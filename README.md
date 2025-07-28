@@ -42,3 +42,50 @@ We believe Go is the ideal language to scale intelligent systems beyond the limi
 
 This project will be organized as:
 
+```
+
+zerfoo/
+├── pkg/
+│   ├── numeric/        # float8/16/32/64 definitions and math
+│   ├── tensor/         # core tensor implementation
+│   ├── engine/         # execution backends
+│   ├── graph/          # DAG builder + autograd
+│   ├── layers/         # Dense, Transformer blocks, Norm, etc.
+│   ├── optimizer/      # SGD, Adam, etc.
+│   ├── onnx/           # ONNX import utility
+│   ├── model/          # High-level model orchestration
+│   └── training/       # Trainer, checkpoints, loops
+
+```
+
+---
+
+## 🚀 Why Now?
+
+- ML is shifting toward **low-precision compute** to reduce cost and increase model scale.
+- The Go ecosystem lacks a credible deep learning stack.
+- Transformers are now infrastructure—training and fine-tuning them should be programmable in any language.
+
+Zerfoo is our bet that **ML infrastructure will diversify** and that **Go can be a first-class citizen in AI.**
+
+---
+
+## 💼 For Collaborators
+
+Zerfoo is early but ambitious. We're looking for:
+
+- 🔬 Technical partners or contributors with ML or compiler background
+- 🧠 AI-native product teams who want to experiment outside the Python ecosystem
+
+---
+
+## 📍 Follow Along
+
+We'll share development progress, design decisions, and benchmarks here:  
+➡️ [github.com/zerfoo/zerfoo](https://github.com/zerfoo/zerfoo)  
+
+---
+
+**License:** Apache 2.0  
+
+© Feza Inc. – Designed for developers building the future of AI infrastructure.
