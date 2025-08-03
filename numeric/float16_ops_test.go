@@ -9,24 +9,8 @@ import (
 
 func TestFloat16Ops_Add(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name           string
-		a, b, expected float16.Float16
-	}{
-		{"positive numbers", float16.FromFloat32(1.0), float16.FromFloat32(2.0), float16.FromFloat32(3.0)},
-		{"negative numbers", float16.FromFloat32(-1.0), float16.FromFloat32(-2.0), float16.FromFloat32(-3.0)},
-		{"mixed numbers", float16.FromFloat32(1.0), float16.FromFloat32(-2.0), float16.FromFloat32(-1.0)},
-		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(0.0), float16.FromFloat32(0.0)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Add(tt.a, tt.b)
-			if result != tt.expected {
-				t.Errorf("Add(%v, %v): expected %v, got %v", tt.a, tt.b, tt.expected, result)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestArithmeticOp(t, "Add", ops.Add, func(a, b float16.Float16) bool { return a == b }, testData.Add)
 }
 
 func TestFloat16Ops_Sub(t *testing.T) {
@@ -53,95 +37,26 @@ func TestFloat16Ops_Sub(t *testing.T) {
 
 func TestFloat16Ops_Mul(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name           string
-		a, b, expected float16.Float16
-	}{
-		{"positive numbers", float16.FromFloat32(2.0), float16.FromFloat32(3.0), float16.FromFloat32(6.0)},
-		{"negative numbers", float16.FromFloat32(-2.0), float16.FromFloat32(-3.0), float16.FromFloat32(6.0)},
-		{"mixed numbers", float16.FromFloat32(2.0), float16.FromFloat32(-3.0), float16.FromFloat32(-6.0)},
-		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(5.0), float16.FromFloat32(0.0)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Mul(tt.a, tt.b)
-			if result != tt.expected {
-				t.Errorf("Mul(%v, %v): expected %v, got %v", tt.a, tt.b, tt.expected, result)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestArithmeticOp(t, "Mul", ops.Mul, func(a, b float16.Float16) bool { return a == b }, testData.Mul)
 }
 
 func TestFloat16Ops_Div(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name           string
-		a, b, expected float16.Float16
-	}{
-		{"positive numbers", float16.FromFloat32(6.0), float16.FromFloat32(3.0), float16.FromFloat32(2.0)},
-		{"negative numbers", float16.FromFloat32(-6.0), float16.FromFloat32(-3.0), float16.FromFloat32(2.0)},
-		{"mixed numbers", float16.FromFloat32(6.0), float16.FromFloat32(-3.0), float16.FromFloat32(-2.0)},
-		{"divide by one", float16.FromFloat32(5.0), float16.FromFloat32(1.0), float16.FromFloat32(5.0)},
-		{"zero dividend", float16.FromFloat32(0.0), float16.FromFloat32(5.0), float16.FromFloat32(0.0)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Div(tt.a, tt.b)
-			if result != tt.expected {
-				t.Errorf("Div(%v, %v): expected %v, got %v", tt.a, tt.b, tt.expected, result)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestArithmeticOp(t, "Div", ops.Div, func(a, b float16.Float16) bool { return a == b }, testData.Div)
 }
 
 func TestFloat16Ops_Tanh(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name     string
-		x        float16.Float16
-		expected float16.Float16
-	}{
-		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(0.0)},
-		{"positive", float16.FromFloat32(1.0), float16.FromFloat32(float32(math.Tanh(1.0)))},
-		{"negative", float16.FromFloat32(-1.0), float16.FromFloat32(float32(math.Tanh(-1.0)))},
-		{"large positive", float16.FromFloat32(100.0), float16.FromFloat32(float32(math.Tanh(100.0)))},
-		{"large negative", float16.FromFloat32(-100.0), float16.FromFloat32(float32(math.Tanh(-100.0)))},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Tanh(tt.x)
-			if result != tt.expected {
-				t.Errorf("Tanh(%v): expected %v, got %v", tt.x, tt.expected, result)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestUnaryOp(t, "Tanh", ops.Tanh, func(a, b float16.Float16) bool { return a == b }, testData.Tanh)
 }
 
 func TestFloat16Ops_Sigmoid(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name     string
-		x        float16.Float16
-		expected float16.Float16
-	}{
-		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(0.5)},
-		{"positive", float16.FromFloat32(1.0), float16.FromFloat32(1.0 / (1.0 + float32(math.Exp(-1.0))))},
-		{"negative", float16.FromFloat32(-1.0), float16.FromFloat32(1.0 / (1.0 + float32(math.Exp(1.0))))},
-		{"large positive", float16.FromFloat32(100.0), float16.FromFloat32(1.0)},
-		{"large negative", float16.FromFloat32(-100.0), float16.FromFloat32(0.0)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Sigmoid(tt.x)
-			if result != tt.expected {
-				t.Errorf("Sigmoid(%v): expected %v, got %v", tt.x, tt.expected, result)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestUnaryOp(t, "Sigmoid", ops.Sigmoid, func(a, b float16.Float16) bool { return a == b }, testData.Sigmoid)
 }
 
 func TestFloat16Ops_TanhGrad(t *testing.T) {
@@ -174,8 +89,12 @@ func TestFloat16Ops_SigmoidGrad(t *testing.T) {
 		expected float16.Float16
 	}{
 		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(0.25)},
-		{"positive", float16.FromFloat32(1.0), float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32() * (1.0 - ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32()))},
-		{"negative", float16.FromFloat32(-1.0), float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32() * (1.0 - ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32()))},
+		{"positive", float16.FromFloat32(1.0), 
+			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32() * 
+				(1.0 - ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32()))},
+		{"negative", float16.FromFloat32(-1.0), 
+			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32() * 
+				(1.0 - ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32()))},
 	}
 
 	for _, tt := range tests {
@@ -446,26 +365,6 @@ func TestFloat16Ops_Abs(t *testing.T) {
 
 func TestFloat16Ops_Sum(t *testing.T) {
 	ops := Float16Ops{}
-	tests := []struct {
-		name     string
-		s        []float16.Float16
-		expected float32
-		epsilon  float32
-	}{
-		{"empty slice", []float16.Float16{}, 0.0, 0.01},
-		{"single element", []float16.Float16{float16.FromFloat32(2.5)}, 2.5, 0.01},
-		{"multiple positive", []float16.Float16{float16.FromFloat32(1.0), float16.FromFloat32(2.0), float16.FromFloat32(3.0)}, 6.0, 0.01},
-		{"mixed signs", []float16.Float16{float16.FromFloat32(1.0), float16.FromFloat32(-2.0), float16.FromFloat32(3.0)}, 2.0, 0.01},
-		{"all zeros", []float16.Float16{float16.FromInt(0), float16.FromInt(0), float16.FromInt(0)}, 0.0, 0.01},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.Sum(tt.s)
-			resultFloat := result.ToFloat32()
-			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
-				t.Errorf("Sum(%v): expected %v, got %v", tt.s, tt.expected, resultFloat)
-			}
-		})
-	}
+	testData := Float16TestData()
+	TestSumOp(t, ops.Sum, func(f float16.Float16) float32 { return f.ToFloat32() }, testData.Sum)
 }
