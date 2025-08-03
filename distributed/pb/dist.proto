@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package distributed;
+
+option go_package = "github.com/zerfoo/zerfoo/distributed/pb";
+
+service DistributedService {
+  // AllReduce performs a single all-reduce operation on a tensor.
+  rpc AllReduce(stream AllReduceRequest) returns (stream AllReduceResponse) {}
+  // Barrier provides a synchronization point for all workers.
+  rpc Barrier(BarrierRequest) returns (BarrierResponse) {}
+  // Broadcast sends a tensor from the root to all other workers.
+  rpc Broadcast(BroadcastRequest) returns (BroadcastResponse) {}
+}
+
+message Tensor {
+  repeated int32 shape = 1;
+  repeated float data = 2; // Using float32 for simplicity of transport
+}
+
+message AllReduceRequest {
+  string name = 1;
+  Tensor tensor = 2;
+}
+
+message AllReduceResponse {
+  string name = 1;
+  Tensor tensor = 2;
+}
+
+message BarrierRequest {
+  int32 rank = 1;
+}
+
+message BarrierResponse {}
+
+message BroadcastRequest {
+  string name = 1;
+  Tensor tensor = 2;
+}
+
+message BroadcastResponse {
+  Tensor tensor = 1;
+}
