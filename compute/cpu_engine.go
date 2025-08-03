@@ -52,8 +52,8 @@ func (e *CPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.Tensor[T], op func
 	return result, nil
 }
 
-// Add performs element-wise addition of two tensors.
-func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// binaryOp performs element-wise binary operations with broadcasting support.
+func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.Tensor[T], op func(T, T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil || b == nil {
 		return nil, fmt.Errorf("input tensors cannot be nil")
 	}
@@ -71,57 +71,24 @@ func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*
 	for i := range rData {
 		aIndex := tensor.BroadcastIndex(i, a.Shape(), outputShape, broadcastA)
 		bIndex := tensor.BroadcastIndex(i, b.Shape(), outputShape, broadcastB)
-		rData[i] = e.ops.Add(aData[aIndex], bData[bIndex])
+		rData[i] = op(aData[aIndex], bData[bIndex])
 	}
 	return result, nil
+}
+
+// Add performs element-wise addition of two tensors.
+func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
 // Sub performs element-wise subtraction of two tensors.
 func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	if a == nil || b == nil {
-		return nil, fmt.Errorf("input tensors cannot be nil")
-	}
-	outputShape, broadcastA, broadcastB, err := tensor.BroadcastShapes(a.Shape(), b.Shape())
-	if err != nil {
-		return nil, err
-	}
-	result, err := e.getOrCreateDest(outputShape, dst...)
-	if err != nil {
-		return nil, err
-	}
-	aData := a.Data()
-	bData := b.Data()
-	rData := result.Data()
-	for i := range rData {
-		aIndex := tensor.BroadcastIndex(i, a.Shape(), outputShape, broadcastA)
-		bIndex := tensor.BroadcastIndex(i, b.Shape(), outputShape, broadcastB)
-		rData[i] = e.ops.Sub(aData[aIndex], bData[bIndex])
-	}
-	return result, nil
+	return e.binaryOp(ctx, a, b, e.ops.Sub, dst...)
 }
 
 // Mul performs element-wise multiplication of two tensors.
 func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	if a == nil || b == nil {
-		return nil, fmt.Errorf("input tensors cannot be nil")
-	}
-	outputShape, broadcastA, broadcastB, err := tensor.BroadcastShapes(a.Shape(), b.Shape())
-	if err != nil {
-		return nil, err
-	}
-	result, err := e.getOrCreateDest(outputShape, dst...)
-	if err != nil {
-		return nil, err
-	}
-	aData := a.Data()
-	bData := b.Data()
-	rData := result.Data()
-	for i := range rData {
-		aIndex := tensor.BroadcastIndex(i, a.Shape(), outputShape, broadcastA)
-		bIndex := tensor.BroadcastIndex(i, b.Shape(), outputShape, broadcastB)
-		rData[i] = e.ops.Mul(aData[aIndex], bData[bIndex])
-	}
-	return result, nil
+	return e.binaryOp(ctx, a, b, e.ops.Mul, dst...)
 }
 
 // Div performs element-wise division of two tensors.
@@ -355,26 +322,7 @@ func (e *CPUEngine[T]) Log(ctx context.Context, a *tensor.Tensor[T], dst ...*ten
 
 // Pow raises each element of a tensor to the power of the corresponding element in another tensor.
 func (e *CPUEngine[T]) Pow(ctx context.Context, base, exponent *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	if base == nil || exponent == nil {
-		return nil, fmt.Errorf("input tensors cannot be nil")
-	}
-	outputShape, broadcastBase, broadcastExp, err := tensor.BroadcastShapes(base.Shape(), exponent.Shape())
-	if err != nil {
-		return nil, err
-	}
-	result, err := e.getOrCreateDest(outputShape, dst...)
-	if err != nil {
-		return nil, err
-	}
-	baseData := base.Data()
-	expData := exponent.Data()
-	rData := result.Data()
-	for i := range rData {
-		baseIndex := tensor.BroadcastIndex(i, base.Shape(), outputShape, broadcastBase)
-		expIndex := tensor.BroadcastIndex(i, exponent.Shape(), outputShape, broadcastExp)
-		rData[i] = e.ops.Pow(baseData[baseIndex], expData[expIndex])
-	}
-	return result, nil
+	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
 // Zero sets all elements of a tensor to zero.
