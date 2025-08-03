@@ -97,7 +97,13 @@ type Engine[T tensor.Numeric] interface {
 
 	// ReduceSum calculates the sum of elements along a specified axis, similar to Sum but potentially with different
 	// internal handling or optimizations for reduction operations.
-	ReduceSum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	ReduceSum(
+		ctx context.Context,
+		a *tensor.Tensor[T],
+		axis int,
+		keepDims bool,
+		dst ...*tensor.Tensor[T],
+	) (*tensor.Tensor[T], error)
 
 	// AddScalar performs element-wise addition of a tensor by a scalar.
 	AddScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)

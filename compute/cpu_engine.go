@@ -440,7 +440,9 @@ func (e *CPUEngine[T]) ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.T
 			return fmt.Errorf("index %d out of bounds for vocabulary size %d", idx, vocabSize)
 		}
 		for j := 0; j < embeddingDim; j++ {
-			dEmbeddingTableData[idx*embeddingDim+j] = e.ops.Add(dEmbeddingTableData[idx*embeddingDim+j], dOutData[i*embeddingDim+j])
+			currentVal := dEmbeddingTableData[idx*embeddingDim+j]
+			gradVal := dOutData[i*embeddingDim+j]
+			dEmbeddingTableData[idx*embeddingDim+j] = e.ops.Add(currentVal, gradVal)
 		}
 	}
 	return nil
