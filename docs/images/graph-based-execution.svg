@@ -1,0 +1,63 @@
+<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .rect {
+      fill: #f0f0f0;
+      stroke: #333;
+      stroke-width: 2;
+    }
+    .circle {
+      fill: #fff;
+      stroke: #333;
+      stroke-width: 2;
+    }
+    .text {
+      font-family: sans-serif;
+      font-size: 16px;
+      text-anchor: middle;
+    }
+    .arrow {
+      stroke: #333;
+      stroke-width: 2;
+      marker-end: url(#arrowhead);
+    }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" />
+    </marker>
+  </defs>
+
+  <!-- Graph-Based Execution Model -->
+  <text x="400" y="30" class="text" font-size="24">Graph-Based Execution Model</text>
+
+  <!-- Nodes -->
+  <circle cx="150" cy="150" r="40" class="circle" />
+  <text x="150" y="155" class="text">Input</text>
+
+  <circle cx="300" cy="150" r="40" class="circle" />
+  <text x="300" y="155" class="text">Dense</text>
+
+  <circle cx="450" cy="150" r="40" class="circle" />
+  <text x="450" y="155" class="text">ReLU</text>
+
+  <circle cx="600" cy="150" r="40" class="circle" />
+  <text x="600" y="155" class="text">Output</text>
+
+  <!-- Arrows (Forward Pass) -->
+  <line x1="190" y1="150" x2="260" y2="150" class="arrow" />
+  <line x1="340" y1="150" x2="410" y2="150" class="arrow" />
+  <line x1="490" y1="150" x2="560" y2="150" class="arrow" />
+  <text x="375" y="130" class="text">Forward Pass</text>
+
+  <!-- Backward Pass -->
+  <text x="375" y="330" class="text">Backward Pass (Gradients)</text>
+  <line x1="560" y1="300" x2="490" y2="300" class="arrow" />
+  <line x1="410" y1="300" x2="340" y2="300" class="arrow" />
+  <line x1="260" y1="300" x2="190" y2="300" class="arrow" />
+
+  <!-- Graph Builder -->
+  <rect x="100" y="400" width="600" height="150" class="rect" rx="10" ry="10" />
+  <text x="400" y="430" class="text" font-size="20">Graph Builder</text>
+  <text x="400" y="460" class="text">Constructs the graph, then returns</text>
+  <text x="400" y="490" class="text">`forward` and `backward` functions.</text>
+</svg>
