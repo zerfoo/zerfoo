@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package distributed;
+
+option go_package = "github.com/zerfoo/zerfoo/distributed/pb";
+
+service Coordinator {
+  // RegisterWorker allows a worker to join the cluster.
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse) {}
+  // UnregisterWorker allows a worker to leave the cluster.
+  rpc UnregisterWorker(UnregisterWorkerRequest) returns (UnregisterWorkerResponse) {}
+  // Heartbeat is sent by workers to indicate that they are still alive.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {}
+  // StartCheckpoint initiates a distributed checkpoint.
+  rpc StartCheckpoint(StartCheckpointRequest) returns (StartCheckpointResponse) {}
+  // EndCheckpoint is called by workers to report the completion of a checkpoint.
+  rpc EndCheckpoint(EndCheckpointRequest) returns (EndCheckpointResponse) {}
+}
+
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string address = 2;
+}
+
+message RegisterWorkerResponse {
+  int32 rank = 1;
+  repeated string peers = 2;
+}
+
+message UnregisterWorkerRequest {
+  string worker_id = 1;
+}
+
+message UnregisterWorkerResponse {}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+}
+
+message HeartbeatResponse {
+  string status = 1;
+}
+
+message StartCheckpointRequest {
+  int64 epoch = 1;
+  string path = 2;
+}
+
+message StartCheckpointResponse {
+  string checkpoint_id = 1;
+}
+
+message EndCheckpointRequest {
+  string worker_id = 1;
+  int64 epoch = 2;
+  string checkpoint_id = 3;
+}
+
+message EndCheckpointResponse {}
