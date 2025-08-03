@@ -1,3 +1,4 @@
+// Package compute provides comprehensive test coverage for the compute engine.
 package compute
 
 import (

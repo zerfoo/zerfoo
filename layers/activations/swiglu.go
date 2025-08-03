@@ -1,4 +1,4 @@
-// layers/activations/swiglu.go
+// Package activations provides neural network activation functions.
 package activations
 
 import (

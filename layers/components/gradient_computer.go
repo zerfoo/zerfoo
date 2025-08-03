@@ -1,3 +1,4 @@
+// Package components provides reusable components for neural network layers.
 package components
 
 import (

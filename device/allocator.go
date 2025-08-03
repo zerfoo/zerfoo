@@ -1,3 +1,4 @@
+// Package device provides device abstraction and memory allocation interfaces.
 package device
 
 import "fmt"
