@@ -1,0 +1,50 @@
+package tensor
+
+import "fmt"
+
+// Reshape returns a new Tensor with a different shape that shares the same underlying data.
+// The new shape must have the same total number of elements as the original tensor.
+// This operation is a "view" and does not copy the data.
+func (t *Tensor[T]) Reshape(newShape []int) (*Tensor[T], error) {
+	newSize := 1
+	inferredDim := -1
+	for i, dim := range newShape {
+		if dim > 0 {
+			newSize *= dim
+		} else if dim == -1 {
+			if inferredDim != -1 {
+				return nil, fmt.Errorf("only one dimension can be inferred")
+			}
+			inferredDim = i
+		} else {
+			return nil, fmt.Errorf("invalid shape dimension: %d; must be positive or -1", dim)
+		}
+	}
+
+	if inferredDim != -1 {
+		if t.Size()%newSize != 0 {
+			return nil, fmt.Errorf("cannot infer dimension for size %d and new size %d", t.Size(), newSize)
+		}
+		newShape[inferredDim] = t.Size() / newSize
+		newSize = t.Size()
+	}
+
+	if newSize != t.Size() {
+		return nil, fmt.Errorf("cannot reshape tensor of size %d into shape %v with size %d", t.Size(), newShape, newSize)
+	}
+
+	// For a reshaped tensor, strides need to be recalculated.
+	newStrides := make([]int, len(newShape))
+	stride := 1
+	for i := len(newShape) - 1; i >= 0; i-- {
+		newStrides[i] = stride
+		stride *= newShape[i]
+	}
+
+	return &Tensor[T]{
+		shape:   newShape,
+		strides: newStrides,
+		data:    t.data, // Share the underlying data
+		isView:  true,
+	}, nil
+}
