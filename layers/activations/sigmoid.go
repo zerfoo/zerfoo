@@ -2,51 +2,34 @@ package activations
 
 import (
 	"context"
-	"fmt"
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // Sigmoid implements the sigmoid activation function.
 type Sigmoid[T tensor.Numeric] struct {
-	graph.NoParameters[T]
-	engine      compute.Engine[T]
-	ops         numeric.Arithmetic[T]
-	lastInput   *tensor.Tensor[T]
-	outputShape []int
+	*BaseActivation[T]
 }
 
+// NewSigmoid creates a new Sigmoid activation function.
 func NewSigmoid[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *Sigmoid[T] {
-	return &Sigmoid[T]{engine: engine, ops: ops}
+	return &Sigmoid[T]{
+		BaseActivation: NewBaseActivation(engine, ops, ops.Sigmoid, ops.SigmoidGrad),
+	}
 }
 
+// OutputShape returns the output shape of the Sigmoid activation.
 func (s *Sigmoid[T]) OutputShape() []int {
-	return s.outputShape
+	return s.BaseActivation.OutputShape()
 }
 
+// Forward performs the forward pass of the Sigmoid activation.
 func (s *Sigmoid[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	if len(inputs) != 1 {
-		return nil, fmt.Errorf("Sigmoid: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
-	}
-	s.lastInput = inputs[0]
-	s.outputShape = s.lastInput.Shape()
-	output, err := s.engine.UnaryOp(ctx, s.lastInput, s.ops.Sigmoid)
-	if err != nil {
-		return nil, err
-	}
-	return output, nil
+	return s.BaseActivation.Forward(ctx, inputs...)
 }
 
+// Backward performs the backward pass of the Sigmoid activation.
 func (s *Sigmoid[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	dsigmoid, err := s.engine.UnaryOp(ctx, s.lastInput, s.ops.SigmoidGrad)
-	if err != nil {
-		return nil, err
-	}
-	inputGrad, err := s.engine.Mul(ctx, outputGradient, dsigmoid)
-	if err != nil {
-		return nil, err
-	}
-	return []*tensor.Tensor[T]{inputGrad}, nil
+	return s.BaseActivation.Backward(ctx, outputGradient)
 }
