@@ -174,14 +174,18 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
-	ln.gamma.AddGradient(dGamma) // Accumulate gradient
+	if err := ln.gamma.AddGradient(dGamma); err != nil {
+		return nil, err
+	}
 
 	// dL/dbeta = sum(dOut) along the normalization axis
 	dBeta, err := ln.engine.ReduceSum(ctx, dOut, len(ln.inputShape)-1, false, nil)
 	if err != nil {
 		return nil, err
 	}
-	ln.beta.AddGradient(dBeta) // Accumulate gradient
+	if err := ln.beta.AddGradient(dBeta); err != nil {
+		return nil, err
+	}
 
 	// Gradient for input (dL/dx)
 	// This derivation follows the standard backpropagation for Layer Normalization.

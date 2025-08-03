@@ -165,7 +165,6 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 
 // Backward computes the gradients for RoPE.
 func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-
 	// Split dOut into d_rotated_x0, d_rotated_x1
 	dRotatedX0, err := dOut.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, rpe.inputShape[1]}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
@@ -213,6 +212,3 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 
 	return []*tensor.Tensor[T]{dInput}, nil
 }
-
-
-

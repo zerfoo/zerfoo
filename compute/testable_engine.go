@@ -152,7 +152,7 @@ func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error
 	if f.failZero {
 		return fmt.Errorf("controlled failure: Zero operation failed")
 	}
-	return f.engine.CPUEngine.Zero(ctx, a)
+	return f.engine.Zero(ctx, a)
 }
 
 // TestableSum performs sum with a FailableZeroer

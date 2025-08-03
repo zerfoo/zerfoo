@@ -15,12 +15,12 @@ import (
 
 // GroupedQueryAttention implements the Grouped Query Attention mechanism.
 type GroupedQueryAttention[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	ops numeric.Arithmetic[T]
-	numQueryHeads int // Number of query heads
+	engine           compute.Engine[T]
+	ops              numeric.Arithmetic[T]
+	numQueryHeads    int // Number of query heads
 	numKeyValueHeads int // Number of key/value heads (must divide numQueryHeads)
-	modelDim int // d_model, the input/output dimension of the block
-	headDim  int // Dimension of each head (modelDim / numQueryHeads)
+	modelDim         int // d_model, the input/output dimension of the block
+	headDim          int // Dimension of each head (modelDim / numQueryHeads)
 
 	// Linear projections for Q, K, V
 	wq *core.Dense[T] // Query projection
@@ -34,9 +34,9 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	wo *core.Dense[T] // Output projection
 
 	// Cached tensors for backward pass
-	qProj *tensor.Tensor[T] // Projected Q
-	kProj *tensor.Tensor[T] // Projected K
-	vProj *tensor.Tensor[T] // Projected V
+	qProj      *tensor.Tensor[T] // Projected Q
+	kProj      *tensor.Tensor[T] // Projected K
+	vProj      *tensor.Tensor[T] // Projected V
 	attnOutput *tensor.Tensor[T] // Output from scaledDotProductAttention
 	qHeadsRoPE *tensor.Tensor[T] // Q after RoPE
 	kHeadsRoPE *tensor.Tensor[T] // K after RoPE
@@ -65,11 +65,11 @@ func NewGroupedQueryAttention[T tensor.Numeric](engine compute.Engine[T], ops nu
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WQ dense layer: %w", err)
 	}
-							wk, err := core.NewDense[T]("wk", engine, ops, modelDim, kvHeadDim) // K projection to kvHeadDim
+	wk, err := core.NewDense[T]("wk", engine, ops, modelDim, kvHeadDim) // K projection to kvHeadDim
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WK dense layer: %w", err)
 	}
-					wv, err := core.NewDense[T]("wv", engine, ops, modelDim, kvHeadDim) // V projection to kvHeadDim
+	wv, err := core.NewDense[T]("wv", engine, ops, modelDim, kvHeadDim) // V projection to kvHeadDim
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WV dense layer: %w", err)
 	}
@@ -328,8 +328,8 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 		return nil, err
 	}
 	// Re-create vForSDPA as it might have been replicated
-	var kvHeadDim int = gqa.modelDim / gqa.numKeyValueHeads
-	vHeadsOriginal := gqa.vProj // Use original vProj to avoid issues with replication
+	var kvHeadDim = gqa.modelDim / gqa.numKeyValueHeads
+	vHeadsOriginal := gqa.vProj    // Use original vProj to avoid issues with replication
 	var vForSDPA *tensor.Tensor[T] // Declare vForSDPA here
 	if gqa.numQueryHeads != gqa.numKeyValueHeads {
 		replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads // Declare replicationFactor here

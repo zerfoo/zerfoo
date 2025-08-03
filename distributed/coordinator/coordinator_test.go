@@ -485,7 +485,7 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 			name:     "successful unregister",
 			workerID: "worker-1",
 			setupFunc: func(kit *testKit) {
-				kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
+				_, _ = kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
 			},
 			expectErr:     false,
 			expectWorkers: map[string]*WorkerInfo{},
@@ -535,7 +535,7 @@ func TestCoordinator_Heartbeat_Table(t *testing.T) {
 			name:     "successful heartbeat",
 			workerID: "worker-1",
 			setupFunc: func(kit *testKit) {
-				kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
+				_, _ = kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
 			},
 			expectErr:    false,
 			expectStatus: "OK",

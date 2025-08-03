@@ -76,7 +76,7 @@ func TestBuilder_Build(t *testing.T) {
 		t.Errorf("expected 1, got %d", output.Data()[0])
 	}
 
-	backward(input)
+	_ = backward(input)
 }
 
 func TestBuilder_Input(t *testing.T) {
@@ -94,7 +94,7 @@ func TestBuilder_Input(t *testing.T) {
 	if output != nil {
 		t.Errorf("expected nil, got %v", output)
 	}
-	inputNode.Backward(nil)
+	_, _ = inputNode.Backward(nil)
 	if inputNode.Parameters() != nil {
 		t.Errorf("expected nil parameters, got %v", inputNode.Parameters())
 	}
