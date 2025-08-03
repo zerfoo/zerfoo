@@ -169,8 +169,12 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorker
 		peers = append(peers, worker.Address)
 	}
 
+	// Safe conversion check for rank
+	if rank > int(^uint32(0)>>1) {
+		return nil, fmt.Errorf("rank %d exceeds int32 maximum value", rank)
+	}
 	return &pb.RegisterWorkerResponse{
-		Rank:  int32(rank),
+		Rank:  int32(rank), // #nosec G115 - Range checked above
 		Peers: peers,
 	}, nil
 }
@@ -230,9 +234,13 @@ func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpoi
 		workers[id] = false
 	}
 
+	// Safe conversion check for epoch
+	if req.Epoch > int64(^uint32(0)>>1) {
+		return nil, fmt.Errorf("epoch %d exceeds int32 maximum value", req.Epoch)
+	}
 	c.checkpoints[checkpointID] = &CheckpointInfo{
 		ID:      checkpointID,
-		Epoch:   int32(req.Epoch),
+		Epoch:   int32(req.Epoch), // #nosec G115 - Range checked above
 		Path:    req.Path,
 		Workers: workers,
 	}

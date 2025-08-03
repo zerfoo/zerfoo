@@ -174,6 +174,7 @@ func TestDirectErrorInjection(t *testing.T) {
 func manipulateTensorForFailure(t *tensor.Tensor[float32]) {
 	// Try to access internal fields using unsafe operations
 	// This is a last resort to trigger the uncovered error paths
+	// #nosec G103 - Unsafe pointer usage is intentional for coverage testing
 	ptr := unsafe.Pointer(t)
 
 	// Attempt to corrupt internal state (this is experimental)
