@@ -287,6 +287,80 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 }
 
 // Backward computes the gradients for GroupedQueryAttention.
+func (gqa *GroupedQueryAttention[T]) backwardRoPE(ctx context.Context, dQHeadsRoPE, dKHeadsRoPE, qForSDPA, kForSDPA *tensor.Tensor[T], seqLen int) ([]*tensor.Tensor[T], []*tensor.Tensor[T], error) {
+	rope, err := embeddings.NewRotaryPositionalEmbedding[T](ctx, gqa.engine, gqa.headDim, seqLen)
+	if err != nil {
+		return nil, nil, err
+	}
+	dQForRoPE, err := rope.Backward(ctx, dQHeadsRoPE, qForSDPA)
+	if err != nil {
+		return nil, nil, err
+	}
+	dKForRoPE, err := rope.Backward(ctx, dKHeadsRoPE, kForSDPA)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dQForRoPE, dKForRoPE, nil
+}
+
+func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context, dQForRoPE, dKForRoPE []*tensor.Tensor[T], dVHeads *tensor.Tensor[T], batchSize, seqLen, kvHeadDim int) (*tensor.Tensor[T], *tensor.Tensor[T], *tensor.Tensor[T], error) {
+	// Sum gradients from replicated K, V heads
+	if gqa.numQueryHeads != gqa.numKeyValueHeads {
+		// Sum dVHeads along the replicated dimension
+		dVHeadsSummed, err := gqa.engine.ReduceSum(ctx, dVHeads, 1, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		dVHeads = dVHeadsSummed
+		// Sum dKHeadsRoPE along the replicated dimension
+		dKForRoPE[0], err = gqa.engine.ReduceSum(ctx, dKForRoPE[0], 1, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	// Reshape and transpose back to original projection shapes
+	dQProj, err := gqa.engine.Reshape(ctx, dQForRoPE[0], []int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dQProj, err = gqa.engine.Transpose(ctx, dQProj, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dQProj, err = gqa.engine.Reshape(ctx, dQProj, []int{batchSize, seqLen, gqa.modelDim})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	dKProj, err := gqa.engine.Reshape(ctx, dKForRoPE[0], []int{batchSize, gqa.numKeyValueHeads, seqLen, kvHeadDim})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dKProj, err = gqa.engine.Transpose(ctx, dKProj, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dKProj, err = gqa.engine.Reshape(ctx, dKProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original K proj dim
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	dVProj, err := gqa.engine.Reshape(ctx, dVHeads, []int{batchSize, gqa.numKeyValueHeads, seqLen, kvHeadDim})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dVProj, err = gqa.engine.Transpose(ctx, dVProj, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dVProj, err = gqa.engine.Reshape(ctx, dVProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original V proj dim
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return dQProj, dKProj, dVProj, nil
+}
+
 func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
@@ -362,76 +436,12 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	}
 	dQHeadsRoPE, dKHeadsRoPE, dVHeads := dQKVSplit[0], dQKVSplit[1], dQKVSplit[2]
 
-	// 4. Backward through RoPE
-	rope, err := embeddings.NewRotaryPositionalEmbedding[T](ctx, gqa.engine, gqa.headDim, seqLen)
-	if err != nil {
-		return nil, err
-	}
-	dQForRoPE, err := rope.Backward(ctx, dQHeadsRoPE, qForSDPA)
-	if err != nil {
-		return nil, err
-	}
-	dKForRoPE, err := rope.Backward(ctx, dKHeadsRoPE, kForSDPA)
+	dQForRoPE, dKForRoPE, err := gqa.backwardRoPE(ctx, dQHeadsRoPE, dKHeadsRoPE, qForSDPA, kForSDPA, seqLen)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Backward through split and reshape (reverse of step 2 in Forward)
-	// dQForRoPE: (batch * num_query_heads, seq_len, head_dim)
-	// dKForRoPE: (batch * num_kv_heads, seq_len, kv_head_dim)
-	// dVHeads: (batch * num_query_heads, seq_len, head_dim)
-
-	// Sum gradients from replicated K, V heads
-	if gqa.numQueryHeads != gqa.numKeyValueHeads {
-		// Sum dVHeads along the replicated dimension
-		dVHeadsSummed, err := gqa.engine.ReduceSum(ctx, dVHeads, 1, false)
-		if err != nil {
-			return nil, err
-		}
-		dVHeads = dVHeadsSummed
-		// Sum dKHeadsRoPE along the replicated dimension
-		dKForRoPE[0], err = gqa.engine.ReduceSum(ctx, dKForRoPE[0], 1, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Reshape and transpose back to original projection shapes
-	dQProj, err := gqa.engine.Reshape(ctx, dQForRoPE[0], []int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
-	dQProj, err = gqa.engine.Transpose(ctx, dQProj, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-	dQProj, err = gqa.engine.Reshape(ctx, dQProj, []int{batchSize, seqLen, gqa.modelDim})
-	if err != nil {
-		return nil, err
-	}
-
-	dKProj, err := gqa.engine.Reshape(ctx, dKForRoPE[0], []int{batchSize, gqa.numKeyValueHeads, seqLen, kvHeadDim})
-	if err != nil {
-		return nil, err
-	}
-	dKProj, err = gqa.engine.Transpose(ctx, dKProj, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-	dKProj, err = gqa.engine.Reshape(ctx, dKProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original K proj dim
-	if err != nil {
-		return nil, err
-	}
-
-	dVProj, err := gqa.engine.Reshape(ctx, dVHeads, []int{batchSize, gqa.numKeyValueHeads, seqLen, kvHeadDim})
-	if err != nil {
-		return nil, err
-	}
-	dVProj, err = gqa.engine.Transpose(ctx, dVProj, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-	dVProj, err = gqa.engine.Reshape(ctx, dVProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original V proj dim
+	dQProj, dKProj, dVProj, err := gqa.backwardSplitAndReshape(ctx, dQForRoPE, dKForRoPE, dVHeads, batchSize, seqLen, kvHeadDim)
 	if err != nil {
 		return nil, err
 	}
