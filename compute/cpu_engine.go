@@ -319,7 +319,7 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.Tensor[T], dst ...*tenso
 }
 
 // Log computes the element-wise natural logarithm of a tensor.
-func (e *CPUEngine[T]) Log(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -343,7 +343,7 @@ func (e *CPUEngine[T]) Pow(
 }
 
 // Zero sets all elements of a tensor to zero.
-func (e *CPUEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -354,7 +354,7 @@ func (e *CPUEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
 }
 
 // Zeros fills the tensor with zeros. If a shape is provided, the tensor is reallocated to that shape.
-func (e *CPUEngine[T]) Zeros(ctx context.Context, a *tensor.Tensor[T], shape []int) error {
+func (e *CPUEngine[T]) Zeros(_ context.Context, a *tensor.Tensor[T], shape []int) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
