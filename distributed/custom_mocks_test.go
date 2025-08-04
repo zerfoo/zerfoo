@@ -355,13 +355,13 @@ type CustomMockGrpcServer struct {
 	serveErr             error
 }
 
-func (m *CustomMockGrpcServer) RegisterService(desc *grpc.ServiceDesc, impl interface{}) {
+func (m *CustomMockGrpcServer) RegisterService(_ *grpc.ServiceDesc, _ interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.registerServiceCalls++
 }
 
-func (m *CustomMockGrpcServer) Serve(lis net.Listener) error {
+func (m *CustomMockGrpcServer) Serve(_ net.Listener) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.serveCalls++
@@ -432,7 +432,7 @@ type CustomMockDistributedServiceClient struct {
 	}
 }
 
-func (m *CustomMockDistributedServiceClient) AllReduce(ctx context.Context, opts ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
+func (m *CustomMockDistributedServiceClient) AllReduce(_ context.Context, _ ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceCalls++
@@ -459,7 +459,7 @@ func (m *CustomMockDistributedServiceClient) ReturnAllReduce(client pb.Distribut
 	return m
 }
 
-func (m *CustomMockDistributedServiceClient) Barrier(ctx context.Context, in *pb.BarrierRequest, opts ...grpc.CallOption) (*pb.BarrierResponse, error) {
+func (m *CustomMockDistributedServiceClient) Barrier(_ context.Context, _ *pb.BarrierRequest, _ ...grpc.CallOption) (*pb.BarrierResponse, error) {
 	return &pb.BarrierResponse{}, nil
 }
 
@@ -472,6 +472,6 @@ func (m *CustomMockDistributedServiceClient) AssertExpectations(t *testing.T) {
 }
 
 // MockClientFactory is a mock implementation of the DistributedServiceClientFactory function.
-func MockClientFactory(cc *grpc.ClientConn) pb.DistributedServiceClient {
+func MockClientFactory(_ *grpc.ClientConn) pb.DistributedServiceClient {
 	return &CustomMockDistributedServiceClient{}
 }
