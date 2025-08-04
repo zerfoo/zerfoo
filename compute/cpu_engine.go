@@ -466,7 +466,7 @@ func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Ten
 }
 
 // RandomUniform fills the tensor with random values from a uniform distribution.
-func (e *CPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.Tensor[T], minVal, maxVal T) error {
+func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.Tensor[T], minVal, maxVal T) error {
 	if t == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -491,7 +491,7 @@ func (e *CPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.Tensor[T], m
 }
 
 // Fill fills the tensor with a scalar value.
-func (e *CPUEngine[T]) Fill(ctx context.Context, t *tensor.Tensor[T], value T) error {
+func (e *CPUEngine[T]) Fill(_ context.Context, t *tensor.Tensor[T], value T) error {
 	if t == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -502,7 +502,7 @@ func (e *CPUEngine[T]) Fill(ctx context.Context, t *tensor.Tensor[T], value T) e
 }
 
 // MulScalar performs element-wise multiplication of a tensor by a scalar.
-func (e *CPUEngine[T]) MulScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
