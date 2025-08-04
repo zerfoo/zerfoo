@@ -203,6 +203,9 @@ func (e *CPUEngine[T]) Transpose(ctx context.Context, a *tensor.Tensor[T], axes 
 	return result, nil
 }
 
+// Sum computes the sum of tensor elements along the specified axis.
+// If keepDims is true, the reduced dimensions are retained with size 1.
+// An optional destination tensor can be provided to store the result.
 func (e *CPUEngine[T]) Sum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
