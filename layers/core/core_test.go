@@ -76,10 +76,10 @@ type mockEngine struct {
 	Err error
 }
 
-func (e *mockEngine) Add(_ context.Context, a, b *tensor.Tensor[float32], dst ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+func (e *mockEngine) Add(_ context.Context, _, _ *tensor.Tensor[float32], _ ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
 	return nil, e.Err
 }
 
-func (e *mockEngine) MatMul(_ context.Context, a, b *tensor.Tensor[float32], dst ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+func (e *mockEngine) MatMul(_ context.Context, _, _ *tensor.Tensor[float32], _ ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
 	return nil, e.Err
 }

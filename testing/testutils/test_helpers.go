@@ -177,7 +177,7 @@ func (e *MockEngine[T]) Exp(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor
 }
 
 // Log computes the natural logarithm of tensor elements.
-func (e *MockEngine[T]) Log(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Log(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
@@ -187,7 +187,7 @@ func (e *MockEngine[T]) Pow(_ context.Context, _, _ *tensor.Tensor[T], _ ...*ten
 }
 
 // Zero sets all elements of the tensor to zero.
-func (e *MockEngine[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
+func (e *MockEngine[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
 	return e.Err
 }
 
