@@ -1,10 +1,11 @@
 package loss
 
 import (
+	"testing"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
 func TestMSE_Forward(t *testing.T) {

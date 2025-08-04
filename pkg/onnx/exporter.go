@@ -45,7 +45,7 @@ func NewExporter[T tensor.Numeric]() *Exporter[T] {
 // This is a highly simplified example, only handling a single core.Dense layer.
 // A full implementation would iterate through all nodes in a built graph,
 // map each Zerfoo Node to its corresponding ONNX OpType, and handle all parameters.
-func (e *Exporter[T]) ExportGraph(_ *graph.Builder[T], outputNodeHandle interface{}) (*Model, error) {
+func (e *Exporter[T]) ExportGraph(_ *graph.Builder[T], _ interface{}) (*Model, error) {
 	model := &Model{
 		GraphName:    "ZerfooModel",
 		Nodes:        []Node{},

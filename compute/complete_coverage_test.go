@@ -3,13 +3,15 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"testing"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
-// MockFailingTensor implements tensor operations but fails on Set at specific indices
+// MockFailingTensor implements tensor operations but fails on Set at specific indices.
 type MockFailingTensor[T tensor.Numeric] struct {
 	*tensor.Tensor[T]
 	failIndices map[string]bool
@@ -32,10 +34,11 @@ func (m *MockFailingTensor[T]) Set(value T, indices ...int) error {
 	if m.failIndices[key] {
 		return fmt.Errorf("mock error: Set failed at indices %v", indices)
 	}
+
 	return m.Tensor.Set(value, indices...)
 }
 
-// TestOriginalCPUEngineErrorPaths tests the original CPUEngine error paths using mocking
+// TestOriginalCPUEngineErrorPaths tests the original CPUEngine error paths using mocking.
 func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 	// We'll create a modified version of the original methods that accept our mock tensors
 	// to test the exact same code paths in the original CPUEngine
@@ -81,10 +84,11 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 	})
 }
 
-// testMatMulWithMockResult replicates the exact MatMul logic but with a mock result tensor
+// testMatMulWithMockResult replicates the exact MatMul logic but with a mock result tensor.
 func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil || b == nil {
 		t.Error("input tensors cannot be nil")
+
 		return nil
 	}
 
@@ -93,12 +97,14 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 	bShape := b.Shape()
 	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
 		t.Error("invalid shapes for matrix multiplication")
+
 		return nil
 	}
 
 	result, err := tensor.New[float32]([]int{aShape[0], bShape[1]}, nil)
 	if err != nil {
 		t.Errorf("failed to create result tensor: %v", err)
+
 		return nil
 	}
 
@@ -107,10 +113,10 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 	mockResult.SetFailAtIndices(0, 1) // Fail at position [0,1]
 
 	// Exact copy of original MatMul logic
-	for i := 0; i < aShape[0]; i++ {
-		for j := 0; j < bShape[1]; j++ {
+	for i := range aShape[0] {
+		for j := range bShape[1] {
 			sum := e.ops.FromFloat32(0)
-			for k := 0; k < aShape[1]; k++ {
+			for k := range aShape[1] {
 				valA, _ := a.At(i, k)
 				valB, _ := b.At(k, j)
 				sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
@@ -119,29 +125,34 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 			if err := mockResult.Set(sum, i, j); err != nil {
 				// This error path is now covered!
 				t.Logf("Successfully triggered MatMul Set error path: %v", err)
+
 				return result // Return success to indicate we hit the error path
 			}
 		}
 	}
+
 	return result
 }
 
-// testTransposeWithMockResult replicates the exact Transpose logic but with a mock result tensor
+// testTransposeWithMockResult replicates the exact Transpose logic but with a mock result tensor.
 func testTransposeWithMockResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
+
 		return nil
 	}
 
 	shape := a.Shape()
 	if len(shape) != 2 {
 		t.Error("transpose is only supported for 2D tensors")
+
 		return nil
 	}
 
 	result, err := tensor.New[float32]([]int{shape[1], shape[0]}, nil)
 	if err != nil {
 		t.Errorf("failed to create result tensor: %v", err)
+
 		return nil
 	}
 
@@ -150,21 +161,23 @@ func testTransposeWithMockResult(_ context.Context, _ *CPUEngine[float32], a *te
 	mockResult.SetFailAtIndices(2, 0) // Fail at position [2,0] (j=2, i=0)
 
 	// Exact copy of original Transpose logic
-	for i := 0; i < shape[0]; i++ {
-		for j := 0; j < shape[1]; j++ {
+	for i := range shape[0] {
+		for j := range shape[1] {
 			val, _ := a.At(i, j)
 			// This is the exact line we want to test for error coverage
 			if err := mockResult.Set(val, j, i); err != nil {
 				// This error path is now covered!
 				t.Logf("Successfully triggered Transpose Set error path: %v", err)
+
 				return result // Return success to indicate we hit the error path
 			}
 		}
 	}
+
 	return result
 }
 
-// MockFailingZeroEngine wraps CPUEngine and can be configured to fail on Zero operations
+// MockFailingZeroEngine wraps CPUEngine and can be configured to fail on Zero operations.
 type MockFailingZeroEngine[T tensor.Numeric] struct {
 	*CPUEngine[T]
 	failZero bool
@@ -172,15 +185,17 @@ type MockFailingZeroEngine[T tensor.Numeric] struct {
 
 func (m *MockFailingZeroEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
 	if m.failZero {
-		return fmt.Errorf("mock error: Zero operation failed")
+		return errors.New("mock error: Zero operation failed")
 	}
+
 	return m.CPUEngine.Zero(ctx, a)
 }
 
-// testSumWithMockZero replicates the exact Sum logic but with a mock Zero operation
+// testSumWithMockZero replicates the exact Sum logic but with a mock Zero operation.
 func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
+
 		return nil
 	}
 
@@ -204,9 +219,11 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 		result, err := tensor.New[float32](shape, nil)
 		if err != nil {
 			t.Errorf("failed to create result tensor: %v", err)
+
 			return nil
 		}
 		result.Data()[0] = sum
+
 		return result
 	}
 
@@ -214,6 +231,7 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 	shape := a.Shape()
 	if axis < 0 || axis >= len(shape) {
 		t.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(shape))
+
 		return nil
 	}
 
@@ -222,6 +240,7 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 	result, err := tensor.New[float32](newShape, nil)
 	if err != nil {
 		t.Errorf("failed to create result tensor: %v", err)
+
 		return nil
 	}
 
@@ -235,13 +254,14 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 	if err := mockEngine.Zero(ctx, result); err != nil {
 		// This error path is now covered!
 		t.Logf("Successfully triggered Sum Zero error path: %v", err)
+
 		return result // Return success to indicate we hit the error path
 	}
 
 	return result
 }
 
-// TestCompleteCoverageVerification verifies that all error paths are now covered
+// TestCompleteCoverageVerification verifies that all error paths are now covered.
 func TestCompleteCoverageVerification(t *testing.T) {
 	t.Run("VerifyAllErrorPathsCovered", func(t *testing.T) {
 		// This test ensures that our mocking approach successfully covers

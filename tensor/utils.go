@@ -12,6 +12,7 @@ func SameShape[T Numeric](a, b *Tensor[T]) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -43,6 +44,7 @@ func BroadcastShapes(a, b []int) (shape []int, broadcastA, broadcastB bool, err 
 	}
 	broadcastA = len(a) < len(shape) || !shapesEqual(a, shape)
 	broadcastB = len(b) < len(shape) || !shapesEqual(b, shape)
+
 	return
 }
 
@@ -63,6 +65,7 @@ func BroadcastIndex(index int, shape, outputShape []int, broadcast bool) int {
 		}
 		inputIndex += inputCoord * inputStrides[len(shape)-1-i]
 	}
+
 	return inputIndex
 }
 
@@ -75,6 +78,7 @@ func shapesEqual(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -85,5 +89,6 @@ func strides(shape []int) []int {
 		s[i] = stride
 		stride *= shape[i]
 	}
+
 	return s
 }

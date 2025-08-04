@@ -1,4 +1,4 @@
-// layers/embeddings/token_embedding.go
+// Package embeddings provides neural network embedding layers for the Zerfoo ML framework.
 package embeddings
 
 import (
@@ -70,6 +70,7 @@ func (te *TokenEmbedding[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
 	if len(inputShape) != 2 {
 		return nil, fmt.Errorf("expected 2D input tensor (batch_size, seq_len), got %v", inputShape)
 	}
+
 	return []int{inputShape[0], inputShape[1], te.embeddingDim}, nil
 }
 

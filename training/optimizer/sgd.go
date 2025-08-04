@@ -4,6 +4,7 @@ package optimizer
 import (
 	"context"
 	"fmt"
+
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
 	"github.com/zerfoo/zerfoo/compute"
@@ -71,6 +72,7 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 					return minVal
 				}
 			}
+
 			return g
 		}, nil)
 	}

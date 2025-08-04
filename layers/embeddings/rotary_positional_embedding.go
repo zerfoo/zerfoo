@@ -38,20 +38,20 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 
 	// Create position indices: [0, 1, ..., seq_len-1]
 	positions := make([]int, seqLen)
-	for i := 0; i < seqLen; i++ {
+	for i := range seqLen {
 		positions[i] = i
 	}
 
 	// Create inverse frequencies: 1 / (10000^(2i/head_dim))
 	invFreqsData := make([]T, headDim/2)
-	for i := 0; i < headDim/2; i++ {
+	for i := range headDim / 2 {
 		invFreqsData[i] = T(1.0 / math.Pow(10000.0, float64(2*i)/float64(headDim)))
 	}
 
 	// Compute angles: positions * invFreqs
 	anglesData := make([]T, seqLen*(headDim/2))
-	for i := 0; i < seqLen; i++ {
-		for j := 0; j < headDim/2; j++ {
+	for i := range seqLen {
+		for j := range headDim / 2 {
 			anglesData[i*(headDim/2)+j] = T(float64(positions[i]) * float64(invFreqsData[j]))
 		}
 	}
@@ -94,6 +94,7 @@ func (rpe *RotaryPositionalEmbedding[T]) OutputShape(inputShapes ...[]int) ([]in
 	if inputShape[2] != rpe.headDim {
 		return nil, fmt.Errorf("input head dimension (%d) does not match layer's head dimension (%d)", inputShape[2], rpe.headDim)
 	}
+
 	return inputShape, nil
 }
 

@@ -151,5 +151,6 @@ func (a *AdamW[T]) Step(ctx context.Context, params []graph.Parameter[T]) error 
 		// Clear gradient for next step
 		param.ClearGradient()
 	}
+
 	return nil
 }

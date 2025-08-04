@@ -67,12 +67,16 @@ func TestFloat8Ops_TanhGrad(t *testing.T) {
 		expected float8.Float8
 	}{
 		{"zero", float8.ToFloat8(0.0), float8.ToFloat8(1.0)},
-		{"positive", float8.ToFloat8(1.0),
+		{
+			"positive", float8.ToFloat8(1.0),
 			ops.Sub(float8.ToFloat8(1.0),
-				ops.Mul(ops.Tanh(float8.ToFloat8(1.0)), ops.Tanh(float8.ToFloat8(1.0))))},
-		{"negative", float8.ToFloat8(-1.0),
+				ops.Mul(ops.Tanh(float8.ToFloat8(1.0)), ops.Tanh(float8.ToFloat8(1.0)))),
+		},
+		{
+			"negative", float8.ToFloat8(-1.0),
 			ops.Sub(float8.ToFloat8(1.0),
-				ops.Mul(ops.Tanh(float8.ToFloat8(-1.0)), ops.Tanh(float8.ToFloat8(-1.0))))},
+				ops.Mul(ops.Tanh(float8.ToFloat8(-1.0)), ops.Tanh(float8.ToFloat8(-1.0)))),
+		},
 	}
 
 	for _, tt := range tests {
@@ -93,12 +97,16 @@ func TestFloat8Ops_SigmoidGrad(t *testing.T) {
 		expected float8.Float8
 	}{
 		{"zero", float8.ToFloat8(0.0), float8.ToFloat8(0.25)},
-		{"positive", float8.ToFloat8(1.0),
+		{
+			"positive", float8.ToFloat8(1.0),
 			ops.Mul(ops.Sigmoid(float8.ToFloat8(1.0)),
-				ops.Sub(float8.ToFloat8(1.0), ops.Sigmoid(float8.ToFloat8(1.0))))},
-		{"negative", float8.ToFloat8(-1.0),
+				ops.Sub(float8.ToFloat8(1.0), ops.Sigmoid(float8.ToFloat8(1.0)))),
+		},
+		{
+			"negative", float8.ToFloat8(-1.0),
 			ops.Mul(ops.Sigmoid(float8.ToFloat8(-1.0)),
-				ops.Sub(float8.ToFloat8(1.0), ops.Sigmoid(float8.ToFloat8(-1.0))))},
+				ops.Sub(float8.ToFloat8(1.0), ops.Sigmoid(float8.ToFloat8(-1.0)))),
+		},
 	}
 
 	for _, tt := range tests {

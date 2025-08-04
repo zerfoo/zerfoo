@@ -8,20 +8,20 @@ import (
 	"github.com/zerfoo/float8"
 )
 
-// ArithmeticTestCase represents a test case for arithmetic operations
+// ArithmeticTestCase represents a test case for arithmetic operations.
 type ArithmeticTestCase[T any] struct {
 	name           string
 	a, b, expected T
 }
 
-// UnaryTestCase represents a test case for unary operations
+// UnaryTestCase represents a test case for unary operations.
 type UnaryTestCase[T any] struct {
 	name     string
 	x        T
 	expected T
 }
 
-// SumTestCase represents a test case for sum operations
+// SumTestCase represents a test case for sum operations.
 type SumTestCase[T any] struct {
 	name     string
 	s        []T
@@ -29,7 +29,7 @@ type SumTestCase[T any] struct {
 	epsilon  float32
 }
 
-// LeakyReLUTestCase represents a test case for LeakyReLU operations
+// LeakyReLUTestCase represents a test case for LeakyReLU operations.
 type LeakyReLUTestCase[T any] struct {
 	name     string
 	x        T
@@ -38,7 +38,7 @@ type LeakyReLUTestCase[T any] struct {
 	epsilon  float32
 }
 
-// TestArithmeticOp tests a binary arithmetic operation
+// TestArithmeticOp tests a binary arithmetic operation.
 func TestArithmeticOp[T any](t *testing.T, opName string, op func(T, T) T, equal func(T, T) bool, tests []ArithmeticTestCase[T]) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -50,7 +50,7 @@ func TestArithmeticOp[T any](t *testing.T, opName string, op func(T, T) T, equal
 	}
 }
 
-// TestUnaryOp tests a unary operation
+// TestUnaryOp tests a unary operation.
 func TestUnaryOp[T any](t *testing.T, opName string, op func(T) T, equal func(T, T) bool, tests []UnaryTestCase[T]) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +62,7 @@ func TestUnaryOp[T any](t *testing.T, opName string, op func(T) T, equal func(T,
 	}
 }
 
-// TestSumOp tests sum operations with epsilon tolerance
+// TestSumOp tests sum operations with epsilon tolerance.
 func TestSumOp[T any](t *testing.T, op func([]T) T, toFloat32 func(T) float32, tests []SumTestCase[T]) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestSumOp[T any](t *testing.T, op func([]T) T, toFloat32 func(T) float32, t
 	}
 }
 
-// TestLeakyReLUOp tests LeakyReLU operations with epsilon tolerance
+// TestLeakyReLUOp tests LeakyReLU operations with epsilon tolerance.
 func TestLeakyReLUOp[T any](t *testing.T, opName string, op func(T, float64) T, toFloat32 func(T) float32, tests []LeakyReLUTestCase[T]) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,7 +88,7 @@ func TestLeakyReLUOp[T any](t *testing.T, opName string, op func(T, float64) T, 
 	}
 }
 
-// Float8TestData provides common test data for float8 operations
+// Float8TestData provides common test data for float8 operations.
 func Float8TestData() struct {
 	Add           []ArithmeticTestCase[float8.Float8]
 	Mul           []ArithmeticTestCase[float8.Float8]
@@ -164,7 +164,7 @@ func Float8TestData() struct {
 	}
 }
 
-// Float16TestData provides common test data for float16 operations
+// Float16TestData provides common test data for float16 operations.
 func Float16TestData() struct {
 	Add           []ArithmeticTestCase[float16.Float16]
 	Mul           []ArithmeticTestCase[float16.Float16]

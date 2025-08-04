@@ -2,6 +2,7 @@ package loss
 
 import (
 	"context"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -33,6 +34,7 @@ func (m *MSE[T]) Forward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[
 	// For simplicity, we divide by N.
 	n := m.ops.FromFloat32(float32(len(data)))
 	loss, _ := tensor.New[T]([]int{1}, []T{m.ops.Div(sum, n)})
+
 	return loss
 }
 
@@ -40,5 +42,6 @@ func (m *MSE[T]) Forward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[
 func (m *MSE[T]) Backward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[T] {
 	// Gradient is 2 * (predictions - targets) / N. We'll ignore the scaling factor.
 	diff, _ := m.engine.Sub(context.Background(), predictions, targets, nil)
+
 	return diff
 }

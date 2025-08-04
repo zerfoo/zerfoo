@@ -41,6 +41,7 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T])
 	if err != nil {
 		return nil, err
 	}
+
 	return output, nil
 }
 
@@ -54,5 +55,6 @@ func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	return []*tensor.Tensor[T]{inputGrad}, nil
 }

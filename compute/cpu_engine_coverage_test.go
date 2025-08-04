@@ -2,10 +2,11 @@ package compute
 
 import (
 	"context"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
 	"reflect"
 	"testing"
+
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
 )
 
 func TestCPUEngine_Coverage(t *testing.T) {

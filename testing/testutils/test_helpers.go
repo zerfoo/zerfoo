@@ -24,6 +24,7 @@ func ElementsMatch(a, b []string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -37,6 +38,7 @@ func IntSliceEqual(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -227,6 +229,7 @@ func (e *MockEngine[T]) WithDevice(_ device.Device) compute.Engine[T] {
 
 func (e *MockEngine[T]) WithError(err error) *MockEngine[T] {
 	e.Err = err
+
 	return e
 }
 

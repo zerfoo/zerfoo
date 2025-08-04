@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestCoverageSpecific tests specific uncovered code paths to achieve 100% coverage
+// TestCoverageSpecific tests specific uncovered code paths to achieve 100% coverage.
 func TestCoverageSpecific(t *testing.T) {
 	// Test case 1: Create a 0-dimensional view tensor manually
 	// Since Slice() cannot create 0-dimensional views, we need to create one manually

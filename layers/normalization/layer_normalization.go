@@ -75,6 +75,7 @@ func (ln *LayerNormalization[T]) OutputShape(inputShapes ...[]int) ([]int, error
 	if len(inputShapes[0]) == 0 || inputShapes[0][len(inputShapes[0])-1] != ln.gamma.Value.Shape()[0] {
 		return nil, fmt.Errorf("last dimension of input shape %v must match feature dimension %d", inputShapes[0], ln.gamma.Value.Shape()[0])
 	}
+
 	return inputShapes[0], nil
 }
 

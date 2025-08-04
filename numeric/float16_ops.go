@@ -12,21 +12,28 @@ type Float16Ops struct{}
 // Add performs element-wise addition.
 func (ops Float16Ops) Add(a, b float16.Float16) float16.Float16 {
 	res, _ := float16.AddWithMode(a, b, float16.ModeFastArithmetic, float16.RoundNearestEven)
+
 	return res
 }
+
 // Sub performs element-wise subtraction.
 func (ops Float16Ops) Sub(a, b float16.Float16) float16.Float16 {
 	res, _ := float16.SubWithMode(a, b, float16.ModeFastArithmetic, float16.RoundNearestEven)
+
 	return res
 }
+
 // Mul performs element-wise multiplication.
 func (ops Float16Ops) Mul(a, b float16.Float16) float16.Float16 {
 	res, _ := float16.MulWithMode(a, b, float16.ModeFastArithmetic, float16.RoundNearestEven)
+
 	return res
 }
+
 // Div performs element-wise division.
 func (ops Float16Ops) Div(a, b float16.Float16) float16.Float16 {
 	res, _ := float16.DivWithMode(a, b, float16.ModeFastArithmetic, float16.RoundNearestEven)
+
 	return res
 }
 
@@ -39,6 +46,7 @@ func (ops Float16Ops) Tanh(x float16.Float16) float16.Float16 {
 func (ops Float16Ops) Sigmoid(x float16.Float16) float16.Float16 {
 	// The float16 library does not have a Sigmoid function. We will simulate it.
 	f32 := x.ToFloat32()
+
 	return float16.ToFloat16(1.0 / (1.0 + float32(math.Exp(float64(-f32)))))
 }
 
@@ -48,6 +56,7 @@ func (ops Float16Ops) TanhGrad(x float16.Float16) float16.Float16 {
 	tanhX := ops.Tanh(x)
 	tanhX2 := ops.Mul(tanhX, tanhX)
 	one := float16.FromInt(1)
+
 	return ops.Sub(one, tanhX2)
 }
 
@@ -57,6 +66,7 @@ func (ops Float16Ops) SigmoidGrad(x float16.Float16) float16.Float16 {
 	sigX := ops.Sigmoid(x)
 	one := float16.FromInt(1)
 	oneMinusSigX := ops.Sub(one, sigX)
+
 	return ops.Mul(sigX, oneMinusSigX)
 }
 
@@ -65,6 +75,7 @@ func (ops Float16Ops) ReLU(x float16.Float16) float16.Float16 {
 	if x.ToFloat32() > 0 {
 		return x
 	}
+
 	return float16.FromInt(0)
 }
 
@@ -73,6 +84,7 @@ func (ops Float16Ops) LeakyReLU(x float16.Float16, alpha float64) float16.Float1
 	if x.ToFloat32() > 0 {
 		return x
 	}
+
 	return ops.Mul(x, float16.ToFloat16(float32(alpha)))
 }
 
@@ -82,6 +94,7 @@ func (ops Float16Ops) ReLUGrad(x float16.Float16) float16.Float16 {
 	if x.ToFloat32() > 0 {
 		return one
 	}
+
 	return float16.FromInt(0)
 }
 
@@ -91,6 +104,7 @@ func (ops Float16Ops) LeakyReLUGrad(x float16.Float16, alpha float64) float16.Fl
 	if x.ToFloat32() > 0 {
 		return one
 	}
+
 	return float16.ToFloat16(float32(alpha))
 }
 
@@ -140,6 +154,7 @@ func (ops Float16Ops) Sum(s []float16.Float16) float16.Float16 {
 	for _, v := range s {
 		sum, _ = float16.AddWithMode(sum, v, float16.ModeFastArithmetic, float16.RoundNearestEven)
 	}
+
 	return sum
 }
 

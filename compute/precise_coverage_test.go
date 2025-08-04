@@ -2,16 +2,17 @@ package compute
 
 import (
 	"context"
-	"fmt"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"errors"
 	"reflect"
 	"testing"
 	"unsafe"
+
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // TestPrecise100Coverage achieves 100% coverage by directly manipulating tensor internals
-// to trigger the exact uncovered error paths in the original CPUEngine methods
+// to trigger the exact uncovered error paths in the original CPUEngine methods.
 func TestPrecise100Coverage(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -77,7 +78,7 @@ func TestPrecise100Coverage(t *testing.T) {
 }
 
 // corruptTensorForSetFailure uses reflection to corrupt tensor internal state
-// This is a last resort to trigger Set failures
+// This is a last resort to trigger Set failures.
 func corruptTensorForSetFailure(t *tensor.Tensor[float32]) {
 	// Use reflection to access and modify internal tensor fields
 	v := reflect.ValueOf(t).Elem()
@@ -92,7 +93,7 @@ func corruptTensorForSetFailure(t *tensor.Tensor[float32]) {
 	}
 }
 
-// PreciseFailingEngine wraps CPUEngine to fail on specific operations
+// PreciseFailingEngine wraps CPUEngine to fail on specific operations.
 type PreciseFailingEngine[T tensor.Numeric] struct {
 	*CPUEngine[T]
 	shouldFailZero bool
@@ -100,12 +101,13 @@ type PreciseFailingEngine[T tensor.Numeric] struct {
 
 func (p *PreciseFailingEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
 	if p.shouldFailZero {
-		return fmt.Errorf("precise failing engine: Zero operation failed")
+		return errors.New("precise failing engine: Zero operation failed")
 	}
+
 	return p.CPUEngine.Zero(ctx, a)
 }
 
-// TestAlternativeCoverageApproach tries a different approach if reflection doesn't work
+// TestAlternativeCoverageApproach tries a different approach if reflection doesn't work.
 func TestAlternativeCoverageApproach(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -147,7 +149,7 @@ func TestAlternativeCoverageApproach(t *testing.T) {
 	})
 }
 
-// TestDirectErrorInjection tries to directly inject errors into the tensor system
+// TestDirectErrorInjection tries to directly inject errors into the tensor system.
 func TestDirectErrorInjection(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -170,7 +172,7 @@ func TestDirectErrorInjection(t *testing.T) {
 	})
 }
 
-// manipulateTensorForFailure attempts to create conditions for Set to fail
+// manipulateTensorForFailure attempts to create conditions for Set to fail.
 func manipulateTensorForFailure(t *tensor.Tensor[float32]) {
 	// Try to access internal fields using unsafe operations
 	// This is a last resort to trigger the uncovered error paths

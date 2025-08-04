@@ -94,6 +94,7 @@ func (s *AllReduceStrategy[T]) Barrier() error {
 	if err := s.localStrategy.Barrier(); err != nil {
 		return fmt.Errorf("post-cross-node local barrier failed: %w", err)
 	}
+
 	return nil
 }
 

@@ -21,14 +21,18 @@ func (m *mockNode) Forward(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], 
 	if m.forwardFunc != nil {
 		return m.forwardFunc(inputs...)
 	}
+
 	return inputs[0], nil
 }
+
 func (m *mockNode) Backward(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 	if m.backwardFunc != nil {
 		return m.backwardFunc(outputGradient)
 	}
+
 	return []*tensor.Tensor[int]{outputGradient}, nil
 }
+
 func (m *mockNode) Parameters() []*Parameter[int] {
 	return m.params
 }

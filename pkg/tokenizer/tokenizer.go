@@ -26,6 +26,7 @@ func NewTokenizer() *Tokenizer {
 	t.AddToken("<unk>") // Unknown token
 	t.AddToken("<s>")   // Start of sequence
 	t.AddToken("</s>")  // End of sequence
+
 	return t
 }
 
@@ -38,6 +39,7 @@ func (t *Tokenizer) AddToken(token string) int {
 	t.vocab[token] = id
 	t.reverseVocab[id] = token
 	t.nextID++
+
 	return id
 }
 
@@ -53,6 +55,7 @@ func (t *Tokenizer) Encode(text string) []int {
 			tokenIDs[i] = t.vocab["<unk>"] // Use unknown token for OOV words
 		}
 	}
+
 	return tokenIDs
 }
 
@@ -66,5 +69,6 @@ func (t *Tokenizer) Decode(tokenIDs []int) string {
 			words[i] = "<unk>" // Should not happen if encoding uses <unk>
 		}
 	}
+
 	return strings.Join(words, " ")
 }

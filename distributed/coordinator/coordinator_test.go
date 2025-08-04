@@ -61,6 +61,7 @@ func setup(t *testing.T) *testKit {
 		buf:    &buf,
 	}
 }
+
 func TestCoordinator_Start(t *testing.T) {
 	t.Run("successful start", func(_ *testing.T) {
 		var buf bytes.Buffer
@@ -103,6 +104,7 @@ func TestCoordinator_Start(t *testing.T) {
 		testutils.AssertContains(t, buf.String(), "gRPC server failed", "expected log to contain %q, got %q")
 	})
 }
+
 func TestCoordinator_RegisterWorker(t *testing.T) {
 	kit := setup(t)
 	ctx := context.Background()
@@ -263,7 +265,7 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	numWorkers := 50
 
 	// Register initial workers
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		workerID := fmt.Sprintf("worker-%d", i)
 		addr := fmt.Sprintf("addr-%d", i)
 		_, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: workerID, Address: addr})
@@ -273,7 +275,7 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	}
 
 	// Concurrent register, unregister, and heartbeat
-	for i := 0; i < numWorkers*2; i++ {
+	for i := range numWorkers * 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -420,7 +422,7 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	// The ranks map has a gap, but the peers list should be dense.
 	kit.coord.mu.Lock()
 	expectedPeers := []string{}
-	for r := 0; r < kit.coord.nextRank; r++ {
+	for r := range kit.coord.nextRank {
 		if workerID, ok := kit.coord.ranks[r]; ok {
 			expectedPeers = append(expectedPeers, kit.coord.workers[workerID].Address)
 		}

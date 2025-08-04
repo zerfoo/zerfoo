@@ -9,12 +9,13 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// setupGradientComputerTest creates a common test setup for gradient computer tests
+// setupGradientComputerTest creates a common test setup for gradient computer tests.
 func setupGradientComputerTest(t *testing.T) (*LinearGradientComputer[float32], context.Context) {
 	ops := numeric.Float32Ops{}
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
 	computer := NewLinearGradientComputer(engine)
 	ctx := context.Background()
+
 	return computer, ctx
 }
 

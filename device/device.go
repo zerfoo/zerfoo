@@ -49,6 +49,7 @@ func Get(id string) (Device, error) {
 	if !ok {
 		return nil, fmt.Errorf("device not found: %s", id)
 	}
+
 	return dev, nil
 }
 

@@ -108,6 +108,7 @@ func (tb *TransformerBlock[T]) OutputShape(inputShapes ...[]int) ([]int, error) 
 	if len(inputShape) != 3 || inputShape[2] != tb.modelDim {
 		return nil, fmt.Errorf("expected 3D input tensor (batch, seq_len, model_dim) with model_dim %d, got %v", tb.modelDim, inputShape)
 	}
+
 	return inputShape, nil
 }
 
@@ -126,6 +127,7 @@ func (tb *TransformerBlock[T]) Parameters() []graph.Parameter[T] {
 	for _, p := range tb.ffnDown.Parameters() {
 		params = append(params, *p)
 	}
+
 	return params
 }
 

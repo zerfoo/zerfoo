@@ -27,12 +27,13 @@ func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
 type mockOptimizer[T tensor.Numeric] struct{}
 
 func (o *mockOptimizer[T]) Step(_ []*graph.Parameter[T])                    {}
-func (o *mockOptimizer[T]) Clip(_ []*graph.Parameter[T], threshold float32) {}
+func (o *mockOptimizer[T]) Clip(_ []*graph.Parameter[T], _ float32) {}
 
 type mockLoss[T tensor.Numeric] struct{}
 
 func (l *mockLoss[T]) Forward(predictions, _ *tensor.Tensor[T]) (T, *tensor.Tensor[T]) {
 	var lossValue T
+
 	return lossValue, predictions
 }
 

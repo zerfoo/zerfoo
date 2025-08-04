@@ -23,6 +23,7 @@ func NewDense[T tensor.Numeric](name string, engine compute.Engine[T], ops numer
 	if err != nil {
 		return nil, err
 	}
+
 	return &Dense[T]{linear: linear, bias: bias}, nil
 }
 
@@ -41,6 +42,7 @@ func (d *Dense[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], erro
 	if err != nil {
 		return nil, err
 	}
+
 	return biasOutput, nil
 }
 
@@ -54,6 +56,7 @@ func (d *Dense[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[
 	if err != nil {
 		return nil, err
 	}
+
 	return linearGrads, nil
 }
 

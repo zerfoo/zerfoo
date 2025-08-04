@@ -14,7 +14,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// testSGDClip is a generic helper function to test SGD gradient clipping for different numeric types
+// testSGDClip is a generic helper function to test SGD gradient clipping for different numeric types.
 func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T) {
 	return func(t *testing.T) {
 		engine := compute.NewCPUEngine[T](ops)
@@ -45,6 +45,7 @@ func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...
 	if m.mulErr {
 		return nil, errors.New("mul error")
 	}
+
 	return m.Engine.Mul(ctx, a, b, dst...)
 }
 
@@ -52,6 +53,7 @@ func (m *mockEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...
 	if m.subErr {
 		return nil, errors.New("sub error")
 	}
+
 	return m.Engine.Sub(ctx, a, b, dst...)
 }
 

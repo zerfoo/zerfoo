@@ -1,7 +1,7 @@
 package graph
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/tensor"
@@ -27,7 +27,7 @@ func TestNewParameter(t *testing.T) {
 	})
 
 	t.Run("tensor creation fails", func(t *testing.T) {
-		mockErr := fmt.Errorf("mock error")
+		mockErr := errors.New("mock error")
 		mockNewTensorFn := func(_ []int, _ []int) (*tensor.Tensor[int], error) {
 			return nil, mockErr
 		}

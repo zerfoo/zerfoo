@@ -1,6 +1,9 @@
 package tensor
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Reshape returns a new Tensor with a different shape that shares the same underlying data.
 // The new shape must have the same total number of elements as the original tensor.
@@ -14,7 +17,7 @@ func (t *Tensor[T]) Reshape(newShape []int) (*Tensor[T], error) {
 			newSize *= dim
 		case dim == -1:
 			if inferredDim != -1 {
-				return nil, fmt.Errorf("only one dimension can be inferred")
+				return nil, errors.New("only one dimension can be inferred")
 			}
 			inferredDim = i
 		default:

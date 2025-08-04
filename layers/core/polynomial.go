@@ -2,6 +2,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -20,7 +21,7 @@ import (
 // - Configurable polynomial degree
 // - Optional bias term (constant 1)
 // - Interaction terms between features
-// - Efficient computation using tensor operations
+// - Efficient computation using tensor operations.
 type PolynomialExpansion[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
@@ -54,7 +55,7 @@ func NewPolynomialExpansion[T tensor.Numeric](
 	includeBias bool,
 ) (*PolynomialExpansion[T], error) {
 	if name == "" {
-		return nil, fmt.Errorf("layer name cannot be empty")
+		return nil, errors.New("layer name cannot be empty")
 	}
 	if inputSize <= 0 {
 		return nil, fmt.Errorf("input size must be positive, got %d", inputSize)
@@ -88,7 +89,7 @@ func NewPolynomialExpansion[T tensor.Numeric](
 // - [0, 1] represents x2
 // - [2, 0] represents x1^2
 // - [1, 1] represents x1*x2
-// - [0, 2] represents x2^2
+// - [0, 2] represents x2^2.
 func generatePolynomialTerms(inputSize, degree int, includeBias bool) [][]int {
 	var terms [][]int
 
@@ -114,6 +115,7 @@ func generatePolynomialTerms(inputSize, degree int, includeBias bool) [][]int {
 				copy(term, currentTerm)
 				terms = append(terms, term)
 			}
+
 			return
 		}
 
@@ -137,7 +139,7 @@ func (p *PolynomialExpansion[T]) OutputShape() []int {
 
 // Forward performs the polynomial expansion transformation.
 // Input shape: [batch_size, input_size]
-// Output shape: [batch_size, output_size]
+// Output shape: [batch_size, output_size].
 func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Tensor[T] {
 	if len(inputs) != 1 {
 		panic(fmt.Errorf("polynomial expansion expects exactly 1 input, got %d", len(inputs)))
@@ -162,7 +164,7 @@ func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Te
 	inputData := input.Data()
 
 	// Compute polynomial terms for each batch item
-	for b := 0; b < batchSize; b++ {
+	for b := range batchSize {
 		for termIdx, term := range p.termIndices {
 			// Compute the polynomial term value
 			termValue := p.ops.FromFloat32(1.0) // Start with 1
@@ -173,7 +175,7 @@ func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Te
 
 					// Compute feature^power
 					poweredValue := p.ops.FromFloat32(1.0)
-					for i := 0; i < power; i++ {
+					for range power {
 						poweredValue = p.ops.Mul(poweredValue, featureValue)
 					}
 
@@ -192,6 +194,7 @@ func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Te
 
 	// Update output shape for future reference
 	p.outputShape = outputShape
+
 	return output
 }
 
@@ -213,8 +216,8 @@ func (p *PolynomialExpansion[T]) Backward(outputGradient *tensor.Tensor[T]) []*t
 
 	// For polynomial expansion, we need to compute the derivative of each term
 	// with respect to each input feature
-	for b := 0; b < batchSize; b++ {
-		for featureIdx := 0; featureIdx < p.inputSize; featureIdx++ {
+	for b := range batchSize {
+		for featureIdx := range p.inputSize {
 			gradient := p.ops.FromFloat32(0.0)
 
 			// Sum gradients from all terms that involve this feature
@@ -302,5 +305,6 @@ func (p *PolynomialExpansion[T]) GetTermIndices() [][]int {
 		result[i] = make([]int, len(term))
 		copy(result[i], term)
 	}
+
 	return result
 }

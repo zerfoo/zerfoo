@@ -103,6 +103,7 @@ func (gqa *GroupedQueryAttention[T]) OutputShape(inputShapes ...[]int) ([]int, e
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
 	}
 	inputShape := inputShapes[0]
+
 	return inputShape, nil
 }
 
@@ -121,6 +122,7 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []graph.Parameter[T] {
 	for _, p := range gqa.wo.Parameters() {
 		params = append(params, *p)
 	}
+
 	return params
 }
 
@@ -301,6 +303,7 @@ func (gqa *GroupedQueryAttention[T]) backwardRoPE(ctx context.Context, dQHeadsRo
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return dQForRoPE, dKForRoPE, nil
 }
 
@@ -359,6 +362,7 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	return dQProj, dKProj, dVProj, nil
 }
 
@@ -404,7 +408,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 		return nil, err
 	}
 	// Re-create vForSDPA as it might have been replicated
-	var kvHeadDim = gqa.modelDim / gqa.numKeyValueHeads
+	kvHeadDim := gqa.modelDim / gqa.numKeyValueHeads
 	vHeadsOriginal := gqa.vProj    // Use original vProj to avoid issues with replication
 	var vForSDPA *tensor.Tensor[T] // Declare vForSDPA here
 	if gqa.numQueryHeads != gqa.numKeyValueHeads {

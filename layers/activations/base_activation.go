@@ -47,6 +47,7 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 	if err != nil {
 		return nil, err
 	}
+
 	return output, nil
 }
 
@@ -60,5 +61,6 @@ func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor
 	if err != nil {
 		return nil, err
 	}
+
 	return []*tensor.Tensor[T]{inputGrad}, nil
 }

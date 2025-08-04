@@ -31,6 +31,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
+
 			return conn, nil
 		}
 
@@ -66,6 +67,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 			s := grpc.NewServer()
 			go func() { _ = s.Serve(lis) }()
 			defer s.Stop()
+
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
 		nm := NewNetworkManager(dialer, MockClientFactory)

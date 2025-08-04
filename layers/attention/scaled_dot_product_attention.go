@@ -2,7 +2,7 @@ package attention
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -65,5 +65,5 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 func (sdpa *ScaledDotProductAttention[T]) Backward(_ context.Context, dOut *tensor.Tensor[T], q, k, v *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Placeholder for backward pass. This would involve complex chain rule applications.
 	// For now, return nil gradients for Q, K, V.
-	return []*tensor.Tensor[T]{nil, nil, nil}, fmt.Errorf("ScaledDotProductAttention backward pass not yet implemented")
+	return []*tensor.Tensor[T]{nil, nil, nil}, errors.New("ScaledDotProductAttention backward pass not yet implemented")
 }

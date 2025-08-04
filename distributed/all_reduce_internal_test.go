@@ -19,7 +19,6 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
 		err := strategy.Init(0, 4, "coord")
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -37,7 +36,6 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
 		err := strategy.Init(1, 4, "coord")
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -98,7 +96,6 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 		customMockLocal.OnBroadcastTensor(nil, 0).ReturnBroadcastTensor(nil).OnceBroadcastTensor()
 
 		err := strategy.AllReduceGradients(gradients)
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -119,7 +116,6 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 		customMockLocal.OnBroadcastTensor(nil, 0).ReturnBroadcastTensor(nil).OnceBroadcastTensor()
 
 		err := strategy.AllReduceGradients(gradients)
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -143,7 +139,6 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 		customMockCross.OnBarrier().ReturnBarrier(nil)
 
 		err := strategy.Barrier()
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -164,7 +159,6 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 		customMockLocal.OnBarrier().ReturnBarrier(nil)
 
 		err := strategy.Barrier()
-
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}

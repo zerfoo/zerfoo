@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -49,7 +50,7 @@ func NewLinearWithInitializer[T tensor.Numeric](name string, engine compute.Engi
 // NewLinearWithFactories creates a new Linear layer with custom tensor and parameter creation functions.
 func NewLinearWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], _ numeric.Arithmetic[T], inputSize, outputSize int, initializer components.WeightInitializer[T], newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Linear[T], error) {
 	if name == "" {
-		return nil, fmt.Errorf("layer name cannot be empty")
+		return nil, errors.New("layer name cannot be empty")
 	}
 
 	// Initialize weights using the provided initializer
@@ -63,7 +64,7 @@ func NewLinearWithFactories[T tensor.Numeric](name string, engine compute.Engine
 		return nil, fmt.Errorf("failed to create weights tensor: %w", err)
 	}
 
-	weightsParam, err := newParameter(fmt.Sprintf("%s_weights", name), weights, newTensor)
+	weightsParam, err := newParameter(name+"_weights", weights, newTensor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create weights parameter: %w", err)
 	}
@@ -95,6 +96,7 @@ func (l *Linear[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], err
 	}
 
 	l.outputShape = output.Shape()
+
 	return output, nil
 }
 
@@ -110,6 +112,7 @@ func (l *Linear[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor
 	}
 
 	l.weights.Gradient = weightsGrad
+
 	return []*tensor.Tensor[T]{inputGrad}, nil
 }
 
@@ -120,5 +123,5 @@ func (l *Linear[T]) Parameters() []*graph.Parameter[T] {
 
 // SetName sets the name of the Linear layer.
 func (l *Linear[T]) SetName(name string) {
-	l.weights.Name = fmt.Sprintf("%s_weights", name)
+	l.weights.Name = name + "_weights"
 }

@@ -62,6 +62,7 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 		timeout:     timeout,
 	}
 	go c.reaper()
+
 	return c
 }
 
@@ -72,6 +73,7 @@ func (c *Coordinator) Start(address string) error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 	c.start(lis)
+
 	return nil
 }
 
@@ -82,7 +84,7 @@ func (c *Coordinator) start(lis net.Listener) {
 	pb.RegisterCoordinatorServer(c.server, c)
 	c.logger.Printf("starting gRPC server on %s", lis.Addr().String())
 	go func() {
-		if err := c.server.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+		if err := c.server.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			c.logger.Printf("gRPC server failed: %v", err)
 		}
 	}()
@@ -93,6 +95,7 @@ func (c *Coordinator) Addr() net.Addr {
 	if c.lis == nil {
 		return nil
 	}
+
 	return c.lis.Addr()
 }
 
@@ -138,6 +141,7 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 
 	if _, ok := c.workers[req.WorkerId]; ok {
 		c.logger.Printf("worker %s already registered", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s already registered", req.WorkerId)
 	}
 
@@ -155,17 +159,19 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 	c.logger.Printf("registered worker %s at address %s with rank %d", req.WorkerId, req.Address, rank)
 
 	peers := make([]string, 0, len(c.workers))
-	for r := 0; r < c.nextRank; r++ {
+	for r := range c.nextRank {
 		workerID, ok := c.ranks[r]
 		if !ok {
 			// This should not happen, but if it does, we should log it.
 			c.logger.Printf("rank %d not found in ranks map", r)
+
 			continue
 		}
 		worker, ok := c.workers[workerID]
 		if !ok {
 			// This should not happen, but if it does, we should log it.
 			c.logger.Printf("worker %s not found in workers map", workerID)
+
 			continue
 		}
 		peers = append(peers, worker.Address)
@@ -175,6 +181,7 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 	if rank > int(^uint32(0)>>1) {
 		return nil, fmt.Errorf("rank %d exceeds int32 maximum value", rank)
 	}
+
 	return &pb.RegisterWorkerResponse{
 		Rank:  int32(rank), // #nosec G115 - Range checked above
 		Peers: peers,
@@ -193,6 +200,7 @@ func (c *Coordinator) UnregisterWorker(_ context.Context, req *pb.UnregisterWork
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
 		c.logger.Printf("worker %s not found for unregistration", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
@@ -215,6 +223,7 @@ func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*p
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
 		c.logger.Printf("worker %s not found for heartbeat", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
@@ -272,6 +281,7 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 	for _, status := range checkpoint.Workers {
 		if !status {
 			completed = false
+
 			break
 		}
 	}

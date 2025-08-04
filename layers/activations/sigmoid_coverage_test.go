@@ -2,7 +2,7 @@ package activations
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -20,7 +20,7 @@ func TestSigmoid_Error(_ *testing.T) {
 }
 
 func TestSigmoid_Forward_Error(t *testing.T) {
-	engine := &testutils.MockEngine[float32]{Err: fmt.Errorf("test error")}
+	engine := &testutils.MockEngine[float32]{Err: errors.New("test error")}
 	ops := numeric.Float32Ops{}
 	input, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
