@@ -377,7 +377,7 @@ func (e *CPUEngine[T]) Zeros(_ context.Context, a *tensor.Tensor[T], shape []int
 }
 
 // Copy copies the data from one tensor to another.
-func (e *CPUEngine[T]) Copy(ctx context.Context, dst, src *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Copy(_ context.Context, dst, src *tensor.Tensor[T]) error {
 	if dst == nil || src == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -389,7 +389,7 @@ func (e *CPUEngine[T]) Copy(ctx context.Context, dst, src *tensor.Tensor[T]) err
 }
 
 // Gather performs a gather operation.
-func (e *CPUEngine[T]) Gather(ctx context.Context, params *tensor.Tensor[T], indices *tensor.Tensor[int], output *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.Tensor[T], indices *tensor.Tensor[int], output *tensor.Tensor[T]) error {
 	if params == nil || indices == nil || output == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -426,7 +426,7 @@ func (e *CPUEngine[T]) Gather(ctx context.Context, params *tensor.Tensor[T], ind
 }
 
 // ScatterAdd performs a scatter-add operation.
-func (e *CPUEngine[T]) ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.Tensor[T], indices *tensor.Tensor[int], dOut *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Tensor[T], indices *tensor.Tensor[int], dOut *tensor.Tensor[T]) error {
 	if dEmbeddingTable == nil || indices == nil || dOut == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
