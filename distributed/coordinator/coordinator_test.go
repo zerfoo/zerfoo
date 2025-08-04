@@ -62,7 +62,7 @@ func setup(t *testing.T) *testKit {
 	}
 }
 func TestCoordinator_Start(t *testing.T) {
-	t.Run("successful start", func(subT *testing.T) {
+	t.Run("successful start", func(t *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		err := coord.Start("localhost:0")
@@ -75,7 +75,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("listen error", func(subT *testing.T) {
+	t.Run("listen error", func(t *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Let's create a server on a port to make the next call fail.
@@ -91,7 +91,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("serve error", func(subT *testing.T) {
+	t.Run("serve error", func(t *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		ml := &testutils.CustomMockListener{
@@ -499,7 +499,28 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(subT *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			kit := setup(t)
+			ctx := context.Background()
+
+			if tt.setupFunc != nil {
+				tt.setupFunc(kit)
+			}
+
+			_, err := kit.client.UnregisterWorker(ctx, &pb.UnregisterWorkerRequest{WorkerId: tt.workerID})
+
+			if tt.expectErr {
+				testutils.AssertError(t, err, "expected an error, got nil")
+			} else {
+				testutils.AssertNoError(t, err, "expected no error, got %v")
+				kit.coord.mu.Lock()
+				defer kit.coord.mu.Unlock()
+				if tt.expectWorkers != nil {
+					testutils.AssertEqual(t, len(tt.expectWorkers), len(kit.coord.workers), "expected %d workers, got %d")
+				}
+			}
+		})
+	}
 }
 
 func TestCoordinator_Heartbeat_Table(t *testing.T) {
