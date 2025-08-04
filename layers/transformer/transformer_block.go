@@ -17,28 +17,28 @@ import (
 
 // TransformerBlock implements a single Transformer encoder block.
 type TransformerBlock[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	ops    numeric.Arithmetic[T]
-	modelDim int // d_model
-	numQueryHeads int
+	engine           compute.Engine[T]
+	ops              numeric.Arithmetic[T]
+	modelDim         int // d_model
+	numQueryHeads    int
 	numKeyValueHeads int
-	ffnDim   int // Dimension of the feed-forward network
+	ffnDim           int // Dimension of the feed-forward network
 
 	// Sub-layers
-	layerNorm1 *normalization.LayerNormalization[T]
-	gqa        *attention.GroupedQueryAttention[T]
-	layerNorm2 *normalization.LayerNormalization[T]
-	ffnGate    *core.Dense[T] // For SwiGLU
-	ffnUp      *core.Dense[T] // For SwiGLU
+	layerNorm1    *normalization.LayerNormalization[T]
+	gqa           *attention.GroupedQueryAttention[T]
+	layerNorm2    *normalization.LayerNormalization[T]
+	ffnGate       *core.Dense[T] // For SwiGLU
+	ffnUp         *core.Dense[T] // For SwiGLU
 	ffnActivation *activations.SwiGLU[T]
-	ffnDown    *core.Dense[T]
+	ffnDown       *core.Dense[T]
 
 	// Cached tensors for backward pass
-	inputForLN1 *tensor.Tensor[T]
+	inputForLN1   *tensor.Tensor[T]
 	outputFromGQA *tensor.Tensor[T]
-	inputForLN2 *tensor.Tensor[T]
+	inputForLN2   *tensor.Tensor[T]
 	ffnGateOutput *tensor.Tensor[T]
-	ffnUpOutput *tensor.Tensor[T]
+	ffnUpOutput   *tensor.Tensor[T]
 	outputFromFFN *tensor.Tensor[T]
 }
 
@@ -134,7 +134,7 @@ func (tb *TransformerBlock[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("TransformerBlock: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
-	input := inputs[0] // (batch_size, seq_len, model_dim)
+	input := inputs[0]     // (batch_size, seq_len, model_dim)
 	tb.inputForLN1 = input // Cache for backward
 
 	// 1. Layer Normalization 1

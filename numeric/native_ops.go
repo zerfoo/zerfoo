@@ -111,8 +111,6 @@ func (ops Float32Ops) One() float32 {
 	return 1.0
 }
 
-
-
 // Float64Ops provides the implementation of the Arithmetic interface for the float64 type.
 type Float64Ops struct{}
 

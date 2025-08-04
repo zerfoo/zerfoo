@@ -148,8 +148,10 @@ func (n *inputNode[T]) OutputShape() []int {
 func (n *inputNode[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, nil
 }
-func (n *inputNode[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) { return nil, nil }
-func (n *inputNode[T]) Parameters() []*Parameter[T]                                   { return nil }
+func (n *inputNode[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	return nil, nil
+}
+func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
 
 func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[T]) ([]Node[T], error) {
 	var sorted []Node[T]

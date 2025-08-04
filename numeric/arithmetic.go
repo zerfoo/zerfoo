@@ -24,7 +24,6 @@ type Arithmetic[T any] interface {
 	FromFloat32(f float32) T
 	FromFloat64(f float64) T
 	One() T
-	
 
 	// IsZero checks if a value is zero.
 	IsZero(v T) bool

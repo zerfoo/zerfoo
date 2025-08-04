@@ -15,9 +15,9 @@ type CrossEntropyLoss[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 
 	// Cached tensors for backward pass
-	predictions *tensor.Tensor[T] // Model's output (logits)
-	targets     *tensor.Tensor[int] // True labels (int type)
-	softmaxOutput *tensor.Tensor[T] // Softmax of predictions
+	predictions   *tensor.Tensor[T]   // Model's output (logits)
+	targets       *tensor.Tensor[int] // True labels (int type)
+	softmaxOutput *tensor.Tensor[T]   // Softmax of predictions
 }
 
 // NewCrossEntropyLoss creates a new CrossEntropyLoss layer.
@@ -47,7 +47,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	if len(inputs) != 2 {
 		return nil, fmt.Errorf("CrossEntropyLoss: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
 	}
-	predictions := inputs[0] // Logits
+	predictions := inputs[0]   // Logits
 	targetsTensor := inputs[1] // Targets are passed as *tensor.Tensor[T]
 
 	// Convert targetsTensor to *tensor.Tensor[int] for Gather and OneHot
@@ -97,7 +97,8 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	// Average over batch and sequence length
 	totalLoss, err := cel.engine.ReduceSum(ctx, gatheredLoss, -1, false, nil) // Sum all elements
 	if err != nil {
-		return nil, err	}
+		return nil, err
+	}
 
 	// Negate the sum
 	negatedLoss, err := cel.engine.MulScalar(ctx, totalLoss, cel.engine.Ops().FromFloat64(-1.0), nil)

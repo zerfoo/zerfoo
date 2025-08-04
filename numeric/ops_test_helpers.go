@@ -90,24 +90,24 @@ func TestLeakyReLUOp[T any](t *testing.T, opName string, op func(T, float64) T, 
 
 // Float8TestData provides common test data for float8 operations
 func Float8TestData() struct {
-	Add []ArithmeticTestCase[float8.Float8]
-	Mul []ArithmeticTestCase[float8.Float8]
-	Div []ArithmeticTestCase[float8.Float8]
-	Tanh []UnaryTestCase[float8.Float8]
-	Sigmoid []UnaryTestCase[float8.Float8]
-	LeakyReLU []LeakyReLUTestCase[float8.Float8]
+	Add           []ArithmeticTestCase[float8.Float8]
+	Mul           []ArithmeticTestCase[float8.Float8]
+	Div           []ArithmeticTestCase[float8.Float8]
+	Tanh          []UnaryTestCase[float8.Float8]
+	Sigmoid       []UnaryTestCase[float8.Float8]
+	LeakyReLU     []LeakyReLUTestCase[float8.Float8]
 	LeakyReLUGrad []LeakyReLUTestCase[float8.Float8]
-	Sum []SumTestCase[float8.Float8]
+	Sum           []SumTestCase[float8.Float8]
 } {
 	return struct {
-		Add []ArithmeticTestCase[float8.Float8]
-		Mul []ArithmeticTestCase[float8.Float8]
-		Div []ArithmeticTestCase[float8.Float8]
-		Tanh []UnaryTestCase[float8.Float8]
-		Sigmoid []UnaryTestCase[float8.Float8]
-		LeakyReLU []LeakyReLUTestCase[float8.Float8]
+		Add           []ArithmeticTestCase[float8.Float8]
+		Mul           []ArithmeticTestCase[float8.Float8]
+		Div           []ArithmeticTestCase[float8.Float8]
+		Tanh          []UnaryTestCase[float8.Float8]
+		Sigmoid       []UnaryTestCase[float8.Float8]
+		LeakyReLU     []LeakyReLUTestCase[float8.Float8]
 		LeakyReLUGrad []LeakyReLUTestCase[float8.Float8]
-		Sum []SumTestCase[float8.Float8]
+		Sum           []SumTestCase[float8.Float8]
 	}{
 		Add: []ArithmeticTestCase[float8.Float8]{
 			{"positive numbers", float8.ToFloat8(1.0), float8.ToFloat8(2.0), float8.ToFloat8(3.0)},
@@ -166,24 +166,24 @@ func Float8TestData() struct {
 
 // Float16TestData provides common test data for float16 operations
 func Float16TestData() struct {
-	Add []ArithmeticTestCase[float16.Float16]
-	Mul []ArithmeticTestCase[float16.Float16]
-	Div []ArithmeticTestCase[float16.Float16]
-	Tanh []UnaryTestCase[float16.Float16]
-	Sigmoid []UnaryTestCase[float16.Float16]
-	LeakyReLU []LeakyReLUTestCase[float16.Float16]
+	Add           []ArithmeticTestCase[float16.Float16]
+	Mul           []ArithmeticTestCase[float16.Float16]
+	Div           []ArithmeticTestCase[float16.Float16]
+	Tanh          []UnaryTestCase[float16.Float16]
+	Sigmoid       []UnaryTestCase[float16.Float16]
+	LeakyReLU     []LeakyReLUTestCase[float16.Float16]
 	LeakyReLUGrad []LeakyReLUTestCase[float16.Float16]
-	Sum []SumTestCase[float16.Float16]
+	Sum           []SumTestCase[float16.Float16]
 } {
 	return struct {
-		Add []ArithmeticTestCase[float16.Float16]
-		Mul []ArithmeticTestCase[float16.Float16]
-		Div []ArithmeticTestCase[float16.Float16]
-		Tanh []UnaryTestCase[float16.Float16]
-		Sigmoid []UnaryTestCase[float16.Float16]
-		LeakyReLU []LeakyReLUTestCase[float16.Float16]
+		Add           []ArithmeticTestCase[float16.Float16]
+		Mul           []ArithmeticTestCase[float16.Float16]
+		Div           []ArithmeticTestCase[float16.Float16]
+		Tanh          []UnaryTestCase[float16.Float16]
+		Sigmoid       []UnaryTestCase[float16.Float16]
+		LeakyReLU     []LeakyReLUTestCase[float16.Float16]
 		LeakyReLUGrad []LeakyReLUTestCase[float16.Float16]
-		Sum []SumTestCase[float16.Float16]
+		Sum           []SumTestCase[float16.Float16]
 	}{
 		Add: []ArithmeticTestCase[float16.Float16]{
 			{"positive numbers", float16.FromFloat32(1.0), float16.FromFloat32(2.0), float16.FromFloat32(3.0)},

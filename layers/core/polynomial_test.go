@@ -73,7 +73,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	}
 
 	testutils.AssertTrue(t, len(terms) == len(expectedTerms), "expected correct number of terms")
-	
+
 	// Check that all expected terms are present (order might vary)
 	for _, expectedTerm := range expectedTerms {
 		found := false
@@ -120,7 +120,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 
 	outputData := output.Data()
-	
+
 	// Expected output for input [2, 3] with terms [bias, x1, x2, x1^2, x1*x2, x2^2]:
 	// [1, 2, 3, 4, 6, 9]
 	// Note: The actual order depends on how terms are generated, so we check for expected values
@@ -167,13 +167,13 @@ func TestPolynomialExpansion_ForwardPassNoBias(t *testing.T) {
 
 	// Expected output for degree 1 without bias: [x1, x2] = [2, 3]
 	testutils.AssertTrue(t, len(outputData) == 2, "expected 2 output features")
-	
+
 	// Check that we have the input values (order might vary)
 	foundValues := make(map[float32]bool)
 	for _, value := range outputData {
 		foundValues[value] = true
 	}
-	
+
 	testutils.AssertTrue(t, foundValues[2.0], "expected to find x1 value")
 	testutils.AssertTrue(t, foundValues[3.0], "expected to find x2 value")
 }
@@ -197,7 +197,7 @@ func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	// Forward pass
 	output := poly.Forward(input)
 	outputShape := output.Shape()
-	
+
 	testutils.AssertTrue(t, outputShape[0] == 2, "expected batch size 2")
 	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 
@@ -252,7 +252,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
 	output := poly.Forward(input)
-	
+
 	// Create output gradient
 	outputGradData := make([]float32, poly.GetOutputSize())
 	for i := range outputGradData {
@@ -344,21 +344,21 @@ func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	testutils.AssertTrue(t, output != nil, "expected non-nil output")
 
 	outputData := output.Data()
-	
+
 	// For degree 3 with 2 features, we should have terms like:
 	// x1, x2, x1^2, x1*x2, x2^2, x1^3, x1^2*x2, x1*x2^2, x2^3
 	// With input [2, 1]: [2, 1, 4, 2, 1, 8, 4, 2, 1]
-	
+
 	// Check that we have the expected number of terms
 	expectedTermCount := 9 // All combinations up to degree 3, no bias
 	testutils.AssertTrue(t, len(outputData) == expectedTermCount, "expected correct number of output terms")
-	
+
 	// Check some specific values
 	foundValues := make(map[float32]int)
 	for _, value := range outputData {
 		foundValues[value]++
 	}
-	
+
 	// We should find these values: 1, 2, 4, 8 (some may appear multiple times)
 	testutils.AssertTrue(t, foundValues[1.0] > 0, "expected to find value 1")
 	testutils.AssertTrue(t, foundValues[2.0] > 0, "expected to find value 2")

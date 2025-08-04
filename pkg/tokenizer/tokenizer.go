@@ -10,17 +10,17 @@ import (
 // A feature-complete tokenizer would implement subword algorithms (BPE, WordPiece, SentencePiece).
 type Tokenizer struct {
 	// In a real tokenizer, this would hold the vocabulary, merges, etc.
-	vocab map[string]int
+	vocab        map[string]int
 	reverseVocab map[int]string
-	nextID int
+	nextID       int
 }
 
 // NewTokenizer creates a new simple Tokenizer.
 func NewTokenizer() *Tokenizer {
 	t := &Tokenizer{
-		vocab: make(map[string]int),
+		vocab:        make(map[string]int),
 		reverseVocab: make(map[int]string),
-		nextID: 0,
+		nextID:       0,
 	}
 	// Add some basic special tokens
 	t.AddToken("<unk>") // Unknown token

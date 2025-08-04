@@ -14,6 +14,27 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// testSGDClip is a generic helper function to test SGD gradient clipping for different numeric types
+func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T) {
+	return func(t *testing.T) {
+		engine := compute.NewCPUEngine[T](ops)
+		sgd := NewSGD[T](engine, ops, 0.1)
+		value, _ := tensor.New[T]([]int{2, 2}, []T{ops.FromFloat32(1), ops.FromFloat32(2), ops.FromFloat32(3), ops.FromFloat32(4)})
+		gradient, _ := tensor.New[T]([]int{2, 2}, []T{ops.FromFloat32(-10), ops.FromFloat32(0.5), ops.FromFloat32(10), ops.FromFloat32(-0.5)})
+		param, _ := graph.NewParameter("param1", value, tensor.New[T])
+		param.Gradient = gradient
+		params := []*graph.Parameter[T]{param}
+		threshold := float32(1.0)
+		expected := []T{ops.FromFloat32(-1.0), ops.FromFloat32(0.5), ops.FromFloat32(1.0), ops.FromFloat32(-0.5)}
+
+		sgd.Clip(params, threshold)
+
+		if !reflect.DeepEqual(param.Gradient.Data(), expected) {
+			t.Errorf("expected %v, got %v", expected, param.Gradient.Data())
+		}
+	}
+}
+
 type mockEngine[T tensor.Numeric] struct {
 	compute.Engine[T]
 	mulErr bool
@@ -90,60 +111,8 @@ func TestSGD_Clip(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "float16",
-			test: func(t *testing.T) {
-				ops := numeric.Float16Ops{}
-				tc := testCase[float16.Float16]{
-					engine:    compute.NewCPUEngine[float16.Float16](ops),
-					ops:       ops,
-					lr:        0.1,
-					value:     []float16.Float16{ops.FromFloat32(1), ops.FromFloat32(2), ops.FromFloat32(3), ops.FromFloat32(4)},
-					gradient:  []float16.Float16{ops.FromFloat32(-10), ops.FromFloat32(0.5), ops.FromFloat32(10), ops.FromFloat32(-0.5)},
-					threshold: 1.0,
-					expected:  []float16.Float16{ops.FromFloat32(-1.0), ops.FromFloat32(0.5), ops.FromFloat32(1.0), ops.FromFloat32(-0.5)},
-				}
-				sgd := NewSGD[float16.Float16](tc.engine, tc.ops, tc.lr)
-				value, _ := tensor.New[float16.Float16]([]int{2, 2}, tc.value)
-				gradient, _ := tensor.New[float16.Float16]([]int{2, 2}, tc.gradient)
-				param, _ := graph.NewParameter("param1", value, tensor.New[float16.Float16])
-				param.Gradient = gradient
-				params := []*graph.Parameter[float16.Float16]{param}
-
-				sgd.Clip(params, tc.threshold)
-
-				if !reflect.DeepEqual(param.Gradient.Data(), tc.expected) {
-					t.Errorf("expected %v, got %v", tc.expected, param.Gradient.Data())
-				}
-			},
-		},
-		{
-			name: "float8",
-			test: func(t *testing.T) {
-				ops := numeric.Float8Ops{}
-				tc := testCase[float8.Float8]{
-					engine:    compute.NewCPUEngine[float8.Float8](ops),
-					ops:       ops,
-					lr:        0.1,
-					value:     []float8.Float8{ops.FromFloat32(1), ops.FromFloat32(2), ops.FromFloat32(3), ops.FromFloat32(4)},
-					gradient:  []float8.Float8{ops.FromFloat32(-10), ops.FromFloat32(0.5), ops.FromFloat32(10), ops.FromFloat32(-0.5)},
-					threshold: 1.0,
-					expected:  []float8.Float8{ops.FromFloat32(-1.0), ops.FromFloat32(0.5), ops.FromFloat32(1.0), ops.FromFloat32(-0.5)},
-				}
-				sgd := NewSGD[float8.Float8](tc.engine, tc.ops, tc.lr)
-				value, _ := tensor.New[float8.Float8]([]int{2, 2}, tc.value)
-				gradient, _ := tensor.New[float8.Float8]([]int{2, 2}, tc.gradient)
-				param, _ := graph.NewParameter("param1", value, tensor.New[float8.Float8])
-				param.Gradient = gradient
-				params := []*graph.Parameter[float8.Float8]{param}
-
-				sgd.Clip(params, tc.threshold)
-
-				if !reflect.DeepEqual(param.Gradient.Data(), tc.expected) {
-					t.Errorf("expected %v, got %v", tc.expected, param.Gradient.Data())
-				}
-			},
-		},
+		{"float16", testSGDClip[float16.Float16](numeric.Float16Ops{})},
+		{"float8", testSGDClip[float8.Float8](numeric.Float8Ops{})},
 	}
 
 	for _, tt := range tests {

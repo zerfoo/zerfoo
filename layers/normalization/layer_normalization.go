@@ -12,7 +12,7 @@ import (
 
 // LayerNormalization implements the Layer Normalization operation.
 type LayerNormalization[T tensor.Numeric] struct {
-	engine compute.Engine[T]
+	engine  compute.Engine[T]
 	epsilon T // Small constant to avoid division by zero
 
 	// Trainable parameters
@@ -20,9 +20,9 @@ type LayerNormalization[T tensor.Numeric] struct {
 	beta  *graph.Parameter[T] // Shift parameter
 
 	// Cached tensors for backward pass
-	inputShape []int
-	mean       *tensor.Tensor[T]
-	variance   *tensor.Tensor[T]
+	inputShape  []int
+	mean        *tensor.Tensor[T]
+	variance    *tensor.Tensor[T]
 	normedInput *tensor.Tensor[T] // (input - mean) / sqrt(variance + epsilon)
 }
 

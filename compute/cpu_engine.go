@@ -463,7 +463,7 @@ func (e *CPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.Tensor[T], m
 		randFloat := r.Float64()
 
 		// Scale and shift to the desired range [minVal, maxVal]
-		scaledValue := float64(e.ops.Sub(maxVal, minVal)) * randFloat + float64(minVal)
+		scaledValue := float64(e.ops.Sub(maxVal, minVal))*randFloat + float64(minVal)
 
 		// Convert back to type T
 		data[i] = e.ops.FromFloat64(scaledValue)
@@ -792,4 +792,3 @@ func (e *CPUEngine[T]) Repeat(ctx context.Context, a *tensor.Tensor[T], axis int
 
 	return result, nil
 }
-

@@ -89,11 +89,11 @@ func TestFloat16Ops_SigmoidGrad(t *testing.T) {
 		expected float16.Float16
 	}{
 		{"zero", float16.FromFloat32(0.0), float16.FromFloat32(0.25)},
-		{"positive", float16.FromFloat32(1.0), 
-			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32() * 
+		{"positive", float16.FromFloat32(1.0),
+			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32() *
 				(1.0 - ops.Sigmoid(float16.FromFloat32(1.0)).ToFloat32()))},
-		{"negative", float16.FromFloat32(-1.0), 
-			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32() * 
+		{"negative", float16.FromFloat32(-1.0),
+			float16.FromFloat32(ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32() *
 				(1.0 - ops.Sigmoid(float16.FromFloat32(-1.0)).ToFloat32()))},
 	}
 
