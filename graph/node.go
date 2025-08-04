@@ -6,6 +6,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// ErrInvalidInputCount is returned when the number of input tensors is invalid.
 var ErrInvalidInputCount = fmt.Errorf("invalid number of input tensors")
 
 // Node represents a node in the computation graph.
