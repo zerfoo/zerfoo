@@ -13,7 +13,7 @@ type ReadOnlyTensor[T tensor.Numeric] struct {
 	*tensor.Tensor[T]
 }
 
-func (r *ReadOnlyTensor[T]) Set(value T, indices ...int) error {
+func (r *ReadOnlyTensor[T]) Set(value T, indices ...int) error { //nolint:revive
 	return fmt.Errorf("tensor is read-only")
 }
 
@@ -75,7 +75,7 @@ func Test100PercentCoverage(t *testing.T) {
 }
 
 // matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path
-func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error { //nolint:context-as-argument
 	if a == nil || b == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -105,7 +105,7 @@ func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *
 }
 
 // transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path
-func transposeWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func transposeWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error { //nolint:context-as-argument
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -138,7 +138,7 @@ func (f *FailingZero[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
 }
 
 // sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path
-func sumWithFailingZeroOperation(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32]) error {
+func sumWithFailingZeroOperation(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32]) error { //nolint:context-as-argument
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
