@@ -48,7 +48,7 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 		b, _ := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
 
 		// Test the exact error path by creating a custom MatMul that uses our mock
-		result := testMatMulWithMockResult(engine, ctx, a, b, t)
+		result := testMatMulWithMockResult(ctx, engine, a, b, t)
 		if result == nil {
 			t.Error("expected to trigger error path in MatMul Set operation")
 		}
@@ -61,7 +61,7 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 
 		// Test the exact error path by creating a custom Transpose that uses our mock
-		result := testTransposeWithMockResult(engine, ctx, a, t)
+		result := testTransposeWithMockResult(ctx, engine, a, t)
 		if result == nil {
 			t.Error("expected to trigger error path in Transpose Set operation")
 		}
@@ -74,7 +74,7 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 
 		// Test the exact error path by creating a custom Sum that uses a failing Zero
-		result := testSumWithMockZero(engine, ctx, a, t)
+		result := testSumWithMockZero(ctx, engine, a, t)
 		if result == nil {
 			t.Error("expected to trigger error path in Sum Zero operation")
 		}
@@ -253,21 +253,21 @@ func TestCompleteCoverageVerification(t *testing.T) {
 		// Test 1: MatMul Set error path
 		a1, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
 		b1, _ := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
-		result1 := testMatMulWithMockResult(engine, ctx, a1, b1, t)
+		result1 := testMatMulWithMockResult(ctx, engine, a1, b1, t)
 		if result1 == nil {
 			t.Error("MatMul Set error path not covered")
 		}
 
 		// Test 2: Transpose Set error path
 		a2, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
-		result2 := testTransposeWithMockResult(engine, ctx, a2, t)
+		result2 := testTransposeWithMockResult(ctx, engine, a2, t)
 		if result2 == nil {
 			t.Error("Transpose Set error path not covered")
 		}
 
 		// Test 3: Sum Zero error path
 		a3, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
-		result3 := testSumWithMockZero(engine, ctx, a3, t)
+		result3 := testSumWithMockZero(ctx, engine, a3, t)
 		if result3 == nil {
 			t.Error("Sum Zero error path not covered")
 		}
