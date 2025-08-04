@@ -488,7 +488,7 @@ func (m *CustomMockDistributedServiceClient) Barrier(_ context.Context, _ *pb.Ba
 	return &pb.BarrierResponse{}, nil
 }
 
-func (m *CustomMockDistributedServiceClient) Broadcast(ctx context.Context, in *pb.BroadcastRequest, opts ...grpc.CallOption) (*pb.BroadcastResponse, error) {
+func (m *CustomMockDistributedServiceClient) Broadcast(_ context.Context, _ *pb.BroadcastRequest, _ ...grpc.CallOption) (*pb.BroadcastResponse, error) {
 	return &pb.BroadcastResponse{}, nil
 }
 

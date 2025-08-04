@@ -411,12 +411,14 @@ type CustomMockGrpcServer struct {
 	ServeErr             error
 }
 
-func (m *CustomMockGrpcServer) RegisterService(_ *grpc.ServiceDesc, impl interface{}) {
+// RegisterService registers a service with the mock gRPC server.
+func (m *CustomMockGrpcServer) RegisterService(_ *grpc.ServiceDesc, _ interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.registerServiceCalls++
 }
 
+// Serve starts serving the mock gRPC server.
 func (m *CustomMockGrpcServer) Serve(_ net.Listener) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -498,7 +500,7 @@ type CustomMockDistributedServiceClient struct {
 }
 
 // AllReduce performs an all-reduce operation.
-func (m *CustomMockDistributedServiceClient) AllReduce(_ context.Context, opts ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
+func (m *CustomMockDistributedServiceClient) AllReduce(_ context.Context, _ ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceCalls++
@@ -530,14 +532,15 @@ func (m *CustomMockDistributedServiceClient) ReturnAllReduce(client pb.Distribut
 }
 
 // Barrier performs a barrier synchronization.
-func (m *CustomMockDistributedServiceClient) Barrier(_ context.Context, in *pb.BarrierRequest, opts ...grpc.CallOption) (*pb.BarrierResponse, error) {
+func (m *CustomMockDistributedServiceClient) Barrier(_ context.Context, _ *pb.BarrierRequest, _ ...grpc.CallOption) (*pb.BarrierResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// This mock doesn't track calls for Barrier, just returns a default.
 	return &pb.BarrierResponse{}, nil
 }
 
-func (m *CustomMockDistributedServiceClient) Broadcast(ctx context.Context, in *pb.BroadcastRequest, opts ...grpc.CallOption) (*pb.BroadcastResponse, error) {
+// Broadcast performs a broadcast operation.
+func (m *CustomMockDistributedServiceClient) Broadcast(_ context.Context, _ *pb.BroadcastRequest, _ ...grpc.CallOption) (*pb.BroadcastResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// This mock doesn't track calls for Broadcast, just returns a default.

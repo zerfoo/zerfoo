@@ -120,7 +120,7 @@ func TestLinear_AllErrorPaths(t *testing.T) {
 
 	// Test NewLinearWithFactories with failing initializer
 	failingInit := &failingInitializer[float32]{}
-	_, err := NewLinearWithFactories("test", engine, ops, 10, 5, failingInit, tensor.New[float32], func(name string, value *tensor.Tensor[float32], newTensorFn func([]int, []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
+	_, err := NewLinearWithFactories("test", engine, ops, 10, 5, failingInit, tensor.New[float32], func(_ string, _ *tensor.Tensor[float32], _ func([]int, []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
 		return nil, errors.New("parameter creation failed")
 	})
 	testutils.AssertError(t, err, "expected error when parameter creation fails")
@@ -146,11 +146,11 @@ func TestLinear_AllErrorPaths(t *testing.T) {
 // failingInitializer always returns an error.
 type failingInitializer[T tensor.Numeric] struct{}
 
-func (f *failingInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
+func (f *failingInitializer[T]) Initialize(_, _ int) ([]T, error) {
 	return nil, errors.New("mock initializer failure")
 }
 
 // failingTensorCreator always returns an error.
-func failingTensorCreator[T tensor.Numeric](shape []int, data []T) (*tensor.Tensor[T], error) {
+func failingTensorCreator[T tensor.Numeric](_ []int, _ []T) (*tensor.Tensor[T], error) {
 	return nil, errors.New("mock tensor creation failure")
 }

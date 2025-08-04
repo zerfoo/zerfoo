@@ -62,7 +62,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
-func (sdpa *ScaledDotProductAttention[T]) Backward(_ context.Context, dOut *tensor.Tensor[T], q, k, v *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Backward(_ context.Context, _ *tensor.Tensor[T], _, _, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Placeholder for backward pass. This would involve complex chain rule applications.
 	// For now, return nil gradients for Q, K, V.
 	return []*tensor.Tensor[T]{nil, nil, nil}, errors.New("ScaledDotProductAttention backward pass not yet implemented")
