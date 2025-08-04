@@ -7,7 +7,7 @@ func SameShape[T Numeric](a, b *Tensor[T]) bool {
 	if a.Dims() != b.Dims() {
 		return false
 	}
-	for i := 0; i < a.Dims(); i++ {
+	for i := range a.Dims() {
 		if a.shape[i] != b.shape[i] {
 			return false
 		}

@@ -191,7 +191,7 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []
 	newStrides := result.Strides()
 
 	// Iterate over all elements and copy them to the new positions
-	for i := 0; i < a.Size(); i++ {
+	for i := range a.Size() {
 		oldCoords := make([]int, len(originalShape))
 		linearIndex := i
 		for j, stride := range oldStrides {

@@ -15,8 +15,9 @@ func TestSigmoid_Error(_ *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	ops := numeric.Float32Ops{}
 
-	// Test Sigmoid error
-	_ = NewSigmoid[float32](engine, ops)
+	// Test Sigmoid creation - should succeed without errors
+	sigmoid := NewSigmoid[float32](engine, ops)
+	_ = sigmoid // Sigmoid creation successful
 }
 
 func TestSigmoid_Forward_Error(t *testing.T) {
@@ -24,10 +25,10 @@ func TestSigmoid_Forward_Error(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	input, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-	// Test Sigmoid forward error
+	// Test Sigmoid forward with mock engine error
 	sigmoid := NewSigmoid[float32](engine, ops)
 	_, err := sigmoid.Forward(context.Background(), input)
-	testutils.AssertError(t, err, "expected Sigmoid.Forward to return an error")
+	testutils.AssertError(t, err, "expected Sigmoid.Forward to return an error with mock engine")
 }
 
 func TestSigmoid_OutputShape(t *testing.T) {
