@@ -41,10 +41,10 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 				maxF32 := any(maxVal).(float32)
 				minF32 := any(minVal).(float32)
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			case float16.Float16:
@@ -52,10 +52,10 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 				maxF32 := any(maxVal).(float16.Float16).ToFloat32()
 				minF32 := any(minVal).(float16.Float16).ToFloat32()
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			case float8.Float8:
@@ -63,10 +63,10 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 				maxF32 := any(maxVal).(float8.Float8).ToFloat32()
 				minF32 := any(minVal).(float8.Float8).ToFloat32()
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			}
