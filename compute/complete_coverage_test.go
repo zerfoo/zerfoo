@@ -82,7 +82,7 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 }
 
 // testMatMulWithMockResult replicates the exact MatMul logic but with a mock result tensor
-func testMatMulWithMockResult(e *CPUEngine[float32], ctx context.Context, a, b *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testMatMulWithMockResult(ctx context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil || b == nil {
 		t.Error("input tensors cannot be nil")
 		return nil
@@ -127,7 +127,7 @@ func testMatMulWithMockResult(e *CPUEngine[float32], ctx context.Context, a, b *
 }
 
 // testTransposeWithMockResult replicates the exact Transpose logic but with a mock result tensor
-func testTransposeWithMockResult(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testTransposeWithMockResult(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
 		return nil
@@ -178,7 +178,7 @@ func (m *MockFailingZeroEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]
 }
 
 // testSumWithMockZero replicates the exact Sum logic but with a mock Zero operation
-func testSumWithMockZero(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
 		return nil
