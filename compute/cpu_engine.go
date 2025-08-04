@@ -77,7 +77,11 @@ func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.Tensor[T], op 
 }
 
 // Add performs element-wise addition of two tensors.
-func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Add(
+	ctx context.Context,
+	a, b *tensor.Tensor[T],
+	dst ...*tensor.Tensor[T],
+) (*tensor.Tensor[T], error) {
 	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
@@ -206,7 +210,13 @@ func (e *CPUEngine[T]) Transpose(ctx context.Context, a *tensor.Tensor[T], axes 
 // Sum computes the sum of tensor elements along the specified axis.
 // If keepDims is true, the reduced dimensions are retained with size 1.
 // An optional destination tensor can be provided to store the result.
-func (e *CPUEngine[T]) Sum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Sum(
+	ctx context.Context,
+	a *tensor.Tensor[T],
+	axis int,
+	keepDims bool,
+	dst ...*tensor.Tensor[T],
+) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -324,7 +334,11 @@ func (e *CPUEngine[T]) Log(ctx context.Context, a *tensor.Tensor[T], dst ...*ten
 }
 
 // Pow raises each element of a tensor to the power of the corresponding element in another tensor.
-func (e *CPUEngine[T]) Pow(ctx context.Context, base, exponent *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Pow(
+	ctx context.Context,
+	base, exponent *tensor.Tensor[T],
+	dst ...*tensor.Tensor[T],
+) (*tensor.Tensor[T], error) {
 	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
@@ -561,7 +575,13 @@ func (e *CPUEngine[T]) Softmax(ctx context.Context, a *tensor.Tensor[T], axis in
 }
 
 // ReduceSum calculates the sum of elements along a specified axis.
-func (e *CPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) ReduceSum(
+	ctx context.Context,
+	a *tensor.Tensor[T],
+	axis int,
+	keepDims bool,
+	dst ...*tensor.Tensor[T],
+) (*tensor.Tensor[T], error) {
 	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
