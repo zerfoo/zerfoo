@@ -1,4 +1,4 @@
-// layers/attention/grouped_query_attention.go
+// Package attention provides attention mechanisms for neural networks.
 package attention
 
 import (
@@ -106,6 +106,7 @@ func (gqa *GroupedQueryAttention[T]) OutputShape(inputShapes ...[]int) ([]int, e
 	return inputShape, nil
 }
 
+// Parameters returns the parameters of the GroupedQueryAttention layer.
 func (gqa *GroupedQueryAttention[T]) Parameters() []graph.Parameter[T] {
 	var params []graph.Parameter[T]
 	for _, p := range gqa.wq.Parameters() {
@@ -361,6 +362,7 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 	return dQProj, dKProj, dVProj, nil
 }
 
+// Backward computes the gradients for GroupedQueryAttention.
 func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
