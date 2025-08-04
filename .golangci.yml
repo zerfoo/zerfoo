@@ -20,7 +20,6 @@ linters:
     - gocritic
     - gocyclo
     - gosec
-    - lll
     - misspell
     - nakedret
     - revive
@@ -84,9 +83,6 @@ linters-settings:
   goconst:
     min-len: 2
     min-occurrences: 3
-
-  lll:
-    line-length: 320
 
   nakedret:
     max-func-lines: 30
