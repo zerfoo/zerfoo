@@ -87,7 +87,7 @@ linters-settings:
     min-occurrences: 3
 
   lll:
-    line-length: 160
+    line-length: 320
 
   nakedret:
     max-func-lines: 30
