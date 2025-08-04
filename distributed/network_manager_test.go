@@ -57,7 +57,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	})
 
 	t.Run("connection error", func(t *testing.T) {
-		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
+		dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 			if target == "peer2" {
 				return nil, errors.New("dial error")
 			}
