@@ -457,6 +457,8 @@ func (e *CPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.Tensor[T], m
 		return fmt.Errorf("input tensor cannot be nil")
 	}
 
+	// #nosec G404 - Using math/rand for ML weight initialization is acceptable
+	// as cryptographic security is not required for neural network weight sampling
 	src := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(src)
 
