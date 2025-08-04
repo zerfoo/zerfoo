@@ -9,14 +9,15 @@ func (t *Tensor[T]) Reshape(newShape []int) (*Tensor[T], error) {
 	newSize := 1
 	inferredDim := -1
 	for i, dim := range newShape {
-		if dim > 0 {
+		switch {
+		case dim > 0:
 			newSize *= dim
-		} else if dim == -1 {
+		case dim == -1:
 			if inferredDim != -1 {
 				return nil, fmt.Errorf("only one dimension can be inferred")
 			}
 			inferredDim = i
-		} else {
+		default:
 			return nil, fmt.Errorf("invalid shape dimension: %d; must be positive or -1", dim)
 		}
 	}
