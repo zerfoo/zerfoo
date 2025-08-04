@@ -127,7 +127,7 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 }
 
 // testTransposeWithMockResult replicates the exact Transpose logic but with a mock result tensor
-func testTransposeWithMockResult(_ context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testTransposeWithMockResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
 		return nil
