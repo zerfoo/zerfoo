@@ -99,7 +99,7 @@ func TestDense_ErrorRecovery(t *testing.T) {
 }
 
 // Helper function to test dense layer properties
-func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, inputSize, outputSize int) {
+func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, _ int, outputSize int) {
 	if dense == nil {
 		t.Fatalf("dense layer is nil")
 	}
