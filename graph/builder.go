@@ -1,3 +1,4 @@
+// Package graph provides a computational graph abstraction.
 package graph
 
 import (
@@ -145,10 +146,10 @@ func (n *inputNode[T]) OutputShape() []int {
 	return n.shape
 }
 
-func (n *inputNode[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Forward(_ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, nil
 }
-func (n *inputNode[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Backward(_ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	return nil, nil
 }
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
