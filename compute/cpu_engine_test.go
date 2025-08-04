@@ -254,6 +254,9 @@ func TestCPUEngine_Errors(t *testing.T) {
 	}
 	d, _ := tensor.New[int]([]int{2, 2, 2}, nil)
 	_, err = engine.Transpose(ctx, d, []int{0, 2, 1})
+	if err == nil {
+		t.Error("expected error for non-2D tensor in Transpose")
+	}
 
 	// Sum
 	_, err = engine.Sum(ctx, nil, 0, false, nil)
