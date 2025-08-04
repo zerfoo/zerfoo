@@ -24,8 +24,8 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 		go func() { _ = s.Serve(lis) }()
 		defer s.Stop()
 
-		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
-			conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
+			conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(_ context.Context, _ string) (net.Conn, error) {
 				return lis.Dial()
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
@@ -57,7 +57,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	})
 
 	t.Run("connection error", func(t *testing.T) {
-		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
+		dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 			if target == "peer2" {
 				return nil, errors.New("dial error")
 			}
@@ -133,7 +133,7 @@ func TestNetworkManager_ConnectToPeers_DialError(t *testing.T) {
 	peers := []string{"peer1", "peer2"}
 	timeout := time.Second
 
-	dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
+	dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 		return nil, errors.New("dial error")
 	}
 
