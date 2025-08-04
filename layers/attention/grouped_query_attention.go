@@ -390,7 +390,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 		}
 		dVHeads = dVHeadsSummed
 		// Sum dKHeadsRoPE along the replicated dimension
-		dKHeadsRoPE, err = gqa.engine.ReduceSum(ctx, dKHeadsRoPE, 1, false)
+		dKForRoPE[0], err = gqa.engine.ReduceSum(ctx, dKForRoPE[0], 1, false)
 		if err != nil {
 			return nil, err
 		}
