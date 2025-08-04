@@ -1,0 +1,155 @@
+package core // import "github.com/zerfoo/zerfoo/layers/core"
+
+
+TYPES
+
+type Bias[T tensor.Numeric] struct {
+	// Has unexported fields.
+}
+    Bias adds a bias vector to its input.
+
+func NewBias[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int) (*Bias[T], error)
+    NewBias creates a new Bias layer with default tensor and parameter creation.
+
+func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int, newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Bias[T], error)
+    NewBiasWithFactories creates a new Bias layer with custom tensor and
+    parameter creation functions.
+
+func (b *Bias[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward computes the gradients.
+
+func (b *Bias[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+    Forward performs the forward pass: output = input + biases.
+
+func (b *Bias[T]) OutputShape() []int
+
+func (b *Bias[T]) Parameters() []*graph.Parameter[T]
+
+func (b *Bias[T]) SetName(name string)
+
+type Dense[T tensor.Numeric] struct {
+	// Has unexported fields.
+}
+    Dense is a fully connected layer that combines a linear transformation and a
+    bias.
+
+func NewDense[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Dense[T], error)
+    NewDense creates a new Dense layer.
+
+func (d *Dense[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward computes the gradients.
+
+func (d *Dense[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+    Forward performs the forward pass: output = input*weights + biases.
+
+func (d *Dense[T]) OutputShape() []int
+
+func (d *Dense[T]) Parameters() []*graph.Parameter[T]
+
+func (d *Dense[T]) SetName(name string)
+
+type Linear[T tensor.Numeric] struct {
+	// Has unexported fields.
+}
+    Linear performs a linear transformation: output = input * weights. Uses
+    component-based architecture for better modularity and testability.
+
+func NewLinear[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error)
+    NewLinear creates a new Linear layer with Xavier initialization (default).
+
+func NewLinearWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int, initializer components.WeightInitializer[T], newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Linear[T], error)
+    NewLinearWithFactories creates a new Linear layer with custom tensor and
+    parameter creation functions.
+
+func NewLinearWithHe[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error)
+    NewLinearWithHe creates a Linear layer with He initialization.
+
+func NewLinearWithInitializer[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int, initializer components.WeightInitializer[T]) (*Linear[T], error)
+    NewLinearWithInitializer creates a Linear layer with a custom weight
+    initializer.
+
+func NewLinearWithUniform[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int, scale float64) (*Linear[T], error)
+    NewLinearWithUniform creates a Linear layer with uniform initialization.
+
+func NewLinearWithXavier[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error)
+    NewLinearWithXavier creates a Linear layer with Xavier initialization.
+
+func (l *Linear[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward computes the gradients using the gradient computer component.
+
+func (l *Linear[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+    Forward performs the forward pass: output = input * weights.
+
+func (l *Linear[T]) OutputShape() []int
+
+func (l *Linear[T]) Parameters() []*graph.Parameter[T]
+
+func (l *Linear[T]) SetName(name string)
+
+type PolynomialExpansion[T tensor.Numeric] struct {
+	// Has unexported fields.
+}
+    PolynomialExpansion layer transforms input features into polynomial
+    combinations up to a specified degree. This is useful for capturing
+    non-linear relationships in data through feature engineering.
+
+    For input [x1, x2] with degree 2, it generates: [1, x1, x2, x1^2, x1*x2,
+    x2^2]
+
+    The layer supports: - Configurable polynomial degree - Optional bias term
+    (constant 1) - Interaction terms between features - Efficient computation
+    using tensor operations
+
+func NewPolynomialExpansion[T tensor.Numeric](
+	name string,
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	inputSize int,
+	degree int,
+	includeBias bool,
+) (*PolynomialExpansion[T], error)
+    NewPolynomialExpansion creates a new polynomial expansion layer.
+
+    Parameters: - name: layer name (currently not used but kept for consistency)
+    - engine: compute engine for tensor operations - ops: arithmetic operations
+    for the numeric type - inputSize: number of input features - degree:
+    maximum polynomial degree (must be >= 1) - includeBias: whether to include a
+    bias term (constant 1)
+
+    Returns the polynomial expansion layer or an error if parameters are
+    invalid.
+
+func (p *PolynomialExpansion[T]) Backward(outputGradient *tensor.Tensor[T]) []*tensor.Tensor[T]
+    Backward computes gradients for the polynomial expansion layer. This
+    computes the derivative of each polynomial term with respect to the input
+    features.
+
+func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Tensor[T]
+    Forward performs the polynomial expansion transformation. Input shape:
+    [batch_size, input_size] Output shape: [batch_size, output_size]
+
+func (p *PolynomialExpansion[T]) GetDegree() int
+    GetDegree returns the polynomial degree of the layer.
+
+func (p *PolynomialExpansion[T]) GetInputSize() int
+    GetInputSize returns the input size of the layer.
+
+func (p *PolynomialExpansion[T]) GetOutputSize() int
+    GetOutputSize returns the output size of the layer.
+
+func (p *PolynomialExpansion[T]) GetTermIndices() [][]int
+    GetTermIndices returns the polynomial term indices for inspection/debugging.
+
+func (p *PolynomialExpansion[T]) HasBias() bool
+    HasBias returns whether the layer includes a bias term.
+
+func (p *PolynomialExpansion[T]) OutputShape() []int
+    OutputShape returns the shape of the output tensor.
+
+func (p *PolynomialExpansion[T]) Parameters() []*tensor.Tensor[T]
+    Parameters returns the parameters of the layer. Polynomial expansion has no
+    trainable parameters.
+
+func (p *PolynomialExpansion[T]) SetName(name string)
+    SetName sets the name of the layer (for consistency with other layers).
+

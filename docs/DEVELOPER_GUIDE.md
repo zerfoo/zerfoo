@@ -1,0 +1,607 @@
+# Zerfoo Developer Guide
+
+Welcome to the Zerfoo developer guide! This comprehensive document will help you understand, use, and contribute to the Zerfoo machine learning framework.
+
+## Table of Contents
+
+1. [Getting Started](#getting-started)
+2. [Architecture Overview](#architecture-overview)
+3. [Core Concepts](#core-concepts)
+4. [Package Documentation](#package-documentation)
+5. [Building Your First Model](#building-your-first-model)
+6. [Advanced Usage](#advanced-usage)
+7. [Contributing](#contributing)
+8. [API Reference](#api-reference)
+
+## Getting Started
+
+### Prerequisites
+
+- **Go 1.24+**: Zerfoo requires Go 1.24 or later
+- **Git**: For cloning the repository and contributing
+
+### Installation
+
+```bash
+go get github.com/zerfoo/zerfoo
+```
+
+### Quick Start
+
+Here's a simple example to get you started:
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/zerfoo/zerfoo/compute"
+    "github.com/zerfoo/zerfoo/graph"
+    "github.com/zerfoo/zerfoo/layers/activations"
+    "github.com/zerfoo/zerfoo/layers/core"
+    "github.com/zerfoo/zerfoo/tensor"
+    "github.com/zerfoo/zerfoo/training"
+)
+
+func main() {
+    // 1. Create a compute engine
+    engine := compute.NewCPUEngine()
+
+    // 2. Define the model architecture using a graph builder
+    builder := graph.NewBuilder[float32](engine)
+    input := builder.Input([]int{1, 10})
+    dense1 := builder.AddNode(core.NewDense(10, 32), input)
+    act1 := builder.AddNode(activations.NewReLU(), dense1)
+    output := builder.AddNode(core.NewDense(32, 1), act1)
+
+    // 3. Build the computational graph
+    forward, backward, err := builder.Build(output)
+    if err != nil {
+        panic(err)
+    }
+
+    // 4. Create an optimizer
+    optimizer := training.NewAdamOptimizer[float32](0.01)
+
+    // 5. Generate dummy data
+    inputTensor, _ := tensor.NewTensor(engine, []int{1, 10})
+    targetTensor, _ := tensor.NewTensor(engine, []int{1, 1})
+
+    // 6. Run the training loop
+    for i := 0; i < 100; i++ {
+        // Forward pass
+        predTensor := forward(map[graph.NodeHandle]*tensor.Tensor[float32]{input: inputTensor})
+
+        // Compute loss
+        loss := predTensor.Data()[0] - targetTensor.Data()[0]
+        grad := tensor.NewScalar(engine, 2*loss)
+
+        // Backward pass to compute gradients
+        backward(grad, map[graph.NodeHandle]*tensor.Tensor[float32]{input: inputTensor})
+
+        // Update weights
+        optimizer.Step(builder.Parameters())
+    }
+
+    fmt.Println("Training complete!")
+}
+```
+
+## Architecture Overview
+
+Zerfoo is built on a clean, layered architecture that separates concerns and ensures the framework is both powerful and maintainable.
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Composition Layer                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │    Graph    │  │   Layers    │  │      Training       │  │
+│  │             │  │             │  │                     │  │
+│  │ - Builder   │  │ - Dense     │  │ - Optimizers        │  │
+│  │ - Nodes     │  │ - ReLU      │  │ - Loss Functions    │  │
+│  │ - Execution │  │ - Conv      │  │ - Learning Rate     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  Execution/Hardware Layer                   │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │   Tensor    │  │   Compute   │  │      Device         │  │
+│  │             │  │   Engine    │  │                     │  │
+│  │ - Storage   │  │ - CPU       │  │ - Memory Mgmt       │  │
+│  │ - Operations│  │ - GPU       │  │ - Allocation        │  │
+│  │ - Types     │  │ - BLAS      │  │ - Hardware Abs      │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Design Principles
+
+1. **Modularity**: Each package has a focused responsibility
+2. **Extensibility**: New components can be added without modifying core infrastructure
+3. **Type Safety**: Leverages Go's strong type system and generics
+4. **Performance**: Static graph execution for optimization
+5. **Simplicity**: Idiomatic Go code that's easy to understand
+
+## Core Concepts
+
+### Tensors
+
+Tensors are the fundamental data structure in Zerfoo, representing n-dimensional arrays:
+
+```go
+// Create a 2D tensor
+tensor, err := tensor.New[float32]([]int{3, 4}, nil)
+
+// Create with data
+data := []float32{1, 2, 3, 4, 5, 6}
+tensor, err := tensor.New[float32]([]int{2, 3}, data)
+```
+
+### Computational Graphs
+
+Zerfoo uses static computational graphs for model definition:
+
+```go
+// Create a graph builder
+builder := graph.NewBuilder[float32](engine)
+
+// Add input node
+input := builder.Input([]int{10})
+
+// Add layers
+hidden := builder.AddNode(core.NewDense(10, 20), input)
+output := builder.AddNode(activations.NewReLU(), hidden)
+
+// Build the graph
+forward, backward, err := builder.Build(output)
+```
+
+### Engines
+
+Engines provide hardware abstraction for tensor operations:
+
+```go
+// CPU Engine
+cpuEngine := compute.NewCPUEngine()
+
+// Debug Engine (for development)
+debugEngine := compute.NewDebugEngine(cpuEngine)
+```
+
+### Layers
+
+Layers are reusable components that implement the `Node` interface:
+
+```go
+// Dense layer
+dense := core.NewDense(inputSize, outputSize)
+
+// Activation layers
+relu := activations.NewReLU()
+sigmoid := activations.NewSigmoid()
+
+// Sequential composition
+seq := core.NewSequential(
+    core.NewDense(10, 20),
+    activations.NewReLU(),
+    core.NewDense(20, 1),
+)
+```
+
+## Package Documentation
+
+### tensor
+
+The `tensor` package provides the core tensor data structure and basic operations.
+
+**Key Types:**
+- `Tensor[T]`: N-dimensional array with generic numeric type
+- `Numeric`: Type constraint for supported numeric types
+
+**Key Functions:**
+- `New[T](shape []int, data []T)`: Create a new tensor
+- `NewScalar[T](value T)`: Create a scalar tensor
+- `Zeros[T](shape []int)`: Create a zero-filled tensor
+
+### graph
+
+The `graph` package implements computational graph construction and execution.
+
+**Key Types:**
+- `Node[T]`: Interface for graph nodes
+- `Builder[T]`: Graph construction helper
+- `Parameter[T]`: Container for trainable parameters
+
+**Key Functions:**
+- `NewBuilder[T](engine)`: Create a new graph builder
+- `AddNode(node, inputs...)`: Add a node to the graph
+- `Build(output)`: Build the computational graph
+
+### layers
+
+The `layers` package provides pre-built layer implementations.
+
+**Core Layers (`layers/core`):**
+- `Dense`: Fully connected layer
+- `Dropout`: Dropout regularization
+- `LayerNorm`: Layer normalization
+- `Sequential`: Sequential container
+
+**Activation Layers (`layers/activations`):**
+- `ReLU`: Rectified Linear Unit
+- `Sigmoid`: Sigmoid activation
+- `Tanh`: Hyperbolic tangent
+
+### compute
+
+The `compute` package defines the engine interface and implementations.
+
+**Key Types:**
+- `Engine[T]`: Interface for compute engines
+- `CPUEngine`: CPU implementation
+- `DebugEngine`: Debugging wrapper
+
+### training
+
+The `training` package provides training utilities and optimizers.
+
+**Optimizers (`training/optimizer`):**
+- `SGD`: Stochastic Gradient Descent
+- `Adam`: Adam optimizer
+
+**Loss Functions (`training/loss`):**
+- `CrossEntropy`: Cross-entropy loss
+- `MSE`: Mean squared error
+
+## Building Your First Model
+
+Let's build a simple neural network for binary classification:
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    
+    "github.com/zerfoo/zerfoo/compute"
+    "github.com/zerfoo/zerfoo/graph"
+    "github.com/zerfoo/zerfoo/layers/activations"
+    "github.com/zerfoo/zerfoo/layers/core"
+    "github.com/zerfoo/zerfoo/tensor"
+    "github.com/zerfoo/zerfoo/training"
+    "github.com/zerfoo/zerfoo/training/loss"
+    "github.com/zerfoo/zerfoo/training/optimizer"
+)
+
+func main() {
+    // Set up the compute engine
+    engine := compute.NewCPUEngine()
+    
+    // Create the model
+    model := buildModel(engine)
+    
+    // Generate synthetic data
+    trainX, trainY := generateData(1000, 4)
+    
+    // Train the model
+    trainModel(model, trainX, trainY, engine)
+    
+    // Evaluate the model
+    accuracy := evaluateModel(model, trainX, trainY)
+    fmt.Printf("Training accuracy: %.2f%%\n", accuracy*100)
+}
+
+func buildModel(engine compute.Engine[float32]) (*graph.Builder[float32], graph.NodeHandle) {
+    builder := graph.NewBuilder[float32](engine)
+    
+    // Define the architecture
+    input := builder.Input([]int{1, 4}) // 4 input features
+    
+    // Hidden layer 1
+    hidden1 := builder.AddNode(core.NewDense(4, 8), input)
+    act1 := builder.AddNode(activations.NewReLU(), hidden1)
+    
+    // Hidden layer 2
+    hidden2 := builder.AddNode(core.NewDense(8, 4), act1)
+    act2 := builder.AddNode(activations.NewReLU(), hidden2)
+    
+    // Output layer
+    output := builder.AddNode(core.NewDense(4, 1), act2)
+    finalOutput := builder.AddNode(activations.NewSigmoid(), output)
+    
+    return builder, finalOutput
+}
+
+func generateData(samples, features int) ([]*tensor.Tensor[float32], []*tensor.Tensor[float32]) {
+    var trainX, trainY []*tensor.Tensor[float32]
+    
+    for i := 0; i < samples; i++ {
+        // Generate random features
+        data := make([]float32, features)
+        for j := range data {
+            data[j] = rand.Float32()*2 - 1 // Random value between -1 and 1
+        }
+        
+        // Simple decision boundary: sum of features > 0
+        var sum float32
+        for _, val := range data {
+            sum += val
+        }
+        label := float32(0)
+        if sum > 0 {
+            label = 1
+        }
+        
+        x, _ := tensor.New[float32]([]int{1, features}, data)
+        y, _ := tensor.New[float32]([]int{1, 1}, []float32{label})
+        
+        trainX = append(trainX, x)
+        trainY = append(trainY, y)
+    }
+    
+    return trainX, trainY
+}
+
+func trainModel(builder *graph.Builder[float32], output graph.NodeHandle, 
+                trainX, trainY []*tensor.Tensor[float32], engine compute.Engine[float32]) {
+    
+    // Build the computational graph
+    forward, backward, err := builder.Build(output)
+    if err != nil {
+        panic(err)
+    }
+    
+    // Create optimizer
+    opt := optimizer.NewAdam[float32](0.001)
+    
+    // Create loss function
+    lossFunc := loss.NewBinaryCrossEntropy[float32]()
+    
+    // Training loop
+    epochs := 100
+    for epoch := 0; epoch < epochs; epoch++ {
+        totalLoss := float32(0)
+        
+        for i := range trainX {
+            // Forward pass
+            inputMap := map[graph.NodeHandle]*tensor.Tensor[float32]{
+                builder.InputHandles()[0]: trainX[i],
+            }
+            prediction := forward(inputMap)
+            
+            // Compute loss
+            loss := lossFunc.Forward(prediction, trainY[i])
+            totalLoss += loss.Data()[0]
+            
+            // Backward pass
+            lossGrad := lossFunc.Backward(prediction, trainY[i])
+            backward(lossGrad, inputMap)
+            
+            // Update parameters
+            opt.Step(builder.Parameters())
+        }
+        
+        if epoch%20 == 0 {
+            avgLoss := totalLoss / float32(len(trainX))
+            fmt.Printf("Epoch %d, Average Loss: %.4f\n", epoch, avgLoss)
+        }
+    }
+}
+
+func evaluateModel(builder *graph.Builder[float32], output graph.NodeHandle,
+                   testX, testY []*tensor.Tensor[float32]) float32 {
+    
+    forward, _, err := builder.Build(output)
+    if err != nil {
+        panic(err)
+    }
+    
+    correct := 0
+    for i := range testX {
+        inputMap := map[graph.NodeHandle]*tensor.Tensor[float32]{
+            builder.InputHandles()[0]: testX[i],
+        }
+        prediction := forward(inputMap)
+        
+        predicted := float32(0)
+        if prediction.Data()[0] > 0.5 {
+            predicted = 1
+        }
+        
+        if predicted == testY[i].Data()[0] {
+            correct++
+        }
+    }
+    
+    return float32(correct) / float32(len(testX))
+}
+```
+
+## Advanced Usage
+
+### Custom Layers
+
+You can create custom layers by implementing the `Node` interface:
+
+```go
+type CustomLayer[T tensor.Numeric] struct {
+    weights *graph.Parameter[T]
+    bias    *graph.Parameter[T]
+    engine  compute.Engine[T]
+}
+
+func NewCustomLayer[T tensor.Numeric](inputSize, outputSize int, engine compute.Engine[T]) *CustomLayer[T] {
+    // Initialize weights and bias
+    weightsData := make([]T, inputSize*outputSize)
+    // ... initialize with random values
+    
+    weights, _ := tensor.New[T]([]int{inputSize, outputSize}, weightsData)
+    bias, _ := tensor.New[T]([]int{outputSize}, nil)
+    
+    weightsParam, _ := graph.NewParameter[T]("weights", weights, tensor.New[T])
+    biasParam, _ := graph.NewParameter[T]("bias", bias, tensor.New[T])
+    
+    return &CustomLayer[T]{
+        weights: weightsParam,
+        bias:    biasParam,
+        engine:  engine,
+    }
+}
+
+func (l *CustomLayer[T]) OutputShape() []int {
+    return l.bias.Value.Shape()
+}
+
+func (l *CustomLayer[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+    if len(inputs) != 1 {
+        return nil, graph.ErrInvalidInputCount
+    }
+    
+    input := inputs[0]
+    
+    // Perform matrix multiplication: input @ weights + bias
+    // Implementation depends on your specific operation
+    // ...
+    
+    return output, nil
+}
+
+func (l *CustomLayer[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+    // Implement backward pass
+    // Compute gradients for inputs and parameters
+    // ...
+    
+    return inputGradients, nil
+}
+
+func (l *CustomLayer[T]) Parameters() []*graph.Parameter[T] {
+    return []*graph.Parameter[T]{l.weights, l.bias}
+}
+```
+
+### Distributed Training
+
+Zerfoo supports distributed training through the `distributed` package:
+
+```go
+import "github.com/zerfoo/zerfoo/distributed"
+
+// Create a distributed strategy
+strategy := distributed.NewAllReduceStrategy(nodeConfig)
+
+// Initialize the strategy
+err := strategy.Init()
+if err != nil {
+    panic(err)
+}
+
+// In your training loop, synchronize gradients
+err = strategy.AllReduceGradients(parameters)
+if err != nil {
+    panic(err)
+}
+```
+
+### Model Serialization
+
+Save and load models using the model package:
+
+```go
+import "github.com/zerfoo/zerfoo/model"
+
+// Save model
+err := model.SaveModel(myModel, "path/to/model.zerfoo")
+if err != nil {
+    panic(err)
+}
+
+// Load model
+loadedModel, err := model.LoadModel[float32]("path/to/model.zerfoo", engine)
+if err != nil {
+    panic(err)
+}
+```
+
+### ONNX Integration
+
+Export models to ONNX format:
+
+```go
+import "github.com/zerfoo/zerfoo/pkg/onnx"
+
+// Export to ONNX
+exporter := onnx.NewExporter()
+err := exporter.Export(myModel, "model.onnx")
+if err != nil {
+    panic(err)
+}
+```
+
+## Contributing
+
+We welcome contributions to Zerfoo! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- Code style and conventions
+- Testing requirements
+- Pull request process
+- Development environment setup
+
+### Development Setup
+
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/yourname/zerfoo.git`
+3. Install dependencies: `go mod tidy`
+4. Run tests: `go test ./...`
+5. Make your changes
+6. Add tests for new functionality
+7. Ensure all tests pass
+8. Submit a pull request
+
+### Code Style
+
+- Follow standard Go conventions
+- Use `gofmt` to format your code
+- Add comments for public APIs
+- Write comprehensive tests
+
+## API Reference
+
+For detailed API documentation, run:
+
+```bash
+godoc -http=:6060
+```
+
+Then navigate to `http://localhost:6060/pkg/github.com/zerfoo/zerfoo/` in your browser.
+
+Alternatively, use the `go doc` command:
+
+```bash
+# Package documentation
+go doc github.com/zerfoo/zerfoo/tensor
+
+# Function documentation
+go doc github.com/zerfoo/zerfoo/tensor.New
+
+# Type documentation
+go doc github.com/zerfoo/zerfoo/graph.Node
+```
+
+## Resources
+
+- [Official Documentation](https://github.com/zerfoo/zerfoo/tree/main/docs)
+- [Examples](https://github.com/zerfoo/zerfoo/tree/main/examples)
+- [Architecture Design](design.md)
+- [Project Goals](goal.md)
+
+## Support
+
+- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/zerfoo/zerfoo/issues)
+- **Discussions**: Join the community discussion on [GitHub Discussions](https://github.com/zerfoo/zerfoo/discussions)
+
+---
+
+Happy coding with Zerfoo! 🚀
