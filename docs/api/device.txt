@@ -1,0 +1,41 @@
+package device // import "github.com/zerfoo/zerfoo/device"
+
+
+TYPES
+
+type Allocator interface {
+	// Allocate allocates a block of memory of the given size in bytes.
+	// For the CPU, this will be a Go slice. For a GPU, it would be a device pointer.
+	Allocate(size int) (any, error)
+	// Free releases the allocated memory.
+	// For the CPU allocator, this is a no-op as Go's garbage collector manages memory.
+	Free(ptr any) error
+}
+    Allocator defines the interface for a memory allocator. It is responsible
+    for allocating and freeing memory on a specific device.
+
+func NewCPUAllocator() Allocator
+    NewCPUAllocator creates a new CPU memory allocator.
+
+type Device interface {
+	// ID returns the unique identifier for the device (e.g., "cpu", "cuda:0").
+	ID() string
+	// GetAllocator returns the memory allocator associated with this device.
+	GetAllocator() Allocator
+	// Type returns the type of the device
+	Type() Type
+}
+    Device represents a physical or logical compute device (e.g., CPU, GPU).
+    It provides access to the device's properties and its memory allocator.
+
+func Get(id string) (Device, error)
+    Get returns a registered device by its ID. It returns an error if no device
+    with that ID is found.
+
+type Type int
+    Type is an enum for the kind of device.
+
+const (
+	CPU Type = iota
+	CUDA
+)
