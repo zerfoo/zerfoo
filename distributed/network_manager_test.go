@@ -24,7 +24,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 		go func() { _ = s.Serve(lis) }()
 		defer s.Stop()
 
-		dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 				return lis.Dial()
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -57,7 +57,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	})
 
 	t.Run("connection error", func(t *testing.T) {
-		dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			if target == "peer2" {
 				return nil, errors.New("dial error")
 			}
@@ -133,7 +133,7 @@ func TestNetworkManager_ConnectToPeers_DialError(t *testing.T) {
 	peers := []string{"peer1", "peer2"}
 	timeout := time.Second
 
-	dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+	dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
 		return nil, errors.New("dial error")
 	}
 
@@ -178,6 +178,6 @@ func TestNewNetworkManager_DefaultClientFactory(t *testing.T) {
 	testutils.AssertNotNil(t, nm.clientFactory, "expected clientFactory to not be nil")
 }
 
-func TestNewServerManager_DefaultListener(t *testing.T) {
+func TestNewServerManager_DefaultListener(_ *testing.T) {
 	NewServerManager(nil, nil)
 }
