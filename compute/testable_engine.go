@@ -61,7 +61,7 @@ func (f *FailableTensor[T]) Set(value T, indices ...int) error {
 
 // TestableMatMul performs matrix multiplication with a FailableTensor result
 // This allows testing the error path in MatMul when result.Set() fails
-func (e *TestableEngine[T]) TestableMatMul(ctx context.Context, a, b *tensor.Tensor[T], result *FailableTensor[T]) error {
+func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.Tensor[T], result *FailableTensor[T]) error {
 	if a == nil || b == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -100,7 +100,7 @@ func (e *TestableEngine[T]) TestableMatMul(ctx context.Context, a, b *tensor.Ten
 
 // TestableTranspose performs transpose with a FailableTensor result
 // This allows testing the error path in Transpose when result.Set() fails
-func (e *TestableEngine[T]) TestableTranspose(ctx context.Context, a *tensor.Tensor[T], result *FailableTensor[T]) error {
+func (e *TestableEngine[T]) TestableTranspose(_ context.Context, a *tensor.Tensor[T], result *FailableTensor[T]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -157,7 +157,7 @@ func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error
 
 // TestableSum performs sum with a FailableZeroer
 // This allows testing the error path in Sum when Zero() fails
-func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, zeroer *FailableZeroer[T], result *tensor.Tensor[T]) error {
+func (e *TestableEngine[T]) TestableSum(_ context.Context, a *tensor.Tensor[T], axis int, keepDims bool, zeroer *FailableZeroer[T], result *tensor.Tensor[T]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
