@@ -75,7 +75,7 @@ func Test100PercentCoverage(t *testing.T) {
 }
 
 // matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path
-func matMulWithReadOnlyResult(ctx context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil || b == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -105,7 +105,7 @@ func matMulWithReadOnlyResult(ctx context.Context, e *CPUEngine[float32], a, b *
 }
 
 // transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path
-func transposeWithReadOnlyResult(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func transposeWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
