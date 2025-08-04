@@ -202,7 +202,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
 		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
 
-		err := matMulWithReadOnlyResult(engine, ctx, a, b, readOnly)
+		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnly)
 		if err == nil {
 			t.Error("expected error")
 		}
@@ -214,7 +214,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
 		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
 
-		err := transposeWithReadOnlyResult(engine, ctx, a, readOnly)
+		err := transposeWithReadOnlyResult(ctx, engine, a, readOnly)
 		if err == nil {
 			t.Error("expected error")
 		}
