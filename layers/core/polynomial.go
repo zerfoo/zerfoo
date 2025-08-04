@@ -1,3 +1,4 @@
+// Package core provides core neural network layer implementations.
 package core
 
 import (
@@ -268,7 +269,8 @@ func (p *PolynomialExpansion[T]) Parameters() []*tensor.Tensor[T] {
 }
 
 // SetName sets the name of the layer (for consistency with other layers).
-func (p *PolynomialExpansion[T]) SetName(name string) {
+// SetName sets the name of the layer (for consistency with other layers).
+func (p *PolynomialExpansion[T]) SetName(_ string) {
 	// Polynomial expansion layer doesn't store name, but we keep this for interface consistency
 }
 
