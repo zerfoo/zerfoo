@@ -460,7 +460,7 @@ func (e *CPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.Tensor[T], m
 	// #nosec G404 - Using math/rand for ML weight initialization is acceptable
 	// as cryptographic security is not required for neural network weight sampling
 	src := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(src)
+	r := rand.New(src) //nolint:gosec
 
 	data := t.Data()
 	for i := range data {
