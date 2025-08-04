@@ -1,4 +1,4 @@
-// layers/normalization/layer_normalization.go
+// Package normalization provides various normalization layers for neural networks.
 package normalization
 
 import (
