@@ -1,4 +1,4 @@
-// training/loss/cross_entropy_loss.go
+// Package loss provides various loss functions for neural networks.
 package loss
 
 import (
