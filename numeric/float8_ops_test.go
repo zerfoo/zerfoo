@@ -244,28 +244,8 @@ func TestFloat8Ops_ReLU(t *testing.T) {
 
 func TestFloat8Ops_LeakyReLU(t *testing.T) {
 	ops := Float8Ops{}
-	tests := []struct {
-		name     string
-		x        float8.Float8
-		alpha    float64
-		expected float32
-		epsilon  float32
-	}{
-		{"positive", float8.ToFloat8(2.0), 0.1, 2.0, 0.1},
-		{"negative", float8.ToFloat8(-2.0), 0.1, -0.2, 0.1},
-		{"zero", float8.ToFloat8(0.0), 0.1, 0.0, 0.1},
-		{"negative with different alpha", float8.ToFloat8(-1.0), 0.2, -0.2, 0.1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.LeakyReLU(tt.x, tt.alpha)
-			resultFloat := result.ToFloat32()
-			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
-				t.Errorf("LeakyReLU(%v, %v): expected %v, got %v", tt.x, tt.alpha, tt.expected, resultFloat)
-			}
-		})
-	}
+	testData := Float8TestData()
+	TestLeakyReLUOp(t, "LeakyReLU", ops.LeakyReLU, func(f float8.Float8) float32 { return f.ToFloat32() }, testData.LeakyReLU)
 }
 
 func TestFloat8Ops_ReLUGrad(t *testing.T) {
@@ -293,28 +273,8 @@ func TestFloat8Ops_ReLUGrad(t *testing.T) {
 
 func TestFloat8Ops_LeakyReLUGrad(t *testing.T) {
 	ops := Float8Ops{}
-	tests := []struct {
-		name     string
-		x        float8.Float8
-		alpha    float64
-		expected float32
-		epsilon  float32
-	}{
-		{"positive", float8.ToFloat8(2.0), 0.1, 1.0, 0.1},
-		{"negative", float8.ToFloat8(-2.0), 0.1, 0.1, 0.1},
-		{"zero", float8.ToFloat8(0.0), 0.1, 0.1, 0.1},
-		{"negative with different alpha", float8.ToFloat8(-1.0), 0.2, 0.2, 0.1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ops.LeakyReLUGrad(tt.x, tt.alpha)
-			resultFloat := result.ToFloat32()
-			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
-				t.Errorf("LeakyReLUGrad(%v, %v): expected %v, got %v", tt.x, tt.alpha, tt.expected, resultFloat)
-			}
-		})
-	}
+	testData := Float8TestData()
+	TestLeakyReLUOp(t, "LeakyReLUGrad", ops.LeakyReLUGrad, func(f float8.Float8) float32 { return f.ToFloat32() }, testData.LeakyReLUGrad)
 }
 
 func TestFloat8Ops_ToFloat32(t *testing.T) {
