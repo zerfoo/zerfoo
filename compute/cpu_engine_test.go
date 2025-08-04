@@ -253,7 +253,7 @@ func TestCPUEngine_Errors(t *testing.T) {
 		t.Error("expected error for nil input to Transpose")
 	}
 	d, _ := tensor.New[int]([]int{2, 2, 2}, nil)
-	err = engine.Transpose(ctx, d, []int{0, 2, 1})
+	_, err = engine.Transpose(ctx, d, []int{0, 2, 1})
 
 	// Sum
 	_, err = engine.Sum(ctx, nil, 0, false, nil)
