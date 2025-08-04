@@ -138,7 +138,7 @@ func (f *FailingZero[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
 }
 
 // sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path
-func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32]) error {
+func sumWithFailingZeroOperation(ctx context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
