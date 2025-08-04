@@ -1,3 +1,4 @@
+// Package core provides core neural network layer implementations.
 package core
 
 import (
@@ -48,6 +49,7 @@ func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T
 	}, nil
 }
 
+// OutputShape returns the output shape of the Bias layer.
 func (b *Bias[T]) OutputShape() []int {
 	return b.outputShape
 }
@@ -77,10 +79,12 @@ func (b *Bias[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T
 	return []*tensor.Tensor[T]{outputGradient}, nil
 }
 
+// Parameters returns the parameters of the Bias layer.
 func (b *Bias[T]) Parameters() []*graph.Parameter[T] {
 	return []*graph.Parameter[T]{b.biases}
 }
 
+// SetName sets the name of the Bias layer.
 func (b *Bias[T]) SetName(name string) {
 	b.biases.Name = fmt.Sprintf("%s_biases", name)
 }
