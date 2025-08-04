@@ -26,6 +26,7 @@ func NewDense[T tensor.Numeric](name string, engine compute.Engine[T], ops numer
 	return &Dense[T]{linear: linear, bias: bias}, nil
 }
 
+// OutputShape returns the output shape of the Dense layer.
 func (d *Dense[T]) OutputShape() []int {
 	return d.linear.OutputShape()
 }
@@ -56,10 +57,12 @@ func (d *Dense[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[
 	return linearGrads, nil
 }
 
+// Parameters returns the parameters of the Dense layer.
 func (d *Dense[T]) Parameters() []*graph.Parameter[T] {
 	return append(d.linear.Parameters(), d.bias.Parameters()...)
 }
 
+// SetName sets the name of the Dense layer.
 func (d *Dense[T]) SetName(name string) {
 	d.linear.SetName(name)
 	d.bias.SetName(name)
