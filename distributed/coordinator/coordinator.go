@@ -1,3 +1,4 @@
+// Package coordinator provides a distributed training coordinator.
 package coordinator
 
 import (
@@ -40,6 +41,7 @@ type WorkerInfo struct {
 
 // CheckpointInfo holds information about a checkpoint.
 
+// CheckpointInfo holds information about a checkpoint.
 type CheckpointInfo struct {
 	ID        string
 	Epoch     int32
@@ -126,7 +128,7 @@ func (c *Coordinator) reaper() {
 }
 
 // RegisterWorker registers a new worker with the coordinator.
-func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
+func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -180,7 +182,7 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorker
 }
 
 // UnregisterWorker removes a worker from the coordinator.
-func (c *Coordinator) UnregisterWorker(ctx context.Context, req *pb.UnregisterWorkerRequest) (*pb.UnregisterWorkerResponse, error) {
+func (c *Coordinator) UnregisterWorker(_ context.Context, req *pb.UnregisterWorkerRequest) (*pb.UnregisterWorkerResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -202,7 +204,7 @@ func (c *Coordinator) UnregisterWorker(ctx context.Context, req *pb.UnregisterWo
 }
 
 // Heartbeat is called by workers to signal that they are still alive.
-func (c *Coordinator) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -222,7 +224,7 @@ func (c *Coordinator) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (
 	return &pb.HeartbeatResponse{Status: "OK"}, nil
 }
 
-func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpointRequest) (*pb.StartCheckpointResponse, error) {
+func (c *Coordinator) StartCheckpoint(_ context.Context, req *pb.StartCheckpointRequest) (*pb.StartCheckpointResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -249,7 +251,7 @@ func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpoi
 }
 
 // EndCheckpoint is called by workers to report the completion of a checkpoint.
-func (c *Coordinator) EndCheckpoint(ctx context.Context, req *pb.EndCheckpointRequest) (*pb.EndCheckpointResponse, error) {
+func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequest) (*pb.EndCheckpointResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
