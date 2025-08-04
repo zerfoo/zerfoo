@@ -81,7 +81,7 @@ func TestServerManager_Start(t *testing.T) {
 	customMockListener := new(CustomMockListener)
 
 	t.Run("successful start", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, addr string) (net.Listener, error) {
 			return customMockListener, nil
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -95,7 +95,7 @@ func TestServerManager_Start(t *testing.T) {
 	})
 
 	t.Run("listen error", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, addr string) (net.Listener, error) {
 			return nil, errors.New("listen error")
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -104,7 +104,7 @@ func TestServerManager_Start(t *testing.T) {
 	})
 
 	t.Run("serve error", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, addr string) (net.Listener, error) {
 			return customMockListener, nil
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -172,7 +172,7 @@ func TestNewNetworkManager_DefaultDialer(t *testing.T) {
 }
 
 func TestNewNetworkManager_DefaultClientFactory(t *testing.T) {
-	nm := NewNetworkManager(func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+	nm := NewNetworkManager(func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 		return nil, nil
 	}, nil).(*networkManager)
 	testutils.AssertNotNil(t, nm.clientFactory, "expected clientFactory to not be nil")
