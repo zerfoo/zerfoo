@@ -96,7 +96,7 @@ func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*
 }
 
 // Div performs element-wise division of two tensors.
-func (e *CPUEngine[T]) Div(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil || b == nil {
 		return nil, fmt.Errorf("input tensors cannot be nil")
 	}
@@ -123,7 +123,7 @@ func (e *CPUEngine[T]) Div(ctx context.Context, a, b *tensor.Tensor[T], dst ...*
 }
 
 // MatMul performs matrix multiplication of two tensors.
-func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil || b == nil {
 		return nil, fmt.Errorf("input tensors cannot be nil")
 	}
@@ -154,7 +154,7 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.Tensor[T], dst .
 }
 
 // Transpose transposes a 2D tensor.
-func (e *CPUEngine[T]) Transpose(ctx context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
