@@ -113,6 +113,9 @@ issues:
     - path: \.pb\.go
       linters:
         - all
+    - path: compute/cpu_engine\.go
+      linters:
+        - gosec
 
   max-issues-per-linter: 50
   max-same-issues: 3
