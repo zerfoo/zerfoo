@@ -517,7 +517,7 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.Tensor[T], scalar 
 }
 
 // DivScalar performs element-wise division of a tensor by a scalar.
-func (e *CPUEngine[T]) DivScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) DivScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -535,7 +535,7 @@ func (e *CPUEngine[T]) DivScalar(ctx context.Context, a *tensor.Tensor[T], scala
 }
 
 // Softmax applies the softmax function to a tensor along a given axis.
-func (e *CPUEngine[T]) Softmax(ctx context.Context, a *tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -586,7 +586,7 @@ func (e *CPUEngine[T]) ReduceSum(
 }
 
 // AddScalar performs element-wise addition of a tensor by a scalar.
-func (e *CPUEngine[T]) AddScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
