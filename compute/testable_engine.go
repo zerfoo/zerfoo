@@ -157,7 +157,7 @@ func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error
 
 // TestableSum performs sum with a FailableZeroer
 // This allows testing the error path in Sum when Zero() fails
-func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, zeroer *FailableZeroer[T], result *tensor.Tensor[T]) error {
+func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.Tensor[T], axis int, _ bool, zeroer *FailableZeroer[T], result *tensor.Tensor[T]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
