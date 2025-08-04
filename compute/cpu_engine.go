@@ -304,7 +304,7 @@ func (e *CPUEngine[T]) Sum(
 }
 
 // Exp computes the element-wise exponential of a tensor.
-func (e *CPUEngine[T]) Exp(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
