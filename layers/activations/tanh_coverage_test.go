@@ -11,7 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestTanh_Error(t *testing.T) {
+func TestTanh_Error(_ *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	ops := numeric.Float32Ops{}
 
