@@ -224,6 +224,7 @@ func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*p
 	return &pb.HeartbeatResponse{Status: "OK"}, nil
 }
 
+// StartCheckpoint initiates a new checkpoint process.
 func (c *Coordinator) StartCheckpoint(_ context.Context, req *pb.StartCheckpointRequest) (*pb.StartCheckpointResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
