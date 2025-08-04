@@ -26,7 +26,7 @@ func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
 
 type mockOptimizer[T tensor.Numeric] struct{}
 
-func (o *mockOptimizer[T]) Step(_ []*graph.Parameter[T])                    {}
+func (o *mockOptimizer[T]) Step(_ []*graph.Parameter[T])            {}
 func (o *mockOptimizer[T]) Clip(_ []*graph.Parameter[T], _ float32) {}
 
 type mockLoss[T tensor.Numeric] struct{}
