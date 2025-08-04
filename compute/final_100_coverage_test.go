@@ -105,7 +105,7 @@ func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *te
 }
 
 // transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path
-func transposeWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func transposeWithReadOnlyResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
