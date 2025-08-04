@@ -16,11 +16,11 @@ var _ NetworkManager = (*networkManager)(nil)
 
 type networkManager struct {
 	dialFunc      Dialer
-	clientFactory DistributedServiceClientFactory
+	clientFactory ServiceClientFactory
 }
 
 // NewNetworkManager creates a new NetworkManager.
-func NewNetworkManager(dialer Dialer, clientFactory DistributedServiceClientFactory) NetworkManager {
+func NewNetworkManager(dialer Dialer, clientFactory ServiceClientFactory) NetworkManager {
 	if dialer == nil {
 		dialer = func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
