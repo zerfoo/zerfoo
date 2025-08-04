@@ -61,8 +61,9 @@ func setup(t *testing.T) *testKit {
 		buf:    &buf,
 	}
 }
+
 func TestCoordinator_Start(t *testing.T) {
-	t.Run("successful start", func(t *testing.T) {
+	t.Run("successful start", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		err := coord.Start("localhost:0")
@@ -75,7 +76,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("listen error", func(t *testing.T) {
+	t.Run("listen error", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Let's create a server on a port to make the next call fail.
@@ -91,7 +92,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("serve error", func(t *testing.T) {
+	t.Run("serve error", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		ml := &testutils.CustomMockListener{
@@ -103,6 +104,7 @@ func TestCoordinator_Start(t *testing.T) {
 		testutils.AssertContains(t, buf.String(), "gRPC server failed", "expected log to contain %q, got %q")
 	})
 }
+
 func TestCoordinator_RegisterWorker(t *testing.T) {
 	kit := setup(t)
 	ctx := context.Background()
@@ -263,7 +265,7 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	numWorkers := 50
 
 	// Register initial workers
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		workerID := fmt.Sprintf("worker-%d", i)
 		addr := fmt.Sprintf("addr-%d", i)
 		_, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: workerID, Address: addr})
@@ -273,7 +275,7 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	}
 
 	// Concurrent register, unregister, and heartbeat
-	for i := 0; i < numWorkers*2; i++ {
+	for i := range numWorkers * 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -420,7 +422,7 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	// The ranks map has a gap, but the peers list should be dense.
 	kit.coord.mu.Lock()
 	expectedPeers := []string{}
-	for r := 0; r < kit.coord.nextRank; r++ {
+	for r := range kit.coord.nextRank {
 		if workerID, ok := kit.coord.ranks[r]; ok {
 			expectedPeers = append(expectedPeers, kit.coord.workers[workerID].Address)
 		}
@@ -465,7 +467,7 @@ func TestCoordinator_Stop(t *testing.T) {
 		testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
 	})
 
-	t.Run("does nothing if server is not started", func(t *testing.T) {
+	t.Run("does nothing if server is not started", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Note: We are not calling coord.Start()
@@ -485,7 +487,7 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 			name:     "successful unregister",
 			workerID: "worker-1",
 			setupFunc: func(kit *testKit) {
-				kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
+				_, _ = kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
 			},
 			expectErr:     false,
 			expectWorkers: map[string]*WorkerInfo{},
@@ -499,8 +501,8 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kit := setup(t)
+		t.Run(tt.name, func(subT *testing.T) {
+			kit := setup(subT)
 			ctx := context.Background()
 
 			if tt.setupFunc != nil {
@@ -510,13 +512,13 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 			_, err := kit.client.UnregisterWorker(ctx, &pb.UnregisterWorkerRequest{WorkerId: tt.workerID})
 
 			if tt.expectErr {
-				testutils.AssertError(t, err, "expected an error, got nil")
+				testutils.AssertError(subT, err, "expected an error, got nil")
 			} else {
-				testutils.AssertNoError(t, err, "expected no error, got %v")
+				testutils.AssertNoError(subT, err, "expected no error, got %v")
 				kit.coord.mu.Lock()
 				defer kit.coord.mu.Unlock()
 				if tt.expectWorkers != nil {
-					testutils.AssertEqual(t, len(tt.expectWorkers), len(kit.coord.workers), "expected %d workers, got %d")
+					testutils.AssertEqual(subT, len(tt.expectWorkers), len(kit.coord.workers), "expected %d workers, got %d")
 				}
 			}
 		})
@@ -535,7 +537,7 @@ func TestCoordinator_Heartbeat_Table(t *testing.T) {
 			name:     "successful heartbeat",
 			workerID: "worker-1",
 			setupFunc: func(kit *testKit) {
-				kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
+				_, _ = kit.client.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{WorkerId: "worker-1", Address: "addr-1"})
 			},
 			expectErr:    false,
 			expectStatus: "OK",
@@ -549,8 +551,8 @@ func TestCoordinator_Heartbeat_Table(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kit := setup(t)
+		t.Run(tt.name, func(subT *testing.T) {
+			kit := setup(subT)
 			ctx := context.Background()
 
 			if tt.setupFunc != nil {
@@ -560,10 +562,10 @@ func TestCoordinator_Heartbeat_Table(t *testing.T) {
 			resp, err := kit.client.Heartbeat(ctx, &pb.HeartbeatRequest{WorkerId: tt.workerID})
 
 			if tt.expectErr {
-				testutils.AssertError(t, err, "expected an error, got nil")
+				testutils.AssertError(subT, err, "expected an error, got nil")
 			} else {
-				testutils.AssertNoError(t, err, "expected no error, got %v")
-				testutils.AssertEqual(t, tt.expectStatus, resp.Status, "expected status %q, got %q")
+				testutils.AssertNoError(subT, err, "expected no error, got %v")
+				testutils.AssertEqual(subT, tt.expectStatus, resp.Status, "expected status %q, got %q")
 			}
 		})
 	}

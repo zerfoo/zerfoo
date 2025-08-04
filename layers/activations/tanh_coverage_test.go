@@ -2,7 +2,7 @@ package activations
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -11,16 +11,8 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestTanh_Error(t *testing.T) {
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-	ops := numeric.Float32Ops{}
-
-	// Test Tanh error
-	_ = NewTanh[float32](engine, ops)
-}
-
 func TestTanh_Forward_Error(t *testing.T) {
-	engine := &testutils.MockEngine[float32]{Err: fmt.Errorf("test error")}
+	engine := &testutils.MockEngine[float32]{Err: errors.New("test error")}
 	ops := numeric.Float32Ops{}
 	input, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 

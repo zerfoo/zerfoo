@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -52,7 +53,13 @@ type Engine[T tensor.Numeric] interface {
 	// If keepDims is true, the reduced dimensions are retained with size 1.
 	// Returns a new tensor with the reduced shape.
 	// Returns an error if the tensor is nil or the axis is out of bounds.
-	Sum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	Sum(
+		ctx context.Context,
+		a *tensor.Tensor[T],
+		axis int,
+		keepDims bool,
+		dst ...*tensor.Tensor[T],
+	) (*tensor.Tensor[T], error)
 
 	// Exp computes the element-wise exponential of a tensor.
 	Exp(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
@@ -97,7 +104,13 @@ type Engine[T tensor.Numeric] interface {
 
 	// ReduceSum calculates the sum of elements along a specified axis, similar to Sum but potentially with different
 	// internal handling or optimizations for reduction operations.
-	ReduceSum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	ReduceSum(
+		ctx context.Context,
+		a *tensor.Tensor[T],
+		axis int,
+		keepDims bool,
+		dst ...*tensor.Tensor[T],
+	) (*tensor.Tensor[T], error)
 
 	// AddScalar performs element-wise addition of a tensor by a scalar.
 	AddScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
@@ -112,7 +125,13 @@ type Engine[T tensor.Numeric] interface {
 	Concat(ctx context.Context, tensors []*tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
 
 	// Repeat repeats the input tensor along a given axis a specified number of times.
-	Repeat(ctx context.Context, a *tensor.Tensor[T], axis int, repetitions int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	Repeat(
+		ctx context.Context,
+		a *tensor.Tensor[T],
+		axis int,
+		repetitions int,
+		dst ...*tensor.Tensor[T],
+	) (*tensor.Tensor[T], error)
 
 	// OneHot creates a one-hot encoding of the input tensor.
 	OneHot(ctx context.Context, input *tensor.Tensor[int], depth int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)

@@ -1,8 +1,9 @@
-// layers/activations/swiglu.go
+// Package activations provides neural network activation functions.
 package activations
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -39,7 +40,7 @@ func (s *SwiGLU[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
 	}
 	inputShape := inputShapes[0]
 	if len(inputShape) < 1 {
-		return nil, fmt.Errorf("SwiGLU input must have at least one dimension")
+		return nil, errors.New("SwiGLU input must have at least one dimension")
 	}
 	lastDim := inputShape[len(inputShape)-1]
 	if lastDim%2 != 0 {
@@ -48,6 +49,7 @@ func (s *SwiGLU[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
 	outputShape := make([]int, len(inputShape))
 	copy(outputShape, inputShape)
 	outputShape[len(outputShape)-1] = lastDim / 2
+
 	return outputShape, nil
 }
 
@@ -95,7 +97,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 // Backward computes the gradients for SwiGLU.
 func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
-		return nil, fmt.Errorf("invalid input count: %s", graph.ErrInvalidInputCount)
+		return nil, fmt.Errorf("invalid input count: %w", graph.ErrInvalidInputCount)
 	}
 	// dOut shape: (..., feature_dim)
 	// s.lastInput shape: (..., 2 * feature_dim)
@@ -123,7 +125,7 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 	}
 
 	// dL/dx2 = dL/dgate * dgate/dx2
-	// dgate/dx2 is the derivative of sigmoid(x2), which is sigmoid(x2) * (1 - sigmoid(x2))
+	// is the derivative of sigmoid(x2), which is sigmoid(x2) * (1 - sigmoid(x2))
 	// We already have gate = sigmoid(x2)
 	oneMinusGate, err := s.engine.UnaryOp(ctx, s.gate, func(val T) T { return s.ops.Sub(s.ops.One(), val) })
 	if err != nil {

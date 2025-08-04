@@ -33,6 +33,7 @@ func (x *XavierInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error
 	weights := make([]T, inputSize*outputSize)
 	for i := range weights {
 		// Generate random value in [-limit, limit]
+		// #nosec G404 - math/rand is acceptable for ML weight initialization
 		val := (rand.Float64()*2 - 1) * limit
 		weights[i] = x.ops.FromFloat32(float32(val))
 	}
@@ -59,6 +60,7 @@ func (h *HeInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
 	weights := make([]T, inputSize*outputSize)
 	for i := range weights {
 		// Generate random value from normal distribution
+		// #nosec G404 - math/rand is acceptable for ML weight initialization
 		val := rand.NormFloat64() * stddev
 		weights[i] = h.ops.FromFloat32(float32(val))
 	}
@@ -81,6 +83,7 @@ func NewUniformInitializer[T tensor.Numeric](ops numeric.Arithmetic[T], scale fl
 func (u *UniformInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
 	weights := make([]T, inputSize*outputSize)
 	for i := range weights {
+		// #nosec G404 - math/rand is acceptable for ML weight initialization
 		val := (rand.Float64()*2 - 1) * u.scale
 		weights[i] = u.ops.FromFloat32(float32(val))
 	}

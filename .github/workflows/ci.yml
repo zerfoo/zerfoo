@@ -2,29 +2,135 @@ name: CI
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "**" ]
+    branches: [ "main", "develop" ]
 
 jobs:
-  test:
+  code-quality:
+    name: Code Quality & Lint Regression Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          go-version: '1.21'
-      - name: Run tests
-        run: go test ./...
+          fetch-depth: 0  # Full history for better diff analysis
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
-      - name: golangci-lint
+          go-version: '1.24'
+
+      - name: Install formatting tools
+        run: |
+          go install mvdan.cc/gofumpt@latest
+          go install golang.org/x/tools/cmd/goimports@latest
+
+      - name: Check code formatting
+        run: |
+          echo "🎨 Checking code formatting..."
+          make format
+          if [ -n "$(git diff --name-only)" ]; then
+            echo "❌ Code is not properly formatted. Please run 'make format' locally."
+            git diff
+            exit 1
+          fi
+          echo "✅ Code formatting is correct"
+
+      - name: Run golangci-lint with auto-fix check
         uses: golangci/golangci-lint-action@v3
         with:
           version: v1.55.2
+          args: --timeout=5m --issues-exit-code=1
+
+      - name: Lint regression check
+        run: |
+          echo "🔍 Running lint regression check..."
+          # Get current lint issues count
+          CURRENT_ISSUES=$(golangci-lint run --timeout=5m --out-format=json | jq '.Issues | length' || echo "0")
+          echo "Current lint issues: $CURRENT_ISSUES"
+          
+          # Define maximum allowed issues (current baseline)
+          MAX_ALLOWED_ISSUES=49  # Based on current status: 49 total issues
+          
+          if [ "$CURRENT_ISSUES" -gt "$MAX_ALLOWED_ISSUES" ]; then
+            echo "❌ Lint regression detected!"
+            echo "   Current issues: $CURRENT_ISSUES"
+            echo "   Maximum allowed: $MAX_ALLOWED_ISSUES"
+            echo "   Please fix the new lint issues or run 'make lint-fix' to auto-fix what's possible."
+            exit 1
+          fi
+          
+          echo "✅ No lint regression detected ($CURRENT_ISSUES/$MAX_ALLOWED_ISSUES issues)"
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Run tests with coverage
+        run: |
+          echo "🧪 Running tests with coverage analysis..."
+          go test -coverprofile=coverage.out ./...
+          echo "✅ All tests passed"
+
+      - name: Test coverage regression check
+        run: |
+          echo "📊 Checking test coverage regression..."
+          # Get current coverage percentage
+          CURRENT_COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | sed 's/%//')
+          echo "Current test coverage: ${CURRENT_COVERAGE}%"
+          
+          # Define minimum allowed coverage (current baseline)
+          MIN_COVERAGE=40.9  # Based on current status: 40.9% total coverage
+          
+          # Use awk for floating point comparison
+          if awk "BEGIN {exit !($CURRENT_COVERAGE < $MIN_COVERAGE)}"; then
+            echo "❌ Test coverage regression detected!"
+            echo "   Current coverage: ${CURRENT_COVERAGE}%"
+            echo "   Minimum required: ${MIN_COVERAGE}%"
+            echo "   Please add tests to maintain or improve coverage."
+            exit 1
+          fi
+          
+          echo "✅ No coverage regression detected (${CURRENT_COVERAGE}% >= ${MIN_COVERAGE}%)"
+
+      - name: Generate coverage report
+        run: |
+          echo "📋 Generating detailed coverage report..."
+          go tool cover -func=coverage.out > coverage-report.txt
+          echo "Coverage by package:"
+          cat coverage-report.txt
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage.out
+            coverage-report.txt
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Build project
+        run: |
+          echo "🔨 Building project..."
+          go build ./...
+          echo "✅ Build successful"

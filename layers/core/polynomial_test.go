@@ -9,7 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// TestPolynomialExpansion_Creation tests basic creation of polynomial expansion layers
+// TestPolynomialExpansion_Creation tests basic creation of polynomial expansion layers.
 func TestPolynomialExpansion_Creation(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -28,7 +28,7 @@ func TestPolynomialExpansion_Creation(t *testing.T) {
 	testutils.AssertTrue(t, !polyNoBias.HasBias(), "expected no bias term")
 }
 
-// TestPolynomialExpansion_ErrorCases tests error handling in creation
+// TestPolynomialExpansion_ErrorCases tests error handling in creation.
 func TestPolynomialExpansion_ErrorCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -52,7 +52,7 @@ func TestPolynomialExpansion_ErrorCases(t *testing.T) {
 	testutils.AssertError(t, err, "expected error for negative degree")
 }
 
-// TestPolynomialExpansion_TermGeneration tests polynomial term generation
+// TestPolynomialExpansion_TermGeneration tests polynomial term generation.
 func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -73,7 +73,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	}
 
 	testutils.AssertTrue(t, len(terms) == len(expectedTerms), "expected correct number of terms")
-	
+
 	// Check that all expected terms are present (order might vary)
 	for _, expectedTerm := range expectedTerms {
 		found := false
@@ -83,11 +83,13 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 				for i, power := range expectedTerm {
 					if actualTerm[i] != power {
 						match = false
+
 						break
 					}
 				}
 				if match {
 					found = true
+
 					break
 				}
 			}
@@ -96,7 +98,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	}
 }
 
-// TestPolynomialExpansion_ForwardPass tests the forward pass computation
+// TestPolynomialExpansion_ForwardPass tests the forward pass computation.
 func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -120,7 +122,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 
 	outputData := output.Data()
-	
+
 	// Expected output for input [2, 3] with terms [bias, x1, x2, x1^2, x1*x2, x2^2]:
 	// [1, 2, 3, 4, 6, 9]
 	// Note: The actual order depends on how terms are generated, so we check for expected values
@@ -147,7 +149,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	}
 }
 
-// TestPolynomialExpansion_ForwardPassNoBias tests forward pass without bias term
+// TestPolynomialExpansion_ForwardPassNoBias tests forward pass without bias term.
 func TestPolynomialExpansion_ForwardPassNoBias(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -167,18 +169,18 @@ func TestPolynomialExpansion_ForwardPassNoBias(t *testing.T) {
 
 	// Expected output for degree 1 without bias: [x1, x2] = [2, 3]
 	testutils.AssertTrue(t, len(outputData) == 2, "expected 2 output features")
-	
+
 	// Check that we have the input values (order might vary)
 	foundValues := make(map[float32]bool)
 	for _, value := range outputData {
 		foundValues[value] = true
 	}
-	
+
 	testutils.AssertTrue(t, foundValues[2.0], "expected to find x1 value")
 	testutils.AssertTrue(t, foundValues[3.0], "expected to find x2 value")
 }
 
-// TestPolynomialExpansion_BatchProcessing tests processing multiple samples
+// TestPolynomialExpansion_BatchProcessing tests processing multiple samples.
 func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -197,7 +199,7 @@ func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	// Forward pass
 	output := poly.Forward(input)
 	outputShape := output.Shape()
-	
+
 	testutils.AssertTrue(t, outputShape[0] == 2, "expected batch size 2")
 	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 
@@ -205,7 +207,7 @@ func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	testutils.AssertTrue(t, len(outputData) == 2*poly.GetOutputSize(), "expected correct output data length")
 }
 
-// TestPolynomialExpansion_ForwardErrorCases tests error handling in forward pass
+// TestPolynomialExpansion_ForwardErrorCases tests error handling in forward pass.
 func TestPolynomialExpansion_ForwardErrorCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -238,7 +240,7 @@ func TestPolynomialExpansion_ForwardErrorCases(t *testing.T) {
 	}, "expected panic with wrong input size")
 }
 
-// TestPolynomialExpansion_BackwardPass tests the backward pass computation
+// TestPolynomialExpansion_BackwardPass tests the backward pass computation.
 func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -252,7 +254,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
 	output := poly.Forward(input)
-	
+
 	// Create output gradient
 	outputGradData := make([]float32, poly.GetOutputSize())
 	for i := range outputGradData {
@@ -272,7 +274,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	testutils.AssertTrue(t, inputGradShape[1] == 2, "expected input size 2")
 }
 
-// TestPolynomialExpansion_BackwardErrorCases tests error handling in backward pass
+// TestPolynomialExpansion_BackwardErrorCases tests error handling in backward pass.
 func TestPolynomialExpansion_BackwardErrorCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -287,7 +289,7 @@ func TestPolynomialExpansion_BackwardErrorCases(t *testing.T) {
 	}, "expected panic with wrong gradient size")
 }
 
-// TestPolynomialExpansion_Parameters tests parameter retrieval
+// TestPolynomialExpansion_Parameters tests parameter retrieval.
 func TestPolynomialExpansion_Parameters(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -300,7 +302,7 @@ func TestPolynomialExpansion_Parameters(t *testing.T) {
 	testutils.AssertTrue(t, params == nil, "expected no parameters")
 }
 
-// TestPolynomialExpansion_OutputShape tests output shape computation
+// TestPolynomialExpansion_OutputShape tests output shape computation.
 func TestPolynomialExpansion_OutputShape(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -313,7 +315,7 @@ func TestPolynomialExpansion_OutputShape(t *testing.T) {
 	testutils.AssertTrue(t, shape[1] == poly.GetOutputSize(), "expected correct output size")
 }
 
-// TestPolynomialExpansion_SetName tests name setting
+// TestPolynomialExpansion_SetName tests name setting.
 func TestPolynomialExpansion_SetName(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -325,7 +327,7 @@ func TestPolynomialExpansion_SetName(t *testing.T) {
 	poly.SetName("new_name")
 }
 
-// TestPolynomialExpansion_HigherDegree tests polynomial expansion with higher degrees
+// TestPolynomialExpansion_HigherDegree tests polynomial expansion with higher degrees.
 func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -344,21 +346,21 @@ func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	testutils.AssertTrue(t, output != nil, "expected non-nil output")
 
 	outputData := output.Data()
-	
+
 	// For degree 3 with 2 features, we should have terms like:
 	// x1, x2, x1^2, x1*x2, x2^2, x1^3, x1^2*x2, x1*x2^2, x2^3
 	// With input [2, 1]: [2, 1, 4, 2, 1, 8, 4, 2, 1]
-	
+
 	// Check that we have the expected number of terms
 	expectedTermCount := 9 // All combinations up to degree 3, no bias
 	testutils.AssertTrue(t, len(outputData) == expectedTermCount, "expected correct number of output terms")
-	
+
 	// Check some specific values
 	foundValues := make(map[float32]int)
 	for _, value := range outputData {
 		foundValues[value]++
 	}
-	
+
 	// We should find these values: 1, 2, 4, 8 (some may appear multiple times)
 	testutils.AssertTrue(t, foundValues[1.0] > 0, "expected to find value 1")
 	testutils.AssertTrue(t, foundValues[2.0] > 0, "expected to find value 2")

@@ -1,3 +1,5 @@
+// Package distributed provides distributed training strategies and coordination mechanisms
+// for multi-node machine learning workloads in the Zerfoo framework.
 package distributed
 
 import (
@@ -92,9 +94,13 @@ func (s *AllReduceStrategy[T]) Barrier() error {
 	if err := s.localStrategy.Barrier(); err != nil {
 		return fmt.Errorf("post-cross-node local barrier failed: %w", err)
 	}
+
 	return nil
 }
 
+// BroadcastTensor broadcasts a tensor from the root rank to all other ranks in the distributed system.
+// The tensor is first broadcast within the root's local node, then across node leaders, and finally
+// within each local node to ensure all ranks receive the broadcasted tensor.
 func (s *AllReduceStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank int) error {
 	// Determine the node leader of the root rank.
 	rootNodeLeaderRank := rootRank - (rootRank % s.localStrategy.Size())

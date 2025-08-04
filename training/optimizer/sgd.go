@@ -1,8 +1,10 @@
+// Package optimizer provides various optimization algorithms for neural networks.
 package optimizer
 
 import (
 	"context"
 	"fmt"
+
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
 	"github.com/zerfoo/zerfoo/compute"
@@ -18,6 +20,7 @@ type SGD[T tensor.Numeric] struct {
 	learningRate T
 }
 
+// NewSGD creates a new SGD optimizer.
 func NewSGD[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], learningRate float32) *SGD[T] {
 	return &SGD[T]{
 		engine:       engine,
@@ -26,6 +29,7 @@ func NewSGD[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T
 	}
 }
 
+// Clip clips the gradients of the parameters by a threshold.
 func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 	minVal := s.ops.FromFloat32(-threshold)
 	maxVal := s.ops.FromFloat32(threshold)
@@ -35,39 +39,40 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 		p.Gradient, _ = s.engine.UnaryOp(ctx, p.Gradient, func(g T) T {
 			switch any(g).(type) {
 			case float32:
-				g_f32 := any(g).(float32)
-				max_f32 := any(maxVal).(float32)
-				min_f32 := any(minVal).(float32)
+				gF32 := any(g).(float32)
+				maxF32 := any(maxVal).(float32)
+				minF32 := any(minVal).(float32)
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			case float16.Float16:
-				g_f32 := any(g).(float16.Float16).ToFloat32()
-				max_f32 := any(maxVal).(float16.Float16).ToFloat32()
-				min_f32 := any(minVal).(float16.Float16).ToFloat32()
+				gF32 := any(g).(float16.Float16).ToFloat32()
+				maxF32 := any(maxVal).(float16.Float16).ToFloat32()
+				minF32 := any(minVal).(float16.Float16).ToFloat32()
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			case float8.Float8:
-				g_f32 := any(g).(float8.Float8).ToFloat32()
-				max_f32 := any(maxVal).(float8.Float8).ToFloat32()
-				min_f32 := any(minVal).(float8.Float8).ToFloat32()
+				gF32 := any(g).(float8.Float8).ToFloat32()
+				maxF32 := any(maxVal).(float8.Float8).ToFloat32()
+				minF32 := any(minVal).(float8.Float8).ToFloat32()
 
-				if g_f32 > max_f32 {
+				if gF32 > maxF32 {
 					return maxVal
 				}
-				if g_f32 < min_f32 {
+				if gF32 < minF32 {
 					return minVal
 				}
 			}
+
 			return g
 		}, nil)
 	}

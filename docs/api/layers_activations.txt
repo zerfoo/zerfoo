@@ -1,0 +1,89 @@
+package activations // import "github.com/zerfoo/zerfoo/layers/activations"
+
+layers/activations/swiglu.go
+
+TYPES
+
+type LeakyReLU[T tensor.Numeric] struct {
+	graph.NoParameters[T]
+
+	// Has unexported fields.
+}
+    LeakyReLU implements the Leaky Rectified Linear Unit activation function.
+
+func NewLeakyReLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], alpha float64) *LeakyReLU[T]
+
+func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+
+func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+
+func (l *LeakyReLU[T]) OutputShape() []int
+
+type ReLU[T tensor.Numeric] struct {
+	graph.NoParameters[T]
+
+	// Has unexported fields.
+}
+    ReLU implements the Rectified Linear Unit activation function.
+
+func NewReLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *ReLU[T]
+
+func (r *ReLU[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+
+func (r *ReLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+
+func (r *ReLU[T]) OutputShape() []int
+
+type Sigmoid[T tensor.Numeric] struct {
+	graph.NoParameters[T]
+
+	// Has unexported fields.
+}
+    Sigmoid implements the sigmoid activation function.
+
+func NewSigmoid[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *Sigmoid[T]
+
+func (s *Sigmoid[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+
+func (s *Sigmoid[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+
+func (s *Sigmoid[T]) OutputShape() []int
+
+type SwiGLU[T tensor.Numeric] struct {
+	// Has unexported fields.
+}
+    SwiGLU implements the SwiGLU activation function.
+
+func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *SwiGLU[T]
+    NewSwiGLU creates a new SwiGLU activation layer.
+
+func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward computes the gradients for SwiGLU.
+
+func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+    Forward computes the SwiGLU activation. Input: A tensor with its last
+    dimension being 2 * feature_dim.
+
+func (s *SwiGLU[T]) OutputShape(inputShapes ...[]int) ([]int, error)
+    OutputShape returns the output shape of SwiGLU. Input shape is (...,
+    2 * feature_dim). Output shape is (..., feature_dim).
+
+func (s *SwiGLU[T]) Parameters() []graph.Parameter[T]
+    Parameters returns an empty slice as SwiGLU has no trainable parameters.
+
+type Tanh[T tensor.Numeric] struct {
+	graph.NoParameters[T]
+
+	// Has unexported fields.
+}
+    Tanh implements the hyperbolic tangent activation function.
+
+func NewTanh[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *Tanh[T]
+
+func (t *Tanh[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward computes the gradient of the Tanh activation.
+
+func (t *Tanh[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+
+func (t *Tanh[T]) OutputShape() []int
+

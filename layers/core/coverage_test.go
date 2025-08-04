@@ -11,7 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// TestDense_NewBiasError tests the error path in NewDense when NewBias fails
+// TestDense_NewBiasError tests the error path in NewDense when NewBias fails.
 func TestDense_NewBiasError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -44,7 +44,7 @@ func TestDense_NewBiasError(t *testing.T) {
 	}
 }
 
-// TestLinear_InitializerError tests the error path in NewLinearWithFactories when initializer fails
+// TestLinear_InitializerError tests the error path in NewLinearWithFactories when initializer fails.
 func TestLinear_InitializerError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -57,7 +57,7 @@ func TestLinear_InitializerError(t *testing.T) {
 	testutils.AssertTrue(t, err.Error() == "failed to initialize weights: mock initializer failure", "expected specific error message")
 }
 
-// TestLinear_BackwardError tests error handling in Backward method
+// TestLinear_BackwardError tests error handling in Backward method.
 func TestLinear_BackwardError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -73,7 +73,7 @@ func TestLinear_BackwardError(t *testing.T) {
 	_, _ = layer.Forward(input)
 }
 
-// TestLinear_ForwardError tests error handling in Forward method
+// TestLinear_ForwardError tests error handling in Forward method.
 func TestLinear_ForwardError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -91,7 +91,7 @@ func TestLinear_ForwardError(t *testing.T) {
 	testutils.AssertError(t, err, "expected panic when forward pass fails due to shape mismatch")
 }
 
-// TestDense_ErrorPaths tests various error paths in Dense layer
+// TestDense_ErrorPaths tests various error paths in Dense layer.
 func TestDense_ErrorPaths(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -113,14 +113,14 @@ func TestDense_ErrorPaths(t *testing.T) {
 	testutils.AssertError(t, err, "expected panic when dense forward fails due to shape mismatch")
 }
 
-// TestLinear_AllErrorPaths tests all remaining error paths in Linear layer
+// TestLinear_AllErrorPaths tests all remaining error paths in Linear layer.
 func TestLinear_AllErrorPaths(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test NewLinearWithFactories with failing initializer
 	failingInit := &failingInitializer[float32]{}
-	_, err := NewLinearWithFactories("test", engine, ops, 10, 5, failingInit, tensor.New[float32], func(name string, value *tensor.Tensor[float32], newTensorFn func([]int, []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
+	_, err := NewLinearWithFactories("test", engine, ops, 10, 5, failingInit, tensor.New[float32], func(_ string, _ *tensor.Tensor[float32], _ func([]int, []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
 		return nil, errors.New("parameter creation failed")
 	})
 	testutils.AssertError(t, err, "expected error when parameter creation fails")
@@ -143,14 +143,14 @@ func TestLinear_AllErrorPaths(t *testing.T) {
 
 // Helper types for testing
 
-// failingInitializer always returns an error
+// failingInitializer always returns an error.
 type failingInitializer[T tensor.Numeric] struct{}
 
-func (f *failingInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
+func (f *failingInitializer[T]) Initialize(_, _ int) ([]T, error) {
 	return nil, errors.New("mock initializer failure")
 }
 
-// failingTensorCreator always returns an error
-func failingTensorCreator[T tensor.Numeric](shape []int, data []T) (*tensor.Tensor[T], error) {
+// failingTensorCreator always returns an error.
+func failingTensorCreator[T tensor.Numeric](_ []int, _ []T) (*tensor.Tensor[T], error) {
 	return nil, errors.New("mock tensor creation failure")
 }

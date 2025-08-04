@@ -24,13 +24,14 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 		go func() { _ = s.Serve(lis) }()
 		defer s.Stop()
 
-		dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
-			conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
+			conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(_ context.Context, _ string) (net.Conn, error) {
 				return lis.Dial()
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				return nil, err
 			}
+
 			return conn, nil
 		}
 
@@ -57,7 +58,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	})
 
 	t.Run("connection error", func(t *testing.T) {
-		dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		dialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			if target == "peer2" {
 				return nil, errors.New("dial error")
 			}
@@ -66,6 +67,7 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 			s := grpc.NewServer()
 			go func() { _ = s.Serve(lis) }()
 			defer s.Stop()
+
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
 		nm := NewNetworkManager(dialer, MockClientFactory)
@@ -81,7 +83,7 @@ func TestServerManager_Start(t *testing.T) {
 	customMockListener := new(CustomMockListener)
 
 	t.Run("successful start", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, _ string) (net.Listener, error) {
 			return customMockListener, nil
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -95,7 +97,7 @@ func TestServerManager_Start(t *testing.T) {
 	})
 
 	t.Run("listen error", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, _ string) (net.Listener, error) {
 			return nil, errors.New("listen error")
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -104,7 +106,7 @@ func TestServerManager_Start(t *testing.T) {
 	})
 
 	t.Run("serve error", func(t *testing.T) {
-		listenFunc := func(network, addr string) (net.Listener, error) {
+		listenFunc := func(_ string, _ string) (net.Listener, error) {
 			return customMockListener, nil
 		}
 		sm := NewServerManager(customMockServer, listenFunc)
@@ -133,7 +135,7 @@ func TestNetworkManager_ConnectToPeers_DialError(t *testing.T) {
 	peers := []string{"peer1", "peer2"}
 	timeout := time.Second
 
-	dialer := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+	dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 		return nil, errors.New("dial error")
 	}
 
@@ -149,7 +151,7 @@ func TestNetworkManager_CloseConnections(t *testing.T) {
 	go func() { _ = s.Serve(lis) }()
 	defer s.Stop()
 
-	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+	conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	testutils.AssertNoError(t, err, "failed to dial: %v")
@@ -172,12 +174,12 @@ func TestNewNetworkManager_DefaultDialer(t *testing.T) {
 }
 
 func TestNewNetworkManager_DefaultClientFactory(t *testing.T) {
-	nm := NewNetworkManager(func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+	nm := NewNetworkManager(func(_ context.Context, _ string) (*grpc.ClientConn, error) {
 		return nil, nil
 	}, nil).(*networkManager)
 	testutils.AssertNotNil(t, nm.clientFactory, "expected clientFactory to not be nil")
 }
 
-func TestNewServerManager_DefaultListener(t *testing.T) {
+func TestNewServerManager_DefaultListener(_ *testing.T) {
 	NewServerManager(nil, nil)
 }

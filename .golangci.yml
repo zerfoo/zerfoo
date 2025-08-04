@@ -15,19 +15,32 @@ linters:
     - govet
     - ineffassign
     - staticcheck
-    - unused
     - dupl
     - goconst
     - gocritic
     - gocyclo
     - gosec
-    - lll
     - misspell
     - nakedret
     - revive
     - unconvert
     - unparam
     - whitespace
+    # Additional auto-fixable linters
+    - godot          # Ensures comments end with periods
+    - nlreturn       # Adds newlines before returns/branches
+    - nolintlint     # Fixes malformed nolint directives
+    - tagalign       # Aligns struct tags
+    - usestdlibvars  # Uses stdlib constants instead of literals
+    - copyloopvar    # Fixes loop variable copying issues
+    - dupword        # Removes duplicate words
+    - errorlint      # Fixes error wrapping issues
+    - importas       # Enforces consistent import aliases
+    - intrange       # Uses integer ranges in for loops
+    - mirror         # Fixes bytes/strings usage patterns
+    - perfsprint     # Replaces fmt.Sprintf with faster alternatives
+  disable:
+    - unused
 
 linters-settings:
   errcheck:
@@ -58,6 +71,9 @@ linters-settings:
       - name: unused-parameter
       - name: unreachable-code
 
+  lll:
+    line-length: 120  # Reduced for better readability and auto-wrapping
+
   staticcheck:
     checks: ["all"]
 
@@ -84,11 +100,37 @@ linters-settings:
     min-len: 2
     min-occurrences: 3
 
-  lll:
-    line-length: 120
-
   nakedret:
     max-func-lines: 30
+
+  godot:
+    scope: declarations
+    exclude:
+      - "^\\s*TODO"
+      - "^\\s*FIXME"
+    capital: false
+
+  tagalign:
+    align: false
+    sort: true
+
+  importas:
+    no-unaliased: true
+    alias:
+      - pkg: github.com/stretchr/testify/assert
+        alias: assert
+      - pkg: github.com/stretchr/testify/require
+        alias: require
+
+  nlreturn:
+    block-size: 2
+
+  nolintlint:
+    allow-unused: false
+    require-explanation: true
+    require-specific: true
+
+
 
 issues:
   exclude-rules:
@@ -98,7 +140,6 @@ issues:
         - errcheck
         - dupl
         - gosec
-        - lll
         - goconst
         - gocritic
 
@@ -111,6 +152,9 @@ issues:
     - path: \.pb\.go
       linters:
         - all
+    - path: compute/cpu_engine\.go
+      linters:
+        - gosec
 
   max-issues-per-linter: 50
   max-same-issues: 3

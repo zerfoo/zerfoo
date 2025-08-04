@@ -9,7 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// TestDense_ComprehensiveCoverage tests all realistic paths in Dense layer creation
+// TestDense_ComprehensiveCoverage tests all realistic paths in Dense layer creation.
 func TestDense_ComprehensiveCoverage(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -57,7 +57,7 @@ func TestDense_ComprehensiveCoverage(t *testing.T) {
 	}
 }
 
-// TestDense_SpecialCases tests edge cases and special scenarios
+// TestDense_SpecialCases tests edge cases and special scenarios.
 func TestDense_SpecialCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -81,13 +81,13 @@ func TestDense_SpecialCases(t *testing.T) {
 	}
 }
 
-// TestDense_ErrorRecovery tests error scenarios and recovery
+// TestDense_ErrorRecovery tests error scenarios and recovery.
 func TestDense_ErrorRecovery(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test multiple empty name attempts
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := NewDense("", engine, ops, 5, 3)
 		testutils.AssertError(t, err, "expected error for empty name attempt")
 	}
@@ -98,8 +98,8 @@ func TestDense_ErrorRecovery(t *testing.T) {
 	testutils.AssertTrue(t, dense != nil, "expected non-nil dense layer after recovery")
 }
 
-// Helper function to test dense layer properties
-func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, inputSize, outputSize int) {
+// Helper function to test dense layer properties.
+func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, _ int, outputSize int) {
 	if dense == nil {
 		t.Fatalf("dense layer is nil")
 	}
@@ -117,7 +117,7 @@ func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName strin
 	dense.SetName(expectedName + "_updated")
 }
 
-// Helper function to test basic dense layer operation
+// Helper function to test basic dense layer operation.
 func testDenseBasicOperation(t *testing.T, dense *Dense[float32]) {
 	// Create a simple input
 	inputData := []float32{1.0, 0.5, -0.3}

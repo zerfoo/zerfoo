@@ -1,12 +1,14 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-var ErrInvalidInputCount = fmt.Errorf("invalid number of input tensors")
+// ErrInvalidInputCount is returned when the number of input tensors is invalid.
+var ErrInvalidInputCount = errors.New("invalid number of input tensors")
 
 // Node represents a node in the computation graph.
 type Node[T tensor.Numeric] interface {
@@ -32,16 +34,17 @@ type Parameter[T tensor.Numeric] struct {
 // It takes a tensor creation function to allow for mocking in tests.
 func NewParameter[T tensor.Numeric](name string, value *tensor.Tensor[T], newTensorFn func(shape []int, data []T) (*tensor.Tensor[T], error)) (*Parameter[T], error) {
 	if name == "" {
-		return nil, fmt.Errorf("parameter name cannot be empty")
+		return nil, errors.New("parameter name cannot be empty")
 	}
 	if value == nil {
-		return nil, fmt.Errorf("cannot create parameter from nil tensor")
+		return nil, errors.New("cannot create parameter from nil tensor")
 	}
 	// Gradient tensor is initialized with zeros and has the same shape as the value.
 	grad, err := newTensorFn(value.Shape(), nil)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Parameter[T]{
 		Name:     name,
 		Value:    value,
@@ -59,9 +62,10 @@ func (p *Parameter[T]) AddGradient(grad *tensor.Tensor[T]) error {
 	}
 
 	// Assuming element-wise addition for gradients
-	for i := 0; i < len(p.Gradient.Data()); i++ {
+	for i := range len(p.Gradient.Data()) {
 		p.Gradient.Data()[i] += grad.Data()[i]
 	}
+
 	return nil
 }
 

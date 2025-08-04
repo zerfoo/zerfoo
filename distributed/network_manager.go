@@ -11,17 +11,18 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// ensure that the struct implements the interface
+// ensure that the struct implements the interface.
 var _ NetworkManager = (*networkManager)(nil)
 
 type networkManager struct {
 	dialFunc      Dialer
-	clientFactory DistributedServiceClientFactory
+	clientFactory ServiceClientFactory
 }
 
-func NewNetworkManager(dialer Dialer, clientFactory DistributedServiceClientFactory) NetworkManager {
+// NewNetworkManager creates a new NetworkManager.
+func NewNetworkManager(dialer Dialer, clientFactory ServiceClientFactory) NetworkManager {
 	if dialer == nil {
-		dialer = func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		dialer = func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
 	}
@@ -30,6 +31,7 @@ func NewNetworkManager(dialer Dialer, clientFactory DistributedServiceClientFact
 			return pb.NewDistributedServiceClient(cc)
 		}
 	}
+
 	return &networkManager{
 		dialFunc:      dialer,
 		clientFactory: clientFactory,
@@ -49,7 +51,7 @@ func (nm *networkManager) ConnectToPeers(peers []string, selfRank int, timeout t
 		conn, err := nm.dialFunc(ctx, peer)
 		if err != nil {
 			// Before returning, close any connections that were successfully opened.
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if conns[j] != nil {
 					if err := conns[j].Close(); err != nil {
 						// Log the error, but continue closing other connections
@@ -57,11 +59,13 @@ func (nm *networkManager) ConnectToPeers(peers []string, selfRank int, timeout t
 					}
 				}
 			}
-			return nil, nil, fmt.Errorf("failed to connect to peer %s: %v", peer, err)
+
+			return nil, nil, fmt.Errorf("failed to connect to peer %s: %w", peer, err)
 		}
 		clients[i] = nm.clientFactory(conn)
 		conns[i] = conn
 	}
+
 	return clients, conns, nil
 }
 
@@ -76,7 +80,7 @@ func (nm *networkManager) CloseConnections(conns []*grpc.ClientConn) {
 	}
 }
 
-// ensure that the struct implements the interface
+// ensure that the struct implements the interface.
 var _ ServerManager = (*serverManager)(nil)
 
 type serverManager struct {
@@ -86,10 +90,12 @@ type serverManager struct {
 	errCh      chan error
 }
 
+// NewServerManager creates a new ServerManager.
 func NewServerManager(grpcServer GrpcServer, listenerFactory ListenerFactory) ServerManager {
 	if listenerFactory == nil {
 		listenerFactory = net.Listen
 	}
+
 	return &serverManager{
 		server:     grpcServer,
 		listenFunc: listenerFactory,
@@ -114,6 +120,7 @@ func (sm *serverManager) Start(workerAddress string, service interface{}, servic
 			sm.errCh <- err
 		}
 	}()
+
 	return nil
 }
 

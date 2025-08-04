@@ -1,6 +1,9 @@
 package tensor
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // At retrieves the value at the specified indices.
 // It returns an error if the number of indices does not match the tensor's dimensions
@@ -9,7 +12,7 @@ func (t *Tensor[T]) At(indices ...int) (T, error) {
 	if t.Dims() == 0 {
 		// For a 0-dimensional tensor (scalar), it should only be accessed with no indices.
 		if len(indices) != 0 {
-			return 0, fmt.Errorf("0-dimensional tensor cannot be accessed with indices")
+			return 0, errors.New("0-dimensional tensor cannot be accessed with indices")
 		}
 		// A 0-dimensional tensor always has one element in its data slice.
 		return t.data[0], nil
@@ -36,7 +39,7 @@ func (t *Tensor[T]) At(indices ...int) (T, error) {
 func (t *Tensor[T]) Set(value T, indices ...int) error {
 	if t.isView {
 		// This is a simplification. A production-ready framework might allow setting on views.
-		return fmt.Errorf("cannot set values on a tensor view")
+		return errors.New("cannot set values on a tensor view")
 	}
 
 	if len(indices) != t.Dims() {
@@ -52,6 +55,7 @@ func (t *Tensor[T]) Set(value T, indices ...int) error {
 	}
 
 	t.data[offset] = value
+
 	return nil
 }
 
@@ -60,11 +64,11 @@ func (t *Tensor[T]) Set(value T, indices ...int) error {
 // The returned tensor shares the same underlying data.
 func (t *Tensor[T]) Slice(ranges ...[2]int) (*Tensor[T], error) {
 	if t.Dims() == 0 {
-		return nil, fmt.Errorf("cannot slice a 0-dimensional tensor")
+		return nil, errors.New("cannot slice a 0-dimensional tensor")
 	}
 
 	if len(ranges) > len(t.shape) {
-		return nil, fmt.Errorf("too many slice ranges for tensor dimensions")
+		return nil, errors.New("too many slice ranges for tensor dimensions")
 	}
 
 	newShape := make([]int, len(t.shape))

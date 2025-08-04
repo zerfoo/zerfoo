@@ -13,7 +13,6 @@ func TestXavierInitializer(t *testing.T) {
 
 	inputSize, outputSize := 10, 5
 	weights, err := initializer.Initialize(inputSize, outputSize)
-
 	if err != nil {
 		t.Fatalf("Xavier initialization failed: %v", err)
 	}
@@ -41,7 +40,6 @@ func TestHeInitializer(t *testing.T) {
 
 	inputSize, outputSize := 10, 5
 	weights, err := initializer.Initialize(inputSize, outputSize)
-
 	if err != nil {
 		t.Fatalf("He initialization failed: %v", err)
 	}
@@ -74,7 +72,6 @@ func TestUniformInitializer(t *testing.T) {
 
 	inputSize, outputSize := 10, 5
 	weights, err := initializer.Initialize(inputSize, outputSize)
-
 	if err != nil {
 		t.Fatalf("Uniform initialization failed: %v", err)
 	}
@@ -115,6 +112,7 @@ func TestInitializerConsistency(t *testing.T) {
 			sumSquares += val * val
 		}
 		mean := sum / float64(len(weights))
+
 		return (sumSquares / float64(len(weights))) - (mean * mean)
 	}
 

@@ -2,12 +2,13 @@ package compute
 
 import (
 	"context"
+	"testing"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
-// TestFinalCoverageTargeted tests the specific remaining uncovered lines
+// TestFinalCoverageTargeted tests the specific remaining uncovered lines.
 func TestFinalCoverageTargeted(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()

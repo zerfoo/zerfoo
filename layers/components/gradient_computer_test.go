@@ -9,10 +9,18 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-func TestLinearGradientComputer_ComputeWeightGradient(t *testing.T) {
+// setupGradientComputerTest creates a common test setup for gradient computer tests.
+func setupGradientComputerTest(_ *testing.T) (*LinearGradientComputer[float32], context.Context) {
 	ops := numeric.Float32Ops{}
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
 	computer := NewLinearGradientComputer(engine)
+	ctx := context.Background()
+
+	return computer, ctx
+}
+
+func TestLinearGradientComputer_ComputeWeightGradient(t *testing.T) {
+	computer, ctx := setupGradientComputerTest(t)
 
 	// Create test tensors
 	// Input: (2x3), Output gradient: (2x2)
@@ -30,7 +38,6 @@ func TestLinearGradientComputer_ComputeWeightGradient(t *testing.T) {
 		t.Fatalf("Failed to create output gradient tensor: %v", err)
 	}
 
-	ctx := context.Background()
 	weightGrad, err := computer.ComputeWeightGradient(ctx, input, outputGrad)
 	if err != nil {
 		t.Fatalf("Weight gradient computation failed: %v", err)
@@ -43,9 +50,7 @@ func TestLinearGradientComputer_ComputeWeightGradient(t *testing.T) {
 }
 
 func TestLinearGradientComputer_ComputeInputGradient(t *testing.T) {
-	ops := numeric.Float32Ops{}
-	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
-	computer := NewLinearGradientComputer(engine)
+	computer, ctx := setupGradientComputerTest(t)
 
 	// Create test tensors
 	// Weights: (3x2), Output gradient: (2x2)
@@ -63,7 +68,6 @@ func TestLinearGradientComputer_ComputeInputGradient(t *testing.T) {
 		t.Fatalf("Failed to create output gradient tensor: %v", err)
 	}
 
-	ctx := context.Background()
 	inputGrad, err := computer.ComputeInputGradient(ctx, weights, outputGrad)
 	if err != nil {
 		t.Fatalf("Input gradient computation failed: %v", err)

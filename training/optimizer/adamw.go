@@ -1,4 +1,4 @@
-// training/optimizer/adamw.go
+// Package optimizer provides various optimization algorithms for neural networks.
 package optimizer
 
 import (
@@ -12,7 +12,7 @@ import (
 
 // AdamW implements the AdamW optimizer.
 type AdamW[T tensor.Numeric] struct {
-	engine compute.Engine[T]
+	engine       compute.Engine[T]
 	learningRate T
 	beta1        T
 	beta2        T
@@ -22,7 +22,7 @@ type AdamW[T tensor.Numeric] struct {
 	// State variables for each parameter
 	m map[*graph.Parameter[T]]*tensor.Tensor[T] // First moment estimates
 	v map[*graph.Parameter[T]]*tensor.Tensor[T] // Second moment estimates
-	t int // Timestep
+	t int                                       // Timestep
 }
 
 // NewAdamW creates a new AdamW optimizer.
@@ -151,5 +151,6 @@ func (a *AdamW[T]) Step(ctx context.Context, params []graph.Parameter[T]) error 
 		// Clear gradient for next step
 		param.ClearGradient()
 	}
+
 	return nil
 }

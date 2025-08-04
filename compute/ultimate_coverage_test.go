@@ -2,13 +2,14 @@ package compute
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"testing"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
-// MockTensor is a tensor that can be configured to fail on Set operations
+// MockTensor is a tensor that can be configured to fail on Set operations.
 type MockTensor[T tensor.Numeric] struct {
 	*tensor.Tensor[T]
 	failOnSet bool
@@ -16,12 +17,13 @@ type MockTensor[T tensor.Numeric] struct {
 
 func (m *MockTensor[T]) Set(value T, indices ...int) error {
 	if m.failOnSet {
-		return fmt.Errorf("mock error: Set operation failed")
+		return errors.New("mock error: Set operation failed")
 	}
+
 	return m.Tensor.Set(value, indices...)
 }
 
-// TestUltimateCoverage tests the remaining uncovered error paths using mocking
+// TestUltimateCoverage tests the remaining uncovered error paths using mocking.
 func TestUltimateCoverage(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -88,7 +90,7 @@ func TestUltimateCoverage(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 3, 4, 2}, data)
 
 		// Test all axes with both keepDims true and false
-		for axis := 0; axis < 4; axis++ {
+		for axis := range 4 {
 			for _, keepDims := range []bool{true, false} {
 				result, err := engine.Sum(ctx, a, axis, keepDims)
 				if err != nil {

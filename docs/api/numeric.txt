@@ -1,0 +1,310 @@
+package numeric // import "github.com/zerfoo/zerfoo/numeric"
+
+
+TYPES
+
+type Arithmetic[T any] interface {
+	// Basic binary operations
+	Add(a, b T) T
+	Sub(a, b T) T
+	Mul(a, b T) T
+	Div(a, b T) T
+
+	// Activation functions and their derivatives
+	Tanh(x T) T
+	Sigmoid(x T) T
+	ReLU(x T) T
+	LeakyReLU(x T, alpha float64) T
+	TanhGrad(x T) T    // Derivative of Tanh
+	SigmoidGrad(x T) T // Derivative of Sigmoid
+	ReLUGrad(x T) T
+	LeakyReLUGrad(x T, alpha float64) T
+
+	// Conversion from standard types
+	FromFloat32(f float32) T
+	FromFloat64(f float64) T
+	One() T
+
+	// IsZero checks if a value is zero.
+	IsZero(v T) bool
+
+	// Abs returns the absolute value of x.
+	Abs(x T) T
+	// Sum returns the sum of all elements in the slice.
+	Sum(s []T) T
+	// Exp returns e**x.
+	Exp(x T) T
+	// Log returns the natural logarithm of x.
+	Log(x T) T
+	// Pow returns base**exponent.
+	Pow(base, exponent T) T
+
+	// Sqrt returns the square root of x.
+	Sqrt(x T) T
+
+	// GreaterThan returns true if a is greater than b.
+	GreaterThan(a, b T) bool
+}
+    Arithmetic defines a generic interface for all mathematical operations
+    required by the compute engine. This allows the engine to be completely
+    agnostic to the specific numeric type it is operating on.
+
+type Float16Ops struct{}
+    Float16Ops provides the implementation of the Arithmetic interface for the
+    float16.Float16 type.
+
+func (ops Float16Ops) Abs(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) Add(a, b float16.Float16) float16.Float16
+
+func (ops Float16Ops) Div(a, b float16.Float16) float16.Float16
+
+func (ops Float16Ops) Exp(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) FromFloat32(f float32) float16.Float16
+
+func (ops Float16Ops) FromFloat64(f float64) float16.Float16
+
+func (ops Float16Ops) GreaterThan(a, b float16.Float16) bool
+
+func (ops Float16Ops) IsZero(v float16.Float16) bool
+
+func (ops Float16Ops) LeakyReLU(x float16.Float16, alpha float64) float16.Float16
+
+func (ops Float16Ops) LeakyReLUGrad(x float16.Float16, alpha float64) float16.Float16
+
+func (ops Float16Ops) Log(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) Mul(a, b float16.Float16) float16.Float16
+
+func (ops Float16Ops) One() float16.Float16
+
+func (ops Float16Ops) Pow(base, exponent float16.Float16) float16.Float16
+
+func (ops Float16Ops) ReLU(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) ReLUGrad(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) Sigmoid(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) SigmoidGrad(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) Sqrt(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) Sub(a, b float16.Float16) float16.Float16
+
+func (ops Float16Ops) Sum(s []float16.Float16) float16.Float16
+
+func (ops Float16Ops) Tanh(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) TanhGrad(x float16.Float16) float16.Float16
+
+func (ops Float16Ops) ToFloat32(t float16.Float16) float32
+
+type Float32Ops struct{}
+    Float32Ops provides the implementation of the Arithmetic interface for the
+    float32 type.
+
+func (ops Float32Ops) Abs(x float32) float32
+
+func (ops Float32Ops) Add(a, b float32) float32
+
+func (ops Float32Ops) Div(a, b float32) float32
+
+func (ops Float32Ops) Exp(x float32) float32
+
+func (ops Float32Ops) FromFloat32(f float32) float32
+
+func (ops Float32Ops) FromFloat64(f float64) float32
+
+func (ops Float32Ops) GreaterThan(a, b float32) bool
+
+func (ops Float32Ops) IsZero(v float32) bool
+
+func (ops Float32Ops) LeakyReLU(x float32, alpha float64) float32
+
+func (ops Float32Ops) LeakyReLUGrad(x float32, alpha float64) float32
+
+func (ops Float32Ops) Log(x float32) float32
+
+func (ops Float32Ops) Mul(a, b float32) float32
+
+func (ops Float32Ops) One() float32
+
+func (ops Float32Ops) Pow(base, exponent float32) float32
+
+func (ops Float32Ops) ReLU(x float32) float32
+
+func (ops Float32Ops) ReLUGrad(x float32) float32
+
+func (ops Float32Ops) Sigmoid(x float32) float32
+
+func (ops Float32Ops) SigmoidGrad(x float32) float32
+
+func (ops Float32Ops) Sqrt(x float32) float32
+
+func (ops Float32Ops) Sub(a, b float32) float32
+
+func (ops Float32Ops) Sum(s []float32) float32
+
+func (ops Float32Ops) Tanh(x float32) float32
+
+func (ops Float32Ops) TanhGrad(x float32) float32
+
+func (ops Float32Ops) ToFloat32(t float32) float32
+
+type Float64Ops struct{}
+    Float64Ops provides the implementation of the Arithmetic interface for the
+    float64 type.
+
+func (ops Float64Ops) Abs(x float64) float64
+
+func (ops Float64Ops) Add(a, b float64) float64
+
+func (ops Float64Ops) Div(a, b float64) float64
+
+func (ops Float64Ops) Exp(x float64) float64
+
+func (ops Float64Ops) FromFloat32(f float32) float64
+
+func (ops Float64Ops) FromFloat64(f float64) float64
+
+func (ops Float64Ops) GreaterThan(a, b float64) bool
+
+func (ops Float64Ops) IsZero(v float64) bool
+
+func (ops Float64Ops) LeakyReLU(x float64, alpha float64) float64
+
+func (ops Float64Ops) LeakyReLUGrad(x float64, alpha float64) float64
+
+func (ops Float64Ops) Log(x float64) float64
+
+func (ops Float64Ops) Mul(a, b float64) float64
+
+func (ops Float64Ops) One() float64
+
+func (ops Float64Ops) Pow(base, exponent float64) float64
+
+func (ops Float64Ops) ReLU(x float64) float64
+
+func (ops Float64Ops) ReLUGrad(x float64) float64
+
+func (ops Float64Ops) Sigmoid(x float64) float64
+
+func (ops Float64Ops) SigmoidGrad(x float64) float64
+
+func (ops Float64Ops) Sqrt(x float64) float64
+
+func (ops Float64Ops) Sub(a, b float64) float64
+
+func (ops Float64Ops) Sum(s []float64) float64
+
+func (ops Float64Ops) Tanh(x float64) float64
+
+func (ops Float64Ops) TanhGrad(x float64) float64
+
+func (ops Float64Ops) ToFloat32(t float64) float32
+
+type Float8Ops struct{}
+    Float8Ops provides the implementation of the Arithmetic interface for the
+    float8.Float8 type.
+
+func (ops Float8Ops) Abs(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) Add(a, b float8.Float8) float8.Float8
+
+func (ops Float8Ops) Div(a, b float8.Float8) float8.Float8
+
+func (ops Float8Ops) Exp(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) FromFloat32(f float32) float8.Float8
+
+func (ops Float8Ops) FromFloat64(f float64) float8.Float8
+
+func (ops Float8Ops) GreaterThan(a, b float8.Float8) bool
+
+func (ops Float8Ops) IsZero(v float8.Float8) bool
+
+func (ops Float8Ops) LeakyReLU(x float8.Float8, alpha float64) float8.Float8
+
+func (ops Float8Ops) LeakyReLUGrad(x float8.Float8, alpha float64) float8.Float8
+
+func (ops Float8Ops) Log(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) Mul(a, b float8.Float8) float8.Float8
+
+func (ops Float8Ops) One() float8.Float8
+
+func (ops Float8Ops) Pow(base, exponent float8.Float8) float8.Float8
+
+func (ops Float8Ops) ReLU(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) ReLUGrad(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) Sigmoid(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) SigmoidGrad(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) Sqrt(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) Sub(a, b float8.Float8) float8.Float8
+
+func (ops Float8Ops) Sum(s []float8.Float8) float8.Float8
+
+func (ops Float8Ops) Tanh(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) TanhGrad(x float8.Float8) float8.Float8
+
+func (ops Float8Ops) ToFloat32(t float8.Float8) float32
+
+type IntOps struct{}
+    IntOps implements Arithmetic for int.
+
+func (IntOps) Abs(x int) int
+
+func (IntOps) Add(a, b int) int
+
+func (IntOps) Div(a, b int) int
+
+func (IntOps) Exp(x int) int
+
+func (IntOps) FromFloat32(f float32) int
+
+func (IntOps) FromFloat64(f float64) int
+
+func (IntOps) GreaterThan(a, b int) bool
+
+func (IntOps) IsZero(v int) bool
+
+func (IntOps) LeakyReLU(x int, alpha float64) int
+
+func (IntOps) LeakyReLUGrad(x int, alpha float64) int
+
+func (IntOps) Log(x int) int
+
+func (IntOps) Mul(a, b int) int
+
+func (IntOps) One() int
+
+func (IntOps) Pow(base, exponent int) int
+
+func (IntOps) ReLU(x int) int
+
+func (IntOps) ReLUGrad(x int) int
+
+func (IntOps) Sigmoid(x int) int
+
+func (IntOps) SigmoidGrad(x int) int
+
+func (IntOps) Sqrt(x int) int
+
+func (IntOps) Sub(a, b int) int
+
+func (IntOps) Sum(s []int) int
+
+func (IntOps) Tanh(x int) int
+
+func (IntOps) TanhGrad(x int) int
+
+func (IntOps) ToFloat32(t int) float32
+

@@ -1,7 +1,9 @@
+// Package core provides core neural network layer implementations.
 package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -26,7 +28,7 @@ func NewBias[T tensor.Numeric](name string, engine compute.Engine[T], ops numeri
 // NewBiasWithFactories creates a new Bias layer with custom tensor and parameter creation functions.
 func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int, newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Bias[T], error) {
 	if name == "" {
-		return nil, fmt.Errorf("layer name cannot be empty")
+		return nil, errors.New("layer name cannot be empty")
 	}
 	// Initialize biases with zeros.
 	biasesData := make([]T, size)
@@ -35,7 +37,7 @@ func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T
 		return nil, fmt.Errorf("failed to create biases tensor: %w", err)
 	}
 
-	biasesParam, err := newParameter(fmt.Sprintf("%s_biases", name), biases, newTensor)
+	biasesParam, err := newParameter(name+"_biases", biases, newTensor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create biases parameter: %w", err)
 	}
@@ -48,6 +50,7 @@ func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T
 	}, nil
 }
 
+// OutputShape returns the output shape of the Bias layer.
 func (b *Bias[T]) OutputShape() []int {
 	return b.outputShape
 }
@@ -60,6 +63,7 @@ func (b *Bias[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error
 		return nil, err
 	}
 	b.outputShape = output.Shape()
+
 	return output, nil
 }
 
@@ -77,10 +81,12 @@ func (b *Bias[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T
 	return []*tensor.Tensor[T]{outputGradient}, nil
 }
 
+// Parameters returns the parameters of the Bias layer.
 func (b *Bias[T]) Parameters() []*graph.Parameter[T] {
 	return []*graph.Parameter[T]{b.biases}
 }
 
+// SetName sets the name of the Bias layer.
 func (b *Bias[T]) SetName(name string) {
-	b.biases.Name = fmt.Sprintf("%s_biases", name)
+	b.biases.Name = name + "_biases"
 }

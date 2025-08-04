@@ -242,7 +242,7 @@ func TestTensor_Each(t *testing.T) {
 	// Test with an empty tensor (0-dimensional)
 	emptyTensor, _ := New[int]([]int{}, nil)
 	var eachCount int
-	emptyTensor.Each(func(val int) {
+	emptyTensor.Each(func(_ int) {
 		eachCount++
 	})
 	if eachCount != 1 {
@@ -262,7 +262,7 @@ func TestTensor_Each(t *testing.T) {
 	// Test with a tensor that has zero size (to test eachRecursive with Dims() == 0 branch)
 	zeroSizeTensor, _ := New[int]([]int{0}, nil)
 	var zeroSizeCount int
-	zeroSizeTensor.Each(func(val int) {
+	zeroSizeTensor.Each(func(_ int) {
 		zeroSizeCount++
 	})
 	// For a tensor with shape [0], Each should not call the function at all

@@ -1,0 +1,45 @@
+package onnx // import "github.com/zerfoo/zerfoo/pkg/onnx"
+
+onnx/exporter.go
+
+TYPES
+
+type Exporter[T tensor.Numeric] struct {
+}
+    Exporter provides functionality to export Zerfoo models to ONNX format.
+
+func NewExporter[T tensor.Numeric]() *Exporter[T]
+    NewExporter creates a new ONNX Exporter.
+
+func (e *Exporter[T]) ExportGraph(g *graph.Builder[T], outputNodeHandle interface{}) (*Model, error)
+    ExportGraph exports a Zerfoo computational graph to a simplified ONNX Model.
+    This is a highly simplified example, only handling a single core.Dense
+    layer. A full implementation would iterate through all nodes in a built
+    graph, map each Zerfoo Node to its corresponding ONNX OpType, and handle all
+    parameters.
+
+type Initializer struct {
+	Name  string
+	Shape []int
+	Data  interface{} // Raw tensor data
+}
+    Initializer represents a simplified ONNX Initializer (model weights).
+
+type Model struct {
+	GraphName    string
+	Inputs       []string
+	Outputs      []string
+	Nodes        []Node
+	Initializers []Initializer
+}
+    Model represents a simplified ONNX Model.
+
+type Node struct {
+	Name       string
+	OpType     string
+	Inputs     []string
+	Outputs    []string
+	Attributes map[string]interface{}
+}
+    Node represents a simplified ONNX Node.
+

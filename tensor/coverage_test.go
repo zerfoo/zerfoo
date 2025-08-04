@@ -1,10 +1,11 @@
+// Package tensor provides comprehensive test coverage for the tensor package.
 package tensor
 
 import (
 	"testing"
 )
 
-// TestCoverageSpecific tests specific uncovered code paths to achieve 100% coverage
+// TestCoverageSpecific tests specific uncovered code paths to achieve 100% coverage.
 func TestCoverageSpecific(t *testing.T) {
 	// Test case 1: Create a 0-dimensional view tensor manually
 	// Since Slice() cannot create 0-dimensional views, we need to create one manually
@@ -56,7 +57,7 @@ func TestCoverageSpecific(t *testing.T) {
 	zeroSizeTensor, _ := New[int]([]int{2, 0, 3}, nil)
 
 	var zeroSizeCallCount int
-	zeroSizeTensor.Each(func(val int) {
+	zeroSizeTensor.Each(func(_ int) {
 		zeroSizeCallCount++
 	})
 
@@ -77,7 +78,7 @@ func TestCoverageSpecific(t *testing.T) {
 
 	// Call eachRecursive directly to test the "if t.Dims() == 0" branch
 	var directCallCount int
-	zeroDTensor.eachRecursive([]int{}, 0, func(val int) {
+	zeroDTensor.eachRecursive([]int{}, 0, func(_ int) {
 		directCallCount++
 	})
 

@@ -1,4 +1,4 @@
-// layers/embeddings/token_embedding.go
+// Package embeddings provides neural network embedding layers for the Zerfoo ML framework.
 package embeddings
 
 import (
@@ -70,6 +70,7 @@ func (te *TokenEmbedding[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
 	if len(inputShape) != 2 {
 		return nil, fmt.Errorf("expected 2D input tensor (batch_size, seq_len), got %v", inputShape)
 	}
+
 	return []int{inputShape[0], inputShape[1], te.embeddingDim}, nil
 }
 
@@ -106,7 +107,6 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 
 // Backward computes the gradients for the embedding table.
 func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-
 	// The gradient for the embedding table is a sparse update.
 	// For each token ID in inputTokenIDs, we add the corresponding dOut slice
 	// to the gradient accumulator of that embedding vector in the embeddingTable.
@@ -134,11 +134,12 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T
 	}
 
 	if err := te.engine.ScatterAdd(ctx, dEmbeddingTable, reshapedInputTokenIDs, reshapedDOut); err != nil { // Assuming ScatterAdd is available
-
 		return nil, err
 	}
 
-	te.embeddingTable.AddGradient(dEmbeddingTable) // Accumulate gradient
+	if err := te.embeddingTable.AddGradient(dEmbeddingTable); err != nil {
+		return nil, err
+	}
 
 	// Embedding layer typically does not pass gradients back to its input (token IDs are discrete).
 	// So, return nil for input gradients.

@@ -21,14 +21,18 @@ func (m *mockNode) Forward(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], 
 	if m.forwardFunc != nil {
 		return m.forwardFunc(inputs...)
 	}
+
 	return inputs[0], nil
 }
+
 func (m *mockNode) Backward(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 	if m.backwardFunc != nil {
 		return m.backwardFunc(outputGradient)
 	}
+
 	return []*tensor.Tensor[int]{outputGradient}, nil
 }
+
 func (m *mockNode) Parameters() []*Parameter[int] {
 	return m.params
 }
@@ -76,7 +80,7 @@ func TestBuilder_Build(t *testing.T) {
 		t.Errorf("expected 1, got %d", output.Data()[0])
 	}
 
-	backward(input)
+	_ = backward(input)
 }
 
 func TestBuilder_Input(t *testing.T) {
@@ -94,7 +98,7 @@ func TestBuilder_Input(t *testing.T) {
 	if output != nil {
 		t.Errorf("expected nil, got %v", output)
 	}
-	inputNode.Backward(nil)
+	_, _ = inputNode.Backward(nil)
 	if inputNode.Parameters() != nil {
 		t.Errorf("expected nil parameters, got %v", inputNode.Parameters())
 	}

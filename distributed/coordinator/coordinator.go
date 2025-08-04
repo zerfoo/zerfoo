@@ -1,3 +1,4 @@
+// Package coordinator provides a distributed training coordinator.
 package coordinator
 
 import (
@@ -40,6 +41,7 @@ type WorkerInfo struct {
 
 // CheckpointInfo holds information about a checkpoint.
 
+// CheckpointInfo holds information about a checkpoint.
 type CheckpointInfo struct {
 	ID        string
 	Epoch     int32
@@ -60,6 +62,7 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 		timeout:     timeout,
 	}
 	go c.reaper()
+
 	return c
 }
 
@@ -70,6 +73,7 @@ func (c *Coordinator) Start(address string) error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 	c.start(lis)
+
 	return nil
 }
 
@@ -80,7 +84,7 @@ func (c *Coordinator) start(lis net.Listener) {
 	pb.RegisterCoordinatorServer(c.server, c)
 	c.logger.Printf("starting gRPC server on %s", lis.Addr().String())
 	go func() {
-		if err := c.server.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+		if err := c.server.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			c.logger.Printf("gRPC server failed: %v", err)
 		}
 	}()
@@ -91,6 +95,7 @@ func (c *Coordinator) Addr() net.Addr {
 	if c.lis == nil {
 		return nil
 	}
+
 	return c.lis.Addr()
 }
 
@@ -126,7 +131,7 @@ func (c *Coordinator) reaper() {
 }
 
 // RegisterWorker registers a new worker with the coordinator.
-func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
+func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -136,6 +141,7 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorker
 
 	if _, ok := c.workers[req.WorkerId]; ok {
 		c.logger.Printf("worker %s already registered", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s already registered", req.WorkerId)
 	}
 
@@ -153,30 +159,37 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, req *pb.RegisterWorker
 	c.logger.Printf("registered worker %s at address %s with rank %d", req.WorkerId, req.Address, rank)
 
 	peers := make([]string, 0, len(c.workers))
-	for r := 0; r < c.nextRank; r++ {
+	for r := range c.nextRank {
 		workerID, ok := c.ranks[r]
 		if !ok {
 			// This should not happen, but if it does, we should log it.
 			c.logger.Printf("rank %d not found in ranks map", r)
+
 			continue
 		}
 		worker, ok := c.workers[workerID]
 		if !ok {
 			// This should not happen, but if it does, we should log it.
 			c.logger.Printf("worker %s not found in workers map", workerID)
+
 			continue
 		}
 		peers = append(peers, worker.Address)
 	}
 
+	// Safe conversion check for rank
+	if rank > int(^uint32(0)>>1) {
+		return nil, fmt.Errorf("rank %d exceeds int32 maximum value", rank)
+	}
+
 	return &pb.RegisterWorkerResponse{
-		Rank:  int32(rank),
+		Rank:  int32(rank), // #nosec G115 - Range checked above
 		Peers: peers,
 	}, nil
 }
 
 // UnregisterWorker removes a worker from the coordinator.
-func (c *Coordinator) UnregisterWorker(ctx context.Context, req *pb.UnregisterWorkerRequest) (*pb.UnregisterWorkerResponse, error) {
+func (c *Coordinator) UnregisterWorker(_ context.Context, req *pb.UnregisterWorkerRequest) (*pb.UnregisterWorkerResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -187,6 +200,7 @@ func (c *Coordinator) UnregisterWorker(ctx context.Context, req *pb.UnregisterWo
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
 		c.logger.Printf("worker %s not found for unregistration", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
@@ -198,7 +212,7 @@ func (c *Coordinator) UnregisterWorker(ctx context.Context, req *pb.UnregisterWo
 }
 
 // Heartbeat is called by workers to signal that they are still alive.
-func (c *Coordinator) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -209,6 +223,7 @@ func (c *Coordinator) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
 		c.logger.Printf("worker %s not found for heartbeat", req.WorkerId)
+
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
@@ -218,7 +233,8 @@ func (c *Coordinator) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (
 	return &pb.HeartbeatResponse{Status: "OK"}, nil
 }
 
-func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpointRequest) (*pb.StartCheckpointResponse, error) {
+// StartCheckpoint initiates a new checkpoint process.
+func (c *Coordinator) StartCheckpoint(_ context.Context, req *pb.StartCheckpointRequest) (*pb.StartCheckpointResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -230,9 +246,13 @@ func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpoi
 		workers[id] = false
 	}
 
+	// Safe conversion check for epoch
+	if req.Epoch > int64(^uint32(0)>>1) {
+		return nil, fmt.Errorf("epoch %d exceeds int32 maximum value", req.Epoch)
+	}
 	c.checkpoints[checkpointID] = &CheckpointInfo{
 		ID:      checkpointID,
-		Epoch:   int32(req.Epoch),
+		Epoch:   int32(req.Epoch), // #nosec G115 - Range checked above
 		Path:    req.Path,
 		Workers: workers,
 	}
@@ -241,7 +261,7 @@ func (c *Coordinator) StartCheckpoint(ctx context.Context, req *pb.StartCheckpoi
 }
 
 // EndCheckpoint is called by workers to report the completion of a checkpoint.
-func (c *Coordinator) EndCheckpoint(ctx context.Context, req *pb.EndCheckpointRequest) (*pb.EndCheckpointResponse, error) {
+func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequest) (*pb.EndCheckpointResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -261,6 +281,7 @@ func (c *Coordinator) EndCheckpoint(ctx context.Context, req *pb.EndCheckpointRe
 	for _, status := range checkpoint.Workers {
 		if !status {
 			completed = false
+
 			break
 		}
 	}

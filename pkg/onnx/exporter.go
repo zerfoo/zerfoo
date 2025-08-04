@@ -1,4 +1,4 @@
-// onnx/exporter.go
+// Package onnx provides functionality to export Zerfoo models to ONNX format.
 package onnx
 
 import (
@@ -8,10 +8,10 @@ import (
 
 // Node represents a simplified ONNX Node.
 type Node struct {
-	Name     string
-	OpType   string
-	Inputs   []string
-	Outputs  []string
+	Name       string
+	OpType     string
+	Inputs     []string
+	Outputs    []string
 	Attributes map[string]interface{}
 }
 
@@ -24,10 +24,10 @@ type Initializer struct {
 
 // Model represents a simplified ONNX Model.
 type Model struct {
-	GraphName string
-	Inputs    []string
-	Outputs   []string
-	Nodes     []Node
+	GraphName    string
+	Inputs       []string
+	Outputs      []string
+	Nodes        []Node
 	Initializers []Initializer
 }
 
@@ -45,10 +45,10 @@ func NewExporter[T tensor.Numeric]() *Exporter[T] {
 // This is a highly simplified example, only handling a single core.Dense layer.
 // A full implementation would iterate through all nodes in a built graph,
 // map each Zerfoo Node to its corresponding ONNX OpType, and handle all parameters.
-func (e *Exporter[T]) ExportGraph(g *graph.Builder[T], outputNodeHandle interface{}) (*Model, error) {
+func (e *Exporter[T]) ExportGraph(_ *graph.Builder[T], _ interface{}) (*Model, error) {
 	model := &Model{
-		GraphName: "ZerfooModel",
-		Nodes:     []Node{},
+		GraphName:    "ZerfooModel",
+		Nodes:        []Node{},
 		Initializers: []Initializer{},
 	}
 
@@ -84,13 +84,13 @@ func (e *Exporter[T]) ExportGraph(g *graph.Builder[T], outputNodeHandle interfac
 
 	// ONNX Node for Dense (Gemm operator)
 	denseNode := Node{
-		Name:   "Dense_0",
-		OpType: "Gemm", // General Matrix Multiplication
-		Inputs: []string{"input_0", "Dense_0_Weight", "Dense_0_Bias"},
+		Name:    "Dense_0",
+		OpType:  "Gemm", // General Matrix Multiplication
+		Inputs:  []string{"input_0", "Dense_0_Weight", "Dense_0_Bias"},
 		Outputs: []string{"output_0"},
 		Attributes: map[string]interface{}{
-			"alpha": 1.0,
-			"beta":  1.0,
+			"alpha":  1.0,
+			"beta":   1.0,
 			"transB": 1,
 		},
 	}

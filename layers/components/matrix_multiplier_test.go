@@ -79,5 +79,6 @@ func equalIntSlices(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }

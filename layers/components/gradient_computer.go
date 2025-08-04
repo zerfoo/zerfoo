@@ -1,3 +1,4 @@
+// Package components provides reusable components for neural network layers.
 package components
 
 import (
@@ -18,7 +19,7 @@ func NewLinearGradientComputer[T tensor.Numeric](engine compute.Engine[T]) *Line
 }
 
 // ComputeWeightGradient computes the gradient with respect to weights.
-// Formula: weight_gradient = input^T * output_gradient
+// Formula: weight_gradient = input^T * output_gradient.
 func (g *LinearGradientComputer[T]) ComputeWeightGradient(ctx context.Context, input, outputGradient *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	// Transpose input: input^T
 	transposedInput, err := g.engine.Transpose(ctx, input, []int{1, 0})
@@ -36,7 +37,7 @@ func (g *LinearGradientComputer[T]) ComputeWeightGradient(ctx context.Context, i
 }
 
 // ComputeInputGradient computes the gradient with respect to input.
-// Formula: input_gradient = output_gradient * weights^T
+// Formula: input_gradient = output_gradient * weights^T.
 func (g *LinearGradientComputer[T]) ComputeInputGradient(ctx context.Context, weights, outputGradient *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	// Transpose weights: weights^T
 	transposedWeights, err := g.engine.Transpose(ctx, weights, []int{1, 0})

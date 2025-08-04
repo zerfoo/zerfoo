@@ -1,4 +1,4 @@
-// layers/normalization/layer_normalization.go
+// Package normalization provides various normalization layers for neural networks.
 package normalization
 
 import (
@@ -12,7 +12,7 @@ import (
 
 // LayerNormalization implements the Layer Normalization operation.
 type LayerNormalization[T tensor.Numeric] struct {
-	engine compute.Engine[T]
+	engine  compute.Engine[T]
 	epsilon T // Small constant to avoid division by zero
 
 	// Trainable parameters
@@ -20,9 +20,9 @@ type LayerNormalization[T tensor.Numeric] struct {
 	beta  *graph.Parameter[T] // Shift parameter
 
 	// Cached tensors for backward pass
-	inputShape []int
-	mean       *tensor.Tensor[T]
-	variance   *tensor.Tensor[T]
+	inputShape  []int
+	mean        *tensor.Tensor[T]
+	variance    *tensor.Tensor[T]
 	normedInput *tensor.Tensor[T] // (input - mean) / sqrt(variance + epsilon)
 }
 
@@ -75,6 +75,7 @@ func (ln *LayerNormalization[T]) OutputShape(inputShapes ...[]int) ([]int, error
 	if len(inputShapes[0]) == 0 || inputShapes[0][len(inputShapes[0])-1] != ln.gamma.Value.Shape()[0] {
 		return nil, fmt.Errorf("last dimension of input shape %v must match feature dimension %d", inputShapes[0], ln.gamma.Value.Shape()[0])
 	}
+
 	return inputShapes[0], nil
 }
 
@@ -174,14 +175,18 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
-	ln.gamma.AddGradient(dGamma) // Accumulate gradient
+	if err := ln.gamma.AddGradient(dGamma); err != nil {
+		return nil, err
+	}
 
 	// dL/dbeta = sum(dOut) along the normalization axis
 	dBeta, err := ln.engine.ReduceSum(ctx, dOut, len(ln.inputShape)-1, false, nil)
 	if err != nil {
 		return nil, err
 	}
-	ln.beta.AddGradient(dBeta) // Accumulate gradient
+	if err := ln.beta.AddGradient(dBeta); err != nil {
+		return nil, err
+	}
 
 	// Gradient for input (dL/dx)
 	// This derivation follows the standard backpropagation for Layer Normalization.

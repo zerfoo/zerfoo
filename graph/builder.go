@@ -1,8 +1,12 @@
+// Package graph provides a computational graph abstraction.
+// Package graph provides a computational graph abstraction.
 package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -27,6 +31,7 @@ func NewBuilder[T tensor.Numeric](engine compute.Engine[T]) *Builder[T] {
 func (b *Builder[T]) AddNode(node Node[T], inputs ...Node[T]) Node[T] {
 	b.nodes = append(b.nodes, node)
 	b.dependencies[node] = inputs
+
 	return node
 }
 
@@ -35,6 +40,7 @@ func (b *Builder[T]) Input(shape []int) Node[T] {
 	inputNode := &inputNode[T]{shape: shape}
 	b.nodes = append(b.nodes, inputNode)
 	b.inputs = append(b.inputs, inputNode)
+
 	return inputNode
 }
 
@@ -62,6 +68,7 @@ func (b *Builder[T]) Parameters() []*Parameter[T] {
 	for _, node := range b.nodes {
 		params = append(params, node.Parameters()...)
 	}
+
 	return params
 }
 
@@ -95,6 +102,7 @@ func (g *Graph[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], erro
 		}
 		memo[n] = output
 	}
+
 	return memo[g.output], nil
 }
 
@@ -117,13 +125,14 @@ func (g *Graph[T]) Backward(initialGradient *tensor.Tensor[T]) error {
 					// Accumulate gradients if multiple paths converge to the same node
 					addedGrad, err := g.engine.Add(context.Background(), existingGrad, inputGrads[j])
 					if err != nil {
-						return fmt.Errorf("error accumulating gradients: %v", err)
+						return fmt.Errorf("error accumulating gradients: %w", err)
 					}
 					grads[dep] = addedGrad
 				}
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -133,6 +142,7 @@ func (g *Graph[T]) Parameters() []*Parameter[T] {
 	for _, node := range g.nodes {
 		params = append(params, node.Parameters()...)
 	}
+
 	return params
 }
 
@@ -145,11 +155,14 @@ func (n *inputNode[T]) OutputShape() []int {
 	return n.shape
 }
 
-func (n *inputNode[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Forward(_ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, nil
 }
-func (n *inputNode[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) { return nil, nil }
-func (n *inputNode[T]) Parameters() []*Parameter[T]                                   { return nil }
+
+func (n *inputNode[T]) Backward(_ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	return nil, nil
+}
+func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
 
 func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[T]) ([]Node[T], error) {
 	var sorted []Node[T]
@@ -159,7 +172,7 @@ func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[
 	var visit func(node Node[T]) error
 	visit = func(node Node[T]) error {
 		if recursionStack[node] {
-			return fmt.Errorf("cycle detected in graph")
+			return errors.New("cycle detected in graph")
 		}
 		if visited[node] {
 			return nil
@@ -176,6 +189,7 @@ func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[
 
 		sorted = append(sorted, node)
 		delete(recursionStack, node)
+
 		return nil
 	}
 
@@ -184,5 +198,6 @@ func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[
 			return nil, err
 		}
 	}
+
 	return sorted, nil
 }

@@ -2,10 +2,11 @@ package compute
 
 import (
 	"context"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
 	"reflect"
 	"testing"
+
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
 )
 
 func TestCPUEngine_UnaryOp(t *testing.T) {
@@ -255,7 +256,7 @@ func TestCPUEngine_Errors(t *testing.T) {
 	d, _ := tensor.New[int]([]int{2, 2, 2}, nil)
 	_, err = engine.Transpose(ctx, d, []int{0, 2, 1})
 	if err == nil {
-		//t.Error("expected error for non-2D tensor in Transpose")
+		t.Error("expected error for non-2D tensor in Transpose")
 	}
 
 	// Sum

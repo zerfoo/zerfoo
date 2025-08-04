@@ -9,7 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// TestLinear_Creation tests basic Linear layer creation
+// TestLinear_Creation tests basic Linear layer creation.
 func TestLinear_Creation(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -26,7 +26,7 @@ func TestLinear_Creation(t *testing.T) {
 	testutils.AssertEqual(t, "test_linear_weights", params[0].Name, "expected parameter name to match")
 }
 
-// TestLinear_WithXavier tests Xavier initialization
+// TestLinear_WithXavier tests Xavier initialization.
 func TestLinear_WithXavier(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -46,7 +46,7 @@ func TestLinear_WithXavier(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
 }
 
-// TestLinear_WithHe tests He initialization
+// TestLinear_WithHe tests He initialization.
 func TestLinear_WithHe(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -62,7 +62,7 @@ func TestLinear_WithHe(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
 }
 
-// TestLinear_WithUniform tests uniform initialization
+// TestLinear_WithUniform tests uniform initialization.
 func TestLinear_WithUniform(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -78,7 +78,7 @@ func TestLinear_WithUniform(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
 }
 
-// TestLinear_ForwardPass tests the forward pass functionality
+// TestLinear_ForwardPass tests the forward pass functionality.
 func TestLinear_ForwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -98,7 +98,7 @@ func TestLinear_ForwardPass(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, output.Shape()), "expected output shape to match")
 }
 
-// TestLinear_BackwardPass tests the backward pass functionality
+// TestLinear_BackwardPass tests the backward pass functionality.
 func TestLinear_BackwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -137,7 +137,7 @@ func TestLinear_BackwardPass(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedWeightGradShape, weightGrad.Shape()), "expected weight gradient shape to match")
 }
 
-// TestLinear_CustomInitializer tests using a custom initializer
+// TestLinear_CustomInitializer tests using a custom initializer.
 func TestLinear_CustomInitializer(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -158,7 +158,7 @@ func TestLinear_CustomInitializer(t *testing.T) {
 	}
 }
 
-// TestLinear_SetName tests the SetName functionality
+// TestLinear_SetName tests the SetName functionality.
 func TestLinear_SetName(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -172,7 +172,7 @@ func TestLinear_SetName(t *testing.T) {
 	testutils.AssertEqual(t, "new_name_weights", params[0].Name, "expected parameter name to match")
 }
 
-// Helper test initializer
+// Helper test initializer.
 type testInitializer[T tensor.Numeric] struct {
 	value T
 }
@@ -182,5 +182,6 @@ func (ti *testInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error)
 	for i := range weights {
 		weights[i] = ti.value
 	}
+
 	return weights, nil
 }

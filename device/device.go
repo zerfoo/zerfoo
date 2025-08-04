@@ -20,7 +20,9 @@ type Device interface {
 type Type int
 
 const (
+	// CPU represents the Central Processing Unit device type.
 	CPU Type = iota
+	// CUDA represents the NVIDIA GPU device type.
 	CUDA
 )
 
@@ -47,6 +49,7 @@ func Get(id string) (Device, error) {
 	if !ok {
 		return nil, fmt.Errorf("device not found: %s", id)
 	}
+
 	return dev, nil
 }
 

@@ -1,3 +1,4 @@
+// Package device provides device abstraction and memory allocation interfaces.
 package device
 
 import "fmt"
@@ -40,7 +41,7 @@ func (a *cpuAllocator) Allocate(size int) (any, error) {
 
 // Free is a no-op for the CPU allocator because the Go garbage collector
 // automatically manages memory for slices.
-func (a *cpuAllocator) Free(ptr any) error {
+func (a *cpuAllocator) Free(_ any) error {
 	// No-op
 	return nil
 }

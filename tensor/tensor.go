@@ -1,6 +1,7 @@
 package tensor
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/float16"
@@ -31,11 +32,12 @@ type Tensor[T Numeric] struct {
 func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 	if len(shape) == 0 {
 		if len(data) > 1 {
-			return nil, fmt.Errorf("cannot create 0-dimensional tensor with more than one data element")
+			return nil, errors.New("cannot create 0-dimensional tensor with more than one data element")
 		}
 		if len(data) == 0 {
 			data = make([]T, 1) // For a scalar, data should have one element
 		}
+
 		return &Tensor[T]{
 			shape:   shape,
 			strides: []int{}, // Strides for 0-dim tensor is empty
@@ -54,7 +56,7 @@ func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 
 	// If size is 0, and data is provided, data must also be empty.
 	if size == 0 && len(data) > 0 {
-		return nil, fmt.Errorf("cannot create tensor with size 0 but non-empty data")
+		return nil, errors.New("cannot create tensor with size 0 but non-empty data")
 	}
 
 	// If data is nil and size is 0, allocate an empty slice.
@@ -90,6 +92,7 @@ func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 func (t *Tensor[T]) Shape() []int {
 	shapeCopy := make([]int, len(t.shape))
 	copy(shapeCopy, t.shape)
+
 	return shapeCopy
 }
 
@@ -102,6 +105,7 @@ func (t *Tensor[T]) SetShape(shape []int) {
 func (t *Tensor[T]) Strides() []int {
 	stridesCopy := make([]int, len(t.strides))
 	copy(stridesCopy, t.strides)
+
 	return stridesCopy
 }
 
@@ -117,6 +121,7 @@ func (t *Tensor[T]) Data() []T {
 			// For a 0-dimensional tensor (scalar) view, return its single element.
 			// The At method for a 0-dimensional tensor with no indices will return the scalar value.
 			val, _ := t.At()
+
 			return []T{val}
 		}
 
@@ -135,16 +140,19 @@ func (t *Tensor[T]) Data() []T {
 				val, _ := t.At(indices...)
 				data[i] = val
 				i++
+
 				return
 			}
-			for j := 0; j < t.shape[dim]; j++ {
+			for j := range t.shape[dim] {
 				indices[dim] = j
 				iter(dim + 1)
 			}
 		}
 		iter(0)
+
 		return data
 	}
+
 	return t.data
 }
 
@@ -153,10 +161,12 @@ func (t *Tensor[T]) SetData(data []T) {
 	t.data = data
 }
 
+// Copy creates a deep copy of the tensor.
 func (t *Tensor[T]) Copy() *Tensor[T] {
 	newData := make([]T, t.Size())
 	copy(newData, t.Data())
 	newTensor, _ := New(t.shape, newData)
+
 	return newTensor
 }
 
@@ -169,6 +179,7 @@ func (t *Tensor[T]) Size() int {
 	for _, dim := range t.shape {
 		size *= dim
 	}
+
 	return size
 }
 
@@ -191,6 +202,7 @@ func (t *Tensor[T]) Each(f func(val T)) {
 		if t.Size() == 1 {
 			f(t.data[0])
 		}
+
 		return
 	}
 
@@ -207,9 +219,10 @@ func (t *Tensor[T]) eachRecursive(indices []int, dim int, f func(val T)) {
 	if dim == t.Dims() {
 		val, _ := t.At(indices...)
 		f(val)
+
 		return
 	}
-	for i := 0; i < t.shape[dim]; i++ {
+	for i := range t.shape[dim] {
 		indices[dim] = i
 		t.eachRecursive(indices, dim+1, f)
 	}
@@ -225,5 +238,6 @@ func (t *Tensor[T]) ShapeEquals(other *Tensor[T]) bool {
 			return false
 		}
 	}
+
 	return true
 }

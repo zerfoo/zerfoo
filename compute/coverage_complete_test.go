@@ -2,13 +2,14 @@ package compute
 
 import (
 	"context"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
 	"reflect"
 	"testing"
+
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// TestCoverageComplete tests specific uncovered code paths to achieve 100% coverage
+// TestCoverageComplete tests specific uncovered code paths to achieve 100% coverage.
 func TestCoverageComplete(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -198,7 +199,7 @@ func TestCoverageComplete(t *testing.T) {
 	})
 }
 
-// TestSumComplexCases tests more complex Sum scenarios to ensure full coverage
+// TestSumComplexCases tests more complex Sum scenarios to ensure full coverage.
 func TestSumComplexCases(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -259,7 +260,7 @@ func TestSumComplexCases(t *testing.T) {
 	})
 }
 
-// TestFinalCoverageEdgeCases tests the remaining uncovered edge cases
+// TestFinalCoverageEdgeCases tests the remaining uncovered edge cases.
 func TestFinalCoverageEdgeCases(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()

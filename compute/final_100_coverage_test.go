@@ -2,22 +2,24 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"testing"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
-// ReadOnlyTensor creates a tensor that fails on Set operations by being read-only
+// ReadOnlyTensor creates a tensor that fails on Set operations by being read-only.
 type ReadOnlyTensor[T tensor.Numeric] struct {
 	*tensor.Tensor[T]
 }
 
-func (r *ReadOnlyTensor[T]) Set(value T, indices ...int) error {
-	return fmt.Errorf("tensor is read-only")
+func (r *ReadOnlyTensor[T]) Set(_ T, indices ...int) error { //nolint:revive
+	return errors.New("tensor is read-only")
 }
 
-// Test100PercentCoverage achieves 100% coverage by testing the exact uncovered error paths
+// Test100PercentCoverage achieves 100% coverage by testing the exact uncovered error paths.
 func Test100PercentCoverage(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -32,7 +34,7 @@ func Test100PercentCoverage(t *testing.T) {
 		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
 
 		// Call a modified MatMul that uses our read-only tensor
-		err := matMulWithReadOnlyResult(engine, ctx, a, b, readOnlyResult)
+		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnlyResult)
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
@@ -50,7 +52,7 @@ func Test100PercentCoverage(t *testing.T) {
 		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
 
 		// Call a modified Transpose that uses our read-only tensor
-		err := transposeWithReadOnlyResult(engine, ctx, a, readOnlyResult)
+		err := transposeWithReadOnlyResult(ctx, engine, a, readOnlyResult)
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
@@ -64,7 +66,7 @@ func Test100PercentCoverage(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
 
 		// Call a modified Sum that uses a failing Zero operation
-		err := sumWithFailingZeroOperation(engine, ctx, a)
+		err := sumWithFailingZeroOperation(ctx, engine, a)
 		if err == nil {
 			t.Error("expected error from Zero operation")
 		}
@@ -74,23 +76,23 @@ func Test100PercentCoverage(t *testing.T) {
 	})
 }
 
-// matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path
-func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+// matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path.
+func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil || b == nil {
-		return fmt.Errorf("input tensors cannot be nil")
+		return errors.New("input tensors cannot be nil")
 	}
 
 	// Exact copy of the original MatMul logic from cpu_engine.go
 	aShape := a.Shape()
 	bShape := b.Shape()
 	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
-		return fmt.Errorf("invalid shapes for matrix multiplication")
+		return errors.New("invalid shapes for matrix multiplication")
 	}
 
-	for i := 0; i < aShape[0]; i++ {
-		for j := 0; j < bShape[1]; j++ {
+	for i := range aShape[0] {
+		for j := range bShape[1] {
 			sum := e.ops.FromFloat32(0)
-			for k := 0; k < aShape[1]; k++ {
+			for k := range aShape[1] {
 				valA, _ := a.At(i, k)
 				valB, _ := b.At(k, j)
 				sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
@@ -101,23 +103,24 @@ func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *
 			}
 		}
 	}
+
 	return nil
 }
 
-// transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path
-func transposeWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+// transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path.
+func transposeWithReadOnlyResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil {
-		return fmt.Errorf("input tensor cannot be nil")
+		return errors.New("input tensor cannot be nil")
 	}
 
 	shape := a.Shape()
 	if len(shape) != 2 {
-		return fmt.Errorf("transpose is only supported for 2D tensors")
+		return errors.New("transpose is only supported for 2D tensors")
 	}
 
 	// Exact copy of the original Transpose logic from cpu_engine.go
-	for i := 0; i < shape[0]; i++ {
-		for j := 0; j < shape[1]; j++ {
+	for i := range shape[0] {
+		for j := range shape[1] {
 			val, _ := a.At(i, j)
 			// This is the exact line 192-194 from cpu_engine.go that we want to cover
 			if err := result.Set(val, j, i); err != nil {
@@ -125,22 +128,23 @@ func transposeWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a *
 			}
 		}
 	}
+
 	return nil
 }
 
-// FailingZero is a mock engine that fails on Zero operations
+// FailingZero is a mock engine that fails on Zero operations.
 type FailingZero[T tensor.Numeric] struct {
 	*CPUEngine[T]
 }
 
-func (f *FailingZero[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
-	return fmt.Errorf("zero operation failed")
+func (f *FailingZero[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
+	return errors.New("zero operation failed")
 }
 
-// sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path
-func sumWithFailingZeroOperation(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32]) error {
+// sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path.
+func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32]) error {
 	if a == nil {
-		return fmt.Errorf("input tensor cannot be nil")
+		return errors.New("input tensor cannot be nil")
 	}
 
 	// Test the axis-based sum path that includes the Zero operation
@@ -190,7 +194,7 @@ func sumWithFailingZeroOperation(e *CPUEngine[float32], ctx context.Context, a *
 	return nil
 }
 
-// TestMinimalErrorCoverage provides the absolute minimal tests to achieve 100% coverage
+// TestMinimalErrorCoverage provides the absolute minimal tests to achieve 100% coverage.
 func TestMinimalErrorCoverage(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -202,7 +206,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
 		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
 
-		err := matMulWithReadOnlyResult(engine, ctx, a, b, readOnly)
+		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnly)
 		if err == nil {
 			t.Error("expected error")
 		}
@@ -214,7 +218,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
 		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
 
-		err := transposeWithReadOnlyResult(engine, ctx, a, readOnly)
+		err := transposeWithReadOnlyResult(ctx, engine, a, readOnly)
 		if err == nil {
 			t.Error("expected error")
 		}
@@ -224,7 +228,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 	t.Run("Minimal_Sum_Error", func(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-		err := sumWithFailingZeroOperation(engine, ctx, a)
+		err := sumWithFailingZeroOperation(ctx, engine, a)
 		if err == nil {
 			t.Error("expected error")
 		}

@@ -1,3 +1,6 @@
+// Package numeric provides precision types, arithmetic operations, and generic constraints
+// for the Zerfoo ML framework. It serves as the foundation layer supporting float8,
+// float16, float32, and float64 numeric types with IEEE 754 compliance.
 package numeric
 
 // Arithmetic defines a generic interface for all mathematical operations
@@ -24,7 +27,6 @@ type Arithmetic[T any] interface {
 	FromFloat32(f float32) T
 	FromFloat64(f float64) T
 	One() T
-	
 
 	// IsZero checks if a value is zero.
 	IsZero(v T) bool

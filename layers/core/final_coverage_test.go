@@ -10,7 +10,7 @@ import (
 )
 
 // TestDense_NewBiasSpecificError attempts to trigger the specific error path
-// where NewLinear succeeds but NewBias fails in NewDense
+// where NewLinear succeeds but NewBias fails in NewDense.
 func TestDense_NewBiasSpecificError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -53,7 +53,7 @@ func TestDense_NewBiasSpecificError(t *testing.T) {
 }
 
 // TestDense_WithCustomFactories tests NewDense indirectly by testing the underlying
-// components with custom factories that might fail in different ways
+// components with custom factories that might fail in different ways.
 func TestDense_WithCustomFactories(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -86,7 +86,7 @@ func TestDense_WithCustomFactories(t *testing.T) {
 	testutils.AssertTrue(t, bias2 != nil, "expected non-nil size-1 bias")
 }
 
-// TestDense_ErrorHandling tests comprehensive error handling scenarios
+// TestDense_ErrorHandling tests comprehensive error handling scenarios.
 func TestDense_ErrorHandling(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -124,7 +124,7 @@ func TestDense_ErrorHandling(t *testing.T) {
 	}
 }
 
-// Helper function to test basic dense layer functionality
+// Helper function to test basic dense layer functionality.
 func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, outputSize int) {
 	// Create input tensor
 	inputData := make([]float32, inputSize)

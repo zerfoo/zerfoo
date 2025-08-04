@@ -24,6 +24,7 @@ func ElementsMatch(a, b []string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -37,6 +38,7 @@ func IntSliceEqual(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -129,62 +131,77 @@ type MockEngine[T tensor.Numeric] struct {
 	Err error
 }
 
-func (e *MockEngine[T]) UnaryOp(ctx context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// UnaryOp performs a unary operation on a tensor.
+func (e *MockEngine[T]) UnaryOp(_ context.Context, _ *tensor.Tensor[T], _ func(T) T, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Add performs element-wise addition of two tensors.
+func (e *MockEngine[T]) Add(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Sub performs element-wise subtraction of two tensors.
+func (e *MockEngine[T]) Sub(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Mul performs element-wise multiplication of two tensors.
+func (e *MockEngine[T]) Mul(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Div(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Div performs element-wise division of two tensors.
+func (e *MockEngine[T]) Div(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) MatMul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// MatMul performs matrix multiplication of two tensors.
+func (e *MockEngine[T]) MatMul(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Transpose(ctx context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Transpose transposes a tensor along the specified axes.
+func (e *MockEngine[T]) Transpose(_ context.Context, _ *tensor.Tensor[T], _ []int, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Sum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Sum computes the sum of tensor elements along the specified axis.
+func (e *MockEngine[T]) Sum(_ context.Context, _ *tensor.Tensor[T], _ int, _ bool, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Exp(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Exp computes the exponential of tensor elements.
+func (e *MockEngine[T]) Exp(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Log(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Log computes the natural logarithm of tensor elements.
+func (e *MockEngine[T]) Log(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Pow(ctx context.Context, base, exponent *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// Pow computes the power of base tensor raised to exponent tensor.
+func (e *MockEngine[T]) Pow(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+// Zero sets all elements of the tensor to zero.
+func (e *MockEngine[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
 	return e.Err
 }
 
-func (e *MockEngine[T]) Copy(ctx context.Context, dst, src *tensor.Tensor[T]) error {
+// Copy copies data from source tensor to destination tensor.
+func (e *MockEngine[T]) Copy(_ context.Context, _, _ *tensor.Tensor[T]) error {
 	return e.Err
 }
 
-func (e *MockEngine[T]) WithName(name string) compute.Engine[T] {
+// WithName returns a new engine with the specified name.
+func (e *MockEngine[T]) WithName(_ string) compute.Engine[T] {
 	return e
 }
 
+// Name returns the name of the engine.
 func (e *MockEngine[T]) Name() string {
 	return "mock"
 }
@@ -193,47 +210,59 @@ func (e *MockEngine[T]) String() string {
 	return e.Name()
 }
 
+// Close closes the engine and releases resources.
 func (e *MockEngine[T]) Close() error {
 	return e.Err
 }
 
+// Wait waits for all pending operations to complete.
 func (e *MockEngine[T]) Wait() error {
 	return e.Err
 }
 
+// Device returns the device associated with the engine.
 func (e *MockEngine[T]) Device() device.Device {
 	return nil
 }
 
+// Allocator returns the memory allocator for the engine.
 func (e *MockEngine[T]) Allocator() device.Allocator {
 	return nil
 }
 
+// Context returns the context associated with the engine.
 func (e *MockEngine[T]) Context() context.Context {
 	return context.Background()
 }
 
-func (e *MockEngine[T]) WithContext(ctx context.Context) compute.Engine[T] {
+// WithContext returns a new engine with the specified context.
+func (e *MockEngine[T]) WithContext(_ context.Context) compute.Engine[T] {
 	return e
 }
 
-func (e *MockEngine[T]) WithAllocator(allocator device.Allocator) compute.Engine[T] {
+// WithAllocator returns a new engine with the specified allocator.
+func (e *MockEngine[T]) WithAllocator(_ device.Allocator) compute.Engine[T] {
 	return e
 }
 
-func (e *MockEngine[T]) WithDevice(d device.Device) compute.Engine[T] {
+// WithDevice returns a new engine with the specified device.
+func (e *MockEngine[T]) WithDevice(_ device.Device) compute.Engine[T] {
 	return e
 }
 
+// WithError returns a mock engine that will return the specified error.
 func (e *MockEngine[T]) WithError(err error) *MockEngine[T] {
 	e.Err = err
+
 	return e
 }
 
+// NewMockEngine creates a new mock engine for testing.
 func NewMockEngine[T tensor.Numeric]() *MockEngine[T] {
 	return &MockEngine[T]{}
 }
 
+// NewMockEngineWithError creates a new mock engine that returns the specified error.
 func NewMockEngineWithError[T tensor.Numeric](err error) *MockEngine[T] {
 	return &MockEngine[T]{Err: err}
 }

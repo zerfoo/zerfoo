@@ -2,12 +2,13 @@ package compute
 
 import (
 	"context"
+	"testing"
+
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"testing"
 )
 
-// TestFailableTensorSetError tests the previously unreachable MatMul error path
+// TestFailableTensorSetError tests the previously unreachable MatMul error path.
 func TestFailableTensorSetError(t *testing.T) {
 	engine := NewTestableEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -85,7 +86,7 @@ func TestFailableTensorSetError(t *testing.T) {
 	})
 }
 
-// TestFailableZeroerError tests the previously unreachable Sum Zero error path
+// TestFailableZeroerError tests the previously unreachable Sum Zero error path.
 func TestFailableZeroerError(t *testing.T) {
 	engine := NewTestableEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -126,7 +127,7 @@ func TestFailableZeroerError(t *testing.T) {
 	})
 }
 
-// TestTestableEngineErrorHandling tests various error conditions
+// TestTestableEngineErrorHandling tests various error conditions.
 func TestTestableEngineErrorHandling(t *testing.T) {
 	engine := NewTestableEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
@@ -201,7 +202,7 @@ func TestTestableEngineErrorHandling(t *testing.T) {
 	})
 }
 
-// TestFailableTensorNormalOperation tests that FailableTensor works normally when not configured to fail
+// TestFailableTensorNormalOperation tests that FailableTensor works normally when not configured to fail.
 func TestFailableTensorNormalOperation(t *testing.T) {
 	engine := NewTestableEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()

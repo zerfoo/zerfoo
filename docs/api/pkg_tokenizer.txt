@@ -1,0 +1,26 @@
+package tokenizer // import "github.com/zerfoo/zerfoo/pkg/tokenizer"
+
+tokenizer/tokenizer.go
+
+TYPES
+
+type Tokenizer struct {
+	// Has unexported fields.
+}
+    Tokenizer provides basic text tokenization functionality. This is a highly
+    simplified example (whitespace tokenization). A feature-complete tokenizer
+    would implement subword algorithms (BPE, WordPiece, SentencePiece).
+
+func NewTokenizer() *Tokenizer
+    NewTokenizer creates a new simple Tokenizer.
+
+func (t *Tokenizer) AddToken(token string) int
+    AddToken adds a token to the vocabulary if it doesn't exist.
+
+func (t *Tokenizer) Decode(tokenIDs []int) string
+    Decode converts a slice of token IDs back into a text string.
+
+func (t *Tokenizer) Encode(text string) []int
+    Encode converts a text string into a slice of token IDs. This uses simple
+    whitespace tokenization.
+

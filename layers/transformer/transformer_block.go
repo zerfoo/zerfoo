@@ -1,4 +1,4 @@
-// layers/transformer/transformer_block.go
+// Package transformer provides transformer-related neural network layers.
 package transformer
 
 import (
@@ -15,30 +15,30 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// TransformerBlock implements a single Transformer encoder block.
-type TransformerBlock[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	ops    numeric.Arithmetic[T]
-	modelDim int // d_model
-	numQueryHeads int
+// Block implements a single Transformer encoder block.
+type Block[T tensor.Numeric] struct {
+	engine           compute.Engine[T]
+	ops              numeric.Arithmetic[T]
+	modelDim         int // d_model
+	numQueryHeads    int
 	numKeyValueHeads int
-	ffnDim   int // Dimension of the feed-forward network
+	ffnDim           int // Dimension of the feed-forward network
 
 	// Sub-layers
-	layerNorm1 *normalization.LayerNormalization[T]
-	gqa        *attention.GroupedQueryAttention[T]
-	layerNorm2 *normalization.LayerNormalization[T]
-	ffnGate    *core.Dense[T] // For SwiGLU
-	ffnUp      *core.Dense[T] // For SwiGLU
+	layerNorm1    *normalization.LayerNormalization[T]
+	gqa           *attention.GroupedQueryAttention[T]
+	layerNorm2    *normalization.LayerNormalization[T]
+	ffnGate       *core.Dense[T] // For SwiGLU
+	ffnUp         *core.Dense[T] // For SwiGLU
 	ffnActivation *activations.SwiGLU[T]
-	ffnDown    *core.Dense[T]
+	ffnDown       *core.Dense[T]
 
 	// Cached tensors for backward pass
-	inputForLN1 *tensor.Tensor[T]
+	inputForLN1   *tensor.Tensor[T]
 	outputFromGQA *tensor.Tensor[T]
-	inputForLN2 *tensor.Tensor[T]
+	inputForLN2   *tensor.Tensor[T]
 	ffnGateOutput *tensor.Tensor[T]
-	ffnUpOutput *tensor.Tensor[T]
+	ffnUpOutput   *tensor.Tensor[T]
 	outputFromFFN *tensor.Tensor[T]
 }
 
@@ -48,7 +48,7 @@ type TransformerBlock[T tensor.Numeric] struct {
 // numKeyValueHeads: The number of key/value heads.
 // ffnDim: The inner dimension of the feed-forward network.
 // epsilon: Epsilon for Layer Normalization.
-func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, numQueryHeads, numKeyValueHeads, ffnDim int, epsilon T) (*TransformerBlock[T], error) {
+func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, numQueryHeads, numKeyValueHeads, ffnDim int, epsilon T) (*Block[T], error) {
 	// Layer Normalization 1
 	ln1, err := normalization.NewLayerNormalization[T](engine, modelDim, epsilon)
 	if err != nil {
@@ -83,7 +83,7 @@ func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric
 		return nil, fmt.Errorf("failed to create FFN Down Dense: %w", err)
 	}
 
-	return &TransformerBlock[T]{
+	return &Block[T]{
 		engine:           engine,
 		modelDim:         modelDim,
 		numQueryHeads:    numQueryHeads,
@@ -100,19 +100,20 @@ func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric
 }
 
 // OutputShape returns the output shape, which is the same as the input shape.
-func (tb *TransformerBlock[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
+func (tb *Block[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
 	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("TransformerBlock: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
+		return nil, fmt.Errorf("Block: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
 	}
 	inputShape := inputShapes[0]
 	if len(inputShape) != 3 || inputShape[2] != tb.modelDim {
 		return nil, fmt.Errorf("expected 3D input tensor (batch, seq_len, model_dim) with model_dim %d, got %v", tb.modelDim, inputShape)
 	}
+
 	return inputShape, nil
 }
 
 // Parameters returns all trainable parameters from its sub-layers.
-func (tb *TransformerBlock[T]) Parameters() []graph.Parameter[T] {
+func (tb *Block[T]) Parameters() []graph.Parameter[T] {
 	var params []graph.Parameter[T]
 	params = append(params, tb.layerNorm1.Parameters()...)
 	params = append(params, tb.gqa.Parameters()...)
@@ -126,15 +127,16 @@ func (tb *TransformerBlock[T]) Parameters() []graph.Parameter[T] {
 	for _, p := range tb.ffnDown.Parameters() {
 		params = append(params, *p)
 	}
+
 	return params
 }
 
 // Forward computes the Transformer Block's forward pass.
-func (tb *TransformerBlock[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (tb *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("TransformerBlock: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
-	input := inputs[0] // (batch_size, seq_len, model_dim)
+	input := inputs[0]     // (batch_size, seq_len, model_dim)
 	tb.inputForLN1 = input // Cache for backward
 
 	// 1. Layer Normalization 1
@@ -206,7 +208,7 @@ func (tb *TransformerBlock[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 }
 
 // Backward computes the gradients for the Transformer Block.
-func (tb *TransformerBlock[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (tb *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("TransformerBlock: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}

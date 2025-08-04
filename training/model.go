@@ -1,3 +1,4 @@
+// Package training provides core components for neural network training.
 package training
 
 import (

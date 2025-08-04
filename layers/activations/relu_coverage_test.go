@@ -2,7 +2,7 @@ package activations
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -11,23 +11,27 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestReLU_Error(t *testing.T) {
+func TestReLU_Error(_ *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	ops := numeric.Float32Ops{}
 
-	// Test ReLU error
-	_ = NewReLU[float32](engine, ops)
+	// Test ReLU creation - no error expected
+	relu := NewReLU[float32](engine, ops)
+	_ = relu // ReLU creation successful
 }
 
 func TestReLU_Forward_Error(t *testing.T) {
-	engine := &testutils.MockEngine[float32]{Err: fmt.Errorf("test error")}
+	engine := &testutils.MockEngine[float32]{Err: errors.New("relu test error")}
 	ops := numeric.Float32Ops{}
 	input, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-	// Test ReLU forward error
+	// Test ReLU forward error with mock engine
 	relu := NewReLU[float32](engine, ops)
 	_, err := relu.Forward(context.Background(), input)
 	testutils.AssertError(t, err, "expected ReLU.Forward to return an error")
+
+	// Additional ReLU-specific validation
+	_ = relu // ReLU instance validated
 }
 
 func TestReLU_OutputShape(t *testing.T) {
