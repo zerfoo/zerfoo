@@ -1,4 +1,4 @@
-// training/optimizer/adamw.go
+// Package optimizer provides various optimization algorithms for neural networks.
 package optimizer
 
 import (
