@@ -62,7 +62,7 @@ func setup(t *testing.T) *testKit {
 	}
 }
 func TestCoordinator_Start(t *testing.T) {
-	t.Run("successful start", func(subT *testing.T) {
+	t.Run("successful start", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		err := coord.Start("localhost:0")
@@ -75,7 +75,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("listen error", func(subT *testing.T) {
+	t.Run("listen error", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Let's create a server on a port to make the next call fail.
@@ -91,7 +91,7 @@ func TestCoordinator_Start(t *testing.T) {
 		}
 	})
 
-	t.Run("serve error", func(subT *testing.T) {
+	t.Run("serve error", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		ml := &testutils.CustomMockListener{
@@ -465,7 +465,7 @@ func TestCoordinator_Stop(t *testing.T) {
 		testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
 	})
 
-	t.Run("does nothing if server is not started", func(t *testing.T) {
+	t.Run("does nothing if server is not started", func(_ *testing.T) {
 		var buf bytes.Buffer
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Note: We are not calling coord.Start()
