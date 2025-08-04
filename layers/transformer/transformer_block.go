@@ -16,7 +16,7 @@ import (
 )
 
 // TransformerBlock implements a single Transformer encoder block.
-type Block[T tensor.Numeric] struct { // Block implements a single Transformer encoder block.
+type TransformerBlock[T tensor.Numeric] struct { // TransformerBlock implements a single Transformer encoder block.
 	engine           compute.Engine[T]
 	ops              numeric.Arithmetic[T]
 	modelDim         int // d_model
