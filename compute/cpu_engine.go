@@ -38,7 +38,7 @@ func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.Tensor[T]) (*
 }
 
 // UnaryOp applies a unary operation to a tensor.
-func (e *CPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -53,7 +53,7 @@ func (e *CPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.Tensor[T], op func
 }
 
 // binaryOp performs element-wise binary operations with broadcasting support.
-func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.Tensor[T], op func(T, T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.Tensor[T], op func(T, T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil || b == nil {
 		return nil, fmt.Errorf("input tensors cannot be nil")
 	}
