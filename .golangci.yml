@@ -58,6 +58,9 @@ linters-settings:
       - name: unused-parameter
       - name: unreachable-code
 
+  lll:
+    line-length: 160
+
   staticcheck:
     checks: ["all"]
 
@@ -95,7 +98,6 @@ issues:
         - errcheck
         - dupl
         - gosec
-        - lll
         - goconst
         - gocritic
 
