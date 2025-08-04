@@ -45,6 +45,7 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	shutdownCalls int
 }
 
+// Init records the arguments and increments the call count for the Init method.
 func (m *CustomMockStrategy[T]) Init(rank int, size int, coordinatorAddress string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,6 +65,7 @@ func (m *CustomMockStrategy[T]) Init(rank int, size int, coordinatorAddress stri
 	return m.initReturns[m.initCalls-1]
 }
 
+// OnInit sets up expectations for the Init method.
 func (m *CustomMockStrategy[T]) OnInit(rank, size int, coordinatorAddress string) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,6 +81,7 @@ func (m *CustomMockStrategy[T]) OnInit(rank, size int, coordinatorAddress string
 	return m
 }
 
+// ReturnInit specifies the return value for the Init method.
 func (m *CustomMockStrategy[T]) ReturnInit(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -86,11 +89,13 @@ func (m *CustomMockStrategy[T]) ReturnInit(err error) *CustomMockStrategy[T] {
 	return m
 }
 
+// OnceInit indicates that the Init method should be called once.
 func (m *CustomMockStrategy[T]) OnceInit() *CustomMockStrategy[T] {
 	// For simplicity, Once is handled by the order of Return calls.
 	return m
 }
 
+// Rank returns the rank of the current process.
 func (m *CustomMockStrategy[T]) Rank() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -101,10 +106,12 @@ func (m *CustomMockStrategy[T]) Rank() int {
 	return m.rankReturns[m.rankCalls-1]
 }
 
+// OnRank sets up expectations for the Rank method.
 func (m *CustomMockStrategy[T]) OnRank() *CustomMockStrategy[T] {
 	return m
 }
 
+// ReturnRank specifies the return value for the Rank method.
 func (m *CustomMockStrategy[T]) ReturnRank(rank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -112,10 +119,12 @@ func (m *CustomMockStrategy[T]) ReturnRank(rank int) *CustomMockStrategy[T] {
 	return m
 }
 
+// OnceRank indicates that the Rank method should be called once.
 func (m *CustomMockStrategy[T]) OnceRank() *CustomMockStrategy[T] {
 	return m
 }
 
+// Size returns the total number of processes.
 func (m *CustomMockStrategy[T]) Size() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -126,10 +135,12 @@ func (m *CustomMockStrategy[T]) Size() int {
 	return m.sizeReturns[m.sizeCalls-1]
 }
 
+// OnSize sets up expectations for the Size method.
 func (m *CustomMockStrategy[T]) OnSize() *CustomMockStrategy[T] {
 	return m
 }
 
+// ReturnSize specifies the return value for the Size method.
 func (m *CustomMockStrategy[T]) ReturnSize(size int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -137,10 +148,12 @@ func (m *CustomMockStrategy[T]) ReturnSize(size int) *CustomMockStrategy[T] {
 	return m
 }
 
+// OnceSize indicates that the Size method should be called once.
 func (m *CustomMockStrategy[T]) OnceSize() *CustomMockStrategy[T] {
 	return m
 }
 
+// AllReduceGradients performs an all-reduce operation on gradients.
 func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.Tensor[T]) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -152,6 +165,7 @@ func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.
 	return m.allReduceGradientsReturns[m.allReduceGradientsCalls-1]
 }
 
+// OnAllReduceGradients sets up expectations for the AllReduceGradients method.
 func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.Tensor[T]) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -159,6 +173,7 @@ func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tenso
 	return m
 }
 
+// ReturnAllReduceGradients specifies the return value for the AllReduceGradients method.
 func (m *CustomMockStrategy[T]) ReturnAllReduceGradients(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -166,10 +181,12 @@ func (m *CustomMockStrategy[T]) ReturnAllReduceGradients(err error) *CustomMockS
 	return m
 }
 
+// OnceAllReduceGradients indicates that the AllReduceGradients method should be called once.
 func (m *CustomMockStrategy[T]) OnceAllReduceGradients() *CustomMockStrategy[T] {
 	return m
 }
 
+// Barrier synchronizes all processes.
 func (m *CustomMockStrategy[T]) Barrier() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -180,10 +197,12 @@ func (m *CustomMockStrategy[T]) Barrier() error {
 	return m.barrierReturns[m.barrierCalls-1]
 }
 
+// OnBarrier sets up expectations for the Barrier method.
 func (m *CustomMockStrategy[T]) OnBarrier() *CustomMockStrategy[T] {
 	return m
 }
 
+// ReturnBarrier specifies the return value for the Barrier method.
 func (m *CustomMockStrategy[T]) ReturnBarrier(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -191,10 +210,12 @@ func (m *CustomMockStrategy[T]) ReturnBarrier(err error) *CustomMockStrategy[T] 
 	return m
 }
 
+// TwiceBarrier indicates that the Barrier method should be called twice.
 func (m *CustomMockStrategy[T]) TwiceBarrier() *CustomMockStrategy[T] {
 	return m // Handled by calling ReturnBarrier twice
 }
 
+// BroadcastTensor broadcasts a tensor from the root rank to all other processes.
 func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -212,6 +233,7 @@ func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank in
 	return m.broadcastTensorReturns[m.broadcastTensorCalls-1]
 }
 
+// OnBroadcastTensor sets up expectations for the BroadcastTensor method.
 func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.Tensor[T], rootRank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -225,6 +247,7 @@ func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.Tensor[T], rootRank 
 	return m
 }
 
+// ReturnBroadcastTensor specifies the return value for the BroadcastTensor method.
 func (m *CustomMockStrategy[T]) ReturnBroadcastTensor(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -232,16 +255,19 @@ func (m *CustomMockStrategy[T]) ReturnBroadcastTensor(err error) *CustomMockStra
 	return m
 }
 
+// OnceBroadcastTensor indicates that the BroadcastTensor method should be called once.
 func (m *CustomMockStrategy[T]) OnceBroadcastTensor() *CustomMockStrategy[T] {
 	return m
 }
 
+// Shutdown performs a graceful shutdown of the distributed training environment.
 func (m *CustomMockStrategy[T]) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.shutdownCalls++
 }
 
+// AssertExpectations asserts that all expected calls were made.
 func (m *CustomMockStrategy[T]) AssertExpectations(t *testing.T) {
 	t.Helper()
 	// For simplicity, this mock doesn't track arguments for AssertExpectations.
@@ -249,6 +275,7 @@ func (m *CustomMockStrategy[T]) AssertExpectations(t *testing.T) {
 	// More sophisticated argument matching would require additional logic.
 }
 
+// AssertNotCalled asserts that a specific method was not called.
 func (m *CustomMockStrategy[T]) AssertNotCalled(t *testing.T, methodName string) {
 	t.Helper()
 	m.mu.Lock()
@@ -299,6 +326,7 @@ type CustomMockListener struct {
 	addrCalls   int
 }
 
+// Accept waits for and returns the next connection to the listener.
 func (m *CustomMockListener) Accept() (net.Conn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -306,6 +334,7 @@ func (m *CustomMockListener) Accept() (net.Conn, error) {
 	return nil, m.AcceptErr
 }
 
+// Close closes the listener.
 func (m *CustomMockListener) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -313,6 +342,7 @@ func (m *CustomMockListener) Close() error {
 	return m.CloseErr
 }
 
+// Addr returns the listener's network address.
 func (m *CustomMockListener) Addr() net.Addr {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -320,6 +350,7 @@ func (m *CustomMockListener) Addr() net.Addr {
 	return m.AddrVal
 }
 
+// OnAccept sets up expectations for the Accept method.
 func (m *CustomMockListener) OnAccept(err error) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -327,6 +358,7 @@ func (m *CustomMockListener) OnAccept(err error) *CustomMockListener {
 	return m
 }
 
+// OnClose sets up expectations for the Close method.
 func (m *CustomMockListener) OnClose(err error) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -334,6 +366,7 @@ func (m *CustomMockListener) OnClose(err error) *CustomMockListener {
 	return m
 }
 
+// OnAddr sets up expectations for the Addr method.
 func (m *CustomMockListener) OnAddr(addr net.Addr) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -341,6 +374,7 @@ func (m *CustomMockListener) OnAddr(addr net.Addr) *CustomMockListener {
 	return m
 }
 
+// AssertExpectations asserts that all expected calls were made.
 func (m *CustomMockListener) AssertExpectations(t *testing.T) {
 	t.Helper()
 }
@@ -355,31 +389,34 @@ type CustomMockGrpcServer struct {
 	ServeErr             error
 }
 
-func (m *CustomMockGrpcServer) RegisterService(desc *grpc.ServiceDesc, impl interface{}) {
+func (m *CustomMockGrpcServer) RegisterService(_ *grpc.ServiceDesc, impl interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.registerServiceCalls++
 }
 
-func (m *CustomMockGrpcServer) Serve(lis net.Listener) error {
+func (m *CustomMockGrpcServer) Serve(_ net.Listener) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.serveCalls++
 	return m.ServeErr
 }
 
+// Stop stops the gRPC server.
 func (m *CustomMockGrpcServer) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stopCalls++
 }
 
+// GracefulStop stops the gRPC server gracefully.
 func (m *CustomMockGrpcServer) GracefulStop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gracefulStopCalls++
 }
 
+// OnServe sets up expectations for the Serve method.
 func (m *CustomMockGrpcServer) OnServe(err error) *CustomMockGrpcServer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -387,6 +424,7 @@ func (m *CustomMockGrpcServer) OnServe(err error) *CustomMockGrpcServer {
 	return m
 }
 
+// AssertExpectations asserts that all expected calls were made.
 func (m *CustomMockGrpcServer) AssertExpectations(t *testing.T) {
 	t.Helper()
 }
@@ -401,6 +439,7 @@ type CustomMockLogger struct {
 	}
 }
 
+// Printf records the arguments and increments the call count for the Printf method.
 func (m *CustomMockLogger) Printf(format string, v ...interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -414,10 +453,12 @@ func (m *CustomMockLogger) Printf(format string, v ...interface{}) {
 	})
 }
 
+// AssertExpectations asserts that all expected calls were made.
 func (m *CustomMockLogger) AssertExpectations(t *testing.T) {
 	t.Helper()
 }
 
+// OnPrintf sets up expectations for the Printf method.
 func (m *CustomMockLogger) OnPrintf() *CustomMockLogger {
 	return m
 }
@@ -432,7 +473,8 @@ type CustomMockDistributedServiceClient struct {
 	}
 }
 
-func (m *CustomMockDistributedServiceClient) AllReduce(ctx context.Context, opts ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
+// AllReduce performs an all-reduce operation.
+func (m *CustomMockDistributedServiceClient) AllReduce(_ context.Context, opts ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceCalls++
@@ -442,10 +484,12 @@ func (m *CustomMockDistributedServiceClient) AllReduce(ctx context.Context, opts
 	return m.allReduceReturns[m.allReduceCalls-1].client, m.allReduceReturns[m.allReduceCalls-1].err
 }
 
+// OnAllReduce sets up expectations for the AllReduce method.
 func (m *CustomMockDistributedServiceClient) OnAllReduce() *CustomMockDistributedServiceClient {
 	return m
 }
 
+// ReturnAllReduce specifies the return value for the AllReduce method.
 func (m *CustomMockDistributedServiceClient) ReturnAllReduce(client pb.DistributedService_AllReduceClient, err error) *CustomMockDistributedServiceClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -459,7 +503,8 @@ func (m *CustomMockDistributedServiceClient) ReturnAllReduce(client pb.Distribut
 	return m
 }
 
-func (m *CustomMockDistributedServiceClient) Barrier(ctx context.Context, in *pb.BarrierRequest, opts ...grpc.CallOption) (*pb.BarrierResponse, error) {
+// Barrier performs a barrier synchronization.
+func (m *CustomMockDistributedServiceClient) Barrier(_ context.Context, in *pb.BarrierRequest, opts ...grpc.CallOption) (*pb.BarrierResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// This mock doesn't track calls for Barrier, just returns a default.
@@ -473,11 +518,12 @@ func (m *CustomMockDistributedServiceClient) Broadcast(ctx context.Context, in *
 	return &pb.BroadcastResponse{}, nil
 }
 
+// AssertExpectations asserts that all expected calls were made.
 func (m *CustomMockDistributedServiceClient) AssertExpectations(t *testing.T) {
 	t.Helper()
 }
 
 // MockClientFactory is a mock implementation of the DistributedServiceClientFactory function.
-func MockClientFactory(cc *grpc.ClientConn) pb.DistributedServiceClient {
+func MockClientFactory(_ *grpc.ClientConn) pb.DistributedServiceClient {
 	return &CustomMockDistributedServiceClient{}
 }

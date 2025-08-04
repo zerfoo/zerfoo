@@ -129,59 +129,59 @@ type MockEngine[T tensor.Numeric] struct {
 	Err error
 }
 
-func (e *MockEngine[T]) UnaryOp(ctx context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) UnaryOp(_ context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Add(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Sub(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Mul(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Div(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Div(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) MatMul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Transpose(ctx context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Sum(ctx context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Sum(_ context.Context, a *tensor.Tensor[T], axis int, keepDims bool, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Exp(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Exp(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Log(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Log(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Pow(ctx context.Context, base, exponent *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Pow(_ context.Context, base, exponent *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, e.Err
 }
 
-func (e *MockEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (e *MockEngine[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
 	return e.Err
 }
 
-func (e *MockEngine[T]) Copy(ctx context.Context, dst, src *tensor.Tensor[T]) error {
+func (e *MockEngine[T]) Copy(_ context.Context, dst, src *tensor.Tensor[T]) error {
 	return e.Err
 }
 
-func (e *MockEngine[T]) WithName(name string) compute.Engine[T] {
+func (e *MockEngine[T]) WithName(_ string) compute.Engine[T] {
 	return e
 }
 
@@ -217,11 +217,11 @@ func (e *MockEngine[T]) WithContext(ctx context.Context) compute.Engine[T] {
 	return e
 }
 
-func (e *MockEngine[T]) WithAllocator(allocator device.Allocator) compute.Engine[T] {
+func (e *MockEngine[T]) WithAllocator(_ device.Allocator) compute.Engine[T] {
 	return e
 }
 
-func (e *MockEngine[T]) WithDevice(d device.Device) compute.Engine[T] {
+func (e *MockEngine[T]) WithDevice(_ device.Device) compute.Engine[T] {
 	return e
 }
 
