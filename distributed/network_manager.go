@@ -19,9 +19,10 @@ type networkManager struct {
 	clientFactory DistributedServiceClientFactory
 }
 
+// NewNetworkManager creates a new NetworkManager.
 func NewNetworkManager(dialer Dialer, clientFactory DistributedServiceClientFactory) NetworkManager {
 	if dialer == nil {
-		dialer = func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		dialer = func(_ context.Context, target string) (*grpc.ClientConn, error) {
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
 	}
@@ -86,6 +87,7 @@ type serverManager struct {
 	errCh      chan error
 }
 
+// NewServerManager creates a new ServerManager.
 func NewServerManager(grpcServer GrpcServer, listenerFactory ListenerFactory) ServerManager {
 	if listenerFactory == nil {
 		listenerFactory = net.Listen
