@@ -133,7 +133,7 @@ type FailingZero[T tensor.Numeric] struct {
 	*CPUEngine[T]
 }
 
-func (f *FailingZero[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
+func (f *FailingZero[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
 	return fmt.Errorf("zero operation failed")
 }
 
