@@ -601,7 +601,7 @@ func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.Tensor[T], scalar 
 }
 
 // Sqrt computes the element-wise square root of a tensor.
-func (e *CPUEngine[T]) Sqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Sqrt(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -616,7 +616,7 @@ func (e *CPUEngine[T]) Sqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*te
 }
 
 // Split splits a tensor into multiple tensors along a given axis.
-func (e *CPUEngine[T]) Split(ctx context.Context, a *tensor.Tensor[T], numSplits int, axis int) ([]*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.Tensor[T], numSplits int, axis int) ([]*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -651,7 +651,7 @@ func (e *CPUEngine[T]) Split(ctx context.Context, a *tensor.Tensor[T], numSplits
 }
 
 // Concat concatenates a list of tensors along a given axis.
-func (e *CPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if len(tensors) == 0 {
 		return nil, fmt.Errorf("no tensors provided for concatenation")
 	}
