@@ -1,4 +1,4 @@
-// tokenizer/tokenizer.go
+// Package tokenizer provides basic text tokenization functionality.
 package tokenizer
 
 import (
