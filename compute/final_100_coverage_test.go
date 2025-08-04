@@ -32,7 +32,7 @@ func Test100PercentCoverage(t *testing.T) {
 		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
 
 		// Call a modified MatMul that uses our read-only tensor
-		err := matMulWithReadOnlyResult(engine, ctx, a, b, readOnlyResult)
+		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnlyResult)
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
@@ -50,7 +50,7 @@ func Test100PercentCoverage(t *testing.T) {
 		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
 
 		// Call a modified Transpose that uses our read-only tensor
-		err := transposeWithReadOnlyResult(engine, ctx, a, readOnlyResult)
+		err := transposeWithReadOnlyResult(ctx, engine, a, readOnlyResult)
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
@@ -64,7 +64,7 @@ func Test100PercentCoverage(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
 
 		// Call a modified Sum that uses a failing Zero operation
-		err := sumWithFailingZeroOperation(engine, ctx, a)
+		err := sumWithFailingZeroOperation(ctx, engine, a)
 		if err == nil {
 			t.Error("expected error from Zero operation")
 		}
@@ -224,7 +224,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 	t.Run("Minimal_Sum_Error", func(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-		err := sumWithFailingZeroOperation(engine, ctx, a)
+		err := sumWithFailingZeroOperation(ctx, engine, a)
 		if err == nil {
 			t.Error("expected error")
 		}
