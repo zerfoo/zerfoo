@@ -705,7 +705,7 @@ func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.Tensor[T], ax
 }
 
 // OneHot creates a one-hot encoding of the input tensor.
-func (e *CPUEngine[T]) OneHot(ctx context.Context, input *tensor.Tensor[int], depth int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) OneHot(_ context.Context, input *tensor.Tensor[int], depth int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if input == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -742,7 +742,7 @@ func (e *CPUEngine[T]) OneHot(ctx context.Context, input *tensor.Tensor[int], de
 }
 
 // Reshape changes the shape of a tensor without changing its data.
-func (e *CPUEngine[T]) Reshape(ctx context.Context, a *tensor.Tensor[T], shape []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.Tensor[T], shape []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
@@ -776,7 +776,7 @@ func (e *CPUEngine[T]) Reshape(ctx context.Context, a *tensor.Tensor[T], shape [
 }
 
 // Repeat repeats the input tensor along a given axis a specified number of times.
-func (e *CPUEngine[T]) Repeat(ctx context.Context, a *tensor.Tensor[T], axis int, repetitions int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.Tensor[T], axis int, repetitions int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, fmt.Errorf("input tensor cannot be nil")
 	}
