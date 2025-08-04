@@ -13,6 +13,7 @@ type MSE[T tensor.Numeric] struct {
 	ops    numeric.Arithmetic[T]
 }
 
+// NewMSE creates a new MSE loss function.
 func NewMSE[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *MSE[T] {
 	return &MSE[T]{engine: engine, ops: ops}
 }
