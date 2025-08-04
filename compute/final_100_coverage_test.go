@@ -13,7 +13,7 @@ type ReadOnlyTensor[T tensor.Numeric] struct {
 	*tensor.Tensor[T]
 }
 
-func (r *ReadOnlyTensor[T]) Set(value T, indices ...int) error { //nolint:revive
+func (r *ReadOnlyTensor[T]) Set(_ T, indices ...int) error { //nolint:revive
 	return fmt.Errorf("tensor is read-only")
 }
 
