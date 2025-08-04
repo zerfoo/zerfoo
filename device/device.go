@@ -20,6 +20,7 @@ type Device interface {
 type Type int
 
 const (
+	// CPU represents the Central Processing Unit device type.
 	CPU Type = iota
 	CUDA
 )
