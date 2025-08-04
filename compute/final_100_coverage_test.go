@@ -75,7 +75,7 @@ func Test100PercentCoverage(t *testing.T) {
 }
 
 // matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path
-func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error { //nolint:context-as-argument
+func matMulWithReadOnlyResult(ctx context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil || b == nil {
 		return fmt.Errorf("input tensors cannot be nil")
 	}
@@ -105,7 +105,7 @@ func matMulWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a, b *
 }
 
 // transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path
-func transposeWithReadOnlyResult(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error { //nolint:context-as-argument
+func transposeWithReadOnlyResult(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
@@ -133,12 +133,12 @@ type FailingZero[T tensor.Numeric] struct {
 	*CPUEngine[T]
 }
 
-func (f *FailingZero[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (f *FailingZero[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
 	return fmt.Errorf("zero operation failed")
 }
 
 // sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path
-func sumWithFailingZeroOperation(e *CPUEngine[float32], ctx context.Context, a *tensor.Tensor[float32]) error { //nolint:context-as-argument
+func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32]) error {
 	if a == nil {
 		return fmt.Errorf("input tensor cannot be nil")
 	}
