@@ -1,4 +1,5 @@
 // Package graph provides a computational graph abstraction.
+// Package graph provides a computational graph abstraction.
 package graph
 
 import (
