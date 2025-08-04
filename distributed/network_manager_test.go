@@ -149,7 +149,7 @@ func TestNetworkManager_CloseConnections(t *testing.T) {
 	go func() { _ = s.Serve(lis) }()
 	defer s.Stop()
 
-	conn, err := grpc.DialContext(context.Background(), "bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+	conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	testutils.AssertNoError(t, err, "failed to dial: %v")
