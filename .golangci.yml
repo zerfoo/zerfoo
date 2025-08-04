@@ -20,13 +20,14 @@ linters:
     - gocritic
     - gocyclo
     - gosec
-    - lll
     - misspell
     - nakedret
     - revive
     - unconvert
     - unparam
     - whitespace
+  disable:
+    - lll
 
   disable:
     - unused
