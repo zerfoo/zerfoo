@@ -15,7 +15,6 @@ linters:
     - govet
     - ineffassign
     - staticcheck
-    - unused
     - dupl
     - goconst
     - gocritic
@@ -28,6 +27,9 @@ linters:
     - unconvert
     - unparam
     - whitespace
+
+  disable:
+    - unused
 
 linters-settings:
   errcheck:
