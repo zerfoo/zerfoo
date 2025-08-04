@@ -32,7 +32,7 @@ type InternalStrategy[T tensor.Numeric] interface {
 // Dialer is a function that creates a gRPC client connection.
 type Dialer func(ctx context.Context, target string) (*grpc.ClientConn, error)
 
-// DistributedServiceClientFactory is a function that creates a new DistributedServiceClient.
+// ServiceClientFactory is a function that creates a new DistributedServiceClient.
 type ServiceClientFactory func(cc *grpc.ClientConn) pb.DistributedServiceClient
 
 // NetworkManager is an interface for managing network connections between workers.
