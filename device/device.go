@@ -22,7 +22,8 @@ type Type int
 const (
 	// CPU represents the Central Processing Unit device type.
 	CPU Type = iota
-	CUDA // CUDA represents the NVIDIA GPU device type.
+	// CUDA represents the NVIDIA GPU device type.
+	CUDA
 )
 
 // --- Device Registry ---
