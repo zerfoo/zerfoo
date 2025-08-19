@@ -97,8 +97,8 @@ At its core, Zerfoo represents models as **directed acyclic graphs (DAGs)** of c
 type Node[T Numeric] interface {
     OutputShape() []int
     Parameters() []Parameter[T]
-    Forward(inputs ...Tensor[T]) Tensor[T]
-    Backward(dOut Tensor[T], inputs ...Tensor[T]) []Tensor[T]
+    Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+    Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
 }
 ```
 
