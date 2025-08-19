@@ -1,6 +1,8 @@
 package training
 
 import (
+	"context"
+
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
@@ -23,18 +25,30 @@ func NewTrainer[T tensor.Numeric](model Model[T], optimizer optimizer.Optimizer[
 }
 
 // Train performs a single training step.
-func (t *Trainer[T]) Train(inputs, targets *tensor.Tensor[T]) (T, error) {
+func (t *Trainer[T]) Train(ctx context.Context, inputs, targets *tensor.Tensor[T]) (T, error) {
 	// Forward pass
-	predictions := t.model.Forward(inputs)
+	predictions, err := t.model.Forward(ctx, inputs)
+	if err != nil {
+		return *new(T), err
+	}
 
 	// Calculate loss
-	lossValue, lossGrad := t.lossFn.Forward(predictions, targets)
+	lossValue, lossGrad, err := t.lossFn.Forward(ctx, predictions, targets)
+	if err != nil {
+		return *new(T), err
+	}
 
 	// Backward pass
-	t.model.Backward(lossGrad)
+	_, err = t.model.Backward(ctx, lossGrad)
+	if err != nil {
+		return *new(T), err
+	}
 
 	// Update parameters
-	t.optimizer.Step(t.model.Parameters())
+	err = t.optimizer.Step(ctx, t.model.Parameters())
+	if err != nil {
+		return *new(T), err
+	}
 
 	return lossValue, nil
 }

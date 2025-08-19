@@ -1,6 +1,7 @@
 package training
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/graph"
@@ -12,12 +13,12 @@ type mockModel[T tensor.Numeric] struct {
 	params []*graph.Parameter[T]
 }
 
-func (m *mockModel[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Tensor[T] {
-	return inputs[0]
+func (m *mockModel[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	return inputs[0], nil
 }
 
-func (m *mockModel[T]) Backward(grad *tensor.Tensor[T]) []*tensor.Tensor[T] {
-	return []*tensor.Tensor[T]{grad}
+func (m *mockModel[T]) Backward(ctx context.Context, grad *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	return []*tensor.Tensor[T]{grad}, nil
 }
 
 func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
@@ -26,15 +27,15 @@ func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
 
 type mockOptimizer[T tensor.Numeric] struct{}
 
-func (o *mockOptimizer[T]) Step(_ []*graph.Parameter[T])            {}
-func (o *mockOptimizer[T]) Clip(_ []*graph.Parameter[T], _ float32) {}
+func (o *mockOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) error            { return nil }
+func (o *mockOptimizer[T]) Clip(_ context.Context, _ []*graph.Parameter[T], _ float32) {}
 
 type mockLoss[T tensor.Numeric] struct{}
 
-func (l *mockLoss[T]) Forward(predictions, _ *tensor.Tensor[T]) (T, *tensor.Tensor[T]) {
+func (l *mockLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.Tensor[T]) (T, *tensor.Tensor[T], error) {
 	var lossValue T
 
-	return lossValue, predictions
+	return lossValue, predictions, nil
 }
 
 func TestTrainer(t *testing.T) {
@@ -46,7 +47,7 @@ func TestTrainer(t *testing.T) {
 	inputs, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-	lossValue, err := trainer.Train(inputs, targets)
+	lossValue, err := trainer.Train(context.Background(), inputs, targets)
 	testutils.AssertNoError(t, err, "expected no error, got %v")
 	testutils.AssertNotNil(t, lossValue, "expected lossValue to not be nil")
 }

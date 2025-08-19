@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -135,7 +136,7 @@ func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, out
 	testutils.AssertNoError(t, err, "expected no error creating input")
 
 	// Test forward pass
-	output, _ := dense.Forward(input)
+	output, _ := dense.Forward(context.Background(), input)
 	testutils.AssertTrue(t, output != nil, "expected non-nil output")
 
 	outputShape := output.Shape()
@@ -150,7 +151,7 @@ func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, out
 	outputGrad, err := tensor.New(outputShape, gradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
-	inputGrads, _ := dense.Backward(outputGrad)
+	inputGrads, _ := dense.Backward(context.Background(), outputGrad)
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertTrue(t, inputGrads[0] != nil, "expected non-nil input gradient")
 

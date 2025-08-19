@@ -83,12 +83,11 @@ func (l *Linear[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input * weights.
-func (l *Linear[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("Linear: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 	l.lastInput = inputs[0]
-	ctx := context.Background()
 
 	output, err := l.multiplier.Multiply(ctx, l.lastInput, l.weights.Value)
 	if err != nil {
@@ -101,9 +100,7 @@ func (l *Linear[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], err
 }
 
 // Backward computes the gradients using the gradient computer component.
-func (l *Linear[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	ctx := context.Background()
-
+func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Compute both gradients efficiently
 	weightsGrad, inputGrad, err := l.gradientComputer.ComputeBothGradients(
 		ctx, l.lastInput, l.weights.Value, outputGradient)

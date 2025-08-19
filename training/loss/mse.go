@@ -20,10 +20,15 @@ func NewMSE[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T
 }
 
 // Forward computes the loss value.
-func (m *MSE[T]) Forward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[T] {
-	ctx := context.Background()
-	diff, _ := m.engine.Sub(ctx, predictions, targets, nil)
-	squared, _ := m.engine.Mul(ctx, diff, diff, nil)
+func (m *MSE[T]) Forward(ctx context.Context, predictions, targets *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	diff, err := m.engine.Sub(ctx, predictions, targets, nil)
+	if err != nil {
+		return nil, err
+	}
+	squared, err := m.engine.Mul(ctx, diff, diff, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	data := squared.Data()
 	var sum T
@@ -33,15 +38,21 @@ func (m *MSE[T]) Forward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[
 
 	// For simplicity, we divide by N.
 	n := m.ops.FromFloat32(float32(len(data)))
-	loss, _ := tensor.New[T]([]int{1}, []T{m.ops.Div(sum, n)})
+	loss, err := tensor.New[T]([]int{1}, []T{m.ops.Div(sum, n)})
+	if err != nil {
+		return nil, err
+	}
 
-	return loss
+	return loss, nil
 }
 
 // Backward computes the initial gradient of the loss.
-func (m *MSE[T]) Backward(predictions, targets *tensor.Tensor[T]) *tensor.Tensor[T] {
+func (m *MSE[T]) Backward(ctx context.Context, predictions, targets *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	// Gradient is 2 * (predictions - targets) / N. We'll ignore the scaling factor.
-	diff, _ := m.engine.Sub(context.Background(), predictions, targets, nil)
+	diff, err := m.engine.Sub(ctx, predictions, targets, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	return diff
+	return diff, nil
 }

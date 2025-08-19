@@ -136,15 +136,15 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	seqLen := input.Shape()[1]
 
 	// 1. Linear projections for Q, K, V
-	qProj, err := gqa.wq.Forward(input)
+	qProj, err := gqa.wq.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	kProj, err := gqa.wk.Forward(input)
+	kProj, err := gqa.wk.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	vProj, err := gqa.wv.Forward(input)
+	vProj, err := gqa.wv.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	}
 
 	// 6. Final linear projection
-	output, err := gqa.wo.Forward(attnOutputFinal)
+	output, err := gqa.wo.Forward(ctx, attnOutputFinal)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +376,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	seqLen := input.Shape()[1]
 
 	// 1. Backward through final linear projection (WO)
-	dAttnOutputFinal, err := gqa.wo.Backward(dOut)
+	dAttnOutputFinal, err := gqa.wo.Backward(ctx, dOut)
 	if err != nil {
 		return nil, err
 	}
@@ -453,15 +453,15 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	}
 
 	// 6. Backward through linear projections (WQ, WK, WV)
-	dInputQ, err := gqa.wq.Backward(dQProj)
+	dInputQ, err := gqa.wq.Backward(ctx, dQProj)
 	if err != nil {
 		return nil, err
 	}
-	dInputK, err := gqa.wk.Backward(dKProj)
+	dInputK, err := gqa.wk.Backward(ctx, dKProj)
 	if err != nil {
 		return nil, err
 	}
-	dInputV, err := gqa.wv.Backward(dVProj)
+	dInputV, err := gqa.wv.Backward(ctx, dVProj)
 	if err != nil {
 		return nil, err
 	}

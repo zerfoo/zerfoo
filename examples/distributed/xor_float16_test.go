@@ -87,32 +87,34 @@ dense1, err := core.NewDense[float32]("dense1", engine, ops, 2, 4)
 			target := targets[i]
 
 			// Forward pass
-			hiddenOutput, err := dense1.Forward(input)
+			hiddenOutput, err := dense1.Forward(context.Background(), input)
 			if err != nil { t.Fatalf("Dense1 forward pass failed: %v", err) }
 			activatedHiddenOutput, err := relu1.Forward(context.Background(), hiddenOutput)
 			if err != nil { t.Fatalf("ReLU1 forward pass failed: %v", err) }
 
-			output, err := dense2.Forward(activatedHiddenOutput)
+			output, err := dense2.Forward(context.Background(), activatedHiddenOutput)
 			if err != nil { t.Fatalf("Dense2 forward pass failed: %v", err) }
 			finalOutput, err := sigmoid1.Forward(context.Background(), output)
 			if err != nil { t.Fatalf("Sigmoid1 forward pass failed: %v", err) }
 
 			// Calculate loss
-			lossTensor := lossFn.Forward(finalOutput, target)
+			lossTensor, err := lossFn.Forward(context.Background(), finalOutput, target)
+			if err != nil { t.Fatalf("Loss forward pass failed: %v", err) }
 			l := lossTensor.Data()[0]
 			totalLoss = (numeric.Float32Ops{}).Add(totalLoss, l)
 
 			// Backward pass (compute gradients)
-			outputGrad := lossFn.Backward(finalOutput, target)
+			outputGrad, err := lossFn.Backward(context.Background(), finalOutput, target)
+			if err != nil { t.Fatalf("Loss backward pass failed: %v", err) }
 			
 sigmoidGrads, err := sigmoid1.Backward(context.Background(), outputGrad)
 			if err != nil { t.Fatalf("Sigmoid1 backward pass failed: %v", err) }
-			dense2Grads, err := dense2.Backward(sigmoidGrads[0])
+			dense2Grads, err := dense2.Backward(context.Background(), sigmoidGrads[0])
 			if err != nil { t.Fatalf("Dense2 backward pass failed: %v", err) }
 
 			reluGrads, err := relu1.Backward(context.Background(), dense2Grads[0])
 			if err != nil { t.Fatalf("ReLU1 backward pass failed: %v", err) }
-			_, err = dense1.Backward(reluGrads[0])
+			_, err = dense1.Backward(context.Background(), reluGrads[0])
 			if err != nil { t.Fatalf("Dense1 backward pass failed: %v", err) }
 
 			// Apply gradients (simulate AllReduce and then update)
@@ -134,12 +136,12 @@ sigmoidGrads, err := sigmoid1.Backward(context.Background(), outputGrad)
 		input := inputs[i]
 		target := targets[i]
 
-		hiddenOutput, err := dense1.Forward(input)
+		hiddenOutput, err := dense1.Forward(context.Background(), input)
 		if err != nil { t.Fatalf("Dense1 forward pass failed during verification: %v", err) }
 		activatedHiddenOutput, err := relu1.Forward(context.Background(), hiddenOutput)
 		if err != nil { t.Fatalf("ReLU1 forward pass failed during verification: %v", err) }
 
-		output, err := dense2.Forward(activatedHiddenOutput)
+		output, err := dense2.Forward(context.Background(), activatedHiddenOutput)
 		if err != nil { t.Fatalf("Dense2 forward pass failed during verification: %v", err) }
 		finalOutput, err := sigmoid1.Forward(context.Background(), output)
 		if err != nil { t.Fatalf("Sigmoid1 forward pass failed during verification: %v", err) }

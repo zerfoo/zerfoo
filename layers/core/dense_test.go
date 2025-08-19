@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -23,13 +24,13 @@ func TestDense(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 
 	// Check forward pass
-	output, _ := layer.Forward(input)
+	output, _ := layer.Forward(context.Background(), input)
 	testutils.AssertNotNil(t, output, "expected output to not be nil")
 
 	// Check backward pass
 	gradOutput, err := tensor.New[float32]([]int{1, 5}, []float32{1, 1, 1, 1, 1})
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
-	gradInput, _ := layer.Backward(gradOutput)
+	gradInput, _ := layer.Backward(context.Background(), gradOutput)
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 
 	// Test the SetName method of the dense layer

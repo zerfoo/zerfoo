@@ -45,7 +45,7 @@ func (b *Builder[T]) Input(shape []int) Node[T] {
 }
 
 // Build constructs the final graph and returns forward and backward functions.
-func (b *Builder[T]) Build(outputNode Node[T]) (func(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error), func(initialGradient *tensor.Tensor[T]) error, error) {
+func (b *Builder[T]) Build(outputNode Node[T]) (func(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error), func(ctx context.Context, initialGradient *tensor.Tensor[T]) error, error) {
 	sortedNodes, err := topologicalSort[T](b.nodes, b.dependencies)
 	if err != nil {
 		return nil, nil, err
@@ -82,7 +82,7 @@ type Graph[T tensor.Numeric] struct {
 }
 
 // Forward executes the forward pass of the entire graph.
-func (g *Graph[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	memo := make(map[Node[T]]*tensor.Tensor[T])
 	for i, n := range g.inputs {
 		memo[n] = inputs[i]
@@ -96,7 +96,7 @@ func (g *Graph[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], erro
 		for i, dep := range g.dependencies[n] {
 			nodeInputs[i] = memo[dep]
 		}
-		output, err := n.Forward(nodeInputs...)
+		output, err := n.Forward(ctx, nodeInputs...)
 		if err != nil {
 			return nil, err
 		}
@@ -107,14 +107,14 @@ func (g *Graph[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], erro
 }
 
 // Backward executes the backward pass of the entire graph.
-func (g *Graph[T]) Backward(initialGradient *tensor.Tensor[T]) error {
+func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.Tensor[T]) error {
 	grads := make(map[Node[T]]*tensor.Tensor[T])
 	grads[g.output] = initialGradient
 
 	for i := len(g.nodes) - 1; i >= 0; i-- {
 		node := g.nodes[i]
 		if grad, ok := grads[node]; ok {
-			inputGrads, err := node.Backward(grad)
+			inputGrads, err := node.Backward(ctx, grad)
 			if err != nil {
 				return err
 			}
@@ -155,11 +155,11 @@ func (n *inputNode[T]) OutputShape() []int {
 	return n.shape
 }
 
-func (n *inputNode[T]) Forward(_ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Forward(ctx context.Context, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	return nil, nil
 }
 
-func (n *inputNode[T]) Backward(_ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	return nil, nil
 }
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }

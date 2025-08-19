@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -11,23 +12,23 @@ import (
 type mockNode struct {
 	name         string
 	outputShape  []int
-	forwardFunc  func(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error)
-	backwardFunc func(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error)
+	forwardFunc  func(ctx context.Context, inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error)
+	backwardFunc func(ctx context.Context, outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error)
 	params       []*Parameter[int]
 }
 
 func (m *mockNode) OutputShape() []int { return m.outputShape }
-func (m *mockNode) Forward(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
+func (m *mockNode) Forward(ctx context.Context, inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
 	if m.forwardFunc != nil {
-		return m.forwardFunc(inputs...)
+		return m.forwardFunc(ctx, inputs...)
 	}
 
 	return inputs[0], nil
 }
 
-func (m *mockNode) Backward(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
+func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 	if m.backwardFunc != nil {
-		return m.backwardFunc(outputGradient)
+		return m.backwardFunc(ctx, outputGradient)
 	}
 
 	return []*tensor.Tensor[int]{outputGradient}, nil
@@ -45,20 +46,20 @@ func TestBuilder_Build(t *testing.T) {
 
 	node1 := &mockNode{
 		name: "node1",
-		forwardFunc: func(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
+		forwardFunc: func(ctx context.Context, inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
 			return inputs[0], nil
 		},
 	}
-	node1.backwardFunc = func(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
+	node1.backwardFunc = func(ctx context.Context, outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 		return []*tensor.Tensor[int]{outputGradient}, nil
 	}
 	node2 := &mockNode{
 		name: "node2",
-		forwardFunc: func(inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
+		forwardFunc: func(ctx context.Context, inputs ...*tensor.Tensor[int]) (*tensor.Tensor[int], error) {
 			return inputs[0], nil
 		},
 	}
-	node2.backwardFunc = func(outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
+	node2.backwardFunc = func(ctx context.Context, outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 		return []*tensor.Tensor[int]{outputGradient}, nil
 	}
 
@@ -75,12 +76,12 @@ func TestBuilder_Build(t *testing.T) {
 	}
 
 	input, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})
-	output, _ := forward(input)
+	output, _ := forward(context.Background(), input)
 	if output.Data()[0] != 1 {
 		t.Errorf("expected 1, got %d", output.Data()[0])
 	}
 
-	_ = backward(input)
+	_ = backward(context.Background(), input)
 }
 
 func TestBuilder_Input(t *testing.T) {
@@ -94,11 +95,11 @@ func TestBuilder_Input(t *testing.T) {
 		t.Errorf("expected output shape to be [2, 2], got %v", inputNode.OutputShape())
 	}
 	input, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})
-	output, _ := inputNode.Forward(input)
+	output, _ := inputNode.Forward(context.Background(), input)
 	if output != nil {
 		t.Errorf("expected nil, got %v", output)
 	}
-	_, _ = inputNode.Backward(nil)
+	_, _ = inputNode.Backward(context.Background(), nil)
 	if inputNode.Parameters() != nil {
 		t.Errorf("expected nil parameters, got %v", inputNode.Parameters())
 	}

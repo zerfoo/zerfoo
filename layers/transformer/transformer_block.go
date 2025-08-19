@@ -169,13 +169,13 @@ func (tb *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 	// 5. Feed-Forward Network (SwiGLU based)
 	// Gemma FFN: input -> Linear(ffnDim * 2) -> SwiGLU -> Linear(modelDim)
 	// Here, we have ffnGate (for x1) and ffnUp (for x2 in SwiGLU)
-	ffnGateOutput, err := tb.ffnGate.Forward(norm2Output)
+	ffnGateOutput, err := tb.ffnGate.Forward(ctx, norm2Output)
 	if err != nil {
 		return nil, err
 	}
 	tb.ffnGateOutput = ffnGateOutput // Cache for backward
 
-	ffnUpOutput, err := tb.ffnUp.Forward(norm2Output)
+	ffnUpOutput, err := tb.ffnUp.Forward(ctx, norm2Output)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func (tb *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 		return nil, err
 	}
 
-	ffnOutput, err := tb.ffnDown.Forward(swiGLUOutput)
+	ffnOutput, err := tb.ffnDown.Forward(ctx, swiGLUOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (tb *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 	dFFNOutput := dOut
 
 	// 2. Backward through Feed-Forward Network (SwiGLU based)
-	dSwiGLUOutput, err := tb.ffnDown.Backward(dFFNOutput)
+	dSwiGLUOutput, err := tb.ffnDown.Backward(ctx, dFFNOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -245,13 +245,13 @@ func (tb *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 	}
 	dFFNGateOutput, dFFNUpOutput := splitTensors[0], splitTensors[1]
 
-	dNorm2OutputFromFFNGate, err := tb.ffnGate.Backward(dFFNGateOutput)
+	dNorm2OutputFromFFNGate, err := tb.ffnGate.Backward(ctx, dFFNGateOutput)
 	if err != nil {
 		return nil, err
 	}
 	dNorm2OutputFromFFNGateTensor := dNorm2OutputFromFFNGate[0]
 
-	dNorm2OutputFromFFNUp, err := tb.ffnUp.Backward(dFFNUpOutput)
+	dNorm2OutputFromFFNUp, err := tb.ffnUp.Backward(ctx, dFFNUpOutput)
 	if err != nil {
 		return nil, err
 	}
