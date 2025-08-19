@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
@@ -33,12 +35,12 @@ func (d *Dense[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input*weights + biases.
-func (d *Dense[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	linearOutput, err := d.linear.Forward(inputs...)
+func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	linearOutput, err := d.linear.Forward(ctx, inputs...)
 	if err != nil {
 		return nil, err
 	}
-	biasOutput, err := d.bias.Forward(linearOutput)
+	biasOutput, err := d.bias.Forward(ctx, linearOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -47,12 +49,12 @@ func (d *Dense[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], erro
 }
 
 // Backward computes the gradients.
-func (d *Dense[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	biasGrads, err := d.bias.Backward(outputGradient)
+func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	biasGrads, err := d.bias.Backward(ctx, outputGradient)
 	if err != nil {
 		return nil, err
 	}
-	linearGrads, err := d.linear.Backward(biasGrads[0])
+	linearGrads, err := d.linear.Backward(ctx, biasGrads[0])
 	if err != nil {
 		return nil, err
 	}

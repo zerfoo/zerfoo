@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -113,7 +114,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
 	// Forward pass
-	output := poly.Forward(input)
+	output, _ := poly.Forward(context.Background(), input)
 	testutils.AssertTrue(t, output != nil, "expected non-nil output")
 
 	outputShape := output.Shape()
@@ -164,7 +165,7 @@ func TestPolynomialExpansion_ForwardPassNoBias(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
 	// Forward pass
-	output := poly.Forward(input)
+	output, _ := poly.Forward(context.Background(), input)
 	outputData := output.Data()
 
 	// Expected output for degree 1 without bias: [x1, x2] = [2, 3]
@@ -197,7 +198,7 @@ func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating batch input tensor")
 
 	// Forward pass
-	output := poly.Forward(input)
+	output, _ := poly.Forward(context.Background(), input)
 	outputShape := output.Shape()
 
 	testutils.AssertTrue(t, outputShape[0] == 2, "expected batch size 2")
@@ -216,28 +217,24 @@ func TestPolynomialExpansion_ForwardErrorCases(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Test with no inputs
-	testutils.AssertPanics(t, func() {
-		poly.Forward()
-	}, "expected panic with no inputs")
+	_, err = poly.Forward(context.Background())
+	testutils.AssertError(t, err, "expected error with no inputs")
 
 	// Test with multiple inputs
 	input1, _ := tensor.New([]int{1, 2}, []float32{1.0, 2.0})
 	input2, _ := tensor.New([]int{1, 2}, []float32{3.0, 4.0})
-	testutils.AssertPanics(t, func() {
-		poly.Forward(input1, input2)
-	}, "expected panic with multiple inputs")
+	_, err = poly.Forward(context.Background(), input1, input2)
+	testutils.AssertError(t, err, "expected error with multiple inputs")
 
 	// Test with wrong input shape (1D)
 	input1D, _ := tensor.New([]int{2}, []float32{1.0, 2.0})
-	testutils.AssertPanics(t, func() {
-		poly.Forward(input1D)
-	}, "expected panic with 1D input")
+	_, err = poly.Forward(context.Background(), input1D)
+	testutils.AssertError(t, err, "expected error with 1D input")
 
 	// Test with wrong input size
 	inputWrongSize, _ := tensor.New([]int{1, 3}, []float32{1.0, 2.0, 3.0})
-	testutils.AssertPanics(t, func() {
-		poly.Forward(inputWrongSize)
-	}, "expected panic with wrong input size")
+	_, err = poly.Forward(context.Background(), inputWrongSize)
+	testutils.AssertError(t, err, "expected error with wrong input size")
 }
 
 // TestPolynomialExpansion_BackwardPass tests the backward pass computation.
@@ -253,7 +250,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	input, err := tensor.New([]int{1, 2}, inputData)
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
-	output := poly.Forward(input)
+	output, _ := poly.Forward(context.Background(), input)
 
 	// Create output gradient
 	outputGradData := make([]float32, poly.GetOutputSize())
@@ -264,7 +261,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
 	// Backward pass
-	inputGrads := poly.Backward(outputGrad)
+	inputGrads, _ := poly.Backward(context.Background(), outputGrad)
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertTrue(t, inputGrads[0] != nil, "expected non-nil input gradient")
 
@@ -284,9 +281,8 @@ func TestPolynomialExpansion_BackwardErrorCases(t *testing.T) {
 
 	// Test with wrong output gradient size
 	wrongSizeGrad, _ := tensor.New([]int{1, 3}, []float32{1.0, 1.0, 1.0})
-	testutils.AssertPanics(t, func() {
-		poly.Backward(wrongSizeGrad)
-	}, "expected panic with wrong gradient size")
+	_, err = poly.Backward(context.Background(), wrongSizeGrad)
+	testutils.AssertError(t, err, "expected an error with wrong gradient size")
 }
 
 // TestPolynomialExpansion_Parameters tests parameter retrieval.
@@ -342,7 +338,7 @@ func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating input tensor")
 
 	// Forward pass
-	output := poly.Forward(input)
+	output, _ := poly.Forward(context.Background(), input)
 	testutils.AssertTrue(t, output != nil, "expected non-nil output")
 
 	outputData := output.Data()

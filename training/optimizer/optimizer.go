@@ -1,12 +1,14 @@
 package optimizer
 
 import (
+	"context"
+
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // Optimizer defines the interface for optimization algorithms.
 type Optimizer[T tensor.Numeric] interface {
-	Step(params []*graph.Parameter[T])
-	Clip(params []*graph.Parameter[T], threshold float32)
+	Step(ctx context.Context, params []*graph.Parameter[T]) error
+	Clip(ctx context.Context, params []*graph.Parameter[T], threshold float32)
 }

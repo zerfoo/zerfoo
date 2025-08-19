@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -91,7 +92,7 @@ func TestLinear_ForwardPass(t *testing.T) {
 	input, err := tensor.New([]int{1, 3}, inputData)
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 
-	output, _ := layer.Forward(input)
+	output, _ := layer.Forward(context.Background(), input)
 	testutils.AssertNotNil(t, output, "expected forward pass output to not be nil")
 
 	expectedShape := []int{1, 2}
@@ -112,7 +113,7 @@ func TestLinear_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 
 	// Forward pass
-	_, _ = layer.Forward(input)
+	_, _ = layer.Forward(context.Background(), input)
 
 	// Create output gradient (1x2)
 	outputGradData := []float32{1.0, 1.0}
@@ -120,7 +121,7 @@ func TestLinear_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error when creating output gradient tensor, got %v")
 
 	// Backward pass
-	inputGrads, _ := layer.Backward(outputGrad)
+	inputGrads, _ := layer.Backward(context.Background(), outputGrad)
 
 	testutils.AssertEqual(t, 1, len(inputGrads), "expected 1 input gradient")
 

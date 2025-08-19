@@ -30,10 +30,9 @@ func NewSGD[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T
 }
 
 // Clip clips the gradients of the parameters by a threshold.
-func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
+func (s *SGD[T]) Clip(ctx context.Context, params []*graph.Parameter[T], threshold float32) {
 	minVal := s.ops.FromFloat32(-threshold)
 	maxVal := s.ops.FromFloat32(threshold)
-	ctx := context.Background()
 
 	for _, p := range params {
 		p.Gradient, _ = s.engine.UnaryOp(ctx, p.Gradient, func(g T) T {
@@ -79,8 +78,7 @@ func (s *SGD[T]) Clip(params []*graph.Parameter[T], threshold float32) {
 }
 
 // Step updates the parameters based on their gradients.
-func (s *SGD[T]) Step(params []*graph.Parameter[T]) {
-	ctx := context.Background()
+func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 	for _, p := range params {
 		// Create a tensor for the learning rate with the same shape as the gradient.
 		lrData := make([]T, p.Gradient.Size())
@@ -92,14 +90,15 @@ func (s *SGD[T]) Step(params []*graph.Parameter[T]) {
 		// scaled_grad = learning_rate * gradient
 		scaledGrad, err := s.engine.Mul(ctx, lrTensor, p.Gradient, nil)
 		if err != nil {
-			panic(fmt.Sprintf("failed to scale gradient: %v", err))
+			return fmt.Errorf("failed to scale gradient: %w", err)
 		}
 
 		// value = value - scaled_grad
 		newValue, err := s.engine.Sub(ctx, p.Value, scaledGrad, nil)
 		if err != nil {
-			panic(fmt.Sprintf("failed to update parameter value: %v", err))
+			return fmt.Errorf("failed to update parameter value: %w", err)
 		}
 		p.Value = newValue
 	}
+	return nil
 }

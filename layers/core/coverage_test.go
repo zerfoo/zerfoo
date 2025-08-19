@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestLinear_BackwardError(t *testing.T) {
 	input, err := tensor.New([]int{1, 3}, inputData)
 	testutils.AssertNoError(t, err, "expected no error creating input")
 
-	_, _ = layer.Forward(input)
+	_, _ = layer.Forward(context.Background(), input)
 }
 
 // TestLinear_ForwardError tests error handling in Forward method.
@@ -87,7 +88,7 @@ func TestLinear_ForwardError(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating incompatible input")
 
 	// This should panic due to shape mismatch in matrix multiplication
-	_, err = layer.Forward(incompatibleInput)
+	_, err = layer.Forward(context.Background(), incompatibleInput)
 	testutils.AssertError(t, err, "expected panic when forward pass fails due to shape mismatch")
 }
 
@@ -109,7 +110,7 @@ func TestDense_ErrorPaths(t *testing.T) {
 	incompatibleInput, err := tensor.New([]int{1, 2}, incompatibleData)
 	testutils.AssertNoError(t, err, "expected no error creating incompatible input")
 
-	_, err = dense.Forward(incompatibleInput)
+	_, err = dense.Forward(context.Background(), incompatibleInput)
 	testutils.AssertError(t, err, "expected panic when dense forward fails due to shape mismatch")
 }
 
@@ -129,7 +130,7 @@ func TestLinear_AllErrorPaths(t *testing.T) {
 	layer, err := NewLinear("test", engine, ops, 3, 2)
 	testutils.AssertNoError(t, err, "expected no error creating layer")
 
-	_, err = layer.Forward(nil)
+	_, err = layer.Forward(context.Background(), nil)
 	testutils.AssertError(t, err, "expected panic with nil input")
 
 	// Test Backward without Forward (lastInput is nil)
@@ -137,7 +138,7 @@ func TestLinear_AllErrorPaths(t *testing.T) {
 	outputGrad, err := tensor.New([]int{1, 2}, outputGradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
-	_, err = layer.Backward(outputGrad)
+	_, err = layer.Backward(context.Background(), outputGrad)
 	testutils.AssertError(t, err, "expected panic when backward called without forward")
 }
 

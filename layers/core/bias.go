@@ -56,8 +56,7 @@ func (b *Bias[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input + biases.
-func (b *Bias[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	ctx := context.Background()
+func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	output, err := b.engine.Add(ctx, inputs[0], b.biases.Value)
 	if err != nil {
 		return nil, err
@@ -68,8 +67,7 @@ func (b *Bias[T]) Forward(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error
 }
 
 // Backward computes the gradients.
-func (b *Bias[T]) Backward(outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	ctx := context.Background()
+func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Gradient with respect to biases: sum of output_gradient along batch dimension
 	biasesGrad, err := b.engine.Sum(ctx, outputGradient, 0, false)
 	if err != nil {

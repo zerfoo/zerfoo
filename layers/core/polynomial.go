@@ -2,6 +2,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -140,21 +141,21 @@ func (p *PolynomialExpansion[T]) OutputShape() []int {
 // Forward performs the polynomial expansion transformation.
 // Input shape: [batch_size, input_size]
 // Output shape: [batch_size, output_size].
-func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Tensor[T] {
+func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if len(inputs) != 1 {
-		panic(fmt.Errorf("polynomial expansion expects exactly 1 input, got %d", len(inputs)))
+		return nil, fmt.Errorf("polynomial expansion expects exactly 1 input, got %d", len(inputs))
 	}
 
 	input := inputs[0]
 	inputShape := input.Shape()
 
 	if len(inputShape) != 2 {
-		panic(fmt.Errorf("input must be 2D tensor, got shape %v", inputShape))
+		return nil, fmt.Errorf("input must be 2D tensor, got shape %v", inputShape)
 	}
 
 	batchSize := inputShape[0]
 	if inputShape[1] != p.inputSize {
-		panic(fmt.Errorf("input size mismatch: expected %d, got %d", p.inputSize, inputShape[1]))
+		return nil, fmt.Errorf("input size mismatch: expected %d, got %d", p.inputSize, inputShape[1])
 	}
 
 	// Create output tensor
@@ -189,23 +190,23 @@ func (p *PolynomialExpansion[T]) Forward(inputs ...*tensor.Tensor[T]) *tensor.Te
 
 	output, err := tensor.New(outputShape, outputData)
 	if err != nil {
-		panic(fmt.Errorf("failed to create output tensor: %w", err))
+		return nil, fmt.Errorf("failed to create output tensor: %w", err)
 	}
 
 	// Update output shape for future reference
 	p.outputShape = outputShape
 
-	return output
+	return output, nil
 }
 
 // Backward computes gradients for the polynomial expansion layer.
 // This computes the derivative of each polynomial term with respect to the input features.
-func (p *PolynomialExpansion[T]) Backward(outputGradient *tensor.Tensor[T]) []*tensor.Tensor[T] {
+func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	outputGradShape := outputGradient.Shape()
 	batchSize := outputGradShape[0]
 
 	if outputGradShape[1] != p.outputSize {
-		panic(fmt.Errorf("output gradient size mismatch: expected %d, got %d", p.outputSize, outputGradShape[1]))
+		return nil, fmt.Errorf("output gradient size mismatch: expected %d, got %d", p.outputSize, outputGradShape[1])
 	}
 
 	// Create input gradient tensor
@@ -259,10 +260,10 @@ func (p *PolynomialExpansion[T]) Backward(outputGradient *tensor.Tensor[T]) []*t
 
 	inputGrad, err := tensor.New(inputGradShape, inputGradData)
 	if err != nil {
-		panic(fmt.Errorf("failed to create input gradient tensor: %w", err))
+		return nil, fmt.Errorf("failed to create input gradient tensor: %w", err)
 	}
 
-	return []*tensor.Tensor[T]{inputGrad}
+	return []*tensor.Tensor[T]{inputGrad}, nil
 }
 
 // Parameters returns the parameters of the layer.

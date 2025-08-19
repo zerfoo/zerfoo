@@ -27,7 +27,7 @@ func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T)
 		threshold := float32(1.0)
 		expected := []T{ops.FromFloat32(-1.0), ops.FromFloat32(0.5), ops.FromFloat32(1.0), ops.FromFloat32(-0.5)}
 
-		sgd.Clip(params, threshold)
+		sgd.Clip(context.Background(), params, threshold)
 
 		if !reflect.DeepEqual(param.Gradient.Data(), expected) {
 			t.Errorf("expected %v, got %v", expected, param.Gradient.Data())
@@ -65,7 +65,7 @@ func TestSGD_Step(t *testing.T) {
 	param, _ := graph.NewParameter("param1", value, tensor.New[int])
 	param.Gradient = gradient
 	params := []*graph.Parameter[int]{param}
-	sgd.Step(params)
+	sgd.Step(context.Background(), params)
 	expected := []int{0, 1, 2, 3}
 	if !reflect.DeepEqual(param.Value.Data(), expected) {
 		t.Errorf("expected %v, got %v", expected, param.Value.Data())
@@ -106,7 +106,7 @@ func TestSGD_Clip(t *testing.T) {
 				param.Gradient = gradient
 				params := []*graph.Parameter[float32]{param}
 
-				sgd.Clip(params, tc.threshold)
+				sgd.Clip(context.Background(), params, tc.threshold)
 
 				if !reflect.DeepEqual(param.Gradient.Data(), tc.expected) {
 					t.Errorf("expected %v, got %v", tc.expected, param.Gradient.Data())
@@ -122,13 +122,8 @@ func TestSGD_Clip(t *testing.T) {
 	}
 }
 
-func TestSGD_Step_Panic(t *testing.T) {
+func TestSGD_Step_Error(t *testing.T) {
 	t.Run("mul error", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("The code did not panic")
-			}
-		}()
 		engine := &mockEngine[int]{
 			Engine: compute.NewCPUEngine[int](numeric.IntOps{}),
 			mulErr: true,
@@ -139,15 +134,13 @@ func TestSGD_Step_Panic(t *testing.T) {
 		param, _ := graph.NewParameter("param1", value, tensor.New[int])
 		param.Gradient = gradient
 		params := []*graph.Parameter[int]{param}
-		sgd.Step(params)
+		err := sgd.Step(context.Background(), params)
+		if err == nil {
+			t.Errorf("The code did not return an error")
+		}
 	})
 
 	t.Run("sub error", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("The code did not panic")
-			}
-		}()
 		engine := &mockEngine[int]{
 			Engine: compute.NewCPUEngine[int](numeric.IntOps{}),
 			subErr: true,
@@ -158,6 +151,9 @@ func TestSGD_Step_Panic(t *testing.T) {
 		param, _ := graph.NewParameter("param1", value, tensor.New[int])
 		param.Gradient = gradient
 		params := []*graph.Parameter[int]{param}
-		sgd.Step(params)
+		err := sgd.Step(context.Background(), params)
+		if err == nil {
+			t.Errorf("The code did not return an error")
+		}
 	})
 }
