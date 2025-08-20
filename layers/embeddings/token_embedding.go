@@ -11,7 +11,7 @@ import (
 )
 
 // TokenEmbedding converts token IDs into dense vector representations.
-type TokenEmbedding[T float64] struct {
+type TokenEmbedding[T tensor.Numeric] struct {
 	engine       compute.Engine[T]
 	vocabSize    int // Size of the vocabulary
 	embeddingDim int // Dimension of the embedding vectors
@@ -27,7 +27,7 @@ type TokenEmbedding[T float64] struct {
 // NewTokenEmbedding creates a new TokenEmbedding layer.
 // vocabSize: The size of the vocabulary (number of unique tokens).
 // embeddingDim: The dimension of the embedding vectors.
-func NewTokenEmbedding[T float64](engine compute.Engine[T], vocabSize, embeddingDim int) (*TokenEmbedding[T], error) {
+func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, embeddingDim int) (*TokenEmbedding[T], error) {
 	if vocabSize <= 0 {
 		return nil, fmt.Errorf("vocabSize must be positive, got %d", vocabSize)
 	}
@@ -44,7 +44,7 @@ func NewTokenEmbedding[T float64](engine compute.Engine[T], vocabSize, embedding
 	// Initialize embedding table with random values (e.g., Glorot/Xavier uniform)
 	// For simplicity, let's use a basic uniform random initialization for now.
 	// A proper initializer would be a separate component.
-	if err := engine.RandomUniform(context.Background(), embeddingTableTensor, T(-0.05), T(0.05)); err != nil {
+	if err := engine.RandomUniform(context.Background(), embeddingTableTensor, engine.Ops().FromFloat64(-0.05), engine.Ops().FromFloat64(0.05)); err != nil {
 		return nil, fmt.Errorf("failed to initialize embedding table: %w", err)
 	}
 
@@ -67,8 +67,8 @@ func (te *TokenEmbedding[T]) OutputShape() []int {
 }
 
 // Parameters returns the trainable embedding table.
-func (te *TokenEmbedding[T]) Parameters() []graph.Parameter[T] {
-	return []graph.Parameter[T]{*te.embeddingTable}
+func (te *TokenEmbedding[T]) Parameters() []*graph.Parameter[T] {
+	return []*graph.Parameter[T]{te.embeddingTable}
 }
 
 // Forward performs the embedding lookup.
@@ -78,6 +78,9 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 	te.inputTokenIDs = tokenIDs // Cache for backward
 
 	inputShape := tokenIDs.Shape()
+	if len(inputShape) < 2 {
+		return nil, fmt.Errorf("input tensor must have at least 2 dimensions, got %d", len(inputShape))
+	}
 	batchSize := inputShape[0]
 	seqLen := inputShape[1]
 

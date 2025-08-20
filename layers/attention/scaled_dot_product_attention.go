@@ -25,10 +25,11 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 
 // Forward computes the scaled dot-product attention.
 // Q, K, V are expected to be 3D tensors (batch_size, seq_len, head_dim).
-func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+// mask is an optional 4D tensor (batch_size, num_heads, seq_len_q, seq_len_k).
+func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.Tensor[T], mask *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	// 1. MatMul Q and K^T
 	// (batch, seq_len_q, head_dim) x (batch, head_dim, seq_len_k) -> (batch, seq_len_q, seq_len_k)
-	kTransposed, err := sdpa.engine.Transpose(ctx, k, nil) // Transpose K
+	kTransposed, err := sdpa.engine.Transpose(ctx, k, []int{0, 2, 1}) // Transpose K for 3D tensor
 	if err != nil {
 		return nil, err
 	}
@@ -44,13 +45,33 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 		return nil, err
 	}
 
-	// 3. Apply Softmax
+	// 3. Apply mask
+	if mask != nil {
+		batchSize := q.Shape()[0]
+		numHeads := mask.Shape()[1]
+		seqLenQ := q.Shape()[1]
+		seqLenK := k.Shape()[1]
+		reshapedScores, err := sdpa.engine.Reshape(ctx, scaledAttentionScores, []int{batchSize / numHeads, numHeads, seqLenQ, seqLenK})
+		if err != nil {
+			return nil, err
+		}
+		maskedScores, err := sdpa.engine.Add(ctx, reshapedScores, mask, nil)
+		if err != nil {
+			return nil, err
+		}
+		scaledAttentionScores, err = sdpa.engine.Reshape(ctx, maskedScores, []int{batchSize, seqLenQ, seqLenK})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 4. Apply Softmax
 	attentionWeights, err := sdpa.engine.Softmax(ctx, scaledAttentionScores, -1, nil) // Softmax along the last dimension
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. MatMul attention weights and V
+	// 5. MatMul attention weights and V
 	// (batch, seq_len_q, seq_len_k) x (batch, seq_len_k, head_dim) -> (batch, seq_len_q, head_dim)
 	output, err := sdpa.engine.MatMul(ctx, attentionWeights, v, nil)
 	if err != nil {

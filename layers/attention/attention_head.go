@@ -97,7 +97,7 @@ func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.Tensor[T]
 	}
 
 	// Perform scaled dot-product attention
-	output, err := ah.sdpa.Forward(ctx, qReshaped, kReshaped, vReshaped)
+	output, err := ah.sdpa.Forward(ctx, qReshaped, kReshaped, vReshaped, nil)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: scaled dot-product attention failed: %w", err)
 	}

@@ -98,6 +98,9 @@ func (rpe *RotaryPositionalEmbedding[T]) Parameters() []graph.Parameter[T] {
 func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	rpe.inputShape = input.Shape()
 	rpe.outputShape = input.Shape()
+	if len(rpe.inputShape) < 2 {
+		return nil, fmt.Errorf("input tensor must have at least 2 dimensions, got %d", len(rpe.inputShape))
+	}
 	seqLen := rpe.inputShape[1]
 
 	// Slice cos and sin angles to match the input sequence length
@@ -225,4 +228,26 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	}
 
 	return []*tensor.Tensor[T]{dInput}, nil
+}
+
+// Scale scales the positional embeddings by a given factor.
+func (rpe *RotaryPositionalEmbedding[T]) Scale(ctx context.Context, factor float64) error {
+	scaleTensor, err := tensor.New[T]([]int{1}, []T{T(factor)})
+	if err != nil {
+		return err
+	}
+
+	scaledCos, err := rpe.engine.Mul(ctx, rpe.cosAngles, scaleTensor)
+	if err != nil {
+		return err
+	}
+	rpe.cosAngles = scaledCos
+
+	scaledSin, err := rpe.engine.Mul(ctx, rpe.sinAngles, scaleTensor)
+	if err != nil {
+		return err
+	}
+	rpe.sinAngles = scaledSin
+
+	return nil
 }

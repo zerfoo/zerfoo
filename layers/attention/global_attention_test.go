@@ -1,4 +1,4 @@
-package transformer
+package attention
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestTransformerBlock_Forward(t *testing.T) {
+func TestGlobalSelfAttention_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -18,14 +18,13 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	modelDim := 64
 	numQueryHeads := 8
 	numKeyValueHeads := 4
-	ffnDim := 256
 	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen)
+	attn, err := NewGlobalSelfAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, epsilon, base, maxSeqLen)
 	if err != nil {
-		t.Fatalf("Failed to create TransformerBlock: %v", err)
+		t.Fatalf("Failed to create GlobalSelfAttention: %v", err)
 	}
 
 	batchSize := 2
@@ -40,7 +39,7 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := block.Forward(ctx, inputTensor)
+	output, err := attn.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}

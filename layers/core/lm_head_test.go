@@ -1,4 +1,4 @@
-package transformer
+package core
 
 import (
 	"context"
@@ -10,22 +10,17 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestTransformerBlock_Forward(t *testing.T) {
+func TestLMHead_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
 	modelDim := 64
-	numQueryHeads := 8
-	numKeyValueHeads := 4
-	ffnDim := 256
-	epsilon := float32(1e-6)
-	base := 10000.0
-	maxSeqLen := 512
+	vocabSize := 1000
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen)
+	head, err := NewLMHead[float32]("test_lm_head", engine, ops, modelDim, vocabSize)
 	if err != nil {
-		t.Fatalf("Failed to create TransformerBlock: %v", err)
+		t.Fatalf("Failed to create LMHead: %v", err)
 	}
 
 	batchSize := 2
@@ -40,12 +35,13 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := block.Forward(ctx, inputTensor)
+	output, err := head.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
 
-	if !testutils.IntSliceEqual(output.Shape(), inputShape) {
-		t.Errorf("Expected output shape %v, got %v", inputShape, output.Shape())
+	expectedShape := []int{batchSize, seqLen, vocabSize}
+	if !testutils.IntSliceEqual(output.Shape(), expectedShape) {
+		t.Errorf("Expected output shape %v, got %v", expectedShape, output.Shape())
 	}
 }
