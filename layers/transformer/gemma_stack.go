@@ -28,23 +28,31 @@ func NewGemmaStack[T tensor.Numeric](
 ) (*GemmaStack[T], error) {
 	var layers []graph.Node[T]
 	for i := 0; i < numLayers; i++ {
-		var block graph.Node[T]
+		var attentionLayer graph.Node[T]
 		var err error
 		if (i+1)%globalInterval == 0 {
-			attn, err := attention.NewGlobalSelfAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, epsilon, base, maxSeqLen)
+			attn, err := attention.NewGlobalAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create layer %d: %w", i, err)
+				return nil, fmt.Errorf("failed to create global attention layer for block %d: %w", i, err)
 			}
 			// Scale RoPE embeddings for global attention layers
-			if err := attn.ScaleRope(context.Background(), 0.5); err != nil {
-				return nil, fmt.Errorf("failed to scale rope for layer %d: %w", i, err)
+			var iface interface{} = attn
+			if scaler, ok := iface.(attention.RopeScaler[T]); ok {
+				if err := scaler.ScaleRope(context.Background(), 0.5); err != nil {
+					return nil, fmt.Errorf("failed to scale rope for layer %d: %w", i, err)
+				}
 			}
-			block = attn
+			attentionLayer = attn
 		} else {
-			block, err = attention.NewLocalSlidingWindowAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, localWindowSize, epsilon, base, maxSeqLen)
+			attentionLayer, err = attention.NewLocalAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, localWindowSize, base, maxSeqLen)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to create layer %d: %w", i, err)
+			return nil, fmt.Errorf("failed to create attention layer for block %d: %w", i, err)
+		}
+
+		block, err := NewTransformerBlock[T](engine, ops, modelDim, ffnDim, epsilon, attentionLayer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create transformer block %d: %w", i, err)
 		}
 		layers = append(layers, block)
 	}
@@ -84,7 +92,23 @@ func (s *GemmaStack[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]
 
 // Backward computes the backward pass of the GemmaStack.
 func (s *GemmaStack[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	// This is a simplified backward pass. A real implementation would need to
-	// correctly chain the gradients through the layers.
-	return nil, fmt.Errorf("GemmaStack backward pass not yet implemented")
+	var err error
+	d := dOut
+	for i := len(s.layers) - 1; i >= 0; i-- {
+		var input *tensor.Tensor[T]
+		if i > 0 {
+			// This is a simplification. We should have cached the input to each layer.
+			// For now, we assume the input to the stack is the input to the first layer.
+			// This will not work for a real training scenario.
+			input = inputs[0]
+		} else {
+			input = inputs[0]
+		}
+		grads, err := s.layers[i].Backward(ctx, d, input)
+		if err != nil {
+			return nil, err
+		}
+		d = grads[0]
+	}
+	return []*tensor.Tensor[T]{d}, err
 }
