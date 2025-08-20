@@ -3,7 +3,6 @@ package loss
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -40,23 +39,8 @@ func (cel *CrossEntropyLoss[T]) Parameters() []graph.Parameter[T] {
 
 // Forward computes the cross-entropy loss.
 // Inputs: predictions (logits), targets (int labels).
-func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("CrossEntropyLoss: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
-	}
-	predictions := inputs[0]   // Logits
-	targetsTensor := inputs[1] // Targets are passed as *tensor.Tensor[T]
+func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor.Tensor[T], targets *tensor.Tensor[int]) (*tensor.Tensor[T], error) {
 	cel.outputShape = []int{1} // Loss is a scalar
-
-	// Convert targetsTensor to *tensor.Tensor[int] for Gather and OneHot
-	targetsData := make([]int, targetsTensor.Size())
-	for i, v := range targetsTensor.Data() {
-		targetsData[i] = int(v) // Assuming T can be safely cast to int for labels
-	}
-	targets, err := tensor.New[int](targetsTensor.Shape(), targetsData)
-	if err != nil {
-		return nil, err
-	}
 
 	cel.predictions = predictions // Cache for backward
 	cel.targets = targets         // Cache for backward
@@ -122,10 +106,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 
 // Backward computes the gradients for CrossEntropyLoss.
 // dOut is typically a scalar (1.0) for loss functions.
-func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("CrossEntropyLoss: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
-	}
+func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// The gradient of Cross-Entropy Loss with respect to logits (predictions)
 	// is (softmax(predictions) - one_hot(targets))
 	// dOut is the gradient from the subsequent layer (usually 1.0 for loss)

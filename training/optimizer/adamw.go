@@ -41,14 +41,13 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 }
 
 // Step updates the parameters based on their gradients.
-func (a *AdamW[T]) Step(ctx context.Context, params []graph.Parameter[T]) error {
+func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 	a.t++ // Increment timestep
 
 	// Bias correction terms
 	alpha := a.learningRate * T(math.Sqrt(float64(1.0-math.Pow(float64(a.beta2), float64(a.t))))/(1.0-math.Pow(float64(a.beta1), float64(a.t))))
 
-	for i := range params {
-		param := &params[i]
+	for _, param := range params {
 		grad := param.Gradient
 
 		if grad == nil {
