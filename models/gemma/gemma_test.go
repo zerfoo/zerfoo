@@ -1,4 +1,4 @@
-package training
+package gemma
 
 import (
 	"context"
@@ -27,9 +27,9 @@ func TestGemmaModel_Forward(t *testing.T) {
 	localWindowSize := 3
 	globalInterval := 2
 
-	model, err := NewGemmaModel[float32](engine, ops, vocabSize, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen, numLayers, localWindowSize, globalInterval)
+	model, err := New[float32](engine, ops, vocabSize, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen, numLayers, localWindowSize, globalInterval)
 	if err != nil {
-		t.Fatalf("Failed to create GemmaModel: %v", err)
+		t.Fatalf("Failed to create Model: %v", err)
 	}
 
 	batchSize := 2

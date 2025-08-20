@@ -1,4 +1,4 @@
-package training
+package gemma
 
 import (
 	"context"
@@ -12,22 +12,22 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// GemmaModel combines the token embedding, Gemma stack, and LM head.
-type GemmaModel[T tensor.Numeric] struct {
+// Model combines the token embedding, Gemma stack, and LM head.
+type Model[T tensor.Numeric] struct {
 	embedding *embeddings.TokenEmbedding[T]
 	stack     *transformer.GemmaStack[T]
 	lmHead    *core.LMHead[T]
 }
 
-// NewGemmaModel creates a new GemmaModel.
-func NewGemmaModel[T tensor.Numeric](
+// New creates a new Model.
+func New[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	vocabSize, modelDim, numQueryHeads, numKeyValueHeads, ffnDim int,
 	epsilon T,
 	base float64,
 	maxSeqLen, numLayers, localWindowSize, globalInterval int,
-) (*GemmaModel[T], error) {
+) (*Model[T], error) {
 	embedding, err := embeddings.NewTokenEmbedding[T](engine, vocabSize, modelDim)
 	if err != nil {
 		return nil, err
@@ -51,15 +51,15 @@ func NewGemmaModel[T tensor.Numeric](
 	}
 	lmHead.SetWeights(transposedWeights)
 
-	return &GemmaModel[T]{
+	return &Model[T]{
 		embedding: embedding,
 		stack:     stack,
 		lmHead:    lmHead,
 	}, nil
 }
 
-// Forward computes the forward pass of the GemmaModel.
-func (m *GemmaModel[T]) Forward(ctx context.Context, inputs *tensor.Tensor[int]) (*tensor.Tensor[T], error) {
+// Forward computes the forward pass of the Model.
+func (m *Model[T]) Forward(ctx context.Context, inputs *tensor.Tensor[int]) (*tensor.Tensor[T], error) {
 	// Note: The input to the model is a tensor of token IDs (int), but the graph nodes expect T.
 	// The embedding layer handles this conversion.
 	embedded, err := m.embedding.Forward(ctx, inputs)
@@ -80,8 +80,8 @@ func (m *GemmaModel[T]) Forward(ctx context.Context, inputs *tensor.Tensor[int])
 	return logits, nil
 }
 
-// Parameters returns all parameters of the GemmaModel.
-func (m *GemmaModel[T]) Parameters() []*graph.Parameter[T] {
+// Parameters returns all parameters of the Model.
+func (m *Model[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
 	params = append(params, m.embedding.Parameters()...)
 	params = append(params, m.stack.Parameters()...)
@@ -89,8 +89,8 @@ func (m *GemmaModel[T]) Parameters() []*graph.Parameter[T] {
 	return params
 }
 
-// Backward computes the backward pass of the GemmaModel.
-func (m *GemmaModel[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) error {
+// Backward computes the backward pass of the Model.
+func (m *Model[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) error {
 	// Gradients are computed in reverse order of the forward pass.
 	// 1. Backward through LM Head
 	dHidden, err := m.lmHead.Backward(ctx, dOut)
