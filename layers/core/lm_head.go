@@ -9,36 +9,65 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// LMHead maps hidden states to logits.
+// LMHead is a linear layer that maps hidden states to vocabulary logits.
 type LMHead[T tensor.Numeric] struct {
-	dense *Dense[T]
+	linear *Linear[T]
+	engine compute.Engine[T]
 }
 
 // NewLMHead creates a new LMHead.
-func NewLMHead[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, vocabSize int) (*LMHead[T], error) {
-	dense, err := NewDense[T](name, engine, ops, modelDim, vocabSize)
+func NewLMHead[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], hiddenDim, vocabSize int) (*LMHead[T], error) {
+	linear, err := NewLinear[T]("lm_head", engine, ops, hiddenDim, vocabSize)
 	if err != nil {
 		return nil, err
 	}
-	return &LMHead[T]{dense: dense}, nil
+	return &LMHead[T]{linear: linear, engine: engine}, nil
 }
 
-// OutputShape returns the output shape of the LMHead.
-func (h *LMHead[T]) OutputShape() []int {
-	return h.dense.OutputShape()
+// SetWeights sets the weights of the LMHead. This is useful for sharing weights
+// with a token embedding layer.
+func (h *LMHead[T]) SetWeights(weights *tensor.Tensor[T]) {
+	h.linear.weights.Value = weights
 }
 
-// Forward performs the forward pass of the LMHead.
+// Forward computes the forward pass of the LMHead.
 func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	return h.dense.Forward(ctx, inputs...)
+	input := inputs[0]
+	originalShape := input.Shape()
+	batchSize := originalShape[0]
+	seqLen := originalShape[1]
+	hiddenDim := originalShape[2]
+
+	reshapedInput, err := h.engine.Reshape(ctx, input, []int{batchSize * seqLen, hiddenDim})
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := h.linear.Forward(ctx, reshapedInput)
+	if err != nil {
+		return nil, err
+	}
+
+	vocabSize := h.linear.OutputShape()[1]
+	output, err = h.engine.Reshape(ctx, output, []int{batchSize, seqLen, vocabSize})
+	if err != nil {
+		return nil, err
+	}
+
+	return output, nil
 }
 
-// Backward computes the gradients for the LMHead.
-func (h *LMHead[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	return h.dense.Backward(ctx, outputGradient, inputs...)
+// Backward computes the backward pass of the LMHead.
+func (h *LMHead[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	return h.linear.Backward(ctx, dOut, inputs...)
 }
 
 // Parameters returns the parameters of the LMHead.
 func (h *LMHead[T]) Parameters() []*graph.Parameter[T] {
-	return h.dense.Parameters()
+	return h.linear.Parameters()
+}
+
+// OutputShape returns the output shape of the LMHead.
+func (h *LMHead[T]) OutputShape() []int {
+	return h.linear.OutputShape()
 }

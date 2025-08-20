@@ -15,27 +15,27 @@ func TestLMHead_Forward(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	modelDim := 64
+	hiddenDim := 64
 	vocabSize := 1000
 
-	head, err := NewLMHead[float32]("test_lm_head", engine, ops, modelDim, vocabSize)
+	lmHead, err := NewLMHead[float32](engine, ops, hiddenDim, vocabSize)
 	if err != nil {
 		t.Fatalf("Failed to create LMHead: %v", err)
 	}
 
 	batchSize := 2
 	seqLen := 10
-	inputShape := []int{batchSize, seqLen, modelDim}
-	inputData := make([]float32, batchSize*seqLen*modelDim)
+	inputShape := []int{batchSize, seqLen, hiddenDim}
+	inputData := make([]float32, batchSize*seqLen*hiddenDim)
 	for i := range inputData {
-		inputData[i] = float32(i) * 0.01 // Simple dummy data
+		inputData[i] = float32(i) * 0.01
 	}
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := head.Forward(ctx, inputTensor)
+	output, err := lmHead.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
