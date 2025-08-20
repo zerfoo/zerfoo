@@ -7,7 +7,6 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/device"
-	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/numeric"
@@ -15,15 +14,6 @@ import (
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 )
-
-// convertParameters converts a slice of parameter pointers to a slice of parameter values.
-func convertParameters[T tensor.Numeric](params []*graph.Parameter[T]) []graph.Parameter[T] {
-	converted := make([]graph.Parameter[T], len(params))
-	for i, p := range params {
-		converted[i] = *p
-	}
-	return converted
-}
 
 // TestXORFloat16Distributed demonstrates a simplified distributed training of XOR using float16.
 // This example simulates a single-node distributed setup for testability.
@@ -121,8 +111,8 @@ sigmoidGrads, err := sigmoid1.Backward(context.Background(), outputGrad)
 			// In a real distributed setting, gradients from all ranks would be
 			// averaged here before applying. For this single-rank simulation, 
 			// we just apply the local gradients.
-			if err := opt.Step(context.Background(), convertParameters[float32](dense1.Parameters())); err != nil { t.Fatalf("Optimizer step for dense1 failed: %v", err) }
-			if err := opt.Step(context.Background(), convertParameters[float32](dense2.Parameters())); err != nil { t.Fatalf("Optimizer step for dense2 failed: %v", err) }
+			if err := opt.Step(context.Background(), dense1.Parameters()); err != nil { t.Fatalf("Optimizer step for dense1 failed: %v", err) }
+			if err := opt.Step(context.Background(), dense2.Parameters()); err != nil { t.Fatalf("Optimizer step for dense2 failed: %v", err) }
 		}
 
 		if epoch%100 == 0 {
