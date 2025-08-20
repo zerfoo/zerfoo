@@ -7,7 +7,6 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/normalization"
@@ -25,21 +24,17 @@ type Block[T tensor.Numeric] struct {
 	ffnDim           int // Dimension of the feed-forward network
 
 	// Sub-layers
-	layerNorm1    *normalization.LayerNormalization[T]
-	gqa           *attention.GroupedQueryAttention[T]
-	layerNorm2    *normalization.LayerNormalization[T]
-	ffnGate       *core.Dense[T] // For SwiGLU
-	ffnUp         *core.Dense[T] // For SwiGLU
-	ffnActivation *activations.SwiGLU[T]
-	ffnDown       *core.Dense[T]
+	rmsNorm1 *normalization.RMSNorm[T]
+	gqa      *attention.GroupedQueryAttention[T]
+	rmsNorm2 *normalization.RMSNorm[T]
+	ffn      *core.FFN[T]
 
 	// Cached tensors for backward pass
 	inputForLN1   *tensor.Tensor[T]
 	outputFromGQA *tensor.Tensor[T]
 	inputForLN2   *tensor.Tensor[T]
-	ffnGateOutput *tensor.Tensor[T]
-	ffnUpOutput   *tensor.Tensor[T]
 	outputFromFFN *tensor.Tensor[T]
+	outputShape   []int
 }
 
 // NewTransformerBlock creates a new Transformer encoder block.
@@ -47,40 +42,32 @@ type Block[T tensor.Numeric] struct {
 // numQueryHeads: The number of query heads.
 // numKeyValueHeads: The number of key/value heads.
 // ffnDim: The inner dimension of the feed-forward network.
-// epsilon: Epsilon for Layer Normalization.
-func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, numQueryHeads, numKeyValueHeads, ffnDim int, epsilon T) (*Block[T], error) {
-	// Layer Normalization 1
-	ln1, err := normalization.NewLayerNormalization[T](engine, modelDim, epsilon)
+// epsilon: Epsilon for RMS Normalization.
+// base: The base for RoPE.
+// maxSeqLen: The maximum sequence length for RoPE.
+func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, numQueryHeads, numKeyValueHeads, ffnDim int, epsilon T, base float64, maxSeqLen int) (*Block[T], error) {
+	// RMS Normalization 1
+	rmsNorm1, err := normalization.NewRMSNorm[T]("rmsNorm1", engine, ops, modelDim, epsilon)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create LayerNorm1: %w", err)
+		return nil, fmt.Errorf("failed to create RMSNorm1: %w", err)
 	}
 
 	// Grouped Query Attention
-	gqa, err := attention.NewGroupedQueryAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads)
+	gqa, err := attention.NewGroupedQueryAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GroupedQueryAttention: %w", err)
 	}
 
-	// Layer Normalization 2
-	ln2, err := normalization.NewLayerNormalization[T](engine, modelDim, epsilon)
+	// RMS Normalization 2
+	rmsNorm2, err := normalization.NewRMSNorm[T]("rmsNorm2", engine, ops, modelDim, epsilon)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create LayerNorm2: %w", err)
+		return nil, fmt.Errorf("failed to create RMSNorm2: %w", err)
 	}
 
-	// Feed-Forward Network (SwiGLU based)
-	// Gemma uses a structure like: input -> Linear(ffnDim * 2) -> SwiGLU -> Linear(modelDim)
-	ffnGate, err := core.NewDense[T]("ffn_gate", engine, ops, modelDim, ffnDim) // This will be multiplied by the gate
+	// Feed-Forward Network
+	ffn, err := core.NewFFN[T]("ffn", engine, ops, modelDim, ffnDim, modelDim)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create FFN Gate Dense: %w", err)
-	}
-	ffnUp, err := core.NewDense[T]("ffn_up", engine, ops, modelDim, ffnDim) // This will be the input to Sigmoid
-	if err != nil {
-		return nil, fmt.Errorf("failed to create FFN Up Dense: %w", err)
-	}
-	ffnActivation := activations.NewSwiGLU[T](engine, ops)
-	ffnDown, err := core.NewDense[T]("ffn_down", engine, ops, ffnDim, modelDim)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create FFN Down Dense: %w", err)
+		return nil, fmt.Errorf("failed to create FFN: %w", err)
 	}
 
 	return &Block[T]{
@@ -89,44 +76,25 @@ func NewTransformerBlock[T tensor.Numeric](engine compute.Engine[T], ops numeric
 		numQueryHeads:    numQueryHeads,
 		numKeyValueHeads: numKeyValueHeads,
 		ffnDim:           ffnDim,
-		layerNorm1:       ln1,
+		rmsNorm1:         rmsNorm1,
 		gqa:              gqa,
-		layerNorm2:       ln2,
-		ffnGate:          ffnGate,
-		ffnUp:            ffnUp,
-		ffnActivation:    ffnActivation,
-		ffnDown:          ffnDown,
+		rmsNorm2:         rmsNorm2,
+		ffn:              ffn,
 	}, nil
 }
 
 // OutputShape returns the output shape, which is the same as the input shape.
-func (tb *Block[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("Block: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
-	}
-	inputShape := inputShapes[0]
-	if len(inputShape) != 3 || inputShape[2] != tb.modelDim {
-		return nil, fmt.Errorf("expected 3D input tensor (batch, seq_len, model_dim) with model_dim %d, got %v", tb.modelDim, inputShape)
-	}
-
-	return inputShape, nil
+func (tb *Block[T]) OutputShape() []int {
+	return tb.outputShape
 }
 
 // Parameters returns all trainable parameters from its sub-layers.
-func (tb *Block[T]) Parameters() []graph.Parameter[T] {
-	var params []graph.Parameter[T]
-	params = append(params, tb.layerNorm1.Parameters()...)
+func (tb *Block[T]) Parameters() []*graph.Parameter[T] {
+	var params []*graph.Parameter[T]
+	params = append(params, tb.rmsNorm1.Parameters()...)
 	params = append(params, tb.gqa.Parameters()...)
-	params = append(params, tb.layerNorm2.Parameters()...)
-	for _, p := range tb.ffnGate.Parameters() {
-		params = append(params, *p)
-	}
-	for _, p := range tb.ffnUp.Parameters() {
-		params = append(params, *p)
-	}
-	for _, p := range tb.ffnDown.Parameters() {
-		params = append(params, *p)
-	}
+	params = append(params, tb.rmsNorm2.Parameters()...)
+	params = append(params, tb.ffn.Parameters()...)
 
 	return params
 }
@@ -138,15 +106,15 @@ func (tb *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 	}
 	input := inputs[0]     // (batch_size, seq_len, model_dim)
 	tb.inputForLN1 = input // Cache for backward
+	tb.outputShape = input.Shape()
 
-	// 1. Layer Normalization 1
-	norm1Output, err := tb.layerNorm1.Forward(ctx, input)
+	// 1. RMS Normalization 1
+	norm1Output, err := tb.rmsNorm1.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
 
 	// 2. Grouped Query Attention (Self-Attention)
-	// For self-attention, Q, K, V are all the same input (norm1Output)
 	gqaOutput, err := tb.gqa.Forward(ctx, norm1Output)
 	if err != nil {
 		return nil, err
@@ -160,39 +128,14 @@ func (tb *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 	}
 	tb.inputForLN2 = residual1Output // Cache for backward
 
-	// 4. Layer Normalization 2
-	norm2Output, err := tb.layerNorm2.Forward(ctx, residual1Output)
+	// 4. RMS Normalization 2
+	norm2Output, err := tb.rmsNorm2.Forward(ctx, residual1Output)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Feed-Forward Network (SwiGLU based)
-	// Gemma FFN: input -> Linear(ffnDim * 2) -> SwiGLU -> Linear(modelDim)
-	// Here, we have ffnGate (for x1) and ffnUp (for x2 in SwiGLU)
-	ffnGateOutput, err := tb.ffnGate.Forward(ctx, norm2Output)
-	if err != nil {
-		return nil, err
-	}
-	tb.ffnGateOutput = ffnGateOutput // Cache for backward
-
-	ffnUpOutput, err := tb.ffnUp.Forward(ctx, norm2Output)
-	if err != nil {
-		return nil, err
-	}
-	tb.ffnUpOutput = ffnUpOutput // Cache for backward
-
-	// Concatenate ffnGateOutput and ffnUpOutput for SwiGLU input
-	swiGLUInput, err := tb.engine.Concat(ctx, []*tensor.Tensor[T]{ffnGateOutput, ffnUpOutput}, len(ffnGateOutput.Shape())-1, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	swiGLUOutput, err := tb.ffnActivation.Forward(ctx, swiGLUInput)
-	if err != nil {
-		return nil, err
-	}
-
-	ffnOutput, err := tb.ffnDown.Forward(ctx, swiGLUOutput)
+	// 5. Feed-Forward Network
+	ffnOutput, err := tb.ffn.Forward(ctx, norm2Output)
 	if err != nil {
 		return nil, err
 	}
@@ -213,65 +156,26 @@ func (tb *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 		return nil, fmt.Errorf("TransformerBlock: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 	// dOut is the gradient from the subsequent layer/loss
-	// We need to propagate it backward through the block.
 
 	// 1. Backward through Residual Connection 2
 	dResidual1OutputFromRes2 := dOut
 	dFFNOutput := dOut
 
-	// 2. Backward through Feed-Forward Network (SwiGLU based)
-	dSwiGLUOutput, err := tb.ffnDown.Backward(ctx, dFFNOutput)
+	// 2. Backward through Feed-Forward Network
+	dNorm2Output, err := tb.ffn.Backward(ctx, dFFNOutput)
 	if err != nil {
 		return nil, err
 	}
-	dSwiGLUOutputTensor := dSwiGLUOutput[0]
+	dNorm2OutputTensor := dNorm2Output[0]
 
-	// Reconstruct swiGLUInput for backward pass
-
-	// Reconstruct swiGLUInput for backward pass
-	swiGLUInput, err := tb.engine.Concat(ctx, []*tensor.Tensor[T]{tb.ffnGateOutput, tb.ffnUpOutput}, len(tb.ffnGateOutput.Shape())-1, nil)
-	if err != nil {
-		return nil, err
-	}
-	dSwiGLUInput, err := tb.ffnActivation.Backward(ctx, dSwiGLUOutputTensor, swiGLUInput)
-	if err != nil {
-		return nil, err
-	}
-	dSwiGLUInputTensor := dSwiGLUInput[0]
-
-	splitTensors, err := tb.engine.Split(ctx, dSwiGLUInputTensor, 2, len(dSwiGLUInputTensor.Shape())-1)
-	if err != nil {
-		return nil, err
-	}
-	dFFNGateOutput, dFFNUpOutput := splitTensors[0], splitTensors[1]
-
-	dNorm2OutputFromFFNGate, err := tb.ffnGate.Backward(ctx, dFFNGateOutput)
-	if err != nil {
-		return nil, err
-	}
-	dNorm2OutputFromFFNGateTensor := dNorm2OutputFromFFNGate[0]
-
-	dNorm2OutputFromFFNUp, err := tb.ffnUp.Backward(ctx, dFFNUpOutput)
-	if err != nil {
-		return nil, err
-	}
-	dNorm2OutputFromFFNUpTensor := dNorm2OutputFromFFNUp[0]
-
-	// Sum gradients for norm2Output from both FFN paths
-	dNorm2OutputTotal, err := tb.engine.Add(ctx, dNorm2OutputFromFFNGateTensor, dNorm2OutputFromFFNUpTensor, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. Backward through Layer Normalization 2
-	dResidual1OutputFromLN2, err := tb.layerNorm2.Backward(ctx, dNorm2OutputTotal, tb.inputForLN2)
+	// 3. Backward through RMS Normalization 2
+	dResidual1OutputFromLN2, err := tb.rmsNorm2.Backward(ctx, dNorm2OutputTensor, tb.inputForLN2)
 	if err != nil {
 		return nil, err
 	}
 	dResidual1OutputFromLN2Tensor := dResidual1OutputFromLN2[0]
 
 	// 4. Sum gradients for Residual Connection 1
-	// dL/dResidual1Output = dL/dResidual1Output_from_res2 + dL/dResidual1Output_from_LN2
 	dResidual1OutputTotal, err := tb.engine.Add(ctx, dResidual1OutputFromRes2, dResidual1OutputFromLN2Tensor, nil)
 	if err != nil {
 		return nil, err
@@ -284,16 +188,14 @@ func (tb *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 	}
 	dNorm1OutputFromGQATensor := dNorm1OutputFromGQA[0]
 
-	// 6. Backward through Layer Normalization 1
-	dInputFromLN1, err := tb.layerNorm1.Backward(ctx, dNorm1OutputFromGQATensor, tb.inputForLN1)
+	// 6. Backward through RMS Normalization 1
+	dInputFromLN1, err := tb.rmsNorm1.Backward(ctx, dNorm1OutputFromGQATensor, tb.inputForLN1)
 	if err != nil {
 		return nil, err
 	}
 	dInputFromLN1Tensor := dInputFromLN1[0]
 
-	// 7. Sum gradients for original input (from residual connection 1 and LN1 path)
-	// dL/dInput = dL/dInput_from_res1 + dL/dInput_from_LN1
-	// The dL/dInput_from_res1 is simply dResidual1OutputTotal (as it was added directly)
+	// 7. Sum gradients for original input
 	dInputTotal, err := tb.engine.Add(ctx, dResidual1OutputTotal, dInputFromLN1Tensor, nil)
 	if err != nil {
 		return nil, err

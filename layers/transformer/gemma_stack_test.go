@@ -10,7 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestTransformerBlock_Forward(t *testing.T) {
+func TestGemmaStack_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -22,10 +22,13 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
+	numLayers := 6
+	localWindowSize := 3
+	globalInterval := 5
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen)
+	stack, err := NewGemmaStack[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen, numLayers, localWindowSize, globalInterval)
 	if err != nil {
-		t.Fatalf("Failed to create TransformerBlock: %v", err)
+		t.Fatalf("Failed to create GemmaStack: %v", err)
 	}
 
 	batchSize := 2
@@ -40,7 +43,7 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := block.Forward(ctx, inputTensor)
+	output, err := stack.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}

@@ -39,7 +39,7 @@ func (t *Trainer[T]) Train(ctx context.Context, inputs, targets *tensor.Tensor[T
 	}
 
 	// Backward pass
-	_, err = t.model.Backward(ctx, lossGrad)
+	_, err = t.model.Backward(ctx, lossGrad, inputs)
 	if err != nil {
 		return *new(T), err
 	}

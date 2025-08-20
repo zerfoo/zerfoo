@@ -10,7 +10,7 @@ import (
 // ActivationLayer defines the interface for activation layers used in tests.
 type ActivationLayer[T tensor.Numeric] interface {
 	Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
-	Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+	Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
 }
 
 // testActivationForward is a common helper for testing activation forward passes.
@@ -33,7 +33,7 @@ func testActivationBackward[T tensor.Numeric](t *testing.T, activation Activatio
 		t.Fatalf("unexpected error: %v", err)
 	}
 	outputGradient, _ := tensor.New[T]([]int{1, 2}, []T{T(1), T(2)})
-	inputGrads, err := activation.Backward(context.Background(), outputGradient)
+	inputGrads, err := activation.Backward(context.Background(), outputGradient, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

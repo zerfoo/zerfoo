@@ -18,6 +18,7 @@ type CrossEntropyLoss[T tensor.Numeric] struct {
 	predictions   *tensor.Tensor[T]   // Model's output (logits)
 	targets       *tensor.Tensor[int] // True labels (int type)
 	softmaxOutput *tensor.Tensor[T]   // Softmax of predictions
+	outputShape   []int
 }
 
 // NewCrossEntropyLoss creates a new CrossEntropyLoss layer.
@@ -28,12 +29,8 @@ func NewCrossEntropyLoss[T tensor.Numeric](engine compute.Engine[T]) *CrossEntro
 }
 
 // OutputShape returns the output shape of the loss (a scalar).
-func (cel *CrossEntropyLoss[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 2 { // predictions, targets
-		return nil, fmt.Errorf("CrossEntropyLoss: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputShapes))
-	}
-	// Loss is a scalar
-	return []int{1}, nil
+func (cel *CrossEntropyLoss[T]) OutputShape() []int {
+	return cel.outputShape
 }
 
 // Parameters returns an empty slice as CrossEntropyLoss has no trainable parameters.
@@ -49,6 +46,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	}
 	predictions := inputs[0]   // Logits
 	targetsTensor := inputs[1] // Targets are passed as *tensor.Tensor[T]
+	cel.outputShape = []int{1} // Loss is a scalar
 
 	// Convert targetsTensor to *tensor.Tensor[int] for Gather and OneHot
 	targetsData := make([]int, targetsTensor.Size())

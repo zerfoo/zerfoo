@@ -13,7 +13,7 @@ type Model[T tensor.Numeric] interface {
 	// Forward performs the forward pass of the model.
 	Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
 	// Backward performs the backward pass of the model.
-	Backward(ctx context.Context, grad *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+	Backward(ctx context.Context, grad *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
 	// Parameters returns the parameters of the model.
 	Parameters() []*graph.Parameter[T]
 }
