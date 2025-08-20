@@ -88,3 +88,27 @@ func (m *GemmaModel[T]) Parameters() []*graph.Parameter[T] {
 	// LM head parameters are shared with embedding, so we don't add them again.
 	return params
 }
+
+// Backward computes the backward pass of the GemmaModel.
+func (m *GemmaModel[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) error {
+	// Gradients are computed in reverse order of the forward pass.
+	// 1. Backward through LM Head
+	dHidden, err := m.lmHead.Backward(ctx, dOut)
+	if err != nil {
+		return err
+	}
+
+	// 2. Backward through Gemma Stack
+	dEmbedded, err := m.stack.Backward(ctx, dHidden[0])
+	if err != nil {
+		return err
+	}
+
+	// 3. Backward through Token Embedding
+	_, err = m.embedding.Backward(ctx, dEmbedded[0])
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
