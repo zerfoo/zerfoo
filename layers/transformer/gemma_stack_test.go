@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
@@ -50,5 +51,27 @@ func TestGemmaStack_Forward(t *testing.T) {
 
 	if !testutils.IntSliceEqual(output.Shape(), inputShape) {
 		t.Errorf("Expected output shape %v, got %v", inputShape, output.Shape())
+	}
+
+	// Check the types of attention layers
+	numGlobal := 0
+	numLocal := 0
+	for _, layer := range stack.layers {
+		block := layer.(*Block[float32])
+		switch block.attention.(type) {
+		case *attention.GlobalAttention[float32]:
+			numGlobal++
+		case *attention.LocalAttention[float32]:
+			numLocal++
+		}
+	}
+
+	expectedGlobal := numLayers / globalInterval
+	expectedLocal := numLayers - expectedGlobal
+	if numGlobal != expectedGlobal {
+		t.Errorf("Expected %d global attention layers, got %d", expectedGlobal, numGlobal)
+	}
+	if numLocal != expectedLocal {
+		t.Errorf("Expected %d local attention layers, got %d", expectedLocal, numLocal)
 	}
 }

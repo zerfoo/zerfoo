@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
@@ -23,7 +24,12 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	base := 10000.0
 	maxSeqLen := 512
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen)
+	gqa, err := attention.NewGroupedQueryAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
+	if err != nil {
+		t.Fatalf("Failed to create GroupedQueryAttention: %v", err)
+	}
+
+	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, epsilon, gqa)
 	if err != nil {
 		t.Fatalf("Failed to create TransformerBlock: %v", err)
 	}
@@ -47,5 +53,17 @@ func TestTransformerBlock_Forward(t *testing.T) {
 
 	if !testutils.IntSliceEqual(output.Shape(), inputShape) {
 		t.Errorf("Expected output shape %v, got %v", inputShape, output.Shape())
+	}
+
+	// Check number of parameters
+	// rmsNorm1: 1
+	// gqa: 8 (wq, wk, wv, wo weights and biases)
+	// rmsNormPostAttention: 1
+	// rmsNorm2: 1
+	// ffn: 6 (w1, w3, w2 weights and biases)
+	// Total: 17
+	expectedNumParams := 17
+	if len(block.Parameters()) != expectedNumParams {
+		t.Errorf("Expected %d parameters, got %d", expectedNumParams, len(block.Parameters()))
 	}
 }
