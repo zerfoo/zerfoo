@@ -36,7 +36,24 @@ func (d *Dense[T]) OutputShape() []int {
 
 // Forward performs the forward pass: output = input*weights + biases.
 func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	linearOutput, err := d.linear.Forward(ctx, inputs...)
+	input := inputs[0]
+	originalShape := input.Shape()
+	inputSize := originalShape[len(originalShape)-1]
+
+	// Reshape to 2D if input is N-D
+	if len(originalShape) > 2 {
+		batchSize := 1
+		for i := 0; i < len(originalShape)-1; i++ {
+			batchSize *= originalShape[i]
+		}
+		var err error
+		input, err = input.Reshape([]int{batchSize, inputSize})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	linearOutput, err := d.linear.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -45,11 +62,23 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 		return nil, err
 	}
 
+	// Reshape back to original batch dimensions
+	if len(originalShape) > 2 {
+		outputShape := make([]int, len(originalShape))
+		copy(outputShape, originalShape)
+		outputShape[len(outputShape)-1] = d.linear.OutputShape()[1]
+		var err error
+		biasOutput, err = biasOutput.Reshape(outputShape)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return biasOutput, nil
 }
 
 // Backward computes the gradients.
-func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	biasGrads, err := d.bias.Backward(ctx, outputGradient)
 	if err != nil {
 		return nil, err

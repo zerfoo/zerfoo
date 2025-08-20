@@ -17,9 +17,10 @@ type FFN[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	ops     numeric.Arithmetic[T]
 
-	w1 *Dense[T] // First linear layer
-	w3 *Dense[T] // Gate linear layer for SwiGLU
-	w2 *Dense[T] // Second linear layer
+	w1      *Dense[T] // First linear layer
+	w3      *Dense[T] // Gate linear layer for SwiGLU
+	w2      *Dense[T] // Second linear layer
+	swiglu  *activations.SwiGLU[T]
 
 	// Cached tensors for backward pass
 	inputTensor *tensor.Tensor[T]
@@ -27,6 +28,7 @@ type FFN[T tensor.Numeric] struct {
 	w3Output    *tensor.Tensor[T]
 	swiGLUOutput *tensor.Tensor[T]
 	w2Output    *tensor.Tensor[T]
+	outputShape []int
 }
 
 // NewFFN creates a new Feed-Forward Network layer.
@@ -55,6 +57,8 @@ func NewFFN[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric
 		return nil, fmt.Errorf("failed to create W2 dense layer: %w", err)
 	}
 
+	swiglu := activations.NewSwiGLU[T](engine, ops)
+
 	return &FFN[T]{
 		name:   name,
 		engine: engine,
@@ -62,21 +66,13 @@ func NewFFN[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric
 		w1:     w1,
 		w3:     w3,
 		w2:     w2,
+		swiglu: swiglu,
 	}, nil
 }
 
 // OutputShape returns the output shape of the FFN layer.
-// Input shape is (batch_size, input_dim). Output shape is (batch_size, output_dim).
-func (ffn *FFN[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("FFN: expected 1 input shape, got %d", len(inputShapes))
-	}
-	inputShape := inputShapes[0]
-	if len(inputShape) != 2 {
-		return nil, fmt.Errorf("expected 2D tensor (batch, input_dim) for FFN, got %v", inputShape)
-	}
-
-	return []int{inputShape[0], ffn.w2.linear.OutputShape()[1]}, nil
+func (ffn *FFN[T]) OutputShape() []int {
+	return ffn.outputShape
 }
 
 // Parameters returns the trainable parameters of the FFN layer.
@@ -114,9 +110,14 @@ func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 	}
 	ffn.w3Output = w3Output // Cache for backward pass
 
-	// SwiGLU Activation: (W1_output * Swish(W3_output))
-	swiglu := activations.NewSwiGLU[T](ffn.engine, ffn.ops)
-	swiGLUOutput, err := swiglu.Forward(ctx, ffn.w1Output, ffn.w3Output)
+	// Concatenate w1Output and w3Output for SwiGLU
+	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.Tensor[T]{w1Output, w3Output}, len(w1Output.Shape())-1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU: %w", err)
+	}
+
+	// SwiGLU Activation
+	swiGLUOutput, err := ffn.swiglu.Forward(ctx, swigluInput)
 	if err != nil {
 		return nil, err
 	}
@@ -128,12 +129,13 @@ func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 		return nil, err
 	}
 	ffn.w2Output = w2Output // Cache for backward pass
+	ffn.outputShape = w2Output.Shape()
 
 	return w2Output, nil
 }
 
 // Backward computes the backward pass of the FFN.
-func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Backward through W2
 	dSwiGLUOutput, err := ffn.w2.Backward(ctx, dOut)
 	if err != nil {
@@ -141,13 +143,25 @@ func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) ([]*ten
 	}
 	dSwiGLUOutputTensor := dSwiGLUOutput[0]
 
+	// Concatenate w1Output and w3Output to reconstruct swigluInput for backward
+	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.Tensor[T]{ffn.w1Output, ffn.w3Output}, len(ffn.w1Output.Shape())-1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU backward: %w", err)
+	}
+
 	// Backward through SwiGLU
-	swiglu := activations.NewSwiGLU[T](ffn.engine, ffn.ops)
-	dSwiGLUInputs, err := swiglu.Backward(ctx, dSwiGLUOutputTensor, ffn.w1Output, ffn.w3Output)
+	dSwiGLUInputs, err := ffn.swiglu.Backward(ctx, dSwiGLUOutputTensor, swigluInput)
 	if err != nil {
 		return nil, err
 	}
-	dW1Output, dW3Output := dSwiGLUInputs[0], dSwiGLUInputs[1]
+	dSwiGLUInputTensor := dSwiGLUInputs[0]
+
+	// Split the gradient back for w1 and w3
+	splitGrads, err := ffn.engine.Split(ctx, dSwiGLUInputTensor, 2, len(dSwiGLUInputTensor.Shape())-1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to split gradients for w1 and w3: %w", err)
+	}
+	dW1Output, dW3Output := splitGrads[0], splitGrads[1]
 
 	// Backward through W1
 	dInputW1, err := ffn.w1.Backward(ctx, dW1Output)

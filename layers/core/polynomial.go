@@ -201,7 +201,7 @@ func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.
 
 // Backward computes gradients for the polynomial expansion layer.
 // This computes the derivative of each polynomial term with respect to the input features.
-func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	outputGradShape := outputGradient.Shape()
 	batchSize := outputGradShape[0]
 

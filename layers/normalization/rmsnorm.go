@@ -20,6 +20,7 @@ type RMSNorm[T tensor.Numeric] struct {
 	// Cache for backward pass
 	inputTensor *tensor.Tensor[T]
 	rms         *tensor.Tensor[T]
+	outputShape []int
 }
 
 // NewRMSNorm creates a new RMSNorm layer.
@@ -48,11 +49,8 @@ func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops num
 }
 
 // OutputShape returns the output shape of the RMSNorm layer.
-func (r *RMSNorm[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
-	}
-	return inputShapes[0], nil
+func (r *RMSNorm[T]) OutputShape() []int {
+	return r.outputShape
 }
 
 // Parameters returns the learnable parameters of the RMSNorm layer.
@@ -67,6 +65,7 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (
 	}
 	input := inputs[0]
 	r.inputTensor = input // Cache for backward pass
+	r.outputShape = input.Shape()
 
 	// Calculate sum of squares along the last dimension
 	squared, err := r.engine.Mul(ctx, input, input, nil)

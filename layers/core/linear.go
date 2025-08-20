@@ -100,7 +100,7 @@ func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 }
 
 // Backward computes the gradients using the gradient computer component.
-func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Compute both gradients efficiently
 	weightsGrad, inputGrad, err := l.gradientComputer.ComputeBothGradients(
 		ctx, l.lastInput, l.weights.Value, outputGradient)

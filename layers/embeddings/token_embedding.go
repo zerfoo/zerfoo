@@ -21,6 +21,7 @@ type TokenEmbedding[T float64] struct {
 
 	// Cached input for backward pass
 	inputTokenIDs *tensor.Tensor[int] // Input is int tensor for token IDs
+	outputShape   []int
 }
 
 // NewTokenEmbedding creates a new TokenEmbedding layer.
@@ -61,17 +62,8 @@ func NewTokenEmbedding[T float64](engine compute.Engine[T], vocabSize, embedding
 }
 
 // OutputShape returns the output shape of the embedding layer.
-// Input shape is (batch_size, seq_len). Output shape is (batch_size, seq_len, embedding_dim).
-func (te *TokenEmbedding[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("TokenEmbedding: expected 1 input shape, got %d", len(inputShapes))
-	}
-	inputShape := inputShapes[0]
-	if len(inputShape) != 2 {
-		return nil, fmt.Errorf("expected 2D input tensor (batch_size, seq_len), got %v", inputShape)
-	}
-
-	return []int{inputShape[0], inputShape[1], te.embeddingDim}, nil
+func (te *TokenEmbedding[T]) OutputShape() []int {
+	return te.outputShape
 }
 
 // Parameters returns the trainable embedding table.
@@ -89,8 +81,8 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 	batchSize := inputShape[0]
 	seqLen := inputShape[1]
 
-	outputShape := []int{batchSize, seqLen, te.embeddingDim}
-	output, err := tensor.New[T](outputShape, nil) // Create output tensor
+	te.outputShape = []int{batchSize, seqLen, te.embeddingDim}
+	output, err := tensor.New[T](te.outputShape, nil) // Create output tensor
 	if err != nil {
 		return nil, err
 	}

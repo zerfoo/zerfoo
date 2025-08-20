@@ -133,26 +133,68 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
-	// Basic implementation for 2D matrices
+
 	aShape := a.Shape()
 	bShape := b.Shape()
-	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
+
+	if len(aShape) != len(bShape) {
+		return nil, errors.New("tensors must have the same number of dimensions")
+	}
+
+	if len(aShape) < 2 {
+		return nil, errors.New("tensors must have at least 2 dimensions")
+	}
+
+	// Check if the inner dimensions are compatible
+	if aShape[len(aShape)-1] != bShape[len(bShape)-2] {
 		return nil, errors.New("invalid shapes for matrix multiplication")
 	}
-	result, err := e.getOrCreateDest([]int{aShape[0], bShape[1]}, dst...)
+
+	// Check if batch dimensions are compatible
+	for i := 0; i < len(aShape)-2; i++ {
+		if aShape[i] != bShape[i] {
+			return nil, errors.New("batch dimensions must be equal")
+		}
+	}
+
+	// Calculate output shape
+	outputShape := make([]int, len(aShape))
+	copy(outputShape, aShape[:len(aShape)-2])
+	outputShape[len(outputShape)-2] = aShape[len(aShape)-2]
+	outputShape[len(outputShape)-1] = bShape[len(bShape)-1]
+
+	result, err := e.getOrCreateDest(outputShape, dst...)
 	if err != nil {
 		return nil, err
 	}
-	for i := range aShape[0] {
-		for j := range bShape[1] {
-			sum := e.ops.FromFloat64(0)
-			for k := range aShape[1] {
-				valA, _ := a.At(i, k)
-				valB, _ := b.At(k, j)
-				sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
-			}
-			if err := result.Set(sum, i, j); err != nil {
-				return nil, err
+
+	batchSize := 1
+	for i := 0; i < len(aShape)-2; i++ {
+		batchSize *= aShape[i]
+	}
+
+	m := aShape[len(aShape)-2]
+	k := aShape[len(aShape)-1]
+	n := bShape[len(bShape)-1]
+
+	aData := a.Data()
+	bData := b.Data()
+	rData := result.Data()
+
+	for i := 0; i < batchSize; i++ {
+		aOffset := i * m * k
+		bOffset := i * k * n
+		rOffset := i * m * n
+
+		for row := 0; row < m; row++ {
+			for col := 0; col < n; col++ {
+				sum := e.ops.FromFloat64(0)
+				for inner := 0; inner < k; inner++ {
+					valA := aData[aOffset+row*k+inner]
+					valB := bData[bOffset+inner*n+col]
+					sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
+				}
+				rData[rOffset+row*n+col] = sum
 			}
 		}
 	}
@@ -160,14 +202,19 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...
 	return result, nil
 }
 
-// Transpose transposes a 2D tensor.
+
+// Transpose transposes a tensor.
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
 	originalShape := a.Shape()
-	if len(originalShape) != 2 {
-		return nil, fmt.Errorf("transpose is only supported for 2D tensors, got %d dimensions", len(originalShape))
+	if axes == nil {
+		// Default transpose for 2D tensors
+		if len(originalShape) != 2 {
+			return nil, fmt.Errorf("default transpose is only supported for 2D tensors, got %d dimensions", len(originalShape))
+		}
+		axes = []int{1, 0}
 	}
 	if len(axes) != len(originalShape) {
 		return nil, fmt.Errorf("number of axes %d must match tensor dimensions %d", len(axes), len(originalShape))
@@ -559,6 +606,9 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.Tensor[T], axis int,
 		return nil, errors.New("input tensor cannot be nil")
 	}
 	shape := a.Shape()
+	if axis < 0 {
+		axis = len(shape) + axis
+	}
 	if axis < 0 || axis >= len(shape) {
 		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(shape))
 	}
@@ -568,6 +618,7 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.Tensor[T], axis int,
 		return nil, err
 	}
 
+	// ... (rest of the implementation remains the same)
 	// Calculate max for numerical stability
 	maxVal := e.ops.FromFloat64(-math.MaxFloat64)
 	for _, v := range a.Data() {
@@ -838,4 +889,35 @@ func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.Tensor[T], axis int, 
 	}
 
 	return result, nil
+}
+
+// ReduceMean calculates the mean of elements along a specified axis.
+func (e *CPUEngine[T]) ReduceMean(
+	ctx context.Context,
+	a *tensor.Tensor[T],
+	axis int,
+	keepDims bool,
+	dst ...*tensor.Tensor[T],
+) (*tensor.Tensor[T], error) {
+	sum, err := e.Sum(ctx, a, axis, keepDims, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the size of the dimension that was reduced
+	var divisor T
+	if axis >= 0 && axis < a.Dims() {
+		divisor = e.ops.FromFloat64(float64(a.Shape()[axis]))
+	} else {
+		divisor = e.ops.FromFloat64(float64(a.Size()))
+	}
+
+	return e.DivScalar(ctx, sum, divisor, sum)
+}
+
+// Rsqrt computes the element-wise reciprocal square root of a tensor.
+func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	return e.UnaryOp(ctx, a, func(v T) T {
+		return e.ops.FromFloat64(1.0 / math.Sqrt(float64(v)))
+	}, dst...)
 }

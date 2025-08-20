@@ -26,7 +26,7 @@ func (m *mockNode) Forward(ctx context.Context, inputs ...*tensor.Tensor[int]) (
 	return inputs[0], nil
 }
 
-func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
+func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.Tensor[int], inputs ...*tensor.Tensor[int]) ([]*tensor.Tensor[int], error) {
 	if m.backwardFunc != nil {
 		return m.backwardFunc(ctx, outputGradient)
 	}

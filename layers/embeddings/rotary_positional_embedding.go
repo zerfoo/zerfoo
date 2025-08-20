@@ -17,20 +17,23 @@ type RotaryPositionalEmbedding[T tensor.Numeric] struct {
 	cosAngles *tensor.Tensor[T]
 	sinAngles *tensor.Tensor[T]
 	// Cached input for backward pass
-	inputShape []int
-	xRot0Slice *tensor.Tensor[T]
-	xRot1Slice *tensor.Tensor[T]
+	inputShape  []int
+	xRot0Slice  *tensor.Tensor[T]
+	xRot1Slice  *tensor.Tensor[T]
+	outputShape []int
 }
 
 // NewRotaryPositionalEmbedding creates a new RotaryPositionalEmbedding layer.
 // headDim: The dimension of the head. Must be even.
 // seqLen: The maximum sequence length this embedding will be applied to.
+// base: The base for the inverse frequency calculation.
 // engine: The compute engine to use for tensor operations.
 func NewRotaryPositionalEmbedding[T tensor.Numeric](
 	ctx context.Context,
 	engine compute.Engine[T],
 	headDim int,
 	seqLen int,
+	base float64,
 ) (*RotaryPositionalEmbedding[T], error) {
 	if headDim%2 != 0 {
 		return nil, fmt.Errorf("head dimension (%d) must be even for RoPE", headDim)
@@ -38,14 +41,14 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 
 	// Create position indices: [0, 1, ..., seq_len-1]
 	positions := make([]int, seqLen)
-	for i := range seqLen {
+	for i := 0; i < seqLen; i++ {
 		positions[i] = i
 	}
 
-	// Create inverse frequencies: 1 / (10000^(2i/head_dim))
+	// Create inverse frequencies: 1 / (base^(2i/head_dim))
 	invFreqsData := make([]T, headDim/2)
-	for i := range headDim / 2 {
-		invFreqsData[i] = T(1.0 / math.Pow(10000.0, float64(2*i)/float64(headDim)))
+	for i := 0; i < headDim/2; i++ {
+		invFreqsData[i] = T(1.0 / math.Pow(base, float64(2*i)/float64(headDim)))
 	}
 
 	// Compute angles: positions * invFreqs
@@ -82,20 +85,8 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 }
 
 // OutputShape returns the output shape of the RoPE layer.
-// Input shape is (batch_size, seq_len, head_dim). Output shape is the same.
-func (rpe *RotaryPositionalEmbedding[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("RotaryPositionalEmbedding: expected 1 input shape, got %d", len(inputShapes))
-	}
-	inputShape := inputShapes[0]
-	if len(inputShape) != 3 {
-		return nil, fmt.Errorf("expected 3D tensor (batch, seq_len, head_dim) for RoPE, got %v", inputShape)
-	}
-	if inputShape[2] != rpe.headDim {
-		return nil, fmt.Errorf("input head dimension (%d) does not match layer's head dimension (%d)", inputShape[2], rpe.headDim)
-	}
-
-	return inputShape, nil
+func (rpe *RotaryPositionalEmbedding[T]) OutputShape() []int {
+	return rpe.outputShape
 }
 
 // Parameters returns no trainable parameters for RoPE.
@@ -106,10 +97,20 @@ func (rpe *RotaryPositionalEmbedding[T]) Parameters() []graph.Parameter[T] {
 // Forward applies Rotary Positional Embedding to the input tensor.
 func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
 	rpe.inputShape = input.Shape()
+	rpe.outputShape = input.Shape()
 	seqLen := rpe.inputShape[1]
 
+	// Slice cos and sin angles to match the input sequence length
+	cosAngles, err := rpe.cosAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
+	if err != nil {
+		return nil, err
+	}
+	sinAngles, err := rpe.sinAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
+	if err != nil {
+		return nil, err
+	}
+
 	// Split input into two halves: x_rot0, x_rot1
-	var err error
 	rpe.xRot0Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
 		return nil, err
@@ -124,13 +125,13 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	// x_rot1 * cos(angles) + x_rot0 * sin(angles)
 
 	// Term 1: x_rot0 * cos(angles)
-	term1, err := rpe.engine.Mul(ctx, rpe.xRot0Slice, rpe.cosAngles) // Broadcasting cosAngles
+	term1, err := rpe.engine.Mul(ctx, rpe.xRot0Slice, cosAngles) // Broadcasting cosAngles
 	if err != nil {
 		return nil, err
 	}
 
 	// Term 2: x_rot1 * sin(angles)
-	term2, err := rpe.engine.Mul(ctx, rpe.xRot1Slice, rpe.sinAngles) // Broadcasting sinAngles
+	term2, err := rpe.engine.Mul(ctx, rpe.xRot1Slice, sinAngles) // Broadcasting sinAngles
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +143,11 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	}
 
 	// rotated_x1 = x_rot1 * cos(angles) + x_rot0 * sin(angles)
-	mul1, err := rpe.engine.Mul(ctx, rpe.xRot1Slice, rpe.cosAngles)
+	mul1, err := rpe.engine.Mul(ctx, rpe.xRot1Slice, cosAngles)
 	if err != nil {
 		return nil, err
 	}
-	mul2, err := rpe.engine.Mul(ctx, rpe.xRot0Slice, rpe.sinAngles)
+	mul2, err := rpe.engine.Mul(ctx, rpe.xRot0Slice, sinAngles)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +167,18 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 
 // Backward computes the gradients for RoPE.
 func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	seqLen := rpe.inputShape[1]
+
+	// Slice cos and sin angles to match the input sequence length
+	cosAngles, err := rpe.cosAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
+	if err != nil {
+		return nil, err
+	}
+	sinAngles, err := rpe.sinAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
+	if err != nil {
+		return nil, err
+	}
+
 	// Split dOut into d_rotated_x0, d_rotated_x1
 	dRotatedX0, err := dOut.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, rpe.inputShape[1]}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
@@ -178,11 +191,11 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 
 	// Gradients for x_rot0 and x_rot1
 	// dL/dx_rot0 = d_rotated_x0 * cos(angles) + d_rotated_x1 * sin(angles)
-	mul1, err := rpe.engine.Mul(ctx, dRotatedX0, rpe.cosAngles)
+	mul1, err := rpe.engine.Mul(ctx, dRotatedX0, cosAngles)
 	if err != nil {
 		return nil, err
 	}
-	mul2, err := rpe.engine.Mul(ctx, dRotatedX1, rpe.sinAngles)
+	mul2, err := rpe.engine.Mul(ctx, dRotatedX1, sinAngles)
 	if err != nil {
 		return nil, err
 	}
@@ -192,11 +205,11 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	}
 
 	// dL/dx_rot1 = d_rotated_x1 * cos(angles) - d_rotated_x0 * sin(angles)
-	mul3, err := rpe.engine.Mul(ctx, dRotatedX1, rpe.cosAngles)
+	mul3, err := rpe.engine.Mul(ctx, dRotatedX1, cosAngles)
 	if err != nil {
 		return nil, err
 	}
-	mul4, err := rpe.engine.Mul(ctx, dRotatedX0, rpe.sinAngles)
+	mul4, err := rpe.engine.Mul(ctx, dRotatedX0, sinAngles)
 	if err != nil {
 		return nil, err
 	}
