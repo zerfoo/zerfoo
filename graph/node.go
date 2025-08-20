@@ -18,7 +18,7 @@ type Node[T tensor.Numeric] interface {
 	// Forward computes the output of the node given the inputs.
 	Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
 	// Backward computes the gradients of the loss with respect to the inputs and parameters.
-	Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+	Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
 	// Parameters returns the parameters of the node.
 	Parameters() []*Parameter[T]
 }

@@ -79,9 +79,25 @@ func TestCPUEngine_Transpose(t *testing.T) {
 	engine := NewCPUEngine[int](numeric.IntOps{})
 	a, _ := tensor.New[int]([]int{2, 3}, []int{1, 2, 3, 4, 5, 6})
 	result, _ := engine.Transpose(context.Background(), a, []int{1, 0}, nil)
-	expected := []int{1, 4, 2, 5, 3, 6}
-	if !reflect.DeepEqual(result.Data(), expected) {
-		t.Errorf("expected %v, got %v", expected, result.Data())
+	expectedData := []int{1, 4, 2, 5, 3, 6}
+	expectedShape := []int{3, 2}
+	if !reflect.DeepEqual(result.Data(), expectedData) {
+		t.Errorf("expected data %v, got %v", expectedData, result.Data())
+	}
+	if !reflect.DeepEqual(result.Shape(), expectedShape) {
+		t.Errorf("expected shape %v, got %v", expectedShape, result.Shape())
+	}
+
+	// Test 3D transpose
+	b, _ := tensor.New[int]([]int{2, 2, 3}, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+	result, _ = engine.Transpose(context.Background(), b, []int{0, 2, 1}, nil)
+	expectedData3D := []int{1, 4, 2, 5, 3, 6, 7, 10, 8, 11, 9, 12}
+	expectedShape3D := []int{2, 3, 2}
+	if !reflect.DeepEqual(result.Data(), expectedData3D) {
+		t.Errorf("expected data %v, got %v", expectedData3D, result.Data())
+	}
+	if !reflect.DeepEqual(result.Shape(), expectedShape3D) {
+		t.Errorf("expected shape %v, got %v", expectedShape3D, result.Shape())
 	}
 }
 
@@ -249,14 +265,14 @@ func TestCPUEngine_Errors(t *testing.T) {
 	}
 
 	// Transpose
-	_, err = engine.Transpose(ctx, nil, nil)
+	_, err = engine.Transpose(ctx, nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for nil input to Transpose")
 	}
 	d, _ := tensor.New[int]([]int{2, 2, 2}, nil)
-	_, err = engine.Transpose(ctx, d, []int{0, 2, 1})
+	_, err = engine.Transpose(ctx, d, []int{0, 1}, nil)
 	if err == nil {
-		t.Error("expected error for non-2D tensor in Transpose")
+		t.Error("expected error for incorrect number of axes in Transpose")
 	}
 
 	// Sum

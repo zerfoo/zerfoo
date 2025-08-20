@@ -24,6 +24,7 @@ type LayerNormalization[T tensor.Numeric] struct {
 	mean        *tensor.Tensor[T]
 	variance    *tensor.Tensor[T]
 	normedInput *tensor.Tensor[T] // (input - mean) / sqrt(variance + epsilon)
+	outputShape []int
 }
 
 // NewLayerNormalization creates a new LayerNormalization layer.
@@ -67,16 +68,8 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 }
 
 // OutputShape returns the output shape, which is the same as the input shape.
-func (ln *LayerNormalization[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
-	}
-	// Ensure the last dimension matches the featureDim used during initialization
-	if len(inputShapes[0]) == 0 || inputShapes[0][len(inputShapes[0])-1] != ln.gamma.Value.Shape()[0] {
-		return nil, fmt.Errorf("last dimension of input shape %v must match feature dimension %d", inputShapes[0], ln.gamma.Value.Shape()[0])
-	}
-
-	return inputShapes[0], nil
+func (ln *LayerNormalization[T]) OutputShape() []int {
+	return ln.outputShape
 }
 
 // Parameters returns the trainable gamma and beta parameters.
@@ -91,6 +84,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	}
 	input := inputs[0]
 	ln.inputShape = input.Shape() // Cache input shape for backward
+	ln.outputShape = input.Shape()
 
 	// Calculate mean along the last dimension
 	// KeepDims=true to maintain original dimensions for broadcasting

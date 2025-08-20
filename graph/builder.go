@@ -159,7 +159,7 @@ func (n *inputNode[T]) Forward(ctx context.Context, _ ...*tensor.Tensor[T]) (*te
 	return nil, nil
 }
 
-func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	return nil, nil
 }
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }

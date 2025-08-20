@@ -67,7 +67,7 @@ func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*te
 }
 
 // Backward computes the gradients.
-func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Gradient with respect to biases: sum of output_gradient along batch dimension
 	biasesGrad, err := b.engine.Sum(ctx, outputGradient, 0, false)
 	if err != nil {

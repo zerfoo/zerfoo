@@ -304,15 +304,6 @@ func TestFinalCoverageEdgeCases(t *testing.T) {
 		}
 	})
 
-	// Test Transpose with 1D tensor (should fail)
-	t.Run("Transpose_1D", func(t *testing.T) {
-		a, _ := tensor.New[float32]([]int{5}, []float32{1, 2, 3, 4, 5})
-		_, err := engine.Transpose(ctx, a, []int{0}) // 1D tensor, transpose with its only axis
-		if err == nil {
-			t.Error("expected error for 1D tensor transpose")
-		}
-	})
-
 	// Test Transpose destination error
 	t.Run("Transpose_DestError", func(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})

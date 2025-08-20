@@ -138,4 +138,16 @@ type Engine[T tensor.Numeric] interface {
 
 	// Reshape changes the shape of a tensor without changing its data.
 	Reshape(ctx context.Context, a *tensor.Tensor[T], shape []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+
+	// ReduceMean calculates the mean of elements along a specified axis.
+	ReduceMean(
+		ctx context.Context,
+		a *tensor.Tensor[T],
+		axis int,
+		keepDims bool,
+		dst ...*tensor.Tensor[T],
+	) (*tensor.Tensor[T], error)
+
+	// Rsqrt computes the element-wise reciprocal square root of a tensor.
+	Rsqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
 }

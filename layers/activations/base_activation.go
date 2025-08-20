@@ -52,7 +52,7 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 }
 
 // Backward performs the backward pass of the activation function.
-func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	derivative, err := b.engine.UnaryOp(ctx, b.lastInput, b.backwardOp)
 	if err != nil {
 		return nil, err

@@ -17,7 +17,7 @@ func (m *mockModel[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T])
 	return inputs[0], nil
 }
 
-func (m *mockModel[T]) Backward(ctx context.Context, grad *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (m *mockModel[T]) Backward(ctx context.Context, grad *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	return []*tensor.Tensor[T]{grad}, nil
 }
 

@@ -19,8 +19,9 @@ type SwiGLU[T tensor.Numeric] struct {
 	sigmoid *Sigmoid[T] // SwiGLU uses Sigmoid internally
 
 	// Cached tensors for backward pass
-	lastInput *tensor.Tensor[T]
-	gate      *tensor.Tensor[T] // The sigmoid(x2) part
+	lastInput   *tensor.Tensor[T]
+	gate        *tensor.Tensor[T] // The sigmoid(x2) part
+	outputShape []int
 }
 
 // NewSwiGLU creates a new SwiGLU activation layer.
@@ -33,28 +34,12 @@ func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmeti
 }
 
 // OutputShape returns the output shape of SwiGLU.
-// Input shape is (..., 2 * feature_dim). Output shape is (..., feature_dim).
-func (s *SwiGLU[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	if len(inputShapes) != 1 {
-		return nil, fmt.Errorf("SwiGLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputShapes))
-	}
-	inputShape := inputShapes[0]
-	if len(inputShape) < 1 {
-		return nil, errors.New("SwiGLU input must have at least one dimension")
-	}
-	lastDim := inputShape[len(inputShape)-1]
-	if lastDim%2 != 0 {
-		return nil, fmt.Errorf("last dimension of input (%d) must be even for SwiGLU", lastDim)
-	}
-	outputShape := make([]int, len(inputShape))
-	copy(outputShape, inputShape)
-	outputShape[len(outputShape)-1] = lastDim / 2
-
-	return outputShape, nil
+func (s *SwiGLU[T]) OutputShape() []int {
+	return s.outputShape
 }
 
 // Parameters returns an empty slice as SwiGLU has no trainable parameters.
-func (s *SwiGLU[T]) Parameters() []graph.Parameter[T] {
+func (s *SwiGLU[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
@@ -68,7 +53,16 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 	s.lastInput = input // Cache input for backward
 
 	inputShape := s.lastInput.Shape()
-	// featureDim := lastDim / 2
+	if len(inputShape) < 1 {
+		return nil, errors.New("SwiGLU input must have at least one dimension")
+	}
+	lastDim := inputShape[len(inputShape)-1]
+	if lastDim%2 != 0 {
+		return nil, fmt.Errorf("last dimension of input (%d) must be even for SwiGLU", lastDim)
+	}
+	s.outputShape = make([]int, len(inputShape))
+	copy(s.outputShape, inputShape)
+	s.outputShape[len(s.outputShape)-1] = lastDim / 2
 
 	// Split input into x1 and x2 along the last dimension
 	splitTensors, err := s.engine.Split(ctx, s.lastInput, 2, len(inputShape)-1)
