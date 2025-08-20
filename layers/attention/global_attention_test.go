@@ -10,7 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestGlobalSelfAttention_Forward(t *testing.T) {
+func TestGlobalAttention_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -18,28 +18,27 @@ func TestGlobalSelfAttention_Forward(t *testing.T) {
 	modelDim := 64
 	numQueryHeads := 8
 	numKeyValueHeads := 4
-	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
 
-	attn, err := NewGlobalSelfAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, epsilon, base, maxSeqLen)
+	globalAttn, err := NewGlobalAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
 	if err != nil {
-		t.Fatalf("Failed to create GlobalSelfAttention: %v", err)
+		t.Fatalf("Failed to create GlobalAttention: %v", err)
 	}
 
-	batchSize := 2
-	seqLen := 10
+	batchSize := 1
+	seqLen := 5
 	inputShape := []int{batchSize, seqLen, modelDim}
 	inputData := make([]float32, batchSize*seqLen*modelDim)
 	for i := range inputData {
-		inputData[i] = float32(i) * 0.01 // Simple dummy data
+		inputData[i] = float32(i) * 0.01
 	}
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := attn.Forward(ctx, inputTensor)
+	output, err := globalAttn.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}

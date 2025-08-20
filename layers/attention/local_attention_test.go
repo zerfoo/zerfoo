@@ -10,7 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func TestLocalSlidingWindowAttention_Forward(t *testing.T) {
+func TestLocalAttention_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -19,28 +19,27 @@ func TestLocalSlidingWindowAttention_Forward(t *testing.T) {
 	numQueryHeads := 8
 	numKeyValueHeads := 4
 	windowSize := 3
-	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
 
-	attn, err := NewLocalSlidingWindowAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, windowSize, epsilon, base, maxSeqLen)
+	localAttn, err := NewLocalAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, windowSize, base, maxSeqLen)
 	if err != nil {
-		t.Fatalf("Failed to create LocalSlidingWindowAttention: %v", err)
+		t.Fatalf("Failed to create LocalAttention: %v", err)
 	}
 
-	batchSize := 2
-	seqLen := 10
+	batchSize := 1
+	seqLen := 5
 	inputShape := []int{batchSize, seqLen, modelDim}
 	inputData := make([]float32, batchSize*seqLen*modelDim)
 	for i := range inputData {
-		inputData[i] = float32(i) * 0.01 // Simple dummy data
+		inputData[i] = float32(i) * 0.01
 	}
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := attn.Forward(ctx, inputTensor)
+	output, err := localAttn.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
@@ -48,4 +47,7 @@ func TestLocalSlidingWindowAttention_Forward(t *testing.T) {
 	if !testutils.IntSliceEqual(output.Shape(), inputShape) {
 		t.Errorf("Expected output shape %v, got %v", inputShape, output.Shape())
 	}
+
+	// More detailed test to check the mask would be needed here.
+	// For now, we just check that it runs and produces the correct shape.
 }

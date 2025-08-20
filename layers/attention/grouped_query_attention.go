@@ -114,6 +114,11 @@ func (gqa *GroupedQueryAttention[T]) OutputShape() []int {
 	return gqa.outputShape
 }
 
+// ScaleRope scales the rotary positional embeddings.
+func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float64) error {
+	return gqa.rope.Scale(ctx, factor)
+}
+
 // Parameters returns the parameters of the GroupedQueryAttention layer.
 func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
@@ -360,96 +365,59 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	seqLen := input.Shape()[1]
 
 	// 1. Backward through final linear projection (WO)
-	dAttnOutputFinal, err := gqa.wo.Backward(ctx, dOut)
+	dAttnOutputFinal, err := gqa.wo.Backward(ctx, dOut, gqa.attnOutput)
 	if err != nil {
 		return nil, err
 	}
 	dAttnOutputFinalTensor := dAttnOutputFinal[0]
 
 	// 2. Backward through reshape and transpose (reverse of step 5 in Forward)
-	dAttnOutputReshaped, err := gqa.engine.Reshape(ctx, dAttnOutputFinalTensor, []int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim})
+	dAttnOutputCombined, err := gqa.engine.Reshape(ctx, dAttnOutputFinalTensor, []int{batchSize, seqLen, gqa.numQueryHeads, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
-	dAttnOutputCombined, err := gqa.engine.Transpose(ctx, dAttnOutputReshaped, []int{0, 2, 1, 3})
+	dAttnOutputReshaped, err := gqa.engine.Transpose(ctx, dAttnOutputCombined, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
 	}
-	dAttnOutputHeads, err := gqa.engine.Reshape(ctx, dAttnOutputCombined, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
+	dAttnOutputHeads, err := gqa.engine.Reshape(ctx, dAttnOutputReshaped, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
 
 	// 3. Backward through Scaled Dot-Product Attention
-	// Need to pass the original Q, K, V that went into SDPA.
-	// These are qHeadsRoPE, kHeadsRoPE, vHeads (after replication if any).
-	qForSDPA, err := gqa.engine.Reshape(ctx, gqa.qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
-	kForSDPA, err := gqa.engine.Reshape(ctx, gqa.kHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
-	// Re-create vForSDPA as it might have been replicated
-	kvHeadDim := gqa.modelDim / gqa.numKeyValueHeads
-	vHeadsOriginal := gqa.vProj    // Use original vProj to avoid issues with replication
-	var vForSDPA *tensor.Tensor[T] // Declare vForSDPA here
-	if gqa.numQueryHeads != gqa.numKeyValueHeads {
-		replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads // Declare replicationFactor here
-		vHeadsOriginalReshaped, err := gqa.engine.Reshape(ctx, vHeadsOriginal, []int{batchSize, seqLen, gqa.numKeyValueHeads, kvHeadDim})
-		if err != nil {
-			return nil, err
-		}
-		vHeadsOriginalTransposed, err := gqa.engine.Transpose(ctx, vHeadsOriginalReshaped, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, err
-		}
-		vForSDPA, err = gqa.engine.Repeat(ctx, vHeadsOriginalTransposed, 1, replicationFactor)
-		if err != nil {
-			return nil, err
-		}
-		vForSDPA, err = gqa.engine.Reshape(ctx, vForSDPA, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		vForSDPA, err = gqa.engine.Reshape(ctx, vHeadsOriginal, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	dQKVSplit, err := gqa.scaledDotProductAttention.Backward(ctx, dAttnOutputHeads, qForSDPA, kForSDPA, vForSDPA)
+	dQKVSplit, err := gqa.scaledDotProductAttention.Backward(ctx, dAttnOutputHeads, gqa.scaledDotProductAttention.q, gqa.scaledDotProductAttention.k, gqa.scaledDotProductAttention.v)
 	if err != nil {
 		return nil, err
 	}
 	dQHeadsRoPE, dKHeadsRoPE, dVHeads := dQKVSplit[0], dQKVSplit[1], dQKVSplit[2]
 
-	dQForRoPE, err := gqa.rope.Backward(ctx, dQHeadsRoPE, qForSDPA)
+	// 4. Backward through RoPE
+	dQForRoPE, err := gqa.rope.Backward(ctx, dQHeadsRoPE)
 	if err != nil {
 		return nil, err
 	}
-	dKForRoPE, err := gqa.rope.Backward(ctx, dKHeadsRoPE, kForSDPA)
+	dKForRoPE, err := gqa.rope.Backward(ctx, dKHeadsRoPE)
 	if err != nil {
 		return nil, err
 	}
 
-	dQProj, dKProj, dVProj, err := gqa.backwardSplitAndReshape(ctx, dQForRoPE, dKForRoPE, dVHeads, batchSize, seqLen, kvHeadDim)
+	// 5. Backward through head splitting and replication
+	dQProj, dKProj, dVProj, err := gqa.backwardSplitAndReshape(ctx, dQForRoPE, dKForRoPE, dVHeads, batchSize, seqLen, gqa.headDim)
 	if err != nil {
 		return nil, err
 	}
 
 	// 6. Backward through linear projections (WQ, WK, WV)
-	dInputQ, err := gqa.wq.Backward(ctx, dQProj)
+	dInputQ, err := gqa.wq.Backward(ctx, dQProj, input)
 	if err != nil {
 		return nil, err
 	}
-	dInputK, err := gqa.wk.Backward(ctx, dKProj)
+	dInputK, err := gqa.wk.Backward(ctx, dKProj, input)
 	if err != nil {
 		return nil, err
 	}
-	dInputV, err := gqa.wv.Backward(ctx, dVProj)
+	dInputV, err := gqa.wv.Backward(ctx, dVProj, input)
 	if err != nil {
 		return nil, err
 	}
