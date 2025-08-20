@@ -23,9 +23,9 @@ func TestGemmaModel_Forward(t *testing.T) {
 	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
-	numLayers := 6
+	numLayers := 2 // Use a small number of layers for testing
 	localWindowSize := 3
-	globalInterval := 5
+	globalInterval := 2
 
 	model, err := NewGemmaModel[float32](engine, ops, vocabSize, modelDim, numQueryHeads, numKeyValueHeads, ffnDim, epsilon, base, maxSeqLen, numLayers, localWindowSize, globalInterval)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestGemmaModel_Forward(t *testing.T) {
 	inputShape := []int{batchSize, seqLen}
 	inputData := make([]int, batchSize*seqLen)
 	for i := range inputData {
-		inputData[i] = i % vocabSize // Simple dummy data
+		inputData[i] = i % vocabSize
 	}
 	inputTensor, err := tensor.New[int](inputShape, inputData)
 	if err != nil {
