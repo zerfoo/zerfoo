@@ -2,7 +2,6 @@ package attention
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -10,74 +9,82 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// LocalSlidingWindowAttention implements a local sliding window attention mechanism.
-type LocalSlidingWindowAttention[T tensor.Numeric] struct {
-	gqa         *GroupedQueryAttention[T]
-	windowSize  int
-	outputShape []int
+// LocalAttention implements a local, sliding-window self-attention mechanism.
+type LocalAttention[T tensor.Numeric] struct {
+	gqa        *GroupedQueryAttention[T]
+	windowSize int
+	ops        numeric.Arithmetic[T]
 }
 
-// NewLocalSlidingWindowAttention creates a new LocalSlidingWindowAttention layer.
-func NewLocalSlidingWindowAttention[T tensor.Numeric](
+// NewLocalAttention creates a new LocalAttention layer.
+func NewLocalAttention[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	modelDim, numQueryHeads, numKeyValueHeads, windowSize int,
-	epsilon T,
 	base float64,
 	maxSeqLen int,
-) (*LocalSlidingWindowAttention[T], error) {
+) (*LocalAttention[T], error) {
 	gqa, err := NewGroupedQueryAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GroupedQueryAttention: %w", err)
-	}
-	return &LocalSlidingWindowAttention[T]{
-		gqa:        gqa,
-		windowSize: windowSize,
-	}, nil
-}
-
-// OutputShape returns the output shape of the LocalSlidingWindowAttention.
-func (lswa *LocalSlidingWindowAttention[T]) OutputShape() []int {
-	return lswa.outputShape
-}
-
-// Parameters returns the parameters of the LocalSlidingWindowAttention layer.
-func (lswa *LocalSlidingWindowAttention[T]) Parameters() []*graph.Parameter[T] {
-	return lswa.gqa.Parameters()
-}
-
-// Forward computes the local sliding window attention.
-func (lswa *LocalSlidingWindowAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	input := inputs[0]
-	lswa.outputShape = input.Shape()
-	batchSize := input.Shape()[0]
-	seqLen := input.Shape()[1]
-	numHeads := lswa.gqa.numQueryHeads
-
-	// Create sliding window mask
-	mask, err := tensor.New[T]([]int{batchSize, numHeads, seqLen, seqLen}, nil)
 	if err != nil {
 		return nil, err
 	}
-	for b := 0; b < batchSize; b++ {
-		for h := 0; h < numHeads; h++ {
-			for i := 0; i < seqLen; i++ {
-				for j := 0; j < seqLen; j++ {
-					if j > i || j < i-lswa.windowSize {
-						if err := mask.Set(lswa.gqa.ops.FromFloat64(-1e9), b, h, i, j); err != nil {
-							return nil, err
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return lswa.gqa.Forward(ctx, input, mask)
+	return &LocalAttention[T]{
+		gqa:        gqa,
+		windowSize: windowSize,
+		ops:        ops,
+	}, nil
 }
 
-// Backward computes the gradients for LocalSlidingWindowAttention.
-func (lswa *LocalSlidingWindowAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	// The backward pass is the same as GQA for now.
-	return lswa.gqa.Backward(ctx, dOut, inputs...)
+// Parameters returns the parameters of the LocalAttention layer.
+func (la *LocalAttention[T]) Parameters() []*graph.Parameter[T] {
+	return la.gqa.Parameters()
+}
+
+// Forward computes the forward pass of the LocalAttention layer.
+func (la *LocalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	input := inputs[0]
+	seqLen := input.Shape()[1]
+
+	mask, err := la.createLocalAttentionMask(seqLen)
+	if err != nil {
+		return nil, err
+	}
+
+	return la.gqa.Forward(ctx, input, mask)
+}
+
+func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tensor[T], error) {
+	mask, err := tensor.New[T]([]int{1, 1, seqLen, seqLen}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Fill with a large negative number
+	largeNegative := la.ops.FromFloat64(-1e9)
+	for i := 0; i < seqLen*seqLen; i++ {
+		mask.Data()[i] = largeNegative
+	}
+
+	for i := 0; i < seqLen; i++ {
+		start := i - la.windowSize
+		if start < 0 {
+			start = 0
+		}
+		end := i + la.windowSize + 1
+		if end > seqLen {
+			end = seqLen
+		}
+		for j := start; j < end; j++ {
+			mask.Data()[i*seqLen+j] = la.ops.FromFloat64(0)
+		}
+	}
+	return mask, nil
+}
+
+// Backward is not implemented
+func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	return la.gqa.Backward(ctx, dOut, inputs...)
+}
+
+func (la *LocalAttention[T]) OutputShape() []int {
+	return la.gqa.OutputShape()
 }

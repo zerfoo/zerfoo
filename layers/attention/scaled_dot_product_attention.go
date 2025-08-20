@@ -2,7 +2,6 @@ package attention
 
 import (
 	"context"
-	"errors"
 	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -13,6 +12,12 @@ import (
 type ScaledDotProductAttention[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	headDim float64 // Dimension of each head, used for scaling
+
+	// Cached tensors for backward pass
+	q                *tensor.Tensor[T]
+	k                *tensor.Tensor[T]
+	v                *tensor.Tensor[T]
+	attentionWeights *tensor.Tensor[T]
 }
 
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
@@ -27,6 +32,11 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 // Q, K, V are expected to be 3D tensors (batch_size, seq_len, head_dim).
 // mask is an optional 4D tensor (batch_size, num_heads, seq_len_q, seq_len_k).
 func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.Tensor[T], mask *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	// Cache inputs for backward pass
+	sdpa.q = q
+	sdpa.k = k
+	sdpa.v = v
+
 	// 1. MatMul Q and K^T
 	// (batch, seq_len_q, head_dim) x (batch, head_dim, seq_len_k) -> (batch, seq_len_q, seq_len_k)
 	kTransposed, err := sdpa.engine.Transpose(ctx, k, []int{0, 2, 1}) // Transpose K for 3D tensor
@@ -70,6 +80,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 	if err != nil {
 		return nil, err
 	}
+	sdpa.attentionWeights = attentionWeights // Cache for backward pass
 
 	// 5. MatMul attention weights and V
 	// (batch, seq_len_q, seq_len_k) x (batch, seq_len_k, head_dim) -> (batch, seq_len_q, head_dim)
@@ -83,8 +94,66 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
-func (sdpa *ScaledDotProductAttention[T]) Backward(_ context.Context, _ *tensor.Tensor[T], _, _, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	// Placeholder for backward pass. This would involve complex chain rule applications.
-	// For now, return nil gradients for Q, K, V.
-	return []*tensor.Tensor[T]{nil, nil, nil}, errors.New("ScaledDotProductAttention backward pass not yet implemented")
+func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _, _, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	// 1. Gradient w.r.t. V
+	attentionWeightsTransposed, err := sdpa.engine.Transpose(ctx, sdpa.attentionWeights, []int{0, 2, 1})
+	if err != nil {
+		return nil, err
+	}
+	dV, err := sdpa.engine.MatMul(ctx, attentionWeightsTransposed, dOut, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Gradient w.r.t. attention_weights
+	vTransposed, err := sdpa.engine.Transpose(ctx, sdpa.v, []int{0, 2, 1})
+	if err != nil {
+		return nil, err
+	}
+	dAttentionWeights, err := sdpa.engine.MatMul(ctx, dOut, vTransposed, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Gradient w.r.t. scaled_attention_scores (through softmax)
+	// dL/dx = (dL/dy - sum(dL/dy * y)) * y
+	mul, err := sdpa.engine.Mul(ctx, dAttentionWeights, sdpa.attentionWeights)
+	if err != nil {
+		return nil, err
+	}
+	sum, err := sdpa.engine.ReduceSum(ctx, mul, -1, true)
+	if err != nil {
+		return nil, err
+	}
+	sub, err := sdpa.engine.Sub(ctx, dAttentionWeights, sum)
+	if err != nil {
+		return nil, err
+	}
+	dScaledAttentionScores, err := sdpa.engine.Mul(ctx, sub, sdpa.attentionWeights)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Gradient w.r.t. attention_scores (through scaling)
+	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(sdpa.headDim))
+	dAttentionScores, err := sdpa.engine.MulScalar(ctx, dScaledAttentionScores, scaleFactor, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 5. Gradient w.r.t. Q and K
+	dQ, err := sdpa.engine.MatMul(ctx, dAttentionScores, sdpa.k, nil)
+	if err != nil {
+		return nil, err
+	}
+	dAttentionScoresTransposed, err := sdpa.engine.Transpose(ctx, dAttentionScores, []int{0, 2, 1})
+	if err != nil {
+		return nil, err
+	}
+	dK, err := sdpa.engine.MatMul(ctx, dAttentionScoresTransposed, sdpa.q, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.Tensor[T]{dQ, dK, dV}, nil
 }
