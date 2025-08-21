@@ -137,7 +137,7 @@ func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 // Backward computes the backward pass of the FFN.
 func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
 	// Backward through W2
-	dSwiGLUOutput, err := ffn.w2.Backward(ctx, dOut)
+	dSwiGLUOutput, err := ffn.w2.Backward(ctx, dOut, ffn.swiGLUOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -164,14 +164,14 @@ func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs 
 	dW1Output, dW3Output := splitGrads[0], splitGrads[1]
 
 	// Backward through W1
-	dInputW1, err := ffn.w1.Backward(ctx, dW1Output)
+	dInputW1, err := ffn.w1.Backward(ctx, dW1Output, ffn.inputTensor)
 	if err != nil {
 		return nil, err
 	}
 	dInputW1Tensor := dInputW1[0]
 
 	// Backward through W3
-	dInputW3, err := ffn.w3.Backward(ctx, dW3Output)
+	dInputW3, err := ffn.w3.Backward(ctx, dW3Output, ffn.inputTensor)
 	if err != nil {
 		return nil, err
 	}

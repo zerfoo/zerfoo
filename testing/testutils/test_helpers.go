@@ -3,6 +3,7 @@ package testutils
 import (
 	"context"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -11,6 +12,19 @@ import (
 	"github.com/zerfoo/zerfoo/device"
 	"github.com/zerfoo/zerfoo/tensor"
 )
+
+// TestCase represents a single test case with a name and a function to execute.
+type TestCase struct {
+	Name string
+	Func func(t *testing.T)
+}
+
+// RunTests executes a slice of test cases.
+func RunTests(t *testing.T, tests []TestCase) {
+	for _, tt := range tests {
+		t.Run(tt.Name, tt.Func)
+	}
+}
 
 // ElementsMatch checks if two string slices contain the same elements, regardless of order.
 func ElementsMatch(a, b []string) bool {
@@ -90,7 +104,7 @@ func AssertNotNil(t *testing.T, value interface{}, msg string) {
 // AssertNil checks if a value is nil.
 func AssertNil(t *testing.T, value interface{}, msg string) {
 	t.Helper()
-	if value != nil {
+	if value != nil && !reflect.ValueOf(value).IsNil() {
 		t.Errorf("expected nil, but got %v: %s", value, msg)
 	}
 }

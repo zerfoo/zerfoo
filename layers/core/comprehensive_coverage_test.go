@@ -138,7 +138,7 @@ func testDenseBasicOperation(t *testing.T, dense *Dense[float32]) {
 	outputGrad, err := tensor.New(outputShape, gradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
-	inputGrads, _ := dense.Backward(context.Background(), outputGrad)
+	inputGrads, _ := dense.Backward(context.Background(), outputGrad, input)
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertTrue(t, inputGrads[0] != nil, "expected non-nil input gradient")
 }

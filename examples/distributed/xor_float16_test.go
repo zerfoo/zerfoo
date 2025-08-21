@@ -99,12 +99,12 @@ dense1, err := core.NewDense[float32]("dense1", engine, ops, 2, 4)
 			
 sigmoidGrads, err := sigmoid1.Backward(context.Background(), outputGrad)
 			if err != nil { t.Fatalf("Sigmoid1 backward pass failed: %v", err) }
-			dense2Grads, err := dense2.Backward(context.Background(), sigmoidGrads[0])
+			dense2Grads, err := dense2.Backward(context.Background(), sigmoidGrads[0], activatedHiddenOutput)
 			if err != nil { t.Fatalf("Dense2 backward pass failed: %v", err) }
 
 			reluGrads, err := relu1.Backward(context.Background(), dense2Grads[0])
 			if err != nil { t.Fatalf("ReLU1 backward pass failed: %v", err) }
-			_, err = dense1.Backward(context.Background(), reluGrads[0])
+			_, err = dense1.Backward(context.Background(), reluGrads[0], input)
 			if err != nil { t.Fatalf("Dense1 backward pass failed: %v", err) }
 
 			// Apply gradients (simulate AllReduce and then update)

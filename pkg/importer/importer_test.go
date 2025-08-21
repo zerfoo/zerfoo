@@ -7,7 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zmf/format"
+	"github.com/zerfoo/zmf"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,9 +25,9 @@ func (m *mockEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], out *te
 
 func TestLoadModel_Comprehensive(t *testing.T) {
 	// 1. Create a mock ZMF model protobuf
-	zmfModel := &format.Model{
-		Graph: &format.Graph{
-			Nodes: []*format.Node{
+	zmfModel := &zmf.Model{
+		Graph: &zmf.Graph{
+			Nodes: []*zmf.Node{
 				{
 					Name:   "token_embedding_1",
 					OpType: "TokenEmbedding",
@@ -37,8 +37,8 @@ func TestLoadModel_Comprehensive(t *testing.T) {
 					Name:   "rmsnorm_1",
 					OpType: "RMSNorm",
 					Inputs: []string{"rmsnorm_1_gain"},
-					Attributes: map[string]*format.Attribute{
-						"epsilon": {Value: &format.Attribute_F{F: 1e-6}},
+					Attributes: map[string]*zmf.Attribute{
+						"epsilon": {Value: &zmf.Attribute_F{F: 1e-6}},
 					},
 				},
 				{
@@ -51,24 +51,24 @@ func TestLoadModel_Comprehensive(t *testing.T) {
 					OpType: "ReLU",
 				},
 			},
-			Parameters: map[string]*format.Tensor{
+			Parameters: map[string]*zmf.Tensor{
 				"embedding_table": {
-					Dtype: format.Tensor_FLOAT32,
+					Dtype: zmf.Tensor_FLOAT32,
 					Shape: []int64{1000, 128},
 					Data:  make([]byte, 1000*128*4),
 				},
 				"rmsnorm_1_gain": {
-					Dtype: format.Tensor_FLOAT32,
+					Dtype: zmf.Tensor_FLOAT32,
 					Shape: []int64{128},
 					Data:  make([]byte, 128*4),
 				},
 				"dense_1_weights": {
-					Dtype: format.Tensor_FLOAT32,
+					Dtype: zmf.Tensor_FLOAT32,
 					Shape: []int64{128, 256},
 					Data:  make([]byte, 128*256*4),
 				},
 				"dense_1_bias": {
-					Dtype: format.Tensor_FLOAT32,
+					Dtype: zmf.Tensor_FLOAT32,
 					Shape: []int64{256},
 					Data:  make([]byte, 256*4),
 				},
