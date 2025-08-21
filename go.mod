@@ -1,6 +1,6 @@
 module github.com/zerfoo/zerfoo
 
-go 1.24.5
+go 1.25
 
 require (
 	github.com/zerfoo/float16 v0.1.0
