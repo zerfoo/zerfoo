@@ -106,7 +106,9 @@ func newGlobalAttention[T tensor.Numeric](
 	wo := core.NewDenseFromParams[T](core.NewLinearFromParam[T](engine, woWeightsParam), core.NewBiasFromParam[T](engine, ops, woBiasParam))
 
 	// 4. Create RoPE
-	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, modelDim/numQueryHeads, maxSeqLen, base)
+	headDim := modelDim / numQueryHeads
+	seqLen := maxSeqLen
+	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, seqLen, embeddings.WithRotaryBase(base))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
 	}

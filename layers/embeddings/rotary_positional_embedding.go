@@ -23,20 +23,42 @@ type RotaryPositionalEmbedding[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// RotaryPositionalEmbeddingOptions holds configuration options for RotaryPositionalEmbedding layers.
+type RotaryPositionalEmbeddingOptions struct {
+	Base float64 // Base for the inverse frequency calculation (theta parameter)
+}
+
+// RotaryPositionalEmbeddingOption is a functional option for configuring RotaryPositionalEmbedding layers.
+type RotaryPositionalEmbeddingOption func(*RotaryPositionalEmbeddingOptions)
+
+// WithRotaryBase sets the base (theta) parameter for the inverse frequency calculation.
+func WithRotaryBase(base float64) RotaryPositionalEmbeddingOption {
+	return func(opts *RotaryPositionalEmbeddingOptions) {
+		opts.Base = base
+	}
+}
+
 // NewRotaryPositionalEmbedding creates a new RotaryPositionalEmbedding layer.
 // headDim: The dimension of the head. Must be even.
 // seqLen: The maximum sequence length this embedding will be applied to.
-// base: The base for the inverse frequency calculation.
 // engine: The compute engine to use for tensor operations.
 func NewRotaryPositionalEmbedding[T tensor.Numeric](
 	ctx context.Context,
 	engine compute.Engine[T],
 	headDim int,
 	seqLen int,
-	base float64,
+	options ...RotaryPositionalEmbeddingOption,
 ) (*RotaryPositionalEmbedding[T], error) {
 	if headDim%2 != 0 {
 		return nil, fmt.Errorf("head dimension (%d) must be even for RoPE", headDim)
+	}
+
+	// Apply functional options
+	opts := &RotaryPositionalEmbeddingOptions{
+		Base: 10000.0, // Default base value (theta)
+	}
+	for _, option := range options {
+		option(opts)
 	}
 
 	// Create position indices: [0, 1, ..., seq_len-1]
@@ -48,7 +70,7 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 	// Create inverse frequencies: 1 / (base^(2i/head_dim))
 	invFreqsData := make([]T, headDim/2)
 	for i := 0; i < headDim/2; i++ {
-		invFreqsData[i] = T(1.0 / math.Pow(base, float64(2*i)/float64(headDim)))
+		invFreqsData[i] = T(1.0 / math.Pow(opts.Base, float64(2*i)/float64(headDim)))
 	}
 
 	// Compute angles: positions * invFreqs
