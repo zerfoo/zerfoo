@@ -14,12 +14,21 @@ import (
 type Gather[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	outputShape []int
+	weights     *tensor.TensorNumeric[T] // Optional embedded weights
 }
 
 // New creates a new Gather layer.
 func New[T tensor.Numeric](engine compute.Engine[T]) *Gather[T] {
 	return &Gather[T]{
 		engine: engine,
+	}
+}
+
+// NewWithWeights creates a new Gather layer with embedded weights.
+func NewWithWeights[T tensor.Numeric](engine compute.Engine[T], weights *tensor.TensorNumeric[T]) *Gather[T] {
+	return &Gather[T]{
+		engine:  engine,
+		weights: weights,
 	}
 }
 
@@ -35,10 +44,31 @@ func (g *Gather[T]) Parameters() []*graph.Parameter[T] {
 
 // Forward computes the gather operation.
 func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	params := inputs[0]
-	indices, ok := any(inputs[1]).(*tensor.TensorNumeric[int])
-	if !ok {
-		return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[1])
+	var params *tensor.TensorNumeric[T]
+	var indices *tensor.TensorNumeric[int]
+	
+	// If we have embedded weights, use them as params and expect only indices as input
+	if g.weights != nil {
+		if len(inputs) != 1 {
+			return nil, fmt.Errorf("Gather layer with embedded weights expects 1 input (indices), got %d", len(inputs))
+		}
+		params = g.weights
+		var ok bool
+		indices, ok = any(inputs[0]).(*tensor.TensorNumeric[int])
+		if !ok {
+			return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[0])
+		}
+	} else {
+		// Original behavior: expect params and indices as inputs
+		if len(inputs) != 2 {
+			return nil, fmt.Errorf("Gather layer expects 2 inputs (params, indices), got %d", len(inputs))
+		}
+		params = inputs[0]
+		var ok bool
+		indices, ok = any(inputs[1]).(*tensor.TensorNumeric[int])
+		if !ok {
+			return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[1])
+		}
 	}
 
 	// The output shape is the shape of the indices tensor, with the last dimension
