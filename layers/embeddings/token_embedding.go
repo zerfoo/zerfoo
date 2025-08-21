@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -24,16 +25,38 @@ type TokenEmbedding[T tensor.Numeric] struct {
 	outputShape   []int
 }
 
+// TokenEmbeddingOptions holds configuration options for TokenEmbedding layers.
+type TokenEmbeddingOptions[T tensor.Numeric] struct {
+	Initializer components.WeightInitializer[T]
+}
+
+// TokenEmbeddingOption is a functional option for configuring TokenEmbedding layers.
+type TokenEmbeddingOption[T tensor.Numeric] func(*TokenEmbeddingOptions[T])
+
+// WithTokenEmbeddingInitializer sets a custom weight initializer for the embedding table.
+func WithTokenEmbeddingInitializer[T tensor.Numeric](initializer components.WeightInitializer[T]) TokenEmbeddingOption[T] {
+	return func(opts *TokenEmbeddingOptions[T]) {
+		opts.Initializer = initializer
+	}
+}
+
 // NewTokenEmbedding creates a new TokenEmbedding layer.
 // vocabSize: The size of the vocabulary (number of unique tokens).
 // embeddingDim: The dimension of the embedding vectors.
-func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, embeddingDim int) (*TokenEmbedding[T], error) {
+func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, embeddingDim int, options ...TokenEmbeddingOption[T]) (*TokenEmbedding[T], error) {
 	if vocabSize <= 0 {
 		return nil, fmt.Errorf("vocabSize must be positive, got %d", vocabSize)
 	}
 	if embeddingDim <= 0 {
 		return nil, fmt.Errorf("embeddingDim must be positive, got %d", embeddingDim)
 	}
+
+	// Apply functional options
+	opts := &TokenEmbeddingOptions[T]{}
+	for _, option := range options {
+		option(opts)
+	}
+
 	// Initialize the embedding table (vocabSize x embeddingDim)
 	// This will be a trainable parameter.
 	embeddingTableTensor, err := tensor.New[T]([]int{vocabSize, embeddingDim}, nil)
@@ -41,11 +64,19 @@ func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, em
 		return nil, fmt.Errorf("failed to create embedding table tensor: %w", err)
 	}
 
-	// Initialize embedding table with random values (e.g., Glorot/Xavier uniform)
-	// For simplicity, let's use a basic uniform random initialization for now.
-	// A proper initializer would be a separate component.
-	if err := engine.RandomUniform(context.Background(), embeddingTableTensor, engine.Ops().FromFloat64(-0.05), engine.Ops().FromFloat64(0.05)); err != nil {
-		return nil, fmt.Errorf("failed to initialize embedding table: %w", err)
+	// Initialize embedding table with the provided initializer or default
+	if opts.Initializer != nil {
+		weights, err := opts.Initializer.Initialize(vocabSize, embeddingDim)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize embedding table with custom initializer: %w", err)
+		}
+		// Copy weights to tensor
+		copy(embeddingTableTensor.Data(), weights)
+	} else {
+		// Default initialization: uniform random values
+		if err := engine.RandomUniform(context.Background(), embeddingTableTensor, engine.Ops().FromFloat64(-0.05), engine.Ops().FromFloat64(0.05)); err != nil {
+			return nil, fmt.Errorf("failed to initialize embedding table: %w", err)
+		}
 	}
 
 	embeddingTable, err := graph.NewParameter[T]("embedding_table", embeddingTableTensor, tensor.New[T])

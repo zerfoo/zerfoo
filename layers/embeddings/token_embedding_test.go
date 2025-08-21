@@ -173,3 +173,36 @@ func TestTokenEmbedding_Backward_Token(t *testing.T) {
 		testutils.AssertFloatEqual(t, expectedDEmbeddingTableData[i], e.embeddingTable.Gradient.Data()[i], 1e-6, fmt.Sprintf("embeddingTable gradient data mismatch at index %d", i))
 	}
 }
+
+// TestTokenEmbedding_WithInitializer tests TokenEmbedding with custom weight initializer option
+func TestTokenEmbedding_WithInitializer(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+
+	// Create custom initializer that sets all weights to 0.7
+	customInit := &testutils.TestInitializer[float32]{Value: 0.7}
+
+	embedding, err := NewTokenEmbedding[float32](engine, 10, 4, WithTokenEmbeddingInitializer[float32](customInit))
+	testutils.AssertNoError(t, err, "NewTokenEmbedding with custom initializer should not return an error")
+	testutils.AssertNotNil(t, embedding, "TokenEmbedding should not be nil")
+
+	// Check that all weights are initialized to 0.7
+	weights := embedding.embeddingTable.Value.Data()
+	for _, val := range weights {
+		testutils.AssertFloatEqual(t, float32(0.7), val, float32(1e-6), "Embedding weight should be 0.7")
+	}
+}
+
+// TestTokenEmbedding_DefaultInitialization tests TokenEmbedding with default initialization
+func TestTokenEmbedding_DefaultInitialization(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+
+	embedding, err := NewTokenEmbedding[float32](engine, 10, 4)
+	testutils.AssertNoError(t, err, "NewTokenEmbedding with default initialization should not return an error")
+	testutils.AssertNotNil(t, embedding, "TokenEmbedding should not be nil")
+
+	// Check that weights are within expected range [-0.05, 0.05]
+	weights := embedding.embeddingTable.Value.Data()
+	for _, val := range weights {
+		testutils.AssertTrue(t, val >= -0.05 && val <= 0.05, "Default initialized weight should be in range [-0.05, 0.05]")
+	}
+}
