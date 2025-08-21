@@ -36,6 +36,29 @@ type PolynomialExpansion[T tensor.Numeric] struct {
 	termIndices [][]int // Each element contains the powers for each input feature
 }
 
+// PolynomialExpansionOptions holds configuration options for PolynomialExpansion layer.
+type PolynomialExpansionOptions[T tensor.Numeric] struct {
+	Degree      int
+	IncludeBias bool
+}
+
+// PolynomialExpansionOption is a function that configures PolynomialExpansionOptions.
+type PolynomialExpansionOption[T tensor.Numeric] func(*PolynomialExpansionOptions[T])
+
+// WithPolynomialDegree sets the maximum polynomial degree.
+func WithPolynomialDegree[T tensor.Numeric](degree int) PolynomialExpansionOption[T] {
+	return func(opts *PolynomialExpansionOptions[T]) {
+		opts.Degree = degree
+	}
+}
+
+// WithPolynomialBias sets whether to include a bias term (constant 1).
+func WithPolynomialBias[T tensor.Numeric](includeBias bool) PolynomialExpansionOption[T] {
+	return func(opts *PolynomialExpansionOptions[T]) {
+		opts.IncludeBias = includeBias
+	}
+}
+
 // NewPolynomialExpansion creates a new polynomial expansion layer.
 //
 // Parameters:
@@ -43,8 +66,11 @@ type PolynomialExpansion[T tensor.Numeric] struct {
 // - engine: compute engine for tensor operations
 // - ops: arithmetic operations for the numeric type
 // - inputSize: number of input features
-// - degree: maximum polynomial degree (must be >= 1)
-// - includeBias: whether to include a bias term (constant 1)
+// - options: functional options for configuration
+//
+// Default values:
+// - degree: 2
+// - includeBias: true
 //
 // Returns the polynomial expansion layer or an error if parameters are invalid.
 func NewPolynomialExpansion[T tensor.Numeric](
@@ -52,9 +78,21 @@ func NewPolynomialExpansion[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	inputSize int,
-	degree int,
-	includeBias bool,
+	options ...PolynomialExpansionOption[T],
 ) (*PolynomialExpansion[T], error) {
+	// Set default options
+	opts := &PolynomialExpansionOptions[T]{
+		Degree:      2,
+		IncludeBias: true,
+	}
+
+	// Apply functional options
+	for _, option := range options {
+		option(opts)
+	}
+
+	degree := opts.Degree
+	includeBias := opts.IncludeBias
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}
