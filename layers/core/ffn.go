@@ -185,3 +185,8 @@ func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs 
 
 	return []*tensor.Tensor[T]{dInputTotal}, nil
 }
+
+// Engine returns the compute engine of the FFN layer.
+func (ffn *FFN[T]) Engine() compute.Engine[T] {
+	return ffn.engine
+}
