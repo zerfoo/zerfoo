@@ -24,7 +24,11 @@ func NewLocalAttention[T tensor.Numeric](
 	base float64,
 	maxSeqLen int,
 ) (*LocalAttention[T], error) {
-	gqa, err := NewGroupedQueryAttention[T](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
+	gqa, err := NewGroupedQueryAttention[T](
+		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
+		WithRopeBase[T](base),
+		WithMaxSeqLen[T](maxSeqLen),
+	)
 	if err != nil {
 		return nil, err
 	}

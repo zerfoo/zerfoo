@@ -24,7 +24,11 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	base := 10000.0
 	maxSeqLen := 512
 
-	gqa, err := attention.NewGroupedQueryAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, base, maxSeqLen)
+	gqa, err := attention.NewGroupedQueryAttention[float32](
+		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
+		attention.WithRopeBase[float32](base),
+		attention.WithMaxSeqLen[float32](maxSeqLen),
+	)
 	if err != nil {
 		t.Fatalf("Failed to create GroupedQueryAttention: %v", err)
 	}

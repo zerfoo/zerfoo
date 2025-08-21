@@ -13,10 +13,11 @@ import (
 
 // Block represents a single Transformer block.
 type Block[T tensor.Numeric] struct {
-	attention graph.Node[T]
-	ffn       *core.FFN[T]
-	norm1     *normalization.RMSNorm[T]
-	norm2     *normalization.RMSNorm[T]
+	attention            graph.Node[T]
+	ffn                  *core.FFN[T]
+	norm1                *normalization.RMSNorm[T]
+	norm2                *normalization.RMSNorm[T]
+	normPostAttention    *normalization.RMSNorm[T]
 }
 
 // NewBlock creates a new Transformer block.
@@ -39,12 +40,17 @@ func NewTransformerBlock[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, epsilon)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Block[T]{
-		attention: attention,
-		ffn:       ffn,
-		norm1:     norm1,
-		norm2:     norm2,
+		attention:            attention,
+		ffn:                  ffn,
+		norm1:                norm1,
+		norm2:                norm2,
+		normPostAttention:    normPostAttention,
 	}, nil
 }
 
@@ -63,6 +69,11 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 	}
 	// Residual connection
 	attnOutput, err = b.ffn.Engine().Add(ctx, x, attnOutput)
+	if err != nil {
+		return nil, err
+	}
+	// Post-attention normalization
+	attnOutput, err = b.normPostAttention.Forward(ctx, attnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +109,7 @@ func (b *Block[T]) Parameters() []*graph.Parameter[T] {
 	params = append(params, b.ffn.Parameters()...)
 	params = append(params, b.norm1.Parameters()...)
 	params = append(params, b.norm2.Parameters()...)
+	params = append(params, b.normPostAttention.Parameters()...)
 	return params
 }
 
