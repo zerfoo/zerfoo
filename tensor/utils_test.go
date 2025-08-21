@@ -89,3 +89,108 @@ func TestShapesEqual(t *testing.T) {
 		t.Error("expected SameShape to return true for identical shapes")
 	}
 }
+
+func TestConvertInt64ToInt(t *testing.T) {
+	// Test normal conversion
+	input := []int64{1, 2, 3, 4, 5}
+	expected := []int{1, 2, 3, 4, 5}
+	result := ConvertInt64ToInt(input)
+	
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("ConvertInt64ToInt(%v): expected %v, got %v", input, expected, result)
+	}
+	
+	// Test empty slice
+	emptyInput := []int64{}
+	emptyExpected := []int{}
+	emptyResult := ConvertInt64ToInt(emptyInput)
+	
+	if !reflect.DeepEqual(emptyResult, emptyExpected) {
+		t.Errorf("ConvertInt64ToInt([]): expected %v, got %v", emptyExpected, emptyResult)
+	}
+	
+	// Test with negative numbers
+	negInput := []int64{-1, -2, 0, 1, 2}
+	negExpected := []int{-1, -2, 0, 1, 2}
+	negResult := ConvertInt64ToInt(negInput)
+	
+	if !reflect.DeepEqual(negResult, negExpected) {
+		t.Errorf("ConvertInt64ToInt(%v): expected %v, got %v", negInput, negExpected, negResult)
+	}
+}
+
+func TestConvertIntToInt64(t *testing.T) {
+	// Test normal conversion
+	input := []int{1, 2, 3, 4, 5}
+	expected := []int64{1, 2, 3, 4, 5}
+	result := ConvertIntToInt64(input)
+	
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("ConvertIntToInt64(%v): expected %v, got %v", input, expected, result)
+	}
+	
+	// Test empty slice
+	emptyInput := []int{}
+	emptyExpected := []int64{}
+	emptyResult := ConvertIntToInt64(emptyInput)
+	
+	if !reflect.DeepEqual(emptyResult, emptyExpected) {
+		t.Errorf("ConvertIntToInt64([]): expected %v, got %v", emptyExpected, emptyResult)
+	}
+	
+	// Test with negative numbers
+	negInput := []int{-1, -2, 0, 1, 2}
+	negExpected := []int64{-1, -2, 0, 1, 2}
+	negResult := ConvertIntToInt64(negInput)
+	
+	if !reflect.DeepEqual(negResult, negExpected) {
+		t.Errorf("ConvertIntToInt64(%v): expected %v, got %v", negInput, negExpected, negResult)
+	}
+}
+
+func TestProduct(t *testing.T) {
+	// Test normal case
+	input := []int{2, 3, 4}
+	expected := 24
+	result := Product(input)
+	
+	if result != expected {
+		t.Errorf("Product(%v): expected %d, got %d", input, expected, result)
+	}
+	
+	// Test empty slice
+	emptyInput := []int{}
+	emptyExpected := 1
+	emptyResult := Product(emptyInput)
+	
+	if emptyResult != emptyExpected {
+		t.Errorf("Product([]): expected %d, got %d", emptyExpected, emptyResult)
+	}
+	
+	// Test single element
+	singleInput := []int{5}
+	singleExpected := 5
+	singleResult := Product(singleInput)
+	
+	if singleResult != singleExpected {
+		t.Errorf("Product(%v): expected %d, got %d", singleInput, singleExpected, singleResult)
+	}
+	
+	// Test with zero
+	zeroInput := []int{2, 0, 3}
+	zeroExpected := 0
+	zeroResult := Product(zeroInput)
+	
+	if zeroResult != zeroExpected {
+		t.Errorf("Product(%v): expected %d, got %d", zeroInput, zeroExpected, zeroResult)
+	}
+	
+	// Test with negative numbers
+	negInput := []int{-2, 3, -1}
+	negExpected := 6
+	negResult := Product(negInput)
+	
+	if negResult != negExpected {
+		t.Errorf("Product(%v): expected %d, got %d", negInput, negExpected, negResult)
+	}
+}
