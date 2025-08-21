@@ -9,7 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zmf/format"
+	"github.com/zerfoo/zmf"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/protobuf/proto"
 )
@@ -19,7 +19,7 @@ import (
 type LayerConstructor[T tensor.Numeric] func(
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error)
 
@@ -45,7 +45,7 @@ func LoadModel[T tensor.Numeric](
 	}
 
 	// 2. Unmarshal the protobuf data
-	zmfModel := &format.Model{}
+	zmfModel := &zmf.Model{}
 	if err := proto.Unmarshal(data, zmfModel); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal model protobuf: %w", err)
 	}
@@ -109,11 +109,11 @@ func LoadModel[T tensor.Numeric](
 
 // loadParameters converts the raw tensor data from the .zmf file into
 // the framework's graph.Parameter format.
-func loadParameters[T tensor.Numeric](paramData map[string]*format.Tensor) (map[string]*graph.Parameter[T], error) {
+func loadParameters[T tensor.Numeric](paramData map[string]*zmf.Tensor) (map[string]*graph.Parameter[T], error) {
 	params := make(map[string]*graph.Parameter[T], len(paramData))
 	for name, tenData := range paramData {
 		// This is a simplification. We need to handle different data types.
-		if tenData.Dtype != format.Tensor_FLOAT32 {
+		if tenData.Dtype != zmf.Tensor_FLOAT32 {
 			return nil, fmt.Errorf("unsupported data type for parameter %s: %v", name, tenData.Dtype)
 		}
 

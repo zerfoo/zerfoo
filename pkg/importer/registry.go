@@ -12,7 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zmf/format"
+	"github.com/zerfoo/zmf"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -31,7 +31,7 @@ func init() {
 func newGlobalAttention[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	// 1. Get attributes
@@ -126,7 +126,7 @@ func newGlobalAttention[T tensor.Numeric](
 func newTokenEmbedding[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (*embeddings.TokenEmbedding[T], error) {
 	// 1. Get parameters
@@ -149,7 +149,7 @@ func newTokenEmbedding[T tensor.Numeric](
 func newSwiGLU[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	return activations.NewSwiGLU(engine, ops), nil
@@ -159,7 +159,7 @@ func newSwiGLU[T tensor.Numeric](
 func newTanh[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	return activations.NewTanh(engine, ops), nil
@@ -169,7 +169,7 @@ func newTanh[T tensor.Numeric](
 func newReLU[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	return activations.NewReLU(engine, ops), nil
@@ -179,7 +179,7 @@ func newReLU[T tensor.Numeric](
 func newSigmoid[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	return activations.NewSigmoid(engine, ops), nil
@@ -189,7 +189,7 @@ func newSigmoid[T tensor.Numeric](
 func newDense[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	// 1. Get parameters
@@ -219,7 +219,7 @@ func newDense[T tensor.Numeric](
 func newRMSNorm[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	node *format.Node,
+	node *zmf.Node,
 	params map[string]*graph.Parameter[T],
 ) (graph.Node[T], error) {
 	// 1. Get attributes
