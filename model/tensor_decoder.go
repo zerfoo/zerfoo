@@ -8,7 +8,7 @@ import (
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/zmf"
+	"github.com/zerfoo/zmf"
 )
 
 // DecodeTensor converts a ZMF Tensor protobuf message into a Zerfoo Tensor.
@@ -51,7 +51,7 @@ func decodeFloat16[T tensor.Numeric](rawData []byte, dest []T) error {
 	}
 	for i := 0; i < len(rawData); i += 2 {
 		bits := binary.LittleEndian.Uint16(rawData[i : i+2])
-		f16 := float16.Frombits(bits)
+		f16 := float16.FromBits(bits)
 		dest[i/2] = T(f16.Float32())
 	}
 	return nil

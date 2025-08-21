@@ -1,94 +1,29 @@
+// Package tensor provides a multi-dimensional array (tensor) implementation.
 package tensor
 
-import "fmt"
-
-// SameShape checks if two tensors have the same shape.
-func SameShape[T Numeric](a, b *Tensor[T]) bool {
-	if a.Dims() != b.Dims() {
-		return false
+// ConvertInt64ToInt converts a slice of int64 to a slice of int.
+func ConvertInt64ToInt(s []int64) []int {
+	result := make([]int, len(s))
+	for i, v := range s {
+		result[i] = int(v)
 	}
-	for i := range a.Dims() {
-		if a.shape[i] != b.shape[i] {
-			return false
-		}
-	}
-
-	return true
+	return result
 }
 
-// BroadcastShapes computes the output shape for a broadcasting operation.
-func BroadcastShapes(a, b []int) (shape []int, broadcastA, broadcastB bool, err error) {
-	lenA, lenB := len(a), len(b)
-	maxLen := lenA
-	if lenB > maxLen {
-		maxLen = lenB
+// ConvertIntToInt64 converts a slice of int to a slice of int64.
+func ConvertIntToInt64(s []int) []int64 {
+	result := make([]int64, len(s))
+	for i, v := range s {
+		result[i] = int64(v)
 	}
-	shape = make([]int, maxLen)
-	for i := 1; i <= maxLen; i++ {
-		dimA := 1
-		if i <= lenA {
-			dimA = a[lenA-i]
-		}
-		dimB := 1
-		if i <= lenB {
-			dimB = b[lenB-i]
-		}
-		if dimA != dimB && dimA != 1 && dimB != 1 {
-			return nil, false, false, fmt.Errorf("tensor shapes %v and %v are not compatible for broadcasting", a, b)
-		}
-		if dimA > dimB {
-			shape[maxLen-i] = dimA
-		} else {
-			shape[maxLen-i] = dimB
-		}
-	}
-	broadcastA = len(a) < len(shape) || !shapesEqual(a, shape)
-	broadcastB = len(b) < len(shape) || !shapesEqual(b, shape)
-
-	return
+	return result
 }
 
-// BroadcastIndex computes the index into a tensor for a broadcasting operation.
-func BroadcastIndex(index int, shape, outputShape []int, broadcast bool) int {
-	if !broadcast {
-		return index
+// Product returns the product of the elements in a slice of ints.
+func Product(s []int) int {
+	p := 1
+	for _, v := range s {
+		p *= v
 	}
-	outputStrides := strides(outputShape)
-	inputStrides := strides(shape)
-	inputIndex := 0
-	for i := range shape {
-		dim := shape[len(shape)-1-i]
-		outputCoord := (index / outputStrides[len(outputShape)-1-i]) % outputShape[len(outputShape)-1-i]
-		inputCoord := outputCoord
-		if dim == 1 {
-			inputCoord = 0
-		}
-		inputIndex += inputCoord * inputStrides[len(shape)-1-i]
-	}
-
-	return inputIndex
-}
-
-func shapesEqual(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func strides(shape []int) []int {
-	s := make([]int, len(shape))
-	stride := 1
-	for i := len(shape) - 1; i >= 0; i-- {
-		s[i] = stride
-		stride *= shape[i]
-	}
-
-	return s
+	return p
 }

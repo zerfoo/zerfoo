@@ -47,7 +47,7 @@ func (ops Float16Ops) Sigmoid(x float16.Float16) float16.Float16 {
 	// The float16 library does not have a Sigmoid function. We will simulate it.
 	f32 := x.ToFloat32()
 
-	return float16.ToFloat16(1.0 / (1.0 + float32(math.Exp(float64(-f32)))))
+	return float16.FromFloat32(1.0 / (1.0 + float32(math.Exp(float64(-f32)))))
 }
 
 // TanhGrad computes the gradient of the hyperbolic tangent function.
@@ -55,7 +55,7 @@ func (ops Float16Ops) TanhGrad(x float16.Float16) float16.Float16 {
 	// TanhGrad is 1 - tanh(x)^2
 	tanhX := ops.Tanh(x)
 	tanhX2 := ops.Mul(tanhX, tanhX)
-	one := float16.FromInt(1)
+	one := float16.FromFloat32(1)
 
 	return ops.Sub(one, tanhX2)
 }
@@ -64,7 +64,7 @@ func (ops Float16Ops) TanhGrad(x float16.Float16) float16.Float16 {
 func (ops Float16Ops) SigmoidGrad(x float16.Float16) float16.Float16 {
 	// SigmoidGrad is sigmoid(x) * (1 - sigmoid(x))
 	sigX := ops.Sigmoid(x)
-	one := float16.FromInt(1)
+	one := float16.FromFloat32(1)
 	oneMinusSigX := ops.Sub(one, sigX)
 
 	return ops.Mul(sigX, oneMinusSigX)
@@ -76,7 +76,7 @@ func (ops Float16Ops) ReLU(x float16.Float16) float16.Float16 {
 		return x
 	}
 
-	return float16.FromInt(0)
+	return float16.FromFloat32(0)
 }
 
 // LeakyReLU computes the Leaky Rectified Linear Unit function.
@@ -85,32 +85,32 @@ func (ops Float16Ops) LeakyReLU(x float16.Float16, alpha float64) float16.Float1
 		return x
 	}
 
-	return ops.Mul(x, float16.ToFloat16(float32(alpha)))
+	return ops.Mul(x, float16.FromFloat32(float32(alpha)))
 }
 
 // ReLUGrad computes the gradient of the Rectified Linear Unit function.
 func (ops Float16Ops) ReLUGrad(x float16.Float16) float16.Float16 {
-	one := float16.FromInt(1)
+	one := float16.FromFloat32(1)
 	if x.ToFloat32() > 0 {
 		return one
 	}
 
-	return float16.FromInt(0)
+	return float16.FromFloat32(0)
 }
 
 // LeakyReLUGrad computes the gradient of the Leaky Rectified Linear Unit function.
 func (ops Float16Ops) LeakyReLUGrad(x float16.Float16, alpha float64) float16.Float16 {
-	one := float16.FromInt(1)
+	one := float16.FromFloat32(1)
 	if x.ToFloat32() > 0 {
 		return one
 	}
 
-	return float16.ToFloat16(float32(alpha))
+	return float16.FromFloat32(float32(alpha))
 }
 
 // FromFloat32 converts a float32 to a float16.Float16.
 func (ops Float16Ops) FromFloat32(f float32) float16.Float16 {
-	return float16.ToFloat16(f)
+	return float16.FromFloat32(f)
 }
 
 // ToFloat32 converts a float16.Float16 to a float32.
@@ -165,7 +165,7 @@ func (ops Float16Ops) GreaterThan(a, b float16.Float16) bool {
 
 // One returns a float16.Float16 with value 1.
 func (ops Float16Ops) One() float16.Float16 {
-	return float16.FromInt(1)
+	return float16.FromFloat32(1)
 }
 
 // FromFloat64 converts a float64 to a float16.Float16.

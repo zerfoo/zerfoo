@@ -5,7 +5,7 @@ go 1.25
 require (
 	github.com/zerfoo/float16 v0.1.0
 	github.com/zerfoo/float8 v0.1.1
-	github.com/zerfoo/zmf v0.1.0
+	github.com/zerfoo/zmf v0.1.1
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.8
 )
