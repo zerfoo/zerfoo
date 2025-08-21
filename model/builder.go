@@ -2,6 +2,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -42,9 +43,12 @@ func BuildFromZMF[T tensor.Numeric](
 		instantiatedNodes[inputProto.Name] = builder.Input(dims)
 	}
 
+	// 1.5. Handle Parameters as nodes (only add them if they don't conflict with layer nodes)
+	// We'll add parameters on-demand during the connection phase to avoid conflicts
+
 	// 2. First pass: Instantiate all layer nodes
 	for _, nodeProto := range model.Graph.Nodes {
-		// Skip if a node with this name already exists (e.g., it's an input)
+		// Skip if a node with this name already exists (e.g., it's an input or parameter)
 		if _, exists := instantiatedNodes[nodeProto.Name]; exists {
 			continue
 		}
@@ -67,7 +71,21 @@ func BuildFromZMF[T tensor.Numeric](
 		for i, inputName := range nodeProto.Inputs {
 			inputNode, ok := instantiatedNodes[inputName]
 			if !ok {
-				return nil, fmt.Errorf("input node '%s' for node '%s' not found", inputName, nodeProto.Name)
+				// Try to resolve output suffix (e.g., "/path/to/node/output_0" -> "/path/to/node")
+				resolvedName := resolveOutputSuffix(inputName)
+				if resolvedName != inputName {
+					inputNode, ok = instantiatedNodes[resolvedName]
+				}
+				if !ok {
+					// Try to create a parameter node if this input refers to a parameter
+					if param, paramExists := params[inputName]; paramExists {
+						paramNode := &parameterNode[T]{value: param.Value}
+						instantiatedNodes[inputName] = paramNode
+						inputNode = paramNode
+					} else {
+						return nil, fmt.Errorf("input node '%s' for node '%s' not found", inputName, nodeProto.Name)
+					}
+				}
 			}
 			inputNodes[i] = inputNode
 		}
@@ -85,6 +103,44 @@ func BuildFromZMF[T tensor.Numeric](
 	}
 
 	return builder.Build(outputNode)
+}
+
+// parameterNode is a special node type for parameters that are referenced as inputs.
+type parameterNode[T tensor.Numeric] struct {
+	value *tensor.TensorNumeric[T]
+}
+
+func (n *parameterNode[T]) OutputShape() []int {
+	return n.value.Shape()
+}
+
+func (n *parameterNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return n.value, nil
+}
+
+func (n *parameterNode[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	// Parameters don't propagate gradients to inputs since they have no inputs
+	return nil, nil
+}
+
+func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
+	return nil
+}
+
+// resolveOutputSuffix removes output suffixes from node names to resolve to the actual node.
+func resolveOutputSuffix(nodeName string) string {
+	// Common output suffix patterns in ONNX/ZMF models
+	suffixes := []string{"/output_0", "/output_1", "/output", ":0", ":1"}
+	
+	for _, suffix := range suffixes {
+		if len(nodeName) > len(suffix) {
+			if nodeName[len(nodeName)-len(suffix):] == suffix {
+				return nodeName[:len(nodeName)-len(suffix)]
+			}
+		}
+	}
+	
+	return nodeName
 }
 
 // convertParameters converts the ZMF Tensor map to a map of graph.Parameter.

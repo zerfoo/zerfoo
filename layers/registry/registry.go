@@ -3,6 +3,7 @@ package registry
 
 import (
 	"github.com/zerfoo/zerfoo/layers/activations"
+	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/gather"
 	"github.com/zerfoo/zerfoo/layers/normalization"
@@ -16,12 +17,19 @@ func RegisterAll() {
 	// Activations
 	model.RegisterLayer("FastGelu", activations.BuildFastGelu[float32])
 
+	// Attention
+	model.RegisterLayer("GroupQueryAttention", attention.BuildGroupQueryAttention[float32])
+
 	// Core
 	model.RegisterLayer("Shape", core.BuildShape[float32])
 	model.RegisterLayer("Mul", core.BuildMul[float32])
 	model.RegisterLayer("Sub", core.BuildSub[float32])
 	model.RegisterLayer("Unsqueeze", core.BuildUnsqueeze[float32])
 	model.RegisterLayer("Cast", core.BuildCast[float32])
+	model.RegisterLayer("Concat", core.BuildConcat[float32])
+	model.RegisterLayer("MatMul", core.BuildMatMul[float32])
+	model.RegisterLayer("Reshape", core.BuildReshape[float32])
+	model.RegisterLayer("RotaryEmbedding", core.BuildRotaryEmbedding[float32])
 
 	// Embeddings
 

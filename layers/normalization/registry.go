@@ -3,6 +3,7 @@ package normalization
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -47,9 +48,41 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	params map[string]*graph.Parameter[T],
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
-	gain, ok := params[name+"_gain"]
+	// Try multiple parameter naming patterns for LayerNorm gain/weight
+	var gain *graph.Parameter[T]
+	var ok bool
+	
+	// Pattern 1: {name}_gain (original expected format)
+	gain, ok = params[name+"_gain"]
 	if !ok {
-		return nil, fmt.Errorf("missing required parameter: %s_gain", name)
+		// Pattern 2: Convert path-like name to dot notation + .weight
+		// e.g., "/model/layers.0/input_layernorm/LayerNorm" -> "model.layers.0.input_layernorm.weight"
+		dotName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
+		if strings.HasSuffix(dotName, ".LayerNorm") {
+			dotName = strings.TrimSuffix(dotName, ".LayerNorm") + ".weight"
+		}
+		if strings.HasSuffix(dotName, ".SimplifiedLayerNormalization") {
+			dotName = strings.TrimSuffix(dotName, ".SimplifiedLayerNormalization") + ".weight"
+		}
+		gain, ok = params[dotName]
+	}
+	if !ok {
+		// Pattern 3: Try just the weight suffix
+		weightName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".") + ".weight"
+		gain, ok = params[weightName]
+	}
+	if !ok {
+		// Pattern 4: Try layernorm.weight pattern
+		// e.g., "/model/layers.0/attn/q_norm/SimplifiedLayerNormalization" -> "model.layers.0.attn.q_norm.layernorm.weight"
+		layernormName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
+		if strings.HasSuffix(layernormName, ".SimplifiedLayerNormalization") {
+			layernormName = strings.TrimSuffix(layernormName, ".SimplifiedLayerNormalization") + ".layernorm.weight"
+		}
+		gain, ok = params[layernormName]
+	}
+	
+	if !ok {
+		return nil, fmt.Errorf("missing required parameter for LayerNorm. Tried: %s_gain, and weight patterns", name)
 	}
 
 	epsilonAttr, ok := attributes["epsilon"]
@@ -77,9 +110,43 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	params map[string]*graph.Parameter[T],
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
-	gain, ok := params[name+"_gain"]
+	// Try multiple parameter naming patterns for LayerNorm gain/weight
+	var gain *graph.Parameter[T]
+	var ok bool
+	
+	// Pattern 1: {name}_gain (original expected format)
+	gain, ok = params[name+"_gain"]
 	if !ok {
-		return nil, fmt.Errorf("missing required parameter: %s_gain", name)
+		// Pattern 2: Convert path-like name to dot notation + .weight
+		// e.g., "/model/layers.0/pre_feedforward_layernorm/SkipLayerNorm" -> "model.layers.0.pre_feedforward_layernorm.weight"
+		dotName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
+		if strings.HasSuffix(dotName, ".SkipLayerNorm") {
+			dotName = strings.TrimSuffix(dotName, ".SkipLayerNorm") + ".weight"
+		}
+		if strings.HasSuffix(dotName, ".SkipSimplifiedLayerNormalization") {
+			dotName = strings.TrimSuffix(dotName, ".SkipSimplifiedLayerNormalization") + ".weight"
+		}
+		gain, ok = params[dotName]
+	}
+	if !ok {
+		// Pattern 3: Try just the weight suffix
+		weightName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".") + ".weight"
+		gain, ok = params[weightName]
+	}
+	if !ok {
+		// Pattern 4: Try layernorm.weight pattern
+		layernormName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
+		if strings.HasSuffix(layernormName, ".SkipLayerNorm") {
+			layernormName = strings.TrimSuffix(layernormName, ".SkipLayerNorm") + ".layernorm.weight"
+		}
+		if strings.HasSuffix(layernormName, ".SkipSimplifiedLayerNormalization") {
+			layernormName = strings.TrimSuffix(layernormName, ".SkipSimplifiedLayerNormalization") + ".layernorm.weight"
+		}
+		gain, ok = params[layernormName]
+	}
+	
+	if !ok {
+		return nil, fmt.Errorf("missing required parameter for SkipLayerNorm. Tried: %s_gain, and weight patterns", name)
 	}
 
 	epsilonAttr, ok := attributes["epsilon"]
