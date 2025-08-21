@@ -1,0 +1,112 @@
+package transformer
+
+import (
+	"context"
+
+	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/normalization"
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
+)
+
+// Block represents a single Transformer block.
+type Block[T tensor.Numeric] struct {
+	attention graph.Node[T]
+	ffn       *core.FFN[T]
+	norm1     *normalization.RMSNorm[T]
+	norm2     *normalization.RMSNorm[T]
+}
+
+// NewBlock creates a new Transformer block.
+func NewTransformerBlock[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	modelDim, ffnDim int,
+	epsilon T,
+	attention graph.Node[T],
+) (*Block[T], error) {
+	ffn, err := core.NewFFN[T]("ffn", engine, ops, modelDim, ffnDim, modelDim)
+	if err != nil {
+		return nil, err
+	}
+	norm1, err := normalization.NewRMSNorm[T]("norm1", engine, ops, modelDim, epsilon)
+	if err != nil {
+		return nil, err
+	}
+	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, epsilon)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Block[T]{
+		attention: attention,
+		ffn:       ffn,
+		norm1:     norm1,
+		norm2:     norm2,
+	}, nil
+}
+
+// Forward computes the forward pass of the Transformer block.
+func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+	x := inputs[0]
+
+	// Attention part
+	norm1Output, err := b.norm1.Forward(ctx, x)
+	if err != nil {
+		return nil, err
+	}
+	attnOutput, err := b.attention.Forward(ctx, norm1Output)
+	if err != nil {
+		return nil, err
+	}
+	// Residual connection
+	attnOutput, err = b.ffn.Engine().Add(ctx, x, attnOutput)
+	if err != nil {
+		return nil, err
+	}
+
+	// FFN part
+	norm2Output, err := b.norm2.Forward(ctx, attnOutput)
+	if err != nil {
+		return nil, err
+	}
+	ffnOutput, err := b.ffn.Forward(ctx, norm2Output)
+	if err != nil {
+		return nil, err
+	}
+	// Residual connection
+	ffnOutput, err = b.ffn.Engine().Add(ctx, attnOutput, ffnOutput)
+	if err != nil {
+		return nil, err
+	}
+
+	return ffnOutput, nil
+}
+
+// Backward computes the backward pass of the Transformer block.
+func (b *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+	// This is a simplified backward pass and needs to be implemented correctly.
+	return []*tensor.Tensor[T]{dOut}, nil
+}
+
+// Parameters returns the parameters of the Transformer block.
+func (b *Block[T]) Parameters() []*graph.Parameter[T] {
+	var params []*graph.Parameter[T]
+	params = append(params, b.attention.Parameters()...)
+	params = append(params, b.ffn.Parameters()...)
+	params = append(params, b.norm1.Parameters()...)
+	params = append(params, b.norm2.Parameters()...)
+	return params
+}
+
+// OutputShape returns the output shape of the Transformer block.
+func (b *Block[T]) OutputShape() []int {
+	return b.attention.OutputShape()
+}
+
+// Attention returns the attention layer of the Transformer block.
+func (b *Block[T]) Attention() graph.Node[T] {
+	return b.attention
+}
