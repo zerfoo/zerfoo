@@ -2,12 +2,15 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	_ "github.com/zerfoo/zerfoo/layers/core"
 )
 
 func TestLinear(t *testing.T) {
@@ -60,10 +63,10 @@ type mockEngine struct {
 	Err error
 }
 
-func (e *mockEngine) Add(_ context.Context, _, _ *tensor.Tensor[float32], _ ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+func (e *mockEngine) Add(_ context.Context, _, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return nil, e.Err
 }
 
-func (e *mockEngine) MatMul(_ context.Context, _, _ *tensor.Tensor[float32], _ ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+func (e *mockEngine) MatMul(_ context.Context, _, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return nil, e.Err
 }

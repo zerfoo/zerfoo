@@ -16,9 +16,9 @@ type Node[T tensor.Numeric] interface {
 	// OutputShape returns the shape of the output tensor.
 	OutputShape() []int
 	// Forward computes the output of the node given the inputs.
-	Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 	// Backward computes the gradients of the loss with respect to the inputs and parameters.
-	Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+	Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error)
 	// Parameters returns the parameters of the node.
 	Parameters() []*Parameter[T]
 }
@@ -27,13 +27,13 @@ type Node[T tensor.Numeric] interface {
 // It holds both the tensor for its value and a tensor for its gradient.
 type Parameter[T tensor.Numeric] struct {
 	Name     string
-	Value    *tensor.Tensor[T]
-	Gradient *tensor.Tensor[T]
+	Value    *tensor.TensorNumeric[T]
+	Gradient *tensor.TensorNumeric[T]
 }
 
 // NewParameter creates a new parameter, initializing its gradient tensor with the same shape.
 // It takes a tensor creation function to allow for mocking in tests.
-func NewParameter[T tensor.Numeric](name string, value *tensor.Tensor[T], newTensorFn func(shape []int, data []T) (*tensor.Tensor[T], error)) (*Parameter[T], error) {
+func NewParameter[T tensor.Numeric](name string, value *tensor.TensorNumeric[T], newTensorFn func(shape []int, data []T) (*tensor.TensorNumeric[T], error)) (*Parameter[T], error) {
 	if name == "" {
 		return nil, errors.New("parameter name cannot be empty")
 	}
@@ -54,7 +54,7 @@ func NewParameter[T tensor.Numeric](name string, value *tensor.Tensor[T], newTen
 }
 
 // AddGradient accumulates the given gradient to the parameter's gradient.
-func (p *Parameter[T]) AddGradient(grad *tensor.Tensor[T]) error {
+func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 	if p.Gradient == nil {
 		return fmt.Errorf("parameter %s gradient is nil", p.Name)
 	}

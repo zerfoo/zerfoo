@@ -16,18 +16,18 @@ import (
 // mockNode is a simple implementation of graph.Node for testing.
 type mockNode[T tensor.Numeric] struct {
 	name       string
-	forwardFn  func(inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
+	forwardFn  func(inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 	parameters []*graph.Parameter[T]
 }
 
 func (m *mockNode[T]) OutputShape() []int { return []int{1} }
-func (m *mockNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.forwardFn != nil {
 		return m.forwardFn(inputs...)
 	}
 	return tensor.New[T]([]int{1}, []T{1})
 }
-func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 func (m *mockNode[T]) Parameters() []*graph.Parameter[T] { return m.parameters }
@@ -42,7 +42,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 		// This node adds 1 to its input
 		return &mockNode[float32]{
 			name: n,
-			forwardFn: func(inputs ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+			forwardFn: func(inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 				outData := inputs[0].Data()[0] + 1
 				return tensor.New[float32]([]int{1}, []float32{outData})
 			},
@@ -52,7 +52,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 		// This node multiplies its input by 2
 		return &mockNode[float32]{
 			name: n,
-			forwardFn: func(inputs ...*tensor.Tensor[float32]) (*tensor.Tensor[float32], error) {
+			forwardFn: func(inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 				outData := inputs[0].Data()[0] * 2
 				return tensor.New[float32]([]int{1}, []float32{outData})
 			},

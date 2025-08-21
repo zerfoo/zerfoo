@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/device"
 	"github.com/zerfoo/zerfoo/tensor"
+	_ "github.com/zerfoo/zerfoo/layers/core"
 )
 
 // TestCase represents a single test case with a name and a function to execute.
@@ -190,67 +191,67 @@ type MockEngine[T tensor.Numeric] struct {
 }
 
 // UnaryOp performs a unary operation on a tensor.
-func (e *MockEngine[T]) UnaryOp(_ context.Context, _ *tensor.Tensor[T], _ func(T) T, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) UnaryOp(_ context.Context, _ *tensor.TensorNumeric[T], _ func(T) T, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Add performs element-wise addition of two tensors.
-func (e *MockEngine[T]) Add(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Add(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Sub performs element-wise subtraction of two tensors.
-func (e *MockEngine[T]) Sub(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Sub(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Mul performs element-wise multiplication of two tensors.
-func (e *MockEngine[T]) Mul(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Mul(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Div performs element-wise division of two tensors.
-func (e *MockEngine[T]) Div(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Div(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // MatMul performs matrix multiplication of two tensors.
-func (e *MockEngine[T]) MatMul(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) MatMul(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Transpose transposes a tensor along the specified axes.
-func (e *MockEngine[T]) Transpose(_ context.Context, _ *tensor.Tensor[T], _ []int, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Transpose(_ context.Context, _ *tensor.TensorNumeric[T], _ []int, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Sum computes the sum of tensor elements along the specified axis.
-func (e *MockEngine[T]) Sum(_ context.Context, _ *tensor.Tensor[T], _ int, _ bool, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Sum(_ context.Context, _ *tensor.TensorNumeric[T], _ int, _ bool, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Exp computes the exponential of tensor elements.
-func (e *MockEngine[T]) Exp(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Exp(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Log computes the natural logarithm of tensor elements.
-func (e *MockEngine[T]) Log(_ context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Log(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Pow computes the power of base tensor raised to exponent tensor.
-func (e *MockEngine[T]) Pow(_ context.Context, _, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *MockEngine[T]) Pow(_ context.Context, _, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, e.Err
 }
 
 // Zero sets all elements of the tensor to zero.
-func (e *MockEngine[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
+func (e *MockEngine[T]) Zero(_ context.Context, _ *tensor.TensorNumeric[T]) error {
 	return e.Err
 }
 
 // Copy copies data from source tensor to destination tensor.
-func (e *MockEngine[T]) Copy(_ context.Context, _, _ *tensor.Tensor[T]) error {
+func (e *MockEngine[T]) Copy(_ context.Context, _, _ *tensor.TensorNumeric[T]) error {
 	return e.Err
 }
 
@@ -326,7 +327,7 @@ func NewMockEngineWithError[T tensor.Numeric](err error) *MockEngine[T] {
 }
 
 // CompareTensorsApprox checks if two tensors are approximately equal element-wise.
-func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.Tensor[T], epsilon T) bool {
+func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.TensorNumeric[T], epsilon T) bool {
 	t.Helper()
 	if !actual.ShapeEquals(expected) {
 		t.Errorf("tensor shapes do not match: actual %v, expected %v", actual.Shape(), expected.Shape())

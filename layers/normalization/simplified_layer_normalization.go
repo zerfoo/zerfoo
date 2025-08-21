@@ -20,8 +20,8 @@ type SimplifiedLayerNormalization[T tensor.Numeric] struct {
 	epsilon T
 
 	// Cached values for backward pass
-	normalizedInput *tensor.Tensor[T]
-	invStdDev       *tensor.Tensor[T]
+	normalizedInput *tensor.TensorNumeric[T]
+	invStdDev       *tensor.TensorNumeric[T]
 	inputShape      []int
 }
 
@@ -29,7 +29,7 @@ type SimplifiedLayerNormalization[T tensor.Numeric] struct {
 func NewSimplifiedLayerNormalization[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	gain *tensor.Tensor[T],
+	gain *tensor.TensorNumeric[T],
 	epsilon T,
 ) (*SimplifiedLayerNormalization[T], error) {
 	gainParam, err := graph.NewParameter[T]("gain", gain, tensor.New[T])
@@ -45,7 +45,7 @@ func NewSimplifiedLayerNormalization[T tensor.Numeric](
 }
 
 // Forward applies the forward pass of the SimplifiedLayerNormalization layer.
-func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SimplifiedLayerNormalization expects 1 input, got %d", len(inputs))
 	}
@@ -94,7 +94,7 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 }
 
 // Backward applies the backward pass of the SimplifiedLayerNormalization layer.
-func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, fmt.Errorf("backward pass not implemented")
 }
 

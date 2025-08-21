@@ -28,7 +28,7 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	sizeReturns []int
 	sizeCalls   int
 
-	allReduceGradientsArgs    []map[string]*tensor.Tensor[T]
+	allReduceGradientsArgs    []map[string]*tensor.TensorNumeric[T]
 	allReduceGradientsReturns []error
 	allReduceGradientsCalls   int
 
@@ -36,7 +36,7 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	barrierCalls   int
 
 	broadcastTensorArgs []struct {
-		t        *tensor.Tensor[T]
+		t        *tensor.TensorNumeric[T]
 		rootRank int
 	}
 	broadcastTensorReturns []error
@@ -148,7 +148,7 @@ func (m *CustomMockStrategy[T]) OnceSize() *CustomMockStrategy[T] {
 	return m
 }
 
-func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.Tensor[T]) error {
+func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceGradientsCalls++
@@ -160,7 +160,7 @@ func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.
 	return m.allReduceGradientsReturns[m.allReduceGradientsCalls-1]
 }
 
-func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.Tensor[T]) *CustomMockStrategy[T] {
+func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceGradientsArgs = append(m.allReduceGradientsArgs, gradients)
@@ -207,12 +207,12 @@ func (m *CustomMockStrategy[T]) TwiceBarrier() *CustomMockStrategy[T] {
 	return m // Handled by calling ReturnBarrier twice
 }
 
-func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank int) error {
+func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.broadcastTensorCalls++
 	m.broadcastTensorArgs = append(m.broadcastTensorArgs, struct {
-		t        *tensor.Tensor[T]
+		t        *tensor.TensorNumeric[T]
 		rootRank int
 	}{
 		t:        t,
@@ -225,11 +225,11 @@ func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank in
 	return m.broadcastTensorReturns[m.broadcastTensorCalls-1]
 }
 
-func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.Tensor[T], rootRank int) *CustomMockStrategy[T] {
+func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.broadcastTensorArgs = append(m.broadcastTensorArgs, struct {
-		t        *tensor.Tensor[T]
+		t        *tensor.TensorNumeric[T]
 		rootRank int
 	}{
 		t:        t,

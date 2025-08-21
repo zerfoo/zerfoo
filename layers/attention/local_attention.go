@@ -76,7 +76,7 @@ func (la *LocalAttention[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the forward pass of the LocalAttention layer.
-func (la *LocalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (la *LocalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	seqLen := input.Shape()[1]
 
@@ -88,7 +88,7 @@ func (la *LocalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 	return la.gqa.Forward(ctx, input, mask)
 }
 
-func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tensor[T], error) {
+func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.TensorNumeric[T], error) {
 	mask, err := tensor.New[T]([]int{1, 1, seqLen, seqLen}, nil)
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 }
 
 // Backward is not implemented
-func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return la.gqa.Backward(ctx, dOut, inputs...)
 }
 

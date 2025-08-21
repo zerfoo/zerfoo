@@ -24,11 +24,11 @@ type FFN[T tensor.Numeric] struct {
 	swiglu  *activations.SwiGLU[T]
 
 	// Cached tensors for backward pass
-	inputTensor *tensor.Tensor[T]
-	w1Output    *tensor.Tensor[T]
-	w3Output    *tensor.Tensor[T]
-	swiGLUOutput *tensor.Tensor[T]
-	w2Output    *tensor.Tensor[T]
+	inputTensor *tensor.TensorNumeric[T]
+	w1Output    *tensor.TensorNumeric[T]
+	w3Output    *tensor.TensorNumeric[T]
+	swiGLUOutput *tensor.TensorNumeric[T]
+	w2Output    *tensor.TensorNumeric[T]
 	outputShape []int
 }
 
@@ -170,7 +170,7 @@ func (ffn *FFN[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the forward pass of the FFN.
-func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FFN: expected 1 input tensor, got %d", len(inputs))
 	}
@@ -192,7 +192,7 @@ func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 	ffn.w3Output = w3Output // Cache for backward pass
 
 	// Concatenate w1Output and w3Output for SwiGLU
-	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.Tensor[T]{w1Output, w3Output}, len(w1Output.Shape())-1)
+	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.TensorNumeric[T]{w1Output, w3Output}, len(w1Output.Shape())-1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU: %w", err)
 	}
@@ -216,7 +216,7 @@ func (ffn *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 }
 
 // Backward computes the backward pass of the FFN.
-func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Backward through W2
 	dSwiGLUOutput, err := ffn.w2.Backward(ctx, dOut, ffn.swiGLUOutput)
 	if err != nil {
@@ -225,7 +225,7 @@ func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs 
 	dSwiGLUOutputTensor := dSwiGLUOutput[0]
 
 	// Concatenate w1Output and w3Output to reconstruct swigluInput for backward
-	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.Tensor[T]{ffn.w1Output, ffn.w3Output}, len(ffn.w1Output.Shape())-1)
+	swigluInput, err := ffn.engine.Concat(ctx, []*tensor.TensorNumeric[T]{ffn.w1Output, ffn.w3Output}, len(ffn.w1Output.Shape())-1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU backward: %w", err)
 	}
@@ -264,7 +264,7 @@ func (ffn *FFN[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs 
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInputTotal}, nil
+	return []*tensor.TensorNumeric[T]{dInputTotal}, nil
 }
 
 // Engine returns the compute engine of the FFN layer.

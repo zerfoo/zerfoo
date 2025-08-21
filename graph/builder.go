@@ -82,8 +82,8 @@ type Graph[T tensor.Numeric] struct {
 }
 
 // Forward executes the forward pass of the entire graph.
-func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
-	memo := make(map[Node[T]]*tensor.Tensor[T])
+func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	memo := make(map[Node[T]]*tensor.TensorNumeric[T])
 	for i, n := range g.inputs {
 		memo[n] = inputs[i]
 	}
@@ -92,7 +92,7 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 		if _, ok := n.(*inputNode[T]); ok {
 			continue
 		}
-		nodeInputs := make([]*tensor.Tensor[T], len(g.dependencies[n]))
+		nodeInputs := make([]*tensor.TensorNumeric[T], len(g.dependencies[n]))
 		for i, dep := range g.dependencies[n] {
 			nodeInputs[i] = memo[dep]
 		}
@@ -107,8 +107,8 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 }
 
 // Backward executes the backward pass of the entire graph.
-func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.Tensor[T]) error {
-	grads := make(map[Node[T]]*tensor.Tensor[T])
+func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.TensorNumeric[T]) error {
+	grads := make(map[Node[T]]*tensor.TensorNumeric[T])
 	grads[g.output] = initialGradient
 
 	for i := len(g.nodes) - 1; i >= 0; i-- {
@@ -155,11 +155,11 @@ func (n *inputNode[T]) OutputShape() []int {
 	return n.shape
 }
 
-func (n *inputNode[T]) Forward(ctx context.Context, _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
-func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }

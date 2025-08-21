@@ -8,24 +8,27 @@ import (
 // At retrieves the value at the specified indices.
 // It returns an error if the number of indices does not match the tensor's dimensions
 // or if any index is out of bounds.
-func (t *Tensor[T]) At(indices ...int) (T, error) {
+func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 	if t.Dims() == 0 {
 		// For a 0-dimensional tensor (scalar), it should only be accessed with no indices.
 		if len(indices) != 0 {
-			return 0, errors.New("0-dimensional tensor cannot be accessed with indices")
+			var zero T
+			return zero, errors.New("0-dimensional tensor cannot be accessed with indices")
 		}
 		// A 0-dimensional tensor always has one element in its data slice.
 		return t.data[0], nil
 	}
 
 	if len(indices) != t.Dims() {
-		return 0, fmt.Errorf("number of indices (%d) does not match tensor dimensions (%d)", len(indices), t.Dims())
+		var zero T
+		return zero, fmt.Errorf("number of indices (%d) does not match tensor dimensions (%d)", len(indices), t.Dims())
 	}
 
 	offset := 0
 	for i, index := range indices {
 		if index < 0 || index >= t.shape[i] {
-			return 0, fmt.Errorf("index %d is out of bounds for dimension %d with size %d", index, i, t.shape[i])
+			var zero T
+			return zero, fmt.Errorf("index %d is out of bounds for dimension %d with size %d", index, i, t.shape[i])
 		}
 		offset += index * t.strides[i]
 	}
@@ -36,7 +39,7 @@ func (t *Tensor[T]) At(indices ...int) (T, error) {
 // Set updates the value at the specified indices.
 // It returns an error if the number of indices does not match the tensor's dimensions,
 // if any index is out of bounds, or if the tensor is a read-only view.
-func (t *Tensor[T]) Set(value T, indices ...int) error {
+func (t *TensorNumeric[T]) Set(value T, indices ...int) error {
 	if t.isView {
 		// This is a simplification. A production-ready framework might allow setting on views.
 		return errors.New("cannot set values on a tensor view")
@@ -59,10 +62,10 @@ func (t *Tensor[T]) Set(value T, indices ...int) error {
 	return nil
 }
 
-// Slice creates a new Tensor view for the specified range.
+// Slice creates a new TensorNumeric view for the specified range.
 // A slice is defined by a start and end index for each dimension.
 // The returned tensor shares the same underlying data.
-func (t *Tensor[T]) Slice(ranges ...[2]int) (*Tensor[T], error) {
+func (t *TensorNumeric[T]) Slice(ranges ...[2]int) (*TensorNumeric[T], error) {
 	if t.Dims() == 0 {
 		return nil, errors.New("cannot slice a 0-dimensional tensor")
 	}
@@ -84,7 +87,7 @@ func (t *Tensor[T]) Slice(ranges ...[2]int) (*Tensor[T], error) {
 		offset += start * t.strides[i]
 	}
 
-	return &Tensor[T]{
+	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: t.strides,
 		data:    t.data[offset:],

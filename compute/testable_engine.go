@@ -24,15 +24,15 @@ func NewTestableEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *TestableEng
 
 // FailableTensor wraps a tensor and can be configured to fail on specific operations.
 type FailableTensor[T tensor.Numeric] struct {
-	*tensor.Tensor[T]
+	*tensor.TensorNumeric[T]
 	failOnSet    bool
 	setFailCount int // Fail after this many Set calls
 	setCalls     int // Track number of Set calls
 }
 
 // NewFailableTensor creates a new FailableTensor wrapper.
-func NewFailableTensor[T tensor.Numeric](t *tensor.Tensor[T]) *FailableTensor[T] {
-	return &FailableTensor[T]{Tensor: t}
+func NewFailableTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) *FailableTensor[T] {
+	return &FailableTensor[T]{TensorNumeric: t}
 }
 
 // SetFailOnSet configures the tensor to fail on Set operations.
@@ -58,12 +58,12 @@ func (f *FailableTensor[T]) Set(value T, indices ...int) error {
 		return fmt.Errorf("controlled failure: Set operation failed after %d calls", f.setCalls)
 	}
 
-	return f.Tensor.Set(value, indices...)
+	return f.TensorNumeric.Set(value, indices...)
 }
 
 // TestableMatMul performs matrix multiplication with a FailableTensor result
 // This allows testing the error path in MatMul when result.Set() fails.
-func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.Tensor[T], result *FailableTensor[T]) error {
+func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.TensorNumeric[T], result *FailableTensor[T]) error {
 	if a == nil || b == nil {
 		return errors.New("input tensors cannot be nil")
 	}
@@ -103,7 +103,7 @@ func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.Tenso
 
 // TestableTranspose performs transpose with a FailableTensor result
 // This allows testing the error path in Transpose when result.Set() fails.
-func (e *TestableEngine[T]) TestableTranspose(_ context.Context, a *tensor.Tensor[T], result *FailableTensor[T]) error {
+func (e *TestableEngine[T]) TestableTranspose(_ context.Context, a *tensor.TensorNumeric[T], result *FailableTensor[T]) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -152,7 +152,7 @@ func (f *FailableZeroer[T]) SetFailOnZero(fail bool) {
 }
 
 // Zero performs the zero operation with controlled failure capability.
-func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	if f.failZero {
 		return errors.New("controlled failure: Zero operation failed")
 	}
@@ -162,7 +162,7 @@ func (f *FailableZeroer[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error
 
 // TestableSum performs sum with a FailableZeroer
 // This allows testing the error path in Sum when Zero() fails.
-func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.Tensor[T], axis int, _ bool, zeroer *FailableZeroer[T], result *tensor.Tensor[T]) error {
+func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, _ bool, zeroer *FailableZeroer[T], result *tensor.TensorNumeric[T]) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}

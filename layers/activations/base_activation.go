@@ -15,7 +15,7 @@ type BaseActivation[T tensor.Numeric] struct {
 	graph.NoParameters[T]
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
-	lastInput   *tensor.Tensor[T]
+	lastInput   *tensor.TensorNumeric[T]
 	outputShape []int
 	forwardOp   func(T) T
 	backwardOp  func(T) T
@@ -66,7 +66,7 @@ func (b *BaseActivation[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass of the activation function.
-func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("BaseActivation: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -81,7 +81,7 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 }
 
 // Backward performs the backward pass of the activation function.
-func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	derivative, err := b.engine.UnaryOp(ctx, b.lastInput, b.backwardOp)
 	if err != nil {
 		return nil, err
@@ -91,5 +91,5 @@ func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{inputGrad}, nil
+	return []*tensor.TensorNumeric[T]{inputGrad}, nil
 }

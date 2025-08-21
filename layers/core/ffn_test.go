@@ -36,21 +36,21 @@ func TestFFN_Forward(t *testing.T) {
 	for i := range w1Data {
 		w1Data[i] = float64(i + 1) * 0.1
 	}
-	ffn.w1.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() // Assuming SetWeights takes *tensor.Tensor
 
 	// W2 (hiddenDim x outputDim)
 	w2Data := make([]float64, hiddenDim*outputDim)
 	for i := range w2Data {
 		w2Data[i] = float64(i + 1) * 0.05
 	}
-	ffn.w2.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() // Assuming SetWeights takes *tensor.Tensor
 
 	// W3 (inputDim x hiddenDim) - for the gate in SwiGLU
 	w3Data := make([]float64, inputDim*hiddenDim)
 	for i := range w3Data {
 		w3Data[i] = float64(i + 1) * 0.08
 	}
-	ffn.w3.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() // Assuming SetWeights takes *tensor.Tensor
 
 	// Input tensor (batchSize, inputDim)
 	inputData := []float64{1.0, 2.0, 3.0, 4.0}
@@ -95,19 +95,19 @@ func TestFFN_Backward(t *testing.T) {
 	for i := range w1Data {
 		w1Data[i] = float64(i + 1) * 0.1
 	}
-	ffn.w1.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() 
+	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() 
 
 	w2Data := make([]float64, hiddenDim*outputDim)
 	for i := range w2Data {
 		w2Data[i] = float64(i + 1) * 0.05
 	}
-	ffn.w2.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() 
+	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() 
 
 	w3Data := make([]float64, inputDim*hiddenDim)
 	for i := range w3Data {
 		w3Data[i] = float64(i + 1) * 0.08
 	}
-	ffn.w3.linear.weights.Value = func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() 
+	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() 
 
 	inputData := []float64{1.0, 2.0, 3.0, 4.0}
 	inputTensor, _ := tensor.New[float64]([]int{batchSize, inputDim}, inputData)

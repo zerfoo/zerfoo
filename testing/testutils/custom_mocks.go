@@ -10,6 +10,9 @@ import (
 	"github.com/zerfoo/zerfoo/distributed/pb"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/grpc"
+	_ "github.com/zerfoo/zerfoo/layers/core"
+	_ "github.com/zerfoo/zerfoo/layers/gather"
+	_ "github.com/zerfoo/zerfoo/layers/transpose"
 )
 
 // CustomMockStrategy is a custom mock implementation of the InternalStrategy interface.
@@ -29,7 +32,7 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	sizeReturns []int
 	sizeCalls   int
 
-	allReduceGradientsArgs    []map[string]*tensor.Tensor[T]
+	allReduceGradientsArgs    []map[string]*tensor.TensorNumeric[T]
 	allReduceGradientsReturns []error
 	allReduceGradientsCalls   int
 
@@ -37,7 +40,7 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	barrierCalls   int
 
 	BroadcastTensorArgs []struct {
-		Tensor   *tensor.Tensor[T]
+		Tensor   *tensor.TensorNumeric[T]
 		RootRank int
 	}
 	broadcastTensorReturns []error
@@ -162,7 +165,7 @@ func (m *CustomMockStrategy[T]) OnceSize() *CustomMockStrategy[T] {
 }
 
 // AllReduceGradients performs an all-reduce operation on gradients.
-func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.Tensor[T]) error {
+func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceGradientsCalls++
@@ -175,7 +178,7 @@ func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.
 }
 
 // OnAllReduceGradients sets up expectations for the AllReduceGradients method.
-func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.Tensor[T]) *CustomMockStrategy[T] {
+func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.allReduceGradientsArgs = append(m.allReduceGradientsArgs, gradients)
@@ -229,12 +232,12 @@ func (m *CustomMockStrategy[T]) TwiceBarrier() *CustomMockStrategy[T] {
 }
 
 // BroadcastTensor broadcasts a tensor from the root rank to all other processes.
-func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank int) error {
+func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.broadcastTensorCalls++
 	m.BroadcastTensorArgs = append(m.BroadcastTensorArgs, struct {
-		Tensor   *tensor.Tensor[T]
+		Tensor   *tensor.TensorNumeric[T]
 		RootRank int
 	}{
 		Tensor:   t,
@@ -248,11 +251,11 @@ func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank in
 }
 
 // OnBroadcastTensor sets up expectations for the BroadcastTensor method.
-func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.Tensor[T], rootRank int) *CustomMockStrategy[T] {
+func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.BroadcastTensorArgs = append(m.BroadcastTensorArgs, struct {
-		Tensor   *tensor.Tensor[T]
+		Tensor   *tensor.TensorNumeric[T]
 		RootRank int
 	}{
 		Tensor:   t,

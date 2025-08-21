@@ -25,7 +25,7 @@ func NewTrainer[T tensor.Numeric](model Model[T], optimizer optimizer.Optimizer[
 }
 
 // Train performs a single training step.
-func (t *Trainer[T]) Train(ctx context.Context, inputs, targets *tensor.Tensor[T]) (T, error) {
+func (t *Trainer[T]) Train(ctx context.Context, inputs, targets *tensor.TensorNumeric[T]) (T, error) {
 	// Forward pass
 	predictions, err := t.model.Forward(ctx, inputs)
 	if err != nil {

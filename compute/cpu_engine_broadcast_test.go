@@ -10,7 +10,7 @@ import (
 )
 
 // CompareTensorsApprox checks if two tensors are approximately equal element-wise.
-func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.Tensor[T], epsilon T) bool {
+func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.TensorNumeric[T], epsilon T) bool {
 	t.Helper()
 	if !actual.ShapeEquals(expected) {
 		t.Errorf("tensor shapes do not match: actual %v, expected %v", actual.Shape(), expected.Shape())

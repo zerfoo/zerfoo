@@ -19,8 +19,8 @@ type SwiGLU[T tensor.Numeric] struct {
 	sigmoid *Sigmoid[T] // SwiGLU uses Sigmoid internally
 
 	// Cached tensors for backward pass
-	lastInput   *tensor.Tensor[T]
-	gate        *tensor.Tensor[T] // The sigmoid(x2) part
+	lastInput   *tensor.TensorNumeric[T]
+	gate        *tensor.TensorNumeric[T] // The sigmoid(x2) part
 	outputShape []int
 }
 
@@ -59,7 +59,7 @@ func (s *SwiGLU[T]) Parameters() []*graph.Parameter[T] {
 
 // Forward computes the SwiGLU activation.
 // Input: A tensor with its last dimension being 2 * feature_dim.
-func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SwiGLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -103,7 +103,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 }
 
 // Backward computes the gradients for SwiGLU.
-func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("invalid input count: %w", graph.ErrInvalidInputCount)
 	}
@@ -149,10 +149,10 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs
 	}
 
 	// Concatenate dL/dx1 and dL/dx2
-	dInput, err := s.engine.Concat(ctx, []*tensor.Tensor[T]{dLdx1, dLdx2}, len(inputShape)-1, nil)
+	dInput, err := s.engine.Concat(ctx, []*tensor.TensorNumeric[T]{dLdx1, dLdx2}, len(inputShape)-1, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInput}, nil
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }

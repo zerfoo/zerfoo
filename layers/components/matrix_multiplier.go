@@ -32,21 +32,21 @@ func NewMatrixMultiplier[T tensor.Numeric](engine compute.Engine[T], opts ...Mat
 }
 
 // Multiply performs matrix multiplication: result = a * b.
-func (m *MatrixMultiplier[T]) Multiply(ctx context.Context, a, b *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *MatrixMultiplier[T]) Multiply(ctx context.Context, a, b *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return m.engine.MatMul(ctx, a, b)
 }
 
 // MultiplyWithDestination performs matrix multiplication with a pre-allocated destination tensor.
-func (m *MatrixMultiplier[T]) MultiplyWithDestination(ctx context.Context, a, b, dst *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *MatrixMultiplier[T]) MultiplyWithDestination(ctx context.Context, a, b, dst *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return m.engine.MatMul(ctx, a, b, dst)
 }
 
 // Transpose transposes a matrix.
-func (m *MatrixMultiplier[T]) Transpose(ctx context.Context, a *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *MatrixMultiplier[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return m.engine.Transpose(ctx, a, []int{1, 0})
 }
 
 // TransposeWithDestination transposes a matrix with a pre-allocated destination tensor.
-func (m *MatrixMultiplier[T]) TransposeWithDestination(ctx context.Context, a, dst *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *MatrixMultiplier[T]) TransposeWithDestination(ctx context.Context, a, dst *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return m.engine.Transpose(ctx, a, []int{1, 0}, dst)
 }

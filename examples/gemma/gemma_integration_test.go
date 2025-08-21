@@ -6,10 +6,14 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/layers/embeddings"
+	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/layers/embeddings"
+	_ "github.com/zerfoo/zerfoo/layers/core"
+	_ "github.com/zerfoo/zerfoo/layers/gather"
+	_ "github.com/zerfoo/zerfoo/layers/transpose"
 )
 
 // TestGemmaIntegration runs an end-to-end test of loading and running the Gemma model.
@@ -36,11 +40,14 @@ func TestGemmaIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to decode embedding weights: %v", err)
 	}
-	embeddingLayer, err := embeddings.NewTokenEmbedding[float32](engine, embeddingWeights.Shape()[0], embeddingWeights.Shape()[1])
+	embeddingParam, err := graph.NewParameter[float32]("embedding_table", embeddingWeights, tensor.New[float32])
+	if err != nil {
+		t.Fatalf("Failed to create embedding parameter: %v", err)
+	}
+	embeddingLayer, err := embeddings.NewTokenEmbeddingFromParam[float32](engine, embeddingParam)
 	if err != nil {
 		t.Fatalf("Failed to create token embedding layer: %v", err)
 	}
-	embeddingLayer.Parameters()[0].Value = embeddingWeights
 
 	zerfooGraph, err := model.BuildFromZMF[float32](engine, &ops, zmfModel)
 	if err != nil {

@@ -37,12 +37,12 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	rope *embeddings.RotaryPositionalEmbedding[T]
 
 	// Cached tensors for backward pass
-	qProj       *tensor.Tensor[T] // Projected Q
-	kProj       *tensor.Tensor[T] // Projected K
-	vProj       *tensor.Tensor[T] // Projected V
-	attnOutput  *tensor.Tensor[T] // Output from scaledDotProductAttention
-	qHeadsRoPE  *tensor.Tensor[T] // Q after RoPE
-	kHeadsRoPE  *tensor.Tensor[T] // K after RoPE
+	qProj       *tensor.TensorNumeric[T] // Projected Q
+	kProj       *tensor.TensorNumeric[T] // Projected K
+	vProj       *tensor.TensorNumeric[T] // Projected V
+	attnOutput  *tensor.TensorNumeric[T] // Output from scaledDotProductAttention
+	qHeadsRoPE  *tensor.TensorNumeric[T] // Q after RoPE
+	kHeadsRoPE  *tensor.TensorNumeric[T] // K after RoPE
 	outputShape []int
 }
 
@@ -193,13 +193,13 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the grouped query attention.
-func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: expected at least 1 input tensor, got %d", len(inputs))
 	}
 	input := inputs[0] // (batch_size, seq_len, model_dim)
 	gqa.outputShape = input.Shape()
-	var mask *tensor.Tensor[T]
+	var mask *tensor.TensorNumeric[T]
 	if len(inputs) > 1 {
 		mask = inputs[1]
 	}
@@ -358,7 +358,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 
 
-func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context, dQForRoPE, dKForRoPE []*tensor.Tensor[T], dVHeads *tensor.Tensor[T], batchSize, seqLen, kvHeadDim int) (*tensor.Tensor[T], *tensor.Tensor[T], *tensor.Tensor[T], error) {
+func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context, dQForRoPE, dKForRoPE []*tensor.TensorNumeric[T], dVHeads *tensor.TensorNumeric[T], batchSize, seqLen, kvHeadDim int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
 	// Sum gradients from replicated K, V heads
 	if gqa.numQueryHeads != gqa.numKeyValueHeads {
 		// Sum dVHeads along the replicated dimension
@@ -418,7 +418,7 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 }
 
 // Backward computes the gradients for GroupedQueryAttention.
-func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -494,5 +494,5 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInputTotal}, nil
+	return []*tensor.TensorNumeric[T]{dInputTotal}, nil
 }

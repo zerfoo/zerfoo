@@ -20,7 +20,7 @@ type SkipSimplifiedLayerNormalization[T tensor.Numeric] struct {
 func NewSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	gain *tensor.Tensor[T],
+	gain *tensor.TensorNumeric[T],
 	epsilon T,
 ) (*SkipSimplifiedLayerNormalization[T], error) {
 	normLayer, err := NewSimplifiedLayerNormalization[T](engine, ops, gain, epsilon)
@@ -34,7 +34,7 @@ func NewSkipSimplifiedLayerNormalization[T tensor.Numeric](
 }
 
 // Forward applies the forward pass of the SkipSimplifiedLayerNormalization layer.
-func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	normalized, err := sln.normLayer.Forward(ctx, inputs...)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inp
 }
 
 // Backward applies the backward pass of the SkipSimplifiedLayerNormalization layer.
-func (sln *SkipSimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (sln *SkipSimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

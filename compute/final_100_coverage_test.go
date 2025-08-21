@@ -12,7 +12,7 @@ import (
 
 // ReadOnlyTensor creates a tensor that fails on Set operations by being read-only.
 type ReadOnlyTensor[T tensor.Numeric] struct {
-	*tensor.Tensor[T]
+	*tensor.TensorNumeric[T]
 }
 
 func (r *ReadOnlyTensor[T]) Set(_ T, indices ...int) error { //nolint:revive
@@ -77,7 +77,7 @@ func Test100PercentCoverage(t *testing.T) {
 }
 
 // matMulWithReadOnlyResult replicates the exact MatMul logic to test the Set error path.
-func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.TensorNumeric[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil || b == nil {
 		return errors.New("input tensors cannot be nil")
 	}
@@ -108,7 +108,7 @@ func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *te
 }
 
 // transposeWithReadOnlyResult replicates the exact Transpose logic to test the Set error path.
-func transposeWithReadOnlyResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], result *ReadOnlyTensor[float32]) error {
+func transposeWithReadOnlyResult(_ context.Context, _ *CPUEngine[float32], a *tensor.TensorNumeric[float32], result *ReadOnlyTensor[float32]) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -137,12 +137,12 @@ type FailingZero[T tensor.Numeric] struct {
 	*CPUEngine[T]
 }
 
-func (f *FailingZero[T]) Zero(_ context.Context, _ *tensor.Tensor[T]) error {
+func (f *FailingZero[T]) Zero(_ context.Context, _ *tensor.TensorNumeric[T]) error {
 	return errors.New("zero operation failed")
 }
 
 // sumWithFailingZeroOperation replicates the Sum logic to test the Zero error path.
-func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32]) error {
+func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *tensor.TensorNumeric[float32]) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}

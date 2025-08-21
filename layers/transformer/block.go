@@ -78,7 +78,7 @@ func NewTransformerBlock[T tensor.Numeric](
 }
 
 // Forward computes the forward pass of the Transformer block.
-func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	x := inputs[0]
 
 	// Attention part
@@ -120,9 +120,9 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 }
 
 // Backward computes the backward pass of the Transformer block.
-func (b *Block[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (b *Block[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a simplified backward pass and needs to be implemented correctly.
-	return []*tensor.Tensor[T]{dOut}, nil
+	return []*tensor.TensorNumeric[T]{dOut}, nil
 }
 
 // Parameters returns the parameters of the Transformer block.

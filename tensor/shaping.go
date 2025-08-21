@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// Reshape returns a new Tensor with a different shape that shares the same underlying data.
+// Reshape returns a new TensorNumeric with a different shape that shares the same underlying data.
 // The new shape must have the same total number of elements as the original tensor.
 // This operation is a "view" and does not copy the data.
-func (t *Tensor[T]) Reshape(newShape []int) (*Tensor[T], error) {
+func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 	newSize := 1
 	inferredDim := -1
 	for i, dim := range newShape {
@@ -45,7 +45,7 @@ func (t *Tensor[T]) Reshape(newShape []int) (*Tensor[T], error) {
 		stride *= newShape[i]
 	}
 
-	return &Tensor[T]{
+	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: newStrides,
 		data:    t.data, // Share the underlying data

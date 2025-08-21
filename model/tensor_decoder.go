@@ -12,7 +12,7 @@ import (
 )
 
 // DecodeTensor converts a ZMF Tensor protobuf message into a Zerfoo Tensor.
-func DecodeTensor[T tensor.Numeric](tensorProto *zmf.Tensor) (*tensor.Tensor[T], error) {
+func DecodeTensor[T tensor.Numeric](tensorProto *zmf.Tensor) (*tensor.TensorNumeric[T], error) {
 	shape := tensor.ConvertInt64ToInt(tensorProto.Shape)
 	data := make([]T, tensor.Product(shape))
 

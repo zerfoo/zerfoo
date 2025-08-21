@@ -227,56 +227,56 @@ type mockAdamWEngine[T tensor.Numeric] struct {
 	subErr        bool
 }
 
-func (m *mockAdamWEngine[T]) Zeros(ctx context.Context, dst *tensor.Tensor[T], shape []int) error {
+func (m *mockAdamWEngine[T]) Zeros(ctx context.Context, dst *tensor.TensorNumeric[T], shape []int) error {
 	if m.zerosErr {
 		return errors.New("zeros error")
 	}
 	return m.Engine.Zeros(ctx, dst, shape)
 }
 
-func (m *mockAdamWEngine[T]) MulScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.mulScalarErr {
 		return nil, errors.New("mulscalar error")
 	}
 	return m.Engine.MulScalar(ctx, a, scalar, dst...)
 }
 
-func (m *mockAdamWEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.addErr {
 		return nil, errors.New("add error")
 	}
 	return m.Engine.Add(ctx, a, b, dst...)
 }
 
-func (m *mockAdamWEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.mulErr {
 		return nil, errors.New("mul error")
 	}
 	return m.Engine.Mul(ctx, a, b, dst...)
 }
 
-func (m *mockAdamWEngine[T]) Sqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.sqrtErr {
 		return nil, errors.New("sqrt error")
 	}
 	return m.Engine.Sqrt(ctx, a, dst...)
 }
 
-func (m *mockAdamWEngine[T]) AddScalar(ctx context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.addScalarErr {
 		return nil, errors.New("addscalar error")
 	}
 	return m.Engine.AddScalar(ctx, a, scalar, dst...)
 }
 
-func (m *mockAdamWEngine[T]) Div(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.divErr {
 		return nil, errors.New("div error")
 	}
 	return m.Engine.Div(ctx, a, b, dst...)
 }
 
-func (m *mockAdamWEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockAdamWEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.subErr {
 		return nil, errors.New("sub error")
 	}

@@ -20,8 +20,8 @@ type AdamW[T tensor.Numeric] struct {
 	weightDecay  T
 
 	// State variables for each parameter
-	m map[*graph.Parameter[T]]*tensor.Tensor[T] // First moment estimates
-	v map[*graph.Parameter[T]]*tensor.Tensor[T] // Second moment estimates
+	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates
+	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates
 	t int                                       // Timestep
 }
 
@@ -34,8 +34,8 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 		beta2:        beta2,
 		epsilon:      epsilon,
 		weightDecay:  weightDecay,
-		m:            make(map[*graph.Parameter[T]]*tensor.Tensor[T]),
-		v:            make(map[*graph.Parameter[T]]*tensor.Tensor[T]),
+		m:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
+		v:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
 		t:            0,
 	}
 }

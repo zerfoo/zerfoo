@@ -7,6 +7,9 @@ import (
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/normalization"
+	_ "github.com/zerfoo/zerfoo/layers/shape" // Blank import to register the Shape layer
+	_ "github.com/zerfoo/zerfoo/layers/gather" // Blank import to register the Gather layer
+	_ "github.com/zerfoo/zerfoo/layers/transpose" // Blank import to register the Transpose layer
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/tensor"
 )

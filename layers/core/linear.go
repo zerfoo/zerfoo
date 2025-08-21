@@ -18,7 +18,7 @@ type Linear[T tensor.Numeric] struct {
 	multiplier       *components.MatrixMultiplier[T]
 	gradientComputer *components.LinearGradientComputer[T]
 	weights          *graph.Parameter[T]
-	lastInput        *tensor.Tensor[T]
+	lastInput        *tensor.TensorNumeric[T]
 	outputShape      []int
 }
 
@@ -81,8 +81,8 @@ func NewLinear[T tensor.Numeric](
 func NewLinearWithFactories[T tensor.Numeric](
 	name string, engine compute.Engine[T], _ numeric.Arithmetic[T], inputSize, outputSize int,
 	initializer components.WeightInitializer[T],
-	newTensor func([]int, []T) (*tensor.Tensor[T], error),
-	newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error),
+	newTensor func([]int, []T) (*tensor.TensorNumeric[T], error),
+	newParameter func(string, *tensor.TensorNumeric[T], func([]int, []T) (*tensor.TensorNumeric[T], error)) (*graph.Parameter[T], error),
 ) (*Linear[T], error) {
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
@@ -129,7 +129,7 @@ func (l *Linear[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input * weights.
-func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("Linear: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -146,7 +146,7 @@ func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 }
 
 // Backward computes the gradients using the gradient computer component.
-func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Compute both gradients efficiently
 	weightsGrad, inputGrad, err := l.gradientComputer.ComputeBothGradients(
 		ctx, l.lastInput, l.weights.Value, outputGradient)
@@ -156,7 +156,7 @@ func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[
 
 	l.weights.Gradient = weightsGrad
 
-	return []*tensor.Tensor[T]{inputGrad}, nil
+	return []*tensor.TensorNumeric[T]{inputGrad}, nil
 }
 
 // Parameters returns the parameters of the Linear layer.

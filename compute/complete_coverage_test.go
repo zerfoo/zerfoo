@@ -13,11 +13,11 @@ import (
 
 // MockFailingTensor implements tensor operations but fails on Set at specific indices.
 type MockFailingTensor[T tensor.Numeric] struct {
-	*tensor.Tensor[T]
+	*tensor.TensorNumeric[T]
 	failIndices map[string]bool
 }
 
-func NewMockFailingTensor[T tensor.Numeric](t *tensor.Tensor[T]) *MockFailingTensor[T] {
+func NewMockFailingTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) *MockFailingTensor[T] {
 	return &MockFailingTensor[T]{
 		Tensor:      t,
 		failIndices: make(map[string]bool),
@@ -85,7 +85,7 @@ func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 }
 
 // testMatMulWithMockResult replicates the exact MatMul logic but with a mock result tensor.
-func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *tensor.TensorNumeric[float32], t *testing.T) *tensor.TensorNumeric[float32] {
 	if a == nil || b == nil {
 		t.Error("input tensors cannot be nil")
 
@@ -135,7 +135,7 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 }
 
 // testTransposeWithMockResult replicates the exact Transpose logic but with a mock result tensor.
-func testTransposeWithMockResult(_ context.Context, _ *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testTransposeWithMockResult(_ context.Context, _ *CPUEngine[float32], a *tensor.TensorNumeric[float32], t *testing.T) *tensor.TensorNumeric[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
 
@@ -183,7 +183,7 @@ type MockFailingZeroEngine[T tensor.Numeric] struct {
 	failZero bool
 }
 
-func (m *MockFailingZeroEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (m *MockFailingZeroEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	if m.failZero {
 		return errors.New("mock error: Zero operation failed")
 	}
@@ -192,7 +192,7 @@ func (m *MockFailingZeroEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]
 }
 
 // testSumWithMockZero replicates the exact Sum logic but with a mock Zero operation.
-func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.Tensor[float32], t *testing.T) *tensor.Tensor[float32] {
+func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.TensorNumeric[float32], t *testing.T) *tensor.TensorNumeric[float32] {
 	if a == nil {
 		t.Error("input tensor cannot be nil")
 

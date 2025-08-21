@@ -14,10 +14,10 @@ type ScaledDotProductAttention[T tensor.Numeric] struct {
 	headDim float64 // Dimension of each head, used for scaling
 
 	// Cached tensors for backward pass
-	q                *tensor.Tensor[T]
-	k                *tensor.Tensor[T]
-	v                *tensor.Tensor[T]
-	attentionWeights *tensor.Tensor[T]
+	q                *tensor.TensorNumeric[T]
+	k                *tensor.TensorNumeric[T]
+	v                *tensor.TensorNumeric[T]
+	attentionWeights *tensor.TensorNumeric[T]
 }
 
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
@@ -45,7 +45,7 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 // Forward computes the scaled dot-product attention.
 // Q, K, V are expected to be 3D tensors (batch_size, seq_len, head_dim).
 // mask is an optional 4D tensor (batch_size, num_heads, seq_len_q, seq_len_k).
-func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.Tensor[T], mask *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.TensorNumeric[T], mask *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Cache inputs for backward pass
 	sdpa.q = q
 	sdpa.k = k
@@ -108,7 +108,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
-func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _, _, _ *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// 1. Gradient w.r.t. V
 	attentionWeightsTransposed, err := sdpa.engine.Transpose(ctx, sdpa.attentionWeights, []int{0, 2, 1})
 	if err != nil {
@@ -169,5 +169,5 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *te
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dQ, dK, dV}, nil
+	return []*tensor.TensorNumeric[T]{dQ, dK, dV}, nil
 }

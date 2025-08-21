@@ -46,8 +46,8 @@ func TestXORFloat16Distributed(t *testing.T) {
 	target3, err := tensor.New[float32]([]int{1, 1}, []float32{0})
 	if err != nil { t.Fatalf("Failed to create tensor: %v", err) }
 
-	inputs := []*tensor.Tensor[float32]{input00, input01, input10, input11}
-	targets := []*tensor.Tensor[float32]{target0, target1, target2, target3}
+	inputs := []*tensor.TensorNumeric[float32]{input00, input01, input10, input11}
+	targets := []*tensor.TensorNumeric[float32]{target0, target1, target2, target3}
 
 	// 3. Build the Model (Dense layers)
 	// Input: 2 features, Hidden: 8 neurons, Output: 1 neuron

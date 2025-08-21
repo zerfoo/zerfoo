@@ -14,9 +14,9 @@ type CrossEntropyLoss[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 
 	// Cached tensors for backward pass
-	predictions   *tensor.Tensor[T]   // Model's output (logits)
-	targets       *tensor.Tensor[int] // True labels (int type)
-	softmaxOutput *tensor.Tensor[T]   // Softmax of predictions
+	predictions   *tensor.TensorNumeric[T]   // Model's output (logits)
+	targets       *tensor.TensorNumeric[int] // True labels (int type)
+	softmaxOutput *tensor.TensorNumeric[T]   // Softmax of predictions
 	outputShape   []int
 }
 
@@ -39,7 +39,7 @@ func (cel *CrossEntropyLoss[T]) Parameters() []graph.Parameter[T] {
 
 // Forward computes the cross-entropy loss.
 // Inputs: predictions (logits), targets (int labels).
-func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor.Tensor[T], targets *tensor.Tensor[int]) (*tensor.Tensor[T], error) {
+func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor.TensorNumeric[T], targets *tensor.TensorNumeric[int]) (*tensor.TensorNumeric[T], error) {
 	cel.outputShape = []int{1} // Loss is a scalar
 
 	cel.predictions = predictions // Cache for backward
@@ -106,7 +106,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor
 
 // Backward computes the gradients for CrossEntropyLoss.
 // dOut is typically a scalar (1.0) for loss functions.
-func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient of Cross-Entropy Loss with respect to logits (predictions)
 	// is (softmax(predictions) - one_hot(targets))
 	// dOut is the gradient from the subsequent layer (usually 1.0 for loss)
@@ -134,5 +134,5 @@ func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.Tenso
 	}
 
 	// Loss function does not pass gradients back to targets (they are ground truth).
-	return []*tensor.Tensor[T]{finalGradPredictions, nil}, nil
+	return []*tensor.TensorNumeric[T]{finalGradPredictions, nil}, nil
 }

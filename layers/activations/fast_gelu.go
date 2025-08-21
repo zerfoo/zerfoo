@@ -22,7 +22,7 @@ func NewFastGelu[T tensor.Float](engine compute.Engine[T]) *FastGelu[T] {
 }
 
 // Forward applies the forward pass of the FastGelu layer.
-func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FastGelu expects 1 input, got %d", len(inputs))
 	}
@@ -89,7 +89,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) 
 }
 
 // Backward applies the backward pass of the FastGelu layer.
-func (g *FastGelu[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (g *FastGelu[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
@@ -99,6 +99,6 @@ func (g *FastGelu[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // OutputShape returns the output shape of the layer.
-func (g *FastGelu[T]) OutputShape(inputShapes ...[]int) ([]int, error) {
-	return inputShapes[0], nil
+func (g *FastGelu[T]) OutputShape() []int {
+	return nil
 }
