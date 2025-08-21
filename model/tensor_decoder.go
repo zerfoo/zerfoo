@@ -52,7 +52,7 @@ func decodeFloat16[T tensor.Numeric](rawData []byte, dest []T) error {
 	for i := 0; i < len(rawData); i += 2 {
 		bits := binary.LittleEndian.Uint16(rawData[i : i+2])
 		f16 := float16.FromBits(bits)
-		dest[i/2] = T(f16.Float32())
+		dest[i/2] = T(f16.ToFloat32())
 	}
 	return nil
 }
