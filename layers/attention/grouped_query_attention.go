@@ -46,13 +46,48 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// GQAOptions holds configuration options for the GroupedQueryAttention layer.
+type GQAOptions[T tensor.Numeric] struct {
+	Base      float64
+	MaxSeqLen int
+}
+
+// GQAOption is a function that applies an option to GQAOptions.
+type GQAOption[T tensor.Numeric] func(*GQAOptions[T])
+
+// WithRopeBase sets the base for Rotary Positional Embeddings.
+func WithRopeBase[T tensor.Numeric](base float64) GQAOption[T] {
+	return func(o *GQAOptions[T]) {
+		o.Base = base
+	}
+}
+
+// WithMaxSeqLen sets the maximum sequence length for Rotary Positional Embeddings.
+func WithMaxSeqLen[T tensor.Numeric](maxSeqLen int) GQAOption[T] {
+	return func(o *GQAOptions[T]) {
+		o.MaxSeqLen = maxSeqLen
+	}
+}
+
 // NewGroupedQueryAttention creates a new GroupedQueryAttention layer.
 // modelDim: The dimension of the input and output of the block (d_model).
 // numQueryHeads: The number of query heads.
 // numKeyValueHeads: The number of key/value heads.
-// base: The base for RoPE.
-// maxSeqLen: The maximum sequence length for RoPE.
-func NewGroupedQueryAttention[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim, numQueryHeads, numKeyValueHeads int, base float64, maxSeqLen int) (*GroupedQueryAttention[T], error) {
+func NewGroupedQueryAttention[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	modelDim, numQueryHeads, numKeyValueHeads int,
+	opts ...GQAOption[T],
+) (*GroupedQueryAttention[T], error) {
+	// Default options
+	options := &GQAOptions[T]{
+		Base:      10000.0,
+		MaxSeqLen: 2048,
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	if numQueryHeads%numKeyValueHeads != 0 {
 		return nil, fmt.Errorf("number of query heads (%d) must be divisible by number of key/value heads (%d)", numQueryHeads, numKeyValueHeads)
 	}
@@ -88,7 +123,7 @@ func NewGroupedQueryAttention[T tensor.Numeric](engine compute.Engine[T], ops nu
 		return nil, fmt.Errorf("failed to create WO dense layer: %w", err)
 	}
 
-	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, maxSeqLen, base)
+	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, options.MaxSeqLen, options.Base)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
 	}
