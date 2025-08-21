@@ -10,7 +10,7 @@ require (
 	google.golang.org/protobuf v1.36.8
 )
 
-replace github.com/zerfoo/zmf => ../zmf
+
 
 require (
 	golang.org/x/net v0.25.0 // indirect
