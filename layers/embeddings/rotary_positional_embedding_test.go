@@ -31,7 +31,7 @@ func TestRotaryPositionalEmbedding_NewRotaryPositionalEmbedding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, tt.headDim, tt.seqLen, 10000.0)
+			rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, tt.headDim, tt.seqLen, WithRotaryBase(10000.0))
 
 			if tt.expectErr {
 				testutils.AssertError(t, err, "expected error")
@@ -78,7 +78,7 @@ func TestRotaryPositionalEmbedding_NewRotaryPositionalEmbedding(t *testing.T) {
 func TestRotaryPositionalEmbedding_OutputShape(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
-	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 10, 10000.0)
+	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 10, WithRotaryBase(10000.0))
 
 	tests := []struct {
 		name        string
@@ -115,7 +115,7 @@ func TestRotaryPositionalEmbedding_OutputShape(t *testing.T) {
 func TestRotaryPositionalEmbedding_Parameters(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
-	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 10, 10000.0)
+	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 10, WithRotaryBase(10000.0))
 
 	params := rpe.Parameters()
 	if params != nil {
@@ -126,7 +126,7 @@ func TestRotaryPositionalEmbedding_Parameters(t *testing.T) {
 func TestRotaryPositionalEmbedding_Forward(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
-	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2, 10000.0) // headDim=4, seqLen=2
+	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2, WithRotaryBase(10000.0)) // headDim=4, seqLen=2
 
 	inputData := []float64{1, 2, 3, 4, 5, 6, 7, 8}
 	inputTensor, _ := tensor.New[float64]([]int{1, 2, 4}, inputData)
@@ -148,7 +148,7 @@ func TestRotaryPositionalEmbedding_Forward(t *testing.T) {
 func TestRotaryPositionalEmbedding_Backward(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
-	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2, 10000.0) // headDim=4, seqLen=2
+	rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2, WithRotaryBase(10000.0)) // headDim=4, seqLen=2
 
 	// Simulate cached inputs from Forward pass
 	inputData := []float64{1, 2, 3, 4, 5, 6, 7, 8}
@@ -181,7 +181,7 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 
 	headDim := 2
 	seqLen := 1
-	rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen, 10000.0)
+	rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen, WithRotaryBase(10000.0))
 	testutils.AssertNoError(t, err, "NewRotaryPositionalEmbedding should not return an error")
 	testutils.AssertNotNil(t, rpe, "expected non-nil rpe")
 
@@ -229,4 +229,46 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 	for i := range expectedDInputData {
 		testutils.AssertFloatEqual(t, expectedDInputData[i], dInputs[0].Data()[i], 1e-6, fmt.Sprintf("Backward dInput mismatch at index %d", i))
 	}
+}
+
+// TestRotaryPositionalEmbedding_WithBase tests RotaryPositionalEmbedding with custom base option
+func TestRotaryPositionalEmbedding_WithBase(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	// Test with custom base value
+	customBase := 5000.0
+	rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2, WithRotaryBase(customBase))
+	testutils.AssertNoError(t, err, "NewRotaryPositionalEmbedding with custom base should not return an error")
+	testutils.AssertNotNil(t, rpe, "RotaryPositionalEmbedding should not be nil")
+
+	// Test forward pass works with custom base
+	inputData := []float64{1, 2, 3, 4, 5, 6, 7, 8}
+	inputTensor, _ := tensor.New[float64]([]int{1, 2, 4}, inputData)
+
+	output, err := rpe.Forward(ctx, inputTensor)
+	testutils.AssertNoError(t, err, "Forward should not return an error")
+	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
+	
+	// Output should have same shape as input
+	testutils.AssertTrue(t, output.ShapeEquals(inputTensor), "Output shape should match input shape")
+}
+
+// TestRotaryPositionalEmbedding_DefaultBase tests RotaryPositionalEmbedding with default base
+func TestRotaryPositionalEmbedding_DefaultBase(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	// Test with default base (no options)
+	rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, 4, 2)
+	testutils.AssertNoError(t, err, "NewRotaryPositionalEmbedding with default base should not return an error")
+	testutils.AssertNotNil(t, rpe, "RotaryPositionalEmbedding should not be nil")
+
+	// Test forward pass works with default base
+	inputData := []float64{1, 2, 3, 4, 5, 6, 7, 8}
+	inputTensor, _ := tensor.New[float64]([]int{1, 2, 4}, inputData)
+
+	output, err := rpe.Forward(ctx, inputTensor)
+	testutils.AssertNoError(t, err, "Forward should not return an error")
+	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
 }

@@ -123,7 +123,7 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 		return nil, fmt.Errorf("failed to create WO dense layer: %w", err)
 	}
 
-	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, options.MaxSeqLen, options.Base)
+	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, options.MaxSeqLen, embeddings.WithRotaryBase(options.Base))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
 	}
