@@ -20,27 +20,50 @@ type Block[T tensor.Numeric] struct {
 	normPostAttention    *normalization.RMSNorm[T]
 }
 
+// BlockOptions holds configuration options for the Transformer block.
+type BlockOptions[T tensor.Numeric] struct {
+	Epsilon T
+}
+
+// BlockOption is a function that applies an option to BlockOptions.
+type BlockOption[T tensor.Numeric] func(*BlockOptions[T])
+
+// WithEpsilon sets the epsilon value for the RMS normalization layers.
+func WithEpsilon[T tensor.Numeric](epsilon T) BlockOption[T] {
+	return func(o *BlockOptions[T]) {
+		o.Epsilon = epsilon
+	}
+}
+
 // NewBlock creates a new Transformer block.
 func NewTransformerBlock[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	modelDim, ffnDim int,
-	epsilon T,
 	attention graph.Node[T],
+	opts ...BlockOption[T],
 ) (*Block[T], error) {
+	// Default options
+	options := &BlockOptions[T]{
+		Epsilon: ops.FromFloat64(1e-6),
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	ffn, err := core.NewFFN[T]("ffn", engine, ops, modelDim, ffnDim, modelDim)
 	if err != nil {
 		return nil, err
 	}
-	norm1, err := normalization.NewRMSNorm[T]("norm1", engine, ops, modelDim, epsilon)
+	norm1, err := normalization.NewRMSNorm[T]("norm1", engine, ops, modelDim, options.Epsilon)
 	if err != nil {
 		return nil, err
 	}
-	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, epsilon)
+	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, options.Epsilon)
 	if err != nil {
 		return nil, err
 	}
-	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, epsilon)
+	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, options.Epsilon)
 	if err != nil {
 		return nil, err
 	}

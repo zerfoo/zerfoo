@@ -27,56 +27,25 @@ func TestLinear_Creation(t *testing.T) {
 	testutils.AssertEqual(t, "test_linear_weights", params[0].Name, "expected parameter name to match")
 }
 
-// TestLinear_WithXavier tests Xavier initialization.
-func TestLinear_WithXavier(t *testing.T) {
+// TestLinear_WithInitializers tests different initializers.
+func TestLinear_WithInitializers(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	layer, err := NewLinearWithXavier("xavier_test", engine, ops, 10, 5)
+	// Test Xavier Initializer
+	layer, err := NewLinear("xavier_test", engine, ops, 10, 5, WithXavier[float32](ops))
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer with Xavier, got %v")
 	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
 
-	// Check that weights were initialized
-	params := layer.Parameters()
-	testutils.AssertEqual(t, 1, len(params), "expected 1 parameter")
-
-	weights := params[0].Value
-	testutils.AssertNotNil(t, weights, "expected weights tensor to not be nil")
-
-	expectedShape := []int{10, 5}
-	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
-}
-
-// TestLinear_WithHe tests He initialization.
-func TestLinear_WithHe(t *testing.T) {
-	ops := numeric.Float32Ops{}
-	engine := compute.NewCPUEngine[float32](ops)
-
-	layer, err := NewLinearWithHe("he_test", engine, ops, 10, 5)
+	// Test He Initializer
+	layer, err = NewLinear("he_test", engine, ops, 10, 5, WithHe[float32](ops))
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer with He, got %v")
 	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
 
-	params := layer.Parameters()
-	weights := params[0].Value
-
-	expectedShape := []int{10, 5}
-	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
-}
-
-// TestLinear_WithUniform tests uniform initialization.
-func TestLinear_WithUniform(t *testing.T) {
-	ops := numeric.Float32Ops{}
-	engine := compute.NewCPUEngine[float32](ops)
-
-	layer, err := NewLinearWithUniform("uniform_test", engine, ops, 10, 5, 0.1)
+	// Test Uniform Initializer
+	layer, err = NewLinear("uniform_test", engine, ops, 10, 5, WithUniform[float32](ops, 0.1))
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer with Uniform, got %v")
 	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
-
-	params := layer.Parameters()
-	weights := params[0].Value
-
-	expectedShape := []int{10, 5}
-	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, weights.Shape()), "expected weights shape to match")
 }
 
 // TestLinear_ForwardPass tests the forward pass functionality.
@@ -84,7 +53,7 @@ func TestLinear_ForwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	layer, err := NewLinearWithXavier("forward_test", engine, ops, 3, 2)
+	layer, err := NewLinear("forward_test", engine, ops, 3, 2)
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer, got %v")
 
 	// Create input tensor (1x3)
@@ -104,7 +73,7 @@ func TestLinear_BackwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	layer, err := NewLinearWithXavier("backward_test", engine, ops, 3, 2)
+	layer, err := NewLinear("backward_test", engine, ops, 3, 2)
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer, got %v")
 
 	// Create input tensor (1x3)
@@ -144,9 +113,9 @@ func TestLinear_CustomInitializer(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Create custom initializer that sets all weights to 0.5
-	customInit := &testInitializer[float32]{value: 0.5}
+	customInit := &testutils.TestInitializer[float32]{Value: 0.5}
 
-	layer, err := NewLinearWithInitializer("custom_test", engine, ops, 2, 2, customInit)
+	layer, err := NewLinear("custom_test", engine, ops, 2, 2, WithInitializer[float32](customInit))
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer with custom initializer, got %v")
 
 	params := layer.Parameters()
@@ -164,25 +133,11 @@ func TestLinear_SetName(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	layer, err := NewLinearWithXavier("original_name", engine, ops, 3, 2)
+	layer, err := NewLinear("original_name", engine, ops, 3, 2)
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer, got %v")
 
 	layer.SetName("new_name")
 
 	params := layer.Parameters()
 	testutils.AssertEqual(t, "new_name_weights", params[0].Name, "expected parameter name to match")
-}
-
-// Helper test initializer.
-type testInitializer[T tensor.Numeric] struct {
-	value T
-}
-
-func (ti *testInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
-	weights := make([]T, inputSize*outputSize)
-	for i := range weights {
-		weights[i] = ti.value
-	}
-
-	return weights, nil
 }

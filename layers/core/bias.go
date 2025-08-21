@@ -20,18 +20,46 @@ type Bias[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// BiasOptions holds configuration options for the Bias layer.
+type BiasOptions[T tensor.Numeric] struct {
+	Initializer func(size int) []T
+}
+
+// BiasOption is a function that applies an option to BiasOptions.
+type BiasOption[T tensor.Numeric] func(*BiasOptions[T])
+
+// WithBiasInitializer sets a custom initializer for the bias vector.
+func WithBiasInitializer[T tensor.Numeric](initializer func(size int) []T) BiasOption[T] {
+	return func(o *BiasOptions[T]) {
+		o.Initializer = initializer
+	}
+}
+
 // NewBias creates a new Bias layer with default tensor and parameter creation.
-func NewBias[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int) (*Bias[T], error) {
-	return NewBiasWithFactories(name, engine, ops, size, tensor.New[T], graph.NewParameter[T])
+func NewBias[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int, opts ...BiasOption[T]) (*Bias[T], error) {
+	// Default options
+	options := &BiasOptions[T]{
+		Initializer: func(size int) []T { return make([]T, size) }, // Default to zeros
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return NewBiasWithFactories(name, engine, ops, size, tensor.New[T], graph.NewParameter[T], options.Initializer)
 }
 
 // NewBiasWithFactories creates a new Bias layer with custom tensor and parameter creation functions.
-func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int, newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Bias[T], error) {
+func NewBiasWithFactories[T tensor.Numeric](
+	name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int,
+	newTensor func([]int, []T) (*tensor.Tensor[T], error),
+	newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error),
+	initializer func(size int) []T,
+) (*Bias[T], error) {
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}
-	// Initialize biases with zeros.
-	biasesData := make([]T, size)
+	// Initialize biases.
+	biasesData := initializer(size)
 	biases, err := newTensor([]int{size}, biasesData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create biases tensor: %w", err)

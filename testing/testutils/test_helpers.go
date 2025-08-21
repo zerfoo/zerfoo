@@ -2,6 +2,7 @@ package testutils
 
 import (
 	"context"
+	"errors"
 	"math"
 	"reflect"
 	"sort"
@@ -149,6 +150,36 @@ func AssertFloatEqual[T float32 | float64](t *testing.T, expected, actual T, tol
 	t.Helper()
 	if math.Abs(float64(expected)-float64(actual)) > float64(tolerance) {
 		t.Errorf("expected %v, got %v (tolerance %v): %s", expected, actual, tolerance, msg)
+	}
+}
+
+// AssertFloat32SliceApproxEqual checks if two float32 slices are approximately equal element-wise.
+func AssertFloat32SliceApproxEqual(t *testing.T, expected, actual []float32, tolerance float32, msg string) {
+	t.Helper()
+	if len(expected) != len(actual) {
+		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
+		return
+	}
+	for i := range expected {
+		if math.Abs(float64(expected[i])-float64(actual[i])) > float64(tolerance) {
+			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
+			return
+		}
+	}
+}
+
+// AssertFloat64SliceApproxEqual checks if two float64 slices are approximately equal element-wise.
+func AssertFloat64SliceApproxEqual(t *testing.T, expected, actual []float64, tolerance float64, msg string) {
+	t.Helper()
+	if len(expected) != len(actual) {
+		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
+		return
+	}
+	for i := range expected {
+		if math.Abs(expected[i]-actual[i]) > tolerance {
+			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
+			return
+		}
 	}
 }
 
@@ -317,4 +348,27 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 		}
 	}
 	return true
+}
+
+// FailingInitializer is a test initializer that always returns an error.
+type FailingInitializer[T tensor.Numeric] struct{}
+
+// Initialize always returns an error for testing error paths.
+func (f *FailingInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
+	return nil, errors.New("test initializer failure")
+}
+
+// TestInitializer is a test initializer that sets all values to a specific value.
+type TestInitializer[T tensor.Numeric] struct {
+	Value T
+}
+
+// Initialize sets all values to the specified value.
+func (t *TestInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
+	size := inputSize * outputSize
+	data := make([]T, size)
+	for i := range data {
+		data[i] = t.Value
+	}
+	return data, nil
 }

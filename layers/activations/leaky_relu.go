@@ -21,8 +21,31 @@ type LeakyReLU[T tensor.Numeric] struct {
 }
 
 // NewLeakyReLU creates a new LeakyReLU activation function.
-func NewLeakyReLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], alpha float64) *LeakyReLU[T] {
-	return &LeakyReLU[T]{engine: engine, ops: ops, alpha: alpha}
+// LeakyReLUOptions holds configuration options for LeakyReLU.
+type LeakyReLUOptions[T tensor.Numeric] struct {
+	Alpha float64
+}
+
+// LeakyReLUOption is a function that applies an option to LeakyReLUOptions.
+type LeakyReLUOption[T tensor.Numeric] func(*LeakyReLUOptions[T])
+
+// WithAlpha sets the alpha parameter for LeakyReLU.
+func WithAlpha[T tensor.Numeric](alpha float64) LeakyReLUOption[T] {
+	return func(o *LeakyReLUOptions[T]) {
+		o.Alpha = alpha
+	}
+}
+
+// NewLeakyReLU creates a new LeakyReLU activation function.
+func NewLeakyReLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opts ...LeakyReLUOption[T]) *LeakyReLU[T] {
+	options := &LeakyReLUOptions[T]{
+		Alpha: 0.01, // Default alpha value
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return &LeakyReLU[T]{engine: engine, ops: ops, alpha: options.Alpha}
 }
 
 // OutputShape returns the output shape of the LeakyReLU layer.

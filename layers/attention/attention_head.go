@@ -23,7 +23,23 @@ type AttentionHead[T tensor.Numeric] struct {
 // NewAttentionHead creates a new AttentionHead instance.
 // inputDim is the dimension of the input features.
 // headDim is the dimension of the query, key, and value vectors for this head.
-func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, headDim int) *AttentionHead[T] {
+// AttentionHeadOptions holds configuration options for AttentionHead.
+type AttentionHeadOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// AttentionHeadOption is a function that applies an option to AttentionHeadOptions.
+type AttentionHeadOption[T tensor.Numeric] func(*AttentionHeadOptions[T])
+
+// NewAttentionHead creates a new AttentionHead instance.
+// inputDim is the dimension of the input features.
+// headDim is the dimension of the query, key, and value vectors for this head.
+func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, headDim int, opts ...AttentionHeadOption[T]) *AttentionHead[T] {
+	options := &AttentionHeadOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	// Pass engine and its arithmetic operations to Dense layers
 	qProj, err := core.NewDense[T]("q_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {

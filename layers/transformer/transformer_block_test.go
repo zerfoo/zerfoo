@@ -33,7 +33,7 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create GroupedQueryAttention: %v", err)
 	}
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, epsilon, gqa)
+	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, gqa, WithEpsilon[float32](epsilon))
 	if err != nil {
 		t.Fatalf("Failed to create TransformerBlock: %v", err)
 	}

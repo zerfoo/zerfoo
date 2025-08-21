@@ -25,7 +25,21 @@ type SwiGLU[T tensor.Numeric] struct {
 }
 
 // NewSwiGLU creates a new SwiGLU activation layer.
-func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *SwiGLU[T] {
+// SwiGLUOptions holds configuration options for SwiGLU.
+type SwiGLUOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// SwiGLUOption is a function that applies an option to SwiGLUOptions.
+type SwiGLUOption[T tensor.Numeric] func(*SwiGLUOptions[T])
+
+// NewSwiGLU creates a new SwiGLU activation layer.
+func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opts ...SwiGLUOption[T]) *SwiGLU[T] {
+	options := &SwiGLUOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &SwiGLU[T]{
 		engine:  engine,
 		ops:     ops,

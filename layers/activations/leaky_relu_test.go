@@ -11,7 +11,7 @@ import (
 
 func TestLeakyReLU_Forward(t *testing.T) {
 	engine := compute.NewCPUEngine[int](numeric.IntOps{})
-	leakyrelu := NewLeakyReLU[int](engine, numeric.IntOps{}, 0.01)
+	leakyrelu := NewLeakyReLU[int](engine, numeric.IntOps{}, WithAlpha[int](0.01))
 	input, _ := tensor.New[int]([]int{1, 2}, []int{1, 2})
 	output, err := leakyrelu.Forward(context.Background(), input)
 	if err != nil {
@@ -24,14 +24,14 @@ func TestLeakyReLU_Forward(t *testing.T) {
 
 func TestLeakyReLU_Backward(t *testing.T) {
 	engine := compute.NewCPUEngine[int](numeric.IntOps{})
-	leakyrelu := NewLeakyReLU[int](engine, numeric.IntOps{}, 0.01)
+	leakyrelu := NewLeakyReLU[int](engine, numeric.IntOps{}, WithAlpha[int](0.01))
 	input, _ := tensor.New[int]([]int{1, 2}, []int{1, 2})
 	_, err := leakyrelu.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	outputGradient, _ := tensor.New[int]([]int{1, 2}, []int{1, 2})
-	inputGrads, err := leakyrelu.Backward(context.Background(), outputGradient)
+	inputGrads, err := leakyrelu.Backward(context.Background(), outputGradient, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
