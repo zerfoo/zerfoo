@@ -14,6 +14,6 @@ type Tanh[T tensor.Numeric] struct {
 // NewTanh creates a new Tanh activation function.
 func NewTanh[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *Tanh[T] {
 	return &Tanh[T]{
-		BaseActivation: NewBaseActivation(engine, ops, ops.Tanh, ops.TanhGrad),
+		BaseActivation: NewBaseActivation(engine, ops, WithForwardOp(ops.Tanh), WithBackwardOp(ops.TanhGrad)),
 	}
 }

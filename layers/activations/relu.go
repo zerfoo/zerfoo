@@ -14,6 +14,6 @@ type ReLU[T tensor.Numeric] struct {
 // NewReLU creates a new ReLU activation function.
 func NewReLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *ReLU[T] {
 	return &ReLU[T]{
-		BaseActivation: NewBaseActivation(engine, ops, ops.ReLU, ops.ReLUGrad),
+		BaseActivation: NewBaseActivation(engine, ops, WithForwardOp(ops.ReLU), WithBackwardOp(ops.ReLUGrad)),
 	}
 }

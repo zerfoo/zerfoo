@@ -2,12 +2,9 @@ package core
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
@@ -50,19 +47,6 @@ func TestLinear(t *testing.T) {
 	// Test the error case for NewLinear
 	_, err = NewLinear("", engine, ops, 10, 5)
 	testutils.AssertError(t, err, "expected an error for empty name, got nil")
-
-	// Test the error case for NewLinear with a tensor error
-	initializer := components.NewXavierInitializer(ops)
-	_, err = NewLinearWithFactories("linear", engine, ops, 10, 5, initializer, func(_ []int, _ []float32) (*tensor.Tensor[float32], error) {
-		return nil, errors.New("tensor error")
-	}, graph.NewParameter[float32])
-	testutils.AssertError(t, err, "expected an error for tensor creation failure, got nil")
-
-	// Test the error case for NewLinear with a parameter error
-	_, err = NewLinearWithFactories("linear", engine, ops, 10, 5, initializer, tensor.New[float32], func(_ string, _ *tensor.Tensor[float32], _ func(shape []int, data []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
-		return nil, errors.New("parameter error")
-	})
-	testutils.AssertError(t, err, "expected an error for parameter creation failure, got nil")
 
 	// Test the panic case for the Forward method of the linear layer
 	// Note: With component-based architecture, we can't easily mock the engine

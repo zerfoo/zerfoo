@@ -22,33 +22,68 @@ type Linear[T tensor.Numeric] struct {
 	outputShape      []int
 }
 
-// NewLinear creates a new Linear layer with Xavier initialization (default).
-func NewLinear[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error) {
-	return NewLinearWithXavier(name, engine, ops, inputSize, outputSize)
+// LinearOptions holds configuration options for the Linear layer.
+type LinearOptions[T tensor.Numeric] struct {
+	Initializer components.WeightInitializer[T]
 }
 
-// NewLinearWithXavier creates a Linear layer with Xavier initialization.
-func NewLinearWithXavier[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error) {
-	return NewLinearWithInitializer(name, engine, ops, inputSize, outputSize, components.NewXavierInitializer(ops))
+// LinearOption is a function that applies an option to LinearOptions.
+type LinearOption[T tensor.Numeric] func(*LinearOptions[T])
+
+// WithInitializer sets a custom weight initializer for the Linear layer.
+func WithInitializer[T tensor.Numeric](initializer components.WeightInitializer[T]) LinearOption[T] {
+	return func(o *LinearOptions[T]) {
+		o.Initializer = initializer
+	}
 }
 
-// NewLinearWithHe creates a Linear layer with He initialization.
-func NewLinearWithHe[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int) (*Linear[T], error) {
-	return NewLinearWithInitializer(name, engine, ops, inputSize, outputSize, components.NewHeInitializer(ops))
+// WithXavier is an option to use Xavier weight initialization.
+func WithXavier[T tensor.Numeric](ops numeric.Arithmetic[T]) LinearOption[T] {
+	return func(o *LinearOptions[T]) {
+		o.Initializer = components.NewXavierInitializer(ops)
+	}
 }
 
-// NewLinearWithUniform creates a Linear layer with uniform initialization.
-func NewLinearWithUniform[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int, scale float64) (*Linear[T], error) {
-	return NewLinearWithInitializer(name, engine, ops, inputSize, outputSize, components.NewUniformInitializer(ops, scale))
+// WithHe is an option to use He weight initialization.
+func WithHe[T tensor.Numeric](ops numeric.Arithmetic[T]) LinearOption[T] {
+	return func(o *LinearOptions[T]) {
+		o.Initializer = components.NewHeInitializer(ops)
+	}
 }
 
-// NewLinearWithInitializer creates a Linear layer with a custom weight initializer.
-func NewLinearWithInitializer[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], inputSize, outputSize int, initializer components.WeightInitializer[T]) (*Linear[T], error) {
-	return NewLinearWithFactories(name, engine, ops, inputSize, outputSize, initializer, tensor.New[T], graph.NewParameter[T])
+// WithUniform is an option to use Uniform weight initialization.
+func WithUniform[T tensor.Numeric](ops numeric.Arithmetic[T], scale float64) LinearOption[T] {
+	return func(o *LinearOptions[T]) {
+		o.Initializer = components.NewUniformInitializer(ops, components.WithScale[T](scale))
+	}
+}
+
+// NewLinear creates a new Linear layer.
+func NewLinear[T tensor.Numeric](
+	name string,
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	inputSize, outputSize int,
+	opts ...LinearOption[T],
+) (*Linear[T], error) {
+	// Default options
+	options := &LinearOptions[T]{
+		Initializer: components.NewXavierInitializer(ops),
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return NewLinearWithFactories(name, engine, ops, inputSize, outputSize, options.Initializer, tensor.New[T], graph.NewParameter[T])
 }
 
 // NewLinearWithFactories creates a new Linear layer with custom tensor and parameter creation functions.
-func NewLinearWithFactories[T tensor.Numeric](name string, engine compute.Engine[T], _ numeric.Arithmetic[T], inputSize, outputSize int, initializer components.WeightInitializer[T], newTensor func([]int, []T) (*tensor.Tensor[T], error), newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error)) (*Linear[T], error) {
+func NewLinearWithFactories[T tensor.Numeric](
+	name string, engine compute.Engine[T], _ numeric.Arithmetic[T], inputSize, outputSize int,
+	initializer components.WeightInitializer[T],
+	newTensor func([]int, []T) (*tensor.Tensor[T], error),
+	newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error),
+) (*Linear[T], error) {
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}

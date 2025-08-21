@@ -22,12 +22,41 @@ type BaseActivation[T tensor.Numeric] struct {
 }
 
 // NewBaseActivation creates a new base activation with the given forward and backward operations.
-func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], forwardOp, backwardOp func(T) T) *BaseActivation[T] {
+// BaseActivationOptions holds configuration options for BaseActivation.
+type BaseActivationOptions[T tensor.Numeric] struct {
+	ForwardOp  func(T) T
+	BackwardOp func(T) T
+}
+
+// BaseActivationOption is a function that applies an option to BaseActivationOptions.
+type BaseActivationOption[T tensor.Numeric] func(*BaseActivationOptions[T])
+
+// WithForwardOp sets the forward operation for the BaseActivation.
+func WithForwardOp[T tensor.Numeric](op func(T) T) BaseActivationOption[T] {
+	return func(o *BaseActivationOptions[T]) {
+		o.ForwardOp = op
+	}
+}
+
+// WithBackwardOp sets the backward operation for the BaseActivation.
+func WithBackwardOp[T tensor.Numeric](op func(T) T) BaseActivationOption[T] {
+	return func(o *BaseActivationOptions[T]) {
+		o.BackwardOp = op
+	}
+}
+
+// NewBaseActivation creates a new base activation with the given forward and backward operations.
+func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opts ...BaseActivationOption[T]) *BaseActivation[T] {
+	options := &BaseActivationOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &BaseActivation[T]{
 		engine:     engine,
 		ops:        ops,
-		forwardOp:  forwardOp,
-		backwardOp: backwardOp,
+		forwardOp:  options.ForwardOp,
+		backwardOp: options.BackwardOp,
 	}
 }
 

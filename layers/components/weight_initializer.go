@@ -20,7 +20,21 @@ type XavierInitializer[T tensor.Numeric] struct {
 }
 
 // NewXavierInitializer creates a new Xavier initializer.
-func NewXavierInitializer[T tensor.Numeric](ops numeric.Arithmetic[T]) *XavierInitializer[T] {
+// XavierInitializerOptions holds configuration options for XavierInitializer.
+type XavierInitializerOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// XavierInitializerOption is a function that applies an option to XavierInitializerOptions.
+type XavierInitializerOption[T tensor.Numeric] func(*XavierInitializerOptions[T])
+
+// NewXavierInitializer creates a new Xavier initializer.
+func NewXavierInitializer[T tensor.Numeric](ops numeric.Arithmetic[T], opts ...XavierInitializerOption[T]) *XavierInitializer[T] {
+	options := &XavierInitializerOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &XavierInitializer[T]{ops: ops}
 }
 
@@ -48,7 +62,21 @@ type HeInitializer[T tensor.Numeric] struct {
 }
 
 // NewHeInitializer creates a new He initializer.
-func NewHeInitializer[T tensor.Numeric](ops numeric.Arithmetic[T]) *HeInitializer[T] {
+// HeInitializerOptions holds configuration options for HeInitializer.
+type HeInitializerOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// HeInitializerOption is a function that applies an option to HeInitializerOptions.
+type HeInitializerOption[T tensor.Numeric] func(*HeInitializerOptions[T])
+
+// NewHeInitializer creates a new He initializer.
+func NewHeInitializer[T tensor.Numeric](ops numeric.Arithmetic[T], opts ...HeInitializerOption[T]) *HeInitializer[T] {
+	options := &HeInitializerOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &HeInitializer[T]{ops: ops}
 }
 
@@ -75,8 +103,29 @@ type UniformInitializer[T tensor.Numeric] struct {
 }
 
 // NewUniformInitializer creates a new uniform initializer with the given scale.
-func NewUniformInitializer[T tensor.Numeric](ops numeric.Arithmetic[T], scale float64) *UniformInitializer[T] {
-	return &UniformInitializer[T]{ops: ops, scale: scale}
+// UniformInitializerOptions holds configuration options for UniformInitializer.
+type UniformInitializerOptions[T tensor.Numeric] struct {
+	Scale float64
+}
+
+// UniformInitializerOption is a function that applies an option to UniformInitializerOptions.
+type UniformInitializerOption[T tensor.Numeric] func(*UniformInitializerOptions[T])
+
+// WithScale sets the scale parameter for UniformInitializer.
+func WithScale[T tensor.Numeric](scale float64) UniformInitializerOption[T] {
+	return func(o *UniformInitializerOptions[T]) {
+		o.Scale = scale
+	}
+}
+
+// NewUniformInitializer creates a new uniform initializer with the given scale.
+func NewUniformInitializer[T tensor.Numeric](ops numeric.Arithmetic[T], opts ...UniformInitializerOption[T]) *UniformInitializer[T] {
+	options := &UniformInitializerOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return &UniformInitializer[T]{ops: ops, scale: options.Scale}
 }
 
 // Initialize generates weights using uniform initialization.

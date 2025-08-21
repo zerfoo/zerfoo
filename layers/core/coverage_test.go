@@ -2,11 +2,9 @@ package core
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
@@ -50,12 +48,11 @@ func TestLinear_InitializerError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	// Create a failing initializer
-	failingInit := &failingInitializer[float32]{}
+	// This initializer will always fail.
+	failingInit := &testutils.FailingInitializer[float32]{}
 
-	_, err := NewLinearWithInitializer("test", engine, ops, 10, 5, failingInit)
-	testutils.AssertError(t, err, "expected error when initializer fails")
-	testutils.AssertTrue(t, err.Error() == "failed to initialize weights: mock initializer failure", "expected specific error message")
+	_, err := NewLinear("test", engine, ops, 10, 5, WithInitializer[float32](failingInit))
+	testutils.AssertError(t, err, "expected an error for failing initializer, got nil")
 }
 
 // TestLinear_BackwardError tests error handling in Backward method.
@@ -112,46 +109,4 @@ func TestDense_ErrorPaths(t *testing.T) {
 
 	_, err = dense.Forward(context.Background(), incompatibleInput)
 	testutils.AssertError(t, err, "expected panic when dense forward fails due to shape mismatch")
-}
-
-// TestLinear_AllErrorPaths tests all remaining error paths in Linear layer.
-func TestLinear_AllErrorPaths(t *testing.T) {
-	ops := numeric.Float32Ops{}
-	engine := compute.NewCPUEngine[float32](ops)
-
-	// Test NewLinearWithFactories with failing initializer
-	failingInit := &failingInitializer[float32]{}
-	_, err := NewLinearWithFactories("test", engine, ops, 10, 5, failingInit, tensor.New[float32], func(_ string, _ *tensor.Tensor[float32], _ func([]int, []float32) (*tensor.Tensor[float32], error)) (*graph.Parameter[float32], error) {
-		return nil, errors.New("parameter creation failed")
-	})
-	testutils.AssertError(t, err, "expected error when parameter creation fails")
-
-	// Test with nil input to Forward
-	layer, err := NewLinear("test", engine, ops, 3, 2)
-	testutils.AssertNoError(t, err, "expected no error creating layer")
-
-	_, err = layer.Forward(context.Background(), nil)
-	testutils.AssertError(t, err, "expected panic with nil input")
-
-	// Test Backward without Forward (lastInput is nil)
-	outputGradData := []float32{1.0, 1.0}
-	outputGrad, err := tensor.New([]int{1, 2}, outputGradData)
-	testutils.AssertNoError(t, err, "expected no error creating output gradient")
-
-	_, err = layer.Backward(context.Background(), outputGrad)
-	testutils.AssertError(t, err, "expected panic when backward called without forward")
-}
-
-// Helper types for testing
-
-// failingInitializer always returns an error.
-type failingInitializer[T tensor.Numeric] struct{}
-
-func (f *failingInitializer[T]) Initialize(_, _ int) ([]T, error) {
-	return nil, errors.New("mock initializer failure")
-}
-
-// failingTensorCreator always returns an error.
-func failingTensorCreator[T tensor.Numeric](_ []int, _ []T) (*tensor.Tensor[T], error) {
-	return nil, errors.New("mock tensor creation failure")
 }

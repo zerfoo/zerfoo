@@ -16,18 +16,49 @@ type LocalAttention[T tensor.Numeric] struct {
 	ops        numeric.Arithmetic[T]
 }
 
+// LocalAttentionOptions holds configuration options for the LocalAttention layer.
+type LocalAttentionOptions[T tensor.Numeric] struct {
+	Base      float64
+	MaxSeqLen int
+}
+
+// LocalAttentionOption is a function that applies an option to LocalAttentionOptions.
+type LocalAttentionOption[T tensor.Numeric] func(*LocalAttentionOptions[T])
+
+// WithRopeBase sets the base for Rotary Positional Embeddings.
+func WithLocalRopeBase[T tensor.Numeric](base float64) LocalAttentionOption[T] {
+	return func(o *LocalAttentionOptions[T]) {
+		o.Base = base
+	}
+}
+
+// WithMaxSeqLen sets the maximum sequence length for Rotary Positional Embeddings.
+func WithLocalMaxSeqLen[T tensor.Numeric](maxSeqLen int) LocalAttentionOption[T] {
+	return func(o *LocalAttentionOptions[T]) {
+		o.MaxSeqLen = maxSeqLen
+	}
+}
+
 // NewLocalAttention creates a new LocalAttention layer.
 func NewLocalAttention[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	modelDim, numQueryHeads, numKeyValueHeads, windowSize int,
-	base float64,
-	maxSeqLen int,
+	opts ...LocalAttentionOption[T],
 ) (*LocalAttention[T], error) {
+	// Default options
+	options := &LocalAttentionOptions[T]{
+		Base:      10000.0,
+		MaxSeqLen: 2048,
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	gqa, err := NewGroupedQueryAttention[T](
 		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
-		WithRopeBase[T](base),
-		WithMaxSeqLen[T](maxSeqLen),
+		WithRopeBase[T](options.Base),
+		WithMaxSeqLen[T](options.MaxSeqLen),
 	)
 	if err != nil {
 		return nil, err

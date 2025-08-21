@@ -22,7 +22,11 @@ func TestLocalAttention_Forward(t *testing.T) {
 	base := 10000.0
 	maxSeqLen := 512
 
-	localAttn, err := NewLocalAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, windowSize, base, maxSeqLen)
+	localAttn, err := NewLocalAttention[float32](
+		engine, ops, modelDim, numQueryHeads, numKeyValueHeads, windowSize,
+		WithLocalRopeBase[float32](base),
+		WithLocalMaxSeqLen[float32](maxSeqLen),
+	)
 	if err != nil {
 		t.Fatalf("Failed to create LocalAttention: %v", err)
 	}

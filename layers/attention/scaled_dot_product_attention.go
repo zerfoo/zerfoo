@@ -21,7 +21,21 @@ type ScaledDotProductAttention[T tensor.Numeric] struct {
 }
 
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
-func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], headDim int) *ScaledDotProductAttention[T] {
+// ScaledDotProductAttentionOptions holds configuration options for ScaledDotProductAttention.
+type ScaledDotProductAttentionOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// ScaledDotProductAttentionOption is a function that applies an option to ScaledDotProductAttentionOptions.
+type ScaledDotProductAttentionOption[T tensor.Numeric] func(*ScaledDotProductAttentionOptions[T])
+
+// NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
+func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], headDim int, opts ...ScaledDotProductAttentionOption[T]) *ScaledDotProductAttention[T] {
+	options := &ScaledDotProductAttentionOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &ScaledDotProductAttention[T]{
 		engine:  engine,
 		headDim: float64(headDim),
