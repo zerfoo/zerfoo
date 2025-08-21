@@ -1,6 +1,8 @@
 package gather
 
 import (
+	"strings"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/model"
@@ -14,44 +16,38 @@ func init() {
 
 func BuildGather[T tensor.Numeric](
 	engine compute.Engine[T],
-	_ numeric.Arithmetic[T],
+	ops numeric.Arithmetic[T],
 	name string,
 	params map[string]*graph.Parameter[T],
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
-	// Try to find the embedding weights parameter
-	// Look for common patterns in parameter naming
-	var weights *graph.Parameter[T]
-	var ok bool
-	
-	// Pattern 1: Try exact match with expected parameter name
-	if weightsName, exists := attributes["weights_param"]; exists {
-		if paramName, isString := weightsName.(string); isString {
-			weights, ok = params[paramName]
-		}
-	}
-	
-	// Pattern 2: Try common embedding weight patterns
-	if !ok {
-		candidates := []string{
+	// For embedding layers like /model/embed_tokens/Gather, use embedded weights
+	// For other Gather operations, use the standard two-input approach
+	if strings.Contains(name, "embed_tokens") {
+		// Try to find embedding weights parameter from multiple naming patterns
+		var embeddingWeights *graph.Parameter[T]
+		
+		// Common patterns for embedding weights
+		weightPatterns := []string{
 			"model.embed_tokens.weight",
-			"embed_tokens.weight", 
 			name + ".weight",
+			strings.TrimSuffix(name, "/Gather") + ".weight", 
 			name + "_weight",
 		}
 		
-		for _, candidate := range candidates {
-			if weights, ok = params[candidate]; ok {
+		for _, pattern := range weightPatterns {
+			if param, exists := params[pattern]; exists {
+				embeddingWeights = param
 				break
 			}
 		}
+		
+		if embeddingWeights != nil {
+			// Create Gather layer with embedded weights (expects only indices input)
+			return NewWithWeights[T](engine, embeddingWeights.Value), nil
+		}
 	}
 	
-	// If we found weights, create a Gather layer with embedded weights
-	if ok {
-		return NewWithWeights(engine, weights.Value), nil
-	}
-	
-	// Fallback: create basic Gather layer that expects weights as input
-	return New(engine), nil
+	// Create basic Gather layer (expects weights and indices inputs)
+	return New[T](engine), nil
 }

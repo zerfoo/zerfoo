@@ -4,6 +4,8 @@ package model
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -50,6 +52,7 @@ func BuildFromZMF[T tensor.Numeric](
 	for _, nodeProto := range model.Graph.Nodes {
 		// Skip if a node with this name already exists (e.g., it's an input or parameter)
 		if _, exists := instantiatedNodes[nodeProto.Name]; exists {
+			fmt.Printf("DEBUG: Skipping node '%s' (already exists)\n", nodeProto.Name)
 			continue
 		}
 		layerBuilder, err := GetLayerBuilder[T](nodeProto.OpType)
@@ -67,14 +70,36 @@ func BuildFromZMF[T tensor.Numeric](
 	// 3. Second pass: Connect the nodes
 	for _, nodeProto := range model.Graph.Nodes {
 		currentNode := instantiatedNodes[nodeProto.Name]
-		inputNodes := make([]graph.Node[T], len(nodeProto.Inputs))
-		for i, inputName := range nodeProto.Inputs {
+		
+		// Filter out empty input names first
+		validInputNames := make([]string, 0, len(nodeProto.Inputs))
+		for _, inputName := range nodeProto.Inputs {
+			if inputName != "" {
+				validInputNames = append(validInputNames, inputName)
+			}
+		}
+		
+		inputNodes := make([]graph.Node[T], len(validInputNames))
+		
+		for i, inputName := range validInputNames {
 			inputNode, ok := instantiatedNodes[inputName]
 			if !ok {
 				// Try to resolve output suffix (e.g., "/path/to/node/output_0" -> "/path/to/node")
 				resolvedName := resolveOutputSuffix(inputName)
 				if resolvedName != inputName {
 					inputNode, ok = instantiatedNodes[resolvedName]
+					if !ok {
+						// Try with common layer suffixes (LayerNorm, etc.)
+						layerSuffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm"}
+						for _, suffix := range layerSuffixes {
+							candidateName := resolvedName + suffix
+							if candidate, exists := instantiatedNodes[candidateName]; exists {
+								inputNode = candidate
+								ok = true
+								break
+							}
+						}
+					}
 				}
 				if !ok {
 					// Try to create a parameter node if this input refers to a parameter
@@ -82,8 +107,25 @@ func BuildFromZMF[T tensor.Numeric](
 						paramNode := &parameterNode[T]{value: param.Value}
 						instantiatedNodes[inputName] = paramNode
 						inputNode = paramNode
+					} else if param, paramExists := params[resolvedName]; paramExists {
+						// Try parameter lookup with resolved name
+						paramNode := &parameterNode[T]{value: param.Value}
+						instantiatedNodes[resolvedName] = paramNode
+						inputNode = paramNode
 					} else {
-						return nil, fmt.Errorf("input node '%s' for node '%s' not found", inputName, nodeProto.Name)
+						// Handle special cases like transposed parameters
+						baseParamName := strings.TrimSuffix(inputName, "_transposed")
+						if baseParamName != inputName {
+							if param, paramExists := params[baseParamName]; paramExists {
+								paramNode := &parameterNode[T]{value: param.Value}
+								instantiatedNodes[inputName] = paramNode
+								inputNode = paramNode
+							} else {
+								return nil, fmt.Errorf("input node '%s' (resolved: '%s') for node '%s' not found", inputName, resolvedName, nodeProto.Name)
+							}
+						} else {
+							return nil, fmt.Errorf("input node '%s' (resolved: '%s') for node '%s' not found", inputName, resolvedName, nodeProto.Name)
+						}
 					}
 				}
 			}
@@ -97,9 +139,24 @@ func BuildFromZMF[T tensor.Numeric](
 		return nil, fmt.Errorf("graph has no defined outputs")
 	}
 	outputNodeName := model.Graph.Outputs[0].Name
+	
 	outputNode, ok := instantiatedNodes[outputNodeName]
 	if !ok {
-		return nil, fmt.Errorf("output node '%s' not found in instantiated nodes", outputNodeName)
+		// Try to resolve output suffix for the output name
+		resolvedOutputName := resolveOutputSuffix(outputNodeName)
+		outputNode, ok = instantiatedNodes[resolvedOutputName]
+		if !ok {
+			// For Gemma models, 'logits' typically maps to the last MatMul node (lm_head)
+			if outputNodeName == "logits" {
+				if lmHeadNode, exists := instantiatedNodes["/lm_head/MatMul"]; exists {
+					outputNode = lmHeadNode
+					ok = true
+				}
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("output node '%s' not found in instantiated nodes", outputNodeName)
+		}
 	}
 
 	return builder.Build(outputNode)
@@ -127,20 +184,31 @@ func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
-// resolveOutputSuffix removes output suffixes from node names to resolve to the actual node.
-func resolveOutputSuffix(nodeName string) string {
-	// Common output suffix patterns in ONNX/ZMF models
-	suffixes := []string{"/output_0", "/output_1", "/output", ":0", ":1"}
-	
-	for _, suffix := range suffixes {
-		if len(nodeName) > len(suffix) {
-			if nodeName[len(nodeName)-len(suffix):] == suffix {
-				return nodeName[:len(nodeName)-len(suffix)]
+// resolveOutputSuffix removes output suffixes like "/output_0", "/output_1", ":0", ":1" etc.
+func resolveOutputSuffix(name string) string {
+	// Handle /output_N pattern
+	if idx := strings.LastIndex(name, "/output_"); idx != -1 {
+		return name[:idx]
+	}
+	// Handle :N pattern
+	if idx := strings.LastIndex(name, ":"); idx != -1 {
+		// Check if what follows is a number
+		if suffix := name[idx+1:]; len(suffix) > 0 {
+			if _, err := strconv.Atoi(suffix); err == nil {
+				return name[:idx]
 			}
 		}
 	}
-	
-	return nodeName
+	return name
+}
+
+// getNodeNames returns a slice of all node names for debugging
+func getNodeNames[T tensor.Numeric](nodes map[string]graph.Node[T]) []string {
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
+		names = append(names, name)
+	}
+	return names
 }
 
 // convertParameters converts the ZMF Tensor map to a map of graph.Parameter.
