@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
@@ -15,8 +16,8 @@ import (
 )
 
 func init() {
-	model.RegisterLayer("GroupedQueryAttention", buildGroupedQueryAttention[tensor.Float16])
-	model.RegisterLayer("GlobalAttention", buildGlobalAttention[tensor.Float16])
+	model.RegisterLayer("GroupedQueryAttention", buildGroupedQueryAttention[float16.Float16])
+	model.RegisterLayer("GlobalAttention", buildGlobalAttention[float16.Float16])
 	// Add registrations for other supported types if needed.
 }
 
