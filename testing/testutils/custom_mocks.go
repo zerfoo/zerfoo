@@ -10,9 +10,6 @@ import (
 	"github.com/zerfoo/zerfoo/distributed/pb"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/grpc"
-	_ "github.com/zerfoo/zerfoo/layers/core"
-	_ "github.com/zerfoo/zerfoo/layers/gather"
-	_ "github.com/zerfoo/zerfoo/layers/transpose"
 )
 
 // CustomMockStrategy is a custom mock implementation of the InternalStrategy interface.

@@ -162,8 +162,47 @@ func (t *TensorNumeric[T]) Shape() []int {
 }
 
 // Data returns a slice representing the underlying data of the tensor.
+// For views, this returns only the data visible through the view.
 func (t *TensorNumeric[T]) Data() []T {
-	return t.data
+	if !t.isView {
+		return t.data
+	}
+	
+	// For views, we need to extract only the visible data
+	size := t.Size()
+	if size == 0 {
+		return []T{}
+	}
+	
+	// Handle 0-dimensional views
+	if t.Dims() == 0 {
+		return t.data[:1]
+	}
+	
+	// For multi-dimensional views, we need to iterate through all valid indices
+	result := make([]T, 0, size)
+	t.iterateView([]int{}, 0, func(indices []int) {
+		val, _ := t.At(indices...)
+		result = append(result, val)
+	})
+	return result
+}
+
+// iterateView recursively iterates through all valid indices in a view
+func (t *TensorNumeric[T]) iterateView(currentIndices []int, dim int, fn func([]int)) {
+	if dim == t.Dims() {
+		// We've built a complete set of indices, call the function
+		fn(currentIndices)
+		return
+	}
+	
+	// Iterate through all valid indices for this dimension
+	for i := 0; i < t.shape[dim]; i++ {
+		newIndices := make([]int, len(currentIndices)+1)
+		copy(newIndices, currentIndices)
+		newIndices[len(currentIndices)] = i
+		t.iterateView(newIndices, dim+1, fn)
+	}
 }
 
 // SetData sets the underlying data of the tensor.
@@ -236,4 +275,62 @@ func Float32ToBytes(f []float32) ([]byte, error) {
 	header.Len *= 4
 	header.Cap *= 4
 	return *(*[]byte)(unsafe.Pointer(header)), nil
+}
+
+// NewFromBytes creates a new tensor from bytes data with the given shape.
+func NewFromBytes[T Numeric](shape []int, data []byte) (*TensorNumeric[T], error) {
+	// Calculate expected size
+	size := 1
+	for _, dim := range shape {
+		if dim <= 0 {
+			return nil, fmt.Errorf("invalid shape dimension: %d", dim)
+		}
+		size *= dim
+	}
+
+	// Check if data size matches expected size
+	expectedBytes := size * int(unsafe.Sizeof(*new(T)))
+	if len(data) != expectedBytes {
+		return nil, fmt.Errorf("data size mismatch: expected %d bytes, got %d", expectedBytes, len(data))
+	}
+
+	// Convert bytes to slice of T
+	typedData := unsafe.Slice((*T)(unsafe.Pointer(&data[0])), size)
+	
+	// Create copy to avoid referencing external memory
+	dataCopy := make([]T, size)
+	copy(dataCopy, typedData)
+
+	return New(shape, dataCopy)
+}
+
+// String returns a string representation of the tensor.
+func (t *TensorNumeric[T]) String() string {
+	return fmt.Sprintf("Tensor(shape=%v, data=%v)", t.shape, t.Data())
+}
+
+// Each applies a function to each element of the tensor.
+func (t *TensorNumeric[T]) Each(fn func(T)) {
+	for _, v := range t.data {
+		fn(v)
+	}
+}
+
+// Copy creates a deep copy of the tensor.
+func (t *TensorNumeric[T]) Copy() *TensorNumeric[T] {
+	newData := make([]T, len(t.data))
+	copy(newData, t.data)
+	
+	newShape := make([]int, len(t.shape))
+	copy(newShape, t.shape)
+	
+	newStrides := make([]int, len(t.strides))
+	copy(newStrides, t.strides)
+	
+	return &TensorNumeric[T]{
+		shape:   newShape,
+		strides: newStrides,
+		data:    newData,
+		isView:  false,
+	}
 }

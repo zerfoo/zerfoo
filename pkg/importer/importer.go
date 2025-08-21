@@ -117,8 +117,14 @@ func loadParameters[T tensor.Numeric](paramData map[string]*zmf.Tensor) (map[str
 			return nil, fmt.Errorf("unsupported data type for parameter %s: %v", name, tenData.Dtype)
 		}
 
+		// Convert int64 shape to int shape
+		shape := make([]int, len(tenData.Shape))
+		for i, dim := range tenData.Shape {
+			shape[i] = int(dim)
+		}
+
 		// Create the tensor
-		t, err := tensor.NewFromBytes[T](tenData.Shape, tenData.Data)
+		t, err := tensor.NewFromBytes[T](shape, tenData.Data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create tensor for parameter %s: %w", name, err)
 		}

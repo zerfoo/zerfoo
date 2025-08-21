@@ -19,8 +19,8 @@ type MockFailingTensor[T tensor.Numeric] struct {
 
 func NewMockFailingTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) *MockFailingTensor[T] {
 	return &MockFailingTensor[T]{
-		Tensor:      t,
-		failIndices: make(map[string]bool),
+		TensorNumeric: t,
+		failIndices:   make(map[string]bool),
 	}
 }
 
@@ -35,7 +35,7 @@ func (m *MockFailingTensor[T]) Set(value T, indices ...int) error {
 		return fmt.Errorf("mock error: Set failed at indices %v", indices)
 	}
 
-	return m.Tensor.Set(value, indices...)
+	return m.TensorNumeric.Set(value, indices...)
 }
 
 // TestOriginalCPUEngineErrorPaths tests the original CPUEngine error paths using mocking.

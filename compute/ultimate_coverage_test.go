@@ -20,7 +20,7 @@ func (m *MockTensor[T]) Set(value T, indices ...int) error {
 		return errors.New("mock error: Set operation failed")
 	}
 
-	return m.Tensor.Set(value, indices...)
+	return m.TensorNumeric.Set(value, indices...)
 }
 
 // TestUltimateCoverage tests the remaining uncovered error paths using mocking.

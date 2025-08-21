@@ -12,7 +12,6 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/device"
 	"github.com/zerfoo/zerfoo/tensor"
-	_ "github.com/zerfoo/zerfoo/layers/core"
 )
 
 // TestCase represents a single test case with a name and a function to execute.

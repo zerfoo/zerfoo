@@ -16,7 +16,7 @@ func TestCoverageSpecific(t *testing.T) {
 
 	// Manually create a view that simulates a 0-dimensional view
 	// This is the only way to test the specific branch in Data() for 0-dimensional views
-	viewTensor := &Tensor[int]{
+	viewTensor := &TensorNumeric[int]{
 		shape:   []int{}, // 0-dimensional
 		strides: []int{}, // 0-dimensional
 		data:    baseTensor.data,
@@ -66,24 +66,23 @@ func TestCoverageSpecific(t *testing.T) {
 		t.Errorf("expected Each to not be called for zero-size tensor, got %d calls", zeroSizeCallCount)
 	}
 
-	// Test case 4: Test eachRecursive directly with a manually created 0-dimensional tensor
-	// to trigger the specific uncovered branch in eachRecursive
-	// Since Each() handles 0-dimensional tensors directly, we need to call eachRecursive manually
-	zeroDTensor := &Tensor[int]{
+	// Test case 4: Additional test for 0-dimensional tensor via Each method
+	// This tests the Each method's handling of 0-dimensional tensors
+	zeroDTensor := &TensorNumeric[int]{
 		shape:   []int{}, // 0-dimensional
-		strides: []int{}, // 0-dimensional
+		strides: []int{}, // 0-dimensional  
 		data:    []int{123},
 		isView:  false,
 	}
 
-	// Call eachRecursive directly to test the "if t.Dims() == 0" branch
+	// Call Each method on 0-dimensional tensor
 	var directCallCount int
-	zeroDTensor.eachRecursive([]int{}, 0, func(_ int) {
+	zeroDTensor.Each(func(_ int) {
 		directCallCount++
 	})
 
-	// For a 0-dimensional tensor, eachRecursive should return early and not call the function
-	if directCallCount != 0 {
-		t.Errorf("expected eachRecursive to not call function for 0-dimensional tensor, got %d calls", directCallCount)
+	// For a 0-dimensional tensor, Each should call the function once with the single value
+	if directCallCount != 1 {
+		t.Errorf("expected Each to call function once for 0-dimensional tensor, got %d calls", directCallCount)
 	}
 }

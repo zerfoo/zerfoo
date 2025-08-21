@@ -2,15 +2,12 @@ package core
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
-	_ "github.com/zerfoo/zerfoo/layers/core"
 )
 
 func TestLinear(t *testing.T) {
