@@ -109,6 +109,33 @@ func NewGroupedQueryAttention[T tensor.Numeric](engine compute.Engine[T], ops nu
 	}, nil
 }
 
+// NewGroupedQueryAttentionFromParams creates a new GroupedQueryAttention layer from existing parameters.
+func NewGroupedQueryAttentionFromParams[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	modelDim, numQueryHeads, numKeyValueHeads int,
+	wq, wk, wv, wo *core.Dense[T],
+	rope *embeddings.RotaryPositionalEmbedding[T],
+) (*GroupedQueryAttention[T], error) {
+	headDim := modelDim / numQueryHeads
+	scaledDotProductAttention := NewScaledDotProductAttention[T](engine, headDim)
+
+	return &GroupedQueryAttention[T]{
+		engine:                    engine,
+		ops:                       ops,
+		numQueryHeads:             numQueryHeads,
+		numKeyValueHeads:          numKeyValueHeads,
+		modelDim:                  modelDim,
+		headDim:                   headDim,
+		wq:                        wq,
+		wk:                        wk,
+		wv:                        wv,
+		scaledDotProductAttention: scaledDotProductAttention,
+		wo:                        wo,
+		rope:                      rope,
+	}, nil
+}
+
 // OutputShape returns the output shape of the GroupedQueryAttention.
 func (gqa *GroupedQueryAttention[T]) OutputShape() []int {
 	return gqa.outputShape

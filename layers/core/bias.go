@@ -50,6 +50,17 @@ func NewBiasWithFactories[T tensor.Numeric](name string, engine compute.Engine[T
 	}, nil
 }
 
+// NewBiasFromParam creates a new Bias layer from an existing biases parameter.
+func NewBiasFromParam[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], biases *graph.Parameter[T]) *Bias[T] {
+	size := biases.Value.Shape()[0]
+	return &Bias[T]{
+		engine:      engine,
+		ops:         ops,
+		biases:      biases,
+		outputShape: []int{1, size},
+	}
+}
+
 // OutputShape returns the output shape of the Bias layer.
 func (b *Bias[T]) OutputShape() []int {
 	return b.outputShape

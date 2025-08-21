@@ -61,6 +61,20 @@ func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, em
 	}, nil
 }
 
+// NewTokenEmbeddingFromParam creates a new TokenEmbedding layer from an existing embedding table.
+func NewTokenEmbeddingFromParam[T tensor.Numeric](engine compute.Engine[T], embeddingTable *graph.Parameter[T]) (*TokenEmbedding[T], error) {
+	shape := embeddingTable.Value.Shape()
+	if len(shape) != 2 {
+		return nil, fmt.Errorf("embedding table must have 2 dimensions, got %d", len(shape))
+	}
+	return &TokenEmbedding[T]{
+		engine:         engine,
+		vocabSize:      shape[0],
+		embeddingDim:   shape[1],
+		embeddingTable: embeddingTable,
+	}, nil
+}
+
 // OutputShape returns the output shape of the embedding layer.
 func (te *TokenEmbedding[T]) OutputShape() []int {
 	return te.outputShape

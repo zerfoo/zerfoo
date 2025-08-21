@@ -48,6 +48,16 @@ func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops num
 	}, nil
 }
 
+// NewRMSNormFromParam creates a new RMSNorm layer from an existing gain parameter.
+func NewRMSNormFromParam[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], epsilon T, gain *graph.Parameter[T]) (*RMSNorm[T], error) {
+	return &RMSNorm[T]{
+		engine:  engine,
+		ops:     ops,
+		epsilon: epsilon,
+		gain:    gain,
+	}, nil
+}
+
 // OutputShape returns the output shape of the RMSNorm layer.
 func (r *RMSNorm[T]) OutputShape() []int {
 	return r.outputShape
@@ -185,4 +195,9 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], input
 	}
 
 	return []*tensor.Tensor[T]{dInput}, nil
+}
+
+// SetName sets the name of the RMSNorm layer.
+func (r *RMSNorm[T]) SetName(name string) {
+	r.gain.Name = name + "_gain"
 }

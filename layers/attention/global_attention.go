@@ -31,6 +31,13 @@ func NewGlobalAttention[T tensor.Numeric](
 	}, nil
 }
 
+// NewGlobalAttentionFromParams creates a new GlobalAttention layer from an existing GroupedQueryAttention layer.
+func NewGlobalAttentionFromParams[T tensor.Numeric](gqa *GroupedQueryAttention[T]) *GlobalAttention[T] {
+	return &GlobalAttention[T]{
+		gqa: gqa,
+	}
+}
+
 // Parameters returns the parameters of the GlobalAttention layer.
 func (ga *GlobalAttention[T]) Parameters() []*graph.Parameter[T] {
 	return ga.gqa.Parameters()
