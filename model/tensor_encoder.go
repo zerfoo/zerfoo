@@ -27,7 +27,7 @@ func EncodeTensor[T tensor.Numeric](t *tensor.Tensor[T]) (*zmf.Tensor, error) {
 	case float32:
 		tensorProto.Dtype = zmf.Tensor_FLOAT32
 		rawData, err = encodeFloat32(t.Data())
-	case tensor.Float16:
+	case float16.Float16:
 		tensorProto.Dtype = zmf.Tensor_FLOAT16
 		rawData, err = encodeFloat16(t.Data())
 	default:

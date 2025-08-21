@@ -9,7 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/zmf"
+	"github.com/zerfoo/zmf"
 )
 
 // TestBuildFromZMF_SingleNode tests building a simple model with one RMSNorm node.
