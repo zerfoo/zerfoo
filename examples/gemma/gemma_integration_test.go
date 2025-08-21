@@ -72,11 +72,32 @@ func TestGemmaIntegration(t *testing.T) {
 	}
 
 	// 4. Execute the model's forward pass
-	if len(zerfooGraph.Inputs()) != 1 {
-		t.Fatalf("Expected 1 input node, got %d", len(zerfooGraph.Inputs()))
+	// The Gemma model has multiple inputs (input_ids, attention_mask, position_ids, etc.)
+	// For this integration test, we'll create a minimal set of inputs
+	inputs := zerfooGraph.Inputs()
+	t.Logf("Model has %d input nodes", len(inputs))
+	
+	// Create input tensors for all required inputs
+	inputTensors := make([]*tensor.TensorNumeric[float32], len(inputs))
+	for i, input := range inputs {
+		// Create a tensor with the expected shape for each input
+		shape := input.OutputShape()
+		if len(shape) == 0 {
+			shape = []int{1} // Default to scalar if no shape specified
+		}
+		inputTensors[i], err = tensor.New[float32](shape, nil)
+		if err != nil {
+			t.Fatalf("Failed to create input tensor %d: %v", i, err)
+		}
+		
+		// Initialize with simple values (zeros for most, sequence for input_ids)
+		if i == 0 { // Assume first input is input_ids
+			inputTensors[i] = inputTensor // Use our tokenized input
+		}
+		// Other inputs can remain as zero-initialized tensors
 	}
 
-	outputTensor, err := zerfooGraph.Forward(context.Background(), inputTensor)
+	outputTensor, err := zerfooGraph.Forward(context.Background(), inputTensors...)
 	if err != nil {
 		t.Fatalf("Model forward pass failed: %v", err)
 	}
