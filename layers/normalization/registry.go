@@ -4,6 +4,7 @@ package normalization
 import (
 	"fmt"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/model"
@@ -12,7 +13,7 @@ import (
 )
 
 func init() {
-	model.RegisterLayer("RMSNorm", buildRMSNorm[tensor.Float16])
+	model.RegisterLayer("RMSNorm", buildRMSNorm[float16.Float16])
 	// Add registrations for other supported types like float32 if needed.
 }
 

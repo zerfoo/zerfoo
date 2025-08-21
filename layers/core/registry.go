@@ -4,6 +4,7 @@ package core
 import (
 	"fmt"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/model"
@@ -12,7 +13,7 @@ import (
 )
 
 func init() {
-	model.RegisterLayer("FFN", buildFFN[tensor.Float16])
+	model.RegisterLayer("FFN", buildFFN[float16.Float16])
 	// Add registrations for other supported types if needed.
 }
 
