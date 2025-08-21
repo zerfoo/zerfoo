@@ -42,6 +42,19 @@ func IntSliceEqual(a, b []int) bool {
 	return true
 }
 
+// Int64SliceEqual checks if two int64 slices are equal.
+func Int64SliceEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // AssertError checks if an error is not nil.
 func AssertError(t *testing.T, err error, msg string) {
 	t.Helper()

@@ -3,6 +3,8 @@ package tensor
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"unsafe"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
@@ -93,6 +95,15 @@ func (t *Tensor[T]) Shape() []int {
 	shapeCopy := make([]int, len(t.shape))
 	copy(shapeCopy, t.shape)
 
+	return shapeCopy
+}
+
+// ShapeInt64 returns a copy of the tensor's shape as int64.
+func (t *Tensor[T]) ShapeInt64() []int64 {
+	shapeCopy := make([]int64, len(t.shape))
+	for i, v := range t.shape {
+		shapeCopy[i] = int64(v)
+	}
 	return shapeCopy
 }
 
@@ -240,4 +251,66 @@ func (t *Tensor[T]) ShapeEquals(other *Tensor[T]) bool {
 	}
 
 	return true
+}
+
+// BytesToFloat32 converts a byte slice to a float32 slice.
+func BytesToFloat32(b []byte) ([]float32, error) {
+	if len(b)%4 != 0 {
+		return nil, fmt.Errorf("byte slice length must be a multiple of 4 for float32 conversion, got %d", len(b))
+	}
+	// This is a common Go pattern for type punning, but it relies on memory layout and can be unsafe.
+	// A safer, but slower, method would be to iterate and use math.Float32frombits.
+	// For performance, we accept the risk here, assuming the underlying byte slice is correctly formatted.
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	header.Len /= 4
+	header.Cap /= 4
+	return *(*[]float32)(unsafe.Pointer(header)), nil
+}
+
+// Float32ToBytes converts a float32 slice to a byte slice.
+func Float32ToBytes(f []float32) ([]byte, error) {
+	// This is the reverse of BytesToFloat32 and carries similar risks.
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&f))
+	header.Len *= 4
+	header.Cap *= 4
+	return *(*[]byte)(unsafe.Pointer(header)), nil
+}
+
+// NewFromBytes creates a new Tensor from a byte slice.
+// This is primarily used for deserialization.
+func NewFromBytes[T Numeric](shape []int64, data []byte) (*Tensor[T], error) {
+	// This is a simplification. A real implementation would need a robust way
+	// to handle different numeric types (T). For now, we assume T is float32.
+	var zero T
+	switch any(zero).(type) {
+	case float32:
+		float32Data, err := BytesToFloat32(data)
+		if err != nil {
+			return nil, err
+		}
+		// This type assertion is unsafe in a general case but is a common pattern.
+		genericData := *(*[]T)(unsafe.Pointer(&float32Data))
+		shapeInt := make([]int, len(shape))
+		for i, v := range shape {
+			shapeInt[i] = int(v)
+		}
+		return New[T](shapeInt, genericData)
+	default:
+		return nil, fmt.Errorf("NewFromBytes is currently only implemented for float32, not %T", zero)
+	}
+}
+
+// Bytes returns the underlying data of the tensor as a byte slice.
+func (t *Tensor[T]) Bytes() ([]byte, error) {
+	// This is a simplification. A real implementation would need a robust way
+	// to handle different numeric types (T). For now, we assume T is float32.
+	var zero T
+	switch any(zero).(type) {
+	case float32:
+		// This type assertion is unsafe in a general case.
+		float32Data := *(*[]float32)(unsafe.Pointer(&t.data))
+		return Float32ToBytes(float32Data)
+	default:
+		return nil, fmt.Errorf("Bytes is currently only implemented for float32, not %T", zero)
+	}
 }
