@@ -146,6 +146,16 @@ func (g *Graph[T]) Parameters() []*Parameter[T] {
 	return params
 }
 
+// Inputs returns the input nodes of the graph.
+func (g *Graph[T]) Inputs() []Node[T] {
+	return g.inputs
+}
+
+// Output returns the output node of the graph.
+func (g *Graph[T]) Output() Node[T] {
+	return g.output
+}
+
 // inputNode is a special node type for graph inputs.
 type inputNode[T tensor.Numeric] struct {
 	shape []int

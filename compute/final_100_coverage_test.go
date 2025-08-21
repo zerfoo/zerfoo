@@ -31,7 +31,7 @@ func Test100PercentCoverage(t *testing.T) {
 
 		// Create a read-only tensor that will fail on Set
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
-		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
+		readOnlyResult := &ReadOnlyTensor[float32]{TensorNumeric: result}
 
 		// Call a modified MatMul that uses our read-only tensor
 		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnlyResult)
@@ -49,7 +49,7 @@ func Test100PercentCoverage(t *testing.T) {
 
 		// Create a read-only tensor that will fail on Set
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
-		readOnlyResult := &ReadOnlyTensor[float32]{Tensor: result}
+		readOnlyResult := &ReadOnlyTensor[float32]{TensorNumeric: result}
 
 		// Call a modified Transpose that uses our read-only tensor
 		err := transposeWithReadOnlyResult(ctx, engine, a, readOnlyResult)
@@ -204,7 +204,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 		b, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
-		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
+		readOnly := &ReadOnlyTensor[float32]{TensorNumeric: result}
 
 		err := matMulWithReadOnlyResult(ctx, engine, a, b, readOnly)
 		if err == nil {
@@ -216,7 +216,7 @@ func TestMinimalErrorCoverage(t *testing.T) {
 	t.Run("Minimal_Transpose_Error", func(t *testing.T) {
 		a, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 		result, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
-		readOnly := &ReadOnlyTensor[float32]{Tensor: result}
+		readOnly := &ReadOnlyTensor[float32]{TensorNumeric: result}
 
 		err := transposeWithReadOnlyResult(ctx, engine, a, readOnly)
 		if err == nil {

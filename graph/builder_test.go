@@ -7,9 +7,6 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	_ "github.com/zerfoo/zerfoo/layers/core"
-	_ "github.com/zerfoo/zerfoo/layers/gather"
-	_ "github.com/zerfoo/zerfoo/layers/transpose"
 )
 
 type mockNode struct {
