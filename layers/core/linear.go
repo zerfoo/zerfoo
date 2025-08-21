@@ -77,6 +77,17 @@ func NewLinearWithFactories[T tensor.Numeric](name string, engine compute.Engine
 	}, nil
 }
 
+// NewLinearFromParam creates a new Linear layer from an existing weights parameter.
+func NewLinearFromParam[T tensor.Numeric](engine compute.Engine[T], weights *graph.Parameter[T]) *Linear[T] {
+	outputSize := weights.Value.Shape()[1]
+	return &Linear[T]{
+		multiplier:       components.NewMatrixMultiplier(engine),
+		gradientComputer: components.NewLinearGradientComputer(engine),
+		weights:          weights,
+		outputShape:      []int{1, outputSize},
+	}
+}
+
 // OutputShape returns the output shape of the Linear layer.
 func (l *Linear[T]) OutputShape() []int {
 	return l.outputShape

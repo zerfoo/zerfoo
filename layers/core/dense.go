@@ -29,6 +29,11 @@ func NewDense[T tensor.Numeric](name string, engine compute.Engine[T], ops numer
 	return &Dense[T]{linear: linear, bias: bias}, nil
 }
 
+// NewDenseFromParams creates a new Dense layer from existing parameters.
+func NewDenseFromParams[T tensor.Numeric](linear *Linear[T], bias *Bias[T]) *Dense[T] {
+	return &Dense[T]{linear: linear, bias: bias}
+}
+
 // OutputShape returns the output shape of the Dense layer.
 func (d *Dense[T]) OutputShape() []int {
 	return d.linear.OutputShape()

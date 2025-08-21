@@ -26,20 +26,17 @@ func testActivationForward[T tensor.Numeric](t *testing.T, activation Activation
 }
 
 // testActivationBackward is a common helper for testing activation backward passes.
-func testActivationBackward[T tensor.Numeric](t *testing.T, activation ActivationLayer[T]) {
-	input, _ := tensor.New[T]([]int{1, 2}, []T{T(1), T(2)})
-	_, err := activation.Forward(context.Background(), input)
+func testActivationBackward[T tensor.Numeric](t *testing.T, activation ActivationLayer[T], inputData []T, expectedGrad []T) {
+	ctx := context.Background()
+	input, _ := tensor.New[T]([]int{len(inputData)}, inputData)
+	output, _ := activation.Forward(ctx, input)
+	outputGrad, _ := tensor.New[T](output.Shape(), tensor.Ones[T](len(inputData)))
+	inputGrad, err := activation.Backward(ctx, outputGrad, input)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Backward failed: %v", err)
 	}
-	outputGradient, _ := tensor.New[T]([]int{1, 2}, []T{T(1), T(2)})
-	inputGrads, err := activation.Backward(context.Background(), outputGradient, input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if inputGrads[0].Shape()[0] != 1 || inputGrads[0].Shape()[1] != 2 {
-		t.Errorf("expected shape [1 2], got %v", inputGrads[0].Shape())
-	}
+	expectedTensor, _ := tensor.New[T]([]int{len(expectedGrad)}, expectedGrad)
+	tensor.AssertClose(t, expectedTensor, inputGrad[0], 1e-6)
 }
 
 // testActivationCoverage is a common helper for testing activation coverage scenarios.
