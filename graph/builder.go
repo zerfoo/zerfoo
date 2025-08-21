@@ -44,11 +44,11 @@ func (b *Builder[T]) Input(shape []int) Node[T] {
 	return inputNode
 }
 
-// Build constructs the final graph and returns forward and backward functions.
-func (b *Builder[T]) Build(outputNode Node[T]) (func(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error), func(ctx context.Context, initialGradient *tensor.Tensor[T]) error, error) {
+// Build constructs the final graph.
+func (b *Builder[T]) Build(outputNode Node[T]) (*Graph[T], error) {
 	sortedNodes, err := topologicalSort[T](b.nodes, b.dependencies)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	g := &Graph[T]{
@@ -59,7 +59,7 @@ func (b *Builder[T]) Build(outputNode Node[T]) (func(ctx context.Context, inputs
 		output:       outputNode,
 	}
 
-	return g.Forward, g.Backward, nil
+	return g, nil
 }
 
 // Parameters returns all the trainable parameters in the graph.

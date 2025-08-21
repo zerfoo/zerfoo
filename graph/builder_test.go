@@ -66,7 +66,7 @@ func TestBuilder_Build(t *testing.T) {
 	builder.AddNode(node1, inputNode)
 	builder.AddNode(node2, node1)
 
-	forward, backward, err := builder.Build(node2)
+	graph, err := builder.Build(node2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,12 +76,12 @@ func TestBuilder_Build(t *testing.T) {
 	}
 
 	input, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})
-	output, _ := forward(context.Background(), input)
+	output, _ := graph.Forward(context.Background(), input)
 	if output.Data()[0] != 1 {
 		t.Errorf("expected 1, got %d", output.Data()[0])
 	}
 
-	_ = backward(context.Background(), input)
+	_ = graph.Backward(context.Background(), input)
 }
 
 func TestBuilder_Input(t *testing.T) {
@@ -116,7 +116,7 @@ func TestBuilder_Build_Error(t *testing.T) {
 	builder.AddNode(node1, node2)
 	builder.AddNode(node2, node1)
 
-	_, _, err := builder.Build(node1)
+	_, err := builder.Build(node1)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
