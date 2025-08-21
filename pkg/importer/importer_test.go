@@ -7,7 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/pkg/format"
+	"github.com/zerfoo/zmf/format"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/protobuf/proto"
 )
