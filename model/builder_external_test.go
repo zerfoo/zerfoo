@@ -1,11 +1,12 @@
-// Package model provides the core structures and loading mechanisms for Zerfoo models.
-package model
+// Package model_test provides tests for the model package.
+package model_test
 
 import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/layers/normalization"
+	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/zmf"
@@ -19,7 +20,7 @@ func TestBuildFromZMF_SingleNode(t *testing.T) {
 
 	// Create a sample gain tensor and encode it.
 	gainTensor, _ := tensor.New[tensor.Float16]([]int{128}, nil)
-	encodedGain, err := EncodeTensor(gainTensor)
+	encodedGain, err := model.EncodeTensor(gainTensor)
 	if err != nil {
 		t.Fatalf("Failed to encode gain tensor: %v", err)
 	}
@@ -42,17 +43,17 @@ func TestBuildFromZMF_SingleNode(t *testing.T) {
 	}
 
 	// 2. Call the function to be tested.
-	model, err := BuildFromZMF[tensor.Float16](engine, ops, zmfModel)
+	builtModel, err := model.BuildFromZMF[tensor.Float16](engine, ops, zmfModel)
 	if err != nil {
 		t.Fatalf("BuildFromZMF failed: %v", err)
 	}
 
 	// 3. Verify the result.
-	if len(model) != 1 {
-		t.Fatalf("Expected 1 node in the model, got %d", len(model))
+	if len(builtModel) != 1 {
+		t.Fatalf("Expected 1 node in the model, got %d", len(builtModel))
 	}
 
-	node, ok := model["norm"]
+	node, ok := builtModel["norm"]
 	if !ok {
 		t.Fatal("Model is missing the 'norm' node")
 	}

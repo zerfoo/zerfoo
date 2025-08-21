@@ -230,8 +230,8 @@ func TestFloat16Ops_ReLU(t *testing.T) {
 		expected float16.Float16
 	}{
 		{"positive", float16.FromFloat32(2.5), float16.FromFloat32(2.5)},
-		{"negative", float16.FromFloat32(-1.5), float16.FromInt(0)},
-		{"zero", float16.FromInt(0), float16.FromInt(0)},
+		{"negative", float16.FromFloat32(-1.5), float16.FromFloat32(0)},
+		{"zero", float16.FromFloat32(0), float16.FromFloat32(0)},
 		{"small positive", float16.FromFloat32(0.1), float16.FromFloat32(0.1)},
 	}
 
@@ -258,10 +258,10 @@ func TestFloat16Ops_ReLUGrad(t *testing.T) {
 		x        float16.Float16
 		expected float16.Float16
 	}{
-		{"positive", float16.FromFloat32(2.5), float16.FromInt(1)},
-		{"negative", float16.FromFloat32(-1.5), float16.FromInt(0)},
-		{"zero", float16.FromInt(0), float16.FromInt(0)},
-		{"small positive", float16.FromFloat32(0.1), float16.FromInt(1)},
+		{"positive", float16.FromFloat32(2.5), float16.FromFloat32(1)},
+		{"negative", float16.FromFloat32(-1.5), float16.FromFloat32(0)},
+		{"zero", float16.FromFloat32(0), float16.FromFloat32(0)},
+		{"small positive", float16.FromFloat32(0.1), float16.FromFloat32(1)},
 	}
 
 	for _, tt := range tests {
@@ -290,7 +290,7 @@ func TestFloat16Ops_ToFloat32(t *testing.T) {
 	}{
 		{"positive", float16.FromFloat32(2.5), 2.5, 0.01},
 		{"negative", float16.FromFloat32(-1.5), -1.5, 0.01},
-		{"zero", float16.FromInt(0), 0.0, 0.01},
+		{"zero", float16.FromFloat32(0), 0.0, 0.01},
 		{"small", float16.FromFloat32(0.1), 0.1, 0.01},
 	}
 
@@ -313,7 +313,7 @@ func TestFloat16Ops_Abs(t *testing.T) {
 	}{
 		{"positive", float16.FromFloat32(2.5), float16.FromFloat32(2.5)},
 		{"negative", float16.FromFloat32(-1.5), float16.FromFloat32(1.5)},
-		{"zero", float16.FromInt(0), float16.FromInt(0)},
+		{"zero", float16.FromFloat32(0), float16.FromFloat32(0)},
 		{"small negative", float16.FromFloat32(-0.1), float16.FromFloat32(0.1)},
 	}
 

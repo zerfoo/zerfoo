@@ -221,13 +221,13 @@ func Float16TestData() struct {
 		LeakyReLU: []LeakyReLUTestCase[float16.Float16]{
 			{"positive", float16.FromFloat32(2.0), 0.1, 2.0, 0.01},
 			{"negative", float16.FromFloat32(-2.0), 0.1, -0.2, 0.01},
-			{"zero", float16.FromInt(0), 0.1, 0.0, 0.01},
+			{"zero", float16.FromFloat32(0), 0.1, 0.0, 0.01},
 			{"negative with different alpha", float16.FromFloat32(-1.0), 0.2, -0.2, 0.01},
 		},
 		LeakyReLUGrad: []LeakyReLUTestCase[float16.Float16]{
 			{"positive", float16.FromFloat32(2.0), 0.1, 1.0, 0.01},
 			{"negative", float16.FromFloat32(-2.0), 0.1, 0.1, 0.01},
-			{"zero", float16.FromInt(0), 0.1, 0.1, 0.01},
+			{"zero", float16.FromFloat32(0), 0.1, 0.1, 0.01},
 			{"negative with different alpha", float16.FromFloat32(-1.0), 0.2, 0.2, 0.01},
 		},
 		Sum: []SumTestCase[float16.Float16]{
@@ -235,7 +235,7 @@ func Float16TestData() struct {
 			{"single element", []float16.Float16{float16.FromFloat32(2.5)}, 2.5, 0.01},
 			{"multiple positive", []float16.Float16{float16.FromFloat32(1.0), float16.FromFloat32(2.0), float16.FromFloat32(3.0)}, 6.0, 0.01},
 			{"mixed signs", []float16.Float16{float16.FromFloat32(1.0), float16.FromFloat32(-2.0), float16.FromFloat32(3.0)}, 2.0, 0.01},
-			{"all zeros", []float16.Float16{float16.FromInt(0), float16.FromInt(0), float16.FromInt(0)}, 0.0, 0.01},
+			{"all zeros", []float16.Float16{float16.FromFloat32(0), float16.FromFloat32(0), float16.FromFloat32(0)}, 0.0, 0.01},
 		},
 	}
 }

@@ -11,16 +11,16 @@ func TestSameShape(t *testing.T) {
 	c, _ := New[int]([]int{3, 2}, nil)
 	d, _ := New[int]([]int{2, 3, 1}, nil)
 
-	if !SameShape(a, b) {
+	if !SameShape(a.Shape(), b.Shape()) {
 		t.Error("expected SameShape to return true for same shapes")
 	}
-	if SameShape(a, c) {
+	if SameShape(a.Shape(), c.Shape()) {
 		t.Error("expected SameShape to return false for different shapes")
 	}
-	if SameShape(a, d) {
+	if SameShape(a.Shape(), d.Shape()) {
 		t.Error("expected SameShape to return false for different dimensions")
 	}
-	if SameShape(d, a) {
+	if SameShape(d.Shape(), a.Shape()) {
 		t.Error("expected SameShape to return false for different dimensions")
 	}
 }
@@ -82,7 +82,10 @@ func TestBroadcastIndex(t *testing.T) {
 }
 
 func TestShapesEqual(t *testing.T) {
-	if shapesEqual([]int{1, 2}, []int{1, 2, 3}) {
-		t.Error("expected shapesEqual to return false for different lengths")
+	if SameShape([]int{1, 2}, []int{1, 2, 3}) {
+		t.Error("expected SameShape to return false for different lengths")
+	}
+	if !SameShape([]int{1, 2}, []int{1, 2}) {
+		t.Error("expected SameShape to return true for identical shapes")
 	}
 }
