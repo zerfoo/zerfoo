@@ -27,10 +27,32 @@ type LayerNormalization[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// LayerNormalizationOptions holds configuration options for LayerNormalization layers.
+type LayerNormalizationOptions[T tensor.Numeric] struct {
+	Epsilon T // Small constant to avoid division by zero
+}
+
+// LayerNormalizationOption is a functional option for configuring LayerNormalization layers.
+type LayerNormalizationOption[T tensor.Numeric] func(*LayerNormalizationOptions[T])
+
+// WithLayerNormEpsilon sets the epsilon parameter for LayerNormalization.
+func WithLayerNormEpsilon[T tensor.Numeric](epsilon T) LayerNormalizationOption[T] {
+	return func(opts *LayerNormalizationOptions[T]) {
+		opts.Epsilon = epsilon
+	}
+}
+
 // NewLayerNormalization creates a new LayerNormalization layer.
 // featureDim: The dimension over which to normalize (typically the last dimension).
-// epsilon: A small constant to avoid division by zero.
-func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDim int, epsilon T) (*LayerNormalization[T], error) {
+func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDim int, options ...LayerNormalizationOption[T]) (*LayerNormalization[T], error) {
+	// Apply functional options
+	opts := &LayerNormalizationOptions[T]{
+		Epsilon: engine.Ops().FromFloat64(1e-5), // Default epsilon value
+	}
+	for _, option := range options {
+		option(opts)
+	}
+
 	// Initialize gamma (scale) and beta (shift) parameters
 	// They should have shape (featureDim,)
 	gammaTensor, err := tensor.New[T]([]int{featureDim}, nil)
@@ -61,7 +83,7 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 
 	return &LayerNormalization[T]{
 		engine:  engine,
-		epsilon: epsilon,
+		epsilon: opts.Epsilon,
 		gamma:   gamma,
 		beta:    beta,
 	}, nil
