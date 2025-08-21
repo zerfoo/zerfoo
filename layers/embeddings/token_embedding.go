@@ -21,7 +21,7 @@ type TokenEmbedding[T tensor.Numeric] struct {
 	embeddingTable *graph.Parameter[T]
 
 	// Cached input for backward pass
-	inputTokenIDs *tensor.Tensor[int] // Input is int tensor for token IDs
+	inputTokenIDs *tensor.TensorNumeric[int] // Input is int tensor for token IDs
 	outputShape   []int
 }
 
@@ -119,7 +119,7 @@ func (te *TokenEmbedding[T]) Parameters() []*graph.Parameter[T] {
 // Forward performs the embedding lookup.
 // Input: A tensor of token IDs (int type).
 // Output: A tensor of embedding vectors (T type).
-func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tensor[int], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	te.inputTokenIDs = tokenIDs // Cache for backward
 
 	inputShape := tokenIDs.Shape()
@@ -146,7 +146,7 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 }
 
 // Backward computes the gradients for the embedding table.
-func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient for the embedding table is a sparse update.
 	// For each token ID in inputTokenIDs, we add the corresponding dOut slice
 	// to the gradient accumulator of that embedding vector in the embeddingTable.

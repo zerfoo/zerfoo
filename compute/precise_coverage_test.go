@@ -79,7 +79,7 @@ func TestPrecise100Coverage(t *testing.T) {
 
 // corruptTensorForSetFailure uses reflection to corrupt tensor internal state
 // This is a last resort to trigger Set failures.
-func corruptTensorForSetFailure(t *tensor.Tensor[float32]) {
+func corruptTensorForSetFailure(t *tensor.TensorNumeric[float32]) {
 	// Use reflection to access and modify internal tensor fields
 	v := reflect.ValueOf(t).Elem()
 
@@ -99,7 +99,7 @@ type PreciseFailingEngine[T tensor.Numeric] struct {
 	shouldFailZero bool
 }
 
-func (p *PreciseFailingEngine[T]) Zero(ctx context.Context, a *tensor.Tensor[T]) error {
+func (p *PreciseFailingEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
 	if p.shouldFailZero {
 		return errors.New("precise failing engine: Zero operation failed")
 	}
@@ -173,7 +173,7 @@ func TestDirectErrorInjection(t *testing.T) {
 }
 
 // manipulateTensorForFailure attempts to create conditions for Set to fail.
-func manipulateTensorForFailure(t *tensor.Tensor[float32]) {
+func manipulateTensorForFailure(t *tensor.TensorNumeric[float32]) {
 	// Try to access internal fields using unsafe operations
 	// This is a last resort to trigger the uncovered error paths
 	// #nosec G103 - Unsafe pointer usage is intentional for coverage testing

@@ -12,7 +12,7 @@ import (
 )
 
 // EncodeTensor converts a Zerfoo Tensor into a ZMF Tensor protobuf message.
-func EncodeTensor[T tensor.Numeric](t *tensor.Tensor[T]) (*zmf.Tensor, error) {
+func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, error) {
 	tensorProto := &zmf.Tensor{
 		Shape: tensor.ConvertIntToInt64(t.Shape()),
 	}

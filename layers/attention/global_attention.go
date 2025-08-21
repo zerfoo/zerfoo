@@ -95,12 +95,12 @@ func (ga *GlobalAttention[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the forward pass of the GlobalAttention layer.
-func (ga *GlobalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (ga *GlobalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return ga.gqa.Forward(ctx, inputs...)
 }
 
 // Backward is not implemented
-func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return ga.gqa.Backward(ctx, dOut, inputs...)
 }
 

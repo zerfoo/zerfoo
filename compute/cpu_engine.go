@@ -28,7 +28,7 @@ func (e *CPUEngine[T]) Ops() numeric.Arithmetic[T] {
 	return e.ops
 }
 
-func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(dst) > 0 && dst[0] != nil {
 		if !reflect.DeepEqual(dst[0].Shape(), shape) {
 			return nil, fmt.Errorf("destination tensor has incorrect shape: got %v, want %v", dst[0].Shape(), shape)
@@ -41,7 +41,7 @@ func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.Tensor[T]) (*
 }
 
 // UnaryOp applies a unary operation to a tensor.
-func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.Tensor[T], op func(T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -57,7 +57,7 @@ func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.Tensor[T], op func(T
 }
 
 // binaryOp performs element-wise binary operations with broadcasting support.
-func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.Tensor[T], op func(T, T) T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T], op func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -84,24 +84,24 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.Tensor[T], op fu
 // Add performs element-wise addition of two tensors.
 func (e *CPUEngine[T]) Add(
 	ctx context.Context,
-	a, b *tensor.Tensor[T],
-	dst ...*tensor.Tensor[T],
-) (*tensor.Tensor[T], error) {
+	a, b *tensor.TensorNumeric[T],
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
 	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
 // Sub performs element-wise subtraction of two tensors.
-func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.binaryOp(ctx, a, b, e.ops.Sub, dst...)
 }
 
 // Mul performs element-wise multiplication of two tensors.
-func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.binaryOp(ctx, a, b, e.ops.Mul, dst...)
 }
 
 // Div performs element-wise division of two tensors.
-func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -129,7 +129,7 @@ func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.Tensor[T], dst ...*te
 }
 
 // MatMul performs matrix multiplication of two tensors.
-func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -204,7 +204,7 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.Tensor[T], dst ...
 
 
 // Transpose transposes a tensor.
-func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -266,11 +266,11 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.Tensor[T], axes []
 // An optional destination tensor can be provided to store the result.
 func (e *CPUEngine[T]) Sum(
 	ctx context.Context,
-	a *tensor.Tensor[T],
+	a *tensor.TensorNumeric[T],
 	axis int,
 	keepDims bool,
-	dst ...*tensor.Tensor[T],
-) (*tensor.Tensor[T], error) {
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -359,7 +359,7 @@ func (e *CPUEngine[T]) Sum(
 }
 
 // Exp computes the element-wise exponential of a tensor.
-func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -375,7 +375,7 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.Tensor[T], dst ...*tenso
 }
 
 // Log computes the element-wise natural logarithm of a tensor.
-func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -393,14 +393,14 @@ func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.Tensor[T], dst ...*tenso
 // Pow raises each element of a tensor to the power of the corresponding element in another tensor.
 func (e *CPUEngine[T]) Pow(
 	ctx context.Context,
-	base, exponent *tensor.Tensor[T],
-	dst ...*tensor.Tensor[T],
-) (*tensor.Tensor[T], error) {
+	base, exponent *tensor.TensorNumeric[T],
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
 	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
 // Zero sets all elements of a tensor to zero.
-func (e *CPUEngine[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Zero(_ context.Context, a *tensor.TensorNumeric[T]) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -412,7 +412,7 @@ func (e *CPUEngine[T]) Zero(_ context.Context, a *tensor.Tensor[T]) error {
 }
 
 // Zeros fills the tensor with zeros. If a shape is provided, the tensor is reallocated to that shape.
-func (e *CPUEngine[T]) Zeros(_ context.Context, a *tensor.Tensor[T], shape []int) error {
+func (e *CPUEngine[T]) Zeros(_ context.Context, a *tensor.TensorNumeric[T], shape []int) error {
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -436,7 +436,7 @@ func (e *CPUEngine[T]) Zeros(_ context.Context, a *tensor.Tensor[T], shape []int
 }
 
 // Copy copies the data from one tensor to another.
-func (e *CPUEngine[T]) Copy(_ context.Context, dst, src *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Copy(_ context.Context, dst, src *tensor.TensorNumeric[T]) error {
 	if dst == nil || src == nil {
 		return errors.New("input tensors cannot be nil")
 	}
@@ -449,7 +449,7 @@ func (e *CPUEngine[T]) Copy(_ context.Context, dst, src *tensor.Tensor[T]) error
 }
 
 // Gather performs a gather operation.
-func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.Tensor[T], indices *tensor.Tensor[int], output *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
 	if params == nil || indices == nil || output == nil {
 		return errors.New("input tensors cannot be nil")
 	}
@@ -487,7 +487,7 @@ func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.Tensor[T], indic
 }
 
 // ScatterAdd performs a scatter-add operation.
-func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Tensor[T], indices *tensor.Tensor[int], dOut *tensor.Tensor[T]) error {
+func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
 	if dEmbeddingTable == nil || indices == nil || dOut == nil {
 		return errors.New("input tensors cannot be nil")
 	}
@@ -528,7 +528,7 @@ func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Ten
 }
 
 // RandomUniform fills the tensor with random values from a uniform distribution.
-func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.Tensor[T], minVal, maxVal T) error {
+func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	if t == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -554,7 +554,7 @@ func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.Tensor[T], min
 }
 
 // Fill fills the tensor with a scalar value.
-func (e *CPUEngine[T]) Fill(_ context.Context, t *tensor.Tensor[T], value T) error {
+func (e *CPUEngine[T]) Fill(_ context.Context, t *tensor.TensorNumeric[T], value T) error {
 	if t == nil {
 		return errors.New("input tensor cannot be nil")
 	}
@@ -566,7 +566,7 @@ func (e *CPUEngine[T]) Fill(_ context.Context, t *tensor.Tensor[T], value T) err
 }
 
 // MulScalar performs element-wise multiplication of a tensor by a scalar.
-func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -582,7 +582,7 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.Tensor[T], scalar 
 }
 
 // DivScalar performs element-wise division of a tensor by a scalar.
-func (e *CPUEngine[T]) DivScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) DivScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -601,7 +601,7 @@ func (e *CPUEngine[T]) DivScalar(_ context.Context, a *tensor.Tensor[T], scalar 
 }
 
 // Softmax applies the softmax function to a tensor along a given axis.
-func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -647,16 +647,16 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.Tensor[T], axis int,
 // ReduceSum calculates the sum of elements along a specified axis.
 func (e *CPUEngine[T]) ReduceSum(
 	ctx context.Context,
-	a *tensor.Tensor[T],
+	a *tensor.TensorNumeric[T],
 	axis int,
 	keepDims bool,
-	dst ...*tensor.Tensor[T],
-) (*tensor.Tensor[T], error) {
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
 	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
 // AddScalar performs element-wise addition of a tensor by a scalar.
-func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.Tensor[T], scalar T, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -672,7 +672,7 @@ func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.Tensor[T], scalar 
 }
 
 // Sqrt computes the element-wise square root of a tensor.
-func (e *CPUEngine[T]) Sqrt(_ context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Sqrt(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -688,7 +688,7 @@ func (e *CPUEngine[T]) Sqrt(_ context.Context, a *tensor.Tensor[T], dst ...*tens
 }
 
 // Split splits a tensor into multiple tensors along a given axis.
-func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.Tensor[T], numSplits int, axis int) ([]*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -701,7 +701,7 @@ func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.Tensor[T], numSplits i
 	}
 
 	splitSize := shape[axis] / numSplits
-	var results []*tensor.Tensor[T]
+	var results []*tensor.TensorNumeric[T]
 
 	for i := range numSplits {
 		ranges := make([][2]int, len(shape))
@@ -724,7 +724,7 @@ func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.Tensor[T], numSplits i
 }
 
 // Concat concatenates a list of tensors along a given axis.
-func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.Tensor[T], axis int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(tensors) == 0 {
 		return nil, errors.New("no tensors provided for concatenation")
 	}
@@ -778,7 +778,7 @@ func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.Tensor[T], ax
 }
 
 // OneHot creates a one-hot encoding of the input tensor.
-func (e *CPUEngine[T]) OneHot(_ context.Context, input *tensor.Tensor[int], depth int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) OneHot(_ context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if input == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -815,7 +815,7 @@ func (e *CPUEngine[T]) OneHot(_ context.Context, input *tensor.Tensor[int], dept
 }
 
 // Reshape changes the shape of a tensor without changing its data.
-func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.Tensor[T], shape []int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.TensorNumeric[T], shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -849,7 +849,7 @@ func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.Tensor[T], shape []i
 }
 
 // Repeat repeats the input tensor along a given axis a specified number of times.
-func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.Tensor[T], axis int, repetitions int, dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -894,11 +894,11 @@ func (e *CPUEngine[T]) Repeat(_ context.Context, a *tensor.Tensor[T], axis int, 
 // ReduceMean calculates the mean of elements along a specified axis.
 func (e *CPUEngine[T]) ReduceMean(
 	ctx context.Context,
-	a *tensor.Tensor[T],
+	a *tensor.TensorNumeric[T],
 	axis int,
 	keepDims bool,
-	dst ...*tensor.Tensor[T],
-) (*tensor.Tensor[T], error) {
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
 	sum, err := e.Sum(ctx, a, axis, keepDims, dst...)
 	if err != nil {
 		return nil, err
@@ -916,7 +916,7 @@ func (e *CPUEngine[T]) ReduceMean(
 }
 
 // Rsqrt computes the element-wise reciprocal square root of a tensor.
-func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.UnaryOp(ctx, a, func(v T) T {
 		return e.ops.FromFloat64(1.0 / math.Sqrt(float64(v)))
 	}, dst...)

@@ -9,5 +9,5 @@ import (
 // Loss defines the interface for loss functions.
 type Loss[T tensor.Numeric] interface {
 	// Forward computes the loss and its gradient.
-	Forward(ctx context.Context, predictions, targets *tensor.Tensor[T]) (T, *tensor.Tensor[T], error)
+	Forward(ctx context.Context, predictions, targets *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error)
 }

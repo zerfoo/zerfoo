@@ -8,18 +8,21 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	_ "github.com/zerfoo/zerfoo/layers/core"
+	_ "github.com/zerfoo/zerfoo/layers/gather"
+	_ "github.com/zerfoo/zerfoo/layers/transpose"
 )
 
 type mockModel[T tensor.Numeric] struct {
 	params []*graph.Parameter[T]
 }
 
-func (m *mockModel[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockModel[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return inputs[0], nil
 }
 
-func (m *mockModel[T]) Backward(ctx context.Context, grad *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
-	return []*tensor.Tensor[T]{grad}, nil
+func (m *mockModel[T]) Backward(ctx context.Context, grad *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return []*tensor.TensorNumeric[T]{grad}, nil
 }
 
 func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
@@ -33,7 +36,7 @@ func (o *mockOptimizer[T]) Clip(_ context.Context, _ []*graph.Parameter[T], _ fl
 
 type mockLoss[T tensor.Numeric] struct{}
 
-func (l *mockLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.Tensor[T]) (T, *tensor.Tensor[T], error) {
+func (l *mockLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error) {
 	var lossValue T
 
 	return lossValue, predictions, nil
@@ -74,18 +77,18 @@ type errorModel[T tensor.Numeric] struct {
 	params      []*graph.Parameter[T]
 }
 
-func (m *errorModel[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *errorModel[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.forwardErr {
 		return nil, errors.New("forward error")
 	}
 	return inputs[0], nil
 }
 
-func (m *errorModel[T]) Backward(ctx context.Context, grad *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (m *errorModel[T]) Backward(ctx context.Context, grad *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if m.backwardErr {
 		return nil, errors.New("backward error")
 	}
-	return []*tensor.Tensor[T]{grad}, nil
+	return []*tensor.TensorNumeric[T]{grad}, nil
 }
 
 func (m *errorModel[T]) Parameters() []*graph.Parameter[T] {
@@ -109,7 +112,7 @@ type errorLoss[T tensor.Numeric] struct {
 	forwardErr bool
 }
 
-func (l *errorLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.Tensor[T]) (T, *tensor.Tensor[T], error) {
+func (l *errorLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error) {
 	if l.forwardErr {
 		var zero T
 		return zero, nil, errors.New("loss forward error")

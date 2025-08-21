@@ -33,7 +33,7 @@ func TestNewParameter(t *testing.T) {
 
 	t.Run("tensor creation fails", func(t *testing.T) {
 		mockErr := errors.New("mock error")
-		mockNewTensorFn := func(_ []int, _ []int) (*tensor.Tensor[int], error) {
+		mockNewTensorFn := func(_ []int, _ []int) (*tensor.TensorNumeric[int], error) {
 			return nil, mockErr
 		}
 		_, err := NewParameter("test", value, mockNewTensorFn)

@@ -26,12 +26,12 @@ func NewLMHead[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmeti
 
 // SetWeights sets the weights of the LMHead. This is useful for sharing weights
 // with a token embedding layer.
-func (h *LMHead[T]) SetWeights(weights *tensor.Tensor[T]) {
+func (h *LMHead[T]) SetWeights(weights *tensor.TensorNumeric[T]) {
 	h.linear.weights.Value = weights
 }
 
 // Forward computes the forward pass of the LMHead.
-func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	originalShape := input.Shape()
 	batchSize := originalShape[0]
@@ -58,7 +58,7 @@ func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*
 }
 
 // Backward computes the backward pass of the LMHead.
-func (h *LMHead[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (h *LMHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return h.linear.Backward(ctx, dOut, inputs...)
 }
 

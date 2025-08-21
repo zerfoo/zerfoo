@@ -45,7 +45,7 @@ func (s *AllReduceStrategy[T]) Init(rank int, size int, coordinatorAddress strin
 }
 
 // AllReduceGradients performs hierarchical all-reduce on gradients.
-func (s *AllReduceStrategy[T]) AllReduceGradients(gradients map[string]*tensor.Tensor[T]) error {
+func (s *AllReduceStrategy[T]) AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error {
 	// Step 1: Local AllReduce within the node.
 	if err := s.localStrategy.AllReduceGradients(gradients); err != nil {
 		return fmt.Errorf("local AllReduce failed: %w", err)
@@ -101,7 +101,7 @@ func (s *AllReduceStrategy[T]) Barrier() error {
 // BroadcastTensor broadcasts a tensor from the root rank to all other ranks in the distributed system.
 // The tensor is first broadcast within the root's local node, then across node leaders, and finally
 // within each local node to ensure all ranks receive the broadcasted tensor.
-func (s *AllReduceStrategy[T]) BroadcastTensor(t *tensor.Tensor[T], rootRank int) error {
+func (s *AllReduceStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error {
 	// Determine the node leader of the root rank.
 	rootNodeLeaderRank := rootRank - (rootRank % s.localStrategy.Size())
 

@@ -179,7 +179,7 @@ func (p *PolynomialExpansion[T]) OutputShape() []int {
 // Forward performs the polynomial expansion transformation.
 // Input shape: [batch_size, input_size]
 // Output shape: [batch_size, output_size].
-func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("polynomial expansion expects exactly 1 input, got %d", len(inputs))
 	}
@@ -239,7 +239,7 @@ func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.
 
 // Backward computes gradients for the polynomial expansion layer.
 // This computes the derivative of each polynomial term with respect to the input features.
-func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	outputGradShape := outputGradient.Shape()
 	batchSize := outputGradShape[0]
 
@@ -301,12 +301,12 @@ func (p *PolynomialExpansion[T]) Backward(ctx context.Context, outputGradient *t
 		return nil, fmt.Errorf("failed to create input gradient tensor: %w", err)
 	}
 
-	return []*tensor.Tensor[T]{inputGrad}, nil
+	return []*tensor.TensorNumeric[T]{inputGrad}, nil
 }
 
 // Parameters returns the parameters of the layer.
 // Polynomial expansion has no trainable parameters.
-func (p *PolynomialExpansion[T]) Parameters() []*tensor.Tensor[T] {
+func (p *PolynomialExpansion[T]) Parameters() []*tensor.TensorNumeric[T] {
 	return nil
 }
 

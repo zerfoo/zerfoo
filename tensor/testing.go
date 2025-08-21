@@ -14,7 +14,7 @@ func Ones[T Numeric](size int) []T {
 }
 
 // Equals checks if two tensors are equal.
-func Equals[T Numeric](a, b *Tensor[T]) bool {
+func Equals[T Numeric](a, b *TensorNumeric[T]) bool {
 	if !a.ShapeEquals(b) {
 		return false
 	}
@@ -27,14 +27,14 @@ func Equals[T Numeric](a, b *Tensor[T]) bool {
 }
 
 // AssertEquals checks if two tensors are equal and fails the test if they are not.
-func AssertEquals[T Numeric](t *testing.T, expected, actual *Tensor[T]) {
+func AssertEquals[T Numeric](t *testing.T, expected, actual *TensorNumeric[T]) {
 	if !Equals(expected, actual) {
 		t.Errorf("Expected tensor %v, got %v", expected, actual)
 	}
 }
 
 // AssertClose checks if two tensors are close enough and fails the test if they are not.
-func AssertClose[T Numeric](t *testing.T, expected, actual *Tensor[T], tolerance float64) {
+func AssertClose[T Numeric](t *testing.T, expected, actual *TensorNumeric[T], tolerance float64) {
 	if !expected.ShapeEquals(actual) {
 		t.Errorf("Expected shape %v, got %v", expected.Shape(), actual.Shape())
 		return

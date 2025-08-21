@@ -15,10 +15,10 @@ import (
 // mockEngine is a simple mock of the compute.Engine for testing purposes.
 type mockEngine[T tensor.Numeric] struct{}
 
-func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], out *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], out *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return tensor.New[T](a.Shape(), nil)
 }
-func (m *mockEngine[T]) Add(ctx context.Context, a, b *tensor.Tensor[T], out *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], out *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return tensor.New[T](a.Shape(), nil)
 }
 // Add other necessary mock methods...

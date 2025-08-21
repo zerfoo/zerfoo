@@ -34,7 +34,7 @@ func NewLinearGradientComputer[T tensor.Numeric](engine compute.Engine[T], opts 
 
 // ComputeWeightGradient computes the gradient with respect to weights.
 // Formula: weight_gradient = input^T * output_gradient.
-func (g *LinearGradientComputer[T]) ComputeWeightGradient(ctx context.Context, input, outputGradient *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (g *LinearGradientComputer[T]) ComputeWeightGradient(ctx context.Context, input, outputGradient *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Transpose input: input^T
 	transposedInput, err := g.engine.Transpose(ctx, input, []int{1, 0})
 	if err != nil {
@@ -52,7 +52,7 @@ func (g *LinearGradientComputer[T]) ComputeWeightGradient(ctx context.Context, i
 
 // ComputeInputGradient computes the gradient with respect to input.
 // Formula: input_gradient = output_gradient * weights^T.
-func (g *LinearGradientComputer[T]) ComputeInputGradient(ctx context.Context, weights, outputGradient *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (g *LinearGradientComputer[T]) ComputeInputGradient(ctx context.Context, weights, outputGradient *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Transpose weights: weights^T
 	transposedWeights, err := g.engine.Transpose(ctx, weights, []int{1, 0})
 	if err != nil {
@@ -70,7 +70,7 @@ func (g *LinearGradientComputer[T]) ComputeInputGradient(ctx context.Context, we
 
 // ComputeBothGradients computes both weight and input gradients in one call.
 // This can be more efficient when both gradients are needed.
-func (g *LinearGradientComputer[T]) ComputeBothGradients(ctx context.Context, input, weights, outputGradient *tensor.Tensor[T]) (*tensor.Tensor[T], *tensor.Tensor[T], error) {
+func (g *LinearGradientComputer[T]) ComputeBothGradients(ctx context.Context, input, weights, outputGradient *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
 	// Compute weight gradient: input^T * output_gradient
 	weightGradient, err := g.ComputeWeightGradient(ctx, input, outputGradient)
 	if err != nil {

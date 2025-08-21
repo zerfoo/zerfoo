@@ -65,7 +65,7 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 
 // Forward computes the output of the attention head.
 // input is expected to be a 3D tensor (batch_size, seq_len, input_dim).
-func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Ensure input is 3D: (batch_size, seq_len, input_dim)
 	if len(input.Shape()) != 3 {
 		return nil, fmt.Errorf("AttentionHead: input must be a 3D tensor (batch_size, seq_len, input_dim), got shape %v", input.Shape())
@@ -147,7 +147,7 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 }
 
 // Backward computes the gradients for the AttentionHead.
-func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a placeholder. The actual backward pass for attention is complex
 	// and involves backpropagating through SDPA and then through the linear projections.
 	return nil, fmt.Errorf("AttentionHead backward pass not yet implemented")

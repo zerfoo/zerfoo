@@ -51,8 +51,8 @@ func NewBias[T tensor.Numeric](name string, engine compute.Engine[T], ops numeri
 // NewBiasWithFactories creates a new Bias layer with custom tensor and parameter creation functions.
 func NewBiasWithFactories[T tensor.Numeric](
 	name string, engine compute.Engine[T], ops numeric.Arithmetic[T], size int,
-	newTensor func([]int, []T) (*tensor.Tensor[T], error),
-	newParameter func(string, *tensor.Tensor[T], func([]int, []T) (*tensor.Tensor[T], error)) (*graph.Parameter[T], error),
+	newTensor func([]int, []T) (*tensor.TensorNumeric[T], error),
+	newParameter func(string, *tensor.TensorNumeric[T], func([]int, []T) (*tensor.TensorNumeric[T], error)) (*graph.Parameter[T], error),
 	initializer func(size int) []T,
 ) (*Bias[T], error) {
 	if name == "" {
@@ -95,7 +95,7 @@ func (b *Bias[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input + biases.
-func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	output, err := b.engine.Add(ctx, inputs[0], b.biases.Value)
 	if err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*te
 }
 
 // Backward computes the gradients.
-func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Gradient with respect to biases: sum of output_gradient along batch dimension
 	biasesGrad, err := b.engine.Sum(ctx, outputGradient, 0, false)
 	if err != nil {
@@ -115,7 +115,7 @@ func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T]
 	b.biases.Gradient = biasesGrad
 
 	// Gradient with respect to input is just the output gradient.
-	return []*tensor.Tensor[T]{outputGradient}, nil
+	return []*tensor.TensorNumeric[T]{outputGradient}, nil
 }
 
 // Parameters returns the parameters of the Bias layer.

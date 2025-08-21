@@ -11,7 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-func calculateExpectedNormalizedTensor(input *tensor.Tensor[float64], epsilon float64) *tensor.Tensor[float64] {
+func calculateExpectedNormalizedTensor(input *tensor.TensorNumeric[float64], epsilon float64) *tensor.TensorNumeric[float64] {
 	data := input.Data()
 	sumSq := 0.0
 	for _, v := range data {
@@ -33,42 +33,42 @@ func TestQKNorm(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		qInput    *tensor.Tensor[float64]
-		kInput    *tensor.Tensor[float64]
+		qInput    *tensor.TensorNumeric[float64]
+		kInput    *tensor.TensorNumeric[float64]
 		epsilon   float64
 		expectErr bool
 	}{
 		{
 			name:    "Simple 1D tensors",
-			qInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
-			kInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
+			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
+			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
 			epsilon: 1e-5,
 			expectErr: false,
 		},
 		{
 			name:    "2D tensors",
-			qInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{1.0, 2.0, 3.0, 4.0}); return t }(),
-			kInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{5.0, 6.0, 7.0, 8.0}); return t }(),
+			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{1.0, 2.0, 3.0, 4.0}); return t }(),
+			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{5.0, 6.0, 7.0, 8.0}); return t }(),
 			epsilon: 1e-5,
 			expectErr: false,
 		},
 		{
 			name:    "Mismatched shapes",
-			qInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
-			kInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{2}, []float64{4.0, 5.0}); return t }(),
+			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
+			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2}, []float64{4.0, 5.0}); return t }(),
 			epsilon: 1e-5,
 			expectErr: true,
 		},
 		{
 			name:    "Nil Q input",
 			qInput:  nil,
-			kInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
+			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
 			epsilon: 1e-5,
 			expectErr: true,
 		},
 		{
 			name:    "Nil K input",
-			qInput:  func() *tensor.Tensor[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
+			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
 			kInput:  nil,
 			epsilon: 1e-5,
 			expectErr: true,

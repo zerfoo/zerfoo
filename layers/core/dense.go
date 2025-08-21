@@ -72,7 +72,7 @@ func (d *Dense[T]) OutputShape() []int {
 }
 
 // Forward performs the forward pass: output = input*weights + biases.
-func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	originalShape := input.Shape()
 	inputSize := originalShape[len(originalShape)-1]
@@ -119,7 +119,7 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*t
 }
 
 // Backward computes the gradients.
-func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	originalInputShape := inputs[0].Shape()
 	// Reshape outputGradient to 2D if original input was N-D
 	if len(originalInputShape) > 2 {
@@ -134,7 +134,7 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor[T
 		}
 	}
 
-	var linearInputGradient *tensor.Tensor[T]
+	var linearInputGradient *tensor.TensorNumeric[T]
 	if d.bias != nil {
 		biasGrads, err := d.bias.Backward(ctx, outputGradient)
 		if err != nil {

@@ -33,8 +33,8 @@ type Tensor interface {
 	isTensor()
 }
 
-// Tensor[T] represents an n-dimensional array of a generic numeric type T.
-type Tensor[T Numeric] struct {
+// TensorNumeric[T] represents an n-dimensional array of a generic numeric type T.
+type TensorNumeric[T Numeric] struct {
 	shape   []int
 	strides []int
 	data    []T
@@ -42,16 +42,16 @@ type Tensor[T Numeric] struct {
 }
 
 // isTensor is a private method to satisfy the Tensor interface.
-func (t *Tensor[T]) isTensor() {}
+func (t *TensorNumeric[T]) isTensor() {}
 
 // DType returns the reflect.Type of the tensor's elements.
-func (t *Tensor[T]) DType() reflect.Type {
+func (t *TensorNumeric[T]) DType() reflect.Type {
 	var zero T
 	return reflect.TypeOf(zero)
 }
 
-// New creates a new Tensor with the given shape and initializes it with the provided data.
-func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
+// New creates a new TensorNumeric with the given shape and initializes it with the provided data.
+func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 	if len(shape) == 0 {
 		if len(data) > 1 {
 			return nil, errors.New("cannot create 0-dimensional tensor with more than one data element")
@@ -59,7 +59,7 @@ func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 		if len(data) == 0 {
 			data = make([]T, 1)
 		}
-		return &Tensor[T]{
+		return &TensorNumeric[T]{
 			shape:   shape,
 			strides: []int{},
 			data:    data,
@@ -89,7 +89,7 @@ func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 		stride *= shape[i]
 	}
 
-	return &Tensor[T]{
+	return &TensorNumeric[T]{
 		shape:   shape,
 		strides: strides,
 		data:    data,
@@ -99,11 +99,11 @@ func New[T Numeric](shape []int, data []T) (*Tensor[T], error) {
 // NewFromType creates a new tensor of a specific reflect.Type.
 // This is used when the concrete generic type is not known at compile time.
 func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
-	// t is expected to be a pointer type, like *tensor.Tensor[float32]
+	// t is expected to be a pointer type, like *tensor.TensorNumeric[float32]
 	if t.Kind() != reflect.Ptr {
 		return nil, fmt.Errorf("type must be a pointer to a tensor type, got %s", t.Kind())
 	}
-	elemType := t.Elem() // This gives us tensor.Tensor[float32]
+	elemType := t.Elem() // This gives us tensor.TensorNumeric[float32]
 
 	// Get the generic type argument (e.g., float32)
 	if elemType.NumField() == 0 { // Simplified check
@@ -114,8 +114,8 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 	dataType := elemType.Field(2).Type.Elem() // data []T -> T
 
 	// Create a new instance of the concrete tensor type
-	// e.g., reflect.New(tensor.Tensor[float32])
-	tensorPtr := reflect.New(elemType)
+	// e.g., reflect.New(tensor.TensorNumeric[float32])
+	_ = reflect.New(elemType)
 
 	// Call the generic New function using reflection
 	newFn := reflect.ValueOf(New[float32]) // Placeholder type, will be replaced
@@ -155,19 +155,41 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 
 
 // Shape returns a copy of the tensor's shape.
-func (t *Tensor[T]) Shape() []int {
+func (t *TensorNumeric[T]) Shape() []int {
 	shapeCopy := make([]int, len(t.shape))
 	copy(shapeCopy, t.shape)
 	return shapeCopy
 }
 
 // Data returns a slice representing the underlying data of the tensor.
-func (t *Tensor[T]) Data() []T {
+func (t *TensorNumeric[T]) Data() []T {
 	return t.data
 }
 
+// SetData sets the underlying data of the tensor.
+func (t *TensorNumeric[T]) SetData(data []T) {
+	t.data = data
+}
+
+// Strides returns a copy of the tensor's strides.
+func (t *TensorNumeric[T]) Strides() []int {
+	stridesCopy := make([]int, len(t.strides))
+	copy(stridesCopy, t.strides)
+	return stridesCopy
+}
+
+// SetStrides sets the tensor's strides.
+func (t *TensorNumeric[T]) SetStrides(strides []int) {
+	t.strides = strides
+}
+
+// SetShape sets the tensor's shape.
+func (t *TensorNumeric[T]) SetShape(shape []int) {
+	t.shape = shape
+}
+
 // Size returns the total number of elements in the tensor.
-func (t *Tensor[T]) Size() int {
+func (t *TensorNumeric[T]) Size() int {
 	if len(t.shape) == 0 {
 		return 1
 	}
@@ -178,8 +200,26 @@ func (t *Tensor[T]) Size() int {
 	return size
 }
 
+// Dims returns the number of dimensions of the tensor.
+func (t *TensorNumeric[T]) Dims() int {
+	return len(t.shape)
+}
+
+// ShapeEquals returns true if the shapes of two tensors are identical.
+func (t *TensorNumeric[T]) ShapeEquals(other *TensorNumeric[T]) bool {
+	if len(t.shape) != len(other.shape) {
+		return false
+	}
+	for i, dim := range t.shape {
+		if dim != other.shape[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Bytes returns the underlying data of the tensor as a byte slice.
-func (t *Tensor[T]) Bytes() ([]byte, error) {
+func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 	var zero T
 	switch any(zero).(type) {
 	case float32:

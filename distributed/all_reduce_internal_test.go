@@ -80,7 +80,7 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 
 func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 	grad, _ := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
-	gradients := map[string]*tensor.Tensor[float32]{"param1": grad}
+	gradients := map[string]*tensor.TensorNumeric[float32]{"param1": grad}
 
 	t.Run("leader performs all steps", func(t *testing.T) {
 		customMockLocal := new(testutils.CustomMockStrategy[float32])
@@ -169,7 +169,7 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 
 func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 	grad, _ := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
-	gradients := map[string]*tensor.Tensor[float32]{"param1": grad}
+	gradients := map[string]*tensor.TensorNumeric[float32]{"param1": grad}
 
 	t.Run("local all-reduce fails", func(t *testing.T) {
 		customMockLocal := new(testutils.CustomMockStrategy[float32])

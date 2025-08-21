@@ -18,8 +18,8 @@ type RMSNorm[T tensor.Numeric] struct {
 	gain    *graph.Parameter[T] // Learnable gain parameter
 
 	// Cache for backward pass
-	inputTensor *tensor.Tensor[T]
-	rms         *tensor.Tensor[T]
+	inputTensor *tensor.TensorNumeric[T]
+	rms         *tensor.TensorNumeric[T]
 	outputShape []int
 }
 
@@ -92,7 +92,7 @@ func (r *RMSNorm[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the forward pass of the RMSNorm layer.
-func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -136,7 +136,7 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (
 }
 
 // Backward computes the backward pass of the RMSNorm layer.
-func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -217,7 +217,7 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], input
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInput}, nil
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
 // SetName sets the name of the RMSNorm layer.

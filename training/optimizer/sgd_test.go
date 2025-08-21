@@ -39,7 +39,7 @@ type mockEngine[T tensor.Numeric] struct {
 	subErr bool
 }
 
-func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.mulErr {
 		return nil, errors.New("mul error")
 	}
@@ -47,7 +47,7 @@ func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.Tensor[T], dst ...
 	return m.Engine.Mul(ctx, a, b, dst...)
 }
 
-func (m *mockEngine[T]) Sub(ctx context.Context, a, b *tensor.Tensor[T], dst ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (m *mockEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.subErr {
 		return nil, errors.New("sub error")
 	}

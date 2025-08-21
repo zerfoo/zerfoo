@@ -11,7 +11,7 @@ import (
 
 // MockTensor is a tensor that can be configured to fail on Set operations.
 type MockTensor[T tensor.Numeric] struct {
-	*tensor.Tensor[T]
+	*tensor.TensorNumeric[T]
 	failOnSet bool
 }
 

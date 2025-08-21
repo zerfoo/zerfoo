@@ -14,12 +14,12 @@ import (
 type RotaryPositionalEmbedding[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	headDim   int
-	cosAngles *tensor.Tensor[T]
-	sinAngles *tensor.Tensor[T]
+	cosAngles *tensor.TensorNumeric[T]
+	sinAngles *tensor.TensorNumeric[T]
 	// Cached input for backward pass
 	inputShape  []int
-	xRot0Slice  *tensor.Tensor[T]
-	xRot1Slice  *tensor.Tensor[T]
+	xRot0Slice  *tensor.TensorNumeric[T]
+	xRot1Slice  *tensor.TensorNumeric[T]
 	outputShape []int
 }
 
@@ -112,12 +112,12 @@ func (rpe *RotaryPositionalEmbedding[T]) OutputShape() []int {
 }
 
 // Parameters returns no trainable parameters for RoPE.
-func (rpe *RotaryPositionalEmbedding[T]) Parameters() []graph.Parameter[T] {
+func (rpe *RotaryPositionalEmbedding[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
 // Forward applies Rotary Positional Embedding to the input tensor.
-func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.Tensor[T], _ ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	rpe.inputShape = input.Shape()
 	rpe.outputShape = input.Shape()
 	if len(rpe.inputShape) < 2 {
@@ -182,7 +182,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	}
 
 	// Concatenate rotated halves
-	output, err := rpe.engine.Concat(ctx, []*tensor.Tensor[T]{rotatedX0, rotatedX1}, 2)
+	output, err := rpe.engine.Concat(ctx, []*tensor.TensorNumeric[T]{rotatedX0, rotatedX1}, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 }
 
 // Backward computes the gradients for RoPE.
-func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], _ ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	seqLen := rpe.inputShape[1]
 
 	// Slice cos and sin angles to match the input sequence length
@@ -244,12 +244,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	}
 
 	// Concatenate gradients for x_rot0 and x_rot1
-	dInput, err := rpe.engine.Concat(ctx, []*tensor.Tensor[T]{dLdxRot0, dLdxRot1}, 2)
+	dInput, err := rpe.engine.Concat(ctx, []*tensor.TensorNumeric[T]{dLdxRot0, dLdxRot1}, 2)
 	if err != nil {
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInput}, nil
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
 // Scale scales the positional embeddings by a given factor.

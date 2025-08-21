@@ -21,9 +21,9 @@ type LayerNormalization[T tensor.Numeric] struct {
 
 	// Cached tensors for backward pass
 	inputShape  []int
-	mean        *tensor.Tensor[T]
-	variance    *tensor.Tensor[T]
-	normedInput *tensor.Tensor[T] // (input - mean) / sqrt(variance + epsilon)
+	mean        *tensor.TensorNumeric[T]
+	variance    *tensor.TensorNumeric[T]
+	normedInput *tensor.TensorNumeric[T] // (input - mean) / sqrt(variance + epsilon)
 	outputShape []int
 }
 
@@ -100,7 +100,7 @@ func (ln *LayerNormalization[T]) Parameters() []graph.Parameter[T] {
 }
 
 // Forward computes the Layer Normalization.
-func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error) {
+func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -177,7 +177,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 }
 
 // Backward computes the gradients for LayerNormalization.
-func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error) {
+func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -291,5 +291,5 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 		return nil, err
 	}
 
-	return []*tensor.Tensor[T]{dInput}, nil
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }

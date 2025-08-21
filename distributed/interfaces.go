@@ -16,11 +16,11 @@ type InternalStrategy[T tensor.Numeric] interface {
 	// Init initializes the strategy.
 	Init(rank int, size int, coordinatorAddress string) error
 	// AllReduceGradients performs an all-reduce operation on the gradients.
-	AllReduceGradients(gradients map[string]*tensor.Tensor[T]) error
+	AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error
 	// Barrier blocks until all workers have reached the barrier.
 	Barrier() error
 	// BroadcastTensor broadcasts a tensor from the root to all other workers.
-	BroadcastTensor(t *tensor.Tensor[T], rootRank int) error
+	BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error
 	// Rank returns the rank of the current worker.
 	Rank() int
 	// Size returns the total number of workers.
