@@ -162,3 +162,57 @@ func TestFFN_Backward(t *testing.T) {
 		}
 	}
 }
+
+// TestFFN_WithInitializer tests FFN with custom weight initializer option
+func TestFFN_WithInitializer(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+	ops := &numeric.Float32Ops{}
+
+	// Create custom initializer that sets all weights to 0.5
+	customInit := &testutils.TestInitializer[float32]{Value: 0.5}
+
+	ffn, err := NewFFN[float32]("test_ffn", engine, ops, 2, 4, 2, WithFFNInitializer[float32](customInit))
+	testutils.AssertNoError(t, err, "NewFFN with custom initializer should not return an error")
+	testutils.AssertNotNil(t, ffn, "FFN should not be nil")
+
+	// Check that all weights are initialized to 0.5
+	w1Weights := ffn.w1.linear.weights.Value.Data()
+	for _, val := range w1Weights {
+		testutils.AssertFloatEqual(t, float32(0.5), val, float32(1e-6), "W1 weight should be 0.5")
+	}
+
+	w2Weights := ffn.w2.linear.weights.Value.Data()
+	for _, val := range w2Weights {
+		testutils.AssertFloatEqual(t, float32(0.5), val, float32(1e-6), "W2 weight should be 0.5")
+	}
+
+	w3Weights := ffn.w3.linear.weights.Value.Data()
+	for _, val := range w3Weights {
+		testutils.AssertFloatEqual(t, float32(0.5), val, float32(1e-6), "W3 weight should be 0.5")
+	}
+}
+
+// TestFFN_WithBias tests FFN with bias option
+func TestFFN_WithBias(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+	ops := &numeric.Float32Ops{}
+
+	// Test with bias disabled
+	ffnNoBias, err := NewFFN[float32]("test_ffn_no_bias", engine, ops, 2, 4, 2, WithFFNBias[float32](false))
+	testutils.AssertNoError(t, err, "NewFFN with no bias should not return an error")
+	testutils.AssertNotNil(t, ffnNoBias, "FFN should not be nil")
+
+	// Test with bias enabled (default)
+	ffnWithBias, err := NewFFN[float32]("test_ffn_with_bias", engine, ops, 2, 4, 2, WithFFNBias[float32](true))
+	testutils.AssertNoError(t, err, "NewFFN with bias should not return an error")
+	testutils.AssertNotNil(t, ffnWithBias, "FFN should not be nil")
+
+	// Check parameter counts (weights + bias for each layer)
+	noBiasParams := ffnNoBias.Parameters()
+	withBiasParams := ffnWithBias.Parameters()
+	
+	// With bias: 6 parameters (W1 weights, W1 bias, W2 weights, W2 bias, W3 weights, W3 bias)
+	// Without bias: 3 parameters (W1 weights, W2 weights, W3 weights)
+	testutils.AssertEqual(t, len(noBiasParams), 3, "FFN without bias should have 3 parameter tensors")
+	testutils.AssertEqual(t, len(withBiasParams), 6, "FFN with bias should have 6 parameter tensors")
+}
