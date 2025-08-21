@@ -52,12 +52,12 @@ These layers currently do not use functional options.
 - [ ] `activations.NewTanh`
 - [ ] `core.NewLMHead`
 
-### Complex Constructors (Refactoring Candidates)
-- [ ] `attention.NewGlobalAttention`
+### Attention Layers
+- [x] `attention.NewGlobalAttention` - GlobalAttentionOption with WithGlobalAttentionBase, WithGlobalAttentionMaxSeqLen
 
 ## Summary
 
-**Status: NEARLY COMPLETE** - 22 out of 26 layer constructors (85%) have been refactored to use functional options. The most critical and commonly used layers are now updated.
+**Status: COMPLETE** - 23 out of 26 layer constructors (88%) have been refactored to use functional options. All configurable layers are now updated.
 
 **Completed**: All core, activation, attention, component, embedding, normalization, and transformer layers that require configuration.
-**Remaining**: A few simple wrappers that don't require options (`ReLU`, `Sigmoid`, `Tanh`, `LMHead`) and one complex constructor (`GlobalAttention`) that could be refactored in the future if needed.
+**Remaining**: Only simple wrappers that don't require options (`ReLU`, `Sigmoid`, `Tanh`, `LMHead`) - these are intentionally left without functional options as they have no configuration parameters.
