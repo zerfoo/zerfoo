@@ -42,26 +42,26 @@ These layers currently do not use functional options and may benefit from refact
 - [ ] `activations.NewTanh` - Simple wrapper, no options needed
 
 ### Core Layers
-- [ ] `core.NewFFN` - Could benefit from initialization options
+- [x] `core.NewFFN` - FFNOption[T] with WithFFNInitializer, WithFFNBias
 - [ ] `core.NewLMHead` - Simple wrapper around Linear
 - [ ] `core.NewPolynomialExpansion` - Complex constructor with many parameters
 
 ### Embedding Layers
-- [ ] `embeddings.NewRotaryPositionalEmbedding` - Complex constructor, could use options for base/theta
-- [ ] `embeddings.NewTokenEmbedding` - Could benefit from initialization options
+- [x] `embeddings.NewRotaryPositionalEmbedding` - RotaryPositionalEmbeddingOption[T] with WithRotaryBase
+- [x] `embeddings.NewTokenEmbedding` - TokenEmbeddingOption[T] with WithTokenEmbeddingInitializer
 
 ### Normalization Layers
-- [ ] `normalization.NewLayerNormalization` - Simple constructor, minimal options needed
-- [ ] `normalization.NewRMSNorm` - Simple constructor, minimal options needed
+- [x] `normalization.NewLayerNormalization` - LayerNormalizationOption[T] with WithLayerNormEpsilon
+- [x] `normalization.NewRMSNorm` - RMSNormOption[T] with WithRMSNormEpsilon
 
 ### Attention Layers
 - [ ] `attention.NewGlobalAttention` - May need attention-specific options
 
 ## Summary
 
-**Status: PARTIAL** - 16 out of 25 layer constructors (64%) have been refactored to use functional options.
+**Status: NEARLY COMPLETE** - 21 out of 25 layer constructors (84%) have been refactored to use functional options.
 
-**Completed**: Core layers, most activation layers, attention layers, components, and transformer layers
-**Remaining**: Some activation wrappers, embeddings, normalization, and complex constructors
+**Completed**: Core layers (including FFN), most activation layers, attention layers, components, transformer layers, embeddings, and normalization layers
+**Remaining**: Simple activation wrappers, LMHead, PolynomialExpansion, and GlobalAttention
 
 The framework has good functional options coverage for the most commonly used and configurable layers.

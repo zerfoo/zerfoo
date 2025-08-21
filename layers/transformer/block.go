@@ -55,15 +55,15 @@ func NewTransformerBlock[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
-	norm1, err := normalization.NewRMSNorm[T]("norm1", engine, ops, modelDim, options.Epsilon)
+	attnNorm, err := normalization.NewRMSNorm[T]("attn_norm", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
 	}
-	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, options.Epsilon)
+	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
 	}
-	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, options.Epsilon)
+	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func NewTransformerBlock[T tensor.Numeric](
 	return &Block[T]{
 		attention:            attention,
 		ffn:                  ffn,
-		norm1:                norm1,
+		norm1:                attnNorm,
 		norm2:                norm2,
 		normPostAttention:    normPostAttention,
 	}, nil

@@ -23,8 +23,31 @@ type RMSNorm[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// RMSNormOptions holds configuration options for RMSNorm layers.
+type RMSNormOptions[T tensor.Numeric] struct {
+	Epsilon T // Small constant to avoid division by zero
+}
+
+// RMSNormOption is a functional option for configuring RMSNorm layers.
+type RMSNormOption[T tensor.Numeric] func(*RMSNormOptions[T])
+
+// WithRMSNormEpsilon sets the epsilon parameter for RMSNorm.
+func WithRMSNormEpsilon[T tensor.Numeric](epsilon T) RMSNormOption[T] {
+	return func(opts *RMSNormOptions[T]) {
+		opts.Epsilon = epsilon
+	}
+}
+
 // NewRMSNorm creates a new RMSNorm layer.
-func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim int, epsilon T) (*RMSNorm[T], error) {
+func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim int, options ...RMSNormOption[T]) (*RMSNorm[T], error) {
+	// Apply functional options
+	opts := &RMSNormOptions[T]{
+		Epsilon: ops.FromFloat64(1e-6), // Default epsilon value
+	}
+	for _, option := range options {
+		option(opts)
+	}
+
 	// Initialize gain as a learnable parameter with value 1.0
 	gainData := make([]T, modelDim)
 	for i := range gainData {
@@ -43,7 +66,7 @@ func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops num
 	return &RMSNorm[T]{
 		engine:  engine,
 		ops:     ops,
-		epsilon: epsilon,
+		epsilon: opts.Epsilon,
 		gain:    gainParam,
 	}, nil
 }

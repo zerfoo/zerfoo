@@ -16,7 +16,7 @@ func TestPolynomialExpansion_Creation(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test valid creation
-	poly, err := NewPolynomialExpansion("test_poly", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test_poly", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 	testutils.AssertTrue(t, poly != nil, "expected non-nil polynomial layer")
 	testutils.AssertTrue(t, poly.GetDegree() == 2, "expected degree 2")
@@ -24,7 +24,7 @@ func TestPolynomialExpansion_Creation(t *testing.T) {
 	testutils.AssertTrue(t, poly.HasBias(), "expected bias term")
 
 	// Test without bias
-	polyNoBias, err := NewPolynomialExpansion("test_no_bias", engine, ops, 3, 2, false)
+	polyNoBias, err := NewPolynomialExpansion("test_no_bias", engine, ops, 3, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](false))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer without bias")
 	testutils.AssertTrue(t, !polyNoBias.HasBias(), "expected no bias term")
 }
@@ -35,21 +35,21 @@ func TestPolynomialExpansion_ErrorCases(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test empty name
-	_, err := NewPolynomialExpansion("", engine, ops, 2, 2, true)
+	_, err := NewPolynomialExpansion("", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertError(t, err, "expected error for empty name")
 
 	// Test invalid input size
-	_, err = NewPolynomialExpansion("test", engine, ops, 0, 2, true)
+	_, err = NewPolynomialExpansion("test", engine, ops, 0, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertError(t, err, "expected error for zero input size")
 
-	_, err = NewPolynomialExpansion("test", engine, ops, -1, 2, true)
+	_, err = NewPolynomialExpansion("test", engine, ops, -1, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertError(t, err, "expected error for negative input size")
 
 	// Test invalid degree
-	_, err = NewPolynomialExpansion("test", engine, ops, 2, 0, true)
+	_, err = NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](0), WithPolynomialBias[float32](true))
 	testutils.AssertError(t, err, "expected error for zero degree")
 
-	_, err = NewPolynomialExpansion("test", engine, ops, 2, -1, true)
+	_, err = NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](-1), WithPolynomialBias[float32](true))
 	testutils.AssertError(t, err, "expected error for negative degree")
 }
 
@@ -59,7 +59,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test 2 features, degree 2, with bias
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	terms := poly.GetTermIndices()
@@ -105,7 +105,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test simple case: 2 features, degree 2, with bias
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Input: [2.0, 3.0]
@@ -156,7 +156,7 @@ func TestPolynomialExpansion_ForwardPassNoBias(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test without bias: 2 features, degree 1
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 1, false)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](1), WithPolynomialBias[float32](false))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Input: [2.0, 3.0]
@@ -186,7 +186,7 @@ func TestPolynomialExpansion_BatchProcessing(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 1, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](1), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Batch input: 2 samples, 2 features each
@@ -213,7 +213,7 @@ func TestPolynomialExpansion_ForwardErrorCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Test with no inputs
@@ -242,7 +242,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 1, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](1), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Forward pass first
@@ -276,7 +276,7 @@ func TestPolynomialExpansion_BackwardErrorCases(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Test with wrong output gradient size
@@ -290,7 +290,7 @@ func TestPolynomialExpansion_Parameters(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// Polynomial expansion has no trainable parameters
@@ -303,7 +303,7 @@ func TestPolynomialExpansion_OutputShape(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 3, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 3, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	shape := poly.OutputShape()
@@ -316,7 +316,7 @@ func TestPolynomialExpansion_SetName(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 2, true)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](2), WithPolynomialBias[float32](true))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
 
 	// SetName should not panic (even though it doesn't store the name)
@@ -329,7 +329,7 @@ func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// Test degree 3 with 2 features
-	poly, err := NewPolynomialExpansion("test", engine, ops, 2, 3, false)
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2, WithPolynomialDegree[float32](3), WithPolynomialBias[float32](false))
 	testutils.AssertNoError(t, err, "expected no error creating degree 3 polynomial layer")
 
 	// Input: [2.0, 1.0]
@@ -362,4 +362,60 @@ func TestPolynomialExpansion_HigherDegree(t *testing.T) {
 	testutils.AssertTrue(t, foundValues[2.0] > 0, "expected to find value 2")
 	testutils.AssertTrue(t, foundValues[4.0] > 0, "expected to find value 4")
 	testutils.AssertTrue(t, foundValues[8.0] > 0, "expected to find value 8")
+}
+
+// TestPolynomialExpansion_FunctionalOptions tests the new functional options pattern.
+func TestPolynomialExpansion_FunctionalOptions(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	// Test default options (degree=2, includeBias=true)
+	polyDefault, err := NewPolynomialExpansion("test_default", engine, ops, 2)
+	testutils.AssertNoError(t, err, "expected no error creating polynomial layer with defaults")
+	testutils.AssertTrue(t, polyDefault.GetDegree() == 2, "expected default degree 2")
+	testutils.AssertTrue(t, polyDefault.HasBias(), "expected default bias true")
+
+	// Test custom degree
+	polyCustomDegree, err := NewPolynomialExpansion("test_degree", engine, ops, 2, WithPolynomialDegree[float32](3))
+	testutils.AssertNoError(t, err, "expected no error creating polynomial layer with custom degree")
+	testutils.AssertTrue(t, polyCustomDegree.GetDegree() == 3, "expected custom degree 3")
+	testutils.AssertTrue(t, polyCustomDegree.HasBias(), "expected default bias true")
+
+	// Test custom bias
+	polyCustomBias, err := NewPolynomialExpansion("test_bias", engine, ops, 2, WithPolynomialBias[float32](false))
+	testutils.AssertNoError(t, err, "expected no error creating polynomial layer with custom bias")
+	testutils.AssertTrue(t, polyCustomBias.GetDegree() == 2, "expected default degree 2")
+	testutils.AssertTrue(t, !polyCustomBias.HasBias(), "expected custom bias false")
+
+	// Test both custom options
+	polyCustomBoth, err := NewPolynomialExpansion("test_both", engine, ops, 3, 
+		WithPolynomialDegree[float32](4), WithPolynomialBias[float32](false))
+	testutils.AssertNoError(t, err, "expected no error creating polynomial layer with both custom options")
+	testutils.AssertTrue(t, polyCustomBoth.GetDegree() == 4, "expected custom degree 4")
+	testutils.AssertTrue(t, !polyCustomBoth.HasBias(), "expected custom bias false")
+}
+
+// TestPolynomialExpansion_FunctionalOptionsForward tests forward pass with functional options.
+func TestPolynomialExpansion_FunctionalOptionsForward(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	// Test with default options
+	poly, err := NewPolynomialExpansion("test", engine, ops, 2)
+	testutils.AssertNoError(t, err, "expected no error creating polynomial layer")
+
+	// Input: [2.0, 3.0]
+	inputData := []float32{2.0, 3.0}
+	input, err := tensor.New([]int{1, 2}, inputData)
+	testutils.AssertNoError(t, err, "expected no error creating input tensor")
+
+	// Forward pass
+	output, err := poly.Forward(context.Background(), input)
+	testutils.AssertNoError(t, err, "expected no error in forward pass")
+	testutils.AssertTrue(t, output != nil, "expected non-nil output")
+
+	outputShape := output.Shape()
+	testutils.AssertTrue(t, len(outputShape) == 2, "expected 2D output")
+	testutils.AssertTrue(t, outputShape[0] == 1, "expected batch size 1")
+	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 }
