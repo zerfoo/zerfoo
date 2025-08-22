@@ -72,3 +72,11 @@ func (t *Tokenizer) Decode(tokenIDs []int) string {
 
 	return strings.Join(words, " ")
 }
+
+// GetToken returns the token string for a given ID, or "<unk>" if not found.
+func (t *Tokenizer) GetToken(id int) string {
+	if word, ok := t.reverseVocab[id]; ok {
+		return word
+	}
+	return "<unk>"
+}
