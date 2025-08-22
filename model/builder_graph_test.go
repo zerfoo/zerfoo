@@ -25,14 +25,15 @@ func (m *mockNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric
 	if m.forwardFn != nil {
 		return m.forwardFn(inputs...)
 	}
+
 	return tensor.New[T]([]int{1}, []T{1})
 }
 func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
-func (m *mockNode[T]) Parameters() []*graph.Parameter[T] { return m.parameters }
-func (m *mockNode[T]) OpType() string                       { return m.name }
-func (m *mockNode[T]) Attributes() map[string]interface{}    { return nil }
+func (m *mockNode[T]) Parameters() []*graph.Parameter[T]  { return m.parameters }
+func (m *mockNode[T]) OpType() string                     { return m.name }
+func (m *mockNode[T]) Attributes() map[string]interface{} { return nil }
 
 // TestBuildFromZMF_ConnectedGraph tests building a graph with multiple connected nodes.
 func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
@@ -46,6 +47,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 			name: n,
 			forwardFn: func(inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 				outData := inputs[0].Data()[0] + 1
+
 				return tensor.New[float32]([]int{1}, []float32{outData})
 			},
 		}, nil
@@ -56,6 +58,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 			name: n,
 			forwardFn: func(inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 				outData := inputs[0].Data()[0] * 2
+
 				return tensor.New[float32]([]int{1}, []float32{outData})
 			},
 		}, nil

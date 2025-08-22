@@ -39,6 +39,7 @@ func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, er
 	}
 
 	tensorProto.Data = rawData
+
 	return tensorProto, nil
 }
 
@@ -48,6 +49,7 @@ func encodeFloat32[T tensor.Numeric](data []T) ([]byte, error) {
 		bits := math.Float32bits(float32(val))
 		binary.LittleEndian.PutUint32(rawData[i*4:], bits)
 	}
+
 	return rawData, nil
 }
 
@@ -58,5 +60,6 @@ func encodeFloat16[T tensor.Numeric](data []T) ([]byte, error) {
 		bits := f16.Bits()
 		binary.LittleEndian.PutUint16(rawData[i*2:], bits)
 	}
+
 	return rawData, nil
 }
