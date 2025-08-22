@@ -839,21 +839,49 @@ func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.TensorNumeric[T], sh
 		return nil, errors.New("input tensor cannot be nil")
 	}
 
-	// Check if the new shape is compatible with the existing data size
+	// Calculate current tensor size
 	currentSize := 1
 	for _, dim := range a.Shape() {
 		currentSize *= dim
 	}
+
+	// Handle -1 dimension inference
+	inferredShape := make([]int, len(shape))
+	copy(inferredShape, shape)
+	
+	inferIndex := -1
+	knownSize := 1
+	for i, dim := range shape {
+		if dim == -1 {
+			if inferIndex != -1 {
+				return nil, errors.New("only one dimension can be -1")
+			}
+			inferIndex = i
+		} else if dim <= 0 {
+			return nil, fmt.Errorf("invalid dimension size: %d", dim)
+		} else {
+			knownSize *= dim
+		}
+	}
+	
+	if inferIndex != -1 {
+		if currentSize%knownSize != 0 {
+			return nil, fmt.Errorf("cannot infer dimension: tensor size %d not divisible by known dimensions %d", currentSize, knownSize)
+		}
+		inferredShape[inferIndex] = currentSize / knownSize
+	}
+
+	// Check if the new shape is compatible with the existing data size
 	newSize := 1
-	for _, dim := range shape {
+	for _, dim := range inferredShape {
 		newSize *= dim
 	}
 
 	if currentSize != newSize {
-		return nil, fmt.Errorf("new shape %v is not compatible with current tensor size %d", shape, currentSize)
+		return nil, fmt.Errorf("new shape %v is not compatible with current tensor size %d", inferredShape, currentSize)
 	}
 
-	result, err := e.getOrCreateDest(shape, dst...)
+	result, err := e.getOrCreateDest(inferredShape, dst...)
 	if err != nil {
 		return nil, err
 	}
