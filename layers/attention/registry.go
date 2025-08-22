@@ -23,23 +23,23 @@ func buildGroupedQueryAttention[T tensor.Numeric](
 	// Extract attributes
 	modelDim, ok := attributes["model_dim"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: model_dim")
+		return nil, errors.New("missing or invalid attribute: model_dim")
 	}
 	numQueryHeads, ok := attributes["num_query_heads"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: num_query_heads")
+		return nil, errors.New("missing or invalid attribute: num_query_heads")
 	}
 	numKeyValueHeads, ok := attributes["num_key_value_heads"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: num_key_value_heads")
+		return nil, errors.New("missing or invalid attribute: num_key_value_heads")
 	}
 	base, ok := attributes["rope_base"].(float64)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: rope_base")
+		return nil, errors.New("missing or invalid attribute: rope_base")
 	}
 	maxSeqLen, ok := attributes["max_seq_len"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: max_seq_len")
+		return nil, errors.New("missing or invalid attribute: max_seq_len")
 	}
 
 	// Extract parameters for sub-layers

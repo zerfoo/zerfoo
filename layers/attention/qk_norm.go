@@ -14,10 +14,10 @@ import (
 // It normalizes Q and K independently by their respective RMS values.
 func QKNorm[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], q, k *tensor.TensorNumeric[T], epsilon float64) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
 	if q == nil {
-		return nil, nil, fmt.Errorf("query tensor (q) cannot be nil")
+		return nil, nil, errors.New("query tensor (q) cannot be nil")
 	}
 	if k == nil {
-		return nil, nil, fmt.Errorf("key tensor (k) cannot be nil")
+		return nil, nil, errors.New("key tensor (k) cannot be nil")
 	}
 	if !q.ShapeEquals(k) {
 		return nil, nil, fmt.Errorf("query and key tensors must have the same shape: q %v, k %v", q.Shape(), k.Shape())

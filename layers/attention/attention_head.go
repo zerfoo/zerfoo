@@ -134,6 +134,7 @@ func (ah *AttentionHead[T]) Parameters() []graph.Parameter[T] {
 	for _, p := range ah.vProj.Parameters() {
 		params = append(params, *p)
 	}
+
 	return params
 }
 
@@ -150,5 +151,5 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a placeholder. The actual backward pass for attention is complex
 	// and involves backpropagating through SDPA and then through the linear projections.
-	return nil, fmt.Errorf("AttentionHead backward pass not yet implemented")
+	return nil, errors.New("AttentionHead backward pass not yet implemented")
 }
