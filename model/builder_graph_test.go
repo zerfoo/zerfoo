@@ -31,6 +31,8 @@ func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ 
 	return nil, nil
 }
 func (m *mockNode[T]) Parameters() []*graph.Parameter[T] { return m.parameters }
+func (m *mockNode[T]) OpType() string                       { return m.name }
+func (m *mockNode[T]) Attributes() map[string]interface{}    { return nil }
 
 // TestBuildFromZMF_ConnectedGraph tests building a graph with multiple connected nodes.
 func TestBuildFromZMF_ConnectedGraph(t *testing.T) {

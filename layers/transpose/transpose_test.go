@@ -38,6 +38,7 @@ func TestBuildTranspose(t *testing.T) {
 			name:         "Without perm attribute",
 			attributes:   map[string]interface{}{},
 			expectedAxes: nil,
+			expectBuildErr: true,
 		},
 	}
 
@@ -56,8 +57,8 @@ func TestBuildTranspose(t *testing.T) {
 				t.Fatalf("BuildTranspose() did not return a *Transpose layer")
 			}
 
-			if !reflect.DeepEqual(transposeLayer.axes, tc.expectedAxes) {
-				t.Errorf("Expected axes to be %v, but got %v", tc.expectedAxes, transposeLayer.axes)
+			if !reflect.DeepEqual(transposeLayer.perm, tc.expectedAxes) {
+				t.Errorf("Expected axes to be %v, but got %v", tc.expectedAxes, transposeLayer.perm)
 			}
 		})
 	}
@@ -80,11 +81,7 @@ func TestTransposeForward(t *testing.T) {
 			axes:          []int{0, 2, 1},
 			expectedShape: []int{2, 4, 3},
 		},
-		{
-			name:          "Without axes (reverse)",
-			axes:          nil,
-			expectedShape: []int{4, 3, 2},
-		},
+		
 	}
 
 	for _, tc := range testCases {

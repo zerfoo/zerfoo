@@ -38,6 +38,14 @@ func (m *mockNode) Parameters() []*Parameter[int] {
 	return m.params
 }
 
+func (m *mockNode) OpType() string {
+	return "mock"
+}
+
+func (m *mockNode) Attributes() map[string]interface{} {
+	return nil
+}
+
 func TestBuilder_Build(t *testing.T) {
 	var engine compute.Engine[int] = compute.NewCPUEngine[int](numeric.IntOps{})
 	builder := NewBuilder[int](engine)

@@ -36,6 +36,7 @@ func TestNewBaseActivation_FunctionalOptions(t *testing.T) {
 	activation := NewBaseActivation(
 		engine,
 		ops,
+		"mock_activation",
 		WithForwardOp(customForwardOp),
 		WithBackwardOp(customBackwardOp),
 	)
