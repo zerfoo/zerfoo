@@ -7,6 +7,7 @@ func ConvertInt64ToInt(s []int64) []int {
 	for i, v := range s {
 		result[i] = int(v)
 	}
+
 	return result
 }
 
@@ -16,6 +17,7 @@ func ConvertIntToInt64(s []int) []int64 {
 	for i, v := range s {
 		result[i] = int64(v)
 	}
+
 	return result
 }
 
@@ -25,5 +27,6 @@ func Product(s []int) int {
 	for _, v := range s {
 		p *= v
 	}
+
 	return p
 }

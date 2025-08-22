@@ -46,13 +46,14 @@ func BroadcastIndex(index int, shape, outputShape []int, broadcast bool) int {
 	outputStrides := strides(outputShape)
 	originalStrides := strides(shape)
 	originalIndex := 0
-	for i := 0; i < len(outputShape); i++ {
+	for i := range len(outputShape) {
 		coord := (index / outputStrides[i]) % outputShape[i]
 		shapeI := len(shape) - 1 - (len(outputShape) - 1 - i)
 		if shapeI >= 0 && shape[shapeI] != 1 {
 			originalIndex += coord * originalStrides[shapeI]
 		}
 	}
+
 	return originalIndex
 }
 
@@ -66,6 +67,7 @@ func SameShape(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -77,5 +79,6 @@ func strides(shape []int) []int {
 		s[i] = stride
 		stride *= shape[i]
 	}
+
 	return s
 }

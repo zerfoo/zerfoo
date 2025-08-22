@@ -10,5 +10,6 @@ func ShapesEqual(a, b []int) bool {
 			return false
 		}
 	}
+
 	return true
 }

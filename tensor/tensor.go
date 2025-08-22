@@ -47,6 +47,7 @@ func (t *TensorNumeric[T]) isTensor() {}
 // DType returns the reflect.Type of the tensor's elements.
 func (t *TensorNumeric[T]) DType() reflect.Type {
 	var zero T
+
 	return reflect.TypeOf(zero)
 }
 
@@ -59,6 +60,7 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 		if len(data) == 0 {
 			data = make([]T, 1)
 		}
+
 		return &TensorNumeric[T]{
 			shape:   shape,
 			strides: []int{},
@@ -153,11 +155,11 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 	return results[0].Interface().(Tensor), nil
 }
 
-
 // Shape returns a copy of the tensor's shape.
 func (t *TensorNumeric[T]) Shape() []int {
 	shapeCopy := make([]int, len(t.shape))
 	copy(shapeCopy, t.shape)
+
 	return shapeCopy
 }
 
@@ -167,37 +169,39 @@ func (t *TensorNumeric[T]) Data() []T {
 	if !t.isView {
 		return t.data
 	}
-	
+
 	// For views, we need to extract only the visible data
 	size := t.Size()
 	if size == 0 {
 		return []T{}
 	}
-	
+
 	// Handle 0-dimensional views
 	if t.Dims() == 0 {
 		return t.data[:1]
 	}
-	
+
 	// For multi-dimensional views, we need to iterate through all valid indices
 	result := make([]T, 0, size)
 	t.iterateView([]int{}, 0, func(indices []int) {
 		val, _ := t.At(indices...)
 		result = append(result, val)
 	})
+
 	return result
 }
 
-// iterateView recursively iterates through all valid indices in a view
+// iterateView recursively iterates through all valid indices in a view.
 func (t *TensorNumeric[T]) iterateView(currentIndices []int, dim int, fn func([]int)) {
 	if dim == t.Dims() {
 		// We've built a complete set of indices, call the function
 		fn(currentIndices)
+
 		return
 	}
-	
+
 	// Iterate through all valid indices for this dimension
-	for i := 0; i < t.shape[dim]; i++ {
+	for i := range t.shape[dim] {
 		newIndices := make([]int, len(currentIndices)+1)
 		copy(newIndices, currentIndices)
 		newIndices[len(currentIndices)] = i
@@ -214,6 +218,7 @@ func (t *TensorNumeric[T]) SetData(data []T) {
 func (t *TensorNumeric[T]) Strides() []int {
 	stridesCopy := make([]int, len(t.strides))
 	copy(stridesCopy, t.strides)
+
 	return stridesCopy
 }
 
@@ -236,6 +241,7 @@ func (t *TensorNumeric[T]) Size() int {
 	for _, dim := range t.shape {
 		size *= dim
 	}
+
 	return size
 }
 
@@ -254,6 +260,7 @@ func (t *TensorNumeric[T]) ShapeEquals(other *TensorNumeric[T]) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -263,6 +270,7 @@ func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 	switch any(zero).(type) {
 	case float32:
 		float32Data := *(*[]float32)(unsafe.Pointer(&t.data))
+
 		return Float32ToBytes(float32Data)
 	default:
 		return nil, fmt.Errorf("Bytes is currently only implemented for float32, not %T", zero)
@@ -274,6 +282,7 @@ func Float32ToBytes(f []float32) ([]byte, error) {
 	header := (*reflect.SliceHeader)(unsafe.Pointer(&f))
 	header.Len *= 4
 	header.Cap *= 4
+
 	return *(*[]byte)(unsafe.Pointer(header)), nil
 }
 
@@ -296,7 +305,7 @@ func NewFromBytes[T Numeric](shape []int, data []byte) (*TensorNumeric[T], error
 
 	// Convert bytes to slice of T
 	typedData := unsafe.Slice((*T)(unsafe.Pointer(&data[0])), size)
-	
+
 	// Create copy to avoid referencing external memory
 	dataCopy := make([]T, size)
 	copy(dataCopy, typedData)
@@ -320,13 +329,13 @@ func (t *TensorNumeric[T]) Each(fn func(T)) {
 func (t *TensorNumeric[T]) Copy() *TensorNumeric[T] {
 	newData := make([]T, len(t.data))
 	copy(newData, t.data)
-	
+
 	newShape := make([]int, len(t.shape))
 	copy(newShape, t.shape)
-	
+
 	newStrides := make([]int, len(t.strides))
 	copy(newStrides, t.strides)
-	
+
 	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: newStrides,
