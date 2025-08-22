@@ -41,10 +41,8 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 
 	a, b := inputs[0], inputs[1]
 	
-	// Debug: Print shapes for problematic MatMul operations
+	// Check for dimension mismatch and attempt transpose if needed
 	if a.Shape()[len(a.Shape())-1] != b.Shape()[0] {
-		fmt.Printf("DEBUG: MatMul dimension mismatch - a.Shape()=%v, b.Shape()=%v\n", a.Shape(), b.Shape())
-		
 		// Check if this is a case where b needs to be transposed
 		if len(a.Shape()) >= 2 && len(b.Shape()) == 2 {
 			aInner := a.Shape()[len(a.Shape())-1]
@@ -52,7 +50,6 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 			
 			// If a's inner dimension matches b's inner dimension, we might need to transpose b
 			if aInner == bInner {
-				fmt.Printf("DEBUG: Attempting to transpose second operand for MatMul\n")
 				bTransposed, err := m.engine.Transpose(ctx, b, []int{1, 0})
 				if err != nil {
 					return nil, fmt.Errorf("failed to transpose second operand: %w", err)
@@ -66,7 +63,7 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 			}
 		}
 		
-		return nil, fmt.Errorf("invalid shapes for matrix multiplication: a.Shape()=%v, b.Shape()=%v (inner dimensions %d != %d)", a.Shape(), b.Shape(), a.Shape()[len(a.Shape())-1], b.Shape()[0])
+		return nil, fmt.Errorf("incompatible dimensions for matrix multiplication: %v x %v", a.Shape(), b.Shape())
 	}
 
 	result, err := m.engine.MatMul(ctx, a, b)

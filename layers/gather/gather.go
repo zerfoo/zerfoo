@@ -61,7 +61,6 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		
 		// Create int tensor with same shape as input
 		inputTensor := inputs[0]
-		fmt.Printf("DEBUG: Gather Forward - input shape: %v, weights shape: %v\n", inputTensor.Shape(), g.weights.Shape())
 		
 		intTensor, err := tensor.New[int](inputTensor.Shape(), nil)
 		if err != nil {
@@ -88,7 +87,6 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 				return nil, fmt.Errorf("failed to reshape indices tensor: %w", err)
 			}
 			indices = reshapedTensor
-			fmt.Printf("DEBUG: Reshaped indices from %v to %v\n", intTensor.Shape(), newShape)
 		} else {
 			indices = intTensor
 		}
