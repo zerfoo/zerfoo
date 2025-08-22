@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/testing/testutils"
 	_ "github.com/zerfoo/zerfoo/layers/core"
 	_ "github.com/zerfoo/zerfoo/layers/gather"
 	_ "github.com/zerfoo/zerfoo/layers/transpose"
+	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
 type mockModel[T tensor.Numeric] struct {
@@ -31,7 +31,7 @@ func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
 
 type mockOptimizer[T tensor.Numeric] struct{}
 
-func (o *mockOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) error            { return nil }
+func (o *mockOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) error      { return nil }
 func (o *mockOptimizer[T]) Clip(_ context.Context, _ []*graph.Parameter[T], _ float32) {}
 
 type mockLoss[T tensor.Numeric] struct{}
@@ -60,9 +60,9 @@ func TestNewTrainer(t *testing.T) {
 	model := &mockModel[float32]{}
 	optimizer := &mockOptimizer[float32]{}
 	lossFn := &mockLoss[float32]{}
-	
+
 	trainer := NewTrainer[float32](model, optimizer, lossFn)
-	
+
 	testutils.AssertNotNil(t, trainer, "trainer should not be nil")
 	// Check that the trainer fields are set (can't directly compare interfaces)
 	testutils.AssertNotNil(t, trainer.model, "model should be set")
@@ -70,7 +70,7 @@ func TestNewTrainer(t *testing.T) {
 	testutils.AssertNotNil(t, trainer.lossFn, "loss function should be set")
 }
 
-// Error mocks for testing error handling
+// Error mocks for testing error handling.
 type errorModel[T tensor.Numeric] struct {
 	forwardErr  bool
 	backwardErr bool
@@ -81,6 +81,7 @@ func (m *errorModel[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	if m.forwardErr {
 		return nil, errors.New("forward error")
 	}
+
 	return inputs[0], nil
 }
 
@@ -88,6 +89,7 @@ func (m *errorModel[T]) Backward(ctx context.Context, grad *tensor.TensorNumeric
 	if m.backwardErr {
 		return nil, errors.New("backward error")
 	}
+
 	return []*tensor.TensorNumeric[T]{grad}, nil
 }
 
@@ -103,6 +105,7 @@ func (o *errorOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) err
 	if o.stepErr {
 		return errors.New("optimizer step error")
 	}
+
 	return nil
 }
 
@@ -115,9 +118,11 @@ type errorLoss[T tensor.Numeric] struct {
 func (l *errorLoss[T]) Forward(ctx context.Context, predictions, _ *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error) {
 	if l.forwardErr {
 		var zero T
+
 		return zero, nil, errors.New("loss forward error")
 	}
 	var lossValue T
+
 	return lossValue, predictions, nil
 }
 
@@ -175,10 +180,10 @@ func TestTrainer_Train_WithParameters(t *testing.T) {
 	// Create a parameter for the model
 	value, err := tensor.New[float32]([]int{2, 2}, []float32{1.0, 2.0, 3.0, 4.0})
 	testutils.AssertNoError(t, err, "Failed to create parameter value")
-	
+
 	param, err := graph.NewParameter("test_param", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
-	
+
 	model := &mockModel[float32]{params: []*graph.Parameter[float32]{param}}
 	optimizer := &mockOptimizer[float32]{}
 	lossFn := &mockLoss[float32]{}

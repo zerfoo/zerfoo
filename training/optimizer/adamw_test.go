@@ -18,7 +18,7 @@ func TestNewAdamW(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	adamw := NewAdamW[float32](engine, 0.001, 0.9, 0.999, 1e-8, 0.01)
-	
+
 	testutils.AssertNotNil(t, adamw, "AdamW should not be nil")
 	testutils.AssertFloatEqual(t, 0.001, adamw.learningRate, 1e-6, "Learning rate should match")
 	testutils.AssertFloatEqual(t, 0.9, adamw.beta1, 1e-6, "Beta1 should match")
@@ -125,7 +125,7 @@ func TestAdamW_Step_MultipleSteps(t *testing.T) {
 	params := []*graph.Parameter[float32]{param}
 
 	// Multiple steps with different gradients
-	for step := 0; step < 3; step++ {
+	for step := range 3 {
 		gradient, err := tensor.New[float32]([]int{2}, []float32{0.1, 0.2})
 		testutils.AssertNoError(t, err, "Failed to create gradient tensor")
 		param.Gradient = gradient
@@ -214,23 +214,24 @@ func TestAdamW_Step_BiasCorrection(t *testing.T) {
 	}
 }
 
-// Mock engine for error testing
+// Mock engine for error testing.
 type mockAdamWEngine[T tensor.Numeric] struct {
 	compute.Engine[T]
-	zerosErr      bool
-	mulScalarErr  bool
-	addErr        bool
-	mulErr        bool
-	sqrtErr       bool
-	addScalarErr  bool
-	divErr        bool
-	subErr        bool
+	zerosErr     bool
+	mulScalarErr bool
+	addErr       bool
+	mulErr       bool
+	sqrtErr      bool
+	addScalarErr bool
+	divErr       bool
+	subErr       bool
 }
 
 func (m *mockAdamWEngine[T]) Zeros(ctx context.Context, dst *tensor.TensorNumeric[T], shape []int) error {
 	if m.zerosErr {
 		return errors.New("zeros error")
 	}
+
 	return m.Engine.Zeros(ctx, dst, shape)
 }
 
@@ -238,6 +239,7 @@ func (m *mockAdamWEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNume
 	if m.mulScalarErr {
 		return nil, errors.New("mulscalar error")
 	}
+
 	return m.Engine.MulScalar(ctx, a, scalar, dst...)
 }
 
@@ -245,6 +247,7 @@ func (m *mockAdamWEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric
 	if m.addErr {
 		return nil, errors.New("add error")
 	}
+
 	return m.Engine.Add(ctx, a, b, dst...)
 }
 
@@ -252,6 +255,7 @@ func (m *mockAdamWEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric
 	if m.mulErr {
 		return nil, errors.New("mul error")
 	}
+
 	return m.Engine.Mul(ctx, a, b, dst...)
 }
 
@@ -259,6 +263,7 @@ func (m *mockAdamWEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T
 	if m.sqrtErr {
 		return nil, errors.New("sqrt error")
 	}
+
 	return m.Engine.Sqrt(ctx, a, dst...)
 }
 
@@ -266,6 +271,7 @@ func (m *mockAdamWEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNume
 	if m.addScalarErr {
 		return nil, errors.New("addscalar error")
 	}
+
 	return m.Engine.AddScalar(ctx, a, scalar, dst...)
 }
 
@@ -273,6 +279,7 @@ func (m *mockAdamWEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric
 	if m.divErr {
 		return nil, errors.New("div error")
 	}
+
 	return m.Engine.Div(ctx, a, b, dst...)
 }
 
@@ -280,6 +287,7 @@ func (m *mockAdamWEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric
 	if m.subErr {
 		return nil, errors.New("sub error")
 	}
+
 	return m.Engine.Sub(ctx, a, b, dst...)
 }
 
@@ -293,6 +301,7 @@ func TestAdamW_Step_ErrorHandling(t *testing.T) {
 		gradient, _ := tensor.New[float32]([]int{2}, []float32{0.1, 0.1})
 		param, _ := graph.NewParameter("param1", value, tensor.New[float32])
 		param.Gradient = gradient
+
 		return param
 	}
 

@@ -67,6 +67,7 @@ func Int64SliceEqual(a, b []int64) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -158,11 +159,13 @@ func AssertFloat32SliceApproxEqual(t *testing.T, expected, actual []float32, tol
 	t.Helper()
 	if len(expected) != len(actual) {
 		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
+
 		return
 	}
 	for i := range expected {
 		if math.Abs(float64(expected[i])-float64(actual[i])) > float64(tolerance) {
 			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
+
 			return
 		}
 	}
@@ -173,11 +176,13 @@ func AssertFloat64SliceApproxEqual(t *testing.T, expected, actual []float64, tol
 	t.Helper()
 	if len(expected) != len(actual) {
 		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
+
 		return
 	}
 	for i := range expected {
 		if math.Abs(expected[i]-actual[i]) > tolerance {
 			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
+
 			return
 		}
 	}
@@ -330,6 +335,7 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 	t.Helper()
 	if !actual.ShapeEquals(expected) {
 		t.Errorf("tensor shapes do not match: actual %v, expected %v", actual.Shape(), expected.Shape())
+
 		return false
 	}
 
@@ -338,15 +344,18 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 
 	if len(actualData) != len(expectedData) {
 		t.Errorf("tensor data lengths do not match: actual %d, expected %d", len(actualData), len(expectedData))
+
 		return false
 	}
 
 	for i := range actualData {
 		if math.Abs(float64(actualData[i])-float64(expectedData[i])) > float64(epsilon) {
 			t.Errorf("tensor elements at index %d are not approximately equal: actual %v, expected %v, epsilon %v", i, actualData[i], expectedData[i], epsilon)
+
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -370,5 +379,6 @@ func (t *TestInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) 
 	for i := range data {
 		data[i] = t.Value
 	}
+
 	return data, nil
 }
