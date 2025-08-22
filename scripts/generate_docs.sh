@@ -69,7 +69,6 @@ generate_package_docs() {
         "training/loss"
         "distributed"
         "model"
-        "pkg/onnx"
         "pkg/tokenizer"
         "device"
         "numeric"
@@ -604,7 +603,7 @@ echo "📦 Generating package documentation..."
 go doc -all . > docs/api/root.txt 2>/dev/null || echo "⚠️  Root package documentation failed"
 
 # Generate for each package
-for pkg in tensor graph compute layers/core layers/activations training/optimizer training/loss distributed model pkg/onnx pkg/tokenizer device; do
+for pkg in tensor graph compute layers/core layers/activations training/optimizer training/loss distributed model pkg/tokenizer device; do
     if [ -d "$pkg" ] && ls "$pkg"/*.go 1> /dev/null 2>&1; then
         echo "  📄 Documenting $pkg..."
         pkg_name="${pkg//\//_}"
