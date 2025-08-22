@@ -10,12 +10,12 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// MockEngine for testing purposes
+// MockEngine for testing purposes.
 type MockEngine[T tensor.Numeric] struct {
 	compute.CPUEngine[T]
 }
 
-// MockOps for testing purposes
+// MockOps for testing purposes.
 type MockOps[T tensor.Numeric] struct {
 	numeric.Float32Ops
 }
