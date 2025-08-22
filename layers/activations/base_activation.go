@@ -46,7 +46,7 @@ func WithBackwardOp[T tensor.Numeric](op func(T) T) BaseActivationOption[T] {
 }
 
 // NewBaseActivation creates a new base activation with the given forward and backward operations.
-func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opts ...BaseActivationOption[T]) *BaseActivation[T] {
+func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opType string, opts ...BaseActivationOption[T]) *BaseActivation[T] {
 	options := &BaseActivationOptions[T]{}
 	for _, opt := range opts {
 		opt(options)
@@ -57,6 +57,7 @@ func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.A
 		ops:        ops,
 		forwardOp:  options.ForwardOp,
 		backwardOp: options.BackwardOp,
+		opType:     opType,
 	}
 }
 
