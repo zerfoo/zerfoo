@@ -82,7 +82,7 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	}
 	
 	if !ok {
-		return nil, fmt.Errorf("missing required parameter for LayerNorm. Tried: %s_gain, and weight patterns", name)
+			return nil, fmt.Errorf("missing required parameter for LayerNorm. Tried: %s_gain, and weight patterns", name)
 	}
 
 	epsilonAttr, ok := attributes["epsilon"]

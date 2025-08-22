@@ -107,3 +107,13 @@ func (sln *SimplifiedLayerNormalization[T]) Parameters() []*graph.Parameter[T] {
 func (sln *SimplifiedLayerNormalization[T]) OutputShape() []int {
 	return sln.inputShape
 }
+
+// OpType returns the operation type of the SimplifiedLayerNormalization layer.
+func (sln *SimplifiedLayerNormalization[T]) OpType() string {
+	return "SimplifiedLayerNormalization"
+}
+
+// Attributes returns the attributes of the SimplifiedLayerNormalization layer.
+func (sln *SimplifiedLayerNormalization[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"epsilon": sln.epsilon}
+}
