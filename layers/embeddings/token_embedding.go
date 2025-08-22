@@ -98,6 +98,7 @@ func NewTokenEmbeddingFromParam[T tensor.Numeric](engine compute.Engine[T], embe
 	if len(shape) != 2 {
 		return nil, fmt.Errorf("embedding table must have 2 dimensions, got %d", len(shape))
 	}
+
 	return &TokenEmbedding[T]{
 		engine:         engine,
 		vocabSize:      shape[0],

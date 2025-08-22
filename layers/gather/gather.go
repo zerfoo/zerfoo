@@ -42,7 +42,7 @@ func (g *Gather[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
-// HasEmbeddedWeights returns true if this Gather layer has embedded weights
+// HasEmbeddedWeights returns true if this Gather layer has embedded weights.
 func (g *Gather[T]) HasEmbeddedWeights() bool {
 	return g.weights != nil
 }
@@ -51,22 +51,22 @@ func (g *Gather[T]) HasEmbeddedWeights() bool {
 func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	var params *tensor.TensorNumeric[T]
 	var indices *tensor.TensorNumeric[int]
-	
+
 	// If we have embedded weights, use them as params and expect only indices as input
 	if g.weights != nil {
 		if len(inputs) != 1 {
 			return nil, fmt.Errorf("Gather layer with embedded weights expects 1 input (indices), got %d", len(inputs))
 		}
 		params = g.weights
-		
+
 		// Create int tensor with same shape as input
 		inputTensor := inputs[0]
-		
+
 		intTensor, err := tensor.New[int](inputTensor.Shape(), nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create int tensor: %w", err)
 		}
-		
+
 		// Convert input values to int (assuming they represent valid indices)
 		// For now, we'll access the underlying data directly since we need to convert types
 		// This is a simplified approach - in a production system, we'd want better type handling
@@ -77,7 +77,7 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 			intData[i] = int(float64(val))
 		}
 		intTensor.SetData(intData)
-		
+
 		// Ensure indices tensor is 2D as required by the engine
 		if len(intTensor.Shape()) == 1 {
 			// Reshape 1D tensor to 2D: [N] -> [1, N]
