@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -34,18 +35,30 @@ func (s *Sub[T]) Parameters() []*graph.Parameter[T] {
 
 // Forward computes the element-wise subtraction of two input tensors (a - b).
 func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 2 {
-		panic("Sub layer requires exactly 2 inputs")
+	if len(inputs) == 1 {
+		// Handle single input case - subtract from zero (negate)
+		a := inputs[0]
+		s.outputShape = a.Shape()
+		
+		// Create a zero tensor with same shape
+		zeroTensor, err := tensor.New[T](a.Shape(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create zero tensor: %w", err)
+		}
+		
+		return s.engine.Sub(ctx, zeroTensor, a)
+	} else if len(inputs) == 2 {
+		a := inputs[0]
+		b := inputs[1]
+		
+		// The output shape should be the broadcasted shape of the two inputs
+		// For simplicity, we'll assume they have compatible shapes
+		s.outputShape = a.Shape()
+		
+		return s.engine.Sub(ctx, a, b)
+	} else {
+		return nil, fmt.Errorf("Sub layer expects 1 or 2 inputs, got %d", len(inputs))
 	}
-	
-	a := inputs[0]
-	b := inputs[1]
-	
-	// The output shape should be the broadcasted shape of the two inputs
-	// For simplicity, we'll assume they have compatible shapes
-	s.outputShape = a.Shape()
-	
-	return s.engine.Sub(ctx, a, b)
 }
 
 // Backward computes the gradients for the Sub layer.

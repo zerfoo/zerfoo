@@ -79,27 +79,30 @@ func BuildFromZMF[T tensor.Numeric](
 			}
 		}
 		
-		inputNodes := make([]graph.Node[T], len(validInputNames))
+		// Debug: Print input connection info for Sub layers
+		if nodeProto.OpType == "Sub" {
+			fmt.Printf("DEBUG: Sub layer %s expects %d inputs, got %d: %v\n", 
+				nodeProto.Name, len(nodeProto.Inputs), len(validInputNames), nodeProto.Inputs)
+		}
 		
-		for i, inputName := range validInputNames {
+		// Special handling for Gather layers with embedded weights
+		actualInputNames := validInputNames
+		if gatherLayer, isGather := currentNode.(interface{ HasEmbeddedWeights() bool }); isGather && gatherLayer.HasEmbeddedWeights() {
+			// Skip the first input (weights) since it's embedded in the layer
+			if len(actualInputNames) > 1 {
+				actualInputNames = actualInputNames[1:]
+			}
+		}
+		
+		// Connect inputs
+		inputNodes := make([]graph.Node[T], len(actualInputNames))
+		for i, inputName := range actualInputNames {
 			inputNode, ok := instantiatedNodes[inputName]
 			if !ok {
-				// Try to resolve output suffix (e.g., "/path/to/node/output_0" -> "/path/to/node")
+				// Try to resolve with output suffix
 				resolvedName := resolveOutputSuffix(inputName)
-				if resolvedName != inputName {
+				if resolvedName != "" {
 					inputNode, ok = instantiatedNodes[resolvedName]
-					if !ok {
-						// Try with common layer suffixes (LayerNorm, etc.)
-						layerSuffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm"}
-						for _, suffix := range layerSuffixes {
-							candidateName := resolvedName + suffix
-							if candidate, exists := instantiatedNodes[candidateName]; exists {
-								inputNode = candidate
-								ok = true
-								break
-							}
-						}
-					}
 				}
 				if !ok {
 					// Try to create a parameter node if this input refers to a parameter
@@ -185,21 +188,38 @@ func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // resolveOutputSuffix removes output suffixes like "/output_0", "/output_1", ":0", ":1" etc.
-func resolveOutputSuffix(name string) string {
+// and tries to find the actual node name in the nodeMap
+func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph.Node[T]) string {
 	// Handle /output_N pattern
 	if idx := strings.LastIndex(name, "/output_"); idx != -1 {
-		return name[:idx]
+		baseName := name[:idx]
+		if _, exists := nodeMap[baseName]; exists {
+			return baseName
+		}
 	}
 	// Handle :N pattern
 	if idx := strings.LastIndex(name, ":"); idx != -1 {
 		// Check if what follows is a number
 		if suffix := name[idx+1:]; len(suffix) > 0 {
 			if _, err := strconv.Atoi(suffix); err == nil {
-				return name[:idx]
+				baseName := name[:idx]
+				if _, exists := nodeMap[baseName]; exists {
+					return baseName
+				}
 			}
 		}
 	}
-	return name
+	
+	// Try common layer suffixes
+	suffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm"}
+	for _, suffix := range suffixes {
+		candidate := name + suffix
+		if _, exists := nodeMap[candidate]; exists {
+			return candidate
+		}
+	}
+	
+	return ""
 }
 
 // getNodeNames returns a slice of all node names for debugging

@@ -42,6 +42,11 @@ func (g *Gather[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
+// HasEmbeddedWeights returns true if this Gather layer has embedded weights
+func (g *Gather[T]) HasEmbeddedWeights() bool {
+	return g.weights != nil
+}
+
 // Forward computes the gather operation.
 func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	var params *tensor.TensorNumeric[T]
@@ -53,10 +58,39 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 			return nil, fmt.Errorf("Gather layer with embedded weights expects 1 input (indices), got %d", len(inputs))
 		}
 		params = g.weights
-		var ok bool
-		indices, ok = any(inputs[0]).(*tensor.TensorNumeric[int])
-		if !ok {
-			return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[0])
+		
+		// Create int tensor with same shape as input
+		inputTensor := inputs[0]
+		fmt.Printf("DEBUG: Gather Forward - input shape: %v, weights shape: %v\n", inputTensor.Shape(), g.weights.Shape())
+		
+		intTensor, err := tensor.New[int](inputTensor.Shape(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create int tensor: %w", err)
+		}
+		
+		// Convert input values to int (assuming they represent valid indices)
+		// For now, we'll access the underlying data directly since we need to convert types
+		// This is a simplified approach - in a production system, we'd want better type handling
+		inputData := inputTensor.Data()
+		intData := make([]int, len(inputData))
+		for i, val := range inputData {
+			// Convert to int (assuming T represents valid indices)
+			intData[i] = int(float64(val))
+		}
+		intTensor.SetData(intData)
+		
+		// Ensure indices tensor is 2D as required by the engine
+		if len(intTensor.Shape()) == 1 {
+			// Reshape 1D tensor to 2D: [N] -> [1, N]
+			newShape := []int{1, intTensor.Shape()[0]}
+			reshapedTensor, err := tensor.New[int](newShape, intData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to reshape indices tensor: %w", err)
+			}
+			indices = reshapedTensor
+			fmt.Printf("DEBUG: Reshaped indices from %v to %v\n", intTensor.Shape(), newShape)
+		} else {
+			indices = intTensor
 		}
 	} else {
 		// Original behavior: expect params and indices as inputs
