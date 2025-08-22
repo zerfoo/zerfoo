@@ -81,3 +81,13 @@ func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.Tens
 
 	return []*tensor.TensorNumeric[T]{inputGrad}, nil
 }
+
+// OpType returns the operation type of the LeakyReLU layer.
+func (l *LeakyReLU[T]) OpType() string {
+	return "LeakyReLU"
+}
+
+// Attributes returns the attributes of the LeakyReLU layer.
+func (l *LeakyReLU[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"alpha": l.alpha}
+}

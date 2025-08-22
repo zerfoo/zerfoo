@@ -93,6 +93,16 @@ func (g *FastGelu[T]) Backward(ctx context.Context, outputGradient *tensor.Tenso
 	return nil, nil
 }
 
+// OpType returns the operation type of the FastGelu layer.
+func (g *FastGelu[T]) OpType() string {
+	return "FastGelu"
+}
+
+// Attributes returns nil for the FastGelu layer.
+func (g *FastGelu[T]) Attributes() map[string]interface{} {
+	return nil
+}
+
 // Parameters returns the learnable parameters of the layer.
 func (g *FastGelu[T]) Parameters() []*graph.Parameter[T] {
 	return nil
