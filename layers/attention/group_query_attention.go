@@ -74,3 +74,13 @@ func (g *GroupQueryAttention[T]) Backward(ctx context.Context, outputGradient *t
 	
 	return gradients, nil
 }
+
+// OpType returns the operation type of the GroupQueryAttention layer.
+func (g *GroupQueryAttention[T]) OpType() string {
+	return g.name
+}
+
+// Attributes returns nil for the GroupQueryAttention layer.
+func (g *GroupQueryAttention[T]) Attributes() map[string]interface{} {
+	return nil
+}
