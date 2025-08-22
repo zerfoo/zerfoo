@@ -122,6 +122,8 @@ linters-settings:
       - pkg: github.com/stretchr/testify/require
         alias: require
 
+  
+
   nlreturn:
     block-size: 2
 

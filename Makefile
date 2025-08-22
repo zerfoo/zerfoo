@@ -37,8 +37,10 @@ format:
 
 # Run linters with auto-fix
 lint-fix:
-	@echo "🔧 Running linters with auto-fix..."
-	@golangci-lint run --fix --timeout=5m
+	@echo "🔧 Organizing imports (goimports)..."
+	@goimports -w .
+	@echo "🔧 Running linters with auto-fix (golangci-lint)..."
+	@golangci-lint run --fix --timeout=5m || true
 	@echo "✅ Auto-fixable issues resolved"
 
 # Run full lint check (no fixes)
