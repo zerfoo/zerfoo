@@ -105,10 +105,12 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		}
 	}
 
-	// The output shape is the shape of the indices tensor, with the last dimension
-	// replaced by the shape of the params tensor after the first dimension.
-	outputShape := indices.Shape()
-	outputShape = append(outputShape, params.Shape()[1:]...)
+	// For Gather operation, the output shape should be [batch_size, num_indices, embedding_dim]
+	// where batch_size and num_indices come from indices shape, and embedding_dim from params
+	batchSize := indices.Shape()[0]
+	numIndices := indices.Shape()[1]
+	embeddingDim := params.Shape()[1]
+	outputShape := []int{batchSize, numIndices, embeddingDim}
 	g.outputShape = outputShape
 
 	output, err := tensor.New[T](outputShape, nil)
