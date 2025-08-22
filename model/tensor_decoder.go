@@ -42,6 +42,7 @@ func decodeFloat32[T tensor.Numeric](rawData []byte, dest []T) error {
 		floatVal := math.Float32frombits(bits)
 		dest[i/4] = T(floatVal)
 	}
+
 	return nil
 }
 
@@ -54,5 +55,6 @@ func decodeFloat16[T tensor.Numeric](rawData []byte, dest []T) error {
 		f16 := float16.FromBits(bits)
 		dest[i/2] = T(f16.ToFloat32())
 	}
+
 	return nil
 }

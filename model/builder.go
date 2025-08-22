@@ -23,7 +23,7 @@ func BuildFromZMF[T tensor.Numeric](
 	model *zmf.Model,
 ) (*graph.Graph[T], error) {
 	if model == nil || model.Graph == nil {
-		return nil, fmt.Errorf("cannot build model from nil or empty ZMF graph")
+		return nil, errors.New("cannot build model from nil or empty ZMF graph")
 	}
 
 	params, err := convertParameters[T](model.Graph.Parameters)
@@ -73,7 +73,7 @@ func BuildFromZMF[T tensor.Numeric](
 	// 3. Second pass: Connect the nodes
 	for _, nodeProto := range model.Graph.Nodes {
 		currentNode := instantiatedNodes[nodeProto.Name]
-		
+
 		// Filter out empty input names first
 		validInputNames := make([]string, 0, len(nodeProto.Inputs))
 		for _, inputName := range nodeProto.Inputs {
@@ -81,8 +81,7 @@ func BuildFromZMF[T tensor.Numeric](
 				validInputNames = append(validInputNames, inputName)
 			}
 		}
-		
-		
+
 		// Special handling for layers with embedded weights/parameters
 		actualInputNames := validInputNames
 		if gatherLayer, isGather := currentNode.(interface{ HasEmbeddedWeights() bool }); isGather && gatherLayer.HasEmbeddedWeights() {
@@ -151,7 +150,7 @@ func BuildFromZMF[T tensor.Numeric](
 				actualInputNames = actualInputNames[:1]
 			}
 		}
-		
+
 		// Connect inputs
 		inputNodes := make([]graph.Node[T], len(actualInputNames))
 		for i, inputName := range actualInputNames {
@@ -187,7 +186,7 @@ func BuildFromZMF[T tensor.Numeric](
 						} else {
 							return nil, fmt.Errorf("input node '%s' (resolved: '%s') for node '%s' not found", inputName, resolvedName, nodeProto.Name)
 						}
-						}
+					}
 				}
 			}
 			inputNodes[i] = inputNode
@@ -197,10 +196,10 @@ func BuildFromZMF[T tensor.Numeric](
 
 	// 4. Identify the final output node of the graph.
 	if len(model.Graph.Outputs) == 0 {
-		return nil, fmt.Errorf("graph has no defined outputs")
+		return nil, errors.New("graph has no defined outputs")
 	}
 	outputNodeName := model.Graph.Outputs[0].Name
-	
+
 	outputNode, ok := instantiatedNodes[outputNodeName]
 	if !ok {
 		// Try to resolve output suffix for the output name
@@ -254,7 +253,7 @@ func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // resolveOutputSuffix removes output suffixes like "/output_0", "/output_1", ":0", ":1" etc.
-// and tries to find the actual node name in the nodeMap
+// and tries to find the actual node name in the nodeMap.
 func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph.Node[T]) string {
 	// Try stripping common suffixes first, including numbered outputs.
 	suffixes := []string{"/output_0", ":0", "/output_1", ":1", "/output_2", ":2", "/output_3", ":3"}
@@ -264,8 +263,8 @@ func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph
 			if _, exists := nodeMap[baseName]; exists {
 				return baseName
 			}
-			
-			// For patterns like "/model/layers.0/input_layernorm/output_0", 
+
+			// For patterns like "/model/layers.0/input_layernorm/output_0",
 			// try to find the actual layer node by appending common layer suffixes
 			layerSuffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm", "/MatMul", "/Gather", "/Shape", "/Cast", "/Reshape", "/Mul", "/Sub", "/Add", "/Concat", "/Unsqueeze", "/FastGelu"}
 			for _, layerSuffix := range layerSuffixes {
@@ -291,12 +290,13 @@ func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph
 	return ""
 }
 
-// getNodeNames returns a slice of all node names for debugging
+// getNodeNames returns a slice of all node names for debugging.
 func getNodeNames[T tensor.Numeric](nodes map[string]graph.Node[T]) []string {
 	names := make([]string, 0, len(nodes))
 	for name := range nodes {
 		names = append(names, name)
 	}
+
 	return names
 }
 
@@ -322,6 +322,7 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 		}
 		params[name] = param
 	}
+
 	return params, nil
 }
 
@@ -353,5 +354,6 @@ func convertAttributes(zmfAttributes map[string]*zmf.Attribute) map[string]inter
 			attributes[name] = stringValues
 		}
 	}
+
 	return attributes
 }
