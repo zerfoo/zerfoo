@@ -18,7 +18,7 @@ func BuildTranspose[T tensor.Numeric](
 ) (graph.Node[T], error) {
 	permAttr, ok := attributes["perm"]
 	if !ok {
-		return nil, fmt.Errorf("Transpose layer requires a 'perm' attribute")
+		return nil, errors.New("Transpose layer requires a 'perm' attribute")
 	}
 
 	perm, ok := permAttr.([]any)
@@ -26,12 +26,13 @@ func BuildTranspose[T tensor.Numeric](
 		// If it's not []any, maybe it's already []int64.
 		perm64, ok := permAttr.([]int64)
 		if !ok {
-			return nil, fmt.Errorf("attribute 'perm' is not a valid integer slice")
+			return nil, errors.New("attribute 'perm' is not a valid integer slice")
 		}
 		axes := make([]int, len(perm64))
 		for i, v := range perm64 {
 			axes[i] = int(v)
 		}
+
 		return New(engine, axes), nil
 	}
 
@@ -40,5 +41,6 @@ func BuildTranspose[T tensor.Numeric](
 	for i, v := range perm {
 		axes[i] = int(v.(int64))
 	}
+
 	return New(engine, axes), nil
 }

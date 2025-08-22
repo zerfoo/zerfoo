@@ -11,9 +11,9 @@ import (
 
 // ReduceSum represents a reduce sum operation.
 type ReduceSum[T tensor.Numeric] struct {
-	engine   compute.Engine[T]
-	axes     []int
-	keepDims bool
+	engine      compute.Engine[T]
+	axes        []int
+	keepDims    bool
 	outputShape []int
 }
 
@@ -25,8 +25,8 @@ func (r *ReduceSum[T]) OpType() string {
 // Attributes returns the attributes.
 func (r *ReduceSum[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{
-		"axes":      r.axes,
-		"keepdims":  r.keepDims,
+		"axes":     r.axes,
+		"keepdims": r.keepDims,
 	}
 }
 
@@ -53,7 +53,7 @@ func (r *ReduceSum[T]) Parameters() []*graph.Parameter[T] {
 func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
-	
+
 	axesMap := make(map[int]bool)
 	for _, axis := range r.axes {
 		axesMap[axis] = true
@@ -95,6 +95,7 @@ func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 			return nil, err
 		}
 	}
+
 	return tempResult, nil
 }
 

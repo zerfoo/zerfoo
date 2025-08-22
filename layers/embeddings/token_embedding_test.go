@@ -174,7 +174,7 @@ func TestTokenEmbedding_Backward_Token(t *testing.T) {
 	}
 }
 
-// TestTokenEmbedding_WithInitializer tests TokenEmbedding with custom weight initializer option
+// TestTokenEmbedding_WithInitializer tests TokenEmbedding with custom weight initializer option.
 func TestTokenEmbedding_WithInitializer(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 
@@ -192,7 +192,7 @@ func TestTokenEmbedding_WithInitializer(t *testing.T) {
 	}
 }
 
-// TestTokenEmbedding_DefaultInitialization tests TokenEmbedding with default initialization
+// TestTokenEmbedding_DefaultInitialization tests TokenEmbedding with default initialization.
 func TestTokenEmbedding_DefaultInitialization(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 

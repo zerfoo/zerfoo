@@ -63,13 +63,13 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 
 	// Create position indices: [0, 1, ..., seq_len-1]
 	positions := make([]int, seqLen)
-	for i := 0; i < seqLen; i++ {
+	for i := range seqLen {
 		positions[i] = i
 	}
 
 	// Create inverse frequencies: 1 / (base^(2i/head_dim))
 	invFreqsData := make([]T, headDim/2)
-	for i := 0; i < headDim/2; i++ {
+	for i := range headDim / 2 {
 		invFreqsData[i] = T(1.0 / math.Pow(opts.Base, float64(2*i)/float64(headDim)))
 	}
 

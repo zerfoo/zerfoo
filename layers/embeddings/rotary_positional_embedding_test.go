@@ -231,7 +231,7 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 	}
 }
 
-// TestRotaryPositionalEmbedding_WithBase tests RotaryPositionalEmbedding with custom base option
+// TestRotaryPositionalEmbedding_WithBase tests RotaryPositionalEmbedding with custom base option.
 func TestRotaryPositionalEmbedding_WithBase(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
@@ -249,12 +249,12 @@ func TestRotaryPositionalEmbedding_WithBase(t *testing.T) {
 	output, err := rpe.Forward(ctx, inputTensor)
 	testutils.AssertNoError(t, err, "Forward should not return an error")
 	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
-	
+
 	// Output should have same shape as input
 	testutils.AssertTrue(t, output.ShapeEquals(inputTensor), "Output shape should match input shape")
 }
 
-// TestRotaryPositionalEmbedding_DefaultBase tests RotaryPositionalEmbedding with default base
+// TestRotaryPositionalEmbedding_DefaultBase tests RotaryPositionalEmbedding with default base.
 func TestRotaryPositionalEmbedding_DefaultBase(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})

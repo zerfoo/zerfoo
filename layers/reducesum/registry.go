@@ -16,7 +16,7 @@ func BuildReduceSum[T tensor.Numeric](
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
 	var axes []int
-	
+
 	axesAttr, ok := attributes["axes"]
 	if !ok {
 		// Default behavior: reduce over all axes (empty slice indicates all axes)
@@ -42,5 +42,6 @@ func BuildReduceSum[T tensor.Numeric](
 	if !ok {
 		keepDims = 1
 	}
+
 	return New(engine, axes, keepDims == 1), nil
 }

@@ -11,8 +11,8 @@ import (
 
 // Transpose represents a transpose operation.
 type Transpose[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	perm   []int
+	engine      compute.Engine[T]
+	perm        []int
 	outputShape []int
 }
 
@@ -59,6 +59,7 @@ func (t *Transpose[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 
 	// Transpose the input tensor
 	transposed, err := t.engine.Transpose(ctx, inputs[0], t.perm)
+
 	return transposed, err
 }
 

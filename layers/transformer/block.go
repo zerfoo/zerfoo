@@ -13,11 +13,11 @@ import (
 
 // Block represents a single Transformer block.
 type Block[T tensor.Numeric] struct {
-	attention            graph.Node[T]
-	ffn                  *core.FFN[T]
-	norm1                *normalization.RMSNorm[T]
-	norm2                *normalization.RMSNorm[T]
-	normPostAttention    *normalization.RMSNorm[T]
+	attention         graph.Node[T]
+	ffn               *core.FFN[T]
+	norm1             *normalization.RMSNorm[T]
+	norm2             *normalization.RMSNorm[T]
+	normPostAttention *normalization.RMSNorm[T]
 }
 
 // BlockOptions holds configuration options for the Transformer block.
@@ -69,11 +69,11 @@ func NewTransformerBlock[T tensor.Numeric](
 	}
 
 	return &Block[T]{
-		attention:            attention,
-		ffn:                  ffn,
-		norm1:                attnNorm,
-		norm2:                norm2,
-		normPostAttention:    normPostAttention,
+		attention:         attention,
+		ffn:               ffn,
+		norm1:             attnNorm,
+		norm2:             norm2,
+		normPostAttention: normPostAttention,
 	}, nil
 }
 
@@ -133,6 +133,7 @@ func (b *Block[T]) Parameters() []*graph.Parameter[T] {
 	params = append(params, b.norm1.Parameters()...)
 	params = append(params, b.norm2.Parameters()...)
 	params = append(params, b.normPostAttention.Parameters()...)
+
 	return params
 }
 
