@@ -55,3 +55,13 @@ func (s *Shape[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 	// of the input tensor's values, so the gradient is zero.
 	return nil, nil
 }
+
+// OpType returns the operation type of the Shape layer.
+func (s *Shape[T]) OpType() string {
+	return "Shape"
+}
+
+// Attributes returns nil for the Shape layer.
+func (s *Shape[T]) Attributes() map[string]interface{} {
+	return nil
+}

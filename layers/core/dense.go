@@ -169,3 +169,13 @@ func (d *Dense[T]) SetName(name string) {
 		d.bias.SetName(name)
 	}
 }
+
+// OpType returns the operation type of the Dense layer.
+func (d *Dense[T]) OpType() string {
+	return "Dense"
+}
+
+// Attributes returns the attributes of the Dense layer.
+func (d *Dense[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"with_bias": d.bias != nil}
+}

@@ -347,3 +347,16 @@ func (p *PolynomialExpansion[T]) GetTermIndices() [][]int {
 
 	return result
 }
+
+// OpType returns the operation type of the PolynomialExpansion layer.
+func (p *PolynomialExpansion[T]) OpType() string {
+	return "PolynomialExpansion"
+}
+
+// Attributes returns the attributes of the PolynomialExpansion layer.
+func (p *PolynomialExpansion[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"degree":       p.degree,
+		"include_bias": p.includeBias,
+	}
+}

@@ -89,3 +89,13 @@ func (u *Unsqueeze[T]) Backward(ctx context.Context, outputGradient *tensor.Tens
 	
 	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
+
+// OpType returns the operation type of the Unsqueeze layer.
+func (u *Unsqueeze[T]) OpType() string {
+	return "Unsqueeze"
+}
+
+// Attributes returns the attributes of the Unsqueeze layer.
+func (u *Unsqueeze[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"axes": u.axes}
+}

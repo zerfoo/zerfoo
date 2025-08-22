@@ -55,3 +55,13 @@ func (c *Cast[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNum
 	// For same-type casting, gradient passes through unchanged
 	return []*tensor.TensorNumeric[T]{outputGradient}, nil
 }
+
+// OpType returns the operation type of the Cast layer.
+func (c *Cast[T]) OpType() string {
+	return "Cast"
+}
+
+// Attributes returns nil for the Cast layer.
+func (c *Cast[T]) Attributes() map[string]interface{} {
+	return nil
+}

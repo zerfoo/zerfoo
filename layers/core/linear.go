@@ -168,3 +168,13 @@ func (l *Linear[T]) Parameters() []*graph.Parameter[T] {
 func (l *Linear[T]) SetName(name string) {
 	l.weights.Name = name + "_weights"
 }
+
+// OpType returns the operation type of the Linear layer.
+func (l *Linear[T]) OpType() string {
+	return "Linear"
+}
+
+// Attributes returns nil for the Linear layer.
+func (l *Linear[T]) Attributes() map[string]interface{} {
+	return nil
+}
