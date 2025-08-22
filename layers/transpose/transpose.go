@@ -9,18 +9,30 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// Transpose is a layer that transposes a tensor.
+// Transpose represents a transpose operation.
 type Transpose[T tensor.Numeric] struct {
-	engine      compute.Engine[T]
-	axes        []int
+	engine compute.Engine[T]
+	perm   []int
 	outputShape []int
+}
+
+// OpType returns the operation type.
+func (t *Transpose[T]) OpType() string {
+	return "Transpose"
+}
+
+// Attributes returns the attributes.
+func (t *Transpose[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"perm": t.perm,
+	}
 }
 
 // New creates a new Transpose layer.
 func New[T tensor.Numeric](engine compute.Engine[T], axes []int) *Transpose[T] {
 	return &Transpose[T]{
 		engine: engine,
-		axes:   axes,
+		perm:   axes,
 	}
 }
 
@@ -38,23 +50,16 @@ func (t *Transpose[T]) Parameters() []*graph.Parameter[T] {
 func (t *Transpose[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
-	
-	axes := t.axes
-	if axes == nil {
-		// Default is to reverse the dimensions
-		axes = make([]int, len(shape))
-		for i := range shape {
-			axes[i] = len(shape) - 1 - i
-		}
-	}
 
 	outputShape := make([]int, len(shape))
-	for i, axis := range axes {
+	for i, axis := range t.perm {
 		outputShape[i] = shape[axis]
 	}
 	t.outputShape = outputShape
 
-	return t.engine.Transpose(ctx, input, axes)
+	// Transpose the input tensor
+	transposed, err := t.engine.Transpose(ctx, inputs[0], t.perm)
+	return transposed, err
 }
 
 // Backward computes the gradients for the Transpose layer.
