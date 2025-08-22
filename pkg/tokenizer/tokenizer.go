@@ -78,5 +78,6 @@ func (t *Tokenizer) GetToken(id int) string {
 	if word, ok := t.reverseVocab[id]; ok {
 		return word
 	}
+
 	return "<unk>"
 }
