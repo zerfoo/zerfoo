@@ -40,14 +40,14 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	}
 
 	a, b := inputs[0], inputs[1]
-	
+
 	// Check for dimension mismatch and attempt transpose if needed
 	if a.Shape()[len(a.Shape())-1] != b.Shape()[0] {
 		// Check if this is a case where b needs to be transposed
 		if len(a.Shape()) >= 2 && len(b.Shape()) == 2 {
 			aInner := a.Shape()[len(a.Shape())-1]
 			bInner := b.Shape()[1]
-			
+
 			// If a's inner dimension matches b's inner dimension, we might need to transpose b
 			if aInner == bInner {
 				bTransposed, err := m.engine.Transpose(ctx, b, []int{1, 0})
@@ -59,10 +59,11 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 					return nil, err
 				}
 				m.outputShape = result.Shape()
+
 				return result, nil
 			}
 		}
-		
+
 		return nil, fmt.Errorf("incompatible dimensions for matrix multiplication: %v x %v", a.Shape(), b.Shape())
 	}
 
@@ -72,6 +73,7 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	}
 
 	m.outputShape = result.Shape()
+
 	return result, nil
 }
 
@@ -80,22 +82,22 @@ func (m *MatMul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 	if len(inputs) != 2 {
 		panic("MatMul layer requires exactly 2 inputs")
 	}
-	
+
 	a := inputs[0]
 	b := inputs[1]
-	
+
 	// Gradient w.r.t. a: outputGradient @ b^T
 	gradA, err := m.engine.MatMul(ctx, outputGradient, b)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Gradient w.r.t. b: a^T @ outputGradient
 	gradB, err := m.engine.MatMul(ctx, a, outputGradient)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
 

@@ -39,24 +39,25 @@ func (c *Concat[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if len(inputs) == 0 {
 		panic("Concat layer requires at least 1 input")
 	}
-	
+
 	// Handle single input case (no-op)
 	if len(inputs) == 1 {
 		c.outputShape = inputs[0].Shape()
+
 		return inputs[0], nil
 	}
-	
+
 	// Calculate output shape for multiple inputs
 	firstShape := inputs[0].Shape()
 	c.outputShape = make([]int, len(firstShape))
 	copy(c.outputShape, firstShape)
-	
+
 	// Sum the dimensions along the concatenation axis
 	for i := 1; i < len(inputs); i++ {
 		inputShape := inputs[i].Shape()
 		c.outputShape[c.axis] += inputShape[c.axis]
 	}
-	
+
 	// For now, return the first input as a simplified implementation
 	// A full implementation would properly concatenate tensors
 	// This allows the model loading to proceed while we focus on the core functionality
@@ -68,19 +69,19 @@ func (c *Concat[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 	if len(inputs) == 0 {
 		panic("Concat layer requires at least 1 input")
 	}
-	
+
 	// Handle single input case (gradient passes through unchanged)
 	if len(inputs) == 1 {
 		return []*tensor.TensorNumeric[T]{outputGradient}, nil
 	}
-	
+
 	// For now, return the output gradient for each input
 	// A full implementation would properly split the gradient
 	gradients := make([]*tensor.TensorNumeric[T], len(inputs))
 	for i := range inputs {
 		gradients[i] = outputGradient
 	}
-	
+
 	return gradients, nil
 }
 
