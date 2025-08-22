@@ -34,23 +34,32 @@ func TestFFN_Forward(t *testing.T) {
 	// W1 (inputDim x hiddenDim)
 	w1Data := make([]float64, inputDim*hiddenDim)
 	for i := range w1Data {
-		w1Data[i] = float64(i + 1) * 0.1
+		w1Data[i] = float64(i+1) * 0.1
 	}
-	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data)
+		return t
+	}() // Assuming SetWeights takes *tensor.Tensor
 
 	// W2 (hiddenDim x outputDim)
 	w2Data := make([]float64, hiddenDim*outputDim)
 	for i := range w2Data {
-		w2Data[i] = float64(i + 1) * 0.05
+		w2Data[i] = float64(i+1) * 0.05
 	}
-	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data)
+		return t
+	}() // Assuming SetWeights takes *tensor.Tensor
 
 	// W3 (inputDim x hiddenDim) - for the gate in SwiGLU
 	w3Data := make([]float64, inputDim*hiddenDim)
 	for i := range w3Data {
-		w3Data[i] = float64(i + 1) * 0.08
+		w3Data[i] = float64(i+1) * 0.08
 	}
-	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() // Assuming SetWeights takes *tensor.Tensor
+	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data)
+		return t
+	}() // Assuming SetWeights takes *tensor.Tensor
 
 	// Input tensor (batchSize, inputDim)
 	inputData := []float64{1.0, 2.0, 3.0, 4.0}
@@ -93,21 +102,30 @@ func TestFFN_Backward(t *testing.T) {
 	// Manually set weights (same as forward for consistency)
 	w1Data := make([]float64, inputDim*hiddenDim)
 	for i := range w1Data {
-		w1Data[i] = float64(i + 1) * 0.1
+		w1Data[i] = float64(i+1) * 0.1
 	}
-	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data); return t }() 
+	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data)
+		return t
+	}()
 
 	w2Data := make([]float64, hiddenDim*outputDim)
 	for i := range w2Data {
-		w2Data[i] = float64(i + 1) * 0.05
+		w2Data[i] = float64(i+1) * 0.05
 	}
-	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data); return t }() 
+	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data)
+		return t
+	}()
 
 	w3Data := make([]float64, inputDim*hiddenDim)
 	for i := range w3Data {
-		w3Data[i] = float64(i + 1) * 0.08
+		w3Data[i] = float64(i+1) * 0.08
 	}
-	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data); return t }() 
+	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
+		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data)
+		return t
+	}()
 
 	inputData := []float64{1.0, 2.0, 3.0, 4.0}
 	inputTensor, _ := tensor.New[float64]([]int{batchSize, inputDim}, inputData)
@@ -119,7 +137,7 @@ func TestFFN_Backward(t *testing.T) {
 	// Gradient from subsequent layer (dOut)
 	dOutData := make([]float64, batchSize*outputDim)
 	for i := range dOutData {
-		dOutData[i] = float64(i + 1) * 0.01
+		dOutData[i] = float64(i+1) * 0.01
 	}
 	dOutTensor, _ := tensor.New[float64]([]int{batchSize, outputDim}, dOutData)
 
@@ -163,7 +181,7 @@ func TestFFN_Backward(t *testing.T) {
 	}
 }
 
-// TestFFN_WithInitializer tests FFN with custom weight initializer option
+// TestFFN_WithInitializer tests FFN with custom weight initializer option.
 func TestFFN_WithInitializer(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 	ops := &numeric.Float32Ops{}
@@ -192,7 +210,7 @@ func TestFFN_WithInitializer(t *testing.T) {
 	}
 }
 
-// TestFFN_WithBias tests FFN with bias option
+// TestFFN_WithBias tests FFN with bias option.
 func TestFFN_WithBias(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 	ops := &numeric.Float32Ops{}
@@ -210,7 +228,7 @@ func TestFFN_WithBias(t *testing.T) {
 	// Check parameter counts (weights + bias for each layer)
 	noBiasParams := ffnNoBias.Parameters()
 	withBiasParams := ffnWithBias.Parameters()
-	
+
 	// With bias: 6 parameters (W1 weights, W1 bias, W2 weights, W2 bias, W3 weights, W3 bias)
 	// Without bias: 3 parameters (W1 weights, W2 weights, W3 weights)
 	testutils.AssertEqual(t, len(noBiasParams), 3, "FFN without bias should have 3 parameter tensors")

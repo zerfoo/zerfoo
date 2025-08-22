@@ -39,9 +39,10 @@ func (r *Reshape[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	if len(inputs) != 1 {
 		panic("Reshape layer requires exactly 1 input")
 	}
-	
+
 	input := inputs[0]
 	r.outputShape = r.targetShape
+
 	return r.engine.Reshape(ctx, input, r.targetShape)
 }
 
@@ -50,16 +51,16 @@ func (r *Reshape[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor
 	if len(inputs) != 1 {
 		panic("Reshape layer requires exactly 1 input")
 	}
-	
+
 	input := inputs[0]
 	inputShape := input.Shape()
-	
+
 	// The gradient just needs to be reshaped back to the input shape
 	gradInput, err := r.engine.Reshape(ctx, outputGradient, inputShape)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
 

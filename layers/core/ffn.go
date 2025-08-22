@@ -14,22 +14,22 @@ import (
 
 // FFN (Feed-Forward Network) implements a two-layer MLP with SwiGLU activation.
 type FFN[T tensor.Numeric] struct {
-	name    string
-	engine  compute.Engine[T]
-	ops     numeric.Arithmetic[T]
+	name   string
+	engine compute.Engine[T]
+	ops    numeric.Arithmetic[T]
 
-	w1      *Dense[T] // First linear layer
-	w3      *Dense[T] // Gate linear layer for SwiGLU
-	w2      *Dense[T] // Second linear layer
-	swiglu  *activations.SwiGLU[T]
+	w1     *Dense[T] // First linear layer
+	w3     *Dense[T] // Gate linear layer for SwiGLU
+	w2     *Dense[T] // Second linear layer
+	swiglu *activations.SwiGLU[T]
 
 	// Cached tensors for backward pass
-	inputTensor *tensor.TensorNumeric[T]
-	w1Output    *tensor.TensorNumeric[T]
-	w3Output    *tensor.TensorNumeric[T]
+	inputTensor  *tensor.TensorNumeric[T]
+	w1Output     *tensor.TensorNumeric[T]
+	w3Output     *tensor.TensorNumeric[T]
 	swiGLUOutput *tensor.TensorNumeric[T]
-	w2Output    *tensor.TensorNumeric[T]
-	outputShape []int
+	w2Output     *tensor.TensorNumeric[T]
+	outputShape  []int
 }
 
 // OpType returns the operation type.
@@ -176,6 +176,7 @@ func (ffn *FFN[T]) Parameters() []*graph.Parameter[T] {
 	params = append(params, ffn.w3.Parameters()...)
 	// Append parameters from w2
 	params = append(params, ffn.w2.Parameters()...)
+
 	return params
 }
 

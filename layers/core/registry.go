@@ -27,15 +27,15 @@ func buildFFN[T tensor.Numeric](
 	// Extract attributes
 	inputDim, ok := attributes["input_dim"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: input_dim")
+		return nil, errors.New("missing or invalid attribute: input_dim")
 	}
 	hiddenDim, ok := attributes["hidden_dim"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: hidden_dim")
+		return nil, errors.New("missing or invalid attribute: hidden_dim")
 	}
 	outputDim, ok := attributes["output_dim"].(int)
 	if !ok {
-		return nil, fmt.Errorf("missing or invalid attribute: output_dim")
+		return nil, errors.New("missing or invalid attribute: output_dim")
 	}
 	withBias, ok := attributes["with_bias"].(bool)
 	if !ok {

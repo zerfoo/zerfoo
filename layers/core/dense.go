@@ -80,7 +80,7 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	// Reshape to 2D if input is N-D
 	if len(originalShape) > 2 {
 		batchSize := 1
-		for i := 0; i < len(originalShape)-1; i++ {
+		for i := range len(originalShape) - 1 {
 			batchSize *= originalShape[i]
 		}
 		var err error
@@ -124,7 +124,7 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 	// Reshape outputGradient to 2D if original input was N-D
 	if len(originalInputShape) > 2 {
 		batchSize := 1
-		for i := 0; i < len(originalInputShape)-1; i++ {
+		for i := range len(originalInputShape) - 1 {
 			batchSize *= originalInputShape[i]
 		}
 		var err error
@@ -159,6 +159,7 @@ func (d *Dense[T]) Parameters() []*graph.Parameter[T] {
 	if d.bias != nil {
 		params = append(params, d.bias.Parameters()...)
 	}
+
 	return params
 }
 

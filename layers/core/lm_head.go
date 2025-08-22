@@ -21,6 +21,7 @@ func NewLMHead[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmeti
 	if err != nil {
 		return nil, err
 	}
+
 	return &LMHead[T]{linear: linear, engine: engine}, nil
 }
 

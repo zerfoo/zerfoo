@@ -16,8 +16,7 @@ func BuildReshape[T tensor.Numeric](
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
 	var shape []int
-	
-	
+
 	shapeAttr, ok := attributes["shape"]
 	if !ok {
 		// Try to find shape in constant attributes (ZMF pattern)
@@ -30,6 +29,7 @@ func BuildReshape[T tensor.Numeric](
 					for i, val := range shapeValues {
 						shape[i] = int(val)
 					}
+
 					break
 				} else if shapeValues, isSlice := value.([]interface{}); isSlice {
 					shape = make([]int, len(shapeValues))
@@ -40,11 +40,12 @@ func BuildReshape[T tensor.Numeric](
 							shape[i] = intVal
 						}
 					}
+
 					break
 				}
 			}
 		}
-		
+
 		if len(shape) == 0 {
 			// Default behavior: return identity reshape (will be determined at runtime)
 			shape = []int{-1} // -1 means infer from input
