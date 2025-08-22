@@ -140,3 +140,13 @@ func (g *Gather[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 
 	return []*tensor.TensorNumeric[T]{dParams, nil}, nil
 }
+
+// OpType returns the operation type of the Gather layer.
+func (g *Gather[T]) OpType() string {
+	return "Gather"
+}
+
+// Attributes returns nil for the Gather layer.
+func (g *Gather[T]) Attributes() map[string]interface{} {
+	return nil
+}
