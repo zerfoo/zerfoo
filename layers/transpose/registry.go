@@ -5,14 +5,9 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
-
-func init() {
-	model.RegisterLayer("Transpose", BuildTranspose[float32])
-}
 
 func BuildTranspose[T tensor.Numeric](
 	engine compute.Engine[T],
