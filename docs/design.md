@@ -130,6 +130,13 @@ By adhering to these principles, Zerfoo aims to provide a **flexible, maintainab
 - CI enforces that `zerfoo/` imports do not reference ONNX or ZONNX packages.
 - Static checks/grep in workflows fail builds on forbidden imports.
 
+### Interoperability Lessons
+
+- Converter-centric normalization: ONNX flexibility (e.g., attributes provided as inputs) should be resolved in ZONNX. ZMF encodes explicit, normalized attributes so the runtime stays simple and numeric-first.
+- Example – Transpose: ONNX `perm` may appear as a node attribute or a constant tensor input. ZONNX must support both and emit a single canonical `perm` in ZMF.
+- Validation early: Prefer detection of mismatches at conversion/load time (e.g., graph input count, shapes) to prevent runtime errors and improve DX.
+- Pure Go tooling: Keep ZONNX free of CGo dependencies (e.g., avoid onnxruntime-based inspectors). Use protobuf-generated ONNX structs for parsing.
+
 
 ## High-Level Architecture Overview
 
