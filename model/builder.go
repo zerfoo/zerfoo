@@ -36,7 +36,12 @@ func BuildFromZMF[T tensor.Numeric](
 
 	// 1. Handle Graph Inputs
 	// These are the entry points to the graph. We create special input nodes for them.
+	// Only create input nodes for actual model inputs, not parameters
 	for _, inputProto := range model.Graph.Inputs {
+		// Skip parameters - they should be embedded in layers, not treated as inputs
+		if _, isParam := params[inputProto.Name]; isParam {
+			continue
+		}
 		dims := make([]int, len(inputProto.Shape))
 		for i, dim := range inputProto.Shape {
 			dims[i] = int(dim) // Convert int64 to int
