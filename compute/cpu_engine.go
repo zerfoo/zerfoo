@@ -145,39 +145,39 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 	// Check if the inner dimensions are compatible for matrix multiplication
 	// For a @ b, the last dimension of a must match the second-to-last dimension of b
 	if aShape[len(aShape)-1] != bShape[len(bShape)-2] {
-		return nil, fmt.Errorf("invalid shapes for matrix multiplication: a.Shape()=%v, b.Shape()=%v (inner dimensions %d != %d)", 
+		return nil, fmt.Errorf("invalid shapes for matrix multiplication: a.Shape()=%v, b.Shape()=%v (inner dimensions %d != %d)",
 			aShape, bShape, aShape[len(aShape)-1], bShape[len(bShape)-2])
 	}
 
 	// Handle broadcasting: if b is 2D and a is higher dimensional, broadcast b
 	var outputShape []int
 	var batchSize int
-	
+
 	if len(aShape) > len(bShape) {
 		// Broadcasting case: a is [batch..., m, k], b is [k, n]
 		outputShape = make([]int, len(aShape))
-		copy(outputShape, aShape[:len(aShape)-1]) // Copy batch dims + m
+		copy(outputShape, aShape[:len(aShape)-1])               // Copy batch dims + m
 		outputShape[len(outputShape)-1] = bShape[len(bShape)-1] // Set n
-		
+
 		batchSize = 1
-		for i := 0; i < len(aShape)-2; i++ {
+		for i := range len(aShape) - 2 {
 			batchSize *= aShape[i]
 		}
 	} else {
 		// Same dimensions case
-		for i := 0; i < len(aShape)-2; i++ {
+		for i := range len(aShape) - 2 {
 			if aShape[i] != bShape[i] {
 				return nil, errors.New("batch dimensions must be equal")
 			}
 		}
-		
+
 		outputShape = make([]int, len(aShape))
 		copy(outputShape, aShape[:len(aShape)-2])
 		outputShape[len(outputShape)-2] = aShape[len(aShape)-2]
 		outputShape[len(outputShape)-1] = bShape[len(bShape)-1]
-		
+
 		batchSize = 1
-		for i := 0; i < len(aShape)-2; i++ {
+		for i := range len(aShape) - 2 {
 			batchSize *= aShape[i]
 		}
 	}
@@ -195,20 +195,20 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 	bData := b.Data()
 	rData := result.Data()
 
-	for i := 0; i < batchSize; i++ {
+	for i := range batchSize {
 		aOffset := i * m * k
 		rOffset := i * m * n
-		
+
 		// For broadcasting, b doesn't have batch dimension, so bOffset is always 0
 		bOffset := 0
 		if len(aShape) == len(bShape) {
 			bOffset = i * k * n
 		}
 
-		for row := 0; row < m; row++ {
-			for col := 0; col < n; col++ {
+		for row := range m {
+			for col := range n {
 				sum := e.ops.FromFloat64(0)
-				for inner := 0; inner < k; inner++ {
+				for inner := range k {
 					valA := aData[aOffset+row*k+inner]
 					valB := bData[bOffset+inner*n+col]
 					sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
@@ -220,7 +220,6 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 
 	return result, nil
 }
-
 
 // Transpose transposes a tensor.
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -848,7 +847,7 @@ func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.TensorNumeric[T], sh
 	// Handle -1 dimension inference
 	inferredShape := make([]int, len(shape))
 	copy(inferredShape, shape)
-	
+
 	inferIndex := -1
 	knownSize := 1
 	for i, dim := range shape {
@@ -863,7 +862,7 @@ func (e *CPUEngine[T]) Reshape(_ context.Context, a *tensor.TensorNumeric[T], sh
 			knownSize *= dim
 		}
 	}
-	
+
 	if inferIndex != -1 {
 		if currentSize%knownSize != 0 {
 			return nil, fmt.Errorf("cannot infer dimension: tensor size %d not divisible by known dimensions %d", currentSize, knownSize)
