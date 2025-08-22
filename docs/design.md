@@ -62,6 +62,36 @@ func main() {
 }
 ```
 
+### Quick Start: Load and Run a ZMF Model
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/zerfoo/zerfoo/compute"
+    "github.com/zerfoo/zerfoo/model"
+)
+
+func main() {
+    // 1) Create engine
+    eng := compute.NewCPUEngine()
+
+    // 2) Load a pre-converted ZMF model
+    //    ZONNX produces `.zmf`; Zerfoo runtime only consumes ZMF.
+    m, err := model.LoadZMF(context.Background(), eng, "./model.zmf")
+    if err != nil { panic(err) }
+
+    // 3) Prepare inputs according to the model's declared graph inputs
+    //    (omitted for brevity)
+
+    // 4) Run inference
+    out, err := m.Forward(context.Background(), nil /* inputs map */)
+    if err != nil { panic(err) }
+    _ = out
+}
+```
+
 ## Introduction
 
 Zerfoo is a Go-based machine learning framework designed to enable experimentation towards Artificial General Intelligence (AGI) while remaining practical for immediate tasks such as time series forecasting, sentiment analysis, and classification. The architecture is optimized to scale to extremely large models (AGI-scale) in the future, yet the initial implementation (MVP) focuses on core functionality for common ML tasks. Zerfoo takes a disruptive approach by leveraging Go’s strengths – strong typing, concurrency, and simplicity – to build an idiomatic, highly modular ML framework. The design emphasizes a **declarative model definition**, a graph-based execution model, and robust support for distributed training, all while avoiding common pitfalls of existing frameworks (complex class hierarchies, monolithic designs, etc.). This document outlines the architecture in detail, including core components, interfaces, execution model, and strategies for extensibility and performance.
@@ -87,6 +117,19 @@ Zerfoo’s architecture is guided by fundamental software design principles (SOL
 *   **Avoiding Common ML Framework Pitfalls:** Zerfoo intentionally sidesteps anti-patterns observed in other frameworks. It forgoes heavy object-oriented inheritance (no base class that every layer must inherit), avoids global session/graph contexts in favor of explicit graph objects, and does not hide errors or state behind magic. Each interface is small and purpose-specific (Interface Segregation Principle) to avoid bloated types. The result is a design where components can be tested and used in isolation, and the framework can evolve without breaking existing code.
 
 By adhering to these principles, Zerfoo aims to provide a **flexible, maintainable, and scalable** foundation for machine learning in Go.
+
+## Architecture Boundaries
+
+- Zerfoo is a runtime that is ONNX-agnostic and consumes only ZMF (Zerfoo Model Format).
+- ZONNX is a separate converter/tooling module that translates ONNX ↔ ZMF. It must not depend on `zerfoo` runtime internals.
+- ZMF is the single interchange format between converter and runtime. The runtime loads ZMF and constructs graphs; no ONNX parsing occurs in `zerfoo/`.
+- Strings and exotic ONNX types are normalized in ZONNX. Runtime STRING tensors exist only when a specific op requires them.
+
+### CI Architecture Guards
+
+- CI enforces that `zerfoo/` imports do not reference ONNX or ZONNX packages.
+- Static checks/grep in workflows fail builds on forbidden imports.
+
 
 ## High-Level Architecture Overview
 
@@ -121,7 +164,10 @@ Zerfoo’s codebase is organized into clear-cut packages, each handling a distin
 *   **`graph`**: Provides tools for building and manipulating the computation graph. It defines the core `Node[T]` interface (described above) and a `Builder[T]` for constructing DAGs of nodes. The Builder manages node handles (identifiers) and ensures that when the graph is built, all dependencies are resolved and ordered. The graph package also may include logic for topological sorting of nodes, detecting cycles (to enforce acyclic), and composing the forward and backward execution flows. Additionally, simple merge nodes (like concatenation or sum of multiple inputs) can be provided here as utilities.
 *   **`layers`**: A collection of sub-packages for predefined layer implementations. For example, `layers/dense` for fully connected layers, `layers/conv` for convolutional layers, `layers/rnn` for recurrent layers, `layers/attention` for attention mechanisms, etc. Each layer in `layers/...` is implemented as a struct (possibly embedding other structs) that satisfies the `Node[T]` interface (i.e., implements `Forward`, `Backward`, etc.). These layer packages can depend on `tensor` and `compute` for their operations, and typically will use the engine interface to perform their math. By organizing each family of layers separately, new layers can be added without affecting core packages.
 *   **`training`**: Houses components for the training process. This includes optimizers (`Optimizer[T]` interface with methods like `Step(params)` to update parameters), learning rate schedulers (`LRScheduler` for adjusting learning rate over epochs), regularizers (`Regularizer` to apply weight decay or other regularization post-update), and possibly a high-level `Trainer` that orchestrates the training loop. This package might also contain `DataLoader` abstractions for batch loading of datasets. The goal is to keep training-related logic (optimizing parameters, managing epochs and batches, callbacks for logging) separate from the graph and engine.
-*   **`model`**: Defines the `Model` interface and utilities for saving, loading, or exporting models. A `Model` could be an object that groups together a graph (or reference to the output node) and the set of parameters. The package also provides `ModelImporter` and `ModelExporter` interfaces to support interoperability with external model formats. For instance, an ONNX importer could implement `ModelImporter` to construct a Zerfoo model from an ONNX file, and an exporter could save Zerfoo models in ONNX or other formats. This promotes integration with other tools and frameworks without baking their logic into Zerfoo’s core.
+*   **`model`**: Defines the `Model` interface and utilities for saving and loading models in the **ZMF (Zerfoo Model Format)**. A `Model` could be an object that groups together a graph (or reference to the output node) and the set of parameters. The package also provides `ModelImporter` and `ModelExporter` interfaces to support interoperability with ZMF.
+    
+    - ZMF Loader Contract: `model.LoadZMF(ctx, engine, path)` parses the ZMF protobuf, validates shapes/attributes, builds the runtime graph using only ZMF data, and returns a runnable model. Errors are surfaced with user-friendly messages when ZMF is incomplete or invalid.
+    - The loader is the sole entry point that constructs runtime graphs from serialized artifacts; no ONNX parsing or semantics exist here.
 *   **`device`** (optional): Abstractions for hardware devices and memory management. This could define a `Device` interface representing a physical or logical device (CPU, specific GPU, etc.) with methods to query device properties or allocate/free memory. Higher-level code can use this to enumerate available devices or direct operations to a particular device. This package is optional and primarily relevant for advanced scenarios (explicit device placement, memory pool management). In many cases, the `compute` engines handle device details internally.
 *   **`distributed`**: Provides tools for distributed training across multiple processes or nodes. It defines interfaces like `DistributedStrategy` which encapsulate the communication patterns needed for multi-machine training. Implementations may include strategies such as All-Reduce (peers exchanging gradients), Parameter Server (central parameter node), or Hierarchical-AllReduce. The strategy interface typically includes methods to initialize communication, perform gradient synchronization (`AllReduceGradients`), and coordinate barriers or synchronization points. By isolating distributed logic here, the rest of the framework can remain unchanged whether training is single-machine or multi-machine.
 
@@ -133,7 +179,22 @@ To ensure flexibility and consistency, Zerfoo defines clear interfaces for key c
 
 *   **Numeric Types and Local Dependencies:** Zerfoo defines a type constraint `Numeric` to allow numeric generics. The core framework supports all four precision types: `float32`, `float64`, `float16`, and `float8`. For lower-precision floating-point types, which are critical for optimizing model size and inference speed, Zerfoo integrates with local implementations. Specifically, it uses `github.com/dndungu/float16` for IEEE 754 compliant 16-bit `float16` support and `github.com/dndungu/float8` for E4M3FN format 8-bit `float8` support, both included as local package dependencies with replace directives in `go.mod`. This approach provides production-quality implementations while maintaining full control over the numeric foundation. The `numeric` package provides a unified API across all precision types with consistent arithmetic operations (Add, Mul, Sub, Div, Neg, Abs) and proper IEEE 754 compliance. All computations are parameterized by a generic type `T` which must satisfy the `tensor.Numeric` constraint, ensuring type safety across all supported precisions.
 
-*   **Tensor:** The `tensor.Tensor[T]` type represents an n-dimensional array of values of type T. It provides methods like `Shape() []int` to get the dimensions, and `Data() []T` to access the raw data. Internally, a Tensor may also carry metadata like strides or device placement info, but those are abstracted behind the interface. Tensors are typically created by engine implementations or by high-level ops; users mostly interact with them through Node operations or simple creation utilities. For performance, the Tensor may either be a struct or an interface with optimized implementations for different backends (e.g., a struct for CPU tensor vs a separate struct for GPU tensor, both satisfying `Tensor[T]`).
+### Supported Data Types (Runtime)
+
+- Floats: FP32, FP16, FP8
+- Integers (quantized): INT8, UINT8
+- Boolean: BOOL
+- Strings: minimal/only when strictly required by an op
+
+Exotic ONNX types are normalized in ZONNX to supported ZMF forms; runtime remains numeric-first.
+
+### Quantization Execution Policy
+
+- ZONNX preserves quantization info in ZMF: `Tensor.DataType` may be `INT8` or `UINT8`, and optional `Tensor.quant` carries `scale`, `zero_point`, `axis`, `symmetric`.
+- Zerfoo executes quantized kernels (INT8/UINT8) where available (e.g., MatMul/GEMM/Conv; Gather if needed) and respects per-tensor vs per-channel quantization (`axis`).
+- Fallback: if an op lacks a quantized kernel, dequantize at load/build to FP tensors for that op’s path only.
+
+*   **Tensor:** The `tensor.Tensor[T]` type represents an n-dimensional array of values of type T. It provides methods like `Shape() []int` to get the dimensions, and `Data() []T` to access the raw data. Internally, a Tensor may also carry metadata like strides or device placement info, but those are abstracted behind the interface. Tensors are typically created by engine implementations or by high-level ops; users mostly interact with them through Node operations or simple creation utilities. For performance, the Tensor may either be a struct or an interface with optimized implementations for different backends (e.g., a struct for CPU tensor vs a separate struct for GPU tensor, both satisfying `Tensor[T]`)
 
 *   **Engine (Compute Context):** The `compute.Engine[T]` interface defines low-level tensor operations that the execution engine must provide. All methods on the `Engine` interface must accept a `context.Context` as their first argument. This is a standard Go idiom for production systems that enables cancellation, timeouts, and deadline propagation. To optimize for high-performance and low-memory scenarios, `Engine` methods should accept an optional destination `dst` tensor (e.g., `Add(ctx, a, b, dst)`). If `dst` is provided, the result should be written into it directly, avoiding a new memory allocation. Representative methods include:
 
@@ -277,7 +338,7 @@ Using Zerfoo to train a model involves a few clear steps which leverage the comp
 
 1.  **Define Model Architecture:** The user defines the model either by using the declarative struct method or by manually building via `Builder`. For instance, assume we have a struct-based model `MyModel` or we manually do builder calls; either way we now have an output node handle (or a Model object that encapsulates it). If using a struct, we might call `builder, inputs := graph.BuildModel(&myModel)` which returns a builder and input handles ready to use. The model architecture might include, for a time-series example, an RNN layer followed by a Dense for output; for sentiment analysis, perhaps an embedding layer, followed by a sequence aggregator and a classifier. Zerfoo’s layer library would provide these common components.
 
-2.  **Initialize Builder and Engine:** The user chooses an execution engine. For initial use, this could be the default CPU engine: `engine := compute.NewCPUEngine()` (which perhaps internally uses multi-threaded BLAS). For acceleration, if GPU is available, `engine := compute.NewCUDAEngine()` could be used. The engine is passed into the graph builder so that all operations will utilize it. For distributed training, at this time the user might also initialize a distributed strategy (e.g., `dist := distributed.NewAllReduceStrategy(...); dist.Init()`).
+2.  **Initialize Builder and Engine:** The user chooses an execution engine. For initial use, this could be the default CPU engine: `engine := compute.NewCPUEngine()` (which perhaps internally uses multi-threaded BLAS). For acceleration, if GPU is available, `engine := compute.NewCUDAEngine()` could be used. The engine is passed into the graph builder so that all operations will utilize it. For distributed training, at this time the user might also initialize a distributed strategy (e.g., `dist := distributed.NewAllReduceStrategy(...); dist.Init()`)
 
 3.  **Build Computational Graph:** The model is built into a graph if not already done. If using the manual approach:
 
@@ -303,7 +364,7 @@ Using Zerfoo to train a model involves a few clear steps which leverage the comp
 
 6.  **Epoch End and Evaluation:** After each epoch, the user can evaluate model performance on a validation set. This simply involves using the `forward` function on validation data (without calling backward or optimizer). Because forward is a pure function of inputs (no internal state change except maybe caching), it can be called concurrently on multiple batches if desired (e.g., using goroutines to evaluate in parallel) or sequentially. The framework does not distinguish training vs inference mode explicitly, except that certain layers like Dropout might need to behave differently. Those layers can have an internal flag for "training mode" vs "inference mode" that the user toggles, or more simply, one could instantiate a slightly different graph for inference (omitting dropout or using moving average batchnorm parameters, etc.).
 
-7.  **Model Checkpointing:** Periodically, the user can save the model. Using the `model.ModelExporter` interface, one could do something like `modelExporter.ExportModel(myModel, "path/to/file")`. An ONNX exporter, for instance, would write out a file containing the network structure and weights. Alternatively, Zerfoo could provide a simpler serialization (e.g., Gob encoding of all parameters, or just saving weights to a file with a known ordering). The design supports multiple serialization formats through the interface so that the framework is not locked into a single model file format.
+7.  **Model Checkpointing:** Periodically, the user can save the model. Using the `model.ModelExporter` interface, one could do something like `modelExporter.ExportModel(myModel, "path/to/file.zmf")`. This will save the model in the ZMF format.
 
 This workflow demonstrates Zerfoo’s end-to-end usage. It highlights the declarative building of a model, the execution of graph forward/backward passes, and the integration with training utilities and possibly distributed strategies. The key point is that each part of this workflow corresponds to a distinct module in the design (graph building, execution engine, training loop, etc.), validating the separation of concerns. A development team can work on improving one part (say the GPU engine or a new optimizer) with minimal impact on others, as long as the interface contracts are upheld.
 
@@ -382,21 +443,48 @@ These features ensure that a multi-day training job is not lost due to a transie
 
 ## Model Serialization and Interoperability
 
-Interoperability with other tools and the ability to save/load models are important in any ML framework. Zerfoo addresses this through a dedicated model interface and import/export mechanisms:
+Interoperability with other tools and the ability to save/load models are important in any ML framework. Zerfoo addresses this through a dedicated model interface and import/export mechanisms centered around its native **ZMF (Zerfoo Model Format)**.
 
 *   **Model Interface:** Zerfoo may define a `Model` interface representing a trainable model instance. This could be simply a wrapper that has methods like `Forward(inputs)`, or it may encapsulate metadata like input/output names. The Model could also provide a `GetParameters() []Parameter[T]` method to easily fetch all parameters, which is useful for optimizers or saving. For many use cases, the Model interface might not be strictly necessary since the graph’s forward function suffices; however, it can be useful to package together the graph and any additional logic (for example, a method to do inference that internally maps input struct to tensors, calls forward, and maps output tensor to result types).
 
-*   **Serialization/Export:** The `model.ModelExporter` interface is intended for saving models to external formats. Zerfoo aims to support **ONNX (Open Neural Network Exchange)** as a primary interoperability format. An ONNX exporter will traverse the Zerfoo graph and convert each node to the corresponding ONNX graph node, then save all the Parameter values into the ONNX file. Since ONNX has wide adoption, this allows models trained in Zerfoo to be used in deployment environments that support ONNX (for example, running on mobile via ONNX Runtime, or sharing with Python-based teams). Similarly, a `ModelImporter` for ONNX can take an ONNX model and construct an equivalent Zerfoo graph, creating corresponding layers and loading weights. This importer would likely reside in a sub-package (perhaps `pkg/importer/onnx`) and use reflection or a registry to map ONNX layer types to Zerfoo layer constructors.
+*   **Serialization/Export to ZMF:** The `model.ModelExporter` interface is intended for saving models to the ZMF format. An ZMF exporter will traverse the Zerfoo graph and convert each node to the corresponding ZMF graph node, then save all the Parameter values into the ZMF file.
 
-*   **Format Flexibility:** Beyond ONNX, the framework could support other formats like TensorFlow SavedModel, JSON-based model descriptions, or even simpler custom formats (like a Gob-encoded Zerfoo struct). The key is that these are implemented as pluggable components, not hardcoded. If the community develops a new standard format, Zerfoo can gain support by adding a new importer/exporter without changing core code. The ModelExporter interface’s existence means multiple exporters could be registered – e.g., ONNX, a plain binary weights file, etc. – and the user can choose one.
+*   **Interoperability via ZONNX:** To interact with the broader ML ecosystem, Zerfoo relies on the **ZONNX** project (`github.com/zerfoo/zonnx`). ZONNX is a separate, dedicated tool for bidirectional conversion between ZMF and ONNX (Open Neural Network Exchange). This clean separation of concerns ensures that Zerfoo's core remains lean and focused on its native format, while ZONNX handles the complexities of ONNX interoperability.
 
-*   **Versioning and Compatibility:** When serializing models, especially as the framework evolves, care will be taken to include version info and perhaps a minimal metadata about the architecture. If a model is saved and later loaded with a newer version of Zerfoo, the importer will try to map old layer names to new ones or alert if something is unsupported. Using well-defined external formats like ONNX mitigates this, since ONNX itself has versioned ops. If Zerfoo-specific features (like a custom layer not in ONNX) need export, the exporter might have to fallback (e.g., export an unknown op as a custom ONNX op, or not support it). These details would be documented.
+*   **Integration with Go Tools:** Thanks to Go’s standard library, saving and loading can leverage packages like `encoding/gob` for quick dumps of weight matrices, or `encoding/json` for human-readable configs. For instance, Zerfoo could have a simple `SaveWeights(model, filepath)` that just writes all weight tensors to a binary file in order, and a `LoadWeights(model, filepath)` to read them back – this would assume the model architecture is known (the same code that created it). This is mainly for convenience during development (fast checkpointing). The more formal approach is the exporter/importer interfaces for ZMF.
 
-*   **Integration with Go Tools:** Thanks to Go’s standard library, saving and loading can leverage packages like `encoding/gob` for quick dumps of weight matrices, or `encoding/json` for human-readable configs. For instance, Zerfoo could have a simple `SaveWeights(model, filepath)` that just writes all weight tensors to a binary file in order, and a `LoadWeights(model, filepath)` to read them back – this would assume the model architecture is known (the same code that created it). This is mainly for convenience during development (fast checkpointing). The more formal approach is the exporter/importer interfaces for standardized formats.
+*   **Interoperability Use Cases:** With the ZMF-ONNX bridge provided by ZONNX, one can do things like: train a model in Zerfoo, export it to ZMF, convert it to ONNX using ZONNX, and then deploy it in a C++ runtime or a cloud service that accepts ONNX. Or, import a model that was trained in PyTorch (exported to ONNX) into ZMF using ZONNX, and then load it into Zerfoo to continue training or analysis in Go. This flexibility ensures Zerfoo can exist in the larger ML ecosystem. It lowers adoption risk because users aren’t “locked in” – they can always convert their models out if needed.
 
-*   **Interoperability Use Cases:** With ONNX support, one can do things like: train a model in Zerfoo and then deploy it in a C++ runtime or a cloud service that accepts ONNX. Or, import a model that was trained in PyTorch (exported to ONNX) into Zerfoo and continue training or analysis in Go. This flexibility ensures Zerfoo can exist in the larger ML ecosystem. It lowers adoption risk because users aren’t “locked in” – they can always convert their models out if needed. Additionally, in the future, Zerfoo could allow mixing external components via FFI – e.g., maybe wrap a TensorFlow or PyTorch module as a node – but that’s beyond MVP scope and would require careful handling of tensor memory.
+In summary, Zerfoo’s serialization and interoperability design ensures that while the framework is Go-centric, it doesn’t operate in isolation. Models can move between Zerfoo and other environments when needed through the ZMF format and the ZONNX tool.
 
-In summary, Zerfoo’s serialization and interoperability design ensures that while the framework is Go-centric, it doesn’t operate in isolation. Models can move between Zerfoo and other environments when needed, and developers can use familiar tools to save and inspect models. By planning for these features early (with the ModelImporter/Exporter abstraction), Zerfoo avoids the trap of having a great training framework that is hard to use in production or share with others.
+## ZMF: The Zerfoo Model Format
+
+ZMF (Zerfoo Model Format) is the native serialization format for Zerfoo models. It is designed to be a complete and efficient representation of a Zerfoo computational graph, including the model architecture, weights, and any other necessary metadata.
+
+### ZMF Design Goals
+
+*   **Completeness:** ZMF must be able to represent any valid Zerfoo graph, including custom layers and complex topologies.
+*   **Efficiency:** The format should be compact and fast to read and write.
+*   **Extensibility:** ZMF is designed to be forward-compatible, allowing for the addition of new features and layer types without breaking older models.
+*   **Simplicity:** The format is based on standard technologies like Protocol Buffers, making it easy to understand and implement.
+
+### ZMF Structure
+
+A ZMF file is a Protocol Buffer message that contains the following information:
+
+*   **Graph Definition:** A description of the computational graph, including all nodes, their connections, and their attributes.
+*   **Weights:** The trained weights of the model, stored in a compact binary format.
+*   **Metadata:** Additional information about the model, such as the Zerfoo version it was trained with, the date it was created, and any other user-defined metadata.
+
+### Enhancing ZMF
+
+To ensure that ZMF can fully represent any model, we will continue to enhance it as Zerfoo evolves. This includes:
+
+*   **Adding support for new layer types:** As new layers are added to Zerfoo, we will update the ZMF specification to include them.
+*   **Improving performance:** We will continue to optimize the ZMF format for speed and efficiency.
+*   **Adding new features:** We will add new features to ZMF as needed, such as support for quantized models or new types of metadata.
+
+By investing in ZMF, we are creating a solid foundation for the future of Zerfoo. A robust and well-designed model format is essential for a successful ML framework, and we are committed to making ZMF the best it can be.
 
 ## Avoiding Common Framework Pitfalls
 
@@ -462,7 +550,7 @@ Create a test file for your new layer (e.g., `my_custom_layer_test.go`) and add 
 package layers
 
 import (
-	"testing"
+	t"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
