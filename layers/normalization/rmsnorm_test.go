@@ -57,28 +57,28 @@ func TestRMSNorm_CustomEpsilon(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
-	
+
 	modelDim := 4
 	customEpsilon := float32(1e-3)
-	
+
 	rmsnorm, err := NewRMSNorm[float32]("test_rmsnorm", engine, ops, modelDim, WithRMSNormEpsilon[float32](customEpsilon))
 	if err != nil {
 		t.Fatalf("Failed to create RMSNorm layer: %v", err)
 	}
-	
+
 	// Create input tensor
 	inputData := []float32{1.0, 2.0, 3.0, 4.0, 2.0, 3.0, 4.0, 5.0}
 	input, err := tensor.New[float32]([]int{2, modelDim}, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
-	
+
 	// Forward pass should work without error
 	output, err := rmsnorm.Forward(ctx, input)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
-	
+
 	// Verify output shape
 	expectedShape := []int{2, modelDim}
 	if len(output.Shape()) != len(expectedShape) {
@@ -95,28 +95,28 @@ func TestRMSNorm_DefaultEpsilon(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
-	
+
 	modelDim := 4
-	
+
 	// Create RMSNorm without epsilon option (should use default)
 	rmsnorm, err := NewRMSNorm[float32]("test_rmsnorm", engine, ops, modelDim)
 	if err != nil {
 		t.Fatalf("Failed to create RMSNorm layer: %v", err)
 	}
-	
+
 	// Create input tensor
 	inputData := []float32{1.0, 2.0, 3.0, 4.0}
 	input, err := tensor.New[float32]([]int{1, modelDim}, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
-	
+
 	// Forward pass should work without error
 	output, err := rmsnorm.Forward(ctx, input)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
-	
+
 	// Verify output shape
 	expectedShape := []int{1, modelDim}
 	if len(output.Shape()) != len(expectedShape) {
@@ -132,17 +132,17 @@ func TestRMSNorm_DefaultEpsilon(t *testing.T) {
 func TestRMSNorm_Parameters(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
-	
+
 	modelDim := 4
-	
+
 	rmsnorm, err := NewRMSNorm[float32]("test_rmsnorm", engine, ops, modelDim)
 	if err != nil {
 		t.Fatalf("Failed to create RMSNorm layer: %v", err)
 	}
-	
+
 	params := rmsnorm.Parameters()
 	testutils.AssertEqual(t, len(params), 1, "RMSNorm should have 1 parameter (weight)")
-	
+
 	// Check weight parameter
 	weight := params[0]
 	if weight.Name != "test_rmsnorm_gain" {
@@ -150,7 +150,7 @@ func TestRMSNorm_Parameters(t *testing.T) {
 	}
 }
 
-// TestRMSNorm_OutputShape tests OutputShape method
+// TestRMSNorm_OutputShape tests OutputShape method.
 func TestRMSNorm_OutputShape(t *testing.T) {
 	ctx := context.Background()
 	ops := &numeric.Float32Ops{}
@@ -177,7 +177,7 @@ func TestRMSNorm_OutputShape(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(inputShape, outputShape), "OutputShape should match input shape")
 }
 
-// TestRMSNorm_Forward_Comprehensive tests Forward method with various inputs
+// TestRMSNorm_Forward_Comprehensive tests Forward method with various inputs.
 func TestRMSNorm_Forward_Comprehensive(t *testing.T) {
 	ctx := context.Background()
 	ops := &numeric.Float32Ops{}
@@ -219,13 +219,13 @@ func TestRMSNorm_Forward_Comprehensive(t *testing.T) {
 	// Verify that RMS normalization was applied (values should be scaled)
 	for i := 0; i < len(outputData); i += normalizedDim {
 		// Check that the RMS-normalized values are reasonable
-		for j := 0; j < normalizedDim; j++ {
+		for j := range normalizedDim {
 			testutils.AssertTrue(t, outputData[i+j] != inputData[i+j], "Output should be different from input after normalization")
 		}
 	}
 }
 
-// TestRMSNorm_Forward_EdgeCases tests Forward with edge cases
+// TestRMSNorm_Forward_EdgeCases tests Forward with edge cases.
 func TestRMSNorm_Forward_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 	ops := &numeric.Float32Ops{}
@@ -266,7 +266,7 @@ func TestRMSNorm_Forward_EdgeCases(t *testing.T) {
 	testutils.AssertNotNil(t, output3, "Output should not be nil")
 }
 
-// TestRMSNorm_Backward tests Backward method
+// TestRMSNorm_Backward tests Backward method.
 func TestRMSNorm_Backward(t *testing.T) {
 	ctx := context.Background()
 	ops := &numeric.Float32Ops{}
@@ -296,9 +296,10 @@ func TestRMSNorm_Backward(t *testing.T) {
 	if err != nil {
 		// If backward is not implemented, just verify it returns an error gracefully
 		testutils.AssertError(t, err, "Backward pass should return an error if not implemented")
+
 		return
 	}
-	
+
 	testutils.AssertNotNil(t, inputGrads, "Input gradients should not be nil")
 	testutils.AssertEqual(t, len(inputGrads), 1, "Should return one input gradient")
 
@@ -312,19 +313,20 @@ func TestRMSNorm_Backward(t *testing.T) {
 	for _, grad := range gradData2 {
 		if grad != 0.0 {
 			hasNonZeroGrad = true
+
 			break
 		}
 	}
 	testutils.AssertTrue(t, hasNonZeroGrad, "Should have non-zero gradients")
 }
 
-// TestRMSNorm_NewFromParam tests NewRMSNormFromParam constructor
+// TestRMSNorm_NewFromParam tests NewRMSNormFromParam constructor.
 func TestRMSNorm_NewFromParam(t *testing.T) {
 	// Skip this test as it requires complex graph.Parameter setup
 	t.Skip("NewRMSNormFromParam requires graph.Parameter setup which is complex for unit tests")
 }
 
-// TestRMSNorm_SetName tests SetName method
+// TestRMSNorm_SetName tests SetName method.
 func TestRMSNorm_SetName(t *testing.T) {
 	ops := &numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)

@@ -10,7 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-// TestLayerNormalization_WithEpsilon tests LayerNormalization with custom epsilon option
+// TestLayerNormalization_WithEpsilon tests LayerNormalization with custom epsilon option.
 func TestLayerNormalization_WithEpsilon(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 
@@ -24,7 +24,7 @@ func TestLayerNormalization_WithEpsilon(t *testing.T) {
 	testutils.AssertFloatEqual(t, customEpsilon, ln.epsilon, float32(1e-9), "Epsilon should be set to custom value")
 }
 
-// TestLayerNormalization_DefaultEpsilon tests LayerNormalization with default epsilon
+// TestLayerNormalization_DefaultEpsilon tests LayerNormalization with default epsilon.
 func TestLayerNormalization_DefaultEpsilon(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 
@@ -38,7 +38,7 @@ func TestLayerNormalization_DefaultEpsilon(t *testing.T) {
 	testutils.AssertFloatEqual(t, expectedEpsilon, ln.epsilon, float32(1e-9), "Epsilon should be set to default value")
 }
 
-// TestLayerNormalization_Parameters tests that LayerNormalization returns correct parameters
+// TestLayerNormalization_Parameters tests that LayerNormalization returns correct parameters.
 func TestLayerNormalization_Parameters(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
 
@@ -49,7 +49,7 @@ func TestLayerNormalization_Parameters(t *testing.T) {
 	testutils.AssertEqual(t, len(params), 2, "LayerNormalization should have 2 parameters (gamma and beta)")
 }
 
-// TestLayerNormalization_OutputShape tests OutputShape method
+// TestLayerNormalization_OutputShape tests OutputShape method.
 func TestLayerNormalization_OutputShape(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
@@ -72,7 +72,7 @@ func TestLayerNormalization_OutputShape(t *testing.T) {
 	testutils.AssertTrue(t, testutils.IntSliceEqual(inputShape, outputShape), "OutputShape should match input shape")
 }
 
-// TestLayerNormalization_Forward tests Forward method
+// TestLayerNormalization_Forward tests Forward method.
 func TestLayerNormalization_Forward(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
@@ -88,7 +88,7 @@ func TestLayerNormalization_Forward(t *testing.T) {
 	inputData := []float32{
 		// Batch 1, Seq 1
 		1.0, 2.0, 3.0, 4.0,
-		// Batch 1, Seq 2  
+		// Batch 1, Seq 2
 		5.0, 6.0, 7.0, 8.0,
 		// Batch 1, Seq 3
 		9.0, 10.0, 11.0, 12.0,
@@ -120,7 +120,7 @@ func TestLayerNormalization_Forward(t *testing.T) {
 	testutils.AssertFloatEqual(t, 0.0, mean, 1e-5, "Normalized sequence should have mean ≈ 0")
 }
 
-// TestLayerNormalization_Forward_EdgeCases tests Forward with edge cases
+// TestLayerNormalization_Forward_EdgeCases tests Forward with edge cases.
 func TestLayerNormalization_Forward_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
@@ -150,7 +150,7 @@ func TestLayerNormalization_Forward_EdgeCases(t *testing.T) {
 	testutils.AssertNotNil(t, output2, "Output should not be nil")
 }
 
-// TestLayerNormalization_Backward tests Backward method
+// TestLayerNormalization_Backward tests Backward method.
 func TestLayerNormalization_Backward(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
@@ -179,9 +179,10 @@ func TestLayerNormalization_Backward(t *testing.T) {
 	if err != nil {
 		// If backward is not implemented, just verify it returns an error gracefully
 		testutils.AssertError(t, err, "Backward pass should return an error if not implemented")
+
 		return
 	}
-	
+
 	testutils.AssertNotNil(t, inputGrads, "Input gradients should not be nil")
 	testutils.AssertEqual(t, len(inputGrads), 1, "Should return one input gradient")
 

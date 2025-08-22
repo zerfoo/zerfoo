@@ -2,6 +2,7 @@
 package normalization
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,7 +26,7 @@ func BuildRMSNorm[T tensor.Numeric](
 
 	epsilonAttr, ok := attributes["epsilon"]
 	if !ok {
-		return nil, fmt.Errorf("missing required attribute: epsilon")
+		return nil, errors.New("missing required attribute: epsilon")
 	}
 
 	var epsilon float64
@@ -51,7 +52,7 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	// Try multiple parameter naming patterns for LayerNorm gain/weight
 	var gain *graph.Parameter[T]
 	var ok bool
-	
+
 	// Pattern 1: {name}_gain (original expected format)
 	gain, ok = params[name+"_gain"]
 	if !ok {
@@ -80,14 +81,14 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 		}
 		gain, ok = params[layernormName]
 	}
-	
+
 	if !ok {
-			return nil, fmt.Errorf("missing required parameter for LayerNorm. Tried: %s_gain, and weight patterns", name)
+		return nil, fmt.Errorf("missing required parameter for LayerNorm. Tried: %s_gain, and weight patterns", name)
 	}
 
 	epsilonAttr, ok := attributes["epsilon"]
 	if !ok {
-		return nil, fmt.Errorf("missing required attribute: epsilon")
+		return nil, errors.New("missing required attribute: epsilon")
 	}
 
 	var epsilon float64
@@ -113,7 +114,7 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	// Try multiple parameter naming patterns for LayerNorm gain/weight
 	var gain *graph.Parameter[T]
 	var ok bool
-	
+
 	// Pattern 1: {name}_gain (original expected format)
 	gain, ok = params[name+"_gain"]
 	if !ok {
@@ -144,14 +145,14 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 		}
 		gain, ok = params[layernormName]
 	}
-	
+
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter for SkipLayerNorm. Tried: %s_gain, and weight patterns", name)
 	}
 
 	epsilonAttr, ok := attributes["epsilon"]
 	if !ok {
-		return nil, fmt.Errorf("missing required attribute: epsilon")
+		return nil, errors.New("missing required attribute: epsilon")
 	}
 
 	var epsilon float64

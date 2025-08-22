@@ -27,6 +27,7 @@ func NewSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	return &SkipSimplifiedLayerNormalization[T]{
 		normLayer: normLayer,
 		engine:    engine,
@@ -39,6 +40,7 @@ func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inp
 	if err != nil {
 		return nil, err
 	}
+
 	return sln.engine.Add(ctx, inputs[0], normalized)
 }
 
