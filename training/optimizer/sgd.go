@@ -100,5 +100,6 @@ func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 		}
 		p.Value = newValue
 	}
+
 	return nil
 }

@@ -23,7 +23,7 @@ func TestCrossEntropyLoss_OutputShape(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	cel := NewCrossEntropyLoss[float32](engine)
-	
+
 	// OutputShape should return empty initially
 	outputShape := cel.OutputShape()
 	testutils.AssertEqual(t, len(outputShape), 0, "OutputShape should be empty initially")
@@ -34,7 +34,7 @@ func TestCrossEntropyLoss_Parameters(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	cel := NewCrossEntropyLoss[float32](engine)
-	
+
 	params := cel.Parameters()
 	testutils.AssertNil(t, params, "CrossEntropyLoss should have no parameters")
 }
@@ -68,6 +68,7 @@ func TestCrossEntropyLoss_Forward_Simple(t *testing.T) {
 	if err != nil {
 		// Expected to fail due to missing Softmax, Log, Gather, etc. methods in engine
 		testutils.AssertError(t, err, "Forward pass expected to fail due to missing engine methods")
+
 		return
 	}
 
@@ -171,13 +172,14 @@ func TestCrossEntropyLoss_Backward(t *testing.T) {
 	if err != nil {
 		// Expected to fail due to missing OneHot, Sub, Mul methods in engine
 		testutils.AssertError(t, err, "Backward pass expected to fail due to missing engine methods")
+
 		return
 	}
 
 	// If it doesn't fail, verify gradients structure
 	testutils.AssertNotNil(t, grads, "Gradients should not be nil")
 	testutils.AssertEqual(t, len(grads), 2, "Should return 2 gradients (predictions, targets)")
-	
+
 	if grads[0] != nil {
 		testutils.AssertTrue(t, testutils.IntSliceEqual(predShape, grads[0].Shape()), "Prediction gradients should match prediction shape")
 	}
