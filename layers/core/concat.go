@@ -36,11 +36,17 @@ func (c *Concat[T]) Parameters() []*graph.Parameter[T] {
 
 // Forward computes the concatenation of input tensors along the specified axis.
 func (c *Concat[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) < 2 {
-		panic("Concat layer requires at least 2 inputs")
+	if len(inputs) == 0 {
+		panic("Concat layer requires at least 1 input")
 	}
 	
-	// Calculate output shape
+	// Handle single input case (no-op)
+	if len(inputs) == 1 {
+		c.outputShape = inputs[0].Shape()
+		return inputs[0], nil
+	}
+	
+	// Calculate output shape for multiple inputs
 	firstShape := inputs[0].Shape()
 	c.outputShape = make([]int, len(firstShape))
 	copy(c.outputShape, firstShape)
@@ -59,8 +65,13 @@ func (c *Concat[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 
 // Backward computes the gradients for the Concat layer.
 func (c *Concat[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	if len(inputs) < 2 {
-		panic("Concat layer requires at least 2 inputs")
+	if len(inputs) == 0 {
+		panic("Concat layer requires at least 1 input")
+	}
+	
+	// Handle single input case (gradient passes through unchanged)
+	if len(inputs) == 1 {
+		return []*tensor.TensorNumeric[T]{outputGradient}, nil
 	}
 	
 	// For now, return the output gradient for each input
@@ -71,4 +82,14 @@ func (c *Concat[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 	}
 	
 	return gradients, nil
+}
+
+// OpType returns the operation type of the Concat layer.
+func (c *Concat[T]) OpType() string {
+	return "Concat"
+}
+
+// Attributes returns the attributes of the Concat layer.
+func (c *Concat[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"axis": c.axis}
 }

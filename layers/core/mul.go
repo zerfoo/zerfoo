@@ -71,3 +71,13 @@ func (m *Mul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
+
+// OpType returns the operation type of the Mul layer.
+func (m *Mul[T]) OpType() string {
+	return "Mul"
+}
+
+// Attributes returns nil for the Mul layer.
+func (m *Mul[T]) Attributes() map[string]interface{} {
+	return nil
+}

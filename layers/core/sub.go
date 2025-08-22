@@ -81,3 +81,13 @@ func (s *Sub[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
+
+// OpType returns the operation type of the Sub layer.
+func (s *Sub[T]) OpType() string {
+	return "Sub"
+}
+
+// Attributes returns nil for the Sub layer.
+func (s *Sub[T]) Attributes() map[string]interface{} {
+	return nil
+}

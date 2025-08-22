@@ -127,3 +127,13 @@ func (b *Bias[T]) Parameters() []*graph.Parameter[T] {
 func (b *Bias[T]) SetName(name string) {
 	b.biases.Name = name + "_biases"
 }
+
+// OpType returns the operation type of the Bias layer.
+func (b *Bias[T]) OpType() string {
+	return "Bias"
+}
+
+// Attributes returns nil for the Bias layer.
+func (b *Bias[T]) Attributes() map[string]interface{} {
+	return nil
+}

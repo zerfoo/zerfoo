@@ -98,3 +98,13 @@ func (r *Reshape[T]) Backward(ctx context.Context, outputGradient *tensor.Tensor
 	
 	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
+
+// OpType returns the operation type of the Reshape layer.
+func (r *Reshape[T]) OpType() string {
+	return "Reshape"
+}
+
+// Attributes returns the attributes of the Reshape layer.
+func (r *Reshape[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"shape": r.targetShape}
+}

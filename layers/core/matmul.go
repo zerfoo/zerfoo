@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -32,29 +33,49 @@ func (m *MatMul[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
-// Forward computes the matrix multiplication of two input tensors.
+// Forward computes the matrix multiplication.
 func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
-		panic("MatMul layer requires exactly 2 inputs")
+		return nil, fmt.Errorf("MatMul layer requires exactly 2 inputs, got %d", len(inputs))
 	}
+
+	a, b := inputs[0], inputs[1]
 	
-	a := inputs[0]
-	b := inputs[1]
-	
-	// Calculate output shape for matrix multiplication
-	aShape := a.Shape()
-	bShape := b.Shape()
-	
-	// For 2D matrices: (M, K) x (K, N) -> (M, N)
-	if len(aShape) >= 2 && len(bShape) >= 2 {
-		m.outputShape = make([]int, len(aShape))
-		copy(m.outputShape, aShape)
-		m.outputShape[len(aShape)-1] = bShape[len(bShape)-1]
-	} else {
-		m.outputShape = aShape
+	// Debug: Print shapes for problematic MatMul operations
+	if a.Shape()[len(a.Shape())-1] != b.Shape()[0] {
+		fmt.Printf("DEBUG: MatMul dimension mismatch - a.Shape()=%v, b.Shape()=%v\n", a.Shape(), b.Shape())
+		
+		// Check if this is a case where b needs to be transposed
+		if len(a.Shape()) >= 2 && len(b.Shape()) == 2 {
+			aInner := a.Shape()[len(a.Shape())-1]
+			bInner := b.Shape()[1]
+			
+			// If a's inner dimension matches b's inner dimension, we might need to transpose b
+			if aInner == bInner {
+				fmt.Printf("DEBUG: Attempting to transpose second operand for MatMul\n")
+				bTransposed, err := m.engine.Transpose(ctx, b, []int{1, 0})
+				if err != nil {
+					return nil, fmt.Errorf("failed to transpose second operand: %w", err)
+				}
+				result, err := m.engine.MatMul(ctx, a, bTransposed)
+				if err != nil {
+					return nil, err
+				}
+				m.outputShape = result.Shape()
+				return result, nil
+			}
+		}
+		
+		return nil, fmt.Errorf("invalid shapes for matrix multiplication: a.Shape()=%v, b.Shape()=%v (inner dimensions %d != %d)", a.Shape(), b.Shape(), a.Shape()[len(a.Shape())-1], b.Shape()[0])
 	}
-	
-	return m.engine.MatMul(ctx, a, b)
+
+	result, err := m.engine.MatMul(ctx, a, b)
+	if err != nil {
+		return nil, err
+	}
+
+	m.outputShape = result.Shape()
+	return result, nil
 }
 
 // Backward computes the gradients for the MatMul layer.
@@ -79,4 +100,14 @@ func (m *MatMul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 	}
 	
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
+}
+
+// OpType returns the operation type of the MatMul layer.
+func (m *MatMul[T]) OpType() string {
+	return "MatMul"
+}
+
+// Attributes returns nil for the MatMul layer.
+func (m *MatMul[T]) Attributes() map[string]interface{} {
+	return nil
 }

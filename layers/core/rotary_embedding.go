@@ -74,3 +74,13 @@ func (r *RotaryEmbedding[T]) Backward(ctx context.Context, outputGradient *tenso
 	
 	return gradients, nil
 }
+
+// OpType returns the operation type of the RotaryEmbedding layer.
+func (r *RotaryEmbedding[T]) OpType() string {
+	return r.name
+}
+
+// Attributes returns nil for the RotaryEmbedding layer.
+func (r *RotaryEmbedding[T]) Attributes() map[string]interface{} {
+	return nil
+}
