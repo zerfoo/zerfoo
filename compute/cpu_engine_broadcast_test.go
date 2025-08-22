@@ -14,6 +14,7 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 	t.Helper()
 	if !actual.ShapeEquals(expected) {
 		t.Errorf("tensor shapes do not match: actual %v, expected %v", actual.Shape(), expected.Shape())
+
 		return false
 	}
 
@@ -22,15 +23,18 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 
 	if len(actualData) != len(expectedData) {
 		t.Errorf("tensor data lengths do not match: actual %d, expected %d", len(actualData), len(expectedData))
+
 		return false
 	}
 
 	for i := range actualData {
 		if math.Abs(float64(actualData[i])-float64(expectedData[i])) > float64(epsilon) {
 			t.Errorf("tensor elements at index %d are not approximately equal: actual %v, expected %v, epsilon %v", i, actualData[i], expectedData[i], epsilon)
+
 			return false
 		}
 	}
+
 	return true
 }
 
