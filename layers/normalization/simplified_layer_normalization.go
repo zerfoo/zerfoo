@@ -3,6 +3,7 @@ package normalization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -33,6 +34,7 @@ func NewSimplifiedLayerNormalization[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	return &SimplifiedLayerNormalization[T]{
 		engine:  engine,
 		ops:     ops,
@@ -92,7 +94,99 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 
 // Backward applies the backward pass of the SimplifiedLayerNormalization layer.
 func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("backward pass not implemented")
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("SimplifiedLayerNormalization expects 1 input, got %d", len(inputs))
+	}
+
+	input := inputs[0]
+
+	// Ensure forward caches are present
+	if sln.invStdDev == nil || sln.normalizedInput == nil {
+		return nil, errors.New("backward called before forward: missing cached tensors")
+	}
+
+	// dGain = sum(dOut * normalized) reduced to gain shape
+	dGainFull, err := sln.engine.Mul(ctx, outputGradient, sln.normalizedInput)
+	if err != nil {
+		return nil, err
+	}
+
+	dGainReduced := dGainFull
+	// Common case: gain has shape [D] (last dimension). Reduce over all other axes with keepDims=false.
+	// Repeatedly reduce axis 0 until only the last dimension remains.
+	for len(dGainReduced.Shape()) > 1 {
+		dGainReduced, err = sln.engine.ReduceSum(ctx, dGainReduced, 0, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Accumulate into parameter gradient
+	sln.gain.Gradient, err = sln.engine.Add(ctx, sln.gain.Gradient, dGainReduced, sln.gain.Gradient)
+	if err != nil {
+		return nil, err
+	}
+
+	// dInput computation
+	// dNormalized = dOut * gain
+	dNormalized, err := sln.engine.Mul(ctx, outputGradient, sln.gain.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	// term1 = dNormalized * invStdDev
+	term1, err := sln.engine.Mul(ctx, dNormalized, sln.invStdDev)
+	if err != nil {
+		return nil, err
+	}
+
+	// rmsCubed = invStdDev^3
+	rmsSq, err := sln.engine.Mul(ctx, sln.invStdDev, sln.invStdDev)
+	if err != nil {
+		return nil, err
+	}
+	rmsCubed, err := sln.engine.Mul(ctx, rmsSq, sln.invStdDev)
+	if err != nil {
+		return nil, err
+	}
+
+	// sumDNormX = ReduceSum(dNormalized * input, axis=-1, keepDims=true)
+	dNormX, err := sln.engine.Mul(ctx, dNormalized, input)
+	if err != nil {
+		return nil, err
+	}
+	sumDNormX, err := sln.engine.ReduceSum(ctx, dNormX, -1, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// invN = 1/N where N is last dimension size
+	lastDim := input.Shape()[len(input.Shape())-1]
+	invN, err := tensor.New[T]([]int{1}, []T{sln.ops.FromFloat64(1.0 / float64(lastDim))})
+	if err != nil {
+		return nil, err
+	}
+
+	// term2 = input * sumDNormX * rmsCubed * invN
+	term2, err := sln.engine.Mul(ctx, input, sumDNormX)
+	if err != nil {
+		return nil, err
+	}
+	term2, err = sln.engine.Mul(ctx, term2, rmsCubed)
+	if err != nil {
+		return nil, err
+	}
+	term2, err = sln.engine.Mul(ctx, term2, invN)
+	if err != nil {
+		return nil, err
+	}
+
+	dInput, err := sln.engine.Sub(ctx, term1, term2)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
 // Parameters returns the learnable parameters of the layer.
