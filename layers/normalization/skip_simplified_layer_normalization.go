@@ -56,3 +56,13 @@ func (sln *SkipSimplifiedLayerNormalization[T]) Parameters() []*graph.Parameter[
 func (sln *SkipSimplifiedLayerNormalization[T]) OutputShape() []int {
 	return sln.normLayer.OutputShape()
 }
+
+// OpType returns the operation type of the SkipSimplifiedLayerNormalization layer.
+func (sln *SkipSimplifiedLayerNormalization[T]) OpType() string {
+	return "SkipSimplifiedLayerNormalization"
+}
+
+// Attributes returns the attributes of the underlying normalization layer.
+func (sln *SkipSimplifiedLayerNormalization[T]) Attributes() map[string]interface{} {
+	return sln.normLayer.Attributes()
+}
