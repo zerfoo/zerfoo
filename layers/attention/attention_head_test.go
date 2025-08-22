@@ -28,7 +28,7 @@ func TestAttentionHead(t *testing.T) {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 	// Fill with some dummy data
-	for i := 0; i < batchSize*seqLen*inputDim; i++ {
+	for i := range batchSize * seqLen * inputDim {
 		inputTensor.Data()[i] = float32(i)
 	}
 

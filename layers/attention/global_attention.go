@@ -26,8 +26,8 @@ func (ga *GlobalAttention[T]) Attributes() map[string]interface{} {
 
 // GlobalAttentionOptions holds configuration options for GlobalAttention layer.
 type GlobalAttentionOptions struct {
-	Base       float64
-	MaxSeqLen  int
+	Base      float64
+	MaxSeqLen int
 }
 
 // GlobalAttentionOption is a function that configures GlobalAttentionOptions.
@@ -59,7 +59,7 @@ func WithGlobalAttentionMaxSeqLen(maxSeqLen int) GlobalAttentionOption {
 //
 // Default values:
 // - base: 10000.0
-// - maxSeqLen: 2048
+// - maxSeqLen: 2048.
 func NewGlobalAttention[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -87,6 +87,7 @@ func NewGlobalAttention[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	return &GlobalAttention[T]{
 		gqa: gqa,
 	}, nil
@@ -109,7 +110,7 @@ func (ga *GlobalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 	return ga.gqa.Forward(ctx, inputs...)
 }
 
-// Backward is not implemented
+// Backward is not implemented.
 func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return ga.gqa.Backward(ctx, dOut, inputs...)
 }

@@ -63,6 +63,7 @@ func NewLocalAttention[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	return &LocalAttention[T]{
 		gqa:        gqa,
 		windowSize: windowSize,
@@ -95,11 +96,11 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 	}
 	// Fill with a large negative number
 	largeNegative := la.ops.FromFloat64(-1e9)
-	for i := 0; i < seqLen*seqLen; i++ {
+	for i := range seqLen * seqLen {
 		mask.Data()[i] = largeNegative
 	}
 
-	for i := 0; i < seqLen; i++ {
+	for i := range seqLen {
 		start := i - la.windowSize
 		if start < 0 {
 			start = 0
@@ -112,10 +113,11 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 			mask.Data()[i*seqLen+j] = la.ops.FromFloat64(0)
 		}
 	}
+
 	return mask, nil
 }
 
-// Backward is not implemented
+// Backward is not implemented.
 func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return la.gqa.Backward(ctx, dOut, inputs...)
 }

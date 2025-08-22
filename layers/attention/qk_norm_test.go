@@ -24,6 +24,7 @@ func calculateExpectedNormalizedTensor(input *tensor.TensorNumeric[float64], eps
 		normalizedData[i] = v / rms
 	}
 	newTensor, _ := tensor.New[float64](input.Shape(), normalizedData)
+
 	return newTensor
 }
 
@@ -39,38 +40,62 @@ func TestQKNorm(t *testing.T) {
 		expectErr bool
 	}{
 		{
-			name:    "Simple 1D tensors",
-			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
-			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
-			epsilon: 1e-5,
+			name: "Simple 1D tensors",
+			qInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+				return t
+			}(),
+			kInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0})
+				return t
+			}(),
+			epsilon:   1e-5,
 			expectErr: false,
 		},
 		{
-			name:    "2D tensors",
-			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{1.0, 2.0, 3.0, 4.0}); return t }(),
-			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2, 2}, []float64{5.0, 6.0, 7.0, 8.0}); return t }(),
-			epsilon: 1e-5,
+			name: "2D tensors",
+			qInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{2, 2}, []float64{1.0, 2.0, 3.0, 4.0})
+				return t
+			}(),
+			kInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{2, 2}, []float64{5.0, 6.0, 7.0, 8.0})
+				return t
+			}(),
+			epsilon:   1e-5,
 			expectErr: false,
 		},
 		{
-			name:    "Mismatched shapes",
-			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
-			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{2}, []float64{4.0, 5.0}); return t }(),
-			epsilon: 1e-5,
+			name: "Mismatched shapes",
+			qInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+				return t
+			}(),
+			kInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{2}, []float64{4.0, 5.0})
+				return t
+			}(),
+			epsilon:   1e-5,
 			expectErr: true,
 		},
 		{
-			name:    "Nil Q input",
-			qInput:  nil,
-			kInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0}); return t }(),
-			epsilon: 1e-5,
+			name:   "Nil Q input",
+			qInput: nil,
+			kInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0})
+				return t
+			}(),
+			epsilon:   1e-5,
 			expectErr: true,
 		},
 		{
-			name:    "Nil K input",
-			qInput:  func() *tensor.TensorNumeric[float64] { t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0}); return t }(),
-			kInput:  nil,
-			epsilon: 1e-5,
+			name: "Nil K input",
+			qInput: func() *tensor.TensorNumeric[float64] {
+				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+				return t
+			}(),
+			kInput:    nil,
+			epsilon:   1e-5,
 			expectErr: true,
 		},
 	}
