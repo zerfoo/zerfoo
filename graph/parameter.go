@@ -1,7 +1,7 @@
 package graph
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -16,15 +16,16 @@ type Parameter[T tensor.Numeric] struct {
 // NewParameter creates a new parameter.
 func NewParameter[T tensor.Numeric](name string, value *tensor.TensorNumeric[T], newTensorFn func([]int, []T) (*tensor.TensorNumeric[T], error)) (*Parameter[T], error) {
 	if name == "" {
-		return nil, fmt.Errorf("parameter name cannot be empty")
+		return nil, errors.New("parameter name cannot be empty")
 	}
 	if value == nil {
-		return nil, fmt.Errorf("parameter value cannot be nil")
+		return nil, errors.New("parameter value cannot be nil")
 	}
 	grad, err := newTensorFn(value.Shape(), nil)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Parameter[T]{
 		Name:     name,
 		Value:    value,
@@ -35,14 +36,15 @@ func NewParameter[T tensor.Numeric](name string, value *tensor.TensorNumeric[T],
 // AddGradient adds the given gradient to the parameter's gradient.
 func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 	if p.Gradient == nil {
-		return fmt.Errorf("parameter gradient is nil")
+		return errors.New("parameter gradient is nil")
 	}
 	if !tensor.ShapesEqual(p.Value.Shape(), grad.Shape()) {
-		return fmt.Errorf("gradient shape mismatch")
+		return errors.New("gradient shape mismatch")
 	}
 	for i := range p.Gradient.Data() {
 		p.Gradient.Data()[i] += grad.Data()[i]
 	}
+
 	return nil
 }
 
