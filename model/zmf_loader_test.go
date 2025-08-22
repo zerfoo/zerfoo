@@ -18,7 +18,7 @@ func TestLoadZMF(t *testing.T) {
 	// Create a sample ZMF Model protobuf message.
 	sampleModel := &zmf.Model{
 		Metadata: &zmf.Metadata{
-			ProducerName:    "zonnx_test",
+			ProducerName:    "zerfoo_test_producer",
 			ProducerVersion: "0.1.0",
 			OpsetVersion:    1,
 		},
@@ -56,8 +56,8 @@ func TestLoadZMF(t *testing.T) {
 	}
 
 	// Check a few fields to ensure deserialization was correct.
-	if loadedModel.Metadata.ProducerName != "zonnx_test" {
-		t.Errorf("Expected producer name 'zonnx_test', got '%s'", loadedModel.Metadata.ProducerName)
+	if loadedModel.Metadata.ProducerName != "zerfoo_test_producer" {
+		t.Errorf("Expected producer name 'zerfoo_test_producer', got '%s'", loadedModel.Metadata.ProducerName)
 	}
 	if len(loadedModel.Graph.Nodes) != 1 {
 		t.Errorf("Expected 1 node, got %d", len(loadedModel.Graph.Nodes))

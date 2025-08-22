@@ -1,6 +1,8 @@
 package transpose
 
 import (
+	"fmt"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/model"
@@ -21,8 +23,7 @@ func BuildTranspose[T tensor.Numeric](
 ) (graph.Node[T], error) {
 	permAttr, ok := attributes["perm"]
 	if !ok {
-		// perm is optional in ONNX, if not present, it's a simple reverse.
-		return New(engine, nil), nil
+		return nil, fmt.Errorf("Transpose layer requires a 'perm' attribute")
 	}
 
 	perm, ok := permAttr.([]any)
