@@ -13,6 +13,7 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 		// For a 0-dimensional tensor (scalar), it should only be accessed with no indices.
 		if len(indices) != 0 {
 			var zero T
+
 			return zero, errors.New("0-dimensional tensor cannot be accessed with indices")
 		}
 		// A 0-dimensional tensor always has one element in its data slice.
@@ -21,6 +22,7 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 
 	if len(indices) != t.Dims() {
 		var zero T
+
 		return zero, fmt.Errorf("number of indices (%d) does not match tensor dimensions (%d)", len(indices), t.Dims())
 	}
 
@@ -28,6 +30,7 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 	for i, index := range indices {
 		if index < 0 || index >= t.shape[i] {
 			var zero T
+
 			return zero, fmt.Errorf("index %d is out of bounds for dimension %d with size %d", index, i, t.shape[i])
 		}
 		offset += index * t.strides[i]

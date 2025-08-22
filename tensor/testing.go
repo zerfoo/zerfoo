@@ -10,6 +10,7 @@ func Ones[T Numeric](size int) []T {
 	for i := range data {
 		data[i] = 1
 	}
+
 	return data
 }
 
@@ -23,6 +24,7 @@ func Equals[T Numeric](a, b *TensorNumeric[T]) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -37,12 +39,14 @@ func AssertEquals[T Numeric](t *testing.T, expected, actual *TensorNumeric[T]) {
 func AssertClose[T Numeric](t *testing.T, expected, actual *TensorNumeric[T], tolerance float64) {
 	if !expected.ShapeEquals(actual) {
 		t.Errorf("Expected shape %v, got %v", expected.Shape(), actual.Shape())
+
 		return
 	}
 	for i := range expected.data {
 		diff := expected.data[i] - actual.data[i]
 		if float64(diff) > tolerance || float64(diff) < -tolerance {
 			t.Errorf("Expected tensor %v, got %v", expected, actual)
+
 			return
 		}
 	}
