@@ -85,16 +85,17 @@ func TestGemmaIntegration(t *testing.T) {
 		if len(shape) == 0 {
 			shape = []int{1} // Default to scalar if no shape specified
 		}
-		inputTensors[i], err = tensor.New[float32](shape, nil)
-		if err != nil {
-			t.Fatalf("Failed to create input tensor %d: %v", i, err)
-		}
 		
-		// Initialize with simple values (zeros for most, sequence for input_ids)
-		if i == 0 { // Assume first input is input_ids
+		// Use the tokenized input for input_ids (first input)
+		if i == 0 {
 			inputTensors[i] = inputTensor // Use our tokenized input
+		} else {
+			// Create zero-initialized tensors for other inputs
+			inputTensors[i], err = tensor.New[float32](shape, nil)
+			if err != nil {
+				t.Fatalf("Failed to create input tensor %d: %v", i, err)
+			}
 		}
-		// Other inputs can remain as zero-initialized tensors
 	}
 
 	outputTensor, err := zerfooGraph.Forward(context.Background(), inputTensors...)
