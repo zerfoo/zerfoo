@@ -22,7 +22,7 @@ type AdamW[T tensor.Numeric] struct {
 	// State variables for each parameter
 	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates
 	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates
-	t int                                       // Timestep
+	t int                                              // Timestep
 }
 
 // NewAdamW creates a new AdamW optimizer.

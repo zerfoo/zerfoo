@@ -28,6 +28,7 @@ func (m *mockNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric
 
 	return tensor.New[T]([]int{1}, []T{1})
 }
+
 func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }

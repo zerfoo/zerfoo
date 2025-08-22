@@ -39,22 +39,22 @@ func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 		// Handle single input case - subtract from zero (negate)
 		a := inputs[0]
 		s.outputShape = a.Shape()
-		
+
 		// Create a zero tensor with same shape
 		zeroTensor, err := tensor.New[T](a.Shape(), nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create zero tensor: %w", err)
 		}
-		
+
 		return s.engine.Sub(ctx, zeroTensor, a)
 	} else if len(inputs) == 2 {
 		a := inputs[0]
 		b := inputs[1]
-		
+
 		// The output shape should be the broadcasted shape of the two inputs
 		// For simplicity, we'll assume they have compatible shapes
 		s.outputShape = a.Shape()
-		
+
 		return s.engine.Sub(ctx, a, b)
 	} else {
 		return nil, fmt.Errorf("Sub layer expects 1 or 2 inputs, got %d", len(inputs))
@@ -66,10 +66,10 @@ func (s *Sub[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	if len(inputs) != 2 {
 		panic("Sub layer requires exactly 2 inputs")
 	}
-	
+
 	// Gradient w.r.t. a: outputGradient (derivative of a - b w.r.t. a is 1)
 	gradA := outputGradient
-	
+
 	// Gradient w.r.t. b: -outputGradient (derivative of a - b w.r.t. b is -1)
 	// Create a tensor of -1s and multiply
 	ops := s.engine.Ops()
@@ -78,7 +78,7 @@ func (s *Sub[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
 

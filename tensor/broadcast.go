@@ -46,7 +46,7 @@ func BroadcastIndex(index int, shape, outputShape []int, broadcast bool) int {
 	outputStrides := strides(outputShape)
 	originalStrides := strides(shape)
 	originalIndex := 0
-	for i := range len(outputShape) {
+	for i := range outputShape {
 		coord := (index / outputStrides[i]) % outputShape[i]
 		shapeI := len(shape) - 1 - (len(outputShape) - 1 - i)
 		if shapeI >= 0 && shape[shapeI] != 1 {

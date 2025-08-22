@@ -38,6 +38,7 @@ func TestFFN_Forward(t *testing.T) {
 	}
 	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data)
+
 		return t
 	}() // Assuming SetWeights takes *tensor.Tensor
 
@@ -48,6 +49,7 @@ func TestFFN_Forward(t *testing.T) {
 	}
 	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data)
+
 		return t
 	}() // Assuming SetWeights takes *tensor.Tensor
 
@@ -58,6 +60,7 @@ func TestFFN_Forward(t *testing.T) {
 	}
 	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data)
+
 		return t
 	}() // Assuming SetWeights takes *tensor.Tensor
 
@@ -106,6 +109,7 @@ func TestFFN_Backward(t *testing.T) {
 	}
 	ffn.w1.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w1Data)
+
 		return t
 	}()
 
@@ -115,6 +119,7 @@ func TestFFN_Backward(t *testing.T) {
 	}
 	ffn.w2.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{hiddenDim, outputDim}, w2Data)
+
 		return t
 	}()
 
@@ -124,6 +129,7 @@ func TestFFN_Backward(t *testing.T) {
 	}
 	ffn.w3.linear.weights.Value = func() *tensor.TensorNumeric[float64] {
 		t, _ := tensor.New[float64]([]int{inputDim, hiddenDim}, w3Data)
+
 		return t
 	}()
 

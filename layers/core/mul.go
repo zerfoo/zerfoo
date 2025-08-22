@@ -37,14 +37,14 @@ func (m *Mul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if len(inputs) != 2 {
 		panic("Mul layer requires exactly 2 inputs")
 	}
-	
+
 	a := inputs[0]
 	b := inputs[1]
-	
+
 	// The output shape should be the broadcasted shape of the two inputs
 	// For simplicity, we'll assume they have compatible shapes
 	m.outputShape = a.Shape()
-	
+
 	return m.engine.Mul(ctx, a, b)
 }
 
@@ -53,22 +53,22 @@ func (m *Mul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	if len(inputs) != 2 {
 		panic("Mul layer requires exactly 2 inputs")
 	}
-	
+
 	a := inputs[0]
 	b := inputs[1]
-	
+
 	// Gradient w.r.t. a: outputGradient * b
 	gradA, err := m.engine.Mul(ctx, outputGradient, b)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Gradient w.r.t. b: outputGradient * a
 	gradB, err := m.engine.Mul(ctx, outputGradient, a)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
 

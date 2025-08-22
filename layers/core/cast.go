@@ -37,10 +37,10 @@ func (c *Cast[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	if len(inputs) != 1 {
 		panic("Cast layer requires exactly 1 input")
 	}
-	
+
 	input := inputs[0]
 	c.outputShape = input.Shape()
-	
+
 	// For same-type casting, we just return a copy of the input
 	// In a more complete implementation, this would handle type conversions
 	return input, nil
@@ -51,7 +51,7 @@ func (c *Cast[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNum
 	if len(inputs) != 1 {
 		panic("Cast layer requires exactly 1 input")
 	}
-	
+
 	// For same-type casting, gradient passes through unchanged
 	return []*tensor.TensorNumeric[T]{outputGradient}, nil
 }

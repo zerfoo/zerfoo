@@ -15,19 +15,19 @@ import (
 
 // GroupedQueryAttention implements grouped query attention mechanism.
 type GroupedQueryAttention[T tensor.Numeric] struct {
-	engine          compute.Engine[T]
-	ops             numeric.Arithmetic[T]
-	modelDim        int
-	numQueryHeads   int
+	engine           compute.Engine[T]
+	ops              numeric.Arithmetic[T]
+	modelDim         int
+	numQueryHeads    int
 	numKeyValueHeads int
-	headDim         int
-	
-	wq   *core.Dense[T] // Query projection
-	wk   *core.Dense[T] // Key projection  
-	wv   *core.Dense[T] // Value projection
-	wo   *core.Dense[T] // Output projection
-	rope *embeddings.RotaryPositionalEmbedding[T]  // Rotary positional embedding
-	
+	headDim          int
+
+	wq   *core.Dense[T]                           // Query projection
+	wk   *core.Dense[T]                           // Key projection
+	wv   *core.Dense[T]                           // Value projection
+	wo   *core.Dense[T]                           // Output projection
+	rope *embeddings.RotaryPositionalEmbedding[T] // Rotary positional embedding
+
 	scaledDotProductAttention *ScaledDotProductAttention[T]
 
 	// Cached tensors for backward pass
@@ -48,10 +48,10 @@ func (gqa *GroupedQueryAttention[T]) OpType() string {
 // Attributes returns the attributes.
 func (gqa *GroupedQueryAttention[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{
-		"model_dim":          gqa.modelDim,
-		"num_query_heads":    gqa.numQueryHeads,
+		"model_dim":           gqa.modelDim,
+		"num_query_heads":     gqa.numQueryHeads,
 		"num_key_value_heads": gqa.numKeyValueHeads,
-		"head_dim":           gqa.headDim,
+		"head_dim":            gqa.headDim,
 	}
 }
 
@@ -364,8 +364,6 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 	return output, nil
 }
-
-
 
 func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context, dQForRoPE, dKForRoPE []*tensor.TensorNumeric[T], dVHeads *tensor.TensorNumeric[T], batchSize, seqLen, kvHeadDim int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
 	// Sum gradients from replicated K, V heads

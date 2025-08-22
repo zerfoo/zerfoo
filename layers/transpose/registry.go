@@ -1,7 +1,7 @@
 package transpose
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"

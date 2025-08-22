@@ -43,10 +43,12 @@ func TestQKNorm(t *testing.T) {
 			name: "Simple 1D tensors",
 			qInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+
 				return t
 			}(),
 			kInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0})
+
 				return t
 			}(),
 			epsilon:   1e-5,
@@ -56,10 +58,12 @@ func TestQKNorm(t *testing.T) {
 			name: "2D tensors",
 			qInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{2, 2}, []float64{1.0, 2.0, 3.0, 4.0})
+
 				return t
 			}(),
 			kInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{2, 2}, []float64{5.0, 6.0, 7.0, 8.0})
+
 				return t
 			}(),
 			epsilon:   1e-5,
@@ -69,10 +73,12 @@ func TestQKNorm(t *testing.T) {
 			name: "Mismatched shapes",
 			qInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+
 				return t
 			}(),
 			kInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{2}, []float64{4.0, 5.0})
+
 				return t
 			}(),
 			epsilon:   1e-5,
@@ -83,6 +89,7 @@ func TestQKNorm(t *testing.T) {
 			qInput: nil,
 			kInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{3}, []float64{4.0, 5.0, 6.0})
+
 				return t
 			}(),
 			epsilon:   1e-5,
@@ -92,6 +99,7 @@ func TestQKNorm(t *testing.T) {
 			name: "Nil K input",
 			qInput: func() *tensor.TensorNumeric[float64] {
 				t, _ := tensor.New[float64]([]int{3}, []float64{1.0, 2.0, 3.0})
+
 				return t
 			}(),
 			kInput:    nil,

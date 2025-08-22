@@ -35,9 +35,9 @@ func TestBuildTranspose(t *testing.T) {
 			expectedAxes: []int{0, 2, 1},
 		},
 		{
-			name:         "Without perm attribute",
-			attributes:   map[string]interface{}{},
-			expectedAxes: nil,
+			name:           "Without perm attribute",
+			attributes:     map[string]interface{}{},
+			expectedAxes:   nil,
 			expectBuildErr: true,
 		},
 	}
@@ -81,7 +81,6 @@ func TestTransposeForward(t *testing.T) {
 			axes:          []int{0, 2, 1},
 			expectedShape: []int{2, 4, 3},
 		},
-		
 	}
 
 	for _, tc := range testCases {
