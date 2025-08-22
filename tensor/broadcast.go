@@ -24,7 +24,7 @@ func BroadcastShapes(a, b []int) (shape []int, broadcastA, broadcastB bool, err 
 		}
 
 		if dimA != dimB && dimA != 1 && dimB != 1 {
-			return nil, false, false, fmt.Errorf("shapes %v and %v are not broadcast compatible", a, b)
+			return nil, false, false, fmt.Errorf("shapes %v and %v are not broadcast compatible (dimension %d: %d vs %d)", a, b, i, dimA, dimB)
 		}
 
 		if dimA > dimB {

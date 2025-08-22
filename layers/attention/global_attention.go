@@ -9,9 +9,19 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// GlobalAttention implements a standard multi-head self-attention mechanism.
+// GlobalAttention wraps GroupedQueryAttention to provide a global attention interface.
 type GlobalAttention[T tensor.Numeric] struct {
 	gqa *GroupedQueryAttention[T]
+}
+
+// OpType returns the operation type.
+func (ga *GlobalAttention[T]) OpType() string {
+	return "GlobalAttention"
+}
+
+// Attributes returns the attributes.
+func (ga *GlobalAttention[T]) Attributes() map[string]interface{} {
+	return ga.gqa.Attributes()
 }
 
 // GlobalAttentionOptions holds configuration options for GlobalAttention layer.

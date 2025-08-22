@@ -13,28 +13,22 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// GroupedQueryAttention implements the Grouped Query Attention mechanism.
+// GroupedQueryAttention implements grouped query attention mechanism.
 type GroupedQueryAttention[T tensor.Numeric] struct {
-	engine           compute.Engine[T]
-	ops              numeric.Arithmetic[T]
-	numQueryHeads    int // Number of query heads
-	numKeyValueHeads int // Number of key/value heads (must divide numQueryHeads)
-	modelDim         int // d_model, the input/output dimension of the block
-	headDim          int // Dimension of each head (modelDim / numQueryHeads)
-
-	// Linear projections for Q, K, V
-	wq *core.Dense[T] // Query projection
-	wk *core.Dense[T] // Key projection
-	wv *core.Dense[T] // Value projection
-
-	// Scaled Dot-Product Attention
+	engine          compute.Engine[T]
+	ops             numeric.Arithmetic[T]
+	modelDim        int
+	numQueryHeads   int
+	numKeyValueHeads int
+	headDim         int
+	
+	wq   *core.Dense[T] // Query projection
+	wk   *core.Dense[T] // Key projection  
+	wv   *core.Dense[T] // Value projection
+	wo   *core.Dense[T] // Output projection
+	rope *embeddings.RotaryPositionalEmbedding[T]  // Rotary positional embedding
+	
 	scaledDotProductAttention *ScaledDotProductAttention[T]
-
-	// Final linear projection
-	wo *core.Dense[T] // Output projection
-
-	// Rotary Positional Embedding
-	rope *embeddings.RotaryPositionalEmbedding[T]
 
 	// Cached tensors for backward pass
 	qProj       *tensor.TensorNumeric[T] // Projected Q
@@ -44,6 +38,21 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	qHeadsRoPE  *tensor.TensorNumeric[T] // Q after RoPE
 	kHeadsRoPE  *tensor.TensorNumeric[T] // K after RoPE
 	outputShape []int
+}
+
+// OpType returns the operation type.
+func (gqa *GroupedQueryAttention[T]) OpType() string {
+	return "GroupedQueryAttention"
+}
+
+// Attributes returns the attributes.
+func (gqa *GroupedQueryAttention[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"model_dim":          gqa.modelDim,
+		"num_query_heads":    gqa.numQueryHeads,
+		"num_key_value_heads": gqa.numKeyValueHeads,
+		"head_dim":           gqa.headDim,
+	}
 }
 
 // GQAOptions holds configuration options for the GroupedQueryAttention layer.

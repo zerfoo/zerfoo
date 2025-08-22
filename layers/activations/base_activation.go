@@ -17,6 +17,7 @@ type BaseActivation[T tensor.Numeric] struct {
 	ops         numeric.Arithmetic[T]
 	lastInput   *tensor.TensorNumeric[T]
 	outputShape []int
+	opType      string
 	forwardOp   func(T) T
 	backwardOp  func(T) T
 }
@@ -51,14 +52,24 @@ func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.A
 	for _, opt := range opts {
 		opt(options)
 	}
-
+	
 	return &BaseActivation[T]{
 		engine:     engine,
 		ops:        ops,
+		opType:     opType,
 		forwardOp:  options.ForwardOp,
 		backwardOp: options.BackwardOp,
-		opType:     opType,
 	}
+}
+
+// OpType returns the operation type of the activation.
+func (b *BaseActivation[T]) OpType() string {
+	return b.opType
+}
+
+// Attributes returns the attributes of the activation.
+func (b *BaseActivation[T]) Attributes() map[string]interface{} {
+	return make(map[string]interface{})
 }
 
 // OutputShape returns the output shape of the activation.

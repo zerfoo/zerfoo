@@ -16,12 +16,22 @@ import (
 type SwiGLU[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	ops     numeric.Arithmetic[T]
-	sigmoid *Sigmoid[T] // SwiGLU uses Sigmoid internally
+	sigmoid *BaseActivation[T] // SwiGLU uses Sigmoid internally
 
 	// Cached tensors for backward pass
 	lastInput   *tensor.TensorNumeric[T]
 	gate        *tensor.TensorNumeric[T] // The sigmoid(x2) part
 	outputShape []int
+}
+
+// OpType returns the operation type.
+func (s *SwiGLU[T]) OpType() string {
+	return "SwiGLU"
+}
+
+// Attributes returns the attributes.
+func (s *SwiGLU[T]) Attributes() map[string]interface{} {
+	return make(map[string]interface{})
 }
 
 // NewSwiGLU creates a new SwiGLU activation layer.

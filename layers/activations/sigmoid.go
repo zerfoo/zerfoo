@@ -12,8 +12,6 @@ type Sigmoid[T tensor.Numeric] struct {
 }
 
 // NewSigmoid creates a new Sigmoid activation function.
-func NewSigmoid[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *Sigmoid[T] {
-	return &Sigmoid[T]{
-		BaseActivation: NewBaseActivation(engine, ops, WithForwardOp(ops.Sigmoid), WithBackwardOp(ops.SigmoidGrad)),
-	}
+func NewSigmoid[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *BaseActivation[T] {
+	return NewBaseActivation(engine, ops, "Sigmoid", WithForwardOp(ops.Sigmoid), WithBackwardOp(ops.SigmoidGrad))
 }
