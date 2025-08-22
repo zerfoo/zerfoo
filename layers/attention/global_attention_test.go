@@ -18,7 +18,7 @@ func TestGlobalAttention_Forward(t *testing.T) {
 	modelDim := 64
 	numQueryHeads := 8
 	numKeyValueHeads := 4
-	globalAttn, err := NewGlobalAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads, 
+	globalAttn, err := NewGlobalAttention[float32](engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
 		WithGlobalAttentionBase(10000.0), WithGlobalAttentionMaxSeqLen(512))
 	if err != nil {
 		t.Fatalf("Failed to create GlobalAttention: %v", err)

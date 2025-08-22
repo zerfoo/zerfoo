@@ -388,7 +388,7 @@ func TestPolynomialExpansion_FunctionalOptions(t *testing.T) {
 	testutils.AssertTrue(t, !polyCustomBias.HasBias(), "expected custom bias false")
 
 	// Test both custom options
-	polyCustomBoth, err := NewPolynomialExpansion("test_both", engine, ops, 3, 
+	polyCustomBoth, err := NewPolynomialExpansion("test_both", engine, ops, 3,
 		WithPolynomialDegree[float32](4), WithPolynomialBias[float32](false))
 	testutils.AssertNoError(t, err, "expected no error creating polynomial layer with both custom options")
 	testutils.AssertTrue(t, polyCustomBoth.GetDegree() == 4, "expected custom degree 4")

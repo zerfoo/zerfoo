@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"

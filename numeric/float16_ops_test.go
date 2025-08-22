@@ -77,7 +77,7 @@ func TestFloat16Ops_TanhGrad(t *testing.T) {
 			// Use tolerance for float16 precision
 			tolerance := float32(0.001)
 			if math.Abs(float64(result.ToFloat32()-tt.expected.ToFloat32())) > float64(tolerance) {
-				t.Errorf("TanhGrad(%v): expected %v, got %v (diff: %v)", tt.x, tt.expected, result, 
+				t.Errorf("TanhGrad(%v): expected %v, got %v (diff: %v)", tt.x, tt.expected, result,
 					math.Abs(float64(result.ToFloat32()-tt.expected.ToFloat32())))
 			}
 		})
@@ -110,7 +110,7 @@ func TestFloat16Ops_SigmoidGrad(t *testing.T) {
 			// Use tolerance for float16 precision
 			tolerance := float32(0.001)
 			if math.Abs(float64(result.ToFloat32()-tt.expected.ToFloat32())) > float64(tolerance) {
-				t.Errorf("SigmoidGrad(%v): expected %v, got %v (diff: %v)", tt.x, tt.expected, result, 
+				t.Errorf("SigmoidGrad(%v): expected %v, got %v (diff: %v)", tt.x, tt.expected, result,
 					math.Abs(float64(result.ToFloat32()-tt.expected.ToFloat32())))
 			}
 		})

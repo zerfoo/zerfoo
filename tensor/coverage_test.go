@@ -70,7 +70,7 @@ func TestCoverageSpecific(t *testing.T) {
 	// This tests the Each method's handling of 0-dimensional tensors
 	zeroDTensor := &TensorNumeric[int]{
 		shape:   []int{}, // 0-dimensional
-		strides: []int{}, // 0-dimensional  
+		strides: []int{}, // 0-dimensional
 		data:    []int{123},
 		isView:  false,
 	}

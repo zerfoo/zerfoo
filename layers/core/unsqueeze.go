@@ -39,13 +39,13 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 	if len(inputs) != 1 {
 		panic("Unsqueeze layer requires exactly 1 input")
 	}
-	
+
 	input := inputs[0]
 	inputShape := input.Shape()
-	
+
 	// Calculate the output shape by inserting 1s at the specified axes
 	outputShape := make([]int, len(inputShape)+len(u.axes))
-	
+
 	// Normalize negative axes and create a map of axes to insert 1s
 	axesMap := make(map[int]bool)
 	for _, axis := range u.axes {
@@ -55,7 +55,7 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 		}
 		axesMap[normalizedAxis] = true
 	}
-	
+
 	inputIdx := 0
 	for i := 0; i < len(outputShape); i++ {
 		if axesMap[i] {
@@ -65,9 +65,9 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 			inputIdx++
 		}
 	}
-	
+
 	u.outputShape = outputShape
-	
+
 	// Reshape the tensor to the new shape
 	return u.engine.Reshape(ctx, input, outputShape)
 }
@@ -77,16 +77,16 @@ func (u *Unsqueeze[T]) Backward(ctx context.Context, outputGradient *tensor.Tens
 	if len(inputs) != 1 {
 		panic("Unsqueeze layer requires exactly 1 input")
 	}
-	
+
 	input := inputs[0]
 	inputShape := input.Shape()
-	
+
 	// The gradient just needs to be reshaped back to the input shape
 	gradInput, err := u.engine.Reshape(ctx, outputGradient, inputShape)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
 

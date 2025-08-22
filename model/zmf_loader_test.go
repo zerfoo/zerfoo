@@ -40,7 +40,7 @@ func TestLoadZMF(t *testing.T) {
 	}
 
 	// Write the bytes to the temporary file.
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
 		t.Fatalf("Failed to write temp .zmf file: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestLoadZMF_InvalidData(t *testing.T) {
 	filePath := filepath.Join(tempDir, "invalid.zmf")
 	invalidData := []byte{0x01, 0x02, 0x03, 0x04} // Not valid protobuf
 
-	if err := os.WriteFile(filePath, invalidData, 0600); err != nil {
+	if err := os.WriteFile(filePath, invalidData, 0o600); err != nil {
 		t.Fatalf("Failed to write temp invalid .zmf file: %v", err)
 	}
 

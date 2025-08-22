@@ -23,7 +23,7 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	if len(inputs) != len(g.inputs) {
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
-	
+
 	memo := make(map[Node[T]]*tensor.TensorNumeric[T])
 	for i, n := range g.inputs {
 		memo[n] = inputs[i]

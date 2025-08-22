@@ -68,7 +68,7 @@ func TestHeInitializer(t *testing.T) {
 func TestUniformInitializer(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	scale := 0.1
-					initializer := NewUniformInitializer(ops, WithScale[float32](float64(0.1)))
+	initializer := NewUniformInitializer(ops, WithScale[float32](float64(0.1)))
 
 	inputSize, outputSize := 10, 5
 	weights, err := initializer.Initialize(inputSize, outputSize)

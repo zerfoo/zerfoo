@@ -2,6 +2,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/zerfoo/float16"

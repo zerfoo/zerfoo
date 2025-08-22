@@ -52,7 +52,7 @@ func NewBaseActivation[T tensor.Numeric](engine compute.Engine[T], ops numeric.A
 	for _, opt := range opts {
 		opt(options)
 	}
-	
+
 	return &BaseActivation[T]{
 		engine:     engine,
 		ops:        ops,

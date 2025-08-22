@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
@@ -16,7 +17,7 @@ func BuildUnsqueeze[T tensor.Numeric](
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
 	var axes []int
-	
+
 	axesAttr, ok := attributes["axes"]
 	if !ok {
 		// Default behavior: add dimension at the end (axis -1)

@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -48,10 +49,10 @@ func (g *GroupQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if len(inputs) < 1 {
 		panic("GroupQueryAttention layer requires at least 1 input")
 	}
-	
+
 	input := inputs[0]
 	g.outputShape = input.Shape()
-	
+
 	// Simplified implementation: return the first input unchanged
 	// In a full implementation, this would apply grouped query attention
 	return input, nil
@@ -62,16 +63,16 @@ func (g *GroupQueryAttention[T]) Backward(ctx context.Context, outputGradient *t
 	if len(inputs) < 1 {
 		panic("GroupQueryAttention layer requires at least 1 input")
 	}
-	
+
 	// For simplified implementation, gradient passes through unchanged
 	gradients := make([]*tensor.TensorNumeric[T], len(inputs))
 	gradients[0] = outputGradient
-	
+
 	// Set remaining gradients to nil (no gradient flow)
 	for i := 1; i < len(inputs); i++ {
 		gradients[i] = nil
 	}
-	
+
 	return gradients, nil
 }
 
