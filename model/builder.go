@@ -56,7 +56,6 @@ func BuildFromZMF[T tensor.Numeric](
 	for _, nodeProto := range model.Graph.Nodes {
 		// Skip if a node with this name already exists (e.g., it's an input or parameter)
 		if _, exists := instantiatedNodes[nodeProto.Name]; exists {
-			fmt.Printf("DEBUG: Skipping node '%s' (already exists)\n", nodeProto.Name)
 			continue
 		}
 		layerBuilder, err := GetLayerBuilder[T](nodeProto.OpType)
@@ -83,11 +82,6 @@ func BuildFromZMF[T tensor.Numeric](
 			}
 		}
 		
-		// Debug: Print input connection info for Sub layers
-		if nodeProto.OpType == "Sub" {
-			fmt.Printf("DEBUG: Sub layer %s expects %d inputs, got %d: %v\n", 
-				nodeProto.Name, len(nodeProto.Inputs), len(validInputNames), nodeProto.Inputs)
-		}
 		
 		// Special handling for layers with embedded weights/parameters
 		actualInputNames := validInputNames
