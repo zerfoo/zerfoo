@@ -5,21 +5,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
-	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
-
-func init() {
-	model.RegisterLayer("GroupedQueryAttention", buildGroupedQueryAttention[float16.Float16])
-	model.RegisterLayer("GlobalAttention", buildGlobalAttention[float16.Float16])
-	// Add registrations for other supported types if needed.
-}
 
 func buildGroupedQueryAttention[T tensor.Numeric](
 	engine compute.Engine[T],
