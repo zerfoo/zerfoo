@@ -137,40 +137,54 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 	aShape := a.Shape()
 	bShape := b.Shape()
 
-	if len(aShape) != len(bShape) {
-		return nil, errors.New("tensors must have the same number of dimensions")
-	}
-
-	if len(aShape) < 2 {
+	// Both tensors must have at least 2 dimensions
+	if len(aShape) < 2 || len(bShape) < 2 {
 		return nil, errors.New("tensors must have at least 2 dimensions")
 	}
 
-	// Check if the inner dimensions are compatible
+	// Check if the inner dimensions are compatible for matrix multiplication
+	// For a @ b, the last dimension of a must match the second-to-last dimension of b
 	if aShape[len(aShape)-1] != bShape[len(bShape)-2] {
-		return nil, errors.New("invalid shapes for matrix multiplication")
+		return nil, fmt.Errorf("invalid shapes for matrix multiplication: a.Shape()=%v, b.Shape()=%v (inner dimensions %d != %d)", 
+			aShape, bShape, aShape[len(aShape)-1], bShape[len(bShape)-2])
 	}
 
-	// Check if batch dimensions are compatible
-	for i := 0; i < len(aShape)-2; i++ {
-		if aShape[i] != bShape[i] {
-			return nil, errors.New("batch dimensions must be equal")
+	// Handle broadcasting: if b is 2D and a is higher dimensional, broadcast b
+	var outputShape []int
+	var batchSize int
+	
+	if len(aShape) > len(bShape) {
+		// Broadcasting case: a is [batch..., m, k], b is [k, n]
+		outputShape = make([]int, len(aShape))
+		copy(outputShape, aShape[:len(aShape)-1]) // Copy batch dims + m
+		outputShape[len(outputShape)-1] = bShape[len(bShape)-1] // Set n
+		
+		batchSize = 1
+		for i := 0; i < len(aShape)-2; i++ {
+			batchSize *= aShape[i]
+		}
+	} else {
+		// Same dimensions case
+		for i := 0; i < len(aShape)-2; i++ {
+			if aShape[i] != bShape[i] {
+				return nil, errors.New("batch dimensions must be equal")
+			}
+		}
+		
+		outputShape = make([]int, len(aShape))
+		copy(outputShape, aShape[:len(aShape)-2])
+		outputShape[len(outputShape)-2] = aShape[len(aShape)-2]
+		outputShape[len(outputShape)-1] = bShape[len(bShape)-1]
+		
+		batchSize = 1
+		for i := 0; i < len(aShape)-2; i++ {
+			batchSize *= aShape[i]
 		}
 	}
-
-	// Calculate output shape
-	outputShape := make([]int, len(aShape))
-	copy(outputShape, aShape[:len(aShape)-2])
-	outputShape[len(outputShape)-2] = aShape[len(aShape)-2]
-	outputShape[len(outputShape)-1] = bShape[len(bShape)-1]
 
 	result, err := e.getOrCreateDest(outputShape, dst...)
 	if err != nil {
 		return nil, err
-	}
-
-	batchSize := 1
-	for i := 0; i < len(aShape)-2; i++ {
-		batchSize *= aShape[i]
 	}
 
 	m := aShape[len(aShape)-2]
@@ -183,8 +197,13 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 
 	for i := 0; i < batchSize; i++ {
 		aOffset := i * m * k
-		bOffset := i * k * n
 		rOffset := i * m * n
+		
+		// For broadcasting, b doesn't have batch dimension, so bOffset is always 0
+		bOffset := 0
+		if len(aShape) == len(bShape) {
+			bOffset = i * k * n
+		}
 
 		for row := 0; row < m; row++ {
 			for col := 0; col < n; col++ {

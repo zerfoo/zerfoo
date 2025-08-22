@@ -11,18 +11,15 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// SimplifiedLayerNormalization applies layer normalization without centering the mean.
-// It is equivalent to RMSNorm with a learnable gain parameter.
+// SimplifiedLayerNormalization implements a simplified version of layer normalization.
 type SimplifiedLayerNormalization[T tensor.Numeric] struct {
-	engine  compute.Engine[T]
-	ops     numeric.Arithmetic[T]
-	gain    *graph.Parameter[T]
-	epsilon T
-
-	// Cached values for backward pass
-	normalizedInput *tensor.TensorNumeric[T]
-	invStdDev       *tensor.TensorNumeric[T]
+	engine          compute.Engine[T]
+	ops             numeric.Arithmetic[T]
+	gain            *graph.Parameter[T]
+	epsilon         T
 	inputShape      []int
+	invStdDev       *tensor.TensorNumeric[T]
+	normalizedInput *tensor.TensorNumeric[T]
 }
 
 // NewSimplifiedLayerNormalization creates a new SimplifiedLayerNormalization layer.

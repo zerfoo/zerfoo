@@ -23,6 +23,18 @@ type RMSNorm[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// OpType returns the operation type.
+func (r *RMSNorm[T]) OpType() string {
+	return "RMSNorm"
+}
+
+// Attributes returns the attributes.
+func (r *RMSNorm[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"epsilon": r.epsilon,
+	}
+}
+
 // RMSNormOptions holds configuration options for RMSNorm layers.
 type RMSNormOptions[T tensor.Numeric] struct {
 	Epsilon T // Small constant to avoid division by zero

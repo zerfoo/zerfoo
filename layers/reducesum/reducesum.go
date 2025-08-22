@@ -9,12 +9,25 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// ReduceSum is a layer that computes the sum of elements along given axes.
+// ReduceSum represents a reduce sum operation.
 type ReduceSum[T tensor.Numeric] struct {
-	engine      compute.Engine[T]
-	axes        []int
-	keepDims    bool
+	engine   compute.Engine[T]
+	axes     []int
+	keepDims bool
 	outputShape []int
+}
+
+// OpType returns the operation type.
+func (r *ReduceSum[T]) OpType() string {
+	return "ReduceSum"
+}
+
+// Attributes returns the attributes.
+func (r *ReduceSum[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"axes":      r.axes,
+		"keepdims":  r.keepDims,
+	}
 }
 
 // New creates a new ReduceSum layer.

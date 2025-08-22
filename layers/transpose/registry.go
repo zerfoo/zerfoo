@@ -31,7 +31,7 @@ func BuildTranspose[T tensor.Numeric](
 		// If it's not []any, maybe it's already []int64.
 		perm64, ok := permAttr.([]int64)
 		if !ok {
-			return New(engine, nil), nil
+			return nil, fmt.Errorf("attribute 'perm' is not a valid integer slice")
 		}
 		axes := make([]int, len(perm64))
 		for i, v := range perm64 {

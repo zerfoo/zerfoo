@@ -32,6 +32,16 @@ type FFN[T tensor.Numeric] struct {
 	outputShape []int
 }
 
+// OpType returns the operation type.
+func (f *FFN[T]) OpType() string {
+	return "FFN"
+}
+
+// Attributes returns the attributes.
+func (f *FFN[T]) Attributes() map[string]interface{} {
+	return make(map[string]interface{})
+}
+
 // FFNOptions holds configuration options for the FFN layer.
 type FFNOptions[T tensor.Numeric] struct {
 	Initializer components.WeightInitializer[T]

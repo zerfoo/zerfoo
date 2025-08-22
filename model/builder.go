@@ -4,7 +4,6 @@ package model
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -85,12 +84,72 @@ func BuildFromZMF[T tensor.Numeric](
 				nodeProto.Name, len(nodeProto.Inputs), len(validInputNames), nodeProto.Inputs)
 		}
 		
-		// Special handling for Gather layers with embedded weights
+		// Special handling for layers with embedded weights/parameters
 		actualInputNames := validInputNames
 		if gatherLayer, isGather := currentNode.(interface{ HasEmbeddedWeights() bool }); isGather && gatherLayer.HasEmbeddedWeights() {
 			// Skip the first input (weights) since it's embedded in the layer
 			if len(actualInputNames) > 1 {
 				actualInputNames = actualInputNames[1:]
+			}
+		} else if nodeProto.OpType == "MatMul" && strings.Contains(nodeProto.Name, "lm_head") {
+			// For language modeling head MatMul, check if it's using embedding weights that need transposition
+			if len(actualInputNames) > 1 {
+				weightInputName := actualInputNames[1]
+				// Check if this is using embedding weights
+				if strings.Contains(weightInputName, "embed_tokens") {
+					// Create a transposed version of the embedding weights for the lm_head
+					if embedParam, exists := params[weightInputName]; exists {
+						// Transpose the embedding weights: [vocab_size, embed_dim] -> [embed_dim, vocab_size]
+						transposedTensor, err := engine.Transpose(context.Background(), embedParam.Value, []int{1, 0})
+						if err != nil {
+							return nil, fmt.Errorf("failed to transpose embedding weights for lm_head: %w", err)
+						}
+						// Create a new parameter with the transposed weights
+						transposedParam := &graph.Parameter[T]{
+							Name:  weightInputName + "_transposed",
+							Value: transposedTensor,
+						}
+						params[weightInputName+"_transposed"] = transposedParam
+						// Update the input name to use the transposed weights
+						actualInputNames[1] = weightInputName + "_transposed"
+					}
+				}
+			}
+		} else if nodeProto.OpType == "SimplifiedLayerNormalization" || nodeProto.OpType == "SkipSimplifiedLayerNormalization" {
+			// For normalization layers, skip parameter inputs (usually the second input is the weight/gain parameter)
+			// Keep only the first input (the data input)
+			if len(actualInputNames) > 1 {
+				actualInputNames = actualInputNames[:1]
+			}
+		} else if nodeProto.OpType == "Reshape" {
+			// For Reshape layers, extract shape from the second input (constant) and add as attribute
+			if len(actualInputNames) > 1 {
+				shapeInputName := actualInputNames[1]
+				// Try to find the shape constant in parameters
+				if shapeParam, exists := params[shapeInputName]; exists {
+					// Extract shape values from the constant tensor
+					shapeValues := make([]int64, shapeParam.Value.Size())
+					for i := 0; i < shapeParam.Value.Size(); i++ {
+						val, err := shapeParam.Value.At(i)
+						if err != nil {
+							return nil, fmt.Errorf("failed to extract shape value at index %d: %w", i, err)
+						}
+						shapeValues[i] = int64(val)
+					}
+					// Add shape as attribute for the Reshape builder
+					// Convert to the format expected by layer builders (map[string]interface{})
+					if nodeProto.Attributes == nil {
+						nodeProto.Attributes = make(map[string]*zmf.Attribute)
+					}
+					// Create a ZMF attribute with integer array
+					intsAttr := &zmf.Ints{Val: shapeValues}
+					attr := &zmf.Attribute{
+						Value: &zmf.Attribute_Ints{Ints: intsAttr},
+					}
+					nodeProto.Attributes["shape"] = attr
+				}
+				// Keep only the first input (the data input)
+				actualInputNames = actualInputNames[:1]
 			}
 		}
 		
@@ -100,7 +159,7 @@ func BuildFromZMF[T tensor.Numeric](
 			inputNode, ok := instantiatedNodes[inputName]
 			if !ok {
 				// Try to resolve with output suffix
-				resolvedName := resolveOutputSuffix(inputName)
+				resolvedName := resolveOutputSuffix(inputName, instantiatedNodes)
 				if resolvedName != "" {
 					inputNode, ok = instantiatedNodes[resolvedName]
 				}
@@ -129,7 +188,7 @@ func BuildFromZMF[T tensor.Numeric](
 						} else {
 							return nil, fmt.Errorf("input node '%s' (resolved: '%s') for node '%s' not found", inputName, resolvedName, nodeProto.Name)
 						}
-					}
+						}
 				}
 			}
 			inputNodes[i] = inputNode
@@ -146,7 +205,7 @@ func BuildFromZMF[T tensor.Numeric](
 	outputNode, ok := instantiatedNodes[outputNodeName]
 	if !ok {
 		// Try to resolve output suffix for the output name
-		resolvedOutputName := resolveOutputSuffix(outputNodeName)
+		resolvedOutputName := resolveOutputSuffix(outputNodeName, instantiatedNodes)
 		outputNode, ok = instantiatedNodes[resolvedOutputName]
 		if !ok {
 			// For Gemma models, 'logits' typically maps to the last MatMul node (lm_head)
@@ -170,6 +229,14 @@ type parameterNode[T tensor.Numeric] struct {
 	value *tensor.TensorNumeric[T]
 }
 
+func (p *parameterNode[T]) OpType() string {
+	return "Parameter"
+}
+
+func (p *parameterNode[T]) Attributes() map[string]interface{} {
+	return make(map[string]interface{})
+}
+
 func (n *parameterNode[T]) OutputShape() []int {
 	return n.value.Shape()
 }
@@ -190,35 +257,38 @@ func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
 // resolveOutputSuffix removes output suffixes like "/output_0", "/output_1", ":0", ":1" etc.
 // and tries to find the actual node name in the nodeMap
 func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph.Node[T]) string {
-	// Handle /output_N pattern
-	if idx := strings.LastIndex(name, "/output_"); idx != -1 {
-		baseName := name[:idx]
-		if _, exists := nodeMap[baseName]; exists {
-			return baseName
-		}
-	}
-	// Handle :N pattern
-	if idx := strings.LastIndex(name, ":"); idx != -1 {
-		// Check if what follows is a number
-		if suffix := name[idx+1:]; len(suffix) > 0 {
-			if _, err := strconv.Atoi(suffix); err == nil {
-				baseName := name[:idx]
-				if _, exists := nodeMap[baseName]; exists {
-					return baseName
+	// Try stripping common suffixes first, including numbered outputs.
+	suffixes := []string{"/output_0", ":0", "/output_1", ":1", "/output_2", ":2", "/output_3", ":3"}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(name, suffix) {
+			baseName := strings.TrimSuffix(name, suffix)
+			if _, exists := nodeMap[baseName]; exists {
+				return baseName
+			}
+			
+			// For patterns like "/model/layers.0/input_layernorm/output_0", 
+			// try to find the actual layer node by appending common layer suffixes
+			layerSuffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm", "/MatMul", "/Gather", "/Shape", "/Cast", "/Reshape", "/Mul", "/Sub", "/Add", "/Concat", "/Unsqueeze", "/FastGelu"}
+			for _, layerSuffix := range layerSuffixes {
+				candidateName := baseName + layerSuffix
+				if _, exists := nodeMap[candidateName]; exists {
+					return candidateName
 				}
 			}
 		}
 	}
-	
-	// Try common layer suffixes
-	suffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm"}
-	for _, suffix := range suffixes {
-		candidate := name + suffix
-		if _, exists := nodeMap[candidate]; exists {
-			return candidate
+
+	// Try common layer name variations (for backward compatibility).
+	layerSuffixes := []string{"/LayerNorm", "/SimplifiedLayerNormalization", "/SkipLayerNorm"}
+	for _, suffix := range layerSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			baseName := strings.TrimSuffix(name, suffix)
+			if _, exists := nodeMap[baseName]; exists {
+				return baseName
+			}
 		}
 	}
-	
+
 	return ""
 }
 
@@ -267,6 +337,21 @@ func convertAttributes(zmfAttributes map[string]*zmf.Attribute) map[string]inter
 			attributes[name] = int(v.I) // Cast to int for convenience
 		case *zmf.Attribute_S:
 			attributes[name] = v.S
+		case *zmf.Attribute_Ints:
+			// Convert int64 array to int array for convenience
+			intValues := make([]int64, len(v.Ints.Val))
+			copy(intValues, v.Ints.Val)
+			attributes[name] = intValues
+		case *zmf.Attribute_Floats:
+			// Convert float array
+			floatValues := make([]float32, len(v.Floats.Val))
+			copy(floatValues, v.Floats.Val)
+			attributes[name] = floatValues
+		case *zmf.Attribute_Strings:
+			// Convert string array
+			stringValues := make([]string, len(v.Strings.Val))
+			copy(stringValues, v.Strings.Val)
+			attributes[name] = stringValues
 		}
 	}
 	return attributes
