@@ -47,6 +47,7 @@ func NewTokenEmbedding[T tensor.Numeric](engine compute.Engine[T], vocabSize, em
 	if vocabSize <= 0 {
 		return nil, fmt.Errorf("vocabSize must be positive, got %d", vocabSize)
 	}
+
 	if embeddingDim <= 0 {
 		return nil, fmt.Errorf("embeddingDim must be positive, got %d", embeddingDim)
 	}
@@ -127,10 +128,12 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 	if len(inputShape) < 2 {
 		return nil, fmt.Errorf("input tensor must have at least 2 dimensions, got %d", len(inputShape))
 	}
+
 	batchSize := inputShape[0]
 	seqLen := inputShape[1]
 
 	te.outputShape = []int{batchSize, seqLen, te.embeddingDim}
+
 	output, err := tensor.New[T](te.outputShape, nil) // Create output tensor
 	if err != nil {
 		return nil, err
@@ -157,6 +160,7 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNu
 	if err != nil {
 		return nil, err
 	}
+
 	if err := te.engine.Zeros(ctx, dEmbeddingTable, te.embeddingTable.Value.Shape()); err != nil { // Assuming Zeros is available
 		return nil, err
 	}

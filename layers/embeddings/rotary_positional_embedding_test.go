@@ -35,6 +35,7 @@ func TestRotaryPositionalEmbedding_NewRotaryPositionalEmbedding(t *testing.T) {
 
 			if tt.expectErr {
 				testutils.AssertError(t, err, "expected error")
+
 				if rpe != nil {
 					t.Errorf("expected nil rpe, got %v", rpe)
 				}
@@ -97,6 +98,7 @@ func TestRotaryPositionalEmbedding_OutputShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a dummy input tensor to set the output shape
 			input, _ := tensor.New[float64](tt.inputShapes[0], nil)
+
 			_, err := rpe.Forward(context.Background(), input)
 			if err != nil && !tt.expectErr {
 				t.Fatalf("unexpected error during forward pass: %v", err)
@@ -132,6 +134,7 @@ func TestRotaryPositionalEmbedding_Forward(t *testing.T) {
 	output, err := rpe.Forward(ctx, inputTensor)
 	testutils.AssertNoError(t, err, "Forward should not return an error")
 	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
+
 	dummyOutput, _ := tensor.New[float64]([]int{1, 2, 4}, nil)
 	testutils.AssertTrue(t, output.ShapeEquals(dummyOutput), "Output shape mismatch")
 
@@ -151,6 +154,7 @@ func TestRotaryPositionalEmbedding_Backward(t *testing.T) {
 	// Simulate cached inputs from Forward pass
 	inputData := []float64{1, 2, 3, 4, 5, 6, 7, 8}
 	inputTensor, _ := tensor.New[float64]([]int{1, 2, 4}, inputData)
+
 	_, err := rpe.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward failed: %v", err)
@@ -165,6 +169,7 @@ func TestRotaryPositionalEmbedding_Backward(t *testing.T) {
 	testutils.AssertNoError(t, err, "Backward should not return an error")
 	testutils.AssertNotNil(t, dInputs, "dInputs should not be nil")
 	testutils.AssertEqual(t, len(dInputs), 1, "expected 1 input gradient")
+
 	dummyDInput, _ := tensor.New[float64]([]int{1, 2, 4}, nil)
 	testutils.AssertTrue(t, dInputs[0].ShapeEquals(dummyDInput), "dInput shape mismatch")
 
@@ -191,6 +196,7 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 	output, err := rpe.Forward(ctx, inputTensor)
 	testutils.AssertNoError(t, err, "Forward should not return an error")
 	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
+
 	dummyOutput, _ := tensor.New[float64]([]int{1, 1, 2}, nil)
 	testutils.AssertTrue(t, output.ShapeEquals(dummyOutput), "Output shape mismatch")
 
@@ -214,6 +220,7 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 	testutils.AssertNoError(t, err, "Backward should not return an error")
 	testutils.AssertNotNil(t, dInputs, "dInputs should not be nil")
 	testutils.AssertEqual(t, len(dInputs), 1, "expected 1 input gradient")
+
 	dummyDInput, _ := tensor.New[float64]([]int{1, 1, 2}, nil)
 	testutils.AssertTrue(t, dInputs[0].ShapeEquals(dummyDInput), "dInput shape mismatch")
 
