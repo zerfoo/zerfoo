@@ -32,8 +32,10 @@ func ElementsMatch(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	sort.Strings(a)
 	sort.Strings(b)
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
@@ -48,6 +50,7 @@ func IntSliceEqual(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
@@ -62,6 +65,7 @@ func Int64SliceEqual(a, b []int64) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
@@ -74,6 +78,7 @@ func Int64SliceEqual(a, b []int64) bool {
 // AssertError checks if an error is not nil.
 func AssertError(t *testing.T, err error, msg string) {
 	t.Helper()
+
 	if err == nil {
 		t.Errorf("expected an error, but got nil: %s", msg)
 	}
@@ -82,6 +87,7 @@ func AssertError(t *testing.T, err error, msg string) {
 // AssertNoError checks if an error is nil.
 func AssertNoError(t *testing.T, err error, msg string) {
 	t.Helper()
+
 	if err != nil {
 		t.Errorf("expected no error, but got %v: %s", err, msg)
 	}
@@ -90,6 +96,7 @@ func AssertNoError(t *testing.T, err error, msg string) {
 // AssertEqual checks if two values are equal.
 func AssertEqual[T comparable](t *testing.T, expected, actual T, msg string) {
 	t.Helper()
+
 	if actual != expected {
 		t.Errorf("expected %v, got %v: %s", expected, actual, msg)
 	}
@@ -98,6 +105,7 @@ func AssertEqual[T comparable](t *testing.T, expected, actual T, msg string) {
 // AssertNotNil checks if a value is not nil.
 func AssertNotNil(t *testing.T, value interface{}, msg string) {
 	t.Helper()
+
 	if value == nil {
 		t.Errorf("expected not nil, but got nil: %s", msg)
 	}
@@ -106,6 +114,7 @@ func AssertNotNil(t *testing.T, value interface{}, msg string) {
 // AssertNil checks if a value is nil.
 func AssertNil(t *testing.T, value interface{}, msg string) {
 	t.Helper()
+
 	if value != nil && !reflect.ValueOf(value).IsNil() {
 		t.Errorf("expected nil, but got %v: %s", value, msg)
 	}
@@ -114,6 +123,7 @@ func AssertNil(t *testing.T, value interface{}, msg string) {
 // AssertTrue checks if a boolean is true.
 func AssertTrue(t *testing.T, condition bool, msg string) {
 	t.Helper()
+
 	if !condition {
 		t.Errorf("expected true, but got false: %s", msg)
 	}
@@ -122,6 +132,7 @@ func AssertTrue(t *testing.T, condition bool, msg string) {
 // AssertFalse checks if a boolean is false.
 func AssertFalse(t *testing.T, condition bool, msg string) {
 	t.Helper()
+
 	if condition {
 		t.Errorf("expected false, but got true: %s", msg)
 	}
@@ -130,6 +141,7 @@ func AssertFalse(t *testing.T, condition bool, msg string) {
 // AssertContains checks if a string contains a substring.
 func AssertContains(t *testing.T, s, substr, msg string) {
 	t.Helper()
+
 	if !strings.Contains(s, substr) {
 		t.Errorf("expected %q to contain %q, but it did not: %s", s, substr, msg)
 	}
@@ -138,17 +150,20 @@ func AssertContains(t *testing.T, s, substr, msg string) {
 // AssertPanics checks if a function panics.
 func AssertPanics(t *testing.T, f func(), msg string) {
 	t.Helper()
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("expected a panic, but none occurred: %s", msg)
 		}
 	}()
+
 	f()
 }
 
 // AssertFloatEqual checks if two float values are approximately equal.
-func AssertFloatEqual[T float32 | float64](t *testing.T, expected, actual T, tolerance T, msg string) {
+func AssertFloatEqual[T float32 | float64](t *testing.T, expected, actual, tolerance T, msg string) {
 	t.Helper()
+
 	if math.Abs(float64(expected)-float64(actual)) > float64(tolerance) {
 		t.Errorf("expected %v, got %v (tolerance %v): %s", expected, actual, tolerance, msg)
 	}
@@ -157,11 +172,13 @@ func AssertFloatEqual[T float32 | float64](t *testing.T, expected, actual T, tol
 // AssertFloat32SliceApproxEqual checks if two float32 slices are approximately equal element-wise.
 func AssertFloat32SliceApproxEqual(t *testing.T, expected, actual []float32, tolerance float32, msg string) {
 	t.Helper()
+
 	if len(expected) != len(actual) {
 		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
 
 		return
 	}
+
 	for i := range expected {
 		if math.Abs(float64(expected[i])-float64(actual[i])) > float64(tolerance) {
 			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
@@ -174,11 +191,13 @@ func AssertFloat32SliceApproxEqual(t *testing.T, expected, actual []float32, tol
 // AssertFloat64SliceApproxEqual checks if two float64 slices are approximately equal element-wise.
 func AssertFloat64SliceApproxEqual(t *testing.T, expected, actual []float64, tolerance float64, msg string) {
 	t.Helper()
+
 	if len(expected) != len(actual) {
 		t.Errorf("slice lengths do not match: expected %d, got %d: %s", len(expected), len(actual), msg)
 
 		return
 	}
+
 	for i := range expected {
 		if math.Abs(expected[i]-actual[i]) > tolerance {
 			t.Errorf("elements at index %d are not approximately equal: expected %v, got %v (tolerance %v): %s", i, expected[i], actual[i], tolerance, msg)
@@ -333,6 +352,7 @@ func NewMockEngineWithError[T tensor.Numeric](err error) *MockEngine[T] {
 // CompareTensorsApprox checks if two tensors are approximately equal element-wise.
 func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.TensorNumeric[T], epsilon T) bool {
 	t.Helper()
+
 	if !actual.ShapeEquals(expected) {
 		t.Errorf("tensor shapes do not match: actual %v, expected %v", actual.Shape(), expected.Shape())
 
@@ -375,6 +395,7 @@ type TestInitializer[T tensor.Numeric] struct {
 // Initialize sets all values to the specified value.
 func (t *TestInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
 	size := inputSize * outputSize
+
 	data := make([]T, size)
 	for i := range data {
 		data[i] = t.Value
