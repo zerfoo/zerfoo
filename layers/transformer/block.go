@@ -57,14 +57,17 @@ func NewTransformerBlock[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	attnNorm, err := normalization.NewRMSNorm[T]("attn_norm", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
 	}
+
 	norm2, err := normalization.NewRMSNorm[T]("norm2", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
 	}
+
 	normPostAttention, err := normalization.NewRMSNorm[T]("normPostAttention", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](options.Epsilon))
 	if err != nil {
 		return nil, err
@@ -88,6 +91,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	if err != nil {
 		return nil, err
 	}
+
 	attnOutput, err := b.attention.Forward(ctx, norm1Output)
 	if err != nil {
 		return nil, err
@@ -108,6 +112,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	if err != nil {
 		return nil, err
 	}
+
 	ffnOutput, err := b.ffn.Forward(ctx, norm2Output)
 	if err != nil {
 		return nil, err
@@ -130,6 +135,7 @@ func (b *Block[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], _ 
 // Parameters returns the parameters of the Transformer block.
 func (b *Block[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
+
 	params = append(params, b.attention.Parameters()...)
 	params = append(params, b.ffn.Parameters()...)
 	params = append(params, b.norm1.Parameters()...)
@@ -147,4 +153,19 @@ func (b *Block[T]) OutputShape() []int {
 // Attention returns the attention layer of the Transformer block.
 func (b *Block[T]) Attention() graph.Node[T] {
 	return b.attention
+}
+
+// Engine returns the compute engine used by the Transformer block.
+func (b *Block[T]) Engine() compute.Engine[T] {
+	return b.ffn.Engine()
+}
+
+// Attributes returns the attributes of the Transformer block.
+func (b *Block[T]) Attributes() map[string]any {
+	return nil
+}
+
+// OpType returns the operator type of the Transformer block.
+func (b *Block[T]) OpType() string {
+	return "TransformerBlock"
 }
