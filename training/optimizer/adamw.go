@@ -60,18 +60,22 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			if err != nil {
 				return err
 			}
+
 			if err := a.engine.Zeros(ctx, mTensor, param.Value.Shape()); err != nil {
 				return err
 			}
+
 			a.m[param] = mTensor
 
 			vTensor, err := tensor.New[T](param.Value.Shape(), nil)
 			if err != nil {
 				return err
 			}
+
 			if err := a.engine.Zeros(ctx, vTensor, param.Value.Shape()); err != nil {
 				return err
 			}
+
 			a.v[param] = vTensor
 		}
 
@@ -84,10 +88,12 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		if err != nil {
 			return err
 		}
+
 		gradScaled, err := a.engine.MulScalar(ctx, grad, T(1.0)-a.beta1, nil)
 		if err != nil {
 			return err
 		}
+
 		m, err = a.engine.Add(ctx, mNew, gradScaled, m) // Update m in-place
 		if err != nil {
 			return err
@@ -98,14 +104,17 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		if err != nil {
 			return err
 		}
+
 		gradSquared, err := a.engine.Mul(ctx, grad, grad, nil)
 		if err != nil {
 			return err
 		}
+
 		gradSquaredScaled, err := a.engine.MulScalar(ctx, gradSquared, T(1.0)-a.beta2, nil)
 		if err != nil {
 			return err
 		}
+
 		v, err = a.engine.Add(ctx, vNew, gradSquaredScaled, v)
 		if err != nil { // Update v in-place
 			return err
@@ -118,14 +127,17 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		if err != nil {
 			return err
 		}
+
 		sqrtVPlusEpsilon, err := a.engine.AddScalar(ctx, sqrtV, a.epsilon, nil)
 		if err != nil {
 			return err
 		}
+
 		updateTerm, err := a.engine.Div(ctx, m, sqrtVPlusEpsilon, nil)
 		if err != nil {
 			return err
 		}
+
 		updateTermScaled, err := a.engine.MulScalar(ctx, updateTerm, alpha, nil)
 		if err != nil {
 			return err
@@ -142,6 +154,7 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		if err != nil {
 			return err
 		}
+
 		param.Value, err = a.engine.Sub(ctx, paramNew, weightDecayTerm, paramValue)
 		if err != nil { // Update paramValue in-place
 			return err

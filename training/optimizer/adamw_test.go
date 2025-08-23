@@ -46,6 +46,7 @@ func TestAdamW_Step_Basic(t *testing.T) {
 
 	param, err := graph.NewParameter("param1", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
+
 	param.Gradient = gradient
 
 	params := []*graph.Parameter[float32]{param}
@@ -57,6 +58,7 @@ func TestAdamW_Step_Basic(t *testing.T) {
 
 	// Check that parameter values changed
 	originalValues := []float32{1.0, 2.0, 3.0, 4.0}
+
 	newValues := param.Value.Data()
 	for i, original := range originalValues {
 		if newValues[i] == original {
@@ -66,6 +68,7 @@ func TestAdamW_Step_Basic(t *testing.T) {
 
 	// Check that gradient was cleared (zeroed)
 	testutils.AssertNotNil(t, param.Gradient, "Gradient tensor should still exist after step")
+
 	for _, v := range param.Gradient.Data() {
 		testutils.AssertFloatEqual(t, 0.0, v, 1e-6, "Gradient should be zeroed after step")
 	}
@@ -88,6 +91,7 @@ func TestAdamW_Step_WithWeightDecay(t *testing.T) {
 
 	param, err := graph.NewParameter("param1", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
+
 	param.Gradient = gradient
 
 	params := []*graph.Parameter[float32]{param}
@@ -129,6 +133,7 @@ func TestAdamW_Step_MultipleSteps(t *testing.T) {
 	for step := range 3 {
 		gradient, err := tensor.New[float32]([]int{2}, []float32{0.1, 0.2})
 		testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
 		param.Gradient = gradient
 
 		err = adamw.Step(ctx, params)
@@ -187,6 +192,7 @@ func TestAdamW_Step_BiasCorrection(t *testing.T) {
 
 	param, err := graph.NewParameter("param1", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
+
 	param.Gradient = gradient
 
 	params := []*graph.Parameter[float32]{param}
@@ -202,6 +208,7 @@ func TestAdamW_Step_BiasCorrection(t *testing.T) {
 	// Second step with new gradient
 	gradient2, err := tensor.New[float32]([]int{1}, []float32{0.1})
 	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
 	param.Gradient = gradient2
 
 	err = adamw.Step(ctx, params)
@@ -376,6 +383,7 @@ func TestAdamW_Step_EdgeCases(t *testing.T) {
 
 	param, err := graph.NewParameter("param1", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
+
 	param.Gradient = gradient
 
 	params := []*graph.Parameter[float32]{param}
@@ -406,6 +414,7 @@ func TestAdamW_Step_ZeroGradient(t *testing.T) {
 
 	param, err := graph.NewParameter("param1", value, tensor.New[float32])
 	testutils.AssertNoError(t, err, "Failed to create parameter")
+
 	param.Gradient = gradient
 
 	params := []*graph.Parameter[float32]{param}
