@@ -1,4 +1,4 @@
-// Package shape provides the Shape layer for the Zerfoo ML framework.
+// Package core provides the Shape layer for the Zerfoo ML framework.
 package core
 
 import (
@@ -33,7 +33,7 @@ func (s *Shape[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the shape of the input tensor.
-func (s *Shape[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (s *Shape[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
 	s.outputShape = []int{len(shape)}
@@ -50,7 +50,7 @@ func (s *Shape[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward computes the gradients for the Shape layer.
-func (s *Shape[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (s *Shape[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The Shape layer has no trainable parameters and its output is not a function
 	// of the input tensor's values, so the gradient is zero.
 	return nil, nil
