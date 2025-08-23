@@ -2,7 +2,6 @@ package attention
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -149,8 +148,80 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 }
 
 // Backward computes the gradients for the AttentionHead.
-func (ah *AttentionHead[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// This is a placeholder. The actual backward pass for attention is complex
-	// and involves backpropagating through SDPA and then through the linear projections.
-	return nil, errors.New("AttentionHead backward pass not yet implemented")
+// dOut has shape (batch, seq_len, head_dim). inputs[0] has shape (batch, seq_len, input_dim).
+func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+    if len(inputs) != 1 {
+        return nil, fmt.Errorf("AttentionHead: expected 1 input, got %d", len(inputs))
+    }
+
+    input := inputs[0]
+    if len(input.Shape()) != 3 {
+        return nil, fmt.Errorf("AttentionHead: input must be 3D, got %v", input.Shape())
+    }
+
+    batchSize := input.Shape()[0]
+    seqLen := input.Shape()[1]
+    inputDim := input.Shape()[2]
+
+    // Backprop through SDPA to obtain dQ, dK, dV
+    sdpaGrads, err := ah.sdpa.Backward(ctx, dOut, nil, nil, nil)
+    if err != nil {
+        return nil, fmt.Errorf("AttentionHead: SDPA backward failed: %w", err)
+    }
+    dQ := sdpaGrads[0] // (batch, seq, headDim)
+    dK := sdpaGrads[1]
+    dV := sdpaGrads[2]
+
+    // Reshape dQ/dK/dV to 2D for Dense backward: (batch*seq, headDim)
+    headDim := dQ.Shape()[2]
+    dQ2D, err := dQ.Reshape([]int{batchSize * seqLen, headDim})
+    if err != nil {
+        return nil, err
+    }
+    dK2D, err := dK.Reshape([]int{batchSize * seqLen, headDim})
+    if err != nil {
+        return nil, err
+    }
+    dV2D, err := dV.Reshape([]int{batchSize * seqLen, headDim})
+    if err != nil {
+        return nil, err
+    }
+
+    // Prepare the 2D input used for Dense forward: (batch*seq, inputDim)
+    input2D, err := input.Reshape([]int{batchSize * seqLen, inputDim})
+    if err != nil {
+        return nil, err
+    }
+
+    // Backprop through V, K, Q projections
+    vGrads, err := ah.vProj.Backward(ctx, dV2D, input2D)
+    if err != nil {
+        return nil, fmt.Errorf("AttentionHead: V backward failed: %w", err)
+    }
+    kGrads, err := ah.kProj.Backward(ctx, dK2D, input2D)
+    if err != nil {
+        return nil, fmt.Errorf("AttentionHead: K backward failed: %w", err)
+    }
+    qGrads, err := ah.qProj.Backward(ctx, dQ2D, input2D)
+    if err != nil {
+        return nil, fmt.Errorf("AttentionHead: Q backward failed: %w", err)
+    }
+
+    // Sum input gradients from the three branches: shapes are (batch*seq, inputDim)
+    sumVK, err := ah.engine.Add(ctx, vGrads[0], kGrads[0], nil)
+    if err != nil {
+        return nil, err
+    }
+    dInput2D, err := ah.engine.Add(ctx, sumVK, qGrads[0], nil)
+    if err != nil {
+        return nil, err
+    }
+
+    // Reshape back to (batch, seq, inputDim) for upstream
+    dInput3D, err := dInput2D.Reshape([]int{batchSize, seqLen, inputDim})
+    if err != nil {
+        return nil, err
+    }
+
+    return []*tensor.TensorNumeric[T]{dInput3D}, nil
 }
