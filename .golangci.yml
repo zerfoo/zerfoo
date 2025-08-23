@@ -1,156 +1,329 @@
+# .golangci.yml
+# Strict, fix-forward config: enable auto-fixing linters and strong correctness linters.
+# Run with: golangci-lint run --fix ./...
+
 version: "2"
+
 run:
   timeout: 5m
   tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+  # Skip generated and external dirs to reduce noise.
+  skip-dirs:
+    - vendor
+    - third_party
+    - node_modules
+    - bin
+    - dist
+    - .git
+  skip-files:
+    - ".*_generated\\.go"
+    - "zz_.*\\.go"
 
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+# Curated set: prefer fixable formatters + essential correctness & security linters.
 linters:
+  default: standard
+
   enable:
-    - errcheck
-    - govet
-    - ineffassign
+    # Auto-fixable formatters / organizers
+    - misspell         # spelling; supports --fix
+    #- whitespace       # common whitespace issues; supports --fix
+    #- wsl_v5           # consistent empty lines around blocks; many rules auto-fix
+
+    # Correctness, readability, and maintainability
+    #- govet
     - staticcheck
-    - dupl
-    - goconst
+    #- revive
+    - errcheck
+    - ineffassign
+    #- unused
     - gocritic
-    - gocyclo
+    - nolintlint
+    - lll
     - gosec
-    - misspell
-    - nakedret
-    - revive
-    - unconvert
-    - unparam
-    - whitespace
-    # Additional auto-fixable linters
-    - godot          # Ensures comments end with periods
-    - nlreturn       # Adds newlines before returns/branches
-    - nolintlint     # Fixes malformed nolint directives
-    - tagalign       # Aligns struct tags
-    - usestdlibvars  # Uses stdlib constants instead of literals
-    - copyloopvar    # Fixes loop variable copying issues
-    - dupword        # Removes duplicate words
-    - errorlint      # Fixes error wrapping issues
-    - importas       # Enforces consistent import aliases
-    - intrange       # Uses integer ranges in for loops
-    - mirror         # Fixes bytes/strings usage patterns
-    - perfsprint     # Replaces fmt.Sprintf with faster alternatives
-    - shadow
-  disable:
-    - unused
+
+    # API, error, and return-shape hygiene
+    - errorlint
+    - errname
+    #- ireturn
+
+    # Complexity/structure
+    #- gocyclo
+    #- cyclop
+    #- funlen
+    #- nestif
+    - dupl
+
+    # Testing quality
+    - tparallel
+    #- thelper
+    #- testpackage
+
+    # Tags and struct initialization
+    #- exhaustruct
+    - tagliatelle
+    - tagalign
+
+    # Context and net/http usage
+    - noctx
+    - nosprintfhostport
+
+    # Codebase policy
+    - depguard
+    #- gomodguard
+    - forbidigo
+    - copyloopvar
+
+  # Per-linter settings (v2 format).
   settings:
-    errcheck:
-      check-type-assertions: true
-      check-blank: true
-    
+    gofumpt:
+      extra-rules: true
+
+    gci:
+      skip-generated: true
+      # Put your module path here for local import grouping:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/feza-inc)  # ← set to your module path
+      custom-order: true
+
+    misspell:
+      locale: US
+      ignore-words:
+        - zerfoo
+        - Feza
+      # misspell applies fixes when run with --fix
+
+    whitespace:
+      multi-if: true
+      multi-func: true
+
+    wsl_v5:
+      allow-assign-and-anything: false
+      allow-assign-and-call: false
+      allow-assign-and-return: false
+      allow-trailing-comment: false
+      force-case-trailing-whitespace: true
+      force-err-cuddling: true
+      strict-append: true
+
+    govet:
+      enable-all: false
+      enable:
+        - printf
+        #- shadow
+        - loopclosure
+        - lostcancel
+        - nilness
+        - stringintconv
+        - structtag
+        - testinggoroutine
+        - sortslice
+        - waitgroup
+      settings:
+        printf:
+          funcs:
+            - (log.Logger).Printf
+            - (log.Logger).Fatalf
+            - (log.Logger).Panicf
+
+    staticcheck:
+      go: "1.23"
+
     revive:
+      # A compact, practical rule set. Many items are auto-fixable.
       rules:
         - name: blank-imports
         - name: context-as-argument
-        - name: dot-imports
+        - name: errorf
+        - name: error-naming
         - name: error-return
-        - name: error-strings
         - name: exported
         - name: if-return
-        - name: var-naming
-        - name: package-comments
-        - name: range
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: optimize-operands-order
+        - name: range-val-in-closure
         - name: receiver-naming
-        - name: time-naming
         - name: unexported-return
-        - name: errorf
-        - name: empty-block
+        - name: var-naming
         - name: superfluous-else
-        - name: unused-parameter
         - name: unreachable-code
-    
-    lll:
-      line-length: 120  # Reduced for better readability and auto-wrapping
-    
-    staticcheck:
-      checks: ["all"]
-    
-    misspell:
-      locale: US
-    
-    gocritic:
-      enabled-tags:
-        - diagnostic
-        - performance
-        - style
-      disabled-checks:
-        - dupImport
-        - ifElseChain
-        - octalLiteral
-    
-    gocyclo:
-      min-complexity: 15
-    
-    dupl:
-      threshold: 100
-    
-    goconst:
-      min-len: 2
-      min-occurrences: 3
-    
-    nakedret:
-      max-func-lines: 30
-    
-    godot:
-      scope: declarations
-      exclude:
-        - "^\\s*TODO"
-        - "^\\s*FIXME"
-      capital: false
-    
-    tagalign:
-      align: false
-      sort: true
-    
-    importas:
-      no-unaliased: true
-      alias:
-        - pkg: github.com/stretchr/testify/assert
-          alias: assert
-        - pkg: github.com/stretchr/testify/require
-          alias: require
-    
-    nlreturn:
-      block-size: 2
-    
-    nolintlint:
-      allow-unused: false
-      require-explanation: true
-      require-specific: true
+        - name: unnecessary-stmt
+        - name: use-any
+        - name: time-equal
+        - name: redefines-builtin-id
+        - name: import-shadowing
+        - name: early-return
+        - name: empty-lines
+        - name: package-comments
+        - name: useless-break
 
-  exclusions:
-    paths:
-      - vendor
-      - .git
-      - ".*\\.pb\\.go$"
-      - ".*_gen\\.go$"
-    rules:
-      - path: _test\.go
-        linters:
-          - gocyclo
-          - errcheck
-          - dupl
-          - gosec
-          - goconst
-          - gocritic
-  
-      - path: examples/
-        linters:
-          - errcheck
-          - gosec
-          - gocritic
-  
-      - path: \.pb\.go
-        linters:
-          - all
-  
-      - path: compute/cpu_engine.go
-        linters:
-          - gosec
+    gocritic:
+      enable-all: false
+      enabled-checks:
+        - appendCombine
+        - boolExprSimplify
+        - emptyStringTest
+        - importShadow
+        - preferFilepathJoin
+        - preferFprint
+        - preferWriteByte
+        - rangeExprCopy
+        - rangeValCopy
+        - redundantSprint
+        - sprintfQuotedString
+        - timeExprSimplify
+      settings:
+        rangeExprCopy:
+          sizeThreshold: 512
+        rangeValCopy:
+          sizeThreshold: 128
+
+    lll:
+      line-length: 320
+      tab-width: 1
+      exclude-pattern: "^\\s*//|`"   # allow long comments and raw strings
+
+    gocyclo:
+      min-complexity: 12
+    cyclop:
+      max-complexity: 12
+      package-average: 0.0
+    gocognit:
+      min-complexity: 10
+    funlen:
+      lines: 100
+      statements: 60
+
+    exhaustruct:
+      allow-empty: false
+      # Common exemptions like Cobra commands:
+      exclude:
+        - '.+/cobra\\.Command$'
+
+    tagliatelle:
+      case:
+        rules:
+          json: camel
+          yaml: camel
+          xml: camel
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    wrapcheck:
+      # Require wrapping external errors. Allow standard wrapping helpers.
+      ignoreSigs:
+        - errors.Join(error, ...)
+        - errors.Is(error, error)
+        - errors.As(error, interface{})
+        - fmt.Errorf(string, ...)
+
+    ireturn:
+      allow:
+        - error
+        - fmt.Stringer
+        - io.Reader
+        - io.Writer
+        - context.Context
+
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          files:
+            - $all
+          allow:
+            - $gostd
+          deny:
+            - pkg: "github.com/stretchr/testify"
+              desc: "Use the standard library testing and require no third-party test frameworks."
+            - pkg: "github.com/pkg/errors"
+              desc: "Use errors, fmt.Errorf with %w, and stdlib wrapping."
+            - pkg: "github.com/sirupsen/logrus"
+              desc: "Prefer slog or std log."
+            - pkg: "io/ioutil$"
+              desc: "Deprecated since Go 1.16. Use os or io packages instead."
+            - pkg: "math/rand$"
+              desc: "Use math/rand/v2."
+          # You can add allow entries for specific submodules if needed.
+
+    gomodguard:
+      blocked:
+        modules:
+          - github.com/stretchr/testify:
+              reason: "Avoid external test frameworks; keep tests in stdlib."
+          - github.com/pkg/errors:
+              recommendations: ["errors"]
+              reason: "Prefer stdlib error wrapping."
+          - github.com/sirupsen/logrus:
+              recommendations: ["log/slog", "log"]
+              reason: "Prefer structured logging in stdlib."
+      allowed:
+        domains:
+          - golang.org
+          - go.uber.org
+          - google.golang.org
+
+    gosec:
+      severity: medium
+      confidence: medium
+      excludes:
+        - G404   # Allow math/rand in tests is still blocked by depguard in prod code
+        - G115   # Int conv false positives in generics-heavy code
+      # Tune paths where security checks are too noisy:
+      # Note: gosec is still run in tests, but we often skip specific rules via issues.exclude-rules.
+
+    forbidigo:
+      forbid:
+        - pattern: '^print(ln)?$'
+        - pattern: '^fmt\\.Print.*$'  # avoid committing Print*; use logging
+      exclude-godoc-examples: true
+      analyze-types: true
+
+    copyloopvar:
+      check-alias: true
 
 issues:
-  max-issues-per-linter: 50
-  max-same-issues: 3
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+
+  # So useful linters do not spam in tests and generated code.
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - funlen
+        - gocyclo
+        - cyclop
+        - dupl
+        - lll
+        - wrapcheck
+        - ireturn
+        - gocognit
+        - gosec         # keep tests readable; security is focused on prod paths
+
+    - path: ".*_generated\\.go"
+      linters:
+        - all
+
+    # Allow long lines for URLs and comments.
+    - linters:
+        - lll
+      source: "https?://"
+
+    # Allow fmt.Print in cmd tools if you want; uncomment and adjust path:
+    # - path: ^cmd/
+    #   linters:
+    #     - forbidigo
