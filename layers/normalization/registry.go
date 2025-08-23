@@ -53,8 +53,10 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
 	// Try multiple parameter naming patterns for LayerNorm gain/weight
-	var gain *graph.Parameter[T]
-	var ok bool
+	var (
+		gain *graph.Parameter[T]
+		ok   bool
+	)
 
 	// Pattern 1: {name}_gain (original expected format)
 	gain, ok = params[name+"_gain"]
@@ -65,16 +67,20 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 		if strings.HasSuffix(dotName, ".LayerNorm") {
 			dotName = strings.TrimSuffix(dotName, ".LayerNorm") + ".weight"
 		}
+
 		if strings.HasSuffix(dotName, ".SimplifiedLayerNormalization") {
 			dotName = strings.TrimSuffix(dotName, ".SimplifiedLayerNormalization") + ".weight"
 		}
+
 		gain, ok = params[dotName]
 	}
+
 	if !ok {
 		// Pattern 3: Try just the weight suffix
 		weightName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".") + ".weight"
 		gain, ok = params[weightName]
 	}
+
 	if !ok {
 		// Pattern 4: Try layernorm.weight pattern
 		// e.g., "/model/layers.0/attn/q_norm/SimplifiedLayerNormalization" -> "model.layers.0.attn.q_norm.layernorm.weight"
@@ -82,6 +88,7 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 		if strings.HasSuffix(layernormName, ".SimplifiedLayerNormalization") {
 			layernormName = strings.TrimSuffix(layernormName, ".SimplifiedLayerNormalization") + ".layernorm.weight"
 		}
+
 		gain, ok = params[layernormName]
 	}
 
@@ -117,8 +124,10 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {
 	// Try multiple parameter naming patterns for LayerNorm gain/weight
-	var gain *graph.Parameter[T]
-	var ok bool
+	var (
+		gain *graph.Parameter[T]
+		ok   bool
+	)
 
 	// Pattern 1: {name}_gain (original expected format)
 	gain, ok = params[name+"_gain"]
@@ -129,25 +138,31 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 		if strings.HasSuffix(dotName, ".SkipLayerNorm") {
 			dotName = strings.TrimSuffix(dotName, ".SkipLayerNorm") + ".weight"
 		}
+
 		if strings.HasSuffix(dotName, ".SkipSimplifiedLayerNormalization") {
 			dotName = strings.TrimSuffix(dotName, ".SkipSimplifiedLayerNormalization") + ".weight"
 		}
+
 		gain, ok = params[dotName]
 	}
+
 	if !ok {
 		// Pattern 3: Try just the weight suffix
 		weightName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".") + ".weight"
 		gain, ok = params[weightName]
 	}
+
 	if !ok {
 		// Pattern 4: Try layernorm.weight pattern
 		layernormName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
 		if strings.HasSuffix(layernormName, ".SkipLayerNorm") {
 			layernormName = strings.TrimSuffix(layernormName, ".SkipLayerNorm") + ".layernorm.weight"
 		}
+
 		if strings.HasSuffix(layernormName, ".SkipSimplifiedLayerNormalization") {
 			layernormName = strings.TrimSuffix(layernormName, ".SkipSimplifiedLayerNormalization") + ".layernorm.weight"
 		}
+
 		gain, ok = params[layernormName]
 	}
 

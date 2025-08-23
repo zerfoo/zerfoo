@@ -24,6 +24,7 @@ func TestRMSNormLayer_Forward(t *testing.T) {
 	}
 
 	inputData := []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}
+
 	input, err := tensor.New[float32]([]int{2, modelDim}, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
@@ -38,6 +39,7 @@ func TestRMSNormLayer_Forward(t *testing.T) {
 		0.36514837, 0.73029673, 1.0954452, 1.4605935,
 		0.75809807, 0.9097177, 1.0613372, 1.2129569,
 	}
+
 	expected, err := tensor.New[float32]([]int{2, modelDim}, expectedData)
 	if err != nil {
 		t.Fatalf("Failed to create expected tensor: %v", err)
@@ -68,6 +70,7 @@ func TestRMSNorm_CustomEpsilon(t *testing.T) {
 
 	// Create input tensor
 	inputData := []float32{1.0, 2.0, 3.0, 4.0, 2.0, 3.0, 4.0, 5.0}
+
 	input, err := tensor.New[float32]([]int{2, modelDim}, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
@@ -84,6 +87,7 @@ func TestRMSNorm_CustomEpsilon(t *testing.T) {
 	if len(output.Shape()) != len(expectedShape) {
 		t.Errorf("Output shape mismatch. Got %v, want %v", output.Shape(), expectedShape)
 	}
+
 	for i, dim := range output.Shape() {
 		if dim != expectedShape[i] {
 			t.Errorf("Output shape mismatch at dimension %d. Got %d, want %d", i, dim, expectedShape[i])
@@ -106,6 +110,7 @@ func TestRMSNorm_DefaultEpsilon(t *testing.T) {
 
 	// Create input tensor
 	inputData := []float32{1.0, 2.0, 3.0, 4.0}
+
 	input, err := tensor.New[float32]([]int{1, modelDim}, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
@@ -122,6 +127,7 @@ func TestRMSNorm_DefaultEpsilon(t *testing.T) {
 	if len(output.Shape()) != len(expectedShape) {
 		t.Errorf("Output shape mismatch. Got %v, want %v", output.Shape(), expectedShape)
 	}
+
 	for i, dim := range output.Shape() {
 		if dim != expectedShape[i] {
 			t.Errorf("Output shape mismatch at dimension %d. Got %d, want %d", i, dim, expectedShape[i])
@@ -161,10 +167,12 @@ func TestRMSNorm_OutputShape(t *testing.T) {
 
 	// Create a test input to initialize output shape
 	inputShape := []int{2, 6}
+
 	inputData := make([]float32, 12)
 	for i := range inputData {
 		inputData[i] = float32(i + 1)
 	}
+
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	testutils.AssertNoError(t, err, "Failed to create input tensor")
 
@@ -310,6 +318,7 @@ func TestRMSNorm_Backward(t *testing.T) {
 	// Check that gradients are computed (not zero)
 	gradData2 := inputGrad.Data()
 	hasNonZeroGrad := false
+
 	for _, grad := range gradData2 {
 		if grad != 0.0 {
 			hasNonZeroGrad = true
@@ -317,6 +326,7 @@ func TestRMSNorm_Backward(t *testing.T) {
 			break
 		}
 	}
+
 	testutils.AssertTrue(t, hasNonZeroGrad, "Should have non-zero gradients")
 }
 
