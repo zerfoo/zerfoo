@@ -103,9 +103,7 @@ func TestRotaryPositionalEmbedding_OutputShape(t *testing.T) {
 			}
 
 			shape := rpe.OutputShape()
-			if tt.expectErr {
-				// This test case is now invalid as the error is caught in Forward
-			} else {
+			if !tt.expectErr {
 				testutils.AssertTrue(t, reflect.DeepEqual(shape, tt.expected), "output shape mismatch")
 			}
 		})
