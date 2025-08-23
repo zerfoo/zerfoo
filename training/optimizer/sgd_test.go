@@ -63,7 +63,9 @@ func TestSGD_Step(t *testing.T) {
 	param, _ := graph.NewParameter("param1", value, tensor.New[int])
 	param.Gradient = gradient
 	params := []*graph.Parameter[int]{param}
-	sgd.Step(context.Background(), params)
+	if err := sgd.Step(context.Background(), params); err != nil {
+		t.Fatalf("sgd.Step returned error: %v", err)
+	}
 	expected := []int{0, 1, 2, 3}
 	if !reflect.DeepEqual(param.Value.Data(), expected) {
 		t.Errorf("expected %v, got %v", expected, param.Value.Data())
