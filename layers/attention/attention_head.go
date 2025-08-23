@@ -43,6 +43,15 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 		opt(options)
 	}
 
+	// Validate dimensions early to avoid invalid layers
+	if inputDim <= 0 {
+		panic(fmt.Errorf("invalid inputDim: %d; must be > 0", inputDim))
+	}
+
+	if headDim <= 0 {
+		panic(fmt.Errorf("invalid headDim: %d; must be > 0", headDim))
+	}
+
 	// Pass engine and its arithmetic operations to Dense layers
 	qProj, err := core.NewDense[T]("q_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
@@ -105,6 +114,10 @@ func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNum
 
 	// Reshape Q, K, V back to 3D: (batch_size, seq_len, head_dim)
 	headDim := ah.qProj.OutputShape()[1] // Get headDim from the output shape of Q projection
+
+	if headDim <= 0 {
+		return nil, fmt.Errorf("AttentionHead: invalid headDim %d derived from qProj output shape %v", headDim, ah.qProj.OutputShape())
+	}
 
 	qReshaped, err := q.Reshape([]int{batchSize, seqLen, headDim})
 	if err != nil {
