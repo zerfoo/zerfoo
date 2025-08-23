@@ -29,6 +29,7 @@ func RegisterLayer[T tensor.Numeric](opType string, builder LayerBuilder[T]) {
 		// In a real application, you might want to panic here or handle this more gracefully.
 		fmt.Printf("Warning: Overwriting existing layer builder for op_type '%s'\n", opType)
 	}
+
 	registry[opType] = builder
 }
 

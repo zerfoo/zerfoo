@@ -59,9 +59,11 @@ func TestLoadZMF(t *testing.T) {
 	if loadedModel.Metadata.ProducerName != "zerfoo_test_producer" {
 		t.Errorf("Expected producer name 'zerfoo_test_producer', got '%s'", loadedModel.Metadata.ProducerName)
 	}
+
 	if len(loadedModel.Graph.Nodes) != 1 {
 		t.Errorf("Expected 1 node, got %d", len(loadedModel.Graph.Nodes))
 	}
+
 	if loadedModel.Graph.Nodes[0].Name != "node_1" {
 		t.Errorf("Expected node name 'node_1', got '%s'", loadedModel.Graph.Nodes[0].Name)
 	}
