@@ -13,6 +13,7 @@ import (
 // deserializes it, and returns the parsed Model object.
 func LoadZMF(filePath string) (*zmf.Model, error) {
 	// Read the entire file into a byte slice.
+	//nolint:gosec // Reading a model file from a variable path is expected and validated by caller.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ZMF file '%s': %w", filePath, err)

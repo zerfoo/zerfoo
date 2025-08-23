@@ -42,7 +42,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	// 1. Register mock layer builders for our test op types.
-	model.RegisterLayer("OpA", func(e compute.Engine[float32], o numeric.Arithmetic[float32], n string, p map[string]*graph.Parameter[float32], a map[string]interface{}) (graph.Node[float32], error) {
+	model.RegisterLayer("OpA", func(_ compute.Engine[float32], _ numeric.Arithmetic[float32], n string, _ map[string]*graph.Parameter[float32], _ map[string]interface{}) (graph.Node[float32], error) {
 		// This node adds 1 to its input
 		return &mockNode[float32]{
 			name: n,
@@ -53,7 +53,7 @@ func TestBuildFromZMF_ConnectedGraph(t *testing.T) {
 			},
 		}, nil
 	})
-	model.RegisterLayer("OpB", func(e compute.Engine[float32], o numeric.Arithmetic[float32], n string, p map[string]*graph.Parameter[float32], a map[string]interface{}) (graph.Node[float32], error) {
+	model.RegisterLayer("OpB", func(_ compute.Engine[float32], _ numeric.Arithmetic[float32], n string, _ map[string]*graph.Parameter[float32], _ map[string]interface{}) (graph.Node[float32], error) {
 		// This node multiplies its input by 2
 		return &mockNode[float32]{
 			name: n,

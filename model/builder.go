@@ -18,6 +18,7 @@ import (
 // This function iterates through the nodes in the graph, instantiates the
 // corresponding layers using a registered builder, and connects them into an
 // executable graph.
+//nolint:gocyclo // High-level orchestration with many cases; splitting would harm clarity.
 func BuildFromZMF[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -90,65 +91,51 @@ func BuildFromZMF[T tensor.Numeric](
 			if len(actualInputNames) > 1 {
 				actualInputNames = actualInputNames[1:]
 			}
-		} else if nodeProto.OpType == "MatMul" && strings.Contains(nodeProto.Name, "lm_head") {
-			// For language modeling head MatMul, check if it's using embedding weights that need transposition
-			if len(actualInputNames) > 1 {
-				weightInputName := actualInputNames[1]
-				// Check if this is using embedding weights
-				if strings.Contains(weightInputName, "embed_tokens") {
-					// Create a transposed version of the embedding weights for the lm_head
-					if embedParam, exists := params[weightInputName]; exists {
-						// Transpose the embedding weights: [vocab_size, embed_dim] -> [embed_dim, vocab_size]
-						transposedTensor, err := engine.Transpose(context.Background(), embedParam.Value, []int{1, 0})
-						if err != nil {
-							return nil, fmt.Errorf("failed to transpose embedding weights for lm_head: %w", err)
+		} else {
+			switch nodeProto.OpType {
+			case "MatMul":
+				if strings.Contains(nodeProto.Name, "lm_head") && len(actualInputNames) > 1 {
+					weightInputName := actualInputNames[1]
+					if strings.Contains(weightInputName, "embed_tokens") {
+						if embedParam, exists := params[weightInputName]; exists {
+							transposedTensor, err := engine.Transpose(context.Background(), embedParam.Value, []int{1, 0})
+							if err != nil {
+								return nil, fmt.Errorf("failed to transpose embedding weights for lm_head: %w", err)
+							}
+							transposedParam := &graph.Parameter[T]{
+								Name:  weightInputName + "_transposed",
+								Value: transposedTensor,
+							}
+							params[weightInputName+"_transposed"] = transposedParam
+							actualInputNames[1] = weightInputName + "_transposed"
 						}
-						// Create a new parameter with the transposed weights
-						transposedParam := &graph.Parameter[T]{
-							Name:  weightInputName + "_transposed",
-							Value: transposedTensor,
-						}
-						params[weightInputName+"_transposed"] = transposedParam
-						// Update the input name to use the transposed weights
-						actualInputNames[1] = weightInputName + "_transposed"
 					}
 				}
-			}
-		} else if nodeProto.OpType == "SimplifiedLayerNormalization" || nodeProto.OpType == "SkipSimplifiedLayerNormalization" {
-			// For normalization layers, skip parameter inputs (usually the second input is the weight/gain parameter)
-			// Keep only the first input (the data input)
-			if len(actualInputNames) > 1 {
-				actualInputNames = actualInputNames[:1]
-			}
-		} else if nodeProto.OpType == "Reshape" {
-			// For Reshape layers, extract shape from the second input (constant) and add as attribute
-			if len(actualInputNames) > 1 {
-				shapeInputName := actualInputNames[1]
-				// Try to find the shape constant in parameters
-				if shapeParam, exists := params[shapeInputName]; exists {
-					// Extract shape values from the constant tensor
-					shapeValues := make([]int64, shapeParam.Value.Size())
-					for i := 0; i < shapeParam.Value.Size(); i++ {
-						val, err := shapeParam.Value.At(i)
-						if err != nil {
-							return nil, fmt.Errorf("failed to extract shape value at index %d: %w", i, err)
-						}
-						shapeValues[i] = int64(val)
-					}
-					// Add shape as attribute for the Reshape builder
-					// Convert to the format expected by layer builders (map[string]interface{})
-					if nodeProto.Attributes == nil {
-						nodeProto.Attributes = make(map[string]*zmf.Attribute)
-					}
-					// Create a ZMF attribute with integer array
-					intsAttr := &zmf.Ints{Val: shapeValues}
-					attr := &zmf.Attribute{
-						Value: &zmf.Attribute_Ints{Ints: intsAttr},
-					}
-					nodeProto.Attributes["shape"] = attr
+			case "SimplifiedLayerNormalization", "SkipSimplifiedLayerNormalization":
+				if len(actualInputNames) > 1 {
+					actualInputNames = actualInputNames[:1]
 				}
-				// Keep only the first input (the data input)
-				actualInputNames = actualInputNames[:1]
+			case "Reshape":
+				if len(actualInputNames) > 1 {
+					shapeInputName := actualInputNames[1]
+					if shapeParam, exists := params[shapeInputName]; exists {
+						shapeValues := make([]int64, shapeParam.Value.Size())
+						for i := 0; i < shapeParam.Value.Size(); i++ { //nolint:intrange // classic loop for generic tensor access
+							val, err := shapeParam.Value.At(i)
+							if err != nil {
+								return nil, fmt.Errorf("failed to extract shape value at index %d: %w", i, err)
+							}
+							shapeValues[i] = int64(val)
+						}
+						if nodeProto.Attributes == nil {
+							nodeProto.Attributes = make(map[string]*zmf.Attribute)
+						}
+						intsAttr := &zmf.Ints{Val: shapeValues}
+						attr := &zmf.Attribute{Value: &zmf.Attribute_Ints{Ints: intsAttr}}
+						nodeProto.Attributes["shape"] = attr
+					}
+					actualInputNames = actualInputNames[:1]
+				}
 			}
 		}
 
@@ -236,20 +223,20 @@ func (p *parameterNode[T]) Attributes() map[string]interface{} {
 	return make(map[string]interface{})
 }
 
-func (n *parameterNode[T]) OutputShape() []int {
-	return n.value.Shape()
+func (p *parameterNode[T]) OutputShape() []int {
+	return p.value.Shape()
 }
 
-func (n *parameterNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return n.value, nil
+func (p *parameterNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return p.value, nil
 }
 
-func (n *parameterNode[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (p *parameterNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Parameters don't propagate gradients to inputs since they have no inputs
 	return nil, nil
 }
 
-func (n *parameterNode[T]) Parameters() []*graph.Parameter[T] {
+func (p *parameterNode[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
@@ -314,9 +301,7 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode tensor for parameter '%s': %w", name, err)
 		}
-		newTensorFn := func(shape []int, data []T) (*tensor.TensorNumeric[T], error) {
-			return tensor.New(shape, data)
-		}
+		newTensorFn := tensor.New[T]
 		param, err := graph.NewParameter[T](name, tensorValue, newTensorFn)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create parameter '%s': %w", name, err)
