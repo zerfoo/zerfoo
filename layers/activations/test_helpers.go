@@ -44,6 +44,7 @@ func testActivationBackward[T tensor.Numeric](t *testing.T, activation Activatio
 }
 
 // testActivationCoverage is a common helper for testing activation coverage scenarios.
+//
 //nolint:unused // helper retained for future coverage tests
 func testActivationCoverage[T tensor.Numeric](t *testing.T, newActivationFunc func() ActivationLayer[T]) {
 	// Test activation creation (Error test)
