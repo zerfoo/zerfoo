@@ -33,14 +33,17 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		if _, ok := n.(*inputNode[T]); ok {
 			continue
 		}
+
 		nodeInputs := make([]*tensor.TensorNumeric[T], len(g.dependencies[n]))
 		for i, dep := range g.dependencies[n] {
 			nodeInputs[i] = memo[dep]
 		}
+
 		output, err := n.Forward(ctx, nodeInputs...)
 		if err != nil {
 			return nil, err
 		}
+
 		memo[n] = output
 	}
 
@@ -59,6 +62,7 @@ func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.TensorN
 			if err != nil {
 				return err
 			}
+
 			for j, dep := range g.dependencies[node] {
 				if existingGrad, ok := grads[dep]; !ok {
 					grads[dep] = inputGrads[j]
@@ -68,6 +72,7 @@ func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.TensorN
 					if err != nil {
 						return fmt.Errorf("error accumulating gradients: %w", err)
 					}
+
 					grads[dep] = addedGrad
 				}
 			}
@@ -125,14 +130,17 @@ func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
 
 func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[T]) ([]Node[T], error) {
 	var sorted []Node[T]
+
 	visited := make(map[Node[T]]bool)
 	recursionStack := make(map[Node[T]]bool)
 
 	var visit func(node Node[T]) error
+
 	visit = func(node Node[T]) error {
 		if recursionStack[node] {
 			return errors.New("cycle detected in graph")
 		}
+
 		if visited[node] {
 			return nil
 		}
