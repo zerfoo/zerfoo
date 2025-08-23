@@ -33,7 +33,7 @@ func (c *Cast[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the cast operation (for same type, this is essentially a copy).
-func (c *Cast[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (c *Cast[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		panic("Cast layer requires exactly 1 input")
 	}
@@ -47,7 +47,7 @@ func (c *Cast[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 }
 
 // Backward computes the gradients for the Cast layer.
-func (c *Cast[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (c *Cast[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		panic("Cast layer requires exactly 1 input")
 	}
