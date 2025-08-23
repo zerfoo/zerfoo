@@ -15,7 +15,7 @@ type ReadOnlyTensor[T tensor.Numeric] struct {
 	*tensor.TensorNumeric[T]
 }
 
-func (r *ReadOnlyTensor[T]) Set(_ T, indices ...int) error { //nolint:revive
+func (r *ReadOnlyTensor[T]) Set(_ T, indices ...int) error {
 	return errors.New("tensor is read-only")
 }
 
@@ -38,6 +38,7 @@ func Test100PercentCoverage(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
+
 		if err.Error() != "tensor is read-only" {
 			t.Errorf("expected 'tensor is read-only' error, got: %v", err)
 		}
@@ -56,6 +57,7 @@ func Test100PercentCoverage(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from read-only tensor Set operation")
 		}
+
 		if err.Error() != "tensor is read-only" {
 			t.Errorf("expected 'tensor is read-only' error, got: %v", err)
 		}
@@ -70,6 +72,7 @@ func Test100PercentCoverage(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from Zero operation")
 		}
+
 		if err.Error() != "zero operation failed" {
 			t.Errorf("expected 'zero operation failed' error, got: %v", err)
 		}
@@ -84,6 +87,7 @@ func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *te
 
 	// Exact copy of the original MatMul logic from cpu_engine.go
 	aShape := a.Shape()
+
 	bShape := b.Shape()
 	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
 		return errors.New("invalid shapes for matrix multiplication")
@@ -92,6 +96,7 @@ func matMulWithReadOnlyResult(_ context.Context, e *CPUEngine[float32], a, b *te
 	for i := range aShape[0] {
 		for j := range bShape[1] {
 			sum := e.ops.FromFloat32(0)
+
 			for k := range aShape[1] {
 				valA, _ := a.At(i, k)
 				valB, _ := b.At(k, j)
@@ -172,6 +177,7 @@ func sumWithFailingZeroOperation(ctx context.Context, e *CPUEngine[float32], a *
 				newShape = append(newShape, dim)
 			}
 		}
+
 		if len(newShape) == 0 {
 			newShape = []int{1}
 		}

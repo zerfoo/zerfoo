@@ -28,6 +28,7 @@ func TestFailableTensorSetError(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from Set operation, got nil")
 		}
+
 		if err.Error() != "controlled failure: Set operation failed" {
 			t.Errorf("expected controlled failure error, got: %v", err)
 		}
@@ -64,6 +65,7 @@ func TestFailableTensorSetError(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from Set operation, got nil")
 		}
+
 		if err.Error() != "controlled failure: Set operation failed" {
 			t.Errorf("expected controlled failure error, got: %v", err)
 		}
@@ -105,6 +107,7 @@ func TestFailableZeroerError(t *testing.T) {
 		if err == nil {
 			t.Error("expected error from Zero operation, got nil")
 		}
+
 		if err.Error() != "controlled failure: Zero operation failed" {
 			t.Errorf("expected controlled failure error, got: %v", err)
 		}
@@ -190,6 +193,7 @@ func TestTestableEngineErrorHandling(t *testing.T) {
 		}
 
 		a, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+
 		err = engine.TestableSum(ctx, a, -1, false, nil, result)
 		if err == nil {
 			t.Error("expected error for nil zeroer")
@@ -223,6 +227,7 @@ func TestFailableTensorNormalOperation(t *testing.T) {
 
 		// Verify the result is correct
 		expectedData := []float32{19, 22, 43, 50}
+
 		resultData := failableResult.Data()
 		for i, expected := range expectedData {
 			if resultData[i] != expected {
@@ -246,6 +251,7 @@ func TestFailableTensorNormalOperation(t *testing.T) {
 
 		// Verify the result is correct
 		expectedData := []float32{1, 4, 2, 5, 3, 6}
+
 		resultData := failableResult.Data()
 		for i, expected := range expectedData {
 			if resultData[i] != expected {

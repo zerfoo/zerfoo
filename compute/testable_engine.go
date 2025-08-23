@@ -67,11 +67,13 @@ func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.Tenso
 	if a == nil || b == nil {
 		return errors.New("input tensors cannot be nil")
 	}
+
 	if result == nil {
 		return errors.New("result tensor cannot be nil")
 	}
 
 	aShape := a.Shape()
+
 	bShape := b.Shape()
 	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
 		return errors.New("invalid shapes for matrix multiplication")
@@ -86,6 +88,7 @@ func (e *TestableEngine[T]) TestableMatMul(_ context.Context, a, b *tensor.Tenso
 	for i := range aShape[0] {
 		for j := range bShape[1] {
 			sum := e.ops.FromFloat32(0)
+
 			for k := range aShape[1] {
 				valA, _ := a.At(i, k)
 				valB, _ := b.At(k, j)
@@ -107,6 +110,7 @@ func (e *TestableEngine[T]) TestableTranspose(_ context.Context, a *tensor.Tenso
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
+
 	if result == nil {
 		return errors.New("result tensor cannot be nil")
 	}
@@ -166,9 +170,11 @@ func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.TensorNum
 	if a == nil {
 		return errors.New("input tensor cannot be nil")
 	}
+
 	if result == nil {
 		return errors.New("result tensor cannot be nil")
 	}
+
 	if zeroer == nil {
 		return errors.New("zeroer cannot be nil")
 	}
@@ -189,6 +195,7 @@ func (e *TestableEngine[T]) TestableSum(ctx context.Context, a *tensor.TensorNum
 		for _, v := range aData {
 			sum = e.ops.Add(sum, v)
 		}
+
 		if len(rData) > 0 {
 			rData[0] = sum
 		}
@@ -202,6 +209,7 @@ func equalSlices(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
