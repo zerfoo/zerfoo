@@ -17,8 +17,10 @@ func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, er
 		Shape: tensor.ConvertIntToInt64(t.Shape()),
 	}
 
-	var rawData []byte
-	var err error
+	var (
+		rawData []byte
+		err     error
+	)
 
 	// This is a bit of a hack. A better way would be to use type assertions
 	// on a generic interface or pass the type information explicitly.
