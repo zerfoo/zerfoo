@@ -80,6 +80,7 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 			anglesData[i*(headDim/2)+j] = T(float64(positions[i]) * float64(invFreqsData[j]))
 		}
 	}
+
 	anglesTensor, err := tensor.New[T]([]int{seqLen, headDim / 2}, anglesData)
 	if err != nil {
 		return nil, err
@@ -91,6 +92,7 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 	if err != nil {
 		return nil, err
 	}
+
 	sinAngles, err := engine.UnaryOp(ctx, anglesTensor, func(val T) T {
 		return T(math.Sin(float64(val)))
 	})
@@ -119,10 +121,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Parameters() []*graph.Parameter[T] {
 // Forward applies Rotary Positional Embedding to the input tensor.
 func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	rpe.inputShape = input.Shape()
+
 	rpe.outputShape = input.Shape()
 	if len(rpe.inputShape) < 2 {
 		return nil, fmt.Errorf("input tensor must have at least 2 dimensions, got %d", len(rpe.inputShape))
 	}
+
 	seqLen := rpe.inputShape[1]
 
 	// Slice cos and sin angles to match the input sequence length
@@ -130,6 +134,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	if err != nil {
 		return nil, err
 	}
+
 	sinAngles, err := rpe.sinAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
 		return nil, err
@@ -140,6 +145,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	if err != nil {
 		return nil, err
 	}
+
 	rpe.xRot1Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{rpe.headDim / 2, rpe.headDim})
 	if err != nil {
 		return nil, err
@@ -172,10 +178,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 	if err != nil {
 		return nil, err
 	}
+
 	mul2, err := rpe.engine.Mul(ctx, rpe.xRot0Slice, sinAngles)
 	if err != nil {
 		return nil, err
 	}
+
 	rotatedX1, err := rpe.engine.Add(ctx, mul1, mul2)
 	if err != nil {
 		return nil, err
@@ -199,6 +207,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	if err != nil {
 		return nil, err
 	}
+
 	sinAngles, err := rpe.sinAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
 		return nil, err
@@ -209,6 +218,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	if err != nil {
 		return nil, err
 	}
+
 	dRotatedX1, err := dOut.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, rpe.inputShape[1]}, [2]int{rpe.headDim / 2, rpe.headDim})
 	if err != nil {
 		return nil, err
@@ -220,10 +230,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	if err != nil {
 		return nil, err
 	}
+
 	mul2, err := rpe.engine.Mul(ctx, dRotatedX1, sinAngles)
 	if err != nil {
 		return nil, err
 	}
+
 	dLdxRot0, err := rpe.engine.Add(ctx, mul1, mul2)
 	if err != nil {
 		return nil, err
@@ -234,10 +246,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 	if err != nil {
 		return nil, err
 	}
+
 	mul4, err := rpe.engine.Mul(ctx, dRotatedX0, sinAngles)
 	if err != nil {
 		return nil, err
 	}
+
 	dLdxRot1, err := rpe.engine.Sub(ctx, mul3, mul4)
 	if err != nil {
 		return nil, err
@@ -263,12 +277,14 @@ func (rpe *RotaryPositionalEmbedding[T]) Scale(ctx context.Context, factor float
 	if err != nil {
 		return err
 	}
+
 	rpe.cosAngles = scaledCos
 
 	scaledSin, err := rpe.engine.Mul(ctx, rpe.sinAngles, scaleTensor)
 	if err != nil {
 		return err
 	}
+
 	rpe.sinAngles = scaledSin
 
 	return nil

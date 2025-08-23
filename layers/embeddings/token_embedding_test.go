@@ -32,6 +32,7 @@ func TestNewTokenEmbedding(t *testing.T) {
 
 			if tt.expectErr {
 				testutils.AssertError(t, err, "expected error")
+
 				if e != nil {
 					t.Errorf("expected nil embedding, got %v", e)
 				}
@@ -65,6 +66,7 @@ func TestTokenEmbedding_OutputShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a dummy input tensor to set the output shape
 			input, _ := tensor.New[int](tt.inputShapes[0], nil)
+
 			_, err := e.Forward(context.Background(), input)
 			if err != nil && !tt.expectErr {
 				t.Fatalf("unexpected error during forward pass: %v", err)
@@ -85,6 +87,7 @@ func TestTokenEmbedding_Parameters(t *testing.T) {
 	params := e.Parameters()
 	testutils.AssertEqual(t, len(params), 1, "expected 1 parameter")
 	testutils.AssertEqual(t, params[0].Name, "embedding_table", "parameter name mismatch")
+
 	dummyParams, _ := tensor.New[float64]([]int{10, 5}, nil)
 	testutils.AssertTrue(t, params[0].Value.ShapeEquals(dummyParams), "parameter value shape mismatch")
 }
@@ -117,8 +120,10 @@ func TestTokenEmbedding_Forward_Test(t *testing.T) {
 	output, err := e.Forward(ctx, inputTokenIDs)
 	testutils.AssertNoError(t, err, "Forward should not return an error")
 	testutils.AssertNotNil(t, output, "Output tensor should not be nil")
+
 	dummyOutput, _ := tensor.New[float64]([]int{1, 4, 3}, nil)
 	testutils.AssertTrue(t, output.ShapeEquals(dummyOutput), "Output shape mismatch")
+
 	for i := range expectedOutputData {
 		testutils.AssertFloatEqual(t, expectedOutputData[i], output.Data()[i], 1e-6, fmt.Sprintf("Output data mismatch at index %d", i))
 	}
@@ -165,8 +170,10 @@ func TestTokenEmbedding_Backward_Token(t *testing.T) {
 	testutils.AssertEqual(t, len(dInputs), 0, "Backward should return an empty slice for input gradients")
 
 	testutils.AssertNotNil(t, e.embeddingTable.Gradient, "embeddingTable gradient should not be nil")
+
 	dummyGradient, _ := tensor.New[float64]([]int{5, 3}, nil)
 	testutils.AssertTrue(t, e.embeddingTable.Gradient.ShapeEquals(dummyGradient), "embeddingTable gradient shape mismatch")
+
 	for i := range expectedDEmbeddingTableData {
 		testutils.AssertFloatEqual(t, expectedDEmbeddingTableData[i], e.embeddingTable.Gradient.Data()[i], 1e-6, fmt.Sprintf("embeddingTable gradient data mismatch at index %d", i))
 	}
