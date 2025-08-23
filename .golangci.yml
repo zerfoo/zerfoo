@@ -2,17 +2,12 @@ version: 2
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
-    - .git
-  skip-files:
-    - ".*\\.pb\\.go$"
-    - ".*_gen\\.go$"
 
 linters:
   enable:
     - errcheck
     - govet
+    - shadow
     - ineffassign
     - staticcheck
     - dupl
@@ -48,7 +43,7 @@ linters-settings:
     check-blank: true
 
   govet:
-    check-shadowing: true
+  # shadowing check moved to dedicated 'shadow' linter
 
   revive:
     rules:
@@ -135,6 +130,12 @@ linters-settings:
 
 
 issues:
+  exclude-dirs:
+    - vendor
+    - .git
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*_gen\\.go$"
   exclude-rules:
     - path: _test\.go
       linters:

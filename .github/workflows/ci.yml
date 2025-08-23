@@ -41,8 +41,10 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: v1.61.0
-          args: --timeout=5m --issues-exit-code=1
+          args: --timeout=5m --issues-exit-code=1 --out-format=colored-line-number
           working-directory: .
+          install-mode: go
+          config: .golangci.yml
 
       - name: Install golangci-lint for regression check
         run: |
@@ -53,7 +55,7 @@ jobs:
         run: |
           echo "🔍 Running lint regression check..."
           # Get current lint issues count
-          CURRENT_ISSUES=$(golangci-lint run --timeout=5m --out-format=json | jq '.Issues | length' || echo "0")
+          CURRENT_ISSUES=$(golangci-lint run --config=.golangci.yml --timeout=5m --out-format=json | jq '.Issues | length' || echo "0")
           echo "Current lint issues: $CURRENT_ISSUES"
           
           # Define maximum allowed issues (current baseline)
