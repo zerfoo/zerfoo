@@ -76,6 +76,7 @@ func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 			}
 		}
 	}
+
 	r.outputShape = outputShape
 
 	// The compute engine's Sum method might need to be updated to handle multiple axes.
@@ -88,6 +89,7 @@ func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 
 	// Iterative sum for now
 	tempResult := input
+
 	var err error
 	for _, axis := range r.axes {
 		tempResult, err = r.engine.Sum(ctx, tempResult, axis, r.keepDims)
