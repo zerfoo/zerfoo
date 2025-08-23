@@ -21,41 +21,41 @@ type CPUEngine[T tensor.Numeric] struct {
 
 // ReduceSum calculates the sum along a specified axis. It delegates to Sum.
 func (e *CPUEngine[T]) ReduceSum(
-    ctx context.Context,
-    a *tensor.TensorNumeric[T],
-    axis int,
-    keepDims bool,
-    dst ...*tensor.TensorNumeric[T],
+	ctx context.Context,
+	a *tensor.TensorNumeric[T],
+	axis int,
+	keepDims bool,
+	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
-    return e.Sum(ctx, a, axis, keepDims, dst...)
+	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
 // Softmax applies the softmax function along the specified axis.
 // Implementation: exp(x) then divide by sum(exp(x)) along axis using broadcasting.
 func (e *CPUEngine[T]) Softmax(
-    ctx context.Context,
-    a *tensor.TensorNumeric[T],
-    axis int,
-    dst ...*tensor.TensorNumeric[T],
+	ctx context.Context,
+	a *tensor.TensorNumeric[T],
+	axis int,
+	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
-    if a == nil {
-        return nil, errors.New("input tensor cannot be nil")
-    }
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
 
-    // Compute exponentials
-    exps, err := e.Exp(ctx, a)
-    if err != nil {
-        return nil, err
-    }
+	// Compute exponentials
+	exps, err := e.Exp(ctx, a)
+	if err != nil {
+		return nil, err
+	}
 
-    // Sum along axis, keeping dimensions for broadcasting
-    sums, err := e.Sum(ctx, exps, axis, true)
-    if err != nil {
-        return nil, err
-    }
+	// Sum along axis, keeping dimensions for broadcasting
+	sums, err := e.Sum(ctx, exps, axis, true)
+	if err != nil {
+		return nil, err
+	}
 
-    // Divide exps by sums with broadcasting
-    return e.Div(ctx, exps, sums, dst...)
+	// Divide exps by sums with broadcasting
+	return e.Div(ctx, exps, sums, dst...)
 }
 
 // AddScalar performs element-wise addition of a tensor by a scalar.
@@ -171,107 +171,107 @@ func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.TensorNumeric[T], numS
 // indices may be 1D [N] or 2D [batch, seq].
 // output must be [indices..., dim].
 func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
-    if params == nil || indices == nil || output == nil {
-        return errors.New("params, indices, and output cannot be nil")
-    }
+	if params == nil || indices == nil || output == nil {
+		return errors.New("params, indices, and output cannot be nil")
+	}
 
-    pShape := params.Shape()
-    if len(pShape) != 2 {
-        return fmt.Errorf("params must be 2D [vocab, dim], got %v", pShape)
-    }
-    vocab := pShape[0]
-    dim := pShape[1]
+	pShape := params.Shape()
+	if len(pShape) != 2 {
+		return fmt.Errorf("params must be 2D [vocab, dim], got %v", pShape)
+	}
+	vocab := pShape[0]
+	dim := pShape[1]
 
-    // Validate indices dims (allow 1D or 2D)
-    iShape := indices.Shape()
-    if len(iShape) != 1 && len(iShape) != 2 {
-        return fmt.Errorf("indices must be 1D or 2D, got %dD shape %v", len(iShape), iShape)
-    }
+	// Validate indices dims (allow 1D or 2D)
+	iShape := indices.Shape()
+	if len(iShape) != 1 && len(iShape) != 2 {
+		return fmt.Errorf("indices must be 1D or 2D, got %dD shape %v", len(iShape), iShape)
+	}
 
-    // Expected output shape is indices shape with an extra trailing dim
-    expectedOutShape := append(append([]int{}, iShape...), dim)
-    if !reflect.DeepEqual(output.Shape(), expectedOutShape) {
-        return fmt.Errorf("output shape %v must equal indices shape appended with dim %v; want %v", output.Shape(), dim, expectedOutShape)
-    }
+	// Expected output shape is indices shape with an extra trailing dim
+	expectedOutShape := append(append([]int{}, iShape...), dim)
+	if !reflect.DeepEqual(output.Shape(), expectedOutShape) {
+		return fmt.Errorf("output shape %v must equal indices shape appended with dim %v; want %v", output.Shape(), dim, expectedOutShape)
+	}
 
-    idx := indices.Data()
-    out := output.Data()
+	idx := indices.Data()
+	out := output.Data()
 
-    // Number of positions in indices (flattened)
-    n := 1
-    for _, d := range iShape {
-        n *= d
-    }
-    if n != len(idx) {
-        return fmt.Errorf("indices data size mismatch: shape %v -> %d, but data length is %d", iShape, n, len(idx))
-    }
+	// Number of positions in indices (flattened)
+	n := 1
+	for _, d := range iShape {
+		n *= d
+	}
+	if n != len(idx) {
+		return fmt.Errorf("indices data size mismatch: shape %v -> %d, but data length is %d", iShape, n, len(idx))
+	}
 
-    // For each index, copy the corresponding row vector of length dim
-    pData := params.Data()
-    for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
-        row := idx[i]
-        if row < 0 || row >= vocab {
-            return fmt.Errorf("gather index %d out of bounds [0,%d)", row, vocab)
-        }
-        srcStart := row * dim
-        dstStart := i * dim
-        copy(out[dstStart:dstStart+dim], pData[srcStart:srcStart+dim])
-    }
+	// For each index, copy the corresponding row vector of length dim
+	pData := params.Data()
+	for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
+		row := idx[i]
+		if row < 0 || row >= vocab {
+			return fmt.Errorf("gather index %d out of bounds [0,%d)", row, vocab)
+		}
+		srcStart := row * dim
+		dstStart := i * dim
+		copy(out[dstStart:dstStart+dim], pData[srcStart:srcStart+dim])
+	}
 
-    return nil
+	return nil
 }
 
 // ScatterAdd performs a scatter-add over rows: dEmbeddingTable[indices[i], :] += dOut[i, :].
 // dEmbeddingTable must be [vocab, dim]. dOut must be [N, dim]. indices can be [N] or [1, N] or [batch, seq] with N=batch*seq.
 func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
-    if dEmbeddingTable == nil || indices == nil || dOut == nil {
-        return errors.New("inputs cannot be nil")
-    }
+	if dEmbeddingTable == nil || indices == nil || dOut == nil {
+		return errors.New("inputs cannot be nil")
+	}
 
-    tShape := dEmbeddingTable.Shape()
-    if len(tShape) != 2 {
-        return fmt.Errorf("dEmbeddingTable must be 2D [vocab, dim], got %v", tShape)
-    }
-    vocab := tShape[0]
-    dim := tShape[1]
+	tShape := dEmbeddingTable.Shape()
+	if len(tShape) != 2 {
+		return fmt.Errorf("dEmbeddingTable must be 2D [vocab, dim], got %v", tShape)
+	}
+	vocab := tShape[0]
+	dim := tShape[1]
 
-    // Validate dOut shape [N, dim]
-    gShape := dOut.Shape()
-    if len(gShape) != 2 || gShape[1] != dim {
-        return fmt.Errorf("dOut must be 2D [N, %d], got %v", dim, gShape)
-    }
-    n := gShape[0]
+	// Validate dOut shape [N, dim]
+	gShape := dOut.Shape()
+	if len(gShape) != 2 || gShape[1] != dim {
+		return fmt.Errorf("dOut must be 2D [N, %d], got %v", dim, gShape)
+	}
+	n := gShape[0]
 
-    // Flatten indices length and verify equals N
-    iShape := indices.Shape()
-    if len(iShape) == 0 {
-        return errors.New("indices must have at least 1 dimension")
-    }
-    idxCount := 1
-    for _, d := range iShape {
-        idxCount *= d
-    }
-    if idxCount != n {
-        return fmt.Errorf("indices flattened length %d must equal dOut rows %d", idxCount, n)
-    }
+	// Flatten indices length and verify equals N
+	iShape := indices.Shape()
+	if len(iShape) == 0 {
+		return errors.New("indices must have at least 1 dimension")
+	}
+	idxCount := 1
+	for _, d := range iShape {
+		idxCount *= d
+	}
+	if idxCount != n {
+		return fmt.Errorf("indices flattened length %d must equal dOut rows %d", idxCount, n)
+	}
 
-    table := dEmbeddingTable.Data()
-    idx := indices.Data()
-    grad := dOut.Data()
+	table := dEmbeddingTable.Data()
+	idx := indices.Data()
+	grad := dOut.Data()
 
-    for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
-        row := idx[i]
-        if row < 0 || row >= vocab {
-            return fmt.Errorf("scatter index %d out of bounds [0,%d)", row, vocab)
-        }
-        tStart := row * dim
-        gStart := i * dim
-        for j := 0; j < dim; j++ { //nolint:intrange // Classic index loop maintained
-            table[tStart+j] = e.ops.Add(table[tStart+j], grad[gStart+j])
-        }
-    }
+	for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
+		row := idx[i]
+		if row < 0 || row >= vocab {
+			return fmt.Errorf("scatter index %d out of bounds [0,%d)", row, vocab)
+		}
+		tStart := row * dim
+		gStart := i * dim
+		for j := 0; j < dim; j++ { //nolint:intrange // Classic index loop maintained
+			table[tStart+j] = e.ops.Add(table[tStart+j], grad[gStart+j])
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // RandomUniform fills the tensor with values from a uniform distribution in [minVal, maxVal).

@@ -1,5 +1,6 @@
 // Package normalization_test tests the normalization layers.
 // Package normalization_test tests the normalization layers.
+//
 //nolint:dupl // File intentionally mirrors simplified variant to validate both implementations with identical setup and imports
 package normalization_test
 
@@ -14,8 +15,9 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
-//nolint:dupl // Intentional duplication with simplified layer test to validate skip-connection variant using same harness
 // TestSkipSimplifiedLayerNormalization_Forward tests the forward pass of the SkipSimplifiedLayerNormalization layer.
+//
+//nolint:dupl // Intentional duplication with simplified layer test to validate skip-connection variant using same harness
 func TestSkipSimplifiedLayerNormalization_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
