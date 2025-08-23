@@ -38,6 +38,7 @@ func TestFastGelu_Forward(t *testing.T) {
 		inner := float32(math.Sqrt(2/math.Pi)) * (x + 0.044715*x3)
 		expectedOutputData[i] = 0.5 * x * (1 + float32(math.Tanh(float64(inner))))
 	}
+
 	expectedOutput, _ := tensor.New[float32]([]int{1, 5}, expectedOutputData)
 
 	if !testutils.CompareTensorsApprox(t, expectedOutput, output, 1e-5) {
