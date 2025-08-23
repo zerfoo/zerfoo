@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,78 @@ import (
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
+// mockGrpcServer is a mock implementation of grpc.ServiceRegistrar and grpc.Server for testing
+type mockGrpcServer struct {
+	mu                   sync.Mutex
+	registerServiceCalls int
+	serviceDesc          *grpc.ServiceDesc
+	serviceImpl          interface{}
+	serveCalled          bool
+	stopCalled           bool
+	gracefulStop         bool
+	serveError           error
+}
+
+func (m *mockGrpcServer) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.registerServiceCalls++
+	m.serviceDesc = sd
+	m.serviceImpl = ss
+}
+
+func (m *mockGrpcServer) Serve(lis net.Listener) error {
+	m.mu.Lock()
+	m.serveCalled = true
+	err := m.serveError
+	m.mu.Unlock()
+
+	return err
+}
+
+func (m *mockGrpcServer) Stop() {
+	m.mu.Lock()
+	m.stopCalled = true
+	m.mu.Unlock()
+}
+
+func (m *mockGrpcServer) GracefulStop() {
+	m.mu.Lock()
+	m.gracefulStop = true
+	m.mu.Unlock()
+}
+
+// mockListener is a mock implementation of net.Listener for testing
+type mockListener struct {
+	addrCalled int
+	addr       *net.TCPAddr
+}
+
+func (m *mockListener) Addr() net.Addr {
+	m.addrCalled++
+	if m.addr == nil {
+		m.addr = &net.TCPAddr{
+			IP:   net.IPv4(127, 0, 0, 1),
+			Port: 1234,
+		}
+	}
+
+	return m.addr
+}
+
+func (m *mockListener) Accept() (net.Conn, error) {
+	return nil, nil
+}
+
+func (m *mockListener) Close() error {
+	return nil
+}
+
+func (m *mockListener) SetAddr(addr *net.TCPAddr) {
+	m.addr = addr
+}
+
 func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	peers := []string{"peer1", "peer2", "peer3"}
 	timeout := time.Second
@@ -21,7 +94,9 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 	t.Run("successful connection", func(t *testing.T) {
 		lis := bufconn.Listen(1024 * 1024)
 		s := grpc.NewServer()
+
 		go func() { _ = s.Serve(lis) }()
+
 		defer s.Stop()
 
 		dialer := func(_ context.Context, _ string) (*grpc.ClientConn, error) {
@@ -38,21 +113,27 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 		nm := NewNetworkManager(dialer, MockClientFactory)
 		clients, conns, err := nm.ConnectToPeers(peers, 1, timeout)
 		testutils.AssertNoError(t, err, "ConnectToPeers failed: %v")
+
 		if len(clients) != 3 {
 			t.Errorf("expected 3 clients, got %d", len(clients))
 		}
+
 		if len(conns) != 3 {
 			t.Errorf("expected 3 connections, got %d", len(conns))
 		}
+
 		testutils.AssertNotNil(t, clients[0], "clients[0] should not be nil")
 		testutils.AssertNil(t, clients[1], "clients[1] should be nil (self)")
 		testutils.AssertNotNil(t, clients[2], "clients[2] should not be nil")
+
 		nilCount := 0
+
 		for _, conn := range conns {
 			if conn == nil {
 				nilCount++
 			}
 		}
+
 		testutils.AssertEqual(t, 1, nilCount, "expected exactly one nil connection")
 		nm.CloseConnections(conns)
 	})
@@ -65,7 +146,9 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 			// Create a dummy connection for the first peer
 			lis := bufconn.Listen(1024 * 1024)
 			s := grpc.NewServer()
+
 			go func() { _ = s.Serve(lis) }()
+
 			defer s.Stop()
 
 			return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -79,55 +162,51 @@ func TestNetworkManager_ConnectToPeers(t *testing.T) {
 
 func TestServerManager_Start(t *testing.T) {
 	address := "localhost:1234"
-	customMockServer := new(CustomMockGrpcServer)
-	customMockListener := new(CustomMockListener)
 
 	t.Run("successful start", func(t *testing.T) {
-		listenFunc := func(_ string, _ string) (net.Listener, error) {
-			return customMockListener, nil
+		srv := &mockGrpcServer{}
+		listener := &mockListener{}
+		listenFunc := func(_, _ string) (net.Listener, error) {
+			return listener, nil
 		}
-		sm := NewServerManager(customMockServer, listenFunc)
 
-		// customMockServer.On("RegisterService", mock.Anything, mock.Anything).Once()
-		// customMockServer.On("Serve", customMockListener).Return(nil).Once()
-		customMockListener.OnAddr(&net.TCPAddr{})
+		sm := NewServerManager(srv, listenFunc)
 
 		err := sm.Start(address, nil, nil)
 		testutils.AssertNoError(t, err, "expected no error, got %v")
+		testutils.AssertTrue(t, srv.registerServiceCalls > 0, "RegisterService should be called")
+		testutils.AssertTrue(t, listener.addrCalled > 0, "Addr() should be called on the listener")
 	})
 
 	t.Run("listen error", func(t *testing.T) {
-		listenFunc := func(_ string, _ string) (net.Listener, error) {
-			return nil, errors.New("listen error")
+		srv := &mockGrpcServer{}
+		expectedErr := errors.New("listen error")
+		listenFunc := func(_, _ string) (net.Listener, error) {
+			return nil, expectedErr
 		}
-		sm := NewServerManager(customMockServer, listenFunc)
+
+		sm := NewServerManager(srv, listenFunc)
 		err := sm.Start(address, nil, nil)
 		testutils.AssertError(t, err, "expected an error, got nil")
+		testutils.AssertEqual(t, expectedErr, err, "expected specific error")
 	})
 
 	t.Run("serve error", func(t *testing.T) {
-		listenFunc := func(_ string, _ string) (net.Listener, error) {
-			return customMockListener, nil
+		srv := &mockGrpcServer{
+			serveError: errors.New("serve error"),
 		}
-		sm := NewServerManager(customMockServer, listenFunc)
-		customMockLogger := new(CustomMockLogger)
-		sm.SetLogger(customMockLogger)
+		listener := &mockListener{}
 
-		// customMockServer.On("RegisterService", mock.Anything, mock.Anything).Once()
-		customMockServer.OnServe(errors.New("serve error"))
-		customMockListener.OnAddr(&net.TCPAddr{})
-		// customMockLogger.On("Printf", mock.Anything, mock.Anything).Once()
+		listenFunc := func(_, _ string) (net.Listener, error) {
+			return listener, nil
+		}
+
+		sm := NewServerManager(srv, listenFunc)
 
 		err := sm.Start(address, nil, nil)
-		testutils.AssertNoError(t, err, "expected no error, got %v")
-
-		// Give the goroutine time to run
-		time.Sleep(10 * time.Millisecond)
-
-		// Give the goroutine time to run
-		time.Sleep(10 * time.Millisecond)
-
-		// customMockLogger.AssertExpectations(t)
+		// The error is handled asynchronously, so we can't directly test it here
+		// Instead, we'll just verify that the server was started
+		testutils.AssertNoError(t, err, "expected no error from Start()")
 	})
 }
 
@@ -148,7 +227,9 @@ func TestNetworkManager_CloseConnections(t *testing.T) {
 	// Create a mock connection to test closing.
 	lis := bufconn.Listen(1024 * 1024)
 	s := grpc.NewServer()
+
 	go func() { _ = s.Serve(lis) }()
+
 	defer s.Stop()
 
 	conn, err := grpc.NewClient("bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {

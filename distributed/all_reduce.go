@@ -27,7 +27,7 @@ func NewAllReduceStrategy[T tensor.Numeric](
 }
 
 // Init initializes the hierarchical strategy.
-func (s *AllReduceStrategy[T]) Init(rank int, size int, coordinatorAddress string) error {
+func (s *AllReduceStrategy[T]) Init(rank, size int, coordinatorAddress string) error {
 	if err := s.localStrategy.Init(rank, size, coordinatorAddress); err != nil {
 		return fmt.Errorf("failed to initialize local strategy: %w", err)
 	}
@@ -123,6 +123,7 @@ func (s *AllReduceStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootR
 // Shutdown gracefully closes all connections.
 func (s *AllReduceStrategy[T]) Shutdown() {
 	s.localStrategy.Shutdown()
+
 	if s.isNodeLeader {
 		s.crossNodeStrategy.Shutdown()
 	}

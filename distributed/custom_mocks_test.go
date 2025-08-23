@@ -45,10 +45,12 @@ type CustomMockStrategy[T tensor.Numeric] struct {
 	shutdownCalls int
 }
 
-func (m *CustomMockStrategy[T]) Init(rank int, size int, coordinatorAddress string) error {
+func (m *CustomMockStrategy[T]) Init(rank, size int, coordinatorAddress string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.initCalls++
+
 	m.initArgs = append(m.initArgs, struct {
 		rank               int
 		size               int
@@ -68,6 +70,7 @@ func (m *CustomMockStrategy[T]) Init(rank int, size int, coordinatorAddress stri
 func (m *CustomMockStrategy[T]) OnInit(rank, size int, coordinatorAddress string) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.initArgs = append(m.initArgs, struct {
 		rank               int
 		size               int
@@ -84,6 +87,7 @@ func (m *CustomMockStrategy[T]) OnInit(rank, size int, coordinatorAddress string
 func (m *CustomMockStrategy[T]) ReturnInit(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.initReturns = append(m.initReturns, err)
 
 	return m
@@ -97,6 +101,7 @@ func (m *CustomMockStrategy[T]) OnceInit() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) Rank() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.rankCalls++
 	if len(m.rankReturns) < m.rankCalls {
 		panic("not enough return values for Rank")
@@ -112,6 +117,7 @@ func (m *CustomMockStrategy[T]) OnRank() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) ReturnRank(rank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.rankReturns = append(m.rankReturns, rank)
 
 	return m
@@ -124,6 +130,7 @@ func (m *CustomMockStrategy[T]) OnceRank() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) Size() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.sizeCalls++
 	if len(m.sizeReturns) < m.sizeCalls {
 		panic("not enough return values for Size")
@@ -139,6 +146,7 @@ func (m *CustomMockStrategy[T]) OnSize() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) ReturnSize(size int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.sizeReturns = append(m.sizeReturns, size)
 
 	return m
@@ -151,7 +159,9 @@ func (m *CustomMockStrategy[T]) OnceSize() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.allReduceGradientsCalls++
+
 	m.allReduceGradientsArgs = append(m.allReduceGradientsArgs, gradients)
 	if len(m.allReduceGradientsReturns) < m.allReduceGradientsCalls {
 		panic("not enough return values for AllReduceGradients")
@@ -163,6 +173,7 @@ func (m *CustomMockStrategy[T]) AllReduceGradients(gradients map[string]*tensor.
 func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.allReduceGradientsArgs = append(m.allReduceGradientsArgs, gradients)
 
 	return m
@@ -171,6 +182,7 @@ func (m *CustomMockStrategy[T]) OnAllReduceGradients(gradients map[string]*tenso
 func (m *CustomMockStrategy[T]) ReturnAllReduceGradients(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.allReduceGradientsReturns = append(m.allReduceGradientsReturns, err)
 
 	return m
@@ -183,6 +195,7 @@ func (m *CustomMockStrategy[T]) OnceAllReduceGradients() *CustomMockStrategy[T] 
 func (m *CustomMockStrategy[T]) Barrier() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.barrierCalls++
 	if len(m.barrierReturns) < m.barrierCalls {
 		panic("not enough return values for Barrier")
@@ -198,6 +211,7 @@ func (m *CustomMockStrategy[T]) OnBarrier() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) ReturnBarrier(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.barrierReturns = append(m.barrierReturns, err)
 
 	return m
@@ -210,7 +224,9 @@ func (m *CustomMockStrategy[T]) TwiceBarrier() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.broadcastTensorCalls++
+
 	m.broadcastTensorArgs = append(m.broadcastTensorArgs, struct {
 		t        *tensor.TensorNumeric[T]
 		rootRank int
@@ -228,6 +244,7 @@ func (m *CustomMockStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], root
 func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.broadcastTensorArgs = append(m.broadcastTensorArgs, struct {
 		t        *tensor.TensorNumeric[T]
 		rootRank int
@@ -242,6 +259,7 @@ func (m *CustomMockStrategy[T]) OnBroadcastTensor(t *tensor.TensorNumeric[T], ro
 func (m *CustomMockStrategy[T]) ReturnBroadcastTensor(err error) *CustomMockStrategy[T] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.broadcastTensorReturns = append(m.broadcastTensorReturns, err)
 
 	return m
@@ -254,6 +272,7 @@ func (m *CustomMockStrategy[T]) OnceBroadcastTensor() *CustomMockStrategy[T] {
 func (m *CustomMockStrategy[T]) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.shutdownCalls++
 }
 
@@ -266,6 +285,7 @@ func (m *CustomMockStrategy[T]) AssertExpectations(t *testing.T) {
 
 func (m *CustomMockStrategy[T]) AssertNotCalled(t *testing.T, methodName string) {
 	t.Helper()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -317,6 +337,7 @@ type CustomMockListener struct {
 func (m *CustomMockListener) Accept() (net.Conn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.acceptCalls++
 
 	return nil, m.acceptErr
@@ -325,6 +346,7 @@ func (m *CustomMockListener) Accept() (net.Conn, error) {
 func (m *CustomMockListener) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.closeCalls++
 
 	return m.closeErr
@@ -333,6 +355,7 @@ func (m *CustomMockListener) Close() error {
 func (m *CustomMockListener) Addr() net.Addr {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.addrCalls++
 
 	return m.addr
@@ -341,6 +364,7 @@ func (m *CustomMockListener) Addr() net.Addr {
 func (m *CustomMockListener) OnAccept(err error) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.acceptErr = err
 
 	return m
@@ -349,6 +373,7 @@ func (m *CustomMockListener) OnAccept(err error) *CustomMockListener {
 func (m *CustomMockListener) OnClose(err error) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.closeErr = err
 
 	return m
@@ -357,6 +382,7 @@ func (m *CustomMockListener) OnClose(err error) *CustomMockListener {
 func (m *CustomMockListener) OnAddr(addr net.Addr) *CustomMockListener {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.addr = addr
 
 	return m
@@ -379,12 +405,14 @@ type CustomMockGrpcServer struct {
 func (m *CustomMockGrpcServer) RegisterService(_ *grpc.ServiceDesc, _ interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.registerServiceCalls++
 }
 
 func (m *CustomMockGrpcServer) Serve(_ net.Listener) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.serveCalls++
 
 	return m.serveErr
@@ -393,18 +421,21 @@ func (m *CustomMockGrpcServer) Serve(_ net.Listener) error {
 func (m *CustomMockGrpcServer) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.stopCalls++
 }
 
 func (m *CustomMockGrpcServer) GracefulStop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.gracefulStopCalls++
 }
 
 func (m *CustomMockGrpcServer) OnServe(err error) *CustomMockGrpcServer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.serveErr = err
 
 	return m
@@ -427,6 +458,7 @@ type CustomMockLogger struct {
 func (m *CustomMockLogger) Printf(format string, v ...interface{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.printfCalls++
 	m.printfArgs = append(m.printfArgs, struct {
 		format string
@@ -458,6 +490,7 @@ type CustomMockDistributedServiceClient struct {
 func (m *CustomMockDistributedServiceClient) AllReduce(_ context.Context, _ ...grpc.CallOption) (pb.DistributedService_AllReduceClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.allReduceCalls++
 	if len(m.allReduceReturns) < m.allReduceCalls {
 		panic("not enough return values for AllReduce")
@@ -473,6 +506,7 @@ func (m *CustomMockDistributedServiceClient) OnAllReduce() *CustomMockDistribute
 func (m *CustomMockDistributedServiceClient) ReturnAllReduce(client pb.DistributedService_AllReduceClient, err error) *CustomMockDistributedServiceClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.allReduceReturns = append(m.allReduceReturns, struct {
 		client pb.DistributedService_AllReduceClient
 		err    error
