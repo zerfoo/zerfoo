@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
