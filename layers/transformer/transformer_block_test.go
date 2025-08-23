@@ -41,10 +41,12 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	batchSize := 2
 	seqLen := 10
 	inputShape := []int{batchSize, seqLen, modelDim}
+
 	inputData := make([]float32, batchSize*seqLen*modelDim)
 	for i := range inputData {
 		inputData[i] = float32(i) * 0.01 // Simple dummy data
 	}
+
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
