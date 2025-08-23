@@ -8,9 +8,11 @@ func TestGetDevice(t *testing.T) {
 		if err != nil {
 			t.Fatalf(`expected to get "cpu" device, but got error: %v`, err)
 		}
+
 		if dev.ID() != "cpu" {
 			t.Errorf(`expected device ID "cpu", got "%s"`, dev.ID())
 		}
+
 		if dev.Type() != CPU {
 			t.Errorf("expected device type CPU, got %v", dev.Type())
 		}

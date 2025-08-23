@@ -37,6 +37,7 @@ var (
 func registerDevice(dev Device) {
 	devicesMutex.Lock()
 	defer devicesMutex.Unlock()
+
 	devices[dev.ID()] = dev
 }
 
@@ -45,6 +46,7 @@ func registerDevice(dev Device) {
 func Get(id string) (Device, error) {
 	devicesMutex.RLock()
 	defer devicesMutex.RUnlock()
+
 	dev, ok := devices[id]
 	if !ok {
 		return nil, fmt.Errorf("device not found: %s", id)
