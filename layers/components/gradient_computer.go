@@ -13,13 +13,12 @@ type LinearGradientComputer[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 }
 
-// NewLinearGradientComputer creates a new linear gradient computer.
 // LinearGradientComputerOptions holds configuration options for LinearGradientComputer.
 type LinearGradientComputerOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
 }
 
-// LinearGradientComputerOption is a function that applies an option to LinearGradientComputerOptions.
+// LinearGradientComputerOption applies an option to LinearGradientComputerOptions.
 type LinearGradientComputerOption[T tensor.Numeric] func(*LinearGradientComputerOptions[T])
 
 // NewLinearGradientComputer creates a new linear gradient computer.
