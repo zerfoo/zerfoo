@@ -136,7 +136,7 @@ func TestRotaryPositionalEmbedding_Forward(t *testing.T) {
 	testutils.AssertTrue(t, output.ShapeEquals(dummyOutput), "Output shape mismatch")
 
 	// Dynamically calculate expected output
-	expectedOutputData := []float64{1, 2, -3.1887853643145765, 5.919701335826659, 3, 4, 7.9894710651164615, 8.059599003338322}
+	expectedOutputData := []float64{1, 2, 3, 4, -3.1887853643145765, 5.919701335826659, 7.9894710651164615, 8.059599003338322}
 
 	for i := range expectedOutputData {
 		testutils.AssertFloatEqual(t, expectedOutputData[i], output.Data()[i], 1e-6, fmt.Sprintf("Output data mismatch at index %d", i))
@@ -159,7 +159,7 @@ func TestRotaryPositionalEmbedding_Backward(t *testing.T) {
 	dOutData := []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8}
 	dOutTensor, _ := tensor.New[float64]([]int{1, 2, 4}, dOutData)
 
-	expectedDInputData := []float64{0.1, 0.2, 0.8591808422995973, 0.6079698669173325, 0.3, 0.4, -0.04252387829625043, 0.7939601003328323}
+	expectedDInputData := []float64{0.1, 0.2, 0.3, 0.4, 0.8591808422995973, 0.6079698669173325, -0.04252387829625043, 0.7939601003328323}
 
 	dInputs, err := rpe.Backward(ctx, dOutTensor)
 	testutils.AssertNoError(t, err, "Backward should not return an error")
