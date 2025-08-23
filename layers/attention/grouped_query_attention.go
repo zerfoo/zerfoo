@@ -100,9 +100,11 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 	if numQueryHeads%numKeyValueHeads != 0 {
 		return nil, fmt.Errorf("number of query heads (%d) must be divisible by number of key/value heads (%d)", numQueryHeads, numKeyValueHeads)
 	}
+
 	if modelDim%numQueryHeads != 0 {
 		return nil, fmt.Errorf("model dimension (%d) must be divisible by number of query heads (%d)", modelDim, numQueryHeads)
 	}
+
 	if modelDim%numKeyValueHeads != 0 {
 		return nil, fmt.Errorf("model dimension (%d) must be divisible by number of key/value heads (%d)", modelDim, numKeyValueHeads)
 	}
@@ -114,10 +116,12 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WQ dense layer: %w", err)
 	}
+
 	wk, err := core.NewDense[T]("wk", engine, ops, modelDim, headDim*numKeyValueHeads) // K projection
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WK dense layer: %w", err)
 	}
+
 	wv, err := core.NewDense[T]("wv", engine, ops, modelDim, headDim*numKeyValueHeads) // V projection
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WV dense layer: %w", err)
@@ -193,6 +197,7 @@ func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float
 // Parameters returns the parameters of the GroupedQueryAttention layer.
 func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
+
 	params = append(params, gqa.wq.Parameters()...)
 	params = append(params, gqa.wk.Parameters()...)
 	params = append(params, gqa.wv.Parameters()...)
@@ -206,8 +211,10 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if len(inputs) < 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: expected at least 1 input tensor, got %d", len(inputs))
 	}
+
 	input := inputs[0] // (batch_size, seq_len, model_dim)
 	gqa.outputShape = input.Shape()
+
 	var mask *tensor.TensorNumeric[T]
 	if len(inputs) > 1 {
 		mask = inputs[1]
@@ -221,10 +228,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kProj, err := gqa.wk.Forward(ctx, input)
 	if err != nil {
 		return nil, err
 	}
+
 	vProj, err := gqa.wv.Forward(ctx, input)
 	if err != nil {
 		return nil, err
@@ -241,6 +250,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	qHeads, err := gqa.engine.Transpose(ctx, qReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
@@ -251,6 +261,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kHeads, err := gqa.engine.Transpose(ctx, kReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
@@ -260,6 +271,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	vHeads, err := gqa.engine.Transpose(ctx, vReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
@@ -273,6 +285,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kForRoPE, err := gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
@@ -282,6 +295,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kHeadsRoPE, err := gqa.rope.Forward(ctx, kForRoPE)
 	if err != nil {
 		return nil, err
@@ -295,6 +309,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kHeadsRoPE, err = gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize, gqa.numKeyValueHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
@@ -313,10 +328,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if err != nil {
 			return nil, err
 		}
+
 		vHeadsExpanded, err := gqa.engine.Repeat(ctx, vHeads, 1, replicationFactor)
 		if err != nil {
 			return nil, err
 		}
+
 		kHeadsRoPE = kHeadsExpanded
 		vHeads = vHeadsExpanded
 	}
@@ -327,10 +344,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	kForSDPA, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
+
 	vForSDPA, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
@@ -340,6 +359,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	gqa.attnOutput = attnOutputHeads // Cache for backward
 
 	// 5. Concatenate heads and reshape back
@@ -347,10 +367,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	if err != nil {
 		return nil, err
 	}
+
 	attnOutputCombined, err := gqa.engine.Transpose(ctx, attnOutputReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
 	}
+
 	attnOutputFinal, err := gqa.engine.Reshape(ctx, attnOutputCombined, []int{batchSize, seqLen, gqa.modelDim})
 	if err != nil {
 		return nil, err
@@ -373,6 +395,7 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		dVHeads = dVHeadsSummed
 		// Sum dKHeadsRoPE along the replicated dimension
 		dKForRoPE[0], err = gqa.engine.ReduceSum(ctx, dKForRoPE[0], 1, false)
@@ -386,10 +409,12 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dQProj, err = gqa.engine.Transpose(ctx, dQProj, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dQProj, err = gqa.engine.Reshape(ctx, dQProj, []int{batchSize, seqLen, gqa.modelDim})
 	if err != nil {
 		return nil, nil, nil, err
@@ -399,10 +424,12 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dKProj, err = gqa.engine.Transpose(ctx, dKProj, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dKProj, err = gqa.engine.Reshape(ctx, dKProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original K proj dim
 	if err != nil {
 		return nil, nil, nil, err
@@ -412,10 +439,12 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dVProj, err = gqa.engine.Transpose(ctx, dVProj, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	dVProj, err = gqa.engine.Reshape(ctx, dVProj, []int{batchSize, seqLen, gqa.modelDim / gqa.numQueryHeads * gqa.numKeyValueHeads}) // Reshape to original V proj dim
 	if err != nil {
 		return nil, nil, nil, err
@@ -429,6 +458,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	input := inputs[0] // Original input to GQA
 	batchSize := input.Shape()[0]
 	seqLen := input.Shape()[1]
@@ -438,6 +468,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dAttnOutputFinalTensor := dAttnOutputFinal[0]
 
 	// 2. Backward through reshape and transpose (reverse of step 5 in Forward)
@@ -445,10 +476,12 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dAttnOutputReshaped, err := gqa.engine.Transpose(ctx, dAttnOutputCombined, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
 	}
+
 	dAttnOutputHeads, err := gqa.engine.Reshape(ctx, dAttnOutputReshaped, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
@@ -459,6 +492,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dQHeadsRoPE, dKHeadsRoPE, dVHeads := dQKVSplit[0], dQKVSplit[1], dQKVSplit[2]
 
 	// 4. Backward through RoPE
@@ -466,6 +500,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dKForRoPE, err := gqa.rope.Backward(ctx, dKHeadsRoPE)
 	if err != nil {
 		return nil, err
@@ -482,10 +517,12 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dInputK, err := gqa.wk.Backward(ctx, dKProj, input)
 	if err != nil {
 		return nil, err
 	}
+
 	dInputV, err := gqa.wv.Backward(ctx, dVProj, input)
 	if err != nil {
 		return nil, err
@@ -496,6 +533,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	dInputTotal, err = gqa.engine.Add(ctx, dInputTotal, dInputV[0])
 	if err != nil {
 		return nil, err

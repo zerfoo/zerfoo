@@ -26,18 +26,22 @@ func buildGroupedQueryAttention[T tensor.Numeric](
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: model_dim")
 	}
+
 	numQueryHeads, ok := attributes["num_query_heads"].(int)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: num_query_heads")
 	}
+
 	numKeyValueHeads, ok := attributes["num_key_value_heads"].(int)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: num_key_value_heads")
 	}
+
 	base, ok := attributes["rope_base"].(float64)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: rope_base")
 	}
+
 	maxSeqLen, ok := attributes["max_seq_len"].(int)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: max_seq_len")
@@ -48,14 +52,17 @@ func buildGroupedQueryAttention[T tensor.Numeric](
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_wq", name)
 	}
+
 	wk, ok := params[name+"_wk"]
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_wk", name)
 	}
+
 	wv, ok := params[name+"_wv"]
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_wv", name)
 	}
+
 	wo, ok := params[name+"_wo"]
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_wo", name)
@@ -68,6 +75,7 @@ func buildGroupedQueryAttention[T tensor.Numeric](
 	woDense := core.NewDenseFromParams(core.NewLinearFromParam(engine, wo), nil)
 
 	headDim := modelDim / numQueryHeads
+
 	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, maxSeqLen, embeddings.WithRotaryBase(base))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
@@ -79,6 +87,7 @@ func buildGroupedQueryAttention[T tensor.Numeric](
 	)
 }
 
+//nolint:unused // retained for completeness; may be used by future registry wiring
 func buildGlobalAttention[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],

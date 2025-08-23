@@ -13,16 +13,19 @@ import (
 
 func calculateExpectedNormalizedTensor(input *tensor.TensorNumeric[float64], epsilon float64) *tensor.TensorNumeric[float64] {
 	data := input.Data()
+
 	sumSq := 0.0
 	for _, v := range data {
 		sumSq += v * v
 	}
+
 	rms := math.Sqrt(sumSq/float64(input.Size()) + epsilon)
 
 	normalizedData := make([]float64, input.Size())
 	for i, v := range data {
 		normalizedData[i] = v / rms
 	}
+
 	newTensor, _ := tensor.New[float64](input.Shape(), normalizedData)
 
 	return newTensor
@@ -125,6 +128,7 @@ func TestQKNorm(t *testing.T) {
 				if !testutils.CompareTensorsApprox(t, actualQ, expectedQ, tt.epsilon) {
 					t.Errorf("QKNorm(%s) Q output mismatch", tt.name)
 				}
+
 				if !testutils.CompareTensorsApprox(t, actualK, expectedK, tt.epsilon) {
 					t.Errorf("QKNorm(%s) K output mismatch", tt.name)
 				}

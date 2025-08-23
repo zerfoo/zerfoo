@@ -44,7 +44,7 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 // Forward computes the scaled dot-product attention.
 // Q, K, V are expected to be 3D tensors (batch_size, seq_len, head_dim).
 // mask is an optional 4D tensor (batch_size, num_heads, seq_len_q, seq_len_k).
-func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *tensor.TensorNumeric[T], mask *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, mask *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Cache inputs for backward pass
 	sdpa.q = q
 	sdpa.k = k
@@ -56,6 +56,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 	if err != nil {
 		return nil, err
 	}
+
 	attentionScores, err := sdpa.engine.MatMul(ctx, q, kTransposed, nil)
 	if err != nil {
 		return nil, err
@@ -63,6 +64,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 
 	// 2. Scale attention scores
 	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(sdpa.headDim))
+
 	scaledAttentionScores, err := sdpa.engine.MulScalar(ctx, attentionScores, scaleFactor, nil)
 	if err != nil {
 		return nil, err
@@ -74,14 +76,17 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 		numHeads := mask.Shape()[1]
 		seqLenQ := q.Shape()[1]
 		seqLenK := k.Shape()[1]
+
 		reshapedScores, err := sdpa.engine.Reshape(ctx, scaledAttentionScores, []int{batchSize / numHeads, numHeads, seqLenQ, seqLenK})
 		if err != nil {
 			return nil, err
 		}
+
 		maskedScores, err := sdpa.engine.Add(ctx, reshapedScores, mask, nil)
 		if err != nil {
 			return nil, err
 		}
+
 		scaledAttentionScores, err = sdpa.engine.Reshape(ctx, maskedScores, []int{batchSize, seqLenQ, seqLenK})
 		if err != nil {
 			return nil, err
@@ -93,6 +98,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 	if err != nil {
 		return nil, err
 	}
+
 	sdpa.attentionWeights = attentionWeights // Cache for backward pass
 
 	// 5. MatMul attention weights and V
@@ -107,12 +113,13 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v *
 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
-func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut, _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// 1. Gradient w.r.t. V
 	attentionWeightsTransposed, err := sdpa.engine.Transpose(ctx, sdpa.attentionWeights, []int{0, 2, 1})
 	if err != nil {
 		return nil, err
 	}
+
 	dV, err := sdpa.engine.MatMul(ctx, attentionWeightsTransposed, dOut, nil)
 	if err != nil {
 		return nil, err
@@ -123,6 +130,7 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *te
 	if err != nil {
 		return nil, err
 	}
+
 	dAttentionWeights, err := sdpa.engine.MatMul(ctx, dOut, vTransposed, nil)
 	if err != nil {
 		return nil, err
@@ -134,14 +142,17 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *te
 	if err != nil {
 		return nil, err
 	}
+
 	sum, err := sdpa.engine.ReduceSum(ctx, mul, -1, true)
 	if err != nil {
 		return nil, err
 	}
+
 	sub, err := sdpa.engine.Sub(ctx, dAttentionWeights, sum)
 	if err != nil {
 		return nil, err
 	}
+
 	dScaledAttentionScores, err := sdpa.engine.Mul(ctx, sub, sdpa.attentionWeights)
 	if err != nil {
 		return nil, err
@@ -149,6 +160,7 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *te
 
 	// 4. Gradient w.r.t. attention_scores (through scaling)
 	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(sdpa.headDim))
+
 	dAttentionScores, err := sdpa.engine.MulScalar(ctx, dScaledAttentionScores, scaleFactor, nil)
 	if err != nil {
 		return nil, err
@@ -159,10 +171,12 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut *te
 	if err != nil {
 		return nil, err
 	}
+
 	dAttentionScoresTransposed, err := sdpa.engine.Transpose(ctx, dAttentionScores, []int{0, 2, 1})
 	if err != nil {
 		return nil, err
 	}
+
 	dK, err := sdpa.engine.MatMul(ctx, dAttentionScoresTransposed, sdpa.q, nil)
 	if err != nil {
 		return nil, err
