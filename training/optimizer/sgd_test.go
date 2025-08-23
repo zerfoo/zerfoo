@@ -13,6 +13,7 @@ import (
 )
 
 // testSGDClip is a generic helper function to test SGD gradient clipping for different numeric types.
+//nolint:unused // kept for future expansion of type-parameterized tests
 func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T) {
 	return func(t *testing.T) {
 		engine := compute.NewCPUEngine[T](ops)
@@ -62,10 +63,12 @@ func TestSGD_Step(t *testing.T) {
 	gradient, _ := tensor.New[int]([]int{2, 2}, []int{1, 1, 1, 1})
 	param, _ := graph.NewParameter("param1", value, tensor.New[int])
 	param.Gradient = gradient
+
 	params := []*graph.Parameter[int]{param}
 	if err := sgd.Step(context.Background(), params); err != nil {
 		t.Fatalf("sgd.Step returned error: %v", err)
 	}
+
 	expected := []int{0, 1, 2, 3}
 	if !reflect.DeepEqual(param.Value.Data(), expected) {
 		t.Errorf("expected %v, got %v", expected, param.Value.Data())
@@ -135,6 +138,7 @@ func TestSGD_Step_Error(t *testing.T) {
 		param, _ := graph.NewParameter("param1", value, tensor.New[int])
 		param.Gradient = gradient
 		params := []*graph.Parameter[int]{param}
+
 		err := sgd.Step(context.Background(), params)
 		if err == nil {
 			t.Errorf("The code did not return an error")
@@ -152,6 +156,7 @@ func TestSGD_Step_Error(t *testing.T) {
 		param, _ := graph.NewParameter("param1", value, tensor.New[int])
 		param.Gradient = gradient
 		params := []*graph.Parameter[int]{param}
+
 		err := sgd.Step(context.Background(), params)
 		if err == nil {
 			t.Errorf("The code did not return an error")
