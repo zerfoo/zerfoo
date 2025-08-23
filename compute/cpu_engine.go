@@ -221,28 +221,6 @@ func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.TensorNumeric[T]
     return nil
 }
 
-// ScatterAdd performs a scatter-add operation: dEmbeddingTable[indices[i]] += dOut[i].
-func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
-	if dEmbeddingTable == nil || indices == nil || dOut == nil {
-		return errors.New("inputs cannot be nil")
-	}
-	if !reflect.DeepEqual(indices.Shape(), dOut.Shape()) {
-		return fmt.Errorf("indices shape %v must equal dOut shape %v", indices.Shape(), dOut.Shape())
-	}
-	table := dEmbeddingTable.Data()
-	idx := indices.Data()
-	grad := dOut.Data()
-	for i := 0; i < len(idx); i++ { //nolint:intrange // Classic index loop maintained
-		pos := idx[i]
-		if pos < 0 || pos >= len(table) {
-			return fmt.Errorf("scatter index %d out of bounds [0,%d)", pos, len(table))
-		}
-		table[pos] = e.ops.Add(table[pos], grad[i])
-	}
-
-	return nil
-}
-
 // RandomUniform fills the tensor with values from a uniform distribution in [minVal, maxVal).
 func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	if t == nil {
