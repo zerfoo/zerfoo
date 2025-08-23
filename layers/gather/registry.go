@@ -10,12 +10,14 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildGather constructs a Gather layer. It attempts to resolve embedding weights
+// from common parameter naming patterns; otherwise a minimal dummy tensor is used.
 func BuildGather[T tensor.Numeric](
 	engine compute.Engine[T],
-	ops numeric.Arithmetic[T],
+	_ numeric.Arithmetic[T],
 	name string,
 	params map[string]*graph.Parameter[T],
-	attributes map[string]interface{},
+	_ map[string]interface{},
 ) (graph.Node[T], error) {
 	// Try to find any weights parameter that could be used with this Gather layer
 	var embeddingWeights *graph.Parameter[T]

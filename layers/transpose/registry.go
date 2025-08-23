@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildTranspose constructs a Transpose node, reading the permutation from attributes.
 func BuildTranspose[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],

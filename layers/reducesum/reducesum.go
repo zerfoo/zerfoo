@@ -100,7 +100,7 @@ func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the ReduceSum layer.
-func (r *ReduceSum[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (r *ReduceSum[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient of the sum is 1, so we just need to broadcast the output gradient
 	// to the shape of the input tensor.
 	return []*tensor.TensorNumeric[T]{outputGradient}, nil
