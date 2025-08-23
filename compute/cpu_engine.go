@@ -40,6 +40,14 @@ func (e *CPUEngine[T]) Softmax(
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
+	// Normalize axis: in Softmax, negative axis means counting from the end (e.g., -1 is last axis).
+	rank := len(a.Shape())
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
+	}
 
 	// Compute exponentials
 	exps, err := e.Exp(ctx, a)
