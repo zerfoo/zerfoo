@@ -10,7 +10,6 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
-	"github.com/zerfoo/zerfoo/types"
 )
 
 // TestSkipSimplifiedLayerNormalization_Backward validates gradients via finite differences.
@@ -39,7 +38,7 @@ func TestSkipSimplifiedLayerNormalization_Backward(t *testing.T) {
 	// Analytical gradients
 	_, err = skip.Forward(ctx, input)
 	testutils.AssertNoError(t, err, "forward failed")
-	grads, err := skip.Backward(ctx, types.FullBackprop, dOut, input)
+	grads, err := skip.Backward(ctx, dOut, input)
 	testutils.AssertNoError(t, err, "backward failed")
 
 	dInput := grads[0]
