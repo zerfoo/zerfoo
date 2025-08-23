@@ -34,6 +34,8 @@ type PolynomialExpansion[T tensor.Numeric] struct {
 
 	// Precomputed indices for efficient polynomial term generation
 	termIndices [][]int // Each element contains the powers for each input feature
+	// Cached input for exact backward computation
+	lastInput   *tensor.TensorNumeric[T]
 }
 
 // PolynomialExpansionOptions holds configuration options for PolynomialExpansion layer.
@@ -203,7 +205,7 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 	inputData := input.Data()
 
 	// Compute polynomial terms for each batch item
-	for b := range batchSize {
+	for b := 0; b < batchSize; b++ {
 		for termIdx, term := range p.termIndices {
 			// Compute the polynomial term value
 			termValue := p.ops.FromFloat32(1.0) // Start with 1
@@ -214,7 +216,7 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 
 					// Compute feature^power
 					poweredValue := p.ops.FromFloat32(1.0)
-					for range power {
+					for i := 0; i < power; i++ {
 						poweredValue = p.ops.Mul(poweredValue, featureValue)
 					}
 
@@ -231,15 +233,16 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 		return nil, fmt.Errorf("failed to create output tensor: %w", err)
 	}
 
-	// Update output shape for future reference
+	// Update output shape and cache input for exact backward
 	p.outputShape = outputShape
+	p.lastInput = input
 
 	return output, nil
 }
 
 // Backward computes gradients for the polynomial expansion layer.
 // This computes the derivative of each polynomial term with respect to the input features.
-func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	outputGradShape := outputGradient.Shape()
 	batchSize := outputGradShape[0]
 
@@ -253,43 +256,53 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 
 	outputGradData := outputGradient.Data()
 
-	// For polynomial expansion, we need to compute the derivative of each term
-	// with respect to each input feature
-	for b := range batchSize {
-		for featureIdx := range p.inputSize {
+	// Determine input to use for exact derivative computation
+	var inputData []T
+	if p.lastInput != nil {
+		inputData = p.lastInput.Data()
+	} else if len(inputs) > 0 && inputs[0] != nil {
+		inputData = inputs[0].Data()
+	} else {
+		return nil, fmt.Errorf("polynomial backward: missing cached input; pass input to Backward or run Forward first")
+	}
+
+	// Compute exact derivatives using cached input
+	for b := 0; b < batchSize; b++ {
+		for featureIdx := 0; featureIdx < p.inputSize; featureIdx++ {
 			gradient := p.ops.FromFloat32(0.0)
 
 			// Sum gradients from all terms that involve this feature
 			for termIdx, term := range p.termIndices {
 				power := term[featureIdx]
-				if power > 0 {
-					// Derivative of x^n is n*x^(n-1)
-					// For a term like x1^a * x2^b, derivative w.r.t. x1 is a * x1^(a-1) * x2^b
-
-					termGradient := p.ops.FromFloat32(float32(power)) // coefficient from derivative
-
-					// Compute the remaining polynomial term after taking derivative
-					for otherFeatureIdx, otherPower := range term {
-						if otherFeatureIdx == featureIdx {
-							// Use power-1 for the feature we're differentiating
-							if power > 1 {
-								// We need the input values to compute this, but we don't have them stored
-								// This is a limitation - we'd need to store the input from Forward pass
-								// For now, we'll implement a simplified version
-								termGradient = p.ops.Mul(termGradient, p.ops.FromFloat32(1.0))
-							}
-						} else if otherPower > 0 {
-							// For other features, use the original power
-							// Again, we'd need the input values here
-							termGradient = p.ops.Mul(termGradient, p.ops.FromFloat32(1.0))
-						}
-					}
-
-					// Multiply by the output gradient for this term
-					outputGrad := outputGradData[b*p.outputSize+termIdx]
-					termContribution := p.ops.Mul(termGradient, outputGrad)
-					gradient = p.ops.Add(gradient, termContribution)
+				if power == 0 {
+					continue
 				}
+
+				// coefficient from derivative (n for x^n)
+				termGradient := p.ops.FromFloat32(float32(power))
+
+				// Multiply by product of x_j^(p_j) for j!=i, and x_i^(p_i-1) for j==i
+				for j, pj := range term {
+					exp := pj
+					if j == featureIdx {
+						exp = pj - 1
+					}
+					if exp <= 0 {
+						continue
+					}
+					v := inputData[b*p.inputSize+j]
+					// v^exp
+					powered := p.ops.FromFloat32(1.0)
+					for k := 0; k < exp; k++ {
+						powered = p.ops.Mul(powered, v)
+					}
+					termGradient = p.ops.Mul(termGradient, powered)
+				}
+
+				// Multiply by the output gradient for this term
+				outputGrad := outputGradData[b*p.outputSize+termIdx]
+				termContribution := p.ops.Mul(termGradient, outputGrad)
+				gradient = p.ops.Add(gradient, termContribution)
 			}
 
 			inputGradData[b*p.inputSize+featureIdx] = gradient
