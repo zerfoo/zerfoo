@@ -30,6 +30,7 @@ func RegisterAll() {
 	model.RegisterLayer("MatMul", core.BuildMatMul[float32])
 	model.RegisterLayer("Reshape", core.BuildReshape[float32])
 	model.RegisterLayer("RotaryEmbedding", core.BuildRotaryEmbedding[float32])
+	model.RegisterLayer("SpectralFingerprint", core.BuildSpectralFingerprint[float32])
 
 	// Embeddings
 
