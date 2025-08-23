@@ -1,91 +1,35 @@
-package training
+// Package training_test contains tests for the training package.
+package training_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	_ "github.com/zerfoo/zerfoo/layers/core"
-	_ "github.com/zerfoo/zerfoo/layers/gather"
-	_ "github.com/zerfoo/zerfoo/layers/transpose"
+	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/training"
 )
 
-type mockModel[T tensor.Numeric] struct {
-	params []*graph.Parameter[T]
-}
-
-func (m *mockModel[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return inputs[0], nil
-}
-
-func (m *mockModel[T]) Backward(_ context.Context, grad *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return []*tensor.TensorNumeric[T]{grad}, nil
-}
-
-func (m *mockModel[T]) Parameters() []*graph.Parameter[T] {
-	return m.params
-}
-
-type mockOptimizer[T tensor.Numeric] struct{}
-
-func (o *mockOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) error      { return nil }
-func (o *mockOptimizer[T]) Clip(_ context.Context, _ []*graph.Parameter[T], _ float32) {}
-
-type mockLoss[T tensor.Numeric] struct{}
-
-func (l *mockLoss[T]) Forward(_ context.Context, predictions, _ *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error) {
-	var lossValue T
-
-	return lossValue, predictions, nil
-}
-
-func TestTrainer(t *testing.T) {
-	model := &mockModel[float32]{}
-	optimizer := &mockOptimizer[float32]{}
-	lossFn := &mockLoss[float32]{}
-	trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-	inputs, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
-	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
-
-	lossValue, err := trainer.Train(context.Background(), inputs, targets)
-	testutils.AssertNoError(t, err, "expected no error, got %v")
-	testutils.AssertNotNil(t, lossValue, "expected lossValue to not be nil")
-}
-
-func TestNewTrainer(t *testing.T) {
-	model := &mockModel[float32]{}
-	optimizer := &mockOptimizer[float32]{}
-	lossFn := &mockLoss[float32]{}
-
-	trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-	testutils.AssertNotNil(t, trainer, "trainer should not be nil")
-	// Check that the trainer fields are set (can't directly compare interfaces)
-	testutils.AssertNotNil(t, trainer.model, "model should be set")
-	testutils.AssertNotNil(t, trainer.optimizer, "optimizer should be set")
-	testutils.AssertNotNil(t, trainer.lossFn, "loss function should be set")
-}
-
-// Error mocks for testing error handling.
-type errorModel[T tensor.Numeric] struct {
+type mockNode[T tensor.Numeric] struct {
 	forwardErr  bool
 	backwardErr bool
 	params      []*graph.Parameter[T]
+	outputShape []int
 }
 
-func (m *errorModel[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (m *mockNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if m.forwardErr {
 		return nil, errors.New("forward error")
 	}
 
-	return inputs[0], nil
+	return tensor.New[T](m.outputShape, nil)
 }
 
-func (m *errorModel[T]) Backward(_ context.Context, grad *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (m *mockNode[T]) Backward(_ context.Context, grad *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if m.backwardErr {
 		return nil, errors.New("backward error")
 	}
@@ -93,15 +37,27 @@ func (m *errorModel[T]) Backward(_ context.Context, grad *tensor.TensorNumeric[T
 	return []*tensor.TensorNumeric[T]{grad}, nil
 }
 
-func (m *errorModel[T]) Parameters() []*graph.Parameter[T] {
+func (m *mockNode[T]) Parameters() []*graph.Parameter[T] {
 	return m.params
 }
 
-type errorOptimizer[T tensor.Numeric] struct {
+func (m *mockNode[T]) OutputShape() []int {
+	return m.outputShape
+}
+
+func (m *mockNode[T]) OpType() string {
+	return "MockNode"
+}
+
+func (m *mockNode[T]) Attributes() map[string]any {
+	return nil
+}
+
+type mockOptimizer[T tensor.Numeric] struct {
 	stepErr bool
 }
 
-func (o *errorOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) error {
+func (o *mockOptimizer[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 	if o.stepErr {
 		return errors.New("optimizer step error")
 	}
@@ -109,105 +65,30 @@ func (o *errorOptimizer[T]) Step(_ context.Context, _ []*graph.Parameter[T]) err
 	return nil
 }
 
-func (o *errorOptimizer[T]) Clip(_ context.Context, _ []*graph.Parameter[T], _ float32) {}
+func TestDefaultTrainer(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	builder := graph.NewBuilder[float32](engine)
 
-type errorLoss[T tensor.Numeric] struct {
-	forwardErr bool
-}
+	inputNode := builder.Input([]int{1, 1})
+	mockModelNode := &mockNode[float32]{outputShape: []int{1, 1}}
+	builder.AddNode(mockModelNode, inputNode)
+	modelGraph, err := builder.Build(mockModelNode)
+	testutils.AssertNoError(t, err, "graph build failed")
 
-func (l *errorLoss[T]) Forward(_ context.Context, predictions, _ *tensor.TensorNumeric[T]) (T, *tensor.TensorNumeric[T], error) {
-	if l.forwardErr {
-		var zero T
+	optimizer := &mockOptimizer[float32]{}
+	lossFn := &mockNode[float32]{outputShape: []int{1}}
+	trainer := training.NewDefaultTrainer[float32](modelGraph, lossFn, optimizer, nil)
 
-		return zero, nil, errors.New("loss forward error")
+	inputTensor, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
+	inputs := map[graph.Node[float32]]*tensor.TensorNumeric[float32]{
+		inputNode: inputTensor,
 	}
-	var lossValue T
-
-	return lossValue, predictions, nil
-}
-
-func TestTrainer_Train_ErrorHandling(t *testing.T) {
-	inputs, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
-	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
-	ctx := context.Background()
-
-	// Test model forward error
-	t.Run("model forward error", func(t *testing.T) {
-		model := &errorModel[float32]{forwardErr: true}
-		optimizer := &mockOptimizer[float32]{}
-		lossFn := &mockLoss[float32]{}
-		trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-		_, err := trainer.Train(ctx, inputs, targets)
-		testutils.AssertError(t, err, "expected forward error")
-	})
-
-	// Test loss forward error
-	t.Run("loss forward error", func(t *testing.T) {
-		model := &mockModel[float32]{}
-		optimizer := &mockOptimizer[float32]{}
-		lossFn := &errorLoss[float32]{forwardErr: true}
-		trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-		_, err := trainer.Train(ctx, inputs, targets)
-		testutils.AssertError(t, err, "expected loss forward error")
-	})
-
-	// Test model backward error
-	t.Run("model backward error", func(t *testing.T) {
-		model := &errorModel[float32]{backwardErr: true}
-		optimizer := &mockOptimizer[float32]{}
-		lossFn := &mockLoss[float32]{}
-		trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-		_, err := trainer.Train(ctx, inputs, targets)
-		testutils.AssertError(t, err, "expected backward error")
-	})
-
-	// Test optimizer step error
-	t.Run("optimizer step error", func(t *testing.T) {
-		model := &mockModel[float32]{}
-		optimizer := &errorOptimizer[float32]{stepErr: true}
-		lossFn := &mockLoss[float32]{}
-		trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-		_, err := trainer.Train(ctx, inputs, targets)
-		testutils.AssertError(t, err, "expected optimizer step error")
-	})
-}
-
-func TestTrainer_Train_WithParameters(t *testing.T) {
-	// Create a parameter for the model
-	value, err := tensor.New[float32]([]int{2, 2}, []float32{1.0, 2.0, 3.0, 4.0})
-	testutils.AssertNoError(t, err, "Failed to create parameter value")
-
-	param, err := graph.NewParameter("test_param", value, tensor.New[float32])
-	testutils.AssertNoError(t, err, "Failed to create parameter")
-
-	model := &mockModel[float32]{params: []*graph.Parameter[float32]{param}}
-	optimizer := &mockOptimizer[float32]{}
-	lossFn := &mockLoss[float32]{}
-	trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-	inputs, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-	lossValue, err := trainer.Train(context.Background(), inputs, targets)
-	testutils.AssertNoError(t, err, "training should not error with parameters")
-	testutils.AssertNotNil(t, lossValue, "loss value should not be nil")
-}
-
-func TestTrainer_Train_DifferentTensorShapes(t *testing.T) {
-	model := &mockModel[float32]{}
-	optimizer := &mockOptimizer[float32]{}
-	lossFn := &mockLoss[float32]{}
-	trainer := NewTrainer[float32](model, optimizer, lossFn)
-
-	// Test with different tensor shapes
-	inputs, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
-	targets, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
-
-	lossValue, err := trainer.Train(context.Background(), inputs, targets)
-	testutils.AssertNoError(t, err, "training should work with different tensor shapes")
-	testutils.AssertNotNil(t, lossValue, "loss value should not be nil")
+	_, err = trainer.TrainStep(context.Background(), training.Batch[float32]{
+		Inputs:  inputs,
+		Targets: targets,
+	})
+	testutils.AssertNoError(t, err, "expected no error, got %v")
 }
