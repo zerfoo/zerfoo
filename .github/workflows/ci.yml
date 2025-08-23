@@ -40,7 +40,7 @@ jobs:
       - name: Run golangci-lint with auto-fix check
         uses: golangci/golangci-lint-action@v3
         with:
-          version: latest
+          version: v2.4.0
           args: --timeout=5m --issues-exit-code=1 --out-format=colored-line-number
           working-directory: .
           install-mode: goinstall
