@@ -9,10 +9,11 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildReshape constructs a Reshape node, parsing target shape from attributes.
 func BuildReshape[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],
-	name string,
+	_ string,
 	_ map[string]*graph.Parameter[T],
 	attributes map[string]interface{},
 ) (graph.Node[T], error) {

@@ -45,7 +45,7 @@ func (r *RotaryEmbedding[T]) OutputShape() []int {
 
 // Forward applies rotary embedding to the input.
 // For now, this is a simplified implementation that returns the input unchanged.
-func (r *RotaryEmbedding[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("RotaryEmbedding layer requires at least 1 input")
 	}
@@ -59,7 +59,7 @@ func (r *RotaryEmbedding[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 }
 
 // Backward computes the gradients for the RotaryEmbedding layer.
-func (r *RotaryEmbedding[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (r *RotaryEmbedding[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("RotaryEmbedding layer requires at least 1 input")
 	}

@@ -47,7 +47,9 @@ func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 		}
 
 		return s.engine.Sub(ctx, zeroTensor, a)
-	} else if len(inputs) == 2 {
+	}
+
+	if len(inputs) == 2 {
 		a := inputs[0]
 		b := inputs[1]
 
@@ -56,9 +58,9 @@ func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 		s.outputShape = a.Shape()
 
 		return s.engine.Sub(ctx, a, b)
-	} else {
-		return nil, fmt.Errorf("Sub layer expects 1 or 2 inputs, got %d", len(inputs))
 	}
+
+	return nil, fmt.Errorf("Sub layer expects 1 or 2 inputs, got %d", len(inputs))
 }
 
 // Backward computes the gradients for the Sub layer.
