@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	rand "math/rand/v2"
+	"reflect"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
