@@ -48,15 +48,17 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 
 	// Normalize negative axes and create a map of axes to insert 1s
 	axesMap := make(map[int]bool)
+
 	for _, axis := range u.axes {
-		normalizedAxis := axis
-		if axis < 0 {
-			normalizedAxis = len(outputShape) + axis
+		ax := axis //nolint:copyloopvar // local working copy for normalization
+		if ax < 0 {
+			ax = len(outputShape) + ax
 		}
-		axesMap[normalizedAxis] = true
+		axesMap[ax] = true
 	}
 
 	inputIdx := 0
+
 	for i := 0; i < len(outputShape); i++ {
 		if axesMap[i] {
 			outputShape[i] = 1

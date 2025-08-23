@@ -30,14 +30,17 @@ func buildFFN[T tensor.Numeric](
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: input_dim")
 	}
+
 	hiddenDim, ok := attributes["hidden_dim"].(int)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: hidden_dim")
 	}
+
 	outputDim, ok := attributes["output_dim"].(int)
 	if !ok {
 		return nil, errors.New("missing or invalid attribute: output_dim")
 	}
+
 	withBias, ok := attributes["with_bias"].(bool)
 	if !ok {
 		withBias = true // Default to true
@@ -49,10 +52,12 @@ func buildFFN[T tensor.Numeric](
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_w1_weights", name)
 	}
+
 	w2, ok := params[name+"_w2_weights"]
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_w2_weights", name)
 	}
+
 	w3, ok := params[name+"_w3_weights"]
 	if !ok {
 		return nil, fmt.Errorf("missing required parameter: %s_w3_weights", name)
@@ -78,14 +83,17 @@ func buildFFN[T tensor.Numeric](
 		if !ok {
 			return nil, fmt.Errorf("missing required parameter: %s_w1_biases", name)
 		}
+
 		w2Bias, ok := params[name+"_w2_biases"]
 		if !ok {
 			return nil, fmt.Errorf("missing required parameter: %s_w2_biases", name)
 		}
+
 		w3Bias, ok := params[name+"_w3_biases"]
 		if !ok {
 			return nil, fmt.Errorf("missing required parameter: %s_w3_biases", name)
 		}
+
 		ffn.w1.bias.biases = w1Bias
 		ffn.w2.bias.biases = w2Bias
 		ffn.w3.bias.biases = w3Bias

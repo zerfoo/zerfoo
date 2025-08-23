@@ -20,6 +20,7 @@ func TestDense(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i)
 	}
+
 	input, err := tensor.New[float32]([]int{1, 10}, inputData)
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 
@@ -30,6 +31,7 @@ func TestDense(t *testing.T) {
 	// Check backward pass
 	gradOutput, err := tensor.New[float32]([]int{1, 5}, []float32{1, 1, 1, 1, 1})
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
+
 	gradInput, _ := layer.Backward(context.Background(), gradOutput, input)
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 
@@ -49,6 +51,7 @@ func TestDense(t *testing.T) {
 	if layer.bias != nil {
 		expectedParams = 2 // bias layer adds another parameter
 	}
+
 	testutils.AssertEqual(t, expectedParams, len(layer.Parameters()), "expected parameter count mismatch")
 }
 
@@ -62,6 +65,7 @@ func TestDense_NDInput(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i)
 	}
+
 	input, err := tensor.New[float32]([]int{2, 3, 10}, inputData)
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 

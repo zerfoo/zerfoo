@@ -132,6 +132,7 @@ func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, out
 	for i := range inputData {
 		inputData[i] = float32(i + 1)
 	}
+
 	input, err := tensor.New([]int{1, inputSize}, inputData)
 	testutils.AssertNoError(t, err, "expected no error creating input")
 
@@ -148,6 +149,7 @@ func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, out
 	for i := range gradData {
 		gradData[i] = 1.0
 	}
+
 	outputGrad, err := tensor.New(outputShape, gradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 

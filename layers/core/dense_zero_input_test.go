@@ -12,6 +12,7 @@ import (
 
 func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
 	ops := numeric.Float32Ops{}
+
 	testutils.RunTests(t, []testutils.TestCase{
 		{
 			Name: "Zero output gradient with bias",

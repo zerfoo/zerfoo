@@ -50,6 +50,7 @@ func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	}
 
 	vocabSize := h.linear.OutputShape()[1]
+
 	output, err = h.engine.Reshape(ctx, output, []int{batchSize, seqLen, vocabSize})
 	if err != nil {
 		return nil, err
