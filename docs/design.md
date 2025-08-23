@@ -154,11 +154,13 @@ type Node[T Numeric] interface {
     OutputShape() []int
     Parameters() []Parameter[T]
     Forward(ctx context.Context, inputs ...*tensor.Tensor[T]) (*tensor.Tensor[T], error)
-    Backward(ctx context.Context, outputGradient *tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    Backward(ctx context.Context, outputGradient *tensor.Tensor[T], inputs ...*tensor.Tensor[T]) ([]*tensor.Tensor[T], error)
+    OpType() string
+    Attributes() map[string]any
 }
 ```
 
-Each node can represent a layer (like Dense, Conv, LSTM), an activation, or even a simple function (like addition, concatenation). Nodes are connected into a graph via a **Builder**, which creates input placeholders and adds nodes by wiring their inputs from earlier nodes. The outcome is a built DAG representing the model’s computation. Once built, the graph yields two callable functions: a `forward` function (for inference/training forward pass) and a `backward` function (for computing gradients given an output gradient). This design allows the training loop to obtain a self-contained forward and backward that can be invoked with actual `Tensor` data, abstracting away the graph traversal details. The DAG supports complex topologies (multiple inputs, multiple outputs, branching and merging) enabling advanced architectures.
+Each node can represent a layer (like Dense, Conv, LSTM), an activation, or even a simple function (like addition, concatenation). Nodes are connected into a graph via a **Builder**, which creates input placeholders and adds nodes by wiring their inputs from earlier nodes. The outcome is a built DAG representing the model’s computation. Once built, the graph yields a `*Graph[T]` object which contains the `Forward` and `Backward` methods. This design allows the training loop to obtain a self-contained graph object that can be invoked with actual `Tensor` data, abstracting away the graph traversal details. The DAG supports complex topologies (multiple inputs, multiple outputs, branching and merging) enabling advanced architectures.
 
 **Example Workflow:** To illustrate, a user would create a graph builder (specifying the numeric type and desired compute engine), register input nodes (with given shapes), and then successively add layer nodes connected to those inputs. After adding the final output node, the builder is finalized to produce the `forward` and `backward` executors. At runtime, the user calls `forward(inputMap)` to get model outputs, and during training, calls `backward(outputGrad, inputMap)` to get gradients for each input or parameter. An optimizer then uses those gradients to update parameters before the next iteration. This separation of concerns – graph construction vs. execution – makes it easy to define models declaratively and run them efficiently.
 
@@ -610,13 +612,13 @@ Zerfoo has achieved significant implementation milestones with excellent test co
 
 **Comprehensive Layer Ecosystem:**
 The framework now includes a complete set of neural network components:
-*   **Core layers:** Linear, Dense, Bias, FFN, Dropout with 98.6% test coverage
+*   **Core layers:** Linear, Dense, Bias, FFN, Dropout, Add with 98.6% test coverage
 *   **Activations:** ReLU, Leaky ReLU, GELU, Fast GELU, Sigmoid, Tanh, Softmax, Swish/SiLU
 *   **Attention mechanisms:** Single and multi-head attention, global attention, causal masking
 *   **Embeddings:** Token embedding and Rotary Positional Embedding (RoPE)
 *   **Normalization:** Layer normalization and RMS normalization
 *   **Pooling:** Max and average pooling operations
-*   **Recurrent:** LSTM and GRU cell implementations
+*   **Recurrent:** LSTM and GRU cell implementations, and Hierarchical Recurrent Modules (HRM)
 *   **Transformer:** Encoder and decoder blocks
 
 With this mature implementation and architecture, Zerfoo provides a production-ready Go-native ML framework that not only meets today's needs but can evolve to meet the demands of the future, empowering researchers and developers on the path to AGI and beyond.
