@@ -33,8 +33,10 @@ type Tensor interface {
 	isTensor()
 }
 
-// TensorNumeric[T] represents an n-dimensional array of a generic numeric type T.
-type TensorNumeric[T Numeric] struct {
+// TensorNumeric represents an n-dimensional array of a generic numeric type T.
+//
+// Note: The name includes the package term "Tensor" which may appear as stutter (tensor.TensorNumeric). This is intentional for clarity and API stability.
+type TensorNumeric[T Numeric] struct { //nolint:revive // Name stutter is intentional for clarity and API stability.
 	shape   []int
 	strides []int
 	data    []T
@@ -120,7 +122,7 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 	_ = reflect.New(elemType)
 
 	// Call the generic New function using reflection
-	newFn := reflect.ValueOf(New[float32]) // Placeholder type, will be replaced
+	var newFn reflect.Value // assigned based on dataType
 	switch dataType.Kind() {
 	case reflect.Float32:
 		newFn = reflect.ValueOf(New[float32])
@@ -269,6 +271,7 @@ func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 	var zero T
 	switch any(zero).(type) {
 	case float32:
+		// #nosec G103 -- Converting slice header for zero-copy serialization is intentional and audited
 		float32Data := *(*[]float32)(unsafe.Pointer(&t.data))
 
 		return Float32ToBytes(float32Data)
@@ -279,11 +282,16 @@ func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 
 // Float32ToBytes converts a float32 slice to a byte slice.
 func Float32ToBytes(f []float32) ([]byte, error) {
-	header := (*reflect.SliceHeader)(unsafe.Pointer(&f))
-	header.Len *= 4
-	header.Cap *= 4
+    // #nosec G103 -- Zero-copy reinterpretation via unsafe is intentional and audited
+    if len(f) == 0 {
+        return nil, nil
+    }
+    // #nosec G103 -- unsafe.SliceData used deliberately for zero-copy view
+    ptr := unsafe.SliceData(f)
+    // #nosec G103 -- unsafe.Slice used deliberately to create byte view over float32 backing array
+    b := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(f)*int(unsafe.Sizeof(f[0])))
 
-	return *(*[]byte)(unsafe.Pointer(header)), nil
+    return b, nil
 }
 
 // NewFromBytes creates a new tensor from bytes data with the given shape.
@@ -304,6 +312,7 @@ func NewFromBytes[T Numeric](shape []int, data []byte) (*TensorNumeric[T], error
 	}
 
 	// Convert bytes to slice of T
+	// #nosec G103 -- Reinterpreting byte buffer as typed slice is intentional and bounds-checked by size
 	typedData := unsafe.Slice((*T)(unsafe.Pointer(&data[0])), size)
 
 	// Create copy to avoid referencing external memory
