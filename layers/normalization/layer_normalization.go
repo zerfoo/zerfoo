@@ -63,6 +63,7 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 	if err := engine.Fill(context.Background(), gammaTensor, T(1.0)); err != nil { // Assuming Fill is available
 		return nil, fmt.Errorf("failed to fill gamma tensor: %w", err)
 	}
+
 	gamma, err := graph.NewParameter[T]("gamma", gammaTensor, tensor.New[T])
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gamma parameter: %w", err)
@@ -76,6 +77,7 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 	if err := engine.Fill(context.Background(), betaTensor, T(0.0)); err != nil {
 		return nil, fmt.Errorf("failed to fill beta tensor: %w", err)
 	}
+
 	beta, err := graph.NewParameter[T]("beta", betaTensor, tensor.New[T])
 	if err != nil {
 		return nil, fmt.Errorf("failed to create beta parameter: %w", err)
@@ -104,6 +106,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	input := inputs[0]
 	ln.inputShape = input.Shape() // Cache input shape for backward
 	ln.outputShape = input.Shape()
@@ -114,11 +117,14 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	featureSize := T(input.Shape()[len(input.Shape())-1])
+
 	mean, err := ln.engine.DivScalar(ctx, sum, featureSize, nil) // Assuming ReduceMean is available
 	if err != nil {
 		return nil, err
 	}
+
 	ln.mean = mean // Cache for backward
 
 	// Calculate variance
@@ -144,6 +150,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	ln.variance = variance // Cache for backward
 
 	// sqrt(variance + epsilon)
@@ -151,6 +158,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	stdDev, err := ln.engine.Sqrt(ctx, variancePlusEpsilon, nil) // Assuming Sqrt is available
 	if err != nil {
 		return nil, err
@@ -161,6 +169,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	ln.normedInput = normedInput // Cache for backward
 
 	// Scale and shift: normedInput * gamma + beta
@@ -168,6 +177,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
+
 	output, err := ln.engine.Add(ctx, scaled, ln.beta.Value, nil)
 	if err != nil {
 		return nil, err
@@ -187,10 +197,12 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	dGamma, err := ln.engine.ReduceSum(ctx, dOutMulNormedInput, len(ln.inputShape)-1, false, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	if err := ln.gamma.AddGradient(dGamma); err != nil {
 		return nil, err
 	}
@@ -200,6 +212,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	if err := ln.beta.AddGradient(dBeta); err != nil {
 		return nil, err
 	}
@@ -226,6 +239,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	stdDev, err := ln.engine.Sqrt(ctx, variancePlusEpsilon, nil)
 	if err != nil {
 		return nil, err
@@ -236,6 +250,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	dLdVarianceTerm, err := ln.engine.ReduceSum(ctx, mulResult, len(ln.inputShape)-1, true, nil)
 	if err != nil {
 		return nil, err
@@ -258,18 +273,22 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	stdDevCubed, err := ln.engine.Mul(ctx, stdDevSquared, stdDev, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	term2Numerator, err := ln.engine.Mul(ctx, inputMinusMean, dLdVarianceTerm, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	term2Denominator, err := ln.engine.MulScalar(ctx, stdDevCubed, N, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	term2, err := ln.engine.Div(ctx, term2Numerator, term2Denominator, nil)
 	if err != nil {
 		return nil, err
@@ -286,6 +305,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	dInput, err = ln.engine.Sub(ctx, dInput, term3, nil)
 	if err != nil {
 		return nil, err

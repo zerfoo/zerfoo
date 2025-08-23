@@ -65,6 +65,7 @@ func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops num
 	for i := range gainData {
 		gainData[i] = ops.One()
 	}
+
 	gainTensor, err := tensor.New[T]([]int{modelDim}, gainData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gain tensor: %w", err)
@@ -108,6 +109,7 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	input := inputs[0]
 	r.inputTensor = input // Cache for backward pass
 	r.outputShape = input.Shape()
@@ -117,7 +119,9 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, err
 	}
+
 	lastDim := len(input.Shape()) - 1
+
 	meanSq, err := r.engine.ReduceMean(ctx, squared, lastDim, true)
 	if err != nil {
 		return nil, err
@@ -128,10 +132,12 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, err
 	}
+
 	rsqrt, err := r.engine.Rsqrt(ctx, meanSqPlusEpsilon, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	r.rms = rsqrt // Cache for backward pass
 
 	// Normalize input and scale by gain
@@ -139,6 +145,7 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, err
 	}
+
 	output, err := r.engine.Mul(ctx, normalized, r.gain.Value, nil)
 	if err != nil {
 		return nil, err
@@ -152,6 +159,7 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	input := r.inputTensor
 
 	// Gradient of the gain parameter
@@ -159,6 +167,7 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	dGain, err := r.engine.Mul(ctx, dOut, normalized, nil)
 	if err != nil {
 		return nil, err
@@ -168,10 +177,12 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	dGainSum, err = r.engine.ReduceSum(ctx, dGainSum, 1, true)
 	if err != nil {
 		return nil, err
 	}
+
 	r.gain.Gradient, err = r.engine.Add(ctx, r.gain.Gradient, dGainSum, r.gain.Gradient)
 	if err != nil {
 		return nil, err
@@ -192,6 +203,7 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	rmsCubed, err = r.engine.Mul(ctx, rmsCubed, r.rms, nil)
 	if err != nil {
 		return nil, err
@@ -206,6 +218,7 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	sumDNormX, err = r.engine.ReduceSum(ctx, sumDNormX, -1, true)
 	if err != nil {
 		return nil, err
@@ -215,10 +228,12 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	term2, err = r.engine.Mul(ctx, term2, rmsCubed, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	term2, err = r.engine.Mul(ctx, term2, invN, nil)
 	if err != nil {
 		return nil, err

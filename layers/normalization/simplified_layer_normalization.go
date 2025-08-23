@@ -48,6 +48,7 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SimplifiedLayerNormalization expects 1 input, got %d", len(inputs))
 	}
+
 	input := inputs[0]
 	sln.inputShape = input.Shape()
 
@@ -74,6 +75,7 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 	if err != nil {
 		return nil, err
 	}
+
 	sln.invStdDev = invStdDev // Cache for backward pass
 
 	// 5. Normalize
@@ -81,6 +83,7 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 	if err != nil {
 		return nil, err
 	}
+
 	sln.normalizedInput = normalized // Cache for backward pass
 
 	// 6. Apply gain
@@ -145,6 +148,7 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, output
 	if err != nil {
 		return nil, err
 	}
+
 	rmsCubed, err := sln.engine.Mul(ctx, rmsSq, sln.invStdDev)
 	if err != nil {
 		return nil, err
@@ -155,6 +159,7 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, output
 	if err != nil {
 		return nil, err
 	}
+
 	sumDNormX, err := sln.engine.ReduceSum(ctx, dNormX, -1, true)
 	if err != nil {
 		return nil, err
@@ -162,6 +167,7 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, output
 
 	// invN = 1/N where N is last dimension size
 	lastDim := input.Shape()[len(input.Shape())-1]
+
 	invN, err := tensor.New[T]([]int{1}, []T{sln.ops.FromFloat64(1.0 / float64(lastDim))})
 	if err != nil {
 		return nil, err
@@ -172,10 +178,12 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, output
 	if err != nil {
 		return nil, err
 	}
+
 	term2, err = sln.engine.Mul(ctx, term2, rmsCubed)
 	if err != nil {
 		return nil, err
 	}
+
 	term2, err = sln.engine.Mul(ctx, term2, invN)
 	if err != nil {
 		return nil, err

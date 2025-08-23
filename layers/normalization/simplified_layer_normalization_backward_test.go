@@ -40,33 +40,35 @@ func TestSimplifiedLayerNormalization_Backward(t *testing.T) {
 	testutils.AssertNoError(t, err, "forward failed")
 	grads, err := sln.Backward(ctx, dOut, input)
 	testutils.AssertNoError(t, err, "backward failed")
+
 	dInput := grads[0]
 	dGainAnalytical := sln.Parameters()[0].Gradient
 
 	// Numerical gradient for input
 	eps := float32(1e-3)
+
 	dInputNum := make([]float32, len(inputData))
 	for i := range inputData {
-		// Perturb input
-		irow, icol := 0, i // shape [1,4]
-		idx := irow*4 + icol
-		orig := input.Data()[idx]
+		// Perturb input at flat index (shape [1,4])
+		orig := input.Data()[i]
 
-		input.Data()[idx] = orig + eps
+		input.Data()[i] = orig + eps
 		outPos, err := sln.Forward(ctx, input)
 		testutils.AssertNoError(t, err, "forward+ failed")
+
 		lp := dot(outPos.Data(), dOutData)
 
-		input.Data()[idx] = orig - eps
+		input.Data()[i] = orig - eps
 		outNeg, err := sln.Forward(ctx, input)
 		testutils.AssertNoError(t, err, "forward- failed")
+
 		ln := dot(outNeg.Data(), dOutData)
 
 		num := (lp - ln) / (2 * eps)
 		dInputNum[i] = num
 
 		// Restore
-		input.Data()[idx] = orig
+		input.Data()[i] = orig
 	}
 
 	if !approxSlice(dInput.Data(), dInputNum, 2e-2) { // finite diff tolerance
@@ -81,11 +83,13 @@ func TestSimplifiedLayerNormalization_Backward(t *testing.T) {
 		gain.Data()[i] = orig + eps
 		outPos, err := sln.Forward(ctx, input)
 		testutils.AssertNoError(t, err, "forward+ gain failed")
+
 		lp := dot(outPos.Data(), dOutData)
 
 		gain.Data()[i] = orig - eps
 		outNeg, err := sln.Forward(ctx, input)
 		testutils.AssertNoError(t, err, "forward- gain failed")
+
 		ln := dot(outNeg.Data(), dOutData)
 
 		dGainNum[i] = (lp - ln) / (2 * eps)
@@ -110,6 +114,7 @@ func approxSlice(a, b []float32, tol float32) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if float32(math.Abs(float64(a[i]-b[i]))) > tol {
 			return false
