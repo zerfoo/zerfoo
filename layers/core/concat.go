@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -47,21 +48,14 @@ func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 		return inputs[0], nil
 	}
 
-	// Calculate output shape for multiple inputs
-	firstShape := inputs[0].Shape()
-	c.outputShape = make([]int, len(firstShape))
-	copy(c.outputShape, firstShape)
-
-	// Sum the dimensions along the concatenation axis
-	for i := 1; i < len(inputs); i++ {
-		inputShape := inputs[i].Shape()
-		c.outputShape[c.axis] += inputShape[c.axis]
+	// Perform actual concatenation via engine
+	out, err := c.engine.Concat(context.Background(), inputs, c.axis)
+	if err != nil {
+		return nil, err
 	}
+	c.outputShape = out.Shape()
 
-	// For now, return the first input as a simplified implementation
-	// A full implementation would properly concatenate tensors
-	// This allows the model loading to proceed while we focus on the core functionality
-	return inputs[0], nil
+	return out, nil
 }
 
 // Backward computes the gradients for the Concat layer.
@@ -75,14 +69,63 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 		return []*tensor.TensorNumeric[T]{outputGradient}, nil
 	}
 
-	// For now, return the output gradient for each input
-	// A full implementation would properly split the gradient
-	gradients := make([]*tensor.TensorNumeric[T], len(inputs))
-	for i := range inputs {
-		gradients[i] = outputGradient
+	// Properly split gradient along the concatenation axis according to each input's size
+	shape := outputGradient.Shape()
+	axis := c.axis
+	if axis < 0 {
+		axis = len(shape) + axis
 	}
 
-	return gradients, nil
+	// Compute block size (product of dims after axis) and outer (product before axis)
+	blockSize := 1
+	for i := axis + 1; i < len(shape); i++ {
+		blockSize *= shape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	grads := make([]*tensor.TensorNumeric[T], len(inputs))
+	// Precompute per-input lengths along axis
+	inAxisLens := make([]int, len(inputs))
+	totalAxis := 0
+	for i, in := range inputs {
+		inAxisLens[i] = in.Shape()[axis]
+		totalAxis += inAxisLens[i]
+	}
+
+	// Sanity: outputGradient axis length must match sum of inputs along axis
+	if totalAxis != shape[axis] {
+		return nil, fmt.Errorf("Concat backward: mismatch along axis %d: out %d vs sum(inputs) %d", axis, shape[axis], totalAxis)
+	}
+
+	// Allocate gradient tensors per input and copy corresponding slices
+	for i, in := range inputs {
+		g, err := tensor.New[T](in.Shape(), nil)
+		if err != nil {
+			return nil, err
+		}
+		grads[i] = g
+	}
+
+	outData := outputGradient.Data()
+	// runningOffset tracks how many positions along axis we've consumed in out gradient
+	runningOffset := 0
+	for i, g := range grads {
+		part := inAxisLens[i]
+		gData := g.Data()
+		for o := 0; o < outer; o++ { //nolint:intrange
+			for j := 0; j < part; j++ { //nolint:intrange
+				srcStart := o*shape[axis]*blockSize + (runningOffset+j)*blockSize
+				dstStart := o*part*blockSize + j*blockSize
+				copy(gData[dstStart:dstStart+blockSize], outData[srcStart:srcStart+blockSize])
+			}
+		}
+		runningOffset += part
+	}
+
+	return grads, nil
 }
 
 // OpType returns the operation type of the Concat layer.

@@ -45,7 +45,7 @@ func (g *GroupQueryAttention[T]) OutputShape() []int {
 
 // Forward applies group query attention to the inputs.
 // For now, this is a simplified implementation that returns the first input unchanged.
-func (g *GroupQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (g *GroupQueryAttention[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("GroupQueryAttention layer requires at least 1 input")
 	}
@@ -59,7 +59,7 @@ func (g *GroupQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.
 }
 
 // Backward computes the gradients for the GroupQueryAttention layer.
-func (g *GroupQueryAttention[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (g *GroupQueryAttention[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("GroupQueryAttention layer requires at least 1 input")
 	}

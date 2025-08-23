@@ -20,13 +20,12 @@ type ScaledDotProductAttention[T tensor.Numeric] struct {
 	attentionWeights *tensor.TensorNumeric[T]
 }
 
-// NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
 // ScaledDotProductAttentionOptions holds configuration options for ScaledDotProductAttention.
 type ScaledDotProductAttentionOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
 }
 
-// ScaledDotProductAttentionOption is a function that applies an option to ScaledDotProductAttentionOptions.
+// ScaledDotProductAttentionOption applies an option to ScaledDotProductAttentionOptions.
 type ScaledDotProductAttentionOption[T tensor.Numeric] func(*ScaledDotProductAttentionOptions[T])
 
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
