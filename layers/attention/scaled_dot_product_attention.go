@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -63,7 +64,19 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	}
 
 	// 2. Scale attention scores
-	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(sdpa.headDim))
+	// Compute head dimension robustly to avoid division by zero
+	d := sdpa.headDim
+	if d <= 0 {
+		// Fallback to deriving from Q's last dimension
+		if q == nil || len(q.Shape()) < 3 {
+			return nil, fmt.Errorf("ScaledDotProductAttention: invalid Q shape %v to infer head dimension", q.Shape())
+		}
+		d = float64(q.Shape()[2])
+	}
+	if d <= 0 {
+		return nil, fmt.Errorf("ScaledDotProductAttention: headDim must be > 0, got %v", d)
+	}
+	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(d))
 
 	scaledAttentionScores, err := sdpa.engine.MulScalar(ctx, attentionScores, scaleFactor, nil)
 	if err != nil {
@@ -159,7 +172,15 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut, _,
 	}
 
 	// 4. Gradient w.r.t. attention_scores (through scaling)
-	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(sdpa.headDim))
+	// Use the same robust head dimension computation as in Forward
+	d := sdpa.headDim
+	if d <= 0 {
+		if sdpa.q == nil || len(sdpa.q.Shape()) < 3 {
+			return nil, fmt.Errorf("ScaledDotProductAttention: cannot infer headDim in Backward; cached Q is invalid")
+		}
+		d = float64(sdpa.q.Shape()[2])
+	}
+	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(d))
 
 	dAttentionScores, err := sdpa.engine.MulScalar(ctx, dScaledAttentionScores, scaleFactor, nil)
 	if err != nil {
