@@ -26,7 +26,7 @@ func NewLModule[T tensor.Numeric](
 	attention graph.Node[T],
 	opts ...transformer.BlockOption[T],
 ) (*LModule[T], error) {
-    // construct transformer block and initial state
+	// construct transformer block and initial state
 	block, err := transformer.NewTransformerBlock[T](engine, ops, modelDim, ffnDim, attention, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("new transformer block: %w", err)
