@@ -6,9 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
 	"reflect"
-	"time"
+	rand "math/rand/v2"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -279,17 +278,16 @@ func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[
 	if t == nil {
 		return errors.New("input tensor cannot be nil")
 	}
-	//nolint:gosec // G404: math/rand is acceptable for non-cryptographic ML initialization
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	minF := float64(minVal)
 	maxF := float64(maxVal)
 	if maxF < minF {
 		return errors.New("maxVal must be >= minVal")
 	}
 	span := maxF - minF
+
 	data := t.Data()
 	for i := 0; i < len(data); i++ {
-		v := minF + rng.Float64()*span
+		v := minF + rand.Float64()*span
 		data[i] = e.ops.FromFloat64(v)
 	}
 
@@ -627,7 +625,7 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], 
 	// Iterate over all elements and copy them to the new positions
 	for i := 0; i < a.Size(); i++ { //nolint:intrange // Classic index loop maintained
 		oldCoords := make([]int, len(originalShape))
-		linearIndex := i
+		linearIndex := i //nolint:copyloopvar // working copy used for index decomposition
 		for j, stride := range oldStrides {
 			oldCoords[j] = linearIndex / stride
 			linearIndex %= stride
@@ -728,7 +726,7 @@ func (e *CPUEngine[T]) Sum(
 
 	for i := 0; i < len(aData); i++ { //nolint:intrange // Classic index loop maintained
 		rIndex := 0
-		temp := i
+		temp := i //nolint:copyloopvar // working copy used for index decomposition
 		for j, stride := range aStrides {
 			coord := temp / stride
 			temp %= stride
