@@ -45,6 +45,7 @@ func (s *SGD[T]) Clip(ctx context.Context, params []*graph.Parameter[T], thresho
 				if gF32 > maxF32 {
 					return maxVal
 				}
+
 				if gF32 < minF32 {
 					return minVal
 				}
@@ -56,6 +57,7 @@ func (s *SGD[T]) Clip(ctx context.Context, params []*graph.Parameter[T], thresho
 				if gF32 > maxF32 {
 					return maxVal
 				}
+
 				if gF32 < minF32 {
 					return minVal
 				}
@@ -67,6 +69,7 @@ func (s *SGD[T]) Clip(ctx context.Context, params []*graph.Parameter[T], thresho
 				if gF32 > maxF32 {
 					return maxVal
 				}
+
 				if gF32 < minF32 {
 					return minVal
 				}
@@ -85,6 +88,7 @@ func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 		for i := range lrData {
 			lrData[i] = s.learningRate
 		}
+
 		lrTensor, _ := tensor.New[T](p.Gradient.Shape(), lrData)
 
 		// scaled_grad = learning_rate * gradient
@@ -98,6 +102,7 @@ func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 		if err != nil {
 			return fmt.Errorf("failed to update parameter value: %w", err)
 		}
+
 		p.Value = newValue
 	}
 
