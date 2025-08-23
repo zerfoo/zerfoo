@@ -48,6 +48,7 @@ func TestBuildTranspose(t *testing.T) {
 			if (err != nil) != tc.expectBuildErr {
 				t.Fatalf("BuildTranspose() error = %v, expectBuildErr %v", err, tc.expectBuildErr)
 			}
+
 			if err != nil {
 				return
 			}
@@ -66,6 +67,7 @@ func TestBuildTranspose(t *testing.T) {
 
 func TestTransposeForward(t *testing.T) {
 	engine := compute.NewTestableEngine[float32](numeric.Float32Ops{})
+
 	inputTensor, err := tensor.New[float32]([]int{2, 3, 4}, nil)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
@@ -86,6 +88,7 @@ func TestTransposeForward(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			layer := New(engine, tc.axes)
+
 			output, err := layer.Forward(context.Background(), inputTensor)
 			if err != nil {
 				t.Fatalf("Forward() error = %v", err)

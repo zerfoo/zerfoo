@@ -55,6 +55,7 @@ func (t *Transpose[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 	for i, axis := range t.perm {
 		outputShape[i] = shape[axis]
 	}
+
 	t.outputShape = outputShape
 
 	// Transpose the input tensor
