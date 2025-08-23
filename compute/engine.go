@@ -79,12 +79,17 @@ type Engine[T tensor.Numeric] interface {
 	// Copy copies the data from one tensor to another.
 	Copy(ctx context.Context, dst, src *tensor.TensorNumeric[T]) error
 
-	// Gather performs a gather operation.
-	// output[i] = params[indices[i]]
+	// Gather performs an embedding-style gather.
+	// params must be 2D [vocab, dim].
+	// indices may be 1D [N] or 2D [batch, seq].
+	// output must be [indices..., dim], i.e., [N, dim] or [batch, seq, dim].
 	Gather(ctx context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error
 
-	// ScatterAdd performs a scatter-add operation.
-	// dEmbeddingTable[indices[i]] += dOut[i]
+	// ScatterAdd performs a row-wise scatter-add for embeddings.
+	// dEmbeddingTable must be [vocab, dim].
+	// indices may be 1D [N] or multi-dim with flattened length N.
+	// dOut must be [N, dim].
+	// For each i in [0..N), it applies: dEmbeddingTable[indices[i], :] += dOut[i, :].
 	ScatterAdd(ctx context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error
 
 	// RandomUniform fills the tensor with random values from a uniform distribution.
