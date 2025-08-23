@@ -205,7 +205,7 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 	inputData := input.Data()
 
 	// Compute polynomial terms for each batch item
-	for b := 0; b < batchSize; b++ {
+	for b := range batchSize {
 		for termIdx, term := range p.termIndices {
 			// Compute the polynomial term value
 			termValue := p.ops.FromFloat32(1.0) // Start with 1
@@ -216,7 +216,7 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 
 					// Compute feature^power
 					poweredValue := p.ops.FromFloat32(1.0)
-					for i := 0; i < power; i++ {
+					for range power {
 						poweredValue = p.ops.Mul(poweredValue, featureValue)
 					}
 
@@ -258,17 +258,18 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 
 	// Determine input to use for exact derivative computation
 	var inputData []T
-	if p.lastInput != nil {
+	switch {
+	case p.lastInput != nil:
 		inputData = p.lastInput.Data()
-	} else if len(inputs) > 0 && inputs[0] != nil {
+	case len(inputs) > 0 && inputs[0] != nil:
 		inputData = inputs[0].Data()
-	} else {
-		return nil, fmt.Errorf("polynomial backward: missing cached input; pass input to Backward or run Forward first")
+	default:
+		return nil, errors.New("polynomial backward: missing cached input; pass input to Backward or run Forward first")
 	}
 
 	// Compute exact derivatives using cached input
-	for b := 0; b < batchSize; b++ {
-		for featureIdx := 0; featureIdx < p.inputSize; featureIdx++ {
+	for b := range batchSize {
+		for featureIdx := range p.inputSize {
 			gradient := p.ops.FromFloat32(0.0)
 
 			// Sum gradients from all terms that involve this feature
@@ -293,7 +294,7 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 					v := inputData[b*p.inputSize+j]
 					// v^exp
 					powered := p.ops.FromFloat32(1.0)
-					for k := 0; k < exp; k++ {
+					for range exp {
 						powered = p.ops.Mul(powered, v)
 					}
 					termGradient = p.ops.Mul(termGradient, powered)
