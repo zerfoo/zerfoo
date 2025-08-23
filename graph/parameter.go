@@ -18,9 +18,11 @@ func NewParameter[T tensor.Numeric](name string, value *tensor.TensorNumeric[T],
 	if name == "" {
 		return nil, errors.New("parameter name cannot be empty")
 	}
+
 	if value == nil {
 		return nil, errors.New("parameter value cannot be nil")
 	}
+
 	grad, err := newTensorFn(value.Shape(), nil)
 	if err != nil {
 		return nil, err
@@ -38,9 +40,11 @@ func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 	if p.Gradient == nil {
 		return errors.New("parameter gradient is nil")
 	}
+
 	if !tensor.ShapesEqual(p.Value.Shape(), grad.Shape()) {
 		return errors.New("gradient shape mismatch")
 	}
+
 	for i := range p.Gradient.Data() {
 		p.Gradient.Data()[i] += grad.Data()[i]
 	}

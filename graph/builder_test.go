@@ -48,6 +48,7 @@ func (m *mockNode) Attributes() map[string]interface{} {
 
 func TestBuilder_Build(t *testing.T) {
 	var engine compute.Engine[int] = compute.NewCPUEngine[int](numeric.IntOps{})
+
 	builder := NewBuilder[int](engine)
 
 	inputNode := builder.Input([]int{2, 2})
@@ -84,6 +85,7 @@ func TestBuilder_Build(t *testing.T) {
 	}
 
 	input, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})
+
 	output, _ := graph.Forward(context.Background(), input)
 	if output.Data()[0] != 1 {
 		t.Errorf("expected 1, got %d", output.Data()[0])
@@ -94,19 +96,25 @@ func TestBuilder_Build(t *testing.T) {
 
 func TestBuilder_Input(t *testing.T) {
 	var engine compute.Engine[int] = compute.NewCPUEngine[int](numeric.IntOps{})
+
 	builder := NewBuilder[int](engine)
+
 	inputNode := builder.Input([]int{2, 2})
 	if inputNode == nil {
 		t.Fatal("input node should not be nil")
 	}
+
 	if inputNode.OutputShape()[0] != 2 {
 		t.Errorf("expected output shape to be [2, 2], got %v", inputNode.OutputShape())
 	}
+
 	input, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})
+
 	output, _ := inputNode.Forward(context.Background(), input)
 	if output != nil {
 		t.Errorf("expected nil, got %v", output)
 	}
+
 	_, _ = inputNode.Backward(context.Background(), nil)
 	if inputNode.Parameters() != nil {
 		t.Errorf("expected nil parameters, got %v", inputNode.Parameters())
@@ -115,6 +123,7 @@ func TestBuilder_Input(t *testing.T) {
 
 func TestBuilder_Build_Error(t *testing.T) {
 	var engine compute.Engine[int] = compute.NewCPUEngine[int](numeric.IntOps{})
+
 	builder := NewBuilder[int](engine)
 	builder.nodes = []Node[int]{&mockNode{name: "a"}, &mockNode{name: "b"}}
 	// This test is no longer valid as topologicalSortFn is not a field anymore.
