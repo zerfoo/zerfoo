@@ -113,10 +113,12 @@ func TestCrossEntropyLoss_Forward_3D(t *testing.T) {
 
 	// Test with 3D predictions (batch, sequence, vocab)
 	predShape := []int{2, 3, 4} // 2 batch, 3 sequence, 4 vocab
+
 	predData := make([]float32, 24)
 	for i := range predData {
 		predData[i] = float32(i) * 0.1
 	}
+
 	predictions, err := tensor.New[float32](predShape, predData)
 	testutils.AssertNoError(t, err, "Failed to create predictions tensor")
 
@@ -183,6 +185,7 @@ func TestCrossEntropyLoss_Backward(t *testing.T) {
 	if grads[0] != nil {
 		testutils.AssertTrue(t, testutils.IntSliceEqual(predShape, grads[0].Shape()), "Prediction gradients should match prediction shape")
 	}
+
 	testutils.AssertNil(t, grads[1], "Target gradients should be nil")
 }
 

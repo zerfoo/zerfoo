@@ -53,6 +53,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor
 	if err != nil {
 		return nil, err
 	}
+
 	cel.softmaxOutput = softmaxOutput // Cache for backward
 
 	// Take log of softmax output
@@ -66,10 +67,12 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor
 	// This requires a gather operation on logSoftmaxOutput using targets as indices.
 	// The result will be (batch_size, seq_len) if predictions are (batch_size, seq_len, vocab_size)
 	gatheredLossShape := targets.Shape()
+
 	gatheredLoss, err := tensor.New[T](gatheredLossShape, nil) // Create a new tensor for gatheredLoss
 	if err != nil {
 		return nil, err
 	}
+
 	err = cel.engine.Gather(ctx, logSoftmaxOutput, targets, gatheredLoss)
 	if err != nil {
 		return nil, err
@@ -115,6 +118,7 @@ func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.Tenso
 	// targets: (batch_size, seq_len)
 	// oneHotTargets: (batch_size, seq_len, vocab_size)
 	vocabSize := cel.predictions.Shape()[len(cel.predictions.Shape())-1]
+
 	oneHotTargets, err := cel.engine.OneHot(ctx, cel.targets, vocabSize, nil)
 	if err != nil {
 		return nil, err
