@@ -72,6 +72,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SwiGLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	input := inputs[0]
 	s.lastInput = input // Cache input for backward
 
@@ -79,10 +80,12 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if len(inputShape) < 1 {
 		return nil, errors.New("SwiGLU input must have at least one dimension")
 	}
+
 	lastDim := inputShape[len(inputShape)-1]
 	if lastDim%2 != 0 {
 		return nil, fmt.Errorf("last dimension of input (%d) must be even for SwiGLU", lastDim)
 	}
+
 	s.outputShape = make([]int, len(inputShape))
 	copy(s.outputShape, inputShape)
 	s.outputShape[len(s.outputShape)-1] = lastDim / 2
@@ -92,6 +95,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if err != nil {
 		return nil, err
 	}
+
 	x1 := splitTensors[0]
 	x2 := splitTensors[1]
 
@@ -100,6 +104,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if err != nil {
 		return nil, err
 	}
+
 	s.gate = gate // Cache gate for backward
 
 	// Compute output = x1 * gate
@@ -126,6 +131,7 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T],
 	if err != nil {
 		return nil, err
 	}
+
 	x1 := splitTensors[0]
 	_ = splitTensors[1]
 
@@ -148,10 +154,12 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T],
 	if err != nil {
 		return nil, err
 	}
+
 	sigmoidGrad, err := s.engine.Mul(ctx, s.gate, oneMinusGate, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	dLdx2, err := s.engine.Mul(ctx, dLdgate, sigmoidGrad, nil)
 	if err != nil {
 		return nil, err

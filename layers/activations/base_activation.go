@@ -82,8 +82,10 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("BaseActivation: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	b.lastInput = inputs[0]
 	b.outputShape = b.lastInput.Shape()
+
 	output, err := b.engine.UnaryOp(ctx, b.lastInput, b.forwardOp)
 	if err != nil {
 		return nil, err
@@ -98,6 +100,7 @@ func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor
 	if err != nil {
 		return nil, err
 	}
+
 	inputGrad, err := b.engine.Mul(ctx, outputGradient, derivative)
 	if err != nil {
 		return nil, err

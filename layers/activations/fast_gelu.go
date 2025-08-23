@@ -26,6 +26,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FastGelu expects 1 input, got %d", len(inputs))
 	}
+
 	x := inputs[0]
 
 	// y = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
@@ -36,6 +37,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	if err != nil {
 		return nil, err
 	}
+
 	x3, err = g.engine.Mul(ctx, x3, x)
 	if err != nil {
 		return nil, err

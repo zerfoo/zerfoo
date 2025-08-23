@@ -58,8 +58,10 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LeakyReLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
 	l.lastInput = inputs[0]
 	l.outputShape = l.lastInput.Shape()
+
 	output, err := l.engine.UnaryOp(ctx, l.lastInput, func(val T) T { return l.ops.LeakyReLU(val, l.alpha) })
 	if err != nil {
 		return nil, err
@@ -74,6 +76,7 @@ func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.Tens
 	if err != nil {
 		return nil, err
 	}
+
 	inputGrad, err := l.engine.Mul(ctx, outputGradient, dleakyrelu)
 	if err != nil {
 		return nil, err
