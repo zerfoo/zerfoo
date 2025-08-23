@@ -82,7 +82,7 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 		blockSize *= shape[i]
 	}
 	outer := 1
-	for i := 0; i < axis; i++ {
+	for i := range shape[:axis] {
 		outer *= shape[i]
 	}
 
