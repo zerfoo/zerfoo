@@ -12,13 +12,12 @@ type MatrixMultiplier[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 }
 
-// NewMatrixMultiplier creates a new matrix multiplier.
-// MatrixMultiplierOptions holds configuration options for MatrixMultiplier.
+// MatrixMultiplierOptions represents configuration options for MatrixMultiplier.
 type MatrixMultiplierOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
 }
 
-// MatrixMultiplierOption is a function that applies an option to MatrixMultiplierOptions.
+// MatrixMultiplierOption applies an option to MatrixMultiplierOptions.
 type MatrixMultiplierOption[T tensor.Numeric] func(*MatrixMultiplierOptions[T])
 
 // NewMatrixMultiplier creates a new matrix multiplier.

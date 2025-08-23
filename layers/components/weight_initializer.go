@@ -19,7 +19,6 @@ type XavierInitializer[T tensor.Numeric] struct {
 	ops numeric.Arithmetic[T]
 }
 
-// NewXavierInitializer creates a new Xavier initializer.
 // XavierInitializerOptions holds configuration options for XavierInitializer.
 type XavierInitializerOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
@@ -61,7 +60,6 @@ type HeInitializer[T tensor.Numeric] struct {
 	ops numeric.Arithmetic[T]
 }
 
-// NewHeInitializer creates a new He initializer.
 // HeInitializerOptions holds configuration options for HeInitializer.
 type HeInitializerOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
@@ -102,7 +100,6 @@ type UniformInitializer[T tensor.Numeric] struct {
 	scale float64
 }
 
-// NewUniformInitializer creates a new uniform initializer with the given scale.
 // UniformInitializerOptions holds configuration options for UniformInitializer.
 type UniformInitializerOptions[T tensor.Numeric] struct {
 	Scale float64
