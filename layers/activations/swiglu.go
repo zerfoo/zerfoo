@@ -34,7 +34,6 @@ func (s *SwiGLU[T]) Attributes() map[string]interface{} {
 	return make(map[string]interface{})
 }
 
-// NewSwiGLU creates a new SwiGLU activation layer.
 // SwiGLUOptions holds configuration options for SwiGLU.
 type SwiGLUOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
@@ -53,7 +52,7 @@ func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmeti
 	return &SwiGLU[T]{
 		engine:  engine,
 		ops:     ops,
-		sigmoid: NewSigmoid[T](engine, ops),
+		sigmoid: NewBaseActivation(engine, ops, "Sigmoid", WithForwardOp(ops.Sigmoid), WithBackwardOp(ops.SigmoidGrad)),
 	}
 }
 

@@ -1,4 +1,4 @@
-// package activations_test tests the activation layers.
+// Package activations_test tests the activation layers.
 package activations_test
 
 import (
