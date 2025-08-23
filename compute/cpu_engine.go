@@ -166,29 +166,59 @@ func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.TensorNumeric[T], numS
 	return results, nil
 }
 
-// Gather performs a gather operation: output[i] = params[indices[i]].
+// Gather performs an embedding-style gather.
+// params is expected to be [vocab, dim].
+// indices may be 1D [N] or 2D [batch, seq].
+// output must be [indices..., dim].
 func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], output *tensor.TensorNumeric[T]) error {
-	if params == nil || indices == nil || output == nil {
-		return errors.New("params, indices, and output cannot be nil")
-	}
-	if indices.Dims() != 1 {
-		return errors.New("indices must be a 1D tensor")
-	}
-	if !reflect.DeepEqual(output.Shape(), indices.Shape()) {
-		return fmt.Errorf("output shape %v must equal indices shape %v", output.Shape(), indices.Shape())
-	}
-	pData := params.Data()
-	idx := indices.Data()
-	out := output.Data()
-	for i := 0; i < len(idx); i++ { //nolint:intrange // Classic index loop maintained
-		pos := idx[i]
-		if pos < 0 || pos >= len(pData) {
-			return fmt.Errorf("gather index %d out of bounds [0,%d)", pos, len(pData))
-		}
-		out[i] = pData[pos]
-	}
+    if params == nil || indices == nil || output == nil {
+        return errors.New("params, indices, and output cannot be nil")
+    }
 
-	return nil
+    pShape := params.Shape()
+    if len(pShape) != 2 {
+        return fmt.Errorf("params must be 2D [vocab, dim], got %v", pShape)
+    }
+    vocab := pShape[0]
+    dim := pShape[1]
+
+    // Validate indices dims (allow 1D or 2D)
+    iShape := indices.Shape()
+    if len(iShape) != 1 && len(iShape) != 2 {
+        return fmt.Errorf("indices must be 1D or 2D, got %dD shape %v", len(iShape), iShape)
+    }
+
+    // Expected output shape is indices shape with an extra trailing dim
+    expectedOutShape := append(append([]int{}, iShape...), dim)
+    if !reflect.DeepEqual(output.Shape(), expectedOutShape) {
+        return fmt.Errorf("output shape %v must equal indices shape appended with dim %v; want %v", output.Shape(), dim, expectedOutShape)
+    }
+
+    idx := indices.Data()
+    out := output.Data()
+
+    // Number of positions in indices (flattened)
+    n := 1
+    for _, d := range iShape {
+        n *= d
+    }
+    if n != len(idx) {
+        return fmt.Errorf("indices data size mismatch: shape %v -> %d, but data length is %d", iShape, n, len(idx))
+    }
+
+    // For each index, copy the corresponding row vector of length dim
+    pData := params.Data()
+    for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
+        row := idx[i]
+        if row < 0 || row >= vocab {
+            return fmt.Errorf("gather index %d out of bounds [0,%d)", row, vocab)
+        }
+        srcStart := row * dim
+        dstStart := i * dim
+        copy(out[dstStart:dstStart+dim], pData[srcStart:srcStart+dim])
+    }
+
+    return nil
 }
 
 // ScatterAdd performs a scatter-add operation: dEmbeddingTable[indices[i]] += dOut[i].
