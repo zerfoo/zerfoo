@@ -13,6 +13,7 @@ import (
 
 // AttentionHead implements a single attention head, including linear projections
 // for Query, Key, and Value, followed by scaled dot-product attention.
+//nolint:revive // exported type stutters as attention.AttentionHead; acceptable for clarity
 type AttentionHead[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 	qProj  *core.Dense[T]
@@ -21,15 +22,14 @@ type AttentionHead[T tensor.Numeric] struct {
 	sdpa   *ScaledDotProductAttention[T]
 }
 
-// NewAttentionHead creates a new AttentionHead instance.
-// inputDim is the dimension of the input features.
-// headDim is the dimension of the query, key, and value vectors for this head.
 // AttentionHeadOptions holds configuration options for AttentionHead.
+//nolint:revive // exported type stutters as attention.AttentionHeadOptions; acceptable for clarity
 type AttentionHeadOptions[T tensor.Numeric] struct {
 	// No specific options for now, but kept for consistency.
 }
 
-// AttentionHeadOption is a function that applies an option to AttentionHeadOptions.
+// AttentionHeadOption applies an option to AttentionHeadOptions.
+//nolint:revive // exported type stutters as attention.AttentionHeadOption; acceptable for clarity
 type AttentionHeadOption[T tensor.Numeric] func(*AttentionHeadOptions[T])
 
 // NewAttentionHead creates a new AttentionHead instance.
@@ -149,7 +149,7 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 }
 
 // Backward computes the gradients for the AttentionHead.
-func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (ah *AttentionHead[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a placeholder. The actual backward pass for attention is complex
 	// and involves backpropagating through SDPA and then through the linear projections.
 	return nil, errors.New("AttentionHead backward pass not yet implemented")
