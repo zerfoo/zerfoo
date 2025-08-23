@@ -45,10 +45,12 @@ func BuildFromZMF[T tensor.Numeric](
 		if _, isParam := params[inputProto.Name]; isParam {
 			continue
 		}
+
 		dims := make([]int, len(inputProto.Shape))
 		for i, dim := range inputProto.Shape {
 			dims[i] = int(dim) // Convert int64 to int
 		}
+
 		instantiatedNodes[inputProto.Name] = builder.Input(dims)
 	}
 
@@ -61,15 +63,19 @@ func BuildFromZMF[T tensor.Numeric](
 		if _, exists := instantiatedNodes[nodeProto.Name]; exists {
 			continue
 		}
+
 		layerBuilder, err := GetLayerBuilder[T](nodeProto.OpType)
 		if err != nil {
 			return nil, err
 		}
+
 		attributes := convertAttributes(nodeProto.Attributes)
+
 		node, err := layerBuilder(engine, ops, nodeProto.Name, params, attributes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build node '%s' of type '%s': %w", nodeProto.Name, nodeProto.OpType, err)
 		}
+
 		instantiatedNodes[nodeProto.Name] = node
 	}
 
@@ -103,6 +109,7 @@ func BuildFromZMF[T tensor.Numeric](
 							if err != nil {
 								return nil, fmt.Errorf("failed to transpose embedding weights for lm_head: %w", err)
 							}
+
 							transposedParam := &graph.Parameter[T]{
 								Name:  weightInputName + "_transposed",
 								Value: transposedTensor,
@@ -126,15 +133,19 @@ func BuildFromZMF[T tensor.Numeric](
 							if err != nil {
 								return nil, fmt.Errorf("failed to extract shape value at index %d: %w", i, err)
 							}
+
 							shapeValues[i] = int64(val)
 						}
+
 						if nodeProto.Attributes == nil {
 							nodeProto.Attributes = make(map[string]*zmf.Attribute)
 						}
+
 						intsAttr := &zmf.Ints{Val: shapeValues}
 						attr := &zmf.Attribute{Value: &zmf.Attribute_Ints{Ints: intsAttr}}
 						nodeProto.Attributes["shape"] = attr
 					}
+
 					actualInputNames = actualInputNames[:1]
 				}
 			}
@@ -150,6 +161,7 @@ func BuildFromZMF[T tensor.Numeric](
 				if resolvedName != "" {
 					inputNode, ok = instantiatedNodes[resolvedName]
 				}
+
 				if !ok {
 					// Try to create a parameter node if this input refers to a parameter
 					if param, paramExists := params[inputName]; paramExists {
@@ -178,8 +190,10 @@ func BuildFromZMF[T tensor.Numeric](
 					}
 				}
 			}
+
 			inputNodes[i] = inputNode
 		}
+
 		builder.AddNode(currentNode, inputNodes...)
 	}
 
@@ -187,12 +201,14 @@ func BuildFromZMF[T tensor.Numeric](
 	if len(model.Graph.Outputs) == 0 {
 		return nil, errors.New("graph has no defined outputs")
 	}
+
 	outputNodeName := model.Graph.Outputs[0].Name
 
 	outputNode, ok := instantiatedNodes[outputNodeName]
 	if !ok {
 		// Try to resolve output suffix for the output name
 		resolvedOutputName := resolveOutputSuffix(outputNodeName, instantiatedNodes)
+
 		outputNode, ok = instantiatedNodes[resolvedOutputName]
 		if !ok {
 			// For Gemma models, 'logits' typically maps to the last MatMul node (lm_head)
@@ -203,6 +219,7 @@ func BuildFromZMF[T tensor.Numeric](
 				}
 			}
 		}
+
 		if !ok {
 			return nil, fmt.Errorf("output node '%s' not found in instantiated nodes", outputNodeName)
 		}
@@ -280,6 +297,7 @@ func resolveOutputSuffix[T tensor.Numeric](name string, nodeMap map[string]graph
 }
 
 // getNodeNames returns a slice of all node names for debugging.
+//nolint:unused // helper retained for debugging/logging during development
 func getNodeNames[T tensor.Numeric](nodes map[string]graph.Node[T]) []string {
 	names := make([]string, 0, len(nodes))
 	for name := range nodes {
@@ -292,6 +310,7 @@ func getNodeNames[T tensor.Numeric](nodes map[string]graph.Node[T]) []string {
 // convertParameters converts the ZMF Tensor map to a map of graph.Parameter.
 func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[string]*graph.Parameter[T], error) {
 	params := make(map[string]*graph.Parameter[T])
+
 	for name, tensorProto := range zmfParams {
 		// Skip non-float tensors, as they are constants handled as attributes.
 		if tensorProto.Dtype != zmf.Tensor_FLOAT32 && tensorProto.Dtype != zmf.Tensor_FLOAT64 && tensorProto.Dtype != zmf.Tensor_FLOAT16 && tensorProto.Dtype != zmf.Tensor_BFLOAT16 {
@@ -302,11 +321,14 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode tensor for parameter '%s': %w", name, err)
 		}
+
 		newTensorFn := tensor.New[T]
+
 		param, err := graph.NewParameter[T](name, tensorValue, newTensorFn)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create parameter '%s': %w", name, err)
 		}
+
 		params[name] = param
 	}
 
@@ -316,6 +338,7 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 // convertAttributes converts ZMF attributes to a more usable map[string]interface{}.
 func convertAttributes(zmfAttributes map[string]*zmf.Attribute) map[string]interface{} {
 	attributes := make(map[string]interface{})
+
 	for name, attr := range zmfAttributes {
 		switch v := attr.Value.(type) {
 		case *zmf.Attribute_F:
