@@ -207,7 +207,7 @@ func (ops Float64Ops) ReLU(x float64) float64 {
 }
 
 // LeakyReLU computes the Leaky Rectified Linear Unit function.
-func (ops Float64Ops) LeakyReLU(x float64, alpha float64) float64 {
+func (ops Float64Ops) LeakyReLU(x, alpha float64) float64 {
 	if x > 0 {
 		return x
 	}
@@ -225,7 +225,7 @@ func (ops Float64Ops) ReLUGrad(x float64) float64 {
 }
 
 // LeakyReLUGrad computes the gradient of the Leaky Rectified Linear Unit function.
-func (ops Float64Ops) LeakyReLUGrad(x float64, alpha float64) float64 {
+func (ops Float64Ops) LeakyReLUGrad(x, alpha float64) float64 {
 	if x > 0 {
 		return 1
 	}

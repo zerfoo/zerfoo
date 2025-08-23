@@ -220,6 +220,7 @@ func TestFloat16Ops_Pow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ops.Pow(tt.base, tt.exponent)
+
 			resultFloat := result.ToFloat32()
 			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
 				t.Errorf("Pow(%v, %v): expected %v, got %v", tt.base, tt.exponent, tt.expected, resultFloat)

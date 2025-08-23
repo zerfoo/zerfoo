@@ -67,6 +67,7 @@ func TestSumOp[T any](t *testing.T, op func([]T) T, toFloat32 func(T) float32, t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := op(tt.s)
+
 			resultFloat := toFloat32(result)
 			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
 				t.Errorf("Sum(%v): expected %v, got %v", tt.s, tt.expected, resultFloat)
@@ -80,6 +81,7 @@ func TestLeakyReLUOp[T any](t *testing.T, opName string, op func(T, float64) T, 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := op(tt.x, tt.alpha)
+
 			resultFloat := toFloat32(result)
 			if math.Abs(float64(resultFloat-tt.expected)) > float64(tt.epsilon) {
 				t.Errorf("%s(%v, %v): expected %v, got %v", opName, tt.x, tt.alpha, tt.expected, resultFloat)
