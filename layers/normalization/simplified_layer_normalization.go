@@ -1,4 +1,4 @@
-// package normalization provides normalization layers for the Zerfoo model.
+// Package normalization provides normalization layers for the Zerfoo model.
 package normalization
 
 import (

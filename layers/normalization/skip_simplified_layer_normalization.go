@@ -1,4 +1,4 @@
-// package normalization provides normalization layers for the Zerfoo model.
+// Package normalization provides normalization layers for the Zerfoo model.
 package normalization
 
 import (
@@ -45,7 +45,7 @@ func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inp
 }
 
 // Backward applies the backward pass of the SkipSimplifiedLayerNormalization layer.
-func (sln *SkipSimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (sln *SkipSimplifiedLayerNormalization[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

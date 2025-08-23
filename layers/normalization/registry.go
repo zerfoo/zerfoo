@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildRMSNorm constructs an RMSNorm node from the provided parameter and epsilon attribute.
 func BuildRMSNorm[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -42,6 +43,8 @@ func BuildRMSNorm[T tensor.Numeric](
 	return NewRMSNormFromParam(engine, ops, ops.FromFloat64(epsilon), gain)
 }
 
+// BuildSimplifiedLayerNormalization constructs a SimplifiedLayerNormalization node,
+// attempting multiple common naming patterns to resolve the gain/weight parameter.
 func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -104,6 +107,8 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 	return NewSimplifiedLayerNormalization(engine, ops, gain.Value, T(epsilon))
 }
 
+// BuildSkipSimplifiedLayerNormalization constructs a SkipSimplifiedLayerNormalization node,
+// resolving the gain/weight parameter using several naming conventions.
 func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
