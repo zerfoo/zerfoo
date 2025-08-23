@@ -221,6 +221,59 @@ func (e *CPUEngine[T]) Gather(_ context.Context, params *tensor.TensorNumeric[T]
     return nil
 }
 
+// ScatterAdd performs a scatter-add over rows: dEmbeddingTable[indices[i], :] += dOut[i, :].
+// dEmbeddingTable must be [vocab, dim]. dOut must be [N, dim]. indices can be [N] or [1, N] or [batch, seq] with N=batch*seq.
+func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.TensorNumeric[T], indices *tensor.TensorNumeric[int], dOut *tensor.TensorNumeric[T]) error {
+    if dEmbeddingTable == nil || indices == nil || dOut == nil {
+        return errors.New("inputs cannot be nil")
+    }
+
+    tShape := dEmbeddingTable.Shape()
+    if len(tShape) != 2 {
+        return fmt.Errorf("dEmbeddingTable must be 2D [vocab, dim], got %v", tShape)
+    }
+    vocab := tShape[0]
+    dim := tShape[1]
+
+    // Validate dOut shape [N, dim]
+    gShape := dOut.Shape()
+    if len(gShape) != 2 || gShape[1] != dim {
+        return fmt.Errorf("dOut must be 2D [N, %d], got %v", dim, gShape)
+    }
+    n := gShape[0]
+
+    // Flatten indices length and verify equals N
+    iShape := indices.Shape()
+    if len(iShape) == 0 {
+        return fmt.Errorf("indices must have at least 1 dimension")
+    }
+    idxCount := 1
+    for _, d := range iShape {
+        idxCount *= d
+    }
+    if idxCount != n {
+        return fmt.Errorf("indices flattened length %d must equal dOut rows %d", idxCount, n)
+    }
+
+    table := dEmbeddingTable.Data()
+    idx := indices.Data()
+    grad := dOut.Data()
+
+    for i := 0; i < n; i++ { //nolint:intrange // Classic index loop maintained
+        row := idx[i]
+        if row < 0 || row >= vocab {
+            return fmt.Errorf("scatter index %d out of bounds [0,%d)", row, vocab)
+        }
+        tStart := row * dim
+        gStart := i * dim
+        for j := 0; j < dim; j++ { //nolint:intrange // Classic index loop maintained
+            table[tStart+j] = e.ops.Add(table[tStart+j], grad[gStart+j])
+        }
+    }
+
+    return nil
+}
+
 // RandomUniform fills the tensor with values from a uniform distribution in [minVal, maxVal).
 func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[T], minVal, maxVal T) error {
 	if t == nil {
