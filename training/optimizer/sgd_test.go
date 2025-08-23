@@ -13,6 +13,7 @@ import (
 )
 
 // testSGDClip is a generic helper function to test SGD gradient clipping for different numeric types.
+//
 //nolint:unused // kept for future expansion of type-parameterized tests
 func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T) {
 	return func(t *testing.T) {
