@@ -1,4 +1,4 @@
-version: 2
+version: "2"
 run:
   timeout: 5m
   tests: true
@@ -37,95 +37,95 @@ linters:
   disable:
     - unused
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-
-  govet:
-  # shadowing check moved to dedicated 'shadow' linter
-
-  revive:
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: exported
-      - name: if-return
-      - name: var-naming
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-
-  lll:
-    line-length: 120  # Reduced for better readability and auto-wrapping
-
-  staticcheck:
-    checks: ["all"]
-
-  misspell:
-    locale: US
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-    disabled-checks:
-      - dupImport
-      - ifElseChain
-      - octalLiteral
-
-  gocyclo:
-    min-complexity: 15
-
-  dupl:
-    threshold: 100
-
-  goconst:
-    min-len: 2
-    min-occurrences: 3
-
-  nakedret:
-    max-func-lines: 30
-
-  godot:
-    scope: declarations
-    exclude:
-      - "^\\s*TODO"
-      - "^\\s*FIXME"
-    capital: false
-
-  tagalign:
-    align: false
-    sort: true
-
-  importas:
-    no-unaliased: true
-    alias:
-      - pkg: github.com/stretchr/testify/assert
-        alias: assert
-      - pkg: github.com/stretchr/testify/require
-        alias: require
-
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
   
-
-  nlreturn:
-    block-size: 2
-
-  nolintlint:
-    allow-unused: false
-    require-explanation: true
-    require-specific: true
+    govet:
+    # shadowing check moved to dedicated 'shadow' linter
+  
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: exported
+        - name: if-return
+        - name: var-naming
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+  
+    lll:
+      line-length: 120  # Reduced for better readability and auto-wrapping
+  
+    staticcheck:
+      checks: ["all"]
+  
+    misspell:
+      locale: US
+  
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - dupImport
+        - ifElseChain
+        - octalLiteral
+  
+    gocyclo:
+      min-complexity: 15
+  
+    dupl:
+      threshold: 100
+  
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+  
+    nakedret:
+      max-func-lines: 30
+  
+    godot:
+      scope: declarations
+      exclude:
+        - "^\\s*TODO"
+        - "^\\s*FIXME"
+      capital: false
+  
+    tagalign:
+      align: false
+      sort: true
+  
+    importas:
+      no-unaliased: true
+      alias:
+        - pkg: github.com/stretchr/testify/assert
+          alias: assert
+        - pkg: github.com/stretchr/testify/require
+          alias: require
+  
+    
+  
+    nlreturn:
+      block-size: 2
+  
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
 
 
 
