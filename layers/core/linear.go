@@ -66,7 +66,6 @@ func NewLinear[T tensor.Numeric](
 	inputSize, outputSize int,
 	opts ...LinearOption[T],
 ) (*Linear[T], error) {
- 
 	options := &LinearOptions[T]{
 		Initializer: components.NewXavierInitializer(ops),
 	}
@@ -84,7 +83,6 @@ func NewLinearWithFactories[T tensor.Numeric](
 	newTensor func([]int, []T) (*tensor.TensorNumeric[T], error),
 	newParameter func(string, *tensor.TensorNumeric[T], func([]int, []T) (*tensor.TensorNumeric[T], error)) (*graph.Parameter[T], error),
 ) (*Linear[T], error) {
- 
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}
