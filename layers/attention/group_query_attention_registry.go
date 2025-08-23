@@ -11,10 +11,12 @@ import (
 // Unused parameters are accepted to satisfy the common builder signature.
 func BuildGroupQueryAttention[T tensor.Numeric](
 	engine compute.Engine[T],
-	_ numeric.Arithmetic[T],
-	_ string,
-	_ map[string]*graph.Parameter[T],
-	_ map[string]interface{},
+	ops numeric.Arithmetic[T],
+	name string,
+	params map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
 ) (graph.Node[T], error) {
-	return NewGroupQueryAttention(engine), nil
+	// Delegate to the proper grouped-query attention builder that
+	// reads attributes and parameters to construct the layer.
+	return buildGroupedQueryAttention[T](engine, ops, name, params, attributes)
 }

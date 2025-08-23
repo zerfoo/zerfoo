@@ -121,9 +121,9 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 	return mask, nil
 }
 
-// Backward is not implemented.
+// Backward delegates the backward pass to the wrapped GroupedQueryAttention.
 func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return la.gqa.Backward(ctx, dOut, inputs...)
+    return la.gqa.Backward(ctx, dOut, inputs...)
 }
 
 // OutputShape returns the output shape of the LocalAttention layer.
