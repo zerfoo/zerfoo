@@ -363,7 +363,7 @@ func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tens
 type FailingInitializer[T tensor.Numeric] struct{}
 
 // Initialize always returns an error for testing error paths.
-func (f *FailingInitializer[T]) Initialize(inputSize, outputSize int) ([]T, error) {
+func (f *FailingInitializer[T]) Initialize(_, _ int) ([]T, error) {
 	return nil, errors.New("test initializer failure")
 }
 

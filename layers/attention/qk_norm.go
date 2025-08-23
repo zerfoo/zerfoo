@@ -13,7 +13,7 @@ import (
 // QKNorm applies a form of normalization to Query (Q) and Key (K) tensors
 // to stabilize attention score scales, similar to RMSNorm.
 // It normalizes Q and K independently by their respective RMS values.
-func QKNorm[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], q, k *tensor.TensorNumeric[T], epsilon float64) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
+func QKNorm[T tensor.Numeric](_ context.Context, _ compute.Engine[T], q, k *tensor.TensorNumeric[T], epsilon float64) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
 	if q == nil {
 		return nil, nil, errors.New("query tensor (q) cannot be nil")
 	}

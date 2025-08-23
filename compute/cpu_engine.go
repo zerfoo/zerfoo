@@ -795,52 +795,66 @@ func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.TensorNumeric
 		return nil, errors.New("no tensors provided for concatenation")
 	}
 
-	firstTensor := tensors[0]
-	firstShape := firstTensor.Shape()
-	if axis < 0 || axis >= len(firstShape) {
-		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(firstShape))
+	first := tensors[0]
+	rank := len(first.Shape())
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
 	}
 
-	// Calculate new shape and total size
-	newShape := make([]int, len(firstShape))
-	copy(newShape, firstShape)
-	newShape[axis] = 0 // Sum of sizes along the concatenation axis
-
+	// Validate shapes and build output shape
+	outShape := make([]int, rank)
+	copy(outShape, first.Shape())
+	outShape[axis] = 0
 	for _, t := range tensors {
-		currentShape := t.Shape()
-		if len(currentShape) != len(firstShape) {
+		s := t.Shape()
+		if len(s) != rank {
 			return nil, errors.New("tensors must have the same number of dimensions for concatenation")
 		}
-		for i, dim := range currentShape {
+		for i, d := range s {
 			if i == axis {
-				newShape[axis] += dim
-			} else if dim != firstShape[i] {
+				outShape[axis] += d
+			} else if d != first.Shape()[i] {
 				return nil, errors.New("dimensions must be equal except for the concatenation axis")
 			}
 		}
 	}
 
-	result, err := e.getOrCreateDest(newShape, dst...)
+	out, err := e.getOrCreateDest(outShape, dst...)
 	if err != nil {
 		return nil, err
 	}
 
-	currentOffset := 0
-	for _, t := range tensors {
-		// Calculate the size of the current tensor's slice along the concatenation axis
-		sliceSize := 1
-		for i, dim := range t.Shape() {
-			if i != axis {
-				sliceSize *= dim
-			}
-		}
-		sliceSize *= t.Shape()[axis] // Total elements in the current tensor
-
-		copy(result.Data()[currentOffset:currentOffset+sliceSize], t.Data())
-		currentOffset += sliceSize
+	// Compute block sizes
+	blockSize := 1
+	for i := axis + 1; i < rank; i++ {
+		blockSize *= outShape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= outShape[i]
 	}
 
-	return result, nil
+	outData := out.Data()
+	axisOffset := 0 // running offset along concatenation axis in output
+	for _, t := range tensors {
+		ts := t.Shape()
+		tAxis := ts[axis]
+		tData := t.Data()
+
+		for o := 0; o < outer; o++ { //nolint:intrange
+			for j := 0; j < tAxis; j++ { //nolint:intrange
+				srcStart := o*tAxis*blockSize + j*blockSize
+				dstStart := o*outShape[axis]*blockSize + (axisOffset+j)*blockSize
+				copy(outData[dstStart:dstStart+blockSize], tData[srcStart:srcStart+blockSize])
+			}
+		}
+		axisOffset += tAxis
+	}
+
+	return out, nil
 }
 
 // OneHot creates a one-hot encoding of the input tensor.

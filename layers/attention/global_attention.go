@@ -115,6 +115,7 @@ func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorN
 	return ga.gqa.Backward(ctx, dOut, inputs...)
 }
 
+// OutputShape returns the output shape of the GlobalAttention layer.
 func (ga *GlobalAttention[T]) OutputShape() []int {
 	return ga.gqa.OutputShape()
 }
