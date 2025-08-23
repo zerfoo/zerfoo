@@ -110,9 +110,10 @@ func (ga *GlobalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 	return ga.gqa.Forward(ctx, inputs...)
 }
 
-// Backward is not implemented.
+// Backward delegates the backward pass to the wrapped GroupedQueryAttention.
 func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return ga.gqa.Backward(ctx, dOut, inputs...)
+    // Delegate backward pass to the wrapped GroupedQueryAttention.
+    return ga.gqa.Backward(ctx, dOut, inputs...)
 }
 
 // OutputShape returns the output shape of the GlobalAttention layer.
