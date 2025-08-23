@@ -25,14 +25,18 @@ type LocalAttentionOptions[T tensor.Numeric] struct {
 // LocalAttentionOption is a function that applies an option to LocalAttentionOptions.
 type LocalAttentionOption[T tensor.Numeric] func(*LocalAttentionOptions[T])
 
-// WithRopeBase sets the base for Rotary Positional Embeddings.
+// WithLocalRopeBase sets the base for Rotary Positional Embeddings.
+// 
+// base: The base for Rotary Positional Embeddings.
 func WithLocalRopeBase[T tensor.Numeric](base float64) LocalAttentionOption[T] {
 	return func(o *LocalAttentionOptions[T]) {
 		o.Base = base
 	}
 }
 
-// WithMaxSeqLen sets the maximum sequence length for Rotary Positional Embeddings.
+// WithLocalMaxSeqLen sets the maximum sequence length for Rotary Positional Embeddings.
+// 
+// maxSeqLen: The maximum sequence length for Rotary Positional Embeddings.
 func WithLocalMaxSeqLen[T tensor.Numeric](maxSeqLen int) LocalAttentionOption[T] {
 	return func(o *LocalAttentionOptions[T]) {
 		o.MaxSeqLen = maxSeqLen
@@ -96,11 +100,11 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 	}
 	// Fill with a large negative number
 	largeNegative := la.ops.FromFloat64(-1e9)
-	for i := range seqLen * seqLen {
+	for i := 0; i < seqLen*seqLen; i++ { //nolint:intrange // Keep classic index loop for clarity and performance
 		mask.Data()[i] = largeNegative
 	}
 
-	for i := range seqLen {
+	for i := 0; i < seqLen; i++ { //nolint:intrange // Keep classic index loop for clarity and performance
 		start := i - la.windowSize
 		if start < 0 {
 			start = 0
@@ -122,6 +126,7 @@ func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNu
 	return la.gqa.Backward(ctx, dOut, inputs...)
 }
 
+// OutputShape returns the output shape of the LocalAttention layer.
 func (la *LocalAttention[T]) OutputShape() []int {
 	return la.gqa.OutputShape()
 }
