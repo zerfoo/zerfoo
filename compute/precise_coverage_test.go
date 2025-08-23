@@ -140,6 +140,7 @@ func TestAlternativeCoverageApproach(t *testing.T) {
 
 		// Same for Transpose
 		a2, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+
 		result2, err2 := engine.Transpose(ctx, a2, []int{1, 0})
 		if err2 != nil {
 			t.Logf("Transpose nil dest triggered error: %v", err2)

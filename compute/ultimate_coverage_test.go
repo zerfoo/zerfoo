@@ -67,6 +67,7 @@ func TestUltimateCoverage(t *testing.T) {
 		for i := range data {
 			data[i] = float32(i + 1)
 		}
+
 		a, _ := tensor.New[float32]([]int{4, 5}, data)
 
 		result, err := engine.Transpose(ctx, a, []int{1, 0})
@@ -87,6 +88,7 @@ func TestUltimateCoverage(t *testing.T) {
 		for i := range data {
 			data[i] = float32(i + 1)
 		}
+
 		a, _ := tensor.New[float32]([]int{2, 3, 4, 2}, data)
 
 		// Test all axes with both keepDims true and false
@@ -96,6 +98,7 @@ func TestUltimateCoverage(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error for axis %d, keepDims %v: %v", axis, keepDims, err)
 				}
+
 				if result == nil {
 					t.Errorf("expected non-nil result for axis %d, keepDims %v", axis, keepDims)
 				}
@@ -125,6 +128,7 @@ func TestUltimateCoverage(t *testing.T) {
 		for i := range data {
 			data[i] = float32(i + 1)
 		}
+
 		a, _ := tensor.New[float32]([]int{3, 3, 3}, data)
 
 		// Sum along middle axis (axis 1) to test complex stride calculations

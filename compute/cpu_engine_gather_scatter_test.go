@@ -25,10 +25,12 @@ func TestCPUEngine_Gather_1D2D(t *testing.T) {
 
 	// 1D indices
 	idx1D, _ := tensor.New[int]([]int{3}, []int{1, 3, 0})
+
 	out1D, _ := tensor.New[float64]([]int{3, dim}, make([]float64, 3*dim))
 	if err := engine.Gather(ctx, params, idx1D, out1D); err != nil {
 		t.Fatalf("Gather 1D returned error: %v", err)
 	}
+
 	expected1D := []float64{
 		// row 1
 		1.0, 1.1, 1.2,
@@ -46,10 +48,12 @@ func TestCPUEngine_Gather_1D2D(t *testing.T) {
 		2, 0,
 		3, 1,
 	})
+
 	out2D, _ := tensor.New[float64]([]int{2, 2, dim}, make([]float64, 2*2*dim))
 	if err := engine.Gather(ctx, params, idx2D, out2D); err != nil {
 		t.Fatalf("Gather 2D returned error: %v", err)
 	}
+
 	expected2D := []float64{
 		// (0,0) -> row 2
 		2.0, 2.1, 2.2,
@@ -74,6 +78,7 @@ func TestCPUEngine_ScatterAdd_1D2D(t *testing.T) {
 	// 1D indices case
 	dTable1, _ := tensor.New[float64]([]int{vocab, dim}, make([]float64, vocab*dim))
 	indices1, _ := tensor.New[int]([]int{3}, []int{0, 2, 2})
+
 	dOut1, _ := tensor.New[float64]([]int{3, dim}, []float64{
 		0.1, 0.2, 0.3,
 		0.5, 0.5, 0.5,
@@ -82,6 +87,7 @@ func TestCPUEngine_ScatterAdd_1D2D(t *testing.T) {
 	if err := engine.ScatterAdd(ctx, dTable1, indices1, dOut1); err != nil {
 		t.Fatalf("ScatterAdd 1D returned error: %v", err)
 	}
+
 	expectedTable1 := []float64{
 		// row 0
 		0.1, 0.2, 0.3,
@@ -99,6 +105,7 @@ func TestCPUEngine_ScatterAdd_1D2D(t *testing.T) {
 	// 2D indices [1,2] with dOut [2,dim]
 	dTable2, _ := tensor.New[float64]([]int{vocab, dim}, make([]float64, vocab*dim))
 	indices2, _ := tensor.New[int]([]int{1, 2}, []int{1, 0})
+
 	dOut2, _ := tensor.New[float64]([]int{2, dim}, []float64{
 		0.2, 0.2, 0.2,
 		0.3, 0.3, 0.3,
@@ -106,6 +113,7 @@ func TestCPUEngine_ScatterAdd_1D2D(t *testing.T) {
 	if err := engine.ScatterAdd(ctx, dTable2, indices2, dOut2); err != nil {
 		t.Fatalf("ScatterAdd 2D returned error: %v", err)
 	}
+
 	expectedTable2 := []float64{
 		// row 0 gets second row of dOut2
 		0.3, 0.3, 0.3,

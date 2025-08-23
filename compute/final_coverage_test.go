@@ -88,6 +88,7 @@ func TestFinalCoverageTargeted(t *testing.T) {
 		for i := range data {
 			data[i] = float32(i + 1)
 		}
+
 		a, _ := tensor.New[float32]([]int{2, 2, 2, 2}, data)
 
 		// Sum along axis 1 (second dimension) without keepDims
@@ -110,6 +111,7 @@ func TestFinalCoverageTargeted(t *testing.T) {
 		for i := range data {
 			data[i] = float32(i + 1)
 		}
+
 		a, _ := tensor.New[float32]([]int{2, 3, 4}, data)
 
 		// Sum along axis 0 (first dimension) with keepDims=false

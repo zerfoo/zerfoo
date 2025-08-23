@@ -42,7 +42,6 @@ func (m *MockFailingTensor[T]) Set(value T, indices ...int) error {
 func TestOriginalCPUEngineErrorPaths(t *testing.T) {
 	// We'll create a modified version of the original methods that accept our mock tensors
 	// to test the exact same code paths in the original CPUEngine
-
 	t.Run("MatMul_OriginalSetErrorPath", func(t *testing.T) {
 		engine := NewCPUEngine[float32](numeric.Float32Ops{})
 		ctx := context.Background()
@@ -94,6 +93,7 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 
 	// Basic implementation for 2D matrices (exact copy of original logic)
 	aShape := a.Shape()
+
 	bShape := b.Shape()
 	if len(aShape) != 2 || len(bShape) != 2 || aShape[1] != bShape[0] {
 		t.Error("invalid shapes for matrix multiplication")
@@ -116,6 +116,7 @@ func testMatMulWithMockResult(_ context.Context, e *CPUEngine[float32], a, b *te
 	for i := range aShape[0] {
 		for j := range bShape[1] {
 			sum := e.ops.FromFloat32(0)
+
 			for k := range aShape[1] {
 				valA, _ := a.At(i, k)
 				valB, _ := b.At(k, j)
@@ -209,6 +210,7 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 		for _, v := range a.Data() {
 			sum = e.ops.Add(sum, v)
 		}
+
 		shape := []int{1}
 		if keepDims {
 			shape = make([]int, a.Dims())
@@ -216,12 +218,14 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 				shape[i] = 1
 			}
 		}
+
 		result, err := tensor.New[float32](shape, nil)
 		if err != nil {
 			t.Errorf("failed to create result tensor: %v", err)
 
 			return nil
 		}
+
 		result.Data()[0] = sum
 
 		return result
@@ -237,6 +241,7 @@ func testSumWithMockZero(ctx context.Context, e *CPUEngine[float32], a *tensor.T
 
 	// Create result tensor
 	newShape := []int{3} // Simplified
+
 	result, err := tensor.New[float32](newShape, nil)
 	if err != nil {
 		t.Errorf("failed to create result tensor: %v", err)
@@ -266,13 +271,13 @@ func TestCompleteCoverageVerification(t *testing.T) {
 	t.Run("VerifyAllErrorPathsCovered", func(t *testing.T) {
 		// This test ensures that our mocking approach successfully covers
 		// all the previously unreachable error paths in the original CPUEngine
-
 		engine := NewCPUEngine[float32](numeric.Float32Ops{})
 		ctx := context.Background()
 
 		// Test 1: MatMul Set error path
 		a1, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
 		b1, _ := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
+
 		result1 := testMatMulWithMockResult(ctx, engine, a1, b1, t)
 		if result1 == nil {
 			t.Error("MatMul Set error path not covered")
@@ -280,6 +285,7 @@ func TestCompleteCoverageVerification(t *testing.T) {
 
 		// Test 2: Transpose Set error path
 		a2, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+
 		result2 := testTransposeWithMockResult(ctx, engine, a2, t)
 		if result2 == nil {
 			t.Error("Transpose Set error path not covered")
@@ -287,6 +293,7 @@ func TestCompleteCoverageVerification(t *testing.T) {
 
 		// Test 3: Sum Zero error path
 		a3, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+
 		result3 := testSumWithMockZero(ctx, engine, a3, t)
 		if result3 == nil {
 			t.Error("Sum Zero error path not covered")
