@@ -115,10 +115,12 @@ func NewFFN[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize W1 weights: %w", err)
 		}
+
 		w1WeightsTensor, err := tensor.New[T]([]int{inputDim, hiddenDim}, w1WeightsData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create W1 weights tensor: %w", err)
 		}
+
 		w1.linear.weights.Value = w1WeightsTensor
 
 		// Initialize W2 weights
@@ -126,10 +128,12 @@ func NewFFN[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize W2 weights: %w", err)
 		}
+
 		w2WeightsTensor, err := tensor.New[T]([]int{hiddenDim, outputDim}, w2WeightsData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create W2 weights tensor: %w", err)
 		}
+
 		w2.linear.weights.Value = w2WeightsTensor
 
 		// Initialize W3 weights
@@ -137,10 +141,12 @@ func NewFFN[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize W3 weights: %w", err)
 		}
+
 		w3WeightsTensor, err := tensor.New[T]([]int{inputDim, hiddenDim}, w3WeightsData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create W3 weights tensor: %w", err)
 		}
+
 		w3.linear.weights.Value = w3WeightsTensor
 	}
 
@@ -181,6 +187,7 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FFN: expected 1 input tensor, got %d", len(inputs))
 	}
+
 	input := inputs[0]
 	f.inputTensor = input // Cache for backward pass
 
@@ -189,6 +196,7 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	f.w1Output = w1Output // Cache for backward pass
 
 	// Gate Linear Layer (W3)
@@ -196,6 +204,7 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	f.w3Output = w3Output // Cache for backward pass
 
 	// Concatenate w1Output and w3Output for SwiGLU
@@ -209,6 +218,7 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	f.swiGLUOutput = swiGLUOutput // Cache for backward pass
 
 	// Linear Layer 2
@@ -216,6 +226,7 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	if err != nil {
 		return nil, err
 	}
+
 	f.w2Output = w2Output // Cache for backward pass
 	f.outputShape = w2Output.Shape()
 
@@ -229,6 +240,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	if err != nil {
 		return nil, err
 	}
+
 	dSwiGLUOutputTensor := dSwiGLUOutput[0]
 
 	// Concatenate w1Output and w3Output to reconstruct swigluInput for backward
@@ -242,6 +254,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	if err != nil {
 		return nil, err
 	}
+
 	dSwiGLUInputTensor := dSwiGLUInputs[0]
 
 	// Split the gradient back for w1 and w3
@@ -249,6 +262,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	if err != nil {
 		return nil, fmt.Errorf("failed to split gradients for w1 and w3: %w", err)
 	}
+
 	dW1Output, dW3Output := splitGrads[0], splitGrads[1]
 
 	// Backward through W1
@@ -256,6 +270,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	if err != nil {
 		return nil, err
 	}
+
 	dInputW1Tensor := dInputW1[0]
 
 	// Backward through W3
@@ -263,6 +278,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	if err != nil {
 		return nil, err
 	}
+
 	dInputW3Tensor := dInputW3[0]
 
 	// Sum gradients for the input tensor

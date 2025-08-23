@@ -53,6 +53,7 @@ func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 	if err != nil {
 		return nil, err
 	}
+
 	c.outputShape = out.Shape()
 
 	return out, nil
@@ -71,6 +72,7 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 
 	// Properly split gradient along the concatenation axis according to each input's size
 	shape := outputGradient.Shape()
+
 	axis := c.axis
 	if axis < 0 {
 		axis = len(shape) + axis
@@ -81,6 +83,7 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 	for i := axis + 1; i < len(shape); i++ {
 		blockSize *= shape[i]
 	}
+
 	outer := 1
 	for i := range shape[:axis] {
 		outer *= shape[i]
@@ -90,6 +93,7 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 	// Precompute per-input lengths along axis
 	inAxisLens := make([]int, len(inputs))
 	totalAxis := 0
+
 	for i, in := range inputs {
 		inAxisLens[i] = in.Shape()[axis]
 		totalAxis += inAxisLens[i]
@@ -106,15 +110,18 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 		if err != nil {
 			return nil, err
 		}
+
 		grads[i] = g
 	}
 
 	outData := outputGradient.Data()
 	// runningOffset tracks how many positions along axis we've consumed in out gradient
 	runningOffset := 0
+
 	for i, g := range grads {
 		part := inAxisLens[i]
 		gData := g.Data()
+
 		for o := 0; o < outer; o++ { //nolint:intrange
 			for j := 0; j < part; j++ { //nolint:intrange
 				srcStart := o*shape[axis]*blockSize + (runningOffset+j)*blockSize
@@ -122,6 +129,7 @@ func (c *Concat[T]) Backward(_ context.Context, outputGradient *tensor.TensorNum
 				copy(gData[dstStart:dstStart+blockSize], outData[srcStart:srcStart+blockSize])
 			}
 		}
+
 		runningOffset += part
 	}
 

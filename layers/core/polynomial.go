@@ -95,12 +95,15 @@ func NewPolynomialExpansion[T tensor.Numeric](
 
 	degree := opts.Degree
 	includeBias := opts.IncludeBias
+
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}
+
 	if inputSize <= 0 {
 		return nil, fmt.Errorf("input size must be positive, got %d", inputSize)
 	}
+
 	if degree < 1 {
 		return nil, fmt.Errorf("degree must be at least 1, got %d", degree)
 	}
@@ -143,6 +146,7 @@ func generatePolynomialTerms(inputSize, degree int, includeBias bool) [][]int {
 	// Generate all combinations of powers that sum to at most 'degree'
 	// We use a recursive approach to generate all valid combinations
 	var generateCombinations func(currentTerm []int, position, remainingDegree int)
+
 	generateCombinations = func(currentTerm []int, position, remainingDegree int) {
 		if position == inputSize {
 			// Check if this term has degree > 0 (not the bias term)
@@ -150,6 +154,7 @@ func generatePolynomialTerms(inputSize, degree int, includeBias bool) [][]int {
 			for _, power := range currentTerm {
 				totalDegree += power
 			}
+
 			if totalDegree > 0 {
 				// Make a copy of the current term
 				term := make([]int, inputSize)
@@ -206,11 +211,12 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 
 	// Compute polynomial terms for each batch item
 	for b := range batchSize {
-		for termIdx, term := range p.termIndices {
+		for termIdx := range p.termIndices {
 			// Compute the polynomial term value
 			termValue := p.ops.FromFloat32(1.0) // Start with 1
 
-			for featureIdx, power := range term {
+			for featureIdx := range p.termIndices[termIdx] {
+				power := p.termIndices[termIdx][featureIdx]
 				if power > 0 {
 					featureValue := inputData[b*p.inputSize+featureIdx]
 
@@ -258,6 +264,7 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 
 	// Determine input to use for exact derivative computation
 	var inputData []T
+
 	switch {
 	case p.lastInput != nil:
 		inputData = p.lastInput.Data()
@@ -273,8 +280,8 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 			gradient := p.ops.FromFloat32(0.0)
 
 			// Sum gradients from all terms that involve this feature
-			for termIdx, term := range p.termIndices {
-				power := term[featureIdx]
+			for termIdx := range p.termIndices {
+				power := p.termIndices[termIdx][featureIdx]
 				if power == 0 {
 					continue
 				}
@@ -283,20 +290,23 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, outputGradient *ten
 				termGradient := p.ops.FromFloat32(float32(power))
 
 				// Multiply by product of x_j^(p_j) for j!=i, and x_i^(p_i-1) for j==i
-				for j, pj := range term {
-					exp := pj
+				for j := range p.termIndices[termIdx] {
+					exp := p.termIndices[termIdx][j]
 					if j == featureIdx {
-						exp = pj - 1
+						exp--
 					}
+
 					if exp <= 0 {
 						continue
 					}
+
 					v := inputData[b*p.inputSize+j]
 					// v^exp
 					powered := p.ops.FromFloat32(1.0)
 					for range exp {
 						powered = p.ops.Mul(powered, v)
 					}
+
 					termGradient = p.ops.Mul(termGradient, powered)
 				}
 

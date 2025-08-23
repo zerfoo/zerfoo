@@ -28,6 +28,7 @@ func TestConcat_ForwardAxis1(t *testing.T) {
 	out, err := layer.Forward(context.Background(), in1, in2)
 	testutils.AssertNoError(t, err, "forward")
 	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2, 5}, out.Shape()), "shape mismatch")
+
 	expected := []float32{
 		0, 1, 2, 100, 101,
 		3, 4, 5, 102, 103,
@@ -67,6 +68,7 @@ func TestConcat_BackwardAxis1(t *testing.T) {
 		13, 14,
 		23, 24,
 	}
+
 	testutils.AssertFloat32SliceApproxEqual(t, expG1, grads[0].Data(), 0, "grad1 data")
 	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
 }
@@ -81,6 +83,7 @@ func TestConcat_ForwardAxis0(t *testing.T) {
 	out, err := layer.Forward(context.Background(), in1, in2)
 	testutils.AssertNoError(t, err, "forward axis0")
 	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{3, 3}, out.Shape()), "shape")
+
 	expected := []float32{
 		1, 2, 3,
 		4, 5, 6,
@@ -107,6 +110,7 @@ func TestConcat_BackwardAxis0(t *testing.T) {
 
 	expG1 := []float32{10, 11, 12}
 	expG2 := []float32{20, 21, 22, 30, 31, 32}
+
 	testutils.AssertFloat32SliceApproxEqual(t, expG1, grads[0].Data(), 0, "grad1 data")
 	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
 }

@@ -78,9 +78,11 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 	// Check that all expected terms are present (order might vary)
 	for _, expectedTerm := range expectedTerms {
 		found := false
+
 		for _, actualTerm := range terms {
 			if len(actualTerm) == len(expectedTerm) {
 				match := true
+
 				for i, power := range expectedTerm {
 					if actualTerm[i] != power {
 						match = false
@@ -88,6 +90,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 						break
 					}
 				}
+
 				if match {
 					found = true
 
@@ -95,6 +98,7 @@ func TestPolynomialExpansion_TermGeneration(t *testing.T) {
 				}
 			}
 		}
+
 		testutils.AssertTrue(t, found, "expected to find term in generated terms")
 	}
 }
@@ -146,6 +150,7 @@ func TestPolynomialExpansion_ForwardPass(t *testing.T) {
 	// Check that all expected values were found
 	for value, found := range expectedValues {
 		testutils.AssertTrue(t, found, "expected to find value in output")
+
 		_ = value // Use the value to avoid unused variable warning
 	}
 }
@@ -257,6 +262,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	for i := range outputGradData {
 		outputGradData[i] = 1.0 // Gradient of 1 for all outputs
 	}
+
 	outputGrad, err := tensor.New(output.Shape(), outputGradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 

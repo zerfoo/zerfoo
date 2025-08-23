@@ -26,10 +26,12 @@ func TestLMHead_Forward(t *testing.T) {
 	batchSize := 2
 	seqLen := 10
 	inputShape := []int{batchSize, seqLen, hiddenDim}
+
 	inputData := make([]float32, batchSize*seqLen*hiddenDim)
 	for i := range inputData {
 		inputData[i] = float32(i) * 0.01
 	}
+
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)

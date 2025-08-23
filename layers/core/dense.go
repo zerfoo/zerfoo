@@ -38,19 +38,24 @@ func NewDense[T tensor.Numeric](
 	inputSize, outputSize int,
 	opts ...DenseOption[T],
 ) (*Dense[T], error) {
+
 	options := &DenseOptions[T]{
 		WithBias: true, // Default to true
 	}
 	for _, opt := range opts {
 		opt(options)
 	}
+
 	linear, err := NewLinear[T](name, engine, ops, inputSize, outputSize)
 	if err != nil {
 		return nil, err
 	}
+
 	var bias *Bias[T]
+
 	if options.WithBias {
 		var err error
+
 		bias, err = NewBias[T](name, engine, ops, outputSize)
 		if err != nil {
 			return nil, err
@@ -82,7 +87,9 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		for i := range len(originalShape) - 1 {
 			batchSize *= originalShape[i]
 		}
+
 		var err error
+
 		input, err = input.Reshape([]int{batchSize, inputSize})
 		if err != nil {
 			return nil, err
@@ -107,7 +114,9 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		outputShape := make([]int, len(originalShape))
 		copy(outputShape, originalShape)
 		outputShape[len(outputShape)-1] = d.linear.OutputShape()[1]
+
 		var err error
+
 		biasOutput, err = biasOutput.Reshape(outputShape)
 		if err != nil {
 			return nil, err
@@ -126,7 +135,9 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 		for i := range len(originalInputShape) - 1 {
 			batchSize *= originalInputShape[i]
 		}
+
 		var err error
+
 		outputGradient, err = outputGradient.Reshape([]int{batchSize, d.linear.OutputShape()[1]})
 		if err != nil {
 			return nil, err
@@ -134,11 +145,13 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 	}
 
 	var linearInputGradient *tensor.TensorNumeric[T]
+
 	if d.bias != nil {
 		biasGrads, err := d.bias.Backward(ctx, outputGradient)
 		if err != nil {
 			return nil, err
 		}
+
 		linearInputGradient = biasGrads[0]
 	} else {
 		linearInputGradient = outputGradient
@@ -165,6 +178,7 @@ func (d *Dense[T]) Parameters() []*graph.Parameter[T] {
 // SetName sets the name of the Dense layer.
 func (d *Dense[T]) SetName(name string) {
 	d.linear.SetName(name)
+
 	if d.bias != nil {
 		d.bias.SetName(name)
 	}

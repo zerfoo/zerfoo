@@ -58,8 +58,10 @@ func NewBiasWithFactories[T tensor.Numeric](
 	if name == "" {
 		return nil, errors.New("layer name cannot be empty")
 	}
+
 	// Initialize biases.
 	biasesData := initializer(size)
+
 	biases, err := newTensor([]int{size}, biasesData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create biases tensor: %w", err)
@@ -101,6 +103,7 @@ func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	if err != nil {
 		return nil, err
 	}
+
 	b.outputShape = output.Shape()
 
 	return output, nil
@@ -113,6 +116,7 @@ func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNum
 	if err != nil {
 		return nil, err
 	}
+
 	b.biases.Gradient = biasesGrad
 
 	// Gradient with respect to input is just the output gradient.

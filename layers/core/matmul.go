@@ -54,10 +54,12 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 				if err != nil {
 					return nil, fmt.Errorf("failed to transpose second operand: %w", err)
 				}
+
 				result, err := m.engine.MatMul(ctx, a, bTransposed)
 				if err != nil {
 					return nil, err
 				}
+
 				m.outputShape = result.Shape()
 
 				return result, nil

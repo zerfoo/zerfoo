@@ -53,6 +53,7 @@ func TestDense_ComprehensiveCoverage(t *testing.T) {
 	testDenseProperties(t, dense2, "medium", 10, 5)
 	testDenseProperties(t, dense3, "single", 1, 1)
 	testDenseProperties(t, dense4, "large", 100, 50)
+
 	if dense5 != nil {
 		testDenseProperties(t, dense5, "very_large", 500, 200)
 	}
@@ -100,7 +101,7 @@ func TestDense_ErrorRecovery(t *testing.T) {
 }
 
 // Helper function to test dense layer properties.
-func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, _ int, outputSize int) {
+func testDenseProperties(t *testing.T, dense *Dense[float32], expectedName string, _, outputSize int) {
 	if dense == nil {
 		t.Fatalf("dense layer is nil")
 	}
@@ -131,10 +132,12 @@ func testDenseBasicOperation(t *testing.T, dense *Dense[float32]) {
 
 	// Test backward pass
 	outputShape := output.Shape()
+
 	gradData := make([]float32, outputShape[0]*outputShape[1])
 	for i := range gradData {
 		gradData[i] = 1.0
 	}
+
 	outputGrad, err := tensor.New(outputShape, gradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 

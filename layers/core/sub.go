@@ -76,6 +76,7 @@ func (s *Sub[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNume
 	// Create a tensor of -1s and multiply
 	ops := s.engine.Ops()
 	negOne := ops.FromFloat32(-1.0)
+
 	gradB, err := s.engine.UnaryOp(ctx, outputGradient, func(x T) T { return ops.Mul(x, negOne) })
 	if err != nil {
 		return nil, err
