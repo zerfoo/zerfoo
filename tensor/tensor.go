@@ -282,16 +282,16 @@ func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 
 // Float32ToBytes converts a float32 slice to a byte slice.
 func Float32ToBytes(f []float32) ([]byte, error) {
-    // #nosec G103 -- Zero-copy reinterpretation via unsafe is intentional and audited
-    if len(f) == 0 {
-        return nil, nil
-    }
-    // #nosec G103 -- unsafe.SliceData used deliberately for zero-copy view
-    ptr := unsafe.SliceData(f)
-    // #nosec G103 -- unsafe.Slice used deliberately to create byte view over float32 backing array
-    b := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(f)*int(unsafe.Sizeof(f[0])))
+	// #nosec G103 -- Zero-copy reinterpretation via unsafe is intentional and audited
+	if len(f) == 0 {
+		return nil, nil
+	}
+	// #nosec G103 -- unsafe.SliceData used deliberately for zero-copy view
+	ptr := unsafe.SliceData(f)
+	// #nosec G103 -- unsafe.Slice used deliberately to create byte view over float32 backing array
+	b := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(f)*int(unsafe.Sizeof(f[0])))
 
-    return b, nil
+	return b, nil
 }
 
 // NewFromBytes creates a new tensor from bytes data with the given shape.

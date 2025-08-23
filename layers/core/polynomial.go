@@ -35,7 +35,7 @@ type PolynomialExpansion[T tensor.Numeric] struct {
 	// Precomputed indices for efficient polynomial term generation
 	termIndices [][]int // Each element contains the powers for each input feature
 	// Cached input for exact backward computation
-	lastInput   *tensor.TensorNumeric[T]
+	lastInput *tensor.TensorNumeric[T]
 }
 
 // PolynomialExpansionOptions holds configuration options for PolynomialExpansion layer.

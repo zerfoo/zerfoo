@@ -26,7 +26,7 @@ type LocalAttentionOptions[T tensor.Numeric] struct {
 type LocalAttentionOption[T tensor.Numeric] func(*LocalAttentionOptions[T])
 
 // WithLocalRopeBase sets the base for Rotary Positional Embeddings.
-// 
+//
 // base: The base for Rotary Positional Embeddings.
 func WithLocalRopeBase[T tensor.Numeric](base float64) LocalAttentionOption[T] {
 	return func(o *LocalAttentionOptions[T]) {
@@ -35,7 +35,7 @@ func WithLocalRopeBase[T tensor.Numeric](base float64) LocalAttentionOption[T] {
 }
 
 // WithLocalMaxSeqLen sets the maximum sequence length for Rotary Positional Embeddings.
-// 
+//
 // maxSeqLen: The maximum sequence length for Rotary Positional Embeddings.
 func WithLocalMaxSeqLen[T tensor.Numeric](maxSeqLen int) LocalAttentionOption[T] {
 	return func(o *LocalAttentionOptions[T]) {
@@ -123,7 +123,7 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 
 // Backward delegates the backward pass to the wrapped GroupedQueryAttention.
 func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-    return la.gqa.Backward(ctx, dOut, inputs...)
+	return la.gqa.Backward(ctx, dOut, inputs...)
 }
 
 // OutputShape returns the output shape of the LocalAttention layer.

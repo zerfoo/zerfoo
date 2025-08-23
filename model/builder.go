@@ -18,6 +18,7 @@ import (
 // This function iterates through the nodes in the graph, instantiates the
 // corresponding layers using a registered builder, and connects them into an
 // executable graph.
+//
 //nolint:gocyclo // High-level orchestration with many cases; splitting would harm clarity.
 func BuildFromZMF[T tensor.Numeric](
 	engine compute.Engine[T],
