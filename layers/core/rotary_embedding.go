@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -13,6 +14,11 @@ type RotaryEmbedding[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	name        string
 	outputShape []int
+	// configuration
+	base      float64
+	maxSeqLen int
+	// inner RoPE implementation (lazy-initialized on first Forward)
+	inner *embeddings.RotaryPositionalEmbedding[T]
 }
 
 // NewRotaryEmbedding creates a new RotaryEmbedding layer.
@@ -20,6 +26,7 @@ func NewRotaryEmbedding[T tensor.Numeric](engine compute.Engine[T]) *RotaryEmbed
 	return &RotaryEmbedding[T]{
 		engine: engine,
 		name:   "RotaryEmbedding",
+		base:   10000.0,
 	}
 }
 
@@ -44,7 +51,6 @@ func (r *RotaryEmbedding[T]) OutputShape() []int {
 }
 
 // Forward applies rotary embedding to the input.
-// For now, this is a simplified implementation that returns the input unchanged.
 func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("RotaryEmbedding layer requires at least 1 input")
@@ -53,9 +59,32 @@ func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 	input := inputs[0]
 	r.outputShape = input.Shape()
 
-	// Simplified implementation: return the first input unchanged
-	// In a full implementation, this would apply rotary position embeddings
-	return input, nil
+	// Expect input shape: (batch, seq_len, head_dim)
+	if len(r.outputShape) < 3 {
+		// Pass-through for non 3D tensors (defensive)
+		return input, nil
+	}
+
+	seqLen := r.outputShape[1]
+	headDim := r.outputShape[2]
+
+	// Initialize inner RoPE if needed or if dimensions changed
+	if r.inner == nil || r.maxSeqLen < seqLen || headDim != 0 && r.inner.OutputShape() != nil && len(r.inner.OutputShape()) > 0 && r.inner.OutputShape()[2] != headDim {
+		// choose precompute seq len: maxSeqLen if provided, else current seqLen
+		precomputeSeq := seqLen
+		if r.maxSeqLen > 0 {
+			precomputeSeq = r.maxSeqLen
+		}
+
+		rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), r.engine, headDim, precomputeSeq, embeddings.WithRotaryBase(r.base))
+		if err != nil {
+			return nil, err
+		}
+		r.inner = rope
+	}
+
+	// Delegate to inner RoPE
+	return r.inner.Forward(context.Background(), input)
 }
 
 // Backward computes the gradients for the RotaryEmbedding layer.
@@ -64,16 +93,16 @@ func (r *RotaryEmbedding[T]) Backward(_ context.Context, outputGradient *tensor.
 		panic("RotaryEmbedding layer requires at least 1 input")
 	}
 
-	// For simplified implementation, gradient passes through unchanged
-	gradients := make([]*tensor.TensorNumeric[T], len(inputs))
-	gradients[0] = outputGradient
-
-	// Set remaining gradients to nil (no gradient flow)
-	for i := 1; i < len(inputs); i++ {
-		gradients[i] = nil
+	if r.inner == nil {
+		// No-op if Forward never initialized inner; pass-through gradient
+		return []*tensor.TensorNumeric[T]{outputGradient}, nil
 	}
 
-	return gradients, nil
+	dInputs, err := r.inner.Backward(context.Background(), outputGradient)
+	if err != nil {
+		return nil, err
+	}
+	return dInputs, nil
 }
 
 // OpType returns the operation type of the RotaryEmbedding layer.
@@ -83,5 +112,8 @@ func (r *RotaryEmbedding[T]) OpType() string {
 
 // Attributes returns nil for the RotaryEmbedding layer.
 func (r *RotaryEmbedding[T]) Attributes() map[string]interface{} {
-	return nil
+	return map[string]interface{}{
+		"rope_base":   r.base,
+		"max_seq_len": r.maxSeqLen,
+	}
 }

@@ -12,9 +12,41 @@ import (
 func BuildRotaryEmbedding[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],
-	_ string,
+	name string,
 	_ map[string]*graph.Parameter[T],
-	_ map[string]interface{},
+	attributes map[string]interface{},
 ) (graph.Node[T], error) {
-	return NewRotaryEmbedding(engine), nil
+	layer := NewRotaryEmbedding(engine)
+	if name != "" {
+		layer.SetName(name)
+	}
+
+	if attributes != nil {
+		if v, ok := attributes["rope_base"]; ok {
+			switch x := v.(type) {
+			case float64:
+				layer.base = x
+			case float32:
+				layer.base = float64(x)
+			case int:
+				layer.base = float64(x)
+			case int64:
+				layer.base = float64(x)
+			}
+		}
+		if v, ok := attributes["max_seq_len"]; ok {
+			switch x := v.(type) {
+			case int:
+				layer.maxSeqLen = x
+			case int64:
+				layer.maxSeqLen = int(x)
+			case float64:
+				layer.maxSeqLen = int(x)
+			case float32:
+				layer.maxSeqLen = int(x)
+			}
+		}
+	}
+
+	return layer, nil
 }
