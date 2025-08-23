@@ -114,11 +114,11 @@ func (n *inputNode[T]) OutputShape() []int {
 	return n.shape
 }
 
-func (n *inputNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (n *inputNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
-func (n *inputNode[T]) Backward(ctx context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (n *inputNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }

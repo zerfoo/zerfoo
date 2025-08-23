@@ -26,7 +26,7 @@ func (m *mockNode) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	return inputs[0], nil
 }
 
-func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[int], inputs ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
 	if m.backwardFunc != nil {
 		return m.backwardFunc(ctx, outputGradient)
 	}
@@ -54,20 +54,20 @@ func TestBuilder_Build(t *testing.T) {
 
 	node1 := &mockNode{
 		name: "node1",
-		forwardFunc: func(ctx context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
+		forwardFunc: func(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
 			return inputs[0], nil
 		},
 	}
-	node1.backwardFunc = func(ctx context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+	node1.backwardFunc = func(_ context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
 		return []*tensor.TensorNumeric[int]{outputGradient}, nil
 	}
 	node2 := &mockNode{
 		name: "node2",
-		forwardFunc: func(ctx context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
+		forwardFunc: func(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
 			return inputs[0], nil
 		},
 	}
-	node2.backwardFunc = func(ctx context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+	node2.backwardFunc = func(_ context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
 		return []*tensor.TensorNumeric[int]{outputGradient}, nil
 	}
 
