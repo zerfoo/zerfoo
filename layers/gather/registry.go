@@ -56,6 +56,7 @@ func BuildGather[T tensor.Numeric](
 	// Create a dummy weight tensor - this is a workaround for Gemma's pattern
 	// In a real implementation, we'd need to handle this more elegantly
 	dummyShape := []int{1, 1} // Minimal shape
+
 	dummyTensor, err := tensor.New[T](dummyShape, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dummy tensor: %w", err)

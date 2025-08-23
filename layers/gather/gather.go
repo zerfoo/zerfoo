@@ -49,14 +49,18 @@ func (g *Gather[T]) HasEmbeddedWeights() bool {
 
 // Forward computes the gather operation.
 func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	var params *tensor.TensorNumeric[T]
-	var indices *tensor.TensorNumeric[int]
+	var (
+		params  *tensor.TensorNumeric[T]
+		indices *tensor.TensorNumeric[int]
+	)
 
 	// If we have embedded weights, use them as params and expect only indices as input
+
 	if g.weights != nil {
 		if len(inputs) != 1 {
 			return nil, fmt.Errorf("Gather layer with embedded weights expects 1 input (indices), got %d", len(inputs))
 		}
+
 		params = g.weights
 
 		// Create int tensor with same shape as input
@@ -71,21 +75,25 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		// For now, we'll access the underlying data directly since we need to convert types
 		// This is a simplified approach - in a production system, we'd want better type handling
 		inputData := inputTensor.Data()
+
 		intData := make([]int, len(inputData))
 		for i, val := range inputData {
 			// Convert to int (assuming T represents valid indices)
 			intData[i] = int(float64(val))
 		}
+
 		intTensor.SetData(intData)
 
 		// Ensure indices tensor is 2D as required by the engine
 		if len(intTensor.Shape()) == 1 {
 			// Reshape 1D tensor to 2D: [N] -> [1, N]
 			newShape := []int{1, intTensor.Shape()[0]}
+
 			reshapedTensor, err := tensor.New[int](newShape, intData)
 			if err != nil {
 				return nil, fmt.Errorf("failed to reshape indices tensor: %w", err)
 			}
+
 			indices = reshapedTensor
 		} else {
 			indices = intTensor
@@ -95,8 +103,11 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		if len(inputs) != 2 {
 			return nil, fmt.Errorf("Gather layer expects 2 inputs (params, indices), got %d", len(inputs))
 		}
+
 		params = inputs[0]
+
 		var ok bool
+
 		indices, ok = any(inputs[1]).(*tensor.TensorNumeric[int])
 		if !ok {
 			return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[1])
@@ -124,6 +135,7 @@ func (g *Gather[T]) Backward(ctx context.Context, outputGradient *tensor.TensorN
 	// The Gather layer has no trainable parameters, so the gradient is passed
 	// through to the params tensor.
 	params := inputs[0]
+
 	indices, ok := any(inputs[1]).(*tensor.TensorNumeric[int])
 	if !ok {
 		return nil, fmt.Errorf("Gather layer expects indices to be of type *tensor.TensorNumeric[int], got %T", inputs[1])
