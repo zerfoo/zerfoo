@@ -8,57 +8,62 @@ This section provides a brief, end-to-end example of how to define, train, and u
 package main
 
 import (
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/layers/activations"
-	"github.com/zerfoo/zerfoo/layers/core"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/training"
+    "github.com/zerfoo/zerfoo/compute"
+    "github.com/zerfoo/zerfoo/graph"
+    "github.com/zerfoo/zerfoo/layers/activations"
+    "github.com/zerfoo/zerfoo/layers/core"
+    "github.com/zerfoo/zerfoo/numeric"
+    opt "github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 func main() {
-	// 1. Create a compute engine
-	engine := compute.NewCPUEngine()
+    ctx := context.Background()
 
-	// 2. Define the model architecture
-	builder := graph.NewBuilder[float32](engine)
-	input := builder.Input([]int{1, 10})
-	dense1 := builder.AddNode(core.NewDense(10, 32), input)
-	act1 := builder.AddNode(activations.NewReLU(), dense1)
-	output := builder.AddNode(core.NewDense(32, 1), act1)
+    // 1. Create a compute engine
+    engine := compute.NewCPUEngine[float32]()
 
-	// 3. Build the computational graph
-	forward, backward, err := builder.Build(output)
-	if err != nil {
-		panic(err)
-	}
+    // 2. Define the model architecture
+    builder := graph.NewBuilder[float32](engine)
+    input := builder.Input([]int{1, 10})
+    dense1 := builder.AddNode(core.NewDense[float32](engine, 10, 32), input)
+    act1 := builder.AddNode(activations.NewReLU[float32](engine), dense1)
+    output := builder.AddNode(core.NewDense[float32](engine, 32, 1), act1)
 
-	// 4. Create an optimizer
-	optimizer := training.NewAdamOptimizer[float32](0.01)
+    // 3. Build the computational graph
+    g, err := builder.Build(output)
+    if err != nil {
+        panic(err)
+    }
 
-	// 5. Generate some dummy data
-	inputTensor, _ := tensor.NewTensor(engine, []int{1, 10})
-	targetTensor, _ := tensor.NewTensor(engine, []int{1, 1})
+    // 4. Create an optimizer (example: SGD)
+    ops := numeric.Float32Ops{}
+    sgd := opt.NewSGD[float32](engine, ops, 0.01)
 
-	// 6. Run the training loop
-	for i := 0; i < 100; i++ {
-		// Forward pass
-		predTensor := forward(map[graph.NodeHandle]*tensor.Tensor[float32]{input: inputTensor})
+    // 5. Generate some dummy data
+    in, _ := tensor.New[float32]([]int{1, 10}, make([]float32, 10))
+    target, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
 
-		// Compute loss (dummy loss for this example)
-		loss := predTensor.Data()[0] - targetTensor.Data()[0]
-		grad := tensor.NewScalar(engine, 2*loss)
+    // 6. Run the training loop (toy example: manual loss/grad)
+    for i := 0; i < 100; i++ {
+        // Forward pass
+        pred, err := g.Forward(ctx, in)
+        if err != nil { panic(err) }
 
-		// Backward pass
-		backward(grad, map[graph.NodeHandle]*tensor.Tensor[float32]{input: inputTensor})
+        // Compute a dummy scalar loss and its gradient w.r.t. pred
+        loss := pred.Data()[0] - target.Data()[0]
+        dLoss := tensor.NewScalar[float32](ops.FromFloat32(2*loss))
 
-		// Update weights
-		optimizer.Step(builder.Parameters())
-	}
+        // Backward pass through the graph
+        if err := g.Backward(ctx, dLoss); err != nil { panic(err) }
 
-	fmt.Println("Training complete!")
+        // Update weights
+        if err := sgd.Step(ctx, g.Parameters()); err != nil { panic(err) }
+    }
+
+    fmt.Println("Training complete!")
 }
 ```
 
