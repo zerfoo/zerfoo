@@ -69,16 +69,16 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 
 // Start starts the coordinator service on the given address.
 func (c *Coordinator) Start(address string) error {
-    // Use context-aware listener per linter guidance.
-    lc := net.ListenConfig{}
-    lis, err := lc.Listen(context.Background(), "tcp", address)
-    if err != nil {
-        return fmt.Errorf("failed to listen: %w", err)
-    }
+	// Use context-aware listener per linter guidance.
+	lc := net.ListenConfig{}
+	lis, err := lc.Listen(context.Background(), "tcp", address)
+	if err != nil {
+		return fmt.Errorf("failed to listen: %w", err)
+	}
 
-    c.start(lis)
+	c.start(lis)
 
-    return nil
+	return nil
 }
 
 // start starts the coordinator service on the given listener.
