@@ -11,6 +11,7 @@ import (
 func TestAllReduceStrategy_Init(t *testing.T) {
 	customMockLocal := new(testutils.CustomMockStrategy[float32])
 	customMockCross := new(testutils.CustomMockStrategy[float32])
+
 	t.Run("successful init for leader", func(t *testing.T) {
 		customMockLocal.OnInit(0, 4, "coord").ReturnInit(nil).OnceInit()
 		customMockLocal.OnRank().ReturnRank(0).OnceRank()
@@ -18,10 +19,12 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 		customMockCross.OnInit(0, 4, "coord").ReturnInit(nil).OnceInit()
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
+
 		err := strategy.Init(0, 4, "coord")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})
@@ -35,10 +38,12 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 		customMockLocal.OnSize().ReturnSize(4).OnceSize()
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
+
 		err := strategy.Init(1, 4, "coord")
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertNotCalled(t, "Init")
 	})
@@ -50,11 +55,12 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 		customMockLocal.OnInit(0, 4, "coord").ReturnInit(errors.New("local error")).OnceInit()
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
-		err := strategy.Init(0, 4, "coord")
 
+		err := strategy.Init(0, 4, "coord")
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 	})
 
@@ -68,11 +74,12 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 		customMockCross.OnInit(0, 4, "coord").ReturnInit(errors.New("cross-node error")).OnceInit()
 
 		strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
-		err := strategy.Init(0, 4, "coord")
 
+		err := strategy.Init(0, 4, "coord")
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})
@@ -99,6 +106,7 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})
@@ -119,6 +127,7 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertNotCalled(t, "AllReduceGradients")
 	})
@@ -142,6 +151,7 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})
@@ -162,6 +172,7 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertNotCalled(t, "Barrier")
 	})
@@ -184,6 +195,7 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 	})
 
@@ -202,6 +214,7 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})
@@ -220,6 +233,7 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 	})
 }
@@ -238,6 +252,7 @@ func TestAllReduceStrategy_Barrier_Error(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 	})
 
@@ -256,6 +271,7 @@ func TestAllReduceStrategy_Barrier_Error(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected an error, got nil")
 		}
+
 		customMockLocal.AssertExpectations(t)
 		customMockCross.AssertExpectations(t)
 	})

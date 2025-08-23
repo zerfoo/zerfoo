@@ -30,7 +30,9 @@ type testKit struct {
 
 func setup(t *testing.T) *testKit {
 	lis := bufconn.Listen(bufSize)
+
 	var buf bytes.Buffer
+
 	coord := NewCoordinator(&buf, 10*time.Second)
 
 	coord.start(lis)
@@ -65,12 +67,15 @@ func setup(t *testing.T) *testKit {
 func TestCoordinator_Start(t *testing.T) {
 	t.Run("successful start", func(_ *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
+
 		err := coord.Start("localhost:0")
 		if err != nil {
 			t.Fatalf("failed to start coordinator: %v", err)
 		}
 		defer coord.Stop()
+
 		if coord.Addr() == nil {
 			t.Errorf("expected coordinator address to not be nil, got nil")
 		}
@@ -78,12 +83,15 @@ func TestCoordinator_Start(t *testing.T) {
 
 	t.Run("listen error", func(_ *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Let's create a server on a port to make the next call fail.
-		lis, err := net.Listen("tcp", "localhost:0")
+		lc := net.ListenConfig{}
+		lis, err := lc.Listen(context.Background(), "tcp", "localhost:0")
 		if err != nil {
 			t.Fatalf("failed to listen: %v", err)
 		}
+
 		defer func() { _ = lis.Close() }()
 
 		err = coord.Start(lis.Addr().String())
@@ -94,6 +102,7 @@ func TestCoordinator_Start(t *testing.T) {
 
 	t.Run("serve error", func(_ *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
 		ml := &testutils.CustomMockListener{
 			AcceptErr: errors.New("mock error"),
@@ -114,9 +123,11 @@ func TestCoordinator_RegisterWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	if resp1.Rank != int32(0) {
 		t.Errorf("expected rank 0, got %d", resp1.Rank)
 	}
+
 	if len(resp1.Peers) != 1 || resp1.Peers[0] != "addr-1" {
 		t.Errorf("expected peers [\"addr-1\"], got %v", resp1.Peers)
 	}
@@ -126,6 +137,7 @@ func TestCoordinator_RegisterWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	if resp2.Rank != int32(1) {
 		t.Errorf("expected rank 1, got %d", resp2.Rank)
 	}
@@ -145,10 +157,12 @@ func TestCoordinator_RegisterWorker(t *testing.T) {
 	// create a gap in ranks
 	delete(kit.coord.ranks, 0)
 	kit.coord.mu.Unlock()
+
 	resp3, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: "worker-3", Address: "addr-3"})
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	if resp3.Rank != int32(2) {
 		t.Errorf("expected rank 2, got %d", resp3.Rank)
 	}
@@ -161,13 +175,16 @@ func TestCoordinator_RegisterWorker(t *testing.T) {
 	// create an inconsistent state
 	kit.coord.ranks[1] = "worker-dne"
 	kit.coord.mu.Unlock()
+
 	resp4, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: "worker-4", Address: "addr-4"})
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	if resp4.Rank != int32(3) {
 		t.Errorf("expected rank 3, got %d", resp4.Rank)
 	}
+
 	if !strings.Contains(kit.buf.String(), "worker worker-dne not found in workers map") {
 		t.Errorf("expected log to contain \"worker worker-dne not found in workers map\", got %s", kit.buf.String())
 	}
@@ -193,6 +210,7 @@ func TestCoordinator_UnregisterWorker(t *testing.T) {
 	kit.coord.mu.Lock()
 	_, ok := kit.coord.workers["worker-1"]
 	kit.coord.mu.Unlock()
+
 	if ok {
 		t.Errorf("expected worker to be unregistered, but it still exists")
 	}
@@ -227,6 +245,7 @@ func TestCoordinator_Heartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to send heartbeat: %v", err)
 	}
+
 	testutils.AssertEqual(t, "OK", resp.Status, "expected status %q, got %q")
 
 	// Verify heartbeat time was updated
@@ -249,6 +268,7 @@ func TestCoordinator_Checkpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start checkpoint: %v", err)
 	}
+
 	testutils.AssertEqual(t, "ckpt-1", startResp.CheckpointId, "expected checkpoint ID %q, got %q")
 
 	// End Checkpoint
@@ -261,13 +281,16 @@ func TestCoordinator_Checkpoints(t *testing.T) {
 func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	kit := setup(t)
 	ctx := context.Background()
+
 	var wg sync.WaitGroup
+
 	numWorkers := 50
 
 	// Register initial workers
 	for i := range numWorkers {
 		workerID := fmt.Sprintf("worker-%d", i)
 		addr := fmt.Sprintf("addr-%d", i)
+
 		_, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: workerID, Address: addr})
 		if err != nil {
 			t.Fatalf("failed to register worker: %v", err)
@@ -277,8 +300,10 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 	// Concurrent register, unregister, and heartbeat
 	for i := range numWorkers * 2 {
 		wg.Add(1)
+
 		go func(i int) {
 			defer wg.Done()
+
 			op := i % 3
 			switch op {
 			case 0: // Register new worker
@@ -300,6 +325,7 @@ func TestCoordinator_ConcurrentOperations(t *testing.T) {
 
 func TestCoordinator_StartAndStop(t *testing.T) {
 	var buf bytes.Buffer
+
 	coord := NewCoordinator(&buf, 10*time.Second)
 
 	err := coord.Start("localhost:0")
@@ -310,31 +336,39 @@ func TestCoordinator_StartAndStop(t *testing.T) {
 	coord.Stop()
 
 	// Try to dial the closed server (should fail)
-	_, err = net.DialTimeout("tcp", coord.Addr().String(), 100*time.Millisecond)
+	dctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	d := &net.Dialer{}
+	_, err = d.DialContext(dctx, "tcp", coord.Addr().String())
 	testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
 }
 
 func TestCoordinator_Addr(t *testing.T) {
 	t.Run("returns nil when not started", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
 		testutils.AssertNil(t, coord.Addr(), "expected coordinator address to be nil")
 	})
 
 	t.Run("returns address when started", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
+
 		err := coord.Start("localhost:0")
 		if err != nil {
 			t.Fatalf("failed to start coordinator: %v", err)
 		}
 		defer coord.Stop()
+
 		testutils.AssertNotNil(t, coord.Addr(), "expected coordinator address to not be nil, got nil")
 	})
 }
 
 func TestCoordinator_GracefulStop(t *testing.T) {
 	var buf bytes.Buffer
+
 	coord := NewCoordinator(&buf, 10*time.Second)
 
 	err := coord.Start("localhost:0")
@@ -346,7 +380,10 @@ func TestCoordinator_GracefulStop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Try to dial the closed server (should fail)
-	_, err = net.DialTimeout("tcp", coord.Addr().String(), 100*time.Millisecond)
+	dctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	d := &net.Dialer{}
+	_, err = d.DialContext(dctx, "tcp", coord.Addr().String())
 	testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
 }
 
@@ -359,12 +396,14 @@ func TestCoordinator_RegisterWorker_RankAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertEqual(t, int32(0), resp1.Rank, "expected rank %d, got %d")
 
 	resp2, err := kit.client.RegisterWorker(ctx, &pb.RegisterWorkerRequest{WorkerId: "worker-b", Address: "addr-b"})
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertEqual(t, int32(1), resp2.Rank, "expected rank %d, got %d")
 
 	// Unregister the first worker
@@ -378,6 +417,7 @@ func TestCoordinator_RegisterWorker_RankAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertEqual(t, int32(2), resp3.Rank, "expected rank %d, got %d")
 }
 
@@ -390,6 +430,7 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertTrue(t, testutils.ElementsMatch(resp1.Peers, []string{"addr-1"}), "expected peers to match")
 
 	// Worker 2
@@ -397,6 +438,7 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertTrue(t, testutils.ElementsMatch(resp2.Peers, []string{"addr-1", "addr-2"}), "expected peers to match")
 
 	// Worker 3
@@ -404,6 +446,7 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register worker: %v", err)
 	}
+
 	testutils.AssertTrue(t, testutils.ElementsMatch(resp3.Peers, []string{"addr-1", "addr-2", "addr-3"}), "expected peers to match")
 
 	// Unregister worker 2
@@ -421,54 +464,39 @@ func TestCoordinator_RegisterWorker_Peers(t *testing.T) {
 	// Note: The order of peers is not guaranteed, so we use ElementsMatch.
 	// The ranks map has a gap, but the peers list should be dense.
 	kit.coord.mu.Lock()
+
 	expectedPeers := []string{}
+
 	for r := range kit.coord.nextRank {
 		if workerID, ok := kit.coord.ranks[r]; ok {
 			expectedPeers = append(expectedPeers, kit.coord.workers[workerID].Address)
 		}
 	}
+
 	kit.coord.mu.Unlock()
 
 	testutils.AssertTrue(t, testutils.ElementsMatch(expectedPeers, resp4.Peers), "expected peers to match")
 }
 
-// mockListener is a mock implementation of net.Listener for testing purposes.
-type mockListener struct {
-	acceptErr error
-	closeErr  error
-	addr      net.Addr
-}
-
-func (m *mockListener) Accept() (net.Conn, error) {
-	if m.acceptErr != nil {
-		return nil, m.acceptErr
-	}
-	// This will block forever, which is fine for the test where we don't expect Accept to be called.
-	select {}
-}
-
-func (m *mockListener) Close() error {
-	return m.closeErr
-}
-
-func (m *mockListener) Addr() net.Addr {
-	return m.addr
-}
-
 func TestCoordinator_Stop(t *testing.T) {
 	t.Run("stops a running server", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
 		err := coord.Start("localhost:0")
 		testutils.AssertNoError(t, err, "failed to start coordinator: %v")
 		testutils.AssertNotNil(t, coord.Addr(), "expected coordinator address to not be nil, got nil")
 		coord.Stop()
-		_, err = net.DialTimeout("tcp", coord.Addr().String(), 100*time.Millisecond)
+		dctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		d := &net.Dialer{}
+		_, err = d.DialContext(dctx, "tcp", coord.Addr().String())
 		testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
 	})
 
 	t.Run("does nothing if server is not started", func(_ *testing.T) {
 		var buf bytes.Buffer
+
 		coord := NewCoordinator(&buf, 10*time.Second)
 		// Note: We are not calling coord.Start()
 		coord.Stop() // Should not panic
@@ -515,8 +543,10 @@ func TestCoordinator_UnregisterWorker_Table(t *testing.T) {
 				testutils.AssertError(subT, err, "expected an error, got nil")
 			} else {
 				testutils.AssertNoError(subT, err, "expected no error, got %v")
+
 				kit.coord.mu.Lock()
 				defer kit.coord.mu.Unlock()
+
 				if tt.expectWorkers != nil {
 					testutils.AssertEqual(subT, len(tt.expectWorkers), len(kit.coord.workers), "expected %d workers, got %d")
 				}
@@ -573,6 +603,7 @@ func TestCoordinator_Heartbeat_Table(t *testing.T) {
 
 func TestNewCoordinator(t *testing.T) {
 	var buf bytes.Buffer
+
 	coord := NewCoordinator(&buf, 10*time.Second)
 	testutils.AssertNotNil(t, coord, "expected coordinator to not be nil")
 	testutils.AssertNotNil(t, coord.workers, "expected workers map to not be nil")

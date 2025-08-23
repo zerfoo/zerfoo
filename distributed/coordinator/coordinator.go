@@ -53,6 +53,7 @@ type CheckpointInfo struct {
 // NewCoordinator creates a new Coordinator.
 func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 	logger := log.New(out, "coordinator: ", log.LstdFlags)
+
 	c := &Coordinator{
 		workers:     make(map[string]*WorkerInfo),
 		ranks:       make(map[int]string),
@@ -68,13 +69,16 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 
 // Start starts the coordinator service on the given address.
 func (c *Coordinator) Start(address string) error {
-	lis, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("failed to listen: %w", err)
-	}
-	c.start(lis)
+    // Use context-aware listener per linter guidance.
+    lc := net.ListenConfig{}
+    lis, err := lc.Listen(context.Background(), "tcp", address)
+    if err != nil {
+        return fmt.Errorf("failed to listen: %w", err)
+    }
 
-	return nil
+    c.start(lis)
+
+    return nil
 }
 
 // start starts the coordinator service on the given listener.
@@ -83,6 +87,7 @@ func (c *Coordinator) start(lis net.Listener) {
 	c.server = grpc.NewServer()
 	pb.RegisterCoordinatorServer(c.server, c)
 	c.logger.Printf("starting gRPC server on %s", lis.Addr().String())
+
 	go func() {
 		if err := c.server.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			c.logger.Printf("gRPC server failed: %v", err)
@@ -117,8 +122,10 @@ func (c *Coordinator) GracefulStop() {
 func (c *Coordinator) reaper() {
 	ticker := time.NewTicker(c.timeout / 2)
 	defer ticker.Stop()
+
 	for range ticker.C {
 		c.mu.Lock()
+
 		for id, worker := range c.workers {
 			if time.Since(worker.LastHeartbeat) > c.timeout {
 				c.logger.Printf("worker %s timed out", id)
@@ -126,6 +133,7 @@ func (c *Coordinator) reaper() {
 				delete(c.ranks, worker.Rank)
 			}
 		}
+
 		c.mu.Unlock()
 	}
 }
@@ -167,6 +175,7 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 
 			continue
 		}
+
 		worker, ok := c.workers[workerID]
 		if !ok {
 			// This should not happen, but if it does, we should log it.
@@ -174,6 +183,7 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 
 			continue
 		}
+
 		peers = append(peers, worker.Address)
 	}
 
@@ -228,6 +238,7 @@ func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*p
 	}
 
 	w.LastHeartbeat = time.Now()
+
 	c.logger.Printf("received heartbeat from worker %s", req.WorkerId)
 
 	return &pb.HeartbeatResponse{Status: "OK"}, nil
@@ -250,6 +261,7 @@ func (c *Coordinator) StartCheckpoint(_ context.Context, req *pb.StartCheckpoint
 	if req.Epoch > int64(^uint32(0)>>1) {
 		return nil, fmt.Errorf("epoch %d exceeds int32 maximum value", req.Epoch)
 	}
+
 	c.checkpoints[checkpointID] = &CheckpointInfo{
 		ID:      checkpointID,
 		Epoch:   int32(req.Epoch), // #nosec G115 - Range checked above
@@ -278,6 +290,7 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 	c.logger.Printf("worker %s finished checkpoint %s for epoch %d", req.WorkerId, req.CheckpointId, req.Epoch)
 
 	completed := true
+
 	for _, status := range checkpoint.Workers {
 		if !status {
 			completed = false
@@ -288,6 +301,7 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 
 	if completed {
 		checkpoint.Completed = true
+
 		c.logger.Printf("checkpoint %s for epoch %d completed", req.CheckpointId, req.Epoch)
 	}
 
