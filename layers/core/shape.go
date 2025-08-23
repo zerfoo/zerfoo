@@ -50,7 +50,7 @@ func (s *Shape[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]
 }
 
 // Backward computes the gradients for the Shape layer.
-func (s *Shape[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (s *Shape[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The Shape layer has no trainable parameters and its output is not a function
 	// of the input tensor's values, so the gradient is zero.
 	return nil, nil
