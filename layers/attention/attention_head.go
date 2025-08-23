@@ -48,10 +48,12 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 	if err != nil {
 		panic(fmt.Errorf("failed to create Q projection: %w", err))
 	}
+
 	kProj, err := core.NewDense[T]("k_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
 		panic(fmt.Errorf("failed to create K projection: %w", err))
 	}
+
 	vProj, err := core.NewDense[T]("v_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
 		panic(fmt.Errorf("failed to create V projection: %w", err))
@@ -90,10 +92,12 @@ func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNum
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: Q projection failed: %w", err)
 	}
+
 	k, err := ah.kProj.Forward(ctx, reshapedInput)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: K projection failed: %w", err)
 	}
+
 	v, err := ah.vProj.Forward(ctx, reshapedInput)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: V projection failed: %w", err)
@@ -106,10 +110,12 @@ func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNum
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: failed to reshape Q back to 3D: %w", err)
 	}
+
 	kReshaped, err := k.Reshape([]int{batchSize, seqLen, headDim})
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: failed to reshape K back to 3D: %w", err)
 	}
+
 	vReshaped, err := v.Reshape([]int{batchSize, seqLen, headDim})
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: failed to reshape V back to 3D: %w", err)
@@ -131,9 +137,11 @@ func (ah *AttentionHead[T]) Parameters() []graph.Parameter[T] {
 	for _, p := range ah.qProj.Parameters() {
 		params = append(params, *p)
 	}
+
 	for _, p := range ah.kProj.Parameters() {
 		params = append(params, *p)
 	}
+
 	for _, p := range ah.vProj.Parameters() {
 		params = append(params, *p)
 	}
@@ -171,20 +179,24 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNum
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: SDPA backward failed: %w", err)
 	}
+
 	dQ := sdpaGrads[0] // (batch, seq, headDim)
 	dK := sdpaGrads[1]
 	dV := sdpaGrads[2]
 
 	// Reshape dQ/dK/dV to 2D for Dense backward: (batch*seq, headDim)
 	headDim := dQ.Shape()[2]
+
 	dQ2D, err := dQ.Reshape([]int{batchSize * seqLen, headDim})
 	if err != nil {
 		return nil, err
 	}
+
 	dK2D, err := dK.Reshape([]int{batchSize * seqLen, headDim})
 	if err != nil {
 		return nil, err
 	}
+
 	dV2D, err := dV.Reshape([]int{batchSize * seqLen, headDim})
 	if err != nil {
 		return nil, err
@@ -201,10 +213,12 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNum
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: V backward failed: %w", err)
 	}
+
 	kGrads, err := ah.kProj.Backward(ctx, dK2D, input2D)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: K backward failed: %w", err)
 	}
+
 	qGrads, err := ah.qProj.Backward(ctx, dQ2D, input2D)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: Q backward failed: %w", err)
@@ -215,6 +229,7 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNum
 	if err != nil {
 		return nil, err
 	}
+
 	dInput2D, err := ah.engine.Add(ctx, sumVK, qGrads[0], nil)
 	if err != nil {
 		return nil, err

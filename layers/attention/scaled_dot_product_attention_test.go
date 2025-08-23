@@ -51,6 +51,7 @@ func TestNewScaledDotProductAttention_FunctionalOptions(t *testing.T) {
 	for i := range outputGradData {
 		outputGradData[i] = 1.0
 	}
+
 	outputGrad, err := tensor.New[float32](expectedOutputShape, outputGradData)
 	testutils.AssertNoError(t, err, "failed to create output gradient tensor")
 

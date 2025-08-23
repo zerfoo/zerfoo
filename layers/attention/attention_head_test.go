@@ -23,6 +23,7 @@ func TestAttentionHead(t *testing.T) {
 
 	// Create a dummy input tensor
 	inputShape := []int{batchSize, seqLen, inputDim}
+
 	inputTensor, err := tensor.New[float32](inputShape, nil) // Corrected tensor creation
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
@@ -50,14 +51,17 @@ func TestAttentionHead(t *testing.T) {
 	// Test with different input dimensions
 	attentionHead2 := NewAttentionHead[float32](engine, 16, 8)
 	inputShape2 := []int{batchSize, seqLen, 16}
+
 	inputTensor2, err := tensor.New[float32](inputShape2, nil) // Corrected tensor creation
 	if err != nil {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
+
 	output2, err := attentionHead2.Forward(context.Background(), inputTensor2)
 	if err != nil {
 		t.Fatalf("AttentionHead2 Forward failed: %v", err)
 	}
+
 	expectedOutputShape2 := []int{batchSize, seqLen, 8}
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedOutputShape2, output2.Shape()),
 		fmt.Sprintf("Expected output shape %v, got %v", expectedOutputShape2, output2.Shape()))

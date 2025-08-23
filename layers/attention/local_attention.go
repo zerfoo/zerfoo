@@ -109,10 +109,12 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 		if start < 0 {
 			start = 0
 		}
+
 		end := i + la.windowSize + 1
 		if end > seqLen {
 			end = seqLen
 		}
+
 		for j := start; j < end; j++ {
 			mask.Data()[i*seqLen+j] = la.ops.FromFloat64(0)
 		}

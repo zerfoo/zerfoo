@@ -79,6 +79,7 @@ func NewGlobalAttention[T tensor.Numeric](
 
 	base := opts.Base
 	maxSeqLen := opts.MaxSeqLen
+
 	gqa, err := NewGroupedQueryAttention[T](
 		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
 		WithRopeBase[T](base),
