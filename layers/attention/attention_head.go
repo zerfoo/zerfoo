@@ -149,7 +149,7 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 }
 
 // Backward computes the gradients for the AttentionHead.
-func (ah *AttentionHead[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (ah *AttentionHead[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a placeholder. The actual backward pass for attention is complex
 	// and involves backpropagating through SDPA and then through the linear projections.
 	return nil, errors.New("AttentionHead backward pass not yet implemented")
