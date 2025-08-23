@@ -35,6 +35,7 @@ func (t *Tokenizer) AddToken(token string) int {
 	if id, ok := t.vocab[token]; ok {
 		return id
 	}
+
 	id := t.nextID
 	t.vocab[token] = id
 	t.reverseVocab[id] = token
@@ -47,6 +48,7 @@ func (t *Tokenizer) AddToken(token string) int {
 // This uses simple whitespace tokenization.
 func (t *Tokenizer) Encode(text string) []int {
 	words := strings.Fields(text) // Split by whitespace
+
 	tokenIDs := make([]int, len(words))
 	for i, word := range words {
 		if id, ok := t.vocab[word]; ok {
