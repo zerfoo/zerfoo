@@ -19,6 +19,45 @@ type CPUEngine[T tensor.Numeric] struct {
 	ops numeric.Arithmetic[T]
 }
 
+// ReduceSum calculates the sum along a specified axis. It delegates to Sum.
+func (e *CPUEngine[T]) ReduceSum(
+    ctx context.Context,
+    a *tensor.TensorNumeric[T],
+    axis int,
+    keepDims bool,
+    dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+    return e.Sum(ctx, a, axis, keepDims, dst...)
+}
+
+// Softmax applies the softmax function along the specified axis.
+// Implementation: exp(x) then divide by sum(exp(x)) along axis using broadcasting.
+func (e *CPUEngine[T]) Softmax(
+    ctx context.Context,
+    a *tensor.TensorNumeric[T],
+    axis int,
+    dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+    if a == nil {
+        return nil, errors.New("input tensor cannot be nil")
+    }
+
+    // Compute exponentials
+    exps, err := e.Exp(ctx, a)
+    if err != nil {
+        return nil, err
+    }
+
+    // Sum along axis, keeping dimensions for broadcasting
+    sums, err := e.Sum(ctx, exps, axis, true)
+    if err != nil {
+        return nil, err
+    }
+
+    // Divide exps by sums with broadcasting
+    return e.Div(ctx, exps, sums, dst...)
+}
+
 // AddScalar performs element-wise addition of a tensor by a scalar.
 func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
