@@ -26,6 +26,7 @@ func TestCoverageSpecific(t *testing.T) {
 	// Test the Data() method on this 0-dimensional view
 	// This should trigger the specific branch: if t.isView && t.Dims() == 0
 	data := viewTensor.Data()
+
 	expected := []int{42}
 	if len(data) != 1 || data[0] != 42 {
 		t.Errorf("expected data %v, got %v", expected, data)
@@ -37,8 +38,11 @@ func TestCoverageSpecific(t *testing.T) {
 
 	// Call Each which internally calls eachRecursive
 	// This should test the eachRecursive branch: if t.Dims() == 0
-	var callCount int
-	var receivedValue int
+	var (
+		callCount     int
+		receivedValue int
+	)
+
 	zeroD.Each(func(val int) {
 		callCount++
 		receivedValue = val
@@ -48,6 +52,7 @@ func TestCoverageSpecific(t *testing.T) {
 	if callCount != 1 {
 		t.Errorf("expected Each to be called once for 0-dimensional tensor, got %d", callCount)
 	}
+
 	if receivedValue != 99 {
 		t.Errorf("expected value 99, got %d", receivedValue)
 	}

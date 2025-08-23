@@ -11,6 +11,7 @@ import (
 func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 	newSize := 1
 	inferredDim := -1
+
 	for i, dim := range newShape {
 		switch {
 		case dim > 0:
@@ -19,6 +20,7 @@ func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 			if inferredDim != -1 {
 				return nil, errors.New("only one dimension can be inferred")
 			}
+
 			inferredDim = i
 		default:
 			return nil, fmt.Errorf("invalid shape dimension: %d; must be positive or -1", dim)
@@ -29,6 +31,7 @@ func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 		if t.Size()%newSize != 0 {
 			return nil, fmt.Errorf("cannot infer dimension for size %d and new size %d", t.Size(), newSize)
 		}
+
 		newShape[inferredDim] = t.Size() / newSize
 		newSize = t.Size()
 	}
@@ -39,6 +42,7 @@ func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 
 	// For a reshaped tensor, strides need to be recalculated.
 	newStrides := make([]int, len(newShape))
+
 	stride := 1
 	for i := len(newShape) - 1; i >= 0; i-- {
 		newStrides[i] = stride
