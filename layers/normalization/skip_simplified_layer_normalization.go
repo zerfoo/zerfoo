@@ -45,8 +45,17 @@ func (sln *SkipSimplifiedLayerNormalization[T]) Forward(ctx context.Context, inp
 }
 
 // Backward applies the backward pass of the SkipSimplifiedLayerNormalization layer.
-func (sln *SkipSimplifiedLayerNormalization[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
+func (sln *SkipSimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGrad *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	grads, err := sln.normLayer.Backward(ctx, outputGrad, inputs...)
+	if err != nil {
+		return nil, err
+	}
+
+	residualGrad, err := sln.engine.Add(ctx, outputGrad, grads[0])
+	if err != nil {
+		return nil, err
+	}
+	return append([]*tensor.TensorNumeric[T]{residualGrad}, grads[1:]...), nil
 }
 
 // Parameters returns the learnable parameters of the layer.
