@@ -59,6 +59,7 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 		if len(data) > 1 {
 			return nil, errors.New("cannot create 0-dimensional tensor with more than one data element")
 		}
+
 		if len(data) == 0 {
 			data = make([]T, 1)
 		}
@@ -71,10 +72,12 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 	}
 
 	size := 1
+
 	for _, dim := range shape {
 		if dim < 0 {
 			return nil, fmt.Errorf("invalid shape dimension: %d; must be non-negative", dim)
 		}
+
 		size *= dim
 	}
 
@@ -87,6 +90,7 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 	}
 
 	strides := make([]int, len(shape))
+
 	stride := 1
 	for i := len(shape) - 1; i >= 0; i-- {
 		strides[i] = stride
@@ -107,6 +111,7 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 	if t.Kind() != reflect.Ptr {
 		return nil, fmt.Errorf("type must be a pointer to a tensor type, got %s", t.Kind())
 	}
+
 	elemType := t.Elem() // This gives us tensor.TensorNumeric[float32]
 
 	// Get the generic type argument (e.g., float32)
@@ -185,6 +190,7 @@ func (t *TensorNumeric[T]) Data() []T {
 
 	// For multi-dimensional views, we need to iterate through all valid indices
 	result := make([]T, 0, size)
+
 	t.iterateView([]int{}, 0, func(indices []int) {
 		val, _ := t.At(indices...)
 		result = append(result, val)
@@ -239,6 +245,7 @@ func (t *TensorNumeric[T]) Size() int {
 	if len(t.shape) == 0 {
 		return 1
 	}
+
 	size := 1
 	for _, dim := range t.shape {
 		size *= dim
@@ -257,6 +264,7 @@ func (t *TensorNumeric[T]) ShapeEquals(other *TensorNumeric[T]) bool {
 	if len(t.shape) != len(other.shape) {
 		return false
 	}
+
 	for i, dim := range t.shape {
 		if dim != other.shape[i] {
 			return false
@@ -298,10 +306,12 @@ func Float32ToBytes(f []float32) ([]byte, error) {
 func NewFromBytes[T Numeric](shape []int, data []byte) (*TensorNumeric[T], error) {
 	// Calculate expected size
 	size := 1
+
 	for _, dim := range shape {
 		if dim <= 0 {
 			return nil, fmt.Errorf("invalid shape dimension: %d", dim)
 		}
+
 		size *= dim
 	}
 

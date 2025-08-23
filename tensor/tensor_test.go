@@ -9,13 +9,16 @@ func TestNew(t *testing.T) {
 	// Test case: Valid shape and data
 	shape := []int{2, 2}
 	data := []float32{1.0, 2.0, 3.0, 4.0}
+
 	tensor, err := New(shape, data)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	if !reflect.DeepEqual(tensor.Shape(), shape) {
 		t.Errorf("expected shape %v, got %v", shape, tensor.Shape())
 	}
+
 	if !reflect.DeepEqual(tensor.Data(), data) {
 		t.Errorf("expected data %v, got %v", data, tensor.Data())
 	}
@@ -37,6 +40,7 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error for 0-sized dimension: %v", err)
 	}
+
 	if tensorZeroDim.Size() != 0 {
 		t.Errorf("expected size 0, got %d", tensorZeroDim.Size())
 	}
@@ -52,6 +56,7 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	if len(tensor.Data()) != 4 {
 		t.Errorf("expected data length 4, got %d", len(tensor.Data()))
 	}
@@ -61,6 +66,7 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error for empty shape and non-empty data (scalar): %v", err)
 	}
+
 	if tensorScalar.Size() != 1 || tensorScalar.Data()[0] != 1.0 {
 		t.Errorf("expected scalar tensor with size 1 and data 1.0, got size %d and data %v", tensorScalar.Size(), tensorScalar.Data())
 	}
@@ -76,9 +82,11 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	if tensorEmpty.Size() != 1 {
 		t.Errorf("expected size 1, got %d", tensorEmpty.Size())
 	}
+
 	if tensorEmpty.Data()[0] != 0.0 {
 		t.Errorf("expected data 0.0, got %v", tensorEmpty.Data()[0])
 	}
@@ -91,6 +99,7 @@ func TestTensor_At(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	if val != 2 {
 		t.Errorf("expected 2, got %d", val)
 	}
@@ -108,10 +117,12 @@ func TestTensor_At(t *testing.T) {
 
 	// Test case: Accessing a 0-dimensional tensor (scalar) with no indices
 	scalarTensor, _ := New[int]([]int{}, []int{42})
+
 	scalarVal, err := scalarTensor.At()
 	if err != nil {
 		t.Errorf("unexpected error for scalar At(): %v", err)
 	}
+
 	if scalarVal != 42 {
 		t.Errorf("expected 42, got %d", scalarVal)
 	}
@@ -166,6 +177,7 @@ func TestTensor_Set(t *testing.T) {
 
 	// Test case: Set on a view (should return error)
 	view, _ := tensor.Slice([2]int{0, 1}, [2]int{0, 2})
+
 	err = view.Set(100, 0, 0)
 	if err == nil {
 		t.Errorf("expected error when setting on a view, got nil")
@@ -211,6 +223,7 @@ func TestTensor_Reshape(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	reshapedVal, _ := reshaped.At(2, 0)
 	if reshapedVal != 99 {
 		t.Errorf("data should be shared after reshape, expected 99, got %d", reshapedVal)
@@ -219,10 +232,12 @@ func TestTensor_Reshape(t *testing.T) {
 
 func TestTensor_Reshape_Inferred(t *testing.T) {
 	tensor, _ := New[int]([]int{2, 6}, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+
 	reshaped, err := tensor.Reshape([]int{3, -1, 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	expectedShape := []int{3, 2, 2}
 	if !reflect.DeepEqual(reshaped.Shape(), expectedShape) {
 		t.Errorf("expected shape %v, got %v", expectedShape, reshaped.Shape())
@@ -231,36 +246,43 @@ func TestTensor_Reshape_Inferred(t *testing.T) {
 
 func TestTensor_Each(t *testing.T) {
 	tensor, _ := New[int]([]int{2, 3}, []int{1, 2, 3, 4, 5, 6})
+
 	var sum int
 	tensor.Each(func(val int) {
 		sum += val
 	})
+
 	if sum != 21 {
 		t.Errorf("expected 21, got %d", sum)
 	}
 
 	// Test with an empty tensor (0-dimensional)
 	emptyTensor, _ := New[int]([]int{}, nil)
+
 	var eachCount int
 	emptyTensor.Each(func(_ int) {
 		eachCount++
 	})
+
 	if eachCount != 1 {
 		t.Errorf("expected Each to be called once for 0-dimensional tensor, got %d", eachCount)
 	}
 
 	// Test with a 0-dimensional tensor with a specific value
 	scalarTensor, _ := New[int]([]int{}, []int{99})
+
 	var scalarVal int
 	scalarTensor.Each(func(val int) {
 		scalarVal = val
 	})
+
 	if scalarVal != 99 {
 		t.Errorf("expected Each to pass 99 for scalar tensor, got %d", scalarVal)
 	}
 
 	// Test with a tensor that has zero size (to test eachRecursive with Dims() == 0 branch)
 	zeroSizeTensor, _ := New[int]([]int{0}, nil)
+
 	var zeroSizeCount int
 	zeroSizeTensor.Each(func(_ int) {
 		zeroSizeCount++
@@ -275,6 +297,7 @@ func TestTensor_Each(t *testing.T) {
 func TestTensor_Slice(t *testing.T) {
 	// Test case: Slicing a 0-dimensional tensor (scalar)
 	scalarTensor, _ := New[int]([]int{}, []int{42})
+
 	_, err := scalarTensor.Slice([2]int{0, 0})
 	if err == nil {
 		t.Errorf("expected error when slicing a 0-dimensional tensor, got nil")
@@ -304,14 +327,17 @@ func TestTensor_Copy(t *testing.T) {
 
 	// Test copying a view
 	view, _ := tensor.Slice([2]int{0, 1}, [2]int{0, 2})
+
 	copiedView := view.Copy()
 	if &view.data[0] == &copiedView.data[0] {
 		t.Errorf("data should be copied, not shared")
 	}
+
 	err = copiedView.Set(20, 0, 0)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
 	originalVal, _ = view.At(0, 0)
 	if originalVal == 20 {
 		t.Errorf("modifying copied view should not affect original view")
@@ -320,6 +346,7 @@ func TestTensor_Copy(t *testing.T) {
 
 func TestTensor_Strides(t *testing.T) {
 	tensor, _ := New[int]([]int{2, 3, 4}, nil)
+
 	expectedStrides := []int{12, 4, 1}
 	if !reflect.DeepEqual(tensor.Strides(), expectedStrides) {
 		t.Errorf("expected strides %v, got %v", expectedStrides, tensor.Strides())
@@ -328,6 +355,7 @@ func TestTensor_Strides(t *testing.T) {
 
 func TestTensor_String(t *testing.T) {
 	tensor, _ := New[int]([]int{2, 2}, []int{1, 2, 3, 4})
+
 	expectedString := "Tensor(shape=[2 2], data=[1 2 3 4])"
 	if tensor.String() != expectedString {
 		t.Errorf("expected string %q, got %q", expectedString, tensor.String())
@@ -335,6 +363,7 @@ func TestTensor_String(t *testing.T) {
 
 	// Test with a view
 	view, _ := tensor.Slice([2]int{0, 1}, [2]int{0, 2})
+
 	expectedString = "Tensor(shape=[1 2], data=[1 2])"
 	if view.String() != expectedString {
 		t.Errorf("expected string %q, got %q", expectedString, view.String())
@@ -344,10 +373,12 @@ func TestTensor_String(t *testing.T) {
 func TestTensor_Data_View(t *testing.T) {
 	// Test case 1: 1D view
 	tensor1D, _ := New[int]([]int{4}, []int{1, 2, 3, 4})
+
 	view1D, err := tensor1D.Slice([2]int{0, 1}) // Corrected: only one range for 1D tensor
 	if err != nil {
 		t.Fatalf("unexpected error creating 1D view: %v", err)
 	}
+
 	expectedData1D := []int{1}
 	if !reflect.DeepEqual(view1D.Data(), expectedData1D) {
 		t.Errorf("Test 1D View: expected data %v, got %v", expectedData1D, view1D.Data())
@@ -360,6 +391,7 @@ func TestTensor_Data_View(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating 2D view: %v", err)
 	}
+
 	expectedData2D := []int{4, 5, 6}
 	if !reflect.DeepEqual(view2D.Data(), expectedData2D) {
 		t.Errorf("Test 2D View: expected data %v, got %v", expectedData2D, view2D.Data())
@@ -376,6 +408,7 @@ func TestTensor_Data_View(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating 2D sliced view: %v", err)
 	}
+
 	expectedData2DSliced := []int{2, 3, 5, 6}
 	if !reflect.DeepEqual(view2DSliced.Data(), expectedData2DSliced) {
 		t.Errorf("Test 2D Sliced View: expected data %v, got %v", expectedData2DSliced, view2DSliced.Data())
@@ -386,6 +419,7 @@ func TestTensor_Data_View(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating zero size tensor: %v", err)
 	}
+
 	expectedZeroSizeData := []int{}
 	if !reflect.DeepEqual(zeroSizeTensor.Data(), expectedZeroSizeData) {
 		t.Errorf("Test Zero Size Tensor: expected data %v, got %v", expectedZeroSizeData, zeroSizeTensor.Data())
@@ -393,10 +427,12 @@ func TestTensor_Data_View(t *testing.T) {
 
 	// Test case 5: View with size 0
 	zeroSizeViewTensor, _ := New[int]([]int{2, 2}, []int{1, 2, 3, 4})
+
 	zeroSizeView, err := zeroSizeViewTensor.Slice([2]int{0, 2}, [2]int{0, 0})
 	if err != nil {
 		t.Fatalf("unexpected error creating zero size view: %v", err)
 	}
+
 	expectedZeroSizeViewData := []int{}
 	if !reflect.DeepEqual(zeroSizeView.Data(), expectedZeroSizeViewData) {
 		t.Errorf("Test Zero Size View: expected data %v, got %v", expectedZeroSizeViewData, zeroSizeView.Data())
@@ -410,6 +446,7 @@ func TestTensor_Data_View(t *testing.T) {
 	// We need to manually create a view-like scenario by creating a tensor that behaves like a view
 	// This tests the specific branch in Data() for 0-dimensional views
 	scalarViewData := scalarTensor.Data()
+
 	expectedScalarData := []int{42}
 	if !reflect.DeepEqual(scalarViewData, expectedScalarData) {
 		t.Errorf("Test 0-dimensional tensor Data: expected data %v, got %v", expectedScalarData, scalarViewData)

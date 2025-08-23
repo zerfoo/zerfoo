@@ -19,6 +19,7 @@ func Equals[T Numeric](a, b *TensorNumeric[T]) bool {
 	if !a.ShapeEquals(b) {
 		return false
 	}
+
 	for i := range a.data {
 		if a.data[i] != b.data[i] {
 			return false
@@ -42,6 +43,7 @@ func AssertClose[T Numeric](t *testing.T, expected, actual *TensorNumeric[T], to
 
 		return
 	}
+
 	for i := range expected.data {
 		diff := expected.data[i] - actual.data[i]
 		if float64(diff) > tolerance || float64(diff) < -tolerance {

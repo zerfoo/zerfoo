@@ -7,10 +7,12 @@ import "fmt"
 func BroadcastShapes(a, b []int) (shape []int, broadcastA, broadcastB bool, err error) {
 	lenA := len(a)
 	lenB := len(b)
+
 	maxLen := lenA
 	if lenB > maxLen {
 		maxLen = lenB
 	}
+
 	result := make([]int, maxLen)
 
 	for i := 1; i <= maxLen; i++ {
@@ -18,6 +20,7 @@ func BroadcastShapes(a, b []int) (shape []int, broadcastA, broadcastB bool, err 
 		if i <= lenA {
 			dimA = a[lenA-i]
 		}
+
 		dimB := 1
 		if i <= lenB {
 			dimB = b[lenB-i]
@@ -46,8 +49,10 @@ func BroadcastIndex(index int, shape, outputShape []int, broadcast bool) int {
 	outputStrides := strides(outputShape)
 	originalStrides := strides(shape)
 	originalIndex := 0
+
 	for i := range outputShape {
 		coord := (index / outputStrides[i]) % outputShape[i]
+
 		shapeI := len(shape) - 1 - (len(outputShape) - 1 - i)
 		if shapeI >= 0 && shape[shapeI] != 1 {
 			originalIndex += coord * originalStrides[shapeI]
@@ -62,6 +67,7 @@ func SameShape(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
@@ -74,6 +80,7 @@ func SameShape(a, b []int) bool {
 // strides computes the strides for a given shape.
 func strides(shape []int) []int {
 	s := make([]int, len(shape))
+
 	stride := 1
 	for i := len(shape) - 1; i >= 0; i-- {
 		s[i] = stride

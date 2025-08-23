@@ -13,6 +13,7 @@ func TestAt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
+
 		if val != 5 {
 			t.Errorf("expected value 5, got %d", val)
 		}
@@ -62,6 +63,7 @@ func TestSet(t *testing.T) {
 
 	t.Run("SetOnView", func(t *testing.T) {
 		slice, _ := tensor.Slice([2]int{0, 1}, [2]int{0, 1})
+
 		err := slice.Set(100, 0, 0)
 		if err == nil {
 			t.Fatal("expected an error for setting on a view, got nil")
@@ -103,6 +105,7 @@ func TestSlice(t *testing.T) {
 
 		// Check if the view accesses the correct data
 		val1, _ := slice.At(0, 0) // Should be tensor.At(1, 0) -> 4
+
 		val2, _ := slice.At(1, 1) // Should be tensor.At(2, 1) -> 9
 		if val1 != 4 || val2 != 9 {
 			t.Errorf("slice data is incorrect. Expected (4, 9), got (%d, %d)", val1, val2)
@@ -113,6 +116,7 @@ func TestSlice(t *testing.T) {
 		if err == nil {
 			t.Fatalf("setting value on slice should have failed as it is a view")
 		}
+
 		originalVal, _ := tensor.At(1, 0)
 		if originalVal == 99 {
 			t.Errorf("modifying slice affected original tensor. Expected not 99, got %d", originalVal)
@@ -131,6 +135,7 @@ func TestSlice(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
+
 		if !reflect.DeepEqual(slice.Shape(), tensor.Shape()) {
 			t.Errorf("expected shape %v, got %v", tensor.Shape(), slice.Shape())
 		}

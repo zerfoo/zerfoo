@@ -57,6 +57,7 @@ func TestReshape(t *testing.T) {
 
 	t.Run("InvalidReshape_CannotInfer", func(t *testing.T) {
 		tensor, _ := New[int]([]int{2, 5}, nil)
+
 		_, err := tensor.Reshape([]int{3, -1})
 		if err == nil {
 			t.Fatal("expected an error for cannot infer dimension, got nil")

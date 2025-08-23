@@ -14,12 +14,15 @@ func TestSameShape(t *testing.T) {
 	if !SameShape(a.Shape(), b.Shape()) {
 		t.Error("expected SameShape to return true for same shapes")
 	}
+
 	if SameShape(a.Shape(), c.Shape()) {
 		t.Error("expected SameShape to return false for different shapes")
 	}
+
 	if SameShape(a.Shape(), d.Shape()) {
 		t.Error("expected SameShape to return false for different dimensions")
 	}
+
 	if SameShape(d.Shape(), a.Shape()) {
 		t.Error("expected SameShape to return false for different dimensions")
 	}
@@ -45,13 +48,16 @@ func TestBroadcastShapes(t *testing.T) {
 		if (err != nil) != tc.err {
 			t.Errorf("BroadcastShapes(%v, %v): expected error %v, got %v", tc.a, tc.b, tc.err, err)
 		}
+
 		if err == nil {
 			if !reflect.DeepEqual(shape, tc.expected) {
 				t.Errorf("BroadcastShapes(%v, %v): expected shape %v, got %v", tc.a, tc.b, tc.expected, shape)
 			}
+
 			if broadcastA != tc.broadcastA {
 				t.Errorf("BroadcastShapes(%v, %v): expected broadcastA %v, got %v", tc.a, tc.b, tc.broadcastA, broadcastA)
 			}
+
 			if broadcastB != tc.broadcastB {
 				t.Errorf("BroadcastShapes(%v, %v): expected broadcastB %v, got %v", tc.a, tc.b, tc.broadcastB, broadcastB)
 			}
@@ -85,6 +91,7 @@ func TestShapesEqual(t *testing.T) {
 	if SameShape([]int{1, 2}, []int{1, 2, 3}) {
 		t.Error("expected SameShape to return false for different lengths")
 	}
+
 	if !SameShape([]int{1, 2}, []int{1, 2}) {
 		t.Error("expected SameShape to return true for identical shapes")
 	}

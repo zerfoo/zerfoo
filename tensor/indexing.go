@@ -27,12 +27,14 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 	}
 
 	offset := 0
+
 	for i, index := range indices {
 		if index < 0 || index >= t.shape[i] {
 			var zero T
 
 			return zero, fmt.Errorf("index %d is out of bounds for dimension %d with size %d", index, i, t.shape[i])
 		}
+
 		offset += index * t.strides[i]
 	}
 
@@ -53,10 +55,12 @@ func (t *TensorNumeric[T]) Set(value T, indices ...int) error {
 	}
 
 	offset := 0
+
 	for i, index := range indices {
 		if index < 0 || index >= t.shape[i] {
 			return fmt.Errorf("index %d is out of bounds for dimension %d with size %d", index, i, t.shape[i])
 		}
+
 		offset += index * t.strides[i]
 	}
 
@@ -79,6 +83,7 @@ func (t *TensorNumeric[T]) Slice(ranges ...[2]int) (*TensorNumeric[T], error) {
 
 	newShape := make([]int, len(t.shape))
 	copy(newShape, t.shape)
+
 	offset := 0
 
 	for i, r := range ranges {
@@ -86,6 +91,7 @@ func (t *TensorNumeric[T]) Slice(ranges ...[2]int) (*TensorNumeric[T], error) {
 		if start < 0 || end > t.shape[i] || start > end {
 			return nil, fmt.Errorf("invalid slice range [%d:%d] for dimension %d with size %d", start, end, i, t.shape[i])
 		}
+
 		newShape[i] = end - start
 		offset += start * t.strides[i]
 	}
