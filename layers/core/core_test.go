@@ -21,6 +21,7 @@ func TestLinear(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i)
 	}
+
 	input, err := tensor.New[float32]([]int{1, 10}, inputData)
 	testutils.AssertNoError(t, err, "expected no error when creating input tensor, got %v")
 
@@ -31,6 +32,7 @@ func TestLinear(t *testing.T) {
 	// Check backward pass
 	gradOutput, err := tensor.New[float32]([]int{1, 5}, []float32{1, 1, 1, 1, 1})
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
+
 	gradInput, _ := layer.Backward(context.Background(), gradOutput)
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 
@@ -55,15 +57,18 @@ func TestLinear(t *testing.T) {
 	testutils.AssertError(t, err, "expected Forward to panic on nil input")
 }
 
+//nolint:unused // test helper retained for future negative-path tests
 type mockEngine struct {
 	compute.Engine[float32]
 	Err error
 }
 
+//nolint:unused // test helper retained for future negative-path tests
 func (e *mockEngine) Add(_ context.Context, _, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return nil, e.Err
 }
 
+//nolint:unused // test helper retained for future negative-path tests
 func (e *mockEngine) MatMul(_ context.Context, _, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return nil, e.Err
 }
