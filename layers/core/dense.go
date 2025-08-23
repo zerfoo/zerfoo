@@ -38,7 +38,6 @@ func NewDense[T tensor.Numeric](
 	inputSize, outputSize int,
 	opts ...DenseOption[T],
 ) (*Dense[T], error) {
-
 	options := &DenseOptions[T]{
 		WithBias: true, // Default to true
 	}
