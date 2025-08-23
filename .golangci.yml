@@ -33,17 +33,13 @@ linters:
     - intrange       # Uses integer ranges in for loops
     - mirror         # Fixes bytes/strings usage patterns
     - perfsprint     # Replaces fmt.Sprintf with faster alternatives
+    - shadow
   disable:
     - unused
   settings:
     errcheck:
       check-type-assertions: true
       check-blank: true
-    
-    govet:
-      # Configure govet analyzers (v2): enable strict shadow checking
-      shadow:
-        strict: true
     
     revive:
       rules:
@@ -125,35 +121,35 @@ linters:
       require-explanation: true
       require-specific: true
 
-exclusions:
-  paths:
-    - vendor
-    - .git
-    - ".*\\.pb\\.go$"
-    - ".*_gen\\.go$"
-  rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - goconst
-        - gocritic
-
-    - path: examples/
-      linters:
-        - errcheck
-        - gosec
-        - gocritic
-
-    - path: \.pb\.go
-      linters:
-        - all
-
-    - path: compute/cpu_engine.go
-      linters:
-        - gosec
+  exclusions:
+    paths:
+      - vendor
+      - .git
+      - ".*\\.pb\\.go$"
+      - ".*_gen\\.go$"
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - goconst
+          - gocritic
+  
+      - path: examples/
+        linters:
+          - errcheck
+          - gosec
+          - gocritic
+  
+      - path: \.pb\.go
+        linters:
+          - all
+  
+      - path: compute/cpu_engine.go
+        linters:
+          - gosec
 
 issues:
   max-issues-per-linter: 50
