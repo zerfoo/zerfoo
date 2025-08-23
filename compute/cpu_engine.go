@@ -245,7 +245,7 @@ func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Ten
     // Flatten indices length and verify equals N
     iShape := indices.Shape()
     if len(iShape) == 0 {
-        return fmt.Errorf("indices must have at least 1 dimension")
+        return errors.New("indices must have at least 1 dimension")
     }
     idxCount := 1
     for _, d := range iShape {
@@ -833,7 +833,7 @@ func (e *CPUEngine[T]) Concat(_ context.Context, tensors []*tensor.TensorNumeric
 		blockSize *= outShape[i]
 	}
 	outer := 1
-	for i := 0; i < axis; i++ {
+	for i := range axis {
 		outer *= outShape[i]
 	}
 
