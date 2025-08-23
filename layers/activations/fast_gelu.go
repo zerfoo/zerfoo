@@ -1,4 +1,4 @@
-// package activations provides activation function layers.
+// Package activations provides activation function layers.
 package activations
 
 import (
@@ -89,7 +89,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 }
 
 // Backward applies the backward pass of the FastGelu layer.
-func (g *FastGelu[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (g *FastGelu[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

@@ -28,7 +28,7 @@ func TestNewBaseActivation_FunctionalOptions(t *testing.T) {
 	customForwardOp := func(val float32) float32 {
 		return val * 2 // Example: double the value
 	}
-	customBackwardOp := func(val float32) float32 {
+	customBackwardOp := func(_ float32) float32 {
 		return 1.0 // Example: constant gradient
 	}
 

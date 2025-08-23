@@ -20,7 +20,7 @@ type LeakyReLU[T tensor.Numeric] struct {
 	alpha       float64
 }
 
-// NewLeakyReLU creates a new LeakyReLU activation function.
+// LeakyReLUOptions holds configuration options for LeakyReLU.
 // LeakyReLUOptions holds configuration options for LeakyReLU.
 type LeakyReLUOptions[T tensor.Numeric] struct {
 	Alpha float64
@@ -69,7 +69,7 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the LeakyReLU activation.
-func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	dleakyrelu, err := l.engine.UnaryOp(ctx, l.lastInput, func(val T) T { return l.ops.LeakyReLUGrad(val, l.alpha) })
 	if err != nil {
 		return nil, err

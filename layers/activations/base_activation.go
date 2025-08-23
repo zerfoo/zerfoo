@@ -22,7 +22,7 @@ type BaseActivation[T tensor.Numeric] struct {
 	backwardOp  func(T) T
 }
 
-// NewBaseActivation creates a new base activation with the given forward and backward operations.
+// BaseActivationOptions holds configuration options for BaseActivation.
 // BaseActivationOptions holds configuration options for BaseActivation.
 type BaseActivationOptions[T tensor.Numeric] struct {
 	ForwardOp  func(T) T
@@ -93,7 +93,7 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 }
 
 // Backward performs the backward pass of the activation function.
-func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	derivative, err := b.engine.UnaryOp(ctx, b.lastInput, b.backwardOp)
 	if err != nil {
 		return nil, err

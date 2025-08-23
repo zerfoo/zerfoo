@@ -1,4 +1,4 @@
-// package activations provides activation function layers.
+// Package activations provides activation function layers.
 package activations
 
 import (
@@ -8,12 +8,13 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildFastGelu constructs a FastGelu layer for the registry.
 func BuildFastGelu[T tensor.Float](
 	engine compute.Engine[T],
-	ops numeric.Arithmetic[T],
-	name string,
-	params map[string]*graph.Parameter[T],
-	attributes map[string]interface{},
+	_ numeric.Arithmetic[T],
+	_ string,
+	_ map[string]*graph.Parameter[T],
+	_ map[string]interface{},
 ) (graph.Node[T], error) {
 	return NewFastGelu(engine), nil
 }
