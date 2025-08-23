@@ -64,7 +64,7 @@ func (t *Transpose[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the Transpose layer.
-func (t *Transpose[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (t *Transpose[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient of the transpose is the transpose of the gradient.
 	return []*tensor.TensorNumeric[T]{outputGradient}, nil
 }

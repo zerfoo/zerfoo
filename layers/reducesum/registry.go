@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildReduceSum constructs a ReduceSum node, parsing axes and keepdims from attributes.
 func BuildReduceSum[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],
