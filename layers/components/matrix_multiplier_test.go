@@ -11,7 +11,9 @@ import (
 
 func TestMatrixMultiplier_Multiply(t *testing.T) {
 	ops := numeric.Float32Ops{}
+
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
+
 	multiplier := NewMatrixMultiplier(engine)
 
 	// Create test matrices: A (2x3) * B (3x2) = C (2x2)
@@ -29,6 +31,7 @@ func TestMatrixMultiplier_Multiply(t *testing.T) {
 	}
 
 	ctx := context.Background()
+
 	result, err := multiplier.Multiply(ctx, a, b)
 	if err != nil {
 		t.Fatalf("Matrix multiplication failed: %v", err)
@@ -48,17 +51,21 @@ func TestMatrixMultiplier_Multiply(t *testing.T) {
 
 func TestMatrixMultiplier_Transpose(t *testing.T) {
 	ops := numeric.Float32Ops{}
+
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
+
 	multiplier := NewMatrixMultiplier(engine)
 
 	// Create test matrix: A (2x3)
 	aData := []float32{1, 2, 3, 4, 5, 6}
+
 	a, err := tensor.New([]int{2, 3}, aData)
 	if err != nil {
 		t.Fatalf("Failed to create tensor A: %v", err)
 	}
 
 	ctx := context.Background()
+
 	result, err := multiplier.Transpose(ctx, a)
 	if err != nil {
 		t.Fatalf("Matrix transpose failed: %v", err)
@@ -74,6 +81,7 @@ func equalIntSlices(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false

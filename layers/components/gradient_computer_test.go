@@ -12,7 +12,9 @@ import (
 // setupGradientComputerTest creates a common test setup for gradient computer tests.
 func setupGradientComputerTest(_ *testing.T) (*LinearGradientComputer[float32], context.Context) {
 	ops := numeric.Float32Ops{}
+
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
+
 	computer := NewLinearGradientComputer(engine)
 	ctx := context.Background()
 
@@ -81,7 +83,9 @@ func TestLinearGradientComputer_ComputeInputGradient(t *testing.T) {
 
 func TestLinearGradientComputer_ComputeBothGradients(t *testing.T) {
 	ops := numeric.Float32Ops{}
+
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](ops)
+
 	computer := NewLinearGradientComputer(engine)
 
 	// Create test tensors
@@ -105,6 +109,7 @@ func TestLinearGradientComputer_ComputeBothGradients(t *testing.T) {
 	}
 
 	ctx := context.Background()
+
 	weightGrad, inputGrad, err := computer.ComputeBothGradients(ctx, input, weights, outputGrad)
 	if err != nil {
 		t.Fatalf("Both gradients computation failed: %v", err)

@@ -2,7 +2,7 @@ package components
 
 import (
 	"math"
-	"math/rand"
+	rand "math/rand/v2"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
