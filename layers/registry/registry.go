@@ -1,4 +1,4 @@
-// package registry provides a central registration point for all layer builders.
+// Package registry provides a central registration point for all layer builders.
 package registry
 
 import (

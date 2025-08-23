@@ -1,3 +1,5 @@
+// Package transformer provides transformer building blocks such as the
+// Transformer `Block` used in encoder/decoder stacks.
 package transformer
 
 import (
@@ -35,7 +37,7 @@ func WithEpsilon[T tensor.Numeric](epsilon T) BlockOption[T] {
 	}
 }
 
-// NewBlock creates a new Transformer block.
+// NewTransformerBlock creates a new Transformer block.
 func NewTransformerBlock[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -120,7 +122,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward computes the backward pass of the Transformer block.
-func (b *Block[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (b *Block[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a simplified backward pass and needs to be implemented correctly.
 	return []*tensor.TensorNumeric[T]{dOut}, nil
 }
