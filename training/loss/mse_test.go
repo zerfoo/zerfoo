@@ -12,6 +12,7 @@ import (
 
 func TestMSE_Forward(t *testing.T) {
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
 	mse := NewMSE[float32](engine, numeric.Float32Ops{})
 
 	predictions, _ := tensor.New[float32]([]int{2, 2}, []float32{1.0, 2.0, 3.0, 5.0})
@@ -26,6 +27,7 @@ func TestMSE_Forward(t *testing.T) {
 	predictions2, _ := tensor.New[float32]([]int{1, 3}, []float32{1.0, 2.0, 3.0})
 	targets2, _ := tensor.New[float32]([]int{1, 3}, []float32{1.0, 2.0, 3.0})
 	loss2, _ := mse.Forward(context.Background(), predictions2, targets2)
+
 	expectedLoss2 := float32(0.0)
 	if loss2.Data()[0] != expectedLoss2 {
 		t.Errorf("expected %f, got %f", expectedLoss2, loss2.Data()[0])
@@ -34,6 +36,7 @@ func TestMSE_Forward(t *testing.T) {
 
 func TestMSE_Backward(t *testing.T) {
 	var engine compute.Engine[float32] = compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
 	mse := NewMSE[float32](engine, numeric.Float32Ops{})
 
 	predictions, _ := tensor.New[float32]([]int{2, 2}, []float32{1.0, 2.0, 3.0, 5.0})
@@ -93,6 +96,7 @@ func TestMSE_Forward_EdgeCases(t *testing.T) {
 
 	loss1, err := mse.Forward(ctx, pred1, target1)
 	testutils.AssertNoError(t, err, "Forward should not error with single element")
+
 	expected := float32(4.0) // (5-3)^2 = 4
 	testutils.AssertFloatEqual(t, expected, loss1.Data()[0], 1e-6, "Loss should be 4.0 for (5-3)^2")
 
@@ -104,6 +108,7 @@ func TestMSE_Forward_EdgeCases(t *testing.T) {
 
 	lossLarge, err := mse.Forward(ctx, predLarge, targetLarge)
 	testutils.AssertNoError(t, err, "Forward should not error with large values")
+
 	expectedLarge := float32(1.0) // ((1000-1001)^2 + (2000-1999)^2) / 2 = (1 + 1) / 2 = 1
 	testutils.AssertFloatEqual(t, expectedLarge, lossLarge.Data()[0], 1e-6, "Loss should be 1.0 for large values")
 }
@@ -122,6 +127,7 @@ func TestMSE_Forward_DifferentShapes(t *testing.T) {
 
 	loss1D, err := mse.Forward(ctx, pred1D, target1D)
 	testutils.AssertNoError(t, err, "Forward should not error with 1D tensors")
+
 	expected1D := float32(1.0) // ((1-2)^2 + (2-3)^2 + (3-4)^2 + (4-5)^2) / 4 = (1+1+1+1)/4 = 1
 	testutils.AssertFloatEqual(t, expected1D, loss1D.Data()[0], 1e-6, "Loss should be 1.0 for 1D case")
 
@@ -150,6 +156,7 @@ func TestMSE_Backward_EdgeCases(t *testing.T) {
 
 	gradient, err := mse.Backward(ctx, predictions, targets)
 	testutils.AssertNoError(t, err, "Backward should not error with zeros")
+
 	for _, v := range gradient.Data() {
 		testutils.AssertFloatEqual(t, 0.0, v, 1e-6, "Gradient should be 0 for identical values")
 	}

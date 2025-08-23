@@ -25,12 +25,14 @@ func (m *MSE[T]) Forward(ctx context.Context, predictions, targets *tensor.Tenso
 	if err != nil {
 		return nil, err
 	}
+
 	squared, err := m.engine.Mul(ctx, diff, diff, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	data := squared.Data()
+
 	var sum T
 	for _, val := range data {
 		sum = m.ops.Add(sum, val)
@@ -38,6 +40,7 @@ func (m *MSE[T]) Forward(ctx context.Context, predictions, targets *tensor.Tenso
 
 	// For simplicity, we divide by N.
 	n := m.ops.FromFloat32(float32(len(data)))
+
 	loss, err := tensor.New[T]([]int{1}, []T{m.ops.Div(sum, n)})
 	if err != nil {
 		return nil, err
