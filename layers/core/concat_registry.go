@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildConcat constructs a Concat node, extracting the axis from attributes.
 func BuildConcat[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],

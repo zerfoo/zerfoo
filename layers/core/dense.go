@@ -15,7 +15,6 @@ type Dense[T tensor.Numeric] struct {
 	bias   *Bias[T]
 }
 
-// NewDense creates a new Dense layer.
 // DenseOptions holds configuration options for the Dense layer.
 type DenseOptions[T tensor.Numeric] struct {
 	WithBias bool

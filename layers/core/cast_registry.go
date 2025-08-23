@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildCast constructs a Cast node.
 func BuildCast[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],

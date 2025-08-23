@@ -7,6 +7,8 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildRotaryEmbedding constructs a new RotaryPositionalEmbedding node for the given compute engine.
+// It conforms to the layer registry builder signature used by the graph builder.
 func BuildRotaryEmbedding[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],

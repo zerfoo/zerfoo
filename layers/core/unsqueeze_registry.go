@@ -9,6 +9,8 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildUnsqueeze constructs a new Unsqueeze node for the given compute engine.
+// It parses optional "axes" attributes from the attributes map.
 func BuildUnsqueeze[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],
