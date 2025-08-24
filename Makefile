@@ -55,3 +55,39 @@ check: format lint-fix lint
 # Complete CI pipeline: format -> lint -> test with coverage
 ci: format lint-fix lint test-coverage
 	@echo "🚀 CI pipeline complete - ready for deployment!"
+
+# ZONNX conversion target
+zonnx-convert:
+	@echo "Converting ONNX to ZMF..."
+	@../zonnx/zonnx convert -input $(INPUT) -output $(OUTPUT)
+	@echo "Conversion complete."
+
+# Verify architectural boundaries
+verify-architecture:
+	@echo "🛡️ Running architectural dependency checks..."
+	# Check 1: zerfoo/ imports onnx or zonnx
+	@if grep -R --include="*.go" "import.*\(onnx\|zonnx\)" . | grep -v -E "(docs|test|examples|vendor)/" ; then \
+	  echo "❌ Architectural violation: zerfoo/ imports onnx or zonnx packages."; \
+	  exit 1; \
+	fi
+	@echo "✅ zerfoo/ does not import onnx or zonnx packages."
+
+	# Check 2: zonnx/ imports github.com/zerfoo/zerfoo
+	@if grep -R --include="*.go" "import.*github.com/zerfoo/zerfoo" ../zonnx/ ; then \
+	  echo "❌ Architectural violation: zonnx/ imports github.com/zerfoo/zerfoo."; \
+	  exit 1; \
+	fi
+	@echo "✅ zonnx/ does not import github.com/zerfoo/zerfoo."
+
+	# Check 3: Broad grep for zonnx/onnx under zerfoo/ (excluding docs/tests/examples)
+	@if grep -R "zonnx\|onnx" . | grep -v -E "(docs|test|examples)/" ; then \
+	  echo "❌ Architectural violation: zonnx or onnx references found in zerfoo/ outside docs/tests/examples."; \
+	  exit 1; \
+	fi
+	@echo "✅ No zonnx or onnx references found in zerfoo/ outside docs/tests/examples."
+	@echo "✅ All architectural dependency checks passed."
+
+# End-to-end smoke test (placeholder)
+e2e-smoke:
+	@echo "Running end-to-end smoke test... (Not yet implemented)"
+	@echo "This will involve converting a small ONNX model to ZMF and running it with zerfoo runtime."
