@@ -45,6 +45,32 @@ jobs:
           working-directory: .
           install-mode: binary
 
+      - name: Architectural Dependency Checks
+        run: |
+          echo "🛡️ Running architectural dependency checks..."
+          # Check 1: zerfoo/ imports onnx or zonnx
+          if grep -R --include="*.go" "import.*\(onnx\|zonnx\)" zerfoo/ | grep -v -E "zerfoo/(docs|test|examples|vendor)/" ; then
+            echo "❌ Architectural violation: zerfoo/ imports onnx or zonnx packages."
+            exit 1
+          fi
+          echo "✅ zerfoo/ does not import onnx or zonnx packages."
+
+          # Check 2: zonnx/ imports github.com/zerfoo/zerfoo
+          if grep -R --include="*.go" "import.*github.com/zerfoo/zerfoo" zonnx/ ; then
+            echo "❌ Architectural violation: zonnx/ imports github.com/zerfoo/zerfoo."
+            exit 1
+          fi
+          echo "✅ zonnx/ does not import github.com/zerfoo/zerfoo."
+
+          # Check 3: Broad grep for zonnx/onnx under zerfoo/ (excluding docs/tests/examples)
+          if grep -R "zonnx\|onnx" zerfoo/ | grep -v -E "zerfoo/(docs|test|examples)/" ; then
+            echo "❌ Architectural violation: zonnx or onnx references found in zerfoo/ outside docs/tests/examples."
+            exit 1
+          fi
+          echo "✅ No zonnx or onnx references found in zerfoo/ outside docs/tests/examples."
+
+          echo "✅ All architectural dependency checks passed."
+
       - name: Install golangci-lint for regression check
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
