@@ -452,3 +452,65 @@ func TestTensor_Data_View(t *testing.T) {
 		t.Errorf("Test 0-dimensional tensor Data: expected data %v, got %v", expectedScalarData, scalarViewData)
 	}
 }
+
+func TestTensorNumeric_Int8(t *testing.T) {
+	shape := []int{2, 2}
+	data := []int8{1, 2, 3, 4}
+	tensor, err := New[int8](shape, data)
+	if err != nil {
+		t.Fatalf("Failed to create new int8 tensor: %v", err)
+	}
+
+	if !reflect.DeepEqual(tensor.Shape(), shape) {
+		t.Errorf("Expected shape %v, got %v", shape, tensor.Shape())
+	}
+
+	if !reflect.DeepEqual(tensor.Data(), data) {
+		t.Errorf("Expected data %v, got %v", data, tensor.Data())
+	}
+
+	bytes, err := tensor.Bytes()
+	if err != nil {
+		t.Fatalf("Failed to get bytes from int8 tensor: %v", err)
+	}
+
+	if len(bytes) != 4 {
+		t.Errorf("Expected 4 bytes, got %d", len(bytes))
+	}
+}
+
+func TestTensorNumeric_Uint8(t *testing.T) {
+	shape := []int{2, 2}
+	data := []uint8{1, 2, 3, 4}
+	tensor, err := New[uint8](shape, data)
+	if err != nil {
+		t.Fatalf("Failed to create new Uint8 tensor: %v", err)
+	}
+
+	if !reflect.DeepEqual(tensor.Shape(), shape) {
+		t.Errorf("Expected shape %v, got %v", shape, tensor.Shape())
+	}
+
+	if !reflect.DeepEqual(tensor.Data(), data) {
+		t.Errorf("Expected data %v, got %v", data, tensor.Data())
+	}
+
+	bytes, err := tensor.Bytes()
+	if err != nil {
+		t.Fatalf("Failed to get bytes from Uint8 tensor: %v", err)
+	}
+
+	if len(bytes) != 4 {
+		t.Errorf("Expected 4 bytes, got %d", len(bytes))
+	}
+
+	// Test NewFromBytes for Uint8
+	newTensor, err := NewFromBytes[uint8](shape, bytes)
+	if err != nil {
+		t.Fatalf("Failed to create new Uint8 tensor from bytes: %v", err)
+	}
+
+	if !reflect.DeepEqual(newTensor.Data(), data) {
+		t.Errorf("Expected data %v, got %v from NewFromBytes", data, newTensor.Data())
+	}
+}
