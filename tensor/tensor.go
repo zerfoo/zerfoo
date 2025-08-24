@@ -13,7 +13,7 @@ import (
 // Numeric defines the constraint for numeric types that can be used in Tensors.
 type Numeric interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint32 | ~uint64 |
+		~uint | uint8 | ~uint32 | ~uint64 |
 		~float32 | ~float64 |
 		float8.Float8 |
 		float16.Float16
@@ -139,6 +139,14 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 		newFn = reflect.ValueOf(New[int32])
 	case reflect.Int64:
 		newFn = reflect.ValueOf(New[int64])
+	case reflect.Int8:
+		newFn = reflect.ValueOf(New[int8])
+	case reflect.Uint8:
+		newFn = reflect.ValueOf(New[uint8])
+	case reflect.Bool:
+		newFn = reflect.ValueOf(NewBool)
+	case reflect.String:
+		newFn = reflect.ValueOf(NewString)
 	// Add other supported types here
 	default:
 		return nil, fmt.Errorf("unsupported data type for NewFromType: %s", dataType.Kind())
@@ -283,6 +291,12 @@ func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 		float32Data := *(*[]float32)(unsafe.Pointer(&t.data))
 
 		return Float32ToBytes(float32Data)
+	case int8:
+		int8Data := *(*[]int8)(unsafe.Pointer(&t.data))
+		return Int8ToBytes(int8Data)
+	case uint8:
+		uint8Data := *(*[]uint8)(unsafe.Pointer(&t.data))
+		return Uint8ToBytes(uint8Data)
 	default:
 		return nil, fmt.Errorf("Bytes is currently only implemented for float32, not %T", zero)
 	}
@@ -361,4 +375,166 @@ func (t *TensorNumeric[T]) Copy() *TensorNumeric[T] {
 		data:    newData,
 		isView:  false,
 	}
+}
+
+// Int8ToBytes converts an int8 slice to a byte slice.
+func Int8ToBytes(i []int8) ([]byte, error) {
+	if len(i) == 0 {
+		return nil, nil
+	}
+	ptr := unsafe.SliceData(i)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(i)*int(unsafe.Sizeof(i[0])))
+	return b, nil
+}
+
+// Uint8ToBytes converts a uint8 slice to a byte slice.
+func Uint8ToBytes(u []uint8) ([]byte, error) {
+	if len(u) == 0 {
+		return nil, nil
+	}
+	ptr := unsafe.SliceData(u)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(u)*int(unsafe.Sizeof(u[0])))
+	return b, nil
+}
+
+// TensorBool represents an n-dimensional array of booleans.
+type TensorBool struct {
+	shape []int
+	data  []bool
+}
+
+// isTensor is a private method to satisfy the Tensor interface.
+func (t *TensorBool) isTensor() {}
+
+// Shape returns a copy of the tensor's shape.
+func (t *TensorBool) Shape() []int {
+	shapeCopy := make([]int, len(t.shape))
+	copy(shapeCopy, t.shape)
+	return shapeCopy
+}
+
+// DType returns the reflect.Type of the tensor's elements.
+func (t *TensorBool) DType() reflect.Type {
+	return reflect.TypeOf(false)
+}
+
+// Data returns a slice representing the underlying data of the tensor.
+func (t *TensorBool) Data() []bool {
+	return t.data
+}
+
+// Bytes returns the underlying data of the tensor as a byte slice.
+func (t *TensorBool) Bytes() ([]byte, error) {
+	if len(t.data) == 0 {
+		return nil, nil
+	}
+	bytes := make([]byte, len(t.data))
+	for i, v := range t.data {
+		if v {
+			bytes[i] = 1
+		} else {
+			bytes[i] = 0
+		}
+	}
+	return bytes, nil
+}
+
+// NewBool creates a new TensorBool with the given shape and initializes it with the provided data.
+func NewBool(shape []int, data []bool) (*TensorBool, error) {
+	if len(shape) == 0 {
+		if len(data) > 1 {
+			return nil, errors.New("cannot create 0-dimensional tensor with more than one data element")
+		}
+		if len(data) == 0 {
+			data = make([]bool, 1)
+		}
+		return &TensorBool{
+			shape: shape,
+			data:  data,
+		}, nil
+	}
+
+	size := 1
+	for _, dim := range shape {
+		if dim < 0 {
+			return nil, fmt.Errorf("invalid shape dimension: %d; must be non-negative", dim)
+		}
+		size *= dim
+	}
+
+	if data == nil {
+		data = make([]bool, size)
+	}
+
+	if len(data) != size {
+		return nil, fmt.Errorf("data length (%d) does not match tensor size (%d)", len(data), size)
+	}
+
+	return &TensorBool{
+		shape: shape,
+		data:  data,
+	}, nil
+}
+
+// TensorString represents an n-dimensional array of strings.
+type TensorString struct {
+	shape []int
+	data  []string
+}
+
+// isTensor is a private method to satisfy the Tensor interface.
+func (t *TensorString) isTensor() {}
+
+// Shape returns a copy of the tensor's shape.
+func (t *TensorString) Shape() []int {
+	shapeCopy := make([]int, len(t.shape))
+	copy(shapeCopy, t.shape)
+	return shapeCopy
+}
+
+// DType returns the reflect.Type of the tensor's elements.
+func (t *TensorString) DType() reflect.Type {
+	return reflect.TypeOf("")
+}
+
+// Data returns a slice representing the underlying data of the tensor.
+func (t *TensorString) Data() []string {
+	return t.data
+}
+
+// NewString creates a new TensorString with the given shape and initializes it with the provided data.
+func NewString(shape []int, data []string) (*TensorString, error) {
+	if len(shape) == 0 {
+		if len(data) > 1 {
+			return nil, errors.New("cannot create 0-dimensional tensor with more than one data element")
+		}
+		if len(data) == 0 {
+			data = make([]string, 1)
+		}
+		return &TensorString{
+			shape: shape,
+			data:  data,
+		}, nil
+	}
+
+	size := 1
+	for _, dim := range shape {
+		if dim < 0 {
+			return nil, fmt.Errorf("invalid shape dimension: %d; must be non-negative", dim)
+		}
+		size *= dim
+	}
+
+	if data == nil {
+		data = make([]string, size)
+	}
+
+	if len(data) != size {
+		return nil, fmt.Errorf("data length (%d) does not match tensor size (%d)", len(data), size)
+	}
+
+	return &TensorString{
+		shape: shape,
+		data:  data,
+	}, nil
 }
