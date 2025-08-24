@@ -8,7 +8,6 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
-	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestConcat_Forward_NegativeAxis(t *testing.T) {
@@ -53,7 +52,7 @@ func TestConcat_Backward_NegativeAxis(t *testing.T) {
 		20, 21, 22, 23, 24,
 	})
 
-	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2)
+	grads, err := layer.Backward(context.Background(), gOut, in1, in2)
 	testutils.AssertNoError(t, err, "backward neg axis")
 	testutils.AssertEqual(t, 2, len(grads), "grads len")
 
@@ -90,7 +89,7 @@ func TestConcat_Backward_ThreeInputs(t *testing.T) {
 		20, 21, 22, 23,
 	})
 
-	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2, in3)
+	grads, err := layer.Backward(context.Background(), gOut, in1, in2, in3)
 	testutils.AssertNoError(t, err, "backward three inputs")
 	testutils.AssertEqual(t, 3, len(grads), "grads len")
 
@@ -113,7 +112,7 @@ func TestConcat_SingleInput_Passthrough(t *testing.T) {
 	testutils.AssertFloat32SliceApproxEqual(t, in1.Data(), out.Data(), 0, "data")
 
 	gOut, _ := tensor.New(out.Shape(), []float32{10, 11, 12, 13})
-	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1)
+	grads, err := layer.Backward(context.Background(), gOut, in1)
 	testutils.AssertNoError(t, err, "backward single input")
 	testutils.AssertEqual(t, 1, len(grads), "grads len")
 	testutils.AssertFloat32SliceApproxEqual(t, gOut.Data(), grads[0].Data(), 0, "grad passthrough")
