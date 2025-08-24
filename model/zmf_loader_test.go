@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zmf"
 	"google.golang.org/protobuf/proto"
 )
@@ -92,5 +94,65 @@ func TestLoadZMF_InvalidData(t *testing.T) {
 	_, err := LoadZMF(filePath)
 	if err == nil {
 		t.Fatal("Expected an unmarshaling error, but got nil")
+	}
+}
+
+func TestLoadModelFromZMF(t *testing.T) {
+	// 1. Create a temporary .zmf file for testing.
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "test_model_with_version.zmf")
+
+	// Create a sample ZMF Model protobuf message.
+	sampleModel := &zmf.Model{
+		ZmfVersion: "0.2.0",
+		Metadata: &zmf.Metadata{
+			ProducerName:    "zerfoo_test_producer",
+			ProducerVersion: "0.1.0",
+			OpsetVersion:    1,
+		},
+		Graph: &zmf.Graph{
+			Inputs: []*zmf.ValueInfo{
+				{
+					Name:  "input",
+					Dtype: zmf.Tensor_FLOAT32,
+					Shape: []int64{1, 10},
+				},
+			},
+			Outputs: []*zmf.ValueInfo{
+				{
+					Name:  "input", // just pass through for simplicity
+					Dtype: zmf.Tensor_FLOAT32,
+					Shape: []int64{1, 10},
+				},
+			},
+		},
+	}
+
+	// Marshal the sample model to bytes.
+	data, err := proto.Marshal(sampleModel)
+	if err != nil {
+		t.Fatalf("Failed to marshal sample model: %v", err)
+	}
+
+	// Write the bytes to the temporary file.
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
+		t.Fatalf("Failed to write temp .zmf file: %v", err)
+	}
+
+	// 2. Call the function we are testing.
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	loadedModel, err := LoadModelFromZMF[float32](engine, ops, filePath)
+	if err != nil {
+		t.Fatalf("LoadModelFromZMF failed: %v", err)
+	}
+
+	// 3. Verify the result.
+	if loadedModel == nil {
+		t.Fatal("LoadModelFromZMF returned a nil model")
+	}
+
+	if loadedModel.ZMFVersion != "0.2.0" {
+		t.Errorf("Expected ZMFVersion '0.2.0', got '%s'", loadedModel.ZMFVersion)
 	}
 }
