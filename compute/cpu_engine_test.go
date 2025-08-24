@@ -424,3 +424,15 @@ func TestCPUEngine_Add_Int8(t *testing.T) {
 		t.Errorf("expected %v, got %v", expected, result.Data())
 	}
 }
+
+func TestCPUEngine_MatMul_Int8(t *testing.T) {
+	engine := NewCPUEngine[int8](numeric.Int8Ops{})
+	a, _ := tensor.New[int8]([]int{2, 3}, []int8{1, 2, 3, 4, 5, 6})
+	b, _ := tensor.New[int8]([]int{3, 2}, []int8{7, 8, 9, 10, 11, 12})
+	result, _ := engine.MatMul(context.Background(), a, b, nil)
+
+	expected := []int8{58, 64, -117, -102}
+	if !reflect.DeepEqual(result.Data(), expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data())
+	}
+}
