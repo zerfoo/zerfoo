@@ -313,11 +313,6 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 	params := make(map[string]*graph.Parameter[T])
 
 	for name, tensorProto := range zmfParams {
-		// Skip non-float tensors, as they are constants handled as attributes.
-		if tensorProto.Dtype != zmf.Tensor_FLOAT32 && tensorProto.Dtype != zmf.Tensor_FLOAT64 && tensorProto.Dtype != zmf.Tensor_FLOAT16 && tensorProto.Dtype != zmf.Tensor_BFLOAT16 {
-			continue
-		}
-
 		tensorValue, err := DecodeTensor[T](tensorProto)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode tensor for parameter '%s': %w", name, err)

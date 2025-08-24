@@ -25,6 +25,10 @@ func DecodeTensor[T tensor.Numeric](tensorProto *zmf.Tensor) (*tensor.TensorNume
 		if err := decodeFloat16(tensorProto.Data, data); err != nil {
 			return nil, err
 		}
+	case zmf.Tensor_INT8:
+		if err := decodeInt8(tensorProto.Data, data); err != nil {
+			return nil, err
+		}
 	// Add cases for other data types (Float8, Int32, etc.) here.
 	default:
 		return nil, fmt.Errorf("unsupported tensor dtype: %s", tensorProto.Dtype)
@@ -56,6 +60,18 @@ func decodeFloat16[T tensor.Numeric](rawData []byte, dest []T) error {
 		bits := binary.LittleEndian.Uint16(rawData[i : i+2])
 		f16 := float16.FromBits(bits)
 		dest[i/2] = T(f16.ToFloat32())
+	}
+
+	return nil
+}
+
+func decodeInt8[T tensor.Numeric](rawData []byte, dest []T) error {
+	if len(rawData) != len(dest) {
+		return fmt.Errorf("invalid int8 data length: expected %d, got %d", len(dest), len(rawData))
+	}
+
+	for i := 0; i < len(rawData); i++ {
+		dest[i] = T(int8(rawData[i]))
 	}
 
 	return nil

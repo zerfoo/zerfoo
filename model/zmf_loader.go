@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zmf"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,6 +28,34 @@ func LoadZMF(filePath string) (*zmf.Model, error) {
 	// Unmarshal the protobuf data.
 	if err := proto.Unmarshal(data, model); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal ZMF data: %w", err)
+	}
+
+	return model, nil
+}
+
+// LoadModelFromZMF loads a ZMF model from a file, builds the computation graph,
+// and returns a complete Model object.
+func LoadModelFromZMF[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	filePath string,
+) (*Model[T], error) {
+	zmfModel, err := LoadZMF(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	graph, err := BuildFromZMF(engine, ops, zmfModel)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Handle embedding layer loading.
+	// For now, we'll leave it as nil.
+
+	model := &Model[T]{
+		Graph:      graph,
+		ZMFVersion: zmfModel.ZmfVersion,
 	}
 
 	return model, nil
