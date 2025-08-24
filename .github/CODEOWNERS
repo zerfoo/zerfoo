@@ -1,0 +1,13 @@
+# Designates a user or team as a code owner for paths in the repository.
+# When someone opens a pull request that modifies code that has a code owner,
+# the code owner is automatically requested as a reviewer.
+
+# Each line is a file pattern followed by one or more owners.
+
+# Default owners for the entire repository
+* @dndungu
+
+# Specific owners for sub-modules
+/zonnx/ @dndungu
+/zmf/ @dndungu
+/zerfoo/ @dndungu
