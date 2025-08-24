@@ -13,11 +13,16 @@ require (
 require (
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/sys v0.20.0 // indirect
-	golang.org/x/text v0.15.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 )
 
 exclude google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de
+
 exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+
+require (
+	gonum.org/v1/gonum v0.16.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+)
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
