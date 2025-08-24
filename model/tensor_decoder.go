@@ -57,53 +57,24 @@ func DecodeTensor[T tensor.Numeric](tensorProto *zmf.Tensor) (*tensor.TensorNume
 		if len(tensorProto.Data)%2 != 0 {
 			return nil, fmt.Errorf("invalid float16 data length: must be a multiple of 2, got %d", len(tensorProto.Data))
 		}
-
-		f16 := make([]float16.Float16, size)
-		for i := 0; i < size; i++ {
-			bits := binary.LittleEndian.Uint16(tensorProto.Data[i*2 : i*2+2])
-			f16[i] = float16.FromBits(bits)
-		}
-
-		switch any(zero).(type) {
-		case float16.Float16:
-			data := any(f16).([]T)
-			return tensor.New[T](shape, data)
-		case float32:
-			f32 := make([]float32, size)
-			for i, v := range f16 {
-				f32[i] = v.ToFloat32()
-			}
-			data := any(f32).([]T)
-			return tensor.New[T](shape, data)
-		case float16.BFloat16:
-			bf := make([]float16.BFloat16, size)
-			for i, v := range f16 {
-				bf[i] = float16.BFloat16FromFloat32(v.ToFloat32())
-			}
-			data := any(bf).([]T)
-			return tensor.New[T](shape, data)
-		default:
-			return nil, fmt.Errorf("unsupported destination type %T for FLOAT16 source", zero)
-		}
-
 	case zmf.Tensor_INT8:
-		if size != len(tensorProto.Data) {
-			return nil, fmt.Errorf("invalid int8 data length: expected %d, got %d", size, len(tensorProto.Data))
+		if err := decodeInt8(tensorProto.Data, data); err != nil {
+			return nil, err
 		}
-
-		switch any(zero).(type) {
-		case int8:
-			vals := make([]int8, size)
-			for i := 0; i < size; i++ {
-				vals[i] = int8(tensorProto.Data[i])
-			}
-			data := any(vals).([]T)
-			return tensor.New[T](shape, data)
-		default:
-			return nil, fmt.Errorf("unsupported destination type %T for INT8 source", zero)
-		}
-
+	// Add cases for other data types (Float8, Int32, etc.) here.
 	default:
 		return nil, fmt.Errorf("unsupported tensor dtype: %s", tensorProto.Dtype)
 	}
+}
+
+func decodeInt8[T tensor.Numeric](rawData []byte, dest []T) error {
+	if len(rawData) != len(dest) {
+		return fmt.Errorf("invalid int8 data length: expected %d, got %d", len(dest), len(rawData))
+	}
+
+	for i := 0; i < len(rawData); i++ {
+		dest[i] = T(int8(rawData[i]))
+	}
+
+	return nil
 }
