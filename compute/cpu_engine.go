@@ -23,18 +23,6 @@ type CPUEngine[T tensor.Numeric] struct {
 	ops numeric.Arithmetic[T]
 }
 
-// Tanh applies the hyperbolic tangent activation element-wise.
-func (e *CPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.UnaryOp(ctx, a, e.ops.Tanh, dst...)
-}
-
-// TanhPrime computes tanh'(a) * upstream element-wise.
-func (e *CPUEngine[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.binaryOp(ctx, a, upstream, func(x, u T) T {
-		return e.ops.Mul(e.ops.TanhGrad(x), u)
-	}, dst...)
-}
-
 // parallelFor splits [0,total) into chunks and runs fn(start,end) across workers.
 // It avoids goroutine overhead for small ranges.
 func parallelFor(total int, fn func(start, end int)) {
@@ -382,9 +370,9 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 	parallelFor(total, func(start, end int) {
 		for lin := start; lin < end; lin++ { //nolint:intrange
 			// Decode linear index into coords
+			idx := lin
 			offA := 0
 			offB := 0
-			idx := lin               //nolint:copyloopvar // idx is modified in the loop
 			for i := 0; i < R; i++ { //nolint:intrange
 				stride := outStrides[i]
 				coord := 0
@@ -465,9 +453,9 @@ func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst
 	parallelFor(total, func(start, end int) {
 		for lin := start; lin < end; lin++ { //nolint:intrange
 			// Decode linear index
+			idx := lin
 			offA := 0
 			offB := 0
-			idx := lin               //nolint:copyloopvar // idx is modified in the loop
 			for i := 0; i < R; i++ { //nolint:intrange
 				stride := outStrides[i]
 				coord := 0
@@ -544,17 +532,17 @@ func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[
 	if t == nil {
 		return errors.New("input tensor cannot be nil")
 	}
-	// Ensure minVal <= maxVal using ops.GreaterThan
-	if e.ops.GreaterThan(minVal, maxVal) {
-		minVal, maxVal = maxVal, minVal
+	min := float64(minVal)
+	max := float64(maxVal)
+	if max < min {
+		min, max = max, min
 	}
-	span := e.ops.Sub(maxVal, minVal)
+	span := max - min
 	data := t.Data()
 	parallelFor(len(data), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
-			// r64 in [0,1), convert to T and scale/shift: minVal + span * r
-			rT := e.ops.FromFloat64(rand.Float64())
-			data[i] = e.ops.Add(minVal, e.ops.Mul(span, rT))
+			r := rand.Float64()*span + min
+			data[i] = e.ops.FromFloat64(r)
 		}
 	})
 	return nil
@@ -778,32 +766,9 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 				rE[cOffset:cOffset+m*n],
 			)
 		}
-	case int8:
-		aI8 := any(aData).([]int8)
-		bI8 := any(bData).([]int8)
-		rI8 := any(rData).([]int8)
-		for i := 0; i < batchSize; i++ {
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
-			}
-			for row := 0; row < m; row++ {
-				for col := 0; col < n; col++ {
-					var sum int8
-					for inner := 0; inner < k; inner++ {
-						valA := aI8[aOffset+row*k+inner]
-						valB := bI8[bOffset+inner*n+col]
-						sum += valA * valB
-					}
-					rI8[cOffset+row*n+col] = sum
-				}
-			}
-		}
 	default:
 		// Fallback to naive implementation for other types
-		for i := 0; i < batchSize; i++ {
+		for i := range batchSize {
 			aOffset := i * m * k
 			rOffset := i * m * n
 			bOffset := 0
@@ -827,6 +792,7 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 	return result, nil
 }
 
+// Transpose transposes a tensor along the given axes.
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
@@ -1402,6 +1368,3 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 
 	return out, nil
 }
-
-// Statically assert that the type implements the Engine interface.
-var _ Engine[float32] = (*CPUEngine[float32])(nil)
