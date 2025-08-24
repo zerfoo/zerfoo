@@ -463,7 +463,7 @@ Interoperability with other tools and the ability to save/load models are import
 
 *   **Serialization/Export to ZMF:** The `model.ModelExporter` interface is intended for saving models to the ZMF format. An ZMF exporter will traverse the Zerfoo graph and convert each node to the corresponding ZMF graph node, then save all the Parameter values into the ZMF file.
 
-*   **Interoperability via ZONNX:** To interact with the broader ML ecosystem, Zerfoo relies on the **ZONNX** project (`github.com/zerfoo/zonnx`). ZONNX is a separate, dedicated tool for bidirectional conversion between ZMF and ONNX (Open Neural Network Exchange). This clean separation of concerns ensures that Zerfoo's core remains lean and focused on its native format, while ZONNX handles the complexities of ONNX interoperability.
+*   **Interoperability via ZONNX:** To interact with the broader ML ecosystem, Zerfoo relies on the **ZONNX** project (`github.com/zerfoo/zonnx`). ZONNX is a separate, dedicated tool for bidirectional conversion between ZMF and ONNX (Open Neural Network Exchange). This clean separation of concerns ensures that Zerfoo's core remains lean and focused on its native format, while ZONNX handles the complexities of ONNX interoperability. Crucially, for consumption by Zerfoo, ZONNX is designed to *only* emit ZMF models, reinforcing the architectural boundary.
 
 *   **Integration with Go Tools:** Thanks to Go’s standard library, saving and loading can leverage packages like `encoding/gob` for quick dumps of weight matrices, or `encoding/json` for human-readable configs. For instance, Zerfoo could have a simple `SaveWeights(model, filepath)` that just writes all weight tensors to a binary file in order, and a `LoadWeights(model, filepath)` to read them back – this would assume the model architecture is known (the same code that created it). This is mainly for convenience during development (fast checkpointing). The more formal approach is the exporter/importer interfaces for ZMF.
 
@@ -478,6 +478,7 @@ ZMF (Zerfoo Model Format) is the native serialization format for Zerfoo models. 
 ### ZMF Design Goals
 
 *   **Completeness:** ZMF must be able to represent any valid Zerfoo graph, including custom layers and complex topologies.
+*   **Explicitness:** All model attributes, shapes, and data types are explicitly defined within the ZMF schema, minimizing runtime inference.
 *   **Efficiency:** The format should be compact and fast to read and write.
 *   **Extensibility:** ZMF is designed to be forward-compatible, allowing for the addition of new features and layer types without breaking older models.
 *   **Simplicity:** The format is based on standard technologies like Protocol Buffers, making it easy to understand and implement.
@@ -486,7 +487,7 @@ ZMF (Zerfoo Model Format) is the native serialization format for Zerfoo models. 
 
 A ZMF file is a Protocol Buffer message that contains the following information:
 
-*   **Graph Definition:** A description of the computational graph, including all nodes, their connections, and their attributes.
+*   **Graph Definition:** A description of the computational graph, including all nodes, their connections, and their explicit attributes and shapes.
 *   **Weights:** The trained weights of the model, stored in a compact binary format.
 *   **Metadata:** Additional information about the model, such as the Zerfoo version it was trained with, the date it was created, and any other user-defined metadata.
 
