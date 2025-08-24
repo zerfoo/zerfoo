@@ -412,3 +412,15 @@ func TestCPUEngine_DstErrors(t *testing.T) {
 		t.Error("expected error for mismatched dst shape")
 	}
 }
+
+func TestCPUEngine_Add_Int8(t *testing.T) {
+	engine := NewCPUEngine[int8](numeric.Int8Ops{})
+	a, _ := tensor.New[int8]([]int{2, 2}, []int8{1, 2, 3, 4})
+	b, _ := tensor.New[int8]([]int{2, 2}, []int8{5, 6, 7, 8})
+	result, _ := engine.Add(context.Background(), a, b, nil)
+
+	expected := []int8{6, 8, 10, 12}
+	if !reflect.DeepEqual(result.Data(), expected) {
+		t.Errorf("expected %v, got %v", expected, result.Data())
+	}
+}
