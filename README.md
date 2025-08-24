@@ -96,7 +96,7 @@ Zerfoo is designed to address the limitations of existing ML frameworks by embra
 
 ## Architectural Vision
 
-Zerfoo is built on a clean, layered architecture that separates concerns, ensuring the framework is both powerful and maintainable.
+Zerfoo is built on a clean, layered architecture that separates concerns, ensuring the framework is both powerful and maintainable. A core tenet of this architecture is the use of the **Zerfoo Model Format (ZMF)** as the universal intermediate representation for models. This enables a strict decoupling from model converters like `zonnx`, ensuring that `zerfoo` focuses solely on efficient model execution without any ONNX-specific dependencies.
 
 ![High-Level Architecture](docs/images/high-level-architecture.svg)
 
