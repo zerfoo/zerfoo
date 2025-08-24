@@ -768,7 +768,7 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 		}
 	default:
 		// Fallback to naive implementation for other types
-		for i := range batchSize {
+		for i := 0; i < batchSize; i++ {
 			aOffset := i * m * k
 			rOffset := i * m * n
 			bOffset := 0
@@ -792,206 +792,205 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 	return result, nil
 }
 
-// Transpose transposes a tensor along the given axes.
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if a == nil {
-		return nil, errors.New("input tensor cannot be nil")
-	}
-	originalShape := a.Shape()
-	if axes == nil {
-		// Default transpose for 2D tensors
-		if len(originalShape) != 2 {
-			return nil, fmt.Errorf("default transpose is only supported for 2D tensors, got %d dimensions", len(originalShape))
-		}
-		axes = []int{1, 0}
-	}
-	if len(axes) != len(originalShape) {
-		return nil, fmt.Errorf("number of axes %d must match tensor dimensions %d", len(axes), len(originalShape))
-	}
+  if a == nil {
+    return nil, errors.New("input tensor cannot be nil")
+  }
+  originalShape := a.Shape()
+  if axes == nil {
+    // Default transpose for 2D tensors
+    if len(originalShape) != 2 {
+      return nil, fmt.Errorf("default transpose is only supported for 2D tensors, got %d dimensions", len(originalShape))
+    }
+    axes = []int{1, 0}
+  }
+  if len(axes) != len(originalShape) {
+    return nil, fmt.Errorf("number of axes %d must match tensor dimensions %d", len(axes), len(originalShape))
+  }
 
-	newShape := make([]int, len(originalShape))
-	for i, axis := range axes {
-		if axis < 0 || axis >= len(originalShape) {
-			return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(originalShape))
-		}
-		newShape[i] = originalShape[axis]
-	}
+  newShape := make([]int, len(originalShape))
+  for i, axis := range axes {
+    if axis < 0 || axis >= len(originalShape) {
+      return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(originalShape))
+    }
+    newShape[i] = originalShape[axis]
+  }
 
-	result, err := e.getOrCreateDest(newShape, dst...)
-	if err != nil {
-		return nil, err
-	}
+  result, err := e.getOrCreateDest(newShape, dst...)
+  if err != nil {
+    return nil, err
+  }
 
-	// Use compact strides to match Data() layout (important for views)
-	aStrides := makeStrides(originalShape)
-	rStrides := makeStrides(newShape)
-	aData := a.Data()
-	rData := result.Data()
+  // Use compact strides to match Data() layout (important for views)
+  aStrides := makeStrides(originalShape)
+  rStrides := makeStrides(newShape)
+  aData := a.Data()
+  rData := result.Data()
 
-	// Build inverse permutation: invAxes[oldAxis] = newAxisIndex
-	invAxes := make([]int, len(axes))
-	for newAxis, oldAxis := range axes {
-		invAxes[oldAxis] = newAxis
-	}
+  // Build inverse permutation: invAxes[oldAxis] = newAxisIndex
+  invAxes := make([]int, len(axes))
+  for newAxis, oldAxis := range axes {
+    invAxes[oldAxis] = newAxis
+  }
 
-	total := 1
-	for _, d := range originalShape {
-		total *= d
-	}
+  total := 1
+  for _, d := range originalShape {
+    total *= d
+  }
 
-	parallelFor(total, func(start, end int) {
-		for lin := start; lin < end; lin++ { //nolint:intrange
-			// Decode lin into old coordinates using compact strides, and map directly to new linear index
-			newLin := 0
-			idx := lin                                      //nolint:copyloopvar // idx is modified in the loop
-			for dim := 0; dim < len(originalShape); dim++ { //nolint:intrange
-				stride := aStrides[dim]
-				coord := 0
-				if stride != 0 {
-					coord = idx / stride
-					idx %= stride
-				}
-				newDim := invAxes[dim]
-				newLin += coord * rStrides[newDim]
-			}
-			rData[newLin] = aData[lin]
-		}
-	})
+  parallelFor(total, func(start, end int) {
+    for lin := start; lin < end; lin++ { //nolint:intrange
+      // Decode lin into old coordinates using compact strides, and map directly to new linear index
+      idx := lin
+      newLin := 0
+      for dim := 0; dim < len(originalShape); dim++ { //nolint:intrange
+        stride := aStrides[dim]
+        coord := 0
+        if stride != 0 {
+          coord = idx / stride
+          idx %= stride
+        }
+        newDim := invAxes[dim]
+        newLin += coord * rStrides[newDim]
+      }
+      rData[newLin] = aData[lin]
+    }
+  })
 
-	return result, nil
+  return result, nil
 }
 
 // Sum computes the sum of tensor elements along the specified axis.
 // If keepDims is true, the reduced dimensions are retained with size 1.
 // An optional destination tensor can be provided to store the result.
 func (e *CPUEngine[T]) Sum(
-	_ context.Context,
-	a *tensor.TensorNumeric[T],
-	axis int,
-	keepDims bool,
-	dst ...*tensor.TensorNumeric[T],
+  _ context.Context,
+  a *tensor.TensorNumeric[T],
+  axis int,
+  keepDims bool,
+  dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
-	if a == nil {
-		return nil, errors.New("input tensor cannot be nil")
-	}
+  if a == nil {
+    return nil, errors.New("input tensor cannot be nil")
+  }
 
-	// A negative axis means sum over all axes.
-	if axis < 0 {
-		var sum T
-		for _, v := range a.Data() {
-			sum = e.ops.Add(sum, v)
-		}
-		shape := []int{1}
-		if keepDims {
-			shape = make([]int, a.Dims())
-			for i := range shape {
-				shape[i] = 1
-			}
-		}
-		result, err := e.getOrCreateDest(shape, dst...)
-		if err != nil {
-			return nil, err
-		}
-		result.Data()[0] = sum
+  // A negative axis means sum over all axes.
+  if axis < 0 {
+    var sum T
+    for _, v := range a.Data() {
+      sum = e.ops.Add(sum, v)
+    }
+    shape := []int{1}
+    if keepDims {
+      shape = make([]int, a.Dims())
+      for i := range shape {
+        shape[i] = 1
+      }
+    }
+    result, err := e.getOrCreateDest(shape, dst...)
+    if err != nil {
+      return nil, err
+    }
+    result.Data()[0] = sum
 
-		return result, nil
-	}
+    return result, nil
+  }
 
-	shape := a.Shape()
-	if axis < 0 {
-		axis = len(shape) + axis
-	}
-	if axis < 0 || axis >= len(shape) {
-		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(shape))
-	}
+  shape := a.Shape()
+  if axis < 0 {
+    axis = len(shape) + axis
+  }
+  if axis < 0 || axis >= len(shape) {
+    return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, len(shape))
+  }
 
-	newShape := make([]int, 0, len(shape))
-	if keepDims {
-		newShape = make([]int, len(shape))
-		for i, dim := range shape {
-			if i == axis {
-				newShape[i] = 1
-			} else {
-				newShape[i] = dim
-			}
-		}
-	} else {
-		for i := range shape {
-			if i != axis {
-				newShape = append(newShape, shape[i])
-			}
-		}
-		if len(newShape) == 0 {
-			newShape = []int{1}
-		}
-	}
+  newShape := make([]int, 0, len(shape))
+  if keepDims {
+    newShape = make([]int, len(shape))
+    for i, dim := range shape {
+      if i == axis {
+        newShape[i] = 1
+      } else {
+        newShape[i] = dim
+      }
+    }
+  } else {
+    for i := range shape {
+      if i != axis {
+        newShape = append(newShape, shape[i])
+      }
+    }
+    if len(newShape) == 0 {
+      newShape = []int{1}
+    }
+  }
 
-	result, err := e.getOrCreateDest(newShape, dst...)
-	if err != nil {
-		return nil, err
-	}
+  result, err := e.getOrCreateDest(newShape, dst...)
+  if err != nil {
+    return nil, err
+  }
 
-	// Use compact strides to match Data() layout and parallelize over independent stripes
-	aData := a.Data()
-	rData := result.Data()
-	aStrides := makeStrides(shape)
-	rStrides := makeStrides(newShape)
+  // Use compact strides to match Data() layout and parallelize over independent stripes
+  aData := a.Data()
+  rData := result.Data()
+  aStrides := makeStrides(shape)
+  rStrides := makeStrides(newShape)
 
-	// Compute block sizes
-	inner := 1
-	for i := axis + 1; i < len(shape); i++ {
-		inner *= shape[i]
-	}
-	outer := 1
-	for i := 0; i < axis; i++ {
-		outer *= shape[i]
-	}
-	axisSize := shape[axis]
+  // Compute block sizes
+  inner := 1
+  for i := axis + 1; i < len(shape); i++ {
+    inner *= shape[i]
+  }
+  outer := 1
+  for i := 0; i < axis; i++ {
+    outer *= shape[i]
+  }
+  axisSize := shape[axis]
 
-	stripes := outer * inner // each stripe maps to exactly one output index
-	parallelFor(stripes, func(start, end int) {
-		for s := start; s < end; s++ { //nolint:intrange
-			o := 0
-			in := 0
-			if inner != 0 {
-				o = s / inner
-				in = s % inner
-			}
-			base := o*axisSize*inner + in
-			step := inner
+  stripes := outer * inner // each stripe maps to exactly one output index
+  parallelFor(stripes, func(start, end int) {
+    for s := start; s < end; s++ { //nolint:intrange
+      o := 0
+      in := 0
+      if inner != 0 {
+        o = s / inner
+        in = s % inner
+      }
+      base := o*axisSize*inner + in
+      step := inner
 
-			// Compute output linear index for this stripe by decoding base index
-			rIndex := 0
-			tmp := base
-			for j := 0; j < len(shape); j++ { //nolint:intrange
-				stride := aStrides[j]
-				coord := 0
-				if stride != 0 {
-					coord = tmp / stride
-					tmp %= stride
-				}
-				if j < axis {
-					rIndex += coord * rStrides[j]
-				} else if j > axis {
-					if keepDims {
-						rIndex += coord * rStrides[j]
-					} else {
-						rIndex += coord * rStrides[j-1]
-					}
-				}
-			}
+      // Compute output linear index for this stripe by decoding base index
+      rIndex := 0
+      tmp := base
+      for j := 0; j < len(shape); j++ { //nolint:intrange
+        stride := aStrides[j]
+        coord := 0
+        if stride != 0 {
+          coord = tmp / stride
+          tmp %= stride
+        }
+        if j < axis {
+          rIndex += coord * rStrides[j]
+        } else if j > axis {
+          if keepDims {
+            rIndex += coord * rStrides[j]
+          } else {
+            rIndex += coord * rStrides[j-1]
+          }
+        }
+      }
 
-			// Reduce along the axis for this stripe
-			sum := e.ops.FromFloat64(0)
-			for k := 0; k < axisSize; k++ { //nolint:intrange
-				idx := base + k*step
-				sum = e.ops.Add(sum, aData[idx])
-			}
-			rData[rIndex] = sum
-		}
-	})
+      // Reduce along the axis for this stripe
+      sum := e.ops.FromFloat64(0)
+      for k := 0; k < axisSize; k++ { //nolint:intrange
+        idx := base + k*step
+        sum = e.ops.Add(sum, aData[idx])
+      }
+      rData[rIndex] = sum
+    }
+  })
 
-	return result, nil
+  return result, nil
 }
 
 // Exp computes the element-wise exponential of a tensor.
