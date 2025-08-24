@@ -1,6 +1,6 @@
 // Package normalization_test tests the normalization layers.
 //
-//nolint:dupl // File intentionally mirrors skip variant to validate both implementations with identical setup and imports
+
 package normalization_test
 
 import (
@@ -16,7 +16,7 @@ import (
 
 // TestSimplifiedLayerNormalization_Forward tests the forward pass of the SimplifiedLayerNormalization layer.
 //
-//nolint:dupl // Test structure intentionally mirrors skip variant to validate both implementations with identical setup
+
 func TestSimplifiedLayerNormalization_Forward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
