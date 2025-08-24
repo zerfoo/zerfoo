@@ -51,7 +51,7 @@ func TestGroupedQueryAttention_Forward_Shape(t *testing.T) {
 	}
 
 	// Sanity: output should be finite numbers (no NaN/Inf) for a few positions
-	for _, idx := range []int{0, len(out.Data())/2, len(out.Data()) - 1} {
+	for _, idx := range []int{0, len(out.Data()) / 2, len(out.Data()) - 1} {
 		v := out.Data()[idx]
 		if !(v == v) { // NaN check
 			t.Fatalf("output contains NaN at idx %d", idx)
