@@ -130,6 +130,9 @@ func (n *inputNode[T]) Backward(_ context.Context, mode types.BackwardMode, _ *t
 
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
 
+// Statically assert that the type implements the interface.
+var _ Node[float32] = (*inputNode[float32])(nil)
+
 func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[T]) ([]Node[T], error) {
 	var sorted []Node[T]
 
