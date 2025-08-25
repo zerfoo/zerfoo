@@ -116,3 +116,6 @@ func (g *FastGelu[T]) Parameters() []*graph.Parameter[T] {
 func (g *FastGelu[T]) OutputShape() []int {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*FastGelu[float32])(nil)

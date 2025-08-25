@@ -95,3 +95,6 @@ func (l *LeakyReLU[T]) OpType() string {
 func (l *LeakyReLU[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"alpha": l.alpha}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*LeakyReLU[float32])(nil)
