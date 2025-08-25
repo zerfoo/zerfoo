@@ -1402,3 +1402,6 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 
 	return out, nil
 }
+
+// Statically assert that the type implements the Engine interface.
+var _ Engine[float32] = (*CPUEngine[float32])(nil)
