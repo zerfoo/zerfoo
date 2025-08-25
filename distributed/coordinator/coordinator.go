@@ -307,3 +307,6 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 
 	return &pb.EndCheckpointResponse{}, nil
 }
+
+// Statically assert that the type implements the interface.
+var _ pb.CoordinatorServer = (*Coordinator)(nil)
