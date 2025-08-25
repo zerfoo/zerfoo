@@ -314,3 +314,16 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 
 	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
+
+// OpType returns the operation type of the LayerNormalization layer.
+func (ln *LayerNormalization[T]) OpType() string {
+	return "LayerNormalization"
+}
+
+// Attributes returns the attributes of the LayerNormalization layer.
+func (ln *LayerNormalization[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{"epsilon": ln.epsilon}
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*LayerNormalization[float32])(nil)

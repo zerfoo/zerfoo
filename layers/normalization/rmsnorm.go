@@ -252,3 +252,6 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 func (r *RMSNorm[T]) SetName(name string) {
 	r.gain.Name = name + "_gain"
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*RMSNorm[float32])(nil)
