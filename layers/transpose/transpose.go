@@ -79,3 +79,6 @@ func (t *Transpose[T]) Backward(ctx context.Context, _ types.BackwardMode, outpu
 	}
 	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Transpose[float32])(nil)
