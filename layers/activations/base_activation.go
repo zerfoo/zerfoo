@@ -109,3 +109,6 @@ func (b *BaseActivation[T]) Backward(ctx context.Context, mode types.BackwardMod
 
 	return []*tensor.TensorNumeric[T]{inputGrad}, nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*BaseActivation[float32])(nil)

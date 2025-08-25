@@ -174,3 +174,6 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 
 	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*SwiGLU[float32])(nil)
