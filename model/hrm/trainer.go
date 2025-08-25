@@ -6,7 +6,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/training"
+	opt "github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // HRMTrainer implements the one-step gradient approximation training for the HRM.
@@ -23,7 +23,7 @@ func NewHRMTrainer[T tensor.Numeric](hrm *HRM[T], loss graph.Node[T]) *HRMTraine
 // TrainStep performs a single training step for the HRM.
 func (t *HRMTrainer[T]) TrainStep(
 	ctx context.Context,
-	optimizer training.Optimizer[T],
+	optimizer opt.Optimizer[T],
 	inputs map[graph.Node[T]]*tensor.TensorNumeric[T],
 	targets *tensor.TensorNumeric[T],
 	nSteps, tSteps int,
@@ -36,7 +36,7 @@ func (t *HRMTrainer[T]) TrainStep(
 	}
 
 	// Optimizer step over model parameters.
-	if err := optimizer.Step(t.hrm.Parameters()); err != nil {
+	if err := optimizer.Step(ctx, t.hrm.Parameters()); err != nil {
 		var zero T
 		return zero, err
 	}

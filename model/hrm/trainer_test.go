@@ -20,7 +20,7 @@ type mockOptimizer[T tensor.Numeric] struct {
 	stepErr bool
 }
 
-func (o *mockOptimizer[T]) Step(_ []*graph.Parameter[T]) error {
+func (o *mockOptimizer[T]) Step(ctx context.Context, _ []*graph.Parameter[T]) error {
 	if o.stepErr {
 		return errors.New("optimizer step error")
 	}
