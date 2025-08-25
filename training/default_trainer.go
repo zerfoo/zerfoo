@@ -39,17 +39,30 @@ func NewDefaultTrainer[T tensor.Numeric](
 }
 
 // TrainStep performs a single training step using the configured strategy and optimizer.
-func (t *DefaultTrainer[T]) TrainStep(ctx context.Context, batch Batch[T]) (T, error) {
-	lossVal, err := t.strategy.ComputeGradients(ctx, t.g, t.loss, batch)
+func (t *DefaultTrainer[T]) TrainStep(
+	ctx context.Context,
+	g *graph.Graph[T],
+	optimizer opt.Optimizer[T],
+	inputs map[graph.Node[T]]*tensor.TensorNumeric[T],
+	targets *tensor.TensorNumeric[T],
+) (T, error) {
+	batch := Batch[T]{
+		Inputs:  inputs,
+		Targets: targets,
+	}
+	lossVal, err := t.strategy.ComputeGradients(ctx, g, t.loss, batch)
 	if err != nil {
 		var zero T
 		return zero, err
 	}
 
-	if err := t.opt.Step(ctx, t.g.Parameters()); err != nil {
+	if err := optimizer.Step(ctx, g.Parameters()); err != nil {
 		var zero T
 		return zero, err
 	}
 
 	return lossVal, nil
 }
+
+// Statically assert that the type implements the Trainer interface.
+var _ Trainer[float32] = (*DefaultTrainer[float32])(nil)
