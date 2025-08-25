@@ -108,3 +108,6 @@ func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 
 	return nil
 }
+
+// Statically assert that the type implements the Optimizer interface.
+var _ Optimizer[float32] = (*SGD[float32])(nil)

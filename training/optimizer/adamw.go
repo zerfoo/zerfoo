@@ -173,3 +173,6 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 
 	return nil
 }
+
+// Statically assert that the type implements the Optimizer interface.
+var _ Optimizer[float32] = (*AdamW[float32])(nil)
