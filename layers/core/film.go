@@ -67,17 +67,17 @@ func (f *FiLM[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 		return nil, fmt.Errorf("FiLM: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
 	}
 
-	feature, context := inputs[0], inputs[1]
+	feature, ctxInput := inputs[0], inputs[1]
 	f.lastFeature = feature
 
 	// Generate scale and bias from the context
-	scale, err := f.scaleGen.Forward(ctx, context)
+	scale, err := f.scaleGen.Forward(ctx, ctxInput)
 	if err != nil {
 		return nil, fmt.Errorf("FiLM scale generation failed: %w", err)
 	}
 	f.lastScale = scale
 
-	bias, err := f.biasGen.Forward(ctx, context)
+	bias, err := f.biasGen.Forward(ctx, ctxInput)
 	if err != nil {
 		return nil, fmt.Errorf("FiLM bias generation failed: %w", err)
 	}
@@ -104,10 +104,10 @@ func (f *FiLM[T]) Backward(ctx context.Context, mode types.BackwardMode, outputG
 		return nil, fmt.Errorf("FiLM: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
 	}
 
-	context := inputs[1]
+	ctxInput := inputs[1]
 
 	// Gradient of the bias is just the output gradient
-	dBias, err := f.biasGen.Backward(ctx, mode, outputGradient, context)
+	dBias, err := f.biasGen.Backward(ctx, mode, outputGradient, ctxInput)
 	if err != nil {
 		return nil, fmt.Errorf("FiLM bias backward pass failed: %w", err)
 	}
@@ -121,7 +121,7 @@ func (f *FiLM[T]) Backward(ctx context.Context, mode types.BackwardMode, outputG
 		return nil, fmt.Errorf("FiLM dScale calculation failed: %w", err)
 	}
 
-	dScaleContext, err := f.scaleGen.Backward(ctx, mode, dScale, context)
+	dScaleContext, err := f.scaleGen.Backward(ctx, mode, dScale, ctxInput)
 	if err != nil {
 		return nil, fmt.Errorf("FiLM scale backward pass failed: %w", err)
 	}
