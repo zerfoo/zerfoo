@@ -542,3 +542,6 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.Ba
 
 	return []*tensor.TensorNumeric[T]{dInputTotal}, nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*GroupedQueryAttention[float32])(nil)

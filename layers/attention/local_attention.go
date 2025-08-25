@@ -145,3 +145,6 @@ func (la *LocalAttention[T]) Attributes() map[string]interface{} {
 func (la *LocalAttention[T]) OpType() string {
 	return "LocalAttention"
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*LocalAttention[float32])(nil)

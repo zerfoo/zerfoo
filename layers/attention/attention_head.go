@@ -80,7 +80,11 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 
 // Forward computes the output of the attention head.
 // input is expected to be a 3D tensor (batch_size, seq_len, input_dim).
-func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (ah *AttentionHead[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("AttentionHead: expected 1 input, got %d", len(inputs))
+	}
+	input := inputs[0]
 	// Ensure input is 3D: (batch_size, seq_len, input_dim)
 	if len(input.Shape()) != 3 {
 		return nil, fmt.Errorf("AttentionHead: input must be a 3D tensor (batch_size, seq_len, input_dim), got shape %v", input.Shape())
@@ -145,20 +149,13 @@ func (ah *AttentionHead[T]) Forward(ctx context.Context, input *tensor.TensorNum
 }
 
 // Parameters returns all trainable parameters of the AttentionHead.
-func (ah *AttentionHead[T]) Parameters() []graph.Parameter[T] {
-	params := []graph.Parameter[T]{}
-	// Convert []*graph.Parameter[T] to []graph.Parameter[T]
-	for _, p := range ah.qProj.Parameters() {
-		params = append(params, *p)
-	}
+func (ah *AttentionHead[T]) Parameters() []*graph.Parameter[T] {
+	params := []*graph.Parameter[T]{}
+	params = append(params, ah.qProj.Parameters()...)
 
-	for _, p := range ah.kProj.Parameters() {
-		params = append(params, *p)
-	}
+	params = append(params, ah.kProj.Parameters()...)
 
-	for _, p := range ah.vProj.Parameters() {
-		params = append(params, *p)
-	}
+	params = append(params, ah.vProj.Parameters()...)
 
 	return params
 }
@@ -257,3 +254,22 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, mode types.BackwardMod
 
 	return []*tensor.TensorNumeric[T]{dInput3D}, nil
 }
+
+// OpType returns the operation type of the AttentionHead.
+func (ah *AttentionHead[T]) OpType() string {
+	return "AttentionHead"
+}
+
+// Attributes returns the attributes for the AttentionHead.
+func (ah *AttentionHead[T]) Attributes() map[string]interface{} {
+	// Head dimension can be inferred from qProj's output shape when available.
+	attrs := make(map[string]interface{})
+	shape := ah.qProj.OutputShape()
+	if len(shape) >= 2 {
+		attrs["head_dim"] = shape[1]
+	}
+	return attrs
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*AttentionHead[float32])(nil)
