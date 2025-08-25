@@ -170,3 +170,6 @@ func (b *Block[T]) Attributes() map[string]any {
 func (b *Block[T]) OpType() string {
 	return "TransformerBlock"
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Block[float32])(nil)
