@@ -217,3 +217,6 @@ func (sln *SimplifiedLayerNormalization[T]) OpType() string {
 func (sln *SimplifiedLayerNormalization[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"epsilon": sln.epsilon}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*SimplifiedLayerNormalization[float32])(nil)
