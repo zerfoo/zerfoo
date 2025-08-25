@@ -4,7 +4,6 @@ go 1.25
 
 require (
 	github.com/stretchr/testify v1.11.0
-	github.com/zerfoo/bfloat16 v0.0.0
 	github.com/zerfoo/float16 v0.1.0
 	github.com/zerfoo/float8 v0.2.0
 	github.com/zerfoo/zmf v0.1.1
@@ -12,10 +11,6 @@ require (
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.8
 )
-
-replace github.com/zerfoo/bfloat16 => ../bfloat16
-
-replace github.com/zerfoo/float16 => ../float16
 
 replace github.com/zerfoo/float8 => ../float8
 
