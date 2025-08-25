@@ -26,7 +26,6 @@ func TestNewTokenEmbedding(t *testing.T) {
 		{"Zero Vocab Size", 0, 5, true},
 		{"Zero Embedding Dim", 10, 0, true},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, err := NewTokenEmbedding[float64](engine, tt.vocabSize, tt.embeddingDim)
@@ -47,6 +46,96 @@ func TestNewTokenEmbedding(t *testing.T) {
 	}
 }
 
+// TestTokenEmbedding_Backward_ND validates backward with N-D output gradient shape,
+// ensuring indices are flattened correctly for ScatterAdd.
+func TestTokenEmbedding_Backward_ND(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+	vocabSize, embDim := 5, 3
+	e, _ := NewTokenEmbedding[float64](engine, vocabSize, embDim)
+
+	// Build a 3D input token id tensor with duplicates: shape [2,2,2] (N=8)
+	ids := []int{0, 2, 1, 4, 2, 1, 3, 2}
+	idsF := make([]float64, len(ids))
+	for i, v := range ids {
+		idsF[i] = float64(v)
+	}
+	inputIDs, _ := tensor.New[float64]([]int{2, 2, 2}, idsF)
+
+	// Run forward to cache inputTokenIDs and set output shape
+	_, err := e.Forward(ctx, inputIDs)
+	testutils.AssertNoError(t, err, "Forward should not return an error for N-D input")
+
+	// Build output gradient matching output shape: [2,2,2, embDim]
+	N := len(ids)
+	dOutData := make([]float64, N*embDim)
+	for p := 0; p < N; p++ {
+		for k := 0; k < embDim; k++ {
+			dOutData[p*embDim+k] = float64(p*embDim+k+1) * 0.01 // deterministic values
+		}
+	}
+	dOut, _ := tensor.New[float64]([]int{2, 2, 2, embDim}, dOutData)
+
+	// Compute expected gradient accumulation per vocab index
+	expected := make([]float64, vocabSize*embDim)
+	for p := 0; p < N; p++ {
+		id := ids[p]
+		for k := 0; k < embDim; k++ {
+			expected[id*embDim+k] += dOutData[p*embDim+k]
+		}
+	}
+
+	// Backward and verify
+	dInputs, err := e.Backward(ctx, types.FullBackprop, dOut)
+	testutils.AssertNoError(t, err, "Backward should not return an error")
+	testutils.AssertEqual(t, len(dInputs), 0, "Backward should return no input gradients")
+
+	testutils.AssertNotNil(t, e.embeddingTable.Gradient, "embeddingTable gradient should not be nil")
+	dummyGrad, _ := tensor.New[float64]([]int{vocabSize, embDim}, nil)
+	testutils.AssertTrue(t, e.embeddingTable.Gradient.ShapeEquals(dummyGrad), "embeddingTable gradient shape mismatch")
+
+	for i := range expected {
+		testutils.AssertFloatEqual(t, expected[i], e.embeddingTable.Gradient.Data()[i], 1e-6, fmt.Sprintf("embeddingTable gradient mismatch at index %d", i))
+	}
+}
+
+func TestTokenEmbedding_Forward_1D_VerifyValues(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+	e, _ := NewTokenEmbedding[float64](engine, 5, 3)
+
+	// Set a known embedding table
+	embeddingTableData := []float64{
+		0.1, 0.2, 0.3,
+		1.1, 1.2, 1.3,
+		2.1, 2.2, 2.3,
+		3.1, 3.2, 3.3,
+		4.1, 4.2, 4.3,
+	}
+	embeddingTableTensor, _ := tensor.New[float64]([]int{5, 3}, embeddingTableData)
+	e.embeddingTable.Value = embeddingTableTensor
+
+	// 1D indices
+	ids := []int{0, 2, 1, 4}
+	idsF := make([]float64, len(ids))
+	for i, v := range ids {
+		idsF[i] = float64(v)
+	}
+	input, _ := tensor.New[float64]([]int{len(ids)}, idsF)
+
+	out, err := e.Forward(ctx, input)
+	testutils.AssertNoError(t, err, "Forward 1D should not return error")
+	testutils.AssertNotNil(t, out, "Output should not be nil")
+
+	for i, id := range ids {
+		embedding := embeddingTableData[id*3 : (id+1)*3]
+		output := out.Data()[i*3 : (i+1)*3]
+		for j := range embedding {
+			testutils.AssertFloatEqual(t, embedding[j], output[j], 1e-6, fmt.Sprintf("Output data mismatch at index %d", i))
+		}
+	}
+}
+
 func TestTokenEmbedding_OutputShape(t *testing.T) {
 	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
 	e, _ := NewTokenEmbedding[float64](engine, 10, 5)
@@ -57,18 +146,22 @@ func TestTokenEmbedding_OutputShape(t *testing.T) {
 		expected    []int
 		expectErr   bool
 	}{
+		{"Valid 1D Input", [][]int{{4}}, []int{4, 5}, false},
 		{"Valid 2D Input", [][]int{{1, 10}}, []int{1, 10, 5}, false},
+		{"Valid 3D Input", [][]int{{1, 2, 3}}, []int{1, 2, 3, 5}, false},
 		{"Invalid Input Count", [][]int{{1, 10}, {1, 5}}, nil, true},
-		{"Invalid Input Dim (1D)", [][]int{{10}}, nil, true},
-		{"Invalid Input Dim (3D)", [][]int{{1, 10, 5}}, nil, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a dummy input tensor to set the output shape
-			input, _ := tensor.New[int](tt.inputShapes[0], nil)
+			// Build inputs according to tt.inputShapes
+			inputs := make([]*tensor.TensorNumeric[float64], 0, len(tt.inputShapes))
+			for _, shp := range tt.inputShapes {
+				in, _ := tensor.New[float64](shp, nil)
+				inputs = append(inputs, in)
+			}
 
-			_, err := e.Forward(context.Background(), input)
+			_, err := e.Forward(context.Background(), inputs...)
 			if err != nil && !tt.expectErr {
 				t.Fatalf("unexpected error during forward pass: %v", err)
 			}
@@ -109,7 +202,12 @@ func TestTokenEmbedding_Forward_Test(t *testing.T) {
 	e.embeddingTable.Value = embeddingTableTensor
 
 	inputTokenIDsData := []int{0, 2, 1, 4}
-	inputTokenIDs, _ := tensor.New[int]([]int{1, 4}, inputTokenIDsData)
+	// Build float64 token IDs to pass to Forward; layer converts to int
+	inputTokenIDsF := make([]float64, len(inputTokenIDsData))
+	for i, v := range inputTokenIDsData {
+		inputTokenIDsF[i] = float64(v)
+	}
+	inputTokenIDs, _ := tensor.New[float64]([]int{1, 4}, inputTokenIDsF)
 
 	expectedOutputData := []float64{
 		0.1, 0.2, 0.3,

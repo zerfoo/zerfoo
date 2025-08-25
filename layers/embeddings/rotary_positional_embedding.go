@@ -117,7 +117,11 @@ func (rpe *RotaryPositionalEmbedding[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward applies Rotary Positional Embedding to the input tensor.
-func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("RotaryPositionalEmbedding expects 1 input, got %d", len(inputs))
+	}
+	input := inputs[0]
 	rpe.inputShape = input.Shape()
 
 	rpe.outputShape = input.Shape()
@@ -264,6 +268,16 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, mode type
 	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
+// OpType returns the operation type of the RotaryPositionalEmbedding layer.
+func (rpe *RotaryPositionalEmbedding[T]) OpType() string {
+	return "RotaryPositionalEmbedding"
+}
+
+// Attributes returns the attributes of the RotaryPositionalEmbedding layer.
+func (rpe *RotaryPositionalEmbedding[T]) Attributes() map[string]interface{} {
+	return nil
+}
+
 // Scale scales the positional embeddings by a given factor.
 func (rpe *RotaryPositionalEmbedding[T]) Scale(ctx context.Context, factor float64) error {
 	ops := rpe.engine.Ops()
@@ -281,3 +295,6 @@ func (rpe *RotaryPositionalEmbedding[T]) Scale(ctx context.Context, factor float
 
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*RotaryPositionalEmbedding[float32])(nil)
