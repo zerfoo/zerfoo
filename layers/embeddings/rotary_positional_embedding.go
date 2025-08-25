@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // RotaryPositionalEmbedding applies Rotary Positional Embedding to a tensor.
@@ -63,39 +64,36 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 
 	// Create position indices: [0, 1, ..., seq_len-1]
 	positions := make([]int, seqLen)
-	for i := range seqLen {
+	for i := 0; i < seqLen; i++ {
 		positions[i] = i
 	}
 
 	// Create inverse frequencies: 1 / (base^(2i/head_dim))
-	invFreqsData := make([]T, headDim/2)
-	for i := range headDim / 2 {
-		invFreqsData[i] = T(1.0 / math.Pow(opts.Base, float64(2*i)/float64(headDim)))
+	ops := engine.Ops()
+	invFreqs64 := make([]float64, headDim/2)
+	for i := 0; i < headDim/2; i++ {
+		invFreqs64[i] = 1.0 / math.Pow(opts.Base, float64(2*i)/float64(headDim))
 	}
 
-	// Compute angles: positions * invFreqs
-	anglesData := make([]T, seqLen*(headDim/2))
-	for i := range seqLen {
-		for j := range headDim / 2 {
-			anglesData[i*(headDim/2)+j] = T(float64(positions[i]) * float64(invFreqsData[j]))
+	// Precompute cos and sin of angles using float64 and convert to T
+	size := seqLen * (headDim / 2)
+	cosData := make([]T, size)
+	sinData := make([]T, size)
+	for i := 0; i < seqLen; i++ {
+		for j := 0; j < headDim/2; j++ {
+			angle := float64(positions[i]) * invFreqs64[j]
+			idx := i*(headDim/2) + j
+			cosData[idx] = ops.FromFloat64(math.Cos(angle))
+			sinData[idx] = ops.FromFloat64(math.Sin(angle))
 		}
 	}
 
-	anglesTensor, err := tensor.New[T]([]int{seqLen, headDim / 2}, anglesData)
+	cosAngles, err := tensor.New[T]([]int{seqLen, headDim / 2}, cosData)
 	if err != nil {
 		return nil, err
 	}
 
-	cosAngles, err := engine.UnaryOp(ctx, anglesTensor, func(val T) T {
-		return T(math.Cos(float64(val)))
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	sinAngles, err := engine.UnaryOp(ctx, anglesTensor, func(val T) T {
-		return T(math.Sin(float64(val)))
-	})
+	sinAngles, err := tensor.New[T]([]int{seqLen, headDim / 2}, sinData)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +197,7 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, input *ten
 }
 
 // Backward computes the gradients for RoPE.
-func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	seqLen := rpe.inputShape[1]
 
 	// Slice cos and sin angles to match the input sequence length
@@ -268,23 +266,17 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, dOut *ten
 
 // Scale scales the positional embeddings by a given factor.
 func (rpe *RotaryPositionalEmbedding[T]) Scale(ctx context.Context, factor float64) error {
-	scaleTensor, err := tensor.New[T]([]int{1}, []T{T(factor)})
+	ops := rpe.engine.Ops()
+	scaledCos, err := rpe.engine.MulScalar(ctx, rpe.cosAngles, ops.FromFloat64(factor), nil)
 	if err != nil {
 		return err
 	}
-
-	scaledCos, err := rpe.engine.Mul(ctx, rpe.cosAngles, scaleTensor)
-	if err != nil {
-		return err
-	}
-
 	rpe.cosAngles = scaledCos
 
-	scaledSin, err := rpe.engine.Mul(ctx, rpe.sinAngles, scaleTensor)
+	scaledSin, err := rpe.engine.MulScalar(ctx, rpe.sinAngles, ops.FromFloat64(factor), nil)
 	if err != nil {
 		return err
 	}
-
 	rpe.sinAngles = scaledSin
 
 	return nil

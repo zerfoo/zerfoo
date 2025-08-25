@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Graph represents a computation graph with a defined execution order.
@@ -51,14 +52,14 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward executes the backward pass of the entire graph.
-func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.TensorNumeric[T]) error {
+func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initialGradient *tensor.TensorNumeric[T]) error {
 	grads := make(map[Node[T]]*tensor.TensorNumeric[T])
 	grads[g.output] = initialGradient
 
 	for i := len(g.nodes) - 1; i >= 0; i-- {
 		node := g.nodes[i]
 		if grad, ok := grads[node]; ok {
-			inputGrads, err := node.Backward(ctx, grad)
+			inputGrads, err := node.Backward(ctx, mode, grad)
 			if err != nil {
 				return err
 			}
@@ -68,7 +69,7 @@ func (g *Graph[T]) Backward(ctx context.Context, initialGradient *tensor.TensorN
 					grads[dep] = inputGrads[j]
 				} else {
 					// Accumulate gradients if multiple paths converge to the same node
-					addedGrad, err := g.engine.Add(context.Background(), existingGrad, inputGrads[j])
+					addedGrad, err := g.engine.Add(ctx, existingGrad, inputGrads[j])
 					if err != nil {
 						return fmt.Errorf("error accumulating gradients: %w", err)
 					}
@@ -123,9 +124,10 @@ func (n *inputNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T])
 	return nil, nil
 }
 
-func (n *inputNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (n *inputNode[T]) Backward(_ context.Context, mode types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
+
 func (n *inputNode[T]) Parameters() []*Parameter[T] { return nil }
 
 func topologicalSort[T tensor.Numeric](nodes []Node[T], deps map[Node[T]][]Node[T]) ([]Node[T], error) {

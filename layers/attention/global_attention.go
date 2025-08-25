@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // GlobalAttention wraps GroupedQueryAttention to provide a global attention interface.
@@ -112,9 +113,9 @@ func (ga *GlobalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 }
 
 // Backward delegates the backward pass to the wrapped GroupedQueryAttention.
-func (ga *GlobalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (ga *GlobalAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Delegate backward pass to the wrapped GroupedQueryAttention.
-	return ga.gqa.Backward(ctx, dOut, inputs...)
+	return ga.gqa.Backward(ctx, mode, dOut, inputs...)
 }
 
 // OutputShape returns the output shape of the GlobalAttention layer.

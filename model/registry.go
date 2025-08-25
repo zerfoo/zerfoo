@@ -33,6 +33,11 @@ func RegisterLayer[T tensor.Numeric](opType string, builder LayerBuilder[T]) {
 	registry[opType] = builder
 }
 
+// UnregisterLayer removes a layer builder from the registry.
+func UnregisterLayer(opType string) {
+	delete(registry, opType)
+}
+
 // GetLayerBuilder retrieves a layer builder from the registry for a given op_type.
 func GetLayerBuilder[T tensor.Numeric](opType string) (LayerBuilder[T], error) {
 	builder, exists := registry[opType]

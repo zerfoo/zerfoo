@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	rand "math/rand/v2"
 	"reflect"
 	"runtime"
@@ -22,6 +21,18 @@ import (
 // CPUEngine is a CPU-based implementation of the Engine interface.
 type CPUEngine[T tensor.Numeric] struct {
 	ops numeric.Arithmetic[T]
+}
+
+// Tanh applies the hyperbolic tangent activation element-wise.
+func (e *CPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.UnaryOp(ctx, a, e.ops.Tanh, dst...)
+}
+
+// TanhPrime computes tanh'(a) * upstream element-wise.
+func (e *CPUEngine[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.binaryOp(ctx, a, upstream, func(x, u T) T {
+		return e.ops.Mul(e.ops.TanhGrad(x), u)
+	}, dst...)
 }
 
 // parallelFor splits [0,total) into chunks and runs fn(start,end) across workers.
@@ -373,7 +384,7 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 			// Decode linear index into coords
 			offA := 0
 			offB := 0
-			idx := lin //nolint:copyloopvar // idx is modified in the loop
+			idx := lin               //nolint:copyloopvar // idx is modified in the loop
 			for i := 0; i < R; i++ { //nolint:intrange
 				stride := outStrides[i]
 				coord := 0
@@ -456,7 +467,7 @@ func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst
 			// Decode linear index
 			offA := 0
 			offB := 0
-			idx := lin //nolint:copyloopvar // idx is modified in the loop
+			idx := lin               //nolint:copyloopvar // idx is modified in the loop
 			for i := 0; i < R; i++ { //nolint:intrange
 				stride := outStrides[i]
 				coord := 0
@@ -533,17 +544,17 @@ func (e *CPUEngine[T]) RandomUniform(_ context.Context, t *tensor.TensorNumeric[
 	if t == nil {
 		return errors.New("input tensor cannot be nil")
 	}
-	min := float64(minVal)
-	max := float64(maxVal)
-	if max < min {
-		min, max = max, min
+	// Ensure minVal <= maxVal using ops.GreaterThan
+	if e.ops.GreaterThan(minVal, maxVal) {
+		minVal, maxVal = maxVal, minVal
 	}
-	span := max - min
+	span := e.ops.Sub(maxVal, minVal)
 	data := t.Data()
 	parallelFor(len(data), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
-			r := rand.Float64()*span + min
-			data[i] = e.ops.FromFloat64(r)
+			// r64 in [0,1), convert to T and scale/shift: minVal + span * r
+			rT := e.ops.FromFloat64(rand.Float64())
+			data[i] = e.ops.Add(minVal, e.ops.Mul(span, rT))
 		}
 	})
 	return nil
@@ -866,7 +877,7 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], 
 		for lin := start; lin < end; lin++ { //nolint:intrange
 			// Decode lin into old coordinates using compact strides, and map directly to new linear index
 			newLin := 0
-			idx := lin //nolint:copyloopvar // idx is modified in the loop
+			idx := lin                                      //nolint:copyloopvar // idx is modified in the loop
 			for dim := 0; dim < len(originalShape); dim++ { //nolint:intrange
 				stride := aStrides[dim]
 				coord := 0
@@ -1304,7 +1315,7 @@ func (e *CPUEngine[T]) ReduceMean(
 // Rsqrt computes the element-wise reciprocal square root of a tensor.
 func (e *CPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.UnaryOp(ctx, a, func(v T) T {
-		return e.ops.FromFloat64(1.0 / math.Sqrt(float64(v)))
+		return e.ops.Div(e.ops.FromFloat64(1), e.ops.Sqrt(v))
 	}, dst...)
 }
 

@@ -16,12 +16,24 @@ type Numeric interface {
 		~uint | uint8 | ~uint32 | ~uint64 |
 		~float32 | ~float64 |
 		float8.Float8 |
-		float16.Float16
+		float16.Float16 |
+		float16.BFloat16
 }
 
 // Float defines the constraint for floating-point types.
 type Float interface {
 	~float32 | ~float64
+}
+
+// Addable defines the constraint for numeric types that support the built-in
+// arithmetic operators directly (e.g., +, -, *, /) and zero literals. This
+// intentionally excludes custom minifloat types like float8.Float8,
+// float16.Float16, and float16.BFloat16, which are defined types that do not
+// support Go's built-in operators without explicit conversion helpers.
+type Addable interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint32 | ~uint64 |
+		~float32 | ~float64
 }
 
 // Tensor is an interface that all concrete tensor types must implement.

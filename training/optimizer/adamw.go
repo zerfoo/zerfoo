@@ -3,7 +3,6 @@ package optimizer
 
 import (
 	"context"
-	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -45,7 +44,14 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 	a.t++ // Increment timestep
 
 	// Bias correction terms
-	alpha := a.learningRate * T(math.Sqrt(float64(1.0-math.Pow(float64(a.beta2), float64(a.t))))/(1.0-math.Pow(float64(a.beta1), float64(a.t))))
+	ops := a.engine.Ops()
+	one := ops.FromFloat64(1.0)
+	tAsT := ops.FromFloat64(float64(a.t))
+	// sqrt(1 - beta2^t) / (1 - beta1^t)
+	numer := ops.Sqrt(ops.Sub(one, ops.Pow(a.beta2, tAsT)))
+	denom := ops.Sub(one, ops.Pow(a.beta1, tAsT))
+	biasCorr := ops.Div(numer, denom)
+	alpha := ops.Mul(a.learningRate, biasCorr)
 
 	for _, param := range params {
 		grad := param.Gradient
@@ -89,7 +95,7 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			return err
 		}
 
-		gradScaled, err := a.engine.MulScalar(ctx, grad, T(1.0)-a.beta1, nil)
+		gradScaled, err := a.engine.MulScalar(ctx, grad, ops.Sub(one, a.beta1), nil)
 		if err != nil {
 			return err
 		}
@@ -110,7 +116,7 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			return err
 		}
 
-		gradSquaredScaled, err := a.engine.MulScalar(ctx, gradSquared, T(1.0)-a.beta2, nil)
+		gradSquaredScaled, err := a.engine.MulScalar(ctx, gradSquared, ops.Sub(one, a.beta2), nil)
 		if err != nil {
 			return err
 		}
@@ -143,8 +149,9 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			return err
 		}
 
-		// Apply weight decay: param = param - learningRate * weightDecay * param
-		weightDecayTerm, err := a.engine.MulScalar(ctx, paramValue, a.learningRate*a.weightDecay, nil)
+		// Apply weight decay: param = param - (learningRate * weightDecay) * param
+		lrWd := ops.Mul(a.learningRate, a.weightDecay)
+		weightDecayTerm, err := a.engine.MulScalar(ctx, paramValue, lrWd, nil)
 		if err != nil {
 			return err
 		}

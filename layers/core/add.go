@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Statically assert that *Add[T] implements the graph.Node[T] interface.
@@ -31,7 +32,7 @@ func (a *Add[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 }
 
 // Backward computes the backward pass of the Add node.
-func (a *Add[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (a *Add[T]) Backward(_ context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return []*tensor.TensorNumeric[T]{dOut, dOut}, nil
 }
 

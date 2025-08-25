@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // LayerNormalization implements the Layer Normalization operation.
@@ -60,7 +61,7 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 		return nil, fmt.Errorf("failed to create gamma tensor: %w", err)
 	}
 	// Initialize gamma to ones
-	if err := engine.Fill(context.Background(), gammaTensor, T(1.0)); err != nil { // Assuming Fill is available
+	if err := engine.Fill(context.Background(), gammaTensor, engine.Ops().FromFloat64(1.0)); err != nil { // Assuming Fill is available
 		return nil, fmt.Errorf("failed to fill gamma tensor: %w", err)
 	}
 
@@ -74,7 +75,7 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 		return nil, fmt.Errorf("failed to create beta tensor: %w", err)
 	}
 	// Initialize beta to zeros
-	if err := engine.Fill(context.Background(), betaTensor, T(0.0)); err != nil {
+	if err := engine.Fill(context.Background(), betaTensor, engine.Ops().FromFloat64(0.0)); err != nil {
 		return nil, fmt.Errorf("failed to fill beta tensor: %w", err)
 	}
 
@@ -97,8 +98,8 @@ func (ln *LayerNormalization[T]) OutputShape() []int {
 }
 
 // Parameters returns the trainable gamma and beta parameters.
-func (ln *LayerNormalization[T]) Parameters() []graph.Parameter[T] {
-	return []graph.Parameter[T]{*ln.gamma, *ln.beta}
+func (ln *LayerNormalization[T]) Parameters() []*graph.Parameter[T] {
+	return []*graph.Parameter[T]{ln.gamma, ln.beta}
 }
 
 // Forward computes the Layer Normalization.
@@ -118,7 +119,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, err
 	}
 
-	featureSize := T(input.Shape()[len(input.Shape())-1])
+	featureSize := ln.engine.Ops().FromFloat64(float64(input.Shape()[len(input.Shape())-1]))
 
 	mean, err := ln.engine.DivScalar(ctx, sum, featureSize, nil) // Assuming ReduceMean is available
 	if err != nil {
@@ -187,7 +188,7 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 }
 
 // Backward computes the gradients for LayerNormalization.
-func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -220,7 +221,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, dOut *tensor.Tens
 	// Gradient for input (dL/dx)
 	// This derivation follows the standard backpropagation for Layer Normalization.
 	// N is the size of the feature dimension (last dimension of inputShape)
-	N := T(ln.inputShape[len(ln.inputShape)-1])
+	N := ln.engine.Ops().FromFloat64(float64(ln.inputShape[len(ln.inputShape)-1]))
 
 	// dL/d_normed_input = dOut * gamma
 	dLdNormedInput, err := ln.engine.Mul(ctx, dOut, ln.gamma.Value, nil)

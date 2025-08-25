@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // TokenEmbedding converts token IDs into dense vector representations.
@@ -150,7 +151,7 @@ func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.Tenso
 }
 
 // Backward computes the gradients for the embedding table.
-func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (te *TokenEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient for the embedding table is a sparse update.
 	// For each token ID in inputTokenIDs, we add the corresponding dOut slice
 	// to the gradient accumulator of that embedding vector in the embeddingTable.
@@ -166,16 +167,19 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, dOut *tensor.TensorNu
 	}
 
 	// Scatter-add operation: add dOut slices to dEmbeddingTable based on token IDs
-	// Reshape dOut from (batch_size, seq_len, embedding_dim) to (batch_size * seq_len, embedding_dim)
-	reshapedDOut, err := dOut.Reshape([]int{dOut.Shape()[0] * dOut.Shape()[1], dOut.Shape()[2]})
+	// Reshape outputGradient from (batch_size, seq_len, embedding_dim) to (batch_size * seq_len, embedding_dim)
+	reshapedDOut, err := te.engine.Reshape(ctx, outputGradient, []int{outputGradient.Shape()[0] * outputGradient.Shape()[1], outputGradient.Shape()[2]})
 	if err != nil {
-		return nil, fmt.Errorf("failed to reshape dOut for ScatterAdd: %w", err)
+		return nil, fmt.Errorf("failed to reshape outputGradient for ScatterAdd: %w", err)
 	}
 
-	// Reshape inputTokenIDs from (batch_size, seq_len) to (1, batch_size * seq_len)
-	reshapedInputTokenIDs, err := te.inputTokenIDs.Reshape([]int{1, te.inputTokenIDs.Shape()[0] * te.inputTokenIDs.Shape()[1]})
+	// Flatten inputTokenIDs from (batch_size, seq_len) to (batch_size * seq_len)
+	N := te.inputTokenIDs.Shape()[0] * te.inputTokenIDs.Shape()[1]
+	flatIDsData := make([]int, N)
+	copy(flatIDsData, te.inputTokenIDs.Data())
+	reshapedInputTokenIDs, err := tensor.New[int]([]int{N}, flatIDsData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reshape inputTokenIDs for ScatterAdd: %w", err)
+		return nil, fmt.Errorf("failed to build flattened inputTokenIDs for ScatterAdd: %w", err)
 	}
 
 	if err := te.engine.ScatterAdd(ctx, dEmbeddingTable, reshapedInputTokenIDs, reshapedDOut); err != nil { // Assuming ScatterAdd is available

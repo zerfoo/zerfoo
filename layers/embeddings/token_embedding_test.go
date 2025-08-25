@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestNewTokenEmbedding(t *testing.T) {
@@ -165,7 +166,7 @@ func TestTokenEmbedding_Backward_Token(t *testing.T) {
 		0.10, 0.11, 0.12, // Index 4
 	}
 
-	dInputs, err := e.Backward(ctx, dOutTensor)
+	dInputs, err := e.Backward(ctx, types.FullBackprop, dOutTensor)
 	testutils.AssertNoError(t, err, "Backward should not return an error")
 	testutils.AssertEqual(t, len(dInputs), 0, "Backward should return an empty slice for input gradients")
 

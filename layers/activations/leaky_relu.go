@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // LeakyReLU implements the Leaky Rectified Linear Unit activation function.
@@ -71,7 +72,7 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the LeakyReLU activation.
-func (l *LeakyReLU[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (l *LeakyReLU[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	dleakyrelu, err := l.engine.UnaryOp(ctx, l.lastInput, func(val T) T { return l.ops.LeakyReLUGrad(val, l.alpha) })
 	if err != nil {
 		return nil, err

@@ -111,7 +111,7 @@ func BuildSimplifiedLayerNormalization[T tensor.Numeric](
 		return nil, fmt.Errorf("attribute 'epsilon' has incorrect type: expected float64 or float32, got %T", epsilonAttr)
 	}
 
-	return NewSimplifiedLayerNormalization(engine, ops, gain.Value, T(epsilon))
+	return NewSimplifiedLayerNormalization(engine, ops, gain.Value, ops.FromFloat64(epsilon))
 }
 
 // BuildSkipSimplifiedLayerNormalization constructs a SkipSimplifiedLayerNormalization node,
@@ -185,5 +185,5 @@ func BuildSkipSimplifiedLayerNormalization[T tensor.Numeric](
 		return nil, fmt.Errorf("attribute 'epsilon' has incorrect type: expected float64 or float32, got %T", epsilonAttr)
 	}
 
-	return NewSkipSimplifiedLayerNormalization(engine, ops, gain.Value, T(epsilon))
+	return NewSkipSimplifiedLayerNormalization(engine, ops, gain.Value, ops.FromFloat64(epsilon))
 }

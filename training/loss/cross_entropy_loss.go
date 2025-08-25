@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // CrossEntropyLoss computes the cross-entropy loss.
@@ -33,7 +34,7 @@ func (cel *CrossEntropyLoss[T]) OutputShape() []int {
 }
 
 // Parameters returns an empty slice as CrossEntropyLoss has no trainable parameters.
-func (cel *CrossEntropyLoss[T]) Parameters() []graph.Parameter[T] {
+func (cel *CrossEntropyLoss[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
@@ -92,14 +93,16 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor
 	}
 
 	// Average loss over batch size and sequence length
-	numElements := T(1.0)
+	// Compute denominator as float64 and convert once.
+	denomF64 := 1.0
 	for _, dim := range predictions.Shape() {
-		numElements *= T(dim)
+		denomF64 *= float64(dim)
 	}
 	// Divide by vocab size to get average per token
-	numElements /= T(predictions.Shape()[len(predictions.Shape())-1])
+	denomF64 /= float64(predictions.Shape()[len(predictions.Shape())-1])
+	denom := cel.engine.Ops().FromFloat64(denomF64)
 
-	averageLoss, err := cel.engine.DivScalar(ctx, negatedLoss, numElements, nil)
+	averageLoss, err := cel.engine.DivScalar(ctx, negatedLoss, denom, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +111,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor
 }
 
 // Backward computes the gradients for CrossEntropyLoss.
-// dOut is typically a scalar (1.0) for loss functions.
-func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient of Cross-Entropy Loss with respect to logits (predictions)
 	// is (softmax(predictions) - one_hot(targets))
 	// dOut is the gradient from the subsequent layer (usually 1.0 for loss)

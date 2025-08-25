@@ -14,65 +14,96 @@ import (
 // DecodeTensor converts a ZMF Tensor protobuf message into a Zerfoo Tensor.
 func DecodeTensor[T tensor.Numeric](tensorProto *zmf.Tensor) (*tensor.TensorNumeric[T], error) {
 	shape := tensor.ConvertInt64ToInt(tensorProto.Shape)
-	data := make([]T, tensor.Product(shape))
+	size := tensor.Product(shape)
+
+	var zero T
 
 	switch tensorProto.Dtype {
 	case zmf.Tensor_FLOAT32:
-		if err := decodeFloat32(tensorProto.Data, data); err != nil {
-			return nil, err
+		// Decode raw bytes into []float32
+		if len(tensorProto.Data)%4 != 0 {
+			return nil, fmt.Errorf("invalid float32 data length: must be a multiple of 4, got %d", len(tensorProto.Data))
 		}
+
+		f32 := make([]float32, size)
+		for i := 0; i < size; i++ {
+			bits := binary.LittleEndian.Uint32(tensorProto.Data[i*4 : i*4+4])
+			f32[i] = math.Float32frombits(bits)
+		}
+
+		switch any(zero).(type) {
+		case float32:
+			data := any(f32).([]T)
+			return tensor.New[T](shape, data)
+		case float16.Float16:
+			f16 := make([]float16.Float16, size)
+			for i, v := range f32 {
+				f16[i] = float16.FromFloat32(v)
+			}
+			data := any(f16).([]T)
+			return tensor.New[T](shape, data)
+		case float16.BFloat16:
+			bf := make([]float16.BFloat16, size)
+			for i, v := range f32 {
+				bf[i] = float16.BFloat16FromFloat32(v)
+			}
+			data := any(bf).([]T)
+			return tensor.New[T](shape, data)
+		default:
+			return nil, fmt.Errorf("unsupported destination type %T for FLOAT32 source", zero)
+		}
+
 	case zmf.Tensor_FLOAT16:
-		if err := decodeFloat16(tensorProto.Data, data); err != nil {
-			return nil, err
+		if len(tensorProto.Data)%2 != 0 {
+			return nil, fmt.Errorf("invalid float16 data length: must be a multiple of 2, got %d", len(tensorProto.Data))
 		}
+
+		f16 := make([]float16.Float16, size)
+		for i := 0; i < size; i++ {
+			bits := binary.LittleEndian.Uint16(tensorProto.Data[i*2 : i*2+2])
+			f16[i] = float16.FromBits(bits)
+		}
+
+		switch any(zero).(type) {
+		case float16.Float16:
+			data := any(f16).([]T)
+			return tensor.New[T](shape, data)
+		case float32:
+			f32 := make([]float32, size)
+			for i, v := range f16 {
+				f32[i] = v.ToFloat32()
+			}
+			data := any(f32).([]T)
+			return tensor.New[T](shape, data)
+		case float16.BFloat16:
+			bf := make([]float16.BFloat16, size)
+			for i, v := range f16 {
+				bf[i] = float16.BFloat16FromFloat32(v.ToFloat32())
+			}
+			data := any(bf).([]T)
+			return tensor.New[T](shape, data)
+		default:
+			return nil, fmt.Errorf("unsupported destination type %T for FLOAT16 source", zero)
+		}
+
 	case zmf.Tensor_INT8:
-		if err := decodeInt8(tensorProto.Data, data); err != nil {
-			return nil, err
+		if size != len(tensorProto.Data) {
+			return nil, fmt.Errorf("invalid int8 data length: expected %d, got %d", size, len(tensorProto.Data))
 		}
-	// Add cases for other data types (Float8, Int32, etc.) here.
+
+		switch any(zero).(type) {
+		case int8:
+			vals := make([]int8, size)
+			for i := 0; i < size; i++ {
+				vals[i] = int8(tensorProto.Data[i])
+			}
+			data := any(vals).([]T)
+			return tensor.New[T](shape, data)
+		default:
+			return nil, fmt.Errorf("unsupported destination type %T for INT8 source", zero)
+		}
+
 	default:
 		return nil, fmt.Errorf("unsupported tensor dtype: %s", tensorProto.Dtype)
 	}
-
-	return tensor.New[T](shape, data)
-}
-
-func decodeFloat32[T tensor.Numeric](rawData []byte, dest []T) error {
-	if len(rawData)%4 != 0 {
-		return fmt.Errorf("invalid float32 data length: must be a multiple of 4, got %d", len(rawData))
-	}
-
-	for i := 0; i < len(rawData); i += 4 {
-		bits := binary.LittleEndian.Uint32(rawData[i : i+4])
-		floatVal := math.Float32frombits(bits)
-		dest[i/4] = T(floatVal)
-	}
-
-	return nil
-}
-
-func decodeFloat16[T tensor.Numeric](rawData []byte, dest []T) error {
-	if len(rawData)%2 != 0 {
-		return fmt.Errorf("invalid float16 data length: must be a multiple of 2, got %d", len(rawData))
-	}
-
-	for i := 0; i < len(rawData); i += 2 {
-		bits := binary.LittleEndian.Uint16(rawData[i : i+2])
-		f16 := float16.FromBits(bits)
-		dest[i/2] = T(f16.ToFloat32())
-	}
-
-	return nil
-}
-
-func decodeInt8[T tensor.Numeric](rawData []byte, dest []T) error {
-	if len(rawData) != len(dest) {
-		return fmt.Errorf("invalid int8 data length: expected %d, got %d", len(dest), len(rawData))
-	}
-
-	for i := 0; i < len(rawData); i++ {
-		dest[i] = T(int8(rawData[i]))
-	}
-
-	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Sub is a layer that performs element-wise subtraction of two tensors.
@@ -64,7 +65,7 @@ func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 }
 
 // Backward computes the gradients for the Sub layer.
-func (s *Sub[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (s *Sub[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		panic("Sub layer requires exactly 2 inputs")
 	}

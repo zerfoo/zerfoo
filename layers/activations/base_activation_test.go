@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // MockEngine for testing purposes.
@@ -58,7 +59,7 @@ func TestNewBaseActivation_FunctionalOptions(t *testing.T) {
 	outputGrad, err := tensor.New[float32]([]int{1, 2}, []float32{1.0, 1.0})
 	testutils.AssertNoError(t, err, "failed to create output gradient tensor")
 
-	inputGrads, err := activation.Backward(context.Background(), outputGrad, input)
+	inputGrads, err := activation.Backward(context.Background(), types.FullBackprop, outputGrad, input)
 	testutils.AssertNoError(t, err, "backward pass failed")
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertNotNil(t, inputGrads[0], "expected non-nil input gradient")

@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Linear performs a linear transformation: output = input * weights.
@@ -147,7 +148,7 @@ func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 }
 
 // Backward computes the gradients using the gradient computer component.
-func (l *Linear[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Compute both gradients efficiently
 	weightsGrad, inputGrad, err := l.gradientComputer.ComputeBothGradients(
 		ctx, l.lastInput, l.weights.Value, outputGradient)

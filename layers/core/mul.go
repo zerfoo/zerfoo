@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Mul is a layer that performs element-wise multiplication of two tensors.
@@ -49,7 +50,7 @@ func (m *Mul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 }
 
 // Backward computes the gradients for the Mul layer.
-func (m *Mul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (m *Mul[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		panic("Mul layer requires exactly 2 inputs")
 	}

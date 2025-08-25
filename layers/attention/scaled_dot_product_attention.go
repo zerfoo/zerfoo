@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // ScaledDotProductAttention implements the scaled dot-product attention mechanism.
@@ -126,7 +127,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
-func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, dOut, _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut, _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// 1. Gradient w.r.t. V
 	attentionWeightsTransposed, err := sdpa.engine.Transpose(ctx, sdpa.attentionWeights, []int{0, 2, 1})
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestNewCrossEntropyLoss(t *testing.T) {
@@ -170,7 +171,7 @@ func TestCrossEntropyLoss_Backward(t *testing.T) {
 	testutils.AssertNoError(t, err, "Failed to create dOut tensor")
 
 	// Test backward pass
-	grads, err := cel.Backward(ctx, dOut)
+	grads, err := cel.Backward(ctx, types.FullBackprop, dOut)
 	if err != nil {
 		// Expected to fail due to missing OneHot, Sub, Mul methods in engine
 		testutils.AssertError(t, err, "Backward pass expected to fail due to missing engine methods")
@@ -210,7 +211,7 @@ func TestCrossEntropyLoss_Backward_WithoutForward(t *testing.T) {
 		}
 	}()
 
-	_, err = cel.Backward(ctx, dOut)
+	_, err = cel.Backward(ctx, types.FullBackprop, dOut)
 	if err != nil {
 		// Expected to fail due to nil cached values or missing engine methods
 		testutils.AssertError(t, err, "Backward pass should fail without Forward being called first")

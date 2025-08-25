@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 	"github.com/zerfoo/zmf"
 )
 
@@ -29,7 +30,7 @@ func (m *mockNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric
 	return tensor.New[T]([]int{1}, []T{1})
 }
 
-func (m *mockNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (m *mockNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 func (m *mockNode[T]) Parameters() []*graph.Parameter[T]  { return m.parameters }

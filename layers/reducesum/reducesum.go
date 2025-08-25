@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // ReduceSum represents a reduce sum operation.
@@ -102,8 +103,53 @@ func (r *ReduceSum[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the ReduceSum layer.
-func (r *ReduceSum[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// The gradient of the sum is 1, so we just need to broadcast the output gradient
-	// to the shape of the input tensor.
-	return []*tensor.TensorNumeric[T]{outputGradient}, nil
+func (r *ReduceSum[T]) Backward(ctx context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	// Broadcast the output gradient back to the input shape.
+	// If keepDims is true, outputGradient already has 1s in reduced axes; just repeat along those axes.
+	// If keepDims is false, first reshape to re-insert 1s at reduced axes, then repeat.
+	if len(inputs) != 1 {
+		panic("ReduceSum layer requires exactly 1 input for backward")
+	}
+
+	input := inputs[0]
+	inputShape := input.Shape()
+
+	grad := outputGradient
+
+	// Build a map for quick axis lookup
+	axesMap := make(map[int]bool)
+	for _, ax := range r.axes {
+		axesMap[ax] = true
+	}
+
+	if !r.keepDims {
+		// Re-insert singleton dimensions at reduced axes positions
+		reshaped := make([]int, len(inputShape))
+		outShape := grad.Shape()
+		outIdx := 0
+		for i := 0; i < len(reshaped); i++ {
+			if axesMap[i] {
+				reshaped[i] = 1
+			} else {
+				reshaped[i] = outShape[outIdx]
+				outIdx++
+			}
+		}
+		var err error
+		grad, err = r.engine.Reshape(ctx, grad, reshaped)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Now repeat along each reduced axis to match the input shape
+	var err error
+	for _, ax := range r.axes {
+		grad, err = r.engine.Repeat(ctx, grad, ax, inputShape[ax])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return []*tensor.TensorNumeric[T]{grad}, nil
 }

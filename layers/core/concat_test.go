@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestConcat_ForwardAxis1(t *testing.T) {
@@ -54,7 +55,7 @@ func TestConcat_BackwardAxis1(t *testing.T) {
 		20, 21, 22, 23, 24,
 	})
 
-	grads, err := layer.Backward(context.Background(), gOut, in1, in2)
+	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2)
 	testutils.AssertNoError(t, err, "backward")
 	testutils.AssertEqual(t, 2, len(grads), "grads len")
 	testutils.AssertTrue(t, testutils.IntSliceEqual(in1.Shape(), grads[0].Shape()), "grad1 shape")
@@ -104,7 +105,7 @@ func TestConcat_BackwardAxis0(t *testing.T) {
 		30, 31, 32,
 	})
 
-	grads, err := layer.Backward(context.Background(), gOut, in1, in2)
+	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2)
 	testutils.AssertNoError(t, err, "backward axis0")
 	testutils.AssertEqual(t, 2, len(grads), "grads len")
 

@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // SimplifiedLayerNormalization implements a simplified version of layer normalization.
@@ -96,7 +97,7 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 }
 
 // Backward applies the backward pass of the SimplifiedLayerNormalization layer.
-func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SimplifiedLayerNormalization expects 1 input, got %d", len(inputs))
 	}

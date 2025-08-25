@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Unsqueeze is a layer that adds dimensions of size 1 to a tensor at specified axes.
@@ -75,7 +76,7 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the Unsqueeze layer.
-func (u *Unsqueeze[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (u *Unsqueeze[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		panic("Unsqueeze layer requires exactly 1 input")
 	}

@@ -67,6 +67,13 @@ type Engine[T tensor.Numeric] interface {
 	// Log computes the element-wise natural logarithm of a tensor.
 	Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 
+	// Tanh applies the hyperbolic tangent activation function element-wise.
+	Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+
+	// TanhPrime computes the element-wise gradient of tanh at `a` multiplied by `upstream`.
+	// This is useful for backpropagation where `upstream` is dL/dy and the result is dL/dx.
+	TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+
 	// Pow raises each element of a tensor to the power of the corresponding element in another tensor.
 	Pow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 

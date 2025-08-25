@@ -350,7 +350,7 @@ func NewMockEngineWithError[T tensor.Numeric](err error) *MockEngine[T] {
 }
 
 // CompareTensorsApprox checks if two tensors are approximately equal element-wise.
-func CompareTensorsApprox[T tensor.Numeric](t *testing.T, actual, expected *tensor.TensorNumeric[T], epsilon T) bool {
+func CompareTensorsApprox[T tensor.Addable](t *testing.T, actual, expected *tensor.TensorNumeric[T], epsilon T) bool {
 	t.Helper()
 
 	if !actual.ShapeEquals(expected) {

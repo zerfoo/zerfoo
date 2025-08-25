@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // SpectralFingerprint computes FFT/DFT magnitude features over a fixed window.
@@ -156,7 +157,7 @@ func (s *SpectralFingerprint[T]) Forward(_ context.Context, inputs ...*tensor.Te
 }
 
 // Backward returns no gradients (treated as non-differentiable feature transform).
-func (s *SpectralFingerprint[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (s *SpectralFingerprint[T]) Backward(_ context.Context, mode types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

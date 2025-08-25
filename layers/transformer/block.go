@@ -11,6 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Block represents a single Transformer block.
@@ -127,7 +128,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward computes the backward pass of the Transformer block.
-func (b *Block[T]) Backward(_ context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (b *Block[T]) Backward(_ context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// This is a simplified backward pass and needs to be implemented correctly.
 	return []*tensor.TensorNumeric[T]{dOut}, nil
 }

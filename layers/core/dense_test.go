@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestDense(t *testing.T) {
@@ -32,7 +33,7 @@ func TestDense(t *testing.T) {
 	gradOutput, err := tensor.New[float32]([]int{1, 5}, []float32{1, 1, 1, 1, 1})
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
 
-	gradInput, _ := layer.Backward(context.Background(), gradOutput, input)
+	gradInput, _ := layer.Backward(context.Background(), types.FullBackprop, gradOutput, input)
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 
 	// Test the SetName method of the dense layer
@@ -76,7 +77,7 @@ func TestDense_NDInput(t *testing.T) {
 
 	gradOutput, err := tensor.New[float32]([]int{2, 3, 5}, make([]float32, 2*3*5))
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
-	gradInput, err := layer.Backward(context.Background(), gradOutput, input)
+	gradInput, err := layer.Backward(context.Background(), types.FullBackprop, gradOutput, input)
 	testutils.AssertNoError(t, err, "expected no error during backward pass, got %v")
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 }

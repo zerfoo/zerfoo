@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // MatMul is a layer that performs matrix multiplication of two tensors.
@@ -80,7 +81,7 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 }
 
 // Backward computes the gradients for the MatMul layer.
-func (m *MatMul[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (m *MatMul[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		panic("MatMul layer requires exactly 2 inputs")
 	}

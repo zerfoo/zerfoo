@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // BaseActivation provides common functionality for unary activation functions.
@@ -95,7 +96,7 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 }
 
 // Backward performs the backward pass of the activation function.
-func (b *BaseActivation[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (b *BaseActivation[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	derivative, err := b.engine.UnaryOp(ctx, b.lastInput, b.backwardOp)
 	if err != nil {
 		return nil, err

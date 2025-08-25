@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // TestPolynomialExpansion_Creation tests basic creation of polynomial expansion layers.
@@ -267,7 +268,7 @@ func TestPolynomialExpansion_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
 	// Backward pass
-	inputGrads, _ := poly.Backward(context.Background(), outputGrad)
+	inputGrads, _ := poly.Backward(context.Background(), types.FullBackprop, outputGrad, input)
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertTrue(t, inputGrads[0] != nil, "expected non-nil input gradient")
 
@@ -287,7 +288,7 @@ func TestPolynomialExpansion_BackwardErrorCases(t *testing.T) {
 
 	// Test with wrong output gradient size
 	wrongSizeGrad, _ := tensor.New([]int{1, 3}, []float32{1.0, 1.0, 1.0})
-	_, err = poly.Backward(context.Background(), wrongSizeGrad)
+	_, err = poly.Backward(context.Background(), types.FullBackprop, wrongSizeGrad)
 	testutils.AssertError(t, err, "expected an error with wrong gradient size")
 }
 

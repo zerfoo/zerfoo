@@ -45,8 +45,53 @@ func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 		return errors.New("gradient shape mismatch")
 	}
 
-	for i := range p.Gradient.Data() {
-		p.Gradient.Data()[i] += grad.Data()[i]
+	gdst := p.Gradient.Data()
+	gsrc := grad.Data()
+
+	// Handle supported built-in numeric types via type switch.
+	switch any(*new(T)).(type) {
+	case float32:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(float32) + any(gsrc[i]).(float32)).(T)
+		}
+	case float64:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(float64) + any(gsrc[i]).(float64)).(T)
+		}
+	case int:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(int) + any(gsrc[i]).(int)).(T)
+		}
+	case int8:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(int8) + any(gsrc[i]).(int8)).(T)
+		}
+	case int16:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(int16) + any(gsrc[i]).(int16)).(T)
+		}
+	case int32:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(int32) + any(gsrc[i]).(int32)).(T)
+		}
+	case int64:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(int64) + any(gsrc[i]).(int64)).(T)
+		}
+	case uint:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(uint) + any(gsrc[i]).(uint)).(T)
+		}
+	case uint32:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(uint32) + any(gsrc[i]).(uint32)).(T)
+		}
+	case uint64:
+		for i := range gdst {
+			gdst[i] = any(any(gdst[i]).(uint64) + any(gsrc[i]).(uint64)).(T)
+		}
+	default:
+		return errors.New("AddGradient unsupported for this numeric type; use engine ops instead")
 	}
 
 	return nil
@@ -54,7 +99,53 @@ func (p *Parameter[T]) AddGradient(grad *tensor.TensorNumeric[T]) error {
 
 // ClearGradient resets the parameter's gradient to zero.
 func (p *Parameter[T]) ClearGradient() {
-	for i := range p.Gradient.Data() {
-		p.Gradient.Data()[i] = 0
+	gdst := p.Gradient.Data()
+	switch any(*new(T)).(type) {
+	case float32:
+		for i := range gdst {
+			gdst[i] = any(float32(0)).(T)
+		}
+	case float64:
+		for i := range gdst {
+			gdst[i] = any(float64(0)).(T)
+		}
+	case int:
+		for i := range gdst {
+			gdst[i] = any(int(0)).(T)
+		}
+	case int8:
+		for i := range gdst {
+			gdst[i] = any(int8(0)).(T)
+		}
+	case int16:
+		for i := range gdst {
+			gdst[i] = any(int16(0)).(T)
+		}
+	case int32:
+		for i := range gdst {
+			gdst[i] = any(int32(0)).(T)
+		}
+	case int64:
+		for i := range gdst {
+			gdst[i] = any(int64(0)).(T)
+		}
+	case uint:
+		for i := range gdst {
+			gdst[i] = any(uint(0)).(T)
+		}
+	case uint32:
+		for i := range gdst {
+			gdst[i] = any(uint32(0)).(T)
+		}
+	case uint64:
+		for i := range gdst {
+			gdst[i] = any(uint64(0)).(T)
+		}
+	default:
+		// Unsupported numeric types: set via copy from a zeroed slice of same length if possible
+		for i := range gdst {
+			var z T
+			gdst[i] = z
+		}
 	}
 }

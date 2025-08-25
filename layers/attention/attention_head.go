@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // AttentionHead implements a single attention head, including linear projections
@@ -173,7 +174,7 @@ func (ah *AttentionHead[T]) OutputShape() []int {
 
 // Backward computes the gradients for the AttentionHead.
 // dOut has shape (batch, seq_len, head_dim). inputs[0] has shape (batch, seq_len, input_dim).
-func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (ah *AttentionHead[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("AttentionHead: expected 1 input, got %d", len(inputs))
 	}
@@ -188,7 +189,7 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNum
 	inputDim := input.Shape()[2]
 
 	// Backprop through SDPA to obtain dQ, dK, dV
-	sdpaGrads, err := ah.sdpa.Backward(ctx, dOut, nil, nil, nil)
+	sdpaGrads, err := ah.sdpa.Backward(ctx, mode, dOut, nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: SDPA backward failed: %w", err)
 	}
@@ -222,17 +223,17 @@ func (ah *AttentionHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNum
 	}
 
 	// Backprop through V, K, Q projections
-	vGrads, err := ah.vProj.Backward(ctx, dV2D, input2D)
+	vGrads, err := ah.vProj.Backward(ctx, mode, dV2D, input2D)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: V backward failed: %w", err)
 	}
 
-	kGrads, err := ah.kProj.Backward(ctx, dK2D, input2D)
+	kGrads, err := ah.kProj.Backward(ctx, mode, dK2D, input2D)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: K backward failed: %w", err)
 	}
 
-	qGrads, err := ah.qProj.Backward(ctx, dQ2D, input2D)
+	qGrads, err := ah.qProj.Backward(ctx, mode, dQ2D, input2D)
 	if err != nil {
 		return nil, fmt.Errorf("AttentionHead: Q backward failed: %w", err)
 	}

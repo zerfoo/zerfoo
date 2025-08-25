@@ -7,14 +7,16 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 type mockNode struct {
 	name         string
 	outputShape  []int
 	forwardFunc  func(ctx context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error)
-	backwardFunc func(ctx context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error)
+	backwardFunc func(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error)
 	params       []*Parameter[int]
+	capturedMode types.BackwardMode
 }
 
 func (m *mockNode) OutputShape() []int { return m.outputShape }
@@ -26,9 +28,10 @@ func (m *mockNode) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	return inputs[0], nil
 }
 
-func (m *mockNode) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+func (m *mockNode) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+	m.capturedMode = mode
 	if m.backwardFunc != nil {
-		return m.backwardFunc(ctx, outputGradient)
+		return m.backwardFunc(ctx, mode, outputGradient)
 	}
 
 	return []*tensor.TensorNumeric[int]{outputGradient}, nil
@@ -55,21 +58,9 @@ func TestBuilder_Build(t *testing.T) {
 
 	node1 := &mockNode{
 		name: "node1",
-		forwardFunc: func(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
-			return inputs[0], nil
-		},
-	}
-	node1.backwardFunc = func(_ context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
-		return []*tensor.TensorNumeric[int]{outputGradient}, nil
 	}
 	node2 := &mockNode{
 		name: "node2",
-		forwardFunc: func(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
-			return inputs[0], nil
-		},
-	}
-	node2.backwardFunc = func(_ context.Context, outputGradient *tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
-		return []*tensor.TensorNumeric[int]{outputGradient}, nil
 	}
 
 	builder.AddNode(node1, inputNode)
@@ -91,7 +82,44 @@ func TestBuilder_Build(t *testing.T) {
 		t.Errorf("expected 1, got %d", output.Data()[0])
 	}
 
-	_ = graph.Backward(context.Background(), input)
+	initialGradient, _ := tensor.New[int]([]int{2, 2}, []int{1, 1, 1, 1})
+	_ = graph.Backward(context.Background(), types.FullBackprop, initialGradient)
+}
+
+func TestGraph_Backward_Mode(t *testing.T) {
+	var engine compute.Engine[int] = compute.NewCPUEngine[int](numeric.IntOps{})
+	builder := NewBuilder[int](engine)
+
+	input := builder.Input([]int{1})
+	mock := &mockNode{name: "mock"}
+	builder.AddNode(mock, input)
+
+	graph, err := builder.Build(mock)
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+
+	initialGradient, _ := tensor.New[int]([]int{1}, []int{1})
+
+	t.Run("FullBackprop", func(t *testing.T) {
+		err := graph.Backward(context.Background(), types.FullBackprop, initialGradient)
+		if err != nil {
+			t.Fatalf("Backward() failed: %v", err)
+		}
+		if mock.capturedMode != types.FullBackprop {
+			t.Errorf("expected mode %v, got %v", types.FullBackprop, mock.capturedMode)
+		}
+	})
+
+	t.Run("OneStepApproximation", func(t *testing.T) {
+		err := graph.Backward(context.Background(), types.OneStepApproximation, initialGradient)
+		if err != nil {
+			t.Fatalf("Backward() failed: %v", err)
+		}
+		if mock.capturedMode != types.OneStepApproximation {
+			t.Errorf("expected mode %v, got %v", types.OneStepApproximation, mock.capturedMode)
+		}
+	})
 }
 
 func TestBuilder_Input(t *testing.T) {
@@ -115,7 +143,7 @@ func TestBuilder_Input(t *testing.T) {
 		t.Errorf("expected nil, got %v", output)
 	}
 
-	_, _ = inputNode.Backward(context.Background(), nil)
+	_, _ = inputNode.Backward(context.Background(), types.FullBackprop, nil)
 	if inputNode.Parameters() != nil {
 		t.Errorf("expected nil parameters, got %v", inputNode.Parameters())
 	}

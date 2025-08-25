@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Transpose represents a transpose operation.
@@ -65,7 +66,16 @@ func (t *Transpose[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 }
 
 // Backward computes the gradients for the Transpose layer.
-func (t *Transpose[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// The gradient of the transpose is the transpose of the gradient.
-	return []*tensor.TensorNumeric[T]{outputGradient}, nil
+func (t *Transpose[T]) Backward(ctx context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	// The gradient w.r.t. the input is the gradient transposed by the inverse permutation.
+	inv := make([]int, len(t.perm))
+	for i, p := range t.perm {
+		inv[p] = i
+	}
+
+	gradInput, err := t.engine.Transpose(ctx, outputGradient, inv)
+	if err != nil {
+		return nil, err
+	}
+	return []*tensor.TensorNumeric[T]{gradInput}, nil
 }
