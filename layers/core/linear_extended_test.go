@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
 
@@ -90,7 +91,7 @@ func TestLinear_BackwardPass(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error when creating output gradient tensor, got %v")
 
 	// Backward pass
-	inputGrads, _ := layer.Backward(context.Background(), outputGrad)
+	inputGrads, _ := layer.Backward(context.Background(), types.FullBackprop, outputGrad, input)
 
 	testutils.AssertEqual(t, 1, len(inputGrads), "expected 1 input gradient")
 

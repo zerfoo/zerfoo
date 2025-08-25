@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func approxEqual(a, b, eps float32) bool {
@@ -77,7 +78,7 @@ func TestSpectralFingerprint_Backward(t *testing.T) {
 	out, _ := layer.Forward(context.Background(), in)
 	grad, _ := tensor.New(out.Shape(), make([]float32, out.Size()))
 
-	inGrads, err := layer.Backward(context.Background(), grad, in)
+	inGrads, err := layer.Backward(context.Background(), types.FullBackprop, grad, in)
 	testutils.AssertNoError(t, err, "backward should not error")
 	testutils.AssertTrue(t, inGrads == nil, "expected nil gradients for stateless non-differentiable layer")
 }
