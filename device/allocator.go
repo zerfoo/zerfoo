@@ -45,3 +45,6 @@ func (a *cpuAllocator) Free(_ any) error {
 	// No-op
 	return nil
 }
+
+// Statically assert that the type implements the interface.
+var _ Allocator = (*cpuAllocator)(nil)

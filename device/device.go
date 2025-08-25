@@ -86,6 +86,9 @@ func (d *cpuDevice) Type() Type {
 	return CPU
 }
 
+// Statically assert that the type implements the interface.
+var _ Device = (*cpuDevice)(nil)
+
 // init registers the default CPU device when the package is imported.
 func init() {
 	registerDevice(newCPUDevice())
