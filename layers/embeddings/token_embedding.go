@@ -120,30 +120,61 @@ func (te *TokenEmbedding[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward performs the embedding lookup.
-// Input: A tensor of token IDs (int type).
+// Input: A tensor of token IDs (T type).
 // Output: A tensor of embedding vectors (T type).
-func (te *TokenEmbedding[T]) Forward(ctx context.Context, tokenIDs *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	te.inputTokenIDs = tokenIDs // Cache for backward
-
-	inputShape := tokenIDs.Shape()
-	if len(inputShape) < 2 {
-		return nil, fmt.Errorf("input tensor must have at least 2 dimensions, got %d", len(inputShape))
+func (te *TokenEmbedding[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("TokenEmbedding expects 1 input, got %d", len(inputs))
 	}
+	// Accept indices as the same numeric type T and convert to int indices internally.
+	tokenIDsT := inputs[0]
+	inputShape := tokenIDsT.Shape()
+	// Convert token IDs to int tensor (flattened indices)
+	flatSize := 1
+	for _, d := range inputShape {
+		flatSize *= d
+	}
+	intData := make([]int, flatSize)
+	dataT := tokenIDsT.Data()
+	for i := 0; i < flatSize; i++ {
+		switch v := any(dataT[i]).(type) {
+		case float32:
+			intData[i] = int(v)
+		case float64:
+			intData[i] = int(v)
+		default:
+			return nil, fmt.Errorf("TokenEmbedding requires input indices convertible to int; unsupported element type %T", v)
+		}
+	}
+	tokenIDs, err := tensor.New[int](inputShape, intData)
+	if err != nil {
+		return nil, err
+	}
+	te.inputTokenIDs = tokenIDs // Cache for backward (original shape)
 
-	batchSize := inputShape[0]
-	seqLen := inputShape[1]
-
-	te.outputShape = []int{batchSize, seqLen, te.embeddingDim}
-
-	output, err := tensor.New[T](te.outputShape, nil) // Create output tensor
+	// Prepare 1D indices for gather: [N]
+	flatIDs, err := tensor.New[int]([]int{flatSize}, intData)
 	if err != nil {
 		return nil, err
 	}
 
-	// Perform embedding lookup
-	// This operation needs to be implemented efficiently by the engine.
-	// It's essentially a gather operation.
-	if err := te.engine.Gather(ctx, te.embeddingTable.Value, tokenIDs, output); err != nil { // Assuming Gather is available
+	// Output shape is inputShape + [embeddingDim]
+	te.outputShape = append(append([]int{}, inputShape...), te.embeddingDim)
+
+	// Allocate flat output [N, embeddingDim]
+	outputFlat, err := tensor.New[T]([]int{flatSize, te.embeddingDim}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform embedding lookup with 1D indices => [N, dim]
+	if err := te.engine.Gather(ctx, te.embeddingTable.Value, flatIDs, outputFlat); err != nil {
+		return nil, err
+	}
+
+	// Reshape to [inputShape..., dim]
+	output, err := te.engine.Reshape(ctx, outputFlat, te.outputShape)
+	if err != nil {
 		return nil, err
 	}
 
@@ -167,17 +198,30 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMo
 	}
 
 	// Scatter-add operation: add dOut slices to dEmbeddingTable based on token IDs
-	// Reshape outputGradient from (batch_size, seq_len, embedding_dim) to (batch_size * seq_len, embedding_dim)
-	reshapedDOut, err := te.engine.Reshape(ctx, outputGradient, []int{outputGradient.Shape()[0] * outputGradient.Shape()[1], outputGradient.Shape()[2]})
+	// Reshape outputGradient from [inputShape..., embedding_dim] to [N, embedding_dim]
+	ogShape := outputGradient.Shape()
+	if len(ogShape) < 2 {
+		return nil, fmt.Errorf("outputGradient must have at least 2 dims, got %v", ogShape)
+	}
+	embDim := ogShape[len(ogShape)-1]
+	N := 1
+	for i := 0; i < len(ogShape)-1; i++ {
+		N *= ogShape[i]
+	}
+	reshapedDOut, err := te.engine.Reshape(ctx, outputGradient, []int{N, embDim})
 	if err != nil {
 		return nil, fmt.Errorf("failed to reshape outputGradient for ScatterAdd: %w", err)
 	}
 
-	// Flatten inputTokenIDs from (batch_size, seq_len) to (batch_size * seq_len)
-	N := te.inputTokenIDs.Shape()[0] * te.inputTokenIDs.Shape()[1]
-	flatIDsData := make([]int, N)
+	// Flatten inputTokenIDs from inputShape to [N]
+	idsShape := te.inputTokenIDs.Shape()
+	total := 1
+	for _, d := range idsShape {
+		total *= d
+	}
+	flatIDsData := make([]int, total)
 	copy(flatIDsData, te.inputTokenIDs.Data())
-	reshapedInputTokenIDs, err := tensor.New[int]([]int{N}, flatIDsData)
+	reshapedInputTokenIDs, err := tensor.New[int]([]int{total}, flatIDsData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build flattened inputTokenIDs for ScatterAdd: %w", err)
 	}
@@ -194,3 +238,19 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMo
 	// So, return nil for input gradients.
 	return nil, nil
 }
+
+// OpType returns the operation type of the TokenEmbedding layer.
+func (te *TokenEmbedding[T]) OpType() string {
+	return "TokenEmbedding"
+}
+
+// Attributes returns the attributes of the TokenEmbedding layer.
+func (te *TokenEmbedding[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"vocab_size":    te.vocabSize,
+		"embedding_dim": te.embeddingDim,
+	}
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*TokenEmbedding[float32])(nil)
