@@ -2,6 +2,7 @@ package data
 
 import (
 	"math"
+	"sort"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -57,10 +58,18 @@ func LoadDatasetFromParquet(path string) (*Dataset, error) {
 	}
 
 	dataset := &Dataset{}
-	for era, stocks := range eras {
+	
+	// Sort eras to ensure consistent ordering
+	eraKeys := make([]int, 0, len(eras))
+	for era := range eras {
+		eraKeys = append(eraKeys, era)
+	}
+	sort.Ints(eraKeys)
+	
+	for _, era := range eraKeys {
 		dataset.Eras = append(dataset.Eras, EraData{
 			Era:    era,
-			Stocks: stocks,
+			Stocks: eras[era],
 		})
 	}
 
