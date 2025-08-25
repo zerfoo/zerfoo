@@ -24,9 +24,9 @@ func NewModel[T tensor.Numeric](embedding *embeddings.TokenEmbedding[T], g *grap
 }
 
 // Forward performs the forward pass of the model.
-func (m *Model[T]) Forward(ctx context.Context, inputs *tensor.TensorNumeric[int]) (*tensor.TensorNumeric[T], error) {
+func (m *Model[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// 1. Get embeddings
-	embeddingTensors, err := m.Embedding.Forward(ctx, inputs)
+	embeddingTensors, err := m.Embedding.Forward(ctx, inputs...)
 	if err != nil {
 		return nil, err
 	}
