@@ -153,3 +153,6 @@ func (r *ReduceSum[T]) Backward(ctx context.Context, _ types.BackwardMode, outpu
 
 	return []*tensor.TensorNumeric[T]{grad}, nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*ReduceSum[float32])(nil)
