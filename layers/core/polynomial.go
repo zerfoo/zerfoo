@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
@@ -331,7 +332,7 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, mode types.Backward
 
 // Parameters returns the parameters of the layer.
 // Polynomial expansion has no trainable parameters.
-func (p *PolynomialExpansion[T]) Parameters() []*tensor.TensorNumeric[T] {
+func (p *PolynomialExpansion[T]) Parameters() []*graph.Parameter[T] {
 	return nil
 }
 
@@ -385,3 +386,6 @@ func (p *PolynomialExpansion[T]) Attributes() map[string]interface{} {
 		"include_bias": p.includeBias,
 	}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*PolynomialExpansion[float32])(nil)

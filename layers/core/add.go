@@ -57,3 +57,6 @@ func (a *Add[T]) Attributes() map[string]any {
 func (a *Add[T]) OpType() string {
 	return "Add"
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Add[float32])(nil)

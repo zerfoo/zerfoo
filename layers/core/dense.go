@@ -193,3 +193,6 @@ func (d *Dense[T]) OpType() string {
 func (d *Dense[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"with_bias": d.bias != nil}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Dense[float32])(nil)
