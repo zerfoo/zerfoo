@@ -128,3 +128,6 @@ func (s *AllReduceStrategy[T]) Shutdown() {
 		s.crossNodeStrategy.Shutdown()
 	}
 }
+
+// Statically assert that the type implements the interface.
+var _ InternalStrategy[float32] = (*AllReduceStrategy[float32])(nil)
