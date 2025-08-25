@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestAttentionHead_Backward_GradientShapeAndFlow(t *testing.T) {
@@ -39,7 +40,7 @@ func TestAttentionHead_Backward_GradientShapeAndFlow(t *testing.T) {
 		dOut.Data()[i] = 1.0 // simple all-ones upstream grad
 	}
 
-	grads, err := ah.Backward(context.Background(), dOut, inp)
+	grads, err := ah.Backward(context.Background(), types.FullBackprop, dOut, inp)
 	testutils.AssertNoError(t, err, "backward")
 	testutils.AssertEqual(t, 1, len(grads), "grads len")
 

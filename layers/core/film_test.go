@@ -2,9 +2,9 @@ package core
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -20,20 +20,15 @@ func TestFiLM_Forward(t *testing.T) {
 	featureDim := 8
 
 	film, err := NewFiLM[float32]("test_film", engine, ops, contextDim, featureDim)
-	if err != nil {
-		t.Fatalf("NewFiLM returned error: %v", err)
-	}
+	assert.NoError(t, err)
 
 	feature, _ := tensor.New[float32]([]int{1, featureDim}, make([]float32, featureDim))
 	contextTensor, _ := tensor.New[float32]([]int{1, contextDim}, make([]float32, contextDim))
 
 	output, err := film.Forward(ctx, feature, contextTensor)
-	if err != nil {
-		t.Fatalf("Forward returned error: %v", err)
-	}
-	if !reflect.DeepEqual([]int{1, featureDim}, output.Shape()) {
-		t.Errorf("unexpected output shape: got %v want %v", output.Shape(), []int{1, featureDim})
-	}
+
+	assert.NoError(t, err)
+	assert.Equal(t, []int{1, featureDim}, output.Shape())
 }
 
 func TestFiLM_Backward(t *testing.T) {
@@ -45,9 +40,7 @@ func TestFiLM_Backward(t *testing.T) {
 	featureDim := 8
 
 	film, err := NewFiLM[float32]("test_film", engine, ops, contextDim, featureDim)
-	if err != nil {
-		t.Fatalf("NewFiLM returned error: %v", err)
-	}
+	assert.NoError(t, err)
 
 	featureData := make([]float32, featureDim)
 	for i := range featureData {
@@ -63,9 +56,7 @@ func TestFiLM_Backward(t *testing.T) {
 
 	// Forward pass to populate intermediate values
 	_, err = film.Forward(ctx, feature, contextTensor)
-	if err != nil {
-		t.Fatalf("Forward returned error: %v", err)
-	}
+	assert.NoError(t, err)
 
 	// Dummy output gradient
 	outputGradientData := make([]float32, featureDim)
@@ -75,33 +66,21 @@ func TestFiLM_Backward(t *testing.T) {
 	outputGradient, _ := tensor.New[float32]([]int{1, featureDim}, outputGradientData)
 
 	inputGradients, err := film.Backward(ctx, types.FullBackprop, outputGradient, feature, contextTensor)
-	if err != nil {
-		t.Fatalf("Backward returned error: %v", err)
-	}
-	if len(inputGradients) != 2 {
-		t.Fatalf("expected 2 input gradients, got %d", len(inputGradients))
-	}
+
+	assert.NoError(t, err)
+	assert.Len(t, inputGradients, 2)
 
 	dFeature := inputGradients[0]
 	dContext := inputGradients[1]
 
-	if !reflect.DeepEqual(feature.Shape(), dFeature.Shape()) {
-		t.Errorf("unexpected dFeature shape: got %v want %v", dFeature.Shape(), feature.Shape())
-	}
-	if !reflect.DeepEqual(contextTensor.Shape(), dContext.Shape()) {
-		t.Errorf("unexpected dContext shape: got %v want %v", dContext.Shape(), contextTensor.Shape())
-	}
+	assert.Equal(t, feature.Shape(), dFeature.Shape())
+	assert.Equal(t, contextTensor.Shape(), dContext.Shape())
 
 	// Check that parameter gradients are populated
 	params := film.Parameters()
 	for _, p := range params {
-		if p.Gradient == nil {
-			t.Errorf("expected parameter gradient to be populated")
-			continue
-		}
-		if !reflect.DeepEqual(p.Value.Shape(), p.Gradient.Shape()) {
-			t.Errorf("unexpected param grad shape: got %v want %v", p.Gradient.Shape(), p.Value.Shape())
-		}
+		assert.NotNil(t, p.Gradient)
+		assert.Equal(t, p.Value.Shape(), p.Gradient.Shape())
 	}
 }
 
@@ -113,13 +92,9 @@ func TestFiLM_Parameters(t *testing.T) {
 	featureDim := 8
 
 	film, err := NewFiLM[float32]("test_film", engine, ops, contextDim, featureDim)
-	if err != nil {
-		t.Fatalf("NewFiLM returned error: %v", err)
-	}
+	assert.NoError(t, err)
 
 	params := film.Parameters()
 	// scaleGen weights + biasGen weights
-	if len(params) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(params))
-	}
+	assert.Len(t, params, 2)
 }

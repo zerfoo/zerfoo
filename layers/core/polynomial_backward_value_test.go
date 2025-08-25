@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Analytic check: for degree=2 with bias on 2 features, terms are
@@ -34,7 +35,7 @@ func TestPolynomialExpansion_BackwardValues_Deg2WithBias(t *testing.T) {
 	gOut, err := tensor.New(out.Shape(), gOutData)
 	testutils.AssertNoError(t, err, "new gout")
 
-	grads, err := poly.Backward(context.Background(), gOut)
+	grads, err := poly.Backward(context.Background(), types.FullBackprop, gOut, in)
 	testutils.AssertNoError(t, err, "backward")
 	testutils.AssertEqual(t, 1, len(grads), "grads len")
 

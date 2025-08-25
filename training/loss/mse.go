@@ -27,12 +27,7 @@ func NewMSE[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T
 }
 
 // Forward computes the loss value.
-func (m *MSE[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("MSE expects 2 inputs, got %d", len(inputs))
-	}
-	predictions := inputs[0]
-	targets := inputs[1]
+func (m *MSE[T]) Forward(ctx context.Context, predictions, targets *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	// Cache inputs for backward
 	m.predictions = predictions
 	m.targets = targets
@@ -93,27 +88,4 @@ func (m *MSE[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tenso
 	}
 
 	return []*tensor.TensorNumeric[T]{gradPred, nil}, nil
-}
-
-// OutputShape returns the output shape of the MSE loss function.
-func (m *MSE[T]) OutputShape() []int {
-	return []int{1}
-}
-
-// OpType returns the operation type of the MSE loss function.
-func (m *MSE[T]) OpType() string {
-	return "MSE"
-}
-
-// Attributes returns the attributes of the MSE loss function.
-func (m *MSE[T]) Attributes() map[string]interface{} {
-	return nil
-}
-
-// Statically assert that the type implements the graph.Node interface.
-var _ graph.Node[float32] = (*MSE[float32])(nil)
-
-// Parameters returns the parameters of the MSE loss function.
-func (m *MSE[T]) Parameters() []*graph.Parameter[T] {
-	return nil
 }

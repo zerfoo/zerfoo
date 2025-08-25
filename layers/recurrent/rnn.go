@@ -176,6 +176,3 @@ func (r *SimpleRNN[T]) Attributes() map[string]interface{} {
 
 // Ensure SimpleRNN implements the graph.Node interface.
 var _ graph.Node[float32] = (*SimpleRNN[float32])(nil)
-
-// Statically assert that the type implements the graph.Node interface.
-var _ graph.Node[float32] = (*SimpleRNN[float32])(nil)
