@@ -180,3 +180,6 @@ func (l *Linear[T]) OpType() string {
 func (l *Linear[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Linear[float32])(nil)

@@ -82,3 +82,6 @@ func (m *Mul[T]) OpType() string {
 func (m *Mul[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Mul[float32])(nil)

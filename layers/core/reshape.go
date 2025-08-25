@@ -74,3 +74,6 @@ func (r *Reshape[T]) OpType() string {
 func (r *Reshape[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"shape": r.targetShape}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Reshape[float32])(nil)

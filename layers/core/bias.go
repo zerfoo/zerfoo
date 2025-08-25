@@ -143,3 +143,6 @@ func (b *Bias[T]) OpType() string {
 func (b *Bias[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Bias[float32])(nil)

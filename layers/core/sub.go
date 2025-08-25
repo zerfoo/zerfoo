@@ -95,3 +95,6 @@ func (s *Sub[T]) OpType() string {
 func (s *Sub[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Sub[float32])(nil)

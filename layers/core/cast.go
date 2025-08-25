@@ -66,3 +66,6 @@ func (c *Cast[T]) OpType() string {
 func (c *Cast[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Cast[float32])(nil)

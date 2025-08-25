@@ -295,3 +295,6 @@ func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *te
 func (f *FFN[T]) Engine() compute.Engine[T] {
 	return f.engine
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*FFN[float32])(nil)

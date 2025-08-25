@@ -102,3 +102,6 @@ func (u *Unsqueeze[T]) OpType() string {
 func (u *Unsqueeze[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"axes": u.axes}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Unsqueeze[float32])(nil)

@@ -146,3 +146,6 @@ func (c *Concat[T]) OpType() string {
 func (c *Concat[T]) Attributes() map[string]interface{} {
 	return map[string]interface{}{"axis": c.axis}
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Concat[float32])(nil)
