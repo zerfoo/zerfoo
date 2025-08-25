@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // TestLayerNormalization_WithEpsilon tests LayerNormalization with custom epsilon option.
@@ -175,7 +176,7 @@ func TestLayerNormalization_Backward(t *testing.T) {
 	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
 
 	// Test backward pass
-	inputGrads, err := ln.Backward(ctx, gradTensor, inputTensor)
+	inputGrads, err := ln.Backward(ctx, types.FullBackprop, gradTensor, inputTensor)
 	if err != nil {
 		// If backward is not implemented, just verify it returns an error gracefully
 		testutils.AssertError(t, err, "Backward pass should return an error if not implemented")

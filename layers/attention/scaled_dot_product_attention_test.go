@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestNewScaledDotProductAttention_FunctionalOptions(t *testing.T) {
@@ -55,7 +56,7 @@ func TestNewScaledDotProductAttention_FunctionalOptions(t *testing.T) {
 	outputGrad, err := tensor.New[float32](expectedOutputShape, outputGradData)
 	testutils.AssertNoError(t, err, "failed to create output gradient tensor")
 
-	inputGrads, err := sdpa.Backward(context.Background(), outputGrad, q, k, v)
+	inputGrads, err := sdpa.Backward(context.Background(), types.FullBackprop, outputGrad, q, k, v)
 	testutils.AssertNoError(t, err, "backward pass failed")
 	testutils.AssertTrue(t, len(inputGrads) == 3, "expected 3 input gradients")
 	testutils.AssertNotNil(t, inputGrads[0], "expected non-nil dQ")

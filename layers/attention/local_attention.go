@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // LocalAttention implements a local, sliding-window self-attention mechanism.
@@ -124,11 +125,23 @@ func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.Tenso
 }
 
 // Backward delegates the backward pass to the wrapped GroupedQueryAttention.
-func (la *LocalAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return la.gqa.Backward(ctx, dOut, inputs...)
+func (la *LocalAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return la.gqa.Backward(ctx, mode, dOut, inputs...)
 }
 
 // OutputShape returns the output shape of the LocalAttention layer.
 func (la *LocalAttention[T]) OutputShape() []int {
 	return la.gqa.OutputShape()
+}
+
+// Attributes returns the attributes of the LocalAttention layer.
+func (la *LocalAttention[T]) Attributes() map[string]interface{} {
+	attrs := la.gqa.Attributes()
+	attrs["window_size"] = la.windowSize
+	return attrs
+}
+
+// OpType returns the operation type of the LocalAttention layer.
+func (la *LocalAttention[T]) OpType() string {
+	return "LocalAttention"
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 	"github.com/zerfoo/zmf"
 )
 
@@ -249,7 +250,7 @@ func (p *parameterNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric
 	return p.value, nil
 }
 
-func (p *parameterNode[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (p *parameterNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Parameters don't propagate gradients to inputs since they have no inputs
 	return nil, nil
 }

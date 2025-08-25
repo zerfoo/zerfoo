@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestFFN_Forward(t *testing.T) {
@@ -156,7 +157,7 @@ func TestFFN_Backward(t *testing.T) {
 	dOutTensor, _ := tensor.New[float64]([]int{batchSize, outputDim}, dOutData)
 
 	// Perform backward pass
-	dInputs, err := ffn.Backward(ctx, dOutTensor)
+	dInputs, err := ffn.Backward(ctx, types.FullBackprop, dOutTensor, inputTensor)
 	testutils.AssertNoError(t, err, "Backward pass should not return an error")
 	testutils.AssertEqual(t, len(dInputs), 1, "Expected 1 input gradient")
 	testutils.AssertNotNil(t, dInputs[0], "Input gradient should not be nil")

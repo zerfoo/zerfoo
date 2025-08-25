@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Cast is a layer that converts tensor elements to a different data type.
@@ -47,7 +48,7 @@ func (c *Cast[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T])
 }
 
 // Backward computes the gradients for the Cast layer.
-func (c *Cast[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (c *Cast[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		panic("Cast layer requires exactly 1 input")
 	}

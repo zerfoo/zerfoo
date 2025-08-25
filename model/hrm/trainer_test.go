@@ -13,6 +13,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 type mockOptimizer[T tensor.Numeric] struct {
@@ -33,7 +34,7 @@ func (l *mockLoss[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) 
 	return tensor.New[T]([]int{1}, nil)
 }
 
-func (l *mockLoss[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (l *mockLoss[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	grad, _ := tensor.New[T]([]int{1}, nil)
 	return []*tensor.TensorNumeric[T]{grad}, nil
 }

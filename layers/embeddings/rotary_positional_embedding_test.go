@@ -11,6 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestRotaryPositionalEmbedding_NewRotaryPositionalEmbedding(t *testing.T) {
@@ -165,7 +166,7 @@ func TestRotaryPositionalEmbedding_Backward(t *testing.T) {
 
 	expectedDInputData := []float64{0.1, 0.2, 0.3, 0.4, 0.8591808422995973, 0.6079698669173325, -0.04252387829625043, 0.7939601003328323}
 
-	dInputs, err := rpe.Backward(ctx, dOutTensor)
+	dInputs, err := rpe.Backward(ctx, types.FullBackprop, dOutTensor)
 	testutils.AssertNoError(t, err, "Backward should not return an error")
 	testutils.AssertNotNil(t, dInputs, "dInputs should not be nil")
 	testutils.AssertEqual(t, len(dInputs), 1, "expected 1 input gradient")
@@ -216,7 +217,7 @@ func TestRotaryPositionalEmbedding_SimpleCase(t *testing.T) {
 	dOutData := []float64{0.5, 0.6}
 	dOutTensor, _ := tensor.New[float64]([]int{1, 1, 2}, dOutData)
 
-	dInputs, err := rpe.Backward(ctx, dOutTensor)
+	dInputs, err := rpe.Backward(ctx, types.FullBackprop, dOutTensor)
 	testutils.AssertNoError(t, err, "Backward should not return an error")
 	testutils.AssertNotNil(t, dInputs, "dInputs should not be nil")
 	testutils.AssertEqual(t, len(dInputs), 1, "expected 1 input gradient")

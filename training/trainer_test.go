@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
 	"github.com/zerfoo/zerfoo/training"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 type mockNode[T tensor.Numeric] struct {
@@ -29,7 +30,7 @@ func (m *mockNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) 
 	return tensor.New[T](m.outputShape, nil)
 }
 
-func (m *mockNode[T]) Backward(_ context.Context, grad *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (m *mockNode[T]) Backward(_ context.Context, _ types.BackwardMode, grad *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if m.backwardErr {
 		return nil, errors.New("backward error")
 	}

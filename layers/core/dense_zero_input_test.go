@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
@@ -41,9 +42,10 @@ func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
 
 				inputTensor, err := tensor.New[float32]([]int{batchSize, inputSize}, make([]float32, batchSize*inputSize))
 				testutils.AssertNil(t, err, "New tensor for inputTensor should not return an error")
+				testutils.AssertNotNil(t, inputTensor, "Input tensor should not be nil")
 
-				// This call is expected to panic
-				_, err = dense.Backward(context.Background(), outputGradient, inputTensor)
+				// This call is expected to return an error (not panic)
+				_, err = dense.Backward(context.Background(), types.FullBackprop, outputGradient, inputTensor)
 				testutils.AssertNotNil(t, err, "Backward should return an error, not panic") // Expecting an error, not a panic
 			},
 		},

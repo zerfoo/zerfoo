@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestLinear(t *testing.T) {
@@ -33,7 +34,7 @@ func TestLinear(t *testing.T) {
 	gradOutput, err := tensor.New[float32]([]int{1, 5}, []float32{1, 1, 1, 1, 1})
 	testutils.AssertNoError(t, err, "expected no error when creating gradient output tensor, got %v")
 
-	gradInput, _ := layer.Backward(context.Background(), gradOutput)
+	gradInput, _ := layer.Backward(context.Background(), types.FullBackprop, gradOutput, input)
 	testutils.AssertNotNil(t, gradInput, "expected gradient input to not be nil")
 
 	// Test the SetName method of the linear layer

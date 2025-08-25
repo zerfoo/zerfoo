@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // TestDense_NewBiasSpecificError attempts to trigger the specific error path
@@ -153,7 +154,7 @@ func testBasicDenseOperation(t *testing.T, dense *Dense[float32], inputSize, out
 	outputGrad, err := tensor.New(outputShape, gradData)
 	testutils.AssertNoError(t, err, "expected no error creating output gradient")
 
-	inputGrads, _ := dense.Backward(context.Background(), outputGrad, input)
+	inputGrads, _ := dense.Backward(context.Background(), types.FullBackprop, outputGrad, input)
 	testutils.AssertTrue(t, len(inputGrads) == 1, "expected 1 input gradient")
 	testutils.AssertTrue(t, inputGrads[0] != nil, "expected non-nil input gradient")
 

@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // LMHead is a linear layer that maps hidden states to vocabulary logits.
@@ -60,8 +61,8 @@ func (h *LMHead[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 }
 
 // Backward computes the backward pass of the LMHead.
-func (h *LMHead[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return h.linear.Backward(ctx, dOut, inputs...)
+func (h *LMHead[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return h.linear.Backward(ctx, mode, dOut, inputs...)
 }
 
 // Parameters returns the parameters of the LMHead.

@@ -11,6 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/embeddings" // For RoPE
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // GroupedQueryAttention implements grouped query attention mechanism.
@@ -454,7 +455,7 @@ func (gqa *GroupedQueryAttention[T]) backwardSplitAndReshape(ctx context.Context
 }
 
 // Backward computes the gradients for GroupedQueryAttention.
-func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
@@ -464,7 +465,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	seqLen := input.Shape()[1]
 
 	// 1. Backward through final linear projection (WO)
-	dAttnOutputFinal, err := gqa.wo.Backward(ctx, dOut, gqa.attnOutput)
+	dAttnOutputFinal, err := gqa.wo.Backward(ctx, mode, dOut, gqa.attnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +489,7 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	}
 
 	// 3. Backward through Scaled Dot-Product Attention
-	dQKVSplit, err := gqa.scaledDotProductAttention.Backward(ctx, dAttnOutputHeads, gqa.scaledDotProductAttention.q, gqa.scaledDotProductAttention.k, gqa.scaledDotProductAttention.v)
+	dQKVSplit, err := gqa.scaledDotProductAttention.Backward(ctx, mode, dAttnOutputHeads, gqa.scaledDotProductAttention.q, gqa.scaledDotProductAttention.k, gqa.scaledDotProductAttention.v)
 	if err != nil {
 		return nil, err
 	}
@@ -496,12 +497,12 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	dQHeadsRoPE, dKHeadsRoPE, dVHeads := dQKVSplit[0], dQKVSplit[1], dQKVSplit[2]
 
 	// 4. Backward through RoPE
-	dQForRoPE, err := gqa.rope.Backward(ctx, dQHeadsRoPE)
+	dQForRoPE, err := gqa.rope.Backward(ctx, mode, dQHeadsRoPE)
 	if err != nil {
 		return nil, err
 	}
 
-	dKForRoPE, err := gqa.rope.Backward(ctx, dKHeadsRoPE)
+	dKForRoPE, err := gqa.rope.Backward(ctx, mode, dKHeadsRoPE)
 	if err != nil {
 		return nil, err
 	}
@@ -513,17 +514,17 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, dOut *tensor.
 	}
 
 	// 6. Backward through linear projections (WQ, WK, WV)
-	dInputQ, err := gqa.wq.Backward(ctx, dQProj, input)
+	dInputQ, err := gqa.wq.Backward(ctx, mode, dQProj, input)
 	if err != nil {
 		return nil, err
 	}
 
-	dInputK, err := gqa.wk.Backward(ctx, dKProj, input)
+	dInputK, err := gqa.wk.Backward(ctx, mode, dKProj, input)
 	if err != nil {
 		return nil, err
 	}
 
-	dInputV, err := gqa.wv.Backward(ctx, dVProj, input)
+	dInputV, err := gqa.wv.Backward(ctx, mode, dVProj, input)
 	if err != nil {
 		return nil, err
 	}

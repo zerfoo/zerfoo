@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestAdd(t *testing.T) {
@@ -32,7 +33,7 @@ func TestAdd(t *testing.T) {
 	// Test Backward pass
 	dOut, _ := tensor.New[float32]([]int{1, 4}, []float32{1, 1, 1, 1})
 
-	grads, err := add.Backward(context.Background(), dOut)
+	grads, err := add.Backward(context.Background(), types.FullBackprop, dOut)
 	if err != nil {
 		t.Fatalf("Backward pass failed: %v", err)
 	}

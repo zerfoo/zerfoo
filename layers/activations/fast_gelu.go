@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // FastGelu is an approximation of the GELU activation function.
@@ -44,7 +45,8 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	}
 
 	// 2. 0.044715 * x^3
-	term1, err := g.engine.MulScalar(ctx, x3, T(0.044715))
+	ops := g.engine.Ops()
+	term1, err := g.engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +58,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	}
 
 	// 4. sqrt(2/pi) * (x + 0.044715 * x^3)
-	term3, err := g.engine.MulScalar(ctx, term2, T(math.Sqrt(2/math.Pi)))
+	term3, err := g.engine.MulScalar(ctx, term2, ops.FromFloat64(math.Sqrt(2/math.Pi)))
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +72,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	}
 
 	// 6. 1 + tanh(...)
-	term4, err := g.engine.AddScalar(ctx, tanh, T(1))
+	term4, err := g.engine.AddScalar(ctx, tanh, ops.One())
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +84,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	}
 
 	// 8. 0.5 * ...
-	output, err := g.engine.MulScalar(ctx, term5, T(0.5))
+	output, err := g.engine.MulScalar(ctx, term5, ops.FromFloat64(0.5))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +93,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 }
 
 // Backward applies the backward pass of the FastGelu layer.
-func (g *FastGelu[T]) Backward(_ context.Context, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (g *FastGelu[T]) Backward(_ context.Context, mode types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

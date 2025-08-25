@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Dense is a fully connected layer that combines a linear transformation and a bias.
@@ -126,7 +127,7 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward computes the gradients.
-func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (d *Dense[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	originalInputShape := inputs[0].Shape()
 	// Reshape outputGradient to 2D if original input was N-D
 	if len(originalInputShape) > 2 {
@@ -146,7 +147,7 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 	var linearInputGradient *tensor.TensorNumeric[T]
 
 	if d.bias != nil {
-		biasGrads, err := d.bias.Backward(ctx, outputGradient)
+		biasGrads, err := d.bias.Backward(ctx, mode, outputGradient)
 		if err != nil {
 			return nil, err
 		}
@@ -156,7 +157,7 @@ func (d *Dense[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNu
 		linearInputGradient = outputGradient
 	}
 
-	linearGrads, err := d.linear.Backward(ctx, linearInputGradient)
+	linearGrads, err := d.linear.Backward(ctx, mode, linearInputGradient)
 	if err != nil {
 		return nil, err
 	}

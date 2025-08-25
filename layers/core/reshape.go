@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Reshape is a layer that changes the shape of a tensor without changing its data.
@@ -47,7 +48,7 @@ func (r *Reshape[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 }
 
 // Backward computes the gradients for the Reshape layer.
-func (r *Reshape[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (r *Reshape[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		panic("Reshape layer requires exactly 1 input")
 	}

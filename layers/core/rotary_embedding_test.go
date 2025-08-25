@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestRotaryEmbedding_Forward_Shape(t *testing.T) {
@@ -66,7 +67,7 @@ func TestRotaryEmbedding_Backward_Shape(t *testing.T) {
 		dOut.Data()[i] = 1.0
 	}
 
-	dIn, err := re.Backward(context.Background(), dOut, inp)
+	dIn, err := re.Backward(context.Background(), types.FullBackprop, dOut, inp)
 	if err != nil {
 		t.Fatalf("backward failed: %v", err)
 	}

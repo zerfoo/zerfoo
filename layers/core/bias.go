@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // Bias adds a bias vector to its input.
@@ -110,7 +111,7 @@ func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 }
 
 // Backward computes the gradients.
-func (b *Bias[T]) Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (b *Bias[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Gradient with respect to biases: sum of output_gradient along batch dimension
 	biasesGrad, err := b.engine.Sum(ctx, outputGradient, 0, false)
 	if err != nil {

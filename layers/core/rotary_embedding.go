@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // RotaryEmbedding applies rotary position embedding to input tensors.
@@ -88,7 +89,7 @@ func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 }
 
 // Backward computes the gradients for the RotaryEmbedding layer.
-func (r *RotaryEmbedding[T]) Backward(_ context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (r *RotaryEmbedding[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
 		panic("RotaryEmbedding layer requires at least 1 input")
 	}
@@ -98,7 +99,7 @@ func (r *RotaryEmbedding[T]) Backward(_ context.Context, outputGradient *tensor.
 		return []*tensor.TensorNumeric[T]{outputGradient}, nil
 	}
 
-	dInputs, err := r.inner.Backward(context.Background(), outputGradient)
+	dInputs, err := r.inner.Backward(context.Background(), mode, outputGradient)
 	if err != nil {
 		return nil, err
 	}

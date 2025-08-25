@@ -22,18 +22,18 @@ func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, er
 		err     error
 	)
 
-	// This is a bit of a hack. A better way would be to use type assertions
-	// on a generic interface or pass the type information explicitly.
-	var zero T
-	switch any(zero).(type) {
-	case float32:
+	switch data := any(t.Data()).(type) {
+	case []float32:
 		tensorProto.Dtype = zmf.Tensor_FLOAT32
-		rawData, err = encodeFloat32(t.Data())
-	case float16.Float16:
+		rawData, err = encodeFloat32(data)
+	case []float16.Float16:
 		tensorProto.Dtype = zmf.Tensor_FLOAT16
-		rawData, err = encodeFloat16(t.Data())
+		rawData, err = encodeFloat16(data)
+	case []int8:
+		tensorProto.Dtype = zmf.Tensor_INT8
+		rawData, err = encodeInt8(data)
 	default:
-		return nil, fmt.Errorf("unsupported tensor type for encoding: %T", zero)
+		return nil, fmt.Errorf("unsupported tensor type for encoding: %T", t.DType())
 	}
 
 	if err != nil {
@@ -45,22 +45,30 @@ func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, er
 	return tensorProto, nil
 }
 
-func encodeFloat32[T tensor.Numeric](data []T) ([]byte, error) {
+func encodeFloat32(data []float32) ([]byte, error) {
 	rawData := make([]byte, len(data)*4)
 	for i, val := range data {
-		bits := math.Float32bits(float32(val))
+		bits := math.Float32bits(val)
 		binary.LittleEndian.PutUint32(rawData[i*4:], bits)
 	}
 
 	return rawData, nil
 }
 
-func encodeFloat16[T tensor.Numeric](data []T) ([]byte, error) {
+func encodeFloat16(data []float16.Float16) ([]byte, error) {
 	rawData := make([]byte, len(data)*2)
 	for i, val := range data {
-		f16 := float16.FromFloat32(float32(val))
-		bits := f16.Bits()
+		bits := val.Bits()
 		binary.LittleEndian.PutUint16(rawData[i*2:], bits)
+	}
+
+	return rawData, nil
+}
+
+func encodeInt8(data []int8) ([]byte, error) {
+	rawData := make([]byte, len(data))
+	for i, v := range data {
+		rawData[i] = byte(v)
 	}
 
 	return rawData, nil

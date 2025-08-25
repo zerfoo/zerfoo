@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // FFN (Feed-Forward Network) implements a two-layer MLP with SwiGLU activation.
@@ -234,9 +235,9 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 }
 
 // Backward computes the backward pass of the FFN.
-func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Backward through W2
-	dSwiGLUOutput, err := f.w2.Backward(ctx, dOut, f.swiGLUOutput)
+	dSwiGLUOutput, err := f.w2.Backward(ctx, mode, dOut, f.swiGLUOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +251,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	}
 
 	// Backward through SwiGLU
-	dSwiGLUInputs, err := f.swiglu.Backward(ctx, dSwiGLUOutputTensor, swigluInput)
+	dSwiGLUInputs, err := f.swiglu.Backward(ctx, mode, dSwiGLUOutputTensor, swigluInput)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +267,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	dW1Output, dW3Output := splitGrads[0], splitGrads[1]
 
 	// Backward through W1
-	dInputW1, err := f.w1.Backward(ctx, dW1Output, f.inputTensor)
+	dInputW1, err := f.w1.Backward(ctx, mode, dW1Output, f.inputTensor)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +275,7 @@ func (f *FFN[T]) Backward(ctx context.Context, dOut *tensor.TensorNumeric[T], _ 
 	dInputW1Tensor := dInputW1[0]
 
 	// Backward through W3
-	dInputW3, err := f.w3.Backward(ctx, dW3Output, f.inputTensor)
+	dInputW3, err := f.w3.Backward(ctx, mode, dW3Output, f.inputTensor)
 	if err != nil {
 		return nil, err
 	}

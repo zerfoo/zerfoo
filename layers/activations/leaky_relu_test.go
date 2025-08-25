@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestLeakyReLU_Forward(t *testing.T) {
@@ -36,7 +37,7 @@ func TestLeakyReLU_Backward(t *testing.T) {
 
 	outputGradient, _ := tensor.New[int]([]int{1, 2}, []int{1, 2})
 
-	inputGrads, err := leakyrelu.Backward(context.Background(), outputGradient, input)
+	inputGrads, err := leakyrelu.Backward(context.Background(), types.FullBackprop, outputGradient, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

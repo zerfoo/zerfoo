@@ -5,17 +5,19 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 // ActivationLayer defines the interface for activation layers used in tests.
 type ActivationLayer[T tensor.Numeric] interface {
 	Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
-	Backward(ctx context.Context, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error)
+	Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error)
 }
 
 // testActivationForward is a common helper for testing activation forward passes.
 func testActivationForward[T tensor.Numeric](t *testing.T, activation ActivationLayer[T]) {
-	input, _ := tensor.New[T]([]int{1, 2}, []T{T(1), T(2)})
+	// Use zero-initialized input; we only assert shape.
+	input, _ := tensor.New[T]([]int{1, 2}, nil)
 
 	output, err := activation.Forward(context.Background(), input)
 	if err != nil {
@@ -34,7 +36,7 @@ func testActivationBackward[T tensor.Numeric](t *testing.T, activation Activatio
 	output, _ := activation.Forward(ctx, input)
 	outputGrad, _ := tensor.New[T](output.Shape(), tensor.Ones[T](len(inputData)))
 
-	inputGrad, err := activation.Backward(ctx, outputGrad, input)
+	inputGrad, err := activation.Backward(ctx, types.FullBackprop, outputGrad, input)
 	if err != nil {
 		t.Fatalf("Backward failed: %v", err)
 	}
@@ -52,7 +54,7 @@ func testActivationCoverage[T tensor.Numeric](t *testing.T, newActivationFunc fu
 
 	// Test forward error
 	activation := newActivationFunc()
-	input, _ := tensor.New[T]([]int{1, 1}, []T{T(1)})
+	input, _ := tensor.New[T]([]int{1, 1}, nil)
 
 	_, err := activation.Forward(context.Background(), input)
 	if err != nil {
@@ -61,7 +63,7 @@ func testActivationCoverage[T tensor.Numeric](t *testing.T, newActivationFunc fu
 	}
 
 	// Test output shape
-	input2, _ := tensor.New[T]([]int{1, 5}, []T{T(1), T(2), T(3), T(4), T(5)})
+	input2, _ := tensor.New[T]([]int{1, 5}, nil)
 	activation2 := newActivationFunc()
 	_, _ = activation2.Forward(context.Background(), input2)
 	// OutputShape test would be activation-specific
