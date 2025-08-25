@@ -57,10 +57,11 @@ func TestCrossEntropyLoss_Forward_Simple(t *testing.T) {
 	predictions, err := tensor.New[float32](predShape, predData)
 	testutils.AssertNoError(t, err, "Failed to create predictions tensor")
 
-	// Targets: [batch=2]
+	// Targets: [batch=2] as float32 (labels will be converted to int internally)
 	targetShape := []int{2}
-	targetData := []int{2, 0} // True classes
-	targets, err := tensor.New[int](targetShape, targetData)
+	targetDataI := []int{2, 0} // True classes
+	targetData := []float32{float32(targetDataI[0]), float32(targetDataI[1])}
+	targets, err := tensor.New[float32](targetShape, targetData)
 	testutils.AssertNoError(t, err, "Failed to create targets tensor")
 
 	// Test forward pass - this will likely fail due to missing engine methods
@@ -93,8 +94,8 @@ func TestCrossEntropyLoss_Forward_EdgeCases(t *testing.T) {
 	testutils.AssertNoError(t, err, "Failed to create predictions tensor")
 
 	targetShape := []int{1}
-	targetData := []int{0}
-	targets, err := tensor.New[int](targetShape, targetData)
+	targetData := []float32{0}
+	targets, err := tensor.New[float32](targetShape, targetData)
 	testutils.AssertNoError(t, err, "Failed to create targets tensor")
 
 	// Test forward pass
@@ -124,8 +125,12 @@ func TestCrossEntropyLoss_Forward_3D(t *testing.T) {
 	testutils.AssertNoError(t, err, "Failed to create predictions tensor")
 
 	targetShape := []int{2, 3} // 2 batch, 3 sequence
-	targetData := []int{0, 1, 2, 3, 0, 1}
-	targets, err := tensor.New[int](targetShape, targetData)
+	targetDataI := []int{0, 1, 2, 3, 0, 1}
+	targetData := make([]float32, len(targetDataI))
+	for i, v := range targetDataI {
+		targetData[i] = float32(v)
+	}
+	targets, err := tensor.New[float32](targetShape, targetData)
 	testutils.AssertNoError(t, err, "Failed to create targets tensor")
 
 	// Test forward pass

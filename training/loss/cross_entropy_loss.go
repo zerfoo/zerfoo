@@ -3,6 +3,7 @@ package loss
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -39,8 +40,35 @@ func (cel *CrossEntropyLoss[T]) Parameters() []*graph.Parameter[T] {
 }
 
 // Forward computes the cross-entropy loss.
-// Inputs: predictions (logits), targets (int labels).
-func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, predictions *tensor.TensorNumeric[T], targets *tensor.TensorNumeric[int]) (*tensor.TensorNumeric[T], error) {
+// Inputs: predictions (logits as T), targets (labels as T that will be converted to int indices).
+func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("CrossEntropyLoss expects 2 inputs, got %d", len(inputs))
+	}
+	predictions := inputs[0]
+	targetsT := inputs[1]
+	// Convert targets from type T to int indices
+	tShape := targetsT.Shape()
+	flat := 1
+	for _, d := range tShape {
+		flat *= d
+	}
+	intData := make([]int, flat)
+	dataT := targetsT.Data()
+	for i := 0; i < flat; i++ {
+		switch v := any(dataT[i]).(type) {
+		case float32:
+			intData[i] = int(v)
+		case float64:
+			intData[i] = int(v)
+		default:
+			return nil, fmt.Errorf("CrossEntropyLoss requires targets convertible to int; unsupported element type %T", v)
+		}
+	}
+	targets, err := tensor.New[int](tShape, intData)
+	if err != nil {
+		return nil, err
+	}
 	cel.outputShape = []int{1} // Loss is a scalar
 
 	cel.predictions = predictions // Cache for backward
@@ -142,3 +170,16 @@ func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMo
 	// Loss function does not pass gradients back to targets (they are ground truth).
 	return []*tensor.TensorNumeric[T]{finalGradPredictions, nil}, nil
 }
+
+// OpType returns the operation type of the CrossEntropyLoss layer.
+func (cel *CrossEntropyLoss[T]) OpType() string {
+	return "CrossEntropyLoss"
+}
+
+// Attributes returns the attributes of the CrossEntropyLoss layer.
+func (cel *CrossEntropyLoss[T]) Attributes() map[string]interface{} {
+	return nil
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*CrossEntropyLoss[float32])(nil)
