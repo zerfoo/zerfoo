@@ -127,3 +127,6 @@ func (ga *GlobalAttention[T]) OutputShape() []int {
 func (ga *GlobalAttention[T]) ScaleRope(ctx context.Context, factor float64) error {
 	return ga.gqa.ScaleRope(ctx, factor)
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*GlobalAttention[float32])(nil)
