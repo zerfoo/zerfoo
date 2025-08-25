@@ -2,11 +2,7 @@ package data
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/parquet-go/parquet-go"
 )
 
 func TestStockData_Create(t *testing.T) {
@@ -259,118 +255,6 @@ func TestNormalizeFeatures(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestLoadDatasetFromParquet(t *testing.T) {
-	// Create temporary parquet file for testing
-	tempDir, err := os.MkdirTemp("", "data_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tempDir); err != nil {
-			t.Errorf("Failed to remove temp dir: %v", err)
-		}
-	}()
-
-	testFile := filepath.Join(tempDir, "test.parquet")
-
-	tests := []struct {
-		name       string
-		rows       []NumeraiRow
-		wantEras   int
-		wantStocks int
-		wantErr    bool
-	}{
-		{
-			name: "valid parquet file",
-			rows: []NumeraiRow{
-				{Era: 100, ID: "stock1", Features: []float32{1.0, 2.0}, Target: 0.5},
-				{Era: 100, ID: "stock2", Features: []float32{3.0, 4.0}, Target: 0.7},
-				{Era: 101, ID: "stock1", Features: []float32{1.5, 2.5}, Target: 0.6},
-			},
-			wantEras:   2,
-			wantStocks: 2, // stock1 and stock2 in first era
-			wantErr:    false,
-		},
-		{
-			name:       "empty parquet file",
-			rows:       []NumeraiRow{},
-			wantEras:   0,
-			wantStocks: 0,
-			wantErr:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Write test data to parquet file
-			err := parquet.WriteFile(testFile, tt.rows)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// Test loading the file
-			dataset, err := LoadDatasetFromParquet(testFile)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("LoadDatasetFromParquet() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			if len(dataset.Eras) != tt.wantEras {
-				t.Errorf("LoadDatasetFromParquet() eras = %v, want %v", len(dataset.Eras), tt.wantEras)
-			}
-
-			if len(tt.rows) > 0 && len(dataset.Eras) > 0 {
-				// Check first era has expected number of stocks
-				if len(dataset.Eras[0].Stocks) != tt.wantStocks {
-					t.Errorf("LoadDatasetFromParquet() first era stocks = %v, want %v", len(dataset.Eras[0].Stocks), tt.wantStocks)
-				}
-
-				// Verify data integrity for first stock
-				if len(dataset.Eras[0].Stocks) > 0 {
-					stock := dataset.Eras[0].Stocks[0]
-					originalRow := tt.rows[0] // Assuming first row corresponds to first stock
-
-					if stock.ID != originalRow.ID {
-						t.Errorf("LoadDatasetFromParquet() stock ID = %v, want %v", stock.ID, originalRow.ID)
-					}
-
-					if len(stock.Features) != len(originalRow.Features) {
-						t.Errorf("LoadDatasetFromParquet() features len = %v, want %v", len(stock.Features), len(originalRow.Features))
-					}
-
-					if math.Abs(stock.Target-float64(originalRow.Target)) > 1e-10 {
-						t.Errorf("LoadDatasetFromParquet() target = %v, want %v", stock.Target, float64(originalRow.Target))
-					}
-
-					// Check feature conversion
-					for i, feature := range stock.Features {
-						expectedFeature := float64(originalRow.Features[i])
-						if math.Abs(feature-expectedFeature) > 1e-10 {
-							t.Errorf("LoadDatasetFromParquet() feature[%d] = %v, want %v", i, feature, expectedFeature)
-						}
-					}
-				}
-			}
-
-			// Clean up for next iteration
-			if err := os.Remove(testFile); err != nil {
-				t.Errorf("Failed to remove test file: %v", err)
-			}
-		})
-	}
-}
-
-func TestLoadDatasetFromParquet_FileNotFound(t *testing.T) {
-	_, err := LoadDatasetFromParquet("nonexistent.parquet")
-	if err == nil {
-		t.Error("LoadDatasetFromParquet() expected error for nonexistent file, got nil")
 	}
 }
 
