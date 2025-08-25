@@ -28,3 +28,6 @@ func (s *DefaultBackpropStrategy[T]) ComputeGradients(
 ) (T, error) {
 	return computeGradientsCommon[T](ctx, g, loss, batch, types.FullBackprop)
 }
+
+// Statically assert that the type implements the GradientStrategy interface.
+var _ GradientStrategy[float32] = (*DefaultBackpropStrategy[float32])(nil)

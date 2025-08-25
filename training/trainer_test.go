@@ -87,9 +87,6 @@ func TestDefaultTrainer(t *testing.T) {
 	}
 	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
 
-	_, err = trainer.TrainStep(context.Background(), training.Batch[float32]{
-		Inputs:  inputs,
-		Targets: targets,
-	})
+	_, err = trainer.TrainStep(context.Background(), modelGraph, optimizer, inputs, targets)
 	testutils.AssertNoError(t, err, "expected no error, got %v")
 }
