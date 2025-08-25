@@ -163,3 +163,6 @@ func (g *Gather[T]) OpType() string {
 func (g *Gather[T]) Attributes() map[string]interface{} {
 	return nil
 }
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Gather[float32])(nil)
