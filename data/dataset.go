@@ -2,6 +2,8 @@ package data
 
 import (
 	"math"
+
+	"github.com/parquet-go/parquet-go"
 )
 
 // StockData represents a single stock's data for a given era.
@@ -21,6 +23,48 @@ type EraData struct {
 // Dataset represents the entire dataset, composed of multiple eras.
 type Dataset struct {
 	Eras []EraData
+}
+
+// NumeraiRow represents a single row in the Numerai parquet format.
+type NumeraiRow struct {
+	Era      int32     `parquet:"era"`
+	ID       string    `parquet:"id"`
+	Features []float32 `parquet:"features,list"`
+	Target   float32   `parquet:"target"`
+}
+
+// LoadDatasetFromParquet loads a dataset from a Parquet file.
+func LoadDatasetFromParquet(path string) (*Dataset, error) {
+	rows, err := parquet.ReadFile[NumeraiRow](path)
+	if err != nil {
+		return nil, err
+	}
+
+	eras := make(map[int][]StockData)
+	for _, row := range rows {
+		features64 := make([]float64, len(row.Features))
+		for i, f := range row.Features {
+			features64[i] = float64(f)
+		}
+
+		stock := StockData{
+			ID:       row.ID,
+			Features: features64,
+			Target:   float64(row.Target),
+		}
+		eraInt := int(row.Era)
+		eras[eraInt] = append(eras[eraInt], stock)
+	}
+
+	dataset := &Dataset{}
+	for era, stocks := range eras {
+		dataset.Eras = append(dataset.Eras, EraData{
+			Era:    era,
+			Stocks: stocks,
+		})
+	}
+
+	return dataset, nil
 }
 
 // NormalizeFeatures applies z-score normalization to the features of the dataset.
