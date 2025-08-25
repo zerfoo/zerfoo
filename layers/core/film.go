@@ -158,5 +158,5 @@ func (f *FiLM[T]) Attributes() map[string]interface{} {
 	return nil
 }
 
-// Ensure FiLM implements the graph.Node interface.
+// Statically assert with a concrete type to avoid using generic constraints in assertions.
 var _ graph.Node[float32] = (*FiLM[float32])(nil)
