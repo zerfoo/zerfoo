@@ -198,17 +198,30 @@ func (te *TokenEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMo
 	}
 
 	// Scatter-add operation: add dOut slices to dEmbeddingTable based on token IDs
-	// Reshape outputGradient from (batch_size, seq_len, embedding_dim) to (batch_size * seq_len, embedding_dim)
-	reshapedDOut, err := te.engine.Reshape(ctx, outputGradient, []int{outputGradient.Shape()[0] * outputGradient.Shape()[1], outputGradient.Shape()[2]})
+	// Reshape outputGradient from [inputShape..., embedding_dim] to [N, embedding_dim]
+	ogShape := outputGradient.Shape()
+	if len(ogShape) < 2 {
+		return nil, fmt.Errorf("outputGradient must have at least 2 dims, got %v", ogShape)
+	}
+	embDim := ogShape[len(ogShape)-1]
+	N := 1
+	for i := 0; i < len(ogShape)-1; i++ {
+		N *= ogShape[i]
+	}
+	reshapedDOut, err := te.engine.Reshape(ctx, outputGradient, []int{N, embDim})
 	if err != nil {
 		return nil, fmt.Errorf("failed to reshape outputGradient for ScatterAdd: %w", err)
 	}
 
-	// Flatten inputTokenIDs from (batch_size, seq_len) to (batch_size * seq_len)
-	N := te.inputTokenIDs.Shape()[0] * te.inputTokenIDs.Shape()[1]
-	flatIDsData := make([]int, N)
+	// Flatten inputTokenIDs from inputShape to [N]
+	idsShape := te.inputTokenIDs.Shape()
+	total := 1
+	for _, d := range idsShape {
+		total *= d
+	}
+	flatIDsData := make([]int, total)
 	copy(flatIDsData, te.inputTokenIDs.Data())
-	reshapedInputTokenIDs, err := tensor.New[int]([]int{N}, flatIDsData)
+	reshapedInputTokenIDs, err := tensor.New[int]([]int{total}, flatIDsData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build flattened inputTokenIDs for ScatterAdd: %w", err)
 	}
