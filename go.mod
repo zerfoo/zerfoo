@@ -3,6 +3,7 @@ module github.com/zerfoo/zerfoo
 go 1.25
 
 require (
+	github.com/parquet-go/parquet-go v0.25.1
 	github.com/stretchr/testify v1.11.0
 	github.com/zerfoo/float16 v0.1.0
 	github.com/zerfoo/float8 v0.2.0
@@ -12,13 +13,9 @@ require (
 	google.golang.org/protobuf v1.36.8
 )
 
-replace github.com/zerfoo/float8 => ../float8
-
-replace github.com/zerfoo/zmf => ../zmf
-
 require (
 	golang.org/x/net v0.25.0 // indirect
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )
 
@@ -27,7 +24,11 @@ exclude google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de
 exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
+	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
