@@ -1,249 +1,224 @@
-# Project Plan: Zerfoo Gradient Strategy Architectural Refactoring
+# Project Plan: BFloat16 Production Enhancement with Feature Parity
 
 ## 1. Context
 
 ### 1.1. Problem Statement
 
-The current gradient strategy implementation in the Zerfoo framework is implicit and potentially confusing. The `DefaultBackpropStrategy` exhibits "magic" or surprising behavior, where its gradient computation method changes based on the type of node it is processing (e.g., a standard layer vs. a recurrent layer). This violates the principle of least surprise and makes the framework's behavior difficult to predict and debug. A cleaner, more explicit architecture is needed.
+The BFloat16 implementation in the float16 package currently lacks proper rounding modes, conversion modes, error handling, and mathematical functions that are available in the Float16 implementation. This asymmetry makes BFloat16 unsuitable for production use in the "zerfoo" machine learning framework. The current implementation uses simple truncation for float32-to-BFloat16 conversion and lacks configurable rounding modes, which can lead to numerical instability and accuracy issues in machine learning applications.
 
 ### 1.2. Objectives and Non-Goals
 
 **Objectives:**
-- Refactor the gradient computation architecture to be explicit, clear, and directly controlled by the selected `GradientStrategy`.
-- Improve the long-term maintainability, clarity, and extensibility of the framework.
-- Ensure the behavior of gradient computation is predictable and not dependent on the internal implementation of nodes.
+- Implement configurable rounding modes for BFloat16 conversions matching Float16 capabilities
+- Add conversion mode support (IEEE vs Strict) with proper error handling
+- Implement comprehensive mathematical functions for BFloat16
+- Achieve feature parity between BFloat16 and Float16 implementations
+- Ensure proper handling of subnormal numbers in BFloat16
+- Add slice operations with error handling for BFloat16
+- Implement FloatClass classification for BFloat16
+- Add CopySign and other utility functions matching Float16
 
 **Non-Goals:**
-- This refactoring will not implement new gradient computation features (e.g., full BPTT, Truncated BPTT). It will only establish the architectural foundation for them.
-- The public-facing API of the root `zerfoo` package will not be changed.
+- This project will not change the BFloat16 bit format (1 sign, 8 exponent, 7 mantissa)
+- This project will not modify existing Float16 functionality
+- This project will not implement hardware-specific optimizations
+- This project will not add SIMD or vectorized operations
 
 ### 1.3. Constraints and Assumptions
 
-- All work must be implemented in Go, within the existing Zerfoo framework.
-- The refactoring must not break existing, validated functionality.
-- We assume that making the architecture more explicit will lead to fewer bugs and easier onboarding for new developers.
+- All work must be implemented in Go using standard library only
+- Must maintain backward compatibility with existing BFloat16 API where possible
+- Must follow IEEE 754 semantics for special values and edge cases
+- Performance should be comparable to Float16 operations
+- All code must pass existing test suites
 
 ### 1.4. Success Metrics
 
-- The new architecture using `BackwardMode` is successfully implemented.
-- All existing unit and integration tests for the Zerfoo framework pass after the refactoring.
-- The `audacity` project can be successfully trained using the new, explicit architecture.
-- The code is demonstrably clearer, as measured by peer review.
+- All BFloat16 operations support configurable rounding modes
+- BFloat16 conversions support both IEEE and Strict modes with proper error reporting
+- All mathematical functions available for Float16 are also available for BFloat16
+- Complete test coverage for new BFloat16 functionality
+- All tests pass with correct rounding behavior
+- Performance benchmarks show no significant regression
 
 ## 2. Scope and Deliverables
 
 ### 2.1. In Scope
 
-- Defining a `BackwardMode` enum in a central `types` package.
-- Modifying the `graph.Node` interface to accept a `BackwardMode`.
-- Updating the `graph.Graph` implementation to propagate the `BackwardMode`.
-- Updating all existing layer implementations to conform to the new `Node` interface.
-- Updating the `GradientStrategy` implementations to explicitly control the `BackwardMode`.
+- Implementing FromFloat32WithRounding and FromFloat64WithRounding for BFloat16
+- Adding ConversionMode support with error handling for BFloat16
+- Implementing all rounding modes (RoundNearestEven, RoundTowardZero, RoundTowardPositive, RoundTowardNegative, RoundNearestAway)
+- Adding proper subnormal number handling in BFloat16 conversions
+- Implementing mathematical functions (Sqrt, Cbrt, Pow, Exp, Log, Sin, Cos, Tan, etc.) for BFloat16
+- Adding slice operations with mode support for BFloat16
+- Implementing FloatClass and classification methods for BFloat16
+- Adding CopySign and other utility functions for BFloat16
+- Creating comprehensive test coverage for all new functionality
+- Updating documentation to reflect new capabilities
 
 ### 2.2. Out of Scope
 
-- Implementation of new gradient strategies beyond `FullBackprop` and `OneStepApproximation`.
-- Performance optimization of the gradient computation paths.
+- Modifying the BFloat16 binary format
+- Changing existing Float16 implementations
+- Adding assembly or hardware-specific optimizations
+- Implementing extended precision operations
+- Creating lookup tables for performance optimization
 
 ### 2.3. Deliverables
 
-| ID   | Description                                      |
-|------|--------------------------------------------------|
-| D1   | Refactored core graph and node interfaces.       |
-| D2   | All existing layers updated to the new interface.  |
-| D3   | Updated Gradient Strategy implementations.       |
-| D4   | A clean, self-contained project plan (this doc). |
+| ID   | Description                                      | Owner | Acceptance Criteria |
+|------|--------------------------------------------------|-------|-------------------|
+| D1   | BFloat16 rounding mode implementation           | TBD   | All 5 rounding modes work correctly with comprehensive tests |
+| D2   | BFloat16 conversion mode support                | TBD   | IEEE and Strict modes implemented with proper error handling |
+| D3   | BFloat16 mathematical functions                 | TBD   | All Float16 math functions available for BFloat16 |
+| D4   | BFloat16 utility and classification functions   | TBD   | CopySign, FloatClass, and other utilities implemented |
+| D5   | Comprehensive test suite for BFloat16           | TBD   | 100 percent test coverage for new functionality |
+| D6   | Updated documentation                           | TBD   | All new features documented with examples |
 
-## 3. Work Breakdown Structure
-
-### E1: Define Core Types and Refactor Interfaces
-- **T1.1: Define `BackwardMode` in `types` Package**
-  - **S1.1.1:** Create a new directory and file: `types/backward_mode.go`.
-  - **S1.1.2:** Define the `BackwardMode` enum in the `types` package with `FullBackprop` and `OneStepApproximation` values.
-  - **S1.1.3:** Add comments explaining each mode.
-- **T1.2: Update `graph.Node` Interface**
-  - **Dependencies:** T1.1
-  - **S1.2.1:** Modify the `Backward` method signature in `graph/node.go` to accept a `types.BackwardMode` parameter.
-  - **S1.2.2:** Add `github.com/zerfoo/zerfoo/types` to the imports list in `graph/node.go`.
-- **T1.3: Update `graph.Graph` Implementation**
-  - **Dependencies:** T1.2
-  - **S1.3.1:** Modify the `Backward` method signature in `graph/graph.go` to accept a `types.BackwardMode` parameter.
-  - **S1.3.2:** Update the implementation to pass the `mode` down to each node's `Backward` call.
-  - **S1.3.3:** Write unit tests to verify the mode is passed correctly.
-
-### E2: Update Layer Implementations
-- **T2.1: Update `layers/core`**
-  - **Dependencies:** T1.2
-  - **S2.1.1:** Update `add.go` `Backward` signature.
-  - **S2.1.2:** Update `bias.go` `Backward` signature.
-  - **S2.1.3:** Update `cast.go` `Backward` signature.
-  - **S2.1.4:** Update `concat.go` `Backward` signature.
-  - **S2.1.5:** Update `dense.go` `Backward` signature.
-  - **S2.1.6:** Update `ffn.go` `Backward` signature.
-  - **S2.1.7:** Update `film.go` `Backward` signature.
-  - **S2.1.8:** Update `linear.go` `Backward` signature.
-  - **S2.1.9:** Update other `core` layers (`matmul`, `mul`, `reshape`, etc.).
-  - **S2.1.10:** Run `go test ./layers/core/...` to ensure compilation and basic test success.
-- **T2.2: Update `layers/activations`**
-  - **Dependencies:** T1.2
-  - **S2.2.1:** Update all activation function layers (`relu`, `sigmoid`, `tanh`, etc.).
-  - **S2.2.2:** Run `go test ./layers/activations/...`.
-- **T2.3: Update `layers/attention`**
-  - **Dependencies:** T1.2
-  - **S2.3.1:** Update all attention layers.
-  - **S2.3.2:** Run `go test ./layers/attention/...`.
-- **T2.4: Update `layers/features`**
-  - **Dependencies:** T1.2
-  - **S2.4.1:** Update `spectral.go` `Backward` signature.
-  - **S2.4.2:** Run `go test ./layers/features/...`.
-- **T2.5: Update `layers/recurrent`**
-  - **Dependencies:** T1.2
-  - **S2.5.1:** Update `rnn.go` `Backward` signature.
-  - **S2.5.2:** Implement logic within the RNN `Backward` method to switch behavior based on the `BackwardMode`.
-  - **S2.5.3:** Add specific unit tests for each `BackwardMode` in `rnn_test.go`.
-
-### E3: Update Training Strategies
-- **T3.1: Update `DefaultBackpropStrategy`**
-  - **Dependencies:** T1.3
-  - **S3.1.1:** Modify `training/strategy_backprop.go` to call `g.Backward` with the `FullBackprop` mode.
-  - **S3.1.2:** Add tests to verify the correct mode is used.
-- **T3.2: Update `OneStepApproximationStrategy`**
-  - **Dependencies:** T1.3
-  - **S3.2.1:** Modify `training/strategy_one_step.go` to call `g.Backward` with the `OneStepApproximation` mode.
-  - **S3.2.2:** Add tests to verify the correct mode is used.
-
-### E4: Verification and Cleanup
-- **T4.1: Full Project Testing**
-  - **Dependencies:** E2, E3
-  - **S4.1.1:** Execute the entire `zerfoo` test suite (`go test ./...`).
-  - **S4.1.2:** Debug and fix any failing tests introduced by the refactoring.
-- **T4.2: Update and Test `audacity`**
-  - **Dependencies:** T4.1
-  - **S4.2.1:** Update `audacity/cmd/train/main.go` to use one of the explicit strategies.
-  - **S4.2.2:** Run the `audacity` training process to ensure it completes successfully.
-- **T4.3: Code Formatting and Linting**
-  - **Dependencies:** T4.2
-  - **S4.3.1:** Run `go fmt ./...` on the `zerfoo` project.
-  - **S4.3.2:** Run `golangci-lint run` on the `zerfoo` project and fix any issues.
-
-## 4. Checkable Todo Board
+## 3. Checkable Work Breakdown
 
 ### Not Started
-- [ ] T4.2: Update and Test `audacity`  Owner: TBD  Est: 1h
-- [ ] T4.3: Code Formatting and Linting  Owner: TBD  Est: 30m
 
-### In Progress
-- None
+- [ ] E1 Core Rounding Infrastructure  Owner: TBD  Est: 4h
+  - [ ] T1.1 Implement rounding mode detection for BFloat16  Owner: TBD  Est: 1h
+    - [ ] S1.1.1 Create shouldRoundBFloat16 helper function  Owner: TBD  Est: 30m
+    - [ ] S1.1.2 Implement guard and sticky bit extraction for 7-bit mantissa  Owner: TBD  Est: 30m
+  - [ ] T1.2 Implement BFloat16FromFloat32WithRounding  Owner: TBD  Est: 2h
+    - [ ] S1.2.1 Handle special cases (NaN, Inf, Zero)  Owner: TBD  Est: 30m
+    - [ ] S1.2.2 Implement normal number conversion with rounding  Owner: TBD  Est: 45m
+    - [ ] S1.2.3 Implement subnormal number handling  Owner: TBD  Est: 45m
+  - [ ] T1.3 Implement BFloat16FromFloat64WithRounding  Owner: TBD  Est: 1h
+    - [ ] S1.3.1 Implement double-to-BFloat16 conversion path  Owner: TBD  Est: 30m
+    - [ ] S1.3.2 Handle precision loss and rounding  Owner: TBD  Est: 30m
 
-### Blocked
-- None
+- [ ] E2 Conversion Mode Support  Owner: TBD  Est: 3h
+  - [ ] T2.1 Implement BFloat16FromFloat32WithMode  Owner: TBD  Est: 1h30m
+    - [ ] S2.1.1 Add ConversionMode parameter handling  Owner: TBD  Est: 30m
+    - [ ] S2.1.2 Implement overflow and underflow detection  Owner: TBD  Est: 30m
+    - [ ] S2.1.3 Create error reporting for Strict mode  Owner: TBD  Est: 30m
+  - [ ] T2.2 Implement BFloat16FromFloat64WithMode  Owner: TBD  Est: 1h
+    - [ ] S2.2.1 Add mode-aware conversion logic  Owner: TBD  Est: 30m
+    - [ ] S2.2.2 Implement error handling for edge cases  Owner: TBD  Est: 30m
+  - [ ] T2.3 Add slice conversion with modes  Owner: TBD  Est: 30m
+    - [ ] S2.3.1 Implement ToBFloat16SliceWithMode  Owner: TBD  Est: 30m
 
-### Done
-- [x] T1.1: Define `BackwardMode` in `types` Package
-- [x] T1.2: Update `graph.Node` Interface
-- [x] T1.3: Update `graph.Graph` Implementation
-- [x] T2.1: Update `layers/core` (complete and tested)
-- [x] T2.2: Update `layers/activations` (complete and tested)
-- [x] T2.3: Update `layers/attention` (complete and tested)
-- [x] T2.4: Update `layers/features` (complete and tested)
-- [x] T2.5: Update `layers/recurrent` (complete with BackwardMode switching logic)
-- [x] T3.1: Update `DefaultBackpropStrategy` (complete and tested)
-- [x] T3.2: Update `OneStepApproximationStrategy` (complete and tested)
-- [x] T4.1: Full Project Testing (all packages passing)
+- [ ] E3 Mathematical Functions  Owner: TBD  Est: 6h
+  - [ ] T3.1 Implement basic math functions  Owner: TBD  Est: 2h
+    - [ ] S3.1.1 Implement BFloat16Sqrt  Owner: TBD  Est: 30m
+    - [ ] S3.1.2 Implement BFloat16Cbrt  Owner: TBD  Est: 30m
+    - [ ] S3.1.3 Implement BFloat16Pow  Owner: TBD  Est: 30m
+    - [ ] S3.1.4 Implement BFloat16Mod and BFloat16Remainder  Owner: TBD  Est: 30m
+  - [ ] T3.2 Implement exponential and logarithmic functions  Owner: TBD  Est: 2h
+    - [ ] S3.2.1 Implement BFloat16Exp and BFloat16Exp2  Owner: TBD  Est: 30m
+    - [ ] S3.2.2 Implement BFloat16Log and BFloat16Log2  Owner: TBD  Est: 30m
+    - [ ] S3.2.3 Implement BFloat16Log10 and BFloat16Log1p  Owner: TBD  Est: 30m
+    - [ ] S3.2.4 Implement BFloat16Expm1  Owner: TBD  Est: 30m
+  - [ ] T3.3 Implement trigonometric functions  Owner: TBD  Est: 2h
+    - [ ] S3.3.1 Implement BFloat16Sin, BFloat16Cos, BFloat16Tan  Owner: TBD  Est: 45m
+    - [ ] S3.3.2 Implement BFloat16Asin, BFloat16Acos, BFloat16Atan  Owner: TBD  Est: 45m
+    - [ ] S3.3.3 Implement BFloat16Sinh, BFloat16Cosh, BFloat16Tanh  Owner: TBD  Est: 30m
 
-## 5. Timeline and Milestones
+- [ ] E4 Utility Functions  Owner: TBD  Est: 3h
+  - [ ] T4.1 Implement FloatClass for BFloat16  Owner: TBD  Est: 1h
+    - [ ] S4.1.1 Add Class method to BFloat16  Owner: TBD  Est: 30m
+    - [ ] S4.1.2 Implement classification logic for BFloat16 format  Owner: TBD  Est: 30m
+  - [ ] T4.2 Implement utility functions  Owner: TBD  Est: 1h
+    - [ ] S4.2.1 Implement BFloat16CopySign  Owner: TBD  Est: 30m
+    - [ ] S4.2.2 Implement BFloat16NextAfter  Owner: TBD  Est: 30m
+  - [ ] T4.3 Implement decomposition functions  Owner: TBD  Est: 1h
+    - [ ] S4.3.1 Implement BFloat16Frexp  Owner: TBD  Est: 30m
+    - [ ] S4.3.2 Implement BFloat16Ldexp and BFloat16Modf  Owner: TBD  Est: 30m
+
+- [ ] E5 Slice Operations  Owner: TBD  Est: 2h
+  - [ ] T5.1 Implement basic slice operations  Owner: TBD  Est: 1h
+    - [ ] S5.1.1 Implement BFloat16AddSlice, BFloat16SubSlice  Owner: TBD  Est: 30m
+    - [ ] S5.1.2 Implement BFloat16MulSlice, BFloat16DivSlice  Owner: TBD  Est: 30m
+  - [ ] T5.2 Implement slice utilities  Owner: TBD  Est: 1h
+    - [ ] S5.2.1 Implement BFloat16SliceStats  Owner: TBD  Est: 30m
+    - [ ] S5.2.2 Implement BFloat16ValidateSliceLength  Owner: TBD  Est: 30m
+
+- [ ] E6 Testing  Owner: TBD  Est: 6h
+  - [ ] T6.1 Test rounding modes  Owner: TBD  Est: 2h
+    - [ ] S6.1.1 Write tests for each rounding mode  Owner: TBD  Est: 1h
+    - [ ] S6.1.2 Test edge cases and boundary conditions  Owner: TBD  Est: 1h
+  - [ ] T6.2 Test conversion modes  Owner: TBD  Est: 1h30m
+    - [ ] S6.2.1 Test IEEE mode behavior  Owner: TBD  Est: 45m
+    - [ ] S6.2.2 Test Strict mode error reporting  Owner: TBD  Est: 45m
+  - [ ] T6.3 Test mathematical functions  Owner: TBD  Est: 1h30m
+    - [ ] S6.3.1 Test basic math operations  Owner: TBD  Est: 30m
+    - [ ] S6.3.2 Test exponential and logarithmic functions  Owner: TBD  Est: 30m
+    - [ ] S6.3.3 Test trigonometric functions  Owner: TBD  Est: 30m
+  - [ ] T6.4 Test utility and slice operations  Owner: TBD  Est: 1h
+    - [ ] S6.4.1 Test FloatClass and utility functions  Owner: TBD  Est: 30m
+    - [ ] S6.4.2 Test slice operations  Owner: TBD  Est: 30m
+
+- [ ] E7 Integration and Cleanup  Owner: TBD  Est: 2h
+  - [ ] T7.1 Integration testing  Owner: TBD  Est: 1h
+    - [ ] S7.1.1 Run full test suite for float16 package  Owner: TBD  Est: 30m
+    - [ ] S7.1.2 Test BFloat16-Float16 interoperability  Owner: TBD  Est: 30m
+  - [ ] T7.2 Code quality  Owner: TBD  Est: 1h
+    - [ ] S7.2.1 Run go fmt on all modified files  Owner: TBD  Est: 15m
+    - [ ] S7.2.2 Run golangci-lint and fix issues  Owner: TBD  Est: 30m
+    - [ ] S7.2.3 Update package documentation  Owner: TBD  Est: 15m
+
+- [ ] E8 Performance Validation  Owner: TBD  Est: 2h
+  - [ ] T8.1 Benchmark new functions  Owner: TBD  Est: 1h
+    - [ ] S8.1.1 Create benchmarks for rounding operations  Owner: TBD  Est: 30m
+    - [ ] S8.1.2 Create benchmarks for math functions  Owner: TBD  Est: 30m
+  - [ ] T8.2 Performance analysis  Owner: TBD  Est: 1h
+    - [ ] S8.2.1 Compare BFloat16 vs Float16 performance  Owner: TBD  Est: 30m
+    - [ ] S8.2.2 Identify and optimize hotspots  Owner: TBD  Est: 30m
+
+## 4. Timeline and Milestones
 
 | ID   | Task Description                      | Dependencies | Estimated End Date |
 |------|---------------------------------------|--------------|--------------------|
-| T1.1 | Define `BackwardMode` in `types` Package | -            | 2025 08 24         |
-| T1.2 | Update `graph.Node` Interface         | T1.1         | 2025 08 24         |
-| T1.3 | Update `graph.Graph` Implementation   | T1.2         | 2025 08 25         |
-| M1   | **Milestone: Core Interfaces Refactored** | T1.3         | **2025 08 25**     |
-| T2.x | Update All Layer Implementations      | T1.2         | 2025 08 26         |
-| M2   | **Milestone: All Layers Updated**       | T2.x         | **2025 08 26**     |
-| T3.x | Update Training Strategies            | T1.3         | 2025 08 27         |
-| T4.1 | Full Project Testing                  | T2.x, T3.x   | 2025 08 27         |
-| T4.2 | Update and Test `audacity`            | T4.1         | 2025 08 28         |
-| T4.3 | Code Formatting and Linting           | T4.2         | 2025 08 28         |
-| M3   | **Milestone: Refactoring Complete**     | T4.3         | **2025 08 28**     |
+| E1   | Core Rounding Infrastructure          | -            | 2025 08 25         |
+| E2   | Conversion Mode Support               | E1           | 2025 08 25         |
+| M1   | **Milestone: Rounding Complete**      | E1, E2       | **2025 08 25**     |
+| E3   | Mathematical Functions                | E1           | 2025 08 26         |
+| E4   | Utility Functions                     | E1           | 2025 08 26         |
+| E5   | Slice Operations                      | E1           | 2025 08 26         |
+| M2   | **Milestone: Features Complete**      | E3, E4, E5   | **2025 08 26**     |
+| E6   | Testing                               | E1-E5        | 2025 08 27         |
+| E7   | Integration and Cleanup               | E6           | 2025 08 27         |
+| E8   | Performance Validation                | E6           | 2025 08 27         |
+| M3   | **Milestone: Project Complete**       | E6, E7, E8   | **2025 08 27**     |
 
-## 6. Operating Procedure
+## 5. Operating Procedure
 
-- **Definition of Done:** A task is done when its implementation is complete, it has been tested (unit and integration), the code has been formatted and linted, and it has been reviewed and merged.
-- **QA Steps:** All code changes must be reviewed by at least one other team member. All tests must pass in the CI/CD pipeline.
-- **Testing:** Always add tests when adding new implementation code. Aim for high test coverage.
-- **Formatting:** Always run `go fmt ./...` and `golangci-lint run` after making code changes.
-- **Commits:** Never commit files from different directories in the same commit. Make many small, logical commits with clear messages.
+- **Definition of Done:** A task is complete when implementation passes all tests, code is formatted with go fmt, passes golangci-lint checks, and has been committed with a descriptive message
+- **QA Steps:** Run go test ./... after each implementation task to ensure no regressions
+- **Testing:** Always add unit tests for new functionality before marking task complete
+- **Formatting:** Always run go fmt ./... after code changes
+- **Linting:** Always run golangci-lint run after code changes
+- **Commits:** Never commit files from different directories together; make small logical commits
+- **Review:** Code should follow existing patterns in float16 package for consistency
 
-## 7. Progress Log
+## 6. Progress Log
 
-- **2025 08 24: Change Summary**
-  - This plan was created to guide the architectural refactoring of Zerfoo's gradient computation strategy. The goal is to move from an implicit, "magic" system to an explicit one controlled by the `GradientStrategy` via a `BackwardMode` enum. This change was prompted by user feedback (you!) pointing out the lack of clarity in the original design. The plan breaks down the required changes to core interfaces (E1), layers (E2), strategies (E3), and verification (E4).
+- **2025 08 25: Change Summary**
+  - Created comprehensive plan for BFloat16 production enhancement
+  - Defined 8 epics covering rounding, conversion modes, math functions, utilities, slicing, testing, integration, and performance
+  - Established 3-day timeline with clear milestones
+  - Prioritized core rounding infrastructure as foundation for other features
 
-- **2025 08 24: Architectural Pivot**
-  - After discussion, the initial plan to place `BackwardMode` in the `training` package was found to be flawed due to circular dependencies. The architecture was updated to introduce a new, dedicated `types` package at the project root. This package will house `BackwardMode` and other future shared types, ensuring a clean separation of concerns and a clear dependency graph (`training` -> `graph` -> `types`).
+- **2025 08 24: Previous Entry**
+  - Plan for adding static assertions for interface implementations was documented
 
-- **2025 08 24: Progress Update**
-  - Completed the core interface refactoring (E1). The `types` package was created, `graph.Node` and `graph.Graph` were updated, and tests were added. Updated layer implementations (E2) for `layers/core`, `layers/activations` and `layers/attention` packages, but many tests are broken due to incorrect test signatures that need to be fixed.
+## 7. Hand-off Notes
 
-- **2025 08 24: Major Completion**
-  - ✅ **CORE BACKWARD METHOD REFACTORING COMPLETE**: All primary layer packages (`layers/activations`, `layers/embeddings`, `layers/features`, `layers/recurrent`) now have the correct `Backward(ctx, mode, grad, ...inputs)` signature and working tests.
-  - ✅ **TRAINING STRATEGIES COMPLETE**: Both `DefaultBackpropStrategy` and `OneStepApproximationStrategy` properly use `types.FullBackprop` and `types.OneStepApproximation` respectively.
-  - ✅ **RNN BACKWARD MODE LOGIC**: The `SimpleRNN` layer correctly implements different behaviors based on `BackwardMode` - truncating gradients for `OneStepApproximation` and passing them through for `FullBackprop`.
-  - ✅ **BFLOAT16 INTEGRATION RESOLVED**: Unified `float16` package now provides both `Float16` and `BFloat16` types, resolving all undefined symbol errors and import issues.
+- **Context:** Review the existing Float16 implementation in float16.go, convert.go, and math.go to understand patterns to follow
+- **Key Files:** Primary work will be in bfloat16.go with new files for bfloat16_math.go and updates to convert.go
+- **Testing:** Use bfloat16_test.go and create comprehensive test cases mirroring float16_test.go structure
+- **Dependencies:** No external dependencies; uses only Go standard library
+- **Build:** Standard go build ./... and go test ./... commands
+- **Documentation:** Update package comments to reflect new BFloat16 capabilities
 
-- **2025 08 25: Float16 Package Consolidation**
-  - ✅ **UNIFIED FLOAT16 PACKAGE**: Successfully consolidated separate `bfloat16` and `float16` packages into a single unified `float16` package.
-  - ✅ **BFLOAT16 IMPLEMENTATION**: Added complete BFloat16 support with arithmetic, conversions, classifications, and cross-conversion with Float16.
-  - ✅ **ZERFOO INTEGRATION**: Updated all zerfoo imports to use the unified package, resolving build failures in `model/tensor_decoder.go` and `tensor/tensor.go`.
-  - ✅ **MISSING FUNCTIONS**: Implemented all missing functions in float16 package that tests were expecting: `FromFloat64WithMode`, `Parse`, `FromInt`, `ToFloat16`, `ToSlice16`, `shouldRound`, etc.
-  - ✅ **TEST FIXES**: Fixed compilation errors and test signature mismatches, achieving successful package compilation.
-
-- **2025 08 24: Test Suite Green**
-  - ✅ Ran `go test ./...` with all packages passing after updating remaining tests (`layers/core/linear_extended_test.go`, `layers/core/spectral_fingerprint_test.go`) to the new Backward signature and imports.
-
-## 8. Lessons Learned
-
-### 8.1. Technical Insights
-
-- **Package Consolidation Benefits**: Unifying the `bfloat16` and `float16` packages into a single package eliminated dependency management complexity and provided a consistent API. This approach reduced maintenance overhead and improved developer experience.
-
-- **Interface Refactoring Strategy**: The systematic approach of updating interfaces first, then implementations, then tests proved effective. Starting with the core `graph.Node` interface and propagating changes outward ensured consistency across all layers.
-
-- **BackwardMode Implementation**: The explicit `BackwardMode` parameter successfully eliminated the "magic" behavior in gradient computation. The `SimpleRNN` layer's implementation demonstrates how different gradient strategies can be clearly expressed through the mode parameter.
-
-### 8.2. Project Management Insights
-
-- **Test-Driven Debugging**: Compilation errors served as an excellent guide for missing implementations. Each undefined function error pointed directly to required work, making the refactoring process systematic and measurable.
-
-- **Incremental Validation**: Testing each layer package individually (`./layers/activations/...`, `./layers/embeddings/...`, etc.) allowed for rapid iteration and immediate feedback on fixes.
-
-- **Cross-Package Dependencies**: The original circular dependency issue between `training` and `graph` packages led to the creation of the `types` package. This architectural decision improved the overall dependency structure.
-
-### 8.3. Code Quality Improvements
-
-- **Explicit vs. Implicit Behavior**: The refactoring successfully eliminated implicit gradient computation behavior. The `BackwardMode` enum makes the intended behavior explicit and predictable.
-
-- **Type Safety**: Adding the `types.BackwardMode` parameter to all `Backward` methods provides compile-time guarantees that gradient strategies are explicitly chosen.
-
-- **API Consistency**: The unified float16 package provides consistent naming conventions and API patterns for both `Float16` and `BFloat16` types.
-
-### 8.4. Future Recommendations
-
-- **Testing Strategy**: Future layer implementations should include tests for both `FullBackprop` and `OneStepApproximation` modes to ensure correct behavior switching.
-
-- **Documentation**: The explicit `BackwardMode` system should be documented with examples showing how different gradient strategies affect training behavior.
-
-- **Package Architecture**: The `types` package pattern (shared types at project root) proved effective and should be considered for other shared concerns like error types or configuration structs.
-
-## 9. Hand-off Notes
-
-- **Context:** A new engineer should first read the `Context` section (1) of this plan to understand the problem and objectives. The core task is to refactor the framework to make gradient computation explicit.
-- **Entry Point:** The Work Breakdown Structure (WBS) in section 3 provides a clear, hierarchical list of tasks. The `Checkable Todo Board` (section 4) shows the current status of each task.
-- **Key Files:** The most important files for this refactoring are `types/backward_mode.go`, `graph/node.go`, `graph/graph.go`, and the `training/strategy_*.go` files.
-- **Current Status:** The core backward method refactoring is complete and functional. The unified float16 package resolves all build issues. Remaining work focuses on `audacity` integration and final cleanup.
-
-## 10. Appendix
+## 8. Appendix
 
 - **References:**
-  - Hierarchical Reasoning Model Paper: `docs/2506.21734v3.md`
+  - IEEE 754-2008 Standard for Floating-Point Arithmetic
+  - BFloat16 format specification (Google Brain)
+  - Go math package documentation for function semantics
+  - Existing float16 package implementation as reference
