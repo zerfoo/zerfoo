@@ -108,8 +108,7 @@ Zerfoo is designed to address the limitations of existing ML frameworks by embra
 -   **Grouped-Query Attention (GQA)**: Memory-efficient attention mechanism with optional Rotary Positional Embeddings (RoPE)
 
 ### Enhanced Training Infrastructure
--   **Era Sequencer**: Sophisticated curriculum learning for time-series data with variable sequence lengths
--   **Advanced Metrics**: Comprehensive evaluation metrics including Pearson/Spearman correlation, Sharpe ratio, and drawdown analysis
+-   **Advanced Metrics**: Comprehensive evaluation metrics including Pearson/Spearman correlation, MSE, RMSE, and MAE
 -   **Flexible Training Loops**: Generic trainer with pluggable loss functions, optimizers, and gradient strategies
 
 ## Architectural Vision
@@ -134,25 +133,32 @@ go get github.com/zerfoo/zerfoo
 
 ### Advanced Usage Examples
 
-#### Data Loading and Feature Engineering
+#### Advanced Model Architecture
 
 ```go
 import (
-    "github.com/zerfoo/zerfoo/data"
-    "github.com/zerfoo/zerfoo/features"
+    "github.com/zerfoo/zerfoo/graph"
+    "github.com/zerfoo/zerfoo/layers/core"
+    "github.com/zerfoo/zerfoo/layers/attention"
+    "github.com/zerfoo/zerfoo/layers/activations"
 )
 
-// Load dataset from Parquet
-dataset, err := data.LoadDatasetFromParquet("data.parquet")
+// Build sophisticated model with attention
+builder := graph.NewBuilder[float32](engine)
+input := builder.Input([]int{batchSize, seqLen, inputDim})
 
-// Create feature transformers
-transformer := features.NewTransformerPipeline()
-transformer.AddLaggedFeatures([]int{1, 5, 20}) // 1, 5, 20-period lags
-transformer.AddRollingStatistics(4)             // 4-period rolling stats  
-transformer.AddFFTFeatures(16, 5)               // FFT with 16-period window, top 5 frequencies
+// Add linear transformation 
+linear := builder.AddNode(core.NewLinear("input_proj", engine, ops, inputDim, hiddenDim), input)
 
-// Apply transformations
-transformedDataset, err := transformer.Transform(dataset)
+// Add multi-head attention
+attention := builder.AddNode(attention.NewGlobalAttention(engine, ops, hiddenDim, numHeads, headSize), linear)
+
+// Add residual connection and activation
+residual := builder.AddNode(core.NewAdd(engine), linear, attention)
+activated := builder.AddNode(activations.NewTanh(engine, ops), residual)
+
+// Output projection
+output := builder.AddNode(core.NewLinear("output_proj", engine, ops, hiddenDim, outputDim), activated)
 ```
 
 #### Hierarchical Recurrent Models
@@ -183,7 +189,7 @@ output := builder.AddNode(core.NewDense(lDim, 1), film)
 model, _, err := builder.Build(output)
 ```
 
-#### Training with Era Sequencing
+#### Training with Metrics Evaluation
 
 ```go
 import (
@@ -191,24 +197,21 @@ import (
     "github.com/zerfoo/zerfoo/metrics"
 )
 
-// Create era sequencer for curriculum learning
-sequencer := training.NewEraSequencer(dataset, maxSeqLen)
-
-// Set up trainer with advanced metrics
+// Set up trainer with metrics evaluation
 trainer := training.NewDefaultTrainer(graph, lossNode, optimizer, strategy)
 
 // Training loop with evaluation metrics
 for epoch := 0; epoch < epochs; epoch++ {
-    sequences := sequencer.GenerateSequences(batchSize)
-    
-    for _, seq := range sequences {
-        loss, err := trainer.TrainBatch(seq)
-        // ... handle training
+    loss, err := trainer.TrainBatch(batchData)
+    if err != nil {
+        log.Printf("Training error: %v", err)
+        continue
     }
     
-    // Evaluate with Sharpe ratio and correlation
-    corrMetrics := metrics.CalculateCorrelation(predictions, targets)
-    sharpe := metrics.CalculateSharpe(corrMetrics.PerEra)
+    // Evaluate with correlation and error metrics
+    evalMetrics := metrics.CalculateMetrics(predictions, targets)
+    log.Printf("Epoch %d: Loss=%.4f, Pearson=%.4f, MSE=%.4f", 
+               epoch, loss, evalMetrics.PearsonCorrelation, evalMetrics.MSE)
 }
 ```
 
