@@ -94,6 +94,24 @@ Zerfoo is designed to address the limitations of existing ML frameworks by embra
 -   **Multi-Precision Support**: Native support for `float32` and `float64`, with `float16` and `float8` for cutting-edge, low-precision training.
 -   **ONNX Interoperability**: Export models to the Open Neural Network Exchange (ONNX) format for deployment in any compatible environment.
 
+## Extended Features
+
+### Data Processing & Feature Engineering
+-   **Data Package**: Comprehensive data loading with native Parquet support for efficient dataset handling
+-   **Feature Transformers**: Built-in transformers for lagged features, rolling statistics, and FFT-based frequency domain features
+-   **Normalization**: Automatic feature normalization (z-score) for stable training
+
+### Advanced Model Components
+-   **Hierarchical Recurrent Modules (HRM)**: Dual-timescale recurrent architecture with H-Module (high-level) and L-Module (low-level) for complex temporal reasoning
+-   **Spectral Fingerprint Layers**: Advanced signal processing layers using Koopman operator theory and Fourier analysis for regime detection
+-   **Feature-wise Linear Modulation (FiLM)**: Conditional normalization for dynamic model behavior adaptation
+-   **Grouped-Query Attention (GQA)**: Memory-efficient attention mechanism with optional Rotary Positional Embeddings (RoPE)
+
+### Enhanced Training Infrastructure
+-   **Era Sequencer**: Sophisticated curriculum learning for time-series data with variable sequence lengths
+-   **Advanced Metrics**: Comprehensive evaluation metrics including Pearson/Spearman correlation, Sharpe ratio, and drawdown analysis
+-   **Flexible Training Loops**: Generic trainer with pluggable loss functions, optimizers, and gradient strategies
+
 ## Architectural Vision
 
 Zerfoo is built on a clean, layered architecture that separates concerns, ensuring the framework is both powerful and maintainable. A core tenet of this architecture is the use of the **Zerfoo Model Format (ZMF)** as the universal intermediate representation for models. This enables a strict decoupling from model converters like `zonnx`, ensuring that `zerfoo` focuses solely on efficient model execution without any ONNX-specific dependencies.
@@ -112,6 +130,86 @@ For a deep dive into the design philosophy, core interfaces, and technical roadm
 To install Zerfoo, use `go get`:
 ```sh
 go get github.com/zerfoo/zerfoo
+```
+
+### Advanced Usage Examples
+
+#### Data Loading and Feature Engineering
+
+```go
+import (
+    "github.com/zerfoo/zerfoo/data"
+    "github.com/zerfoo/zerfoo/features"
+)
+
+// Load dataset from Parquet
+dataset, err := data.LoadDatasetFromParquet("data.parquet")
+
+// Create feature transformers
+transformer := features.NewTransformerPipeline()
+transformer.AddLaggedFeatures([]int{1, 5, 20}) // 1, 5, 20-period lags
+transformer.AddRollingStatistics(4)             // 4-period rolling stats  
+transformer.AddFFTFeatures(16, 5)               // FFT with 16-period window, top 5 frequencies
+
+// Apply transformations
+transformedDataset, err := transformer.Transform(dataset)
+```
+
+#### Hierarchical Recurrent Models
+
+```go
+import (
+    "github.com/zerfoo/zerfoo/graph"
+    "github.com/zerfoo/zerfoo/layers/hrm"
+    "github.com/zerfoo/zerfoo/layers/core"
+)
+
+// Build hierarchical model
+builder := graph.NewBuilder[float32](engine)
+spectralInput := builder.Input([]int{windowSize})
+featureInput := builder.Input([]int{numStocks, numFeatures})
+
+// Add spectral fingerprint layer
+spectral := builder.AddNode(core.NewSpectralFingerprint(windowSize, fingerprintDim), spectralInput)
+
+// Add hierarchical recurrent modules
+hModule := builder.AddNode(hrm.NewHModule(hDim), spectral)
+lModule := builder.AddNode(hrm.NewLModule(lDim), featureInput, hModule)
+
+// Add FiLM conditioning
+film := builder.AddNode(core.NewFiLM(lDim), lModule, hModule)
+output := builder.AddNode(core.NewDense(lDim, 1), film)
+
+model, _, err := builder.Build(output)
+```
+
+#### Training with Era Sequencing
+
+```go
+import (
+    "github.com/zerfoo/zerfoo/training"
+    "github.com/zerfoo/zerfoo/metrics"
+)
+
+// Create era sequencer for curriculum learning
+sequencer := training.NewEraSequencer(dataset, maxSeqLen)
+
+// Set up trainer with advanced metrics
+trainer := training.NewDefaultTrainer(graph, lossNode, optimizer, strategy)
+
+// Training loop with evaluation metrics
+for epoch := 0; epoch < epochs; epoch++ {
+    sequences := sequencer.GenerateSequences(batchSize)
+    
+    for _, seq := range sequences {
+        loss, err := trainer.TrainBatch(seq)
+        // ... handle training
+    }
+    
+    // Evaluate with Sharpe ratio and correlation
+    corrMetrics := metrics.CalculateCorrelation(predictions, targets)
+    sharpe := metrics.CalculateSharpe(corrMetrics.PerEra)
+}
 ```
 
 ## Contributing
