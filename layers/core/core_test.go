@@ -42,7 +42,7 @@ func TestLinear(t *testing.T) {
 	testutils.AssertEqual(t, "new_linear_weights", layer.weights.Name, "expected weights name %q, got %q")
 
 	// Test the OutputShape method of the linear layer
-	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{1, 5}, layer.OutputShape()), "expected output shape to be equal")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{-1, 5}, layer.OutputShape()), "expected output shape to be equal")
 
 	// Test the Parameters method of the linear layer
 	testutils.AssertNotNil(t, layer.Parameters(), "expected parameters to not be nil")

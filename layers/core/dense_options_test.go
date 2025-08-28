@@ -14,12 +14,12 @@ func TestNewDense_WithFunctionalOptions(t *testing.T) {
 
 	// This test will initially fail because NewDense does not yet accept options.
 	layer, err := NewDense[float32](
-		"dense_with_options",
+		"test_layer",
 		engine,
 		ops,
 		10,
 		5,
-		WithBias[float32](false),
+		WithoutBias[float32](),
 	)
 	testutils.AssertNoError(t, err, "expected no error when creating dense layer with options, got %v")
 	testutils.AssertNotNil(t, layer, "expected layer to not be nil")

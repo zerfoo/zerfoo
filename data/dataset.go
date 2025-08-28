@@ -58,14 +58,14 @@ func LoadDatasetFromParquet(path string) (*Dataset, error) {
 	}
 
 	dataset := &Dataset{}
-	
+
 	// Sort eras to ensure consistent ordering
 	eraKeys := make([]int, 0, len(eras))
 	for era := range eras {
 		eraKeys = append(eraKeys, era)
 	}
 	sort.Ints(eraKeys)
-	
+
 	for _, era := range eraKeys {
 		dataset.Eras = append(dataset.Eras, EraData{
 			Era:    era,

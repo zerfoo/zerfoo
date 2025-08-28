@@ -42,7 +42,7 @@ func PearsonCorrelation(x, y []float64) float64 {
 	}
 
 	n := float64(len(x))
-	
+
 	// Calculate means
 	var sumX, sumY float64
 	for i := 0; i < len(x); i++ {
@@ -88,22 +88,22 @@ func SpearmanCorrelation(x, y []float64) float64 {
 func calculateRanks(values []float64) []float64 {
 	n := len(values)
 	ranks := make([]float64, n)
-	
+
 	// Create sorted indices
 	type indexValue struct {
 		index int
 		value float64
 	}
-	
+
 	sorted := make([]indexValue, n)
 	for i, v := range values {
 		sorted[i] = indexValue{index: i, value: v}
 	}
-	
+
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].value < sorted[j].value
 	})
-	
+
 	// Assign ranks handling ties by averaging
 	i := 0
 	for i < n {
@@ -112,17 +112,17 @@ func calculateRanks(values []float64) []float64 {
 		for j < n && sorted[j].value == currentValue {
 			j++
 		}
-		
+
 		// Average rank for tied values
-		avgRank := float64(i+j-1) / 2.0 + 1.0
-		
+		avgRank := float64(i+j-1)/2.0 + 1.0
+
 		for k := i; k < j; k++ {
 			ranks[sorted[k].index] = avgRank
 		}
-		
+
 		i = j
 	}
-	
+
 	return ranks
 }
 

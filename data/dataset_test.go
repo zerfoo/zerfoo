@@ -108,9 +108,9 @@ func TestEraData_Create(t *testing.T) {
 
 func TestDataset_Create(t *testing.T) {
 	tests := []struct {
-		name     string
-		eras     []EraData
-		wantLen  int
+		name    string
+		eras    []EraData
+		wantLen int
 	}{
 		{
 			name: "dataset with multiple eras",
@@ -162,8 +162,8 @@ func TestNormalizeFeatures(t *testing.T) {
 					},
 				},
 			},
-			wantMean: 0.0,  // After normalization, mean should be close to 0
-			wantStd:  1.0,  // After normalization, std should be close to 1
+			wantMean: 0.0, // After normalization, mean should be close to 0
+			wantStd:  1.0, // After normalization, std should be close to 1
 			epsilon:  1e-10,
 		},
 		{
@@ -251,7 +251,7 @@ func TestNormalizeFeatures(t *testing.T) {
 						}
 					}
 					sampleStd := math.Sqrt(variance / float64(count-1))
-					
+
 					// For normalized data, sample std should be close to 1
 					if abs(sampleStd-1.0) > 0.1 { // More lenient epsilon for std
 						t.Errorf("Feature %d normalized sample std = %v, want ~1.0", featureIdx, sampleStd)

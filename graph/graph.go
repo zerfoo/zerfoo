@@ -17,6 +17,7 @@ type Graph[T tensor.Numeric] struct {
 	dependencies map[Node[T]][]Node[T]
 	inputs       []Node[T]
 	output       Node[T]
+	memo         map[Node[T]]*tensor.TensorNumeric[T]
 }
 
 // Forward executes the forward pass of the entire graph.
@@ -25,9 +26,9 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
 
-	memo := make(map[Node[T]]*tensor.TensorNumeric[T])
+	g.memo = make(map[Node[T]]*tensor.TensorNumeric[T])
 	for i, n := range g.inputs {
-		memo[n] = inputs[i]
+		g.memo[n] = inputs[i]
 	}
 
 	for _, n := range g.nodes {
@@ -37,7 +38,7 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 		nodeInputs := make([]*tensor.TensorNumeric[T], len(g.dependencies[n]))
 		for i, dep := range g.dependencies[n] {
-			nodeInputs[i] = memo[dep]
+			nodeInputs[i] = g.memo[dep]
 		}
 
 		output, err := n.Forward(ctx, nodeInputs...)
@@ -45,10 +46,10 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 			return nil, err
 		}
 
-		memo[n] = output
+		g.memo[n] = output
 	}
 
-	return memo[g.output], nil
+	return g.memo[g.output], nil
 }
 
 // Backward executes the backward pass of the entire graph.
@@ -59,8 +60,13 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 	for i := len(g.nodes) - 1; i >= 0; i-- {
 		node := g.nodes[i]
 		if grad, ok := grads[node]; ok {
-			inputGrads, err := node.Backward(ctx, mode, grad)
-			if err != nil {
+			nodeInputs := make([]*tensor.TensorNumeric[T], len(g.dependencies[node]))
+			for j, dep := range g.dependencies[node] {
+				nodeInputs[j] = g.memo[dep]
+			}
+
+			inputGrads, err := node.Backward(ctx, mode, grad, nodeInputs...)
+		if err != nil {
 				return err
 			}
 
@@ -101,6 +107,51 @@ func (g *Graph[T]) Inputs() []Node[T] {
 // Output returns the output node of the graph.
 func (g *Graph[T]) Output() Node[T] {
 	return g.output
+}
+
+// Nodes returns all the nodes in the graph.
+func (g *Graph[T]) Nodes() []Node[T] {
+	return g.nodes
+}
+
+// Dependencies returns the dependencies of a given node.
+func (g *Graph[T]) Dependencies(n Node[T]) []Node[T] {
+	return g.dependencies[n]
+}
+
+// GetNodeMetadata returns metadata for a specific node including its type, attributes, and shape.
+func (g *Graph[T]) GetNodeMetadata(n Node[T]) map[string]interface{} {
+	metadata := make(map[string]interface{})
+	metadata["op_type"] = n.OpType()
+	metadata["output_shape"] = n.OutputShape()
+	metadata["attributes"] = n.Attributes()
+	metadata["parameter_count"] = len(n.Parameters())
+	return metadata
+}
+
+// GetDependencies returns the dependency map for all nodes in the graph.
+func (g *Graph[T]) GetDependencies() map[Node[T]][]Node[T] {
+	// Return a copy to prevent external modification
+	deps := make(map[Node[T]][]Node[T])
+	for node, nodeDeps := range g.dependencies {
+		depsCopy := make([]Node[T], len(nodeDeps))
+		copy(depsCopy, nodeDeps)
+		deps[node] = depsCopy
+	}
+	return deps
+}
+
+// GetAllNodes returns all nodes in the graph in their current order.
+func (g *Graph[T]) GetAllNodes() []Node[T] {
+	// Return a copy to prevent external modification
+	nodes := make([]Node[T], len(g.nodes))
+	copy(nodes, g.nodes)
+	return nodes
+}
+
+// GetTopologicalOrder returns the nodes in topological order for execution.
+func (g *Graph[T]) GetTopologicalOrder() ([]Node[T], error) {
+	return topologicalSort(g.nodes, g.dependencies)
 }
 
 // inputNode is a special node type for graph inputs.

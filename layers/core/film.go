@@ -24,6 +24,8 @@ type FiLM[T tensor.Numeric] struct {
 	lastScale   *tensor.TensorNumeric[T]
 	lastBias    *tensor.TensorNumeric[T]
 	outputShape []int
+	contextDim  int
+	featureDim  int
 }
 
 // NewFiLM creates a new FiLM layer.
@@ -51,6 +53,8 @@ func NewFiLM[T tensor.Numeric](
 		engine:      engine,
 		scaleGen:    scaleGen,
 		biasGen:     biasGen,
+		contextDim:  contextDim,
+		featureDim:  featureDim,
 		outputShape: []int{1, featureDim}, // Assuming batch size of 1 for now
 	}, nil
 }
@@ -153,9 +157,36 @@ func (f *FiLM[T]) OpType() string {
 	return "FiLM"
 }
 
-// Attributes returns nil for the FiLM layer.
+// Attributes returns the attributes of the FiLM layer.
 func (f *FiLM[T]) Attributes() map[string]interface{} {
-	return nil
+	return map[string]interface{}{
+		"context_dim": f.contextDim,
+		"feature_dim": f.featureDim,
+	}
+}
+
+// BuildFiLM constructs a FiLM node from attributes.
+// Required attributes:
+// - "context_dim" (int): dimension of the context input
+// - "feature_dim" (int): dimension of the feature input
+func BuildFiLM[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	name string,
+	_ map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
+) (graph.Node[T], error) {
+	contextDim, ok := attributes["context_dim"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'context_dim' for FiLM")
+	}
+	
+	featureDim, ok := attributes["feature_dim"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'feature_dim' for FiLM")
+	}
+
+	return NewFiLM[T](name, engine, ops, contextDim, featureDim)
 }
 
 // Statically assert with a concrete type to avoid using generic constraints in assertions.

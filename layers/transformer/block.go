@@ -4,6 +4,7 @@ package transformer
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -21,6 +22,7 @@ type Block[T tensor.Numeric] struct {
 	norm1             *normalization.RMSNorm[T]
 	norm2             *normalization.RMSNorm[T]
 	normPostAttention *normalization.RMSNorm[T]
+	engine            compute.Engine[T]
 }
 
 // BlockOptions holds configuration options for the Transformer block.
@@ -80,6 +82,7 @@ func NewTransformerBlock[T tensor.Numeric](
 		norm1:             attnNorm,
 		norm2:             norm2,
 		normPostAttention: normPostAttention,
+		engine:            engine,
 	}, nil
 }
 
@@ -98,7 +101,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		return nil, err
 	}
 	// Residual connection
-	attnOutput, err = b.ffn.Engine().Add(ctx, x, attnOutput)
+	attnOutput, err = b.engine.Add(ctx, x, attnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +122,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		return nil, err
 	}
 	// Residual connection
-	ffnOutput, err = b.ffn.Engine().Add(ctx, attnOutput, ffnOutput)
+	ffnOutput, err = b.engine.Add(ctx, attnOutput, ffnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +132,7 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 // Backward computes the backward pass of the Transformer block.
 func (b *Block[T]) Backward(_ context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// This is a simplified backward pass and needs to be implemented correctly.
-	return []*tensor.TensorNumeric[T]{dOut}, nil
+	return []*tensor.TensorNumeric[T]{dOut}, fmt.Errorf("backward pass not implemented")
 }
 
 // Parameters returns the parameters of the Transformer block.
@@ -158,7 +160,7 @@ func (b *Block[T]) Attention() graph.Node[T] {
 
 // Engine returns the compute engine used by the Transformer block.
 func (b *Block[T]) Engine() compute.Engine[T] {
-	return b.ffn.Engine()
+	return b.engine
 }
 
 // Attributes returns the attributes of the Transformer block.

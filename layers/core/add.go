@@ -6,6 +6,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
 )
@@ -56,6 +57,17 @@ func (a *Add[T]) Attributes() map[string]any {
 // OpType returns the operator type of the Add node.
 func (a *Add[T]) OpType() string {
 	return "Add"
+}
+
+// BuildAdd constructs an Add node from attributes.
+func BuildAdd[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	name string,
+	params map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
+) (graph.Node[T], error) {
+	return NewAdd[T](engine), nil
 }
 
 // Statically assert that the type implements the graph.Node interface.

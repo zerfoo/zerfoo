@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -10,24 +11,39 @@ import (
 	"github.com/zerfoo/zerfoo/types"
 )
 
-// Dense is a fully connected layer that combines a linear transformation and a bias.
+// Dense is a fully connected layer with optional activation and bias.
 type Dense[T tensor.Numeric] struct {
-	linear *Linear[T]
-	bias   *Bias[T]
+	name       string
+	linear     *Linear[T]
+	bias       *Bias[T]
+	activation graph.Node[T]
 }
 
-// DenseOptions holds configuration options for the Dense layer.
-type DenseOptions[T tensor.Numeric] struct {
-	WithBias bool
+// DenseOpt is a functional option for configuring a Dense layer.
+type DenseOpt[T tensor.Numeric] func(*Dense[T])
+
+// WithBias adds a bias to the Dense layer.
+func WithBias[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], outputFeatures int) DenseOpt[T] {
+	return func(d *Dense[T]) {
+		b, err := NewBias[T](d.name+"_bias", engine, ops, outputFeatures)
+		if err != nil {
+			panic(fmt.Sprintf("failed to create bias: %v", err))
+		}
+		d.bias = b
+	}
 }
 
-// DenseOption is a function that applies an option to DenseOptions.
-type DenseOption[T tensor.Numeric] func(*DenseOptions[T])
+// WithoutBias disables bias for the Dense layer.
+func WithoutBias[T tensor.Numeric]() DenseOpt[T] {
+	return func(d *Dense[T]) {
+		d.bias = nil
+	}
+}
 
-// WithBias sets whether the Dense layer should include a bias.
-func WithBias[T tensor.Numeric](withBias bool) DenseOption[T] {
-	return func(o *DenseOptions[T]) {
-		o.WithBias = withBias
+// WithActivation adds an activation function to the Dense layer.
+func WithActivation[T tensor.Numeric](activation graph.Node[T]) DenseOpt[T] {
+	return func(d *Dense[T]) {
+		d.activation = activation
 	}
 }
 
@@ -36,67 +52,65 @@ func NewDense[T tensor.Numeric](
 	name string,
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	inputSize, outputSize int,
-	opts ...DenseOption[T],
+	inputFeatures, outputFeatures int,
+	opts ...DenseOpt[T],
 ) (*Dense[T], error) {
-	options := &DenseOptions[T]{
-		WithBias: true, // Default to true
+	if name == "" {
+		return nil, fmt.Errorf("layer name cannot be empty")
 	}
-	for _, opt := range opts {
-		opt(options)
+	if inputFeatures <= 0 || outputFeatures <= 0 {
+		return nil, fmt.Errorf("input and output features must be positive")
 	}
-
-	linear, err := NewLinear[T](name, engine, ops, inputSize, outputSize)
+	
+	linear, err := NewLinear[T](name+"_linear", engine, ops, inputFeatures, outputFeatures)
 	if err != nil {
 		return nil, err
 	}
 
-	var bias *Bias[T]
-
-	if options.WithBias {
-		var err error
-
-		bias, err = NewBias[T](name, engine, ops, outputSize)
-		if err != nil {
-			return nil, err
-		}
+	d := &Dense[T]{
+		name:   name,
+		linear: linear,
 	}
 
-	return &Dense[T]{linear: linear, bias: bias}, nil
+	// Add bias by default
+	bias, err := NewBias[T](name+"_bias", engine, ops, outputFeatures)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bias: %w", err)
+	}
+	d.bias = bias
+
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d, nil
 }
 
-// NewDenseFromParams creates a new Dense layer from existing parameters.
-func NewDenseFromParams[T tensor.Numeric](linear *Linear[T], bias *Bias[T]) *Dense[T] {
-	return &Dense[T]{linear: linear, bias: bias}
+// OpType returns the operation type of the layer.
+func (d *Dense[T]) OpType() string {
+	return "Dense"
 }
 
-// OutputShape returns the output shape of the Dense layer.
+// Attributes returns the attributes of the layer.
+func (d *Dense[T]) Attributes() map[string]interface{} {
+	attrs := map[string]interface{}{}
+	if d.bias != nil {
+		attrs["bias"] = true
+	}
+	if d.activation != nil {
+		attrs["activation"] = d.activation.OpType()
+	}
+	return attrs
+}
+
+// OutputShape returns the output shape of the layer.
 func (d *Dense[T]) OutputShape() []int {
 	return d.linear.OutputShape()
 }
 
-// Forward performs the forward pass: output = input*weights + biases.
+// Forward computes the forward pass of the layer.
 func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	input := inputs[0]
-	originalShape := input.Shape()
-	inputSize := originalShape[len(originalShape)-1]
-
-	// Reshape to 2D if input is N-D
-	if len(originalShape) > 2 {
-		batchSize := 1
-		for i := range len(originalShape) - 1 {
-			batchSize *= originalShape[i]
-		}
-
-		var err error
-
-		input, err = input.Reshape([]int{batchSize, inputSize})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	linearOutput, err := d.linear.Forward(ctx, input)
+	linearOutput, err := d.linear.Forward(ctx, inputs...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,18 +123,8 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		}
 	}
 
-	// Reshape back to original batch dimensions
-	if len(originalShape) > 2 {
-		outputShape := make([]int, len(originalShape))
-		copy(outputShape, originalShape)
-		outputShape[len(outputShape)-1] = d.linear.OutputShape()[1]
-
-		var err error
-
-		biasOutput, err = biasOutput.Reshape(outputShape)
-		if err != nil {
-			return nil, err
-		}
+	if d.activation != nil {
+		return d.activation.Forward(ctx, biasOutput)
 	}
 
 	return biasOutput, nil
@@ -128,71 +132,55 @@ func (d *Dense[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 
 // Backward computes the gradients.
 func (d *Dense[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	originalInputShape := inputs[0].Shape()
-	// Reshape outputGradient to 2D if original input was N-D
-	if len(originalInputShape) > 2 {
-		batchSize := 1
-		for i := range len(originalInputShape) - 1 {
-			batchSize *= originalInputShape[i]
-		}
-
-		var err error
-
-		outputGradient, err = outputGradient.Reshape([]int{batchSize, d.linear.OutputShape()[1]})
+	activationGradient := outputGradient
+	if d.activation != nil {
+		grads, err := d.activation.Backward(ctx, mode, outputGradient, inputs...)
 		if err != nil {
 			return nil, err
 		}
+		activationGradient = grads[0]
 	}
 
-	var linearInputGradient *tensor.TensorNumeric[T]
-
+	biasGradient := activationGradient
 	if d.bias != nil {
-		biasGrads, err := d.bias.Backward(ctx, mode, outputGradient)
+		grads, err := d.bias.Backward(ctx, mode, activationGradient)
 		if err != nil {
 			return nil, err
 		}
-
-		linearInputGradient = biasGrads[0]
-	} else {
-		linearInputGradient = outputGradient
+		biasGradient = grads[0]
 	}
 
-	linearGrads, err := d.linear.Backward(ctx, mode, linearInputGradient)
-	if err != nil {
-		return nil, err
-	}
-
-	return linearGrads, nil
+	return d.linear.Backward(ctx, mode, biasGradient, inputs...)
 }
 
-// Parameters returns the parameters of the Dense layer.
+// Parameters returns the parameters of the layer.
 func (d *Dense[T]) Parameters() []*graph.Parameter[T] {
 	params := d.linear.Parameters()
 	if d.bias != nil {
 		params = append(params, d.bias.Parameters()...)
 	}
-
 	return params
 }
 
 // SetName sets the name of the Dense layer.
 func (d *Dense[T]) SetName(name string) {
-	d.linear.SetName(name)
-
+	d.name = name
+	d.linear.SetName(name + "_linear")
 	if d.bias != nil {
-		d.bias.SetName(name)
+		d.bias.SetName(name + "_bias")
 	}
 }
 
-// OpType returns the operation type of the Dense layer.
-func (d *Dense[T]) OpType() string {
-	return "Dense"
+// Name returns the name of the Dense layer.
+func (d *Dense[T]) Name() string {
+	return d.name
 }
 
-// Attributes returns the attributes of the Dense layer.
-func (d *Dense[T]) Attributes() map[string]interface{} {
-	return map[string]interface{}{"with_bias": d.bias != nil}
+// NewDenseFromParams creates a Dense layer from existing Linear and Bias components.
+// This is used for constructing layers from pre-existing parameters during model loading.
+func NewDenseFromParams[T tensor.Numeric](linear *Linear[T], bias *Bias[T]) *Dense[T] {
+	return &Dense[T]{
+		linear: linear,
+		bias:   bias,
+	}
 }
-
-// Statically assert that the type implements the graph.Node interface.
-var _ graph.Node[float32] = (*Dense[float32])(nil)

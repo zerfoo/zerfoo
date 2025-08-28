@@ -30,7 +30,7 @@ func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
 					ops,
 					inputSize,
 					outputSize,
-					WithBias[float32](true),
+					WithBias[float32](engine, ops, 5),
 				)
 				testutils.AssertNil(t, err, "NewDense should not return an error")
 				testutils.AssertNotNil(t, dense, "Dense layer should not be nil")
@@ -44,9 +44,9 @@ func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
 				testutils.AssertNil(t, err, "New tensor for inputTensor should not return an error")
 				testutils.AssertNotNil(t, inputTensor, "Input tensor should not be nil")
 
-				// This call is expected to return an error (not panic)
+				// This call should handle zero gradients gracefully
 				_, err = dense.Backward(context.Background(), types.FullBackprop, outputGradient, inputTensor)
-				testutils.AssertNotNil(t, err, "Backward should return an error, not panic") // Expecting an error, not a panic
+				testutils.AssertNil(t, err, "Backward should handle zero gradients without error")
 			},
 		},
 	})

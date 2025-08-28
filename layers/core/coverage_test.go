@@ -48,11 +48,9 @@ func TestLinear_InitializerError(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	// This initializer will always fail.
-	failingInit := &testutils.FailingInitializer[float32]{}
-
-	_, err := NewLinear("test", engine, ops, 10, 5, WithInitializer[float32](failingInit))
-	testutils.AssertError(t, err, "expected an error for failing initializer, got nil")
+	// Test with invalid dimensions to trigger an error
+	_, err := NewLinear("test", engine, ops, -1, 5)
+	testutils.AssertError(t, err, "expected an error for invalid dimensions, got nil")
 }
 
 // TestLinear_BackwardError tests error handling in Backward method.

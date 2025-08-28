@@ -16,11 +16,14 @@ import (
 func RegisterAll() {
 	// Activations
 	model.RegisterLayer("FastGelu", activations.BuildFastGelu[float32])
+	model.RegisterLayer("Tanh", activations.BuildTanh[float32])
 
 	// Attention
 	model.RegisterLayer("GroupQueryAttention", attention.BuildGroupQueryAttention[float32])
+	model.RegisterLayer("GlobalAttention", attention.BuildGlobalAttention[float32])
 
 	// Core
+	model.RegisterLayer("Add", core.BuildAdd[float32])
 	model.RegisterLayer("Shape", core.BuildShape[float32])
 	model.RegisterLayer("Mul", core.BuildMul[float32])
 	model.RegisterLayer("Sub", core.BuildSub[float32])
@@ -31,6 +34,7 @@ func RegisterAll() {
 	model.RegisterLayer("Reshape", core.BuildReshape[float32])
 	model.RegisterLayer("RotaryEmbedding", core.BuildRotaryEmbedding[float32])
 	model.RegisterLayer("SpectralFingerprint", core.BuildSpectralFingerprint[float32])
+	model.RegisterLayer("FiLM", core.BuildFiLM[float32])
 
 	// Embeddings
 

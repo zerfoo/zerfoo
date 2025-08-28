@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -12,7 +13,10 @@ import (
 
 // GlobalAttention wraps GroupedQueryAttention to provide a global attention interface.
 type GlobalAttention[T tensor.Numeric] struct {
-	gqa *GroupedQueryAttention[T]
+	gqa            *GroupedQueryAttention[T]
+	embedDim       int
+	numHeads       int
+	numKVHeads     int
 }
 
 // OpType returns the operation type.
@@ -22,7 +26,11 @@ func (ga *GlobalAttention[T]) OpType() string {
 
 // Attributes returns the attributes.
 func (ga *GlobalAttention[T]) Attributes() map[string]interface{} {
-	return ga.gqa.Attributes()
+	return map[string]interface{}{
+		"embed_dim":    ga.embedDim,
+		"num_heads":    ga.numHeads,
+		"num_kv_heads": ga.numKVHeads,
+	}
 }
 
 // GlobalAttentionOptions holds configuration options for GlobalAttention layer.
@@ -91,7 +99,10 @@ func NewGlobalAttention[T tensor.Numeric](
 	}
 
 	return &GlobalAttention[T]{
-		gqa: gqa,
+		gqa:        gqa,
+		embedDim:   modelDim,
+		numHeads:   numQueryHeads,
+		numKVHeads: numKeyValueHeads,
 	}, nil
 }
 
@@ -126,6 +137,36 @@ func (ga *GlobalAttention[T]) OutputShape() []int {
 // ScaleRope scales the rotary positional embeddings.
 func (ga *GlobalAttention[T]) ScaleRope(ctx context.Context, factor float64) error {
 	return ga.gqa.ScaleRope(ctx, factor)
+}
+
+// BuildGlobalAttention constructs a GlobalAttention node from attributes.
+// Required attributes:
+// - "embed_dim" (int): embedding dimension
+// - "num_heads" (int): number of attention heads
+// - "num_kv_heads" (int): number of key-value heads
+func BuildGlobalAttention[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	_ string,
+	_ map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
+) (graph.Node[T], error) {
+	embedDim, ok := attributes["embed_dim"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'embed_dim' for GlobalAttention")
+	}
+	
+	numHeads, ok := attributes["num_heads"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'num_heads' for GlobalAttention")
+	}
+	
+	numKVHeads, ok := attributes["num_kv_heads"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'num_kv_heads' for GlobalAttention")
+	}
+
+	return NewGlobalAttention[T](engine, ops, embedDim, numHeads, numKVHeads)
 }
 
 // Statically assert that the type implements the graph.Node interface.

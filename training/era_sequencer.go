@@ -40,7 +40,7 @@ func (s *EraSequencer) GenerateSequences(dataset *data.Dataset, numSequences int
 	for i := 0; i < numSequences; i++ {
 		// Pick a random sequence length between 1 and maxSeqLen
 		seqLen := s.rand.IntN(s.maxSeqLen) + 1
-		
+
 		// Make sure sequence length doesn't exceed available eras
 		if seqLen > len(sortedEras) {
 			seqLen = len(sortedEras)
@@ -51,9 +51,9 @@ func (s *EraSequencer) GenerateSequences(dataset *data.Dataset, numSequences int
 		if maxStartIdx < 0 {
 			maxStartIdx = 0
 		}
-		
+
 		startIdx := s.rand.IntN(maxStartIdx + 1)
-		
+
 		// Create sequence
 		sequenceEras := make([]data.EraData, seqLen)
 		copy(sequenceEras, sortedEras[startIdx:startIdx+seqLen])

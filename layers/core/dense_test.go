@@ -38,14 +38,14 @@ func TestDense(t *testing.T) {
 
 	// Test the SetName method of the dense layer
 	layer.SetName("new_dense")
-	testutils.AssertEqual(t, "new_dense_weights", layer.linear.weights.Name, "expected weights name %q, got %q")
+	testutils.AssertEqual(t, "new_dense_linear_weights", layer.linear.weights.Name, "expected weights name %q, got %q")
 	// The bias might be nil if WithBias(false) is used, so check before accessing
 	if layer.bias != nil {
-		testutils.AssertEqual(t, "new_dense_biases", layer.bias.biases.Name, "expected biases name %q, got %q")
+		testutils.AssertEqual(t, "new_dense_bias_biases", layer.bias.biases.Name, "expected biases name %q, got %q")
 	}
 
 	// Test the OutputShape method of the dense layer
-	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{1, 5}, layer.OutputShape()), "expected output shape to be {1, 5}")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{-1, 5}, layer.OutputShape()), "expected output shape to be {-1, 5}")
 
 	// Test the Parameters method of the dense layer
 	expectedParams := 1 // linear layer always has weights

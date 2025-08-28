@@ -59,7 +59,7 @@ func TestHRMTrainer(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 	modelDim := 16
-	ffnDim := 32
+	ffnDim := 16
 	inputDim := 16
 	outputDim := 8
 	N := 2

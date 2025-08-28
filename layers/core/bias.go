@@ -112,10 +112,17 @@ func (b *Bias[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 
 // Backward computes the gradients.
 func (b *Bias[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// Gradient with respect to biases: sum of output_gradient along batch dimension
-	biasesGrad, err := b.engine.Sum(ctx, outputGradient, 0, false)
-	if err != nil {
-		return nil, err
+	// Gradient with respect to biases: sum over all dimensions except the last one
+	gradShape := outputGradient.Shape()
+	biasesGrad := outputGradient
+	
+	// Sum over all dimensions except the last one to get bias gradients
+	for i := 0; i < len(gradShape)-1; i++ {
+		var err error
+		biasesGrad, err = b.engine.Sum(ctx, biasesGrad, 0, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	b.biases.Gradient = biasesGrad

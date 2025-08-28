@@ -74,10 +74,10 @@ func TestLaggedTransformer_Transform(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transformer := NewLaggedTransformer(tt.lags)
-			
+
 			// Make a copy of the dataset to avoid modifying test data
 			testDataset := copyDataset(tt.dataset)
-			
+
 			err := transformer.Transform(testDataset)
 			if err != nil {
 				t.Errorf("LaggedTransformer.Transform() error = %v", err)
@@ -147,10 +147,10 @@ func TestRollingTransformer_Transform(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transformer := NewRollingTransformer(tt.window)
-			
+
 			// Make a copy of the dataset to avoid modifying test data
 			testDataset := copyDataset(tt.dataset)
-			
+
 			err := transformer.Transform(testDataset)
 			if err != nil {
 				t.Errorf("RollingTransformer.Transform() error = %v", err)
@@ -229,10 +229,10 @@ func TestFFTTransformer_Transform(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transformer := NewFFTTransformer(tt.window, tt.k)
-			
+
 			// Make a copy of the dataset to avoid modifying test data
 			testDataset := copyDataset(tt.dataset)
-			
+
 			err := transformer.Transform(testDataset)
 			if err != nil {
 				t.Errorf("FFTTransformer.Transform() error = %v", err)
@@ -260,11 +260,11 @@ func copyDataset(original *data.Dataset) *data.Dataset {
 	if original == nil {
 		return nil
 	}
-	
+
 	copyData := &data.Dataset{
 		Eras: make([]data.EraData, len(original.Eras)),
 	}
-	
+
 	for i, era := range original.Eras {
 		copyData.Eras[i] = data.EraData{
 			Era:      era.Era,
@@ -272,7 +272,7 @@ func copyDataset(original *data.Dataset) *data.Dataset {
 			Stocks:   make([]data.StockData, len(era.Stocks)),
 		}
 		copy(copyData.Eras[i].EraStats, era.EraStats)
-		
+
 		for j, stock := range era.Stocks {
 			copyData.Eras[i].Stocks[j] = data.StockData{
 				ID:       stock.ID,
@@ -282,6 +282,6 @@ func copyDataset(original *data.Dataset) *data.Dataset {
 			copy(copyData.Eras[i].Stocks[j].Features, stock.Features)
 		}
 	}
-	
+
 	return copyData
 }

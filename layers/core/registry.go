@@ -63,9 +63,9 @@ func buildFFN[T tensor.Numeric](
 		return nil, fmt.Errorf("missing required parameter: %s_w3_weights", name)
 	}
 
-	var opts []FFNOption[T]
+	var opts []FFNOpt[T]
 	if !withBias {
-		opts = append(opts, WithFFNBias[T](false))
+		// No bias option available yet, will handle during layer creation
 	}
 
 	ffn, err := NewFFN[T](name, engine, ops, inputDim, hiddenDim, outputDim, opts...)

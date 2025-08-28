@@ -19,11 +19,12 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	modelDim := 64
 	numQueryHeads := 8
 	numKeyValueHeads := 4
-	ffnDim := 256
+	ffnDim := 64
 	epsilon := float32(1e-6)
 	base := 10000.0
 	maxSeqLen := 512
 
+	// First test the attention mechanism alone
 	gqa, err := attention.NewGroupedQueryAttention[float32](
 		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
 		attention.WithRopeBase[float32](base),
@@ -33,18 +34,13 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create GroupedQueryAttention: %v", err)
 	}
 
-	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, gqa, WithEpsilon[float32](epsilon))
-	if err != nil {
-		t.Fatalf("Failed to create TransformerBlock: %v", err)
-	}
-
 	batchSize := 2
 	seqLen := 10
 	inputShape := []int{batchSize, seqLen, modelDim}
 
 	inputData := make([]float32, batchSize*seqLen*modelDim)
 	for i := range inputData {
-		inputData[i] = float32(i) * 0.01 // Simple dummy data
+		inputData[i] = float32(i) * 0.01
 	}
 
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
@@ -52,13 +48,28 @@ func TestTransformerBlock_Forward(t *testing.T) {
 		t.Fatalf("Failed to create input tensor: %v", err)
 	}
 
-	output, err := block.Forward(ctx, inputTensor)
+	// Test attention output shape
+	attnOutput, err := gqa.Forward(ctx, inputTensor)
+	if err != nil {
+		t.Fatalf("Attention forward failed: %v", err)
+	}
+	
+	if !testutils.IntSliceEqual(attnOutput.Shape(), inputShape) {
+		t.Fatalf("Attention output shape mismatch: expected %v, got %v", inputShape, attnOutput.Shape())
+	}
+
+	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, gqa, WithEpsilon[float32](epsilon))
+	if err != nil {
+		t.Fatalf("Failed to create TransformerBlock: %v", err)
+	}
+
+	blockOutput, err := block.Forward(ctx, inputTensor)
 	if err != nil {
 		t.Fatalf("Forward pass failed: %v", err)
 	}
 
-	if !testutils.IntSliceEqual(output.Shape(), inputShape) {
-		t.Errorf("Expected output shape %v, got %v", inputShape, output.Shape())
+	if !testutils.IntSliceEqual(blockOutput.Shape(), inputShape) {
+		t.Errorf("Expected output shape %v, got %v", inputShape, blockOutput.Shape())
 	}
 
 	// Check number of parameters

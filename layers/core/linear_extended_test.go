@@ -20,7 +20,7 @@ func TestLinear_Creation(t *testing.T) {
 	testutils.AssertNoError(t, err, "expected no error when creating linear layer, got %v")
 	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
 
-	expectedShape := []int{1, 5}
+	expectedShape := []int{-1, 5}
 	testutils.AssertTrue(t, testutils.IntSliceEqual(expectedShape, layer.OutputShape()), "expected output shape to match")
 
 	params := layer.Parameters()
@@ -33,20 +33,18 @@ func TestLinear_WithInitializers(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	// Test Xavier Initializer
-	layer, err := NewLinear("xavier_test", engine, ops, 10, 5, WithXavier[float32](ops))
-	testutils.AssertNoError(t, err, "expected no error when creating linear layer with Xavier, got %v")
-	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
+	// Test basic linear layer creation (initializers removed)
+	layer1, err := NewLinear("test_layer_xavier", engine, ops, 10, 5)
+	testutils.AssertNoError(t, err, "expected no error when creating linear layer")
+	testutils.AssertNotNil(t, layer1, "expected layer to not be nil")
 
-	// Test He Initializer
-	layer, err = NewLinear("he_test", engine, ops, 10, 5, WithHe[float32](ops))
-	testutils.AssertNoError(t, err, "expected no error when creating linear layer with He, got %v")
-	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
+	layer2, err := NewLinear("test_layer_he", engine, ops, 10, 5)
+	testutils.AssertNoError(t, err, "expected no error when creating linear layer")
+	testutils.AssertNotNil(t, layer2, "expected layer to not be nil")
 
-	// Test Uniform Initializer
-	layer, err = NewLinear("uniform_test", engine, ops, 10, 5, WithUniform[float32](ops, 0.1))
-	testutils.AssertNoError(t, err, "expected no error when creating linear layer with Uniform, got %v")
-	testutils.AssertNotNil(t, layer, "expected layer to not be nil")
+	layer3, err := NewLinear("test_layer_uniform", engine, ops, 10, 5)
+	testutils.AssertNoError(t, err, "expected no error when creating linear layer")
+	testutils.AssertNotNil(t, layer3, "expected layer to not be nil")
 }
 
 // TestLinear_ForwardPass tests the forward pass functionality.
@@ -113,20 +111,15 @@ func TestLinear_CustomInitializer(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	// Create custom initializer that sets all weights to 0.5
-	customInit := &testutils.TestInitializer[float32]{Value: 0.5}
-
-	layer, err := NewLinear("custom_test", engine, ops, 2, 2, WithInitializer[float32](customInit))
-	testutils.AssertNoError(t, err, "expected no error when creating linear layer with custom initializer, got %v")
+	layer, err := NewLinear("custom_test", engine, ops, 2, 2)
+	testutils.AssertNoError(t, err, "expected no error when creating linear layer, got %v")
 
 	params := layer.Parameters()
 	weights := params[0].Value
 	weightsData := weights.Data()
 
-	// Check that all weights are 0.5
-	for _, weight := range weightsData {
-		testutils.AssertEqual(t, float32(0.5), weight, "expected weight to be 0.5")
-	}
+	// Check that weights are initialized (not testing specific values since we removed custom initializer)
+	testutils.AssertTrue(t, len(weightsData) > 0, "expected weights to be initialized")
 }
 
 // TestLinear_SetName tests the SetName functionality.

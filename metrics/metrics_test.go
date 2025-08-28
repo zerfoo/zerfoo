@@ -35,7 +35,7 @@ func TestCalculateMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := CalculateMetrics(tt.predictions, tt.targets)
-			
+
 			if (result == nil) != tt.wantNil {
 				t.Errorf("CalculateMetrics() nil result = %v, wantNil %v", result == nil, tt.wantNil)
 				return
@@ -105,7 +105,7 @@ func TestPearsonCorrelation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := PearsonCorrelation(tt.x, tt.y)
-			
+
 			if math.IsNaN(tt.want) {
 				if !math.IsNaN(got) {
 					t.Errorf("PearsonCorrelation() = %v, want NaN", got)
@@ -155,7 +155,7 @@ func TestSpearmanCorrelation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := SpearmanCorrelation(tt.x, tt.y)
-			
+
 			if math.IsNaN(tt.want) {
 				if !math.IsNaN(got) {
 					t.Errorf("SpearmanCorrelation() = %v, want NaN", got)
@@ -195,12 +195,12 @@ func TestCalculateRanks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := calculateRanks(tt.values)
-			
+
 			if len(got) != len(tt.want) {
 				t.Errorf("calculateRanks() length = %v, want %v", len(got), len(tt.want))
 				return
 			}
-			
+
 			for i := range got {
 				if math.Abs(got[i]-tt.want[i]) > 1e-10 {
 					t.Errorf("calculateRanks()[%d] = %v, want %v", i, got[i], tt.want[i])

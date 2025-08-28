@@ -2,61 +2,33 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"math/rand"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/layers/components"
+	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
 )
 
-// Linear performs a linear transformation: output = input * weights.
-// Uses component-based architecture for better modularity and testability.
+// Linear is a linear layer.
 type Linear[T tensor.Numeric] struct {
-	multiplier       *components.MatrixMultiplier[T]
-	gradientComputer *components.LinearGradientComputer[T]
-	weights          *graph.Parameter[T]
-	lastInput        *tensor.TensorNumeric[T]
-	outputShape      []int
+	name         string
+	engine       compute.Engine[T]
+	ops          numeric.Arithmetic[T]
+	weights      *graph.Parameter[T]
+	inputFeatures int
+	outputFeatures int
 }
 
-// LinearOptions holds configuration options for the Linear layer.
-type LinearOptions[T tensor.Numeric] struct {
-	Initializer components.WeightInitializer[T]
-}
-
-// LinearOption is a function that applies an option to LinearOptions.
-type LinearOption[T tensor.Numeric] func(*LinearOptions[T])
-
-// WithInitializer sets a custom weight initializer for the Linear layer.
-func WithInitializer[T tensor.Numeric](initializer components.WeightInitializer[T]) LinearOption[T] {
-	return func(o *LinearOptions[T]) {
-		o.Initializer = initializer
+func randomData[T tensor.Numeric](size int) []T {
+	data := make([]T, size)
+	for i := range data {
+		data[i] = T(rand.Float32()) //nolint:gosec
 	}
-}
-
-// WithXavier is an option to use Xavier weight initialization.
-func WithXavier[T tensor.Numeric](ops numeric.Arithmetic[T]) LinearOption[T] {
-	return func(o *LinearOptions[T]) {
-		o.Initializer = components.NewXavierInitializer(ops)
-	}
-}
-
-// WithHe is an option to use He weight initialization.
-func WithHe[T tensor.Numeric](ops numeric.Arithmetic[T]) LinearOption[T] {
-	return func(o *LinearOptions[T]) {
-		o.Initializer = components.NewHeInitializer(ops)
-	}
-}
-
-// WithUniform is an option to use Uniform weight initialization.
-func WithUniform[T tensor.Numeric](ops numeric.Arithmetic[T], scale float64) LinearOption[T] {
-	return func(o *LinearOptions[T]) {
-		o.Initializer = components.NewUniformInitializer(ops, components.WithScale[T](scale))
-	}
+	return data
 }
 
 // NewLinear creates a new Linear layer.
@@ -64,122 +36,166 @@ func NewLinear[T tensor.Numeric](
 	name string,
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
-	inputSize, outputSize int,
-	opts ...LinearOption[T],
-) (*Linear[T], error) {
-	options := &LinearOptions[T]{
-		Initializer: components.NewXavierInitializer(ops),
-	}
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	return NewLinearWithFactories(name, engine, ops, inputSize, outputSize, options.Initializer, tensor.New[T], graph.NewParameter[T])
-}
-
-// NewLinearWithFactories creates a new Linear layer with custom tensor and parameter creation functions.
-func NewLinearWithFactories[T tensor.Numeric](
-	name string, engine compute.Engine[T], _ numeric.Arithmetic[T], inputSize, outputSize int,
-	initializer components.WeightInitializer[T],
-	newTensor func([]int, []T) (*tensor.TensorNumeric[T], error),
-	newParameter func(string, *tensor.TensorNumeric[T], func([]int, []T) (*tensor.TensorNumeric[T], error)) (*graph.Parameter[T], error),
+	inputFeatures, outputFeatures int,
 ) (*Linear[T], error) {
 	if name == "" {
-		return nil, errors.New("layer name cannot be empty")
+		return nil, fmt.Errorf("layer name cannot be empty")
 	}
-
-	// Initialize weights using the provided initializer
-	weightsData, err := initializer.Initialize(inputSize, outputSize)
+	if inputFeatures <= 0 || outputFeatures <= 0 {
+		return nil, fmt.Errorf("input and output features must be positive")
+	}
+	weightsTensor, err := tensor.New[T](
+		[]int{inputFeatures, outputFeatures},
+		randomData[T](inputFeatures*outputFeatures),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize weights: %w", err)
+		return nil, err
 	}
-
-	weights, err := newTensor([]int{inputSize, outputSize}, weightsData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create weights tensor: %w", err)
-	}
-
-	weightsParam, err := newParameter(name+"_weights", weights, newTensor)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create weights parameter: %w", err)
-	}
-
-	return &Linear[T]{
-		multiplier:       components.NewMatrixMultiplier(engine),
-		gradientComputer: components.NewLinearGradientComputer(engine),
-		weights:          weightsParam,
-		outputShape:      []int{1, outputSize}, // Assuming batch size of 1 for now
-	}, nil
-}
-
-// NewLinearFromParam creates a new Linear layer from an existing weights parameter.
-func NewLinearFromParam[T tensor.Numeric](engine compute.Engine[T], weights *graph.Parameter[T]) *Linear[T] {
-	outputSize := weights.Value.Shape()[1]
-
-	return &Linear[T]{
-		multiplier:       components.NewMatrixMultiplier(engine),
-		gradientComputer: components.NewLinearGradientComputer(engine),
-		weights:          weights,
-		outputShape:      []int{1, outputSize},
-	}
-}
-
-// OutputShape returns the output shape of the Linear layer.
-func (l *Linear[T]) OutputShape() []int {
-	return l.outputShape
-}
-
-// Forward performs the forward pass: output = input * weights.
-func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 1 {
-		return nil, fmt.Errorf("Linear: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
-	}
-
-	l.lastInput = inputs[0]
-
-	output, err := l.multiplier.Multiply(ctx, l.lastInput, l.weights.Value)
-	if err != nil {
-		return nil, fmt.Errorf("forward pass failed: %w", err)
-	}
-
-	l.outputShape = output.Shape()
-
-	return output, nil
-}
-
-// Backward computes the gradients using the gradient computer component.
-func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	// Compute both gradients efficiently
-	weightsGrad, inputGrad, err := l.gradientComputer.ComputeBothGradients(
-		ctx, l.lastInput, l.weights.Value, outputGradient)
+	weights, err := graph.NewParameter[T](
+		name+"_weights",
+		weightsTensor,
+		tensor.New[T],
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	l.weights.Gradient = weightsGrad
-
-	return []*tensor.TensorNumeric[T]{inputGrad}, nil
+	return &Linear[T]{
+		name:         name,
+		engine:       engine,
+		ops:          ops,
+		weights:      weights,
+		inputFeatures: inputFeatures,
+		outputFeatures: outputFeatures,
+	}, nil
 }
 
-// Parameters returns the parameters of the Linear layer.
-func (l *Linear[T]) Parameters() []*graph.Parameter[T] {
-	return []*graph.Parameter[T]{l.weights}
-}
-
-// SetName sets the name of the Linear layer.
-func (l *Linear[T]) SetName(name string) {
-	l.weights.Name = name + "_weights"
-}
-
-// OpType returns the operation type of the Linear layer.
+// OpType returns the operation type of the layer.
 func (l *Linear[T]) OpType() string {
 	return "Linear"
 }
 
-// Attributes returns nil for the Linear layer.
+// Attributes returns the attributes of the layer.
 func (l *Linear[T]) Attributes() map[string]interface{} {
-	return nil
+	return map[string]interface{}{
+		"input_features":  l.inputFeatures,
+		"output_features": l.outputFeatures,
+	}
 }
 
-// Statically assert that the type implements the graph.Node interface.
-var _ graph.Node[float32] = (*Linear[float32])(nil)
+// OutputShape returns the output shape of the layer.
+func (l *Linear[T]) OutputShape() []int {
+	return []int{-1, l.outputFeatures} // -1 for batch dimension
+}
+
+// Forward computes the forward pass of the layer.
+func (l *Linear[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("Linear layer requires exactly one input, got %d", len(inputs))
+	}
+
+	return l.engine.MatMul(ctx, inputs[0], l.weights.Value)
+}
+
+// Backward computes the gradients.
+func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("Linear layer requires exactly one input, got %d", len(inputs))
+	}
+
+	input := inputs[0]
+
+	// Gradient with respect to weights
+	inputShape := input.Shape()
+	gradShape := outputGradient.Shape()
+	
+	// Reshape input and gradient to 2D for matrix operations
+	batchSize := 1
+	for i := 0; i < len(inputShape)-1; i++ {
+		batchSize *= inputShape[i]
+	}
+	
+	inputReshaped, err := l.engine.Reshape(ctx, input, []int{batchSize, inputShape[len(inputShape)-1]})
+	if err != nil {
+		return nil, err
+	}
+	
+	gradReshaped, err := l.engine.Reshape(ctx, outputGradient, []int{batchSize, gradShape[len(gradShape)-1]})
+	if err != nil {
+		return nil, err
+	}
+	
+	transposedInput, err := l.engine.Transpose(ctx, inputReshaped, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	dw, err := l.engine.MatMul(ctx, transposedInput, gradReshaped)
+	if err != nil {
+		return nil, err
+	}
+	l.weights.Gradient, err = l.engine.Add(ctx, l.weights.Gradient, dw)
+	if err != nil {
+		return nil, err
+	}
+
+	// Gradient with respect to input
+	transposedWeights, err := l.engine.Transpose(ctx, l.weights.Value, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	dx, err := l.engine.MatMul(ctx, gradReshaped, transposedWeights)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Reshape back to original input shape
+	dxReshaped, err := l.engine.Reshape(ctx, dx, inputShape)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{dxReshaped}, nil
+}
+
+// Parameters returns the parameters of the layer.
+func (l *Linear[T]) Parameters() []*graph.Parameter[T] {
+	return []*graph.Parameter[T]{l.weights}
+}
+
+func init() {
+	model.RegisterLayer("Linear", func(engine compute.Engine[float32], ops numeric.Arithmetic[float32], name string, params map[string]*graph.Parameter[float32], attributes map[string]interface{}) (graph.Node[float32], error) {
+		inputFeatures, ok := attributes["input_features"].(int)
+		if !ok {
+			return nil, fmt.Errorf("missing or invalid attribute 'input_features' for Linear")
+		}
+		outputFeatures, ok := attributes["output_features"].(int)
+		if !ok {
+			return nil, fmt.Errorf("missing or invalid attribute 'output_features' for Linear")
+		}
+		return NewLinear[float32](name, engine, ops, inputFeatures, outputFeatures)
+	})
+}
+
+// SetName sets the name of the Linear layer.
+func (l *Linear[T]) SetName(name string) {
+	l.name = name
+	l.weights.Name = name + "_weights"
+}
+
+// Name returns the name of the Linear layer.
+func (l *Linear[T]) Name() string {
+	return l.name
+}
+
+// NewLinearFromParam creates a Linear layer from an existing parameter.
+// This is used for constructing layers from pre-existing parameters during model loading.
+func NewLinearFromParam[T tensor.Numeric](engine compute.Engine[T], param *graph.Parameter[T]) *Linear[T] {
+	shape := param.Value.Shape()
+	return &Linear[T]{
+		name:           param.Name,
+		engine:         engine,
+		weights:        param,
+		inputFeatures:  shape[0],
+		outputFeatures: shape[1],
+	}
+}
