@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -15,18 +15,18 @@ import (
 
 // Linear is a linear layer.
 type Linear[T tensor.Numeric] struct {
-	name         string
-	engine       compute.Engine[T]
-	ops          numeric.Arithmetic[T]
-	weights      *graph.Parameter[T]
-	inputFeatures int
+	name           string
+	engine         compute.Engine[T]
+	ops            numeric.Arithmetic[T]
+	weights        *graph.Parameter[T]
+	inputFeatures  int
 	outputFeatures int
 }
 
 func randomData[T tensor.Numeric](size int) []T {
 	data := make([]T, size)
 	for i := range data {
-		data[i] = T(rand.Float32()) //nolint:gosec
+		data[i] = T(rand.Float32())
 	}
 	return data
 }
@@ -61,11 +61,11 @@ func NewLinear[T tensor.Numeric](
 	}
 
 	return &Linear[T]{
-		name:         name,
-		engine:       engine,
-		ops:          ops,
-		weights:      weights,
-		inputFeatures: inputFeatures,
+		name:           name,
+		engine:         engine,
+		ops:            ops,
+		weights:        weights,
+		inputFeatures:  inputFeatures,
 		outputFeatures: outputFeatures,
 	}, nil
 }
@@ -108,23 +108,23 @@ func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	// Gradient with respect to weights
 	inputShape := input.Shape()
 	gradShape := outputGradient.Shape()
-	
+
 	// Reshape input and gradient to 2D for matrix operations
 	batchSize := 1
 	for i := 0; i < len(inputShape)-1; i++ {
 		batchSize *= inputShape[i]
 	}
-	
+
 	inputReshaped, err := l.engine.Reshape(ctx, input, []int{batchSize, inputShape[len(inputShape)-1]})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	gradReshaped, err := l.engine.Reshape(ctx, outputGradient, []int{batchSize, gradShape[len(gradShape)-1]})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	transposedInput, err := l.engine.Transpose(ctx, inputReshaped, []int{1, 0})
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Reshape back to original input shape
 	dxReshaped, err := l.engine.Reshape(ctx, dx, inputShape)
 	if err != nil {

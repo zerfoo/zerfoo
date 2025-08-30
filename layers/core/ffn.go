@@ -38,7 +38,6 @@ func WithSwiGLU[T tensor.Numeric]() FFNOpt[T] {
 
 // FFNConfig holds configuration for FFN layers.
 type FFNConfig[T tensor.Numeric] struct {
-	biasEnabled bool
 }
 
 // WithFFNNoBias disables bias for all layers in the FFN.
@@ -58,7 +57,7 @@ func NewFFN[T tensor.Numeric](
 ) (*FFN[T], error) {
 	// Default to bias enabled
 	biasEnabled := true
-	
+
 	// Check if WithFFNNoBias option is present
 	for _, opt := range opts {
 		if opt != nil {
@@ -76,10 +75,10 @@ func NewFFN[T tensor.Numeric](
 			}
 		}
 	}
-	
+
 	var w1, w2, w3 *Dense[T]
 	var err error
-	
+
 	if biasEnabled {
 		w1, err = NewDense[T](name+"_w1", engine, ops, inputDim, hiddenDim, WithBias[T](engine, ops, hiddenDim))
 		if err != nil {

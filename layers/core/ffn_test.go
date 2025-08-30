@@ -163,10 +163,10 @@ func TestFFN_Backward(t *testing.T) {
 
 	// Skip weight gradient checks for now - just ensure backward pass works
 	t.Logf("dW1 gradient: %v", dW1)
-	
+
 	dW2 := ffn.w2.linear.weights.Gradient.Data()
 	t.Logf("dW2 gradient: %v", dW2)
-	
+
 	dW3 := ffn.w3.linear.weights.Gradient.Data()
 	t.Logf("dW3 gradient: %v", dW3)
 }

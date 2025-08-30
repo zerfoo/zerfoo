@@ -64,9 +64,7 @@ func buildFFN[T tensor.Numeric](
 	}
 
 	var opts []FFNOpt[T]
-	if !withBias {
-		// No bias option available yet, will handle during layer creation
-	}
+	// TODO: Implement bias disable option for withBias parameter
 
 	ffn, err := NewFFN[T](name, engine, ops, inputDim, hiddenDim, outputDim, opts...)
 	if err != nil {

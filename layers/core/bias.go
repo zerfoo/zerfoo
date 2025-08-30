@@ -115,7 +115,7 @@ func (b *Bias[T]) Backward(ctx context.Context, mode types.BackwardMode, outputG
 	// Gradient with respect to biases: sum over all dimensions except the last one
 	gradShape := outputGradient.Shape()
 	biasesGrad := outputGradient
-	
+
 	// Sum over all dimensions except the last one to get bias gradients
 	for i := 0; i < len(gradShape)-1; i++ {
 		var err error

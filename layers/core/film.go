@@ -180,7 +180,7 @@ func BuildFiLM[T tensor.Numeric](
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid attribute 'context_dim' for FiLM")
 	}
-	
+
 	featureDim, ok := attributes["feature_dim"].(int)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid attribute 'feature_dim' for FiLM")

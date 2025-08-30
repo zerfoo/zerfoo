@@ -61,7 +61,7 @@ func NewDense[T tensor.Numeric](
 	if inputFeatures <= 0 || outputFeatures <= 0 {
 		return nil, fmt.Errorf("input and output features must be positive")
 	}
-	
+
 	linear, err := NewLinear[T](name+"_linear", engine, ops, inputFeatures, outputFeatures)
 	if err != nil {
 		return nil, err
