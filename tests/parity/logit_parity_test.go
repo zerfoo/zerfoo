@@ -83,7 +83,7 @@ func saveParityResults(t *testing.T, mre, agree, tol32 float64, topK, n int) {
 	
 	// Save CSV results
 	csvFile := fmt.Sprintf("artifacts/parity/%s.csv", timestamp)
-	file, err := os.Create(csvFile)
+	file, err := os.OpenFile(csvFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 -- controlled test artifact path
 	if err != nil {
 		t.Logf("Failed to create CSV file %s: %v", csvFile, err)
 		return
