@@ -75,7 +75,8 @@ func main() {
 	// Run prediction pipeline
 	if err := runPrediction(config, result); err != nil {
 		result.ErrorMessage = err.Error()
-		log.Fatalf("Prediction failed: %v", err)
+		log.Printf("Prediction failed: %v", err)
+		os.Exit(1)
 	}
 	
 	result.Success = true
