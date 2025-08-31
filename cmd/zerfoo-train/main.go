@@ -46,6 +46,11 @@ type CLIConfig struct {
 	// Execution options
 	Verbose        bool    `json:"verbose"`
 	RandomSeed     int     `json:"random_seed"`
+	
+	// Config locking and warm run options
+	LockConfig     bool    `json:"lock_config"`      // Whether to create a config lock
+	WarmRun        bool    `json:"warm_run"`         // Whether to perform warm run validation  
+	UseConfigLock  string  `json:"use_config_lock"`  // Path to existing config lock file
 }
 
 // TrainingResult contains the results of a training run.
@@ -94,6 +99,8 @@ func main() {
 	// Run training pipeline
 	if err := runTraining(config, result); err != nil {
 		result.ErrorMessage = err.Error()
+		result.Duration = time.Since(startTime)
+		saveResult(config, result)
 		log.Printf("Training failed: %v", err)
 		os.Exit(1)
 	}
@@ -137,6 +144,11 @@ func parseFlags() *CLIConfig {
 	flag.BoolVar(&config.Verbose, "verbose", false, "Verbose output")
 	flag.IntVar(&config.RandomSeed, "seed", 42, "Random seed")
 	
+	// Config lock flags
+	flag.BoolVar(&config.LockConfig, "lock-config", false, "Create configuration lock file")
+	flag.BoolVar(&config.WarmRun, "warm-run", false, "Perform warm run validation")
+	flag.StringVar(&config.UseConfigLock, "use-config-lock", "", "Path to existing config lock file")
+	
 	flag.Parse()
 	
 	// Validate required flags
@@ -151,6 +163,108 @@ func runTraining(config *CLIConfig, result *TrainingResult) error {
 	// Create output directory
 	if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	
+	lockDir := filepath.Join(config.OutputDir, "config_locks")
+	locker := numerai.NewConfigLocker(lockDir)
+	
+	// Handle config lock operations
+	if config.UseConfigLock != "" {
+		// Load and validate existing config lock
+		if config.Verbose {
+			log.Printf("Loading config lock from: %s", config.UseConfigLock)
+		}
+		
+		existingLock, err := locker.LoadConfigLock(config.UseConfigLock)
+		if err != nil {
+			return fmt.Errorf("failed to load config lock: %w", err)
+		}
+		
+		// Validate current config against lock
+		if err := locker.ValidateConfigLock(*config, existingLock); err != nil {
+			return fmt.Errorf("config validation failed: %w", err)
+		}
+		
+		if config.Verbose {
+			log.Printf("Config validated against lock: %s", existingLock.ConfigHash)
+		}
+	} else if config.LockConfig {
+		// Create new config lock
+		if config.Verbose {
+			log.Printf("Creating config lock...")
+		}
+		
+		metadata := map[string]interface{}{
+			"run_type": "training",
+			"cli_version": "1.0.0",
+			"locked_at": time.Now().Format(time.RFC3339),
+		}
+		
+		lock, err := locker.LockConfig(*config, metadata)
+		if err != nil {
+			return fmt.Errorf("failed to create config lock: %w", err)
+		}
+		
+		if config.Verbose {
+			log.Printf("Config lock created with hash: %s", lock.ConfigHash)
+		}
+	}
+	
+	// Perform warm run if requested
+	if config.WarmRun {
+		if config.Verbose {
+			log.Printf("Performing warm run validation...")
+		}
+		
+		// Create validation functions
+		dataValidator := func(dataPath string) error {
+			if _, err := os.Stat(dataPath); os.IsNotExist(err) {
+				return fmt.Errorf("data file does not exist: %s", dataPath)
+			}
+			return nil
+		}
+		
+		modelTester := func(cfg interface{}) error {
+			// Basic config validation
+			if cliConfig, ok := cfg.(CLIConfig); ok {
+				if cliConfig.NumEpochs <= 0 {
+					return fmt.Errorf("invalid number of epochs: %d", cliConfig.NumEpochs)
+				}
+				if cliConfig.LearningRate <= 0 {
+					return fmt.Errorf("invalid learning rate: %f", cliConfig.LearningRate)
+				}
+				if cliConfig.BatchSize <= 0 {
+					return fmt.Errorf("invalid batch size: %d", cliConfig.BatchSize)
+				}
+			}
+			return nil
+		}
+		
+		runner := numerai.NewWarmRunner(dataValidator, modelTester)
+		
+		// Create temporary lock for warm run
+		tempLock := &numerai.ConfigLock{
+			Version:    "1.0.0",
+			Timestamp:  time.Now(),
+			ConfigHash: "warm_run",
+			Config:     *config,
+		}
+		
+		warmResult, err := runner.RunWarmUp(tempLock, config.DataPath)
+		if err != nil {
+			return fmt.Errorf("warm run failed: %w", err)
+		}
+		
+		if !warmResult.Success {
+			return fmt.Errorf("warm run validation failed: %s", warmResult.ErrorMessage)
+		}
+		
+		if config.Verbose {
+			log.Printf("Warm run completed successfully in %v", warmResult.Duration)
+			for validation, passed := range warmResult.Validation {
+				log.Printf("  %s: %v", validation, passed)
+			}
+		}
 	}
 	
 	// Load data (placeholder - would implement actual data loading)
