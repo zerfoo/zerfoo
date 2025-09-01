@@ -326,11 +326,12 @@ func TestGraph_GetTopologicalOrder(t *testing.T) {
 	// Verify order: inputNode should come before node1, node1 before node2
 	inputIndex, node1Index, node2Index := -1, -1, -1
 	for i, node := range topOrder {
-		if node == inputNode {
+		switch node {
+		case inputNode:
 			inputIndex = i
-		} else if node == node1 {
+		case node1:
 			node1Index = i
-		} else if node == node2 {
+		case node2:
 			node2Index = i
 		}
 	}

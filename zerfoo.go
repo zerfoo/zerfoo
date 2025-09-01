@@ -141,12 +141,12 @@ func NewAdamW[T tensor.Numeric](learningRate, beta1, beta2, epsilon, weightDecay
 
 // NewDefaultTrainer creates a new default trainer.
 func NewDefaultTrainer[T tensor.Numeric](
-	graph *graph.Graph[T],
-	loss graph.Node[T],
+	g *graph.Graph[T],
+	lossNode graph.Node[T],
 	opt optimizer.Optimizer[T],
 	strategy training.GradientStrategy[T],
 ) *training.DefaultTrainer[T] {
-	return training.NewDefaultTrainer[T](graph, loss, opt, strategy)
+	return training.NewDefaultTrainer[T](g, lossNode, opt, strategy)
 }
 
 // Batch represents a training batch.

@@ -53,7 +53,7 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attention forward failed: %v", err)
 	}
-	
+
 	if !testutils.IntSliceEqual(attnOutput.Shape(), inputShape) {
 		t.Fatalf("Attention output shape mismatch: expected %v, got %v", inputShape, attnOutput.Shape())
 	}

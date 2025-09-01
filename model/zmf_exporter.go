@@ -52,7 +52,7 @@ func (e *ZMFExporter[T]) Export(model *Model[T], path string) error {
 		return fmt.Errorf("failed to marshal ZMF model: %w", err)
 	}
 
-	err = os.WriteFile(path, data, 0644)
+	err = os.WriteFile(path, data, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to write ZMF file: %w", err)
 	}
@@ -186,15 +186,15 @@ func (e *ZMFExporter[T]) convertNodeToZMF(node graph.Node[T], name string, metad
 
 // convertParameterToZMF converts a graph parameter to ZMF format.
 func (e *ZMFExporter[T]) convertParameterToZMF(param *graph.Parameter[T]) (*zmf.Tensor, error) {
-	tensor := param.Value
-	
+	tensorValue := param.Value
+
 	zmfTensor := &zmf.Tensor{
 		Dtype: getZMFDataType[T](),
-		Shape: int32SliceToInt64Slice(tensor.Shape()),
+		Shape: int32SliceToInt64Slice(tensorValue.Shape()),
 	}
 
 	// Serialize tensor data
-	data, err := serializeTensorData(tensor)
+	data, err := serializeTensorData(tensorValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize tensor data: %w", err)
 	}
@@ -234,7 +234,7 @@ func serializeTensorData[T tensor.Numeric](t *tensor.TensorNumeric[T]) ([]byte, 
 	// This is a simplified implementation - in practice you'd want proper binary serialization
 	data := t.Data()
 	result := make([]byte, len(data)*4) // Assuming 4 bytes per element for simplicity
-	
+
 	for i, val := range data {
 		// Convert to bytes - this is a placeholder implementation
 		bytes := []byte(fmt.Sprintf("%v", val))
@@ -242,6 +242,6 @@ func serializeTensorData[T tensor.Numeric](t *tensor.TensorNumeric[T]) ([]byte, 
 			copy(result[i*4:], bytes)
 		}
 	}
-	
+
 	return result, nil
 }

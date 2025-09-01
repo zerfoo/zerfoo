@@ -13,10 +13,10 @@ import (
 
 // GlobalAttention wraps GroupedQueryAttention to provide a global attention interface.
 type GlobalAttention[T tensor.Numeric] struct {
-	gqa            *GroupedQueryAttention[T]
-	embedDim       int
-	numHeads       int
-	numKVHeads     int
+	gqa        *GroupedQueryAttention[T]
+	embedDim   int
+	numHeads   int
+	numKVHeads int
 }
 
 // OpType returns the operation type.
@@ -155,12 +155,12 @@ func BuildGlobalAttention[T tensor.Numeric](
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid attribute 'embed_dim' for GlobalAttention")
 	}
-	
+
 	numHeads, ok := attributes["num_heads"].(int)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid attribute 'num_heads' for GlobalAttention")
 	}
-	
+
 	numKVHeads, ok := attributes["num_kv_heads"].(int)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid attribute 'num_kv_heads' for GlobalAttention")

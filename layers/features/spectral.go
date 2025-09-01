@@ -90,7 +90,7 @@ func (s *SpectralFingerprint[T]) Backward(ctx context.Context, mode types.Backwa
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("SpectralFingerprint requires exactly one input, got %d", len(inputs))
 	}
-	
+
 	// Return zero gradient tensor with same shape as input
 	input := inputs[0]
 	inputShape := input.Shape()
@@ -99,7 +99,7 @@ func (s *SpectralFingerprint[T]) Backward(ctx context.Context, mode types.Backwa
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zero gradient tensor: %w", err)
 	}
-	
+
 	return []*tensor.TensorNumeric[T]{zeroGrad}, nil
 }
 
