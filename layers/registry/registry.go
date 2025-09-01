@@ -16,6 +16,7 @@ import (
 func RegisterAll() {
 	// Activations
 	model.RegisterLayer("FastGelu", activations.BuildFastGelu[float32])
+	model.RegisterLayer("Gelu", activations.BuildGelu[float32])
 	model.RegisterLayer("Tanh", activations.BuildTanh[float32])
 
 	// Attention

@@ -66,7 +66,7 @@ func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initia
 			}
 
 			inputGrads, err := node.Backward(ctx, mode, grad, nodeInputs...)
-		if err != nil {
+			if err != nil {
 				return err
 			}
 
