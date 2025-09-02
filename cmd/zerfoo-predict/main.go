@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
@@ -11,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zerfoo/zerfoo/cmd/cli"
+	"github.com/zerfoo/zerfoo/model"
 )
 
 // PredictConfig represents command-line configuration for prediction.
@@ -28,7 +32,7 @@ type PredictConfig struct {
 	// Data processing
 	FeatureColumns []string `json:"feature_columns"` // Specific feature columns to use
 	IDColumn       string   `json:"id_column"`       // ID column name
-	EraColumn      string   `json:"era_column"`      // Era column name
+	GroupColumn    string   `json:"group_column"`    // Optional grouping column name
 	
 	// Execution options
 	Verbose        bool   `json:"verbose"`
@@ -51,6 +55,36 @@ type PredictionResult struct {
 }
 
 func main() {
+	// Check if we should use the new CLI framework
+	if len(os.Args) > 1 && (os.Args[1] == "--new-cli" || os.Getenv("ZERFOO_USE_NEW_CLI") == "true") {
+		// Use new CLI framework
+		ctx := context.Background()
+		cliApp := cli.NewCLI()
+		
+		// Register model registry with standard providers
+		modelRegistry := model.Float32ModelRegistry
+		
+		// Register predict command
+		predictCmd := cli.NewPredictCommand(modelRegistry)
+		cliApp.RegisterCommand(predictCmd)
+		
+		// Filter out --new-cli flag
+		args := os.Args[1:]
+		filteredArgs := make([]string, 0, len(args))
+		for _, arg := range args {
+			if arg != "--new-cli" {
+				filteredArgs = append(filteredArgs, arg)
+			}
+		}
+		
+		if err := cliApp.Run(ctx, append([]string{"predict"}, filteredArgs...)); err != nil {
+			log.Printf("CLI execution failed: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+	
+	// Legacy behavior for backward compatibility
 	config := parsePredictFlags()
 	
 	if config.Verbose {
@@ -99,7 +133,7 @@ func parsePredictFlags() *PredictConfig {
 	// Data processing
 	featureColumnsFlag := flag.String("features", "", "Comma-separated feature column names (default: auto-detect)")
 	flag.StringVar(&config.IDColumn, "id-col", "id", "ID column name")
-	flag.StringVar(&config.EraColumn, "era-col", "era", "Era column name")
+	flag.StringVar(&config.GroupColumn, "group-col", "", "Optional grouping column name (e.g., time periods, batches)")
 	
 	// Execution options
 	flag.BoolVar(&config.Verbose, "verbose", false, "Verbose output")
@@ -203,8 +237,8 @@ func generateCSVPredictions(config *PredictConfig, result *PredictionResult) err
 	
 	// Write header
 	header := []string{config.IDColumn, "prediction"}
-	if config.EraColumn != "" {
-		header = append(header, config.EraColumn)
+	if config.GroupColumn != "" {
+		header = append(header, config.GroupColumn)
 	}
 	if config.IncludeProbs {
 		header = append(header, "prediction_prob")
@@ -221,9 +255,9 @@ func generateCSVPredictions(config *PredictConfig, result *PredictionResult) err
 			fmt.Sprintf("%.6f", 0.5+float64(i%100)/10000.0), // Placeholder prediction
 		}
 		
-		if config.EraColumn != "" {
-			eraNum := (i / 1000) + 1
-			row = append(row, fmt.Sprintf("era%d", eraNum))
+		if config.GroupColumn != "" {
+			groupNum := (i / 1000) + 1
+			row = append(row, fmt.Sprintf("group_%d", groupNum))
 		}
 		
 		if config.IncludeProbs {
@@ -242,7 +276,7 @@ func generateJSONPredictions(config *PredictConfig, result *PredictionResult) er
 	type PredictionRow struct {
 		ID         string  `json:"id"`
 		Prediction float64 `json:"prediction"`
-		Era        string  `json:"era,omitempty"`
+		Group      string  `json:"group,omitempty"`
 		Prob       float64 `json:"prediction_prob,omitempty"`
 	}
 	
@@ -254,9 +288,9 @@ func generateJSONPredictions(config *PredictConfig, result *PredictionResult) er
 			Prediction: 0.5 + float64(i%100)/10000.0,
 		}
 		
-		if config.EraColumn != "" {
-			eraNum := (i / 100) + 1
-			row.Era = fmt.Sprintf("era%d", eraNum)
+		if config.GroupColumn != "" {
+			groupNum := (i / 100) + 1
+			row.Group = fmt.Sprintf("group_%d", groupNum)
 		}
 		
 		if config.IncludeProbs {
@@ -330,7 +364,7 @@ PREDICTION OPTIONS:
 DATA OPTIONS:
     -features <string>  Comma-separated feature column names (auto-detect if not specified)
     -id-col <string>    ID column name (default: id)
-    -era-col <string>   Era column name (default: era)
+    -group-col <string> Optional grouping column name (e.g., time periods, batches)
 
 OTHER OPTIONS:
     -verbose            Verbose output (default: false)
