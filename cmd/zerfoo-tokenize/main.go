@@ -10,6 +10,14 @@ import (
 )
 
 func main() {
+	// Check if we should use the new CLI framework
+	if len(os.Args) > 1 && (os.Args[1] == "--new-cli" || os.Getenv("ZERFOO_USE_NEW_CLI") == "true") {
+		fmt.Println("NEW CLI: Use 'zerfoo tokenize' for the new framework-based tokenization.")
+		fmt.Println("This legacy tool will be deprecated in future versions.")
+		os.Exit(0)
+	}
+	
+	// Legacy behavior for backward compatibility
 	text := flag.String("text", "", "Text to tokenize")
 	flag.Parse()
 
