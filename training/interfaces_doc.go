@@ -9,19 +9,19 @@
 //
 // # Core Design Principles
 //
-// 1. **Separation of Concerns**: Generic ML training logic is separated from domain-specific
-//    business logic (e.g., Numerai tournament requirements).
+//  1. **Separation of Concerns**: Generic ML training logic is separated from domain-specific
+//     business logic (e.g., Numerai tournament requirements).
 //
-// 2. **Dependency Inversion**: High-level training workflows depend on abstractions, not
-//    concrete implementations.
+//  2. **Dependency Inversion**: High-level training workflows depend on abstractions, not
+//     concrete implementations.
 //
-// 3. **Plugin Architecture**: Components can be registered and swapped at runtime using
-//    the plugin registry system.
+//  3. **Plugin Architecture**: Components can be registered and swapped at runtime using
+//     the plugin registry system.
 //
 // 4. **Backward Compatibility**: Adapter patterns allow legacy code to work with new interfaces.
 //
-// 5. **Extensibility**: Configuration structures include extension points for domain-specific
-//    customization.
+//  5. **Extensibility**: Configuration structures include extension points for domain-specific
+//     customization.
 //
 // # Interface Hierarchy
 //
@@ -33,9 +33,10 @@
 // pipeline including initialization, training loops, validation, and cleanup.
 //
 // Usage Pattern:
-//   workflow := registry.GetWorkflow(ctx, "standard", config)
-//   workflow.Initialize(ctx, workflowConfig)
-//   result := workflow.Train(ctx, dataProvider, modelProvider)
+//
+//	workflow := registry.GetWorkflow(ctx, "standard", config)
+//	workflow.Initialize(ctx, workflowConfig)
+//	result := workflow.Train(ctx, dataProvider, modelProvider)
 //
 // ### DataProvider[T]
 //
@@ -49,12 +50,13 @@
 // - Resource management (cleanup)
 //
 // Usage Pattern:
-//   dataProvider := registry.GetDataProvider(ctx, "csv", config)
-//   trainingData := dataProvider.GetTrainingData(ctx, batchConfig)
-//   for trainingData.Next(ctx) {
-//       batch := trainingData.Batch()
-//       // Process batch
-//   }
+//
+//	dataProvider := registry.GetDataProvider(ctx, "csv", config)
+//	trainingData := dataProvider.GetTrainingData(ctx, batchConfig)
+//	for trainingData.Next(ctx) {
+//	    batch := trainingData.Batch()
+//	    // Process batch
+//	}
 //
 // ### ModelProvider[T]
 //
@@ -67,9 +69,10 @@
 // - Model metadata and introspection
 //
 // Usage Pattern:
-//   modelProvider := registry.GetModelProvider(ctx, "mlp", config)
-//   model := modelProvider.CreateModel(ctx, modelConfig)
-//   modelProvider.SaveModel(ctx, model, "/path/to/model")
+//
+//	modelProvider := registry.GetModelProvider(ctx, "mlp", config)
+//	model := modelProvider.CreateModel(ctx, modelConfig)
+//	modelProvider.SaveModel(ctx, model, "/path/to/model")
 //
 // ## Supporting Interfaces
 //
@@ -90,10 +93,11 @@
 // while using standard training workflows.
 //
 // Usage Pattern:
-//   computer := NewMetricComputer()
-//   computer.RegisterMetric("mse", mseFuncition)
-//   computer.RegisterMetric("custom_score", customFunction)
-//   metrics := computer.ComputeMetrics(ctx, predictions, targets, metadata)
+//
+//	computer := NewMetricComputer()
+//	computer.RegisterMetric("mse", mseFuncition)
+//	computer.RegisterMetric("custom_score", customFunction)
+//	metrics := computer.ComputeMetrics(ctx, predictions, targets, metadata)
 //
 // ### CrossValidator[T]
 //
@@ -110,15 +114,15 @@
 // domain-specific applications to pass additional configuration without
 // modifying the core framework:
 //
-//   config := WorkflowConfig{
-//       NumEpochs: 100,
-//       Extensions: map[string]interface{}{
-//           "numerai": map[string]interface{}{
-//               "tournament_id": "numerai_main",
-//               "era_limit": 120,
-//           },
-//       },
-//   }
+//	config := WorkflowConfig{
+//	    NumEpochs: 100,
+//	    Extensions: map[string]interface{}{
+//	        "numerai": map[string]interface{}{
+//	            "tournament_id": "numerai_main",
+//	            "era_limit": 120,
+//	        },
+//	    },
+//	}
 //
 // ## Configuration Validation
 //
@@ -132,13 +136,13 @@
 //
 // ## Registration Pattern
 //
-//   // Register a component
-//   err := Float32Registry.RegisterWorkflow("standard", func(ctx context.Context, config map[string]interface{}) (TrainingWorkflow[float32], error) {
-//       return NewStandardWorkflow(config), nil
-//   })
+//	// Register a component
+//	err := Float32Registry.RegisterWorkflow("standard", func(ctx context.Context, config map[string]interface{}) (TrainingWorkflow[float32], error) {
+//	    return NewStandardWorkflow(config), nil
+//	})
 //
-//   // Use registered component
-//   workflow, err := Float32Registry.GetWorkflow(ctx, "standard", config)
+//	// Use registered component
+//	workflow, err := Float32Registry.GetWorkflow(ctx, "standard", config)
 //
 // ## Factory Functions
 //
@@ -156,9 +160,9 @@
 //
 // Adapts existing Trainer implementations to work with the TrainingWorkflow interface:
 //
-//   legacy := NewDefaultTrainer(graph, loss, optimizer, strategy)
-//   adapter := NewTrainerWorkflowAdapter(legacy, optimizer)
-//   // Now 'adapter' can be used with new workflow system
+//	legacy := NewDefaultTrainer(graph, loss, optimizer, strategy)
+//	adapter := NewTrainerWorkflowAdapter(legacy, optimizer)
+//	// Now 'adapter' can be used with new workflow system
 //
 // ## Migration Strategy
 //
@@ -173,30 +177,30 @@
 //
 // All interface methods accept context.Context and should respect cancellation:
 //
-//   func (w *MyWorkflow) Train(ctx context.Context, ...) (*TrainingResult[T], error) {
-//       for epoch := 0; epoch < maxEpochs; epoch++ {
-//           select {
-//           case <-ctx.Done():
-//               return nil, ctx.Err()
-//           default:
-//               // Continue training
-//           }
-//       }
-//   }
+//	func (w *MyWorkflow) Train(ctx context.Context, ...) (*TrainingResult[T], error) {
+//	    for epoch := 0; epoch < maxEpochs; epoch++ {
+//	        select {
+//	        case <-ctx.Done():
+//	            return nil, ctx.Err()
+//	        default:
+//	            // Continue training
+//	        }
+//	    }
+//	}
 //
 // ## Resource Cleanup
 //
 // Implementations should provide proper resource cleanup:
 //
-//   func (p *MyDataProvider) Close() error {
-//       // Close files, database connections, etc.
-//       return nil
-//   }
+//	func (p *MyDataProvider) Close() error {
+//	    // Close files, database connections, etc.
+//	    return nil
+//	}
 //
 // Use defer for automatic cleanup:
 //
-//   dataProvider := registry.GetDataProvider(ctx, "csv", config)
-//   defer dataProvider.Close()
+//	dataProvider := registry.GetDataProvider(ctx, "csv", config)
+//	defer dataProvider.Close()
 //
 // # Performance Considerations
 //
@@ -218,67 +222,56 @@
 //
 // Create mock implementations for testing:
 //
-//   type MockDataProvider[T] struct {
-//       batches []*Batch[T]
-//   }
+//	type MockDataProvider[T] struct {
+//	    batches []*Batch[T]
+//	}
 //
-//   func (m *MockDataProvider[T]) GetTrainingData(ctx context.Context, config BatchConfig) (DataIterator[T], error) {
-//       return NewDataIteratorAdapter(m.batches), nil
-//   }
+//	func (m *MockDataProvider[T]) GetTrainingData(ctx context.Context, config BatchConfig) (DataIterator[T], error) {
+//	    return NewDataIteratorAdapter(m.batches), nil
+//	}
 //
 // ## Integration Testing
 //
 // Test complete workflows with real implementations:
 //
-//   func TestWorkflowIntegration(t *testing.T) {
-//       registry := NewPluginRegistry[float32]()
-//       registry.RegisterWorkflow("test", testWorkflowFactory)
-//       registry.RegisterDataProvider("mock", mockDataProviderFactory)
-//       
-//       workflow, _ := registry.GetWorkflow(ctx, "test", config)
-//       dataProvider, _ := registry.GetDataProvider(ctx, "mock", dataConfig)
-//       
-//       result, err := workflow.Train(ctx, dataProvider, modelProvider)
-//       assert.NoError(t, err)
-//       assert.NotNil(t, result)
-//   }
+//	func TestWorkflowIntegration(t *testing.T) {
+//	    registry := NewPluginRegistry[float32]()
+//	    registry.RegisterWorkflow("test", testWorkflowFactory)
+//	    registry.RegisterDataProvider("mock", mockDataProviderFactory)
+//
+//	    workflow, _ := registry.GetWorkflow(ctx, "test", config)
+//	    dataProvider, _ := registry.GetDataProvider(ctx, "mock", dataConfig)
+//
+//	    result, err := workflow.Train(ctx, dataProvider, modelProvider)
+//	    assert.NoError(t, err)
+//	    assert.NotNil(t, result)
+//	}
 //
 // # Migration from Domain-Specific Code
-//
-// ## Era-Specific Code Migration
-//
-// The EraSequencer has been migrated from zerfoo to audacity and replaced with
-// the generic SequenceProvider interface:
-//
-// Before (domain-specific):
-//   sequencer := NewEraSequencer(maxLen)
-//   sequences := sequencer.GenerateSequences(dataset, numSeq)
-//
-// After (generic):
-//   sequenceProvider, _ := registry.GetSequenceProvider(ctx, "consecutive", config)
-//   sequences, _ := sequenceProvider.GenerateSequences(ctx, dataProvider, seqConfig)
 //
 // ## Configuration Migration
 //
 // Domain-specific configuration moves to extensions:
 //
 // Before:
-//   config := NumeraiTrainingConfig{
-//       Epochs: 100,
-//       TournamentID: "main",
-//       EraLimit: 120,
-//   }
+//
+//	config := NumeraiTrainingConfig{
+//	    Epochs: 100,
+//	    TournamentID: "main",
+//	    EraLimit: 120,
+//	}
 //
 // After:
-//   config := WorkflowConfig{
-//       NumEpochs: 100,
-//       Extensions: map[string]interface{}{
-//           "numerai": map[string]interface{}{
-//               "tournament_id": "main",
-//               "era_limit": 120,
-//           },
-//       },
-//   }
+//
+//	config := WorkflowConfig{
+//	    NumEpochs: 100,
+//	    Extensions: map[string]interface{}{
+//	        "numerai": map[string]interface{}{
+//	            "tournament_id": "main",
+//	            "era_limit": 120,
+//	        },
+//	    },
+//	}
 //
 // # Best Practices
 //
@@ -310,9 +303,4 @@
 // - adapter.go: Adapter pattern implementations
 // - registry.go: Plugin registry system
 // - interfaces.go: Core interface definitions
-//
-// For domain-specific implementations, see the audacity project:
-// - audacity/internal/training/: Era-specific implementations
-// - audacity/internal/numerai/: Numerai tournament implementations
-//
 package training
