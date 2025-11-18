@@ -13,7 +13,6 @@ import (
 
 	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/training"
 )
 
 // Command represents a generic CLI command with pluggable functionality.
@@ -69,44 +68,44 @@ func (r *CommandRegistry) List() []string {
 // BaseConfig provides common configuration options for CLI commands.
 type BaseConfig struct {
 	// Common options
-	Verbose   bool   `json:"verbose"`
-	Output    string `json:"output"`
-	Format    string `json:"format"`    // "json", "yaml", "csv", "text"
-	ConfigFile string `json:"config_file"`
-	
+	Verbose    bool   `json:"verbose"`
+	Output     string `json:"output"`
+	Format     string `json:"format"` // "json", "yaml", "csv", "text"
+	ConfigFile string `json:"configFile"`
+
 	// Plugin configuration
-	Plugins   map[string]interface{} `json:"plugins"`
-	
+	Plugins map[string]interface{} `json:"plugins"`
+
 	// Extension point for command-specific configuration
 	Extensions map[string]interface{} `json:"extensions"`
 }
 
 // PredictCommand implements model prediction using the plugin system.
 type PredictCommand[T tensor.Numeric] struct {
-	modelRegistry    *model.ModelRegistry[T]
-	defaultConfig    *PredictCommandConfig
+	modelRegistry *model.ModelRegistry[T]
+	defaultConfig *PredictCommandConfig
 }
 
 // PredictCommandConfig configures model prediction.
 type PredictCommandConfig struct {
 	BaseConfig
-	
+
 	// Model configuration
-	ModelPath     string `json:"model_path"`
-	ModelProvider string `json:"model_provider"` // Registry key for model provider
-	ModelConfig   map[string]interface{} `json:"model_config"`
-	
+	ModelPath     string                 `json:"modelPath"`
+	ModelProvider string                 `json:"modelProvider"` // Registry key for model provider
+	ModelConfig   map[string]interface{} `json:"modelConfig"`
+
 	// Data configuration
-	DataPath       string   `json:"data_path"`
-	DataProvider   string   `json:"data_provider"`   // Registry key for data provider
-	FeatureColumns []string `json:"feature_columns"`
-	IDColumn       string   `json:"id_column"`
-	GroupColumn    string   `json:"group_column"`
-	
+	DataPath       string   `json:"dataPath"`
+	DataProvider   string   `json:"dataProvider"` // Registry key for data provider
+	FeatureColumns []string `json:"featureColumns"`
+	IDColumn       string   `json:"idColumn"`
+	GroupColumn    string   `json:"groupColumn"`
+
 	// Prediction configuration
-	BatchSize     int  `json:"batch_size"`
-	IncludeProbs  bool `json:"include_probs"`
-	Overwrite     bool `json:"overwrite"`
+	BatchSize    int  `json:"batchSize"`
+	IncludeProbs bool `json:"includeProbs"`
+	Overwrite    bool `json:"overwrite"`
 }
 
 // NewPredictCommand creates a new predict command.
@@ -115,8 +114,8 @@ func NewPredictCommand[T tensor.Numeric](registry *model.ModelRegistry[T]) *Pred
 		modelRegistry: registry,
 		defaultConfig: &PredictCommandConfig{
 			BaseConfig: BaseConfig{
-				Format:  "csv",
-				Plugins: make(map[string]interface{}),
+				Format:     "csv",
+				Plugins:    make(map[string]interface{}),
 				Extensions: make(map[string]interface{}),
 			},
 			ModelProvider: "standard",
@@ -143,49 +142,49 @@ func (c *PredictCommand[T]) Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse arguments: %w", err)
 	}
-	
+
 	if config.Verbose {
 		fmt.Printf("Running prediction with config: %+v\n", config)
 	}
-	
+
 	// Create model provider (placeholder - in production would use this)
 	_, err = c.modelRegistry.GetModelProvider(ctx, config.ModelProvider, config.ModelConfig)
 	if err != nil {
 		return fmt.Errorf("failed to get model provider '%s': %w", config.ModelProvider, err)
 	}
-	
+
 	// Load model
 	modelLoader, err := c.modelRegistry.GetModelLoader(ctx, "zmf", nil)
 	if err != nil {
 		return fmt.Errorf("failed to get model loader: %w", err)
 	}
-	
+
 	modelInstance, err := modelLoader.LoadFromPath(ctx, config.ModelPath)
 	if err != nil {
 		return fmt.Errorf("failed to load model from %s: %w", config.ModelPath, err)
 	}
-	
+
 	if config.Verbose {
 		metadata := modelInstance.GetMetadata()
-		fmt.Printf("Loaded model: %s (version: %s, parameters: %d)\n", 
+		fmt.Printf("Loaded model: %s (version: %s, parameters: %d)\n",
 			metadata.Name, metadata.Version, metadata.Parameters)
 	}
-	
+
 	// Run prediction
 	result, err := c.runPrediction(ctx, config, modelInstance)
 	if err != nil {
 		return fmt.Errorf("prediction failed: %w", err)
 	}
-	
+
 	// Save results
 	if err := c.saveResults(config, result); err != nil {
 		return fmt.Errorf("failed to save results: %w", err)
 	}
-	
+
 	if config.Verbose {
 		fmt.Printf("Prediction completed successfully. Results saved to: %s\n", config.Output)
 	}
-	
+
 	return nil
 }
 
@@ -220,92 +219,11 @@ func (c *PredictCommand[T]) Examples() []string {
 	}
 }
 
-// TrainCommand implements model training using the plugin system.
-type TrainCommand[T tensor.Numeric] struct {
-	modelRegistry    *model.ModelRegistry[T]
-	trainingRegistry *training.PluginRegistry[T]
-	defaultConfig    *TrainCommandConfig
-}
-
-// TrainCommandConfig configures model training.
-type TrainCommandConfig struct {
-	BaseConfig
-	
-	// Data configuration
-	DataPath      string `json:"data_path"`
-	DataProvider  string `json:"data_provider"`
-	
-	// Model configuration
-	ModelType     string `json:"model_type"`
-	ModelProvider string `json:"model_provider"`
-	ModelConfig   map[string]interface{} `json:"model_config"`
-	
-	// Training configuration
-	TrainingWorkflow string `json:"training_workflow"`
-	TrainingConfig   map[string]interface{} `json:"training_config"`
-	
-	// Output configuration
-	OutputPath    string `json:"output_path"`
-	SaveInterval  int    `json:"save_interval"`
-}
-
-// NewTrainCommand creates a new train command.
-func NewTrainCommand[T tensor.Numeric](
-	modelRegistry *model.ModelRegistry[T],
-	trainingRegistry *training.PluginRegistry[T],
-) *TrainCommand[T] {
-	return &TrainCommand[T]{
-		modelRegistry:    modelRegistry,
-		trainingRegistry: trainingRegistry,
-		defaultConfig: &TrainCommandConfig{
-			BaseConfig: BaseConfig{
-				Format:     "json",
-				Plugins:    make(map[string]interface{}),
-				Extensions: make(map[string]interface{}),
-			},
-			ModelProvider:    "standard",
-			DataProvider:     "csv", 
-			TrainingWorkflow: "standard",
-		},
-	}
-}
-
-// Name implements Command.Name
-func (c *TrainCommand[T]) Name() string {
-	return "train"
-}
-
-// Description implements Command.Description
-func (c *TrainCommand[T]) Description() string {
-	return "Train models using configurable training workflows and data providers"
-}
-
-// Run implements Command.Run
-func (c *TrainCommand[T]) Run(ctx context.Context, args []string) error {
-	return fmt.Errorf("training functionality has been moved to domain-specific applications - use audacity for Numerai training")
-}
-
-// Usage implements Command.Usage
-func (c *TrainCommand[T]) Usage() string {
-	return `train [OPTIONS]
-
-DEPRECATED: Training functionality has been moved to domain-specific applications.
-For Numerai tournament training, please use the audacity project.`
-}
-
-// Examples implements Command.Examples  
-func (c *TrainCommand[T]) Examples() []string {
-	return []string{
-		"# Training has been moved to audacity",
-		"cd ../audacity && go run cmd/numerai-train/main.go [options]",
-	}
-}
-
 // Helper methods for PredictCommand
 
 func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, error) {
 	config := *c.defaultConfig // Copy defaults
-	
+
 	// Simple argument parsing (in a real implementation, use flag or cobra)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -343,7 +261,7 @@ func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, err
 			i++
 		}
 	}
-	
+
 	// Validate required parameters
 	if config.ModelPath == "" {
 		return nil, fmt.Errorf("--model-path is required")
@@ -354,22 +272,24 @@ func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, err
 	if config.Output == "" {
 		return nil, fmt.Errorf("--output is required")
 	}
-	
+
 	return &config, nil
 }
 
+//nolint:gosec
 func (c *PredictCommand[T]) loadConfig(path string, config *PredictCommandConfig) error {
+	// The path is provided by the user of the CLI tool.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	
+
 	return json.Unmarshal(data, config)
 }
 
 func (c *PredictCommand[T]) runPrediction(ctx context.Context, config *PredictCommandConfig, modelInstance model.ModelInstance[T]) (*PredictionResult, error) {
 	startTime := time.Now()
-	
+
 	result := &PredictionResult{
 		ModelPath:  config.ModelPath,
 		DataPath:   config.DataPath,
@@ -378,15 +298,15 @@ func (c *PredictCommand[T]) runPrediction(ctx context.Context, config *PredictCo
 		Config:     config,
 		Success:    false,
 	}
-	
+
 	// Placeholder implementation - in a real system, this would:
 	// 1. Load data using the configured data provider
 	// 2. Process data in batches
 	// 3. Run model inference
 	// 4. Collect predictions and statistics
-	
-	result.NumSamples = 10000    // Placeholder
-	result.NumFeatures = 100     // Placeholder
+
+	result.NumSamples = 10000 // Placeholder
+	result.NumFeatures = 100  // Placeholder
 	result.PredictionStats = map[string]float64{
 		"mean": 0.5,
 		"std":  0.1,
@@ -395,22 +315,22 @@ func (c *PredictCommand[T]) runPrediction(ctx context.Context, config *PredictCo
 	}
 	result.Duration = time.Since(startTime)
 	result.Success = true
-	
+
 	return result, nil
 }
 
 func (c *PredictCommand[T]) saveResults(config *PredictCommandConfig, result *PredictionResult) error {
 	// Create output directory
 	outputDir := filepath.Dir(config.Output)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	
+
 	// Check if output exists and overwrite flag
 	if _, err := os.Stat(config.Output); err == nil && !config.Overwrite {
 		return fmt.Errorf("output file exists and overwrite not enabled: %s", config.Output)
 	}
-	
+
 	// Save results based on format
 	switch strings.ToLower(config.Format) {
 	case "json":
@@ -431,13 +351,13 @@ func (c *PredictCommand[T]) saveJSONResults(config *PredictCommandConfig, result
 		},
 		"metadata": result,
 	}
-	
+
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return err
 	}
-	
-	return os.WriteFile(config.Output, data, 0644)
+
+	return os.WriteFile(config.Output, data, 0600)
 }
 
 func (c *PredictCommand[T]) saveCSVResults(config *PredictCommandConfig, result *PredictionResult) error {
@@ -445,28 +365,27 @@ func (c *PredictCommand[T]) saveCSVResults(config *PredictCommandConfig, result 
 	content := fmt.Sprintf("%s,prediction\n", config.IDColumn)
 	content += "sample_1,0.75\n"
 	content += "sample_2,0.25\n"
-	
-	return os.WriteFile(config.Output, []byte(content), 0644)
+
+	return os.WriteFile(config.Output, []byte(content), 0600)
 }
 
 // PredictionResult contains prediction results and metadata (reused from original).
 type PredictionResult struct {
-	ModelPath       string                 `json:"model_path"`
-	DataPath        string                 `json:"data_path"`
-	OutputPath      string                 `json:"output_path"`
-	Timestamp       time.Time              `json:"timestamp"`
-	Config          *PredictCommandConfig  `json:"config"`
-	NumSamples      int                    `json:"num_samples"`
-	NumFeatures     int                    `json:"num_features"`
-	PredictionStats map[string]float64     `json:"prediction_stats"`
-	Duration        time.Duration          `json:"duration"`
-	Success         bool                   `json:"success"`
-	ErrorMessage    string                 `json:"error_message,omitempty"`
+	ModelPath       string                `json:"modelPath"`
+	DataPath        string                `json:"dataPath"`
+	OutputPath      string                `json:"outputPath"`
+	Timestamp       time.Time             `json:"timestamp"`
+	Config          *PredictCommandConfig `json:"config"`
+	NumSamples      int                   `json:"numSamples"`
+	NumFeatures     int                   `json:"numFeatures"`
+	PredictionStats map[string]float64    `json:"predictionStats"`
+	Duration        time.Duration         `json:"duration"`
+	Success         bool                  `json:"success"`
+	ErrorMessage    string                `json:"errorMessage,omitempty"`
 }
 
 // TokenizeCommand implements text tokenization.
 type TokenizeCommand struct {
-	defaultText string
 }
 
 // NewTokenizeCommand creates a new tokenize command.
@@ -488,10 +407,9 @@ func (c *TokenizeCommand) Description() string {
 func (c *TokenizeCommand) Run(ctx context.Context, args []string) error {
 	// Simple argument parsing - in production would use proper flag parsing
 	var text string
-	
+
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--text":
+		if args[i] == "--text" {
 			if i+1 >= len(args) {
 				return fmt.Errorf("--text requires a value")
 			}
@@ -499,11 +417,11 @@ func (c *TokenizeCommand) Run(ctx context.Context, args []string) error {
 			i++
 		}
 	}
-	
+
 	if text == "" {
 		return fmt.Errorf("please provide text to tokenize using the --text flag")
 	}
-	
+
 	// Use tokenizer (placeholder - would need proper tokenizer implementation)
 	// For now, simple word tokenization
 	words := strings.Fields(text)
@@ -511,7 +429,7 @@ func (c *TokenizeCommand) Run(ctx context.Context, args []string) error {
 	for i := range words {
 		tokenIDs[i] = i + 1 // Simple sequential IDs
 	}
-	
+
 	fmt.Printf("Token IDs for '%s': %v\n", text, tokenIDs)
 	return nil
 }
@@ -556,13 +474,13 @@ func (c *CLI) Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return c.printUsage()
 	}
-	
+
 	cmdName := args[0]
 	cmd, exists := c.registry.Get(cmdName)
 	if !exists {
 		return fmt.Errorf("unknown command: %s\n\nUse 'help' to see available commands", cmdName)
 	}
-	
+
 	return cmd.Run(ctx, args[1:])
 }
 
@@ -571,12 +489,12 @@ func (c *CLI) printUsage() error {
 	fmt.Printf("USAGE:\n")
 	fmt.Printf("  zerfoo <command> [options]\n\n")
 	fmt.Printf("AVAILABLE COMMANDS:\n")
-	
+
 	for _, name := range c.registry.List() {
 		cmd, _ := c.registry.Get(name)
 		fmt.Printf("  %-12s %s\n", name, cmd.Description())
 	}
-	
+
 	fmt.Printf("\nUse 'zerfoo <command> --help' for more information about a command.\n")
 	return nil
 }
