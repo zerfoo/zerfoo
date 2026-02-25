@@ -201,8 +201,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 }
 
 // Backward computes the gradients for RoPE.
+// Shapes are derived from dOut so that a single RoPE instance can be shared
+// across Q and K paths whose batch dimensions differ.
 func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	seqLen := rpe.inputShape[1]
+	dShape := dOut.Shape()
+	batchDim := dShape[0]
+	seqLen := dShape[1]
 
 	// Slice cos and sin angles to match the input sequence length
 	cosAngles, err := rpe.cosAngles.Slice([2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
@@ -216,12 +220,12 @@ func (rpe *RotaryPositionalEmbedding[T]) Backward(ctx context.Context, mode type
 	}
 
 	// Split dOut into d_rotated_x0, d_rotated_x1
-	dRotatedX0, err := dOut.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, rpe.inputShape[1]}, [2]int{0, rpe.headDim / 2})
+	dRotatedX0, err := dOut.Slice([2]int{0, batchDim}, [2]int{0, seqLen}, [2]int{0, rpe.headDim / 2})
 	if err != nil {
 		return nil, err
 	}
 
-	dRotatedX1, err := dOut.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, rpe.inputShape[1]}, [2]int{rpe.headDim / 2, rpe.headDim})
+	dRotatedX1, err := dOut.Slice([2]int{0, batchDim}, [2]int{0, seqLen}, [2]int{rpe.headDim / 2, rpe.headDim})
 	if err != nil {
 		return nil, err
 	}
