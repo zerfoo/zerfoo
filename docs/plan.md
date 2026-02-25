@@ -96,84 +96,89 @@ production framework.
 
 ## 3. Checkable Work Breakdown
 
-### E1: Fix ZMF Serialization (Critical)
+### E1: Fix ZMF Serialization (Critical) -- DONE
 
-- [ ] T1.1 Replace serializeTensorData with EncodeTensor in zmf_exporter.go  Owner: TBD  Est: 1h
+- [x] T1.1 Replace serializeTensorData with EncodeTensor in zmf_exporter.go  Owner: TBD  Est: 1h
   - Dependencies: None
   - Acceptance: serializeTensorData function at model/zmf_exporter.go:233-247 replaced with call to EncodeTensor from model/tensor_encoder.go
   - Risk: EncodeTensor currently supports float32, float16, and int8 only. If other types are needed, EncodeTensor must be extended first.
-  - [ ] S1.1.1 Read model/zmf_exporter.go and model/tensor_encoder.go to confirm type compatibility  Est: 15m
-  - [ ] S1.1.2 Replace serializeTensorData body with EncodeTensor call, remove the old function  Est: 30m
-  - [ ] S1.1.3 Run gofmt and go vet on model/  Est: 5m
-- [ ] T1.2 Add round-trip unit test for ZMF export/import  Owner: TBD  Est: 1h
+  - [x] S1.1.1 Read model/zmf_exporter.go and model/tensor_encoder.go to confirm type compatibility  Est: 15m
+  - [x] S1.1.2 Replace serializeTensorData body with EncodeTensor call, remove the old function  Est: 30m
+  - Note: Extended EncodeTensor to also support float64, int16, int32, int, int64.
+  - [x] S1.1.3 Run gofmt and go vet on model/  Est: 5m
+- [x] T1.2 Add round-trip unit test for ZMF export/import  Owner: TBD  Est: 1h
   - Dependencies: T1.1
   - Acceptance: Test creates a tensor, exports to ZMF bytes, decodes back, asserts values match exactly
-  - [ ] S1.2.1 Write TestZMFExporter_RoundTrip in model/zmf_exporter_test.go  Est: 45m
-  - [ ] S1.2.2 Run go test ./model/ and verify pass  Est: 15m
+  - [x] S1.2.1 Write TestZMFExporter_RoundTrip in model/zmf_exporter_test.go  Est: 45m
+  - [x] S1.2.2 Run go test ./model/ and verify pass  Est: 15m
 
-### E2: Implement Model Adapter Stubs (Critical)
+### E2: Implement Model Adapter Stubs (Critical) -- DONE
 
-- [ ] T2.1 Implement ZMFModelLoader.LoadFromPath  Owner: TBD  Est: 1.5h
+- [x] T2.1 Implement ZMFModelLoader.LoadFromPath  Owner: TBD  Est: 1.5h
   - Dependencies: T1.1 (needs working serialization)
   - Location: model/adapters.go:194-198
   - Acceptance: Opens a ZMF file, reads proto, decodes tensors, returns populated Model[T]
-  - [ ] S2.1.1 Read model/adapters.go and model/zmf_loader.go to understand the loading pipeline  Est: 15m
-  - [ ] S2.1.2 Implement LoadFromPath using existing ZMF proto parsing and DecodeTensor  Est: 45m
-  - [ ] S2.1.3 Write TestZMFModelLoader_LoadFromPath in model/adapters_test.go  Est: 30m
-  - [ ] S2.1.4 Run gofmt and go vet on model/  Est: 5m
-- [ ] T2.2 Implement ZMFModelLoader.LoadFromReader  Owner: TBD  Est: 1h
+  - [x] S2.1.1 Read model/adapters.go and model/zmf_loader.go to understand the loading pipeline  Est: 15m
+  - [x] S2.1.2 Implement LoadFromPath using existing ZMF proto parsing and DecodeTensor  Est: 45m
+  - [x] S2.1.3 Write TestZMFModelLoader_LoadFromPath in model/adapters_test.go  Est: 30m
+  - [x] S2.1.4 Run gofmt and go vet on model/  Est: 5m
+- [x] T2.2 Implement ZMFModelLoader.LoadFromReader  Owner: TBD  Est: 1h
   - Dependencies: T2.1
   - Location: model/adapters.go:200-202
   - Acceptance: Reads ZMF proto from io.Reader, decodes, returns Model[T]
-  - [ ] S2.2.1 Implement LoadFromReader wrapping proto unmarshal from reader  Est: 30m
-  - [ ] S2.2.2 Write TestZMFModelLoader_LoadFromReader  Est: 20m
-  - [ ] S2.2.3 Run gofmt and go vet on model/  Est: 5m
-- [ ] T2.3 Implement ZMFModelLoader.LoadFromBytes  Owner: TBD  Est: 45m
+  - [x] S2.2.1 Implement LoadFromReader wrapping proto unmarshal from reader  Est: 30m
+  - [x] S2.2.2 Write TestZMFModelLoader_LoadFromReader  Est: 20m
+  - [x] S2.2.3 Run gofmt and go vet on model/  Est: 5m
+- [x] T2.3 Implement ZMFModelLoader.LoadFromBytes  Owner: TBD  Est: 45m
   - Dependencies: T2.2
   - Location: model/adapters.go:205-207
   - Acceptance: Wraps bytes in reader, delegates to LoadFromReader
-  - [ ] S2.3.1 Implement LoadFromBytes using bytes.NewReader and LoadFromReader  Est: 15m
-  - [ ] S2.3.2 Write TestZMFModelLoader_LoadFromBytes  Est: 20m
-  - [ ] S2.3.3 Run gofmt and go vet on model/  Est: 5m
-- [ ] T2.4 Implement ZMFModelExporter.ExportToWriter  Owner: TBD  Est: 1h
+  - [x] S2.3.1 Implement LoadFromBytes using bytes.NewReader and LoadFromReader  Est: 15m
+  - [x] S2.3.2 Write TestZMFModelLoader_LoadFromBytes  Est: 20m
+  - [x] S2.3.3 Run gofmt and go vet on model/  Est: 5m
+- [x] T2.4 Implement ZMFModelExporter.ExportToWriter  Owner: TBD  Est: 1h
   - Dependencies: T1.1
   - Location: model/adapters.go:266-267
   - Acceptance: Serializes Model[T] to ZMF proto, writes to io.Writer
-  - [ ] S2.4.1 Implement ExportToWriter using ZMFExporter and proto marshal  Est: 30m
-  - [ ] S2.4.2 Write TestZMFModelExporter_ExportToWriter  Est: 20m
-  - [ ] S2.4.3 Run gofmt and go vet on model/  Est: 5m
-- [ ] T2.5 Implement ZMFModelExporter.ExportToBytes  Owner: TBD  Est: 45m
+  - [x] S2.4.1 Implement ExportToWriter using ZMFExporter and proto marshal  Est: 30m
+  - [x] S2.4.2 Write TestZMFModelExporter_ExportToWriter  Est: 20m
+  - [x] S2.4.3 Run gofmt and go vet on model/  Est: 5m
+- [x] T2.5 Implement ZMFModelExporter.ExportToBytes  Owner: TBD  Est: 45m
   - Dependencies: T2.4
   - Location: model/adapters.go:271-272
   - Acceptance: Wraps bytes.Buffer, delegates to ExportToWriter, returns bytes
-  - [ ] S2.5.1 Implement ExportToBytes using bytes.Buffer and ExportToWriter  Est: 15m
-  - [ ] S2.5.2 Write TestZMFModelExporter_ExportToBytes  Est: 20m
-  - [ ] S2.5.3 Run gofmt and go vet on model/  Est: 5m
-- [ ] T2.6 Implement StandardModelInstance.Backward  Owner: TBD  Est: 1.5h
+  - [x] S2.5.1 Implement ExportToBytes using bytes.Buffer and ExportToWriter  Est: 15m
+  - [x] S2.5.2 Write TestZMFModelExporter_ExportToBytes  Est: 20m
+  - [x] S2.5.3 Run gofmt and go vet on model/  Est: 5m
+- [x] T2.6 Implement StandardModelInstance.Backward  Owner: TBD  Est: 1.5h
   - Dependencies: E3 (needs TransformerBlock.Backward)
   - Location: model/adapters.go:67-71
   - Acceptance: Delegates backward to the underlying graph's backward pass
-  - [ ] S2.6.1 Implement Backward using graph automatic differentiation  Est: 45m
-  - [ ] S2.6.2 Write TestStandardModelInstance_Backward  Est: 30m
-  - [ ] S2.6.3 Run gofmt and go vet on model/  Est: 5m
+  - [x] S2.6.1 Implement Backward using graph automatic differentiation  Est: 45m
+  - [x] S2.6.2 Write TestStandardModelInstance_Backward  Est: 30m
+  - [x] S2.6.3 Run gofmt and go vet on model/  Est: 5m
 
-### E3: Implement Transformer Backward Pass (Critical)
+### E3: Implement Transformer Backward Pass (Critical) -- DONE
 
-- [ ] T3.1 Implement Block.Backward in layers/transformer/block.go  Owner: TBD  Est: 3h
+- [x] T3.1 Implement Block.Backward in layers/transformer/block.go  Owner: TBD  Est: 3h
   - Dependencies: None
   - Location: layers/transformer/block.go:134-136
   - Acceptance: Gradient propagates through normalization, attention, FFN, and residual connections in reverse order. Output gradient shapes match input shapes.
   - Risk: Must correctly handle residual connection gradient splitting and RMSNorm backward.
-  - [ ] S3.1.1 Read layers/transformer/block.go Forward method to map the computation graph  Est: 30m
-  - [ ] S3.1.2 Verify that sub-layers (attention, FFN, norm1, norm2, normPostAttention) each have Backward methods  Est: 15m
-  - [ ] S3.1.3 Implement Block.Backward: reverse the forward pass order, propagate gradients through each sub-layer, split gradients at residual additions  Est: 1.5h
-  - [ ] S3.1.4 Run gofmt and go vet on layers/transformer/  Est: 5m
-- [ ] T3.2 Add backward pass unit tests  Owner: TBD  Est: 1.5h
+  - [x] S3.1.1 Read layers/transformer/block.go Forward method to map the computation graph  Est: 30m
+  - [x] S3.1.2 Verify that sub-layers (attention, FFN, norm1, norm2, normPostAttention) each have Backward methods  Est: 15m
+  - [x] S3.1.3 Implement Block.Backward: reverse the forward pass order, propagate gradients through each sub-layer, split gradients at residual additions  Est: 1.5h
+  - Note: Found and fixed 3 pre-existing bugs:
+    - RoPE backward used cached inputShape (broke when shared between Q and K paths)
+    - RMSNorm backward gain gradient shape [1,1,dim] vs parameter shape [dim]
+    - GQA backward applied RoPE backward before reversing K/V head replication
+  - [x] S3.1.4 Run gofmt and go vet on layers/transformer/  Est: 5m
+- [x] T3.2 Add backward pass unit tests  Owner: TBD  Est: 1.5h
   - Dependencies: T3.1
   - Acceptance: Test with synthetic input verifies: no error returned, output gradient shapes correct, gradients are non-zero
-  - [ ] S3.2.1 Write TestTransformerBlock_Backward in layers/transformer/transformer_block_test.go  Est: 45m
-  - [ ] S3.2.2 Write TestTransformerBlock_BackwardShapes verifying gradient dimensions  Est: 30m
-  - [ ] S3.2.3 Run go test ./layers/transformer/ and verify pass  Est: 10m
+  - [x] S3.2.1 Write TestTransformerBlock_Backward in layers/transformer/transformer_block_test.go  Est: 45m
+  - [x] S3.2.2 Write TestTransformerBlock_BackwardShapes verifying gradient dimensions  Est: 30m
+  - [x] S3.2.3 Run go test ./layers/transformer/ and verify pass  Est: 10m
 
 ### E4: Fix CLI Predict and Tokenize Commands (Critical)
 
@@ -340,7 +345,10 @@ A task is done when:
 
 ## 6. Progress Log
 
-- **2026 02 24:** Plan created to address all issues documented in ISSUES.md. Merged with existing audacity removal plan. Epics E1-E7 defined covering ZMF serialization (E1), model adapters (E2), transformer backward (E3), CLI (E4), data cleanup including audacity removal (E5), HRM integration (E6), and final verification (E7). Previous audacity-only tasks (old E1, E2) absorbed into E5 (T5.4) and E7. No implementation progress yet.
+- **2026 02 24:** Plan created to address all issues documented in ISSUES.md. Merged with existing audacity removal plan. Epics E1-E7 defined covering ZMF serialization (E1), model adapters (E2), transformer backward (E3), CLI (E4), data cleanup including audacity removal (E5), HRM integration (E6), and final verification (E7). Previous audacity-only tasks (old E1, E2) absorbed into E5 (T5.4) and E7.
+- **2026 02 24:** E1 completed. Replaced lossy serializeTensorData (fmt.Sprintf) with binary EncodeTensor. Extended EncodeTensor to support float64, int16, int32, int, int64. Added TestZMFExporter_RoundTrip verifying bit-exact float32 round-trip. Commit f1b3494.
+- **2026 02 24:** E3 completed. Implemented Block.Backward with gradient propagation through all sub-layers and residual connections. Fixed 3 pre-existing bugs: (1) RoPE backward used cached inputShape which broke when a single instance was shared between Q and K paths with different batch dims; (2) RMSNorm backward gain gradient shape mismatch [1,1,dim] vs [dim]; (3) GQA backward applied RoPE backward before reversing K/V head replication. Commits: 9d35a40, 388088b, 3a7727c, 4bc80a2.
+- **2026 02 24:** E2 completed. Implemented all 6 adapter stubs: StandardModelInstance.Backward (delegates to graph.Backward with FullBackprop), ZMFModelLoader.LoadFromPath/Reader/Bytes (proto unmarshal + BuildFromZMF), ZMFModelExporter.ExportToWriter/Bytes (proto marshal). Added comprehensive round-trip tests including MockOp layer builder registration. Commit 3edb72a.
 
 ---
 
