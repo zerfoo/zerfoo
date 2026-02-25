@@ -376,9 +376,9 @@ func TestModelConfig_Extensions(t *testing.T) {
 		TrainingMode: true,
 		BatchSize:    32,
 		Extensions: map[string]interface{}{
-			"numerai": map[string]interface{}{
-				"tournament_id": "main",
-				"era_limit":     120,
+			"domain": map[string]interface{}{
+				"task_id":     "main",
+				"batch_limit": 120,
 			},
 			"custom": map[string]interface{}{
 				"feature_count": 1000,
@@ -388,18 +388,18 @@ func TestModelConfig_Extensions(t *testing.T) {
 	}
 
 	// Test extension access
-	if config.Extensions["numerai"] == nil {
-		t.Error("Expected numerai extension to be present")
+	if config.Extensions["domain"] == nil {
+		t.Error("Expected domain extension to be present")
 	}
 
-	numeraiConfig, ok := config.Extensions["numerai"].(map[string]interface{})
+	domainConfig, ok := config.Extensions["domain"].(map[string]interface{})
 	if !ok {
-		t.Error("Expected numerai config to be map[string]interface{}")
+		t.Error("Expected domain config to be map[string]interface{}")
 	}
 
-	tournamentID, ok := numeraiConfig["tournament_id"].(string)
-	if !ok || tournamentID != "main" {
-		t.Errorf("Expected tournament_id 'main', got %v", tournamentID)
+	taskID, ok := domainConfig["task_id"].(string)
+	if !ok || taskID != "main" {
+		t.Errorf("Expected task_id 'main', got %v", taskID)
 	}
 
 	// Test custom extension
