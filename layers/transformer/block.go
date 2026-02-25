@@ -23,6 +23,13 @@ type Block[T tensor.Numeric] struct {
 	norm2             *normalization.RMSNorm[T]
 	normPostAttention *normalization.RMSNorm[T]
 	engine            compute.Engine[T]
+
+	// Cached forward intermediates for backward pass.
+	fwdInput     *tensor.TensorNumeric[T] // x
+	fwdNorm1Out  *tensor.TensorNumeric[T] // norm1(x)
+	fwdResidual1 *tensor.TensorNumeric[T] // x + attention(norm1(x))
+	fwdPostAttn  *tensor.TensorNumeric[T] // normPostAttention(residual1)
+	fwdNorm2Out  *tensor.TensorNumeric[T] // norm2(postAttn)
 }
 
 // BlockOptions holds configuration options for the Transformer block.
@@ -89,12 +96,14 @@ func NewTransformerBlock[T tensor.Numeric](
 // Forward computes the forward pass of the Transformer block.
 func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	x := inputs[0]
+	b.fwdInput = x
 
 	// Attention part
 	norm1Output, err := b.norm1.Forward(ctx, x)
 	if err != nil {
 		return nil, err
 	}
+	b.fwdNorm1Out = norm1Output
 
 	attnOutput, err := b.attention.Forward(ctx, norm1Output)
 	if err != nil {
@@ -105,17 +114,21 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 	if err != nil {
 		return nil, err
 	}
+	b.fwdResidual1 = attnOutput
+
 	// Post-attention normalization
 	attnOutput, err = b.normPostAttention.Forward(ctx, attnOutput)
 	if err != nil {
 		return nil, err
 	}
+	b.fwdPostAttn = attnOutput
 
 	// FFN part
 	norm2Output, err := b.norm2.Forward(ctx, attnOutput)
 	if err != nil {
 		return nil, err
 	}
+	b.fwdNorm2Out = norm2Output
 
 	ffnOutput, err := b.ffn.Forward(ctx, norm2Output)
 	if err != nil {
@@ -131,8 +144,70 @@ func (b *Block[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward computes the backward pass of the Transformer block.
-func (b *Block[T]) Backward(_ context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return []*tensor.TensorNumeric[T]{dOut}, fmt.Errorf("backward pass not implemented")
+//
+// The forward pass is:
+//
+//	n1  = norm1(x)
+//	a   = attention(n1)
+//	r1  = x + a              (residual 1)
+//	npa = normPostAttention(r1)
+//	n2  = norm2(npa)
+//	f   = ffn(n2)
+//	out = npa + f             (residual 2)
+//
+// Backward reverses this, splitting gradients at each residual addition.
+func (b *Block[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	// Residual 2: out = npa + f → d_npa = dOut, d_f = dOut
+	dF := dOut
+	dNPA := dOut
+
+	// FFN backward: f = ffn(n2) → d_n2
+	dN2, err := b.ffn.Backward(ctx, mode, dF, b.fwdNorm2Out)
+	if err != nil {
+		return nil, fmt.Errorf("ffn backward: %w", err)
+	}
+
+	// norm2 backward: n2 = norm2(npa) → d_npa_from_norm2
+	dNPAFromNorm2, err := b.norm2.Backward(ctx, mode, dN2[0], b.fwdPostAttn)
+	if err != nil {
+		return nil, fmt.Errorf("norm2 backward: %w", err)
+	}
+
+	// Accumulate gradients at npa
+	dNPATotal, err := b.engine.Add(ctx, dNPA, dNPAFromNorm2[0])
+	if err != nil {
+		return nil, fmt.Errorf("accumulate npa gradient: %w", err)
+	}
+
+	// normPostAttention backward: npa = normPostAttention(r1) → d_r1
+	dR1, err := b.normPostAttention.Backward(ctx, mode, dNPATotal, b.fwdResidual1)
+	if err != nil {
+		return nil, fmt.Errorf("normPostAttention backward: %w", err)
+	}
+
+	// Residual 1: r1 = x + a → d_x = d_r1, d_a = d_r1
+	dA := dR1[0]
+	dX := dR1[0]
+
+	// attention backward: a = attention(n1) → d_n1
+	dN1, err := b.attention.Backward(ctx, mode, dA, b.fwdNorm1Out)
+	if err != nil {
+		return nil, fmt.Errorf("attention backward: %w", err)
+	}
+
+	// norm1 backward: n1 = norm1(x) → d_x_from_norm1
+	dXFromNorm1, err := b.norm1.Backward(ctx, mode, dN1[0], b.fwdInput)
+	if err != nil {
+		return nil, fmt.Errorf("norm1 backward: %w", err)
+	}
+
+	// Accumulate gradients at x
+	dXTotal, err := b.engine.Add(ctx, dX, dXFromNorm1[0])
+	if err != nil {
+		return nil, fmt.Errorf("accumulate input gradient: %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{dXTotal}, nil
 }
 
 // Parameters returns the parameters of the Transformer block.

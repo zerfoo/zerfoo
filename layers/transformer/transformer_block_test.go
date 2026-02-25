@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/zerfoo/types"
 )
 
 func TestTransformerBlock_Forward(t *testing.T) {
@@ -82,5 +83,168 @@ func TestTransformerBlock_Forward(t *testing.T) {
 	expectedNumParams := 17
 	if len(block.Parameters()) != expectedNumParams {
 		t.Errorf("Expected %d parameters, got %d", expectedNumParams, len(block.Parameters()))
+	}
+}
+
+// newTestBlock creates a Block with standard test configuration.
+func newTestBlock(t *testing.T) (*Block[float32], []int) {
+	t.Helper()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	modelDim := 64
+	ffnDim := 64
+
+	gqa, err := attention.NewGroupedQueryAttention[float32](
+		engine, ops, modelDim, 8, 4,
+		attention.WithRopeBase[float32](10000.0),
+		attention.WithMaxSeqLen[float32](512),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create attention: %v", err)
+	}
+
+	block, err := NewTransformerBlock[float32](engine, ops, modelDim, ffnDim, gqa,
+		WithEpsilon[float32](1e-6))
+	if err != nil {
+		t.Fatalf("Failed to create block: %v", err)
+	}
+
+	inputShape := []int{2, 10, modelDim}
+	return block, inputShape
+}
+
+func TestTransformerBlock_Backward(t *testing.T) {
+	ctx := context.Background()
+	block, inputShape := newTestBlock(t)
+
+	batchSize, seqLen, modelDim := inputShape[0], inputShape[1], inputShape[2]
+
+	// Create input and run forward
+	inputData := make([]float32, batchSize*seqLen*modelDim)
+	for i := range inputData {
+		inputData[i] = float32(i) * 0.01
+	}
+	input, err := tensor.New[float32](inputShape, inputData)
+	if err != nil {
+		t.Fatalf("Failed to create input: %v", err)
+	}
+
+	output, err := block.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Create gradient same shape as output (ones)
+	gradData := make([]float32, batchSize*seqLen*modelDim)
+	for i := range gradData {
+		gradData[i] = 1.0
+	}
+	dOut, err := tensor.New[float32](output.Shape(), gradData)
+	if err != nil {
+		t.Fatalf("Failed to create gradient: %v", err)
+	}
+
+	// Run backward
+	grads, err := block.Backward(ctx, types.FullBackprop, dOut)
+	if err != nil {
+		t.Fatalf("Backward failed: %v", err)
+	}
+
+	// Verify: single gradient tensor returned
+	if len(grads) != 1 {
+		t.Fatalf("Expected 1 gradient, got %d", len(grads))
+	}
+
+	// Verify: gradient is non-nil
+	if grads[0] == nil {
+		t.Fatal("Input gradient is nil")
+	}
+
+	// Verify: gradient shape matches input
+	if !testutils.IntSliceEqual(grads[0].Shape(), inputShape) {
+		t.Errorf("Gradient shape %v != input shape %v", grads[0].Shape(), inputShape)
+	}
+
+	// Verify: gradients are non-zero (at least some elements)
+	gradValues := grads[0].Data()
+	hasNonZero := false
+	for _, v := range gradValues {
+		if v != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("All gradient values are zero; expected non-zero gradients")
+	}
+}
+
+func TestTransformerBlock_BackwardShapes(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		batch int
+		seq   int
+		dim   int
+	}{
+		{"small", 1, 4, 64},
+		{"medium", 2, 10, 64},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ops := numeric.Float32Ops{}
+			engine := compute.NewCPUEngine[float32](ops)
+
+			gqa, err := attention.NewGroupedQueryAttention[float32](
+				engine, ops, tt.dim, 8, 4,
+				attention.WithRopeBase[float32](10000.0),
+				attention.WithMaxSeqLen[float32](512),
+			)
+			if err != nil {
+				t.Fatalf("Failed to create attention: %v", err)
+			}
+
+			block, err := NewTransformerBlock[float32](engine, ops, tt.dim, tt.dim, gqa,
+				WithEpsilon[float32](1e-6))
+			if err != nil {
+				t.Fatalf("Failed to create block: %v", err)
+			}
+
+			shape := []int{tt.batch, tt.seq, tt.dim}
+			n := tt.batch * tt.seq * tt.dim
+			data := make([]float32, n)
+			for i := range data {
+				data[i] = float32(i%100) * 0.001
+			}
+			input, err := tensor.New[float32](shape, data)
+			if err != nil {
+				t.Fatalf("Failed to create input: %v", err)
+			}
+
+			out, err := block.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			gradData := make([]float32, n)
+			for i := range gradData {
+				gradData[i] = 1.0
+			}
+			dOut, err := tensor.New[float32](out.Shape(), gradData)
+			if err != nil {
+				t.Fatalf("Failed to create dOut: %v", err)
+			}
+
+			grads, err := block.Backward(ctx, types.FullBackprop, dOut)
+			if err != nil {
+				t.Fatalf("Backward failed: %v", err)
+			}
+
+			if !testutils.IntSliceEqual(grads[0].Shape(), shape) {
+				t.Errorf("Gradient shape %v != expected %v", grads[0].Shape(), shape)
+			}
+		})
 	}
 }
