@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
@@ -353,5 +354,120 @@ func TestInt32SliceToInt64Slice(t *testing.T) {
 		if v != expected[i] {
 			t.Errorf("expected %d at index %d, got %d", expected[i], i, v)
 		}
+	}
+}
+
+func TestGetZMFDataType_Int(t *testing.T) {
+	result := getZMFDataType[int]()
+	if result != zmf.Tensor_INT32 {
+		t.Errorf("expected INT32 for int, got %v", result)
+	}
+}
+
+func TestGetZMFDataType_Int64(t *testing.T) {
+	result := getZMFDataType[int64]()
+	if result != zmf.Tensor_INT64 {
+		t.Errorf("expected INT64 for int64, got %v", result)
+	}
+}
+
+func TestGetZMFDataType_Float16(t *testing.T) {
+	// float16 should fall through to default (FLOAT32)
+	result := getZMFDataType[float16.Float16]()
+	if result != zmf.Tensor_FLOAT32 {
+		t.Errorf("expected FLOAT32 default for float16, got %v", result)
+	}
+}
+
+func TestZMFExporter_Export_NilGraph(t *testing.T) {
+	model := &Model[int]{Graph: nil}
+	exporter := NewZMFExporter[int]()
+
+	// Export with nil graph panics in GetAllNodes.
+	// Verify it panics rather than silently succeeding.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil graph in Export")
+		}
+	}()
+
+	_ = exporter.Export(model, "/tmp/should_not_create.zmf")
+}
+
+func TestZMFExporter_Export_InvalidPath(t *testing.T) {
+	// Create a model to export
+	engine := compute.NewCPUEngine[int](numeric.IntOps{})
+	builder := graph.NewBuilder[int](engine)
+	inputNode := builder.Input([]int{2})
+
+	node := &mockNode{
+		opType:      "MockOp",
+		outputShape: []int{2},
+		params:      []*graph.Parameter[int]{},
+	}
+	builder.AddNode(node, inputNode)
+
+	g, err := builder.Build(node)
+	if err != nil {
+		t.Fatalf("failed to build graph: %v", err)
+	}
+
+	model := &Model[int]{Graph: g}
+	exporter := NewZMFExporter[int]()
+
+	// Try to write to an invalid path
+	err = exporter.Export(model, "/nonexistent_dir_12345/model.zmf")
+	if err == nil {
+		t.Error("expected error for invalid path")
+	}
+}
+
+func TestConvertNodeToZMF_VariousAttributes(t *testing.T) {
+	exporter := NewZMFExporter[int]()
+
+	node := &mockNode{
+		opType:      "TestOp",
+		outputShape: []int{2},
+		attributes: map[string]interface{}{
+			"str_attr":   "hello",
+			"int_attr":   42,
+			"int64_attr": int64(100),
+			"f32_attr":   float32(3.14),
+			"f64_attr":   float64(2.718),
+			"bool_attr":  true,
+			"other_attr": []int{1, 2, 3}, // will use fmt.Sprintf fallback
+		},
+		params: []*graph.Parameter[int]{},
+	}
+
+	metadata := map[string]interface{}{
+		"op_type":    "TestOp",
+		"attributes": node.Attributes(),
+	}
+
+	zmfNode, err := exporter.convertNodeToZMF(node, "test_node", metadata)
+	if err != nil {
+		t.Fatalf("convertNodeToZMF failed: %v", err)
+	}
+
+	// Verify string attribute
+	if zmfNode.Attributes["str_attr"].GetS() != "hello" {
+		t.Errorf("str_attr: expected 'hello', got %q", zmfNode.Attributes["str_attr"].GetS())
+	}
+	// Verify int attribute
+	if zmfNode.Attributes["int_attr"].GetI() != 42 {
+		t.Errorf("int_attr: expected 42, got %d", zmfNode.Attributes["int_attr"].GetI())
+	}
+	// Verify int64 attribute
+	if zmfNode.Attributes["int64_attr"].GetI() != 100 {
+		t.Errorf("int64_attr: expected 100, got %d", zmfNode.Attributes["int64_attr"].GetI())
+	}
+	// Verify float32 attribute
+	if zmfNode.Attributes["f32_attr"].GetF() != 3.14 {
+		t.Errorf("f32_attr: expected 3.14, got %v", zmfNode.Attributes["f32_attr"].GetF())
+	}
+	// Verify bool attribute
+	if !zmfNode.Attributes["bool_attr"].GetB() {
+		t.Error("bool_attr: expected true")
 	}
 }
