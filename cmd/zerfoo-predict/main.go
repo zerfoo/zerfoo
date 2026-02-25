@@ -64,7 +64,7 @@ func main() {
 		modelRegistry := model.Float32ModelRegistry
 
 		// Register predict command
-		predictCmd := cli.NewPredictCommand(modelRegistry)
+		predictCmd := cli.NewPredictCommand(modelRegistry, func(f float64) float32 { return float32(f) }, func(v float32) float64 { return float64(v) })
 		cliApp.RegisterCommand(predictCmd)
 
 		// Filter out --new-cli flag
