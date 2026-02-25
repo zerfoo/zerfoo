@@ -3,15 +3,19 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -83,6 +87,8 @@ type BaseConfig struct {
 // PredictCommand implements model prediction using the plugin system.
 type PredictCommand[T tensor.Numeric] struct {
 	modelRegistry *model.ModelRegistry[T]
+	fromFloat64   func(float64) T
+	toFloat64     func(T) float64
 	defaultConfig *PredictCommandConfig
 }
 
@@ -109,9 +115,13 @@ type PredictCommandConfig struct {
 }
 
 // NewPredictCommand creates a new predict command.
-func NewPredictCommand[T tensor.Numeric](registry *model.ModelRegistry[T]) *PredictCommand[T] {
+// fromFloat64 converts a float64 CSV value to type T.
+// toFloat64 converts a prediction value of type T back to float64 for output.
+func NewPredictCommand[T tensor.Numeric](registry *model.ModelRegistry[T], fromFloat64 func(float64) T, toFloat64 func(T) float64) *PredictCommand[T] {
 	return &PredictCommand[T]{
 		modelRegistry: registry,
+		fromFloat64:   fromFloat64,
+		toFloat64:     toFloat64,
 		defaultConfig: &PredictCommandConfig{
 			BaseConfig: BaseConfig{
 				Format:     "csv",
@@ -299,24 +309,118 @@ func (c *PredictCommand[T]) runPrediction(ctx context.Context, config *PredictCo
 		Success:    false,
 	}
 
-	// Placeholder implementation - in a real system, this would:
-	// 1. Load data using the configured data provider
-	// 2. Process data in batches
-	// 3. Run model inference
-	// 4. Collect predictions and statistics
-
-	result.NumSamples = 10000 // Placeholder
-	result.NumFeatures = 100  // Placeholder
-	result.PredictionStats = map[string]float64{
-		"mean": 0.5,
-		"std":  0.1,
-		"min":  0.0,
-		"max":  1.0,
+	// Read CSV data
+	ids, features, numFeatures, err := c.readCSVData(config)
+	if err != nil {
+		return result, fmt.Errorf("failed to read data: %w", err)
 	}
+	result.NumSamples = len(ids)
+	result.NumFeatures = numFeatures
+
+	// Convert features to tensor of type T and run model forward
+	data := make([]T, len(features))
+	for i, f := range features {
+		data[i] = c.fromFloat64(f)
+	}
+
+	inputTensor, err := tensor.New[T]([]int{len(ids), numFeatures}, data)
+	if err != nil {
+		return result, fmt.Errorf("failed to create input tensor: %w", err)
+	}
+
+	output, err := modelInstance.Forward(ctx, inputTensor)
+	if err != nil {
+		return result, fmt.Errorf("model forward failed: %w", err)
+	}
+
+	// Extract predictions as float64 values
+	outputData := output.Data()
+	predictions := make([]float64, len(outputData))
+	for i, v := range outputData {
+		predictions[i] = c.toFloat64(v)
+	}
+
+	result.Predictions = predictions
+	result.IDs = ids
 	result.Duration = time.Since(startTime)
 	result.Success = true
 
 	return result, nil
+}
+
+// readCSVData reads a CSV file and returns sample IDs, flattened features, and
+// the number of feature columns.
+func (c *PredictCommand[T]) readCSVData(config *PredictCommandConfig) (ids []string, features []float64, numFeatures int, err error) {
+	file, err := os.Open(config.DataPath)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer file.Close() //nolint:errcheck
+
+	reader := csv.NewReader(file)
+	header, err := reader.Read()
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	// Determine which columns are the ID and which are features
+	idIdx := -1
+	featureIdxs := make([]int, 0)
+	for i, col := range header {
+		col = strings.TrimSpace(col)
+		if col == config.IDColumn {
+			idIdx = i
+			continue
+		}
+		if len(config.FeatureColumns) > 0 {
+			for _, fc := range config.FeatureColumns {
+				if col == fc {
+					featureIdxs = append(featureIdxs, i)
+					break
+				}
+			}
+		} else {
+			// Auto-detect: all non-ID columns are features
+			featureIdxs = append(featureIdxs, i)
+		}
+	}
+
+	numFeatures = len(featureIdxs)
+	if numFeatures == 0 {
+		return nil, nil, 0, fmt.Errorf("no feature columns found in CSV")
+	}
+
+	// Read rows
+	for {
+		record, readErr := reader.Read()
+		if readErr != nil {
+			break // EOF or error
+		}
+
+		// Extract ID
+		sampleID := ""
+		if idIdx >= 0 && idIdx < len(record) {
+			sampleID = record[idIdx]
+		} else {
+			sampleID = fmt.Sprintf("row_%d", len(ids))
+		}
+		ids = append(ids, sampleID)
+
+		// Extract features
+		for _, fi := range featureIdxs {
+			if fi < len(record) {
+				val, parseErr := strconv.ParseFloat(strings.TrimSpace(record[fi]), 64)
+				if parseErr != nil {
+					val = 0.0
+				}
+				features = append(features, val)
+			} else {
+				features = append(features, 0.0)
+			}
+		}
+	}
+
+	return ids, features, numFeatures, nil
 }
 
 func (c *PredictCommand[T]) saveResults(config *PredictCommandConfig, result *PredictionResult) error {
@@ -343,16 +447,21 @@ func (c *PredictCommand[T]) saveResults(config *PredictCommandConfig, result *Pr
 }
 
 func (c *PredictCommand[T]) saveJSONResults(config *PredictCommandConfig, result *PredictionResult) error {
-	// Placeholder JSON output
-	output := map[string]interface{}{
-		"predictions": []map[string]interface{}{
-			{"id": "sample_1", "prediction": 0.75},
-			{"id": "sample_2", "prediction": 0.25},
-		},
-		"metadata": result,
+	type predictionRow struct {
+		ID         string  `json:"id"`
+		Prediction float64 `json:"prediction"`
 	}
 
-	data, err := json.MarshalIndent(output, "", "  ")
+	rows := make([]predictionRow, len(result.IDs))
+	for i, id := range result.IDs {
+		pred := 0.0
+		if i < len(result.Predictions) {
+			pred = result.Predictions[i]
+		}
+		rows[i] = predictionRow{ID: id, Prediction: pred}
+	}
+
+	data, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -361,36 +470,57 @@ func (c *PredictCommand[T]) saveJSONResults(config *PredictCommandConfig, result
 }
 
 func (c *PredictCommand[T]) saveCSVResults(config *PredictCommandConfig, result *PredictionResult) error {
-	// Placeholder CSV output
-	content := fmt.Sprintf("%s,prediction\n", config.IDColumn)
-	content += "sample_1,0.75\n"
-	content += "sample_2,0.25\n"
+	file, err := os.Create(config.Output)
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck
 
-	return os.WriteFile(config.Output, []byte(content), 0600)
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	if err := writer.Write([]string{config.IDColumn, "prediction"}); err != nil {
+		return err
+	}
+
+	for i, id := range result.IDs {
+		pred := 0.0
+		if i < len(result.Predictions) {
+			pred = result.Predictions[i]
+		}
+		if err := writer.Write([]string{id, strconv.FormatFloat(pred, 'f', 6, 64)}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-// PredictionResult contains prediction results and metadata (reused from original).
+// PredictionResult contains prediction results and metadata.
 type PredictionResult struct {
-	ModelPath       string                `json:"modelPath"`
-	DataPath        string                `json:"dataPath"`
-	OutputPath      string                `json:"outputPath"`
-	Timestamp       time.Time             `json:"timestamp"`
-	Config          *PredictCommandConfig `json:"config"`
-	NumSamples      int                   `json:"numSamples"`
-	NumFeatures     int                   `json:"numFeatures"`
-	PredictionStats map[string]float64    `json:"predictionStats"`
-	Duration        time.Duration         `json:"duration"`
-	Success         bool                  `json:"success"`
-	ErrorMessage    string                `json:"errorMessage,omitempty"`
+	ModelPath   string                `json:"modelPath"`
+	DataPath    string                `json:"dataPath"`
+	OutputPath  string                `json:"outputPath"`
+	Timestamp   time.Time             `json:"timestamp"`
+	Config      *PredictCommandConfig `json:"config"`
+	NumSamples  int                   `json:"numSamples"`
+	NumFeatures int                   `json:"numFeatures"`
+	Predictions []float64             `json:"predictions,omitempty"`
+	IDs         []string              `json:"ids,omitempty"`
+	Duration    time.Duration         `json:"duration"`
+	Success     bool                  `json:"success"`
 }
 
 // TokenizeCommand implements text tokenization.
 type TokenizeCommand struct {
+	tok *tokenizer.Tokenizer
 }
 
 // NewTokenizeCommand creates a new tokenize command.
 func NewTokenizeCommand() *TokenizeCommand {
-	return &TokenizeCommand{}
+	return &TokenizeCommand{
+		tok: tokenizer.NewTokenizer(),
+	}
 }
 
 // Name implements Command.Name
@@ -404,16 +534,22 @@ func (c *TokenizeCommand) Description() string {
 }
 
 // Run implements Command.Run
-func (c *TokenizeCommand) Run(ctx context.Context, args []string) error {
-	// Simple argument parsing - in production would use proper flag parsing
-	var text string
+func (c *TokenizeCommand) Run(_ context.Context, args []string) error {
+	var text, vocabPath string
 
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--text" {
+		switch args[i] {
+		case "--text":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--text requires a value")
 			}
 			text = args[i+1]
+			i++
+		case "--vocab":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--vocab requires a value")
+			}
+			vocabPath = args[i+1]
 			i++
 		}
 	}
@@ -422,16 +558,39 @@ func (c *TokenizeCommand) Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("please provide text to tokenize using the --text flag")
 	}
 
-	// Use tokenizer (placeholder - would need proper tokenizer implementation)
-	// For now, simple word tokenization
-	words := strings.Fields(text)
-	tokenIDs := make([]int, len(words))
-	for i := range words {
-		tokenIDs[i] = i + 1 // Simple sequential IDs
+	// Load vocabulary from file if provided
+	if vocabPath != "" {
+		if err := c.loadVocab(vocabPath); err != nil {
+			return fmt.Errorf("failed to load vocabulary: %w", err)
+		}
 	}
 
+	tokenIDs := c.tok.Encode(text)
 	fmt.Printf("Token IDs for '%s': %v\n", text, tokenIDs)
 	return nil
+}
+
+// loadVocab loads a vocabulary file (one token per line) into the tokenizer.
+func (c *TokenizeCommand) loadVocab(path string) error {
+	file, err := os.Open(path) //nolint:gosec // user-provided path
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		token := strings.TrimSpace(scanner.Text())
+		if token != "" {
+			c.tok.AddToken(token)
+		}
+	}
+	return scanner.Err()
+}
+
+// Tok returns the underlying tokenizer for testing.
+func (c *TokenizeCommand) Tok() *tokenizer.Tokenizer {
+	return c.tok
 }
 
 // Usage implements Command.Usage
@@ -441,7 +600,8 @@ func (c *TokenizeCommand) Usage() string {
 Tokenize text using the Zerfoo tokenizer.
 
 OPTIONS:
-  --text <string>    Text to tokenize (required)`
+  --text <string>    Text to tokenize (required)
+  --vocab <path>     Path to vocabulary file (one token per line)`
 }
 
 // Examples implements Command.Examples
