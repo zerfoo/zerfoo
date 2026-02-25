@@ -32,14 +32,14 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	scaledDotProductAttention *ScaledDotProductAttention[T]
 
 	// Cached tensors for backward pass
-	qProj       *tensor.TensorNumeric[T] // Projected Q
-	kProj       *tensor.TensorNumeric[T] // Projected K
-	vProj       *tensor.TensorNumeric[T] // Projected V
+	qProj           *tensor.TensorNumeric[T] // Projected Q
+	kProj           *tensor.TensorNumeric[T] // Projected K
+	vProj           *tensor.TensorNumeric[T] // Projected V
 	attnOutput      *tensor.TensorNumeric[T] // Output from scaledDotProductAttention (heads format)
 	attnOutputFinal *tensor.TensorNumeric[T] // Final reshaped output passed to wo
-	qHeadsRoPE  *tensor.TensorNumeric[T] // Q after RoPE
-	kHeadsRoPE  *tensor.TensorNumeric[T] // K after RoPE
-	outputShape []int
+	qHeadsRoPE      *tensor.TensorNumeric[T] // Q after RoPE
+	kHeadsRoPE      *tensor.TensorNumeric[T] // K after RoPE
+	outputShape     []int
 }
 
 // OpType returns the operation type.
