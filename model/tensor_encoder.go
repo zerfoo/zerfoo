@@ -26,12 +26,27 @@ func EncodeTensor[T tensor.Numeric](t *tensor.TensorNumeric[T]) (*zmf.Tensor, er
 	case []float32:
 		tensorProto.Dtype = zmf.Tensor_FLOAT32
 		rawData, err = encodeFloat32(data)
+	case []float64:
+		tensorProto.Dtype = zmf.Tensor_FLOAT64
+		rawData, err = encodeFloat64(data)
 	case []float16.Float16:
 		tensorProto.Dtype = zmf.Tensor_FLOAT16
 		rawData, err = encodeFloat16(data)
 	case []int8:
 		tensorProto.Dtype = zmf.Tensor_INT8
 		rawData, err = encodeInt8(data)
+	case []int16:
+		tensorProto.Dtype = zmf.Tensor_INT16
+		rawData, err = encodeInt16(data)
+	case []int32:
+		tensorProto.Dtype = zmf.Tensor_INT32
+		rawData, err = encodeInt32(data)
+	case []int:
+		tensorProto.Dtype = zmf.Tensor_INT64
+		rawData, err = encodeInt(data)
+	case []int64:
+		tensorProto.Dtype = zmf.Tensor_INT64
+		rawData, err = encodeInt64(data)
 	default:
 		return nil, fmt.Errorf("unsupported tensor type for encoding: %T", t.DType())
 	}
@@ -65,10 +80,56 @@ func encodeFloat16(data []float16.Float16) ([]byte, error) {
 	return rawData, nil
 }
 
+func encodeFloat64(data []float64) ([]byte, error) {
+	rawData := make([]byte, len(data)*8)
+	for i, val := range data {
+		bits := math.Float64bits(val)
+		binary.LittleEndian.PutUint64(rawData[i*8:], bits)
+	}
+
+	return rawData, nil
+}
+
 func encodeInt8(data []int8) ([]byte, error) {
 	rawData := make([]byte, len(data))
 	for i, v := range data {
 		rawData[i] = byte(v)
+	}
+
+	return rawData, nil
+}
+
+func encodeInt16(data []int16) ([]byte, error) {
+	rawData := make([]byte, len(data)*2)
+	for i, val := range data {
+		binary.LittleEndian.PutUint16(rawData[i*2:], uint16(val))
+	}
+
+	return rawData, nil
+}
+
+func encodeInt32(data []int32) ([]byte, error) {
+	rawData := make([]byte, len(data)*4)
+	for i, val := range data {
+		binary.LittleEndian.PutUint32(rawData[i*4:], uint32(val))
+	}
+
+	return rawData, nil
+}
+
+func encodeInt(data []int) ([]byte, error) {
+	rawData := make([]byte, len(data)*8)
+	for i, val := range data {
+		binary.LittleEndian.PutUint64(rawData[i*8:], uint64(val))
+	}
+
+	return rawData, nil
+}
+
+func encodeInt64(data []int64) ([]byte, error) {
+	rawData := make([]byte, len(data)*8)
+	for i, val := range data {
+		binary.LittleEndian.PutUint64(rawData[i*8:], uint64(val))
 	}
 
 	return rawData, nil

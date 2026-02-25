@@ -247,8 +247,8 @@ func TestConvertParameterToZMF(t *testing.T) {
 		t.Errorf("expected shape [2, 2], got %v", zmfParam.Shape)
 	}
 
-	if zmfParam.Dtype != zmf.Tensor_INT32 {
-		t.Errorf("expected data type INT32, got %v", zmfParam.Dtype)
+	if zmfParam.Dtype != zmf.Tensor_INT64 {
+		t.Errorf("expected data type INT64 for Go int, got %v", zmfParam.Dtype)
 	}
 }
 
@@ -282,6 +282,60 @@ func TestGetZMFDataType(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestZMFExporter_RoundTrip(t *testing.T) {
+	// Create a float32 tensor with known values
+	shape := []int{2, 3}
+	original := []float32{1.5, -2.75, 3.125, 0.0, -0.5, 100.0}
+	srcTensor, err := tensor.New[float32](shape, original)
+	if err != nil {
+		t.Fatalf("failed to create source tensor: %v", err)
+	}
+
+	// Encode: Zerfoo tensor -> ZMF protobuf tensor
+	encoded, err := EncodeTensor(srcTensor)
+	if err != nil {
+		t.Fatalf("EncodeTensor failed: %v", err)
+	}
+
+	if encoded.Dtype != zmf.Tensor_FLOAT32 {
+		t.Errorf("expected dtype FLOAT32, got %v", encoded.Dtype)
+	}
+
+	if len(encoded.Shape) != 2 || encoded.Shape[0] != 2 || encoded.Shape[1] != 3 {
+		t.Errorf("expected shape [2,3], got %v", encoded.Shape)
+	}
+
+	// Expected raw data size: 6 floats * 4 bytes = 24
+	if len(encoded.Data) != 24 {
+		t.Fatalf("expected 24 bytes of data, got %d", len(encoded.Data))
+	}
+
+	// Decode: ZMF protobuf tensor -> Zerfoo tensor
+	decoded, err := DecodeTensor[float32](encoded)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+
+	// Verify shape
+	decodedShape := decoded.Shape()
+	if len(decodedShape) != 2 || decodedShape[0] != 2 || decodedShape[1] != 3 {
+		t.Errorf("decoded shape mismatch: expected [2,3], got %v", decodedShape)
+	}
+
+	// Verify values match bit-for-bit
+	decodedData := decoded.Data()
+	if len(decodedData) != len(original) {
+		t.Fatalf("decoded data length %d != original %d", len(decodedData), len(original))
+	}
+
+	for i, want := range original {
+		got := decodedData[i]
+		if got != want {
+			t.Errorf("element [%d]: got %v, want %v", i, got, want)
+		}
 	}
 }
 
