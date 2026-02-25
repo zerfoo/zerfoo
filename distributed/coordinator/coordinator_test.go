@@ -21,6 +21,27 @@ import (
 
 const bufSize = 1024 * 1024
 
+// syncBuffer is a thread-safe bytes.Buffer for use in tests where
+// a goroutine writes (via log) concurrently with reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
 type testKit struct {
 	client pb.CoordinatorClient
 	coord  *Coordinator
@@ -101,16 +122,16 @@ func TestCoordinator_Start(t *testing.T) {
 	})
 
 	t.Run("serve error", func(_ *testing.T) {
-		var buf bytes.Buffer
+		var sb syncBuffer
 
-		coord := NewCoordinator(&buf, 10*time.Second)
+		coord := NewCoordinator(&sb, 10*time.Second)
 		ml := &testutils.CustomMockListener{
 			AcceptErr: errors.New("mock error"),
 			AddrVal:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345},
 		}
 		coord.start(ml)
-		time.Sleep(10 * time.Millisecond) // give time for the go routine to run
-		testutils.AssertContains(t, buf.String(), "gRPC server failed", "expected log to contain %q, got %q")
+		time.Sleep(50 * time.Millisecond) // give time for the goroutine to run
+		testutils.AssertContains(t, sb.String(), "gRPC server failed", "expected log to contain %q, got %q")
 	})
 }
 
@@ -487,6 +508,8 @@ func TestCoordinator_Stop(t *testing.T) {
 		testutils.AssertNoError(t, err, "failed to start coordinator: %v")
 		testutils.AssertNotNil(t, coord.Addr(), "expected coordinator address to not be nil, got nil")
 		coord.Stop()
+		// Allow the OS to fully release the socket.
+		time.Sleep(50 * time.Millisecond)
 		dctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		d := &net.Dialer{}
