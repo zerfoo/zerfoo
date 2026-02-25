@@ -26,7 +26,7 @@ type mockNodeF32 struct {
 
 func (m *mockNodeF32) OpType() string                          { return m.opType }
 func (m *mockNodeF32) OutputShape() []int                      { return m.outputShape }
-func (m *mockNodeF32) Attributes() map[string]any      { return m.attributes }
+func (m *mockNodeF32) Attributes() map[string]any              { return m.attributes }
 func (m *mockNodeF32) Parameters() []*graph.Parameter[float32] { return m.params }
 func (m *mockNodeF32) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return inputs[0], nil
