@@ -270,26 +270,26 @@ production framework.
   - [x] S6.3.3 Static graph.Node assertions verified (compile-time + runtime)  Est: 10m
   - [x] S6.3.4 Run go test ./layers/hrm/ -cover: 82.9% coverage (target: 60%+)  Est: 10m
 
-### E7: Final Verification
+### E7: Final Verification -- DONE
 
-- [ ] T7.1 Run full test suite  Owner: TBD  Est: 30m
+- [x] T7.1 Run full test suite  Owner: TBD  Est: 30m
   - Dependencies: E1, E2, E3, E4, E5, E6
   - Acceptance: `go test ./...` passes with zero failures
-  - [ ] S7.1.1 Run go test ./... and capture output  Est: 20m
-  - [ ] S7.1.2 Fix any test failures discovered  Est: varies
-- [ ] T7.2 Run linters and formatters  Owner: TBD  Est: 30m
+  - [x] S7.1.1 Run go test ./... -race: all packages pass  Est: 20m
+  - [x] S7.1.2 Fixed coordinator data race (syncBuffer) and flaky Stop test (socket release timing)  Est: 30m
+- [x] T7.2 Run linters and formatters  Owner: TBD  Est: 30m
   - Dependencies: T7.1
   - Acceptance: `gofmt -l .` returns no files; `go vet ./...` returns no issues
-  - [ ] S7.2.1 Run gofmt -l . and fix any formatting issues  Est: 10m
-  - [ ] S7.2.2 Run go vet ./... and fix any issues  Est: 15m
-- [ ] T7.3 Verify success metrics  Owner: TBD  Est: 30m
+  - [x] S7.2.1 Run gofmt -l . and fix 4 files (cmd/zerfoo-predict, layers/attention, model/adapters_test, model/zmf_exporter)  Est: 10m
+  - [x] S7.2.2 Run go vet ./... — clean. Run golangci-lint run ./... — 0 issues.  Est: 15m
+- [x] T7.3 Verify success metrics  Owner: TBD  Est: 30m
   - Dependencies: T7.2
   - Acceptance: All metrics from the Success Metrics table above are met
-  - [ ] S7.3.1 Run ZMF round-trip test  Est: 5m
-  - [ ] S7.3.2 Run transformer backward test  Est: 5m
-  - [ ] S7.3.3 Run CLI integration tests  Est: 5m
-  - [ ] S7.3.4 Run grep for NumeraiRow and audacity  Est: 5m
-  - [ ] S7.3.5 Check HRM coverage report  Est: 5m
+  - [x] S7.3.1 ZMF round-trip test passes (model/zmf_exporter_test.go)  Est: 5m
+  - [x] S7.3.2 Transformer backward test passes (layers/transformer/)  Est: 5m
+  - [x] S7.3.3 CLI tests pass: 6 tests in cmd/cli/  Est: 5m
+  - [x] S7.3.4 grep for NumeraiRow/Eras/Stocks in data/ features/ — zero matches. grep for "audacity" — only ISSUES.md (reference doc)  Est: 5m
+  - [x] S7.3.5 HRM coverage: 82.9% (target: 60%+)  Est: 5m
 
 ---
 
@@ -356,6 +356,7 @@ A task is done when:
 - **2026 02 24:** E5 completed. Renamed StockData→Sample, EraData→Batch, Eras→Batches across data/ and features/ packages. Deleted NumeraiRow, LoadDatasetFromParquet, and parquet-go dependency. Replaced all "numerai" references in training/interfaces_doc.go, training/interfaces_test.go, and model/interfaces_test.go with generic "domain" keys. Commits: ebef4d3, 3daa54d, 445f1d6, 02d6eca, b32db8e.
 - **2026 02 24:** E4 completed. Replaced hardcoded CLI outputs with real implementations: PredictCommand reads CSV, creates tensors, runs model.Forward with fromFloat64/toFloat64 converters; TokenizeCommand uses pkg/tokenizer with --vocab flag for vocabulary loading. Added 6 tests covering registration, tokenization (with/without vocab, missing text, missing vocab file), and predict missing args. Updated cmd/zerfoo, cmd/zerfoo-predict, and cmd/zerfoo-tokenize callers. Commits: 0d5cf76, 8582d38, f1675c3, 988aae1.
 - **2026 02 24:** E6 completed. Implemented graph.Node interface on HModule and LModule: added OpType, Attributes, OutputShape, Backward methods; converted Forward to variadic signature; added static assertions. Backward delegates to Block.Backward with 2D/3D reshape handling. LModule.Backward returns 2 gradients for Add(hState, projectedInput). Coverage raised from 19.4% to 82.9% with 22 new tests. Commit 0501280.
+- **2026 02 24:** E7 completed. Full test suite passes with race detector (`go test ./... -race`). Fixed pre-existing coordinator data race (syncBuffer for concurrent log/read) and flaky TestCoordinator_Stop (socket release timing). All linters clean: golangci-lint 0 issues, go vet clean, gofmt clean (4 files fixed). All success metrics verified: ZMF round-trip pass, transformer backward pass, CLI tests pass, zero NumeraiRow/audacity references (except ISSUES.md), HRM coverage 82.9%. Commits: 462be5d, 19b4c35, 6635c43, 9bb7a29.
 
 ---
 
