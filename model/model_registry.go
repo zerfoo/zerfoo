@@ -13,13 +13,13 @@ import (
 // This registry enables runtime component selection and supports multiple implementations
 // of each model interface.
 type ModelRegistry[T tensor.Numeric] struct {
-	mu           sync.RWMutex
-	providers    map[string]ModelProviderFactory[T]
-	serializers  map[string]ModelSerializerFactory[T]
-	loaders      map[string]ModelLoaderFactory[T]
-	exporters    map[string]ModelExporterFactory[T]
-	validators   map[string]ModelValidatorFactory[T]
-	optimizers   map[string]ModelOptimizerFactory[T]
+	mu          sync.RWMutex
+	providers   map[string]ModelProviderFactory[T]
+	serializers map[string]ModelSerializerFactory[T]
+	loaders     map[string]ModelLoaderFactory[T]
+	exporters   map[string]ModelExporterFactory[T]
+	validators  map[string]ModelValidatorFactory[T]
+	optimizers  map[string]ModelOptimizerFactory[T]
 }
 
 // Factory function types for creating model component instances
@@ -66,11 +66,11 @@ func NewModelRegistry[T tensor.Numeric]() *ModelRegistry[T] {
 func (r *ModelRegistry[T]) RegisterModelProvider(name string, factory ModelProviderFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.providers[name]; exists {
 		return fmt.Errorf("model provider '%s' is already registered", name)
 	}
-	
+
 	r.providers[name] = factory
 	return nil
 }
@@ -80,11 +80,11 @@ func (r *ModelRegistry[T]) GetModelProvider(ctx context.Context, name string, co
 	r.mu.RLock()
 	factory, exists := r.providers[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model provider '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -92,7 +92,7 @@ func (r *ModelRegistry[T]) GetModelProvider(ctx context.Context, name string, co
 func (r *ModelRegistry[T]) ListModelProviders() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.providers))
 	for name := range r.providers {
 		names = append(names, name)
@@ -106,11 +106,11 @@ func (r *ModelRegistry[T]) ListModelProviders() []string {
 func (r *ModelRegistry[T]) RegisterModelSerializer(name string, factory ModelSerializerFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.serializers[name]; exists {
 		return fmt.Errorf("model serializer '%s' is already registered", name)
 	}
-	
+
 	r.serializers[name] = factory
 	return nil
 }
@@ -120,11 +120,11 @@ func (r *ModelRegistry[T]) GetModelSerializer(ctx context.Context, name string, 
 	r.mu.RLock()
 	factory, exists := r.serializers[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model serializer '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -132,7 +132,7 @@ func (r *ModelRegistry[T]) GetModelSerializer(ctx context.Context, name string, 
 func (r *ModelRegistry[T]) ListModelSerializers() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.serializers))
 	for name := range r.serializers {
 		names = append(names, name)
@@ -146,11 +146,11 @@ func (r *ModelRegistry[T]) ListModelSerializers() []string {
 func (r *ModelRegistry[T]) RegisterModelLoader(name string, factory ModelLoaderFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.loaders[name]; exists {
 		return fmt.Errorf("model loader '%s' is already registered", name)
 	}
-	
+
 	r.loaders[name] = factory
 	return nil
 }
@@ -160,11 +160,11 @@ func (r *ModelRegistry[T]) GetModelLoader(ctx context.Context, name string, conf
 	r.mu.RLock()
 	factory, exists := r.loaders[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model loader '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -172,7 +172,7 @@ func (r *ModelRegistry[T]) GetModelLoader(ctx context.Context, name string, conf
 func (r *ModelRegistry[T]) ListModelLoaders() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.loaders))
 	for name := range r.loaders {
 		names = append(names, name)
@@ -186,11 +186,11 @@ func (r *ModelRegistry[T]) ListModelLoaders() []string {
 func (r *ModelRegistry[T]) RegisterModelExporter(name string, factory ModelExporterFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.exporters[name]; exists {
 		return fmt.Errorf("model exporter '%s' is already registered", name)
 	}
-	
+
 	r.exporters[name] = factory
 	return nil
 }
@@ -200,11 +200,11 @@ func (r *ModelRegistry[T]) GetModelExporter(ctx context.Context, name string, co
 	r.mu.RLock()
 	factory, exists := r.exporters[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model exporter '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -212,7 +212,7 @@ func (r *ModelRegistry[T]) GetModelExporter(ctx context.Context, name string, co
 func (r *ModelRegistry[T]) ListModelExporters() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.exporters))
 	for name := range r.exporters {
 		names = append(names, name)
@@ -226,11 +226,11 @@ func (r *ModelRegistry[T]) ListModelExporters() []string {
 func (r *ModelRegistry[T]) RegisterModelValidator(name string, factory ModelValidatorFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.validators[name]; exists {
 		return fmt.Errorf("model validator '%s' is already registered", name)
 	}
-	
+
 	r.validators[name] = factory
 	return nil
 }
@@ -240,11 +240,11 @@ func (r *ModelRegistry[T]) GetModelValidator(ctx context.Context, name string, c
 	r.mu.RLock()
 	factory, exists := r.validators[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model validator '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -252,7 +252,7 @@ func (r *ModelRegistry[T]) GetModelValidator(ctx context.Context, name string, c
 func (r *ModelRegistry[T]) ListModelValidators() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.validators))
 	for name := range r.validators {
 		names = append(names, name)
@@ -266,11 +266,11 @@ func (r *ModelRegistry[T]) ListModelValidators() []string {
 func (r *ModelRegistry[T]) RegisterModelOptimizer(name string, factory ModelOptimizerFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.optimizers[name]; exists {
 		return fmt.Errorf("model optimizer '%s' is already registered", name)
 	}
-	
+
 	r.optimizers[name] = factory
 	return nil
 }
@@ -280,11 +280,11 @@ func (r *ModelRegistry[T]) GetModelOptimizer(ctx context.Context, name string, c
 	r.mu.RLock()
 	factory, exists := r.optimizers[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model optimizer '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -292,7 +292,7 @@ func (r *ModelRegistry[T]) GetModelOptimizer(ctx context.Context, name string, c
 func (r *ModelRegistry[T]) ListModelOptimizers() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.optimizers))
 	for name := range r.optimizers {
 		names = append(names, name)
@@ -348,7 +348,7 @@ func (r *ModelRegistry[T]) UnregisterModelOptimizer(name string) {
 func (r *ModelRegistry[T]) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	r.providers = make(map[string]ModelProviderFactory[T])
 	r.serializers = make(map[string]ModelSerializerFactory[T])
 	r.loaders = make(map[string]ModelLoaderFactory[T])
@@ -361,7 +361,7 @@ func (r *ModelRegistry[T]) Clear() {
 func (r *ModelRegistry[T]) Summary() map[string]int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	return map[string]int{
 		"providers":   len(r.providers),
 		"serializers": len(r.serializers),
@@ -376,38 +376,38 @@ func (r *ModelRegistry[T]) Summary() map[string]int {
 func (r *ModelRegistry[T]) GetAllRegistrations() map[string][]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	// Extract names for each component type
 	providerNames := make([]string, 0, len(r.providers))
 	for name := range r.providers {
 		providerNames = append(providerNames, name)
 	}
-	
+
 	serializerNames := make([]string, 0, len(r.serializers))
 	for name := range r.serializers {
 		serializerNames = append(serializerNames, name)
 	}
-	
+
 	loaderNames := make([]string, 0, len(r.loaders))
 	for name := range r.loaders {
 		loaderNames = append(loaderNames, name)
 	}
-	
+
 	exporterNames := make([]string, 0, len(r.exporters))
 	for name := range r.exporters {
 		exporterNames = append(exporterNames, name)
 	}
-	
+
 	validatorNames := make([]string, 0, len(r.validators))
 	for name := range r.validators {
 		validatorNames = append(validatorNames, name)
 	}
-	
+
 	optimizerNames := make([]string, 0, len(r.optimizers))
 	for name := range r.optimizers {
 		optimizerNames = append(optimizerNames, name)
 	}
-	
+
 	return map[string][]string{
 		"providers":   providerNames,
 		"serializers": serializerNames,
@@ -422,17 +422,17 @@ func (r *ModelRegistry[T]) GetAllRegistrations() map[string][]string {
 func (r *ModelRegistry[T]) FindProviderByCapability(ctx context.Context, requirement string) ([]string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	var matching []string
-	
+
 	for name, factory := range r.providers {
 		provider, err := factory(ctx, nil)
 		if err != nil {
 			continue // Skip providers that can't be instantiated
 		}
-		
+
 		capabilities := provider.GetCapabilities()
-		
+
 		// Check if requirement is in supported types or other capability fields
 		for _, supportedType := range capabilities.SupportedTypes {
 			if supportedType == requirement {
@@ -441,6 +441,6 @@ func (r *ModelRegistry[T]) FindProviderByCapability(ctx context.Context, require
 			}
 		}
 	}
-	
+
 	return matching, nil
 }

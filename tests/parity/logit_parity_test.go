@@ -55,32 +55,32 @@ func TestLogitParity(t *testing.T) {
 
 func saveParityResults(t *testing.T, mre, agree, tol32 float64, topK, n int) {
 	timestamp := time.Now().Format("2006-01-02")
-	
+
 	// Save JSON results
 	results := map[string]interface{}{
-		"timestamp":        timestamp,
-		"test_name":        "logit_parity",
-		"mean_rel_error":   mre,
-		"top_k_agreement":  agree,
-		"tolerance":        tol32,
-		"top_k":            topK,
-		"num_prompts":      n,
-		"passed":           mre <= tol32 && agree >= 0.99,
+		"timestamp":       timestamp,
+		"test_name":       "logit_parity",
+		"mean_rel_error":  mre,
+		"top_k_agreement": agree,
+		"tolerance":       tol32,
+		"top_k":           topK,
+		"num_prompts":     n,
+		"passed":          mre <= tol32 && agree >= 0.99,
 	}
-	
+
 	jsonFile := fmt.Sprintf("artifacts/parity/%s.json", timestamp)
 	jsonData, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		t.Logf("Failed to marshal JSON: %v", err)
 		return
 	}
-	
+
 	if err := os.WriteFile(jsonFile, jsonData, 0600); err != nil {
 		t.Logf("Failed to write JSON file %s: %v", jsonFile, err)
 	} else {
 		t.Logf("Saved parity results to %s", jsonFile)
 	}
-	
+
 	// Save CSV results
 	csvFile := fmt.Sprintf("artifacts/parity/%s.csv", timestamp)
 	file, err := os.OpenFile(csvFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304 -- controlled test artifact path
@@ -89,22 +89,22 @@ func saveParityResults(t *testing.T, mre, agree, tol32 float64, topK, n int) {
 		return
 	}
 	defer func() { _ = file.Close() }()
-	
+
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
-	
+
 	// Write header
 	if err := writer.Write([]string{"timestamp", "test_name", "mean_rel_error", "top_k_agreement", "tolerance", "top_k", "num_prompts", "passed"}); err != nil {
 		t.Logf("Failed to write CSV header: %v", err)
 		return
 	}
-	
+
 	// Write data
 	passed := "false"
 	if mre <= tol32 && agree >= 0.99 {
 		passed = "true"
 	}
-	
+
 	record := []string{
 		timestamp,
 		"logit_parity",
@@ -115,11 +115,11 @@ func saveParityResults(t *testing.T, mre, agree, tol32 float64, topK, n int) {
 		fmt.Sprintf("%d", n),
 		passed,
 	}
-	
+
 	if err := writer.Write(record); err != nil {
 		t.Logf("Failed to write CSV record: %v", err)
 		return
 	}
-	
+
 	t.Logf("Saved parity results to %s", csvFile)
 }

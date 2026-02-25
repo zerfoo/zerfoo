@@ -129,7 +129,7 @@ func TestCPUEngine_UncoveredFunctions(t *testing.T) {
 			t.Fatalf("ReduceSum failed: %v", err)
 		}
 
-		// Result should have shape [2] with sums [6, 15] 
+		// Result should have shape [2] with sums [6, 15]
 		if !equalSlices(result.Shape(), []int{2}) {
 			t.Errorf("Expected shape [2], got %v", result.Shape())
 		}
@@ -417,11 +417,11 @@ func TestCPUEngine_AdvancedFunctions(t *testing.T) {
 		data := result.Data()
 		// Input was [1,2] [3,4], repeating along axis 0 twice gives: [1,2] [3,4] [1,2] [3,4]
 		expected := []float32{1, 2, 3, 4, 1, 2, 3, 4}
-		
+
 		if len(data) != len(expected) {
 			t.Errorf("Expected %d values, got %d. Data: %v", len(expected), len(data), data)
 		}
-		
+
 		if !equalFloat32Slices(data, expected) {
 			t.Errorf("Repeat failed: expected %v, got %v", expected, data)
 		}
@@ -514,48 +514,48 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 
 	t.Run("MatMul_EdgeCases", func(t *testing.T) {
 		// Test different matrix sizes to improve MatMul coverage
-		
+
 		// Test 1x1 matrices
 		a, err := tensor.New[float32]([]int{1, 1}, []float32{2.0})
 		if err != nil {
 			t.Fatalf("Failed to create tensor a: %v", err)
 		}
-		
+
 		b, err := tensor.New[float32]([]int{1, 1}, []float32{3.0})
 		if err != nil {
 			t.Fatalf("Failed to create tensor b: %v", err)
 		}
-		
+
 		result, err := engine.MatMul(ctx, a, b, nil)
 		if err != nil {
 			t.Fatalf("MatMul failed: %v", err)
 		}
-		
+
 		if !equalSlices(result.Shape(), []int{1, 1}) {
 			t.Errorf("Expected shape [1, 1], got %v", result.Shape())
 		}
-		
+
 		data := result.Data()
 		if len(data) != 1 || data[0] != 6.0 {
 			t.Errorf("Expected [6.0], got %v", data)
 		}
-		
+
 		// Test different dimension combinations
 		c, err := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 		if err != nil {
 			t.Fatalf("Failed to create tensor c: %v", err)
 		}
-		
+
 		d, err := tensor.New[float32]([]int{3, 2}, []float32{1, 2, 3, 4, 5, 6})
 		if err != nil {
 			t.Fatalf("Failed to create tensor d: %v", err)
 		}
-		
+
 		result2, err := engine.MatMul(ctx, c, d, nil)
 		if err != nil {
 			t.Fatalf("MatMul 2x3 * 3x2 failed: %v", err)
 		}
-		
+
 		if !equalSlices(result2.Shape(), []int{2, 2}) {
 			t.Errorf("Expected shape [2, 2], got %v", result2.Shape())
 		}
@@ -567,34 +567,34 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create input tensor: %v", err)
 		}
-		
+
 		// Test reshape to 1D
 		result1, err := engine.Reshape(ctx, input, []int{6}, nil)
 		if err != nil {
 			t.Fatalf("Reshape to 1D failed: %v", err)
 		}
-		
+
 		if !equalSlices(result1.Shape(), []int{6}) {
 			t.Errorf("Expected shape [6], got %v", result1.Shape())
 		}
-		
+
 		// Test reshape to 3D
 		result2, err := engine.Reshape(ctx, input, []int{1, 2, 3}, nil)
 		if err != nil {
 			t.Fatalf("Reshape to 3D failed: %v", err)
 		}
-		
+
 		if !equalSlices(result2.Shape(), []int{1, 2, 3}) {
 			t.Errorf("Expected shape [1, 2, 3], got %v", result2.Shape())
 		}
-		
+
 		// Test invalid reshape (should fail)
 		_, err = engine.Reshape(ctx, input, []int{5}, nil)
 		if err == nil {
 			t.Error("Expected error for invalid reshape, got nil")
 		}
 	})
-	
+
 	t.Run("Gather_EdgeCases", func(t *testing.T) {
 		// Test Gather function to improve its coverage
 		// Gather expects 2D params [vocab, dim] and 1D/2D indices
@@ -602,27 +602,27 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create params tensor: %v", err)
 		}
-		
+
 		indices, err := tensor.New[int]([]int{2}, []int{0, 2})
 		if err != nil {
 			t.Fatalf("Failed to create indices tensor: %v", err)
 		}
-		
+
 		output, err := tensor.New[float32]([]int{2, 2}, make([]float32, 4))
 		if err != nil {
 			t.Fatalf("Failed to create output tensor: %v", err)
 		}
-		
+
 		err = engine.Gather(ctx, params, indices, output)
 		if err != nil {
 			t.Fatalf("Gather failed: %v", err)
 		}
-		
+
 		// Verify output shape
 		if !equalSlices(output.Shape(), []int{2, 2}) {
 			t.Errorf("Expected shape [2, 2], got %v", output.Shape())
 		}
-		
+
 		// Verify values: should gather rows 0 and 2 from params
 		data := output.Data()
 		expected := []float32{1, 2, 5, 6} // row 0: [1,2], row 2: [5,6]
@@ -638,22 +638,22 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create dEmbeddingTable tensor: %v", err)
 		}
-		
+
 		indices, err := tensor.New[int]([]int{2}, []int{0, 2})
 		if err != nil {
 			t.Fatalf("Failed to create indices tensor: %v", err)
 		}
-		
+
 		dOut, err := tensor.New[float32]([]int{2, 2}, []float32{10, 20, 30, 40})
 		if err != nil {
 			t.Fatalf("Failed to create dOut tensor: %v", err)
 		}
-		
+
 		err = engine.ScatterAdd(ctx, dEmbeddingTable, indices, dOut)
 		if err != nil {
 			t.Fatalf("ScatterAdd failed: %v", err)
 		}
-		
+
 		// Verify that the values were scattered correctly
 		// Original [1,2,3,4,5,6], scatter add [10,20] to row 0, [30,40] to row 2
 		// Should be [11,22,3,4,35,46]
@@ -666,44 +666,44 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 
 	t.Run("Softmax_EdgeCases", func(t *testing.T) {
 		// Test Softmax with different tensor shapes and values
-		
+
 		// Test 1D case
 		input1D, err := tensor.New[float32]([]int{3}, []float32{1.0, 2.0, 3.0})
 		if err != nil {
 			t.Fatalf("Failed to create 1D tensor: %v", err)
 		}
-		
+
 		result1D, err := engine.Softmax(ctx, input1D, -1, nil)
 		if err != nil {
 			t.Fatalf("Softmax 1D failed: %v", err)
 		}
-		
+
 		if !equalSlices(result1D.Shape(), []int{3}) {
 			t.Errorf("Expected shape [3], got %v", result1D.Shape())
 		}
-		
+
 		// Test 2D case with different axes
 		input2D, err := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 		if err != nil {
 			t.Fatalf("Failed to create 2D tensor: %v", err)
 		}
-		
+
 		// Test axis = -1 (last axis)
 		result2D, err := engine.Softmax(ctx, input2D, -1, nil)
 		if err != nil {
 			t.Fatalf("Softmax 2D axis=-1 failed: %v", err)
 		}
-		
+
 		if !equalSlices(result2D.Shape(), []int{2, 3}) {
 			t.Errorf("Expected shape [2, 3], got %v", result2D.Shape())
 		}
-		
+
 		// Test axis = 0
 		result2D_axis0, err := engine.Softmax(ctx, input2D, 0, nil)
 		if err != nil {
 			t.Fatalf("Softmax 2D axis=0 failed: %v", err)
 		}
-		
+
 		if !equalSlices(result2D_axis0.Shape(), []int{2, 3}) {
 			t.Errorf("Expected shape [2, 3], got %v", result2D_axis0.Shape())
 		}
@@ -715,33 +715,33 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create input tensor: %v", err)
 		}
-		
+
 		result, err := engine.DivScalar(ctx, input, 2.0, nil)
 		if err != nil {
 			t.Fatalf("DivScalar failed: %v", err)
 		}
-		
+
 		if !equalSlices(result.Shape(), []int{2, 2}) {
 			t.Errorf("Expected shape [2, 2], got %v", result.Shape())
 		}
-		
+
 		data := result.Data()
 		expected := []float32{2.0, 4.0, 6.0, 8.0}
 		if !equalFloat32Slices(data, expected) {
 			t.Errorf("Expected %v, got %v", expected, data)
 		}
-		
+
 		// Test with edge case values
 		input2, err := tensor.New[float32]([]int{2}, []float32{0.0, 1.0})
 		if err != nil {
 			t.Fatalf("Failed to create input2 tensor: %v", err)
 		}
-		
+
 		result2, err := engine.DivScalar(ctx, input2, 1.0, nil)
 		if err != nil {
 			t.Fatalf("DivScalar edge case failed: %v", err)
 		}
-		
+
 		data2 := result2.Data()
 		expected2 := []float32{0.0, 1.0}
 		if !equalFloat32Slices(data2, expected2) {
@@ -751,62 +751,62 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 
 	t.Run("Zeros_EdgeCases", func(t *testing.T) {
 		// Test Zeros with different shapes
-		
+
 		// Test reshaping to 1D
 		tensor1D, err := tensor.New[float32]([]int{3}, []float32{1, 2, 3})
 		if err != nil {
 			t.Fatalf("Failed to create tensor: %v", err)
 		}
-		
+
 		err = engine.Zeros(ctx, tensor1D, []int{5})
 		if err != nil {
 			t.Fatalf("Zeros 1D failed: %v", err)
 		}
-		
+
 		if !equalSlices(tensor1D.Shape(), []int{5}) {
 			t.Errorf("Expected shape [5], got %v", tensor1D.Shape())
 		}
-		
+
 		data1D := tensor1D.Data()
 		for i, v := range data1D {
 			if v != 0.0 {
 				t.Errorf("Expected 0.0 at index %d, got %f", i, v)
 			}
 		}
-		
+
 		// Test reshaping to 3D
 		tensor3D, err := tensor.New[float32]([]int{2}, []float32{5, 6})
 		if err != nil {
 			t.Fatalf("Failed to create tensor: %v", err)
 		}
-		
+
 		err = engine.Zeros(ctx, tensor3D, []int{2, 2, 2})
 		if err != nil {
 			t.Fatalf("Zeros 3D failed: %v", err)
 		}
-		
+
 		if !equalSlices(tensor3D.Shape(), []int{2, 2, 2}) {
 			t.Errorf("Expected shape [2, 2, 2], got %v", tensor3D.Shape())
 		}
-		
+
 		data3D := tensor3D.Data()
 		for i, v := range data3D {
 			if v != 0.0 {
 				t.Errorf("Expected 0.0 at index %d, got %f", i, v)
 			}
 		}
-		
+
 		// Test zeroing without reshaping
 		tensorNoReshape, err := tensor.New[float32]([]int{3}, []float32{7, 8, 9})
 		if err != nil {
 			t.Fatalf("Failed to create tensor: %v", err)
 		}
-		
+
 		err = engine.Zeros(ctx, tensorNoReshape, nil)
 		if err != nil {
 			t.Fatalf("Zeros without reshaping failed: %v", err)
 		}
-		
+
 		dataNoReshape := tensorNoReshape.Data()
 		for i, v := range dataNoReshape {
 			if v != 0.0 {
@@ -817,63 +817,63 @@ func TestCPUEngine_LowCoverage(t *testing.T) {
 
 	t.Run("ParallelProcessing_LargeTensors", func(t *testing.T) {
 		// Test with large tensors to trigger parallel processing paths
-		
+
 		// Large matrix multiplication to trigger parallelFor
 		largeA, err := tensor.New[float32]([]int{100, 50}, make([]float32, 5000))
 		if err != nil {
 			t.Fatalf("Failed to create large tensor A: %v", err)
 		}
-		
+
 		// Fill with some data
 		dataA := largeA.Data()
 		for i := range dataA {
 			dataA[i] = float32(i % 10)
 		}
-		
+
 		largeB, err := tensor.New[float32]([]int{50, 80}, make([]float32, 4000))
 		if err != nil {
 			t.Fatalf("Failed to create large tensor B: %v", err)
 		}
-		
+
 		// Fill with some data
 		dataB := largeB.Data()
 		for i := range dataB {
 			dataB[i] = float32((i % 5) + 1)
 		}
-		
+
 		result, err := engine.MatMul(ctx, largeA, largeB, nil)
 		if err != nil {
 			t.Fatalf("Large MatMul failed: %v", err)
 		}
-		
+
 		if !equalSlices(result.Shape(), []int{100, 80}) {
 			t.Errorf("Expected shape [100, 80], got %v", result.Shape())
 		}
-		
+
 		// Test large tensor operations that might use parallelFor
 		largeUnary, err := tensor.New[float32]([]int{1000, 100}, make([]float32, 100000))
 		if err != nil {
 			t.Fatalf("Failed to create large tensor for unary ops: %v", err)
 		}
-		
+
 		// Fill with data
 		dataUnary := largeUnary.Data()
 		for i := range dataUnary {
 			dataUnary[i] = float32(i % 100)
 		}
-		
+
 		// Test Exp on large tensor (might trigger parallel processing)
 		_, err = engine.Exp(ctx, largeUnary, nil)
 		if err != nil {
 			t.Fatalf("Large Exp failed: %v", err)
 		}
-		
+
 		// Test Sum on large tensor with different axes
 		_, err = engine.Sum(ctx, largeUnary, 0, false, nil)
 		if err != nil {
 			t.Fatalf("Large Sum axis 0 failed: %v", err)
 		}
-		
+
 		_, err = engine.Sum(ctx, largeUnary, 1, false, nil)
 		if err != nil {
 			t.Fatalf("Large Sum axis 1 failed: %v", err)
@@ -888,7 +888,6 @@ func abs(x float32) float32 {
 	}
 	return x
 }
-
 
 // Helper function to compare float32 slices
 func equalFloat32Slices(a, b []float32) bool {

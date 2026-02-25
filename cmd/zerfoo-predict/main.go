@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,38 +19,38 @@ import (
 // PredictConfig represents command-line configuration for prediction.
 type PredictConfig struct {
 	// Input/Output paths
-	DataPath       string `json:"data_path"`       // Input features data
-	ModelPath      string `json:"model_path"`      // Trained model path
-	OutputPath     string `json:"output_path"`     // Output predictions path
-	
+	DataPath   string `json:"data_path"`   // Input features data
+	ModelPath  string `json:"model_path"`  // Trained model path
+	OutputPath string `json:"output_path"` // Output predictions path
+
 	// Prediction options
-	BatchSize      int    `json:"batch_size"`      // Prediction batch size
-	OutputFormat   string `json:"output_format"`   // "csv", "json", "parquet"
-	IncludeProbs   bool   `json:"include_probs"`   // Include prediction probabilities
-	
+	BatchSize    int    `json:"batch_size"`    // Prediction batch size
+	OutputFormat string `json:"output_format"` // "csv", "json", "parquet"
+	IncludeProbs bool   `json:"include_probs"` // Include prediction probabilities
+
 	// Data processing
 	FeatureColumns []string `json:"feature_columns"` // Specific feature columns to use
 	IDColumn       string   `json:"id_column"`       // ID column name
 	GroupColumn    string   `json:"group_column"`    // Optional grouping column name
-	
+
 	// Execution options
-	Verbose        bool   `json:"verbose"`
-	Overwrite      bool   `json:"overwrite"`       // Overwrite existing output
+	Verbose   bool `json:"verbose"`
+	Overwrite bool `json:"overwrite"` // Overwrite existing output
 }
 
 // PredictionResult contains prediction results and metadata.
 type PredictionResult struct {
-	ModelPath     string                 `json:"model_path"`
-	DataPath      string                 `json:"data_path"`
-	OutputPath    string                 `json:"output_path"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Config        *PredictConfig         `json:"config"`
-	NumSamples    int                    `json:"num_samples"`
-	NumFeatures   int                    `json:"num_features"`
-	PredictionStats map[string]float64   `json:"prediction_stats"`
-	Duration      time.Duration          `json:"duration"`
-	Success       bool                   `json:"success"`
-	ErrorMessage  string                 `json:"error_message,omitempty"`
+	ModelPath       string             `json:"model_path"`
+	DataPath        string             `json:"data_path"`
+	OutputPath      string             `json:"output_path"`
+	Timestamp       time.Time          `json:"timestamp"`
+	Config          *PredictConfig     `json:"config"`
+	NumSamples      int                `json:"num_samples"`
+	NumFeatures     int                `json:"num_features"`
+	PredictionStats map[string]float64 `json:"prediction_stats"`
+	Duration        time.Duration      `json:"duration"`
+	Success         bool               `json:"success"`
+	ErrorMessage    string             `json:"error_message,omitempty"`
 }
 
 func main() {
@@ -60,14 +59,14 @@ func main() {
 		// Use new CLI framework
 		ctx := context.Background()
 		cliApp := cli.NewCLI()
-		
+
 		// Register model registry with standard providers
 		modelRegistry := model.Float32ModelRegistry
-		
+
 		// Register predict command
 		predictCmd := cli.NewPredictCommand(modelRegistry)
 		cliApp.RegisterCommand(predictCmd)
-		
+
 		// Filter out --new-cli flag
 		args := os.Args[1:]
 		filteredArgs := make([]string, 0, len(args))
@@ -76,21 +75,21 @@ func main() {
 				filteredArgs = append(filteredArgs, arg)
 			}
 		}
-		
+
 		if err := cliApp.Run(ctx, append([]string{"predict"}, filteredArgs...)); err != nil {
 			log.Printf("CLI execution failed: %v", err)
 			os.Exit(1)
 		}
 		return
 	}
-	
+
 	// Legacy behavior for backward compatibility
 	config := parsePredictFlags()
-	
+
 	if config.Verbose {
 		log.Printf("Starting prediction with config: %+v", config)
 	}
-	
+
 	result := &PredictionResult{
 		ModelPath:  config.ModelPath,
 		DataPath:   config.DataPath,
@@ -99,48 +98,48 @@ func main() {
 		Config:     config,
 		Success:    false,
 	}
-	
+
 	startTime := time.Now()
 	defer func() {
 		result.Duration = time.Since(startTime)
 		savePredictionResult(config, result)
 	}()
-	
+
 	// Run prediction pipeline
 	if err := runPrediction(config, result); err != nil {
 		result.ErrorMessage = err.Error()
 		log.Printf("Prediction failed: %v", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: defer runs before os.Exit on success path
 	}
-	
+
 	result.Success = true
 	log.Printf("Prediction completed successfully in %v", result.Duration)
 }
 
 func parsePredictFlags() *PredictConfig {
 	config := &PredictConfig{}
-	
+
 	// Input/Output flags
 	flag.StringVar(&config.DataPath, "data", "", "Path to input data (required)")
 	flag.StringVar(&config.ModelPath, "model", "", "Path to trained model (required)")
 	flag.StringVar(&config.OutputPath, "output", "", "Output path for predictions (required)")
-	
+
 	// Prediction options
 	flag.IntVar(&config.BatchSize, "batch-size", 10000, "Prediction batch size")
 	flag.StringVar(&config.OutputFormat, "format", "csv", "Output format (csv, json, parquet)")
 	flag.BoolVar(&config.IncludeProbs, "include-probs", false, "Include prediction probabilities")
-	
+
 	// Data processing
 	featureColumnsFlag := flag.String("features", "", "Comma-separated feature column names (default: auto-detect)")
 	flag.StringVar(&config.IDColumn, "id-col", "id", "ID column name")
 	flag.StringVar(&config.GroupColumn, "group-col", "", "Optional grouping column name (e.g., time periods, batches)")
-	
+
 	// Execution options
 	flag.BoolVar(&config.Verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&config.Overwrite, "overwrite", false, "Overwrite existing output file")
-	
+
 	flag.Parse()
-	
+
 	// Process feature columns
 	if *featureColumnsFlag != "" {
 		config.FeatureColumns = strings.Split(*featureColumnsFlag, ",")
@@ -148,7 +147,7 @@ func parsePredictFlags() *PredictConfig {
 			config.FeatureColumns[i] = strings.TrimSpace(config.FeatureColumns[i])
 		}
 	}
-	
+
 	// Validate required flags
 	if config.DataPath == "" {
 		log.Fatal("Data path is required (-data)")
@@ -159,12 +158,12 @@ func parsePredictFlags() *PredictConfig {
 	if config.OutputPath == "" {
 		log.Fatal("Output path is required (-output)")
 	}
-	
+
 	// Check if output exists and overwrite flag
 	if _, err := os.Stat(config.OutputPath); err == nil && !config.Overwrite {
 		log.Fatalf("Output file exists and -overwrite not specified: %s", config.OutputPath)
 	}
-	
+
 	return config
 }
 
@@ -174,39 +173,39 @@ func runPrediction(config *PredictConfig, result *PredictionResult) error {
 		log.Printf("Loading model from: %s", config.ModelPath)
 		log.Printf("Loading data from: %s", config.DataPath)
 	}
-	
+
 	// Simulate data loading and prediction
-	result.NumSamples = 100000  // Placeholder
-	result.NumFeatures = 1050   // Placeholder
-	
+	result.NumSamples = 100000 // Placeholder
+	result.NumFeatures = 1050  // Placeholder
+
 	// Simulate prediction statistics
 	result.PredictionStats = map[string]float64{
-		"mean":     0.5,
-		"std":      0.1,
-		"min":      0.0,
-		"max":      1.0,
-		"q25":      0.45,
-		"q50":      0.5,
-		"q75":      0.55,
+		"mean":      0.5,
+		"std":       0.1,
+		"min":       0.0,
+		"max":       1.0,
+		"q25":       0.45,
+		"q50":       0.5,
+		"q75":       0.55,
 		"nan_count": 0,
 	}
-	
+
 	// Create output directory
 	outputDir := filepath.Dir(config.OutputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	
+
 	// Generate placeholder predictions
 	if err := generatePlaceholderPredictions(config, result); err != nil {
 		return fmt.Errorf("failed to generate predictions: %w", err)
 	}
-	
+
 	if config.Verbose {
 		log.Printf("Predictions saved to: %s", config.OutputPath)
 		log.Printf("Prediction stats: %+v", result.PredictionStats)
 	}
-	
+
 	return nil
 }
 
@@ -231,10 +230,10 @@ func generateCSVPredictions(config *PredictConfig, result *PredictionResult) err
 			fmt.Fprintf(os.Stderr, "Warning: failed to close file: %v\n", closeErr)
 		}
 	}()
-	
+
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
-	
+
 	// Write header
 	header := []string{config.IDColumn, "prediction"}
 	if config.GroupColumn != "" {
@@ -243,32 +242,32 @@ func generateCSVPredictions(config *PredictConfig, result *PredictionResult) err
 	if config.IncludeProbs {
 		header = append(header, "prediction_prob")
 	}
-	
+
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
-	
+
 	// Write placeholder data
 	for i := 0; i < result.NumSamples; i++ {
 		row := []string{
 			fmt.Sprintf("id_%06d", i),
 			fmt.Sprintf("%.6f", 0.5+float64(i%100)/10000.0), // Placeholder prediction
 		}
-		
+
 		if config.GroupColumn != "" {
 			groupNum := (i / 1000) + 1
 			row = append(row, fmt.Sprintf("group_%d", groupNum))
 		}
-		
+
 		if config.IncludeProbs {
 			row = append(row, fmt.Sprintf("%.6f", 0.6+float64(i%50)/5000.0))
 		}
-		
+
 		if err := writer.Write(row); err != nil {
 			return fmt.Errorf("failed to write CSV row %d: %w", i, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -279,33 +278,33 @@ func generateJSONPredictions(config *PredictConfig, result *PredictionResult) er
 		Group      string  `json:"group,omitempty"`
 		Prob       float64 `json:"prediction_prob,omitempty"`
 	}
-	
+
 	var predictions []PredictionRow
-	
+
 	for i := 0; i < min(1000, result.NumSamples); i++ { // Limit for JSON output
 		row := PredictionRow{
 			ID:         fmt.Sprintf("id_%06d", i),
 			Prediction: 0.5 + float64(i%100)/10000.0,
 		}
-		
+
 		if config.GroupColumn != "" {
 			groupNum := (i / 100) + 1
 			row.Group = fmt.Sprintf("group_%d", groupNum)
 		}
-		
+
 		if config.IncludeProbs {
 			row.Prob = 0.6 + float64(i%50)/5000.0
 		}
-		
+
 		predictions = append(predictions, row)
 	}
-	
+
 	data, err := json.MarshalIndent(predictions, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal predictions: %w", err)
 	}
-	
-	return os.WriteFile(config.OutputPath, data, 0644)
+
+	return os.WriteFile(config.OutputPath, data, 0600)
 }
 
 func savePredictionResult(config *PredictConfig, result *PredictionResult) {
@@ -313,18 +312,18 @@ func savePredictionResult(config *PredictConfig, result *PredictionResult) {
 	outputDir := filepath.Dir(config.OutputPath)
 	baseName := strings.TrimSuffix(filepath.Base(config.OutputPath), filepath.Ext(config.OutputPath))
 	metaPath := filepath.Join(outputDir, fmt.Sprintf("%s_metadata.json", baseName))
-	
+
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		log.Printf("Failed to marshal prediction result: %v", err)
 		return
 	}
-	
-	if err := os.WriteFile(metaPath, data, 0644); err != nil {
+
+	if err := os.WriteFile(metaPath, data, 0600); err != nil {
 		log.Printf("Failed to save prediction metadata: %v", err)
 		return
 	}
-	
+
 	if config.Verbose {
 		log.Printf("Prediction metadata saved to: %s", metaPath)
 	}
@@ -338,50 +337,3 @@ func min(a, b int) int {
 	return b
 }
 
-func parseFloat(s string) float64 {
-	f, _ := strconv.ParseFloat(s, 64)
-	return f
-}
-
-// printPredictUsage prints detailed usage information.
-func printPredictUsage() {
-	fmt.Printf(`
-Zerfoo Model Prediction CLI
-
-USAGE:
-    zerfoo-predict -data <path> -model <path> -output <path> [OPTIONS]
-
-REQUIRED ARGUMENTS:
-    -data <path>        Path to input data file
-    -model <path>       Path to trained model file
-    -output <path>      Output path for predictions
-
-PREDICTION OPTIONS:
-    -batch-size <int>   Prediction batch size (default: 10000)
-    -format <string>    Output format: csv, json, parquet (default: csv)
-    -include-probs      Include prediction probabilities (default: false)
-
-DATA OPTIONS:
-    -features <string>  Comma-separated feature column names (auto-detect if not specified)
-    -id-col <string>    ID column name (default: id)
-    -group-col <string> Optional grouping column name (e.g., time periods, batches)
-
-OTHER OPTIONS:
-    -verbose            Verbose output (default: false)
-    -overwrite          Overwrite existing output file (default: false)
-
-EXAMPLES:
-    # Basic prediction
-    zerfoo-predict -data test_data.csv -model trained_model.zmf -output predictions.csv
-
-    # JSON output with probabilities
-    zerfoo-predict -data test.csv -model model.zmf -output pred.json -format json -include-probs
-
-    # Custom feature columns and batch size
-    zerfoo-predict -data data.csv -model model.zmf -output pred.csv -features "feature_1,feature_2,feature_3" -batch-size 5000
-
-    # Verbose output with overwrite
-    zerfoo-predict -data test.csv -model model.zmf -output predictions.csv -verbose -overwrite
-
-`)
-}

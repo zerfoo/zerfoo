@@ -11,11 +11,11 @@ func TestMixedPrecisionNumerics(t *testing.T) {
 	if helpers.ImplNumerics == nil {
 		t.Skip("wire ImplNumerics in tests/helpers/wire.go")
 	}
-	
+
 	// Test mixed-precision behavior with different value ranges
 	// This simulates scenarios where computations involve both
 	// high-precision and reduced-precision values
-	
+
 	testCases := []struct {
 		name               string
 		input              []float64
@@ -59,7 +59,7 @@ func TestMixedPrecisionNumerics(t *testing.T) {
 			description:        "Gradient-scale values should maintain sufficient precision",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Forward pass
@@ -67,25 +67,25 @@ func TestMixedPrecisionNumerics(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Forward pass failed for %s: %v", tc.description, err)
 			}
-			
+
 			// Check output precision characteristics
 			checkPrecisionCharacteristics(t, "output", output, tc.toleranceThreshold)
-			
+
 			// Backward pass
 			if ctx != nil {
 				upstream := make([]float64, len(output))
 				for i := range upstream {
 					upstream[i] = 1.0
 				}
-				
+
 				grad, backErr := helpers.ImplNumerics.Backward(ctx, upstream)
 				if backErr != nil {
 					t.Fatalf("Backward pass failed for %s: %v", tc.description, backErr)
 				}
-				
+
 				// Check gradient precision characteristics
 				checkPrecisionCharacteristics(t, "gradient", grad, tc.toleranceThreshold)
-				
+
 				// Verify gradient magnitudes are reasonable
 				for i, g := range grad {
 					if math.Abs(g) > 1e10 {
@@ -96,7 +96,7 @@ func TestMixedPrecisionNumerics(t *testing.T) {
 					}
 				}
 			}
-			
+
 			t.Logf("Mixed precision test passed for %s (tolerance=%.2e)", tc.description, tc.toleranceThreshold)
 		})
 	}
@@ -106,12 +106,12 @@ func TestPrecisionDegradation(t *testing.T) {
 	if helpers.ImplNumerics == nil {
 		t.Skip("wire ImplNumerics in tests/helpers/wire.go")
 	}
-	
+
 	// Test precision degradation scenarios that might occur in training
 	scenarios := []struct {
-		name    string
-		input   []float64
-		rounds  int
+		name           string
+		input          []float64
+		rounds         int
 		maxDegradation float64
 	}{
 		{
@@ -127,47 +127,47 @@ func TestPrecisionDegradation(t *testing.T) {
 			maxDegradation: 1e-12,
 		},
 	}
-	
+
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			currentInput := make([]float64, len(scenario.input))
 			copy(currentInput, scenario.input)
-			
+
 			initialSum := 0.0
 			for _, v := range currentInput {
 				initialSum += v
 			}
-			
+
 			// Perform iterative forward passes
 			for round := 0; round < scenario.rounds; round++ {
 				output, _, err := helpers.ImplNumerics.Forward(currentInput)
 				if err != nil {
 					t.Fatalf("Round %d failed: %v", round, err)
 				}
-				
+
 				// Check for invalid values
 				if containsInvalidValues(output) {
 					t.Fatalf("Round %d produced invalid values", round)
 				}
-				
+
 				// Use output as input for next iteration (simulating iterative training)
 				if len(output) == len(currentInput) {
 					copy(currentInput, output)
 				}
 			}
-			
+
 			// Check precision degradation
 			finalSum := 0.0
 			for _, v := range currentInput {
 				finalSum += v
 			}
-			
+
 			degradation := math.Abs((finalSum - initialSum) / initialSum)
 			if degradation > scenario.maxDegradation {
 				t.Errorf("Precision degradation too high after %d rounds: %.2e > %.2e",
 					scenario.rounds, degradation, scenario.maxDegradation)
 			}
-			
+
 			t.Logf("Precision maintained after %d rounds: degradation=%.2e", scenario.rounds, degradation)
 		})
 	}
@@ -177,7 +177,7 @@ func TestNumericalStability(t *testing.T) {
 	if helpers.ImplNumerics == nil {
 		t.Skip("wire ImplNumerics in tests/helpers/wire.go")
 	}
-	
+
 	// Test numerical stability in challenging scenarios
 	stabilityTests := []struct {
 		name        string
@@ -205,46 +205,46 @@ func TestNumericalStability(t *testing.T) {
 			description: "Alternating positive/negative values",
 		},
 	}
-	
+
 	for _, test := range stabilityTests {
 		t.Run(test.name, func(t *testing.T) {
 			// Multiple runs to check consistency
 			const numRuns = 5
 			var outputs [][]float64
 			var grads [][]float64
-			
+
 			for run := 0; run < numRuns; run++ {
 				output, ctx, err := helpers.ImplNumerics.Forward(test.input)
 				if err != nil {
 					t.Fatalf("Run %d forward pass failed for %s: %v", run, test.description, err)
 				}
-				
+
 				if containsInvalidValues(output) {
 					t.Fatalf("Run %d produced invalid output for %s", run, test.description)
 				}
-				
+
 				outputs = append(outputs, output)
-				
+
 				// Backward pass
 				if ctx != nil {
 					upstream := make([]float64, len(output))
 					for i := range upstream {
 						upstream[i] = 1.0
 					}
-					
+
 					grad, backErr := helpers.ImplNumerics.Backward(ctx, upstream)
 					if backErr != nil {
 						t.Fatalf("Run %d backward pass failed for %s: %v", run, test.description, backErr)
 					}
-					
+
 					if containsInvalidValues(grad) {
 						t.Fatalf("Run %d produced invalid gradients for %s", run, test.description)
 					}
-					
+
 					grads = append(grads, grad)
 				}
 			}
-			
+
 			// Check consistency across runs
 			if len(outputs) > 1 {
 				checkConsistency(t, "outputs", outputs, 1e-12)
@@ -252,7 +252,7 @@ func TestNumericalStability(t *testing.T) {
 			if len(grads) > 1 {
 				checkConsistency(t, "gradients", grads, 1e-12)
 			}
-			
+
 			t.Logf("Numerical stability verified for %s across %d runs", test.description, numRuns)
 		})
 	}
@@ -263,17 +263,17 @@ func checkPrecisionCharacteristics(t *testing.T, name string, values []float64, 
 	if len(values) == 0 {
 		return
 	}
-	
+
 	// Check for invalid values
 	if containsInvalidValues(values) {
 		t.Errorf("%s contains invalid values (NaN/Inf)", name)
 		return
 	}
-	
+
 	// Check dynamic range
 	minVal := math.Inf(1)
 	maxVal := math.Inf(-1)
-	
+
 	for _, v := range values {
 		if v != 0.0 {
 			absV := math.Abs(v)
@@ -285,14 +285,14 @@ func checkPrecisionCharacteristics(t *testing.T, name string, values []float64, 
 			}
 		}
 	}
-	
+
 	if !math.IsInf(minVal, 0) && !math.IsInf(maxVal, 0) && minVal > 0 {
 		dynamicRange := maxVal / minVal
 		if dynamicRange > 1e12 {
 			t.Logf("%s has wide dynamic range: %.2e (may impact precision)", name, dynamicRange)
 		}
 	}
-	
+
 	// Check for subnormal values
 	subnormalCount := 0
 	for _, v := range values {
@@ -300,7 +300,7 @@ func checkPrecisionCharacteristics(t *testing.T, name string, values []float64, 
 			subnormalCount++
 		}
 	}
-	
+
 	if subnormalCount > 0 {
 		t.Logf("%s contains %d subnormal values (potential underflow)", name, subnormalCount)
 	}
@@ -311,14 +311,14 @@ func checkConsistency(t *testing.T, name string, runs [][]float64, tolerance flo
 	if len(runs) < 2 {
 		return
 	}
-	
+
 	reference := runs[0]
 	for runIdx, current := range runs[1:] {
 		if len(current) != len(reference) {
 			t.Errorf("%s run %d length mismatch: expected %d, got %d", name, runIdx+1, len(reference), len(current))
 			continue
 		}
-		
+
 		for i := range reference {
 			diff := math.Abs(current[i] - reference[i])
 			if diff > tolerance {

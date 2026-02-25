@@ -30,7 +30,7 @@ func NewConstant[T tensor.Numeric](
 	if name == "" {
 		return nil, fmt.Errorf("constant layer name cannot be empty")
 	}
-	
+
 	if value == nil {
 		return nil, fmt.Errorf("constant value cannot be nil")
 	}
@@ -54,7 +54,7 @@ func NewConstantFromData[T tensor.Numeric](
 	if name == "" {
 		return nil, fmt.Errorf("constant layer name cannot be empty")
 	}
-	
+
 	value, err := tensor.New[T](shape, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create constant tensor: %w", err)
@@ -78,7 +78,7 @@ func (c *Constant[T]) Attributes() map[string]interface{} {
 	attrs := map[string]interface{}{
 		"shape": c.value.Shape(),
 	}
-	
+
 	// Include tensor data type information
 	switch any(c.value.Data()).(type) {
 	case []float32:
@@ -94,7 +94,7 @@ func (c *Constant[T]) Attributes() map[string]interface{} {
 	default:
 		attrs["dtype"] = "unknown"
 	}
-	
+
 	return attrs
 }
 
@@ -115,21 +115,21 @@ func (c *Constant[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	// Constant layers can accept 0 or more inputs (which are ignored)
 	// This flexibility is useful in computational graphs where constants
 	// might be connected to other nodes for graph structure reasons
-	
+
 	// Return a copy of the constant value to prevent modification
 	// Create a new tensor with the same shape and data
 	shape := c.value.Shape()
 	data := c.value.Data()
-	
+
 	// Make a copy of the data to prevent modification
 	dataCopy := make([]T, len(data))
 	copy(dataCopy, data)
-	
+
 	result, err := tensor.New[T](shape, dataCopy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create constant output tensor: %w", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -138,28 +138,28 @@ func (c *Constant[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 func (c *Constant[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// Constants don't depend on inputs, so gradients w.r.t. inputs are zero
 	inputGradients := make([]*tensor.TensorNumeric[T], len(inputs))
-	
+
 	for i, input := range inputs {
 		// Create zero gradient with same shape as input
 		shape := input.Shape()
-		
+
 		// Calculate total number of elements
 		size := 1
 		for _, dim := range shape {
 			size *= dim
 		}
-		
+
 		// Create zero-filled data slice
 		zeroData := make([]T, size)
 		// Go initializes slice elements to zero value automatically
-		
+
 		zeros, err := tensor.New[T](shape, zeroData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create zero gradient for input %d: %w", i, err)
 		}
 		inputGradients[i] = zeros
 	}
-	
+
 	return inputGradients, nil
 }
 

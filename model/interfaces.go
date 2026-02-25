@@ -133,47 +133,47 @@ type ModelOptimizer[T tensor.Numeric] interface {
 // ModelConfig configures model creation and behavior.
 type ModelConfig struct {
 	// Core configuration
-	Type          string                 `json:"type"`            // "standard", "hrm", "ensemble", etc.
-	Architecture  map[string]interface{} `json:"architecture"`    // Architecture-specific parameters
-	Parameters    map[string]interface{} `json:"parameters"`      // Model parameters
-	
+	Type         string                 `json:"type"`         // "standard", "hrm", "ensemble", etc.
+	Architecture map[string]interface{} `json:"architecture"` // Architecture-specific parameters
+	Parameters   map[string]interface{} `json:"parameters"`   // Model parameters
+
 	// Behavior configuration
-	TrainingMode  bool                   `json:"training_mode"`   // Whether to initialize in training mode
-	BatchSize     int                    `json:"batch_size"`      // Default batch size for inference
-	
+	TrainingMode bool `json:"training_mode"` // Whether to initialize in training mode
+	BatchSize    int  `json:"batch_size"`    // Default batch size for inference
+
 	// Format and compatibility
-	InputFormat   string                 `json:"input_format"`    // Expected input format
-	OutputFormat  string                 `json:"output_format"`   // Expected output format
-	Version       string                 `json:"version"`         // Model format version
-	
+	InputFormat  string `json:"input_format"`  // Expected input format
+	OutputFormat string `json:"output_format"` // Expected output format
+	Version      string `json:"version"`       // Model format version
+
 	// Extension point for domain-specific configuration
-	Extensions    map[string]interface{} `json:"extensions"`      // Domain-specific extensions
+	Extensions map[string]interface{} `json:"extensions"` // Domain-specific extensions
 }
 
 // OptimizationConfig configures model optimization.
 type OptimizationConfig struct {
-	Strategies    []string               `json:"strategies"`      // Optimization strategies to apply
-	TargetDevice  string                 `json:"target_device"`   // Target device for optimization
-	Precision     string                 `json:"precision"`       // Target precision (fp32, fp16, int8)
-	MaxMemory     int64                  `json:"max_memory"`      // Memory constraints
-	Extensions    map[string]interface{} `json:"extensions"`      // Strategy-specific options
+	Strategies   []string               `json:"strategies"`    // Optimization strategies to apply
+	TargetDevice string                 `json:"target_device"` // Target device for optimization
+	Precision    string                 `json:"precision"`     // Target precision (fp32, fp16, int8)
+	MaxMemory    int64                  `json:"max_memory"`    // Memory constraints
+	Extensions   map[string]interface{} `json:"extensions"`    // Strategy-specific options
 }
 
 // Metadata and information structures
 
 // ModelMetadata contains information about a model instance.
 type ModelMetadata struct {
-	Name          string                 `json:"name"`
-	Version       string                 `json:"version"`
-	Architecture  string                 `json:"architecture"`
-	Framework     string                 `json:"framework"`
-	CreatedAt     string                 `json:"created_at"`
-	ModifiedAt    string                 `json:"modified_at"`
-	Parameters    int64                  `json:"parameter_count"`
-	InputShape    [][]int                `json:"input_shapes"`
-	OutputShape   []int                  `json:"output_shape"`
-	Tags          []string               `json:"tags"`
-	Extensions    map[string]interface{} `json:"extensions"`
+	Name         string                 `json:"name"`
+	Version      string                 `json:"version"`
+	Architecture string                 `json:"architecture"`
+	Framework    string                 `json:"framework"`
+	CreatedAt    string                 `json:"created_at"`
+	ModifiedAt   string                 `json:"modified_at"`
+	Parameters   int64                  `json:"parameter_count"`
+	InputShape   [][]int                `json:"input_shapes"`
+	OutputShape  []int                  `json:"output_shape"`
+	Tags         []string               `json:"tags"`
+	Extensions   map[string]interface{} `json:"extensions"`
 }
 
 // ModelCapabilities describes what a model provider can do.
@@ -200,49 +200,49 @@ type ProviderInfo struct {
 
 // SerializerInfo contains metadata about a model serializer.
 type SerializerInfo struct {
-	Name            string   `json:"name"`
-	Version         string   `json:"version"`
-	Description     string   `json:"description"`
+	Name             string   `json:"name"`
+	Version          string   `json:"version"`
+	Description      string   `json:"description"`
 	SupportedFormats []string `json:"supported_formats"`
-	Compression     bool     `json:"supports_compression"`
-	Encryption      bool     `json:"supports_encryption"`
+	Compression      bool     `json:"supports_compression"`
+	Encryption       bool     `json:"supports_encryption"`
 }
 
 // LoaderInfo contains metadata about a model loader.
 type LoaderInfo struct {
-	Name            string   `json:"name"`
-	Version         string   `json:"version"`
-	Description     string   `json:"description"`
+	Name             string   `json:"name"`
+	Version          string   `json:"version"`
+	Description      string   `json:"description"`
 	SupportedFormats []string `json:"supported_formats"`
-	StreamingLoad   bool     `json:"supports_streaming_load"`
-	LazyLoad        bool     `json:"supports_lazy_load"`
+	StreamingLoad    bool     `json:"supports_streaming_load"`
+	LazyLoad         bool     `json:"supports_lazy_load"`
 }
 
 // ExporterInfo contains metadata about a model exporter.
 type ExporterInfo struct {
-	Name            string   `json:"name"`
-	Version         string   `json:"version"`
-	Description     string   `json:"description"`
+	Name             string   `json:"name"`
+	Version          string   `json:"version"`
+	Description      string   `json:"description"`
 	SupportedFormats []string `json:"supported_formats"`
-	Optimization    bool     `json:"supports_optimization"`
-	Quantization    bool     `json:"supports_quantization"`
+	Optimization     bool     `json:"supports_optimization"`
+	Quantization     bool     `json:"supports_quantization"`
 }
 
 // ValidatorInfo contains metadata about a model validator.
 type ValidatorInfo struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Description  string   `json:"description"`
-	CheckTypes   []string `json:"check_types"`
-	Strictness   string   `json:"strictness"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	CheckTypes  []string `json:"check_types"`
+	Strictness  string   `json:"strictness"`
 }
 
 // OptimizerInfo contains metadata about a model optimizer.
 type OptimizerInfo struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Description  string   `json:"description"`
-	Strategies   []string `json:"available_strategies"`
+	Name          string   `json:"name"`
+	Version       string   `json:"version"`
+	Description   string   `json:"description"`
+	Strategies    []string `json:"available_strategies"`
 	TargetDevices []string `json:"target_devices"`
 }
 
@@ -250,29 +250,29 @@ type OptimizerInfo struct {
 
 // ValidationResult contains model validation results.
 type ValidationResult struct {
-	IsValid     bool                   `json:"is_valid"`
-	Errors      []ValidationError      `json:"errors"`
-	Warnings    []ValidationWarning    `json:"warnings"`
-	Metrics     map[string]float64     `json:"metrics"`
-	Summary     string                 `json:"summary"`
-	Extensions  map[string]interface{} `json:"extensions"`
+	IsValid    bool                   `json:"is_valid"`
+	Errors     []ValidationError      `json:"errors"`
+	Warnings   []ValidationWarning    `json:"warnings"`
+	Metrics    map[string]float64     `json:"metrics"`
+	Summary    string                 `json:"summary"`
+	Extensions map[string]interface{} `json:"extensions"`
 }
 
 // ValidationError represents a validation error.
 type ValidationError struct {
-	Type        string `json:"type"`
-	Message     string `json:"message"`
-	Component   string `json:"component"`
-	Severity    string `json:"severity"`
-	Suggestion  string `json:"suggestion"`
+	Type       string `json:"type"`
+	Message    string `json:"message"`
+	Component  string `json:"component"`
+	Severity   string `json:"severity"`
+	Suggestion string `json:"suggestion"`
 }
 
 // ValidationWarning represents a validation warning.
 type ValidationWarning struct {
-	Type        string `json:"type"`
-	Message     string `json:"message"`
-	Component   string `json:"component"`
-	Suggestion  string `json:"suggestion"`
+	Type       string `json:"type"`
+	Message    string `json:"message"`
+	Component  string `json:"component"`
+	Suggestion string `json:"suggestion"`
 }
 
 // OptimizationStrategy describes an optimization approach.

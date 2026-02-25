@@ -16,7 +16,7 @@ func main() {
 		fmt.Println("This legacy tool will be deprecated in future versions.")
 		os.Exit(0)
 	}
-	
+
 	// Legacy behavior for backward compatibility
 	text := flag.String("text", "", "Text to tokenize")
 	flag.Parse()

@@ -6,8 +6,8 @@ package helpers
 type ZerfooAPI interface {
 	SetSeed(seed int)
 	Tokenize(text string) ([]int, error)
-	RefTokenize(text string) ([]int, error) // reference tokenizer
-	Logits(prompt string, maxNewTokens int) ([]float32, error) // model under test
+	RefTokenize(text string) ([]int, error)                       // reference tokenizer
+	Logits(prompt string, maxNewTokens int) ([]float32, error)    // model under test
 	RefLogits(prompt string, maxNewTokens int) ([]float32, error) // reference model
 	DecodeGreedy(ids []int) (string, error)
 	DecodeTopP(ids []int, p float64) (string, error)
@@ -35,7 +35,7 @@ type PerfAPI interface {
 }
 
 var (
-	ImplZerfoo  ZerfooAPI
+	ImplZerfoo   ZerfooAPI
 	ImplNumerics NumericsAPI
 	ImplPipeline PipelineAPI
 	ImplPerf     PerfAPI

@@ -11,15 +11,15 @@ func TestNaNInfHooks(t *testing.T) {
 	if helpers.ImplNumerics == nil {
 		t.Skip("wire ImplNumerics in tests/helpers/wire.go")
 	}
-	
+
 	// Test that NaN/Inf values are properly detected and handled
 	// This simulates training halting behavior when invalid values are encountered
-	
+
 	testCases := []struct {
-		name           string
-		input          []float64
-		expectInvalid  bool
-		description    string
+		name          string
+		input         []float64
+		expectInvalid bool
+		description   string
 	}{
 		{
 			name:          "normal_values",
@@ -58,7 +58,7 @@ func TestNaNInfHooks(t *testing.T) {
 			description:   "Small but normal values should pass",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Check input validation
@@ -67,12 +67,12 @@ func TestNaNInfHooks(t *testing.T) {
 				t.Errorf("Input validation mismatch for %s: expected_invalid=%v, actual_invalid=%v",
 					tc.description, tc.expectInvalid, hasInvalid)
 			}
-			
+
 			// If input has invalid values, test should expect error or special handling
 			if tc.expectInvalid {
 				// Test that the system properly rejects or handles invalid input
 				output, ctx, err := helpers.ImplNumerics.Forward(tc.input)
-				
+
 				// The implementation should either:
 				// 1. Return an error for invalid input
 				// 2. Return output that we can validate for invalid values
@@ -81,14 +81,14 @@ func TestNaNInfHooks(t *testing.T) {
 					outputInvalid := containsInvalidValues(output)
 					if outputInvalid {
 						t.Logf("Forward pass produced invalid output as expected for %s", tc.description)
-						
+
 						// Test that backward also handles this appropriately
 						if ctx != nil {
 							upstream := make([]float64, len(output))
 							for i := range upstream {
 								upstream[i] = 1.0
 							}
-							
+
 							grad, backErr := helpers.ImplNumerics.Backward(ctx, upstream)
 							if backErr == nil && grad != nil {
 								gradInvalid := containsInvalidValues(grad)
@@ -107,18 +107,18 @@ func TestNaNInfHooks(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Forward pass failed for valid input %s: %v", tc.description, err)
 				}
-				
+
 				if containsInvalidValues(output) {
 					t.Errorf("Forward pass produced invalid output for valid input %s", tc.description)
 				}
-				
+
 				// Test backward pass
 				if ctx != nil {
 					upstream := make([]float64, len(output))
 					for i := range upstream {
 						upstream[i] = 1.0
 					}
-					
+
 					grad, backErr := helpers.ImplNumerics.Backward(ctx, upstream)
 					if backErr != nil {
 						t.Errorf("Backward pass failed for valid input %s: %v", tc.description, backErr)
@@ -135,55 +135,55 @@ func TestTensorDumpOnInvalidValues(t *testing.T) {
 	if helpers.ImplNumerics == nil {
 		t.Skip("wire ImplNumerics in tests/helpers/wire.go")
 	}
-	
+
 	// Test that when invalid values are detected, we can dump tensor information
 	// This simulates the debugging capability when training halts due to NaN/Inf
-	
+
 	inputs := [][]float64{
-		{1.0, 2.0, math.NaN()},           // Contains NaN
-		{math.Inf(1), 2.0, 3.0},         // Contains +Inf
-		{1.0, math.Inf(-1), 3.0},        // Contains -Inf
-		{math.NaN(), math.Inf(1), 0.0},  // Multiple invalid values
+		{1.0, 2.0, math.NaN()},         // Contains NaN
+		{math.Inf(1), 2.0, 3.0},        // Contains +Inf
+		{1.0, math.Inf(-1), 3.0},       // Contains -Inf
+		{math.NaN(), math.Inf(1), 0.0}, // Multiple invalid values
 	}
-	
+
 	for i, input := range inputs {
 		t.Run(t.Name(), func(t *testing.T) {
 			// Detect invalid values in input
 			if !containsInvalidValues(input) {
 				t.Fatalf("Test case %d should contain invalid values", i)
 			}
-			
+
 			// Dump tensor information for debugging
 			dumpTensorInfo(t, "input", input)
-			
+
 			// Try forward pass (may fail or produce invalid output)
 			output, ctx, err := helpers.ImplNumerics.Forward(input)
 			if err != nil {
 				t.Logf("Forward pass correctly failed: %v", err)
 				return
 			}
-			
+
 			if output != nil {
 				dumpTensorInfo(t, "output", output)
-				
+
 				// Check output validity
 				if containsInvalidValues(output) {
 					t.Logf("Forward pass propagated invalid values to output")
 				}
-				
+
 				// Try backward pass
 				if ctx != nil {
 					upstream := make([]float64, len(output))
 					for j := range upstream {
 						upstream[j] = 1.0
 					}
-					
+
 					grad, backErr := helpers.ImplNumerics.Backward(ctx, upstream)
 					if backErr != nil {
 						t.Logf("Backward pass failed: %v", backErr)
 					} else if grad != nil {
 						dumpTensorInfo(t, "gradient", grad)
-						
+
 						if containsInvalidValues(grad) {
 							t.Logf("Backward pass propagated invalid values to gradients")
 						}
@@ -208,12 +208,12 @@ func containsInvalidValues(values []float64) bool {
 func dumpTensorInfo(t *testing.T, name string, values []float64) {
 	t.Logf("=== %s tensor dump ===", name)
 	t.Logf("Shape: [%d]", len(values))
-	
+
 	hasNaN := false
 	hasInf := false
 	minVal := math.Inf(1)
 	maxVal := math.Inf(-1)
-	
+
 	for i, v := range values {
 		switch {
 		case math.IsNaN(v):
@@ -235,11 +235,11 @@ func dumpTensorInfo(t *testing.T, name string, values []float64) {
 			}
 		}
 	}
-	
+
 	if !hasNaN && !hasInf {
 		t.Logf("Range: [%.6e, %.6e]", minVal, maxVal)
 	}
-	
+
 	t.Logf("Contains NaN: %v, Contains Inf: %v", hasNaN, hasInf)
 	t.Logf("=== end %s dump ===", name)
 }

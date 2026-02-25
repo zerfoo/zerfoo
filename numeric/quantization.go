@@ -17,11 +17,11 @@ func NewQuantizationConfig(scale float32, zeroPoint int64, symmetric bool) (*Qua
 	if scale <= 0 {
 		return nil, fmt.Errorf("quantization scale must be positive, got %f", scale)
 	}
-	
+
 	if !symmetric && (zeroPoint < 0 || zeroPoint > 255) {
 		return nil, fmt.Errorf("zero point must be in range [0, 255] for asymmetric quantization, got %d", zeroPoint)
 	}
-	
+
 	return &QuantizationConfig{
 		Scale:     scale,
 		ZeroPoint: zeroPoint,
@@ -39,9 +39,9 @@ func (qc *QuantizationConfig) Quantize(value float32) uint8 {
 	} else {
 		zeroPoint = float32(qc.ZeroPoint)
 	}
-	
+
 	quantized := value/qc.Scale + zeroPoint
-	
+
 	// Round and clamp to uint8 range
 	rounded := float32(math.Round(float64(quantized)))
 	if rounded < 0 {
@@ -72,7 +72,7 @@ func (qc *QuantizationConfig) Dequantize(quantized uint8) float32 {
 	} else {
 		zeroPoint = float32(qc.ZeroPoint)
 	}
-	
+
 	return qc.Scale * (float32(quantized) - zeroPoint)
 }
 
@@ -94,15 +94,15 @@ func Pack4BitWeights(low4, high4 uint8) (uint8, error) {
 	if high4 > 15 {
 		return 0, fmt.Errorf("high 4-bit value must be in range [0, 15], got %d", high4)
 	}
-	
+
 	return (high4 << 4) | low4, nil
 }
 
 // Unpack4BitWeights extracts two 4-bit values from a single uint8
 // Returns (low4, high4) where low4 is bits [0:3] and high4 is bits [4:7]
 func Unpack4BitWeights(packed uint8) (uint8, uint8) {
-	low4 := packed & 0x0F  // Extract lower 4 bits
-	high4 := packed >> 4   // Extract upper 4 bits
+	low4 := packed & 0x0F // Extract lower 4 bits
+	high4 := packed >> 4  // Extract upper 4 bits
 	return low4, high4
 }
 
@@ -124,7 +124,7 @@ func Pack4BitSlice(values []uint8) ([]uint8, error) {
 	if len(values)%2 != 0 {
 		return nil, fmt.Errorf("input length must be even for 4-bit packing, got %d", len(values))
 	}
-	
+
 	result := make([]uint8, len(values)/2)
 	for i := 0; i < len(values); i += 2 {
 		packed, err := Pack4BitWeights(values[i], values[i+1])
@@ -141,7 +141,7 @@ func Pack4BitSlice(values []uint8) ([]uint8, error) {
 func (qc *QuantizationConfig) Dequantize4BitWeights(packed []uint8) []float32 {
 	// First unpack 4-bit values to uint8
 	unpacked := Unpack4BitSlice(packed)
-	
+
 	// Then dequantize to float32
 	return qc.DequantizeSlice(unpacked)
 }
@@ -152,12 +152,12 @@ func ComputeQuantizationParams(minVal, maxVal float32, symmetric bool) (*Quantiz
 	if minVal > maxVal {
 		return nil, fmt.Errorf("min value (%f) cannot be greater than max value (%f)", minVal, maxVal)
 	}
-	
+
 	if minVal == maxVal {
 		// Handle edge case where all values are the same
 		return NewQuantizationConfig(1.0, 128, symmetric)
 	}
-	
+
 	if symmetric {
 		// Symmetric quantization: zero_point at 128, scale covers [-absMax, absMax]
 		// Map [-absMax, absMax] to [1, 255] with 128 as zero
@@ -165,11 +165,11 @@ func ComputeQuantizationParams(minVal, maxVal float32, symmetric bool) (*Quantiz
 		scale := absMax / 127.0 // Map [-absMax, absMax] to [-127, 127], centered at 128
 		return NewQuantizationConfig(scale, 0, true)
 	}
-	
+
 	// Asymmetric quantization: map [minVal, maxVal] to [0, 255]
 	scale := (maxVal - minVal) / 255.0
 	zeroPoint := int64(math.Round(float64(-minVal / scale)))
-	
+
 	// Clamp zero_point to valid uint8 range
 	if zeroPoint < 0 {
 		zeroPoint = 0
@@ -177,7 +177,7 @@ func ComputeQuantizationParams(minVal, maxVal float32, symmetric bool) (*Quantiz
 	if zeroPoint > 255 {
 		zeroPoint = 255
 	}
-	
+
 	return NewQuantizationConfig(scale, zeroPoint, false)
 }
 
@@ -186,18 +186,18 @@ func (qc *QuantizationConfig) QuantizationError(original []float32) float64 {
 	if len(original) == 0 {
 		return 0.0
 	}
-	
+
 	// Quantize and dequantize
 	quantized := qc.QuantizeSlice(original)
 	dequantized := qc.DequantizeSlice(quantized)
-	
+
 	// Compute RMS error
 	sumSquaredError := 0.0
 	for i, orig := range original {
 		diff := float64(orig - dequantized[i])
 		sumSquaredError += diff * diff
 	}
-	
+
 	return math.Sqrt(sumSquaredError / float64(len(original)))
 }
 
@@ -205,7 +205,7 @@ func (qc *QuantizationConfig) QuantizationError(original []float32) float64 {
 func (qc *QuantizationConfig) ValidateQuantizationRoundTrip(values []float32, tolerance float64) error {
 	quantized := qc.QuantizeSlice(values)
 	dequantized := qc.DequantizeSlice(quantized)
-	
+
 	for i, orig := range values {
 		diff := math.Abs(float64(orig - dequantized[i]))
 		if diff > tolerance {
