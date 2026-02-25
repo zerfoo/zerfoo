@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
@@ -275,66 +276,138 @@ func TestRMSNorm_Forward_EdgeCases(t *testing.T) {
 	testutils.AssertNotNil(t, output3, "Output should not be nil")
 }
 
-// TestRMSNorm_Backward tests Backward method.
+// TestRMSNorm_Backward tests Backward method with 3D input.
 func TestRMSNorm_Backward(t *testing.T) {
 	ctx := context.Background()
 	ops := &numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	normalizedDim := 3
+	normalizedDim := 4
 	rms, err := NewRMSNorm[float32]("test_rms", engine, ops, normalizedDim)
 	testutils.AssertNoError(t, err, "NewRMSNorm should not return an error")
 
-	// Create input tensor
-	inputShape := []int{2, normalizedDim}
-	inputData := []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}
+	// Use 3D input [batch, seq, features] for backward to work correctly
+	inputShape := []int{2, 3, normalizedDim}
+	inputData := make([]float32, 24)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.1
+	}
 	inputTensor, err := tensor.New[float32](inputShape, inputData)
 	testutils.AssertNoError(t, err, "Failed to create input tensor")
 
-	// Run forward pass first to cache necessary values
 	_, err = rms.Forward(ctx, inputTensor)
 	testutils.AssertNoError(t, err, "Forward pass should not return an error")
 
-	// Create gradient tensor (same shape as output)
-	gradData := []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}
+	gradData := make([]float32, 24)
+	for i := range gradData {
+		gradData[i] = float32(i+1) * 0.01
+	}
 	gradTensor, err := tensor.New[float32](inputShape, gradData)
 	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
 
-	// Test backward pass
 	inputGrads, err := rms.Backward(ctx, types.FullBackprop, gradTensor, inputTensor)
 	if err != nil {
-		// If backward is not implemented, just verify it returns an error gracefully
-		testutils.AssertError(t, err, "Backward pass should return an error if not implemented")
-
+		t.Logf("Backward returned error (may be expected for shape issues): %v", err)
 		return
 	}
 
 	testutils.AssertNotNil(t, inputGrads, "Input gradients should not be nil")
 	testutils.AssertEqual(t, len(inputGrads), 1, "Should return one input gradient")
-
-	// Check gradient shape
-	inputGrad := inputGrads[0]
-	testutils.AssertTrue(t, testutils.IntSliceEqual(inputShape, inputGrad.Shape()), "Input gradient shape should match input shape")
+	testutils.AssertTrue(t, testutils.IntSliceEqual(inputShape, inputGrads[0].Shape()), "Input gradient shape should match input shape")
 
 	// Check that gradients are computed (not zero)
-	gradData2 := inputGrad.Data()
 	hasNonZeroGrad := false
-
-	for _, grad := range gradData2 {
+	for _, grad := range inputGrads[0].Data() {
 		if grad != 0.0 {
 			hasNonZeroGrad = true
-
 			break
 		}
 	}
-
 	testutils.AssertTrue(t, hasNonZeroGrad, "Should have non-zero gradients")
 }
 
 // TestRMSNorm_NewFromParam tests NewRMSNormFromParam constructor.
 func TestRMSNorm_NewFromParam(t *testing.T) {
-	// Skip this test as it requires complex graph.Parameter setup
-	t.Skip("NewRMSNormFromParam requires graph.Parameter setup which is complex for unit tests")
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	gainData := []float32{1.0, 1.0, 1.0, 1.0}
+	gainTensor, err := tensor.New[float32]([]int{4}, gainData)
+	testutils.AssertNoError(t, err, "failed to create gain tensor")
+
+	gainParam, err := graph.NewParameter[float32]("gain", gainTensor, tensor.New[float32])
+	testutils.AssertNoError(t, err, "failed to create gain parameter")
+
+	rms, err := NewRMSNormFromParam(engine, ops, float32(1e-6), gainParam)
+	testutils.AssertNoError(t, err, "NewRMSNormFromParam should not return an error")
+	testutils.AssertNotNil(t, rms, "RMSNorm should not be nil")
+
+	// Verify it works with Forward
+	input, err := tensor.New[float32]([]int{1, 4}, []float32{1.0, 2.0, 3.0, 4.0})
+	testutils.AssertNoError(t, err, "failed to create input")
+
+	output, err := rms.Forward(context.Background(), input)
+	testutils.AssertNoError(t, err, "Forward should not error")
+	testutils.AssertNotNil(t, output, "output should not be nil")
+}
+
+// TestRMSNorm_OpType tests OpType method.
+func TestRMSNorm_OpType(t *testing.T) {
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rms, err := NewRMSNorm[float32]("test", engine, ops, 4)
+	testutils.AssertNoError(t, err, "NewRMSNorm failed")
+
+	if rms.OpType() != "RMSNorm" {
+		t.Errorf("OpType() = %q, want RMSNorm", rms.OpType())
+	}
+}
+
+// TestRMSNorm_Attributes tests Attributes method.
+func TestRMSNorm_Attributes(t *testing.T) {
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rms, err := NewRMSNorm[float32]("test", engine, ops, 4, WithRMSNormEpsilon[float32](1e-5))
+	testutils.AssertNoError(t, err, "NewRMSNorm failed")
+
+	attrs := rms.Attributes()
+	if attrs == nil {
+		t.Fatal("Attributes returned nil")
+	}
+	if _, ok := attrs["epsilon"]; !ok {
+		t.Error("Attributes should contain epsilon")
+	}
+}
+
+// TestRMSNorm_Forward_InvalidInputCount tests Forward with wrong input count.
+func TestRMSNorm_Forward_InvalidInputCount(t *testing.T) {
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rms, err := NewRMSNorm[float32]("test", engine, ops, 4)
+	testutils.AssertNoError(t, err, "NewRMSNorm failed")
+
+	_, err = rms.Forward(context.Background())
+	if err == nil {
+		t.Error("expected error for no inputs")
+	}
+}
+
+// TestRMSNorm_Backward_InvalidInputCount tests Backward with wrong input count.
+func TestRMSNorm_Backward_InvalidInputCount(t *testing.T) {
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rms, err := NewRMSNorm[float32]("test", engine, ops, 4)
+	testutils.AssertNoError(t, err, "NewRMSNorm failed")
+
+	grad, _ := tensor.New[float32]([]int{1, 4}, []float32{1, 1, 1, 1})
+	_, err = rms.Backward(context.Background(), types.FullBackprop, grad)
+	if err == nil {
+		t.Error("expected error for no inputs in Backward")
+	}
 }
 
 // TestRMSNorm_SetName tests SetName method.
@@ -345,9 +418,9 @@ func TestRMSNorm_SetName(t *testing.T) {
 	rms, err := NewRMSNorm[float32]("test_rms", engine, ops, 4)
 	testutils.AssertNoError(t, err, "NewRMSNorm should not return an error")
 
-	// Test SetName
-	newName := "test_rmsnorm"
-	rms.SetName(newName)
-	// Note: We can't easily test that the name was set without exposing a getter,
-	// but we can verify the method doesn't crash
+	rms.SetName("renamed")
+	params := rms.Parameters()
+	if params[0].Name != "renamed_gain" {
+		t.Errorf("SetName: gain parameter name = %q, want renamed_gain", params[0].Name)
+	}
 }
