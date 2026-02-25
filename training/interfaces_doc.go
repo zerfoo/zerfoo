@@ -10,7 +10,7 @@
 // # Core Design Principles
 //
 //  1. **Separation of Concerns**: Generic ML training logic is separated from domain-specific
-//     business logic (e.g., Numerai tournament requirements).
+//     business logic (e.g., custom scoring or evaluation requirements).
 //
 //  2. **Dependency Inversion**: High-level training workflows depend on abstractions, not
 //     concrete implementations.
@@ -117,9 +117,9 @@
 //	config := WorkflowConfig{
 //	    NumEpochs: 100,
 //	    Extensions: map[string]interface{}{
-//	        "numerai": map[string]interface{}{
-//	            "tournament_id": "numerai_main",
-//	            "era_limit": 120,
+//	        "domain": map[string]interface{}{
+//	            "task_id":     "main",
+//	            "batch_limit": 120,
 //	        },
 //	    },
 //	}
@@ -255,10 +255,10 @@
 //
 // Before:
 //
-//	config := NumeraiTrainingConfig{
-//	    Epochs: 100,
-//	    TournamentID: "main",
-//	    EraLimit: 120,
+//	config := LegacyTrainingConfig{
+//	    Epochs:     100,
+//	    TaskID:     "main",
+//	    BatchLimit: 120,
 //	}
 //
 // After:
@@ -266,9 +266,9 @@
 //	config := WorkflowConfig{
 //	    NumEpochs: 100,
 //	    Extensions: map[string]interface{}{
-//	        "numerai": map[string]interface{}{
-//	            "tournament_id": "main",
-//	            "era_limit": 120,
+//	        "domain": map[string]interface{}{
+//	            "task_id":     "main",
+//	            "batch_limit": 120,
 //	        },
 //	    },
 //	}
