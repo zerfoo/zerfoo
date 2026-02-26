@@ -249,6 +249,13 @@ func (e *errEngine) Zeros(ctx context.Context, a *tensor.TensorNumeric[float32],
 	return e.Engine.Zeros(ctx, a, shape)
 }
 
+func (e *errEngine) RandomUniform(ctx context.Context, a *tensor.TensorNumeric[float32], min, max float32) error {
+	if err := e.check("RandomUniform"); err != nil {
+		return err
+	}
+	return e.Engine.RandomUniform(ctx, a, min, max)
+}
+
 func (e *errEngine) Ops() numeric.Arithmetic[float32] {
 	return numeric.Float32Ops{}
 }
@@ -557,5 +564,111 @@ func TestTokenEmbedding_Forward_InputCount(t *testing.T) {
 	_, err = te.Forward(ctx)
 	if err == nil {
 		t.Error("expected error for 0 inputs")
+	}
+}
+
+// ---------- NewTokenEmbedding constructor error paths ----------
+
+// failingInitializer returns an error on Initialize.
+type failingInitializer struct{}
+
+func (f failingInitializer) Initialize(_, _ int) ([]float32, error) {
+	return nil, fmt.Errorf("initializer failed")
+}
+
+func TestNewTokenEmbedding_InitializerError(t *testing.T) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	_, err := NewTokenEmbedding(eng, 10, 4, WithTokenEmbeddingInitializer[float32](failingInitializer{}))
+	if err == nil {
+		t.Error("expected error from failing initializer")
+	}
+}
+
+func TestNewTokenEmbedding_RandomUniformError(t *testing.T) {
+	eng := newErrEngine(map[string]int{"RandomUniform": 1})
+	_, err := NewTokenEmbedding[float32](eng, 10, 4)
+	if err == nil {
+		t.Error("expected error from RandomUniform during default initialization")
+	}
+}
+
+// ---------- TokenEmbedding Forward with multi-dimensional input ----------
+
+func TestTokenEmbedding_Forward_2DInput(t *testing.T) {
+	ctx := context.Background()
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	te, err := NewTokenEmbedding[float32](eng, 10, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2D input [2, 3] -> tokens in batch
+	input, _ := tensor.New[float32]([]int{2, 3}, []float32{0, 1, 2, 3, 4, 5})
+	output, err := te.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward with 2D input failed: %v", err)
+	}
+
+	// Output shape: [2, 3, 4] (input shape + embeddingDim)
+	shape := output.Shape()
+	if len(shape) != 3 || shape[0] != 2 || shape[1] != 3 || shape[2] != 4 {
+		t.Errorf("expected shape [2,3,4], got %v", shape)
+	}
+}
+
+// ---------- TokenEmbedding Backward with multi-dimensional gradient ----------
+
+func TestTokenEmbedding_Backward_2DInput(t *testing.T) {
+	ctx := context.Background()
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	te, err := NewTokenEmbedding[float32](eng, 10, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2D input triggers the N-D flatten path in Backward
+	input, _ := tensor.New[float32]([]int{2, 3}, []float32{0, 1, 2, 3, 4, 5})
+	_, err = te.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Gradient shape matches output: [2, 3, 4]
+	grad, _ := tensor.New[float32]([]int{2, 3, 4}, make([]float32, 24))
+	_, err = te.Backward(ctx, types.FullBackprop, grad)
+	if err != nil {
+		t.Fatalf("Backward with 2D input gradient failed: %v", err)
+	}
+}
+
+// ---------- RoPE Backward slice error (dOut too large) ----------
+
+func TestRotaryPositionalEmbedding_Backward_DOutSliceError(t *testing.T) {
+	ctx := context.Background()
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	// Create RoPE with headDim=4 and seqLen=4
+	rpe, err := NewRotaryPositionalEmbedding[float32](ctx, eng, 4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Forward with valid input
+	input, _ := tensor.New[float32]([]int{1, 2, 4}, make([]float32, 8))
+	_, err = rpe.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Backward with gradient whose headDim > precomputed headDim/2
+	// Since dOut.Slice uses [headDim/2:headDim], if headDim in dOut differs
+	// from rpe.headDim, the second Slice should fail.
+	// headDim=6 but rpe.headDim=4, so [2:4] slice on dim 2 of shape [1,2,6] should succeed
+	// but [0:2] from cosAngles precomputed for seqLen=4 should also succeed.
+	// Actually, let's just test with seqLen exceeding precomputed to trigger the SECOND Slice
+	// (sinAngles at line 217-220)
+	grad, _ := tensor.New[float32]([]int{1, 5, 4}, make([]float32, 20))
+	_, err = rpe.Backward(ctx, types.FullBackprop, grad)
+	if err == nil {
+		t.Error("expected Slice error in Backward for oversized seqLen")
 	}
 }
