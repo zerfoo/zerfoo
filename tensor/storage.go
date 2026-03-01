@@ -1,6 +1,10 @@
 package tensor
 
-import "github.com/zerfoo/zerfoo/device"
+import (
+	"fmt"
+
+	"github.com/zerfoo/zerfoo/device"
+)
 
 // Storage abstracts over CPU and GPU tensor data storage.
 // For CPU storage, Slice() returns the underlying slice directly (zero copy).
@@ -14,6 +18,37 @@ type Storage[T Numeric] interface {
 	Set(data []T)
 	// DeviceType returns the device type this storage resides on.
 	DeviceType() device.Type
+}
+
+// NewWithStorage creates a TensorNumeric backed by the given Storage.
+// This allows creating tensors with GPUStorage or any other Storage implementation.
+func NewWithStorage[T Numeric](shape []int, s Storage[T]) (*TensorNumeric[T], error) {
+	size := 1
+	for _, d := range shape {
+		if d < 0 {
+			return nil, fmt.Errorf("invalid shape dimension: %d", d)
+		}
+
+		size *= d
+	}
+
+	if s.Len() != size {
+		return nil, fmt.Errorf("storage length (%d) does not match tensor size (%d)", s.Len(), size)
+	}
+
+	strides := make([]int, len(shape))
+
+	stride := 1
+	for i := len(shape) - 1; i >= 0; i-- {
+		strides[i] = stride
+		stride *= shape[i]
+	}
+
+	return &TensorNumeric[T]{
+		shape:   shape,
+		strides: strides,
+		storage: s,
+	}, nil
 }
 
 // CPUStorage is a CPU-backed Storage implementation wrapping a Go slice.

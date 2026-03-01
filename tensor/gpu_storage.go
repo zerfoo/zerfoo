@@ -58,6 +58,20 @@ func NewGPUStorageFromSlice[T Numeric](data []T) (*GPUStorage[T], error) {
 	return s, nil
 }
 
+// NewGPUStorageFromPtr wraps an existing CUDA device pointer as a GPUStorage.
+// The caller is responsible for the lifetime of the device pointer. The
+// GPUStorage does NOT free the pointer when Free() is called.
+func NewGPUStorageFromPtr[T Numeric](devPtr unsafe.Pointer, length int) (*GPUStorage[T], error) {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+
+	return &GPUStorage[T]{
+		devicePtr: devPtr,
+		length:    length,
+		byteSize:  length * elemSize,
+	}, nil
+}
+
 // Len returns the number of elements.
 func (s *GPUStorage[T]) Len() int { return s.length }
 
