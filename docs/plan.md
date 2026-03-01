@@ -442,7 +442,7 @@ func Sgemm(handle C.cublasHandle_t, m, n, k int, alpha float32,
 
 Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each kernel is a .cu file compiled via CGO or a Go-based PTX approach.
 
-- [ ] T11.1 Create CUDA kernel infrastructure  Owner: TBD  Est: 60m
+- [x] T11.1 Create CUDA kernel infrastructure  Completed: 2026 03 01
   - Dependencies: T10.4
   - Acceptance: A pattern for writing, compiling, and calling CUDA kernels from Go via CGO is established. One example kernel (vector add) works end-to-end.
   - [ ] S11.1.1 Create internal/cuda/kernels/ directory with build infrastructure  Est: 15m
@@ -451,7 +451,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S11.1.4 Write test verifying vector_add kernel produces correct output  Est: 10m
   - [ ] S11.1.5 Run golangci-lint  Est: 5m
 
-- [ ] T11.2 Implement GPU Add, Sub, Mul, Div kernels  Owner: TBD  Est: 60m
+- [x] T11.2 Implement GPU Add, Sub, Mul, Div kernels  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: GPU Add, Sub, Mul, Div produce results matching CPUEngine within 1e-6. Broadcasting is supported.
   - [ ] S11.2.1 Write CUDA kernels for add, sub, mul, div with broadcasting  Est: 20m
@@ -460,7 +460,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S11.2.4 Write parity tests: GPU vs CPU for each operation  Est: 15m
   - [ ] S11.2.5 Run golangci-lint on compute package  Est: 5m
 
-- [ ] T11.3 Implement GPU scalar ops and Pow kernel  Owner: TBD  Est: 45m
+- [x] T11.3 Implement GPU scalar ops and Pow kernel  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: AddScalar, MulScalar, DivScalar, Pow produce correct results on GPU.
   - [ ] S11.3.1 Write CUDA kernels for scalar add, mul, div, and pow  Est: 15m
@@ -470,7 +470,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 
 #### E12: GPU Activation and Math Function Kernels
 
-- [ ] T12.1 Implement GPU Exp, Log, Sqrt, Rsqrt kernels  Owner: TBD  Est: 45m
+- [x] T12.1 Implement GPU Exp, Log, Sqrt, Rsqrt kernels  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: Each operation matches CPU output within 1e-6 relative error.
   - [ ] S12.1.1 Write CUDA kernels for exp, log, sqrt, rsqrt (unary elementwise)  Est: 15m
@@ -478,7 +478,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S12.1.3 Write parity tests for each operation  Est: 15m
   - [ ] S12.1.4 Run golangci-lint  Est: 5m
 
-- [ ] T12.2 Implement GPU Tanh, TanhPrime kernels  Owner: TBD  Est: 30m
+- [x] T12.2 Implement GPU Tanh, TanhPrime kernels  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: Tanh and TanhPrime match CPU output within 1e-6.
   - [ ] S12.2.1 Write CUDA kernels for tanh and tanh_prime (tanh_prime = (1-tanh^2) * upstream)  Est: 10m
@@ -486,7 +486,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S12.2.3 Write parity tests  Est: 10m
   - [ ] S12.2.4 Run golangci-lint  Est: 5m
 
-- [ ] T12.3 Implement GPU Softmax kernel  Owner: TBD  Est: 60m
+- [x] T12.3 Implement GPU Softmax kernel  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: Softmax along any valid axis matches CPU output within 1e-5. Numerically stable (max subtraction before exp).
   - Risk: Reduction within softmax requires shared memory or multi-pass kernel.
@@ -498,7 +498,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 
 #### E13: GPU Reduction and Tensor Manipulation Kernels
 
-- [ ] T13.1 Implement GPU Sum, ReduceSum, ReduceMean kernels  Owner: TBD  Est: 60m
+- [x] T13.1 Implement GPU Sum, ReduceSum, ReduceMean kernels  Completed: 2026 03 01
   - Dependencies: T11.1
   - Acceptance: Sum/ReduceSum/ReduceMean match CPU output within 1e-5 for all valid axes and keepDims settings.
   - Risk: Parallel reduction requires careful shared-memory design.
@@ -549,7 +549,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 
 #### E14: Integration Testing and Benchmarks
 
-- [ ] T14.1 End-to-end Linear layer test on GPU  Owner: TBD  Est: 45m
+- [x] T14.1 End-to-end Linear layer test on GPU  Completed: 2026 03 01
   - Dependencies: T10.3, T10.4
   - Acceptance: Create Linear layer with GPUEngine, run forward and backward pass, verify output matches CPUEngine within 1e-5.
   - [ ] S14.1.1 Write test: construct Linear with GPUEngine, forward pass  Est: 15m
@@ -581,7 +581,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S14.4.3 Write benchmark: full forward pass for small transformer  Est: 15m
   - [ ] S14.4.4 Run golangci-lint  Est: 5m
 
-- [ ] T14.5 Verify non-CUDA build still works  Owner: TBD  Est: 30m
+- [x] T14.5 Verify non-CUDA build still works  Completed: 2026 03 01
   - Dependencies: E10
   - Acceptance: `go test ./... -cover` passes without cuda build tag. `go build ./...` succeeds. No CUDA imports leak into non-tagged files.
   - [ ] S14.5.1 Run go test ./... without cuda tag  Est: 10m
@@ -675,6 +675,8 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 
 ## 6. Progress Log
 
+- **2026 03 01 (update 2):** Change Summary: Completed E11 (GPU Elementwise Ops), E12 (GPU Activation/Math Kernels), and partial E13 (T13.1 Sum/ReduceSum/ReduceMean). All 15 elementwise CUDA kernels (add, sub, mul, div, pow, add_scalar, mul_scalar, div_scalar, exp, log, sqrt, rsqrt, tanh, tanh_prime, fill) are wired into GPUEngine for float32 with CPU fallback for other types. Softmax kernel uses shared-memory reduction with numerical stability (max subtraction). SumAxis reduction kernel added for Sum/ReduceSum/ReduceMean. T14.1 (Linear layer integration test) and T14.5 (non-CUDA build verification) also completed. Remaining: T13.2-T13.5 (tensor manipulation), T14.2-T14.4 (integration tests/benchmarks).
+
 - **2026 03 01:** Change Summary: Completed E8 (Tensor Storage Abstraction), E9 (CUDA Device and Memory Management), and E10 (cuBLAS MatMul). E8: Created Storage[T] interface and CPUStorage[T] (T8.1-T8.2), refactored TensorNumeric[T].data to use Storage[T] (T8.3), verified CPUEngine compatibility (T8.4). E9: Created internal/cuda CGO runtime bindings (T9.1), CUDA allocator and device registration (T9.2-T9.3), GPUStorage[T] (T9.4), ToGPU/ToCPU transfer functions (T9.5). E10: Created internal/cublas Sgemm bindings (T10.1), implemented GPUEngine[T] with cuBLAS MatMul and CPU fallback for all 33 remaining methods (T10.2-T10.4). All code behind //go:build cuda. All existing tests pass unchanged. Commits: b922d98, 32bf3a8, b3c54b3, f9c20a2, 615a08d, 54e3717, 3ed95b8, cc80304.
 
 - **2026 02 28:** Change Summary: Added Phase 2 GPU Engine Implementation plan (E8-E14, T8.1-T14.5). New epics cover: E8 tensor storage abstraction (critical path), E9 CUDA device/memory management, E10 cuBLAS MatMul, E11 GPU elementwise ops, E12 GPU activations/math, E13 GPU reductions/tensor manipulation, E14 integration testing and benchmarks. Added milestones M6-M10. Updated Context section with architecture overview and GPU design rationale. Added build tag strategy to Operating Procedure. Preserved all existing Phase 1 tasks and status unchanged.
@@ -690,7 +692,7 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 ### For a New Contributor
 
 - **Phase 1 status:** Test coverage work is complete. See Documented Coverage Exceptions for the 3 packages below 95%.
-- **Phase 2 status:** E8 (Storage abstraction), E9 (CUDA device/memory), and E10 (cuBLAS MatMul) are complete. GPUEngine[T] implements all 34 Engine methods with native cuBLAS MatMul and CPU fallback for the rest. Next: E11 (GPU elementwise kernels).
+- **Phase 2 status:** E8-E12 complete, E13 partially complete (T13.1 done). GPUEngine[T] has native GPU implementations for 20 of 34 Engine methods: MatMul (cuBLAS), Add, Sub, Mul, Div, Pow, AddScalar, MulScalar, DivScalar, Exp, Log, Sqrt, Rsqrt, Tanh, TanhPrime, Softmax, Sum, ReduceSum, ReduceMean, Fill. Remaining 14 methods use CPU fallback: UnaryOp, Transpose, Zero, Zeros, Copy, Gather, ScatterAdd, RandomUniform, Split, Concat, Repeat, OneHot, Reshape. Next: T13.2-T13.5 (tensor manipulation kernels).
 - **Key files to understand first:**
   - `tensor/tensor.go` -- TensorNumeric[T] struct, the core data type
   - `compute/engine.go` -- Engine[T] interface (34 methods)
