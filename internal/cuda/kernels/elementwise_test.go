@@ -56,7 +56,7 @@ func TestKernelAdd(t *testing.T) {
 	devC, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devC) }()
 
-	if err := Add(devA, devB, devC, n); err != nil {
+	if err := Add(devA, devB, devC, n, nil); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestKernelMulScalar(t *testing.T) {
 	devC, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devC) }()
 
-	if err := MulScalar(devA, 3.0, devC, n); err != nil {
+	if err := MulScalar(devA, 3.0, devC, n, nil); err != nil {
 		t.Fatalf("MulScalar: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestKernelExp(t *testing.T) {
 	devC, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devC) }()
 
-	if err := Exp(devA, devC, n); err != nil {
+	if err := Exp(devA, devC, n, nil); err != nil {
 		t.Fatalf("Exp: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestKernelTanh(t *testing.T) {
 	devC, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devC) }()
 
-	if err := Tanh(devA, devC, n); err != nil {
+	if err := Tanh(devA, devC, n, nil); err != nil {
 		t.Fatalf("Tanh: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestKernelSumAxis(t *testing.T) {
 	devOut, _ := cuda.Malloc(outN * 4)
 	defer func() { _ = cuda.Free(devOut) }()
 
-	if err := SumAxis(devIn, devOut, 2, 1, 3); err != nil {
+	if err := SumAxis(devIn, devOut, 2, 1, 3, nil); err != nil {
 		t.Fatalf("SumAxis: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestKernelSumAxisAxis0(t *testing.T) {
 	devOut, _ := cuda.Malloc(outN * 4)
 	defer func() { _ = cuda.Free(devOut) }()
 
-	if err := SumAxis(devIn, devOut, 1, 3, 2); err != nil {
+	if err := SumAxis(devIn, devOut, 1, 3, 2, nil); err != nil {
 		t.Fatalf("SumAxis axis0: %v", err)
 	}
 
@@ -206,16 +206,13 @@ func TestKernelSoftmax(t *testing.T) {
 	devOut, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devOut) }()
 
-	if err := Softmax(devIn, devOut, 2, 1, 3); err != nil {
+	if err := Softmax(devIn, devOut, 2, 1, 3, nil); err != nil {
 		t.Fatalf("Softmax: %v", err)
 	}
 
-	// Synchronize to ensure kernel completes
 	result := fromDevice(t, devOut, n)
 
 	// Row 0: softmax([1,2,3])
-	// e^1=2.718, e^2=7.389, e^3=20.086 => sum=30.193
-	// [0.09003, 0.24473, 0.66524]
 	e1 := float32(math.Exp(1))
 	e2 := float32(math.Exp(2))
 	e3 := float32(math.Exp(3))
@@ -235,9 +232,6 @@ func TestKernelSoftmax(t *testing.T) {
 func TestKernelSoftmaxAxis0(t *testing.T) {
 	// 2D softmax: shape [2,3], axis=0
 	// outer=1, inner=3, axisSize=2
-	// Data in row-major: [1,2,3, 4,5,6]
-	// Along axis 0, each column is a stripe:
-	//   col0: [1,4], col1: [2,5], col2: [3,6]
 	input := []float32{1, 2, 3, 4, 5, 6}
 	n := len(input)
 
@@ -247,13 +241,12 @@ func TestKernelSoftmaxAxis0(t *testing.T) {
 	devOut, _ := cuda.Malloc(n * 4)
 	defer func() { _ = cuda.Free(devOut) }()
 
-	if err := Softmax(devIn, devOut, 1, 3, 2); err != nil {
+	if err := Softmax(devIn, devOut, 1, 3, 2, nil); err != nil {
 		t.Fatalf("Softmax axis0: %v", err)
 	}
 
 	result := fromDevice(t, devOut, n)
 
-	// For col0: softmax([1,4]) => e^1/(e^1+e^4), e^4/(e^1+e^4)
 	for col := 0; col < 3; col++ {
 		v0 := input[col]
 		v1 := input[3+col]
@@ -279,7 +272,7 @@ func TestKernelFill(t *testing.T) {
 
 	defer func() { _ = cuda.Free(devPtr) }()
 
-	if err := Fill(devPtr, 42.0, n); err != nil {
+	if err := Fill(devPtr, 42.0, n, nil); err != nil {
 		t.Fatalf("Fill: %v", err)
 	}
 
@@ -288,6 +281,45 @@ func TestKernelFill(t *testing.T) {
 	for i, v := range result {
 		if v != 42.0 {
 			t.Errorf("[%d] = %f, want 42.0", i, v)
+		}
+	}
+}
+
+func TestKernelAddOnStream(t *testing.T) {
+	stream, err := cuda.CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	defer func() { _ = stream.Destroy() }()
+
+	a := []float32{1, 2, 3, 4}
+	b := []float32{10, 20, 30, 40}
+	n := len(a)
+
+	devA := toDevice(t, a)
+	defer func() { _ = cuda.Free(devA) }()
+
+	devB := toDevice(t, b)
+	defer func() { _ = cuda.Free(devB) }()
+
+	devC, _ := cuda.Malloc(n * 4)
+	defer func() { _ = cuda.Free(devC) }()
+
+	if err := Add(devA, devB, devC, n, stream.Ptr()); err != nil {
+		t.Fatalf("Add on stream: %v", err)
+	}
+
+	if err := stream.Synchronize(); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+
+	result := fromDevice(t, devC, n)
+	expected := []float32{11, 22, 33, 44}
+
+	for i := range expected {
+		if result[i] != expected[i] {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
 		}
 	}
 }

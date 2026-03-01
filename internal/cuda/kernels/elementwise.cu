@@ -185,6 +185,8 @@ __global__ void kernel_sum_axis(const float* input, float* output,
 }
 
 // ---------- Launcher functions (extern "C" for CGO) ----------
+// All launchers accept a cudaStream_t for async execution.
+// Pass NULL (0) for the default stream.
 
 static inline void grid_config(int n, int* grid, int* block) {
     *block = 256;
@@ -193,114 +195,114 @@ static inline void grid_config(int n, int* grid, int* block) {
 
 extern "C" {
 
-cudaError_t launch_add(const float* a, const float* b, float* c, int n) {
+cudaError_t launch_add(const float* a, const float* b, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_add<<<grid, block>>>(a, b, c, n);
+    kernel_add<<<grid, block, 0, stream>>>(a, b, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_sub(const float* a, const float* b, float* c, int n) {
+cudaError_t launch_sub(const float* a, const float* b, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_sub<<<grid, block>>>(a, b, c, n);
+    kernel_sub<<<grid, block, 0, stream>>>(a, b, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_mul(const float* a, const float* b, float* c, int n) {
+cudaError_t launch_mul(const float* a, const float* b, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_mul<<<grid, block>>>(a, b, c, n);
+    kernel_mul<<<grid, block, 0, stream>>>(a, b, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_div(const float* a, const float* b, float* c, int n) {
+cudaError_t launch_div(const float* a, const float* b, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_div<<<grid, block>>>(a, b, c, n);
+    kernel_div<<<grid, block, 0, stream>>>(a, b, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_pow(const float* base, const float* exp, float* c, int n) {
+cudaError_t launch_pow(const float* base, const float* exp, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_pow<<<grid, block>>>(base, exp, c, n);
+    kernel_pow<<<grid, block, 0, stream>>>(base, exp, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_add_scalar(const float* a, float scalar, float* c, int n) {
+cudaError_t launch_add_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_add_scalar<<<grid, block>>>(a, scalar, c, n);
+    kernel_add_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_mul_scalar(const float* a, float scalar, float* c, int n) {
+cudaError_t launch_mul_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_mul_scalar<<<grid, block>>>(a, scalar, c, n);
+    kernel_mul_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_div_scalar(const float* a, float scalar, float* c, int n) {
+cudaError_t launch_div_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_div_scalar<<<grid, block>>>(a, scalar, c, n);
+    kernel_div_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_exp(const float* a, float* c, int n) {
+cudaError_t launch_exp(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_exp<<<grid, block>>>(a, c, n);
+    kernel_exp<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_log(const float* a, float* c, int n) {
+cudaError_t launch_log(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_log<<<grid, block>>>(a, c, n);
+    kernel_log<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_sqrt(const float* a, float* c, int n) {
+cudaError_t launch_sqrt(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_sqrt<<<grid, block>>>(a, c, n);
+    kernel_sqrt<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_rsqrt(const float* a, float* c, int n) {
+cudaError_t launch_rsqrt(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_rsqrt<<<grid, block>>>(a, c, n);
+    kernel_rsqrt<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_tanh(const float* a, float* c, int n) {
+cudaError_t launch_tanh(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_tanh<<<grid, block>>>(a, c, n);
+    kernel_tanh<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, int n) {
+cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_tanh_prime<<<grid, block>>>(a, upstream, c, n);
+    kernel_tanh_prime<<<grid, block, 0, stream>>>(a, upstream, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_fill(float* data, float value, int n) {
+cudaError_t launch_fill(float* data, float value, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
-    kernel_fill<<<grid, block>>>(data, value, n);
+    kernel_fill<<<grid, block, 0, stream>>>(data, value, n);
     return cudaGetLastError();
 }
 
 cudaError_t launch_sum_axis(const float* input, float* output,
-                            int outer, int inner, int axisSize) {
+                            int outer, int inner, int axisSize, cudaStream_t stream) {
     int block = 1;
     while (block < axisSize && block < 256) block <<= 1;
     int numStripes = outer * inner;
     size_t smem = block * sizeof(float);
-    kernel_sum_axis<<<numStripes, block, smem>>>(input, output, outer, inner, axisSize);
+    kernel_sum_axis<<<numStripes, block, smem, stream>>>(input, output, outer, inner, axisSize);
     return cudaGetLastError();
 }
 
 cudaError_t launch_softmax(const float* input, float* output,
-                           int outer, int inner, int axisSize) {
+                           int outer, int inner, int axisSize, cudaStream_t stream) {
     // Block size: next power of 2 up to min(axisSize, 256)
     int block = 1;
     while (block < axisSize && block < 256) block <<= 1;
     int numStripes = outer * inner;
     size_t smem = block * sizeof(float);
-    kernel_softmax<<<numStripes, block, smem>>>(input, output, outer, inner, axisSize);
+    kernel_softmax<<<numStripes, block, smem, stream>>>(input, output, outer, inner, axisSize);
     return cudaGetLastError();
 }
 
