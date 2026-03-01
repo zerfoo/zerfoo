@@ -82,6 +82,108 @@ func TestMemcpyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStreamCreateDestroySync(t *testing.T) {
+	stream, err := CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream failed: %v", err)
+	}
+
+	if err := stream.Synchronize(); err != nil {
+		t.Fatalf("Synchronize failed: %v", err)
+	}
+
+	if err := stream.Destroy(); err != nil {
+		t.Fatalf("Destroy failed: %v", err)
+	}
+}
+
+func TestStreamPtr(t *testing.T) {
+	stream, err := CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream failed: %v", err)
+	}
+
+	defer func() { _ = stream.Destroy() }()
+
+	// Ptr should return non-nil for a valid stream
+	// Note: The default stream (0) is a valid pointer value, so we just
+	// verify no panic.
+	_ = stream.Ptr()
+}
+
+func TestMemcpyAsyncRoundTrip(t *testing.T) {
+	stream, err := CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream failed: %v", err)
+	}
+
+	defer func() { _ = stream.Destroy() }()
+
+	src := []float32{10.0, 20.0, 30.0}
+	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
+
+	devPtr, err := Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc failed: %v", err)
+	}
+
+	defer func() { _ = Free(devPtr) }()
+
+	// Async H2D
+	if err := MemcpyAsync(devPtr, unsafe.Pointer(&src[0]), byteSize, MemcpyHostToDevice, stream); err != nil {
+		t.Fatalf("MemcpyAsync H2D failed: %v", err)
+	}
+
+	// Sync to ensure H2D is complete
+	if err := stream.Synchronize(); err != nil {
+		t.Fatalf("Synchronize after H2D failed: %v", err)
+	}
+
+	// Async D2H
+	dst := make([]float32, len(src))
+	if err := MemcpyAsync(unsafe.Pointer(&dst[0]), devPtr, byteSize, MemcpyDeviceToHost, stream); err != nil {
+		t.Fatalf("MemcpyAsync D2H failed: %v", err)
+	}
+
+	if err := stream.Synchronize(); err != nil {
+		t.Fatalf("Synchronize after D2H failed: %v", err)
+	}
+
+	for i := range src {
+		if src[i] != dst[i] {
+			t.Errorf("async round trip mismatch at %d: got %f, want %f", i, dst[i], src[i])
+		}
+	}
+}
+
+func TestMemcpyAsyncNilStream(t *testing.T) {
+	src := []float32{1.0, 2.0}
+	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
+
+	devPtr, err := Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc failed: %v", err)
+	}
+
+	defer func() { _ = Free(devPtr) }()
+
+	// nil stream should use the default stream
+	if err := MemcpyAsync(devPtr, unsafe.Pointer(&src[0]), byteSize, MemcpyHostToDevice, nil); err != nil {
+		t.Fatalf("MemcpyAsync with nil stream failed: %v", err)
+	}
+
+	dst := make([]float32, len(src))
+	if err := MemcpyAsync(unsafe.Pointer(&dst[0]), devPtr, byteSize, MemcpyDeviceToHost, nil); err != nil {
+		t.Fatalf("MemcpyAsync D2H with nil stream failed: %v", err)
+	}
+
+	for i := range src {
+		if src[i] != dst[i] {
+			t.Errorf("nil stream round trip mismatch at %d: got %f, want %f", i, dst[i], src[i])
+		}
+	}
+}
+
 func TestMemcpyDeviceToDevice(t *testing.T) {
 	src := []float32{5.0, 6.0, 7.0, 8.0}
 	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
