@@ -142,6 +142,58 @@ func TestKernelTanh(t *testing.T) {
 	}
 }
 
+func TestKernelSumAxis(t *testing.T) {
+	// shape [2,3], axis=1 => outer=2, inner=1, axisSize=3
+	// Row sums: [1+2+3, 4+5+6] = [6, 15]
+	input := []float32{1, 2, 3, 4, 5, 6}
+
+	devIn := toDevice(t, input)
+	defer func() { _ = cuda.Free(devIn) }()
+
+	outN := 2 // outer * inner
+	devOut, _ := cuda.Malloc(outN * 4)
+	defer func() { _ = cuda.Free(devOut) }()
+
+	if err := SumAxis(devIn, devOut, 2, 1, 3); err != nil {
+		t.Fatalf("SumAxis: %v", err)
+	}
+
+	result := fromDevice(t, devOut, outN)
+	expected := []float32{6, 15}
+
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-5 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
+func TestKernelSumAxisAxis0(t *testing.T) {
+	// shape [2,3], axis=0 => outer=1, inner=3, axisSize=2
+	// Column sums: [1+4, 2+5, 3+6] = [5, 7, 9]
+	input := []float32{1, 2, 3, 4, 5, 6}
+
+	devIn := toDevice(t, input)
+	defer func() { _ = cuda.Free(devIn) }()
+
+	outN := 3 // outer * inner
+	devOut, _ := cuda.Malloc(outN * 4)
+	defer func() { _ = cuda.Free(devOut) }()
+
+	if err := SumAxis(devIn, devOut, 1, 3, 2); err != nil {
+		t.Fatalf("SumAxis axis0: %v", err)
+	}
+
+	result := fromDevice(t, devOut, outN)
+	expected := []float32{5, 7, 9}
+
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-5 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
 func TestKernelSoftmax(t *testing.T) {
 	// 2D softmax: shape [2,3], axis=1 (last axis)
 	// outer=2, inner=1, axisSize=3

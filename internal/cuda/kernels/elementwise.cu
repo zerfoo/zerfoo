@@ -151,6 +151,39 @@ __global__ void kernel_softmax(const float* input, float* output,
     }
 }
 
+// ---------- Sum reduction along axis ----------
+
+// Each block handles one (outer, inner) stripe, reducing axisSize elements
+// into a single output value.
+__global__ void kernel_sum_axis(const float* input, float* output,
+                                int outer, int inner, int axisSize) {
+    int stripe = blockIdx.x;
+    int o = stripe / inner;
+    int in_ = stripe % inner;
+    int base = o * axisSize * inner + in_;
+    int step = inner;
+
+    extern __shared__ float sdata[];
+
+    float local_sum = 0.0f;
+    for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
+        local_sum += input[base + k * step];
+    }
+    sdata[threadIdx.x] = local_sum;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            sdata[threadIdx.x] += sdata[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        output[stripe] = sdata[0];
+    }
+}
+
 // ---------- Launcher functions (extern "C" for CGO) ----------
 
 static inline void grid_config(int n, int* grid, int* block) {
@@ -247,6 +280,16 @@ cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, i
 cudaError_t launch_fill(float* data, float value, int n) {
     int grid, block; grid_config(n, &grid, &block);
     kernel_fill<<<grid, block>>>(data, value, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_sum_axis(const float* input, float* output,
+                            int outer, int inner, int axisSize) {
+    int block = 1;
+    while (block < axisSize && block < 256) block <<= 1;
+    int numStripes = outer * inner;
+    size_t smem = block * sizeof(float);
+    kernel_sum_axis<<<numStripes, block, smem>>>(input, output, outer, inner, axisSize);
     return cudaGetLastError();
 }
 

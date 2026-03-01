@@ -22,6 +22,7 @@ extern cudaError_t launch_rsqrt(const float* a, float* c, int n);
 extern cudaError_t launch_tanh(const float* a, float* c, int n);
 extern cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, int n);
 extern cudaError_t launch_fill(float* data, float value, int n);
+extern cudaError_t launch_sum_axis(const float* input, float* output, int outer, int inner, int axisSize);
 extern cudaError_t launch_softmax(const float* input, float* output, int outer, int inner, int axisSize);
 */
 import "C"
@@ -112,6 +113,12 @@ func TanhPrime(a, upstream, c unsafe.Pointer, n int) error {
 // Fill launches the fill kernel: sets all elements to value.
 func Fill(data unsafe.Pointer, value float32, n int) error {
 	return checkCUDA(C.launch_fill((*C.float)(data), C.float(value), C.int(n)), "fill")
+}
+
+// SumAxis launches the sum-reduction kernel along an axis defined by outer/inner/axisSize strides.
+// Output has outer*inner elements, one sum per (outer, inner) stripe.
+func SumAxis(input, output unsafe.Pointer, outer, inner, axisSize int) error {
+	return checkCUDA(C.launch_sum_axis((*C.float)(input), (*C.float)(output), C.int(outer), C.int(inner), C.int(axisSize)), "sum_axis")
 }
 
 // Softmax launches the softmax kernel along an axis defined by outer/inner/axisSize strides.
