@@ -14,88 +14,126 @@ import (
 
 const f32Size = int(unsafe.Sizeof(float32(0)))
 
-// gpuBinaryOp transfers two equal-length float32 tensors to GPU, runs a kernel,
-// and transfers the result back. Falls back to CPU for non-float32 types.
+// getDevicePtr returns a CUDA device pointer for the tensor's data.
+// If the tensor has GPUStorage, returns Ptr() directly (zero-copy).
+// If the tensor has CPUStorage, allocates device memory from the pool,
+// copies H2D, and returns a cleanup function that returns the buffer to the pool.
+func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
+	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return gs.Ptr(), func() {}, nil
+	}
+
+	// CPUStorage path: allocate from pool, copy H2D.
+	data := t.Data()
+	n := len(data)
+	byteSize := n * f32Size
+
+	devPtr, err := e.pool.Alloc(byteSize)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&data))
+
+	if err := cuda.Memcpy(devPtr, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		e.pool.Free(devPtr, byteSize)
+
+		return nil, nil, err
+	}
+
+	cleanup := func() {
+		e.pool.Free(devPtr, byteSize)
+	}
+
+	return devPtr, cleanup, nil
+}
+
+// makeGPUResult creates a tensor with GPUStorage wrapping the given device pointer.
+// The device pointer is NOT freed when the storage is freed; the caller retains
+// ownership through the pool.
+func makeGPUResult[T tensor.Numeric](shape []int, devPtr unsafe.Pointer, numElems int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	gs, err := tensor.NewGPUStorageFromPtr[T](devPtr, numElems)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(dst) > 0 && dst[0] != nil {
+		dst[0].SetStorage(gs)
+		dst[0].SetShape(shape)
+
+		return dst[0], nil
+	}
+
+	t, err := tensor.NewWithStorage[T](shape, gs)
+	if err != nil {
+		return nil, err
+	}
+
+	return t, nil
+}
+
+// gpuBinaryOp runs a binary kernel on two equal-length float32 tensors.
+// Uses the device-resident pipeline: inputs via getDevicePtr, output as GPUStorage.
 func gpuBinaryOp[T tensor.Numeric](
 	e *GPUEngine[T],
 	ctx context.Context,
 	a, b *tensor.TensorNumeric[T],
-	kernelFn func(devA, devB, devC unsafe.Pointer, n int) error,
+	kernelFn func(devA, devB, devC unsafe.Pointer, n int, stream unsafe.Pointer) error,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
-	// Only float32 uses GPU kernels.
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
 	}
 
-	aData := a.Data()
-	bData := b.Data()
-	n := len(aData)
-
-	if len(bData) != n {
-		return nil, fmt.Errorf("GPU binary op: length mismatch %d vs %d", n, len(bData))
+	n := a.GetStorage().Len()
+	if b.GetStorage().Len() != n {
+		return nil, fmt.Errorf("GPU binary op: length mismatch %d vs %d", n, b.GetStorage().Len())
 	}
 
-	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return nil, err
 	}
+
+	defer cleanupA()
+
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		return nil, err
+	}
+
+	defer cleanupB()
 
 	byteSize := n * f32Size
 
-	devA, err := cuda.Malloc(byteSize)
+	devC, err := e.pool.Alloc(byteSize)
 	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devA) }()
+	if err := kernelFn(devA, devB, devC, n, e.streamPtr()); err != nil {
+		e.pool.Free(devC, byteSize)
 
-	devB, err := cuda.Malloc(byteSize)
-	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devB) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devC, byteSize)
 
-	devC, err := cuda.Malloc(byteSize)
-	if err != nil {
-		return nil, err
+			return nil, err
+		}
 	}
 
-	defer func() { _ = cuda.Free(devC) }()
-
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-	bF32 := *(*[]float32)(unsafe.Pointer(&bData))
-
-	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
-	}
-
-	if err := cuda.Memcpy(devB, unsafe.Pointer(&bF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
-	}
-
-	if err := kernelFn(devA, devB, devC, n); err != nil {
-		return nil, err
-	}
-
-	resultF32 := make([]float32, n)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return nil, err
-	}
-
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	result.SetData(resultT)
-
-	return result, nil
+	return makeGPUResult[T](a.Shape(), devC, n, dst...)
 }
 
-// gpuUnaryOp transfers a float32 tensor to GPU, runs a kernel, and returns.
+// gpuUnaryOp runs a unary kernel on a float32 tensor.
 func gpuUnaryOp[T tensor.Numeric](
 	e *GPUEngine[T],
 	a *tensor.TensorNumeric[T],
-	kernelFn func(devA, devC unsafe.Pointer, n int) error,
+	kernelFn func(devA, devC unsafe.Pointer, n int, stream unsafe.Pointer) error,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
 	var zero T
@@ -103,57 +141,45 @@ func gpuUnaryOp[T tensor.Numeric](
 		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
 	}
 
-	aData := a.Data()
-	n := len(aData)
+	n := a.GetStorage().Len()
 
-	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return nil, err
 	}
+
+	defer cleanupA()
 
 	byteSize := n * f32Size
 
-	devA, err := cuda.Malloc(byteSize)
+	devC, err := e.pool.Alloc(byteSize)
 	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devA) }()
+	if err := kernelFn(devA, devC, n, e.streamPtr()); err != nil {
+		e.pool.Free(devC, byteSize)
 
-	devC, err := cuda.Malloc(byteSize)
-	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devC) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devC, byteSize)
 
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-
-	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
+			return nil, err
+		}
 	}
 
-	if err := kernelFn(devA, devC, n); err != nil {
-		return nil, err
-	}
-
-	resultF32 := make([]float32, n)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return nil, err
-	}
-
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	result.SetData(resultT)
-
-	return result, nil
+	return makeGPUResult[T](a.Shape(), devC, n, dst...)
 }
 
-// gpuScalarOp transfers a tensor to GPU and applies a scalar kernel.
+// gpuScalarOp runs a scalar kernel on a float32 tensor.
 func gpuScalarOp[T tensor.Numeric](
 	e *GPUEngine[T],
 	a *tensor.TensorNumeric[T],
 	scalar float32,
-	kernelFn func(devA unsafe.Pointer, scalar float32, devC unsafe.Pointer, n int) error,
+	kernelFn func(devA unsafe.Pointer, scalar float32, devC unsafe.Pointer, n int, stream unsafe.Pointer) error,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
 	var zero T
@@ -161,49 +187,37 @@ func gpuScalarOp[T tensor.Numeric](
 		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
 	}
 
-	aData := a.Data()
-	n := len(aData)
+	n := a.GetStorage().Len()
 
-	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return nil, err
 	}
+
+	defer cleanupA()
 
 	byteSize := n * f32Size
 
-	devA, err := cuda.Malloc(byteSize)
+	devC, err := e.pool.Alloc(byteSize)
 	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devA) }()
+	if err := kernelFn(devA, scalar, devC, n, e.streamPtr()); err != nil {
+		e.pool.Free(devC, byteSize)
 
-	devC, err := cuda.Malloc(byteSize)
-	if err != nil {
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devC) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devC, byteSize)
 
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-
-	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
+			return nil, err
+		}
 	}
 
-	if err := kernelFn(devA, scalar, devC, n); err != nil {
-		return nil, err
-	}
-
-	resultF32 := make([]float32, n)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return nil, err
-	}
-
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	result.SetData(resultT)
-
-	return result, nil
+	return makeGPUResult[T](a.Shape(), devC, n, dst...)
 }
 
 // isFloat32 checks if the generic type T is float32.
@@ -220,8 +234,6 @@ func toFloat32[T tensor.Numeric](v T) float32 {
 }
 
 // --- GPU-accelerated method overrides ---
-// These replace the CPU fallbacks in gpu_engine.go for float32 types.
-// For non-float32, they fall back to CPUEngine.
 
 func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() || !sameShape(a, b) {
@@ -340,28 +352,36 @@ func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], 
 		return e.cpu.Fill(ctx, t, value)
 	}
 
-	data := t.Data()
-	n := len(data)
+	n := t.GetStorage().Len()
 	byteSize := n * f32Size
 
-	devPtr, err := cuda.Malloc(byteSize)
+	devPtr, err := e.pool.Alloc(byteSize)
 	if err != nil {
+		return e.cpu.Fill(ctx, t, value)
+	}
+
+	if err := kernels.Fill(devPtr, toFloat32(value), n, e.streamPtr()); err != nil {
+		e.pool.Free(devPtr, byteSize)
+
 		return err
 	}
 
-	defer func() { _ = cuda.Free(devPtr) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devPtr, byteSize)
 
-	if err := kernels.Fill(devPtr, toFloat32(value), n); err != nil {
+			return err
+		}
+	}
+
+	gs, err := tensor.NewGPUStorageFromPtr[T](devPtr, n)
+	if err != nil {
+		e.pool.Free(devPtr, byteSize)
+
 		return err
 	}
 
-	resultF32 := make([]float32, n)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devPtr, byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return err
-	}
-
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	t.SetData(resultT)
+	t.SetStorage(gs)
 
 	return nil
 }
@@ -375,7 +395,6 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 		return nil, fmt.Errorf("Sum: input tensor must not be nil")
 	}
 
-	// Negative axis means sum over all elements -- fall back to CPU for simplicity.
 	if axis < 0 {
 		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 	}
@@ -400,7 +419,6 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 	axisSize := shape[axis]
 	numStripes := outer * inner
 
-	// Compute output shape.
 	var newShape []int
 	if keepDims {
 		newShape = make([]int, rank)
@@ -422,53 +440,39 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 		}
 	}
 
-	result, err := e.cpu.getOrCreateDest(newShape, dst...)
+	devIn, cleanupIn, err := getDevicePtr(e, a)
 	if err != nil {
-		return nil, err
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 	}
 
-	aData := a.Data()
-	inByteSize := len(aData) * f32Size
+	defer cleanupIn()
+
 	outByteSize := numStripes * f32Size
 
-	devIn, err := cuda.Malloc(inByteSize)
+	devOut, err := e.pool.Alloc(outByteSize)
 	if err != nil {
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+	}
+
+	if err := kernels.SumAxis(devIn, devOut, outer, inner, axisSize, e.streamPtr()); err != nil {
+		e.pool.Free(devOut, outByteSize)
+
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devIn) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devOut, outByteSize)
 
-	devOut, err := cuda.Malloc(outByteSize)
-	if err != nil {
-		return nil, err
+			return nil, err
+		}
 	}
 
-	defer func() { _ = cuda.Free(devOut) }()
-
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-
-	if err := cuda.Memcpy(devIn, unsafe.Pointer(&aF32[0]), inByteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
-	}
-
-	if err := kernels.SumAxis(devIn, devOut, outer, inner, axisSize); err != nil {
-		return nil, err
-	}
-
-	resultF32 := make([]float32, numStripes)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devOut, outByteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return nil, err
-	}
-
-	// The kernel outputs stripes in order [o0*inner+in0, o0*inner+in1, ...].
-	// For keepDims=false, the output shape collapses the axis dimension.
-	// The stripe ordering is consistent with the output layout: for axis reduction,
-	// the output index (o, in) maps to linear index o*inner + in, which matches
-	// the kernel's stripe ordering.
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	result.SetData(resultT)
-
-	return result, nil
+	return makeGPUResult[T](newShape, devOut, numStripes, dst...)
 }
 
 func (e *GPUEngine[T]) gpuReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -480,7 +484,6 @@ func (e *GPUEngine[T]) gpuReduceMean(ctx context.Context, a *tensor.TensorNumeri
 		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
 	}
 
-	// Negative axis: fall back to CPU (gpuSum also falls back).
 	if axis < 0 {
 		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
 	}
@@ -492,7 +495,6 @@ func (e *GPUEngine[T]) gpuReduceMean(ctx context.Context, a *tensor.TensorNumeri
 		return nil, fmt.Errorf("ReduceMean: axis %d out of bounds for %d dimensions", axis, rank)
 	}
 
-	// ReduceMean = Sum / axisSize
 	sumResult, err := e.gpuSum(ctx, a, axis, keepDims)
 	if err != nil {
 		return nil, err
@@ -527,14 +529,7 @@ func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T
 		return nil, fmt.Errorf("Softmax: axis %d out of bounds for %d dimensions", axis, rank)
 	}
 
-	result, err := e.cpu.getOrCreateDest(shape, dst...)
-	if err != nil {
-		return nil, err
-	}
-
-	aData := a.Data()
-	n := len(aData)
-	byteSize := n * f32Size
+	n := a.GetStorage().Len()
 
 	inner := 1
 	for i := axis + 1; i < rank; i++ {
@@ -548,39 +543,39 @@ func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T
 
 	axisSize := shape[axis]
 
-	devIn, err := cuda.Malloc(byteSize)
+	devIn, cleanupIn, err := getDevicePtr(e, a)
 	if err != nil {
-		return nil, err
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.Softmax(ctx, a, axis, dst...)
 	}
 
-	defer func() { _ = cuda.Free(devIn) }()
+	defer cleanupIn()
 
-	devOut, err := cuda.Malloc(byteSize)
+	byteSize := n * f32Size
+
+	devOut, err := e.pool.Alloc(byteSize)
 	if err != nil {
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.Softmax(ctx, a, axis, dst...)
+	}
+
+	if err := kernels.Softmax(devIn, devOut, outer, inner, axisSize, e.streamPtr()); err != nil {
+		e.pool.Free(devOut, byteSize)
+
 		return nil, err
 	}
 
-	defer func() { _ = cuda.Free(devOut) }()
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devOut, byteSize)
 
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-
-	if err := cuda.Memcpy(devIn, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		return nil, err
+			return nil, err
+		}
 	}
 
-	if err := kernels.Softmax(devIn, devOut, outer, inner, axisSize); err != nil {
-		return nil, err
-	}
-
-	resultF32 := make([]float32, n)
-	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devOut, byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		return nil, err
-	}
-
-	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
-	result.SetData(resultT)
-
-	return result, nil
+	return makeGPUResult[T](shape, devOut, n, dst...)
 }
 
 // sameShape checks if two tensors have the same shape (for non-broadcasting GPU path).

@@ -5,6 +5,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cublas"
@@ -17,36 +18,93 @@ import (
 // MatMul uses cuBLAS for maximum performance. Elementwise, scalar, activation,
 // and math operations use native CUDA kernels for float32 types.
 // Operations without GPU kernels delegate to CPUEngine.
+//
+// GPUEngine uses a device-resident pipeline: output tensors have GPUStorage
+// so data stays on GPU between chained operations. A memory pool avoids
+// per-operation cudaMalloc/cudaFree, and a dedicated CUDA stream enables
+// async kernel execution.
 type GPUEngine[T tensor.Numeric] struct {
 	cpu    *CPUEngine[T]
 	handle *cublas.Handle
+	pool   *cuda.MemPool
+	stream *cuda.Stream
+
+	// oomFallbackCount tracks how many times an OOM triggered CPU fallback.
+	oomFallbackCount atomic.Int64
 }
 
-// NewGPUEngine creates a new GPUEngine backed by a cuBLAS handle.
-// Call Close() when done to release the handle.
+// NewGPUEngine creates a new GPUEngine backed by a cuBLAS handle, memory pool,
+// and CUDA stream. Call Close() when done to release all resources.
 func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) (*GPUEngine[T], error) {
 	h, err := cublas.CreateHandle()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cuBLAS handle: %w", err)
 	}
 
+	stream, err := cuda.CreateStream()
+	if err != nil {
+		_ = h.Destroy()
+
+		return nil, fmt.Errorf("failed to create CUDA stream: %w", err)
+	}
+
+	if err := h.SetStream(stream.Ptr()); err != nil {
+		_ = stream.Destroy()
+		_ = h.Destroy()
+
+		return nil, fmt.Errorf("failed to set cuBLAS stream: %w", err)
+	}
+
 	return &GPUEngine[T]{
 		cpu:    NewCPUEngine(ops),
 		handle: h,
+		pool:   cuda.NewMemPool(),
+		stream: stream,
 	}, nil
 }
 
-// Close releases the cuBLAS handle. The engine must not be used after Close.
+// Close releases the cuBLAS handle, CUDA stream, and drains the memory pool.
+// The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {
-	if e.handle != nil {
-		return e.handle.Destroy()
+	var firstErr error
+
+	if e.pool != nil {
+		if err := e.pool.Drain(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
-	return nil
+	if e.stream != nil {
+		if err := e.stream.Destroy(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if e.handle != nil {
+		if err := e.handle.Destroy(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+// OOMFallbackCount returns the number of times GPU OOM triggered CPU fallback.
+func (e *GPUEngine[T]) OOMFallbackCount() int64 {
+	return e.oomFallbackCount.Load()
 }
 
 // Ops returns the arithmetic ops for this engine.
 func (e *GPUEngine[T]) Ops() numeric.Arithmetic[T] { return e.cpu.Ops() }
+
+// streamPtr returns the raw stream pointer for kernel calls.
+func (e *GPUEngine[T]) streamPtr() unsafe.Pointer {
+	if e.stream != nil {
+		return e.stream.Ptr()
+	}
+
+	return nil
+}
 
 // MatMul performs matrix multiplication using cuBLAS for float32 tensors.
 // For non-float32 types, it falls back to the CPU implementation.
@@ -110,83 +168,73 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	outShape = append(outShape, aBatch...)
 	outShape = append(outShape, m, n)
 
-	result, err := e.cpu.getOrCreateDest(outShape, dst...)
+	// Get device pointers for inputs.
+	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
-		return nil, err
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	// Get CPU data, transfer to GPU, compute, transfer back.
-	aData := a.Data()
-	bData := b.Data()
+	defer cleanupA()
+
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	defer cleanupB()
 
 	elemSize := int(unsafe.Sizeof(float32(0)))
 	aMatSize := m * k
 	bMatSize := k * n
 	cMatSize := m * n
 
-	// Allocate device memory for one A matrix, one B matrix, and one C matrix.
-	devA, err := cuda.Malloc(aMatSize * elemSize)
+	// Allocate device output.
+	devCTotal, err := e.pool.Alloc(batchSize * cMatSize * elemSize)
 	if err != nil {
-		return nil, fmt.Errorf("MatMul: cudaMalloc A: %w", err)
+		e.oomFallbackCount.Add(1)
+
+		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	defer func() { _ = cuda.Free(devA) }()
-
-	devB, err := cuda.Malloc(bMatSize * elemSize)
-	if err != nil {
-		return nil, fmt.Errorf("MatMul: cudaMalloc B: %w", err)
-	}
-
-	defer func() { _ = cuda.Free(devB) }()
-
-	devC, err := cuda.Malloc(cMatSize * elemSize)
-	if err != nil {
-		return nil, fmt.Errorf("MatMul: cudaMalloc C: %w", err)
-	}
-
-	defer func() { _ = cuda.Free(devC) }()
-
-	// We need to work with float32 data. Since T is constrained to float32 here,
-	// we use unsafe pointer casting.
-	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
-	bF32 := *(*[]float32)(unsafe.Pointer(&bData))
-
-	resultData := make([]float32, batchSize*cMatSize)
+	s := e.streamPtr()
 
 	for batch := range batchSize {
-		aOff := batch * aMatSize
+		aOff := batch * aMatSize * elemSize
 		bOff := 0
 		if bBatchSize > 1 {
-			bOff = batch * bMatSize
+			bOff = batch * bMatSize * elemSize
 		}
 
-		// H2D: copy A slice for this batch
-		if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[aOff]), aMatSize*elemSize, cuda.MemcpyHostToDevice); err != nil {
-			return nil, fmt.Errorf("MatMul: Memcpy A H2D batch %d: %w", batch, err)
-		}
+		cOff := batch * cMatSize * elemSize
 
-		// H2D: copy B slice for this batch
-		if err := cuda.Memcpy(devB, unsafe.Pointer(&bF32[bOff]), bMatSize*elemSize, cuda.MemcpyHostToDevice); err != nil {
-			return nil, fmt.Errorf("MatMul: Memcpy B H2D batch %d: %w", batch, err)
-		}
+		batchDevA := unsafe.Add(devA, aOff)
+		batchDevB := unsafe.Add(devB, bOff)
+		batchDevC := unsafe.Add(devCTotal, cOff)
 
 		// cuBLAS Sgemm
-		if err := cublas.Sgemm(e.handle, m, n, k, 1.0, devA, devB, 0.0, devC); err != nil {
-			return nil, fmt.Errorf("MatMul: cublasSgemm batch %d: %w", batch, err)
-		}
+		if err := cublas.Sgemm(e.handle, m, n, k, 1.0, batchDevA, batchDevB, 0.0, batchDevC); err != nil {
+			e.pool.Free(devCTotal, batchSize*cMatSize*elemSize)
 
-		// D2H: copy result
-		cOff := batch * cMatSize
-		if err := cuda.Memcpy(unsafe.Pointer(&resultData[cOff]), devC, cMatSize*elemSize, cuda.MemcpyDeviceToHost); err != nil {
-			return nil, fmt.Errorf("MatMul: Memcpy C D2H batch %d: %w", batch, err)
+			return nil, fmt.Errorf("MatMul: cublasSgemm batch %d: %w", batch, err)
 		}
 	}
 
-	// Cast back to []T and set on result tensor.
-	resultT := *(*[]T)(unsafe.Pointer(&resultData))
-	result.SetData(resultT)
+	// Synchronize stream before creating the storage.
+	if e.stream != nil {
+		if err := e.stream.Synchronize(); err != nil {
+			e.pool.Free(devCTotal, batchSize*cMatSize*elemSize)
 
-	return result, nil
+			return nil, fmt.Errorf("MatMul: stream sync: %w", err)
+		}
+	}
+
+	_ = s // stream used via cuBLAS handle
+
+	return makeGPUResult[T](outShape, devCTotal, batchSize*cMatSize, dst...)
 }
 
 // --- GPU-accelerated and fallback methods ---
