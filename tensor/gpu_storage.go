@@ -3,6 +3,8 @@
 package tensor
 
 import (
+	"fmt"
+	"log"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/device"
@@ -59,38 +61,54 @@ func NewGPUStorageFromSlice[T Numeric](data []T) (*GPUStorage[T], error) {
 // Len returns the number of elements.
 func (s *GPUStorage[T]) Len() int { return s.length }
 
-// Slice copies device memory to a new CPU slice and returns it.
-func (s *GPUStorage[T]) Slice() []T {
+// TrySlice copies device memory to a new CPU slice.
+// Returns an error if the D2H copy fails instead of panicking.
+func (s *GPUStorage[T]) TrySlice() ([]T, error) {
 	if s.length == 0 {
-		return []T{}
+		return []T{}, nil
 	}
 
 	host := make([]T, s.length)
 	dst := unsafe.Pointer(unsafe.SliceData(host))
 
-	// Memcpy errors are not expected here; panic to surface bugs early.
 	if err := cuda.Memcpy(dst, s.devicePtr, s.byteSize, cuda.MemcpyDeviceToHost); err != nil {
-		panic("GPUStorage.Slice: " + err.Error())
+		return nil, fmt.Errorf("GPUStorage.TrySlice: %w", err)
 	}
 
-	return host
+	return host, nil
 }
 
-// Set copies data from a CPU slice to the GPU, replacing the current contents.
+// Slice copies device memory to a new CPU slice and returns it.
+// On error, logs a warning and returns a zero-valued slice.
+func (s *GPUStorage[T]) Slice() []T {
+	data, err := s.TrySlice()
+	if err != nil {
+		log.Printf("WARNING: %v; returning zero slice of length %d", err, s.length)
+
+		return make([]T, s.length)
+	}
+
+	return data
+}
+
+// TrySet copies data from a CPU slice to the GPU, replacing the current contents.
 // If the new slice has a different length, the old device memory is freed and
-// new memory is allocated.
-func (s *GPUStorage[T]) Set(data []T) {
+// new memory is allocated. Returns an error instead of panicking on failure.
+func (s *GPUStorage[T]) TrySet(data []T) error {
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
 	newByteSize := len(data) * elemSize
 
 	if len(data) != s.length {
-		// Reallocate
 		_ = cuda.Free(s.devicePtr)
 
 		ptr, err := cuda.Malloc(newByteSize)
 		if err != nil {
-			panic("GPUStorage.Set: " + err.Error())
+			s.devicePtr = nil
+			s.length = 0
+			s.byteSize = 0
+
+			return fmt.Errorf("GPUStorage.TrySet: malloc: %w", err)
 		}
 
 		s.devicePtr = ptr
@@ -101,8 +119,18 @@ func (s *GPUStorage[T]) Set(data []T) {
 	if len(data) > 0 {
 		src := unsafe.Pointer(unsafe.SliceData(data))
 		if err := cuda.Memcpy(s.devicePtr, src, s.byteSize, cuda.MemcpyHostToDevice); err != nil {
-			panic("GPUStorage.Set: " + err.Error())
+			return fmt.Errorf("GPUStorage.TrySet: memcpy: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// Set copies data from a CPU slice to the GPU, replacing the current contents.
+// On error, logs a warning instead of panicking.
+func (s *GPUStorage[T]) Set(data []T) {
+	if err := s.TrySet(data); err != nil {
+		log.Printf("WARNING: %v", err)
 	}
 }
 

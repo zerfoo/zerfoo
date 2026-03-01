@@ -142,3 +142,101 @@ func TestGPUStorageEmptySlice(t *testing.T) {
 		t.Errorf("Slice() for empty storage returned %d elements", len(got))
 	}
 }
+
+func TestGPUStorageTrySlice(t *testing.T) {
+	src := []float32{1.0, 2.0, 3.0}
+
+	s, err := NewGPUStorageFromSlice(src)
+	if err != nil {
+		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
+	}
+
+	defer func() { _ = s.Free() }()
+
+	got, err := s.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice failed: %v", err)
+	}
+
+	if len(got) != len(src) {
+		t.Fatalf("TrySlice returned %d elements, want %d", len(got), len(src))
+	}
+
+	for i := range src {
+		if src[i] != got[i] {
+			t.Errorf("TrySlice()[%d] = %f, want %f", i, got[i], src[i])
+		}
+	}
+}
+
+func TestGPUStorageTrySliceEmpty(t *testing.T) {
+	s, err := NewGPUStorage[float32](0)
+	if err != nil {
+		t.Fatalf("NewGPUStorage(0) failed: %v", err)
+	}
+
+	defer func() { _ = s.Free() }()
+
+	got, err := s.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice failed: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("TrySlice() for empty storage returned %d elements", len(got))
+	}
+}
+
+func TestGPUStorageTrySet(t *testing.T) {
+	s, err := NewGPUStorageFromSlice([]float32{1.0, 2.0})
+	if err != nil {
+		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
+	}
+
+	defer func() { _ = s.Free() }()
+
+	newData := []float32{10.0, 20.0, 30.0}
+	if err := s.TrySet(newData); err != nil {
+		t.Fatalf("TrySet failed: %v", err)
+	}
+
+	if s.Len() != 3 {
+		t.Errorf("after TrySet, Len() = %d, want 3", s.Len())
+	}
+
+	got, err := s.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice after TrySet failed: %v", err)
+	}
+
+	for i := range newData {
+		if newData[i] != got[i] {
+			t.Errorf("after TrySet, TrySlice()[%d] = %f, want %f", i, got[i], newData[i])
+		}
+	}
+}
+
+func TestGPUStorageTrySetSameLength(t *testing.T) {
+	s, err := NewGPUStorageFromSlice([]float32{1.0, 2.0, 3.0})
+	if err != nil {
+		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
+	}
+
+	defer func() { _ = s.Free() }()
+
+	newData := []float32{4.0, 5.0, 6.0}
+	if err := s.TrySet(newData); err != nil {
+		t.Fatalf("TrySet same length failed: %v", err)
+	}
+
+	got, err := s.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice failed: %v", err)
+	}
+
+	for i := range newData {
+		if newData[i] != got[i] {
+			t.Errorf("TrySlice()[%d] = %f, want %f", i, got[i], newData[i])
+		}
+	}
+}
