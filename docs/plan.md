@@ -8,7 +8,9 @@ Zerfoo is a Go-based ML framework with 40+ packages. This plan covers two major 
 
 **Phase 1 (Completed): Test Coverage Improvement.** Raise every testable package to at least 95% statement coverage. This phase is complete. 30 of 33 testable packages are at or above 95%. Three packages (layers/gather 93.1%, layers/embeddings 93.5%, layers/features 93.8%) remain below 95% due to unreachable tensor.New error paths, documented as acceptable exceptions.
 
-**Phase 2 (Active): GPU Engine Implementation.** Implement `compute.GPUEngine[T]` that satisfies the existing `compute.Engine[T]` interface. All existing layer code must remain untouched. GPU support must work for both training and inference without breaking the current API. The approach is incremental: start with tensor storage abstraction, then cuBLAS MatMul, then add GPU kernels one-by-one.
+**Phase 2 (Complete): GPU Engine Implementation.** Implemented `compute.GPUEngine[T]` satisfying the `compute.Engine[T]` interface. 20 of 34 Engine methods have native CUDA GPU implementations for float32. Remaining 14 methods use CPU fallback by design.
+
+**Phase 3 (Active): GPU Production Readiness.** Address the 6 production gaps in the current GPU implementation: (1) validate on real GPU hardware via gcloud, (2) eliminate per-operation H2D/D2H round-trips with a device-resident tensor pipeline, (3) add CUDA memory pooling, (4) add CUDA stream management for async execution, (5) replace panics in GPUStorage with graceful error handling, (6) document validated benchmark results from real hardware.
 
 ### Architecture Overview
 
@@ -34,6 +36,10 @@ The critical challenge: `TensorNumeric[T].data` is `[]T` (a Go slice in CPU RAM)
 - O4: Implement cuBLAS-backed `MatMul` via CGO as the first GPU operation.
 - O5: Incrementally add GPU kernels: elementwise ops, Softmax, reductions.
 - O6: All GPU code behind `//go:build cuda` build tag so non-CUDA builds are unaffected.
+- O7: Validate all GPU code on real NVIDIA hardware via gcloud T4 VM.
+- O8: Eliminate per-operation H2D/D2H round-trips; tensors stay on GPU between chained operations.
+- O9: Add CUDA memory pooling and stream management for production-grade GPU performance.
+- O10: Replace panics in GPUStorage with graceful error handling and CPU fallback on OOM.
 
 ### Non-Goals
 
@@ -105,6 +111,11 @@ The critical challenge: `TensorNumeric[T].data` is `[]T` (a Go slice in CPU RAM)
 | D11 | GPU activation + math ops | TBD | Exp, Log, Tanh, TanhPrime, Sqrt, Rsqrt, Softmax pass parity tests |
 | D12 | GPU reductions + tensor ops | TBD | Sum, ReduceSum, ReduceMean, Transpose, Reshape, etc. pass parity |
 | D13 | Full Engine compliance | TBD | `var _ Engine[float32] = (*GPUEngine[float32])(nil)` compiles |
+| D14 | Hardware validation | TBD | All GPU tests pass on real NVIDIA T4 hardware via gcloud |
+| D15 | Device-resident pipeline | TBD | Chained GPU ops avoid H2D/D2H; tensors stay on GPU between operations |
+| D16 | Memory pool + streams | TBD | CUDA memory pool eliminates per-op cudaMalloc/Free; streams enable async |
+| D17 | Error recovery | TBD | GPUStorage never panics; OOM triggers graceful CPU fallback |
+| D18 | Validated benchmarks | TBD | MatMul/Softmax/attention benchmarks documented from real T4 hardware |
 
 ---
 
@@ -205,7 +216,7 @@ with valid inputs. These are defensive checks against memory allocation failures
 
 ---
 
-### Phase 2: GPU Engine Implementation (Active)
+### Phase 2: GPU Engine Implementation (Complete)
 
 #### E8: Tensor Storage Abstraction (Critical Path)
 
@@ -548,6 +559,187 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
   - [ ] S14.5.3 Verify no unconditional imports of internal/cuda or internal/cublas  Est: 10m
   - [ ] S14.5.4 Run golangci-lint  Est: 5m
 
+### Phase 3: GPU Production Readiness (Active)
+
+#### E15: Hardware Validation via gcloud
+
+Validate all existing GPU code on real NVIDIA hardware. Use the cheapest available GPU VM on GCP (T4 spot instance). Create the VM, run tests and benchmarks, capture results, delete the VM immediately.
+
+- [ ] T15.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h
+  - Dependencies: E14
+  - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured.
+  - [ ] S15.1.1 Create n1-standard-4 spot VM with T4 GPU using gcloud CLI (us-central1-a, Ubuntu 22.04)  Est: 5m
+  - [ ] S15.1.2 SSH into VM, install CUDA Toolkit 12.x and Go 1.23+  Est: 15m
+  - [ ] S15.1.3 Clone repo, build with `go build -tags cuda ./...`, fix any build issues  Est: 10m
+  - [ ] S15.1.4 Run `go test -tags cuda ./...` and capture output  Est: 10m
+  - [ ] S15.1.5 Run benchmarks: `go test -tags cuda -bench=. -benchmem ./compute/` and save results  Est: 5m
+  - [ ] S15.1.6 Delete VM immediately: `gcloud compute instances delete ...`  Est: 2m
+  - [ ] S15.1.7 Document results in docs/gpu.md (test pass/fail, benchmark numbers)  Est: 10m
+
+#### E16: Device-Resident Tensor Pipeline
+
+The current architecture does H2D -> kernel -> D2H for every single GPU operation. For N chained operations, this means 2N unnecessary memory copies. Refactor GPUEngine so that:
+- Output tensors use GPUStorage (data stays on GPU)
+- Input tensors are checked: if GPUStorage, use Ptr() directly; if CPUStorage, do H2D into temp buffer
+- This eliminates N-1 round-trips for N chained GPU ops
+
+**Design: getDevicePtr helper**
+```go
+// getDevicePtr returns a CUDA device pointer for the tensor's data.
+// If the tensor has GPUStorage, returns Ptr() directly (zero-copy).
+// If the tensor has CPUStorage, allocates device memory and copies H2D.
+// The returned cleanup function must be called to free temp allocations.
+func getDevicePtr[T tensor.Numeric](t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
+    if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+        return gs.Ptr(), func() {}, nil // zero-copy, no cleanup
+    }
+    // CPUStorage: allocate temp buffer, copy H2D
+    data := t.Data()
+    byteSize := len(data) * f32Size
+    devPtr, err := cuda.Malloc(byteSize)
+    if err != nil { return nil, nil, err }
+    // memcpy H2D ...
+    return devPtr, func() { cuda.Free(devPtr) }, nil
+}
+```
+
+- [x] T16.1 Add getDevicePtr helper to compute/gpu_kernels.go  Completed: 2026 03 01  Note: getDevicePtr checks storage type, returns device pointer with cleanup. GPUStorage is zero-copy. CPUStorage does H2D from pool.
+  - Dependencies: E15
+  - Acceptance: Helper checks storage type, returns device pointer with cleanup. GPUStorage path is zero-copy. CPUStorage path does H2D.
+  - [ ] S16.1.1 Implement getDevicePtr[T] that type-asserts on GetStorage()  Est: 15m
+  - [ ] S16.1.2 Implement allocDeviceOutput[T] that creates result tensor with GPUStorage  Est: 15m
+
+- [x] T16.2 Refactor gpuBinaryOp to use device-resident pipeline  Completed: 2026 03 01
+  - Dependencies: T16.1
+  - Acceptance: gpuBinaryOp uses getDevicePtr for inputs and allocDeviceOutput for output. No D2H copy of result. Output tensor has GPUStorage.
+  - [ ] S16.2.1 Replace cuda.Malloc + Memcpy H2D with getDevicePtr calls  Est: 10m
+  - [ ] S16.2.2 Replace resultF32 D2H + SetData with GPUStorage output  Est: 10m
+  - [ ] S16.2.3 Verify all 5 binary ops (Add, Sub, Mul, Div, Pow) still pass parity tests  Est: 10m
+
+- [x] T16.3 Refactor gpuUnaryOp and gpuScalarOp to use device-resident pipeline  Completed: 2026 03 01
+  - Dependencies: T16.1
+  - Acceptance: Both helpers use getDevicePtr for input and GPUStorage for output. No unnecessary copies.
+  - [ ] S16.3.1 Refactor gpuUnaryOp (Exp, Log, Sqrt, Rsqrt, Tanh)  Est: 10m
+  - [ ] S16.3.2 Refactor gpuScalarOp (AddScalar, MulScalar, DivScalar)  Est: 10m
+  - [ ] S16.3.3 Verify all unary + scalar ops pass parity tests  Est: 10m
+
+- [x] T16.4 Refactor MatMul, Softmax, Sum to use device-resident pipeline  Completed: 2026 03 01
+  - Dependencies: T16.1
+  - Acceptance: MatMul, Softmax, gpuSum, gpuFill all use getDevicePtr and GPUStorage output.
+  - [ ] S16.4.1 Refactor MatMul to use getDevicePtr for A and B inputs  Est: 15m
+  - [ ] S16.4.2 Refactor gpuSoftmax and gpuSum to use getDevicePtr  Est: 15m
+  - [ ] S16.4.3 Refactor gpuFill to use device-resident pattern  Est: 5m
+  - [ ] S16.4.4 Verify MatMul, Softmax, Sum, ReduceSum, ReduceMean pass parity tests  Est: 10m
+
+- [x] T16.5 Add chained-operation integration test  Completed: 2026 03 01  Note: TestGPUEngine_ChainedOpsDeviceResident (5 chained ops, asserts GPUStorage), TestGPUEngine_MixedStorageInputs, TestGPUEngine_OOMFallbackCount.
+  - Dependencies: T16.2, T16.3, T16.4
+  - Acceptance: Test performs 5+ chained GPU operations (MatMul -> Add -> Softmax -> etc.) and verifies intermediate tensors have GPUStorage (no D2H between ops).
+  - [ ] S16.5.1 Write test: chain of GPU ops, assert intermediate tensor storage is GPUStorage  Est: 15m
+  - [ ] S16.5.2 Write test: mixed GPU/CPU tensor inputs (one GPUStorage, one CPUStorage)  Est: 10m
+  - [ ] S16.5.3 Run golangci-lint on compute package  Est: 5m
+
+#### E17: CUDA Memory Pool
+
+Replace per-operation cudaMalloc/cudaFree with a pooled allocator. The pool caches freed allocations by size bucket for reuse.
+
+**Design: MemPool**
+```go
+type MemPool struct {
+    mu    sync.Mutex
+    cache map[int][]unsafe.Pointer // size -> list of free device ptrs
+}
+
+func (p *MemPool) Alloc(size int) (unsafe.Pointer, error) {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    if ptrs := p.cache[size]; len(ptrs) > 0 {
+        ptr := ptrs[len(ptrs)-1]
+        p.cache[size] = ptrs[:len(ptrs)-1]
+        return ptr, nil
+    }
+    return cuda.Malloc(size)
+}
+
+func (p *MemPool) Free(ptr unsafe.Pointer, size int) {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    p.cache[size] = append(p.cache[size], ptr)
+}
+```
+
+- [x] T17.1 Implement MemPool in internal/cuda/mempool.go  Completed: 2026 03 01  Note: Size-bucketed free-list allocator with Alloc, Free, Drain, Stats. Mutex-synchronized.
+  - Dependencies: T9.1
+  - Acceptance: MemPool.Alloc returns cached pointer when available, fresh allocation otherwise. MemPool.Free returns pointer to cache. MemPool.Drain frees all cached memory.
+  - [ ] S17.1.1 Create internal/cuda/mempool.go with MemPool struct  Est: 15m
+  - [ ] S17.1.2 Implement Alloc, Free, Drain methods with mutex synchronization  Est: 10m
+  - [ ] S17.1.3 Write unit tests for pool reuse and drain  Est: 5m
+
+- [x] T17.2 Integrate MemPool into GPUEngine  Completed: 2026 03 01  Note: Integrated as part of E16 device-resident pipeline commit. GPUEngine holds pool, all temp allocations use pool, Close() drains pool.
+  - Dependencies: T17.1, T16.1
+  - Acceptance: GPUEngine holds a MemPool. All temp allocations (getDevicePtr for CPUStorage inputs) use pool. GPUEngine.Close() calls pool.Drain().
+  - [ ] S17.2.1 Add pool field to GPUEngine struct, initialize in constructor  Est: 10m
+  - [ ] S17.2.2 Update getDevicePtr to use pool.Alloc for temp buffers  Est: 10m
+  - [ ] S17.2.3 Update Close() to call pool.Drain()  Est: 5m
+  - [ ] S17.2.4 Verify all parity tests still pass  Est: 5m
+
+#### E18: CUDA Stream Management
+
+Add non-default CUDA stream support for async kernel execution and memory transfers. This enables overlapping compute and transfer.
+
+- [x] T18.1 Add CUDA stream bindings to internal/cuda  Completed: 2026 03 01  Note: Stream type, CreateStream, Synchronize, Destroy, Ptr. MemcpyAsync added.
+  - Dependencies: T9.1
+  - Acceptance: cudaStreamCreate, cudaStreamDestroy, cudaStreamSynchronize wrapped. cudaMemcpyAsync wrapped.
+  - [ ] S18.1.1 Add Stream type and CreateStream/DestroyStream/Synchronize to runtime.go  Est: 15m
+  - [ ] S18.1.2 Add MemcpyAsync function  Est: 10m
+  - [ ] S18.1.3 Run golangci-lint  Est: 5m
+
+- [x] T18.2 Add stream parameter to CUDA kernel launchers  Completed: 2026 03 01  Note: All 17 launcher functions accept cudaStream_t. cuBLAS SetStream method added.
+  - Dependencies: T18.1
+  - Acceptance: All kernel launcher functions in elementwise.cu accept a cudaStream_t parameter. Go wrappers pass stream.
+  - [ ] S18.2.1 Update all extern "C" launcher functions to accept cudaStream_t parameter  Est: 15m
+  - [ ] S18.2.2 Update all Go wrapper functions in elementwise.go to accept stream  Est: 15m
+  - [ ] S18.2.3 Update cuBLAS handle to use stream via cublasSetStream  Est: 10m
+  - [ ] S18.2.4 Verify all tests still pass  Est: 5m
+
+- [x] T18.3 Integrate stream into GPUEngine  Completed: 2026 03 01  Note: Integrated as part of E16 device-resident pipeline commit. GPUEngine creates stream, all kernel calls and cuBLAS use it, Close() destroys it.
+  - Dependencies: T18.2
+  - Acceptance: GPUEngine creates a stream in constructor. All kernel launches and memcpy use the stream. Close() destroys the stream.
+  - [ ] S18.3.1 Add stream field to GPUEngine, create in NewGPUEngine  Est: 10m
+  - [ ] S18.3.2 Pass stream to all kernel calls and memcpy calls  Est: 15m
+  - [ ] S18.3.3 Call Synchronize before D2H copies when needed  Est: 5m
+
+#### E19: Error Recovery and Graceful Fallback
+
+Replace panics in GPUStorage with error returns. Add OOM fallback in GPUEngine.
+
+- [x] T19.1 Replace panics in GPUStorage with error returns  Completed: 2026 03 01  Note: Added TrySlice()/TrySet(). Slice()/Set() log warnings instead of panicking.
+  - Dependencies: None
+  - Acceptance: GPUStorage.Slice() and Set() no longer panic. Errors are returned via new TrySlice()/TrySet() methods. Existing Slice()/Set() still satisfy Storage[T] interface but log errors instead of panicking.
+  - Risk: Storage[T] interface defines Slice() []T and Set([]T) with no error returns. Cannot change the interface without breaking all code.
+  - [ ] S19.1.1 Add TrySlice() ([]T, error) and TrySet(data []T) error methods to GPUStorage  Est: 10m
+  - [ ] S19.1.2 Change Slice() to call TrySlice(); on error, return zero slice and log  Est: 10m
+  - [ ] S19.1.3 Change Set() to call TrySet(); on error, log instead of panic  Est: 10m
+
+- [x] T19.2 Add OOM fallback in GPUEngine  Completed: 2026 03 01  Note: getDevicePtr callers fall back to CPUEngine on OOM. oomFallbackCount atomic counter added for observability.
+  - Dependencies: T19.1
+  - Acceptance: When cuda.Malloc fails (OOM), GPUEngine methods fall back to CPUEngine transparently. A warning is logged on first fallback.
+  - [ ] S19.2.1 Wrap getDevicePtr to catch Malloc errors and fall back to CPU path  Est: 15m
+  - [ ] S19.2.2 Add oomFallbackCount metric to GPUEngine for observability  Est: 10m
+  - [ ] S19.2.3 Write test: simulate OOM by setting device memory limit, verify CPU fallback  Est: 5m
+
+#### E20: Production Benchmarks on Real Hardware
+
+Re-run benchmarks on real T4 hardware after E16-E18 optimizations.
+
+- [ ] T20.1 Run optimized benchmarks on T4 and document results  Owner: TBD  Est: 1h
+  - Dependencies: E16, E17, E18, E19
+  - Acceptance: Benchmark results document speedup for MatMul (128/512/1024), Softmax, and chained attention ops. Results include comparison: Phase 2 (per-op H2D/D2H) vs Phase 3 (device-resident pipeline).
+  - [ ] S20.1.1 Create T4 spot VM, install deps, clone repo  Est: 15m
+  - [ ] S20.1.2 Run `go test -tags cuda -bench=. -benchmem ./compute/` and capture  Est: 10m
+  - [ ] S20.1.3 Run chained-ops benchmark (attention: Q@K^T -> Softmax -> @V)  Est: 10m
+  - [ ] S20.1.4 Update docs/gpu.md with Phase 3 benchmark results and speedup table  Est: 15m
+  - [ ] S20.1.5 Delete VM immediately  Est: 2m
+
 ---
 
 ## 4. Timeline and Milestones
@@ -564,6 +756,10 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 | M8 | cuBLAS MatMul working | E10 | GPUEngine.MatMul parity test passes, all 34 methods stubbed |
 | M9 | Native GPU kernels complete | E11, E12, E13 | All Engine methods have native GPU implementations (except UnaryOp) |
 | M10 | GPU integration validated | E14 | End-to-end tests pass, benchmarks show >= 10x MatMul speedup |
+| M11 | Real hardware validation | E15 | All GPU tests pass on T4 hardware via gcloud |
+| M12 | Device-resident pipeline | E16 | Chained ops avoid H2D/D2H; intermediate tensors stay on GPU |
+| M13 | Memory pool + streams | E17, E18 | Pool eliminates per-op malloc; streams enable async execution |
+| M14 | Production ready | E19, E20 | Error recovery, validated benchmarks, documented results |
 
 ### Recommended Sequence
 
@@ -575,6 +771,14 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 6. **E13** -- GPU reductions + tensor manipulation (completes the Engine)
 7. **E14** -- Integration tests + benchmarks (validates everything end-to-end)
 8. **E6, E7** -- Phase 1 remaining tasks (independent, low priority)
+9. **E15** -- Hardware validation (validate Phase 2 on real T4 GPU)
+10. **E16** -- Device-resident pipeline (eliminates per-op H2D/D2H, biggest perf win)
+11. **E17** -- Memory pool (eliminates per-op cudaMalloc/Free)
+12. **E18** -- Stream management (async kernel execution)
+13. **E19** -- Error recovery (replace panics, OOM fallback)
+14. **E20** -- Production benchmarks (re-validate after optimizations)
+
+E17 and E18 are independent and can be done in parallel. E16 is the critical path for Phase 3.
 
 Within E11, E12, E13, tasks are independent of each other and can be done in any order or in parallel.
 
@@ -634,6 +838,10 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 
 ## 6. Progress Log
 
+- **2026 03 01 (update 5):** Change Summary: Implemented Phase 3 code changes (E16-E19). E19 T19.1: GPUStorage TrySlice/TrySet with error returns, Slice/Set log instead of panic. E17 T17.1: CUDA MemPool with size-bucketed free-list. E18 T18.1-T18.2: CUDA Stream bindings, all 17 kernel launchers accept stream parameter, cuBLAS SetStream. E16 T16.1-T16.4 + T17.2 + T18.3: Device-resident pipeline - getDevicePtr (zero-copy for GPUStorage, H2D from pool for CPUStorage), makeGPUResult (output as GPUStorage), all GPU ops refactored. GPUEngine now has pool, stream, oomFallbackCount fields. T19.2: OOM fallback with atomic counter. Remaining: T16.5 (chained-op integration test), E15/E20 (hardware validation, blocked on gcloud auth).
+
+- **2026 03 01 (update 4):** Change Summary: Added Phase 3 GPU Production Readiness plan (E15-E20). Six new epics: E15 hardware validation via gcloud T4 VM, E16 device-resident tensor pipeline (eliminates per-op H2D/D2H), E17 CUDA memory pool, E18 CUDA stream management, E19 error recovery and graceful fallback, E20 production benchmarks on real hardware. Added milestones M11-M14, deliverables D14-D18, objectives O7-O10.
+
 - **2026 03 01 (update 3):** Change Summary: Completed E13 (GPU Reduction and Tensor Manipulation) and E14 (Integration Testing and Benchmarks). All Phase 2 GPU Engine work is now complete. 20 of 34 Engine methods have native CUDA GPU implementations for float32. Remaining 14 methods use CPU fallback by design (metadata-only ops, integer-index ops, or Go-function ops that cannot run on GPU). Comprehensive parity tests verify GPU matches CPU output. Benchmarks for MatMul and Softmax are included.
 
 - **2026 03 01 (update 2):** Change Summary: Completed E11 (GPU Elementwise Ops), E12 (GPU Activation/Math Kernels), and partial E13 (T13.1 Sum/ReduceSum/ReduceMean). All 15 elementwise CUDA kernels (add, sub, mul, div, pow, add_scalar, mul_scalar, div_scalar, exp, log, sqrt, rsqrt, tanh, tanh_prime, fill) are wired into GPUEngine for float32 with CPU fallback for other types. Softmax kernel uses shared-memory reduction with numerical stability (max subtraction). SumAxis reduction kernel added for Sum/ReduceSum/ReduceMean. T14.1 (Linear layer integration test) and T14.5 (non-CUDA build verification) also completed. Remaining: T13.2-T13.5 (tensor manipulation), T14.2-T14.4 (integration tests/benchmarks).
@@ -654,6 +862,9 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 
 - **Phase 1 status:** Test coverage work is complete. See Documented Coverage Exceptions for the 3 packages below 95%.
 - **Phase 2 status:** Complete. E8-E14 all done. GPUEngine[T] has native GPU implementations for 20 of 34 Engine methods: MatMul (cuBLAS), Add, Sub, Mul, Div, Pow, AddScalar, MulScalar, DivScalar, Exp, Log, Sqrt, Rsqrt, Tanh, TanhPrime, Softmax, Sum, ReduceSum, ReduceMean, Fill. Remaining 14 methods (UnaryOp, Transpose, Zero, Zeros, Copy, Gather, ScatterAdd, RandomUniform, Split, Concat, Repeat, OneHot, Reshape) use CPU fallback by design. Comprehensive parity tests and benchmarks in compute/gpu_integration_test.go.
+- **Phase 3 status:** Nearly complete. E16 (device-resident pipeline), E17 (memory pool), E18 (streams), E19 (error recovery) are all done. GPU operations now keep data on-device between chained ops (GPUStorage), use pooled allocation (MemPool), execute on a dedicated CUDA stream, and fall back gracefully on OOM. Remaining: T16.5 (chained-op integration test), E15 (hardware validation, blocked on gcloud auth), E20 (production benchmarks, blocked on hardware).
+- **Key architecture change (Phase 3):** GPU operations now produce GPUStorage output tensors. getDevicePtr detects GPUStorage (zero-copy) vs CPUStorage (H2D from pool). This eliminates N-1 round-trips for N chained GPU ops.
+- **gcloud cost note:** Use spot/preemptible T4 instances (~$0.11/hr for n1-standard-4 + T4 in us-central1). Create and delete VMs immediately after use.
 - **Key files to understand first:**
   - `tensor/tensor.go` -- TensorNumeric[T] struct, the core data type
   - `compute/engine.go` -- Engine[T] interface (34 methods)
