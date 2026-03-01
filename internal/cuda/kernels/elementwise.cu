@@ -91,6 +91,66 @@ __global__ void kernel_fill(float* data, float value, int n) {
     if (idx < n) data[idx] = value;
 }
 
+// ---------- Softmax (shared-memory reduction) ----------
+
+// Each block handles one (outer, inner) stripe along the softmax axis.
+// Uses shared memory for parallel max and sum reductions.
+__global__ void kernel_softmax(const float* input, float* output,
+                                int outer, int inner, int axisSize) {
+    int stripe = blockIdx.x;
+    int o = stripe / inner;
+    int in_ = stripe % inner;
+    int base = o * axisSize * inner + in_;
+    int step = inner;
+
+    extern __shared__ float sdata[];
+
+    // Phase 1: Find max along axis for numerical stability
+    float local_max = -INFINITY;
+    for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
+        float val = input[base + k * step];
+        if (val > local_max) local_max = val;
+    }
+    sdata[threadIdx.x] = local_max;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            if (sdata[threadIdx.x + s] > sdata[threadIdx.x])
+                sdata[threadIdx.x] = sdata[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    float max_val = sdata[0];
+    __syncthreads();
+
+    // Phase 2: Compute exp(x - max) and accumulate sum
+    float local_sum = 0.0f;
+    for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
+        int idx = base + k * step;
+        float ex = expf(input[idx] - max_val);
+        output[idx] = ex;
+        local_sum += ex;
+    }
+    sdata[threadIdx.x] = local_sum;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            sdata[threadIdx.x] += sdata[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    float sum_val = sdata[0];
+    __syncthreads();
+
+    // Phase 3: Normalize
+    for (int k = threadIdx.x; k < axisSize; k += blockDim.x) {
+        int idx = base + k * step;
+        output[idx] /= sum_val;
+    }
+}
+
 // ---------- Launcher functions (extern "C" for CGO) ----------
 
 static inline void grid_config(int n, int* grid, int* block) {
@@ -187,6 +247,17 @@ cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, i
 cudaError_t launch_fill(float* data, float value, int n) {
     int grid, block; grid_config(n, &grid, &block);
     kernel_fill<<<grid, block>>>(data, value, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_softmax(const float* input, float* output,
+                           int outer, int inner, int axisSize) {
+    // Block size: next power of 2 up to min(axisSize, 256)
+    int block = 1;
+    while (block < axisSize && block < 256) block <<= 1;
+    int numStripes = outer * inner;
+    size_t smem = block * sizeof(float);
+    kernel_softmax<<<numStripes, block, smem>>>(input, output, outer, inner, axisSize);
     return cudaGetLastError();
 }
 
