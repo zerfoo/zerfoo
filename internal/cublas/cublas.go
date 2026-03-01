@@ -40,6 +40,18 @@ func (h *Handle) Destroy() error {
 	return nil
 }
 
+// SetStream associates a CUDA stream with this cuBLAS handle.
+// All subsequent cuBLAS operations will execute on the given stream.
+// Pass nil to use the default stream.
+func (h *Handle) SetStream(streamPtr unsafe.Pointer) error {
+	status := C.cublasSetStream(h.h, C.cudaStream_t(streamPtr))
+	if status != C.CUBLAS_STATUS_SUCCESS {
+		return fmt.Errorf("cublasSetStream failed with status %d", int(status))
+	}
+
+	return nil
+}
+
 // Sgemm performs single-precision general matrix multiplication.
 //
 // This function handles the row-major to column-major conversion internally.
