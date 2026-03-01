@@ -216,7 +216,7 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+	return e.gpuSum(ctx, a, axis, keepDims, dst...)
 }
 
 func (e *GPUEngine[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -280,7 +280,7 @@ func (e *GPUEngine[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], 
 }
 
 func (e *GPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.ReduceSum(ctx, a, axis, keepDims, dst...)
+	return e.gpuReduceSum(ctx, a, axis, keepDims, dst...)
 }
 
 func (e *GPUEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -312,7 +312,7 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 }
 
 func (e *GPUEngine[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
+	return e.gpuReduceMean(ctx, a, axis, keepDims, dst...)
 }
 
 func (e *GPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {

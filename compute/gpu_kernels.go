@@ -366,6 +366,143 @@ func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], 
 	return nil
 }
 
+func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+	}
+
+	if a == nil {
+		return nil, fmt.Errorf("Sum: input tensor must not be nil")
+	}
+
+	// Negative axis means sum over all elements -- fall back to CPU for simplicity.
+	if axis < 0 {
+		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
+	}
+
+	shape := a.Shape()
+	rank := len(shape)
+
+	if axis >= rank {
+		return nil, fmt.Errorf("Sum: axis %d out of bounds for %d dimensions", axis, rank)
+	}
+
+	inner := 1
+	for i := axis + 1; i < rank; i++ {
+		inner *= shape[i]
+	}
+
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	axisSize := shape[axis]
+	numStripes := outer * inner
+
+	// Compute output shape.
+	var newShape []int
+	if keepDims {
+		newShape = make([]int, rank)
+		for i, d := range shape {
+			if i == axis {
+				newShape[i] = 1
+			} else {
+				newShape[i] = d
+			}
+		}
+	} else {
+		for i, d := range shape {
+			if i != axis {
+				newShape = append(newShape, d)
+			}
+		}
+		if len(newShape) == 0 {
+			newShape = []int{1}
+		}
+	}
+
+	result, err := e.cpu.getOrCreateDest(newShape, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	aData := a.Data()
+	inByteSize := len(aData) * f32Size
+	outByteSize := numStripes * f32Size
+
+	devIn, err := cuda.Malloc(inByteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devIn) }()
+
+	devOut, err := cuda.Malloc(outByteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devOut) }()
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+
+	if err := cuda.Memcpy(devIn, unsafe.Pointer(&aF32[0]), inByteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := kernels.SumAxis(devIn, devOut, outer, inner, axisSize); err != nil {
+		return nil, err
+	}
+
+	resultF32 := make([]float32, numStripes)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devOut, outByteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return nil, err
+	}
+
+	// The kernel outputs stripes in order [o0*inner+in0, o0*inner+in1, ...].
+	// For keepDims=false, the output shape collapses the axis dimension.
+	// The stripe ordering is consistent with the output layout: for axis reduction,
+	// the output index (o, in) maps to linear index o*inner + in, which matches
+	// the kernel's stripe ordering.
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	result.SetData(resultT)
+
+	return result, nil
+}
+
+func (e *GPUEngine[T]) gpuReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.gpuSum(ctx, a, axis, keepDims, dst...)
+}
+
+func (e *GPUEngine[T]) gpuReduceMean(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
+	}
+
+	// Negative axis: fall back to CPU (gpuSum also falls back).
+	if axis < 0 {
+		return e.cpu.ReduceMean(ctx, a, axis, keepDims, dst...)
+	}
+
+	shape := a.Shape()
+	rank := len(shape)
+
+	if axis >= rank {
+		return nil, fmt.Errorf("ReduceMean: axis %d out of bounds for %d dimensions", axis, rank)
+	}
+
+	// ReduceMean = Sum / axisSize
+	sumResult, err := e.gpuSum(ctx, a, axis, keepDims)
+	if err != nil {
+		return nil, err
+	}
+
+	divisor := any(float32(shape[axis])).(T)
+
+	return e.gpuDivScalar(ctx, sumResult, divisor, dst...)
+}
+
 func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() {
 		return e.cpu.Softmax(ctx, a, axis, dst...)
