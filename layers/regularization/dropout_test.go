@@ -2,6 +2,7 @@ package regularization
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -364,6 +365,56 @@ func TestDropout_BuildDropout(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for non-float64 rate attribute")
 	}
+}
+
+// TestDropout_Forward_EngineMulError tests the error path when engine.Mul fails during Forward.
+func TestDropout_Forward_EngineMulError(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	eng := &failingMulEngine{CPUEngine: compute.NewCPUEngine(ops)}
+	d := NewDropout[float32](eng, ops, 0.5)
+	d.SetTraining(true)
+
+	input, _ := tensor.New([]int{4}, []float32{1, 2, 3, 4})
+	_, err := d.Forward(ctx, input)
+	if err == nil {
+		t.Error("expected error when engine.Mul fails, got nil")
+	}
+}
+
+// TestDropout_Backward_EngineMulError tests the error path when engine.Mul fails during Backward.
+func TestDropout_Backward_EngineMulError(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	realEng := compute.NewCPUEngine(ops)
+
+	// Forward with real engine to cache the mask.
+	d := NewDropout[float32](realEng, ops, 0.0) // rate=0 means all elements survive
+	d.SetTraining(true)
+
+	input, _ := tensor.New([]int{4}, []float32{1, 2, 3, 4})
+	_, err := d.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Swap engine to failing one for Backward.
+	d.engine = &failingMulEngine{CPUEngine: realEng}
+
+	dOut, _ := tensor.New([]int{4}, []float32{1, 1, 1, 1})
+	_, err = d.Backward(ctx, types.FullBackprop, dOut, input)
+	if err == nil {
+		t.Error("expected error when engine.Mul fails in Backward, got nil")
+	}
+}
+
+// failingMulEngine wraps CPUEngine but returns an error from Mul.
+type failingMulEngine struct {
+	*compute.CPUEngine[float32]
+}
+
+func (e *failingMulEngine) Mul(_ context.Context, _, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	return nil, fmt.Errorf("mock Mul error")
 }
 
 // Compile-time interface check.
