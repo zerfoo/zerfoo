@@ -575,6 +575,166 @@ func TestGPUEngine_LinearLayerEndToEnd(t *testing.T) {
 	}
 }
 
+// TestGPUEngine_ChainedOpsDeviceResident verifies that chained GPU operations
+// keep data on the device. Intermediate tensors should have GPUStorage (not
+// CPUStorage), eliminating H2D/D2H round-trips between operations.
+func TestGPUEngine_ChainedOpsDeviceResident(t *testing.T) {
+	ops := numeric.Float32Arithmetic{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+
+	defer func() { _ = gpuEng.Close() }()
+
+	cpuEng := NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	// Start with CPU-backed tensors (normal user input).
+	a, _ := tensor.New[float32]([]int{4, 8}, make([]float32, 32))
+	b, _ := tensor.New[float32]([]int{4, 8}, make([]float32, 32))
+
+	for i := range 32 {
+		a.Data()[i] = float32(i+1) * 0.1
+		b.Data()[i] = float32(i+1) * 0.05
+	}
+
+	// Chain: add -> mul_scalar -> exp -> softmax -> div_scalar
+	// Each intermediate result should be a GPUStorage tensor.
+
+	// Step 1: Add
+	sum, err := gpuEng.Add(ctx, a, b)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	assertGPUStorage(t, sum, "Add output")
+
+	// Step 2: MulScalar (input is GPUStorage from step 1 = zero-copy)
+	scaled, err := gpuEng.MulScalar(ctx, sum, 0.1)
+	if err != nil {
+		t.Fatalf("MulScalar: %v", err)
+	}
+
+	assertGPUStorage(t, scaled, "MulScalar output")
+
+	// Step 3: Exp (input is GPUStorage from step 2)
+	exped, err := gpuEng.Exp(ctx, scaled)
+	if err != nil {
+		t.Fatalf("Exp: %v", err)
+	}
+
+	assertGPUStorage(t, exped, "Exp output")
+
+	// Step 4: Softmax (input is GPUStorage from step 3)
+	soft, err := gpuEng.Softmax(ctx, exped, 1)
+	if err != nil {
+		t.Fatalf("Softmax: %v", err)
+	}
+
+	assertGPUStorage(t, soft, "Softmax output")
+
+	// Step 5: DivScalar (input is GPUStorage from step 4)
+	final, err := gpuEng.DivScalar(ctx, soft, 2.0)
+	if err != nil {
+		t.Fatalf("DivScalar: %v", err)
+	}
+
+	assertGPUStorage(t, final, "DivScalar output")
+
+	// Verify numerical parity with CPU.
+	cpuSum, _ := cpuEng.Add(ctx, a, b)
+	cpuScaled, _ := cpuEng.MulScalar(ctx, cpuSum, 0.1)
+	cpuExped, _ := cpuEng.Exp(ctx, cpuScaled)
+	cpuSoft, _ := cpuEng.Softmax(ctx, cpuExped, 1)
+	cpuFinal, _ := cpuEng.DivScalar(ctx, cpuSoft, 2.0)
+
+	gpuData := final.Data()
+	cpuData := cpuFinal.Data()
+
+	if len(gpuData) != len(cpuData) {
+		t.Fatalf("length mismatch: GPU=%d, CPU=%d", len(gpuData), len(cpuData))
+	}
+
+	for i := range gpuData {
+		diff := math.Abs(float64(gpuData[i] - cpuData[i]))
+		if diff > 1e-5 {
+			t.Errorf("[%d] GPU=%f, CPU=%f, diff=%e", i, gpuData[i], cpuData[i], diff)
+		}
+	}
+}
+
+// TestGPUEngine_MixedStorageInputs verifies that GPUEngine correctly handles
+// one GPUStorage input and one CPUStorage input in binary operations.
+func TestGPUEngine_MixedStorageInputs(t *testing.T) {
+	ops := numeric.Float32Arithmetic{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+
+	defer func() { _ = gpuEng.Close() }()
+
+	cpuEng := NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	cpuA, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	cpuB, _ := tensor.New[float32]([]int{2, 3}, []float32{0.5, 1.5, 2.5, 3.5, 4.5, 5.5})
+
+	// Make gpuA a GPUStorage tensor by running it through a GPU op.
+	gpuA, err := gpuEng.MulScalar(ctx, cpuA, 1.0)
+	if err != nil {
+		t.Fatalf("MulScalar (identity): %v", err)
+	}
+
+	assertGPUStorage(t, gpuA, "gpuA")
+
+	// Add: one GPUStorage input (gpuA), one CPUStorage input (cpuB).
+	result, err := gpuEng.Add(ctx, gpuA, cpuB)
+	if err != nil {
+		t.Fatalf("Add mixed: %v", err)
+	}
+
+	assertGPUStorage(t, result, "mixed Add output")
+
+	// Verify against pure CPU.
+	cpuResult, _ := cpuEng.Add(ctx, cpuA, cpuB)
+	gpuData := result.Data()
+	cpuData := cpuResult.Data()
+
+	for i := range gpuData {
+		diff := math.Abs(float64(gpuData[i] - cpuData[i]))
+		if diff > 1e-6 {
+			t.Errorf("[%d] GPU=%f, CPU=%f, diff=%e", i, gpuData[i], cpuData[i], diff)
+		}
+	}
+}
+
+// TestGPUEngine_OOMFallbackCount verifies that the OOM fallback counter is
+// accessible and starts at zero.
+func TestGPUEngine_OOMFallbackCount(t *testing.T) {
+	ops := numeric.Float32Arithmetic{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+
+	defer func() { _ = gpuEng.Close() }()
+
+	if count := gpuEng.OOMFallbackCount(); count != 0 {
+		t.Errorf("expected OOMFallbackCount=0 on fresh engine, got %d", count)
+	}
+}
+
+// assertGPUStorage checks that a tensor's storage is GPUStorage.
+func assertGPUStorage(t *testing.T, tn *tensor.TensorNumeric[float32], label string) {
+	t.Helper()
+
+	if _, ok := tn.GetStorage().(*tensor.GPUStorage[float32]); !ok {
+		t.Errorf("%s: expected GPUStorage, got %T", label, tn.GetStorage())
+	}
+}
+
 // --- Benchmarks ---
 
 func benchMatMul(b *testing.B, eng Engine[float32], size int) {
