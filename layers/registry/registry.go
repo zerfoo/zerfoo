@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/gather"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/layers/reducesum"
+	"github.com/zerfoo/zerfoo/layers/regularization"
 	"github.com/zerfoo/zerfoo/layers/transpose"
 	"github.com/zerfoo/zerfoo/model"
 )
@@ -46,6 +47,9 @@ func RegisterAll() {
 	model.RegisterLayer("RMSNorm", normalization.BuildRMSNorm[float32])
 	model.RegisterLayer("SimplifiedLayerNormalization", normalization.BuildSimplifiedLayerNormalization[float32])
 	model.RegisterLayer("SkipSimplifiedLayerNormalization", normalization.BuildSkipSimplifiedLayerNormalization[float32])
+
+	// Regularization
+	model.RegisterLayer("Dropout", regularization.BuildDropout[float32])
 
 	// ReduceSum
 	model.RegisterLayer("ReduceSum", reducesum.BuildReduceSum[float32])
