@@ -565,7 +565,7 @@ Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each 
 
 Validate all existing GPU code on real NVIDIA hardware. Use the cheapest available GPU VM on GCP (T4 spot instance). Create the VM, run tests and benchmarks, capture results, delete the VM immediately.
 
-- [ ] T15.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h
+- [ ] T15.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h  **BLOCKED:** GCP GPU quota = 0 for all available projects (numerai-488804, sire-staging). Quota increase request submitted (preference ID: zerfoo-gpu-test) but auto-denied pending manual Google review. Check status: `gcloud beta quotas preferences describe zerfoo-gpu-test --project=numerai-488804`
   - Dependencies: E14
   - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured.
   - [ ] S15.1.1 Create n1-standard-4 spot VM with T4 GPU using gcloud CLI (us-central1-a, Ubuntu 22.04)  Est: 5m
@@ -731,8 +731,8 @@ Replace panics in GPUStorage with error returns. Add OOM fallback in GPUEngine.
 
 Re-run benchmarks on real T4 hardware after E16-E18 optimizations.
 
-- [ ] T20.1 Run optimized benchmarks on T4 and document results  Owner: TBD  Est: 1h
-  - Dependencies: E16, E17, E18, E19
+- [ ] T20.1 Run optimized benchmarks on T4 and document results  Owner: TBD  Est: 1h  **BLOCKED:** Depends on E15 (GPU quota).
+  - Dependencies: E15, E16, E17, E18, E19
   - Acceptance: Benchmark results document speedup for MatMul (128/512/1024), Softmax, and chained attention ops. Results include comparison: Phase 2 (per-op H2D/D2H) vs Phase 3 (device-resident pipeline).
   - [ ] S20.1.1 Create T4 spot VM, install deps, clone repo  Est: 15m
   - [ ] S20.1.2 Run `go test -tags cuda -bench=. -benchmem ./compute/` and capture  Est: 10m
@@ -837,6 +837,8 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 ---
 
 ## 6. Progress Log
+
+- **2026 03 01 (update 6):** Change Summary: T16.5 chained-operation integration test added (TestGPUEngine_ChainedOpsDeviceResident, TestGPUEngine_MixedStorageInputs, TestGPUEngine_OOMFallbackCount). All plan checkboxes updated. E15/E20 blocked on GCP GPU quota (request submitted, pending Google manual review).
 
 - **2026 03 01 (update 5):** Change Summary: Implemented Phase 3 code changes (E16-E19). E19 T19.1: GPUStorage TrySlice/TrySet with error returns, Slice/Set log instead of panic. E17 T17.1: CUDA MemPool with size-bucketed free-list. E18 T18.1-T18.2: CUDA Stream bindings, all 17 kernel launchers accept stream parameter, cuBLAS SetStream. E16 T16.1-T16.4 + T17.2 + T18.3: Device-resident pipeline - getDevicePtr (zero-copy for GPUStorage, H2D from pool for CPUStorage), makeGPUResult (output as GPUStorage), all GPU ops refactored. GPUEngine now has pool, stream, oomFallbackCount fields. T19.2: OOM fallback with atomic counter. Remaining: T16.5 (chained-op integration test), E15/E20 (hardware validation, blocked on gcloud auth).
 
