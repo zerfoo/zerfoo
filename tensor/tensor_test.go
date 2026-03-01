@@ -309,7 +309,7 @@ func TestTensor_Copy(t *testing.T) {
 	copied := tensor.Copy()
 
 	// Check that the data slices are different
-	if &tensor.data[0] == &copied.data[0] {
+	if &tensor.Data()[0] == &copied.Data()[0] {
 		t.Errorf("data should be copied, not shared")
 	}
 
@@ -329,7 +329,7 @@ func TestTensor_Copy(t *testing.T) {
 	view, _ := tensor.Slice([2]int{0, 1}, [2]int{0, 2})
 
 	copiedView := view.Copy()
-	if &view.data[0] == &copiedView.data[0] {
+	if &view.Data()[0] == &copiedView.Data()[0] {
 		t.Errorf("data should be copied, not shared")
 	}
 
