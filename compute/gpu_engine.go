@@ -276,7 +276,7 @@ func (e *GPUEngine[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Softmax(ctx, a, axis, dst...)
+	return e.gpuSoftmax(ctx, a, axis, dst...)
 }
 
 func (e *GPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T], axis int, keepDims bool, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {

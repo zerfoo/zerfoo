@@ -366,6 +366,86 @@ func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], 
 	return nil
 }
 
+func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Softmax(ctx, a, axis, dst...)
+	}
+
+	if a == nil {
+		return nil, fmt.Errorf("Softmax: input tensor must not be nil")
+	}
+
+	shape := a.Shape()
+	rank := len(shape)
+
+	if rank == 0 {
+		return e.cpu.Softmax(ctx, a, axis, dst...)
+	}
+
+	if axis < 0 {
+		axis = rank + axis
+	}
+
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("Softmax: axis %d out of bounds for %d dimensions", axis, rank)
+	}
+
+	result, err := e.cpu.getOrCreateDest(shape, dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	aData := a.Data()
+	n := len(aData)
+	byteSize := n * f32Size
+
+	inner := 1
+	for i := axis + 1; i < rank; i++ {
+		inner *= shape[i]
+	}
+
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	axisSize := shape[axis]
+
+	devIn, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devIn) }()
+
+	devOut, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devOut) }()
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+
+	if err := cuda.Memcpy(devIn, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := kernels.Softmax(devIn, devOut, outer, inner, axisSize); err != nil {
+		return nil, err
+	}
+
+	resultF32 := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devOut, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return nil, err
+	}
+
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	result.SetData(resultT)
+
+	return result, nil
+}
+
 // sameShape checks if two tensors have the same shape (for non-broadcasting GPU path).
 func sameShape[T tensor.Numeric](a, b *tensor.TensorNumeric[T]) bool {
 	as := a.Shape()
