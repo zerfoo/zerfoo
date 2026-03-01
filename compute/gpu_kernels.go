@@ -1,0 +1,385 @@
+//go:build cuda
+
+package compute
+
+import (
+	"context"
+	"fmt"
+	"unsafe"
+
+	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
+	"github.com/zerfoo/zerfoo/tensor"
+)
+
+const f32Size = int(unsafe.Sizeof(float32(0)))
+
+// gpuBinaryOp transfers two equal-length float32 tensors to GPU, runs a kernel,
+// and transfers the result back. Falls back to CPU for non-float32 types.
+func gpuBinaryOp[T tensor.Numeric](
+	e *GPUEngine[T],
+	ctx context.Context,
+	a, b *tensor.TensorNumeric[T],
+	kernelFn func(devA, devB, devC unsafe.Pointer, n int) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	// Only float32 uses GPU kernels.
+	var zero T
+	if _, ok := any(zero).(float32); !ok {
+		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
+	}
+
+	aData := a.Data()
+	bData := b.Data()
+	n := len(aData)
+
+	if len(bData) != n {
+		return nil, fmt.Errorf("GPU binary op: length mismatch %d vs %d", n, len(bData))
+	}
+
+	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	byteSize := n * f32Size
+
+	devA, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devA) }()
+
+	devB, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devB) }()
+
+	devC, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devC) }()
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+	bF32 := *(*[]float32)(unsafe.Pointer(&bData))
+
+	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := cuda.Memcpy(devB, unsafe.Pointer(&bF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := kernelFn(devA, devB, devC, n); err != nil {
+		return nil, err
+	}
+
+	resultF32 := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return nil, err
+	}
+
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	result.SetData(resultT)
+
+	return result, nil
+}
+
+// gpuUnaryOp transfers a float32 tensor to GPU, runs a kernel, and returns.
+func gpuUnaryOp[T tensor.Numeric](
+	e *GPUEngine[T],
+	a *tensor.TensorNumeric[T],
+	kernelFn func(devA, devC unsafe.Pointer, n int) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	var zero T
+	if _, ok := any(zero).(float32); !ok {
+		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
+	}
+
+	aData := a.Data()
+	n := len(aData)
+
+	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	byteSize := n * f32Size
+
+	devA, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devA) }()
+
+	devC, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devC) }()
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+
+	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := kernelFn(devA, devC, n); err != nil {
+		return nil, err
+	}
+
+	resultF32 := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return nil, err
+	}
+
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	result.SetData(resultT)
+
+	return result, nil
+}
+
+// gpuScalarOp transfers a tensor to GPU and applies a scalar kernel.
+func gpuScalarOp[T tensor.Numeric](
+	e *GPUEngine[T],
+	a *tensor.TensorNumeric[T],
+	scalar float32,
+	kernelFn func(devA unsafe.Pointer, scalar float32, devC unsafe.Pointer, n int) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	var zero T
+	if _, ok := any(zero).(float32); !ok {
+		return nil, fmt.Errorf("GPU kernel: unsupported type %T", zero)
+	}
+
+	aData := a.Data()
+	n := len(aData)
+
+	result, err := e.cpu.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+
+	byteSize := n * f32Size
+
+	devA, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devA) }()
+
+	devC, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = cuda.Free(devC) }()
+
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+
+	if err := cuda.Memcpy(devA, unsafe.Pointer(&aF32[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		return nil, err
+	}
+
+	if err := kernelFn(devA, scalar, devC, n); err != nil {
+		return nil, err
+	}
+
+	resultF32 := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devC, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return nil, err
+	}
+
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	result.SetData(resultT)
+
+	return result, nil
+}
+
+// isFloat32 checks if the generic type T is float32.
+func isFloat32[T tensor.Numeric]() bool {
+	var zero T
+	_, ok := any(zero).(float32)
+
+	return ok
+}
+
+// toFloat32 converts a T value to float32 via any.
+func toFloat32[T tensor.Numeric](v T) float32 {
+	return any(v).(float32)
+}
+
+// --- GPU-accelerated method overrides ---
+// These replace the CPU fallbacks in gpu_engine.go for float32 types.
+// For non-float32, they fall back to CPUEngine.
+
+func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(a, b) {
+		return e.cpu.Add(ctx, a, b, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, a, b, kernels.Add, dst...)
+}
+
+func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(a, b) {
+		return e.cpu.Sub(ctx, a, b, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, a, b, kernels.Sub, dst...)
+}
+
+func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(a, b) {
+		return e.cpu.Mul(ctx, a, b, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, a, b, kernels.Mul, dst...)
+}
+
+func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(a, b) {
+		return e.cpu.Div(ctx, a, b, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, a, b, kernels.Div, dst...)
+}
+
+func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(base, exponent) {
+		return e.cpu.Pow(ctx, base, exponent, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, base, exponent, kernels.Pow, dst...)
+}
+
+func (e *GPUEngine[T]) gpuExp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Exp(ctx, a, dst...)
+	}
+
+	return gpuUnaryOp(e, a, kernels.Exp, dst...)
+}
+
+func (e *GPUEngine[T]) gpuLog(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Log(ctx, a, dst...)
+	}
+
+	return gpuUnaryOp(e, a, kernels.Log, dst...)
+}
+
+func (e *GPUEngine[T]) gpuSqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Sqrt(ctx, a, dst...)
+	}
+
+	return gpuUnaryOp(e, a, kernels.Sqrt, dst...)
+}
+
+func (e *GPUEngine[T]) gpuRsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Rsqrt(ctx, a, dst...)
+	}
+
+	return gpuUnaryOp(e, a, kernels.Rsqrt, dst...)
+}
+
+func (e *GPUEngine[T]) gpuTanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Tanh(ctx, a, dst...)
+	}
+
+	return gpuUnaryOp(e, a, kernels.Tanh, dst...)
+}
+
+func (e *GPUEngine[T]) gpuTanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() || !sameShape(a, upstream) {
+		return e.cpu.TanhPrime(ctx, a, upstream, dst...)
+	}
+
+	return gpuBinaryOp(e, ctx, a, upstream, kernels.TanhPrime, dst...)
+}
+
+func (e *GPUEngine[T]) gpuAddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.AddScalar(ctx, a, scalar, dst...)
+	}
+
+	return gpuScalarOp(e, a, toFloat32(scalar), kernels.AddScalar, dst...)
+}
+
+func (e *GPUEngine[T]) gpuMulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.MulScalar(ctx, a, scalar, dst...)
+	}
+
+	return gpuScalarOp(e, a, toFloat32(scalar), kernels.MulScalar, dst...)
+}
+
+func (e *GPUEngine[T]) gpuDivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.DivScalar(ctx, a, scalar, dst...)
+	}
+
+	return gpuScalarOp(e, a, toFloat32(scalar), kernels.DivScalar, dst...)
+}
+
+func (e *GPUEngine[T]) gpuFill(ctx context.Context, t *tensor.TensorNumeric[T], value T) error {
+	if !isFloat32[T]() {
+		return e.cpu.Fill(ctx, t, value)
+	}
+
+	data := t.Data()
+	n := len(data)
+	byteSize := n * f32Size
+
+	devPtr, err := cuda.Malloc(byteSize)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = cuda.Free(devPtr) }()
+
+	if err := kernels.Fill(devPtr, toFloat32(value), n); err != nil {
+		return err
+	}
+
+	resultF32 := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&resultF32[0]), devPtr, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		return err
+	}
+
+	resultT := *(*[]T)(unsafe.Pointer(&resultF32))
+	t.SetData(resultT)
+
+	return nil
+}
+
+// sameShape checks if two tensors have the same shape (for non-broadcasting GPU path).
+func sameShape[T tensor.Numeric](a, b *tensor.TensorNumeric[T]) bool {
+	as := a.Shape()
+	bs := b.Shape()
+
+	if len(as) != len(bs) {
+		return false
+	}
+
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+
+	return true
+}

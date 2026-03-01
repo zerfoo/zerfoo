@@ -14,8 +14,9 @@ import (
 )
 
 // GPUEngine is a CUDA-accelerated implementation of the Engine interface.
-// MatMul uses cuBLAS for maximum performance. All other operations delegate
-// to an embedded CPUEngine until native GPU kernels are added.
+// MatMul uses cuBLAS for maximum performance. Elementwise, scalar, activation,
+// and math operations use native CUDA kernels for float32 types.
+// Operations without GPU kernels delegate to CPUEngine.
 type GPUEngine[T tensor.Numeric] struct {
 	cpu    *CPUEngine[T]
 	handle *cublas.Handle
@@ -188,26 +189,26 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	return result, nil
 }
 
-// --- Fallback methods delegating to CPUEngine ---
+// --- GPU-accelerated and fallback methods ---
 
 func (e *GPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.UnaryOp(ctx, a, op, dst...)
 }
 
 func (e *GPUEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Add(ctx, a, b, dst...)
+	return e.gpuAdd(ctx, a, b, dst...)
 }
 
 func (e *GPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Sub(ctx, a, b, dst...)
+	return e.gpuSub(ctx, a, b, dst...)
 }
 
 func (e *GPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Mul(ctx, a, b, dst...)
+	return e.gpuMul(ctx, a, b, dst...)
 }
 
 func (e *GPUEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Div(ctx, a, b, dst...)
+	return e.gpuDiv(ctx, a, b, dst...)
 }
 
 func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -219,23 +220,23 @@ func (e *GPUEngine[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], axis
 }
 
 func (e *GPUEngine[T]) Exp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Exp(ctx, a, dst...)
+	return e.gpuExp(ctx, a, dst...)
 }
 
 func (e *GPUEngine[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Log(ctx, a, dst...)
+	return e.gpuLog(ctx, a, dst...)
 }
 
 func (e *GPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Tanh(ctx, a, dst...)
+	return e.gpuTanh(ctx, a, dst...)
 }
 
 func (e *GPUEngine[T]) TanhPrime(ctx context.Context, a, upstream *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.TanhPrime(ctx, a, upstream, dst...)
+	return e.gpuTanhPrime(ctx, a, upstream, dst...)
 }
 
 func (e *GPUEngine[T]) Pow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Pow(ctx, base, exponent, dst...)
+	return e.gpuPow(ctx, base, exponent, dst...)
 }
 
 func (e *GPUEngine[T]) Zero(ctx context.Context, a *tensor.TensorNumeric[T]) error {
@@ -263,15 +264,15 @@ func (e *GPUEngine[T]) RandomUniform(ctx context.Context, t *tensor.TensorNumeri
 }
 
 func (e *GPUEngine[T]) Fill(ctx context.Context, t *tensor.TensorNumeric[T], value T) error {
-	return e.cpu.Fill(ctx, t, value)
+	return e.gpuFill(ctx, t, value)
 }
 
 func (e *GPUEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.MulScalar(ctx, a, scalar, dst...)
+	return e.gpuMulScalar(ctx, a, scalar, dst...)
 }
 
 func (e *GPUEngine[T]) DivScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.DivScalar(ctx, a, scalar, dst...)
+	return e.gpuDivScalar(ctx, a, scalar, dst...)
 }
 
 func (e *GPUEngine[T]) Softmax(ctx context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -283,11 +284,11 @@ func (e *GPUEngine[T]) ReduceSum(ctx context.Context, a *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) AddScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.AddScalar(ctx, a, scalar, dst...)
+	return e.gpuAddScalar(ctx, a, scalar, dst...)
 }
 
 func (e *GPUEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Sqrt(ctx, a, dst...)
+	return e.gpuSqrt(ctx, a, dst...)
 }
 
 func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
@@ -315,7 +316,7 @@ func (e *GPUEngine[T]) ReduceMean(ctx context.Context, a *tensor.TensorNumeric[T
 }
 
 func (e *GPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Rsqrt(ctx, a, dst...)
+	return e.gpuRsqrt(ctx, a, dst...)
 }
 
 // Static type assertion: GPUEngine satisfies Engine.
