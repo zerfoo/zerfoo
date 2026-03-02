@@ -357,12 +357,21 @@ func TestCoordinator_StartAndStop(t *testing.T) {
 	// Stop the server
 	coord.Stop()
 
-	// Try to dial the closed server (should fail)
-	dctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// Verify the server no longer serves RPCs after stop.
+	// Note: raw TCP dial is unreliable on macOS because the port
+	// may remain briefly connectable after the listener closes.
+	addr := coord.Addr().String()
+	conn, dialErr := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if dialErr != nil {
+		return // server already unreachable, test passes
+	}
+	defer func() { _ = conn.Close() }()
+
+	rctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	d := &net.Dialer{}
-	_, err = d.DialContext(dctx, "tcp", coord.Addr().String())
-	testutils.AssertError(t, err, "expected an error when dialing closed server, got nil")
+	client := pb.NewCoordinatorClient(conn)
+	_, rpcErr := client.Heartbeat(rctx, &pb.HeartbeatRequest{WorkerId: "test"})
+	testutils.AssertError(t, rpcErr, "expected RPC to fail on stopped server")
 }
 
 func TestCoordinator_Addr(t *testing.T) {

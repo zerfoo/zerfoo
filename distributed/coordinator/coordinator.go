@@ -25,6 +25,7 @@ type Coordinator struct {
 	checkpoints map[string]*CheckpointInfo
 	nextRank    int
 	server      *grpc.Server
+	serverOpts  []grpc.ServerOption
 	logger      log.Logger
 	lis         net.Listener
 	timeout     time.Duration
@@ -77,10 +78,16 @@ func (c *Coordinator) Start(address string) error {
 	return nil
 }
 
+// SetServerOptions sets gRPC server options (e.g. TLS credentials)
+// that will be applied when the server starts. Must be called before Start.
+func (c *Coordinator) SetServerOptions(opts ...grpc.ServerOption) {
+	c.serverOpts = opts
+}
+
 // start starts the coordinator service on the given listener.
 func (c *Coordinator) start(lis net.Listener) {
 	c.lis = lis
-	c.server = grpc.NewServer()
+	c.server = grpc.NewServer(c.serverOpts...)
 	pb.RegisterCoordinatorServer(c.server, c)
 	c.logger.Info("starting gRPC server", "address", lis.Addr().String())
 
