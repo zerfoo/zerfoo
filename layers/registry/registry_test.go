@@ -39,6 +39,8 @@ func TestRegisterAll(t *testing.T) {
 		"Conv",
 		"GlobalAveragePool",
 		"Resize",
+		"MoEGate",
+		"MixtureOfExperts",
 		// Gather
 		"Gather",
 		// Normalization

@@ -46,6 +46,8 @@ func RegisterAll() {
 	model.RegisterLayer("Conv", core.BuildConv2d[float32])
 	model.RegisterLayer("GlobalAveragePool", core.BuildGlobalAveragePool[float32])
 	model.RegisterLayer("Resize", core.BuildResize[float32])
+	model.RegisterLayer("MoEGate", core.BuildMoEGate[float32])
+	model.RegisterLayer("MixtureOfExperts", core.BuildMixtureOfExperts[float32])
 
 	// Embeddings
 
