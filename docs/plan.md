@@ -133,35 +133,35 @@ or the distributed Logger interface.
 - [x] T21.1 Define Logger interface in a new `log` package  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Interface has Debug, Info, Warn, Error methods. Each accepts a message string and key-value fields. A NopLogger and a StdLogger (writing to io.Writer) are provided. JSON output mode is available via a constructor option.
-  - [ ] S21.1.1 Create log/logger.go with Logger interface and Level type  Est: 20m
-  - [ ] S21.1.2 Implement StdLogger with level filtering and text/JSON output  Est: 25m
-  - [ ] S21.1.3 Implement NopLogger (zero-allocation no-op)  Est: 5m
-  - [ ] S21.1.4 Write unit tests for StdLogger (level filtering, JSON format, field rendering)  Est: 20m
-  - [ ] S21.1.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S21.1.1 Create log/logger.go with Logger interface and Level type  Est: 20m
+  - [x] S21.1.2 Implement StdLogger with level filtering and text/JSON output  Est: 25m
+  - [x] S21.1.3 Implement NopLogger (zero-allocation no-op)  Est: 5m
+  - [x] S21.1.4 Write unit tests for StdLogger (level filtering, JSON format, field rendering)  Est: 20m
+  - [x] S21.1.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T21.2 Integrate Logger into compute package  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: CPUEngine and GPUEngine accept a Logger at construction. OOM fallback, stream errors, and pool operations log at appropriate levels. No raw fmt.Printf calls remain in compute/.
-  - [ ] S21.2.1 Add Logger field to CPUEngine; log parallelFor errors at Warn  Est: 15m
-  - [ ] S21.2.2 Add Logger field to GPUEngine; log OOM fallback, pool stats, stream errors  Est: 20m
-  - [ ] S21.2.3 Update tests to verify log output in error scenarios  Est: 15m
-  - [ ] S21.2.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S21.2.1 Add Logger field to CPUEngine; log parallelFor errors at Warn  Est: 15m
+  - [x] S21.2.2 Add Logger field to GPUEngine; log OOM fallback, pool stats, stream errors  Est: 20m
+  - [x] S21.2.3 Update tests to verify log output in error scenarios  Est: 15m
+  - [x] S21.2.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T21.3 Integrate Logger into distributed package  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: Replace existing distributed.Logger interface with log.Logger. All coordinator and worker components use leveled logging. Connection events logged at Info, errors at Error.
-  - [ ] S21.3.1 Update distributed.ServerManager, coordinator to accept log.Logger  Est: 15m
-  - [ ] S21.3.2 Replace all fmt.Printf calls in distributed/ with logger calls  Est: 15m
-  - [ ] S21.3.3 Update tests to use StdLogger or NopLogger  Est: 10m
-  - [ ] S21.3.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S21.3.1 Update distributed.ServerManager, coordinator to accept log.Logger  Est: 15m
+  - [x] S21.3.2 Replace all fmt.Printf calls in distributed/ with logger calls  Est: 15m
+  - [x] S21.3.3 Update tests to use StdLogger or NopLogger  Est: 10m
+  - [x] S21.3.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T21.4 Integrate Logger into remaining packages  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: training/, model/, cmd/cli/ use log.Logger. No raw fmt.Printf in non-test production code.
-  - [ ] S21.4.1 Add Logger to training.WorkflowConfig and optimizer constructors  Est: 10m
-  - [ ] S21.4.2 Add Logger to model package and cmd/cli framework  Est: 10m
-  - [ ] S21.4.3 Audit all packages for remaining fmt.Printf; replace with logger  Est: 10m
-  - [ ] S21.4.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S21.4.1 Add Logger to training.WorkflowConfig and optimizer constructors  Est: 10m
+  - [x] S21.4.2 Add Logger to model package and cmd/cli framework  Est: 10m
+  - [x] S21.4.3 Audit all packages for remaining fmt.Printf; replace with logger  Est: 10m
+  - [x] S21.4.4 Run golangci-lint and go test -cover  Est: 5m
 
 #### E22: Metrics Interface
 
@@ -171,27 +171,27 @@ must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
 - [x] T22.1 Define Metrics interface in a new `metrics/runtime` package  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Interface has Counter(name), Gauge(name), Histogram(name, buckets) methods. Each returns a typed metric with Inc/Set/Observe methods. A default in-memory implementation is provided for testing and local use. A NopMetrics implementation is provided for zero overhead when metrics are disabled.
-  - [ ] S22.1.1 Create metrics/runtime/metrics.go with Collector interface  Est: 20m
-  - [ ] S22.1.2 Implement InMemoryCollector with thread-safe counters/gauges  Est: 25m
-  - [ ] S22.1.3 Implement NopCollector (zero-allocation no-op)  Est: 5m
-  - [ ] S22.1.4 Write unit tests for InMemoryCollector (concurrent access, snapshot)  Est: 15m
-  - [ ] S22.1.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S22.1.1 Create metrics/runtime/metrics.go with Collector interface  Est: 20m
+  - [x] S22.1.2 Implement InMemoryCollector with thread-safe counters/gauges  Est: 25m
+  - [x] S22.1.3 Implement NopCollector (zero-allocation no-op)  Est: 5m
+  - [x] S22.1.4 Write unit tests for InMemoryCollector (concurrent access, snapshot)  Est: 15m
+  - [x] S22.1.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T22.2 Instrument compute.Engine with metrics  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T22.1
   - Acceptance: CPUEngine and GPUEngine report: op_count (counter per operation type), op_duration_seconds (histogram), oom_fallback_total (counter), pool_hit_total / pool_miss_total (counters for GPU pool).
-  - [ ] S22.2.1 Add Collector field to CPUEngine; instrument Add/MatMul/etc. with counters and timers  Est: 20m
-  - [ ] S22.2.2 Add Collector field to GPUEngine; instrument kernel dispatch, OOM, pool  Est: 20m
-  - [ ] S22.2.3 Write tests verifying metric increments after operations  Est: 15m
-  - [ ] S22.2.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S22.2.1 Add Collector field to CPUEngine; instrument Add/MatMul/etc. with counters and timers  Est: 20m
+  - [x] S22.2.2 Add Collector field to GPUEngine; instrument kernel dispatch, OOM, pool  Est: 20m
+  - [x] S22.2.3 Write tests verifying metric increments after operations  Est: 15m
+  - [x] S22.2.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T22.3 Instrument distributed package with metrics  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T22.1
   - Acceptance: Distributed workers report: allreduce_count (counter), allreduce_duration_seconds (histogram), barrier_count, broadcast_count, connection_errors_total.
-  - [ ] S22.3.1 Add Collector to Strategy and coordinator  Est: 15m
-  - [ ] S22.3.2 Instrument AllReduceGradients, Barrier, BroadcastTensor  Est: 10m
-  - [ ] S22.3.3 Write tests verifying metrics after distributed operations  Est: 10m
-  - [ ] S22.3.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S22.3.1 Add Collector to Strategy and coordinator  Est: 15m
+  - [x] S22.3.2 Instrument AllReduceGradients, Barrier, BroadcastTensor  Est: 10m
+  - [x] S22.3.3 Write tests verifying metrics after distributed operations  Est: 10m
+  - [x] S22.3.4 Run golangci-lint and go test -cover  Est: 5m
 
 #### E23: gRPC Security Hardening
 
@@ -200,19 +200,19 @@ Add TLS and mutual authentication to all gRPC communication channels.
 - [x] T23.1 Add TLS configuration to gRPC server and client  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A TLSConfig struct supports: CA cert path, server cert/key paths, client cert/key paths for mTLS. ServerManager.Start() uses TLS credentials when TLSConfig is provided. Worker connections use TLS. Plaintext is still supported (for local development) when TLSConfig is nil.
-  - [ ] S23.1.1 Create distributed/tlsconfig.go with TLSConfig struct and credential helpers  Est: 20m
-  - [ ] S23.1.2 Update ServerManager to accept TLSConfig and create TLS listener  Est: 15m
-  - [ ] S23.1.3 Update NetworkManager.ConnectToPeers to use TLS dial options  Est: 15m
-  - [ ] S23.1.4 Write integration test: server + client with self-signed TLS certs  Est: 20m
-  - [ ] S23.1.5 Write integration test: mTLS with client cert verification  Est: 15m
-  - [ ] S23.1.6 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S23.1.1 Create distributed/tlsconfig.go with TLSConfig struct and credential helpers  Est: 20m
+  - [x] S23.1.2 Update ServerManager to accept TLSConfig and create TLS listener  Est: 15m
+  - [x] S23.1.3 Update NetworkManager.ConnectToPeers to use TLS dial options  Est: 15m
+  - [x] S23.1.4 Write integration test: server + client with self-signed TLS certs  Est: 20m
+  - [x] S23.1.5 Write integration test: mTLS with client cert verification  Est: 15m
+  - [x] S23.1.6 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T23.2 Add input validation to distributed RPC handlers  Owner: TBD  Est: 30m  Completed: 2026 03 01 via T32.5  Note: Implemented as part of Phase 5 E32 workerService.
   - Dependencies: None
   - Acceptance: All RPC handlers validate request fields (non-empty rank, valid tensor shapes, non-nil data). Invalid requests return gRPC InvalidArgument status. Tests verify each validation path.
-  - [ ] S23.2.1 Add validation to AllReduce, Barrier, Broadcast RPC handlers  Est: 15m
-  - [ ] S23.2.2 Write tests for each validation error case  Est: 10m
-  - [ ] S23.2.3 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S23.2.1 Add validation to AllReduce, Barrier, Broadcast RPC handlers  Est: 15m
+  - [x] S23.2.2 Write tests for each validation error case  Est: 10m
+  - [x] S23.2.3 Run golangci-lint and go test -cover  Est: 5m
 
 #### E24: Configuration Management
 
@@ -222,18 +222,18 @@ variable overrides. Use encoding/json and os.Getenv from the standard library.
 - [x] T24.1 Create config package with file loader  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A config.Load[T](path string) function reads a JSON file into a struct. A config.LoadWithEnv[T](path, prefix string) function additionally applies environment variable overrides using the `env` struct tag. Validation errors list all invalid fields. Missing required fields produce clear error messages.
-  - [ ] S24.1.1 Create config/loader.go with Load[T] function (JSON decoder)  Est: 15m
-  - [ ] S24.1.2 Implement env var override via struct tag reflection  Est: 20m
-  - [ ] S24.1.3 Implement validation via `validate:"required"` struct tag  Est: 15m
-  - [ ] S24.1.4 Write unit tests: valid config, missing file, invalid JSON, missing required, env override  Est: 20m
-  - [ ] S24.1.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S24.1.1 Create config/loader.go with Load[T] function (JSON decoder)  Est: 15m
+  - [x] S24.1.2 Implement env var override via struct tag reflection  Est: 20m
+  - [x] S24.1.3 Implement validation via `validate:"required"` struct tag  Est: 15m
+  - [x] S24.1.4 Write unit tests: valid config, missing file, invalid JSON, missing required, env override  Est: 20m
+  - [x] S24.1.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T24.2 Define standard config structs for Engine and Training  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T24.1
   - Acceptance: EngineConfig (device type, memory limit, log level), TrainingConfig (batch size, learning rate, optimizer, epochs, checkpoint interval), DistributedConfig (coordinator address, TLS config, timeout). Each struct has JSON tags and validation tags.
-  - [ ] S24.2.1 Define EngineConfig, TrainingConfig, DistributedConfig structs  Est: 15m
-  - [ ] S24.2.2 Write tests loading each config from JSON with env overrides  Est: 10m
-  - [ ] S24.2.3 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S24.2.1 Define EngineConfig, TrainingConfig, DistributedConfig structs  Est: 15m
+  - [x] S24.2.2 Write tests loading each config from JSON with env overrides  Est: 10m
+  - [x] S24.2.3 Run golangci-lint and go test -cover  Est: 5m
 
 #### E25: Graceful Shutdown
 
@@ -243,27 +243,27 @@ and cleanup callbacks.
 - [x] T25.1 Add Closer interface and shutdown coordinator  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A shutdown.Coordinator registers Closer instances in order. On Shutdown(ctx), it calls Close() on each in reverse registration order. If a Closer does not complete within the context deadline, it is skipped and logged. Integration test demonstrates orderly cleanup.
-  - [ ] S25.1.1 Create shutdown/coordinator.go with Closer interface and Coordinator  Est: 20m
-  - [ ] S25.1.2 Implement reverse-order shutdown with timeout per closer  Est: 15m
-  - [ ] S25.1.3 Write tests: orderly shutdown, timeout on slow closer, empty coordinator  Est: 15m
-  - [ ] S25.1.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S25.1.1 Create shutdown/coordinator.go with Closer interface and Coordinator  Est: 20m
+  - [x] S25.1.2 Implement reverse-order shutdown with timeout per closer  Est: 15m
+  - [x] S25.1.3 Write tests: orderly shutdown, timeout on slow closer, empty coordinator  Est: 15m
+  - [x] S25.1.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T25.2 Implement Closer for Engine and distributed components  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T25.1
   - Acceptance: GPUEngine.Close() drains memory pool and destroys CUDA handles. CPUEngine.Close() is a no-op (satisfies interface). Distributed Strategy.Shutdown() deregisters from coordinator and closes connections. All Close methods are idempotent.
-  - [ ] S25.2.1 Make CPUEngine implement Closer (no-op Close)  Est: 5m
-  - [ ] S25.2.2 Verify GPUEngine.Close() is idempotent  Est: 10m
-  - [ ] S25.2.3 Make distributed Strategy implement Closer  Est: 10m
-  - [ ] S25.2.4 Write integration test: register Engine + Strategy, trigger shutdown  Est: 15m
-  - [ ] S25.2.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S25.2.1 Make CPUEngine implement Closer (no-op Close)  Est: 5m
+  - [x] S25.2.2 Verify GPUEngine.Close() is idempotent  Est: 10m
+  - [x] S25.2.3 Make distributed Strategy implement Closer  Est: 10m
+  - [x] S25.2.4 Write integration test: register Engine + Strategy, trigger shutdown  Est: 15m
+  - [x] S25.2.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T25.3 Add signal handling to CLI commands  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T25.1, T25.2
   - Acceptance: cmd/zerfoo and cmd/zerfoo-predict catch SIGINT/SIGTERM, trigger shutdown coordinator, and exit cleanly. Integration test verifies signal handling.
-  - [ ] S25.3.1 Add signal listener in cmd framework that cancels root context  Est: 15m
-  - [ ] S25.3.2 Wire shutdown coordinator into CLI lifecycle  Est: 10m
-  - [ ] S25.3.3 Write test verifying clean exit on SIGTERM  Est: 10m
-  - [ ] S25.3.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S25.3.1 Add signal listener in cmd framework that cancels root context  Est: 15m
+  - [x] S25.3.2 Wire shutdown coordinator into CLI lifecycle  Est: 10m
+  - [x] S25.3.3 Write test verifying clean exit on SIGTERM  Est: 10m
+  - [x] S25.3.4 Run golangci-lint and go test -cover  Est: 5m
 
 #### E26: Health Checks
 
@@ -273,17 +273,17 @@ and readiness).
 - [x] T26.1 Create health check HTTP server  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: A health.Server exposes /healthz (liveness) and /readyz (readiness) HTTP endpoints. Each returns 200 OK with JSON body when healthy, 503 when unhealthy. Readiness checks are configurable (register check functions). Server starts on a configurable port. Logger is used for startup/error messages.
-  - [ ] S26.1.1 Create health/server.go with Server struct and HTTP handlers  Est: 15m
-  - [ ] S26.1.2 Implement configurable readiness checks (func() error callbacks)  Est: 10m
-  - [ ] S26.1.3 Write tests: healthy response, unhealthy readiness, concurrent access  Est: 15m
-  - [ ] S26.1.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S26.1.1 Create health/server.go with Server struct and HTTP handlers  Est: 15m
+  - [x] S26.1.2 Implement configurable readiness checks (func() error callbacks)  Est: 10m
+  - [x] S26.1.3 Write tests: healthy response, unhealthy readiness, concurrent access  Est: 15m
+  - [x] S26.1.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T26.2 Add engine health check  Owner: TBD  Est: 20m  Completed: 2026 03 01
   - Dependencies: T26.1
   - Acceptance: A check function verifies Engine is operational (e.g., small tensor add succeeds). For GPU, additionally verify CUDA context is valid. Register as readiness check.
-  - [ ] S26.2.1 Implement engine health check function  Est: 10m
-  - [ ] S26.2.2 Write test for healthy and unhealthy engine  Est: 10m
-  - [ ] S26.2.3 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S26.2.1 Implement engine health check function  Est: 10m
+  - [x] S26.2.2 Write test for healthy and unhealthy engine  Est: 10m
+  - [x] S26.2.3 Run golangci-lint and go test -cover  Est: 5m
 
 #### E27: CI/CD Hardening
 
@@ -292,33 +292,33 @@ Make CI pipeline enforce quality gates strictly.
 - [x] T27.1 Make parity and numerics tests blocking  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Remove `|| true` from parity and numerics test steps in .github/workflows/ci.yml. CI fails if any parity or numerics test fails.
-  - [ ] S27.1.1 Update ci.yml: remove `|| true` from parity test step  Est: 5m
-  - [ ] S27.1.2 Update ci.yml: remove `|| true` from numerics test step  Est: 5m
-  - [ ] S27.1.3 Verify CI passes with current test suite  Est: 5m
+  - [x] S27.1.1 Update ci.yml: remove `|| true` from parity test step  Est: 5m
+  - [x] S27.1.2 Update ci.yml: remove `|| true` from numerics test step  Est: 5m
+  - [x] S27.1.3 Verify CI passes with current test suite  Est: 5m
 
 - [x] T27.2 Add coverage gate to CI  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI step runs `go test -coverprofile=coverage.out ./...`, parses output, and fails if any testable package (excluding documented exceptions) drops below 93%. Coverage summary is posted as a CI artifact.
-  - [ ] S27.2.1 Add coverage step to ci.yml that generates coverage.out  Est: 10m
-  - [ ] S27.2.2 Write a Go script (cmd/coverage-gate/main.go) that parses coverage.out and exits non-zero if below threshold  Est: 20m
-  - [ ] S27.2.3 Add tests for coverage-gate script  Est: 10m
-  - [ ] S27.2.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S27.2.1 Add coverage step to ci.yml that generates coverage.out  Est: 10m
+  - [x] S27.2.2 Write a Go script (cmd/coverage-gate/main.go) that parses coverage.out and exits non-zero if below threshold  Est: 20m
+  - [x] S27.2.3 Add tests for coverage-gate script  Est: 10m
+  - [x] S27.2.4 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T27.3 Add benchmark regression detection  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI runs benchmarks on each PR. A Go script compares benchmark results against a baseline (stored in repo). CI fails if any benchmark regresses by more than 10%. Baseline is updated via a manual workflow dispatch.
-  - [ ] S27.3.1 Add benchmark step to ci.yml (go test -bench=. -benchmem -count=3)  Est: 10m
-  - [ ] S27.3.2 Write cmd/bench-compare/main.go to parse benchstat output and enforce threshold  Est: 25m
-  - [ ] S27.3.3 Add baseline benchmark results file (benchmarks/baseline.txt)  Est: 5m
-  - [ ] S27.3.4 Add tests for bench-compare script  Est: 10m
-  - [ ] S27.3.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S27.3.1 Add benchmark step to ci.yml (go test -bench=. -benchmem -count=3)  Est: 10m
+  - [x] S27.3.2 Write cmd/bench-compare/main.go to parse benchstat output and enforce threshold  Est: 25m
+  - [x] S27.3.3 Add baseline benchmark results file (benchmarks/baseline.txt)  Est: 5m
+  - [x] S27.3.4 Add tests for bench-compare script  Est: 10m
+  - [x] S27.3.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T27.4 Update CI Go version and add race detector  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI uses Go 1.25 (matching go.mod). Race detector runs on unit tests. Both Ubuntu and macOS runners are used.
-  - [ ] S27.4.1 Update ci.yml go-version to match go.mod  Est: 5m
-  - [ ] S27.4.2 Add -race flag to unit test step  Est: 5m
-  - [ ] S27.4.3 Add macOS runner to test matrix  Est: 5m
+  - [x] S27.4.1 Update ci.yml go-version to match go.mod  Est: 5m
+  - [x] S27.4.2 Add -race flag to unit test step  Est: 5m
+  - [x] S27.4.3 Add macOS runner to test matrix  Est: 5m
 
 #### E28: Resource Limits
 
@@ -328,19 +328,19 @@ runaway operations.
 - [x] T28.1 Add memory limit to Engine  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Engine accepts a MaxMemoryBytes option. Tensor allocation that would exceed the limit returns an error instead of allocating. GPU engine tracks device memory usage. The limit is enforced at the Engine level, not the allocator level (so it applies to both CPU and GPU).
-  - [ ] S28.1.1 Add MemoryTracker to compute package (atomic int64 tracking allocated bytes)  Est: 15m
-  - [ ] S28.1.2 Integrate MemoryTracker into tensor allocation (New, NewWithStorage)  Est: 15m
-  - [ ] S28.1.3 Add MaxMemoryBytes option to Engine constructors  Est: 10m
-  - [ ] S28.1.4 Write tests: allocation within limit succeeds, over limit returns error  Est: 15m
-  - [ ] S28.1.5 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S28.1.1 Add MemoryTracker to compute package (atomic int64 tracking allocated bytes)  Est: 15m
+  - [x] S28.1.2 Integrate MemoryTracker into tensor allocation (New, NewWithStorage)  Est: 15m
+  - [x] S28.1.3 Add MaxMemoryBytes option to Engine constructors  Est: 10m
+  - [x] S28.1.4 Write tests: allocation within limit succeeds, over limit returns error  Est: 15m
+  - [x] S28.1.5 Run golangci-lint and go test -cover  Est: 5m
 
 - [x] T28.2 Add per-operation timeout enforcement  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Engine respects context.Context deadlines. Long-running operations (MatMul, Softmax) check ctx.Done() periodically and return context.DeadlineExceeded if expired. GPU operations use CUDA stream synchronization with timeout.
-  - [ ] S28.2.1 Add ctx.Done() checks in CPUEngine parallelFor loops  Est: 15m
-  - [ ] S28.2.2 Add stream sync timeout in GPUEngine operations  Est: 10m
-  - [ ] S28.2.3 Write tests: operation completes within deadline, times out correctly  Est: 15m
-  - [ ] S28.2.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S28.2.1 Add ctx.Done() checks in CPUEngine parallelFor loops  Est: 15m
+  - [x] S28.2.2 Add stream sync timeout in GPUEngine operations  Est: 10m
+  - [x] S28.2.3 Write tests: operation completes within deadline, times out correctly  Est: 15m
+  - [x] S28.2.4 Run golangci-lint and go test -cover  Est: 5m
 
 #### E29: GPU Hardware Validation (Blocked)
 
@@ -372,25 +372,25 @@ Create operational documentation for production deployment.
 - [x] T30.1 Write deployment runbook  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: E21, E23, E24, E25, E26
   - Acceptance: docs/runbook.md covers: system requirements, installation steps, configuration reference (all config fields documented), startup sequence, health check verification, log interpretation, common operational tasks (scale workers, update model, restart), shutdown procedure.
-  - [ ] S30.1.1 Write system requirements and installation section  Est: 15m
-  - [ ] S30.1.2 Write configuration reference (all config structs documented)  Est: 15m
-  - [ ] S30.1.3 Write startup, health check, and shutdown sections  Est: 15m
-  - [ ] S30.1.4 Write common operational tasks  Est: 15m
+  - [x] S30.1.1 Write system requirements and installation section  Est: 15m
+  - [x] S30.1.2 Write configuration reference (all config structs documented)  Est: 15m
+  - [x] S30.1.3 Write startup, health check, and shutdown sections  Est: 15m
+  - [x] S30.1.4 Write common operational tasks  Est: 15m
 
 - [x] T30.2 Write troubleshooting guide  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: E21, E22
   - Acceptance: docs/troubleshooting.md covers: common error messages with root causes and fixes, GPU-specific issues (CUDA not found, OOM, driver mismatch), distributed training issues (connection refused, timeout, split brain), performance diagnosis (how to identify bottlenecks, pprof usage).
-  - [ ] S30.2.1 Document common error messages and fixes  Est: 15m
-  - [ ] S30.2.2 Document GPU troubleshooting  Est: 10m
-  - [ ] S30.2.3 Document distributed training troubleshooting  Est: 10m
-  - [ ] S30.2.4 Document performance diagnosis with pprof  Est: 10m
+  - [x] S30.2.1 Document common error messages and fixes  Est: 15m
+  - [x] S30.2.2 Document GPU troubleshooting  Est: 10m
+  - [x] S30.2.3 Document distributed training troubleshooting  Est: 10m
+  - [x] S30.2.4 Document performance diagnosis with pprof  Est: 10m
 
 - [x] T30.3 Add pprof endpoints to health server  Owner: TBD  Est: 20m  Completed: 2026 03 01
   - Dependencies: T26.1
   - Acceptance: Health server registers net/http/pprof handlers. CPU profile, heap profile, goroutine dump available at /debug/pprof/*.
-  - [ ] S30.3.1 Register pprof handlers in health.Server  Est: 10m
-  - [ ] S30.3.2 Write test verifying pprof endpoints respond  Est: 10m
-  - [ ] S30.3.3 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S30.3.1 Register pprof handlers in health.Server  Est: 10m
+  - [x] S30.3.2 Write test verifying pprof endpoints respond  Est: 10m
+  - [x] S30.3.3 Run golangci-lint and go test -cover  Est: 5m
 
 #### E31: Final Verification
 
@@ -399,23 +399,23 @@ Run the full quality gate suite after all enterprise features are implemented.
 - [x] T31.1 Run full test suite with coverage  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: E21, E22, E23, E24, E25, E26, E27, E28
   - Acceptance: `go test ./... -cover` shows all packages at target coverage. `go test ./... -race` shows zero races. New packages (log, config, health, shutdown, metrics/runtime) are all at >= 95%.
-  - [ ] S31.1.1 Run go test ./... -cover  Est: 10m
-  - [ ] S31.1.2 Run go test ./... -race  Est: 10m
-  - [ ] S31.1.3 Verify new packages meet 95% coverage  Est: 10m
+  - [x] S31.1.1 Run go test ./... -cover  Est: 10m
+  - [x] S31.1.2 Run go test ./... -race  Est: 10m
+  - [x] S31.1.3 Verify new packages meet 95% coverage  Est: 10m
 
 - [x] T31.2 Run linters and formatters  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: T31.1
   - Acceptance: golangci-lint 0 issues, go vet clean, gofmt clean.
-  - [ ] S31.2.1 Run golangci-lint run ./...  Est: 5m
-  - [ ] S31.2.2 Run go vet ./...  Est: 5m
-  - [ ] S31.2.3 Run gofmt -l . and verify no files  Est: 5m
+  - [x] S31.2.1 Run golangci-lint run ./...  Est: 5m
+  - [x] S31.2.2 Run go vet ./...  Est: 5m
+  - [x] S31.2.3 Run gofmt -l . and verify no files  Est: 5m
 
 - [x] T31.3 Run integration smoke test  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T31.1
   - Acceptance: End-to-end test: load config from file, create Engine, run forward pass, verify health check, trigger graceful shutdown. All within a single test binary.
-  - [ ] S31.3.1 Write integration test covering config -> engine -> health -> shutdown  Est: 20m
-  - [ ] S31.3.2 Run integration test  Est: 5m
-  - [ ] S31.3.3 Run golangci-lint  Est: 5m
+  - [x] S31.3.1 Write integration test covering config -> engine -> health -> shutdown  Est: 20m
+  - [x] S31.3.2 Run integration test  Est: 5m
+  - [x] S31.3.3 Run golangci-lint  Est: 5m
 
 ---
 
@@ -654,12 +654,12 @@ using in-process bufconn listeners (same pattern as coordinator tests).
   - [x] S34.3.3 Write TestSingleWorker (world size 1)  Est: 10m
   - [x] S34.3.4 Run with -race flag  Est: 5m
 
-- [ ] T34.4 TLS multi-worker integration test  Owner: TBD  Est: 30m
+- [x] T34.4 TLS multi-worker integration test  Owner: TBD  Est: 30m  Completed: 2026 03 02
   - Dependencies: T34.1
   - Acceptance: Same as T34.1 but with TLS enabled using self-signed certificates (generated at test time). Verifies TLS handshake works for both coordinator and peer connections. Uses the existing TLSConfig from distributed/tlsconfig.go.
-  - [ ] S34.4.1 Add TLS cert generation helper to test (reuse pattern from tlsconfig_test.go)  Est: 10m
-  - [ ] S34.4.2 Write TestMultiWorkerAllReduce_TLS with TLS-enabled coordinator and workers  Est: 15m
-  - [ ] S34.4.3 Run with -race flag  Est: 5m
+  - [x] S34.4.1 Add TLS cert generation helper to test (reuse pattern from tlsconfig_test.go)  Est: 10m
+  - [x] S34.4.2 Write TestMultiWorkerAllReduce_TLS with TLS-enabled coordinator and workers  Est: 15m
+  - [x] S34.4.3 Run with -race flag  Est: 5m
 
 - [x] T34.5 Run linters and verify coverage for E34  Owner: TBD  Est: 15m  Completed: 2026 03 02
   - Dependencies: T34.4
