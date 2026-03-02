@@ -10,23 +10,36 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	float16 "github.com/zerfoo/float16"
 	float8 "github.com/zerfoo/float8"
 	"github.com/zerfoo/zerfoo/internal/xblas"
 	"github.com/zerfoo/zerfoo/log"
+	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // CPUEngine is a CPU-based implementation of the Engine interface.
 type CPUEngine[T tensor.Numeric] struct {
-	ops    numeric.Arithmetic[T]
-	logger log.Logger
+	ops       numeric.Arithmetic[T]
+	logger    log.Logger
+	collector metrics.Collector
+}
+
+// Default histogram buckets for operation duration (seconds).
+var opDurationBuckets = []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0}
+
+// recordOp increments the operation counter and records the duration.
+func (e *CPUEngine[T]) recordOp(name string, start time.Time) {
+	e.collector.Counter("op_count_" + name).Inc()
+	e.collector.Histogram("op_duration_seconds", opDurationBuckets).Observe(time.Since(start).Seconds())
 }
 
 // Tanh applies the hyperbolic tangent activation element-wise.
 func (e *CPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Tanh", time.Now())
 	return e.UnaryOp(ctx, a, e.ops.Tanh, dst...)
 }
 
@@ -142,6 +155,7 @@ func (e *CPUEngine[T]) ReduceSum(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("ReduceSum", time.Now())
 	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
@@ -277,9 +291,9 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 }
 
 // NewCPUEngine constructs a new CPUEngine for the given numeric operations.
-// A no-op logger is used by default; call SetLogger to override.
+// A no-op logger and no-op collector are used by default; call SetLogger/SetCollector to override.
 func NewCPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *CPUEngine[T] {
-	return &CPUEngine[T]{ops: ops, logger: log.Nop()}
+	return &CPUEngine[T]{ops: ops, logger: log.Nop(), collector: metrics.Nop()}
 }
 
 // SetLogger replaces the engine's logger.
@@ -288,6 +302,14 @@ func (e *CPUEngine[T]) SetLogger(l log.Logger) {
 		l = log.Nop()
 	}
 	e.logger = l
+}
+
+// SetCollector replaces the engine's metrics collector.
+func (e *CPUEngine[T]) SetCollector(c metrics.Collector) {
+	if c == nil {
+		c = metrics.Nop()
+	}
+	e.collector = c
 }
 
 // Ops returns the arithmetic ops for this engine.
@@ -419,21 +441,25 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 
 // Add performs element-wise addition with broadcasting.
 func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Add", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
 // Sub performs element-wise subtraction with broadcasting.
 func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Sub", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Sub, dst...)
 }
 
 // Mul performs element-wise multiplication with broadcasting.
 func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Mul", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Mul, dst...)
 }
 
 // Div performs element-wise division with broadcasting. For integer types, division by zero returns an error.
 func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Div", time.Now())
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -654,6 +680,7 @@ func expandShapeStrides(shape, strides []int, rank int) ([]int, []int) {
 
 // MatMul performs matrix multiplication of two tensors.
 func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("MatMul", time.Now())
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -839,6 +866,7 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 }
 
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Transpose", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -916,6 +944,7 @@ func (e *CPUEngine[T]) Sum(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Sum", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1041,6 +1070,7 @@ func (e *CPUEngine[T]) Sum(
 
 // Exp computes the element-wise exponential of a tensor.
 func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Exp", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1061,6 +1091,7 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ..
 
 // Log computes the element-wise natural logarithm of a tensor.
 func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Log", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1085,6 +1116,7 @@ func (e *CPUEngine[T]) Pow(
 	base, exponent *tensor.TensorNumeric[T],
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Pow", time.Now())
 	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
@@ -1307,6 +1339,7 @@ func (e *CPUEngine[T]) ReduceMean(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("ReduceMean", time.Now())
 	sum, err := e.Sum(ctx, a, axis, keepDims, dst...)
 	if err != nil {
 		return nil, err
@@ -1338,6 +1371,7 @@ func (e *CPUEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst
 // Softmax applies the softmax function to a tensor along a given axis.
 // If axis is negative, it is interpreted relative to the last axis (e.g., -1 means last axis).
 func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Softmax", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}

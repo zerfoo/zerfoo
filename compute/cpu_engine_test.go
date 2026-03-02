@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/log"
+	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -465,5 +466,101 @@ func TestCPUEngine_SetLogger_Nil(t *testing.T) {
 	_, err := engine.Add(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Add after nil logger: %v", err)
+	}
+}
+
+func TestCPUEngine_SetCollector(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+	collector := metrics.NewInMemory()
+	engine.SetCollector(collector)
+
+	ctx := context.Background()
+	a, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+	b, _ := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
+
+	// Run several operations
+	_, _ = engine.Add(ctx, a, b)
+	_, _ = engine.MatMul(ctx, a, b)
+	_, _ = engine.Softmax(ctx, a, -1)
+
+	snap := collector.Snapshot()
+
+	tests := []struct {
+		name string
+		want int64
+	}{
+		{"op_count_Add", 1},
+		{"op_count_MatMul", 1},
+		{"op_count_Softmax", 1},
+	}
+
+	for _, tt := range tests {
+		got := snap.Counters[tt.name]
+		if got != tt.want {
+			t.Errorf("%s = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+
+	// Verify histogram has observations
+	h, ok := snap.Histograms["op_duration_seconds"]
+	if !ok {
+		t.Fatal("expected op_duration_seconds histogram")
+	}
+	if h.Count != 3 {
+		t.Errorf("histogram count = %d, want 3", h.Count)
+	}
+}
+
+func TestCPUEngine_SetCollector_Nil(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+	engine.SetCollector(nil) // Should not panic; defaults to Nop.
+
+	a, _ := tensor.New[float32]([]int{2}, []float32{1, 2})
+	b, _ := tensor.New[float32]([]int{2}, []float32{3, 4})
+	_, err := engine.Add(context.Background(), a, b)
+	if err != nil {
+		t.Fatalf("Add after nil collector: %v", err)
+	}
+}
+
+func TestCPUEngine_MetricsPerOp(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+	collector := metrics.NewInMemory()
+	engine.SetCollector(collector)
+
+	ctx := context.Background()
+	a, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+	b, _ := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
+
+	ops := []struct {
+		name string
+		fn   func()
+	}{
+		{"Add", func() { _, _ = engine.Add(ctx, a, b) }},
+		{"Sub", func() { _, _ = engine.Sub(ctx, a, b) }},
+		{"Mul", func() { _, _ = engine.Mul(ctx, a, b) }},
+		{"Div", func() { _, _ = engine.Div(ctx, a, b) }},
+		{"MatMul", func() { _, _ = engine.MatMul(ctx, a, b) }},
+		{"Tanh", func() { _, _ = engine.Tanh(ctx, a) }},
+		{"Exp", func() { _, _ = engine.Exp(ctx, a) }},
+		{"Log", func() { _, _ = engine.Log(ctx, a) }},
+		{"Pow", func() { _, _ = engine.Pow(ctx, a, b) }},
+		{"Sum", func() { _, _ = engine.Sum(ctx, a, 0, false) }},
+		{"ReduceSum", func() { _, _ = engine.ReduceSum(ctx, a, 0, false) }},
+		{"ReduceMean", func() { _, _ = engine.ReduceMean(ctx, a, 0, false) }},
+		{"Softmax", func() { _, _ = engine.Softmax(ctx, a, -1) }},
+		{"Transpose", func() { _, _ = engine.Transpose(ctx, a, nil) }},
+	}
+
+	for _, op := range ops {
+		op.fn()
+	}
+
+	snap := collector.Snapshot()
+	for _, op := range ops {
+		got := snap.Counters["op_count_"+op.name]
+		if got < 1 {
+			t.Errorf("op_count_%s = %d, want >= 1", op.name, got)
+		}
 	}
 }
