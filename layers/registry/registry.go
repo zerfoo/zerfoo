@@ -48,6 +48,7 @@ func RegisterAll() {
 	model.RegisterLayer("Resize", core.BuildResize[float32])
 	model.RegisterLayer("MoEGate", core.BuildMoEGate[float32])
 	model.RegisterLayer("MixtureOfExperts", core.BuildMixtureOfExperts[float32])
+	model.RegisterLayer("FFN", core.BuildFFN[float32])
 
 	// Embeddings
 
