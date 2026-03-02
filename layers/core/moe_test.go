@@ -339,3 +339,69 @@ func TestBuildMixtureOfExperts_MissingTopK(t *testing.T) {
 		t.Error("expected error for missing top_k")
 	}
 }
+
+func TestBuildMoEGate_UnsupportedTopKType(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	_, err := BuildMoEGate(eng, ops, "gate", nil, map[string]interface{}{"top_k": float64(2)})
+	if err == nil {
+		t.Error("expected error for unsupported top_k type")
+	}
+}
+
+func TestBuildMixtureOfExperts_UnsupportedNumExpertsType(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	_, err := BuildMixtureOfExperts(eng, ops, "moe", nil, map[string]interface{}{
+		"num_experts": float64(4),
+		"top_k":       int64(2),
+	})
+	if err == nil {
+		t.Error("expected error for unsupported num_experts type")
+	}
+}
+
+func TestBuildMixtureOfExperts_UnsupportedTopKType(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	_, err := BuildMixtureOfExperts(eng, ops, "moe", nil, map[string]interface{}{
+		"num_experts": int64(4),
+		"top_k":       float64(2),
+	})
+	if err == nil {
+		t.Error("expected error for unsupported top_k type")
+	}
+}
+
+func TestMixtureOfExperts_ExpertIndexOutOfRange(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 1) // topK=1
+
+	// Only 1 expert but gateWeight has 2 rows; token will be routed to expert 1.
+	experts := []graph.Node[float32]{&identityExpert{}}
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, 2, 1)
+
+	// Token [0,1] will get higher logit for expert 1 (gateWeight row 1 = [0,1]).
+	hs, _ := tensor.New[float32]([]int{1, 2}, []float32{0, 1})
+	gw, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 0, 0, 1})
+
+	_, err := moe.Forward(context.Background(), hs, gw)
+	if err == nil {
+		t.Error("expected error when expert index is out of range")
+	}
+}
+
+func TestMixtureOfExperts_HiddenStates1D(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 1)
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, []graph.Node[float32]{&identityExpert{}}, 1, 1)
+
+	hs, _ := tensor.New[float32]([]int{3}, []float32{1, 2, 3})
+	gw, _ := tensor.New[float32]([]int{1, 3}, []float32{1, 0, 0})
+	_, err := moe.Forward(context.Background(), hs, gw)
+	if err == nil {
+		t.Error("expected error for 1D hiddenStates")
+	}
+}
