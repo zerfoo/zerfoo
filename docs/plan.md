@@ -168,7 +168,7 @@ or the distributed Logger interface.
 Add a metrics collection abstraction for runtime observability. The interface
 must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
 
-- [ ] T22.1 Define Metrics interface in a new `metrics/runtime` package  Owner: TBD  Est: 1h
+- [x] T22.1 Define Metrics interface in a new `metrics/runtime` package  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Interface has Counter(name), Gauge(name), Histogram(name, buckets) methods. Each returns a typed metric with Inc/Set/Observe methods. A default in-memory implementation is provided for testing and local use. A NopMetrics implementation is provided for zero overhead when metrics are disabled.
   - [ ] S22.1.1 Create metrics/runtime/metrics.go with Collector interface  Est: 20m
@@ -177,7 +177,7 @@ must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
   - [ ] S22.1.4 Write unit tests for InMemoryCollector (concurrent access, snapshot)  Est: 15m
   - [ ] S22.1.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T22.2 Instrument compute.Engine with metrics  Owner: TBD  Est: 45m
+- [x] T22.2 Instrument compute.Engine with metrics  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T22.1
   - Acceptance: CPUEngine and GPUEngine report: op_count (counter per operation type), op_duration_seconds (histogram), oom_fallback_total (counter), pool_hit_total / pool_miss_total (counters for GPU pool).
   - [ ] S22.2.1 Add Collector field to CPUEngine; instrument Add/MatMul/etc. with counters and timers  Est: 20m
@@ -185,7 +185,7 @@ must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
   - [ ] S22.2.3 Write tests verifying metric increments after operations  Est: 15m
   - [ ] S22.2.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T22.3 Instrument distributed package with metrics  Owner: TBD  Est: 30m
+- [x] T22.3 Instrument distributed package with metrics  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T22.1
   - Acceptance: Distributed workers report: allreduce_count (counter), allreduce_duration_seconds (histogram), barrier_count, broadcast_count, connection_errors_total.
   - [ ] S22.3.1 Add Collector to Strategy and coordinator  Est: 15m
@@ -197,7 +197,7 @@ must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
 
 Add TLS and mutual authentication to all gRPC communication channels.
 
-- [ ] T23.1 Add TLS configuration to gRPC server and client  Owner: TBD  Est: 1h
+- [x] T23.1 Add TLS configuration to gRPC server and client  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A TLSConfig struct supports: CA cert path, server cert/key paths, client cert/key paths for mTLS. ServerManager.Start() uses TLS credentials when TLSConfig is provided. Worker connections use TLS. Plaintext is still supported (for local development) when TLSConfig is nil.
   - [ ] S23.1.1 Create distributed/tlsconfig.go with TLSConfig struct and credential helpers  Est: 20m
@@ -207,7 +207,7 @@ Add TLS and mutual authentication to all gRPC communication channels.
   - [ ] S23.1.5 Write integration test: mTLS with client cert verification  Est: 15m
   - [ ] S23.1.6 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T23.2 Add input validation to distributed RPC handlers  Owner: TBD  Est: 30m
+- [ ] T23.2 Add input validation to distributed RPC handlers  Owner: TBD  Est: 30m  **SKIPPED:** No concrete DistributedServiceServer implementation exists; only auto-generated protobuf stubs.
   - Dependencies: None
   - Acceptance: All RPC handlers validate request fields (non-empty rank, valid tensor shapes, non-nil data). Invalid requests return gRPC InvalidArgument status. Tests verify each validation path.
   - [ ] S23.2.1 Add validation to AllReduce, Barrier, Broadcast RPC handlers  Est: 15m
@@ -248,7 +248,7 @@ and cleanup callbacks.
   - [ ] S25.1.3 Write tests: orderly shutdown, timeout on slow closer, empty coordinator  Est: 15m
   - [ ] S25.1.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T25.2 Implement Closer for Engine and distributed components  Owner: TBD  Est: 30m
+- [x] T25.2 Implement Closer for Engine and distributed components  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T25.1
   - Acceptance: GPUEngine.Close() drains memory pool and destroys CUDA handles. CPUEngine.Close() is a no-op (satisfies interface). Distributed Strategy.Shutdown() deregisters from coordinator and closes connections. All Close methods are idempotent.
   - [ ] S25.2.1 Make CPUEngine implement Closer (no-op Close)  Est: 5m
@@ -257,7 +257,7 @@ and cleanup callbacks.
   - [ ] S25.2.4 Write integration test: register Engine + Strategy, trigger shutdown  Est: 15m
   - [ ] S25.2.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T25.3 Add signal handling to CLI commands  Owner: TBD  Est: 30m
+- [x] T25.3 Add signal handling to CLI commands  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T25.1, T25.2
   - Acceptance: cmd/zerfoo and cmd/zerfoo-predict catch SIGINT/SIGTERM, trigger shutdown coordinator, and exit cleanly. Integration test verifies signal handling.
   - [ ] S25.3.1 Add signal listener in cmd framework that cancels root context  Est: 15m
@@ -278,7 +278,7 @@ and readiness).
   - [ ] S26.1.3 Write tests: healthy response, unhealthy readiness, concurrent access  Est: 15m
   - [ ] S26.1.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T26.2 Add engine health check  Owner: TBD  Est: 20m
+- [x] T26.2 Add engine health check  Owner: TBD  Est: 20m  Completed: 2026 03 01
   - Dependencies: T26.1
   - Acceptance: A check function verifies Engine is operational (e.g., small tensor add succeeds). For GPU, additionally verify CUDA context is valid. Register as readiness check.
   - [ ] S26.2.1 Implement engine health check function  Est: 10m
@@ -296,7 +296,7 @@ Make CI pipeline enforce quality gates strictly.
   - [ ] S27.1.2 Update ci.yml: remove `|| true` from numerics test step  Est: 5m
   - [ ] S27.1.3 Verify CI passes with current test suite  Est: 5m
 
-- [ ] T27.2 Add coverage gate to CI  Owner: TBD  Est: 30m
+- [x] T27.2 Add coverage gate to CI  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI step runs `go test -coverprofile=coverage.out ./...`, parses output, and fails if any testable package (excluding documented exceptions) drops below 93%. Coverage summary is posted as a CI artifact.
   - [ ] S27.2.1 Add coverage step to ci.yml that generates coverage.out  Est: 10m
@@ -304,7 +304,7 @@ Make CI pipeline enforce quality gates strictly.
   - [ ] S27.2.3 Add tests for coverage-gate script  Est: 10m
   - [ ] S27.2.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T27.3 Add benchmark regression detection  Owner: TBD  Est: 45m
+- [x] T27.3 Add benchmark regression detection  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI runs benchmarks on each PR. A Go script compares benchmark results against a baseline (stored in repo). CI fails if any benchmark regresses by more than 10%. Baseline is updated via a manual workflow dispatch.
   - [ ] S27.3.1 Add benchmark step to ci.yml (go test -bench=. -benchmem -count=3)  Est: 10m
@@ -325,7 +325,7 @@ Make CI pipeline enforce quality gates strictly.
 Add configurable resource limits to prevent unbounded allocation and
 runaway operations.
 
-- [ ] T28.1 Add memory limit to Engine  Owner: TBD  Est: 45m
+- [x] T28.1 Add memory limit to Engine  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Engine accepts a MaxMemoryBytes option. Tensor allocation that would exceed the limit returns an error instead of allocating. GPU engine tracks device memory usage. The limit is enforced at the Engine level, not the allocator level (so it applies to both CPU and GPU).
   - [ ] S28.1.1 Add MemoryTracker to compute package (atomic int64 tracking allocated bytes)  Est: 15m
@@ -334,7 +334,7 @@ runaway operations.
   - [ ] S28.1.4 Write tests: allocation within limit succeeds, over limit returns error  Est: 15m
   - [ ] S28.1.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T28.2 Add per-operation timeout enforcement  Owner: TBD  Est: 30m
+- [x] T28.2 Add per-operation timeout enforcement  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Engine respects context.Context deadlines. Long-running operations (MatMul, Softmax) check ctx.Done() periodically and return context.DeadlineExceeded if expired. GPU operations use CUDA stream synchronization with timeout.
   - [ ] S28.2.1 Add ctx.Done() checks in CPUEngine parallelFor loops  Est: 15m
@@ -369,7 +369,7 @@ Validate all GPU code on real NVIDIA hardware.
 
 Create operational documentation for production deployment.
 
-- [ ] T30.1 Write deployment runbook  Owner: TBD  Est: 1h
+- [x] T30.1 Write deployment runbook  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: E21, E23, E24, E25, E26
   - Acceptance: docs/runbook.md covers: system requirements, installation steps, configuration reference (all config fields documented), startup sequence, health check verification, log interpretation, common operational tasks (scale workers, update model, restart), shutdown procedure.
   - [ ] S30.1.1 Write system requirements and installation section  Est: 15m
@@ -377,7 +377,7 @@ Create operational documentation for production deployment.
   - [ ] S30.1.3 Write startup, health check, and shutdown sections  Est: 15m
   - [ ] S30.1.4 Write common operational tasks  Est: 15m
 
-- [ ] T30.2 Write troubleshooting guide  Owner: TBD  Est: 45m
+- [x] T30.2 Write troubleshooting guide  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: E21, E22
   - Acceptance: docs/troubleshooting.md covers: common error messages with root causes and fixes, GPU-specific issues (CUDA not found, OOM, driver mismatch), distributed training issues (connection refused, timeout, split brain), performance diagnosis (how to identify bottlenecks, pprof usage).
   - [ ] S30.2.1 Document common error messages and fixes  Est: 15m
@@ -385,7 +385,7 @@ Create operational documentation for production deployment.
   - [ ] S30.2.3 Document distributed training troubleshooting  Est: 10m
   - [ ] S30.2.4 Document performance diagnosis with pprof  Est: 10m
 
-- [ ] T30.3 Add pprof endpoints to health server  Owner: TBD  Est: 20m
+- [x] T30.3 Add pprof endpoints to health server  Owner: TBD  Est: 20m  Completed: 2026 03 01
   - Dependencies: T26.1
   - Acceptance: Health server registers net/http/pprof handlers. CPU profile, heap profile, goroutine dump available at /debug/pprof/*.
   - [ ] S30.3.1 Register pprof handlers in health.Server  Est: 10m
@@ -396,21 +396,21 @@ Create operational documentation for production deployment.
 
 Run the full quality gate suite after all enterprise features are implemented.
 
-- [ ] T31.1 Run full test suite with coverage  Owner: TBD  Est: 30m
+- [x] T31.1 Run full test suite with coverage  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: E21, E22, E23, E24, E25, E26, E27, E28
   - Acceptance: `go test ./... -cover` shows all packages at target coverage. `go test ./... -race` shows zero races. New packages (log, config, health, shutdown, metrics/runtime) are all at >= 95%.
   - [ ] S31.1.1 Run go test ./... -cover  Est: 10m
   - [ ] S31.1.2 Run go test ./... -race  Est: 10m
   - [ ] S31.1.3 Verify new packages meet 95% coverage  Est: 10m
 
-- [ ] T31.2 Run linters and formatters  Owner: TBD  Est: 15m
+- [x] T31.2 Run linters and formatters  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: T31.1
   - Acceptance: golangci-lint 0 issues, go vet clean, gofmt clean.
   - [ ] S31.2.1 Run golangci-lint run ./...  Est: 5m
   - [ ] S31.2.2 Run go vet ./...  Est: 5m
   - [ ] S31.2.3 Run gofmt -l . and verify no files  Est: 5m
 
-- [ ] T31.3 Run integration smoke test  Owner: TBD  Est: 30m
+- [x] T31.3 Run integration smoke test  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T31.1
   - Acceptance: End-to-end test: load config from file, create Engine, run forward pass, verify health check, trigger graceful shutdown. All within a single test binary.
   - [ ] S31.3.1 Write integration test covering config -> engine -> health -> shutdown  Est: 20m
@@ -489,6 +489,10 @@ A task is done when:
 
 ## 6. Progress Log
 
+- **2026 03 01 (update 9):** Change Summary: Completed remaining Phase 4 tasks. T25.3 signal handling (cmd/cli, cmd/zerfoo, cmd/zerfoo-predict). T28.1 memory limit (MemoryTracker with CAS-based enforcement). T28.2 per-operation timeout (parallelForCtx, context checks in UnaryOp/binaryOp/MatMul). T30.1 deployment runbook (docs/runbook.md). T30.2 troubleshooting guide (docs/troubleshooting.md). T31.1 full test suite with race detector (0 data races, 1 pre-existing flaky test in distributed/coordinator). T31.2 golangci-lint 0 issues, go vet clean. T31.3 integration smoke test (config->engine->health->shutdown). CI regex fixed (Go 1.25 does not support Perl negative lookahead). T23.2 skipped (no concrete RPC server implementation). E29 remains BLOCKED on GCP GPU quota.
+
+- **2026 03 01 (update 8):** Change Summary: Completed T22.1-T22.3 metrics interface/instrumentation, T23.1 TLS config, T25.2 Closer implementations, T26.2 engine health check, T27.2 coverage gate, T27.3 benchmark regression detection, T30.3 pprof endpoints. All with tests, lint clean, coverage above thresholds.
+
 - **2026 03 01 (update 7):** Change Summary: Created enterprise production readiness plan (Phase 4, E21-E31). Extracted architecture and design knowledge to docs/design.md. Trimmed plan.md to remove completed Phase 1-3 task details (preserved as summary in design.md Section 7). New epics: E21 structured logging, E22 metrics interface, E23 gRPC TLS, E24 config management, E25 graceful shutdown, E26 health checks, E27 CI hardening, E28 resource limits, E29 GPU validation (re-numbered from E15/E20), E30 production docs, E31 final verification. Added milestones M15-M21.
 
 - **2026 03 01 (update 6):** Completed E6 T6.1 (testutil tests, 98.5%), E6 T6.2 (testutils tests, 94.5%), E7 T7.1 (full suite green, zero races, regularization 92.9% -> 97.6%), E7 T7.2 (0 lint issues, gofmt clean). All Phase 1 remaining tasks done.
@@ -508,7 +512,7 @@ A task is done when:
 - **Architecture:** Read docs/design.md for interface contracts, package layout, and GPU architecture.
 - **GPU details:** Read docs/gpu.md for build requirements, kernel inventory, and memory model.
 - **Phase 1-3 status:** Complete. See docs/design.md Section 7 for summary.
-- **Phase 4 status:** Not started. This plan covers enterprise production readiness.
+- **Phase 4 status:** Complete (except E29 GPU validation, blocked on GCP quota, and T23.2 skipped).
 - **GPU hardware validation:** Blocked on GCP GPU quota (E29).
 - **Key files to read first:**
   - compute/engine.go -- Engine[T] interface (34 methods)
