@@ -9,7 +9,7 @@ func TestNewTokenizer(t *testing.T) {
 
 	// Should have 3 special tokens: <unk>, <s>, </s>
 	tests := []struct {
-		token string
+		token  string
 		wantID int
 	}{
 		{"<unk>", 0},
