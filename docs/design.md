@@ -67,13 +67,13 @@ cmd/                  CLI binaries and framework
 data/                 Dataset container (Sample, Batch, normalization)
 features/             Time-series feature transformers (Lag, Rolling, FFT)
 types/                Shared type definitions (BackwardMode)
-pkg/tokenizer/        Whitespace-splitting tokenizer
+pkg/tokenizer/        Whitespace-splitting tokenizer (standard lib only)
 internal/xblas/       CPU BLAS wrappers (gonum GEMM for float32/64; upcast for float16/float8)
 internal/cuda/        CUDA runtime CGO bindings (//go:build cuda)
 internal/cublas/      cuBLAS CGO bindings (//go:build cuda)
 internal/cuda/kernels/ CUDA kernel source (.cu) and Go wrappers
 testing/testutils/    Test assertion helpers, MockEngine, custom mocks
-tests/                Parity tests, numerics tests, integration test helpers
+tests/                Parity tests (env-var gated model forward pass tests)
 ```
 
 ### 2.2 Dependency Graph
@@ -203,6 +203,8 @@ type Node[T tensor.Numeric] interface {
 ```
 
 Every layer implements Node[T]. The graph Builder connects nodes into a DAG.
+`Graph.Forward` and `Graph.Backward` are safe for concurrent use; a
+`sync.Mutex` serializes access to the internal memo cache.
 
 ### 3.3 Storage[T] (tensor/storage.go)
 
@@ -283,9 +285,10 @@ type LayerBuilder[T tensor.Numeric] func(
 ) (graph.Node[T], error)
 ```
 
-`layers/registry.RegisterAll()` wires all standard layers into
-`model.RegisterLayer[T]`. The ZMF model loader uses this registry to
-reconstruct graphs from serialized specs.
+`layers/registry.RegisterAll()` is the single entry point that wires all
+standard layers (including FFN) into `model.RegisterLayer[T]`. No layer
+package uses `init()` for registration. The ZMF model loader uses this
+registry to reconstruct graphs from serialized specs.
 
 ---
 
@@ -613,7 +616,6 @@ Documented exceptions (unreachable `tensor.New` error paths):
 | cmd/zerfoo/ | Main entrypoint, no testable logic |
 | cmd/zerfoo-predict/ | Main entrypoint; logic in cmd/cli/ |
 | cmd/zerfoo-tokenize/ | Main entrypoint; logic in pkg/tokenizer/ |
-| pkg/prelude/ | No statements |
 | types/ | Type definitions only |
 
 ### 7.4 GPU Test Execution
@@ -666,10 +668,9 @@ Direct (go.mod):
 
 ### 8.4 CI Pipeline (GitHub Actions)
 
-- Unit tests on push/PR to main (excludes parity and numerics tests).
+- Unit tests on push/PR to main (excludes parity tests).
 - golangci-lint with 5m timeout.
-- Parity tests (currently non-blocking).
-- Numerics red team tests (currently non-blocking).
+- Parity tests (currently non-blocking, gated by env vars).
 - Nightly toy training pipeline.
 
 ---
@@ -744,8 +745,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 6. Default device -- always uses cuda:0, no device selection API.
 7. Hardware validation pending -- GCP GPU quota request pending.
 8. float16/float8 GEMM upcasts to float32 -- no native half-precision kernels.
-9. graph.Graph is not thread-safe -- concurrent Forward calls race on memo cache.
-10. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
+9. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
 
 ---
 
