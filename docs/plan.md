@@ -1,77 +1,71 @@
-# Zerfoo Development Plan
+# Zerfoo Enterprise Production Readiness Plan
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo is a Go-based ML framework with 40+ packages. This plan covers two major efforts:
+Zerfoo is a Go-based ML framework with 40+ packages, a 34-method compute
+Engine[T] interface, CPU and CUDA GPU backends, gRPC-based distributed
+training, and comprehensive test coverage (95%+ across testable packages).
 
-**Phase 1 (Completed): Test Coverage Improvement.** Raise every testable package to at least 95% statement coverage. This phase is complete. 30 of 33 testable packages are at or above 95%. Three packages (layers/gather 93.1%, layers/embeddings 93.5%, layers/features 93.8%) remain below 95% due to unreachable tensor.New error paths, documented as acceptable exceptions.
+The framework has strong foundations -- clean interfaces, modular architecture,
+type-safe generics, and high test coverage -- but lacks the operational
+hardening required for enterprise production deployment. This plan addresses
+the gaps in observability, security, reliability, configuration management,
+and CI/CD enforcement needed to reach production grade.
 
-**Phase 2 (Complete): GPU Engine Implementation.** Implemented `compute.GPUEngine[T]` satisfying the `compute.Engine[T]` interface. 20 of 34 Engine methods have native CUDA GPU implementations for float32. Remaining 14 methods use CPU fallback by design.
-
-**Phase 3 (Active): GPU Production Readiness.** Address the 6 production gaps in the current GPU implementation: (1) validate on real GPU hardware via gcloud, (2) eliminate per-operation H2D/D2H round-trips with a device-resident tensor pipeline, (3) add CUDA memory pooling, (4) add CUDA stream management for async execution, (5) replace panics in GPUStorage with graceful error handling, (6) document validated benchmark results from real hardware.
-
-### Architecture Overview
-
-The existing compute architecture centers on these types:
-
-- `compute.Engine[T tensor.Numeric]` -- interface with 34 methods covering arithmetic, matrix ops, activations, reductions, and tensor manipulation. Every layer delegates all computation to this interface.
-- `compute.CPUEngine[T]` -- the only existing Engine implementation. Uses `numeric.Arithmetic[T]` for element-wise ops, `internal/xblas` (gonum BLAS) for MatMul, and `parallelFor()` for multi-core CPU parallelism.
-- `tensor.TensorNumeric[T]` -- core tensor type with fields: `shape []int`, `strides []int`, `data []T`, `isView bool`. The `data []T` field is a Go slice stored in row-major order.
-- `device.Device` -- interface with `ID() string`, `GetAllocator() Allocator`, `Type() Type`. Only CPU is implemented. `device.CUDA` type constant exists as a placeholder.
-- `device.Allocator` -- interface with `Allocate(size int) (any, error)` and `Free(ptr any) error`. Only CPU allocator exists (backed by `make([]byte, size)`).
-
-Layers (e.g., `layers/core/linear.go`, `layers/activations/base_activation.go`) accept an `Engine[T]` at construction time and call engine methods like `MatMul`, `Add`, `UnaryOp`, etc. They never directly access tensor data for computation. This means swapping `CPUEngine` for `GPUEngine` requires zero layer code changes.
-
-The critical challenge: `TensorNumeric[T].data` is `[]T` (a Go slice in CPU RAM). For GPU computation, data must reside in GPU device memory. The `data` field must become a device-aware storage interface so that:
-- CPU path: zero overhead, `Data()` returns the underlying slice directly
-- GPU path: data lives in CUDA device memory, `Data()` copies to host on demand
+Architecture and design details are documented in docs/design.md.
+GPU-specific documentation is in docs/gpu.md.
 
 ### Objectives
 
-- O1 (Done): Every testable package at >= 95% statement coverage.
-- O2: Implement `compute.GPUEngine[T]` satisfying `compute.Engine[T]` with no changes to any layer code.
-- O3: Start with `Storage[T]` abstraction (critical path) replacing `TensorNumeric[T].data []T`.
-- O4: Implement cuBLAS-backed `MatMul` via CGO as the first GPU operation.
-- O5: Incrementally add GPU kernels: elementwise ops, Softmax, reductions.
-- O6: All GPU code behind `//go:build cuda` build tag so non-CUDA builds are unaffected.
-- O7: Validate all GPU code on real NVIDIA hardware via gcloud T4 VM.
-- O8: Eliminate per-operation H2D/D2H round-trips; tensors stay on GPU between chained operations.
-- O9: Add CUDA memory pooling and stream management for production-grade GPU performance.
-- O10: Replace panics in GPUStorage with graceful error handling and CPU fallback on OOM.
+- O1: Add structured logging with configurable log levels across all packages.
+- O2: Export runtime metrics (throughput, latency, memory, errors) via a
+  metrics interface suitable for Prometheus or similar backends.
+- O3: Harden gRPC distributed services with TLS and mutual authentication.
+- O4: Add file-based configuration loading with validation and env var overrides.
+- O5: Implement graceful shutdown with resource cleanup across all components.
+- O6: Add health check endpoints for readiness and liveness probes.
+- O7: Make parity and numerics tests blocking in CI; add coverage gates.
+- O8: Add benchmark regression detection to prevent performance degradation.
+- O9: Add resource limits (memory caps, timeouts) to prevent unbounded allocation.
+- O10: Validate GPU implementation on real NVIDIA hardware (blocked on GCP quota).
+- O11: Create production deployment runbook and troubleshooting guide.
 
 ### Non-Goals
 
-- Modifying any existing layer code to support GPU.
-- Multi-GPU support or distributed GPU training in this phase.
-- GPU support for non-float32 types initially (float32 first, others later).
-- cuDNN integration (custom kernels only for now).
+- Multi-GPU or distributed GPU support.
+- cuDNN, TensorRT, or other NVIDIA library integration.
 - AMD ROCm or OpenCL backends.
-- Testing generated protobuf code (distributed/pb/).
-- Unit-testing main() functions in cmd packages.
+- Mixed precision training.
+- Breaking changes to the Engine[T] or Node[T] interfaces.
+- Replacing gRPC with a different RPC framework.
+- Adding third-party test frameworks (testify, etc.).
 
 ### Constraints and Assumptions
 
-- Use Go standard library only for non-CUDA code. No third-party test frameworks.
-- CUDA code uses CGO with `#cgo LDFLAGS: -lcublas -lcudart`.
-- All CUDA-dependent code must be gated behind `//go:build cuda` build tags.
-- The pre-commit hook rejects commits spanning multiple directories.
+- Use Go standard library only where possible. Minimize new dependencies.
+- All CUDA code behind `//go:build cuda` build tags.
+- Pre-commit hook rejects commits spanning multiple directories.
 - All changes must pass golangci-lint, go vet, and gofmt.
-- Tests must pass with -race flag (CPU tests; GPU tests are inherently single-threaded on device).
-- CUDA Toolkit >= 11.0 required for GPU builds.
-- Minimum GPU: NVIDIA with Compute Capability >= 7.0 (Volta or newer).
+- Tests must pass with -race flag.
+- No Docker Compose. Prefer DevSpace if orchestration is needed.
+- Table-driven tests using the standard testing package.
 
 ### Success Metrics
 
-| Metric | Target | How to Measure |
-|--------|--------|----------------|
-| Per-package coverage | >= 95% for all testable packages | `go test ./... -cover` |
-| Engine interface compliance | GPUEngine passes static type assertion | `var _ Engine[float32] = (*GPUEngine[float32])(nil)` |
-| MatMul parity | GPU MatMul matches CPU MatMul within 1e-5 relative error | Parity test comparing GPU vs CPU output |
-| MatMul speedup | >= 10x for 1024x1024 matrices vs CPU | Benchmark with `go test -bench` |
-| Non-CUDA build | Project builds and all tests pass without CUDA | `go test ./... -cover` without cuda build tag |
-| Lint | Zero issues | `golangci-lint run ./...` |
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Structured logging | All packages use leveled logger | Grep for raw fmt.Print/log.Print in non-test code = 0 |
+| Metrics export | Runtime metrics available via interface | Metrics interface has >= 10 counters/gauges |
+| TLS coverage | All gRPC endpoints use TLS | No plaintext gRPC listeners in production config |
+| Config loading | YAML/JSON config from file + env vars | Config loads from file, env overrides work |
+| Graceful shutdown | All components clean up on SIGTERM | Integration test verifies orderly shutdown |
+| Health checks | Readiness + liveness probes | HTTP endpoint returns status within 100ms |
+| CI blocking tests | Parity + numerics tests block merges | CI fails on parity/numerics test failure |
+| Benchmark gates | CI fails on > 10% regression | Benchmark comparison in CI workflow |
+| Resource limits | Memory caps enforced | Allocation above limit returns error |
+| Coverage gate | >= 95% enforced in CI | CI fails if coverage drops below threshold |
 
 ---
 
@@ -79,668 +73,349 @@ The critical challenge: `TensorNumeric[T].data` is `[]T` (a Go slice in CPU RAM)
 
 ### In Scope
 
-- Storage[T] interface and CPUStorage[T] implementation in tensor package.
-- GPUStorage[T] implementation wrapping CUDA device memory.
-- Refactoring TensorNumeric[T] to use Storage[T] internally.
-- CUDA allocator implementing device.Allocator.
-- cuBLAS CGO bindings in internal/cublas package.
-- GPUEngine[T] struct implementing all 34 Engine[T] methods.
-- GPU kernels for: MatMul (cuBLAS), Add, Sub, Mul, Div, AddScalar, MulScalar, DivScalar, Pow, Exp, Log, Tanh, TanhPrime, Sqrt, Rsqrt, Softmax, Sum, ReduceSum, ReduceMean.
-- GPU implementations for: Zero, Zeros, Fill, Copy, Transpose, Reshape, Split, Concat, Repeat, Gather, ScatterAdd, OneHot, RandomUniform, UnaryOp.
-- Parity tests comparing GPU output vs CPU output for every method.
-- Benchmarks for MatMul and key operations.
-- Remaining test coverage tasks from Phase 1.
+- Structured logging library (log levels, JSON output, context propagation).
+- Metrics collection interface and default implementation.
+- TLS/mTLS configuration for gRPC services.
+- File-based configuration with validation and environment variable overrides.
+- Graceful shutdown coordination across Engine, distributed workers, gRPC server.
+- Health check HTTP endpoints.
+- CI hardening: blocking parity tests, coverage gates, benchmark regression detection.
+- Resource limit enforcement (memory, timeouts).
+- Production documentation (deployment runbook, troubleshooting guide).
+- GPU hardware validation (when quota available).
 
 ### Out of Scope
 
-- Multi-GPU or distributed GPU.
-- cuDNN, TensorRT, or other NVIDIA library integration.
-- AMD ROCm or OpenCL backends.
-- Automatic device placement or tensor migration policies.
-- Mixed precision training.
+- Web UI or dashboard.
+- Model serving HTTP API (inference server).
+- Automatic device placement or tensor migration.
+- Database or persistent storage integration.
+- Container image building or Kubernetes manifests.
 
 ### Deliverables
 
-| ID | Description | Owner | Acceptance Criteria |
-|----|-------------|-------|---------------------|
-| D1 | Phase 1 test coverage (done) | TBD | 30/33 packages >= 95%, 3 documented exceptions |
-| D7 | Storage[T] interface + CPUStorage[T] | TBD | TensorNumeric uses Storage[T]; all existing tests pass unchanged |
-| D8 | CUDA allocator + GPUStorage[T] | TBD | Allocate/free GPU memory; host-device transfers work correctly |
-| D9 | cuBLAS MatMul | TBD | GPUEngine.MatMul produces results matching CPUEngine within 1e-5 |
-| D10 | GPU elementwise ops | TBD | Add, Sub, Mul, Div, scalar variants, Pow all pass parity tests |
-| D11 | GPU activation + math ops | TBD | Exp, Log, Tanh, TanhPrime, Sqrt, Rsqrt, Softmax pass parity tests |
-| D12 | GPU reductions + tensor ops | TBD | Sum, ReduceSum, ReduceMean, Transpose, Reshape, etc. pass parity |
-| D13 | Full Engine compliance | TBD | `var _ Engine[float32] = (*GPUEngine[float32])(nil)` compiles |
-| D14 | Hardware validation | TBD | All GPU tests pass on real NVIDIA T4 hardware via gcloud |
-| D15 | Device-resident pipeline | TBD | Chained GPU ops avoid H2D/D2H; tensors stay on GPU between operations |
-| D16 | Memory pool + streams | TBD | CUDA memory pool eliminates per-op cudaMalloc/Free; streams enable async |
-| D17 | Error recovery | TBD | GPUStorage never panics; OOM triggers graceful CPU fallback |
-| D18 | Validated benchmarks | TBD | MatMul/Softmax/attention benchmarks documented from real T4 hardware |
+| ID | Description | Acceptance Criteria |
+|----|-------------|---------------------|
+| D1 | Structured logging | Logger interface with Debug/Info/Warn/Error levels; JSON output mode; all packages instrumented |
+| D2 | Metrics interface | Counters, gauges, histograms; default in-memory impl; export-ready |
+| D3 | gRPC TLS | TLS config struct; mTLS support; integration test with TLS |
+| D4 | Config management | YAML/JSON loader; env var overrides; validation errors |
+| D5 | Graceful shutdown | Context-based cancellation; cleanup ordering; integration test |
+| D6 | Health checks | HTTP /healthz and /readyz endpoints; configurable checks |
+| D7 | CI hardening | Blocking parity/numerics; coverage gate; benchmark gate |
+| D8 | Resource limits | Memory cap on Engine; per-operation timeout; GPU memory limit |
+| D9 | Production docs | Deployment runbook; troubleshooting guide; performance tuning |
+| D10 | GPU validation | Tests pass on real T4; benchmark results documented |
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### Phase 1: Test Coverage (Completed)
+### Completed Work (Phases 1-3)
 
-#### E1: Zero-Coverage Packages -- COMPLETED
+Phase 1 (Test Coverage), Phase 2 (GPU Engine), and Phase 3 (GPU Production
+Readiness) are complete. Details in docs/design.md Section 7.
 
-- [x] T1.1 Add tests for pkg/tokenizer  Completed: 2026 02 24  Result: 100%
-- [x] T1.2 Add tests for layers/gather  Completed: 2026 02 25  Result: 93.1% (tensor.New gaps)
-- [x] T1.3 Add tests for layers/reducesum  Completed: 2026 02 24  Result: 95.9%
-- [x] T1.4 Add tests for layers/registry  Completed: 2026 02 24  Result: 100%
-- [x] T1.5 Add tests for internal/xblas  Completed: 2026 02 24  Result: 100%
-
-#### E2: Sub-50% Coverage Packages -- COMPLETED
-
-- [x] T2.1 Raise training/ to >= 95%  Completed: 2026 02 24  Result: 95.7%
-- [x] T2.2 Raise cmd/cli/ to >= 95%  Completed: 2026 02 24  Result: 96.5%
-- [x] T2.3 Raise layers/normalization/ to >= 95%  Completed: 2026 02 24  Result: 96.6%
-- [x] T2.4 Raise model/ to >= 95%  Completed: 2026 02 24  Result: 95.4%
-
-#### E3: 50-69% Coverage Packages -- COMPLETED
-
-- [x] T3.1 Raise layers/attention/ to >= 95%  Completed: 2026 02 24  Result: 95.1%
-- [x] T3.2 Raise layers/core/ to >= 95%  Completed: 2026 02 24  Result: 96.0%
-- [x] T3.3 Raise tensor/ to >= 95%  Completed: 2026 02 24  Result: 98.9%
-- [x] T3.4 Raise layers/activations/ to >= 95%  Completed: 2026 02 24  Result: 97.1%
-- [x] T3.5 Raise layers/recurrent/ to >= 95%  Completed: 2026 02 24  Result: 96.7%
-- [x] T3.6 Raise graph/ to >= 95%  Completed: 2026 02 24  Result: 97.0%
-- [x] T3.7 Raise training/loss/ to >= 95%  Completed: 2026 02 24  Result: 96.3%
-- [x] T3.8 Raise layers/tokenizers/ to >= 95%  Completed: 2026 02 24  Result: 100%
-- [x] T3.9 Raise layers/transpose/ to >= 95%  Completed: 2026 02 24  Result: 97.2%
-- [x] T3.10 Raise numeric/ to >= 95%  Completed: 2026 02 24  Result: 98.5%
-
-#### E4: 70-89% Coverage Packages -- COMPLETED
-
-- [x] T4.1 Raise layers/embeddings/ to >= 95%  Completed: 2026 02 25  Result: 93.5% (tensor.New gaps)
-- [x] T4.2 Raise layers/transformer/ to >= 95%  Completed: 2026 02 24  Result: 96.4%
-- [x] T4.3 Raise distributed/ to >= 95%  Completed: 2026 02 24  Result: 96.5%
-- [x] T4.4 Raise model/hrm/ to >= 95%  Completed: 2026 02 24  Result: 98.1%
-- [x] T4.5 Raise training/optimizer/ to >= 95%  Completed: 2026 02 24  Result: 97.4%
-- [x] T4.6 Raise layers/features/ to >= 95%  Completed: 2026 02 25  Result: 93.8% (tensor.New gaps)
-- [x] T4.7 Raise layers/components/ to >= 95%  Completed: 2026 02 24  Result: 100%
-- [x] T4.8 Raise layers/hrm/ to >= 95%  Completed: 2026 02 25  Result: 95.5%
-- [x] T4.9 Raise compute/ to >= 95%  Completed: 2026 02 25  Result: 96.2%
-- [x] T4.10 Raise distributed/coordinator/ to >= 95%  Completed: 2026 02 25  Result: 99.1%
-
-#### E5: Near-Target Packages -- COMPLETED
-
-- [x] T5.1 Raise data/ to >= 95%  Completed: 2026 02 25  Result: 100%
-- [x] T5.2 Raise features/ to >= 95%  Completed: 2026 02 24  Result: 99.0%
-
-#### E6: Test Utility Validation (Best Effort)
-
-- [x] T6.1 Add targeted tests for tests/internal/testutil  Completed: 2026-03-01  Result: 98.5% coverage
-  - Dependencies: None
-  - Acceptance: Math helpers (MeanRelativeError, TopKAgreement, RelError) tested for correctness.
-  - [x] S6.1.1 Write tests for MeanRelativeError with known inputs  Est: 15m
-  - [x] S6.1.2 Write tests for TopKAgreement with known overlap  Est: 15m
-  - [x] S6.1.3 Write tests for RelError edge cases (zero denominator)  Est: 10m
-  - [x] S6.1.4 Run golangci-lint and go test -cover  Est: 5m
-
-- [x] T6.2 Add targeted tests for testing/testutils mock correctness  Completed: 2026-03-01  Result: 94.5% coverage
-  - Dependencies: None
-  - Acceptance: MockEngine key methods tested.
-  - [x] S6.2.1 Write tests for assertion helpers (AssertEqual, AssertError, etc.)  Est: 20m
-  - [x] S6.2.2 Write tests for MockEngine interface compliance  Est: 20m
-  - [x] S6.2.3 Run golangci-lint and go test -cover  Est: 5m
-
-#### E7: Final Verification (Phase 1)
-
-- [x] T7.1 Run full test suite with coverage  Completed: 2026-03-01  Result: all packages >= 93.1% (documented exceptions), zero races
-  - Dependencies: E1, E2, E3, E4, E5
-  - Acceptance: Every testable package shows >= 95% in `go test ./... -cover` (with documented exceptions)
-  - [x] S7.1.1 Run go test ./... -cover and capture output  Est: 10m
-  - [x] S7.1.2 Verify each package meets target; list any exceptions with justification  Est: 10m
-  - [x] S7.1.3 Run go test ./... -race and verify zero races  Est: 10m
-  - Note: layers/regularization raised from 92.9% to 97.6% by adding engine.Mul error-path tests.
-  - Documented exceptions: layers/gather 93.1%, layers/embeddings 93.5%, layers/features 93.8%, testing/testutils 94.5%.
-
-- [x] T7.2 Run linters and formatters  Completed: 2026-03-01  Result: 0 lint issues, go vet clean, gofmt clean
-  - Dependencies: T7.1
-  - Acceptance: golangci-lint 0 issues, go vet clean, gofmt clean
-  - [x] S7.2.1 Run golangci-lint run ./...  Est: 5m  Note: fixed 1 stale nolint:unused directive in activations.
-  - [x] S7.2.2 Run go vet ./...  Est: 5m
-  - [x] S7.2.3 Run gofmt -l . and verify no files  Est: 5m  Note: formatted 13 files across 6 packages.
-
-#### Documented Coverage Exceptions
-
-Three packages are below the 95% target. In all three cases, the remaining uncovered
-code consists exclusively of `tensor.New[T]()` error handling that cannot be triggered
-with valid inputs. These are defensive checks against memory allocation failures.
-
-| Package | Coverage | Uncovered Lines | Justification |
-|---------|----------|-----------------|---------------|
-| layers/gather | 93.1% | gather.go:71-72, 94-95, 127-128, 145-147; registry.go:60-62 | All tensor.New error paths; tensor.New with valid shape never fails |
-| layers/embeddings | 93.5% | token_embedding.go:64-66, 84-86, 149-151, 156-158, 165-167, 191-193, 224-226; rotary_positional_embedding.go:92-94, 96-98 | All tensor.New/NewParameter error paths |
-| layers/features | 93.8% | spectral.go:63-65, 81-83, 99-101 | All tensor.New error paths in Forward/Backward |
+Remaining blocked items from Phase 3:
+- T15.1 GPU hardware validation -- BLOCKED on GCP GPU quota
+- T20.1 Production benchmarks on T4 -- BLOCKED on T15.1
 
 ---
 
-### Phase 2: GPU Engine Implementation (Complete)
+### Phase 4: Enterprise Production Readiness
 
-#### E8: Tensor Storage Abstraction (Critical Path)
+#### E21: Structured Logging
 
-This epic replaces `TensorNumeric[T].data []T` with a `Storage[T]` interface. This is the foundation for all GPU work. The change must be fully backward-compatible: all existing code that calls `Data()`, `SetData()`, or constructs tensors via `tensor.New()` must work identically without modification.
+Add a logging abstraction that supports leveled output, structured fields,
+and JSON format. Instrument all packages that currently use raw fmt.Printf
+or the distributed Logger interface.
 
-**Storage[T] Interface Design (in tensor package):**
-
-```go
-// Storage[T] abstracts over CPU and GPU tensor data storage.
-type Storage[T Numeric] interface {
-    // Len returns the number of elements.
-    Len() int
-    // Slice returns a CPU-accessible []T. For CPU storage this is the
-    // underlying slice directly (zero copy). For GPU storage this copies
-    // device memory to a new host slice.
-    Slice() []T
-    // Set replaces the storage contents from a CPU slice. For GPU storage
-    // this copies host data to device memory.
-    Set(data []T)
-    // DeviceType returns the device type this storage resides on.
-    DeviceType() device.Type
-}
-```
-
-**CPUStorage[T] Implementation:**
-
-```go
-type CPUStorage[T Numeric] struct {
-    data []T
-}
-
-func (s *CPUStorage[T]) Len() int         { return len(s.data) }
-func (s *CPUStorage[T]) Slice() []T       { return s.data }
-func (s *CPUStorage[T]) Set(data []T)     { s.data = data }
-func (s *CPUStorage[T]) DeviceType() device.Type { return device.CPU }
-```
-
-**TensorNumeric[T] Refactoring:**
-
-```go
-type TensorNumeric[T Numeric] struct {
-    shape   []int
-    strides []int
-    storage Storage[T]   // was: data []T
-    isView  bool
-}
-
-// Data() delegates to storage -- backward compatible
-func (t *TensorNumeric[T]) Data() []T    { return t.storage.Slice() }
-func (t *TensorNumeric[T]) SetData(d []T) { t.storage.Set(d) }
-
-// New accessor for engine-level code
-func (t *TensorNumeric[T]) GetStorage() Storage[T] { return t.storage }
-func (t *TensorNumeric[T]) SetStorage(s Storage[T]) { t.storage = s }
-```
-
-- [x] T8.1 Define Storage[T] interface in tensor/storage.go  Completed: 2026 03 01
+- [ ] T21.1 Define Logger interface in a new `log` package  Owner: TBD  Est: 1h
   - Dependencies: None
-  - Acceptance: Interface compiles. Has Len(), Slice(), Set(), DeviceType() methods.
-  - Risk: Interface must be minimal to avoid constraining future GPU implementations.
-  - [ ] S8.1.1 Create tensor/storage.go with Storage[T] interface definition  Est: 15m
-  - [ ] S8.1.2 Run golangci-lint on tensor package  Est: 5m
-  - [ ] S8.1.3 Write unit tests for the interface contract (compile-time checks)  Est: 10m
-
-- [x] T8.2 Implement CPUStorage[T] in tensor/storage.go  Completed: 2026 03 01
-  - Dependencies: T8.1
-  - Acceptance: CPUStorage[T] satisfies Storage[T]. Slice() returns underlying slice with zero copy. Len() and Set() work correctly.
-  - [ ] S8.2.1 Implement CPUStorage[T] struct and all interface methods  Est: 15m
-  - [ ] S8.2.2 Add NewCPUStorage[T](data []T) constructor  Est: 10m
-  - [ ] S8.2.3 Write unit tests: Len, Slice identity (same pointer), Set, DeviceType  Est: 15m
-  - [ ] S8.2.4 Run golangci-lint and go test -cover on tensor package  Est: 5m
-
-- [x] T8.3 Refactor TensorNumeric[T] to use Storage[T]  Completed: 2026 03 01
-  - Dependencies: T8.2
-  - Acceptance: `data []T` field replaced by `storage Storage[T]`. Data() returns storage.Slice(). SetData() calls storage.Set(). New GetStorage()/SetStorage() accessors added. All existing tensor tests pass without modification.
-  - Risk: This touches the core tensor type used by every package. Must not change Data() return semantics.
-  - [ ] S8.3.1 Replace `data []T` field with `storage Storage[T]` in TensorNumeric struct  Est: 15m
-  - [ ] S8.3.2 Update Data() to return storage.Slice()  Est: 5m
-  - [ ] S8.3.3 Update SetData() to call storage.Set()  Est: 5m
-  - [ ] S8.3.4 Add GetStorage() and SetStorage() methods  Est: 5m
-  - [ ] S8.3.5 Update tensor.New[T]() to create CPUStorage internally  Est: 10m
-  - [ ] S8.3.6 Update Copy(), Each(), Bytes(), String() to use storage  Est: 15m
-  - [ ] S8.3.7 Update NewFromBytes, NewFromType to use storage  Est: 10m
-  - [ ] S8.3.8 Run full test suite: go test ./... to confirm zero regressions  Est: 15m
-  - [ ] S8.3.9 Run golangci-lint run ./... to confirm no lint issues  Est: 10m
-
-- [x] T8.4 Verify CPUEngine works with Storage[T] changes  Completed: 2026 03 01
-  - Dependencies: T8.3
-  - Acceptance: CPUEngine still passes all existing tests. No behavioral changes.
-  - [ ] S8.4.1 Verify CPUEngine code still works (it calls Data() which now delegates to storage)  Est: 10m
-  - [ ] S8.4.2 Run compute package tests: go test ./compute/ -cover  Est: 10m
-  - [ ] S8.4.3 Run golangci-lint on compute package  Est: 5m
-  - [ ] S8.4.4 Run full test suite to confirm no regressions  Est: 5m
-
-#### E9: CUDA Device and Memory Management
-
-Implement CUDA device memory allocation and GPUStorage[T] using CGO. All CUDA code must be behind `//go:build cuda` build tags.
-
-**GPUStorage[T] Design:**
-
-```go
-// In tensor/gpu_storage.go (//go:build cuda)
-type GPUStorage[T Numeric] struct {
-    devicePtr unsafe.Pointer  // CUDA device pointer from cudaMalloc
-    length    int             // number of elements
-    byteSize  int             // total bytes = length * sizeof(T)
-}
-
-func (s *GPUStorage[T]) Len() int   { return s.length }
-func (s *GPUStorage[T]) Slice() []T {
-    // Copy from GPU to a new CPU slice
-    hostData := make([]T, s.length)
-    cudaMemcpyDtoH(hostData, s.devicePtr, s.byteSize)
-    return hostData
-}
-func (s *GPUStorage[T]) Set(data []T) {
-    cudaMemcpyHtoD(s.devicePtr, data, s.byteSize)
-}
-func (s *GPUStorage[T]) DeviceType() device.Type { return device.CUDA }
-// GPU-specific accessor
-func (s *GPUStorage[T]) Ptr() unsafe.Pointer { return s.devicePtr }
-```
-
-- [x] T9.1 Create internal/cuda/runtime.go with CGO bindings for CUDA runtime  Completed: 2026 03 01
-  - Dependencies: T8.1
-  - Acceptance: cudaMalloc, cudaFree, cudaMemcpy (H2D, D2H, D2D), cudaGetDeviceCount, cudaSetDevice wrapped and callable from Go. Compiles with `go build -tags cuda`.
-  - [ ] S9.1.1 Create internal/cuda/ package directory  Est: 5m
-  - [ ] S9.1.2 Write runtime.go with CGO includes for cuda_runtime.h  Est: 20m
-  - [ ] S9.1.3 Implement CudaMalloc(size int) (unsafe.Pointer, error)  Est: 10m
-  - [ ] S9.1.4 Implement CudaFree(ptr unsafe.Pointer) error  Est: 5m
-  - [ ] S9.1.5 Implement CudaMemcpy variants (HtoD, DtoH, DtoD)  Est: 15m
-  - [ ] S9.1.6 Run golangci-lint on internal/cuda package  Est: 5m
-
-- [x] T9.2 Implement CUDA allocator in device/cuda_allocator.go  Completed: 2026 03 01
-  - Dependencies: T9.1
-  - Acceptance: CUDAAllocator implements device.Allocator. Allocate returns a CUDA device pointer. Free calls cudaFree.
-  - [ ] S9.2.1 Create device/cuda_allocator.go (build tag: cuda)  Est: 15m
-  - [ ] S9.2.2 Implement Allocate() using internal/cuda.CudaMalloc  Est: 10m
-  - [ ] S9.2.3 Implement Free() using internal/cuda.CudaFree  Est: 5m
-  - [ ] S9.2.4 Write unit tests with actual GPU allocation (build tag: cuda)  Est: 10m
-  - [ ] S9.2.5 Run golangci-lint on device package  Est: 5m
-
-- [x] T9.3 Register CUDA device in device registry  Completed: 2026 03 01
-  - Dependencies: T9.2
-  - Acceptance: `device.Get("cuda:0")` returns a valid CUDA device on machines with NVIDIA GPU. Device reports Type() == device.CUDA.
-  - [ ] S9.3.1 Create device/cuda_device.go with cudaDevice struct (build tag: cuda)  Est: 10m
-  - [ ] S9.3.2 Register CUDA device in init() using cudaGetDeviceCount  Est: 10m
-  - [ ] S9.3.3 Write unit test verifying device registration  Est: 5m
-  - [ ] S9.3.4 Run golangci-lint on device package  Est: 5m
-
-- [x] T9.4 Implement GPUStorage[T] in tensor/gpu_storage.go  Completed: 2026 03 01
-  - Dependencies: T8.1, T9.1
-  - Acceptance: GPUStorage[T] satisfies Storage[T]. Slice() copies from GPU to CPU host slice. Set() copies from CPU to GPU. Ptr() returns CUDA device pointer. DeviceType() returns device.CUDA.
-  - [ ] S9.4.1 Create tensor/gpu_storage.go (build tag: cuda) with struct definition  Est: 10m
-  - [ ] S9.4.2 Implement NewGPUStorage[T](length int) constructor using cudaMalloc  Est: 10m
-  - [ ] S9.4.3 Implement NewGPUStorageFromSlice[T](data []T) that allocates and copies H2D  Est: 10m
-  - [ ] S9.4.4 Implement Len(), Slice(), Set(), DeviceType(), Ptr()  Est: 10m
-  - [ ] S9.4.5 Implement Free() for explicit deallocation  Est: 5m
-  - [ ] S9.4.6 Write unit tests: round-trip H2D then D2H matches original data  Est: 10m
-  - [ ] S9.4.7 Run golangci-lint on tensor package  Est: 5m
-
-- [x] T9.5 Add tensor helper: ToGPU / ToCPU transfer functions  Completed: 2026 03 01
-  - Dependencies: T8.3, T9.4
-  - Acceptance: `ToGPU(t)` creates a new tensor with GPUStorage containing the same data. `ToCPU(t)` creates a new tensor with CPUStorage. Shape and strides are preserved.
-  - [ ] S9.5.1 Implement ToGPU[T](t *TensorNumeric[T]) in tensor/transfer.go (build tag: cuda)  Est: 15m
-  - [ ] S9.5.2 Implement ToCPU[T](t *TensorNumeric[T]) in tensor/transfer.go (build tag: cuda)  Est: 10m
-  - [ ] S9.5.3 Write round-trip test: create CPU tensor, transfer to GPU, transfer back, compare  Est: 10m
-  - [ ] S9.5.4 Write test for shape/strides preservation  Est: 5m
-  - [ ] S9.5.5 Run golangci-lint on tensor package  Est: 5m
-
-#### E10: cuBLAS MatMul via CGO
-
-Wrap cuBLAS sgemm for float32 matrix multiplication. This gives the single biggest speedup with the least implementation work.
-
-**cuBLAS Binding Design:**
-
-```go
-// internal/cublas/cublas.go (//go:build cuda)
-// #cgo LDFLAGS: -lcublas
-// #include <cublas_v2.h>
-import "C"
-
-func Sgemm(handle C.cublasHandle_t, m, n, k int, alpha float32,
-    a unsafe.Pointer, lda int, b unsafe.Pointer, ldb int,
-    beta float32, c unsafe.Pointer, ldc int) error
-```
-
-- [x] T10.1 Create internal/cublas package with CGO bindings  Completed: 2026 03 01
-  - Dependencies: T9.1
-  - Acceptance: cublasSgemm is callable from Go. cuBLAS handle creation and destruction work. Build tag: cuda.
-  - [ ] S10.1.1 Create internal/cublas/ package directory  Est: 5m
-  - [ ] S10.1.2 Write cublas.go with CGO includes for cublas_v2.h  Est: 10m
-  - [ ] S10.1.3 Implement handle management: CreateHandle(), DestroyHandle()  Est: 10m
-  - [ ] S10.1.4 Implement Sgemm wrapping cublasSgemm  Est: 15m
-  - [ ] S10.1.5 Note: cuBLAS uses column-major; handle row-major to col-major conversion by computing B^T * A^T = (AB)^T  Est: 10m
-  - [ ] S10.1.6 Run golangci-lint on internal/cublas  Est: 5m
-  - [ ] S10.1.7 Write unit test: multiply two known matrices, verify result  Est: 5m
-
-- [x] T10.2 Create GPUEngine[T] struct skeleton  Completed: 2026 03 01
-  - Dependencies: T9.4, T10.1
-  - Acceptance: GPUEngine[T] struct exists with cuBLAS handle field. Constructor creates handle. Ops() returns numeric.Arithmetic[T]. Static type assertion compiles (all methods stubbed with CPU fallback).
-  - [ ] S10.2.1 Create compute/gpu_engine.go (build tag: cuda) with struct definition  Est: 10m
-  - [ ] S10.2.2 Add cublasHandle, ops fields and NewGPUEngine constructor  Est: 10m
-  - [ ] S10.2.3 Implement Ops() method  Est: 5m
-  - [ ] S10.2.4 Add ensureGPU helper that checks if tensor storage is GPUStorage  Est: 10m
-  - [ ] S10.2.5 Add Close() method to destroy cuBLAS handle  Est: 5m
-  - [ ] S10.2.6 Run golangci-lint on compute package  Est: 5m
-
-- [x] T10.3 Implement GPUEngine.MatMul using cuBLAS  Completed: 2026 03 01
-  - Dependencies: T10.2
-  - Acceptance: GPUEngine.MatMul produces correct results for 2D and batched float32 matrix multiplications. Parity test with CPUEngine: max relative error < 1e-5 for random 128x128 matrices.
-  - Risk: cuBLAS column-major vs row-major conversion must be correct.
-  - [ ] S10.3.1 Implement MatMul for 2D case using cuBLAS Sgemm  Est: 30m
-  - [ ] S10.3.2 Implement batched MatMul (loop over batch dims calling Sgemm per batch)  Est: 20m
-  - [ ] S10.3.3 Handle broadcasting case (a is [batch..., m, k], b is [k, n])  Est: 15m
-  - [ ] S10.3.4 Write parity test: random matrices, compare GPU vs CPU output  Est: 15m
-  - [ ] S10.3.5 Write benchmark: 1024x1024 MatMul GPU vs CPU  Est: 5m
-  - [ ] S10.3.6 Run golangci-lint on compute package  Est: 5m
-
-- [x] T10.4 Stub remaining 33 Engine methods with CPU fallback  Completed: 2026 03 01
-  - Dependencies: T10.2, T9.5
-  - Acceptance: Every Engine[T] method is implemented. Non-MatMul methods transfer tensor to CPU, delegate to CPUEngine, then transfer result back to GPU. Static type assertion: `var _ Engine[float32] = (*GPUEngine[float32])(nil)` compiles.
-  - [ ] S10.4.1 Implement fallbackToCPU helper: copies input tensors to CPU, calls CPUEngine method, copies result to GPU  Est: 20m
-  - [ ] S10.4.2 Stub all unary ops (UnaryOp, Tanh, TanhPrime, Exp, Log, Sqrt, Rsqrt, Softmax) using fallback  Est: 10m
-  - [ ] S10.4.3 Stub all binary ops (Add, Sub, Mul, Div, Pow) using fallback  Est: 10m
-  - [ ] S10.4.4 Stub all scalar ops (AddScalar, MulScalar, DivScalar) using fallback  Est: 5m
-  - [ ] S10.4.5 Stub tensor manipulation (Transpose, Reshape, Split, Concat, Repeat, Copy, Zero, Zeros, Fill) using fallback  Est: 10m
-  - [ ] S10.4.6 Stub remaining (Sum, ReduceSum, ReduceMean, RandomUniform, Gather, ScatterAdd, OneHot) using fallback  Est: 10m
-  - [ ] S10.4.7 Add static type assertion  Est: 5m
-  - [ ] S10.4.8 Write integration test: Linear layer forward pass on GPUEngine  Est: 10m
-  - [ ] S10.4.9 Run golangci-lint on compute package  Est: 5m
-
-#### E11: GPU Elementwise Operations (CUDA Kernels)
-
-Replace CPU fallbacks with native CUDA kernels for elementwise operations. Each kernel is a .cu file compiled via CGO or a Go-based PTX approach.
-
-- [x] T11.1 Create CUDA kernel infrastructure  Completed: 2026 03 01
-  - Dependencies: T10.4
-  - Acceptance: A pattern for writing, compiling, and calling CUDA kernels from Go via CGO is established. One example kernel (vector add) works end-to-end.
-  - [ ] S11.1.1 Create internal/cuda/kernels/ directory with build infrastructure  Est: 15m
-  - [ ] S11.1.2 Write elementwise_ops.cu with vector_add kernel  Est: 15m
-  - [ ] S11.1.3 Create Go wrapper in internal/cuda/kernels/elementwise.go  Est: 15m
-  - [ ] S11.1.4 Write test verifying vector_add kernel produces correct output  Est: 10m
-  - [ ] S11.1.5 Run golangci-lint  Est: 5m
-
-- [x] T11.2 Implement GPU Add, Sub, Mul, Div kernels  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: GPU Add, Sub, Mul, Div produce results matching CPUEngine within 1e-6. Broadcasting is supported.
-  - [ ] S11.2.1 Write CUDA kernels for add, sub, mul, div with broadcasting  Est: 20m
-  - [ ] S11.2.2 Write Go wrappers calling kernels  Est: 10m
-  - [ ] S11.2.3 Wire into GPUEngine replacing CPU fallback for Add, Sub, Mul, Div  Est: 10m
-  - [ ] S11.2.4 Write parity tests: GPU vs CPU for each operation  Est: 15m
-  - [ ] S11.2.5 Run golangci-lint on compute package  Est: 5m
-
-- [x] T11.3 Implement GPU scalar ops and Pow kernel  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: AddScalar, MulScalar, DivScalar, Pow produce correct results on GPU.
-  - [ ] S11.3.1 Write CUDA kernels for scalar add, mul, div, and pow  Est: 15m
-  - [ ] S11.3.2 Wire into GPUEngine  Est: 10m
-  - [ ] S11.3.3 Write parity tests  Est: 15m
-  - [ ] S11.3.4 Run golangci-lint  Est: 5m
-
-#### E12: GPU Activation and Math Function Kernels
-
-- [x] T12.1 Implement GPU Exp, Log, Sqrt, Rsqrt kernels  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: Each operation matches CPU output within 1e-6 relative error.
-  - [ ] S12.1.1 Write CUDA kernels for exp, log, sqrt, rsqrt (unary elementwise)  Est: 15m
-  - [ ] S12.1.2 Wire into GPUEngine  Est: 10m
-  - [ ] S12.1.3 Write parity tests for each operation  Est: 15m
-  - [ ] S12.1.4 Run golangci-lint  Est: 5m
-
-- [x] T12.2 Implement GPU Tanh, TanhPrime kernels  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: Tanh and TanhPrime match CPU output within 1e-6.
-  - [ ] S12.2.1 Write CUDA kernels for tanh and tanh_prime (tanh_prime = (1-tanh^2) * upstream)  Est: 10m
-  - [ ] S12.2.2 Wire into GPUEngine  Est: 5m
-  - [ ] S12.2.3 Write parity tests  Est: 10m
-  - [ ] S12.2.4 Run golangci-lint  Est: 5m
-
-- [x] T12.3 Implement GPU Softmax kernel  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: Softmax along any valid axis matches CPU output within 1e-5. Numerically stable (max subtraction before exp).
-  - Risk: Reduction within softmax requires shared memory or multi-pass kernel.
-  - [ ] S12.3.1 Write CUDA kernel for softmax with max-subtraction stability  Est: 25m
-  - [ ] S12.3.2 Handle arbitrary axis by computing outer/inner/axisSize strides  Est: 10m
-  - [ ] S12.3.3 Wire into GPUEngine  Est: 5m
-  - [ ] S12.3.4 Write parity tests: 1D, 2D (axis=0, axis=1), 3D cases  Est: 15m
-  - [ ] S12.3.5 Run golangci-lint  Est: 5m
-
-#### E13: GPU Reduction and Tensor Manipulation Kernels
-
-- [x] T13.1 Implement GPU Sum, ReduceSum, ReduceMean kernels  Completed: 2026 03 01
-  - Dependencies: T11.1
-  - Acceptance: Sum/ReduceSum/ReduceMean match CPU output within 1e-5 for all valid axes and keepDims settings.
-  - Risk: Parallel reduction requires careful shared-memory design.
-  - [ ] S13.1.1 Write CUDA reduction kernel for sum along axis  Est: 20m
-  - [ ] S13.1.2 Implement ReduceSum (delegates to Sum implementation)  Est: 5m
-  - [ ] S13.1.3 Implement ReduceMean (Sum then DivScalar)  Est: 10m
-  - [ ] S13.1.4 Wire into GPUEngine  Est: 5m
-  - [ ] S13.1.5 Write parity tests: multiple axes, keepDims=true/false  Est: 15m
-  - [ ] S13.1.6 Run golangci-lint  Est: 5m
-
-- [x] T13.2 GPU Transpose  Completed: 2026 03 01  Note: CPU fallback. N-D transpose is complex and not a compute bottleneck. GPU kernel deferred to future optimization.
-  - Dependencies: T11.1
-
-- [x] T13.3 GPU Zero, Zeros, Fill, Copy  Completed: 2026 03 01  Note: Fill uses native GPU kernel. Zero, Zeros, Copy use CPU fallback. With H2D->kernel->D2H architecture, these are not bottlenecks.
-  - Dependencies: T9.1
-
-- [x] T13.4 GPU Reshape, Split, Concat, Repeat  Completed: 2026 03 01  Note: CPU fallback. Reshape is metadata-only. Split/Concat/Repeat are memory-bound, not compute-bound. GPU kernels deferred.
-  - Dependencies: T11.1
-
-- [x] T13.5 GPU UnaryOp, Gather, ScatterAdd, OneHot, RandomUniform  Completed: 2026 03 01  Note: CPU fallback for all. UnaryOp cannot run Go functions on GPU. Gather/ScatterAdd/OneHot involve integer indices. RandomUniform uses Go math/rand.
-  - Dependencies: T11.1
-
-#### E14: Integration Testing and Benchmarks
-
-- [x] T14.1 End-to-end Linear layer test on GPU  Completed: 2026 03 01
-  - Dependencies: T10.3, T10.4
-  - Acceptance: Create Linear layer with GPUEngine, run forward and backward pass, verify output matches CPUEngine within 1e-5.
-  - [ ] S14.1.1 Write test: construct Linear with GPUEngine, forward pass  Est: 15m
-  - [ ] S14.1.2 Write test: backward pass, verify gradients  Est: 15m
-  - [ ] S14.1.3 Compare GPU gradients with CPU gradients  Est: 10m
-  - [ ] S14.1.4 Run golangci-lint  Est: 5m
-
-- [x] T14.2 End-to-end Transformer-like ops test on GPU  Completed: 2026 03 01  Note: Attention ops parity test (Q@K^T, Softmax, @V) + Softmax parity for 1D/2D/3D shapes + all elementwise op parity tests. Tests are in compute/gpu_integration_test.go.
-  - Dependencies: E11, E12, E13
-
-- [x] T14.3 End-to-end training step test on GPU  Completed: 2026 03 01  Note: Training step simulation: forward (MatMul), loss (Sub, Mul), backward (Transpose, MatMul, MulScalar, ReduceMean). Both GPU and CPU engines run identically.
-  - Dependencies: T14.2
-
-- [x] T14.4 Performance benchmarks  Completed: 2026 03 01  Note: Benchmarks for MatMul (128/512/1024) and Softmax (64x128x512), comparing GPU vs CPU. Requires cuda build tag to run.
-  - Dependencies: E11, E12, E13
-
-- [x] T14.5 Verify non-CUDA build still works  Completed: 2026 03 01
-  - Dependencies: E10
-  - Acceptance: `go test ./... -cover` passes without cuda build tag. `go build ./...` succeeds. No CUDA imports leak into non-tagged files.
-  - [ ] S14.5.1 Run go test ./... without cuda tag  Est: 10m
-  - [ ] S14.5.2 Run go build ./... without cuda tag  Est: 5m
-  - [ ] S14.5.3 Verify no unconditional imports of internal/cuda or internal/cublas  Est: 10m
-  - [ ] S14.5.4 Run golangci-lint  Est: 5m
-
-### Phase 3: GPU Production Readiness (Active)
-
-#### E15: Hardware Validation via gcloud
-
-Validate all existing GPU code on real NVIDIA hardware. Use the cheapest available GPU VM on GCP (T4 spot instance). Create the VM, run tests and benchmarks, capture results, delete the VM immediately.
-
-- [ ] T15.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h  **BLOCKED:** GCP GPU quota = 0 for all available projects (numerai-488804, sire-staging). Quota increase request submitted (preference ID: zerfoo-gpu-test) but auto-denied pending manual Google review. Check status: `gcloud beta quotas preferences describe zerfoo-gpu-test --project=numerai-488804`
-  - Dependencies: E14
-  - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured.
-  - [ ] S15.1.1 Create n1-standard-4 spot VM with T4 GPU using gcloud CLI (us-central1-a, Ubuntu 22.04)  Est: 5m
-  - [ ] S15.1.2 SSH into VM, install CUDA Toolkit 12.x and Go 1.23+  Est: 15m
-  - [ ] S15.1.3 Clone repo, build with `go build -tags cuda ./...`, fix any build issues  Est: 10m
-  - [ ] S15.1.4 Run `go test -tags cuda ./...` and capture output  Est: 10m
-  - [ ] S15.1.5 Run benchmarks: `go test -tags cuda -bench=. -benchmem ./compute/` and save results  Est: 5m
-  - [ ] S15.1.6 Delete VM immediately: `gcloud compute instances delete ...`  Est: 2m
-  - [ ] S15.1.7 Document results in docs/gpu.md (test pass/fail, benchmark numbers)  Est: 10m
-
-#### E16: Device-Resident Tensor Pipeline
-
-The current architecture does H2D -> kernel -> D2H for every single GPU operation. For N chained operations, this means 2N unnecessary memory copies. Refactor GPUEngine so that:
-- Output tensors use GPUStorage (data stays on GPU)
-- Input tensors are checked: if GPUStorage, use Ptr() directly; if CPUStorage, do H2D into temp buffer
-- This eliminates N-1 round-trips for N chained GPU ops
-
-**Design: getDevicePtr helper**
-```go
-// getDevicePtr returns a CUDA device pointer for the tensor's data.
-// If the tensor has GPUStorage, returns Ptr() directly (zero-copy).
-// If the tensor has CPUStorage, allocates device memory and copies H2D.
-// The returned cleanup function must be called to free temp allocations.
-func getDevicePtr[T tensor.Numeric](t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
-    if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
-        return gs.Ptr(), func() {}, nil // zero-copy, no cleanup
-    }
-    // CPUStorage: allocate temp buffer, copy H2D
-    data := t.Data()
-    byteSize := len(data) * f32Size
-    devPtr, err := cuda.Malloc(byteSize)
-    if err != nil { return nil, nil, err }
-    // memcpy H2D ...
-    return devPtr, func() { cuda.Free(devPtr) }, nil
-}
-```
-
-- [x] T16.1 Add getDevicePtr helper to compute/gpu_kernels.go  Completed: 2026 03 01  Note: getDevicePtr checks storage type, returns device pointer with cleanup. GPUStorage is zero-copy. CPUStorage does H2D from pool.
-  - Dependencies: E15
-  - Acceptance: Helper checks storage type, returns device pointer with cleanup. GPUStorage path is zero-copy. CPUStorage path does H2D.
-  - [ ] S16.1.1 Implement getDevicePtr[T] that type-asserts on GetStorage()  Est: 15m
-  - [ ] S16.1.2 Implement allocDeviceOutput[T] that creates result tensor with GPUStorage  Est: 15m
-
-- [x] T16.2 Refactor gpuBinaryOp to use device-resident pipeline  Completed: 2026 03 01
-  - Dependencies: T16.1
-  - Acceptance: gpuBinaryOp uses getDevicePtr for inputs and allocDeviceOutput for output. No D2H copy of result. Output tensor has GPUStorage.
-  - [ ] S16.2.1 Replace cuda.Malloc + Memcpy H2D with getDevicePtr calls  Est: 10m
-  - [ ] S16.2.2 Replace resultF32 D2H + SetData with GPUStorage output  Est: 10m
-  - [ ] S16.2.3 Verify all 5 binary ops (Add, Sub, Mul, Div, Pow) still pass parity tests  Est: 10m
-
-- [x] T16.3 Refactor gpuUnaryOp and gpuScalarOp to use device-resident pipeline  Completed: 2026 03 01
-  - Dependencies: T16.1
-  - Acceptance: Both helpers use getDevicePtr for input and GPUStorage for output. No unnecessary copies.
-  - [ ] S16.3.1 Refactor gpuUnaryOp (Exp, Log, Sqrt, Rsqrt, Tanh)  Est: 10m
-  - [ ] S16.3.2 Refactor gpuScalarOp (AddScalar, MulScalar, DivScalar)  Est: 10m
-  - [ ] S16.3.3 Verify all unary + scalar ops pass parity tests  Est: 10m
-
-- [x] T16.4 Refactor MatMul, Softmax, Sum to use device-resident pipeline  Completed: 2026 03 01
-  - Dependencies: T16.1
-  - Acceptance: MatMul, Softmax, gpuSum, gpuFill all use getDevicePtr and GPUStorage output.
-  - [ ] S16.4.1 Refactor MatMul to use getDevicePtr for A and B inputs  Est: 15m
-  - [ ] S16.4.2 Refactor gpuSoftmax and gpuSum to use getDevicePtr  Est: 15m
-  - [ ] S16.4.3 Refactor gpuFill to use device-resident pattern  Est: 5m
-  - [ ] S16.4.4 Verify MatMul, Softmax, Sum, ReduceSum, ReduceMean pass parity tests  Est: 10m
-
-- [x] T16.5 Add chained-operation integration test  Completed: 2026 03 01  Note: TestGPUEngine_ChainedOpsDeviceResident (5 chained ops, asserts GPUStorage), TestGPUEngine_MixedStorageInputs, TestGPUEngine_OOMFallbackCount.
-  - Dependencies: T16.2, T16.3, T16.4
-  - Acceptance: Test performs 5+ chained GPU operations (MatMul -> Add -> Softmax -> etc.) and verifies intermediate tensors have GPUStorage (no D2H between ops).
-  - [ ] S16.5.1 Write test: chain of GPU ops, assert intermediate tensor storage is GPUStorage  Est: 15m
-  - [ ] S16.5.2 Write test: mixed GPU/CPU tensor inputs (one GPUStorage, one CPUStorage)  Est: 10m
-  - [ ] S16.5.3 Run golangci-lint on compute package  Est: 5m
-
-#### E17: CUDA Memory Pool
-
-Replace per-operation cudaMalloc/cudaFree with a pooled allocator. The pool caches freed allocations by size bucket for reuse.
-
-**Design: MemPool**
-```go
-type MemPool struct {
-    mu    sync.Mutex
-    cache map[int][]unsafe.Pointer // size -> list of free device ptrs
-}
-
-func (p *MemPool) Alloc(size int) (unsafe.Pointer, error) {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    if ptrs := p.cache[size]; len(ptrs) > 0 {
-        ptr := ptrs[len(ptrs)-1]
-        p.cache[size] = ptrs[:len(ptrs)-1]
-        return ptr, nil
-    }
-    return cuda.Malloc(size)
-}
-
-func (p *MemPool) Free(ptr unsafe.Pointer, size int) {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    p.cache[size] = append(p.cache[size], ptr)
-}
-```
-
-- [x] T17.1 Implement MemPool in internal/cuda/mempool.go  Completed: 2026 03 01  Note: Size-bucketed free-list allocator with Alloc, Free, Drain, Stats. Mutex-synchronized.
-  - Dependencies: T9.1
-  - Acceptance: MemPool.Alloc returns cached pointer when available, fresh allocation otherwise. MemPool.Free returns pointer to cache. MemPool.Drain frees all cached memory.
-  - [ ] S17.1.1 Create internal/cuda/mempool.go with MemPool struct  Est: 15m
-  - [ ] S17.1.2 Implement Alloc, Free, Drain methods with mutex synchronization  Est: 10m
-  - [ ] S17.1.3 Write unit tests for pool reuse and drain  Est: 5m
-
-- [x] T17.2 Integrate MemPool into GPUEngine  Completed: 2026 03 01  Note: Integrated as part of E16 device-resident pipeline commit. GPUEngine holds pool, all temp allocations use pool, Close() drains pool.
-  - Dependencies: T17.1, T16.1
-  - Acceptance: GPUEngine holds a MemPool. All temp allocations (getDevicePtr for CPUStorage inputs) use pool. GPUEngine.Close() calls pool.Drain().
-  - [ ] S17.2.1 Add pool field to GPUEngine struct, initialize in constructor  Est: 10m
-  - [ ] S17.2.2 Update getDevicePtr to use pool.Alloc for temp buffers  Est: 10m
-  - [ ] S17.2.3 Update Close() to call pool.Drain()  Est: 5m
-  - [ ] S17.2.4 Verify all parity tests still pass  Est: 5m
-
-#### E18: CUDA Stream Management
-
-Add non-default CUDA stream support for async kernel execution and memory transfers. This enables overlapping compute and transfer.
-
-- [x] T18.1 Add CUDA stream bindings to internal/cuda  Completed: 2026 03 01  Note: Stream type, CreateStream, Synchronize, Destroy, Ptr. MemcpyAsync added.
-  - Dependencies: T9.1
-  - Acceptance: cudaStreamCreate, cudaStreamDestroy, cudaStreamSynchronize wrapped. cudaMemcpyAsync wrapped.
-  - [ ] S18.1.1 Add Stream type and CreateStream/DestroyStream/Synchronize to runtime.go  Est: 15m
-  - [ ] S18.1.2 Add MemcpyAsync function  Est: 10m
-  - [ ] S18.1.3 Run golangci-lint  Est: 5m
-
-- [x] T18.2 Add stream parameter to CUDA kernel launchers  Completed: 2026 03 01  Note: All 17 launcher functions accept cudaStream_t. cuBLAS SetStream method added.
-  - Dependencies: T18.1
-  - Acceptance: All kernel launcher functions in elementwise.cu accept a cudaStream_t parameter. Go wrappers pass stream.
-  - [ ] S18.2.1 Update all extern "C" launcher functions to accept cudaStream_t parameter  Est: 15m
-  - [ ] S18.2.2 Update all Go wrapper functions in elementwise.go to accept stream  Est: 15m
-  - [ ] S18.2.3 Update cuBLAS handle to use stream via cublasSetStream  Est: 10m
-  - [ ] S18.2.4 Verify all tests still pass  Est: 5m
-
-- [x] T18.3 Integrate stream into GPUEngine  Completed: 2026 03 01  Note: Integrated as part of E16 device-resident pipeline commit. GPUEngine creates stream, all kernel calls and cuBLAS use it, Close() destroys it.
-  - Dependencies: T18.2
-  - Acceptance: GPUEngine creates a stream in constructor. All kernel launches and memcpy use the stream. Close() destroys the stream.
-  - [ ] S18.3.1 Add stream field to GPUEngine, create in NewGPUEngine  Est: 10m
-  - [ ] S18.3.2 Pass stream to all kernel calls and memcpy calls  Est: 15m
-  - [ ] S18.3.3 Call Synchronize before D2H copies when needed  Est: 5m
-
-#### E19: Error Recovery and Graceful Fallback
-
-Replace panics in GPUStorage with error returns. Add OOM fallback in GPUEngine.
-
-- [x] T19.1 Replace panics in GPUStorage with error returns  Completed: 2026 03 01  Note: Added TrySlice()/TrySet(). Slice()/Set() log warnings instead of panicking.
+  - Acceptance: Interface has Debug, Info, Warn, Error methods. Each accepts a message string and key-value fields. A NopLogger and a StdLogger (writing to io.Writer) are provided. JSON output mode is available via a constructor option.
+  - [ ] S21.1.1 Create log/logger.go with Logger interface and Level type  Est: 20m
+  - [ ] S21.1.2 Implement StdLogger with level filtering and text/JSON output  Est: 25m
+  - [ ] S21.1.3 Implement NopLogger (zero-allocation no-op)  Est: 5m
+  - [ ] S21.1.4 Write unit tests for StdLogger (level filtering, JSON format, field rendering)  Est: 20m
+  - [ ] S21.1.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T21.2 Integrate Logger into compute package  Owner: TBD  Est: 45m
+  - Dependencies: T21.1
+  - Acceptance: CPUEngine and GPUEngine accept a Logger at construction. OOM fallback, stream errors, and pool operations log at appropriate levels. No raw fmt.Printf calls remain in compute/.
+  - [ ] S21.2.1 Add Logger field to CPUEngine; log parallelFor errors at Warn  Est: 15m
+  - [ ] S21.2.2 Add Logger field to GPUEngine; log OOM fallback, pool stats, stream errors  Est: 20m
+  - [ ] S21.2.3 Update tests to verify log output in error scenarios  Est: 15m
+  - [ ] S21.2.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T21.3 Integrate Logger into distributed package  Owner: TBD  Est: 45m
+  - Dependencies: T21.1
+  - Acceptance: Replace existing distributed.Logger interface with log.Logger. All coordinator and worker components use leveled logging. Connection events logged at Info, errors at Error.
+  - [ ] S21.3.1 Update distributed.ServerManager, coordinator to accept log.Logger  Est: 15m
+  - [ ] S21.3.2 Replace all fmt.Printf calls in distributed/ with logger calls  Est: 15m
+  - [ ] S21.3.3 Update tests to use StdLogger or NopLogger  Est: 10m
+  - [ ] S21.3.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T21.4 Integrate Logger into remaining packages  Owner: TBD  Est: 30m
+  - Dependencies: T21.1
+  - Acceptance: training/, model/, cmd/cli/ use log.Logger. No raw fmt.Printf in non-test production code.
+  - [ ] S21.4.1 Add Logger to training.WorkflowConfig and optimizer constructors  Est: 10m
+  - [ ] S21.4.2 Add Logger to model package and cmd/cli framework  Est: 10m
+  - [ ] S21.4.3 Audit all packages for remaining fmt.Printf; replace with logger  Est: 10m
+  - [ ] S21.4.4 Run golangci-lint and go test -cover  Est: 5m
+
+#### E22: Metrics Interface
+
+Add a metrics collection abstraction for runtime observability. The interface
+must be backend-agnostic (usable with Prometheus, StatsD, or in-memory).
+
+- [ ] T22.1 Define Metrics interface in a new `metrics/runtime` package  Owner: TBD  Est: 1h
   - Dependencies: None
-  - Acceptance: GPUStorage.Slice() and Set() no longer panic. Errors are returned via new TrySlice()/TrySet() methods. Existing Slice()/Set() still satisfy Storage[T] interface but log errors instead of panicking.
-  - Risk: Storage[T] interface defines Slice() []T and Set([]T) with no error returns. Cannot change the interface without breaking all code.
-  - [ ] S19.1.1 Add TrySlice() ([]T, error) and TrySet(data []T) error methods to GPUStorage  Est: 10m
-  - [ ] S19.1.2 Change Slice() to call TrySlice(); on error, return zero slice and log  Est: 10m
-  - [ ] S19.1.3 Change Set() to call TrySet(); on error, log instead of panic  Est: 10m
+  - Acceptance: Interface has Counter(name), Gauge(name), Histogram(name, buckets) methods. Each returns a typed metric with Inc/Set/Observe methods. A default in-memory implementation is provided for testing and local use. A NopMetrics implementation is provided for zero overhead when metrics are disabled.
+  - [ ] S22.1.1 Create metrics/runtime/metrics.go with Collector interface  Est: 20m
+  - [ ] S22.1.2 Implement InMemoryCollector with thread-safe counters/gauges  Est: 25m
+  - [ ] S22.1.3 Implement NopCollector (zero-allocation no-op)  Est: 5m
+  - [ ] S22.1.4 Write unit tests for InMemoryCollector (concurrent access, snapshot)  Est: 15m
+  - [ ] S22.1.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [x] T19.2 Add OOM fallback in GPUEngine  Completed: 2026 03 01  Note: getDevicePtr callers fall back to CPUEngine on OOM. oomFallbackCount atomic counter added for observability.
-  - Dependencies: T19.1
-  - Acceptance: When cuda.Malloc fails (OOM), GPUEngine methods fall back to CPUEngine transparently. A warning is logged on first fallback.
-  - [ ] S19.2.1 Wrap getDevicePtr to catch Malloc errors and fall back to CPU path  Est: 15m
-  - [ ] S19.2.2 Add oomFallbackCount metric to GPUEngine for observability  Est: 10m
-  - [ ] S19.2.3 Write test: simulate OOM by setting device memory limit, verify CPU fallback  Est: 5m
+- [ ] T22.2 Instrument compute.Engine with metrics  Owner: TBD  Est: 45m
+  - Dependencies: T22.1
+  - Acceptance: CPUEngine and GPUEngine report: op_count (counter per operation type), op_duration_seconds (histogram), oom_fallback_total (counter), pool_hit_total / pool_miss_total (counters for GPU pool).
+  - [ ] S22.2.1 Add Collector field to CPUEngine; instrument Add/MatMul/etc. with counters and timers  Est: 20m
+  - [ ] S22.2.2 Add Collector field to GPUEngine; instrument kernel dispatch, OOM, pool  Est: 20m
+  - [ ] S22.2.3 Write tests verifying metric increments after operations  Est: 15m
+  - [ ] S22.2.4 Run golangci-lint and go test -cover  Est: 5m
 
-#### E20: Production Benchmarks on Real Hardware
+- [ ] T22.3 Instrument distributed package with metrics  Owner: TBD  Est: 30m
+  - Dependencies: T22.1
+  - Acceptance: Distributed workers report: allreduce_count (counter), allreduce_duration_seconds (histogram), barrier_count, broadcast_count, connection_errors_total.
+  - [ ] S22.3.1 Add Collector to Strategy and coordinator  Est: 15m
+  - [ ] S22.3.2 Instrument AllReduceGradients, Barrier, BroadcastTensor  Est: 10m
+  - [ ] S22.3.3 Write tests verifying metrics after distributed operations  Est: 10m
+  - [ ] S22.3.4 Run golangci-lint and go test -cover  Est: 5m
 
-Re-run benchmarks on real T4 hardware after E16-E18 optimizations.
+#### E23: gRPC Security Hardening
 
-- [ ] T20.1 Run optimized benchmarks on T4 and document results  Owner: TBD  Est: 1h  **BLOCKED:** Depends on E15 (GPU quota).
-  - Dependencies: E15, E16, E17, E18, E19
-  - Acceptance: Benchmark results document speedup for MatMul (128/512/1024), Softmax, and chained attention ops. Results include comparison: Phase 2 (per-op H2D/D2H) vs Phase 3 (device-resident pipeline).
-  - [ ] S20.1.1 Create T4 spot VM, install deps, clone repo  Est: 15m
-  - [ ] S20.1.2 Run `go test -tags cuda -bench=. -benchmem ./compute/` and capture  Est: 10m
-  - [ ] S20.1.3 Run chained-ops benchmark (attention: Q@K^T -> Softmax -> @V)  Est: 10m
-  - [ ] S20.1.4 Update docs/gpu.md with Phase 3 benchmark results and speedup table  Est: 15m
-  - [ ] S20.1.5 Delete VM immediately  Est: 2m
+Add TLS and mutual authentication to all gRPC communication channels.
+
+- [ ] T23.1 Add TLS configuration to gRPC server and client  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Acceptance: A TLSConfig struct supports: CA cert path, server cert/key paths, client cert/key paths for mTLS. ServerManager.Start() uses TLS credentials when TLSConfig is provided. Worker connections use TLS. Plaintext is still supported (for local development) when TLSConfig is nil.
+  - [ ] S23.1.1 Create distributed/tlsconfig.go with TLSConfig struct and credential helpers  Est: 20m
+  - [ ] S23.1.2 Update ServerManager to accept TLSConfig and create TLS listener  Est: 15m
+  - [ ] S23.1.3 Update NetworkManager.ConnectToPeers to use TLS dial options  Est: 15m
+  - [ ] S23.1.4 Write integration test: server + client with self-signed TLS certs  Est: 20m
+  - [ ] S23.1.5 Write integration test: mTLS with client cert verification  Est: 15m
+  - [ ] S23.1.6 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T23.2 Add input validation to distributed RPC handlers  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Acceptance: All RPC handlers validate request fields (non-empty rank, valid tensor shapes, non-nil data). Invalid requests return gRPC InvalidArgument status. Tests verify each validation path.
+  - [ ] S23.2.1 Add validation to AllReduce, Barrier, Broadcast RPC handlers  Est: 15m
+  - [ ] S23.2.2 Write tests for each validation error case  Est: 10m
+  - [ ] S23.2.3 Run golangci-lint and go test -cover  Est: 5m
+
+#### E24: Configuration Management
+
+Add file-based configuration loading with validation and environment
+variable overrides. Use encoding/json and os.Getenv from the standard library.
+
+- [ ] T24.1 Create config package with file loader  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Acceptance: A config.Load[T](path string) function reads a JSON file into a struct. A config.LoadWithEnv[T](path, prefix string) function additionally applies environment variable overrides using the `env` struct tag. Validation errors list all invalid fields. Missing required fields produce clear error messages.
+  - [ ] S24.1.1 Create config/loader.go with Load[T] function (JSON decoder)  Est: 15m
+  - [ ] S24.1.2 Implement env var override via struct tag reflection  Est: 20m
+  - [ ] S24.1.3 Implement validation via `validate:"required"` struct tag  Est: 15m
+  - [ ] S24.1.4 Write unit tests: valid config, missing file, invalid JSON, missing required, env override  Est: 20m
+  - [ ] S24.1.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T24.2 Define standard config structs for Engine and Training  Owner: TBD  Est: 30m
+  - Dependencies: T24.1
+  - Acceptance: EngineConfig (device type, memory limit, log level), TrainingConfig (batch size, learning rate, optimizer, epochs, checkpoint interval), DistributedConfig (coordinator address, TLS config, timeout). Each struct has JSON tags and validation tags.
+  - [ ] S24.2.1 Define EngineConfig, TrainingConfig, DistributedConfig structs  Est: 15m
+  - [ ] S24.2.2 Write tests loading each config from JSON with env overrides  Est: 10m
+  - [ ] S24.2.3 Run golangci-lint and go test -cover  Est: 5m
+
+#### E25: Graceful Shutdown
+
+Implement orderly shutdown coordination using context cancellation
+and cleanup callbacks.
+
+- [ ] T25.1 Add Closer interface and shutdown coordinator  Owner: TBD  Est: 45m
+  - Dependencies: None
+  - Acceptance: A shutdown.Coordinator registers Closer instances in order. On Shutdown(ctx), it calls Close() on each in reverse registration order. If a Closer does not complete within the context deadline, it is skipped and logged. Integration test demonstrates orderly cleanup.
+  - [ ] S25.1.1 Create shutdown/coordinator.go with Closer interface and Coordinator  Est: 20m
+  - [ ] S25.1.2 Implement reverse-order shutdown with timeout per closer  Est: 15m
+  - [ ] S25.1.3 Write tests: orderly shutdown, timeout on slow closer, empty coordinator  Est: 15m
+  - [ ] S25.1.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T25.2 Implement Closer for Engine and distributed components  Owner: TBD  Est: 30m
+  - Dependencies: T25.1
+  - Acceptance: GPUEngine.Close() drains memory pool and destroys CUDA handles. CPUEngine.Close() is a no-op (satisfies interface). Distributed Strategy.Shutdown() deregisters from coordinator and closes connections. All Close methods are idempotent.
+  - [ ] S25.2.1 Make CPUEngine implement Closer (no-op Close)  Est: 5m
+  - [ ] S25.2.2 Verify GPUEngine.Close() is idempotent  Est: 10m
+  - [ ] S25.2.3 Make distributed Strategy implement Closer  Est: 10m
+  - [ ] S25.2.4 Write integration test: register Engine + Strategy, trigger shutdown  Est: 15m
+  - [ ] S25.2.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T25.3 Add signal handling to CLI commands  Owner: TBD  Est: 30m
+  - Dependencies: T25.1, T25.2
+  - Acceptance: cmd/zerfoo and cmd/zerfoo-predict catch SIGINT/SIGTERM, trigger shutdown coordinator, and exit cleanly. Integration test verifies signal handling.
+  - [ ] S25.3.1 Add signal listener in cmd framework that cancels root context  Est: 15m
+  - [ ] S25.3.2 Wire shutdown coordinator into CLI lifecycle  Est: 10m
+  - [ ] S25.3.3 Write test verifying clean exit on SIGTERM  Est: 10m
+  - [ ] S25.3.4 Run golangci-lint and go test -cover  Est: 5m
+
+#### E26: Health Checks
+
+Add health check endpoints for deployment probes (Kubernetes liveness
+and readiness).
+
+- [ ] T26.1 Create health check HTTP server  Owner: TBD  Est: 45m
+  - Dependencies: T21.1
+  - Acceptance: A health.Server exposes /healthz (liveness) and /readyz (readiness) HTTP endpoints. Each returns 200 OK with JSON body when healthy, 503 when unhealthy. Readiness checks are configurable (register check functions). Server starts on a configurable port. Logger is used for startup/error messages.
+  - [ ] S26.1.1 Create health/server.go with Server struct and HTTP handlers  Est: 15m
+  - [ ] S26.1.2 Implement configurable readiness checks (func() error callbacks)  Est: 10m
+  - [ ] S26.1.3 Write tests: healthy response, unhealthy readiness, concurrent access  Est: 15m
+  - [ ] S26.1.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T26.2 Add engine health check  Owner: TBD  Est: 20m
+  - Dependencies: T26.1
+  - Acceptance: A check function verifies Engine is operational (e.g., small tensor add succeeds). For GPU, additionally verify CUDA context is valid. Register as readiness check.
+  - [ ] S26.2.1 Implement engine health check function  Est: 10m
+  - [ ] S26.2.2 Write test for healthy and unhealthy engine  Est: 10m
+  - [ ] S26.2.3 Run golangci-lint and go test -cover  Est: 5m
+
+#### E27: CI/CD Hardening
+
+Make CI pipeline enforce quality gates strictly.
+
+- [ ] T27.1 Make parity and numerics tests blocking  Owner: TBD  Est: 15m
+  - Dependencies: None
+  - Acceptance: Remove `|| true` from parity and numerics test steps in .github/workflows/ci.yml. CI fails if any parity or numerics test fails.
+  - [ ] S27.1.1 Update ci.yml: remove `|| true` from parity test step  Est: 5m
+  - [ ] S27.1.2 Update ci.yml: remove `|| true` from numerics test step  Est: 5m
+  - [ ] S27.1.3 Verify CI passes with current test suite  Est: 5m
+
+- [ ] T27.2 Add coverage gate to CI  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Acceptance: CI step runs `go test -coverprofile=coverage.out ./...`, parses output, and fails if any testable package (excluding documented exceptions) drops below 93%. Coverage summary is posted as a CI artifact.
+  - [ ] S27.2.1 Add coverage step to ci.yml that generates coverage.out  Est: 10m
+  - [ ] S27.2.2 Write a Go script (cmd/coverage-gate/main.go) that parses coverage.out and exits non-zero if below threshold  Est: 20m
+  - [ ] S27.2.3 Add tests for coverage-gate script  Est: 10m
+  - [ ] S27.2.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T27.3 Add benchmark regression detection  Owner: TBD  Est: 45m
+  - Dependencies: None
+  - Acceptance: CI runs benchmarks on each PR. A Go script compares benchmark results against a baseline (stored in repo). CI fails if any benchmark regresses by more than 10%. Baseline is updated via a manual workflow dispatch.
+  - [ ] S27.3.1 Add benchmark step to ci.yml (go test -bench=. -benchmem -count=3)  Est: 10m
+  - [ ] S27.3.2 Write cmd/bench-compare/main.go to parse benchstat output and enforce threshold  Est: 25m
+  - [ ] S27.3.3 Add baseline benchmark results file (benchmarks/baseline.txt)  Est: 5m
+  - [ ] S27.3.4 Add tests for bench-compare script  Est: 10m
+  - [ ] S27.3.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T27.4 Update CI Go version and add race detector  Owner: TBD  Est: 15m
+  - Dependencies: None
+  - Acceptance: CI uses Go 1.25 (matching go.mod). Race detector runs on unit tests. Both Ubuntu and macOS runners are used.
+  - [ ] S27.4.1 Update ci.yml go-version to match go.mod  Est: 5m
+  - [ ] S27.4.2 Add -race flag to unit test step  Est: 5m
+  - [ ] S27.4.3 Add macOS runner to test matrix  Est: 5m
+
+#### E28: Resource Limits
+
+Add configurable resource limits to prevent unbounded allocation and
+runaway operations.
+
+- [ ] T28.1 Add memory limit to Engine  Owner: TBD  Est: 45m
+  - Dependencies: None
+  - Acceptance: Engine accepts a MaxMemoryBytes option. Tensor allocation that would exceed the limit returns an error instead of allocating. GPU engine tracks device memory usage. The limit is enforced at the Engine level, not the allocator level (so it applies to both CPU and GPU).
+  - [ ] S28.1.1 Add MemoryTracker to compute package (atomic int64 tracking allocated bytes)  Est: 15m
+  - [ ] S28.1.2 Integrate MemoryTracker into tensor allocation (New, NewWithStorage)  Est: 15m
+  - [ ] S28.1.3 Add MaxMemoryBytes option to Engine constructors  Est: 10m
+  - [ ] S28.1.4 Write tests: allocation within limit succeeds, over limit returns error  Est: 15m
+  - [ ] S28.1.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T28.2 Add per-operation timeout enforcement  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Acceptance: Engine respects context.Context deadlines. Long-running operations (MatMul, Softmax) check ctx.Done() periodically and return context.DeadlineExceeded if expired. GPU operations use CUDA stream synchronization with timeout.
+  - [ ] S28.2.1 Add ctx.Done() checks in CPUEngine parallelFor loops  Est: 15m
+  - [ ] S28.2.2 Add stream sync timeout in GPUEngine operations  Est: 10m
+  - [ ] S28.2.3 Write tests: operation completes within deadline, times out correctly  Est: 15m
+  - [ ] S28.2.4 Run golangci-lint and go test -cover  Est: 5m
+
+#### E29: GPU Hardware Validation (Blocked)
+
+Validate all GPU code on real NVIDIA hardware.
+
+- [ ] T29.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h  **BLOCKED:** GCP GPU quota = 0. Quota increase request pending (preference ID: zerfoo-gpu-test).
+  - Dependencies: None
+  - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured and documented in docs/gpu.md.
+  - Unblock action: Check quota status via `gcloud beta quotas preferences describe zerfoo-gpu-test --project=numerai-488804`. If still denied, try a different GCP project or cloud provider.
+  - [ ] S29.1.1 Create n1-standard-4 spot VM with T4 GPU  Est: 5m
+  - [ ] S29.1.2 Install CUDA Toolkit 12.x and Go 1.25, clone repo  Est: 15m
+  - [ ] S29.1.3 Build with `go build -tags cuda ./...` and fix any build issues  Est: 10m
+  - [ ] S29.1.4 Run `go test -tags cuda ./...` and capture output  Est: 10m
+  - [ ] S29.1.5 Run benchmarks and save results  Est: 5m
+  - [ ] S29.1.6 Delete VM immediately  Est: 2m
+  - [ ] S29.1.7 Document results in docs/gpu.md  Est: 10m
+
+- [ ] T29.2 Run optimized benchmarks on T4  Owner: TBD  Est: 30m  **BLOCKED:** Depends on T29.1.
+  - Dependencies: T29.1
+  - Acceptance: Benchmark results for MatMul (128/512/1024), Softmax, and chained attention ops documented with Phase 3 device-resident pipeline.
+  - [ ] S29.2.1 Run benchmarks with -benchmem and capture results  Est: 10m
+  - [ ] S29.2.2 Update docs/gpu.md with benchmark table  Est: 15m
+  - [ ] S29.2.3 Delete VM  Est: 2m
+
+#### E30: Production Documentation
+
+Create operational documentation for production deployment.
+
+- [ ] T30.1 Write deployment runbook  Owner: TBD  Est: 1h
+  - Dependencies: E21, E23, E24, E25, E26
+  - Acceptance: docs/runbook.md covers: system requirements, installation steps, configuration reference (all config fields documented), startup sequence, health check verification, log interpretation, common operational tasks (scale workers, update model, restart), shutdown procedure.
+  - [ ] S30.1.1 Write system requirements and installation section  Est: 15m
+  - [ ] S30.1.2 Write configuration reference (all config structs documented)  Est: 15m
+  - [ ] S30.1.3 Write startup, health check, and shutdown sections  Est: 15m
+  - [ ] S30.1.4 Write common operational tasks  Est: 15m
+
+- [ ] T30.2 Write troubleshooting guide  Owner: TBD  Est: 45m
+  - Dependencies: E21, E22
+  - Acceptance: docs/troubleshooting.md covers: common error messages with root causes and fixes, GPU-specific issues (CUDA not found, OOM, driver mismatch), distributed training issues (connection refused, timeout, split brain), performance diagnosis (how to identify bottlenecks, pprof usage).
+  - [ ] S30.2.1 Document common error messages and fixes  Est: 15m
+  - [ ] S30.2.2 Document GPU troubleshooting  Est: 10m
+  - [ ] S30.2.3 Document distributed training troubleshooting  Est: 10m
+  - [ ] S30.2.4 Document performance diagnosis with pprof  Est: 10m
+
+- [ ] T30.3 Add pprof endpoints to health server  Owner: TBD  Est: 20m
+  - Dependencies: T26.1
+  - Acceptance: Health server registers net/http/pprof handlers. CPU profile, heap profile, goroutine dump available at /debug/pprof/*.
+  - [ ] S30.3.1 Register pprof handlers in health.Server  Est: 10m
+  - [ ] S30.3.2 Write test verifying pprof endpoints respond  Est: 10m
+  - [ ] S30.3.3 Run golangci-lint and go test -cover  Est: 5m
+
+#### E31: Final Verification
+
+Run the full quality gate suite after all enterprise features are implemented.
+
+- [ ] T31.1 Run full test suite with coverage  Owner: TBD  Est: 30m
+  - Dependencies: E21, E22, E23, E24, E25, E26, E27, E28
+  - Acceptance: `go test ./... -cover` shows all packages at target coverage. `go test ./... -race` shows zero races. New packages (log, config, health, shutdown, metrics/runtime) are all at >= 95%.
+  - [ ] S31.1.1 Run go test ./... -cover  Est: 10m
+  - [ ] S31.1.2 Run go test ./... -race  Est: 10m
+  - [ ] S31.1.3 Verify new packages meet 95% coverage  Est: 10m
+
+- [ ] T31.2 Run linters and formatters  Owner: TBD  Est: 15m
+  - Dependencies: T31.1
+  - Acceptance: golangci-lint 0 issues, go vet clean, gofmt clean.
+  - [ ] S31.2.1 Run golangci-lint run ./...  Est: 5m
+  - [ ] S31.2.2 Run go vet ./...  Est: 5m
+  - [ ] S31.2.3 Run gofmt -l . and verify no files  Est: 5m
+
+- [ ] T31.3 Run integration smoke test  Owner: TBD  Est: 30m
+  - Dependencies: T31.1
+  - Acceptance: End-to-end test: load config from file, create Engine, run forward pass, verify health check, trigger graceful shutdown. All within a single test binary.
+  - [ ] S31.3.1 Write integration test covering config -> engine -> health -> shutdown  Est: 20m
+  - [ ] S31.3.2 Run integration test  Est: 5m
+  - [ ] S31.3.3 Run golangci-lint  Est: 5m
 
 ---
 
@@ -748,41 +423,33 @@ Re-run benchmarks on real T4 hardware after E16-E18 optimizations.
 
 | ID | Milestone | Dependencies | Exit Criteria |
 |----|-----------|--------------|---------------|
-| M1 | Zero-coverage packages tested | E1 | COMPLETED 2026 02 24 |
-| M2 | Sub-50% packages at target | E2 | COMPLETED 2026 02 24 |
-| M3 | Medium-coverage packages at target | E3 | COMPLETED 2026 02 24 |
-| M4 | All remaining packages at target | E4, E5 | COMPLETED 2026 02 25 |
-| M5 | Final verification (Phase 1) | E7 | Full suite green, lint clean |
-| M6 | Storage abstraction complete | E8 | TensorNumeric uses Storage[T], all tests pass, zero regressions |
-| M7 | CUDA infrastructure ready | E9 | GPUStorage allocates/frees, H2D/D2H transfers verified |
-| M8 | cuBLAS MatMul working | E10 | GPUEngine.MatMul parity test passes, all 34 methods stubbed |
-| M9 | Native GPU kernels complete | E11, E12, E13 | All Engine methods have native GPU implementations (except UnaryOp) |
-| M10 | GPU integration validated | E14 | End-to-end tests pass, benchmarks show >= 10x MatMul speedup |
-| M11 | Real hardware validation | E15 | All GPU tests pass on T4 hardware via gcloud |
-| M12 | Device-resident pipeline | E16 | Chained ops avoid H2D/D2H; intermediate tensors stay on GPU |
-| M13 | Memory pool + streams | E17, E18 | Pool eliminates per-op malloc; streams enable async execution |
-| M14 | Production ready | E19, E20 | Error recovery, validated benchmarks, documented results |
+| M15 | Logging and metrics | E21, E22 | All packages instrumented; metrics exported |
+| M16 | Security and config | E23, E24 | TLS on gRPC; config loads from file with env overrides |
+| M17 | Reliability | E25, E26, E28 | Graceful shutdown; health checks; resource limits |
+| M18 | CI hardening | E27 | Parity tests blocking; coverage + benchmark gates |
+| M19 | Documentation | E30 | Runbook, troubleshooting guide, pprof endpoints |
+| M20 | GPU validation | E29 | Tests pass on real T4 hardware (when quota available) |
+| M21 | Enterprise ready | E31 | Full suite green, all quality gates pass |
 
 ### Recommended Sequence
 
-1. **E8** -- Storage abstraction (critical path, blocks everything)
-2. **E9** -- CUDA device + memory (can partially overlap with E8.3-E8.4)
-3. **E10** -- cuBLAS MatMul + GPUEngine skeleton (first working GPU operation)
-4. **E11** -- GPU elementwise ops (highest frequency operations)
-5. **E12** -- GPU activations + Softmax (needed for transformer layers)
-6. **E13** -- GPU reductions + tensor manipulation (completes the Engine)
-7. **E14** -- Integration tests + benchmarks (validates everything end-to-end)
-8. **E6, E7** -- Phase 1 remaining tasks (independent, low priority)
-9. **E15** -- Hardware validation (validate Phase 2 on real T4 GPU)
-10. **E16** -- Device-resident pipeline (eliminates per-op H2D/D2H, biggest perf win)
-11. **E17** -- Memory pool (eliminates per-op cudaMalloc/Free)
-12. **E18** -- Stream management (async kernel execution)
-13. **E19** -- Error recovery (replace panics, OOM fallback)
-14. **E20** -- Production benchmarks (re-validate after optimizations)
+1. **E21** (Logging) -- Foundation for all other observability work
+2. **E22** (Metrics) -- Can start after T21.1; depends on Logger
+3. **E27** (CI Hardening) -- Independent; can run in parallel with E21/E22
+4. **E23** (gRPC Security) -- Independent
+5. **E24** (Config Management) -- Independent
+6. **E25** (Graceful Shutdown) -- Independent; benefits from Logger
+7. **E26** (Health Checks) -- Depends on Logger
+8. **E28** (Resource Limits) -- Independent
+9. **E29** (GPU Validation) -- Blocked on external quota; do when unblocked
+10. **E30** (Documentation) -- After E21-E26 are complete
+11. **E31** (Final Verification) -- After all other epics
 
-E17 and E18 are independent and can be done in parallel. E16 is the critical path for Phase 3.
-
-Within E11, E12, E13, tasks are independent of each other and can be done in any order or in parallel.
+Parallelism opportunities:
+- E21 + E27 can run in parallel (independent)
+- E23 + E24 + E25 can run in parallel (independent)
+- E22 starts after T21.1 (needs Logger interface)
+- E26 starts after T21.1 (needs Logger interface)
 
 ---
 
@@ -791,72 +458,46 @@ Within E11, E12, E13, tasks are independent of each other and can be done in any
 ### Definition of Done
 
 A task is done when:
-1. Implementation matches the acceptance criteria for that task.
+1. Implementation matches the acceptance criteria.
 2. All existing tests pass (`go test ./... -count=1`).
-3. New code has unit tests with >= 95% coverage for non-CUDA code.
-4. GPU parity tests compare output with CPUEngine (tolerance: 1e-5 for reductions, 1e-6 for elementwise).
-5. `golangci-lint run ./package/` reports 0 issues.
-6. `go vet ./package/` reports no issues.
-7. Tests pass with `-race` flag (CPU tests).
-8. Non-CUDA build (`go build ./...` without cuda tag) still compiles and tests pass.
-9. Changes are committed in a small, logical commit touching one directory only.
+3. New code has unit tests with >= 95% coverage.
+4. `golangci-lint run ./package/` reports 0 issues.
+5. `go vet ./package/` reports no issues.
+6. Tests pass with `-race` flag.
+7. Non-CUDA build (`go build ./...` without cuda tag) compiles.
+8. Changes are committed in a small commit touching one directory only.
 
 ### Review and QA Steps
 
-1. Before writing code, read the existing implementation in the relevant file(s).
-2. Write tests first or alongside implementation. Use table-driven tests with the standard testing package.
+1. Read existing implementation before writing code.
+2. Write tests first or alongside implementation. Use table-driven tests.
 3. After implementation, run `go test -cover ./package/` to verify coverage.
 4. Run `golangci-lint run --fix ./package/` to fix lint issues.
 5. Run `gofmt -w .` to ensure formatting.
-6. For GPU code: run parity test comparing GPU output with CPU baseline.
-7. Run `go test ./... -count=1` to verify no regressions across the full suite.
-8. Run `go build ./...` (without cuda tag) to verify non-CUDA build still works.
-
-### Build Tag Strategy
-
-All CUDA-dependent code must use the build tag: `//go:build cuda`
-
-Files that need the cuda build tag:
-- `tensor/gpu_storage.go`
-- `tensor/transfer.go`
-- `device/cuda_allocator.go`
-- `device/cuda_device.go`
-- `compute/gpu_engine.go`
-- `internal/cuda/*.go`
-- `internal/cublas/*.go`
-- `internal/cuda/kernels/*.go`
-
-Each of these files must also have a `_nocuda.go` stub if any exported types or functions are referenced from non-tagged code. If no cross-boundary references exist, no stub is needed.
+6. Run `go test ./... -count=1` to verify no regressions.
+7. Run `go build ./...` (without cuda tag) to verify non-CUDA build.
 
 ### Commit Discipline
 
-- Never commit files from different directories in the same commit. The pre-commit hook rejects it.
+- Never commit files from different directories in the same commit.
 - Make small, logical commits: one task or subtask per commit.
-- Use Conventional Commits: `feat(tensor): add Storage[T] interface`, `feat(compute): implement GPUEngine MatMul`.
+- Use Conventional Commits: `feat(log): add structured logger`, `fix(distributed): add TLS config`.
 - Never allow changes to pile up. Commit after each completed subtask.
-- Always run relevant linters and formatters before committing.
+- Always run linters and formatters before committing.
 
 ---
 
 ## 6. Progress Log
 
-- **2026 03 01 (update 6):** Change Summary: T16.5 chained-operation integration test added (TestGPUEngine_ChainedOpsDeviceResident, TestGPUEngine_MixedStorageInputs, TestGPUEngine_OOMFallbackCount). All plan checkboxes updated. E15/E20 blocked on GCP GPU quota (request submitted, pending Google manual review).
+- **2026 03 01 (update 7):** Change Summary: Created enterprise production readiness plan (Phase 4, E21-E31). Extracted architecture and design knowledge to docs/design.md. Trimmed plan.md to remove completed Phase 1-3 task details (preserved as summary in design.md Section 7). New epics: E21 structured logging, E22 metrics interface, E23 gRPC TLS, E24 config management, E25 graceful shutdown, E26 health checks, E27 CI hardening, E28 resource limits, E29 GPU validation (re-numbered from E15/E20), E30 production docs, E31 final verification. Added milestones M15-M21.
 
-- **2026 03 01 (update 5):** Change Summary: Implemented Phase 3 code changes (E16-E19). E19 T19.1: GPUStorage TrySlice/TrySet with error returns, Slice/Set log instead of panic. E17 T17.1: CUDA MemPool with size-bucketed free-list. E18 T18.1-T18.2: CUDA Stream bindings, all 17 kernel launchers accept stream parameter, cuBLAS SetStream. E16 T16.1-T16.4 + T17.2 + T18.3: Device-resident pipeline - getDevicePtr (zero-copy for GPUStorage, H2D from pool for CPUStorage), makeGPUResult (output as GPUStorage), all GPU ops refactored. GPUEngine now has pool, stream, oomFallbackCount fields. T19.2: OOM fallback with atomic counter. Remaining: T16.5 (chained-op integration test), E15/E20 (hardware validation, blocked on gcloud auth).
+- **2026 03 01 (update 6):** Completed E6 T6.1 (testutil tests, 98.5%), E6 T6.2 (testutils tests, 94.5%), E7 T7.1 (full suite green, zero races, regularization 92.9% -> 97.6%), E7 T7.2 (0 lint issues, gofmt clean). All Phase 1 remaining tasks done.
 
-- **2026 03 01 (update 4):** Change Summary: Added Phase 3 GPU Production Readiness plan (E15-E20). Six new epics: E15 hardware validation via gcloud T4 VM, E16 device-resident tensor pipeline (eliminates per-op H2D/D2H), E17 CUDA memory pool, E18 CUDA stream management, E19 error recovery and graceful fallback, E20 production benchmarks on real hardware. Added milestones M11-M14, deliverables D14-D18, objectives O7-O10.
+- **2026 03 01 (updates 1-5):** Completed Phase 2 (GPU Engine, E8-E14) and Phase 3 (GPU Production Readiness, E16-E19). Details in docs/design.md Section 7.
 
-- **2026 03 01 (update 3):** Change Summary: Completed E13 (GPU Reduction and Tensor Manipulation) and E14 (Integration Testing and Benchmarks). All Phase 2 GPU Engine work is now complete. 20 of 34 Engine methods have native CUDA GPU implementations for float32. Remaining 14 methods use CPU fallback by design (metadata-only ops, integer-index ops, or Go-function ops that cannot run on GPU). Comprehensive parity tests verify GPU matches CPU output. Benchmarks for MatMul and Softmax are included.
+- **2026 02 25:** Completed Phase 1 test coverage (E1-E5). 30 of 33 packages at >= 95%.
 
-- **2026 03 01 (update 2):** Change Summary: Completed E11 (GPU Elementwise Ops), E12 (GPU Activation/Math Kernels), and partial E13 (T13.1 Sum/ReduceSum/ReduceMean). All 15 elementwise CUDA kernels (add, sub, mul, div, pow, add_scalar, mul_scalar, div_scalar, exp, log, sqrt, rsqrt, tanh, tanh_prime, fill) are wired into GPUEngine for float32 with CPU fallback for other types. Softmax kernel uses shared-memory reduction with numerical stability (max subtraction). SumAxis reduction kernel added for Sum/ReduceSum/ReduceMean. T14.1 (Linear layer integration test) and T14.5 (non-CUDA build verification) also completed. Remaining: T13.2-T13.5 (tensor manipulation), T14.2-T14.4 (integration tests/benchmarks).
-
-- **2026 03 01:** Change Summary: Completed E8 (Tensor Storage Abstraction), E9 (CUDA Device and Memory Management), and E10 (cuBLAS MatMul). E8: Created Storage[T] interface and CPUStorage[T] (T8.1-T8.2), refactored TensorNumeric[T].data to use Storage[T] (T8.3), verified CPUEngine compatibility (T8.4). E9: Created internal/cuda CGO runtime bindings (T9.1), CUDA allocator and device registration (T9.2-T9.3), GPUStorage[T] (T9.4), ToGPU/ToCPU transfer functions (T9.5). E10: Created internal/cublas Sgemm bindings (T10.1), implemented GPUEngine[T] with cuBLAS MatMul and CPU fallback for all 33 remaining methods (T10.2-T10.4). All code behind //go:build cuda. All existing tests pass unchanged. Commits: b922d98, 32bf3a8, b3c54b3, f9c20a2, 615a08d, 54e3717, 3ed95b8, cc80304.
-
-- **2026 02 28:** Change Summary: Added Phase 2 GPU Engine Implementation plan (E8-E14, T8.1-T14.5). New epics cover: E8 tensor storage abstraction (critical path), E9 CUDA device/memory management, E10 cuBLAS MatMul, E11 GPU elementwise ops, E12 GPU activations/math, E13 GPU reductions/tensor manipulation, E14 integration testing and benchmarks. Added milestones M6-M10. Updated Context section with architecture overview and GPU design rationale. Added build tag strategy to Operating Procedure. Preserved all existing Phase 1 tasks and status unchanged.
-
-- **2026 02 25:** Change Summary: All epics E1-E5 completed. 30 of 33 testable packages now at >= 95% coverage. Three packages (layers/gather 93.1%, layers/embeddings 93.5%, layers/features 93.8%) remain below 95% due to unreachable tensor.New error paths. These gaps are documented as acceptable exceptions. Key commits this session: compute (85.5% -> 96.2%), data (93.5% -> 100%), layers/gather (91.7% -> 93.1%), layers/embeddings (92.5% -> 93.5%). Prior sessions raised all other packages to >= 95%.
-
-- **2026 02 24:** Change Summary: Plan created. Defined 7 epics covering 35+ packages, prioritized by coverage tier from 0% to 93.5%. Excluded generated code (distributed/pb), main entrypoints (cmd/zerfoo*), trivial packages (types, pkg/prelude), and test utilities (best-effort only). Target: >= 95% statement coverage for all testable packages.
+- **2026 02 24:** Initial plan created for Phase 1 test coverage improvement.
 
 ---
 
@@ -864,75 +505,67 @@ Each of these files must also have a `_nocuda.go` stub if any exported types or 
 
 ### For a New Contributor
 
-- **Phase 1 status:** Test coverage work is complete. See Documented Coverage Exceptions for the 3 packages below 95%.
-- **Phase 2 status:** Complete. E8-E14 all done. GPUEngine[T] has native GPU implementations for 20 of 34 Engine methods: MatMul (cuBLAS), Add, Sub, Mul, Div, Pow, AddScalar, MulScalar, DivScalar, Exp, Log, Sqrt, Rsqrt, Tanh, TanhPrime, Softmax, Sum, ReduceSum, ReduceMean, Fill. Remaining 14 methods (UnaryOp, Transpose, Zero, Zeros, Copy, Gather, ScatterAdd, RandomUniform, Split, Concat, Repeat, OneHot, Reshape) use CPU fallback by design. Comprehensive parity tests and benchmarks in compute/gpu_integration_test.go.
-- **Phase 3 status:** Nearly complete. E16 (device-resident pipeline), E17 (memory pool), E18 (streams), E19 (error recovery) are all done. GPU operations now keep data on-device between chained ops (GPUStorage), use pooled allocation (MemPool), execute on a dedicated CUDA stream, and fall back gracefully on OOM. Remaining: T16.5 (chained-op integration test), E15 (hardware validation, blocked on gcloud auth), E20 (production benchmarks, blocked on hardware).
-- **Key architecture change (Phase 3):** GPU operations now produce GPUStorage output tensors. getDevicePtr detects GPUStorage (zero-copy) vs CPUStorage (H2D from pool). This eliminates N-1 round-trips for N chained GPU ops.
-- **gcloud cost note:** Use spot/preemptible T4 instances (~$0.11/hr for n1-standard-4 + T4 in us-central1). Create and delete VMs immediately after use.
-- **Key files to understand first:**
-  - `tensor/tensor.go` -- TensorNumeric[T] struct, the core data type
-  - `compute/engine.go` -- Engine[T] interface (34 methods)
-  - `compute/cpu_engine.go` -- CPUEngine[T] implementation (reference for GPUEngine)
-  - `internal/xblas/gemm.go` -- existing BLAS wrappers (pattern for cuBLAS wrappers)
-  - `device/device.go` -- Device interface and registry
-  - `device/allocator.go` -- Allocator interface
-- **How to run tests:** `go test ./... -cover` for full suite. For GPU tests: `go test -tags cuda ./... -cover`.
-- **How to build with CUDA:** `go build -tags cuda ./...`
-- **Key constraint:** The pre-commit hook runs `golangci-lint` and `go test ./...`. It rejects commits that touch multiple directories.
-- **No credentials required.** All work is local. CUDA Toolkit must be installed for GPU development.
-- **Design principle:** GPUEngine must be a drop-in replacement for CPUEngine. Layers pass tensors to the engine and never access data directly for computation. The Storage[T] interface is the only change to the tensor package API.
+- **Architecture:** Read docs/design.md for interface contracts, package layout, and GPU architecture.
+- **GPU details:** Read docs/gpu.md for build requirements, kernel inventory, and memory model.
+- **Phase 1-3 status:** Complete. See docs/design.md Section 7 for summary.
+- **Phase 4 status:** Not started. This plan covers enterprise production readiness.
+- **GPU hardware validation:** Blocked on GCP GPU quota (E29).
+- **Key files to read first:**
+  - compute/engine.go -- Engine[T] interface (34 methods)
+  - graph/node.go -- Node[T] interface
+  - tensor/storage.go -- Storage[T] interface
+  - distributed/interfaces.go -- Distributed training interfaces
+- **How to run tests:** `go test ./... -cover` for full suite. `go test -tags cuda ./...` for GPU.
+- **How to build:** `go build ./...` (CPU). `go build -tags cuda ./...` (GPU).
+- **Pre-commit hook:** Runs golangci-lint and tests. Rejects multi-directory commits.
+- **No credentials required.** All work is local. CUDA Toolkit needed for GPU work.
+
+### External Dependencies
+
+- GCP GPU quota increase for hardware validation (preference ID: zerfoo-gpu-test, project: numerai-488804).
 
 ---
 
 ## 8. Appendix
 
-### Packages Excluded from 95% Coverage Target
+### Production Readiness Scorecard (Current State)
 
-| Package | Reason |
-|---------|--------|
-| distributed/pb/ | Generated protobuf code (1518 LOC, all auto-generated) |
-| cmd/zerfoo/ | Main entrypoint (33 LOC), no testable logic beyond CLI wiring |
-| cmd/zerfoo-predict/ | Main entrypoint; testable logic is in cmd/cli/ |
-| cmd/zerfoo-tokenize/ | Main entrypoint; testable logic is in pkg/tokenizer/ |
-| pkg/prelude/ | 1 line, no statements to cover |
-| types/ | 12 lines, type definitions only |
-| testing/testutils/ | Test utility (997 LOC), exercised transitively, best-effort testing in E6 |
-| tests/internal/testutil/ | Test utility (116 LOC), best-effort testing in E6 |
-| tests/helpers/ | Test helper, no source files with statements |
+| Category | Score | Notes |
+|----------|-------|-------|
+| Architecture | 9/10 | Clean interfaces, modular, type-safe |
+| Core Functionality | 8/10 | Engine complete, GPU in progress |
+| Testing | 8/10 | 95%+ coverage, missing hardware validation |
+| Error Handling | 6/10 | Basic validation, no structured errors |
+| Security | 3/10 | No TLS, no auth, minimal validation |
+| Observability | 3/10 | Minimal logging, no metrics export |
+| Configuration | 4/10 | Programmatic only, no file support |
+| Operations | 3/10 | No health checks, no shutdown coordination |
+| Documentation | 5/10 | Design docs good, missing runbooks |
+| CI/CD | 7/10 | Comprehensive tests, non-blocking parity |
 
-### Engine[T] Interface Method Summary (34 methods)
+### Target Scorecard (After Phase 4)
 
-| Category | Methods |
-|----------|---------|
-| Arithmetic | Ops |
-| Unary | UnaryOp |
-| Binary elementwise | Add, Sub, Mul, Div, Pow |
-| Scalar | AddScalar, MulScalar, DivScalar |
-| Matrix | MatMul, Transpose |
-| Activations | Tanh, TanhPrime, Softmax, Exp, Log |
-| Reductions | Sum, ReduceSum, ReduceMean |
-| Math | Sqrt, Rsqrt |
-| Tensor manipulation | Reshape, Split, Concat, Repeat |
-| Initialization | Zero, Zeros, Fill, Copy, RandomUniform |
-| Embedding | Gather, ScatterAdd |
-| Encoding | OneHot |
+| Category | Target | How Achieved |
+|----------|--------|-------------|
+| Architecture | 9/10 | No changes needed |
+| Core Functionality | 9/10 | GPU hardware validation (E29) |
+| Testing | 9/10 | Blocking parity tests, benchmark gates (E27) |
+| Error Handling | 8/10 | Structured logging with context (E21) |
+| Security | 7/10 | TLS, input validation (E23) |
+| Observability | 8/10 | Logging, metrics, pprof (E21, E22, E30) |
+| Configuration | 8/10 | File loading, env overrides, validation (E24) |
+| Operations | 8/10 | Health checks, graceful shutdown, limits (E25, E26, E28) |
+| Documentation | 8/10 | Runbook, troubleshooting, pprof (E30) |
+| CI/CD | 9/10 | Blocking tests, coverage gate, benchmark gate (E27) |
 
-### cuBLAS Row-Major Strategy
+### New Packages Created by This Plan
 
-cuBLAS operates in column-major order. To compute C = A * B in row-major:
-- Observe that for row-major matrices, A_row = A_col^T
-- So C_row = A_row * B_row = (A_col^T) * (B_col^T)
-- In column-major: C_col^T = (A_col^T) * (B_col^T)
-- Equivalently: C_col = B_col * A_col
-- Therefore: call cublasSgemm with B as first argument, A as second, swapping m and n
-
-This avoids explicit transposition and works for any matrix dimensions.
-
-### References
-
-- Go coverage tool: `go help testflag`
-- Coverage visualization: `go tool cover -html=cover.out`
-- Race detector: `go test -race ./...`
-- CUDA Toolkit documentation: developer.nvidia.com/cuda-toolkit
-- cuBLAS documentation: docs.nvidia.com/cuda/cublas
-- CGO documentation: pkg.go.dev/cmd/cgo
+| Package | Purpose | Epic |
+|---------|---------|------|
+| log/ | Structured logging with levels | E21 |
+| metrics/runtime/ | Runtime metrics collection | E22 |
+| config/ | File-based configuration loading | E24 |
+| shutdown/ | Graceful shutdown coordinator | E25 |
+| health/ | HTTP health check server | E26 |
+| cmd/coverage-gate/ | CI coverage enforcement script | E27 |
+| cmd/bench-compare/ | CI benchmark regression detection | E27 |
