@@ -7,10 +7,21 @@ import (
 
 	"github.com/zerfoo/zerfoo/cmd/cli"
 	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/zerfoo/shutdown"
 )
 
 func main() {
-	ctx := context.Background()
+	if err := run(); err != nil {
+		log.Printf("CLI execution failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// Create shutdown coordinator and signal-aware context.
+	coord := shutdown.New()
+	ctx, cancel := cli.SignalContext(context.Background(), coord)
+	defer cancel()
 
 	// Create CLI application
 	cliApp := cli.NewCLI()
@@ -26,8 +37,5 @@ func main() {
 	cliApp.RegisterCommand(tokenizeCmd)
 
 	// Run CLI
-	if err := cliApp.Run(ctx, os.Args[1:]); err != nil {
-		log.Printf("CLI execution failed: %v", err)
-		os.Exit(1)
-	}
+	return cliApp.Run(ctx, os.Args[1:])
 }
