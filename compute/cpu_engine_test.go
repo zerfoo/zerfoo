@@ -523,6 +523,21 @@ func TestCPUEngine_SetCollector_Nil(t *testing.T) {
 	}
 }
 
+func TestCPUEngine_Close(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+	err := engine.Close(context.Background())
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// Verify engine is still usable after Close (no-op).
+	a, _ := tensor.New[float32]([]int{2}, []float32{1, 2})
+	b, _ := tensor.New[float32]([]int{2}, []float32{3, 4})
+	_, err = engine.Add(context.Background(), a, b)
+	if err != nil {
+		t.Fatalf("Add after Close: %v", err)
+	}
+}
+
 func TestCPUEngine_MetricsPerOp(t *testing.T) {
 	engine := NewCPUEngine[float32](numeric.Float32Ops{})
 	collector := metrics.NewInMemory()

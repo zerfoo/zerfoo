@@ -312,6 +312,9 @@ func (e *CPUEngine[T]) SetCollector(c metrics.Collector) {
 	e.collector = c
 }
 
+// Close is a no-op for CPUEngine. It satisfies the shutdown.Closer interface.
+func (e *CPUEngine[T]) Close(_ context.Context) error { return nil }
+
 // Ops returns the arithmetic ops for this engine.
 func (e *CPUEngine[T]) Ops() numeric.Arithmetic[T] { return e.ops }
 
