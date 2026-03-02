@@ -73,7 +73,6 @@ func NewGrpcStrategy[T tensor.Numeric](cfg GrpcStrategyConfig) *GrpcStrategy[T] 
 // connects to all peers.
 func (s *GrpcStrategy[T]) Init(rank, size int, coordinatorAddress string) error {
 	_ = rank // rank is assigned by the coordinator
-	_ = size // size is determined by the coordinator response
 
 	// Connect to the coordinator.
 	conn, err := grpc.NewClient(coordinatorAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -96,6 +95,12 @@ func (s *GrpcStrategy[T]) Init(rank, size int, coordinatorAddress string) error 
 
 	s.rank = int(resp.Rank)
 	s.size = len(resp.Peers)
+	// If the caller specifies the world size, use it. This is needed when
+	// workers register sequentially and the coordinator returns a partial
+	// peer list at registration time.
+	if size > 0 {
+		s.size = size
+	}
 
 	s.logger.Info("registered with coordinator",
 		"rank", fmt.Sprintf("%d", s.rank),
@@ -381,7 +386,7 @@ func protoToTensor[T tensor.Numeric](p *pb.Tensor) (*tensor.TensorNumeric[T], er
 		data[i] = T(v)
 	}
 
-	return tensor.New[T](shape, data)
+	return tensor.New(shape, data)
 }
 
 // updateTensorFromProto updates a tensor's data in place from a pb.Tensor.
