@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -12,6 +13,7 @@ import (
 
 // Graph represents a computation graph with a defined execution order.
 type Graph[T tensor.Numeric] struct {
+	mu           sync.Mutex
 	engine       compute.Engine[T]
 	nodes        []Node[T]
 	dependencies map[Node[T]][]Node[T]
@@ -21,7 +23,11 @@ type Graph[T tensor.Numeric] struct {
 }
 
 // Forward executes the forward pass of the entire graph.
+// It is safe for concurrent use; callers will be serialized.
 func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if len(inputs) != len(g.inputs) {
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
@@ -53,7 +59,11 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 }
 
 // Backward executes the backward pass of the entire graph.
+// It is safe for concurrent use; callers will be serialized.
 func (g *Graph[T]) Backward(ctx context.Context, mode types.BackwardMode, initialGradient *tensor.TensorNumeric[T]) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	grads := make(map[Node[T]]*tensor.TensorNumeric[T])
 	grads[g.output] = initialGradient
 
