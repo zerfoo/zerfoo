@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	float16 "github.com/zerfoo/float16"
 	float8 "github.com/zerfoo/float8"
@@ -23,9 +24,10 @@ import (
 
 // CPUEngine is a CPU-based implementation of the Engine interface.
 type CPUEngine[T tensor.Numeric] struct {
-	ops       numeric.Arithmetic[T]
-	logger    log.Logger
-	collector metrics.Collector
+	ops        numeric.Arithmetic[T]
+	logger     log.Logger
+	collector  metrics.Collector
+	memTracker *MemoryTracker
 }
 
 // Default histogram buckets for operation duration (seconds).
@@ -293,7 +295,12 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 // NewCPUEngine constructs a new CPUEngine for the given numeric operations.
 // A no-op logger and no-op collector are used by default; call SetLogger/SetCollector to override.
 func NewCPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *CPUEngine[T] {
-	return &CPUEngine[T]{ops: ops, logger: log.Nop(), collector: metrics.Nop()}
+	return &CPUEngine[T]{
+		ops:        ops,
+		logger:     log.Nop(),
+		collector:  metrics.Nop(),
+		memTracker: NewMemoryTracker(0),
+	}
 }
 
 // SetLogger replaces the engine's logger.
@@ -312,14 +319,41 @@ func (e *CPUEngine[T]) SetCollector(c metrics.Collector) {
 	e.collector = c
 }
 
+// SetMemoryLimit configures the maximum number of bytes this engine may
+// allocate for tensors. A limit of 0 disables enforcement.
+func (e *CPUEngine[T]) SetMemoryLimit(bytes int64) {
+	e.memTracker = NewMemoryTracker(bytes)
+}
+
+// MemoryTracker returns the engine's memory tracker.
+func (e *CPUEngine[T]) MemoryTracker() *MemoryTracker {
+	return e.memTracker
+}
+
 // Close is a no-op for CPUEngine. It satisfies the shutdown.Closer interface.
 func (e *CPUEngine[T]) Close(_ context.Context) error { return nil }
 
 // Ops returns the arithmetic ops for this engine.
 func (e *CPUEngine[T]) Ops() numeric.Arithmetic[T] { return e.ops }
 
+// elemBytes returns the byte size of a single element of type T.
+func (e *CPUEngine[T]) elemBytes() int64 {
+	var zero T
+	return int64(unsafe.Sizeof(zero))
+}
+
+// tensorBytes returns the total byte size of a tensor with the given shape.
+func (e *CPUEngine[T]) tensorBytes(shape []int) int64 {
+	n := int64(1)
+	for _, d := range shape {
+		n *= int64(d)
+	}
+	return n * e.elemBytes()
+}
+
 // getOrCreateDest ensures a destination tensor with the requested shape exists.
 // If dst is provided, validates the shape and returns it; otherwise allocates a new tensor.
+// When a memory limit is configured, new allocations are checked against the tracker.
 func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(dst) > 0 && dst[0] != nil {
 		if !reflect.DeepEqual(dst[0].Shape(), shape) {
@@ -327,8 +361,13 @@ func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric
 		}
 		return dst[0], nil
 	}
+	bytes := e.tensorBytes(shape)
+	if err := e.memTracker.Alloc(bytes); err != nil {
+		return nil, fmt.Errorf("tensor allocation (%v): %w", shape, err)
+	}
 	out, err := tensor.New[T](shape, nil)
 	if err != nil {
+		e.memTracker.Free(bytes)
 		return nil, err
 	}
 	return out, nil

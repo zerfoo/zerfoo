@@ -579,3 +579,82 @@ func TestCPUEngine_MetricsPerOp(t *testing.T) {
 		}
 	}
 }
+
+func TestCPUEngine_SetMemoryLimit(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	engine.SetMemoryLimit(1024)
+
+	mt := engine.MemoryTracker()
+	if mt.Limit() != 1024 {
+		t.Errorf("limit = %d, want 1024", mt.Limit())
+	}
+}
+
+func TestCPUEngine_MemoryLimit_AllocationSucceeds(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	// 10 float32 elements = 40 bytes. Set limit to 1000 bytes.
+	engine.SetMemoryLimit(1000)
+
+	ctx := context.Background()
+	a, err := tensor.New[float32]([]int{5}, []float32{1, 2, 3, 4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := tensor.New[float32]([]int{5}, []float32{6, 7, 8, 9, 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = engine.Add(ctx, a, b)
+	if err != nil {
+		t.Fatalf("Add within limit: %v", err)
+	}
+}
+
+func TestCPUEngine_MemoryLimit_AllocationFails(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	// 4 bytes per float32 * 100 = 400 bytes, set limit to 100 bytes.
+	engine.SetMemoryLimit(100)
+
+	ctx := context.Background()
+	a, err := tensor.New[float32]([]int{100}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := tensor.New[float32]([]int{100}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = engine.Add(ctx, a, b)
+	if err == nil {
+		t.Fatal("expected memory limit error, got nil")
+	}
+	if !strings.Contains(err.Error(), "memory limit exceeded") {
+		t.Errorf("expected memory limit error, got: %v", err)
+	}
+}
+
+func TestCPUEngine_MemoryLimit_Unlimited(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	// Default is unlimited (0).
+	mt := engine.MemoryTracker()
+	if mt.Limit() != 0 {
+		t.Errorf("default limit = %d, want 0 (unlimited)", mt.Limit())
+	}
+
+	ctx := context.Background()
+	a, err := tensor.New[float32]([]int{1000}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := tensor.New[float32]([]int{1000}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = engine.Add(ctx, a, b)
+	if err != nil {
+		t.Fatalf("Add with unlimited: %v", err)
+	}
+}
