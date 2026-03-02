@@ -27,7 +27,7 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: ${{ runner.os }}-go-
       - name: Unit tests
-        run: go test -race ./... -run '^(?!(TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks))' -v
+        run: go test -race ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks' -v
       - name: Linting
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
@@ -38,7 +38,7 @@ jobs:
         run: go test ./tests/numerics/... -count=1 -v
       - name: Coverage gate
         run: |
-          go test -coverprofile=coverage.out ./... -run '^(?!(TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks))'
+          go test -coverprofile=coverage.out ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks'
           go run ./cmd/coverage-gate -profile coverage.out -threshold 93
       - name: Benchmark regression check
         run: |
