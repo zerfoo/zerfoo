@@ -171,36 +171,38 @@ The critical challenge: `TensorNumeric[T].data` is `[]T` (a Go slice in CPU RAM)
 
 #### E6: Test Utility Validation (Best Effort)
 
-- [ ] T6.1 Add targeted tests for tests/internal/testutil  Owner: TBD  Est: 1h
+- [x] T6.1 Add targeted tests for tests/internal/testutil  Completed: 2026-03-01  Result: 98.5% coverage
   - Dependencies: None
   - Acceptance: Math helpers (MeanRelativeError, TopKAgreement, RelError) tested for correctness.
-  - [ ] S6.1.1 Write tests for MeanRelativeError with known inputs  Est: 15m
-  - [ ] S6.1.2 Write tests for TopKAgreement with known overlap  Est: 15m
-  - [ ] S6.1.3 Write tests for RelError edge cases (zero denominator)  Est: 10m
-  - [ ] S6.1.4 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S6.1.1 Write tests for MeanRelativeError with known inputs  Est: 15m
+  - [x] S6.1.2 Write tests for TopKAgreement with known overlap  Est: 15m
+  - [x] S6.1.3 Write tests for RelError edge cases (zero denominator)  Est: 10m
+  - [x] S6.1.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T6.2 Add targeted tests for testing/testutils mock correctness  Owner: TBD  Est: 1h
+- [x] T6.2 Add targeted tests for testing/testutils mock correctness  Completed: 2026-03-01  Result: 94.5% coverage
   - Dependencies: None
   - Acceptance: MockEngine key methods tested.
-  - [ ] S6.2.1 Write tests for assertion helpers (AssertEqual, AssertError, etc.)  Est: 20m
-  - [ ] S6.2.2 Write tests for MockEngine interface compliance  Est: 20m
-  - [ ] S6.2.3 Run golangci-lint and go test -cover  Est: 5m
+  - [x] S6.2.1 Write tests for assertion helpers (AssertEqual, AssertError, etc.)  Est: 20m
+  - [x] S6.2.2 Write tests for MockEngine interface compliance  Est: 20m
+  - [x] S6.2.3 Run golangci-lint and go test -cover  Est: 5m
 
 #### E7: Final Verification (Phase 1)
 
-- [ ] T7.1 Run full test suite with coverage  Owner: TBD  Est: 30m
+- [x] T7.1 Run full test suite with coverage  Completed: 2026-03-01  Result: all packages >= 93.1% (documented exceptions), zero races
   - Dependencies: E1, E2, E3, E4, E5
   - Acceptance: Every testable package shows >= 95% in `go test ./... -cover` (with documented exceptions)
-  - [ ] S7.1.1 Run go test ./... -cover and capture output  Est: 10m
-  - [ ] S7.1.2 Verify each package meets target; list any exceptions with justification  Est: 10m
-  - [ ] S7.1.3 Run go test ./... -race and verify zero races  Est: 10m
+  - [x] S7.1.1 Run go test ./... -cover and capture output  Est: 10m
+  - [x] S7.1.2 Verify each package meets target; list any exceptions with justification  Est: 10m
+  - [x] S7.1.3 Run go test ./... -race and verify zero races  Est: 10m
+  - Note: layers/regularization raised from 92.9% to 97.6% by adding engine.Mul error-path tests.
+  - Documented exceptions: layers/gather 93.1%, layers/embeddings 93.5%, layers/features 93.8%, testing/testutils 94.5%.
 
-- [ ] T7.2 Run linters and formatters  Owner: TBD  Est: 15m
+- [x] T7.2 Run linters and formatters  Completed: 2026-03-01  Result: 0 lint issues, go vet clean, gofmt clean
   - Dependencies: T7.1
   - Acceptance: golangci-lint 0 issues, go vet clean, gofmt clean
-  - [ ] S7.2.1 Run golangci-lint run ./...  Est: 5m
-  - [ ] S7.2.2 Run go vet ./...  Est: 5m
-  - [ ] S7.2.3 Run gofmt -l . and verify no files  Est: 5m
+  - [x] S7.2.1 Run golangci-lint run ./...  Est: 5m  Note: fixed 1 stale nolint:unused directive in activations.
+  - [x] S7.2.2 Run go vet ./...  Est: 5m
+  - [x] S7.2.3 Run gofmt -l . and verify no files  Est: 5m  Note: formatted 13 files across 6 packages.
 
 #### Documented Coverage Exceptions
 
