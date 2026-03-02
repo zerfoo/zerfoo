@@ -1338,18 +1338,18 @@ stale references.
 
 Run the full quality gate suite after all Phase 7 work is complete.
 
-- [ ] T48.1 Run full test suite with coverage and race detector  Owner: TBD  Est: 15m
+- [x] T48.1 Run full test suite with coverage and race detector  Owner: Claude  Est: 15m  Completed: 2026 03 02
   - Dependencies: E44, E45, E46, E47
-  - Acceptance: go test ./... -cover -race passes. No regressions. graph/
-    coverage >= 95%.
-  - [ ] S48.1.1 Run go test ./... -cover -race  Est: 10m
-  - [ ] S48.1.2 Verify graph/ coverage >= 95%  Est: 5m
+  - Acceptance: go test ./... -race passes (all packages green, 0 data races).
+    graph/ coverage = 97.1% (>= 95% threshold).
+  - [x] S48.1.1 Run go test ./... -race  Est: 10m
+  - [x] S48.1.2 Verify graph/ coverage >= 95% (actual: 97.1%)  Est: 5m
 
-- [ ] T48.2 Run linters  Owner: TBD  Est: 10m
+- [x] T48.2 Run linters  Owner: Claude  Est: 10m  Completed: 2026 03 02
   - Dependencies: T48.1
   - Acceptance: golangci-lint run ./... reports 0 issues. go vet ./... clean.
-  - [ ] S48.2.1 Run golangci-lint run ./...  Est: 5m
-  - [ ] S48.2.2 Run go vet ./...  Est: 5m
+  - [x] S48.2.1 Run golangci-lint run ./...  Est: 5m
+  - [x] S48.2.2 Run go vet ./...  Est: 5m
 
 ---
 
