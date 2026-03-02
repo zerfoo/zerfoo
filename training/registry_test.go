@@ -232,8 +232,8 @@ func (m *mockMetricComputer[T]) ComputeMetrics(ctx context.Context, predictions,
 }
 
 func (m *mockMetricComputer[T]) RegisterMetric(name string, metric MetricFunction[T]) {}
-func (m *mockMetricComputer[T]) UnregisterMetric(name string)                          {}
-func (m *mockMetricComputer[T]) AvailableMetrics() []string                            { return nil }
+func (m *mockMetricComputer[T]) UnregisterMetric(name string)                         {}
+func (m *mockMetricComputer[T]) AvailableMetrics() []string                           { return nil }
 
 type mockCrossValidator[T tensor.Numeric] struct{}
 
