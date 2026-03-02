@@ -14,6 +14,9 @@ func TestRegisterAll(t *testing.T) {
 		"FastGelu",
 		"Gelu",
 		"Tanh",
+		"Sigmoid",
+		"Softmax",
+		"Erf",
 		// Attention
 		"GroupQueryAttention",
 		"GlobalAttention",
@@ -30,16 +33,22 @@ func TestRegisterAll(t *testing.T) {
 		"RotaryEmbedding",
 		"SpectralFingerprint",
 		"FiLM",
+		"Slice",
+		"Pad",
+		"TopK",
 		// Gather
 		"Gather",
 		// Normalization
 		"RMSNorm",
+		"LayerNormalization",
 		"SimplifiedLayerNormalization",
 		"SkipSimplifiedLayerNormalization",
 		// ReduceSum
 		"ReduceSum",
 		// Transpose
 		"Transpose",
+		// Regularization
+		"Dropout",
 	}
 
 	for _, opType := range expectedOps {
