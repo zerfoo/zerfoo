@@ -130,7 +130,7 @@ Add a logging abstraction that supports leveled output, structured fields,
 and JSON format. Instrument all packages that currently use raw fmt.Printf
 or the distributed Logger interface.
 
-- [ ] T21.1 Define Logger interface in a new `log` package  Owner: TBD  Est: 1h
+- [x] T21.1 Define Logger interface in a new `log` package  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Interface has Debug, Info, Warn, Error methods. Each accepts a message string and key-value fields. A NopLogger and a StdLogger (writing to io.Writer) are provided. JSON output mode is available via a constructor option.
   - [ ] S21.1.1 Create log/logger.go with Logger interface and Level type  Est: 20m
@@ -139,7 +139,7 @@ or the distributed Logger interface.
   - [ ] S21.1.4 Write unit tests for StdLogger (level filtering, JSON format, field rendering)  Est: 20m
   - [ ] S21.1.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T21.2 Integrate Logger into compute package  Owner: TBD  Est: 45m
+- [x] T21.2 Integrate Logger into compute package  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: CPUEngine and GPUEngine accept a Logger at construction. OOM fallback, stream errors, and pool operations log at appropriate levels. No raw fmt.Printf calls remain in compute/.
   - [ ] S21.2.1 Add Logger field to CPUEngine; log parallelFor errors at Warn  Est: 15m
@@ -147,7 +147,7 @@ or the distributed Logger interface.
   - [ ] S21.2.3 Update tests to verify log output in error scenarios  Est: 15m
   - [ ] S21.2.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T21.3 Integrate Logger into distributed package  Owner: TBD  Est: 45m
+- [x] T21.3 Integrate Logger into distributed package  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: Replace existing distributed.Logger interface with log.Logger. All coordinator and worker components use leveled logging. Connection events logged at Info, errors at Error.
   - [ ] S21.3.1 Update distributed.ServerManager, coordinator to accept log.Logger  Est: 15m
@@ -155,7 +155,7 @@ or the distributed Logger interface.
   - [ ] S21.3.3 Update tests to use StdLogger or NopLogger  Est: 10m
   - [ ] S21.3.4 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T21.4 Integrate Logger into remaining packages  Owner: TBD  Est: 30m
+- [x] T21.4 Integrate Logger into remaining packages  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: training/, model/, cmd/cli/ use log.Logger. No raw fmt.Printf in non-test production code.
   - [ ] S21.4.1 Add Logger to training.WorkflowConfig and optimizer constructors  Est: 10m
@@ -219,7 +219,7 @@ Add TLS and mutual authentication to all gRPC communication channels.
 Add file-based configuration loading with validation and environment
 variable overrides. Use encoding/json and os.Getenv from the standard library.
 
-- [ ] T24.1 Create config package with file loader  Owner: TBD  Est: 1h
+- [x] T24.1 Create config package with file loader  Owner: TBD  Est: 1h  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A config.Load[T](path string) function reads a JSON file into a struct. A config.LoadWithEnv[T](path, prefix string) function additionally applies environment variable overrides using the `env` struct tag. Validation errors list all invalid fields. Missing required fields produce clear error messages.
   - [ ] S24.1.1 Create config/loader.go with Load[T] function (JSON decoder)  Est: 15m
@@ -228,7 +228,7 @@ variable overrides. Use encoding/json and os.Getenv from the standard library.
   - [ ] S24.1.4 Write unit tests: valid config, missing file, invalid JSON, missing required, env override  Est: 20m
   - [ ] S24.1.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T24.2 Define standard config structs for Engine and Training  Owner: TBD  Est: 30m
+- [x] T24.2 Define standard config structs for Engine and Training  Owner: TBD  Est: 30m  Completed: 2026 03 01
   - Dependencies: T24.1
   - Acceptance: EngineConfig (device type, memory limit, log level), TrainingConfig (batch size, learning rate, optimizer, epochs, checkpoint interval), DistributedConfig (coordinator address, TLS config, timeout). Each struct has JSON tags and validation tags.
   - [ ] S24.2.1 Define EngineConfig, TrainingConfig, DistributedConfig structs  Est: 15m
@@ -240,7 +240,7 @@ variable overrides. Use encoding/json and os.Getenv from the standard library.
 Implement orderly shutdown coordination using context cancellation
 and cleanup callbacks.
 
-- [ ] T25.1 Add Closer interface and shutdown coordinator  Owner: TBD  Est: 45m
+- [x] T25.1 Add Closer interface and shutdown coordinator  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: A shutdown.Coordinator registers Closer instances in order. On Shutdown(ctx), it calls Close() on each in reverse registration order. If a Closer does not complete within the context deadline, it is skipped and logged. Integration test demonstrates orderly cleanup.
   - [ ] S25.1.1 Create shutdown/coordinator.go with Closer interface and Coordinator  Est: 20m
@@ -270,7 +270,7 @@ and cleanup callbacks.
 Add health check endpoints for deployment probes (Kubernetes liveness
 and readiness).
 
-- [ ] T26.1 Create health check HTTP server  Owner: TBD  Est: 45m
+- [x] T26.1 Create health check HTTP server  Owner: TBD  Est: 45m  Completed: 2026 03 01
   - Dependencies: T21.1
   - Acceptance: A health.Server exposes /healthz (liveness) and /readyz (readiness) HTTP endpoints. Each returns 200 OK with JSON body when healthy, 503 when unhealthy. Readiness checks are configurable (register check functions). Server starts on a configurable port. Logger is used for startup/error messages.
   - [ ] S26.1.1 Create health/server.go with Server struct and HTTP handlers  Est: 15m
@@ -289,7 +289,7 @@ and readiness).
 
 Make CI pipeline enforce quality gates strictly.
 
-- [ ] T27.1 Make parity and numerics tests blocking  Owner: TBD  Est: 15m
+- [x] T27.1 Make parity and numerics tests blocking  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: Remove `|| true` from parity and numerics test steps in .github/workflows/ci.yml. CI fails if any parity or numerics test fails.
   - [ ] S27.1.1 Update ci.yml: remove `|| true` from parity test step  Est: 5m
@@ -313,7 +313,7 @@ Make CI pipeline enforce quality gates strictly.
   - [ ] S27.3.4 Add tests for bench-compare script  Est: 10m
   - [ ] S27.3.5 Run golangci-lint and go test -cover  Est: 5m
 
-- [ ] T27.4 Update CI Go version and add race detector  Owner: TBD  Est: 15m
+- [x] T27.4 Update CI Go version and add race detector  Owner: TBD  Est: 15m  Completed: 2026 03 01
   - Dependencies: None
   - Acceptance: CI uses Go 1.25 (matching go.mod). Race detector runs on unit tests. Both Ubuntu and macOS runners are used.
   - [ ] S27.4.1 Update ci.yml go-version to match go.mod  Est: 5m
