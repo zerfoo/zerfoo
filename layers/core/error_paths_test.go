@@ -17,9 +17,9 @@ import (
 // after a specified number of successful calls.
 type errEngine struct {
 	compute.Engine[float32]
-	calls     map[string]int
-	failOn    map[string]int
-	failErr   error
+	calls   map[string]int
+	failOn  map[string]int
+	failErr error
 }
 
 func newErrEngine(failOn map[string]int) *errEngine {

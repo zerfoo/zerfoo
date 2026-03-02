@@ -332,10 +332,10 @@ func TestBuildFFN(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		attrs map[string]any
+		name   string
+		attrs  map[string]any
 		params map[string]*graph.Parameter[float32]
-		want  string
+		want   string
 	}{
 		{
 			name:  "missing_input_dim",
@@ -353,10 +353,10 @@ func TestBuildFFN(t *testing.T) {
 			want:  "missing or invalid attribute: output_dim",
 		},
 		{
-			name:  "missing_w1_weights",
-			attrs: map[string]any{"input_dim": 4, "hidden_dim": 8, "output_dim": 4},
+			name:   "missing_w1_weights",
+			attrs:  map[string]any{"input_dim": 4, "hidden_dim": 8, "output_dim": 4},
 			params: map[string]*graph.Parameter[float32]{},
-			want:  "missing required parameter",
+			want:   "missing required parameter",
 		},
 		{
 			name:  "missing_w2_weights",

@@ -350,38 +350,38 @@ func TestUnsqueeze(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name        string
-		axes        []int
-		inputShape  []int
-		wantShape   []int
+		name          string
+		axes          []int
+		inputShape    []int
+		wantShape     []int
 		wantBackShape []int
 	}{
 		{
-			name:        "axis_0",
-			axes:        []int{0},
-			inputShape:  []int{3, 4},
-			wantShape:   []int{1, 3, 4},
+			name:          "axis_0",
+			axes:          []int{0},
+			inputShape:    []int{3, 4},
+			wantShape:     []int{1, 3, 4},
 			wantBackShape: []int{3, 4},
 		},
 		{
-			name:        "axis_2",
-			axes:        []int{2},
-			inputShape:  []int{3, 4},
-			wantShape:   []int{3, 4, 1},
+			name:          "axis_2",
+			axes:          []int{2},
+			inputShape:    []int{3, 4},
+			wantShape:     []int{3, 4, 1},
 			wantBackShape: []int{3, 4},
 		},
 		{
-			name:        "negative_axis",
-			axes:        []int{-1},
-			inputShape:  []int{3, 4},
-			wantShape:   []int{3, 4, 1},
+			name:          "negative_axis",
+			axes:          []int{-1},
+			inputShape:    []int{3, 4},
+			wantShape:     []int{3, 4, 1},
 			wantBackShape: []int{3, 4},
 		},
 		{
-			name:        "multiple_axes",
-			axes:        []int{0, 2},
-			inputShape:  []int{3, 4},
-			wantShape:   []int{1, 3, 1, 4},
+			name:          "multiple_axes",
+			axes:          []int{0, 2},
+			inputShape:    []int{3, 4},
+			wantShape:     []int{1, 3, 1, 4},
 			wantBackShape: []int{3, 4},
 		},
 	}

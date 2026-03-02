@@ -106,7 +106,7 @@ func TestGroupedQueryAttention_Validation_Errors(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](ops)
 
 	tests := []struct {
-		name    string
+		name                  string
 		modelDim, numQ, numKV int
 	}{
 		{"QueryNotDivisibleByKV", 16, 5, 2},
