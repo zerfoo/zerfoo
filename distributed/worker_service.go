@@ -2,11 +2,17 @@ package distributed
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"sync"
+	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
 	"github.com/zerfoo/zerfoo/log"
 	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // workerService implements pb.DistributedServiceServer.
@@ -279,6 +285,117 @@ func (bs *barrierState) arrive(ctx context.Context) error {
 		bs.cond.Wait()
 	}
 	return ctx.Err()
+}
+
+// --- RPC Handlers ---
+
+// Default histogram buckets for distributed service operations.
+var svcOpDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0}
+
+// recordOp records an operation metric.
+func (ws *workerService) recordOp(name string, start time.Time) {
+	ws.collector.Counter(name + "_count").Inc()
+	ws.collector.Histogram(name+"_duration_seconds", svcOpDurationBuckets).Observe(time.Since(start).Seconds())
+}
+
+// AllReduce handles a bidi streaming all-reduce from a peer.
+// Each peer sends its tensors as AllReduceRequest messages, then the server
+// waits for all peers to submit, computes the average, and sends back
+// AllReduceResponse messages with the result.
+func (ws *workerService) AllReduce(stream pb.DistributedService_AllReduceServer) error {
+	defer ws.recordOp("allreduce_server", time.Now())
+
+	session := ws.getSession()
+	if session == nil {
+		return status.Error(codes.FailedPrecondition, "no active reduce session")
+	}
+
+	// Receive all tensors from this peer until EOF.
+	tensors := make(map[string]*pb.Tensor)
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			ws.logger.Error("allreduce recv error", "error", err.Error())
+			return status.Errorf(codes.Internal, "recv error: %v", err)
+		}
+		tensors[req.Name] = req.Tensor
+	}
+
+	// Submit this peer's tensors and wait for the global result.
+	session.Submit(-1, tensors) // rank -1 for incoming peers; rank is not used in Submit
+	result := session.WaitForResult(stream.Context())
+	if result == nil {
+		return status.Error(codes.DeadlineExceeded, "allreduce timed out waiting for all peers")
+	}
+
+	// Send reduced tensors back to this peer.
+	for name, t := range result {
+		if err := stream.Send(&pb.AllReduceResponse{Name: name, Tensor: t}); err != nil {
+			ws.logger.Error("allreduce send error", "error", err.Error())
+			return status.Errorf(codes.Internal, "send error: %v", err)
+		}
+	}
+	return nil
+}
+
+// Barrier handles a barrier synchronization request from a peer.
+// Blocks until all workers have called Barrier or the context expires.
+func (ws *workerService) Barrier(ctx context.Context, req *pb.BarrierRequest) (*pb.BarrierResponse, error) {
+	defer ws.recordOp("barrier_server", time.Now())
+
+	if req.Rank < 0 || req.Rank >= ws.worldSize {
+		return nil, status.Errorf(codes.InvalidArgument, "rank %d out of range [0, %d)", req.Rank, ws.worldSize)
+	}
+
+	if err := ws.barrier.arrive(ctx); err != nil {
+		return nil, status.Errorf(codes.DeadlineExceeded, "barrier timed out: %v", err)
+	}
+	return &pb.BarrierResponse{}, nil
+}
+
+// Broadcast handles a broadcast request.
+// Root sets the tensor via SetBroadcastTensor before non-root workers call this.
+// Non-root workers block until the tensor is available or the context expires.
+func (ws *workerService) Broadcast(ctx context.Context, req *pb.BroadcastRequest) (*pb.BroadcastResponse, error) {
+	defer ws.recordOp("broadcast_server", time.Now())
+
+	if req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "broadcast name cannot be empty")
+	}
+
+	entry := ws.getBroadcastEntry(req.Name)
+
+	// Wait for the tensor to be available.
+	select {
+	case <-entry.ready:
+		return &pb.BroadcastResponse{Tensor: entry.tensor}, nil
+	case <-ctx.Done():
+		return nil, status.Errorf(codes.DeadlineExceeded, "broadcast timed out waiting for tensor %q: %v", req.Name, ctx.Err())
+	}
+}
+
+// validateTensor checks that a pb.Tensor is valid.
+func validateTensor(t *pb.Tensor, fieldName string) error {
+	if t == nil {
+		return fmt.Errorf("%s: tensor cannot be nil", fieldName)
+	}
+	if len(t.Shape) == 0 {
+		return fmt.Errorf("%s: tensor shape cannot be empty", fieldName)
+	}
+	product := 1
+	for _, dim := range t.Shape {
+		if dim <= 0 {
+			return fmt.Errorf("%s: tensor shape dimension must be positive, got %d", fieldName, dim)
+		}
+		product *= int(dim)
+	}
+	if product != len(t.Data) {
+		return fmt.Errorf("%s: tensor shape product %d does not match data length %d", fieldName, product, len(t.Data))
+	}
+	return nil
 }
 
 // Static interface assertion.

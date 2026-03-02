@@ -2,11 +2,17 @@ package distributed
 
 import (
 	"context"
+	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // --- reduceSession tests ---
@@ -406,6 +412,305 @@ func TestWorkerService_SetBroadcastTensor_DoubleSet(t *testing.T) {
 	entry := ws.getBroadcastEntry("w")
 	if entry.tensor != t2 {
 		t.Error("expected second tensor to overwrite first")
+	}
+}
+
+// --- Mock bidi stream for AllReduce tests ---
+
+type mockAllReduceStream struct {
+	grpc.ServerStream
+	ctx      context.Context
+	recvMsgs []*pb.AllReduceRequest
+	recvIdx  int
+	recvErr  error
+	sentMsgs []*pb.AllReduceResponse
+	sendErr  error
+	mu       sync.Mutex
+}
+
+func (m *mockAllReduceStream) Context() context.Context { return m.ctx }
+
+func (m *mockAllReduceStream) Send(resp *pb.AllReduceResponse) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.sentMsgs = append(m.sentMsgs, resp)
+	return nil
+}
+
+func (m *mockAllReduceStream) Recv() (*pb.AllReduceRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recvErr != nil {
+		return nil, m.recvErr
+	}
+	if m.recvIdx >= len(m.recvMsgs) {
+		return nil, io.EOF
+	}
+	msg := m.recvMsgs[m.recvIdx]
+	m.recvIdx++
+	return msg, nil
+}
+
+func (m *mockAllReduceStream) SendHeader(metadata.MD) error { return nil }
+func (m *mockAllReduceStream) SetHeader(metadata.MD) error  { return nil }
+func (m *mockAllReduceStream) SetTrailer(metadata.MD)       {}
+func (m *mockAllReduceStream) SendMsg(any) error { return nil }
+func (m *mockAllReduceStream) RecvMsg(any) error { return nil }
+
+// --- AllReduce RPC handler tests ---
+
+func TestAllReduce_TwoPeers(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	// Root submits its own tensors.
+	ws.SetLocalTensors(map[string]*pb.Tensor{
+		"grad": {Shape: []int32{3}, Data: []float32{2, 4, 6}},
+	})
+
+	// Peer 1 calls AllReduce via stream.
+	stream := &mockAllReduceStream{
+		ctx: context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{
+			{Name: "grad", Tensor: &pb.Tensor{Shape: []int32{3}, Data: []float32{4, 6, 8}}},
+		},
+	}
+
+	err := ws.AllReduce(stream)
+	if err != nil {
+		t.Fatalf("AllReduce error: %v", err)
+	}
+
+	if len(stream.sentMsgs) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(stream.sentMsgs))
+	}
+
+	got := stream.sentMsgs[0]
+	if got.Name != "grad" {
+		t.Errorf("name = %s, want grad", got.Name)
+	}
+	// Average: [(2+4)/2, (4+6)/2, (6+8)/2] = [3, 5, 7]
+	want := []float32{3, 5, 7}
+	for i, v := range got.Tensor.Data {
+		if v != want[i] {
+			t.Errorf("data[%d] = %f, want %f", i, v, want[i])
+		}
+	}
+}
+
+func TestAllReduce_NoSession(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	// No NewSession() called.
+
+	stream := &mockAllReduceStream{
+		ctx:      context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{},
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error when no session exists")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.FailedPrecondition {
+		t.Errorf("expected FailedPrecondition, got %v", err)
+	}
+}
+
+func TestAllReduce_RecvError(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	stream := &mockAllReduceStream{
+		ctx:     context.Background(),
+		recvErr: errors.New("connection reset"),
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error on recv failure")
+	}
+}
+
+func TestAllReduce_SendError(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	// Root submits its own tensors.
+	ws.SetLocalTensors(map[string]*pb.Tensor{
+		"grad": {Shape: []int32{1}, Data: []float32{1}},
+	})
+
+	stream := &mockAllReduceStream{
+		ctx: context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{
+			{Name: "grad", Tensor: &pb.Tensor{Shape: []int32{1}, Data: []float32{2}}},
+		},
+		sendErr: errors.New("broken pipe"),
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error on send failure")
+	}
+}
+
+// --- Barrier RPC handler tests ---
+
+func TestBarrier_AllWorkersArrive_RPC(t *testing.T) {
+	ws := NewWorkerService(0, 3, nil)
+
+	errs := make([]error, 3)
+	var wg sync.WaitGroup
+	for i := range 3 {
+		wg.Add(1)
+		go func(rank int) {
+			defer wg.Done()
+			_, errs[rank] = ws.Barrier(context.Background(), &pb.BarrierRequest{Rank: int32(rank)})
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("worker %d: unexpected error: %v", i, err)
+		}
+	}
+}
+
+func TestBarrier_InvalidRank(t *testing.T) {
+	ws := NewWorkerService(0, 3, nil)
+
+	tests := []struct {
+		name string
+		rank int32
+	}{
+		{"negative", -1},
+		{"too_large", 3},
+		{"way_too_large", 100},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ws.Barrier(context.Background(), &pb.BarrierRequest{Rank: tc.rank})
+			if err == nil {
+				t.Fatal("expected error for invalid rank")
+			}
+			st, ok := status.FromError(err)
+			if !ok || st.Code() != codes.InvalidArgument {
+				t.Errorf("expected InvalidArgument, got %v", err)
+			}
+		})
+	}
+}
+
+func TestBarrier_Timeout_RPC(t *testing.T) {
+	ws := NewWorkerService(0, 3, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// Only 1 of 3 workers arrives.
+	_, err := ws.Barrier(ctx, &pb.BarrierRequest{Rank: 0})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+// --- Broadcast RPC handler tests ---
+
+func TestBroadcast_SetThenRetrieve(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+
+	tensor := &pb.Tensor{Shape: []int32{2}, Data: []float32{10, 20}}
+	ws.SetBroadcastTensor("weights", tensor)
+
+	resp, err := ws.Broadcast(context.Background(), &pb.BroadcastRequest{Name: "weights"})
+	if err != nil {
+		t.Fatalf("Broadcast error: %v", err)
+	}
+	if resp.Tensor == nil {
+		t.Fatal("expected tensor in response")
+	}
+	if resp.Tensor.Data[0] != 10 || resp.Tensor.Data[1] != 20 {
+		t.Errorf("data = %v, want [10, 20]", resp.Tensor.Data)
+	}
+}
+
+func TestBroadcast_WaitForTensor(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+
+	// Set tensor after a short delay.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		ws.SetBroadcastTensor("weights", &pb.Tensor{Shape: []int32{1}, Data: []float32{42}})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	resp, err := ws.Broadcast(ctx, &pb.BroadcastRequest{Name: "weights"})
+	if err != nil {
+		t.Fatalf("Broadcast error: %v", err)
+	}
+	if resp.Tensor.Data[0] != 42 {
+		t.Errorf("data[0] = %f, want 42", resp.Tensor.Data[0])
+	}
+}
+
+func TestBroadcast_EmptyName(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+
+	_, err := ws.Broadcast(context.Background(), &pb.BroadcastRequest{Name: ""})
+	if err == nil {
+		t.Fatal("expected error for empty name")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestBroadcast_Timeout(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	// Tensor never set, should timeout.
+	_, err := ws.Broadcast(ctx, &pb.BroadcastRequest{Name: "missing"})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+// --- validateTensor tests ---
+
+func TestValidateTensor(t *testing.T) {
+	tests := []struct {
+		name    string
+		tensor  *pb.Tensor
+		wantErr bool
+	}{
+		{"valid_1d", &pb.Tensor{Shape: []int32{3}, Data: []float32{1, 2, 3}}, false},
+		{"valid_2d", &pb.Tensor{Shape: []int32{2, 3}, Data: []float32{1, 2, 3, 4, 5, 6}}, false},
+		{"nil_tensor", nil, true},
+		{"empty_shape", &pb.Tensor{Shape: []int32{}, Data: []float32{1}}, true},
+		{"zero_dim", &pb.Tensor{Shape: []int32{0, 3}, Data: []float32{}}, true},
+		{"negative_dim", &pb.Tensor{Shape: []int32{-1, 3}, Data: []float32{}}, true},
+		{"shape_data_mismatch", &pb.Tensor{Shape: []int32{2, 3}, Data: []float32{1, 2}}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTensor(tc.tensor, "test")
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateTensor() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
