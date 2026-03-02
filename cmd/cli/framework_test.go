@@ -154,7 +154,7 @@ func (m *mockModelInstance) Backward(_ context.Context, _ ...*tensor.TensorNumer
 	return nil
 }
 
-func (m *mockModelInstance) GetGraph() *graph.Graph[float32]        { return nil }
+func (m *mockModelInstance) GetGraph() *graph.Graph[float32]         { return nil }
 func (m *mockModelInstance) GetMetadata() model.ModelMetadata        { return m.metadata }
 func (m *mockModelInstance) Parameters() []*graph.Parameter[float32] { return nil }
 func (m *mockModelInstance) SetTrainingMode(_ bool)                  {}
