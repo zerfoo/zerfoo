@@ -36,6 +36,9 @@ func TestRegisterAll(t *testing.T) {
 		"Slice",
 		"Pad",
 		"TopK",
+		"Conv",
+		"GlobalAveragePool",
+		"Resize",
 		// Gather
 		"Gather",
 		// Normalization
@@ -43,6 +46,7 @@ func TestRegisterAll(t *testing.T) {
 		"LayerNormalization",
 		"SimplifiedLayerNormalization",
 		"SkipSimplifiedLayerNormalization",
+		"BatchNormalization",
 		// ReduceSum
 		"ReduceSum",
 		// Transpose

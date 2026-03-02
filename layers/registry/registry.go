@@ -43,6 +43,9 @@ func RegisterAll() {
 	model.RegisterLayer("Slice", core.BuildSlice[float32])
 	model.RegisterLayer("Pad", core.BuildPad[float32])
 	model.RegisterLayer("TopK", core.BuildTopK[float32])
+	model.RegisterLayer("Conv", core.BuildConv2d[float32])
+	model.RegisterLayer("GlobalAveragePool", core.BuildGlobalAveragePool[float32])
+	model.RegisterLayer("Resize", core.BuildResize[float32])
 
 	// Embeddings
 
@@ -54,6 +57,7 @@ func RegisterAll() {
 	model.RegisterLayer("LayerNormalization", normalization.BuildLayerNormalization[float32])
 	model.RegisterLayer("SimplifiedLayerNormalization", normalization.BuildSimplifiedLayerNormalization[float32])
 	model.RegisterLayer("SkipSimplifiedLayerNormalization", normalization.BuildSkipSimplifiedLayerNormalization[float32])
+	model.RegisterLayer("BatchNormalization", normalization.BuildBatchNormalization[float32])
 
 	// Regularization
 	model.RegisterLayer("Dropout", regularization.BuildDropout[float32])
