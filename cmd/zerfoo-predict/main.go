@@ -14,6 +14,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/cmd/cli"
 	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/zerfoo/shutdown"
 )
 
 // PredictConfig represents command-line configuration for prediction.
@@ -56,27 +57,7 @@ type PredictionResult struct {
 func main() {
 	// Check if we should use the new CLI framework
 	if len(os.Args) > 1 && (os.Args[1] == "--new-cli" || os.Getenv("ZERFOO_USE_NEW_CLI") == "true") {
-		// Use new CLI framework
-		ctx := context.Background()
-		cliApp := cli.NewCLI()
-
-		// Register model registry with standard providers
-		modelRegistry := model.Float32ModelRegistry
-
-		// Register predict command
-		predictCmd := cli.NewPredictCommand(modelRegistry, func(f float64) float32 { return float32(f) }, func(v float32) float64 { return float64(v) })
-		cliApp.RegisterCommand(predictCmd)
-
-		// Filter out --new-cli flag
-		args := os.Args[1:]
-		filteredArgs := make([]string, 0, len(args))
-		for _, arg := range args {
-			if arg != "--new-cli" {
-				filteredArgs = append(filteredArgs, arg)
-			}
-		}
-
-		if err := cliApp.Run(ctx, append([]string{"predict"}, filteredArgs...)); err != nil {
+		if err := runNewCLI(); err != nil {
 			log.Printf("CLI execution failed: %v", err)
 			os.Exit(1)
 		}
@@ -84,6 +65,13 @@ func main() {
 	}
 
 	// Legacy behavior for backward compatibility
+	if err := runLegacy(); err != nil {
+		log.Printf("Prediction failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+func runLegacy() error {
 	config := parsePredictFlags()
 
 	if config.Verbose {
@@ -105,15 +93,37 @@ func main() {
 		savePredictionResult(config, result)
 	}()
 
-	// Run prediction pipeline
 	if err := runPrediction(config, result); err != nil {
 		result.ErrorMessage = err.Error()
-		log.Printf("Prediction failed: %v", err)
-		os.Exit(1) //nolint:gocritic // exitAfterDefer: defer runs before os.Exit on success path
+		return err
 	}
 
 	result.Success = true
 	log.Printf("Prediction completed successfully in %v", result.Duration)
+	return nil
+}
+
+func runNewCLI() error {
+	coord := shutdown.New()
+	ctx, cancel := cli.SignalContext(context.Background(), coord)
+	defer cancel()
+
+	cliApp := cli.NewCLI()
+
+	modelRegistry := model.Float32ModelRegistry
+	predictCmd := cli.NewPredictCommand(modelRegistry, func(f float64) float32 { return float32(f) }, func(v float32) float64 { return float64(v) })
+	cliApp.RegisterCommand(predictCmd)
+
+	// Filter out --new-cli flag.
+	args := os.Args[1:]
+	filteredArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg != "--new-cli" {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	return cliApp.Run(ctx, append([]string{"predict"}, filteredArgs...))
 }
 
 func parsePredictFlags() *PredictConfig {
