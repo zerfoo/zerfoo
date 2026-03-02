@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,6 +61,7 @@ func generateTestCerts(t *testing.T, dir string) (caCertPath, serverCertPath, se
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{Organization: []string{"Test Server"}},
 		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

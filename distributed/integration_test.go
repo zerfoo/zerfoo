@@ -280,6 +280,125 @@ func TestAllReduce_ContextCancellation(t *testing.T) {
 	}
 }
 
+// --- T34.4: TLS multi-worker AllReduce integration test ---
+
+func TestMultiWorkerAllReduce_TLS(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	const n = 3
+
+	// Generate test certificates.
+	dir := t.TempDir()
+	caCert, serverCert, serverKey := distributed.GenerateTestCerts(t, dir)
+
+	tlsCfg := &distributed.TLSConfig{
+		CACertPath: caCert,
+		CertPath:   serverCert,
+		KeyPath:    serverKey,
+	}
+
+	// Build TLS credentials for the coordinator server.
+	coordServerCreds, err := tlsCfg.ServerCredentials()
+	if err != nil {
+		t.Fatalf("coordinator server credentials: %v", err)
+	}
+
+	// Start coordinator with TLS.
+	coord := coordinator.NewCoordinator(&syncWriter{}, 30*time.Second)
+	coord.SetServerOptions(grpc.Creds(coordServerCreds))
+	if err := coord.Start("localhost:0"); err != nil {
+		t.Fatalf("failed to start coordinator: %v", err)
+	}
+	t.Cleanup(coord.GracefulStop)
+	coordAddr := coord.Addr().String()
+
+	// Build TLS credentials for worker servers and client connections.
+	workerServerCreds, err := tlsCfg.ServerCredentials()
+	if err != nil {
+		t.Fatalf("worker server credentials: %v", err)
+	}
+	clientCreds, err := tlsCfg.ClientCredentials()
+	if err != nil {
+		t.Fatalf("client credentials: %v", err)
+	}
+
+	// Allocate ephemeral addresses for workers.
+	workerAddrs := make([]string, n)
+	for i := range n {
+		lc := net.ListenConfig{}
+		lis, lisErr := lc.Listen(context.Background(), "tcp", "localhost:0")
+		if lisErr != nil {
+			t.Fatalf("failed to listen for worker %d: %v", i, lisErr)
+		}
+		workerAddrs[i] = lis.Addr().String()
+		_ = lis.Close()
+	}
+
+	// Create TLS-aware dialer for peer and coordinator connections.
+	tlsDialer := func(_ context.Context, target string) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(clientCreds))
+	}
+
+	// Create and init workers sequentially with TLS.
+	workers := make([]*distributed.GrpcStrategy[float32], n)
+	for i := range n {
+		srv := grpc.NewServer(grpc.Creds(workerServerCreds))
+		sm := distributed.NewServerManager(srv, nil)
+		nm := distributed.NewNetworkManager(tlsDialer, nil)
+
+		strategy := distributed.NewGrpcStrategy[float32](distributed.GrpcStrategyConfig{
+			WorkerAddress:  workerAddrs[i],
+			ServerManager:  sm,
+			NetworkManager: nm,
+			TLS:            tlsCfg,
+		})
+
+		if initErr := strategy.Init(0, n, coordAddr); initErr != nil {
+			t.Fatalf("worker %d Init failed: %v", i, initErr)
+		}
+		t.Cleanup(strategy.Shutdown)
+		workers[i] = strategy
+	}
+
+	// Each worker has different gradients.
+	grads := []map[string]*tensor.TensorNumeric[float32]{
+		makeGradients(t, []float32{1, 2, 3}),
+		makeGradients(t, []float32{4, 5, 6}),
+		makeGradients(t, []float32{7, 8, 9}),
+	}
+
+	// Run AllReduceGradients concurrently on all workers.
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(rank int) {
+			defer wg.Done()
+			errs[rank] = workers[rank].AllReduceGradients(grads[rank])
+		}(i)
+	}
+	wg.Wait()
+
+	for i, allErr := range errs {
+		if allErr != nil {
+			t.Errorf("worker %d AllReduce error: %v", i, allErr)
+		}
+	}
+
+	// All workers should have the average: [4, 5, 6]
+	want := []float32{4, 5, 6}
+	for i, g := range grads {
+		data := g["grad"].Data()
+		for j, v := range data {
+			if diff := v - want[j]; diff > 0.01 || diff < -0.01 {
+				t.Errorf("worker %d grad[%d] = %f, want %f", i, j, v, want[j])
+			}
+		}
+	}
+}
+
 // --- Helpers ---
 
 func makeGradients(t *testing.T, data []float32) map[string]*tensor.TensorNumeric[float32] {

@@ -37,6 +37,7 @@ type GrpcStrategy[T tensor.Numeric] struct {
 
 	logger    log.Logger
 	collector metrics.Collector
+	tlsConfig *TLSConfig
 
 	shutdownOnce sync.Once
 }
@@ -50,6 +51,7 @@ type GrpcStrategyConfig struct {
 	Dialer         Dialer
 	Logger         log.Logger
 	Collector      metrics.Collector
+	TLS            *TLSConfig
 }
 
 // NewGrpcStrategy creates a new GrpcStrategy with the given configuration.
@@ -66,6 +68,7 @@ func NewGrpcStrategy[T tensor.Numeric](cfg GrpcStrategyConfig) *GrpcStrategy[T] 
 		networkMgr:    cfg.NetworkManager,
 		logger:        cfg.Logger,
 		collector:     cfg.Collector,
+		tlsConfig:     cfg.TLS,
 	}
 }
 
@@ -75,7 +78,17 @@ func (s *GrpcStrategy[T]) Init(rank, size int, coordinatorAddress string) error 
 	_ = rank // rank is assigned by the coordinator
 
 	// Connect to the coordinator.
-	conn, err := grpc.NewClient(coordinatorAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var coordDialOpt grpc.DialOption
+	if s.tlsConfig != nil {
+		creds, tlsErr := s.tlsConfig.ClientCredentials()
+		if tlsErr != nil {
+			return fmt.Errorf("failed to load TLS client credentials: %w", tlsErr)
+		}
+		coordDialOpt = grpc.WithTransportCredentials(creds)
+	} else {
+		coordDialOpt = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+	conn, err := grpc.NewClient(coordinatorAddress, coordDialOpt)
 	if err != nil {
 		return fmt.Errorf("failed to connect to coordinator: %w", err)
 	}
