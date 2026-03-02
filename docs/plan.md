@@ -729,6 +729,501 @@ Run the full quality gate suite after all Phase 5 work is complete.
 
 ---
 
+### Phase 6: Open Weights Model Import Support
+
+#### Phase 6 Context
+
+Zerfoo can train and run inference on models built directly with its layer API.
+Importing pre-trained open-weights models (Gemma 3, Kimi-VL) requires closing
+gaps in the ONNX import pipeline (zonnx repo) and in the zerfoo layer registry.
+
+Gap analysis conducted on 2026 03 02 identified the following blockers:
+
+**Gemma 3 (4-bit quantized transformer, 18 layers, ONNX opset 21):**
+- zonnx converter: AttributeProto_TENSOR case missing in convertAttribute()
+  blocks 7 Constant nodes from converting.
+- zonnx converter: UINT8 dtype missing in convertTensorWithPath() blocks
+  MatMulNBits (126 instances) quantized weight tensors.
+- MatMulNBits and Constant layers exist in zerfoo (layers/core/) but lack
+  registry builder functions and are not registered in layers/registry/.
+- model/builder.go has no dispatch for "MatMulNBits" or "Constant" ZMF node types.
+
+**Kimi-VL-A3B (MoonLight language model + SigLIP vision encoder):**
+- Vision encoder uses Conv2d, Pad, Slice, Resize, BatchNormalization,
+  GlobalAveragePool -- none implemented in zerfoo.
+- Softmax exists in the compute engine but is not registered as a graph layer node.
+- Standard LayerNormalization (with bias) is not registered (only Simplified and
+  Skip variants are).
+- Slice, Pad, TopK, Erf are missing entirely.
+- MoE (Mixture of Experts) gate routing and expert dispatch are not implemented.
+
+#### Phase 6 Objectives
+
+- P6-O1: Fix zonnx converter to handle TENSOR attributes and UINT8 dtype.
+- P6-O2: Register MatMulNBits and Constant in zerfoo layer registry.
+- P6-O3: Implement Softmax, Sigmoid, LayerNormalization, Slice, Pad, TopK, Erf.
+- P6-O4: Implement Conv2d, GlobalAveragePool, BatchNormalization, Resize.
+- P6-O5: Implement MixtureOfExperts layer for Kimi-VL language model.
+- P6-O6: Validate Gemma 3 end-to-end with a forward pass integration test.
+- P6-O7: Validate Kimi-VL vision encoder end-to-end with a forward pass test.
+
+#### Phase 6 Non-Goals
+
+- KV cache and autoregressive decoding (future phase; requires graph execution changes).
+- Beam search or nucleus sampling strategies.
+- Operator fusion or CUDA acceleration for new operators (correctness first).
+- Model quantization at import time (only loading pre-quantized 4-bit weights).
+- ZMF sub-graph support (MoE will hold expert tensors directly as a workaround).
+
+#### Phase 6 Design Decisions
+
+**4-bit weight packing:** MatMulNBits stores 4-bit weights packed two-per-byte
+in UINT8 tensors. ZMF uses DataType=UINT8 for these. Dequantization happens in
+MatMulNBits.Forward() which already uses numeric.Unpack4BitSlice internally.
+
+**Conv2d strategy:** Use im2col + MatMul for correctness. im2col reshapes input
+patches into a 2D matrix that is multiplied by the flattened kernel matrix.
+This reuses the existing MatMul implementation without a specialized kernel.
+
+**Multi-repo discipline:** zonnx and zerfoo are separate repos. Pre-commit hooks
+reject multi-directory commits. All zonnx changes are committed in the zonnx
+repo; all zerfoo layer/model changes are committed in the zerfoo repo.
+
+---
+
+#### E37: Complete Gemma 3 ONNX Import
+
+Fix the zonnx converter and zerfoo layer registry to support all operators
+used by Gemma 3 4B-IT quantized (ONNX opset 21).
+
+- [ ] T37.1 Fix TENSOR attribute and UINT8 dtype in zonnx converter  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: zonnx/pkg/converter/converter.go (convertAttribute, convertTensorWithPath)
+  - Acceptance: Add case AttributeProto_TENSOR in convertAttribute(): read embedded
+    TensorProto via attr.T, call convertTensorWithPath(), store as ZMF TENSOR attribute.
+    Add UINT8 and INT8 cases in convertTensorWithPath() dtype switch: read raw bytes
+    from RawData field, store as []byte in ZMF Tensor.Data with DataType=UINT8/INT8.
+    Test: convert a minimal ONNX graph with a Constant node (value = float32 [[1,2],[3,4]]);
+    assert ZMF attribute type=TENSOR and values match. Test: UINT8 tensor with 4 bytes
+    [0x12,0x34,0x56,0x78] is preserved in ZMF.
+  - Risk: ONNX TensorProto has multiple storage formats (float_data, raw_data). Prioritize
+    RawData for UINT8; fall through to typed fields for other types.
+  - [ ] S37.1.1 Add AttributeProto_TENSOR case in convertAttribute()  Est: 20m
+  - [ ] S37.1.2 Add UINT8 and INT8 dtype cases in convertTensorWithPath()  Est: 20m
+  - [ ] S37.1.3 Write unit tests for TENSOR attribute and UINT8 dtype conversion  Est: 20m
+  - [ ] S37.1.4 Run golangci-lint and go test -cover in zonnx/pkg/converter/  Est: 5m
+
+- [ ] T37.2 Add BuildConstant[T] to zerfoo and register  Owner: TBD  Est: 45m
+  - Dependencies: T37.1
+  - Files: layers/core/constant.go, layers/registry/registry.go, model/builder.go
+  - Acceptance: Add func BuildConstant[T generic.TensorNumeric](node *zmf.Node,
+    inputs []graph.Node[T]) (graph.Node[T], error) to layers/core/constant.go. Read
+    "value" attribute (ZMF Tensor) from node.Attributes. Decode into tensor.TensorNumeric[T].
+    Construct and return a Constant[T] holding the decoded tensor. Register "Constant":
+    BuildConstant[T] in layers/registry/RegisterAll[T](). Add case "Constant" in
+    model/builder.go dispatch. Unit test: ZMF graph with single Constant node; forward
+    pass returns tensor [1.0, 2.0, 3.0].
+  - [ ] S37.2.1 Add BuildConstant[T] function to layers/core/constant.go  Est: 15m
+  - [ ] S37.2.2 Register "Constant" in layers/registry/registry.go  Est: 5m
+  - [ ] S37.2.3 Add "Constant" case in model/builder.go  Est: 5m
+  - [ ] S37.2.4 Write unit tests for Constant layer build and forward  Est: 15m
+  - [ ] S37.2.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T37.3 Add BuildMatMulNBits[T] to zerfoo and register  Owner: TBD  Est: 1.5h
+  - Dependencies: T37.1
+  - Files: layers/core/matmul_nbits.go, layers/registry/registry.go, model/builder.go
+  - Acceptance: Add func BuildMatMulNBits[T generic.TensorNumeric](node *zmf.Node,
+    inputs []graph.Node[T]) (graph.Node[T], error). Read node attributes: K (int),
+    N (int), bits (int, default 4), block_size (int). Read weight tensor from node's
+    UINT8 initializer (packed 4-bit bytes). Read scale tensor (float32). Optionally read
+    zero_point tensor (UINT8). Construct MatMulNBits[T] with pre-loaded fields. Register
+    "MatMulNBits" in layers/registry/RegisterAll[T](). Add "MatMulNBits" case in
+    model/builder.go. Unit test: BuildMatMulNBits K=4, N=2, bits=4, block_size=4; run
+    forward with float32 activations [1,4]; verify output shape [1,2] and values match
+    manual dequantization reference (tolerance 1e-4).
+  - [ ] S37.3.1 Add BuildMatMulNBits[T] function to layers/core/matmul_nbits.go  Est: 30m
+  - [ ] S37.3.2 Register "MatMulNBits" in layers/registry/registry.go  Est: 5m
+  - [ ] S37.3.3 Add "MatMulNBits" case in model/builder.go  Est: 5m
+  - [ ] S37.3.4 Write unit tests: build, forward pass, dequantization correctness  Est: 30m
+  - [ ] S37.3.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T37.4 Add zonnx converter handler for MatMulNBits  Owner: TBD  Est: 45m
+  - Dependencies: T37.1
+  - File: zonnx/pkg/converter/converter.go (convertNode function)
+  - Acceptance: Add case "MatMulNBits" in convertNode(). Extract ONNX attrs: K (int),
+    N (int), bits (int, default=4), block_size (int). Map inputs: [0]=A (float activations),
+    [1]=B (uint8 quantized weights), [2]=scales (float32), [3]=zero_points (uint8 optional).
+    Emit a ZMF Node with type="MatMulNBits" and attributes K, N, bits, block_size. Store B
+    as a node initializer weight in ZMF. Test: convert a minimal ONNX graph with one
+    MatMulNBits node; verify ZMF node type="MatMulNBits" and all attributes are present.
+  - [ ] S37.4.1 Add "MatMulNBits" case in convertNode()  Est: 25m
+  - [ ] S37.4.2 Write unit test for MatMulNBits node conversion  Est: 15m
+  - [ ] S37.4.3 Run golangci-lint and go test -cover in zonnx/pkg/converter/  Est: 5m
+
+- [ ] T37.5 Add zonnx importer builders for Constant and MatMulNBits  Owner: TBD  Est: 1h
+  - Dependencies: T37.1, T37.4
+  - Files: zonnx/pkg/importer/layers/constant.go (new), matmul_nbits.go (new)
+  - Acceptance: BuildConstant reads ONNX Constant node "value" attribute (TensorProto),
+    calls convertTensorWithPath(), emits a ZMF Constant node. BuildMatMulNBits reads ONNX
+    attrs (K, N, bits, block_size), reads UINT8 weight initializer, emits ZMF MatMulNBits
+    node. Both registered in zonnx importer layer registry. Test: ONNX graph with Constant
+    and MatMulNBits nodes imports to ZMF; ZMF graph has nodes of correct types.
+  - [ ] S37.5.1 Create zonnx/pkg/importer/layers/constant.go with BuildConstant  Est: 20m
+  - [ ] S37.5.2 Create zonnx/pkg/importer/layers/matmul_nbits.go with BuildMatMulNBits  Est: 25m
+  - [ ] S37.5.3 Register both builders in zonnx importer registry  Est: 5m
+  - [ ] S37.5.4 Write unit tests for both builders  Est: 15m
+  - [ ] S37.5.5 Run golangci-lint and go test -cover in zonnx/pkg/importer/  Est: 5m
+
+- [ ] T37.6 Gemma 3 ONNX import smoke test  Owner: TBD  Est: 1.5h
+  - Dependencies: T37.1, T37.2, T37.3, T37.4, T37.5
+  - File: tests/parity/gemma3_import_test.go (new, in zerfoo repo)
+  - Acceptance: Test is skipped if GEMMA3_ONNX_PATH env var is not set. Load Gemma 3
+    4B-IT quantized ONNX model. Run zonnx convert. Assert: conversion completes without
+    error. Assert: ZMF graph contains MatMulNBits (126 nodes), SimplifiedLayerNormalization,
+    GroupQueryAttention, Constant, Reshape, Transpose nodes. Load ZMF into zerfoo. Run one
+    forward pass with input shape [1, 8] int64 token IDs. Assert: output shape [1, 8, V]
+    where V >= 256000. Assert: no NaN or Inf in output.
+  - [ ] S37.6.1 Write TestGemma3Import (skip if env var not set)  Est: 30m
+  - [ ] S37.6.2 Run test with a real Gemma 3 model file; fix any import errors  Est: 45m
+  - [ ] S37.6.3 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T37.7 Run linters and verify coverage for E37  Owner: TBD  Est: 15m
+  - Dependencies: T37.6
+  - Acceptance: golangci-lint 0 issues in all modified directories. go test -cover on
+    layers/core/ >= 85%. go test -cover on zonnx/pkg/converter/ >= 80%.
+  - [ ] S37.7.1 Run golangci-lint in zerfoo layers/core/, layers/registry/, model/  Est: 5m
+  - [ ] S37.7.2 Run golangci-lint in zonnx/pkg/converter/ and zonnx/pkg/importer/  Est: 5m
+  - [ ] S37.7.3 Verify coverage thresholds; fix any gaps  Est: 5m
+
+#### E38: Core Missing Operators
+
+Implement graph-level layer nodes for operators missing from the zerfoo registry.
+These are needed for general transformer inference and as building blocks for VLMs.
+
+- [ ] T38.1 Implement Softmax layer and register  Owner: TBD  Est: 45m
+  - Dependencies: None
+  - Files: layers/activations/softmax.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Softmax[T] struct with axis int attribute. Forward: for each slice along
+    axis subtract max (numerical stability), exponentiate, divide by sum. BuildSoftmax[T]
+    reads "axis" from node attributes (default -1). Register "Softmax" in RegisterAll[T].
+    Add "Softmax" case in model/builder.go. Test: Softmax([[1,2,3],[4,5,6]], axis=1) matches
+    scipy.special.softmax reference (tolerance 1e-6).
+  - [ ] S38.1.1 Create layers/activations/softmax.go with Softmax[T] and BuildSoftmax[T]  Est: 20m
+  - [ ] S38.1.2 Register "Softmax" and add model/builder.go case  Est: 5m
+  - [ ] S38.1.3 Write unit tests with numerical reference  Est: 15m
+  - [ ] S38.1.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.2 Implement Sigmoid layer and register  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Files: layers/activations/sigmoid.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Sigmoid[T] struct. Forward: element-wise 1/(1+exp(-x)). BuildSigmoid[T].
+    Register "Sigmoid". Test: Sigmoid([0,1,-1]) matches [0.5, 0.7311, 0.2689] (1e-4).
+  - [ ] S38.2.1 Create layers/activations/sigmoid.go  Est: 10m
+  - [ ] S38.2.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.2.3 Write unit tests  Est: 10m
+  - [ ] S38.2.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.3 Implement standard LayerNormalization layer and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/normalization/layer_norm.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: LayerNormalization[T] struct with axis int, epsilon float64, weight (gamma),
+    bias (beta) tensor fields. Forward: normalize x along axes [axis,...], scale by gamma,
+    shift by beta. Distinct from SimplifiedLayerNormalization (no bias) and Skip variant.
+    BuildLayerNormalization[T] reads axis, epsilon from attributes; loads gamma and bias from
+    initializers. Register "LayerNormalization". Test: LayerNorm([[1,2,3,4]], axis=-1,
+    gamma=all-ones, beta=all-zeros) matches reference (tolerance 1e-5).
+  - [ ] S38.3.1 Create layers/normalization/layer_norm.go  Est: 25m
+  - [ ] S38.3.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.3.3 Write unit tests vs reference  Est: 20m
+  - [ ] S38.3.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.4 Implement Slice layer and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/core/slice.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Slice[T] struct. Inputs (ONNX opset 10+): data, starts, ends, axes
+    (optional), steps (optional). Forward: extract subtensor along specified axes with
+    start:end:step semantics. BuildSlice[T]. Register "Slice". Test: Slice([0..11] shape
+    [3,4], starts=[0,1], ends=[2,3], axes=[0,1], steps=[1,1]) returns [[1,2],[5,6]].
+  - [ ] S38.4.1 Create layers/core/slice.go  Est: 25m
+  - [ ] S38.4.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.4.3 Write unit tests  Est: 20m
+  - [ ] S38.4.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.5 Implement Pad layer and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/core/pad.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Pad[T] struct supporting mode="constant" (pad with constant value,
+    default 0). Pads tensor: flat pads input [begin_d0,...,begin_dN,end_d0,...,end_dN].
+    BuildPad[T]. Register "Pad". Test: Pad([[1,2],[3,4]], pads=[0,0,1,1]) returns
+    [[1,2,0],[3,4,0],[0,0,0]] (shape [3,3]).
+  - [ ] S38.5.1 Create layers/core/pad.go  Est: 25m
+  - [ ] S38.5.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.5.3 Write unit tests  Est: 20m
+  - [ ] S38.5.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.6 Implement TopK layer and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/core/topk.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: TopK[T] struct. Attributes: K int, axis int (default -1), largest bool
+    (default true), sorted bool (default true). Outputs: values [top K values], indices
+    [int64 indices]. Forward: partial sort along axis (sort.Slice for correctness).
+    BuildTopK[T]. Register "TopK". Test: TopK([5,3,8,1,9,2], K=3, largest=true, sorted=true)
+    returns values=[9,8,5], indices=[4,2,0].
+  - [ ] S38.6.1 Create layers/core/topk.go  Est: 30m
+  - [ ] S38.6.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.6.3 Write unit tests  Est: 20m
+  - [ ] S38.6.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.7 Implement Erf layer and register  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Files: layers/activations/erf.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Erf[T] struct. Forward: element-wise math.Erf (cast T->float64->T).
+    BuildErf[T]. Register "Erf". Test: Erf([0.0, 1.0, -1.0]) matches [0.0, 0.8427, -0.8427]
+    (tolerance 1e-4).
+  - [ ] S38.7.1 Create layers/activations/erf.go  Est: 10m
+  - [ ] S38.7.2 Register and add builder.go case  Est: 5m
+  - [ ] S38.7.3 Write unit tests  Est: 10m
+  - [ ] S38.7.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T38.8 Add zonnx importer builders for E38 operators  Owner: TBD  Est: 1.5h
+  - Dependencies: T38.1 through T38.7
+  - Files: one new file per operator in zonnx/pkg/importer/layers/
+    (softmax.go, sigmoid.go, layer_norm.go, slice.go, pad.go, topk.go, erf.go)
+  - Acceptance: Each file has a Build{Op} function registered in the zonnx importer
+    layer registry. Builder reads ONNX node attributes and produces ZMF node with correct
+    type and attribute values. Tests verify round-trip conversion for each operator.
+  - [ ] S38.8.1 Create zonnx importer builders for Softmax, Sigmoid, LayerNorm  Est: 30m
+  - [ ] S38.8.2 Create zonnx importer builders for Slice, Pad  Est: 20m
+  - [ ] S38.8.3 Create zonnx importer builders for TopK, Erf  Est: 20m
+  - [ ] S38.8.4 Register all builders in zonnx importer registry  Est: 5m
+  - [ ] S38.8.5 Write round-trip tests for each operator  Est: 20m
+  - [ ] S38.8.6 Run golangci-lint and go test -cover in zonnx/pkg/importer/  Est: 5m
+
+- [ ] T38.9 Run linters and verify coverage for E38  Owner: TBD  Est: 15m
+  - Dependencies: T38.8
+  - Acceptance: golangci-lint 0 issues in layers/activations/, layers/core/,
+    layers/normalization/, layers/registry/, model/, zonnx/pkg/importer/. go test -cover
+    >= 90% for each new file.
+  - [ ] S38.9.1 Run golangci-lint and go test -cover -race in all modified dirs  Est: 10m
+  - [ ] S38.9.2 Fix any remaining issues  Est: 5m
+
+#### E39: Vision Encoder Operators
+
+Implement operators for the SigLIP vision encoder used in MoondreamV2 and
+Kimi-VL. All operators use NCHW tensor format [N, C, H, W].
+
+- [ ] T39.1 Implement Conv2d layer and register  Owner: TBD  Est: 2h
+  - Dependencies: None
+  - Files: layers/core/conv2d.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Conv2d[T] struct. Attributes: strides [2]int, pads [4]int
+    (top,left,bottom,right), dilations [2]int, groups int. Fields: kernel
+    [out_C, in_C/groups, kH, kW], bias [out_C] optional. Forward: im2col reshapes input
+    patches to [N*H_out*W_out, in_C*kH*kW]; multiply by flattened kernel
+    [in_C*kH*kW, out_C]; reshape to [N, out_C, H_out, W_out]. BuildConv2d[T] reads kernel
+    and bias from node initializers. Register "Conv". Test 1: [1,1,5,5] all-ones input,
+    [1,1,3,3] all-ones kernel, stride=1, pad=0 returns [1,1,3,3] where each value = 9.0.
+    Test 2: stride=2 halves spatial dims. Test 3: padding preserves spatial dims.
+  - Risk: im2col allocates a large intermediate matrix for large images. Accept for
+    correctness; optimize later.
+  - [ ] S39.1.1 Implement im2col helper function  Est: 30m
+  - [ ] S39.1.2 Implement Conv2d Forward using im2col + MatMul  Est: 30m
+  - [ ] S39.1.3 Implement BuildConv2d[T] with kernel and bias loading  Est: 20m
+  - [ ] S39.1.4 Register "Conv" and add model/builder.go case  Est: 5m
+  - [ ] S39.1.5 Write unit tests (3 cases: basic, stride, padding)  Est: 25m
+  - [ ] S39.1.6 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T39.2 Implement GlobalAveragePool layer and register  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Files: layers/core/global_avg_pool.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: GlobalAveragePool[T] struct. Input [N,C,H,W]. Forward: average over H and
+    W; output [N,C,1,1]. BuildGlobalAveragePool[T]. Register "GlobalAveragePool". Test:
+    [1,2,3,3] with channel 0=all 2.0, channel 1=all 4.0 returns [1,2,1,1] = [2.0, 4.0].
+  - [ ] S39.2.1 Create layers/core/global_avg_pool.go  Est: 10m
+  - [ ] S39.2.2 Register and add builder.go case  Est: 5m
+  - [ ] S39.2.3 Write unit tests  Est: 10m
+  - [ ] S39.2.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T39.3 Implement BatchNormalization layer (inference mode) and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/normalization/batch_norm.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: BatchNormalization[T] struct. Fields: scale (gamma) [C], bias (beta) [C],
+    running_mean [C], running_var [C], epsilon float64. Forward (inference only):
+    y_nc = gamma_c * (x_nc - mean_c) / sqrt(var_c + epsilon) + beta_c, applied channel-wise.
+    BuildBatchNormalization[T] reads all 4 initializer tensors and epsilon attribute. Register
+    "BatchNormalization". Test: output matches PyTorch nn.BatchNorm2d eval mode for [1,2,3,3]
+    float32 input (tolerance 1e-5). Training mode (5-output variant) not needed.
+  - [ ] S39.3.1 Create layers/normalization/batch_norm.go  Est: 25m
+  - [ ] S39.3.2 Register and add builder.go case  Est: 5m
+  - [ ] S39.3.3 Write unit tests vs reference  Est: 20m
+  - [ ] S39.3.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T39.4 Implement Resize layer and register  Owner: TBD  Est: 1h
+  - Dependencies: None
+  - Files: layers/core/resize.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: Resize[T] struct supporting modes "nearest" and "linear" (bilinear for 4D).
+    Inputs (ONNX opset 13): data, roi (optional), scales (optional), sizes (optional).
+    If scales given: output_size_i = floor(input_size_i * scale_i). If sizes given: use
+    directly. Nearest: output[x,y] = input[floor(x/sx), floor(y/sy)]. BuildResize[T].
+    Register "Resize". Test 1: [1,1,2,2] by scales [1,1,2,2] nearest returns [1,1,4,4]
+    with each pixel repeated 2x. Test 2: resize with explicit sizes.
+  - [ ] S39.4.1 Create layers/core/resize.go (nearest neighbor)  Est: 25m
+  - [ ] S39.4.2 Add bilinear interpolation mode  Est: 20m
+  - [ ] S39.4.3 Register and add builder.go case  Est: 5m
+  - [ ] S39.4.4 Write unit tests for both modes  Est: 15m
+  - [ ] S39.4.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T39.5 Add zonnx importer builders for E39 operators  Owner: TBD  Est: 1.5h
+  - Dependencies: T39.1 through T39.4
+  - Files: zonnx/pkg/importer/layers/conv.go (new), global_avg_pool.go (new),
+    batch_norm.go (new), resize.go (new)
+  - Acceptance: Conv builder reads kernel (weight initializer), bias (optional), strides,
+    pads, dilations, group attributes. BatchNorm builder reads all 4 initializers. All
+    builders registered in zonnx importer layer registry. Tests verify round-trip conversion.
+  - [ ] S39.5.1 Create zonnx importer builders for Conv and GlobalAveragePool  Est: 30m
+  - [ ] S39.5.2 Create zonnx importer builders for BatchNormalization and Resize  Est: 30m
+  - [ ] S39.5.3 Register all builders  Est: 5m
+  - [ ] S39.5.4 Write round-trip tests  Est: 20m
+  - [ ] S39.5.5 Run golangci-lint and go test -cover in zonnx/pkg/importer/  Est: 5m
+
+- [ ] T39.6 Run linters and verify coverage for E39  Owner: TBD  Est: 15m
+  - Dependencies: T39.5
+  - Acceptance: golangci-lint 0 issues. go test -cover >= 85% for Conv2d (im2col complex);
+    >= 90% for simpler operators.
+  - [ ] S39.6.1 Run golangci-lint and go test -cover -race  Est: 10m
+  - [ ] S39.6.2 Fix any remaining issues  Est: 5m
+
+#### E40: Mixture of Experts
+
+Implement MixtureOfExperts[T] for Kimi-VL-A3B (MoonLight uses sparse MoE
+with top-2 expert routing per token).
+
+- [ ] T40.1 Implement MoE gate routing layer  Owner: TBD  Est: 1.5h
+  - Dependencies: T38.1 (Softmax), T38.6 (TopK)
+  - Files: layers/core/moe.go (new), layers/registry/registry.go, model/builder.go
+  - Acceptance: MoEGate[T] struct. Fields: gateWeight [num_experts, model_dim], topK int.
+    Forward inputs: hidden_states [seq_len, model_dim]. Steps: (1) logits = hidden_states @
+    gateWeight.T -> [seq_len, num_experts]; (2) apply Softmax over expert dim -> gate
+    probabilities; (3) TopK to get indices [seq_len, topK] and scores [seq_len, topK];
+    (4) normalize scores by row sum. Returns: expert_indices, expert_weights. BuildMoEGate[T]
+    reads gateWeight from initializer, topK from attribute. Register "MoEGate". Test: 3
+    experts, topK=2, seq_len=2; verify output shapes and row-wise weights sum to 1.0.
+  - [ ] S40.1.1 Implement MoEGate struct and Forward  Est: 30m
+  - [ ] S40.1.2 Add BuildMoEGate[T] and register "MoEGate"  Est: 15m
+  - [ ] S40.1.3 Write unit tests  Est: 30m
+  - [ ] S40.1.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T40.2 Implement MoE expert dispatch and aggregate  Owner: TBD  Est: 2h
+  - Dependencies: T40.1
+  - Files: layers/core/moe.go (extend), layers/registry/registry.go, model/builder.go
+  - Acceptance: MixtureOfExperts[T] struct. Fields: gate MoEGate[T], experts []graph.Node[T],
+    numExperts int, topK int. Forward inputs: hidden_states [seq_len, model_dim]. Steps:
+    (1) gate routing -> indices [seq_len, topK], weights [seq_len, topK]; (2) for each
+    token t and each k in [0,topK): expert_out[t,k] = experts[indices[t,k]].Forward(token);
+    (3) output[t] = sum_k(weights[t,k] * expert_out[t,k]). BuildMixtureOfExperts[T] reads
+    numExperts, topK from attributes; expert sub-nodes from a nested node list. If ZMF
+    sub-graph support is unavailable, embed expert weight tensors directly as a workaround
+    and document as tech debt. Register "MixtureOfExperts". Test: 2 experts (identity and
+    scale-by-2), 2 tokens, topK=1; verify output matches hand-computed expected.
+  - Risk: ZMF sub-graph nodes not yet supported. Fallback: inline expert tensors directly.
+  - [ ] S40.2.1 Implement MixtureOfExperts struct and Forward  Est: 45m
+  - [ ] S40.2.2 Add BuildMixtureOfExperts[T] with expert loading strategy  Est: 30m
+  - [ ] S40.2.3 Register "MixtureOfExperts" and add builder.go case  Est: 5m
+  - [ ] S40.2.4 Write unit tests  Est: 30m
+  - [ ] S40.2.5 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T40.3 Add zonnx importer builders for MoE operators  Owner: TBD  Est: 1h
+  - Dependencies: T40.1, T40.2
+  - File: zonnx/pkg/importer/layers/moe.go (new)
+  - Acceptance: BuildMoEGate and BuildMixtureOfExperts registered in zonnx importer.
+    Tests verify round-trip conversion. golangci-lint 0 issues.
+  - [ ] S40.3.1 Create zonnx/pkg/importer/layers/moe.go  Est: 30m
+  - [ ] S40.3.2 Write unit tests  Est: 20m
+  - [ ] S40.3.3 Run golangci-lint and go test -cover  Est: 10m
+
+- [ ] T40.4 Run linters and verify coverage for E40  Owner: TBD  Est: 15m
+  - Dependencies: T40.3
+  - Acceptance: golangci-lint 0 issues. go test -cover >= 85% for moe.go.
+  - [ ] S40.4.1 Run golangci-lint and go test -cover -race  Est: 10m
+  - [ ] S40.4.2 Fix any remaining issues  Est: 5m
+
+#### E41: Gemma 3 End-to-End Validation
+
+- [ ] T41.1 Gemma 3 forward pass parity test  Owner: TBD  Est: 2h
+  - Dependencies: E37, E38
+  - File: tests/parity/gemma3_test.go (new, in zerfoo repo)
+  - Acceptance: Skipped if GEMMA3_ZMF_PATH env var not set. Load ZMF model. Create
+    float32 CPUEngine. Build graph. Run forward pass with input [1, 8] int64 token IDs
+    [1,2,3,4,5,6,7,8]. Assert: output shape [1, 8, V] where V >= 256000. Assert: no NaN
+    or Inf in output. Optionally compare top-5 logits for first token against golden file
+    tests/parity/gemma3_golden.json (tolerance 0.1 for 4-bit quantized model).
+  - [ ] S41.1.1 Create tests/parity/gemma3_test.go  Est: 45m
+  - [ ] S41.1.2 Run test with real model; capture golden output  Est: 45m
+  - [ ] S41.1.3 Save golden file and verify test passes  Est: 20m
+  - [ ] S41.1.4 Run golangci-lint and go test -cover  Est: 5m
+
+- [ ] T41.2 Gemma 3 greedy decode smoke test  Owner: TBD  Est: 1h
+  - Dependencies: T41.1
+  - File: tests/parity/gemma3_test.go (extend)
+  - Acceptance: Skipped if GEMMA3_ZMF_PATH not set. Run 5 greedy decode steps: argmax
+    over vocab of last-position logits, append token, re-run. Assert: 5 output tokens in
+    valid range [0, V). Assert: no panic or error. NOTE: without KV cache each step runs
+    the full sequence (slow but correct for smoke testing).
+  - [ ] S41.2.1 Implement greedy decode loop in test  Est: 30m
+  - [ ] S41.2.2 Run and verify  Est: 20m
+  - [ ] S41.2.3 Run golangci-lint and go test  Est: 5m
+
+#### E42: Kimi-VL Vision Encoder Validation
+
+- [ ] T42.1 SigLIP vision encoder forward pass test  Owner: TBD  Est: 2h
+  - Dependencies: E39
+  - File: tests/parity/siglip_test.go (new, in zerfoo repo)
+  - Acceptance: Skipped if SIGLIP_ZMF_PATH env var not set. Load ZMF model. Create
+    float32 CPUEngine. Run forward pass with input [1, 3, 224, 224] float32 (normalized
+    image). Assert: output shape [1, 196, embed_dim] (patch_size=16, 224/16=14, 14*14=196).
+    Assert: no NaN or Inf. Optionally compare CLS token embedding vs HuggingFace reference
+    (tolerance 1e-2).
+  - [ ] S42.1.1 Create tests/parity/siglip_test.go  Est: 45m
+  - [ ] S42.1.2 Run test with real SigLIP model; fix any import or runtime errors  Est: 45m
+  - [ ] S42.1.3 Verify output and run golangci-lint  Est: 20m
+
+- [ ] T42.2 Kimi-VL connector forward pass test  Owner: TBD  Est: 1h
+  - Dependencies: T42.1
+  - File: tests/parity/siglip_test.go (extend)
+  - Acceptance: Skipped if env vars not set. Load connector ZMF model. Input: vision
+    embeddings [1, 196, embed_dim] (output of T42.1). Assert: connector output shape
+    [1, 196, lm_dim]. Assert: no NaN or Inf.
+  - [ ] S42.2.1 Implement connector test  Est: 30m
+  - [ ] S42.2.2 Run and verify  Est: 20m
+  - [ ] S42.2.3 Run golangci-lint and go test  Est: 5m
+
+#### E43: Phase 6 Final Verification
+
+- [ ] T43.1 Run full test suite with coverage and race detector  Owner: TBD  Est: 30m
+  - Dependencies: E37, E38, E39, E40, E41, E42
+  - Acceptance: go test ./... -cover -race passes in zerfoo. go test ./... -cover passes
+    in zonnx. All existing tests still pass (no regressions). New files meet >= 85%
+    coverage (Conv2d accepted at 85%; others at >= 90%).
+  - [ ] S43.1.1 Run go test ./... -cover -race in zerfoo  Est: 10m
+  - [ ] S43.1.2 Run go test ./... -cover in zonnx  Est: 10m
+  - [ ] S43.1.3 Fix any regressions  Est: 10m
+
+- [ ] T43.2 Run linters across all modified directories  Owner: TBD  Est: 15m
+  - Dependencies: T43.1
+  - Acceptance: golangci-lint 0 issues. go vet clean. gofmt clean.
+  - [ ] S43.2.1 Run golangci-lint run ./... in zerfoo  Est: 5m
+  - [ ] S43.2.2 Run golangci-lint run ./... in zonnx  Est: 5m
+  - [ ] S43.2.3 Fix any remaining lint issues  Est: 5m
+
+- [ ] T43.3 Update documentation  Owner: TBD  Est: 30m
+  - Dependencies: T43.2
+  - Acceptance: docs/plan.md Phase 6 tasks marked [x]. Hand-off notes updated with
+    supported models and new operator list. zonnx/missing_operators_analysis.md updated.
+  - [ ] S43.3.1 Update docs/plan.md Phase 6 tasks to [x]  Est: 10m
+  - [ ] S43.3.2 Update Hand-off Notes with new operators and supported models  Est: 10m
+  - [ ] S43.3.3 Update zonnx/missing_operators_analysis.md  Est: 10m
+
+---
+
 ## 4. Timeline and Milestones
 
 | ID | Milestone | Dependencies | Exit Criteria |
@@ -744,6 +1239,12 @@ Run the full quality gate suite after all Phase 5 work is complete.
 | M23 | Distributed integration | E34 | Multi-worker tests prove AllReduce/Barrier/Broadcast correctness |
 | M24 | Worker lifecycle | E35 | WorkerNode + CLI command; health + shutdown integrated |
 | M25 | Phase 5 complete | E36 | Full suite green, distributed coverage >= 95% |
+| M26 | Gemma 3 converter fixed | E37 | TENSOR attr handled; 126 MatMulNBits + 7 Constant nodes convert; smoke test passes |
+| M27 | Core operators complete | E38 | Softmax, Sigmoid, LayerNorm, Slice, Pad, TopK, Erf registered and tested |
+| M28 | Vision encoder ready | E39 | Conv2d, GlobalAveragePool, BatchNorm, Resize registered and tested |
+| M29 | MoE complete | E40 | MoEGate and MixtureOfExperts registered and tested |
+| M30 | VLM parity validated | E41, E42 | Gemma 3 forward pass test passes; SigLIP encoder test passes |
+| M31 | Phase 6 complete | E43 | Full suite green; all quality gates pass |
 
 ### Recommended Sequence
 
@@ -766,6 +1267,15 @@ Run the full quality gate suite after all Phase 5 work is complete.
 14. **E34** (Integration Tests) -- Depends on E33
 15. **E35** (Worker Lifecycle + CLI) -- Depends on E33; can partially parallel E34
 16. **E36** (Final Verification) -- After E32-E35
+
+**Phase 6 (Open Weights Model Import):**
+17. **E37** (Gemma 3 ONNX Import) -- No new zerfoo deps; zonnx converter fix first
+18. **E38** (Core Missing Operators) -- Parallel with E37; independent of E39/E40
+19. **E39** (Vision Encoder Operators) -- Parallel with E38; independent
+20. **E40** (MoE) -- Depends on E38 (Softmax + TopK needed by MoEGate)
+21. **E41** (Gemma 3 Validation) -- Depends on E37, E38
+22. **E42** (Kimi-VL Validation) -- Depends on E39, E40
+23. **E43** (Final Verification) -- After E37-E42
 
 Parallelism opportunities:
 - E21 + E27 can run in parallel (independent)
@@ -812,6 +1322,8 @@ A task is done when:
 
 ## 6. Progress Log
 
+- **2026 03 02 (update 12):** Change Summary: Added Phase 6 -- Open Weights Model Import Support. Gap analysis identified blockers for Gemma 3 (TENSOR attribute missing in zonnx converter, UINT8 dtype missing, MatMulNBits and Constant not registered in zerfoo) and Kimi-VL (Conv2d, Pad, Slice, Resize, BatchNorm, GlobalAveragePool all missing; Softmax/Sigmoid/TopK/Erf not registered as layer nodes; MoE not implemented). New epics: E37 (Gemma 3 ONNX import fixes: 7 tasks), E38 (core missing operators: Softmax, Sigmoid, LayerNorm, Slice, Pad, TopK, Erf: 9 tasks), E39 (vision encoder operators: Conv2d, GlobalAveragePool, BatchNorm, Resize: 6 tasks), E40 (MoE: 4 tasks), E41 (Gemma 3 end-to-end validation: 2 tasks), E42 (Kimi-VL vision encoder validation: 2 tasks), E43 (Phase 6 final verification: 3 tasks). Added milestones M26-M31. Phase 6 is unblocked and can begin immediately.
+
 - **2026 03 02 (update 11):** Change Summary: Completed Phase 5 -- Concrete Distributed Service Server. E32: workerService implementing pb.DistributedServiceServer with AllReduce (bidi stream), Barrier (unary), Broadcast (unary) handlers, reduceSession, barrierState, input validation (validateTensor). E33: GrpcStrategy[T] implementing InternalStrategy[T] with Init, AllReduceGradients (star-topology), Barrier, BroadcastTensor, Shutdown (idempotent). Fixed Init to accept explicit world size parameter for sequential registration. E34: Multi-worker integration tests (AllReduce 3-worker, single-worker, Barrier, Broadcast, context cancellation). T34.4 (TLS integration) deferred. E35: WorkerNode struct (worker_node.go), WorkerCommand (cmd/cli/worker.go), registered in cmd/zerfoo/main.go, lifecycle integration test. E36: Full test suite pass, distributed/ 96.0% coverage, golangci-lint 0 issues, go vet clean. Commits: a20fe4c, ab72e98, 34a784e, 9922af5, ddbea47, c3f8fcf, b668d28, afdea4a, 3574de4.
 
 - **2026 03 01 (update 10):** Change Summary: Added Phase 5 -- Concrete Distributed Service Server. New epics E32 (WorkerService implementing pb.DistributedServiceServer with AllReduce/Barrier/Broadcast handlers and input validation), E33 (GrpcStrategy[T] implementing InternalStrategy[T] over gRPC transport), E34 (multi-worker integration tests using bufconn), E35 (WorkerNode lifecycle + CLI worker command + health/shutdown integration), E36 (Phase 5 final verification). Added milestones M22-M25. Star-topology AllReduce protocol (reduce to root, broadcast back). T32.5 completes previously skipped T23.2 (RPC input validation). 20 new tasks, estimated ~15 hours total.
@@ -840,7 +1352,8 @@ A task is done when:
 - **GPU details:** Read docs/gpu.md for build requirements, kernel inventory, and memory model.
 - **Phase 1-3 status:** Complete. See docs/design.md Section 7 for summary.
 - **Phase 4 status:** Complete (except E29 GPU validation, blocked on GCP quota).
-- **Phase 5 status:** Planned, not started. Concrete DistributedServiceServer implementation.
+- **Phase 5 status:** Complete. Concrete DistributedServiceServer, GrpcStrategy, WorkerNode, CLI worker command. 96% coverage.
+- **Phase 6 status:** Planned, not started. Open weights model import (Gemma 3 + Kimi-VL).
 - **GPU hardware validation:** Blocked on GCP GPU quota (E29).
 - **Key files to read first:**
   - compute/engine.go -- Engine[T] interface (34 methods)
@@ -896,6 +1409,21 @@ A task is done when:
 | Documentation | 8/10 | Runbook, troubleshooting, pprof (E30) |
 | CI/CD | 9/10 | Blocking tests, coverage gate, benchmark gate (E27) |
 
+### Target Scorecard (After Phase 6)
+
+| Category | Target | How Achieved |
+|----------|--------|-------------|
+| Architecture | 10/10 | No changes from Phase 5 |
+| Core Functionality | 10/10 | Gemma 3 + Kimi-VL inference via ONNX import (E37-E42) |
+| Testing | 10/10 | Parity tests for real open-weights models (E41, E42) |
+| Error Handling | 9/10 | No changes from Phase 5 |
+| Security | 8/10 | No changes from Phase 5 |
+| Observability | 8/10 | No changes from Phase 5 |
+| Configuration | 8/10 | No changes from Phase 5 |
+| Operations | 9/10 | No changes from Phase 5 |
+| Documentation | 9/10 | Gap analysis resolved; operator coverage documented (T43.3) |
+| CI/CD | 9/10 | No changes from Phase 5 |
+
 ### Target Scorecard (After Phase 5)
 
 | Category | Target | How Achieved |
@@ -927,3 +1455,31 @@ A task is done when:
 | distributed/integration_test.go | Multi-worker integration tests using bufconn | E34 |
 | distributed/worker_node.go | WorkerNode lifecycle management | E35 |
 | cmd/zerfoo/worker.go | Worker CLI subcommand | E35 |
+| layers/activations/softmax.go | Softmax graph layer node | E38 |
+| layers/activations/sigmoid.go | Sigmoid graph layer node | E38 |
+| layers/activations/erf.go | Erf (error function) graph layer node | E38 |
+| layers/normalization/layer_norm.go | Standard LayerNormalization (with gamma+beta) | E38 |
+| layers/normalization/batch_norm.go | BatchNormalization inference mode | E39 |
+| layers/core/slice.go | Slice operator for tensor cropping | E38 |
+| layers/core/pad.go | Pad operator (constant mode) | E38 |
+| layers/core/topk.go | TopK selection operator | E38 |
+| layers/core/conv2d.go | 2D convolution via im2col + MatMul | E39 |
+| layers/core/global_avg_pool.go | GlobalAveragePool [N,C,H,W] -> [N,C,1,1] | E39 |
+| layers/core/resize.go | Resize (nearest + bilinear) | E39 |
+| layers/core/moe.go | MoEGate and MixtureOfExperts layers | E40 |
+| tests/parity/gemma3_test.go | Gemma 3 forward pass parity test | E41 |
+| tests/parity/siglip_test.go | SigLIP + Kimi-VL connector parity tests | E42 |
+| zonnx/pkg/importer/layers/constant.go | zonnx builder for Constant nodes | E37 |
+| zonnx/pkg/importer/layers/matmul_nbits.go | zonnx builder for MatMulNBits nodes | E37 |
+| zonnx/pkg/importer/layers/softmax.go | zonnx builder for Softmax | E38 |
+| zonnx/pkg/importer/layers/sigmoid.go | zonnx builder for Sigmoid | E38 |
+| zonnx/pkg/importer/layers/layer_norm.go | zonnx builder for LayerNormalization | E38 |
+| zonnx/pkg/importer/layers/slice.go | zonnx builder for Slice | E38 |
+| zonnx/pkg/importer/layers/pad.go | zonnx builder for Pad | E38 |
+| zonnx/pkg/importer/layers/topk.go | zonnx builder for TopK | E38 |
+| zonnx/pkg/importer/layers/erf.go | zonnx builder for Erf | E38 |
+| zonnx/pkg/importer/layers/conv.go | zonnx builder for Conv (Conv2d) | E39 |
+| zonnx/pkg/importer/layers/global_avg_pool.go | zonnx builder for GlobalAveragePool | E39 |
+| zonnx/pkg/importer/layers/batch_norm.go | zonnx builder for BatchNormalization | E39 |
+| zonnx/pkg/importer/layers/resize.go | zonnx builder for Resize | E39 |
+| zonnx/pkg/importer/layers/moe.go | zonnx builders for MoEGate and MixtureOfExperts | E40 |
