@@ -8,6 +8,7 @@ package health
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/pprof"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/log"
@@ -45,11 +46,19 @@ func (s *Server) AddReadinessCheck(name string, check CheckFunc) {
 	s.checks[name] = check
 }
 
-// Handler returns an http.Handler with /healthz and /readyz routes.
+// Handler returns an http.Handler with /healthz, /readyz, and /debug/pprof routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+
+	// Register pprof handlers for runtime profiling.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	return mux
 }
 
