@@ -5,20 +5,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-func init() {
-	model.RegisterLayer("FFN", buildFFN[float16.Float16])
-	// Add registrations for other supported types if needed.
-}
-
-func buildFFN[T tensor.Numeric](
+// BuildFFN creates an FFN layer from ZMF parameters and attributes.
+func BuildFFN[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	name string,

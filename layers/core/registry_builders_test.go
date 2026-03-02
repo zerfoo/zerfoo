@@ -436,7 +436,7 @@ func TestBuildFFN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node, err := buildFFN(engine, ops, "test", tt.params, tt.attrs)
+			node, err := BuildFFN(engine, ops, "test", tt.params, tt.attrs)
 			if tt.want != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.want)
@@ -444,10 +444,10 @@ func TestBuildFFN(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("buildFFN: %v", err)
+				t.Fatalf("BuildFFN: %v", err)
 			}
 			if node == nil {
-				t.Fatal("buildFFN returned nil")
+				t.Fatal("BuildFFN returned nil")
 			}
 		})
 	}
