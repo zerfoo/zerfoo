@@ -281,11 +281,11 @@ func TestResolveOutputSuffix_OutputWithLayerSuffix(t *testing.T) {
 
 func TestConvertAttributes_AllTypes(t *testing.T) {
 	zmfAttrs := map[string]*zmf.Attribute{
-		"float_attr": {Value: &zmf.Attribute_F{F: 3.14}},
-		"int_attr":   {Value: &zmf.Attribute_I{I: 42}},
-		"str_attr":   {Value: &zmf.Attribute_S{S: "hello"}},
-		"ints_attr":  {Value: &zmf.Attribute_Ints{Ints: &zmf.Ints{Val: []int64{1, 2, 3}}}},
-		"floats_attr": {Value: &zmf.Attribute_Floats{Floats: &zmf.Floats{Val: []float32{1.0, 2.0}}}},
+		"float_attr":   {Value: &zmf.Attribute_F{F: 3.14}},
+		"int_attr":     {Value: &zmf.Attribute_I{I: 42}},
+		"str_attr":     {Value: &zmf.Attribute_S{S: "hello"}},
+		"ints_attr":    {Value: &zmf.Attribute_Ints{Ints: &zmf.Ints{Val: []int64{1, 2, 3}}}},
+		"floats_attr":  {Value: &zmf.Attribute_Floats{Floats: &zmf.Floats{Val: []float32{1.0, 2.0}}}},
 		"strings_attr": {Value: &zmf.Attribute_Strings{Strings: &zmf.Strings{Val: []string{"a", "b"}}}},
 	}
 

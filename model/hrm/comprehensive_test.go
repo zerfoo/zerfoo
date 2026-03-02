@@ -125,9 +125,9 @@ func (n *errNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor
 }
 
 func (n *errNode[T]) Parameters() []*graph.Parameter[T] { return n.params }
-func (n *errNode[T]) OutputShape() []int                 { return []int{1} }
-func (n *errNode[T]) OpType() string                     { return "ErrNode" }
-func (n *errNode[T]) Attributes() map[string]any         { return nil }
+func (n *errNode[T]) OutputShape() []int                { return []int{1} }
+func (n *errNode[T]) OpType() string                    { return "ErrNode" }
+func (n *errNode[T]) Attributes() map[string]any        { return nil }
 
 func makeModel(t *testing.T) *hrm.HRM[float32] {
 	t.Helper()

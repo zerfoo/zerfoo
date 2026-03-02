@@ -20,7 +20,7 @@ func (s *stubSerializer[T]) Save(_ context.Context, _ ModelInstance[T], _ interf
 func (s *stubSerializer[T]) Load(_ context.Context, _ interface{}) (ModelInstance[T], error) {
 	return nil, nil
 }
-func (s *stubSerializer[T]) GetSupportedFormats() []string   { return []string{"zmf"} }
+func (s *stubSerializer[T]) GetSupportedFormats() []string     { return []string{"zmf"} }
 func (s *stubSerializer[T]) GetSerializerInfo() SerializerInfo { return SerializerInfo{Name: "stub"} }
 
 // stubOptimizer implements ModelOptimizer for registry testing.
@@ -169,8 +169,14 @@ func TestModelRegistry_Exporter(t *testing.T) { //nolint:dupl // registry CRUD p
 				return nil, nil
 			})
 		},
-		get:        func(r *ModelRegistry[float32]) error { _, err := r.GetModelExporter(context.Background(), "e1", nil); return err },
-		getMissing: func(r *ModelRegistry[float32]) error { _, err := r.GetModelExporter(context.Background(), "missing", nil); return err },
+		get: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelExporter(context.Background(), "e1", nil)
+			return err
+		},
+		getMissing: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelExporter(context.Background(), "missing", nil)
+			return err
+		},
 		list:       func(r *ModelRegistry[float32]) int { return len(r.ListModelExporters()) },
 		unregister: func(r *ModelRegistry[float32]) { r.UnregisterModelExporter("e1") },
 	})
@@ -188,8 +194,14 @@ func TestModelRegistry_Validator(t *testing.T) { //nolint:dupl // registry CRUD 
 				return nil, nil
 			})
 		},
-		get:        func(r *ModelRegistry[float32]) error { _, err := r.GetModelValidator(context.Background(), "v1", nil); return err },
-		getMissing: func(r *ModelRegistry[float32]) error { _, err := r.GetModelValidator(context.Background(), "missing", nil); return err },
+		get: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelValidator(context.Background(), "v1", nil)
+			return err
+		},
+		getMissing: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelValidator(context.Background(), "missing", nil)
+			return err
+		},
 		list:       func(r *ModelRegistry[float32]) int { return len(r.ListModelValidators()) },
 		unregister: func(r *ModelRegistry[float32]) { r.UnregisterModelValidator("v1") },
 	})
@@ -207,8 +219,14 @@ func TestModelRegistry_Optimizer(t *testing.T) {
 				return nil, nil
 			})
 		},
-		get:        func(r *ModelRegistry[float32]) error { _, err := r.GetModelOptimizer(context.Background(), "o1", nil); return err },
-		getMissing: func(r *ModelRegistry[float32]) error { _, err := r.GetModelOptimizer(context.Background(), "missing", nil); return err },
+		get: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelOptimizer(context.Background(), "o1", nil)
+			return err
+		},
+		getMissing: func(r *ModelRegistry[float32]) error {
+			_, err := r.GetModelOptimizer(context.Background(), "missing", nil)
+			return err
+		},
 		list:       func(r *ModelRegistry[float32]) int { return len(r.ListModelOptimizers()) },
 		unregister: func(r *ModelRegistry[float32]) { r.UnregisterModelOptimizer("o1") },
 	})
