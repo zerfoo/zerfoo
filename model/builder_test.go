@@ -851,6 +851,149 @@ func TestBuildFromZMF_ExistingNodeNameSkipped(t *testing.T) {
 	}
 }
 
+// --- Attribute_Tensor and Constant node tests (T37.2) ---
+
+func TestConvertAttributes_TensorType(t *testing.T) {
+	rawData := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawData, math.Float32bits(1.0))
+
+	tensorProto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT32,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	zmfAttrs := map[string]*zmf.Attribute{
+		"value": {Value: &zmf.Attribute_Tensor{Tensor: tensorProto}},
+	}
+
+	result := convertAttributes(zmfAttrs)
+
+	got, ok := result["value"].(*zmf.Tensor)
+	if !ok {
+		t.Fatalf("expected *zmf.Tensor for tensor attribute, got %T", result["value"])
+	}
+	if got != tensorProto {
+		t.Error("expected same tensor proto pointer")
+	}
+}
+
+func TestBuildFromZMF_ConstantNode_AsOutput(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rawData := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawData, math.Float32bits(7.0))
+
+	tensorProto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT32,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	RegisterLayer("TestConstDnOp", passthroughBuilder())
+	defer UnregisterLayer("TestConstDnOp")
+
+	// Constant node with an output alias; downstream node reads the output alias.
+	zmfModel := &zmf.Model{
+		Graph: &zmf.Graph{
+			Nodes: []*zmf.Node{
+				{
+					Name:    "const_node",
+					OpType:  "Constant",
+					Outputs: []string{"const_out"},
+					Attributes: map[string]*zmf.Attribute{
+						"value": {Value: &zmf.Attribute_Tensor{Tensor: tensorProto}},
+					},
+				},
+				{
+					Name:   "downstream",
+					OpType: "TestConstDnOp",
+					Inputs: []string{"const_out"},
+				},
+			},
+			Outputs: []*zmf.ValueInfo{{Name: "downstream"}},
+		},
+	}
+
+	g, err := BuildFromZMF[float32](engine, ops, zmfModel)
+	if err != nil {
+		t.Fatalf("BuildFromZMF failed: %v", err)
+	}
+	if g == nil {
+		t.Fatal("expected non-nil graph")
+	}
+}
+
+func TestBuildFromZMF_ConstantNode_ByName(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	rawData := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawData, math.Float32bits(3.0))
+
+	tensorProto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT32,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	RegisterLayer("TestConstByNameOp", passthroughBuilder())
+	defer UnregisterLayer("TestConstByNameOp")
+
+	// Downstream node references constant by its node name directly.
+	zmfModel := &zmf.Model{
+		Graph: &zmf.Graph{
+			Nodes: []*zmf.Node{
+				{
+					Name:   "my_const",
+					OpType: "Constant",
+					Attributes: map[string]*zmf.Attribute{
+						"value": {Value: &zmf.Attribute_Tensor{Tensor: tensorProto}},
+					},
+				},
+				{
+					Name:   "user_node",
+					OpType: "TestConstByNameOp",
+					Inputs: []string{"my_const"},
+				},
+			},
+			Outputs: []*zmf.ValueInfo{{Name: "user_node"}},
+		},
+	}
+
+	g, err := BuildFromZMF[float32](engine, ops, zmfModel)
+	if err != nil {
+		t.Fatalf("BuildFromZMF failed: %v", err)
+	}
+	if g == nil {
+		t.Fatal("expected non-nil graph")
+	}
+}
+
+func TestBuildFromZMF_ConstantNode_MissingValueAttr(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	zmfModel := &zmf.Model{
+		Graph: &zmf.Graph{
+			Nodes: []*zmf.Node{
+				{
+					Name:       "bad_const",
+					OpType:     "Constant",
+					Attributes: map[string]*zmf.Attribute{}, // no "value" attr
+				},
+			},
+			Outputs: []*zmf.ValueInfo{{Name: "bad_const"}},
+		},
+	}
+
+	_, err := BuildFromZMF[float32](engine, ops, zmfModel)
+	if err == nil {
+		t.Error("expected error for Constant node with missing value attribute")
+	}
+}
+
 // --- GetLayerBuilder type mismatch test ---
 
 func TestGetLayerBuilder_TypeMismatch(t *testing.T) {
