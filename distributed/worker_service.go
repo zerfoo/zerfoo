@@ -321,6 +321,12 @@ func (ws *workerService) AllReduce(stream pb.DistributedService_AllReduceServer)
 			ws.logger.Error("allreduce recv error", "error", err.Error())
 			return status.Errorf(codes.Internal, "recv error: %v", err)
 		}
+		if req.Name == "" {
+			return status.Error(codes.InvalidArgument, "allreduce tensor name cannot be empty")
+		}
+		if err := validateTensor(req.Tensor, "allreduce"); err != nil {
+			return status.Errorf(codes.InvalidArgument, "%v", err)
+		}
 		tensors[req.Name] = req.Tensor
 	}
 
@@ -364,6 +370,11 @@ func (ws *workerService) Broadcast(ctx context.Context, req *pb.BroadcastRequest
 
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "broadcast name cannot be empty")
+	}
+	if req.Tensor != nil {
+		if err := validateTensor(req.Tensor, "broadcast"); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
 	}
 
 	entry := ws.getBroadcastEntry(req.Name)

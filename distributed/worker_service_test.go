@@ -687,6 +687,89 @@ func TestBroadcast_Timeout(t *testing.T) {
 	}
 }
 
+// --- AllReduce input validation tests ---
+
+func TestAllReduce_EmptyTensorName(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	stream := &mockAllReduceStream{
+		ctx: context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{
+			{Name: "", Tensor: &pb.Tensor{Shape: []int32{1}, Data: []float32{1}}},
+		},
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error for empty tensor name")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestAllReduce_NilTensor(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	stream := &mockAllReduceStream{
+		ctx: context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{
+			{Name: "grad", Tensor: nil},
+		},
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error for nil tensor")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestAllReduce_InvalidTensorShape(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+	ws.NewSession()
+
+	stream := &mockAllReduceStream{
+		ctx: context.Background(),
+		recvMsgs: []*pb.AllReduceRequest{
+			{Name: "grad", Tensor: &pb.Tensor{Shape: []int32{2, 3}, Data: []float32{1}}},
+		},
+	}
+
+	err := ws.AllReduce(stream)
+	if err == nil {
+		t.Fatal("expected error for shape/data mismatch")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
+// --- Broadcast input validation tests ---
+
+func TestBroadcast_InvalidTensor(t *testing.T) {
+	ws := NewWorkerService(0, 2, nil)
+
+	_, err := ws.Broadcast(context.Background(), &pb.BroadcastRequest{
+		Name:   "w",
+		Tensor: &pb.Tensor{Shape: []int32{2}, Data: []float32{1, 2, 3}}, // mismatch
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid tensor")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
 // --- validateTensor tests ---
 
 func TestValidateTensor(t *testing.T) {
