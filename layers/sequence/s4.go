@@ -231,8 +231,13 @@ func (s *S4[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (
 	return tensor.New[T]([]int{batchSize, seqLen, dim}, outputData)
 }
 
-// Backward computes gradients using one-step approximation.
-// Gradients are computed for the last time step only, treating the state as detached.
+// Backward computes gradients using full backpropagation through time (BPTT).
+//
+// The adjoint equation for the hidden state is:
+//
+//	dL/dx_k = dL/dy_k * C + dL/dx_{k+1} * A_disc
+//
+// We iterate backward from the last timestep, accumulating gradients for all parameters.
 func (s *S4[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("S4 backward requires exactly 1 input, got %d", len(inputs))
@@ -256,10 +261,10 @@ func (s *S4[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient
 		aDisc[i] = T(math.Exp(-math.Exp(float64(v))))
 	}
 
-	// Recompute states for gradient calculation.
-	// states[batch][t][dim*stateDim]
+	// Forward pass: recompute all states for gradient calculation.
+	// allStates[batch, t, d, n] indexed as [batch*seqLen*dim*stateDim + t*dim*stateDim + d*stateDim + n]
 	allStates := make([]T, batchSize*seqLen*dim*s.stateDim)
-	prevState := make([]T, batchSize*dim*s.stateDim)
+	curState := make([]T, batchSize*dim*s.stateDim)
 	for batch := range batchSize {
 		for t := range seqLen {
 			for d := range dim {
@@ -267,58 +272,73 @@ func (s *S4[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient
 				for n := range s.stateDim {
 					idx := d*s.stateDim + n
 					prevIdx := batch*dim*s.stateDim + idx
-					stateVal := aDisc[idx]*prevState[prevIdx] + bData[idx]*u
+					stateVal := aDisc[idx]*curState[prevIdx] + bData[idx]*u
 					allStates[batch*seqLen*dim*s.stateDim+t*dim*s.stateDim+d*s.stateDim+n] = stateVal
-					prevState[prevIdx] = stateVal
+					curState[prevIdx] = stateVal
 				}
 			}
 		}
 	}
 
-	// Compute gradients.
+	// Backward pass: iterate from last timestep to first.
 	inputGradData := make([]T, batchSize*seqLen*dim)
 	daLog := make([]T, dim*s.stateDim)
 	db := make([]T, dim*s.stateDim)
 	dc := make([]T, dim*s.stateDim)
 	dd := make([]T, dim)
 
+	// Adjoint state: dL/dx_{t+1}[batch, d, n]
+	dState := make([]T, batchSize*dim*s.stateDim)
+
 	for batch := range batchSize {
-		for t := range seqLen {
+		// Reset adjoint state for each batch element.
+		for i := range dState[batch*dim*s.stateDim : (batch+1)*dim*s.stateDim] {
+			dState[batch*dim*s.stateDim+i] = 0
+		}
+
+		for t := seqLen - 1; t >= 0; t-- {
 			for d := range dim {
 				dy := gradData[batch*seqLen*dim+t*dim+d]
 				u := uData[batch*seqLen*dim+t*dim+d]
 
-				// d/d(D) += dy * u
+				// dL/dD[d] += dy * u
 				dd[d] += dy * u
 
-				// d/d(input) += dy * D[d]
+				// Accumulate input gradient: dy * D[d]
 				var dInput T
 				dInput += dy * dData[d]
 
 				for n := range s.stateDim {
 					idx := d*s.stateDim + n
+					stateIdx := batch*dim*s.stateDim + idx
 					stateVal := allStates[batch*seqLen*dim*s.stateDim+t*dim*s.stateDim+d*s.stateDim+n]
 
-					// d/d(C) += dy * x_k
+					// dL/dC[d,n] += dy * x_k[d,n]
 					dc[idx] += dy * stateVal
 
-					// dL/dx_k = dy * C[d,n]
-					dxk := dy * cData[idx]
+					// Adjoint: dL/dx_k = dy * C[d,n] + dL/dx_{k+1} * A_disc[d,n]
+					dxk := dy*cData[idx] + dState[stateIdx]*aDisc[idx]
 
-					// d/d(B) += dxk * u
+					// dL/dB[d,n] += dxk * u
 					db[idx] += dxk * u
 
-					// d/d(input) += dxk * B[d,n]
+					// dL/dinput += dxk * B[d,n]
 					dInput += dxk * bData[idx]
 
-					// d/d(A_log): A_disc = exp(-exp(a_log))
-					// dA_disc/da_log = -exp(a_log) * exp(-exp(a_log)) = -exp(a_log) * A_disc
-					// dL/da_log = dxk * x_{k-1} * dA_disc/da_log
+					// dL/dA_disc[d,n] += dxk * x_{k-1}[d,n] + dL/dx_{k+1} * x_k * ???
+					// For A_log gradient: chain rule through A_disc = exp(-exp(A_log))
+					// dA_disc/dA_log = -exp(A_log) * A_disc
 					if t > 0 {
-						prevState := allStates[batch*seqLen*dim*s.stateDim+(t-1)*dim*s.stateDim+d*s.stateDim+n]
+						prevStateVal := allStates[batch*seqLen*dim*s.stateDim+(t-1)*dim*s.stateDim+d*s.stateDim+n]
 						expALog := T(math.Exp(float64(aLogData[idx])))
-						daLog[idx] += dxk * prevState * (-expALog * aDisc[idx])
+						// dL/dA_log += (dxk * x_{k-1} + dState_next * x_k) * dA_disc/dA_log
+						// But dxk already includes dState_next * A_disc, so:
+						// dL/dA_disc at step t = dxk * x_{k-1}
+						daLog[idx] += dxk * prevStateVal * (-expALog * aDisc[idx])
 					}
+
+					// Update adjoint state for step t-1.
+					dState[stateIdx] = dxk
 				}
 				inputGradData[batch*seqLen*dim+t*dim+d] = dInput
 			}

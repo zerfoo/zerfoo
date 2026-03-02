@@ -154,9 +154,11 @@ func TestAllReduceStrategy_Barrier_PostCrossNodeLocalFail(t *testing.T) {
 func TestServerManager_SetLogger(t *testing.T) {
 	srv := &mockGrpcServer{}
 	sm := NewServerManager(srv, nil)
-	logger := &CustomMockLogger{}
-	sm.SetLogger(logger)
-	// Verify no panic and the logger was set
+	sm.SetLogger(&CustomMockLogger{})
+	// Verify no panic and the logger was set.
+
+	// nil logger should default to Nop.
+	sm.SetLogger(nil)
 }
 
 func TestServerManager_Stop(t *testing.T) {
@@ -191,13 +193,6 @@ func TestServerManager_GracefulStop(t *testing.T) {
 	})
 }
 
-// ---------- defaultLogger coverage ----------
-
-func TestDefaultLogger_Printf(t *testing.T) {
-	logger := &defaultLogger{}
-	// Just call Printf to cover the code path; output goes to stdout
-	logger.Printf("test %d", 42)
-}
 
 // ---------- NewNetworkManager default dialer/factory coverage ----------
 

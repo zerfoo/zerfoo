@@ -206,8 +206,9 @@ func TestCoordinator_RegisterWorker(t *testing.T) {
 		t.Errorf("expected rank 3, got %d", resp4.Rank)
 	}
 
-	if !strings.Contains(kit.buf.String(), "worker worker-dne not found in workers map") {
-		t.Errorf("expected log to contain \"worker worker-dne not found in workers map\", got %s", kit.buf.String())
+	logOutput := kit.buf.String()
+	if !strings.Contains(logOutput, "worker not found in workers map") || !strings.Contains(logOutput, "worker-dne") {
+		t.Errorf("expected log to contain worker not found message for worker-dne, got %s", logOutput)
 	}
 }
 
@@ -632,7 +633,6 @@ func TestNewCoordinator(t *testing.T) {
 	testutils.AssertNotNil(t, coord.workers, "expected workers map to not be nil")
 	testutils.AssertNotNil(t, coord.ranks, "expected ranks map to not be nil")
 	testutils.AssertNotNil(t, coord.logger, "expected logger to not be nil")
-	testutils.AssertEqual(t, &buf, coord.out.(*bytes.Buffer), "expected output buffer to be %v, got %v")
 }
 
 func TestWorkerInfo(t *testing.T) {

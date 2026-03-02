@@ -2,11 +2,11 @@ package distributed
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/grpc"
 )
@@ -59,7 +59,7 @@ type ServerManager interface {
 	Start(workerAddress string, service interface{}, serviceDesc *grpc.ServiceDesc) error
 	Stop()
 	GracefulStop()
-	SetLogger(logger Logger)
+	SetLogger(logger log.Logger)
 }
 
 // CoordinatorClient is an interface for a client of the coordinator service.
@@ -67,15 +67,4 @@ type CoordinatorClient interface {
 	RegisterWorker(ctx context.Context, in *pb.RegisterWorkerRequest, opts ...grpc.CallOption) (*pb.RegisterWorkerResponse, error)
 	UnregisterWorker(ctx context.Context, in *pb.UnregisterWorkerRequest, opts ...grpc.CallOption) (*pb.UnregisterWorkerResponse, error)
 	Heartbeat(ctx context.Context, in *pb.HeartbeatRequest, opts ...grpc.CallOption) (*pb.HeartbeatResponse, error)
-}
-
-// Logger is an interface for logging.
-type Logger interface {
-	Printf(format string, v ...interface{})
-}
-
-type defaultLogger struct{}
-
-func (l *defaultLogger) Printf(format string, v ...interface{}) {
-	fmt.Printf(format, v...)
 }

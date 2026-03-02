@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/tensor"
 	"google.golang.org/grpc"
 )
@@ -445,36 +446,42 @@ func (m *CustomMockGrpcServer) AssertExpectations(t *testing.T) {
 	t.Helper()
 }
 
-// CustomMockLogger is a custom mock implementation of the Logger interface.
+// CustomMockLogger is a custom mock implementation of the log.Logger interface.
 type CustomMockLogger struct {
-	mu          sync.Mutex
-	printfCalls int
-	printfArgs  []struct {
-		format string
-		v      []interface{}
-	}
+	mu       sync.Mutex
+	messages []string
 }
 
-func (m *CustomMockLogger) Printf(format string, v ...interface{}) {
+func (m *CustomMockLogger) Debug(msg string, _ ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.messages = append(m.messages, "DEBUG: "+msg)
+}
 
-	m.printfCalls++
-	m.printfArgs = append(m.printfArgs, struct {
-		format string
-		v      []interface{}
-	}{
-		format: format,
-		v:      v,
-	})
+func (m *CustomMockLogger) Info(msg string, _ ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, "INFO: "+msg)
+}
+
+func (m *CustomMockLogger) Warn(msg string, _ ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, "WARN: "+msg)
+}
+
+func (m *CustomMockLogger) Error(msg string, _ ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, "ERROR: "+msg)
+}
+
+func (m *CustomMockLogger) WithLevel(_ log.Level) log.Logger {
+	return m
 }
 
 func (m *CustomMockLogger) AssertExpectations(t *testing.T) {
 	t.Helper()
-}
-
-func (m *CustomMockLogger) OnPrintf() *CustomMockLogger {
-	return m
 }
 
 // CustomMockDistributedServiceClient is a custom mock implementation of the DistributedServiceClient interface.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
+	"github.com/zerfoo/zerfoo/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -17,6 +18,7 @@ var _ NetworkManager = (*networkManager)(nil)
 type networkManager struct {
 	dialFunc      Dialer
 	clientFactory ServiceClientFactory
+	logger        log.Logger
 }
 
 // NewNetworkManager creates a new NetworkManager.
@@ -36,6 +38,7 @@ func NewNetworkManager(dialer Dialer, clientFactory ServiceClientFactory) Networ
 	return &networkManager{
 		dialFunc:      dialer,
 		clientFactory: clientFactory,
+		logger:        log.Nop(),
 	}
 }
 
@@ -57,9 +60,8 @@ func (nm *networkManager) ConnectToPeers(peers []string, selfRank int, timeout t
 			// Before returning, close any connections that were successfully opened.
 			for j := range conns {
 				if conns[j] != nil {
-					if err := conns[j].Close(); err != nil {
-						// Log the error, but continue closing other connections
-						fmt.Printf("Error closing connection: %v\n", err)
+					if closeErr := conns[j].Close(); closeErr != nil {
+						nm.logger.Warn("error closing connection during cleanup", "error", closeErr.Error())
 					}
 				}
 			}
@@ -78,8 +80,7 @@ func (nm *networkManager) CloseConnections(conns []*grpc.ClientConn) {
 	for _, conn := range conns {
 		if conn != nil {
 			if err := conn.Close(); err != nil {
-				// Log the error, but continue
-				fmt.Printf("Error closing connection: %v\n", err)
+				nm.logger.Warn("error closing connection", "error", err.Error())
 			}
 		}
 	}
@@ -91,7 +92,7 @@ var _ ServerManager = (*serverManager)(nil)
 type serverManager struct {
 	server     GrpcServer
 	listenFunc ListenerFactory
-	logger     Logger
+	logger     log.Logger
 	errCh      chan error
 }
 
@@ -104,12 +105,15 @@ func NewServerManager(grpcServer GrpcServer, listenerFactory ListenerFactory) Se
 	return &serverManager{
 		server:     grpcServer,
 		listenFunc: listenerFactory,
-		logger:     &defaultLogger{},
+		logger:     log.Nop(),
 		errCh:      make(chan error, 1),
 	}
 }
 
-func (sm *serverManager) SetLogger(logger Logger) {
+func (sm *serverManager) SetLogger(logger log.Logger) {
+	if logger == nil {
+		logger = log.Nop()
+	}
 	sm.logger = logger
 }
 
@@ -125,7 +129,7 @@ func (sm *serverManager) Start(workerAddress string, service interface{}, servic
 
 	go func() {
 		if err := sm.server.Serve(lis); err != nil {
-			sm.logger.Printf("gRPC server failed: %v\n", err)
+			sm.logger.Error("gRPC server failed", "error", err.Error())
 
 			sm.errCh <- err
 		}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
@@ -367,6 +368,329 @@ func TestS4_Backward_FiniteGradients(t *testing.T) {
 				t.Fatalf("param %s gradient[%d] = %f (not finite)", p.Name, i, v)
 			}
 		}
+	}
+}
+
+func TestS4_Backward_WrongInputCount(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
+	if err != nil {
+		t.Fatalf("NewS4: %v", err)
+	}
+
+	input, _ := tensor.New[float32]([]int{1, 3, 2}, make([]float32, 6))
+	ctx := context.Background()
+	_, err = s4.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	grad, _ := tensor.New[float32]([]int{1, 3, 2}, make([]float32, 6))
+
+	// Zero inputs
+	_, err = s4.Backward(ctx, types.OneStepApproximation, grad)
+	if err == nil {
+		t.Error("expected error for zero inputs")
+	}
+
+	// Two inputs
+	_, err = s4.Backward(ctx, types.OneStepApproximation, grad, input, input)
+	if err == nil {
+		t.Error("expected error for two inputs")
+	}
+}
+
+func TestS4_Forward_WrongInputCountMultiple(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
+	if err != nil {
+		t.Fatalf("NewS4: %v", err)
+	}
+
+	input1, _ := tensor.New[float32]([]int{1, 3, 2}, make([]float32, 6))
+	input2, _ := tensor.New[float32]([]int{1, 3, 2}, make([]float32, 6))
+	ctx := context.Background()
+	_, err = s4.Forward(ctx, input1, input2)
+	if err == nil {
+		t.Error("expected error for two inputs")
+	}
+}
+
+func TestS4_RegistryBuilder_Valid(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	attrs := map[string]interface{}{
+		"input_dim": 4,
+		"state_dim": 8,
+	}
+	builder, err := model.GetLayerBuilder[float32]("S4")
+	if err != nil {
+		t.Fatalf("GetLayerBuilder: %v", err)
+	}
+	node, err := builder(engine, ops, "registry_s4", nil, attrs)
+	if err != nil {
+		t.Fatalf("builder: %v", err)
+	}
+	if node.OpType() != "S4" {
+		t.Errorf("OpType = %q, want %q", node.OpType(), "S4")
+	}
+}
+
+func TestS4_RegistryBuilder_MissingInputDim(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	attrs := map[string]interface{}{
+		"state_dim": 8,
+	}
+	builder, err := model.GetLayerBuilder[float32]("S4")
+	if err != nil {
+		t.Fatalf("GetLayerBuilder: %v", err)
+	}
+	_, err = builder(engine, ops, "registry_s4", nil, attrs)
+	if err == nil {
+		t.Error("expected error for missing input_dim")
+	}
+}
+
+func TestS4_RegistryBuilder_MissingStateDim(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	attrs := map[string]interface{}{
+		"input_dim": 4,
+	}
+	builder, err := model.GetLayerBuilder[float32]("S4")
+	if err != nil {
+		t.Fatalf("GetLayerBuilder: %v", err)
+	}
+	_, err = builder(engine, ops, "registry_s4", nil, attrs)
+	if err == nil {
+		t.Error("expected error for missing state_dim")
+	}
+}
+
+func TestS4_RegistryBuilder_WrongTypeDim(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	tests := []struct {
+		name  string
+		attrs map[string]interface{}
+	}{
+		{"input_dim string", map[string]interface{}{"input_dim": "four", "state_dim": 8}},
+		{"state_dim string", map[string]interface{}{"input_dim": 4, "state_dim": "eight"}},
+	}
+
+	builder, err := model.GetLayerBuilder[float32]("S4")
+	if err != nil {
+		t.Fatalf("GetLayerBuilder: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := builder(engine, ops, "registry_s4", nil, tt.attrs)
+			if err == nil {
+				t.Error("expected error for wrong type attribute")
+			}
+		})
+	}
+}
+
+func TestS4_Forward_LargerDimensions(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+	s4, err := NewS4[float32]("test_s4", engine, ops, 32, 16)
+	if err != nil {
+		t.Fatalf("NewS4: %v", err)
+	}
+
+	// batch=4, seq=10, dim=32
+	inputData := make([]float32, 4*10*32)
+	for i := range inputData {
+		inputData[i] = float32(i%11) * 0.01
+	}
+	input, _ := tensor.New[float32]([]int{4, 10, 32}, inputData)
+	ctx := context.Background()
+	output, err := s4.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	shape := output.Shape()
+	if shape[0] != 4 || shape[1] != 10 || shape[2] != 32 {
+		t.Errorf("output shape = %v, want [4, 10, 32]", shape)
+	}
+}
+
+// TestS4_NumericalGradientCheck verifies analytical gradients against finite-difference
+// approximations for all parameters and the input.
+func TestS4_NumericalGradientCheck(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	const (
+		inputDim = 2
+		stateDim = 3
+		batch    = 1
+		seqLen   = 3
+		eps      = 1e-3
+		tol      = 0.1 // relative tolerance for float32
+	)
+
+	// Helper: create a fresh S4 with specific parameter values.
+	makeS4WithParams := func(aLogData, bData, cData []float32, dData []float32) *S4[float32] {
+		s, err := NewS4[float32]("grad_check", engine, ops, inputDim, stateDim)
+		if err != nil {
+			t.Fatalf("NewS4: %v", err)
+		}
+		copy(s.aLog.Value.Data(), aLogData)
+		copy(s.b.Value.Data(), bData)
+		copy(s.c.Value.Data(), cData)
+		copy(s.d.Value.Data(), dData)
+		return s
+	}
+
+	// Fixed parameter values for reproducibility.
+	aLogData := []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}
+	bData := []float32{0.1, -0.1, 0.2, -0.2, 0.1, -0.1}
+	cData := []float32{0.3, 0.1, -0.2, 0.2, -0.1, 0.3}
+	dData := []float32{1.0, 0.5}
+
+	inputData := []float32{0.5, -0.3, 0.2, 0.4, -0.1, 0.6}
+
+	// Compute analytical gradients.
+	s4 := makeS4WithParams(aLogData, bData, cData, dData)
+	input, _ := tensor.New[float32]([]int{batch, seqLen, inputDim}, inputData)
+	ctx := context.Background()
+	output, err := s4.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Use sum of outputs as scalar loss.
+	gradData := make([]float32, batch*seqLen*inputDim)
+	for i := range gradData {
+		gradData[i] = 1.0
+	}
+	outGrad, _ := tensor.New[float32]([]int{batch, seqLen, inputDim}, gradData)
+	inputGrads, err := s4.Backward(ctx, types.OneStepApproximation, outGrad, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+
+	// Helper: compute scalar loss (sum of all outputs).
+	computeLoss := func(s *S4[float32], in *tensor.TensorNumeric[float32]) float64 {
+		out, err := s.Forward(ctx, in)
+		if err != nil {
+			t.Fatalf("Forward in loss: %v", err)
+		}
+		var sum float64
+		for _, v := range out.Data() {
+			sum += float64(v)
+		}
+		return sum
+	}
+
+	_ = output // used indirectly via forward
+
+	// Table-driven parameter gradient checks.
+	type paramGradCase struct {
+		name     string
+		data     []float32
+		anaGrads []float32
+		makeS4   func(perturbed []float32) *S4[float32]
+	}
+
+	paramCases := []paramGradCase{
+		{
+			name: "d_gradient", data: dData,
+			anaGrads: s4.d.Gradient.Data(),
+			makeS4:   func(p []float32) *S4[float32] { return makeS4WithParams(aLogData, bData, cData, p) },
+		},
+		{
+			name: "b_gradient", data: bData,
+			anaGrads: s4.b.Gradient.Data(),
+			makeS4:   func(p []float32) *S4[float32] { return makeS4WithParams(aLogData, p, cData, dData) },
+		},
+		{
+			name: "c_gradient", data: cData,
+			anaGrads: s4.c.Gradient.Data(),
+			makeS4:   func(p []float32) *S4[float32] { return makeS4WithParams(aLogData, bData, p, dData) },
+		},
+		{
+			name: "a_log_gradient", data: aLogData,
+			anaGrads: s4.aLog.Gradient.Data(),
+			makeS4:   func(p []float32) *S4[float32] { return makeS4WithParams(p, bData, cData, dData) },
+		},
+	}
+
+	// Check input gradient via finite differences.
+	t.Run("input_gradient", func(t *testing.T) {
+		for i := range inputData {
+			pertPlus := make([]float32, len(inputData))
+			pertMinus := make([]float32, len(inputData))
+			copy(pertPlus, inputData)
+			copy(pertMinus, inputData)
+			pertPlus[i] += eps
+			pertMinus[i] -= eps
+
+			inPlus, _ := tensor.New[float32]([]int{batch, seqLen, inputDim}, pertPlus)
+			inMinus, _ := tensor.New[float32]([]int{batch, seqLen, inputDim}, pertMinus)
+
+			sPlus := makeS4WithParams(aLogData, bData, cData, dData)
+			sMinus := makeS4WithParams(aLogData, bData, cData, dData)
+
+			lPlus := computeLoss(sPlus, inPlus)
+			lMinus := computeLoss(sMinus, inMinus)
+
+			numGrad := (lPlus - lMinus) / (2 * eps)
+			anaGrad := float64(inputGrads[0].Data()[i])
+
+			if math.Abs(numGrad) > 1e-6 || math.Abs(anaGrad) > 1e-6 {
+				relErr := math.Abs(numGrad-anaGrad) / (math.Abs(numGrad) + math.Abs(anaGrad) + 1e-8)
+				if relErr > tol {
+					t.Errorf("input grad[%d]: analytical=%.6f, numerical=%.6f, relErr=%.4f",
+						i, anaGrad, numGrad, relErr)
+				}
+			}
+		}
+	})
+
+	// Check parameter gradients via finite differences (table-driven).
+	for _, pc := range paramCases {
+		t.Run(pc.name, func(t *testing.T) {
+			for i := range pc.data {
+				plus := make([]float32, len(pc.data))
+				minus := make([]float32, len(pc.data))
+				copy(plus, pc.data)
+				copy(minus, pc.data)
+				plus[i] += eps
+				minus[i] -= eps
+
+				in, _ := tensor.New[float32]([]int{batch, seqLen, inputDim}, inputData)
+				sPlus := pc.makeS4(plus)
+				sMinus := pc.makeS4(minus)
+
+				lPlus := computeLoss(sPlus, in)
+				lMinus := computeLoss(sMinus, in)
+				_ = in
+
+				numGrad := (lPlus - lMinus) / (2 * eps)
+				anaGrad := float64(pc.anaGrads[i])
+
+				if math.Abs(numGrad) > 1e-6 || math.Abs(anaGrad) > 1e-6 {
+					relErr := math.Abs(numGrad-anaGrad) / (math.Abs(numGrad) + math.Abs(anaGrad) + 1e-8)
+					if relErr > tol {
+						t.Errorf("%s grad[%d]: analytical=%.6f, numerical=%.6f, relErr=%.4f",
+							pc.name, i, anaGrad, numGrad, relErr)
+					}
+				}
+			}
+		})
 	}
 }
 
