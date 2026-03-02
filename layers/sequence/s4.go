@@ -368,7 +368,7 @@ func init() {
 		engine compute.Engine[float32],
 		ops numeric.Arithmetic[float32],
 		name string,
-		_ map[string]*graph.Parameter[float32],
+		params map[string]*graph.Parameter[float32],
 		attributes map[string]interface{},
 	) (graph.Node[float32], error) {
 		inputDim, ok := attributes["input_dim"].(int)
@@ -379,6 +379,26 @@ func init() {
 		if !ok {
 			return nil, fmt.Errorf("missing or invalid attribute 'state_dim' for S4")
 		}
+
+		// Restore from ZMF parameters if available.
+		aLog := params[name+"_a_log"]
+		b := params[name+"_b"]
+		c := params[name+"_c"]
+		d := params[name+"_d"]
+		if aLog != nil && b != nil && c != nil && d != nil {
+			return &S4[float32]{
+				name:     name,
+				engine:   engine,
+				ops:      ops,
+				aLog:     aLog,
+				b:        b,
+				c:        c,
+				d:        d,
+				inputDim: inputDim,
+				stateDim: stateDim,
+			}, nil
+		}
+
 		return NewS4[float32](name, engine, ops, inputDim, stateDim)
 	})
 }
