@@ -443,6 +443,7 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 	devIn, cleanupIn, err := getDevicePtr(e, a)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("Sum: GPU alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 	}
@@ -454,6 +455,7 @@ func (e *GPUEngine[T]) gpuSum(ctx context.Context, a *tensor.TensorNumeric[T], a
 	devOut, err := e.pool.Alloc(outByteSize)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("Sum: GPU output alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.Sum(ctx, a, axis, keepDims, dst...)
 	}
@@ -546,6 +548,7 @@ func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T
 	devIn, cleanupIn, err := getDevicePtr(e, a)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("Softmax: GPU alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.Softmax(ctx, a, axis, dst...)
 	}
@@ -557,6 +560,7 @@ func (e *GPUEngine[T]) gpuSoftmax(ctx context.Context, a *tensor.TensorNumeric[T
 	devOut, err := e.pool.Alloc(byteSize)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("Softmax: GPU output alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.Softmax(ctx, a, axis, dst...)
 	}

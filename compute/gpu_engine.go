@@ -10,6 +10,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cublas"
 	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -28,6 +29,7 @@ type GPUEngine[T tensor.Numeric] struct {
 	handle *cublas.Handle
 	pool   *cuda.MemPool
 	stream *cuda.Stream
+	logger log.Logger
 
 	// oomFallbackCount tracks how many times an OOM triggered CPU fallback.
 	oomFallbackCount atomic.Int64
@@ -55,12 +57,25 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) (*GPUEngine[T], e
 		return nil, fmt.Errorf("failed to set cuBLAS stream: %w", err)
 	}
 
+	l := log.Nop()
+	l.Info("gpu engine initialized", "pool", "enabled", "stream", "enabled")
+
 	return &GPUEngine[T]{
 		cpu:    NewCPUEngine(ops),
 		handle: h,
 		pool:   cuda.NewMemPool(),
 		stream: stream,
+		logger: l,
 	}, nil
+}
+
+// SetLogger replaces the engine's logger.
+func (e *GPUEngine[T]) SetLogger(l log.Logger) {
+	if l == nil {
+		l = log.Nop()
+	}
+	e.logger = l
+	e.cpu.SetLogger(l)
 }
 
 // Close releases the cuBLAS handle, CUDA stream, and drains the memory pool.
@@ -172,6 +187,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("MatMul: GPU alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -181,6 +197,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	devB, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("MatMul: GPU alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -196,6 +213,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	devCTotal, err := e.pool.Alloc(batchSize * cMatSize * elemSize)
 	if err != nil {
 		e.oomFallbackCount.Add(1)
+		e.logger.Warn("MatMul: GPU output alloc failed, falling back to CPU", "error", err.Error())
 
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}

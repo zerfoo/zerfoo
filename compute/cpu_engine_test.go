@@ -1,10 +1,13 @@
 package compute
 
 import (
+	"bytes"
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -434,5 +437,33 @@ func TestCPUEngine_MatMul_Int8(t *testing.T) {
 	expected := []int8{58, 64, -117, -102}
 	if !reflect.DeepEqual(result.Data(), expected) {
 		t.Errorf("expected %v, got %v", expected, result.Data())
+	}
+}
+
+func TestCPUEngine_SetLogger(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+
+	var buf bytes.Buffer
+	l := log.New(&buf, log.LevelDebug, log.FormatText)
+	engine.SetLogger(l)
+
+	// Verify logger is active by using it.
+	engine.logger.Info("test message", "key", "value")
+	out := buf.String()
+	if !strings.Contains(out, "test message") {
+		t.Errorf("expected logger output, got %q", out)
+	}
+}
+
+func TestCPUEngine_SetLogger_Nil(t *testing.T) {
+	engine := NewCPUEngine[float32](numeric.Float32Ops{})
+	engine.SetLogger(nil) // Should not panic; defaults to Nop.
+
+	// Verify engine still works after nil logger.
+	a, _ := tensor.New[float32]([]int{2}, []float32{1, 2})
+	b, _ := tensor.New[float32]([]int{2}, []float32{3, 4})
+	_, err := engine.Add(context.Background(), a, b)
+	if err != nil {
+		t.Fatalf("Add after nil logger: %v", err)
 	}
 }

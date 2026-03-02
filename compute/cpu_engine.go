@@ -14,13 +14,15 @@ import (
 	float16 "github.com/zerfoo/float16"
 	float8 "github.com/zerfoo/float8"
 	"github.com/zerfoo/zerfoo/internal/xblas"
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // CPUEngine is a CPU-based implementation of the Engine interface.
 type CPUEngine[T tensor.Numeric] struct {
-	ops numeric.Arithmetic[T]
+	ops    numeric.Arithmetic[T]
+	logger log.Logger
 }
 
 // Tanh applies the hyperbolic tangent activation element-wise.
@@ -275,8 +277,17 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 }
 
 // NewCPUEngine constructs a new CPUEngine for the given numeric operations.
+// A no-op logger is used by default; call SetLogger to override.
 func NewCPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *CPUEngine[T] {
-	return &CPUEngine[T]{ops: ops}
+	return &CPUEngine[T]{ops: ops, logger: log.Nop()}
+}
+
+// SetLogger replaces the engine's logger.
+func (e *CPUEngine[T]) SetLogger(l log.Logger) {
+	if l == nil {
+		l = log.Nop()
+	}
+	e.logger = l
 }
 
 // Ops returns the arithmetic ops for this engine.
