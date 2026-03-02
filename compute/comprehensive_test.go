@@ -343,7 +343,7 @@ func TestReshape_Validation(t *testing.T) {
 		{"zero_dimension", a, []int{0, 6}},
 		{"negative_dimension", a, []int{-2, 3}},
 		{"indivisible_infer", a, []int{-1, 4}}, // 6/4 not integer
-		{"incompatible_size", a, []int{3, 3}},   // 9 != 6
+		{"incompatible_size", a, []int{3, 3}},  // 9 != 6
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -447,7 +447,7 @@ func TestConcat_Validation(t *testing.T) {
 	})
 
 	t.Run("dim_mismatch", func(t *testing.T) {
-		c, _ := tensor.New[float32]([]int{3, 3}, nil) // dim 0 is 3, not 2
+		c, _ := tensor.New[float32]([]int{3, 3}, nil)                        // dim 0 is 3, not 2
 		_, err := eng.Concat(ctx, []*tensor.TensorNumeric[float32]{a, c}, 1) // concat on axis 1, but axis 0 differs
 		if err == nil {
 			t.Error("expected error for non-axis dimension mismatch")

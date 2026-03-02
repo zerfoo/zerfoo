@@ -335,10 +335,10 @@ func TestGPUEngine_ReductionParity(t *testing.T) {
 	})
 
 	tests := []struct {
-		name     string
-		gpu      func() (*tensor.TensorNumeric[float32], error)
-		cpu      func() (*tensor.TensorNumeric[float32], error)
-		tol      float64
+		name string
+		gpu  func() (*tensor.TensorNumeric[float32], error)
+		cpu  func() (*tensor.TensorNumeric[float32], error)
+		tol  float64
 	}{
 		{"Sum_axis0", func() (*tensor.TensorNumeric[float32], error) { return gpuEng.Sum(ctx, a, 0, false) }, func() (*tensor.TensorNumeric[float32], error) { return cpuEng.Sum(ctx, a, 0, false) }, 1e-5},
 		{"Sum_axis1", func() (*tensor.TensorNumeric[float32], error) { return gpuEng.Sum(ctx, a, 1, false) }, func() (*tensor.TensorNumeric[float32], error) { return cpuEng.Sum(ctx, a, 1, false) }, 1e-5},
