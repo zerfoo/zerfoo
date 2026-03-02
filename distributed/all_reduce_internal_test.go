@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/testing/testutils"
 )
@@ -293,4 +294,74 @@ func TestAllReduceStrategy_Size(t *testing.T) {
 	}
 	customMockLocal.OnSize().ReturnSize(10)
 	testutils.AssertEqual(t, 10, strategy.Size(), "expected size to be 10")
+}
+
+func TestAllReduceStrategy_SetCollector(t *testing.T) {
+	customMockLocal := new(testutils.CustomMockStrategy[float32])
+	customMockCross := new(testutils.CustomMockStrategy[float32])
+	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
+
+	collector := metrics.NewInMemory()
+	strategy.SetCollector(collector)
+
+	grad, _ := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
+	gradients := map[string]*tensor.TensorNumeric[float32]{"param1": grad}
+
+	// Set up mocks for AllReduceGradients (non-leader path)
+	customMockLocal.OnAllReduceGradients(gradients).ReturnAllReduceGradients(nil).OnceAllReduceGradients()
+	customMockLocal.OnBroadcastTensor(nil, 0).ReturnBroadcastTensor(nil).OnceBroadcastTensor()
+
+	if err := strategy.AllReduceGradients(gradients); err != nil {
+		t.Fatalf("AllReduceGradients: %v", err)
+	}
+
+	// Set up mocks for Barrier (non-leader path: 2 local barriers)
+	customMockLocal.OnBarrier().ReturnBarrier(nil)
+	customMockLocal.OnBarrier().ReturnBarrier(nil)
+
+	if err := strategy.Barrier(); err != nil {
+		t.Fatalf("Barrier: %v", err)
+	}
+
+	snap := collector.Snapshot()
+
+	tests := []struct {
+		name string
+		want int64
+	}{
+		{"allreduce_count", 1},
+		{"barrier_count", 1},
+	}
+	for _, tt := range tests {
+		got := snap.Counters[tt.name]
+		if got != tt.want {
+			t.Errorf("%s = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+
+	// Verify histograms recorded
+	for _, name := range []string{"allreduce_duration_seconds", "barrier_duration_seconds"} {
+		h, ok := snap.Histograms[name]
+		if !ok {
+			t.Errorf("expected histogram %s", name)
+			continue
+		}
+		if h.Count < 1 {
+			t.Errorf("%s count = %d, want >= 1", name, h.Count)
+		}
+	}
+}
+
+func TestAllReduceStrategy_SetCollector_Nil(t *testing.T) {
+	customMockLocal := new(testutils.CustomMockStrategy[float32])
+	customMockCross := new(testutils.CustomMockStrategy[float32])
+	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
+	strategy.SetCollector(nil) // Should not panic; defaults to Nop.
+
+	customMockLocal.OnBarrier().ReturnBarrier(nil)
+	customMockLocal.OnBarrier().ReturnBarrier(nil)
+
+	if err := strategy.Barrier(); err != nil {
+		t.Fatalf("Barrier after nil collector: %v", err)
+	}
 }
