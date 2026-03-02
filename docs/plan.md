@@ -14,8 +14,8 @@ hardening required for enterprise production deployment. This plan addresses
 the gaps in observability, security, reliability, configuration management,
 and CI/CD enforcement needed to reach production grade.
 
-Architecture and design details are documented in docs/design.md.
-GPU-specific documentation is in docs/gpu.md.
+Architecture, design, GPU details, operations, and troubleshooting are
+documented in docs/design.md (the single reference document).
 
 ### Objectives
 
@@ -348,7 +348,7 @@ Validate all GPU code on real NVIDIA hardware.
 
 - [ ] T29.1 Create GCP T4 spot VM and validate GPU tests  Owner: TBD  Est: 1h  **BLOCKED:** GCP GPU quota = 0. Quota increase request pending (preference ID: zerfoo-gpu-test).
   - Dependencies: None
-  - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured and documented in docs/gpu.md.
+  - Acceptance: `go test -tags cuda ./...` passes on real T4 hardware. Benchmark results captured and documented in docs/design.md.
   - Unblock action: Check quota status via `gcloud beta quotas preferences describe zerfoo-gpu-test --project=numerai-488804`. If still denied, try a different GCP project or cloud provider.
   - [ ] S29.1.1 Create n1-standard-4 spot VM with T4 GPU  Est: 5m
   - [ ] S29.1.2 Install CUDA Toolkit 12.x and Go 1.25, clone repo  Est: 15m
@@ -356,13 +356,13 @@ Validate all GPU code on real NVIDIA hardware.
   - [ ] S29.1.4 Run `go test -tags cuda ./...` and capture output  Est: 10m
   - [ ] S29.1.5 Run benchmarks and save results  Est: 5m
   - [ ] S29.1.6 Delete VM immediately  Est: 2m
-  - [ ] S29.1.7 Document results in docs/gpu.md  Est: 10m
+  - [ ] S29.1.7 Document results in docs/design.md  Est: 10m
 
 - [ ] T29.2 Run optimized benchmarks on T4  Owner: TBD  Est: 30m  **BLOCKED:** Depends on T29.1.
   - Dependencies: T29.1
   - Acceptance: Benchmark results for MatMul (128/512/1024), Softmax, and chained attention ops documented with Phase 3 device-resident pipeline.
   - [ ] S29.2.1 Run benchmarks with -benchmem and capture results  Est: 10m
-  - [ ] S29.2.2 Update docs/gpu.md with benchmark table  Est: 15m
+  - [ ] S29.2.2 Update docs/design.md with benchmark table  Est: 15m
   - [ ] S29.2.3 Delete VM  Est: 2m
 
 #### E30: Production Documentation
@@ -1123,6 +1123,233 @@ with top-2 expert routing per token).
 
 ---
 
+### Phase 7: Architecture Cleanup
+
+#### Phase 7 Context
+
+A comprehensive architecture review on 2026 03 02 identified structural issues
+accumulated over Phases 1-6. The framework is functionally complete for open
+weights model import, but internal code quality has drifted. This phase fixes
+concrete issues found during the review without breaking existing APIs.
+
+Issues identified and their severity:
+
+1. **Dead code**: pkg/prelude/prelude.go is an empty package with no
+   declarations. tests/helpers/wire.go declares 4 interface variables (ImplZerfoo,
+   ImplNumerics, ImplPipeline, ImplPerf) that are all nil with no implementations.
+   Both add confusion and bloat.
+
+2. **Inverted layer registration dependency**: layers/core/registry.go has an
+   init() function that imports model and registers FFN for float16. This creates
+   layers -> model coupling (inverted direction). The correct pattern is used by
+   layers/registry/registry.go which sits above both packages.
+
+3. **Graph.memo is not thread-safe**: graph.Graph stores a memo map for caching
+   forward-pass activations. The map is reset on each Forward call with no mutex.
+   Concurrent Forward calls from different goroutines would race on this map.
+   This blocks safe use in serving scenarios where multiple requests run in
+   parallel.
+
+4. **model/ package is overloaded**: model/ contains 5 distinct concerns in one
+   package: global layer registry (registry.go), concrete Model[T] struct
+   (model.go), ZMF file I/O (zmf_loader.go, zmf_exporter.go), graph builder
+   from ZMF (builder.go), plugin registry with 6 component types
+   (model_registry.go). Splitting the layer registry into its own package would
+   reduce coupling and allow layers/core to register without importing model.
+
+5. **Stale plan references**: docs/plan.md Section 1 references docs/gpu.md
+   which no longer exists. Hand-off notes reference deleted files. Appendix
+   scorecards are outdated.
+
+#### Phase 7 Objectives
+
+- P7-O1: Remove dead code (pkg/prelude, tests/helpers nil stubs).
+- P7-O2: Eliminate inverted layers/core -> model dependency.
+- P7-O3: Add thread safety to graph.Graph for concurrent Forward calls.
+- P7-O4: Update docs/plan.md and docs/design.md to reflect all changes.
+
+#### Phase 7 Non-Goals
+
+- Splitting model/ into multiple packages. The overloaded model package is
+  documented tech debt but splitting it is a large refactor that would touch
+  every import site. Defer to a future phase.
+- Changing the Arithmetic[T] interface. Removing activation functions (Tanh,
+  Sigmoid, ReLU) from Arithmetic would break all 6 implementations and all
+  callers. The interface is locked per the project non-goals.
+- Merging Sum and ReduceSum in the Engine[T] interface. The Engine interface is
+  locked per non-goals (no breaking changes to Engine[T] or Node[T]).
+- Changing log.Logger field signature from ...string to ...any. Would break all
+  callers across 10+ packages.
+- Removing data/ and features/ domain-specific packages. They are used by
+  training tests and the audacity project.
+- Renaming model.ModelProvider to avoid collision with training.ModelProvider.
+  Would break exported API.
+
+#### Phase 7 Design Decisions
+
+**Layer registration consolidation strategy:**
+Remove the init() in layers/core/registry.go entirely. Move the FFN float16
+registration into layers/registry/registry.go where all other registrations
+live. This eliminates the inverted dependency without changing any public API.
+The FFN registration will be typed to float32 like all other registrations in
+RegisterAll (float16 registration was likely a mistake since the rest of the
+wiring is float32).
+
+**Graph thread safety strategy:**
+Add a sync.Mutex to graph.Graph protecting the memo map. Lock on each Forward
+call (reset + full traversal) and each Backward call (reads memo). This is
+coarse-grained but correct. Fine-grained per-node locking is premature
+optimization for a graph that is typically small (< 1000 nodes).
+
+**Dead code removal strategy:**
+Delete pkg/prelude/prelude.go entirely. Delete tests/helpers/wire.go and its
+4 interface definitions. Verify no other file imports these packages. If
+tests/helpers/ becomes empty, delete the directory.
+
+---
+
+#### E44: Remove Dead Code
+
+Remove empty packages and nil stub files that add confusion without value.
+
+- [ ] T44.1 Delete pkg/prelude package  Owner: TBD  Est: 15m
+  - Dependencies: None
+  - Acceptance: pkg/prelude/ directory is deleted. No file in the repo imports
+    "github.com/zerfoo/zerfoo/pkg/prelude". go build ./... succeeds. go test
+    ./... passes.
+  - [ ] S44.1.1 Verify no imports of pkg/prelude exist in the repo  Est: 2m
+  - [ ] S44.1.2 Delete pkg/prelude/prelude.go  Est: 2m
+  - [ ] S44.1.3 Remove pkg/prelude/ directory  Est: 1m
+  - [ ] S44.1.4 Run go build ./... and go test ./... to verify no breakage  Est: 5m
+  - [ ] S44.1.5 Run golangci-lint  Est: 5m
+
+- [ ] T44.2 Delete tests/helpers/wire.go nil stubs  Owner: TBD  Est: 15m
+  - Dependencies: None
+  - Acceptance: tests/helpers/wire.go is deleted. If tests/helpers/ directory is
+    empty after deletion, delete the directory too. No file imports
+    "github.com/zerfoo/zerfoo/tests/helpers". go build ./... succeeds.
+  - [ ] S44.2.1 Check if any test file imports tests/helpers  Est: 2m
+  - [ ] S44.2.2 Delete tests/helpers/wire.go  Est: 2m
+  - [ ] S44.2.3 Delete tests/helpers/ directory if empty  Est: 1m
+  - [ ] S44.2.4 Run go build ./... and go test ./... to verify no breakage  Est: 5m
+  - [ ] S44.2.5 Run golangci-lint  Est: 5m
+
+- [ ] T44.3 Run linters and verify for E44  Owner: TBD  Est: 10m
+  - Dependencies: T44.1, T44.2
+  - Acceptance: golangci-lint 0 issues. go vet clean. go test ./... -race passes.
+  - [ ] S44.3.1 Run golangci-lint run ./...  Est: 5m
+  - [ ] S44.3.2 Run go test ./... -race  Est: 5m
+
+#### E45: Consolidate Layer Registration
+
+Eliminate the inverted layers/core -> model dependency by removing the init()
+auto-registration in layers/core/registry.go and consolidating all
+registrations into layers/registry/registry.go.
+
+- [ ] T45.1 Move FFN registration from layers/core/registry.go init() to layers/registry  Owner: TBD  Est: 30m
+  - Dependencies: None
+  - Files: layers/core/registry.go (modify), layers/registry/registry.go (modify)
+  - Acceptance: layers/core/registry.go no longer has an init() function.
+    layers/core/registry.go no longer imports "github.com/zerfoo/zerfoo/model".
+    layers/registry/registry.go RegisterAll() includes an FFN registration
+    (model.RegisterLayer("FFN", core.BuildFFN[float32])). go build ./... succeeds.
+    All existing tests pass. The FFN layer is still available after RegisterAll().
+  - Risk: If any code depends on the float16 FFN registration from init(), it
+    will break. Verify by grepping for FFN usage with float16.
+  - [ ] S45.1.1 Grep for float16.Float16 usage with FFN to verify nothing depends on float16 registration  Est: 5m
+  - [ ] S45.1.2 Add model.RegisterLayer("FFN", core.BuildFFN[float32]) to RegisterAll  Est: 5m
+  - [ ] S45.1.3 Remove init() function and model import from layers/core/registry.go  Est: 5m
+  - [ ] S45.1.4 Run go build ./... to verify compilation  Est: 5m
+  - [ ] S45.1.5 Run go test ./... -race to verify no regressions  Est: 5m
+  - [ ] S45.1.6 Run golangci-lint  Est: 5m
+
+- [ ] T45.2 Verify no other init()-based registrations exist in layers/  Owner: TBD  Est: 15m
+  - Dependencies: T45.1
+  - Acceptance: Grep for "func init()" in all layers/ files returns zero results.
+    The only layer registration entry point is layers/registry.RegisterAll().
+  - [ ] S45.2.1 Grep for func init() in layers/ directory tree  Est: 5m
+  - [ ] S45.2.2 If any found, move them to RegisterAll and remove  Est: 5m
+  - [ ] S45.2.3 Run go test ./... -race  Est: 5m
+
+- [ ] T45.3 Run linters and verify for E45  Owner: TBD  Est: 10m
+  - Dependencies: T45.1, T45.2
+  - Acceptance: golangci-lint 0 issues. go vet clean. go test ./... -race passes.
+    No init()-based registrations in layers/.
+  - [ ] S45.3.1 Run golangci-lint run ./...  Est: 5m
+  - [ ] S45.3.2 Run go test ./... -race  Est: 5m
+
+#### E46: Graph Thread Safety
+
+Add mutex protection to graph.Graph to allow concurrent Forward calls from
+different goroutines without data races.
+
+- [ ] T46.1 Add sync.Mutex to Graph struct and protect memo map  Owner: TBD  Est: 45m
+  - Dependencies: None
+  - Files: graph/graph.go
+  - Acceptance: graph.Graph has a sync.Mutex field (mu). Forward() locks mu
+    before resetting memo and unlocks after the full traversal completes.
+    Backward() locks mu before reading memo and unlocks after completion.
+    go test ./graph/ -race passes. A new test spawns 4 goroutines each calling
+    Forward concurrently with different inputs and verifies no race and no panic.
+  - Risk: Coarse-grained locking may reduce throughput if many goroutines
+    compete for the same graph. This is acceptable for correctness-first.
+  - [ ] S46.1.1 Add sync.Mutex field to Graph struct  Est: 5m
+  - [ ] S46.1.2 Add mu.Lock()/mu.Unlock() around memo reset and traversal in Forward  Est: 10m
+  - [ ] S46.1.3 Add mu.Lock()/mu.Unlock() around memo reads in Backward  Est: 10m
+  - [ ] S46.1.4 Write TestGraphConcurrentForward: 4 goroutines, different inputs, verify no race  Est: 15m
+  - [ ] S46.1.5 Run go test ./graph/ -race -cover  Est: 5m
+
+- [ ] T46.2 Run linters and verify for E46  Owner: TBD  Est: 10m
+  - Dependencies: T46.1
+  - Acceptance: golangci-lint 0 issues on graph/. go test ./... -race passes.
+    graph/ coverage remains >= 95%.
+  - [ ] S46.2.1 Run golangci-lint run ./graph/  Est: 5m
+  - [ ] S46.2.2 Run go test ./... -race  Est: 5m
+
+#### E47: Documentation Update
+
+Update docs/plan.md and docs/design.md to reflect Phase 7 changes and correct
+stale references.
+
+- [ ] T47.1 Update docs/design.md with architecture improvements  Owner: TBD  Est: 30m
+  - Dependencies: E44, E45, E46
+  - Acceptance: docs/design.md Section 10 (Known Limitations) updated:
+    remove item 9 (graph thread safety -- now fixed). Section 2.1 (Package
+    Layout) updated: remove pkg/prelude line. Add note about single registration
+    entry point (RegisterAll). Add concurrency note to Section 3.2 (Node/Graph).
+  - [ ] S47.1.1 Remove pkg/prelude from package layout  Est: 5m
+  - [ ] S47.1.2 Update Known Limitations: remove graph thread-safety item  Est: 5m
+  - [ ] S47.1.3 Add concurrency note to Graph section  Est: 5m
+  - [ ] S47.1.4 Add registration consolidation note to Section 3.6  Est: 5m
+  - [ ] S47.1.5 Review full document for other stale references  Est: 10m
+
+- [ ] T47.2 Update docs/plan.md metadata  Owner: TBD  Est: 15m
+  - Dependencies: E44, E45, E46
+  - Acceptance: Section 1 no longer references docs/gpu.md. Hand-off notes
+    updated. Progress log has Phase 7 entries. Appendix scorecards updated.
+  - [ ] S47.2.1 Fix stale file references in Context and Hand-off sections  Est: 5m
+  - [ ] S47.2.2 Update appendix scorecards  Est: 5m
+  - [ ] S47.2.3 Add progress log entry  Est: 5m
+
+#### E48: Phase 7 Final Verification
+
+Run the full quality gate suite after all Phase 7 work is complete.
+
+- [ ] T48.1 Run full test suite with coverage and race detector  Owner: TBD  Est: 15m
+  - Dependencies: E44, E45, E46, E47
+  - Acceptance: go test ./... -cover -race passes. No regressions. graph/
+    coverage >= 95%.
+  - [ ] S48.1.1 Run go test ./... -cover -race  Est: 10m
+  - [ ] S48.1.2 Verify graph/ coverage >= 95%  Est: 5m
+
+- [ ] T48.2 Run linters  Owner: TBD  Est: 10m
+  - Dependencies: T48.1
+  - Acceptance: golangci-lint run ./... reports 0 issues. go vet ./... clean.
+  - [ ] S48.2.1 Run golangci-lint run ./...  Est: 5m
+  - [ ] S48.2.2 Run go vet ./...  Est: 5m
+
+---
+
 ## 4. Timeline and Milestones
 
 | ID | Milestone | Dependencies | Exit Criteria |
@@ -1144,6 +1371,10 @@ with top-2 expert routing per token).
 | M29 | MoE complete | E40 | MoEGate and MixtureOfExperts registered and tested |
 | M30 | VLM parity validated | E41, E42 | Gemma 3 forward pass test passes; SigLIP encoder test passes |
 | M31 | Phase 6 complete | E43 | Full suite green; all quality gates pass |
+| M32 | Dead code removed | E44 | pkg/prelude deleted; tests/helpers/wire.go deleted; no breakage |
+| M33 | Registration consolidated | E45 | No init() in layers/; single RegisterAll entry point |
+| M34 | Graph thread-safe | E46 | Concurrent Forward passes without data races |
+| M35 | Phase 7 complete | E48 | Full suite green; docs updated; all quality gates pass |
 
 ### Recommended Sequence
 
@@ -1183,6 +1414,18 @@ Parallelism opportunities:
 - E26 starts after T21.1 (needs Logger interface)
 - E34 + E35 can partially overlap (E34 tests E33 output; E35 builds on E33 independently)
 
+**Phase 7 (Architecture Cleanup):**
+24. **E44** (Dead Code Removal) -- Independent; can run first
+25. **E45** (Registration Consolidation) -- Independent of E44
+26. **E46** (Graph Thread Safety) -- Independent of E44/E45
+27. **E47** (Documentation) -- After E44-E46
+28. **E48** (Final Verification) -- After all Phase 7 epics
+
+Parallelism opportunities:
+- E44, E45, E46 are all independent and can run in parallel
+- E47 must wait for E44-E46 to complete
+- E48 must wait for E47
+
 ---
 
 ## 5. Operating Procedure
@@ -1221,6 +1464,10 @@ A task is done when:
 
 ## 6. Progress Log
 
+- **2026 03 02 (update 16):** Change Summary: Added Phase 7 -- Architecture Cleanup. Comprehensive review identified: dead code (pkg/prelude empty, tests/helpers/wire.go all nil), inverted dependency (layers/core/registry.go init() imports model), graph.Graph not thread-safe (memo map unprotected). New epics: E44 (dead code removal, 3 tasks), E45 (registration consolidation, 3 tasks), E46 (graph thread safety, 2 tasks), E47 (documentation update, 2 tasks), E48 (final verification, 2 tasks). Added milestones M32-M35. Deferred: model/ package split, Arithmetic[T] interface change, Engine[T] Sum/ReduceSum merge, log.Logger signature change (all too risky or break non-goals). Consolidated docs: deleted docs/gpu.md, docs/runbook.md, docs/troubleshooting.md; rewrote docs/design.md as single comprehensive reference (commit 645f40b).
+
+- **2026 03 02 (update 15):** Change Summary: Consolidated all documentation. Rewrote docs/design.md as comprehensive single reference document. Deleted docs/gpu.md, docs/runbook.md, docs/troubleshooting.md (content merged into design.md). Updated known limitations to reflect current state. Added model import pipeline, layer coverage, ecosystem, and type system sections. Net reduction of 307 lines. Commit: 645f40b.
+
 - **2026 03 02 (update 14):** Change Summary: Completed T38.8 (zonnx importer builders). Added converter special cases for Slice/Pad/TopK to promote positional ONNX input tensors to named ZMF attributes (starts/ends/axes/steps, pads/constant_value, k). Added 7 layer builder stubs in zonnx/pkg/importer/layers/ (softmax, sigmoid, erf, layer_norm, slice, pad, topk), each registered via init(). 10 new round-trip tests added to converter_test.go covering all E38 operators. All zonnx tests pass; golangci-lint 0 issues. Commits (zonnx): 2a7bd4f, 04726bb.
 
 - **2026 03 02 (update 13):** Change Summary: Completed E38 core missing operators (T38.1-T38.7, T38.9). Implemented and registered: Softmax (layers/activations/softmax.go), Erf (layers/activations/erf.go), BuildSigmoid builder (layers/activations/registry.go), BuildLayerNormalization with resolveParam helper (layers/normalization/registry.go), Slice (layers/core/slice.go), Pad (layers/core/pad.go), TopK (layers/core/topk.go). All seven operators registered in layers/registry/registry.go. All 50 packages pass go test -race ./...; golangci-lint 0 issues. Commits: 5c15cab, cf93bf7, d1ad6fa, 3370f25.
@@ -1251,12 +1498,12 @@ A task is done when:
 
 ### For a New Contributor
 
-- **Architecture:** Read docs/design.md for interface contracts, package layout, and GPU architecture.
-- **GPU details:** Read docs/gpu.md for build requirements, kernel inventory, and memory model.
-- **Phase 1-3 status:** Complete. See docs/design.md Section 7 for summary.
+- **Architecture:** Read docs/design.md for interface contracts, package layout, GPU architecture, operations, and troubleshooting. It is the single reference document.
+- **Phase 1-3 status:** Complete. Test coverage, GPU engine, GPU production readiness.
 - **Phase 4 status:** Complete (except E29 GPU validation, blocked on GCP quota).
 - **Phase 5 status:** Complete. Concrete DistributedServiceServer, GrpcStrategy, WorkerNode, CLI worker command. 96% coverage.
-- **Phase 6 status:** Planned, not started. Open weights model import (Gemma 3 + Kimi-VL).
+- **Phase 6 status:** Complete. Open weights model import (Gemma 3, SigLIP, Kimi-VL). All operators registered and tested.
+- **Phase 7 status:** Planned, not started. Architecture cleanup (dead code, registration consolidation, graph thread safety).
 - **GPU hardware validation:** Blocked on GCP GPU quota (E29).
 - **Key files to read first:**
   - compute/engine.go -- Engine[T] interface (34 methods)
@@ -1341,6 +1588,21 @@ A task is done when:
 | Operations | 9/10 | Worker lifecycle + CLI command + health integration (E35) |
 | Documentation | 9/10 | Distributed worker setup in runbook (T35.5) |
 | CI/CD | 9/10 | No changes from Phase 4 |
+
+### Target Scorecard (After Phase 7)
+
+| Category | Target | How Achieved |
+|----------|--------|-------------|
+| Architecture | 10/10 | Dead code removed (E44); registration consolidated (E45); graph thread-safe (E46) |
+| Core Functionality | 10/10 | No changes from Phase 6 |
+| Testing | 10/10 | Concurrent forward test added (E46) |
+| Error Handling | 9/10 | No changes from Phase 6 |
+| Security | 8/10 | No changes from Phase 6 |
+| Observability | 8/10 | No changes from Phase 6 |
+| Configuration | 8/10 | No changes from Phase 6 |
+| Operations | 9/10 | No changes from Phase 6 |
+| Documentation | 10/10 | Consolidated to single docs/design.md; stale refs removed (E47) |
+| CI/CD | 9/10 | No changes from Phase 6 |
 
 ### New Packages and Files Created
 
