@@ -290,3 +290,85 @@ func makeGradients(t *testing.T, data []float32) map[string]*tensor.TensorNumeri
 	}
 	return map[string]*tensor.TensorNumeric[float32]{"grad": tn}
 }
+
+// --- T35.3: WorkerNode lifecycle integration test ---
+
+func TestWorkerNodeLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Start coordinator.
+	coord := coordinator.NewCoordinator(&syncWriter{}, 30*time.Second)
+	if err := coord.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("failed to start coordinator: %v", err)
+	}
+	t.Cleanup(coord.GracefulStop)
+	coordAddr := coord.Addr().String()
+
+	// Allocate ephemeral ports for 2 workers.
+	workerAddrs := make([]string, 2)
+	for i := range 2 {
+		lc := net.ListenConfig{}
+		lis, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen for worker %d: %v", i, err)
+		}
+		workerAddrs[i] = lis.Addr().String()
+		_ = lis.Close()
+	}
+
+	// Start 2 WorkerNodes.
+	nodes := make([]*distributed.WorkerNode, 2)
+	for i := range 2 {
+		node := distributed.NewWorkerNode(distributed.WorkerNodeConfig{
+			WorkerAddress:      workerAddrs[i],
+			CoordinatorAddress: coordAddr,
+			WorldSize:          2,
+		})
+		if err := node.Start(context.Background()); err != nil {
+			t.Fatalf("node %d Start failed: %v", i, err)
+		}
+		nodes[i] = node
+	}
+
+	// Verify both workers registered.
+	for i, node := range nodes {
+		if node.Rank() < 0 {
+			t.Errorf("node %d rank = %d, want >= 0", i, node.Rank())
+		}
+		if node.Size() != 2 {
+			t.Errorf("node %d size = %d, want 2", i, node.Size())
+		}
+		if node.Strategy() == nil {
+			t.Errorf("node %d strategy is nil", i)
+		}
+	}
+
+	// Double start should return error.
+	if err := nodes[0].Start(context.Background()); err == nil {
+		t.Error("expected error on double start")
+	}
+
+	// Shutdown nodes.
+	for i, node := range nodes {
+		if err := node.Close(context.Background()); err != nil {
+			t.Errorf("node %d Close error: %v", i, err)
+		}
+	}
+
+	// After close, strategy should be nil and rank should be -1.
+	for i, node := range nodes {
+		if node.Strategy() != nil {
+			t.Errorf("node %d strategy should be nil after close", i)
+		}
+		if node.Rank() != -1 {
+			t.Errorf("node %d rank = %d, want -1 after close", i, node.Rank())
+		}
+	}
+
+	// Double close should be safe.
+	if err := nodes[0].Close(context.Background()); err != nil {
+		t.Errorf("double Close error: %v", err)
+	}
+}

@@ -128,6 +128,7 @@ func (wn *WorkerNode) Close(_ context.Context) error {
 
 	wn.logger.Info("shutting down worker node")
 	wn.strategy.Shutdown()
+	wn.strategy = nil
 	wn.started = false
 	return nil
 }
