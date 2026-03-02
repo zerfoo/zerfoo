@@ -88,6 +88,68 @@ func parallelFor(total int, fn func(start, end int)) {
 	wg.Wait()
 }
 
+// parallelForCtx is like parallelFor but respects context cancellation.
+// It checks ctx.Done() before dispatching each chunk and returns the
+// context error if the context is canceled.
+func parallelForCtx(ctx context.Context, total int, fn func(start, end int)) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	const minPerG = 32768
+	if total <= minPerG {
+		fn(0, total)
+		return nil
+	}
+
+	workers := runtime.GOMAXPROCS(0)
+	maxW := total / minPerG
+	if maxW < 1 {
+		maxW = 1
+	}
+	if workers > maxW {
+		workers = maxW
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	chunk := (total + workers - 1) / workers
+
+	var wg sync.WaitGroup
+	canceled := false
+
+	for start := 0; start < total; start += chunk {
+		if !canceled {
+			select {
+			case <-ctx.Done():
+				canceled = true
+			default:
+			}
+		}
+		if canceled {
+			continue
+		}
+
+		end := start + chunk
+		if end > total {
+			end = total
+		}
+		wg.Add(1)
+		go func(s, e int) {
+			defer wg.Done()
+			fn(s, e)
+		}(start, end)
+	}
+	wg.Wait()
+
+	if canceled {
+		return ctx.Err()
+	}
+	return nil
+}
+
 // Split splits a tensor into numSplits along the given axis.
 // All splits are equal-sized; shape[axis] must be divisible by numSplits.
 func (e *CPUEngine[T]) Split(_ context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
@@ -407,7 +469,7 @@ func (e *CPUEngine[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], sh
 }
 
 // UnaryOp applies a unary element-wise operation.
-func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -417,16 +479,18 @@ func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.TensorNumeric[T], op
 	}
 	aData := a.Data()
 	rData := result.Data()
-	parallelFor(len(aData), func(start, end int) {
+	if err := parallelForCtx(ctx, len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
 			rData[i] = op(aData[i])
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 // binaryOp performs a broadcasted binary element-wise operation.
-func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T], op func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.TensorNumeric[T], op func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -454,7 +518,7 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 		total *= d
 	}
 
-	parallelFor(total, func(start, end int) {
+	if err := parallelForCtx(ctx, total, func(start, end int) {
 		for lin := start; lin < end; lin++ { //nolint:intrange
 			// Decode linear index into coords
 			offA := 0
@@ -476,7 +540,9 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 			}
 			rData[lin] = op(aData[offA], bData[offB])
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -721,8 +787,13 @@ func expandShapeStrides(shape, strides []int, rank int) ([]int, []int) {
 }
 
 // MatMul performs matrix multiplication of two tensors.
-func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("MatMul", time.Now())
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}

@@ -635,6 +635,70 @@ func TestCPUEngine_MemoryLimit_AllocationFails(t *testing.T) {
 	}
 }
 
+func TestCPUEngine_TimeoutCanceled(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	a, err := tensor.New[float32]([]int{5}, []float32{1, 2, 3, 4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := tensor.New[float32]([]int{5}, []float32{6, 7, 8, 9, 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an already-canceled context.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = engine.Add(ctx, a, b)
+	if err == nil {
+		t.Fatal("expected context error, got nil")
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("expected canceled error, got: %v", err)
+	}
+}
+
+func TestCPUEngine_MatMulTimeout(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	a, err := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := tensor.New[float32]([]int{2, 2}, []float32{5, 6, 7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Already canceled context.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = engine.MatMul(ctx, a, b)
+	if err == nil {
+		t.Fatal("expected context error, got nil")
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("expected canceled error, got: %v", err)
+	}
+}
+
+func TestCPUEngine_UnaryOpTimeout(t *testing.T) {
+	engine := NewCPUEngine(numeric.Float32Ops{})
+	a, err := tensor.New[float32]([]int{3}, []float32{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = engine.UnaryOp(ctx, a, func(v float32) float32 { return v * 2 })
+	if err == nil {
+		t.Fatal("expected context error, got nil")
+	}
+}
+
 func TestCPUEngine_MemoryLimit_Unlimited(t *testing.T) {
 	engine := NewCPUEngine(numeric.Float32Ops{})
 	// Default is unlimited (0).
