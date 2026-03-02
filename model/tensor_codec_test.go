@@ -346,17 +346,22 @@ func TestEncodeDecode_Float16_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecodeTensor_Float64_Unsupported(t *testing.T) {
-	// The decoder does not have a FLOAT64 case, so decoding should fail.
-	data := []float64{1.5}
-	src, _ := tensor.New[float64]([]int{1}, data)
+func TestDecodeTensor_FLOAT64_RoundTrip(t *testing.T) {
+	data := []float64{1.5, -2.75}
+	src, _ := tensor.New[float64]([]int{2}, data)
 	encoded, err := EncodeTensor(src)
 	if err != nil {
 		t.Fatalf("EncodeTensor failed: %v", err)
 	}
-	_, err = DecodeTensor[float64](encoded)
-	if err == nil {
-		t.Error("expected error for unsupported FLOAT64 decode")
+	decoded, err := DecodeTensor[float64](encoded)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	got := decoded.Data()
+	for i, want := range data {
+		if got[i] != want {
+			t.Errorf("element %d: got %v, want %v", i, got[i], want)
+		}
 	}
 }
 
@@ -418,5 +423,258 @@ func TestDecodeTensor_Float32_ToFloat16(t *testing.T) {
 	}
 	if decoded.Size() != 1 {
 		t.Errorf("expected size 1, got %d", decoded.Size())
+	}
+}
+
+// --- New dtype decode tests (T37.3) ---
+
+func TestDecodeTensor_BFloat16_ToBFloat16(t *testing.T) {
+	bf1 := float16.BFloat16FromFloat32(1.0)
+	bf2 := float16.BFloat16FromFloat32(2.0)
+	rawData := make([]byte, 4)
+	binary.LittleEndian.PutUint16(rawData[0:2], bf1.Bits())
+	binary.LittleEndian.PutUint16(rawData[2:4], bf2.Bits())
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_BFLOAT16,
+		Shape: []int64{2},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float16.BFloat16](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	data := decoded.Data()
+	if data[0].Bits() != bf1.Bits() {
+		t.Errorf("element 0: bits differ")
+	}
+	if data[1].Bits() != bf2.Bits() {
+		t.Errorf("element 1: bits differ")
+	}
+}
+
+func TestDecodeTensor_BFloat16_ToFloat32(t *testing.T) {
+	bf := float16.BFloat16FromFloat32(3.0)
+	rawData := make([]byte, 2)
+	binary.LittleEndian.PutUint16(rawData, bf.Bits())
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_BFLOAT16,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float32](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	data := decoded.Data()
+	if data[0] != 3.0 {
+		t.Errorf("expected 3.0, got %v", data[0])
+	}
+}
+
+func TestDecodeTensor_BFloat16_InvalidDataLength(t *testing.T) {
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_BFLOAT16,
+		Shape: []int64{1},
+		Data:  []byte{0x01}, // 1 byte, not multiple of 2
+	}
+	_, err := DecodeTensor[float16.BFloat16](proto)
+	if err == nil {
+		t.Error("expected error for invalid bfloat16 data length")
+	}
+}
+
+func TestDecodeTensor_INT32_ToInt32(t *testing.T) {
+	rawData := make([]byte, 8)
+	var n0, n1 int32 = -100, 200
+	binary.LittleEndian.PutUint32(rawData[0:4], uint32(n0))
+	binary.LittleEndian.PutUint32(rawData[4:8], uint32(n1))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT32,
+		Shape: []int64{2},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[int32](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	data := decoded.Data()
+	if data[0] != -100 || data[1] != 200 {
+		t.Errorf("expected [-100, 200], got %v", data)
+	}
+}
+
+func TestDecodeTensor_INT32_ToFloat32(t *testing.T) {
+	rawData := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawData, uint32(int32(42)))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT32,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float32](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	if decoded.Data()[0] != 42.0 {
+		t.Errorf("expected 42.0, got %v", decoded.Data()[0])
+	}
+}
+
+func TestDecodeTensor_INT32_InvalidDataLength(t *testing.T) {
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT32,
+		Shape: []int64{1},
+		Data:  []byte{0x01, 0x02, 0x03}, // 3 bytes, not multiple of 4
+	}
+	_, err := DecodeTensor[int32](proto)
+	if err == nil {
+		t.Error("expected error for invalid int32 data length")
+	}
+}
+
+func TestDecodeTensor_INT64_ToInt64(t *testing.T) {
+	rawData := make([]byte, 16)
+	var v0, v1 int64 = -1000, 2000
+	binary.LittleEndian.PutUint64(rawData[0:8], uint64(v0))
+	binary.LittleEndian.PutUint64(rawData[8:16], uint64(v1))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT64,
+		Shape: []int64{2},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[int64](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	data := decoded.Data()
+	if data[0] != -1000 || data[1] != 2000 {
+		t.Errorf("expected [-1000, 2000], got %v", data)
+	}
+}
+
+func TestDecodeTensor_INT64_ToFloat32(t *testing.T) {
+	rawData := make([]byte, 8)
+	binary.LittleEndian.PutUint64(rawData, uint64(int64(512)))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT64,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float32](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	if decoded.Data()[0] != 512.0 {
+		t.Errorf("expected 512.0, got %v", decoded.Data()[0])
+	}
+}
+
+func TestDecodeTensor_INT64_InvalidDataLength(t *testing.T) {
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_INT64,
+		Shape: []int64{1},
+		Data:  []byte{0x01, 0x02, 0x03, 0x04}, // 4 bytes, not multiple of 8
+	}
+	_, err := DecodeTensor[int64](proto)
+	if err == nil {
+		t.Error("expected error for invalid int64 data length")
+	}
+}
+
+func TestDecodeTensor_FLOAT64_ToFloat64(t *testing.T) {
+	val := 1.5
+	rawData := make([]byte, 8)
+	binary.LittleEndian.PutUint64(rawData, math.Float64bits(val))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT64,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float64](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	if decoded.Data()[0] != val {
+		t.Errorf("expected %v, got %v", val, decoded.Data()[0])
+	}
+}
+
+func TestDecodeTensor_FLOAT64_ToFloat32(t *testing.T) {
+	val := 2.5
+	rawData := make([]byte, 8)
+	binary.LittleEndian.PutUint64(rawData, math.Float64bits(val))
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT64,
+		Shape: []int64{1},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[float32](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	if decoded.Data()[0] != float32(val) {
+		t.Errorf("expected %v, got %v", float32(val), decoded.Data()[0])
+	}
+}
+
+func TestDecodeTensor_FLOAT64_InvalidDataLength(t *testing.T) {
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_FLOAT64,
+		Shape: []int64{1},
+		Data:  []byte{0x01, 0x02, 0x03, 0x04}, // 4 bytes, not multiple of 8
+	}
+	_, err := DecodeTensor[float64](proto)
+	if err == nil {
+		t.Error("expected error for invalid float64 data length")
+	}
+}
+
+func TestDecodeTensor_UINT8_ToUint8(t *testing.T) {
+	rawData := []byte{0, 127, 255}
+
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_UINT8,
+		Shape: []int64{3},
+		Data:  rawData,
+	}
+
+	decoded, err := DecodeTensor[uint8](proto)
+	if err != nil {
+		t.Fatalf("DecodeTensor failed: %v", err)
+	}
+	data := decoded.Data()
+	expected := []uint8{0, 127, 255}
+	for i, want := range expected {
+		if data[i] != want {
+			t.Errorf("element %d: got %d, want %d", i, data[i], want)
+		}
+	}
+}
+
+func TestDecodeTensor_UINT8_InvalidDataLength(t *testing.T) {
+	proto := &zmf.Tensor{
+		Dtype: zmf.Tensor_UINT8,
+		Shape: []int64{3},
+		Data:  []byte{0x01, 0x02}, // 2 bytes, expected 3
+	}
+	_, err := DecodeTensor[uint8](proto)
+	if err == nil {
+		t.Error("expected error for invalid uint8 data length")
 	}
 }
