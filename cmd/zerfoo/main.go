@@ -36,6 +36,9 @@ func run() error {
 	tokenizeCmd := cli.NewTokenizeCommand()
 	cliApp.RegisterCommand(tokenizeCmd)
 
+	workerCmd := cli.NewWorkerCommand(coord)
+	cliApp.RegisterCommand(workerCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
