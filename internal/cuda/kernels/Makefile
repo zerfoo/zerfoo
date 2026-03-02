@@ -1,5 +1,6 @@
 NVCC ?= nvcc
-NVCC_FLAGS ?= -O2 -arch=sm_70
+CUDA_ARCH ?= sm_75
+NVCC_FLAGS ?= -O2 -arch=$(CUDA_ARCH)
 
 SRCS = elementwise.cu
 OBJS = $(SRCS:.cu=.o)

@@ -36,10 +36,12 @@ result, err := gpuEngine.MatMul(ctx, tensorA, tensorB)
 
 ```bash
 cd internal/cuda/kernels/
-make
+make                        # default: sm_75 (GCP T4)
+make CUDA_ARCH=sm_120       # DGX Spark (Blackwell GB10)
+make CUDA_ARCH=sm_70        # V100
 ```
 
-This produces `libkernels.a` from `elementwise.cu` using `nvcc -O2 -arch=sm_70`.
+This produces `libkernels.a` from `elementwise.cu` using `nvcc -O2 -arch=$(CUDA_ARCH)`.
 
 ### Build with GPU Support
 
@@ -161,11 +163,15 @@ gcloud compute instances create gpu-test \
     --boot-disk-size=80GB
 ```
 
-Compatible GPUs (us-central1-a):
-- **nvidia-tesla-t4** (sm_75, 16 GB) -- cheapest, good for testing
-- **nvidia-l4** (sm_89, 24 GB) -- newer, faster
-- **nvidia-tesla-v100** (sm_70, 16 GB) -- high performance
-- **nvidia-tesla-a100** (sm_80, 40/80 GB) -- highest performance
+Compatible GPUs:
+
+| GPU | Arch | CUDA_ARCH | Memory | Platform |
+|-----|------|-----------|--------|----------|
+| Tesla T4 | Turing | sm_75 | 16 GB | GCP (us-central1-a) |
+| L4 | Ada Lovelace | sm_89 | 24 GB | GCP (us-central1-a) |
+| Tesla V100 | Volta | sm_70 | 16 GB | GCP (us-central1-a) |
+| A100 | Ampere | sm_80 | 40/80 GB | GCP (us-central1-a) |
+| DGX Spark GB10 | Blackwell | sm_120 | 128 GB unified | Local (ARM64) |
 
 ### Run Tests
 
@@ -185,6 +191,23 @@ go test -tags cuda -count=1 -v \
 # 3. Run parity tests (GPU vs CPU)
 go test -tags cuda -run Parity -v ./compute/
 ```
+
+## DGX Spark Setup
+
+The NVIDIA DGX Spark uses an ARM64 Grace CPU with a Blackwell GB10 GPU and 128 GB unified memory. Key differences from GCP x86_64 VMs:
+
+- **Architecture:** `linux/arm64` -- use `go1.25.0.linux-arm64.tar.gz`
+- **CUDA:** 13.0 (same runtime API, links to `-lcudart` / `-lcublas`)
+- **Compute capability:** sm_120 -- compile kernels with `make CUDA_ARCH=sm_120`
+- **Deployment:** SSH to persistent machine, rsync source (no GCP VM lifecycle)
+- **Memory:** 128 GB unified -- no OOM concerns for full dataset training
+
+```bash
+# From local machine (audacity repo):
+./scripts/dgx-spark-train.sh user@dgx-spark-host
+```
+
+The script handles: source packaging, rsync, kernel compilation, GPU tests, build, data download, training, and result retrieval.
 
 ## Known Limitations
 
