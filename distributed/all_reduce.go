@@ -3,6 +3,7 @@
 package distributed
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -155,6 +156,12 @@ func (s *AllReduceStrategy[T]) Shutdown() {
 	if s.isNodeLeader {
 		s.crossNodeStrategy.Shutdown()
 	}
+}
+
+// Close satisfies the shutdown.Closer interface by calling Shutdown.
+func (s *AllReduceStrategy[T]) Close(_ context.Context) error {
+	s.Shutdown()
+	return nil
 }
 
 // Statically assert that the type implements the interface.

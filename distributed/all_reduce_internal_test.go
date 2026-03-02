@@ -1,6 +1,7 @@
 package distributed
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -349,6 +350,18 @@ func TestAllReduceStrategy_SetCollector(t *testing.T) {
 		if h.Count < 1 {
 			t.Errorf("%s count = %d, want >= 1", name, h.Count)
 		}
+	}
+}
+
+func TestAllReduceStrategy_Close(t *testing.T) {
+	customMockLocal := new(testutils.CustomMockStrategy[float32])
+	customMockCross := new(testutils.CustomMockStrategy[float32])
+	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
+
+	// Close should not error (delegates to Shutdown which is a no-op for non-leader).
+	err := strategy.Close(context.Background())
+	if err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 
