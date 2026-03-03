@@ -16,17 +16,17 @@ func TestLaggedTransformer_Transform(t *testing.T) {
 		{
 			name: "single lag transformation",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{
+				Batches: []data.Batch{
 					{
-						Era: 100,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{1.0, 2.0}, Target: 0.5},
+						Index: 100,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{1.0, 2.0}, Target: 0.5},
 						},
 					},
 					{
-						Era: 101,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{3.0, 4.0}, Target: 0.7},
+						Index: 101,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{3.0, 4.0}, Target: 0.7},
 						},
 					},
 				},
@@ -37,23 +37,23 @@ func TestLaggedTransformer_Transform(t *testing.T) {
 		{
 			name: "multiple lags transformation",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{
+				Batches: []data.Batch{
 					{
-						Era: 100,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{1.0, 2.0}, Target: 0.5},
+						Index: 100,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{1.0, 2.0}, Target: 0.5},
 						},
 					},
 					{
-						Era: 101,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{3.0, 4.0}, Target: 0.7},
+						Index: 101,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{3.0, 4.0}, Target: 0.7},
 						},
 					},
 					{
-						Era: 102,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{5.0, 6.0}, Target: 0.9},
+						Index: 102,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{5.0, 6.0}, Target: 0.9},
 						},
 					},
 				},
@@ -64,7 +64,7 @@ func TestLaggedTransformer_Transform(t *testing.T) {
 		{
 			name: "empty dataset",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{},
+				Batches: []data.Batch{},
 			},
 			lags:           []int{1},
 			wantFeatureLen: 0,
@@ -84,15 +84,15 @@ func TestLaggedTransformer_Transform(t *testing.T) {
 				return
 			}
 
-			if len(testDataset.Eras) == 0 {
+			if len(testDataset.Batches) == 0 {
 				return // Skip validation for empty datasets
 			}
 
-			// Check that all stocks have the expected feature length
-			for _, era := range testDataset.Eras {
-				for _, stock := range era.Stocks {
-					if len(stock.Features) != tt.wantFeatureLen {
-						t.Errorf("LaggedTransformer.Transform() feature length = %v, want %v", len(stock.Features), tt.wantFeatureLen)
+			// Check that all samples have the expected feature length
+			for _, batch := range testDataset.Batches {
+				for _, sample := range batch.Samples {
+					if len(sample.Features) != tt.wantFeatureLen {
+						t.Errorf("LaggedTransformer.Transform() feature length = %v, want %v", len(sample.Features), tt.wantFeatureLen)
 					}
 				}
 			}
@@ -110,23 +110,23 @@ func TestRollingTransformer_Transform(t *testing.T) {
 		{
 			name: "rolling window transformation",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{
+				Batches: []data.Batch{
 					{
-						Era: 100,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{1.0, 2.0}, Target: 0.5},
+						Index: 100,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{1.0, 2.0}, Target: 0.5},
 						},
 					},
 					{
-						Era: 101,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{3.0, 4.0}, Target: 0.7},
+						Index: 101,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{3.0, 4.0}, Target: 0.7},
 						},
 					},
 					{
-						Era: 102,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{5.0, 6.0}, Target: 0.9},
+						Index: 102,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{5.0, 6.0}, Target: 0.9},
 						},
 					},
 				},
@@ -137,7 +137,7 @@ func TestRollingTransformer_Transform(t *testing.T) {
 		{
 			name: "empty dataset",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{},
+				Batches: []data.Batch{},
 			},
 			window:         2,
 			wantFeatureLen: 0,
@@ -157,15 +157,15 @@ func TestRollingTransformer_Transform(t *testing.T) {
 				return
 			}
 
-			if len(testDataset.Eras) == 0 {
+			if len(testDataset.Batches) == 0 {
 				return // Skip validation for empty datasets
 			}
 
-			// Check that all stocks have the expected feature length
-			for _, era := range testDataset.Eras {
-				for _, stock := range era.Stocks {
-					if len(stock.Features) != tt.wantFeatureLen {
-						t.Errorf("RollingTransformer.Transform() feature length = %v, want %v", len(stock.Features), tt.wantFeatureLen)
+			// Check that all samples have the expected feature length
+			for _, batch := range testDataset.Batches {
+				for _, sample := range batch.Samples {
+					if len(sample.Features) != tt.wantFeatureLen {
+						t.Errorf("RollingTransformer.Transform() feature length = %v, want %v", len(sample.Features), tt.wantFeatureLen)
 					}
 				}
 			}
@@ -184,29 +184,29 @@ func TestFFTTransformer_Transform(t *testing.T) {
 		{
 			name: "FFT transformation",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{
+				Batches: []data.Batch{
 					{
-						Era: 100,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{1.0, 2.0}, Target: 0.5},
+						Index: 100,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{1.0, 2.0}, Target: 0.5},
 						},
 					},
 					{
-						Era: 101,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{3.0, 4.0}, Target: 0.7},
+						Index: 101,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{3.0, 4.0}, Target: 0.7},
 						},
 					},
 					{
-						Era: 102,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{5.0, 6.0}, Target: 0.9},
+						Index: 102,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{5.0, 6.0}, Target: 0.9},
 						},
 					},
 					{
-						Era: 103,
-						Stocks: []data.StockData{
-							{ID: "stock1", Features: []float64{7.0, 8.0}, Target: 0.8},
+						Index: 103,
+						Samples: []data.Sample{
+							{ID: "s1", Features: []float64{7.0, 8.0}, Target: 0.8},
 						},
 					},
 				},
@@ -218,7 +218,7 @@ func TestFFTTransformer_Transform(t *testing.T) {
 		{
 			name: "empty dataset",
 			dataset: &data.Dataset{
-				Eras: []data.EraData{},
+				Batches: []data.Batch{},
 			},
 			window:         3,
 			k:              2,
@@ -239,15 +239,15 @@ func TestFFTTransformer_Transform(t *testing.T) {
 				return
 			}
 
-			if len(testDataset.Eras) == 0 {
+			if len(testDataset.Batches) == 0 {
 				return // Skip validation for empty datasets
 			}
 
-			// Check that all stocks have the expected feature length
-			for _, era := range testDataset.Eras {
-				for _, stock := range era.Stocks {
-					if len(stock.Features) != tt.wantFeatureLen {
-						t.Errorf("FFTTransformer.Transform() feature length = %v, want %v", len(stock.Features), tt.wantFeatureLen)
+			// Check that all samples have the expected feature length
+			for _, batch := range testDataset.Batches {
+				for _, sample := range batch.Samples {
+					if len(sample.Features) != tt.wantFeatureLen {
+						t.Errorf("FFTTransformer.Transform() feature length = %v, want %v", len(sample.Features), tt.wantFeatureLen)
 					}
 				}
 			}
@@ -262,24 +262,24 @@ func copyDataset(original *data.Dataset) *data.Dataset {
 	}
 
 	copyData := &data.Dataset{
-		Eras: make([]data.EraData, len(original.Eras)),
+		Batches: make([]data.Batch, len(original.Batches)),
 	}
 
-	for i, era := range original.Eras {
-		copyData.Eras[i] = data.EraData{
-			Era:      era.Era,
-			EraStats: make([]float64, len(era.EraStats)),
-			Stocks:   make([]data.StockData, len(era.Stocks)),
+	for i, batch := range original.Batches {
+		copyData.Batches[i] = data.Batch{
+			Index:   batch.Index,
+			Stats:   make([]float64, len(batch.Stats)),
+			Samples: make([]data.Sample, len(batch.Samples)),
 		}
-		copy(copyData.Eras[i].EraStats, era.EraStats)
+		copy(copyData.Batches[i].Stats, batch.Stats)
 
-		for j, stock := range era.Stocks {
-			copyData.Eras[i].Stocks[j] = data.StockData{
-				ID:       stock.ID,
-				Target:   stock.Target,
-				Features: make([]float64, len(stock.Features)),
+		for j, sample := range batch.Samples {
+			copyData.Batches[i].Samples[j] = data.Sample{
+				ID:       sample.ID,
+				Target:   sample.Target,
+				Features: make([]float64, len(sample.Features)),
 			}
-			copy(copyData.Eras[i].Stocks[j].Features, stock.Features)
+			copy(copyData.Batches[i].Samples[j].Features, sample.Features)
 		}
 	}
 

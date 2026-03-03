@@ -13,10 +13,10 @@ import (
 // TrainerWorkflowAdapter adapts the existing Trainer interface to the new TrainingWorkflow interface.
 // This allows legacy trainer implementations to work with the new generic workflow system.
 type TrainerWorkflowAdapter[T tensor.Numeric] struct {
-	trainer    Trainer[T]
-	optimizer  optimizer.Optimizer[T]
-	config     WorkflowConfig
-	metrics    map[string]interface{}
+	trainer   Trainer[T]
+	optimizer optimizer.Optimizer[T]
+	config    WorkflowConfig
+	metrics   map[string]interface{}
 }
 
 // NewTrainerWorkflowAdapter creates a new adapter for legacy trainers.
@@ -47,63 +47,63 @@ func (a *TrainerWorkflowAdapter[T]) Train(ctx context.Context, dataset DataProvi
 	if err != nil {
 		return nil, fmt.Errorf("failed to get training data: %w", err)
 	}
-	defer dataIter.Close()
+	defer func() { _ = dataIter.Close() }()
 
 	var totalLoss T
 	var bestLoss T
 	bestEpoch := 0
 	epoch := 0
-	
+
 	// Training loop
 	for epoch < a.config.NumEpochs {
 		epochLoss := T(0)
 		batchCount := 0
-		
+
 		// Reset iterator for new epoch
 		if err := dataIter.Reset(); err != nil {
 			return nil, fmt.Errorf("failed to reset data iterator: %w", err)
 		}
-		
+
 		// Process all batches in epoch
 		for dataIter.Next(ctx) {
 			batch := dataIter.Batch()
 			if batch == nil {
 				break
 			}
-			
+
 			// Convert batch targets to the required format for legacy trainer
 			targets := batch.Targets
-			
+
 			// Perform training step using legacy trainer
 			stepLoss, err := a.trainer.TrainStep(ctx, model, a.optimizer, batch.Inputs, targets)
 			if err != nil {
 				return nil, fmt.Errorf("training step failed at epoch %d: %w", epoch, err)
 			}
-			
+
 			epochLoss += stepLoss
 			batchCount++
 		}
-		
+
 		if err := dataIter.Error(); err != nil {
 			return nil, fmt.Errorf("data iteration failed at epoch %d: %w", epoch, err)
 		}
-		
+
 		// Calculate average loss for epoch
 		if batchCount > 0 {
 			epochLoss /= T(batchCount)
 		}
-		
+
 		totalLoss = epochLoss
-		
+
 		// Track best loss
 		if epoch == 0 || epochLoss < bestLoss {
 			bestLoss = epochLoss
 			bestEpoch = epoch
 		}
-		
+
 		// Store metrics
 		a.metrics[fmt.Sprintf("epoch_%d_loss", epoch)] = float64(epochLoss)
-		
+
 		epoch++
 	}
 
@@ -135,7 +135,7 @@ func (a *TrainerWorkflowAdapter[T]) Validate(ctx context.Context, dataset DataPr
 	if err != nil {
 		return nil, fmt.Errorf("failed to get validation data: %w", err)
 	}
-	defer dataIter.Close()
+	defer func() { _ = dataIter.Close() }()
 
 	var totalLoss T
 	sampleCount := 0
@@ -145,9 +145,9 @@ func (a *TrainerWorkflowAdapter[T]) Validate(ctx context.Context, dataset DataPr
 		if batch == nil {
 			break
 		}
-		
+
 		sampleCount++
-		
+
 		// Note: For validation, we would typically run forward pass only,
 		// but legacy trainer interface doesn't provide this.
 		// This is a limitation of the adapter approach.
@@ -208,9 +208,9 @@ func (a *GradientStrategyAdapter[T]) ComputeGradientsFromBatch(ctx context.Conte
 
 // DataIteratorAdapter provides a simple iterator implementation over static data.
 type DataIteratorAdapter[T tensor.Numeric] struct {
-	batches     []*Batch[T]
-	currentIdx  int
-	err         error
+	batches    []*Batch[T]
+	currentIdx int
+	err        error
 }
 
 // NewDataIteratorAdapter creates a new data iterator from a slice of batches.

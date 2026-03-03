@@ -97,42 +97,42 @@ func TestNewQuantizationConfig(t *testing.T) {
 
 func TestQuantizeDequantize(t *testing.T) {
 	tests := []struct {
-		name         string
-		scale        float32
-		zeroPoint    int64
-		symmetric    bool
-		testValues   []float32
-		tolerance    float64
+		name       string
+		scale      float32
+		zeroPoint  int64
+		symmetric  bool
+		testValues []float32
+		tolerance  float64
 	}{
 		{
-			name:      "basic_asymmetric",
-			scale:     0.1,
-			zeroPoint: 128,
-			symmetric: false,
+			name:       "basic_asymmetric",
+			scale:      0.1,
+			zeroPoint:  128,
+			symmetric:  false,
 			testValues: []float32{-12.8, -6.4, 0.0, 6.4, 12.7},
 			tolerance:  0.1,
 		},
 		{
-			name:      "basic_symmetric",
-			scale:     0.2,
-			zeroPoint: 0,
-			symmetric: true,
+			name:       "basic_symmetric",
+			scale:      0.2,
+			zeroPoint:  0,
+			symmetric:  true,
 			testValues: []float32{-25.0, -12.5, 0.0, 12.5, 25.0},
 			tolerance:  0.2,
 		},
 		{
-			name:      "edge_values",
-			scale:     1.0,
-			zeroPoint: 0,
-			symmetric: true,
+			name:       "edge_values",
+			scale:      1.0,
+			zeroPoint:  0,
+			symmetric:  true,
 			testValues: []float32{-127.0, -1.0, 0.0, 1.0, 127.0},
 			tolerance:  1.0,
 		},
 		{
-			name:      "small_scale",
-			scale:     0.01,
-			zeroPoint: 100,
-			symmetric: false,
+			name:       "small_scale",
+			scale:      0.01,
+			zeroPoint:  100,
+			symmetric:  false,
 			testValues: []float32{-1.0, -0.5, 0.0, 0.5, 1.0},
 			tolerance:  0.01,
 		},
@@ -562,7 +562,7 @@ func TestValidateQuantizationRoundTrip(t *testing.T) {
 		{
 			name:      "values_exceed_tolerance",
 			values:    []float32{0.001, 0.002, 0.003}, // Very small values, large relative error
-			tolerance: 1e-6,                          // Very tight tolerance
+			tolerance: 1e-6,                           // Very tight tolerance
 			expectErr: true,
 		},
 	}

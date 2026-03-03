@@ -6,6 +6,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -22,12 +23,23 @@ type LayerBuilder[T tensor.Numeric] func(
 // registry maps ZMF op_type strings to their corresponding LayerBuilder functions.
 var registry = make(map[string]interface{})
 
+// pkgLogger is the package-level logger for model operations.
+// Override via SetLogger before calling RegisterLayer if you need output.
+var pkgLogger log.Logger = log.Nop()
+
+// SetLogger sets the package-level logger for model operations.
+func SetLogger(l log.Logger) {
+	if l == nil {
+		l = log.Nop()
+	}
+	pkgLogger = l
+}
+
 // RegisterLayer adds a new layer builder to the registry.
 // It is intended to be called at initialization time (e.g., in an init() function).
 func RegisterLayer[T tensor.Numeric](opType string, builder LayerBuilder[T]) {
 	if _, exists := registry[opType]; exists {
-		// In a real application, you might want to panic here or handle this more gracefully.
-		fmt.Printf("Warning: Overwriting existing layer builder for op_type '%s'\n", opType)
+		pkgLogger.Warn("overwriting existing layer builder", "op_type", opType)
 	}
 
 	registry[opType] = builder

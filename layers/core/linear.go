@@ -164,6 +164,10 @@ func (l *Linear[T]) Parameters() []*graph.Parameter[T] {
 
 func init() {
 	model.RegisterLayer("Linear", func(engine compute.Engine[float32], ops numeric.Arithmetic[float32], name string, params map[string]*graph.Parameter[float32], attributes map[string]interface{}) (graph.Node[float32], error) {
+		// Restore from ZMF parameters if available.
+		if w, ok := params[name+"_weights"]; ok {
+			return NewLinearFromParam(engine, w), nil
+		}
 		inputFeatures, ok := attributes["input_features"].(int)
 		if !ok {
 			return nil, fmt.Errorf("missing or invalid attribute 'input_features' for Linear")

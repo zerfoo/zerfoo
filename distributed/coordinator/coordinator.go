@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
+	"github.com/zerfoo/zerfoo/log"
 	"google.golang.org/grpc"
 )
 
@@ -25,8 +25,8 @@ type Coordinator struct {
 	checkpoints map[string]*CheckpointInfo
 	nextRank    int
 	server      *grpc.Server
-	out         io.Writer // for logging
-	logger      *log.Logger
+	serverOpts  []grpc.ServerOption
+	logger      log.Logger
 	lis         net.Listener
 	timeout     time.Duration
 }
@@ -40,8 +40,6 @@ type WorkerInfo struct {
 }
 
 // CheckpointInfo holds information about a checkpoint.
-
-// CheckpointInfo holds information about a checkpoint.
 type CheckpointInfo struct {
 	ID        string
 	Epoch     int32
@@ -52,14 +50,13 @@ type CheckpointInfo struct {
 
 // NewCoordinator creates a new Coordinator.
 func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
-	logger := log.New(out, "coordinator: ", log.LstdFlags)
+	l := log.New(out, log.LevelInfo, log.FormatText)
 
 	c := &Coordinator{
 		workers:     make(map[string]*WorkerInfo),
 		ranks:       make(map[int]string),
 		checkpoints: make(map[string]*CheckpointInfo),
-		out:         out,
-		logger:      logger,
+		logger:      l,
 		timeout:     timeout,
 	}
 	go c.reaper()
@@ -81,16 +78,22 @@ func (c *Coordinator) Start(address string) error {
 	return nil
 }
 
+// SetServerOptions sets gRPC server options (e.g. TLS credentials)
+// that will be applied when the server starts. Must be called before Start.
+func (c *Coordinator) SetServerOptions(opts ...grpc.ServerOption) {
+	c.serverOpts = opts
+}
+
 // start starts the coordinator service on the given listener.
 func (c *Coordinator) start(lis net.Listener) {
 	c.lis = lis
-	c.server = grpc.NewServer()
+	c.server = grpc.NewServer(c.serverOpts...)
 	pb.RegisterCoordinatorServer(c.server, c)
-	c.logger.Printf("starting gRPC server on %s", lis.Addr().String())
+	c.logger.Info("starting gRPC server", "address", lis.Addr().String())
 
 	go func() {
 		if err := c.server.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			c.logger.Printf("gRPC server failed: %v", err)
+			c.logger.Error("gRPC server failed", "error", err.Error())
 		}
 	}()
 }
@@ -107,7 +110,7 @@ func (c *Coordinator) Addr() net.Addr {
 // Stop gracefully stops the coordinator service.
 func (c *Coordinator) Stop() {
 	if c.server != nil {
-		c.logger.Println("stopping gRPC server")
+		c.logger.Info("stopping gRPC server")
 		c.server.GracefulStop()
 	}
 }
@@ -128,7 +131,7 @@ func (c *Coordinator) reaper() {
 
 		for id, worker := range c.workers {
 			if time.Since(worker.LastHeartbeat) > c.timeout {
-				c.logger.Printf("worker %s timed out", id)
+				c.logger.Warn("worker timed out", "worker", id)
 				delete(c.workers, id)
 				delete(c.ranks, worker.Rank)
 			}
@@ -148,7 +151,7 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 	}
 
 	if _, ok := c.workers[req.WorkerId]; ok {
-		c.logger.Printf("worker %s already registered", req.WorkerId)
+		c.logger.Warn("worker already registered", "worker", req.WorkerId)
 
 		return nil, fmt.Errorf("worker %s already registered", req.WorkerId)
 	}
@@ -164,22 +167,20 @@ func (c *Coordinator) RegisterWorker(_ context.Context, req *pb.RegisterWorkerRe
 	}
 	c.workers[req.WorkerId] = w
 	c.ranks[rank] = req.WorkerId
-	c.logger.Printf("registered worker %s at address %s with rank %d", req.WorkerId, req.Address, rank)
+	c.logger.Info("registered worker", "worker", req.WorkerId, "address", req.Address, "rank", fmt.Sprintf("%d", rank))
 
 	peers := make([]string, 0, len(c.workers))
 	for r := range c.nextRank {
 		workerID, ok := c.ranks[r]
 		if !ok {
-			// This should not happen, but if it does, we should log it.
-			c.logger.Printf("rank %d not found in ranks map", r)
+			c.logger.Warn("rank not found in ranks map", "rank", fmt.Sprintf("%d", r))
 
 			continue
 		}
 
 		worker, ok := c.workers[workerID]
 		if !ok {
-			// This should not happen, but if it does, we should log it.
-			c.logger.Printf("worker %s not found in workers map", workerID)
+			c.logger.Warn("worker not found in workers map", "worker", workerID)
 
 			continue
 		}
@@ -209,14 +210,14 @@ func (c *Coordinator) UnregisterWorker(_ context.Context, req *pb.UnregisterWork
 
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
-		c.logger.Printf("worker %s not found for unregistration", req.WorkerId)
+		c.logger.Warn("worker not found for unregistration", "worker", req.WorkerId)
 
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
 	delete(c.workers, req.WorkerId)
 	delete(c.ranks, w.Rank)
-	c.logger.Printf("unregistered worker %s", req.WorkerId)
+	c.logger.Info("unregistered worker", "worker", req.WorkerId)
 
 	return &pb.UnregisterWorkerResponse{}, nil
 }
@@ -232,14 +233,14 @@ func (c *Coordinator) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*p
 
 	w, ok := c.workers[req.WorkerId]
 	if !ok {
-		c.logger.Printf("worker %s not found for heartbeat", req.WorkerId)
+		c.logger.Warn("worker not found for heartbeat", "worker", req.WorkerId)
 
 		return nil, fmt.Errorf("worker %s not found", req.WorkerId)
 	}
 
 	w.LastHeartbeat = time.Now()
 
-	c.logger.Printf("received heartbeat from worker %s", req.WorkerId)
+	c.logger.Debug("received heartbeat", "worker", req.WorkerId)
 
 	return &pb.HeartbeatResponse{Status: "OK"}, nil
 }
@@ -250,7 +251,7 @@ func (c *Coordinator) StartCheckpoint(_ context.Context, req *pb.StartCheckpoint
 	defer c.mu.Unlock()
 
 	checkpointID := fmt.Sprintf("ckpt-%d", req.Epoch)
-	c.logger.Printf("starting checkpoint %s for epoch %d, path: %s", checkpointID, req.Epoch, req.Path)
+	c.logger.Info("starting checkpoint", "checkpoint", checkpointID, "epoch", fmt.Sprintf("%d", req.Epoch), "path", req.Path)
 
 	workers := make(map[string]bool)
 	for id := range c.workers {
@@ -287,7 +288,7 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 	}
 
 	checkpoint.Workers[req.WorkerId] = true
-	c.logger.Printf("worker %s finished checkpoint %s for epoch %d", req.WorkerId, req.CheckpointId, req.Epoch)
+	c.logger.Info("worker finished checkpoint", "worker", req.WorkerId, "checkpoint", req.CheckpointId, "epoch", fmt.Sprintf("%d", req.Epoch))
 
 	completed := true
 
@@ -302,7 +303,7 @@ func (c *Coordinator) EndCheckpoint(_ context.Context, req *pb.EndCheckpointRequ
 	if completed {
 		checkpoint.Completed = true
 
-		c.logger.Printf("checkpoint %s for epoch %d completed", req.CheckpointId, req.Epoch)
+		c.logger.Info("checkpoint completed", "checkpoint", req.CheckpointId, "epoch", fmt.Sprintf("%d", req.Epoch))
 	}
 
 	return &pb.EndCheckpointResponse{}, nil

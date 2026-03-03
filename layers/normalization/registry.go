@@ -12,6 +12,89 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// BuildLayerNormalization constructs a LayerNormalization node.
+// It resolves scale (gamma) and bias (beta) parameters using several naming
+// conventions derived from the node name, and reads epsilon from attributes.
+func BuildLayerNormalization[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	name string,
+	params map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
+) (graph.Node[T], error) {
+	epsilonAttr, ok := attributes["epsilon"]
+	if !ok {
+		return nil, errors.New("missing required attribute: epsilon")
+	}
+
+	var epsilon float64
+	switch v := epsilonAttr.(type) {
+	case float64:
+		epsilon = v
+	case float32:
+		epsilon = float64(v)
+	default:
+		return nil, fmt.Errorf("attribute 'epsilon' has incorrect type: expected float64 or float32, got %T", epsilonAttr)
+	}
+
+	// Resolve scale (gamma) parameter via multiple naming patterns.
+	scale := resolveParam(name, params, []string{"_scale", ".weight"})
+
+	// Resolve bias (beta) parameter via multiple naming patterns.
+	bias := resolveParam(name, params, []string{"_bias", ".bias"})
+
+	// Determine featureDim from the scale parameter shape when available.
+	featureDim := 1
+	if scale != nil {
+		shape := scale.Value.Shape()
+		if len(shape) > 0 {
+			featureDim = shape[len(shape)-1]
+		}
+	} else if bias != nil {
+		shape := bias.Value.Shape()
+		if len(shape) > 0 {
+			featureDim = shape[len(shape)-1]
+		}
+	}
+
+	ln, err := NewLayerNormalization(engine, featureDim, WithLayerNormEpsilon[T](ops.FromFloat64(epsilon)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LayerNormalization: %w", err)
+	}
+
+	if scale != nil {
+		ln.gamma = scale
+	}
+	if bias != nil {
+		ln.beta = bias
+	}
+
+	return ln, nil
+}
+
+// resolveParam looks up a parameter from params using several name derivations.
+// It tries: exact suffix appended to name, and path-to-dot conversions with
+// "LayerNormalization" suffix stripped before appending each candidate suffix.
+func resolveParam[T tensor.Numeric](name string, params map[string]*graph.Parameter[T], suffixes []string) *graph.Parameter[T] {
+	for _, sfx := range suffixes {
+		if p, ok := params[name+sfx]; ok {
+			return p
+		}
+	}
+
+	// Convert path-like name to dot notation and strip LayerNormalization suffix.
+	dotName := strings.ReplaceAll(strings.TrimPrefix(name, "/"), "/", ".")
+	dotName = strings.TrimSuffix(dotName, ".LayerNormalization")
+
+	for _, sfx := range suffixes {
+		if p, ok := params[dotName+sfx]; ok {
+			return p
+		}
+	}
+
+	return nil
+}
+
 // BuildRMSNorm constructs an RMSNorm node from the provided parameter and epsilon attribute.
 func BuildRMSNorm[T tensor.Numeric](
 	engine compute.Engine[T],

@@ -90,3 +90,83 @@ func TestDefaultTrainer(t *testing.T) {
 	_, err = trainer.TrainStep(context.Background(), modelGraph, optimizer, inputs, targets)
 	testutils.AssertNoError(t, err, "expected no error, got %v")
 }
+
+func TestDefaultTrainer_OneStepStrategy(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	builder := graph.NewBuilder[float32](engine)
+
+	inputNode := builder.Input([]int{1, 1})
+	mockModelNode := &mockNode[float32]{outputShape: []int{1, 1}}
+	builder.AddNode(mockModelNode, inputNode)
+	modelGraph, err := builder.Build(mockModelNode)
+	testutils.AssertNoError(t, err, "graph build failed")
+
+	optimizer := &mockOptimizer[float32]{}
+	lossFn := &mockNode[float32]{outputShape: []int{1}}
+	strategy := training.NewOneStepApproximationStrategy[float32]()
+	trainer := training.NewDefaultTrainer(modelGraph, lossFn, optimizer, strategy)
+
+	inputTensor, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
+	inputs := map[graph.Node[float32]]*tensor.TensorNumeric[float32]{
+		inputNode: inputTensor,
+	}
+	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
+
+	_, err = trainer.TrainStep(context.Background(), modelGraph, optimizer, inputs, targets)
+	testutils.AssertNoError(t, err, "OneStepStrategy TrainStep failed")
+}
+
+func TestDefaultTrainer_OptimizerStepError(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	builder := graph.NewBuilder[float32](engine)
+
+	inputNode := builder.Input([]int{1, 1})
+	mockModelNode := &mockNode[float32]{outputShape: []int{1, 1}}
+	builder.AddNode(mockModelNode, inputNode)
+	modelGraph, err := builder.Build(mockModelNode)
+	testutils.AssertNoError(t, err, "graph build failed")
+
+	optimizer := &mockOptimizer[float32]{stepErr: true}
+	lossFn := &mockNode[float32]{outputShape: []int{1}}
+	trainer := training.NewDefaultTrainer[float32](modelGraph, lossFn, optimizer, nil)
+
+	inputTensor, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
+	inputs := map[graph.Node[float32]]*tensor.TensorNumeric[float32]{
+		inputNode: inputTensor,
+	}
+	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
+
+	_, err = trainer.TrainStep(context.Background(), modelGraph, optimizer, inputs, targets)
+	if err == nil {
+		t.Error("expected optimizer step error")
+	}
+}
+
+func TestDefaultTrainer_ForwardError(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	builder := graph.NewBuilder[float32](engine)
+
+	inputNode := builder.Input([]int{1, 1})
+	mockModelNode := &mockNode[float32]{outputShape: []int{1, 1}, forwardErr: true}
+	builder.AddNode(mockModelNode, inputNode)
+	modelGraph, err := builder.Build(mockModelNode)
+	testutils.AssertNoError(t, err, "graph build failed")
+
+	optimizer := &mockOptimizer[float32]{}
+	lossFn := &mockNode[float32]{outputShape: []int{1}}
+	trainer := training.NewDefaultTrainer[float32](modelGraph, lossFn, optimizer, nil)
+
+	inputTensor, _ := tensor.New[float32]([]int{1, 1}, []float32{0})
+	inputs := map[graph.Node[float32]]*tensor.TensorNumeric[float32]{
+		inputNode: inputTensor,
+	}
+	targets, _ := tensor.New[float32]([]int{1, 1}, []float32{1})
+
+	_, err = trainer.TrainStep(context.Background(), modelGraph, optimizer, inputs, targets)
+	if err == nil {
+		t.Error("expected forward error")
+	}
+}

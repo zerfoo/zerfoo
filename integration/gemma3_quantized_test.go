@@ -118,7 +118,7 @@ func TestGemma3QuantizedInference(t *testing.T) {
 			}
 		}
 
-		t.Logf("Quantized inference successful. Output shape: %v, Sample output: %v", 
+		t.Logf("Quantized inference successful. Output shape: %v, Sample output: %v",
 			output.Shape(), outputData[:4])
 	})
 
@@ -129,10 +129,10 @@ func TestGemma3QuantizedInference(t *testing.T) {
 
 		// Layer 1 setup
 		quant1Data := []uint8{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC} // 3x2 packed -> 3x4 unpacked
-		scale1Data := []float32{0.1, 0.1, 0.1}                     // uniform scaling
+		scale1Data := []float32{0.1, 0.1, 0.1}                    // uniform scaling
 
 		quant1, err := core.NewConstantFromData[uint8](
-			"layer1_weights", 
+			"layer1_weights",
 			compute.NewCPUEngine[uint8](numeric.Uint8Ops{}),
 			numeric.Uint8Ops{},
 			[]int{3, 2}, quant1Data)
@@ -146,7 +146,7 @@ func TestGemma3QuantizedInference(t *testing.T) {
 			t.Fatalf("Failed to create layer 1 scales: %v", err)
 		}
 
-		// Layer 2 setup  
+		// Layer 2 setup
 		quant2Data := []uint8{0xAB, 0xCD, 0xEF, 0x12} // 4x1 packed -> 4x2 unpacked
 		scale2Data := []float32{0.2, 0.2, 0.2, 0.2}   // uniform scaling
 
@@ -240,7 +240,7 @@ func TestGemma3QuantizedInference(t *testing.T) {
 
 		// Create simple quantized representation
 		// Just use raw uint8 values for testing
-		quantizedData := []uint8{0x12, 0x34} // Will unpack to [2,1,4,3] 
+		quantizedData := []uint8{0x12, 0x34} // Will unpack to [2,1,4,3]
 		quantTensor, err := tensor.New[uint8]([]int{2, 1}, quantizedData)
 		if err != nil {
 			t.Fatalf("Failed to create quantized tensor: %v", err)
@@ -323,11 +323,11 @@ func TestQuantizationRoundTrip(t *testing.T) {
 		for i, orig := range originalValues {
 			deq := dequantized[i]
 			error := abs(orig - deq)
-			
+
 			// Error should be within quantization step size
 			maxError := scale * 2 // Allow up to 2 quantization steps of error
 			if error > maxError {
-				t.Errorf("Round-trip error too large for value %f: got %f, error %f > %f", 
+				t.Errorf("Round-trip error too large for value %f: got %f, error %f > %f",
 					orig, deq, error, maxError)
 			}
 		}

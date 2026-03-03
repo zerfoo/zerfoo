@@ -257,7 +257,7 @@ func TestConstantAttributes(t *testing.T) {
 		}
 
 		attrs := layer.Attributes()
-		
+
 		shape, ok := attrs["shape"].([]int)
 		if !ok {
 			t.Error("Expected shape attribute to be []int")

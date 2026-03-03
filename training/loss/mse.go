@@ -92,7 +92,12 @@ func (m *MSE[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tenso
 		return nil, err
 	}
 
-	return []*tensor.TensorNumeric[T]{gradPred, nil}, nil
+	// Return zero gradient for targets (targets are fixed, not trainable).
+	zeroGrad, err := tensor.New[T](targs.Shape(), make([]T, len(targs.Data())))
+	if err != nil {
+		return nil, err
+	}
+	return []*tensor.TensorNumeric[T]{gradPred, zeroGrad}, nil
 }
 
 // OutputShape returns the output shape of the MSE loss function.

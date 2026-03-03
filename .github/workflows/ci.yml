@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           check-latest: true
       - name: Cache Go build
         uses: actions/cache@v4
@@ -27,15 +27,23 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: ${{ runner.os }}-go-
       - name: Unit tests
-        run: go test ./... -run '^(?!(TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks))' -v
+        run: go test -race ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks' -v
       - name: Linting
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
           golangci-lint run
       - name: Parity tests
-        run: go test ./tests/parity/... -count=1 -v || true  # non-blocking until wired
+        run: go test ./tests/parity/... -count=1 -v
       - name: Numerics red team
-        run: go test ./tests/numerics/... -count=1 -v || true  # non-blocking until wired
+        run: go test ./tests/numerics/... -count=1 -v
+      - name: Coverage gate
+        run: |
+          go test -coverprofile=coverage.out ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks'
+          go run ./cmd/coverage-gate -profile coverage.out -threshold 93
+      - name: Benchmark regression check
+        run: |
+          go test -bench=. -benchmem -count=3 -run='^$' ./compute/ > bench-current.txt 2>&1 || true
+          go run ./cmd/bench-compare -baseline benchmarks/baseline.txt -current bench-current.txt -threshold 10
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           check-latest: true
       - name: Toy training
         run: |

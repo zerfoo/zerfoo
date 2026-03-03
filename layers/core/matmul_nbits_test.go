@@ -35,8 +35,8 @@ func TestNewMatMulNBits(t *testing.T) {
 			ops,
 			quantWeights,
 			scale,
-			nil, // No zero point for symmetric
-			4,   // 4-bit
+			nil,  // No zero point for symmetric
+			4,    // 4-bit
 			true, // symmetric
 		)
 
@@ -196,7 +196,7 @@ func TestMatMulNBitsDequantization(t *testing.T) {
 		}
 
 		data := dequantized.Data()
-		
+
 		// For asymmetric quantization: dequantized = scale * (quantized - zero_point)
 		// Unpacked: [4, 3], zero_point=2, scale=0.2
 		// Expected: 0.2 * (4 - 2) = 0.4, 0.2 * (3 - 2) = 0.2

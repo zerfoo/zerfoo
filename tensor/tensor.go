@@ -51,7 +51,7 @@ type Tensor interface {
 type TensorNumeric[T Numeric] struct { //nolint:revive // Name stutter is intentional for clarity and API stability.
 	shape   []int
 	strides []int
-	data    []T
+	storage Storage[T]
 	isView  bool
 }
 
@@ -79,7 +79,7 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 		return &TensorNumeric[T]{
 			shape:   shape,
 			strides: []int{},
-			data:    data,
+			storage: NewCPUStorage(data),
 		}, nil
 	}
 
@@ -112,7 +112,7 @@ func New[T Numeric](shape []int, data []T) (*TensorNumeric[T], error) {
 	return &TensorNumeric[T]{
 		shape:   shape,
 		strides: strides,
-		data:    data,
+		storage: NewCPUStorage(data),
 	}, nil
 }
 
@@ -130,9 +130,15 @@ func NewFromType(t reflect.Type, shape []int, data any) (Tensor, error) {
 	if elemType.NumField() == 0 { // Simplified check
 		return nil, fmt.Errorf("cannot determine generic type from %s", elemType.Name())
 	}
-	// This is a bit of a hack, relying on the internal structure.
-	// A more robust solution might involve a registry of tensor types.
-	dataType := elemType.Field(2).Type.Elem() // data []T -> T
+	// Create a zero instance and call DType() to determine the element type.
+	inst := reflect.New(elemType)
+	dtypeMethod := inst.MethodByName("DType")
+
+	if !dtypeMethod.IsValid() {
+		return nil, fmt.Errorf("type %s does not have a DType method", elemType.Name())
+	}
+
+	dataType := dtypeMethod.Call(nil)[0].Interface().(reflect.Type)
 
 	// Create a new instance of the concrete tensor type
 	// e.g., reflect.New(tensor.TensorNumeric[float32])
@@ -194,7 +200,7 @@ func (t *TensorNumeric[T]) Shape() []int {
 // For views, this returns only the data visible through the view.
 func (t *TensorNumeric[T]) Data() []T {
 	if !t.isView {
-		return t.data
+		return t.storage.Slice()
 	}
 
 	// For views, we need to extract only the visible data
@@ -205,7 +211,7 @@ func (t *TensorNumeric[T]) Data() []T {
 
 	// Handle 0-dimensional views
 	if t.Dims() == 0 {
-		return t.data[:1]
+		return t.storage.Slice()[:1]
 	}
 
 	// For multi-dimensional views, we need to iterate through all valid indices
@@ -218,6 +224,12 @@ func (t *TensorNumeric[T]) Data() []T {
 
 	return result
 }
+
+// GetStorage returns the underlying storage of the tensor.
+func (t *TensorNumeric[T]) GetStorage() Storage[T] { return t.storage }
+
+// SetStorage replaces the underlying storage of the tensor.
+func (t *TensorNumeric[T]) SetStorage(s Storage[T]) { t.storage = s }
 
 // iterateView recursively iterates through all valid indices in a view.
 func (t *TensorNumeric[T]) iterateView(currentIndices []int, dim int, fn func([]int)) {
@@ -239,7 +251,7 @@ func (t *TensorNumeric[T]) iterateView(currentIndices []int, dim int, fn func([]
 
 // SetData sets the underlying data of the tensor.
 func (t *TensorNumeric[T]) SetData(data []T) {
-	t.data = data
+	t.storage.Set(data)
 }
 
 // Strides returns a copy of the tensor's strides.
@@ -297,17 +309,19 @@ func (t *TensorNumeric[T]) ShapeEquals(other *TensorNumeric[T]) bool {
 // Bytes returns the underlying data of the tensor as a byte slice.
 func (t *TensorNumeric[T]) Bytes() ([]byte, error) {
 	var zero T
+	data := t.storage.Slice()
+
 	switch any(zero).(type) {
 	case float32:
 		// #nosec G103 -- Converting slice header for zero-copy serialization is intentional and audited
-		float32Data := *(*[]float32)(unsafe.Pointer(&t.data))
+		float32Data := *(*[]float32)(unsafe.Pointer(&data))
 
 		return Float32ToBytes(float32Data)
 	case int8:
-		int8Data := *(*[]int8)(unsafe.Pointer(&t.data))
+		int8Data := *(*[]int8)(unsafe.Pointer(&data))
 		return Int8ToBytes(int8Data)
 	case uint8:
-		uint8Data := *(*[]uint8)(unsafe.Pointer(&t.data))
+		uint8Data := *(*[]uint8)(unsafe.Pointer(&data))
 		return Uint8ToBytes(uint8Data)
 	default:
 		return nil, fmt.Errorf("Bytes is currently only implemented for float32, not %T", zero)
@@ -365,15 +379,16 @@ func (t *TensorNumeric[T]) String() string {
 
 // Each applies a function to each element of the tensor.
 func (t *TensorNumeric[T]) Each(fn func(T)) {
-	for _, v := range t.data {
+	for _, v := range t.storage.Slice() {
 		fn(v)
 	}
 }
 
 // Copy creates a deep copy of the tensor.
 func (t *TensorNumeric[T]) Copy() *TensorNumeric[T] {
-	newData := make([]T, len(t.data))
-	copy(newData, t.data)
+	srcData := t.storage.Slice()
+	newData := make([]T, len(srcData))
+	copy(newData, srcData)
 
 	newShape := make([]int, len(t.shape))
 	copy(newShape, t.shape)
@@ -384,7 +399,7 @@ func (t *TensorNumeric[T]) Copy() *TensorNumeric[T] {
 	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: newStrides,
-		data:    newData,
+		storage: NewCPUStorage(newData),
 		isView:  false,
 	}
 }

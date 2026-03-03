@@ -65,6 +65,24 @@ func BuildFromZMF[T tensor.Numeric](
 			continue
 		}
 
+		// Special case: Constant nodes embed their value in a tensor attribute.
+		// Handle them inline without a registry lookup to avoid a circular dependency
+		// (layers packages cannot import the model package).
+		if nodeProto.OpType == "Constant" {
+			constNode, err := buildConstantNode[T](nodeProto)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build Constant node '%s': %w", nodeProto.Name, err)
+			}
+			instantiatedNodes[nodeProto.Name] = constNode
+			// Also register every output alias so downstream nodes can reference them.
+			for _, outName := range nodeProto.Outputs {
+				if outName != "" {
+					instantiatedNodes[outName] = constNode
+				}
+			}
+			continue
+		}
+
 		layerBuilder, err := GetLayerBuilder[T](nodeProto.OpType)
 		if err != nil {
 			return nil, err
@@ -332,6 +350,27 @@ func convertParameters[T tensor.Numeric](zmfParams map[string]*zmf.Tensor) (map[
 	return params, nil
 }
 
+// buildConstantNode creates a parameterNode from a ZMF Constant op node.
+// The node must have a "value" attribute of type *zmf.Attribute_Tensor.
+func buildConstantNode[T tensor.Numeric](nodeProto *zmf.Node) (*parameterNode[T], error) {
+	valueAttr, ok := nodeProto.Attributes["value"]
+	if !ok {
+		return nil, fmt.Errorf("constant node missing required 'value' attribute")
+	}
+
+	tensorAttr, ok := valueAttr.Value.(*zmf.Attribute_Tensor)
+	if !ok {
+		return nil, fmt.Errorf("constant node 'value' attribute has unexpected type %T", valueAttr.Value)
+	}
+
+	decoded, err := DecodeTensor[T](tensorAttr.Tensor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode Constant tensor: %w", err)
+	}
+
+	return &parameterNode[T]{value: decoded}, nil
+}
+
 // convertAttributes converts ZMF attributes to a more usable map[string]interface{}.
 func convertAttributes(zmfAttributes map[string]*zmf.Attribute) map[string]interface{} {
 	attributes := make(map[string]interface{})
@@ -359,6 +398,10 @@ func convertAttributes(zmfAttributes map[string]*zmf.Attribute) map[string]inter
 			stringValues := make([]string, len(v.Strings.Val))
 			copy(stringValues, v.Strings.Val)
 			attributes[name] = stringValues
+		case *zmf.Attribute_Tensor:
+			// Store raw ZMF tensor proto; callers that need a typed tensor (e.g. Constant
+			// node handling in BuildFromZMF) can call DecodeTensor themselves.
+			attributes[name] = v.Tensor
 		}
 	}
 

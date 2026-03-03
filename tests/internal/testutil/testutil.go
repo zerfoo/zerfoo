@@ -11,7 +11,7 @@ import (
 
 func LoadPrompts(path string, n, seed int) []string {
 	var out []string
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path comes from test fixtures
 	if err == nil {
 		defer func() { _ = f.Close() }()
 		sc := bufio.NewScanner(f)
@@ -74,7 +74,7 @@ func TopKAgreement(a, b []float32, k int) float64 {
 		}
 		// partial selection sort for simplicity
 		for i := 0; i < k; i++ {
-			m := i
+			m := i //nolint:copyloopvar // selection sort min index, not a loop var copy
 			for j := i + 1; j < n; j++ {
 				if idx[j].v > idx[m].v {
 					m = j

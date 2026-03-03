@@ -17,7 +17,7 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 			return zero, errors.New("0-dimensional tensor cannot be accessed with indices")
 		}
 		// A 0-dimensional tensor always has one element in its data slice.
-		return t.data[0], nil
+		return t.storage.Slice()[0], nil
 	}
 
 	if len(indices) != t.Dims() {
@@ -38,7 +38,7 @@ func (t *TensorNumeric[T]) At(indices ...int) (T, error) {
 		offset += index * t.strides[i]
 	}
 
-	return t.data[offset], nil
+	return t.storage.Slice()[offset], nil
 }
 
 // Set updates the value at the specified indices.
@@ -64,7 +64,7 @@ func (t *TensorNumeric[T]) Set(value T, indices ...int) error {
 		offset += index * t.strides[i]
 	}
 
-	t.data[offset] = value
+	t.storage.Slice()[offset] = value
 
 	return nil
 }
@@ -99,7 +99,7 @@ func (t *TensorNumeric[T]) Slice(ranges ...[2]int) (*TensorNumeric[T], error) {
 	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: t.strides,
-		data:    t.data[offset:],
+		storage: NewCPUStorage(t.storage.Slice()[offset:]),
 		isView:  true,
 	}, nil
 }

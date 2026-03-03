@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -10,15 +11,8 @@ import (
 )
 
 func main() {
-	// Check if we should use the new CLI framework
-	if len(os.Args) > 1 && (os.Args[1] == "--new-cli" || os.Getenv("ZERFOO_USE_NEW_CLI") == "true") {
-		fmt.Println("NEW CLI: Use 'zerfoo tokenize' for the new framework-based tokenization.")
-		fmt.Println("This legacy tool will be deprecated in future versions.")
-		os.Exit(0)
-	}
-	
-	// Legacy behavior for backward compatibility
 	text := flag.String("text", "", "Text to tokenize")
+	vocabPath := flag.String("vocab", "", "Path to vocabulary file (one token per line)")
 	flag.Parse()
 
 	if *text == "" {
@@ -26,13 +20,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	t := tokenizer.NewTokenizer()
-	// This is a simple tokenizer, so we will add the words from the input to the vocab
-	for _, word := range strings.Fields(*text) {
-		t.AddToken(word)
+	t := tokenizer.NewWhitespaceTokenizer()
+
+	// Load vocabulary from file if provided
+	if *vocabPath != "" {
+		if err := loadVocab(t, *vocabPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load vocabulary: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	tokenIDs := t.Encode(*text)
-
+	tokenIDs, err := t.Encode(*text)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Tokenization failed: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Printf("Token IDs for '%s': %v\n", *text, tokenIDs)
+}
+
+func loadVocab(t *tokenizer.WhitespaceTokenizer, path string) error {
+	file, err := os.Open(path) //nolint:gosec // user-provided path
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		token := strings.TrimSpace(scanner.Text())
+		if token != "" {
+			t.AddToken(token)
+		}
+	}
+	return scanner.Err()
 }

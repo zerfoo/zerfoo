@@ -2,95 +2,42 @@ package data
 
 import (
 	"math"
-	"sort"
-
-	"github.com/parquet-go/parquet-go"
 )
 
-// StockData represents a single stock's data for a given era.
-type StockData struct {
+// Sample represents a single data point with an identifier, feature vector, and target value.
+type Sample struct {
 	ID       string
 	Features []float64
-	Target   float64 // Target value (if known; training data has it, tournament data will not)
+	Target   float64
 }
 
-// EraData represents all the data for a single era.
-type EraData struct {
-	Era      int
-	Stocks   []StockData
-	EraStats []float64 // e.g. precomputed aggregate stats for the era (mean, var, etc.)
+// Batch represents a group of samples collected at the same time index.
+type Batch struct {
+	Index   int
+	Samples []Sample
+	Stats   []float64 // Precomputed aggregate stats for this batch (mean, var, etc.)
 }
 
-// Dataset represents the entire dataset, composed of multiple eras.
+// Dataset represents a collection of time-ordered batches of samples.
 type Dataset struct {
-	Eras []EraData
-}
-
-// NumeraiRow represents a single row in the Numerai parquet format.
-type NumeraiRow struct {
-	Era      int32     `parquet:"era"`
-	ID       string    `parquet:"id"`
-	Features []float32 `parquet:"features,list"`
-	Target   float32   `parquet:"target"`
-}
-
-// LoadDatasetFromParquet loads a dataset from a Parquet file.
-func LoadDatasetFromParquet(path string) (*Dataset, error) {
-	rows, err := parquet.ReadFile[NumeraiRow](path)
-	if err != nil {
-		return nil, err
-	}
-
-	eras := make(map[int][]StockData)
-	for _, row := range rows {
-		features64 := make([]float64, len(row.Features))
-		for i, f := range row.Features {
-			features64[i] = float64(f)
-		}
-
-		stock := StockData{
-			ID:       row.ID,
-			Features: features64,
-			Target:   float64(row.Target),
-		}
-		eraInt := int(row.Era)
-		eras[eraInt] = append(eras[eraInt], stock)
-	}
-
-	dataset := &Dataset{}
-
-	// Sort eras to ensure consistent ordering
-	eraKeys := make([]int, 0, len(eras))
-	for era := range eras {
-		eraKeys = append(eraKeys, era)
-	}
-	sort.Ints(eraKeys)
-
-	for _, era := range eraKeys {
-		dataset.Eras = append(dataset.Eras, EraData{
-			Era:    era,
-			Stocks: eras[era],
-		})
-	}
-
-	return dataset, nil
+	Batches []Batch
 }
 
 // NormalizeFeatures applies z-score normalization to the features of the dataset.
 func (d *Dataset) NormalizeFeatures() {
-	if len(d.Eras) == 0 || len(d.Eras[0].Stocks) == 0 {
+	if len(d.Batches) == 0 || len(d.Batches[0].Samples) == 0 {
 		return
 	}
 
-	numFeatures := len(d.Eras[0].Stocks[0].Features)
+	numFeatures := len(d.Batches[0].Samples[0].Features)
 	means := make([]float64, numFeatures)
 	stdDevs := make([]float64, numFeatures)
 	counts := make([]float64, numFeatures)
 
 	// Calculate mean
-	for _, era := range d.Eras {
-		for _, stock := range era.Stocks {
-			for i, feature := range stock.Features {
+	for _, batch := range d.Batches {
+		for _, sample := range batch.Samples {
+			for i, feature := range sample.Features {
 				if i < numFeatures {
 					means[i] += feature
 					counts[i]++
@@ -106,9 +53,9 @@ func (d *Dataset) NormalizeFeatures() {
 	}
 
 	// Calculate standard deviation
-	for _, era := range d.Eras {
-		for _, stock := range era.Stocks {
-			for i, feature := range stock.Features {
+	for _, batch := range d.Batches {
+		for _, sample := range batch.Samples {
+			for i, feature := range sample.Features {
 				if i < numFeatures {
 					stdDevs[i] += (feature - means[i]) * (feature - means[i])
 				}
@@ -125,14 +72,14 @@ func (d *Dataset) NormalizeFeatures() {
 	}
 
 	// Apply z-score normalization
-	for i := range d.Eras {
-		for j := range d.Eras[i].Stocks {
-			for k, feature := range d.Eras[i].Stocks[j].Features {
+	for i := range d.Batches {
+		for j := range d.Batches[i].Samples {
+			for k, feature := range d.Batches[i].Samples[j].Features {
 				if k < numFeatures {
 					if stdDevs[k] > 0 {
-						d.Eras[i].Stocks[j].Features[k] = (feature - means[k]) / stdDevs[k]
+						d.Batches[i].Samples[j].Features[k] = (feature - means[k]) / stdDevs[k]
 					} else {
-						d.Eras[i].Stocks[j].Features[k] = 0
+						d.Batches[i].Samples[j].Features[k] = 0
 					}
 				}
 			}

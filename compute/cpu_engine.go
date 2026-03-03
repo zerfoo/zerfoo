@@ -10,21 +10,38 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
+	"unsafe"
 
 	float16 "github.com/zerfoo/float16"
 	float8 "github.com/zerfoo/float8"
 	"github.com/zerfoo/zerfoo/internal/xblas"
+	"github.com/zerfoo/zerfoo/log"
+	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // CPUEngine is a CPU-based implementation of the Engine interface.
 type CPUEngine[T tensor.Numeric] struct {
-	ops numeric.Arithmetic[T]
+	ops        numeric.Arithmetic[T]
+	logger     log.Logger
+	collector  metrics.Collector
+	memTracker *MemoryTracker
+}
+
+// Default histogram buckets for operation duration (seconds).
+var opDurationBuckets = []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0}
+
+// recordOp increments the operation counter and records the duration.
+func (e *CPUEngine[T]) recordOp(name string, start time.Time) {
+	e.collector.Counter("op_count_" + name).Inc()
+	e.collector.Histogram("op_duration_seconds", opDurationBuckets).Observe(time.Since(start).Seconds())
 }
 
 // Tanh applies the hyperbolic tangent activation element-wise.
 func (e *CPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Tanh", time.Now())
 	return e.UnaryOp(ctx, a, e.ops.Tanh, dst...)
 }
 
@@ -69,6 +86,68 @@ func parallelFor(total int, fn func(start, end int)) {
 		}(start, end)
 	}
 	wg.Wait()
+}
+
+// parallelForCtx is like parallelFor but respects context cancellation.
+// It checks ctx.Done() before dispatching each chunk and returns the
+// context error if the context is canceled.
+func parallelForCtx(ctx context.Context, total int, fn func(start, end int)) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	const minPerG = 32768
+	if total <= minPerG {
+		fn(0, total)
+		return nil
+	}
+
+	workers := runtime.GOMAXPROCS(0)
+	maxW := total / minPerG
+	if maxW < 1 {
+		maxW = 1
+	}
+	if workers > maxW {
+		workers = maxW
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	chunk := (total + workers - 1) / workers
+
+	var wg sync.WaitGroup
+	canceled := false
+
+	for start := 0; start < total; start += chunk {
+		if !canceled {
+			select {
+			case <-ctx.Done():
+				canceled = true
+			default:
+			}
+		}
+		if canceled {
+			continue
+		}
+
+		end := start + chunk
+		if end > total {
+			end = total
+		}
+		wg.Add(1)
+		go func(s, e int) {
+			defer wg.Done()
+			fn(s, e)
+		}(start, end)
+	}
+	wg.Wait()
+
+	if canceled {
+		return ctx.Err()
+	}
+	return nil
 }
 
 // Split splits a tensor into numSplits along the given axis.
@@ -140,6 +219,7 @@ func (e *CPUEngine[T]) ReduceSum(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("ReduceSum", time.Now())
 	return e.Sum(ctx, a, axis, keepDims, dst...)
 }
 
@@ -275,15 +355,67 @@ func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 }
 
 // NewCPUEngine constructs a new CPUEngine for the given numeric operations.
+// A no-op logger and no-op collector are used by default; call SetLogger/SetCollector to override.
 func NewCPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *CPUEngine[T] {
-	return &CPUEngine[T]{ops: ops}
+	return &CPUEngine[T]{
+		ops:        ops,
+		logger:     log.Nop(),
+		collector:  metrics.Nop(),
+		memTracker: NewMemoryTracker(0),
+	}
 }
+
+// SetLogger replaces the engine's logger.
+func (e *CPUEngine[T]) SetLogger(l log.Logger) {
+	if l == nil {
+		l = log.Nop()
+	}
+	e.logger = l
+}
+
+// SetCollector replaces the engine's metrics collector.
+func (e *CPUEngine[T]) SetCollector(c metrics.Collector) {
+	if c == nil {
+		c = metrics.Nop()
+	}
+	e.collector = c
+}
+
+// SetMemoryLimit configures the maximum number of bytes this engine may
+// allocate for tensors. A limit of 0 disables enforcement.
+func (e *CPUEngine[T]) SetMemoryLimit(bytes int64) {
+	e.memTracker = NewMemoryTracker(bytes)
+}
+
+// MemoryTracker returns the engine's memory tracker.
+func (e *CPUEngine[T]) MemoryTracker() *MemoryTracker {
+	return e.memTracker
+}
+
+// Close is a no-op for CPUEngine. It satisfies the shutdown.Closer interface.
+func (e *CPUEngine[T]) Close(_ context.Context) error { return nil }
 
 // Ops returns the arithmetic ops for this engine.
 func (e *CPUEngine[T]) Ops() numeric.Arithmetic[T] { return e.ops }
 
+// elemBytes returns the byte size of a single element of type T.
+func (e *CPUEngine[T]) elemBytes() int64 {
+	var zero T
+	return int64(unsafe.Sizeof(zero))
+}
+
+// tensorBytes returns the total byte size of a tensor with the given shape.
+func (e *CPUEngine[T]) tensorBytes(shape []int) int64 {
+	n := int64(1)
+	for _, d := range shape {
+		n *= int64(d)
+	}
+	return n * e.elemBytes()
+}
+
 // getOrCreateDest ensures a destination tensor with the requested shape exists.
 // If dst is provided, validates the shape and returns it; otherwise allocates a new tensor.
+// When a memory limit is configured, new allocations are checked against the tracker.
 func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(dst) > 0 && dst[0] != nil {
 		if !reflect.DeepEqual(dst[0].Shape(), shape) {
@@ -291,8 +423,13 @@ func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric
 		}
 		return dst[0], nil
 	}
+	bytes := e.tensorBytes(shape)
+	if err := e.memTracker.Alloc(bytes); err != nil {
+		return nil, fmt.Errorf("tensor allocation (%v): %w", shape, err)
+	}
 	out, err := tensor.New[T](shape, nil)
 	if err != nil {
+		e.memTracker.Free(bytes)
 		return nil, err
 	}
 	return out, nil
@@ -332,7 +469,7 @@ func (e *CPUEngine[T]) Zeros(ctx context.Context, a *tensor.TensorNumeric[T], sh
 }
 
 // UnaryOp applies a unary element-wise operation.
-func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) UnaryOp(ctx context.Context, a *tensor.TensorNumeric[T], op func(T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -342,16 +479,18 @@ func (e *CPUEngine[T]) UnaryOp(_ context.Context, a *tensor.TensorNumeric[T], op
 	}
 	aData := a.Data()
 	rData := result.Data()
-	parallelFor(len(aData), func(start, end int) {
+	if err := parallelForCtx(ctx, len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
 			rData[i] = op(aData[i])
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 // binaryOp performs a broadcasted binary element-wise operation.
-func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T], op func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.TensorNumeric[T], op func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -379,7 +518,7 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 		total *= d
 	}
 
-	parallelFor(total, func(start, end int) {
+	if err := parallelForCtx(ctx, total, func(start, end int) {
 		for lin := start; lin < end; lin++ { //nolint:intrange
 			// Decode linear index into coords
 			offA := 0
@@ -401,28 +540,34 @@ func (e *CPUEngine[T]) binaryOp(_ context.Context, a, b *tensor.TensorNumeric[T]
 			}
 			rData[lin] = op(aData[offA], bData[offB])
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
 
 // Add performs element-wise addition with broadcasting.
 func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Add", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
 // Sub performs element-wise subtraction with broadcasting.
 func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Sub", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Sub, dst...)
 }
 
 // Mul performs element-wise multiplication with broadcasting.
 func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Mul", time.Now())
 	return e.binaryOp(ctx, a, b, e.ops.Mul, dst...)
 }
 
 // Div performs element-wise division with broadcasting. For integer types, division by zero returns an error.
 func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Div", time.Now())
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -642,7 +787,13 @@ func expandShapeStrides(shape, strides []int, rank int) ([]int, []int) {
 }
 
 // MatMul performs matrix multiplication of two tensors.
-func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("MatMul", time.Now())
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -828,6 +979,7 @@ func (e *CPUEngine[T]) MatMul(_ context.Context, a, b *tensor.TensorNumeric[T], 
 }
 
 func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], axes []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Transpose", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -905,6 +1057,7 @@ func (e *CPUEngine[T]) Sum(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Sum", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1030,6 +1183,7 @@ func (e *CPUEngine[T]) Sum(
 
 // Exp computes the element-wise exponential of a tensor.
 func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Exp", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1050,6 +1204,7 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ..
 
 // Log computes the element-wise natural logarithm of a tensor.
 func (e *CPUEngine[T]) Log(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Log", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -1074,6 +1229,7 @@ func (e *CPUEngine[T]) Pow(
 	base, exponent *tensor.TensorNumeric[T],
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Pow", time.Now())
 	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
@@ -1296,6 +1452,7 @@ func (e *CPUEngine[T]) ReduceMean(
 	keepDims bool,
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("ReduceMean", time.Now())
 	sum, err := e.Sum(ctx, a, axis, keepDims, dst...)
 	if err != nil {
 		return nil, err
@@ -1327,6 +1484,7 @@ func (e *CPUEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst
 // Softmax applies the softmax function to a tensor along a given axis.
 // If axis is negative, it is interpreted relative to the last axis (e.g., -1 means last axis).
 func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Softmax", time.Now())
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}

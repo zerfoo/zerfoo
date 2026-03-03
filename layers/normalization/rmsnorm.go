@@ -184,6 +184,12 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 		return nil, err
 	}
 
+	// Reshape reduced gradient from [1, 1, dim] to [dim] to match gain shape.
+	dGainSum, err = dGainSum.Reshape(r.gain.Value.Shape())
+	if err != nil {
+		return nil, fmt.Errorf("RMSNorm: failed to reshape gain gradient: %w", err)
+	}
+
 	r.gain.Gradient, err = r.engine.Add(ctx, r.gain.Gradient, dGainSum, r.gain.Gradient)
 	if err != nil {
 		return nil, err

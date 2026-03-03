@@ -45,8 +45,10 @@ func Equals[T Numeric](a, b *TensorNumeric[T]) bool {
 		return false
 	}
 
-	for i := range a.data {
-		if a.data[i] != b.data[i] {
+	aData := a.Data()
+	bData := b.Data()
+	for i := range aData {
+		if aData[i] != bData[i] {
 			return false
 		}
 	}
@@ -69,31 +71,33 @@ func AssertClose[T Numeric](t *testing.T, expected, actual *TensorNumeric[T], to
 		return
 	}
 
-	for i := range expected.data {
+	expData := expected.Data()
+	actData := actual.Data()
+	for i := range expData {
 		var diff float64
-		switch any(expected.data[i]).(type) {
+		switch any(expData[i]).(type) {
 		case float32:
-			diff = float64(any(expected.data[i]).(float32) - any(actual.data[i]).(float32))
+			diff = float64(any(expData[i]).(float32) - any(actData[i]).(float32))
 		case float64:
-			diff = any(expected.data[i]).(float64) - any(actual.data[i]).(float64)
+			diff = any(expData[i]).(float64) - any(actData[i]).(float64)
 		case int:
-			diff = float64(any(expected.data[i]).(int) - any(actual.data[i]).(int))
+			diff = float64(any(expData[i]).(int) - any(actData[i]).(int))
 		case int8:
-			diff = float64(any(expected.data[i]).(int8) - any(actual.data[i]).(int8))
+			diff = float64(any(expData[i]).(int8) - any(actData[i]).(int8))
 		case int16:
-			diff = float64(any(expected.data[i]).(int16) - any(actual.data[i]).(int16))
+			diff = float64(any(expData[i]).(int16) - any(actData[i]).(int16))
 		case int32:
-			diff = float64(any(expected.data[i]).(int32) - any(actual.data[i]).(int32))
+			diff = float64(any(expData[i]).(int32) - any(actData[i]).(int32))
 		case int64:
-			diff = float64(any(expected.data[i]).(int64) - any(actual.data[i]).(int64))
+			diff = float64(any(expData[i]).(int64) - any(actData[i]).(int64))
 		case uint:
-			diff = float64(any(expected.data[i]).(uint) - any(actual.data[i]).(uint))
+			diff = float64(any(expData[i]).(uint) - any(actData[i]).(uint))
 		case uint8:
-			diff = float64(any(expected.data[i]).(uint8) - any(actual.data[i]).(uint8))
+			diff = float64(any(expData[i]).(uint8) - any(actData[i]).(uint8))
 		case uint32:
-			diff = float64(any(expected.data[i]).(uint32) - any(actual.data[i]).(uint32))
+			diff = float64(any(expData[i]).(uint32) - any(actData[i]).(uint32))
 		case uint64:
-			diff = float64(any(expected.data[i]).(uint64) - any(actual.data[i]).(uint64))
+			diff = float64(any(expData[i]).(uint64) - any(actData[i]).(uint64))
 		}
 		if diff > tolerance || diff < -tolerance {
 			t.Errorf("Expected tensor %v, got %v", expected, actual)

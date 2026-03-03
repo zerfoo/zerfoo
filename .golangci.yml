@@ -68,7 +68,7 @@ linters:
 
     # Tags and struct initialization
     #- exhaustruct
-    - tagliatelle
+    #- tagliatelle  # disabled: existing snake_case JSON tags are an API contract
     - tagalign
 
     # Context and net/http usage
@@ -313,6 +313,13 @@ issues:
         - ireturn
         - gocognit
         - gosec         # keep tests readable; security is focused on prod paths
+        - errcheck      # test helper calls often ignore errors intentionally
+
+    - path: ^cmd/
+      linters:
+        - gosec         # file permissions (0644/0755) are standard for CLI tools
+        - forbidigo     # CLI tools need fmt.Print for user output
+        - gocritic      # exitAfterDefer is expected in main functions
 
     - path: ".*_generated\\.go"
       linters:

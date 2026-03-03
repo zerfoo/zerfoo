@@ -138,77 +138,77 @@ type Fold[T tensor.Numeric] interface {
 // WorkflowConfig configures the training workflow.
 type WorkflowConfig struct {
 	// Training configuration
-	NumEpochs      int                    `json:"num_epochs"`
-	LearningRate   float64                `json:"learning_rate"`
-	EarlyStopTol   float64                `json:"early_stop_tolerance"`
-	MaxNoImprove   int                    `json:"max_no_improve"`
-	RandomSeed     uint64                 `json:"random_seed"`
+	NumEpochs    int     `json:"num_epochs"`
+	LearningRate float64 `json:"learning_rate"`
+	EarlyStopTol float64 `json:"early_stop_tolerance"`
+	MaxNoImprove int     `json:"max_no_improve"`
+	RandomSeed   uint64  `json:"random_seed"`
 
 	// Component configurations
-	BatchConfig    BatchConfig            `json:"batch_config"`
-	ModelConfig    ModelConfig            `json:"model_config"`
-	MetricConfigs  map[string]interface{} `json:"metric_configs"`
+	BatchConfig   BatchConfig            `json:"batch_config"`
+	ModelConfig   ModelConfig            `json:"model_config"`
+	MetricConfigs map[string]interface{} `json:"metric_configs"`
 
 	// Extension point for domain-specific configuration
-	Extensions     map[string]interface{} `json:"extensions"`
+	Extensions map[string]interface{} `json:"extensions"`
 }
 
 // BatchConfig configures batch processing.
 type BatchConfig struct {
-	BatchSize      int                    `json:"batch_size"`
-	Shuffle        bool                   `json:"shuffle"`
-	DropLast       bool                   `json:"drop_last"`
-	NumWorkers     int                    `json:"num_workers"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	BatchSize  int                    `json:"batch_size"`
+	Shuffle    bool                   `json:"shuffle"`
+	DropLast   bool                   `json:"drop_last"`
+	NumWorkers int                    `json:"num_workers"`
+	Extensions map[string]interface{} `json:"extensions"`
 }
 
 // ModelConfig configures model creation.
 type ModelConfig struct {
-	Type           string                 `json:"type"`
-	Architecture   map[string]interface{} `json:"architecture"`
-	Hyperparams    map[string]interface{} `json:"hyperparams"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	Type         string                 `json:"type"`
+	Architecture map[string]interface{} `json:"architecture"`
+	Hyperparams  map[string]interface{} `json:"hyperparams"`
+	Extensions   map[string]interface{} `json:"extensions"`
 }
 
 // SequenceConfig configures sequence generation.
 type SequenceConfig struct {
-	MaxSeqLen      int                    `json:"max_seq_len"`
-	NumSequences   int                    `json:"num_sequences"`
-	Strategy       string                 `json:"strategy"`       // "consecutive", "random", "curriculum"
-	Extensions     map[string]interface{} `json:"extensions"`
+	MaxSeqLen    int                    `json:"max_seq_len"`
+	NumSequences int                    `json:"num_sequences"`
+	Strategy     string                 `json:"strategy"` // "consecutive", "random", "curriculum"
+	Extensions   map[string]interface{} `json:"extensions"`
 }
 
 // SplitConfig configures train/validation splitting.
 type SplitConfig struct {
 	ValidationRatio float64                `json:"validation_ratio"`
-	Strategy        string                 `json:"strategy"`         // "random", "chronological", "stratified"
+	Strategy        string                 `json:"strategy"` // "random", "chronological", "stratified"
 	RandomSeed      uint64                 `json:"random_seed"`
 	Extensions      map[string]interface{} `json:"extensions"`
 }
 
 // CVConfig configures cross-validation.
 type CVConfig struct {
-	Strategy       string                 `json:"strategy"`        // "k_fold", "time_series", "group"
-	NumFolds       int                    `json:"num_folds"`
-	GroupBy        string                 `json:"group_by"`        // For group-based CV
-	PurgeGap       int                    `json:"purge_gap"`       // For time-series CV
-	TestSize       float64                `json:"test_size"`
-	RandomSeed     uint64                 `json:"random_seed"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	Strategy   string                 `json:"strategy"` // "k_fold", "time_series", "group"
+	NumFolds   int                    `json:"num_folds"`
+	GroupBy    string                 `json:"group_by"`  // For group-based CV
+	PurgeGap   int                    `json:"purge_gap"` // For time-series CV
+	TestSize   float64                `json:"test_size"`
+	RandomSeed uint64                 `json:"random_seed"`
+	Extensions map[string]interface{} `json:"extensions"`
 }
 
 // Result structures
 
 // TrainingResult contains training outcome information.
 type TrainingResult[T tensor.Numeric] struct {
-	FinalLoss      T                      `json:"final_loss"`
-	BestLoss       T                      `json:"best_loss"`
-	BestEpoch      int                    `json:"best_epoch"`
-	TotalEpochs    int                    `json:"total_epochs"`
-	TrainingTime   float64                `json:"training_time_seconds"`
-	Metrics        map[string]float64     `json:"metrics"`
-	ModelPath      string                 `json:"model_path,omitempty"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	FinalLoss    T                      `json:"final_loss"`
+	BestLoss     T                      `json:"best_loss"`
+	BestEpoch    int                    `json:"best_epoch"`
+	TotalEpochs  int                    `json:"total_epochs"`
+	TrainingTime float64                `json:"training_time_seconds"`
+	Metrics      map[string]float64     `json:"metrics"`
+	ModelPath    string                 `json:"model_path,omitempty"`
+	Extensions   map[string]interface{} `json:"extensions"`
 }
 
 // ValidationResult contains validation outcome information.
@@ -222,22 +222,22 @@ type ValidationResult[T tensor.Numeric] struct {
 
 // CVResult contains cross-validation results.
 type CVResult[T tensor.Numeric] struct {
-	MeanLoss       T                      `json:"mean_loss"`
-	StdLoss        T                      `json:"std_loss"`
-	MeanMetrics    map[string]float64     `json:"mean_metrics"`
-	StdMetrics     map[string]float64     `json:"std_metrics"`
-	FoldResults    []ValidationResult[T]  `json:"fold_results"`
-	TotalTime      float64                `json:"total_time_seconds"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	MeanLoss    T                      `json:"mean_loss"`
+	StdLoss     T                      `json:"std_loss"`
+	MeanMetrics map[string]float64     `json:"mean_metrics"`
+	StdMetrics  map[string]float64     `json:"std_metrics"`
+	FoldResults []ValidationResult[T]  `json:"fold_results"`
+	TotalTime   float64                `json:"total_time_seconds"`
+	Extensions  map[string]interface{} `json:"extensions"`
 }
 
 // ModelInfo contains model metadata.
 type ModelInfo struct {
-	Name           string                 `json:"name"`
-	Version        string                 `json:"version"`
-	Architecture   string                 `json:"architecture"`
-	Parameters     int64                  `json:"parameter_count"`
-	InputShape     []int                  `json:"input_shape"`
-	OutputShape    []int                  `json:"output_shape"`
-	Extensions     map[string]interface{} `json:"extensions"`
+	Name         string                 `json:"name"`
+	Version      string                 `json:"version"`
+	Architecture string                 `json:"architecture"`
+	Parameters   int64                  `json:"parameter_count"`
+	InputShape   []int                  `json:"input_shape"`
+	OutputShape  []int                  `json:"output_shape"`
+	Extensions   map[string]interface{} `json:"extensions"`
 }

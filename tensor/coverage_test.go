@@ -19,7 +19,7 @@ func TestCoverageSpecific(t *testing.T) {
 	viewTensor := &TensorNumeric[int]{
 		shape:   []int{}, // 0-dimensional
 		strides: []int{}, // 0-dimensional
-		data:    baseTensor.data,
+		storage: baseTensor.GetStorage(),
 		isView:  true, // This is the key - it's a view
 	}
 
@@ -76,7 +76,7 @@ func TestCoverageSpecific(t *testing.T) {
 	zeroDTensor := &TensorNumeric[int]{
 		shape:   []int{}, // 0-dimensional
 		strides: []int{}, // 0-dimensional
-		data:    []int{123},
+		storage: NewCPUStorage([]int{123}),
 		isView:  false,
 	}
 

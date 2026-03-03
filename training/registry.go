@@ -11,13 +11,13 @@ import (
 
 // PluginRegistry manages registered training components and provides factory functions.
 type PluginRegistry[T tensor.Numeric] struct {
-	mu                 sync.RWMutex
-	workflows          map[string]WorkflowFactory[T]
-	dataProviders      map[string]DataProviderFactory[T]
-	modelProviders     map[string]ModelProviderFactory[T]
-	sequenceProviders  map[string]SequenceProviderFactory[T]
-	metricComputers    map[string]MetricComputerFactory[T]
-	crossValidators    map[string]CrossValidatorFactory[T]
+	mu                sync.RWMutex
+	workflows         map[string]WorkflowFactory[T]
+	dataProviders     map[string]DataProviderFactory[T]
+	modelProviders    map[string]ModelProviderFactory[T]
+	sequenceProviders map[string]SequenceProviderFactory[T]
+	metricComputers   map[string]MetricComputerFactory[T]
+	crossValidators   map[string]CrossValidatorFactory[T]
 }
 
 // Factory function types for creating plugin instances
@@ -64,11 +64,11 @@ func NewPluginRegistry[T tensor.Numeric]() *PluginRegistry[T] {
 func (r *PluginRegistry[T]) RegisterWorkflow(name string, factory WorkflowFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.workflows[name]; exists {
 		return fmt.Errorf("workflow '%s' is already registered", name)
 	}
-	
+
 	r.workflows[name] = factory
 	return nil
 }
@@ -78,11 +78,11 @@ func (r *PluginRegistry[T]) GetWorkflow(ctx context.Context, name string, config
 	r.mu.RLock()
 	factory, exists := r.workflows[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("workflow '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -90,7 +90,7 @@ func (r *PluginRegistry[T]) GetWorkflow(ctx context.Context, name string, config
 func (r *PluginRegistry[T]) ListWorkflows() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.workflows))
 	for name := range r.workflows {
 		names = append(names, name)
@@ -104,11 +104,11 @@ func (r *PluginRegistry[T]) ListWorkflows() []string {
 func (r *PluginRegistry[T]) RegisterDataProvider(name string, factory DataProviderFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.dataProviders[name]; exists {
 		return fmt.Errorf("data provider '%s' is already registered", name)
 	}
-	
+
 	r.dataProviders[name] = factory
 	return nil
 }
@@ -118,11 +118,11 @@ func (r *PluginRegistry[T]) GetDataProvider(ctx context.Context, name string, co
 	r.mu.RLock()
 	factory, exists := r.dataProviders[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("data provider '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -130,7 +130,7 @@ func (r *PluginRegistry[T]) GetDataProvider(ctx context.Context, name string, co
 func (r *PluginRegistry[T]) ListDataProviders() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.dataProviders))
 	for name := range r.dataProviders {
 		names = append(names, name)
@@ -144,11 +144,11 @@ func (r *PluginRegistry[T]) ListDataProviders() []string {
 func (r *PluginRegistry[T]) RegisterModelProvider(name string, factory ModelProviderFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.modelProviders[name]; exists {
 		return fmt.Errorf("model provider '%s' is already registered", name)
 	}
-	
+
 	r.modelProviders[name] = factory
 	return nil
 }
@@ -158,11 +158,11 @@ func (r *PluginRegistry[T]) GetModelProvider(ctx context.Context, name string, c
 	r.mu.RLock()
 	factory, exists := r.modelProviders[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("model provider '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -170,7 +170,7 @@ func (r *PluginRegistry[T]) GetModelProvider(ctx context.Context, name string, c
 func (r *PluginRegistry[T]) ListModelProviders() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.modelProviders))
 	for name := range r.modelProviders {
 		names = append(names, name)
@@ -184,11 +184,11 @@ func (r *PluginRegistry[T]) ListModelProviders() []string {
 func (r *PluginRegistry[T]) RegisterSequenceProvider(name string, factory SequenceProviderFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.sequenceProviders[name]; exists {
 		return fmt.Errorf("sequence provider '%s' is already registered", name)
 	}
-	
+
 	r.sequenceProviders[name] = factory
 	return nil
 }
@@ -198,11 +198,11 @@ func (r *PluginRegistry[T]) GetSequenceProvider(ctx context.Context, name string
 	r.mu.RLock()
 	factory, exists := r.sequenceProviders[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("sequence provider '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -210,7 +210,7 @@ func (r *PluginRegistry[T]) GetSequenceProvider(ctx context.Context, name string
 func (r *PluginRegistry[T]) ListSequenceProviders() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.sequenceProviders))
 	for name := range r.sequenceProviders {
 		names = append(names, name)
@@ -224,11 +224,11 @@ func (r *PluginRegistry[T]) ListSequenceProviders() []string {
 func (r *PluginRegistry[T]) RegisterMetricComputer(name string, factory MetricComputerFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.metricComputers[name]; exists {
 		return fmt.Errorf("metric computer '%s' is already registered", name)
 	}
-	
+
 	r.metricComputers[name] = factory
 	return nil
 }
@@ -238,11 +238,11 @@ func (r *PluginRegistry[T]) GetMetricComputer(ctx context.Context, name string, 
 	r.mu.RLock()
 	factory, exists := r.metricComputers[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("metric computer '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -250,7 +250,7 @@ func (r *PluginRegistry[T]) GetMetricComputer(ctx context.Context, name string, 
 func (r *PluginRegistry[T]) ListMetricComputers() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.metricComputers))
 	for name := range r.metricComputers {
 		names = append(names, name)
@@ -264,11 +264,11 @@ func (r *PluginRegistry[T]) ListMetricComputers() []string {
 func (r *PluginRegistry[T]) RegisterCrossValidator(name string, factory CrossValidatorFactory[T]) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if _, exists := r.crossValidators[name]; exists {
 		return fmt.Errorf("cross validator '%s' is already registered", name)
 	}
-	
+
 	r.crossValidators[name] = factory
 	return nil
 }
@@ -278,11 +278,11 @@ func (r *PluginRegistry[T]) GetCrossValidator(ctx context.Context, name string, 
 	r.mu.RLock()
 	factory, exists := r.crossValidators[name]
 	r.mu.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("cross validator '%s' not registered", name)
 	}
-	
+
 	return factory(ctx, config)
 }
 
@@ -290,7 +290,7 @@ func (r *PluginRegistry[T]) GetCrossValidator(ctx context.Context, name string, 
 func (r *PluginRegistry[T]) ListCrossValidators() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	names := make([]string, 0, len(r.crossValidators))
 	for name := range r.crossValidators {
 		names = append(names, name)
@@ -346,7 +346,7 @@ func (r *PluginRegistry[T]) UnregisterCrossValidator(name string) {
 func (r *PluginRegistry[T]) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	r.workflows = make(map[string]WorkflowFactory[T])
 	r.dataProviders = make(map[string]DataProviderFactory[T])
 	r.modelProviders = make(map[string]ModelProviderFactory[T])
@@ -359,13 +359,13 @@ func (r *PluginRegistry[T]) Clear() {
 func (r *PluginRegistry[T]) Summary() map[string]int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	return map[string]int{
-		"workflows":          len(r.workflows),
-		"dataProviders":      len(r.dataProviders),
-		"modelProviders":     len(r.modelProviders),
-		"sequenceProviders":  len(r.sequenceProviders),
-		"metricComputers":    len(r.metricComputers),
-		"crossValidators":    len(r.crossValidators),
+		"workflows":         len(r.workflows),
+		"dataProviders":     len(r.dataProviders),
+		"modelProviders":    len(r.modelProviders),
+		"sequenceProviders": len(r.sequenceProviders),
+		"metricComputers":   len(r.metricComputers),
+		"crossValidators":   len(r.crossValidators),
 	}
 }

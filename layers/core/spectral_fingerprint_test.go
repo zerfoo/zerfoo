@@ -80,7 +80,11 @@ func TestSpectralFingerprint_Backward(t *testing.T) {
 
 	inGrads, err := layer.Backward(context.Background(), types.FullBackprop, grad, in)
 	testutils.AssertNoError(t, err, "backward should not error")
-	testutils.AssertTrue(t, inGrads == nil, "expected nil gradients for stateless non-differentiable layer")
+	testutils.AssertTrue(t, len(inGrads) == 1, "expected 1 gradient tensor for 1 input")
+	// Gradient should be all zeros since spectral fingerprint is non-differentiable
+	for _, v := range inGrads[0].Data() {
+		testutils.AssertTrue(t, v == 0, "expected zero gradient for non-differentiable layer")
+	}
 }
 
 func TestSpectralFingerprint_BuilderRegistry(t *testing.T) {

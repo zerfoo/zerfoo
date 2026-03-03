@@ -3,10 +3,16 @@
 package distributed
 
 import (
+	"context"
 	"fmt"
+	"time"
 
+	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
 	"github.com/zerfoo/zerfoo/tensor"
 )
+
+// Default histogram buckets for distributed operation duration (seconds).
+var distOpDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0}
 
 // AllReduceStrategy implements a more advanced AllReduce algorithm.
 type AllReduceStrategy[T tensor.Numeric] struct {
@@ -14,6 +20,7 @@ type AllReduceStrategy[T tensor.Numeric] struct {
 	crossNodeStrategy InternalStrategy[T]
 	localRank         int
 	isNodeLeader      bool
+	collector         metrics.Collector
 }
 
 // NewAllReduceStrategy creates a new AllReduceStrategy.
@@ -23,7 +30,26 @@ func NewAllReduceStrategy[T tensor.Numeric](
 	return &AllReduceStrategy[T]{
 		localStrategy:     localStrategy,
 		crossNodeStrategy: crossNodeStrategy,
+		collector:         metrics.Nop(),
 	}
+}
+
+// SetCollector replaces the strategy's metrics collector.
+func (s *AllReduceStrategy[T]) SetCollector(c metrics.Collector) {
+	if c == nil {
+		c = metrics.Nop()
+	}
+	s.collector = c
+}
+
+// recordOp increments the operation counter and records the duration.
+func (s *AllReduceStrategy[T]) recordOp(name string, start time.Time) {
+	c := s.collector
+	if c == nil {
+		return
+	}
+	c.Counter(name + "_count").Inc()
+	c.Histogram(name+"_duration_seconds", distOpDurationBuckets).Observe(time.Since(start).Seconds())
 }
 
 // Init initializes the hierarchical strategy.
@@ -46,6 +72,7 @@ func (s *AllReduceStrategy[T]) Init(rank, size int, coordinatorAddress string) e
 
 // AllReduceGradients performs hierarchical all-reduce on gradients.
 func (s *AllReduceStrategy[T]) AllReduceGradients(gradients map[string]*tensor.TensorNumeric[T]) error {
+	defer s.recordOp("allreduce", time.Now())
 	// Step 1: Local AllReduce within the node.
 	if err := s.localStrategy.AllReduceGradients(gradients); err != nil {
 		return fmt.Errorf("local AllReduce failed: %w", err)
@@ -80,6 +107,7 @@ func (s *AllReduceStrategy[T]) Size() int {
 
 // Barrier synchronizes all workers across all nodes.
 func (s *AllReduceStrategy[T]) Barrier() error {
+	defer s.recordOp("barrier", time.Now())
 	// First, synchronize within the local node.
 	if err := s.localStrategy.Barrier(); err != nil {
 		return fmt.Errorf("local barrier failed: %w", err)
@@ -102,6 +130,7 @@ func (s *AllReduceStrategy[T]) Barrier() error {
 // The tensor is first broadcast within the root's local node, then across node leaders, and finally
 // within each local node to ensure all ranks receive the broadcasted tensor.
 func (s *AllReduceStrategy[T]) BroadcastTensor(t *tensor.TensorNumeric[T], rootRank int) error {
+	defer s.recordOp("broadcast", time.Now())
 	// Determine the node leader of the root rank.
 	rootNodeLeaderRank := rootRank - (rootRank % s.localStrategy.Size())
 
@@ -127,6 +156,12 @@ func (s *AllReduceStrategy[T]) Shutdown() {
 	if s.isNodeLeader {
 		s.crossNodeStrategy.Shutdown()
 	}
+}
+
+// Close satisfies the shutdown.Closer interface by calling Shutdown.
+func (s *AllReduceStrategy[T]) Close(_ context.Context) error {
+	s.Shutdown()
+	return nil
 }
 
 // Statically assert that the type implements the interface.

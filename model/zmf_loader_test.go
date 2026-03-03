@@ -97,6 +97,41 @@ func TestLoadZMF_InvalidData(t *testing.T) {
 	}
 }
 
+func TestLoadModelFromZMF_BuildError(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "bad_model.zmf")
+
+	// Create a ZMF model with an unrecognized op type
+	badModel := &zmf.Model{
+		Graph: &zmf.Graph{
+			Inputs: []*zmf.ValueInfo{
+				{Name: "input", Shape: []int64{1}},
+			},
+			Nodes: []*zmf.Node{
+				{Name: "bad_node", OpType: "UnknownOpType_XYZ", Inputs: []string{"input"}},
+			},
+			Outputs: []*zmf.ValueInfo{
+				{Name: "bad_node"},
+			},
+		},
+	}
+
+	data, err := proto.Marshal(badModel)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	_, err = LoadModelFromZMF[float32](engine, ops, filePath)
+	if err == nil {
+		t.Error("expected error for unrecognized op type in model")
+	}
+}
+
 func TestLoadModelFromZMF(t *testing.T) {
 	// 1. Create a temporary .zmf file for testing.
 	tempDir := t.TempDir()

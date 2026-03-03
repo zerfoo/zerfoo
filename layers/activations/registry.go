@@ -18,3 +18,14 @@ func BuildFastGelu[T tensor.Float](
 ) (graph.Node[T], error) {
 	return NewFastGelu(engine), nil
 }
+
+// BuildSigmoid constructs a Sigmoid activation layer for the registry.
+func BuildSigmoid[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	_ string,
+	_ map[string]*graph.Parameter[T],
+	_ map[string]interface{},
+) (graph.Node[T], error) {
+	return NewSigmoid(engine, ops), nil
+}

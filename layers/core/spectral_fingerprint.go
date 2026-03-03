@@ -157,8 +157,20 @@ func (s *SpectralFingerprint[T]) Forward(_ context.Context, inputs ...*tensor.Te
 }
 
 // Backward returns no gradients (treated as non-differentiable feature transform).
-func (s *SpectralFingerprint[T]) Backward(_ context.Context, mode types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
+func (s *SpectralFingerprint[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) == 0 {
+		return []*tensor.TensorNumeric[T]{}, nil
+	}
+	shape := inputs[0].Shape()
+	size := 1
+	for _, d := range shape {
+		size *= d
+	}
+	zeroGrad, err := tensor.New[T](shape, make([]T, size))
+	if err != nil {
+		return nil, fmt.Errorf("spectral fingerprint backward: %w", err)
+	}
+	return []*tensor.TensorNumeric[T]{zeroGrad}, nil
 }
 
 // Statically assert that the type implements the graph.Node interface.

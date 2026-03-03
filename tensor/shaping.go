@@ -52,7 +52,7 @@ func (t *TensorNumeric[T]) Reshape(newShape []int) (*TensorNumeric[T], error) {
 	return &TensorNumeric[T]{
 		shape:   newShape,
 		strides: newStrides,
-		data:    t.data, // Share the underlying data
+		storage: t.storage, // Share the underlying storage
 		isView:  true,
 	}, nil
 }

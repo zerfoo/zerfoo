@@ -169,6 +169,25 @@ func init() {
 		if !ok {
 			return nil, fmt.Errorf("missing or invalid attribute 'hidden_dim' for SimpleRNN")
 		}
+
+		// Restore from ZMF parameters if available.
+		iw := params[name+"_input_weights_weights"]
+		hw := params[name+"_hidden_weights_weights"]
+		bb := params[name+"_bias_biases"]
+		if iw != nil && hw != nil && bb != nil {
+			return &SimpleRNN[float32]{
+				name:          name,
+				engine:        engine,
+				ops:           ops,
+				inputWeights:  core.NewLinearFromParam(engine, iw),
+				hiddenWeights: core.NewLinearFromParam(engine, hw),
+				bias:          core.NewBiasFromParam(engine, ops, bb),
+				activation:    activations.NewTanh[float32](engine, ops),
+				inputDim:      inputDim,
+				hiddenDim:     hiddenDim,
+			}, nil
+		}
+
 		return NewSimpleRNN[float32](name, engine, ops, inputDim, hiddenDim)
 	})
 }

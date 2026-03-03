@@ -27,52 +27,52 @@ func NewLaggedTransformer(lags []int) *LaggedTransformer {
 }
 
 // Transform adds lagged features to the dataset.
-// It assumes the Eras in the dataset are sorted chronologically.
+// It assumes the Batches in the dataset are sorted chronologically.
 func (t *LaggedTransformer) Transform(dataset *data.Dataset) error {
-	if len(dataset.Eras) == 0 || len(dataset.Eras[0].Stocks) == 0 {
+	if len(dataset.Batches) == 0 || len(dataset.Batches[0].Samples) == 0 {
 		return nil
 	}
 
-	// Create a map for quick lookup of stock data by era and stock ID
-	stockHistory := make(map[int]map[string][]float64)
-	for _, era := range dataset.Eras {
-		stockHistory[era.Era] = make(map[string][]float64)
-		for _, stock := range era.Stocks {
+	// Create a map for quick lookup of sample data by batch index and sample ID
+	sampleHistory := make(map[int]map[string][]float64)
+	for _, batch := range dataset.Batches {
+		sampleHistory[batch.Index] = make(map[string][]float64)
+		for _, sample := range batch.Samples {
 			// Store a copy of the original features
-			originalFeatures := make([]float64, len(stock.Features))
-			copy(originalFeatures, stock.Features)
-			stockHistory[era.Era][stock.ID] = originalFeatures
+			originalFeatures := make([]float64, len(sample.Features))
+			copy(originalFeatures, sample.Features)
+			sampleHistory[batch.Index][sample.ID] = originalFeatures
 		}
 	}
 
-	// Sort eras to ensure chronological processing
-	sort.Slice(dataset.Eras, func(i, j int) bool {
-		return dataset.Eras[i].Era < dataset.Eras[j].Era
+	// Sort batches to ensure chronological processing
+	sort.Slice(dataset.Batches, func(i, j int) bool {
+		return dataset.Batches[i].Index < dataset.Batches[j].Index
 	})
 
-	for eraIdx := range dataset.Eras {
-		era := &dataset.Eras[eraIdx]
+	for batchIdx := range dataset.Batches {
+		batch := &dataset.Batches[batchIdx]
 		numOriginalFeatures := 0
-		if len(era.Stocks) > 0 {
-			numOriginalFeatures = len(stockHistory[era.Era][era.Stocks[0].ID])
+		if len(batch.Samples) > 0 {
+			numOriginalFeatures = len(sampleHistory[batch.Index][batch.Samples[0].ID])
 		}
 
-		for stockIdx := range era.Stocks {
-			stock := &era.Stocks[stockIdx]
+		for sampleIdx := range batch.Samples {
+			sample := &batch.Samples[sampleIdx]
 
 			newFeatures := make([]float64, numOriginalFeatures)
-			copy(newFeatures, stock.Features)
+			copy(newFeatures, sample.Features)
 
 			for _, lag := range t.lags {
-				prevEra := era.Era - lag
-				if prevFeatures, ok := stockHistory[prevEra][stock.ID]; ok {
+				prevIndex := batch.Index - lag
+				if prevFeatures, ok := sampleHistory[prevIndex][sample.ID]; ok {
 					newFeatures = append(newFeatures, prevFeatures...)
 				} else {
 					// If past data is missing, append zeros.
 					newFeatures = append(newFeatures, make([]float64, numOriginalFeatures)...)
 				}
 			}
-			stock.Features = newFeatures
+			sample.Features = newFeatures
 		}
 	}
 
@@ -94,42 +94,42 @@ func NewRollingTransformer(window int) *RollingTransformer {
 // Transform adds rolling statistics to the dataset.
 // It calculates the moving average and standard deviation over a given window.
 func (t *RollingTransformer) Transform(dataset *data.Dataset) error {
-	if len(dataset.Eras) == 0 || len(dataset.Eras[0].Stocks) == 0 {
+	if len(dataset.Batches) == 0 || len(dataset.Batches[0].Samples) == 0 {
 		return nil
 	}
 
-	// Create a map for quick lookup of stock data by era and stock ID
-	stockHistory := make(map[int]map[string][]float64)
-	for _, era := range dataset.Eras {
-		stockHistory[era.Era] = make(map[string][]float64)
-		for _, stock := range era.Stocks {
-			stockHistory[era.Era][stock.ID] = stock.Features
+	// Create a map for quick lookup of sample data by batch index and sample ID
+	sampleHistory := make(map[int]map[string][]float64)
+	for _, batch := range dataset.Batches {
+		sampleHistory[batch.Index] = make(map[string][]float64)
+		for _, sample := range batch.Samples {
+			sampleHistory[batch.Index][sample.ID] = sample.Features
 		}
 	}
 
-	// Sort eras to ensure chronological processing
-	sort.Slice(dataset.Eras, func(i, j int) bool {
-		return dataset.Eras[i].Era < dataset.Eras[j].Era
+	// Sort batches to ensure chronological processing
+	sort.Slice(dataset.Batches, func(i, j int) bool {
+		return dataset.Batches[i].Index < dataset.Batches[j].Index
 	})
 
-	for eraIdx := range dataset.Eras {
-		era := &dataset.Eras[eraIdx]
+	for batchIdx := range dataset.Batches {
+		batch := &dataset.Batches[batchIdx]
 		numOriginalFeatures := 0
-		if len(era.Stocks) > 0 {
-			numOriginalFeatures = len(stockHistory[era.Era][era.Stocks[0].ID])
+		if len(batch.Samples) > 0 {
+			numOriginalFeatures = len(sampleHistory[batch.Index][batch.Samples[0].ID])
 		}
 
-		for stockIdx := range era.Stocks {
-			stock := &era.Stocks[stockIdx]
+		for sampleIdx := range batch.Samples {
+			sample := &batch.Samples[sampleIdx]
 
-			newFeatures := make([]float64, len(stock.Features))
-			copy(newFeatures, stock.Features)
+			newFeatures := make([]float64, len(sample.Features))
+			copy(newFeatures, sample.Features)
 
 			for featureIdx := 0; featureIdx < numOriginalFeatures; featureIdx++ {
 				values := []float64{}
 				for i := 0; i < t.window; i++ {
-					prevEra := era.Era - i
-					if prevFeatures, ok := stockHistory[prevEra][stock.ID]; ok && len(prevFeatures) > featureIdx {
+					prevIndex := batch.Index - i
+					if prevFeatures, ok := sampleHistory[prevIndex][sample.ID]; ok && len(prevFeatures) > featureIdx {
 						values = append(values, prevFeatures[featureIdx])
 					}
 				}
@@ -157,7 +157,7 @@ func (t *RollingTransformer) Transform(dataset *data.Dataset) error {
 					newFeatures = append(newFeatures, 0.0, 0.0)
 				}
 			}
-			stock.Features = newFeatures
+			sample.Features = newFeatures
 		}
 	}
 
@@ -180,42 +180,42 @@ func NewFFTTransformer(window, k int) *FFTTransformer {
 
 // Transform adds FFT-based features to the dataset.
 func (t *FFTTransformer) Transform(dataset *data.Dataset) error {
-	if len(dataset.Eras) == 0 || len(dataset.Eras[0].Stocks) == 0 {
+	if len(dataset.Batches) == 0 || len(dataset.Batches[0].Samples) == 0 {
 		return nil
 	}
 
-	// Create a map for quick lookup of stock data by era and stock ID
-	stockHistory := make(map[int]map[string][]float64)
-	for _, era := range dataset.Eras {
-		stockHistory[era.Era] = make(map[string][]float64)
-		for _, stock := range era.Stocks {
-			stockHistory[era.Era][stock.ID] = stock.Features
+	// Create a map for quick lookup of sample data by batch index and sample ID
+	sampleHistory := make(map[int]map[string][]float64)
+	for _, batch := range dataset.Batches {
+		sampleHistory[batch.Index] = make(map[string][]float64)
+		for _, sample := range batch.Samples {
+			sampleHistory[batch.Index][sample.ID] = sample.Features
 		}
 	}
 
-	// Sort eras to ensure chronological processing
-	sort.Slice(dataset.Eras, func(i, j int) bool {
-		return dataset.Eras[i].Era < dataset.Eras[j].Era
+	// Sort batches to ensure chronological processing
+	sort.Slice(dataset.Batches, func(i, j int) bool {
+		return dataset.Batches[i].Index < dataset.Batches[j].Index
 	})
 
-	for eraIdx := range dataset.Eras {
-		era := &dataset.Eras[eraIdx]
+	for batchIdx := range dataset.Batches {
+		batch := &dataset.Batches[batchIdx]
 		numOriginalFeatures := 0
-		if len(era.Stocks) > 0 {
-			numOriginalFeatures = len(stockHistory[era.Era][era.Stocks[0].ID])
+		if len(batch.Samples) > 0 {
+			numOriginalFeatures = len(sampleHistory[batch.Index][batch.Samples[0].ID])
 		}
 
-		for stockIdx := range era.Stocks {
-			stock := &era.Stocks[stockIdx]
+		for sampleIdx := range batch.Samples {
+			sample := &batch.Samples[sampleIdx]
 
-			newFeatures := make([]float64, len(stock.Features))
-			copy(newFeatures, stock.Features)
+			newFeatures := make([]float64, len(sample.Features))
+			copy(newFeatures, sample.Features)
 
 			for featureIdx := 0; featureIdx < numOriginalFeatures; featureIdx++ {
 				series := make([]float64, 0, t.window)
 				for i := 0; i < t.window; i++ {
-					prevEra := era.Era - i
-					if prevFeatures, ok := stockHistory[prevEra][stock.ID]; ok && len(prevFeatures) > featureIdx {
+					prevIndex := batch.Index - i
+					if prevFeatures, ok := sampleHistory[prevIndex][sample.ID]; ok && len(prevFeatures) > featureIdx {
 						series = append(series, prevFeatures[featureIdx])
 					}
 				}
@@ -239,7 +239,7 @@ func (t *FFTTransformer) Transform(dataset *data.Dataset) error {
 					}
 				}
 			}
-			stock.Features = newFeatures
+			sample.Features = newFeatures
 		}
 	}
 
