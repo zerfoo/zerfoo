@@ -69,7 +69,9 @@ func (s *Squeeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 		}
 	}
 	if len(newShape) == 0 {
-		newShape = []int{1}
+		// Squeezing all dimensions produces a scalar (0D tensor).
+		// Use tensor.New directly since Reshape may reject empty shapes.
+		return tensor.New[T](nil, inputs[0].Data()[:1])
 	}
 
 	return s.engine.Reshape(ctx, inputs[0], newShape)

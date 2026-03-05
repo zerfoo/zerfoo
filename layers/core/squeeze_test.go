@@ -43,6 +43,12 @@ func TestSqueeze_Forward(t *testing.T) {
 			wantShape: []int{3, 4},
 		},
 		{
+			name:      "squeeze to scalar",
+			axes:      []int{0},
+			inShape:   []int{1},
+			wantShape: nil, // scalar (0D tensor)
+		},
+		{
 			name:      "no size-1 dims to squeeze",
 			axes:      nil,
 			inShape:   []int{3, 4},
