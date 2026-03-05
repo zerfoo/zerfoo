@@ -74,6 +74,39 @@ func TestConcat_BackwardAxis1(t *testing.T) {
 	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
 }
 
+func TestConcat_ForwardRankAlignment(t *testing.T) {
+	// Simulates the ONNX SigLIP pattern: Unsqueeze output [1,1] concatenated
+	// with Constant [1]. Concat should auto-unsqueeze the 1D input to [1,1].
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	// Unsqueeze output: rank 2, shape [1,1]
+	in1, err := tensor.New[float32]([]int{1, 1}, []float32{42})
+	testutils.AssertNoError(t, err, "create in1")
+	// Constant: rank 1, shape [1]
+	in2, err := tensor.New[float32]([]int{1}, []float32{7})
+	testutils.AssertNoError(t, err, "create in2")
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward rank alignment")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2, 1}, out.Shape()), "shape should be [2,1]")
+	testutils.AssertFloat32SliceApproxEqual(t, []float32{42, 7}, out.Data(), 0, "data")
+}
+
+func TestConcat_ForwardSameRankUnchanged(t *testing.T) {
+	// When all inputs have the same rank, no alignment should occur.
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	in1, _ := tensor.New[float32]([]int{1}, []float32{1})
+	in2, _ := tensor.New[float32]([]int{1}, []float32{2})
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward same rank")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2}, out.Shape()), "shape should be [2]")
+	testutils.AssertFloat32SliceApproxEqual(t, []float32{1, 2}, out.Data(), 0, "data")
+}
+
 func TestConcat_ForwardAxis0(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	layer := NewConcat[float32](engine, 0)

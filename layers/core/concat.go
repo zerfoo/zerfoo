@@ -49,8 +49,47 @@ func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 		return inputs[0], nil
 	}
 
+	// Ensure all inputs have the same rank by unsqueezing lower-rank tensors.
+	// This handles the common ONNX pattern where Constant [N] tensors are
+	// concatenated with Unsqueeze outputs of shape [1, N].
+	maxRank := 0
+	for _, t := range inputs {
+		if r := len(t.Shape()); r > maxRank {
+			maxRank = r
+		}
+	}
+	needsAlign := false
+	for _, t := range inputs {
+		if len(t.Shape()) < maxRank {
+			needsAlign = true
+			break
+		}
+	}
+	aligned := inputs
+	if needsAlign {
+		aligned = make([]*tensor.TensorNumeric[T], len(inputs))
+		for i, t := range inputs {
+			if r := len(t.Shape()); r < maxRank {
+				// Prepend dimensions of size 1 to match maxRank.
+				newShape := make([]int, maxRank)
+				pad := maxRank - r
+				for j := range pad {
+					newShape[j] = 1
+				}
+				copy(newShape[pad:], t.Shape())
+				reshaped, err := tensor.New[T](newShape, t.Data())
+				if err != nil {
+					return nil, fmt.Errorf("concat rank alignment failed for input %d: %w", i, err)
+				}
+				aligned[i] = reshaped
+			} else {
+				aligned[i] = t
+			}
+		}
+	}
+
 	// Perform actual concatenation via engine
-	out, err := c.engine.Concat(context.Background(), inputs, c.axis)
+	out, err := c.engine.Concat(context.Background(), aligned, c.axis)
 	if err != nil {
 		return nil, err
 	}
