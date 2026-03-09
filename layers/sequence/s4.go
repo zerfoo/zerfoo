@@ -165,7 +165,10 @@ func (s *S4[T]) Parameters() []*graph.Parameter[T] {
 //
 // Input: [batch, seq_len, input_dim]
 // Output: [batch, seq_len, input_dim]
-func (s *S4[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+//
+// All arithmetic is routed through engine primitives so the computation
+// graph is fully traceable by the tracing compiler.
+func (s *S4[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("S4 requires exactly 1 input, got %d", len(inputs))
 	}
@@ -181,54 +184,105 @@ func (s *S4[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (
 
 	s.lastInput = input
 
-	// Compute discrete A = exp(-exp(a_log)) element-wise.
-	// Since a_log parameterizes log(-A), discrete A = exp(-exp(a_log) * dt).
-	// We use dt=1 for simplicity, so A_disc = exp(-exp(a_log)).
-	aLogData := s.aLog.Value.Data()
-	bData := s.b.Value.Data()
-	cData := s.c.Value.Data()
-	dData := s.d.Value.Data()
-	uData := input.Data()
-
-	// Pre-compute discrete A values.
-	aDisc := make([]T, dim*s.stateDim)
-	for i, v := range aLogData {
-		aDisc[i] = T(math.Exp(-math.Exp(float64(v))))
+	// Compute discrete A = exp(-exp(a_log)) element-wise via engine primitives.
+	// A_disc = exp(-exp(a_log))
+	expALog, err := s.engine.Exp(ctx, s.aLog.Value) // exp(a_log)  [dim, state_dim]
+	if err != nil {
+		return nil, fmt.Errorf("s4 exp(a_log): %w", err)
+	}
+	negExpALog, err := s.engine.MulScalar(ctx, expALog, T(-1)) // -exp(a_log)
+	if err != nil {
+		return nil, fmt.Errorf("s4 neg exp(a_log): %w", err)
+	}
+	aDisc, err := s.engine.Exp(ctx, negExpALog) // exp(-exp(a_log))  [dim, state_dim]
+	if err != nil {
+		return nil, fmt.Errorf("s4 exp(-exp(a_log)): %w", err)
 	}
 
-	// Run the scan.
-	outputData := make([]T, batchSize*seqLen*dim)
-	// State: [batch, dim, state_dim]
-	state := make([]T, batchSize*dim*s.stateDim)
+	// Initialize state to zeros: [batch, dim, state_dim].
+	stateData := make([]T, batchSize*dim*s.stateDim)
+	state, err := tensor.New[T]([]int{batchSize, dim, s.stateDim}, stateData)
+	if err != nil {
+		return nil, fmt.Errorf("s4 init state: %w", err)
+	}
 
-	for batch := range batchSize {
-		for t := range seqLen {
-			for d := range dim {
-				u := uData[batch*seqLen*dim+t*dim+d]
-				var y T
-				for n := range s.stateDim {
-					idx := d*s.stateDim + n
-					stateIdx := batch*dim*s.stateDim + idx
-					// x_k = a * x_{k-1} + b * u_k
-					state[stateIdx] = aDisc[idx]*state[stateIdx] + bData[idx]*u
-					// y += c * x_k
-					y += cData[idx] * state[stateIdx]
-				}
-				// y += d * u (skip connection)
-				y += dData[d] * u
-				outputData[batch*seqLen*dim+t*dim+d] = y
-			}
+	// Collect per-step outputs for concatenation.
+	stepOutputs := make([]*tensor.TensorNumeric[T], seqLen)
+
+	// Sequential scan over time steps.
+	for t := range seqLen {
+		// Extract u_t: input[:, t, :] -> [batch, dim].
+		// Build a contiguous tensor from the input slice at timestep t.
+		uData := make([]T, batchSize*dim)
+		inData := input.Data()
+		for b := range batchSize {
+			copy(uData[b*dim:(b+1)*dim], inData[b*seqLen*dim+t*dim:b*seqLen*dim+t*dim+dim])
 		}
+		ut, err := tensor.New[T]([]int{batchSize, dim}, uData)
+		if err != nil {
+			return nil, fmt.Errorf("s4 extract u_t: %w", err)
+		}
+
+		// Expand u_t to [batch, dim, 1] for broadcasting with [dim, state_dim].
+		utExp, err := s.engine.Reshape(ctx, ut, []int{batchSize, dim, 1})
+		if err != nil {
+			return nil, fmt.Errorf("s4 reshape u_t: %w", err)
+		}
+
+		// state = aDisc * state + b * u_t
+		// aDisc is [dim, state_dim], state is [batch, dim, state_dim] -> broadcasts.
+		aState, err := s.engine.Mul(ctx, aDisc, state)
+		if err != nil {
+			return nil, fmt.Errorf("s4 aDisc*state: %w", err)
+		}
+		// b is [dim, state_dim], utExp is [batch, dim, 1] -> broadcasts to [batch, dim, state_dim].
+		bU, err := s.engine.Mul(ctx, s.b.Value, utExp)
+		if err != nil {
+			return nil, fmt.Errorf("s4 b*u_t: %w", err)
+		}
+		state, err = s.engine.Add(ctx, aState, bU)
+		if err != nil {
+			return nil, fmt.Errorf("s4 state update: %w", err)
+		}
+
+		// y_t = sum(c * state, axis=-1) + d * u_t
+		// c is [dim, state_dim], state is [batch, dim, state_dim].
+		cx, err := s.engine.Mul(ctx, s.c.Value, state)
+		if err != nil {
+			return nil, fmt.Errorf("s4 c*state: %w", err)
+		}
+		// Sum over state_dim (axis 2) -> [batch, dim].
+		yt, err := s.engine.Sum(ctx, cx, 2, false)
+		if err != nil {
+			return nil, fmt.Errorf("s4 sum c*x: %w", err)
+		}
+
+		// d * u_t: d is [dim], ut is [batch, dim] -> broadcasts.
+		du, err := s.engine.Mul(ctx, s.d.Value, ut)
+		if err != nil {
+			return nil, fmt.Errorf("s4 d*u_t: %w", err)
+		}
+		yt, err = s.engine.Add(ctx, yt, du)
+		if err != nil {
+			return nil, fmt.Errorf("s4 y_t + d*u_t: %w", err)
+		}
+
+		// Reshape y_t to [batch, 1, dim] for later concatenation along axis 1.
+		yt, err = s.engine.Reshape(ctx, yt, []int{batchSize, 1, dim})
+		if err != nil {
+			return nil, fmt.Errorf("s4 reshape y_t: %w", err)
+		}
+		stepOutputs[t] = yt
 	}
 
 	// Save final state for backward.
-	finalState, err := tensor.New[T]([]int{batchSize, dim, s.stateDim}, state)
-	if err != nil {
-		return nil, err
-	}
-	s.lastStates = finalState
+	s.lastStates = state
 
-	return tensor.New[T]([]int{batchSize, seqLen, dim}, outputData)
+	// Concatenate all step outputs along axis 1 -> [batch, seq_len, dim].
+	if seqLen == 1 {
+		return s.engine.Reshape(ctx, stepOutputs[0], []int{batchSize, seqLen, dim})
+	}
+	return s.engine.Concat(ctx, stepOutputs, 1)
 }
 
 // Backward computes gradients using full backpropagation through time (BPTT).

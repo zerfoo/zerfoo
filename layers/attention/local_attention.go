@@ -95,33 +95,29 @@ func (la *LocalAttention[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 }
 
 func (la *LocalAttention[T]) createLocalAttentionMask(seqLen int) (*tensor.TensorNumeric[T], error) {
-	mask, err := tensor.New[T]([]int{1, 1, seqLen, seqLen}, nil)
-	if err != nil {
-		return nil, err
-	}
-	// Fill with a large negative number
 	largeNegative := la.ops.FromFloat64(-1e9)
-	for i := 0; i < seqLen*seqLen; i++ { //nolint:intrange // Keep classic index loop for clarity and performance
-		mask.Data()[i] = largeNegative
-	}
+	zero := la.ops.FromFloat64(0)
+	data := make([]T, seqLen*seqLen)
 
-	for i := 0; i < seqLen; i++ { //nolint:intrange // Keep classic index loop for clarity and performance
+	for i := range seqLen {
 		start := i - la.windowSize
 		if start < 0 {
 			start = 0
 		}
-
 		end := i + la.windowSize + 1
 		if end > seqLen {
 			end = seqLen
 		}
-
-		for j := start; j < end; j++ {
-			mask.Data()[i*seqLen+j] = la.ops.FromFloat64(0)
+		for j := range seqLen {
+			if j >= start && j < end {
+				data[i*seqLen+j] = zero
+			} else {
+				data[i*seqLen+j] = largeNegative
+			}
 		}
 	}
 
-	return mask, nil
+	return tensor.New[T]([]int{1, 1, seqLen, seqLen}, data)
 }
 
 // Backward delegates the backward pass to the wrapped GroupedQueryAttention.

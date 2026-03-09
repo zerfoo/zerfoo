@@ -80,6 +80,14 @@ func (k *ROCmKernels) DivScalar(a unsafe.Pointer, scalar float32, c unsafe.Point
 	return kernels.DivScalar(a, scalar, c, n, rocmStreamPtr(s))
 }
 
+func (k *ROCmKernels) SubScalar(_ unsafe.Pointer, _ float32, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubScalar: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) PowScalar(_ unsafe.Pointer, _ float32, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("PowScalar: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) Fill(data unsafe.Pointer, value float32, n int, s Stream) error {
 	return kernels.Fill(data, value, n, rocmStreamPtr(s))
 }
@@ -124,7 +132,7 @@ func (k *ROCmKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int,
 	return fmt.Errorf("Gather: not implemented for ROCm")
 }
 
-func (k *ROCmKernels) RMSNorm(input, weight, output unsafe.Pointer, eps float32, rows, D int, _ Stream) error {
+func (k *ROCmKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, _ Stream) error {
 	return fmt.Errorf("RMSNorm: not implemented for ROCm")
 }
 

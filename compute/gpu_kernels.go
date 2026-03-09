@@ -85,6 +85,60 @@ func gpuBroadcastOp[T tensor.Numeric](
 	aShape := a.Shape()
 	bShape := b.Shape()
 
+	// Scalar-broadcast fast path: if one operand has exactly 1 element,
+	// use the broadcast kernel with strides 0,0 for that operand.
+	aTotal := totalElements(aShape)
+	bTotal := totalElements(bShape)
+
+	if bTotal == 1 || aTotal == 1 {
+		// Both are scalar -> same-shape path handles it.
+		if aTotal == 1 && bTotal == 1 {
+			// fall through to normal path
+		} else {
+			// Use broadcast kernel with stride 0 for the scalar operand.
+			var M, D int
+			var saRow, saCol, sbRow, sbCol int
+			if bTotal == 1 {
+				M, D = flattenTo2D(aShape)
+				saRow, saCol = D, 1
+				sbRow, sbCol = 0, 0
+			} else {
+				M, D = flattenTo2D(bShape)
+				saRow, saCol = 0, 0
+				sbRow, sbCol = D, 1
+			}
+			outShape := broadcastShape(aShape, bShape)
+
+			e.setDevice()
+
+			devA, cleanupA, err := getDevicePtr(e, a)
+			if err != nil {
+				return nil, err
+			}
+			defer cleanupA()
+
+			devB, cleanupB, err := getDevicePtr(e, b)
+			if err != nil {
+				return nil, err
+			}
+			defer cleanupB()
+
+			outElems := M * D
+			byteSize := outElems * f32Size
+			devC, err := e.pool.Alloc(e.deviceID, byteSize)
+			if err != nil {
+				return nil, err
+			}
+
+			if err := kernelFn(devA, devB, devC, saRow, saCol, sbRow, sbCol, M, D, e.stream); err != nil {
+				e.pool.Free(e.deviceID, devC, byteSize)
+				return nil, err
+			}
+
+			return makeGPUResult[T](e, outShape, devC, outElems, dst...)
+		}
+	}
+
 	// Flatten to 2D for broadcast analysis.
 	// For N-D tensors, treat as [product(all-but-last), last].
 	aM, aD := flattenTo2D(aShape)
@@ -361,13 +415,34 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 }
 
 func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if !isFloat32[T]() || !sameShape(base, exponent) {
+	if !isFloat32[T]() {
 		return e.cpu.Pow(ctx, base, exponent, dst...)
 	}
 
-	e.setDevice()
+	if sameShape(base, exponent) {
+		e.setDevice()
+		return gpuBinaryOp(e, ctx, base, exponent, e.kernels.Pow, dst...)
+	}
 
-	return gpuBinaryOp(e, ctx, base, exponent, e.kernels.Pow, dst...)
+	// Scalar exponent: exponent has 1 element (e.g. x^2 in RMSNorm).
+	if totalElements(exponent.Shape()) == 1 {
+		scalar := exponent.Data()[0]
+		e.setDevice()
+		return gpuScalarOp(e, base, toFloat32(scalar), e.kernels.PowScalar, dst...)
+	}
+
+	// Scalar base: base has 1 element.
+	if totalElements(base.Shape()) == 1 {
+		// Fall back to CPU for scalar-base Pow (rare pattern).
+		return e.cpu.Pow(ctx, base, exponent, dst...)
+	}
+
+	return e.cpu.Pow(ctx, base, exponent, dst...)
+}
+
+func (e *GPUEngine[T]) gpuSubScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	e.setDevice()
+	return gpuScalarOp(e, a, toFloat32(scalar), e.kernels.SubScalar, dst...)
 }
 
 func (e *GPUEngine[T]) gpuExp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -695,4 +770,135 @@ func sameShape[T tensor.Numeric](a, b *tensor.TensorNumeric[T]) bool {
 	}
 
 	return true
+}
+
+// gpuSplit splits a GPU-resident tensor along the given axis using D2D memcpy.
+// It avoids any D2H copy by operating entirely in device memory.
+func (e *GPUEngine[T]) gpuSplit(srcPtr unsafe.Pointer, shape []int, numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
+	rank := len(shape)
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
+	}
+	if shape[axis]%numSplits != 0 {
+		return nil, fmt.Errorf("cannot split dimension %d (size %d) into %d equal parts", axis, shape[axis], numSplits)
+	}
+
+	part := shape[axis] / numSplits
+	outShape := make([]int, rank)
+	copy(outShape, shape)
+	outShape[axis] = part
+
+	// Compute block sizes for contiguous copies in row-major order.
+	blockSize := 1
+	for i := axis + 1; i < rank; i++ {
+		blockSize *= shape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	partElems := totalElements(outShape)
+	partBytes := partElems * f32Size
+	chunkBytes := part * blockSize * f32Size
+
+	e.setDevice()
+	outs := make([]*tensor.TensorNumeric[T], numSplits)
+	for i := range numSplits {
+		devOut, err := e.pool.Alloc(e.deviceID, partBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		for o := range outer {
+			srcOff := (o*shape[axis]*blockSize + i*part*blockSize) * f32Size
+			dstOff := (o * part * blockSize) * f32Size
+			src := unsafe.Add(srcPtr, srcOff)
+			dst := unsafe.Add(devOut, dstOff)
+			if err := e.runtime.MemcpyAsync(dst, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
+				e.pool.Free(e.deviceID, devOut, partBytes)
+				return nil, fmt.Errorf("gpu split memcpy: %w", err)
+			}
+		}
+
+		t, err := makeGPUResult[T](e, outShape, devOut, partElems)
+		if err != nil {
+			e.pool.Free(e.deviceID, devOut, partBytes)
+			return nil, err
+		}
+		outs[i] = t
+	}
+
+	return outs, nil
+}
+
+// gpuConcat concatenates GPU-resident tensors along the given axis using D2D memcpy.
+func (e *GPUEngine[T]) gpuConcat(ptrs []unsafe.Pointer, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	first := tensors[0]
+	rank := len(first.Shape())
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
+	}
+
+	// Validate shapes and build output shape.
+	outShape := make([]int, rank)
+	copy(outShape, first.Shape())
+	outShape[axis] = 0
+	for _, t := range tensors {
+		s := t.Shape()
+		if len(s) != rank {
+			return nil, fmt.Errorf("tensors must have the same number of dimensions for concatenation")
+		}
+		for i, d := range s {
+			if i == axis {
+				outShape[axis] += d
+			} else if d != first.Shape()[i] {
+				return nil, fmt.Errorf("dimensions must be equal except for the concatenation axis")
+			}
+		}
+	}
+
+	outElems := totalElements(outShape)
+	outBytes := outElems * f32Size
+
+	// Compute block sizes.
+	blockSize := 1
+	for i := axis + 1; i < rank; i++ {
+		blockSize *= outShape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= outShape[i]
+	}
+
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	axisOffset := 0
+	for ti, t := range tensors {
+		tAxis := t.Shape()[axis]
+		chunkBytes := tAxis * blockSize * f32Size
+		for o := range outer {
+			srcOff := (o * tAxis * blockSize) * f32Size
+			dstOff := (o*outShape[axis]*blockSize + axisOffset*blockSize) * f32Size
+			src := unsafe.Add(ptrs[ti], srcOff)
+			d := unsafe.Add(devOut, dstOff)
+			if err := e.runtime.MemcpyAsync(d, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
+				e.pool.Free(e.deviceID, devOut, outBytes)
+				return nil, fmt.Errorf("gpu concat memcpy: %w", err)
+			}
+		}
+		axisOffset += tAxis
+	}
+
+	return makeGPUResult[T](e, outShape, devOut, outElems, dst...)
 }

@@ -18,6 +18,8 @@ import (
 //	y = scale[c] * (X - mean[c]) / sqrt(var[c] + epsilon) + B[c]
 //
 // scale, B, mean, and var must have shape [C] matching X's channel dimension.
+// All operations use Engine primitives so they appear in the ExecutionPlan
+// instruction tape.
 type BatchNormalization[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
@@ -32,7 +34,7 @@ func NewBatchNormalization[T tensor.Numeric](engine compute.Engine[T], ops numer
 
 // Forward computes batch normalization in inference mode.
 // inputs: [X, scale, B, mean, var].
-func (b *BatchNormalization[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (b *BatchNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 5 {
 		return nil, fmt.Errorf("BatchNormalization requires 5 inputs (X, scale, B, mean, var), got %d", len(inputs))
 	}
@@ -44,51 +46,77 @@ func (b *BatchNormalization[T]) Forward(_ context.Context, inputs ...*tensor.Ten
 	}
 
 	c := xShape[1]
-	scaleData := scale.Data()
-	biasData := bias.Data()
-	meanData := mean.Data()
-	varData := variance.Data()
 
-	if len(scaleData) != c || len(biasData) != c || len(meanData) != c || len(varData) != c {
-		return nil, fmt.Errorf("BatchNormalization: scale/B/mean/var must have length %d (C), got %d/%d/%d/%d",
-			c, len(scaleData), len(biasData), len(meanData), len(varData))
-	}
-
-	// Pre-compute per-channel normalization factors: scale[c] / sqrt(var[c] + eps).
-	factors := make([]T, c)
-	shifts := make([]T, c)
-	for ci := range c {
-		std := b.ops.Sqrt(b.ops.Add(varData[ci], b.epsilon))
-		factors[ci] = b.ops.Div(scaleData[ci], std)
-		// shift = bias[c] - scale[c] * mean[c] / sqrt(var[c] + eps)
-		shifts[ci] = b.ops.Sub(biasData[ci], b.ops.Mul(factors[ci], meanData[ci]))
-	}
-
-	xData := X.Data()
-	outData := make([]T, len(xData))
-
-	// Spatial size = product of dims after dim 1.
-	spatialSize := 1
-	for _, d := range xShape[2:] {
-		spatialSize *= d
-	}
-
-	n := xShape[0]
-	for ni := range n {
-		for ci := range c {
-			base := ni*c*spatialSize + ci*spatialSize
-			f := factors[ci]
-			s := shifts[ci]
-			for i := range spatialSize {
-				outData[base+i] = b.ops.Add(b.ops.Mul(f, xData[base+i]), s)
-			}
+	// Validate parameter shapes
+	for name, param := range map[string]*tensor.TensorNumeric[T]{"scale": scale, "B": bias, "mean": mean, "var": variance} {
+		pShape := param.Shape()
+		if len(pShape) != 1 || pShape[0] != c {
+			return nil, fmt.Errorf("BatchNormalization: %s must have shape [%d], got %v", name, c, pShape)
 		}
 	}
 
-	out, err := tensor.New[T](xShape, outData)
-	if err != nil {
-		return nil, fmt.Errorf("BatchNormalization: failed to create output tensor: %w", err)
+	// Build broadcast shape [1, C, 1, 1, ...] matching X's rank.
+	broadcastShape := make([]int, len(xShape))
+	broadcastShape[0] = 1
+	broadcastShape[1] = c
+	for i := 2; i < len(xShape); i++ {
+		broadcastShape[i] = 1
 	}
+
+	// Reshape [C] parameters to [1, C, 1, ...] for broadcasting with X.
+	meanBC, err := b.engine.Reshape(ctx, mean, broadcastShape)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: reshape mean: %w", err)
+	}
+	varBC, err := b.engine.Reshape(ctx, variance, broadcastShape)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: reshape var: %w", err)
+	}
+	scaleBC, err := b.engine.Reshape(ctx, scale, broadcastShape)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: reshape scale: %w", err)
+	}
+	biasBC, err := b.engine.Reshape(ctx, bias, broadcastShape)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: reshape bias: %w", err)
+	}
+
+	// var + epsilon
+	varEps, err := b.engine.AddScalar(ctx, varBC, b.epsilon)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: add epsilon: %w", err)
+	}
+
+	// sqrt(var + epsilon)
+	std, err := b.engine.Sqrt(ctx, varEps)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: sqrt: %w", err)
+	}
+
+	// X - mean (broadcasts [1,C,1,...] to [N,C,H,W,...])
+	centered, err := b.engine.Sub(ctx, X, meanBC)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: sub mean: %w", err)
+	}
+
+	// (X - mean) / sqrt(var + epsilon)
+	normalized, err := b.engine.Div(ctx, centered, std)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: div std: %w", err)
+	}
+
+	// scale * normalized
+	scaled, err := b.engine.Mul(ctx, normalized, scaleBC)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: mul scale: %w", err)
+	}
+
+	// scale * normalized + bias
+	out, err := b.engine.Add(ctx, scaled, biasBC)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization: add bias: %w", err)
+	}
+
 	b.outputShape = out.Shape()
 	return out, nil
 }

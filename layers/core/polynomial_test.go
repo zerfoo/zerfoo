@@ -426,3 +426,104 @@ func TestPolynomialExpansion_FunctionalOptionsForward(t *testing.T) {
 	testutils.AssertTrue(t, outputShape[0] == 1, "expected batch size 1")
 	testutils.AssertTrue(t, outputShape[1] == poly.GetOutputSize(), "expected correct output size")
 }
+
+// TestPolynomialExpansion_Parity verifies engine-composed Forward produces
+// outputs within 1e-5 of hand-computed reference values.
+func TestPolynomialExpansion_Parity(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	const tol float32 = 1e-5
+
+	tests := []struct {
+		name     string
+		input    []float32 // flat [batch, inputSize]
+		batch    int
+		inSize   int
+		degree   int
+		bias     bool
+		wantFunc func(terms [][]int, inData []float32, batch, inSize int) []float32
+	}{
+		{
+			name:   "deg2_bias_single",
+			input:  []float32{2.0, 3.0},
+			batch:  1,
+			inSize: 2,
+			degree: 2,
+			bias:   true,
+		},
+		{
+			name:   "deg2_nobias_single",
+			input:  []float32{2.0, 3.0},
+			batch:  1,
+			inSize: 2,
+			degree: 2,
+			bias:   false,
+		},
+		{
+			name:   "deg3_nobias_batch2",
+			input:  []float32{2.0, 1.0, 0.5, 3.0},
+			batch:  2,
+			inSize: 2,
+			degree: 3,
+			bias:   false,
+		},
+		{
+			name:   "deg1_bias_batch1",
+			input:  []float32{5.0, -2.0, 0.0},
+			batch:  1,
+			inSize: 3,
+			degree: 1,
+			bias:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			poly, err := NewPolynomialExpansion("parity", engine, ops, tc.inSize,
+				WithPolynomialDegree[float32](tc.degree),
+				WithPolynomialBias[float32](tc.bias))
+			if err != nil {
+				t.Fatalf("create layer: %v", err)
+			}
+
+			in, err := tensor.New([]int{tc.batch, tc.inSize}, tc.input)
+			if err != nil {
+				t.Fatalf("create input: %v", err)
+			}
+
+			out, err := poly.Forward(context.Background(), in)
+			if err != nil {
+				t.Fatalf("forward: %v", err)
+			}
+
+			// Compute reference values from term indices.
+			terms := poly.GetTermIndices()
+			outData := out.Data()
+			idx := 0
+			for b := range tc.batch {
+				for _, powers := range terms {
+					ref := float32(1.0)
+					for f, p := range powers {
+						if p > 0 {
+							v := tc.input[b*tc.inSize+f]
+							pv := float32(1.0)
+							for range p {
+								pv *= v
+							}
+							ref *= pv
+						}
+					}
+					got := outData[idx]
+					diff := got - ref
+					if diff < 0 {
+						diff = -diff
+					}
+					if diff > tol {
+						t.Errorf("batch %d term %v: got %v want %v (diff %v)", b, powers, got, ref, diff)
+					}
+					idx++
+				}
+			}
+		})
+	}
+}

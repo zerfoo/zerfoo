@@ -102,6 +102,16 @@ __global__ void kernel_div_scalar(const float* a, float scalar, float* c, int n)
     if (idx < n) c[idx] = a[idx] / scalar;
 }
 
+__global__ void kernel_sub_scalar(const float* a, float scalar, float* c, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) c[idx] = a[idx] - scalar;
+}
+
+__global__ void kernel_pow_scalar(const float* a, float scalar, float* c, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) c[idx] = powf(a[idx], scalar);
+}
+
 // ---------- Unary math ops ----------
 
 __global__ void kernel_exp(const float* a, float* c, int n) {
@@ -338,6 +348,18 @@ cudaError_t launch_mul_scalar(const float* a, float scalar, float* c, int n, cud
 cudaError_t launch_div_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
     kernel_div_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_sub_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_sub_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_pow_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_pow_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 

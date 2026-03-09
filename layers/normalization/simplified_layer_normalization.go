@@ -59,10 +59,16 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 			f32Gain, gOk := any(sln.gain.Value).(*tensor.TensorNumeric[float32])
 			f32Eps, eOk := any(sln.epsilon).(float32)
 			if gOk && eOk && f32Gain.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, err := fused.FusedRMSNormGPU(f32Input, f32Gain, f32Eps)
+				out, scales, err := fused.FusedRMSNormGPU(f32Input, f32Gain, f32Eps)
 				if err != nil {
 					return nil, err
 				}
+				sln.invStdDev = any(scales).(*tensor.TensorNumeric[T])
+				normalized, nErr := sln.engine.Mul(ctx, input, sln.invStdDev)
+				if nErr != nil {
+					return nil, nErr
+				}
+				sln.normalizedInput = normalized
 				return any(out).(*tensor.TensorNumeric[T]), nil
 			}
 		}

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -258,5 +259,229 @@ func TestConv2d_OutputShape(t *testing.T) {
 	want := []int{1, 1, 3, 3}
 	if !shapeEq(conv.OutputShape(), want) {
 		t.Errorf("OutputShape = %v, want %v", conv.OutputShape(), want)
+	}
+}
+
+// conv2dReference computes 2D convolution using a direct nested loop (reference implementation).
+// Used to verify im2col + MatMul parity.
+func conv2dReference(
+	xData []float32, xShape []int,
+	wData []float32, wShape []int,
+	bData []float32,
+	strides [2]int, pads [4]int, dilations [2]int,
+	groups int,
+) ([]float32, []int) {
+	n, cIn, inH, inW := xShape[0], xShape[1], xShape[2], xShape[3]
+	cOut, cInG, kH, kW := wShape[0], wShape[1], wShape[2], wShape[3]
+	sH, sW := strides[0], strides[1]
+	padT, padL := pads[0], pads[1]
+	dH, dW := dilations[0], dilations[1]
+
+	outH := (inH+pads[0]+pads[2]-dH*(kH-1)-1)/sH + 1
+	outW := (inW+pads[1]+pads[3]-dW*(kW-1)-1)/sW + 1
+
+	out := make([]float32, n*cOut*outH*outW)
+	cOutPerGroup := cOut / groups
+
+	for ni := range n {
+		for g := range groups {
+			icOff := g * cInG
+			ocOff := g * cOutPerGroup
+			for oc := range cOutPerGroup {
+				absOC := ocOff + oc
+				for oh := range outH {
+					for ow := range outW {
+						var val float32
+						for ic := range cInG {
+							for kh := range kH {
+								for kw := range kW {
+									ih := oh*sH - padT + kh*dH
+									iw := ow*sW - padL + kw*dW
+									if ih >= 0 && ih < inH && iw >= 0 && iw < inW {
+										xIdx := ni*cIn*inH*inW + (icOff+ic)*inH*inW + ih*inW + iw
+										wIdx := absOC*cInG*kH*kW + ic*kH*kW + kh*kW + kw
+										val += xData[xIdx] * wData[wIdx]
+									}
+								}
+							}
+						}
+						idx := ni*cOut*outH*outW + absOC*outH*outW + oh*outW + ow
+						out[idx] = val
+					}
+				}
+			}
+		}
+	}
+
+	if bData != nil {
+		for ni := range n {
+			for oc := range cOut {
+				for oh := range outH {
+					for ow := range outW {
+						idx := ni*cOut*outH*outW + oc*outH*outW + oh*outW + ow
+						out[idx] += bData[oc]
+					}
+				}
+			}
+		}
+	}
+
+	return out, []int{n, cOut, outH, outW}
+}
+
+// newConv2dSeqFloat32 creates a tensor with sequential values 0.01, 0.02, ...
+func newConv2dSeqFloat32(shape []int) *tensor.TensorNumeric[float32] {
+	size := 1
+	for _, d := range shape {
+		size *= d
+	}
+	data := make([]float32, size)
+	for i := range data {
+		data[i] = float32(i+1) * 0.01
+	}
+	t, _ := tensor.New[float32](shape, data)
+	return t
+}
+
+// TestConv2d_Im2colParity verifies the im2col+MatMul implementation matches
+// a direct nested-loop reference across various configurations.
+func TestConv2d_Im2colParity(t *testing.T) {
+	const tol = 1e-5
+
+	type tc struct {
+		name      string
+		xShape    []int
+		wShape    []int
+		bShape    []int // nil means no bias
+		strides   [2]int
+		pads      [2]int // symmetric: [padH, padW] -> [padH, padW, padH, padW]
+		dilations [2]int
+		groups    int
+	}
+	cases := []tc{
+		{
+			name:      "3x3_kernel_no_pad",
+			xShape:    []int{1, 1, 5, 5},
+			wShape:    []int{1, 1, 3, 3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{0, 0},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+		{
+			name:      "3x3_kernel_pad1",
+			xShape:    []int{1, 1, 5, 5},
+			wShape:    []int{1, 1, 3, 3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{1, 1},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+		{
+			name:      "3x3_stride2",
+			xShape:    []int{1, 1, 7, 7},
+			wShape:    []int{2, 1, 3, 3},
+			strides:   [2]int{2, 2},
+			pads:      [2]int{0, 0},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+		{
+			name:      "3x3_dilation2",
+			xShape:    []int{1, 1, 7, 7},
+			wShape:    []int{1, 1, 3, 3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{0, 0},
+			dilations: [2]int{2, 2},
+			groups:    1,
+		},
+		{
+			name:      "with_bias",
+			xShape:    []int{1, 2, 5, 5},
+			wShape:    []int{3, 2, 3, 3},
+			bShape:    []int{3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{1, 1},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+		{
+			name:      "batch2_multichannel",
+			xShape:    []int{2, 3, 6, 6},
+			wShape:    []int{4, 3, 3, 3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{0, 0},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+		{
+			name:      "groups2",
+			xShape:    []int{1, 4, 5, 5},
+			wShape:    []int{4, 2, 3, 3},
+			strides:   [2]int{1, 1},
+			pads:      [2]int{0, 0},
+			dilations: [2]int{1, 1},
+			groups:    2,
+		},
+		{
+			name:      "5x5_kernel_pad2_stride2",
+			xShape:    []int{1, 1, 8, 8},
+			wShape:    []int{2, 1, 5, 5},
+			strides:   [2]int{2, 2},
+			pads:      [2]int{2, 2},
+			dilations: [2]int{1, 1},
+			groups:    1,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ops := numeric.Float32Ops{}
+			engine := compute.NewCPUEngine[float32](&ops)
+
+			x := newConv2dSeqFloat32(c.xShape)
+			w := newConv2dSeqFloat32(c.wShape)
+
+			pads4 := []int{c.pads[0], c.pads[1], c.pads[0], c.pads[1]}
+			conv := NewConv2d[float32](engine, &ops,
+				[]int{c.strides[0], c.strides[1]},
+				pads4,
+				[]int{c.dilations[0], c.dilations[1]},
+				c.groups,
+			)
+
+			inputs := []*tensor.TensorNumeric[float32]{x, w}
+			var bData []float32
+			if c.bShape != nil {
+				b := newConv2dSeqFloat32(c.bShape)
+				inputs = append(inputs, b)
+				bData = b.Data()
+			}
+
+			out, err := conv.Forward(context.Background(), inputs...)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			refData, refShape := conv2dReference(
+				x.Data(), c.xShape,
+				w.Data(), c.wShape,
+				bData,
+				c.strides, [4]int{c.pads[0], c.pads[1], c.pads[0], c.pads[1]}, c.dilations,
+				c.groups,
+			)
+
+			if !shapeEq(out.Shape(), refShape) {
+				t.Fatalf("shape mismatch: got %v want %v", out.Shape(), refShape)
+			}
+
+			gotData := out.Data()
+			for i := range gotData {
+				diff := math.Abs(float64(gotData[i] - refData[i]))
+				if diff > tol {
+					t.Errorf("out[%d] = %v, ref = %v, diff = %v > tol %v", i, gotData[i], refData[i], diff, tol)
+				}
+			}
+		})
 	}
 }

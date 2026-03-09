@@ -18,8 +18,9 @@ type TensorReleaser[T tensor.Numeric] interface {
 
 // Graph represents a computation graph with a defined execution order.
 type Graph[T tensor.Numeric] struct {
-	mu           sync.Mutex
-	engine       compute.Engine[T]
+	mu          sync.Mutex
+	engine      compute.Engine[T]
+	engineProxy *compute.EngineProxy[T]
 	nodes        []Node[T]
 	dependencies map[Node[T]][]Node[T]
 	inputs       []Node[T]
@@ -27,6 +28,20 @@ type Graph[T tensor.Numeric] struct {
 	memo         map[Node[T]]*tensor.TensorNumeric[T]
 	parallel     bool
 	pool         TensorReleaser[T]
+}
+
+// SetEngineProxy stores a reference to the EngineProxy used by this graph's layers.
+func (g *Graph[T]) SetEngineProxy(proxy *compute.EngineProxy[T]) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.engineProxy = proxy
+}
+
+// EngineProxy returns the EngineProxy if one was set, or nil.
+func (g *Graph[T]) EngineProxy() *compute.EngineProxy[T] {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.engineProxy
 }
 
 // WithParallel enables or disables parallel execution of independent nodes.

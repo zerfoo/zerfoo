@@ -15,6 +15,8 @@ import (
 // ---------- OutputShape ----------
 
 func TestSpectralFingerprint_OutputShape_Comprehensive(t *testing.T) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	o := numeric.Float32Ops{}
 	tests := []struct {
 		topK int
 	}{
@@ -23,7 +25,7 @@ func TestSpectralFingerprint_OutputShape_Comprehensive(t *testing.T) {
 		{16},
 	}
 	for _, tt := range tests {
-		layer := NewSpectralFingerprint[float32](tt.topK)
+		layer := NewSpectralFingerprint[float32](eng, o, tt.topK)
 		shape := layer.OutputShape()
 		if len(shape) != 1 || shape[0] != tt.topK {
 			t.Errorf("OutputShape() = %v, want [%d]", shape, tt.topK)
@@ -34,7 +36,7 @@ func TestSpectralFingerprint_OutputShape_Comprehensive(t *testing.T) {
 // ---------- Forward input count errors ----------
 
 func TestSpectralFingerprint_Forward_WrongInputCount(t *testing.T) {
-	layer := NewSpectralFingerprint[float32](4)
+	layer := NewSpectralFingerprint[float32](compute.NewCPUEngine[float32](numeric.Float32Ops{}), numeric.Float32Ops{}, 4)
 	input, _ := tensor.New[float32]([]int{1, 8}, make([]float32, 8))
 
 	tests := []struct {
@@ -58,7 +60,7 @@ func TestSpectralFingerprint_Forward_WrongInputCount(t *testing.T) {
 // ---------- Backward input count errors ----------
 
 func TestSpectralFingerprint_Backward_WrongInputCount(t *testing.T) {
-	layer := NewSpectralFingerprint[float32](4)
+	layer := NewSpectralFingerprint[float32](compute.NewCPUEngine[float32](numeric.Float32Ops{}), numeric.Float32Ops{}, 4)
 	input, _ := tensor.New[float32]([]int{1, 8}, make([]float32, 8))
 	outputGrad, _ := tensor.New[float32]([]int{1, 4}, make([]float32, 4))
 
@@ -123,7 +125,7 @@ func TestSpectralFingerprint_LayerRegistration(t *testing.T) {
 // ---------- Parameters returns nil ----------
 
 func TestSpectralFingerprint_Parameters_IsNil(t *testing.T) {
-	layer := NewSpectralFingerprint[float32](4)
+	layer := NewSpectralFingerprint[float32](compute.NewCPUEngine[float32](numeric.Float32Ops{}), numeric.Float32Ops{}, 4)
 	params := layer.Parameters()
 	if params != nil {
 		t.Errorf("Parameters() = %v, want nil", params)
@@ -131,7 +133,7 @@ func TestSpectralFingerprint_Parameters_IsNil(t *testing.T) {
 }
 
 func TestSpectralFingerprint_Forward_NilInput(t *testing.T) {
-	layer := NewSpectralFingerprint[float32](4)
+	layer := NewSpectralFingerprint[float32](compute.NewCPUEngine[float32](numeric.Float32Ops{}), numeric.Float32Ops{}, 4)
 	ctx := context.Background()
 
 	_, err := layer.Forward(ctx, nil)
@@ -141,7 +143,7 @@ func TestSpectralFingerprint_Forward_NilInput(t *testing.T) {
 }
 
 func TestSpectralFingerprint_Forward_EmptyInput(t *testing.T) {
-	layer := NewSpectralFingerprint[float32](4)
+	layer := NewSpectralFingerprint[float32](compute.NewCPUEngine[float32](numeric.Float32Ops{}), numeric.Float32Ops{}, 4)
 	ctx := context.Background()
 
 	empty, _ := tensor.New[float32]([]int{0}, nil)

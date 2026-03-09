@@ -694,5 +694,101 @@ func TestS4_NumericalGradientCheck(t *testing.T) {
 	}
 }
 
+// TestS4_Forward_Parity verifies that the engine-based Forward produces
+// identical results to a reference scalar implementation (S96.11.1).
+func TestS4_Forward_Parity(t *testing.T) {
+	engine := makeEngine()
+	ops := numeric.Float32Ops{}
+
+	tests := []struct {
+		name     string
+		batch    int
+		seqLen   int
+		inputDim int
+		stateDim int
+	}{
+		{"tiny", 1, 1, 1, 1},
+		{"small", 1, 3, 2, 4},
+		{"batched", 2, 5, 4, 8},
+		{"large_state", 1, 4, 3, 16},
+		{"multi_batch", 3, 2, 2, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s4, err := NewS4[float32]("parity", engine, ops, tt.inputDim, tt.stateDim)
+			if err != nil {
+				t.Fatalf("NewS4: %v", err)
+			}
+
+			// Snapshot parameter data for the reference implementation.
+			aLogData := make([]float32, len(s4.aLog.Value.Data()))
+			copy(aLogData, s4.aLog.Value.Data())
+			bData := make([]float32, len(s4.b.Value.Data()))
+			copy(bData, s4.b.Value.Data())
+			cData := make([]float32, len(s4.c.Value.Data()))
+			copy(cData, s4.c.Value.Data())
+			dData := make([]float32, len(s4.d.Value.Data()))
+			copy(dData, s4.d.Value.Data())
+
+			// Build deterministic input.
+			n := tt.batch * tt.seqLen * tt.inputDim
+			inputData := make([]float32, n)
+			for i := range inputData {
+				inputData[i] = float32(i%7)*0.1 - 0.3
+			}
+			input, err := tensor.New[float32]([]int{tt.batch, tt.seqLen, tt.inputDim}, inputData)
+			if err != nil {
+				t.Fatalf("tensor.New: %v", err)
+			}
+
+			// Run the engine-based Forward.
+			ctx := context.Background()
+			got, err := s4.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			// Reference scalar implementation (original raw-data logic).
+			aDisc := make([]float32, tt.inputDim*tt.stateDim)
+			for i, v := range aLogData {
+				aDisc[i] = float32(math.Exp(-math.Exp(float64(v))))
+			}
+			wantData := make([]float32, tt.batch*tt.seqLen*tt.inputDim)
+			state := make([]float32, tt.batch*tt.inputDim*tt.stateDim)
+			for batch := range tt.batch {
+				for step := range tt.seqLen {
+					for d := range tt.inputDim {
+						u := inputData[batch*tt.seqLen*tt.inputDim+step*tt.inputDim+d]
+						var y float32
+						for sn := range tt.stateDim {
+							idx := d*tt.stateDim + sn
+							si := batch*tt.inputDim*tt.stateDim + idx
+							state[si] = aDisc[idx]*state[si] + bData[idx]*u
+							y += cData[idx] * state[si]
+						}
+						y += dData[d] * u
+						wantData[batch*tt.seqLen*tt.inputDim+step*tt.inputDim+d] = y
+					}
+				}
+			}
+
+			gotData := got.Data()
+			if len(gotData) != len(wantData) {
+				t.Fatalf("output length = %d, want %d", len(gotData), len(wantData))
+			}
+			for i := range wantData {
+				diff := float64(gotData[i] - wantData[i])
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > 1e-5 {
+					t.Errorf("output[%d] = %g, want %g (diff %g)", i, gotData[i], wantData[i], diff)
+				}
+			}
+		})
+	}
+}
+
 // Compile-time interface check.
 var _ = (*S4[float32])(nil)

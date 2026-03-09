@@ -3,6 +3,7 @@ package generate
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,6 +126,34 @@ func (gen *Generator[T]) Engine() compute.Engine[T] { return gen.engine }
 // Config returns the model configuration.
 func (gen *Generator[T]) Config() ModelConfig { return gen.config }
 
+// compileGraph tries CompileTraced when an EngineProxy is available, with
+// graceful fallback to Compile on error or plan validation failure.
+func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.TensorNumeric[T]) {
+	gen.planOnce.Do(func() {
+		var compiled *graph.ExecutionPlan[T]
+		var cErr error
+		if proxy := gen.graph.EngineProxy(); proxy != nil {
+			compiled, cErr = gen.graph.CompileTraced(ctx, tokenTensor)
+			if cErr == nil {
+				// Validate traced plan with a test run.
+				if _, vErr := compiled.Run(ctx, tokenTensor); vErr != nil {
+					log.Printf("generate: CompileTraced plan validation failed, falling back to Compile: %v", vErr)
+					compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+				}
+			} else {
+				log.Printf("generate: CompileTraced failed, falling back to Compile: %v", cErr)
+				compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+			}
+		} else {
+			compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+		}
+		if cErr == nil {
+			gen.plan.Store(compiled)
+			go tryCompileMegakernel(compiled, nil)
+		}
+	})
+}
+
 // Generate produces text from a prompt using the given sampling configuration.
 // It tokenizes the prompt, runs the autoregressive loop with KV caching, and
 // returns the generated text (excluding the prompt).
@@ -201,12 +230,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			// The graph's memo from this Forward() provides shapes
 			// without re-executing (avoids corrupting model state).
 			if err == nil {
-				gen.planOnce.Do(func() {
-					compiled, cErr := gen.graph.Compile(genCtx, tokenTensor)
-					if cErr == nil {
-						gen.plan.Store(compiled)
-					}
-				})
+				gen.compileGraph(genCtx, tokenTensor)
 			}
 		}
 		if err != nil {

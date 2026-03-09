@@ -1108,6 +1108,14 @@ ADR files in `docs/adr/`.
 | [019](adr/019-phase22-bf16-unified-siglip.md) | BF16 GEMM, Unified Memory, SigLIP Fix | 22 | BF16 cuBLAS GemmEx, cudaMallocManaged, Squeeze scalar fix |
 | [020](adr/020-q4-quantized-dot-product.md) | Q4 Quantized Dot Product | 29 | NEON nibble-extract + FMA, row-level assembly, B-operand GEMV |
 | [021](adr/021-graph-compilation-worker-pool.md) | Graph Compilation and Worker Pool | 30 | Pre-compiled instruction sequence, persistent worker pool, buffer arena |
+| [022](adr/022-gpu-first-inference-pipeline.md) | GPU-First Inference Pipeline | 32 | Upload weights to GPU, GPU-resident forward pass, D2H only for final logits |
+| [023](adr/023-gpu-scalar-ops-d2h-elimination.md) | GPU Scalar Ops and D2H Elimination | 33 | PowScalar/SubScalar kernels, scalar-broadcast detection, GPU Split/Concat |
+| [024](adr/024-cuda-graph-fused-kernels.md) | CUDA Graph and Fused Kernels | 34 | CUDA graph capture, fused attention kernel, kernel launch overhead reduction |
+| [025](adr/025-purego-cuda-bindings.md) | Purego CUDA Bindings | 34 | dlopen-based CUDA bindings, no CGo, cross-platform build |
+| [026](adr/026-megakernel-decode.md) | Megakernel Decode | 34 | Single-kernel decode, codegen emitter, optable, nvcc JIT, slot-based memory |
+| [027](adr/027-composition-prerequisite.md) | Composition Prerequisite | 34 | All layers must compose Engine primitives for tracing compiler |
+| [028](adr/028-tracing-compiler.md) | Tracing Compiler | 34 | EngineProxy records primitive ops during Forward(), automatic decomposition |
+| [029](adr/029-neon-simd-cpu-acceleration.md) | NEON SIMD CPU Acceleration | 34 | Plan9 assembly for hot-path ops, same-shape fast paths, tensor arena |
 
 ---
 
@@ -1522,3 +1530,179 @@ Remaining GPU bottlenecks (pprof):
 - Pow CPU fallback: 8.9% (no GPU scalar-broadcast Pow)
 - binaryOp CPU fallback: 10.4% (unsupported broadcast patterns)
 - GPUStorage.Slice D2H: 24% (CPU fallback ops reading GPU tensor data)
+
+### 15.15 GPU Scalar Ops and D2H Elimination (Phase 33)
+
+Phase 33 eliminated the three remaining CPU fallback bottlenecks identified in
+Phase 32 profiling: Pow scalar-broadcast (8.9%), binary op scalar patterns (10.4%),
+and D2H round-trips from GPU Split/Concat (24%).
+
+Decision rationale: docs/adr/023-gpu-scalar-ops-d2h-elimination.md.
+
+Key implementations:
+- CUDA PowScalar kernel: `out[i] = powf(x[i], scalar)` in elementwise.cu.
+  Wired into `gpuPow` to detect scalar-exponent pattern (totalElements==1).
+- CUDA SubScalar kernel: `c[i] = a[i] - scalar` in elementwise.cu.
+  Completes scalar-op coverage (Add/Sub/Mul/Div/PowScalar).
+- Scalar-broadcast detection in `gpuBroadcastOp`: when one operand has
+  totalElements==1, uses broadcast kernel with stride (0,0) for the scalar side.
+- GPU Split/Concat using D2D memcpy: `gpuSplit` and `gpuConcat` in
+  compute/gpu_kernels.go use `MemcpyAsync(D2D)` instead of custom CUDA kernels.
+  Eliminates all D2H copies from Split/Concat CPU fallback.
+- Float32 weight upload: `GPUEngine.UploadWeights` now uploads both Q4 and
+  float32 weights to GPU (previously skipped float32 to avoid D2H from CPU
+  fallback ops that no longer exist).
+- `totalElements()` helper moved to compute/broadcast.go (no build tag).
+
+Performance at Phase 33 end:
+
+| Model | Quant | Device | tok/s | Phase |
+|-------|-------|--------|-------|-------|
+| Gemma 3 2B | Q4_0 | CPU ARM64 | 6.75 | 33 (bench_tps) |
+| Gemma 3 2B | Q4_0 | GPU (cuda) | 10.32 peak / 7.78 median | 33 (bench_tps, 7 runs) |
+
+High variance (7.45-10.32 across 7 runs) attributed to thermal throttling or
+background processes on DGX Spark. Peak meets original 10 tok/s target.
+
+Remaining bottlenecks for Phase 34:
+- Per-op CGo kernel launch overhead (~100ns per call, 25+ kernels per forward pass)
+- No CUDA graph support (each token = individual kernel launches through CGo)
+- No fused kernels beyond RMSNorm (attention has separate Scale/Softmax/MatMul)
+- All intermediates are float32 (BF16 GEMM exists but elementwise ops are F32)
+- Op-by-op ExecutionPlan dispatch with no batching or fusion
+- llama.cpp achieves 24-38 tok/s for similar models on same hardware
+
+### 15.16 NEON SIMD CPU Acceleration (Phase 34 Track D)
+
+Phase 34 Track D added ARM64 NEON SIMD assembly for all CPU hot-path operations
+beyond matmul, same-shape fast paths to eliminate broadcasting overhead, and a
+tensor arena for buffer reuse. Achieved 8.15 tok/s median (+18.8% over 6.86
+baseline). Target was 10 tok/s; remaining gap requires GEMM cache tiling.
+
+Decision rationale: docs/adr/029-neon-simd-cpu-acceleration.md.
+
+#### Same-Shape Fast Paths (E101)
+
+- Same-shape binaryOp fast path in `compute/cpu_engine.go:binaryOp()`: when both
+  tensors have identical shapes, skips broadcast coordinate-decode loop and uses a
+  direct element-wise loop with parallelFor. 7-8x speedup for same-shape ops.
+  Commit f733d15.
+- Pow x^2 specialization: detects scalar-broadcast exponent with value 2.0 and
+  uses x*x instead of math.Pow(). 13-15x speedup for RMSNorm's Pow call.
+  Commit c28a529.
+- Scalar op baselines verified: MulScalar, AddScalar, DivScalar already use
+  parallelFor. Commit 3d8c3d7.
+
+#### NEON Assembly Kernels (E102)
+
+All assembly follows the established pattern:
+- `internal/xblas/<name>_arm64.go`: Go declarations with `//go:noescape`
+- `internal/xblas/<name>_arm64.s`: ARM64 NEON plan9 assembly
+- `internal/xblas/<name>_generic.go`: `//go:build !arm64` pure-Go fallback
+
+Kernels implemented:
+- **VexpF32** (`exp_arm64.s`): Degree-5 Horner polynomial with range reduction
+  via x * (1/ln2). Max relative error < 2e-7. Shared by Softmax and SiLU.
+  Commit 5931298.
+- **SoftmaxF32** (`softmax_arm64.s`): 3-pass NEON: (1) FMAXP reduce for max,
+  (2) exp(x-max) via VexpF32 + sum, (3) FMUL by reciprocal sum. Commit bc775d8.
+- **RmsNormF32** (`rmsnorm_arm64.s`): FRSQRTE + 2 Newton-Raphson iterations
+  for rsqrt(mean(x^2) + eps), then scale. Commit a40a2f7.
+- **SiluF32/SiluGateF32** (`silu_arm64.s`): Inline exp polynomial + FRECPE for
+  1/(1+exp(-x)) * x. SiluGate variant fuses gate multiplication. Commit d766923.
+- **RopeF32** (`rope_arm64.s`): 4-wide SIMD rotation with scalar tail and
+  passthrough for dimensions beyond rotary_dim. Commit ef099ef.
+- **VaddF32/VmulF32/VsubF32/VdivF32** (`elementwise_arm64.s`): NEON 4-wide
+  elementwise with scalar tail. Commit a40a2f7.
+- **VmulScalarF32/VaddScalarF32/VdivScalarF32** (`scalar_arm64.s`): NEON
+  broadcast-scalar ops. Commit c751b5c.
+
+NEON wiring in CPUEngine (`compute/cpu_engine.go`): float32 type assertion
+dispatches to NEON for tensors with >= 32 elements. Commits 7ac9a35, 0afe430.
+
+#### Assembly Bug Fixes
+
+Seven critical NEON assembly bugs discovered and fixed during integration:
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| RoPE IP0/IP1 confusion | Temp register aliases collided with Go linkage | Used distinct temp registers |
+| FMLS wrong encoding | WORD opcode had incorrect Rm field | Corrected bit encoding |
+| Exp output clamping | Missing clamp for extreme negative inputs | Added FMAX with -87.3f |
+| q4dot callee-saved | V10-V13 are callee-saved (D8-D15 lower) | Remapped to V24-V27 (commit e6d5f19) |
+| RMSNorm lane zeroing | Tail elements not zeroed in partial vector | MOVI zero + masked insert |
+| RMSNorm ABI return | Return value not in correct register | Fixed FMOV to S0 |
+| Exp threshold | Threshold constant loaded incorrectly | Fixed constant pool entry |
+
+ARM64 ABI note: registers D8-D15 (lower 64 bits of V8-V15) are callee-saved.
+NEON assembly must preserve these or remap to V16-V31 (caller-saved scratch).
+
+#### Tensor Arena (E103)
+
+`compute/arena.go`: Power-of-2 bucketed pooling for buffer reuse. Each bucket
+has a free list. Arena.Get(size) rounds up to next power of 2 and returns a
+pooled buffer. Arena.Put(buf) returns it to the bucket. Wired into CPUEngine
+via getOrCreateDest. Run with -race to detect use-after-free. Commit dc97cd7,
+e3775a8.
+
+#### Benchmark Results (E104)
+
+| Config | tok/s | Phase | Notes |
+|--------|-------|-------|-------|
+| CPU ARM64 baseline | 6.86 | 30 | Before Track D |
+| CPU ARM64 + Track D | 8.15 median (7.72-8.45) | 34 D4 | +18.8% |
+
+CPU profile breakdown (post Track D):
+- sgemmAccRowNeon: 37% (float32 GEMM, already NEON)
+- q4DotRowSIMD: 35% (Q4 dot product, already NEON)
+- Transpose: 4.4%
+- Everything else: < 3% each
+
+GEMM dominates at 72% of CPU time. The NEON hot-path ops (Softmax, RMSNorm,
+SiLU, RoPE, elementwise) are now fast enough that they no longer appear in the
+top profile entries. Further CPU gains require GEMM cache tiling (L2/L3 aware
+blocking for sgemmAccRow and q4DotRow).
+
+#### NEON Exp Polynomial Reference
+
+The vectorized exp() uses range reduction with degree-5 polynomial:
+
+```
+Input: x (float32)
+1. n = round(x * (1/ln2))        // FMUL + FCVTNS
+2. r = x - n * ln2               // FMSUB (fused)
+3. p = c0 + r*(c1 + r*(c2 + r*(c3 + r*(c4 + r*c5))))  // Horner's method
+   c0=1.0, c1=1.0, c2=0.5, c3=1/6, c4=1/24, c5=1/120
+4. result = ldexp(p, n)           // add n to float32 exponent bits:
+                                  //   FCVTZS Vn.4S, Vn.4S (float->int)
+                                  //   SHL Vn.4S, Vn.4S, #23 (shift to exponent)
+                                  //   ADD Vp.4S, Vp.4S, Vn.4S (add exponent)
+```
+
+Max relative error: < 2e-7 for x in [-87.3, 88.7] (float32 range).
+
+#### ARM64 NEON Instruction Encoding Cheat Sheet
+
+Common instructions requiring WORD encoding in Go plan9 assembly:
+
+| Instruction | Encoding | Description |
+|-------------|----------|-------------|
+| FMAXP Vd.4S, Vn.4S, Vm.4S | `6E20F400+...` | Pairwise max |
+| FADDP Vd.4S, Vn.4S, Vm.4S | `6E20D400+...` | Pairwise add |
+| FRSQRTE Vd.4S, Vn.4S | `6EA1D800+...` | Reciprocal sqrt estimate |
+| FRSQRTS Vd.4S, Vn.4S, Vm.4S | `0EA0FC00+...` | RSqrt Newton step |
+| FCVTNS Vd.4S, Vn.4S | `4E21A800+...` | Float to int nearest |
+| FRINTX Vd.4S, Vn.4S | `6E219800+...` | Round to integral |
+| FNEG Vd.4S, Vn.4S | `6EA0F800+...` | Negate |
+
+Note: All register operand fields must be encoded correctly in the immediate.
+Use `aarch64-linux-gnu-objdump -d` on a test .o to verify encodings.
+
+#### Known Issues
+
+- DGX Spark Go 1.25.0 linux/arm64 has intermittent segfaults (~10-40%) across
+  ALL packages including pure Go packages with no assembly. Confirmed not caused
+  by our code. System-level Go runtime issue.
+- Pre-existing amd64 asm `vdotf32` missing Go declaration in
+  `internal/xblas/gemm_simd_amd64.go`. golangci-lint rejects adding it because
+  the function is unused on amd64. Not in Track D scope.

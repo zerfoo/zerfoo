@@ -1,98 +1,51 @@
-# Zerfoo Development Plan -- Phase 33: GPU Scalar Ops and D2H Elimination
+# Zerfoo Development Plan -- Documentation Cleanup and Code Commit
 
 ## 1. Context
 
 ### Problem Statement
 
-Phase 32 brought GPU inference from 5.12 to 6.84 tok/s (+33.6%) on DGX Spark
-GB10 for Gemma 3 2B Q4. GPU is now faster than CPU (6.61 tok/s), but the 10
-tok/s target was not met. Profiling shows three remaining bottlenecks that
-cause CPU fallbacks and D2H round-trips:
+The `feat/neon-softmax` branch has 31 commits ahead of origin with a mix of
+uncommitted code and documentation. The docs/ directory has accumulated 12
+markdown files totaling ~244KB, many of which are historical phase logs or
+superseded proposals. The current plan.md (44KB) contains extensive detail on
+completed work (Track 0, Track C waves C1-C4, Track D) that should be archived
+to design.md. Binary build artifacts are untracked and polluting git status.
 
-1. **Pow CPU fallback (8.9%)**: `engine.Pow(base, exponent)` where exponent is
-   a scalar tensor `[1]` with value 2.0 (x^2 in normalization). `gpuPow`
-   requires `sameShape(base, exponent)` which fails for scalar broadcast,
-   falling back to CPU. The CPU then reads GPU-resident base via
-   `GPUStorage.Slice()`, triggering a full D2H copy.
-
-2. **Binary op CPU fallback (10.4%)**: `gpuBroadcastOp` supports row, column,
-   and same-shape 2D patterns. Scalar-vs-tensor (`[1]` op `[M,D]`) is not
-   handled, falling back to CPU with D2H copies.
-
-3. **GPUStorage.Slice D2H (24%)**: all CPU fallback ops that read GPU-resident
-   tensor data trigger `GPUStorage.Slice()` which copies the entire buffer
-   D2H. This is the root-cause multiplier for (1) and (2).
-
-See docs/design.md for full architecture context and Phases 1-32 history.
-Decision rationale: docs/adr/023-gpu-scalar-ops-d2h-elimination.md.
-
-### What Was Delivered (Phase 32)
-
-| Area | Key Result |
-|------|------------|
-| GPU tensor residency | Intermediate tensors stay on GPU; Q4 weights pre-uploaded |
-| GPU Transpose | 2D tiled + N-D stride-based kernel |
-| GPU Broadcasting | Stride-based 2D for Add/Sub/Mul/Div |
-| GPU Gather | Embedding lookup on GPU |
-| Fused GPU RMSNorm | Single-pass kernel with shared-memory reduction |
-| Benchmark | 6.84 tok/s GPU, 6.61 tok/s CPU on DGX Spark GB10 |
-
-### GPU Profile Breakdown (Phase 32, DGX Spark GB10)
-
-| Component | % Time | Root Cause |
-|-----------|--------|------------|
-| runtime.cgocall | 58% | Activation H2D/D2H from CPU fallback ops |
-| Pow CPU fallback | 8.9% | No GPU scalar-broadcast Pow kernel |
-| binaryOp CPU fallback | 10.4% | Scalar-vs-tensor not in gpuBroadcastOp |
-| GPUStorage.Slice D2H | 24% | CPU fallback ops reading GPU tensor data |
-| MatMul (GPU) | ~30% | Core compute, already on GPU |
+The branch needs to be cleaned up, committed, pushed, and merged.
 
 ### Objectives
 
-- O75: Add PowScalar GPU kernel to eliminate the 8.9% Pow CPU fallback.
-- O76: Extend GPU binary ops with scalar-broadcast to eliminate the 10.4%
-  binary op CPU fallback.
-- O77: Add GPU Slice/Split/Concat kernels to eliminate the 24% D2H overhead
-  from GPUStorage.Slice.
-- O78: Achieve >= 10 tok/s for Gemma 3 2B Q4 on DGX Spark GB10.
+- O1: Trim obsolete docs (suggestion.md, suggestion-plan.md, phase27.md,
+  phase28.md) by removing them.
+- O2: Consolidate docs/updates.md content into design.md, then remove it.
+- O3: Archive docs/zerfoo-suggestions.md or integrate actionable items.
+- O4: Commit all uncommitted code changes in small, single-directory commits.
+- O5: Add binary artifacts to .gitignore.
+- O6: Push branch and create PR to upstream (zerfoo/zerfoo).
+- O7: Trim plan.md to contain only pending work.
 
 ### Non-Goals
 
-- Multi-GPU inference or tensor parallelism.
-- FP4 kernels (blocked on upstream CUTLASS SM121 fixes).
-- Vulkan, SYCL, or ROCm kernel ports (stubs only).
-- Training pipeline changes.
-- Flash attention kernel improvements.
-- Speculative decoding (separate phase).
+- Refactoring any code (conv1d composition fix is separate work).
+- DGX Spark integration tasks (T100.2, T100.3, T100.4).
+- Performance tuning (Track B).
 
 ### Constraints and Assumptions
 
-- Go standard library only where possible. No cobra, viper, testify.
-- Build tags for GPU code (`//go:build cuda`).
 - Pre-commit hook rejects multi-directory commits.
-- golangci-lint, go vet, gofmt required for all changes.
-- Tests must pass with `-race` flag.
-- Table-driven tests using the standard `testing` package.
-- DGX Spark GB10 at `ssh ndungu@192.168.86.250` for all GPU validation.
-- Go 1.25.0, CUDA 13.0, sm_121 (Blackwell) on DGX Spark.
-- Target model: Gemma 3 2B Q4 (ZMF), path: ~/models/gemma3-q4/model.zmf.
-- CPU baseline: 6.61 tok/s. GPU baseline: 6.84 tok/s.
-- GPUEngine already has: Add/Sub/Mul/Div (same-shape + 2D broadcast),
-  AddScalar/MulScalar/DivScalar, Pow (same-shape only), Exp, Log, Sqrt, Rsqrt,
-  Tanh, Softmax, ReduceSum, ReduceMean, Fill, Sum, Transpose, Gather,
-  FusedRMSNorm.
-- GPUEngine CPU fallbacks: UnaryOp, Pow (broadcast), Split, Concat, Repeat,
-  Copy, Zero, ScatterAdd, RandomUniform, OneHot.
+- Must commit files from one directory per commit.
+- Branch: feat/neon-softmax.
+- PR target: zerfoo/zerfoo (upstream), head: dndungu:feat/neon-softmax.
 
 ### Success Metrics
 
-| Metric | Current | Target | How Measured |
-|--------|---------|--------|-------------|
-| GPU tok/s (Gemma 3 2B Q4) | 6.84 | >= 10 | bench_tps -device cuda on DGX Spark |
-| cgocall % of wall time | 58% | < 20% | pprof CPU profile |
-| CPU fallback ops in hot loop | Pow, some binary, Slice | 0 | pprof + log grep |
-| Pow CPU fallback % | 8.9% | 0% | pprof |
-| GPUStorage.Slice D2H % | 24% | < 5% | pprof |
+| Metric | Target | How Measured |
+|--------|--------|-------------|
+| docs/ file count | <= 7 (from 12) | ls docs/*.md |
+| docs/ total size | < 120KB (from 244KB) | du -sh docs/ |
+| Untracked files | 0 (excluding build dirs) | git status |
+| Uncommitted changes | 0 | git status |
+| PR created | 1 | gh pr list |
 
 ---
 
@@ -102,329 +55,183 @@ Decision rationale: docs/adr/023-gpu-scalar-ops-d2h-elimination.md.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D407 | PowScalar GPU kernel | Eliminate 8.9% Pow CPU fallback |
-| D408 | SubScalar GPU kernel | Complete scalar-op coverage for broadcast path |
-| D409 | Scalar-broadcast in gpuBroadcastOp | Eliminate 10.4% binary op CPU fallback |
-| D410 | GPU Slice kernel | Eliminate 24% D2H from GPUStorage.Slice |
-| D411 | GPU Split kernel | Eliminate D2H in Split (calls Slice internally) |
-| D412 | GPU Concat kernel | Eliminate D2H in Concat |
-| D413 | End-to-end GPU benchmark >= 10 tok/s | Validate all improvements |
+| D1 | Remove 5 obsolete docs | Reduce noise, single source of truth |
+| D2 | Trim plan.md | Remove completed epics, keep only pending work |
+| D3 | Update design.md | Absorb stable knowledge from removed docs |
+| D4 | Commit all code changes | Clean working tree |
+| D5 | .gitignore update | Stop binary artifacts from cluttering status |
+| D6 | PR to upstream | Get changes reviewed and merged |
 
 ### Out of Scope
 
-- GPU Copy (not in hot path; CPU fallback acceptable).
-- GPU ScatterAdd (backward pass only).
-- GPU RandomUniform (not in inference hot path).
-- GPU OneHot (not in inference hot path).
-- GPU Repeat (not observed in Gemma 3 profile).
-- UnaryOp GPU kernel (closures cannot run on GPU; specific patterns replaced
-  by dedicated kernels like PowScalar).
+- Code refactoring (conv1d composition, variable_selection GELU fix).
+- New feature work.
+- DGX Spark testing.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E75: PowScalar GPU Kernel (O75)
+### E1: Trim Obsolete Documentation
 
-Pow in Gemma 3 inference is always `x^2` (scalar exponent). The current
-`gpuPow` requires same-shape tensors. Add a PowScalar kernel and detect
-the scalar-exponent pattern.
-
-Existing code:
-- `compute/gpu_kernels.go` line 363 -- `gpuPow` with sameShape guard.
-- `internal/cuda/kernels/elementwise.cu` -- existing CUDA kernels.
-- `internal/gpuapi/kernels.go` -- KernelRunner interface.
-- `layers/core/pow.go` -- Pow layer calling `engine.Pow(ctx, base, exponent)`.
-
-- [ ] T75.1 Write CUDA PowScalar kernel  Owner: TBD  Est: 1.5h
-  - Add to `internal/cuda/kernels/elementwise.cu`:
-    `pow_scalar_kernel(float *x, float p, float *out, int n)` computing
-    `out[i] = powf(x[i], p)`.
-  - Acceptance: Kernel compiles for sm_121. Correct output for x^2 (n=2048)
-    and x^0.5 (same as sqrt).
+- [ ] T1.1 Remove docs/suggestion.md  Owner: TBD  Est: 5m
+  - Phase 26 proposal, fully superseded by design.md Phase 26 section.
+  - Acceptance: File deleted. No broken references in remaining docs.
   - Dependencies: none.
 
-- [ ] S75.1.1 PowScalar kernel unit tests  Owner: TBD  Est: 1h
-  - Test: x^2 for 2048 elements matches CPU Pow within 1e-5.
-  - Test: x^0.5 matches Sqrt within 1e-5.
-  - Test: x^1 is identity within 1e-5.
-  - Test: x^0 is all 1s.
-
-- [ ] T75.2 Add PowScalar to KernelRunner interface and Go wrapper  Owner: TBD  Est: 1h
-  - Add `PowScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, stream Stream) error`
-    to `internal/gpuapi/kernels.go` KernelRunner.
-  - Add Go CGo wrapper in `internal/cuda/kernels/elementwise.go`.
-  - Add stub implementations in `internal/gpuapi/cuda_kernels.go`,
-    `internal/gpuapi/rocm_kernels.go`, `internal/gpuapi/opencl_kernels.go`.
-  - Acceptance: Compiles on all backends. CUDA backend calls the kernel.
-  - Dependencies: T75.1.
-
-- [ ] T75.3 Wire PowScalar into GPUEngine.Pow  Owner: TBD  Est: 1.5h
-  - Modify `gpuPow` in `compute/gpu_kernels.go`:
-    - If `!sameShape(base, exponent)` and exponent has 1 element total,
-      extract the scalar value and use `gpuScalarOp` with `kernels.PowScalar`.
-    - If `!sameShape(base, exponent)` and base has 1 element total,
-      create a Fill tensor and use same-shape Pow.
-    - Otherwise keep CPU fallback.
-  - Acceptance: `engine.Pow(x_gpu, scalar_2_tensor)` runs on GPU.
-    Output has GPUStorage. Parity with CPU within 1e-5.
-  - Dependencies: T75.2.
-
-- [ ] S75.3.1 PowScalar parity test  Owner: TBD  Est: 1h
-  - Compare GPUEngine.Pow(x, scalar_tensor) vs CPUEngine.Pow for:
-    - Shape [1, 2048] ^ [1] (RMSNorm pattern).
-    - Shape [8, 128, 64] ^ [1].
-  - Verify output has GPUStorage.
-
-- [ ] T75.4 Run golangci-lint on modified packages  Owner: TBD  Est: 15m
-  - Packages: internal/cuda/kernels/, internal/gpuapi/, compute/.
-  - Dependencies: T75.3.
-
-### E76: Scalar-Broadcast for All Binary Ops (O76)
-
-Extend `gpuBroadcastOp` to detect scalar-vs-tensor patterns ([1] op [M,D])
-and dispatch to existing scalar kernel variants. Also add SubScalar which
-is currently missing.
-
-Existing code:
-- `compute/gpu_kernels.go` line 77 -- `gpuBroadcastOp` switch statement.
-- `compute/gpu_kernels.go` line 258 -- `gpuScalarOp` helper.
-- KernelRunner has AddScalar, MulScalar, DivScalar but no SubScalar.
-
-- [ ] T76.1 Write CUDA SubScalar kernel  Owner: TBD  Est: 1h
-  - Add to `internal/cuda/kernels/elementwise.cu`:
-    `sub_scalar_kernel(float *a, float scalar, float *c, int n)` computing
-    `c[i] = a[i] - scalar`.
-  - Add `SubScalar` to KernelRunner interface and all backend stubs.
-  - Add Go CGo wrapper.
-  - Acceptance: Kernel compiles. Correct output for a - 0.5 (n=1024).
+- [ ] T1.2 Remove docs/suggestion-plan.md  Owner: TBD  Est: 5m
+  - Phase 27-29 closure plan. All work documented in design.md.
+  - Acceptance: File deleted. No broken references.
   - Dependencies: none.
 
-- [ ] S76.1.1 SubScalar kernel unit tests  Owner: TBD  Est: 45m
-  - Test: a - 0.0 is identity.
-  - Test: a - scalar matches CPU Sub within 1e-5.
-  - Test: edge case a - large_value.
-
-- [ ] T76.2 Add scalar-broadcast detection to gpuBroadcastOp  Owner: TBD  Est: 2h
-  - In `gpuBroadcastOp`, before the existing switch statement:
-    - If `b` has exactly 1 element total (product of shape == 1),
-      extract `b.Data()[0]` as scalar and dispatch to the matching
-      scalar kernel (AddScalar, SubScalar, MulScalar, DivScalar).
-    - If `a` has exactly 1 element total, extract scalar and dispatch
-      with operands swapped (for non-commutative ops like Sub/Div,
-      use a reverse-scalar kernel or the broadcast kernel with stride 0).
-  - For the `a`-is-scalar case on Sub and Div (non-commutative):
-    - Sub: compute `scalar - b[i]` as `-(b[i] - scalar)` using SubScalar
-      + MulScalar(-1) or add a `SubScalarRev` kernel. Simpler: use the
-      existing broadcast kernel with strides (saRow=0, saCol=0).
-  - Acceptance: All 4 binary ops (Add, Sub, Mul, Div) accept scalar-vs-tensor
-    on GPU. No CPU fallback for these patterns.
-  - Dependencies: T76.1.
-
-- [ ] S76.2.1 Scalar-broadcast parity tests  Owner: TBD  Est: 1.5h
-  - Test: [1] + [128, 2048] matches CPU Add within 1e-5.
-  - Test: [128, 2048] - [1] matches CPU Sub within 1e-5.
-  - Test: [1] * [128, 2048] matches CPU Mul within 1e-5.
-  - Test: [128, 2048] / [1] matches CPU Div within 1e-5.
-  - Test: [1] - [128, 2048] (scalar on left, non-commutative).
-  - Test: [1] / [128, 2048] (scalar on left, non-commutative).
-  - Verify all outputs have GPUStorage.
-
-- [ ] T76.3 Add gpuSubScalar method to GPUEngine  Owner: TBD  Est: 30m
-  - Wire SubScalar kernel through `gpuScalarOp` like AddScalar/MulScalar.
-  - Acceptance: GPUEngine.Sub(tensor, scalar_tensor) uses GPU kernel.
-  - Dependencies: T76.1.
-
-- [ ] T76.4 Run golangci-lint on modified packages  Owner: TBD  Est: 15m
-  - Packages: internal/cuda/kernels/, internal/gpuapi/, compute/.
-  - Dependencies: T76.3.
-
-### E77: GPU Slice, Split, and Concat Kernels (O77)
-
-`GPUStorage.Slice()` is the #1 D2H source (24%). When a CPU fallback op
-reads data from a GPU-resident tensor, `Slice()` copies the entire buffer
-D2H. The fix is to keep sliced/split/concatenated tensors on GPU.
-
-Existing code:
-- `tensor/gpu_storage.go` line 188 -- `GPUStorage.Slice()` with D2H copy.
-- `compute/gpu_engine.go` line 667 -- `Split` delegates to CPU.
-- `compute/gpu_engine.go` line 671 -- `Concat` delegates to CPU.
-- `compute/cpu_engine.go` -- CPU Split/Concat implementations.
-
-- [ ] T77.1 Write CUDA Slice kernel  Owner: TBD  Est: 2h
-  - Add to `internal/cuda/kernels/slice.cu`:
-    `slice_strided_kernel(float *in, float *out, int *srcStrides, int *starts,
-     int *outShape, int ndim, int total)` -- copies a contiguous sub-region.
-  - For the common case (contiguous last-dim slice), a memcpy-based fast path.
-  - Add `Slice` to KernelRunner interface:
-    `Slice(in, out unsafe.Pointer, srcStrides, starts, outShape []int32, ndim, total int, stream Stream) error`
-  - Add Go CGo wrapper and backend stubs.
-  - Acceptance: Kernel compiles for sm_121. Correct output for 2D and 3D slices.
+- [ ] T1.3 Remove docs/phase27.md  Owner: TBD  Est: 5m
+  - Historical execution log. Relevant facts already in design.md.
+  - Acceptance: File deleted.
   - Dependencies: none.
 
-- [ ] S77.1.1 GPU Slice kernel unit tests  Owner: TBD  Est: 1.5h
-  - Test: 2D slice [4,8] -> rows [1:3] gives [2,8].
-  - Test: 2D slice [4,8] -> cols [2:6] gives [4,4].
-  - Test: 3D slice [2,4,8] -> [0:1, 1:3, :] gives [1,2,8].
-  - Test: full slice (no-op) returns same data.
-  - Compare with CPU Slice within 0 tolerance (exact).
-
-- [ ] T77.2 Wire GPU Slice into GPUEngine  Owner: TBD  Est: 2h
-  - Modify tensor Slice to detect GPUStorage and use the GPU kernel.
-  - Option A: Add `Slice` method to Engine interface.
-  - Option B: Override in `tensor/gpu_storage.go` to use a kernel-based
-    sub-tensor extraction when a KernelRunner is available.
-  - The simpler approach: add a `SliceGPU` method on GPUEngine that layers
-    can call, similar to FusedRMSNormer. Layers that call tensor.Slice()
-    in the hot path (attention mask creation, Split) type-assert the engine.
-  - Acceptance: GPU-resident tensor.Slice() returns GPU-resident output.
-    No D2H copy in pprof.
-  - Dependencies: T77.1.
-
-- [ ] S77.2.1 GPU Slice parity test  Owner: TBD  Est: 1h
-  - Compare GPU Slice vs CPU Slice for shapes used in Gemma 3 inference.
-  - Verify output has GPUStorage.
-
-- [ ] T77.3 Write GPU Split using Slice kernel  Owner: TBD  Est: 1.5h
-  - Modify `GPUEngine.Split` to call the GPU Slice kernel for each split chunk
-    instead of delegating to CPU.
-  - Split along axis: compute start/end for each chunk, call Slice kernel.
-  - Acceptance: GPUEngine.Split returns GPU-resident tensors. Parity with CPU.
-  - Dependencies: T77.2.
-
-- [ ] S77.3.1 GPU Split parity test  Owner: TBD  Est: 1h
-  - Split [8, 2048] into 8 chunks of [1, 2048] along axis 0.
-  - Split [1, 2048] into 2 chunks of [1, 1024] along axis 1 (head split).
-  - Verify all output tensors have GPUStorage.
-
-- [ ] T77.4 Write CUDA Concat kernel  Owner: TBD  Est: 2h
-  - Add to `internal/cuda/kernels/concat.cu`:
-    `concat_kernel(float **inputs, int *inputSizes, float *output, int numInputs,
-     int outerStride, int innerSize, int axis)`.
-  - Add `Concat` to KernelRunner interface.
-  - Wire into GPUEngine.Concat.
-  - Acceptance: GPUEngine.Concat uses GPU kernel for GPU-resident tensors.
-    Output has GPUStorage. Parity with CPU.
+- [ ] T1.4 Remove docs/phase28.md  Owner: TBD  Est: 5m
+  - Historical execution log.
+  - Acceptance: File deleted.
   - Dependencies: none.
 
-- [ ] S77.4.1 GPU Concat parity test  Owner: TBD  Est: 1h
-  - Concat 8 tensors of [1, 2048] along axis 0 gives [8, 2048].
-  - Concat 2 tensors of [1, 1024] along axis 1 gives [1, 2048].
-  - Verify output has GPUStorage.
+- [ ] T1.5 Remove docs/updates.md  Owner: TBD  Est: 10m
+  - Phase 34 execution log. Relevant Wave C1-C5 facts already in plan.md
+    progress log and design.md section 15.16.
+  - Acceptance: File deleted. Key facts preserved in design.md.
+  - Dependencies: none.
 
-- [ ] T77.5 Run golangci-lint on modified packages  Owner: TBD  Est: 15m
-  - Packages: internal/cuda/kernels/, internal/gpuapi/, compute/, tensor/.
-  - Dependencies: T77.4.
+- [ ] T1.6 Remove docs/zerfoo-suggestions.md  Owner: TBD  Est: 5m
+  - Numerai training improvement proposals. training/optimizer/ema.go already
+    implemented. Remaining proposals (SWA, SGDR) are future work.
+  - Acceptance: File deleted.
+  - Dependencies: none.
 
-### E78: Float32 Weight Upload (O78)
+- [ ] T1.7 Commit docs removals  Owner: TBD  Est: 5m
+  - Single commit: `docs: remove obsolete phase logs and proposals`
+  - Acceptance: git status shows no deleted files. Commit passes pre-commit.
+  - Dependencies: T1.1-T1.6.
 
-With Pow and binary ops now on GPU, uploading float32 weights to GPU is
-beneficial (previously it caused D2H from CPU fallback ops). This removes
-the remaining H2D copies for float32 normalization weights and biases.
+### E2: Trim plan.md
 
-- [ ] T78.1 Enable float32 weight upload in GPUEngine.UploadWeights  Owner: TBD  Est: 1h
-  - Remove the skip for non-Q4 tensors in `GPUEngine.UploadWeights`.
-  - Upload all float32 weight tensors to GPU using NewGPUStorageFromSlice.
-  - Acceptance: Both Q4 and float32 weights are GPU-resident after load.
-  - Dependencies: E75, E76 (Pow and binary ops must be on GPU first).
+- [ ] T2.1 Remove completed Track 0 (E96) from plan.md  Owner: TBD  Est: 15m
+  - All 14 tasks complete. Summary already in design.md 15.16.
+  - Remove the entire "Track 0: Remaining Composition Fixes" section.
+  - Keep a one-line note in Context: "Track 0 complete (see design.md 15.16)."
+  - Acceptance: No E96/T96 tasks in plan.md.
+  - Dependencies: none.
 
-- [ ] S78.1.1 Float32 weight upload test  Owner: TBD  Est: 45m
-  - Load model with -device cuda.
-  - Verify all Parameter tensors (including float32 norm weights) have GPUStorage.
-  - Run forward pass. Verify correct output.
+- [ ] T2.2 Condense Track C completed work  Owner: TBD  Est: 20m
+  - Replace detailed T97/T98/T99 task descriptions with a completion summary.
+  - Keep only pending tasks: T100.2, T100.3, T100.4, S100.1.1, S100.2.1.
+  - Keep Track B (E94, E95) as-is (all pending).
+  - Track A (E87-E89): keep as-is (all pending).
+  - Acceptance: plan.md < 15KB. All pending tasks preserved with acceptance
+    criteria.
+  - Dependencies: none.
 
-- [ ] T78.2 Run golangci-lint on compute/ and inference/  Owner: TBD  Est: 15m
-  - Dependencies: T78.1.
+- [ ] T2.3 Consolidate progress log  Owner: TBD  Est: 10m
+  - Replace v10-v17 entries with single summary entry.
+  - Add today's entry for this cleanup work.
+  - Acceptance: Progress log has 2 entries: archive summary + today.
+  - Dependencies: T2.1, T2.2.
 
-### E79: End-to-End GPU Benchmark (O78)
+- [ ] T2.4 Commit trimmed plan.md  Owner: TBD  Est: 5m
+  - Commit: `docs: trim plan.md -- archive completed tracks to design.md`
+  - Acceptance: Commit passes pre-commit.
+  - Dependencies: T2.1-T2.3.
 
-After all optimizations, measure tok/s on DGX Spark and compare with baselines.
+### E3: Update design.md
 
-- [ ] T79.1 Profile GPU inference after all optimizations  Owner: TBD  Est: 2h
-  - Build zerfoo with CUDA tags on DGX Spark including all E75-E78 changes.
-  - Run `bench_tps -model ~/models/gemma3-q4 -device cuda -tokens 100`.
-  - Capture pprof profile.
-  - Acceptance: Profile captured showing reduced cgocall % and eliminated
-    CPU fallbacks.
-  - Dependencies: T78.1, T77.5.
+- [ ] T3.1 Stage and commit unstaged docs/design.md changes  Owner: TBD  Est: 5m
+  - 143 lines of Phase 34 Track D (NEON SIMD) documentation already written.
+  - Commit: `docs: add Phase 34 Track D NEON SIMD documentation to design.md`
+  - Acceptance: docs/design.md committed. Content includes section 15.16.
+  - Dependencies: none.
 
-- [ ] S79.1.1 GPU profile report  Owner: TBD  Est: 30m
-  - Document: tok/s, cgocall %, remaining CPU fallbacks, GPU utilization.
+### E4: Commit Code Changes
 
-- [ ] T79.2 Compare GPU vs CPU tok/s  Owner: TBD  Est: 1h
-  - Run same prompt with -device cpu and -device cuda.
-  - Measure tok/s for both. 3 runs each, report median.
-  - Acceptance: GPU tok/s >= 10 (target). If not met, identify remaining
-    bottleneck and document what would be needed.
-  - Dependencies: T79.1.
+All code changes are on feat/neon-softmax. Pre-commit hook requires
+single-directory commits.
 
-- [ ] S79.2.1 Benchmark comparison report  Owner: TBD  Est: 30m
+- [ ] T4.1 Commit staged normalization files  Owner: TBD  Est: 5m
+  - Files: layers/normalization/rmsnorm.go,
+    layers/normalization/simplified_layer_normalization.go
+  - Already staged. These capture scales output from FusedRMSNormGPU.
+  - Commit: `fix(normalization): cache GPU RMSNorm scales for backward pass`
+  - Dependencies: none.
 
-- [ ] T79.3 Verify output correctness  Owner: TBD  Est: 1h
-  - Generate 50 tokens with same prompt on CPU and GPU.
-  - Compare output text. Both should produce coherent English text.
-  - Acceptance: No NaN or Inf. Coherent output on both devices.
-  - Dependencies: T79.1.
+- [ ] T4.2 Commit ADRs 020-029  Owner: TBD  Est: 5m
+  - 7 new ADR files in docs/adr/.
+  - All complete and ready to commit.
+  - Commit: `docs: add ADRs 020-029 (Q4 dot, worker pool, GPU-first, purego, megakernel, composition, tracing, NEON)`
+  - Dependencies: none.
 
-- [ ] S79.3.1 Output correctness test  Owner: TBD  Est: 30m
+- [ ] T4.3 Commit new layer files  Owner: TBD  Est: 5m
+  - Files: layers/core/conv1d.go, layers/core/conv1d_test.go,
+    layers/core/temporal_conv_encoder.go,
+    layers/core/temporal_conv_encoder_test.go,
+    layers/core/variable_selection.go,
+    layers/core/variable_selection_test.go
+  - Commit: `feat(layers): add Conv1D, TemporalConvEncoder, VariableSelection layers`
+  - Dependencies: none.
 
-- [ ] T79.4 Run golangci-lint on all modified packages  Owner: TBD  Est: 15m
-  - Dependencies: T79.3.
+- [ ] T4.4 Commit training/optimizer/ema.go  Owner: TBD  Est: 5m
+  - EMA optimizer wrapper. Clean implementation.
+  - Commit: `feat(training): add EMA optimizer wrapper`
+  - Dependencies: none.
+
+- [ ] T4.5 Commit remaining compute/gpuapi changes  Owner: TBD  Est: 10m
+  - Unstaged changes in compute/ and internal/gpuapi/ related to RMSNorm
+    scales and kernel runner updates.
+  - Review diffs, group by directory, commit separately.
+  - Dependencies: T4.1.
+
+### E5: Clean Up Build Artifacts
+
+- [ ] T5.1 Add binary artifacts to .gitignore  Owner: TBD  Est: 5m
+  - Add: softmax_arm64.o, bench-compare, bench_tps, coverage-gate,
+    zerfoo-predict
+  - Commit: `chore: add build artifacts to .gitignore`
+  - Dependencies: none.
+
+- [ ] T5.2 Remove softmax_arm64.o (0 bytes, empty)  Owner: TBD  Est: 2m
+  - Delete the file.
+  - Dependencies: T5.1.
+
+### E6: Push and Create PR
+
+- [ ] T6.1 Push feat/neon-softmax to origin  Owner: TBD  Est: 2m
+  - `git push origin feat/neon-softmax`
+  - Dependencies: E1-E5 all complete.
+
+- [ ] T6.2 Create PR to upstream  Owner: TBD  Est: 5m
+  - `gh pr create --repo zerfoo/zerfoo --head dndungu:feat/neon-softmax`
+  - Title: "feat: tracing compiler, NEON SIMD, composition fixes, docs cleanup"
+  - Body: Summary of all tracks (0, C, D) and docs cleanup.
+  - Dependencies: T6.1.
 
 ---
 
 ## 4. Parallel Work
 
-Five epics fall into 3 tracks. E75/E76 (scalar ops) and E77 (D2H elimination)
-are independent kernel work. E78 (weight upload) depends on E75+E76. E79
-(benchmark) depends on all.
+| Track | Tasks | Notes |
+|-------|-------|-------|
+| Track 1: Doc cleanup | T1.1-T1.7, T2.1-T2.4 | Can run in parallel with code commits |
+| Track 2: Code commits | T4.1-T4.5 | Sequential (each commit must pass pre-commit) |
+| Track 3: Artifacts | T5.1-T5.2 | Independent |
+| Track 4: Design doc | T3.1 | Independent |
 
-| Track | Epics | Description | Sync Points |
-|-------|-------|-------------|-------------|
-| A: Scalar Kernels | E75, E76 | PowScalar + SubScalar + scalar-broadcast | Converge before E78 |
-| B: D2H Elimination | E77 | GPU Slice/Split/Concat kernels | Converge before E79 |
-| C: Weight Upload + Benchmark | E78, E79 | Float32 upload + final measurement | After A + B |
-
-### Within-Track Parallelism
-
-| Track | Parallel Tasks | Notes |
-|-------|----------------|-------|
-| A | T75.1 and T76.1 | PowScalar and SubScalar kernels are independent |
-| B | T77.1 and T77.4 | Slice and Concat kernels are independent |
-| A+B | T75.1, T76.1, T77.1, T77.4 | All kernel development in parallel |
-
-### Execution Order
-
-Wave 1 (parallel):
-- T75.1 (PowScalar kernel), T76.1 (SubScalar kernel), T77.1 (Slice kernel),
-  T77.4 (Concat kernel) -- all independent CUDA kernel work.
-
-Wave 2 (after Wave 1):
-- T75.2 (PowScalar Go wrapper), T76.2 (scalar-broadcast detection),
-  T76.3 (SubScalar wiring), T77.2 (GPU Slice wiring), T77.3 (GPU Split).
-
-Wave 3 (after Wave 2):
-- T75.3 (wire PowScalar into GPUEngine.Pow).
-- All lint tasks (T75.4, T76.4, T77.5).
-
-Wave 4 (after E75 + E76):
-- T78.1 (float32 weight upload).
-
-Wave 5 (after all):
-- E79 (benchmark).
+Sync point: All tracks converge at T6.1 (push).
 
 ---
 
 ## 5. Timeline and Milestones
 
-| Milestone | ID | Dependencies | Exit Criteria |
-|-----------|----|-------------|---------------|
-| M41: Scalar GPU ops | E75, E76 | none | PowScalar + SubScalar + scalar-broadcast on GPU. Zero Pow/binary CPU fallbacks. |
-| M42: D2H eliminated | E77 | none | GPU Slice/Split/Concat. GPUStorage.Slice D2H < 5% in pprof. |
-| M43: Full GPU coverage | E78 | M41 | All float32 weights on GPU. Zero H2D in forward pass. |
-| M44: 10 tok/s GPU | E79 | M41, M42, M43 | bench_tps reports >= 10 tok/s with -device cuda on DGX Spark. |
-
-Critical path: T75.1 -> T75.2 -> T75.3 -> T78.1 -> T79.1
+| Milestone | Dependencies | Exit Criteria |
+|-----------|-------------|---------------|
+| M1: Docs trimmed | E1, E2, E3 | docs/ has <= 7 files, plan.md < 15KB |
+| M2: Code committed | E4, E5 | git status clean (no modified/untracked) |
+| M3: PR created | M1, M2 | PR URL returned, CI passes |
 
 ---
 
@@ -432,12 +239,9 @@ Critical path: T75.1 -> T75.2 -> T75.3 -> T78.1 -> T79.1
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R76 | PowScalar kernel numerical precision differs from CPU powf | Output quality regression | Low | Test within 1e-5 tolerance. Use CUDA `powf` which matches glibc. |
-| R77 | GPU Slice kernel for non-contiguous strides is complex | Implementation takes longer than estimated | Medium | Start with contiguous fast path (memcpy). Add strided path only if profiling shows it in hot path. |
-| R78 | Float32 weight upload increases GPU memory usage | OOM on small GPUs | Low | DGX Spark GB10 has 128GB. Gemma 3 2B float32 weights are ~400MB. Not a concern. |
-| R79 | 10 tok/s target still not achieved after all changes | Unknown bottleneck remains | Medium | If target not met, re-profile and document. Possible next steps: batched inference, BF16 compute, or CUDA graph capture. |
-| R80 | Scalar-broadcast for non-commutative ops (Sub, Div) when scalar is on the left | Wrong results if operand order is not handled correctly | Medium | Add explicit tests for `[1] - [M,D]` and `[1] / [M,D]` cases. Use broadcast kernel with stride 0 for left-scalar. |
-| R81 | DGX Spark network connectivity | Cannot deploy and test on GPU | Low | Keep local CPU tests passing. Batch DGX work into focused sessions. |
+| R1 | Pre-commit hook rejects multi-dir commit | Commit fails | Medium | Verify each commit touches only one directory |
+| R2 | Unstaged gpuapi changes conflict with staged normalization | Merge conflict | Low | Commit normalization first, then gpuapi |
+| R3 | Removing docs loses unpreserved knowledge | Information loss | Low | Review each doc before deleting; verify key facts in design.md |
 
 ---
 
@@ -446,67 +250,26 @@ Critical path: T75.1 -> T75.2 -> T75.3 -> T78.1 -> T79.1
 ### Definition of Done
 
 A task is done when:
-1. Implementation matches the acceptance criteria.
-2. All existing tests pass (`go test ./... -count=1`).
-3. New code has unit tests with >= 95% coverage.
-4. `golangci-lint run ./package/` reports 0 issues.
-5. `go vet ./package/` reports no issues.
-6. Tests pass with `-race` flag.
-7. Non-CUDA build (`go build ./...` without any GPU tag) compiles.
-8. CUDA build (`go build -tags cuda ./...`) compiles on DGX Spark.
-9. Changes are committed in a small commit touching one directory only.
+1. File changes match acceptance criteria.
+2. Commit passes pre-commit hooks.
+3. Single directory per commit.
 
 ### Commit Discipline
 
 - Never commit files from different directories in the same commit.
-- Make small, logical commits: one task or subtask per commit.
-- Use Conventional Commits: `feat(cuda): add PowScalar kernel`.
-- Always run linters and formatters before committing.
-
-### DGX Spark Protocol
-
-- SSH: `ssh ndungu@192.168.86.250`
-- Go: `/usr/local/go/bin/go`
-- CUDA: `/usr/local/cuda/bin/nvcc`, `CGO_CFLAGS='-I/usr/local/cuda/include'`,
-  `CGO_LDFLAGS='-L/usr/local/cuda/lib64'`
-- GPU: NVIDIA GB10, sm_121, `make CUDA_ARCH=sm_121`
-- Model: `~/models/gemma3-q4/model.zmf`
-- Repo: `~/zerfoo/`
-
-### Benchmark Protocol
-
-- benchtime=3s, count=3, report median.
-- All GPU benchmarks on DGX Spark GB10.
-- Use `bench_tps -device cuda -tokens 100` for tok/s measurement.
-- Use `bench_tps -device cpu -tokens 100` for CPU comparison.
-- Capture pprof with `-cpuprofile` flag.
-
-### Quality Gate
-
-- `go test -race ./package/`
-- `golangci-lint run ./package/`
-- `go vet ./package/`
-- `go build ./...` (non-CUDA)
-- `go build -tags cuda ./...` (CUDA, on DGX Spark)
+- Use Conventional Commits format.
+- Run linters before committing.
 
 ---
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-06
+### Change Summary -- 2026-03-09
 
-Created Phase 33 plan. Trimmed Phase 32 completed epics (E69-E74) to
-docs/design.md section 15.14. Created ADR 023 for scalar ops strategy.
-
-New epics:
-- E75: PowScalar GPU Kernel (8.9% Pow CPU fallback).
-- E76: Scalar-Broadcast for All Binary Ops (10.4% CPU fallback).
-- E77: GPU Slice/Split/Concat (24% D2H elimination).
-- E78: Float32 Weight Upload (enable now that Pow/binary ops are on GPU).
-- E79: End-to-End GPU Benchmark (validate >= 10 tok/s target).
-
-ADRs created:
-- docs/adr/023-gpu-scalar-ops-d2h-elimination.md: Scalar ops strategy decision.
+Plan created for documentation cleanup and code commit work. Identified 5
+obsolete docs for removal (suggestion.md, suggestion-plan.md, phase27.md,
+phase28.md, updates.md, zerfoo-suggestions.md). Identified 4 groups of
+uncommitted code changes. Binary artifacts need .gitignore entries.
 
 ---
 
@@ -514,83 +277,89 @@ ADRs created:
 
 ### For a New Contributor
 
-- **Architecture:** Read docs/design.md for interface contracts, package layout,
-  GPU architecture, and troubleshooting. Design decisions in docs/adr/ (001-023).
-- **Phases 1-32:** All documented in docs/design.md sections 15.1-15.14.
-- **Phase 33:** This plan is the source of truth.
-- **Quality:** See docs/QUALITY.md for test coverage report.
-- **How to build:**
-  - CPU: `go build ./...`
-  - CUDA: `go build -tags cuda ./...`
-  - On DGX Spark: `make CUDA_ARCH=sm_121` in internal/cuda/kernels/,
-    then `go build -tags cuda ./...`
-- **Pre-commit hook:** Runs golangci-lint and tests. Rejects multi-directory commits.
+- **This plan:** Covers only the cleanup and commit work for feat/neon-softmax.
+- **Active development plan:** After this cleanup, the remaining Phase 34 work
+  is in this same plan (pending tasks T100.2-T100.4, Track A, Track B).
+- **PR workflow:** PRs go to zerfoo/zerfoo (upstream), not dndungu/zerfoo.
+  Use `gh pr create --repo zerfoo/zerfoo --head dndungu:<branch>`.
 
-### Key Starting Points
+### Pending Phase 34 Work (preserved from previous plan)
 
-1. **E75 (PowScalar):** `compute/gpu_kernels.go` line 363 -- `gpuPow` with
-   `sameShape` guard. When exponent has 1 element, extract scalar and use
-   `gpuScalarOp` with new `kernels.PowScalar`.
+#### Track A: Remaining purego Cleanup
 
-2. **E76 (Scalar-Broadcast):** `compute/gpu_kernels.go` line 77 --
-   `gpuBroadcastOp` switch. Add case before existing switch: if either operand
-   has 1 total element, extract scalar and dispatch to scalar kernel.
+- [ ] T87.3 Replace runtime.go CGo functions with dlopen calls  Owner: TBD  Est: 3h
+- [ ] S87.3.1 Runtime function parity test  Owner: TBD  Est: 1.5h
+- [ ] S88.2.1 Elementwise kernel parity test  Owner: TBD  Est: 1.5h
+- [ ] S88.3.1 Full kernel test suite  Owner: TBD  Est: 2h
+- [ ] T89.2 Remove build tags from compute/ GPU files  Owner: TBD  Est: 2h  BLOCKED
+- [ ] S89.3.1 Cross-platform build verification  Owner: TBD  Est: 1h
 
-3. **E77 (GPU Slice):** `tensor/gpu_storage.go` line 188 -- `GPUStorage.Slice()`
-   is the D2H bottleneck. Add CUDA kernel in `internal/cuda/kernels/slice.cu`.
-   Wire via a `SliceGPU` method on GPUEngine.
+#### Track C: Tracing Compiler Integration (remaining)
 
-4. **E78 (Weight Upload):** `compute/gpu_engine.go` line 154 -- remove the
-   skip for non-Q4 tensors. Upload float32 weights to GPU.
+Waves C1-C4 complete (E97, E98 code complete, E99 emitters complete, T100.1
+wired). See design.md section 15.16 and docs/adr/028-tracing-compiler.md.
 
-### External Dependencies
+- [ ] S100.1.1 Integration test on DGX Spark  Owner: TBD  Est: 1.5h
+  - Run bench_tps on DGX Spark. Verify "megakernel: compiled and loaded" log.
+  - Dependencies: DGX Spark access.
 
-- **DGX Spark (ndungu@192.168.86.250):**
-  - Go 1.25.0 linux/arm64, CUDA 13.0, sm_121 (Blackwell).
-  - Model: ~/models/gemma3-q4/model.zmf (1.5GB Q4 ZMF).
-  - Repo: ~/zerfoo/ (sync with `git pull`).
-  - Build: `make CUDA_ARCH=sm_121` in internal/cuda/kernels/
+- [ ] T100.2 Update tryCompileMegakernel for GPU KV cache  Owner: TBD  Est: 2h
+  - Detect KVCache* ops in traced tape. Allocate GPUKVCache. Pass device
+    pointers to runner Launch(). Pass seq_pos from Go KV cache.
+  - Dependencies: T100.1, DGX Spark.
+
+- [ ] S100.2.1 KV cache integration test  Owner: TBD  Est: 1.5h
+  - Generate 50 tokens with megakernel. Compare with plan.Run() output.
+
+- [ ] T100.3 End-to-end megakernel correctness test  Owner: TBD  Est: 2h
+  - Load Gemma 3 2B Q4, generate 50 tokens, compare megakernel vs plan.Run().
+  - Dependencies: T100.2.
+
+- [ ] T100.4 Run golangci-lint on generate/, graph/  Owner: TBD  Est: 15m
+  - Dependencies: T100.3.
+
+#### Track B: Megakernel Performance Tuning
+
+- [ ] T94.1 Profile megakernel with nsys  Owner: TBD  Est: 2h
+  - Dependencies: E100 complete.
+- [ ] T94.2 Optimize memory access patterns  Owner: TBD  Est: 3h
+- [ ] T94.3 Tune thread block and grid dimensions  Owner: TBD  Est: 2h
+- [ ] T94.4 Run golangci-lint  Owner: TBD  Est: 15m
+- [ ] T95.1 Profile GPU inference after all optimizations  Owner: TBD  Est: 2h
+- [ ] S95.1.1 GPU profile report  Owner: TBD  Est: 30m
+- [ ] T95.2 Compare all configurations  Owner: TBD  Est: 1.5h
+- [ ] S95.2.1 Benchmark comparison report  Owner: TBD  Est: 30m
+- [ ] T95.3 Verify output correctness across all paths  Owner: TBD  Est: 1h
+- [ ] S95.3.1 Output correctness report  Owner: TBD  Est: 30m
+- [ ] T95.4 Run golangci-lint  Owner: TBD  Est: 15m
 
 ### Performance Baselines
 
-| Model | Quant | Device | tok/s | Phase |
-|-------|-------|--------|-------|-------|
-| Gemma 3 2B | Q4_0 | CPU ARM64 | 6.86 | 30 |
-| Gemma 3 2B | Q4_0 | CPU ARM64 | 5.94 | 31 (bench_tps) |
-| Gemma 3 2B | Q4_0 | GPU (cuda) | 5.12 | 31 (bench_tps) |
-| Gemma 3 2B | Q4_0 | CPU ARM64 | 6.61 | 32 (bench_tps) |
-| Gemma 3 2B | Q4_0 | GPU (cuda) | 6.84 | 32 (bench_tps) |
+| Config | tok/s | Source |
+|--------|-------|--------|
+| CPU ARM64 (post Track D) | 8.15 median | Phase 34 Track D |
+| CPU ARM64 (pre Track D) | 6.86 | Phase 30 |
+| GPU (cuda) | 10.32 peak / 7.78 median | Phase 33 |
+| Ollama GB10 | ~100 (est.) | Interpolated |
 
----
+### Key Milestones
 
-## 10. Appendix
+| Milestone | Status |
+|-----------|--------|
+| M56: Tracing compiler works | DONE (CompileTraced produces primitive-op tape) |
+| M57: GPU KV cache works | DONE (code complete, integration pending) |
+| M58: Megakernel fires | PENDING (T100.2, T100.3 on DGX Spark) |
+| M59: 50 tok/s GPU | PENDING (Track B after M58) |
+| M60: 10 tok/s CPU ARM64 | PARTIAL (8.15 tok/s, needs GEMM cache tiling) |
 
-### Existing File Reference
+### Risk Register (Phase 34)
 
-| File | Purpose |
-|------|---------|
-| `compute/engine.go` | Engine[T] interface (30+ methods) |
-| `compute/gpu_engine.go` | GPUEngine with CUDA acceleration + CPU fallback |
-| `compute/gpu_kernels.go` | gpuBinaryOp, gpuUnaryOp, gpuScalarOp, gpuBroadcastOp |
-| `compute/broadcast.go` | broadcastShape() for NumPy-style output shapes |
-| `internal/cuda/kernels/elementwise.cu` | CUDA element-wise kernels |
-| `internal/cuda/kernels/elementwise.go` | Go CGo wrappers for CUDA kernels |
-| `internal/cuda/kernels/slice.cu` | (NEW) GPU strided slice kernel |
-| `internal/cuda/kernels/concat.cu` | (NEW) GPU concat kernel |
-| `internal/gpuapi/kernels.go` | KernelRunner interface |
-| `internal/gpuapi/cuda_kernels.go` | CUDA KernelRunner implementation |
-| `tensor/gpu_storage.go` | GPUStorage[T] with Slice() D2H copy |
-| `layers/core/pow.go` | Pow layer calling engine.Pow() |
-| `inference/inference.go` | Load(), WithDevice(), engine creation |
-| `cmd/bench_tps/main.go` | tok/s benchmark binary |
-
-### Estimated Effort Summary
-
-| Epic | Area | Tasks | Estimated Hours |
-|------|------|-------|----------------|
-| E75: PowScalar Kernel | internal/cuda/, compute/ | 4 tasks + 2 subtests | 5.25h |
-| E76: Scalar-Broadcast | internal/cuda/, compute/ | 4 tasks + 2 subtests | 5.75h |
-| E77: GPU Slice/Split/Concat | internal/cuda/, compute/, tensor/ | 5 tasks + 4 subtests | 11.5h |
-| E78: Float32 Weight Upload | compute/, inference/ | 2 tasks + 1 subtest | 2.0h |
-| E79: GPU Benchmark | DGX Spark | 4 tasks + 3 subtests | 5.25h |
-| **Total** | **GPU scalar ops + D2H** | **19 tasks + 12 subtests** | **~30h** |
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R92 | Register pressure: hidden_dim=2048 | Must tile, slower | High | Profile with nvcc --ptxas-options=-v |
+| R95 | KV cache reads limit bandwidth | Cannot reach max | High | Focus on short contexts (<512) |
+| R98 | 50 tok/s not achieved | Unknown bottleneck | Medium | If 30+, profile; if <30, fused kernels |
+| R100 | Tracing captures wrong path | Wrong megakernel output | Medium | Only use for decode (seqLen=1) |
+| R101 | Tensor identity via pointer fragile | Wrong slot wiring | Medium | Disable pooling during tracing |
+| R102 | GPU KV cache memory budget | OOM for long contexts | Low | Default 512 tokens (~104MB) |
+| R103 | EngineProxy dispatch overhead | Small regression | Low | ~1us total, negligible |

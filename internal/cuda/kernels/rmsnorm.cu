@@ -10,6 +10,7 @@
 __global__ void kernel_rmsnorm(const float* __restrict__ input,
                                 const float* __restrict__ weight,
                                 float* __restrict__ output,
+                                float* __restrict__ scales,
                                 float eps, int D) {
     int row = blockIdx.x;
     const float* x = input + row * D;
@@ -37,6 +38,11 @@ __global__ void kernel_rmsnorm(const float* __restrict__ input,
     // Compute scale = rsqrt(mean_sq + eps).
     float scale = rsqrtf(sdata[0] / (float)D + eps);
 
+    // Store per-row scale for backward pass.
+    if (threadIdx.x == 0) {
+        scales[row] = scale;
+    }
+
     // Phase 2: Normalize and scale by weight.
     for (int i = threadIdx.x; i < D; i += blockDim.x) {
         y[i] = x[i] * scale * weight[i];
@@ -48,13 +54,13 @@ __global__ void kernel_rmsnorm(const float* __restrict__ input,
 extern "C" {
 
 cudaError_t launch_rmsnorm(const float* input, const float* weight,
-                            float* output, float eps,
+                            float* output, float* scales, float eps,
                             int rows, int D, cudaStream_t stream) {
     // Block size: next power of 2 up to min(D, 256).
     int block = 1;
     while (block < D && block < 256) block <<= 1;
     size_t smem = block * sizeof(float);
-    kernel_rmsnorm<<<rows, block, smem, stream>>>(input, weight, output, eps, D);
+    kernel_rmsnorm<<<rows, block, smem, stream>>>(input, weight, output, scales, eps, D);
     return cudaGetLastError();
 }
 

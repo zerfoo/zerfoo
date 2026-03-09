@@ -89,6 +89,20 @@ func (e *errEngine) AddScalar(ctx context.Context, a *tensor.TensorNumeric[float
 	return e.Engine.AddScalar(ctx, a, scalar, dst...)
 }
 
+func (e *errEngine) Exp(ctx context.Context, a *tensor.TensorNumeric[float32], dst ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if err := e.check("Exp"); err != nil {
+		return nil, err
+	}
+	return e.Engine.Exp(ctx, a, dst...)
+}
+
+func (e *errEngine) Div(ctx context.Context, a, b *tensor.TensorNumeric[float32], dst ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if err := e.check("Div"); err != nil {
+		return nil, err
+	}
+	return e.Engine.Div(ctx, a, b, dst...)
+}
+
 func (e *errEngine) Split(ctx context.Context, a *tensor.TensorNumeric[float32], numSplits int, axis int) ([]*tensor.TensorNumeric[float32], error) {
 	if err := e.check("Split"); err != nil {
 		return nil, err
@@ -101,6 +115,13 @@ func (e *errEngine) Concat(ctx context.Context, inputs []*tensor.TensorNumeric[f
 		return nil, err
 	}
 	return e.Engine.Concat(ctx, inputs, axis, dst...)
+}
+
+func (e *errEngine) Tanh(ctx context.Context, a *tensor.TensorNumeric[float32], dst ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if err := e.check("Tanh"); err != nil {
+		return nil, err
+	}
+	return e.Engine.Tanh(ctx, a, dst...)
 }
 
 func (e *errEngine) Ops() numeric.Arithmetic[float32] {
@@ -314,7 +335,7 @@ func TestFastGelu_ForwardErrors(t *testing.T) {
 		{"MulScalar1", map[string]int{"MulScalar": 1}},
 		{"Add1", map[string]int{"Add": 1}},
 		{"MulScalar2", map[string]int{"MulScalar": 2}},
-		{"UnaryOp1", map[string]int{"UnaryOp": 1}},
+		{"Tanh1", map[string]int{"Tanh": 1}},
 		{"AddScalar1", map[string]int{"AddScalar": 1}},
 		{"Mul3", map[string]int{"Mul": 3}},
 		{"MulScalar3", map[string]int{"MulScalar": 3}},
@@ -524,7 +545,7 @@ func TestSwiGLU_ForwardEngineErrors(t *testing.T) {
 		failOn map[string]int
 	}{
 		{"Split", map[string]int{"Split": 1}},
-		{"Sigmoid_UnaryOp", map[string]int{"UnaryOp": 1}},
+		{"Sigmoid_Exp", map[string]int{"Exp": 1}},
 		{"Mul_output", map[string]int{"Mul": 1}},
 	}
 	for _, tt := range tests {
@@ -549,11 +570,12 @@ func TestSwiGLU_BackwardEngineErrors(t *testing.T) {
 		name   string
 		failOn map[string]int
 	}{
-		// Backward calls: Split#2, Mul#2(dLdx1), Mul#3(dLdgate), UnaryOp#2(oneMinusGate), Mul#4(sigmoidGrad), Mul#5(dLdx2), Concat#1
+		// Backward calls: Split#2, Mul#2(dLdx1), Mul#3(dLdgate), MulScalar#1(negGate), AddScalar#2(oneMinusGate), Mul#4(sigmoidGrad), Mul#5(dLdx2), Concat#1
 		{"Split", map[string]int{"Split": 2}},
 		{"dLdx1_Mul", map[string]int{"Mul": 2}},
 		{"dLdgate_Mul", map[string]int{"Mul": 3}},
-		{"oneMinusGate_UnaryOp", map[string]int{"UnaryOp": 2}},
+		{"negGate_MulScalar", map[string]int{"MulScalar": 1}},
+		{"oneMinusGate_AddScalar", map[string]int{"AddScalar": 2}},
 		{"sigmoidGrad_Mul", map[string]int{"Mul": 4}},
 		{"dLdx2_Mul", map[string]int{"Mul": 5}},
 		{"Concat", map[string]int{"Concat": 1}},

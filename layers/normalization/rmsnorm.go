@@ -123,10 +123,11 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 			f32Weight, wOk := any(r.gain.Value).(*tensor.TensorNumeric[float32])
 			f32Eps, eOk := any(r.epsilon).(float32)
 			if wOk && eOk && f32Weight.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, err := fused.FusedRMSNormGPU(f32Input, f32Weight, f32Eps)
+				out, scales, err := fused.FusedRMSNormGPU(f32Input, f32Weight, f32Eps)
 				if err != nil {
 					return nil, err
 				}
+				r.rms = any(scales).(*tensor.TensorNumeric[T])
 				return any(out).(*tensor.TensorNumeric[T]), nil
 			}
 		}

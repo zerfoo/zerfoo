@@ -64,9 +64,7 @@ func (g *FastGelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumer
 	}
 
 	// 5. tanh(...)
-	tanh, err := g.engine.UnaryOp(ctx, term3, func(val T) T {
-		return T(math.Tanh(float64(val)))
-	})
+	tanh, err := g.engine.Tanh(ctx, term3)
 	if err != nil {
 		return nil, err
 	}

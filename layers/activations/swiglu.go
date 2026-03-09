@@ -17,7 +17,7 @@ import (
 type SwiGLU[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	ops     numeric.Arithmetic[T]
-	sigmoid *BaseActivation[T] // SwiGLU uses Sigmoid internally
+	sigmoid *Sigmoid[T] // SwiGLU uses composed Sigmoid internally
 
 	// Cached tensors for backward pass
 	lastInput   *tensor.TensorNumeric[T]
@@ -53,7 +53,7 @@ func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmeti
 	return &SwiGLU[T]{
 		engine:  engine,
 		ops:     ops,
-		sigmoid: NewBaseActivation(engine, ops, "Sigmoid", WithForwardOp(ops.Sigmoid), WithBackwardOp(ops.SigmoidGrad)),
+		sigmoid: NewSigmoid(engine, ops),
 	}
 }
 
@@ -151,7 +151,12 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 	// dL/dx2 = dL/dgate * dgate/dx2
 	// is the derivative of sigmoid(x2), which is sigmoid(x2) * (1 - sigmoid(x2))
 	// We already have gate = sigmoid(x2)
-	oneMinusGate, err := s.engine.UnaryOp(ctx, s.gate, func(val T) T { return s.ops.Sub(s.ops.One(), val) })
+	// Compute (1 - gate) using engine primitives: MulScalar(-1) + AddScalar(1)
+	negGate, err := s.engine.MulScalar(ctx, s.gate, s.ops.FromFloat64(-1))
+	if err != nil {
+		return nil, err
+	}
+	oneMinusGate, err := s.engine.AddScalar(ctx, negGate, s.ops.One())
 	if err != nil {
 		return nil, err
 	}

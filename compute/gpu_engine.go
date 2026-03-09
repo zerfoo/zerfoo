@@ -151,11 +151,33 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
-		// Skip non-Q4 tensors. Many float32 weights are consumed by ops
-		// without GPU kernels (Pow, some broadcast patterns). Uploading
-		// them to GPU triggers costly D2H copies when those ops read
-		// data back. Only Q4 weights benefit because all Q4 MatMul runs
-		// on GPU and avoids per-op H2D of the heavy raw bytes.
+		// Upload float32 weights to GPU. With Pow, binary ops, and
+		// Split/Concat now running on GPU, float32 weights benefit from
+		// staying on device (eliminates per-op H2D copies for norm weights).
+		if _, ok := t.GetStorage().(*tensor.GPUStorage[float32]); ok {
+			continue // already on GPU
+		}
+		data := t.Data()
+		n := len(data)
+		if n == 0 {
+			continue
+		}
+		byteSize := n * f32Size
+		devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return fmt.Errorf("alloc f32 GPU (shape %v): %w", t.Shape(), err)
+		}
+		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+			e.pool.Free(e.deviceID, devPtr, byteSize)
+			return fmt.Errorf("upload f32 (shape %v): %w", t.Shape(), err)
+		}
+		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
+		if err != nil {
+			e.pool.Free(e.deviceID, devPtr, byteSize)
+			return fmt.Errorf("create GPU storage (shape %v): %w", t.Shape(), err)
+		}
+		t.SetStorage(gs)
+		uploaded++
 	}
 	if uploaded > 0 || q4Uploaded > 0 {
 		e.logger.Info("weights uploaded to GPU",
@@ -665,11 +687,30 @@ func (e *GPUEngine[T]) Sqrt(ctx context.Context, a *tensor.TensorNumeric[T], dst
 }
 
 func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
-	return e.cpu.Split(ctx, a, numSplits, axis)
+	if !isFloat32[T]() {
+		return e.cpu.Split(ctx, a, numSplits, axis)
+	}
+	gs, ok := a.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return e.cpu.Split(ctx, a, numSplits, axis)
+	}
+	return e.gpuSplit(gs.Ptr(), a.Shape(), numSplits, axis)
 }
 
 func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Concat(ctx, tensors, axis, dst...)
+	if !isFloat32[T]() || len(tensors) == 0 {
+		return e.cpu.Concat(ctx, tensors, axis, dst...)
+	}
+	// Check all inputs are GPU-resident.
+	ptrs := make([]unsafe.Pointer, len(tensors))
+	for i, t := range tensors {
+		gs, ok := t.GetStorage().(*tensor.GPUStorage[T])
+		if !ok {
+			return e.cpu.Concat(ctx, tensors, axis, dst...)
+		}
+		ptrs[i] = gs.Ptr()
+	}
+	return e.gpuConcat(ptrs, tensors, axis, dst...)
 }
 
 func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {

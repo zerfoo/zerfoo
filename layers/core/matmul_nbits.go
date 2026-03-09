@@ -98,19 +98,26 @@ func NewMatMulNBits[T tensor.Numeric](
 	// Compute output shape for the layer
 	outputShape := []int{actualRows, actualCols}
 
-	return &MatMulNBits[T]{
-		name:               name,
-		engine:             engine,
-		ops:                ops,
-		quantizedWeights:   quantizedWeights,
-		scale:              scale,
-		zeroPoint:          zeroPoint,
-		nbits:              nbits,
-		symmetric:          symmetric,
-		outputShape:        outputShape,
-		dequantizedWeights: nil,
-		cacheValid:         false,
-	}, nil
+	m := &MatMulNBits[T]{
+		name:             name,
+		engine:           engine,
+		ops:              ops,
+		quantizedWeights: quantizedWeights,
+		scale:            scale,
+		zeroPoint:        zeroPoint,
+		nbits:            nbits,
+		symmetric:        symmetric,
+		outputShape:      outputShape,
+	}
+
+	// Eagerly dequantize weights at construction time so Forward() never
+	// touches tensor.Data(). This makes the Forward() path engine-only,
+	// visible in the ExecutionPlan instruction tape.
+	if _, err := m.dequantizeWeights(); err != nil {
+		return nil, fmt.Errorf("failed to eagerly dequantize weights: %w", err)
+	}
+
+	return m, nil
 }
 
 // dequantizeWeights unpacks the N-bit weights and applies dequantization.

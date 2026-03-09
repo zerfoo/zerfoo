@@ -9,8 +9,9 @@ import (
 
 // FusedRMSNormer is an optional interface for engines that support GPU-accelerated
 // fused RMSNorm. Layers can type-assert to this to use the fused kernel.
+// Returns (output, scales) where scales contains per-row rsqrt values for backward pass.
 type FusedRMSNormer interface {
-	FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (*tensor.TensorNumeric[float32], error)
+	FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (output, scales *tensor.TensorNumeric[float32], err error)
 }
 
 // WeightUploader is an optional interface for engines that can pre-upload

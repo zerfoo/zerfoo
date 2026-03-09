@@ -62,13 +62,16 @@ func buildTransformerGraph(
 		return nil, err
 	}
 
-	builder := graph.NewBuilder[float32](engine)
+	// Wrap engine in EngineProxy for tracing compiler support.
+	proxy := compute.NewEngineProxy[float32](engine)
+
+	builder := graph.NewBuilder[float32](proxy)
 	// Input: token IDs as [1, seqLen].
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup: token IDs -> [1, seqLen, hiddenSize].
 	embNode := &embeddingLookupNode[float32]{
-		engine: engine,
+		engine: proxy,
 		weight: embedWeight,
 		scale:  opts.embedScale,
 	}
@@ -84,7 +87,7 @@ func buildTransformerGraph(
 			return nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			engine, ops, 1e-5, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, 1e-5, param(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -127,19 +130,19 @@ func buildTransformerGraph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(engine, param(prefix+"self_attn.q_proj.weight", qWT)),
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
 			nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(engine, param(prefix+"self_attn.k_proj.weight", kWT)),
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
 			nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(engine, param(prefix+"self_attn.v_proj.weight", vWT)),
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
 			nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(engine, param(prefix+"self_attn.o_proj.weight", oWT)),
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
 			nil,
 		)
 
@@ -147,14 +150,14 @@ func buildTransformerGraph(
 			embeddings.WithRotaryBase(cfg.RopeTheta),
 		}
 		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
-			context.Background(), engine, headDim, cfg.MaxSeqLen, ropeOpts...,
+			context.Background(), proxy, headDim, cfg.MaxSeqLen, ropeOpts...,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("layer %d rope: %w", i, err)
 		}
 
 		gqa, err := attention.NewGroupedQueryAttentionFromParams[float32](
-			engine, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
+			proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
 			wq, wk, wv, wo, rope,
 		)
 		if err != nil {
@@ -165,7 +168,7 @@ func buildTransformerGraph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Residual Add ---
-		add1 := core.NewAdd[float32](engine)
+		add1 := core.NewAdd[float32](proxy)
 		residual1 := builder.AddNode(add1, attnOut, hidden)
 
 		// --- Post-Attention LayerNorm ---
@@ -174,7 +177,7 @@ func buildTransformerGraph(
 			return nil, err
 		}
 		postNorm, err := normalization.NewRMSNormFromParam[float32](
-			engine, ops, 1e-5, param(prefix+"post_attention_layernorm.weight", postNormW),
+			proxy, ops, 1e-5, param(prefix+"post_attention_layernorm.weight", postNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -196,7 +199,7 @@ func buildTransformerGraph(
 		}
 
 		ffn, err := core.NewFFN[float32](
-			prefix+"mlp", engine, ops,
+			prefix+"mlp", proxy, ops,
 			cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
 			core.WithSwiGLU[float32](),
 			core.WithFFNNoBias[float32](),
@@ -226,13 +229,13 @@ func buildTransformerGraph(
 		ffnOut := builder.AddNode(ffn, normed2)
 
 		// --- Residual Add ---
-		add2 := core.NewAdd[float32](engine)
+		add2 := core.NewAdd[float32](proxy)
 		hidden = builder.AddNode(add2, ffnOut, residual1)
 	}
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		engine, ops, 1e-5, param("model.norm.weight", finalNormWeight),
+		proxy, ops, 1e-5, param("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, err
@@ -240,7 +243,7 @@ func buildTransformerGraph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: engine, weight: lmHeadWeight}
+	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -248,5 +251,6 @@ func buildTransformerGraph(
 		return nil, fmt.Errorf("build graph: %w", err)
 	}
 
+	g.SetEngineProxy(proxy)
 	return g, nil
 }

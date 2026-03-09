@@ -1,5 +1,3 @@
-//go:build cuda
-
 package gpuapi
 
 import (
@@ -79,6 +77,14 @@ func (k *CUDAKernels) DivScalar(a unsafe.Pointer, scalar float32, c unsafe.Point
 	return kernels.DivScalar(a, scalar, c, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) SubScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.SubScalar(a, scalar, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) PowScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.PowScalar(a, scalar, c, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) Fill(data unsafe.Pointer, value float32, n int, s Stream) error {
 	return kernels.Fill(data, value, n, streamPtr(s))
 }
@@ -95,19 +101,19 @@ func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, s Stream
 	return kernels.GemmQ4F32(aQ4, b, c, m, kk, n, streamPtr(s))
 }
 
-func (k *CUDAKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
+func (k *CUDAKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.AddBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
+func (k *CUDAKernels) SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.SubBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
+func (k *CUDAKernels) MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.MulBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
+func (k *CUDAKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.DivBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
@@ -119,12 +125,12 @@ func (k *CUDAKernels) TransposeND(input, output unsafe.Pointer, inStrides, outSh
 	return kernels.TransposeND(input, output, inStrides, outShape, perm, ndim, total, streamPtr(s))
 }
 
-func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error {
+func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.Gather(table, indices, output, N, D, V, streamPtr(s))
 }
 
-func (k *CUDAKernels) RMSNorm(input, weight, output unsafe.Pointer, eps float32, rows, D int, s Stream) error {
-	return kernels.RMSNorm(input, weight, output, eps, rows, D, streamPtr(s))
+func (k *CUDAKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.RMSNorm(input, weight, output, scales, eps, rows, D, streamPtr(s))
 }
 
 // Compile-time interface assertion.

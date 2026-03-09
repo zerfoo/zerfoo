@@ -188,7 +188,7 @@ func (p *PolynomialExpansion[T]) OutputShape() []int {
 // Forward performs the polynomial expansion transformation.
 // Input shape: [batch_size, input_size]
 // Output shape: [batch_size, output_size].
-func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("polynomial expansion expects exactly 1 input, got %d", len(inputs))
 	}
@@ -205,44 +205,70 @@ func (p *PolynomialExpansion[T]) Forward(_ context.Context, inputs ...*tensor.Te
 		return nil, fmt.Errorf("input size mismatch: expected %d, got %d", p.inputSize, inputShape[1])
 	}
 
-	// Create output tensor
-	outputShape := []int{batchSize, p.outputSize}
-	outputData := make([]T, batchSize*p.outputSize)
-
+	// Extract each input feature as a [batch, 1] column tensor.
+	featureCols := make([]*tensor.TensorNumeric[T], p.inputSize)
 	inputData := input.Data()
+	for f := range p.inputSize {
+		colData := make([]T, batchSize)
+		for b := range batchSize {
+			colData[b] = inputData[b*p.inputSize+f]
+		}
+		col, err := tensor.New([]int{batchSize, 1}, colData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create feature column tensor: %w", err)
+		}
+		featureCols[f] = col
+	}
 
-	// Compute polynomial terms for each batch item
-	for b := range batchSize {
-		for termIdx := range p.termIndices {
-			// Compute the polynomial term value
-			termValue := p.ops.FromFloat32(1.0) // Start with 1
+	// Compute each polynomial term using engine primitives.
+	termTensors := make([]*tensor.TensorNumeric[T], len(p.termIndices))
+	for i, powers := range p.termIndices {
+		// Start with a [batch, 1] tensor of ones.
+		ones, err := tensor.New([]int{batchSize, 1}, make([]T, batchSize))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ones tensor: %w", err)
+		}
+		if err := p.engine.Fill(ctx, ones, p.ops.FromFloat32(1.0)); err != nil {
+			return nil, fmt.Errorf("failed to fill ones tensor: %w", err)
+		}
 
-			for featureIdx := range p.termIndices[termIdx] {
-				power := p.termIndices[termIdx][featureIdx]
-				if power > 0 {
-					featureValue := inputData[b*p.inputSize+featureIdx]
-
-					// Compute feature^power
-					poweredValue := p.ops.FromFloat32(1.0)
-					for range power {
-						poweredValue = p.ops.Mul(poweredValue, featureValue)
-					}
-
-					termValue = p.ops.Mul(termValue, poweredValue)
-				}
+		term := ones
+		for f, power := range powers {
+			if power == 0 {
+				continue
+			}
+			// Create exponent tensor filled with this power.
+			exp, err := tensor.New([]int{batchSize, 1}, make([]T, batchSize))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create exponent tensor: %w", err)
+			}
+			if err := p.engine.Fill(ctx, exp, p.ops.FromFloat32(float32(power))); err != nil {
+				return nil, fmt.Errorf("failed to fill exponent tensor: %w", err)
 			}
 
-			outputData[b*p.outputSize+termIdx] = termValue
+			// Compute feature^power via engine.Pow.
+			powered, err := p.engine.Pow(ctx, featureCols[f], exp)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compute Pow: %w", err)
+			}
+
+			// Multiply into the running term product via engine.Mul.
+			term, err = p.engine.Mul(ctx, term, powered)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compute Mul: %w", err)
+			}
 		}
+		termTensors[i] = term
 	}
 
-	output, err := tensor.New(outputShape, outputData)
+	// Concatenate all term tensors along axis 1 to produce [batch, outputSize].
+	output, err := p.engine.Concat(ctx, termTensors, 1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create output tensor: %w", err)
+		return nil, fmt.Errorf("failed to concatenate term tensors: %w", err)
 	}
 
-	// Update output shape and cache input for exact backward
-	p.outputShape = outputShape
+	// Update output shape and cache input for exact backward.
+	p.outputShape = output.Shape()
 	p.lastInput = input
 
 	return output, nil

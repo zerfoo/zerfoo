@@ -2,8 +2,8 @@ package compute
 
 import (
 	"fmt"
-	"math"
 
+	"github.com/zerfoo/zerfoo/internal/xblas"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -27,11 +27,7 @@ func FusedSiLUGate(gate, up *tensor.TensorNumeric[float32]) (*tensor.TensorNumer
 	uData := up.Data()
 	outData := make([]float32, len(gData))
 
-	for i, g := range gData {
-		// silu(g) = g * sigmoid(g) = g / (1 + exp(-g))
-		sig := float32(1.0 / (1.0 + math.Exp(-float64(g))))
-		outData[i] = g * sig * uData[i]
-	}
+	xblas.SiLUGateF32(&outData[0], &gData[0], &uData[0], len(gData))
 
 	return tensor.New(gShape, outData)
 }

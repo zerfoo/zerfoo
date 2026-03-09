@@ -141,6 +141,12 @@ func (stubKernelRunner) MulBroadcast(_, _, _ unsafe.Pointer, _, _, _, _, _, _ in
 func (stubKernelRunner) DivBroadcast(_, _, _ unsafe.Pointer, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) SubScalar(_ unsafe.Pointer, _ float32, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) PowScalar(_ unsafe.Pointer, _ float32, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) Transpose2D(_, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
@@ -150,7 +156,7 @@ func (stubKernelRunner) TransposeND(_, _ unsafe.Pointer, _, _, _ []int32, _, _ i
 func (stubKernelRunner) Gather(_, _, _ unsafe.Pointer, _, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
-func (stubKernelRunner) RMSNorm(_, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
+func (stubKernelRunner) RMSNorm(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
 

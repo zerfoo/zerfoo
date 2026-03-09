@@ -31,3 +31,27 @@ func TestBroadcastShape(t *testing.T) {
 		})
 	}
 }
+
+func TestTotalElements(t *testing.T) {
+	tests := []struct {
+		name  string
+		shape []int
+		want  int
+	}{
+		{"scalar", []int{1}, 1},
+		{"vector", []int{5}, 5},
+		{"matrix", []int{3, 4}, 12},
+		{"3D", []int{2, 3, 4}, 24},
+		{"singleton", []int{1, 1, 1}, 1},
+		{"empty", []int{}, 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := totalElements(tc.shape)
+			if got != tc.want {
+				t.Errorf("totalElements(%v) = %d, want %d", tc.shape, got, tc.want)
+			}
+		})
+	}
+}

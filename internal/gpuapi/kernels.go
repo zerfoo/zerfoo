@@ -28,6 +28,9 @@ type KernelRunner interface {
 	MulScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, stream Stream) error
 	DivScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, stream Stream) error
 
+	SubScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, stream Stream) error
+	PowScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, stream Stream) error
+
 	// Fill sets all n elements to value.
 	Fill(data unsafe.Pointer, value float32, n int, stream Stream) error
 
@@ -60,6 +63,6 @@ type KernelRunner interface {
 	Gather(table, indices, output unsafe.Pointer, N, D, V int, stream Stream) error
 
 	// RMSNorm computes fused RMSNorm: output = input * rsqrt(mean(input^2) + eps) * weight.
-	// input: [rows, D], weight: [D], output: [rows, D].
-	RMSNorm(input, weight, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+	// input: [rows, D], weight: [D], output: [rows, D], scales: [rows] (per-row rsqrt values for backward).
+	RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, stream Stream) error
 }

@@ -30,6 +30,7 @@ type CPUEngine[T tensor.Numeric] struct {
 	collector  metrics.Collector
 	memTracker *MemoryTracker
 	pool       *workerpool.Pool
+	arena      *TensorArena // float32 buffer pool; nil for non-float32 engines
 }
 
 // Default histogram buckets for operation duration (seconds).
@@ -355,8 +356,8 @@ func (e *CPUEngine[T]) ScatterAdd(_ context.Context, dEmbeddingTable *tensor.Ten
 	return nil
 }
 
-// AddScalar performs element-wise addition of a tensor by a scalar.
-func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+// scalarOp applies a scalar operation with optional NEON fast path for float32.
+func (e *CPUEngine[T]) scalarOp(a *tensor.TensorNumeric[T], scalar T, neonFn func(*float32, *float32, float32, int), fallbackOp func(T, T) T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if a == nil {
 		return nil, errors.New("input tensor cannot be nil")
 	}
@@ -366,31 +367,28 @@ func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 	}
 	aData := a.Data()
 	rData := result.Data()
+	if fOut, ok := any(rData).([]float32); ok {
+		fIn := any(aData).([]float32)
+		fScalar := any(scalar).(float32)
+		neonFn(&fOut[0], &fIn[0], fScalar, len(fIn))
+		return result, nil
+	}
 	parallelFor(len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
-			rData[i] = e.ops.Add(aData[i], scalar)
+			rData[i] = fallbackOp(aData[i], scalar)
 		}
 	})
 	return result, nil
 }
 
+// AddScalar performs element-wise addition of a tensor by a scalar.
+func (e *CPUEngine[T]) AddScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.scalarOp(a, scalar, xblas.VaddScalarF32, e.ops.Add, dst...)
+}
+
 // MulScalar performs element-wise multiplication of a tensor by a scalar.
 func (e *CPUEngine[T]) MulScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if a == nil {
-		return nil, errors.New("input tensor cannot be nil")
-	}
-	result, err := e.getOrCreateDest(a.Shape(), dst...)
-	if err != nil {
-		return nil, err
-	}
-	aData := a.Data()
-	rData := result.Data()
-	parallelFor(len(aData), func(start, end int) {
-		for i := start; i < end; i++ { //nolint:intrange
-			rData[i] = e.ops.Mul(aData[i], scalar)
-		}
-	})
-	return result, nil
+	return e.scalarOp(a, scalar, xblas.VmulScalarF32, e.ops.Mul, dst...)
 }
 
 // NewCPUEngine constructs a new CPUEngine for the given numeric operations.
@@ -400,13 +398,19 @@ func NewCPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T]) *CPUEngine[T] {
 	pool := workerpool.New(n)
 	computePool = pool
 	xblas.InitPool(n)
-	return &CPUEngine[T]{
+	e := &CPUEngine[T]{
 		ops:        ops,
 		logger:     log.Nop(),
 		collector:  metrics.Nop(),
 		memTracker: NewMemoryTracker(0),
 		pool:       pool,
 	}
+	// Enable arena for float32 engines.
+	var zero T
+	if _, ok := any(zero).(float32); ok {
+		e.arena = &TensorArena{}
+	}
+	return e
 }
 
 
@@ -479,6 +483,20 @@ func (e *CPUEngine[T]) getOrCreateDest(shape []int, dst ...*tensor.TensorNumeric
 	bytes := e.tensorBytes(shape)
 	if err := e.memTracker.Alloc(bytes); err != nil {
 		return nil, fmt.Errorf("tensor allocation (%v): %w", shape, err)
+	}
+	// Use arena for float32 engines to reduce GC pressure.
+	if e.arena != nil {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		buf := e.arena.Get(size)
+		out, err := tensor.New(shape, any(buf).([]T))
+		if err != nil {
+			e.memTracker.Free(bytes)
+			return nil, err
+		}
+		return out, nil
 	}
 	out, err := tensor.New[T](shape, nil)
 	if err != nil {
@@ -556,15 +574,27 @@ func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.TensorNumeric[
 		return nil, err
 	}
 
-	// Expand shapes/strides to out rank
+	aData := a.Data()
+	bData := b.Data()
+	rData := result.Data()
+
+	// Fast path: identical shapes -- direct element-wise loop, no coordinate decode.
+	if shapesEqual(a.Shape(), b.Shape()) {
+		if err := parallelForCtx(ctx, len(aData), func(start, end int) {
+			for i := start; i < end; i++ {
+				rData[i] = op(aData[i], bData[i])
+			}
+		}); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	// Broadcast path: expand shapes/strides to out rank and decode coordinates.
 	R := len(outShape)
 	aShape, aStrides := expandShapeStrides(a.Shape(), makeStrides(a.Shape()), R)
 	bShape, bStrides := expandShapeStrides(b.Shape(), makeStrides(b.Shape()), R)
 	outStrides := makeStrides(outShape)
-
-	aData := a.Data()
-	bData := b.Data()
-	rData := result.Data()
 
 	total := 1
 	for _, d := range outShape {
@@ -600,27 +630,63 @@ func (e *CPUEngine[T]) binaryOp(ctx context.Context, a, b *tensor.TensorNumeric[
 	return result, nil
 }
 
+// neonBinaryF32 tries to dispatch a same-shape float32 binary op to NEON.
+// Returns (result, true) if handled, (nil, false) otherwise.
+func (e *CPUEngine[T]) neonBinaryF32(ctx context.Context, a, b *tensor.TensorNumeric[T], fn func(*float32, *float32, *float32, int), dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], bool) {
+	if a == nil || b == nil || !shapesEqual(a.Shape(), b.Shape()) {
+		return nil, false
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false
+	}
+	aData := a.Data()
+	fA, ok := any(aData).([]float32)
+	if !ok {
+		return nil, false
+	}
+	result, err := e.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, false
+	}
+	fB := any(b.Data()).([]float32)
+	fOut := any(result.Data()).([]float32)
+	fn(&fOut[0], &fA[0], &fB[0], len(fA))
+	return result, true
+}
+
 // Add performs element-wise addition with broadcasting.
 func (e *CPUEngine[T]) Add(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Add", time.Now())
+	if r, ok := e.neonBinaryF32(ctx, a, b, xblas.VaddF32, dst...); ok {
+		return r, nil
+	}
 	return e.binaryOp(ctx, a, b, e.ops.Add, dst...)
 }
 
 // Sub performs element-wise subtraction with broadcasting.
 func (e *CPUEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Sub", time.Now())
+	if r, ok := e.neonBinaryF32(ctx, a, b, xblas.VsubF32, dst...); ok {
+		return r, nil
+	}
 	return e.binaryOp(ctx, a, b, e.ops.Sub, dst...)
 }
 
 // Mul performs element-wise multiplication with broadcasting.
 func (e *CPUEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Mul", time.Now())
+	if r, ok := e.neonBinaryF32(ctx, a, b, xblas.VmulF32, dst...); ok {
+		return r, nil
+	}
 	return e.binaryOp(ctx, a, b, e.ops.Mul, dst...)
 }
 
 // Div performs element-wise division with broadcasting. For integer types, division by zero returns an error.
-func (e *CPUEngine[T]) Div(_ context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *CPUEngine[T]) Div(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Div", time.Now())
+	if r, ok := e.neonBinaryF32(ctx, a, b, xblas.VdivF32, dst...); ok {
+		return r, nil
+	}
 	if a == nil || b == nil {
 		return nil, errors.New("input tensors cannot be nil")
 	}
@@ -729,6 +795,12 @@ func (e *CPUEngine[T]) DivScalar(_ context.Context, a *tensor.TensorNumeric[T], 
 	}
 	aData := a.Data()
 	rData := result.Data()
+	if fOut, ok := any(rData).([]float32); ok {
+		fIn := any(aData).([]float32)
+		fScalar := any(scalar).(float32)
+		xblas.VdivScalarF32(&fOut[0], &fIn[0], fScalar, len(fIn))
+		return result, nil
+	}
 	parallelFor(len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
 			rData[i] = e.ops.Div(aData[i], scalar)
@@ -787,6 +859,18 @@ func makeStrides(shape []int) []int {
 }
 
 // Helper: broadcast two shapes following NumPy rules.
+func shapesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func broadcastShapes(a, b []int) ([]int, error) {
 	// Align right
 	maxRank := len(a)
@@ -1324,6 +1408,14 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ..
 	}
 	aData := a.Data()
 	rData := result.Data()
+
+	// NEON fast path for float32.
+	if fOut, ok := any(rData).([]float32); ok {
+		fIn := any(aData).([]float32)
+		xblas.VexpF32(&fOut[0], &fIn[0], len(fIn))
+		return result, nil
+	}
+
 	parallelFor(len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
 			rData[i] = e.ops.Exp(aData[i])
@@ -1361,6 +1453,14 @@ func (e *CPUEngine[T]) Pow(
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
 	defer e.recordOp("Pow", time.Now())
+	// Specialization: scalar exponent == 2.0 uses x*x instead of math.Pow
+	if exponent != nil && exponent.Size() == 1 {
+		expData := exponent.Data()
+		two := e.ops.FromFloat64(2.0)
+		if e.ops.IsZero(e.ops.Sub(expData[0], two)) {
+			return e.UnaryOp(ctx, base, func(x T) T { return e.ops.Mul(x, x) }, dst...)
+		}
+	}
 	return e.binaryOp(ctx, base, exponent, e.ops.Pow, dst...)
 }
 
@@ -1655,6 +1755,19 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 		outer *= shape[i]
 	}
 	axisSize := shape[axis]
+
+	// NEON fast path: float32, last-axis (inner==1), contiguous rows.
+	if inner == 1 {
+		if fData, ok := any(oData).([]float32); ok {
+			copy(fData, any(aData).([]float32))
+			numRows := outer
+			for row := range numRows {
+				off := row * axisSize
+				xblas.SoftmaxF32(&fData[off], axisSize)
+			}
+			return out, nil
+		}
+	}
 
 	// Iterate blocks; within each (outer, inner) pair we process a stripe across axis
 	for o := 0; o < outer; o++ { //nolint:intrange

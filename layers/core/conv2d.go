@@ -56,8 +56,40 @@ func NewConv2d[T tensor.Numeric](
 	return c
 }
 
-// Forward computes 2D convolution.
-func (c *Conv2d[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+// im2col extracts input patches into a column matrix for one batch sample and group.
+// Returns a tensor of shape [cInG*kH*kW, outH*outW].
+func im2col[T tensor.Numeric](
+	xData []T,
+	inH, inW int,
+	cInG, kH, kW int,
+	sH, sW, padT, padL, dH, dW int,
+	outH, outW int,
+	icOffset int,
+) []T {
+	colRows := cInG * kH * kW
+	colCols := outH * outW
+	col := make([]T, colRows*colCols)
+	for ic := range cInG {
+		for kh := range kH {
+			for kw := range kW {
+				row := ic*kH*kW + kh*kW + kw
+				for oh := range outH {
+					for ow := range outW {
+						ih := oh*sH - padT + kh*dH
+						iw := ow*sW - padL + kw*dW
+						if ih >= 0 && ih < inH && iw >= 0 && iw < inW {
+							col[row*colCols+oh*outW+ow] = xData[(icOffset+ic)*inH*inW+ih*inW+iw]
+						}
+					}
+				}
+			}
+		}
+	}
+	return col
+}
+
+// Forward computes 2D convolution via im2col + engine.MatMul.
+func (c *Conv2d[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 2 || len(inputs) > 3 {
 		return nil, fmt.Errorf("Conv2d requires 2 or 3 inputs (X, W [,B]), got %d", len(inputs))
 	}
@@ -82,56 +114,50 @@ func (c *Conv2d[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 	outH := (inH+padT+padB-dH*(kH-1)-1)/sH + 1
 	outW := (inW+padL+padR-dW*(kW-1)-1)/sW + 1
 
-	outData := make([]T, n*cOut*outH*outW)
-	xData := x.Data()
-	wData := w.Data()
-
 	groups := c.groups
 	cOutPerGroup := cOut / groups
+	colK := cInG * kH * kW // shared inner dimension
+	spatialSize := outH * outW
 
-	_ = cIn // cIn is checked implicitly via cInG * groups
+	// Reshape weight per group: [cOutPerGroup, cInG*kH*kW].
+	wData := w.Data()
+
+	outData := make([]T, n*cOut*spatialSize)
+	xData := x.Data()
 
 	for ni := range n {
+		batchOffset := ni * cIn * inH * inW
 		for g := range groups {
-			icOffset := g * cInG
+			// Build im2col matrix for this batch/group.
+			colData := im2col[T](xData[batchOffset:], inH, inW,
+				cInG, kH, kW, sH, sW, padT, padL, dH, dW,
+				outH, outW, g*cInG)
+
+			colTensor, err := tensor.New[T]([]int{colK, spatialSize}, colData)
+			if err != nil {
+				return nil, fmt.Errorf("Conv2d: im2col tensor: %w", err)
+			}
+
+			// Extract weight slice for this group: [cOutPerGroup, colK].
+			wGroupStart := g * cOutPerGroup * colK
+			wGroupEnd := wGroupStart + cOutPerGroup*colK
+			wGroup, err := tensor.New[T]([]int{cOutPerGroup, colK}, wData[wGroupStart:wGroupEnd])
+			if err != nil {
+				return nil, fmt.Errorf("Conv2d: weight reshape: %w", err)
+			}
+
+			// MatMul: [cOutPerGroup, colK] x [colK, spatialSize] = [cOutPerGroup, spatialSize]
+			result, err := c.engine.MatMul(ctx, wGroup, colTensor)
+			if err != nil {
+				return nil, fmt.Errorf("Conv2d: MatMul: %w", err)
+			}
+
+			// Copy result into output buffer at the correct position.
+			rData := result.Data()
 			ocOffset := g * cOutPerGroup
 			for oc := range cOutPerGroup {
-				absOC := ocOffset + oc
-				for oh := range outH {
-					for ow := range outW {
-						val := c.ops.FromFloat64(0)
-						for ic := range cInG {
-							for kh := range kH {
-								for kw := range kW {
-									ih := oh*sH - padT + kh*dH
-									iw := ow*sW - padL + kw*dW
-									if ih >= 0 && ih < inH && iw >= 0 && iw < inW {
-										xIdx := ni*cIn*inH*inW + (icOffset+ic)*inH*inW + ih*inW + iw
-										wIdx := absOC*cInG*kH*kW + ic*kH*kW + kh*kW + kw
-										val = c.ops.Add(val, c.ops.Mul(xData[xIdx], wData[wIdx]))
-									}
-								}
-							}
-						}
-						outIdx := ni*cOut*outH*outW + absOC*outH*outW + oh*outW + ow
-						outData[outIdx] = val
-					}
-				}
-			}
-		}
-	}
-
-	// Add bias if provided (B shape [C_out]).
-	if len(inputs) == 3 {
-		bData := inputs[2].Data()
-		for ni := range n {
-			for oc := range cOut {
-				for oh := range outH {
-					for ow := range outW {
-						idx := ni*cOut*outH*outW + oc*outH*outW + oh*outW + ow
-						outData[idx] = c.ops.Add(outData[idx], bData[oc])
-					}
-				}
+				dstStart := ni*cOut*spatialSize + (ocOffset+oc)*spatialSize
+				copy(outData[dstStart:dstStart+spatialSize], rData[oc*spatialSize:(oc+1)*spatialSize])
 			}
 		}
 	}
@@ -140,6 +166,20 @@ func (c *Conv2d[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 	if err != nil {
 		return nil, fmt.Errorf("Conv2d: failed to create output tensor: %w", err)
 	}
+
+	// Add bias if provided (B shape [C_out]) via engine.Add with broadcasting.
+	if len(inputs) == 3 {
+		// Reshape bias from [cOut] to [1, cOut, 1, 1] for broadcasting.
+		biasReshaped, err := c.engine.Reshape(ctx, inputs[2], []int{1, cOut, 1, 1})
+		if err != nil {
+			return nil, fmt.Errorf("Conv2d: bias reshape: %w", err)
+		}
+		out, err = c.engine.Add(ctx, out, biasReshaped)
+		if err != nil {
+			return nil, fmt.Errorf("Conv2d: bias add: %w", err)
+		}
+	}
+
 	c.outputShape = out.Shape()
 	return out, nil
 }

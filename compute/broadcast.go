@@ -1,5 +1,14 @@
 package compute
 
+// totalElements returns the product of all dimensions in a shape.
+func totalElements(shape []int) int {
+	n := 1
+	for _, d := range shape {
+		n *= d
+	}
+	return n
+}
+
 // broadcastShape computes the NumPy-style broadcast output shape for two shapes.
 // Shapes are aligned from the right; each dimension is max(a, b) where one must be 1.
 func broadcastShape(a, b []int) []int {

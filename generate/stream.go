@@ -99,12 +99,7 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		} else {
 			logits, err = gen.graph.Forward(genCtx, tokenTensor)
 			if err == nil {
-				gen.planOnce.Do(func() {
-					compiled, cErr := gen.graph.Compile(genCtx, tokenTensor)
-					if cErr == nil {
-						gen.plan.Store(compiled)
-					}
-				})
+				gen.compileGraph(genCtx, tokenTensor)
 			}
 		}
 		if err != nil {

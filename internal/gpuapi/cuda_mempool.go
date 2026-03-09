@@ -1,5 +1,3 @@
-//go:build cuda
-
 package gpuapi
 
 import (

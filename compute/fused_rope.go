@@ -3,6 +3,7 @@ package compute
 import (
 	"fmt"
 
+	"github.com/zerfoo/zerfoo/internal/xblas"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -41,21 +42,7 @@ func FusedRoPE(input, cosAngles, sinAngles *tensor.TensorNumeric[float32], rotar
 		for s := range seqLen {
 			inOff := (b*seqLen + s) * headDim
 			csOff := s * cosStride
-
-			// Rotary portion.
-			for i := range halfRotary {
-				x0 := inData[inOff+i]
-				x1 := inData[inOff+i+halfRotary]
-				c := cosData[csOff+i]
-				sn := sinData[csOff+i]
-				outData[inOff+i] = x0*c - x1*sn
-				outData[inOff+i+halfRotary] = x1*c + x0*sn
-			}
-
-			// Pass-through portion (if partial rotation).
-			for i := rotaryDim; i < headDim; i++ {
-				outData[inOff+i] = inData[inOff+i]
-			}
+			xblas.RoPEF32(&outData[inOff], &inData[inOff], &cosData[csOff], &sinData[csOff], halfRotary, headDim)
 		}
 	}
 

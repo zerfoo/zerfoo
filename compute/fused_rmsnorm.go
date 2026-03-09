@@ -1,8 +1,7 @@
 package compute
 
 import (
-	"math"
-
+	"github.com/zerfoo/zerfoo/internal/xblas"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -25,23 +24,7 @@ func FusedRMSNorm(input, weight *tensor.TensorNumeric[float32], epsilon float32)
 
 	for row := range rows {
 		off := row * D
-
-		// Compute mean of squares.
-		var sumSq float64
-		for i := range D {
-			v := float64(inData[off+i])
-			sumSq += v * v
-		}
-		meanSq := sumSq / float64(D)
-
-		// rsqrt(meanSq + eps)
-		scale := float32(1.0 / math.Sqrt(meanSq+float64(epsilon)))
-		scaleData[row] = scale
-
-		// Normalize and scale by weight.
-		for i := range D {
-			outData[off+i] = inData[off+i] * scale * wData[i]
-		}
+		xblas.RMSNormF32(&outData[off], &inData[off], &wData[0], D, epsilon, &scaleData[row])
 	}
 
 	// Build scales shape: same as input but last dim = 1.

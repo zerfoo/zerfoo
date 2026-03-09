@@ -256,7 +256,7 @@ func TestGPUEngine_FusedRMSNormParity(t *testing.T) {
 			eps := float32(1e-6)
 
 			// CPU reference
-			cpuOut, _, err := FusedRMSNorm(input, weight, eps)
+			cpuOut, cpuScales, err := FusedRMSNorm(input, weight, eps)
 			if err != nil {
 				t.Fatalf("CPU FusedRMSNorm: %v", err)
 			}
@@ -273,7 +273,7 @@ func TestGPUEngine_FusedRMSNormParity(t *testing.T) {
 				t.Fatalf("ToGPU input: %v", err)
 			}
 
-			gpuOut, err := fused.FusedRMSNormGPU(gpuInput, weight, eps)
+			gpuOut, gpuScales, err := fused.FusedRMSNormGPU(gpuInput, weight, eps)
 			if err != nil {
 				t.Fatalf("GPU FusedRMSNormGPU: %v", err)
 			}
@@ -294,9 +294,28 @@ func TestGPUEngine_FusedRMSNormParity(t *testing.T) {
 			}
 
 			if maxDiff > 1e-4 {
-				t.Errorf("max diff = %e (exceeds 1e-4)", maxDiff)
+				t.Errorf("output max diff = %e (exceeds 1e-4)", maxDiff)
 			} else {
-				t.Logf("max diff = %e", maxDiff)
+				t.Logf("output max diff = %e", maxDiff)
+			}
+
+			// Verify scales parity (needed for backward pass).
+			gsData := gpuScales.Data()
+			csData := cpuScales.Data()
+			if len(gsData) != len(csData) {
+				t.Fatalf("scales length mismatch: GPU=%d, CPU=%d", len(gsData), len(csData))
+			}
+			maxScaleDiff := float64(0)
+			for i := range gsData {
+				diff := math.Abs(float64(gsData[i] - csData[i]))
+				if diff > maxScaleDiff {
+					maxScaleDiff = diff
+				}
+			}
+			if maxScaleDiff > 1e-4 {
+				t.Errorf("scales max diff = %e (exceeds 1e-4)", maxScaleDiff)
+			} else {
+				t.Logf("scales max diff = %e", maxScaleDiff)
 			}
 		})
 	}

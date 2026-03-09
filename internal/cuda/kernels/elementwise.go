@@ -27,6 +27,8 @@ extern cudaError_t launch_pow(const float* base, const float* exp, float* c, int
 extern cudaError_t launch_add_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream);
 extern cudaError_t launch_mul_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream);
 extern cudaError_t launch_div_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream);
+extern cudaError_t launch_sub_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream);
+extern cudaError_t launch_pow_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream);
 extern cudaError_t launch_exp(const float* a, float* c, int n, cudaStream_t stream);
 extern cudaError_t launch_log(const float* a, float* c, int n, cudaStream_t stream);
 extern cudaError_t launch_sqrt(const float* a, float* c, int n, cudaStream_t stream);
@@ -96,6 +98,16 @@ func MulScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s unsa
 // DivScalar launches the scalar divide kernel: c = a / scalar.
 func DivScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	return checkCUDA(C.launch_div_scalar((*C.float)(a), C.float(scalar), (*C.float)(c), C.int(n), stream(s)), "div_scalar")
+}
+
+// SubScalar launches the scalar subtract kernel: c = a - scalar.
+func SubScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+	return checkCUDA(C.launch_sub_scalar((*C.float)(a), C.float(scalar), (*C.float)(c), C.int(n), stream(s)), "sub_scalar")
+}
+
+// PowScalar launches the scalar power kernel: c = pow(a, scalar).
+func PowScalar(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+	return checkCUDA(C.launch_pow_scalar((*C.float)(a), C.float(scalar), (*C.float)(c), C.int(n), stream(s)), "pow_scalar")
 }
 
 // Exp launches the elementwise exp kernel: c = exp(a).

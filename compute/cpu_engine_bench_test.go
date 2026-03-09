@@ -119,32 +119,6 @@ func BenchmarkCPUEngineTranspose(b *testing.B) {
 	}
 }
 
-func BenchmarkCPUEngineTranspose4D(b *testing.B) {
-	ctx := context.Background()
-	e := newEngineF32()
-
-	cases := []struct {
-		name  string
-		shape []int
-	}{
-		{"1x8x128x64", []int{1, 8, 128, 64}},
-		{"1x16x256x64", []int{1, 16, 256, 64}},
-		{"4x8x512x64", []int{4, 8, 512, 64}},
-	}
-
-	for _, tc := range cases {
-		a := allocF32(tc.shape)
-		fillUniform(e, a, -1, 1)
-		b.Run(tc.name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				if _, err := e.Transpose(ctx, a, []int{0, 2, 1, 3}); err != nil {
-					b.Fatalf("Transpose4D error: %v", err)
-				}
-			}
-		})
-	}
-}
-
 func BenchmarkCPUEngineSum(b *testing.B) {
 	ctx := context.Background()
 	e := newEngineF32()
@@ -159,6 +133,38 @@ func BenchmarkCPUEngineSum(b *testing.B) {
 	}
 }
 
+func BenchmarkBinaryOpSameShape(b *testing.B) {
+	ctx := context.Background()
+	e := newEngineF32()
+	a := allocF32([]int{1, 2048})
+	bb := allocF32([]int{1, 2048})
+	fillUniform(e, a, -1, 1)
+	fillUniform(e, bb, -1, 1)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := e.Add(ctx, a, bb); err != nil {
+			b.Fatalf("Add error: %v", err)
+		}
+	}
+}
+
+func BenchmarkBinaryOpBroadcast(b *testing.B) {
+	ctx := context.Background()
+	e := newEngineF32()
+	a := allocF32([]int{1, 2048})
+	bb := allocF32([]int{1, 1})
+	fillUniform(e, a, -1, 1)
+	fillUniform(e, bb, -1, 1)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := e.Add(ctx, a, bb); err != nil {
+			b.Fatalf("Add error: %v", err)
+		}
+	}
+}
+
 func BenchmarkCPUEngineSoftmax(b *testing.B) {
 	ctx := context.Background()
 	e := newEngineF32()
@@ -169,6 +175,89 @@ func BenchmarkCPUEngineSoftmax(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, err := e.Softmax(ctx, a, 1); err != nil { // softmax over last axis
 			b.Fatalf("Softmax error: %v", err)
+		}
+	}
+}
+
+func BenchmarkPowSquare(b *testing.B) {
+	ctx := context.Background()
+	e := newEngineF32()
+	base := allocF32([]int{1, 2048})
+	fillUniform(e, base, -1, 1)
+	exp, err := tensor.New[float32]([]int{1}, []float32{2.0})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := e.Pow(ctx, base, exp); err != nil {
+			b.Fatalf("Pow error: %v", err)
+		}
+	}
+}
+
+func BenchmarkPowGeneric(b *testing.B) {
+	ctx := context.Background()
+	e := newEngineF32()
+	base := allocF32([]int{1, 2048})
+	fillUniform(e, base, -1, 1)
+	exp, err := tensor.New[float32]([]int{1}, []float32{3.0})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := e.Pow(ctx, base, exp); err != nil {
+			b.Fatalf("Pow error: %v", err)
+		}
+	}
+}
+
+// Scalar op baseline (shape [1,2048]):
+//
+//	BenchmarkMulScalarF32   40725   37393 ns/op   8408 B/op   6 allocs/op
+//	BenchmarkAddScalarF32   36465   37188 ns/op   8408 B/op   6 allocs/op
+//	BenchmarkDivScalarF32   40666   37410 ns/op   8408 B/op   6 allocs/op
+func BenchmarkMulScalarF32(b *testing.B) {
+	ctx := context.Background()
+	eng := newEngineF32()
+	a := allocF32([]int{1, 2048})
+	fillUniform(eng, a, -1, 1)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := eng.MulScalar(ctx, a, 2.5); err != nil {
+			b.Fatalf("MulScalar error: %v", err)
+		}
+	}
+}
+
+func BenchmarkAddScalarF32(b *testing.B) {
+	ctx := context.Background()
+	eng := newEngineF32()
+	a := allocF32([]int{1, 2048})
+	fillUniform(eng, a, -1, 1)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := eng.AddScalar(ctx, a, 1.0); err != nil {
+			b.Fatalf("AddScalar error: %v", err)
+		}
+	}
+}
+
+func BenchmarkDivScalarF32(b *testing.B) {
+	ctx := context.Background()
+	eng := newEngineF32()
+	a := allocF32([]int{1, 2048})
+	fillUniform(eng, a, -1, 1)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := eng.DivScalar(ctx, a, 3.0); err != nil {
+			b.Fatalf("DivScalar error: %v", err)
 		}
 	}
 }
