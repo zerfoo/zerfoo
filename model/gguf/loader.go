@@ -166,7 +166,7 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	return tensor.NewWithStorage[float32](shape, q6k)
 }
 
-// decodeQ5_0Tensor dequantizes Q5_0 blocks to float32 at load time.
+// decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
 // Q5_0 format: 32 elements per block, 22 bytes per block.
 // Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low 4-bit values.
 // Each byte in qs contains two 4-bit values: the low nibble maps to the first
@@ -211,7 +211,11 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 			}
 		}
 	}
-	return tensor.New[float32](shape, data)
+
+	// Re-quantize to Q4_0 for fast NEON GEMV. This trades ~1 bit of precision
+	// for 8x bandwidth reduction during inference.
+	q4 := tensor.QuantizeQ4(data)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
