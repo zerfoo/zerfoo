@@ -293,6 +293,11 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return e.matMulQ4(ctx, qs, a, b, dst...)
 	}
 
+	// Check for Q4 quantized storage on B (virtual-transposed weights).
+	if qs, ok := any(b.GetStorage()).(*tensor.Q4Storage); ok {
+		return e.matMulQ4BWeight(ctx, a, qs, b, dst...)
+	}
+
 	// float32 and BFloat16 have GPU BLAS paths; fall back for other types.
 	var zero T
 	_, isFloat32 := any(zero).(float32)
