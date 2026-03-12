@@ -1,0 +1,211 @@
+//go:build !cuda
+
+package cublas
+
+import (
+	"fmt"
+	"math"
+	"sync"
+	"unsafe"
+
+	"github.com/zerfoo/zerfoo/internal/cuda"
+)
+
+// CudaDataType identifies the element data type for cublasGemmEx.
+type CudaDataType int
+
+const (
+	CudaR32F  CudaDataType = 0  // CUDA_R_32F  (float32)
+	CudaR16F  CudaDataType = 2  // CUDA_R_16F  (float16)
+	CudaR16BF CudaDataType = 14 // CUDA_R_16BF (bfloat16)
+)
+
+// CublasComputeType identifies the compute precision for cublasGemmEx.
+type CublasComputeType int
+
+const (
+	CublasCompute32F CublasComputeType = 68 // CUBLAS_COMPUTE_32F
+)
+
+// cuBLAS status codes.
+const cublasStatusSuccess = 0
+
+// cublasLib holds dlopen function pointers for cuBLAS.
+type cublasLib struct {
+	create    uintptr // cublasCreate_v2
+	destroy   uintptr // cublasDestroy_v2
+	setStream uintptr // cublasSetStream_v2
+	sgemm     uintptr // cublasSgemm_v2
+	gemmEx    uintptr // cublasGemmEx
+}
+
+var (
+	cblasLib     *cublasLib
+	cblasOnce    sync.Once
+	cblasLoadErr error
+)
+
+// cuBLAS library paths to try.
+var cublasLibPaths = []string{
+	"libcublas.so.12",
+	"libcublas.so",
+}
+
+func loadCublas() (*cublasLib, error) {
+	var handle uintptr
+	var lastErr string
+	for _, path := range cublasLibPaths {
+		var err error
+		handle, err = cuda.DlopenPath(path)
+		if err == nil {
+			break
+		}
+		lastErr = err.Error()
+	}
+	if handle == 0 {
+		return nil, fmt.Errorf("cublas: dlopen failed: %s", lastErr)
+	}
+
+	lib := &cublasLib{}
+	type sym struct {
+		name string
+		ptr  *uintptr
+	}
+	syms := []sym{
+		{"cublasCreate_v2", &lib.create},
+		{"cublasDestroy_v2", &lib.destroy},
+		{"cublasSetStream_v2", &lib.setStream},
+		{"cublasSgemm_v2", &lib.sgemm},
+		{"cublasGemmEx", &lib.gemmEx},
+	}
+	for _, s := range syms {
+		addr, err := cuda.Dlsym(handle, s.name)
+		if err != nil {
+			return nil, fmt.Errorf("cublas: %w", err)
+		}
+		*s.ptr = addr
+	}
+	return lib, nil
+}
+
+func getCublasLib() (*cublasLib, error) {
+	cblasOnce.Do(func() {
+		cblasLib, cblasLoadErr = loadCublas()
+	})
+	return cblasLib, cblasLoadErr
+}
+
+// Handle wraps a cuBLAS handle (opaque pointer).
+type Handle struct {
+	ptr uintptr // cublasHandle_t is a pointer
+}
+
+// CreateHandle creates a new cuBLAS context handle.
+func CreateHandle() (*Handle, error) {
+	lib, err := getCublasLib()
+	if err != nil {
+		return nil, err
+	}
+	var h uintptr
+	status := cuda.Ccall(lib.create, uintptr(unsafe.Pointer(&h)))
+	if status != cublasStatusSuccess {
+		return nil, fmt.Errorf("cublasCreate failed with status %d", status)
+	}
+	return &Handle{ptr: h}, nil
+}
+
+// Destroy releases the cuBLAS handle resources.
+func (h *Handle) Destroy() error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+	status := cuda.Ccall(lib.destroy, h.ptr)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasDestroy failed with status %d", status)
+	}
+	return nil
+}
+
+// SetStream associates a CUDA stream with this cuBLAS handle.
+func (h *Handle) SetStream(streamPtr unsafe.Pointer) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+	status := cuda.Ccall(lib.setStream, h.ptr, uintptr(streamPtr))
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSetStream failed with status %d", status)
+	}
+	return nil
+}
+
+// cuBLAS operation constants.
+const cublasOpN = 0 // CUBLAS_OP_N
+
+// floatBits reinterprets a float32 as a uintptr (zero-extended from uint32).
+func floatBits(f float32) uintptr {
+	return uintptr(math.Float32bits(f))
+}
+
+// Sgemm performs single-precision general matrix multiplication.
+// Row-major to column-major conversion: swap A/B and m/n.
+func Sgemm(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, b unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+
+	// cuBLAS Sgemm takes pointers to alpha and beta.
+	cAlpha := alpha
+	cBeta := beta
+
+	// Row-major to column-major: swap A<->B, swap m<->n.
+	// cublasSgemm_v2(handle, transB, transA, n, m, k, &alpha, B, n, A, k, &beta, C, n)
+	status := cuda.Ccall(lib.sgemm,
+		h.ptr,
+		uintptr(cublasOpN), // transa (for B)
+		uintptr(cublasOpN), // transb (for A)
+		uintptr(n),         // rows of op(B) = cols of C
+		uintptr(m),         // cols of op(A) = rows of C
+		uintptr(k),         // inner dimension
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(b),  // B first
+		uintptr(n),  // ldb
+		uintptr(a),  // A second
+		uintptr(k),  // lda
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(n), // ldc
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSgemm failed with status %d", status)
+	}
+	return nil
+}
+
+// cublasGemmDefault is the CUBLAS_GEMM_DEFAULT algorithm selector.
+const cublasGemmDefault = -1
+
+// GemmEx performs mixed-precision general matrix multiplication.
+// Row-major to column-major conversion: swap A/B and m/n.
+func GemmEx(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, aType CudaDataType,
+	b unsafe.Pointer, bType CudaDataType,
+	beta float32,
+	c unsafe.Pointer, cType CudaDataType,
+	computeType CublasComputeType,
+) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+
+	// Not yet implemented via purego (requires >14 args or struct packing).
+	// Fall back to Sgemm for float32 types.
+	_ = lib
+	return fmt.Errorf("cublasGemmEx not yet supported via purego")
+}

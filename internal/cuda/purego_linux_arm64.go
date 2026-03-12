@@ -30,7 +30,7 @@ func libc_dlclose_trampoline()
 func libc_dlerror_trampoline()
 
 // Assembly-defined trampoline for calling arbitrary C function pointers
-// with up to 12 arguments (8 register + 4 stack on AAPCS64).
+// with up to 14 arguments (8 register + 6 stack on AAPCS64).
 func ccallTrampoline()
 
 //go:cgo_import_dynamic libc_dlopen dlopen "libdl.so.2"
@@ -48,7 +48,7 @@ func funcPC(fn func()) uintptr {
 // It must match the layout expected by ccallTrampoline in purego_linux_arm64.s.
 type ccallArgs struct {
 	fn   uintptr
-	args [12]uintptr
+	args [14]uintptr
 	ret  uintptr
 }
 
@@ -121,7 +121,7 @@ func goString(p uintptr) string {
 	return string(unsafe.Slice(ptr, n))
 }
 
-// ccall calls a C function pointer with up to 12 arguments.
+// ccall calls a C function pointer with up to 14 arguments.
 // Uses asmcgocall to run on the system stack (zero CGo overhead).
 func ccall(fn uintptr, a ...uintptr) uintptr {
 	var args ccallArgs

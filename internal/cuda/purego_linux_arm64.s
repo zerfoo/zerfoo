@@ -23,8 +23,8 @@ TEXT ·libc_dlerror_trampoline(SB),NOSPLIT,$0-0
 //
 //   struct ccallArgs {
 //       fn   uintptr    // offset 0
-//       args [12]uintptr // offset 8 (args[0] at 8, args[1] at 16, ... args[11] at 96)
-//       ret  uintptr    // offset 104
+//       args [14]uintptr // offset 8 (args[0] at 8, args[1] at 16, ... args[13] at 112)
+//       ret  uintptr    // offset 120
 //   }
 //
 // AAPCS64 calling convention: R0-R7 hold the first 8 args, stack holds the rest.
@@ -33,7 +33,7 @@ TEXT ·libc_dlerror_trampoline(SB),NOSPLIT,$0-0
 //
 // Go's arm64 assembler saves LR at RSP+0 in its prologue. The C calling
 // convention also places outgoing stack arguments at RSP+0. To avoid the
-// stack args overwriting the saved LR, we push an extra 32 bytes for the
+// stack args overwriting the saved LR, we push an extra 48 bytes for the
 // outgoing argument area below the Go-managed frame.
 TEXT ·ccallTrampoline(SB),NOSPLIT,$0
 	// Save args struct pointer and LR in callee-saved registers.
@@ -54,10 +54,10 @@ TEXT ·ccallTrampoline(SB),NOSPLIT,$0
 	MOVD 56(R19), R6
 	MOVD 64(R19), R7
 
-	// Push outgoing stack argument area (32 bytes for args[8]-args[11]).
+	// Push outgoing stack argument area (48 bytes for args[8]-args[13]).
 	// This creates a fresh region at RSP+0 that the C callee sees as its
 	// incoming stack arguments, without touching the Go-saved LR above.
-	SUB $32, RSP
+	SUB $48, RSP
 	MOVD 72(R19), R10
 	MOVD R10, 0(RSP)
 	MOVD 80(R19), R10
@@ -66,15 +66,19 @@ TEXT ·ccallTrampoline(SB),NOSPLIT,$0
 	MOVD R10, 16(RSP)
 	MOVD 96(R19), R10
 	MOVD R10, 24(RSP)
+	MOVD 104(R19), R10
+	MOVD R10, 32(RSP)
+	MOVD 112(R19), R10
+	MOVD R10, 40(RSP)
 
 	// Call the C function
 	CALL (R9)
 
 	// Pop outgoing stack argument area
-	ADD $32, RSP
+	ADD $48, RSP
 
 	// Store return value
-	MOVD R0, 104(R19)
+	MOVD R0, 120(R19)
 
 	// Restore LR and return to asmcgocall
 	MOVD R20, R30

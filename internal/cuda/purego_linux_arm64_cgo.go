@@ -8,19 +8,21 @@ package cuda
 #include <stdlib.h>
 #include <stdint.h>
 
-// ccall_wrapper calls a C function pointer with up to 12 arguments.
+// ccall_wrapper calls a C function pointer with up to 14 arguments.
 static uintptr_t ccall_wrapper(
 	uintptr_t fn,
 	uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3,
 	uintptr_t a4, uintptr_t a5, uintptr_t a6, uintptr_t a7,
-	uintptr_t a8, uintptr_t a9, uintptr_t a10, uintptr_t a11
+	uintptr_t a8, uintptr_t a9, uintptr_t a10, uintptr_t a11,
+	uintptr_t a12, uintptr_t a13
 ) {
 	typedef uintptr_t (*fn_t)(
 		uintptr_t, uintptr_t, uintptr_t, uintptr_t,
 		uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-		uintptr_t, uintptr_t, uintptr_t, uintptr_t
+		uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+		uintptr_t, uintptr_t
 	);
-	return ((fn_t)fn)(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
+	return ((fn_t)fn)(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13);
 }
 */
 import "C"
@@ -53,14 +55,15 @@ func dlerrorImpl() string {
 	return C.GoString(p)
 }
 
-// ccall calls a C function pointer with up to 12 arguments via CGo.
+// ccall calls a C function pointer with up to 14 arguments via CGo.
 func ccall(fn uintptr, a ...uintptr) uintptr {
-	var args [12]uintptr
+	var args [14]uintptr
 	copy(args[:], a)
 	return uintptr(C.ccall_wrapper(
 		C.uintptr_t(fn),
 		C.uintptr_t(args[0]), C.uintptr_t(args[1]), C.uintptr_t(args[2]), C.uintptr_t(args[3]),
 		C.uintptr_t(args[4]), C.uintptr_t(args[5]), C.uintptr_t(args[6]), C.uintptr_t(args[7]),
 		C.uintptr_t(args[8]), C.uintptr_t(args[9]), C.uintptr_t(args[10]), C.uintptr_t(args[11]),
+		C.uintptr_t(args[12]), C.uintptr_t(args[13]),
 	))
 }
