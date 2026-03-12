@@ -19,6 +19,7 @@ import (
 type transformerGraphOpts struct {
 	embedScale float32 // multiply embeddings by this factor (0 = no scaling)
 	postNorm   bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
+	qkNorm     bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only
@@ -168,6 +169,31 @@ func buildTransformerGraph(
 			return nil, fmt.Errorf("layer %d gqa: %w", i, err)
 		}
 		gqa.LayerIndex = i
+
+		// Set Q/K norms if enabled (Gemma 3).
+		if opts.qkNorm {
+			qNormW, lookupErr := lookup(prefix + "self_attn.q_norm.weight")
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			qNorm, normErr := normalization.NewRMSNormFromParam[float32](
+				proxy, ops, 1e-5, param(prefix+"self_attn.q_norm.weight", qNormW),
+			)
+			if normErr != nil {
+				return nil, normErr
+			}
+			kNormW, lookupErr := lookup(prefix + "self_attn.k_norm.weight")
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			kNorm, normErr := normalization.NewRMSNormFromParam[float32](
+				proxy, ops, 1e-5, param(prefix+"self_attn.k_norm.weight", kNormW),
+			)
+			if normErr != nil {
+				return nil, normErr
+			}
+			gqa.SetQKNorms(qNorm, kNorm)
+		}
 
 		attnOut := builder.AddNode(gqa, normed)
 

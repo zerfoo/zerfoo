@@ -38,6 +38,10 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	// blockTableReader optionally reads KV from paged block tables directly.
 	blockTableReader BlockTableReader[T]
 
+	// Optional per-head Q/K norms (Gemma 3).
+	qNorm graph.Node[T]
+	kNorm graph.Node[T]
+
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -210,6 +214,13 @@ func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float
 	return gqa.rope.Scale(ctx, factor)
 }
 
+// SetQKNorms sets optional per-head RMSNorm layers for Q and K projections.
+// Used by architectures like Gemma 3 that normalize Q/K after projection.
+func (gqa *GroupedQueryAttention[T]) SetQKNorms(qNorm, kNorm graph.Node[T]) {
+	gqa.qNorm = qNorm
+	gqa.kNorm = kNorm
+}
+
 // SetBlockTableReader sets an optional BlockTableReader that provides KV data
 // directly from paged block tables, bypassing the standard cache gather path.
 func (gqa *GroupedQueryAttention[T]) SetBlockTableReader(r BlockTableReader[T]) {
@@ -269,11 +280,19 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	gqa.kProj = kProj
 	gqa.vProj = vProj
 
-	// 2. Split into heads and apply RoPE
+	// 2. Split into heads, apply optional Q/K norms, then RoPE
 	// Q: (batch, seq_len, num_query_heads, head_dim)
 	qReshaped, err := gqa.engine.Reshape(ctx, qProj, []int{batchSize, seqLen, gqa.numQueryHeads, gqa.headDim})
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply per-head Q norm if set (Gemma 3).
+	if gqa.qNorm != nil {
+		qReshaped, err = gqa.qNorm.Forward(ctx, qReshaped)
+		if err != nil {
+			return nil, fmt.Errorf("qNorm: %w", err)
+		}
 	}
 
 	qHeads, err := gqa.engine.Transpose(ctx, qReshaped, []int{0, 2, 1, 3})
@@ -285,6 +304,14 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	kReshaped, err := gqa.engine.Reshape(ctx, kProj, []int{batchSize, seqLen, gqa.numKeyValueHeads, gqa.headDim})
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply per-head K norm if set (Gemma 3).
+	if gqa.kNorm != nil {
+		kReshaped, err = gqa.kNorm.Forward(ctx, kReshaped)
+		if err != nil {
+			return nil, fmt.Errorf("kNorm: %w", err)
+		}
 	}
 
 	kHeads, err := gqa.engine.Transpose(ctx, kReshaped, []int{0, 2, 1, 3})
