@@ -42,11 +42,22 @@ func (p *TensorPool[T]) Acquire(shape []int) (*tensor.TensorNumeric[T], error) {
 }
 
 // Release returns a tensor to the pool for future reuse.
+// For GPU-backed tensors, the device memory is freed immediately (returned
+// to the GPU MemPool for reuse) rather than holding the tensor reference,
+// since GPU memory is a scarce resource managed by a separate pool.
 // The tensor must not be used after calling Release.
 func (p *TensorPool[T]) Release(t *tensor.TensorNumeric[T]) {
 	if t == nil {
 		return
 	}
+
+	// GPU tensors: free device memory immediately so the GPU MemPool can
+	// reuse it. Don't hold the tensor in the CPU pool.
+	if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+		t.Release()
+		return
+	}
+
 	key := shapeKey(t.Shape())
 
 	p.mu.Lock()
