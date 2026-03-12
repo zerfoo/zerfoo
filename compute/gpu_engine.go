@@ -671,6 +671,35 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
+	// Compute output shape.
+	outShape := make([]int, rank)
+	for i, ax := range axes {
+		outShape[i] = shape[ax]
+	}
+
+	// Fast path: if the transpose only swaps unit-sized dimensions, it is
+	// equivalent to a reshape (no data movement). This is common during
+	// single-token generation where seqLen=1. Check by comparing the
+	// non-unit dimensions in input vs output order.
+	if isTransposeReshape(shape, outShape) {
+		gs := a.GetStorage().(*tensor.GPUStorage[T])
+		total := 1
+		for _, d := range shape {
+			total *= d
+		}
+		t, tErr := tensor.NewWithStorage[T](outShape, gs)
+		if tErr != nil {
+			return nil, tErr
+		}
+		if len(dst) > 0 && dst[0] != nil {
+			dst[0].SetStorage(gs)
+			dst[0].SetShape(outShape)
+			return dst[0], nil
+		}
+		_ = total
+		return t, nil
+	}
+
 	// Compute total elements.
 	total := 1
 	for _, d := range shape {
@@ -683,12 +712,6 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	for i := rank - 1; i >= 0; i-- {
 		inStrides[i] = stride
 		stride *= shape[i]
-	}
-
-	// Compute output shape.
-	outShape := make([]int, rank)
-	for i, ax := range axes {
-		outShape[i] = shape[ax]
 	}
 
 	devIn, cleanupIn, err := getDevicePtr(e, a)

@@ -770,6 +770,32 @@ func sameShape[T tensor.Numeric](a, b *tensor.TensorNumeric[T]) bool {
 	return true
 }
 
+// isTransposeReshape returns true when the transpose is equivalent to a
+// reshape (no data movement needed). This happens when the non-unit dimensions
+// appear in the same order in both input and output shapes.
+func isTransposeReshape(inShape, outShape []int) bool {
+	var inNonUnit, outNonUnit []int
+	for _, d := range inShape {
+		if d != 1 {
+			inNonUnit = append(inNonUnit, d)
+		}
+	}
+	for _, d := range outShape {
+		if d != 1 {
+			outNonUnit = append(outNonUnit, d)
+		}
+	}
+	if len(inNonUnit) != len(outNonUnit) {
+		return false
+	}
+	for i := range inNonUnit {
+		if inNonUnit[i] != outNonUnit[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // gpuSplit splits a GPU-resident tensor along the given axis using D2D memcpy.
 // It avoids any D2H copy by operating entirely in device memory.
 func (e *GPUEngine[T]) gpuSplit(srcPtr unsafe.Pointer, shape []int, numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
