@@ -106,15 +106,24 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	_, runErr := g.plan.RunInstructions(ctx, gpuInputs...)
 
 	// End capture and get the graph.
-	capturedGraph, err := cuda.StreamEndCapture(g.stream)
-	if err != nil {
-		log.Printf("cuda graph: end capture failed: %v", err)
-		g.failed = true
-		// If runErr is non-nil, the plan had an error during capture.
-		if runErr != nil {
-			return nil, runErr
+	capturedGraph, captureErr := cuda.StreamEndCapture(g.stream)
+	if captureErr != nil || runErr != nil {
+		// Capture failed. This typically happens when the forward pass
+		// includes synchronous cudaMemcpy calls (e.g., GPUStorage.TrySlice)
+		// that conflict with stream capture mode.
+		if captureErr != nil {
+			log.Printf("cuda graph: end capture failed: %v", captureErr)
 		}
-		return nil, err
+		if runErr != nil {
+			log.Printf("cuda graph: plan run during capture failed: %v", runErr)
+		}
+		g.failed = true
+		if capturedGraph != nil {
+			_ = cuda.GraphDestroy(capturedGraph)
+		}
+		// Re-run the plan normally to get the actual result for this token.
+		// The stream is restored to normal mode after EndCapture (even on error).
+		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graph = capturedGraph
 
