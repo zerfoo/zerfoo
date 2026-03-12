@@ -41,6 +41,14 @@ func (r *MegakernelRunner) Launch(_ []float32, _ int) ([]float32, error) {
 	return nil, errStub
 }
 
+// SetKVCache is a stub (no-op in the CGo build).
+func (r *MegakernelRunner) SetKVCache(kvK, kvV unsafe.Pointer) {}
+
+// HasKVCache returns false in the CGo build stub.
+func (r *MegakernelRunner) HasKVCache() bool {
+	return false
+}
+
 // Close is a stub that returns nil in the CGo build.
 func (r *MegakernelRunner) Close() error {
 	return nil
