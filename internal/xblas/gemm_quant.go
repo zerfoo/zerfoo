@@ -156,6 +156,113 @@ func gemmF32Q4NTParallel(n int, a []float32, b *tensor.Q4Storage, c []float32, b
 	wg.Wait()
 }
 
+// GemmF32Q8NT computes C = A * B^T where A is float32 [M,K] and B is Q8_0 [N,K].
+// B is stored in row-major Q8 format: each row j of B (length K) is contiguous
+// in Q8 blocks. The "NT" suffix means B is Not Transposed.
+// K must be a multiple of 32. Falls back to dequant+transpose+SGEMM otherwise.
+func GemmF32Q8NT(m, n, k int, a []float32, b *tensor.Q8Storage, c []float32) {
+	if k%32 != 0 {
+		bf32 := make([]float32, n*k)
+		b.Dequantize(bf32)
+		bT := make([]float32, k*n)
+		for r := range n {
+			for col := range k {
+				bT[col*n+r] = bf32[r*k+col]
+			}
+		}
+		SgemmSimd(m, n, k, a, bT, c)
+		return
+	}
+
+	blocksPerRow := k / 32
+
+	// M=1 GEMV: parallelize across N.
+	if m == 1 && n*k >= q4GemvParallelThreshold {
+		nCores := runtime.NumCPU()
+		nCores = min(nCores, n/4)
+		if nCores > 1 {
+			gemmF32Q8NTParallel(n, k, a, b, c, blocksPerRow, nCores)
+			return
+		}
+	}
+
+	// For each row i of A and each row j of B, compute C[i,j] = dot(A[i,:], B[j,:]).
+	var buf [32]float32
+	for i := range m {
+		aRow := a[i*k:]
+		for j := range n {
+			var sum float32
+			for bi := range blocksPerRow {
+				blkIdx := j*blocksPerRow + bi
+				b.DequantizeBlock(blkIdx, &buf)
+				kBase := bi * 32
+				for p := range 32 {
+					sum += aRow[kBase+p] * buf[p]
+				}
+			}
+			c[i*n+j] = sum
+		}
+	}
+}
+
+// gemmF32Q8NTParallel splits M=1 Q8 GEMV across nCores workers along N.
+func gemmF32Q8NTParallel(n, k int, a []float32, b *tensor.Q8Storage, c []float32, blocksPerRow, nCores int) {
+	chunkSize := (n + nCores - 1) / nCores
+	if defaultPool != nil {
+		tasks := make([]func(), 0, nCores)
+		for t := range nCores {
+			jStart := t * chunkSize
+			jEnd := min(jStart+chunkSize, n)
+			if jStart >= n {
+				break
+			}
+			tasks = append(tasks, func() {
+				var buf [32]float32
+				for j := jStart; j < jEnd; j++ {
+					var sum float32
+					for bi := range blocksPerRow {
+						blkIdx := j*blocksPerRow + bi
+						b.DequantizeBlock(blkIdx, &buf)
+						kBase := bi * 32
+						for p := range 32 {
+							sum += a[kBase+p] * buf[p]
+						}
+					}
+					c[j] = sum
+				}
+			})
+		}
+		defaultPool.Submit(tasks)
+		return
+	}
+	var wg sync.WaitGroup
+	for t := range nCores {
+		jStart := t * chunkSize
+		jEnd := min(jStart+chunkSize, n)
+		if jStart >= n {
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buf [32]float32
+			for j := jStart; j < jEnd; j++ {
+				var sum float32
+				for bi := range blocksPerRow {
+					blkIdx := j*blocksPerRow + bi
+					b.DequantizeBlock(blkIdx, &buf)
+					kBase := bi * 32
+					for p := range 32 {
+						sum += a[kBase+p] * buf[p]
+					}
+				}
+				c[j] = sum
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // dequantQ4Block unpacks 16 packed bytes into 32 float32 values.
 // GGML Q4_0 split format: low nibbles → positions 0-15, high nibbles → positions 16-31.
 func dequantQ4Block(data *byte, scale float32, buf *[32]float32) {
