@@ -7,12 +7,22 @@ import (
 )
 
 func TestLoadMegakernelBadPath(t *testing.T) {
-	if !cuda.Available() {
-		t.Skip("CUDA not available")
-	}
 	_, err := LoadMegakernel("/nonexistent/path/megakernel.so")
 	if err == nil {
 		t.Fatal("expected error for nonexistent .so path")
+	}
+}
+
+func TestLoadMegakernelReturnsErrorNotPanic(t *testing.T) {
+	// Verify LoadMegakernel returns a clean error (no panic) when the
+	// shared library is absent, regardless of CUDA availability.
+	r, err := LoadMegakernel("/tmp/no_such_megakernel_library.so")
+	if err == nil {
+		_ = r.Close()
+		t.Fatal("expected error when .so does not exist")
+	}
+	if r != nil {
+		t.Fatal("expected nil runner on error")
 	}
 }
 
