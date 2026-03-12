@@ -239,6 +239,202 @@ func TestWhereInsufficientInputs(t *testing.T) {
 	}
 }
 
+func TestUtilityOpEmitters(t *testing.T) {
+	tests := []struct {
+		name    string
+		op      string
+		inputs  int
+		wantSub string
+	}{
+		{"shape_metadata_only", "Shape", 0, "metadata only"},
+		{"unsqueeze_reshape", "Unsqueeze", 1, "reshape, no data movement"},
+		{"cast_float", "Cast", 1, "(float)"},
+		{"max_reduce", "Max", 1, "dev_reduce_max"},
+		{"auto_position_ids", "AutoPositionIds", 0, "seq_pos"},
+		{"auto_zero_kv_cache", "AutoZeroKVCache", 0, "0.0f"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inputIdx := make([]int, tc.inputs)
+			for i := range inputIdx {
+				inputIdx[i] = i
+			}
+			meta := graph.InstructionMeta{
+				OpName:    tc.op,
+				InputIdx:  inputIdx,
+				OutputIdx: 5,
+			}
+			slots := make([]SlotInfo, tc.inputs)
+			for i := range slots {
+				slots[i] = SlotInfo{Shape: []int{1, 2048}}
+			}
+			code, err := Emit(meta, slots)
+			if err != nil {
+				t.Fatalf("Emit(%q): %v", tc.op, err)
+			}
+			if !strings.Contains(code, tc.wantSub) {
+				t.Errorf("op %q: output %q missing %q", tc.op, code, tc.wantSub)
+			}
+		})
+	}
+}
+
+func TestScatterNDEmitter(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "ScatterND",
+		InputIdx:  []int{0, 1, 2},
+		OutputIdx: 3,
+	}
+	slots := []SlotInfo{
+		{Shape: []int{8, 4}},
+		{Shape: []int{4, 1}},
+		{Shape: []int{4, 4}},
+	}
+	code, err := Emit(meta, slots)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "dev_scatter_nd") {
+		t.Errorf("want dev_scatter_nd in %q", code)
+	}
+	if !strings.Contains(code, "slot_0") {
+		t.Errorf("want slot_0 (data) in %q", code)
+	}
+	if !strings.Contains(code, "slot_1") {
+		t.Errorf("want slot_1 (indices) in %q", code)
+	}
+	if !strings.Contains(code, "slot_2") {
+		t.Errorf("want slot_2 (updates) in %q", code)
+	}
+}
+
+func TestScatterNDInsufficientInputs(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "ScatterND",
+		InputIdx:  []int{0, 1}, // only 2 inputs, need 3
+		OutputIdx: 2,
+	}
+	_, err := Emit(meta, nil)
+	if err == nil {
+		t.Fatal("expected error for insufficient inputs")
+	}
+}
+
+func TestAutoPositionIdsOutput(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "AutoPositionIds",
+		InputIdx:  nil,
+		OutputIdx: 7,
+	}
+	code, err := Emit(meta, nil)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "seq_pos") {
+		t.Errorf("want seq_pos in %q", code)
+	}
+	if !strings.Contains(code, "slot_7") {
+		t.Errorf("want slot_7 in %q", code)
+	}
+	if !strings.Contains(code, "(float)") {
+		t.Errorf("want float cast in %q", code)
+	}
+}
+
+func TestAutoZeroKVCacheOutput(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "AutoZeroKVCache",
+		InputIdx:  nil,
+		OutputIdx: 4,
+	}
+	code, err := Emit(meta, nil)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "slot_4") {
+		t.Errorf("want slot_4 in %q", code)
+	}
+	if !strings.Contains(code, "0.0f") {
+		t.Errorf("want 0.0f in %q", code)
+	}
+}
+
+func TestMaxEmitterWithShape(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "Max",
+		InputIdx:  []int{0},
+		OutputIdx: 1,
+	}
+	inputs := []SlotInfo{{Shape: []int{4, 256}}}
+	code, err := Emit(meta, inputs)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "dev_reduce_max") {
+		t.Errorf("want dev_reduce_max in %q", code)
+	}
+	if !strings.Contains(code, "256") {
+		t.Errorf("want last dim 256 in %q", code)
+	}
+}
+
+func TestCastEmitterOutput(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "Cast",
+		InputIdx:  []int{0},
+		OutputIdx: 1,
+	}
+	code, err := Emit(meta, []SlotInfo{{Shape: []int{1, 4}}})
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "(float)(slot_0[tid])") {
+		t.Errorf("want element-wise cast in %q", code)
+	}
+	if !strings.Contains(code, "slot_1[tid]") {
+		t.Errorf("want output slot_1 in %q", code)
+	}
+}
+
+func TestShapeNoCompute(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "Shape",
+		InputIdx:  nil,
+		OutputIdx: 3,
+	}
+	code, err := Emit(meta, nil)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "//") {
+		t.Errorf("Shape should emit a comment, got %q", code)
+	}
+	if !strings.Contains(code, "slot_3") {
+		t.Errorf("want slot_3 reference in %q", code)
+	}
+}
+
+func TestUnsqueezeNoCompute(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "Unsqueeze",
+		InputIdx:  []int{0},
+		OutputIdx: 1,
+	}
+	code, err := Emit(meta, nil)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !strings.Contains(code, "//") {
+		t.Errorf("Unsqueeze should emit a comment, got %q", code)
+	}
+	if !strings.Contains(code, "slot_1") {
+		t.Errorf("want slot_1 in %q", code)
+	}
+	if !strings.Contains(code, "slot_0") {
+		t.Errorf("want slot_0 in %q", code)
+	}
+}
+
 func TestRopeAndAttentionEmitters(t *testing.T) {
 	tests := []struct {
 		name     string
