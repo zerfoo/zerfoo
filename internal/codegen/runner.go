@@ -11,13 +11,16 @@ import (
 
 // MegakernelRunner manages a compiled megakernel .so and its GPU resources.
 type MegakernelRunner struct {
-	soHandle   uintptr        // dlopen handle
-	launchFn   uintptr        // dlsym'd launch_megakernel
-	workspace  unsafe.Pointer // GPU workspace buffer
-	frozenPtrs unsafe.Pointer // GPU array of float* pointers to frozen data
-	frozenBufs []unsafe.Pointer
-	layout     WorkspaceLayout
+	soHandle    uintptr          // dlopen handle
+	launchFn    uintptr          // dlsym'd launch_megakernel
+	workspace   unsafe.Pointer   // GPU workspace buffer
+	frozenPtrs  unsafe.Pointer   // GPU array of float* pointers to frozen data
+	frozenBufs  []unsafe.Pointer // individual frozen GPU buffers
+	layout      WorkspaceLayout
 	outputShape []int
+	kvK         unsafe.Pointer // GPU array of float* for K cache buffers (one per layer)
+	kvV         unsafe.Pointer // GPU array of float* for V cache buffers (one per layer)
+	hasKVCache  bool
 }
 
 // LoadMegakernel opens a compiled megakernel .so and resolves the launch symbol.
@@ -99,7 +102,22 @@ func (r *MegakernelRunner) OutputShape() []int {
 	return r.outputShape
 }
 
+// SetKVCache configures the runner to pass KV cache device pointers to the
+// megakernel. kvK and kvV are GPU arrays of float* pointers, one per layer.
+func (r *MegakernelRunner) SetKVCache(kvK, kvV unsafe.Pointer) {
+	r.kvK = kvK
+	r.kvV = kvV
+	r.hasKVCache = true
+}
+
+// HasKVCache reports whether KV cache pointers have been configured.
+func (r *MegakernelRunner) HasKVCache() bool {
+	return r.hasKVCache
+}
+
 // Launch runs the megakernel with input data and returns the output.
+// When KV cache is configured via SetKVCache, pos is used as both the rotary
+// embedding position and the KV cache sequence position.
 func (r *MegakernelRunner) Launch(inputData []float32, pos int) ([]float32, error) {
 	// Copy input to workspace at InputOffset.
 	if len(inputData) > 0 {
@@ -110,12 +128,26 @@ func (r *MegakernelRunner) Launch(inputData []float32, pos int) ([]float32, erro
 	}
 
 	// Launch the megakernel.
-	ret := cuda.Ccall(r.launchFn,
-		uintptr(r.workspace),
-		uintptr(r.frozenPtrs),
-		uintptr(pos),
-		uintptr(r.layout.TotalSize),
-	)
+	var ret uintptr
+	if r.hasKVCache {
+		ret = cuda.Ccall(r.launchFn,
+			uintptr(r.workspace),
+			uintptr(r.frozenPtrs),
+			uintptr(pos),
+			uintptr(r.kvK),
+			uintptr(r.kvV),
+			uintptr(pos), // seq_pos = pos for decode step
+			uintptr(pos), // kv_seq_len = tokens cached so far
+			uintptr(r.layout.TotalSize),
+		)
+	} else {
+		ret = cuda.Ccall(r.launchFn,
+			uintptr(r.workspace),
+			uintptr(r.frozenPtrs),
+			uintptr(pos),
+			uintptr(r.layout.TotalSize),
+		)
+	}
 	if ret != 0 {
 		return nil, fmt.Errorf("megakernel launch failed: cuda error %d", ret)
 	}
