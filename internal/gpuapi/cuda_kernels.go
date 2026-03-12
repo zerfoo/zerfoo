@@ -145,5 +145,9 @@ func (k *CUDAKernels) Argmax(input, result, scratch unsafe.Pointer, n int, s Str
 	return kernels.Argmax(input, result, scratch, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedRoPEF32(input, cosAngles, sinAngles, output unsafe.Pointer, batch, seqLen, headDim, halfRotary, cosStride int, s Stream) error {
+	return kernels.FusedRoPEF32(input, cosAngles, sinAngles, output, batch, seqLen, headDim, halfRotary, cosStride, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

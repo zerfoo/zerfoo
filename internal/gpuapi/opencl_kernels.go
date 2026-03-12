@@ -152,5 +152,13 @@ func (k *OpenCLKernels) Repeat(_ unsafe.Pointer, _ unsafe.Pointer, _, _, _, _ in
 	return fmt.Errorf("Repeat: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) Argmax(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("Argmax: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedRoPEF32: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)

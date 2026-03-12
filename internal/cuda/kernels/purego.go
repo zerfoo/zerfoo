@@ -50,6 +50,9 @@ type KernelLib struct {
 
 	// argmax
 	launchArgmax uintptr
+
+	// fused_rope
+	launchFusedRoPEF32 uintptr
 }
 
 var (
@@ -118,6 +121,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
 			{"launch_argmax", &k.launchArgmax},
+			// fused_rope
+			{"fused_rope_f32", &k.launchFusedRoPEF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)

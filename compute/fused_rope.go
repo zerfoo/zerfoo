@@ -7,6 +7,11 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// FusedRoPEProvider is implemented by engines that support fused GPU RoPE.
+type FusedRoPEProvider[T tensor.Numeric] interface {
+	GPUFusedRoPE(input, cosAngles, sinAngles *tensor.TensorNumeric[T], rotaryDim int) (*tensor.TensorNumeric[T], error)
+}
+
 // FusedRoPE applies rotary position embeddings in a single pass.
 // Input shape: [batch, seq_len, head_dim] where head_dim is even.
 // cos/sin shape: [seq_len, half_dim] (precomputed angles).

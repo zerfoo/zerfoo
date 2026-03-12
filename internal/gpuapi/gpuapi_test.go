@@ -168,6 +168,9 @@ func (stubKernelRunner) Repeat(_, _ unsafe.Pointer, _, _, _, _ int, _ gpuapi.Str
 func (stubKernelRunner) Argmax(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
 var _ gpuapi.KernelRunner = stubKernelRunner{}
 

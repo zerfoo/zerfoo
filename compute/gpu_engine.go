@@ -1462,6 +1462,61 @@ func (e *GPUEngine[T]) GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error) 
 	return int(result), nil
 }
 
+// GPUFusedRoPE applies rotary position embeddings in a single GPU kernel launch.
+// This replaces Split + 4 Mul + Sub + Add + Concat (8 operations, ~10 D2D memcpy) with 1 kernel.
+func (e *GPUEngine[T]) GPUFusedRoPE(input, cosAngles, sinAngles *tensor.TensorNumeric[T], rotaryDim int) (*tensor.TensorNumeric[T], error) {
+	shape := input.Shape()
+	if len(shape) != 3 {
+		return nil, fmt.Errorf("GPUFusedRoPE: expected 3D input [batch, seq, dim], got %dD", len(shape))
+	}
+
+	batch := shape[0]
+	seqLen := shape[1]
+	headDim := shape[2]
+	halfRotary := rotaryDim / 2
+
+	cosShape := cosAngles.Shape()
+	if len(cosShape) != 2 || cosShape[0] < seqLen || cosShape[1] < halfRotary {
+		return nil, fmt.Errorf("GPUFusedRoPE: cos shape %v incompatible with seq_len=%d half_rotary=%d", cosShape, seqLen, halfRotary)
+	}
+	cosStride := cosShape[1]
+
+	// Get device pointers for input, cos, sin.
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedRoPE input: %w", err)
+	}
+	defer inCleanup()
+
+	cosPtr, cosCleanup, err := getDevicePtr(e, cosAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedRoPE cos: %w", err)
+	}
+	defer cosCleanup()
+
+	sinPtr, sinCleanup, err := getDevicePtr(e, sinAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedRoPE sin: %w", err)
+	}
+	defer sinCleanup()
+
+	// Allocate output.
+	outElems := batch * seqLen * headDim
+	outBytes := outElems * f32Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedRoPE alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedRoPEF32(inPtr, cosPtr, sinPtr, devOut, batch, seqLen, headDim, halfRotary, cosStride, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return makeGPUResult[T](e, shape, devOut, outElems)
+}
+
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.
 // Use for benchmarking or when explicit synchronization is needed.
 func (e *GPUEngine[T]) Sync() error {

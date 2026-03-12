@@ -79,4 +79,8 @@ type KernelRunner interface {
 	// input: [n] float32, result: single int32 on device, scratch: temp storage.
 	// scratch must be at least 2*ceil(n/256)*4 bytes.
 	Argmax(input, result, scratch unsafe.Pointer, n int, stream Stream) error
+
+	// FusedRoPEF32 applies rotary positional embedding in one kernel launch.
+	// input/output: [batch * seqLen * headDim], cos/sin: [seqLen * cosStride].
+	FusedRoPEF32(input, cosAngles, sinAngles, output unsafe.Pointer, batch, seqLen, headDim, halfRotary, cosStride int, stream Stream) error
 }

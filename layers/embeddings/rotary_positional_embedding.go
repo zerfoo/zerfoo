@@ -254,13 +254,25 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 		}
 	}
 
-	// Fused single-pass kernel for float32 on CPUEngine (inference hot path).
+	// Fused single-pass kernel (inference hot path).
 	// Unwrap EngineProxy to detect the real engine type, so the fused path
 	// is taken even when the engine is wrapped.
 	realEngine := compute.Engine[T](rpe.engine)
 	if proxy, ok := rpe.engine.(*compute.EngineProxy[T]); ok {
 		realEngine = proxy.Real()
 	}
+	// GPU fused RoPE: one kernel launch replaces Split + 4 Mul + Sub + Add + Concat.
+	if provider, ok := realEngine.(compute.FusedRoPEProvider[T]); ok {
+		out, err := provider.GPUFusedRoPE(input, cosSliced, sinSliced, rpe.rotaryDim)
+		if err == nil {
+			rpe.outputShape = input.Shape()
+			rpe.xRot0Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, halfRotary})
+			rpe.xRot1Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{halfRotary, rpe.rotaryDim})
+			return out, nil
+		}
+		// Fall through to unfused path on error.
+	}
+	// CPU fused RoPE.
 	if _, isCPU := realEngine.(*compute.CPUEngine[T]); isCPU {
 		if f32Input, ok := any(input).(*tensor.TensorNumeric[float32]); ok {
 			f32Cos, cOk := any(cosSliced).(*tensor.TensorNumeric[float32])
@@ -269,7 +281,6 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 				out, err := compute.FusedRoPE(f32Input, f32Cos, f32Sin, rpe.rotaryDim)
 				if err == nil {
 					rpe.outputShape = input.Shape()
-					// Cache slices for backward pass.
 					rpe.xRot0Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, halfRotary})
 					rpe.xRot1Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{halfRotary, rpe.rotaryDim})
 					return any(out).(*tensor.TensorNumeric[T]), nil
