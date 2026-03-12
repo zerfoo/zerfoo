@@ -128,24 +128,33 @@ func (gen *Generator[T]) Config() ModelConfig { return gen.config }
 
 // compileGraph tries CompileTraced when an EngineProxy is available, with
 // graceful fallback to Compile on error or plan validation failure.
+//
+// Compilation runs Forward on graph nodes to trace operations. To prevent
+// these extra forward passes from corrupting the inference KV cache (which
+// would cause duplicate entries and wrong RoPE positions), we strip the
+// KV cache from the context used for compilation.
 func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.TensorNumeric[T]) {
 	gen.planOnce.Do(func() {
+		// Use a cache-free context for compilation so tracing and
+		// validation forward passes do not mutate the real KV cache.
+		compileCtx := context.WithValue(ctx, kvCacheKey{}, nil)
+
 		var compiled *graph.ExecutionPlan[T]
 		var cErr error
 		if proxy := gen.graph.EngineProxy(); proxy != nil {
-			compiled, cErr = gen.graph.CompileTraced(ctx, tokenTensor)
+			compiled, cErr = gen.graph.CompileTraced(compileCtx, tokenTensor)
 			if cErr == nil {
 				// Validate traced plan with a test run.
-				if _, vErr := compiled.Run(ctx, tokenTensor); vErr != nil {
+				if _, vErr := compiled.Run(compileCtx, tokenTensor); vErr != nil {
 					log.Printf("generate: CompileTraced plan validation failed, falling back to Compile: %v", vErr)
-					compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+					compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 				}
 			} else {
 				log.Printf("generate: CompileTraced failed, falling back to Compile: %v", cErr)
-				compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+				compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 			}
 		} else {
-			compiled, cErr = gen.graph.Compile(ctx, tokenTensor)
+			compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 		}
 		if cErr == nil {
 			gen.plan.Store(compiled)
