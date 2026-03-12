@@ -114,6 +114,31 @@ func NewGPUStorageFromPtr[T Numeric](devPtr unsafe.Pointer, length int, deviceID
 	return gs, nil
 }
 
+// NewGPUStorageFromPool wraps a GPU device pointer allocated from a MemPool.
+// When Free() is called, the pointer is returned to the pool instead of being
+// freed via cudaFree. This avoids cudaMalloc overhead on intermediate tensors.
+func NewGPUStorageFromPool[T Numeric](devPtr unsafe.Pointer, length int, pool gpuapi.MemPool, deviceID int) (*GPUStorage[T], error) {
+	rt := getDefaultRuntime()
+	if rt == nil {
+		return nil, fmt.Errorf("NewGPUStorageFromPool: no GPU runtime available")
+	}
+
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+
+	gs := &GPUStorage[T]{
+		devicePtr: devPtr,
+		length:    length,
+		byteSize:  length * elemSize,
+		deviceID:  deviceID,
+		runtime:   rt,
+		pool:      pool,
+	}
+	runtime.SetFinalizer(gs, func(s *GPUStorage[T]) { _ = s.Free() })
+
+	return gs, nil
+}
+
 // NewManagedGPUStorage allocates unified (managed) GPU memory via pool.AllocManaged.
 // The returned storage is host-accessible: TrySlice and TrySet skip Memcpy.
 // This is beneficial on hardware with coherent unified memory (e.g. DGX Spark
@@ -239,16 +264,24 @@ func (s *GPUStorage[T]) TrySet(data []T) error {
 	newByteSize := len(data) * elemSize
 
 	if len(data) != s.length {
-		if s.managed && s.pool != nil {
-			s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
+		if s.pool != nil {
+			if s.managed {
+				s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
+			} else {
+				s.pool.Free(s.deviceID, s.devicePtr, s.byteSize)
+			}
 		} else {
 			_ = s.runtime.Free(s.devicePtr)
 		}
 
 		var ptr unsafe.Pointer
 		var err error
-		if s.managed && s.pool != nil {
-			ptr, err = s.pool.AllocManaged(s.deviceID, newByteSize)
+		if s.pool != nil {
+			if s.managed {
+				ptr, err = s.pool.AllocManaged(s.deviceID, newByteSize)
+			} else {
+				ptr, err = s.pool.Alloc(s.deviceID, newByteSize)
+			}
 		} else {
 			ptr, err = s.runtime.Malloc(newByteSize)
 		}
@@ -295,14 +328,18 @@ func (s *GPUStorage[T]) DeviceType() device.Type { return s.runtime.DeviceType()
 func (s *GPUStorage[T]) Ptr() unsafe.Pointer { return s.devicePtr }
 
 // Free releases the GPU device memory. After calling Free, the storage must
-// not be used. For managed storage, the pointer is returned to the pool.
+// not be used. Pool-backed storage returns the pointer to the pool for reuse.
 func (s *GPUStorage[T]) Free() error {
 	if s.devicePtr == nil {
 		return nil
 	}
 
-	if s.managed && s.pool != nil {
-		s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
+	if s.pool != nil {
+		if s.managed {
+			s.pool.FreeManaged(s.deviceID, s.devicePtr, s.byteSize)
+		} else {
+			s.pool.Free(s.deviceID, s.devicePtr, s.byteSize)
+		}
 		s.devicePtr = nil
 		s.length = 0
 		s.byteSize = 0

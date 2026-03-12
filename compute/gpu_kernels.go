@@ -45,11 +45,11 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 	return devPtr, cleanup, nil
 }
 
-// makeGPUResult creates a tensor with GPUStorage wrapping the given device pointer.
-// The device pointer is NOT freed when the storage is freed; the caller retains
-// ownership through the pool.
+// makeGPUResult creates a tensor with pool-backed GPUStorage wrapping the given
+// device pointer. When the tensor is freed, the pointer is returned to the pool
+// for reuse instead of calling cudaFree.
 func makeGPUResult[T tensor.Numeric](e *GPUEngine[T], shape []int, devPtr unsafe.Pointer, numElems int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	gs, err := tensor.NewGPUStorageFromPtr[T](devPtr, numElems, e.deviceID)
+	gs, err := tensor.NewGPUStorageFromPool[T](devPtr, numElems, e.pool, e.deviceID)
 	if err != nil {
 		return nil, err
 	}
