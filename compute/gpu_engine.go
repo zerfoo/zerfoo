@@ -107,8 +107,31 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 
 	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled")
 
-	pool := gpuapi.NewCUDAMemPool()
-	cuda.SetDefaultMemPool(pool.Inner())
+	fallbackPool := cuda.NewMemPool()
+	cuda.SetDefaultMemPool(fallbackPool)
+
+	// Arena pool: 256MB pre-allocated region for per-pass intermediates.
+	// Falls back to MemPool if arena is exhausted.
+	const arenaSize = 256 * 1024 * 1024 // 256 MB
+	arenaPool, err := gpuapi.NewCUDAArenaPool(dev, arenaSize, fallbackPool)
+	if err == nil {
+		cuda.SetDefaultArenaPool(arenaPool.Inner())
+	}
+	if err != nil {
+		l.Warn("arena pool not available, falling back to MemPool", "error", err.Error())
+		bucketPool := gpuapi.NewCUDAMemPoolFrom(fallbackPool)
+		return &GPUEngine[T]{
+			cpu:      NewCPUEngine(ops),
+			runtime:  rt,
+			blas:     blas,
+			dnn:      dnn,
+			kernels:  gpuapi.NewCUDAKernels(),
+			pool:     bucketPool,
+			stream:   stream,
+			logger:   l,
+			deviceID: dev,
+		}, nil
+	}
 
 	return &GPUEngine[T]{
 		cpu:      NewCPUEngine(ops),
@@ -116,7 +139,7 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		blas:     blas,
 		dnn:      dnn,
 		kernels:  gpuapi.NewCUDAKernels(),
-		pool:     pool,
+		pool:     arenaPool,
 		stream:   stream,
 		logger:   l,
 		deviceID: dev,
@@ -125,6 +148,14 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 
 // DeviceID returns the GPU device ID this engine is bound to.
 func (e *GPUEngine[T]) DeviceID() int { return e.deviceID }
+
+// ResetPool resets the arena pool, reclaiming all per-pass allocations.
+// This is a no-op if the pool is not arena-backed.
+func (e *GPUEngine[T]) ResetPool() {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		arena.Reset()
+	}
+}
 
 // setDevice ensures the correct GPU device context for the calling goroutine.
 func (e *GPUEngine[T]) setDevice() {

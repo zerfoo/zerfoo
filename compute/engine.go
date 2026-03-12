@@ -14,6 +14,13 @@ type FusedRMSNormer interface {
 	FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (output, scales *tensor.TensorNumeric[float32], err error)
 }
 
+// PoolResetter is an optional interface for engines that use arena-based
+// memory pools. Call ResetPool() at the start of each forward pass to
+// reclaim all per-pass intermediate allocations in O(1).
+type PoolResetter interface {
+	ResetPool()
+}
+
 // WeightUploader is an optional interface for engines that can pre-upload
 // model weights to device memory at load time. This eliminates per-operation
 // host-to-device copies during inference. Each tensor's storage is replaced
