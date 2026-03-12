@@ -309,3 +309,83 @@ Next targets:
 2. Eliminate unnecessary H2D copies (~143 per forward pass)
 3. Reduce kernel launch overhead (batch or fuse operations)
 4. Investigate Go runtime overhead vs C/C++ baseline
+
+---
+
+# Performance Optimization Session 3
+
+Date: 2026-03-12
+
+## Environment
+
+- **Host**: ndungu@192.168.86.250 (DGX Spark, NVIDIA GB10) -- offline during session
+- **Model**: gemma3-gguf (Q4_0 quantized), greedy decoding, 64 tokens
+- **Ollama Baseline**: 187.2 tok/s (target: 178.7 tok/s = 95%)
+- **Previous best**: 86.63 tok/s (correct output)
+
+## Optimizations Implemented (Not Yet Benchmarked)
+
+### 1. Pre-allocated KV cache buffers (commit 7e80e21)
+- Allocates `[batch, maxSeqLen, dim]` GPU buffers once at first Update
+- Subsequent appends: D2D memcpy at offset (no cudaMalloc)
+- Eliminates 104 cudaMalloc/Free + 52 redundant D2D copies per token
+
+### 2. GQA KV head broadcast (commit e92a04a)
+- When numKVHeads=1 (Gemma 3: 1 KV head, 8 Q heads), skip Repeat
+- MatMul batch broadcasting handles Q=[8, seqLen, headDim] * K=[1, seqLen, headDim]
+- Eliminates ~192MB of redundant GPU memory copies per decode step
+
+### 3. MatMulTransposeB via cuBLAS SgemmNT (commits 74cac33, bb5e5fd)
+- Computes A*B^T without explicit Transpose allocation + kernel launch
+- SDPA now type-asserts for TransposeBMatMuler, falls back to Transpose+MatMul
+- Added to both CGO and purego paths
+- Eliminates 18 GPU Transpose allocations + kernel launches per token
+
+### 4. ExecutionPlan.Run() pre-allocated buffers (commit 4655ed6)
+- Pre-allocate scratch slot array and per-instruction input buffers once
+- Eliminates ~101 slice heap allocations per token
+
+### 5. TensorPool shapeKey optimization (commit 4655ed6)
+- Use strconv for common rank 1-3 shapes instead of fmt.Sprint
+
+### 6. noopCleanup in getDevicePtr (commit a370d21)
+- Shared package-level no-op replaces per-call closure allocation
+- Eliminates ~200 tiny heap allocations per token
+
+### 7. MatMulTransposeB in traced execution plan (commit 6df83f4)
+- makeTracedForward now handles "MatMulTransposeB" op
+- Compiled plans dispatch to TransposeBMatMuler with fallback
+
+### 8. cublasSgemmStridedBatched (commit 2bbbeb1)
+- Extended purego trampoline from 14 to 20 args
+- Single batched GEMM call replaces N sequential Sgemm calls
+- For 8 query heads per attention layer: 1 call instead of 8
+
+## DGX Status
+
+DGX Spark has been unreachable (SSH timeout) throughout this session.
+All optimizations are pushed to main and ready for benchmarking when it
+comes back online.
+
+## Expected Impact
+
+| Optimization | Expected tok/s Impact |
+|---|---|
+| Pre-allocated KV cache | Moderate: eliminates malloc overhead |
+| GQA broadcast | Moderate: eliminates ~192MB copies/decode |
+| MatMulTransposeB | Moderate: saves 18 kernel launches/token |
+| Batched GEMM | Moderate: reduces cuBLAS call overhead |
+| Heap allocation reduction | Small: reduces GC pressure |
+
+## Build/Test Command for DGX
+
+```
+cd ~/Code/zerfoo/zerfoo
+git pull
+export PATH=$PATH:/usr/local/cuda-13.0/bin:/usr/local/go/bin
+cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_120
+cd ~/Code/zerfoo/zerfoo
+export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda-13.0/lib64:/usr/local/cuda-13.0/targets/sbsa-linux/lib
+go build -o bench_tps_opt3 ./cmd/bench_tps/
+./bench_tps_opt3 -model /home/ndungu/models/gemma3-gguf/model.gguf -device cuda -tokens 64
+```
