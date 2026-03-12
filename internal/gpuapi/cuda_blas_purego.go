@@ -58,6 +58,18 @@ func (b *CUDABlas) SgemmNT(m, n, k int, alpha float32,
 	return cublas.SgemmNT(b.handle, m, n, k, alpha, a, bPtr, beta, c)
 }
 
+// SgemmStridedBatched performs batched C = alpha * A * B + beta * C using
+// cublasSgemmStridedBatched. All batch elements share the same m, n, k.
+func (b *CUDABlas) SgemmStridedBatched(m, n, k int, alpha float32,
+	a unsafe.Pointer, strideA int64,
+	bPtr unsafe.Pointer, strideB int64,
+	beta float32,
+	c unsafe.Pointer, strideC int64,
+	batch int,
+) error {
+	return cublas.SgemmStridedBatched(b.handle, m, n, k, alpha, a, strideA, bPtr, strideB, beta, c, strideC, batch)
+}
+
 func (b *CUDABlas) SetStream(stream Stream) error {
 	var ptr unsafe.Pointer
 	if stream != nil {

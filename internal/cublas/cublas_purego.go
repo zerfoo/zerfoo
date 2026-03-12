@@ -32,11 +32,12 @@ const cublasStatusSuccess = 0
 
 // cublasLib holds dlopen function pointers for cuBLAS.
 type cublasLib struct {
-	create    uintptr // cublasCreate_v2
-	destroy   uintptr // cublasDestroy_v2
-	setStream uintptr // cublasSetStream_v2
-	sgemm     uintptr // cublasSgemm_v2
-	gemmEx    uintptr // cublasGemmEx
+	create              uintptr // cublasCreate_v2
+	destroy             uintptr // cublasDestroy_v2
+	setStream           uintptr // cublasSetStream_v2
+	sgemm               uintptr // cublasSgemm_v2
+	gemmEx              uintptr // cublasGemmEx
+	sgemmStridedBatched uintptr // cublasSgemmStridedBatched
 }
 
 var (
@@ -77,6 +78,7 @@ func loadCublas() (*cublasLib, error) {
 		{"cublasSetStream_v2", &lib.setStream},
 		{"cublasSgemm_v2", &lib.sgemm},
 		{"cublasGemmEx", &lib.gemmEx},
+		{"cublasSgemmStridedBatched", &lib.sgemmStridedBatched},
 	}
 	for _, s := range syms {
 		addr, err := cuda.Dlsym(handle, s.name)
@@ -221,6 +223,67 @@ func SgemmNT(h *Handle, m, n, k int, alpha float32,
 	)
 	if status != cublasStatusSuccess {
 		return fmt.Errorf("cublasSgemm(NT) failed with status %d", status)
+	}
+	return nil
+}
+
+// SgemmStridedBatched performs batched single-precision GEMM with strided access.
+// Row-major to column-major conversion: swap A/B and m/n (same trick as Sgemm).
+//
+// Parameters (in row-major terms):
+//
+//	m        - rows of A and C per batch
+//	n        - columns of B and C per batch
+//	k        - columns of A / rows of B
+//	alpha    - scalar multiplier for A*B
+//	a        - device pointer to A[0] (m x k, row-major)
+//	strideA  - element stride between consecutive A matrices
+//	b        - device pointer to B[0] (k x n, row-major)
+//	strideB  - element stride between consecutive B matrices
+//	beta     - scalar multiplier for C
+//	c        - device pointer to C[0] (m x n, row-major), output
+//	strideC  - element stride between consecutive C matrices
+//	batch    - number of matrices in the batch
+func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, strideA int64,
+	b unsafe.Pointer, strideB int64,
+	beta float32,
+	c unsafe.Pointer, strideC int64,
+	batch int,
+) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+
+	cAlpha := alpha
+	cBeta := beta
+
+	// Row-major to column-major: swap A<->B, swap m<->n, swap strides.
+	// cublasSgemmStridedBatched(handle, transB, transA, n, m, k,
+	//   &alpha, B, n, strideB, A, k, strideA, &beta, C, n, strideC, batchCount)
+	status := cuda.Ccall(lib.sgemmStridedBatched,
+		h.ptr,
+		uintptr(cublasOpN),                 // transa (for B)
+		uintptr(cublasOpN),                 // transb (for A)
+		uintptr(n),                         // rows of op(B) = cols of C
+		uintptr(m),                         // cols of op(A) = rows of C
+		uintptr(k),                         // inner dimension
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(b),                         // B first
+		uintptr(n),                         // ldb
+		uintptr(strideB),                   // strideB
+		uintptr(a),                         // A second
+		uintptr(k),                         // lda
+		uintptr(strideA),                   // strideA
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(n),                         // ldc
+		uintptr(strideC),                   // strideC
+		uintptr(batch),                     // batchCount
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSgemmStridedBatched failed with status %d", status)
 	}
 	return nil
 }

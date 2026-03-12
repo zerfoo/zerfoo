@@ -433,6 +433,23 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
+	// Use strided batched GEMM when available for float32 with batch > 1.
+	// This replaces N sequential Sgemm calls with a single cuBLAS call.
+	if batchSize > 1 && isFloat32 && bBatchSize > 1 {
+		if batched, ok := e.blas.(gpuapi.BLASBatched); ok {
+			strideA := int64(aMatSize)
+			strideBVal := int64(bMatSize)
+			strideC := int64(cMatSize)
+			if err := batched.SgemmStridedBatched(m, n, k, 1.0,
+				devA, strideA, devB, strideBVal, 0.0,
+				devCTotal, strideC, batchSize); err != nil {
+				e.pool.Free(e.deviceID, devCTotal, batchSize*cMatSize*elemSize)
+				return nil, fmt.Errorf("MatMul: batched GEMM: %w", err)
+			}
+			return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
+		}
+	}
+
 	for batch := range batchSize {
 		aOff := batch * aMatSize * elemSize
 		bOff := 0

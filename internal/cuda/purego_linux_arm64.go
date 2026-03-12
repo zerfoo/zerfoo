@@ -48,7 +48,7 @@ func funcPC(fn func()) uintptr {
 // It must match the layout expected by ccallTrampoline in purego_linux_arm64.s.
 type ccallArgs struct {
 	fn   uintptr
-	args [14]uintptr
+	args [20]uintptr
 	ret  uintptr
 }
 

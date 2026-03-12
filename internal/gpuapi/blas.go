@@ -42,3 +42,16 @@ type BLASTransposeB interface {
 		beta float32, c unsafe.Pointer,
 	) error
 }
+
+// BLASBatched is an optional extension that supports strided batched GEMM.
+// All batch elements share the same m, n, k dimensions and alpha/beta scalars.
+// Matrices are accessed at base + i*stride for batch element i.
+type BLASBatched interface {
+	SgemmStridedBatched(m, n, k int, alpha float32,
+		a unsafe.Pointer, strideA int64,
+		b unsafe.Pointer, strideB int64,
+		beta float32,
+		c unsafe.Pointer, strideC int64,
+		batch int,
+	) error
+}

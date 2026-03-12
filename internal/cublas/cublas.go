@@ -166,6 +166,41 @@ func SgemmNT(h *Handle, m, n, k int, alpha float32,
 	return nil
 }
 
+// SgemmStridedBatched performs batched single-precision GEMM with strided access.
+// Row-major to column-major conversion: swap A/B and m/n (same trick as Sgemm).
+func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, strideA int64,
+	b unsafe.Pointer, strideB int64,
+	beta float32,
+	c unsafe.Pointer, strideC int64,
+	batch int,
+) error {
+	cAlpha := C.float(alpha)
+	cBeta := C.float(beta)
+
+	// Row-major to column-major: swap A<->B, swap m<->n, swap strides.
+	status := C.cublasSgemmStridedBatched(
+		h.h,
+		C.CUBLAS_OP_N,
+		C.CUBLAS_OP_N,
+		C.int(n),
+		C.int(m),
+		C.int(k),
+		(*C.float)(unsafe.Pointer(&cAlpha)),
+		(*C.float)(b), C.int(n), C.longlong(strideB),
+		(*C.float)(a), C.int(k), C.longlong(strideA),
+		(*C.float)(unsafe.Pointer(&cBeta)),
+		(*C.float)(c), C.int(n), C.longlong(strideC),
+		C.int(batch),
+	)
+
+	if status != C.CUBLAS_STATUS_SUCCESS {
+		return fmt.Errorf("cublasSgemmStridedBatched failed with status %d", int(status))
+	}
+
+	return nil
+}
+
 // GemmEx performs mixed-precision general matrix multiplication using
 // cublasGemmEx. Supports BFloat16, Float16, and Float32 element types.
 //
