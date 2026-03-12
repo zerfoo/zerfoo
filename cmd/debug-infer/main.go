@@ -59,6 +59,7 @@ func main() {
 	// Dump first 20 dequantized values of a few weight tensors to verify.
 	for _, tname := range []string{
 		"model.layers.0.self_attn.q_proj.weight",
+		"model.layers.0.self_attn.o_proj.weight",
 		"model.layers.0.mlp.gate_proj.weight",
 	} {
 		if t, ok := gm.Tensors[tname]; ok {
