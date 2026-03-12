@@ -58,53 +58,11 @@ func buildTransformerGraph(
 		return &graph.Parameter[float32]{Name: name, Value: t}
 	}
 
-	_, isGPUEngine := engine.(compute.WeightUploader)
-
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		s := t.GetStorage()
-		// GPU path: dequantize quantized weights to F32 and do a real
-		// transpose. Virtual transpose (shape swap) only works with the
-		// CPU Q4NT/Q8NT GEMV kernels that read blocks in original layout.
-		// cuBLAS SGEMM needs proper transposed F32 data.
-		if isGPUEngine {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				switch qs := any(s).(type) {
-				case *tensor.Q4Storage:
-					f32 := make([]float32, qs.Len())
-					qs.Dequantize(f32)
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					return tensor.New([]int{cols, rows}, transposed)
-				case *tensor.Q8Storage:
-					f32 := make([]float32, qs.Len())
-					qs.Dequantize(f32)
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					return tensor.New([]int{cols, rows}, transposed)
-				}
-			}
-			// F32 weights: use engine.Transpose (GPU or CPU).
-			tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
-			if err != nil {
-				return nil, fmt.Errorf("transpose %s: %w", name, err)
-			}
-			return tr, nil
-		}
-
-		// CPU path: virtual transpose for quantized storage.
-		// GemmF32Q4NT reads blocks in original [outDim, inDim] layout and
-		// computes the implicit transpose, avoiding full dequantize+transpose.
+		// For quantized storage (Q4/Q8), swap shape metadata without moving
+		// data. Both CPU (GemmF32Q4NT) and GPU (matMulQ4BWeight) read blocks
+		// in the original [outDim, inDim] layout with implicit transpose.
 		if _, ok := any(s).(*tensor.Q4Storage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
