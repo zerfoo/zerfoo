@@ -631,5 +631,9 @@ func cudaFreeTemp(ptr unsafe.Pointer) {
 	cuda.Free(ptr) //nolint:errcheck // workspace cleanup is best-effort
 }
 
+func init() {
+	DNNFactory = func() (DNN, error) { return NewCUDADNN() }
+}
+
 // Compile-time interface assertion.
 var _ DNN = (*CUDADNN)(nil)
