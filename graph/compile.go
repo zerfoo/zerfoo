@@ -10,6 +10,14 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// EmbeddedFrozenProvider is implemented by nodes that carry frozen data
+// internally (e.g. Gather with embedded weights). Compile detects this
+// interface and creates synthetic frozen slots so the megakernel emitter
+// can reference the data via frozen_%d pointers.
+type EmbeddedFrozenProvider[T tensor.Numeric] interface {
+	EmbeddedFrozen() []*tensor.TensorNumeric[T]
+}
+
 // Instruction is a single pre-resolved operation in a compiled execution plan.
 // It holds a direct function that calls node.Forward() with pre-computed
 // buffer indices, eliminating dependency map lookups and memo operations.
@@ -206,7 +214,18 @@ func (g *Graph[T]) Compile(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		}
 	}
 
-	// Step 4: Create instructions for each compute node.
+	// Step 4: Record slot shapes from warmup memo.
+	slotShapes := make([][]int, len(g.nodes))
+	for n, t := range g.memo {
+		if idx, ok := nodeIdx[n]; ok && t != nil {
+			slotShapes[idx] = t.Shape()
+		}
+	}
+
+	// Step 5: Create instructions for each compute node.
+	// Nodes that embed frozen data (e.g. Gather with embedded weights) get
+	// synthetic frozen slots so the megakernel emitter can reference them.
+	nextSlot := len(g.nodes)
 	var instructions []Instruction[T]
 	for _, n := range g.nodes {
 		if _, ok := n.(*inputNode[T]); ok {
@@ -222,8 +241,35 @@ func (g *Graph[T]) Compile(ctx context.Context, inputs ...*tensor.TensorNumeric[
 			depIndices[i] = nodeIdx[dep]
 		}
 
+		// If the node has embedded frozen data, create synthetic frozen
+		// slots and prepend their indices to the input list so the
+		// megakernel emitter can reference them via frozen_%d.
+		if efp, ok := n.(EmbeddedFrozenProvider[T]); ok {
+			if frozenData := efp.EmbeddedFrozen(); len(frozenData) > 0 {
+				syntheticIdx := make([]int, 0, len(frozenData))
+				for _, ft := range frozenData {
+					sid := nextSlot
+					nextSlot++
+					slots = append(slots, ft)
+					slotShapes = append(slotShapes, ft.Shape())
+					frozenIdx = append(frozenIdx, sid)
+					syntheticIdx = append(syntheticIdx, sid)
+				}
+				depIndices = append(syntheticIdx, depIndices...)
+			}
+		}
+
+		// Capture the original dependency count so Forward receives only
+		// the graph-level dependencies (excluding synthetic frozen slots).
+		origDepCount := len(g.dependencies[n])
 		fwd := func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-			return n.Forward(ctx, inputs...)
+			// Strip any prepended synthetic frozen inputs before calling
+			// the node's Forward, which only expects graph dependencies.
+			actual := inputs
+			if len(inputs) > origDepCount {
+				actual = inputs[len(inputs)-origDepCount:]
+			}
+			return n.Forward(ctx, actual...)
 		}
 		instructions = append(instructions, Instruction[T]{
 			Forward:   fwd,
@@ -231,14 +277,6 @@ func (g *Graph[T]) Compile(ctx context.Context, inputs ...*tensor.TensorNumeric[
 			OutputIdx: outIdx,
 			OpName:    n.OpType(),
 		})
-	}
-
-	// Step 5: Record slot shapes from warmup memo.
-	slotShapes := make([][]int, len(g.nodes))
-	for n, t := range g.memo {
-		if idx, ok := nodeIdx[n]; ok && t != nil {
-			slotShapes[idx] = t.Shape()
-		}
 	}
 
 	return &ExecutionPlan[T]{
