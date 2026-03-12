@@ -3,7 +3,6 @@ package compute
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync/atomic"
 	"unsafe"
 
@@ -835,8 +834,6 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 	}
 
 	q4DataOff2 := tensor.Q4GPUDataOffset(qs.NumBlocks())
-	fmt.Fprintf(os.Stderr, "[Q4-GEMM] devQ4=%p devAT=%p devC=%p M=%d K=%d N=%d dataOff=%d numBlocks=%d gpuByteSize=%d\n",
-		devQ4, devAT, devCTemp, n, k, m, q4DataOff2, qs.NumBlocks(), func() int { _, sz, _ := qs.GPUPtr(); return sz }())
 	if err := e.kernels.GemmQ4F32(devQ4, devAT, devCTemp, n, k, m, q4DataOff2, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devCTemp, cTempSize)
 		return e.cpu.MatMul(ctx, a, b, dst...)
