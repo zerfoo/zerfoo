@@ -275,11 +275,7 @@ func buildTransformerGraph(
 			attnOut = builder.AddNode(postAttnNorm, attnOut)
 		}
 
-		// --- Residual Add ---
-		add1 := core.NewAdd[float32](proxy)
-		residual1 := builder.AddNode(add1, attnOut, hidden)
-
-		// --- Pre-FFN LayerNorm ---
+		// --- Fused Residual Add + Pre-FFN RMSNorm ---
 		var preFfnNormKey string
 		if opts.postNorm {
 			preFfnNormKey = prefix + "pre_feedforward_layernorm.weight"
@@ -290,13 +286,12 @@ func buildTransformerGraph(
 		if err != nil {
 			return nil, err
 		}
-		postNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(preFfnNormKey, postNormW),
-		)
-		if err != nil {
-			return nil, err
+		fusedNode1 := &fusedAddRMSNormNode[float32]{
+			engine: proxy,
+			weight: postNormW,
+			eps:    rmsEps,
 		}
-		normed2 := builder.AddNode(postNorm, residual1)
+		normed2 := builder.AddNode(fusedNode1, attnOut, hidden)
 
 		// --- FFN (SwiGLU) ---
 		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
@@ -357,9 +352,9 @@ func buildTransformerGraph(
 			ffnOut = builder.AddNode(postFfnNorm, ffnOut)
 		}
 
-		// --- Residual Add ---
-		add2 := core.NewAdd[float32](proxy)
-		hidden = builder.AddNode(add2, ffnOut, residual1)
+		// --- Residual Add (uses stored residual from fused node) ---
+		resAdd := &residualAddNode[float32]{engine: proxy, source: fusedNode1}
+		hidden = builder.AddNode(resAdd, ffnOut)
 	}
 
 	// --- Final RMSNorm ---
