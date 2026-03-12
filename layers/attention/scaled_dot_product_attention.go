@@ -153,7 +153,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		}
 	}
 
-	// Debug: check attention scores before softmax
+	// Debug: check attention scores before softmax and print problematic rows
 	if scoreData, ok := any(scaledAttentionScores.Data()).([]float32); ok {
 		nanCount := 0
 		infCount := 0
@@ -163,6 +163,18 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 			}
 			if math.IsInf(float64(v), 0) {
 				infCount++
+			}
+		}
+		shape := scaledAttentionScores.Shape()
+		seqK := shape[len(shape)-1]
+		seqQ := shape[len(shape)-2]
+		// Always print first few rows of first SDPA call for debugging
+		if shape[0] == 4 && seqQ == 8 {
+			for b := 0; b < 1; b++ {
+				for qi := 0; qi < 4; qi++ {
+					row := scoreData[b*seqQ*seqK+qi*seqK : b*seqQ*seqK+(qi+1)*seqK]
+					log.Printf("[SDPA-DBG] pre-softmax batch=%d qi=%d: %v", b, qi, row)
+				}
 			}
 		}
 		if nanCount > 0 || infCount > 0 {
