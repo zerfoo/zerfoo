@@ -116,35 +116,52 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	}
 
 	// Apply logit softcapping: cap * tanh(logit / cap).
-	// Uses float32 fast tanh approximation and parallelizes across cores.
 	if h.softcapVal > 0 {
-		data := result.Data()
-		n := len(data)
-		invCap := float32(1.0 / float64(h.softcapVal))
-		cap32 := h.softcapVal
-		const chunkSize = 4096
-		nChunks := (n + chunkSize - 1) / chunkSize
-		if nChunks <= 1 {
-			for i := range data {
-				data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
+		// GPU path: use engine operations to keep data on device.
+		if _, ok := result.GetStorage().(*tensor.GPUStorage[T]); ok {
+			invCap := T(1.0 / float64(h.softcapVal))
+			scaled, scErr := h.engine.MulScalar(ctx, result, invCap)
+			if scErr != nil {
+				return nil, scErr
+			}
+			tanhed, tErr := h.engine.Tanh(ctx, scaled)
+			if tErr != nil {
+				return nil, tErr
+			}
+			result, err = h.engine.MulScalar(ctx, tanhed, T(h.softcapVal))
+			if err != nil {
+				return nil, err
 			}
 		} else {
-			var wg sync.WaitGroup
-			wg.Add(nChunks)
-			for c := range nChunks {
-				start := c * chunkSize
-				end := start + chunkSize
-				if end > n {
-					end = n
+			// CPU path: fast float32 tanh approximation parallelized across cores.
+			data := result.Data()
+			n := len(data)
+			invCap := float32(1.0 / float64(h.softcapVal))
+			cap32 := h.softcapVal
+			const chunkSize = 4096
+			nChunks := (n + chunkSize - 1) / chunkSize
+			if nChunks <= 1 {
+				for i := range data {
+					data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
 				}
-				go func() {
-					defer wg.Done()
-					for i := start; i < end; i++ {
-						data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
+			} else {
+				var wg sync.WaitGroup
+				wg.Add(nChunks)
+				for c := range nChunks {
+					start := c * chunkSize
+					end := start + chunkSize
+					if end > n {
+						end = n
 					}
-				}()
+					go func() {
+						defer wg.Done()
+						for i := start; i < end; i++ {
+							data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
+						}
+					}()
+				}
+				wg.Wait()
 			}
-			wg.Wait()
 		}
 	}
 
@@ -178,7 +195,7 @@ func (e *embeddingLookupNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
 	return []*tensor.TensorNumeric[T]{e.weight}
 }
 
-func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *embeddingLookupNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
 	ids := input.Data()
@@ -189,6 +206,36 @@ func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.Te
 		seqLen *= d
 	}
 
+	batch := shape[0]
+	sl := seqLen / batch
+
+	// GPU path: use engine.Gather when weight has GPU storage.
+	if _, ok := e.weight.GetStorage().(*tensor.GPUStorage[T]); ok {
+		intIDs := make([]int, seqLen)
+		for i := range intIDs {
+			intIDs[i] = int(ids[i])
+		}
+		idxTensor, err := tensor.New([]int{seqLen}, intIDs)
+		if err != nil {
+			return nil, fmt.Errorf("embedding lookup: create index tensor: %w", err)
+		}
+		outTensor, err := tensor.New[T]([]int{seqLen, hiddenDim}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("embedding lookup: create output tensor: %w", err)
+		}
+		if err := e.engine.Gather(ctx, e.weight, idxTensor, outTensor); err != nil {
+			return nil, fmt.Errorf("embedding lookup: gather: %w", err)
+		}
+		if e.scale > 0 {
+			outTensor, err = e.engine.MulScalar(ctx, outTensor, T(e.scale))
+			if err != nil {
+				return nil, fmt.Errorf("embedding lookup: scale: %w", err)
+			}
+		}
+		return e.engine.Reshape(ctx, outTensor, []int{batch, sl, hiddenDim})
+	}
+
+	// CPU path: direct row lookup.
 	out := make([]T, seqLen*hiddenDim)
 
 	// Fast path: dequantize only the needed rows from Q8 storage instead
@@ -222,8 +269,6 @@ func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.Te
 		}
 	}
 
-	batch := shape[0]
-	sl := seqLen / batch
 	return tensor.New([]int{batch, sl, hiddenDim}, out)
 }
 
