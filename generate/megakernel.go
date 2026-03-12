@@ -37,12 +37,22 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 		frozenMeta[i] = codegen.FrozenSlotMeta{SlotIdx: f.SlotIdx}
 	}
 
+	slotShapes := plan.SlotShapes()
+
+	// Detect KV cache ops and extract dimensions.
+	hasKV := detectKVCacheOps(instructions)
+	var numKVLayers int
+	if hasKV {
+		numKVLayers, _, _ = extractKVCacheDims(instructions, slotShapes)
+	}
+
 	cfg := codegen.MegakernelConfig{
 		Instructions: instructions,
-		SlotShapes:   plan.SlotShapes(),
+		SlotShapes:   slotShapes,
 		FrozenSlots:  frozenMeta,
 		InputSlots:   plan.InputSlots(),
 		OutputSlot:   plan.OutputSlot(),
+		NumKVLayers:  numKVLayers,
 	}
 
 	// Emit CUDA source.
@@ -83,6 +93,31 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 		return
 	}
 
+	// Allocate GPU KV cache and wire device pointers to runner.
+	var kvCache *GPUKVCache
+	if hasKV && numKVLayers > 0 {
+		_, numHeads, headDim := extractKVCacheDims(instructions, slotShapes)
+		if numHeads > 0 && headDim > 0 {
+			alloc := cudaAllocator{}
+			const defaultMaxSeqLen = 512
+			var kvErr error
+			kvCache, kvErr = NewGPUKVCache(alloc, numKVLayers, defaultMaxSeqLen, numHeads, headDim)
+			if kvErr != nil {
+				log.Printf("megakernel: failed to allocate GPU KV cache: %v", kvErr)
+				_ = runner.Close()
+				return
+			}
+			kPtrs, vPtrs, ptrErr := kvCache.DevicePointerArrays()
+			if ptrErr != nil {
+				log.Printf("megakernel: failed to get KV device pointer arrays: %v", ptrErr)
+				_ = kvCache.Close()
+				_ = runner.Close()
+				return
+			}
+			runner.SetKVCache(kPtrs, vPtrs)
+		}
+	}
+
 	outputShape := runner.OutputShape()
 
 	// Set the megakernel function on the plan.
@@ -98,8 +133,12 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 			inputF32[i] = float32(v)
 		}
 
-		// Launch kernel.
-		pos := 0 // position for rotary embeddings (TODO: wire from KV cache)
+		// Wire pos from KV cache sequence length (not hardcoded).
+		pos := 0
+		if kvCache != nil {
+			pos = kvCache.SeqLen()
+		}
+
 		outputF32, err := runner.Launch(inputF32, pos)
 		if err != nil {
 			return nil, err

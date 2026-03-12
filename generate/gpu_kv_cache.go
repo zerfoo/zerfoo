@@ -165,6 +165,41 @@ func (c *GPUKVCache) Reset() {
 	c.seqLen = 0
 }
 
+// DevicePointerArrays returns GPU-resident arrays of float* pointers for K
+// and V buffers across all layers. These can be passed directly to the
+// megakernel. The arrays are allocated once and cached.
+func (c *GPUKVCache) DevicePointerArrays() (kPtrs, vPtrs unsafe.Pointer, err error) {
+	kHostPtrs := make([]uintptr, c.numLayers)
+	vHostPtrs := make([]uintptr, c.numLayers)
+	for i := range c.numLayers {
+		kHostPtrs[i] = uintptr(c.layers[i].kPtr)
+		vHostPtrs[i] = uintptr(c.layers[i].vPtr)
+	}
+	ptrArrayBytes := c.numLayers * 8 // 8 bytes per pointer on 64-bit
+
+	kPtrs, err = c.alloc.Alloc(ptrArrayBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gpu_kv_cache: alloc K ptr array: %w", err)
+	}
+	if err := c.alloc.Memcpy(kPtrs, unsafe.Pointer(&kHostPtrs[0]), ptrArrayBytes, gpuMemcpyHostToDevice); err != nil {
+		_ = c.alloc.Free(kPtrs)
+		return nil, nil, fmt.Errorf("gpu_kv_cache: upload K ptr array: %w", err)
+	}
+
+	vPtrs, err = c.alloc.Alloc(ptrArrayBytes)
+	if err != nil {
+		_ = c.alloc.Free(kPtrs)
+		return nil, nil, fmt.Errorf("gpu_kv_cache: alloc V ptr array: %w", err)
+	}
+	if err := c.alloc.Memcpy(vPtrs, unsafe.Pointer(&vHostPtrs[0]), ptrArrayBytes, gpuMemcpyHostToDevice); err != nil {
+		_ = c.alloc.Free(kPtrs)
+		_ = c.alloc.Free(vPtrs)
+		return nil, nil, fmt.Errorf("gpu_kv_cache: upload V ptr array: %w", err)
+	}
+
+	return kPtrs, vPtrs, nil
+}
+
 // Close frees all GPU memory held by the cache. The cache must not be used
 // after Close is called.
 func (c *GPUKVCache) Close() error {
