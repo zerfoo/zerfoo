@@ -1655,8 +1655,9 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 	return makeGPUResult[T](e, shape, devOut, n)
 }
 
-// GPUFusedAddRMSNorm computes residual = input + residual (in-place) and
-// output = rmsnorm(residual, weight, eps) in a single GPU kernel launch.
+// GPUFusedAddRMSNorm computes sum = input + residual and
+// normed = rmsnorm(sum, weight, eps) in a single GPU kernel launch.
+// Both inputs are read-only; outputs go to separate buffers.
 // This replaces Add + RMSNorm (2 kernel launches) with 1.
 func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	input, residual *tensor.TensorNumeric[T],
@@ -1694,41 +1695,30 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 
 	outBytes := rows * D * f32Size
 	e.setDevice()
-	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	devNormed, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc normed: %w", err)
 	}
 
-	// Allocate a fresh buffer for the residual sum so the caller owns
-	// independent GPU memory (the original residual's memory may be freed
-	// by graph reference counting after this call returns).
-	devRes, err := e.pool.Alloc(e.deviceID, outBytes)
+	devSum, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc residual: %w", err)
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc sum: %w", err)
 	}
 
-	// Copy original residual to the fresh buffer so the kernel can
-	// update it in-place without affecting the original tensor.
-	if err := e.runtime.Memcpy(devRes, resPtr, outBytes, gpuapi.MemcpyDeviceToDevice); err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		e.pool.Free(e.deviceID, devRes, outBytes)
-		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm D2D copy: %w", err)
-	}
-
-	if err := e.kernels.FusedAddRMSNormF32(inPtr, devRes, wPtr, devOut, eps, rows, D, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		e.pool.Free(e.deviceID, devRes, outBytes)
+	if err := e.kernels.FusedAddRMSNormF32(inPtr, resPtr, wPtr, devNormed, devSum, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		e.pool.Free(e.deviceID, devSum, outBytes)
 		return nil, nil, nil, err
 	}
 
-	normed, err = makeGPUResult[T](e, inShape, devOut, rows*D)
+	normed, err = makeGPUResult[T](e, inShape, devNormed, rows*D)
 	if err != nil {
-		e.pool.Free(e.deviceID, devRes, outBytes)
+		e.pool.Free(e.deviceID, devSum, outBytes)
 		return nil, nil, nil, err
 	}
 
-	residualOut, err = makeGPUResult[T](e, inShape, devRes, rows*D)
+	residualOut, err = makeGPUResult[T](e, inShape, devSum, rows*D)
 	if err != nil {
 		return nil, nil, nil, err
 	}

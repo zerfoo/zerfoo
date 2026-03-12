@@ -164,7 +164,7 @@ func (k *OpenCLKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) 
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for OpenCL")
 }
 
-func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for OpenCL")
 }
 

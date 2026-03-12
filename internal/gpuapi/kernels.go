@@ -90,10 +90,10 @@ type KernelRunner interface {
 	FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, stream Stream) error
 
 	// FusedAddRMSNormF32 fuses residual addition and RMSNorm into one kernel launch.
-	// residual is updated in-place: residual = input + residual.
-	// output = rmsnorm(residual, weight, eps).
-	// input: [rows, D], residual: [rows, D], weight: [D], output: [rows, D].
-	FusedAddRMSNormF32(input, residual, weight, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+	// sum_out = input + residual, normed_out = rmsnorm(sum_out, weight, eps).
+	// input: [rows, D], residual: [rows, D], weight: [D],
+	// normedOut: [rows, D], sumOut: [rows, D].
+	FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, stream Stream) error
 
 	// ScaledSoftmaxF32 computes softmax(input * scale) in one kernel launch,
 	// replacing the MulScalar + Softmax chain (saves 1 kernel launch per call).
