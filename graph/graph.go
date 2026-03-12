@@ -235,12 +235,22 @@ func (g *Graph[T]) Output() Node[T] {
 }
 
 // ConstantTensors returns all constant/parameter weight tensors in the graph.
-// Includes tensors from Parameter/Constant nodes and tensors embedded in
-// nodes that implement EmbeddedFrozenProvider (e.g. LM head, gather).
+// Includes tensors from Parameter/Constant nodes, tensors embedded in nodes
+// that implement EmbeddedFrozenProvider (e.g. LM head, gather), and all
+// Parameter values from every node (e.g. attention and FFN weights).
 // Call after graph construction to collect tensors for GPU pre-upload.
 func (g *Graph[T]) ConstantTensors() []*tensor.TensorNumeric[T] {
 	ctx := context.Background()
+	seen := make(map[*tensor.TensorNumeric[T]]bool)
 	var tensors []*tensor.TensorNumeric[T]
+
+	add := func(t *tensor.TensorNumeric[T]) {
+		if t != nil && !seen[t] {
+			seen[t] = true
+			tensors = append(tensors, t)
+		}
+	}
+
 	for _, n := range g.nodes {
 		// Collect from Parameter/Constant nodes.
 		if isConstantNode[T](n) {
@@ -248,12 +258,18 @@ func (g *Graph[T]) ConstantTensors() []*tensor.TensorNumeric[T] {
 			if err != nil || t == nil {
 				continue
 			}
-			tensors = append(tensors, t)
+			add(t)
 			continue
 		}
 		// Collect from EmbeddedFrozenProvider nodes (e.g. LM head weight).
 		if efp, ok := n.(EmbeddedFrozenProvider[T]); ok {
-			tensors = append(tensors, efp.EmbeddedFrozen()...)
+			for _, t := range efp.EmbeddedFrozen() {
+				add(t)
+			}
+		}
+		// Collect Parameter values from all nodes (attention, FFN weights).
+		for _, p := range n.Parameters() {
+			add(p.Value)
 		}
 	}
 	return tensors
