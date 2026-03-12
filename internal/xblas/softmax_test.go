@@ -79,7 +79,7 @@ func TestSoftmaxF32_Range(t *testing.T) {
 }
 
 func TestSoftmaxF32_Lengths(t *testing.T) {
-	for _, n := range []int{1, 4, 7, 128, 2048} {
+	for _, n := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 128, 2048} {
 		t.Run("n="+intToStr(n), func(t *testing.T) {
 			rng := rand.New(rand.NewPCG(99, uint64(n)))
 			input := make([]float32, n)
@@ -129,6 +129,38 @@ func TestSoftmaxF32_EdgeCases(t *testing.T) {
 			t.Errorf("got %v, want 1.0", data[0])
 		}
 	})
+}
+
+func TestSoftmaxF32_CausalMask(t *testing.T) {
+	// Test softmax with -1e9 values (simulating causal mask).
+	// Row 0 of an 8x8 causal mask: only position 0 visible.
+	for _, n := range []int{4, 8, 16} {
+		t.Run("n="+intToStr(n), func(t *testing.T) {
+			for visibleCount := 1; visibleCount <= n; visibleCount++ {
+				input := make([]float32, n)
+				for i := range n {
+					if i < visibleCount {
+						input[i] = float32(i) * 0.5
+					} else {
+						input[i] = -1e9
+					}
+				}
+
+				data := make([]float32, n)
+				copy(data, input)
+				SoftmaxF32(&data[0], n)
+
+				ref := referenceSoftmax(input)
+
+				for i, got := range data {
+					diff := math.Abs(float64(got - ref[i]))
+					if diff > 1e-5 {
+						t.Errorf("visible=%d i=%d: got %v, want %v (diff %e)", visibleCount, i, got, ref[i], diff)
+					}
+				}
+			}
+		})
+	}
 }
 
 func BenchmarkSoftmaxF32(b *testing.B) {
