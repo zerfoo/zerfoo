@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/pprof"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -72,14 +73,20 @@ func run() error {
 	}
 
 	if *modelDir == "" {
-		return fmt.Errorf("usage: bench_tps -model /path/to/model/dir")
+		return fmt.Errorf("usage: bench_tps -model /path/to/model/dir/or/file.gguf")
 	}
-
-	reg := &dirRegistry{path: *modelDir}
 
 	fmt.Printf("Loading model from %s (device=%s)...\n", *modelDir, *device)
 	t0 := time.Now()
-	mdl, err := inference.Load("bench", inference.WithRegistry(reg), inference.WithMmap(*useMmap), inference.WithDevice(*device))
+
+	var mdl *inference.Model
+	var err error
+	if strings.HasSuffix(strings.ToLower(*modelDir), ".gguf") {
+		mdl, err = inference.LoadFile(*modelDir, inference.WithMmap(*useMmap), inference.WithDevice(*device))
+	} else {
+		reg := &dirRegistry{path: *modelDir}
+		mdl, err = inference.Load("bench", inference.WithRegistry(reg), inference.WithMmap(*useMmap), inference.WithDevice(*device))
+	}
 	if err != nil {
 		return fmt.Errorf("load error: %w", err)
 	}

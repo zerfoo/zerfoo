@@ -1182,6 +1182,40 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], 
 		return result, nil
 	}
 
+	// Fast path for 3D transpose (axes=[0,2,1]):
+	// Batched 2D transpose: swap dims 1 and 2, keep batch (0) in place.
+	// Used by SDPA for K^T (batch, seq_len, head_dim) -> (batch, head_dim, seq_len).
+	if len(originalShape) == 3 && axes[0] == 0 && axes[1] == 2 && axes[2] == 1 {
+		B := originalShape[0]
+		rows := originalShape[1]
+		cols := originalShape[2]
+
+		if rows == 1 || cols == 1 {
+			copy(rData, aData)
+			return result, nil
+		}
+
+		batchStride := rows * cols
+		const blockSize = 64
+		parallelFor(B, func(startB, endB int) {
+			for b := startB; b < endB; b++ {
+				bOff := b * batchStride
+				for jb := 0; jb < cols; jb += blockSize {
+					jEnd := jb + blockSize
+					if jEnd > cols {
+						jEnd = cols
+					}
+					for i := 0; i < rows; i++ {
+						for j := jb; j < jEnd; j++ {
+							rData[bOff+j*rows+i] = aData[bOff+i*cols+j]
+						}
+					}
+				}
+			}
+		})
+		return result, nil
+	}
+
 	// Fast path for 4D attention transpose (axes=[0,2,1,3]):
 	// Swaps dims 1 and 2, keeping batch (0) and head_dim (3) in place.
 	// This is a batched 2D transpose of (dim1 x dim2) tiles, each element
