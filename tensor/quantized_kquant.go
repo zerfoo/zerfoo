@@ -25,27 +25,24 @@ const (
 
 // decodeQ4KScalesMins extracts the 6-bit scales and mins from the 12-byte
 // packed region at raw[4:16] of a Q4_K super-block.
+// Layout (matches llama.cpp get_scale_min_k4):
+//
+//	sc[0:4] = 6-bit scales for sub-blocks 0-3 (bits 6-7 hold high bits of scales 4-7)
+//	sc[4:8] = 6-bit mins for sub-blocks 0-3 (bits 6-7 hold high bits of mins 4-7)
+//	sc[8:12] = low 4 bits scale + high 4 bits min for sub-blocks 4-7
 func decodeQ4KScalesMins(raw []byte) (scales, mins [q4KNumSubBlocks]uint8) {
-	for i := range q4KNumSubBlocks {
-		scales[i] = raw[4+i] & 0xF
-		mins[i] = raw[4+i] >> 4
+	sc := raw[4:16] // 12-byte scales region
+
+	// Sub-blocks 0-3: 6 low bits from separate byte ranges.
+	for i := range 4 {
+		scales[i] = sc[i] & 63
+		mins[i] = sc[4+i] & 63
 	}
-	scales[0] |= (raw[12] & 3) << 4
-	scales[1] |= ((raw[12] >> 2) & 3) << 4
-	scales[2] |= ((raw[12] >> 4) & 3) << 4
-	scales[3] |= ((raw[12] >> 6) & 3) << 4
-	scales[4] |= (raw[13] & 3) << 4
-	scales[5] |= ((raw[13] >> 2) & 3) << 4
-	scales[6] |= ((raw[13] >> 4) & 3) << 4
-	scales[7] |= ((raw[13] >> 6) & 3) << 4
-	mins[0] |= (raw[14] & 3) << 4
-	mins[1] |= ((raw[14] >> 2) & 3) << 4
-	mins[2] |= ((raw[14] >> 4) & 3) << 4
-	mins[3] |= ((raw[14] >> 6) & 3) << 4
-	mins[4] |= (raw[15] & 3) << 4
-	mins[5] |= ((raw[15] >> 2) & 3) << 4
-	mins[6] |= ((raw[15] >> 4) & 3) << 4
-	mins[7] |= ((raw[15] >> 6) & 3) << 4
+	// Sub-blocks 4-7: 4 bits from bytes 8-11 + 2 high bits from bytes 0-3 / 4-7.
+	for i := range 4 {
+		scales[4+i] = (sc[8+i] & 0xF) | ((sc[i] >> 6) << 4)
+		mins[4+i] = (sc[8+i] >> 4) | ((sc[4+i] >> 6) << 4)
+	}
 	return
 }
 
@@ -158,15 +155,17 @@ func DequantizeQ6K(raw []byte, dst []float32) {
 		outOff := half * 128
 
 		for l := range 32 {
+			is := l / 16 // sub-block offset within each group of 32
+
 			q1 := int8((ql[qlOff+l]&0xF)|((qh[qhOff+l]&3)<<4)) - 32
 			q2 := int8((ql[qlOff+32+l]&0xF)|(((qh[qhOff+l]>>2)&3)<<4)) - 32
 			q3 := int8((ql[qlOff+l]>>4)|(((qh[qhOff+l]>>4)&3)<<4)) - 32
 			q4 := int8((ql[qlOff+32+l]>>4)|(((qh[qhOff+l]>>6)&3)<<4)) - 32
 
-			dst[outOff+l] = d * float32(int8(sc[scOff+0])) * float32(q1)
-			dst[outOff+32+l] = d * float32(int8(sc[scOff+2])) * float32(q2)
-			dst[outOff+64+l] = d * float32(int8(sc[scOff+4])) * float32(q3)
-			dst[outOff+96+l] = d * float32(int8(sc[scOff+6])) * float32(q4)
+			dst[outOff+l] = d * float32(int8(sc[scOff+is+0])) * float32(q1)
+			dst[outOff+32+l] = d * float32(int8(sc[scOff+is+2])) * float32(q2)
+			dst[outOff+64+l] = d * float32(int8(sc[scOff+is+4])) * float32(q3)
+			dst[outOff+96+l] = d * float32(int8(sc[scOff+is+6])) * float32(q4)
 		}
 	}
 }

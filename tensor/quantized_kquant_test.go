@@ -84,25 +84,17 @@ func buildQ4KBlock(values []float32) []byte {
 	binary.LittleEndian.PutUint16(raw[2:4], float16.FromFloat32(dmin).Bits())
 
 	// Bytes 4-15: packed scales and mins (12 bytes).
-	// Layout from ggml: for sub-blocks 0-3, low 4 bits of scale and min in bytes 4-7.
-	// For sub-blocks 4-7, low 4 bits in bytes 8-11.
-	// High 2 bits of scales in bytes 12-13 (but only 12 bytes total, so packed differently).
-	//
-	// Exact layout from ggml-quants.c:
-	// scales[i] for i<4: low 6 bits stored as: raw[4+i] = (scalesQ[i] & 0xF) | ((minsQ[i] & 0xF) << 4)
-	// scales[i] for i>=4: raw[4+i] = (scalesQ[i] & 0xF) | ((minsQ[i] & 0xF) << 4)
-	// High 2 bits: raw[4+8] to raw[4+11] store the high bits.
-	// raw[12] = (scalesQ[0]>>4)&3 | ((scalesQ[1]>>4)&3)<<2 | ((scalesQ[2]>>4)&3)<<4 | ((scalesQ[3]>>4)&3)<<6
-	// raw[13] = (scalesQ[4]>>4)&3 | ((scalesQ[5]>>4)&3)<<2 | ((scalesQ[6]>>4)&3)<<4 | ((scalesQ[7]>>4)&3)<<6
-	// raw[14] = (minsQ[0]>>4)&3 | ((minsQ[1]>>4)&3)<<2 | ((minsQ[2]>>4)&3)<<4 | ((minsQ[3]>>4)&3)<<6
-	// raw[15] = (minsQ[4]>>4)&3 | ((minsQ[5]>>4)&3)<<2 | ((minsQ[6]>>4)&3)<<4 | ((minsQ[7]>>4)&3)<<6
-	for i := range 8 {
-		raw[4+i] = (scalesQ[i] & 0xF) | ((minsQ[i] & 0xF) << 4)
+	// Layout matches llama.cpp get_scale_min_k4:
+	//   sc[0:4] = 6-bit scales for sub-blocks 0-3 (bits 6-7 = high bits of scales 4-7)
+	//   sc[4:8] = 6-bit mins for sub-blocks 0-3 (bits 6-7 = high bits of mins 4-7)
+	//   sc[8:12] = low 4 bits scale + high 4 bits min for sub-blocks 4-7
+	for i := range 4 {
+		raw[4+i] = (scalesQ[i] & 63) | ((scalesQ[4+i] >> 4) << 6)
+		raw[8+i] = (minsQ[i] & 63) | ((minsQ[4+i] >> 4) << 6)
 	}
-	raw[12] = (scalesQ[0]>>4)&3 | ((scalesQ[1]>>4)&3)<<2 | ((scalesQ[2]>>4)&3)<<4 | ((scalesQ[3]>>4)&3)<<6
-	raw[13] = (scalesQ[4]>>4)&3 | ((scalesQ[5]>>4)&3)<<2 | ((scalesQ[6]>>4)&3)<<4 | ((scalesQ[7]>>4)&3)<<6
-	raw[14] = (minsQ[0]>>4)&3 | ((minsQ[1]>>4)&3)<<2 | ((minsQ[2]>>4)&3)<<4 | ((minsQ[3]>>4)&3)<<6
-	raw[15] = (minsQ[4]>>4)&3 | ((minsQ[5]>>4)&3)<<2 | ((minsQ[6]>>4)&3)<<4 | ((minsQ[7]>>4)&3)<<6
+	for i := range 4 {
+		raw[12+i] = (scalesQ[4+i] & 0xF) | ((minsQ[4+i] & 0xF) << 4)
+	}
 
 	// Bytes 16-143: 256 packed 4-bit quantized values (128 bytes).
 	// Pack in llama.cpp split format: each 32 bytes covers 64 elements.
@@ -425,13 +417,14 @@ func buildQ5KBlock(values []float32) []byte {
 	binary.LittleEndian.PutUint16(raw[0:2], float16.FromFloat32(d).Bits())
 	binary.LittleEndian.PutUint16(raw[2:4], float16.FromFloat32(dmin).Bits())
 
-	for i := range 8 {
-		raw[4+i] = (scalesQ[i] & 0xF) | ((minsQ[i] & 0xF) << 4)
+	// Same layout as Q4_K (matches llama.cpp get_scale_min_k4).
+	for i := range 4 {
+		raw[4+i] = (scalesQ[i] & 63) | ((scalesQ[4+i] >> 4) << 6)
+		raw[8+i] = (minsQ[i] & 63) | ((minsQ[4+i] >> 4) << 6)
 	}
-	raw[12] = (scalesQ[0]>>4)&3 | ((scalesQ[1]>>4)&3)<<2 | ((scalesQ[2]>>4)&3)<<4 | ((scalesQ[3]>>4)&3)<<6
-	raw[13] = (scalesQ[4]>>4)&3 | ((scalesQ[5]>>4)&3)<<2 | ((scalesQ[6]>>4)&3)<<4 | ((scalesQ[7]>>4)&3)<<6
-	raw[14] = (minsQ[0]>>4)&3 | ((minsQ[1]>>4)&3)<<2 | ((minsQ[2]>>4)&3)<<4 | ((minsQ[3]>>4)&3)<<6
-	raw[15] = (minsQ[4]>>4)&3 | ((minsQ[5]>>4)&3)<<2 | ((minsQ[6]>>4)&3)<<4 | ((minsQ[7]>>4)&3)<<6
+	for i := range 4 {
+		raw[12+i] = (scalesQ[4+i] & 0xF) | ((minsQ[4+i] & 0xF) << 4)
+	}
 
 	// Quantize to 5-bit in llama.cpp split format.
 	// Each group of 64 elements uses 32 ql bytes + high bits from qh.
