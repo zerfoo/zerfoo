@@ -266,8 +266,9 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 		out, err := provider.GPUFusedRoPE(input, cosSliced, sinSliced, rpe.rotaryDim)
 		if err == nil {
 			rpe.outputShape = input.Shape()
-			rpe.xRot0Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, halfRotary})
-			rpe.xRot1Slice, _ = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{halfRotary, rpe.rotaryDim})
+			// Skip backward cache (xRot0Slice/xRot1Slice) on GPU path.
+			// Inference never calls Backward, and input.Slice() on GPU
+			// tensors triggers expensive D2H copies.
 			return out, nil
 		}
 		// Fall through to unfused path on error.
