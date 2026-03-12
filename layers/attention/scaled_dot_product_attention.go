@@ -80,27 +80,6 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		}
 	}
 
-	// Try fused decode attention for single-token generation (seqLen_q=1).
-	// Replaces QK^T + ScaledSoftmax + attn*V with a single kernel launch.
-	if mask == nil && !sdpa.causal && len(q.Shape()) == 3 && q.Shape()[1] == 1 {
-		realEngine := sdpa.engine
-		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
-			realEngine = proxy.Real()
-		}
-		if provider, ok := realEngine.(compute.FusedDecodeAttentionProvider[T]); ok {
-			d := sdpa.headDim
-			if d <= 0 {
-				d = float64(q.Shape()[2])
-			}
-			scale := float32(1.0 / math.Sqrt(d))
-			result, fusedErr := provider.GPUFusedDecodeAttention(q, k, v, scale)
-			if fusedErr == nil {
-				return result, nil
-			}
-			// Fall through to unfused path on error.
-		}
-	}
-
 	// 1. MatMul Q and K^T
 	// (batch, seq_len_q, head_dim) x (batch, head_dim, seq_len_k) -> (batch, seq_len_q, seq_len_k)
 	// Use MatMulTransposeB when available to avoid explicit Transpose allocation + kernel.

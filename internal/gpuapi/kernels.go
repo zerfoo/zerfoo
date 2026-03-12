@@ -90,18 +90,12 @@ type KernelRunner interface {
 	FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, stream Stream) error
 
 	// FusedAddRMSNormF32 fuses residual addition and RMSNorm into one kernel launch.
-	// sum = input + residual, normed = rmsnorm(sum, weight, eps).
-	// input: [rows, D], residual: [rows, D] (read-only), weight: [D],
-	// normedOut: [rows, D], sumOut: [rows, D].
-	FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+	// residual is updated in-place: residual = input + residual.
+	// output = rmsnorm(residual, weight, eps).
+	// input: [rows, D], residual: [rows, D], weight: [D], output: [rows, D].
+	FusedAddRMSNormF32(input, residual, weight, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
 
 	// ScaledSoftmaxF32 computes softmax(input * scale) in one kernel launch,
 	// replacing the MulScalar + Softmax chain (saves 1 kernel launch per call).
 	ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
-
-	// FusedDecodeAttentionF32 performs fused single-token attention:
-	// scores = Q * K^T * scale, weights = softmax(scores), O = weights * V.
-	// Replaces 3 kernel launches (MatMulTransposeB + ScaledSoftmax + MatMul)
-	// with 1. Q: [numQHeads, headDim], K/V: [kvSeqLen, headDim].
-	FusedDecodeAttentionF32(Q, K, V, O unsafe.Pointer, numQHeads, kvSeqLen, headDim int, scale float32, stream Stream) error
 }
