@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -9,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/float16"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/log"
 	"github.com/zerfoo/zerfoo/numeric"
@@ -45,6 +44,10 @@ type GPUEngine[T tensor.Numeric] struct {
 // An optional deviceID selects the GPU (default 0).
 // Call Close() when done to release all resources.
 func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) (*GPUEngine[T], error) {
+	if !cuda.Available() {
+		return nil, fmt.Errorf("CUDA runtime not available")
+	}
+
 	dev := 0
 	if len(deviceID) > 0 {
 		dev = deviceID[0]
@@ -55,38 +58,53 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		return nil, fmt.Errorf("failed to set GPU device %d: %w", dev, err)
 	}
 
-	blas, err := gpuapi.NewCUDABlas()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create BLAS handle: %w", err)
+	l := log.Nop()
+
+	var blas gpuapi.BLAS
+	if gpuapi.BLASFactory != nil {
+		var err error
+		blas, err = gpuapi.BLASFactory()
+		if err != nil {
+			l.Warn("BLAS not available, MatMul will fall back to CPU", "error", err.Error())
+		}
 	}
 
 	stream, err := rt.CreateStream()
 	if err != nil {
-		_ = blas.Destroy()
+		if blas != nil {
+			_ = blas.Destroy()
+		}
 		return nil, fmt.Errorf("failed to create GPU stream: %w", err)
 	}
 
-	if err := blas.SetStream(stream); err != nil {
-		_ = stream.Destroy()
-		_ = blas.Destroy()
-		return nil, fmt.Errorf("failed to set BLAS stream: %w", err)
+	if blas != nil {
+		if err := blas.SetStream(stream); err != nil {
+			_ = stream.Destroy()
+			_ = blas.Destroy()
+			return nil, fmt.Errorf("failed to set BLAS stream: %w", err)
+		}
 	}
 
-	dnn, err := gpuapi.NewCUDADNN()
-	if err != nil {
-		_ = stream.Destroy()
-		_ = blas.Destroy()
-		return nil, fmt.Errorf("failed to create DNN handle: %w", err)
+	var dnn gpuapi.DNN
+	if gpuapi.DNNFactory != nil {
+		var err error
+		dnn, err = gpuapi.DNNFactory()
+		if err != nil {
+			l.Warn("DNN not available, cuDNN ops will return errors", "error", err.Error())
+		}
 	}
 
-	if err := dnn.SetStream(stream); err != nil {
-		_ = dnn.Destroy()
-		_ = stream.Destroy()
-		_ = blas.Destroy()
-		return nil, fmt.Errorf("failed to set DNN stream: %w", err)
+	if dnn != nil {
+		if err := dnn.SetStream(stream); err != nil {
+			_ = dnn.Destroy()
+			_ = stream.Destroy()
+			if blas != nil {
+				_ = blas.Destroy()
+			}
+			return nil, fmt.Errorf("failed to set DNN stream: %w", err)
+		}
 	}
 
-	l := log.Nop()
 	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled")
 
 	return &GPUEngine[T]{
@@ -244,6 +262,10 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	_, isFloat32 := any(zero).(float32)
 	_, isBFloat16 := any(zero).(float16.BFloat16)
 	if !isFloat32 && !isBFloat16 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if e.blas == nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 

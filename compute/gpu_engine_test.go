@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -7,12 +5,16 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 func newTestGPUEngine(t *testing.T) *GPUEngine[float32] {
 	t.Helper()
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 
 	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
 	if err != nil {

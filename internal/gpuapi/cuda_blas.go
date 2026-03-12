@@ -66,5 +66,9 @@ func (b *CUDABlas) Handle() *cublas.Handle {
 	return b.handle
 }
 
+func init() {
+	BLASFactory = func() (BLAS, error) { return NewCUDABlas() }
+}
+
 // Compile-time interface assertion.
 var _ BLAS = (*CUDABlas)(nil)
