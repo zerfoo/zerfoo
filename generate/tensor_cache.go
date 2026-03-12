@@ -8,6 +8,17 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// freeGPUStorage releases the GPU memory backing a tensor immediately,
+// rather than waiting for GC finalization which may lag behind allocation.
+func freeGPUStorage[T tensor.Numeric](t *tensor.TensorNumeric[T]) {
+	if t == nil {
+		return
+	}
+	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+		_ = gs.Free()
+	}
+}
+
 // tensorLayerBuf holds GPU-resident cached K/V tensors for a single layer.
 type tensorLayerBuf[T tensor.Numeric] struct {
 	cachedK *tensor.TensorNumeric[T]
@@ -60,15 +71,20 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		lb.cachedK = newK
 		lb.cachedV = newV
 	} else {
+		oldK := lb.cachedK
+		oldV := lb.cachedV
 		var err error
-		lb.cachedK, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{lb.cachedK, newK}, 1)
+		lb.cachedK, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldK, newK}, 1)
 		if err != nil {
 			return fmt.Errorf("concat K layer %d: %w", layer, err)
 		}
-		lb.cachedV, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{lb.cachedV, newV}, 1)
+		lb.cachedV, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldV, newV}, 1)
 		if err != nil {
 			return fmt.Errorf("concat V layer %d: %w", layer, err)
 		}
+		// Free old GPU buffers immediately to prevent memory accumulation.
+		freeGPUStorage(oldK)
+		freeGPUStorage(oldV)
 	}
 	lb.seqLen += seqLen
 	return nil
