@@ -33,12 +33,13 @@ func TestNewSwiGLU_FunctionalOptions(t *testing.T) {
 	testutils.AssertNoError(t, err, "forward pass failed")
 	testutils.AssertNotNil(t, output, "expected output to not be nil")
 
-	// Expected output for SwiGLU(x) = x1 * sigmoid(x2)
+	// Expected output for SwiGLU(x1, x2) = silu(x1) * x2
 	// x1 = [1.0, 2.0], x2 = [3.0, 4.0]
-	// sigmoid(3.0) approx 0.95257
-	// sigmoid(4.0) approx 0.98201
-	// expectedOutput = [1.0 * 0.95257, 2.0 * 0.98201] = [0.95257, 1.96402]
-	expectedOutputData := []float32{0.9525737, 1.964027}
+	// silu(x) = x * sigmoid(x)
+	// silu(1.0) = 1.0 * sigmoid(1.0) = 1.0 * 0.7310586 = 0.7310586
+	// silu(2.0) = 2.0 * sigmoid(2.0) = 2.0 * 0.8807970 = 1.7615941
+	// output = [0.7310586 * 3.0, 1.7615941 * 4.0] = [2.1931758, 7.0463762]
+	expectedOutputData := []float32{2.1931758, 7.0463762}
 	testutils.AssertFloat32SliceApproxEqual(t, expectedOutputData, output.Data(), 1e-6, "forward output mismatch")
 
 	// Test backward pass (simplified check)

@@ -21,7 +21,8 @@ type SwiGLU[T tensor.Numeric] struct {
 
 	// Cached tensors for backward pass
 	lastInput   *tensor.TensorNumeric[T]
-	gate        *tensor.TensorNumeric[T] // The sigmoid(x2) part
+	gate        *tensor.TensorNumeric[T] // sigmoid(x1), the gate activation
+	siluX1      *tensor.TensorNumeric[T] // x1 * sigmoid(x1), cached for backward
 	outputShape []int
 }
 
@@ -97,19 +98,27 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		return nil, err
 	}
 
-	x1 := splitTensors[0]
-	x2 := splitTensors[1]
+	x1 := splitTensors[0] // gate projection output
+	x2 := splitTensors[1] // up projection output
 
-	// Compute gate = sigmoid(x2)
-	gate, err := s.sigmoid.Forward(ctx, x2)
+	// SwiGLU(x1, x2) = silu(x1) * x2 = (x1 * sigmoid(x1)) * x2
+	// Compute gate = sigmoid(x1)
+	gate, err := s.sigmoid.Forward(ctx, x1)
 	if err != nil {
 		return nil, err
 	}
 
 	s.gate = gate // Cache gate for backward
 
-	// Compute output = x1 * gate
-	output, err := s.engine.Mul(ctx, x1, gate, nil)
+	// Compute silu(x1) = x1 * sigmoid(x1)
+	siluX1, err := s.engine.Mul(ctx, x1, gate, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.siluX1 = siluX1 // Cache for backward
+
+	// Compute output = silu(x1) * x2
+	output, err := s.engine.Mul(ctx, siluX1, x2, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -134,24 +143,21 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 	}
 
 	x1 := splitTensors[0]
-	_ = splitTensors[1]
+	x2 := splitTensors[1]
 
-	// dL/dx1 = dOut * gate
-	dLdx1, err := s.engine.Mul(ctx, dOut, s.gate, nil)
+	// Forward was: output = silu(x1) * x2 = (x1 * sigmoid(x1)) * x2
+	// gate = sigmoid(x1), siluX1 = x1 * gate
+	//
+	// dL/dx2 = dOut * silu(x1) = dOut * siluX1
+	dLdx2, err := s.engine.Mul(ctx, dOut, s.siluX1, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// dL/dgate = dOut * x1
-	dLdgate, err := s.engine.Mul(ctx, dOut, x1, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// dL/dx2 = dL/dgate * dgate/dx2
-	// is the derivative of sigmoid(x2), which is sigmoid(x2) * (1 - sigmoid(x2))
-	// We already have gate = sigmoid(x2)
-	// Compute (1 - gate) using engine primitives: MulScalar(-1) + AddScalar(1)
+	// dL/dx1 = dOut * x2 * d(silu(x1))/dx1
+	// d(silu(x1))/dx1 = sigmoid(x1) + x1 * sigmoid(x1) * (1 - sigmoid(x1))
+	//                 = sigmoid(x1) * (1 + x1 * (1 - sigmoid(x1)))
+	//                 = gate * (1 + x1 * (1 - gate))
 	negGate, err := s.engine.MulScalar(ctx, s.gate, s.ops.FromFloat64(-1))
 	if err != nil {
 		return nil, err
@@ -160,13 +166,28 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 	if err != nil {
 		return nil, err
 	}
-
-	sigmoidGrad, err := s.engine.Mul(ctx, s.gate, oneMinusGate, nil)
+	// x1 * (1 - gate)
+	x1OneMinusGate, err := s.engine.Mul(ctx, x1, oneMinusGate, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	dLdx2, err := s.engine.Mul(ctx, dLdgate, sigmoidGrad, nil)
+	// 1 + x1 * (1 - gate)
+	onePlusX1OneMinusGate, err := s.engine.AddScalar(ctx, x1OneMinusGate, s.ops.One())
+	if err != nil {
+		return nil, err
+	}
+	// gate * (1 + x1 * (1 - gate))
+	siluGrad, err := s.engine.Mul(ctx, s.gate, onePlusX1OneMinusGate, nil)
+	if err != nil {
+		return nil, err
+	}
+	// dOut * x2
+	dOutX2, err := s.engine.Mul(ctx, dOut, x2, nil)
+	if err != nil {
+		return nil, err
+	}
+	// dL/dx1 = dOut * x2 * siluGrad
+	dLdx1, err := s.engine.Mul(ctx, dOutX2, siluGrad, nil)
 	if err != nil {
 		return nil, err
 	}
