@@ -65,4 +65,9 @@ type KernelRunner interface {
 	// RMSNorm computes fused RMSNorm: output = input * rsqrt(mean(input^2) + eps) * weight.
 	// input: [rows, D], weight: [D], output: [rows, D], scales: [rows] (per-row rsqrt values for backward).
 	RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
+	// Repeat replicates elements along an axis.
+	// outerSize = product of dims before axis, axisDim = size of axis,
+	// innerSize = product of dims after axis, reps = number of repetitions.
+	Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, stream Stream) error
 }

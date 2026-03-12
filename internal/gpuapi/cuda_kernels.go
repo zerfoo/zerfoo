@@ -133,5 +133,9 @@ func (k *CUDAKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps 
 	return kernels.RMSNorm(input, weight, output, scales, eps, rows, D, streamPtr(s))
 }
 
+func (k *CUDAKernels) Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, s Stream) error {
+	return kernels.Repeat(src, dst, outerSize, axisDim, innerSize, reps, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

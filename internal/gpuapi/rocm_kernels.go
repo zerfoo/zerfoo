@@ -136,5 +136,9 @@ func (k *ROCmKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps 
 	return fmt.Errorf("RMSNorm: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) Repeat(_ unsafe.Pointer, _ unsafe.Pointer, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("Repeat: not implemented for ROCm")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*ROCmKernels)(nil)
