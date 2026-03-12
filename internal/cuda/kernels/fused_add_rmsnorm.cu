@@ -14,22 +14,24 @@
 #include <math.h>
 
 __global__ void kernel_fused_add_rmsnorm(const float* __restrict__ input,
-                                          float* __restrict__ residual,
+                                          const float* __restrict__ residual,
                                           const float* __restrict__ weight,
-                                          float* __restrict__ output,
+                                          float* __restrict__ normed_out,
+                                          float* __restrict__ sum_out,
                                           float eps, int D) {
     int row = blockIdx.x;
     const float* inp = input + row * D;
-    float* res = residual + row * D;
-    float* out = output + row * D;
+    const float* res = residual + row * D;
+    float* nout = normed_out + row * D;
+    float* sout = sum_out + row * D;
 
     extern __shared__ float sdata[];
 
-    // Phase 1: Add input + residual, write back to residual, compute partial sum of squares.
+    // Phase 1: Compute sum = input + residual, write to sum_out, accumulate sum of squares.
     float local_sq = 0.0f;
     for (int i = threadIdx.x; i < D; i += blockDim.x) {
         float v = inp[i] + res[i];
-        res[i] = v;  // in-place update of residual
+        sout[i] = v;
         local_sq += v * v;
     }
     sdata[threadIdx.x] = local_sq;
@@ -46,9 +48,9 @@ __global__ void kernel_fused_add_rmsnorm(const float* __restrict__ input,
     // Compute scale = rsqrt(mean_sq + eps).
     float scale = rsqrtf(sdata[0] / (float)D + eps);
 
-    // Phase 2: Normalize and scale by weight.
+    // Phase 2: Normalize sum and scale by weight.
     for (int i = threadIdx.x; i < D; i += blockDim.x) {
-        out[i] = res[i] * scale * weight[i];
+        nout[i] = sout[i] * scale * weight[i];
     }
 }
 
@@ -65,8 +67,9 @@ static inline float bits_to_float(unsigned int bits) {
 
 extern "C" {
 
-cudaError_t fused_add_rmsnorm_f32(const float* input, float* residual,
-                                    const float* weight, float* output,
+cudaError_t fused_add_rmsnorm_f32(const float* input, const float* residual,
+                                    const float* weight, float* normed_out,
+                                    float* sum_out,
                                     unsigned int eps_bits,
                                     int rows, int D, cudaStream_t stream) {
     float eps = bits_to_float(eps_bits);
@@ -74,7 +77,7 @@ cudaError_t fused_add_rmsnorm_f32(const float* input, float* residual,
     int block = 1;
     while (block < D && block < 256) block <<= 1;
     size_t smem = block * sizeof(float);
-    kernel_fused_add_rmsnorm<<<rows, block, smem, stream>>>(input, residual, weight, output, eps, D);
+    kernel_fused_add_rmsnorm<<<rows, block, smem, stream>>>(input, residual, weight, normed_out, sum_out, eps, D);
     return cudaGetLastError();
 }
 

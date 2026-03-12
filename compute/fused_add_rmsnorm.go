@@ -9,9 +9,9 @@ import (
 // This eliminates one kernel launch per fusion point (2 per transformer layer).
 type FusedAddRMSNormProvider[T tensor.Numeric] interface {
 	// GPUFusedAddRMSNorm computes:
-	//   residual = input + residual  (in-place update)
-	//   output   = rmsnorm(residual, weight, eps)
-	// Returns (normalized output, updated residual, scales, error).
+	//   sum    = input + residual
+	//   normed = rmsnorm(sum, weight, eps)
+	// Both inputs are read-only. Returns (normalized, sum, scales, error).
 	GPUFusedAddRMSNorm(input, residual, weight *tensor.TensorNumeric[T], eps float32) (
 		normed *tensor.TensorNumeric[T],
 		residualOut *tensor.TensorNumeric[T],
