@@ -60,19 +60,32 @@ func buildTransformerGraph(
 
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		s := t.GetStorage()
-		// For quantized storage (Q4/Q8), swap shape metadata without moving
-		// data. Both CPU (GemmF32Q4NT) and GPU (matMulQ4BWeight) read blocks
-		// in the original [outDim, inDim] layout with implicit transpose.
+		// Q4 storage: virtual transpose (shape swap only). Both CPU
+		// (GemmF32Q4NT) and GPU (matMulQ4BWeight) read Q4 blocks in the
+		// original [outDim, inDim] layout with implicit transpose.
 		if _, ok := any(s).(*tensor.Q4Storage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
 				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
 			}
 		}
-		if _, ok := any(s).(*tensor.Q8Storage); ok {
+		// Q8 storage: dequantize to F32 and do a real data transpose.
+		// Virtual transpose would break UploadWeights which dequantizes
+		// Q8->F32 but preserves data layout, creating a shape/data mismatch.
+		if qs, ok := any(s).(*tensor.Q8Storage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				f32 := make([]float32, qs.Len())
+				qs.Dequantize(f32)
+				f32Tensor, tErr := tensor.New(shape, f32)
+				if tErr != nil {
+					return nil, fmt.Errorf("dequantize Q8 %s: %w", name, tErr)
+				}
+				tr, tErr := engine.Transpose(context.Background(), f32Tensor, []int{1, 0})
+				if tErr != nil {
+					return nil, fmt.Errorf("transpose %s: %w", name, tErr)
+				}
+				return tr, nil
 			}
 		}
 		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
