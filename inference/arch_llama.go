@@ -56,6 +56,15 @@ func (h *lmHeadNode[T]) Attributes() map[string]any       { return nil }
 func (h *lmHeadNode[T]) OutputShape() []int               { return nil }
 func (h *lmHeadNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
+// EmbeddedFrozen returns the LM head weight so the compiler registers it as
+// a frozen slot during graph compilation.
+func (h *lmHeadNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
+	if h.weight == nil {
+		return nil
+	}
+	return []*tensor.TensorNumeric[T]{h.weight}
+}
+
 func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
@@ -99,6 +108,15 @@ func (e *embeddingLookupNode[T]) Attributes() map[string]any       { return nil 
 func (e *embeddingLookupNode[T]) OutputShape() []int               { return nil }
 func (e *embeddingLookupNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
+// EmbeddedFrozen returns the embedding weight so the compiler registers it as
+// a frozen slot during graph compilation.
+func (e *embeddingLookupNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
+	if e.weight == nil {
+		return nil
+	}
+	return []*tensor.TensorNumeric[T]{e.weight}
+}
+
 func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	input := inputs[0]
 	shape := input.Shape()
@@ -134,3 +152,7 @@ func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.Te
 func (e *embeddingLookupNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
+
+// Static interface assertions.
+var _ graph.EmbeddedFrozenProvider[float32] = (*lmHeadNode[float32])(nil)
+var _ graph.EmbeddedFrozenProvider[float32] = (*embeddingLookupNode[float32])(nil)
