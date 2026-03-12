@@ -965,21 +965,30 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 			batchSize *= aShape[i]
 		}
 	} else {
-		// Same dimensions case
+		// Same dimensions case. Allow batch broadcasting: when one
+		// operand has batch size 1, it is broadcast across the other.
+		aBatchSize := 1
+		bBatchSize := 1
 		for i := 0; i < len(aShape)-2; i++ {
-			if aShape[i] != bShape[i] {
-				return nil, errors.New("batch dimensions must be equal")
-			}
+			aBatchSize *= aShape[i]
+			bBatchSize *= bShape[i]
+		}
+		if aBatchSize != bBatchSize && aBatchSize != 1 && bBatchSize != 1 {
+			return nil, errors.New("batch dimensions must be equal or one must be 1")
 		}
 
 		outputShape = make([]int, len(aShape))
-		copy(outputShape, aShape[:len(aShape)-2])
+		if aBatchSize >= bBatchSize {
+			copy(outputShape, aShape[:len(aShape)-2])
+		} else {
+			copy(outputShape, bShape[:len(bShape)-2])
+		}
 		outputShape[len(outputShape)-2] = aShape[len(aShape)-2]
 		outputShape[len(outputShape)-1] = bShape[len(bShape)-1]
 
-		batchSize = 1
-		for i := 0; i < len(aShape)-2; i++ {
-			batchSize *= aShape[i]
+		batchSize = aBatchSize
+		if bBatchSize > batchSize {
+			batchSize = bBatchSize
 		}
 	}
 
@@ -1001,6 +1010,16 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	bData := b.Data()
 	rData := result.Data()
 
+	// Compute per-operand batch sizes for broadcasting.
+	aBatch2 := 1
+	bBatch2 := 1
+	for i := 0; i < len(aShape)-2; i++ {
+		aBatch2 *= aShape[i]
+	}
+	for i := 0; i < len(bShape)-2; i++ {
+		bBatch2 *= bShape[i]
+	}
+
 	// Use xblas adapter: f32/f64 direct; f16/f8 via convert->sgemm->convert
 	switch any(*new(T)).(type) {
 	case float32:
@@ -1008,16 +1027,18 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		bF := any(bData).([]float32)
 		rF := any(rData).([]float32)
 		for i := 0; i < batchSize; i++ { //nolint:intrange
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			xblas.GemmF32(m, n, k,
-				aF[aOffset:aOffset+m*k],
-				bF[bOffset:bOffset+k*n],
-				rF[cOffset:cOffset+m*n],
+				aF[aOff:aOff+m*k],
+				bF[bOff:bOff+k*n],
+				rF[i*m*n:i*m*n+m*n],
 			)
 		}
 	case float64:
@@ -1025,16 +1046,18 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		bD := any(bData).([]float64)
 		rD := any(rData).([]float64)
 		for i := 0; i < batchSize; i++ { //nolint:intrange
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			xblas.GemmF64(m, n, k,
-				aD[aOffset:aOffset+m*k],
-				bD[bOffset:bOffset+k*n],
-				rD[cOffset:cOffset+m*n],
+				aD[aOff:aOff+m*k],
+				bD[bOff:bOff+k*n],
+				rD[i*m*n:i*m*n+m*n],
 			)
 		}
 	case float16.Float16:
@@ -1042,16 +1065,18 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		bH := any(bData).([]float16.Float16)
 		rH := any(rData).([]float16.Float16)
 		for i := 0; i < batchSize; i++ { //nolint:intrange
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			xblas.GemmF16(m, n, k,
-				aH[aOffset:aOffset+m*k],
-				bH[bOffset:bOffset+k*n],
-				rH[cOffset:cOffset+m*n],
+				aH[aOff:aOff+m*k],
+				bH[bOff:bOff+k*n],
+				rH[i*m*n:i*m*n+m*n],
 			)
 		}
 	case float8.Float8:
@@ -1059,16 +1084,18 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		bE := any(bData).([]float8.Float8)
 		rE := any(rData).([]float8.Float8)
 		for i := 0; i < batchSize; i++ { //nolint:intrange
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			xblas.GemmF8(m, n, k,
-				aE[aOffset:aOffset+m*k],
-				bE[bOffset:bOffset+k*n],
-				rE[cOffset:cOffset+m*n],
+				aE[aOff:aOff+m*k],
+				bE[bOff:bOff+k*n],
+				rE[i*m*n:i*m*n+m*n],
 			)
 		}
 	case int8:
@@ -1076,39 +1103,44 @@ func (e *CPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		bI8 := any(bData).([]int8)
 		rI8 := any(rData).([]int8)
 		for i := 0; i < batchSize; i++ {
-			aOffset := i * m * k
-			cOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			for row := 0; row < m; row++ {
 				for col := 0; col < n; col++ {
 					var sum int8
 					for inner := 0; inner < k; inner++ {
-						valA := aI8[aOffset+row*k+inner]
-						valB := bI8[bOffset+inner*n+col]
+						valA := aI8[aOff+row*k+inner]
+						valB := bI8[bOff+inner*n+col]
 						sum += valA * valB
 					}
-					rI8[cOffset+row*n+col] = sum
+					rI8[i*m*n+row*n+col] = sum
 				}
 			}
 		}
 	default:
 		// Fallback to naive implementation for other types
 		for i := 0; i < batchSize; i++ {
-			aOffset := i * m * k
+			aOff := 0
+			if aBatch2 > 1 {
+				aOff = i * m * k
+			}
 			rOffset := i * m * n
-			bOffset := 0
-			if len(aShape) == len(bShape) {
-				bOffset = i * k * n
+			bOff := 0
+			if bBatch2 > 1 {
+				bOff = i * k * n
 			}
 			for row := 0; row < m; row++ { //nolint:intrange
 				for col := 0; col < n; col++ { //nolint:intrange
 					sum := e.ops.FromFloat64(0)
 					for inner := 0; inner < k; inner++ { //nolint:intrange
-						valA := aData[aOffset+row*k+inner]
-						valB := bData[bOffset+inner*n+col]
+						valA := aData[aOff+row*k+inner]
+						valB := bData[bOff+inner*n+col]
 						sum = e.ops.Add(sum, e.ops.Mul(valA, valB))
 					}
 					rData[rOffset+row*n+col] = sum
