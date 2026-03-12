@@ -53,6 +53,9 @@ type KernelLib struct {
 
 	// fused_rope
 	launchFusedRoPEF32 uintptr
+
+	// fused_swiglu
+	launchFusedSwiGLUF32 uintptr
 }
 
 var (
@@ -123,6 +126,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_argmax", &k.launchArgmax},
 			// fused_rope
 			{"fused_rope_f32", &k.launchFusedRoPEF32},
+			// fused_swiglu
+			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
