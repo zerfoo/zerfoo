@@ -6,7 +6,7 @@ NVCC ?= nvcc
 CUDA_ARCH ?= sm_75
 NVCC_FLAGS ?= -O2 -arch=$(CUDA_ARCH)
 
-SRCS = elementwise.cu flash_attention.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu transpose.cu gather.cu rmsnorm.cu
+SRCS = elementwise.cu flash_attention.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
 OBJS = $(SRCS:.cu=.o)
 PIC_OBJS = $(SRCS:.cu=.pic.o)
 LIB  = libkernels.a
