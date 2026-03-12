@@ -37,10 +37,11 @@ func buildGemmaGraph(
 	opts := transformerGraphOpts{
 		embedScale: scale,
 	}
-	// Gemma 3 has post-attention/post-FFN norms and Q/K norms.
+	// Gemma 3 has post-attention/post-FFN norms, Q/K norms, and logit softcapping.
 	if cfg.Architecture == "gemma3" {
 		opts.postNorm = true
 		opts.qkNorm = true
+		opts.logitSoftcap = cfg.LogitSoftcap
 	}
 	g, err := buildTransformerGraph(tensors, cfg, engine, embedWeight, embedWeight, opts)
 	if err != nil {

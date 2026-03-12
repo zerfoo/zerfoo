@@ -179,6 +179,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		return "", fmt.Errorf("prompt produced no tokens")
 	}
 
+	// Prepend BOS token if configured.
+	if gen.config.BOSTokenID > 0 {
+		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
+	}
+
 	var cacheProvider CacheProvider[T]
 	if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)

@@ -17,9 +17,10 @@ import (
 
 // transformerGraphOpts configures architecture-specific differences.
 type transformerGraphOpts struct {
-	embedScale float32 // multiply embeddings by this factor (0 = no scaling)
-	postNorm   bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
-	qkNorm     bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
+	embedScale    float32 // multiply embeddings by this factor (0 = no scaling)
+	postNorm      bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
+	qkNorm        bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
+	logitSoftcap  float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only
@@ -309,7 +310,7 @@ func buildTransformerGraph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight, softcapVal: opts.logitSoftcap}
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

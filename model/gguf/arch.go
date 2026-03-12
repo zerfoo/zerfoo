@@ -18,7 +18,8 @@ type ModelConfig struct {
 	IntermediateSize int
 	MaxSeqLen        int
 	RopeTheta        float64
-	HeadDim          int // explicit head dimension (0 = use HiddenSize/NumHeads)
+	HeadDim          int     // explicit head dimension (0 = use HiddenSize/NumHeads)
+	LogitSoftcap     float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -76,6 +77,10 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	// Gemma 3 uses key_length=256 while hidden/heads=288.
 	if v, ok := f.GetUint32(prefix + "attention.key_length"); ok {
 		cfg.HeadDim = int(v)
+	}
+	// Extract logit softcapping value.
+	if v, ok := f.GetFloat32(prefix + "final_logit_softcapping"); ok {
+		cfg.LogitSoftcap = v
 	}
 
 	return cfg, nil

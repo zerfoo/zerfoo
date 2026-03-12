@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -47,8 +48,9 @@ func buildLlamaGraph(
 // input shape: [batch, seqLen, hiddenDim].
 // output shape: [batch, seqLen, vocabSize].
 type lmHeadNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	weight *tensor.TensorNumeric[T]
+	engine     compute.Engine[T]
+	weight     *tensor.TensorNumeric[T]
+	softcapVal float32 // if > 0, apply softcapping: cap * tanh(logit/cap)
 }
 
 func (h *lmHeadNode[T]) OpType() string                  { return "LMHead" }
@@ -87,7 +89,21 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	}
 
 	vocabSize := h.weight.Shape()[0]
-	return h.engine.Reshape(ctx, out, []int{batch, seqLen, vocabSize})
+	result, err := h.engine.Reshape(ctx, out, []int{batch, seqLen, vocabSize})
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply logit softcapping: cap * tanh(logit / cap).
+	if h.softcapVal > 0 {
+		data := result.Data()
+		cap := float64(h.softcapVal)
+		for i := range data {
+			data[i] = T(cap * math.Tanh(float64(data[i])/cap))
+		}
+	}
+
+	return result, nil
 }
 
 func (h *lmHeadNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
