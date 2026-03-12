@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/device"
@@ -16,15 +17,22 @@ import (
 // Each GPUStorage tracks which device it resides on via deviceID.
 // When managed is true, the storage uses unified memory (cudaMallocManaged)
 // and TrySlice/TrySet access the pointer directly without Memcpy.
+//
+// Shared ownership: when View() is called, the returned GPUStorage shares the
+// same refcount. Free() decrements the refcount; only the last Free actually
+// releases memory (back to pool or via cudaFree). This avoids both double-free
+// and GC-dependent cleanup for reshape/transpose views.
 type GPUStorage[T Numeric] struct {
-	devicePtr unsafe.Pointer // GPU device pointer
-	length    int            // number of elements
-	byteSize  int            // total bytes = length * sizeof(T)
-	deviceID  int            // GPU device ordinal
-	runtime   gpuapi.Runtime // GPU runtime for memory operations
-	managed   bool           // true if allocated via cudaMallocManaged
-	pool      gpuapi.MemPool // pool used for managed alloc/free (nil for discrete)
-	view      bool           // true if this is a non-owning view (Free is a no-op)
+	devicePtr unsafe.Pointer  // GPU device pointer
+	length    int             // number of elements
+	byteSize  int             // total bytes = length * sizeof(T)
+	deviceID  int             // GPU device ordinal
+	runtime   gpuapi.Runtime  // GPU runtime for memory operations
+	managed   bool            // true if allocated via cudaMallocManaged
+	pool      gpuapi.MemPool  // pool used for managed alloc/free (nil for discrete)
+	view      bool            // true if this is a non-owning view (Free is a no-op)
+	refcount  *atomic.Int32   // shared refcount for view-based ownership; nil for legacy/non-refcounted
+	allocSize int             // original allocation byte size (for pool Free); 0 means use byteSize
 }
 
 // NewGPUStorage allocates GPU device memory for the given number of elements
@@ -117,7 +125,8 @@ func NewGPUStorageFromPtr[T Numeric](devPtr unsafe.Pointer, length int, deviceID
 
 // NewGPUStorageFromPool wraps a GPU device pointer allocated from a MemPool.
 // When Free() is called, the pointer is returned to the pool instead of being
-// freed via cudaFree. This avoids cudaMalloc overhead on intermediate tensors.
+// freed via cudaFree. Uses reference counting so views can safely share the
+// allocation without double-free or GC-dependent cleanup.
 func NewGPUStorageFromPool[T Numeric](devPtr unsafe.Pointer, length int, pool gpuapi.MemPool, deviceID int) (*GPUStorage[T], error) {
 	rt := getDefaultRuntime()
 	if rt == nil {
@@ -126,14 +135,20 @@ func NewGPUStorageFromPool[T Numeric](devPtr unsafe.Pointer, length int, pool gp
 
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
+	byteSize := length * elemSize
+
+	rc := &atomic.Int32{}
+	rc.Store(1)
 
 	gs := &GPUStorage[T]{
 		devicePtr: devPtr,
 		length:    length,
-		byteSize:  length * elemSize,
+		byteSize:  byteSize,
 		deviceID:  deviceID,
 		runtime:   rt,
 		pool:      pool,
+		refcount:  rc,
+		allocSize: byteSize,
 	}
 	runtime.SetFinalizer(gs, func(s *GPUStorage[T]) { _ = s.Free() })
 
@@ -329,11 +344,43 @@ func (s *GPUStorage[T]) DeviceType() device.Type { return s.runtime.DeviceType()
 func (s *GPUStorage[T]) Ptr() unsafe.Pointer { return s.devicePtr }
 
 // Free releases the GPU device memory. After calling Free, the storage must
-// not be used. Pool-backed storage returns the pointer to the pool for reuse.
-// Views (non-owning) are no-ops since the parent storage owns the memory.
+// not be used. For refcounted storage (pool-backed with views), the refcount
+// is decremented and memory is only returned to the pool when it reaches 0.
+// Legacy views (non-refcounted) are no-ops.
 func (s *GPUStorage[T]) Free() error {
 	if s.devicePtr == nil {
 		return nil
+	}
+
+	// Refcounted storage: decrement and only free on last reference.
+	if s.refcount != nil {
+		if s.refcount.Add(-1) > 0 {
+			s.devicePtr = nil
+			s.length = 0
+			s.byteSize = 0
+			return nil
+		}
+		// Last reference -- free the actual allocation.
+		freeSize := s.allocSize
+		if freeSize == 0 {
+			freeSize = s.byteSize
+		}
+		if s.pool != nil {
+			if s.managed {
+				s.pool.FreeManaged(s.deviceID, s.devicePtr, freeSize)
+			} else {
+				s.pool.Free(s.deviceID, s.devicePtr, freeSize)
+			}
+			s.devicePtr = nil
+			s.length = 0
+			s.byteSize = 0
+			return nil
+		}
+		err := s.runtime.Free(s.devicePtr)
+		s.devicePtr = nil
+		s.length = 0
+		s.byteSize = 0
+		return err
 	}
 
 	// Non-owning views don't free; the parent storage owns the memory.
@@ -381,12 +428,30 @@ func NewGPUStorageView[T Numeric](parent *GPUStorage[T], offsetElems, length int
 	}
 }
 
-// View returns a non-owning GPUStorage with the same device pointer but
-// different length. Free() on the view is a no-op; the original storage
-// retains ownership of the GPU memory. Used for zero-copy reshape operations.
+// View returns a GPUStorage sharing the same device pointer but with a
+// different element count. If the parent has a refcount (pool-backed), the
+// view shares it and Free() on any copy decrements; only the last Free
+// returns memory to the pool. For non-refcounted storage the view uses the
+// legacy no-op Free behavior.
 func (s *GPUStorage[T]) View(length int) *GPUStorage[T] {
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
+
+	if s.refcount != nil {
+		s.refcount.Add(1)
+		return &GPUStorage[T]{
+			devicePtr: s.devicePtr,
+			length:    length,
+			byteSize:  length * elemSize,
+			deviceID:  s.deviceID,
+			runtime:   s.runtime,
+			pool:      s.pool,
+			managed:   s.managed,
+			refcount:  s.refcount,
+			allocSize: s.allocSize,
+		}
+	}
+
 	return &GPUStorage[T]{
 		devicePtr: s.devicePtr,
 		length:    length,

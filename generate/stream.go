@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -103,10 +102,6 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		if err := ctx.Err(); err != nil {
 			break
 		}
-
-		// Reclaim GPU memory from intermediate tensors (views, reshapes)
-		// so the MemPool can reuse allocations on the next forward pass.
-		runtime.GC()
 
 		tokenTensor, tErr := gen.idsToTensor([]int{nextToken})
 		if tErr != nil {
