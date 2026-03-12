@@ -197,10 +197,42 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		t.SetStorage(gs)
 		uploaded++
 	}
-	if uploaded > 0 || q4Uploaded > 0 {
+	// Upload Q8 quantized weights by dequantizing to F32.
+	// This enables cuBLAS SGEMM on GPU instead of CPU NEON GEMV.
+	q8Uploaded := 0
+	for _, t := range tensors {
+		if t == nil {
+			continue
+		}
+		qs, ok := any(t.GetStorage()).(*tensor.Q8Storage)
+		if !ok {
+			continue
+		}
+		n := qs.Len()
+		f32 := make([]float32, n)
+		qs.Dequantize(f32)
+		byteSize := n * f32Size
+		devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+		if err != nil {
+			return fmt.Errorf("alloc Q8→F32 GPU (shape %v): %w", t.Shape(), err)
+		}
+		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&f32[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+			e.pool.Free(e.deviceID, devPtr, byteSize)
+			return fmt.Errorf("upload Q8→F32 (shape %v): %w", t.Shape(), err)
+		}
+		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
+		if err != nil {
+			e.pool.Free(e.deviceID, devPtr, byteSize)
+			return fmt.Errorf("create GPU storage for Q8 (shape %v): %w", t.Shape(), err)
+		}
+		t.SetStorage(gs)
+		q8Uploaded++
+	}
+	if uploaded > 0 || q4Uploaded > 0 || q8Uploaded > 0 {
 		e.logger.Info("weights uploaded to GPU",
 			"f32", fmt.Sprintf("%d", uploaded),
 			"q4", fmt.Sprintf("%d", q4Uploaded),
+			"q8_as_f32", fmt.Sprintf("%d", q8Uploaded),
 			"device", fmt.Sprintf("%d", e.deviceID))
 	}
 	return nil
