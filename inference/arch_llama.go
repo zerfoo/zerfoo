@@ -50,7 +50,8 @@ func buildLlamaGraph(
 type lmHeadNode[T tensor.Numeric] struct {
 	engine     compute.Engine[T]
 	weight     *tensor.TensorNumeric[T]
-	softcapVal float32 // if > 0, apply softcapping: cap * tanh(logit/cap)
+	weightT    *tensor.TensorNumeric[T] // pre-transposed weight [hiddenDim, vocabSize]
+	softcapVal float32                  // if > 0, apply softcapping: cap * tanh(logit/cap)
 }
 
 func (h *lmHeadNode[T]) OpType() string                  { return "LMHead" }
@@ -77,13 +78,16 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 		return nil, err
 	}
 
-	// weight is [vocabSize, hiddenDim], transpose to [hiddenDim, vocabSize].
-	wT, err := h.engine.Transpose(ctx, h.weight, []int{1, 0})
-	if err != nil {
-		return nil, err
+	// Pre-transpose weight once and cache for subsequent calls.
+	if h.weightT == nil {
+		wT, tErr := h.engine.Transpose(ctx, h.weight, []int{1, 0})
+		if tErr != nil {
+			return nil, tErr
+		}
+		h.weightT = wT
 	}
 
-	out, err := h.engine.MatMul(ctx, flat, wT)
+	out, err := h.engine.MatMul(ctx, flat, h.weightT)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +142,6 @@ func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.Te
 	shape := input.Shape()
 	ids := input.Data()
 	hiddenDim := e.weight.Shape()[1]
-	embData := e.weight.Data()
 
 	seqLen := 1
 	for _, d := range shape {
@@ -146,10 +149,28 @@ func (e *embeddingLookupNode[T]) Forward(_ context.Context, inputs ...*tensor.Te
 	}
 
 	out := make([]T, seqLen*hiddenDim)
-	for i := range seqLen {
-		id := int(ids[i])
-		for j := range hiddenDim {
-			out[i*hiddenDim+j] = embData[id*hiddenDim+j]
+
+	// Fast path: dequantize only the needed rows from Q8 storage instead
+	// of materializing the entire embedding table.
+	type rangeDeq interface {
+		DequantizeRange(dst []float32, start, count int)
+	}
+	if q8, ok := any(e.weight.GetStorage()).(rangeDeq); ok {
+		row := make([]float32, hiddenDim)
+		for i := range seqLen {
+			id := int(ids[i])
+			q8.DequantizeRange(row, id*hiddenDim, hiddenDim)
+			for j := range hiddenDim {
+				out[i*hiddenDim+j] = T(row[j])
+			}
+		}
+	} else {
+		embData := e.weight.Data()
+		for i := range seqLen {
+			id := int(ids[i])
+			for j := range hiddenDim {
+				out[i*hiddenDim+j] = embData[id*hiddenDim+j]
+			}
 		}
 	}
 
