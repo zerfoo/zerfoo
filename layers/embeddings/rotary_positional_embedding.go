@@ -277,6 +277,22 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 	cosAngles := cosSliced
 	sinAngles := sinSliced
 
+	// Expand cos/sin from [seqLen, halfRotary] to [batch, seqLen, halfRotary]
+	// so that Mul uses same-shape GPU kernels instead of broadcast, which falls
+	// back to CPU for 3D-vs-2D shapes.
+	batch := rpe.inputShape[0]
+	if batch > 1 && len(cosAngles.Shape()) == 2 {
+		// Repeat along axis 0: [S, H] -> [B*S, H], then reshape to [B, S, H].
+		cosExpanded, err2 := rpe.engine.Repeat(ctx, cosAngles, 0, batch)
+		if err2 == nil {
+			cosAngles, _ = rpe.engine.Reshape(ctx, cosExpanded, []int{batch, seqLen, halfRotary})
+		}
+		sinExpanded, err2 := rpe.engine.Repeat(ctx, sinAngles, 0, batch)
+		if err2 == nil {
+			sinAngles, _ = rpe.engine.Reshape(ctx, sinExpanded, []int{batch, seqLen, halfRotary})
+		}
+	}
+
 	// Split rotary portion into two halves: x_rot0, x_rot1.
 	// When rotaryDim equals the full last dimension, use engine.Split to
 	// keep data on the GPU and avoid costly GPU→CPU copies via tensor.Slice.
