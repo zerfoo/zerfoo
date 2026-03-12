@@ -89,43 +89,19 @@ plan extends it to the remaining CUDA packages.
   - Removed !cuda from 6 purego files. flash_attention.go kept behind cuda&&cutlass.
 - [x] S102.1.1 Kernel parity test passes without cuda tag -- commit d9375fb
 
-### E103: Remove Build Tags from compute/
+### E103: Remove Build Tags from compute/ -- COMPLETE
 
-- [ ] T103.1 Remove cuda tag from gpu_engine.go  Owner: TBD  Est: 1h
-  - Remove //go:build cuda.
-  - Guard NewGPUEngine with cuda.Available() check -- return error if no CUDA.
-  - Make BLAS and DNN fields optional (nil-safe). If gpuapi.NewCUDABLAS is not
-    available (not compiled with -tags cuda), set BLAS to nil. Guard all BLAS
-    calls with nil checks; fall back to kernel-based or error.
-  - Acceptance: go build ./compute/... passes without -tags cuda.
-  - Dependencies: T102.1 (kernels purego).
-
-- [ ] T103.2 Remove cuda tag from gpu_kernels.go  Owner: TBD  Est: 30m
-  - Remove //go:build cuda.
-  - All kernel dispatch already goes through internal/cuda/kernels which is
-    now purego. No functional changes needed beyond tag removal.
-  - Acceptance: go build ./compute/... passes.
-  - Dependencies: T103.1.
-
-- [ ] T103.3 Remove cuda tag from gpu_cudnn.go  Owner: TBD  Est: 30m
-  - Remove //go:build cuda.
-  - Guard cuDNN calls with nil check on DNN field. Return "cuDNN not available"
-    error when DNN is nil (build without -tags cuda).
-  - Acceptance: go build ./compute/... passes.
-  - Dependencies: T103.1.
-
-- [ ] T103.4 Remove cuda tag from gpu_fused_rmsnorm.go  Owner: TBD  Est: 15m
-  - Remove //go:build cuda.
-  - FusedRMSNorm dispatches through internal/cuda/kernels (already purego).
-  - Acceptance: go build ./compute/... passes.
-  - Dependencies: T103.1.
-
-- [ ] S103.4.1 GPU engine tests use runtime skip  Owner: TBD  Est: 30m
-  - Update gpu_engine_test.go, gpu_integration_test.go, gpu_phase32_test.go,
-    gpu_memory_bench_test.go, gpu_bf16_bench_test.go: remove //go:build cuda,
-    add t.Skip if !cuda.Available().
-  - Acceptance: go test ./compute/... passes on macOS (tests skip gracefully).
-  - Dependencies: T103.4.
+- [x] T103.1 Remove cuda tag from gpu_engine.go -- commits eb7e77e, cd31b73
+  - Added BLAS/DNN factory registration pattern in gpuapi/factory.go.
+  - cuda_blas.go and cuda_dnn.go register via init() (stay behind cuda tag).
+  - NewGPUEngine guarded with cuda.Available(). BLAS/DNN optional (nil-safe).
+  - MatMul falls back to CPU when BLAS is nil.
+- [x] T103.2 Remove cuda tag from gpu_kernels.go -- commit cd31b73
+- [x] T103.3 Remove cuda tag from gpu_cudnn.go -- commit cd31b73
+  - All DNN methods guarded with nil check, return descriptive error.
+- [x] T103.4 Remove cuda tag from gpu_fused_rmsnorm.go -- commit cd31b73
+- [x] S103.4.1 GPU engine tests use runtime skip -- commit 6b1af69
+  - 5 test files updated: removed //go:build cuda, added cuda.Available() skip.
 
 ### E104: Remove Build Tags from inference/
 
@@ -170,9 +146,8 @@ ConstantOfShape, Expand, Range, Cos, Sin, Greater, Trilu, Max, ScatterND.
 - [x] T106.3 Add utility op emitters (Shape, Unsqueeze, Cast, Max, ScatterND) -- commit 51ea41d
 - [x] T106.4 Add auto ops (AutoPositionIds, AutoZeroKVCache) -- commit 51ea41d
 - [x] S106.4.1 Emitter unit tests -- commits 4bc6e9a, 51ea41d
-- [ ] T106.5 Run golangci-lint on internal/codegen/  Owner: TBD  Est: 15m
-  - Acceptance: No new lint warnings.
-  - Dependencies: S106.4.1 (done).
+- [x] T106.5 Run golangci-lint on internal/codegen/ -- no issues found
+  - go vet, go build, go test all clean. No new lint warnings.
 
 ### E107: Full Build Verification
 
@@ -282,6 +257,15 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-12 (Wave 4)
+
+Wave 4: 2 agents, 2 tasks completed:
+- E103 (T103.1-S103.4.1): Removed //go:build cuda from all compute/ files.
+  Added BLAS/DNN factory pattern in gpuapi. BLAS and DNN now optional (nil-safe).
+  Commits: eb7e77e, cd31b73, 6b1af69. Stub conflict fixed (fff635b).
+- T106.5: golangci-lint on codegen -- no issues found.
+Newly unblocked: E104 (inference/ tags), E107 (full build verification).
 
 ### Change Summary -- 2026-03-11 (Wave 3)
 
