@@ -40,6 +40,8 @@ type ExecutionPlan[T tensor.Numeric] struct {
 	outputIdx     int                        // which slot holds the final output
 	frozenIdx     []int                      // slots holding frozen data (params)
 	megakernelFn  atomic.Value               // stores func(context.Context, []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) or nil
+	scratchSlots  []*tensor.TensorNumeric[T] // pre-allocated scratch for Run() to avoid per-token alloc
+	instrInputs   [][]*tensor.TensorNumeric[T] // pre-allocated per-instruction input buffers
 }
 
 // InstructionMeta is the exported metadata for a single compiled instruction.
@@ -123,6 +125,8 @@ func (p *ExecutionPlan[T]) SetMegakernelFn(fn func(context.Context, []*tensor.Te
 
 // Run executes the compiled plan. It sets input tensors into the slot array,
 // executes each instruction in sequence, and returns the output.
+//
+// Not safe for concurrent use. The generator calls Run() sequentially per token.
 func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if v := p.megakernelFn.Load(); v != nil {
 		fn := v.(func(context.Context, []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error))
@@ -133,8 +137,16 @@ func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNume
 		return nil, fmt.Errorf("compiled plan: expected %d inputs, got %d", len(p.inputIdx), len(inputs))
 	}
 
-	// Use local slot copy so concurrent Run() calls are safe.
-	slots := make([]*tensor.TensorNumeric[T], len(p.slots))
+	// Reuse pre-allocated scratch slots to avoid per-token heap allocation.
+	// On first call (or if slot count changed), allocate the scratch buffers.
+	if len(p.scratchSlots) != len(p.slots) {
+		p.scratchSlots = make([]*tensor.TensorNumeric[T], len(p.slots))
+		p.instrInputs = make([][]*tensor.TensorNumeric[T], len(p.instructions))
+		for i, inst := range p.instructions {
+			p.instrInputs[i] = make([]*tensor.TensorNumeric[T], len(inst.InputIdx))
+		}
+	}
+	slots := p.scratchSlots
 	copy(slots, p.slots) // copies frozen slot pointers (params)
 
 	for i, idx := range p.inputIdx {
@@ -144,7 +156,7 @@ func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNume
 	// Execute each instruction: gather inputs by index, call Forward, store result.
 	for i := range p.instructions {
 		inst := &p.instructions[i]
-		ins := make([]*tensor.TensorNumeric[T], len(inst.InputIdx))
+		ins := p.instrInputs[i]
 		for j, idx := range inst.InputIdx {
 			ins[j] = slots[idx]
 			if ins[j] == nil {

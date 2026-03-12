@@ -2,6 +2,7 @@ package compute
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/tensor"
@@ -80,8 +81,17 @@ func shapeKey(shape []int) string {
 	if len(shape) == 0 {
 		return "scalar"
 	}
-	// Use fmt.Sprint for simplicity; shapes are small.
-	return fmt.Sprint(shape)
+	// Fast path for common rank-2 and rank-3 tensors to avoid fmt.Sprint overhead.
+	switch len(shape) {
+	case 1:
+		return strconv.Itoa(shape[0])
+	case 2:
+		return strconv.Itoa(shape[0]) + "x" + strconv.Itoa(shape[1])
+	case 3:
+		return strconv.Itoa(shape[0]) + "x" + strconv.Itoa(shape[1]) + "x" + strconv.Itoa(shape[2])
+	default:
+		return fmt.Sprint(shape)
+	}
 }
 
 func zeroData[T tensor.Numeric](data []T) {
