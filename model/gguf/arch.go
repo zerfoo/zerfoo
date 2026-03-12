@@ -23,6 +23,7 @@ type ModelConfig struct {
 	LocalRopeTheta       float64 // RoPE base for local/sliding-window layers (0 = use RopeTheta)
 	SlidingWindow        int     // sliding window size for local attention layers
 	SlidingWindowPattern int     // every Nth layer is global (0 = all global)
+	RMSNormEps           float32 // RMSNorm epsilon (0 = use default 1e-5)
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -96,6 +97,10 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	// Gemma 3 uses a fixed pattern of 6 for sliding window layers.
 	if cfg.LocalRopeTheta > 0 {
 		cfg.SlidingWindowPattern = 6
+	}
+	// Extract RMS norm epsilon.
+	if v, ok := f.GetFloat32(prefix + "attention.layer_norm_rms_epsilon"); ok {
+		cfg.RMSNormEps = v
 	}
 
 	return cfg, nil

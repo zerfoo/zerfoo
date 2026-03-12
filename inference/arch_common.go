@@ -40,6 +40,12 @@ func buildTransformerGraph(
 ) (*graph.Graph[float32], error) {
 	ops := numeric.Float32Ops{}
 
+	// Use model-specified RMS norm epsilon, defaulting to 1e-5.
+	rmsEps := float32(1e-5)
+	if cfg.RMSNormEps > 0 {
+		rmsEps = cfg.RMSNormEps
+	}
+
 	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
 		t, ok := tensors[name]
 		if !ok {
@@ -93,7 +99,7 @@ func buildTransformerGraph(
 			return nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, 1e-5, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -186,7 +192,7 @@ func buildTransformerGraph(
 				return nil, lookupErr
 			}
 			qNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, 1e-5, param(prefix+"self_attn.q_norm.weight", qNormW),
+				proxy, ops, rmsEps, param(prefix+"self_attn.q_norm.weight", qNormW),
 			)
 			if normErr != nil {
 				return nil, normErr
@@ -196,7 +202,7 @@ func buildTransformerGraph(
 				return nil, lookupErr
 			}
 			kNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, 1e-5, param(prefix+"self_attn.k_norm.weight", kNormW),
+				proxy, ops, rmsEps, param(prefix+"self_attn.k_norm.weight", kNormW),
 			)
 			if normErr != nil {
 				return nil, normErr
@@ -213,7 +219,7 @@ func buildTransformerGraph(
 				return nil, lookupErr
 			}
 			postAttnNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, 1e-5, param(prefix+"post_attention_layernorm.weight", postAttnNormW),
+				proxy, ops, rmsEps, param(prefix+"post_attention_layernorm.weight", postAttnNormW),
 			)
 			if normErr != nil {
 				return nil, normErr
@@ -237,7 +243,7 @@ func buildTransformerGraph(
 			return nil, err
 		}
 		postNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, 1e-5, param(preFfnNormKey, postNormW),
+			proxy, ops, rmsEps, param(preFfnNormKey, postNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -295,7 +301,7 @@ func buildTransformerGraph(
 				return nil, lookupErr
 			}
 			postFfnNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, 1e-5, param(prefix+"post_feedforward_layernorm.weight", postFfnNormW),
+				proxy, ops, rmsEps, param(prefix+"post_feedforward_layernorm.weight", postFfnNormW),
 			)
 			if normErr != nil {
 				return nil, normErr
@@ -310,7 +316,7 @@ func buildTransformerGraph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, 1e-5, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, err
