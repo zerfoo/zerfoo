@@ -1,13 +1,19 @@
-//go:build cuda
-
 package tensor
 
 import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 )
+
+func skipIfNoCUDA(t *testing.T) {
+	t.Helper()
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+}
 
 func TestGPUStorageInterfaceCompliance(t *testing.T) {
 	var _ Storage[float32] = (*GPUStorage[float32])(nil)
@@ -16,6 +22,7 @@ func TestGPUStorageInterfaceCompliance(t *testing.T) {
 }
 
 func TestGPUStorageRoundTrip(t *testing.T) {
+	skipIfNoCUDA(t)
 	src := []float32{1.0, 2.0, 3.0, 4.0, 5.0}
 
 	s, err := NewGPUStorageFromSlice(src)
@@ -42,6 +49,7 @@ func TestGPUStorageRoundTrip(t *testing.T) {
 }
 
 func TestGPUStorageLen(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](10)
 	if err != nil {
 		t.Fatalf("NewGPUStorage failed: %v", err)
@@ -55,6 +63,7 @@ func TestGPUStorageLen(t *testing.T) {
 }
 
 func TestGPUStorageSet(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorageFromSlice([]float32{1.0, 2.0})
 	if err != nil {
 		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
@@ -79,6 +88,7 @@ func TestGPUStorageSet(t *testing.T) {
 }
 
 func TestGPUStorageDeviceType(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](1)
 	if err != nil {
 		t.Fatalf("NewGPUStorage failed: %v", err)
@@ -92,6 +102,7 @@ func TestGPUStorageDeviceType(t *testing.T) {
 }
 
 func TestGPUStoragePtr(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](4)
 	if err != nil {
 		t.Fatalf("NewGPUStorage failed: %v", err)
@@ -105,6 +116,7 @@ func TestGPUStoragePtr(t *testing.T) {
 }
 
 func TestGPUStorageFree(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](4)
 	if err != nil {
 		t.Fatalf("NewGPUStorage failed: %v", err)
@@ -131,6 +143,7 @@ func TestGPUStorageFree(t *testing.T) {
 }
 
 func TestGPUStorageEmptySlice(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](0)
 	if err != nil {
 		t.Fatalf("NewGPUStorage(0) failed: %v", err)
@@ -145,6 +158,7 @@ func TestGPUStorageEmptySlice(t *testing.T) {
 }
 
 func TestGPUStorageTrySlice(t *testing.T) {
+	skipIfNoCUDA(t)
 	src := []float32{1.0, 2.0, 3.0}
 
 	s, err := NewGPUStorageFromSlice(src)
@@ -171,6 +185,7 @@ func TestGPUStorageTrySlice(t *testing.T) {
 }
 
 func TestGPUStorageTrySliceEmpty(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](0)
 	if err != nil {
 		t.Fatalf("NewGPUStorage(0) failed: %v", err)
@@ -189,6 +204,7 @@ func TestGPUStorageTrySliceEmpty(t *testing.T) {
 }
 
 func TestGPUStorageTrySet(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorageFromSlice([]float32{1.0, 2.0})
 	if err != nil {
 		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
@@ -218,6 +234,7 @@ func TestGPUStorageTrySet(t *testing.T) {
 }
 
 func TestGPUStorageTrySetSameLength(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorageFromSlice([]float32{1.0, 2.0, 3.0})
 	if err != nil {
 		t.Fatalf("NewGPUStorageFromSlice failed: %v", err)
@@ -243,6 +260,7 @@ func TestGPUStorageTrySetSameLength(t *testing.T) {
 }
 
 func TestManagedGPUStorageRoundTrip(t *testing.T) {
+	skipIfNoCUDA(t)
 	pool := newTestPool(t)
 
 	s, err := NewManagedGPUStorage[float32](pool, 5)
@@ -280,6 +298,7 @@ func TestManagedGPUStorageRoundTrip(t *testing.T) {
 }
 
 func TestManagedGPUStorageTrySetResize(t *testing.T) {
+	skipIfNoCUDA(t)
 	pool := newTestPool(t)
 
 	s, err := NewManagedGPUStorage[float32](pool, 2)
@@ -312,6 +331,7 @@ func TestManagedGPUStorageTrySetResize(t *testing.T) {
 }
 
 func TestManagedGPUStorageFree(t *testing.T) {
+	skipIfNoCUDA(t)
 	pool := newTestPool(t)
 
 	s, err := NewManagedGPUStorage[float32](pool, 4)
@@ -340,6 +360,7 @@ func TestManagedGPUStorageFree(t *testing.T) {
 }
 
 func TestManagedGPUStorageNotManagedByDefault(t *testing.T) {
+	skipIfNoCUDA(t)
 	s, err := NewGPUStorage[float32](4)
 	if err != nil {
 		t.Fatalf("NewGPUStorage failed: %v", err)

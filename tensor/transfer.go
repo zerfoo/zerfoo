@@ -1,5 +1,3 @@
-//go:build cuda || rocm || opencl
-
 package tensor
 
 import (

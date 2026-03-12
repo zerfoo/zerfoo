@@ -1,10 +1,11 @@
-//go:build cuda
+//go:build !rocm && !opencl
 
 package tensor
 
 import (
 	"sync"
 
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 )
 
@@ -17,7 +18,9 @@ var (
 
 func getDefaultRuntime() gpuapi.Runtime {
 	defaultRuntimeOnce.Do(func() {
-		defaultRuntime = gpuapi.NewCUDARuntime()
+		if cuda.Available() {
+			defaultRuntime = gpuapi.NewCUDARuntime()
+		}
 	})
 	return defaultRuntime
 }

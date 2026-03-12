@@ -1,5 +1,3 @@
-//go:build cuda
-
 package tensor
 
 import (
@@ -9,6 +7,7 @@ import (
 )
 
 func TestToGPURoundTrip(t *testing.T) {
+	skipIfNoCUDA(t)
 	src, err := New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -47,6 +46,7 @@ func TestToGPURoundTrip(t *testing.T) {
 }
 
 func TestToGPUPreservesShape(t *testing.T) {
+	skipIfNoCUDA(t)
 	src, err := New[float32]([]int{3, 4, 2}, nil)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -81,6 +81,7 @@ func TestToGPUPreservesShape(t *testing.T) {
 }
 
 func TestToCPUPreservesShape(t *testing.T) {
+	skipIfNoCUDA(t)
 	src, err := New[float32]([]int{2, 5}, nil)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -108,6 +109,7 @@ func TestToCPUPreservesShape(t *testing.T) {
 }
 
 func TestToGPUDoesNotModifySource(t *testing.T) {
+	skipIfNoCUDA(t)
 	src, err := New[float32]([]int{3}, []float32{10, 20, 30})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
