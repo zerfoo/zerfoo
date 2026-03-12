@@ -425,43 +425,43 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		kvSeqLen = cachedSeqLen
 	}
 
-	// 3. Grouped Query Attention: Replicate K, V heads for each Query head group
-	// (batch, num_query_heads, seq_len, head_dim)
-	// (batch, num_kv_heads, seq_len, kv_head_dim)
-	// Need to expand K and V to match num_query_heads
-	// Example: if num_query_heads=8, num_kv_heads=2, then each KV head is replicated 4 times.
-	if gqa.numQueryHeads != gqa.numKeyValueHeads {
+	// 3. Grouped Query Attention: expand K/V to match Q head count.
+	// When numKVHeads == 1, MatMul batch broadcasting avoids the expensive
+	// Repeat that physically copies K/V data (b_batch=1 broadcast).
+	// For numKVHeads > 1, use Repeat to match batch dimensions exactly.
+	if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 		replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
-		// Replicate kHeads and vHeads along the head dimension
-		// (batch, num_kv_heads, seq_len, kv_head_dim) -> (batch, num_query_heads, seq_len, kv_head_dim)
 		kHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, kHeadsRoPE, 1, replicationFactor)
 		if expandErr != nil {
 			return nil, expandErr
 		}
-
 		vHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, vHeads, 1, replicationFactor)
 		if expandErr != nil {
 			return nil, expandErr
 		}
-
 		kHeadsRoPE = kHeadsExpanded
 		vHeads = vHeadsExpanded
 	}
 
 	// 4. Apply Scaled Dot-Product Attention
-	// Reshape to (batch_size * num_heads, seq_len, head_dim) for SDPA.
-	// Q uses seqLen (current tokens), K/V use kvSeqLen (may include cached tokens).
+	// Q uses numQueryHeads; K/V use numQueryHeads (after Repeat) or numKVHeads
+	// (when broadcast). SDPA reshapes to 3D for batched attention.
 	qForSDPA, err := gqa.engine.Reshape(ctx, qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
 
-	kForSDPA, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize * gqa.numQueryHeads, kvSeqLen, gqa.headDim})
+	kvBatchHeads := gqa.numQueryHeads
+	if gqa.numKeyValueHeads == 1 {
+		kvBatchHeads = gqa.numKeyValueHeads
+	}
+
+	kForSDPA, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
 
-	vForSDPA, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize * gqa.numQueryHeads, kvSeqLen, gqa.headDim})
+	vForSDPA, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
