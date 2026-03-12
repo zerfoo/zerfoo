@@ -62,24 +62,19 @@ func buildTransformerGraph(
 
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		s := t.GetStorage()
-		// GPU path: dequantize quantized weights to F32 and do a real
-		// transpose so cuBLAS SGEMM can read correctly laid-out data.
+		// GPU path: use virtual transpose for Q4 weights so the Q4Storage
+		// is preserved and the Q4 GEMV kernel can be used at inference time.
+		// Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
 		if isGPUEngine {
+			if _, ok := any(s).(*tensor.Q4Storage); ok {
+				shape := t.Shape()
+				if len(shape) == 2 {
+					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				}
+			}
 			shape := t.Shape()
 			if len(shape) == 2 {
-				switch qs := any(s).(type) {
-				case *tensor.Q4Storage:
-					f32 := make([]float32, qs.Len())
-					qs.Dequantize(f32)
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					return tensor.New([]int{cols, rows}, transposed)
-				case *tensor.Q8Storage:
+				if qs, ok := any(s).(*tensor.Q8Storage); ok {
 					f32 := make([]float32, qs.Len())
 					qs.Dequantize(f32)
 					rows, cols := shape[0], shape[1]
