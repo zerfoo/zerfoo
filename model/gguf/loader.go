@@ -73,6 +73,9 @@ func tensorByteSize(typ GGMLType, numElements int) (int, error) {
 	case GGMLTypeQ8_0:
 		nBlocks := (numElements + 31) / 32
 		return nBlocks * 34, nil // 2 bytes fp16 scale + 32 bytes int8 (GGUF format)
+	case GGMLTypeQ5_0:
+		nBlocks := (numElements + 31) / 32
+		return nBlocks * 22, nil // 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low nibbles
 	case GGMLTypeQ4_K:
 		nBlocks := (numElements + 255) / 256
 		return nBlocks * 144, nil // 4 bytes header + 12 bytes scales + 128 bytes data
@@ -98,6 +101,8 @@ func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tens
 		return decodeQ4Tensor(shape, numElements, raw)
 	case GGMLTypeQ8_0:
 		return decodeQ8Tensor(shape, numElements, raw)
+	case GGMLTypeQ5_0:
+		return decodeQ5_0Tensor(shape, numElements, raw)
 	case GGMLTypeQ4_K:
 		return decodeQ4KTensor(shape, numElements, raw)
 	case GGMLTypeQ5_K:
@@ -156,6 +161,47 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
 	return tensor.NewWithStorage[float32](shape, q6k)
+}
+
+// decodeQ5_0Tensor dequantizes Q5_0 blocks to float32 at load time.
+// Q5_0 format: 32 elements per block, 22 bytes per block.
+// Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low 4-bit values.
+// Each element reconstructs a 5-bit value: q = (low4 | (highBit << 4)) - 16.
+// Reference: llama.cpp ggml-quants.c dequantize_row_q5_0.
+func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	const blockSize = 32
+	const blockBytes = 22
+	nBlocks := (numElements + blockSize - 1) / blockSize
+
+	data := make([]float32, numElements)
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(raw[off : off+2])).ToFloat32()
+
+		// 4 bytes of high bits (32 bits, one per element).
+		qh := binary.LittleEndian.Uint32(raw[off+2 : off+6])
+
+		// 16 bytes of low nibbles (32 x 4-bit values packed in pairs).
+		for j := range blockSize {
+			idx := bi*blockSize + j
+			if idx >= numElements {
+				break
+			}
+			// Low 4 bits from packed byte.
+			byteIdx := j / 2
+			var low4 uint8
+			if j%2 == 0 {
+				low4 = raw[off+6+byteIdx] & 0x0F
+			} else {
+				low4 = raw[off+6+byteIdx] >> 4
+			}
+			// High bit from qh.
+			highBit := uint8((qh >> j) & 1)
+			q := int(low4) | (int(highBit) << 4)
+			data[idx] = d * float32(q-16)
+		}
+	}
+	return tensor.New[float32](shape, data)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
