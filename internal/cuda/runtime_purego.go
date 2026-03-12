@@ -260,7 +260,12 @@ func MemcpyAsync(dst, src unsafe.Pointer, count int, kind MemcpyKind, stream *St
 // CUDA graph capture mode constants.
 const (
 	// cudaStreamCaptureModeGlobal captures all operations on any stream.
-	cudaStreamCaptureModeGlobal = 0
+	// This mode blocks synchronous memcpy on the legacy stream during capture.
+	cudaStreamCaptureModeGlobal = 0 //nolint:unused
+	// cudaStreamCaptureModeRelaxed only captures operations on the
+	// capturing stream. Other streams (including the legacy/default stream)
+	// can execute normally. Operations on other streams are NOT captured.
+	cudaStreamCaptureModeRelaxed = 2
 )
 
 // Graph wraps a cudaGraph_t handle.
@@ -281,7 +286,7 @@ func StreamBeginCapture(s *Stream) error {
 	if l == nil || l.cudaStreamBeginCapture == 0 {
 		return fmt.Errorf("cudaStreamBeginCapture: not available")
 	}
-	ret := ccall(l.cudaStreamBeginCapture, s.handle, cudaStreamCaptureModeGlobal)
+	ret := ccall(l.cudaStreamBeginCapture, s.handle, cudaStreamCaptureModeRelaxed)
 	if ret != cudaSuccess {
 		return fmt.Errorf("cudaStreamBeginCapture failed: %s", cudaErrorString(ret))
 	}
