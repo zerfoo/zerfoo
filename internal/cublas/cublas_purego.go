@@ -142,6 +142,7 @@ func (h *Handle) SetStream(streamPtr unsafe.Pointer) error {
 
 // cuBLAS operation constants.
 const cublasOpN = 0 // CUBLAS_OP_N
+const cublasOpT = 1 // CUBLAS_OP_T
 
 // floatBits reinterprets a float32 as a uintptr (zero-extended from uint32).
 func floatBits(f float32) uintptr {
@@ -183,6 +184,43 @@ func Sgemm(h *Handle, m, n, k int, alpha float32,
 	)
 	if status != cublasStatusSuccess {
 		return fmt.Errorf("cublasSgemm failed with status %d", status)
+	}
+	return nil
+}
+
+// SgemmNT performs single-precision C = A * B^T where A is [m, k] and
+// B is [n, k] (row-major). Uses CUBLAS_OP_T on the first cuBLAS argument.
+func SgemmNT(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, b unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+
+	cAlpha := alpha
+	cBeta := beta
+
+	// Row-major to column-major: B comes first with CUBLAS_OP_T, A second with CUBLAS_OP_N.
+	status := cuda.Ccall(lib.sgemm,
+		h.ptr,
+		uintptr(cublasOpT), // transpose B (cuBLAS first arg)
+		uintptr(cublasOpN), // no-transpose A (cuBLAS second arg)
+		uintptr(n),         // rows of op(B) = n
+		uintptr(m),         // cols of op(A) = m
+		uintptr(k),         // inner dimension
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(b),  // B first (cuBLAS convention)
+		uintptr(k),  // ldb = k (B_rm row width)
+		uintptr(a),  // A second
+		uintptr(k),  // lda = k (A_rm row width)
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(n), // ldc = n (C_rm row width)
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSgemm(NT) failed with status %d", status)
 	}
 	return nil
 }

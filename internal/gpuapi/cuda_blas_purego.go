@@ -49,6 +49,15 @@ func (b *CUDABlas) BFloat16Gemm(m, n, k int, alpha float32,
 	)
 }
 
+// SgemmNT performs C = alpha * A * B^T + beta * C where A is [m, k] and
+// B is [n, k] (row-major). This avoids an explicit Transpose of B.
+func (b *CUDABlas) SgemmNT(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.SgemmNT(b.handle, m, n, k, alpha, a, bPtr, beta, c)
+}
+
 func (b *CUDABlas) SetStream(stream Stream) error {
 	var ptr unsafe.Pointer
 	if stream != nil {
