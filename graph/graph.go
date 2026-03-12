@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"math"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -131,34 +129,6 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		}
 
 		g.memo[n] = output
-
-		// NaN detection instrumentation (temporary debug).
-		if out, ok := any(output.Data()).([]float32); ok {
-			nanCount := 0
-			for _, v := range out {
-				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-					nanCount++
-				}
-			}
-			if nanCount > 0 {
-				log.Printf("[NaN-DETECT] node[%d] %s: %d/%d NaN/Inf values, shape=%v", nodeIdx, n.OpType(), nanCount, len(out), output.Shape())
-				// Print input shapes and NaN counts for inputs
-				for j, inp := range nodeInputs {
-					if inp == nil {
-						continue
-					}
-					if inpData, ok2 := any(inp.Data()).([]float32); ok2 {
-						inpNaN := 0
-						for _, v := range inpData {
-							if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-								inpNaN++
-							}
-						}
-						log.Printf("[NaN-DETECT]   input[%d] from %s: shape=%v NaN=%d/%d", j, g.dependencies[n][j].OpType(), inp.Shape(), inpNaN, len(inpData))
-					}
-				}
-			}
-		}
 
 		// Release intermediate tensors whose consumers are all done.
 		if refCount != nil {

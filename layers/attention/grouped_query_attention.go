@@ -4,8 +4,6 @@ package attention
 import (
 	"context"
 	"fmt"
-	"log"
-	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -241,23 +239,6 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	return params
 }
 
-// debugNaNF32 checks a float32 tensor for NaN/Inf values and logs a message.
-func debugNaNF32[T tensor.Numeric](label string, t *tensor.TensorNumeric[T]) {
-	data, ok := any(t.Data()).([]float32)
-	if !ok {
-		return
-	}
-	nanCount := 0
-	for _, v := range data {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			nanCount++
-		}
-	}
-	if nanCount > 0 {
-		log.Printf("[GQA-NaN] %s: %d/%d NaN/Inf, shape=%v", label, nanCount, len(data), t.Shape())
-	}
-}
-
 // Forward computes the grouped query attention.
 func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
@@ -298,9 +279,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	gqa.qProj = qProj
 	gqa.kProj = kProj
 	gqa.vProj = vProj
-	debugNaNF32("qProj", qProj)
-	debugNaNF32("kProj", kProj)
-	debugNaNF32("vProj", vProj)
+
 
 	// 2. Split into heads, apply optional Q/K norms, then RoPE
 	// Q: (batch, seq_len, num_query_heads, head_dim)
@@ -317,7 +296,6 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		}
 	}
 
-	debugNaNF32("qAfterNorm", qReshaped)
 	qHeads, err := gqa.engine.Transpose(ctx, qReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
@@ -337,7 +315,6 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		}
 	}
 
-	debugNaNF32("kAfterNorm", kReshaped)
 	kHeads, err := gqa.engine.Transpose(ctx, kReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
@@ -385,8 +362,6 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		return nil, err
 	}
 
-	debugNaNF32("qAfterRoPE", qHeadsRoPE)
-	debugNaNF32("kAfterRoPE", kHeadsRoPE)
 	gqa.qHeadsRoPE = qHeadsRoPE // Cache for backward
 	gqa.kHeadsRoPE = kHeadsRoPE // Cache for backward
 
@@ -500,14 +475,10 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		gqa.scaledDotProductAttention.SetCausal(false)
 	}
 
-	debugNaNF32("qForSDPA", qForSDPA)
-	debugNaNF32("kForSDPA", kForSDPA)
-	debugNaNF32("vForSDPA", vForSDPA)
 	attnOutputHeads, err := gqa.scaledDotProductAttention.Forward(ctx, qForSDPA, kForSDPA, vForSDPA, mask)
 	if err != nil {
 		return nil, err
 	}
-	debugNaNF32("attnOutputHeads", attnOutputHeads)
 
 	gqa.attnOutput = attnOutputHeads // Cache for backward
 

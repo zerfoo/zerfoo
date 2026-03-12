@@ -163,6 +163,36 @@ func TestSoftmaxF32_CausalMask(t *testing.T) {
 	}
 }
 
+func TestSoftmaxF32_MaxInFirstChunk(t *testing.T) {
+	// Regression test: max value appears only in the first 4-element NEON
+	// chunk while the remaining elements are -1e9 (causal mask). A prior
+	// bug in the FMAXV encoding caused the horizontal max reduction to
+	// read the last loaded vector (V0) instead of the accumulator (V30),
+	// producing NaN when the true max lived in an earlier chunk.
+	for _, maxVal := range []float32{0.5, 1.0, 1.73, 5.0, 10.0, 100.0} {
+		t.Run("max="+intToStr(int(maxVal*100)), func(t *testing.T) {
+			input := make([]float32, 8)
+			input[0] = maxVal
+			for i := 1; i < 8; i++ {
+				input[i] = -1e9
+			}
+			data := make([]float32, 8)
+			copy(data, input)
+			SoftmaxF32(&data[0], 8)
+			ref := referenceSoftmax(input)
+			for i, got := range data {
+				if math.IsNaN(float64(got)) {
+					t.Fatalf("NaN at index %d: input=%v got=%v ref=%v", i, input, data, ref)
+				}
+				diff := math.Abs(float64(got - ref[i]))
+				if diff > 1e-5 {
+					t.Errorf("index %d: got %v, want %v (diff %e)", i, got, ref[i], diff)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkSoftmaxF32(b *testing.B) {
 	const n = 2048
 	data := make([]float32, n)

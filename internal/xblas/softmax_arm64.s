@@ -50,7 +50,7 @@ max_scalar:
 max_reduce:
 	// Reduce V30.4S to scalar max in F31
 	// FMAXV S0, V30.4S
-	WORD	$0x6E30F800
+	WORD	$0x6E30F7C0
 	FMAXS	F0, F31, F31
 	// Now F31 = global max
 
