@@ -584,6 +584,20 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 		return e.MatMul(ctx, a, kT, dst...)
 	}
 
+	// Use strided batched NT GEMM when available for batch > 1.
+	// This replaces N sequential SgemmNT calls with a single cuBLAS call.
+	if batchSize > 1 && bBatchSize > 1 {
+		if batchedNT, ok := e.blas.(gpuapi.BLASBatchedTransposeB); ok {
+			if err := batchedNT.SgemmNTStridedBatched(m, n, k, 1.0,
+				devA, int64(aMatSize), devB, int64(bMatSize), 0.0,
+				devC, int64(cMatSize), batchSize); err != nil {
+				e.pool.Free(e.deviceID, devC, batchSize*cMatSize*elemSize)
+				return nil, fmt.Errorf("MatMulTransposeB: batched NT GEMM: %w", err)
+			}
+			return makeGPUResult[T](e, outShape, devC, batchSize*cMatSize, dst...)
+		}
+	}
+
 	for batch := range batchSize {
 		aOff := batch * aMatSize * elemSize
 		bOff := 0
