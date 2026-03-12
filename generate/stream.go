@@ -42,8 +42,18 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		return fmt.Errorf("prompt produced no tokens")
 	}
 
-	cache := NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
-	genCtx := WithKVCache(ctx, cache)
+	// Prepend BOS token if configured.
+	if gen.config.BOSTokenID > 0 {
+		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
+	}
+
+	var cacheProvider CacheProvider[T]
+	if gen.blockPool != nil {
+		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
+	} else {
+		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
+	}
+	genCtx := WithCache(ctx, cacheProvider)
 
 	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
 	for _, id := range sc.StopTokenIDs {
