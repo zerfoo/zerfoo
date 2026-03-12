@@ -74,6 +74,35 @@ func ExtractTokenizer(f *File) (*tokenizer.BPETokenizer, error) {
 		tok.SetSentencePiece(true)
 	}
 
+	// Extract control/special tokens (token_type == 3) for exact matching
+	// during encoding. Without this, tokens like <start_of_turn> would be
+	// split into characters by BPE.
+	if typesRaw, ok := f.Metadata["tokenizer.ggml.token_type"]; ok {
+		if typesArr, ok := typesRaw.([]any); ok {
+			specialTokens := make(map[string]int)
+			for i, typeVal := range typesArr {
+				var tokenType int32
+				switch v := typeVal.(type) {
+				case int32:
+					tokenType = v
+				case uint32:
+					tokenType = int32(v)
+				default:
+					continue
+				}
+				// Type 3 = control/special token.
+				if tokenType == 3 && i < len(tokensArr) {
+					if s, ok := tokensArr[i].(string); ok && len(s) > 0 {
+						specialTokens[s] = i
+					}
+				}
+			}
+			if len(specialTokens) > 0 {
+				tok.SetSpecialTokenStrings(specialTokens)
+			}
+		}
+	}
+
 	return tok, nil
 }
 

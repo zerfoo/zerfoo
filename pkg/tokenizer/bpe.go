@@ -29,6 +29,9 @@ type BPETokenizer struct {
 	// sentencePiece enables SentencePiece-style pre-tokenization where spaces
 	// are replaced with ▁ (U+2581) and words are split at ▁ boundaries.
 	sentencePiece bool
+	// specialTokens maps special token strings to their IDs for exact matching
+	// during encoding (e.g., "<start_of_turn>" -> 105).
+	specialTokens map[string]int
 	// normalizer is an optional text normalization function applied before tokenization.
 	normalizer NormalizerFunc
 }
@@ -64,6 +67,20 @@ func (t *BPETokenizer) Encode(text string) ([]int, error) {
 	if t.normalizer != nil {
 		text = t.normalizer(text)
 	}
+
+	// If special tokens are registered, split around them first.
+	if len(t.specialTokens) > 0 {
+		return t.encodeWithSpecials(text)
+	}
+
+	return t.encodeSegment(text)
+}
+
+// encodeSegment tokenizes a text segment that contains no special tokens.
+func (t *BPETokenizer) encodeSegment(text string) ([]int, error) {
+	if text == "" {
+		return nil, nil
+	}
 	words := t.preTokenize(text)
 	var ids []int
 	for _, word := range words {
@@ -72,6 +89,47 @@ func (t *BPETokenizer) Encode(text string) ([]int, error) {
 			return nil, err
 		}
 		ids = append(ids, wordIDs...)
+	}
+	return ids, nil
+}
+
+// encodeWithSpecials splits text around special token strings, encoding each
+// special token as its single ID and encoding text between them with BPE.
+func (t *BPETokenizer) encodeWithSpecials(text string) ([]int, error) {
+	var ids []int
+	for len(text) > 0 {
+		// Find the earliest special token in the remaining text.
+		bestIdx := -1
+		bestLen := 0
+		bestID := 0
+		for tok, id := range t.specialTokens {
+			idx := strings.Index(text, tok)
+			if idx >= 0 && (bestIdx == -1 || idx < bestIdx || (idx == bestIdx && len(tok) > bestLen)) {
+				bestIdx = idx
+				bestLen = len(tok)
+				bestID = id
+			}
+		}
+		if bestIdx == -1 {
+			// No more special tokens; encode the rest.
+			segIDs, err := t.encodeSegment(text)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, segIDs...)
+			break
+		}
+		// Encode text before the special token.
+		if bestIdx > 0 {
+			segIDs, err := t.encodeSegment(text[:bestIdx])
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, segIDs...)
+		}
+		// Add the special token ID.
+		ids = append(ids, bestID)
+		text = text[bestIdx+bestLen:]
 	}
 	return ids, nil
 }
@@ -144,6 +202,12 @@ func (t *BPETokenizer) SpecialTokens() SpecialTokens {
 // are replaced with ▁ (U+2581) and the text is split at ▁ boundaries.
 func (t *BPETokenizer) SetSentencePiece(enabled bool) {
 	t.sentencePiece = enabled
+}
+
+// SetSpecialTokenStrings registers token strings that should be matched
+// as single tokens during encoding instead of being split by BPE.
+func (t *BPETokenizer) SetSpecialTokenStrings(tokens map[string]int) {
+	t.specialTokens = tokens
 }
 
 // preTokenize splits text into words for BPE processing.
