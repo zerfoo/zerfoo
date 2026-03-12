@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -24,6 +22,9 @@ func (e *GPUEngine[T]) Conv2dForward(
 	dilations [2]int,
 	groups int,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("Conv2dForward: DNN not available (build without -tags cuda)")
+	}
 	// Only float32 has a DNN path.
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
@@ -119,6 +120,9 @@ func (e *GPUEngine[T]) BatchNormForwardInference(
 	x, scale, bias, mean, variance *tensor.TensorNumeric[T],
 	epsilon float64,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("BatchNormForwardInference: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("BatchNormForwardInference: only float32 supported")
@@ -190,6 +194,9 @@ func (e *GPUEngine[T]) CudnnActivationForward(
 	x *tensor.TensorNumeric[T],
 	mode gpuapi.ActivationMode,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("CudnnActivationForward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("CudnnActivationForward: only float32 supported")
@@ -245,6 +252,9 @@ func (e *GPUEngine[T]) CudnnPoolingForward(
 	mode gpuapi.PoolingMode,
 	windowH, windowW, padH, padW, strideH, strideW int,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("CudnnPoolingForward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("CudnnPoolingForward: only float32 supported")
@@ -291,6 +301,9 @@ func (e *GPUEngine[T]) CudnnSoftmaxForward(
 	_ context.Context,
 	x *tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("CudnnSoftmaxForward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("CudnnSoftmaxForward: only float32 supported")
@@ -349,6 +362,9 @@ func (e *GPUEngine[T]) Conv2dBackwardData(
 	dilations [2]int,
 	groups int,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("Conv2dBackwardData: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("Conv2dBackwardData: only float32 supported, got %T", zero)
@@ -415,6 +431,9 @@ func (e *GPUEngine[T]) Conv2dBackwardFilter(
 	dilations [2]int,
 	groups int,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("Conv2dBackwardFilter: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("Conv2dBackwardFilter: only float32 supported, got %T", zero)
@@ -478,6 +497,9 @@ func (e *GPUEngine[T]) BatchNormForwardTraining(
 	runningMean, runningVariance *tensor.TensorNumeric[T],
 	epsilon, expAvgFactor float64,
 ) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, nil, nil, fmt.Errorf("BatchNormForwardTraining: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, nil, nil, fmt.Errorf("BatchNormForwardTraining: only float32 supported")
@@ -585,6 +607,9 @@ func (e *GPUEngine[T]) CudnnBatchNormBackward(
 	x, dy, scale *tensor.TensorNumeric[T],
 	saveMean, saveInvVariance *tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, nil, nil, fmt.Errorf("CudnnBatchNormBackward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, nil, nil, fmt.Errorf("CudnnBatchNormBackward: only float32 supported")
@@ -690,6 +715,9 @@ func (e *GPUEngine[T]) CudnnActivationBackward(
 	x, y, dy *tensor.TensorNumeric[T],
 	mode gpuapi.ActivationMode,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("CudnnActivationBackward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("CudnnActivationBackward: only float32 supported")
@@ -756,6 +784,9 @@ func (e *GPUEngine[T]) CudnnPoolingBackward(
 	mode gpuapi.PoolingMode,
 	windowH, windowW, padH, padW, strideH, strideW int,
 ) (*tensor.TensorNumeric[T], error) {
+	if e.dnn == nil {
+		return nil, fmt.Errorf("CudnnPoolingBackward: DNN not available (build without -tags cuda)")
+	}
 	var zero T
 	if _, ok := any(zero).(float32); !ok {
 		return nil, fmt.Errorf("CudnnPoolingBackward: only float32 supported")
