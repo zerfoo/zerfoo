@@ -1,5 +1,3 @@
-//go:build cuda || rocm || opencl
-
 package tensor
 
 import (
@@ -37,6 +35,9 @@ func NewGPUStorage[T Numeric](length int, deviceID ...int) (*GPUStorage[T], erro
 	}
 
 	rt := getDefaultRuntime()
+	if rt == nil {
+		return nil, fmt.Errorf("NewGPUStorage: no GPU runtime available")
+	}
 	if err := rt.SetDevice(dev); err != nil {
 		return nil, err
 	}
@@ -96,12 +97,17 @@ func NewGPUStorageFromPtr[T Numeric](devPtr unsafe.Pointer, length int, deviceID
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
 
+	rt := getDefaultRuntime()
+	if rt == nil {
+		return nil, fmt.Errorf("NewGPUStorageFromPtr: no GPU runtime available")
+	}
+
 	gs := &GPUStorage[T]{
 		devicePtr: devPtr,
 		length:    length,
 		byteSize:  length * elemSize,
 		deviceID:  dev,
-		runtime:   getDefaultRuntime(),
+		runtime:   rt,
 	}
 	runtime.SetFinalizer(gs, func(s *GPUStorage[T]) { _ = s.Free() })
 
@@ -120,6 +126,9 @@ func NewManagedGPUStorage[T Numeric](pool gpuapi.MemPool, length int, deviceID .
 	}
 
 	rt := getDefaultRuntime()
+	if rt == nil {
+		return nil, fmt.Errorf("NewManagedGPUStorage: no GPU runtime available")
+	}
 	if err := rt.SetDevice(dev); err != nil {
 		return nil, err
 	}
