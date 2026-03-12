@@ -77,13 +77,6 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
 
-	// Reset arena pool to reclaim per-pass intermediate allocations in O(1).
-	if g.engineProxy != nil {
-		if pr, ok := g.engineProxy.Real().(compute.PoolResetter); ok {
-			pr.ResetPool()
-		}
-	}
-
 	g.memo = make(map[Node[T]]*tensor.TensorNumeric[T])
 	for i, n := range g.inputs {
 		g.memo[n] = inputs[i]

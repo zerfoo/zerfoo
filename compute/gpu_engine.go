@@ -110,9 +110,10 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 	fallbackPool := cuda.NewMemPool()
 	cuda.SetDefaultMemPool(fallbackPool)
 
-	// Arena pool: 256MB pre-allocated region for per-pass intermediates.
+	// Arena pool: 2GB pre-allocated region for per-inference intermediates.
+	// On DGX Spark with 128GB unified memory, this is a small fraction.
 	// Falls back to MemPool if arena is exhausted.
-	const arenaSize = 256 * 1024 * 1024 // 256 MB
+	const arenaSize = 2 * 1024 * 1024 * 1024 // 2 GB
 	arenaPool, err := gpuapi.NewCUDAArenaPool(dev, arenaSize, fallbackPool)
 	if err == nil {
 		cuda.SetDefaultArenaPool(arenaPool.Inner())
