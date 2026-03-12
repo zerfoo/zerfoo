@@ -1726,6 +1726,63 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	return normed, residualOut, nil, nil
 }
 
+// GPUFusedQKNormRoPE applies per-head RMSNorm + RoPE to combined Q+K heads
+// in a single GPU kernel launch. This replaces 4 kernel launches per GQA layer.
+// input: [totalHeads, headDim], weightQ/weightK: [headDim],
+// cosAngles/sinAngles: [halfRotary], output: [totalHeads, headDim].
+func (e *GPUEngine[T]) GPUFusedQKNormRoPE(
+	input *tensor.TensorNumeric[T],
+	weightQ, weightK *tensor.TensorNumeric[T],
+	cosAngles, sinAngles *tensor.TensorNumeric[T],
+	eps float32,
+	totalHeads, headDim, numQHeads, halfRotary int,
+) (*tensor.TensorNumeric[T], error) {
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE input: %w", err)
+	}
+	defer inCleanup()
+
+	wqPtr, wqCleanup, err := getDevicePtr(e, weightQ)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE weightQ: %w", err)
+	}
+	defer wqCleanup()
+
+	wkPtr, wkCleanup, err := getDevicePtr(e, weightK)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE weightK: %w", err)
+	}
+	defer wkCleanup()
+
+	cosPtr, cosCleanup, err := getDevicePtr(e, cosAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE cos: %w", err)
+	}
+	defer cosCleanup()
+
+	sinPtr, sinCleanup, err := getDevicePtr(e, sinAngles)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE sin: %w", err)
+	}
+	defer sinCleanup()
+
+	outElems := totalHeads * headDim
+	outBytes := outElems * f32Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedQKNormRoPE alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedQKNormRoPEF32(inPtr, wqPtr, wkPtr, cosPtr, sinPtr, devOut, eps, totalHeads, headDim, numQHeads, halfRotary, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return makeGPUResult[T](e, []int{totalHeads, headDim}, devOut, outElems)
+}
+
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.
 // Use for benchmarking or when explicit synchronization is needed.
 func (e *GPUEngine[T]) Sync() error {

@@ -168,6 +168,10 @@ func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedQKNormRoPEF32: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for OpenCL")
 }

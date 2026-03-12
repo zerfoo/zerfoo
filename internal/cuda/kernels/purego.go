@@ -60,6 +60,9 @@ type KernelLib struct {
 	// fused_add_rmsnorm
 	launchFusedAddRMSNormF32 uintptr
 
+	// fused_qk_norm_rope
+	launchFusedQKNormRoPEF32 uintptr
+
 	// scaled_softmax
 	launchScaledSoftmaxF32 uintptr
 }
@@ -136,6 +139,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
 		// fused_add_rmsnorm
 		{"fused_add_rmsnorm_f32", &k.launchFusedAddRMSNormF32},
+		// fused_qk_norm_rope
+		{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
 		// scaled_softmax
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
 		}

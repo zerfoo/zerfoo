@@ -275,6 +275,7 @@ func buildTransformerGraph(
 				return nil, normErr
 			}
 			gqa.SetQKNorms(qNorm, kNorm)
+			gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
 		}
 
 		attnOut := builder.AddNode(gqa, normed)

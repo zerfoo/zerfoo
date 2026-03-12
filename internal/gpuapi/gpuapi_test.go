@@ -177,6 +177,9 @@ func (stubKernelRunner) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ gpuapi.S
 func (stubKernelRunner) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
 	return nil
 }

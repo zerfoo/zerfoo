@@ -459,6 +459,62 @@ func (rpe *RotaryPositionalEmbedding[T]) Attributes() map[string]interface{} {
 	return nil
 }
 
+// GetAngles returns the cos/sin angle tensors for the given position range,
+// along with halfRotary. For GPU-resident tables, returns non-owning views.
+// This is used by the fused QK norm+RoPE kernel during decode.
+func (rpe *RotaryPositionalEmbedding[T]) GetAngles(offset, seqLen int) (cos, sin *tensor.TensorNumeric[T], halfRotary int, err error) {
+	halfRotary = rpe.rotaryDim / 2
+
+	// Lazily upload cos/sin tables to GPU if not done yet.
+	if !rpe.gpuUploaded {
+		checkEngine := compute.Engine[T](rpe.engine)
+		if proxy, ok := rpe.engine.(*compute.EngineProxy[T]); ok {
+			checkEngine = proxy.Real()
+		}
+		if _, ok := checkEngine.(compute.WeightUploader); ok {
+			if gpuCos, uploadErr := tensor.ToGPU(rpe.cosAngles); uploadErr == nil {
+				rpe.cosAngles = gpuCos
+			}
+			if gpuSin, uploadErr := tensor.ToGPU(rpe.sinAngles); uploadErr == nil {
+				rpe.sinAngles = gpuSin
+			}
+		}
+		rpe.gpuUploaded = true
+	}
+
+	// GPU path: create non-owning views.
+	if cosGS, ok := rpe.cosAngles.GetStorage().(*tensor.GPUStorage[T]); ok {
+		cosView := tensor.NewGPUStorageView(cosGS, offset*halfRotary, seqLen*halfRotary)
+		cos, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, cosView)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		sinGS := rpe.sinAngles.GetStorage().(*tensor.GPUStorage[T])
+		sinView := tensor.NewGPUStorageView(sinGS, offset*halfRotary, seqLen*halfRotary)
+		sin, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, sinView)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		return cos, sin, halfRotary, nil
+	}
+
+	// CPU path.
+	cos, err = rpe.cosAngles.Slice([2]int{offset, offset + seqLen}, [2]int{0, halfRotary})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	sin, err = rpe.sinAngles.Slice([2]int{offset, offset + seqLen}, [2]int{0, halfRotary})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return cos, sin, halfRotary, nil
+}
+
+// RotaryDim returns the number of dimensions that receive rotation.
+func (rpe *RotaryPositionalEmbedding[T]) RotaryDim() int {
+	return rpe.rotaryDim
+}
+
 // AttentionScaleFactor returns the YaRN attention scaling factor.
 // Returns 1.0 when YaRN is not enabled.
 func (rpe *RotaryPositionalEmbedding[T]) AttentionScaleFactor() float64 {

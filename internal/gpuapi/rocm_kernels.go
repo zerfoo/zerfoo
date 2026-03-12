@@ -160,6 +160,10 @@ func (k *ROCmKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ float32, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedQKNormRoPEF32: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for ROCm")
 }

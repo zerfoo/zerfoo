@@ -95,6 +95,12 @@ type KernelRunner interface {
 	// normedOut: [rows, D], sumOut: [rows, D].
 	FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, stream Stream) error
 
+	// FusedQKNormRoPEF32 applies per-head RMSNorm + RoPE to combined Q+K heads.
+	// Replaces 4 kernel launches (Q_norm + K_norm + Q_RoPE + K_RoPE) with 1.
+	// input: [totalHeads, headDim], weightQ/weightK: [headDim],
+	// cosAngles/sinAngles: [halfRotary], output: [totalHeads, headDim].
+	FusedQKNormRoPEF32(input, weightQ, weightK, cosAngles, sinAngles, output unsafe.Pointer, eps float32, totalHeads, headDim, numQHeads, halfRotary int, stream Stream) error
+
 	// ScaledSoftmaxF32 computes softmax(input * scale) in one kernel launch,
 	// replacing the MulScalar + Softmax chain (saves 1 kernel launch per call).
 	ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error

@@ -42,6 +42,11 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	qNorm graph.Node[T]
 	kNorm graph.Node[T]
 
+	// Fused QK norm+RoPE: raw weights and epsilon for decode fast path.
+	qNormWeight *tensor.TensorNumeric[T]
+	kNormWeight *tensor.TensorNumeric[T]
+	qkNormEps   float32
+
 	// Merged QKV weight for single-GEMV decode optimization.
 	mergedQKV *tensor.TensorNumeric[T]
 	qDim      int // number of Q output elements (numQueryHeads * headDim)
@@ -227,6 +232,15 @@ func (gqa *GroupedQueryAttention[T]) SetQKNorms(qNorm, kNorm graph.Node[T]) {
 	gqa.kNorm = kNorm
 }
 
+// SetQKNormWeights stores raw RMSNorm weights for the fused QK norm+RoPE
+// decode path. When set alongside SetQKNorms, the fused kernel replaces
+// 4 kernel launches (Q norm, K norm, Q RoPE, K RoPE) with 1 during decode.
+func (gqa *GroupedQueryAttention[T]) SetQKNormWeights(qWeight, kWeight *tensor.TensorNumeric[T], eps float32) {
+	gqa.qNormWeight = qWeight
+	gqa.kNormWeight = kWeight
+	gqa.qkNormEps = eps
+}
+
 // SetBlockTableReader sets an optional BlockTableReader that provides KV data
 // directly from paged block tables, bypassing the standard cache gather path.
 func (gqa *GroupedQueryAttention[T]) SetBlockTableReader(r BlockTableReader[T]) {
@@ -323,84 +337,183 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 
 	// 2. Split into heads, apply optional Q/K norms, then RoPE
-	// Q: (batch, seq_len, num_query_heads, head_dim)
-	qReshaped, err := gqa.engine.Reshape(ctx, qProj, []int{batchSize, seqLen, gqa.numQueryHeads, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
+	var qHeadsRoPE, kHeadsRoPE *tensor.TensorNumeric[T]
+	var vHeads *tensor.TensorNumeric[T]
 
-	// Apply per-head Q norm if set (Gemma 3).
-	if gqa.qNorm != nil {
-		qReshaped, err = gqa.qNorm.Forward(ctx, qReshaped)
-		if err != nil {
-			return nil, fmt.Errorf("qNorm: %w", err)
-		}
-	}
-
-	qHeads, err := gqa.engine.Transpose(ctx, qReshaped, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-
-	// K, V: (batch, seq_len, num_kv_heads, head_dim)
-	kReshaped, err := gqa.engine.Reshape(ctx, kProj, []int{batchSize, seqLen, gqa.numKeyValueHeads, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply per-head K norm if set (Gemma 3).
-	if gqa.kNorm != nil {
-		kReshaped, err = gqa.kNorm.Forward(ctx, kReshaped)
-		if err != nil {
-			return nil, fmt.Errorf("kNorm: %w", err)
-		}
-	}
-
-	kHeads, err := gqa.engine.Transpose(ctx, kReshaped, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-
+	// V always takes the same path: reshape + transpose.
 	vReshaped, err := gqa.engine.Reshape(ctx, vProj, []int{batchSize, seqLen, gqa.numKeyValueHeads, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
-
-	vHeads, err := gqa.engine.Transpose(ctx, vReshaped, []int{0, 2, 1, 3})
+	vHeads, err = gqa.engine.Transpose(ctx, vReshaped, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply RoPE to Q and K
-	// RoPE expects (batch, seq_len, head_dim)
-	// We need to apply it head by head or use a batched RoPE if engine supports.
-	// Let's reshape to (batch * num_heads, seq_len, head_dim) for RoPE.
-	qForRoPE, err := gqa.engine.Reshape(ctx, qHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
+	// Fused QK norm+RoPE decode path: replaces 4 kernel launches with 1.
+	// Conditions: decode (seqLen=1), Q/K norm weights available, engine supports it.
+	fusedQKNormRoPE := false
+	if seqLen == 1 && gqa.qNormWeight != nil && gqa.kNormWeight != nil {
+		realEngine := compute.Engine[T](gqa.engine)
+		if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+			realEngine = proxy.Real()
+		}
+		if provider, ok := realEngine.(compute.FusedQKNormRoPEProvider[T]); ok {
+			totalHeads := gqa.numQueryHeads + gqa.numKeyValueHeads
+
+			// Reshape Q [1,1,qDim] and K [1,1,kDim] to [numQ, headDim] and [numKV, headDim].
+			qFlat, reshapeErr := gqa.engine.Reshape(ctx, qProj, []int{gqa.numQueryHeads, gqa.headDim})
+			if reshapeErr != nil {
+				return nil, reshapeErr
+			}
+			kFlat, reshapeErr := gqa.engine.Reshape(ctx, kProj, []int{gqa.numKeyValueHeads, gqa.headDim})
+			if reshapeErr != nil {
+				return nil, reshapeErr
+			}
+
+			// Concatenate Q+K into [totalHeads, headDim].
+			qkCombined, catErr := gqa.engine.Concat(ctx, []*tensor.TensorNumeric[T]{qFlat, kFlat}, 0)
+			if catErr != nil {
+				return nil, fmt.Errorf("fused QK norm+RoPE concat: %w", catErr)
+			}
+
+			// Get cos/sin angles for the current position.
+			posOffset := 0
+			if hasCache {
+				posOffset = cache.SeqLen()
+			}
+			cosAngles, sinAngles, halfRotary, angleErr := gqa.rope.GetAngles(posOffset, 1)
+			if angleErr != nil {
+				return nil, fmt.Errorf("fused QK norm+RoPE angles: %w", angleErr)
+			}
+
+			// For the kernel, we need 1D [halfRotary] cos/sin (single position).
+			cos1D, reshapeErr := gqa.engine.Reshape(ctx, cosAngles, []int{halfRotary})
+			if reshapeErr != nil {
+				return nil, reshapeErr
+			}
+			sin1D, reshapeErr := gqa.engine.Reshape(ctx, sinAngles, []int{halfRotary})
+			if reshapeErr != nil {
+				return nil, reshapeErr
+			}
+
+			// Run fused kernel: RMSNorm + RoPE for all heads in one launch.
+			fusedOut, fusedErr := provider.GPUFusedQKNormRoPE(
+				qkCombined, gqa.qNormWeight, gqa.kNormWeight,
+				cos1D, sin1D,
+				gqa.qkNormEps, totalHeads, gqa.headDim, gqa.numQueryHeads, halfRotary,
+			)
+			if fusedErr == nil {
+				fusedQKNormRoPE = true
+
+				// Split output [totalHeads, headDim] into Q' and K' via zero-copy views.
+				qElems := gqa.numQueryHeads * gqa.headDim
+				kElems := gqa.numKeyValueHeads * gqa.headDim
+				if gs, ok := fusedOut.GetStorage().(*tensor.GPUStorage[T]); ok {
+					qView := tensor.NewGPUStorageView(gs, 0, qElems)
+					kView := tensor.NewGPUStorageView(gs, qElems, kElems)
+
+					qSlice, viewErr := tensor.NewWithStorage[T]([]int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim}, qView)
+					if viewErr != nil {
+						return nil, fmt.Errorf("fused QK split Q view: %w", viewErr)
+					}
+					kSlice, viewErr := tensor.NewWithStorage[T]([]int{batchSize, gqa.numKeyValueHeads, seqLen, gqa.headDim}, kView)
+					if viewErr != nil {
+						return nil, fmt.Errorf("fused QK split K view: %w", viewErr)
+					}
+					qHeadsRoPE = qSlice
+					kHeadsRoPE = kSlice
+				} else {
+					// CPU fallback: copy data.
+					data := fusedOut.Data()
+					qData := make([]T, qElems)
+					kData := make([]T, kElems)
+					copy(qData, data[:qElems])
+					copy(kData, data[qElems:qElems+kElems])
+					qSlice, cpuErr := tensor.New([]int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim}, qData)
+					if cpuErr != nil {
+						return nil, cpuErr
+					}
+					kSlice, cpuErr := tensor.New([]int{batchSize, gqa.numKeyValueHeads, seqLen, gqa.headDim}, kData)
+					if cpuErr != nil {
+						return nil, cpuErr
+					}
+					qHeadsRoPE = qSlice
+					kHeadsRoPE = kSlice
+				}
+			}
+			// Fall through to unfused path on error.
+		}
 	}
 
-	kForRoPE, err := gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
+	if !fusedQKNormRoPE {
+		// Unfused path: separate Q/K norm + transpose + RoPE.
+		// Q: (batch, seq_len, num_query_heads, head_dim)
+		qReshaped, reshapeErr := gqa.engine.Reshape(ctx, qProj, []int{batchSize, seqLen, gqa.numQueryHeads, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
 
-	// Set RoPE position offset from cached sequence length so that decode
-	// tokens get the correct absolute position rotation.
-	if hasCache {
-		gqa.rope.SetPositionOffset(cache.SeqLen())
-	} else {
-		gqa.rope.SetPositionOffset(0)
-	}
+		// Apply per-head Q norm if set (Gemma 3).
+		if gqa.qNorm != nil {
+			qReshaped, err = gqa.qNorm.Forward(ctx, qReshaped)
+			if err != nil {
+				return nil, fmt.Errorf("qNorm: %w", err)
+			}
+		}
 
-	qHeadsRoPE, err := gqa.rope.Forward(ctx, qForRoPE)
-	if err != nil {
-		return nil, err
-	}
+		qHeads, reshapeErr := gqa.engine.Transpose(ctx, qReshaped, []int{0, 2, 1, 3})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
 
-	kHeadsRoPE, err := gqa.rope.Forward(ctx, kForRoPE)
-	if err != nil {
-		return nil, err
+		// K: (batch, seq_len, num_kv_heads, head_dim)
+		kReshaped, reshapeErr := gqa.engine.Reshape(ctx, kProj, []int{batchSize, seqLen, gqa.numKeyValueHeads, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
+
+		// Apply per-head K norm if set (Gemma 3).
+		if gqa.kNorm != nil {
+			kReshaped, err = gqa.kNorm.Forward(ctx, kReshaped)
+			if err != nil {
+				return nil, fmt.Errorf("kNorm: %w", err)
+			}
+		}
+
+		kHeads, reshapeErr := gqa.engine.Transpose(ctx, kReshaped, []int{0, 2, 1, 3})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
+
+		// Apply RoPE to Q and K
+		qForRoPE, reshapeErr := gqa.engine.Reshape(ctx, qHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
+
+		kForRoPE, reshapeErr := gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
+
+		// Set RoPE position offset from cached sequence length so that decode
+		// tokens get the correct absolute position rotation.
+		if hasCache {
+			gqa.rope.SetPositionOffset(cache.SeqLen())
+		} else {
+			gqa.rope.SetPositionOffset(0)
+		}
+
+		qHeadsRoPE, err = gqa.rope.Forward(ctx, qForRoPE)
+		if err != nil {
+			return nil, err
+		}
+
+		kHeadsRoPE, err = gqa.rope.Forward(ctx, kForRoPE)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	gqa.qHeadsRoPE = qHeadsRoPE // Cache for backward
