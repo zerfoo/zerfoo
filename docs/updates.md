@@ -238,3 +238,74 @@ megakernel path.
 | Blocker precisely identified | PASS |
 | Performance numbers recorded | PASS |
 | Results appended to docs/updates.md | PASS |
+
+---
+
+# GPU Memory Allocator Optimization Results
+
+Date: 2026-03-12
+
+## Environment
+
+- **Host**: ndungu@192.168.86.250 (DGX Spark, NVIDIA GB10)
+- **Model**: gemma3-gguf (Q4_0 quantized), 64 tokens generated
+- **Device**: cuda (sm_75 PTX JIT on Blackwell)
+- **Ollama Baseline**: 187.2 tok/s (target: 178.7 tok/s = 95%)
+
+## Performance Progression
+
+| Optimization | tok/s | Delta | Commit |
+|---|---|---|---|
+| Starting point (previous session) | 60.59 | -- | -- |
+| Pool-backed GPUStorage | 61.59 | +1.7% | 399baf9 |
+| Transpose-as-reshape | 64.41 | +4.6% | cea6ff4 |
+| TensorPool GPU release | 64.90 | +0.8% | e7e0820 |
+| GPUStorage view fix | 65.88 | +1.5% | 631a29d |
+| Parameter upload fix | 64.34 | -2.3% | f625c88 |
+| MemPool bucket sizing (4KB) | 63.54 | -1.2% | f0278f6 |
+| MemPool bucket sizing (256B) | 63.47 | -0.1% | f8130a9 |
+| GPUStorage refcounting | 61.08 | -3.8% | 276cc72 |
+| Arena allocator (2GB, no reset) | 80.35 | +31.5% | 33b0dee |
+
+## Key Findings
+
+### 1. cudaMalloc Was the #1 Bottleneck (~6ms/token, 39% of per-token budget)
+
+Each forward pass made ~1,500 cudaMalloc calls because:
+- The MemPool was keyed by exact byte size, causing 85% miss rate as attention
+  intermediates grew with kvSeqLen on every pass
+- GPUStorage views (from Reshape/Transpose) had no-op Free(), so memory only
+  returned to the pool via GC finalizers between passes
+- Within-node intermediates (GQA does ~50 allocations internally) were not
+  tracked by the graph executor's refcount system
+
+### 2. Arena Allocator Eliminated All cudaMalloc During Inference
+
+A 2GB pre-allocated bump-pointer arena serves as the GPU memory pool:
+- 119,419 allocations, 0 fallback to MemPool (100% arena hit rate)
+- Each allocation is a pointer bump + 256-byte alignment (~5ns vs ~4us for cudaMalloc)
+- Weight uploads use runtime.Malloc directly (permanent storage, not arena)
+- Arena used 2093.8 MB for 64 tokens + warmup -- tight fit for 2GB
+
+### 3. Pool Bucketing and Refcounting Did Not Help
+
+- Power-of-2 bucket sizing: marginal improvement (85% to 92% hit rate in one
+  config) but didn't address the core issue of within-node intermediates
+- GPUStorage refcounting: added complexity without throughput gain because the
+  graph executor doesn't call Release() on within-node intermediates
+- Arena approach bypasses both problems entirely
+
+## Remaining Gap: 80.35 tok/s vs 178.7 tok/s target (45%)
+
+Per-token budget at 80 tok/s (~12.5ms/token):
+- GPU compute (Q4 GEMV + cuBLAS): ~3.6ms (29%)
+- D2H memory copies: ~1.9ms (15%)
+- H2D memory copies: ~1.5ms (12%)
+- Kernel launch overhead: ~1.6ms (13%)
+- Other (CPU, Go runtime, scheduling): ~3.9ms (31%)
+
+Next targets:
+1. Eliminate unnecessary D2H copies (~13 per forward pass)
+2. Eliminate unnecessary H2D copies (~143 per forward pass)
+3. Reduce kernel launch overhead (batch or fuse operations)
+4. Investigate Go runtime overhead vs C/C++ baseline
