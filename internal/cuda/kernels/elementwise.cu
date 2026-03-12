@@ -257,6 +257,16 @@ static inline void grid_config(int n, int* grid, int* block) {
     *grid = (n + *block - 1) / *block;
 }
 
+// bits_to_float reinterprets a uint32 bit pattern as float32.
+// Used because the purego/ccall calling convention passes all arguments
+// through integer registers. Float parameters sent as IEEE 754 bits
+// must be reinterpreted before use.
+static inline float bits_to_float(unsigned int bits) {
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
 extern "C" {
 
 cudaError_t launch_add_broadcast(const float* a, const float* b, float* c,
@@ -333,31 +343,39 @@ cudaError_t launch_pow(const float* base, const float* exp, float* c, int n, cud
     return cudaGetLastError();
 }
 
-cudaError_t launch_add_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+// Scalar launchers accept float as uint32 bits (IEEE 754) because the
+// purego ccall convention passes all arguments through integer registers.
+
+cudaError_t launch_add_scalar(const float* a, unsigned int scalar_bits, float* c, int n, cudaStream_t stream) {
+    float scalar = bits_to_float(scalar_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_add_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_mul_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+cudaError_t launch_mul_scalar(const float* a, unsigned int scalar_bits, float* c, int n, cudaStream_t stream) {
+    float scalar = bits_to_float(scalar_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_mul_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_div_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+cudaError_t launch_div_scalar(const float* a, unsigned int scalar_bits, float* c, int n, cudaStream_t stream) {
+    float scalar = bits_to_float(scalar_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_div_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_sub_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+cudaError_t launch_sub_scalar(const float* a, unsigned int scalar_bits, float* c, int n, cudaStream_t stream) {
+    float scalar = bits_to_float(scalar_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_sub_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
 }
 
-cudaError_t launch_pow_scalar(const float* a, float scalar, float* c, int n, cudaStream_t stream) {
+cudaError_t launch_pow_scalar(const float* a, unsigned int scalar_bits, float* c, int n, cudaStream_t stream) {
+    float scalar = bits_to_float(scalar_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_pow_scalar<<<grid, block, 0, stream>>>(a, scalar, c, n);
     return cudaGetLastError();
@@ -399,7 +417,8 @@ cudaError_t launch_tanh_prime(const float* a, const float* upstream, float* c, i
     return cudaGetLastError();
 }
 
-cudaError_t launch_fill(float* data, float value, int n, cudaStream_t stream) {
+cudaError_t launch_fill(float* data, unsigned int value_bits, int n, cudaStream_t stream) {
+    float value = bits_to_float(value_bits);
     int grid, block; grid_config(n, &grid, &block);
     kernel_fill<<<grid, block, 0, stream>>>(data, value, n);
     return cudaGetLastError();
