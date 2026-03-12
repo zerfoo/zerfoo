@@ -292,3 +292,11 @@ func (p *EngineProxy[T]) Sum(ctx context.Context, a *tensor.TensorNumeric[T], ax
 	}
 	return result, err
 }
+
+// FusedRMSNormGPU delegates to the underlying engine if it implements FusedRMSNormer.
+func (p *EngineProxy[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (*tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], error) {
+	if fused, ok := p.real.(FusedRMSNormer); ok {
+		return fused.FusedRMSNormGPU(input, weight, epsilon)
+	}
+	return FusedRMSNorm(input, weight, epsilon)
+}
