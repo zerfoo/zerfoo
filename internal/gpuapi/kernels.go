@@ -70,4 +70,9 @@ type KernelRunner interface {
 	// outerSize = product of dims before axis, axisDim = size of axis,
 	// innerSize = product of dims after axis, reps = number of repetitions.
 	Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, stream Stream) error
+
+	// Argmax finds the index of the maximum element in a float32 array on device.
+	// input: [n] float32, result: single int32 on device, scratch: temp storage.
+	// scratch must be at least 2*ceil(n/256)*4 bytes.
+	Argmax(input, result, scratch unsafe.Pointer, n int, stream Stream) error
 }
