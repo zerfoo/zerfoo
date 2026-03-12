@@ -155,6 +155,48 @@ func (q *Q4Storage) RawBytes() []byte {
 	return out
 }
 
+// RawBytesGPU serializes Q4_0 blocks in a GPU-optimized separated layout.
+// The layout is global (not per-row), so it works regardless of how the
+// weight matrix is logically viewed (before or after virtual transpose):
+//
+//	[all_scales: N * 2 bytes] [padding to 16-byte align] [all_data: N * 16 bytes]
+//
+// The kernel indexes by block_idx = row * blocks_per_row + bi, which is
+// the same linear block index regardless of the row definition.
+//
+// blocksPerRow is unused but kept for API compatibility.
+func (q *Q4Storage) RawBytesGPU(blocksPerRow int) []byte {
+	totalBlocks := len(q.blocks)
+	scaleBytes := totalBlocks * 2
+	// Pad scales to 16-byte boundary for aligned uint4 loads on data.
+	paddedScaleBytes := (scaleBytes + 15) &^ 15
+	dataBytes := totalBlocks * 16
+	totalSize := paddedScaleBytes + dataBytes
+
+	out := make([]byte, totalSize)
+
+	// Write all scales contiguously.
+	for i, blk := range q.blocks {
+		binary.LittleEndian.PutUint16(out[i*2:i*2+2], blk.scale.Bits())
+	}
+	// Write all packed data contiguously after the padded scale region.
+	for i, blk := range q.blocks {
+		copy(out[paddedScaleBytes+i*16:paddedScaleBytes+i*16+16], blk.data[:])
+	}
+	return out
+}
+
+// Q4GPUScaleOffset returns the byte offset from the start of RawBytesGPU
+// output where the scale region begins (always 0).
+func Q4GPUScaleOffset() int { return 0 }
+
+// Q4GPUDataOffset returns the byte offset from the start of RawBytesGPU
+// output where the packed data region begins, given the total number of blocks.
+func Q4GPUDataOffset(totalBlocks int) int {
+	scaleBytes := totalBlocks * 2
+	return (scaleBytes + 15) &^ 15
+}
+
 // SetGPUPtr stores a pre-uploaded GPU device pointer for the raw bytes.
 // byteSize must match len(RawBytes()). The caller retains ownership of the pointer.
 func (q *Q4Storage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
