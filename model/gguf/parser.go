@@ -10,7 +10,7 @@ import (
 )
 
 // Magic is the GGUF file magic number ("GGUF" in little-endian).
-const Magic uint32 = 0x46475547 // "GGUF"
+const Magic uint32 = 0x46554747 // "GGUF" in little-endian
 
 // GGUF metadata value types.
 const (
