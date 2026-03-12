@@ -130,10 +130,16 @@ func run() error {
 	fmt.Printf("Throughput: %.2f tok/s\n", tps)
 
 	// Print GPU memory pool stats if available.
+	if arena := cuda.DefaultArenaPool(); arena != nil {
+		hits, misses, resets := arena.HitMissStats()
+		used := arena.UsedBytes()
+		fmt.Printf("\nGPU Arena: hits=%d misses=%d resets=%d used=%.1f MB\n",
+			hits, misses, resets, float64(used)/1e6)
+	}
 	if pool := cuda.DefaultMemPool(); pool != nil {
 		hits, misses, frees := pool.HitMissStats()
 		allocs, cachedBytes := pool.Stats()
-		fmt.Printf("\nGPU MemPool: hits=%d misses=%d frees=%d cached=%d (%.1f MB)\n",
+		fmt.Printf("GPU MemPool (fallback): hits=%d misses=%d frees=%d cached=%d (%.1f MB)\n",
 			hits, misses, frees, allocs, float64(cachedBytes)/1e6)
 	}
 	return nil
