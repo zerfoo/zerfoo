@@ -58,34 +58,58 @@ func buildTransformerGraph(
 		return &graph.Parameter[float32]{Name: name, Value: t}
 	}
 
+	_, isGPUEngine := engine.(compute.WeightUploader)
+
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		s := t.GetStorage()
-		// Q4 storage: virtual transpose (shape swap only). Both CPU
-		// (GemmF32Q4NT) and GPU (matMulQ4BWeight) read Q4 blocks in the
-		// original [outDim, inDim] layout with implicit transpose.
+		// GPU path: dequantize quantized weights to F32 and do a real
+		// transpose so cuBLAS SGEMM can read correctly laid-out data.
+		if isGPUEngine {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				switch qs := any(s).(type) {
+				case *tensor.Q4Storage:
+					f32 := make([]float32, qs.Len())
+					qs.Dequantize(f32)
+					rows, cols := shape[0], shape[1]
+					transposed := make([]float32, len(f32))
+					for r := range rows {
+						for c := range cols {
+							transposed[c*rows+r] = f32[r*cols+c]
+						}
+					}
+					return tensor.New([]int{cols, rows}, transposed)
+				case *tensor.Q8Storage:
+					f32 := make([]float32, qs.Len())
+					qs.Dequantize(f32)
+					rows, cols := shape[0], shape[1]
+					transposed := make([]float32, len(f32))
+					for r := range rows {
+						for c := range cols {
+							transposed[c*rows+r] = f32[r*cols+c]
+						}
+					}
+					return tensor.New([]int{cols, rows}, transposed)
+				}
+			}
+			tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
+			if err != nil {
+				return nil, fmt.Errorf("transpose %s: %w", name, err)
+			}
+			return tr, nil
+		}
+
+		// CPU path: virtual transpose for quantized storage.
 		if _, ok := any(s).(*tensor.Q4Storage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
 				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
 			}
 		}
-		// Q8 storage: dequantize to F32 and do a real data transpose.
-		// Virtual transpose would break UploadWeights which dequantizes
-		// Q8->F32 but preserves data layout, creating a shape/data mismatch.
-		if qs, ok := any(s).(*tensor.Q8Storage); ok {
+		if _, ok := any(s).(*tensor.Q8Storage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
-				f32 := make([]float32, qs.Len())
-				qs.Dequantize(f32)
-				f32Tensor, tErr := tensor.New(shape, f32)
-				if tErr != nil {
-					return nil, fmt.Errorf("dequantize Q8 %s: %w", name, tErr)
-				}
-				tr, tErr := engine.Transpose(context.Background(), f32Tensor, []int{1, 0})
-				if tErr != nil {
-					return nil, fmt.Errorf("transpose %s: %w", name, tErr)
-				}
-				return tr, nil
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
 			}
 		}
 		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
