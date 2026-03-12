@@ -147,7 +147,12 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	return tensor.NewWithStorage[float32](shape, q4k)
+	// Re-quantize Q4_K to Q4_0 for fast NEON GEMV. Q4_K uses 256-element
+	// super-blocks that are not supported by the NEON dot product kernel.
+	f32 := make([]float32, numElements)
+	q4k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -155,7 +160,11 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	return tensor.NewWithStorage[float32](shape, q5k)
+	// Re-quantize Q5_K to Q4_0 for fast NEON GEMV.
+	f32 := make([]float32, numElements)
+	q5k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -163,7 +172,11 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	return tensor.NewWithStorage[float32](shape, q6k)
+	// Re-quantize Q6_K to Q4_0 for fast NEON GEMV.
+	f32 := make([]float32, numElements)
+	q6k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
