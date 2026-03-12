@@ -23,6 +23,9 @@ func TestEmitterRegistered(t *testing.T) {
 		{"Slice", 1}, {"Repeat", 1},
 		{"MatMul", 2}, {"MatMulNBits", 2},
 		{"Gather", 2}, {"Concat", 1}, {"Reshape", 1}, {"Transpose", 1},
+		{"Cos", 1}, {"Sin", 1}, {"Range", 0},
+		{"Trilu", 1}, {"Where", 3}, {"Greater", 2}, {"Equal", 2},
+		{"ConstantOfShape", 0}, {"Expand", 1},
 		{"KVCacheAppendK", 2}, {"KVCacheAppendV", 2},
 		{"KVCacheGetK", 1}, {"KVCacheGetV", 1},
 		{"KVCacheSeqLen", 0},
@@ -73,6 +76,15 @@ func TestEmitterOutputFormat(t *testing.T) {
 		{"Repeat", 1, "dev_repeat"},
 		{"MatMul", 2, "dev_gemv"},
 		{"Gather", 2, "dev_gather"},
+		{"Cos", 1, "cosf"},
+		{"Sin", 1, "sinf"},
+		{"Range", 0, "start_"},
+		{"Trilu", 1, "upper_"},
+		{"Where", 3, "!= 0.0f"},
+		{"Greater", 2, "> slot_"},
+		{"Equal", 2, "== slot_"},
+		{"ConstantOfShape", 0, "const_val_"},
+		{"Expand", 1, "tid %"},
 		{"KVCacheAppendK", 2, "dev_kv_append"},
 		{"KVCacheAppendV", 2, "dev_kv_append"},
 		{"KVCacheGetK", 1, "kv_k["},
@@ -212,5 +224,62 @@ func TestKVCacheGetInsufficientInputs(t *testing.T) {
 	_, err := Emit(meta, nil)
 	if err == nil {
 		t.Fatal("expected error for insufficient inputs")
+	}
+}
+
+func TestWhereInsufficientInputs(t *testing.T) {
+	meta := graph.InstructionMeta{
+		OpName:    "Where",
+		InputIdx:  []int{0, 1}, // only 2 inputs, need 3
+		OutputIdx: 3,
+	}
+	_, err := Emit(meta, nil)
+	if err == nil {
+		t.Fatal("expected error for insufficient inputs")
+	}
+}
+
+func TestRopeAndAttentionEmitters(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       string
+		inputs   int
+		wantSubs []string
+	}{
+		{"cos", "Cos", 1, []string{"cosf(slot_"}},
+		{"sin", "Sin", 1, []string{"sinf(slot_"}},
+		{"range", "Range", 0, []string{"for (int i", "start_", "delta_"}},
+		{"trilu", "Trilu", 1, []string{"upper_", "r = tid /", "c = tid %"}},
+		{"where", "Where", 3, []string{"!= 0.0f", "slot_1[tid]", "slot_2[tid]"}},
+		{"greater", "Greater", 2, []string{"> slot_", "1.0f", "0.0f"}},
+		{"equal", "Equal", 2, []string{"== slot_", "1.0f", "0.0f"}},
+		{"constant_of_shape", "ConstantOfShape", 0, []string{"const_val_10"}},
+		{"expand", "Expand", 1, []string{"tid %", "slot_0[tid"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inputIdx := make([]int, tc.inputs)
+			for i := range inputIdx {
+				inputIdx[i] = i
+			}
+			meta := graph.InstructionMeta{
+				OpName:    tc.op,
+				InputIdx:  inputIdx,
+				OutputIdx: 10,
+			}
+			slots := make([]SlotInfo, tc.inputs)
+			for i := range slots {
+				slots[i] = SlotInfo{Shape: []int{4, 8}}
+			}
+			code, err := Emit(meta, slots)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			for _, sub := range tc.wantSubs {
+				if !strings.Contains(code, sub) {
+					t.Errorf("want %q in %q", sub, code)
+				}
+			}
+		})
 	}
 }

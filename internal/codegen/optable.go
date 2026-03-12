@@ -65,6 +65,19 @@ var emitters = map[string]OpEmitter{
 	"Reshape":   reshapeOp, // no-op in flat memory
 	"Transpose": transposeOp,
 
+	// RoPE ops
+	"Cos":   unaryOp("cosf"),
+	"Sin":   unaryOp("sinf"),
+	"Range": rangeOp,
+
+	// Attention masking ops
+	"Trilu":           triluOp,
+	"Where":           whereOp,
+	"Greater":         comparisonOp(">"),
+	"Equal":           comparisonOp("=="),
+	"ConstantOfShape": constantOfShapeOp,
+	"Expand":          expandOp,
+
 	// KV cache ops
 	"KVCacheAppendK": kvCacheAppendOp("kv_k"),
 	"KVCacheAppendV": kvCacheAppendOp("kv_v"),
@@ -206,6 +219,51 @@ func reduceOp(fn string) OpEmitter {
 		return fmt.Sprintf("  %s(slot_%d, slot_%d, axis_%d, %d);",
 			fn, meta.OutputIdx, meta.InputIdx[0], meta.OutputIdx, dim), nil
 	}
+}
+
+func rangeOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  for (int i = 0; i < dim_%d; i++) { slot_%d[i] = start_%d + i * delta_%d; }",
+		meta.OutputIdx, meta.OutputIdx, meta.OutputIdx, meta.OutputIdx), nil
+}
+
+func triluOp(meta graph.InstructionMeta, inputs []SlotInfo) (string, error) {
+	cols := 1
+	if len(inputs) > 0 && len(inputs[0].Shape) > 0 {
+		cols = inputs[0].Shape[len(inputs[0].Shape)-1]
+	}
+	return fmt.Sprintf("  { int r = tid / %d; int c = tid %% %d; slot_%d[tid] = (upper_%d ? (c >= r ? slot_%d[tid] : 0.0f) : (c <= r ? slot_%d[tid] : 0.0f)); }",
+		cols, cols, meta.OutputIdx, meta.OutputIdx, meta.InputIdx[0], meta.InputIdx[0]), nil
+}
+
+func whereOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	if len(meta.InputIdx) < 3 {
+		return "", fmt.Errorf("Where requires 3 inputs (condition, a, b)")
+	}
+	return fmt.Sprintf("  slot_%d[tid] = (slot_%d[tid] != 0.0f) ? slot_%d[tid] : slot_%d[tid];",
+		meta.OutputIdx, meta.InputIdx[0], meta.InputIdx[1], meta.InputIdx[2]), nil
+}
+
+func comparisonOp(op string) OpEmitter {
+	return func(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+		return fmt.Sprintf("  slot_%d[tid] = (slot_%d[tid] %s slot_%d[tid]) ? 1.0f : 0.0f;",
+			meta.OutputIdx, meta.InputIdx[0], op, meta.InputIdx[1]), nil
+	}
+}
+
+func constantOfShapeOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  slot_%d[tid] = const_val_%d;",
+		meta.OutputIdx, meta.OutputIdx), nil
+}
+
+func expandOp(meta graph.InstructionMeta, inputs []SlotInfo) (string, error) {
+	srcSize := 1
+	if len(inputs) > 0 && len(inputs[0].Shape) > 0 {
+		for _, d := range inputs[0].Shape {
+			srcSize *= d
+		}
+	}
+	return fmt.Sprintf("  slot_%d[tid] = slot_%d[tid %% %d];",
+		meta.OutputIdx, meta.InputIdx[0], srcSize), nil
 }
 
 // kvCacheAppendOp emits a dev_kv_append call that writes new K or V data
