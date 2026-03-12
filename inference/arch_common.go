@@ -59,6 +59,22 @@ func buildTransformerGraph(
 	}
 
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+		// For quantized storage (Q4/Q8), swap shape metadata without moving
+		// data. GemmF32Q4NT reads blocks in the original [outDim, inDim] layout
+		// and computes the implicit transpose, avoiding a full dequantize+transpose.
+		s := t.GetStorage()
+		if _, ok := any(s).(*tensor.Q4Storage); ok {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+			}
+		}
+		if _, ok := any(s).(*tensor.Q8Storage); ok {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+			}
+		}
 		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
 		if err != nil {
 			return nil, fmt.Errorf("transpose %s: %w", name, err)
