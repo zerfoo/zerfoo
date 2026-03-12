@@ -1706,3 +1706,50 @@ Use `aarch64-linux-gnu-objdump -d` on a test .o to verify encodings.
 - Pre-existing amd64 asm `vdotf32` missing Go declaration in
   `internal/xblas/gemm_simd_amd64.go`. golangci-lint rejects adding it because
   the function is unused on amd64. Not in Track D scope.
+
+---
+
+## ADR-025 Implementation Complete (2026-03-12)
+
+Runtime GPU detection via purego dlopen fully implemented. Key outcomes:
+
+### Build Tags Removed
+- internal/codegen/: runner.go and runner_stub.go merged (commit a64d831)
+- internal/cuda/kernels/: 5 CGo kernel files deleted, purego wrappers are sole
+  implementation (commit d9375fb). flash_attention.go remains behind cuda&&cutlass.
+- compute/: gpu_engine.go, gpu_kernels.go, gpu_cudnn.go, gpu_fused_rmsnorm.go
+  all use cuda.Available() runtime guard (commits eb7e77e, cd31b73)
+- inference/: engine_cuda.go and engine_nocuda.go unified into engine.go with
+  cuda.Available() (commit 3bbea76). TensorRT files unchanged (behind cuda tag).
+- tensor/: gpu_storage.go, gpu_storage_default_cuda.go, transfer.go use
+  cuda.Available() (commit 44c68ba)
+
+### BLAS/DNN Factory Pattern
+- gpuapi/factory.go: Registration pattern for BLAS and DNN implementations.
+- cuda_blas.go and cuda_dnn.go register via init() (stay behind cuda tag).
+- GPUEngine handles nil BLAS/DNN gracefully. MatMul falls back to CPU when BLAS nil.
+
+### 16 Op Emitters Added to codegen.CheckSupport
+AutoPositionIds, AutoZeroKVCache, Shape, Unsqueeze, Cast, Equal, Where,
+ConstantOfShape, Expand, Range, Cos, Sin, Greater, Trilu, Max, ScatterND.
+Commits: 4bc6e9a, 51ea41d.
+
+### Kernel Fixes
+- PowScalar SIGSEGV: AAPCS64 float-in-integer-register mismatch. Changed C
+  launcher signatures from float to unsigned int, reinterpret via memcpy
+  (commits d787888, e20604c).
+- gatherOp panic: non-traced Compile gives Gather only 1 InputIdx. Added bounds
+  check, megakernel falls back to per-op (commit 22d269b).
+
+### Verification Results
+- go build ./... passes without -tags cuda on macOS and DGX Spark (linux/arm64).
+- bench_tps: 10 tokens at 0.44 tok/s on DGX Spark (megakernel falls back to per-op).
+- CPU plan.Run(): 5.71 tok/s. CUDA plan.Run(): 2.22 tok/s.
+- Both produce degenerate output (pre-existing inference correctness issue).
+
+### Known Issues Post ADR-025
+- Megakernel Gather emission fails for non-traced Compile path (falls back correctly).
+- CUDA per-op path slower than CPU (2.22 vs 5.71 tok/s).
+- Degenerate output from both CPU and CUDA (pre-existing correctness bug).
+- internal/cublas/ and internal/cudnn/ remain behind //go:build cuda (CGo).
+- Pre-existing purego ccall SIGSEGV on linux/arm64 for packages calling real CUDA APIs.
