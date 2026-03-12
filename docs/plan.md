@@ -162,21 +162,24 @@ ConstantOfShape, Expand, Range, Cos, Sin, Greater, Trilu, Max, ScatterND.
     ccall issues on linux/arm64, tracked separately.
   - Dependencies: T107.2.
 
-### E108: Megakernel End-to-End Verification (replaces T100.3)
+### E108: Megakernel End-to-End Verification (replaces T100.3) -- BLOCKED
+
+E108 is blocked by a pre-existing kernel argument mismatch bug. The PowScalar
+kernel crashes with SIGSEGV (addr=0x1680) both with and without -tags cuda,
+confirming this is NOT a purego ccall issue but a kernel invocation bug where
+the element count is being treated as a pointer by the .cu kernel code. This
+affects the per-op GPU path (non-megakernel), not our build tag changes.
 
 - [ ] T108.1 Run bench_tps on DGX Spark without -tags cuda  Owner: TBD  Est: 30m
-  - Build without -tags cuda: go build ./cmd/bench_tps/
-  - Run with -device cuda flag.
-  - Verify "megakernel: compiled and loaded" log appears.
-  - Record tok/s.
-  - Acceptance: Megakernel fires. Performance recorded.
+  - BLOCKED: PowScalar kernel SIGSEGV on DGX Spark (pre-existing).
+  - Build without -tags cuda: go build ./cmd/bench_tps/ -- PASSES.
+  - Build with -tags cuda: go build -tags cuda ./cmd/bench_tps/ -- PASSES.
+  - Updated Makefile to build libkernels.so (commit f9c9b74).
+  - libkernels.so built on DGX Spark with sm_121.
+  - Run crashes in PowScalar kernel (same crash with or without -tags cuda).
   - Dependencies: E106, E107.
 
 - [ ] T108.2 Compare megakernel vs plan.Run() output  Owner: TBD  Est: 1h
-  - Generate 50 tokens with megakernel enabled.
-  - Generate 50 tokens with megakernel disabled.
-  - Compare token-by-token.
-  - Acceptance: Outputs match or differences documented with explanation.
   - Dependencies: T108.1.
 
 - [ ] T108.3 Run golangci-lint on all modified packages  Owner: TBD  Est: 15m
@@ -248,6 +251,16 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-11 (Wave 8)
+
+Wave 8: Sequential, E108 attempted:
+- T108.1: bench_tps builds without -tags cuda -- PASSES. libkernels.so built
+  on DGX Spark (sm_121). Run crashes in PowScalar kernel (SIGSEGV addr=0x1680).
+  Same crash occurs with -tags cuda, confirming pre-existing kernel argument
+  mismatch bug, not related to build tag removal.
+- Added shared library target to kernels Makefile (commit f9c9b74).
+- E108 BLOCKED on pre-existing kernel bug. Not our change.
 
 ### Change Summary -- 2026-03-11 (Wave 7)
 
