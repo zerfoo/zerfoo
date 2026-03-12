@@ -63,25 +63,27 @@ func QuantizeQ4(src []float32) *Q4Storage {
 		blocks[bi].scale = float16.FromFloat32(scale)
 
 		// Quantize values to 4-bit signed integers and pack.
+		// Low nibble stores the first half (positions 0-15), high nibble stores
+		// the second half (positions 16-31), matching the GGML Q4_0 format.
 		var invScale float32
 		if scale > 0 {
 			invScale = 1.0 / scale
 		}
-		for j := 0; j < q4BlockSize; j += 2 {
+		const halfBlock = q4BlockSize / 2
+		for j := range halfBlock {
 			var v0, v1 float32
 			if offset+j < n {
 				v0 = src[offset+j]
 			}
-			if offset+j+1 < n {
-				v1 = src[offset+j+1]
+			if offset+j+halfBlock < n {
+				v1 = src[offset+j+halfBlock]
 			}
 
 			q0 := clampInt(int(math.Round(float64(v0*invScale))), -8, 7)
 			q1 := clampInt(int(math.Round(float64(v1*invScale))), -8, 7)
 
-			// Pack two 4-bit signed values into one byte.
-			// Low nibble = q0+8, high nibble = q1+8 (unsigned offset).
-			blocks[bi].data[j/2] = byte(q0+8) | (byte(q1+8) << 4)
+			// Pack: low nibble = first half element, high nibble = second half element.
+			blocks[bi].data[j] = byte(q0+8) | (byte(q1+8) << 4)
 		}
 	}
 
@@ -89,19 +91,22 @@ func QuantizeQ4(src []float32) *Q4Storage {
 }
 
 // Dequantize unpacks Q4_0 blocks into dst. len(dst) must be >= q.Len().
+// Low nibbles map to the first half (positions 0-15) and high nibbles map to
+// the second half (positions 16-31), matching llama.cpp's dequantize_row_q4_0.
 func (q *Q4Storage) Dequantize(dst []float32) {
+	const halfBlock = q4BlockSize / 2
 	for bi, blk := range q.blocks {
 		scale := blk.scale.ToFloat32()
 		offset := bi * q4BlockSize
-		for j := 0; j < q4BlockSize; j += 2 {
-			packed := blk.data[j/2]
+		for j := range halfBlock {
+			packed := blk.data[j]
 			q0 := int(packed&0x0F) - 8
 			q1 := int(packed>>4) - 8
 
 			if idx := offset + j; idx < q.len {
 				dst[idx] = float32(q0) * scale
 			}
-			if idx := offset + j + 1; idx < q.len {
+			if idx := offset + j + halfBlock; idx < q.len {
 				dst[idx] = float32(q1) * scale
 			}
 		}

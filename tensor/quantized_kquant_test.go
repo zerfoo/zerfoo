@@ -105,22 +105,34 @@ func buildQ4KBlock(values []float32) []byte {
 	raw[15] = (minsQ[4]>>4)&3 | ((minsQ[5]>>4)&3)<<2 | ((minsQ[6]>>4)&3)<<4 | ((minsQ[7]>>4)&3)<<6
 
 	// Bytes 16-143: 256 packed 4-bit quantized values (128 bytes).
-	// Quantize each value using its sub-block's reconstructed scale and min.
-	for sb := range numSubBlocks {
-		off := sb * subBlockSize
-		sc := d * float32(scalesQ[sb])
-		mn := dmin * float32(minsQ[sb])
-		var invScale float32
-		if sc > 0 {
-			invScale = 1.0 / sc
+	// Pack in llama.cpp split format: each 32 bytes covers 64 elements.
+	// Low nibble of byte l stores element at position group*64+l (first half).
+	// High nibble of byte l stores element at position group*64+l+32 (second half).
+	for group := range 4 {
+		sb0 := group * 2
+		sb1 := group*2 + 1
+
+		sc0 := d * float32(scalesQ[sb0])
+		mn0 := dmin * float32(minsQ[sb0])
+		sc1 := d * float32(scalesQ[sb1])
+		mn1 := dmin * float32(minsQ[sb1])
+
+		var invScale0, invScale1 float32
+		if sc0 > 0 {
+			invScale0 = 1.0 / sc0
 		}
-		for j := 0; j < subBlockSize; j += 2 {
-			v0 := values[off+j]
-			v1 := values[off+j+1]
-			q0 := clampInt(int(math.Round(float64((v0+mn)*invScale))), 0, 15)
-			q1 := clampInt(int(math.Round(float64((v1+mn)*invScale))), 0, 15)
-			byteIdx := (off + j) / 2
-			raw[16+byteIdx] = byte(q0) | (byte(q1) << 4)
+		if sc1 > 0 {
+			invScale1 = 1.0 / sc1
+		}
+
+		baseOut := group * 64
+		baseQ := group * 32
+		for l := range 32 {
+			v0 := values[baseOut+l]
+			v1 := values[baseOut+l+32]
+			q0 := clampInt(int(math.Round(float64((v0+mn0)*invScale0))), 0, 15)
+			q1 := clampInt(int(math.Round(float64((v1+mn1)*invScale1))), 0, 15)
+			raw[16+baseQ+l] = byte(q0) | (byte(q1) << 4)
 		}
 	}
 
@@ -246,27 +258,40 @@ func buildQ6KBlock(values []float32) []byte {
 		subScales[sb] = int8(math.Round(float64(sc)))
 	}
 
-	// Quantize each value to 6-bit signed: -32..31
-	for i := range 256 {
-		sb := i / 16
+	// Quantize values to 6-bit signed: -32..31
+	// Pack in llama.cpp split format. Two 128-element halves.
+	// For each half: 64 ql bytes + 32 qh bytes.
+	//   ql[l] low nibble + qh[l] bits 0-1 -> position l
+	//   ql[32+l] low nibble + qh[l] bits 2-3 -> position 32+l
+	//   ql[l] high nibble + qh[l] bits 4-5 -> position 64+l
+	//   ql[32+l] high nibble + qh[l] bits 6-7 -> position 96+l
+	quantize6 := func(pos int) int {
+		sb := pos / 16
 		sc := d * float32(subScales[sb])
-		var q int
 		if sc > 0 {
-			q = clampInt(int(math.Round(float64(values[i]/sc)))+32, 0, 63)
-		} else {
-			q = 32
+			return clampInt(int(math.Round(float64(values[pos]/sc)))+32, 0, 63)
 		}
-		// Store low 4 bits in ql.
-		q4 := byte(q & 0xF)
-		if i%2 == 0 {
-			raw[i/2] = (raw[i/2] & 0xF0) | q4
-		} else {
-			raw[i/2] = (raw[i/2] & 0x0F) | (q4 << 4)
+		return 32
+	}
+	for half := range 2 {
+		qlOff := half * 64
+		qhOff := half * 32
+		outOff := half * 128
+
+		for l := range 32 {
+			q1 := quantize6(outOff + l)
+			q2 := quantize6(outOff + 32 + l)
+			q3 := quantize6(outOff + 64 + l)
+			q4 := quantize6(outOff + 96 + l)
+
+			// ql: low nibbles of q1 and q3 share byte qlOff+l
+			raw[qlOff+l] = byte(q1&0xF) | byte((q3&0xF)<<4)
+			// ql: low nibbles of q2 and q4 share byte qlOff+32+l
+			raw[qlOff+32+l] = byte(q2&0xF) | byte((q4&0xF)<<4)
+
+			// qh: high 2 bits of q1,q2,q3,q4 packed into qh[l]
+			raw[128+qhOff+l] = byte((q1>>4)&3) | byte(((q2>>4)&3)<<2) | byte(((q3>>4)&3)<<4) | byte(((q4>>4)&3)<<6)
 		}
-		// Store high 2 bits in qh.
-		q2 := byte((q >> 4) & 3)
-		shift := uint(i%4) * 2
-		raw[128+i/4] |= q2 << shift
 	}
 
 	// Write int8 scales.
@@ -408,33 +433,43 @@ func buildQ5KBlock(values []float32) []byte {
 	raw[14] = (minsQ[0]>>4)&3 | ((minsQ[1]>>4)&3)<<2 | ((minsQ[2]>>4)&3)<<4 | ((minsQ[3]>>4)&3)<<6
 	raw[15] = (minsQ[4]>>4)&3 | ((minsQ[5]>>4)&3)<<2 | ((minsQ[6]>>4)&3)<<4 | ((minsQ[7]>>4)&3)<<6
 
-	// Quantize to 5-bit.
-	for sb := range numSubBlocks {
-		off := sb * subBlockSize
-		sc := d * float32(scalesQ[sb])
-		mn := dmin * float32(minsQ[sb])
-		var invScale float32
-		if sc > 0 {
-			invScale = 1.0 / sc
+	// Quantize to 5-bit in llama.cpp split format.
+	// Each group of 64 elements uses 32 ql bytes + high bits from qh.
+	// Low nibble of ql[l] stores element group*64+l, high nibble stores group*64+l+32.
+	// High bit for first half at qh[l] bit (2*group), second half at qh[l] bit (2*group+1).
+	for group := range 4 {
+		sb0 := group * 2
+		sb1 := group*2 + 1
+		sc0 := d * float32(scalesQ[sb0])
+		mn0 := dmin * float32(minsQ[sb0])
+		sc1 := d * float32(scalesQ[sb1])
+		mn1 := dmin * float32(minsQ[sb1])
+		var invScale0, invScale1 float32
+		if sc0 > 0 {
+			invScale0 = 1.0 / sc0
 		}
-		for j := 0; j < subBlockSize; j += 2 {
-			v0 := values[off+j]
-			v1 := values[off+j+1]
-			q0 := clampInt(int(math.Round(float64((v0+mn)*invScale))), 0, 31)
-			q1 := clampInt(int(math.Round(float64((v1+mn)*invScale))), 0, 31)
+		if sc1 > 0 {
+			invScale1 = 1.0 / sc1
+		}
+
+		baseOut := group * 64
+		baseQ := group * 32
+		for l := range 32 {
+			v0 := values[baseOut+l]
+			v1 := values[baseOut+l+32]
+			q0 := clampInt(int(math.Round(float64((v0+mn0)*invScale0))), 0, 31)
+			q1 := clampInt(int(math.Round(float64((v1+mn1)*invScale1))), 0, 31)
 
 			// Low 4 bits go to ql.
-			byteIdx := (off + j) / 2
-			raw[16+byteIdx] = byte(q0&0xF) | (byte(q1&0xF) << 4)
+			raw[16+baseQ+l] = byte(q0&0xF) | (byte(q1&0xF) << 4)
 
-			// High 1 bit goes to qh.
-			bitIdx0 := off + j
-			bitIdx1 := off + j + 1
+			// High 1 bit goes to qh[l]. Each byte stores bits for all 4 groups:
+			// bit 2*group for first half, bit 2*group+1 for second half.
 			if q0&16 != 0 {
-				raw[144+bitIdx0/8] |= 1 << (uint(bitIdx0) % 8)
+				raw[144+l] |= 1 << uint(2*group)
 			}
 			if q1&16 != 0 {
-				raw[144+bitIdx1/8] |= 1 << (uint(bitIdx1) % 8)
+				raw[144+l] |= 1 << uint(2*group+1)
 			}
 		}
 	}

@@ -23,22 +23,13 @@ const (
 	q4KSubBlockSize    = 32
 )
 
-// DequantizeQ4K dequantizes one Q4_K super-block (144 bytes) into 256 float32 values.
-func DequantizeQ4K(raw []byte, dst []float32) {
-	d := float16.FromBits(binary.LittleEndian.Uint16(raw[0:2])).ToFloat32()
-	dmin := float16.FromBits(binary.LittleEndian.Uint16(raw[2:4])).ToFloat32()
-
-	// Decode 6-bit scales and mins for each sub-block.
-	// Bytes 4-11: low 4 bits of scale and min for each sub-block.
-	// Bytes 12-15: high 2 bits packed.
-	var scales [q4KNumSubBlocks]uint8
-	var mins [q4KNumSubBlocks]uint8
-
+// decodeQ4KScalesMins extracts the 6-bit scales and mins from the 12-byte
+// packed region at raw[4:16] of a Q4_K super-block.
+func decodeQ4KScalesMins(raw []byte) (scales, mins [q4KNumSubBlocks]uint8) {
 	for i := range q4KNumSubBlocks {
 		scales[i] = raw[4+i] & 0xF
 		mins[i] = raw[4+i] >> 4
 	}
-	// Unpack high 2 bits.
 	scales[0] |= (raw[12] & 3) << 4
 	scales[1] |= ((raw[12] >> 2) & 3) << 4
 	scales[2] |= ((raw[12] >> 4) & 3) << 4
@@ -47,7 +38,6 @@ func DequantizeQ4K(raw []byte, dst []float32) {
 	scales[5] |= ((raw[13] >> 2) & 3) << 4
 	scales[6] |= ((raw[13] >> 4) & 3) << 4
 	scales[7] |= ((raw[13] >> 6) & 3) << 4
-
 	mins[0] |= (raw[14] & 3) << 4
 	mins[1] |= ((raw[14] >> 2) & 3) << 4
 	mins[2] |= ((raw[14] >> 4) & 3) << 4
@@ -56,21 +46,35 @@ func DequantizeQ4K(raw []byte, dst []float32) {
 	mins[5] |= ((raw[15] >> 2) & 3) << 4
 	mins[6] |= ((raw[15] >> 4) & 3) << 4
 	mins[7] |= ((raw[15] >> 6) & 3) << 4
+	return
+}
 
-	// Dequantize 256 values.
+// DequantizeQ4K dequantizes one Q4_K super-block (144 bytes) into 256 float32 values.
+// Each 32 bytes of quantized data produces 64 output values: low nibbles map to
+// the first 32 positions and high nibbles map to the next 32 positions.
+// This matches llama.cpp's dequantize_row_q4_K.
+func DequantizeQ4K(raw []byte, dst []float32) {
+	d := float16.FromBits(binary.LittleEndian.Uint16(raw[0:2])).ToFloat32()
+	dmin := float16.FromBits(binary.LittleEndian.Uint16(raw[2:4])).ToFloat32()
+
+	scales, mins := decodeQ4KScalesMins(raw)
+
 	qdata := raw[16:] // 128 bytes of packed 4-bit values
-	for sb := range q4KNumSubBlocks {
-		sc := d * float32(scales[sb])
-		mn := dmin * float32(mins[sb])
-		off := sb * q4KSubBlockSize
+	// Process 4 groups of 64 elements (2 sub-blocks each).
+	for group := range 4 {
+		sb0 := group * 2
+		sb1 := group*2 + 1
+		sc0 := d * float32(scales[sb0])
+		mn0 := dmin * float32(mins[sb0])
+		sc1 := d * float32(scales[sb1])
+		mn1 := dmin * float32(mins[sb1])
 
-		for j := 0; j < q4KSubBlockSize; j += 2 {
-			byteIdx := (off + j) / 2
-			packed := qdata[byteIdx]
-			q0 := packed & 0xF
-			q1 := packed >> 4
-			dst[off+j] = sc*float32(q0) - mn
-			dst[off+j+1] = sc*float32(q1) - mn
+		baseOut := group * 64
+		baseQ := group * 32
+		for l := range 32 {
+			q := qdata[baseQ+l]
+			dst[baseOut+l] = sc0*float32(q&0xF) - mn0
+			dst[baseOut+l+32] = sc1*float32(q>>4) - mn1
 		}
 	}
 }
@@ -134,33 +138,36 @@ const (
 )
 
 // DequantizeQ6K dequantizes one Q6_K super-block (210 bytes) into 256 float32 values.
+// Each 128-element half uses 64 ql bytes + 32 qh bytes to produce 4 groups of 32:
+//   low nibbles of ql[0:32]  + qh bits 0-1 -> positions 0-31
+//   low nibbles of ql[32:64] + qh bits 2-3 -> positions 32-63
+//   high nibbles of ql[0:32] + qh bits 4-5 -> positions 64-95
+//   high nibbles of ql[32:64]+ qh bits 6-7 -> positions 96-127
+// This matches llama.cpp's dequantize_row_q6_K.
 func DequantizeQ6K(raw []byte, dst []float32) {
 	ql := raw[0:128]   // low 4 bits
 	qh := raw[128:192] // high 2 bits
 	sc := raw[192:208] // int8 scales for 16 sub-blocks
 	d := float16.FromBits(binary.LittleEndian.Uint16(raw[208:210])).ToFloat32()
 
-	for i := range 256 {
-		// Extract 6-bit quantized value.
-		qlByte := ql[i/2]
-		var q4 uint8
-		if i%2 == 0 {
-			q4 = qlByte & 0xF
-		} else {
-			q4 = qlByte >> 4
+	// Process two 128-element halves.
+	for half := range 2 {
+		qlOff := half * 64
+		qhOff := half * 32
+		scOff := half * 8
+		outOff := half * 128
+
+		for l := range 32 {
+			q1 := int8((ql[qlOff+l]&0xF)|((qh[qhOff+l]&3)<<4)) - 32
+			q2 := int8((ql[qlOff+32+l]&0xF)|(((qh[qhOff+l]>>2)&3)<<4)) - 32
+			q3 := int8((ql[qlOff+l]>>4)|(((qh[qhOff+l]>>4)&3)<<4)) - 32
+			q4 := int8((ql[qlOff+32+l]>>4)|(((qh[qhOff+l]>>6)&3)<<4)) - 32
+
+			dst[outOff+l] = d * float32(int8(sc[scOff+0])) * float32(q1)
+			dst[outOff+32+l] = d * float32(int8(sc[scOff+2])) * float32(q2)
+			dst[outOff+64+l] = d * float32(int8(sc[scOff+4])) * float32(q3)
+			dst[outOff+96+l] = d * float32(int8(sc[scOff+6])) * float32(q4)
 		}
-
-		// High 2 bits: qh stores 4 x 2-bit values per byte.
-		qhByte := qh[i/4]
-		shift := uint(i%4) * 2
-		q2 := (qhByte >> shift) & 3
-
-		q6 := int8(q4 | (q2 << 4)) // 6-bit unsigned: 0..63
-		q6 -= 32                     // center to signed: -32..31
-
-		subBlock := i / 16
-		scale := int8(sc[subBlock])
-		dst[i] = d * float32(scale) * float32(q6)
 	}
 }
 
@@ -223,61 +230,50 @@ const (
 )
 
 // DequantizeQ5K dequantizes one Q5_K super-block (176 bytes) into 256 float32 values.
+// Same split ordering as Q4_K, but each element has an extra high bit from qh.
+// For each group of 64 elements (32 bytes of ql):
+//   low nibbles + qh bit (2*group)   -> positions j..j+31
+//   high nibbles + qh bit (2*group+1) -> positions j+32..j+63
+// This matches llama.cpp's dequantize_row_q5_K.
 func DequantizeQ5K(raw []byte, dst []float32) {
 	d := float16.FromBits(binary.LittleEndian.Uint16(raw[0:2])).ToFloat32()
 	dmin := float16.FromBits(binary.LittleEndian.Uint16(raw[2:4])).ToFloat32()
 
-	// Decode 6-bit scales and mins (same layout as Q4_K).
-	var scales [q4KNumSubBlocks]uint8
-	var mins [q4KNumSubBlocks]uint8
-	for i := range q4KNumSubBlocks {
-		scales[i] = raw[4+i] & 0xF
-		mins[i] = raw[4+i] >> 4
-	}
-	scales[0] |= (raw[12] & 3) << 4
-	scales[1] |= ((raw[12] >> 2) & 3) << 4
-	scales[2] |= ((raw[12] >> 4) & 3) << 4
-	scales[3] |= ((raw[12] >> 6) & 3) << 4
-	scales[4] |= (raw[13] & 3) << 4
-	scales[5] |= ((raw[13] >> 2) & 3) << 4
-	scales[6] |= ((raw[13] >> 4) & 3) << 4
-	scales[7] |= ((raw[13] >> 6) & 3) << 4
-	mins[0] |= (raw[14] & 3) << 4
-	mins[1] |= ((raw[14] >> 2) & 3) << 4
-	mins[2] |= ((raw[14] >> 4) & 3) << 4
-	mins[3] |= ((raw[14] >> 6) & 3) << 4
-	mins[4] |= (raw[15] & 3) << 4
-	mins[5] |= ((raw[15] >> 2) & 3) << 4
-	mins[6] |= ((raw[15] >> 4) & 3) << 4
-	mins[7] |= ((raw[15] >> 6) & 3) << 4
+	scales, mins := decodeQ4KScalesMins(raw)
 
-	ql := raw[16:144]   // 128 bytes: low 4 bits
-	qh := raw[144:176]  // 32 bytes: high 1 bit (256 bits)
+	ql := raw[16:144]  // 128 bytes: low 4 bits
+	qh := raw[144:176] // 32 bytes: high 1 bit (256 bits)
 
-	for sb := range q4KNumSubBlocks {
-		sc := d * float32(scales[sb])
-		mn := dmin * float32(mins[sb])
-		off := sb * q4KSubBlockSize
+	// u1 and u2 are bit masks that rotate through qh bits.
+	u1 := uint8(1)
+	u2 := uint8(2)
+	for group := range 4 {
+		sb0 := group * 2
+		sb1 := group*2 + 1
+		sc0 := d * float32(scales[sb0])
+		mn0 := dmin * float32(mins[sb0])
+		sc1 := d * float32(scales[sb1])
+		mn1 := dmin * float32(mins[sb1])
 
-		for j := 0; j < q4KSubBlockSize; j += 2 {
-			byteIdx := (off + j) / 2
-			packed := ql[byteIdx]
-			q0 := uint8(packed & 0xF)
-			q1 := uint8(packed >> 4)
+		baseOut := group * 64
+		baseQ := group * 32
+		for l := range 32 {
+			q := ql[baseQ+l]
+			hb := qh[l]
 
-			// Add high bit from qh.
-			bitIdx0 := off + j
-			bitIdx1 := off + j + 1
-			if qh[bitIdx0/8]&(1<<(uint(bitIdx0)%8)) != 0 {
-				q0 |= 16
+			var h0, h1 uint8
+			if hb&u1 != 0 {
+				h0 = 16
 			}
-			if qh[bitIdx1/8]&(1<<(uint(bitIdx1)%8)) != 0 {
-				q1 |= 16
+			if hb&u2 != 0 {
+				h1 = 16
 			}
 
-			dst[off+j] = sc*float32(q0) - mn
-			dst[off+j+1] = sc*float32(q1) - mn
+			dst[baseOut+l] = sc0*float32((q&0xF)|h0) - mn0
+			dst[baseOut+l+32] = sc1*float32((q>>4)|h1) - mn1
 		}
+		u1 <<= 2
+		u2 <<= 2
 	}
 }
 
