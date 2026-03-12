@@ -15,9 +15,10 @@ import (
 // buffer indices, eliminating dependency map lookups and memo operations.
 type Instruction[T tensor.Numeric] struct {
 	Forward   func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
-	InputIdx  []int  // indices into the slot array
-	OutputIdx int    // index into the slot array
-	OpName    string // for error reporting
+	InputIdx  []int          // indices into the slot array
+	OutputIdx int            // index into the slot array
+	OpName    string         // for error reporting
+	ExtraArgs map[string]any // optional extra arguments (e.g. layer index for KV cache ops)
 }
 
 // ExecutionPlan is a compiled, flat instruction sequence that replaces the
@@ -37,9 +38,10 @@ type ExecutionPlan[T tensor.Numeric] struct {
 // It contains everything needed by a code generator without exposing the
 // Forward() closure.
 type InstructionMeta struct {
-	OpName    string // operation type (e.g. "Add", "MatMulNBits", "RMSNorm")
-	InputIdx  []int  // slot indices for inputs
-	OutputIdx int    // slot index for the output
+	OpName    string         // operation type (e.g. "Add", "MatMulNBits", "RMSNorm")
+	InputIdx  []int          // slot indices for inputs
+	OutputIdx int            // slot index for the output
+	ExtraArgs map[string]any // optional extra arguments (e.g. layer index for KV cache ops)
 }
 
 // FrozenSlot describes a slot that holds frozen (constant) data such as
@@ -60,6 +62,7 @@ func (p *ExecutionPlan[T]) Instructions() []InstructionMeta {
 			OpName:    inst.OpName,
 			InputIdx:  idx,
 			OutputIdx: inst.OutputIdx,
+			ExtraArgs: inst.ExtraArgs,
 		}
 	}
 	return metas
@@ -355,6 +358,7 @@ func (g *Graph[T]) CompileTraced(ctx context.Context, inputs ...*tensor.TensorNu
 			InputIdx:  inputIdx,
 			OutputIdx: op.OutputID,
 			OpName:    op.OpName,
+			ExtraArgs: op.ExtraArgs,
 		}
 	}
 
