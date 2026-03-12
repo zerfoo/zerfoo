@@ -3,6 +3,7 @@ package attention
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -152,10 +153,58 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		}
 	}
 
+	// Debug: check attention scores before softmax
+	if scoreData, ok := any(scaledAttentionScores.Data()).([]float32); ok {
+		nanCount := 0
+		infCount := 0
+		for _, v := range scoreData {
+			if math.IsNaN(float64(v)) {
+				nanCount++
+			}
+			if math.IsInf(float64(v), 0) {
+				infCount++
+			}
+		}
+		if nanCount > 0 || infCount > 0 {
+			log.Printf("[SDPA-NaN] pre-softmax scores: NaN=%d Inf=%d total=%d shape=%v", nanCount, infCount, len(scoreData), scaledAttentionScores.Shape())
+		}
+	}
+
 	// 4. Apply Softmax
 	attentionWeights, err := sdpa.engine.Softmax(ctx, scaledAttentionScores, -1, nil) // Softmax along the last dimension
 	if err != nil {
 		return nil, err
+	}
+
+	// Debug: check attention weights after softmax
+	if wData, ok := any(attentionWeights.Data()).([]float32); ok {
+		nanCount := 0
+		for _, v := range wData {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				nanCount++
+			}
+		}
+		if nanCount > 0 {
+			log.Printf("[SDPA-NaN] post-softmax weights: NaN=%d/%d shape=%v", nanCount, len(wData), attentionWeights.Shape())
+			// Print first few rows to understand the pattern
+			shape := attentionWeights.Shape()
+			seqK := shape[len(shape)-1]
+			for b := 0; b < shape[0] && b < 2; b++ {
+				for qi := 0; qi < shape[1] && qi < 8; qi++ {
+					row := wData[b*shape[1]*seqK+qi*seqK : b*shape[1]*seqK+(qi+1)*seqK]
+					hasNaN := false
+					for _, v := range row {
+						if math.IsNaN(float64(v)) {
+							hasNaN = true
+							break
+						}
+					}
+					if hasNaN {
+						log.Printf("[SDPA-NaN]   batch=%d qi=%d: %v", b, qi, row)
+					}
+				}
+			}
+		}
 	}
 
 	sdpa.attentionWeights = attentionWeights // Cache for backward pass
