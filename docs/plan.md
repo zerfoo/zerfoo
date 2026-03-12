@@ -162,21 +162,19 @@ ConstantOfShape, Expand, Range, Cos, Sin, Greater, Trilu, Max, ScatterND.
     ccall issues on linux/arm64, tracked separately.
   - Dependencies: T107.2.
 
-### E108: Megakernel End-to-End Verification (replaces T100.3) -- BLOCKED
+### E108: Megakernel End-to-End Verification (replaces T100.3)
 
-E108 is blocked by a pre-existing kernel argument mismatch bug. The PowScalar
-kernel crashes with SIGSEGV (addr=0x1680) both with and without -tags cuda,
-confirming this is NOT a purego ccall issue but a kernel invocation bug where
-the element count is being treated as a pointer by the .cu kernel code. This
-affects the per-op GPU path (non-megakernel), not our build tag changes.
-
-- [ ] T108.1 Run bench_tps on DGX Spark without -tags cuda  Owner: TBD  Est: 30m
-  - BLOCKED: PowScalar kernel SIGSEGV on DGX Spark (pre-existing).
-  - Build without -tags cuda: go build ./cmd/bench_tps/ -- PASSES.
-  - Build with -tags cuda: go build -tags cuda ./cmd/bench_tps/ -- PASSES.
-  - Updated Makefile to build libkernels.so (commit f9c9b74).
-  - libkernels.so built on DGX Spark with sm_121.
-  - Run crashes in PowScalar kernel (same crash with or without -tags cuda).
+- [x] T108.1 Run bench_tps on DGX Spark without -tags cuda -- 2026 03 11
+  - Fixed PowScalar SIGSEGV: AAPCS64 passes float in FP registers but purego
+    ccall passes all args through integer registers. Changed C launcher
+    signatures from float to unsigned int, reinterpret via memcpy (commits
+    d787888, e20604c).
+  - Fixed gatherOp panic: non-traced Compile fallback gives Gather only 1
+    InputIdx. Added bounds check to return error, megakernel gracefully falls
+    back to per-op execution (commit 22d269b).
+  - bench_tps result: 10 tokens generated at 0.44 tok/s on DGX Spark.
+  - Megakernel emit warning for Gather (expected -- non-traced Compile path).
+  - Per-op fallback handles it correctly.
   - Dependencies: E106, E107.
 
 - [ ] T108.2 Compare megakernel vs plan.Run() output  Owner: TBD  Est: 1h
@@ -251,6 +249,20 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-11 (Wave 9)
+
+Wave 9: Sequential, kernel bug fixed and T108.1 completed:
+- Fixed PowScalar SIGSEGV: AAPCS64 float-in-integer-register mismatch.
+  Changed elementwise.cu launchers to accept unsigned int, reinterpret via
+  memcpy (commit d787888). Same fix for rmsnorm.cu eps parameter (commit
+  e20604c).
+- Fixed gatherOp index-out-of-range panic in codegen when CompileTraced
+  validation fails and Gather gets only 1 InputIdx (commit 22d269b).
+- bench_tps runs successfully on DGX Spark: 10 tokens at 0.44 tok/s.
+  Megakernel falls back to per-op execution (expected for Gather with
+  embedded weights).
+- T108.1 unblocked and completed. T108.2 now unblocked.
 
 ### Change Summary -- 2026-03-11 (Wave 8)
 
