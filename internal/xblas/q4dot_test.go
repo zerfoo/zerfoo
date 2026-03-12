@@ -56,11 +56,11 @@ func TestQ4DotBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Pack nibbles into bytes (low nibble first, high nibble second).
+			// Pack nibbles: GGML split format (low nibbles=first half, high nibbles=second half).
 			var packed [16]byte
 			for p := range 16 {
-				lo := tt.nibbles[p*2] & 0x0F
-				hi := tt.nibbles[p*2+1] & 0x0F
+				lo := tt.nibbles[p] & 0x0F
+				hi := tt.nibbles[p+16] & 0x0F
 				packed[p] = byte(lo | (hi << 4))
 			}
 

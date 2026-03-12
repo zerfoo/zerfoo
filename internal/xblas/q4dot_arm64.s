@@ -23,9 +23,9 @@ TEXT ·q4DotBlockSIMD(SB), NOSPLIT, $0-28
 	VAND	V0.B16, V16.B16, V1.B16
 	WORD	$0x6F0C0402				// USHR V2.16B, V0.16B, #4
 
-	// Interleave: [lo0, hi0, lo1, hi1, ...]
-	WORD	$0x4E023823				// ZIP1 V3.16B, V1.16B, V2.16B
-	WORD	$0x4E027824				// ZIP2 V4.16B, V1.16B, V2.16B
+	// Split format: V1=low nibbles (positions 0-15), V2=high nibbles (positions 16-31).
+	WORD	$0x4EA11C23				// ORR V3.16B, V1.16B, V1.16B (MOV V3=V1, low nibbles)
+	WORD	$0x4EA21C44				// ORR V4.16B, V2.16B, V2.16B (MOV V4=V2, high nibbles)
 
 	// Create uint16 vector of 8s.
 	MOVD	$0x0008000800080008, R4
@@ -36,7 +36,7 @@ TEXT ·q4DotBlockSIMD(SB), NOSPLIT, $0-28
 	VEOR	V30.B16, V30.B16, V30.B16
 	VEOR	V31.B16, V31.B16, V31.B16
 
-	// --- Process V3: positions 0-15 ---
+	// --- Process V3: positions 0-15 (low nibbles) ---
 	WORD	$0x2F08A465				// USHLL V5.8H, V3.8B, #0
 	WORD	$0x6F08A466				// USHLL2 V6.8H, V3.16B, #0
 	WORD	$0x6E7184A5				// SUB V5.8H, V5.8H, V17.8H
@@ -56,7 +56,7 @@ TEXT ·q4DotBlockSIMD(SB), NOSPLIT, $0-28
 	VFMLA	V26.S4, V22.S4, V30.S4
 	VFMLA	V27.S4, V23.S4, V31.S4
 
-	// --- Process V4: positions 16-31 ---
+	// --- Process V4: positions 16-31 (high nibbles) ---
 	WORD	$0x2F08A485				// USHLL V5.8H, V4.8B, #0
 	WORD	$0x6F08A486				// USHLL2 V6.8H, V4.16B, #0
 	WORD	$0x6E7184A5				// SUB V5.8H, V5.8H, V17.8H
@@ -124,15 +124,15 @@ row_loop:
 	VAND	V0.B16, V16.B16, V1.B16
 	WORD	$0x6F0C0402				// USHR V2.16B, V0.16B, #4
 
-	// Interleave.
-	WORD	$0x4E023823				// ZIP1 V3.16B, V1.16B, V2.16B
-	WORD	$0x4E027824				// ZIP2 V4.16B, V1.16B, V2.16B
+	// Split format: V1=low nibbles (positions 0-15), V2=high nibbles (positions 16-31).
+	WORD	$0x4EA11C23				// ORR V3.16B, V1.16B, V1.16B (MOV V3=V1, low nibbles)
+	WORD	$0x4EA21C44				// ORR V4.16B, V2.16B, V2.16B (MOV V4=V2, high nibbles)
 
 	// Zero block accumulators.
 	VEOR	V30.B16, V30.B16, V30.B16
 	VEOR	V31.B16, V31.B16, V31.B16
 
-	// --- Positions 0-15 (from V3) ---
+	// --- Positions 0-15 (low nibbles, V3) ---
 	WORD	$0x2F08A465				// USHLL V5.8H, V3.8B, #0
 	WORD	$0x6F08A466				// USHLL2 V6.8H, V3.16B, #0
 	WORD	$0x6E7184A5				// SUB V5.8H, V5.8H, V17.8H
@@ -152,7 +152,7 @@ row_loop:
 	VFMLA	V26.S4, V22.S4, V30.S4
 	VFMLA	V27.S4, V23.S4, V31.S4
 
-	// --- Positions 16-31 (from V4) ---
+	// --- Positions 16-31 (high nibbles, V4) ---
 	WORD	$0x2F08A485				// USHLL V5.8H, V4.8B, #0
 	WORD	$0x6F08A486				// USHLL2 V6.8H, V4.16B, #0
 	WORD	$0x6E7184A5				// SUB V5.8H

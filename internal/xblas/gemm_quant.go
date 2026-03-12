@@ -157,11 +157,12 @@ func gemmF32Q4NTParallel(n int, a []float32, b *tensor.Q4Storage, c []float32, b
 }
 
 // dequantQ4Block unpacks 16 packed bytes into 32 float32 values.
+// GGML Q4_0 split format: low nibbles → positions 0-15, high nibbles → positions 16-31.
 func dequantQ4Block(data *byte, scale float32, buf *[32]float32) {
 	packed := unsafe.Slice(data, 16)
 	for p := range 16 {
 		byteVal := packed[p]
-		buf[p*2] = float32(int(byteVal&0x0F)-8) * scale
-		buf[p*2+1] = float32(int(byteVal>>4)-8) * scale
+		buf[p] = float32(int(byteVal&0x0F)-8) * scale
+		buf[p+16] = float32(int(byteVal>>4)-8) * scale
 	}
 }
