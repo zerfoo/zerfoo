@@ -56,6 +56,12 @@ type KernelLib struct {
 
 	// fused_swiglu
 	launchFusedSwiGLUF32 uintptr
+
+	// fused_add_rmsnorm
+	launchFusedAddRMSNormF32 uintptr
+
+	// scaled_softmax
+	launchScaledSoftmaxF32 uintptr
 }
 
 var (
@@ -128,6 +134,10 @@ func openKernelLib() (*KernelLib, error) {
 			{"fused_rope_f32", &k.launchFusedRoPEF32},
 			// fused_swiglu
 			{"fused_swiglu_f32", &k.launchFusedSwiGLUF32},
+		// fused_add_rmsnorm
+		{"fused_add_rmsnorm_f32", &k.launchFusedAddRMSNormF32},
+		// scaled_softmax
+		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
