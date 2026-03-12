@@ -251,6 +251,10 @@ func (e *GPUEngine[T]) Ops() numeric.Arithmetic[T] { return e.cpu.Ops() }
 // For other types, it falls back to the CPU implementation.
 // Supports 2D matrices and batched matmul (3D+ tensors).
 func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if a == nil || b == nil {
+		return nil, fmt.Errorf("MatMul: input tensors must not be nil")
+	}
+
 	// Check for Q4 quantized storage on A.
 	// Use any() to avoid impossible type assertion when T != float32.
 	if qs, ok := any(a.GetStorage()).(*tensor.Q4Storage); ok {
@@ -270,10 +274,6 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	e.setDevice()
-
-	if a == nil || b == nil {
-		return nil, fmt.Errorf("MatMul: input tensors must not be nil")
-	}
 
 	aShape := a.Shape()
 	bShape := b.Shape()
