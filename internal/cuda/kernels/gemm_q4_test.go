@@ -44,37 +44,38 @@ func quantizeQ4(src []float32) (packed []byte, dequant []float32) {
 		blkOff := bi * 18
 		binary.LittleEndian.PutUint16(packed[blkOff:blkOff+2], scaleBits)
 
-		// Quantize and pack.
+		// Quantize and pack (GGML Q4_0 split format: low nibbles=first half, high nibbles=second half).
 		var invScale float32
 		if scale > 0 {
 			invScale = 1.0 / scale
 		}
-		for j := 0; j < blockSize; j += 2 {
+		const halfBlock = blockSize / 2
+		for j := 0; j < halfBlock; j++ {
 			var v0, v1 float32
 			if offset+j < n {
 				v0 = src[offset+j]
 			}
-			if offset+j+1 < n {
-				v1 = src[offset+j+1]
+			if offset+j+halfBlock < n {
+				v1 = src[offset+j+halfBlock]
 			}
 
 			q0 := clampQ4(int(math.Round(float64(v0 * invScale))))
 			q1 := clampQ4(int(math.Round(float64(v1 * invScale))))
 
-			packed[blkOff+2+j/2] = byte(q0+8) | (byte(q1+8) << 4)
+			packed[blkOff+2+j] = byte(q0+8) | (byte(q1+8) << 4)
 		}
 
 		// Dequantize for reference.
 		f16Scale := float16BitsToFloat32(scaleBits)
-		for j := 0; j < blockSize; j += 2 {
-			p := packed[blkOff+2+j/2]
+		for j := 0; j < halfBlock; j++ {
+			p := packed[blkOff+2+j]
 			d0 := float32(int(p&0x0F)-8) * f16Scale
 			d1 := float32(int(p>>4)-8) * f16Scale
 			if offset+j < n {
 				dequant[offset+j] = d0
 			}
-			if offset+j+1 < n {
-				dequant[offset+j+1] = d1
+			if offset+j+halfBlock < n {
+				dequant[offset+j+halfBlock] = d1
 			}
 		}
 	}

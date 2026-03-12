@@ -47,6 +47,8 @@ __global__ void gemm_q4_kernel(
         int k_base = bi * Q4_BLOCK_SIZE;
         const uint8_t* packed = blk + 2;
 
+        /* GGML Q4_0 split format: low nibbles -> positions 0-15,
+         * high nibbles -> positions 16-31. */
         #pragma unroll
         for (int j = 0; j < 16; j++) {
             uint8_t byte_val = packed[j];
@@ -56,9 +58,8 @@ __global__ void gemm_q4_kernel(
             float v0 = (float)q0 * scale;
             float v1 = (float)q1 * scale;
 
-            int k0 = k_base + j * 2;
-            acc += v0 * B[k0 * N + col];
-            acc += v1 * B[(k0 + 1) * N + col];
+            acc += v0 * B[(k_base + j) * N + col];
+            acc += v1 * B[(k_base + j + 16) * N + col];
         }
     }
 
