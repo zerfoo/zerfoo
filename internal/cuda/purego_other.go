@@ -1,4 +1,4 @@
-//go:build !cuda && !(darwin || (linux && arm64))
+//go:build !(darwin || (linux && arm64))
 
 package cuda
 

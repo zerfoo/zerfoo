@@ -1,5 +1,3 @@
-//go:build cuda
-
 package cuda
 
 import (
@@ -7,6 +5,10 @@ import (
 )
 
 func TestMemPoolAllocFresh(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	pool := NewMemPool()
 	defer func() { _ = pool.Drain() }()
 
@@ -24,6 +26,10 @@ func TestMemPoolAllocFresh(t *testing.T) {
 }
 
 func TestMemPoolAllocReuse(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	pool := NewMemPool()
 	defer func() { _ = pool.Drain() }()
 
@@ -49,6 +55,10 @@ func TestMemPoolAllocReuse(t *testing.T) {
 }
 
 func TestMemPoolAllocDifferentSizes(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	pool := NewMemPool()
 	defer func() { _ = pool.Drain() }()
 
@@ -73,6 +83,10 @@ func TestMemPoolAllocDifferentSizes(t *testing.T) {
 }
 
 func TestMemPoolDrain(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	pool := NewMemPool()
 
 	ptr, err := pool.Alloc(0, 512)
@@ -98,6 +112,10 @@ func TestMemPoolDrain(t *testing.T) {
 }
 
 func TestMemPoolStats(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	pool := NewMemPool()
 	defer func() { _ = pool.Drain() }()
 
@@ -127,6 +145,10 @@ func TestMemPoolStats(t *testing.T) {
 }
 
 func TestMemPoolNoCrossDeviceReuse(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	count, err := GetDeviceCount()
 	if err != nil {
 		t.Fatalf("GetDeviceCount: %v", err)
@@ -159,6 +181,10 @@ func TestMemPoolNoCrossDeviceReuse(t *testing.T) {
 }
 
 func TestMemPoolMultiDeviceStats(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	count, err := GetDeviceCount()
 	if err != nil {
 		t.Fatalf("GetDeviceCount: %v", err)

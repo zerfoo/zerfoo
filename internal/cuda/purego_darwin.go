@@ -1,4 +1,4 @@
-//go:build !cuda && darwin
+//go:build darwin
 
 package cuda
 

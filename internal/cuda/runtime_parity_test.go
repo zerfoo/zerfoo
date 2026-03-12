@@ -5,10 +5,9 @@ import (
 	"unsafe"
 )
 
-// TestRuntimeParityAPI verifies that the purego runtime exports match
-// the CGo runtime exports. This is a compile-time parity check: if any
-// function signature changes in one build tag but not the other, this
-// file will fail to compile under both tags.
+// TestRuntimeParityAPI verifies that the runtime exports have the
+// expected function signatures and that all functions fail gracefully
+// when CUDA is not available.
 
 // assignFunc is a generic helper that forces a compile-time type check
 // on a function value without triggering QF1011.
