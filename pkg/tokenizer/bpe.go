@@ -73,15 +73,23 @@ func (t *BPETokenizer) Encode(text string) ([]int, error) {
 		return t.encodeWithSpecials(text)
 	}
 
-	return t.encodeSegment(text)
+	return t.encodeSegment(text, true)
 }
 
 // encodeSegment tokenizes a text segment that contains no special tokens.
-func (t *BPETokenizer) encodeSegment(text string) ([]int, error) {
+// addLeadingSpace controls whether SentencePiece mode prepends ▁ to the text.
+func (t *BPETokenizer) encodeSegment(text string, addLeadingSpace bool) ([]int, error) {
 	if text == "" {
 		return nil, nil
 	}
-	words := t.preTokenize(text)
+	var words []string
+	if t.byteLevelBPE {
+		words = t.byteLevelPreTokenize(text)
+	} else if t.sentencePiece {
+		words = t.sentencePiecePreTokenize(text, addLeadingSpace)
+	} else {
+		words = strings.Fields(text)
+	}
 	var ids []int
 	for _, word := range words {
 		wordIDs, err := t.encodeWord(word)
@@ -95,8 +103,11 @@ func (t *BPETokenizer) encodeSegment(text string) ([]int, error) {
 
 // encodeWithSpecials splits text around special token strings, encoding each
 // special token as its single ID and encoding text between them with BPE.
+// In SentencePiece mode, only the very first text segment (before any special
+// token) gets the leading ▁ prefix. Text after special tokens does not.
 func (t *BPETokenizer) encodeWithSpecials(text string) ([]int, error) {
 	var ids []int
+	isFirst := true
 	for len(text) > 0 {
 		// Find the earliest special token in the remaining text.
 		bestIdx := -1
@@ -112,7 +123,7 @@ func (t *BPETokenizer) encodeWithSpecials(text string) ([]int, error) {
 		}
 		if bestIdx == -1 {
 			// No more special tokens; encode the rest.
-			segIDs, err := t.encodeSegment(text)
+			segIDs, err := t.encodeSegment(text, isFirst)
 			if err != nil {
 				return nil, err
 			}
@@ -121,7 +132,7 @@ func (t *BPETokenizer) encodeWithSpecials(text string) ([]int, error) {
 		}
 		// Encode text before the special token.
 		if bestIdx > 0 {
-			segIDs, err := t.encodeSegment(text[:bestIdx])
+			segIDs, err := t.encodeSegment(text[:bestIdx], isFirst)
 			if err != nil {
 				return nil, err
 			}
@@ -129,6 +140,7 @@ func (t *BPETokenizer) encodeWithSpecials(text string) ([]int, error) {
 		}
 		// Add the special token ID.
 		ids = append(ids, bestID)
+		isFirst = false
 		text = text[bestIdx+bestLen:]
 	}
 	return ids, nil
@@ -216,34 +228,41 @@ func (t *BPETokenizer) preTokenize(text string) []string {
 		return t.byteLevelPreTokenize(text)
 	}
 	if t.sentencePiece {
-		return t.sentencePiecePreTokenize(text)
+		return t.sentencePiecePreTokenize(text, true)
 	}
 	return strings.Fields(text)
 }
 
 // sentencePiecePreTokenize implements SentencePiece-style pre-tokenization.
-// Spaces are replaced with ▁ (U+2581) and text is split at ▁ boundaries,
-// keeping ▁ as the prefix of each resulting word. Newlines are emitted as
-// separate tokens and reset the ▁ prefix for the following word.
-func (t *BPETokenizer) sentencePiecePreTokenize(text string) []string {
-	// Split on newlines first, then handle each line with ▁ normalization.
+// Text is split on whitespace boundaries. Words that follow a space get ▁
+// (U+2581) prepended. Newlines are emitted as separate tokens.
+// If addLeadingSpace is true, the very first word also gets ▁ prepended.
+func (t *BPETokenizer) sentencePiecePreTokenize(text string, addLeadingSpace bool) []string {
 	var words []string
+	isFirstWord := true
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if i > 0 {
 			words = append(words, "\n")
+			isFirstWord = true // newline resets: next word has no ▁ prefix
 		}
 		if line == "" {
 			continue
 		}
-		// Replace spaces with ▁ and prepend ▁ to the line.
-		normalized := "\u2581" + strings.ReplaceAll(line, " ", "\u2581")
-		parts := strings.Split(normalized, "\u2581")
-		for _, p := range parts {
-			if p == "" {
+		lineWords := strings.SplitAfter(line, " ")
+		for _, w := range lineWords {
+			w = strings.TrimRight(w, " ")
+			if w == "" {
 				continue
 			}
-			words = append(words, "\u2581"+p)
+			if isFirstWord && addLeadingSpace {
+				words = append(words, "\u2581"+w)
+			} else if !isFirstWord {
+				words = append(words, "\u2581"+w)
+			} else {
+				words = append(words, w)
+			}
+			isFirstWord = false
 		}
 	}
 	return words

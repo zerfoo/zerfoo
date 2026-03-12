@@ -338,7 +338,7 @@ func TestBPETokenizer_SentencePiece(t *testing.T) {
 	})
 
 	t.Run("pre-tokenize splits", func(t *testing.T) {
-		words := tok.sentencePiecePreTokenize("hello world test")
+		words := tok.sentencePiecePreTokenize("hello world test", true)
 		want := []string{"\u2581hello", "\u2581world", "\u2581test"}
 		if len(words) != len(want) {
 			t.Fatalf("got %v, want %v", words, want)
