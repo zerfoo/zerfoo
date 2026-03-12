@@ -44,6 +44,9 @@ type KernelLib struct {
 
 	// gemm_q4
 	launchGemmQ4F32 uintptr
+
+	// argmax
+	launchArgmax uintptr
 }
 
 var (
@@ -108,6 +111,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_repeat", &k.launchRepeat},
 			// gemm_q4
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
+			// argmax
+			{"launch_argmax", &k.launchArgmax},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
