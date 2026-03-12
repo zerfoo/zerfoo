@@ -1108,6 +1108,121 @@ func buildBenchTokenizer(b *testing.B) *tokenizer.WhitespaceTokenizer {
 	return tok
 }
 
+// cacheTrackingNode produces fixed logits AND tracks how many times the KV
+// cache is updated. This lets us verify that compilation does not inject
+// spurious cache updates.
+type cacheTrackingNode struct {
+	graph.NoParameters[float32]
+	vocabSize     int
+	tokenSequence []int
+	mu            sync.Mutex
+	callCount     int
+	cacheUpdates  int // number of times cache.Update was called through this node
+}
+
+func (n *cacheTrackingNode) OpType() string                     { return "CacheTracking" }
+func (n *cacheTrackingNode) Attributes() map[string]interface{} { return nil }
+func (n *cacheTrackingNode) OutputShape() []int                 { return []int{1, 1, n.vocabSize} }
+func (n *cacheTrackingNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, nil
+}
+
+func (n *cacheTrackingNode) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	seqLen := 1
+	if len(inputs) > 0 {
+		shape := inputs[0].Shape()
+		if len(shape) >= 2 {
+			seqLen = shape[1]
+		}
+	}
+
+	// If context carries a KV cache, update it (simulating attention layer behavior).
+	if cache, ok := GetCache[float32](ctx); ok {
+		// Create dummy K/V tensors: [1, seqLen, 4] (4 = headDim placeholder).
+		kv := make([]float32, seqLen*4)
+		kvT, _ := tensor.New([]int{1, seqLen, 4}, kv)
+		_ = cache.Update(0, kvT, kvT)
+		n.mu.Lock()
+		n.cacheUpdates++
+		n.mu.Unlock()
+	}
+
+	n.mu.Lock()
+	callCount := n.callCount
+	data := make([]float32, seqLen*n.vocabSize)
+	for pos := range seqLen {
+		targetToken := n.tokenSequence[callCount%len(n.tokenSequence)]
+		offset := pos * n.vocabSize
+		for j := range n.vocabSize {
+			data[offset+j] = -10.0
+		}
+		if targetToken >= 0 && targetToken < n.vocabSize {
+			data[offset+targetToken] = 10.0
+		}
+		if pos == seqLen-1 {
+			n.callCount++
+		}
+	}
+	n.mu.Unlock()
+
+	return tensor.New([]int{1, seqLen, n.vocabSize}, data)
+}
+
+func TestCompileGraph_DoesNotCorruptKVCache(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+
+	// Create a graph with a cache-tracking node.
+	node := &cacheTrackingNode{
+		vocabSize:     vocabSize,
+		tokenSequence: []int{6, 7, 6, 7, 2}, // produce a few tokens then EOS
+	}
+	b := graph.NewBuilder[float32](eng)
+	in := b.Input([]int{1, 1, 1})
+	b.AddNode(node, in)
+	g, err := b.Build(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator[float32](
+		g, tok, eng,
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  64,
+			EOSTokenID: 2,
+			NumLayers:  1, // 1 layer for KV cache
+		},
+	)
+
+	result, err := gen.Generate(context.Background(), "hello world", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+
+	if result != "foo bar foo bar" {
+		t.Errorf("Generate = %q, want %q", result, "foo bar foo bar")
+	}
+
+	// Verify KV cache updates: prefill (1) + decode tokens (4, until EOS).
+	// Without the fix, compilation would add extra cache updates via
+	// CompileTraced or validation Run, corrupting the cache.
+	// The compile context should not carry a KV cache, so no extra updates.
+	node.mu.Lock()
+	updates := node.cacheUpdates
+	node.mu.Unlock()
+
+	// Expected: 1 prefill + 4 decode steps (tokens 6,7,6,7) = 5 updates.
+	// The 5th token (EOS=2) is sampled but we break before running Forward again.
+	if updates != 5 {
+		t.Errorf("cache updates = %d, want 5 (compilation should not add extra updates)", updates)
+	}
+}
+
 func TestNewGenerator_WithPagedKV_InvalidParams(t *testing.T) {
 	// Zero headDim should fall back to regular KV cache.
 	gen := NewGenerator[float32](nil, nil, nil, ModelConfig{
