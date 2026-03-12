@@ -340,15 +340,18 @@ func buildTransformerGraph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	// Convert Q8 lmHead weight to Q4 for fast NEON GEMV. The embedding
-	// lookup node keeps the original Q8 weight for row-level DequantizeRange.
-	if s := lmHeadWeight.GetStorage(); s != nil {
-		switch qs := any(s).(type) {
-		case *tensor.Q8Storage:
-			f32 := make([]float32, qs.Len())
-			qs.Dequantize(f32)
-			q4 := tensor.QuantizeQ4(f32)
-			lmHeadWeight, _ = tensor.NewWithStorage[float32](lmHeadWeight.Shape(), q4)
+	// On CPU: convert Q8 lmHead weight to Q4 for fast NEON GEMV.
+	// On GPU: skip conversion; UploadWeights will dequantize Q8 to F32
+	// for cuBLAS SGEMM.
+	if _, isGPU := engine.(compute.WeightUploader); !isGPU {
+		if s := lmHeadWeight.GetStorage(); s != nil {
+			switch qs := any(s).(type) {
+			case *tensor.Q8Storage:
+				f32 := make([]float32, qs.Len())
+				qs.Dequantize(f32)
+				q4 := tensor.QuantizeQ4(f32)
+				lmHeadWeight, _ = tensor.NewWithStorage[float32](lmHeadWeight.Shape(), q4)
+			}
 		}
 	}
 	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight, softcapVal: opts.logitSoftcap}
