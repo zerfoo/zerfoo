@@ -78,6 +78,17 @@ var emitters = map[string]OpEmitter{
 	"ConstantOfShape": constantOfShapeOp,
 	"Expand":          expandOp,
 
+	// Utility ops
+	"Shape":     shapeOp,
+	"Unsqueeze": unsqueezeOp,
+	"Cast":      castOp,
+	"Max":       maxOp,
+	"ScatterND": scatterNDOp,
+
+	// Auto ops
+	"AutoPositionIds":  autoPositionIdsOp,
+	"AutoZeroKVCache":  autoZeroKVCacheOp,
+
 	// KV cache ops
 	"KVCacheAppendK": kvCacheAppendOp("kv_k"),
 	"KVCacheAppendV": kvCacheAppendOp("kv_v"),
@@ -264,6 +275,55 @@ func expandOp(meta graph.InstructionMeta, inputs []SlotInfo) (string, error) {
 	}
 	return fmt.Sprintf("  slot_%d[tid] = slot_%d[tid %% %d];",
 		meta.OutputIdx, meta.InputIdx[0], srcSize), nil
+}
+
+// shapeOp is a metadata-only op that provides shape info to subsequent ops.
+// No GPU code is needed; it emits a no-op comment.
+func shapeOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  // Shape: slot_%d metadata only (no compute)", meta.OutputIdx), nil
+}
+
+// unsqueezeOp is a reshape with no data movement. Emit pointer aliasing.
+func unsqueezeOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  // Unsqueeze: slot_%d = slot_%d (reshape, no data movement)",
+		meta.OutputIdx, meta.InputIdx[0]), nil
+}
+
+// castOp emits an element-wise type cast.
+func castOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  slot_%d[tid] = (float)(slot_%d[tid]);",
+		meta.OutputIdx, meta.InputIdx[0]), nil
+}
+
+// maxOp emits a fmaxf reduction across an axis.
+func maxOp(meta graph.InstructionMeta, inputs []SlotInfo) (string, error) {
+	dim := 0
+	if len(inputs) > 0 && len(inputs[0].Shape) > 0 {
+		dim = inputs[0].Shape[len(inputs[0].Shape)-1]
+	}
+	return fmt.Sprintf("  dev_reduce_max(slot_%d, slot_%d, axis_%d, %d);",
+		meta.OutputIdx, meta.InputIdx[0], meta.OutputIdx, dim), nil
+}
+
+// scatterNDOp emits an indexed scatter write.
+func scatterNDOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	if len(meta.InputIdx) < 3 {
+		return "", fmt.Errorf("ScatterND requires 3 inputs (data, indices, updates)")
+	}
+	return fmt.Sprintf("  dev_scatter_nd(slot_%d, slot_%d, slot_%d, slot_%d, dim_%d);",
+		meta.OutputIdx, meta.InputIdx[0], meta.InputIdx[1], meta.InputIdx[2], meta.OutputIdx), nil
+}
+
+// autoPositionIdsOp generates position IDs [0, 1, 2, ..., seq_len-1].
+func autoPositionIdsOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  slot_%d[tid] = (float)(seq_pos + tid);",
+		meta.OutputIdx), nil
+}
+
+// autoZeroKVCacheOp emits a memset-style zero fill for KV cache buffers.
+func autoZeroKVCacheOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
+	return fmt.Sprintf("  slot_%d[tid] = 0.0f;",
+		meta.OutputIdx), nil
 }
 
 // kvCacheAppendOp emits a dev_kv_append call that writes new K or V data
