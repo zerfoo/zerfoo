@@ -214,7 +214,13 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 	}
 
 	// Fused single-pass kernel for float32 on CPUEngine (inference hot path).
-	if _, isCPU := rpe.engine.(*compute.CPUEngine[T]); isCPU {
+	// Unwrap EngineProxy to detect the real engine type, so the fused path
+	// is taken even when the engine is wrapped.
+	realEngine := compute.Engine[T](rpe.engine)
+	if proxy, ok := rpe.engine.(*compute.EngineProxy[T]); ok {
+		realEngine = proxy.Real()
+	}
+	if _, isCPU := realEngine.(*compute.CPUEngine[T]); isCPU {
 		if f32Input, ok := any(input).(*tensor.TensorNumeric[float32]); ok {
 			f32Cos, cOk := any(cosSliced).(*tensor.TensorNumeric[float32])
 			f32Sin, sOk := any(sinSliced).(*tensor.TensorNumeric[float32])
@@ -235,15 +241,27 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 	cosAngles := cosSliced
 	sinAngles := sinSliced
 
-	// Split rotary portion into two halves: x_rot0, x_rot1
-	rpe.xRot0Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, halfRotary})
-	if err != nil {
-		return nil, err
-	}
+	// Split rotary portion into two halves: x_rot0, x_rot1.
+	// When rotaryDim equals the full last dimension, use engine.Split to
+	// keep data on the GPU and avoid costly GPU→CPU copies via tensor.Slice.
+	if rpe.rotaryDim == rpe.inputShape[len(rpe.inputShape)-1] {
+		halves, splitErr := rpe.engine.Split(ctx, input, 2, len(rpe.inputShape)-1)
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		rpe.xRot0Slice = halves[0]
+		rpe.xRot1Slice = halves[1]
+	} else {
+		// Partial RoPE (rotaryDim < headDim): fall back to tensor.Slice.
+		rpe.xRot0Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{0, halfRotary})
+		if err != nil {
+			return nil, err
+		}
 
-	rpe.xRot1Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{halfRotary, rpe.rotaryDim})
-	if err != nil {
-		return nil, err
+		rpe.xRot1Slice, err = input.Slice([2]int{0, rpe.inputShape[0]}, [2]int{0, seqLen}, [2]int{halfRotary, rpe.rotaryDim})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply rotation:
