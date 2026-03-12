@@ -153,12 +153,16 @@ func (k *CUDAKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, s Str
 	return kernels.FusedSwiGLUF32(w1, w3, output, n, streamPtr(s))
 }
 
-func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, output unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
-	return kernels.FusedAddRMSNormF32(input, residual, weight, output, eps, rows, D, streamPtr(s))
+func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
 }
 
 func (k *CUDAKernels) ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
 	return kernels.ScaledSoftmaxF32(input, output, outer, inner, axisSize, scale, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedDecodeAttentionF32(Q, K, V, O unsafe.Pointer, numQHeads, kvSeqLen, headDim int, scale float32, s Stream) error {
+	return kernels.FusedDecodeAttentionF32(Q, K, V, O, numQHeads, kvSeqLen, headDim, scale, streamPtr(s))
 }
 
 // Compile-time interface assertion.

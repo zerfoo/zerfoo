@@ -1655,9 +1655,10 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 	return makeGPUResult[T](e, shape, devOut, n)
 }
 
-// GPUFusedAddRMSNorm computes residual = input + residual (in-place) and
-// output = rmsnorm(residual, weight, eps) in a single GPU kernel launch.
+// GPUFusedAddRMSNorm computes sum = input + residual and
+// normed = rmsnorm(sum, weight, eps) in a single GPU kernel launch.
 // This replaces Add + RMSNorm (2 kernel launches) with 1.
+// Both inputs are read-only; two separate output buffers are allocated.
 func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	input, residual *tensor.TensorNumeric[T],
 	weight *tensor.TensorNumeric[T],
@@ -1679,7 +1680,6 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	}
 	defer inCleanup()
 
-	// Residual is updated in-place. We need a mutable device pointer.
 	resPtr, resCleanup, err := getDevicePtr(e, residual)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm residual: %w", err)
@@ -1694,46 +1694,97 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 
 	outBytes := rows * D * f32Size
 	e.setDevice()
-	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	devNormed, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc normed: %w", err)
 	}
 
-	// Allocate a fresh buffer for the residual sum so the caller owns
-	// independent GPU memory (the original residual's memory may be freed
-	// by graph reference counting after this call returns).
-	devRes, err := e.pool.Alloc(e.deviceID, outBytes)
+	devSum, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc residual: %w", err)
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc sum: %w", err)
 	}
 
-	// Copy original residual to the fresh buffer so the kernel can
-	// update it in-place without affecting the original tensor.
-	if err := e.runtime.Memcpy(devRes, resPtr, outBytes, gpuapi.MemcpyDeviceToDevice); err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		e.pool.Free(e.deviceID, devRes, outBytes)
-		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm D2D copy: %w", err)
-	}
-
-	if err := e.kernels.FusedAddRMSNormF32(inPtr, devRes, wPtr, devOut, eps, rows, D, e.stream); err != nil {
-		e.pool.Free(e.deviceID, devOut, outBytes)
-		e.pool.Free(e.deviceID, devRes, outBytes)
+	if err := e.kernels.FusedAddRMSNormF32(inPtr, resPtr, wPtr, devNormed, devSum, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devNormed, outBytes)
+		e.pool.Free(e.deviceID, devSum, outBytes)
 		return nil, nil, nil, err
 	}
 
-	normed, err = makeGPUResult[T](e, inShape, devOut, rows*D)
+	normed, err = makeGPUResult[T](e, inShape, devNormed, rows*D)
 	if err != nil {
-		e.pool.Free(e.deviceID, devRes, outBytes)
+		e.pool.Free(e.deviceID, devSum, outBytes)
 		return nil, nil, nil, err
 	}
 
-	residualOut, err = makeGPUResult[T](e, inShape, devRes, rows*D)
+	residualOut, err = makeGPUResult[T](e, inShape, devSum, rows*D)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	return normed, residualOut, nil, nil
+}
+
+// GPUFusedDecodeAttention performs fused single-token attention in one kernel:
+// scores = Q * K^T * scale, weights = softmax(scores), O = weights * V.
+// Q: [numQHeads, headDim], K: [kvSeqLen, headDim], V: [kvSeqLen, headDim].
+// Returns O: [numQHeads, headDim].
+func (e *GPUEngine[T]) GPUFusedDecodeAttention(
+	q, k, v *tensor.TensorNumeric[T],
+	scale float32,
+) (*tensor.TensorNumeric[T], error) {
+	qShape := q.Shape() // [numQHeads, headDim] or [batch*numQHeads, 1, headDim]
+	kShape := k.Shape() // [kvBatchHeads, kvSeqLen, headDim]
+
+	// Extract dimensions. Q is [batch*heads, 1, headDim] or [numQHeads, headDim].
+	var numQHeads, headDim, kvSeqLen int
+	if len(qShape) == 3 {
+		numQHeads = qShape[0]
+		headDim = qShape[2]
+	} else {
+		numQHeads = qShape[0]
+		headDim = qShape[1]
+	}
+	if len(kShape) == 3 {
+		kvSeqLen = kShape[1]
+	} else {
+		kvSeqLen = kShape[0]
+	}
+
+	qPtr, qCleanup, err := getDevicePtr(e, q)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedDecodeAttention q: %w", err)
+	}
+	defer qCleanup()
+
+	kPtr, kCleanup, err := getDevicePtr(e, k)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedDecodeAttention k: %w", err)
+	}
+	defer kCleanup()
+
+	vPtr, vCleanup, err := getDevicePtr(e, v)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedDecodeAttention v: %w", err)
+	}
+	defer vCleanup()
+
+	outBytes := numQHeads * headDim * f32Size
+	e.setDevice()
+	devO, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedDecodeAttention alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedDecodeAttentionF32(qPtr, kPtr, vPtr, devO,
+		numQHeads, kvSeqLen, headDim, scale, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devO, outBytes)
+		return nil, err
+	}
+
+	// Output shape matches Q: [numQHeads, 1, headDim]
+	outShape := []int{numQHeads, 1, headDim}
+	return makeGPUResult[T](e, outShape, devO, numQHeads*headDim)
 }
 
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.

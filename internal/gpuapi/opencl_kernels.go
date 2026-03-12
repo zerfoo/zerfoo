@@ -164,12 +164,16 @@ func (k *OpenCLKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) 
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for OpenCL")
 }
 
-func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
 	return fmt.Errorf("FusedAddRMSNormF32: not implemented for OpenCL")
 }
 
 func (k *OpenCLKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedDecodeAttentionF32(_, _, _, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("FusedDecodeAttentionF32: not implemented for OpenCL")
 }
 
 // Compile-time interface assertion.
