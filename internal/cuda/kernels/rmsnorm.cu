@@ -49,13 +49,23 @@ __global__ void kernel_rmsnorm(const float* __restrict__ input,
     }
 }
 
+// bits_to_float reinterprets a uint32 bit pattern as float32.
+// Used because the purego/ccall calling convention passes all arguments
+// through integer registers.
+static inline float bits_to_float(unsigned int bits) {
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
 // ---------- Launcher function (extern "C" for CGO) ----------
 
 extern "C" {
 
 cudaError_t launch_rmsnorm(const float* input, const float* weight,
-                            float* output, float* scales, float eps,
+                            float* output, float* scales, unsigned int eps_bits,
                             int rows, int D, cudaStream_t stream) {
+    float eps = bits_to_float(eps_bits);
     // Block size: next power of 2 up to min(D, 256).
     int block = 1;
     while (block < D && block < 256) block <<= 1;
