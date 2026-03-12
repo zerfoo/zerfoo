@@ -10,16 +10,36 @@ import (
 	"github.com/zerfoo/zerfoo/types"
 )
 
+// negInfValue returns a large negative value (-1e9) for floating point types.
+func negInfValue[T tensor.Numeric]() T {
+	var zero T
+	if p, ok := any(&zero).(*float32); ok {
+		*p = -1e9
+		return zero
+	}
+	if p, ok := any(&zero).(*float64); ok {
+		*p = -1e9
+		return zero
+	}
+	return zero
+}
+
 // ScaledDotProductAttention implements the scaled dot-product attention mechanism.
 type ScaledDotProductAttention[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	headDim float64 // Dimension of each head, used for scaling
+	causal  bool    // if true, apply causal masking to attention scores
 
 	// Cached tensors for backward pass
 	q                *tensor.TensorNumeric[T]
 	k                *tensor.TensorNumeric[T]
 	v                *tensor.TensorNumeric[T]
 	attentionWeights *tensor.TensorNumeric[T]
+}
+
+// SetCausal enables or disables causal (lower-triangular) masking.
+func (sdpa *ScaledDotProductAttention[T]) SetCausal(causal bool) {
+	sdpa.causal = causal
 }
 
 // ScaledDotProductAttentionOptions holds configuration options for ScaledDotProductAttention.
@@ -54,9 +74,8 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 
 	// Try fused flash attention when no arbitrary mask is provided.
 	// Flash attention handles causal masking internally via the causal flag.
-	// When mask is nil, we use non-causal flash attention.
 	if mask == nil {
-		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), false); result != nil || err != nil {
+		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal); result != nil || err != nil {
 			return result, err
 		}
 	}
@@ -93,7 +112,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		return nil, err
 	}
 
-	// 3. Apply mask
+	// 3. Apply mask (explicit 4D mask or causal)
 	if mask != nil {
 		batchSize := q.Shape()[0]
 		numHeads := mask.Shape()[1]
@@ -113,6 +132,23 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		scaledAttentionScores, err = sdpa.engine.Reshape(ctx, maskedScores, []int{batchSize, seqLenQ, seqLenK})
 		if err != nil {
 			return nil, err
+		}
+	} else if sdpa.causal {
+		// Apply causal masking directly to 3D scores (batch, seqQ, seqK).
+		// Set positions where q_pos < k_pos to -inf.
+		data := scaledAttentionScores.Data()
+		shape := scaledAttentionScores.Shape()
+		batch, seqQ, seqK := shape[0], shape[1], shape[2]
+		offset := seqK - seqQ // cached tokens are always visible
+		negInf := negInfValue[T]()
+		for b := range batch {
+			for qi := range seqQ {
+				for ki := range seqK {
+					if ki > qi+offset {
+						data[(b*seqQ+qi)*seqK+ki] = negInf
+					}
+				}
+			}
 		}
 	}
 
