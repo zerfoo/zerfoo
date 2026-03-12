@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -7,12 +5,16 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // TestGPUEngine_TransposeParity verifies GPU transpose matches CPU for 2D and N-D cases.
 func TestGPUEngine_TransposeParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -84,6 +86,9 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 
 // TestGPUEngine_GatherParity verifies GPU gather matches CPU for 1D and 2D indices.
 func TestGPUEngine_GatherParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -153,6 +158,9 @@ func TestGPUEngine_GatherParity(t *testing.T) {
 
 // TestGPUEngine_BroadcastParity verifies GPU broadcast binary ops match CPU.
 func TestGPUEngine_BroadcastParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -222,6 +230,9 @@ func TestGPUEngine_BroadcastParity(t *testing.T) {
 
 // TestGPUEngine_FusedRMSNormParity verifies GPU fused RMSNorm matches CPU.
 func TestGPUEngine_FusedRMSNormParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -323,6 +334,9 @@ func TestGPUEngine_FusedRMSNormParity(t *testing.T) {
 
 // TestGPUEngine_UploadWeights verifies the WeightUploader interface works.
 func TestGPUEngine_UploadWeights(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -377,6 +391,9 @@ func TestGPUEngine_UploadWeights(t *testing.T) {
 // TestGPUEngine_TransposeChainedWithMatMul verifies GPU transpose output
 // can be directly used as MatMul input without D2H.
 func TestGPUEngine_TransposeChainedWithMatMul(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
