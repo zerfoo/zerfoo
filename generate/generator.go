@@ -10,6 +10,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -158,6 +159,20 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 		}
 		if cErr == nil {
+			// Try to set up CUDA graph capture for the plan.
+			// If the engine exposes a GPU stream and CUDA graph APIs
+			// are available, wrap the plan in a graph executor.
+			if sp, ok := any(gen.engine).(compute.StreamProvider); ok {
+				if streamPtr := sp.Stream(); streamPtr != nil {
+					if cuda.Available() && cuda.Lib().GraphAvailable() {
+						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
+						compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+							return ge.Run(ctx, inputs...)
+						})
+						log.Printf("generate: CUDA graph executor enabled (2 warmup tokens)")
+					}
+				}
+			}
 			gen.plan.Store(compiled)
 			go tryCompileMegakernel(compiled, nil)
 		}
