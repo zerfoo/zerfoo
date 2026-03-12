@@ -41,16 +41,38 @@ func NewMemPool() *MemPool {
 	}
 }
 
-// Alloc returns a device pointer of the given byte size on the specified
-// device. If a cached allocation of the exact (deviceID, byteSize) exists,
-// it is reused. Otherwise SetDevice is called and a fresh cudaMalloc is
-// performed.
+// bucketSize rounds byteSize up to the next reuse bucket.
+// Sizes under 4KB are kept exact. Sizes >= 4KB are rounded up to the next
+// power of two. This dramatically improves cache hit rates when intermediate
+// tensor sizes vary slightly between forward passes (e.g., growing kvSeqLen).
+func bucketSize(byteSize int) int {
+	const threshold = 4096
+	if byteSize <= threshold {
+		return byteSize
+	}
+	// Round up to next power of 2.
+	v := byteSize - 1
+	v |= v >> 1
+	v |= v >> 2
+	v |= v >> 4
+	v |= v >> 8
+	v |= v >> 16
+	v |= v >> 32
+	return v + 1
+}
+
+// Alloc returns a device pointer of at least the given byte size on the
+// specified device. Sizes >= 4KB are rounded up to power-of-2 buckets for
+// better reuse across slightly varying allocation sizes. If a cached
+// allocation exists for the bucket, it is reused. Otherwise SetDevice is
+// called and a fresh cudaMalloc is performed at the bucketed size.
 func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
+	bucket := bucketSize(byteSize)
 	p.mu.Lock()
 	if devCache := p.cache[deviceID]; devCache != nil {
-		if ptrs := devCache[byteSize]; len(ptrs) > 0 {
+		if ptrs := devCache[bucket]; len(ptrs) > 0 {
 			ptr := ptrs[len(ptrs)-1]
-			devCache[byteSize] = ptrs[:len(ptrs)-1]
+			devCache[bucket] = ptrs[:len(ptrs)-1]
 			p.mu.Unlock()
 			p.hits.Add(1)
 
@@ -64,13 +86,14 @@ func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 		return nil, err
 	}
 
-	return Malloc(byteSize)
+	return Malloc(bucket)
 }
 
 // Free returns a device pointer to the pool for later reuse.
-// The caller must provide the same deviceID and byteSize that were used
-// to allocate.
+// The byteSize is bucketed to match the Alloc bucket so the pointer
+// can be found on the next Alloc of a similar size.
 func (p *MemPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
+	bucket := bucketSize(byteSize)
 	p.frees.Add(1)
 	p.mu.Lock()
 	devCache := p.cache[deviceID]
@@ -78,19 +101,19 @@ func (p *MemPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
 		devCache = make(map[int][]unsafe.Pointer)
 		p.cache[deviceID] = devCache
 	}
-	devCache[byteSize] = append(devCache[byteSize], ptr)
+	devCache[bucket] = append(devCache[bucket], ptr)
 	p.mu.Unlock()
 }
 
-// AllocManaged returns a unified memory pointer of the given byte size.
-// If a cached managed allocation of the exact (deviceID, byteSize) exists,
-// it is reused. Otherwise SetDevice is called and cudaMallocManaged is used.
+// AllocManaged returns a unified memory pointer of at least the given byte
+// size. Uses the same power-of-2 bucketing as Alloc.
 func (p *MemPool) AllocManaged(deviceID, byteSize int) (unsafe.Pointer, error) {
+	bucket := bucketSize(byteSize)
 	p.mu.Lock()
 	if devCache := p.managedCache[deviceID]; devCache != nil {
-		if ptrs := devCache[byteSize]; len(ptrs) > 0 {
+		if ptrs := devCache[bucket]; len(ptrs) > 0 {
 			ptr := ptrs[len(ptrs)-1]
-			devCache[byteSize] = ptrs[:len(ptrs)-1]
+			devCache[bucket] = ptrs[:len(ptrs)-1]
 			p.mu.Unlock()
 
 			return ptr, nil
@@ -102,18 +125,19 @@ func (p *MemPool) AllocManaged(deviceID, byteSize int) (unsafe.Pointer, error) {
 		return nil, err
 	}
 
-	return MallocManaged(byteSize)
+	return MallocManaged(bucket)
 }
 
 // FreeManaged returns a managed memory pointer to the pool for later reuse.
 func (p *MemPool) FreeManaged(deviceID int, ptr unsafe.Pointer, byteSize int) {
+	bucket := bucketSize(byteSize)
 	p.mu.Lock()
 	devCache := p.managedCache[deviceID]
 	if devCache == nil {
 		devCache = make(map[int][]unsafe.Pointer)
 		p.managedCache[deviceID] = devCache
 	}
-	devCache[byteSize] = append(devCache[byteSize], ptr)
+	devCache[bucket] = append(devCache[bucket], ptr)
 	p.mu.Unlock()
 }
 

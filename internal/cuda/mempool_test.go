@@ -144,6 +144,57 @@ func TestMemPoolStats(t *testing.T) {
 	}
 }
 
+func TestBucketSize(t *testing.T) {
+	tests := []struct {
+		input int
+		want  int
+	}{
+		{0, 0},
+		{1, 1},
+		{100, 100},
+		{4096, 4096},    // at threshold, exact
+		{4097, 8192},    // just above threshold, rounds to next power of 2
+		{5000, 8192},    // rounds up
+		{8192, 8192},    // already power of 2
+		{8193, 16384},   // rounds up
+		{65536, 65536},  // already power of 2
+		{100000, 131072}, // rounds up to 2^17
+	}
+	for _, tt := range tests {
+		got := bucketSize(tt.input)
+		if got != tt.want {
+			t.Errorf("bucketSize(%d) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestMemPoolBucketReuse(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
+	pool := NewMemPool()
+	defer func() { _ = pool.Drain() }()
+
+	// Allocate 5000 bytes (buckets to 8192), free it.
+	ptr1, err := pool.Alloc(0, 5000)
+	if err != nil {
+		t.Fatalf("Alloc(5000) failed: %v", err)
+	}
+	pool.Free(0, ptr1, 5000)
+
+	// Allocate 6000 bytes (also buckets to 8192) -- should reuse.
+	ptr2, err := pool.Alloc(0, 6000)
+	if err != nil {
+		t.Fatalf("Alloc(6000) failed: %v", err)
+	}
+
+	if ptr1 != ptr2 {
+		t.Error("expected bucket reuse: 5000 and 6000 both bucket to 8192")
+	}
+	pool.Free(0, ptr2, 6000)
+}
+
 func TestMemPoolNoCrossDeviceReuse(t *testing.T) {
 	if !Available() {
 		t.Skip("CUDA not available")
