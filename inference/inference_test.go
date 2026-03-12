@@ -10,6 +10,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/generate"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
@@ -1099,12 +1100,31 @@ func TestCreateEngine_InvalidDevice(t *testing.T) {
 }
 
 func TestCreateEngine_GPUDevices(t *testing.T) {
+	// CUDA succeeds when runtime is available, errors otherwise.
+	for _, dev := range []string{"cuda", "cuda:0"} {
+		t.Run(dev, func(t *testing.T) {
+			eng, err := createEngine(dev)
+			if cuda.Available() {
+				if err != nil {
+					t.Errorf("expected success with CUDA available, got: %v", err)
+				}
+				if closer, ok := any(eng).(interface{ Close() error }); ok {
+					closer.Close()
+				}
+			} else {
+				if err == nil {
+					t.Error("expected error without CUDA")
+				} else if !strings.Contains(err.Error(), "CUDA") {
+					t.Errorf("error = %q, want to contain %q", err.Error(), "CUDA")
+				}
+			}
+		})
+	}
+	// ROCm and OpenCL always error (no runtime detection yet).
 	tests := []struct {
 		device  string
 		wantErr string
 	}{
-		{"cuda", "CUDA"},
-		{"cuda:0", "CUDA"},
 		{"rocm", "ROCm"},
 		{"rocm:0", "ROCm"},
 		{"opencl", "OpenCL"},
