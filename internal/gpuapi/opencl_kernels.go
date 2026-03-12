@@ -160,5 +160,9 @@ func (k *OpenCLKernels) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ in
 	return fmt.Errorf("FusedRoPEF32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("FusedSwiGLUF32: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)

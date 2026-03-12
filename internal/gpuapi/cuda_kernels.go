@@ -149,5 +149,9 @@ func (k *CUDAKernels) FusedRoPEF32(input, cosAngles, sinAngles, output unsafe.Po
 	return kernels.FusedRoPEF32(input, cosAngles, sinAngles, output, batch, seqLen, headDim, halfRotary, cosStride, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, s Stream) error {
+	return kernels.FusedSwiGLUF32(w1, w3, output, n, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

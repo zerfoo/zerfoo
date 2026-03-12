@@ -171,6 +171,9 @@ func (stubKernelRunner) Argmax(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
 var _ gpuapi.KernelRunner = stubKernelRunner{}
 

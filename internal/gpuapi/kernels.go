@@ -83,4 +83,8 @@ type KernelRunner interface {
 	// FusedRoPEF32 applies rotary positional embedding in one kernel launch.
 	// input/output: [batch * seqLen * headDim], cos/sin: [seqLen * cosStride].
 	FusedRoPEF32(input, cosAngles, sinAngles, output unsafe.Pointer, batch, seqLen, headDim, halfRotary, cosStride int, stream Stream) error
+
+	// FusedSwiGLUF32 applies SwiGLU activation in one kernel launch.
+	// output[i] = w1[i] * sigmoid(w1[i]) * w3[i]. All arrays have n elements.
+	FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, stream Stream) error
 }
