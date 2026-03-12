@@ -76,6 +76,7 @@ type Generator[T tensor.Numeric] struct {
 	headDim   int                                        // per-head dim for paged KV
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
+	logitsBuf []T                                        // reusable buffer for logits sampling (avoids GC pressure)
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -293,10 +294,40 @@ func (gen *Generator[T]) sampleFromLogits(
 	vocabSize := shape[2]
 	seqLen := shape[1]
 
-	data := logits.Data()
+	// Reuse a persistent buffer for logits to avoid allocating 1MB+ per
+	// token. For GPU tensors, CopyTo avoids the double allocation of
+	// Data() which creates a new slice via GPUStorage.Slice().
+	totalElems := seqLen * vocabSize
+	if cap(gen.logitsBuf) < totalElems {
+		gen.logitsBuf = make([]T, totalElems)
+	}
+	data := gen.logitsBuf[:totalElems]
+
+	if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
+		if err := gs.CopyTo(data); err != nil {
+			return 0, fmt.Errorf("copy logits from GPU: %w", err)
+		}
+	} else {
+		copy(data, logits.Data())
+	}
+
 	lastStart := (seqLen - 1) * vocabSize
 	if lastStart+vocabSize > len(data) {
 		return 0, fmt.Errorf("logits data too short: %d < %d", len(data), lastStart+vocabSize)
+	}
+
+	// Greedy fast path: find argmax directly in the T buffer without
+	// allocating a float64 slice. This eliminates 2MB of allocation per token.
+	if sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
+		best := 0
+		bestVal := data[lastStart]
+		for i := 1; i < vocabSize; i++ {
+			if data[lastStart+i] > bestVal {
+				bestVal = data[lastStart+i]
+				best = i
+			}
+		}
+		return best, nil
 	}
 
 	logitsF64 := make([]float64, vocabSize)

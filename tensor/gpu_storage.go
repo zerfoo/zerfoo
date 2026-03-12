@@ -205,6 +205,28 @@ func (s *GPUStorage[T]) Slice() []T {
 	return data
 }
 
+// CopyTo copies GPU device memory into an existing CPU slice without allocating.
+// The destination must have at least Len() elements. Returns an error on failure.
+func (s *GPUStorage[T]) CopyTo(dst []T) error {
+	if s.length == 0 {
+		return nil
+	}
+	if len(dst) < s.length {
+		return fmt.Errorf("GPUStorage.CopyTo: dst too small (%d < %d)", len(dst), s.length)
+	}
+
+	_ = s.runtime.SetDevice(s.deviceID)
+
+	if s.managed {
+		src := unsafe.Slice((*T)(s.devicePtr), s.length)
+		copy(dst, src)
+		return nil
+	}
+
+	dstPtr := unsafe.Pointer(unsafe.SliceData(dst))
+	return s.runtime.Memcpy(dstPtr, s.devicePtr, s.byteSize, gpuapi.MemcpyDeviceToHost)
+}
+
 // TrySet copies data from a CPU slice to the GPU, replacing the current contents.
 // If the new slice has a different length, the old device memory is freed and
 // new memory is allocated. For managed storage, data is written directly to the
