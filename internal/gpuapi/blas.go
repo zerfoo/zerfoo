@@ -55,3 +55,15 @@ type BLASBatched interface {
 		batch int,
 	) error
 }
+
+// BLASBatchedTransposeB is an optional extension that supports strided batched
+// C = A * B^T without explicitly transposing B. A is [m, k], B is [n, k] per batch.
+type BLASBatchedTransposeB interface {
+	SgemmNTStridedBatched(m, n, k int, alpha float32,
+		a unsafe.Pointer, strideA int64,
+		b unsafe.Pointer, strideB int64,
+		beta float32,
+		c unsafe.Pointer, strideC int64,
+		batch int,
+	) error
+}
