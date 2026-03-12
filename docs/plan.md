@@ -138,11 +138,10 @@ ConstantOfShape, Expand, Range, Cos, Sin, Greater, Trilu, Max, ScatterND.
 
 ### E107: Full Build Verification
 
-- [ ] T107.1 Verify go build ./... without -tags cuda  Owner: TBD  Est: 30m
-  - Run go build ./... on macOS (no CUDA).
-  - Fix any compilation errors from removed build tags.
-  - Acceptance: go build ./... passes with zero errors (excluding pre-existing
-    model/ package issues).
+- [x] T107.1 Verify go build ./... without -tags cuda -- 2026 03 12
+  - go build ./... passes on macOS with zero errors.
+  - Fixed pre-existing model/ zmf issue: added Q4_0/Q8_0 to zmf proto (zmf commit 9d26c24).
+  - go test ./... passes (only pre-existing TestCPUEngine_Exp fails).
   - Dependencies: E101-E105.
 
 - [ ] T107.2 Verify go build -tags cuda on DGX Spark  Owner: TBD  Est: 30m
@@ -244,6 +243,14 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-12 (Wave 6)
+
+Wave 6: Sequential, T107.1 completed:
+- T107.1: go build ./... passes on macOS without -tags cuda. Fixed model/ zmf
+  build error by adding Q4_0/Q8_0 to zmf proto (zmf commit 9d26c24).
+  go test ./... passes (only pre-existing TestCPUEngine_Exp fails).
+Newly unblocked: T107.2 (DGX Spark build), S107.2.1 (full test suite on DGX Spark).
 
 ### Change Summary -- 2026-03-12 (Wave 5)
 
