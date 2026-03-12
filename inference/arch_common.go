@@ -233,6 +233,25 @@ func buildTransformerGraph(
 		}
 		gqa.LayerIndex = i
 
+		// Create merged QKV weight for single-GEMV decode optimization.
+		// Concatenates Q, K, V Q4 blocks row-wise so a single GEMV replaces
+		// three separate projections during decode (seqLen=1).
+		if qQ4, ok := any(qW.GetStorage()).(*tensor.Q4Storage); ok {
+			if kQ4, ok := any(kW.GetStorage()).(*tensor.Q4Storage); ok {
+				if vQ4, ok := any(vW.GetStorage()).(*tensor.Q4Storage); ok {
+					mergedQ4 := tensor.MergeQ4Storage(qQ4, kQ4, vQ4)
+					qShape := qW.Shape()
+					kShape := kW.Shape()
+					vShape := vW.Shape()
+					nMerged := qShape[0] + kShape[0] + vShape[0]
+					mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4)
+					if mergeErr == nil {
+						gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+					}
+				}
+			}
+		}
+
 		// Set Q/K norms if enabled (Gemma 3).
 		if opts.qkNorm {
 			qNormW, lookupErr := lookup(prefix + "self_attn.q_norm.weight")
@@ -339,6 +358,20 @@ func buildTransformerGraph(
 		ffnParams[0].Value = gateWT // w1 = gate_proj
 		ffnParams[1].Value = downWT // w2 = down_proj
 		ffnParams[2].Value = upWT   // w3 = up_proj
+
+		// Create merged Gate+Up weight for single-GEMV decode optimization.
+		if gateQ4, ok := any(gateW.GetStorage()).(*tensor.Q4Storage); ok {
+			if upQ4, ok := any(upW.GetStorage()).(*tensor.Q4Storage); ok {
+				mergedGateUpQ4 := tensor.MergeQ4Storage(gateQ4, upQ4)
+				gateShape := gateW.Shape()
+				upShape := upW.Shape()
+				nMerged := gateShape[0] + upShape[0]
+				mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{gateShape[1], nMerged}, mergedGateUpQ4)
+				if mergeErr == nil {
+					ffn.SetMergedGateUp(mergedT, gateShape[0], upShape[0])
+				}
+			}
+		}
 
 		ffnOut := builder.AddNode(ffn, normed2)
 

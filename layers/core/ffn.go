@@ -25,6 +25,11 @@ type FFN[T tensor.Numeric] struct {
 	w3Output     *tensor.TensorNumeric[T]
 	swiGLUOutput *tensor.TensorNumeric[T]
 	w2Output     *tensor.TensorNumeric[T]
+
+	// Merged gate+up weight for single-GEMV decode optimization.
+	mergedGateUp *tensor.TensorNumeric[T]
+	gateDim      int // gate output dim (intermediateSize)
+	upDim        int // up output dim (intermediateSize)
 }
 
 // FFNOpt is a functional option for configuring a FFN layer.
@@ -119,16 +124,37 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	input := inputs[0]
 	f.inputTensor = input // Cache for backward pass
 
-	w1Output, err := f.w1.Forward(ctx, input)
-	if err != nil {
-		return nil, err
+	// Detect sequence length for decode optimization.
+	inputShape := input.Shape()
+	seqLen := 1
+	if len(inputShape) >= 3 {
+		seqLen = inputShape[1]
+	}
+
+	var w1Output, w3Output *tensor.TensorNumeric[T]
+	if f.mergedGateUp != nil && seqLen == 1 {
+		// Merged gate+up: single GEMV + split for decode.
+		merged, mergeErr := f.w1.linear.engine.MatMul(ctx, input, f.mergedGateUp)
+		if mergeErr != nil {
+			return nil, fmt.Errorf("merged gate+up MatMul: %w", mergeErr)
+		}
+		var splitErr error
+		w1Output, w3Output, splitErr = splitMergedGateUp[T](merged, f.gateDim, f.upDim)
+		if splitErr != nil {
+			return nil, fmt.Errorf("split merged gate+up: %w", splitErr)
+		}
+	} else {
+		var err error
+		w1Output, err = f.w1.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		w3Output, err = f.w3.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
 	}
 	f.w1Output = w1Output // Cache for backward pass
-
-	w3Output, err := f.w3.Forward(ctx, input)
-	if err != nil {
-		return nil, err
-	}
 	f.w3Output = w3Output // Cache for backward pass
 
 	// Try fused GPU SwiGLU path: single kernel replaces Concat + Split + sigmoid + Mul + Mul.
@@ -226,10 +252,87 @@ func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *te
 	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
+// SetMergedGateUp sets a merged gate+up weight tensor for single-GEMV decode optimization.
+// During decode (seqLen=1), a single MatMul replaces two separate gate and up projections.
+func (f *FFN[T]) SetMergedGateUp(weight *tensor.TensorNumeric[T], gateDim, upDim int) {
+	f.mergedGateUp = weight
+	f.gateDim = gateDim
+	f.upDim = upDim
+}
+
+// MergedGateUpParameter returns the merged gate+up parameter for GPU upload, or nil if not set.
+func (f *FFN[T]) MergedGateUpParameter() *graph.Parameter[T] {
+	if f.mergedGateUp == nil {
+		return nil
+	}
+	return &graph.Parameter[T]{Name: f.name + "_merged_gate_up", Value: f.mergedGateUp}
+}
+
 // Parameters returns the parameters of the layer.
 func (f *FFN[T]) Parameters() []*graph.Parameter[T] {
 	params := f.w1.Parameters()
 	params = append(params, f.w2.Parameters()...)
 	params = append(params, f.w3.Parameters()...)
+	if p := f.MergedGateUpParameter(); p != nil {
+		params = append(params, p)
+	}
 	return params
+}
+
+// splitMergedGateUp splits a merged gate+up output into separate gate and up tensors.
+// For GPU-resident tensors, uses zero-copy views.
+func splitMergedGateUp[T tensor.Numeric](merged *tensor.TensorNumeric[T], gateDim, upDim int) (gate, up *tensor.TensorNumeric[T], err error) {
+	shape := merged.Shape()
+	if len(shape) < 2 {
+		return nil, nil, fmt.Errorf("expected at least 2D tensor, got %dD", len(shape))
+	}
+	lastDim := shape[len(shape)-1]
+	if lastDim != gateDim+upDim {
+		return nil, nil, fmt.Errorf("last dim %d != gateDim(%d)+upDim(%d)", lastDim, gateDim, upDim)
+	}
+
+	prefix := make([]int, len(shape)-1)
+	copy(prefix, shape[:len(shape)-1])
+	batchElems := 1
+	for _, d := range prefix {
+		batchElems *= d
+	}
+
+	gateShape := append(append([]int{}, prefix...), gateDim)
+	upShape := append(append([]int{}, prefix...), upDim)
+
+	// GPU path: zero-copy views.
+	if gs, ok := merged.GetStorage().(*tensor.GPUStorage[T]); ok {
+		gateView := tensor.NewGPUStorageView(gs, 0, batchElems*gateDim)
+		upView := tensor.NewGPUStorageView(gs, batchElems*gateDim, batchElems*upDim)
+
+		gate, err = tensor.NewWithStorage[T](gateShape, gateView)
+		if err != nil {
+			return nil, nil, err
+		}
+		up, err = tensor.NewWithStorage[T](upShape, upView)
+		if err != nil {
+			return nil, nil, err
+		}
+		return gate, up, nil
+	}
+
+	// CPU path: copy data.
+	data := merged.Data()
+	gateData := make([]T, batchElems*gateDim)
+	upData := make([]T, batchElems*upDim)
+	for b := 0; b < batchElems; b++ {
+		off := b * lastDim
+		copy(gateData[b*gateDim:(b+1)*gateDim], data[off:off+gateDim])
+		copy(upData[b*upDim:(b+1)*upDim], data[off+gateDim:off+gateDim+upDim])
+	}
+	gate, err = tensor.New(gateShape, gateData)
+	if err != nil {
+		return nil, nil, err
+	}
+	up, err = tensor.New(upShape, upData)
+	if err != nil {
+		return nil, nil, err
+	}
+	return gate, up, nil
 }

@@ -195,6 +195,39 @@ func TestNewQ4StorageFromRaw_Errors(t *testing.T) {
 	}
 }
 
+func TestMergeQ4Storage(t *testing.T) {
+	// Create two Q4 storages from known data.
+	a := QuantizeQ4(linspace(-1, 1, 64)) // 2 blocks
+	b := QuantizeQ4(linspace(0, 2, 32))  // 1 block
+
+	merged := MergeQ4Storage(a, b)
+	if merged.NumBlocks() != 3 {
+		t.Fatalf("NumBlocks() = %d, want 3", merged.NumBlocks())
+	}
+	if merged.Len() != 96 {
+		t.Fatalf("Len() = %d, want 96", merged.Len())
+	}
+
+	// Verify merged data matches concatenation of originals.
+	aData := make([]float32, a.Len())
+	a.Dequantize(aData)
+	bData := make([]float32, b.Len())
+	b.Dequantize(bData)
+	mergedData := make([]float32, merged.Len())
+	merged.Dequantize(mergedData)
+
+	for i := range aData {
+		if mergedData[i] != aData[i] {
+			t.Errorf("index %d: merged=%v, want=%v", i, mergedData[i], aData[i])
+		}
+	}
+	for i := range bData {
+		if mergedData[len(aData)+i] != bData[i] {
+			t.Errorf("index %d: merged=%v, want=%v", len(aData)+i, mergedData[len(aData)+i], bData[i])
+		}
+	}
+}
+
 func BenchmarkDequantizeQ4(b *testing.B) {
 	input := linspace(-1, 1, 4096)
 	q := QuantizeQ4(input)

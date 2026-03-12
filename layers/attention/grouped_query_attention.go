@@ -42,6 +42,12 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	qNorm graph.Node[T]
 	kNorm graph.Node[T]
 
+	// Merged QKV weight for single-GEMV decode optimization.
+	mergedQKV *tensor.TensorNumeric[T]
+	qDim      int // number of Q output elements (numQueryHeads * headDim)
+	kDim      int // number of K output elements (numKVHeads * headDim)
+	vDim      int // number of V output elements (numKVHeads * headDim)
+
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -227,6 +233,25 @@ func (gqa *GroupedQueryAttention[T]) SetBlockTableReader(r BlockTableReader[T]) 
 	gqa.blockTableReader = r
 }
 
+// SetMergedQKV sets a merged Q/K/V weight tensor for single-GEMV decode optimization.
+// During decode (seqLen=1), a single MatMul with this weight replaces three separate
+// Q/K/V projections, reducing kernel launch overhead. The output is split into Q, K, V
+// using zero-copy GPU storage views.
+func (gqa *GroupedQueryAttention[T]) SetMergedQKV(weight *tensor.TensorNumeric[T], qDim, kDim, vDim int) {
+	gqa.mergedQKV = weight
+	gqa.qDim = qDim
+	gqa.kDim = kDim
+	gqa.vDim = vDim
+}
+
+// MergedQKVParameter returns the merged QKV parameter for GPU upload, or nil if not set.
+func (gqa *GroupedQueryAttention[T]) MergedQKVParameter() *graph.Parameter[T] {
+	if gqa.mergedQKV == nil {
+		return nil
+	}
+	return &graph.Parameter[T]{Name: "merged_qkv", Value: gqa.mergedQKV}
+}
+
 // Parameters returns the parameters of the GroupedQueryAttention layer.
 func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
@@ -235,6 +260,10 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	params = append(params, gqa.wk.Parameters()...)
 	params = append(params, gqa.wv.Parameters()...)
 	params = append(params, gqa.wo.Parameters()...)
+
+	if p := gqa.MergedQKVParameter(); p != nil {
+		params = append(params, p)
+	}
 
 	return params
 }
@@ -260,19 +289,31 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	cache, hasCache := generate.GetCache[T](ctx)
 
 	// 1. Linear projections for Q, K, V
-	qProj, err := gqa.wq.Forward(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	kProj, err := gqa.wk.Forward(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	vProj, err := gqa.wv.Forward(ctx, input)
-	if err != nil {
-		return nil, err
+	var err error
+	var qProj, kProj, vProj *tensor.TensorNumeric[T]
+	if gqa.mergedQKV != nil && seqLen == 1 {
+		// Merged QKV: single GEMV + zero-copy split for decode.
+		merged, mergeErr := gqa.engine.MatMul(ctx, input, gqa.mergedQKV)
+		if mergeErr != nil {
+			return nil, fmt.Errorf("merged QKV MatMul: %w", mergeErr)
+		}
+		qProj, kProj, vProj, err = splitMergedQKV[T](merged, gqa.qDim, gqa.kDim, gqa.vDim)
+		if err != nil {
+			return nil, fmt.Errorf("split merged QKV: %w", err)
+		}
+	} else {
+		qProj, err = gqa.wq.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		kProj, err = gqa.wk.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		vProj, err = gqa.wv.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Cache projected Q, K, V for backward pass
@@ -672,6 +713,79 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.Ba
 	}
 
 	return []*tensor.TensorNumeric[T]{dInputTotal}, nil
+}
+
+// splitMergedQKV splits a merged QKV output tensor into separate Q, K, V tensors.
+// For GPU-resident tensors, this creates zero-copy views (no data movement).
+// For CPU tensors, it copies the data.
+func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDim, vDim int) (q, k, v *tensor.TensorNumeric[T], err error) {
+	shape := merged.Shape()
+	if len(shape) < 2 {
+		return nil, nil, nil, fmt.Errorf("expected at least 2D tensor, got %dD", len(shape))
+	}
+	lastDim := shape[len(shape)-1]
+	if lastDim != qDim+kDim+vDim {
+		return nil, nil, nil, fmt.Errorf("last dim %d != qDim(%d)+kDim(%d)+vDim(%d)", lastDim, qDim, kDim, vDim)
+	}
+
+	// For seqLen=1 decode, the total elements are just qDim+kDim+vDim.
+	// Build output shapes: same prefix dims, different last dim.
+	prefix := make([]int, len(shape)-1)
+	copy(prefix, shape[:len(shape)-1])
+	batchElems := 1
+	for _, d := range prefix {
+		batchElems *= d
+	}
+
+	qShape := append(append([]int{}, prefix...), qDim)
+	kShape := append(append([]int{}, prefix...), kDim)
+	vShape := append(append([]int{}, prefix...), vDim)
+
+	// GPU path: zero-copy views.
+	if gs, ok := merged.GetStorage().(*tensor.GPUStorage[T]); ok {
+		qView := tensor.NewGPUStorageView(gs, 0, batchElems*qDim)
+		kView := tensor.NewGPUStorageView(gs, batchElems*qDim, batchElems*kDim)
+		vView := tensor.NewGPUStorageView(gs, batchElems*(qDim+kDim), batchElems*vDim)
+
+		q, err = tensor.NewWithStorage[T](qShape, qView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		k, err = tensor.NewWithStorage[T](kShape, kView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		v, err = tensor.NewWithStorage[T](vShape, vView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return q, k, v, nil
+	}
+
+	// CPU path: copy data.
+	data := merged.Data()
+	qData := make([]T, batchElems*qDim)
+	kData := make([]T, batchElems*kDim)
+	vData := make([]T, batchElems*vDim)
+	for b := 0; b < batchElems; b++ {
+		off := b * lastDim
+		copy(qData[b*qDim:(b+1)*qDim], data[off:off+qDim])
+		copy(kData[b*kDim:(b+1)*kDim], data[off+qDim:off+qDim+kDim])
+		copy(vData[b*vDim:(b+1)*vDim], data[off+qDim+kDim:off+qDim+kDim+vDim])
+	}
+	q, err = tensor.New(qShape, qData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	k, err = tensor.New(kShape, kData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	v, err = tensor.New(vShape, vData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return q, k, v, nil
 }
 
 // Statically assert that the type implements the graph.Node interface.

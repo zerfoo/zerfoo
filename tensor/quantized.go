@@ -221,6 +221,26 @@ func (q *Q4Storage) BlockData(i int) *byte {
 	return &q.blocks[i].data[0]
 }
 
+// MergeQ4Storage concatenates multiple Q4Storage objects into one.
+// Used to merge Q/K/V or Gate/Up weight matrices row-wise for single-GEMV
+// optimization during inference decode.
+func MergeQ4Storage(storages ...*Q4Storage) *Q4Storage {
+	totalBlocks := 0
+	totalLen := 0
+	for _, s := range storages {
+		totalBlocks += len(s.blocks)
+		totalLen += s.len
+	}
+	blocks := make([]q4Block, 0, totalBlocks)
+	for _, s := range storages {
+		blocks = append(blocks, s.blocks...)
+	}
+	return &Q4Storage{
+		blocks: blocks,
+		len:    totalLen,
+	}
+}
+
 // NewQ4StorageFromRaw creates Q4Storage from raw block data in the standard
 // Q4_0 format: 18 bytes per block (2 bytes float16 scale LE + 16 bytes packed nibbles).
 // numElements is the number of logical float32 elements the data represents.
