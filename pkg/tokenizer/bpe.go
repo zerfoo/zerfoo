@@ -26,6 +26,9 @@ type BPETokenizer struct {
 	// preTokenize controls how text is split before BPE merging.
 	// If true, byte-level pre-tokenization is used (GPT-2 style).
 	byteLevelBPE bool
+	// sentencePiece enables SentencePiece-style pre-tokenization where spaces
+	// are replaced with ▁ (U+2581) and words are split at ▁ boundaries.
+	sentencePiece bool
 	// normalizer is an optional text normalization function applied before tokenization.
 	normalizer NormalizerFunc
 }
@@ -106,6 +109,12 @@ func (t *BPETokenizer) Decode(ids []int) (string, error) {
 		}
 		return decoded, nil
 	}
+	if t.sentencePiece {
+		// Replace ▁ with space and trim leading space.
+		result = strings.ReplaceAll(result, "\u2581", " ")
+		result = strings.TrimPrefix(result, " ")
+		return result, nil
+	}
 	return result, nil
 }
 
@@ -131,12 +140,40 @@ func (t *BPETokenizer) SpecialTokens() SpecialTokens {
 	return t.special
 }
 
+// SetSentencePiece enables SentencePiece-style pre-tokenization where spaces
+// are replaced with ▁ (U+2581) and the text is split at ▁ boundaries.
+func (t *BPETokenizer) SetSentencePiece(enabled bool) {
+	t.sentencePiece = enabled
+}
+
 // preTokenize splits text into words for BPE processing.
 func (t *BPETokenizer) preTokenize(text string) []string {
 	if t.byteLevelBPE {
 		return t.byteLevelPreTokenize(text)
 	}
+	if t.sentencePiece {
+		return t.sentencePiecePreTokenize(text)
+	}
 	return strings.Fields(text)
+}
+
+// sentencePiecePreTokenize implements SentencePiece-style pre-tokenization.
+// Spaces are replaced with ▁ (U+2581) and text is split at ▁ boundaries,
+// keeping ▁ as the prefix of each resulting word.
+func (t *BPETokenizer) sentencePiecePreTokenize(text string) []string {
+	// Replace all spaces with ▁ and prepend ▁ to the text.
+	normalized := "\u2581" + strings.ReplaceAll(text, " ", "\u2581")
+
+	// Split at ▁ boundaries, keeping ▁ as prefix of each word.
+	var words []string
+	parts := strings.Split(normalized, "\u2581")
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		words = append(words, "\u2581"+p)
+	}
+	return words
 }
 
 // byteLevelPreTokenize converts text to byte-level BPE tokens.

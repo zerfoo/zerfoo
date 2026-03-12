@@ -263,6 +263,94 @@ func TestByteLevelBPEEncoderDecoder(t *testing.T) {
 	}
 }
 
+func TestBPETokenizer_SentencePiece(t *testing.T) {
+	// Build a SentencePiece-style tokenizer with ▁-prefixed tokens.
+	// ▁ (U+2581) is a regular character that gets merged with following chars.
+	vocab := map[string]int{
+		"<unk>":      0,
+		"<s>":       1,
+		"</s>":      2,
+		"<pad>":     3,
+		"\u2581":       4, // ▁ as standalone character
+		"W":         5,
+		"h":         6,
+		"a":         7,
+		"t":         8,
+		"i":         9,
+		"s":         10,
+		"2":         11,
+		"+":         12,
+		"?":         13,
+		"\u2581W":      20,
+		"\u2581Wh":     21,
+		"\u2581Wha":    22,
+		"\u2581What":   23,
+		"\u2581i":      24,
+		"\u2581is":     25,
+		"\u25812":      26,
+		"\u25812+":     27,
+		"\u25812+2":    28,
+		"\u25812+2?":   29,
+	}
+	merges := []MergePair{
+		{Left: "\u2581", Right: "W"},         // rank 0: ▁+W -> ▁W
+		{Left: "\u2581W", Right: "h"},        // rank 1: ▁W+h -> ▁Wh
+		{Left: "\u2581Wh", Right: "a"},       // rank 2: ▁Wh+a -> ▁Wha
+		{Left: "\u2581Wha", Right: "t"},      // rank 3: ▁Wha+t -> ▁What
+		{Left: "\u2581", Right: "i"},         // rank 4: ▁+i -> ▁i
+		{Left: "\u2581i", Right: "s"},        // rank 5: ▁i+s -> ▁is
+		{Left: "\u2581", Right: "2"},         // rank 6: ▁+2 -> ▁2
+		{Left: "\u25812", Right: "+"},        // rank 7: ▁2++ -> ▁2+
+		{Left: "\u25812+", Right: "2"},       // rank 8: ▁2++2 -> ▁2+2
+		{Left: "\u25812+2", Right: "?"},      // rank 9: ▁2+2+? -> ▁2+2?
+	}
+
+	special := SpecialTokens{BOS: 1, EOS: 2, PAD: 3, UNK: 0}
+	tok := NewBPETokenizer(vocab, merges, special, false)
+	tok.SetSentencePiece(true)
+
+	t.Run("encode", func(t *testing.T) {
+		ids, err := tok.Encode("What is 2+2?")
+		if err != nil {
+			t.Fatalf("Encode error: %v", err)
+		}
+		// "What is 2+2?" -> ["▁What", "▁is", "▁2+2?"]
+		want := []int{23, 25, 29}
+		if len(ids) != len(want) {
+			t.Fatalf("Encode = %v (len=%d), want %v (len=%d)", ids, len(ids), want, len(want))
+		}
+		for i, id := range ids {
+			if id != want[i] {
+				t.Errorf("[%d] = %d, want %d", i, id, want[i])
+			}
+		}
+	})
+
+	t.Run("decode", func(t *testing.T) {
+		decoded, err := tok.Decode([]int{23, 25, 29})
+		if err != nil {
+			t.Fatalf("Decode error: %v", err)
+		}
+		want := "What is 2+2?"
+		if decoded != want {
+			t.Errorf("Decode = %q, want %q", decoded, want)
+		}
+	})
+
+	t.Run("pre-tokenize splits", func(t *testing.T) {
+		words := tok.sentencePiecePreTokenize("hello world test")
+		want := []string{"\u2581hello", "\u2581world", "\u2581test"}
+		if len(words) != len(want) {
+			t.Fatalf("got %v, want %v", words, want)
+		}
+		for i, w := range words {
+			if w != want[i] {
+				t.Errorf("[%d] = %q, want %q", i, w, want[i])
+			}
+		}
+	})
+}
+
 func TestBPETokenizer_ByteLevelBPE(t *testing.T) {
 	// Build a tiny byte-level BPE tokenizer.
 	enc, _ := buildByteEncoderDecoder()
