@@ -29,6 +29,14 @@ type WeightUploader interface {
 	UploadWeights(tensors []*tensor.TensorNumeric[float32]) error
 }
 
+// TransposeBMatMuler is an optional interface for engines that can compute
+// C = A * B^T without explicitly transposing B. This avoids an extra
+// GPU allocation and kernel launch for the transpose operation.
+// A is [batch, m, k], B is [batch, n, k], result is [batch, m, n].
+type TransposeBMatMuler[T tensor.Numeric] interface {
+	MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+}
+
 // Engine defines the interface for a computation engine (e.g., CPU, GPU).
 // All tensor operations should be routed through an Engine implementation to ensure
 // hardware interoperability and optimized performance.

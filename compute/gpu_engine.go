@@ -463,6 +463,132 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	return makeGPUResult[T](e, outShape, devCTotal, batchSize*cMatSize, dst...)
 }
 
+// MatMulTransposeB computes C = A * B^T using cuBLAS SgemmNT, avoiding
+// an explicit Transpose allocation and kernel launch.
+// A is [...batch, m, k], B is [...batch, n, k], result is [...batch, m, n].
+// Supports batch broadcasting (bBatch=1 broadcasts B across A's batch).
+func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if a == nil || b == nil {
+		return nil, fmt.Errorf("MatMulTransposeB: input tensors must not be nil")
+	}
+
+	// Check for SgemmNT support.
+	ntBLAS, ok := e.blas.(gpuapi.BLASTransposeB)
+	if !ok {
+		// Fall back: explicit transpose + standard MatMul.
+		kT, err := e.Transpose(ctx, b, []int{0, 2, 1})
+		if err != nil {
+			return nil, err
+		}
+		return e.MatMul(ctx, a, kT, dst...)
+	}
+
+	var zero T
+	_, isFloat32 := any(zero).(float32)
+	if !isFloat32 {
+		kT, err := e.Transpose(ctx, b, []int{0, 2, 1})
+		if err != nil {
+			return nil, err
+		}
+		return e.MatMul(ctx, a, kT, dst...)
+	}
+
+	e.setDevice()
+
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return nil, fmt.Errorf("MatMulTransposeB: tensors must have at least 2 dimensions")
+	}
+
+	// A: [..., m, k], B: [..., n, k] → C: [..., m, n]
+	m := aShape[len(aShape)-2]
+	k := aShape[len(aShape)-1]
+	n := bShape[len(bShape)-2] // B's second-to-last dim is n (B^T would be [k, n])
+	bk := bShape[len(bShape)-1]
+
+	if k != bk {
+		return nil, fmt.Errorf("MatMulTransposeB: k dimensions must match: A[..., %d] vs B[..., %d]", k, bk)
+	}
+
+	aBatchSize := 1
+	for _, d := range aShape[:len(aShape)-2] {
+		aBatchSize *= d
+	}
+	bBatchSize := 1
+	for _, d := range bShape[:len(bShape)-2] {
+		bBatchSize *= d
+	}
+	if bBatchSize != 1 && aBatchSize != bBatchSize {
+		return nil, fmt.Errorf("MatMulTransposeB: batch dimensions %v and %v are incompatible", aShape[:len(aShape)-2], bShape[:len(bShape)-2])
+	}
+
+	batchSize := aBatchSize
+	if bBatchSize > batchSize {
+		batchSize = bBatchSize
+	}
+
+	outShape := make([]int, 0, len(aShape))
+	outShape = append(outShape, aShape[:len(aShape)-2]...)
+	outShape = append(outShape, m, n)
+
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		if tErr != nil {
+			return nil, tErr
+		}
+		return e.MatMul(ctx, a, kT, dst...)
+	}
+	defer cleanupA()
+
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		if tErr != nil {
+			return nil, tErr
+		}
+		return e.MatMul(ctx, a, kT, dst...)
+	}
+	defer cleanupB()
+
+	elemSize := int(unsafe.Sizeof(zero))
+	aMatSize := m * k
+	bMatSize := n * k
+	cMatSize := m * n
+
+	devC, err := e.pool.Alloc(e.deviceID, batchSize*cMatSize*elemSize)
+	if err != nil {
+		kT, tErr := e.Transpose(ctx, b, []int{0, 2, 1})
+		if tErr != nil {
+			return nil, tErr
+		}
+		return e.MatMul(ctx, a, kT, dst...)
+	}
+
+	for batch := range batchSize {
+		aOff := batch * aMatSize * elemSize
+		bOff := 0
+		if bBatchSize > 1 {
+			bOff = batch * bMatSize * elemSize
+		}
+		cOff := batch * cMatSize * elemSize
+
+		if err := ntBLAS.SgemmNT(m, n, k, 1.0,
+			unsafe.Add(devA, aOff),
+			unsafe.Add(devB, bOff),
+			0.0,
+			unsafe.Add(devC, cOff),
+		); err != nil {
+			e.pool.Free(e.deviceID, devC, batchSize*cMatSize*elemSize)
+			return nil, fmt.Errorf("MatMulTransposeB: BLAS batch %d: %w", batch, err)
+		}
+	}
+
+	return makeGPUResult[T](e, outShape, devC, batchSize*cMatSize, dst...)
+}
+
 // matMulQ4 handles GPU Q4_0 dequant-GEMM: C = dequant(A_q4) * B.
 // Only supports unbatched 2D for now; batched Q4 falls back to CPU.
 func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {

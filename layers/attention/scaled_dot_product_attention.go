@@ -82,12 +82,21 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 
 	// 1. MatMul Q and K^T
 	// (batch, seq_len_q, head_dim) x (batch, head_dim, seq_len_k) -> (batch, seq_len_q, seq_len_k)
-	kTransposed, err := sdpa.engine.Transpose(ctx, k, []int{0, 2, 1}) // Transpose K for 3D tensor
-	if err != nil {
-		return nil, err
+	// Use MatMulTransposeB when available to avoid explicit Transpose allocation + kernel.
+	var (
+		attentionScores *tensor.TensorNumeric[T]
+		err             error
+	)
+	if tb, ok := sdpa.engine.(compute.TransposeBMatMuler[T]); ok {
+		attentionScores, err = tb.MatMulTransposeB(ctx, q, k)
+	} else {
+		var kTransposed *tensor.TensorNumeric[T]
+		kTransposed, err = sdpa.engine.Transpose(ctx, k, []int{0, 2, 1})
+		if err != nil {
+			return nil, err
+		}
+		attentionScores, err = sdpa.engine.MatMul(ctx, q, kTransposed, nil)
 	}
-
-	attentionScores, err := sdpa.engine.MatMul(ctx, q, kTransposed, nil)
 	if err != nil {
 		return nil, err
 	}

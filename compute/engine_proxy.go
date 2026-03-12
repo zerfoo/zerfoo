@@ -301,6 +301,23 @@ func (p *EngineProxy[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[flo
 	return FusedRMSNorm(input, weight, epsilon)
 }
 
+// MatMulTransposeB delegates to the underlying engine if it implements TransposeBMatMuler.
+func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if tb, ok := p.real.(TransposeBMatMuler[T]); ok {
+		result, err := tb.MatMulTransposeB(ctx, a, b, dst...)
+		if err == nil {
+			p.record("MatMulTransposeB", []*tensor.TensorNumeric[T]{a, b}, result, nil)
+		}
+		return result, err
+	}
+	// Fall back to Transpose + MatMul.
+	kT, err := p.Transpose(ctx, b, []int{0, 2, 1})
+	if err != nil {
+		return nil, err
+	}
+	return p.MatMul(ctx, a, kT, dst...)
+}
+
 // ResetPool delegates to the underlying engine if it implements PoolResetter.
 func (p *EngineProxy[T]) ResetPool() {
 	if resetter, ok := p.real.(PoolResetter); ok {

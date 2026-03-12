@@ -32,3 +32,13 @@ type BLAS interface {
 	// Destroy releases the BLAS handle resources.
 	Destroy() error
 }
+
+// BLASTransposeB is an optional extension that supports computing
+// C = alpha * A * B^T + beta * C without explicitly transposing B.
+// A is m x k (row-major), B is n x k (row-major), C is m x n.
+type BLASTransposeB interface {
+	SgemmNT(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+}

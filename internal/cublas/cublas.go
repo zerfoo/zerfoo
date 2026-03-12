@@ -125,6 +125,47 @@ func Sgemm(h *Handle, m, n, k int, alpha float32,
 	return nil
 }
 
+// SgemmNT performs single-precision C = A * B^T where A is [m, k] and
+// B is [n, k] (row-major). Uses CUBLAS_OP_T on the first cuBLAS argument
+// (our B) to transpose B without an explicit copy.
+//
+// Row-major to column-major conversion:
+//
+//	cuBLAS sees B_rm[n, k] as B_cm[k, n]. With CUBLAS_OP_T, op(B_cm) = B_cm^T = B_rm[n, k].
+//	cuBLAS sees A_rm[m, k] as A_cm[k, m]. With CUBLAS_OP_N, op(A_cm) = A_cm[k, m].
+//	op(B_cm) * op(A_cm) = [n, k] * [k, m] = [n, m] in column-major.
+//	Reading as row-major: [m, n] = A_rm * B_rm^T. ✓
+func SgemmNT(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, b unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	cAlpha := C.float(alpha)
+	cBeta := C.float(beta)
+
+	status := C.cublasSgemm(
+		h.h,
+		C.CUBLAS_OP_T, // transpose B (cuBLAS first arg)
+		C.CUBLAS_OP_N, // no-transpose A (cuBLAS second arg)
+		C.int(n),      // rows of op(B) = n
+		C.int(m),      // cols of op(A) = m
+		C.int(k),      // inner dimension
+		(*C.float)(unsafe.Pointer(&cAlpha)),
+		(*C.float)(b), // B comes first (cuBLAS convention)
+		C.int(k),      // leading dim of B_cm = k (B_rm row width)
+		(*C.float)(a), // A comes second
+		C.int(k),      // leading dim of A_cm = k (A_rm row width)
+		(*C.float)(unsafe.Pointer(&cBeta)),
+		(*C.float)(c),
+		C.int(n), // leading dim of C_cm = n (C_rm row width)
+	)
+
+	if status != C.CUBLAS_STATUS_SUCCESS {
+		return fmt.Errorf("cublasSgemm(NT) failed with status %d", int(status))
+	}
+
+	return nil
+}
+
 // GemmEx performs mixed-precision general matrix multiplication using
 // cublasGemmEx. Supports BFloat16, Float16, and Float32 element types.
 //
