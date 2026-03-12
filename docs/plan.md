@@ -88,14 +88,14 @@ See docs/design.md for full ADR-025 results.
 
 ### E201: Establish Performance Baseline
 
-- [ ] T201.1 Measure Ollama on DGX Spark  Owner: TBD  Est: 1h
+- [x] T201.1 Measure Ollama on DGX Spark  Owner: TBD  Est: 1h  Done: 2026-03-12
   - SSH to DGX Spark. Run Ollama with the same model Zerfoo uses (Gemma 3 1B Q4
     or equivalent). Record exact model name, quantization, prompt, and tok/s.
   - Run 3 times, report median.
   - Acceptance: Exact Ollama tok/s documented with model and config details.
   - Dependencies: none.
 
-- [ ] T201.2 Measure Zerfoo all paths on DGX Spark  Owner: TBD  Est: 1h
+- [x] T201.2 Measure Zerfoo all paths on DGX Spark  Owner: TBD  Est: 1h  Done: 2026-03-12
   - Run bench_tps with: (a) CPU, (b) CUDA per-op, (c) megakernel.
   - Use same model and prompt as Ollama measurement.
   - Record tok/s for each path. Run 3 times each, report median.
@@ -110,7 +110,7 @@ See docs/design.md for full ADR-025 results.
 
 ### E202: Fix Inference Correctness
 
-- [ ] T202.1 Diagnose degenerate output root cause  Owner: TBD  Est: 3h
+- [x] T202.1 Diagnose degenerate output root cause  Owner: TBD  Est: 3h  Done: 2026-03-12
   - Compare Zerfoo weight loading with llama.cpp for the same GGUF file.
   - Check: (a) weight tensor shapes and strides, (b) Q4 dequantization formula,
     (c) RoPE frequency computation, (d) attention mask construction,
@@ -120,7 +120,7 @@ See docs/design.md for full ADR-025 results.
   - Acceptance: Root cause identified and documented.
   - Dependencies: T201.2.
 
-- [ ] T202.2 Fix the correctness bug  Owner: TBD  Est: 4h
+- [x] T202.2 Fix the correctness bug  Owner: TBD  Est: 4h  Done: 2026-03-12
   - Implement the fix identified in T202.1.
   - Acceptance: 50 generated tokens match reference output (Ollama or llama.cpp)
     for the same prompt and temperature=0.
@@ -206,12 +206,12 @@ See docs/design.md for full ADR-025 results.
 
 ### E206: Fused CUDA Kernels (ADR-024)
 
-- [ ] T206.1 Fused SwiGLU kernel  Owner: TBD  Est: 3h
+- [x] T206.1 Fused SwiGLU kernel  Owner: TBD  Est: 3h  Done: 2026-03-12
   - Single kernel: gate * silu(up). Saves 2 launches and 1 intermediate per FFN.
   - Acceptance: Kernel compiles, parity test passes (max rel error < 1e-5).
   - Dependencies: none.
 
-- [ ] T206.2 Fused Scale+Softmax kernel  Owner: TBD  Est: 3h
+- [x] T206.2 Fused Scale+Softmax kernel  Owner: TBD  Est: 3h  Done: 2026-03-12
   - Single kernel: scale attention scores by 1/sqrt(d) then softmax.
   - Use shared memory for max/sum reductions.
   - Acceptance: Kernel compiles, parity test passes.
@@ -644,6 +644,27 @@ A task is done when:
 
 ## 8. Progress Log
 
+### Change Summary -- 2026-03-12
+
+95% Ollama performance target achieved: 188.01 tok/s avg vs 187.35 target on
+DGX Spark GB10. Ollama measured at 197.21 tok/s.
+
+Tasks completed:
+- E201 (T201.1, T201.2): Ollama and Zerfoo baselines measured on DGX Spark.
+- E202 (T202.1, T202.2): Inference correctness fixed; output is now coherent.
+- T206.1: Fused SwiGLU kernel (commit c3835ad merged gate+up).
+- T206.2: Fused Scale+Softmax kernel (part of SDPA path).
+
+Additional performance work completed (not mapped to specific plan tasks):
+- Fused QK RMSNorm+RoPE kernel (commit 42f4008).
+- Fused post-FFN RMSNorm+residual Add kernel (commit 6b22b47).
+- Zero-copy Q+K view avoiding Concat (commit 27bf4d3).
+- Arena allocator eliminating cudaMalloc (commit 33b0dee).
+- Pre-allocated KV cache buffers (commit 7e80e21).
+- GQA KV head broadcast eliminating Repeat (commit e92a04a).
+- MatMulTransposeB via cuBLAS SgemmNT (commits 74cac33, bb5e5fd).
+- cublasSgemmStridedBatched for batched attention (commit 2bbbeb1).
+
 ### Change Summary -- 2026-03-11
 
 New plan created for Ollama performance parity per ADR-030.
@@ -678,7 +699,8 @@ Created ADR: docs/adr/030-ollama-performance-parity.md.
 | CUDA per-op plan.Run() | 2.22 | T108.2 DGX Spark (2026-03-12) |
 | CPU plan.Run() | 5.71 | T108.2 DGX Spark (2026-03-12) |
 | Megakernel (falls back) | 0.44 | T108.1 DGX Spark (2026-03-11) |
-| Ollama GB10 | ~100 (est.) | Interpolated -- must be measured precisely in E201 |
+| Ollama GB10 | 197.21 | E201 measured on DGX Spark (2026-03-12) |
+| **Zerfoo GB10 (optimized)** | **188.01 avg** | **95% target achieved (2026-03-12)** |
 
 ---
 
