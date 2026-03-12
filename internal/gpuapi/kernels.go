@@ -41,8 +41,9 @@ type KernelRunner interface {
 	Softmax(input, output unsafe.Pointer, outer, inner, axisSize int, stream Stream) error
 
 	// GemmQ4F32 performs Q4_0 dequant-GEMM: C = dequant(A_q4) * B.
-	// A_q4 is packed Q4_0 blocks, B is [K,N] float32, C is [M,N] float32.
-	GemmQ4F32(aQ4, b, c unsafe.Pointer, m, k, n int, stream Stream) error
+	// A_q4 is in GPU separated layout (scales then data), B is [K,N] float32, C is [M,N] float32.
+	// dataOffset is the byte offset from A_q4 to the packed data region.
+	GemmQ4F32(aQ4, b, c unsafe.Pointer, m, k, n, dataOffset int, stream Stream) error
 
 	// GemmQ8F32 performs Q8_0 dequant-GEMM: C = dequant(A_q8) * B.
 	// A_q8 is packed Q8_0 blocks (36 bytes per 32 values), B is [K,N] float32, C is [M,N] float32.
@@ -87,4 +88,14 @@ type KernelRunner interface {
 	// FusedSwiGLUF32 applies SwiGLU activation in one kernel launch.
 	// output[i] = w1[i] * sigmoid(w1[i]) * w3[i]. All arrays have n elements.
 	FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, stream Stream) error
+
+	// FusedAddRMSNormF32 fuses residual addition and RMSNorm into one kernel launch.
+	// residual is updated in-place: residual = input + residual.
+	// output = rmsnorm(residual, weight, eps).
+	// input: [rows, D], residual: [rows, D], weight: [D], output: [rows, D].
+	FusedAddRMSNormF32(input, residual, weight, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
+	// ScaledSoftmaxF32 computes softmax(input * scale) in one kernel launch,
+	// replacing the MulScalar + Softmax chain (saves 1 kernel launch per call).
+	ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
 }

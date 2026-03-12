@@ -108,7 +108,7 @@ func (k *OpenCLKernels) Softmax(input, output unsafe.Pointer, outer, inner, axis
 	return k.prog.Softmax(input, output, outer, inner, axisSize)
 }
 
-func (k *OpenCLKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, _ Stream) error {
+func (k *OpenCLKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n, dataOffset int, _ Stream) error {
 	return fmt.Errorf("GemmQ4F32: not implemented for OpenCL")
 }
 
@@ -162,6 +162,14 @@ func (k *OpenCLKernels) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ in
 
 func (k *OpenCLKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FusedAddRMSNormF32(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAddRMSNormF32: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxF32: not implemented for OpenCL")
 }
 
 // Compile-time interface assertion.

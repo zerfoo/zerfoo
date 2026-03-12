@@ -97,8 +97,8 @@ func (k *CUDAKernels) Softmax(input, output unsafe.Pointer, outer, inner, axisSi
 	return kernels.Softmax(input, output, outer, inner, axisSize, streamPtr(s))
 }
 
-func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, s Stream) error {
-	return kernels.GemmQ4F32(aQ4, b, c, m, kk, n, streamPtr(s))
+func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n, dataOffset int, s Stream) error {
+	return kernels.GemmQ4F32(aQ4, b, c, m, kk, n, dataOffset, streamPtr(s))
 }
 
 func (k *CUDAKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, s Stream) error {
@@ -151,6 +151,14 @@ func (k *CUDAKernels) FusedRoPEF32(input, cosAngles, sinAngles, output unsafe.Po
 
 func (k *CUDAKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, s Stream) error {
 	return kernels.FusedSwiGLUF32(w1, w3, output, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, output unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+	return kernels.FusedAddRMSNormF32(input, residual, weight, output, eps, rows, D, streamPtr(s))
+}
+
+func (k *CUDAKernels) ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
+	return kernels.ScaledSoftmaxF32(input, output, outer, inner, axisSize, scale, streamPtr(s))
 }
 
 // Compile-time interface assertion.

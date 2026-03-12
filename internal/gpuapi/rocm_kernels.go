@@ -100,7 +100,7 @@ func (k *ROCmKernels) Softmax(input, output unsafe.Pointer, outer, inner, axisSi
 	return kernels.Softmax(input, output, outer, inner, axisSize, rocmStreamPtr(s))
 }
 
-func (k *ROCmKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, s Stream) error {
+func (k *ROCmKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n, dataOffset int, s Stream) error {
 	return fmt.Errorf("GemmQ4F32: not implemented for ROCm")
 }
 
@@ -154,6 +154,14 @@ func (k *ROCmKernels) FusedRoPEF32(_, _, _, _ unsafe.Pointer, _, _, _, _, _ int,
 
 func (k *ROCmKernels) FusedSwiGLUF32(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("FusedSwiGLUF32: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) FusedAddRMSNormF32(_, _, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("FusedAddRMSNormF32: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxF32: not implemented for ROCm")
 }
 
 // Compile-time interface assertion.

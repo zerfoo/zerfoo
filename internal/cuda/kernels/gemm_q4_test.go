@@ -10,7 +10,7 @@ import (
 )
 
 // quantizeQ4 performs Q4_0 quantization inline (avoids tensor import cycle).
-// Returns packed bytes (18 bytes per block of 32 values) and dequantized reference.
+// Returns packed bytes in GGUF interleaved format and dequantized reference.
 func quantizeQ4(src []float32) (packed []byte, dequant []float32) {
 	const blockSize = 32
 	n := len(src)
@@ -44,7 +44,7 @@ func quantizeQ4(src []float32) (packed []byte, dequant []float32) {
 		blkOff := bi * 18
 		binary.LittleEndian.PutUint16(packed[blkOff:blkOff+2], scaleBits)
 
-		// Quantize and pack (GGML Q4_0 split format: low nibbles=first half, high nibbles=second half).
+		// Quantize and pack (GGML Q4_0 split format).
 		var invScale float32
 		if scale > 0 {
 			invScale = 1.0 / scale
@@ -80,6 +80,25 @@ func quantizeQ4(src []float32) (packed []byte, dequant []float32) {
 		}
 	}
 	return packed, dequant
+}
+
+// repackQ4ForGPU converts GGUF interleaved Q4 bytes to the GPU separated layout:
+// [all_scales: nBlocks*2 bytes] [pad to 16B] [all_data: nBlocks*16 bytes]
+func repackQ4ForGPU(packed []byte, nBlocks int) (gpuBytes []byte, dataOffset int) {
+	scaleBytes := nBlocks * 2
+	paddedScaleBytes := (scaleBytes + 15) &^ 15
+	dataBytes := nBlocks * 16
+	gpuBytes = make([]byte, paddedScaleBytes+dataBytes)
+	dataOffset = paddedScaleBytes
+
+	for i := 0; i < nBlocks; i++ {
+		blkOff := i * 18
+		// Copy scale (2 bytes)
+		copy(gpuBytes[i*2:i*2+2], packed[blkOff:blkOff+2])
+		// Copy packed data (16 bytes)
+		copy(gpuBytes[paddedScaleBytes+i*16:paddedScaleBytes+i*16+16], packed[blkOff+2:blkOff+18])
+	}
+	return gpuBytes, dataOffset
 }
 
 func clampQ4(v int) int {
@@ -130,8 +149,6 @@ func TestGemmQ4F32_Correctness(t *testing.T) {
 	if !cuda.Available() {
 		t.Skip("CUDA not available")
 	}
-	// Small matrix: M=2, K=32, N=4.
-	// K=32 so each row of A is exactly 1 Q4 block.
 	M, K, N := 2, 32, 4
 
 	stream, err := cuda.CreateStream()
@@ -140,22 +157,20 @@ func TestGemmQ4F32_Correctness(t *testing.T) {
 	}
 	defer func() { _ = stream.Destroy() }()
 
-	// Create float32 source data for A.
 	aF32 := make([]float32, M*K)
 	for i := range aF32 {
 		aF32[i] = float32(i%7-3) * 0.1
 	}
 
-	// Quantize A to Q4.
 	aBytes, aDequant := quantizeQ4(aF32)
+	nBlocks := M * (K / 32)
+	gpuBytes, dataOffset := repackQ4ForGPU(aBytes, nBlocks)
 
-	// Create B matrix.
 	bF32 := make([]float32, K*N)
 	for i := range bF32 {
 		bF32[i] = float32(i%5-2) * 0.1
 	}
 
-	// Compute reference: dequant(A) * B on CPU.
 	ref := make([]float32, M*N)
 	for i := range M {
 		for j := range N {
@@ -167,8 +182,7 @@ func TestGemmQ4F32_Correctness(t *testing.T) {
 		}
 	}
 
-	// Allocate device memory.
-	devA, err := cuda.Malloc(len(aBytes))
+	devA, err := cuda.Malloc(len(gpuBytes))
 	if err != nil {
 		t.Fatalf("cuda.Malloc A: %v", err)
 	}
@@ -186,31 +200,26 @@ func TestGemmQ4F32_Correctness(t *testing.T) {
 	}
 	defer func() { _ = cuda.Free(devC) }()
 
-	// Copy H2D.
-	if err := cuda.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), cuda.MemcpyHostToDevice); err != nil {
+	if err := cuda.Memcpy(devA, unsafe.Pointer(&gpuBytes[0]), len(gpuBytes), cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy A: %v", err)
 	}
 	if err := cuda.Memcpy(devB, unsafe.Pointer(&bF32[0]), K*N*4, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy B: %v", err)
 	}
 
-	// Run kernel.
-	if err := GemmQ4F32(devA, devB, devC, M, K, N, stream.Ptr()); err != nil {
+	if err := GemmQ4F32(devA, devB, devC, M, K, N, dataOffset, stream.Ptr()); err != nil {
 		t.Fatalf("GemmQ4F32: %v", err)
 	}
 
-	// Sync.
 	if err := stream.Synchronize(); err != nil {
 		t.Fatalf("Synchronize: %v", err)
 	}
 
-	// Copy D2H.
 	got := make([]float32, M*N)
 	if err := cuda.Memcpy(unsafe.Pointer(&got[0]), devC, M*N*4, cuda.MemcpyDeviceToHost); err != nil {
 		t.Fatalf("Memcpy C: %v", err)
 	}
 
-	// Compare with Q4 tolerance.
 	const tol = 0.15
 	for i := range got {
 		if diff := math.Abs(float64(got[i] - ref[i])); diff > tol {
@@ -236,13 +245,14 @@ func TestGemmQ4F32_LargerMatrix(t *testing.T) {
 		aF32[i] = float32(i%11-5) * 0.05
 	}
 	aBytes, aDequant := quantizeQ4(aF32)
+	nBlocks := M * (K / 32)
+	gpuBytes, dataOffset := repackQ4ForGPU(aBytes, nBlocks)
 
 	bF32 := make([]float32, K*N)
 	for i := range bF32 {
 		bF32[i] = float32(i%9-4) * 0.05
 	}
 
-	// Reference.
 	ref := make([]float32, M*N)
 	for i := range M {
 		for j := range N {
@@ -254,7 +264,7 @@ func TestGemmQ4F32_LargerMatrix(t *testing.T) {
 		}
 	}
 
-	devA, err := cuda.Malloc(len(aBytes))
+	devA, err := cuda.Malloc(len(gpuBytes))
 	if err != nil {
 		t.Fatalf("cuda.Malloc A: %v", err)
 	}
@@ -272,14 +282,14 @@ func TestGemmQ4F32_LargerMatrix(t *testing.T) {
 	}
 	defer func() { _ = cuda.Free(devC) }()
 
-	if err := cuda.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), cuda.MemcpyHostToDevice); err != nil {
+	if err := cuda.Memcpy(devA, unsafe.Pointer(&gpuBytes[0]), len(gpuBytes), cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy A: %v", err)
 	}
 	if err := cuda.Memcpy(devB, unsafe.Pointer(&bF32[0]), K*N*4, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy B: %v", err)
 	}
 
-	if err := GemmQ4F32(devA, devB, devC, M, K, N, stream.Ptr()); err != nil {
+	if err := GemmQ4F32(devA, devB, devC, M, K, N, dataOffset, stream.Ptr()); err != nil {
 		t.Fatalf("GemmQ4F32: %v", err)
 	}
 	if err := stream.Synchronize(); err != nil {
@@ -301,7 +311,7 @@ func TestGemmQ4F32_LargerMatrix(t *testing.T) {
 		if diff > tol {
 			t.Errorf("C[%d] = %f, want %f (diff %f)", i, got[i], ref[i], diff)
 			if t.Failed() {
-				break // Don't flood output.
+				break
 			}
 		}
 	}
@@ -325,30 +335,31 @@ func BenchmarkGemmQ4F32_1024(b *testing.B) {
 		aF32[i] = float32(i%7-3) * 0.01
 	}
 	aBytes, _ := quantizeQ4(aF32)
+	nBlocks := M * (K / 32)
+	gpuBytes, dataOffset := repackQ4ForGPU(aBytes, nBlocks)
 
 	bF32 := make([]float32, K*N)
 	for i := range bF32 {
 		bF32[i] = float32(i%5-2) * 0.01
 	}
 
-	devA, _ := cuda.Malloc(len(aBytes))
+	devA, _ := cuda.Malloc(len(gpuBytes))
 	defer func() { _ = cuda.Free(devA) }()
 	devB, _ := cuda.Malloc(K * N * 4)
 	defer func() { _ = cuda.Free(devB) }()
 	devC, _ := cuda.Malloc(M * N * 4)
 	defer func() { _ = cuda.Free(devC) }()
 
-	_ = cuda.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devA, unsafe.Pointer(&gpuBytes[0]), len(gpuBytes), cuda.MemcpyHostToDevice)
 	_ = cuda.Memcpy(devB, unsafe.Pointer(&bF32[0]), K*N*4, cuda.MemcpyHostToDevice)
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = GemmQ4F32(devA, devB, devC, M, K, N, stream.Ptr())
+		_ = GemmQ4F32(devA, devB, devC, M, K, N, dataOffset, stream.Ptr())
 	}
 	_ = stream.Synchronize()
 
 	elapsed := b.Elapsed()
-	// Q4 GEMM effective FLOPS: 2*M*K*N per iteration.
 	flops := 2.0 * float64(M) * float64(K) * float64(N) * float64(b.N)
 	gflops := flops / elapsed.Seconds() / 1e9
 	b.ReportMetric(gflops, "GFLOPS")
