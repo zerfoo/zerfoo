@@ -36,19 +36,21 @@ func writeTestGGUF(t *testing.T, dir string) string {
 		name  string
 		shape []uint64
 	}
+	// GGUF stores dimensions in GGML order (innermost-first: ne[0]=columns,
+	// ne[1]=rows). The loader reverses these to PyTorch convention.
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(vocab), uint64(hidden)}},
+		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
 		{"output_norm.weight", []uint64{uint64(hidden)}},
-		{"output.weight", []uint64{uint64(vocab), uint64(hidden)}},
+		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
 		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
 		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.attn_k.weight", []uint64{uint64(kvDim), uint64(hidden)}},
-		{"blk.0.attn_v.weight", []uint64{uint64(kvDim), uint64(hidden)}},
+		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}},
+		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}},
 		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
 		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(inter), uint64(hidden)}},
-		{"blk.0.ffn_up.weight", []uint64{uint64(inter), uint64(hidden)}},
-		{"blk.0.ffn_down.weight", []uint64{uint64(hidden), uint64(inter)}},
+		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
+		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
+		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
 	}
 
 	// Build tokenizer tokens array.

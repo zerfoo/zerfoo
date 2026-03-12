@@ -86,15 +86,19 @@ var blkPattern = regexp.MustCompile(`^blk\.(\d+)\.(.+)$`)
 
 // tensorNameMap maps GGUF tensor name suffixes (after blk.N.) to HuggingFace names.
 var tensorNameMap = map[string]string{
-	"attn_norm.weight":   "input_layernorm.weight",
-	"attn_q.weight":      "self_attn.q_proj.weight",
-	"attn_k.weight":      "self_attn.k_proj.weight",
-	"attn_v.weight":      "self_attn.v_proj.weight",
-	"attn_output.weight": "self_attn.o_proj.weight",
-	"ffn_norm.weight":    "post_attention_layernorm.weight",
-	"ffn_gate.weight":    "mlp.gate_proj.weight",
-	"ffn_up.weight":      "mlp.up_proj.weight",
-	"ffn_down.weight":    "mlp.down_proj.weight",
+	"attn_norm.weight":           "input_layernorm.weight",
+	"attn_q.weight":              "self_attn.q_proj.weight",
+	"attn_k.weight":              "self_attn.k_proj.weight",
+	"attn_v.weight":              "self_attn.v_proj.weight",
+	"attn_output.weight":         "self_attn.o_proj.weight",
+	"attn_q_norm.weight":         "self_attn.q_norm.weight",
+	"attn_k_norm.weight":         "self_attn.k_norm.weight",
+	"ffn_norm.weight":            "post_attention_layernorm.weight",
+	"post_attention_norm.weight": "post_attention_layernorm.weight",
+	"post_ffw_norm.weight":       "post_feedforward_layernorm.weight",
+	"ffn_gate.weight":            "mlp.gate_proj.weight",
+	"ffn_up.weight":              "mlp.up_proj.weight",
+	"ffn_down.weight":            "mlp.down_proj.weight",
 }
 
 // globalTensorMap maps global GGUF tensor names to HuggingFace names.

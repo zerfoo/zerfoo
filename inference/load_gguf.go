@@ -41,6 +41,13 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		return nil, fmt.Errorf("build graph: %w", err)
 	}
 
+	// Derive VocabSize from embedding tensor shape if not set in metadata.
+	if gm.Config.VocabSize == 0 {
+		if emb, ok := gm.Tensors["model.embed_tokens.weight"]; ok {
+			gm.Config.VocabSize = emb.Shape()[0]
+		}
+	}
+
 	// Build metadata.
 	meta := gm.ToModelMetadata()
 	special := tok.SpecialTokens()

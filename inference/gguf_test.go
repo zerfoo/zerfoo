@@ -31,10 +31,11 @@ func buildSyntheticGGUFFile(t *testing.T, dir string) string {
 	writeKV(&buf, "llama.attention.head_count", uint32(4))
 
 	// Tensor info: token_embd.weight (4 x 64 F32)
+	// GGUF stores dims in GGML order (innermost-first): [cols=64, rows=4].
 	writeStr(&buf, "token_embd.weight")
 	bw(&buf, uint32(2)) // 2 dimensions
-	bw(&buf, uint64(4))
 	bw(&buf, uint64(64))
+	bw(&buf, uint64(4))
 	bw(&buf, uint32(gguf.GGMLTypeF32))
 	bw(&buf, uint64(0)) // offset
 

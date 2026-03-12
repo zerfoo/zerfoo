@@ -26,9 +26,12 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		}
 
 		// Convert dimensions to int for tensor API.
+		// GGUF stores dimensions in GGML order (innermost-first: ne[0]=columns,
+		// ne[1]=rows). Reverse to match PyTorch convention (outermost-first:
+		// shape[0]=rows, shape[1]=columns).
 		shape := make([]int, len(ti.Dimensions))
 		for j, d := range ti.Dimensions {
-			shape[j] = int(d)
+			shape[len(ti.Dimensions)-1-j] = int(d)
 		}
 
 		// Compute byte size of this tensor's data.
