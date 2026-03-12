@@ -192,12 +192,13 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				continue // already on GPU
 			}
 			rawBytes := qs.RawBytes()
-			devPtr, err := e.pool.Alloc(e.deviceID, len(rawBytes))
+			// Use runtime.Malloc (not pool) for permanent weight storage.
+			devPtr, err := e.runtime.Malloc(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q4 GPU (shape %v): %w", t.Shape(), err)
 			}
 			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
-				e.pool.Free(e.deviceID, devPtr, len(rawBytes))
+				_ = e.runtime.Free(devPtr)
 				return fmt.Errorf("upload Q4 (shape %v): %w", t.Shape(), err)
 			}
 			qs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
@@ -216,17 +217,18 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			continue
 		}
 		byteSize := n * f32Size
-		devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+		// Use runtime.Malloc (not pool) for permanent weight storage.
+		devPtr, err := e.runtime.Malloc(byteSize)
 		if err != nil {
 			return fmt.Errorf("alloc f32 GPU (shape %v): %w", t.Shape(), err)
 		}
 		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
-			e.pool.Free(e.deviceID, devPtr, byteSize)
+			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload f32 (shape %v): %w", t.Shape(), err)
 		}
 		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
 		if err != nil {
-			e.pool.Free(e.deviceID, devPtr, byteSize)
+			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("create GPU storage (shape %v): %w", t.Shape(), err)
 		}
 		t.SetStorage(gs)
@@ -247,17 +249,18 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		f32 := make([]float32, n)
 		qs.Dequantize(f32)
 		byteSize := n * f32Size
-		devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+		// Use runtime.Malloc (not pool) for permanent weight storage.
+		devPtr, err := e.runtime.Malloc(byteSize)
 		if err != nil {
 			return fmt.Errorf("alloc Q8→F32 GPU (shape %v): %w", t.Shape(), err)
 		}
 		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&f32[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
-			e.pool.Free(e.deviceID, devPtr, byteSize)
+			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload Q8→F32 (shape %v): %w", t.Shape(), err)
 		}
 		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
 		if err != nil {
-			e.pool.Free(e.deviceID, devPtr, byteSize)
+			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("create GPU storage for Q8 (shape %v): %w", t.Shape(), err)
 		}
 		t.SetStorage(gs)
