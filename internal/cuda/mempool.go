@@ -2,8 +2,23 @@ package cuda
 
 import (
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
+
+var defaultPoolInst *MemPool
+
+// DefaultMemPool returns a process-wide MemPool singleton.
+// Returns nil if called before SetDefaultMemPool.
+func DefaultMemPool() *MemPool {
+	return defaultPoolInst
+}
+
+// SetDefaultMemPool registers a MemPool as the process-wide default.
+// Typically called by GPUEngine during initialization.
+func SetDefaultMemPool(p *MemPool) {
+	defaultPoolInst = p
+}
 
 // MemPool is a per-device, size-bucketed free-list allocator for CUDA device
 // memory. It caches freed allocations by (deviceID, byteSize) for reuse,
@@ -13,6 +28,9 @@ type MemPool struct {
 	mu           sync.Mutex
 	cache        map[int]map[int][]unsafe.Pointer // deviceID -> byteSize -> list of free device pointers
 	managedCache map[int]map[int][]unsafe.Pointer // same structure for managed (unified) memory
+	hits         atomic.Int64
+	misses       atomic.Int64
+	frees        atomic.Int64
 }
 
 // NewMemPool creates a new empty memory pool.
@@ -34,11 +52,13 @@ func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 			ptr := ptrs[len(ptrs)-1]
 			devCache[byteSize] = ptrs[:len(ptrs)-1]
 			p.mu.Unlock()
+			p.hits.Add(1)
 
 			return ptr, nil
 		}
 	}
 	p.mu.Unlock()
+	p.misses.Add(1)
 
 	if err := SetDevice(deviceID); err != nil {
 		return nil, err
@@ -51,6 +71,7 @@ func (p *MemPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
 // The caller must provide the same deviceID and byteSize that were used
 // to allocate.
 func (p *MemPool) Free(deviceID int, ptr unsafe.Pointer, byteSize int) {
+	p.frees.Add(1)
 	p.mu.Lock()
 	devCache := p.cache[deviceID]
 	if devCache == nil {
@@ -143,6 +164,19 @@ func (p *MemPool) Drain() error {
 	}
 
 	return firstErr
+}
+
+// HitMissStats returns the cache hit, miss, and free counts since the pool
+// was created. Used for diagnosing pool effectiveness.
+func (p *MemPool) HitMissStats() (hits, misses, frees int64) {
+	return p.hits.Load(), p.misses.Load(), p.frees.Load()
+}
+
+// ResetHitMissStats resets the cache hit/miss/free counters.
+func (p *MemPool) ResetHitMissStats() {
+	p.hits.Store(0)
+	p.misses.Store(0)
+	p.frees.Store(0)
 }
 
 // Stats returns the number of cached allocations and total cached bytes

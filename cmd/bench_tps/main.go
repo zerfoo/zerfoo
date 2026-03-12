@@ -15,6 +15,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 	"github.com/zerfoo/zerfoo/registry"
 )
@@ -127,5 +128,13 @@ func run() error {
 	fmt.Printf("Generated tokens: %d\n", genTokens)
 	fmt.Printf("Time: %.3fs\n", elapsed.Seconds())
 	fmt.Printf("Throughput: %.2f tok/s\n", tps)
+
+	// Print GPU memory pool stats if available.
+	if pool := cuda.DefaultMemPool(); pool != nil {
+		hits, misses, frees := pool.HitMissStats()
+		allocs, cachedBytes := pool.Stats()
+		fmt.Printf("\nGPU MemPool: hits=%d misses=%d frees=%d cached=%d (%.1f MB)\n",
+			hits, misses, frees, allocs, float64(cachedBytes)/1e6)
+	}
 	return nil
 }

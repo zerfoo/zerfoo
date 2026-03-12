@@ -107,13 +107,16 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 
 	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled")
 
+	pool := gpuapi.NewCUDAMemPool()
+	cuda.SetDefaultMemPool(pool.Inner())
+
 	return &GPUEngine[T]{
 		cpu:      NewCPUEngine(ops),
 		runtime:  rt,
 		blas:     blas,
 		dnn:      dnn,
 		kernels:  gpuapi.NewCUDAKernels(),
-		pool:     gpuapi.NewCUDAMemPool(),
+		pool:     pool,
 		stream:   stream,
 		logger:   l,
 		deviceID: dev,
