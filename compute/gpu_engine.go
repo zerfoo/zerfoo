@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"unsafe"
 
@@ -191,7 +192,15 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 				continue // already on GPU
 			}
-			rawBytes := qs.RawBytes()
+			// Use GPU-optimized separated layout: scales grouped, then packed
+			// data grouped per row. This enables 128-bit vectorized loads and
+			// coalesced memory access in the Q4 GEMV kernel.
+			shape := t.Shape()
+			blocksPerRow := 0
+			if len(shape) == 2 {
+				blocksPerRow = shape[1] / 32
+			}
+			rawBytes := qs.RawBytesGPU(blocksPerRow)
 			// Use runtime.Malloc (not pool) for permanent weight storage.
 			devPtr, err := e.runtime.Malloc(len(rawBytes))
 			if err != nil {
@@ -445,10 +454,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 
 	// Use strided batched GEMM when available for float32 with batch > 1.
 	// This replaces N sequential Sgemm calls with a single cuBLAS call.
-	if batchSize > 1 && isFloat32 && bBatchSize > 1 {
+	// When bBatchSize == 1, strideB = 0 broadcasts B across all batches
+	// (supported by cuBLAS). This is critical for GQA attention where K/V
+	// have fewer heads than Q, replacing N individual Sgemm calls with 1.
+	if batchSize > 1 && isFloat32 {
 		if batched, ok := e.blas.(gpuapi.BLASBatched); ok {
 			strideA := int64(aMatSize)
 			strideBVal := int64(bMatSize)
+			if bBatchSize == 1 {
+				strideBVal = 0
+			}
 			strideC := int64(cMatSize)
 			if err := batched.SgemmStridedBatched(m, n, k, 1.0,
 				devA, strideA, devB, strideBVal, 0.0,
@@ -596,10 +611,16 @@ func (e *GPUEngine[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tensor
 
 	// Use strided batched NT GEMM when available for batch > 1.
 	// This replaces N sequential SgemmNT calls with a single cuBLAS call.
-	if batchSize > 1 && bBatchSize > 1 {
+	// When bBatchSize == 1, strideB = 0 broadcasts B across all batches
+	// (supported by cuBLAS). Critical for GQA attention decode performance.
+	if batchSize > 1 {
 		if batchedNT, ok := e.blas.(gpuapi.BLASBatchedTransposeB); ok {
+			strideBVal := int64(bMatSize)
+			if bBatchSize == 1 {
+				strideBVal = 0
+			}
 			if err := batchedNT.SgemmNTStridedBatched(m, n, k, 1.0,
-				devA, int64(aMatSize), devB, int64(bMatSize), 0.0,
+				devA, int64(aMatSize), devB, strideBVal, 0.0,
 				devC, int64(cMatSize), batchSize); err != nil {
 				e.pool.Free(e.deviceID, devC, batchSize*cMatSize*elemSize)
 				return nil, fmt.Errorf("MatMulTransposeB: batched NT GEMM: %w", err)
@@ -662,7 +683,8 @@ func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b 
 		devA = ptr
 		freeA = func() {} // pre-uploaded; do not free
 	} else {
-		aBytes := qs.RawBytes()
+		bpr := k / 32
+		aBytes := qs.RawBytesGPU(bpr)
 		var err error
 		devA, err = e.pool.Alloc(e.deviceID, len(aBytes))
 		if err != nil {
@@ -690,7 +712,9 @@ func (e *GPUEngine[T]) matMulQ4(ctx context.Context, qs *tensor.Q4Storage, a, b 
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	if err := e.kernels.GemmQ4F32(devA, devB, devC, m, k, n, e.stream); err != nil {
+	totalBlocks := m * (k / 32)
+	dataOff := tensor.Q4GPUDataOffset(totalBlocks)
+	if err := e.kernels.GemmQ4F32(devA, devB, devC, m, k, n, dataOff, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -745,7 +769,8 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 		devQ4 = ptr
 		freeQ4 = func() {}
 	} else {
-		q4Bytes := qs.RawBytes()
+		bpr := k / 32
+		q4Bytes := qs.RawBytesGPU(bpr)
 		var err error
 		devQ4, err = e.pool.Alloc(e.deviceID, len(q4Bytes))
 		if err != nil {
@@ -778,7 +803,8 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		if err := e.kernels.GemmQ4F32(devQ4, devA, devC, n, k, 1, e.stream); err != nil {
+		q4DataOff := tensor.Q4GPUDataOffset(qs.NumBlocks())
+		if err := e.kernels.GemmQ4F32(devQ4, devA, devC, n, k, 1, q4DataOff, e.stream); err != nil {
 			e.pool.Free(e.deviceID, devC, cSize)
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
@@ -808,7 +834,10 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	if err := e.kernels.GemmQ4F32(devQ4, devAT, devCTemp, n, k, m, e.stream); err != nil {
+	q4DataOff2 := tensor.Q4GPUDataOffset(qs.NumBlocks())
+	fmt.Fprintf(os.Stderr, "[Q4-GEMM] devQ4=%p devAT=%p devC=%p M=%d K=%d N=%d dataOff=%d numBlocks=%d gpuByteSize=%d\n",
+		devQ4, devAT, devCTemp, n, k, m, q4DataOff2, qs.NumBlocks(), func() int { _, sz, _ := qs.GPUPtr(); return sz }())
+	if err := e.kernels.GemmQ4F32(devQ4, devAT, devCTemp, n, k, m, q4DataOff2, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devCTemp, cTempSize)
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -1564,6 +1593,150 @@ func (e *GPUEngine[T]) GPUFusedSwiGLU(w1, w3 *tensor.TensorNumeric[T]) (*tensor.
 	}
 
 	return makeGPUResult[T](e, w1Shape, devOut, n1)
+}
+
+// GPUScaledSoftmax computes softmax(input * scale) in a single GPU kernel launch.
+// This replaces MulScalar + Softmax (2 kernel launches) with 1, saving 26 launches
+// per token for 26 transformer layers.
+func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale float32, axis int) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return nil, fmt.Errorf("GPUScaledSoftmax: only float32 supported")
+	}
+
+	e.setDevice()
+
+	if input == nil {
+		return nil, fmt.Errorf("GPUScaledSoftmax: input tensor must not be nil")
+	}
+
+	shape := input.Shape()
+	rank := len(shape)
+
+	if rank == 0 {
+		return nil, fmt.Errorf("GPUScaledSoftmax: scalar tensors not supported")
+	}
+
+	if axis < 0 {
+		axis = rank + axis
+	}
+
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("GPUScaledSoftmax: axis %d out of bounds for %d dimensions", axis, rank)
+	}
+
+	n := input.GetStorage().Len()
+
+	inner := 1
+	for i := axis + 1; i < rank; i++ {
+		inner *= shape[i]
+	}
+
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	axisSize := shape[axis]
+
+	devIn, cleanupIn, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUScaledSoftmax input: %w", err)
+	}
+	defer cleanupIn()
+
+	byteSize := n * f32Size
+	devOut, err := e.pool.Alloc(e.deviceID, byteSize)
+	if err != nil {
+		return nil, fmt.Errorf("GPUScaledSoftmax alloc: %w", err)
+	}
+
+	if err := e.kernels.ScaledSoftmaxF32(devIn, devOut, outer, inner, axisSize, scale, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, byteSize)
+		return nil, err
+	}
+
+	return makeGPUResult[T](e, shape, devOut, n)
+}
+
+// GPUFusedAddRMSNorm computes residual = input + residual (in-place) and
+// output = rmsnorm(residual, weight, eps) in a single GPU kernel launch.
+// This replaces Add + RMSNorm (2 kernel launches) with 1.
+func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
+	input, residual *tensor.TensorNumeric[T],
+	weight *tensor.TensorNumeric[T],
+	eps float32,
+) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
+	inShape := input.Shape()
+	if len(inShape) < 2 {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm: input must be at least 2D, got %v", inShape)
+	}
+	D := inShape[len(inShape)-1]
+	rows := 1
+	for i := 0; i < len(inShape)-1; i++ {
+		rows *= inShape[i]
+	}
+
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm input: %w", err)
+	}
+	defer inCleanup()
+
+	// Residual is updated in-place. We need a mutable device pointer.
+	resPtr, resCleanup, err := getDevicePtr(e, residual)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm residual: %w", err)
+	}
+	defer resCleanup()
+
+	wPtr, wCleanup, err := getDevicePtr(e, weight)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm weight: %w", err)
+	}
+	defer wCleanup()
+
+	outBytes := rows * D * f32Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc normed: %w", err)
+	}
+
+	// Allocate a fresh buffer for the residual sum so the caller owns
+	// independent GPU memory (the original residual's memory may be freed
+	// by graph reference counting after this call returns).
+	devRes, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm alloc residual: %w", err)
+	}
+
+	// Copy original residual to the fresh buffer so the kernel can
+	// update it in-place without affecting the original tensor.
+	if err := e.runtime.Memcpy(devRes, resPtr, outBytes, gpuapi.MemcpyDeviceToDevice); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		e.pool.Free(e.deviceID, devRes, outBytes)
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm D2D copy: %w", err)
+	}
+
+	if err := e.kernels.FusedAddRMSNormF32(inPtr, devRes, wPtr, devOut, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		e.pool.Free(e.deviceID, devRes, outBytes)
+		return nil, nil, nil, err
+	}
+
+	normed, err = makeGPUResult[T](e, inShape, devOut, rows*D)
+	if err != nil {
+		e.pool.Free(e.deviceID, devRes, outBytes)
+		return nil, nil, nil, err
+	}
+
+	residualOut, err = makeGPUResult[T](e, inShape, devRes, rows*D)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return normed, residualOut, nil, nil
 }
 
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.
