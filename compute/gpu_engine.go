@@ -1517,6 +1517,55 @@ func (e *GPUEngine[T]) GPUFusedRoPE(input, cosAngles, sinAngles *tensor.TensorNu
 	return makeGPUResult[T](e, shape, devOut, outElems)
 }
 
+// GPUFusedSwiGLU computes SwiGLU(w1, w3) = w1 * sigmoid(w1) * w3 in a single GPU kernel.
+// This replaces Concat + Split + sigmoid + Mul + Mul (5 operations, ~4 D2D memcpy per layer) with 1 kernel.
+func (e *GPUEngine[T]) GPUFusedSwiGLU(w1, w3 *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	w1Shape := w1.Shape()
+	w3Shape := w3.Shape()
+	if len(w1Shape) == 0 || len(w3Shape) == 0 {
+		return nil, fmt.Errorf("GPUFusedSwiGLU: empty shape")
+	}
+
+	// Validate shapes match.
+	n1 := 1
+	for _, d := range w1Shape {
+		n1 *= d
+	}
+	n3 := 1
+	for _, d := range w3Shape {
+		n3 *= d
+	}
+	if n1 != n3 {
+		return nil, fmt.Errorf("GPUFusedSwiGLU: w1 (%d elems) and w3 (%d elems) size mismatch", n1, n3)
+	}
+
+	w1Ptr, w1Cleanup, err := getDevicePtr(e, w1)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSwiGLU w1: %w", err)
+	}
+	defer w1Cleanup()
+
+	w3Ptr, w3Cleanup, err := getDevicePtr(e, w3)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSwiGLU w3: %w", err)
+	}
+	defer w3Cleanup()
+
+	outBytes := n1 * f32Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedSwiGLU alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedSwiGLUF32(w1Ptr, w3Ptr, devOut, n1, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return makeGPUResult[T](e, w1Shape, devOut, n1)
+}
+
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.
 // Use for benchmarking or when explicit synchronization is needed.
 func (e *GPUEngine[T]) Sync() error {
