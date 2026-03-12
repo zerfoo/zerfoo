@@ -42,11 +42,12 @@ func NewMemPool() *MemPool {
 }
 
 // bucketSize rounds byteSize up to the next reuse bucket.
-// Sizes under 4KB are kept exact. Sizes >= 4KB are rounded up to the next
-// power of two. This dramatically improves cache hit rates when intermediate
-// tensor sizes vary slightly between forward passes (e.g., growing kvSeqLen).
+// Sizes <= 256 are kept exact (these are typically small scalar or shape
+// metadata). Sizes > 256 are rounded up to the next power of two, enabling
+// cache reuse across slightly varying allocation sizes (e.g., attention
+// intermediates that grow with kvSeqLen).
 func bucketSize(byteSize int) int {
-	const threshold = 4096
+	const threshold = 256
 	if byteSize <= threshold {
 		return byteSize
 	}

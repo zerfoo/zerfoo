@@ -152,12 +152,14 @@ func TestBucketSize(t *testing.T) {
 		{0, 0},
 		{1, 1},
 		{100, 100},
-		{4096, 4096},    // at threshold, exact
-		{4097, 8192},    // just above threshold, rounds to next power of 2
-		{5000, 8192},    // rounds up
-		{8192, 8192},    // already power of 2
-		{8193, 16384},   // rounds up
-		{65536, 65536},  // already power of 2
+		{256, 256},       // at threshold, exact
+		{257, 512},       // just above threshold, rounds to next power of 2
+		{1024, 1024},     // already power of 2
+		{1025, 2048},     // rounds up
+		{4096, 4096},     // power of 2
+		{5000, 8192},     // rounds up
+		{8192, 8192},     // already power of 2
+		{65536, 65536},   // already power of 2
 		{100000, 131072}, // rounds up to 2^17
 	}
 	for _, tt := range tests {
