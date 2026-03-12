@@ -227,6 +227,12 @@ type q8Block struct {
 type Q8Storage struct {
 	blocks []q8Block
 	len    int
+
+	// GPU-resident copy of the raw bytes (optional).
+	// Set by GPUEngine.UploadWeights to avoid per-op dequant+H2D copies.
+	gpuPtr      unsafe.Pointer
+	gpuByteSize int
+	gpuDeviceID int
 }
 
 // QuantizeQ8 quantizes a float32 slice into Q8_0 format.
@@ -352,6 +358,35 @@ func (q *Q8Storage) BlockScale(i int) float32 {
 // BlockQuants returns the int8 quantized values for block i.
 func (q *Q8Storage) BlockQuants(i int) []int8 {
 	return q.blocks[i].data[:]
+}
+
+// RawBytes serializes Q8_0 blocks as contiguous bytes for GPU upload.
+// Each block is 36 bytes: 4 bytes little-endian float32 scale + 32 bytes int8 data.
+func (q *Q8Storage) RawBytes() []byte {
+	const blockBytes = 36
+	out := make([]byte, len(q.blocks)*blockBytes)
+	for i, blk := range q.blocks {
+		off := i * blockBytes
+		binary.LittleEndian.PutUint32(out[off:off+4], math.Float32bits(blk.scale))
+		for j, v := range blk.data {
+			out[off+4+j] = byte(v)
+		}
+	}
+	return out
+}
+
+// SetGPUPtr stores a pre-uploaded GPU device pointer for the raw bytes.
+// byteSize must match len(RawBytes()). The caller retains ownership of the pointer.
+func (q *Q8Storage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	q.gpuPtr = ptr
+	q.gpuByteSize = byteSize
+	q.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the cached GPU device pointer, byte size, and device ID.
+// Returns nil if no GPU copy exists.
+func (q *Q8Storage) GPUPtr() (unsafe.Pointer, int, int) {
+	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
 }
 
 // NewQ8StorageFromBlocks creates Q8Storage from pre-decoded block data.
