@@ -168,12 +168,21 @@ func TestTensorCache_Truncate(t *testing.T) {
 
 	cache.Truncate(1)
 
-	// After truncation, layer is cleared because GPU slicing is not supported.
-	if _, ok := cache.Get(0); ok {
-		t.Error("Get(0) after Truncate should return false (layer cleared)")
-	}
 	if cache.layers[0].seqLen != 1 {
 		t.Errorf("seqLen after Truncate = %d, want 1", cache.layers[0].seqLen)
+	}
+
+	// After truncation, Get returns a view of just the first position.
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) after Truncate should return true")
+	}
+	gotK := lkv.Key.Data()
+	wantK := []float32{1, 2, 3, 4}
+	for i := range wantK {
+		if gotK[i] != wantK[i] {
+			t.Errorf("Key[%d] after Truncate = %v, want %v", i, gotK[i], wantK[i])
+		}
 	}
 }
 

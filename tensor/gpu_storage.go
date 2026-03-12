@@ -343,6 +343,30 @@ func (s *GPUStorage[T]) DeviceType() device.Type { return s.runtime.DeviceType()
 // Ptr returns the raw GPU device pointer.
 func (s *GPUStorage[T]) Ptr() unsafe.Pointer { return s.devicePtr }
 
+// CopyFromDevice copies numElems elements from src (at srcOffsetElems) into s
+// (at dstOffsetElems) using a synchronous device-to-device memcpy. Both
+// storages must reside on the same device.
+func (s *GPUStorage[T]) CopyFromDevice(src *GPUStorage[T], dstOffsetElems, srcOffsetElems, numElems int) error {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	dstPtr := unsafe.Add(s.devicePtr, dstOffsetElems*elemSize)
+	srcPtr := unsafe.Add(src.devicePtr, srcOffsetElems*elemSize)
+	return s.runtime.Memcpy(dstPtr, srcPtr, numElems*elemSize, gpuapi.MemcpyDeviceToDevice)
+}
+
+// CopyFromHost copies numElems elements from a CPU slice into s starting at
+// dstOffsetElems using a synchronous host-to-device memcpy.
+func (s *GPUStorage[T]) CopyFromHost(data []T, dstOffsetElems int) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	dstPtr := unsafe.Add(s.devicePtr, dstOffsetElems*elemSize)
+	srcPtr := unsafe.Pointer(unsafe.SliceData(data))
+	return s.runtime.Memcpy(dstPtr, srcPtr, len(data)*elemSize, gpuapi.MemcpyHostToDevice)
+}
+
 // Free releases the GPU device memory. After calling Free, the storage must
 // not be used. For refcounted storage (pool-backed with views), the refcount
 // is decremented and memory is only returned to the pool when it reaches 0.

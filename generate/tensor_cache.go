@@ -1,56 +1,34 @@
 package generate
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// freeGPUStorage releases the GPU memory backing a tensor immediately,
-// rather than waiting for GC finalization which may lag behind allocation.
-func freeGPUStorage[T tensor.Numeric](t *tensor.TensorNumeric[T]) {
-	if t == nil {
-		return
-	}
-	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
-		_ = gs.Free()
-	}
-}
-
-// persistGPU copies an arena-backed GPU tensor to a persistent GPU allocation
-// (runtime.Malloc) so it survives arena resets. Returns the tensor unchanged if
-// it's already persistent or not GPU-resident.
-func persistGPU[T tensor.Numeric](t *tensor.TensorNumeric[T]) *tensor.TensorNumeric[T] {
-	if t == nil {
-		return t
-	}
-	// Already persistent (not pool-backed) or CPU -- nothing to do.
-	_, isGPU := t.GetStorage().(*tensor.GPUStorage[T])
-	if !isGPU {
-		return t
-	}
-	// ToGPU creates a new allocation via runtime.Malloc (not the pool/arena)
-	// and performs a D2D copy when the source is already on GPU.
-	dup, err := tensor.ToGPU(t)
-	if err != nil {
-		return t // keep arena-backed if copy fails
-	}
-	return dup
-}
-
-// tensorLayerBuf holds GPU-resident cached K/V tensors for a single layer.
+// tensorLayerBuf holds pre-allocated K/V buffers for a single layer.
+// For GPU-resident tensors, buffers are backed by GPUStorage with direct D2D
+// memcpy appends. For CPU tensors, flat Go slices are used with copy.
 type tensorLayerBuf[T tensor.Numeric] struct {
-	cachedK *tensor.TensorNumeric[T]
-	cachedV *tensor.TensorNumeric[T]
-	seqLen  int
+	// GPU path: pre-allocated persistent GPU memory.
+	kStorage *tensor.GPUStorage[T]
+	vStorage *tensor.GPUStorage[T]
+	// CPU path: pre-allocated flat buffers.
+	kBuf []T
+	vBuf []T
+
+	batch  int
+	dim    int
+	seqLen int
+	isGPU  bool
 }
 
-// TensorCache is a GPU-resident KV cache that keeps tensors on-device.
-// Instead of copying data to CPU via .Data(), it uses engine.Concat to
-// append new K/V tensors along the sequence dimension (axis 1).
-// This avoids 52 synchronous GPU→CPU memcpys per token (26 layers × 2).
+// TensorCache is a KV cache that keeps tensors in pre-allocated buffers.
+// On the first Update for a layer, it allocates [batch, maxSeqLen, dim] memory
+// (GPU or CPU depending on the source tensor). Subsequent Updates append new
+// K/V data via direct memcpy at the correct offset, avoiding per-token
+// allocation overhead.
 type TensorCache[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	layers    []tensorLayerBuf[T]
@@ -70,8 +48,8 @@ func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSe
 
 // Update appends new key and value tensors to the cache for the given layer.
 // Tensors must be 3D with shape [batch, seqLen, dim]. On the first call for
-// a layer the tensors are stored directly; subsequent calls use engine.Concat
-// to append along axis 1 without copying data off-device.
+// a layer, pre-allocated buffers are created. Subsequent calls copy new data
+// directly into the buffers at the current sequence offset.
 func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) error {
 	if layer < 0 || layer >= len(c.layers) {
 		return fmt.Errorf("layer index %d out of range [0, %d)", layer, len(c.layers))
@@ -80,54 +58,100 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	if len(shape) != 3 {
 		return fmt.Errorf("expected 3D tensor [batch, seq, dim], got %dD", len(shape))
 	}
-	seqLen := shape[1]
+	batch, seqLen, dim := shape[0], shape[1], shape[2]
 	lb := &c.layers[layer]
 
 	if lb.seqLen+seqLen > c.maxSeqLen {
 		return fmt.Errorf("cache overflow: cursor=%d + seq=%d > maxSeqLen=%d", lb.seqLen, seqLen, c.maxSeqLen)
 	}
 
-	ctx := context.Background()
-	if lb.cachedK == nil {
-		// Persist to non-arena GPU memory so data survives arena resets.
-		lb.cachedK = persistGPU(newK)
-		lb.cachedV = persistGPU(newV)
-	} else {
-		oldK := lb.cachedK
-		oldV := lb.cachedV
-		var err error
-		concatK, err := c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldK, newK}, 1)
-		if err != nil {
-			return fmt.Errorf("concat K layer %d: %w", layer, err)
+	// Pre-allocate buffers on first call.
+	if lb.batch == 0 {
+		lb.batch = batch
+		lb.dim = dim
+		totalElems := batch * c.maxSeqLen * dim
+
+		// Try GPU allocation first; fall back to CPU buffers.
+		_, isGPU := newK.GetStorage().(*tensor.GPUStorage[T])
+		if isGPU {
+			kSt, err := tensor.NewGPUStorage[T](totalElems)
+			if err != nil {
+				isGPU = false
+			} else {
+				vSt, err2 := tensor.NewGPUStorage[T](totalElems)
+				if err2 != nil {
+					_ = kSt.Free()
+					isGPU = false
+				} else {
+					lb.kStorage = kSt
+					lb.vStorage = vSt
+				}
+			}
 		}
-		concatV, err := c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldV, newV}, 1)
-		if err != nil {
-			return fmt.Errorf("concat V layer %d: %w", layer, err)
+		if !isGPU {
+			lb.kBuf = make([]T, totalElems)
+			lb.vBuf = make([]T, totalElems)
 		}
-		// Copy concat results to persistent GPU memory before arena reset.
-		lb.cachedK = persistGPU(concatK)
-		lb.cachedV = persistGPU(concatV)
-		// Free old persistent GPU buffers and arena-backed concat temporaries.
-		freeGPUStorage(oldK)
-		freeGPUStorage(oldV)
-		freeGPUStorage(concatK)
-		freeGPUStorage(concatV)
+		lb.isGPU = isGPU
 	}
+
+	// Append data at current offset.
+	offset := lb.seqLen * dim * batch
+	numElems := seqLen * dim * batch
+
+	if lb.isGPU {
+		if err := appendGPU(lb.kStorage, offset, numElems, newK); err != nil {
+			return fmt.Errorf("append K layer %d: %w", layer, err)
+		}
+		if err := appendGPU(lb.vStorage, offset, numElems, newV); err != nil {
+			return fmt.Errorf("append V layer %d: %w", layer, err)
+		}
+	} else {
+		copy(lb.kBuf[offset:offset+numElems], newK.Data())
+		copy(lb.vBuf[offset:offset+numElems], newV.Data())
+	}
+
 	lb.seqLen += seqLen
 	return nil
 }
 
+// appendGPU copies tensor data into the pre-allocated GPU buffer at the given
+// element offset, using D2D memcpy for GPU sources or H2D for CPU sources.
+func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], offset, numElems int, src *tensor.TensorNumeric[T]) error {
+	if gs, ok := src.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return dst.CopyFromDevice(gs, offset, 0, numElems)
+	}
+	return dst.CopyFromHost(src.Data(), offset)
+}
+
 // Get returns the cached key-value pair for the given layer.
+// For GPU-backed layers, returns a view into the pre-allocated buffer.
+// For CPU-backed layers, returns a tensor wrapping the buffer slice.
 // Returns false if the layer index is out of range or the layer is empty.
 func (c *TensorCache[T]) Get(layer int) (*LayerKV[T], bool) {
 	if layer < 0 || layer >= len(c.layers) {
 		return nil, false
 	}
 	lb := &c.layers[layer]
-	if lb.seqLen == 0 || lb.cachedK == nil {
+	if lb.seqLen == 0 || lb.batch == 0 {
 		return nil, false
 	}
-	return &LayerKV[T]{Key: lb.cachedK, Value: lb.cachedV}, true
+
+	viewElems := lb.batch * lb.seqLen * lb.dim
+	viewShape := []int{lb.batch, lb.seqLen, lb.dim}
+
+	if lb.isGPU {
+		kView := tensor.NewGPUStorageView(lb.kStorage, 0, viewElems)
+		vView := tensor.NewGPUStorageView(lb.vStorage, 0, viewElems)
+		kTensor, _ := tensor.NewWithStorage(viewShape, kView)
+		vTensor, _ := tensor.NewWithStorage(viewShape, vView)
+		return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
+	}
+
+	// CPU path: wrap the pre-allocated slice.
+	kTensor, _ := tensor.New(viewShape, lb.kBuf[:viewElems])
+	vTensor, _ := tensor.New(viewShape, lb.vBuf[:viewElems])
+	return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
 }
 
 // SeqLen returns the current cached sequence length (from layer 0).
@@ -138,24 +162,38 @@ func (c *TensorCache[T]) SeqLen() int {
 	return c.layers[0].seqLen
 }
 
-// Reset clears all cached tensors and resets sequence lengths to zero.
+// Reset clears sequence lengths to zero. Pre-allocated buffers are kept
+// for reuse; only data pointers are logically invalidated.
 func (c *TensorCache[T]) Reset() {
 	for i := range c.layers {
-		c.layers[i].cachedK = nil
-		c.layers[i].cachedV = nil
 		c.layers[i].seqLen = 0
 	}
 }
 
 // Truncate rolls back the cache to the given sequence length.
-// Because GPU tensors cannot be sliced in-place, layers that exceed
-// newSeqLen are fully cleared. A newSeqLen of 0 is equivalent to Reset.
+// Pre-allocated buffers are kept; the data beyond newSeqLen is simply ignored.
 func (c *TensorCache[T]) Truncate(newSeqLen int) {
 	for i := range c.layers {
 		if c.layers[i].seqLen > newSeqLen {
 			c.layers[i].seqLen = newSeqLen
-			c.layers[i].cachedK = nil
-			c.layers[i].cachedV = nil
 		}
+	}
+}
+
+// Free releases all pre-allocated GPU buffers. CPU buffers are left to GC.
+func (c *TensorCache[T]) Free() {
+	for i := range c.layers {
+		if c.layers[i].kStorage != nil {
+			_ = c.layers[i].kStorage.Free()
+			c.layers[i].kStorage = nil
+		}
+		if c.layers[i].vStorage != nil {
+			_ = c.layers[i].vStorage.Free()
+			c.layers[i].vStorage = nil
+		}
+		c.layers[i].kBuf = nil
+		c.layers[i].vBuf = nil
+		c.layers[i].seqLen = 0
+		c.layers[i].batch = 0
 	}
 }
