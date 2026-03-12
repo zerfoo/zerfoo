@@ -58,6 +58,16 @@ func (g *Gather[T]) HasEmbeddedWeights() bool {
 	return g.weights != nil
 }
 
+// EmbeddedFrozen returns the embedded frozen tensors (weights) that should
+// be registered as frozen slots during compilation. Returns nil if no weights
+// are embedded. Implements graph.EmbeddedFrozenProvider.
+func (g *Gather[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
+	if g.weights == nil {
+		return nil
+	}
+	return []*tensor.TensorNumeric[T]{g.weights}
+}
+
 // Forward computes the gather operation.
 func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	var (
@@ -229,3 +239,6 @@ func (g *Gather[T]) Attributes() map[string]interface{} {
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*Gather[float32])(nil)
+
+// Statically assert that the type implements the graph.EmbeddedFrozenProvider interface.
+var _ graph.EmbeddedFrozenProvider[float32] = (*Gather[float32])(nil)
