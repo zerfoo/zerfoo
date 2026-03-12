@@ -284,6 +284,14 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 	return nil
 }
 
+// Stream returns the engine's GPU stream as an unsafe.Pointer (cudaStream_t).
+func (e *GPUEngine[T]) Stream() unsafe.Pointer {
+	if e.stream == nil {
+		return nil
+	}
+	return e.stream.Ptr()
+}
+
 // Close releases the BLAS handle, DNN handle, GPU stream, and drains the memory pool.
 // The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {

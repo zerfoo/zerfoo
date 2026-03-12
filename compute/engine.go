@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -35,6 +36,13 @@ type WeightUploader interface {
 // A is [batch, m, k], B is [batch, n, k], result is [batch, m, n].
 type TransposeBMatMuler[T tensor.Numeric] interface {
 	MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+}
+
+// StreamProvider is an optional interface for engines that expose their
+// underlying GPU stream for CUDA graph capture.
+type StreamProvider interface {
+	// Stream returns the engine's GPU stream as an unsafe.Pointer (cudaStream_t).
+	Stream() unsafe.Pointer
 }
 
 // GPUArgmaxer is an optional interface for engines that can compute argmax
