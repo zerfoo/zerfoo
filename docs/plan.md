@@ -22,8 +22,9 @@ All 21 tasks done. PR #45 merged (commit 765108e). See git log for details.
   - Branch: feat/purego-runtime-unify.
 - [x] S87.3.1 Runtime function parity test — commit 8286656
   - runtime_parity_test.go verifies signatures, constants, graceful failure.
-- [ ] S88.2.1 Elementwise kernel parity test  Owner: TBD  Est: 1.5h
-  - Dependencies: T87.3 (done).
+- [x] S88.2.1 Elementwise kernel parity test — commit c50e4ab
+  - Table-driven tests for all 24 elementwise ops (binary, scalar, unary, broadcast, special).
+  - Signature parity, symbol resolution, graceful skip without CUDA.
 - [ ] S88.3.1 Full kernel test suite  Owner: TBD  Est: 2h
   - Dependencies: S88.2.1.
 - [ ] T89.2 Remove build tags from compute/ GPU files  Owner: TBD  Est: 2h
@@ -48,9 +49,12 @@ Waves C1-C4 complete. See design.md section 15.16 and docs/adr/028-tracing-compi
   - seq_pos wired from kvCache.SeqLen() (was hardcoded 0).
   - Branch: feat/purego-runtime-unify.
 
-- [ ] S100.2.1 KV cache integration test  Owner: TBD  Est: 1.5h
-  - Generate 50 tokens with megakernel. Compare with plan.Run() output.
-  - Dependencies: T100.2 (done), DGX Spark.
+- [x] S100.2.1 KV cache integration test — 2026-03-11
+  - Megakernel did NOT fire. Two blockers identified:
+  - Blocker 1: 16 unsupported ops in CheckSupport (RoPE, attention masking, utility).
+  - Blocker 2: runner_stub.go returns errStub in cuda build (architectural).
+  - Build fixes: CGo dlopen fallback (17b0e8a), runner stubs (2faa5b2).
+  - Non-megakernel GPU: F32 11.54 tok/s, Q4 8.98 tok/s.
 
 - [ ] T100.3 End-to-end megakernel correctness test  Owner: TBD  Est: 2h
   - Load Gemma 3 2B Q4, generate 50 tokens, compare megakernel vs plan.Run().
@@ -117,7 +121,16 @@ Waves C1-C4 complete. See design.md section 15.16 and docs/adr/028-tracing-compi
 
 ## 6. Progress Log
 
-### 2026-03-11
+### 2026-03-11 (Wave 2)
+
+Wave 2 executed (2 agents, parallel worktrees):
+- S88.2.1: Elementwise kernel parity test — 24 ops covered (commit c50e4ab)
+- S100.2.1: KV cache integration test — megakernel blocked by 16 unsupported ops
+  and cuda/!cuda build tag conflict. Build fixes committed (17b0e8a, 2faa5b2).
+  Non-megakernel GPU: F32 11.54 tok/s, Q4 8.98 tok/s.
+Newly unblocked: S88.3.1. T100.3 blocked on architectural decision.
+
+### 2026-03-11 (Wave 1)
 
 Wave 1 executed (3 agents, parallel worktrees):
 - T87.3: CGo runtime replaced with dlopen. Purego is sole implementation. (commit 8286656)
