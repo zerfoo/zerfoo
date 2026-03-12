@@ -234,8 +234,9 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		t.SetStorage(gs)
 		uploaded++
 	}
-	// Upload Q8 quantized weights by dequantizing to F32.
-	// This enables cuBLAS SGEMM on GPU instead of CPU NEON GEMV.
+	// Upload Q8 quantized weights as raw Q8 bytes (36 bytes per 32 values).
+	// This keeps Q8 data compressed on GPU (325 MB vs 1.2 GB as F32) and uses
+	// the Q8 dequant-GEMM kernel to dequantize during matmul.
 	q8Uploaded := 0
 	for _, t := range tensors {
 		if t == nil {
@@ -245,32 +246,27 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if !ok {
 			continue
 		}
-		n := qs.Len()
-		f32 := make([]float32, n)
-		qs.Dequantize(f32)
-		byteSize := n * f32Size
+		if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+			continue // already on GPU
+		}
+		rawBytes := qs.RawBytes()
 		// Use runtime.Malloc (not pool) for permanent weight storage.
-		devPtr, err := e.runtime.Malloc(byteSize)
+		devPtr, err := e.runtime.Malloc(len(rawBytes))
 		if err != nil {
-			return fmt.Errorf("alloc Q8→F32 GPU (shape %v): %w", t.Shape(), err)
+			return fmt.Errorf("alloc Q8 GPU (shape %v): %w", t.Shape(), err)
 		}
-		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&f32[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
 			_ = e.runtime.Free(devPtr)
-			return fmt.Errorf("upload Q8→F32 (shape %v): %w", t.Shape(), err)
+			return fmt.Errorf("upload Q8 (shape %v): %w", t.Shape(), err)
 		}
-		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
-		if err != nil {
-			_ = e.runtime.Free(devPtr)
-			return fmt.Errorf("create GPU storage for Q8 (shape %v): %w", t.Shape(), err)
-		}
-		t.SetStorage(gs)
+		qs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
 		q8Uploaded++
 	}
 	if uploaded > 0 || q4Uploaded > 0 || q8Uploaded > 0 {
 		e.logger.Info("weights uploaded to GPU",
 			"f32", fmt.Sprintf("%d", uploaded),
 			"q4", fmt.Sprintf("%d", q4Uploaded),
-			"q8_as_f32", fmt.Sprintf("%d", q8Uploaded),
+			"q8", fmt.Sprintf("%d", q8Uploaded),
 			"device", fmt.Sprintf("%d", e.deviceID))
 	}
 	return nil
@@ -334,6 +330,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for Q4 quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q4Storage); ok {
 		return e.matMulQ4BWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for Q8 quantized storage on A.
+	if qs, ok := any(a.GetStorage()).(*tensor.Q8Storage); ok {
+		return e.matMulQ8(ctx, qs, a, b, dst...)
+	}
+
+	// Check for Q8 quantized storage on B (virtual-transposed weights).
+	if qs, ok := any(b.GetStorage()).(*tensor.Q8Storage); ok {
+		return e.matMulQ8BWeight(ctx, a, qs, b, dst...)
 	}
 
 	// float32 and BFloat16 have GPU BLAS paths; fall back for other types.
@@ -799,6 +805,201 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 	}
 
 	if err := e.kernels.GemmQ4F32(devQ4, devAT, devCTemp, n, k, m, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devCTemp, cTempSize)
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// C_temp is [N, M], transpose to [M, N], then reshape to outShape.
+	cTempTensor, err := makeGPUResult[T](e, []int{n, m}, devCTemp, n*m)
+	if err != nil {
+		e.pool.Free(e.deviceID, devCTemp, cTempSize)
+		return nil, err
+	}
+
+	cFlat, err := e.Transpose(ctx, cTempTensor, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	return e.Reshape(ctx, cFlat, outShape, dst...)
+}
+
+// matMulQ8 handles GPU Q8_0 dequant-GEMM: C = dequant(A_q8) * B.
+// Only supports unbatched 2D for now; batched Q8 falls back to CPU.
+func (e *GPUEngine[T]) matMulQ8(ctx context.Context, qs *tensor.Q8Storage, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	m := aShape[len(aShape)-2]
+	k := aShape[len(aShape)-1]
+	n := bShape[len(bShape)-1]
+
+	// Only handle unbatched 2D for now.
+	if len(aShape) > 2 || len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if k%32 != 0 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	e.setDevice()
+
+	// Use pre-uploaded Q8 GPU pointer if available; otherwise upload now.
+	var devA unsafe.Pointer
+	var freeA func()
+	if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+		devA = ptr
+		freeA = func() {} // pre-uploaded; do not free
+	} else {
+		aBytes := qs.RawBytes()
+		var err error
+		devA, err = e.pool.Alloc(e.deviceID, len(aBytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeA = func() { e.pool.Free(e.deviceID, devA, len(aBytes)) }
+		if err := e.runtime.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeA()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeA()
+
+	// Upload B (float32) to GPU.
+	devB, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupB()
+
+	// Allocate output C.
+	cSize := m * n * int(unsafe.Sizeof(float32(0)))
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if err := e.kernels.GemmQ8F32(devA, devB, devC, m, k, n, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	return makeGPUResult[T](e, []int{m, n}, devC, m*n, dst...)
+}
+
+// matMulQ8BWeight handles MatMul where B has Q8 storage (virtual-transposed weight).
+// B's shape after virtual transpose is [K, N], but the Q8 data is laid out as [N, K].
+// We compute C[M, N] = A[M, K] * dequant(B)^T by reformulating as:
+//
+//	C_temp[N, M] = gemm_q8(B_q8[N, K], A^T[K, M])
+//
+// For GEMV (M=1), A^T[K,1] is just A's data as a column, and C_temp[N,1]
+// can be reshaped to [1, N] without a physical transpose.
+func (e *GPUEngine[T]) matMulQ8BWeight(ctx context.Context, a *tensor.TensorNumeric[T], qs *tensor.Q8Storage, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// B must be 2D (virtual-transposed weight).
+	if len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// Flatten A's batch dims: [batch..., m, k] -> [m_total, k]
+	k := aShape[len(aShape)-1]
+	m := 1
+	for i := 0; i < len(aShape)-1; i++ {
+		m *= aShape[i]
+	}
+	n := bShape[1] // columns of B (after virtual transpose)
+
+	// Q8 original layout is [N, K]. Verify K is a multiple of 32.
+	if k%32 != 0 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// Build output shape: [batch..., m_last, n] matching standard MatMul broadcast.
+	outShape := make([]int, len(aShape))
+	copy(outShape, aShape[:len(aShape)-1])
+	outShape[len(outShape)-1] = n
+
+	e.setDevice()
+
+	// Get Q8 device pointer (pre-uploaded or upload now).
+	var devQ8 unsafe.Pointer
+	var freeQ8 func()
+	if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+		devQ8 = ptr
+		freeQ8 = func() {}
+	} else {
+		q8Bytes := qs.RawBytes()
+		var err error
+		devQ8, err = e.pool.Alloc(e.deviceID, len(q8Bytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeQ8 = func() { e.pool.Free(e.deviceID, devQ8, len(q8Bytes)) }
+		if err := e.runtime.Memcpy(devQ8, unsafe.Pointer(&q8Bytes[0]), len(q8Bytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeQ8()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeQ8()
+
+	// Upload A to GPU as F32.
+	devA, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupA()
+
+	f32Size := int(unsafe.Sizeof(float32(0)))
+
+	if m == 1 {
+		// GEMV fast path: C_temp[N, 1] = gemm_q8(B_q8[N,K], A^T[K,1])
+		cSize := n * f32Size
+		devC, err := e.pool.Alloc(e.deviceID, cSize)
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		if err := e.kernels.GemmQ8F32(devQ8, devA, devC, n, k, 1, e.stream); err != nil {
+			e.pool.Free(e.deviceID, devC, cSize)
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+
+		return makeGPUResult[T](e, outShape, devC, n, dst...)
+	}
+
+	// General GEMM: C_temp[N, M] = gemm_q8(B_q8[N,K], A^T[K,M])
+	aFlat, err := e.Reshape(ctx, a, []int{m, k})
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	aT, err := e.Transpose(ctx, aFlat, []int{1, 0})
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	devAT, cleanupAT, err := getDevicePtr(e, aT)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer cleanupAT()
+
+	cTempSize := n * m * f32Size
+	devCTemp, err := e.pool.Alloc(e.deviceID, cTempSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if err := e.kernels.GemmQ8F32(devQ8, devAT, devCTemp, n, k, m, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devCTemp, cTempSize)
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
