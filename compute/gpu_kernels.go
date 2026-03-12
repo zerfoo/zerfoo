@@ -11,13 +11,18 @@ import (
 
 const f32Size = int(unsafe.Sizeof(float32(0)))
 
+// noopCleanup is a shared no-op function used by getDevicePtr when data is
+// already on the GPU. A package-level variable avoids allocating a new
+// closure on every call (~200+ times per generated token).
+var noopCleanup = func() {}
+
 // getDevicePtr returns a GPU device pointer for the tensor's data.
 // If the tensor has GPUStorage, returns Ptr() directly (zero-copy).
 // If the tensor has CPUStorage, allocates device memory from the pool,
 // copies H2D, and returns a cleanup function that returns the buffer to the pool.
 func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
 	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
-		return gs.Ptr(), func() {}, nil
+		return gs.Ptr(), noopCleanup, nil
 	}
 
 	// CPUStorage path: allocate from pool, copy H2D.
