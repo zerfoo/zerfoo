@@ -360,21 +360,30 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		}
 		if provider, ok := realEngine.(compute.FusedQKNormRoPEProvider[T]); ok {
 			totalHeads := gqa.numQueryHeads + gqa.numKeyValueHeads
+			qkElems := totalHeads * gqa.headDim
 
-			// Reshape Q [1,1,qDim] and K [1,1,kDim] to [numQ, headDim] and [numKV, headDim].
-			qFlat, reshapeErr := gqa.engine.Reshape(ctx, qProj, []int{gqa.numQueryHeads, gqa.headDim})
-			if reshapeErr != nil {
-				return nil, reshapeErr
+			// Try zero-copy: if Q and K are adjacent GPU views from merged QKV,
+			// create a single [totalHeads, headDim] view without any kernel launch.
+			var qkCombined *tensor.TensorNumeric[T]
+			if qGS, ok := qProj.GetStorage().(*tensor.GPUStorage[T]); ok {
+				qkView := tensor.NewGPUStorageView(qGS, 0, qkElems)
+				qkCombined, _ = tensor.NewWithStorage[T]([]int{totalHeads, gqa.headDim}, qkView)
 			}
-			kFlat, reshapeErr := gqa.engine.Reshape(ctx, kProj, []int{gqa.numKeyValueHeads, gqa.headDim})
-			if reshapeErr != nil {
-				return nil, reshapeErr
-			}
-
-			// Concatenate Q+K into [totalHeads, headDim].
-			qkCombined, catErr := gqa.engine.Concat(ctx, []*tensor.TensorNumeric[T]{qFlat, kFlat}, 0)
-			if catErr != nil {
-				return nil, fmt.Errorf("fused QK norm+RoPE concat: %w", catErr)
+			if qkCombined == nil {
+				// Fallback: reshape and concat.
+				qFlat, reshapeErr := gqa.engine.Reshape(ctx, qProj, []int{gqa.numQueryHeads, gqa.headDim})
+				if reshapeErr != nil {
+					return nil, reshapeErr
+				}
+				kFlat, reshapeErr := gqa.engine.Reshape(ctx, kProj, []int{gqa.numKeyValueHeads, gqa.headDim})
+				if reshapeErr != nil {
+					return nil, reshapeErr
+				}
+				var catErr error
+				qkCombined, catErr = gqa.engine.Concat(ctx, []*tensor.TensorNumeric[T]{qFlat, kFlat}, 0)
+				if catErr != nil {
+					return nil, fmt.Errorf("fused QK norm+RoPE concat: %w", catErr)
+				}
 			}
 
 			// Get cos/sin angles for the current position.
