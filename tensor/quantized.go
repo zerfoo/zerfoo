@@ -286,6 +286,14 @@ func (q *Q8Storage) Dequantize(dst []float32) {
 	}
 }
 
+// DequantizeBlock unpacks a single Q8_0 block into a 32-element buffer.
+func (q *Q8Storage) DequantizeBlock(blockIdx int, dst *[32]float32) {
+	blk := q.blocks[blockIdx]
+	for j := range 32 {
+		dst[j] = float32(blk.data[j]) * blk.scale
+	}
+}
+
 // DequantizeRange unpacks Q8_0 blocks covering the range [start, start+count)
 // into dst, which must have length >= count.
 func (q *Q8Storage) DequantizeRange(dst []float32, start, count int) {
