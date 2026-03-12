@@ -1,5 +1,3 @@
-//go:build cuda
-
 package kernels
 
 import (
@@ -128,6 +126,9 @@ func float16BitsToFloat32(bits uint16) float32 {
 }
 
 func TestGemmQ4F32_Correctness(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	// Small matrix: M=2, K=32, N=4.
 	// K=32 so each row of A is exactly 1 Q4 block.
 	M, K, N := 2, 32, 4
@@ -218,6 +219,9 @@ func TestGemmQ4F32_Correctness(t *testing.T) {
 }
 
 func TestGemmQ4F32_LargerMatrix(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	M, K, N := 64, 128, 64
 
 	stream, err := cuda.CreateStream()
@@ -304,6 +308,9 @@ func TestGemmQ4F32_LargerMatrix(t *testing.T) {
 }
 
 func BenchmarkGemmQ4F32_1024(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	M, K, N := 1024, 1024, 1024
 
 	stream, err := cuda.CreateStream()

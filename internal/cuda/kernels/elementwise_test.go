@@ -1,5 +1,3 @@
-//go:build cuda
-
 package kernels
 
 import (
@@ -43,6 +41,9 @@ func fromDevice(t *testing.T, devPtr unsafe.Pointer, n int) []float32 {
 }
 
 func TestKernelAdd(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	a := []float32{1, 2, 3, 4}
 	b := []float32{5, 6, 7, 8}
 	n := len(a)
@@ -71,6 +72,9 @@ func TestKernelAdd(t *testing.T) {
 }
 
 func TestKernelMulScalar(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	a := []float32{1, 2, 3, 4}
 	n := len(a)
 
@@ -95,6 +99,9 @@ func TestKernelMulScalar(t *testing.T) {
 }
 
 func TestKernelExp(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	a := []float32{0, 1, 2}
 	n := len(a)
 
@@ -119,6 +126,9 @@ func TestKernelExp(t *testing.T) {
 }
 
 func TestKernelTanh(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	a := []float32{-1, 0, 1, 2}
 	n := len(a)
 
@@ -143,6 +153,9 @@ func TestKernelTanh(t *testing.T) {
 }
 
 func TestKernelSumAxis(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	// shape [2,3], axis=1 => outer=2, inner=1, axisSize=3
 	// Row sums: [1+2+3, 4+5+6] = [6, 15]
 	input := []float32{1, 2, 3, 4, 5, 6}
@@ -169,6 +182,9 @@ func TestKernelSumAxis(t *testing.T) {
 }
 
 func TestKernelSumAxisAxis0(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	// shape [2,3], axis=0 => outer=1, inner=3, axisSize=2
 	// Column sums: [1+4, 2+5, 3+6] = [5, 7, 9]
 	input := []float32{1, 2, 3, 4, 5, 6}
@@ -195,6 +211,9 @@ func TestKernelSumAxisAxis0(t *testing.T) {
 }
 
 func TestKernelSoftmax(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	// 2D softmax: shape [2,3], axis=1 (last axis)
 	// outer=2, inner=1, axisSize=3
 	input := []float32{1, 2, 3, 1, 1, 1}
@@ -230,6 +249,9 @@ func TestKernelSoftmax(t *testing.T) {
 }
 
 func TestKernelSoftmaxAxis0(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	// 2D softmax: shape [2,3], axis=0
 	// outer=1, inner=3, axisSize=2
 	input := []float32{1, 2, 3, 4, 5, 6}
@@ -267,6 +289,9 @@ func TestKernelSoftmaxAxis0(t *testing.T) {
 }
 
 func TestKernelFill(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	n := 8
 	devPtr, _ := cuda.Malloc(n * 4)
 
@@ -286,6 +311,9 @@ func TestKernelFill(t *testing.T) {
 }
 
 func TestKernelAddOnStream(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	stream, err := cuda.CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
