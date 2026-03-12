@@ -322,15 +322,35 @@ func (g *Graph[T]) CompileTraced(ctx context.Context, inputs ...*tensor.TensorNu
 		return nil, fmt.Errorf("CompileTraced: expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
 
-	// Step 1: Collect frozen tensors from constant/parameter nodes.
+	// Step 1: Collect frozen tensors from all sources so the tracer
+	// recognizes them during forward tracing and populates their slots.
 	var frozenTensors []*tensor.TensorNumeric[T]
+	seen := make(map[*tensor.TensorNumeric[T]]bool)
+	addFrozen := func(t *tensor.TensorNumeric[T]) {
+		if t != nil && !seen[t] {
+			seen[t] = true
+			frozenTensors = append(frozenTensors, t)
+		}
+	}
 	for _, n := range g.nodes {
+		// Constant/Parameter nodes produce a single frozen tensor.
 		if isConstantNode[T](n) {
 			t, err := n.Forward(ctx)
-			if err != nil || t == nil {
-				continue
+			if err == nil {
+				addFrozen(t)
 			}
-			frozenTensors = append(frozenTensors, t)
+		}
+		// Collect parameter values from all nodes (e.g. weight matrices
+		// stored inside Linear, RMSNorm, FFN, etc.).
+		for _, p := range n.Parameters() {
+			addFrozen(p.Value)
+		}
+		// Collect from EmbeddedFrozenProvider nodes (e.g. LM head,
+		// embedding lookup with embedded weight tensors).
+		if efp, ok := n.(EmbeddedFrozenProvider[T]); ok {
+			for _, t := range efp.EmbeddedFrozen() {
+				addFrozen(t)
+			}
 		}
 	}
 

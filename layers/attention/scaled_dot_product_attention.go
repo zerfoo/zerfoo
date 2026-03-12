@@ -101,7 +101,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		return nil, err
 	}
 
-	// 2. Scale attention scores
+	// 2. Scale attention scores and apply softmax
 	// Compute head dimension robustly to avoid division by zero
 	d := sdpa.headDim
 	if d <= 0 {
@@ -114,64 +114,89 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	if d <= 0 {
 		return nil, fmt.Errorf("ScaledDotProductAttention: headDim must be > 0, got %v", d)
 	}
-	scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(d))
+	scale := float32(1.0 / math.Sqrt(d))
 
-	scaledAttentionScores, err := sdpa.engine.MulScalar(ctx, attentionScores, scaleFactor, nil)
-	if err != nil {
-		return nil, err
+	// Determine whether masking will intervene between scaling and softmax.
+	// If not, we can fuse MulScalar + Softmax into a single kernel launch.
+	needsMasking := mask != nil || (sdpa.causal && len(attentionScores.Shape()) >= 2 && attentionScores.Shape()[len(attentionScores.Shape())-2] > 1)
+
+	var attentionWeights *tensor.TensorNumeric[T]
+	if !needsMasking {
+		// Try fused scaled softmax path: single kernel replaces MulScalar + Softmax.
+		// Unwrap EngineProxy to detect the real engine type.
+		realEngine := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEngine = proxy.Real()
+		}
+		if provider, ok := realEngine.(compute.FusedScaledSoftmaxProvider[T]); ok {
+			out, fusedErr := provider.GPUScaledSoftmax(attentionScores, scale, -1)
+			if fusedErr == nil {
+				attentionWeights = out
+			}
+		}
 	}
 
-	// 3. Apply mask (explicit 4D mask or causal)
-	if mask != nil {
-		batchSize := q.Shape()[0]
-		numHeads := mask.Shape()[1]
-		seqLenQ := q.Shape()[1]
-		seqLenK := k.Shape()[1]
+	if attentionWeights == nil {
+		// Fallback: separate MulScalar + optional masking + Softmax.
+		scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(d))
 
-		reshapedScores, err := sdpa.engine.Reshape(ctx, scaledAttentionScores, []int{batchSize / numHeads, numHeads, seqLenQ, seqLenK})
+		scaledAttentionScores, err := sdpa.engine.MulScalar(ctx, attentionScores, scaleFactor, nil)
 		if err != nil {
 			return nil, err
 		}
 
-		maskedScores, err := sdpa.engine.Add(ctx, reshapedScores, mask, nil)
-		if err != nil {
-			return nil, err
-		}
+		// 3. Apply mask (explicit 4D mask or causal)
+		if mask != nil {
+			batchSize := q.Shape()[0]
+			numHeads := mask.Shape()[1]
+			seqLenQ := q.Shape()[1]
+			seqLenK := k.Shape()[1]
 
-		scaledAttentionScores, err = sdpa.engine.Reshape(ctx, maskedScores, []int{batchSize, seqLenQ, seqLenK})
-		if err != nil {
-			return nil, err
-		}
-	} else if sdpa.causal {
-		// Apply causal masking directly to 3D scores (batch, seqQ, seqK).
-		// Set positions where q_pos < k_pos to -inf.
-		shape := scaledAttentionScores.Shape()
-		seqQ := shape[1]
-		seqK := shape[2]
-		// During decode (seqQ == 1), every cached position is visible
-		// (offset = seqK - 1, so ki <= seqK-1 == qi+offset for all ki).
-		// Skip masking entirely to avoid a costly .Data() D2H copy on GPU tensors.
-		if seqQ > 1 {
-			data := scaledAttentionScores.Data()
-			batch := shape[0]
-			offset := seqK - seqQ // cached tokens are always visible
-			negInf := negInfValue[T]()
-			for b := range batch {
-				for qi := range seqQ {
-					for ki := range seqK {
-						if ki > qi+offset {
-							data[(b*seqQ+qi)*seqK+ki] = negInf
+			reshapedScores, err := sdpa.engine.Reshape(ctx, scaledAttentionScores, []int{batchSize / numHeads, numHeads, seqLenQ, seqLenK})
+			if err != nil {
+				return nil, err
+			}
+
+			maskedScores, err := sdpa.engine.Add(ctx, reshapedScores, mask, nil)
+			if err != nil {
+				return nil, err
+			}
+
+			scaledAttentionScores, err = sdpa.engine.Reshape(ctx, maskedScores, []int{batchSize, seqLenQ, seqLenK})
+			if err != nil {
+				return nil, err
+			}
+		} else if sdpa.causal {
+			// Apply causal masking directly to 3D scores (batch, seqQ, seqK).
+			// Set positions where q_pos < k_pos to -inf.
+			shape := scaledAttentionScores.Shape()
+			seqQ := shape[1]
+			seqK := shape[2]
+			// During decode (seqQ == 1), every cached position is visible
+			// (offset = seqK - 1, so ki <= seqK-1 == qi+offset for all ki).
+			// Skip masking entirely to avoid a costly .Data() D2H copy on GPU tensors.
+			if seqQ > 1 {
+				data := scaledAttentionScores.Data()
+				batch := shape[0]
+				offset := seqK - seqQ // cached tokens are always visible
+				negInf := negInfValue[T]()
+				for b := range batch {
+					for qi := range seqQ {
+						for ki := range seqK {
+							if ki > qi+offset {
+								data[(b*seqQ+qi)*seqK+ki] = negInf
+							}
 						}
 					}
 				}
 			}
 		}
-	}
 
-	// 4. Apply Softmax
-	attentionWeights, err := sdpa.engine.Softmax(ctx, scaledAttentionScores, -1, nil) // Softmax along the last dimension
-	if err != nil {
-		return nil, err
+		// 4. Apply Softmax
+		attentionWeights, err = sdpa.engine.Softmax(ctx, scaledAttentionScores, -1, nil) // Softmax along the last dimension
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sdpa.attentionWeights = attentionWeights // Cache for backward pass
