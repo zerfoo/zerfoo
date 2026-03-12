@@ -28,6 +28,11 @@ type Graph[T tensor.Numeric] struct {
 	memo         map[Node[T]]*tensor.TensorNumeric[T]
 	parallel     bool
 	pool         TensorReleaser[T]
+
+	// Cached decode-time allocations to avoid per-forward GC pressure.
+	cachedRefCount   map[Node[T]]int // static reference counts (recomputed on clear)
+	cachedNodeInputs []*tensor.TensorNumeric[T] // reusable buffer for node inputs
+	maxDeps          int                         // max dependencies per node
 }
 
 // SetEngineProxy stores a reference to the EngineProxy used by this graph's layers.
@@ -77,31 +82,56 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		return nil, fmt.Errorf("expected %d inputs, got %d", len(g.inputs), len(inputs))
 	}
 
-	g.memo = make(map[Node[T]]*tensor.TensorNumeric[T])
+	// Reuse memo map: clear and repopulate instead of reallocating.
+	if g.memo == nil {
+		g.memo = make(map[Node[T]]*tensor.TensorNumeric[T], len(g.nodes))
+	} else {
+		for k := range g.memo {
+			delete(g.memo, k)
+		}
+	}
 	for i, n := range g.inputs {
 		g.memo[n] = inputs[i]
 	}
 
 	// Build reference counts for pool-based intermediate release.
+	// Cache the initial refcount template so we only recompute it once.
 	var refCount map[Node[T]]int
 	if g.pool != nil {
-		refCount = make(map[Node[T]]int, len(g.nodes))
-		for _, n := range g.nodes {
-			for _, dep := range g.dependencies[n] {
-				refCount[dep]++
+		if g.cachedRefCount == nil {
+			g.cachedRefCount = make(map[Node[T]]int, len(g.nodes))
+			for _, n := range g.nodes {
+				for _, dep := range g.dependencies[n] {
+					g.cachedRefCount[dep]++
+				}
+			}
+			for _, n := range g.inputs {
+				g.cachedRefCount[n] = -1
+			}
+			g.cachedRefCount[g.output] = -1
+			for _, n := range g.nodes {
+				if isConstantNode[T](n) {
+					g.cachedRefCount[n] = -1
+				}
 			}
 		}
-		// Protect input and output nodes from release.
-		for _, n := range g.inputs {
-			refCount[n] = -1 // sentinel: never release
+		// Copy cached template into working refCount.
+		refCount = make(map[Node[T]]int, len(g.cachedRefCount))
+		for k, v := range g.cachedRefCount {
+			refCount[k] = v
 		}
-		refCount[g.output] = -1
-		// Protect parameter/constant nodes (they hold model weights).
+	}
+
+	// Pre-allocate nodeInputs buffer to max dependency count.
+	if g.maxDeps == 0 {
 		for _, n := range g.nodes {
-			if isConstantNode[T](n) {
-				refCount[n] = -1
+			if d := len(g.dependencies[n]); d > g.maxDeps {
+				g.maxDeps = d
 			}
 		}
+	}
+	if cap(g.cachedNodeInputs) < g.maxDeps {
+		g.cachedNodeInputs = make([]*tensor.TensorNumeric[T], g.maxDeps)
 	}
 
 	for nodeIdx, n := range g.nodes {
@@ -109,8 +139,9 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 			continue
 		}
 
-		nodeInputs := make([]*tensor.TensorNumeric[T], len(g.dependencies[n]))
-		for i, dep := range g.dependencies[n] {
+		deps := g.dependencies[n]
+		nodeInputs := g.cachedNodeInputs[:len(deps)]
+		for i, dep := range deps {
 			nodeInputs[i] = g.memo[dep]
 		}
 
