@@ -389,3 +389,85 @@ export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda-13.0/lib64:/
 go build -o bench_tps_opt3 ./cmd/bench_tps/
 ./bench_tps_opt3 -model /home/ndungu/models/gemma3-gguf/model.gguf -device cuda -tokens 64
 ```
+
+---
+
+# TARGET REACHED: 95% of Ollama Inference Performance
+
+Date: 2026-03-12
+
+## Environment
+
+- **Host**: ndungu@192.168.86.250 (DGX Spark, NVIDIA GB10 Blackwell)
+- **Model**: gemma3-gguf (Q4_K_M quantized, Gemma 3 1B)
+- **Tokens**: 256 (greedy decoding)
+- **CUDA**: 13.0, sm_121
+
+## Results
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 186.73 |
+| 2 | **189.78** |
+| 3 | 187.41 |
+| 4 | 188.28 |
+| 5 | 187.85 |
+| **Average** | **188.01** |
+
+**Target: 187.35 tok/s (95% of Ollama's 197.21 tok/s) -- ACHIEVED**
+
+## Performance Progression
+
+| Optimization | tok/s | Delta | Commit |
+|---|---|---|---|
+| Previous session best | 177.49 | -- | c684a92 |
+| Fused QK norm+RoPE kernel | 183.23 | +3.2% | 42f4008 |
+| Zero-copy Q+K view (avoid Concat) | 186.54 | +1.8% | 27bf4d3 |
+| Fused post-FFN norm+add kernel | 189.78 | +1.7% | 6b22b47 |
+
+## Optimizations in This Session
+
+### 1. Fused QK RMSNorm + RoPE kernel (commit 42f4008)
+
+Replaced 4 kernel launches per GQA layer (Q norm, K norm, Q RoPE, K RoPE)
+with a single fused CUDA kernel. Per block handles one head: computes RMS
+reduction, normalizes with the appropriate weight (Q vs K), applies RoPE
+rotation. For 26 layers with 5 heads each (4Q + 1KV), saves 78 kernel
+launches per token.
+
+### 2. Zero-copy Q+K concatenation (commit 27bf4d3)
+
+When Q and K come from merged QKV (adjacent GPU views), creates a single
+GPUStorageView spanning both instead of launching a Concat kernel. Saves
+26 additional kernel launches per token.
+
+### 3. Fused post-FFN RMSNorm + residual Add (commit 6b22b47)
+
+Replaced separate postFfnNorm (RMSNorm) + residualAdd (Add) with a single
+fused kernel that computes output = rmsnorm(input, weight, eps) + residual.
+Saves 26 kernel launches per token. Also introduced residualRefNode for
+zero-cost retrieval of stored residuals from fusedAddRMSNormNode.
+
+## Kernel Launch Count Reduction
+
+| Phase | Per-layer launches | Total (26 layers) |
+|---|---|---|
+| Before this session | ~17 | ~442 |
+| After fused QK norm+RoPE | ~14 | ~364 |
+| After fused norm+add | ~13 | ~338 |
+
+## Architecture Summary
+
+Per decode token (Gemma 3, seqLen=1, 26 layers):
+- inputNorm (RMSNorm): 1 kernel
+- Merged QKV GEMV: 1 kernel
+- Fused QK norm+RoPE: 1 kernel (was 4)
+- SDPA (MatMulTransposeB + ScaledSoftmax + MatMul): 3 kernels
+- O proj GEMV: 1 kernel
+- postAttnNorm (RMSNorm): 1 kernel
+- Fused Add+RMSNorm (residual + pre-FFN norm): 1 kernel
+- GateUp GEMV: 1 kernel
+- FusedSwiGLU: 1 kernel
+- Down GEMV: 1 kernel
+- Fused Norm+Add (post-FFN norm + residual): 1 kernel (was 2)
+Total: ~13 kernels/layer x 26 layers = ~338 + overhead
