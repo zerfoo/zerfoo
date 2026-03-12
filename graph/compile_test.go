@@ -377,3 +377,115 @@ func TestGraphCompile(t *testing.T) {
 		}
 	}
 }
+
+// embeddedFrozenNode is a mock node that carries embedded frozen data,
+// simulating a Gather node with embedded weights.
+type embeddedFrozenNode struct {
+	mockF32Node
+	frozenData []*tensor.TensorNumeric[float32]
+}
+
+func (e *embeddedFrozenNode) EmbeddedFrozen() []*tensor.TensorNumeric[float32] {
+	return e.frozenData
+}
+
+// Verify the interface is satisfied.
+var _ EmbeddedFrozenProvider[float32] = (*embeddedFrozenNode)(nil)
+
+func TestCompileEmbeddedFrozen(t *testing.T) {
+	// Build graph: input -> gatherNode (with embedded weights) -> output.
+	// The embedded weights tensor should become a synthetic frozen slot
+	// and be prepended to the instruction's InputIdx.
+	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+	defer func() { _ = engine.Close(context.Background()) }()
+	b := NewBuilder[float32](engine)
+
+	in := b.Input([]int{1, 2})
+
+	// Simulated embedding table [4, 3].
+	weights, _ := tensor.New[float32]([]int{4, 3}, []float32{
+		10, 11, 12,
+		20, 21, 22,
+		30, 31, 32,
+		40, 41, 42,
+	})
+
+	gatherNode := &embeddedFrozenNode{
+		mockF32Node: mockF32Node{
+			name:        "Gather",
+			outputShape: []int{1, 2, 3},
+			forwardFunc: func(_ context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+				// Simple gather: look up rows from weights by index.
+				idx := inputs[0].Data()
+				dim := weights.Shape()[1]
+				wData := weights.Data()
+				out := make([]float32, len(idx)*dim)
+				for i, id := range idx {
+					row := int(id)
+					copy(out[i*dim:(i+1)*dim], wData[row*dim:(row+1)*dim])
+				}
+				return tensor.New[float32]([]int{1, len(idx), dim}, out)
+			},
+		},
+		frozenData: []*tensor.TensorNumeric[float32]{weights},
+	}
+
+	gathered := b.AddNode(gatherNode, in)
+	g, err := b.Build(gathered)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input, _ := tensor.New[float32]([]int{1, 2}, []float32{1, 3})
+	ctx := context.Background()
+
+	plan, err := g.Compile(ctx, input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	// Verify Gather instruction has 2 inputs (frozen weights + indices).
+	metas := plan.Instructions()
+	var gatherMeta *InstructionMeta
+	for i := range metas {
+		if metas[i].OpName == "Gather" {
+			gatherMeta = &metas[i]
+			break
+		}
+	}
+	if gatherMeta == nil {
+		t.Fatal("no Gather instruction found")
+	}
+	if got := len(gatherMeta.InputIdx); got != 2 {
+		t.Fatalf("Gather InputIdx has %d entries, want 2", got)
+	}
+
+	// Verify frozen slots include the synthetic slot.
+	frozenSlots := plan.FrozenSlots()
+	found := false
+	for _, f := range frozenSlots {
+		if f.SlotIdx == gatherMeta.InputIdx[0] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Gather's first input (slot %d) not in frozen slots", gatherMeta.InputIdx[0])
+	}
+
+	// Verify the plan produces correct output.
+	result, err := plan.Run(ctx, input)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []float32{20, 21, 22, 40, 41, 42} // rows 1 and 3
+	got := result.Data()
+	if len(got) != len(want) {
+		t.Fatalf("result length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("result[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
