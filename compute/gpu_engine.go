@@ -683,20 +683,16 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	// non-unit dimensions in input vs output order.
 	if isTransposeReshape(shape, outShape) {
 		gs := a.GetStorage().(*tensor.GPUStorage[T])
-		total := 1
-		for _, d := range shape {
-			total *= d
-		}
-		t, tErr := tensor.NewWithStorage[T](outShape, gs)
+		viewGS := gs.View(gs.Len())
+		t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
 		if tErr != nil {
 			return nil, tErr
 		}
 		if len(dst) > 0 && dst[0] != nil {
-			dst[0].SetStorage(gs)
+			dst[0].SetStorage(viewGS)
 			dst[0].SetShape(outShape)
 			return dst[0], nil
 		}
-		_ = total
 		return t, nil
 	}
 
@@ -1017,7 +1013,7 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 		if newSize != currentSize {
 			return e.cpu.Reshape(ctx, a, shape, dst...)
 		}
-		return tensor.NewWithStorage[T](inferredShape, gs)
+		return tensor.NewWithStorage[T](inferredShape, gs.View(gs.Len()))
 	}
 	return e.cpu.Reshape(ctx, a, shape, dst...)
 }
