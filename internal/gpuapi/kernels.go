@@ -44,6 +44,10 @@ type KernelRunner interface {
 	// A_q4 is packed Q4_0 blocks, B is [K,N] float32, C is [M,N] float32.
 	GemmQ4F32(aQ4, b, c unsafe.Pointer, m, k, n int, stream Stream) error
 
+	// GemmQ8F32 performs Q8_0 dequant-GEMM: C = dequant(A_q8) * B.
+	// A_q8 is packed Q8_0 blocks (36 bytes per 32 values), B is [K,N] float32, C is [M,N] float32.
+	GemmQ8F32(aQ8, b, c unsafe.Pointer, m, k, n int, stream Stream) error
+
 	// Broadcast binary ops: c[r,c] = op(a[r*saRow+c*saCol], b[r*sbRow+c*sbCol]).
 	// Strides encode broadcasting: D for full row, 1 for full col, 0 for broadcast.
 	AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, stream Stream) error

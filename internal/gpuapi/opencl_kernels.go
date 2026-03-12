@@ -112,6 +112,10 @@ func (k *OpenCLKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, _ Stre
 	return fmt.Errorf("GemmQ4F32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, _ Stream) error {
+	return fmt.Errorf("GemmQ8F32: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, _ Stream) error {
 	return fmt.Errorf("AddBroadcast: not implemented for OpenCL")
 }

@@ -101,6 +101,10 @@ func (k *CUDAKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, s Stream
 	return kernels.GemmQ4F32(aQ4, b, c, m, kk, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, s Stream) error {
+	return kernels.GemmQ8F32(aQ8, b, c, m, kk, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
 	return kernels.AddBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }

@@ -104,6 +104,10 @@ func (k *ROCmKernels) GemmQ4F32(aQ4, b, c unsafe.Pointer, m, kk, n int, s Stream
 	return fmt.Errorf("GemmQ4F32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, _ Stream) error {
+	return fmt.Errorf("GemmQ8F32: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, _ Stream) error {
 	return fmt.Errorf("AddBroadcast: not implemented for ROCm")
 }
