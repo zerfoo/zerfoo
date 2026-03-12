@@ -465,6 +465,16 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		return nil, err
 	}
 
+	// Apply causal masking during prefill (seqLen > 1) when no explicit mask
+	// is provided. Without this, each position attends to future tokens,
+	// producing garbage output.
+	if mask == nil && seqLen > 1 {
+		mask, err = createCausalMask[T](batchSize, gqa.numQueryHeads, seqLen, kvSeqLen)
+		if err != nil {
+			return nil, fmt.Errorf("create causal mask: %w", err)
+		}
+	}
+
 	attnOutputHeads, err := gqa.scaledDotProductAttention.Forward(ctx, qForSDPA, kForSDPA, vForSDPA, mask)
 	if err != nil {
 		return nil, err
@@ -662,6 +672,47 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.Ba
 	}
 
 	return []*tensor.TensorNumeric[T]{dInputTotal}, nil
+}
+
+// negInfValue returns a large negative value (-1e9) for floating point types.
+func negInfValue[T tensor.Numeric]() T {
+	var zero T
+	if p, ok := any(&zero).(*float32); ok {
+		*p = -1e9
+		return zero
+	}
+	if p, ok := any(&zero).(*float64); ok {
+		*p = -1e9
+		return zero
+	}
+	return zero
+}
+
+// createCausalMask generates a causal (lower-triangular) attention mask.
+// Shape: (batchSize, numHeads, seqLenQ, seqLenK).
+// Positions where q_pos < k_pos are set to -1e9 (large negative), others to 0.
+// For prefill with KV cache, seqLenK may be larger than seqLenQ if there are
+// cached tokens from a previous pass.
+func createCausalMask[T tensor.Numeric](batchSize, numHeads, seqLenQ, seqLenK int) (*tensor.TensorNumeric[T], error) {
+	data := make([]T, batchSize*numHeads*seqLenQ*seqLenK)
+	negInf := negInfValue[T]()
+	// offset: K positions [0, seqLenK-seqLenQ) are always visible (cached tokens).
+	offset := seqLenK - seqLenQ
+	for b := range batchSize {
+		for h := range numHeads {
+			for qi := range seqLenQ {
+				for ki := range seqLenK {
+					idx := ((b*numHeads+h)*seqLenQ+qi)*seqLenK + ki
+					// Q at position qi can attend to K at position ki only if
+					// ki <= qi + offset (i.e., the K position is at or before the Q position).
+					if ki > qi+offset {
+						data[idx] = negInf
+					}
+				}
+			}
+		}
+	}
+	return tensor.New([]int{batchSize, numHeads, seqLenQ, seqLenK}, data)
 }
 
 // Statically assert that the type implements the graph.Node interface.
