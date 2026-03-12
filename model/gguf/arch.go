@@ -18,8 +18,11 @@ type ModelConfig struct {
 	IntermediateSize int
 	MaxSeqLen        int
 	RopeTheta        float64
-	HeadDim          int     // explicit head dimension (0 = use HiddenSize/NumHeads)
-	LogitSoftcap     float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
+	HeadDim              int     // explicit head dimension (0 = use HiddenSize/NumHeads)
+	LogitSoftcap         float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
+	LocalRopeTheta       float64 // RoPE base for local/sliding-window layers (0 = use RopeTheta)
+	SlidingWindow        int     // sliding window size for local attention layers
+	SlidingWindowPattern int     // every Nth layer is global (0 = all global)
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -81,6 +84,18 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	// Extract logit softcapping value.
 	if v, ok := f.GetFloat32(prefix + "final_logit_softcapping"); ok {
 		cfg.LogitSoftcap = v
+	}
+	// Extract local RoPE base for alternating attention.
+	if v, ok := f.GetFloat32(prefix + "rope.local.freq_base"); ok {
+		cfg.LocalRopeTheta = float64(v)
+	}
+	// Extract sliding window size.
+	if v, ok := f.GetUint32(prefix + "attention.sliding_window"); ok {
+		cfg.SlidingWindow = int(v)
+	}
+	// Gemma 3 uses a fixed pattern of 6 for sliding window layers.
+	if cfg.LocalRopeTheta > 0 {
+		cfg.SlidingWindowPattern = 6
 	}
 
 	return cfg, nil

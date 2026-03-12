@@ -152,8 +152,16 @@ func buildTransformerGraph(
 			nil,
 		)
 
+		// Select RoPE base: global vs local based on layer pattern.
+		ropeBase := cfg.RopeTheta
+		if cfg.SlidingWindowPattern > 0 && cfg.LocalRopeTheta > 0 {
+			isGlobal := (i+1)%cfg.SlidingWindowPattern == 0
+			if !isGlobal {
+				ropeBase = cfg.LocalRopeTheta
+			}
+		}
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
-			embeddings.WithRotaryBase(cfg.RopeTheta),
+			embeddings.WithRotaryBase(ropeBase),
 		}
 		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
 			context.Background(), proxy, headDim, cfg.MaxSeqLen, ropeOpts...,
