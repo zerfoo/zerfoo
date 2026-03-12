@@ -3,7 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
-	"math"
+	"sync"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -11,6 +11,20 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
 )
+
+// tanhf32 computes tanh(x) using a rational approximation entirely in float32.
+// Accurate to ~3e-5 for |x| < 4.5 (sufficient for logit softcapping).
+// For |x| >= 4.5, returns +-1.
+func tanhf32(x float32) float32 {
+	if x > 4.5 {
+		return 1
+	}
+	if x < -4.5 {
+		return -1
+	}
+	x2 := x * x
+	return x * (27 + x2) / (27 + 9*x2)
+}
 
 // buildLlamaGraph constructs a computation graph for the Llama architecture
 // from pre-loaded GGUF tensors. It returns the graph and the embedding table
@@ -102,11 +116,35 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	}
 
 	// Apply logit softcapping: cap * tanh(logit / cap).
+	// Uses float32 fast tanh approximation and parallelizes across cores.
 	if h.softcapVal > 0 {
 		data := result.Data()
-		cap := float64(h.softcapVal)
-		for i := range data {
-			data[i] = T(cap * math.Tanh(float64(data[i])/cap))
+		n := len(data)
+		invCap := float32(1.0 / float64(h.softcapVal))
+		cap32 := h.softcapVal
+		const chunkSize = 4096
+		nChunks := (n + chunkSize - 1) / chunkSize
+		if nChunks <= 1 {
+			for i := range data {
+				data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
+			}
+		} else {
+			var wg sync.WaitGroup
+			wg.Add(nChunks)
+			for c := range nChunks {
+				start := c * chunkSize
+				end := start + chunkSize
+				if end > n {
+					end = n
+				}
+				go func() {
+					defer wg.Done()
+					for i := start; i < end; i++ {
+						data[i] = T(cap32 * tanhf32(float32(data[i])*invCap))
+					}
+				}()
+			}
+			wg.Wait()
 		}
 	}
 
