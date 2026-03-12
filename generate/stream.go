@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/zerfoo/zerfoo/compute"
 )
 
 // errStopString is a sentinel indicating that a stop string was matched
@@ -50,6 +52,8 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 	var cacheProvider CacheProvider[T]
 	if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
+	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
+		cacheProvider = NewTensorCache[T](gen.engine, gen.config.NumLayers, gen.config.MaxSeqLen)
 	} else {
 		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
 	}
