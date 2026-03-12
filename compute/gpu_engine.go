@@ -994,27 +994,20 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 
 	devA := gs.Ptr()
 
-	// Block size: product of dims after axis.
-	blockSize := 1
-	for i := axis + 1; i < len(shape); i++ {
-		blockSize *= shape[i]
+	// Compute dimensions for the repeat kernel.
+	outerSize := 1
+	for i := 0; i < axis; i++ {
+		outerSize *= shape[i]
 	}
-	numBlocks := a.Size() / (blockSize * shape[axis])
+	axisDim := shape[axis]
+	innerSize := 1
+	for i := axis + 1; i < len(shape); i++ {
+		innerSize *= shape[i]
+	}
 
-	for i := range numBlocks {
-		for r := range repetitions {
-			for j := range shape[axis] {
-				srcOff := (i*shape[axis]*blockSize + j*blockSize) * f32Size
-				dstOff := (i*shape[axis]*blockSize*repetitions + r*shape[axis]*blockSize + j*blockSize) * f32Size
-				chunkBytes := blockSize * f32Size
-				src := unsafe.Add(devA, srcOff)
-				d := unsafe.Add(devOut, dstOff)
-				if err := e.runtime.MemcpyAsync(d, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
-					e.pool.Free(e.deviceID, devOut, outBytes)
-					return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
-				}
-			}
-		}
+	if err := e.kernels.Repeat(devA, devOut, outerSize, axisDim, innerSize, repetitions, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 	}
 
 	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)
