@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -7,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -15,6 +14,9 @@ import (
 // (MatMul of input and weights) produces the same result on GPUEngine
 // and CPUEngine.
 func TestGPUEngine_LinearForward(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -70,6 +72,9 @@ func TestGPUEngine_LinearForward(t *testing.T) {
 // TestGPUEngine_LinearBackward verifies that backward pass gradient
 // computation (transpose + matmul) produces the same result on GPU and CPU.
 func TestGPUEngine_LinearBackward(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -169,6 +174,9 @@ func TestGPUEngine_LinearBackward(t *testing.T) {
 // scores = Q @ K^T, attn = Softmax(scores), out = attn @ V.
 // Compares GPU vs CPU results.
 func TestGPUEngine_AttentionOps(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -250,6 +258,9 @@ func TestGPUEngine_AttentionOps(t *testing.T) {
 // TestGPUEngine_ElementwiseParity verifies all elementwise GPU kernels
 // match CPU output.
 func TestGPUEngine_ElementwiseParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -316,6 +327,9 @@ func TestGPUEngine_ElementwiseParity(t *testing.T) {
 // TestGPUEngine_ReductionParity verifies Sum, ReduceSum, ReduceMean
 // match CPU for various axes and keepDims settings.
 func TestGPUEngine_ReductionParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -379,6 +393,9 @@ func TestGPUEngine_ReductionParity(t *testing.T) {
 // TestGPUEngine_TrainingStep simulates a minimal training step:
 // forward pass, MSE-like loss, backward pass (gradient computation).
 func TestGPUEngine_TrainingStep(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -459,6 +476,9 @@ func TestGPUEngine_TrainingStep(t *testing.T) {
 
 // TestGPUEngine_SoftmaxParity verifies Softmax GPU vs CPU for various shapes and axes.
 func TestGPUEngine_SoftmaxParity(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -521,6 +541,9 @@ func TestGPUEngine_SoftmaxParity(t *testing.T) {
 // TestGPUEngine_LinearLayerEndToEnd constructs a Linear layer with GPUEngine
 // via graph.Parameter and verifies forward pass shape and data.
 func TestGPUEngine_LinearLayerEndToEnd(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -573,6 +596,9 @@ func TestGPUEngine_LinearLayerEndToEnd(t *testing.T) {
 // keep data on the device. Intermediate tensors should have GPUStorage (not
 // CPUStorage), eliminating H2D/D2H round-trips between operations.
 func TestGPUEngine_ChainedOpsDeviceResident(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -661,6 +687,9 @@ func TestGPUEngine_ChainedOpsDeviceResident(t *testing.T) {
 // TestGPUEngine_MixedStorageInputs verifies that GPUEngine correctly handles
 // one GPUStorage input and one CPUStorage input in binary operations.
 func TestGPUEngine_MixedStorageInputs(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -707,6 +736,9 @@ func TestGPUEngine_MixedStorageInputs(t *testing.T) {
 // TestGPUEngine_OOMFallbackCount verifies that the OOM fallback counter is
 // accessible and starts at zero.
 func TestGPUEngine_OOMFallbackCount(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	gpuEng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -754,6 +786,9 @@ func benchMatMul(b *testing.B, eng Engine[float32], size int) {
 }
 
 func BenchmarkMatMul_GPU_128(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	eng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -772,6 +807,9 @@ func BenchmarkMatMul_CPU_128(b *testing.B) {
 }
 
 func BenchmarkMatMul_GPU_512(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	eng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -790,6 +828,9 @@ func BenchmarkMatMul_CPU_512(b *testing.B) {
 }
 
 func BenchmarkMatMul_GPU_1024(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	eng, err := NewGPUEngine[float32](ops)
 	if err != nil {
@@ -808,6 +849,9 @@ func BenchmarkMatMul_CPU_1024(b *testing.B) {
 }
 
 func BenchmarkSoftmax_GPU(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.Float32Ops{}
 	eng, err := NewGPUEngine[float32](ops)
 	if err != nil {

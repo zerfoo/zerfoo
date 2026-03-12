@@ -1,5 +1,3 @@
-//go:build cuda
-
 package compute
 
 import (
@@ -7,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/float16"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -34,6 +33,9 @@ func benchBF16MatMul(b *testing.B, eng Engine[float16.BFloat16], size int) {
 }
 
 func BenchmarkBF16MatMul_GPU_128(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.BFloat16Ops{}
 	eng, err := NewGPUEngine[float16.BFloat16](ops)
 	if err != nil {
@@ -46,6 +48,9 @@ func BenchmarkBF16MatMul_GPU_128(b *testing.B) {
 }
 
 func BenchmarkBF16MatMul_GPU_512(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.BFloat16Ops{}
 	eng, err := NewGPUEngine[float16.BFloat16](ops)
 	if err != nil {
@@ -58,6 +63,9 @@ func BenchmarkBF16MatMul_GPU_512(b *testing.B) {
 }
 
 func BenchmarkBF16MatMul_GPU_1024(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.BFloat16Ops{}
 	eng, err := NewGPUEngine[float16.BFloat16](ops)
 	if err != nil {
@@ -70,6 +78,9 @@ func BenchmarkBF16MatMul_GPU_1024(b *testing.B) {
 }
 
 func BenchmarkBF16MatMul_GPU_2048(b *testing.B) {
+	if !cuda.Available() {
+		b.Skip("CUDA not available")
+	}
 	ops := numeric.BFloat16Ops{}
 	eng, err := NewGPUEngine[float16.BFloat16](ops)
 	if err != nil {
