@@ -293,15 +293,6 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return e.matMulQ4(ctx, qs, a, b, dst...)
 	}
 
-	// Check for Q4 quantized storage on B (virtual-transposed weight).
-	// After virtual transpose, B has shape [K, N] but the underlying Q4
-	// data is in original [N, K] layout. We use gemm_q4 with swapped
-	// operands: C_temp[N, M] = dequant(B_q4[N,K]) * A^T[K,M], then
-	// transpose to C[M, N]. For GEMV (M=1), reshape suffices.
-	if qs, ok := any(b.GetStorage()).(*tensor.Q4Storage); ok {
-		return e.matMulQ4BWeight(ctx, a, qs, b, dst...)
-	}
-
 	// float32 and BFloat16 have GPU BLAS paths; fall back for other types.
 	var zero T
 	_, isFloat32 := any(zero).(float32)
@@ -512,19 +503,28 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	// Only handle unbatched 2D for now.
-	if len(aShape) > 2 || len(bShape) > 2 {
+	// B must be 2D (virtual-transposed weight).
+	if len(bShape) > 2 {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	m := aShape[0] // rows of A
-	k := aShape[1] // shared dimension
+	// Flatten A's batch dims: [batch..., m, k] -> [m_total, k]
+	k := aShape[len(aShape)-1]
+	m := 1
+	for i := 0; i < len(aShape)-1; i++ {
+		m *= aShape[i]
+	}
 	n := bShape[1] // columns of B (after virtual transpose)
 
 	// Q4 original layout is [N, K]. Verify K is a multiple of 32.
 	if k%32 != 0 {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
+
+	// Build output shape: [batch..., m_last, n] matching standard MatMul broadcast.
+	outShape := make([]int, len(aShape))
+	copy(outShape, aShape[:len(aShape)-1])
+	outShape[len(outShape)-1] = n
 
 	e.setDevice()
 
@@ -549,7 +549,8 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 	}
 	defer freeQ4()
 
-	// Upload A to GPU as F32.
+	// Upload A to GPU as F32. A's data is contiguous [m, k] regardless of
+	// original batch shape, so the kernel sees it as a flat 2D matrix.
 	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
@@ -561,7 +562,6 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 	if m == 1 {
 		// GEMV fast path: C_temp[N, 1] = gemm_q4(B_q4[N,K], A^T[K,1])
 		// A is [1, K], A^T is [K, 1] -- same data, just different shape.
-		// gemm_q4 params: M=N, K=K, N=1
 		cSize := n * f32Size
 		devC, err := e.pool.Alloc(e.deviceID, cSize)
 		if err != nil {
@@ -573,13 +573,16 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		// C_temp is [N, 1], reshape to [1, N] (no data movement needed).
-		return makeGPUResult[T](e, []int{1, n}, devC, n, dst...)
+		return makeGPUResult[T](e, outShape, devC, n, dst...)
 	}
 
-	// General case: C_temp[N, M] = gemm_q4(B_q4[N,K], A^T[K,M])
-	// First transpose A[M, K] -> A^T[K, M] on GPU.
-	aT, err := e.Transpose(ctx, a, []int{1, 0})
+	// General GEMM: C_temp[N, M] = gemm_q4(B_q4[N,K], A^T[K,M])
+	// Transpose flattened A[M, K] -> A^T[K, M] on GPU.
+	aFlat, err := e.Reshape(ctx, a, []int{m, k})
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	aT, err := e.Transpose(ctx, aFlat, []int{1, 0})
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -600,14 +603,18 @@ func (e *GPUEngine[T]) matMulQ4BWeight(ctx context.Context, a *tensor.TensorNume
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
-	// C_temp is [N, M], transpose to [M, N].
+	// C_temp is [N, M], transpose to [M, N], then reshape to outShape.
 	cTempTensor, err := makeGPUResult[T](e, []int{n, m}, devCTemp, n*m)
 	if err != nil {
 		e.pool.Free(e.deviceID, devCTemp, cTempSize)
 		return nil, err
 	}
 
-	return e.Transpose(ctx, cTempTensor, []int{1, 0}, dst...)
+	cFlat, err := e.Transpose(ctx, cTempTensor, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	return e.Reshape(ctx, cFlat, outShape, dst...)
 }
 
 // --- GPU-accelerated and fallback methods ---
