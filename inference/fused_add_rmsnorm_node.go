@@ -118,3 +118,27 @@ func (n *residualAddNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 func (n *residualAddNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, fmt.Errorf("ResidualAdd: backward not implemented")
 }
+
+// residualRefNode retrieves the stored residual from a fusedAddRMSNormNode
+// without adding anything. Used by fusedNormAddNode to access the residual
+// as a graph input.
+type residualRefNode[T tensor.Numeric] struct {
+	source *fusedAddRMSNormNode[T]
+}
+
+func (n *residualRefNode[T]) OpType() string                 { return "ResidualRef" }
+func (n *residualRefNode[T]) Attributes() map[string]any     { return nil }
+func (n *residualRefNode[T]) Parameters() []*graph.Parameter[T] { return nil }
+func (n *residualRefNode[T]) OutputShape() []int             { return nil }
+
+func (n *residualRefNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	res := n.source.Residual()
+	if res == nil {
+		return nil, fmt.Errorf("ResidualRef: fused node has no stored residual")
+	}
+	return res, nil
+}
+
+func (n *residualRefNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return nil, fmt.Errorf("ResidualRef: backward not implemented")
+}

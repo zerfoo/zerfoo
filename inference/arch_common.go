@@ -370,24 +370,26 @@ func buildTransformerGraph(
 
 		ffnOut := builder.AddNode(ffn, normed2)
 
-		// --- Post-FFN Norm (Gemma 3: normalize before residual add) ---
+		// --- Fused Post-FFN Norm + Residual Add ---
+		// When postNorm is enabled (Gemma 3), fuse RMSNorm(ffnOut) + Add(result, residual)
+		// into a single kernel launch, replacing 2 separate launches.
 		if opts.postNorm {
 			postFfnNormW, lookupErr := lookup(prefix + "post_feedforward_layernorm.weight")
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
-			postFfnNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, rmsEps, param(prefix+"post_feedforward_layernorm.weight", postFfnNormW),
-			)
-			if normErr != nil {
-				return nil, normErr
-			}
-			ffnOut = builder.AddNode(postFfnNorm, ffnOut)
+			fusedNormAdd := &fusedNormAddNode[float32]{engine: proxy, weight: postFfnNormW, eps: rmsEps}
+			// residualAddNode retrieves the stored residual from fusedNode.
+			// fusedNormAddNode needs the residual as a graph input, so use a
+			// residualAddNode that just returns the residual without adding.
+			resNode := &residualRefNode[float32]{source: fusedNode}
+			residualRef := builder.AddNode(resNode)
+			hidden = builder.AddNode(fusedNormAdd, ffnOut, residualRef)
+		} else {
+			// Non-postNorm path: just add ffnOut + residual.
+			resAdd := &residualAddNode[float32]{engine: proxy, source: fusedNode}
+			hidden = builder.AddNode(resAdd, ffnOut)
 		}
-
-		// --- Residual Add (from fused node) ---
-		resAdd := &residualAddNode[float32]{engine: proxy, source: fusedNode}
-		hidden = builder.AddNode(resAdd, ffnOut)
 	}
 
 	// --- Final RMSNorm ---

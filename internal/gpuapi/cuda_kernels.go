@@ -157,6 +157,10 @@ func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sum
 	return kernels.FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
 }
 
+func (k *CUDAKernels) FusedNormAddF32(input, weight, residual, output unsafe.Pointer, eps float32, rows, D int, s Stream) error {
+	return kernels.FusedNormAddF32(input, weight, residual, output, eps, rows, D, streamPtr(s))
+}
+
 func (k *CUDAKernels) FusedQKNormRoPEF32(input, weightQ, weightK, cosAngles, sinAngles, output unsafe.Pointer, eps float32, totalHeads, headDim, numQHeads, halfRotary int, s Stream) error {
 	return kernels.FusedQKNormRoPEF32(input, weightQ, weightK, cosAngles, sinAngles, output, eps, totalHeads, headDim, numQHeads, halfRotary, streamPtr(s))
 }

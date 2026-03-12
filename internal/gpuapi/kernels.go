@@ -95,6 +95,11 @@ type KernelRunner interface {
 	// normedOut: [rows, D], sumOut: [rows, D].
 	FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, stream Stream) error
 
+	// FusedNormAddF32 applies RMSNorm then adds residual in one kernel launch.
+	// output = rmsnorm(input, weight, eps) + residual.
+	// input: [rows, D], weight: [D], residual: [rows, D], output: [rows, D].
+	FusedNormAddF32(input, weight, residual, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
 	// FusedQKNormRoPEF32 applies per-head RMSNorm + RoPE to combined Q+K heads.
 	// Replaces 4 kernel launches (Q_norm + K_norm + Q_RoPE + K_RoPE) with 1.
 	// input: [totalHeads, headDim], weightQ/weightK: [headDim],

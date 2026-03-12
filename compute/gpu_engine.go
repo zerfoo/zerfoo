@@ -1726,6 +1726,53 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	return normed, residualOut, nil, nil
 }
 
+// GPUFusedNormAdd computes output = rmsnorm(input, weight, eps) + residual
+// in a single GPU kernel launch. Replaces separate RMSNorm + Add (2 launches → 1).
+func (e *GPUEngine[T]) GPUFusedNormAdd(input, weight, residual *tensor.TensorNumeric[T], eps float32) (*tensor.TensorNumeric[T], error) {
+	inShape := input.Shape()
+	if len(inShape) < 2 {
+		return nil, fmt.Errorf("GPUFusedNormAdd: input must be at least 2D, got %v", inShape)
+	}
+	D := inShape[len(inShape)-1]
+	rows := 1
+	for i := 0; i < len(inShape)-1; i++ {
+		rows *= inShape[i]
+	}
+
+	inPtr, inCleanup, err := getDevicePtr(e, input)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd input: %w", err)
+	}
+	defer inCleanup()
+
+	wPtr, wCleanup, err := getDevicePtr(e, weight)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd weight: %w", err)
+	}
+	defer wCleanup()
+
+	resPtr, resCleanup, err := getDevicePtr(e, residual)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd residual: %w", err)
+	}
+	defer resCleanup()
+
+	outElems := rows * D
+	outBytes := outElems * f32Size
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("GPUFusedNormAdd alloc: %w", err)
+	}
+
+	if err := e.kernels.FusedNormAddF32(inPtr, wPtr, resPtr, devOut, eps, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return makeGPUResult[T](e, inShape, devOut, outElems)
+}
+
 // GPUFusedQKNormRoPE applies per-head RMSNorm + RoPE to combined Q+K heads
 // in a single GPU kernel launch. This replaces 4 kernel launches per GQA layer.
 // input: [totalHeads, headDim], weightQ/weightK: [headDim],
