@@ -732,9 +732,11 @@ func TestDecodeTensor_Q4_0_ToFloat32(t *testing.T) {
 func TestDecodeTensor_Q4_0_NonZeroValues(t *testing.T) {
 	scale := float16.FromFloat32(1.0)
 	var nibbles [16]byte
-	// First pair: q0=1 (1+8=9), q1=-1 (-1+8=7). packed = 9 | (7<<4) = 0x79
+	// In GGML split format: low nibble -> first half (pos 0-15),
+	// high nibble -> second half (pos 16-31).
+	// nibbles[0] = 0x79: low nibble 9 (q=1) -> pos 0, high nibble 7 (q=-1) -> pos 16.
 	nibbles[0] = 0x79
-	// Rest: zeros.
+	// Rest: zeros (0x88 = low 8/high 8, both q=0).
 	for i := 1; i < 16; i++ {
 		nibbles[i] = 0x88
 	}
@@ -754,8 +756,8 @@ func TestDecodeTensor_Q4_0_NonZeroValues(t *testing.T) {
 	if data[0] != 1.0 {
 		t.Errorf("element 0: got %v, want 1.0", data[0])
 	}
-	if data[1] != -1.0 {
-		t.Errorf("element 1: got %v, want -1.0", data[1])
+	if data[16] != -1.0 {
+		t.Errorf("element 16: got %v, want -1.0", data[16])
 	}
 }
 
@@ -801,12 +803,13 @@ func TestDecodeTensor_Q4_0_UsesQ4Storage(t *testing.T) {
 	}
 
 	// Data() should still return correct dequantized values via Q4Storage.Slice().
+	// In GGML split format: low nibble -> first half, high nibble -> second half.
 	data := decoded.Data()
 	if data[0] != 1.0 {
 		t.Errorf("element 0: got %v, want 1.0", data[0])
 	}
-	if data[1] != -1.0 {
-		t.Errorf("element 1: got %v, want -1.0", data[1])
+	if data[16] != -1.0 {
+		t.Errorf("element 16: got %v, want -1.0", data[16])
 	}
 }
 

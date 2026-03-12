@@ -169,10 +169,12 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 // decodeQ5_0Tensor dequantizes Q5_0 blocks to float32 at load time.
 // Q5_0 format: 32 elements per block, 22 bytes per block.
 // Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low 4-bit values.
-// Each element reconstructs a 5-bit value: q = (low4 | (highBit << 4)) - 16.
-// Reference: llama.cpp ggml-quants.c dequantize_row_q5_0.
+// Each byte in qs contains two 4-bit values: the low nibble maps to the first
+// half of the block (positions 0-15) and the high nibble maps to the second
+// half (positions 16-31). This matches llama.cpp's dequantize_row_q5_0.
 func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
 	const blockSize = 32
+	const halfBlock = blockSize / 2
 	const blockBytes = 22
 	nBlocks := (numElements + blockSize - 1) / blockSize
 
@@ -184,24 +186,29 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 		// 4 bytes of high bits (32 bits, one per element).
 		qh := binary.LittleEndian.Uint32(raw[off+2 : off+6])
 
-		// 16 bytes of low nibbles (32 x 4-bit values packed in pairs).
-		for j := range blockSize {
-			idx := bi*blockSize + j
-			if idx >= numElements {
-				break
+		// 16 bytes of packed nibbles. Each byte yields two elements:
+		// low nibble -> position j (first half), high nibble -> position j+16 (second half).
+		for j := range halfBlock {
+			packed := raw[off+6+j]
+			low4 := packed & 0x0F
+			high4 := packed >> 4
+
+			// First half: position j, high bit at qh[j].
+			xh0 := uint8((qh>>uint(j))&1) << 4
+			x0 := int(low4|xh0) - 16
+
+			// Second half: position j+16, high bit at qh[j+16].
+			xh1 := uint8((qh>>uint(j+halfBlock))&1) << 4
+			x1 := int(high4|xh1) - 16
+
+			idx0 := bi*blockSize + j
+			idx1 := bi*blockSize + j + halfBlock
+			if idx0 < numElements {
+				data[idx0] = d * float32(x0)
 			}
-			// Low 4 bits from packed byte.
-			byteIdx := j / 2
-			var low4 uint8
-			if j%2 == 0 {
-				low4 = raw[off+6+byteIdx] & 0x0F
-			} else {
-				low4 = raw[off+6+byteIdx] >> 4
+			if idx1 < numElements {
+				data[idx1] = d * float32(x1)
 			}
-			// High bit from qh.
-			highBit := uint8((qh >> j) & 1)
-			q := int(low4) | (int(highBit) << 4)
-			data[idx] = d * float32(q-16)
 		}
 	}
 	return tensor.New[float32](shape, data)
