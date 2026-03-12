@@ -257,6 +257,14 @@ func Load(modelID string, opts ...Option) (*Model, error) {
 				tensors = append(tensors, p.Value)
 			}
 		}
+		// Also upload layer parameters (e.g. RMSNorm gain weights) that
+		// are embedded inside compute nodes rather than registered as
+		// top-level constant/parameter nodes in the graph.
+		for _, p := range mdl.Graph.Parameters() {
+			if p.Value != nil {
+				tensors = append(tensors, p.Value)
+			}
+		}
 		if err := uploader.UploadWeights(tensors); err != nil {
 			return nil, fmt.Errorf("upload weights to GPU: %w", err)
 		}

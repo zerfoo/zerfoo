@@ -60,6 +60,12 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		if embWeight != nil {
 			tensors = append(tensors, embWeight)
 		}
+		// Also upload layer parameters (e.g. RMSNorm gain weights).
+		for _, p := range g.Parameters() {
+			if p.Value != nil {
+				tensors = append(tensors, p.Value)
+			}
+		}
 		if err := uploader.UploadWeights(tensors); err != nil {
 			return nil, fmt.Errorf("upload weights to GPU: %w", err)
 		}

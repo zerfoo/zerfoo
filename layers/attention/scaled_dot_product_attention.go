@@ -136,16 +136,23 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	} else if sdpa.causal {
 		// Apply causal masking directly to 3D scores (batch, seqQ, seqK).
 		// Set positions where q_pos < k_pos to -inf.
-		data := scaledAttentionScores.Data()
 		shape := scaledAttentionScores.Shape()
-		batch, seqQ, seqK := shape[0], shape[1], shape[2]
-		offset := seqK - seqQ // cached tokens are always visible
-		negInf := negInfValue[T]()
-		for b := range batch {
-			for qi := range seqQ {
-				for ki := range seqK {
-					if ki > qi+offset {
-						data[(b*seqQ+qi)*seqK+ki] = negInf
+		seqQ := shape[1]
+		seqK := shape[2]
+		// During decode (seqQ == 1), every cached position is visible
+		// (offset = seqK - 1, so ki <= seqK-1 == qi+offset for all ki).
+		// Skip masking entirely to avoid a costly .Data() D2H copy on GPU tensors.
+		if seqQ > 1 {
+			data := scaledAttentionScores.Data()
+			batch := shape[0]
+			offset := seqK - seqQ // cached tokens are always visible
+			negInf := negInfValue[T]()
+			for b := range batch {
+				for qi := range seqQ {
+					for ki := range seqK {
+						if ki > qi+offset {
+							data[(b*seqQ+qi)*seqK+ki] = negInf
+						}
 					}
 				}
 			}

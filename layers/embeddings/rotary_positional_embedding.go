@@ -18,6 +18,8 @@ type RotaryPositionalEmbedding[T tensor.Numeric] struct {
 	rotaryDim int // number of dimensions that receive rotation (<= headDim)
 	cosAngles *tensor.TensorNumeric[T]
 	sinAngles *tensor.TensorNumeric[T]
+	// gpuUploaded tracks whether cos/sin have been uploaded to GPU.
+	gpuUploaded bool
 	// Cached input for backward pass
 	inputShape  []int
 	xRot0Slice  *tensor.TensorNumeric[T]
@@ -201,16 +203,50 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 	seqLen := rpe.inputShape[1]
 	halfRotary := rpe.rotaryDim / 2
 
+	// Lazily upload cos/sin tables to GPU on first forward pass when
+	// the engine supports GPU. This eliminates per-token H2D copies
+	// that dominated getDevicePtr overhead in the decode loop.
+	if !rpe.gpuUploaded {
+		if _, ok := rpe.engine.(compute.WeightUploader); ok {
+			if gpuCos, err := tensor.ToGPU(rpe.cosAngles); err == nil {
+				rpe.cosAngles = gpuCos
+			}
+			if gpuSin, err := tensor.ToGPU(rpe.sinAngles); err == nil {
+				rpe.sinAngles = gpuSin
+			}
+		}
+		rpe.gpuUploaded = true
+	}
+
 	// Slice cos/sin angles using posOffset so decode tokens get the correct
 	// absolute position rotation instead of always position 0.
 	off := rpe.posOffset
-	cosSliced, err := rpe.cosAngles.Slice([2]int{off, off + seqLen}, [2]int{0, halfRotary})
-	if err != nil {
-		return nil, err
-	}
-	sinSliced, err := rpe.sinAngles.Slice([2]int{off, off + seqLen}, [2]int{0, halfRotary})
-	if err != nil {
-		return nil, err
+	var cosSliced, sinSliced *tensor.TensorNumeric[T]
+	var err error
+
+	// GPU path: create non-owning views into GPU-resident cos/sin tables
+	// to avoid tensor.Slice() which unconditionally creates CPUStorage.
+	if cosGS, ok := rpe.cosAngles.GetStorage().(*tensor.GPUStorage[T]); ok {
+		cosView := tensor.NewGPUStorageView(cosGS, off*halfRotary, seqLen*halfRotary)
+		cosSliced, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, cosView)
+		if err != nil {
+			return nil, err
+		}
+		sinGS := rpe.sinAngles.GetStorage().(*tensor.GPUStorage[T])
+		sinView := tensor.NewGPUStorageView(sinGS, off*halfRotary, seqLen*halfRotary)
+		sinSliced, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, sinView)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cosSliced, err = rpe.cosAngles.Slice([2]int{off, off + seqLen}, [2]int{0, halfRotary})
+		if err != nil {
+			return nil, err
+		}
+		sinSliced, err = rpe.sinAngles.Slice([2]int{off, off + seqLen}, [2]int{0, halfRotary})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Fused single-pass kernel for float32 on CPUEngine (inference hot path).

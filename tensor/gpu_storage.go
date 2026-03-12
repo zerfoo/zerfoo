@@ -295,5 +295,21 @@ func (s *GPUStorage[T]) Free() error {
 	return err
 }
 
+// NewGPUStorageView creates a non-owning view into an existing GPUStorage
+// starting at offsetElems elements from the beginning. The returned storage
+// shares the parent's device memory -- no finalizer is set, so the parent
+// must outlive the view.
+func NewGPUStorageView[T Numeric](parent *GPUStorage[T], offsetElems, length int) *GPUStorage[T] {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	return &GPUStorage[T]{
+		devicePtr: unsafe.Add(parent.devicePtr, offsetElems*elemSize),
+		length:    length,
+		byteSize:  length * elemSize,
+		deviceID:  parent.deviceID,
+		runtime:   parent.runtime,
+	}
+}
+
 // Statically assert that GPUStorage satisfies the Storage interface.
 var _ Storage[float32] = (*GPUStorage[float32])(nil)
