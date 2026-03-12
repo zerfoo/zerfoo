@@ -1214,6 +1214,49 @@ func (e *GPUEngine[T]) Rsqrt(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return e.gpuRsqrt(ctx, a, dst...)
 }
 
+// GPUArgmax finds the index of the maximum element in a GPU-resident float32 tensor.
+// Returns the index as an int without copying the full tensor to the host.
+// Only copies back a single int32 (4 bytes) instead of the entire tensor.
+func (e *GPUEngine[T]) GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error) {
+	gs, ok := t.GetStorage().(*tensor.GPUStorage[float32])
+	if !ok {
+		return 0, fmt.Errorf("GPUArgmax: tensor not GPU-resident")
+	}
+
+	e.setDevice()
+
+	n := gs.Len()
+	devInput := gs.Ptr()
+
+	// Allocate scratch: 2 * ceil(n/256) * 4 bytes (blockVals + blockIdxs).
+	numBlocks := (n + 255) / 256
+	scratchSize := 2 * numBlocks * 4
+	devScratch, err := e.pool.Alloc(e.deviceID, scratchSize)
+	if err != nil {
+		return 0, fmt.Errorf("GPUArgmax: scratch alloc: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, devScratch, scratchSize)
+
+	// Allocate device result (single int32).
+	devResult, err := e.pool.Alloc(e.deviceID, 4)
+	if err != nil {
+		return 0, fmt.Errorf("GPUArgmax: result alloc: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, devResult, 4)
+
+	if err := e.kernels.Argmax(devInput, devResult, devScratch, n, e.stream); err != nil {
+		return 0, fmt.Errorf("GPUArgmax: %w", err)
+	}
+
+	// Copy single int32 result back to host.
+	var result int32
+	if err := e.runtime.Memcpy(unsafe.Pointer(&result), devResult, 4, gpuapi.MemcpyDeviceToHost); err != nil {
+		return 0, fmt.Errorf("GPUArgmax: D2H copy: %w", err)
+	}
+
+	return int(result), nil
+}
+
 // Sync synchronizes the GPU stream, blocking until all enqueued operations complete.
 // Use for benchmarking or when explicit synchronization is needed.
 func (e *GPUEngine[T]) Sync() error {

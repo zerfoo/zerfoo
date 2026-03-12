@@ -37,6 +37,13 @@ type TransposeBMatMuler[T tensor.Numeric] interface {
 	MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 }
 
+// GPUArgmaxer is an optional interface for engines that can compute argmax
+// entirely on GPU, returning just the index without copying logits to host.
+// This eliminates the ~1MB D2H copy per token for greedy decoding.
+type GPUArgmaxer interface {
+	GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error)
+}
+
 // Engine defines the interface for a computation engine (e.g., CPU, GPU).
 // All tensor operations should be routed through an Engine implementation to ensure
 // hardware interoperability and optimized performance.
