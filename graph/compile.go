@@ -116,6 +116,15 @@ func (p *ExecutionPlan[T]) OutputSlot() int {
 	return p.outputIdx
 }
 
+// OutputTensor returns the tensor currently in the output slot.
+// Used by CUDAGraphExecutor to read the result after graph replay.
+func (p *ExecutionPlan[T]) OutputTensor() *tensor.TensorNumeric[T] {
+	if p.scratchSlots != nil {
+		return p.scratchSlots[p.outputIdx]
+	}
+	return p.slots[p.outputIdx]
+}
+
 // SetMegakernelFn sets an optional megakernel function that, when set,
 // replaces the per-instruction execution loop in Run(). This allows a fused
 // kernel to transparently handle the entire plan execution.
@@ -132,7 +141,13 @@ func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNume
 		fn := v.(func(context.Context, []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error))
 		return fn(ctx, inputs)
 	}
+	return p.RunInstructions(ctx, inputs...)
+}
 
+// RunInstructions executes the instruction loop directly, bypassing the
+// megakernel/graph capture hook. Used by CUDAGraphExecutor during warmup
+// and capture phases.
+func (p *ExecutionPlan[T]) RunInstructions(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != len(p.inputIdx) {
 		return nil, fmt.Errorf("compiled plan: expected %d inputs, got %d", len(p.inputIdx), len(inputs))
 	}
