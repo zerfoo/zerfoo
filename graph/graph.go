@@ -235,20 +235,26 @@ func (g *Graph[T]) Output() Node[T] {
 }
 
 // ConstantTensors returns all constant/parameter weight tensors in the graph.
-// These are tensors from nodes with OpType "Parameter" or "Constant".
+// Includes tensors from Parameter/Constant nodes and tensors embedded in
+// nodes that implement EmbeddedFrozenProvider (e.g. LM head, gather).
 // Call after graph construction to collect tensors for GPU pre-upload.
 func (g *Graph[T]) ConstantTensors() []*tensor.TensorNumeric[T] {
 	ctx := context.Background()
 	var tensors []*tensor.TensorNumeric[T]
 	for _, n := range g.nodes {
-		if !isConstantNode[T](n) {
+		// Collect from Parameter/Constant nodes.
+		if isConstantNode[T](n) {
+			t, err := n.Forward(ctx)
+			if err != nil || t == nil {
+				continue
+			}
+			tensors = append(tensors, t)
 			continue
 		}
-		t, err := n.Forward(ctx)
-		if err != nil || t == nil {
-			continue
+		// Collect from EmbeddedFrozenProvider nodes (e.g. LM head weight).
+		if efp, ok := n.(EmbeddedFrozenProvider[T]); ok {
+			tensors = append(tensors, efp.EmbeddedFrozen()...)
 		}
-		tensors = append(tensors, t)
 	}
 	return tensors
 }
