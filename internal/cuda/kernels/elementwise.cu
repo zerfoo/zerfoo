@@ -445,4 +445,37 @@ cudaError_t launch_softmax(const float* input, float* output,
     return cudaGetLastError();
 }
 
+// ---------- Repeat along axis ----------
+// Repeats a tensor along a given axis. The tensor is viewed as
+// [outerSize, axisDim, innerSize] and the output is
+// [outerSize, axisDim * reps, innerSize].
+// Each thread copies one element from src to the correct position in dst.
+__global__ void kernel_repeat(const float* src, float* dst,
+                              int outerSize, int axisDim, int innerSize, int reps) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outerSize * axisDim * reps * innerSize;
+    if (idx >= total) return;
+
+    // Decompose flat index in output to (outer, repAxis, inner)
+    int inner = idx % innerSize;
+    int temp = idx / innerSize;
+    int repAxis = temp % (axisDim * reps);
+    int outer = temp / (axisDim * reps);
+
+    // Map to source: strip out the repetition
+    int srcAxis = repAxis % axisDim;
+    int srcIdx = (outer * axisDim + srcAxis) * innerSize + inner;
+    dst[idx] = src[srcIdx];
+}
+
+cudaError_t launch_repeat(const float* src, float* dst,
+                          int outerSize, int axisDim, int innerSize, int reps,
+                          cudaStream_t stream) {
+    int total = outerSize * axisDim * reps * innerSize;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    kernel_repeat<<<blocks, threads, 0, stream>>>(src, dst, outerSize, axisDim, innerSize, reps);
+    return cudaGetLastError();
+}
+
 } // extern "C"

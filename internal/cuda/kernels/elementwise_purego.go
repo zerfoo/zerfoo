@@ -249,6 +249,18 @@ func MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, 
 	return checkKernel(ret, "mul_broadcast")
 }
 
+// Repeat launches the repeat kernel: replicates axisDim elements along an axis.
+// outerSize = product of dims before axis, axisDim = size of axis, innerSize = product of dims after axis.
+func Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("repeat kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchRepeat, uintptr(src), uintptr(dst),
+		uintptr(outerSize), uintptr(axisDim), uintptr(innerSize), uintptr(reps), uintptr(s))
+	return checkKernel(ret, "repeat")
+}
+
 // DivBroadcast launches the broadcast div kernel.
 func DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
 	k := klib()

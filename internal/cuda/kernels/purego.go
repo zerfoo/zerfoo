@@ -39,6 +39,9 @@ type KernelLib struct {
 	// transpose
 	launchTranspose2D, launchTransposeND uintptr
 
+	// repeat
+	launchRepeat uintptr
+
 	// gemm_q4
 	launchGemmQ4F32 uintptr
 }
@@ -101,6 +104,8 @@ func openKernelLib() (*KernelLib, error) {
 			// transpose
 			{"launch_transpose_2d", &k.launchTranspose2D},
 			{"launch_transpose_nd", &k.launchTransposeND},
+			// repeat
+			{"launch_repeat", &k.launchRepeat},
 			// gemm_q4
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
 		}
