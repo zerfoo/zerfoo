@@ -18,6 +18,7 @@ import (
 // transformerGraphOpts configures architecture-specific differences.
 type transformerGraphOpts struct {
 	embedScale float32 // multiply embeddings by this factor (0 = no scaling)
+	postNorm   bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only
@@ -170,17 +171,38 @@ func buildTransformerGraph(
 
 		attnOut := builder.AddNode(gqa, normed)
 
+		// --- Post-Attention Norm (Gemma 3: normalize before residual add) ---
+		if opts.postNorm {
+			postAttnNormW, lookupErr := lookup(prefix + "post_attention_layernorm.weight")
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			postAttnNorm, normErr := normalization.NewRMSNormFromParam[float32](
+				proxy, ops, 1e-5, param(prefix+"post_attention_layernorm.weight", postAttnNormW),
+			)
+			if normErr != nil {
+				return nil, normErr
+			}
+			attnOut = builder.AddNode(postAttnNorm, attnOut)
+		}
+
 		// --- Residual Add ---
 		add1 := core.NewAdd[float32](proxy)
 		residual1 := builder.AddNode(add1, attnOut, hidden)
 
-		// --- Post-Attention LayerNorm ---
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		// --- Pre-FFN LayerNorm ---
+		var preFfnNormKey string
+		if opts.postNorm {
+			preFfnNormKey = prefix + "pre_feedforward_layernorm.weight"
+		} else {
+			preFfnNormKey = prefix + "post_attention_layernorm.weight"
+		}
+		postNormW, err := lookup(preFfnNormKey)
 		if err != nil {
 			return nil, err
 		}
 		postNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, 1e-5, param(prefix+"post_attention_layernorm.weight", postNormW),
+			proxy, ops, 1e-5, param(preFfnNormKey, postNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -230,6 +252,21 @@ func buildTransformerGraph(
 		ffnParams[2].Value = upWT   // w3 = up_proj
 
 		ffnOut := builder.AddNode(ffn, normed2)
+
+		// --- Post-FFN Norm (Gemma 3: normalize before residual add) ---
+		if opts.postNorm {
+			postFfnNormW, lookupErr := lookup(prefix + "post_feedforward_layernorm.weight")
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			postFfnNorm, normErr := normalization.NewRMSNormFromParam[float32](
+				proxy, ops, 1e-5, param(prefix+"post_feedforward_layernorm.weight", postFfnNormW),
+			)
+			if normErr != nil {
+				return nil, normErr
+			}
+			ffnOut = builder.AddNode(postFfnNorm, ffnOut)
+		}
 
 		// --- Residual Add ---
 		add2 := core.NewAdd[float32](proxy)

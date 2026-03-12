@@ -34,9 +34,14 @@ func buildGemmaGraph(
 	// Gemma always ties LM head to embedding weights.
 	// Gemma scales embeddings by sqrt(hidden_size).
 	scale := float32(math.Sqrt(float64(cfg.HiddenSize)))
-	g, err := buildTransformerGraph(tensors, cfg, engine, embedWeight, embedWeight, transformerGraphOpts{
+	opts := transformerGraphOpts{
 		embedScale: scale,
-	})
+	}
+	// Gemma 3 has post-attention and post-FFN norms before residual adds.
+	if cfg.Architecture == "gemma3" {
+		opts.postNorm = true
+	}
+	g, err := buildTransformerGraph(tensors, cfg, engine, embedWeight, embedWeight, opts)
 	if err != nil {
 		return nil, nil, err
 	}

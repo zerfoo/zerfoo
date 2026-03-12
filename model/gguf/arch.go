@@ -85,7 +85,25 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 var blkPattern = regexp.MustCompile(`^blk\.(\d+)\.(.+)$`)
 
 // tensorNameMap maps GGUF tensor name suffixes (after blk.N.) to HuggingFace names.
+// For architectures like Llama/Gemma 2, ffn_norm is the pre-FFN norm and is called
+// post_attention_layernorm in HuggingFace convention.
 var tensorNameMap = map[string]string{
+	"attn_norm.weight":   "input_layernorm.weight",
+	"attn_q.weight":      "self_attn.q_proj.weight",
+	"attn_k.weight":      "self_attn.k_proj.weight",
+	"attn_v.weight":      "self_attn.v_proj.weight",
+	"attn_output.weight": "self_attn.o_proj.weight",
+	"attn_q_norm.weight": "self_attn.q_norm.weight",
+	"attn_k_norm.weight": "self_attn.k_norm.weight",
+	"ffn_norm.weight":    "post_attention_layernorm.weight",
+	"ffn_gate.weight":    "mlp.gate_proj.weight",
+	"ffn_up.weight":      "mlp.up_proj.weight",
+	"ffn_down.weight":    "mlp.down_proj.weight",
+}
+
+// gemma3TensorNameMap overrides for Gemma 3 which has 4 norms per layer.
+// In Gemma 3, ffn_norm is the pre-FFN norm (separate from post-attention norm).
+var gemma3TensorNameMap = map[string]string{
 	"attn_norm.weight":           "input_layernorm.weight",
 	"attn_q.weight":              "self_attn.q_proj.weight",
 	"attn_k.weight":              "self_attn.k_proj.weight",
@@ -93,8 +111,8 @@ var tensorNameMap = map[string]string{
 	"attn_output.weight":         "self_attn.o_proj.weight",
 	"attn_q_norm.weight":         "self_attn.q_norm.weight",
 	"attn_k_norm.weight":         "self_attn.k_norm.weight",
-	"ffn_norm.weight":            "post_attention_layernorm.weight",
 	"post_attention_norm.weight": "post_attention_layernorm.weight",
+	"ffn_norm.weight":            "pre_feedforward_layernorm.weight",
 	"post_ffw_norm.weight":       "post_feedforward_layernorm.weight",
 	"ffn_gate.weight":            "mlp.gate_proj.weight",
 	"ffn_up.weight":              "mlp.up_proj.weight",
@@ -109,9 +127,10 @@ var globalTensorMap = map[string]string{
 }
 
 // MapTensorName converts a GGUF tensor name to the Zerfoo/HuggingFace canonical name.
-// Supports llama and gemma architectures (they share the same GGUF naming convention).
+// The arch parameter selects architecture-specific name mappings (e.g., "gemma3"
+// uses different norm names than "llama").
 // Unknown names pass through unchanged.
-func MapTensorName(_ string, ggufName string) string {
+func MapTensorName(arch string, ggufName string) string {
 	// Check global names first.
 	if mapped, ok := globalTensorMap[ggufName]; ok {
 		return mapped
@@ -126,14 +145,20 @@ func MapTensorName(_ string, ggufName string) string {
 	layerNum := m[1]
 	suffix := m[2]
 
-	if mapped, ok := tensorNameMap[suffix]; ok {
+	// Select architecture-specific name map.
+	nameMap := tensorNameMap
+	if arch == "gemma3" {
+		nameMap = gemma3TensorNameMap
+	}
+
+	if mapped, ok := nameMap[suffix]; ok {
 		return "model.layers." + layerNum + "." + mapped
 	}
 
 	// Handle bias variants (e.g., attn_q.bias → self_attn.q_proj.bias).
 	if strings.HasSuffix(suffix, ".bias") {
 		weightSuffix := strings.TrimSuffix(suffix, ".bias") + ".weight"
-		if mapped, ok := tensorNameMap[weightSuffix]; ok {
+		if mapped, ok := nameMap[weightSuffix]; ok {
 			biasMapped := strings.TrimSuffix(mapped, ".weight") + ".bias"
 			return "model.layers." + layerNum + "." + biasMapped
 		}
