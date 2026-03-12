@@ -19,6 +19,27 @@ func freeGPUStorage[T tensor.Numeric](t *tensor.TensorNumeric[T]) {
 	}
 }
 
+// persistGPU copies an arena-backed GPU tensor to a persistent GPU allocation
+// (runtime.Malloc) so it survives arena resets. Returns the tensor unchanged if
+// it's already persistent or not GPU-resident.
+func persistGPU[T tensor.Numeric](t *tensor.TensorNumeric[T]) *tensor.TensorNumeric[T] {
+	if t == nil {
+		return t
+	}
+	// Already persistent (not pool-backed) or CPU -- nothing to do.
+	_, isGPU := t.GetStorage().(*tensor.GPUStorage[T])
+	if !isGPU {
+		return t
+	}
+	// ToGPU creates a new allocation via runtime.Malloc (not the pool/arena)
+	// and performs a D2D copy when the source is already on GPU.
+	dup, err := tensor.ToGPU(t)
+	if err != nil {
+		return t // keep arena-backed if copy fails
+	}
+	return dup
+}
+
 // tensorLayerBuf holds GPU-resident cached K/V tensors for a single layer.
 type tensorLayerBuf[T tensor.Numeric] struct {
 	cachedK *tensor.TensorNumeric[T]
@@ -68,23 +89,29 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 
 	ctx := context.Background()
 	if lb.cachedK == nil {
-		lb.cachedK = newK
-		lb.cachedV = newV
+		// Persist to non-arena GPU memory so data survives arena resets.
+		lb.cachedK = persistGPU(newK)
+		lb.cachedV = persistGPU(newV)
 	} else {
 		oldK := lb.cachedK
 		oldV := lb.cachedV
 		var err error
-		lb.cachedK, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldK, newK}, 1)
+		concatK, err := c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldK, newK}, 1)
 		if err != nil {
 			return fmt.Errorf("concat K layer %d: %w", layer, err)
 		}
-		lb.cachedV, err = c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldV, newV}, 1)
+		concatV, err := c.engine.Concat(ctx, []*tensor.TensorNumeric[T]{oldV, newV}, 1)
 		if err != nil {
 			return fmt.Errorf("concat V layer %d: %w", layer, err)
 		}
-		// Free old GPU buffers immediately to prevent memory accumulation.
+		// Copy concat results to persistent GPU memory before arena reset.
+		lb.cachedK = persistGPU(concatK)
+		lb.cachedV = persistGPU(concatV)
+		// Free old persistent GPU buffers and arena-backed concat temporaries.
 		freeGPUStorage(oldK)
 		freeGPUStorage(oldV)
+		freeGPUStorage(concatK)
+		freeGPUStorage(concatV)
 	}
 	lb.seqLen += seqLen
 	return nil

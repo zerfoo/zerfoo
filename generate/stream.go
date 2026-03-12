@@ -103,6 +103,11 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 			break
 		}
 
+		// Reset arena pool between tokens so intermediates are reclaimed.
+		if resetter, ok := gen.engine.(compute.PoolResetter); ok {
+			resetter.ResetPool()
+		}
+
 		tokenTensor, tErr := gen.idsToTensor([]int{nextToken})
 		if tErr != nil {
 			return fmt.Errorf("create token tensor: %w", tErr)
