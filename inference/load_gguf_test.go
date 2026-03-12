@@ -68,7 +68,7 @@ func writeTestGGUF(t *testing.T, dir string) string {
 	metadataCount++    // tokenizer merges (empty)
 
 	// Write header.
-	w.writeUint32(0x46475547) // Magic "GGUF"
+	w.writeUint32(0x46554747) // Magic "GGUF" in little-endian
 	w.writeUint32(3)          // Version
 	w.writeUint64(uint64(len(tensors)))
 	w.writeUint64(uint64(metadataCount))
