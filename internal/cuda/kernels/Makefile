@@ -4,7 +4,7 @@ NVCC ?= nvcc
 #   make CUDA_ARCH=sm_89   # Ada Lovelace L4/L40
 #   make CUDA_ARCH=sm_121  # Blackwell GB10 (DGX Spark)
 CUDA_ARCH ?= sm_75
-NVCC_FLAGS ?= -O2 -arch=$(CUDA_ARCH)
+NVCC_FLAGS ?= -O3 --use_fast_math -arch=$(CUDA_ARCH)
 
 SRCS = elementwise.cu flash_attention.cu fused_add_rmsnorm.cu fused_norm_add.cu fused_qk_norm_rope.cu fused_rope.cu fused_swiglu.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu gemm_q8.cu scaled_softmax.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
 OBJS = $(SRCS:.cu=.o)
