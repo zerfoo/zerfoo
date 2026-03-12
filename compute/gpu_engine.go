@@ -897,7 +897,65 @@ func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumer
 }
 
 func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], axis int, repetitions int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	if !isFloat32[T]() || a == nil {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+	gs, ok := a.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+
+	shape := a.Shape()
+	if axis < 0 || axis >= len(shape) {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+	if repetitions <= 0 {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+
+	e.setDevice()
+
+	newShape := make([]int, len(shape))
+	copy(newShape, shape)
+	newShape[axis] *= repetitions
+
+	outElems := 1
+	for _, d := range newShape {
+		outElems *= d
+	}
+	outBytes := outElems * f32Size
+
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+
+	devA := gs.Ptr()
+
+	// Block size: product of dims after axis.
+	blockSize := 1
+	for i := axis + 1; i < len(shape); i++ {
+		blockSize *= shape[i]
+	}
+	numBlocks := a.Size() / (blockSize * shape[axis])
+
+	for i := range numBlocks {
+		for r := range repetitions {
+			for j := range shape[axis] {
+				srcOff := (i*shape[axis]*blockSize + j*blockSize) * f32Size
+				dstOff := (i*shape[axis]*blockSize*repetitions + r*shape[axis]*blockSize + j*blockSize) * f32Size
+				chunkBytes := blockSize * f32Size
+				src := unsafe.Add(devA, srcOff)
+				d := unsafe.Add(devOut, dstOff)
+				if err := e.runtime.MemcpyAsync(d, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
+					e.pool.Free(e.deviceID, devOut, outBytes)
+					return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+				}
+			}
+		}
+	}
+
+	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)
 }
 
 func (e *GPUEngine[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[int], depth int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
