@@ -461,6 +461,18 @@ func makeTracedForward[T tensor.Numeric](engine compute.Engine[T], op compute.Tr
 		return func(ctx context.Context, ins []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 			return engine.MatMul(ctx, ins[0], ins[1])
 		}
+	case "MatMulTransposeB":
+		return func(ctx context.Context, ins []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+			if tb, ok := engine.(compute.TransposeBMatMuler[T]); ok {
+				return tb.MatMulTransposeB(ctx, ins[0], ins[1])
+			}
+			// Fallback: explicit transpose + matmul
+			kT, tErr := engine.Transpose(ctx, ins[1], []int{0, 2, 1})
+			if tErr != nil {
+				return nil, tErr
+			}
+			return engine.MatMul(ctx, ins[0], kT)
+		}
 	case "Exp":
 		return func(ctx context.Context, ins []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 			return engine.Exp(ctx, ins[0])
