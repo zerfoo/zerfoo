@@ -77,6 +77,9 @@ func buildTransformerGraph(
 	}
 	hidden := builder.AddNode(embNode, input)
 	headDim := cfg.HiddenSize / cfg.NumHeads
+	if cfg.HeadDim > 0 {
+		headDim = cfg.HeadDim
+	}
 
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("model.layers.%d.", i)
@@ -158,7 +161,7 @@ func buildTransformerGraph(
 
 		gqa, err := attention.NewGroupedQueryAttentionFromParams[float32](
 			proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
-			wq, wk, wv, wo, rope,
+			wq, wk, wv, wo, rope, headDim,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("layer %d gqa: %w", i, err)

@@ -167,14 +167,21 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 }
 
 // NewGroupedQueryAttentionFromParams creates a new GroupedQueryAttention layer from existing parameters.
+// headDimOverride, if > 0, sets the per-head dimension explicitly instead of
+// deriving it from modelDim/numQueryHeads. This is required for architectures
+// like Gemma 3 where key_length differs from hidden_size/num_heads.
 func NewGroupedQueryAttentionFromParams[T tensor.Numeric](
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	modelDim, numQueryHeads, numKeyValueHeads int,
 	wq, wk, wv, wo *core.Dense[T],
 	rope *embeddings.RotaryPositionalEmbedding[T],
+	headDimOverride ...int,
 ) (*GroupedQueryAttention[T], error) {
 	headDim := modelDim / numQueryHeads
+	if len(headDimOverride) > 0 && headDimOverride[0] > 0 {
+		headDim = headDimOverride[0]
+	}
 	scaledDotProductAttention := NewScaledDotProductAttention[T](engine, headDim)
 
 	return &GroupedQueryAttention[T]{
@@ -449,7 +456,8 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		return nil, err
 	}
 
-	attnOutputFinal, err := gqa.engine.Reshape(ctx, attnOutputCombined, []int{batchSize, seqLen, gqa.modelDim})
+	qkvDim := gqa.numQueryHeads * gqa.headDim
+	attnOutputFinal, err := gqa.engine.Reshape(ctx, attnOutputCombined, []int{batchSize, seqLen, qkvDim})
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +576,8 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.Ba
 	if err != nil {
 		return nil, fmt.Errorf("dQ transpose: %w", err)
 	}
-	dQProj, err = gqa.engine.Reshape(ctx, dQProj, []int{batchSize, seqLen, gqa.modelDim})
+	qkvDim := gqa.numQueryHeads * gqa.headDim
+	dQProj, err = gqa.engine.Reshape(ctx, dQProj, []int{batchSize, seqLen, qkvDim})
 	if err != nil {
 		return nil, fmt.Errorf("dQ flatten: %w", err)
 	}

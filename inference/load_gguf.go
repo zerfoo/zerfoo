@@ -92,7 +92,7 @@ func buildArchGraph(
 	switch arch {
 	case "llama":
 		return buildLlamaGraph(tensors, cfg, engine)
-	case "gemma":
+	case "gemma", "gemma3":
 		return buildGemmaGraph(tensors, cfg, engine)
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)

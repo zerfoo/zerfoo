@@ -76,7 +76,7 @@ func (m *GGUFModel) ToModelMetadata() *ModelMetadata {
 // chatTemplateForArch returns the chat template name for a GGUF architecture.
 func chatTemplateForArch(arch string) string {
 	switch arch {
-	case "gemma":
+	case "gemma", "gemma3":
 		return "gemma"
 	case "llama":
 		return "llama"

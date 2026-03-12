@@ -8,16 +8,17 @@ import (
 
 // ModelConfig holds model configuration extracted from GGUF metadata.
 type ModelConfig struct {
-	Architecture    string
-	Name            string
-	VocabSize       int
-	HiddenSize      int
-	NumLayers       int
-	NumHeads        int
-	NumKVHeads      int
+	Architecture     string
+	Name             string
+	VocabSize        int
+	HiddenSize       int
+	NumLayers        int
+	NumHeads         int
+	NumKVHeads       int
 	IntermediateSize int
-	MaxSeqLen       int
-	RopeTheta       float64
+	MaxSeqLen        int
+	RopeTheta        float64
+	HeadDim          int // explicit head dimension (0 = use HiddenSize/NumHeads)
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -63,6 +64,18 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetFloat32(prefix + "rope.freq_base"); ok {
 		cfg.RopeTheta = float64(v)
+	}
+	// Gemma 3 uses separate global/local RoPE bases instead of a single rope.freq_base.
+	// Fall back to the global base for the primary RopeTheta.
+	if cfg.RopeTheta == 0 {
+		if v, ok := f.GetFloat32(prefix + "rope.global.freq_base"); ok {
+			cfg.RopeTheta = float64(v)
+		}
+	}
+	// Extract explicit head dimension from attention.key_length if present.
+	// Gemma 3 uses key_length=256 while hidden/heads=288.
+	if v, ok := f.GetUint32(prefix + "attention.key_length"); ok {
+		cfg.HeadDim = int(v)
 	}
 
 	return cfg, nil
