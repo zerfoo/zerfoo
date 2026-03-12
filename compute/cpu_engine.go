@@ -1757,7 +1757,8 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 	axisSize := shape[axis]
 
 	// NEON fast path: float32, last-axis (inner==1), contiguous rows.
-	if inner == 1 {
+	// TEMPORARILY DISABLED for NaN debugging
+	if false && inner == 1 {
 		if fData, ok := any(oData).([]float32); ok {
 			copy(fData, any(aData).([]float32))
 			numRows := outer
