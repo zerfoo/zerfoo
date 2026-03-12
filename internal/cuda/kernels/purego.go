@@ -45,6 +45,9 @@ type KernelLib struct {
 	// gemm_q4
 	launchGemmQ4F32 uintptr
 
+	// gemm_q8
+	launchGemmQ8F32 uintptr
+
 	// argmax
 	launchArgmax uintptr
 }
@@ -111,6 +114,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_repeat", &k.launchRepeat},
 			// gemm_q4
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
+			// gemm_q8
+			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
 			{"launch_argmax", &k.launchArgmax},
 		}
