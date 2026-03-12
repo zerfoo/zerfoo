@@ -392,6 +392,50 @@ go build -o bench_tps_opt3 ./cmd/bench_tps/
 
 ---
 
+# Post-Target Optimization Attempts
+
+Date: 2026-03-12
+
+## NVCC -O3 --use_fast_math
+
+Upgraded kernel compilation from `-O2` to `-O3 --use_fast_math`.
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 189.32 |
+| 2 | 186.85 |
+| 3 | 188.64 |
+| 4 | 187.13 |
+| 5 | 188.47 |
+| **Average** | **188.08** |
+
+Negligible improvement (+0.04%). Kernels are bandwidth-bound, not compute-bound.
+
+## CUDA Graph Capture (Not Yet Feasible)
+
+Implemented CUDA graph API wrappers (purego bindings for cudaStreamBeginCapture,
+cudaStreamEndCapture, cudaGraphInstantiate, cudaGraphLaunch) and a
+CUDAGraphExecutor that captures the decode forward pass. Graph capture fails
+because the forward pass includes synchronous D2H memcpy calls:
+
+1. `GPUEngine.Gather` reads indices via `.Data()` to convert int64 to int32
+2. `GPUStorage.TrySlice` is called during GQA for CPU fallback paths
+3. KV cache `appendGPU` falls back to `.Data()` for CPU-resident tensors
+
+These D2H copies conflict with CUDA stream capture even in relaxed mode because
+the data they read was produced by operations on the capturing stream. CUDA
+correctly blocks reads of not-yet-computed data.
+
+Infrastructure is in place (graph/cuda_graph.go, internal/cuda graph APIs).
+To enable graph capture, eliminate ALL D2H copies from the decode forward pass:
+- Upload Gather indices to GPU without reading on CPU
+- Remove CPU fallback paths from splitMergedQKV during GPU inference
+- Ensure KV cache operations are fully GPU-resident
+
+Expected gain when enabled: ~1-2 tok/s (eliminates 338 kernel launch overheads).
+
+---
+
 # TARGET REACHED: 95% of Ollama Inference Performance
 
 Date: 2026-03-12
