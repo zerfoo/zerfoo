@@ -32,6 +32,14 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 	}
 	defer cleanupIn()
 
+	// If weight is CPU-resident, upload it to GPU once and swap storage
+	// in-place so subsequent calls skip the H2D copy.
+	if _, wGPU := weight.GetStorage().(*tensor.GPUStorage[float32]); !wGPU {
+		if gpuW, err2 := tensor.ToGPU(weight); err2 == nil {
+			weight.SetStorage(gpuW.GetStorage())
+		}
+	}
+
 	devWeight, cleanupWeight, err := getDevicePtr(f32Engine, weight)
 	if err != nil {
 		return FusedRMSNorm(input, weight, epsilon)
