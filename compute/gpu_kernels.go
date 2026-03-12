@@ -137,43 +137,69 @@ func gpuBroadcastOp[T tensor.Numeric](
 		}
 	}
 
-	// Flatten to 2D for broadcast analysis.
-	// For N-D tensors, treat as [product(all-but-last), last].
-	aM, aD := flattenTo2D(aShape)
-	bM, bD := flattenTo2D(bShape)
-
 	// Determine output shape and broadcast strides.
 	var M, D, saRow, saCol, sbRow, sbCol int
 
-	switch {
-	case aM == bM && aD == bD:
-		// Same shape.
-		M, D = aM, aD
-		saRow, saCol = aD, 1
-		sbRow, sbCol = bD, 1
-	case bM == 1 && aD == bD:
-		// b is row-broadcast: [1,D] op [M,D].
-		M, D = aM, aD
-		saRow, saCol = aD, 1
+	// Leading-dimension broadcast: [B,...,X,Y] op [X,Y] or vice versa.
+	// Detect when one shape's trailing dims match the other shape entirely,
+	// then flatten batch dims into M and shared dims into D.
+	matched := false
+	if len(aShape) > len(bShape) && trailingDimsMatch(aShape, bShape) {
+		M = 1
+		for i := 0; i < len(aShape)-len(bShape); i++ {
+			M *= aShape[i]
+		}
+		D = bTotal
+		saRow, saCol = D, 1
 		sbRow, sbCol = 0, 1
-	case aM == 1 && aD == bD:
-		// a is row-broadcast: [1,D] op [M,D].
-		M, D = bM, bD
+		matched = true
+	} else if len(bShape) > len(aShape) && trailingDimsMatch(bShape, aShape) {
+		M = 1
+		for i := 0; i < len(bShape)-len(aShape); i++ {
+			M *= bShape[i]
+		}
+		D = aTotal
 		saRow, saCol = 0, 1
-		sbRow, sbCol = bD, 1
-	case aM == bM && bD == 1:
-		// b is column-broadcast: [M,1] op [M,D].
-		M, D = aM, aD
-		saRow, saCol = aD, 1
-		sbRow, sbCol = 1, 0
-	case aM == bM && aD == 1:
-		// a is column-broadcast: [M,1] op [M,D].
-		M, D = bM, bD
-		saRow, saCol = 1, 0
-		sbRow, sbCol = bD, 1
-	default:
-		// Unsupported broadcast pattern.
-		return cpuFallback(ctx, a, b, dst...)
+		sbRow, sbCol = D, 1
+		matched = true
+	}
+
+	if !matched {
+		// Flatten to 2D for broadcast analysis.
+		// For N-D tensors, treat as [product(all-but-last), last].
+		aM, aD := flattenTo2D(aShape)
+		bM, bD := flattenTo2D(bShape)
+
+		switch {
+		case aM == bM && aD == bD:
+			// Same shape.
+			M, D = aM, aD
+			saRow, saCol = aD, 1
+			sbRow, sbCol = bD, 1
+		case bM == 1 && aD == bD:
+			// b is row-broadcast: [1,D] op [M,D].
+			M, D = aM, aD
+			saRow, saCol = aD, 1
+			sbRow, sbCol = 0, 1
+		case aM == 1 && aD == bD:
+			// a is row-broadcast: [1,D] op [M,D].
+			M, D = bM, bD
+			saRow, saCol = 0, 1
+			sbRow, sbCol = bD, 1
+		case aM == bM && bD == 1:
+			// b is column-broadcast: [M,1] op [M,D].
+			M, D = aM, aD
+			saRow, saCol = aD, 1
+			sbRow, sbCol = 1, 0
+		case aM == bM && aD == 1:
+			// a is column-broadcast: [M,1] op [M,D].
+			M, D = bM, bD
+			saRow, saCol = 1, 0
+			sbRow, sbCol = bD, 1
+		default:
+			// Unsupported broadcast pattern.
+			return cpuFallback(ctx, a, b, dst...)
+		}
 	}
 
 	// Compute proper N-D broadcast output shape (NumPy rules).
@@ -219,6 +245,21 @@ func flattenTo2D(shape []int) (int, int) {
 		M *= shape[i]
 	}
 	return M, D
+}
+
+// trailingDimsMatch returns true when the trailing dimensions of longer match
+// shorter exactly, i.e. longer = [...batch, shorter...].
+func trailingDimsMatch(longer, shorter []int) bool {
+	offset := len(longer) - len(shorter)
+	if offset <= 0 {
+		return false
+	}
+	for i, d := range shorter {
+		if longer[offset+i] != d {
+			return false
+		}
+	}
+	return true
 }
 
 // gpuBinaryOp runs a binary kernel on two equal-length float32 tensors.
