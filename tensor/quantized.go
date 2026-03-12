@@ -286,6 +286,34 @@ func (q *Q8Storage) Dequantize(dst []float32) {
 	}
 }
 
+// DequantizeRange unpacks Q8_0 blocks covering the range [start, start+count)
+// into dst, which must have length >= count.
+func (q *Q8Storage) DequantizeRange(dst []float32, start, count int) {
+	end := start + count
+	if end > q.len {
+		end = q.len
+	}
+	startBlock := start / q8BlockSize
+	endBlock := (end + q8BlockSize - 1) / q8BlockSize
+	if endBlock > len(q.blocks) {
+		endBlock = len(q.blocks)
+	}
+	for bi := startBlock; bi < endBlock; bi++ {
+		blk := q.blocks[bi]
+		offset := bi * q8BlockSize
+		for j := range q8BlockSize {
+			idx := offset + j
+			if idx < start {
+				continue
+			}
+			if idx >= end {
+				break
+			}
+			dst[idx-start] = float32(blk.data[j]) * blk.scale
+		}
+	}
+}
+
 // Len returns the number of logical float32 elements.
 func (q *Q8Storage) Len() int { return q.len }
 
