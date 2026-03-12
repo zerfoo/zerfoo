@@ -223,19 +223,28 @@ func (t *BPETokenizer) preTokenize(text string) []string {
 
 // sentencePiecePreTokenize implements SentencePiece-style pre-tokenization.
 // Spaces are replaced with ▁ (U+2581) and text is split at ▁ boundaries,
-// keeping ▁ as the prefix of each resulting word.
+// keeping ▁ as the prefix of each resulting word. Newlines are emitted as
+// separate tokens and reset the ▁ prefix for the following word.
 func (t *BPETokenizer) sentencePiecePreTokenize(text string) []string {
-	// Replace all spaces with ▁ and prepend ▁ to the text.
-	normalized := "\u2581" + strings.ReplaceAll(text, " ", "\u2581")
-
-	// Split at ▁ boundaries, keeping ▁ as prefix of each word.
+	// Split on newlines first, then handle each line with ▁ normalization.
 	var words []string
-	parts := strings.Split(normalized, "\u2581")
-	for _, p := range parts {
-		if p == "" {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			words = append(words, "\n")
+		}
+		if line == "" {
 			continue
 		}
-		words = append(words, "\u2581"+p)
+		// Replace spaces with ▁ and prepend ▁ to the line.
+		normalized := "\u2581" + strings.ReplaceAll(line, " ", "\u2581")
+		parts := strings.Split(normalized, "\u2581")
+		for _, p := range parts {
+			if p == "" {
+				continue
+			}
+			words = append(words, "\u2581"+p)
+		}
 	}
 	return words
 }
