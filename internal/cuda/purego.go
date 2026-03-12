@@ -26,6 +26,14 @@ type CUDALib struct {
 	cudaGetErrorString     uintptr
 	cudaGetDeviceProperties uintptr
 	cudaMemcpyPeer         uintptr
+
+	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
+	cudaStreamBeginCapture  uintptr
+	cudaStreamEndCapture    uintptr
+	cudaGraphInstantiate    uintptr
+	cudaGraphLaunch         uintptr
+	cudaGraphDestroy        uintptr
+	cudaGraphExecDestroy    uintptr
 }
 
 var (
@@ -91,7 +99,32 @@ func Open() (*CUDALib, error) {
 		*s.ptr = addr
 	}
 
+	// Resolve optional CUDA graph API symbols (available since CUDA 10.0).
+	// These are not required for basic operation, so failure is silently ignored.
+	optSyms := []sym{
+		{"cudaStreamBeginCapture", &lib.cudaStreamBeginCapture},
+		{"cudaStreamEndCapture", &lib.cudaStreamEndCapture},
+		{"cudaGraphInstantiate", &lib.cudaGraphInstantiate},
+		{"cudaGraphLaunch", &lib.cudaGraphLaunch},
+		{"cudaGraphDestroy", &lib.cudaGraphDestroy},
+		{"cudaGraphExecDestroy", &lib.cudaGraphExecDestroy},
+	}
+	for _, s := range optSyms {
+		addr := dlsymImpl(lib.handle, s.name)
+		if addr != 0 {
+			*s.ptr = addr
+		}
+	}
+
 	return lib, nil
+}
+
+// GraphAvailable returns true if CUDA graph capture APIs are available.
+func (lib *CUDALib) GraphAvailable() bool {
+	return lib.cudaStreamBeginCapture != 0 &&
+		lib.cudaStreamEndCapture != 0 &&
+		lib.cudaGraphInstantiate != 0 &&
+		lib.cudaGraphLaunch != 0
 }
 
 // Close releases the dlopen handle.

@@ -152,6 +152,13 @@ type Stream struct {
 	handle uintptr // opaque cudaStream_t (void*)
 }
 
+// StreamFromPtr wraps an existing cudaStream_t handle as a Stream.
+// The caller retains ownership of the handle; Destroy() must NOT be
+// called on the returned Stream (it would destroy the engine's stream).
+func StreamFromPtr(ptr unsafe.Pointer) *Stream {
+	return &Stream{handle: uintptr(ptr)}
+}
+
 // CreateStream creates a new CUDA stream.
 func CreateStream() (*Stream, error) {
 	l := lib()
@@ -246,6 +253,109 @@ func MemcpyAsync(dst, src unsafe.Pointer, count int, kind MemcpyKind, stream *St
 		uintptr(kind), streamHandle)
 	if ret != cudaSuccess {
 		return fmt.Errorf("cudaMemcpyAsync failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
+// CUDA graph capture mode constants.
+const (
+	// cudaStreamCaptureModeGlobal captures all operations on any stream.
+	cudaStreamCaptureModeGlobal = 0
+)
+
+// Graph wraps a cudaGraph_t handle.
+type Graph struct {
+	handle uintptr
+}
+
+// GraphExec wraps a cudaGraphExec_t handle for graph replay.
+type GraphExec struct {
+	handle uintptr
+}
+
+// StreamBeginCapture starts capturing GPU operations on the given stream.
+// All kernel launches, memcpys, and other operations on the stream are
+// recorded into a graph instead of being executed.
+func StreamBeginCapture(s *Stream) error {
+	l := lib()
+	if l == nil || l.cudaStreamBeginCapture == 0 {
+		return fmt.Errorf("cudaStreamBeginCapture: not available")
+	}
+	ret := ccall(l.cudaStreamBeginCapture, s.handle, cudaStreamCaptureModeGlobal)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaStreamBeginCapture failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
+// StreamEndCapture stops capturing on the stream and returns the captured graph.
+func StreamEndCapture(s *Stream) (*Graph, error) {
+	l := lib()
+	if l == nil || l.cudaStreamEndCapture == 0 {
+		return nil, fmt.Errorf("cudaStreamEndCapture: not available")
+	}
+	var graphHandle uintptr
+	ret := ccall(l.cudaStreamEndCapture, s.handle, uintptr(unsafe.Pointer(&graphHandle)))
+	if ret != cudaSuccess {
+		return nil, fmt.Errorf("cudaStreamEndCapture failed: %s", cudaErrorString(ret))
+	}
+	return &Graph{handle: graphHandle}, nil
+}
+
+// GraphInstantiate creates an executable graph from a captured graph.
+// The executable graph can be launched repeatedly without re-capturing.
+func GraphInstantiate(g *Graph) (*GraphExec, error) {
+	l := lib()
+	if l == nil || l.cudaGraphInstantiate == 0 {
+		return nil, fmt.Errorf("cudaGraphInstantiate: not available")
+	}
+	var execHandle uintptr
+	// cudaGraphInstantiate(cudaGraphExec_t* pGraphExec, cudaGraph_t graph,
+	//                      unsigned long long flags)
+	// flags=0 for default behavior.
+	ret := ccall(l.cudaGraphInstantiate, uintptr(unsafe.Pointer(&execHandle)), g.handle, 0)
+	if ret != cudaSuccess {
+		return nil, fmt.Errorf("cudaGraphInstantiate failed: %s", cudaErrorString(ret))
+	}
+	return &GraphExec{handle: execHandle}, nil
+}
+
+// GraphLaunch launches an executable graph on the given stream.
+// This replays the entire captured sequence of operations with minimal overhead.
+func GraphLaunch(ge *GraphExec, s *Stream) error {
+	l := lib()
+	if l == nil || l.cudaGraphLaunch == 0 {
+		return fmt.Errorf("cudaGraphLaunch: not available")
+	}
+	ret := ccall(l.cudaGraphLaunch, ge.handle, s.handle)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaGraphLaunch failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
+// GraphDestroy releases a captured graph.
+func GraphDestroy(g *Graph) error {
+	l := lib()
+	if l == nil || l.cudaGraphDestroy == 0 {
+		return fmt.Errorf("cudaGraphDestroy: not available")
+	}
+	ret := ccall(l.cudaGraphDestroy, g.handle)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaGraphDestroy failed: %s", cudaErrorString(ret))
+	}
+	return nil
+}
+
+// GraphExecDestroy releases an executable graph.
+func GraphExecDestroy(ge *GraphExec) error {
+	l := lib()
+	if l == nil || l.cudaGraphExecDestroy == 0 {
+		return fmt.Errorf("cudaGraphExecDestroy: not available")
+	}
+	ret := ccall(l.cudaGraphExecDestroy, ge.handle)
+	if ret != cudaSuccess {
+		return fmt.Errorf("cudaGraphExecDestroy failed: %s", cudaErrorString(ret))
 	}
 	return nil
 }
