@@ -299,6 +299,28 @@ func (gen *Generator[T]) sampleFromLogits(
 	vocabSize := shape[2]
 	seqLen := shape[1]
 
+	// GPU argmax fast path: for greedy decoding with GPU-resident logits,
+	// run argmax entirely on GPU. Copies back 4 bytes instead of ~1MB.
+	if sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
+		if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
+			if am, ok := gen.engine.(compute.GPUArgmaxer); ok {
+				// For [1, seqLen, vocabSize], the last position starts at (seqLen-1)*vocabSize.
+				// When seqLen=1 (autoregressive decode), the logits tensor IS the last position.
+				if seqLen == 1 {
+					// Safe type assertion: GPUArgmaxer only accepts float32 tensors.
+					if f32t, ok := any(logits).(*tensor.TensorNumeric[float32]); ok {
+						idx, err := am.GPUArgmax(f32t)
+						if err == nil {
+							return idx, nil
+						}
+						// Fall through to CPU path on error.
+					}
+				}
+				_ = gs // used above in type assertion chain
+			}
+		}
+	}
+
 	// Reuse a persistent buffer for logits to avoid allocating 1MB+ per
 	// token. For GPU tensors, CopyTo avoids the double allocation of
 	// Data() which creates a new slice via GPUStorage.Slice().
