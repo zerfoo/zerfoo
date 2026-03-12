@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdlog "log"
+	"math"
 	rand "math/rand/v2"
 	"reflect"
 	"runtime"
@@ -1757,14 +1759,36 @@ func (e *CPUEngine[T]) Softmax(_ context.Context, a *tensor.TensorNumeric[T], ax
 	axisSize := shape[axis]
 
 	// NEON fast path: float32, last-axis (inner==1), contiguous rows.
-	// TEMPORARILY DISABLED for NaN debugging
-	if false && inner == 1 {
+	if inner == 1 {
 		if fData, ok := any(oData).([]float32); ok {
-			copy(fData, any(aData).([]float32))
+			srcData := any(aData).([]float32)
+			copy(fData, srcData)
 			numRows := outer
 			for row := range numRows {
 				off := row * axisSize
+				// DEBUG: Check for NaN before calling NEON softmax
+				hasPreNaN := false
+				for j := 0; j < axisSize; j++ {
+					v := fData[off+j]
+					if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+						hasPreNaN = true
+						break
+					}
+				}
 				xblas.SoftmaxF32(&fData[off], axisSize)
+				// DEBUG: Check for NaN after NEON softmax
+				if !hasPreNaN {
+					for j := 0; j < axisSize; j++ {
+						v := fData[off+j]
+						if math.IsNaN(float64(v)) {
+							stdlog.Printf("[SOFTMAX-BUG] NEON softmax produced NaN for row %d (n=%d), pre-NaN=%v", row, axisSize, hasPreNaN)
+							stdlog.Printf("[SOFTMAX-BUG]   src row: %v", srcData[off:off+axisSize])
+							stdlog.Printf("[SOFTMAX-BUG]   out row: %v", fData[off:off+axisSize])
+							stdlog.Printf("[SOFTMAX-BUG]   src ptr overlap: %v", &srcData[0] == &fData[0])
+							break
+						}
+					}
+				}
 			}
 			return out, nil
 		}
