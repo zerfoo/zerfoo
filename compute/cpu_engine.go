@@ -1145,6 +1145,20 @@ func (e *CPUEngine[T]) Transpose(_ context.Context, a *tensor.TensorNumeric[T], 
 		newShape[i] = originalShape[axis]
 	}
 
+	// Virtual transpose for quantized 2D storage: swap shape without moving data.
+	// GemmF32Q4NT/Q8NT handle the implicit transpose when reading blocks.
+	if len(originalShape) == 2 && axes[0] == 1 && axes[1] == 0 && len(dst) == 0 {
+		s := a.GetStorage()
+		isQuantized := false
+		switch any(s).(type) {
+		case *tensor.Q4Storage, *tensor.Q8Storage:
+			isQuantized = true
+		}
+		if isQuantized {
+			return tensor.NewWithStorage[T](newShape, s)
+		}
+	}
+
 	result, err := e.getOrCreateDest(newShape, dst...)
 	if err != nil {
 		return nil, err
@@ -1911,22 +1925,18 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 		}
 		return true
 	case *tensor.Q8Storage:
-		// Q8 on B side: dequantize B once and use standard SGEMM.
+		// Q8 on B side: use GemmF32Q8NT which reads Q8 blocks directly
+		// without materializing a full dequantized matrix.
 		aF := any(a.Data()).([]float32)
 		rF := any(result.Data()).([]float32)
-		bF := qsB.Slice()
-		for i := range batchSize {
-			aOff := i * m * k
-			cOff := i * m * n
-			bOff := 0
-			if len(aShape) == len(bShape) {
-				bOff = i * k * n
+		if batchSize == 1 {
+			xblas.GemmF32Q8NT(m, n, k, aF, qsB, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.GemmF32Q8NT(m, n, k, aF[aOff:aOff+m*k], qsB, rF[cOff:cOff+m*n])
 			}
-			xblas.GemmF32(m, n, k,
-				aF[aOff:aOff+m*k],
-				bF[bOff:bOff+k*n],
-				rF[cOff:cOff+m*n],
-			)
 		}
 		return true
 	default:

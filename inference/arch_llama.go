@@ -79,6 +79,9 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	}
 
 	// Pre-transpose weight once and cache for subsequent calls.
+	// For quantized storage (Q4/Q8), this is a virtual transpose
+	// (shape metadata swap only) since GemmF32Q*NT handles the
+	// implicit transpose when reading quantized blocks.
 	if h.weightT == nil {
 		wT, tErr := h.engine.Transpose(ctx, h.weight, []int{1, 0})
 		if tErr != nil {
