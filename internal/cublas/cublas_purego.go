@@ -288,6 +288,50 @@ func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
 	return nil
 }
 
+// SgemmNTStridedBatched performs batched C = A * B^T using strided batched GEMM
+// with CUBLAS_OP_T on the B operand.
+func SgemmNTStridedBatched(h *Handle, m, n, k int, alpha float32,
+	a unsafe.Pointer, strideA int64,
+	b unsafe.Pointer, strideB int64,
+	beta float32,
+	c unsafe.Pointer, strideC int64,
+	batch int,
+) error {
+	lib, err := getCublasLib()
+	if err != nil {
+		return err
+	}
+
+	cAlpha := alpha
+	cBeta := beta
+
+	// Row-major to column-major: B with OP_T first, A with OP_N second.
+	status := cuda.Ccall(lib.sgemmStridedBatched,
+		h.ptr,
+		uintptr(cublasOpT),                 // transpose B (cuBLAS first arg)
+		uintptr(cublasOpN),                 // no-transpose A (cuBLAS second arg)
+		uintptr(n),                         // rows of op(B) = n
+		uintptr(m),                         // cols of op(A) = m
+		uintptr(k),                         // inner dimension
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(b),                         // B first
+		uintptr(k),                         // ldb = k (B_rm row width)
+		uintptr(strideB),                   // strideB
+		uintptr(a),                         // A second
+		uintptr(k),                         // lda = k (A_rm row width)
+		uintptr(strideA),                   // strideA
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(n),                         // ldc = n (C_rm row width)
+		uintptr(strideC),                   // strideC
+		uintptr(batch),                     // batchCount
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasSgemmNTStridedBatched failed with status %d", status)
+	}
+	return nil
+}
+
 // cublasGemmDefault is the CUBLAS_GEMM_DEFAULT algorithm selector.
 const cublasGemmDefault = -1
 
