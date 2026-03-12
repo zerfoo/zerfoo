@@ -1,5 +1,3 @@
-//go:build cuda
-
 package cuda
 
 import (
@@ -8,6 +6,10 @@ import (
 )
 
 func TestGetDeviceCount(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	count, err := GetDeviceCount()
 	if err != nil {
 		t.Fatalf("GetDeviceCount failed: %v", err)
@@ -19,6 +21,10 @@ func TestGetDeviceCount(t *testing.T) {
 }
 
 func TestSetDevice(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	err := SetDevice(0)
 	if err != nil {
 		t.Fatalf("SetDevice(0) failed: %v", err)
@@ -26,6 +32,10 @@ func TestSetDevice(t *testing.T) {
 }
 
 func TestMallocAndFree(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	size := 1024 // 1KB
 	ptr, err := Malloc(size)
 
@@ -44,6 +54,10 @@ func TestMallocAndFree(t *testing.T) {
 }
 
 func TestMemcpyRoundTrip(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	// Allocate host data
 	src := []float32{1.0, 2.0, 3.0, 4.0}
 	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
@@ -83,6 +97,10 @@ func TestMemcpyRoundTrip(t *testing.T) {
 }
 
 func TestStreamCreateDestroySync(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	stream, err := CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream failed: %v", err)
@@ -98,6 +116,10 @@ func TestStreamCreateDestroySync(t *testing.T) {
 }
 
 func TestStreamPtr(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	stream, err := CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream failed: %v", err)
@@ -112,6 +134,10 @@ func TestStreamPtr(t *testing.T) {
 }
 
 func TestMemcpyAsyncRoundTrip(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	stream, err := CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream failed: %v", err)
@@ -157,6 +183,10 @@ func TestMemcpyAsyncRoundTrip(t *testing.T) {
 }
 
 func TestMemcpyAsyncNilStream(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	src := []float32{1.0, 2.0}
 	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
 
@@ -185,6 +215,10 @@ func TestMemcpyAsyncNilStream(t *testing.T) {
 }
 
 func TestMemcpyDeviceToDevice(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
 	src := []float32{5.0, 6.0, 7.0, 8.0}
 	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
 

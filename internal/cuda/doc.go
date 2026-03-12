@@ -1,3 +1,4 @@
-// Package cuda provides low-level CGO bindings for the CUDA runtime API.
-// All functional code requires the "cuda" build tag and a working CUDA installation.
+// Package cuda provides low-level bindings for the CUDA runtime API using
+// dlopen/dlsym (no CGo). CUDA availability is detected at runtime; when
+// libcudart is not loadable the package functions return descriptive errors.
 package cuda
