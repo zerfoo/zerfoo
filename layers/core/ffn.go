@@ -131,14 +131,29 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	}
 	f.w3Output = w3Output // Cache for backward pass
 
-	swigluInput, err := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{w1Output, w3Output}, -1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU input: %w", err)
+	// Try fused GPU SwiGLU path: single kernel replaces Concat + Split + sigmoid + Mul + Mul.
+	// Unwrap EngineProxy to detect the real engine type.
+	var swiGLUOutput *tensor.TensorNumeric[T]
+	realEngine := compute.Engine[T](f.w1.linear.engine)
+	if proxy, ok := f.w1.linear.engine.(*compute.EngineProxy[T]); ok {
+		realEngine = proxy.Real()
 	}
+	if provider, ok := realEngine.(compute.FusedSwiGLUProvider[T]); ok {
+		out, err := provider.GPUFusedSwiGLU(w1Output, w3Output)
+		if err == nil {
+			swiGLUOutput = out
+		}
+	}
+	if swiGLUOutput == nil {
+		swigluInput, err := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{w1Output, w3Output}, -1)
+		if err != nil {
+			return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU input: %w", err)
+		}
 
-	swiGLUOutput, err := f.swiglu.Forward(ctx, swigluInput)
-	if err != nil {
-		return nil, err
+		swiGLUOutput, err = f.swiglu.Forward(ctx, swigluInput)
+		if err != nil {
+			return nil, err
+		}
 	}
 	f.swiGLUOutput = swiGLUOutput // Cache for backward pass
 
