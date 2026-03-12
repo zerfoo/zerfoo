@@ -300,3 +300,10 @@ func (p *EngineProxy[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[flo
 	}
 	return FusedRMSNorm(input, weight, epsilon)
 }
+
+// ResetPool delegates to the underlying engine if it implements PoolResetter.
+func (p *EngineProxy[T]) ResetPool() {
+	if resetter, ok := p.real.(PoolResetter); ok {
+		resetter.ResetPool()
+	}
+}
