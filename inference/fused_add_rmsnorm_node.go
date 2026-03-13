@@ -36,13 +36,7 @@ func (n *fusedAddRMSNormNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 	addend := inputs[0]  // e.g. attnOut or ffnOut
 	residual := inputs[1] // e.g. hidden or residual1
 
-	// Unwrap EngineProxy to detect the real engine type.
-	realEngine := compute.Engine[T](n.engine)
-	if proxy, ok := n.engine.(*compute.EngineProxy[T]); ok {
-		realEngine = proxy.Real()
-	}
-
-	if provider, ok := realEngine.(compute.FusedAddRMSNormProvider[T]); ok {
+	if provider, ok := n.engine.(compute.FusedAddRMSNormProvider[T]); ok {
 		normed, residualOut, _, err := provider.GPUFusedAddRMSNorm(addend, residual, n.weight, n.eps)
 		if err == nil {
 			n.residual = residualOut

@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -299,6 +300,34 @@ func (p *EngineProxy[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[flo
 		return fused.FusedRMSNormGPU(input, weight, epsilon)
 	}
 	return FusedRMSNorm(input, weight, epsilon)
+}
+
+// GPUFusedAddRMSNorm delegates to the underlying engine's FusedAddRMSNormProvider
+// implementation and records the operation for tracing. This allows
+// fusedAddRMSNormNode to call through the proxy without unwrapping it,
+// which is required for CompileTraced to capture the operation.
+func (p *EngineProxy[T]) GPUFusedAddRMSNorm(input, residual, weight *tensor.TensorNumeric[T], eps float32) (
+	normed *tensor.TensorNumeric[T],
+	residualOut *tensor.TensorNumeric[T],
+	scales *tensor.TensorNumeric[T],
+	err error,
+) {
+	provider, ok := p.real.(FusedAddRMSNormProvider[T])
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm: underlying engine does not implement FusedAddRMSNormProvider")
+	}
+	normed, residualOut, scales, err = provider.GPUFusedAddRMSNorm(input, residual, weight, eps)
+	if err == nil && p.tracer != nil {
+		outputs := []*tensor.TensorNumeric[T]{normed, residualOut}
+		if scales != nil {
+			outputs = append(outputs, scales)
+		}
+		p.tracer.RecordMultiOutput("GPUFusedAddRMSNorm",
+			[]*tensor.TensorNumeric[T]{input, residual, weight},
+			outputs,
+			map[string]any{"eps": eps})
+	}
+	return
 }
 
 // MatMulTransposeB delegates to the underlying engine if it implements TransposeBMatMuler.
