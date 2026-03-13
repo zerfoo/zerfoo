@@ -2440,3 +2440,216 @@ Estimated local speedup from higher occupancy: 66.67%.
 The GEMV down_proj kernel accounts for ~15% of per-token time. Launch overhead (without
 CUDA graphs) may account for 7-15%. The remaining ~70% is likely other kernel execution
 and Go runtime overhead.
+---
+
+# T602.1 Audit: .Data() Calls in GQA and Decode Hot Path
+
+Date: 2026-03-13
+
+## GQA .Data() Calls
+
+### Call 1: Fused QK Norm+RoPE CPU fallback (line 453)
+
+- **File:** layers/attention/grouped_query_attention.go:453
+- **Code:** `data := fusedOut.Data()`
+- **Hot path?** YES -- called per token during decode.
+- **Trigger condition:** `fusedOut.GetStorage()` is neither `*tensor.GPUStorage[T]` nor
+  `*tensor.Float16Storage`. The fallback triggers when the fused kernel returns a
+  tensor with CPUStorage (or any other unknown storage type).
+- **GPU fast paths:**
+  - Line 422: `*tensor.GPUStorage[T]` -- uses `SubSlice` for zero-copy Q/K split.
+  - Line 436: `*tensor.Float16Storage` -- uses `SubSlice` for zero-copy Q/K split.
+- **Can GPU fast path always be used during decode?** YES. The fused kernel
+  (`GPUFusedQKNormRoPE`) runs on GPU and returns GPUStorage. During F32 decode, the
+  output is always GPUStorage[float32]. During FP16 decode, it would be
+  Float16Storage. The CPU fallback should never trigger during normal GPU decode.
+- **Classification:** Hot-path fallback, should never trigger during GPU decode.
+- **Fix recommendation:** Add a panic or assertion instead of falling back to CPU.
+  If the fused kernel returns non-GPU storage during decode, it indicates a bug in
+  the kernel provider, not a valid code path. Alternatively, ensure T602.2 makes
+  the provider always return GPU storage.
+
+### Call 2: splitMergedQKV CPU fallback (line 926)
+
+- **File:** layers/attention/grouped_query_attention.go:926
+- **Code:** `data := merged.Data()`
+- **Hot path?** YES -- called per token during decode (splitMergedQKV is called
+  from the Forward method when the model uses merged QKV projections).
+- **Trigger condition:** `merged.GetStorage()` is neither `*tensor.GPUStorage[T]`
+  nor `*tensor.Float16Storage`. Falls back when the merged QKV tensor has
+  CPUStorage.
+- **GPU fast paths:**
+  - Line 883: `*tensor.GPUStorage[T]` -- uses `SubSlice` for zero-copy Q/K/V split.
+  - Line 904: `*tensor.Float16Storage` -- uses `SubSlice` for zero-copy Q/K/V split.
+- **Can GPU fast path always be used during decode?** YES. The merged QKV tensor
+  comes from a MatMul (weight projection), which on GPUEngine always produces
+  GPUStorage output. The CPU fallback should never trigger during GPU decode.
+- **Classification:** Hot-path fallback, should never trigger during GPU decode.
+- **Fix recommendation:** Same as Call 1 -- assert or ensure the merged tensor
+  always has GPU storage during decode (T602.3).
+
+## Other .Data() Calls in layers/attention/
+
+### Call 3: Causal masking in SDPA (line 179)
+
+- **File:** layers/attention/scaled_dot_product_attention.go:179
+- **Code:** `data := scaledAttentionScores.Data()`
+- **Hot path?** NO during decode. Guarded by `if seqQ > 1` (line 178). During
+  decode, seqQ == 1, so this branch is skipped entirely.
+- **Classification:** Prefill-only. Not a decode hot-path concern.
+- **Note:** Already has an optimization comment explaining the skip for decode.
+
+## .Data() Calls in compute/ (non-test, decode-relevant)
+
+### Call 4: ensureGPU H2D upload (gpu_kernels.go:51)
+
+- **File:** compute/gpu_kernels.go:51
+- **Code:** `data := t.Data()`
+- **Hot path?** Only if a CPU tensor reaches a GPU kernel. During decode with
+  GPUEngine, all intermediate tensors are GPUStorage. This is an H2D path
+  (CPU->GPU), not D2H.
+- **Classification:** Init/fallback. Not a D2H copy. Not a CUDA graph blocker.
+
+### Call 5: Scalar exponent in Pow (gpu_kernels.go:664)
+
+- **File:** compute/gpu_kernels.go:664
+- **Code:** `scalar := exponent.Data()[0]`
+- **Hot path?** YES -- used in RMSNorm (x^2). However, the exponent tensor is a
+  1-element CPU tensor (constant value 2.0), so `.Data()` returns a CPU slice
+  directly -- no D2H copy occurs.
+- **Classification:** Hot-path but NO D2H copy. The exponent is always CPU-resident.
+  Not a CUDA graph blocker.
+
+### Call 6: Weight upload during init (gpu_engine.go:362)
+
+- **File:** compute/gpu_engine.go:362
+- **Code:** `data := t.Data()`
+- **Hot path?** NO. Called in `UploadWeights()` during model loading, not per token.
+- **Classification:** Init-only.
+
+### Call 7: Pool zero-fill (pool.go:37)
+
+- **File:** compute/pool.go:37
+- **Code:** `zeroData(t.Data())`
+- **Hot path?** Only for CPU tensor pool. GPU tensors use GPUStorage pool (MemPool),
+  not this CPU pool. During GPU decode, this path is not hit.
+- **Classification:** CPU-only pool path. Not relevant for GPU decode.
+
+## .Data() Calls in generate/ (non-test, decode-relevant)
+
+### Call 8: Logits extraction (generator.go:360)
+
+- **File:** generate/generator.go:360
+- **Code:** `copy(data, logits.Data())`
+- **Hot path?** YES -- called per token to extract logits for sampling.
+- **D2H?** Only when logits do NOT have GPUStorage (line 355 checks for GPU path
+  first). During GPU decode, logits always have GPUStorage, so the GPU path
+  (gs.CopyTo) is taken at line 356.
+- **CUDA graph impact:** The `gs.CopyTo` at line 356 is also a D2H copy, but this
+  is *intentional* -- logits must be read on CPU for argmax/sampling. This happens
+  outside the forward pass and would not be captured in a CUDA graph.
+- **Classification:** Hot-path but correct. The GPU path is used. The CPU fallback
+  at line 360 should not trigger during GPU decode.
+
+### Call 9: KV cache append -- TensorCache CPU fallback (tensor_cache.go:124-125)
+
+- **File:** generate/tensor_cache.go:124-125
+- **Code:** `copy(lb.kBuf[...], newK.Data())` and `copy(lb.vBuf[...], newV.Data())`
+- **Hot path?** Only if `!lb.isGPU` (line 120). The TensorCache auto-promotes to
+  GPU when it detects GPU-resident incoming tensors (lines 101-106). After
+  promotion, the GPU path at lines 113-119 (`appendGPU`) is used.
+- **D2H?** YES if promotion fails (line 104 logs WARNING). Otherwise NO.
+- **Classification:** Hot-path fallback. Should not trigger after first token
+  promotes cache to GPU. If promotion fails, every subsequent token hits D2H.
+- **Fix recommendation:** Investigate whether GPU promotion can fail in practice.
+  If so, this is a CUDA graph blocker.
+
+### Call 10: TensorCache CopyFromHost fallback (tensor_cache.go:176)
+
+- **File:** generate/tensor_cache.go:176
+- **Code:** `return dst.CopyFromHost(src.Data(), offset)`
+- **Hot path?** Only if the source (KV cache buffer) is CPU-backed. After GPU
+  promotion, this path is not taken (line 174 uses CopyFromDevice instead).
+- **Classification:** Same as Call 9 -- only triggers if GPU promotion failed.
+
+### Call 11: KVCache (legacy CPU cache) append (kvcache.go:134-135)
+
+- **File:** generate/kvcache.go:134-135
+- **Code:** `kData := newK.Data()` and `vData := newV.Data()`
+- **Hot path?** YES per token, but only when using the legacy `KVCache` (not
+  `TensorCache`). KVCache is selected only when the engine is NOT a
+  `WeightUploader` (generator.go:216) -- i.e., CPU inference only.
+- **Classification:** CPU-only path. Not used during GPU decode.
+
+### Call 12: PagedKVCache append (paged_kv.go:91-92)
+
+- **File:** generate/paged_kv.go:91-92
+- **Code:** `kData := newK.Data()` and `vData := newV.Data()`
+- **Hot path?** YES per token, but only when `WithPagedKV` option is set
+  (generator.go:212). Default GPU decode uses TensorCache, not PagedKVCache.
+- **D2H?** YES -- always calls `.Data()` with no GPU path.
+- **Classification:** Hot-path D2H if paged KV is enabled. Not a concern for
+  default decode path.
+
+### Call 13: Megakernel frozen weights (megakernel.go:85)
+
+- **File:** generate/megakernel.go:85
+- **Code:** `raw := f.Data.Data()`
+- **Hot path?** NO. Called once during megakernel compilation to upload frozen
+  (weight) data to GPU.
+- **Classification:** Init-only.
+
+### Call 14: Megakernel input extraction (megakernel.go:135)
+
+- **File:** generate/megakernel.go:135
+- **Code:** `inputRaw := inputs[0].Data()`
+- **Hot path?** YES per token when megakernel is active. However, megakernel is
+  an experimental codegen path, not the default decode path.
+- **Classification:** Experimental path. Not a concern for standard GPU decode.
+
+### Call 15: Speculative decoding logits (speculative.go:254, 296)
+
+- **File:** generate/speculative.go:254, 296
+- **Code:** `data := targetLogits.Data()` and `data := logits.Data()`
+- **Hot path?** Only during speculative decoding, which is not the default path.
+- **Classification:** Speculative-only. Not a concern for standard decode.
+
+## Summary
+
+| # | File:Line | Hot Path? | D2H? | Blocks CUDA Graph? | Fix |
+|---|-----------|-----------|------|--------------------|----|
+| 1 | grouped_query_attention.go:453 | YES (fallback) | YES | YES | T602.2: Ensure fused kernel always returns GPU storage |
+| 2 | grouped_query_attention.go:926 | YES (fallback) | YES | YES | T602.3: Ensure merged QKV always has GPU storage |
+| 3 | scaled_dot_product_attention.go:179 | NO (prefill only) | N/A | NO | None needed (guarded by seqQ > 1) |
+| 4 | gpu_kernels.go:51 | Fallback | H2D | NO | N/A (upload, not download) |
+| 5 | gpu_kernels.go:664 | YES | NO | NO | N/A (CPU-resident scalar) |
+| 6 | gpu_engine.go:362 | NO (init) | N/A | NO | None |
+| 7 | pool.go:37 | CPU only | N/A | NO | None |
+| 8 | generator.go:360 | YES (fallback) | YES | NO | GPU path already used (line 355) |
+| 9 | tensor_cache.go:124-125 | YES (fallback) | YES | YES | Verify GPU promotion never fails |
+| 10 | tensor_cache.go:176 | YES (fallback) | YES | YES | Same as #9 |
+| 11 | kvcache.go:134-135 | CPU only | YES | N/A | None (CPU engine only) |
+| 12 | paged_kv.go:91-92 | If paged KV | YES | YES | Add GPU path if paged KV is needed |
+| 13 | megakernel.go:85 | NO (init) | N/A | NO | None |
+| 14 | megakernel.go:135 | Experimental | YES | YES | Add GPU input path if megakernel used |
+| 15 | speculative.go:254,296 | Speculative | YES | YES | Add GPU path if speculative used |
+
+## Conclusions
+
+For the **standard GPU F32 decode path** (GPUEngine + TensorCache), only **two .Data()
+calls** can block CUDA graph capture:
+
+1. **GQA fused QK norm+RoPE fallback** (line 453) -- Fix in T602.2.
+2. **GQA splitMergedQKV fallback** (line 926) -- Fix in T602.3.
+
+Both have GPU fast paths that should always be taken during GPU decode. The CPU
+fallbacks exist as safety nets but should never trigger. The fix is to verify and
+ensure the GPU paths are always taken, then either remove the fallbacks or convert
+them to panics.
+
+The **TensorCache** GPU promotion (tensor_cache.go:101-106) is a potential concern
+if promotion fails, but this would already cause WARNING logs visible during
+benchmarking. This should be verified during S602.4.1.
+
+All other .Data() calls are either init-only, CPU-only, guarded by storage type
+checks, or in non-default paths (paged KV, megakernel, speculative).
