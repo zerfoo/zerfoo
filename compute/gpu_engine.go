@@ -26,6 +26,11 @@ const (
 	// Activations are converted F32->FP16 before compute and FP16->F32 after.
 	// Reductions (RMSNorm, Softmax) accumulate in FP32 for precision.
 	DTypeFP16
+
+	// DTypeFP8 uses FP8 E4M3 weights with FP16 compute for element-wise ops.
+	// Weights are quantized to FP8 at load time, dequantized to FP16 on GPU.
+	// MatMul uses cublasLtMatmul (auto-detected via FP8E4M3Storage).
+	DTypeFP8
 )
 
 // GPUEngine is a GPU-accelerated implementation of the Engine interface.
@@ -548,7 +553,7 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	// FP16 compute path: convert F32 inputs to FP16, run mixed-precision GEMM.
-	if e.dtype == DTypeFP16 && isFloat32[T]() {
+	if (e.dtype == DTypeFP16 || e.dtype == DTypeFP8) && isFloat32[T]() {
 		aShape := a.Shape()
 		bShape := b.Shape()
 		if len(aShape) >= 2 && len(bShape) >= 2 {
@@ -2267,7 +2272,7 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 	axisSize := shape[axis]
 
 	// FP16 path: convert to FP16, run FP16 scaled softmax, convert back.
-	if e.dtype == DTypeFP16 {
+	if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 		return fp16ScaledSoftmax(e, input, scale, outer, inner, axisSize)
 	}
 
@@ -2301,7 +2306,7 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	eps float32,
 ) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
 	// FP16 path: decompose into F32 Add + FP16 RMSNorm.
-	if e.dtype == DTypeFP16 {
+	if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 		return fp16FusedAddRMSNorm(e, input, residual, weight, eps)
 	}
 

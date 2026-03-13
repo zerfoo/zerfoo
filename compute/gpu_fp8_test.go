@@ -221,6 +221,33 @@ func TestFP8E4M3Storage_RawBytes(t *testing.T) {
 	}
 }
 
+func TestDTypeFP8_Constant(t *testing.T) {
+	// Verify DTypeFP8 is distinct from DTypeF32 and DTypeFP16.
+	if DTypeFP8 == DTypeF32 {
+		t.Fatal("DTypeFP8 should not equal DTypeF32")
+	}
+	if DTypeFP8 == DTypeFP16 {
+		t.Fatal("DTypeFP8 should not equal DTypeFP16")
+	}
+}
+
+func TestGPUEngine_SetDTypeFP8(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	eng.SetDType(DTypeFP8)
+	if eng.DTypeValue() != DTypeFP8 {
+		t.Fatalf("expected DTypeFP8, got %d", eng.DTypeValue())
+	}
+}
+
 func TestGPUEngine_FP8StorageDispatchDetected(t *testing.T) {
 	// Verify that FP8E4M3Storage triggers the FP8 dispatch path (not the generic path).
 	// We check this by creating FP8 storage and verifying the type assertion works.
