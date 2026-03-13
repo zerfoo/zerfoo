@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"math"
 
 	"github.com/zerfoo/float16"
@@ -286,7 +287,29 @@ func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[s
 			continue
 		}
 		f32 := t.Data()
+
+		// Log min/max of original F32 data for diagnostics.
+		var f32Min, f32Max float32
+		if len(f32) > 0 {
+			f32Min, f32Max = f32[0], f32[0]
+			for _, v := range f32[1:] {
+				if v < f32Min {
+					f32Min = v
+				}
+				if v > f32Max {
+					f32Max = v
+				}
+			}
+		}
+
 		fp8 := tensor.NewFP8E4M3Storage(f32)
+		scale := fp8.Scale()
+		log.Printf("[FP8 diag] QuantizeToFP8E4M3: tensor=%q shape=%v elems=%d scale=%.6g f32Min=%.6g f32Max=%.6g",
+			name, t.Shape(), len(f32), scale, f32Min, f32Max)
+		if scale == 0 || math.IsInf(float64(scale), 0) || math.IsNaN(float64(scale)) {
+			log.Printf("[FP8 diag] WARNING: tensor=%q has abnormal scale=%.6g", name, scale)
+		}
+
 		quantized, err := tensor.NewWithStorage[float32](t.Shape(), fp8)
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: FP8 quantize: %w", name, err)
