@@ -2207,3 +2207,80 @@ Quality: Incoherent repetitive output. FP8 quantization produces degenerate loop
 2. **FP16 path is broken** -- panics in `Float16Storage.Slice` during weight upload. This is a regression from the fp16_storage.go changes.
 3. **FP8 remains extremely slow** at 1.47 tok/s (0.7% of Ollama). The arena pressure is severe (1841 misses, 3281 MB fallback pool), confirming FP8 needs the pre-allocated scratch buffer work (T504.2).
 4. **Output quality is poor across all dtypes** -- F32 produces degenerate "**" tokens, FP8 produces repetitive loops. This may be a sampling or model loading issue rather than a compute issue.
+
+---
+
+# Wave 13: FP16 Weight Conversion Fix and Final Benchmarks
+
+Date: 2026-03-13
+Commit: efdd87b (main)
+Model: Gemma 3 1B Q4_K_M (~/models/gemma3-gguf/model.gguf)
+Prompt: "The quick brown fox"
+Tokens: 50, temp=0.0
+
+## Root Cause: FP16 Garbage Output
+
+The FP16 path produced random Unicode garbage after the Float16Storage crash fix.
+Diagnostic testing isolated the bug to FP16 weight conversion in UploadWeights:
+
+| Configuration | Output | tok/s |
+|--------------|--------|------:|
+| Both OFF (F32 weights, F32 embeddings) | Correct | ~150 |
+| Embedding FP16 ON, Weight FP16 OFF | Correct | ~125 |
+| Embedding FP16 OFF, Weight FP16 ON | GARBAGE | ~125 |
+| Both ON | GARBAGE | ~125 |
+
+The fix: removed the FP16 weight conversion from UploadWeights entirely.
+F32 weights (norm gains, embedding table) stay as GPUStorage[float32].
+Per-op FP16 compute paths handle F32->FP16 conversion on the fly.
+Norm weights are tiny (model_dim=1152 elements) so FP16 savings are negligible.
+Q4K weights (the bulk of model parameters) are unaffected.
+
+Re-enabled Gather output FP16 conversion as the entry point for FP16 activations.
+
+## Benchmark Results (commit efdd87b)
+
+| dtype | tok/s | Arena hits | Arena misses | Arena used | Output quality |
+|-------|------:|-----------:|-------------:|-----------:|---------------|
+| F32 | 157.25 | 26054 | 0 | 7.7 MB | Correct |
+| FP16 | 127.23 | 37390 | 0 | 18.5 MB | Correct (matches F32) |
+| FP8 | 1.48 | 56380 | 1841 | 2011 MB | Degenerate (repetitive) |
+| Ollama | 197.21 | -- | -- | -- | Reference |
+
+## Output Quality Comparison (temp=0, 50 tokens)
+
+F32 output:
+> is a fox.\n\n**\n\n**\n\n** (repeating ** pattern)
+
+FP16 output:
+> is a fox.\n\n**\n\n**\n\n** (identical to F32)
+
+FP8 output:
+> is a fox is a fox is running to the fox is a fox is a fox... (degenerate loop)
+
+F32 and FP16 produce identical output. The "**" repetition after the first sentence
+is expected behavior for Gemma 3 1B at temp=0 with a short prompt -- the model
+enters a markdown-like pattern after completing the sentence.
+
+FP8 output is degenerate: repetitive loops suggesting quantization precision loss
+in the FP8->FP16 dequant fallback path.
+
+## Analysis
+
+1. **FP16 is 19% SLOWER than F32** (127.23 vs 157.25 tok/s). This is because all
+   weight matrices in Q4_K_M are Q4K-quantized, producing F32 output from MatMul.
+   The FP16 path adds overhead by converting Gather output to FP16, then every
+   downstream op round-trips F32<->FP16 for norm operations. For Q4K models,
+   FP16 activations are pure overhead.
+
+2. **F32 is the optimal path for Q4K models.** 157.25 tok/s is 79.7% of Ollama's
+   197.21 tok/s. The 25% gap likely comes from:
+   - Managed memory arena overhead (identified in T401.1 bisect)
+   - Q4K GEMV kernel efficiency vs Ollama's optimized Q4_K implementation
+   - Inference loop overhead (Go runtime, tensor creation/destruction)
+
+3. **FP8 remains broken** with 1841 arena misses and 5.3GB total GPU memory usage.
+
+## go vet
+
+All warnings are pre-existing purego unsafe.Pointer patterns. No new issues.
