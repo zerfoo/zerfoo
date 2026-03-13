@@ -344,7 +344,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
   - Acceptance: Kernels compile for sm_121. Parity with FP16 path.
   - Dependencies: T406.1, T405.3 (FP16 kernels).
 
-- [ ] T406.6 Add full FP8 inference path  Owner: TBD  Est: 4h
+- [x] T406.6 Add full FP8 inference path  Owner: TBD  Est: 4h
   - Enable running inference with FP8 weights: load FP8, dequantize to
     FP16 for element-wise ops, use cublasLtMatmul for MatMul.
   - Add --dtype=fp8 flag to bench_tps.
