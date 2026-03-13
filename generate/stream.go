@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/tensor"
 )
 
 // errStopString is a sentinel indicating that a stop string was matched
@@ -97,6 +98,15 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		return emitErr
 	}
 
+	// Pre-allocate a [1,1] tensor for the decode loop. We reuse this tensor
+	// across all decode steps, updating its single element in-place to avoid
+	// per-token allocation and GC pressure.
+	decodeBuf := []T{T(nextToken)}
+	tokenTensor, tErr := tensor.New([]int{1, 1}, decodeBuf)
+	if tErr != nil {
+		return fmt.Errorf("create decode tensor: %w", tErr)
+	}
+
 	// Autoregressive decode loop.
 	for range sc.MaxNewTokens - 1 {
 		if err := ctx.Err(); err != nil {
@@ -108,10 +118,8 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 			resetter.ResetPool()
 		}
 
-		tokenTensor, tErr := gen.idsToTensor([]int{nextToken})
-		if tErr != nil {
-			return fmt.Errorf("create token tensor: %w", tErr)
-		}
+		// Update the reused tensor's value in-place.
+		decodeBuf[0] = T(nextToken)
 
 		if p := gen.plan.Load(); p != nil {
 			logits, err = p.Run(genCtx, tokenTensor)

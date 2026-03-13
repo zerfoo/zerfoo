@@ -1305,6 +1305,103 @@ func TestCompileGraph_WiresCUDAGraphExecutor(t *testing.T) {
 	}
 }
 
+// inputTrackingNode wraps fixedLogitsNode and records the input tensor pointer
+// and data value for each Forward call. This lets us verify that the decode
+// loop reuses the same tensor object across steps.
+type inputTrackingNode struct {
+	fixedLogitsNode
+	mu         sync.Mutex
+	inputPtrs  []*tensor.TensorNumeric[float32]
+	inputVals  []float32
+}
+
+func (n *inputTrackingNode) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if len(inputs) > 0 {
+		shape := inputs[0].Shape()
+		n.mu.Lock()
+		n.inputPtrs = append(n.inputPtrs, inputs[0])
+		// Record the value only for single-token inputs (decode steps).
+		if len(shape) >= 2 && shape[1] == 1 {
+			n.inputVals = append(n.inputVals, inputs[0].Data()[0])
+		}
+		n.mu.Unlock()
+	}
+	return n.fixedLogitsNode.Forward(ctx, inputs...)
+}
+
+func TestGenerate_TokenTensorReuse(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+
+	node := &inputTrackingNode{
+		fixedLogitsNode: fixedLogitsNode{
+			vocabSize:     vocabSize,
+			tokenSequence: []int{6, 7, 6, 7, 6, 2}, // 5 decode steps then EOS
+		},
+	}
+	b := graph.NewBuilder[float32](eng)
+	in := b.Input([]int{1, 1, 1})
+	b.AddNode(node, in)
+	g, err := b.Build(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator[float32](
+		g, tok, eng,
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		},
+	)
+
+	result, err := gen.Generate(context.Background(), "hello world", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+
+	// Verify output correctness is unchanged with tensor reuse.
+	if result != "foo bar foo bar foo" {
+		t.Errorf("Generate = %q, want %q", result, "foo bar foo bar foo")
+	}
+
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	// We expect 1 prefill call + 5 decode calls = 6 total Forward calls.
+	if len(node.inputPtrs) != 6 {
+		t.Fatalf("Forward call count = %d, want 6", len(node.inputPtrs))
+	}
+
+	// All decode calls (indices 1..5) should receive the same tensor pointer,
+	// confirming a single allocation is reused across decode steps.
+	decodeTensor := node.inputPtrs[1]
+	for i := 2; i < len(node.inputPtrs); i++ {
+		if node.inputPtrs[i] != decodeTensor {
+			t.Errorf("decode step %d used different tensor pointer (not reused)", i)
+		}
+	}
+
+	// Verify the input values were correctly updated in-place.
+	// Expected decode tokens: 6 (from prefill sample), then 7, 6, 7, 6.
+	// The first decode uses the initial value; subsequent ones update in-place.
+	wantVals := []float32{6, 7, 6, 7, 6}
+	if len(node.inputVals) != len(wantVals) {
+		t.Fatalf("decode input values count = %d, want %d", len(node.inputVals), len(wantVals))
+	}
+	for i, want := range wantVals {
+		if node.inputVals[i] != want {
+			t.Errorf("decode step %d input value = %v, want %v", i, node.inputVals[i], want)
+		}
+	}
+}
+
 func TestNewGenerator_WithPagedKV_InvalidParams(t *testing.T) {
 	// Zero headDim should fall back to regular KV cache.
 	gen := NewGenerator[float32](nil, nil, nil, ModelConfig{

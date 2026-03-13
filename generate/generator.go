@@ -250,6 +250,15 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		return text, nil
 	}
 
+	// Pre-allocate a [1,1] tensor for the decode loop. We reuse this tensor
+	// across all decode steps, updating its single element in-place to avoid
+	// per-token allocation and GC pressure.
+	decodeBuf := []T{T(nextToken)}
+	tokenTensor, err := tensor.New([]int{1, 1}, decodeBuf)
+	if err != nil {
+		return "", fmt.Errorf("create decode tensor: %w", err)
+	}
+
 	// Autoregressive decode loop.
 	for range sc.MaxNewTokens - 1 {
 		if err := ctx.Err(); err != nil {
@@ -261,10 +270,8 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			resetter.ResetPool()
 		}
 
-		tokenTensor, tErr := gen.idsToTensor([]int{nextToken})
-		if tErr != nil {
-			return "", fmt.Errorf("create token tensor: %w", tErr)
-		}
+		// Update the reused tensor's value in-place.
+		decodeBuf[0] = T(nextToken)
 
 		if p := gen.plan.Load(); p != nil {
 			logits, err = p.Run(genCtx, tokenTensor)
