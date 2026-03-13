@@ -26,7 +26,7 @@
 #define Q4K_SUPER_BLOCK_SIZE 256
 #define Q4K_BLOCK_BYTES      144
 #define Q4K_NUM_SUB_BLOCKS   8
-#define Q4K_WARPS_PER_BLOCK  4
+#define Q4K_WARPS_PER_BLOCK  8
 #define Q4K_WARP_SIZE        32
 
 /* Decode 6-bit scales and mins from the 12-byte packed region.
@@ -152,7 +152,7 @@ extern "C" cudaError_t gemv_q4k_f32(
         return cudaErrorInvalidValue;
     }
 
-    int threads = Q4K_WARPS_PER_BLOCK * Q4K_WARP_SIZE;  /* 128 */
+    int threads = Q4K_WARPS_PER_BLOCK * Q4K_WARP_SIZE;  /* 256 */
     int grid = (M + Q4K_WARPS_PER_BLOCK - 1) / Q4K_WARPS_PER_BLOCK;
     int smem = K * sizeof(float);
 
