@@ -10,16 +10,21 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// nonCapturableOps lists instruction op names that trigger D2H copies and
+// must run outside CUDA graph capture. EmbeddingLookup reads token IDs
+// from GPU via .Data() and does CPU float→int conversion.
+var nonCapturableOps = map[string]bool{
+	"EmbeddingLookup": true,
+}
+
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
-// On the first Run call, it executes the plan normally to establish stable
-// memory addresses. On the second call, it captures all GPU operations into
-// a CUDA graph and instantiates it. On subsequent calls, it replays the
-// graph with near-zero launch overhead (~15us total vs ~7us per kernel).
+// It splits the plan into three regions:
+//  1. Pre-capture: instructions that trigger D2H copies (e.g. EmbeddingLookup)
+//  2. Capture region: GPU-only instructions (MatMul, RMSNorm, GQA, etc.)
+//  3. Post-capture: any trailing non-capturable instructions
 //
-// Requirements:
-//   - The execution plan must use an arena allocator that resets between tokens
-//     (so device pointer addresses are deterministic).
-//   - All model weights must already be on GPU.
+// During replay, regions 1 and 3 run normally while region 2 is replayed
+// from the captured graph with near-zero launch overhead.
 type CUDAGraphExecutor[T tensor.Numeric] struct {
 	plan      *ExecutionPlan[T]
 	stream    *cuda.Stream
@@ -27,42 +32,60 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	graph     *cuda.Graph
 	warmups   int // number of warmup runs before capture
 	calls     int // total calls so far
-	failed    bool // true if capture failed permanently
+	failed    bool
 
-	// Fixed device buffer for the input token. Updated via H2D memcpy
-	// before each graph launch to avoid capturing H2D inside the graph.
+	// Capture region boundaries: instructions [captureStart, captureEnd)
+	// are captured into the CUDA graph. Instructions outside this range
+	// run normally every call.
+	captureStart int
+	captureEnd   int
+
+	// Fixed device buffer for the input token.
 	inputDevPtr unsafe.Pointer
 	inputBytes  int
 }
 
 // NewCUDAGraphExecutor creates a graph executor for the given plan.
-// streamPtr must be the cudaStream_t from the GPU engine.
-// warmups controls how many normal runs happen before graph capture (minimum 1).
 func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr unsafe.Pointer, warmups int) *CUDAGraphExecutor[T] {
 	if warmups < 1 {
 		warmups = 1
 	}
+
+	// Determine capture region: find the first and last capturable instruction.
+	n := plan.InstructionCount()
+	captureStart := 0
+	for captureStart < n && nonCapturableOps[plan.InstructionOpName(captureStart)] {
+		captureStart++
+	}
+	captureEnd := n
+	for captureEnd > captureStart && nonCapturableOps[plan.InstructionOpName(captureEnd-1)] {
+		captureEnd--
+	}
+
+	if captureStart >= captureEnd {
+		log.Printf("cuda graph: no capturable instructions found, graph disabled")
+		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
+	}
+	log.Printf("cuda graph: capture region is instructions [%d, %d) of %d total", captureStart, captureEnd, n)
+
 	return &CUDAGraphExecutor[T]{
-		plan:    plan,
-		stream:  cuda.StreamFromPtr(streamPtr),
-		warmups: warmups,
+		plan:         plan,
+		stream:       cuda.StreamFromPtr(streamPtr),
+		warmups:      warmups,
+		captureStart: captureStart,
+		captureEnd:   captureEnd,
 	}
 }
 
 // Run executes the plan, using graph capture/replay when available.
-// It handles three phases:
-//  1. Warmup: run plan normally to establish arena addresses
-//  2. Capture: record GPU operations into a CUDA graph
-//  3. Replay: launch the captured graph (near-zero overhead)
 func (g *CUDAGraphExecutor[T]) Run(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	g.calls++
 
-	// If capture failed, fall back to normal execution permanently.
 	if g.failed {
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 
-	// Phase 1: Warmup runs - execute normally.
+	// Phase 1: Warmup runs.
 	if g.calls <= g.warmups {
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
@@ -76,53 +99,46 @@ func (g *CUDAGraphExecutor[T]) Run(ctx context.Context, inputs ...*tensor.Tensor
 	return g.replay(ctx, inputs...)
 }
 
-// captureAndRun records the plan execution as a CUDA graph.
+// captureAndRun records the capturable region as a CUDA graph.
 func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// Pre-stage input on GPU at a fixed address.
-	if err := g.stageInput(inputs); err != nil {
-		log.Printf("cuda graph: failed to stage input, falling back: %v", err)
+	// Prepare slots with the real inputs.
+	if err := g.plan.PrepareSlots(inputs...); err != nil {
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 
-	// Replace input with GPU-backed tensor so no H2D copies happen
-	// inside the captured region.
-	gpuInputs, err := g.gpuInputs(inputs)
-	if err != nil {
-		log.Printf("cuda graph: failed to create GPU inputs, falling back: %v", err)
-		g.failed = true
-		return g.plan.RunInstructions(ctx, inputs...)
-	}
-
-	// Begin capture. All GPU operations on this stream are now recorded.
-	if err := cuda.StreamBeginCapture(g.stream); err != nil {
-		log.Printf("cuda graph: begin capture failed, falling back: %v", err)
-		g.failed = true
-		return g.plan.RunInstructions(ctx, inputs...)
-	}
-
-	// Execute plan. Host-side code (slot manipulation) runs normally.
-	// GPU operations (kernel launches, D2D memcpys) are recorded, not executed.
-	_, runErr := g.plan.RunInstructions(ctx, gpuInputs...)
-
-	// End capture and get the graph.
-	capturedGraph, captureErr := cuda.StreamEndCapture(g.stream)
-	if captureErr != nil || runErr != nil {
-		// Capture failed. This typically happens when the forward pass
-		// includes synchronous cudaMemcpy calls (e.g., GPUStorage.TrySlice)
-		// that conflict with stream capture mode.
-		if captureErr != nil {
-			log.Printf("cuda graph: end capture failed: %v", captureErr)
+	// Run pre-capture instructions normally (e.g. EmbeddingLookup).
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
+			g.failed = true
+			log.Printf("cuda graph: pre-capture run failed: %v", err)
+			return g.plan.RunInstructions(ctx, inputs...)
 		}
-		if runErr != nil {
-			log.Printf("cuda graph: plan run during capture failed: %v", runErr)
+	}
+
+	// Begin capture for the GPU-heavy region.
+	if err := cuda.StreamBeginCapture(g.stream); err != nil {
+		log.Printf("cuda graph: begin capture failed: %v", err)
+		g.failed = true
+		return g.plan.RunInstructions(ctx, inputs...)
+	}
+
+	// Run capturable instructions — GPU operations are recorded.
+	captureErr := g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+
+	// End capture.
+	capturedGraph, endErr := cuda.StreamEndCapture(g.stream)
+	if endErr != nil || captureErr != nil {
+		if endErr != nil {
+			log.Printf("cuda graph: end capture failed: %v", endErr)
+		}
+		if captureErr != nil {
+			log.Printf("cuda graph: capture region failed: %v", captureErr)
 		}
 		g.failed = true
 		if capturedGraph != nil {
 			_ = cuda.GraphDestroy(capturedGraph)
 		}
-		// Re-run the plan normally to get the actual result for this token.
-		// The stream is restored to normal mode after EndCapture (even on error).
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graph = capturedGraph
@@ -130,23 +146,28 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// Instantiate executable graph.
 	exec, err := cuda.GraphInstantiate(capturedGraph)
 	if err != nil {
-		log.Printf("cuda graph: instantiate failed, falling back: %v", err)
+		log.Printf("cuda graph: instantiate failed: %v", err)
 		_ = cuda.GraphDestroy(capturedGraph)
 		g.graph = nil
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graphExec = exec
+	log.Printf("cuda graph: captured and instantiated successfully (instructions %d-%d)", g.captureStart, g.captureEnd-1)
 
-	log.Printf("cuda graph: captured and instantiated successfully")
-
-	// During capture, GPU operations were recorded but not executed.
-	// Launch the graph once to actually compute the result.
+	// Launch the graph once to actually compute the results.
 	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
 		return nil, fmt.Errorf("cuda graph: first launch failed: %w", err)
 	}
 	if err := g.stream.Synchronize(); err != nil {
-		return nil, fmt.Errorf("cuda graph: sync after first launch failed: %w", err)
+		return nil, fmt.Errorf("cuda graph: sync after first launch: %w", err)
+	}
+
+	// Run post-capture instructions if any.
+	if g.captureEnd < g.plan.InstructionCount() {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph: post-capture run failed: %w", err)
+		}
 	}
 
 	return g.plan.OutputTensor(), nil
@@ -154,15 +175,19 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 
 // replay launches the pre-captured graph with updated input.
 func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	_ = ctx // context checked by caller
-
-	// Update the fixed input buffer with new token data.
-	if err := g.updateInput(inputs); err != nil {
-		return nil, fmt.Errorf("cuda graph replay: update input: %w", err)
+	// Prepare slots with new inputs.
+	if err := g.plan.PrepareSlots(inputs...); err != nil {
+		return nil, fmt.Errorf("cuda graph replay: prepare slots: %w", err)
 	}
 
-	// Launch the captured graph. This replays all ~338 kernel launches
-	// with a single driver call (~15us vs ~2.37ms for individual launches).
+	// Run pre-capture instructions normally.
+	if g.captureStart > 0 {
+		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
+		}
+	}
+
+	// Replay the captured graph.
 	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
 		return nil, fmt.Errorf("cuda graph: launch failed: %w", err)
 	}
@@ -170,71 +195,14 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 		return nil, fmt.Errorf("cuda graph: sync failed: %w", err)
 	}
 
-	return g.plan.OutputTensor(), nil
-}
-
-// stageInput allocates a fixed device buffer and uploads the first input.
-func (g *CUDAGraphExecutor[T]) stageInput(inputs []*tensor.TensorNumeric[T]) error {
-	if len(inputs) == 0 {
-		return fmt.Errorf("no inputs")
-	}
-
-	input := inputs[0]
-	data := input.Data()
-	var zero T
-	elemSize := int(unsafe.Sizeof(zero))
-	byteSize := len(data) * elemSize
-
-	if g.inputDevPtr == nil {
-		devPtr, err := cuda.Malloc(byteSize)
-		if err != nil {
-			return fmt.Errorf("malloc input buffer: %w", err)
+	// Run post-capture instructions if any.
+	if g.captureEnd < g.plan.InstructionCount() {
+		if err := g.plan.RunInstructionRange(ctx, g.captureEnd, g.plan.InstructionCount()); err != nil {
+			return nil, fmt.Errorf("cuda graph replay: post-capture: %w", err)
 		}
-		g.inputDevPtr = devPtr
-		g.inputBytes = byteSize
 	}
 
-	src := unsafe.Pointer(unsafe.SliceData(data))
-	return cuda.Memcpy(g.inputDevPtr, src, byteSize, cuda.MemcpyHostToDevice)
-}
-
-// updateInput copies new token data to the fixed device buffer.
-func (g *CUDAGraphExecutor[T]) updateInput(inputs []*tensor.TensorNumeric[T]) error {
-	if len(inputs) == 0 {
-		return fmt.Errorf("no inputs")
-	}
-	data := inputs[0].Data()
-	src := unsafe.Pointer(unsafe.SliceData(data))
-	var zero T
-	elemSize := int(unsafe.Sizeof(zero))
-	byteSize := len(data) * elemSize
-	if byteSize > g.inputBytes {
-		return fmt.Errorf("input size %d exceeds buffer %d", byteSize, g.inputBytes)
-	}
-	return cuda.Memcpy(g.inputDevPtr, src, byteSize, cuda.MemcpyHostToDevice)
-}
-
-// gpuInputs creates GPU-backed tensors pointing at the fixed device buffer.
-func (g *CUDAGraphExecutor[T]) gpuInputs(inputs []*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no inputs")
-	}
-	gpuIn := make([]*tensor.TensorNumeric[T], len(inputs))
-
-	shape := inputs[0].Shape()
-	gs, err := tensor.NewGPUStorageFromPtr[T](g.inputDevPtr, inputs[0].Size())
-	if err != nil {
-		return nil, err
-	}
-	gpuIn[0], err = tensor.NewWithStorage(shape, gs)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := 1; i < len(inputs); i++ {
-		gpuIn[i] = inputs[i]
-	}
-	return gpuIn, nil
+	return g.plan.OutputTensor(), nil
 }
 
 // Destroy releases the CUDA graph resources.

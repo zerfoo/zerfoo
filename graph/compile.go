@@ -148,6 +148,62 @@ func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNume
 	return p.RunInstructions(ctx, inputs...)
 }
 
+// RunInstructionRange executes instructions [start, end) using the shared
+// slot array. The caller must have already populated input slots. This is
+// used by CUDAGraphExecutor to split execution into capturable and
+// non-capturable regions.
+func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end int) error {
+	for i := start; i < end; i++ {
+		inst := &p.instructions[i]
+		ins := p.instrInputs[i]
+		for j, idx := range inst.InputIdx {
+			ins[j] = p.scratchSlots[idx]
+			if ins[j] == nil {
+				return fmt.Errorf("instruction %d (%s): input tensor at slot %d is nil", i, inst.OpName, idx)
+			}
+		}
+		result, err := inst.Forward(ctx, ins)
+		if err != nil {
+			return fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
+		}
+		p.scratchSlots[inst.OutputIdx] = result
+	}
+	return nil
+}
+
+// PrepareSlots initializes the scratch slot array and populates input slots.
+// Must be called before RunInstructionRange.
+func (p *ExecutionPlan[T]) PrepareSlots(inputs ...*tensor.TensorNumeric[T]) error {
+	if len(inputs) != len(p.inputIdx) {
+		return fmt.Errorf("compiled plan: expected %d inputs, got %d", len(p.inputIdx), len(inputs))
+	}
+	if len(p.scratchSlots) != len(p.slots) {
+		p.scratchSlots = make([]*tensor.TensorNumeric[T], len(p.slots))
+		p.instrInputs = make([][]*tensor.TensorNumeric[T], len(p.instructions))
+		for i, inst := range p.instructions {
+			p.instrInputs[i] = make([]*tensor.TensorNumeric[T], len(inst.InputIdx))
+		}
+	}
+	copy(p.scratchSlots, p.slots)
+	for i, idx := range p.inputIdx {
+		p.scratchSlots[idx] = inputs[i]
+	}
+	return nil
+}
+
+// InstructionCount returns the number of instructions in the plan.
+func (p *ExecutionPlan[T]) InstructionCount() int {
+	return len(p.instructions)
+}
+
+// InstructionOpName returns the operation name of instruction at index i.
+func (p *ExecutionPlan[T]) InstructionOpName(i int) string {
+	if i < 0 || i >= len(p.instructions) {
+		return ""
+	}
+	return p.instructions[i].OpName
+}
+
 // RunInstructions executes the instruction loop directly, bypassing the
 // megakernel/graph capture hook. Used by CUDAGraphExecutor during warmup
 // and capture phases.
