@@ -373,6 +373,129 @@ func TestManagedGPUStorageNotManagedByDefault(t *testing.T) {
 	}
 }
 
+func TestGPUStorageSubSlice(t *testing.T) {
+	skipIfNoCUDA(t)
+
+	src := []float32{10, 20, 30, 40, 50, 60, 70, 80}
+	parent, err := NewGPUStorageFromSlice(src)
+	if err != nil {
+		t.Fatalf("NewGPUStorageFromSlice: %v", err)
+	}
+	defer func() { _ = parent.Free() }()
+
+	tests := []struct {
+		name   string
+		offset int
+		length int
+		want   []float32
+	}{
+		{"first half", 0, 4, []float32{10, 20, 30, 40}},
+		{"second half", 4, 4, []float32{50, 60, 70, 80}},
+		{"middle", 2, 3, []float32{30, 40, 50}},
+		{"single element", 5, 1, []float32{60}},
+		{"full range", 0, 8, src},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sub := parent.SubSlice(tt.offset, tt.length)
+
+			if sub.Len() != tt.length {
+				t.Fatalf("Len() = %d, want %d", sub.Len(), tt.length)
+			}
+
+			if !sub.view {
+				t.Error("SubSlice should create a non-owning view")
+			}
+
+			got, err := sub.TrySlice()
+			if err != nil {
+				t.Fatalf("TrySlice: %v", err)
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("TrySlice returned %d elements, want %d", len(got), len(tt.want))
+			}
+
+			for i, w := range tt.want {
+				if got[i] != w {
+					t.Errorf("TrySlice()[%d] = %f, want %f", i, got[i], w)
+				}
+			}
+		})
+	}
+}
+
+func TestGPUStorageSubSliceNoD2HForView(t *testing.T) {
+	skipIfNoCUDA(t)
+
+	// Verify that SubSlice itself does not trigger any data transfer.
+	// It should only perform pointer arithmetic on the device pointer.
+	src := []float32{1, 2, 3, 4, 5, 6}
+	parent, err := NewGPUStorageFromSlice(src)
+	if err != nil {
+		t.Fatalf("NewGPUStorageFromSlice: %v", err)
+	}
+	defer func() { _ = parent.Free() }()
+
+	sub := parent.SubSlice(2, 3)
+
+	// The view's device pointer should be offset from the parent's.
+	if sub.Ptr() == parent.Ptr() {
+		t.Error("SubSlice(2, 3) should have an offset device pointer")
+	}
+	if sub.Ptr() == nil {
+		t.Error("SubSlice device pointer should not be nil")
+	}
+	if sub.DeviceID() != parent.DeviceID() {
+		t.Errorf("DeviceID = %d, want %d", sub.DeviceID(), parent.DeviceID())
+	}
+
+	// Verify data is correct when we do read it.
+	got, err := sub.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice: %v", err)
+	}
+	want := []float32{3, 4, 5}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("got[%d] = %f, want %f", i, got[i], w)
+		}
+	}
+}
+
+func TestGPUStorageSubSliceManagedPreservesFlag(t *testing.T) {
+	skipIfNoCUDA(t)
+	pool := newTestPool(t)
+
+	parent, err := NewManagedGPUStorage[float32](pool, 6)
+	if err != nil {
+		t.Fatalf("NewManagedGPUStorage: %v", err)
+	}
+	defer func() { _ = parent.Free() }()
+
+	if err := parent.TrySet([]float32{1, 2, 3, 4, 5, 6}); err != nil {
+		t.Fatalf("TrySet: %v", err)
+	}
+
+	sub := parent.SubSlice(1, 3)
+
+	if !sub.managed {
+		t.Error("SubSlice of managed storage should preserve managed flag")
+	}
+
+	got, err := sub.TrySlice()
+	if err != nil {
+		t.Fatalf("TrySlice: %v", err)
+	}
+	want := []float32{2, 3, 4}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("got[%d] = %f, want %f", i, got[i], w)
+		}
+	}
+}
+
 // newTestPool returns a CUDAMemPool for testing.
 func newTestPool(t *testing.T) *gpuapi.CUDAMemPool {
 	t.Helper()

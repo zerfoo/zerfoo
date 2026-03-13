@@ -486,5 +486,23 @@ func (s *GPUStorage[T]) View(length int) *GPUStorage[T] {
 	}
 }
 
+// SubSlice returns a non-owning GPUStorage view into a sub-range of the
+// receiver's device buffer, starting at offsetElems for length elements.
+// No data is copied (no D2H transfer). The caller must ensure the parent
+// outlives the returned view.
+func (s *GPUStorage[T]) SubSlice(offsetElems, length int) *GPUStorage[T] {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	return &GPUStorage[T]{
+		devicePtr: unsafe.Add(s.devicePtr, offsetElems*elemSize),
+		length:    length,
+		byteSize:  length * elemSize,
+		deviceID:  s.deviceID,
+		runtime:   s.runtime,
+		managed:   s.managed,
+		view:      true,
+	}
+}
+
 // Statically assert that GPUStorage satisfies the Storage interface.
 var _ Storage[float32] = (*GPUStorage[float32])(nil)
