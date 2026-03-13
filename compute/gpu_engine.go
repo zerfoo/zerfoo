@@ -352,6 +352,9 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[float32]); ok {
 			continue // already on GPU
 		}
+		if _, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			continue // already converted to FP16 on GPU
+		}
 		// Skip Q8 tensors -- they are uploaded as raw bytes in the Q8 loop below.
 		if _, ok := any(t.GetStorage()).(*tensor.Q8Storage); ok {
 			continue
