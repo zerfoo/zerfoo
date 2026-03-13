@@ -34,7 +34,8 @@ type KernelLib struct {
 	launchRMSNorm uintptr
 
 	// gather
-	launchGather uintptr
+	launchGather    uintptr
+	launchGatherI32 uintptr
 
 	// transpose
 	launchTranspose2D, launchTransposeND uintptr
@@ -125,6 +126,7 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_rmsnorm", &k.launchRMSNorm},
 			// gather
 			{"launch_gather", &k.launchGather},
+			{"launch_gather_i32", &k.launchGatherI32},
 			// transpose
 			{"launch_transpose_2d", &k.launchTranspose2D},
 			{"launch_transpose_nd", &k.launchTransposeND},
