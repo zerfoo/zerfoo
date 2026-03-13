@@ -40,7 +40,11 @@ func NewFloat16StorageFromF32(src []float32) *Float16Storage {
 func (s *Float16Storage) Len() int { return s.len }
 
 // Slice decodes FP16 data to float32.
+// Returns a zero-filled slice if no host data is available (GPU-only storage).
 func (s *Float16Storage) Slice() []float32 {
+	if len(s.data) == 0 {
+		return make([]float32, s.len)
+	}
 	dst := make([]float32, s.len)
 	for i := 0; i < s.len; i++ {
 		bits := binary.LittleEndian.Uint16(s.data[i*2:])
