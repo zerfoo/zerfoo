@@ -408,6 +408,206 @@ func TestFP8Scratchpad_FreeIdempotent(t *testing.T) {
 	}
 }
 
+// TestGPUEngine_FP8DequantFallbackBWeight directly tests the fp8DequantMatMulB
+// fallback path (DequantFP8E4M3ToFP16 + MixedFP16Gemm) to verify numerical
+// correctness independent of cublasLt availability.
+func TestGPUEngine_FP8DequantFallbackBWeight(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	if eng.blas == nil {
+		t.Skip("BLAS not available; fallback path requires cuBLAS")
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		m, k, n int
+	}{
+		{"2x2", 2, 2, 2},
+		{"2x3x2", 2, 3, 2},
+		{"4x4", 4, 4, 4},
+		{"1x4x1", 1, 4, 1},
+		{"8x16x8", 8, 16, 8},
+		{"16x32x16", 16, 32, 16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aData := make([]float32, tt.m*tt.k)
+			bData := make([]float32, tt.k*tt.n)
+			for i := range aData {
+				aData[i] = float32(i%7+1) * 0.1
+			}
+			for i := range bData {
+				bData[i] = float32(i%5+1) * 0.1
+			}
+
+			// CPU FP32 reference.
+			cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+			cpuA, _ := tensor.New[float32]([]int{tt.m, tt.k}, aData)
+			cpuB, _ := tensor.New[float32]([]int{tt.k, tt.n}, bData)
+			expected, err := cpuEng.MatMul(ctx, cpuA, cpuB)
+			if err != nil {
+				t.Fatalf("CPU MatMul: %v", err)
+			}
+
+			// Build FP8 B weight and FP32 A.
+			a, _ := tensor.New[float32]([]int{tt.m, tt.k}, aData)
+			fp8B := tensor.NewFP8E4M3Storage(bData)
+			b, _ := tensor.NewWithStorage[float32]([]int{tt.k, tt.n}, fp8B)
+
+			// Upload FP8 weights to GPU.
+			if err := eng.UploadWeights([]*tensor.TensorNumeric[float32]{b}); err != nil {
+				t.Fatalf("UploadWeights: %v", err)
+			}
+
+			// Get the GPU-resident FP8 device pointer for B.
+			devB, _, _ := fp8B.GPUPtr()
+			if devB == nil {
+				t.Fatal("FP8 B weight not uploaded to GPU")
+			}
+
+			outShape := []int{tt.m, tt.n}
+
+			// Call the dequant fallback directly, bypassing cublasLt.
+			got, err := eng.fp8DequantMatMulB(a, fp8B, devB, tt.m, tt.n, tt.k, outShape)
+			if err != nil {
+				t.Fatalf("fp8DequantMatMulB: %v", err)
+			}
+
+			gotData := got.Data()
+			expData := expected.Data()
+			if len(gotData) != len(expData) {
+				t.Fatalf("output size mismatch: got %d, want %d", len(gotData), len(expData))
+			}
+
+			var maxRelErr float64
+			for i := range gotData {
+				if expData[i] == 0 {
+					continue
+				}
+				rel := math.Abs(float64(gotData[i]-expData[i])) / math.Abs(float64(expData[i]))
+				if rel > maxRelErr {
+					maxRelErr = rel
+				}
+			}
+
+			if maxRelErr > 1e-2 {
+				t.Errorf("max relative error %.6f exceeds 1e-2 threshold", maxRelErr)
+				t.Logf("expected: %v", expData)
+				t.Logf("got:      %v", gotData)
+			}
+		})
+	}
+}
+
+// TestGPUEngine_FP8DequantFallbackAWeight directly tests the fp8DequantMatMulA
+// fallback path (DequantFP8E4M3ToFP16 + MixedFP16Gemm) to verify numerical
+// correctness independent of cublasLt availability.
+func TestGPUEngine_FP8DequantFallbackAWeight(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+
+	if eng.blas == nil {
+		t.Skip("BLAS not available; fallback path requires cuBLAS")
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		m, k, n int
+	}{
+		{"2x2", 2, 2, 2},
+		{"4x4", 4, 4, 4},
+		{"8x16x8", 8, 16, 8},
+		{"16x32x16", 16, 32, 16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aData := make([]float32, tt.m*tt.k)
+			bData := make([]float32, tt.k*tt.n)
+			for i := range aData {
+				aData[i] = float32(i%7+1) * 0.1
+			}
+			for i := range bData {
+				bData[i] = float32(i%5+1) * 0.1
+			}
+
+			// CPU FP32 reference.
+			cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+			cpuA, _ := tensor.New[float32]([]int{tt.m, tt.k}, aData)
+			cpuB, _ := tensor.New[float32]([]int{tt.k, tt.n}, bData)
+			expected, err := cpuEng.MatMul(ctx, cpuA, cpuB)
+			if err != nil {
+				t.Fatalf("CPU MatMul: %v", err)
+			}
+
+			// Build FP8 A weight and FP32 B.
+			fp8A := tensor.NewFP8E4M3Storage(aData)
+			a, _ := tensor.NewWithStorage[float32]([]int{tt.m, tt.k}, fp8A)
+			b, _ := tensor.New[float32]([]int{tt.k, tt.n}, bData)
+
+			// Upload FP8 weights to GPU.
+			if err := eng.UploadWeights([]*tensor.TensorNumeric[float32]{a}); err != nil {
+				t.Fatalf("UploadWeights: %v", err)
+			}
+
+			// Get the GPU-resident FP8 device pointer for A.
+			devA, _, _ := fp8A.GPUPtr()
+			if devA == nil {
+				t.Fatal("FP8 A weight not uploaded to GPU")
+			}
+
+			// Call the dequant fallback directly, bypassing cublasLt.
+			got, err := eng.fp8DequantMatMulA(fp8A, devA, b, tt.m, tt.n, tt.k)
+			if err != nil {
+				t.Fatalf("fp8DequantMatMulA: %v", err)
+			}
+
+			gotData := got.Data()
+			expData := expected.Data()
+			if len(gotData) != len(expData) {
+				t.Fatalf("output size mismatch: got %d, want %d", len(gotData), len(expData))
+			}
+
+			var maxRelErr float64
+			for i := range gotData {
+				if expData[i] == 0 {
+					continue
+				}
+				rel := math.Abs(float64(gotData[i]-expData[i])) / math.Abs(float64(expData[i]))
+				if rel > maxRelErr {
+					maxRelErr = rel
+				}
+			}
+
+			if maxRelErr > 1e-2 {
+				t.Errorf("max relative error %.6f exceeds 1e-2 threshold", maxRelErr)
+				t.Logf("expected: %v", expData)
+				t.Logf("got:      %v", gotData)
+			}
+		})
+	}
+}
+
 func TestFP8Scratchpad_GrowFreesOldBuffer(t *testing.T) {
 	pool := newFakeMemPool()
 	var s fp8Scratchpad
