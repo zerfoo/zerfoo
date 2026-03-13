@@ -98,7 +98,7 @@ weight matrix multiplication in every transformer layer. Current kernel uses 128
 threads/block with scalar byte loads. Optimization targets: increase block size
 to 256, vectorize quantized data loads, and tune shared memory usage.
 
-- [ ] T601.1 Profile Q4K GEMV kernel on DGX to establish per-kernel baseline  Owner: TBD  Est: 45m
+- [x] T601.1 Profile Q4K GEMV kernel on DGX to establish per-kernel baseline  Owner: task-T601.1  Est: 45m  Done: 2026-03-13
   - Use nsys or nvprof to measure Q4K GEMV execution time per call.
   - Record: kernel time, SM occupancy, memory throughput, register usage.
   - Run for Gemma 3 1B Q4_K_M decode (single token).
@@ -106,7 +106,7 @@ to 256, vectorize quantized data loads, and tune shared memory usage.
   - Acceptance: Per-call kernel time documented. Occupancy and bandwidth utilization recorded.
   - Dependencies: none.
 
-- [ ] T601.2 Increase Q4K GEMV block size from 128 to 256 threads  Owner: TBD  Est: 1h
+- [x] T601.2 Increase Q4K GEMV block size from 128 to 256 threads  Owner: task-T601.2  Est: 1h  Done: 2026-03-13
   - Change Q4K_WARPS_PER_BLOCK from 4 to 8 in gemv_q4k.cu.
   - Adjust grid calculation: grid = (M + 8 - 1) / 8.
   - Shared memory size stays at K * sizeof(float) -- more threads cooperate to load it.
@@ -159,7 +159,7 @@ tensor data from GPU to CPU. These block CUDA graph capture and add latency.
 Both paths have GPU fast paths that work when tensors have GPUStorage or
 Float16Storage -- the fix is to ensure the fast paths are always taken.
 
-- [ ] T602.1 Audit all .Data() calls in GQA hot path  Owner: TBD  Est: 45m
+- [x] T602.1 Audit all .Data() calls in GQA hot path  Owner: task-T602.1  Est: 45m  Done: 2026-03-13
   - Grep for .Data() in layers/attention/grouped_query_attention.go.
   - For each call, determine: (a) is it in the decode hot path? (b) what
     storage type triggers the fallback? (c) can the GPU fast path always be used?
@@ -253,7 +253,7 @@ FP8 has 1841 arena misses because the fp8Scratchpad only covers A/B matrix
 buffers. Output buffers and scale pointer allocations still go through the arena.
 FP8 output is degenerate (repetitive text) from the FP16 dequant fallback path.
 
-- [ ] T604.1 Extend fp8Scratchpad with output buffer  Owner: TBD  Est: 1h
+- [x] T604.1 Extend fp8Scratchpad with output buffer  Owner: task-T604.1  Est: 1h  Done: 2026-03-13
   - Add a reusable output buffer (fp16BufC or f32BufC) to fp8Scratchpad.
   - Modify fp8DequantMatMulA and fp8DequantMatMulB to use the scratchpad
     output buffer instead of pool.Alloc for the devC allocation.
@@ -306,7 +306,7 @@ FP8 output is degenerate (repetitive text) from the FP16 dequant fallback path.
 Minor optimizations to the inference loop that reduce per-token allocation and
 Go runtime overhead. Each optimization is small but they compound.
 
-- [ ] T605.1 Reuse token input tensor across decode steps  Owner: TBD  Est: 1h
+- [x] T605.1 Reuse token input tensor across decode steps  Owner: task-T605.1  Est: 1h  Done: 2026-03-13
   - In generate/generator.go: instead of calling idsToTensor() per token
     (which allocates a new [1,1] tensor + GPU upload each time), pre-allocate
     a [1,1] tensor and update its value in place using the existing GPU buffer.
