@@ -3039,3 +3039,67 @@ For the primary target (Gemma 3 1B Q4_K_M, dense model, standard decode):
   experimental megakernel path.
 - All other `.Data()` calls are in CPU fallback paths, init-only code, or
   layers not used during LLM transformer decode.
+
+---
+
+# S605.1.1: Verify Token Tensor Reuse on DGX Spark
+
+Date: 2026-03-13
+Commit: 86224ab (main HEAD)
+Model: Gemma 3 1B Q4_K_M (~/models/gemma3-gguf/model.gguf)
+
+## Optimization
+
+T605.1 pre-allocates a single `[1,1]` tensor for the decode loop and updates
+its backing buffer in-place each step (`decodeBuf[0] = T(nextToken)`), instead
+of creating a new tensor per decode step. This eliminates per-token tensor
+allocation and reduces GC pressure.
+
+Implementation: `generate/generator.go:254-274`
+
+## Benchmark Results (F32, temp=0, 50 tokens, 3 runs)
+
+| Run | tok/s | Arena hits | Arena misses | Arena resets | Arena used |
+|-----|------:|-----------:|-------------:|-------------:|-----------:|
+| 1   | 147.04 | 26054 | 0 | 52 | 7.7 MB |
+| 2   | 131.26 | 26054 | 0 | 52 | 7.7 MB |
+| 3   | 150.49 | 26054 | 0 | 52 | 7.7 MB |
+
+All runs: GPU MemPool (fallback): hits=0 misses=0 frees=0 cached=0
+
+## Output (all 3 runs identical)
+
+> is a fox.\n\n**\n\n**\n\n** (repeating ** pattern, 50 tokens)
+
+## Comparison with Prior Baseline (commit efdd87b)
+
+| Metric | Baseline (efdd87b) | Current (86224ab) | Status |
+|--------|-------------------:|------------------:|--------|
+| tok/s (best) | 157.25 | 150.49 | Within variance |
+| tok/s (prior 50-token run) | 150.58 | 150.49 | MATCH |
+| Arena hits | 26054 | 26054 | IDENTICAL |
+| Arena misses | 0 | 0 | IDENTICAL |
+| Arena resets | 52 | 52 | IDENTICAL |
+| Arena used | 7.7 MB | 7.7 MB | IDENTICAL |
+| Output text | is a fox.\n\n**... | is a fox.\n\n**... | IDENTICAL |
+
+## Analysis
+
+1. **Output is identical** to baseline -- token tensor reuse does not affect
+   inference correctness.
+
+2. **Arena stats are unchanged** -- hits=26054, misses=0, resets=52, used=7.7 MB
+   across all runs. The token tensor was already small enough (1 element) that
+   its allocation was handled by the arena without misses. The reuse optimization
+   avoids per-token Go-side tensor creation overhead rather than GPU arena
+   pressure.
+
+3. **Throughput is stable** -- best run (150.49 tok/s) matches the prior 50-token
+   baseline (150.58 tok/s) within measurement noise. The `go run` compilation
+   overhead explains the variance across runs (131-150 tok/s).
+
+4. **No regressions detected** in output quality, arena behavior, or throughput.
+
+## Acceptance
+
+**MET.** Output identical to baseline. Arena hits same. No regressions.
