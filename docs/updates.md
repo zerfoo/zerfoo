@@ -3388,3 +3388,83 @@ All runs: GPU MemPool (fallback): hits=0 misses=0 frees=0 cached=0
 ## Acceptance
 
 **MET.** Output identical to baseline. Arena hits same. No regressions.
+
+---
+
+# S604.3.1 FP8 Output Quality Verification on DGX Spark
+
+Date: 2026-03-13
+Hardware: DGX Spark GB10 (sm_121, Blackwell)
+Model: gemma3 1B (Q4_K GGUF)
+Prompt: "The quick brown fox"
+Tokens: 50, temp=0
+
+## Build
+
+```
+cd ~/zerfoo && git checkout main && git pull origin main
+cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
+```
+
+Kernels compiled successfully: 43 registers, 0 spills for gemv_q4k.
+
+## F32 Baseline
+
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype fp32
+```
+
+**Output:** `is a fox. ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **`
+**Throughput:** 152.68 tok/s
+**Assessment:** Repetitive/degenerate. The model produces a short coherent fragment
+("is a fox.") then degenerates into repeated `**` tokens. This is a baseline quality
+issue unrelated to FP8.
+
+## FP8
+
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype fp8
+```
+
+**Output:** `gut gut gut gut gut gut gut gut gut gut gut gut", INST", K K K K K K Kinstघ्र k k k k k k k k k k k k k k K", k " " " " " " " " "`
+**Throughput:** 55.18 tok/s
+**Assessment:** Degenerate/garbage output. Repeated nonsense tokens with no coherent
+structure. Significantly worse than F32 baseline.
+
+## cublasLt FP8 Path
+
+All cublasLt FP8 matmul operations failed with status 15 (CUBLAS_STATUS_NOT_SUPPORTED)
+for all layer shapes (m=1, various n/k). Every operation fell back to dequant+FP16 path
+via cublasGemmEx MixedFP16Gemm. This means the "FP8" run is actually using FP8 storage
+with FP16 compute after dequantization.
+
+## Comparison
+
+| Metric    | F32       | FP8 (dequant+FP16 fallback) |
+|-----------|-----------|------------------------------|
+| Coherent? | Partially | No                           |
+| tok/s     | 152.68    | 55.18                        |
+| Arena MB  | 7.7       | 29.1                        |
+
+## Findings
+
+1. **FP8 output is NOT coherent** - acceptance criteria not met. The output is
+   degenerate garbage, significantly worse than F32.
+2. **F32 baseline also degenerates** - the F32 output itself is not fully coherent
+   (repeating `**` after a short fragment), suggesting a broader generation quality
+   issue beyond just FP8.
+3. **No native FP8 compute** - cublasLt FP8 path fails for all shapes on sm_121,
+   so FP8 is using dequant+FP16 fallback. The quality degradation is likely from
+   FP8 quantization precision loss in weight storage.
+4. **FP8 is 2.8x slower** than F32 (55.18 vs 152.68 tok/s), due to the
+   dequantization overhead on every matmul.
+
+## Next Steps
+
+- Investigate why F32 output quality degenerates (may be a sampling or model loading issue)
+- Investigate FP8 quantization quality loss - the dequant+FP16 path should theoretically
+  produce similar quality to F32 if quantization is done correctly
+- Consider whether sm_121 (Blackwell) truly supports FP8 via cublasLt or if a different
+  API/kernel approach is needed
