@@ -321,7 +321,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
   - Acceptance: Wrappers compile without CGo. Available() returns true on DGX.
   - Dependencies: none.
 
-- [ ] T406.4 Wire FP8 MatMul through cublasLtMatmul  Owner: TBD  Est: 4h
+- [x] T406.4 Wire FP8 MatMul through cublasLtMatmul  Owner: TBD  Est: 4h
   - When weights are FP8E4M3 and activations are FP16 or FP32:
     use cublasLtMatmul with CUDA_R_8F_E4M3 input type, CUDA_R_16F or
     CUDA_R_32F compute type, and per-tensor scaling via alpha/beta params.
