@@ -1,0 +1,98 @@
+package compute
+
+import (
+	"context"
+	"math"
+	"testing"
+
+	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/zerfoo/tensor"
+)
+
+func TestFP16MatMul_BatchDimensions(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	eng, err := NewGPUEngine[float32](numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = eng.Close() }()
+	eng.dtype = DTypeFP16
+
+	ctx := context.Background()
+	cpuEng := NewCPUEngine[float32](numeric.Float32Ops{})
+
+	tests := []struct {
+		name   string
+		aShape []int
+		bShape []int
+	}{
+		{"2D_2x3_3x2", []int{2, 3}, []int{3, 2}},
+		{"3D_batch4_2x3_3x2", []int{4, 2, 3}, []int{4, 3, 2}},
+		{"3D_batch1_2x3_3x2", []int{1, 2, 3}, []int{1, 3, 2}},
+		{"3D_broadcast_B", []int{4, 2, 3}, []int{1, 3, 2}},
+		{"4D_batch2x3_2x2_2x2", []int{2, 3, 2, 2}, []int{2, 3, 2, 2}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aSize := 1
+			for _, d := range tt.aShape {
+				aSize *= d
+			}
+			bSize := 1
+			for _, d := range tt.bShape {
+				bSize *= d
+			}
+
+			aData := make([]float32, aSize)
+			bData := make([]float32, bSize)
+			for i := range aData {
+				aData[i] = float32(i%7+1) * 0.1
+			}
+			for i := range bData {
+				bData[i] = float32(i%5+1) * 0.1
+			}
+
+			cpuA, _ := tensor.New[float32](tt.aShape, aData)
+			cpuB, _ := tensor.New[float32](tt.bShape, bData)
+			expected, err := cpuEng.MatMul(ctx, cpuA, cpuB)
+			if err != nil {
+				t.Fatalf("CPU MatMul: %v", err)
+			}
+
+			a, _ := tensor.New[float32](tt.aShape, aData)
+			b, _ := tensor.New[float32](tt.bShape, bData)
+
+			got, err := eng.MatMul(ctx, a, b)
+			if err != nil {
+				t.Fatalf("FP16 MatMul: %v", err)
+			}
+
+			gotData := got.Data()
+			expData := expected.Data()
+			if len(gotData) != len(expData) {
+				t.Fatalf("output size mismatch: got %d, want %d", len(gotData), len(expData))
+			}
+
+			var maxRelErr float64
+			for i := range gotData {
+				if expData[i] == 0 {
+					continue
+				}
+				relErr := math.Abs(float64(gotData[i]-expData[i])) / math.Abs(float64(expData[i]))
+				if relErr > maxRelErr {
+					maxRelErr = relErr
+				}
+			}
+
+			// FP16 has limited precision; allow up to 5% relative error.
+			if maxRelErr > 0.05 {
+				t.Errorf("max relative error %.4f exceeds threshold 0.05", maxRelErr)
+			}
+		})
+	}
+}
