@@ -407,11 +407,13 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 
 	// Check for Q4_K quantized storage on A.
 	if qs, ok := any(a.GetStorage()).(*tensor.Q4KStorage); ok {
+		e.logger.Warn("[Q4K-DIAG] MatMul: Q4_K storage on A", "aShape", fmt.Sprintf("%v", a.Shape()), "bShape", fmt.Sprintf("%v", b.Shape()))
 		return e.matMulQ4K(ctx, qs, a, b, dst...)
 	}
 
 	// Check for Q4_K quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q4KStorage); ok {
+		e.logger.Warn("[Q4K-DIAG] MatMul: Q4_K storage on B", "aShape", fmt.Sprintf("%v", a.Shape()), "bShape", fmt.Sprintf("%v", b.Shape()))
 		return e.matMulQ4KBWeight(ctx, a, qs, b, dst...)
 	}
 
@@ -943,11 +945,13 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 	bShape := b.Shape()
 
 	if len(aShape) < 2 || len(bShape) < 2 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (ndim < 2)", "aShape", fmt.Sprintf("%v", aShape), "bShape", fmt.Sprintf("%v", bShape))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
 	// Only handle unbatched 2D for now.
 	if len(aShape) > 2 || len(bShape) > 2 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (batched >2D)", "aShape", fmt.Sprintf("%v", aShape), "bShape", fmt.Sprintf("%v", bShape))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
@@ -957,6 +961,7 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 
 	// K must be a multiple of 256 for Q4_K super-blocks.
 	if k%256 != 0 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (K not multiple of 256)", "K", fmt.Sprintf("%d", k), "M", fmt.Sprintf("%d", m), "N", fmt.Sprintf("%d", n))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
@@ -966,19 +971,23 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 
 		var devW unsafe.Pointer
 		var freeW func()
+		gpuPreloaded := false
 		if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 			devW = ptr
 			freeW = func() {}
+			gpuPreloaded = true
 		} else {
 			rawBytes := qs.RawBytes()
 			var err error
 			devW, err = e.pool.Alloc(e.deviceID, len(rawBytes))
 			if err != nil {
+				e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (GPU alloc failed for weights)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k))
 				return e.cpu.MatMul(ctx, a, b, dst...)
 			}
 			freeW = func() { e.pool.Free(e.deviceID, devW, len(rawBytes)) }
 			if err := e.runtime.Memcpy(devW, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
 				freeW()
+				e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (H2D upload failed)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k))
 				return e.cpu.MatMul(ctx, a, b, dst...)
 			}
 		}
@@ -986,6 +995,7 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 
 		devX, cleanupX, err := getDevicePtr(e, b)
 		if err != nil {
+			e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (getDevicePtr failed for x)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k))
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 		defer cleanupX()
@@ -994,12 +1004,14 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 		cSize := m * f32Size
 		devY, err := e.pool.Alloc(e.deviceID, cSize)
 		if err != nil {
+			e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (GPU alloc failed for output)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k))
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		e.logger.Debug("MatMul: fused GEMV Q4_K dispatch", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k))
+		e.logger.Warn("[Q4K-DIAG] matMulQ4K: fused GEMV Q4_K GPU path", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k), "gpuPreloaded", fmt.Sprintf("%v", gpuPreloaded))
 		if err := e.kernels.GemvQ4KF32(devW, devX, devY, m, k, e.stream); err != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
+			e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (kernel launch failed)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k), "err", err.Error())
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
@@ -1007,6 +1019,7 @@ func (e *GPUEngine[T]) matMulQ4K(ctx context.Context, qs *tensor.Q4KStorage, a, 
 	}
 
 	// Non-GEMV: fall back to CPU for Q4_K.
+	e.logger.Warn("[Q4K-DIAG] matMulQ4K: CPU fallback (non-GEMV, n>1)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k), "N", fmt.Sprintf("%d", n))
 	return e.cpu.MatMul(ctx, a, b, dst...)
 }
 
@@ -1020,11 +1033,13 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 	bShape := b.Shape()
 
 	if len(aShape) < 2 || len(bShape) < 2 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (ndim < 2)", "aShape", fmt.Sprintf("%v", aShape), "bShape", fmt.Sprintf("%v", bShape))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
 	// B must be 2D (virtual-transposed weight).
 	if len(bShape) > 2 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (B >2D)", "aShape", fmt.Sprintf("%v", aShape), "bShape", fmt.Sprintf("%v", bShape))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
@@ -1038,6 +1053,7 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 
 	// K must be a multiple of 256 for Q4_K super-blocks.
 	if k%256 != 0 {
+		e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (K not multiple of 256)", "K", fmt.Sprintf("%d", k), "M", fmt.Sprintf("%d", m), "N", fmt.Sprintf("%d", n))
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
 
@@ -1055,26 +1071,32 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 
 		var devQ4K unsafe.Pointer
 		var freeQ4K func()
+		gpuPreloaded := false
 		if ptr, _, _ := qs.GPUPtr(); ptr != nil {
 			devQ4K = ptr
 			freeQ4K = func() {}
+			gpuPreloaded = true
 		} else {
 			rawBytes := qs.RawBytes()
 			var err error
 			devQ4K, err = e.pool.Alloc(e.deviceID, len(rawBytes))
 			if err != nil {
+				e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (GPU alloc failed for weights)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k))
 				return e.cpu.MatMul(ctx, a, b, dst...)
 			}
 			freeQ4K = func() { e.pool.Free(e.deviceID, devQ4K, len(rawBytes)) }
 			if err := e.runtime.Memcpy(devQ4K, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
 				freeQ4K()
+				e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (H2D upload failed)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k))
 				return e.cpu.MatMul(ctx, a, b, dst...)
 			}
+			e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: per-call H2D upload (not preloaded)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k), "bytes", fmt.Sprintf("%d", len(rawBytes)))
 		}
 		defer freeQ4K()
 
 		devX, cleanupX, err := getDevicePtr(e, a)
 		if err != nil {
+			e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (getDevicePtr failed for x)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k))
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 		defer cleanupX()
@@ -1083,12 +1105,14 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 		cSize := n * f32Size
 		devY, err := e.pool.Alloc(e.deviceID, cSize)
 		if err != nil {
+			e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (GPU alloc failed for output)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k))
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
-		e.logger.Debug("MatMul: fused GEMV Q4_K dispatch (B-weight)", "M", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k))
+		e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: fused GEMV Q4_K GPU path", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k), "gpuPreloaded", fmt.Sprintf("%v", gpuPreloaded))
 		if err := e.kernels.GemvQ4KF32(devQ4K, devX, devY, n, k, e.stream); err != nil {
 			e.pool.Free(e.deviceID, devY, cSize)
+			e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (kernel launch failed)", "N", fmt.Sprintf("%d", n), "K", fmt.Sprintf("%d", k), "err", err.Error())
 			return e.cpu.MatMul(ctx, a, b, dst...)
 		}
 
@@ -1097,6 +1121,7 @@ func (e *GPUEngine[T]) matMulQ4KBWeight(ctx context.Context, a *tensor.TensorNum
 	}
 
 	// Non-GEMV: fall back to CPU for Q4_K.
+	e.logger.Warn("[Q4K-DIAG] matMulQ4KBWeight: CPU fallback (non-GEMV, m>1)", "M", fmt.Sprintf("%d", m), "K", fmt.Sprintf("%d", k), "N", fmt.Sprintf("%d", n))
 	return e.cpu.MatMul(ctx, a, b, dst...)
 }
 
