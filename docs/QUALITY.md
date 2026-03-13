@@ -117,6 +117,19 @@ Graph capture fails (D2H in GQA). Falls back to per-op. No speedup.
 FP16 path crashes due to null function pointer in FP32-to-FP16 conversion
 kernel (purego symbol lookup failure). Needs debugging.
 
+### FP8/FP16 Inference Update (2026-03-13)
+
+| Precision | Status | tok/s |
+|-----------|--------|-------|
+| FP32 | Working | 122.08 |
+| FP16 | GQA storage mismatch | N/A |
+| FP8 | GQA storage mismatch | N/A |
+
+Root cause of prior SIGSEGV: stale `libkernels.so` in project root missing
+FP16 conversion symbols. Fixed by updating the .so. Both FP16 and FP8 now
+fail with a GQA tensor storage length mismatch (`storage length (1536) does
+not match tensor size (6144)`), indicating a bug in the GQA FP16 compute path.
+
 ## Linting
 
 - golangci-lint v2 with project .golangci.yml

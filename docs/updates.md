@@ -1745,3 +1745,77 @@ Exit code 0, no output. No new issues introduced by the FP8 inference path work.
 
 - No new `unsafe.Pointer` warnings from FP8 additions.
 - Pre-existing `unsafe.Pointer` warnings in `internal/cuda/` purego bindings remain (documented in T405.5 above) but are not in the packages checked here since `internal/cuda/` (non-kernels) was not in scope for E406.
+
+---
+
+# S406.6.1 FP8 Parity and Benchmark on DGX Spark
+
+Date: 2026-03-13
+
+## Summary
+
+Attempted FP8 (and FP16) inference benchmark on DGX Spark GB10. FP8 and FP16
+inference paths both fail at runtime due to a GQA tensor storage length
+mismatch. FP32 baseline confirmed working at ~122 tok/s.
+
+## FP32 Baseline (Working)
+
+| Metric | Value |
+|--------|-------|
+| Precision | FP32 |
+| Model | Gemma 3 GGUF |
+| Tokens | 50 (temp=0) |
+| Throughput | 122.08 tok/s |
+| Output | Coherent, deterministic |
+
+FP32 output (temp=0, 50 tokens):
+> not to be to be to be. This is a simple and beautiful statement that is
+> often used in the philosophy of the "Zen" It is a reminder to be present
+> and to be aware of the moment. It is a reminder to
+
+## FP8 and FP16 Status: Blocked
+
+Both FP8 and FP16 inference fail with the same error during prefill:
+
+```
+generate error: prefill forward: node[3] GroupedQueryAttention:
+  storage length (1536) does not match tensor size (6144)
+  (input shapes: [[1 6 1152]], dep ops: [RMSNorm])
+```
+
+This is a pre-existing bug in the GQA layer's FP16 code path (shared by both
+FP16 and FP8 dtypes). The GQA forward pass creates an intermediate tensor with
+an incorrect storage length — 1536 elements instead of 6144 (a 4x ratio
+suggesting a bytes-vs-elements confusion in the FP16 tensor reshape).
+
+## Issues Found and Fixed
+
+### 1. Stale libkernels.so on DGX (Fixed)
+
+The root `~/zerfoo/libkernels.so` was outdated and missing `launch_f32_to_fp16`
+and `launch_fp16_to_f32` symbols. Since `DlopenKernels()` searches
+`"./libkernels.so"` first, it loaded the old .so. FP16 conversion calls hit a
+null function pointer (SIGSEGV at PC=0x0).
+
+**Fix**: Copied the updated .so from `internal/cuda/kernels/libkernels.so` to
+the project root. This resolved the SIGSEGV and unblocked the GQA error.
+
+### 2. FP8 cublasLt layout types (Fixed locally, not pushed)
+
+In `compute/gpu_fp8.go`, `ltMatmulFP8()` hardcoded both matrix layouts as
+`CudaR8F_E4M3`, but in mixed-precision mode one input is FP8 and the other is
+FP16. Added `aType` and `bType` parameters so each layout uses the correct
+CUDA data type.
+
+### 3. GQA storage length mismatch (Blocking, not fixed)
+
+The GroupedQueryAttention layer produces a storage-length error when dtype is
+FP16 or FP8. This occurs on both `main` and `feat/fp8-inference-path` branches.
+The error suggests an internal tensor creation in GQA's FP16 compute path
+confuses element counts with byte counts.
+
+## Assessment
+
+- FP8 parity: **Cannot assess** — blocked by GQA bug
+- FP8 throughput: **Cannot measure** — blocked by GQA bug
+- Acceptance criteria: **Not met** — requires fixing the GQA FP16 path first

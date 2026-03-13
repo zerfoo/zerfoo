@@ -131,7 +131,7 @@ func (e *GPUEngine[T]) matMulFP8(
 		return nil, fmt.Errorf("matMulFP8: alloc output: %w", err)
 	}
 
-	if err := ltMatmulFP8(ltH, m, n, k, devA, scaleAPtr, fp16B, scaleBPtr, devC, e.stream); err != nil {
+	if err := ltMatmulFP8(ltH, m, n, k, devA, scaleAPtr, cublas.CudaR8F_E4M3, fp16B, scaleBPtr, cublas.CudaR16F, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8: cublasLtMatmul: %w", err)
 	}
@@ -258,7 +258,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	}
 
 	// cublasLtMatmul: A_fp16 [m,k] x B_fp8 [k,n] -> C_f32 [m,n]
-	if err := ltMatmulFP8(ltH, m, n, k, fp16A, scaleAPtr, devB, scaleBPtr, devC, e.stream); err != nil {
+	if err := ltMatmulFP8(ltH, m, n, k, fp16A, scaleAPtr, cublas.CudaR16F, devB, scaleBPtr, cublas.CudaR8F_E4M3, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8BWeight: cublasLtMatmul: %w", err)
 	}
@@ -269,6 +269,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 // ltMatmulFP8 performs C = A * B using cublasLtMatmul with FP8/FP16 mixed inputs.
 // A is [m,k], B is [k,n], C is [m,n] in FP32 output.
 // aPtr and bPtr are device pointers to the input matrices.
+// aType and bType specify the CUDA data types (CudaR8F_E4M3 or CudaR16F).
 // scaleA and scaleB are device pointers to per-tensor float32 scale factors.
 // For FP8 inputs, the scale is the absmax scale; for FP16 inputs, scale = 1.0.
 //
@@ -281,8 +282,8 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 func ltMatmulFP8(
 	ltH *cublas.LtHandle,
 	m, n, k int,
-	aPtr unsafe.Pointer, scaleA unsafe.Pointer,
-	bPtr unsafe.Pointer, scaleB unsafe.Pointer,
+	aPtr unsafe.Pointer, scaleA unsafe.Pointer, aType cublas.CudaDataType,
+	bPtr unsafe.Pointer, scaleB unsafe.Pointer, bType cublas.CudaDataType,
 	cPtr unsafe.Pointer,
 	stream gpuapi.Stream,
 ) error {
@@ -309,22 +310,16 @@ func ltMatmulFP8(
 	//   cuBLAS-B = A_rm[m,k] -> col-major [k,m], leading dim = k
 	//   cuBLAS-C = C_rm[m,n] -> col-major [n,m], leading dim = n
 
-	// Both inputs may be either FP8 or FP16. We need to determine the types.
-	// In matMulFP8: A is FP8, B is FP16 -> cuBLAS-A (our B) is FP16, cuBLAS-B (our A) is FP8
-	// In matMulFP8BWeight: A is FP16, B is FP8 -> cuBLAS-A (our B) is FP8, cuBLAS-B (our A) is FP16
-	// We don't know which is which here, so we use FP8 for both A and B in the layout.
-	// cublasLt supports mixed FP8/FP16 with CUDA_R_8F_E4M3 type.
-
 	// Create matrix layouts (column-major after row/col swap).
-	// cuBLAS-A (our B): [n, k], ld = n
-	layoutA, err := cublas.CreateMatrixLayout(cublas.CudaR8F_E4M3, n, k, n)
+	// cuBLAS-A (our B): [n, k], ld = n — use bType since cuBLAS-A = our B
+	layoutA, err := cublas.CreateMatrixLayout(bType, n, k, n)
 	if err != nil {
 		return fmt.Errorf("layout A: %w", err)
 	}
 	defer layoutA.Destroy()
 
-	// cuBLAS-B (our A): [k, m], ld = k
-	layoutB, err := cublas.CreateMatrixLayout(cublas.CudaR8F_E4M3, k, m, k)
+	// cuBLAS-B (our A): [k, m], ld = k — use aType since cuBLAS-B = our A
+	layoutB, err := cublas.CreateMatrixLayout(aType, k, m, k)
 	if err != nil {
 		return fmt.Errorf("layout B: %w", err)
 	}
