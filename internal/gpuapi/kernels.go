@@ -45,6 +45,11 @@ type KernelRunner interface {
 	// dataOffset is the byte offset from A_q4 to the packed data region.
 	GemmQ4F32(aQ4, b, c unsafe.Pointer, m, k, n, dataOffset int, stream Stream) error
 
+	// GemvQ4KF32 performs Q4_K fused dequant-GEMV: y = dequant(W_q4k) * x.
+	// W_q4k is raw Q4_K super-blocks for matrix [M, K]. x is [K] float32.
+	// y is [M] float32. K must be a multiple of 256. Batch=1 only.
+	GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, stream Stream) error
+
 	// GemmQ8F32 performs Q8_0 dequant-GEMM: C = dequant(A_q8) * B.
 	// A_q8 is packed Q8_0 blocks (36 bytes per 32 values), B is [K,N] float32, C is [M,N] float32.
 	GemmQ8F32(aQ8, b, c unsafe.Pointer, m, k, n int, stream Stream) error
