@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"log"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cublas"
@@ -131,6 +132,10 @@ func (e *GPUEngine[T]) matMulFP8(
 		return nil, fmt.Errorf("matMulFP8: alloc output: %w", err)
 	}
 
+	scaleAVal := fs.Scale()
+	log.Printf("[FP8 diag] matMulFP8: m=%d n=%d k=%d scaleA=%.6g (fp8 weight) scaleB=%.6g (fp16 act) scaleAPtr=%v scaleBPtr=%v",
+		m, n, k, scaleAVal, scaleBVal, scaleAPtr, scaleBPtr)
+
 	if err := ltMatmulFP8(ltH, m, n, k, devA, scaleAPtr, cublas.CudaR8F_E4M3, fp16B, scaleBPtr, cublas.CudaR16F, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8: cublasLtMatmul: %w", err)
@@ -258,6 +263,10 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	}
 
 	// cublasLtMatmul: A_fp16 [m,k] x B_fp8 [k,n] -> C_f32 [m,n]
+	scaleBVal := fs.Scale()
+	log.Printf("[FP8 diag] matMulFP8BWeight: m=%d n=%d k=%d scaleA=%.6g (fp16 act) scaleB=%.6g (fp8 weight) scaleAPtr=%v scaleBPtr=%v",
+		m, n, k, scaleAVal, scaleBVal, scaleAPtr, scaleBPtr)
+
 	if err := ltMatmulFP8(ltH, m, n, k, fp16A, scaleAPtr, cublas.CudaR16F, devB, scaleBPtr, cublas.CudaR8F_E4M3, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8BWeight: cublasLtMatmul: %w", err)
@@ -352,6 +361,9 @@ func ltMatmulFP8(
 	if len(results) == 0 {
 		return fmt.Errorf("no suitable cublasLt algorithm found for FP8 matmul")
 	}
+
+	log.Printf("[FP8 diag] ltMatmulFP8: m=%d n=%d k=%d aType=%d bType=%d scaleA=%v scaleB=%v aPtr=%v bPtr=%v",
+		m, n, k, aType, bType, scaleA, scaleB, aPtr, bPtr)
 
 	// alpha = 1.0, beta = 0.0 (host scalars, FP32).
 	alpha := float32(1.0)
