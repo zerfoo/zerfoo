@@ -73,13 +73,13 @@ tables and correctness report.
 | D32 | Fused dequant+GEMV Q4_K validation | Halve Q4 memory bandwidth |
 | D33 | Kernel optimization benchmarks | Verify Wave 8 improvements on DGX |
 | D34 | BFloat16/Float16 inference path | 2x throughput potential via half-precision compute |
+| D35 | FP8 inference path | 4x FP32 throughput on Blackwell via 8-bit compute |
 
 ### Out of Scope
 
 - New model architectures.
 - Training optimization.
 - Multi-GPU / distributed inference.
-- FP8 inference (future, after BF16/FP16 is validated).
 - Managed memory optimization (known 13% regression, needs cudaMemPrefetchAsync research first).
 
 ---
@@ -274,6 +274,98 @@ bottleneck on LPDDR5x).
 - [ ] T405.5 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S405.4.1.
 
+### E406: FP8 Inference Path
+
+Note: GB10 Blackwell (sm_121) supports FP8 at 4x FP32 throughput. Two
+FP8 formats exist: E4M3 (4-bit exponent, 3-bit mantissa, better for weights)
+and E5M2 (5-bit exponent, 2-bit mantissa, better for activations). The
+float8 package (github.com/zerfoo/float8) provides Go FP8 types. FP8
+inference requires per-tensor scaling factors to compensate for the very
+limited dynamic range (E4M3: [-448, 448], E5M2: [-57344, 57344]).
+
+cuBLAS FP8 support uses cublasLtMatmul (not cublasGemmEx). This requires
+wrapping the cuBLASLt (lightweight) API via purego. FP8 MatMul typically
+uses FP16 or FP32 accumulation to maintain output precision.
+
+This epic depends on E405 (BF16/FP16) because FP8 compute pipelines use
+FP16 accumulation and the FP16 kernel infrastructure must be in place first.
+
+- [ ] T406.1 Add FP8 type support to tensor package  Owner: TBD  Est: 2h
+  - Add FP8E4M3Storage and FP8E5M2Storage to tensor/storage.go using the
+    float8 package types.
+  - Support Len, Slice, Set, DeviceType for both formats.
+  - Add conversion functions: FP32 to FP8E4M3 (with per-tensor scale),
+    FP8E4M3 to FP32 (with per-tensor scale).
+  - File: tensor/storage.go or tensor/fp8_storage.go.
+  - Acceptance: go test passes. Round-trip conversion FP32->FP8->FP32
+    has max rel error < 0.1 (FP8 is very lossy).
+  - Dependencies: none.
+
+- [ ] T406.2 Add FP8 weight quantization to GGUF loader  Owner: TBD  Est: 2h
+  - Add --fp8 flag to convert F32 or BF16 weights to FP8E4M3 at load time.
+  - Compute per-tensor absmax scale factor: scale = max(abs(tensor)) / 448.
+  - Store scale factors alongside quantized weights.
+  - File: model/gguf/loader.go.
+  - Acceptance: Model loads with FP8 weights. Memory usage is 1/4 of F32.
+  - Dependencies: T406.1.
+
+- [ ] T406.3 Create purego wrappers for cublasLt API  Owner: TBD  Est: 4h
+  - Wrap via purego dlopen of libcublasLt.so:
+    cublasLtCreate, cublasLtDestroy, cublasLtMatmulDescCreate,
+    cublasLtMatmulDescSetAttribute, cublasLtMatrixLayoutCreate,
+    cublasLtMatmul, cublasLtMatmulPreferenceCreate,
+    cublasLtMatmulAlgoGetHeuristic.
+  - Add cublasLt.Available() runtime guard.
+  - Follow the established purego dlopen pattern from internal/cuda/runtime_purego.go.
+  - File: internal/cublas/cublaslt_purego.go.
+  - Acceptance: Wrappers compile without CGo. Available() returns true on DGX.
+  - Dependencies: none.
+
+- [ ] T406.4 Wire FP8 MatMul through cublasLtMatmul  Owner: TBD  Est: 4h
+  - When weights are FP8E4M3 and activations are FP16 or FP32:
+    use cublasLtMatmul with CUDA_R_8F_E4M3 input type, CUDA_R_16F or
+    CUDA_R_32F compute type, and per-tensor scaling via alpha/beta params.
+  - Handle the matmul descriptor setup: set scale factors via
+    cublasLtMatmulDescSetAttribute (CUBLASLT_MATMUL_DESC_A_SCALE_POINTER).
+  - Add dispatch logic in GPUEngine.MatMul to detect FP8 storage.
+  - File: compute/gpu_engine.go, internal/cublas/cublaslt_purego.go.
+  - Acceptance: FP8 weights x FP16 activations use cublasLtMatmul. Output
+    correct (max rel error < 0.05 vs FP32 reference due to FP8 quantization).
+  - Dependencies: T406.2, T406.3, E405 (FP16 kernels).
+
+- [ ] T406.5 Add FP8 element-wise kernel variants  Owner: TBD  Est: 3h
+  - Add __nv_fp8_e4m3 kernel variants for element-wise ops where beneficial.
+  - For most ops (RMSNorm, Softmax), keep FP16/FP32 accumulation and only
+    use FP8 for weight storage, not compute. The primary gain is from
+    reduced memory reads, not faster compute.
+  - Add dequantize-on-load kernel: reads FP8 from global memory, converts
+    to FP16 in registers, computes in FP16.
+  - File: internal/cuda/kernels/fp8_ops.cu.
+  - Acceptance: Kernels compile for sm_121. Parity with FP16 path.
+  - Dependencies: T406.1, T405.3 (FP16 kernels).
+
+- [ ] T406.6 Add full FP8 inference path  Owner: TBD  Est: 4h
+  - Enable running inference with FP8 weights: load FP8, dequantize to
+    FP16 for element-wise ops, use cublasLtMatmul for MatMul.
+  - Add --dtype=fp8 flag to bench_tps.
+  - Compute and cache per-tensor scale factors during model loading.
+  - File: compute/gpu_engine.go, generate/generator.go.
+  - Acceptance: bench_tps --dtype=fp8 produces coherent output. Throughput
+    measured and documented.
+  - Dependencies: T406.4, T406.5.
+
+- [ ] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h
+  - Compare output quality: FP32 vs BF16 vs FP16 vs FP8 at temp=0 for 50 tokens.
+  - Measure tok/s for each precision. Document results.
+  - FP8 output may diverge more from FP32 due to quantization noise.
+  - Acceptance: FP8 output coherent (may differ from FP32 in word choice
+    but must be grammatically valid and on-topic). Throughput improvement
+    documented. Expected: ~2-4x over FP32 from quartered memory bandwidth.
+  - Dependencies: T406.6.
+
+- [ ] T406.7 Run go vet on modified packages  Owner: TBD  Est: 15m
+  - Dependencies: S406.6.1.
+
 ---
 
 ## 4. Parallel Work
@@ -285,20 +377,25 @@ bottleneck on LPDDR5x).
 | Track C: Q4_K Validation | E403 | Independent. Can run parallel with Track B. |
 | Track D: Kernel Benchmarks | E404 | Independent. Can run parallel with all. |
 | Track E: BF16/FP16 | E405 | Independent. Can run parallel with Tracks B-D. |
+| Track F: FP8 | E406 | Depends on E405 (FP16 kernels). Last in sequence. |
 
 Sync points:
 - After Track A (E401): re-baseline. All subsequent work builds on recovered perf.
 - After Track B (T402.1-T402.4): T402.5 (enable graph) unblocks.
 - After Track E (T405.1-T405.3): T405.4 (full FP16 path) unblocks.
-- After all tracks: final tok/s measurement against Ollama.
+- After Track E complete: Track F (FP8) unblocks.
+- After all tracks: final tok/s measurement across all precisions.
 
 Maximum parallelism:
 - Wave 1: T401.1 (regression bisect) + T402.1-T402.4 (D2H elimination, 4 parallel)
   + T403.1 (Q4_K debug) + T404.1 (kernel rebuild). T401.1 is highest priority.
 - Wave 2: T401.2 (fix regression) + T402.5 (enable graph) + T403.2 (fix Q4_K)
   + T404.2 (benchmark kernels) + T405.1 (BF16 loading) + T405.3 (FP16 kernels).
-- Wave 3: T405.2 (BF16 MatMul) + T405.4 (full FP16 path) + verification tasks.
-- Wave 4: Final benchmarks (S405.4.1) + all remaining verification.
+- Wave 3: T405.2 (BF16 MatMul) + T405.4 (full FP16 path) + T406.1 (FP8 types)
+  + T406.3 (cublasLt wrappers) + verification tasks.
+- Wave 4: T406.2 (FP8 quantization) + T406.4 (FP8 MatMul) + T406.5 (FP8 kernels)
+  + S405.4.1 (BF16/FP16 benchmark).
+- Wave 5: T406.6 (full FP8 path) + S406.6.1 (FP8 benchmark) + final verification.
 
 ---
 
@@ -311,6 +408,7 @@ Maximum parallelism:
 | M80: Q4_K fused GEMV validated | E403 | Q4_K path >= Q4_0 path in tok/s |
 | M81: Surpass Ollama | E401-E404 | bench_tps > 197.21 tok/s |
 | M82: Half-precision inference | E405 | BF16/FP16 path produces coherent output with measured speedup |
+| M83: FP8 inference | E406 | FP8 path produces coherent output with ~2-4x throughput over FP32 |
 
 ---
 
@@ -324,6 +422,9 @@ Maximum parallelism:
 | R404 | Register tuning causes subtle numerical differences | Incorrect output | Low | Run parity tests before and after on DGX |
 | R405 | FP16 precision loss in reductions causes incoherent output | Bad quality | Medium | Use FP32 accumulation in RMSNorm/Softmax. Compare output with FP32 reference. |
 | R406 | BF16 GGUF format not standardized | Cannot load BF16 models | Low | Convert F32 to BF16 at load time as fallback. |
+| R407 | FP8 quantization noise too high for small models | Incoherent output | Medium | Per-channel scaling instead of per-tensor. Fall back to FP16 if quality degrades. |
+| R408 | cublasLt API more complex than cublasGemmEx | Longer implementation | Low | API is well-documented. Follow NVIDIA samples for descriptor setup. |
+| R409 | FP8 E4M3 dynamic range insufficient for outlier activations | Numerical overflow | Medium | Use E5M2 for activations, E4M3 for weights. Implement absmax clipping. |
 
 ---
 
@@ -355,6 +456,14 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-13 (Add FP8 Epic)
+
+Added E406: FP8 inference path (9 tasks: T406.1-T406.7, S406.6.1).
+GB10 Blackwell supports FP8 (E4M3/E5M2) at 4x FP32 throughput. Requires
+cublasLt purego wrappers (new API), per-tensor scaling factors, and FP16
+accumulation. Depends on E405 (BF16/FP16 path must be complete first).
+Added Track F, M83 milestone, R407-R409 risks.
 
 ### Change Summary -- 2026-03-13 (Add BF16/FP16 Epic)
 
