@@ -1851,3 +1851,49 @@ Commit: f261aa1, merged into main at 70fb2c4.
 - Push main to DGX, rebuild libkernels.so
 - Re-run `bench_tps --dtype=fp16` and `bench_tps --dtype=fp8` benchmarks
 - FP16/FP8 paths should now run without crashing, enabling real throughput measurements
+
+---
+
+# S406.6.1 FP8/FP16 Benchmark Results (Post-GQA Fix)
+
+Date: 2026-03-13
+Model: gemma3-gguf (Gemma 3 Q4_K_M)
+Device: DGX Spark GB10 (CUDA)
+Commit: 2944f0a (main)
+libkernels.so: rebuilt with sm_75
+
+## Results
+
+| Dtype | Throughput | Arena Used | Pool Misses | Output Quality |
+|-------|-----------|------------|-------------|----------------|
+| F32   | 149.52 tok/s | 7.7 MB   | 0           | Coherent       |
+| FP16  | 124.50 tok/s | 18.5 MB  | 0           | Coherent (identical to F32) |
+| FP8   | 1.45 tok/s   | 2011.0 MB | 810        | Degraded (repetitive) |
+
+## Analysis
+
+### FP16 (124.50 tok/s -- 17% slower than F32)
+- GQA fix works: no crash, correct output identical to F32.
+- Slowdown caused by F32-to-FP16 and FP16-to-F32 conversion round-trips on every op.
+- Arena uses 2.4x more memory (18.5 vs 7.7 MB) due to temporary conversion buffers.
+- To improve: keep weights in FP16 natively (no per-op conversion), compute MatMul in FP16 directly.
+
+### FP8 (1.45 tok/s -- 100x slower than F32)
+- 1841 arena misses + 810 pool misses = massive GPU memory allocation thrashing.
+- Total GPU memory: ~5.3 GB (arena 2011 MB + pool 3285 MB) for a 1B parameter model.
+- Output is degenerate (repetitive loops), suggesting numerical issues or scale factor problems.
+- To improve: pre-allocate FP8 intermediate buffers, fix arena sizing, investigate scale propagation.
+
+### Baseline regression (149.52 vs earlier 183.79 tok/s)
+- F32 baseline dropped ~18% from earlier session measurements.
+- Possible causes: different model (gemma3 vs llama3), recompilation overhead, thermal throttling.
+- Need to re-test with same model for apples-to-apples comparison.
+
+## Assessment
+
+- S406.6.1 acceptance criteria: **Partially met**
+  - FP8 output coherent: **No** (degenerate output)
+  - Throughput improvement documented: **Yes** (no improvement -- regression)
+  - FP16 parity: **Yes** (identical output to F32)
+- Both FP16 and FP8 paths run end-to-end without crashing (GQA fix confirmed).
+- Performance optimization needed before either path can beat Ollama's 197.21 tok/s.
