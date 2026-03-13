@@ -1,3 +1,4 @@
-// Package rocblas provides low-level CGO bindings for the AMD rocBLAS library.
-// All functional code requires the "rocm" build tag and a working ROCm installation.
+// Package rocblas provides low-level bindings for the AMD rocBLAS library
+// using purego dlopen. No build tags required; use rocblas.Available() to
+// check runtime availability.
 package rocblas
