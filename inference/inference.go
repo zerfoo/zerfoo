@@ -421,8 +421,10 @@ type Message struct {
 
 // Response holds the result of a chat completion.
 type Response struct {
-	Content    string
-	TokensUsed int
+	Content          string
+	TokensUsed       int
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // Chat formats messages using the model's chat template and generates a response.
@@ -434,11 +436,16 @@ func (m *Model) Chat(ctx context.Context, messages []Message, opts ...GenerateOp
 		return Response{}, err
 	}
 
-	// Rough token count from the tokenizer.
-	ids, _ := m.tokenizer.Encode(prompt + result)
+	// Count prompt and completion tokens separately.
+	promptIDs, _ := m.tokenizer.Encode(prompt)
+	resultIDs, _ := m.tokenizer.Encode(result)
+	promptCount := len(promptIDs)
+	completionCount := len(resultIDs)
 	return Response{
-		Content:    result,
-		TokensUsed: len(ids),
+		Content:          result,
+		PromptTokens:     promptCount,
+		CompletionTokens: completionCount,
+		TokensUsed:       promptCount + completionCount,
 	}, nil
 }
 
@@ -674,6 +681,11 @@ func (m *Model) Config() ModelMetadata {
 // Info returns the registry info for this model.
 func (m *Model) Info() *registry.ModelInfo {
 	return m.info
+}
+
+// Tokenizer returns the model's tokenizer for token counting.
+func (m *Model) Tokenizer() tokenizer.Tokenizer {
+	return m.tokenizer
 }
 
 // parseDevice parses a device string like "cpu", "cuda", "cuda:0", or "cuda:1"
