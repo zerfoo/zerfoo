@@ -2137,34 +2137,37 @@ func (e *GPUEngine[T]) OneHot(ctx context.Context, input *tensor.TensorNumeric[i
 }
 
 func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], shape []int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// For GPU-resident tensors, reshape is a zero-copy view change.
-	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && isFloat32[T]() {
-		// Resolve -1 dimension.
-		currentSize := a.Size()
-		inferredShape := make([]int, len(shape))
-		copy(inferredShape, shape)
-		inferIdx := -1
-		knownSize := 1
-		for i, d := range inferredShape {
-			if d == -1 {
-				inferIdx = i
-			} else {
-				knownSize *= d
-			}
+	// Resolve -1 dimension and verify size.
+	currentSize := a.Size()
+	inferredShape := make([]int, len(shape))
+	copy(inferredShape, shape)
+	inferIdx := -1
+	knownSize := 1
+	for i, d := range inferredShape {
+		if d == -1 {
+			inferIdx = i
+		} else {
+			knownSize *= d
 		}
-		if inferIdx >= 0 {
-			inferredShape[inferIdx] = currentSize / knownSize
-		}
-		// Verify size matches.
-		newSize := 1
-		for _, d := range inferredShape {
-			newSize *= d
-		}
-		if newSize != currentSize {
-			return e.cpu.Reshape(ctx, a, shape, dst...)
-		}
+	}
+	if inferIdx >= 0 {
+		inferredShape[inferIdx] = currentSize / knownSize
+	}
+	newSize := 1
+	for _, d := range inferredShape {
+		newSize *= d
+	}
+
+	// Float16Storage: zero-copy reshape (same GPU pointer, new shape).
+	if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok && newSize == currentSize {
+		return tensor.NewWithStorage[T](inferredShape, any(fs).(tensor.Storage[T]))
+	}
+
+	// GPUStorage[T]: zero-copy reshape.
+	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && isFloat32[T]() && newSize == currentSize {
 		return tensor.NewWithStorage[T](inferredShape, gs.View(gs.Len()))
 	}
+
 	return e.cpu.Reshape(ctx, a, shape, dst...)
 }
 
