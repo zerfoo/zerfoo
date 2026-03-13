@@ -131,7 +131,7 @@ results.
 
 ### E302: CUDA Graph Capture and Replay
 
-- [ ] T302.1 Enable CUDA graph capture in generator.go  Owner: TBD  Est: 2h
+- [x] T302.1 Enable CUDA graph capture in generator.go  Owner: task-T302.1  Completed: 2026-03-13
   - Uncomment the CUDA graph executor wiring in compileGraph(). The D2H copy
     elimination in E301 makes this safe.
   - File: generate/generator.go, lines 166-175.
@@ -162,7 +162,7 @@ results.
 
 ### E303: Unified Memory Exploitation
 
-- [ ] T303.1 Use cudaMallocManaged for arena allocator on GB10  Owner: TBD  Est: 2h
+- [x] T303.1 Use cudaMallocManaged for arena allocator on GB10  Owner: task-T303  Completed: 2026-03-13
   - Detect NVLink-C2C / unified memory hardware at startup. When available,
     switch the arena allocator from cudaMalloc to cudaMallocManaged.
   - This eliminates all explicit H2D copies for intermediate tensors because
@@ -171,7 +171,7 @@ results.
   - Acceptance: Arena uses managed memory on GB10. No functional regression.
   - Dependencies: none.
 
-- [ ] T303.2 Use cudaMallocManaged for model weights on GB10  Owner: TBD  Est: 2h
+- [x] T303.2 Use cudaMallocManaged for model weights on GB10  Owner: task-T303  Completed: 2026-03-13
   - When loading model weights, allocate with managed memory instead of
     cudaMalloc + cudaMemcpy H2D. Weights become accessible from both CPU
     and GPU without explicit copies.
@@ -195,7 +195,7 @@ results.
 
 ### E304: Fused Dequant+GEMV Kernel
 
-- [ ] T304.1 Write CUDA fused dequant+GEMV kernel for Q4_K_M  Owner: TBD  Est: 4h
+- [x] T304.1 Write CUDA fused dequant+GEMV kernel for Q4_K_M  Owner: task-T304.1  Completed: 2026-03-13
   - Read Q4_K_M blocks, dequantize in registers, multiply by activation
     vector, accumulate in F32. Single-token decode (batch=1).
   - This is the highest-impact single kernel optimization: dequantize is the
@@ -242,7 +242,7 @@ results.
   - Acceptance: curl GET /v1/models/:id returns model detail.
   - Dependencies: none.
 
-- [ ] T305.4 Add OpenAPI 3.1 specification YAML  Owner: TBD  Est: 2h
+- [x] T305.4 Add OpenAPI 3.1 specification YAML  Owner: task-T305.4  Completed: 2026-03-13
   - Write serve/openapi.yaml documenting all /v1/* endpoints with request
     and response schemas. Follow OpenAI API spec structure.
   - Acceptance: Validates with swagger-cli validate.
@@ -298,7 +298,7 @@ results.
 
 ### E204: GPU Gather Kernel
 
-- [ ] T204.1 Write CUDA gather kernel for embedding lookups  Owner: TBD  Est: 2h
+- [x] T204.1 Write CUDA gather kernel for embedding lookups  Owner: task-T204.1  Completed: 2026-03-13
   - Add gather.cu kernel or extend existing. Support int32 and int64 indices.
   - Each thread block handles one index, copies embedding_dim elements.
   - Acceptance: Kernel compiles for sm_75 and sm_121.

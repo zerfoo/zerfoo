@@ -615,3 +615,75 @@ Date: 2026-03-13
 | go build ./... | PASS |
 | go vet ./... | PASS (pre-existing unsafe.Pointer warnings only) |
 | All tests | PASS (pre-existing TestBatchGenerate race unrelated) |
+
+---
+
+# Wave 2: CUDA Graph + Fused GEMV + Unified Memory + OpenAPI Spec + Gather
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates in isolated worktrees)
+
+## Tasks Completed
+
+### T302.1: CUDA Graph Capture Enabled (Critical Path)
+
+Re-enabled CUDA graph executor wiring in `compileGraph()`. When StreamProvider
+has a non-nil stream and `cuda.Available() && cuda.Lib().GraphAvailable()`, a
+CUDAGraphExecutor is created with 2 warmup runs. Added table-driven test.
+- Commit: 9db1236
+
+### T304.1: Fused Dequant+GEMV Kernel for Q4_K_M
+
+New `gemv_q4k.cu` kernel reads Q4_K super-blocks (144 bytes, 256 values),
+dequantizes in registers, multiplies by activation vector. One warp per row,
+activation in shared memory, warp shuffle reduction. Includes CGo + purego
+dispatch and parity tests (max rel error < 1e-4).
+- Commit: 2fb1921
+- Note: GPU engine dispatch wiring (T304.2) is the follow-up task.
+
+### T303.1 + T303.2: Unified Memory on GB10
+
+- Arena allocator detects managed memory via `cudaDeviceGetAttribute` (attrs 83+89)
+  and uses `cudaMallocManaged` when available. Falls back to `cudaMalloc` otherwise.
+- Weight uploads use direct CPU `copy()` on managed memory (zero-copy on shared
+  LPDDR5x) instead of `cudaMemcpy H2D`.
+- 8 new tests covering detection, allocation, round-trip, and fallback.
+- Commits: c93f9b8, 764aa6e
+
+### T305.4: OpenAPI 3.1 Specification
+
+Full `serve/openapi.yaml` documenting all 6 endpoints with request/response schemas.
+- Commit: d782e12
+
+### T204.1: GPU Gather Kernel (Int32 Support)
+
+Added int32 index support via templated kernel. CGo + purego dispatch for both
+int32 and int64 paths. 5 table-driven parity tests.
+- Commit: ddd14d9
+
+## Quality Gates
+
+| Gate | Status |
+|------|--------|
+| go build ./... | PASS |
+| go vet ./... | PASS (pre-existing warnings only) |
+
+## Cumulative Progress (Waves 1-2)
+
+| Category | Completed | Remaining |
+|----------|-----------|-----------|
+| D2H Elimination (E301) | T301.1-3 | S301.3.1, T301.4 (verification) |
+| CUDA Graph (E302) | T302.1 | T302.2-4 (DGX verification) |
+| Unified Memory (E303) | T303.1-2 | T303.3-4 (benchmark + verification) |
+| Fused Dequant (E304) | T304.1 | T304.2-3 (engine wiring) |
+| OpenAPI Server (E305) | T305.1-4, T305.6 | T305.5, S305.6.1, T305.7 |
+| GPU Transpose (E203) | T203.1 | T203.2-3 (engine wiring) |
+| GPU Gather (E204) | T204.1 | T204.2-3 (engine wiring) |
+| GPU Broadcasting (E205) | -- | T205.1-3 |
+| Fused Kernel Wiring (E306) | -- | T306.1, S306.1.1, T306.2 |
+| CUDA Graph Infra (E207) | -- | T207.2, S207.2.1, T207.3 |
+| Megakernel (E208) | -- | T208.1-3 |
+| Kernel Opt (E209) | -- | T209.1-3 |
+| Purego Conversions (E210-215) | -- | All tasks |
+| Verification (E307) | -- | All tasks (blocked) |
