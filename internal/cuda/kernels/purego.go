@@ -75,6 +75,9 @@ type KernelLib struct {
 
 	// scaled_softmax
 	launchScaledSoftmaxF32 uintptr
+
+	// flash_attention
+	launchFlashAttentionF32 uintptr
 }
 
 var (
@@ -162,6 +165,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
 		// scaled_softmax
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
+		// flash_attention
+		{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
