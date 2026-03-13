@@ -1,10 +1,21 @@
 package gpuapi
 
 import (
+	"fmt"
+	"os"
+	"runtime"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 )
+
+// arenaProfilingEnabled controls diagnostic allocation logging.
+// Set ZERFOO_ARENA_PROFILE=1 to enable.
+var arenaProfilingEnabled = os.Getenv("ZERFOO_ARENA_PROFILE") != ""
+
+// arenaRunningTotal tracks cumulative bytes allocated from the arena.
+var arenaRunningTotal atomic.Int64
 
 // CUDAArenaPool adapts cuda.ArenaPool to the gpuapi.MemPool interface.
 // It also exposes Reset() for use between forward passes.
@@ -24,6 +35,27 @@ func NewCUDAArenaPool(deviceID, capacityBytes int, fallback *cuda.MemPool) (*CUD
 }
 
 func (p *CUDAArenaPool) Alloc(deviceID, byteSize int) (unsafe.Pointer, error) {
+	if arenaProfilingEnabled {
+		// Capture arena state before allocation.
+		usedBefore := p.inner.UsedBytes()
+		ptr, err := p.inner.Alloc(deviceID, byteSize)
+		usedAfter := p.inner.UsedBytes()
+		miss := usedAfter == usedBefore // offset didn't move = arena miss
+		total := arenaRunningTotal.Add(int64(byteSize))
+
+		caller := "unknown"
+		var pcs [4]uintptr
+		if n := runtime.Callers(2, pcs[:]); n > 0 {
+			frames := runtime.CallersFrames(pcs[:n])
+			if f, more := frames.Next(); more || f.Function != "" {
+				caller = fmt.Sprintf("%s:%d", f.Function, f.Line)
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "[ARENA] alloc=%d used=%d/%d total=%d miss=%v caller=%s\n",
+			byteSize, usedAfter, p.inner.Capacity(), total, miss, caller)
+		return ptr, err
+	}
 	return p.inner.Alloc(deviceID, byteSize)
 }
 
@@ -49,6 +81,12 @@ func (p *CUDAArenaPool) Stats() (int, int) {
 
 // Reset rewinds the arena, reclaiming all per-pass allocations.
 func (p *CUDAArenaPool) Reset() {
+	if arenaProfilingEnabled {
+		hits, misses, resets := p.inner.HitMissStats()
+		used := p.inner.UsedBytes()
+		fmt.Fprintf(os.Stderr, "[ARENA] RESET used=%d/%d hits=%d misses=%d resets=%d\n",
+			used, p.inner.Capacity(), hits, misses, resets)
+	}
 	p.inner.Reset()
 }
 
