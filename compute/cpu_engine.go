@@ -1915,6 +1915,27 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 			}
 		}
 		return true
+	case *tensor.Q4KStorage:
+		// Q4_K on A: dequantize then re-quantize to Q4_0 for GEMM.
+		af32 := qs.Slice()
+		bF := any(b.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		if batchSize == 1 {
+			q4 := tensor.QuantizeQ4(af32)
+			xblas.GemmQ4F32(m, n, k, q4, bF, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				bOff := 0
+				if len(aShape) == len(bShape) {
+					bOff = i * k * n
+				}
+				batchA := tensor.QuantizeQ4(af32[aOff : aOff+m*k])
+				xblas.GemmQ4F32(m, n, k, batchA, bF[bOff:bOff+k*n], rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	case *tensor.Q8Storage:
 		bF := any(b.Data()).([]float32)
 		rF := any(result.Data()).([]float32)
@@ -1941,6 +1962,22 @@ func (e *CPUEngine[T]) tryQuantizedMatMul(
 	// Check B for quantized storage.
 	storB := b.GetStorage()
 	switch qsB := any(storB).(type) {
+	case *tensor.Q4KStorage:
+		// Q4_K on B: dequantize then re-quantize to Q4_0 for GEMM-NT.
+		af := any(a.Data()).([]float32)
+		rF := any(result.Data()).([]float32)
+		bf32 := qsB.Slice()
+		q4B := tensor.QuantizeQ4(bf32)
+		if batchSize == 1 {
+			xblas.GemmF32Q4NT(m, n, k, af, q4B, rF)
+		} else {
+			for i := range batchSize {
+				aOff := i * m * k
+				cOff := i * m * n
+				xblas.GemmF32Q4NT(m, n, k, af[aOff:aOff+m*k], q4B, rF[cOff:cOff+m*n])
+			}
+		}
+		return true
 	case *tensor.Q4Storage:
 		// Q4 on B side: GemmF32Q4NT reads Q4 blocks directly from the
 		// original [N,K] weight layout using NEON q4DotBlockSIMD.
