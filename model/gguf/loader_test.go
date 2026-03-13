@@ -527,7 +527,7 @@ func TestLoadTensors_BF16(t *testing.T) {
 
 	// Verify memory is halved vs F32.
 	bf16Storage := tns.GetStorage().(*tensor.BFloat16Storage)
-	if bf16Storage.ByteSize() != len(vals)*2 {
-		t.Errorf("ByteSize() = %d, want %d", bf16Storage.ByteSize(), len(vals)*2)
+	if len(bf16Storage.RawBytes()) != len(vals)*2 {
+		t.Errorf("RawBytes length = %d, want %d", len(bf16Storage.RawBytes()), len(vals)*2)
 	}
 }
