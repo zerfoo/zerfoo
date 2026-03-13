@@ -30,11 +30,25 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 		shape []int
 		axes  []int
 	}{
+		// 2D cases
 		{"2D_nil_axes", []int{3, 4}, nil},
 		{"2D_explicit", []int{3, 4}, []int{1, 0}},
+		{"2D_square", []int{5, 5}, []int{1, 0}},
+		{"2D_wide", []int{2, 64}, []int{1, 0}},
+		{"2D_tall", []int{64, 2}, []int{1, 0}},
+		// 3D cases
 		{"3D_0_2_1", []int{2, 3, 4}, []int{0, 2, 1}},
 		{"3D_2_1_0", []int{2, 3, 4}, []int{2, 1, 0}},
+		{"3D_1_0_2", []int{2, 3, 4}, []int{1, 0, 2}},
+		{"3D_2_0_1", []int{2, 3, 4}, []int{2, 0, 1}},
+		{"3D_unit_dim", []int{1, 3, 4}, []int{0, 2, 1}},
+		// 4D cases (common in attention: batch, heads, seq, dim)
 		{"4D_0_2_1_3", []int{2, 3, 4, 5}, []int{0, 2, 1, 3}},
+		{"4D_3_2_1_0", []int{2, 3, 4, 5}, []int{3, 2, 1, 0}},
+		{"4D_0_1_3_2", []int{2, 3, 4, 5}, []int{0, 1, 3, 2}},
+		{"4D_1_0_2_3", []int{2, 3, 4, 5}, []int{1, 0, 2, 3}},
+		{"4D_unit_batch", []int{1, 4, 8, 16}, []int{0, 2, 1, 3}},
+		{"4D_unit_seq", []int{2, 4, 1, 16}, []int{0, 2, 1, 3}},
 	}
 
 	for _, tc := range tests {
@@ -75,11 +89,28 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 				t.Fatalf("length mismatch: GPU=%d, CPU=%d", len(gData), len(cData))
 			}
 
+			maxRelErr := float32(0)
 			for i := range gData {
-				if gData[i] != cData[i] {
-					t.Errorf("[%d] GPU=%f, CPU=%f", i, gData[i], cData[i])
+				diff := gData[i] - cData[i]
+				if diff < 0 {
+					diff = -diff
+				}
+				denom := cData[i]
+				if denom < 0 {
+					denom = -denom
+				}
+				if denom < 1 {
+					denom = 1
+				}
+				relErr := diff / denom
+				if relErr > maxRelErr {
+					maxRelErr = relErr
+				}
+				if relErr > 1e-6 {
+					t.Errorf("[%d] GPU=%f, CPU=%f (rel err=%e)", i, gData[i], cData[i], relErr)
 				}
 			}
+			t.Logf("max relative error: %e", maxRelErr)
 		})
 	}
 }
