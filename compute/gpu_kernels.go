@@ -26,21 +26,24 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 	}
 
 	// Float16Storage path: has GPU pointer in FP16. Convert FP16->F32 on device.
-	if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
-		fp16Ptr, _, _ := fs.GPUPtr()
-		if fp16Ptr != nil {
-			nElems := fs.Len()
-			f32Bytes := nElems * f32Size
-			f32Ptr, err := e.pool.Alloc(e.deviceID, f32Bytes)
-			if err != nil {
-				return nil, nil, err
+	// Skip when engine uses F32 compute — no Float16Storage tensors exist.
+	if e.dtype != DTypeF32 {
+		if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			fp16Ptr, _, _ := fs.GPUPtr()
+			if fp16Ptr != nil {
+				nElems := fs.Len()
+				f32Bytes := nElems * f32Size
+				f32Ptr, err := e.pool.Alloc(e.deviceID, f32Bytes)
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := e.kernels.FP16ToF32(fp16Ptr, f32Ptr, nElems, e.stream); err != nil {
+					e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
+					return nil, nil, err
+				}
+				cleanup := func() { e.pool.Free(e.deviceID, f32Ptr, f32Bytes) }
+				return f32Ptr, cleanup, nil
 			}
-			if err := e.kernels.FP16ToF32(fp16Ptr, f32Ptr, nElems, e.stream); err != nil {
-				e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
-				return nil, nil, err
-			}
-			cleanup := func() { e.pool.Free(e.deviceID, f32Ptr, f32Bytes) }
-			return f32Ptr, cleanup, nil
 		}
 	}
 
@@ -548,10 +551,10 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
-		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...); r != nil || err != nil {
-			return r, err
-		}
-		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+		if e.dtype != DTypeF32 {
+			if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...); r != nil || err != nil {
+				return r, err
+			}
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...)
 		}
 		e.setDevice()
@@ -574,10 +577,10 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
-		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...); r != nil || err != nil {
-			return r, err
-		}
-		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+		if e.dtype != DTypeF32 {
+			if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...); r != nil || err != nil {
+				return r, err
+			}
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...)
 		}
 		e.setDevice()
@@ -600,10 +603,10 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
-		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...); r != nil || err != nil {
-			return r, err
-		}
-		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+		if e.dtype != DTypeF32 {
+			if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...); r != nil || err != nil {
+				return r, err
+			}
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...)
 		}
 		e.setDevice()
@@ -626,10 +629,10 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
-		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...); r != nil || err != nil {
-			return r, err
-		}
-		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+		if e.dtype != DTypeF32 {
+			if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...); r != nil || err != nil {
+				return r, err
+			}
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...)
 		}
 		e.setDevice()

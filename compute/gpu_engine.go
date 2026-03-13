@@ -551,31 +551,34 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return e.matMulQ8BWeight(ctx, a, qs, b, dst...)
 	}
 
-	// Check for Float16Storage on A or B — pass FP16 device pointers directly.
-	aFP16, aIsFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
-	bFP16, bIsFP16 := any(b.GetStorage()).(*tensor.Float16Storage)
-	if aIsFP16 || bIsFP16 {
-		return fp16MatMulNative(e, ctx, a, b, aFP16, bFP16, aIsFP16, bIsFP16, dst...)
-	}
+	// FP16/FP8/BF16 storage checks — skip entirely for F32 compute.
+	if e.dtype != DTypeF32 {
+		// Check for Float16Storage on A or B — pass FP16 device pointers directly.
+		aFP16, aIsFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
+		bFP16, bIsFP16 := any(b.GetStorage()).(*tensor.Float16Storage)
+		if aIsFP16 || bIsFP16 {
+			return fp16MatMulNative(e, ctx, a, b, aFP16, bFP16, aIsFP16, bIsFP16, dst...)
+		}
 
-	// Check for FP8 E4M3 storage on A (FP8 weights × FP32 activations).
-	if fs, ok := any(a.GetStorage()).(*tensor.FP8E4M3Storage); ok {
-		return e.matMulFP8(ctx, fs, a, b, dst...)
-	}
+		// Check for FP8 E4M3 storage on A (FP8 weights × FP32 activations).
+		if fs, ok := any(a.GetStorage()).(*tensor.FP8E4M3Storage); ok {
+			return e.matMulFP8(ctx, fs, a, b, dst...)
+		}
 
-	// Check for FP8 E4M3 storage on B (FP8 weights as B operand).
-	if fs, ok := any(b.GetStorage()).(*tensor.FP8E4M3Storage); ok {
-		return e.matMulFP8BWeight(ctx, a, fs, b, dst...)
-	}
+		// Check for FP8 E4M3 storage on B (FP8 weights as B operand).
+		if fs, ok := any(b.GetStorage()).(*tensor.FP8E4M3Storage); ok {
+			return e.matMulFP8BWeight(ctx, a, fs, b, dst...)
+		}
 
-	// Check for BFloat16Storage on A (BF16 weights × FP32 activations).
-	if bs, ok := any(a.GetStorage()).(*tensor.BFloat16Storage); ok {
-		return e.matMulBF16(ctx, bs, a, b, dst...)
-	}
+		// Check for BFloat16Storage on A (BF16 weights × FP32 activations).
+		if bs, ok := any(a.GetStorage()).(*tensor.BFloat16Storage); ok {
+			return e.matMulBF16(ctx, bs, a, b, dst...)
+		}
 
-	// Check for BFloat16Storage on B (BF16 weights as B operand).
-	if bs, ok := any(b.GetStorage()).(*tensor.BFloat16Storage); ok {
-		return e.matMulBF16BWeight(ctx, a, bs, b, dst...)
+		// Check for BFloat16Storage on B (BF16 weights as B operand).
+		if bs, ok := any(b.GetStorage()).(*tensor.BFloat16Storage); ok {
+			return e.matMulBF16BWeight(ctx, a, bs, b, dst...)
+		}
 	}
 
 	// FP16 compute path: convert F32 inputs to FP16, run mixed-precision GEMM.
@@ -1726,7 +1729,10 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 
 	// Only use GPU path for GPU-resident tensors.
 	_, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
-	_, isFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
+	isFP16 := false
+	if e.dtype != DTypeF32 {
+		_, isFP16 = any(a.GetStorage()).(*tensor.Float16Storage)
+	}
 	if !isGPU && !isFP16 {
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
@@ -1764,13 +1770,15 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	// single-token generation where seqLen=1. Check by comparing the
 	// non-unit dimensions in input vs output order.
 	if isTransposeReshape(shape, outShape) {
-		if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
-			storageT := any(fs).(tensor.Storage[T])
-			t, tErr := tensor.NewWithStorage[T](outShape, storageT)
-			if tErr != nil {
-				return nil, tErr
+		if e.dtype != DTypeF32 {
+			if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
+				storageT := any(fs).(tensor.Storage[T])
+				t, tErr := tensor.NewWithStorage[T](outShape, storageT)
+				if tErr != nil {
+					return nil, tErr
+				}
+				return t, nil
 			}
-			return t, nil
 		}
 		gs := a.GetStorage().(*tensor.GPUStorage[T])
 		viewGS := gs.View(gs.Len())
@@ -1890,7 +1898,11 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 
 	// Check whether params are GPU-resident (F32 or FP16 storage).
 	_, isGPU := params.GetStorage().(*tensor.GPUStorage[T])
-	fp16Stor, isFP16 := any(params.GetStorage()).(*tensor.Float16Storage)
+	var fp16Stor *tensor.Float16Storage
+	isFP16 := false
+	if e.dtype != DTypeF32 {
+		fp16Stor, isFP16 = any(params.GetStorage()).(*tensor.Float16Storage)
+	}
 	if !isGPU && !isFP16 {
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
@@ -2045,10 +2057,12 @@ func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], nu
 	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok {
 		return e.gpuSplit(gs.Ptr(), a.Shape(), numSplits, axis)
 	}
-	if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
-		ptr, _, _ := fs.GPUPtr()
-		if ptr != nil {
-			return e.gpuSplitFP16(ptr, a.Shape(), numSplits, axis)
+	if e.dtype != DTypeF32 {
+		if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
+			ptr, _, _ := fs.GPUPtr()
+			if ptr != nil {
+				return e.gpuSplitFP16(ptr, a.Shape(), numSplits, axis)
+			}
 		}
 	}
 	return e.cpu.Split(ctx, a, numSplits, axis)
@@ -2065,17 +2079,21 @@ func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumer
 		if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 			ptrs[i] = gs.Ptr()
 			allFP16 = false
-		} else if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
-			p, _, _ := fs.GPUPtr()
-			if p == nil {
+		} else if e.dtype != DTypeF32 {
+			if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+				p, _, _ := fs.GPUPtr()
+				if p == nil {
+					return e.cpu.Concat(ctx, tensors, axis, dst...)
+				}
+				ptrs[i] = p
+			} else {
 				return e.cpu.Concat(ctx, tensors, axis, dst...)
 			}
-			ptrs[i] = p
 		} else {
 			return e.cpu.Concat(ctx, tensors, axis, dst...)
 		}
 	}
-	if allFP16 {
+	if allFP16 && e.dtype != DTypeF32 {
 		return e.gpuConcatFP16(ptrs, tensors, axis, dst...)
 	}
 	return e.gpuConcat(ptrs, tensors, axis, dst...)
@@ -2095,7 +2113,10 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	}
 
 	// Get device pointer (handles GPUStorage[T] and Float16Storage).
-	_, isFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
+	isFP16 := false
+	if e.dtype != DTypeF32 {
+		_, isFP16 = any(a.GetStorage()).(*tensor.Float16Storage)
+	}
 	gs, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
 	if !isGPU && !isFP16 {
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
@@ -2203,8 +2224,10 @@ func (e *GPUEngine[T]) Reshape(ctx context.Context, a *tensor.TensorNumeric[T], 
 	}
 
 	// Float16Storage: zero-copy reshape (same GPU pointer, new shape).
-	if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok && newSize == currentSize {
-		return tensor.NewWithStorage[T](inferredShape, any(fs).(tensor.Storage[T]))
+	if e.dtype != DTypeF32 {
+		if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok && newSize == currentSize {
+			return tensor.NewWithStorage[T](inferredShape, any(fs).(tensor.Storage[T]))
+		}
 	}
 
 	// GPUStorage[T]: zero-copy reshape.
@@ -2459,13 +2482,13 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 
 	axisSize := shape[axis]
 
-	// Native FP16 path: input already has Float16Storage on GPU — no conversion needed.
-	if fs, ok := any(input.GetStorage()).(*tensor.Float16Storage); ok {
-		return fp16ScaledSoftmaxNative(e, fs, input.Shape(), scale, outer, inner, axisSize)
-	}
-
-	// FP16 path: convert to FP16, run FP16 scaled softmax, convert back.
-	if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+	// FP16 paths — skip entirely for F32 compute.
+	if e.dtype != DTypeF32 {
+		// Native FP16 path: input already has Float16Storage on GPU — no conversion needed.
+		if fs, ok := any(input.GetStorage()).(*tensor.Float16Storage); ok {
+			return fp16ScaledSoftmaxNative(e, fs, input.Shape(), scale, outer, inner, axisSize)
+		}
+		// FP16 path: convert to FP16, run FP16 scaled softmax, convert back.
 		return fp16ScaledSoftmax(e, input, scale, outer, inner, axisSize)
 	}
 
@@ -2498,15 +2521,15 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	weight *tensor.TensorNumeric[T],
 	eps float32,
 ) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
-	// Native FP16 path: input and residual already have Float16Storage — no conversion needed.
-	inFS, inOK := any(input.GetStorage()).(*tensor.Float16Storage)
-	resFS, resOK := any(residual.GetStorage()).(*tensor.Float16Storage)
-	if inOK && resOK {
-		return fp16FusedAddRMSNormNative(e, inFS, resFS, input, weight, eps)
-	}
-
-	// FP16 path: decompose into F32 Add + FP16 RMSNorm.
-	if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
+	// FP16 paths — skip entirely for F32 compute.
+	if e.dtype != DTypeF32 {
+		// Native FP16 path: input and residual already have Float16Storage — no conversion needed.
+		inFS, inOK := any(input.GetStorage()).(*tensor.Float16Storage)
+		resFS, resOK := any(residual.GetStorage()).(*tensor.Float16Storage)
+		if inOK && resOK {
+			return fp16FusedAddRMSNormNative(e, inFS, resFS, input, weight, eps)
+		}
+		// FP16 path: decompose into F32 Add + FP16 RMSNorm.
 		return fp16FusedAddRMSNorm(e, input, residual, weight, eps)
 	}
 
