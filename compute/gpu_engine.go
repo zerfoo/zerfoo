@@ -1105,6 +1105,11 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
+	// GPU transpose kernel supports up to 4D; fall back to CPU for higher ranks.
+	if rank > 4 {
+		return e.cpu.Transpose(ctx, a, axes, dst...)
+	}
+
 	// Compute output shape.
 	outShape := make([]int, rank)
 	for i, ax := range axes {
