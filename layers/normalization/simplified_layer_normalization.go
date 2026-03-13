@@ -63,7 +63,9 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 				if err != nil {
 					return nil, err
 				}
-				sln.invStdDev = any(scales).(*tensor.TensorNumeric[T])
+				if scales != nil {
+					sln.invStdDev = any(scales).(*tensor.TensorNumeric[T])
+				}
 				normalized, nErr := sln.engine.Mul(ctx, input, sln.invStdDev)
 				if nErr != nil {
 					return nil, nErr

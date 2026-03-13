@@ -127,7 +127,9 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 				if err != nil {
 					return nil, err
 				}
-				r.rms = any(scales).(*tensor.TensorNumeric[T])
+				if scales != nil {
+					r.rms = any(scales).(*tensor.TensorNumeric[T])
+				}
 				return any(out).(*tensor.TensorNumeric[T]), nil
 			}
 		}
