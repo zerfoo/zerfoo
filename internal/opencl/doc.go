@@ -1,3 +1,3 @@
 // Package opencl provides Go wrappers for the OpenCL 2.0 runtime API.
-// All functional code requires the "opencl" build tag.
+// The runtime is loaded dynamically via dlopen; no build tags required.
 package opencl
