@@ -64,7 +64,7 @@ type KernelRunner interface {
 	TransposeND(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, stream Stream) error
 
 	// Gather performs embedding table lookup: output[i,:] = table[indices[i],:].
-	// table: [V, D], indices: [N] int32 on device, output: [N, D].
+	// table: [V, D], indices: [N] int64 on device, output: [N, D].
 	Gather(table, indices, output unsafe.Pointer, N, D, V int, stream Stream) error
 
 	// RMSNorm computes fused RMSNorm: output = input * rsqrt(mean(input^2) + eps) * weight.
