@@ -139,7 +139,7 @@ to 256, vectorize quantized data loads, and tune shared memory usage.
   - Acceptance: go test passes. bench_tps output identical.
   - Dependencies: T601.3.
 
-- [ ] T601.4 Benchmark optimized Q4K GEMV kernel  Owner: TBD  Est: 30m
+- [x] T601.4 Benchmark optimized Q4K GEMV kernel  Owner: task-T601.4  Est: 30m  Done: 2026-03-13  NOTE: Kernel regressed 12.2% (189->166). Reverted.
   - Rebuild libkernels.so on DGX.
   - Run bench_tps --dtype=fp32 3 times, record results.
   - Compare with T601.1 baseline.
@@ -198,7 +198,7 @@ Float16Storage -- the fix is to ensure the fast paths are always taken.
   - Acceptance: All D2H copies in decode hot path catalogued. Fix plan for each.
   - Dependencies: none.
 
-- [ ] S602.4.1 Verify zero D2H copies during decode  Owner: TBD  Est: 30m
+- [x] S602.4.1 Verify zero D2H copies during decode  Owner: task-S602.4.1  Est: 30m  Done: 2026-03-13
   - Run bench_tps --dtype=fp32 and grep output for "WARNING" and "D2H".
   - Verify no D2H copy warnings appear during token generation.
   - File: docs/updates.md.
@@ -262,7 +262,7 @@ FP8 output is degenerate (repetitive text) from the FP16 dequant fallback path.
     completes without OOM.
   - Dependencies: none.
 
-- [ ] S604.1.1 Test FP8 arena usage after output buffer fix  Owner: TBD  Est: 30m
+- [x] S604.1.1 Test FP8 arena usage after output buffer fix  Owner: task-S604.1.1  Est: 30m  Done: 2026-03-13  NOTE: 1841->4 misses (99.8% reduction).
   - Run bench_tps --dtype=fp8 and verify arena stats.
   - File: docs/updates.md.
   - Acceptance: Arena misses < 100. MemPool misses < 100.
@@ -280,7 +280,7 @@ FP8 output is degenerate (repetitive text) from the FP16 dequant fallback path.
   - Acceptance: Root cause of degenerate output identified and documented.
   - Dependencies: T604.1.
 
-- [ ] T604.3 Fix FP8 degenerate output  Owner: TBD  Est: 2h
+- [x] T604.3 Fix FP8 degenerate output  Owner: task-T604.3  Est: 2h  Done: 2026-03-13  NOTE: Two bugs — stale arena ptrs + embed_tokens FP8 quantization.
   - Based on T604.2 diagnostics, implement the fix. Likely one of:
     a) Switch from per-tensor to per-channel absmax scaling.
     b) Fix dequant kernel numerical issue.
@@ -315,7 +315,7 @@ Go runtime overhead. Each optimization is small but they compound.
     steps. No functional change in output.
   - Dependencies: none.
 
-- [ ] S605.1.1 Test token tensor reuse  Owner: TBD  Est: 30m
+- [x] S605.1.1 Test token tensor reuse  Owner: task-S605.1.1  Est: 30m  Done: 2026-03-13
   - Run bench_tps --dtype=fp32 and verify identical output.
   - Verify arena stats show fewer allocations.
   - File: docs/updates.md.
