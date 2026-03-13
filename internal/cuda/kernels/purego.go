@@ -79,6 +79,15 @@ type KernelLib struct {
 
 	// flash_attention
 	launchFlashAttentionF32 uintptr
+
+	// FP16 elementwise
+	launchAddFP16, launchSubFP16, launchMulFP16, launchDivFP16 uintptr
+
+	// FP16 rmsnorm
+	launchRMSNormFP16 uintptr
+
+	// FP16 scaled_softmax
+	launchScaledSoftmaxFP16 uintptr
 }
 
 var (
@@ -169,6 +178,15 @@ func openKernelLib() (*KernelLib, error) {
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
 		// flash_attention
 		{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
+		// FP16 elementwise
+		{"launch_add_fp16", &k.launchAddFP16},
+		{"launch_sub_fp16", &k.launchSubFP16},
+		{"launch_mul_fp16", &k.launchMulFP16},
+		{"launch_div_fp16", &k.launchDivFP16},
+		// FP16 rmsnorm
+		{"launch_rmsnorm_fp16", &k.launchRMSNormFP16},
+		// FP16 scaled_softmax
+		{"launch_scaled_softmax_fp16", &k.launchScaledSoftmaxFP16},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
