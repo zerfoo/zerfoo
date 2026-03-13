@@ -1260,19 +1260,19 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 	}
 	defer cleanupParams()
 
-	// Upload indices to GPU as int32 (Go int is 64-bit on amd64/arm64).
-	indices32 := make([]int32, N)
-	for i, v := range idxData {
-		indices32[i] = int32(v)
-	}
-	idxByteSize := N * 4
+	// Upload indices to GPU as int64 (Go int on 64-bit platforms).
+	// The gather kernel accepts int64 indices directly, avoiding the
+	// CPU-side int64→int32 conversion that would trigger a D2H copy
+	// for GPU-resident indices and block CUDA graph capture.
+	intSize := int(unsafe.Sizeof(int(0)))
+	idxByteSize := N * intSize
 	devIdx, err := e.pool.Alloc(e.deviceID, idxByteSize)
 	if err != nil {
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
 	defer e.pool.Free(e.deviceID, devIdx, idxByteSize)
 
-	if err := e.runtime.Memcpy(devIdx, unsafe.Pointer(&indices32[0]), idxByteSize, gpuapi.MemcpyHostToDevice); err != nil {
+	if err := e.runtime.Memcpy(devIdx, unsafe.Pointer(&idxData[0]), idxByteSize, gpuapi.MemcpyHostToDevice); err != nil {
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
 

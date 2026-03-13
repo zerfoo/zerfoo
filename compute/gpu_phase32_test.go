@@ -187,6 +187,72 @@ func TestGPUEngine_GatherParity(t *testing.T) {
 	}
 }
 
+// TestGPUEngine_GatherInt64Path verifies that GPUEngine.Gather uses the
+// GatherInt64 kernel path, uploading native int (int64) indices directly
+// without CPU-side int64→int32 conversion. This eliminates D2H copies.
+func TestGPUEngine_GatherInt64Path(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	ops := numeric.Float32Ops{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = gpuEng.Close() }()
+
+	cpuEng := NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		V, D     int
+		indices  []int
+	}{
+		{"single_token", 8, 4, []int{5}},
+		{"multiple_tokens", 8, 4, []int{0, 3, 7, 1}},
+		{"repeated_index", 8, 4, []int{2, 2, 2}},
+		{"last_vocab", 8, 4, []int{7}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tableData := make([]float32, tc.V*tc.D)
+			for i := range tableData {
+				tableData[i] = float32(i+1) * 0.01
+			}
+			table, _ := tensor.New[float32]([]int{tc.V, tc.D}, tableData)
+			gpuTable, err := tensor.ToGPU(table)
+			if err != nil {
+				t.Fatalf("ToGPU: %v", err)
+			}
+
+			N := len(tc.indices)
+			indices, _ := tensor.New[int]([]int{N}, tc.indices)
+			gpuOut, _ := tensor.New[float32]([]int{N, tc.D}, nil)
+			cpuOut, _ := tensor.New[float32]([]int{N, tc.D}, nil)
+
+			if err := gpuEng.Gather(ctx, gpuTable, indices, gpuOut); err != nil {
+				t.Fatalf("GPU Gather: %v", err)
+			}
+			if err := cpuEng.Gather(ctx, table, indices, cpuOut); err != nil {
+				t.Fatalf("CPU Gather: %v", err)
+			}
+
+			gData := gpuOut.Data()
+			cData := cpuOut.Data()
+			if len(gData) != len(cData) {
+				t.Fatalf("length mismatch: GPU=%d CPU=%d", len(gData), len(cData))
+			}
+			for i := range gData {
+				if gData[i] != cData[i] {
+					t.Errorf("[%d] GPU=%f CPU=%f", i, gData[i], cData[i])
+				}
+			}
+		})
+	}
+}
+
 // TestGPUEngine_BroadcastParity verifies GPU broadcast binary ops match CPU.
 func TestGPUEngine_BroadcastParity(t *testing.T) {
 	if !cuda.Available() {
