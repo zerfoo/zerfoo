@@ -202,6 +202,10 @@ func (e *GPUEngine[T]) IsManagedMemory() bool { return e.managedMem }
 func (e *GPUEngine[T]) ResetPool() {
 	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
 		arena.Reset()
+		// Reset FP8 scratchpad cached pointers — arena.Reset() invalidates them.
+		if e.fp8Scratch != nil {
+			e.fp8Scratch.reset()
+		}
 	}
 }
 
