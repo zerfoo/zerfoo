@@ -139,14 +139,14 @@ results.
     hook when StreamProvider and GraphAvailable() are both true.
   - Dependencies: E301.
 
-- [ ] T302.2 Verify graph capture succeeds on DGX Spark  Owner: TBD  Est: 1h
+- [x] T302.2 Verify graph capture succeeds on DGX Spark  Owner: TBD  Est: 1h
   - Run bench_tps on DGX Spark. Confirm log message "cuda graph: captured and
     instantiated successfully" appears.
   - If capture fails, diagnose and fix the remaining conflict.
   - Acceptance: Graph capture succeeds. Tokens 3+ use graph replay.
   - Dependencies: T302.1.
 
-- [ ] T302.3 Benchmark CUDA graph replay vs per-op  Owner: TBD  Est: 30m
+- [x] T302.3 Benchmark CUDA graph replay vs per-op  Owner: TBD  Est: 30m
   - Run bench_tps 3 times with graph, 3 times without. Report tok/s delta.
   - Acceptance: Results documented. Graph replay faster than per-op.
   - Dependencies: T302.2.
@@ -179,7 +179,7 @@ results.
   - Acceptance: Model loading skips explicit H2D when managed memory available.
   - Dependencies: none.
 
-- [ ] T303.3 Benchmark unified memory vs explicit copy  Owner: TBD  Est: 30m
+- [x] T303.3 Benchmark unified memory vs explicit copy  Owner: TBD  Est: 30m
   - Compare tok/s with managed memory vs current explicit copy path.
   - Acceptance: Results documented. No regression.
   - Dependencies: T303.1, T303.2.
@@ -612,7 +612,7 @@ enabling it after D2H elimination.
 
 ### E307: Performance Verification -- Surpass Ollama
 
-- [ ] T307.1 Run bench_tps on DGX Spark with all optimizations  Owner: TBD  Est: 1h
+- [x] T307.1 Run bench_tps on DGX Spark with all optimizations  Owner: TBD  Est: 1h
   - Test all paths: per-op, fused kernels, CUDA graph, megakernel.
   - Record tok/s for each. Compare with baselines.
   - Acceptance: At least one path achieves > 197.21 tok/s (surpasses Ollama).
