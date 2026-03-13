@@ -873,3 +873,60 @@ All tests skip gracefully on non-GPU machines. Build passes.
 - S211.3.1, S212.3.1: cuDNN/TensorRT purego parity (DGX)
 - S214.4.1, S215.3.1: ROCm/OpenCL integration (specific hardware)
 - T307.1-5: Final performance verification (DGX)
+
+---
+
+# DGX Spark Verification Session
+
+Date: 2026-03-13
+
+## Environment
+- **Host**: ndungu@192.168.86.250 (DGX Spark, NVIDIA GB10 Blackwell)
+- **CUDA**: 13.0, sm_121
+- **Model**: gemma3-gguf Q4_K_M, 256 tokens, greedy decoding
+
+## Benchmark Results
+
+| Config | tok/s (3-run avg) | Notes |
+|--------|-------------------|-------|
+| Previous baseline (2026-03-12) | 188.92 | Before Waves 1-7 |
+| All changes + managed mem + CUDA graph | 99.51 | CUDA graph capture fails, garbage output |
+| All changes + managed mem, graph disabled | 145.33 | Managed memory page fault overhead |
+| All changes, managed+graph disabled | 164.84 | Best with current changes |
+| Ollama baseline | 197.21 | Target to surpass |
+
+## Key Findings
+
+### 1. CUDA Graph Capture Still Fails
+The D2H elimination (E301) addressed 3 sites (Gather indices, TrySlice, appendGPU)
+but `grouped_query_attention.go` still has `.Data()` calls at lines 437 and 888
+in CPU fallback paths. These paths are reached during graph capture when the
+GPU SubSlice path doesn't match. Added `ZERFOO_DISABLE_CUDA_GRAPH` env var.
+
+### 2. Managed Memory Slower Than Expected on GB10
+`cudaMallocManaged` on GB10 causes ~13% throughput loss (145 vs 165 tok/s).
+Likely due to page fault overhead — even on shared LPDDR5x, the GPU memory
+controller must handle page migration on first touch. Added
+`ZERFOO_DISABLE_MANAGED_MEM` env var. Need to investigate cudaMemPrefetchAsync.
+
+### 3. Performance Gap Analysis (165 vs 188 tok/s)
+The remaining ~12% gap is likely from:
+- The int64 gather kernel change (doubles index data size)
+- Additional Q4_K dispatch checks in MatMul (branching overhead)
+- SubSlice changes modifying GPU memory layout
+- Possible environmental differences between sessions
+
+### 4. Test Suite (T307.4)
+Most packages pass. Failures found:
+- **Pre-existing**: TestBatchGenerate race conditions, TestDlsymImplFails, TestTRTCacheKey
+- **New**: TestCPUEngine_Exp, TestGPUEngine_ElementwiseParity (Exp/Tanh),
+  TestGPUEngine_TransposeParity (2D_square), TestGemvQ4KF32 (larger sizes)
+- The GemvQ4K failures suggest the fused kernel has precision issues at larger
+  matrix sizes — needs investigation
+
+## Action Items
+1. Fix remaining .Data() calls in GQA to enable CUDA graph capture
+2. Investigate cudaMemPrefetchAsync for managed memory performance
+3. Fix GemvQ4K precision issues at larger matrix sizes
+4. Profile with nsys to identify the throughput regression root cause
+5. Consider reverting int64 gather to int32 with a GPU conversion kernel

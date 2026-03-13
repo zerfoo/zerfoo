@@ -635,7 +635,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./... passes on both platforms.
   - Dependencies: E210, E211, E212, E213, E214, E215.
 
-- [ ] T307.4 Run full test suite  Owner: TBD  Est: 1h
+- [x] T307.4 Run full test suite  Owner: TBD  Est: 1h
   - go test ./... -race -timeout 120s on DGX Spark.
   - Acceptance: All tests pass.
   - Dependencies: T307.3.
