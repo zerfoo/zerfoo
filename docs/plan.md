@@ -1,43 +1,42 @@
-# Zerfoo Development Plan -- Surpass Ollama Inference Performance (Phase 2)
+# Zerfoo Development Plan -- Surpass Ollama Inference Performance (Phase 3)
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo inference on DGX Spark GB10 achieves 166 tok/s (84.2% of Ollama's
-197.21 tok/s). The prior plan (89 tasks across 8 waves) completed all tasks
-including D2H elimination, fused kernels, purego conversions, kernel
-optimization, and GPU residency improvements.
+Zerfoo inference on DGX Spark GB10 achieves 149.52 tok/s with F32 compute
+(75.8% of Ollama's 197.21 tok/s). Phase 2 built FP16 and FP8 inference paths
+end-to-end, but both are slower than F32 due to implementation bottlenecks:
 
-However, performance regressed from 188.92 tok/s (pre-wave baseline) to
-166 tok/s (post-wave). The 31 tok/s gap to Ollama has two components:
+1. **FP16 path is 17% slower than F32 (124.50 tok/s).** Every element-wise
+   operation (Add, Mul, RMSNorm, Softmax) converts F32->FP16 before compute
+   and FP16->F32 after. This adds 4 extra kernel launches per operation
+   (2 conversions + 2 alloc/free) and doubles memory traffic. The fix is to
+   keep activations in FP16 throughout the forward pass, eliminating all
+   intermediate conversions.
 
-1. **Regression (+23 tok/s recoverable):** Something in Waves 1-8 caused a
-   12% throughput regression. Bisecting on DGX will identify the culprit.
+2. **FP8 path is 100x slower than F32 (1.45 tok/s).** The GPU arena (2GB
+   pre-allocated) is exhausted during inference, causing 1841 arena misses
+   that fall back to slow MemPool allocation. FP8 output is degenerate
+   (repetitive text), suggesting scale factor propagation bugs.
 
-2. **CUDA graph capture (+10-30 tok/s potential):** The graph infrastructure
-   is built (graph/cuda_graph.go) with partial capture support, but 5 D2H
-   copy sites in the inference pipeline prevent capture. Eliminating these
-   would reduce ~338 kernel launches to a single graph replay (~15us).
+3. **Baseline may be model-dependent.** F32 was 183.79 tok/s with llama3
+   earlier, now 149.52 with gemma3. Need to verify with same model Ollama uses.
 
-3. **Fused dequant+GEMV Q4_K (+5-15 tok/s potential):** The kernel is written
-   (gemv_q4k.cu) and wired into the engine, but the GGUF loader was reverted
-   to Q4_0 re-quantization because Q4_K preservation caused a regression.
-   The dispatch path needs end-to-end validation.
-
-4. **Kernel optimizations (unverified):** Wave 8 added warp shuffle reductions,
-   BLOCK_SIZE=64 flash attention, and register tuning (gemm_q4/transpose
-   maxrregcount=32 for 100% occupancy). These have not been benchmarked yet.
-
-See docs/design.md for full architecture. See docs/QUALITY.md for benchmark
-tables and correctness report.
+See docs/design.md for full architecture and Phase 2 completion details.
 
 ### Objectives
 
-- O1: Recover the 188.92 tok/s baseline by identifying and fixing the regression.
-- O2: Surpass Ollama throughput (>197.21 tok/s) on DGX Spark GB10.
-- O3: Enable CUDA graph capture for near-zero kernel launch overhead.
-- O4: Validate fused dequant+GEMV Q4_K end-to-end for halved memory bandwidth.
+- O1: Eliminate FP16 conversion overhead so FP16 path is faster than F32.
+- O2: Fix FP8 arena thrashing and scale propagation for coherent, fast FP8 inference.
+- O3: Surpass Ollama throughput (>197.21 tok/s) on DGX Spark GB10 with Gemma 3 1B Q4_K_M.
+- O4: Establish apples-to-apples baseline using identical model and prompt as Ollama.
+
+### Non-Goals
+
+- New model architectures or training.
+- Multi-GPU / distributed inference.
+- CUDA graph capture (blocked by GQA D2H; revisit after FP16/FP8 optimizations land).
 
 ### Constraints and Assumptions
 
@@ -45,20 +44,19 @@ tables and correctness report.
 - DGX Spark available at ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: 273 GB/s LPDDR5x, Blackwell GPU (sm_121), 128GB unified memory.
 - Ollama baseline: 197.21 tok/s (Gemma 3 1B Q4_K_M, measured 2026-03-12).
-- Zerfoo current: 166.02 tok/s average (3 runs, 2026-03-13).
-- Zerfoo previous best: 188.92 tok/s average (3 runs, 2026-03-12).
-- CUDA graph capture disabled by default (ZERFOO_ENABLE_CUDA_GRAPH to opt in).
-- Managed memory disabled by default (ZERFOO_ENABLE_MANAGED_MEM to opt in).
-- Megakernel abandoned. See docs/adr/032-abandon-megakernel.md.
+- Zerfoo current F32: 149.52 tok/s (gemma3, 2026-03-13).
+- Go profile: go test, go vet, go build as quality gates.
+- All GPU bindings use purego (no CGo, no build tags).
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| Regression fixed | >= 188.92 tok/s | bench_tps 3-run avg on DGX Spark |
-| Surpass Ollama | > 197.21 tok/s | bench_tps 3-run avg on DGX Spark |
-| CUDA graph operational | Graph replay for decode tokens 3+ | Log shows "captured and instantiated successfully" |
-| Fused Q4_K validated | Fused kernel used for all Q4_K MatMul | bench_tps log shows fused dispatch |
+| FP16 faster than F32 | FP16 tok/s > F32 tok/s | bench_tps 3-run avg on DGX |
+| FP8 coherent output | Grammatically valid, on-topic text | Manual inspection at temp=0 |
+| FP8 faster than F32 | FP8 tok/s > F32 tok/s | bench_tps 3-run avg on DGX |
+| Surpass Ollama | > 197.21 tok/s | bench_tps 3-run avg on DGX |
+| Apples-to-apples baseline | Same model, prompt, token count as Ollama | Documented in updates.md |
 
 ---
 
@@ -68,334 +66,319 @@ tables and correctness report.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D30 | Regression bisect and fix | Recover 23 tok/s from 188->166 regression |
-| D31 | CUDA graph D2H elimination | Enable graph capture for -2.37ms/token |
-| D32 | Fused dequant+GEMV Q4_K validation | Halve Q4 memory bandwidth |
-| D33 | Kernel optimization benchmarks | Verify Wave 8 improvements on DGX |
-| D34 | BFloat16/Float16 inference path | 2x throughput potential via half-precision compute |
-| D35 | FP8 inference path | 4x FP32 throughput on Blackwell via 8-bit compute |
+| D40 | Native FP16 activation storage | Eliminate F32<->FP16 round-trips (biggest win) |
+| D41 | FP16 weight upload at load time | Keep weights in FP16 on GPU from the start |
+| D42 | FP8 arena pre-allocation | Fix 1841 arena misses causing 100x slowdown |
+| D43 | FP8 scale factor fix | Fix degenerate output from scale propagation bugs |
+| D44 | Apples-to-apples baseline | Fair comparison with Ollama using same model/prompt |
 
 ### Out of Scope
 
-- New model architectures.
-- Training optimization.
-- Multi-GPU / distributed inference.
-- Managed memory optimization (known 13% regression, needs cudaMemPrefetchAsync research first).
+- CUDA graph capture (blocked by GQA D2H; separate phase).
+- New kernel development (existing FP16/FP8 kernels are functional).
+- BFloat16 optimization (FP16 is the priority path on Blackwell).
+- Managed memory optimization.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E401: Regression Bisect and Fix
+### E501: Apples-to-Apples Baseline
 
-- [x] T401.1 Bisect the 188->166 regression on DGX Spark  Owner: TBD  Est: 3h
-  - Build bench_tps at the pre-wave baseline commit (388e60d, 2026-03-12).
-  - Verify 188+ tok/s is reproducible. If not, the regression is environmental.
-  - If reproducible, bisect between 388e60d and current HEAD (~50 commits).
-  - Use git bisect with `bench_tps -tokens 64` for faster iteration.
-  - File: all files changed in Waves 1-8.
-  - Acceptance: Specific commit or set of commits identified as cause.
+- [ ] T501.1 Benchmark F32 with same model and prompt as Ollama  Owner: TBD  Est: 30m
+  - Run Ollama on DGX with Gemma 3 1B Q4_K_M, record exact model path, prompt,
+    and token count.
+  - Run Zerfoo bench_tps with identical parameters.
+  - Record 3-run averages for both.
+  - File: docs/updates.md (results only, no code changes).
+  - Acceptance: Both tools benchmarked with identical inputs. Results documented
+    with exact commands and commit hashes.
   - Dependencies: none.
 
-- [x] T401.2 Fix or revert the regression-causing change  Owner: TBD  Est: 2h
-  - Based on bisect results, either fix the root cause or revert the change.
-  - Likely candidates: int64 gather (T301.1), Q4_K dispatch checks (T304.2),
-    SubSlice changes (T301.2), or managed memory detection (T303.1).
-  - Acceptance: bench_tps >= 188.92 tok/s (3-run avg) on DGX Spark.
-  - Dependencies: T401.1.
+### E502: Native FP16 Activation Storage
 
-- [x] S401.2.1 Regression fix verification  Owner: TBD  Est: 30m
-  - Run bench_tps 3 times on DGX after fix. Report tok/s.
-  - Acceptance: Average >= 188.92 tok/s. No functional regression (output coherent).
-  - Dependencies: T401.2.
+The current FP16 path stores all activations as F32 and converts to FP16 on
+every operation. The fix: when dtype=fp16, store activations directly as FP16
+using GPUStorage with 2-byte elements. Operations read FP16, compute in FP16
+(with FP32 accumulation for reductions), and write FP16. No conversions needed
+except at graph boundaries (embedding lookup output, final logits).
 
-### E402: CUDA Graph D2H Elimination
-
-Note: Partial capture infrastructure exists (graph/cuda_graph.go). The
-CUDAGraphExecutor splits the plan into capturable and non-capturable regions.
-EmbeddingLookup is already excluded. The remaining 5 D2H sites are deep in
-the inference pipeline and need GPU-resident alternatives.
-
-- [x] T402.1 Eliminate D2H in MatMul weight pointer caching  Owner: TBD  Est: 1h
-  - layers/core/matmul.go:106,117 -- getCachedTranspose calls b.Data()[0]
-    to compare weight pointers. Replace with tensor identity comparison
-    (pointer equality on the *TensorNumeric, not on the data slice).
-  - Acceptance: getCachedTranspose never calls .Data() on GPU tensors.
+- [ ] T502.1 Add FP16 GPU storage type  Owner: TBD  Est: 1.5h
+  - Add Float16Storage to tensor/ that wraps GPU memory with 2-byte elements.
+  - Support Len(), SubSlice(), GPUPtr(), SetGPUPtr(), DeviceType().
+  - The storage must be recognized by GPUEngine MatMul dispatch and element-wise
+    dispatch as "native FP16" (no conversion needed).
+  - File: tensor/fp16_storage.go (new file).
+  - Acceptance: go test passes. Float16Storage implements the Storage interface.
+    GPUPtr returns valid device pointer. SubSlice creates zero-copy views.
   - Dependencies: none.
 
-- [x] T402.2 Eliminate D2H in KV cache append CPU fallback  Owner: TBD  Est: 1h
-  - generate/tensor_cache.go:110-111 -- copy(lb.kBuf, newK.Data()) is the
-    CPU fallback when isGPU=false. During GPU inference isGPU should always
-    be true. Add assertion or guard to ensure GPU path is always taken.
-    If isGPU is false during decode, diagnose and fix.
-  - Acceptance: No .Data() call during KV cache append in GPU inference.
+- [ ] S502.1.1 Unit tests for Float16Storage  Owner: TBD  Est: 30m
+  - Table-driven tests: create, SubSlice, GPUPtr round-trip, Len accuracy.
+  - File: tensor/fp16_storage_test.go.
+  - Acceptance: go test -race passes. 100% coverage of Float16Storage methods.
+  - Dependencies: T502.1.
+
+- [ ] T502.2 Modify element-wise ops to accept FP16 storage directly  Owner: TBD  Est: 2h
+  - In compute/gpu_kernels.go: when input tensor has Float16Storage, extract the
+    FP16 device pointer directly and call the FP16 kernel without F32->FP16
+    conversion. Write output to a new Float16Storage tensor.
+  - Affects: gpuAdd, gpuSub, gpuMul, gpuDiv, gpuAddScalar, gpuMulScalar.
+  - When one input is FP16 and the other is F32, convert only the F32 input.
+  - File: compute/gpu_kernels.go, compute/gpu_fp16.go.
+  - Acceptance: When both inputs are Float16Storage, zero F32->FP16 conversions.
+    Output is Float16Storage. Element-wise results match F32 reference (rel error < 1e-3).
+  - Dependencies: T502.1.
+
+- [ ] S502.2.1 Tests for FP16 element-wise without conversion  Owner: TBD  Est: 30m
+  - Verify Add, Mul with Float16Storage inputs produce Float16Storage output.
+  - Verify no F32ToFP16 kernel calls when both inputs are already FP16.
+  - File: compute/gpu_fp16_test.go.
+  - Acceptance: go test -race passes.
+  - Dependencies: T502.2.
+
+- [ ] T502.3 Modify MatMul to accept FP16 storage directly  Owner: TBD  Est: 1.5h
+  - In compute/gpu_engine.go MatMul dispatch: when activations have Float16Storage,
+    pass the FP16 device pointer directly to MixedFP16Gemm (or cublasGemmEx with
+    CUDA_R_16F input type). No F32->FP16 conversion needed.
+  - When weights are F32 and activations are FP16, convert only weights (once,
+    cached on the weight tensor).
+  - Output should be Float16Storage when dtype=fp16.
+  - File: compute/gpu_engine.go, compute/gpu_fp16.go.
+  - Acceptance: FP16 MatMul with Float16Storage inputs skips conversion kernels.
+    Output is Float16Storage. Results match F32 reference (rel error < 1e-3).
+  - Dependencies: T502.1.
+
+- [ ] S502.3.1 Tests for FP16 MatMul without conversion  Owner: TBD  Est: 30m
+  - Verify MatMul with Float16Storage inputs and weights produces correct output.
+  - Test batch dimensions (the GQA bug fix from Phase 2).
+  - File: compute/gpu_fp16_test.go.
+  - Acceptance: go test -race passes.
+  - Dependencies: T502.3.
+
+- [ ] T502.4 Modify RMSNorm and Softmax to accept FP16 storage  Owner: TBD  Est: 1.5h
+  - In compute/gpu_engine.go: GPUScaledSoftmax and GPUFusedAddRMSNorm should
+    detect Float16Storage on inputs and call FP16 kernels directly without
+    F32->FP16 conversion.
+  - RMSNorm: read FP16, accumulate in FP32 (existing kernel behavior), write FP16.
+  - Softmax: read FP16, accumulate in FP32, write FP16.
+  - Output should be Float16Storage.
+  - File: compute/gpu_engine.go, compute/gpu_fp16.go.
+  - Acceptance: Zero F32->FP16 conversions when input is Float16Storage.
+    Output is Float16Storage. Parity with F32 reference (rel error < 1e-3).
+  - Dependencies: T502.1.
+
+- [ ] S502.4.1 Tests for FP16 RMSNorm and Softmax  Owner: TBD  Est: 30m
+  - Verify FusedAddRMSNorm and ScaledSoftmax with Float16Storage inputs.
+  - File: compute/gpu_fp16_test.go.
+  - Acceptance: go test -race passes.
+  - Dependencies: T502.4.
+
+- [ ] T502.5 Convert embedding output to FP16 at inference start  Owner: TBD  Est: 1h
+  - In the inference pipeline (generate/ or compute/), after EmbeddingLookup
+    produces F32 output, convert it to Float16Storage once. All subsequent
+    operations operate on FP16 natively.
+  - This is the single F32->FP16 conversion point for the entire forward pass.
+  - File: compute/gpu_engine.go (EmbeddingLookup or a post-embedding hook).
+  - Acceptance: Embedding output is Float16Storage when dtype=fp16.
+    All downstream ops receive FP16 input.
+  - Dependencies: T502.2, T502.3, T502.4.
+
+- [ ] T502.6 Convert final logits from FP16 to F32 for sampling  Owner: TBD  Est: 30m
+  - The sampling/argmax step expects F32 logits. Add a single FP16->F32
+    conversion at the LMHead output (the last operation before sampling).
+  - File: compute/gpu_engine.go or layers/core/lmhead.go.
+  - Acceptance: Sampling receives F32 logits. Output tokens identical to
+    current FP16 path at temp=0.
+  - Dependencies: T502.5.
+
+- [ ] T502.7 Run go vet on modified packages  Owner: TBD  Est: 15m
+  - Dependencies: T502.6.
+
+### E503: FP16 Weight Pre-conversion
+
+Weights are currently stored as F32 on GPU and converted to FP16 on every MatMul.
+Converting weights to FP16 once at upload time eliminates per-MatMul conversion.
+
+- [ ] T503.1 Convert weights to FP16 during GPU upload  Owner: TBD  Est: 1.5h
+  - In compute/gpu_engine.go UploadWeights: when dtype=fp16, after uploading
+    F32 weights to GPU, run F32ToFP16 kernel once and store the result as
+    Float16Storage on the weight tensor. Free the F32 GPU copy.
+  - Cache the FP16 device pointer on the weight tensor for reuse.
+  - File: compute/gpu_engine.go (UploadWeights method).
+  - Acceptance: Weights are FP16 on GPU after upload. No per-MatMul weight
+    conversion. GPU memory for weights is halved vs F32.
+  - Dependencies: T502.1.
+
+- [ ] S503.1.1 Test FP16 weight pre-conversion  Owner: TBD  Est: 30m
+  - Verify weights are Float16Storage after upload when dtype=fp16.
+  - Verify MatMul uses pre-converted FP16 weights without conversion.
+  - File: compute/gpu_engine_test.go.
+  - Acceptance: go test -race passes.
+  - Dependencies: T503.1.
+
+- [ ] T503.2 Run go vet on compute package  Owner: TBD  Est: 15m
+  - Dependencies: T503.1.
+
+### E504: FP8 Arena Fix
+
+FP8 inference exhausts the 2GB arena because each MatMul allocates temporary
+FP16 conversion buffers that are not freed until the end of the forward pass.
+The fix: pre-allocate persistent FP16 buffers for FP8 MatMul and reuse them.
+
+- [ ] T504.1 Profile FP8 arena usage to identify largest allocations  Owner: TBD  Est: 1h
+  - Add temporary logging to CUDAArenaPool.Alloc to record allocation sizes.
+  - Run bench_tps --dtype=fp8 and collect the log.
+  - Identify the top 10 largest allocations and which functions request them.
+  - File: internal/gpuapi/cuda_arena.go (temporary logging).
+  - Acceptance: Log shows allocation sizes and callers. Top allocations documented.
   - Dependencies: none.
 
-- [x] T402.3 Eliminate D2H in FFN split CPU fallback  Owner: TBD  Est: 1h
-  - layers/core/ffn.go:321 -- CPU fallback for FFN gate/up split calls
-    merged.Data(). The GPU path at line 305 uses NewGPUStorageView.
-    Verify the GPU path is always taken during GPU inference. If not,
-    fix the condition that causes fallback.
-  - Acceptance: No .Data() call in FFN split during GPU inference.
+- [ ] T504.2 Pre-allocate persistent FP16 buffers for FP8 MatMul  Owner: TBD  Est: 2h
+  - In compute/gpu_fp8.go: instead of allocating FP16 conversion buffers per
+    MatMul call via pool.Alloc, pre-allocate a set of reusable FP16 buffers
+    during engine initialization (or on first use, then cache).
+  - Size buffers based on the largest MatMul dimensions in the model.
+  - Add a scratchpad struct to GPUEngine that holds persistent FP16 buffers
+    for FP8 operations.
+  - File: compute/gpu_fp8.go, compute/gpu_engine.go.
+  - Acceptance: FP8 MatMul uses pre-allocated buffers. Arena misses drop from
+    1841 to near zero. bench_tps --dtype=fp8 completes in <5 seconds.
+  - Dependencies: T504.1.
+
+- [ ] S504.2.1 Test FP8 arena usage after pre-allocation  Owner: TBD  Est: 30m
+  - Run bench_tps --dtype=fp8 and verify arena stats show minimal misses.
+  - File: docs/updates.md (benchmark results).
+  - Acceptance: Arena misses < 50 (down from 1841). MemPool misses < 50 (down from 810).
+  - Dependencies: T504.2.
+
+- [ ] T504.3 Run go vet on compute package  Owner: TBD  Est: 15m
+  - Dependencies: T504.2.
+
+### E505: FP8 Scale Factor Fix
+
+FP8 output is degenerate (repetitive text), suggesting scale factors are not
+correctly applied during matmul or are lost between operations.
+
+- [ ] T505.1 Add FP8 scale factor diagnostic logging  Owner: TBD  Est: 1h
+  - In compute/gpu_fp8.go ltMatmulFP8: log the scale values (scaleA, scaleB)
+    and matrix dimensions before each cublasLtMatmul call.
+  - In model/gguf/loader.go QuantizeToFP8E4M3: log scale factors per tensor.
+  - Run bench_tps --dtype=fp8 and inspect whether scales are reasonable
+    (typically 0.001 to 100, not 0 or inf).
+  - File: compute/gpu_fp8.go, model/gguf/loader.go.
+  - Acceptance: Scale factors logged for all FP8 MatMul calls. Any zero, inf,
+    or NaN scales identified and documented.
   - Dependencies: none.
 
-- [x] T402.4 Eliminate D2H in GQA CPU fallback paths  Owner: TBD  Est: 2h
-  - grouped_query_attention.go:437 -- fused QK norm+RoPE CPU fallback.
-  - grouped_query_attention.go:888 -- splitMergedQKV CPU fallback.
-  - Both have GPU paths via SubSlice (lines 421-434 and 867-884).
-  - Verify GPU path is taken. If CPU fallback is reached, diagnose why
-    the GPUStorage type assertion fails.
-  - Acceptance: No .Data() call in GQA during GPU decode.
-  - Dependencies: none.
+- [ ] T505.2 Fix FP8 scale propagation bugs  Owner: TBD  Est: 2h
+  - Based on T505.1 diagnostics, fix identified scale issues. Likely fixes:
+    a) Ensure scaleA and scaleB GPU pointers point to valid float32 values.
+    b) Verify cublasLtMatmulDesc scale pointer attributes are set correctly
+       (CUBLASLT_MATMUL_DESC_A_SCALE_POINTER = 17, B = 18).
+    c) Check if scale factors need to be inverted (cublasLt expects
+       scale = 1/absmax, not absmax/448).
+    d) Verify scale GPU memory is not freed before cublasLtMatmul executes
+       (async execution hazard).
+  - File: compute/gpu_fp8.go, tensor/fp8_storage.go.
+  - Acceptance: bench_tps --dtype=fp8 produces coherent output (grammatically
+    valid, on-topic). Output may differ from F32 in word choice.
+  - Dependencies: T505.1.
 
-- [x] T402.5 Enable CUDA graph capture and verify on DGX  Owner: TBD  Est: 2h
-  - Set ZERFOO_ENABLE_CUDA_GRAPH=1 and run bench_tps on DGX Spark.
-  - Confirm "captured and instantiated successfully" log appears.
-  - If capture still fails, diagnose the remaining D2H site.
-  - Acceptance: Graph capture succeeds. Tokens 3+ use graph replay.
-  - Dependencies: T402.1, T402.2, T402.3, T402.4.
+- [ ] S505.2.1 FP8 output quality test  Owner: TBD  Est: 30m
+  - Run bench_tps --dtype=fp8 with temp=0, 50 tokens. Verify output is
+    coherent (not repetitive, grammatically valid).
+  - Compare with F32 output. Document differences.
+  - File: docs/updates.md.
+  - Acceptance: FP8 output is coherent. Documented.
+  - Dependencies: T505.2.
 
-- [x] T402.6 Benchmark CUDA graph replay vs per-op  Owner: TBD  Est: 30m
-  - Run bench_tps 3 times with ZERFOO_ENABLE_CUDA_GRAPH=1, 3 times without.
-  - Acceptance: Graph replay faster. Results documented.
-  - Dependencies: T402.5.
+- [ ] T505.3 Run go vet on modified packages  Owner: TBD  Est: 15m
+  - Dependencies: T505.2.
 
-- [x] S402.6.1 CUDA graph correctness test  Owner: TBD  Est: 30m
-  - Compare output with graph enabled vs disabled at temp=0 for 50 tokens.
-  - Acceptance: Tokens identical.
-  - Dependencies: T402.5.
+### E506: Final Benchmark and Verification
 
-### E403: Fused Dequant+GEMV Q4_K Validation
-
-- [x] T403.1 Debug Q4_K dispatch regression  Owner: TBD  Est: 2h
-  - The GGUF loader was reverted from Q4_K preservation to Q4_0
-    re-quantization because preserving Q4_K caused a regression (100 tok/s).
-  - Root cause: the Q4_K engine dispatch path may not handle all weight
-    shapes, or the CPU dequantize fallback for batch>1 is slow.
-  - Read compute/gpu_engine.go (matMulQ4K, matMulQ4KBWeight), model/gguf/loader.go.
-  - Add diagnostic logging to the Q4_K dispatch path.
-  - Test with Q4_K preservation re-enabled and identify which MatMul calls
-    fall back to CPU.
-  - Acceptance: Root cause identified. Document which calls fall through.
-  - Dependencies: none.
-
-- [x] T403.2 Fix Q4_K dispatch to handle all weight shapes  Owner: TBD  Est: 3h
-  - Based on T403.1 findings, fix the dispatch path so all Q4_K weights
-    use the fused GEMV kernel for batch=1 and GPU dequantize+cuBLAS for
-    batch>1.
-  - Re-enable Q4_K preservation in the GGUF loader.
-  - Acceptance: bench_tps with Q4_K model produces correct output at
-    >= 166 tok/s (no regression from current baseline).
-  - Dependencies: T403.1.
-
-- [x] S403.2.1 Q4_K end-to-end benchmark  Owner: TBD  Est: 30m
-  - Run bench_tps 3 times with Q4_K preservation enabled.
-  - Compare tok/s with Q4_0 re-quantization path.
-  - Acceptance: Q4_K path >= Q4_0 path. Results documented.
-  - Dependencies: T403.2.
-
-### E404: Kernel Optimization Benchmarks
-
-- [x] T404.1 Rebuild kernels with Wave 8 optimizations on DGX  Owner: TBD  Est: 30m
-  - cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
-  - The Makefile now includes --maxrregcount=32 for gemm_q4 and transpose,
-    FLASH_BLOCK_SIZE=64 for sm_121, and warp shuffle reductions in
-    rmsnorm and scaled_softmax.
+- [ ] T506.1 Rebuild libkernels.so on DGX  Owner: TBD  Est: 15m
+  - cd internal/cuda/kernels && make clean && make shared
+  - Verify build succeeds.
   - Acceptance: libkernels.so builds without errors.
-  - Dependencies: none.
+  - Dependencies: E502, E503, E504, E505.
 
-- [x] T404.2 Benchmark kernel optimizations vs pre-Wave-8  Owner: TBD  Est: 1h
-  - Build bench_tps with new kernels.
-  - Run 3 times and compare with the 166 tok/s baseline.
-  - If improvement is measurable, document per-kernel delta.
-  - Acceptance: Results documented. Any improvement noted.
-  - Dependencies: T404.1.
+- [ ] T506.2 Full benchmark suite on DGX  Owner: TBD  Est: 1h
+  - Run bench_tps 3 times each for F32, FP16, FP8 with identical model and
+    prompt as Ollama baseline from T501.1.
+  - Record all results with commit hash.
+  - File: docs/updates.md.
+  - Acceptance: All 3 dtype paths produce coherent output. FP16 > F32 in tok/s.
+    FP8 > F32 in tok/s. Results documented with exact commands.
+  - Dependencies: T506.1, T501.1.
 
-- [x] S404.2.1 Kernel optimization parity test  Owner: TBD  Est: 30m
-  - Run go test on compute/ and internal/cuda/kernels/ on DGX.
-  - Verify no correctness regression from register tuning or shared memory changes.
-  - Acceptance: All tests pass.
-  - Dependencies: T404.1.
+- [ ] S506.2.1 Output quality comparison  Owner: TBD  Est: 30m
+  - Compare F32, FP16, FP8 output at temp=0, 50 tokens.
+  - Verify FP16 output matches F32 (identical or near-identical).
+  - Verify FP8 output is coherent (may differ from F32).
+  - File: docs/updates.md.
+  - Acceptance: Quality documented. Any regressions flagged.
+  - Dependencies: T506.2.
 
-### E405: BFloat16/Float16 Inference Path
-
-Note: GB10 Blackwell supports native FP16 at 2x FP32 throughput and BF16
-at similar rates. The float16 package (github.com/zerfoo/float16) provides
-Go BFloat16 and Float16 types. cublasGemmEx purego wrapper already supports
-BF16/FP16 compute types. The goal is to run inference with half-precision
-weights and FP32 accumulation to halve memory bandwidth (the primary
-bottleneck on LPDDR5x).
-
-- [x] T405.1 Add BFloat16 weight loading to GGUF loader  Owner: TBD  Est: 2h
-  - Detect BF16 weight type in GGUF files (GGMLTypeBF16 if it exists, or
-    convert F32 weights to BF16 at load time when a --bf16 flag is set).
-  - Store weights as float16.BFloat16 tensors using existing BFloat16Storage
-    or create BFloat16Storage if it does not exist.
-  - File: model/gguf/loader.go, tensor/storage.go.
-  - Acceptance: Model loads with BF16 weights. Memory usage halved vs F32.
-  - Dependencies: none.
-
-- [x] T405.2 Wire BFloat16 MatMul through cublasGemmEx  Owner: TBD  Est: 3h
-  - When weights are BF16 and activations are FP32, use cublasGemmEx with
-    CUDA_R_16BF input type and CUDA_R_32F compute/output type (mixed precision).
-  - The cublasGemmEx purego wrapper (internal/cublas/cublas_purego.go) already
-    supports this via the computeType parameter.
-  - Add dispatch logic in GPUEngine.MatMul to detect BF16 storage and route
-    to GemmEx instead of Sgemm.
-  - File: compute/gpu_engine.go (MatMul path), internal/cublas/cublas_purego.go.
-  - Acceptance: BF16 weights x FP32 activations use GemmEx. Output correct
-    (max rel error < 1e-3 vs FP32 reference).
-  - Dependencies: T405.1.
-
-- [x] T405.3 Add FP16 kernel variants for element-wise ops  Owner: TBD  Est: 3h
-  - Add __half variants of elementwise kernels (add, mul, rmsnorm, etc.) in
-    internal/cuda/kernels/. Use __half2 for 2-wide SIMD where possible.
-  - Add Go dispatch for FP16 via the purego path.
-  - Acceptance: FP16 kernels compile for sm_121. Parity with FP32 (rel error < 1e-3).
-  - Dependencies: none.
-
-- [x] T405.4 Add full FP16 inference path  Owner: TBD  Est: 4h
-  - Enable running the entire forward pass in FP16: weights, activations,
-    and intermediates all in FP16. Use FP32 accumulation in reductions
-    (RMSNorm, Softmax) to avoid precision loss.
-  - Add --dtype=fp16 flag to bench_tps.
-  - File: compute/gpu_engine.go, generate/generator.go.
-  - Acceptance: bench_tps --dtype=fp16 produces coherent output. Throughput
-    measured and documented.
-  - Dependencies: T405.2, T405.3.
-
-- [x] S405.4.1 BF16/FP16 parity and benchmark  Owner: TBD  Est: 1h
-  - Compare output quality: FP32 vs BF16 vs FP16 at temperature=0 for 50 tokens.
-  - Measure tok/s for each precision. Document results.
-  - Acceptance: BF16/FP16 output coherent. Throughput improvement documented.
-    Expected: ~1.5-2x improvement from halved memory bandwidth.
-  - Dependencies: T405.4.
-
-- [x] T405.5 Run go vet on modified packages  Owner: TBD  Est: 15m
-  - Dependencies: S405.4.1.
-
-### E406: FP8 Inference Path
-
-Note: GB10 Blackwell (sm_121) supports FP8 at 4x FP32 throughput. Two
-FP8 formats exist: E4M3 (4-bit exponent, 3-bit mantissa, better for weights)
-and E5M2 (5-bit exponent, 2-bit mantissa, better for activations). The
-float8 package (github.com/zerfoo/float8) provides Go FP8 types. FP8
-inference requires per-tensor scaling factors to compensate for the very
-limited dynamic range (E4M3: [-448, 448], E5M2: [-57344, 57344]).
-
-cuBLAS FP8 support uses cublasLtMatmul (not cublasGemmEx). This requires
-wrapping the cuBLASLt (lightweight) API via purego. FP8 MatMul typically
-uses FP16 or FP32 accumulation to maintain output precision.
-
-This epic depends on E405 (BF16/FP16) because FP8 compute pipelines use
-FP16 accumulation and the FP16 kernel infrastructure must be in place first.
-
-- [x] T406.1 Add FP8 type support to tensor package  Owner: TBD  Est: 2h
-  - Add FP8E4M3Storage and FP8E5M2Storage to tensor/storage.go using the
-    float8 package types.
-  - Support Len, Slice, Set, DeviceType for both formats.
-  - Add conversion functions: FP32 to FP8E4M3 (with per-tensor scale),
-    FP8E4M3 to FP32 (with per-tensor scale).
-  - File: tensor/storage.go or tensor/fp8_storage.go.
-  - Acceptance: go test passes. Round-trip conversion FP32->FP8->FP32
-    has max rel error < 0.1 (FP8 is very lossy).
-  - Dependencies: none.
-
-- [x] T406.2 Add FP8 weight quantization to GGUF loader  Owner: TBD  Est: 2h
-  - Add --fp8 flag to convert F32 or BF16 weights to FP8E4M3 at load time.
-  - Compute per-tensor absmax scale factor: scale = max(abs(tensor)) / 448.
-  - Store scale factors alongside quantized weights.
-  - File: model/gguf/loader.go.
-  - Acceptance: Model loads with FP8 weights. Memory usage is 1/4 of F32.
-  - Dependencies: T406.1.
-
-- [x] T406.3 Create purego wrappers for cublasLt API  Owner: TBD  Est: 4h
-  - Wrap via purego dlopen of libcublasLt.so:
-    cublasLtCreate, cublasLtDestroy, cublasLtMatmulDescCreate,
-    cublasLtMatmulDescSetAttribute, cublasLtMatrixLayoutCreate,
-    cublasLtMatmul, cublasLtMatmulPreferenceCreate,
-    cublasLtMatmulAlgoGetHeuristic.
-  - Add cublasLt.Available() runtime guard.
-  - Follow the established purego dlopen pattern from internal/cuda/runtime_purego.go.
-  - File: internal/cublas/cublaslt_purego.go.
-  - Acceptance: Wrappers compile without CGo. Available() returns true on DGX.
-  - Dependencies: none.
-
-- [x] T406.4 Wire FP8 MatMul through cublasLtMatmul  Owner: TBD  Est: 4h
-  - When weights are FP8E4M3 and activations are FP16 or FP32:
-    use cublasLtMatmul with CUDA_R_8F_E4M3 input type, CUDA_R_16F or
-    CUDA_R_32F compute type, and per-tensor scaling via alpha/beta params.
-  - Handle the matmul descriptor setup: set scale factors via
-    cublasLtMatmulDescSetAttribute (CUBLASLT_MATMUL_DESC_A_SCALE_POINTER).
-  - Add dispatch logic in GPUEngine.MatMul to detect FP8 storage.
-  - File: compute/gpu_engine.go, internal/cublas/cublaslt_purego.go.
-  - Acceptance: FP8 weights x FP16 activations use cublasLtMatmul. Output
-    correct (max rel error < 0.05 vs FP32 reference due to FP8 quantization).
-  - Dependencies: T406.2, T406.3, E405 (FP16 kernels).
-
-- [x] T406.5 Add FP8 element-wise kernel variants  Owner: TBD  Est: 3h
-  - Add __nv_fp8_e4m3 kernel variants for element-wise ops where beneficial.
-  - For most ops (RMSNorm, Softmax), keep FP16/FP32 accumulation and only
-    use FP8 for weight storage, not compute. The primary gain is from
-    reduced memory reads, not faster compute.
-  - Add dequantize-on-load kernel: reads FP8 from global memory, converts
-    to FP16 in registers, computes in FP16.
-  - File: internal/cuda/kernels/fp8_ops.cu.
-  - Acceptance: Kernels compile for sm_121. Parity with FP16 path.
-  - Dependencies: T406.1, T405.3 (FP16 kernels).
-
-- [x] T406.6 Add full FP8 inference path  Owner: TBD  Est: 4h
-  - Enable running inference with FP8 weights: load FP8, dequantize to
-    FP16 for element-wise ops, use cublasLtMatmul for MatMul.
-  - Add --dtype=fp8 flag to bench_tps.
-  - Compute and cache per-tensor scale factors during model loading.
-  - File: compute/gpu_engine.go, generate/generator.go.
-  - Acceptance: bench_tps --dtype=fp8 produces coherent output. Throughput
-    measured and documented.
-  - Dependencies: T406.4, T406.5.
-
-- [x] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h  2026 03 13  NOTE: Benchmarked on DGX. FP16 124.50 tok/s (17% slower than F32 due to conversion overhead). FP8 1.45 tok/s (arena thrashing, degenerate output). Acceptance NOT fully met -- FP8 not coherent, no throughput improvement. See docs/updates.md for full results.
-  - Compare output quality: FP32 vs BF16 vs FP16 vs FP8 at temp=0 for 50 tokens.
-  - Measure tok/s for each precision. Document results.
-  - FP8 output may diverge more from FP32 due to quantization noise.
-  - Acceptance: FP8 output coherent (may differ from FP32 in word choice
-    but must be grammatically valid and on-topic). Throughput improvement
-    documented. Expected: ~2-4x over FP32 from quartered memory bandwidth.
-  - Dependencies: T406.6.
-
-- [x] T406.7 Run go vet on modified packages  Owner: TBD  Est: 15m
-  - Dependencies: S406.6.1.
+- [ ] T506.3 Run go vet on all packages  Owner: TBD  Est: 15m
+  - Dependencies: T506.2.
 
 ---
 
-## 4. Parallel Work
+## 4. Parallel Work (optimize for up to 5 concurrent agents)
 
 | Track | Epics/Tasks | Notes |
 |-------|-------------|-------|
-| Track A: Regression Bisect | E401 | Critical path. Must complete first. |
-| Track B: CUDA Graph D2H | E402 (T402.1-T402.4) | 4 independent D2H elimination tasks. |
-| Track C: Q4_K Validation | E403 | Independent. Can run parallel with Track B. |
-| Track D: Kernel Benchmarks | E404 | Independent. Can run parallel with all. |
-| Track E: BF16/FP16 | E405 | Independent. Can run parallel with Tracks B-D. |
-| Track F: FP8 | E406 | Depends on E405 (FP16 kernels). Last in sequence. |
+| Track A: Baseline | E501 (T501.1) | Quick benchmark, no code changes |
+| Track B: FP16 Activation Storage | E502 (T502.1-T502.7) | Core FP16 optimization |
+| Track C: FP16 Weight Pre-conversion | E503 (T503.1-T503.2) | Depends on T502.1 only |
+| Track D: FP8 Arena Fix | E504 (T504.1-T504.3) | Independent of FP16 work |
+| Track E: FP8 Scale Fix | E505 (T505.1-T505.3) | Independent of FP16 work |
+| Track F: Final Benchmark | E506 (T506.1-T506.3) | Depends on all tracks |
 
 Sync points:
-- After Track A (E401): re-baseline. All subsequent work builds on recovered perf.
-- After Track B (T402.1-T402.4): T402.5 (enable graph) unblocks.
-- After Track E (T405.1-T405.3): T405.4 (full FP16 path) unblocks.
-- After Track E complete: Track F (FP8) unblocks.
-- After all tracks: final tok/s measurement across all precisions.
+- After Wave 1: T502.1 (FP16 storage type) unblocks all E502 and E503 tasks.
+- After Waves 2-3: All implementation done. T506.1 (rebuild + benchmark) unblocks.
+- After Wave 4: Final results determine if target is met.
 
-Maximum parallelism:
-- Wave 1: T401.1 (regression bisect) + T402.1-T402.4 (D2H elimination, 4 parallel)
-  + T403.1 (Q4_K debug) + T404.1 (kernel rebuild). T401.1 is highest priority.
-- Wave 2: T401.2 (fix regression) + T402.5 (enable graph) + T403.2 (fix Q4_K)
-  + T404.2 (benchmark kernels) + T405.1 (BF16 loading) + T405.3 (FP16 kernels).
-- Wave 3: T405.2 (BF16 MatMul) + T405.4 (full FP16 path) + T406.1 (FP8 types)
-  + T406.3 (cublasLt wrappers) + verification tasks.
-- Wave 4: T406.2 (FP8 quantization) + T406.4 (FP8 MatMul) + T406.5 (FP8 kernels)
-  + S405.4.1 (BF16/FP16 benchmark).
-- Wave 5: T406.6 (full FP8 path) + S406.6.1 (FP8 benchmark) + final verification.
+### Maximum parallelism
+
+- Wave 1 (5 tasks): T501.1 (baseline benchmark) + T502.1 (FP16 storage type) +
+  T504.1 (FP8 arena profiling) + T505.1 (FP8 scale diagnostics) +
+  S502.1.1 (FP16 storage tests -- can start once T502.1 skeleton exists,
+  but in practice T502.1 finishes first; replace with T502.2 if T502.1
+  is fast). All 5 have zero dependencies.
+  NOTE: T502.2, T502.3, T502.4 all depend only on T502.1 and touch different
+  files, so they can run in Wave 1 if T502.1 finishes quickly. But conservatively
+  they are Wave 2.
+
+- Wave 2 (5 tasks): T502.2 (element-wise FP16) + T502.3 (MatMul FP16) +
+  T502.4 (RMSNorm/Softmax FP16) + T503.1 (weight pre-conversion) +
+  T504.2 (FP8 arena pre-alloc). All unblocked after Wave 1.
+  T505.2 (FP8 scale fix) also unblocked but limited to 5 slots.
+
+- Wave 3 (5 tasks): T502.5 (embedding FP16 output) + T502.6 (logits FP16->F32) +
+  T505.2 (FP8 scale fix) + S502.2.1 (element-wise tests) + S502.3.1 (MatMul tests).
+  NOTE: T502.5 depends on T502.2+T502.3+T502.4. Tests can run once impl is done.
+
+- Wave 4 (5 tasks): T502.7 (go vet) + T503.2 (go vet) + T504.3 (go vet) +
+  T505.3 (go vet) + S502.4.1 (RMSNorm tests). Vet tasks are quick.
+
+- Wave 5 (4 tasks): T506.1 (rebuild libkernels) + S503.1.1 (weight tests) +
+  S504.2.1 (arena tests) + S505.2.1 (FP8 quality test).
+
+- Wave 6 (3 tasks): T506.2 (full benchmark) + S506.2.1 (quality comparison) +
+  T506.3 (final go vet).
+
+### Dependency minimization checklist applied
+
+a) T502.2, T502.3, T502.4 all depend on T502.1 but NOT on each other -- they
+   touch different functions in different files. Maximally parallel.
+b) T504.x and T505.x are fully independent of T502.x/T503.x -- FP8 and FP16
+   fixes run on separate tracks.
+c) Test subtasks (S*) depend on their implementation tasks but can run as soon
+   as the implementation commits are pushed, without waiting for other tracks.
 
 ---
 
@@ -403,12 +386,10 @@ Maximum parallelism:
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M78: Regression recovered | E401 | bench_tps >= 188.92 tok/s |
-| M79: CUDA graph operational | E402 | Graph capture succeeds, replay faster than per-op |
-| M80: Q4_K fused GEMV validated | E403 | Q4_K path >= Q4_0 path in tok/s |
-| M81: Surpass Ollama | E401-E404 | bench_tps > 197.21 tok/s |
-| M82: Half-precision inference | E405 | BF16/FP16 path produces coherent output with measured speedup |
-| M83: FP8 inference | E406 | FP8 path produces coherent output with ~2-4x throughput over FP32 |
+| M84: Baseline established | T501.1 | Apples-to-apples Ollama vs Zerfoo comparison documented |
+| M85: FP16 zero-conversion path | E502, E503 | FP16 inference with zero F32<->FP16 round-trips. FP16 tok/s > F32 tok/s |
+| M86: FP8 functional | E504, E505 | FP8 coherent output, arena misses < 50, FP8 tok/s > F32 tok/s |
+| M87: Surpass Ollama | E506 | bench_tps > 197.21 tok/s with any dtype |
 
 ---
 
@@ -416,15 +397,12 @@ Maximum parallelism:
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R401 | Regression is environmental (thermal, background load) not code | Cannot fix | Medium | Run baseline commit 5+ times at different times of day |
-| R402 | D2H sites cannot be eliminated without major refactor | CUDA graph stays disabled | Medium | Document remaining sites. Consider graph capture for sub-regions only. |
-| R403 | Q4_K fused GEMV slower than Q4_0 dequant+cuBLAS | No gain from fusion | Low | Q4_K halves bandwidth; should be faster for bandwidth-bound workloads |
-| R404 | Register tuning causes subtle numerical differences | Incorrect output | Low | Run parity tests before and after on DGX |
-| R405 | FP16 precision loss in reductions causes incoherent output | Bad quality | Medium | Use FP32 accumulation in RMSNorm/Softmax. Compare output with FP32 reference. |
-| R406 | BF16 GGUF format not standardized | Cannot load BF16 models | Low | Convert F32 to BF16 at load time as fallback. |
-| R407 | FP8 quantization noise too high for small models | Incoherent output | Medium | Per-channel scaling instead of per-tensor. Fall back to FP16 if quality degrades. |
-| R408 | cublasLt API more complex than cublasGemmEx | Longer implementation | Low | API is well-documented. Follow NVIDIA samples for descriptor setup. |
-| R409 | FP8 E4M3 dynamic range insufficient for outlier activations | Numerical overflow | Medium | Use E5M2 for activations, E4M3 for weights. Implement absmax clipping. |
+| R501 | FP16 native storage breaks tensor shape assumptions | Many ops fail | Medium | Float16Storage must satisfy same interface as GPUStorage. Comprehensive tests. |
+| R502 | FP16 accumulation in reductions loses precision | Incoherent output | Low | Keep FP32 accumulation in RMSNorm/Softmax (already implemented in kernels). |
+| R503 | FP8 scale factors correct but model too small for FP8 | Degenerate output persists | Medium | Fall back to per-channel scaling. Try FP8 on larger model. |
+| R504 | Pre-allocated FP16 buffers waste memory for small models | OOM on constrained devices | Low | Size buffers from model config, not worst-case. Lazy allocation on first use. |
+| R505 | Baseline difference is model-dependent, not optimizable | Cannot reach 197 tok/s with gemma3 | Medium | T501.1 establishes ground truth. If model-dependent, try llama3. |
+| R506 | cublasLtMatmul workspace requirement missed | FP8 MatMul produces wrong results | Medium | Check cublasLtMatmulAlgoGetHeuristic workspace size. Allocate if needed. |
 
 ---
 
@@ -453,80 +431,57 @@ A task is done when:
 - Build: go build ./...
 - Benchmark: bench_tps on DGX Spark for performance-related changes.
 
+### Remote Host Protocol
+
+- Always rebuild libkernels.so on DGX before benchmarking.
+- Always git pull on DGX before benchmarking.
+- Record exact commit hash in benchmark results.
+
 ---
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-13 (Add FP8 Epic)
+### Change Summary -- 2026-03-13 (Phase 3 Plan Created)
 
-Added E406: FP8 inference path (9 tasks: T406.1-T406.7, S406.6.1).
-GB10 Blackwell supports FP8 (E4M3/E5M2) at 4x FP32 throughput. Requires
-cublasLt purego wrappers (new API), per-tensor scaling factors, and FP16
-accumulation. Depends on E405 (BF16/FP16 path must be complete first).
-Added Track F, M83 milestone, R407-R409 risks.
+Created Phase 3 plan targeting >197.21 tok/s. Phase 2 (35 tasks, 6 epics) is
+fully complete. Phase 2 knowledge trimmed to docs/design.md.
 
-### Change Summary -- 2026-03-13 (Add BF16/FP16 Epic)
+Phase 3 focuses on 5 epics:
+- E501: Apples-to-apples baseline (1 task).
+- E502: Native FP16 activation storage (7 tasks + 4 test subtasks).
+- E503: FP16 weight pre-conversion (2 tasks + 1 test subtask).
+- E504: FP8 arena pre-allocation (3 tasks + 1 test subtask).
+- E505: FP8 scale factor fix (3 tasks + 1 test subtask).
+- E506: Final benchmark (3 tasks + 1 test subtask).
 
-Added E405: BFloat16/Float16 inference path (6 tasks: T405.1-T405.5, S405.4.1).
-GB10 Blackwell supports native FP16 at 2x FP32 throughput. Half-precision
-weights halve memory bandwidth (primary bottleneck on LPDDR5x). cublasGemmEx
-purego wrapper already supports BF16/FP16 compute types.
-Added Track E to parallel work, M82 milestone, R405/R406 risks.
+Total: 19 implementation tasks, 7 test subtasks = 26 tasks.
+Designed for 6 waves with up to 5 parallel agents per wave.
 
-### Change Summary -- 2026-03-13 (New Plan)
+Trimmed Phase 2 epics E401-E406 from plan. Stable knowledge preserved in
+docs/design.md "Phase 2 Completion Summary" section.
 
-Created Phase 2 plan targeting surpassing Ollama (>197.21 tok/s). The prior
-plan (89 tasks) is fully complete. This plan focuses on 4 highest-impact
-next steps:
-1. E401: Bisect and fix the 188->166 tok/s regression.
-2. E402: Eliminate remaining D2H copies to enable CUDA graph capture.
-3. E403: Validate fused dequant+GEMV Q4_K end-to-end.
-4. E404: Benchmark Wave 8 kernel optimizations on DGX.
-
-Completed epics from prior plan trimmed to docs/design.md:
-E301-E307, E203-E205, E207-E209, E210-E215, E306.
-
-### Prior Plan Completion -- 2026-03-13
-
-All 89 tasks from the "Surpass Ollama" plan completed across 8 waves:
-- Wave 1: D2H elimination (T301.1-3), OpenAI server (T305.1-3,6), transpose (T203.1)
-- Wave 2: CUDA graph (T302.1), fused GEMV (T304.1), unified memory (T303.1-2), OpenAPI (T305.4), gather (T204.1)
-- Wave 3: Engine wiring (T304.2, T203.2, T204.2), broadcasting (T205.1), OpenAPI endpoint (T305.5)
-- Wave 4: Broadcasting wiring (T205.2), fused verification (T306.1), buffer layout (T207.2), cuBLAS GemmEx (T210.1), flash purego (T213.1)
-- Wave 5: All purego wrappers (T210.2-3, T211.1, T212.1, T214.1-2, T215.1)
-- Wave 6: All build tag removal (T211.2-3, T212.2-3, T213.2, T214.3-4, T215.2-3)
-- Wave 7: All parity/verification tests + server integration test
-- Wave 8: Kernel optimization (T209.2), megakernel abandonment (T208.1-2), purego parity (S211-215), output quality (T307.2), register tuning (T209.1)
-
-### Performance Baselines
-
-| Config | tok/s | Source |
-|--------|-------|--------|
-| Ollama GB10 | 197.21 | Measured 2026-03-12 |
-| Zerfoo GB10 (pre-wave best) | 188.92 avg | 3-run avg 2026-03-12 |
-| Zerfoo GB10 (post-wave) | 166.02 avg | 3-run avg 2026-03-13 |
-| Zerfoo GB10 (managed memory) | 145.33 | With cudaMallocManaged |
-| Zerfoo GB10 (CUDA graph attempt) | 99.51 | Graph capture fails |
-| Zerfoo GB10 (initial GPU Q4) | 8.61 | Pre-optimization |
-| Theoretical max (Q4 on GB10) | ~350-400 | 273 GB/s bandwidth ceiling |
+Updated docs/design.md with Phase 2 completion details, performance data, and
+architectural insights about FP16 conversion overhead and FP8 arena thrashing.
 
 ---
 
 ## 9. Hand-off Notes
 
-- **Prior plan:** All 89 tasks complete. Knowledge preserved in docs/design.md.
+- **Prior plans:** Phase 1 (89 tasks) and Phase 2 (35 tasks) complete. See docs/design.md.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
-- **Build kernels:** cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
-- **Benchmark:** bench_tps -model /home/ndungu/models/gemma3-gguf/model.gguf -tokens 256
-  -prompt 'The meaning of life is' -device cuda
-- **CUDA graph:** Enable with ZERFOO_ENABLE_CUDA_GRAPH=1. Partial capture in graph/cuda_graph.go.
-- **Managed memory:** Enable with ZERFOO_ENABLE_MANAGED_MEM=1. 13% regression on GB10.
-- **Megakernel:** Abandoned. See docs/updates.md "T208.1" section.
+- **Build kernels:** cd internal/cuda/kernels && make clean && make shared
+  (nvcc at /usr/local/cuda/bin/nvcc, go at /usr/local/go/bin/go).
+- **Benchmark:** bench_tps --model ~/models/gemma3-gguf/model.gguf --tokens 50
+  --prompt 'The quick brown fox' --device cuda --dtype [fp32|fp16|fp8]
+- **Key files for FP16 optimization:**
+  - compute/gpu_fp16.go -- FP16 MatMul, element-wise, reductions (conversion bottleneck here)
+  - compute/gpu_kernels.go -- element-wise dispatch (lines 526-605 gate FP16 path)
+  - compute/gpu_engine.go -- MatMul dispatch (lines 499-570), dtype system (lines 19-34)
+  - tensor/fp8_storage.go -- FP8E4M3Storage (model for new Float16Storage)
+- **Key files for FP8 optimization:**
+  - compute/gpu_fp8.go -- FP8 MatMul, ltMatmulFP8 (arena allocation sites)
+  - internal/gpuapi/cuda_arena.go -- CUDAArenaPool (2GB pre-allocated)
+  - model/gguf/loader.go -- QuantizeToFP8E4M3 (scale factor computation)
 - **Pre-commit hook:** Rejects multi-directory commits.
-- **Pre-wave baseline commit:** 388e60d (for regression bisect).
-- **D2H copy sites remaining:**
-  (1) layers/core/matmul.go:106,117 -- weight pointer caching
-  (2) generate/tensor_cache.go:110-111 -- KV cache CPU fallback
-  (3) layers/core/ffn.go:321 -- FFN split CPU fallback
-  (4) grouped_query_attention.go:437 -- fused QK norm+RoPE CPU fallback
-  (5) grouped_query_attention.go:888 -- splitMergedQKV CPU fallback
+- **Stale worktree:** wave-4-task-E103 (fix/gather-codegen-embedded-weights) has 34 unmerged
+  commits from prior plan. Superseded. Do not merge.
