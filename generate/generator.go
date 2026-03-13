@@ -10,6 +10,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -158,21 +159,20 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 		}
 		if cErr == nil {
-			// CUDA graph capture is not yet usable because the GQA forward
-			// pass includes synchronous D2H memcpy calls (GPUStorage.TrySlice)
-			// that conflict with stream capture. Once all D2H copies are
-			// eliminated from the decode path, enable this:
-			//
-			// if sp, ok := any(gen.engine).(compute.StreamProvider); ok {
-			//     if streamPtr := sp.Stream(); streamPtr != nil {
-			//         if cuda.Available() && cuda.Lib().GraphAvailable() {
-			//             ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
-			//             compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-			//                 return ge.Run(ctx, inputs...)
-			//             })
-			//         }
-			//     }
-			// }
+			// Wire CUDA graph capture when the engine exposes a GPU stream
+			// and the runtime supports graph APIs. The executor warms up for
+			// 2 runs, then captures all GPU work into a graph for near-zero
+			// launch overhead on subsequent tokens.
+			if sp, ok := any(gen.engine).(compute.StreamProvider); ok {
+				if streamPtr := sp.Stream(); streamPtr != nil {
+					if cuda.Available() && cuda.Lib().GraphAvailable() {
+						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
+						compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+							return ge.Run(ctx, inputs...)
+						})
+					}
+				}
+			}
 			gen.plan.Store(compiled)
 			go tryCompileMegakernel(compiled, nil)
 		}

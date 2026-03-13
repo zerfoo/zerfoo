@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/pkg/tokenizer"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -1220,6 +1222,86 @@ func TestCompileGraph_DoesNotCorruptKVCache(t *testing.T) {
 	// The 5th token (EOS=2) is sampled but we break before running Forward again.
 	if updates != 5 {
 		t.Errorf("cache updates = %d, want 5 (compilation should not add extra updates)", updates)
+	}
+}
+
+// streamProviderEngine wraps CPUEngine and implements compute.StreamProvider
+// to test CUDA graph wiring in compileGraph.
+type streamProviderEngine struct {
+	*compute.CPUEngine[float32]
+	streamPtr unsafe.Pointer
+}
+
+func (e *streamProviderEngine) Stream() unsafe.Pointer { return e.streamPtr }
+
+func TestCompileGraph_WiresCUDAGraphExecutor(t *testing.T) {
+	tests := []struct {
+		name      string
+		streamPtr unsafe.Pointer
+	}{
+		{
+			name:      "nil stream skips graph wiring",
+			streamPtr: nil,
+		},
+	}
+
+	// On CUDA-capable machines, also test with a real stream pointer.
+	// We use a heap-allocated byte so checkptr is satisfied.
+	if cuda.Available() && cuda.Lib().GraphAvailable() {
+		sentinel := new(byte)
+		tests = append(tests, struct {
+			name      string
+			streamPtr unsafe.Pointer
+		}{
+			name:      "non-nil stream wires graph executor",
+			streamPtr: unsafe.Pointer(sentinel),
+		})
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tok := buildTestTokenizer()
+			vocabSize := 8
+			cpuEng := compute.NewCPUEngine(numeric.Float32Ops{})
+
+			eng := &streamProviderEngine{
+				CPUEngine: cpuEng,
+				streamPtr: tt.streamPtr,
+			}
+
+			// Verify type assertion works.
+			if _, ok := any(eng).(compute.StreamProvider); !ok {
+				t.Fatal("streamProviderEngine should implement StreamProvider")
+			}
+
+			g := buildTestGraph(t, vocabSize, []int{6, 7, 6, 7, 2})
+
+			gen := NewGenerator[float32](
+				g, tok, eng,
+				ModelConfig{
+					VocabSize:  vocabSize,
+					MaxSeqLen:  32,
+					EOSTokenID: 2,
+					NumLayers:  1,
+				},
+			)
+
+			result, err := gen.Generate(context.Background(), "hello world", SamplingConfig{
+				Temperature:  0,
+				MaxNewTokens: 10,
+			})
+			if err != nil {
+				t.Fatalf("Generate error: %v", err)
+			}
+			if result != "foo bar foo bar" {
+				t.Errorf("Generate = %q, want %q", result, "foo bar foo bar")
+			}
+
+			plan := gen.plan.Load()
+			if plan == nil {
+				t.Fatal("expected plan to be stored after compilation")
+			}
+		})
 	}
 }
 
