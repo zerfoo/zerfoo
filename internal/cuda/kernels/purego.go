@@ -91,6 +91,16 @@ type KernelLib struct {
 
 	// FP16 scaled_softmax
 	launchScaledSoftmaxFP16 uintptr
+
+	// FP16 conversion
+	launchF32ToFP16 uintptr
+	launchFP16ToF32 uintptr
+
+	// FP8 ops
+	launchDequantFP8E4M3ToFP16 uintptr
+	launchFP8Add               uintptr
+	launchFP8Mul               uintptr
+	launchFP8RMSNorm           uintptr
 }
 
 var (
@@ -192,6 +202,11 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_rmsnorm_fp16", &k.launchRMSNormFP16},
 		// FP16 scaled_softmax
 		{"launch_scaled_softmax_fp16", &k.launchScaledSoftmaxFP16},
+		// FP8 ops
+		{"launch_dequant_fp8e4m3_to_fp16", &k.launchDequantFP8E4M3ToFP16},
+		{"launch_fp8_add", &k.launchFP8Add},
+		{"launch_fp8_mul", &k.launchFP8Mul},
+		{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
