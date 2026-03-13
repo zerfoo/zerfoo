@@ -24,8 +24,9 @@ type CUDALib struct {
 	cudaGetDeviceCount     uintptr
 	cudaSetDevice          uintptr
 	cudaGetErrorString     uintptr
-	cudaGetDeviceProperties uintptr
-	cudaMemcpyPeer         uintptr
+	cudaGetDeviceProperties  uintptr
+	cudaMemcpyPeer          uintptr
+	cudaDeviceGetAttribute  uintptr
 
 	// CUDA graph API (optional, resolved separately -- may not exist on older runtimes)
 	cudaStreamBeginCapture  uintptr
@@ -89,6 +90,7 @@ func Open() (*CUDALib, error) {
 		{"cudaGetErrorString", &lib.cudaGetErrorString},
 		{"cudaGetDeviceProperties", &lib.cudaGetDeviceProperties},
 		{"cudaMemcpyPeer", &lib.cudaMemcpyPeer},
+		{"cudaDeviceGetAttribute", &lib.cudaDeviceGetAttribute},
 	}
 	for _, s := range syms {
 		addr := dlsymImpl(lib.handle, s.name)

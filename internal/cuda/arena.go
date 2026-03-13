@@ -27,6 +27,11 @@ func SetDefaultArenaPool(a *ArenaPool) {
 // This eliminates cudaMalloc/cudaFree overhead during inference, which is the
 // #1 bottleneck for per-token latency on the DGX Spark GPU.
 //
+// On devices with concurrent managed memory support (e.g., GB10 with
+// NVLink-C2C and shared LPDDR5x), the arena is allocated with
+// cudaMallocManaged. This makes the arena accessible from both CPU and GPU
+// without explicit H2D copies.
+//
 // Weight tensors and KV cache should NOT use the arena (they persist across
 // passes). The arena is only for per-pass intermediates.
 type ArenaPool struct {
@@ -35,6 +40,7 @@ type ArenaPool struct {
 	capacity int            // total bytes allocated
 	offset   int            // current bump offset
 	deviceID int
+	managed  bool // true if base was allocated with cudaMallocManaged
 	hits     atomic.Int64
 	misses   atomic.Int64 // only incremented if arena is full and falls back
 	resets   atomic.Int64
@@ -47,23 +53,44 @@ type ArenaPool struct {
 
 // NewArenaPool allocates a contiguous GPU region of the given capacity bytes
 // on the specified device. A fallback MemPool handles any overflow.
+// On devices with concurrent managed memory support, the arena uses
+// cudaMallocManaged to enable zero-copy CPU/GPU access.
 func NewArenaPool(deviceID, capacityBytes int, fallback *MemPool) (*ArenaPool, error) {
 	if err := SetDevice(deviceID); err != nil {
 		return nil, fmt.Errorf("ArenaPool: SetDevice: %w", err)
 	}
 
-	ptr, err := Malloc(capacityBytes)
+	managed := ManagedMemorySupported(deviceID)
+
+	var ptr unsafe.Pointer
+	var err error
+	if managed {
+		ptr, err = MallocManaged(capacityBytes)
+		if err != nil {
+			// Fall back to regular malloc if managed allocation fails.
+			managed = false
+			ptr, err = Malloc(capacityBytes)
+		}
+	} else {
+		ptr, err = Malloc(capacityBytes)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("ArenaPool: Malloc(%d): %w", capacityBytes, err)
+		return nil, fmt.Errorf("ArenaPool: alloc(%d): %w", capacityBytes, err)
 	}
 
 	return &ArenaPool{
 		base:         ptr,
 		capacity:     capacityBytes,
 		deviceID:     deviceID,
+		managed:      managed,
 		fallback:     fallback,
 		fallbackPtrs: make(map[unsafe.Pointer]int),
 	}, nil
+}
+
+// IsManaged returns true if the arena was allocated with managed memory.
+func (a *ArenaPool) IsManaged() bool {
+	return a.managed
 }
 
 // Alloc returns a device pointer of at least byteSize bytes from the arena.
