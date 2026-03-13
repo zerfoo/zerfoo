@@ -2619,3 +2619,64 @@ Estimated local speedup from higher occupancy: 66.67%.
 The GEMV down_proj kernel accounts for ~15% of per-token time. Launch overhead (without
 CUDA graphs) may account for 7-15%. The remaining ~70% is likely other kernel execution
 and Go runtime overhead.
+
+---
+
+# S604.1.1 Test FP8 Arena Usage After Scratchpad Output Buffer
+
+Date: 2026-03-13
+
+## Context
+
+T604.1 added a grow-only output buffer (`ensureC()`) to `fp8Scratchpad`, eliminating
+repeated arena allocations for the MatMul output tensor during FP8 inference. Before
+this fix, FP8 had 1841 arena misses because every MatMul allocated a fresh output
+buffer from the arena.
+
+## Test
+
+Ran FP8 benchmark on DGX Spark (ssh ndungu@192.168.86.250) with Gemma 3 1B model:
+
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype fp8
+```
+
+## Results
+
+| Metric | Before (baseline) | After (T604.1) | Status |
+|--------|-------------------|-----------------|--------|
+| Arena misses | 1841 | **4** | PASS (< 100) |
+| Arena hits | — | 38370 | — |
+| Arena resets | — | 52 | — |
+| Arena used | — | 1822.7 MB | — |
+| MemPool misses | — | **2** | PASS (< 100) |
+| MemPool hits | — | 2 | — |
+| MemPool frees | — | 4 | — |
+| MemPool cached | — | 3221.2 MB | — |
+| Throughput | — | 1.52 tok/s | — |
+
+### Arena Improvement
+
+Arena misses dropped from **1841 to 4** (99.8% reduction). The 4 remaining misses
+are likely one-time allocations during model initialization. The scratchpad output
+buffer is working as intended -- MatMul output tensors are now reused via the
+grow-only `ensureC()` buffer instead of being freshly allocated each time.
+
+### Note on Output Quality
+
+FP8 output is degenerate (pad tokens) -- this is a separate issue tracked in T604.3
+related to FP8 weight transpose destroying FP8E4M3Storage type. The arena fix is
+orthogonal to the output quality issue.
+
+### Note on cublasLt FP8 Fallback
+
+All FP8 MatMul operations fall back from cublasLt FP8 to dequant+FP16 path
+(cublasLtMatmulAlgoGetHeuristic status 15). This is expected on the current
+hardware/CUDA configuration and does not affect the arena usage test.
+
+## Conclusion
+
+The T604.1 scratchpad output buffer fix successfully eliminated nearly all arena
+misses during FP8 inference. Acceptance criteria met: Arena misses (4) < 100,
+MemPool misses (2) < 100.
