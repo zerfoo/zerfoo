@@ -433,6 +433,20 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 					}
 					qHeadsRoPE = qSlice
 					kHeadsRoPE = kSlice
+				} else if fs, ok := any(fusedOut.GetStorage()).(*tensor.Float16Storage); ok {
+					qView := any(fs.SubSlice(0, qElems)).(tensor.Storage[T])
+					kView := any(fs.SubSlice(qElems, kElems)).(tensor.Storage[T])
+
+					qSlice, viewErr := tensor.NewWithStorage[T]([]int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim}, qView)
+					if viewErr != nil {
+						return nil, fmt.Errorf("fused QK split Q fp16 view: %w", viewErr)
+					}
+					kSlice, viewErr := tensor.NewWithStorage[T]([]int{batchSize, gqa.numKeyValueHeads, seqLen, gqa.headDim}, kView)
+					if viewErr != nil {
+						return nil, fmt.Errorf("fused QK split K fp16 view: %w", viewErr)
+					}
+					qHeadsRoPE = qSlice
+					kHeadsRoPE = kSlice
 				} else {
 					// CPU fallback: copy data.
 					log.Printf("WARNING: GQA fused QK norm+RoPE CPU fallback triggered (D2H copy); expected GPUStorage but got %T", fusedOut.GetStorage())
@@ -870,6 +884,27 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 		qView := gs.SubSlice(0, batchElems*qDim)
 		kView := gs.SubSlice(batchElems*qDim, batchElems*kDim)
 		vView := gs.SubSlice(batchElems*(qDim+kDim), batchElems*vDim)
+
+		q, err = tensor.NewWithStorage[T](qShape, qView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		k, err = tensor.NewWithStorage[T](kShape, kView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		v, err = tensor.NewWithStorage[T](vShape, vView)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return q, k, v, nil
+	}
+
+	// Float16Storage GPU path: zero-copy views via FP16 SubSlice.
+	if fs, ok := any(merged.GetStorage()).(*tensor.Float16Storage); ok {
+		qView := any(fs.SubSlice(0, batchElems*qDim)).(tensor.Storage[T])
+		kView := any(fs.SubSlice(batchElems*qDim, batchElems*kDim)).(tensor.Storage[T])
+		vView := any(fs.SubSlice(batchElems*(qDim+kDim), batchElems*vDim)).(tensor.Storage[T])
 
 		q, err = tensor.NewWithStorage[T](qShape, qView)
 		if err != nil {
