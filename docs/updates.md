@@ -1,3 +1,125 @@
+# T601.4 Benchmark Optimized Q4K GEMV Kernel on DGX Spark
+
+Date: 2026-03-13
+Commit: 962f09d (perf(kernels): vectorize Q4K GEMV loads and tile x-vector)
+Hardware: DGX Spark GB10 (sm_121, Blackwell)
+
+## Optimization Summary (commit 962f09d)
+
+Changes applied in the optimized kernel:
+- Block size: 128 -> 256 threads (8 warps per block)
+- Vectorized loads: 32 scalar `__ldg` per group -> 2 `uint4` loads (16 bytes each)
+- X-vector tiling: full K in shared memory (24 KB for down_proj) -> 4 KB tile
+- Registers: 43 -> 54 per thread (0 spills)
+
+## Build
+
+```
+cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
+```
+
+ptxas output for gemv_q4k kernel: 54 registers, 0 bytes spill, 1 barrier.
+Warning: unused variable `blocks_per_tile` (cosmetic, no impact).
+
+## Benchmark Command
+
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 256 --prompt 'The quick brown fox' --device cuda --dtype fp32
+```
+
+## Results
+
+| Run | Throughput (tok/s) | Time (s) | Tokens |
+|-----|-------------------|----------|--------|
+| 1   | 179.76            | 1.424    | 256    |
+| 2   | 157.89            | 1.621    | 256    |
+| 3   | 160.42            | 1.596    | 256    |
+| **Average** | **166.02** | **1.547** | **256** |
+
+GPU Arena (all runs consistent): hits=119,166, misses=0, resets=258, used=7.9 MB
+GPU MemPool fallback: hits=0, misses=0 (no fallback allocations)
+
+## Comparison with Baseline
+
+| Metric | Baseline (pre-optimization) | Optimized | Delta |
+|--------|----------------------------|-----------|-------|
+| Throughput | 189 tok/s | 166.02 tok/s | **-12.2% regression** |
+| down_proj us/call | 51.3 us | not profiled | TBD |
+
+## Analysis
+
+The optimized Q4K GEMV kernel **regresses throughput by 12.2%** compared to the
+189 tok/s baseline. Possible causes:
+
+1. **Higher register pressure.** Registers increased from 43 to 54 per thread.
+   With 256-thread blocks (8 warps), each block now uses 54 * 256 = 13,824
+   registers. For down_proj (K=6144), the shared memory tiling should improve
+   occupancy, but increased register usage may now be the new occupancy limiter.
+   At 54 regs/thread, max blocks/SM = floor(65536 / 13824) = 4, which gives
+   4 * 8 = 32 warps = 66.7% occupancy. However, this only helps if shared memory
+   is no longer the bottleneck.
+
+2. **Tiling overhead.** The x-vector tiling introduces a loop over tiles with
+   `__syncthreads()` barriers between iterations. For down_proj (K=6144) with
+   4 KB tiles (1024 floats), this means ~6 tile iterations with synchronization
+   overhead each.
+
+3. **Vectorized load alignment.** The uint4 loads assume 16-byte alignment of
+   the Q4K weight data. If the weight data is not properly aligned in the GGUF
+   layout, the vectorized loads may fall back to slower unaligned accesses.
+
+4. **Run-to-run variance.** Run 1 (179.76) is significantly higher than runs
+   2-3 (~159). This ~14% variance suggests thermal throttling or competing
+   workloads may affect results. The baseline 189 tok/s may also have been a
+   peak measurement.
+
+## Recommendation
+
+The kernel optimization does not improve throughput. Consider:
+- Profiling the optimized kernel with `ncu` to compare down_proj latency
+  against the baseline 51.3 us/call
+- Reverting the kernel changes if ncu confirms the regression
+- Investigating register pressure as the new occupancy limiter
+
+---
+
+# S602.4.1 Verify Zero D2H Copies During Decode
+
+Date: 2026-03-13
+
+## Verification
+
+Ran `bench_tps` on DGX Spark (ssh ndungu@192.168.86.250) with Gemma 3 Q4K
+model to verify that no device-to-host (D2H) copies occur during the decode
+phase, following the GQA D2H fallback fixes in T602.2/T602.3 and the audit
+in T602.4.
+
+### Command
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype fp32
+```
+
+### Results
+
+- **Zero D2H warnings** during decode
+- **Zero GPU MemPool fallback** usage (hits=0, misses=0)
+- GPU Arena: hits=26054, misses=0, resets=52, used=7.7 MB
+- Throughput: **152.42 tok/s** (50 tokens in 0.328s)
+
+Init/compile-time messages (expected, not D2H during decode):
+- CompileTraced plan validation fallback to Compile (init-time)
+- Megakernel: 7 unsupported ops (init-time, uses interpreted path)
+
+### Conclusion
+
+All D2H copy fallbacks have been successfully eliminated from the decode
+path. The GQA attention fixes (T602.2/T602.3) and the broader D2H audit
+(T602.4) are confirmed working on DGX Spark hardware.
+
+---
+
 # T604.2 FP8 Degenerate Output Root Cause Analysis
 
 Date: 2026-03-13
