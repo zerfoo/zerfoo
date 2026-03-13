@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/float16"
+	"github.com/zerfoo/zerfoo/internal/cublas"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/log"
@@ -53,6 +54,9 @@ type GPUEngine[T tensor.Numeric] struct {
 	// elementwise ops convert F32 inputs to FP16, run FP16 kernels,
 	// and convert outputs back to F32.
 	dtype DType
+
+	// ltHandle is the cuBLASLt handle, initialized lazily on first FP8 matmul.
+	ltHandle *cublas.LtHandle
 
 	// oomFallbackCount tracks how many times an OOM triggered CPU fallback.
 	oomFallbackCount atomic.Int64
@@ -280,6 +284,38 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
+		// Upload FP8 E4M3 raw bytes to GPU and cache the pointer.
+		// FP8 weights (1 byte/element) are used with cublasLtMatmul for
+		// mixed-precision MatMul (FP8 weights × FP16 activations → FP32 output).
+		if fs, ok := any(t.GetStorage()).(*tensor.FP8E4M3Storage); ok {
+			if ptr, _, _ := fs.GPUPtr(); ptr != nil {
+				continue // already on GPU
+			}
+			rawBytes := fs.RawBytes()
+			devPtr, err := e.allocWeight(len(rawBytes))
+			if err != nil {
+				return fmt.Errorf("alloc FP8 GPU (shape %v): %w", t.Shape(), err)
+			}
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return fmt.Errorf("upload FP8 (shape %v): %w", t.Shape(), err)
+			}
+			fs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			// Upload per-tensor scale factor (single float32) to GPU.
+			scale := fs.Scale()
+			scaleBytes := unsafe.Slice((*byte)(unsafe.Pointer(&scale)), f32Size)
+			scalePtr, err := e.allocWeight(f32Size)
+			if err != nil {
+				return fmt.Errorf("alloc FP8 scale GPU (shape %v): %w", t.Shape(), err)
+			}
+			if err := e.uploadBytes(scalePtr, scaleBytes); err != nil {
+				_ = e.runtime.Free(scalePtr)
+				return fmt.Errorf("upload FP8 scale (shape %v): %w", t.Shape(), err)
+			}
+			fs.SetScaleGPUPtr(scalePtr)
+			uploaded++
+			continue
+		}
 		// Upload BFloat16 raw bytes to GPU and cache the pointer.
 		// BF16 weights (2 bytes/element) are used with cublasGemmEx for
 		// mixed-precision MatMul (BF16 weights × FP32 activations → FP32 output).
@@ -434,6 +470,12 @@ func (e *GPUEngine[T]) Close() error {
 		}
 	}
 
+	if e.ltHandle != nil {
+		if err := e.ltHandle.Destroy(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	return firstErr
 }
 
@@ -483,6 +525,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for Q8 quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q8Storage); ok {
 		return e.matMulQ8BWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for FP8 E4M3 storage on A (FP8 weights × FP32 activations).
+	if fs, ok := any(a.GetStorage()).(*tensor.FP8E4M3Storage); ok {
+		return e.matMulFP8(ctx, fs, a, b, dst...)
+	}
+
+	// Check for FP8 E4M3 storage on B (FP8 weights as B operand).
+	if fs, ok := any(b.GetStorage()).(*tensor.FP8E4M3Storage); ok {
+		return e.matMulFP8BWeight(ctx, a, fs, b, dst...)
 	}
 
 	// Check for BFloat16Storage on A (BF16 weights × FP32 activations).
