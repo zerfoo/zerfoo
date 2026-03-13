@@ -527,7 +527,34 @@ func TestLoadTensors_BF16(t *testing.T) {
 
 	// Verify memory is halved vs F32.
 	bf16Storage := tns.GetStorage().(*tensor.BFloat16Storage)
-	if bf16Storage.ByteSize() != len(vals)*2 {
-		t.Errorf("ByteSize() = %d, want %d", bf16Storage.ByteSize(), len(vals)*2)
+	if len(bf16Storage.RawBytes()) != len(vals)*2 {
+		t.Errorf("RawBytes length = %d, want %d", len(bf16Storage.RawBytes()), len(vals)*2)
+	}
+}
+
+func TestQuantizeToFP8E4M3_Skips1D(t *testing.T) {
+	// 1D tensor (norm weight) should NOT be quantized.
+	norm, _ := tensor.New[float32]([]int{4}, []float32{1, 2, 3, 4})
+	// 2D tensor (weight matrix) should be quantized.
+	weight, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+
+	tensors := map[string]*tensor.TensorNumeric[float32]{
+		"norm":   norm,
+		"weight": weight,
+	}
+
+	result, err := QuantizeToFP8E4M3(tensors)
+	if err != nil {
+		t.Fatalf("QuantizeToFP8E4M3: %v", err)
+	}
+
+	// norm should still be plain storage (not FP8).
+	if _, ok := result["norm"].GetStorage().(*tensor.FP8E4M3Storage); ok {
+		t.Error("1D tensor should not be quantized to FP8")
+	}
+
+	// weight should be FP8.
+	if _, ok := result["weight"].GetStorage().(*tensor.FP8E4M3Storage); !ok {
+		t.Error("2D tensor should be quantized to FP8")
 	}
 }

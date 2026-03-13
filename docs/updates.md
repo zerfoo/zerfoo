@@ -1668,3 +1668,46 @@ crash. BF16 not available for comparison. No throughput improvement documented.
 2. Run `nm -D libkernels.so | grep -i fp16` on DGX to verify symbols exist.
 3. Once FP16 path works, re-run this benchmark.
 4. Consider adding `-dtype bf16` support for BF16 compute benchmarks.
+
+---
+
+# T405.5: go vet Results
+
+Date: 2026-03-13
+
+## Packages Checked
+
+All packages modified in E405 (BF16/FP16) and E406 (FP8):
+- `compute/...`
+- `tensor/...`
+- `internal/cublas/...`
+- `internal/cuda/kernels/...`
+- `internal/gpuapi/...`
+- `model/gguf/...`
+- `inference/...`
+
+## Results
+
+**New issues introduced by E405/E406: 0**
+
+No new `go vet` warnings were found in any of the modified packages.
+
+**Pre-existing issues fixed: 1**
+
+| File | Line | Issue | Fix |
+|------|------|-------|-----|
+| `model/gguf/loader_test.go` | 530 | `bf16Storage.ByteSize()` — method does not exist on `*tensor.BFloat16Storage` | Replaced with `len(bf16Storage.RawBytes())` |
+
+**Pre-existing issues (documented only): 5**
+
+All in `internal/cuda/` purego bindings — expected `unsafe.Pointer` usage for FFI:
+
+| File | Line | Warning |
+|------|------|---------|
+| `internal/cuda/purego_darwin.go` | 91 | possible misuse of unsafe.Pointer |
+| `internal/cuda/runtime_purego.go` | 60 | possible misuse of unsafe.Pointer |
+| `internal/cuda/runtime_purego.go` | 79 | possible misuse of unsafe.Pointer |
+| `internal/cuda/runtime_purego.go` | 94 | possible misuse of unsafe.Pointer |
+| `internal/cuda/runtime_purego.go` | 204 | possible misuse of unsafe.Pointer |
+
+These are inherent to the purego FFI pattern and are not actionable.

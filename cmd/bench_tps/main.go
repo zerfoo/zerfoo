@@ -58,7 +58,7 @@ func run() error {
 	maxTokens := flag.Int("tokens", 64, "max tokens to generate")
 	useMmap := flag.Bool("mmap", false, "use memory-mapped loading")
 	device := flag.String("device", "cpu", "compute device (cpu, cuda, cuda:0)")
-	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16)")
+	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16, fp8)")
 	temperature := flag.Float64("temp", 0, "sampling temperature (0=greedy)")
 	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
 	flag.Parse()

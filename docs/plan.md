@@ -271,7 +271,7 @@ bottleneck on LPDDR5x).
     Expected: ~1.5-2x improvement from halved memory bandwidth.
   - Dependencies: T405.4.
 
-- [ ] T405.5 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T405.5 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S405.4.1.
 
 ### E406: FP8 Inference Path

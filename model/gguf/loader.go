@@ -280,6 +280,11 @@ func decodeBF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 // The tensors are modified in place — the returned map is the same object.
 func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[string]*tensor.TensorNumeric[float32], error) {
 	for name, t := range tensors {
+		// Skip 1D tensors (norm weights, biases) — they are small and
+		// benefit more from full precision than from FP8 compression.
+		if len(t.Shape()) <= 1 {
+			continue
+		}
 		f32 := t.Data()
 		fp8 := tensor.NewFP8E4M3Storage(f32)
 		quantized, err := tensor.NewWithStorage[float32](t.Shape(), fp8)

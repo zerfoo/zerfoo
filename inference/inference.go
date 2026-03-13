@@ -769,6 +769,11 @@ func applyDType(eng compute.Engine[float32], dtype string) {
 			ds.SetDType(compute.DTypeFP16)
 		}
 	}
+	if dtype == "fp8" {
+		if ds, ok := eng.(DTypeSetter); ok {
+			ds.SetDType(compute.DTypeFP8)
+		}
+	}
 }
 
 // NewTestModel constructs a Model from pre-built components.
