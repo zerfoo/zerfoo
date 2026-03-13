@@ -126,7 +126,7 @@ results.
   - Acceptance: go test passes. No D2H memcpy during decode loop.
   - Dependencies: T301.1, T301.2, T301.3.
 
-- [ ] T301.4 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T301.4 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S301.3.1.
 
 ### E302: CUDA Graph Capture and Replay
@@ -157,7 +157,7 @@ results.
   - Acceptance: go test passes on DGX Spark.
   - Dependencies: T302.2.
 
-- [ ] T302.4 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T302.4 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S302.3.1.
 
 ### E303: Unified Memory Exploitation
@@ -190,7 +190,7 @@ results.
   - Acceptance: go test passes.
   - Dependencies: T303.3.
 
-- [ ] T303.4 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T303.4 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S303.3.1.
 
 ### E304: Fused Dequant+GEMV Kernel
@@ -217,7 +217,7 @@ results.
   - Acceptance: go test passes with -race.
   - Dependencies: T304.2.
 
-- [ ] T304.3 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T304.3 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S304.2.1.
 
 ### E305: OpenAI-Compatible Server Completion
@@ -269,7 +269,7 @@ results.
   - Acceptance: go test -run TestServer passes with -race.
   - Dependencies: T305.1, T305.2, T305.3, T305.4, T305.5, T305.6.
 
-- [ ] T305.7 Run go vet on serve/  Owner: TBD  Est: 15m
+- [x] T305.7 Run go vet on serve/  Owner: TBD  Est: 15m
   - Dependencies: S305.6.1.
 
 ### E203: GPU Transpose Kernel
@@ -293,7 +293,7 @@ results.
   - Acceptance: go test -run TestGPUTranspose passes with -race.
   - Dependencies: T203.2.
 
-- [ ] T203.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
+- [x] T203.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
   - Dependencies: S203.2.1.
 
 ### E204: GPU Gather Kernel
@@ -315,7 +315,7 @@ results.
   - Acceptance: go test -run TestGPUGather passes with -race.
   - Dependencies: T204.2.
 
-- [ ] T204.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
+- [x] T204.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
   - Dependencies: S204.2.1.
 
 ### E205: GPU Broadcasting for Element-wise Ops
@@ -338,7 +338,7 @@ results.
   - Acceptance: go test passes with -race.
   - Dependencies: T205.2.
 
-- [ ] T205.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
+- [x] T205.3 Run go vet on compute/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
   - Dependencies: S205.2.1.
 
 ### E306: Fused Kernel Wiring and Integration
@@ -356,7 +356,7 @@ results.
   - Acceptance: go test passes with -race.
   - Dependencies: T306.1.
 
-- [ ] T306.2 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T306.2 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S306.1.1.
 
 ### E207: CUDA Graph Capture and Replay (Infrastructure)
@@ -378,7 +378,7 @@ enabling it after D2H elimination.
   - Acceptance: go test passes.
   - Dependencies: T207.2.
 
-- [ ] T207.3 Run go vet on graph/  Owner: TBD  Est: 15m
+- [x] T207.3 Run go vet on graph/  Owner: TBD  Est: 15m
   - Dependencies: S207.2.1.
 
 ### E208: Megakernel Performance Investigation
@@ -402,7 +402,7 @@ enabling it after D2H elimination.
   - Acceptance: Results documented.
   - Dependencies: T208.2.
 
-- [ ] T208.3 Run go vet on internal/codegen/  Owner: TBD  Est: 15m
+- [x] T208.3 Run go vet on internal/codegen/  Owner: TBD  Est: 15m
   - Dependencies: T208.2.
 
 ### E209: Kernel Optimization
@@ -428,7 +428,7 @@ enabling it after D2H elimination.
   - Acceptance: Per-kernel benchmark results documented.
   - Dependencies: T209.1, T209.2.
 
-- [ ] T209.3 Run go vet on internal/cuda/kernels/  Owner: TBD  Est: 15m
+- [x] T209.3 Run go vet on internal/cuda/kernels/  Owner: TBD  Est: 15m
   - Dependencies: S209.2.1.
 
 ### E210: cuBLAS Purego Conversion
@@ -461,7 +461,7 @@ enabling it after D2H elimination.
   - Acceptance: Parity test passes. Performance delta documented.
   - Dependencies: T210.3.
 
-- [ ] T210.4 Run go vet on internal/cublas/ and internal/gpuapi/  Owner: TBD  Est: 15m
+- [x] T210.4 Run go vet on internal/cublas/ and internal/gpuapi/  Owner: TBD  Est: 15m
   - Dependencies: S210.3.1.
 
 ### E211: cuDNN Purego Conversion
@@ -494,7 +494,7 @@ enabling it after D2H elimination.
   - Acceptance: All operations pass parity test.
   - Dependencies: T211.3.
 
-- [ ] T211.4 Run go vet on internal/cudnn/ and internal/gpuapi/  Owner: TBD  Est: 15m
+- [x] T211.4 Run go vet on internal/cudnn/ and internal/gpuapi/  Owner: TBD  Est: 15m
   - Dependencies: S211.3.1.
 
 ### E212: TensorRT Purego Conversion
@@ -523,7 +523,7 @@ enabling it after D2H elimination.
   - Acceptance: Tokens match. Test passes.
   - Dependencies: T212.3.
 
-- [ ] T212.4 Run go vet on internal/tensorrt/ and inference/  Owner: TBD  Est: 15m
+- [x] T212.4 Run go vet on internal/tensorrt/ and inference/  Owner: TBD  Est: 15m
   - Dependencies: S212.3.1.
 
 ### E213: CUTLASS Flash Attention Purego Conversion
@@ -547,7 +547,7 @@ enabling it after D2H elimination.
   - Acceptance: Test passes on DGX Spark.
   - Dependencies: T213.2.
 
-- [ ] T213.3 Run go vet on layers/attention/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
+- [x] T213.3 Run go vet on layers/attention/ and internal/cuda/kernels/  Owner: TBD  Est: 15m
   - Dependencies: S213.2.1.
 
 ### E214: ROCm Purego Conversion
@@ -580,7 +580,7 @@ enabling it after D2H elimination.
   - Dependencies: T214.4.
   - Risk: Requires access to AMD GPU for testing.
 
-- [ ] T214.5 Run go vet on all ROCm packages  Owner: TBD  Est: 15m
+- [x] T214.5 Run go vet on all ROCm packages  Owner: TBD  Est: 15m
   - Dependencies: S214.4.1.
 
 ### E215: OpenCL Purego Conversion
@@ -607,7 +607,7 @@ enabling it after D2H elimination.
   - Dependencies: T215.3.
   - Risk: Requires OpenCL-capable device for testing.
 
-- [ ] T215.4 Run go vet on internal/opencl/ and internal/gpuapi/  Owner: TBD  Est: 15m
+- [x] T215.4 Run go vet on internal/opencl/ and internal/gpuapi/  Owner: TBD  Est: 15m
   - Dependencies: S215.3.1.
 
 ### E307: Performance Verification -- Surpass Ollama
