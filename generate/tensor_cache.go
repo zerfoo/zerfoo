@@ -2,6 +2,7 @@ package generate
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -95,6 +96,16 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		lb.isGPU = isGPU
 	}
 
+	// If the cache layer is CPU-backed but the incoming tensor is GPU-resident,
+	// promote the cache to GPU to avoid D2H copies on .Data() calls.
+	if !lb.isGPU {
+		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
+			if err := promoteToGPU(lb, batch, c.maxSeqLen, dim); err != nil {
+				log.Printf("WARNING: KV cache layer %d: GPU promotion failed, D2H fallback: %v", layer, err)
+			}
+		}
+	}
+
 	// Append data at current offset.
 	offset := lb.seqLen * dim * batch
 	numElems := seqLen * dim * batch
@@ -107,11 +118,52 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 			return fmt.Errorf("append V layer %d: %w", layer, err)
 		}
 	} else {
+		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
+			log.Printf("WARNING: KV cache layer %d: CPU fallback with GPU tensor, D2H copy triggered", layer)
+		}
 		copy(lb.kBuf[offset:offset+numElems], newK.Data())
 		copy(lb.vBuf[offset:offset+numElems], newV.Data())
 	}
 
 	lb.seqLen += seqLen
+	return nil
+}
+
+// promoteToGPU migrates a CPU-backed cache layer to GPU storage. Existing
+// cached data (if any) is uploaded via H2D copy. On failure the layer remains
+// CPU-backed and the caller should log a warning.
+func promoteToGPU[T tensor.Numeric](lb *tensorLayerBuf[T], batch, maxSeqLen, dim int) error {
+	totalElems := batch * maxSeqLen * dim
+	kSt, err := tensor.NewGPUStorage[T](totalElems)
+	if err != nil {
+		return fmt.Errorf("alloc K GPU storage: %w", err)
+	}
+	vSt, err := tensor.NewGPUStorage[T](totalElems)
+	if err != nil {
+		_ = kSt.Free()
+		return fmt.Errorf("alloc V GPU storage: %w", err)
+	}
+
+	// Upload any existing CPU-cached data.
+	if lb.seqLen > 0 {
+		cached := lb.seqLen * dim * batch
+		if err := kSt.CopyFromHost(lb.kBuf[:cached], 0); err != nil {
+			_ = kSt.Free()
+			_ = vSt.Free()
+			return fmt.Errorf("upload K: %w", err)
+		}
+		if err := vSt.CopyFromHost(lb.vBuf[:cached], 0); err != nil {
+			_ = kSt.Free()
+			_ = vSt.Free()
+			return fmt.Errorf("upload V: %w", err)
+		}
+	}
+
+	lb.kStorage = kSt
+	lb.vStorage = vSt
+	lb.kBuf = nil
+	lb.vBuf = nil
+	lb.isGPU = true
 	return nil
 }
 
