@@ -151,9 +151,14 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Preserve Q4_K storage for fused GEMV kernel dispatch.
-	// Re-enabled to diagnose throughput regression (was re-quantizing to Q4_0).
-	return tensor.NewWithStorage[float32](shape, q4k)
+	// Re-quantize Q4_K to Q4_0 until T403.2 adds GPU dequant+cuBLAS for
+	// non-GEMV Q4_K MatMul. Without that path, Q4_K falls through to CPU
+	// dequantization for batched MatMul, causing ~50% throughput regression.
+	// See docs/updates.md "T403.1 Q4_K dispatch investigation".
+	f32 := make([]float32, numElements)
+	q4k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {

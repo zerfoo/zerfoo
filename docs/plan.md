@@ -167,7 +167,7 @@ the inference pipeline and need GPU-resident alternatives.
 
 ### E403: Fused Dequant+GEMV Q4_K Validation
 
-- [ ] T403.1 Debug Q4_K dispatch regression  Owner: TBD  Est: 2h
+- [x] T403.1 Debug Q4_K dispatch regression  Owner: TBD  Est: 2h
   - The GGUF loader was reverted from Q4_K preservation to Q4_0
     re-quantization because preserving Q4_K caused a regression (100 tok/s).
   - Root cause: the Q4_K engine dispatch path may not handle all weight
@@ -196,7 +196,7 @@ the inference pipeline and need GPU-resident alternatives.
 
 ### E404: Kernel Optimization Benchmarks
 
-- [ ] T404.1 Rebuild kernels with Wave 8 optimizations on DGX  Owner: TBD  Est: 30m
+- [x] T404.1 Rebuild kernels with Wave 8 optimizations on DGX  Owner: TBD  Est: 30m
   - cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
   - The Makefile now includes --maxrregcount=32 for gemm_q4 and transpose,
     FLASH_BLOCK_SIZE=64 for sm_121, and warp shuffle reductions in
@@ -204,14 +204,14 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: libkernels.so builds without errors.
   - Dependencies: none.
 
-- [ ] T404.2 Benchmark kernel optimizations vs pre-Wave-8  Owner: TBD  Est: 1h
+- [x] T404.2 Benchmark kernel optimizations vs pre-Wave-8  Owner: TBD  Est: 1h
   - Build bench_tps with new kernels.
   - Run 3 times and compare with the 166 tok/s baseline.
   - If improvement is measurable, document per-kernel delta.
   - Acceptance: Results documented. Any improvement noted.
   - Dependencies: T404.1.
 
-- [ ] S404.2.1 Kernel optimization parity test  Owner: TBD  Est: 30m
+- [x] S404.2.1 Kernel optimization parity test  Owner: TBD  Est: 30m
   - Run go test on compute/ and internal/cuda/kernels/ on DGX.
   - Verify no correctness regression from register tuning or shared memory changes.
   - Acceptance: All tests pass.
@@ -226,7 +226,7 @@ BF16/FP16 compute types. The goal is to run inference with half-precision
 weights and FP32 accumulation to halve memory bandwidth (the primary
 bottleneck on LPDDR5x).
 
-- [ ] T405.1 Add BFloat16 weight loading to GGUF loader  Owner: TBD  Est: 2h
+- [x] T405.1 Add BFloat16 weight loading to GGUF loader  Owner: TBD  Est: 2h
   - Detect BF16 weight type in GGUF files (GGMLTypeBF16 if it exists, or
     convert F32 weights to BF16 at load time when a --bf16 flag is set).
   - Store weights as float16.BFloat16 tensors using existing BFloat16Storage
@@ -247,7 +247,7 @@ bottleneck on LPDDR5x).
     (max rel error < 1e-3 vs FP32 reference).
   - Dependencies: T405.1.
 
-- [ ] T405.3 Add FP16 kernel variants for element-wise ops  Owner: TBD  Est: 3h
+- [x] T405.3 Add FP16 kernel variants for element-wise ops  Owner: TBD  Est: 3h
   - Add __half variants of elementwise kernels (add, mul, rmsnorm, etc.) in
     internal/cuda/kernels/. Use __half2 for 2-wide SIMD where possible.
   - Add Go dispatch for FP16 via the purego path.
@@ -290,7 +290,7 @@ uses FP16 or FP32 accumulation to maintain output precision.
 This epic depends on E405 (BF16/FP16) because FP8 compute pipelines use
 FP16 accumulation and the FP16 kernel infrastructure must be in place first.
 
-- [ ] T406.1 Add FP8 type support to tensor package  Owner: TBD  Est: 2h
+- [x] T406.1 Add FP8 type support to tensor package  Owner: TBD  Est: 2h
   - Add FP8E4M3Storage and FP8E5M2Storage to tensor/storage.go using the
     float8 package types.
   - Support Len, Slice, Set, DeviceType for both formats.
