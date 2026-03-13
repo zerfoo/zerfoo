@@ -220,3 +220,86 @@ func TestGPUEngine_FallbackSoftmax(t *testing.T) {
 		t.Errorf("Softmax sum = %f, want 1.0", sum)
 	}
 }
+
+func TestGPUEngine_ConvertFP16ToF32(t *testing.T) {
+	eng := newTestGPUEngine(t)
+
+	// Create F32 data, convert to FP16 storage, upload to GPU, then convert back.
+	want := []float32{1.0, 2.5, -0.5, 3.0, 0.0, 7.5}
+	fp16Stor := tensor.NewFloat16StorageFromF32(want)
+	in, err := tensor.NewWithStorage[float32]([]int{2, 3}, fp16Stor)
+	if err != nil {
+		t.Fatalf("create fp16 tensor: %v", err)
+	}
+
+	// Upload FP16 data to GPU.
+	if err := eng.UploadWeights([]*tensor.TensorNumeric[float32]{in}); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+
+	out, err := eng.ConvertFP16ToF32(in)
+	if err != nil {
+		t.Fatalf("ConvertFP16ToF32: %v", err)
+	}
+
+	if s := out.Shape(); len(s) != 2 || s[0] != 2 || s[1] != 3 {
+		t.Fatalf("shape = %v, want [2, 3]", s)
+	}
+
+	// Output should NOT have Float16Storage.
+	if _, isFP16 := any(out.GetStorage()).(*tensor.Float16Storage); isFP16 {
+		t.Fatal("output still has Float16Storage after conversion")
+	}
+
+	got := out.Data()
+	for i, g := range got {
+		if math.Abs(float64(g-want[i])) > 0.01 {
+			t.Errorf("got[%d] = %f, want %f", i, g, want[i])
+		}
+	}
+}
+
+func TestGPUEngine_ConvertFP16ToF32_Passthrough(t *testing.T) {
+	eng := newTestGPUEngine(t)
+
+	// Regular F32 tensor should pass through unchanged.
+	data := []float32{1.0, 2.0, 3.0}
+	in, _ := tensor.New([]int{3}, data)
+
+	out, err := eng.ConvertFP16ToF32(in)
+	if err != nil {
+		t.Fatalf("ConvertFP16ToF32: %v", err)
+	}
+
+	if out != in {
+		t.Error("expected same tensor returned for non-FP16 input")
+	}
+}
+
+func TestConvertFP16ToF32_CPUFallback(t *testing.T) {
+	// Float16Storage without GPU pointer should decode via Slice.
+	want := []float32{1.0, 2.5, -0.5, 3.0}
+	fp16Stor := tensor.NewFloat16StorageFromF32(want)
+	if _, err := tensor.NewWithStorage[float32]([]int{2, 2}, fp16Stor); err != nil {
+		t.Fatalf("create fp16 tensor: %v", err)
+	}
+
+	// Verify GPU pointer is nil (no upload).
+	ptr, _, _ := fp16Stor.GPUPtr()
+	if ptr != nil {
+		t.Fatal("expected nil GPU pointer for CPU-only Float16Storage")
+	}
+
+	// CPU-only Float16Storage: decode via Slice to get F32 values.
+	data := fp16Stor.Slice()
+	out, err := tensor.New([]int{2, 2}, data)
+	if err != nil {
+		t.Fatalf("create f32 tensor: %v", err)
+	}
+
+	for i, g := range out.Data() {
+		if math.Abs(float64(g-want[i])) > 0.01 {
+			t.Errorf("got[%d] = %f, want %f", i, g, want[i])
+		}
+	}
+}
