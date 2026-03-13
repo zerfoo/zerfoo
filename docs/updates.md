@@ -1,3 +1,39 @@
+# S602.4.1 Verify Zero D2H Copies During Decode
+
+Date: 2026-03-13
+
+## Verification
+
+Ran `bench_tps` on DGX Spark (ssh ndungu@192.168.86.250) with Gemma 3 Q4K
+model to verify that no device-to-host (D2H) copies occur during the decode
+phase, following the GQA D2H fallback fixes in T602.2/T602.3 and the audit
+in T602.4.
+
+### Command
+```
+go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype fp32
+```
+
+### Results
+
+- **Zero D2H warnings** during decode
+- **Zero GPU MemPool fallback** usage (hits=0, misses=0)
+- GPU Arena: hits=26054, misses=0, resets=52, used=7.7 MB
+- Throughput: **152.42 tok/s** (50 tokens in 0.328s)
+
+Init/compile-time messages (expected, not D2H during decode):
+- CompileTraced plan validation fallback to Compile (init-time)
+- Megakernel: 7 unsupported ops (init-time, uses interpreted path)
+
+### Conclusion
+
+All D2H copy fallbacks have been successfully eliminated from the decode
+path. The GQA attention fixes (T602.2/T602.3) and the broader D2H audit
+(T602.4) are confirmed working on DGX Spark hardware.
+
+---
+
 # T604.2 FP8 Degenerate Output Root Cause Analysis
 
 Date: 2026-03-13
