@@ -1,5 +1,3 @@
-//go:build !cuda
-
 package cublas
 
 import (
@@ -10,6 +8,13 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 )
+
+// Available returns true if the cuBLAS library can be loaded at runtime.
+// The result is cached after the first call.
+func Available() bool {
+	_, err := getCublasLib()
+	return err == nil
+}
 
 // CudaDataType identifies the element data type for cublasGemmEx.
 type CudaDataType int
@@ -333,7 +338,8 @@ func SgemmNTStridedBatched(h *Handle, m, n, k int, alpha float32,
 }
 
 // cublasGemmDefault is the CUBLAS_GEMM_DEFAULT algorithm selector.
-const cublasGemmDefault = -1
+// The C enum value is -1; as an unsigned 32-bit integer this is 0xFFFFFFFF.
+const cublasGemmDefault uintptr = 0xFFFFFFFF
 
 // GemmEx performs mixed-precision general matrix multiplication.
 // Row-major to column-major conversion: swap A/B and m/n.
@@ -349,8 +355,36 @@ func GemmEx(h *Handle, m, n, k int, alpha float32,
 		return err
 	}
 
-	// Not yet implemented via purego (requires >14 args or struct packing).
-	// Fall back to Sgemm for float32 types.
-	_ = lib
-	return fmt.Errorf("cublasGemmEx not yet supported via purego")
+	cAlpha := alpha
+	cBeta := beta
+
+	// Row-major to column-major: swap A<->B, swap m<->n.
+	// cublasGemmEx(handle, transa, transb, m, n, k,
+	//   alpha, B, Btype, ldb, A, Atype, lda,
+	//   beta, C, Ctype, ldc, computeType, algo)
+	status := cuda.Ccall(lib.gemmEx,
+		h.ptr,
+		uintptr(cublasOpN),                  // transa (for B)
+		uintptr(cublasOpN),                  // transb (for A)
+		uintptr(n),                          // rows of op(B) = cols of C
+		uintptr(m),                          // cols of op(A) = rows of C
+		uintptr(k),                          // inner dimension
+		uintptr(unsafe.Pointer(&cAlpha)),
+		uintptr(b),                          // B first
+		uintptr(bType),                      // Btype
+		uintptr(n),                          // ldb
+		uintptr(a),                          // A second
+		uintptr(aType),                      // Atype
+		uintptr(k),                          // lda
+		uintptr(unsafe.Pointer(&cBeta)),
+		uintptr(c),
+		uintptr(cType),                      // Ctype
+		uintptr(n),                          // ldc
+		uintptr(computeType),                // computeType
+		cublasGemmDefault,                   // algo
+	)
+	if status != cublasStatusSuccess {
+		return fmt.Errorf("cublasGemmEx failed with status %d", status)
+	}
+	return nil
 }

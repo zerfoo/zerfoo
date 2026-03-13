@@ -147,6 +147,18 @@ func (stubKernelRunner) MulBroadcast(_, _, _ unsafe.Pointer, _, _, _, _, _, _ in
 func (stubKernelRunner) DivBroadcast(_, _, _ unsafe.Pointer, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) AddBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) SubBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) MulBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) DivBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) SubScalar(_ unsafe.Pointer, _ float32, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }

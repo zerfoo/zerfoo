@@ -42,6 +42,10 @@ type ExecutionPlan[T tensor.Numeric] struct {
 	megakernelFn  atomic.Value               // stores func(context.Context, []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) or nil
 	scratchSlots  []*tensor.TensorNumeric[T] // pre-allocated scratch for Run() to avoid per-token alloc
 	instrInputs   [][]*tensor.TensorNumeric[T] // pre-allocated per-instruction input buffers
+
+	// Pre-allocated fixed buffer layout for CUDA graph capture.
+	bufferLayout *BufferLayout
+	preallocated []*tensor.TensorNumeric[T] // pre-allocated tensors with fixed backing memory
 }
 
 // InstructionMeta is the exported metadata for a single compiled instruction.
@@ -182,7 +186,18 @@ func (p *ExecutionPlan[T]) RunInstructions(ctx context.Context, inputs ...*tenso
 		if err != nil {
 			return nil, fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
 		}
-		slots[inst.OutputIdx] = result
+
+		// When pre-allocated buffers are available, copy the result into the
+		// fixed buffer so device addresses stay stable across runs (required
+		// for CUDA graph capture). Otherwise store the result directly.
+		if p.preallocated != nil && inst.OutputIdx < len(p.preallocated) && p.preallocated[inst.OutputIdx] != nil {
+			dst := p.preallocated[inst.OutputIdx].Data()
+			src := result.Data()
+			copy(dst, src)
+			slots[inst.OutputIdx] = p.preallocated[inst.OutputIdx]
+		} else {
+			slots[inst.OutputIdx] = result
+		}
 	}
 
 	return slots[p.outputIdx], nil

@@ -128,6 +128,22 @@ func (k *ROCmKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, 
 	return fmt.Errorf("DivBroadcast: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) AddBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("AddBroadcast4D: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) SubBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("SubBroadcast4D: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) MulBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("MulBroadcast4D: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) DivBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("DivBroadcast4D: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) Transpose2D(input, output unsafe.Pointer, rows, cols int, _ Stream) error {
 	return fmt.Errorf("Transpose2D: not implemented for ROCm")
 }

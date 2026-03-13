@@ -136,6 +136,22 @@ func (k *OpenCLKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow
 	return fmt.Errorf("DivBroadcast: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) AddBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("AddBroadcast4D: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) SubBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("SubBroadcast4D: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) MulBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("MulBroadcast4D: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) DivBroadcast4D(_, _, _ unsafe.Pointer, _, _, _, _, _, _, _, _, _, _, _, _ int, _ Stream) error {
+	return fmt.Errorf("DivBroadcast4D: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) Transpose2D(input, output unsafe.Pointer, rows, cols int, _ Stream) error {
 	return fmt.Errorf("Transpose2D: not implemented for OpenCL")
 }

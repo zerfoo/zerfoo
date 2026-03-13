@@ -1,5 +1,3 @@
-//go:build cuda
-
 package cublas
 
 import (
@@ -10,6 +8,9 @@ import (
 )
 
 func TestCreateAndDestroyHandle(t *testing.T) {
+	if !Available() {
+		t.Skip("cuBLAS not available")
+	}
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle failed: %v", err)
@@ -22,6 +23,9 @@ func TestCreateAndDestroyHandle(t *testing.T) {
 }
 
 func TestSgemm(t *testing.T) {
+	if !Available() {
+		t.Skip("cuBLAS not available")
+	}
 	// A = [[1, 2], [3, 4]]  (2x2)
 	// B = [[5, 6], [7, 8]]  (2x2)
 	// C = A * B = [[19, 22], [43, 50]]
@@ -91,6 +95,9 @@ func TestSgemm(t *testing.T) {
 }
 
 func TestGemmEx(t *testing.T) {
+	if !Available() {
+		t.Skip("cuBLAS not available")
+	}
 	tests := []struct {
 		name     string
 		a        []float32
@@ -194,6 +201,9 @@ func TestGemmEx(t *testing.T) {
 }
 
 func TestSgemmNonSquare(t *testing.T) {
+	if !Available() {
+		t.Skip("cuBLAS not available")
+	}
 	// A = [[1, 2, 3]]    (1x3)
 	// B = [[4], [5], [6]] (3x1)
 	// C = A * B = [[32]]  (1x1)

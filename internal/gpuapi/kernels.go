@@ -61,6 +61,13 @@ type KernelRunner interface {
 	MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, stream Stream) error
 	DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, stream Stream) error
 
+	// 4D broadcast binary ops: c[i0,i1,i2,i3] = op(a[...], b[...]) with per-dim strides.
+	// d0-d3 are output dims; sa0-sa3 and sb0-sb3 are per-dim strides (0 = broadcast).
+	AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, stream Stream) error
+	SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, stream Stream) error
+	MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, stream Stream) error
+	DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, stream Stream) error
+
 	// Transpose2D transposes a [rows, cols] matrix to [cols, rows] using tiled shared memory.
 	Transpose2D(input, output unsafe.Pointer, rows, cols int, stream Stream) error
 

@@ -1,5 +1,3 @@
-//go:build !cuda
-
 package gpuapi
 
 import (
@@ -99,7 +97,9 @@ func (b *CUDABlas) Handle() *cublas.Handle {
 }
 
 func init() {
-	BLASFactory = func() (BLAS, error) { return NewCUDABlas() }
+	if cublas.Available() {
+		BLASFactory = func() (BLAS, error) { return NewCUDABlas() }
+	}
 }
 
 // Compile-time interface assertion.

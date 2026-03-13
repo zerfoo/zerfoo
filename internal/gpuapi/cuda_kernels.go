@@ -125,6 +125,22 @@ func (k *CUDAKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, 
 	return kernels.DivBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
+func (k *CUDAKernels) AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+	return kernels.AddBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
+}
+
+func (k *CUDAKernels) SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+	return kernels.SubBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
+}
+
+func (k *CUDAKernels) MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+	return kernels.MulBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
+}
+
+func (k *CUDAKernels) DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+	return kernels.DivBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
+}
+
 func (k *CUDAKernels) Transpose2D(input, output unsafe.Pointer, rows, cols int, s Stream) error {
 	return kernels.Transpose2D(input, output, rows, cols, streamPtr(s))
 }
