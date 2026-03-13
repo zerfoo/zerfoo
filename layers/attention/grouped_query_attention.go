@@ -4,6 +4,7 @@ package attention
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -434,6 +435,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 					kHeadsRoPE = kSlice
 				} else {
 					// CPU fallback: copy data.
+					log.Printf("WARNING: GQA fused QK norm+RoPE CPU fallback triggered (D2H copy); expected GPUStorage but got %T", fusedOut.GetStorage())
 					data := fusedOut.Data()
 					qData := make([]T, qElems)
 					kData := make([]T, kElems)
@@ -885,6 +887,7 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 	}
 
 	// CPU path: copy data.
+	log.Printf("WARNING: GQA splitMergedQKV CPU fallback triggered (D2H copy); expected GPUStorage but got %T", merged.GetStorage())
 	data := merged.Data()
 	qData := make([]T, batchElems*qDim)
 	kData := make([]T, batchElems*kDim)

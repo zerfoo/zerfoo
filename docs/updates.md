@@ -1,3 +1,67 @@
+# T401.1 Bisect Results: Throughput Regression on DGX Spark
+
+Date: 2026-03-13
+
+## Summary
+
+Bisected the throughput regression from ~163 tok/s (commit 388e60d) to ~128 tok/s
+(origin/main HEAD) on DGX Spark GB10. The regression is **~35 tok/s (~21%)**.
+
+**Root cause:** Commit `c93f9b8` ("feat(cuda): add managed memory detection and
+arena support for GB10") unconditionally allocates the ArenaPool with
+`cudaMallocManaged` on GB10. The `ZERFOO_ENABLE_MANAGED_MEM` env var only
+controls weight uploads in `compute/gpu_engine.go`, but the arena in
+`internal/cuda/arena.go` line 63 always calls `ManagedMemorySupported()` and
+uses managed memory if supported. On GB10, this causes page fault overhead
+for all intermediate tensor allocations, reducing throughput by ~25%.
+
+## Bisect Evidence
+
+| Commit | Description | tok/s (best of 2) | Status |
+|--------|-------------|-------------------:|--------|
+| 388e60d | Baseline (pre-optimization waves) | 163 | GOOD |
+| 9db1236 | Enable CUDA graph capture | 165 | GOOD |
+| **c93f9b8** | **Add managed memory to arena** | **131** | **BAD** |
+| 764aa6e | Managed memory for weight uploads | 121 | BAD |
+| 08476ef | Disable CUDA graph + managed mem (opt-in) | 128 | BAD |
+
+The fix at `08476ef` only made managed memory opt-in for weight uploads but
+did not fix the arena allocator.
+
+## Verification
+
+Tested baseline Go binary (388e60d) vs HEAD Go binary using the same
+libkernels.so (HEAD kernels):
+- Baseline Go binary + HEAD kernels: **160 tok/s**
+- HEAD Go binary + HEAD kernels: **122 tok/s**
+
+This confirms the regression is in Go code, not CUDA kernels.
+
+## Fix Required
+
+`internal/cuda/arena.go` line 63 should respect the `ZERFOO_ENABLE_MANAGED_MEM`
+env var, or default to regular `cudaMalloc` until `cudaMemPrefetchAsync` is
+implemented to avoid page fault overhead.
+
+```go
+// Current (broken):
+managed := ManagedMemorySupported(deviceID)
+
+// Fix:
+managed := ManagedMemorySupported(deviceID) && os.Getenv("ZERFOO_ENABLE_MANAGED_MEM") != ""
+```
+
+## Methodology
+
+1. Verified baseline (388e60d) at ~163 tok/s (3 runs).
+2. Verified HEAD (origin/main) at ~128 tok/s (5 runs).
+3. Ran `git bisect` between 388e60d and origin/main.
+4. Bisect identified `c93f9b8` as first bad commit.
+5. Confirmed via binary swapping that regression is in Go code, not CUDA kernels.
+6. Identified arena.go line 63 as the root cause (unconditional managed memory).
+
+---
+
 # S100.1.1 DGX Spark Integration Test Results
 
 Date: 2026-03-11
