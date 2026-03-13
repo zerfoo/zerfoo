@@ -53,6 +53,9 @@ type KernelLib struct {
 	// gemv_q4k (fused dequant+GEMV for Q4_K_M)
 	launchGemvQ4KF32 uintptr
 
+	// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
+	launchDequantQ4KF32 uintptr
+
 	// gemm_q8
 	launchGemmQ8F32 uintptr
 
@@ -160,6 +163,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
 			// gemv_q4k (fused dequant+GEMV for Q4_K_M)
 			{"gemv_q4k_f32", &k.launchGemvQ4KF32},
+			// dequant_q4k (Q4_K to F32 for non-GEMV cuBLAS path)
+			{"dequant_q4k_f32", &k.launchDequantQ4KF32},
 			// gemm_q8
 			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
