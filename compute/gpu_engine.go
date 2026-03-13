@@ -374,33 +374,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload f32 (shape %v): %w", t.Shape(), err)
 		}
-		// When dtype is FP16, convert the F32 weights to FP16 on GPU once
-		// and store as Float16Storage. This avoids per-MatMul F32->FP16
-		// conversion and halves GPU memory for weights.
-		if e.dtype == DTypeFP16 {
-			fp16Bytes := n * fp16Size
-			fp16Ptr, err := e.allocWeight(fp16Bytes)
-			if err != nil {
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("alloc fp16 GPU (shape %v): %w", t.Shape(), err)
-			}
-			if err := e.kernels.F32ToFP16(devPtr, fp16Ptr, n, e.stream); err != nil {
-				_ = e.runtime.Free(fp16Ptr)
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("f32->fp16 convert (shape %v): %w", t.Shape(), err)
-			}
-			// Sync to ensure conversion is complete before freeing F32 source.
-			if err := e.stream.Synchronize(); err != nil {
-				_ = e.runtime.Free(fp16Ptr)
-				_ = e.runtime.Free(devPtr)
-				return fmt.Errorf("stream sync after fp16 convert (shape %v): %w", t.Shape(), err)
-			}
-			_ = e.runtime.Free(devPtr)
-			fs := tensor.NewFloat16StorageGPU(fp16Ptr, n, e.deviceID)
-			t.SetStorage(fs)
-			uploaded++
-			continue
-		}
+		// F32 weights (norm gains, embedding table) stay as GPUStorage[float32].
+		// Norm weights are tiny (model_dim elements) so FP16 savings are negligible.
+		// The per-op FP16 compute paths (fp16FusedAddRMSNorm, etc.) handle F32->FP16
+		// conversion on the fly. The Gather output FP16 conversion is the entry point
+		// for FP16 activations in the forward pass.
 		gs, err := tensor.NewGPUStorageFromPtr[float32](devPtr, n, e.deviceID)
 		if err != nil {
 			_ = e.runtime.Free(devPtr)
