@@ -2,7 +2,6 @@ package compute
 
 import (
 	"fmt"
-	"log"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/tensor"
@@ -20,7 +19,6 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 
 	// Only use GPU path when input is GPU-resident.
 	if _, ok := input.GetStorage().(*tensor.GPUStorage[float32]); !ok {
-		log.Printf("DEBUG: FusedRMSNormGPU: input storage is %T (not GPUStorage[float32]), shape=%v, falling back to CPU", input.GetStorage(), input.Shape())
 		return FusedRMSNorm(input, weight, epsilon)
 	}
 

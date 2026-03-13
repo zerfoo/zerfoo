@@ -243,6 +243,29 @@ func (p *ExecutionPlan[T]) InstructionOpName(i int) string {
 	return p.instructions[i].OpName
 }
 
+// InstructionOutputIdx returns the output slot index of instruction at index i.
+func (p *ExecutionPlan[T]) InstructionOutputIdx(i int) int {
+	if i < 0 || i >= len(p.instructions) {
+		return -1
+	}
+	return p.instructions[i].OutputIdx
+}
+
+// ScratchSlot returns the tensor at the given scratch slot index, or nil.
+func (p *ExecutionPlan[T]) ScratchSlot(idx int) *tensor.TensorNumeric[T] {
+	if idx < 0 || idx >= len(p.scratchSlots) {
+		return nil
+	}
+	return p.scratchSlots[idx]
+}
+
+// SetScratchSlot sets the tensor at the given scratch slot index.
+func (p *ExecutionPlan[T]) SetScratchSlot(idx int, t *tensor.TensorNumeric[T]) {
+	if idx >= 0 && idx < len(p.scratchSlots) {
+		p.scratchSlots[idx] = t
+	}
+}
+
 // RunInstructions executes the instruction loop directly, bypassing the
 // megakernel/graph capture hook. Used by CUDAGraphExecutor during warmup
 // and capture phases.

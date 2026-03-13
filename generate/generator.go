@@ -160,14 +160,24 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 		}
 		if cErr == nil {
-			// CUDA graph capture for the decode loop: EmbeddingLookup runs
-			// outside the capture region (pre-capture), and all remaining
+			// CUDA graph capture for the decode loop: position-independent
 			// GPU ops run inside the captured graph for near-zero launch
 			// overhead. Disable with ZERFOO_DISABLE_CUDA_GRAPH=1.
 			if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_DISABLE_CUDA_GRAPH") == "" {
 				if streamPtr := sp.Stream(); streamPtr != nil {
 					if cuda.Available() && cuda.Lib().GraphAvailable() {
-						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
+						// After capture, protect arena allocations so Reset
+						// doesn't reclaim the GPU buffers referenced by the graph.
+						var onCaptured func()
+						if ap, ok := any(gen.engine).(interface{ ArenaUsedBytes() int }); ok {
+							if asf, ok2 := any(gen.engine).(interface{ SetArenaResetFloor(int) }); ok2 {
+								onCaptured = func() {
+									floor := ap.ArenaUsedBytes()
+									asf.SetArenaResetFloor(floor)
+								}
+							}
+						}
+						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2, onCaptured)
 						compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 							return ge.Run(ctx, inputs...)
 						})

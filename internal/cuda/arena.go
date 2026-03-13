@@ -36,15 +36,16 @@ func SetDefaultArenaPool(a *ArenaPool) {
 // Weight tensors and KV cache should NOT use the arena (they persist across
 // passes). The arena is only for per-pass intermediates.
 type ArenaPool struct {
-	mu       sync.Mutex
-	base     unsafe.Pointer // start of the CUDA allocation
-	capacity int            // total bytes allocated
-	offset   int            // current bump offset
-	deviceID int
-	managed  bool // true if base was allocated with cudaMallocManaged
-	hits     atomic.Int64
-	misses   atomic.Int64 // only incremented if arena is full and falls back
-	resets   atomic.Int64
+	mu         sync.Mutex
+	base       unsafe.Pointer // start of the CUDA allocation
+	capacity   int            // total bytes allocated
+	offset     int            // current bump offset
+	resetFloor int            // minimum offset after Reset (protects captured graph buffers)
+	deviceID   int
+	managed    bool // true if base was allocated with cudaMallocManaged
+	hits       atomic.Int64
+	misses     atomic.Int64 // only incremented if arena is full and falls back
+	resets     atomic.Int64
 
 	// fallback is the MemPool used when the arena is exhausted.
 	fallback *MemPool
@@ -147,13 +148,23 @@ func (a *ArenaPool) FreeManaged(deviceID int, ptr unsafe.Pointer, byteSize int) 
 	a.fallback.FreeManaged(deviceID, ptr, byteSize)
 }
 
-// Reset rewinds the arena offset to 0, reclaiming all arena allocations.
-// Call this at the start of each forward pass.
+// Reset rewinds the arena offset to the reset floor (default 0), reclaiming
+// per-pass allocations while preserving buffers below the floor (e.g. CUDA
+// graph captured buffers).
 func (a *ArenaPool) Reset() {
 	a.mu.Lock()
-	a.offset = 0
+	a.offset = a.resetFloor
 	a.mu.Unlock()
 	a.resets.Add(1)
+}
+
+// SetResetFloor sets the minimum offset that Reset will rewind to. Allocations
+// below this offset are preserved across resets. This is used by CUDA graph
+// capture to protect GPU buffers that the captured graph references.
+func (a *ArenaPool) SetResetFloor(floor int) {
+	a.mu.Lock()
+	a.resetFloor = floor
+	a.mu.Unlock()
 }
 
 // Drain frees the underlying CUDA allocation and drains the fallback pool.

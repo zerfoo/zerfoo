@@ -209,6 +209,21 @@ func (e *GPUEngine[T]) ResetPool() {
 	}
 }
 
+// ArenaUsedBytes returns the current arena offset (bytes in use).
+func (e *GPUEngine[T]) ArenaUsedBytes() int {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		return arena.UsedBytes()
+	}
+	return 0
+}
+
+// SetArenaResetFloor sets the minimum offset that arena Reset will rewind to.
+func (e *GPUEngine[T]) SetArenaResetFloor(floor int) {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		arena.SetResetFloor(floor)
+	}
+}
+
 // setDevice ensures the correct GPU device context for the calling goroutine.
 func (e *GPUEngine[T]) setDevice() {
 	_ = e.runtime.SetDevice(e.deviceID)

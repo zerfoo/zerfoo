@@ -353,3 +353,20 @@ func (p *EngineProxy[T]) ResetPool() {
 		resetter.ResetPool()
 	}
 }
+
+// ArenaUsedBytes returns the current arena offset from the underlying engine.
+func (p *EngineProxy[T]) ArenaUsedBytes() int {
+	type arenaUser interface{ ArenaUsedBytes() int }
+	if au, ok := p.real.(arenaUser); ok {
+		return au.ArenaUsedBytes()
+	}
+	return 0
+}
+
+// SetArenaResetFloor sets the minimum reset offset on the underlying engine.
+func (p *EngineProxy[T]) SetArenaResetFloor(floor int) {
+	type arenaFloorSetter interface{ SetArenaResetFloor(int) }
+	if af, ok := p.real.(arenaFloorSetter); ok {
+		af.SetArenaResetFloor(floor)
+	}
+}

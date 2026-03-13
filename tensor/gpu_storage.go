@@ -238,10 +238,7 @@ func (s *GPUStorage[T]) TrySlice() ([]T, error) {
 func (s *GPUStorage[T]) Slice() []T {
 	data, err := s.TrySlice()
 	if err != nil {
-		// Include stack trace to identify which code path triggers D2H during capture.
-		buf := make([]byte, 4096)
-		n := runtime.Stack(buf, false)
-		log.Printf("WARNING: %v; returning zero slice of length %d\n%s", err, s.length, buf[:n])
+		log.Printf("WARNING: %v; returning zero slice of length %d", err, s.length)
 
 		return make([]T, s.length)
 	}
