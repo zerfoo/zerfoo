@@ -1,8 +1,7 @@
-//go:build opencl
-
 package gpuapi
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/device"
@@ -15,7 +14,11 @@ type OpenCLRuntime struct {
 }
 
 // NewOpenCLRuntime returns a new OpenCL runtime adapter.
+// Returns nil if libOpenCL is not available on this system.
 func NewOpenCLRuntime() *OpenCLRuntime {
+	if !opencl.Available() {
+		return nil
+	}
 	return &OpenCLRuntime{}
 }
 
@@ -34,6 +37,9 @@ func (r *OpenCLRuntime) SetDevice(deviceID int) error {
 }
 
 func (r *OpenCLRuntime) GetDeviceCount() (int, error) {
+	if !opencl.Available() {
+		return 0, fmt.Errorf("opencl: not available")
+	}
 	return opencl.GetDeviceCount()
 }
 

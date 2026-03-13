@@ -1,5 +1,3 @@
-//go:build opencl
-
 package gpuapi
 
 import (
