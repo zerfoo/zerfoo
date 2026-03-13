@@ -1897,8 +1897,10 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
 
-	// Only use GPU path when params are GPU-resident.
-	if _, ok := params.GetStorage().(*tensor.GPUStorage[T]); !ok {
+	// Check whether params are GPU-resident (F32 or FP16 storage).
+	_, isGPU := params.GetStorage().(*tensor.GPUStorage[T])
+	fp16Stor, isFP16 := any(params.GetStorage()).(*tensor.Float16Storage)
+	if !isGPU && !isFP16 {
 		return e.cpu.Gather(ctx, params, indices, output)
 	}
 
@@ -1918,10 +1920,33 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 		return nil
 	}
 
-	// Get device pointer for params (should be zero-copy since GPU-resident).
-	devParams, cleanupParams, err := getDevicePtr(e, params)
-	if err != nil {
-		return e.cpu.Gather(ctx, params, indices, output)
+	// Get device pointer for params. For Float16Storage, convert FP16->F32
+	// into a temporary buffer so the F32 Gather kernel can operate on it.
+	var devParams unsafe.Pointer
+	var cleanupParams func()
+	if isFP16 {
+		fp16Ptr, _, _ := fp16Stor.GPUPtr()
+		if fp16Ptr == nil {
+			return e.cpu.Gather(ctx, params, indices, output)
+		}
+		nElems := V * D
+		f32Bytes := nElems * f32Size
+		f32Ptr, err := e.pool.Alloc(e.deviceID, f32Bytes)
+		if err != nil {
+			return e.cpu.Gather(ctx, params, indices, output)
+		}
+		if err := e.kernels.FP16ToF32(fp16Ptr, f32Ptr, nElems, e.stream); err != nil {
+			e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
+			return e.cpu.Gather(ctx, params, indices, output)
+		}
+		devParams = f32Ptr
+		cleanupParams = func() { e.pool.Free(e.deviceID, f32Ptr, f32Bytes) }
+	} else {
+		var err error
+		devParams, cleanupParams, err = getDevicePtr(e, params)
+		if err != nil {
+			return e.cpu.Gather(ctx, params, indices, output)
+		}
 	}
 	defer cleanupParams()
 
@@ -1951,6 +1976,28 @@ func (e *GPUEngine[T]) Gather(ctx context.Context, params *tensor.TensorNumeric[
 	if err := e.kernels.Gather(devParams, devIdx, devOut, N, D, V, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devOut, outByteSize)
 		return fmt.Errorf("GPU Gather: %w", err)
+	}
+
+	// When dtype is FP16, convert the F32 gather output to FP16 on GPU.
+	// This is the single F32->FP16 conversion point for the entire forward pass;
+	// all downstream ops receive Float16Storage and operate in FP16 natively.
+	if e.dtype == DTypeFP16 {
+		outElems := N * D
+		fp16Bytes := outElems * fp16Size
+		fp16Ptr, err := e.pool.Alloc(e.deviceID, fp16Bytes)
+		if err != nil {
+			e.pool.Free(e.deviceID, devOut, outByteSize)
+			return fmt.Errorf("Gather FP16 alloc: %w", err)
+		}
+		if err := e.kernels.F32ToFP16(devOut, fp16Ptr, outElems, e.stream); err != nil {
+			e.pool.Free(e.deviceID, fp16Ptr, fp16Bytes)
+			e.pool.Free(e.deviceID, devOut, outByteSize)
+			return fmt.Errorf("Gather F32->FP16: %w", err)
+		}
+		e.pool.Free(e.deviceID, devOut, outByteSize)
+		fs := any(tensor.NewFloat16StorageGPU(fp16Ptr, outElems, e.deviceID)).(tensor.Storage[T])
+		output.SetStorage(fs)
+		return nil
 	}
 
 	// Set output storage to GPU.
