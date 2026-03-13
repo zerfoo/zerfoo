@@ -204,7 +204,7 @@ results.
     (max rel error < 1e-4).
   - Dependencies: none.
 
-- [ ] T304.2 Wire fused dequant+GEMV into GPUEngine  Owner: TBD  Est: 2h
+- [x] T304.2 Wire fused dequant+GEMV into GPUEngine  Owner: task-T304.2  Completed: 2026-03-13
   - Detect Q4_K_M quantized weights in MatMul dispatch. When batch=1 and
     weights are Q4, use fused kernel instead of dequantize + cuBLAS Sgemm.
   - File: compute/gpu_engine.go (MatMul path).
@@ -248,7 +248,7 @@ results.
   - Acceptance: Validates with swagger-cli validate.
   - Dependencies: T305.1, T305.2, T305.3.
 
-- [ ] T305.5 Add GET /openapi.yaml endpoint to serve spec  Owner: TBD  Est: 30m
+- [x] T305.5 Add GET /openapi.yaml endpoint to serve spec  Owner: task-T305.5  Completed: 2026-03-13
   - Serve the OpenAPI spec from the server itself for client discovery.
   - Embed the YAML using go:embed.
   - File: serve/server.go.
@@ -281,7 +281,7 @@ results.
   - Acceptance: Kernel compiles for sm_75 and sm_121.
   - Dependencies: none.
 
-- [ ] T203.2 Wire GPU Transpose into GPUEngine  Owner: TBD  Est: 2h
+- [x] T203.2 Wire GPU Transpose into GPUEngine  Owner: task-T203.2  Completed: 2026-03-13
   - Replace CPU fallback in GPUEngine.Transpose with GPU kernel dispatch.
   - Keep CPU fallback for tensors with >4 dimensions.
   - Acceptance: GPUEngine.Transpose returns GPUStorage result for 2D/3D/4D inputs.
@@ -304,7 +304,7 @@ results.
   - Acceptance: Kernel compiles for sm_75 and sm_121.
   - Dependencies: none.
 
-- [ ] T204.2 Wire GPU Gather into GPUEngine  Owner: TBD  Est: 2h
+- [x] T204.2 Wire GPU Gather into GPUEngine  Owner: task-T204.2  Completed: 2026-03-13 (already implemented)
   - Replace CPU fallback in GPUEngine.Gather with GPU kernel dispatch.
   - Acceptance: GPUEngine.Gather returns GPUStorage result.
   - Dependencies: T204.1.
@@ -320,7 +320,7 @@ results.
 
 ### E205: GPU Broadcasting for Element-wise Ops
 
-- [ ] T205.1 Extend CUDA element-wise kernels for broadcasting  Owner: TBD  Est: 3h
+- [x] T205.1 Extend CUDA element-wise kernels for broadcasting  Owner: task-T205.1  Completed: 2026-03-13
   - Support scalar broadcast, row broadcast, and column broadcast patterns.
   - Compute strides for broadcasting inside the kernel (no pre-expansion).
   - Acceptance: Kernels compile and handle mismatched shapes.

@@ -687,3 +687,56 @@ int32 and int64 paths. 5 table-driven parity tests.
 | Kernel Opt (E209) | -- | T209.1-3 |
 | Purego Conversions (E210-215) | -- | All tasks |
 | Verification (E307) | -- | All tasks (blocked) |
+
+---
+
+# Wave 3: Engine Wiring + Broadcasting + OpenAPI Endpoint
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates in isolated worktrees)
+
+## Tasks Completed
+
+### T304.2: Fused Dequant+GEMV Wired into GPUEngine (Critical Path)
+
+Full integration: Q4_K_M weights detected in MatMul dispatch, fused kernel used
+for batch=1 decode. GGUF loader preserves Q4KStorage, GPU upload path added,
+CPU engine fallback for batch>1. Logging confirms fused dispatch.
+- 5 commits across internal/cuda/kernels/, internal/gpuapi/, tensor/, model/gguf/, compute/
+
+### T203.2: GPU Transpose Wired (>4D Fallback Added)
+
+The GPU transpose path was already wired. Added >4D CPU fallback guard and test.
+- Commit: da4357e
+
+### T204.2: GPU Gather Already Wired (No Changes Needed)
+
+GPU Gather was already fully implemented in gpu_engine.go with int64 support
+from Wave 1. Task verified complete, no code changes needed.
+
+### T205.1: 4D Broadcast Element-wise Kernels
+
+Added `kernel_add/sub/mul/div_broadcast4d` with per-dimension stride-based
+indexing. Supports scalar, row, column, and full 4D broadcasting patterns.
+- Commit: 0d64322
+
+### T305.5: GET /openapi.yaml Endpoint
+
+Embedded openapi.yaml via `go:embed`, served at GET /openapi.yaml with
+Content-Type: application/yaml. Test added.
+- Commit: 728a966
+
+## Merge Notes
+
+- Conflict in serve/server.go (route registration + handler function) resolved
+  by keeping both sides.
+- Duplicate `launchGemvQ4KF32` symbol in purego.go resolved by removing redundant
+  entry from T304.2 branch (already declared from T304.1 merge).
+
+## Quality Gates
+
+| Gate | Status |
+|------|--------|
+| go build ./... | PASS |
+| Merge conflicts | Resolved (1 in serve/server.go) |
