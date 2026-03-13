@@ -629,7 +629,7 @@ enabling it after D2H elimination.
   - Acceptance: Report written to docs/QUALITY.md.
   - Dependencies: T307.2.
 
-- [ ] T307.3 Verify go build ./... without any build tags  Owner: TBD  Est: 30m
+- [x] T307.3 Verify go build ./... without any build tags  Owner: TBD  Est: 30m
   - Build on macOS (no GPU) and DGX Spark (GPU).
   - All packages must compile without -tags cuda, -tags rocm, -tags opencl.
   - Acceptance: go build ./... passes on both platforms.
@@ -640,7 +640,7 @@ enabling it after D2H elimination.
   - Acceptance: All tests pass.
   - Dependencies: T307.3.
 
-- [ ] T307.5 Run go vet on all packages  Owner: TBD  Est: 15m
+- [x] T307.5 Run go vet on all packages  Owner: TBD  Est: 15m
   - Dependencies: T307.4.
 
 ---
