@@ -407,7 +407,7 @@ enabling it after D2H elimination.
 
 ### E209: Kernel Optimization
 
-- [ ] T209.1 Tune register pressure and occupancy  Owner: TBD  Est: 3h
+- [x] T209.1 Tune register pressure and occupancy  Owner: TBD  Est: 3h
   - Use --maxrregcount to limit registers per thread.
   - Profile occupancy with nsys for each kernel.
   - Target: >= 50% occupancy for compute-bound kernels.
@@ -421,7 +421,7 @@ enabling it after D2H elimination.
   - Acceptance: Kernels pass parity tests. Benchmark improvement documented.
   - Dependencies: none.
 
-- [ ] S209.2.1 Full kernel benchmark suite  Owner: TBD  Est: 1h
+- [x] S209.2.1 Full kernel benchmark suite  Owner: TBD  Est: 1h
   - Benchmark each kernel individually: elementwise, flash_attention, gemm_q4,
     rmsnorm, transpose, gather.
   - Compare with pre-optimization baselines.
