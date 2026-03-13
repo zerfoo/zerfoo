@@ -41,17 +41,38 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 	}
 	defer cleanupIn()
 
-	// If weight is CPU-resident, upload it to GPU once and swap storage
-	// in-place so subsequent calls skip the H2D copy.
-	if _, wGPU := weight.GetStorage().(*tensor.GPUStorage[float32]); !wGPU {
-		if gpuW, err2 := tensor.ToGPU(weight); err2 == nil {
-			weight.SetStorage(gpuW.GetStorage())
+	// Get weight device pointer. Weight may be Float16Storage (from FP16
+	// weight upload), GPUStorage[float32], or CPU-resident.
+	var devWeight unsafe.Pointer
+	var cleanupWeight func()
+	if wFS, ok := any(weight.GetStorage()).(*tensor.Float16Storage); ok {
+		// Weight is FP16 on GPU. Convert to F32 for the F32 RMSNorm kernel.
+		fp16W, _, _ := wFS.GPUPtr()
+		wElems := weight.Size()
+		f32WBytes := wElems * f32Size
+		f32W, err := e.pool.Alloc(e.deviceID, f32WBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("FusedRMSNormGPU: alloc f32 weight: %w", err)
 		}
-	}
-
-	devWeight, cleanupWeight, err := getDevicePtr(f32Engine, weight)
-	if err != nil {
-		return FusedRMSNorm(input, weight, epsilon)
+		cleanupWeight = func() { e.pool.Free(e.deviceID, f32W, f32WBytes) }
+		if err := e.kernels.FP16ToF32(fp16W, f32W, wElems, e.stream); err != nil {
+			cleanupWeight()
+			return nil, nil, fmt.Errorf("FusedRMSNormGPU: fp16->f32 weight: %w", err)
+		}
+		devWeight = f32W
+	} else {
+		// If weight is CPU-resident, upload it to GPU once and swap storage
+		// in-place so subsequent calls skip the H2D copy.
+		if _, wGPU := weight.GetStorage().(*tensor.GPUStorage[float32]); !wGPU {
+			if gpuW, err2 := tensor.ToGPU(weight); err2 == nil {
+				weight.SetStorage(gpuW.GetStorage())
+			}
+		}
+		var err error
+		devWeight, cleanupWeight, err = getDevicePtr(f32Engine, weight)
+		if err != nil {
+			return nil, nil, fmt.Errorf("FusedRMSNormGPU: get weight ptr: %w", err)
+		}
 	}
 	defer cleanupWeight()
 
