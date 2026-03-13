@@ -85,6 +85,79 @@ __global__ void kernel_div_broadcast(const float* a, const float* b, float* c,
            / b[row * stride_b_row + col * stride_b_col];
 }
 
+// ---------- 4D broadcast binary elementwise ----------
+// Supports broadcasting up to 4 dimensions using per-dimension strides.
+// For a dimension where a tensor has size 1 (broadcast), set stride to 0.
+// Output shape is [d0, d1, d2, d3], total = d0*d1*d2*d3 threads.
+
+__global__ void kernel_add_broadcast4d(const float* a, const float* b, float* c,
+                                        int d0, int d1, int d2, int d3,
+                                        int sa0, int sa1, int sa2, int sa3,
+                                        int sb0, int sb1, int sb2, int sb3) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = d0 * d1 * d2 * d3;
+    if (idx >= total) return;
+    int i3 = idx % d3;
+    int tmp = idx / d3;
+    int i2 = tmp % d2;
+    tmp = tmp / d2;
+    int i1 = tmp % d1;
+    int i0 = tmp / d1;
+    c[idx] = a[i0*sa0 + i1*sa1 + i2*sa2 + i3*sa3]
+           + b[i0*sb0 + i1*sb1 + i2*sb2 + i3*sb3];
+}
+
+__global__ void kernel_sub_broadcast4d(const float* a, const float* b, float* c,
+                                        int d0, int d1, int d2, int d3,
+                                        int sa0, int sa1, int sa2, int sa3,
+                                        int sb0, int sb1, int sb2, int sb3) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = d0 * d1 * d2 * d3;
+    if (idx >= total) return;
+    int i3 = idx % d3;
+    int tmp = idx / d3;
+    int i2 = tmp % d2;
+    tmp = tmp / d2;
+    int i1 = tmp % d1;
+    int i0 = tmp / d1;
+    c[idx] = a[i0*sa0 + i1*sa1 + i2*sa2 + i3*sa3]
+           - b[i0*sb0 + i1*sb1 + i2*sb2 + i3*sb3];
+}
+
+__global__ void kernel_mul_broadcast4d(const float* a, const float* b, float* c,
+                                        int d0, int d1, int d2, int d3,
+                                        int sa0, int sa1, int sa2, int sa3,
+                                        int sb0, int sb1, int sb2, int sb3) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = d0 * d1 * d2 * d3;
+    if (idx >= total) return;
+    int i3 = idx % d3;
+    int tmp = idx / d3;
+    int i2 = tmp % d2;
+    tmp = tmp / d2;
+    int i1 = tmp % d1;
+    int i0 = tmp / d1;
+    c[idx] = a[i0*sa0 + i1*sa1 + i2*sa2 + i3*sa3]
+           * b[i0*sb0 + i1*sb1 + i2*sb2 + i3*sb3];
+}
+
+__global__ void kernel_div_broadcast4d(const float* a, const float* b, float* c,
+                                        int d0, int d1, int d2, int d3,
+                                        int sa0, int sa1, int sa2, int sa3,
+                                        int sb0, int sb1, int sb2, int sb3) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = d0 * d1 * d2 * d3;
+    if (idx >= total) return;
+    int i3 = idx % d3;
+    int tmp = idx / d3;
+    int i2 = tmp % d2;
+    tmp = tmp / d2;
+    int i1 = tmp % d1;
+    int i0 = tmp / d1;
+    c[idx] = a[i0*sa0 + i1*sa1 + i2*sa2 + i3*sa3]
+           / b[i0*sb0 + i1*sb1 + i2*sb2 + i3*sb3];
+}
+
 // ---------- Scalar operations ----------
 
 __global__ void kernel_add_scalar(const float* a, float scalar, float* c, int n) {
@@ -310,6 +383,54 @@ cudaError_t launch_div_broadcast(const float* a, const float* b, float* c,
     int grid, block; grid_config(n, &grid, &block);
     kernel_div_broadcast<<<grid, block, 0, stream>>>(a, b, c,
         stride_a_row, stride_a_col, stride_b_row, stride_b_col, M, D);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_add_broadcast4d(const float* a, const float* b, float* c,
+                                    int d0, int d1, int d2, int d3,
+                                    int sa0, int sa1, int sa2, int sa3,
+                                    int sb0, int sb1, int sb2, int sb3,
+                                    cudaStream_t stream) {
+    int n = d0 * d1 * d2 * d3;
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_add_broadcast4d<<<grid, block, 0, stream>>>(a, b, c, d0, d1, d2, d3,
+        sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_sub_broadcast4d(const float* a, const float* b, float* c,
+                                    int d0, int d1, int d2, int d3,
+                                    int sa0, int sa1, int sa2, int sa3,
+                                    int sb0, int sb1, int sb2, int sb3,
+                                    cudaStream_t stream) {
+    int n = d0 * d1 * d2 * d3;
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_sub_broadcast4d<<<grid, block, 0, stream>>>(a, b, c, d0, d1, d2, d3,
+        sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_mul_broadcast4d(const float* a, const float* b, float* c,
+                                    int d0, int d1, int d2, int d3,
+                                    int sa0, int sa1, int sa2, int sa3,
+                                    int sb0, int sb1, int sb2, int sb3,
+                                    cudaStream_t stream) {
+    int n = d0 * d1 * d2 * d3;
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_mul_broadcast4d<<<grid, block, 0, stream>>>(a, b, c, d0, d1, d2, d3,
+        sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_div_broadcast4d(const float* a, const float* b, float* c,
+                                    int d0, int d1, int d2, int d3,
+                                    int sa0, int sa1, int sa2, int sa3,
+                                    int sb0, int sb1, int sb2, int sb3,
+                                    cudaStream_t stream) {
+    int n = d0 * d1 * d2 * d3;
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_div_broadcast4d<<<grid, block, 0, stream>>>(a, b, c, d0, d1, d2, d3,
+        sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3);
     return cudaGetLastError();
 }
 
