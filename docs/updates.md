@@ -2653,3 +2653,332 @@ benchmarking. This should be verified during S602.4.1.
 
 All other .Data() calls are either init-only, CPU-only, guarded by storage type
 checks, or in non-default paths (paged KV, megakernel, speculative).
+
+---
+
+# T602.4 Audit: Remaining D2H Copies in Inference Hot Path
+
+Date: 2026-03-13
+
+## Summary
+
+Audited all `.Data()` calls in `compute/`, `generate/`, and `layers/` (excluding
+`layers/attention/` which was covered by T602.1). The audit identifies every
+device-to-host (D2H) copy that could be triggered during the decode hot path
+and provides a fix plan for each.
+
+**Key finding:** When the GPU path is active (weights uploaded, embedding
+produces GPU output), most `.Data()` calls are in CPU-only code paths or
+fallback branches that are never reached during normal decode. The critical
+hot-path D2H sites are concentrated in 6 areas.
+
+## Methodology
+
+1. Grepped for `.Data()` in all non-test `.go` files under `compute/`,
+   `generate/`, and `layers/` (excluding `layers/attention/`).
+2. Grepped for `.GetStorage()` type assertions that fall through to CPU paths.
+3. For each call, traced whether it is reachable during GPU-accelerated decode.
+4. Categorized as: HOT-PATH (hit every token), FALLBACK (hit only when GPU
+   path fails), INIT-ONLY (hit during weight loading, not decode), or COLD
+   (never hit during LLM decode).
+
+## Hot-Path D2H Sites (hit every token during decode)
+
+### 1. TensorCache CPU fallback -- `generate/tensor_cache.go:124-125`
+
+```
+copy(lb.kBuf[offset:offset+numElems], newK.Data())   // line 124
+copy(lb.vBuf[offset:offset+numElems], newV.Data())   // line 125
+```
+
+- **Trigger:** KV cache layer is CPU-backed (GPU promotion at line 103 failed
+  or source tensor was CPU on first call).
+- **Hot-path?** YES -- called every token for every transformer layer.
+- **Size:** `seqLen * dim * batch` elements per K and V (~1152 floats for
+  Gemma 3 1B per layer).
+- **Fix plan:** Already has GPU promotion logic (lines 99-107) and GPU append
+  path (lines 113-119). The fallback only triggers if `promoteToGPU` fails
+  (OOM) or if the very first token's K/V was CPU-resident. Once T602.2/T602.3
+  ensure GQA always produces GPU K/V, this path becomes dead code. Add an
+  assertion or remove the CPU fallback branch entirely.
+
+### 2. FFN splitGateUp CPU fallback -- `layers/core/ffn.go:321`
+
+```
+data := merged.Data()   // line 321
+```
+
+- **Trigger:** The merged gate+up tensor from the preceding MatMul does not
+  have `GPUStorage`.
+- **Hot-path?** YES -- called once per FFN layer per token (FFN is in every
+  transformer block).
+- **Size:** `batchElems * (gateDim + upDim)` floats (~6144 for Gemma 3 1B).
+- **Fix plan:** The GPU path (lines 305-317) uses `GPUStorageView` for zero-copy
+  splitting. This fallback only triggers when the FFN MatMul output is on CPU.
+  Once the upstream MatMul always produces GPU output (guaranteed when weights
+  are on GPU and `getDevicePtr` succeeds), this path is dead code. No code
+  change needed -- fix the upstream cascade from T402.5.
+
+### 3. MoE gate routing -- `layers/core/moe.go:60`
+
+```
+probData := probs.Data()   // line 60
+```
+
+- **Trigger:** Softmax output needs to be read on CPU for top-K routing.
+- **Hot-path?** YES for MoE models (e.g., Mixtral, DeepSeek). NOT hit for
+  dense models (Gemma 3 1B, LLaMA).
+- **Size:** `seqLen * numExperts` floats (small, ~8-64 elements).
+- **Fix plan:** Implement GPU top-K kernel that returns indices and weights
+  without D2H. Alternatively, since the tensor is small (~256 bytes), accept
+  the D2H as negligible latency. For CUDA graph capture, this would need a
+  GPU-side top-K or a fixed expert routing pattern.
+
+### 4. MoE token extraction -- `layers/core/moe.go:248`
+
+```
+copy(tokenData, hiddenStates.Data()[t*modelDim:(t+1)*modelDim])   // line 248
+```
+
+- **Trigger:** Multi-token MoE forward (seqLen > 1) copies per-token slices.
+- **Hot-path?** Only during prefill with MoE models (seqLen > 1). During
+  autoregressive decode (seqLen=1), the `if seqLen == 1` branch at line 244
+  avoids the copy.
+- **Fix plan:** For seqLen=1 decode, already avoided. For prefill, add GPU
+  SubSlice to extract token rows without D2H.
+
+### 5. Speculative decoding logits -- `generate/speculative.go:254,296`
+
+```
+data := targetLogits.Data()   // line 254 (verifyTokens)
+data := logits.Data()         // line 296 (greedyArgmax)
+```
+
+- **Trigger:** Speculative decoding verification reads full logits tensor.
+- **Hot-path?** YES when speculative decoding is enabled. NOT hit for standard
+  autoregressive decode.
+- **Size:** `seqLen * vocabSize` floats (~256K elements for Gemma 3 1B).
+- **Fix plan:** Use `GPUStorage.CopyTo()` like `sampleFromLogits` does (line
+  355-358 in generator.go). Better: implement GPU-side argmax for speculative
+  verification (compare draft tokens vs target argmax entirely on GPU).
+
+### 6. Megakernel input extraction -- `generate/megakernel.go:135`
+
+```
+inputRaw := inputs[0].Data()   // line 135
+```
+
+- **Trigger:** Megakernel JIT path reads input tensor to convert to float32.
+- **Hot-path?** Only when megakernel JIT is active (experimental path).
+- **Fix plan:** Use `getDevicePtr` or `GPUStorage.CopyTo()` instead. The
+  megakernel should operate on GPU-resident data directly.
+
+## Fallback-Only D2H Sites (not hit when GPU path is healthy)
+
+### 7. getDevicePtr CPU fallback -- `compute/gpu_kernels.go:51`
+
+```
+data := t.Data()   // line 51
+```
+
+- **Trigger:** Tensor has neither `GPUStorage[T]` nor `Float16Storage` with
+  GPU pointer. Falls through GPU and FP16 checks to CPU path.
+- **Hot-path?** Only when upstream produces CPU tensors (the T402.5 cascade).
+  When weights are on GPU and embedding produces GPU output, this path is not
+  reached for decode-path tensors.
+- **Fix plan:** Already resolved by fixing the embedding cascade (T402.5).
+
+### 8. Pow scalar exponent -- `compute/gpu_kernels.go:664`
+
+```
+scalar := exponent.Data()[0]   // line 664
+```
+
+- **Trigger:** RMSNorm power operation reads a scalar (1 element) from the
+  exponent tensor.
+- **Hot-path?** YES -- called by RMSNorm every layer. But reads only 1 float.
+- **Size:** 4 bytes.
+- **Fix plan:** Negligible D2H (4 bytes). For CUDA graph capture, pre-extract
+  the scalar constant at graph construction time since it never changes (always
+  2.0 for squared norm). Store as a Go float32 parameter rather than reading
+  from a tensor.
+
+### 9. matMulBF16/matMulBF16BWeight -- `compute/gpu_engine.go:1589,1654`
+
+```
+bData := b.Data()   // line 1589 (matMulBF16)
+aData := a.Data()   // line 1654 (matMulBF16BWeight)
+```
+
+- **Trigger:** BFloat16 MatMul path converts F32 tensor to BF16 on CPU before
+  upload. Only reached when weight has `BFloat16Storage` type.
+- **Hot-path?** Only for BF16-quantized models. NOT hit for Q4K or F32 models.
+- **Fix plan:** Upload F32->BF16 conversion to GPU. Use a CUDA kernel for
+  F32->BF16 cast, then run cuBLAS GEMM on device-resident BF16 data.
+
+### 10. Gather indices -- `compute/gpu_engine.go:1920`
+
+```
+idxData := indices.Data()   // line 1920
+```
+
+- **Trigger:** GPU Gather reads token indices (int tensor) from CPU.
+- **Hot-path?** YES -- called once per token for embedding lookup.
+- **Size:** `N` ints where N = number of tokens (typically 1 during decode).
+- **Fix plan:** For decode (N=1), this is 4-8 bytes -- negligible latency. For
+  CUDA graph capture, the index is dynamic per token, so it must be uploaded
+  via a mapped/pinned buffer rather than captured in the graph. Accept as-is
+  for now; address during CUDA graph integration.
+
+### 11. TensorPool zero -- `compute/pool.go:37`
+
+```
+zeroData(t.Data())   // line 37
+```
+
+- **Trigger:** TensorPool.Acquire zeroes a reused CPU tensor.
+- **Hot-path?** Only for CPU-backed tensors in the pool. GPU tensors are freed
+  immediately (lines 57-60) and never enter the CPU pool path.
+- **Fix plan:** Not a D2H issue -- this operates on CPU tensors only. No fix
+  needed.
+
+## Init-Only D2H Sites (weight loading, not decode)
+
+### 12. UploadWeights -- `compute/gpu_engine.go:362`
+
+```
+data := t.Data()   // line 362
+```
+
+- **Trigger:** Reading F32 weight data to upload to GPU during model loading.
+- **Hot-path?** NO -- only during `UploadWeights()` at startup.
+- **Fix plan:** None needed.
+
+### 13. Megakernel frozen slot extraction -- `generate/megakernel.go:85`
+
+```
+raw := f.Data.Data()   // line 85
+```
+
+- **Trigger:** Extracting frozen weight data for megakernel GPU upload.
+- **Hot-path?** NO -- only during megakernel compilation.
+- **Fix plan:** None needed.
+
+### 14. MatMulNBits dequantization -- `layers/core/matmul_nbits.go:130-135`
+
+```
+quantData := m.quantizedWeights.Data()   // line 130
+scaleData := m.scale.Data()              // line 131
+zeroPointData = m.zeroPoint.Data()       // line 135
+```
+
+- **Trigger:** Eager dequantization at construction time (line 116).
+- **Hot-path?** NO -- cached at construction. Forward() uses the cached result.
+- **Fix plan:** None needed.
+
+### 15. MatMulNBits CUDA path -- `layers/core/matmul_nbits_cuda.go:50,63,83`
+
+```
+wData := quantizedWeights.Data()   // line 50
+scaleData := scale.Data()          // line 63
+zpData := zeroPoint.Data()         // line 83
+```
+
+- **Trigger:** Uploading quantized weights/scales to GPU for CUTLASS kernel.
+- **Hot-path?** Called during forward, but behind `cuda && cutlass` build tags
+  (not the default purego path).
+- **Fix plan:** Cache GPU-uploaded weights across forward calls to avoid
+  repeated uploads.
+
+## Cold D2H Sites (never hit during LLM decode)
+
+The following `.Data()` calls are in layers not used during standard LLM decode:
+
+| File | Line | Layer | Why Cold |
+|------|------|-------|----------|
+| `layers/core/concat.go` | 80 | Concat | Not in transformer decode path |
+| `layers/core/conv1d.go` | 166-207 | Conv1D | Audio/signal processing only |
+| `layers/core/conv2d.go` | 123-156 | Conv2D | Vision models only |
+| `layers/core/cos.go` | 29 | Cos | Not in standard transformer |
+| `layers/core/equal.go` | 29 | Equal | Not in decode path |
+| `layers/core/expand.go` | 30-37 | Expand | ONNX shape op, not in decode |
+| `layers/core/gemm.go` | 42-91 | Gemm | ONNX Gemm, not used by LLM |
+| `layers/core/global_avg_pool.go` | 41 | GlobalAvgPool | Vision only |
+| `layers/core/greater.go` | 29 | Greater | Not in decode path |
+| `layers/core/matmul.go` | 122,154 | MatMul CPU | CPU MatMul fallback |
+| `layers/core/pad.go` | 59 | Pad | Not in standard transformer |
+| `layers/core/polynomial.go` | 210-300 | Polynomial | Training/backprop only |
+| `layers/core/range_op.go` | 28-30 | Range | Shape construction only |
+| `layers/core/reducemean.go` | 39 | ReduceMean | Not in standard transformer |
+| `layers/core/reshape.go` | 53 | Reshape | Shape tensor read, not data |
+| `layers/core/resize.go` | 68 | Resize | Vision only |
+| `layers/core/scatternd.go` | 29-31 | ScatterND | Not in decode path |
+| `layers/core/sin.go` | 29 | Sin | Not in standard transformer |
+| `layers/core/slice.go` | 108-119 | Slice | CPU fallback, GPU has SubSlice |
+| `layers/core/topk.go` | 40 | TopK | Sampling, not forward pass |
+| `layers/core/where.go` | 29 | Where | Not in standard transformer |
+| `layers/embeddings/token_embedding.go` | 76-223 | TokenEmbedding | Init + CPU fallback |
+| `layers/gather/gather.go` | 104-186 | Gather | CPU gather fallback |
+| `layers/sequence/s4.go` | 217-409 | S4 | SSM layer, not transformer |
+| `layers/transpose/transpose.go` | 88-120 | Transpose | CPU fallback |
+| `compute/cpu_engine.go` | all | CPUEngine | Entire CPU engine -- fallback |
+| `compute/fused_rmsnorm.go` | 20-21 | FusedRMSNorm | CPU fallback for GPU version |
+| `compute/fused_rope.go` | 40-42 | FusedRoPE | CPU fallback for GPU version |
+| `compute/fused_silugate.go` | 26-27 | FusedSiLUGate | CPU fallback for GPU version |
+| `compute/testable_engine.go` | 189-190 | TestableEngine | Test harness only |
+| `generate/kvcache.go` | 134-135 | KVCache (old) | Older CPU-only KV cache |
+| `generate/paged_kv.go` | 91-92 | PagedKV | Paged KV cache (CPU-only) |
+
+## GetStorage Fallthrough Analysis
+
+The `compute/gpu_engine.go` MatMul dispatch (lines 524-584) uses a chain of
+`GetStorage()` type assertions to route to the correct kernel:
+
+```
+Q4KStorage -> matMulQ4K / matMulQ4KBWeight
+Q4Storage  -> matMulQ4  / matMulQ4BWeight
+Q8Storage  -> matMulQ8  / matMulQ8BWeight
+Float16Storage -> fp16MatMul
+FP8E4M3Storage -> fp8MatMul
+BFloat16Storage -> matMulBF16 / matMulBF16BWeight
+```
+
+If none match, the GPU engine falls through to the CPU engine's MatMul, which
+calls `.Data()` on both operands. This fallthrough happens when:
+- A tensor has plain `[]float32` storage (not uploaded to GPU).
+- A new storage type is added without a GPU dispatch path.
+
+During normal GPU decode, all weight tensors are uploaded to GPU storage types
+by `UploadWeights`, and all activation tensors are GPU-resident from upstream
+GPU operations. The fallthrough to CPU MatMul only occurs in the T402.5
+embedding cascade scenario.
+
+## Summary Table: Hot-Path D2H Sites Requiring Fixes
+
+| # | File:Line | Component | Size | Trigger | Fix |
+|---|-----------|-----------|------|---------|-----|
+| 1 | `tensor_cache.go:124-125` | KV Cache | ~1152 floats/layer | CPU-backed cache | Ensure GPU K/V from GQA (T602.2/T602.3) |
+| 2 | `ffn.go:321` | FFN split | ~6144 floats | CPU MatMul output | Fix upstream cascade (T402.5) |
+| 3 | `moe.go:60` | MoE gate | ~8-64 floats | Always (MoE models) | GPU top-K or accept (small) |
+| 4 | `moe.go:248` | MoE token | ~modelDim floats | Prefill only | GPU SubSlice |
+| 5 | `speculative.go:254,296` | Spec decode | ~256K floats | Always (spec decode) | GPU argmax |
+| 6 | `megakernel.go:135` | Megakernel | ~input size | Always (megakernel) | Use getDevicePtr |
+| 8 | `gpu_kernels.go:664` | Pow scalar | 4 bytes | Always (RMSNorm) | Pre-extract constant |
+| 10 | `gpu_engine.go:1920` | Gather idx | 4-8 bytes | Always (embedding) | Accept (tiny) or pin |
+
+## Conclusion
+
+For the primary target (Gemma 3 1B Q4_K_M, dense model, standard decode):
+
+- **Sites 1 and 2** are the most impactful and are resolved by fixing the
+  upstream embedding cascade (T402.5) and ensuring GQA produces GPU K/V
+  (T602.2, T602.3). No additional code changes needed in these files.
+- **Site 8** (Pow scalar, 4 bytes) is the only truly unavoidable D2H in the
+  standard decode path. It is negligible in latency but blocks CUDA graph
+  capture. Fix: extract the scalar at graph construction time.
+- **Site 10** (Gather indices, 4-8 bytes) is also unavoidable since token IDs
+  originate from CPU. Negligible latency. For CUDA graph: use pinned memory.
+- **Sites 3-6** only affect MoE models, speculative decoding, or the
+  experimental megakernel path.
+- All other `.Data()` calls are in CPU fallback paths, init-only code, or
+  layers not used during LLM transformer decode.
