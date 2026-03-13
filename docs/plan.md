@@ -192,7 +192,7 @@ except at graph boundaries (embedding lookup output, final logits).
     current FP16 path at temp=0.
   - Dependencies: T502.5.
 
-- [ ] T502.7 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T502.7 Run go vet on modified packages  Owner: TBD  Est: 15m  2026 03 13  NOTE: Clean.
   - Dependencies: T502.6.
 
 ### E503: FP16 Weight Pre-conversion
