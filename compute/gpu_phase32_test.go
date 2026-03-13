@@ -338,6 +338,9 @@ func TestGPUEngine_BroadcastParity(t *testing.T) {
 	// Column vector [3,1] (column broadcast)
 	col, _ := tensor.New[float32]([]int{3, 1}, []float32{100, 200, 300})
 
+	// Scalar [1] for scalar*tensor broadcast
+	scalar, _ := tensor.New[float32]([]int{1}, []float32{2.5})
+
 	tests := []struct {
 		name string
 		a, b *tensor.TensorNumeric[float32]
@@ -345,6 +348,7 @@ func TestGPUEngine_BroadcastParity(t *testing.T) {
 		cpuF func(context.Context, *tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)
 		tol  float64
 	}{
+		{"Mul_scalar", scalar, a, gpuEng.Mul, cpuEng.Mul, 1e-5},
 		{"Add_row", a, row, gpuEng.Add, cpuEng.Add, 1e-5},
 		{"Sub_row", a, row, gpuEng.Sub, cpuEng.Sub, 1e-5},
 		{"Mul_row", a, row, gpuEng.Mul, cpuEng.Mul, 1e-5},
