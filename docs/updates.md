@@ -2284,3 +2284,159 @@ in the FP8->FP16 dequant fallback path.
 ## go vet
 
 All warnings are pre-existing purego unsafe.Pointer patterns. No new issues.
+
+---
+
+# T601.1 Q4K GEMV Kernel Profiling on DGX Spark GB10
+
+Date: 2026-03-13
+Commit: 837b210 (main, after git pull)
+Kernel source: internal/cuda/kernels/gemv_q4k.cu
+
+## GPU Configuration
+
+| Property | Value |
+|----------|-------|
+| GPU | NVIDIA GB10 (sm_121, Blackwell) |
+| SMs | 48 |
+| Max threads/SM | 1536 |
+| Max shared mem/block | 49,152 bytes |
+| Max registers/block | 65,536 |
+| L2 cache | 24.0 MB |
+| LPDDR5x bandwidth | 273 GB/s (theoretical) |
+
+## Kernel Configuration (Baseline)
+
+| Property | Value |
+|----------|-------|
+| Block size | 128 threads (4 warps, Q4K_WARPS_PER_BLOCK=4) |
+| Registers/thread | 43 (0 spills, 0 stack) |
+| Shared memory | K * sizeof(float) bytes (input vector x) |
+| Load pattern | Scalar __ldg per byte (32 loads per group of 64 values) |
+
+## Gemma 3 1B Layer Dimensions (Q4_K_M)
+
+| MatMul | M | K | Weight (KB) | Shared Mem (bytes) | Grid | Blocks/SM | Occupancy |
+|--------|---|---|-------------|-------------------|------|-----------|-----------|
+| qkv_proj | 3456 | 1152 | 1944 | 4,608 | 864 | 10 (reg-limited) | 83% |
+| o_proj | 1152 | 1152 | 648 | 4,608 | 288 | 10 (reg-limited) | 83% |
+| gate_proj | 6144 | 1152 | 3456 | 4,608 | 1536 | 10 (reg-limited) | 83% |
+| up_proj | 6144 | 1152 | 3456 | 4,608 | 1536 | 10 (reg-limited) | 83% |
+| down_proj | 1152 | 6144 | 3888 | 24,576 | 288 | 2 (smem-limited) | **33%** |
+
+Note: Grid values shown for 4 warps/block. With Q4K_WARPS_PER_BLOCK=4, grid = ceil(M/4).
+
+## CUDA Event Timing (Micro-benchmark, 50K-500K iterations)
+
+| MatMul | Kernel Time (us) | Data (KB) | Eff BW (GB/s) | Notes |
+|--------|------------------|-----------|---------------|-------|
+| qkv_proj (3456x1152) | <0.1 | 1,962 | >273 (L2 cached) | Sub-event-resolution |
+| o_proj (1152x1152) | <0.1 | 657 | >273 (L2 cached) | Sub-event-resolution |
+| gate_proj (6144x1152) | <0.1 | 3,484 | >273 (L2 cached) | Sub-event-resolution |
+| up_proj (6144x1152) | <0.1 | 3,484 | >273 (L2 cached) | Sub-event-resolution |
+| **down_proj (1152x6144)** | **51.3** | **3,917** | **78 (29%)** | **Dominates 98%+ of GEMV time** |
+
+The K=1152 kernels read ~0.6-3.5 MB of weight data per call, which fits in the 24 MB L2 cache
+after warmup. The kernel time is below CUDA event resolution (~0.5 us). Host-side sync timing
+shows ~0.2 us including launch overhead, confirming these are essentially free.
+
+The down_proj kernel (K=6144) reads ~3.9 MB per call, exceeds L2 capacity when multiplied
+across layers, and is the clear bottleneck.
+
+## Nsight Compute (ncu) Detailed Profile: down_proj (1152x6144)
+
+Profiled with: `sudo ncu --section SpeedOfLight --section MemoryWorkloadAnalysis --section Occupancy`
+
+### Speed of Light
+
+| Metric | Value |
+|--------|-------|
+| SM Frequency | 2.15 GHz |
+| Elapsed Cycles | 245,711 |
+| Duration | 114.24 us (ncu overhead ~2x) |
+| **Compute (SM) Throughput** | **6.04%** |
+| **Memory Throughput** | **39.11%** |
+| L1/TEX Cache Throughput | 36.49% |
+| L2 Cache Throughput | 39.11% |
+
+ncu diagnosis: "Low compute throughput and memory bandwidth utilization relative to peak.
+Achieved compute throughput and/or memory bandwidth below 60.0% of peak typically indicate
+latency issues."
+
+### Memory Workload
+
+| Metric | Value |
+|--------|-------|
+| Mem Busy | 39.11% |
+| **Max Bandwidth** | **28.21%** |
+| L1/TEX Hit Rate | 65.76% |
+| **L2 Hit Rate** | **88.16%** |
+| Mem Pipes Busy | 6.04% |
+
+### Occupancy
+
+| Metric | Value |
+|--------|-------|
+| Block Limit Registers | 10 |
+| Block Limit Shared Mem | **4** |
+| Block Limit Warps | 12 |
+| **Theoretical Occupancy** | **33.33%** |
+| Achieved Occupancy | 28.37% |
+| Achieved Active Warps/SM | 13.62 |
+
+ncu diagnosis: "Theoretical occupancy (33.3%) is limited by shared memory."
+Estimated local speedup from higher occupancy: 66.67%.
+
+## Analysis
+
+### Key Findings
+
+1. **down_proj dominates GEMV time.** The K=6144 case accounts for 98%+ of per-layer GEMV
+   time (~51.3 us/call vs <0.1 us for K=1152 cases). Per token (18 layers):
+   ~924 us total GEMV, ~923 us from down_proj alone.
+
+2. **Shared memory limits occupancy.** The down_proj kernel uses 24,576 bytes of shared
+   memory (K=6144 * 4 bytes). With 49,152 bytes max per block, only 2 blocks/SM can run
+   concurrently (33% occupancy). All K=1152 kernels use only 4,608 bytes and achieve
+   83% occupancy (10 blocks/SM, register-limited).
+
+3. **Memory bandwidth severely underutilized.** The down_proj kernel achieves only 28% of
+   peak memory bandwidth (78 GB/s of 273 GB/s). ncu confirms 39% memory throughput with
+   only 6% compute throughput -- the kernel is latency-bound, not compute-bound.
+
+4. **High L2 hit rate masks DRAM traffic.** 88% L2 hit rate means most data comes from L2,
+   but the kernel still achieves poor bandwidth due to low occupancy (not enough warps to
+   hide memory latency).
+
+5. **Scalar byte loads are inefficient.** The inner loop does 32 scalar `__ldg` byte loads
+   per group. Vectorized uint4 loads (16 bytes per load) would reduce instruction count
+   by 16x for the load portion, improving instruction throughput and enabling better
+   memory coalescing.
+
+### Optimization Priorities
+
+1. **Reduce shared memory for down_proj.** Instead of loading the entire x vector (K=6144,
+   24 KB) into shared memory, tile the computation: load chunks of x into shared memory
+   and iterate. This would allow more blocks per SM, increasing occupancy.
+   Alternatively, for K=6144, consider splitting across multiple blocks per row.
+
+2. **Vectorize byte loads.** Replace 32 scalar __ldg per group with 2 uint4 loads
+   (16 bytes each). This is the T601.3 task and targets instruction throughput.
+
+3. **Increase block size (T601.2, already done).** The worktree already has Q4K_WARPS_PER_BLOCK=8
+   (256 threads). For K=1152 this improves register-limited occupancy. For K=6144, shared
+   memory remains the bottleneck regardless of block size.
+
+### Per-Token Budget
+
+| Component | Time (us) | % of Token |
+|-----------|-----------|------------|
+| GEMV (down_proj x18) | 923 | ~15% |
+| GEMV (other x72) | <10 | <1% |
+| Other kernels (RMSNorm, Add, RoPE, Softmax, etc.) | ~100-200 | ~2-3% |
+| Kernel launch overhead (~90 launches x 5-10 us) | 450-900 | ~7-15% |
+| Full token at 157 tok/s | 6,369 | 100% |
+
+The GEMV down_proj kernel accounts for ~15% of per-token time. Launch overhead (without
+CUDA graphs) may account for 7-15%. The remaining ~70% is likely other kernel execution
+and Go runtime overhead.
