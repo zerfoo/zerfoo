@@ -3745,3 +3745,80 @@ bounds checks in the inference path is < 0.1% of total token time. The 3% gap
 to Ollama comes from kernel efficiency and launch overhead, not Go bounds checks.
 Focus engineering effort on PGO (E701), CUDA graph capture (E603), and Q4K GEMV
 kernel optimization (E601) instead.
+# T702.1 Measure GC Impact During Inference
+
+Date: 2026-03-13
+Hardware: DGX Spark GB10 (sm_121, Blackwell, 20P)
+Commit: dcc70b8 (main)
+
+## Method
+
+Ran bench_tps with `GODEBUG=gctrace=1` to trace all GC pauses:
+
+```
+GODEBUG=gctrace=1 go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 256 --prompt 'The quick brown fox' --device cuda --dtype fp32
+```
+
+## GC Trace Summary
+
+### Phase 1: `go run` compilation (0.003s - 0.063s)
+
+23 GC cycles during Go toolchain compilation. Heap: 3-15 MB.
+Not relevant to inference performance.
+
+### Phase 2: Model loading (0.175s - 8.545s)
+
+15 GC cycles during model loading (10.5s total load time).
+
+| Metric | Value |
+|--------|-------|
+| GC cycles | 15 |
+| Total STW pause (clock) | ~1.5 ms |
+| Average pause | ~0.1 ms |
+| Heap range | 9 MB -> 5,279 MB |
+| Final live heap | 4,173 MB |
+| GC overhead | 0% (as reported by gctrace) |
+
+Heap grows from 9 MB to 5.3 GB during model loading as weight tensors are
+allocated. GC pauses are short (<0.2 ms STW each) and do not impact load time.
+
+### Phase 3: Token generation (after "Generating" message)
+
+| Metric | Value |
+|--------|-------|
+| GC cycles | **0** |
+| Total STW pause | **0 ms** |
+| Tokens generated | 256 |
+| Generation time | 1.349s |
+| Throughput | 189.74 tok/s |
+
+**Zero GC pauses occurred during the entire 256-token generation phase.**
+
+## Analysis
+
+The Go runtime did not trigger a single GC cycle during inference. This means:
+
+1. **The decode loop allocates negligibly.** The GPU arena (hits=119,166,
+   misses=0) handles all GPU memory. CPU-side allocations during decode are
+   below the GC trigger threshold.
+
+2. **Heap is stable during decode.** After model loading, the live heap is
+   ~4.2 GB. The GC goal is ~5.3 GB. Since decode does not allocate enough
+   to reach the goal, no GC is triggered.
+
+3. **GOGC=off will have zero impact on throughput.** There are no GC pauses
+   to eliminate. Setting `debug.SetGCPercent(-1)` during decode would be a
+   no-op in terms of performance.
+
+## Assessment
+
+**GC is NOT a contributor to the 3% gap to Ollama.** The decode path is
+already effectively GC-free due to the GPU arena allocator handling all
+significant allocations. The risk R702 from the plan ("GC is already
+negligible during decode") is confirmed.
+
+**Recommendation:** Skip T702.2 (GOGC=off implementation) and T702.3
+(GC benchmark). The expected 0-3% improvement from GC elimination is 0%.
+Engineering effort should focus on PGO (E701), BCE (E703), and thread
+pinning (E705) instead.
