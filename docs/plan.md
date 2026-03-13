@@ -113,13 +113,13 @@ except at graph boundaries (embedding lookup output, final logits).
     GPUPtr returns valid device pointer. SubSlice creates zero-copy views.
   - Dependencies: none.
 
-- [ ] S502.1.1 Unit tests for Float16Storage  Owner: TBD  Est: 30m
+- [x] S502.1.1 Unit tests for Float16Storage  Owner: TBD  Est: 30m  2026 03 13  NOTE: Included in T502.1 commit.
   - Table-driven tests: create, SubSlice, GPUPtr round-trip, Len accuracy.
   - File: tensor/fp16_storage_test.go.
   - Acceptance: go test -race passes. 100% coverage of Float16Storage methods.
   - Dependencies: T502.1.
 
-- [ ] T502.2 Modify element-wise ops to accept FP16 storage directly  Owner: TBD  Est: 2h
+- [x] T502.2 Modify element-wise ops to accept FP16 storage directly  Owner: TBD  Est: 2h  2026 03 13
   - In compute/gpu_kernels.go: when input tensor has Float16Storage, extract the
     FP16 device pointer directly and call the FP16 kernel without F32->FP16
     conversion. Write output to a new Float16Storage tensor.
@@ -130,14 +130,14 @@ except at graph boundaries (embedding lookup output, final logits).
     Output is Float16Storage. Element-wise results match F32 reference (rel error < 1e-3).
   - Dependencies: T502.1.
 
-- [ ] S502.2.1 Tests for FP16 element-wise without conversion  Owner: TBD  Est: 30m
+- [x] S502.2.1 Tests for FP16 element-wise without conversion  Owner: TBD  Est: 30m  2026 03 13  NOTE: Included in T502.2 commit.
   - Verify Add, Mul with Float16Storage inputs produce Float16Storage output.
   - Verify no F32ToFP16 kernel calls when both inputs are already FP16.
   - File: compute/gpu_fp16_test.go.
   - Acceptance: go test -race passes.
   - Dependencies: T502.2.
 
-- [ ] T502.3 Modify MatMul to accept FP16 storage directly  Owner: TBD  Est: 1.5h
+- [x] T502.3 Modify MatMul to accept FP16 storage directly  Owner: TBD  Est: 1.5h  2026 03 13
   - In compute/gpu_engine.go MatMul dispatch: when activations have Float16Storage,
     pass the FP16 device pointer directly to MixedFP16Gemm (or cublasGemmEx with
     CUDA_R_16F input type). No F32->FP16 conversion needed.
@@ -149,14 +149,14 @@ except at graph boundaries (embedding lookup output, final logits).
     Output is Float16Storage. Results match F32 reference (rel error < 1e-3).
   - Dependencies: T502.1.
 
-- [ ] S502.3.1 Tests for FP16 MatMul without conversion  Owner: TBD  Est: 30m
+- [x] S502.3.1 Tests for FP16 MatMul without conversion  Owner: TBD  Est: 30m  2026 03 13
   - Verify MatMul with Float16Storage inputs and weights produces correct output.
   - Test batch dimensions (the GQA bug fix from Phase 2).
   - File: compute/gpu_fp16_test.go.
   - Acceptance: go test -race passes.
   - Dependencies: T502.3.
 
-- [ ] T502.4 Modify RMSNorm and Softmax to accept FP16 storage  Owner: TBD  Est: 1.5h
+- [x] T502.4 Modify RMSNorm and Softmax to accept FP16 storage  Owner: TBD  Est: 1.5h  2026 03 13
   - In compute/gpu_engine.go: GPUScaledSoftmax and GPUFusedAddRMSNorm should
     detect Float16Storage on inputs and call FP16 kernels directly without
     F32->FP16 conversion.
@@ -168,7 +168,7 @@ except at graph boundaries (embedding lookup output, final logits).
     Output is Float16Storage. Parity with F32 reference (rel error < 1e-3).
   - Dependencies: T502.1.
 
-- [ ] S502.4.1 Tests for FP16 RMSNorm and Softmax  Owner: TBD  Est: 30m
+- [x] S502.4.1 Tests for FP16 RMSNorm and Softmax  Owner: TBD  Est: 30m  2026 03 13  NOTE: Included in T502.4 commit.
   - Verify FusedAddRMSNorm and ScaledSoftmax with Float16Storage inputs.
   - File: compute/gpu_fp16_test.go.
   - Acceptance: go test -race passes.
@@ -200,7 +200,7 @@ except at graph boundaries (embedding lookup output, final logits).
 Weights are currently stored as F32 on GPU and converted to FP16 on every MatMul.
 Converting weights to FP16 once at upload time eliminates per-MatMul conversion.
 
-- [ ] T503.1 Convert weights to FP16 during GPU upload  Owner: TBD  Est: 1.5h
+- [x] T503.1 Convert weights to FP16 during GPU upload  Owner: TBD  Est: 1.5h  2026 03 13
   - In compute/gpu_engine.go UploadWeights: when dtype=fp16, after uploading
     F32 weights to GPU, run F32ToFP16 kernel once and store the result as
     Float16Storage on the weight tensor. Free the F32 GPU copy.
@@ -234,7 +234,7 @@ The fix: pre-allocate persistent FP16 buffers for FP8 MatMul and reuse them.
   - Acceptance: Log shows allocation sizes and callers. Top allocations documented.
   - Dependencies: none.
 
-- [ ] T504.2 Pre-allocate persistent FP16 buffers for FP8 MatMul  Owner: TBD  Est: 2h
+- [x] T504.2 Pre-allocate persistent FP16 buffers for FP8 MatMul  Owner: TBD  Est: 2h  2026 03 13
   - In compute/gpu_fp8.go: instead of allocating FP16 conversion buffers per
     MatMul call via pool.Alloc, pre-allocate a set of reusable FP16 buffers
     during engine initialization (or on first use, then cache).
