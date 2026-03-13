@@ -1,5 +1,3 @@
-//go:build !cuda
-
 package cublas
 
 import (
@@ -10,6 +8,13 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 )
+
+// Available returns true if the cuBLAS library can be loaded at runtime.
+// The result is cached after the first call.
+func Available() bool {
+	_, err := getCublasLib()
+	return err == nil
+}
 
 // CudaDataType identifies the element data type for cublasGemmEx.
 type CudaDataType int
