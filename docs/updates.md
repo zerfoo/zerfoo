@@ -1819,3 +1819,35 @@ confuses element counts with byte counts.
 - FP8 parity: **Cannot assess** — blocked by GQA bug
 - FP8 throughput: **Cannot measure** — blocked by GQA bug
 - Acceptance criteria: **Not met** — requires fixing the GQA FP16 path first
+
+---
+
+# Wave 16: GQA FP16 Batch MatMul Fix
+
+Date: 2026-03-13
+
+## Summary
+
+Fixed the GQA storage mismatch bug that blocked FP16 and FP8 inference paths.
+
+## Root Cause
+
+`fp16MatMul` in `compute/gpu_fp16.go` computed output element count as `cElems = m * n`,
+ignoring batch dimensions from leading tensor axes. For batched 3D tensors (where numQueryHeads
+acts as the batch dimension), the output buffer was undersized, causing storage length mismatches
+downstream in GroupedQueryAttention.
+
+## Fix
+
+- Compute batch size from leading dimensions of input tensors
+- Allocate full batched output buffer (batch * m * n elements)
+- Loop `MixedFP16Gemm` per batch slice instead of single call
+- Added test `TestFP16MatMul_BatchDimensions` in `compute/gpu_fp16_test.go`
+
+Commit: f261aa1, merged into main at 70fb2c4.
+
+## Next Steps
+
+- Push main to DGX, rebuild libkernels.so
+- Re-run `bench_tps --dtype=fp16` and `bench_tps --dtype=fp8` benchmarks
+- FP16/FP8 paths should now run without crashing, enabling real throughput measurements

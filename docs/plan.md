@@ -354,7 +354,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
     measured and documented.
   - Dependencies: T406.4, T406.5.
 
-- [ ] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h
+- [ ] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h  NOTE: GQA batch MatMul bug fixed (f261aa1), re-benchmark needed on DGX
   - Compare output quality: FP32 vs BF16 vs FP16 vs FP8 at temp=0 for 50 tokens.
   - Measure tok/s for each precision. Document results.
   - FP8 output may diverge more from FP32 due to quantization noise.
