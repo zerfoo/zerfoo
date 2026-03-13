@@ -1987,11 +1987,65 @@ All 35 Phase 2 tasks across 6 epics completed:
    436-453 and 889-909) trigger D2H copies when GPU storage type assertion fails.
    Both have GPU fast paths via SubSlice, but the assertion sometimes fails.
 
+### Phase 3 Completion Summary (2026-03-13)
+
+Phase 3 (26 tasks, 6 epics: E501-E506) is complete. Key accomplishments:
+
+1. **Native FP16 activation storage (E502):** Float16Storage type, native FP16 paths
+   for element-wise ops, MatMul, RMSNorm, Softmax. Gather output FP16 conversion
+   as single entry point. LMHead FP16->F32 conversion for sampling.
+
+2. **FP16 weight pre-conversion (E503):** Attempted but reverted. Converting F32
+   weights (norm gains, embedding table) to Float16Storage in UploadWeights caused
+   garbage output due to corruption in FP16->F32 round-trip conversions consumed
+   by downstream operations. Fix: F32 weights stay as GPUStorage[float32]; per-op
+   FP16 compute paths handle F32->FP16 on the fly. Commit efdd87b.
+
+3. **FP8 arena pre-allocation (E504):** fp8Scratchpad with grow-only reusable
+   buffers for A/B matrices. Reduces some arena pressure but 1841 arena misses
+   persist because output buffers and scale pointers are not covered.
+
+4. **FP8 scale factor fix (E505):** cublasLt FP8 requires sm_89+. GB10 (sm_121)
+   supports it but the check was wrong. Added FP16 dequant fallback path:
+   DequantFP8E4M3ToFP16 + MixedFP16Gemm. Works on any GPU with FP16.
+
+5. **FP16 is slower than F32 for Q4K models.** Q4K GEMV always produces F32
+   output. FP16 activations add per-op F32<->FP16 conversion overhead with no
+   compute benefit. For Q4K models, F32 is the optimal activation type.
+
+6. **FP8 remains broken.** 1.48 tok/s with degenerate output. Arena thrashing
+   (1841 misses, 5GB GPU memory) not fully resolved by scratchpad.
+
+### Key Architecture Insights from Phase 3
+
+1. **FP16 activations add overhead for Q4K models.** Since Q4K GEMV produces F32
+   output and all weight matrices are Q4K-quantized, FP16 activations mean every
+   downstream op round-trips F32<->FP16. FP16 only helps with unquantized dense
+   weight matrices.
+
+2. **F32 weight storage is correct for norm weights.** Norm gains are tiny
+   (model_dim elements). Converting them to FP16 saves negligible memory but
+   introduced a garbage output bug that was difficult to diagnose. Per-op
+   F32->FP16 conversion in the compute path is safe and simple.
+
+3. **Managed memory arena regression is fixed.** Arena at internal/cuda/arena.go:64
+   now gates managed memory behind ZERFOO_ENABLE_MANAGED_MEM env var. Weight
+   uploads also gated (gpu_engine.go:148). Default is cudaMalloc (no page faults).
+
+4. **Q4K GEMV kernel characteristics:** 4 warps x 32 = 128 threads/block. Input
+   vector loaded to shared memory. Fused dequant in registers. Warp shuffle
+   reduction. Uses __ldg for quantized byte loads. Block size 128 may be
+   suboptimal for high occupancy -- llama.cpp uses 256.
+
+5. **GQA D2H copies block CUDA graph capture.** Two fallback paths in
+   grouped_query_attention.go trigger .Data() D2H copies when tensor storage
+   type assertions fail. These must be eliminated before CUDA graph capture.
+
 ### Updated Performance (2026-03-13, gemma3 1B Q4_K_M on DGX Spark GB10)
 
 | Config | tok/s | Notes |
 |--------|-------|-------|
-| Zerfoo F32 (gemma3) | 149.52 | Baseline with new model |
-| Zerfoo FP16 (gemma3) | 124.50 | 17% slower -- conversion overhead |
-| Zerfoo FP8 (gemma3) | 1.45 | Arena thrashing, degenerate output |
-| Ollama (gemma3) | 197.21 | Target |
+| Zerfoo F32 (gemma3) | 157.25 | Best path for Q4K models |
+| Zerfoo FP16 (gemma3) | 127.23 | Correct output, slower due to per-op overhead |
+| Zerfoo FP8 (gemma3) | 1.48 | Arena thrashing, degenerate output |
+| Ollama (gemma3) | 197.21 | Target (25% gap from F32) |
