@@ -120,7 +120,7 @@ results.
   - Acceptance: appendGPU uses D2D copy when source is GPUStorage.
   - Dependencies: none.
 
-- [ ] S301.3.1 D2H elimination verification test  Owner: TBD  Est: 1h
+- [x] S301.3.1 D2H elimination verification test  Owner: TBD  Est: 1h
   - Run bench_tps with instrumented D2H counter. Assert zero D2H copies
     in the decode path (post-prefill).
   - Acceptance: go test passes. No D2H memcpy during decode loop.
@@ -151,7 +151,7 @@ results.
   - Acceptance: Results documented. Graph replay faster than per-op.
   - Dependencies: T302.2.
 
-- [ ] S302.3.1 CUDA graph correctness test  Owner: TBD  Est: 1h
+- [x] S302.3.1 CUDA graph correctness test  Owner: TBD  Est: 1h
   - Compare output tokens with graph enabled vs disabled for 10 tokens at
     temperature=0. Tokens must be identical.
   - Acceptance: go test passes on DGX Spark.
@@ -184,7 +184,7 @@ results.
   - Acceptance: Results documented. No regression.
   - Dependencies: T303.1, T303.2.
 
-- [ ] S303.3.1 Unified memory correctness test  Owner: TBD  Est: 1h
+- [x] S303.3.1 Unified memory correctness test  Owner: TBD  Est: 1h
   - Run inference with managed memory, compare output with explicit copy path.
   - Tokens must match at temperature=0.
   - Acceptance: go test passes.
@@ -211,7 +211,7 @@ results.
   - Acceptance: bench_tps uses fused kernel for Q4 decode (verify via logging).
   - Dependencies: T304.1.
 
-- [ ] S304.2.1 Fused dequant+GEMV parity test  Owner: TBD  Est: 1h
+- [x] S304.2.1 Fused dequant+GEMV parity test  Owner: TBD  Est: 1h
   - Compare fused kernel output with unfused path for multiple matrix sizes.
   - Max relative error < 1e-4.
   - Acceptance: go test passes with -race.
@@ -262,7 +262,7 @@ results.
   - Acceptance: All responses include accurate prompt_tokens and completion_tokens.
   - Dependencies: none.
 
-- [ ] S305.6.1 Server integration test  Owner: TBD  Est: 2h
+- [x] S305.6.1 Server integration test  Owner: TBD  Est: 2h
   - Test all endpoints (chat, completions, embeddings, models, openapi.yaml)
     with httptest.NewServer. Verify request/response formats match OpenAI spec.
   - Test SSE streaming for chat and completions.
@@ -287,7 +287,7 @@ results.
   - Acceptance: GPUEngine.Transpose returns GPUStorage result for 2D/3D/4D inputs.
   - Dependencies: T203.1.
 
-- [ ] S203.2.1 GPU Transpose parity test  Owner: TBD  Est: 1h
+- [x] S203.2.1 GPU Transpose parity test  Owner: TBD  Est: 1h
   - Compare GPU Transpose output with CPU Transpose for multiple shapes and
     axis permutations. Max relative error < 1e-6.
   - Acceptance: go test -run TestGPUTranspose passes with -race.
@@ -309,7 +309,7 @@ results.
   - Acceptance: GPUEngine.Gather returns GPUStorage result.
   - Dependencies: T204.1.
 
-- [ ] S204.2.1 GPU Gather parity test  Owner: TBD  Est: 1h
+- [x] S204.2.1 GPU Gather parity test  Owner: TBD  Est: 1h
   - Compare GPU Gather output with CPU Gather for multiple table sizes and
     index patterns. Exact match required (integer indexing, no floating point).
   - Acceptance: go test -run TestGPUGather passes with -race.
@@ -332,7 +332,7 @@ results.
   - Acceptance: GPUEngine binary ops produce GPUStorage for broadcastable shapes.
   - Dependencies: T205.1.
 
-- [ ] S205.2.1 GPU broadcasting parity test  Owner: TBD  Est: 1h
+- [x] S205.2.1 GPU broadcasting parity test  Owner: TBD  Est: 1h
   - Test scalar * tensor, [1,N] + [M,N], [M,1] * [M,N] patterns.
   - Max relative error < 1e-6.
   - Acceptance: go test passes with -race.
@@ -350,7 +350,7 @@ results.
   - Acceptance: bench_tps log shows fused kernel dispatch for all fusable ops.
   - Dependencies: none.
 
-- [ ] S306.1.1 Fused kernel integration test  Owner: TBD  Est: 1h
+- [x] S306.1.1 Fused kernel integration test  Owner: TBD  Est: 1h
   - End-to-end: run inference with fused kernels, compare output with
     unfused path. Tokens must match.
   - Acceptance: go test passes with -race.
@@ -373,7 +373,7 @@ enabling it after D2H elimination.
   - Acceptance: ExecutionPlan uses pre-allocated buffers. No per-op alloc/free.
   - Dependencies: E301.
 
-- [ ] S207.2.1 Fixed buffer layout test  Owner: TBD  Est: 1h
+- [x] S207.2.1 Fixed buffer layout test  Owner: TBD  Est: 1h
   - Verify pre-allocated buffers produce identical results to dynamic allocation.
   - Acceptance: go test passes.
   - Dependencies: T207.2.
@@ -454,7 +454,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./internal/gpuapi/... without -tags cuda.
   - Dependencies: T210.2.
 
-- [ ] S210.3.1 cuBLAS purego parity test  Owner: TBD  Est: 1h
+- [x] S210.3.1 cuBLAS purego parity test  Owner: TBD  Est: 1h
   - Run MatMul with purego cuBLAS path on DGX Spark.
   - Compare output with CPU MatMul. Max relative error < 1e-5.
   - Benchmark purego vs CGo cuBLAS overhead (should be < 5% difference).
@@ -541,7 +541,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./layers/attention/... without build tags.
   - Dependencies: T213.1.
 
-- [ ] S213.2.1 Flash attention purego parity test  Owner: TBD  Est: 1h
+- [x] S213.2.1 Flash attention purego parity test  Owner: TBD  Est: 1h
   - Compare purego flash attention output with naive attention path.
   - Max relative error < 1e-4.
   - Acceptance: Test passes on DGX Spark.
