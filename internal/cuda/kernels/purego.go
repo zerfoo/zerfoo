@@ -34,7 +34,8 @@ type KernelLib struct {
 	launchRMSNorm uintptr
 
 	// gather
-	launchGather uintptr
+	launchGather    uintptr
+	launchGatherI32 uintptr
 
 	// transpose
 	launchTranspose2D, launchTransposeND uintptr
@@ -68,6 +69,9 @@ type KernelLib struct {
 
 	// scaled_softmax
 	launchScaledSoftmaxF32 uintptr
+
+	// gemv_q4k
+	launchGemvQ4KF32 uintptr
 }
 
 var (
@@ -125,6 +129,7 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_rmsnorm", &k.launchRMSNorm},
 			// gather
 			{"launch_gather", &k.launchGather},
+			{"launch_gather_i32", &k.launchGatherI32},
 			// transpose
 			{"launch_transpose_2d", &k.launchTranspose2D},
 			{"launch_transpose_nd", &k.launchTransposeND},
@@ -148,6 +153,8 @@ func openKernelLib() (*KernelLib, error) {
 		{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
 		// scaled_softmax
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
+		// gemv_q4k
+		{"gemv_q4k_f32", &k.launchGemvQ4KF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)

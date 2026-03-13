@@ -1,15 +1,18 @@
 // gather.cu -- CUDA kernel for embedding table gather (lookup).
 // Each thread block handles one index, copying D elements from the table.
-// Indices are int64 (Go int on 64-bit platforms) to avoid CPU-side conversion.
+// Supports both int32 and int64 indices.
 
 #include <cuda_runtime.h>
 
-// kernel_gather: output[i, :] = table[indices[i], :]
-// table: [V, D], indices: [N] int64, output: [N, D]
-__global__ void kernel_gather(const float* __restrict__ table,
-                               const long long* __restrict__ indices,
-                               float* __restrict__ output,
-                               int N, int D, int V) {
+// ---------- Templated gather kernel ----------
+
+// kernel_gather_t: output[i, :] = table[indices[i], :]
+// table: [V, D], indices: [N], output: [N, D]
+template <typename IndexT>
+__global__ void kernel_gather_t(const float* __restrict__ table,
+                                const IndexT* __restrict__ indices,
+                                float* __restrict__ output,
+                                int N, int D, int V) {
     int row = blockIdx.x;
     if (row >= N) return;
 
@@ -26,21 +29,36 @@ __global__ void kernel_gather(const float* __restrict__ table,
     }
 }
 
-// ---------- Launcher function (extern "C" for CGO) ----------
+// ---------- Helper: compute block size ----------
 
-extern "C" {
-
-cudaError_t launch_gather(const float* table, const long long* indices,
-                           float* output, int N, int D, int V,
-                           cudaStream_t stream) {
+static inline int gather_block_size(int D) {
     int block = 256;
     if (D < block) block = D;
-    // Round up to next power of 2 for efficiency.
     int b = 1;
     while (b < block) b <<= 1;
     if (b > 256) b = 256;
+    return b;
+}
 
-    kernel_gather<<<N, b, 0, stream>>>(table, indices, output, N, D, V);
+// ---------- Launcher functions (extern "C" for purego / CGo) ----------
+
+extern "C" {
+
+// launch_gather: int64 (long long) indices.
+cudaError_t launch_gather(const float* table, const long long* indices,
+                           float* output, int N, int D, int V,
+                           cudaStream_t stream) {
+    int b = gather_block_size(D);
+    kernel_gather_t<long long><<<N, b, 0, stream>>>(table, indices, output, N, D, V);
+    return cudaGetLastError();
+}
+
+// launch_gather_i32: int32 indices.
+cudaError_t launch_gather_i32(const float* table, const int* indices,
+                               float* output, int N, int D, int V,
+                               cudaStream_t stream) {
+    int b = gather_block_size(D);
+    kernel_gather_t<int><<<N, b, 0, stream>>>(table, indices, output, N, D, V);
     return cudaGetLastError();
 }
 
