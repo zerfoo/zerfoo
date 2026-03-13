@@ -608,6 +608,128 @@ func TestGPUEngine_FP8DequantFallbackAWeight(t *testing.T) {
 	}
 }
 
+func TestFP8Scratchpad_EnsureCGrows(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+	deviceID := 0
+
+	tests := []struct {
+		name     string
+		size     int
+		wantGrow bool
+	}{
+		{"initial_1024", 1024, true},
+		{"same_size_reuse", 1024, false},
+		{"smaller_reuse", 512, false},
+		{"grow_2048", 2048, true},
+		{"grow_4096", 4096, true},
+		{"equal_after_grow", 4096, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allocsBefore := pool.allocCount
+			ptr, err := s.ensureC(pool, deviceID, tt.size)
+			if err != nil {
+				t.Fatalf("ensureC(%d): %v", tt.size, err)
+			}
+			if ptr == nil {
+				t.Fatal("ensureC returned nil pointer")
+			}
+			grew := pool.allocCount > allocsBefore
+			if grew != tt.wantGrow {
+				t.Errorf("grew=%v, want %v (allocs before=%d after=%d)",
+					grew, tt.wantGrow, allocsBefore, pool.allocCount)
+			}
+		})
+	}
+
+	if s.f32BufCSize != 4096 {
+		t.Errorf("f32BufCSize=%d, want 4096", s.f32BufCSize)
+	}
+}
+
+func TestFP8Scratchpad_EnsureCReusesPointer(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	ptr1, err := s.ensureC(pool, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptr2, err := s.ensureC(pool, 0, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr1 != ptr2 {
+		t.Error("ensureC returned different pointer for smaller request; expected reuse")
+	}
+	ptr3, err := s.ensureC(pool, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr1 != ptr3 {
+		t.Error("ensureC returned different pointer for equal request; expected reuse")
+	}
+}
+
+func TestFP8Scratchpad_FreeCleansOutputBuffer(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	if _, err := s.ensureC(pool, 0, 256); err != nil {
+		t.Fatal(err)
+	}
+	if len(pool.live) != 1 {
+		t.Fatalf("expected 1 live allocation, got %d", len(pool.live))
+	}
+
+	s.free(pool, 0)
+
+	if s.f32BufC != nil {
+		t.Error("f32BufC not nil after free")
+	}
+	if s.f32BufCSize != 0 {
+		t.Error("f32BufCSize not 0 after free")
+	}
+	if len(pool.live) != 0 {
+		t.Errorf("expected 0 live allocations after free, got %d", len(pool.live))
+	}
+}
+
+func TestFP8Scratchpad_OutputBufferReusedAcrossCalls(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	// Simulate two MatMul calls with the same output size.
+	ptr1, err := s.ensureC(pool, 0, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptr2, err := s.ensureC(pool, 0, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr1 != ptr2 {
+		t.Error("output buffer not reused across calls with same size")
+	}
+	if pool.allocCount != 1 {
+		t.Errorf("allocCount=%d, want 1 (second call should reuse)", pool.allocCount)
+	}
+
+	// Different size but smaller should also reuse.
+	ptr3, err := s.ensureC(pool, 0, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr3 != ptr1 {
+		t.Error("output buffer not reused for smaller request")
+	}
+	if pool.allocCount != 1 {
+		t.Errorf("allocCount=%d, want 1 (smaller request should reuse)", pool.allocCount)
+	}
+}
+
 func TestFP8Scratchpad_GrowFreesOldBuffer(t *testing.T) {
 	pool := newFakeMemPool()
 	var s fp8Scratchpad

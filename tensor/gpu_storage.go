@@ -504,5 +504,23 @@ func (s *GPUStorage[T]) SubSlice(offsetElems, length int) *GPUStorage[T] {
 	}
 }
 
+// NewGPUStorageViewFromPtr creates a non-owning GPUStorage that wraps a raw
+// device pointer. Free() is a no-op — the caller retains ownership of the
+// memory. This is used for scratchpad buffers where the compute engine owns
+// the allocation and the tensor is a temporary view into it.
+func NewGPUStorageViewFromPtr[T Numeric](devPtr unsafe.Pointer, length int, deviceID int) *GPUStorage[T] {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	rt := getDefaultRuntime()
+	return &GPUStorage[T]{
+		devicePtr: devPtr,
+		length:    length,
+		byteSize:  length * elemSize,
+		deviceID:  deviceID,
+		runtime:   rt,
+		view:      true,
+	}
+}
+
 // Statically assert that GPUStorage satisfies the Storage interface.
 var _ Storage[float32] = (*GPUStorage[float32])(nil)

@@ -24,6 +24,11 @@ type fp8Scratchpad struct {
 	fp16BufB     unsafe.Pointer
 	fp16BufBSize int
 
+	// f32BufC is a reusable F32 buffer for GEMM output (C matrix).
+	// This avoids per-call arena allocations for the output buffer.
+	f32BufC     unsafe.Pointer
+	f32BufCSize int
+
 	// scaleOne is a persistent device float32 with value 1.0, used as the
 	// scale pointer for FP16 activations (which need no additional scaling).
 	scaleOne unsafe.Pointer
@@ -69,6 +74,26 @@ func (s *fp8Scratchpad) ensureB(pool gpuapi.MemPool, deviceID, byteSize int) (un
 	return ptr, nil
 }
 
+// ensureC returns f32BufC, growing it if needed. The returned pointer is owned
+// by the scratchpad and must NOT be freed by the caller.
+func (s *fp8Scratchpad) ensureC(pool gpuapi.MemPool, deviceID, byteSize int) (unsafe.Pointer, error) {
+	if s.f32BufC != nil && s.f32BufCSize >= byteSize {
+		return s.f32BufC, nil
+	}
+	if s.f32BufC != nil {
+		pool.Free(deviceID, s.f32BufC, s.f32BufCSize)
+		s.f32BufC = nil
+		s.f32BufCSize = 0
+	}
+	ptr, err := pool.Alloc(deviceID, byteSize)
+	if err != nil {
+		return nil, err
+	}
+	s.f32BufC = ptr
+	s.f32BufCSize = byteSize
+	return ptr, nil
+}
+
 // free releases all scratchpad device memory back to the pool.
 func (s *fp8Scratchpad) free(pool gpuapi.MemPool, deviceID int) {
 	if s.fp16BufA != nil {
@@ -80,6 +105,11 @@ func (s *fp8Scratchpad) free(pool gpuapi.MemPool, deviceID int) {
 		pool.Free(deviceID, s.fp16BufB, s.fp16BufBSize)
 		s.fp16BufB = nil
 		s.fp16BufBSize = 0
+	}
+	if s.f32BufC != nil {
+		pool.Free(deviceID, s.f32BufC, s.f32BufCSize)
+		s.f32BufC = nil
+		s.f32BufCSize = 0
 	}
 	if s.scaleOne != nil {
 		pool.Free(deviceID, s.scaleOne, f32Size)
@@ -305,21 +335,20 @@ func (e *GPUEngine[T]) fp8DequantMatMulA(
 		return nil, fmt.Errorf("matMulFP8: f32->fp16 B: %w", err)
 	}
 
-	// Allocate F32 output.
+	// Use scratchpad output buffer for GEMM result.
 	cElems := m * n
 	cSize := cElems * f32Size
-	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	devC, err := scratch.ensureC(e.pool, e.deviceID, cSize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8: alloc output: %w", err)
 	}
 
 	// MixedFP16Gemm: FP16 inputs, FP32 output.
 	if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, fp16A, fp16B, 0.0, devC); err != nil {
-		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8: MixedFP16Gemm: %w", err)
 	}
 
-	return makeGPUResult[T](e, []int{m, n}, devC, cElems, dst...)
+	return makeGPUResultView[T](e, []int{m, n}, devC, cElems, dst...)
 }
 
 // matMulFP8BWeight handles MatMul where B has FP8E4M3Storage (FP8 weights as B).
@@ -516,21 +545,20 @@ func (e *GPUEngine[T]) fp8DequantMatMulB(
 		return nil, fmt.Errorf("matMulFP8BWeight: dequant fp8->fp16 B: %w", err)
 	}
 
-	// Allocate F32 output.
+	// Use scratchpad output buffer for GEMM result.
 	cElems := m * n
 	cSize := cElems * f32Size
-	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	devC, err := scratch.ensureC(e.pool, e.deviceID, cSize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: alloc output: %w", err)
 	}
 
 	// MixedFP16Gemm: FP16 inputs, FP32 output.
 	if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, fp16A, fp16B, 0.0, devC); err != nil {
-		e.pool.Free(e.deviceID, devC, cSize)
 		return nil, fmt.Errorf("matMulFP8BWeight: MixedFP16Gemm: %w", err)
 	}
 
-	return makeGPUResult[T](e, outShape, devC, cElems, dst...)
+	return makeGPUResultView[T](e, outShape, devC, cElems, dst...)
 }
 
 // ltMatmulFP8 performs C = A * B using cublasLtMatmul with FP8/FP16 mixed inputs.
