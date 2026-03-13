@@ -112,6 +112,29 @@ func fp16MatMul[T tensor.Numeric](
 		return nil, fmt.Errorf("fp16MatMul: incompatible inner dimensions %d != %d", k, bK)
 	}
 
+	// Compute batch dimensions.
+	aBatch := aShape[:len(aShape)-2]
+	bBatch := bShape[:len(bShape)-2]
+
+	aBatchSize := 1
+	for _, d := range aBatch {
+		aBatchSize *= d
+	}
+
+	bBatchSize := 1
+	for _, d := range bBatch {
+		bBatchSize *= d
+	}
+
+	if bBatchSize != 1 && aBatchSize != bBatchSize {
+		return nil, fmt.Errorf("fp16MatMul: batch dimensions %v and %v are incompatible", aBatch, bBatch)
+	}
+
+	batchSize := aBatchSize
+	if bBatchSize > batchSize {
+		batchSize = bBatchSize
+	}
+
 	// Get F32 device pointers.
 	devA, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
@@ -125,19 +148,23 @@ func fp16MatMul[T tensor.Numeric](
 	}
 	defer cleanupB()
 
-	aElems := m * k
-	bElems := k * n
-	cElems := m * n
+	aMatElems := m * k
+	bMatElems := k * n
+	cMatElems := m * n
+
+	totalAElems := batchSize * aMatElems
+	totalBElems := batchSize * bMatElems
+	totalCElems := batchSize * cMatElems
 
 	// Allocate FP16 buffers for A and B.
-	fp16ASize := aElems * fp16Size
+	fp16ASize := totalAElems * fp16Size
 	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
 	if err != nil {
 		return nil, fmt.Errorf("fp16MatMul: alloc fp16A: %w", err)
 	}
 	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
 
-	fp16BSize := bElems * fp16Size
+	fp16BSize := totalBElems * fp16Size
 	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
 	if err != nil {
 		return nil, fmt.Errorf("fp16MatMul: alloc fp16B: %w", err)
@@ -145,31 +172,46 @@ func fp16MatMul[T tensor.Numeric](
 	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
 
 	// Convert F32 -> FP16.
-	if err := e.kernels.F32ToFP16(devA, fp16A, aElems, e.stream); err != nil {
+	if err := e.kernels.F32ToFP16(devA, fp16A, totalAElems, e.stream); err != nil {
 		return nil, fmt.Errorf("fp16MatMul: f32->fp16 A: %w", err)
 	}
-	if err := e.kernels.F32ToFP16(devB, fp16B, bElems, e.stream); err != nil {
+	if err := e.kernels.F32ToFP16(devB, fp16B, totalBElems, e.stream); err != nil {
 		return nil, fmt.Errorf("fp16MatMul: f32->fp16 B: %w", err)
 	}
 
 	// Allocate F32 output (MixedFP16Gemm outputs F32).
-	outBytes := cElems * f32Size
+	outBytes := totalCElems * f32Size
 	devC, err := e.pool.Alloc(e.deviceID, outBytes)
 	if err != nil {
 		return nil, fmt.Errorf("fp16MatMul: alloc output: %w", err)
 	}
 
 	// MixedFP16Gemm: FP16 inputs, FP32 output, FP32 accumulation.
-	if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, fp16A, fp16B, 0.0, devC); err != nil {
-		e.pool.Free(e.deviceID, devC, outBytes)
-		return nil, fmt.Errorf("fp16MatMul: gemm: %w", err)
+	// Loop over batches since MixedFP16Gemm only handles single 2D GEMM.
+	for batch := range batchSize {
+		aOff := batch * aMatElems * fp16Size
+		bOff := 0
+		if bBatchSize > 1 {
+			bOff = batch * bMatElems * fp16Size
+		}
+		cOff := batch * cMatElems * f32Size
+
+		batchFP16A := unsafe.Add(fp16A, aOff)
+		batchFP16B := unsafe.Add(fp16B, bOff)
+		batchDevC := unsafe.Add(devC, cOff)
+
+		if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, batchFP16A, batchFP16B, 0.0, batchDevC); err != nil {
+			e.pool.Free(e.deviceID, devC, outBytes)
+			return nil, fmt.Errorf("fp16MatMul: gemm batch %d: %w", batch, err)
+		}
 	}
 
+	// Build output shape.
 	outShape := make([]int, 0, len(aShape))
-	outShape = append(outShape, aShape[:len(aShape)-2]...)
+	outShape = append(outShape, aBatch...)
 	outShape = append(outShape, m, n)
 
-	return makeGPUResult[T](e, outShape, devC, cElems, dst...)
+	return makeGPUResult[T](e, outShape, devC, totalCElems, dst...)
 }
 
 // fp16ScaledSoftmax converts F32 input to FP16, runs ScaledSoftmaxFP16, converts back.
