@@ -351,6 +351,96 @@ func TestGemvQ4KF32_LargerMatrix(t *testing.T) {
 	t.Logf("max relative error: %e", maxRelErr)
 }
 
+func TestGemvQ4KF32_MultipleSizes(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+
+	cases := []struct {
+		name string
+		M, K int
+	}{
+		{"small_32x256", 32, 256},
+		{"medium_64x512", 64, 512},
+		{"square_256x256", 256, 256},
+		{"wide_128x1024", 128, 1024},
+		{"tall_1024x256", 1024, 256},
+		{"large_512x2048", 512, 2048},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, x, ref := buildQ4KTestData(tc.M, tc.K)
+
+			stream, err := cuda.CreateStream()
+			if err != nil {
+				t.Fatalf("CreateStream: %v", err)
+			}
+			defer func() { _ = stream.Destroy() }()
+
+			devW, err := cuda.Malloc(len(raw))
+			if err != nil {
+				t.Fatalf("cuda.Malloc W: %v", err)
+			}
+			defer func() { _ = cuda.Free(devW) }()
+
+			devX, err := cuda.Malloc(tc.K * 4)
+			if err != nil {
+				t.Fatalf("cuda.Malloc x: %v", err)
+			}
+			defer func() { _ = cuda.Free(devX) }()
+
+			devY, err := cuda.Malloc(tc.M * 4)
+			if err != nil {
+				t.Fatalf("cuda.Malloc y: %v", err)
+			}
+			defer func() { _ = cuda.Free(devY) }()
+
+			if err := cuda.Memcpy(devW, unsafe.Pointer(&raw[0]), len(raw), cuda.MemcpyHostToDevice); err != nil {
+				t.Fatalf("Memcpy W: %v", err)
+			}
+			if err := cuda.Memcpy(devX, unsafe.Pointer(&x[0]), tc.K*4, cuda.MemcpyHostToDevice); err != nil {
+				t.Fatalf("Memcpy x: %v", err)
+			}
+
+			if err := GemvQ4KF32(devW, devX, devY, tc.M, tc.K, stream.Ptr()); err != nil {
+				t.Fatalf("GemvQ4KF32: %v", err)
+			}
+
+			if err := stream.Synchronize(); err != nil {
+				t.Fatalf("Synchronize: %v", err)
+			}
+
+			got := make([]float32, tc.M)
+			if err := cuda.Memcpy(unsafe.Pointer(&got[0]), devY, tc.M*4, cuda.MemcpyDeviceToHost); err != nil {
+				t.Fatalf("Memcpy y: %v", err)
+			}
+
+			maxRelErr := 0.0
+			for i := range got {
+				absRef := math.Abs(float64(ref[i]))
+				diff := math.Abs(float64(got[i] - ref[i]))
+				var relErr float64
+				if absRef > 1e-6 {
+					relErr = diff / absRef
+				} else {
+					relErr = diff
+				}
+				if relErr > maxRelErr {
+					maxRelErr = relErr
+				}
+				if relErr > 1e-4 {
+					t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
+					if t.Failed() {
+						break
+					}
+				}
+			}
+			t.Logf("max relative error: %e", maxRelErr)
+		})
+	}
+}
+
 func BenchmarkGemvQ4KF32_4096(b *testing.B) {
 	if !cuda.Available() {
 		b.Skip("CUDA not available")
