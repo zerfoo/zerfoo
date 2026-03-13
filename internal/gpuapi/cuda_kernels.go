@@ -105,6 +105,10 @@ func (k *CUDAKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, s Stream) 
 	return kernels.GemvQ4KF32(wQ4K, x, y, M, K, streamPtr(s))
 }
 
+func (k *CUDAKernels) DequantQ4KF32(src, dst unsafe.Pointer, rows, K int, s Stream) error {
+	return kernels.DequantQ4KF32(src, dst, rows, K, streamPtr(s))
+}
+
 func (k *CUDAKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, s Stream) error {
 	return kernels.GemmQ8F32(aQ8, b, c, m, kk, n, streamPtr(s))
 }

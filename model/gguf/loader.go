@@ -151,8 +151,7 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Preserve Q4_K storage for fused GEMV kernel dispatch.
-	// Re-enabled to diagnose throughput regression (was re-quantizing to Q4_0).
+	// Preserve Q4_K storage. Fused GEMV for batch=1, GPU dequant+cuBLAS for batch>1.
 	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
