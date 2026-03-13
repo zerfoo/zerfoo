@@ -1,5 +1,3 @@
-//go:build !(cuda && tensorrt)
-
 package tensorrt
 
 import (

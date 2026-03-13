@@ -1,5 +1,3 @@
-//go:build cuda && tensorrt
-
 package tensorrt
 
 import (
@@ -10,6 +8,9 @@ import (
 )
 
 func TestCreateDestroyLogger(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	if l == nil {
 		t.Fatal("CreateLogger returned nil")
@@ -18,6 +19,9 @@ func TestCreateDestroyLogger(t *testing.T) {
 }
 
 func TestCreateDestroyBuilder(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -29,6 +33,9 @@ func TestCreateDestroyBuilder(t *testing.T) {
 }
 
 func TestCreateDestroyNetwork(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -57,6 +64,9 @@ func TestCreateDestroyNetwork(t *testing.T) {
 }
 
 func TestCreateDestroyBuilderConfig(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -76,6 +86,9 @@ func TestCreateDestroyBuilderConfig(t *testing.T) {
 }
 
 func TestCreateDestroyRuntime(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -87,6 +100,9 @@ func TestCreateDestroyRuntime(t *testing.T) {
 }
 
 func TestNetworkAddInput(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -113,6 +129,9 @@ func TestNetworkAddInput(t *testing.T) {
 }
 
 func TestNetworkAddActivation(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -156,6 +175,9 @@ func TestNetworkAddActivation(t *testing.T) {
 // TestBuildAndRunReLUNetwork builds a trivial Input -> ReLU -> Output network,
 // serializes it, deserializes it, and runs inference to verify correctness.
 func TestBuildAndRunReLUNetwork(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	logger := CreateLogger(SeverityWarning)
 	defer logger.Destroy()
 
@@ -290,6 +312,9 @@ func TestBuildAndRunReLUNetwork(t *testing.T) {
 
 // TestBuildAndRunMatMulReLUNetwork builds a MatMul -> ReLU network and verifies output.
 func TestBuildAndRunMatMulReLUNetwork(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	logger := CreateLogger(SeverityWarning)
 	defer logger.Destroy()
 
@@ -423,6 +448,9 @@ func TestBuildAndRunMatMulReLUNetwork(t *testing.T) {
 }
 
 func TestDeserializeEngineEmptyData(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -439,6 +467,9 @@ func TestDeserializeEngineEmptyData(t *testing.T) {
 }
 
 func TestNetworkAddElementWise(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -471,6 +502,9 @@ func TestNetworkAddElementWise(t *testing.T) {
 }
 
 func TestNetworkAddSoftMax(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -501,6 +535,9 @@ func TestNetworkAddSoftMax(t *testing.T) {
 }
 
 func TestNetworkAddReduce(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -532,6 +569,9 @@ func TestNetworkAddReduce(t *testing.T) {
 }
 
 func TestNetworkAddShuffle(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
@@ -563,6 +603,9 @@ func TestNetworkAddShuffle(t *testing.T) {
 }
 
 func TestBuilderConfigSetFlagFP16(t *testing.T) {
+	if !Available() {
+		t.Skip("TensorRT not available")
+	}
 	l := CreateLogger(SeverityWarning)
 	defer l.Destroy()
 
