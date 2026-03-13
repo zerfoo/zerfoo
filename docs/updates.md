@@ -930,3 +930,38 @@ Most packages pass. Failures found:
 3. Fix GemvQ4K precision issues at larger matrix sizes
 4. Profile with nsys to identify the throughput regression root cause
 5. Consider reverting int64 gather to int32 with a GPU conversion kernel
+
+## CUDA Graph Partial Capture Implementation
+
+Implemented partial graph capture that splits the plan into capturable and
+non-capturable regions. EmbeddingLookup runs outside the capture region.
+However, GroupedQueryAttention (instruction 2) still triggers D2H through
+the KV cache update path and other internal operations. Multiple `.Data()`
+calls exist deep in the inference pipeline:
+- `layers/core/matmul.go:106,117` — weight pointer caching via `.Data()[0]`
+- `generate/tensor_cache.go:110-111` — KV cache append CPU fallback
+- `layers/core/ffn.go:321` — FFN split CPU fallback
+
+The partial capture infrastructure is ready (`graph/cuda_graph.go`) and the
+capture region detection works, but enabling capture requires eliminating
+ALL D2H calls from the transformer body. This is a deeper refactor.
+
+**Decision:** CUDA graph capture disabled by default (opt-in via
+`ZERFOO_ENABLE_CUDA_GRAPH=1`). Managed memory disabled by default (opt-in
+via `ZERFOO_ENABLE_MANAGED_MEM=1`).
+
+## Final Performance (clean defaults)
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 163.59 |
+| 2 | 168.62 |
+| 3 | 165.86 |
+| **Average** | **166.02** |
+
+Status: 84.2% of Ollama (197.21 tok/s). Gap: 31 tok/s.
+
+Path to surpassing Ollama:
+1. Fix CUDA graph capture (+20-30 tok/s estimated from eliminating 338 launch overheads)
+2. Investigate the 188->166 tok/s regression from Wave 1-7 code changes
+3. Kernel optimization (T209.1-2): register tuning, shared memory for sm_121
