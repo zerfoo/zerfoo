@@ -682,8 +682,26 @@ func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.Tensor
 
 	// Scalar exponent: exponent has 1 element (e.g. x^2 in RMSNorm).
 	if totalElements(exponent.Shape()) == 1 {
-		scalar := exponent.Data()[0]
 		e.setDevice()
+		// Read scalar without sync memcpy on the default stream (which
+		// would break CUDA graph capture). Use async D2H on the engine's
+		// stream when the exponent is GPU-resident.
+		var scalar T
+		if gs, ok := exponent.GetStorage().(*tensor.GPUStorage[T]); ok {
+			var buf [1]T
+			bufPtr := unsafe.Pointer(&buf[0])
+			var zero T
+			elemSize := int(unsafe.Sizeof(zero))
+			if err := e.runtime.MemcpyAsync(bufPtr, gs.Ptr(), elemSize, gpuapi.MemcpyDeviceToHost, e.stream); err != nil {
+				return e.cpu.Pow(ctx, base, exponent, dst...)
+			}
+			if err := e.stream.Synchronize(); err != nil {
+				return e.cpu.Pow(ctx, base, exponent, dst...)
+			}
+			scalar = buf[0]
+		} else {
+			scalar = exponent.Data()[0]
+		}
 		return gpuScalarOp(e, base, toFloat32(scalar), e.kernels.PowScalar, dst...)
 	}
 

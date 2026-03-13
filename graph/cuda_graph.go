@@ -10,17 +10,26 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// nonCapturableOps lists instruction op names that trigger D2H copies and
-// must run outside CUDA graph capture. EmbeddingLookup reads token IDs
-// from GPU via .Data() and does CPU float→int conversion.
+// nonCapturableOps lists instruction op names that must run outside CUDA graph
+// capture. These ops perform CPU work or D2H copies that are incompatible with
+// stream capture.
+//
+// EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
+// float→int conversion.
+//
+// GroupedQueryAttention: reads KV cache position from CPU (cache.SeqLen()),
+// computes RoPE angles on CPU, appends to KV cache at position-dependent
+// offsets. All of these are baked into captured kernel arguments and won't
+// update on replay, producing incorrect results.
 var nonCapturableOps = map[string]bool{
-	"EmbeddingLookup": true,
+	"EmbeddingLookup":        true,
+	"GroupedQueryAttention":  true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
 // It splits the plan into three regions:
-//  1. Pre-capture: instructions that trigger D2H copies (e.g. EmbeddingLookup)
-//  2. Capture region: GPU-only instructions (MatMul, RMSNorm, GQA, etc.)
+//  1. Pre-capture: instructions that trigger D2H copies or have dynamic state
+//  2. Capture region: GPU-only, position-independent instructions
 //  3. Post-capture: any trailing non-capturable instructions
 //
 // During replay, regions 1 and 3 run normally while region 2 is replayed
@@ -43,10 +52,29 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// Fixed device buffer for the input token.
 	inputDevPtr unsafe.Pointer
 	inputBytes  int
+
+	// Cache of GPU tensors for slots that arrive as CPU from pre-capture
+	// (e.g. EmbeddingLookup with Q4K). Device addresses are reused across
+	// replays so the captured graph stays valid.
+	gpuSlotCache map[int]*tensor.TensorNumeric[T]
+
+	// capturedSlots holds the tensors from scratchSlots that were written
+	// during the capture run. These tensors' GPU buffers are the destinations
+	// of the captured graph's operations. During replay, these must be
+	// restored into scratchSlots after PrepareSlots (which resets them)
+	// so that GraphLaunch writes to the same buffers and OutputTensor()
+	// returns the correct result.
+	capturedSlots map[int]*tensor.TensorNumeric[T]
+
+	// onCaptured is called after successful capture, allowing the caller
+	// to protect arena allocations from being reclaimed by Reset.
+	onCaptured func()
 }
 
 // NewCUDAGraphExecutor creates a graph executor for the given plan.
-func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr unsafe.Pointer, warmups int) *CUDAGraphExecutor[T] {
+// The optional onCaptured callback is invoked after a successful capture,
+// allowing the caller to protect arena allocations from being reclaimed.
+func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr unsafe.Pointer, warmups int, onCaptured func()) *CUDAGraphExecutor[T] {
 	if warmups < 1 {
 		warmups = 1
 	}
@@ -62,6 +90,16 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		captureEnd--
 	}
 
+	// Check for non-capturable ops in the middle of the capture range.
+	// If any exist, we can't capture a contiguous region.
+	for i := captureStart; i < captureEnd; i++ {
+		if nonCapturableOps[plan.InstructionOpName(i)] {
+			log.Printf("cuda graph: non-capturable op %q at instruction %d inside capture range [%d, %d), disabling graph",
+				plan.InstructionOpName(i), i, captureStart, captureEnd)
+			return &CUDAGraphExecutor[T]{plan: plan, failed: true}
+		}
+	}
+
 	if captureStart >= captureEnd {
 		log.Printf("cuda graph: no capturable instructions found, graph disabled")
 		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
@@ -74,6 +112,8 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups:      warmups,
 		captureStart: captureStart,
 		captureEnd:   captureEnd,
+		gpuSlotCache: make(map[int]*tensor.TensorNumeric[T]),
+		onCaptured:   onCaptured,
 	}
 }
 
@@ -116,6 +156,12 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		}
 	}
 
+	// Ensure all slot data is GPU-resident before capture. Pre-capture
+	// instructions (e.g. EmbeddingLookup with Q4K embedding tables) may
+	// produce CPU tensors. Upload them now so the capture region sees only
+	// GPU-resident data and avoids sync D2H copies that break capture.
+	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
+
 	// Begin capture for the GPU-heavy region.
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
@@ -155,6 +201,22 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	g.graphExec = exec
 	log.Printf("cuda graph: captured and instantiated successfully (instructions %d-%d)", g.captureStart, g.captureEnd-1)
 
+	// Save all scratch slots written by captured instructions. These tensors
+	// hold the GPU buffers that the captured graph writes to. During replay,
+	// we must restore them after PrepareSlots (which resets scratchSlots).
+	g.capturedSlots = make(map[int]*tensor.TensorNumeric[T])
+	for i := g.captureStart; i < g.captureEnd; i++ {
+		outSlot := g.plan.InstructionOutputIdx(i)
+		if t := g.plan.ScratchSlot(outSlot); t != nil {
+			g.capturedSlots[outSlot] = t
+		}
+	}
+
+	// Notify the caller to protect arena allocations from reset.
+	if g.onCaptured != nil {
+		g.onCaptured()
+	}
+
 	// Launch the graph once to actually compute the results.
 	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
 		return nil, fmt.Errorf("cuda graph: first launch failed: %w", err)
@@ -185,6 +247,17 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 		if err := g.plan.RunInstructionRange(ctx, 0, g.captureStart); err != nil {
 			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
 		}
+	}
+
+	// Ensure pre-capture outputs are GPU-resident before replay.
+	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
+
+	// Restore captured slots. PrepareSlots resets scratchSlots from p.slots,
+	// which clears the tensors allocated during capture. The captured CUDA
+	// graph writes to those GPU buffers, so we must restore the tensor
+	// pointers so that OutputTensor() returns the correct result.
+	for idx, t := range g.capturedSlots {
+		g.plan.SetScratchSlot(idx, t)
 	}
 
 	// Replay the captured graph.

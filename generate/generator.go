@@ -160,20 +160,24 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			compiled, cErr = gen.graph.Compile(compileCtx, tokenTensor)
 		}
 		if cErr == nil {
-			// Wire CUDA graph capture when the engine exposes a GPU stream
-			// and the runtime supports graph APIs. The executor warms up for
-			// 2 runs, then captures all GPU work into a graph for near-zero
-			// launch overhead on subsequent tokens.
-			// CUDA graph capture is disabled: many layers (GQA, FFN, MatMul,
-		// KV cache) still have .Data() calls in CPU fallback paths that
-		// trigger D2H copies incompatible with stream capture. The partial
-		// capture infrastructure is ready (graph/cuda_graph.go) but needs
-		// a deeper refactor to eliminate all D2H from the decode path.
-		// See docs/updates.md "DGX Spark Verification Session" for details.
-		if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_ENABLE_CUDA_GRAPH") != "" {
+			// CUDA graph capture for the decode loop: position-independent
+			// GPU ops run inside the captured graph for near-zero launch
+			// overhead. Disable with ZERFOO_DISABLE_CUDA_GRAPH=1.
+			if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_DISABLE_CUDA_GRAPH") == "" {
 				if streamPtr := sp.Stream(); streamPtr != nil {
 					if cuda.Available() && cuda.Lib().GraphAvailable() {
-						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
+						// After capture, protect arena allocations so Reset
+						// doesn't reclaim the GPU buffers referenced by the graph.
+						var onCaptured func()
+						if ap, ok := any(gen.engine).(interface{ ArenaUsedBytes() int }); ok {
+							if asf, ok2 := any(gen.engine).(interface{ SetArenaResetFloor(int) }); ok2 {
+								onCaptured = func() {
+									floor := ap.ArenaUsedBytes()
+									asf.SetArenaResetFloor(floor)
+								}
+							}
+						}
+						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2, onCaptured)
 						compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 							return ge.Run(ctx, inputs...)
 						})

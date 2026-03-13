@@ -354,6 +354,17 @@ func (s *GPUStorage[T]) CopyFromDevice(src *GPUStorage[T], dstOffsetElems, srcOf
 	return s.runtime.Memcpy(dstPtr, srcPtr, numElems*elemSize, gpuapi.MemcpyDeviceToDevice)
 }
 
+// CopyFromDeviceAsync copies numElems elements from src (at srcOffsetElems)
+// into s (at dstOffsetElems) using an asynchronous device-to-device memcpy on
+// the given stream. Both storages must reside on the same device.
+func (s *GPUStorage[T]) CopyFromDeviceAsync(src *GPUStorage[T], dstOffsetElems, srcOffsetElems, numElems int, stream gpuapi.Stream) error {
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	dstPtr := unsafe.Add(s.devicePtr, dstOffsetElems*elemSize)
+	srcPtr := unsafe.Add(src.devicePtr, srcOffsetElems*elemSize)
+	return s.runtime.MemcpyAsync(dstPtr, srcPtr, numElems*elemSize, gpuapi.MemcpyDeviceToDevice, stream)
+}
+
 // CopyFromHost copies numElems elements from a CPU slice into s starting at
 // dstOffsetElems using a synchronous host-to-device memcpy.
 func (s *GPUStorage[T]) CopyFromHost(data []T, dstOffsetElems int) error {
@@ -365,6 +376,21 @@ func (s *GPUStorage[T]) CopyFromHost(data []T, dstOffsetElems int) error {
 	dstPtr := unsafe.Add(s.devicePtr, dstOffsetElems*elemSize)
 	srcPtr := unsafe.Pointer(unsafe.SliceData(data))
 	return s.runtime.Memcpy(dstPtr, srcPtr, len(data)*elemSize, gpuapi.MemcpyHostToDevice)
+}
+
+// CopyFromHostAsync copies elements from a CPU slice into s starting at
+// dstOffsetElems using an asynchronous host-to-device memcpy on the given
+// stream. The caller must ensure the source slice remains valid until the
+// stream is synchronized.
+func (s *GPUStorage[T]) CopyFromHostAsync(data []T, dstOffsetElems int, stream gpuapi.Stream) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var zero T
+	elemSize := int(unsafe.Sizeof(zero))
+	dstPtr := unsafe.Add(s.devicePtr, dstOffsetElems*elemSize)
+	srcPtr := unsafe.Pointer(unsafe.SliceData(data))
+	return s.runtime.MemcpyAsync(dstPtr, srcPtr, len(data)*elemSize, gpuapi.MemcpyHostToDevice, stream)
 }
 
 // Free releases the GPU device memory. After calling Free, the storage must

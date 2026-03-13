@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -301,6 +302,34 @@ func (p *EngineProxy[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[flo
 	return FusedRMSNorm(input, weight, epsilon)
 }
 
+// GPUFusedAddRMSNorm delegates to the underlying engine's FusedAddRMSNormProvider
+// implementation and records the operation for tracing. This allows
+// fusedAddRMSNormNode to call through the proxy without unwrapping it,
+// which is required for CompileTraced to capture the operation.
+func (p *EngineProxy[T]) GPUFusedAddRMSNorm(input, residual, weight *tensor.TensorNumeric[T], eps float32) (
+	normed *tensor.TensorNumeric[T],
+	residualOut *tensor.TensorNumeric[T],
+	scales *tensor.TensorNumeric[T],
+	err error,
+) {
+	provider, ok := p.real.(FusedAddRMSNormProvider[T])
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm: underlying engine does not implement FusedAddRMSNormProvider")
+	}
+	normed, residualOut, scales, err = provider.GPUFusedAddRMSNorm(input, residual, weight, eps)
+	if err == nil && p.tracer != nil {
+		outputs := []*tensor.TensorNumeric[T]{normed, residualOut}
+		if scales != nil {
+			outputs = append(outputs, scales)
+		}
+		p.tracer.RecordMultiOutput("GPUFusedAddRMSNorm",
+			[]*tensor.TensorNumeric[T]{input, residual, weight},
+			outputs,
+			map[string]any{"eps": eps})
+	}
+	return
+}
+
 // MatMulTransposeB delegates to the underlying engine if it implements TransposeBMatMuler.
 func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if tb, ok := p.real.(TransposeBMatMuler[T]); ok {
@@ -322,5 +351,22 @@ func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tens
 func (p *EngineProxy[T]) ResetPool() {
 	if resetter, ok := p.real.(PoolResetter); ok {
 		resetter.ResetPool()
+	}
+}
+
+// ArenaUsedBytes returns the current arena offset from the underlying engine.
+func (p *EngineProxy[T]) ArenaUsedBytes() int {
+	type arenaUser interface{ ArenaUsedBytes() int }
+	if au, ok := p.real.(arenaUser); ok {
+		return au.ArenaUsedBytes()
+	}
+	return 0
+}
+
+// SetArenaResetFloor sets the minimum reset offset on the underlying engine.
+func (p *EngineProxy[T]) SetArenaResetFloor(floor int) {
+	type arenaFloorSetter interface{ SetArenaResetFloor(int) }
+	if af, ok := p.real.(arenaFloorSetter); ok {
+		af.SetArenaResetFloor(floor)
 	}
 }

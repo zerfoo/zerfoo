@@ -209,6 +209,21 @@ func (e *GPUEngine[T]) ResetPool() {
 	}
 }
 
+// ArenaUsedBytes returns the current arena offset (bytes in use).
+func (e *GPUEngine[T]) ArenaUsedBytes() int {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		return arena.UsedBytes()
+	}
+	return 0
+}
+
+// SetArenaResetFloor sets the minimum offset that arena Reset will rewind to.
+func (e *GPUEngine[T]) SetArenaResetFloor(floor int) {
+	if arena, ok := e.pool.(*gpuapi.CUDAArenaPool); ok {
+		arena.SetResetFloor(floor)
+	}
+}
+
 // setDevice ensures the correct GPU device context for the calling goroutine.
 func (e *GPUEngine[T]) setDevice() {
 	_ = e.runtime.SetDevice(e.deviceID)
@@ -461,6 +476,11 @@ func (e *GPUEngine[T]) Stream() unsafe.Pointer {
 		return nil
 	}
 	return e.stream.Ptr()
+}
+
+// GPUStream returns the engine's gpuapi.Stream for async memory operations.
+func (e *GPUEngine[T]) GPUStream() gpuapi.Stream {
+	return e.stream
 }
 
 // Close releases the BLAS handle, DNN handle, GPU stream, and drains the memory pool.

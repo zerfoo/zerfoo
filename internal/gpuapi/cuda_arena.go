@@ -95,5 +95,15 @@ func (p *CUDAArenaPool) Inner() *cuda.ArenaPool {
 	return p.inner
 }
 
+// SetResetFloor sets the minimum offset that Reset will rewind to.
+func (p *CUDAArenaPool) SetResetFloor(floor int) {
+	p.inner.SetResetFloor(floor)
+}
+
+// UsedBytes returns the current arena offset (bytes in use).
+func (p *CUDAArenaPool) UsedBytes() int {
+	return p.inner.UsedBytes()
+}
+
 // Compile-time interface assertion.
 var _ MemPool = (*CUDAArenaPool)(nil)
