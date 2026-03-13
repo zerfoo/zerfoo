@@ -1,5 +1,3 @@
-//go:build rocm
-
 package gpuapi
 
 import (
