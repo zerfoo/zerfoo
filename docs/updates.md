@@ -1319,3 +1319,44 @@ Date: 2026-03-13
 ## Kernels Already Well-Tuned
 
 All other kernels (elementwise, rmsnorm, scaled_softmax, gather) use <=20 registers/thread, which already allows maximum occupancy. No changes needed.
+
+---
+
+# T404.1 Wave 10 Rebuild & Benchmark Results
+
+Date: 2026-03-13
+
+## Summary
+
+Rebuilt all CUDA kernels with Wave 8 optimizations (--maxrregcount=32 for gemm_q4/transpose, FLASH_BLOCK_SIZE=64, warp shuffle reductions) and benchmarked on DGX Spark GB10 with Gemma 3 1B Q4_K model.
+
+## Build Configuration
+
+- CUDA 13.0, target `sm_121`
+- `--maxrregcount=32` applied to gemm_q4.cu and transpose.cu
+- `FLASH_BLOCK_SIZE=64` for all kernels
+- All 17 kernel files compiled successfully with no warnings
+
+## Benchmark Results
+
+| Run | Tokens | Time (s) | Throughput (tok/s) |
+|-----|--------|----------|--------------------|
+| 1   | 256    | 1.377    | 185.85             |
+| 2   | 256    | 1.394    | 183.68             |
+| 3   | 256    | 1.389    | 184.37             |
+| **Avg** | | | **184.63** |
+
+**Baseline (Wave 9):** 186 tok/s
+**Delta:** -1.37 tok/s (-0.7%) -- within measurement noise
+
+## Analysis
+
+The Wave 8 kernel optimizations (register capping, flash block size tuning, warp shuffle reductions) do not produce a measurable throughput improvement on the decode path. This is expected because:
+
+1. **Decode is memory-bandwidth bound.** At batch size 1, the GEMMs are effectively GEMVs reading full weight matrices but computing only one output column. Register pressure and occupancy improvements help compute-bound workloads but not memory-bound ones.
+2. **The bottleneck is elsewhere.** The megakernel fallback log shows 7 unsupported ops, meaning the execution plan falls back from traced/compiled mode to individual kernel launches. Kernel launch overhead and memory transfers dominate over per-kernel compute efficiency.
+3. **Arena allocator performance is good.** Zero misses, 7.9 MB used -- the arena is not a bottleneck.
+
+## Conclusion
+
+Kernels build and run correctly with all Wave 8 optimizations. Throughput is stable at ~185 tok/s, consistent with the Wave 9 baseline. Future improvement will likely come from reducing kernel launch overhead (megakernel/graph capture) or prefill-path optimization rather than per-kernel register tuning.
