@@ -1747,7 +1747,9 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	}
 
 	// Only use GPU path for GPU-resident tensors.
-	if _, ok := a.GetStorage().(*tensor.GPUStorage[T]); !ok {
+	_, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
+	_, isFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
+	if !isGPU && !isFP16 {
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
@@ -1784,6 +1786,14 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	// single-token generation where seqLen=1. Check by comparing the
 	// non-unit dimensions in input vs output order.
 	if isTransposeReshape(shape, outShape) {
+		if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
+			storageT := any(fs).(tensor.Storage[T])
+			t, tErr := tensor.NewWithStorage[T](outShape, storageT)
+			if tErr != nil {
+				return nil, tErr
+			}
+			return t, nil
+		}
 		gs := a.GetStorage().(*tensor.GPUStorage[T])
 		viewGS := gs.View(gs.Len())
 		t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
@@ -2054,25 +2064,41 @@ func (e *GPUEngine[T]) Split(ctx context.Context, a *tensor.TensorNumeric[T], nu
 	if !isFloat32[T]() {
 		return e.cpu.Split(ctx, a, numSplits, axis)
 	}
-	gs, ok := a.GetStorage().(*tensor.GPUStorage[T])
-	if !ok {
-		return e.cpu.Split(ctx, a, numSplits, axis)
+	if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return e.gpuSplit(gs.Ptr(), a.Shape(), numSplits, axis)
 	}
-	return e.gpuSplit(gs.Ptr(), a.Shape(), numSplits, axis)
+	if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
+		ptr, _, _ := fs.GPUPtr()
+		if ptr != nil {
+			return e.gpuSplitFP16(ptr, a.Shape(), numSplits, axis)
+		}
+	}
+	return e.cpu.Split(ctx, a, numSplits, axis)
 }
 
 func (e *GPUEngine[T]) Concat(ctx context.Context, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() || len(tensors) == 0 {
 		return e.cpu.Concat(ctx, tensors, axis, dst...)
 	}
-	// Check all inputs are GPU-resident.
+	// Check all inputs are GPU-resident (GPUStorage or Float16Storage).
 	ptrs := make([]unsafe.Pointer, len(tensors))
+	allFP16 := true
 	for i, t := range tensors {
-		gs, ok := t.GetStorage().(*tensor.GPUStorage[T])
-		if !ok {
+		if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+			ptrs[i] = gs.Ptr()
+			allFP16 = false
+		} else if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+			p, _, _ := fs.GPUPtr()
+			if p == nil {
+				return e.cpu.Concat(ctx, tensors, axis, dst...)
+			}
+			ptrs[i] = p
+		} else {
 			return e.cpu.Concat(ctx, tensors, axis, dst...)
 		}
-		ptrs[i] = gs.Ptr()
+	}
+	if allFP16 {
+		return e.gpuConcatFP16(ptrs, tensors, axis, dst...)
 	}
 	return e.gpuConcat(ptrs, tensors, axis, dst...)
 }
@@ -2081,16 +2107,19 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	if !isFloat32[T]() || a == nil {
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 	}
-	gs, ok := a.GetStorage().(*tensor.GPUStorage[T])
-	if !ok {
-		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
-	}
 
 	shape := a.Shape()
 	if axis < 0 || axis >= len(shape) {
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 	}
 	if repetitions <= 0 {
+		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+
+	// Get device pointer (handles GPUStorage[T] and Float16Storage).
+	_, isFP16 := any(a.GetStorage()).(*tensor.Float16Storage)
+	gs, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
+	if !isGPU && !isFP16 {
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 	}
 
@@ -2111,7 +2140,25 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
 	}
 
-	devA := gs.Ptr()
+	var devA unsafe.Pointer
+	var cleanupA func()
+	if isGPU {
+		devA = gs.Ptr()
+		cleanupA = func() {}
+	} else {
+		// Float16Storage: convert FP16→F32 for the F32 repeat kernel.
+		f32Engine, ok := any(e).(*GPUEngine[float32])
+		if !ok {
+			e.pool.Free(e.deviceID, devOut, outBytes)
+			return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+		}
+		devA, cleanupA, err = getDevicePtr(f32Engine, any(a).(*tensor.TensorNumeric[float32]))
+		if err != nil {
+			e.pool.Free(e.deviceID, devOut, outBytes)
+			return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+		}
+	}
+	defer cleanupA()
 
 	// Compute dimensions for the repeat kernel.
 	outerSize := 1
@@ -2127,6 +2174,25 @@ func (e *GPUEngine[T]) Repeat(ctx context.Context, a *tensor.TensorNumeric[T], a
 	if err := e.kernels.Repeat(devA, devOut, outerSize, axisDim, innerSize, repetitions, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devOut, outBytes)
 		return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+	}
+
+	// For FP16 inputs, convert the F32 output back to Float16Storage.
+	if isFP16 {
+		fp16Bytes := outElems * fp16Size
+		fp16Out, allocErr := e.pool.Alloc(e.deviceID, fp16Bytes)
+		if allocErr != nil {
+			e.pool.Free(e.deviceID, devOut, outBytes)
+			return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+		}
+		if convErr := e.kernels.F32ToFP16(devOut, fp16Out, outElems, e.stream); convErr != nil {
+			e.pool.Free(e.deviceID, devOut, outBytes)
+			e.pool.Free(e.deviceID, fp16Out, fp16Bytes)
+			return e.cpu.Repeat(ctx, a, axis, repetitions, dst...)
+		}
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		fs := tensor.NewFloat16StorageGPU(fp16Out, outElems, e.deviceID)
+		storageT := any(fs).(tensor.Storage[T])
+		return tensor.NewWithStorage[T](newShape, storageT)
 	}
 
 	return makeGPUResult[T](e, newShape, devOut, outElems, dst...)

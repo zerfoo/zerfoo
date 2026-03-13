@@ -1093,6 +1093,70 @@ func (e *GPUEngine[T]) gpuSplit(srcPtr unsafe.Pointer, shape []int, numSplits in
 	return outs, nil
 }
 
+// gpuSplitFP16 splits a Float16Storage GPU tensor along the given axis.
+// Like gpuSplit but uses fp16Size (2 bytes/elem) and produces Float16Storage output.
+func (e *GPUEngine[T]) gpuSplitFP16(srcPtr unsafe.Pointer, shape []int, numSplits int, axis int) ([]*tensor.TensorNumeric[T], error) {
+	rank := len(shape)
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
+	}
+	if shape[axis]%numSplits != 0 {
+		return nil, fmt.Errorf("cannot split dimension %d (size %d) into %d equal parts", axis, shape[axis], numSplits)
+	}
+
+	part := shape[axis] / numSplits
+	outShape := make([]int, rank)
+	copy(outShape, shape)
+	outShape[axis] = part
+
+	blockSize := 1
+	for i := axis + 1; i < rank; i++ {
+		blockSize *= shape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= shape[i]
+	}
+
+	partElems := totalElements(outShape)
+	partBytes := partElems * fp16Size
+	chunkBytes := part * blockSize * fp16Size
+
+	e.setDevice()
+	outs := make([]*tensor.TensorNumeric[T], numSplits)
+	for i := range numSplits {
+		devOut, err := e.pool.Alloc(e.deviceID, partBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		for o := range outer {
+			srcOff := (o*shape[axis]*blockSize + i*part*blockSize) * fp16Size
+			dstOff := (o * part * blockSize) * fp16Size
+			src := unsafe.Add(srcPtr, srcOff)
+			dst := unsafe.Add(devOut, dstOff)
+			if err := e.runtime.MemcpyAsync(dst, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
+				e.pool.Free(e.deviceID, devOut, partBytes)
+				return nil, fmt.Errorf("gpu split fp16 memcpy: %w", err)
+			}
+		}
+
+		fs := tensor.NewFloat16StorageGPU(devOut, partElems, e.deviceID)
+		storageT := any(fs).(tensor.Storage[T])
+		t, err := tensor.NewWithStorage[T](outShape, storageT)
+		if err != nil {
+			e.pool.Free(e.deviceID, devOut, partBytes)
+			return nil, err
+		}
+		outs[i] = t
+	}
+
+	return outs, nil
+}
+
 // gpuConcat concatenates GPU-resident tensors along the given axis using D2D memcpy.
 func (e *GPUEngine[T]) gpuConcat(ptrs []unsafe.Pointer, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	first := tensors[0]
@@ -1159,4 +1223,77 @@ func (e *GPUEngine[T]) gpuConcat(ptrs []unsafe.Pointer, tensors []*tensor.Tensor
 	}
 
 	return makeGPUResult[T](e, outShape, devOut, outElems, dst...)
+}
+
+// gpuConcatFP16 concatenates Float16Storage GPU tensors along the given axis.
+func (e *GPUEngine[T]) gpuConcatFP16(ptrs []unsafe.Pointer, tensors []*tensor.TensorNumeric[T], axis int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	first := tensors[0]
+	rank := len(first.Shape())
+	if axis < 0 {
+		axis = rank + axis
+	}
+	if axis < 0 || axis >= rank {
+		return nil, fmt.Errorf("axis %d is out of bounds for tensor with %d dimensions", axis, rank)
+	}
+
+	outShape := make([]int, rank)
+	copy(outShape, first.Shape())
+	outShape[axis] = 0
+	for _, t := range tensors {
+		s := t.Shape()
+		if len(s) != rank {
+			return nil, fmt.Errorf("tensors must have the same number of dimensions for concatenation")
+		}
+		for i, d := range s {
+			if i == axis {
+				outShape[axis] += d
+			} else if d != first.Shape()[i] {
+				return nil, fmt.Errorf("dimensions must be equal except for the concatenation axis")
+			}
+		}
+	}
+
+	outElems := totalElements(outShape)
+	outBytes := outElems * fp16Size
+
+	blockSize := 1
+	for i := axis + 1; i < rank; i++ {
+		blockSize *= outShape[i]
+	}
+	outer := 1
+	for i := 0; i < axis; i++ {
+		outer *= outShape[i]
+	}
+
+	e.setDevice()
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	axisOffset := 0
+	for ti, t := range tensors {
+		tAxis := t.Shape()[axis]
+		chunkBytes := tAxis * blockSize * fp16Size
+		for o := range outer {
+			srcOff := (o * tAxis * blockSize) * fp16Size
+			dstOff := (o*outShape[axis]*blockSize + axisOffset*blockSize) * fp16Size
+			src := unsafe.Add(ptrs[ti], srcOff)
+			d := unsafe.Add(devOut, dstOff)
+			if err := e.runtime.MemcpyAsync(d, src, chunkBytes, gpuapi.MemcpyDeviceToDevice, e.stream); err != nil {
+				e.pool.Free(e.deviceID, devOut, outBytes)
+				return nil, fmt.Errorf("gpu concat fp16 memcpy: %w", err)
+			}
+		}
+		axisOffset += tAxis
+	}
+
+	fs := tensor.NewFloat16StorageGPU(devOut, outElems, e.deviceID)
+	storageT := any(fs).(tensor.Storage[T])
+	result, err := tensor.NewWithStorage[T](outShape, storageT)
+	if err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+	return result, nil
 }
