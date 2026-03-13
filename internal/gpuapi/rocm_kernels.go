@@ -106,6 +106,10 @@ func (k *ROCmKernels) GemvQ4KF32(wQ4K, x, y unsafe.Pointer, M, K int, _ Stream) 
 	return fmt.Errorf("GemvQ4KF32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) DequantQ4KF32(src, dst unsafe.Pointer, rows, K int, _ Stream) error {
+	return fmt.Errorf("DequantQ4KF32: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, _ Stream) error {
 	return fmt.Errorf("GemmQ8F32: not implemented for ROCm")
 }
