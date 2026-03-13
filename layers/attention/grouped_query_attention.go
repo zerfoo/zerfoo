@@ -366,7 +366,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			// create a single [totalHeads, headDim] view without any kernel launch.
 			var qkCombined *tensor.TensorNumeric[T]
 			if qGS, ok := qProj.GetStorage().(*tensor.GPUStorage[T]); ok {
-				qkView := tensor.NewGPUStorageView(qGS, 0, qkElems)
+				qkView := qGS.SubSlice(0, qkElems)
 				qkCombined, _ = tensor.NewWithStorage[T]([]int{totalHeads, gqa.headDim}, qkView)
 			}
 			if qkCombined == nil {
@@ -419,8 +419,8 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 				qElems := gqa.numQueryHeads * gqa.headDim
 				kElems := gqa.numKeyValueHeads * gqa.headDim
 				if gs, ok := fusedOut.GetStorage().(*tensor.GPUStorage[T]); ok {
-					qView := tensor.NewGPUStorageView(gs, 0, qElems)
-					kView := tensor.NewGPUStorageView(gs, qElems, kElems)
+					qView := gs.SubSlice(0, qElems)
+					kView := gs.SubSlice(qElems, kElems)
 
 					qSlice, viewErr := tensor.NewWithStorage[T]([]int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim}, qView)
 					if viewErr != nil {
@@ -863,11 +863,11 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 	kShape := append(append([]int{}, prefix...), kDim)
 	vShape := append(append([]int{}, prefix...), vDim)
 
-	// GPU path: zero-copy views.
+	// GPU path: zero-copy views via GPU-side pointer arithmetic (no D2H copy).
 	if gs, ok := merged.GetStorage().(*tensor.GPUStorage[T]); ok {
-		qView := tensor.NewGPUStorageView(gs, 0, batchElems*qDim)
-		kView := tensor.NewGPUStorageView(gs, batchElems*qDim, batchElems*kDim)
-		vView := tensor.NewGPUStorageView(gs, batchElems*(qDim+kDim), batchElems*vDim)
+		qView := gs.SubSlice(0, batchElems*qDim)
+		kView := gs.SubSlice(batchElems*qDim, batchElems*kDim)
+		vView := gs.SubSlice(batchElems*(qDim+kDim), batchElems*vDim)
 
 		q, err = tensor.NewWithStorage[T](qShape, qView)
 		if err != nil {
