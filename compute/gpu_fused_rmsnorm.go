@@ -1,6 +1,9 @@
 package compute
 
 import (
+	"fmt"
+	"unsafe"
+
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -8,6 +11,12 @@ import (
 // Uses the fused GPU kernel when input is GPU-resident, falls back to CPU otherwise.
 // Returns (output, scales) where scales contains per-row rsqrt values for backward pass.
 func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (*tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], error) {
+	// Native FP16 path: when input has Float16Storage, use RMSNormFP16 kernel
+	// directly and produce Float16Storage output.
+	if inFS, ok := any(input.GetStorage()).(*tensor.Float16Storage); ok {
+		return e.fusedRMSNormFP16Native(inFS, input, weight, epsilon)
+	}
+
 	// Only use GPU path when input is GPU-resident.
 	if _, ok := input.GetStorage().(*tensor.GPUStorage[float32]); !ok {
 		return FusedRMSNorm(input, weight, epsilon)
@@ -82,4 +91,86 @@ func (e *GPUEngine[T]) FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float
 	}
 
 	return outTensor, scalesTensor, nil
+}
+
+// fusedRMSNormFP16Native runs RMSNormFP16 kernel when input has Float16Storage.
+// Weight is converted to FP16 if needed. Output is Float16Storage.
+// Scales are returned as GPUStorage[float32] (used by backward pass).
+func (e *GPUEngine[T]) fusedRMSNormFP16Native(
+	inFS *tensor.Float16Storage,
+	input, weight *tensor.TensorNumeric[float32],
+	epsilon float32,
+) (*tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], error) {
+	e.setDevice()
+
+	shape := input.Shape()
+	D := shape[len(shape)-1]
+	total := input.Size()
+	rows := total / D
+
+	// Get FP16 input pointer.
+	fp16In, _, _ := inFS.GPUPtr()
+	if fp16In == nil {
+		return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: input has no GPU pointer")
+	}
+
+	// Get FP16 weight pointer. Weight might be Float16Storage (from FP16
+	// weight upload) or GPUStorage[float32] (norm weights are small and
+	// may not have been converted). Convert F32 -> FP16 if needed.
+	var fp16W unsafe.Pointer
+	var freeW func()
+	if wFS, ok := any(weight.GetStorage()).(*tensor.Float16Storage); ok {
+		fp16W, _, _ = wFS.GPUPtr()
+		freeW = func() {}
+	} else {
+		// F32 weight -- upload to GPU if needed, then convert to FP16.
+		f32Engine, ok := any(e).(*GPUEngine[float32])
+		if !ok {
+			return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: engine type mismatch")
+		}
+		devW, cleanupW, err := getDevicePtr(f32Engine, weight)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: get weight ptr: %w", err)
+		}
+		defer cleanupW()
+
+		wElems := weight.Size()
+		wFP16Bytes := wElems * fp16Size
+		fp16W, err = e.pool.Alloc(e.deviceID, wFP16Bytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: alloc fp16 weight: %w", err)
+		}
+		freeW = func() { e.pool.Free(e.deviceID, fp16W, wFP16Bytes) }
+		if err := e.kernels.F32ToFP16(devW, fp16W, wElems, e.stream); err != nil {
+			freeW()
+			return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: f32->fp16 weight: %w", err)
+		}
+	}
+	defer freeW()
+
+	// Allocate FP16 output.
+	outFP16Bytes := total * fp16Size
+	fp16Out, err := e.pool.Alloc(e.deviceID, outFP16Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: alloc output: %w", err)
+	}
+
+	// Run RMSNormFP16 kernel.
+	if err := e.kernels.RMSNormFP16(fp16In, fp16W, fp16Out, epsilon, rows, D, e.stream); err != nil {
+		e.pool.Free(e.deviceID, fp16Out, outFP16Bytes)
+		return nil, nil, fmt.Errorf("fusedRMSNormFP16Native: kernel: %w", err)
+	}
+
+	// Wrap output as Float16Storage.
+	outFS := tensor.NewFloat16StorageGPU(fp16Out, total, e.deviceID)
+	outTensor, err := tensor.New[float32](shape, nil)
+	if err != nil {
+		e.pool.Free(e.deviceID, fp16Out, outFP16Bytes)
+		return nil, nil, err
+	}
+	outTensor.SetStorage(outFS)
+
+	// Scales: the FP16 RMSNorm kernel does not output per-row scales.
+	// Return nil scales -- callers that need scales should use the F32 path.
+	return outTensor, nil, nil
 }
