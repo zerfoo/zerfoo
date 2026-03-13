@@ -40,6 +40,6 @@ GEMINI.md
 # Build artifacts
 *.o
 bench-compare
-bench_tps
+/bench_tps
 coverage-gate
 zerfoo-predict
