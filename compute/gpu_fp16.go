@@ -11,6 +11,193 @@ import (
 
 const fp16Size = 2 // sizeof(__half)
 
+// fp16BinaryOpNative runs an FP16 binary kernel directly on Float16Storage inputs
+// without any F32<->FP16 conversions. Output is a new tensor with Float16Storage.
+func fp16BinaryOpNative[T tensor.Numeric](
+	e *GPUEngine[T],
+	a, b *tensor.TensorNumeric[T],
+	aFP16, bFP16 *tensor.Float16Storage,
+	kernelFn func(a, b, c unsafe.Pointer, n int, stream gpuapi.Stream) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	e.setDevice()
+
+	n := aFP16.Len()
+
+	ptrA, _, _ := aFP16.GPUPtr()
+	ptrB, _, _ := bFP16.GPUPtr()
+
+	// Allocate FP16 output buffer.
+	outBytes := n * fp16Size
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("fp16BinaryOpNative: alloc output: %w", err)
+	}
+
+	if err := kernelFn(ptrA, ptrB, devOut, n, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, fmt.Errorf("fp16BinaryOpNative: kernel: %w", err)
+	}
+
+	outStorage := any(tensor.NewFloat16StorageGPU(devOut, n, e.deviceID)).(tensor.Storage[T])
+
+	if len(dst) > 0 && dst[0] != nil {
+		dst[0].SetStorage(outStorage)
+		dst[0].SetShape(a.Shape())
+		return dst[0], nil
+	}
+
+	t, err := tensor.NewWithStorage[T](a.Shape(), outStorage)
+	if err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return t, nil
+}
+
+// getFP16DevicePtr returns the FP16 GPU device pointer for a Float16Storage.
+// If the storage has no GPU pointer, it uploads the host data to the GPU.
+func getFP16DevicePtr[T tensor.Numeric](
+	e *GPUEngine[T],
+	fs *tensor.Float16Storage,
+) (unsafe.Pointer, func(), error) {
+	ptr, _, _ := fs.GPUPtr()
+	if ptr != nil {
+		return ptr, noopCleanup, nil
+	}
+
+	// Upload host FP16 bytes to GPU.
+	raw := fs.RawBytes()
+	byteSize := len(raw)
+	devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getFP16DevicePtr: alloc: %w", err)
+	}
+
+	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&raw[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		e.pool.Free(e.deviceID, devPtr, byteSize)
+		return nil, nil, fmt.Errorf("getFP16DevicePtr: memcpy: %w", err)
+	}
+
+	cleanup := func() {
+		e.pool.Free(e.deviceID, devPtr, byteSize)
+	}
+
+	return devPtr, cleanup, nil
+}
+
+// fp16BinaryOpMixed runs an FP16 binary kernel when one input is Float16Storage
+// and the other is F32 GPUStorage. The F32 input is converted to FP16 first.
+func fp16BinaryOpMixed[T tensor.Numeric](
+	e *GPUEngine[T],
+	ctx context.Context,
+	a, b *tensor.TensorNumeric[T],
+	fp16Stor *tensor.Float16Storage,
+	fp16IsA bool,
+	kernelFn func(a, b, c unsafe.Pointer, n int, stream gpuapi.Stream) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	e.setDevice()
+
+	n := fp16Stor.Len()
+
+	// Get the FP16 pointer.
+	fp16Ptr, fp16Cleanup, err := getFP16DevicePtr(e, fp16Stor)
+	if err != nil {
+		return nil, err
+	}
+	defer fp16Cleanup()
+
+	// Get the F32 pointer and convert to FP16.
+	var f32Tensor *tensor.TensorNumeric[T]
+	if fp16IsA {
+		f32Tensor = b
+	} else {
+		f32Tensor = a
+	}
+
+	devF32, cleanupF32, err := getDevicePtr(e, f32Tensor)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupF32()
+
+	// Convert F32 to FP16.
+	convBuf, err := e.pool.Alloc(e.deviceID, n*fp16Size)
+	if err != nil {
+		return nil, fmt.Errorf("fp16BinaryOpMixed: alloc conv: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, convBuf, n*fp16Size)
+
+	if err := e.kernels.F32ToFP16(devF32, convBuf, n, e.stream); err != nil {
+		return nil, fmt.Errorf("fp16BinaryOpMixed: f32->fp16: %w", err)
+	}
+
+	// Allocate FP16 output.
+	outBytes := n * fp16Size
+	devOut, err := e.pool.Alloc(e.deviceID, outBytes)
+	if err != nil {
+		return nil, fmt.Errorf("fp16BinaryOpMixed: alloc output: %w", err)
+	}
+
+	var ptrA, ptrB unsafe.Pointer
+	if fp16IsA {
+		ptrA = fp16Ptr
+		ptrB = convBuf
+	} else {
+		ptrA = convBuf
+		ptrB = fp16Ptr
+	}
+
+	if err := kernelFn(ptrA, ptrB, devOut, n, e.stream); err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, fmt.Errorf("fp16BinaryOpMixed: kernel: %w", err)
+	}
+
+	outStorage := any(tensor.NewFloat16StorageGPU(devOut, n, e.deviceID)).(tensor.Storage[T])
+
+	if len(dst) > 0 && dst[0] != nil {
+		dst[0].SetStorage(outStorage)
+		dst[0].SetShape(a.Shape())
+		return dst[0], nil
+	}
+
+	t, err := tensor.NewWithStorage[T](a.Shape(), outStorage)
+	if err != nil {
+		e.pool.Free(e.deviceID, devOut, outBytes)
+		return nil, err
+	}
+
+	return t, nil
+}
+
+// tryFP16NativeBinaryOp checks whether both inputs have Float16Storage and,
+// if so, runs the FP16 kernel directly without conversion. If only one input
+// is Float16Storage, it converts the F32 operand. Returns (nil, nil) when
+// neither input is Float16Storage, signalling the caller to fall through.
+func tryFP16NativeBinaryOp[T tensor.Numeric](
+	e *GPUEngine[T],
+	ctx context.Context,
+	a, b *tensor.TensorNumeric[T],
+	kernelFn func(a, b, c unsafe.Pointer, n int, stream gpuapi.Stream) error,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	aFP16, aOk := any(a.GetStorage()).(*tensor.Float16Storage)
+	bFP16, bOk := any(b.GetStorage()).(*tensor.Float16Storage)
+
+	switch {
+	case aOk && bOk:
+		return fp16BinaryOpNative(e, a, b, aFP16, bFP16, kernelFn, dst...)
+	case aOk:
+		return fp16BinaryOpMixed(e, ctx, a, b, aFP16, true, kernelFn, dst...)
+	case bOk:
+		return fp16BinaryOpMixed(e, ctx, a, b, bFP16, false, kernelFn, dst...)
+	default:
+		return nil, nil
+	}
+}
+
 // fp16BinaryOp converts two F32 GPU tensors to FP16, runs an FP16 binary kernel,
 // and converts the FP16 result back to F32.
 func fp16BinaryOp[T tensor.Numeric](
