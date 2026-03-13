@@ -16,42 +16,70 @@ import (
 // and a bigger one allocated. This avoids per-call arena allocations that
 // previously exhausted the 2GB arena and caused slow MemPool fallbacks.
 type fp8Scratchpad struct {
-	// fp16Buf is a reusable FP16 conversion buffer for activations (A or B).
-	fp16Buf     unsafe.Pointer
-	fp16BufSize int
+	// fp16BufA is a reusable FP16 buffer for A matrix (weights or activations).
+	fp16BufA     unsafe.Pointer
+	fp16BufASize int
+
+	// fp16BufB is a reusable FP16 buffer for B matrix (activations or weights).
+	fp16BufB     unsafe.Pointer
+	fp16BufBSize int
 
 	// scaleOne is a persistent device float32 with value 1.0, used as the
 	// scale pointer for FP16 activations (which need no additional scaling).
 	scaleOne unsafe.Pointer
 }
 
-// ensure returns fp16Buf, growing it if needed. The returned pointer is owned
+// ensureA returns fp16BufA, growing it if needed. The returned pointer is owned
 // by the scratchpad and must NOT be freed by the caller.
-func (s *fp8Scratchpad) ensure(pool gpuapi.MemPool, deviceID, byteSize int) (unsafe.Pointer, error) {
-	if s.fp16Buf != nil && s.fp16BufSize >= byteSize {
-		return s.fp16Buf, nil
+func (s *fp8Scratchpad) ensureA(pool gpuapi.MemPool, deviceID, byteSize int) (unsafe.Pointer, error) {
+	if s.fp16BufA != nil && s.fp16BufASize >= byteSize {
+		return s.fp16BufA, nil
 	}
-	// Grow: free old, allocate new.
-	if s.fp16Buf != nil {
-		pool.Free(deviceID, s.fp16Buf, s.fp16BufSize)
-		s.fp16Buf = nil
-		s.fp16BufSize = 0
+	if s.fp16BufA != nil {
+		pool.Free(deviceID, s.fp16BufA, s.fp16BufASize)
+		s.fp16BufA = nil
+		s.fp16BufASize = 0
 	}
 	ptr, err := pool.Alloc(deviceID, byteSize)
 	if err != nil {
 		return nil, err
 	}
-	s.fp16Buf = ptr
-	s.fp16BufSize = byteSize
+	s.fp16BufA = ptr
+	s.fp16BufASize = byteSize
+	return ptr, nil
+}
+
+// ensureB returns fp16BufB, growing it if needed. The returned pointer is owned
+// by the scratchpad and must NOT be freed by the caller.
+func (s *fp8Scratchpad) ensureB(pool gpuapi.MemPool, deviceID, byteSize int) (unsafe.Pointer, error) {
+	if s.fp16BufB != nil && s.fp16BufBSize >= byteSize {
+		return s.fp16BufB, nil
+	}
+	if s.fp16BufB != nil {
+		pool.Free(deviceID, s.fp16BufB, s.fp16BufBSize)
+		s.fp16BufB = nil
+		s.fp16BufBSize = 0
+	}
+	ptr, err := pool.Alloc(deviceID, byteSize)
+	if err != nil {
+		return nil, err
+	}
+	s.fp16BufB = ptr
+	s.fp16BufBSize = byteSize
 	return ptr, nil
 }
 
 // free releases all scratchpad device memory back to the pool.
 func (s *fp8Scratchpad) free(pool gpuapi.MemPool, deviceID int) {
-	if s.fp16Buf != nil {
-		pool.Free(deviceID, s.fp16Buf, s.fp16BufSize)
-		s.fp16Buf = nil
-		s.fp16BufSize = 0
+	if s.fp16BufA != nil {
+		pool.Free(deviceID, s.fp16BufA, s.fp16BufASize)
+		s.fp16BufA = nil
+		s.fp16BufASize = 0
+	}
+	if s.fp16BufB != nil {
+		pool.Free(deviceID, s.fp16BufB, s.fp16BufBSize)
+		s.fp16BufB = nil
+		s.fp16BufBSize = 0
 	}
 	if s.scaleOne != nil {
 		pool.Free(deviceID, s.scaleOne, f32Size)
@@ -198,7 +226,7 @@ func (e *GPUEngine[T]) tryLtMatMulFP8A(
 
 	bElems := k * n
 	fp16BSize := bElems * fp16Size
-	fp16B, err := scratch.ensure(e.pool, e.deviceID, fp16BSize)
+	fp16B, err := scratch.ensureB(e.pool, e.deviceID, fp16BSize)
 	if err != nil {
 		return nil, nil
 	}
@@ -241,22 +269,26 @@ func (e *GPUEngine[T]) fp8DequantMatMulA(
 		return nil, fmt.Errorf("matMulFP8: no BLAS available for FP16 fallback")
 	}
 
+	scratch, err := e.getFP8Scratch()
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8: get scratchpad: %w", err)
+	}
+
 	aElems := m * k
 	bElems := k * n
 
-	// Dequantize FP8 A -> FP16.
+	// Dequantize FP8 A -> FP16 using scratchpad buffer A.
 	fp16ASize := aElems * fp16Size
-	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
+	fp16A, err := scratch.ensureA(e.pool, e.deviceID, fp16ASize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8: alloc fp16A: %w", err)
 	}
-	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
 
 	if err := e.kernels.DequantFP8E4M3ToFP16(devA, fp16A, fs.Scale(), aElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8: dequant fp8->fp16 A: %w", err)
 	}
 
-	// Convert F32 B -> FP16.
+	// Convert F32 B -> FP16 using scratchpad buffer B.
 	devBF32, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8: getDevicePtr B: %w", err)
@@ -264,11 +296,10 @@ func (e *GPUEngine[T]) fp8DequantMatMulA(
 	defer cleanupB()
 
 	fp16BSize := bElems * fp16Size
-	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
+	fp16B, err := scratch.ensureB(e.pool, e.deviceID, fp16BSize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8: alloc fp16B: %w", err)
 	}
-	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
 
 	if err := e.kernels.F32ToFP16(devBF32, fp16B, bElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8: f32->fp16 B: %w", err)
@@ -406,7 +437,7 @@ func (e *GPUEngine[T]) tryLtMatMulFP8B(
 
 	aElems := m * k
 	fp16ASize := aElems * fp16Size
-	fp16A, err := scratch.ensure(e.pool, e.deviceID, fp16ASize)
+	fp16A, err := scratch.ensureA(e.pool, e.deviceID, fp16ASize)
 	if err != nil {
 		return nil, nil
 	}
@@ -449,10 +480,15 @@ func (e *GPUEngine[T]) fp8DequantMatMulB(
 		return nil, fmt.Errorf("matMulFP8BWeight: no BLAS available for FP16 fallback")
 	}
 
+	scratch, err := e.getFP8Scratch()
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: get scratchpad: %w", err)
+	}
+
 	aElems := m * k
 	bElems := k * n
 
-	// Convert F32 A -> FP16.
+	// Convert F32 A -> FP16 using scratchpad buffer A.
 	devAF32, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: getDevicePtr A: %w", err)
@@ -460,23 +496,21 @@ func (e *GPUEngine[T]) fp8DequantMatMulB(
 	defer cleanupA()
 
 	fp16ASize := aElems * fp16Size
-	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
+	fp16A, err := scratch.ensureA(e.pool, e.deviceID, fp16ASize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: alloc fp16A: %w", err)
 	}
-	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
 
 	if err := e.kernels.F32ToFP16(devAF32, fp16A, aElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: f32->fp16 A: %w", err)
 	}
 
-	// Dequantize FP8 B -> FP16.
+	// Dequantize FP8 B -> FP16 using scratchpad buffer B.
 	fp16BSize := bElems * fp16Size
-	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
+	fp16B, err := scratch.ensureB(e.pool, e.deviceID, fp16BSize)
 	if err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: alloc fp16B: %w", err)
 	}
-	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
 
 	if err := e.kernels.DequantFP8E4M3ToFP16(devB, fp16B, fs.Scale(), bElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: dequant fp8->fp16 B: %w", err)

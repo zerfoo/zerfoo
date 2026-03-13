@@ -321,7 +321,7 @@ func TestFP8Scratchpad_EnsureGrows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			allocsBefore := pool.allocCount
-			ptr, err := s.ensure(pool, deviceID, tt.size)
+			ptr, err := s.ensureA(pool, deviceID, tt.size)
 			if err != nil {
 				t.Fatalf("ensure(%d): %v", tt.size, err)
 			}
@@ -337,8 +337,8 @@ func TestFP8Scratchpad_EnsureGrows(t *testing.T) {
 	}
 
 	// After all ensures, the internal size should be the max requested.
-	if s.fp16BufSize != 4096 {
-		t.Errorf("fp16BufSize=%d, want 4096", s.fp16BufSize)
+	if s.fp16BufASize != 4096 {
+		t.Errorf("fp16BufSize=%d, want 4096", s.fp16BufASize)
 	}
 }
 
@@ -346,18 +346,18 @@ func TestFP8Scratchpad_EnsureReusesPointer(t *testing.T) {
 	pool := newFakeMemPool()
 	var s fp8Scratchpad
 
-	ptr1, err := s.ensure(pool, 0, 1024)
+	ptr1, err := s.ensureA(pool, 0, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ptr2, err := s.ensure(pool, 0, 512)
+	ptr2, err := s.ensureA(pool, 0, 512)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ptr1 != ptr2 {
 		t.Error("ensure returned different pointer for smaller request; expected reuse")
 	}
-	ptr3, err := s.ensure(pool, 0, 1024)
+	ptr3, err := s.ensureA(pool, 0, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestFP8Scratchpad_Free(t *testing.T) {
 	var s fp8Scratchpad
 
 	// Allocate a buffer and a fake scaleOne.
-	if _, err := s.ensure(pool, 0, 256); err != nil {
+	if _, err := s.ensureA(pool, 0, 256); err != nil {
 		t.Fatal(err)
 	}
 	scalePtr, err := pool.Alloc(0, f32Size)
@@ -386,10 +386,10 @@ func TestFP8Scratchpad_Free(t *testing.T) {
 
 	s.free(pool, 0)
 
-	if s.fp16Buf != nil {
+	if s.fp16BufA != nil {
 		t.Error("fp16Buf not nil after free")
 	}
-	if s.fp16BufSize != 0 {
+	if s.fp16BufASize != 0 {
 		t.Error("fp16BufSize not 0 after free")
 	}
 	if s.scaleOne != nil {
@@ -612,7 +612,7 @@ func TestFP8Scratchpad_GrowFreesOldBuffer(t *testing.T) {
 	pool := newFakeMemPool()
 	var s fp8Scratchpad
 
-	if _, err := s.ensure(pool, 0, 128); err != nil {
+	if _, err := s.ensureA(pool, 0, 128); err != nil {
 		t.Fatal(err)
 	}
 	if pool.allocCount != 1 || pool.freeCount != 0 {
@@ -620,7 +620,7 @@ func TestFP8Scratchpad_GrowFreesOldBuffer(t *testing.T) {
 	}
 
 	// Growing should free the old buffer and allocate a new one.
-	if _, err := s.ensure(pool, 0, 256); err != nil {
+	if _, err := s.ensureA(pool, 0, 256); err != nil {
 		t.Fatal(err)
 	}
 	if pool.allocCount != 2 {
