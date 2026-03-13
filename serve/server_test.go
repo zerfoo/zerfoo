@@ -948,3 +948,348 @@ func TestHandleOpenAPISpec(t *testing.T) {
 		t.Errorf("response body does not look like valid OpenAPI YAML")
 	}
 }
+
+// --- Response format compliance ---
+
+func TestChatCompletions_ResponseIDPrefix(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if !strings.HasPrefix(result.ID, "chatcmpl-") {
+		t.Errorf("ID = %q, want prefix %q", result.ID, "chatcmpl-")
+	}
+	if result.Created == 0 {
+		t.Error("Created should not be zero")
+	}
+}
+
+func TestCompletions_ResponseIDPrefix(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"prompt":"hello","max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result CompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if !strings.HasPrefix(result.ID, "cmpl-") {
+		t.Errorf("ID = %q, want prefix %q", result.ID, "cmpl-")
+	}
+	if result.Created == 0 {
+		t.Error("Created should not be zero")
+	}
+}
+
+func TestChatCompletions_ContentTypeJSON(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+	}
+}
+
+// --- SSE format validation ---
+
+func TestChatCompletions_SSEFormat(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"stream":true,"max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Verify streaming headers.
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want %q", ct, "text/event-stream")
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+	}
+
+	raw, _ := io.ReadAll(resp.Body)
+	lines := strings.Split(string(raw), "\n")
+
+	// Every non-empty line must start with "data: ".
+	var dataLines int
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			t.Errorf("unexpected non-data line: %q", line)
+		}
+		dataLines++
+	}
+	if dataLines == 0 {
+		t.Fatal("no SSE data lines found")
+	}
+
+	// Last data line should be [DONE].
+	if !strings.Contains(string(raw), "data: [DONE]") {
+		t.Error("SSE stream should end with data: [DONE]")
+	}
+}
+
+func TestCompletions_SSEFormat(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"prompt":"hello","stream":true,"max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want %q", ct, "text/event-stream")
+	}
+
+	raw, _ := io.ReadAll(resp.Body)
+
+	// Verify each SSE chunk is valid JSON with choices[].text.
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			continue
+		}
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			t.Errorf("invalid JSON in SSE chunk: %s", data)
+			continue
+		}
+		choices, ok := chunk["choices"]
+		if !ok {
+			t.Errorf("SSE chunk missing 'choices' field: %s", data)
+			continue
+		}
+		arr, ok := choices.([]interface{})
+		if !ok || len(arr) == 0 {
+			t.Errorf("SSE chunk 'choices' is not a non-empty array: %s", data)
+		}
+	}
+
+	if !strings.Contains(string(raw), "data: [DONE]") {
+		t.Error("SSE stream should end with data: [DONE]")
+	}
+}
+
+// --- Model info after delete ---
+
+func TestHandleModelInfo_AfterDelete(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Delete the model.
+	delResp := doDelete(t, ts.URL+"/v1/models/test-model")
+	_ = delResp.Body.Close()
+
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", delResp.StatusCode)
+	}
+
+	// Model info should return 404 after deletion.
+	infoResp := doGet(t, ts.URL+"/v1/models/test-model")
+	defer func() { _ = infoResp.Body.Close() }()
+
+	if infoResp.StatusCode != http.StatusNotFound {
+		t.Errorf("model info after delete: status = %d, want 404", infoResp.StatusCode)
+	}
+}
+
+// --- Embeddings non-string array items ---
+
+func TestHandleEmbeddings_NonStringArrayItems(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"input":["hello", 42]}`
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// --- Full integration: all endpoints on a single server ---
+
+func TestIntegration_AllEndpoints(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// 1. GET /v1/models - list models.
+	listResp := doGet(t, ts.URL+"/v1/models")
+	var listResult ModelListResponse
+	if err := json.NewDecoder(listResp.Body).Decode(&listResult); err != nil {
+		t.Fatalf("models list decode: %v", err)
+	}
+	_ = listResp.Body.Close()
+	if listResult.Object != "list" {
+		t.Errorf("models Object = %q, want %q", listResult.Object, "list")
+	}
+	if len(listResult.Data) != 1 {
+		t.Fatalf("models Data len = %d, want 1", len(listResult.Data))
+	}
+	modelID := listResult.Data[0].ID
+
+	// 2. GET /v1/models/{id} - model info.
+	infoResp := doGet(t, ts.URL+"/v1/models/"+modelID)
+	var infoResult ModelObject
+	if err := json.NewDecoder(infoResp.Body).Decode(&infoResult); err != nil {
+		t.Fatalf("model info decode: %v", err)
+	}
+	_ = infoResp.Body.Close()
+	if infoResult.ID != modelID {
+		t.Errorf("model info ID = %q, want %q", infoResult.ID, modelID)
+	}
+	if infoResult.Object != "model" {
+		t.Errorf("model info Object = %q, want %q", infoResult.Object, "model")
+	}
+
+	// 3. POST /v1/chat/completions - non-streaming.
+	chatBody := `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`
+	chatResp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", chatBody)
+	var chatResult ChatCompletionResponse
+	if err := json.NewDecoder(chatResp.Body).Decode(&chatResult); err != nil {
+		t.Fatalf("chat decode: %v", err)
+	}
+	_ = chatResp.Body.Close()
+	if chatResult.Object != "chat.completion" {
+		t.Errorf("chat Object = %q, want %q", chatResult.Object, "chat.completion")
+	}
+	if chatResult.Model != modelID {
+		t.Errorf("chat Model = %q, want %q", chatResult.Model, modelID)
+	}
+	if len(chatResult.Choices) != 1 || chatResult.Choices[0].Message.Role != "assistant" {
+		t.Error("chat response should have 1 choice with assistant role")
+	}
+
+	// 4. POST /v1/chat/completions - streaming.
+	chatStreamBody := `{"messages":[{"role":"user","content":"hello"}],"stream":true,"max_tokens":5}`
+	chatStreamResp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", chatStreamBody)
+	chatStreamRaw, _ := io.ReadAll(chatStreamResp.Body)
+	_ = chatStreamResp.Body.Close()
+	if !strings.Contains(string(chatStreamRaw), "data: [DONE]") {
+		t.Error("chat stream should contain [DONE]")
+	}
+
+	// 5. POST /v1/completions - non-streaming.
+	complBody := `{"prompt":"hello","max_tokens":5}`
+	complResp := doPost(t, ts.URL+"/v1/completions", "application/json", complBody)
+	var complResult CompletionResponse
+	if err := json.NewDecoder(complResp.Body).Decode(&complResult); err != nil {
+		t.Fatalf("completion decode: %v", err)
+	}
+	_ = complResp.Body.Close()
+	if complResult.Object != "text_completion" {
+		t.Errorf("completion Object = %q, want %q", complResult.Object, "text_completion")
+	}
+	if complResult.Model != modelID {
+		t.Errorf("completion Model = %q, want %q", complResult.Model, modelID)
+	}
+
+	// 6. POST /v1/completions - streaming.
+	complStreamBody := `{"prompt":"hello","stream":true,"max_tokens":5}`
+	complStreamResp := doPost(t, ts.URL+"/v1/completions", "application/json", complStreamBody)
+	complStreamRaw, _ := io.ReadAll(complStreamResp.Body)
+	_ = complStreamResp.Body.Close()
+	if !strings.Contains(string(complStreamRaw), "data: [DONE]") {
+		t.Error("completion stream should contain [DONE]")
+	}
+
+	// 7. POST /v1/embeddings (expected to fail on test model, but verifies routing).
+	embBody := `{"input":"hello"}`
+	embResp := doPost(t, ts.URL+"/v1/embeddings", "application/json", embBody)
+	_ = embResp.Body.Close()
+	// 500 is expected since test model does not support embeddings.
+	if embResp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("embeddings status = %d, want 500", embResp.StatusCode)
+	}
+
+	// 8. GET /openapi.yaml
+	specResp := doGet(t, ts.URL+"/openapi.yaml")
+	specBody, _ := io.ReadAll(specResp.Body)
+	_ = specResp.Body.Close()
+	if specResp.StatusCode != http.StatusOK {
+		t.Fatalf("openapi status = %d, want 200", specResp.StatusCode)
+	}
+	if !strings.Contains(string(specBody), "openapi:") {
+		t.Error("openapi.yaml should contain 'openapi:' field")
+	}
+
+	// 9. DELETE /v1/models/{id} - delete the model.
+	delResp := doDelete(t, ts.URL+"/v1/models/"+modelID)
+	var delResult ModelDeleteResponse
+	if err := json.NewDecoder(delResp.Body).Decode(&delResult); err != nil {
+		t.Fatalf("delete decode: %v", err)
+	}
+	_ = delResp.Body.Close()
+	if !delResult.Deleted {
+		t.Error("delete Deleted should be true")
+	}
+
+	// 10. Verify model is gone.
+	postDelList := doGet(t, ts.URL+"/v1/models")
+	var postDelResult ModelListResponse
+	if err := json.NewDecoder(postDelList.Body).Decode(&postDelResult); err != nil {
+		t.Fatalf("post-delete list decode: %v", err)
+	}
+	_ = postDelList.Body.Close()
+	if len(postDelResult.Data) != 0 {
+		t.Errorf("after delete, models Data len = %d, want 0", len(postDelResult.Data))
+	}
+}
