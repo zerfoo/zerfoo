@@ -34,6 +34,13 @@ $(SO): $(PIC_OBJS)
 # transpose: 40->32 regs/thread (transpose_nd), no spills, occupancy 75%->100%.
 MAXREG32_SRCS = gemm_q4.cu transpose.cu
 
+# Monitor register pressure for Q4K GEMV after vectorization.
+gemv_q4k.o: gemv_q4k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v -c $< -o $@
+
+gemv_q4k.pic.o: gemv_q4k.cu
+	$(NVCC) $(NVCC_FLAGS) --ptxas-options=-v --compiler-options -fPIC -c $< -o $@
+
 gemm_q4.o: gemm_q4.cu
 	$(NVCC) $(NVCC_FLAGS) --maxrregcount=32 -c $< -o $@
 
