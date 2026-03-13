@@ -775,3 +775,30 @@ New `flash_attention_purego.go` dispatches via `cuda.Ccall` to `flash_attention_
 in libkernels.so. CGo file retained for tagged builds.
 
 ## Cumulative Progress (Waves 1-4): 27 tasks completed out of ~65 total
+
+---
+
+# Wave 5: Purego Conversions (cuBLAS, cuDNN, TensorRT, ROCm, OpenCL)
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates)
+
+## Tasks Completed
+
+All purego wrappers now exist for every GPU backend. CGo cuBLAS bindings deleted.
+
+| Task | Library | Key Change |
+|------|---------|-----------|
+| T210.2+T210.3 | cuBLAS | Deleted CGo cublas.go, removed build tags, runtime Available() guard |
+| T211.1 | cuDNN | 1175-line purego wrapper for all forward+backward ops |
+| T212.1 | TensorRT | 909-line purego wrapper for all 38 C shim functions |
+| T214.1+T214.2 | HIP + rocBLAS | Runtime API + BLAS wrappers, removed rocm build tag from mempool |
+| T215.1 | OpenCL | Full runtime API purego wrappers |
+
+## Impact
+- `go build ./...` works without `-tags cuda` for cuBLAS path
+- All GPU backends have purego alternatives for future build-tag removal
+- +4081 lines of purego wrappers, -423 lines of CGo code
+
+## Cumulative Progress (Waves 1-5): 34 tasks completed

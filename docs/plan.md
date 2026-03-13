@@ -442,14 +442,14 @@ enabling it after D2H elimination.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T210.2 Replace CGo cublas.go with purego implementation  Owner: TBD  Est: 2h
+- [x] T210.2 Replace CGo cublas.go with purego implementation  Owner: task-T210  Completed: 2026-03-13
   - Delete or archive internal/cublas/cublas.go (CGo version).
   - Remove //go:build cuda tag from new purego file.
   - Add cublas.Available() runtime guard.
   - Acceptance: go build ./internal/cublas/... without -tags cuda.
   - Dependencies: T210.1.
 
-- [ ] T210.3 Update gpuapi/cuda_blas.go to use purego cublas  Owner: TBD  Est: 1h
+- [x] T210.3 Update gpuapi/cuda_blas.go to use purego cublas  Owner: task-T210  Completed: 2026-03-13
   - Remove //go:build cuda tag.
   - Acceptance: go build ./internal/gpuapi/... without -tags cuda.
   - Dependencies: T210.2.
@@ -466,7 +466,7 @@ enabling it after D2H elimination.
 
 ### E211: cuDNN Purego Conversion
 
-- [ ] T211.1 Create purego wrappers for cuDNN API  Owner: TBD  Est: 6h
+- [x] T211.1 Create purego wrappers for cuDNN API  Owner: task-T211.1  Completed: 2026-03-13
   - Wrap via purego dlopen of libcudnn.so: cudnnCreate, cudnnDestroy,
     cudnnSetStream, cudnnCreateTensorDescriptor, cudnnSetTensor4dDescriptor,
     cudnnConvolutionForward, cudnnBatchNormalizationForwardInference,
@@ -499,7 +499,7 @@ enabling it after D2H elimination.
 
 ### E212: TensorRT Purego Conversion
 
-- [ ] T212.1 Create purego wrappers for TensorRT C API  Owner: TBD  Est: 6h
+- [x] T212.1 Create purego wrappers for TensorRT C API  Owner: task-T212.1  Completed: 2026-03-13
   - TensorRT has a C++ API wrapped by internal/tensorrt/cshim/. The C shim
     provides a flat C interface. Create purego wrappers that dlopen libtrt_capi.so.
   - Update Makefile to produce shared library.
@@ -552,12 +552,12 @@ enabling it after D2H elimination.
 
 ### E214: ROCm Purego Conversion
 
-- [ ] T214.1 Create purego wrappers for HIP runtime API  Owner: TBD  Est: 4h
+- [x] T214.1 Create purego wrappers for HIP runtime API  Owner: task-T214  Completed: 2026-03-13
   - Wrap via purego dlopen of libamdhip64.so.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T214.2 Create purego wrappers for rocBLAS API  Owner: TBD  Est: 3h
+- [x] T214.2 Create purego wrappers for rocBLAS API  Owner: task-T214  Completed: 2026-03-13
   - Wrap via purego dlopen of librocblas.so.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
@@ -585,7 +585,7 @@ enabling it after D2H elimination.
 
 ### E215: OpenCL Purego Conversion
 
-- [ ] T215.1 Create purego wrappers for OpenCL API  Owner: TBD  Est: 4h
+- [x] T215.1 Create purego wrappers for OpenCL API  Owner: task-T215.1  Completed: 2026-03-13
   - Wrap via purego dlopen of libOpenCL.so.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
