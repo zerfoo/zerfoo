@@ -448,23 +448,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 					qHeadsRoPE = qSlice
 					kHeadsRoPE = kSlice
 				} else {
-					// CPU fallback: copy data.
-					log.Printf("WARNING: GQA fused QK norm+RoPE CPU fallback triggered (D2H copy); expected GPUStorage but got %T", fusedOut.GetStorage())
-					data := fusedOut.Data()
-					qData := make([]T, qElems)
-					kData := make([]T, kElems)
-					copy(qData, data[:qElems])
-					copy(kData, data[qElems:qElems+kElems])
-					qSlice, cpuErr := tensor.New([]int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim}, qData)
-					if cpuErr != nil {
-						return nil, cpuErr
-					}
-					kSlice, cpuErr := tensor.New([]int{batchSize, gqa.numKeyValueHeads, seqLen, gqa.headDim}, kData)
-					if cpuErr != nil {
-						return nil, cpuErr
-					}
-					qHeadsRoPE = qSlice
-					kHeadsRoPE = kSlice
+					return nil, fmt.Errorf("fused QK norm+RoPE: expected GPUStorage or Float16Storage but got %T; this causes a D2H copy that blocks CUDA graph capture", fusedOut.GetStorage())
 				}
 			}
 			// Fall through to unfused path on error.
