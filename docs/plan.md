@@ -122,7 +122,7 @@ to 256, vectorize quantized data loads, and tune shared memory usage.
   - Acceptance: go test passes. bench_tps output identical.
   - Dependencies: T601.2.
 
-- [ ] T601.3 Vectorize Q4K quantized byte loads  Owner: TBD  Est: 1.5h
+- [x] T601.3 Vectorize Q4K quantized byte loads  Owner: task-T601.3  Est: 1.5h  Done: 2026-03-13
   - In gemv_q4k_kernel inner loop: replace per-byte __ldg loads with
     uint4 loads (16 bytes = 16 quantized values per load, 2 loads per group
     of 32 bytes instead of 32 scalar loads).
@@ -168,7 +168,7 @@ Float16Storage -- the fix is to ensure the fast paths are always taken.
   - Acceptance: Every .Data() call in GQA catalogued with trigger conditions.
   - Dependencies: none.
 
-- [ ] T602.2 Fix fused QK norm+RoPE D2H fallback  Owner: TBD  Est: 1.5h
+- [x] T602.2 Fix fused QK norm+RoPE D2H fallback  Owner: task-T602.2  Est: 1.5h  Done: 2026-03-13
   - At line ~452: the fallback triggers when fusedOut does not have GPUStorage.
   - Ensure FusedQKNormRoPEProvider always returns GPU-resident output.
   - If the provider interface cannot guarantee GPU output, add a GPU upload
@@ -178,7 +178,7 @@ Float16Storage -- the fix is to ensure the fast paths are always taken.
     WARNING log line never printed during bench_tps.
   - Dependencies: none.
 
-- [ ] T602.3 Fix splitMergedQKV D2H fallback  Owner: TBD  Est: 1h
+- [x] T602.3 Fix splitMergedQKV D2H fallback  Owner: task-T602.3  Est: 1h  Done: 2026-03-13
   - At line ~925: the fallback triggers when merged tensor does not have
     GPUStorage or Float16Storage.
   - Ensure the merged QKV tensor always has GPU storage during decode.
@@ -189,7 +189,7 @@ Float16Storage -- the fix is to ensure the fast paths are always taken.
     WARNING log line never printed during bench_tps.
   - Dependencies: none.
 
-- [ ] T602.4 Audit remaining D2H copies in inference hot path  Owner: TBD  Est: 1h
+- [x] T602.4 Audit remaining D2H copies in inference hot path  Owner: task-T602.4  Est: 1h  Done: 2026-03-13
   - Grep for .Data() calls in compute/, layers/, generate/ that could be
     hit during decode.
   - Focus on: FFN, MatMul dispatch, KV cache operations.
@@ -268,7 +268,7 @@ FP8 output is degenerate (repetitive text) from the FP16 dequant fallback path.
   - Acceptance: Arena misses < 100. MemPool misses < 100.
   - Dependencies: T604.1.
 
-- [ ] T604.2 Debug FP8 degenerate output  Owner: TBD  Est: 2h
+- [x] T604.2 Debug FP8 degenerate output  Owner: task-T604.2  Est: 2h  Done: 2026-03-13
   - Run bench_tps --dtype=fp8 with temp=0 and inspect output quality.
   - Add diagnostic logging to fp8DequantMatMulA: log input/output norms
     for first 3 MatMul calls to check for numerical instability.
