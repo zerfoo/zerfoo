@@ -463,6 +463,11 @@ func (e *GPUEngine[T]) Stream() unsafe.Pointer {
 	return e.stream.Ptr()
 }
 
+// GPUStream returns the engine's gpuapi.Stream for async memory operations.
+func (e *GPUEngine[T]) GPUStream() gpuapi.Stream {
+	return e.stream
+}
+
 // Close releases the BLAS handle, DNN handle, GPU stream, and drains the memory pool.
 // The engine must not be used after Close.
 func (e *GPUEngine[T]) Close() error {

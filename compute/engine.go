@@ -4,6 +4,7 @@ import (
 	"context"
 	"unsafe"
 
+	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -43,6 +44,13 @@ type TransposeBMatMuler[T tensor.Numeric] interface {
 type StreamProvider interface {
 	// Stream returns the engine's GPU stream as an unsafe.Pointer (cudaStream_t).
 	Stream() unsafe.Pointer
+}
+
+// GPUStreamAccessor is an optional interface for engines that provide their
+// gpuapi.Stream for async memory operations (e.g., KV cache D2D copies
+// during CUDA graph capture).
+type GPUStreamAccessor interface {
+	GPUStream() gpuapi.Stream
 }
 
 // GPUArgmaxer is an optional interface for engines that can compute argmax

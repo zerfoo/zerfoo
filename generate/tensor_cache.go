@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
@@ -34,17 +35,24 @@ type TensorCache[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	layers    []tensorLayerBuf[T]
 	maxSeqLen int
+	stream    gpuapi.Stream // GPU stream for async D2D/H2D copies (nil for CPU)
 }
 
 // NewTensorCache creates a TensorCache backed by the given engine.
 // numLayers should match the model's transformer layer count.
 // maxSeqLen limits the total cached sequence length.
+// If the engine implements GPUStreamAccessor, async memcpy is used for
+// KV cache updates (required for CUDA graph capture compatibility).
 func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSeqLen int) *TensorCache[T] {
-	return &TensorCache[T]{
+	tc := &TensorCache[T]{
 		engine:    engine,
 		layers:    make([]tensorLayerBuf[T], numLayers),
 		maxSeqLen: maxSeqLen,
 	}
+	if sa, ok := any(engine).(compute.GPUStreamAccessor); ok {
+		tc.stream = sa.GPUStream()
+	}
+	return tc
 }
 
 // Update appends new key and value tensors to the cache for the given layer.
@@ -111,10 +119,10 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	numElems := seqLen * dim * batch
 
 	if lb.isGPU {
-		if err := appendGPU(lb.kStorage, offset, numElems, newK); err != nil {
+		if err := appendGPU(lb.kStorage, offset, numElems, newK, c.stream); err != nil {
 			return fmt.Errorf("append K layer %d: %w", layer, err)
 		}
-		if err := appendGPU(lb.vStorage, offset, numElems, newV); err != nil {
+		if err := appendGPU(lb.vStorage, offset, numElems, newV, c.stream); err != nil {
 			return fmt.Errorf("append V layer %d: %w", layer, err)
 		}
 	} else {
@@ -169,9 +177,17 @@ func promoteToGPU[T tensor.Numeric](lb *tensorLayerBuf[T], batch, maxSeqLen, dim
 
 // appendGPU copies tensor data into the pre-allocated GPU buffer at the given
 // element offset, using D2D memcpy for GPU sources or H2D for CPU sources.
-func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], offset, numElems int, src *tensor.TensorNumeric[T]) error {
+// When stream is non-nil, async memcpy is used (required for CUDA graph
+// capture compatibility).
+func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], offset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
 	if gs, ok := src.GetStorage().(*tensor.GPUStorage[T]); ok {
+		if stream != nil {
+			return dst.CopyFromDeviceAsync(gs, offset, 0, numElems, stream)
+		}
 		return dst.CopyFromDevice(gs, offset, 0, numElems)
+	}
+	if stream != nil {
+		return dst.CopyFromHostAsync(src.Data(), offset, stream)
 	}
 	return dst.CopyFromHost(src.Data(), offset)
 }
