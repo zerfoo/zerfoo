@@ -38,6 +38,11 @@ type GPUEngine[T tensor.Numeric] struct {
 
 	// oomFallbackCount tracks how many times an OOM triggered CPU fallback.
 	oomFallbackCount atomic.Int64
+
+	// managedMem is true when the device supports concurrent managed memory
+	// access (e.g., GB10 with NVLink-C2C). When true, weight uploads use
+	// cudaMallocManaged instead of cudaMalloc + explicit H2D copy.
+	managedMem bool
 }
 
 // NewGPUEngine creates a new GPUEngine backed by CUDA via the GRAL abstraction.
@@ -105,7 +110,8 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		}
 	}
 
-	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled")
+	managedMem := cuda.ManagedMemorySupported(dev)
+	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled", "managedMemory", fmt.Sprintf("%v", managedMem))
 
 	fallbackPool := cuda.NewMemPool()
 	cuda.SetDefaultMemPool(fallbackPool)
@@ -122,33 +128,39 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		l.Warn("arena pool not available, falling back to MemPool", "error", err.Error())
 		bucketPool := gpuapi.NewCUDAMemPoolFrom(fallbackPool)
 		return &GPUEngine[T]{
-			cpu:      NewCPUEngine(ops),
-			runtime:  rt,
-			blas:     blas,
-			dnn:      dnn,
-			kernels:  gpuapi.NewCUDAKernels(),
-			pool:     bucketPool,
-			stream:   stream,
-			logger:   l,
-			deviceID: dev,
+			cpu:        NewCPUEngine(ops),
+			runtime:    rt,
+			blas:       blas,
+			dnn:        dnn,
+			kernels:    gpuapi.NewCUDAKernels(),
+			pool:       bucketPool,
+			stream:     stream,
+			logger:     l,
+			deviceID:   dev,
+			managedMem: managedMem,
 		}, nil
 	}
 
 	return &GPUEngine[T]{
-		cpu:      NewCPUEngine(ops),
-		runtime:  rt,
-		blas:     blas,
-		dnn:      dnn,
-		kernels:  gpuapi.NewCUDAKernels(),
-		pool:     arenaPool,
-		stream:   stream,
-		logger:   l,
-		deviceID: dev,
+		cpu:        NewCPUEngine(ops),
+		runtime:    rt,
+		blas:       blas,
+		dnn:        dnn,
+		kernels:    gpuapi.NewCUDAKernels(),
+		pool:       arenaPool,
+		stream:     stream,
+		logger:     l,
+		deviceID:   dev,
+		managedMem: managedMem,
 	}, nil
 }
 
 // DeviceID returns the GPU device ID this engine is bound to.
 func (e *GPUEngine[T]) DeviceID() int { return e.deviceID }
+
+// IsManagedMemory returns true if the engine uses managed memory for
+// weight uploads and the arena allocator.
+func (e *GPUEngine[T]) IsManagedMemory() bool { return e.managedMem }
 
 // ResetPool resets the arena pool, reclaiming all per-pass allocations.
 // This is a no-op if the pool is not arena-backed.
@@ -176,6 +188,10 @@ func (e *GPUEngine[T]) SetLogger(l log.Logger) {
 // Tensors that already have GPUStorage are skipped. Q4 quantized weights
 // get their raw bytes uploaded and cached in Q4Storage to avoid per-op H2D.
 // This is called once at model load time.
+//
+// On devices with managed memory support (e.g., GB10), weights are allocated
+// with cudaMallocManaged and populated via direct CPU memcpy. The GPU can
+// then access them without any explicit H2D transfer.
 func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) error {
 	e.setDevice()
 	uploaded := 0
@@ -200,12 +216,11 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 				blocksPerRow = shape[1] / 32
 			}
 			rawBytes := qs.RawBytesGPU(blocksPerRow)
-			// Use runtime.Malloc (not pool) for permanent weight storage.
-			devPtr, err := e.runtime.Malloc(len(rawBytes))
+			devPtr, err := e.allocWeight(len(rawBytes))
 			if err != nil {
 				return fmt.Errorf("alloc Q4 GPU (shape %v): %w", t.Shape(), err)
 			}
-			if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
 				_ = e.runtime.Free(devPtr)
 				return fmt.Errorf("upload Q4 (shape %v): %w", t.Shape(), err)
 			}
@@ -229,12 +244,12 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			continue
 		}
 		byteSize := n * f32Size
-		// Use runtime.Malloc (not pool) for permanent weight storage.
-		devPtr, err := e.runtime.Malloc(byteSize)
+		devPtr, err := e.allocWeight(byteSize)
 		if err != nil {
 			return fmt.Errorf("alloc f32 GPU (shape %v): %w", t.Shape(), err)
 		}
-		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		src := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), byteSize)
+		if err := e.uploadBytes(devPtr, src); err != nil {
 			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload f32 (shape %v): %w", t.Shape(), err)
 		}
@@ -262,26 +277,52 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			continue // already on GPU
 		}
 		rawBytes := qs.RawBytes()
-		// Use runtime.Malloc (not pool) for permanent weight storage.
-		devPtr, err := e.runtime.Malloc(len(rawBytes))
+		devPtr, err := e.allocWeight(len(rawBytes))
 		if err != nil {
 			return fmt.Errorf("alloc Q8 GPU (shape %v): %w", t.Shape(), err)
 		}
-		if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&rawBytes[0]), len(rawBytes), gpuapi.MemcpyHostToDevice); err != nil {
+		if err := e.uploadBytes(devPtr, rawBytes); err != nil {
 			_ = e.runtime.Free(devPtr)
 			return fmt.Errorf("upload Q8 (shape %v): %w", t.Shape(), err)
 		}
 		qs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
 		q8Uploaded++
 	}
+	method := "H2D"
+	if e.managedMem {
+		method = "managed"
+	}
 	if uploaded > 0 || q4Uploaded > 0 || q8Uploaded > 0 {
 		e.logger.Info("weights uploaded to GPU",
 			"f32", fmt.Sprintf("%d", uploaded),
 			"q4", fmt.Sprintf("%d", q4Uploaded),
 			"q8", fmt.Sprintf("%d", q8Uploaded),
-			"device", fmt.Sprintf("%d", e.deviceID))
+			"device", fmt.Sprintf("%d", e.deviceID),
+			"method", method)
 	}
 	return nil
+}
+
+// allocWeight allocates permanent memory for a weight tensor.
+// Uses cudaMallocManaged on devices with managed memory support,
+// otherwise uses cudaMalloc.
+func (e *GPUEngine[T]) allocWeight(byteSize int) (unsafe.Pointer, error) {
+	if e.managedMem {
+		return cuda.MallocManaged(byteSize)
+	}
+	return e.runtime.Malloc(byteSize)
+}
+
+// uploadBytes copies src bytes into a device (or managed) pointer.
+// With managed memory, this is a direct CPU memcpy (no H2D needed).
+// Without managed memory, this uses cudaMemcpy H2D.
+func (e *GPUEngine[T]) uploadBytes(devPtr unsafe.Pointer, src []byte) error {
+	if e.managedMem {
+		dst := unsafe.Slice((*byte)(devPtr), len(src))
+		copy(dst, src)
+		return nil
+	}
+	return e.runtime.Memcpy(devPtr, unsafe.Pointer(&src[0]), len(src), gpuapi.MemcpyHostToDevice)
 }
 
 // Stream returns the engine's GPU stream as an unsafe.Pointer (cudaStream_t).
