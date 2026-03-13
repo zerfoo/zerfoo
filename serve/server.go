@@ -19,6 +19,7 @@ type Server struct {
 	draftModel *inference.Model // optional; enables speculative decoding
 	mux        *http.ServeMux
 	batch      *BatchScheduler // optional; nil means direct calls
+	unloaded   bool            // true after DELETE /v1/models/:id
 }
 
 // ServerOption configures the server.
@@ -50,7 +51,10 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	}
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/completions", s.handleCompletions)
+	s.mux.HandleFunc("POST /v1/embeddings", s.handleEmbeddings)
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
+	s.mux.HandleFunc("GET /v1/models/{id...}", s.handleModelInfo)
+	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.handleModelDelete)
 	return s
 }
 
@@ -108,6 +112,7 @@ type CompletionResponse struct {
 	Created int64              `json:"created"`
 	Model   string             `json:"model"`
 	Choices []CompletionChoice `json:"choices"`
+	Usage   UsageInfo          `json:"usage"`
 }
 
 // CompletionChoice is a single choice in the completion response.
@@ -124,17 +129,47 @@ type UsageInfo struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// EmbeddingRequest represents the OpenAI embeddings request.
+type EmbeddingRequest struct {
+	Model string      `json:"model"`
+	Input interface{} `json:"input"` // string or []string
+}
+
+// EmbeddingObject is a single embedding in the response.
+type EmbeddingObject struct {
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+// EmbeddingResponse is the /v1/embeddings response.
+type EmbeddingResponse struct {
+	Object string            `json:"object"`
+	Data   []EmbeddingObject `json:"data"`
+	Model  string            `json:"model"`
+	Usage  UsageInfo         `json:"usage"`
+}
+
 // ModelObject represents a model in the /v1/models response.
 type ModelObject struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	OwnedBy string `json:"owned_by"`
+	ID           string `json:"id"`
+	Object       string `json:"object"`
+	Created      int64  `json:"created"`
+	OwnedBy      string `json:"owned_by"`
+	Architecture string `json:"architecture,omitempty"`
 }
 
 // ModelListResponse is the /v1/models response.
 type ModelListResponse struct {
 	Object string        `json:"object"`
 	Data   []ModelObject `json:"data"`
+}
+
+// ModelDeleteResponse is the DELETE /v1/models/:id response.
+type ModelDeleteResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
 }
 
 // --- Handlers ---
@@ -212,7 +247,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Message:      ChatMessage{Role: "assistant", Content: resp.Content},
 			FinishReason: "stop",
 		}},
-		Usage: UsageInfo{TotalTokens: resp.TokensUsed},
+		Usage: UsageInfo{
+			PromptTokens:     resp.PromptTokens,
+			CompletionTokens: resp.CompletionTokens,
+			TotalTokens:      resp.TokensUsed,
+		},
 	})
 }
 
@@ -265,6 +304,17 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		modelID = info.ID
 	}
 
+	// Count prompt and completion tokens.
+	var promptTokens, completionTokens int
+	if tok := s.model.Tokenizer(); tok != nil {
+		if ids, err := tok.Encode(req.Prompt); err == nil {
+			promptTokens = len(ids)
+		}
+		if ids, err := tok.Encode(result); err == nil {
+			completionTokens = len(ids)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, CompletionResponse{
 		ID:      fmt.Sprintf("cmpl-%d", time.Now().UnixNano()),
 		Object:  "text_completion",
@@ -275,23 +325,152 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 			Text:         result,
 			FinishReason: "stop",
 		}},
+		Usage: UsageInfo{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		},
 	})
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
+	if s.unloaded {
+		writeJSON(w, http.StatusOK, ModelListResponse{Object: "list"})
+		return
+	}
+
+	obj := s.buildModelObject()
+	writeJSON(w, http.StatusOK, ModelListResponse{
+		Object: "list",
+		Data:   []ModelObject{obj},
+	})
+}
+
+func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if s.unloaded {
+		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
+		return
+	}
+
+	obj := s.buildModelObject()
+	if obj.ID != id {
+		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, obj)
+}
+
+func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if s.unloaded {
+		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
+		return
+	}
+
+	obj := s.buildModelObject()
+	if obj.ID != id {
+		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
+		return
+	}
+
+	_ = s.model.Close()
+	s.unloaded = true
+
+	writeJSON(w, http.StatusOK, ModelDeleteResponse{
+		ID:      id,
+		Object:  "model",
+		Deleted: true,
+	})
+}
+
+func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
+	var req EmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Parse input: can be a single string or an array of strings.
+	var inputs []string
+	switch v := req.Input.(type) {
+	case string:
+		inputs = []string{v}
+	case []interface{}:
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "input array must contain strings")
+				return
+			}
+			inputs = append(inputs, s)
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "input must be a string or array of strings")
+		return
+	}
+
+	if len(inputs) == 0 {
+		writeError(w, http.StatusBadRequest, "input is required")
+		return
+	}
+
+	var data []EmbeddingObject
+	var totalTokens int
+	for i, text := range inputs {
+		emb, err := s.model.Embed(r.Context(), text)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		data = append(data, EmbeddingObject{
+			Object:    "embedding",
+			Embedding: emb,
+			Index:     i,
+		})
+		if tok := s.model.Tokenizer(); tok != nil {
+			if ids, err := tok.Encode(text); err == nil {
+				totalTokens += len(ids)
+			}
+		}
+	}
+
 	modelID := ""
 	if info := s.model.Info(); info != nil {
 		modelID = info.ID
 	}
 
-	writeJSON(w, http.StatusOK, ModelListResponse{
+	writeJSON(w, http.StatusOK, EmbeddingResponse{
 		Object: "list",
-		Data: []ModelObject{{
-			ID:      modelID,
-			Object:  "model",
-			OwnedBy: "local",
-		}},
+		Data:   data,
+		Model:  modelID,
+		Usage: UsageInfo{
+			PromptTokens: totalTokens,
+			TotalTokens:  totalTokens,
+		},
 	})
+}
+
+func (s *Server) buildModelObject() ModelObject {
+	modelID := ""
+	arch := ""
+	if info := s.model.Info(); info != nil {
+		modelID = info.ID
+		arch = info.Architecture
+	}
+	if arch == "" {
+		arch = s.model.Config().Architecture
+	}
+	return ModelObject{
+		ID:           modelID,
+		Object:       "model",
+		Created:      time.Now().Unix(),
+		OwnedBy:      "local",
+		Architecture: arch,
+	}
 }
 
 // --- Streaming ---
