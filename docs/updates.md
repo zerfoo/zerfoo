@@ -1,3 +1,60 @@
+# T604.2 FP8 Degenerate Output Root Cause Analysis
+
+Date: 2026-03-13
+
+## Root Cause
+
+**FP8 weight transpose destroys FP8E4M3Storage, causing all weight MatMuls to
+bypass the FP8 path entirely.**
+
+In `inference/arch_common.go`, `transposeWeight` is called on every weight tensor
+(q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj) to convert
+from [outDim, inDim] to [inDim, outDim] layout. For Q4 and Q8 storage types,
+special handling preserves the quantized storage. But for FP8E4M3Storage, no
+special case existed -- the function fell through to `engine.Transpose()` which
+calls `CPUEngine.Transpose`. This dequantizes FP8 -> F32 and creates a plain
+F32 tensor, losing the FP8E4M3Storage type.
+
+At inference time, the MatMul dispatch in `gpu_engine.go` (line ~564) checks
+`a.GetStorage().(*tensor.FP8E4M3Storage)` -- this type assertion fails because
+the storage is now plain F32. The FP8 MatMul path is never invoked. Instead,
+the code falls through to `fp16MatMul` (line ~589), which converts both F32
+inputs to FP16 and runs a generic FP16 GEMM.
+
+This causes:
+1. **Double quantization noise**: FP8 dequant -> F32 -> FP16 truncation. The
+   original FP8 quantization already loses precision; the additional F32->FP16
+   conversion in fp16MatMul compounds the error.
+2. **Slow throughput (1.48 tok/s)**: Every weight MatMul does F32->FP16
+   conversion of the full weight tensor (dequantized from FP8), hitting the
+   arena allocator heavily.
+3. **Degenerate output**: Accumulated precision loss across 26 transformer
+   layers produces garbage logits.
+
+## Fix
+
+Added FP8E4M3Storage handling to `transposeWeight` in `inference/arch_common.go`.
+When a 2D FP8 weight tensor is transposed:
+1. Dequantize FP8 -> F32 via `fs.Slice()`
+2. Transpose the F32 data in-place
+3. Re-quantize to FP8 via `tensor.NewFP8E4M3Storage(transposed)`
+4. Create the transposed tensor with the new FP8E4M3Storage
+
+This preserves the FP8E4M3Storage type through the transpose, so the MatMul
+dispatch correctly routes to the FP8 MatMul path at inference time.
+
+## Files Changed
+
+- `inference/arch_common.go`: Added FP8E4M3Storage case in `transposeWeight`
+
+## Verification
+
+- `go build ./...` passes
+- `go vet ./compute/... ./inference/...` passes
+- On-device verification pending (bench_tps --dtype=fp8 on DGX Spark)
+
+---
+
 # T401.1 Bisect Results: Throughput Regression on DGX Spark
 
 Date: 2026-03-13
