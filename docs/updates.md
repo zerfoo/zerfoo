@@ -1127,3 +1127,58 @@ fused kernels for the following reasons:
 | Profile report with root cause | PASS |
 | Decision: fix or abandon | PASS — abandon megakernel, prioritize CUDA graph |
 | nsys profiling | N/A — megakernel never fires, nothing to profile |
+
+---
+
+# T209.1 CUDA Kernel Register Pressure and Occupancy Tuning
+
+Date: 2026-03-13
+
+## Environment
+
+- **GPU**: NVIDIA GB10 (sm_121, Blackwell) on DGX Spark
+- **CUDA**: 13.0
+- **Compiler flags**: -O3 --use_fast_math -arch=sm_121
+- **SM resources**: 65536 registers/SM, 2048 max threads/SM
+
+## Baseline Register Usage Report
+
+| Kernel file | Function | Regs/thread | Spills | Shared mem |
+|---|---|---|---|---|
+| elementwise.cu | kernel_softmax | 18 | 0 | 0 |
+| elementwise.cu | kernel_repeat | 16 | 0 | 0 |
+| elementwise.cu | (other 25 kernels) | 10-17 | 0 | 0 |
+| flash_attention.cu | flash_attention_kernel | **47** | 0 | 32768 |
+| gemm_q4.cu | gemm_q4_kernel | **40** | 0 | 0 |
+| gemm_q4.cu | gemv_q4_kernel | **40** | 0 | 0 |
+| gemv_q4k.cu | gemv_q4k_kernel | **43** | 0 | 0 |
+| rmsnorm.cu | kernel_rmsnorm | 20 | 0 | 0 |
+| scaled_softmax.cu | kernel_scaled_softmax | 18 | 0 | 0 |
+| transpose.cu | kernel_transpose_nd | **40** | 0 | 0 |
+| transpose.cu | kernel_transpose_2d | 30 | 0 | 4224 |
+| gather.cu | kernel_gather_t (int/long) | 16 | 0 | 0 |
+
+## maxrregcount=32 Spill Analysis
+
+| Kernel | Baseline regs | With =32 | Spill stores | Spill loads | Verdict |
+|---|---|---|---|---|---|
+| flash_attention | 47 | 32 | 24 B | 44 B | REJECT (spills) |
+| gemm_q4 (both) | 40 | 32 | 0 | 0 | **ACCEPT** |
+| gemv_q4k | 43 | 32 | 76 B | 96 B | REJECT (heavy spills) |
+| transpose (nd+2d) | 40/30 | 32/26 | 0 | 0 | **ACCEPT** |
+
+## Occupancy Impact (256-thread blocks, 65536 regs/SM)
+
+| Kernel | Before (regs) | Max blocks/SM | Threads/SM | Occupancy | After (regs) | Max blocks/SM | Threads/SM | Occupancy |
+|---|---|---|---|---|---|---|---|---|
+| gemm_q4 | 40 | 6 | 1536 | 75% | 32 | 8 | 2048 | **100%** |
+| transpose_nd | 40 | 6 | 1536 | 75% | 32 | 8 | 2048 | **100%** |
+
+## Changes Made
+
+- **internal/cuda/kernels/Makefile**: Added per-file `--maxrregcount=32` build rules for `gemm_q4.cu` and `transpose.cu`. These kernels achieve 100% theoretical occupancy (up from 75%) with zero register spills.
+- Kernels NOT changed: flash_attention (spills at 32 regs, already shared-memory bound), gemv_q4k (heavy spills at 32 regs, 43 regs needed for compute).
+
+## Kernels Already Well-Tuned
+
+All other kernels (elementwise, rmsnorm, scaled_softmax, gather) use <=20 registers/thread, which already allows maximum occupancy. No changes needed.

@@ -29,6 +29,23 @@ $(LIB): $(OBJS)
 $(SO): $(PIC_OBJS)
 	$(NVCC) -shared -o $@ $^
 
+# Limit register pressure for kernels that benefit from higher occupancy.
+# gemm_q4: 40->32 regs/thread, no spills, occupancy 75%->100% (256-thread blocks).
+# transpose: 40->32 regs/thread (transpose_nd), no spills, occupancy 75%->100%.
+MAXREG32_SRCS = gemm_q4.cu transpose.cu
+
+gemm_q4.o: gemm_q4.cu
+	$(NVCC) $(NVCC_FLAGS) --maxrregcount=32 -c $< -o $@
+
+gemm_q4.pic.o: gemm_q4.cu
+	$(NVCC) $(NVCC_FLAGS) --maxrregcount=32 --compiler-options -fPIC -c $< -o $@
+
+transpose.o: transpose.cu
+	$(NVCC) $(NVCC_FLAGS) --maxrregcount=32 -c $< -o $@
+
+transpose.pic.o: transpose.cu
+	$(NVCC) $(NVCC_FLAGS) --maxrregcount=32 --compiler-options -fPIC -c $< -o $@
+
 %.o: %.cu
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
