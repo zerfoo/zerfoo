@@ -634,6 +634,282 @@ func extractSSECompletionText(t *testing.T, raw string) string {
 	return sb.String()
 }
 
+// doDelete sends a DELETE request with context.
+func doDelete(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
+	return resp
+}
+
+// --- Embeddings ---
+
+func TestHandleEmbeddings(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"input":"hello","model":"test-model"}`
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	// Embed is not supported in the test model, so expect 500.
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 (embeddings not supported)", resp.StatusCode)
+	}
+}
+
+func TestHandleEmbeddings_InvalidJSON(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", "not json")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleEmbeddings_EmptyInput(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"input":[]}`
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleEmbeddings_InvalidInputType(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"input":42}`
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleEmbeddings_BatchInput(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"input":["hello","world"]}`
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	// Embed is not supported in the test model, so expect 500.
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+// --- Model Info ---
+
+func TestHandleModelInfo(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doGet(t, ts.URL+"/v1/models/test-model")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result ModelObject
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if result.ID != "test-model" {
+		t.Errorf("ID = %q, want %q", result.ID, "test-model")
+	}
+	if result.Object != "model" {
+		t.Errorf("Object = %q, want %q", result.Object, "model")
+	}
+	if result.OwnedBy != "local" {
+		t.Errorf("OwnedBy = %q, want %q", result.OwnedBy, "local")
+	}
+	if result.Created == 0 {
+		t.Error("Created should not be zero")
+	}
+}
+
+func TestHandleModelInfo_NotFound(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doGet(t, ts.URL+"/v1/models/nonexistent")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// --- Model Delete ---
+
+func TestHandleModelDelete(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doDelete(t, ts.URL+"/v1/models/test-model")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result ModelDeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if result.ID != "test-model" {
+		t.Errorf("ID = %q, want %q", result.ID, "test-model")
+	}
+	if !result.Deleted {
+		t.Error("Deleted should be true")
+	}
+	if result.Object != "model" {
+		t.Errorf("Object = %q, want %q", result.Object, "model")
+	}
+
+	// After deletion, listing models should return empty.
+	listResp := doGet(t, ts.URL+"/v1/models")
+	defer func() { _ = listResp.Body.Close() }()
+
+	var listResult ModelListResponse
+	if err := json.NewDecoder(listResp.Body).Decode(&listResult); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(listResult.Data) != 0 {
+		t.Errorf("Data len = %d, want 0 after deletion", len(listResult.Data))
+	}
+}
+
+func TestHandleModelDelete_NotFound(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doDelete(t, ts.URL+"/v1/models/nonexistent")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestHandleModelDelete_AlreadyDeleted(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Delete once.
+	resp := doDelete(t, ts.URL+"/v1/models/test-model")
+	_ = resp.Body.Close()
+
+	// Delete again - should get 404.
+	resp2 := doDelete(t, ts.URL+"/v1/models/test-model")
+	defer func() { _ = resp2.Body.Close() }()
+
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp2.StatusCode)
+	}
+}
+
+// --- Usage token counting ---
+
+func TestChatCompletions_UsageTokens(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if result.Usage.PromptTokens == 0 {
+		t.Error("PromptTokens should not be zero")
+	}
+	if result.Usage.CompletionTokens == 0 {
+		t.Error("CompletionTokens should not be zero")
+	}
+	if result.Usage.TotalTokens != result.Usage.PromptTokens+result.Usage.CompletionTokens {
+		t.Errorf("TotalTokens = %d, want %d",
+			result.Usage.TotalTokens, result.Usage.PromptTokens+result.Usage.CompletionTokens)
+	}
+}
+
+func TestCompletions_UsageTokens(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"prompt":"hello","max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result CompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if result.Usage.PromptTokens == 0 {
+		t.Error("PromptTokens should not be zero")
+	}
+	if result.Usage.CompletionTokens == 0 {
+		t.Error("CompletionTokens should not be zero")
+	}
+	if result.Usage.TotalTokens != result.Usage.PromptTokens+result.Usage.CompletionTokens {
+		t.Errorf("TotalTokens = %d, want %d",
+			result.Usage.TotalTokens, result.Usage.PromptTokens+result.Usage.CompletionTokens)
+	}
+}
+
 // --- Close ---
 
 func TestServer_Close(t *testing.T) {
