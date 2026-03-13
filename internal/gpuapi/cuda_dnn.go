@@ -1,5 +1,3 @@
-//go:build cuda
-
 package gpuapi
 
 import (
@@ -632,7 +630,9 @@ func cudaFreeTemp(ptr unsafe.Pointer) {
 }
 
 func init() {
-	DNNFactory = func() (DNN, error) { return NewCUDADNN() }
+	if cudnn.Available() {
+		DNNFactory = func() (DNN, error) { return NewCUDADNN() }
+	}
 }
 
 // Compile-time interface assertion.
