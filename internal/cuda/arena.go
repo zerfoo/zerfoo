@@ -2,6 +2,7 @@ package cuda
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -60,7 +61,7 @@ func NewArenaPool(deviceID, capacityBytes int, fallback *MemPool) (*ArenaPool, e
 		return nil, fmt.Errorf("ArenaPool: SetDevice: %w", err)
 	}
 
-	managed := ManagedMemorySupported(deviceID)
+	managed := ManagedMemorySupported(deviceID) && os.Getenv("ZERFOO_ENABLE_MANAGED_MEM") != ""
 
 	var ptr unsafe.Pointer
 	var err error
