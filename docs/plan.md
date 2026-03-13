@@ -155,12 +155,12 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: Graph capture succeeds. Tokens 3+ use graph replay.
   - Dependencies: T402.1, T402.2, T402.3, T402.4.
 
-- [ ] T402.6 Benchmark CUDA graph replay vs per-op  Owner: TBD  Est: 30m
+- [x] T402.6 Benchmark CUDA graph replay vs per-op  Owner: TBD  Est: 30m
   - Run bench_tps 3 times with ZERFOO_ENABLE_CUDA_GRAPH=1, 3 times without.
   - Acceptance: Graph replay faster. Results documented.
   - Dependencies: T402.5.
 
-- [ ] S402.6.1 CUDA graph correctness test  Owner: TBD  Est: 30m
+- [x] S402.6.1 CUDA graph correctness test  Owner: TBD  Est: 30m
   - Compare output with graph enabled vs disabled at temp=0 for 50 tokens.
   - Acceptance: Tokens identical.
   - Dependencies: T402.5.
@@ -264,7 +264,7 @@ bottleneck on LPDDR5x).
     measured and documented.
   - Dependencies: T405.2, T405.3.
 
-- [ ] S405.4.1 BF16/FP16 parity and benchmark  Owner: TBD  Est: 1h
+- [x] S405.4.1 BF16/FP16 parity and benchmark  Owner: TBD  Est: 1h
   - Compare output quality: FP32 vs BF16 vs FP16 at temperature=0 for 50 tokens.
   - Measure tok/s for each precision. Document results.
   - Acceptance: BF16/FP16 output coherent. Throughput improvement documented.

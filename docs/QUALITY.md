@@ -90,6 +90,33 @@ Both outputs are coherent. Difference is chat template, not model quality.
 | go vet ./... | PASS (pre-existing purego warnings only) |
 | Test suite (DGX Spark) | PARTIAL (pre-existing race in TestBatchGenerate) |
 
+### CUDA Graph Benchmark (2026-03-13)
+
+| Mode | Run 1 | Run 2 | Run 3 | Average |
+|------|-------|-------|-------|---------|
+| Per-op (baseline) | 183.16 | 183.94 | 184.27 | 183.79 |
+| CUDA graph enabled | 183.69 | 184.50 | 184.95 | 184.38 |
+
+Graph capture fails (D2H in GQA). Falls back to per-op. No speedup.
+
+### CUDA Graph Correctness (2026-03-13)
+
+| Mode | Output (50 tokens, temp=0) | Match |
+|------|---------------------------|-------|
+| Per-op | "not to be to be to be..." | -- |
+| CUDA graph | "not to be to be to be..." | IDENTICAL |
+
+### FP16 Inference (2026-03-13)
+
+| Precision | Status | tok/s |
+|-----------|--------|-------|
+| FP32 | Working | 183.79 avg |
+| FP16 | SIGSEGV (null kernel ptr) | N/A |
+| BF16 | Not implemented | N/A |
+
+FP16 path crashes due to null function pointer in FP32-to-FP16 conversion
+kernel (purego symbol lookup failure). Needs debugging.
+
 ## Linting
 
 - golangci-lint v2 with project .golangci.yml

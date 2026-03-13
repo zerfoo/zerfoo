@@ -1489,3 +1489,182 @@ output. The fix is straightforward (option 1 is simplest) but requires a code
 change in `compute/gpu_engine.go` UploadWeights or `inference/arch_llama.go`
 embedding lookup. Once the embedding output is on GPU, all downstream
 operations will use their existing GPU paths, eliminating all 4 D2H sites.
+
+---
+
+# T402.6 Benchmark: CUDA Graph Replay vs Per-Op Execution
+
+Date: 2026-03-13
+
+## Setup
+
+- DGX Spark GB10, sm_121, CUDA 13.0
+- Model: Gemma 3 1B Q4_K_M GGUF
+- Kernels rebuilt with `make clean && make shared CUDA_ARCH=sm_121`
+- Benchmark: `bench_tps -tokens 256 -prompt 'The meaning of life is' -device cuda`
+
+## Results
+
+### Baseline (per-op, no CUDA graph)
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 183.16 |
+| 2 | 183.94 |
+| 3 | 184.27 |
+| **Average** | **183.79** |
+
+### CUDA Graph Enabled (ZERFOO_ENABLE_CUDA_GRAPH=1)
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 183.69 |
+| 2 | 184.50 |
+| 3 | 184.95 |
+| **Average** | **184.38** |
+
+### Delta
+
+| Metric | Value |
+|--------|-------|
+| Speedup | +0.59 tok/s (+0.3%) |
+| Statistically significant | No |
+
+## Analysis
+
+CUDA graph capture **fails** on every run. The error is:
+
+```
+cuda graph: capture region failed: instruction 2 (GroupedQueryAttention):
+  cudaMemcpy failed: operation would make the legacy stream depend on a
+  capturing blocking stream
+```
+
+The GroupedQueryAttention operation performs D2H cudaMemcpy during execution,
+which is incompatible with CUDA graph capture. The runtime gracefully falls
+back to per-op execution, so the "graph enabled" runs are actually identical
+to per-op runs. The ~0.3% difference is within measurement noise.
+
+**Root cause**: The D2H copy in GroupedQueryAttention (documented in the
+CUDA graph D2H root cause analysis above) has not been eliminated. The
+graph capture infrastructure works correctly -- it attempts capture, detects
+the failure, and falls back cleanly. But until the D2H copies are removed,
+CUDA graph replay cannot provide any speedup.
+
+**Acceptance criteria**: NOT MET. Graph replay is not faster because graph
+capture fails. The task acceptance assumed T402.5 would succeed, but graph
+capture still fails due to remaining D2H in GQA.
+
+---
+
+# S402.6.1 CUDA Graph Correctness Test
+
+Date: 2026-03-13
+
+## Setup
+
+- Same as T402.6, but `-tokens 50 -temp 0` for deterministic comparison
+
+## Results
+
+### Without CUDA Graph (per-op)
+
+```
+Output: not to be to be to be.
+
+This is a simple and beautiful statement that is often used in the
+philosophy of the "Zen"
+
+It is a reminder to be present and to be aware of the moment.
+
+It is a reminder to
+```
+
+Throughput: 155.26 tok/s
+
+### With CUDA Graph (ZERFOO_ENABLE_CUDA_GRAPH=1)
+
+```
+Output: not to be to be to be.
+
+This is a simple and beautiful statement that is often used in the
+philosophy of the "Zen"
+
+It is a reminder to be present and to be aware of the moment.
+
+It is a reminder to
+```
+
+Throughput: 157.06 tok/s
+
+## Analysis
+
+Output is **token-for-token identical** between the two modes. This is
+expected since CUDA graph capture fails and both modes execute per-op.
+The correctness test passes trivially.
+
+**Acceptance criteria**: MET. Tokens are identical.
+
+---
+
+# S405.4.1 FP16 Parity and Benchmark
+
+Date: 2026-03-13
+
+## Setup
+
+- DGX Spark GB10, sm_121, CUDA 13.0
+- Model: Gemma 3 1B Q4_K_M GGUF
+- Tested with `-dtype fp16` flag (bench_tps supports fp32 and fp16)
+- BF16 not implemented in the codebase (only fp32 and fp16 are supported)
+
+## Results
+
+### FP32 (baseline, temp=0, 50 tokens)
+
+Output coherent. 155.26 tok/s. (Same as S402.6.1 baseline run.)
+
+### FP16 (temp=0, 50 tokens)
+
+**CRASHED** with SIGSEGV (segmentation fault).
+
+```
+SIGSEGV: segmentation violation
+PC=0x0 m=17 sigcode=1 addr=0x0
+
+github.com/zerfoo/zerfoo/internal/cuda/kernels.F32T...
+  (null function pointer call via purego ccall)
+```
+
+The crash occurs because the FP32-to-FP16 conversion kernel function pointer
+is nil. The FP16 elementwise kernels were compiled into `libkernels.so` but
+the purego dlopen symbol lookup returns a null pointer for the conversion
+function. This causes a null function pointer call during the warm-up
+generation pass.
+
+### BF16
+
+Not tested. The `-dtype` flag only supports `fp32` and `fp16`. The
+`inference.go:applyDType()` function has no BF16 path. BF16 weight loading
+exists (T405.1) but there is no BF16 compute dtype option.
+
+## Analysis
+
+**FP16 path is broken.** The FP16 inference path (T405.4) was marked complete
+but has a runtime crash on DGX. The FP16 elementwise kernel symbols are either
+not exported from `libkernels.so` or the symbol names do not match what the
+purego loader expects.
+
+**BF16 path does not exist** as a dtype option. BF16 weight loading was added
+(T405.1) but no `--dtype=bf16` compute path was implemented.
+
+**Acceptance criteria**: NOT MET. Cannot benchmark FP16 throughput due to
+crash. BF16 not available for comparison. No throughput improvement documented.
+
+## Recommended Next Steps
+
+1. Debug the FP16 SIGSEGV: check `elementwise_fp16_purego.go` symbol names
+   vs `elementwise_fp16.cu` exported function names.
+2. Run `nm -D libkernels.so | grep -i fp16` on DGX to verify symbols exist.
+3. Once FP16 path works, re-run this benchmark.
+4. Consider adding `-dtype bf16` support for BF16 compute benchmarks.
