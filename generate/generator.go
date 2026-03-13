@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -163,7 +164,7 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			// and the runtime supports graph APIs. The executor warms up for
 			// 2 runs, then captures all GPU work into a graph for near-zero
 			// launch overhead on subsequent tokens.
-			if sp, ok := any(gen.engine).(compute.StreamProvider); ok {
+			if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_DISABLE_CUDA_GRAPH") == "" {
 				if streamPtr := sp.Stream(); streamPtr != nil {
 					if cuda.Available() && cuda.Lib().GraphAvailable() {
 						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
