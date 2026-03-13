@@ -85,7 +85,7 @@ See docs/design.md for full architecture and Phase 2 completion details.
 
 ### E501: Apples-to-Apples Baseline
 
-- [ ] T501.1 Benchmark F32 with same model and prompt as Ollama  Owner: TBD  Est: 30m
+- [x] T501.1 Benchmark F32 with same model and prompt as Ollama  Owner: TBD  Est: 30m  2026 03 13  NOTE: Ollama 213.34 tok/s (not 197.21), Zerfoo 151.69 tok/s. Gap is 28.9%.
   - Run Ollama on DGX with Gemma 3 1B Q4_K_M, record exact model path, prompt,
     and token count.
   - Run Zerfoo bench_tps with identical parameters.
@@ -103,7 +103,7 @@ using GPUStorage with 2-byte elements. Operations read FP16, compute in FP16
 (with FP32 accumulation for reductions), and write FP16. No conversions needed
 except at graph boundaries (embedding lookup output, final logits).
 
-- [ ] T502.1 Add FP16 GPU storage type  Owner: TBD  Est: 1.5h
+- [x] T502.1 Add FP16 GPU storage type  Owner: TBD  Est: 1.5h  2026 03 13
   - Add Float16Storage to tensor/ that wraps GPU memory with 2-byte elements.
   - Support Len(), SubSlice(), GPUPtr(), SetGPUPtr(), DeviceType().
   - The storage must be recognized by GPUEngine MatMul dispatch and element-wise
@@ -226,7 +226,7 @@ FP8 inference exhausts the 2GB arena because each MatMul allocates temporary
 FP16 conversion buffers that are not freed until the end of the forward pass.
 The fix: pre-allocate persistent FP16 buffers for FP8 MatMul and reuse them.
 
-- [ ] T504.1 Profile FP8 arena usage to identify largest allocations  Owner: TBD  Est: 1h
+- [x] T504.1 Profile FP8 arena usage to identify largest allocations  Owner: TBD  Est: 1h  2026 03 13  NOTE: 1.15GB weight copy per MatMul (54% of arena). fp16MatMul 15.2MB x 1170 calls.
   - Add temporary logging to CUDAArenaPool.Alloc to record allocation sizes.
   - Run bench_tps --dtype=fp8 and collect the log.
   - Identify the top 10 largest allocations and which functions request them.
@@ -260,7 +260,7 @@ The fix: pre-allocate persistent FP16 buffers for FP8 MatMul and reuse them.
 FP8 output is degenerate (repetitive text), suggesting scale factors are not
 correctly applied during matmul or are lost between operations.
 
-- [ ] T505.1 Add FP8 scale factor diagnostic logging  Owner: TBD  Est: 1h
+- [x] T505.1 Add FP8 scale factor diagnostic logging  Owner: TBD  Est: 1h  2026 03 13  NOTE: All scales healthy. FP8 cublasLt MatMul never invoked -- SM 7.5 lacks FP8 support. Falls through to FP16 path.
   - In compute/gpu_fp8.go ltMatmulFP8: log the scale values (scaleA, scaleB)
     and matrix dimensions before each cublasLtMatmul call.
   - In model/gguf/loader.go QuantizeToFP8E4M3: log scale factors per tensor.
