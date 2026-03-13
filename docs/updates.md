@@ -2120,3 +2120,90 @@ within the first few layers.
 4. **Consider increasing arena to 4 GB**: Even with scratch buffers, the
    current 2 GB is tight for 26-layer models. The DGX Spark has 128 GB unified
    memory, so 4 GB is feasible.
+
+---
+
+# Wave 23: Full Benchmark Suite on DGX Spark
+
+Date: 2026-03-13
+
+## Build
+
+Commit: `6b3e0e57e5f4dfd1269c8be008ffe2cee358b383` (upstream/main)
+
+```
+cd ~/zerfoo
+git fetch upstream main && git reset --hard upstream/main
+export PATH=/usr/local/cuda/bin:/usr/local/go/bin:$PATH
+cd internal/cuda/kernels && make clean && make shared
+cd ~/zerfoo && go build ./...
+```
+
+Build succeeded with all 20 CUDA kernel object files compiled (sm_75).
+
+## Benchmark Commands and Results
+
+All benchmarks use: `go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf --tokens 50 --prompt 'The quick brown fox' --device cuda --dtype <dtype>`
+
+### F32 (baseline)
+
+| Metric | Value |
+|--------|-------|
+| Throughput | **150.58 tok/s** |
+| Time | 0.332s |
+| Tokens | 50 |
+| Arena | hits=26054 misses=0 resets=52 used=7.7 MB |
+
+Generated text:
+> is a fox. ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **
+
+Quality: Degenerate output. Model produces "**" repetition after first clause. This is a known issue with greedy (temp=0) generation on this model.
+
+### FP16
+
+**Status: CRASH (panic)**
+
+```
+panic: runtime error: index out of range [1] with length 0
+
+goroutine 1 [running]:
+encoding/binary.littleEndian.Uint16(...)
+    /usr/local/go/src/encoding/binary/binary.go:70
+github.com/zerfoo/zerfoo/tensor.(*Float16Storage).Slice(0x400009cf40)
+    /home/ndungu/zerfoo/tensor/fp16_storage.go:46 +0xdc
+github.com/zerfoo/zerfoo/compute.(*GPUEngine[...]).UploadWeights(...)
+    /home/ndungu/zerfoo/compute/gpu_engine.go:359 +0x644
+```
+
+Root cause: `Float16Storage.Slice` is called with an empty backing slice. The FP16 inference path crashes during weight upload before any inference begins. This is a regression that needs investigation in `tensor/fp16_storage.go:46`.
+
+### FP8
+
+| Metric | Value |
+|--------|-------|
+| Throughput | **1.47 tok/s** |
+| Time | 33.953s |
+| Tokens | 50 |
+| Arena | hits=56380 misses=1841 resets=52 used=2011.0 MB |
+| MemPool fallback | hits=1174 misses=667 frees=1570 cached=3281.1 MB |
+
+Generated text:
+> is a fox is a fox is running to the fox is a fox is a fox is a fox is a fox is a fox is a fox is a common fox is a fox, the fox, the fox. The fox is a fox is
+
+Quality: Incoherent repetitive output. FP8 quantization produces degenerate looping text, suggesting significant precision loss in the quantization path.
+
+## Comparison with Prior Baselines
+
+| dtype | Wave 23 (tok/s) | Prior (tok/s) | Delta |
+|-------|-----------------|---------------|-------|
+| F32 | 150.58 | 151.69 | -0.7% (stable) |
+| FP16 | CRASH | 124.50 | regression |
+| FP8 | 1.47 | 1.45 | +1.4% (stable, still very slow) |
+| Ollama | -- | 213.34 | -- |
+
+## Key Findings
+
+1. **F32 throughput is stable** at ~150 tok/s, consistent with the managed-memory arena regression identified earlier.
+2. **FP16 path is broken** -- panics in `Float16Storage.Slice` during weight upload. This is a regression from the fp16_storage.go changes.
+3. **FP8 remains extremely slow** at 1.47 tok/s (0.7% of Ollama). The arena pressure is severe (1841 misses, 3281 MB fallback pool), confirming FP8 needs the pre-allocated scratch buffer work (T504.2).
+4. **Output quality is poor across all dtypes** -- F32 produces degenerate "**" tokens, FP8 produces repetitive loops. This may be a sampling or model loading issue rather than a compute issue.
