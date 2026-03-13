@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"unsafe"
 
@@ -110,7 +111,7 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		}
 	}
 
-	managedMem := cuda.ManagedMemorySupported(dev)
+	managedMem := cuda.ManagedMemorySupported(dev) && os.Getenv("ZERFOO_DISABLE_MANAGED_MEM") == ""
 	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled", "managedMemory", fmt.Sprintf("%v", managedMem))
 
 	fallbackPool := cuda.NewMemPool()
