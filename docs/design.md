@@ -73,8 +73,8 @@ data/                 Dataset container (Sample, Batch, normalization)
 features/             Time-series feature transformers (Lag, Rolling, FFT)
 types/                Shared type definitions (BackwardMode)
 internal/xblas/       CPU BLAS wrappers (gonum GEMM for float32/64; upcast for float16/float8)
-internal/cuda/        CUDA runtime CGO bindings (//go:build cuda)
-internal/cublas/      cuBLAS CGO bindings (//go:build cuda)
+internal/cuda/        CUDA runtime purego bindings (dlopen libcudart.so)
+internal/cublas/      cuBLAS purego bindings (dlopen libcublas.so)
 internal/cuda/kernels/ CUDA kernel source (.cu) and Go wrappers
 testing/testutils/    Test assertion helpers, MockEngine, custom mocks
 tests/                Parity tests (env-var gated model forward pass tests)
@@ -101,7 +101,9 @@ arithmetic goes through Engine[T]. This enables transparent CPU/GPU switching.
 
 - `zerfoo/` must not import `zonnx/` or `onnx/` (verified by `make verify-architecture`).
 - `zonnx/` must not import `github.com/zerfoo/zerfoo` (decoupled via `zmf` format).
-- CUDA code is gated behind `//go:build cuda`. Non-CUDA builds compile without GPU dependencies.
+- All GPU backends use purego (dlopen-based) bindings. No CGo or build tags.
+  `go build ./...` compiles everywhere without `-tags cuda`, `-tags rocm`, or
+  `-tags opencl`. Runtime detection via `*.Available()` functions.
 
 ### 2.4 Type System
 
@@ -226,7 +228,8 @@ type Storage[T Numeric] interface {
 - **GPUStorage[T]:** Wraps a CUDA device pointer (`unsafe.Pointer`). `Slice()`
   allocates a host slice and copies D2H. `Set()` copies H2D. `Ptr()` returns
   the device pointer for kernel dispatch. `TrySlice()`/`TrySet()` return
-  errors instead of logging.
+  errors instead of logging. `SubSlice(offsetElems, length)` returns a
+  zero-copy GPU view via pointer arithmetic -- no D2H copy for GPU-side slicing.
 
 ### 3.4 Arithmetic[T] (numeric/arithmetic.go)
 
@@ -300,27 +303,29 @@ registry to reconstruct graphs from serialized specs.
 
 ### 4.1 Build Requirements
 
-- CUDA Toolkit 12.x (libcudart, development headers)
-- cuBLAS library (libcublas)
-- cuDNN library (libcudnn8 or later)
+No CGo, no build tags, no C compiler required for building Zerfoo itself:
+
+```
+go build ./...
+go test ./...
+```
+
+GPU acceleration is detected at runtime via `cuda.Available()`, `hip.Available()`,
+and `opencl.Available()`. When a GPU library is not present, the framework
+gracefully falls back to CPU.
+
+**Runtime requirements** (only needed for GPU acceleration):
+- CUDA Toolkit 12.x+ (libcudart.so, libcublas.so, libcudnn.so)
 - NVIDIA GPU with Compute Capability >= 7.0 (Volta/Turing or newer)
-- GCC/G++ (for CGO linking)
 
-```
-go build -tags cuda ./...
-go test -tags cuda ./...
-```
-
-Compile CUDA kernels:
+**Compile CUDA kernels** (produces `libkernels.so` loaded via purego dlopen):
 
 ```
 cd internal/cuda/kernels/
-make                        # default: sm_75 (GCP T4)
-make CUDA_ARCH=sm_120       # DGX Spark (Blackwell GB10)
-make CUDA_ARCH=sm_70        # V100
+make shared                        # default: sm_75 (GCP T4)
+make shared CUDA_ARCH=sm_121       # DGX Spark (Blackwell GB10)
+make shared CUDA_ARCH=sm_70        # V100
 ```
-
-This produces `libkernels.a` from `elementwise.cu` using `nvcc -O2 -arch=$(CUDA_ARCH)`.
 
 ### 4.2 GPU-Accelerated Operations
 
@@ -334,16 +339,22 @@ This produces `libkernels.a` from `elementwise.cu` using `nvcc -O2 -arch=$(CUDA_
 | Math | Exp, Log, Sqrt, Rsqrt | Custom CUDA kernels |
 | Reduction | Sum, ReduceSum, ReduceMean | Custom CUDA kernels (shared memory) |
 | Other | Softmax, Fill | Custom CUDA kernels |
+| Transpose | 2D/3D/4D tensors | Custom CUDA kernel (shared memory tiling, precomputed strides) |
+| Gather | Embedding lookup (int32 + int64 indices) | Custom CUDA kernel |
+| Broadcasting | 4D element-wise Add, Sub, Mul, Div | Custom CUDA kernels (stride-based indexing) |
+| Fused | QK RMSNorm+RoPE, SwiGLU, Scale+Softmax, post-FFN norm+add | Custom CUDA kernels |
+| Fused | Dequant+GEMV Q4_K | Custom CUDA kernel (warp shuffle reduction) |
+| Normalization | RMSNorm | Custom CUDA kernel (single-pass, shared-memory reduction) |
 
 ### 4.3 CPU Fallback Operations
 
 These delegate to CPUEngine by design (not compute-bound or require Go runtime):
 
 - UnaryOp (Go function pointers)
-- Transpose (metadata-only)
+- Transpose (>4D tensors only; 2D/3D/4D have GPU kernels)
 - Zero, Zeros, Copy
 - Reshape, Split, Concat, Repeat
-- Gather, ScatterAdd (integer indexing)
+- ScatterAdd
 - OneHot, RandomUniform
 
 ### 4.4 Device-Resident Pipeline
@@ -365,18 +376,29 @@ Key helpers:
   CPUStorage allocates from memory pool and copies H2D.
 - `makeGPUResult`: Creates output tensors with GPUStorage wrapping device pointer.
 
-### 4.5 CUDA Memory Pool
+### 4.5 CUDA Memory Management
 
-`internal/cuda/mempool.go`: Size-bucketed free-list allocator. Reuses
-previously freed device memory, avoiding per-operation cudaMalloc/cudaFree.
-Mutex-synchronized. Drained on `GPUEngine.Close()`.
+#### Arena Allocator (internal/cuda/arena.go)
 
-Supports two allocation modes:
-- `Alloc` / `Free`: Standard cudaMalloc (discrete device memory).
-- `AllocManaged` / `FreeManaged`: cudaMallocManaged (unified memory). On
-  NVLink-C2C hardware (DGX Spark GB10), managed memory avoids explicit H2D
-  copies and is 200-5000x faster to allocate (demand paging). Use
-  `tensor.NewManagedGPUStorage` to create tensors with managed memory.
+Primary allocator for inference. 2GB pre-allocated bump-pointer arena with
+256-byte alignment. O(1) reset between tokens. During inference, 100% of
+allocations are served by the arena (119K allocations, 0 fallback). Each
+allocation is ~5ns (pointer bump) vs ~4us for cudaMalloc.
+
+#### Memory Pool (internal/cuda/mempool.go)
+
+Fallback allocator. Size-bucketed free-list for allocations that exceed the
+arena or for permanent storage (model weights). Mutex-synchronized. Drained
+on `GPUEngine.Close()`.
+
+#### Managed Memory
+
+Opt-in via `ZERFOO_ENABLE_MANAGED_MEM=1`. Uses `cudaMallocManaged` instead
+of `cudaMalloc`. On NVLink-C2C hardware (DGX Spark GB10), managed memory
+avoids explicit H2D copies and is 200-5000x faster to allocate (demand
+paging). However, benchmarking on GB10 shows a ~13% throughput regression
+(145 vs 165 tok/s) due to page fault overhead on first touch. Disabled by
+default pending investigation of `cudaMemPrefetchAsync`.
 
 ### 4.6 CUDA Stream
 
@@ -398,7 +420,7 @@ cuBLAS operates in column-major order. To compute C = A * B in row-major:
 
 ### 4.9 cuDNN Integration
 
-`internal/cudnn/` provides CGo bindings wrapping libcudnn behind `//go:build cuda`.
+`internal/cudnn/` provides purego bindings wrapping libcudnn via dlopen.
 GPUEngine gains a `cudnnHandle` field alongside `cublasHandle`. cuDNN-accelerated
 operations are non-interface methods on GPUEngine in `compute/gpu_cudnn.go`:
 
@@ -420,8 +442,9 @@ See [ADR-008](adr/008-cudnn-integration.md) and [ADR-014](adr/014-cudnn-backward
 
 ### 4.10 TensorRT Integration
 
-`internal/tensorrt/` provides CGo bindings wrapping TensorRT's C++ API via a thin
-C shim in `cshim/trt_capi.h/cpp`. Pre-compiled into `libtrt_capi.a` via Makefile.
+`internal/tensorrt/` provides purego bindings wrapping TensorRT's C API via
+dlopen of `libtrt_capi.so`. The C shim in `cshim/trt_capi.h/cpp` provides a
+flat C interface over TensorRT's C++ API, compiled into a shared library.
 
 The inference pipeline supports TensorRT via `WithBackend("tensorrt")`:
 
@@ -453,12 +476,11 @@ tiled CUDA kernel, reducing memory from O(n^2) to O(n) and eliminating three
 intermediate kernel launches.
 
 - **Kernel**: `internal/cuda/kernels/flash_attention.cu` -- online softmax
-  (log-sum-exp trick), shared memory for K/V tiles, causal masking. BLOCK_SIZE=64,
-  MAX_HEAD_DIM=128.
-- **Dispatch**: Build-tag-gated pair `layers/attention/flash_cuda.go` /
-  `flash_nocuda.go` (`//go:build cuda && cutlass` / `!(cuda && cutlass)`).
-  `ScaledDotProductAttention.Forward` calls `tryFlashForward` before the naive
-  path when no arbitrary mask is provided.
+  (log-sum-exp trick), shared memory for K/V tiles, causal masking. BLOCK_SIZE=64
+  for sm_121 (Blackwell), MAX_HEAD_DIM=128. Warp shuffle reductions for ScaledSoftmax.
+- **Dispatch**: Single file `layers/attention/flash_cuda.go` with `cuda.Available()`
+  runtime guard. No build tags. `ScaledDotProductAttention.Forward` calls
+  `tryFlashForward` before the naive path when no arbitrary mask is provided.
 - **Scope**: Float32 forward only. Backward pass deferred. Head dim > 128 or
   arbitrary masks fall back to naive attention.
 
@@ -466,84 +488,75 @@ See [ADR-010](adr/010-cutlass-flash-attention.md) for architecture decisions.
 
 ### 4.12 CUDA File Layout
 
+All GPU files use purego (dlopen) bindings. No build tags. No CGo.
+
 ```
 compute/
-  gpu_engine.go            GPUEngine (GRAL interfaces, pool, stream) (//go:build cuda)
-  gpu_cudnn.go             DNN-accelerated operations via GRAL (//go:build cuda)
-  gpu_kernels.go           getDevicePtr, makeGPUResult, kernel dispatch via GRAL (//go:build cuda)
+  gpu_engine.go            GPUEngine (GRAL interfaces, pool, stream, arena)
+  gpu_cudnn.go             DNN-accelerated operations via GRAL
+  gpu_kernels.go           getDevicePtr, makeGPUResult, kernel dispatch via GRAL
 
 tensor/
   storage.go               Storage[T] interface, CPUStorage[T], NewWithStorage
-  gpu_storage.go           GPUStorage[T] with gpuapi.Runtime (//go:build cuda)
-  transfer.go              ToGPU/ToCPU helpers via GRAL Runtime (//go:build cuda)
+  gpu_storage.go           GPUStorage[T] with gpuapi.Runtime, SubSlice for zero-copy views
 
 internal/gpuapi/
-  doc.go                   Package identity
   runtime.go               Runtime, Stream, MemcpyKind interfaces
-  blas.go                  BLAS interface (Sgemm)
+  blas.go                  BLAS interface (Sgemm, GemmEx)
   dnn.go                   DNN interface (conv, batchnorm, activation, pooling, softmax)
-  kernels.go               KernelRunner interface (17 element-wise/reduction ops)
+  kernels.go               KernelRunner interface (element-wise, reduction, transpose, gather, broadcast)
   mempool.go               MemPool interface
-  gpuapi_test.go           Compile-time interface assertions
-  cuda_runtime.go          CUDARuntime adapter (//go:build cuda)
-  cuda_blas.go             CUDABlas adapter (//go:build cuda)
-  cuda_dnn.go              CUDADNN adapter (//go:build cuda)
-  cuda_kernels.go          CUDAKernels adapter (//go:build cuda)
-  cuda_mempool.go          CUDAMemPool adapter (//go:build cuda)
-
-device/
-  cuda_device.go           CUDA device abstraction (//go:build cuda)
-  cuda_allocator.go        CUDA memory allocator (//go:build cuda)
+  factory.go               Registration pattern for BLAS and DNN implementations
+  cuda_runtime.go          CUDARuntime adapter (purego)
+  cuda_blas.go             CUDABlas adapter (purego)
+  cuda_dnn.go              CUDADNN adapter (purego)
+  cuda_kernels.go          CUDAKernels adapter (purego)
+  cuda_mempool.go          CUDAMemPool adapter (purego)
 
 internal/cuda/
-  runtime.go               CUDA runtime + Stream bindings (//go:build cuda)
-  mempool.go               Size-bucketed device memory pool (//go:build cuda)
+  runtime_purego.go        CUDA runtime purego bindings (dlopen libcudart.so)
+  arena.go                 2GB bump-pointer arena allocator
+  mempool.go               Size-bucketed device memory pool (fallback)
   kernels/
-    elementwise.cu         CUDA kernel source (17 kernels, stream-aware)
-    elementwise.go         CGO bindings for kernels (//go:build cuda)
-    flash_attention.cu     Tiled flash attention kernel (online softmax)
-    flash_attention.h      C function declaration
-    flash_attention.go     CGO binding (//go:build cuda && cutlass)
-    gemm_int8.cu           INT8 mixed-precision GEMM kernel
-    gemm_int8.h            C function declaration
-    gemm_int4.cu           INT4 mixed-precision GEMM kernels (left-mul + right-mul)
-    gemm_int4.h            C function declarations
-    gemm_quantized.go      CGO bindings for quantized GEMM (//go:build cuda && cutlass)
-    Makefile               nvcc compilation
+    elementwise.cu         CUDA kernel source (element-wise, scalar, broadcast)
+    flash_attention.cu     Tiled flash attention kernel (online softmax, BLOCK_SIZE=64)
+    transpose.cu           N-D GPU transpose (shared memory tiling, precomputed strides)
+    gather.cu              GPU embedding lookup (int32 + int64 indices)
+    rmsnorm.cu             Fused RMSNorm (single-pass, shared-memory reduction)
+    gemv_q4k.cu            Fused dequant+GEMV for Q4_K (warp shuffle reduction)
+    kernels_purego.go      Purego dispatch wrappers (dlopen libkernels.so)
+    Makefile               nvcc compilation (produces libkernels.so)
 
 internal/cublas/
-  cublas.go                cuBLAS + SetStream bindings (//go:build cuda)
+  cublas_purego.go         cuBLAS purego bindings (dlopen libcublas.so)
 
 internal/cudnn/
-  doc.go                   Package identity (no build tag)
-  cudnn.go                 cuDNN CGo bindings (//go:build cuda)
+  cudnn_purego.go          cuDNN purego bindings (dlopen libcudnn.so)
 
 internal/tensorrt/
-  doc.go                   Package identity (no build tag)
-  tensorrt.go              TensorRT Go bindings (//go:build cuda)
-  Makefile                 Compiles cshim/ into libtrt_capi.a
-  cshim/
-    trt_capi.h             C shim header for TensorRT C++ API
-    trt_capi.cpp           C shim implementation
+  tensorrt_purego.go       TensorRT purego bindings (dlopen libtrt_capi.so)
+  cshim/                   C shim for TensorRT C++ API
 
 inference/
-  tensorrt_convert.go      Graph-to-TRT converter (//go:build cuda)
-  tensorrt_cache.go        TRT engine caching (//go:build cuda)
-  tensorrt_pipeline.go     TRT inference engine wrapper (//go:build cuda)
+  tensorrt_convert.go      Graph-to-TRT converter (runtime Available() guard)
+  tensorrt_cache.go        TRT engine caching
+  tensorrt_pipeline.go     TRT inference engine wrapper
+
+graph/
+  cuda_graph.go            CUDAGraphExecutor (warmup/capture/replay)
 
 layers/attention/
-  flash_cuda.go            Flash attention GPU dispatch (//go:build cuda && cutlass)
-  flash_nocuda.go          Naive fallback (//go:build !(cuda && cutlass))
+  flash_cuda.go            Flash attention dispatch (runtime cuda.Available() guard)
 ```
 
-CGO linker flags:
+Purego dlopen targets:
 
 ```
-internal/cuda/runtime.go:       -lcudart
-internal/cublas/cublas.go:      -lcublas
-internal/cudnn/cudnn.go:        -lcudnn
-internal/tensorrt/tensorrt.go:  -L${SRCDIR} -ltrt_capi -lnvinfer -lstdc++
-internal/cuda/kernels/*.go:     -L${SRCDIR} -lkernels -lcudart -lstdc++
+libcudart.so              CUDA runtime (memory, streams, graphs)
+libcublas.so              cuBLAS (SGEMM, GemmEx)
+libcudnn.so               cuDNN (conv, batchnorm, activation, pooling, softmax)
+libtrt_capi.so            TensorRT C shim
+libkernels.so             Custom CUDA kernels
 ```
 
 ### 4.13 GPU Runtime Abstraction Layer (GRAL)
@@ -554,10 +567,11 @@ and `tensor/` from any specific GPU SDK. GPUEngine stores five GRAL interfaces
 handles. GPUStorage stores a `Runtime` for memory operations.
 
 CUDA adapters in the same package implement these interfaces by delegating to
-`internal/cuda`, `internal/cublas`, and `internal/cudnn`. ROCm adapters delegate
-to `internal/hip`, `internal/rocblas`, and `internal/miopen`. Adding a new
-backend requires implementing the five interfaces -- no changes to compute/ or
-tensor/ are needed.
+`internal/cuda`, `internal/cublas`, and `internal/cudnn` (all purego). ROCm
+adapters delegate to `internal/hip`, `internal/rocblas`, and `internal/miopen`
+(all purego). OpenCL adapters delegate to `internal/opencl` and
+`internal/clblast` (all purego). Adding a new backend requires implementing
+the five interfaces -- no changes to compute/ or tensor/ are needed.
 
 The DNN interface abstracts at the operation level: callers pass shapes as
 `[4]int` arrays and the adapter manages vendor-specific descriptors internally.
@@ -565,35 +579,28 @@ See [ADR-011](adr/011-gpu-runtime-abstraction-layer.md) for details.
 
 ### 4.14 AMD ROCm Backend
 
-ROCmEngine mirrors GPUEngine's architecture using HIP/rocBLAS/MIOpen adapters.
-All 35 Engine[T] methods delegate to CPUEngine; the GRAL infrastructure is wired
-for GPU acceleration when AMD hardware is available.
+ROCmEngine mirrors GPUEngine's architecture using HIP/rocBLAS/MIOpen adapters,
+all via purego dlopen. No build tags. Runtime detection via `hip.Available()`.
 
-```
-internal/hip/runtime.go:           -lamdhip64
-internal/hip/mempool.go:           (pure Go, uses hip.Malloc/Free)
-internal/rocblas/rocblas.go:       -lrocblas
-internal/miopen/miopen.go:         -lMIOpen
-internal/hip/kernels/*.go:         -L${SRCDIR} -lhipkernels -lamdhip64 -lstdc++
-```
+Purego dlopen targets:
+- `libamdhip64.so` -- HIP runtime
+- `librocblas.so` -- rocBLAS GEMM
+- `libMIOpen.so` -- MIOpen DNN operations
+- `libhipkernels.so` -- Custom HIP kernels
 
-Integration: `device/rocm_device.go` auto-registers AMD GPUs via init().
+Integration: `device/rocm_device.go` auto-registers AMD GPUs.
 `inference/engine_rocm.go` routes "rocm" / "rocm:N" to ROCmEngine.
 `layers/attention/flash_rocm.go` dispatches fused attention on AMD GPUs.
 See [ADR-012](adr/012-amd-rocm-backend.md) for details.
 
 ### 4.15 OpenCL Backend
 
-OpenCLEngine mirrors GPUEngine's architecture using OpenCL/CLBlast adapters.
-All 35 Engine[T] methods delegate to CPUEngine; the GRAL infrastructure is wired
-for GPU acceleration when OpenCL hardware is available.
+OpenCLEngine mirrors GPUEngine's architecture using OpenCL/CLBlast adapters,
+all via purego dlopen. No build tags. Runtime detection via `opencl.Available()`.
 
-```
-internal/opencl/runtime.go:                    -lOpenCL
-internal/opencl/kernels/kernels.go:            -lOpenCL (embeds elementwise.cl)
-internal/clblast/clblast.go:                   -lclblast -lOpenCL
-internal/gpuapi/opencl_{runtime,blas,dnn,kernels,mempool}.go
-```
+Purego dlopen targets:
+- `libOpenCL.so` -- OpenCL runtime
+- `libclblast.so` -- CLBlast GEMM
 
 No DNN library: OpenCLDNN returns ErrNotSupported for all operations; the
 compute engine falls back to CPU. Kernels are compiled from .cl source at
@@ -618,7 +625,7 @@ See [ADR-013](adr/013-opencl-backend.md) for details.
 | L4 | Ada Lovelace | sm_89 | 24 GB | GCP |
 | Tesla V100 | Volta | sm_70 | 16 GB | GCP |
 | A100 | Ampere | sm_80 | 40/80 GB | GCP |
-| DGX Spark GB10 | Blackwell | sm_120 | 128 GB unified | Local (ARM64) |
+| DGX Spark GB10 | Blackwell | sm_121 | 128 GB unified LPDDR5x | Local (ARM64) |
 
 ---
 
@@ -811,15 +818,15 @@ Documented exceptions (unreachable `tensor.New` error paths):
 ### 7.4 GPU Test Execution
 
 ```
-# 1. Compile CUDA kernels
-cd internal/cuda/kernels && make
+# 1. Compile CUDA kernels (shared library for purego dlopen)
+cd internal/cuda/kernels && make shared CUDA_ARCH=sm_121
 
-# 2. Run GPU test suite
-go test -tags cuda -count=1 -v \
+# 2. Run GPU test suite (no build tags needed)
+go test -count=1 -v \
     ./compute/ ./tensor/ ./internal/cuda/... ./internal/cublas/... ./device/
 
 # 3. Run parity tests (GPU vs CPU)
-go test -tags cuda -run Parity -v ./compute/
+go test -run Parity -v ./compute/
 ```
 
 ---
@@ -887,8 +894,9 @@ during SIGTERM shutdown.
 
 ### 9.2 GPU-Specific Issues
 
-**"CUDA not found" / build fails with cuda tag**: Install CUDA Toolkit 12.x.
-Ensure `nvcc` is in PATH. Set `CUDA_HOME` if non-standard location.
+**"CUDA not found"**: `cuda.Available()` returns false. Ensure libcudart.so is
+in the library search path (LD_LIBRARY_PATH or /usr/local/cuda/lib64). No build
+tags or compiler needed -- only the runtime shared libraries.
 
 **GPU OOM**: Operations fail with CUDA allocation errors or log "GPU OOM
 fallback to CPU" at WARN level. Reduce batch size, lower `memory_limit_mb`,
@@ -927,17 +935,17 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 
 ## 10. Known Limitations
 
-1. float32 only for GPU -- other types fall back to CPU transparently.
-2. No broadcasting in GPU kernels -- broadcast cases fall back to CPU.
+1. float32 only for GPU element-wise ops -- BF16 GEMM via cuBLAS GemmEx, other types fall back to CPU.
+2. GPU broadcasting supports up to 4D -- >4D cases fall back to CPU.
 3. Single GPU -- no multi-GPU or distributed GPU support.
 4. cuDNN operations (Conv2d, BatchNorm, activations, pooling, softmax) are non-interface methods on GPUEngine -- layers must call them explicitly rather than through Engine[T].
-5. No mixed precision -- full float32 throughout.
-6. Default device -- always uses cuda:0, no device selection API.
-7. Hardware validation pending -- GCP GPU quota request pending.
-8. float16/float8 GEMM upcasts to float32 -- no native half-precision kernels.
-9. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
-10. Embeddings not yet supported -- inference.Embed returns an error (no hidden state access).
-11. KV cache is optional -- not all graph architectures support it.
+5. CUDA graph capture disabled by default (ZERFOO_ENABLE_CUDA_GRAPH) -- remaining D2H copies in GQA/FFN/KV cache prevent full graph capture.
+6. Managed memory disabled by default (ZERFOO_ENABLE_MANAGED_MEM) -- 13% regression on GB10 from page faults.
+7. float16/float8 GEMM upcasts to float32 -- no native half-precision element-wise kernels.
+8. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
+9. KV cache is optional -- not all graph architectures support it.
+10. Fused dequant+GEMV Q4_K kernel ready but engine dispatch validation pending.
+11. Performance at 84% of Ollama (166 vs 197.21 tok/s) -- CUDA graph enablement is the primary path to closing the gap.
 
 ---
 
@@ -971,7 +979,11 @@ The inference pipeline provides an embeddable Go-native API for model loading an
 **Serve:** `serve.NewServer(model).Handler()` returns an `http.Handler` implementing:
 - `POST /v1/chat/completions` -- OpenAI chat completion (non-streaming and SSE)
 - `POST /v1/completions` -- OpenAI text completion (non-streaming and SSE)
+- `POST /v1/embeddings` -- embedding generation
 - `GET /v1/models` -- model listing
+- `GET /v1/models/:id` -- model detail
+- `DELETE /v1/models/:id` -- model unloading
+- `GET /openapi.yaml` -- OpenAPI 3.1 specification (go:embed)
 
 **CLI Commands:**
 - `zerfoo pull <model-id>` -- download and cache a model via registry
@@ -1116,6 +1128,8 @@ ADR files in `docs/adr/`.
 | [027](adr/027-composition-prerequisite.md) | Composition Prerequisite | 34 | All layers must compose Engine primitives for tracing compiler |
 | [028](adr/028-tracing-compiler.md) | Tracing Compiler | 34 | EngineProxy records primitive ops during Forward(), automatic decomposition |
 | [029](adr/029-neon-simd-cpu-acceleration.md) | NEON SIMD CPU Acceleration | 34 | Plan9 assembly for hot-path ops, same-shape fast paths, tensor arena |
+| [030](adr/030-ollama-performance-parity.md) | Ollama Performance Parity | 34 | Performance strategy for matching/surpassing Ollama throughput |
+| [031](adr/031-openai-server-in-zerfoo.md) | OpenAI Server in Zerfoo | 34 | Server stays in Zerfoo serve/ package, not in Zonnx |
 
 ---
 
@@ -1129,7 +1143,7 @@ The NVIDIA DGX Spark GB10 (Blackwell, sm_121, CUDA 13.0.2, ARM64 aarch64,
 
 Nine code fixes were required for aarch64 compatibility:
 
-- Flash attention BLOCK_SIZE reduced 64 -> 32 (48KB shared memory limit on sm_121)
+- Flash attention BLOCK_SIZE: initially reduced 64 -> 32 for sm_121, later restored to 64 with optimized shared memory usage
 - TensorRT Makefile: auto-detect multiarch include path via `dpkg-architecture`
 - TensorRT C shim: `kEXPLICIT_BATCH` -> 0, `setOptimizationProfileShared` -> `setOptimizationProfileAsync`
 - Missing includes: `<cstdio>`, `<stdlib.h>` for C.free
@@ -1747,12 +1761,12 @@ Commits: 4bc6e9a, 51ea41d.
 - CPU plan.Run(): 5.71 tok/s. CUDA plan.Run(): 2.22 tok/s.
 - Both produce degenerate output (pre-existing inference correctness issue).
 
-### Known Issues Post ADR-025
-- Megakernel Gather emission fails for non-traced Compile path (falls back correctly).
-- CUDA per-op path slower than CPU (2.22 vs 5.71 tok/s).
-- Degenerate output from both CPU and CUDA (pre-existing correctness bug).
-- internal/cublas/ and internal/cudnn/ remain behind //go:build cuda (CGo).
-- Pre-existing purego ccall SIGSEGV on linux/arm64 for packages calling real CUDA APIs.
+### Known Issues Post ADR-025 (Resolved)
+- internal/cublas/ and internal/cudnn/ converted to purego (Waves 1-8).
+- All 6 GPU backends (cuBLAS, cuDNN, TensorRT, CUTLASS/flash attention,
+  ROCm/HIP/rocBLAS/MIOpen, OpenCL) are now purego. `go build ./...` works
+  everywhere without any build tags.
+- Megakernel abandoned in favor of CUDA graph + fused kernels (see below).
 
 ---
 
@@ -1805,8 +1819,115 @@ Current performance: 95.8% of Ollama. Model: Gemma 3 1B Q4_K_M GGUF.
   3. tensor_cache appendGPU CPU fallback.
 
 ### OpenAI-Compatible Inference Server
-- Package: serve/ with server.go (395 lines).
-- Endpoints: POST /v1/chat/completions, POST /v1/completions, GET /v1/models.
+- Package: serve/ with server.go.
+- Endpoints: POST /v1/chat/completions, POST /v1/completions,
+  POST /v1/embeddings, GET /v1/models, GET /v1/models/:id,
+  DELETE /v1/models/:id, GET /openapi.yaml.
+- OpenAPI 3.1 specification embedded via go:embed and served at /openapi.yaml.
+- Usage token counting (prompt_tokens, completion_tokens) on all responses.
 - SSE streaming, batch scheduling, speculative decoding support.
 - Wired into CLI via cmd/cli/serve.go.
 - See ADR-031 for architecture decision (server lives in Zerfoo, not Zonnx).
+
+---
+
+## Megakernel Investigation and Abandonment (2026-03-13)
+
+The megakernel approach (single CUDA kernel executing the entire decode step)
+was investigated and abandoned in favor of CUDA graph + fused kernels.
+
+### Failure Modes
+
+1. **CompileTraced validation failure**: The megakernel design requires
+   CompileTraced to decompose composite ops (GQA, FFN, SwiGLU) into primitives.
+   CompileTraced fails with "input tensors cannot be nil" at instruction 0
+   (MatMul) due to frozen slot tensor lifecycle issues. Fallback to Compile
+   produces composite op names that have no emitters.
+
+2. **7 composite ops with no emitters**: Without CompileTraced, the standard
+   Compile path produces EmbeddingLookup, GroupedQueryAttention, FFN, LMHead,
+   and others that codegen.CheckSupport rejects. Writing CUDA device functions
+   for each would duplicate the existing fused kernel infrastructure.
+
+3. **Single-thread execution model**: The emitted megakernel uses a single
+   `tid` thread model. Different ops require different parallelism (MatMul
+   needs 2D thread blocks, reductions need shared memory, etc.). A single
+   thread configuration cannot serve all ops efficiently.
+
+4. **No cuBLAS integration**: The megakernel cannot call cuBLAS from device
+   code. MatMul would need a hand-written GEMM, which cannot match cuBLAS
+   performance.
+
+5. **No Q4_K support**: The codegen emitter has no Q4_K dequantization path.
+
+### Decision
+
+CUDA graph capture + fused kernels is strictly superior:
+- Captures existing optimized kernels (cuBLAS, fused QK norm+RoPE, SwiGLU,
+  fused dequant+GEMV) as-is with zero code duplication.
+- Each op runs with its own optimal grid/block dimensions.
+- Near-zero launch overhead (~15us for graph replay vs ~2.37ms for 338
+  individual launches).
+
+Code in generate/megakernel.go, internal/codegen/ is retained but not invested in.
+
+---
+
+## CUDA Graph Partial Capture (2026-03-13)
+
+### Architecture
+
+`graph/cuda_graph.go` implements CUDAGraphExecutor with 3-phase execution:
+
+1. **Warmup** (token 1): Normal per-op execution to validate correctness.
+2. **Capture** (token 2): `cudaStreamBeginCapture` records all GPU operations
+   into a CUDA graph. `cudaGraphInstantiate` creates a replayable executable.
+3. **Replay** (tokens 3+): `cudaGraphLaunch` replays the captured graph in a
+   single launch, eliminating per-op launch overhead.
+
+The executor splits the execution plan into capturable and non-capturable
+regions. EmbeddingLookup runs outside the graph (data-dependent control flow).
+
+Pre-allocated fixed buffer layout (ExecutionPlan) provides fixed memory
+addresses required by CUDA graph replay.
+
+### Current Status
+
+Disabled by default. Opt-in via `ZERFOO_ENABLE_CUDA_GRAPH=1`.
+
+Remaining D2H copies in the transformer body prevent full capture:
+- GQA forward pass: KV cache management triggers D2H
+- FFN: intermediate tensor reads
+- KV cache append: source tensor Data() calls
+
+When capture fails, CUDAGraphExecutor falls back gracefully to per-op
+execution. Relaxed capture mode (`cudaStreamCaptureModeRelaxed`) is used to
+allow synchronous memcpy during capture, but this is insufficient for the
+remaining D2H sites.
+
+### Estimated Impact
+
+Eliminating 338 kernel launches/token at ~7us each = ~2.37ms overhead.
+Graph replay reduces this to ~15us total. Estimated +20-30 tok/s.
+
+---
+
+## Performance Summary (2026-03-13)
+
+### Current Performance
+
+| Config | tok/s | Notes |
+|--------|-------|-------|
+| Zerfoo GB10 (clean defaults) | 166 | 84% of Ollama |
+| Zerfoo GB10 (managed mem) | 145 | 13% regression from page faults |
+| Zerfoo GB10 (previous best) | 188.92 | Before Wave 1-8 code changes |
+| Ollama GB10 | 197.21 | Baseline target |
+| Theoretical max (Q4 on GB10) | ~350-400 | 273 GB/s bandwidth ceiling |
+
+Output quality is coherent (verified against Ollama at temperature=0).
+
+### Path to Surpassing Ollama
+
+1. Enable CUDA graph capture (eliminate remaining D2H copies) -- +20-30 tok/s estimated
+2. Investigate 188->166 tok/s regression from Wave 1-8 code changes
+3. Kernel optimization: register tuning, shared memory for sm_121
