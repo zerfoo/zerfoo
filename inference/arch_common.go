@@ -86,6 +86,22 @@ func buildTransformerGraph(
 					}
 					return tensor.New([]int{cols, rows}, transposed)
 				}
+				// FP8 E4M3: dequantize, transpose, re-quantize to preserve FP8E4M3Storage.
+				// Without this, engine.Transpose produces F32 storage and the FP8 MatMul
+				// path is never invoked, causing degenerate output from double quantization
+				// (FP8->F32->FP16 in the generic fp16MatMul fallback).
+				if fs, ok := any(s).(*tensor.FP8E4M3Storage); ok {
+					f32 := fs.Slice()
+					rows, cols := shape[0], shape[1]
+					transposed := make([]float32, len(f32))
+					for r := range rows {
+						for c := range cols {
+							transposed[c*rows+r] = f32[r*cols+c]
+						}
+					}
+					fp8 := tensor.NewFP8E4M3Storage(transposed)
+					return tensor.NewWithStorage[float32]([]int{cols, rows}, fp8)
+				}
 			}
 			tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
 			if err != nil {
