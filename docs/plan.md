@@ -326,7 +326,7 @@ results.
   - Acceptance: Kernels compile and handle mismatched shapes.
   - Dependencies: none.
 
-- [ ] T205.2 Remove sameShape guard from GPUEngine binary ops  Owner: TBD  Est: 1h
+- [x] T205.2 Remove sameShape guard from GPUEngine binary ops  Owner: task-T205.2  Completed: 2026-03-13
   - Update Add, Sub, Mul, Div, Pow to use broadcasting kernels when shapes differ.
   - Keep CPU fallback for >4D broadcasting edge cases.
   - Acceptance: GPUEngine binary ops produce GPUStorage for broadcastable shapes.
@@ -343,7 +343,7 @@ results.
 
 ### E306: Fused Kernel Wiring and Integration
 
-- [ ] T306.1 Wire remaining fused kernels into GPUEngine  Owner: TBD  Est: 2h
+- [x] T306.1 Wire remaining fused kernels into GPUEngine  Owner: task-T306.1  Completed: 2026-03-13
   - Fused SwiGLU (T206.1, done) and Scale+Softmax (T206.2, done) are
     implemented but may not be dispatched in all code paths. Verify dispatch
     logic covers ExecutionPlan and direct Forward paths.
@@ -366,7 +366,7 @@ internal/cuda/runtime_purego.go. CUDAGraphExecutor is implemented in
 graph/cuda_graph.go. StreamProvider is on GPUEngine. What remains is
 enabling it after D2H elimination.
 
-- [ ] T207.2 Pre-allocate fixed buffer layout in ExecutionPlan  Owner: TBD  Est: 3h
+- [x] T207.2 Pre-allocate fixed buffer layout in ExecutionPlan  Owner: task-T207.2  Completed: 2026-03-13
   - At compile time, compute shape of every intermediate tensor.
   - Allocate one contiguous GPU buffer with fixed offsets per slot.
   - CUDA graph capture requires fixed memory addresses.
@@ -433,7 +433,7 @@ enabling it after D2H elimination.
 
 ### E210: cuBLAS Purego Conversion
 
-- [ ] T210.1 Create purego wrappers for cuBLAS API  Owner: TBD  Est: 4h
+- [x] T210.1 Create purego wrappers for cuBLAS API  Owner: task-T210.1  Completed: 2026-03-13
   - Wrap via purego dlopen of libcublas.so: cublasCreate, cublasDestroy,
     cublasSetStream, cublasSgemm, cublasGemmEx.
   - Match existing internal/cublas/ API surface.
@@ -528,7 +528,7 @@ enabling it after D2H elimination.
 
 ### E213: CUTLASS Flash Attention Purego Conversion
 
-- [ ] T213.1 Convert flash_attention.cu dispatch to purego  Owner: TBD  Est: 3h
+- [x] T213.1 Convert flash_attention.cu dispatch to purego  Owner: task-T213.1  Completed: 2026-03-13
   - flash_attention.go currently uses CGo (//go:build cuda && cutlass).
   - Convert to purego dlopen of libkernels.so.
   - Remove cutlass build tag requirement.

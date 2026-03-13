@@ -740,3 +740,38 @@ Content-Type: application/yaml. Test added.
 |------|--------|
 | go build ./... | PASS |
 | Merge conflicts | Resolved (1 in serve/server.go) |
+
+---
+
+# Wave 4: Broadcasting Wiring + Fused Verification + Buffer Layout + Purego
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates)
+
+## Tasks Completed
+
+### T205.2: 4D Broadcast Wired into GPUEngine Binary Ops
+GPU binary ops now chain: same-shape -> 2D broadcast -> 4D broadcast -> CPU fallback.
+`broadcastStrides4D()` computes output dims and per-dim strides. Tests cover scalar,
+row, col, full 4D, and >4D rejection.
+
+### T306.1: Fused Kernel Dispatch Verified
+Both FusedSwiGLU and FusedScaledSoftmax already dispatch correctly in all code paths
+(Forward, ExecutionPlan.Run, CompileTraced). 8 tests added to verify dispatch via
+direct engine and EngineProxy.
+
+### T207.2: Pre-allocated Fixed Buffer Layout for CUDA Graph
+`BufferLayout` computes per-slot offsets at compile time. `PreallocateBuffers()`
+allocates one contiguous backing buffer. `RunInstructions` copies results into
+pre-allocated buffers, keeping addresses stable for CUDA graph replay.
+
+### T210.1: cublasGemmEx Purego Wrapper
+Replaced error stub with working implementation. Supports BFloat16, Float16, Float32.
+Fixed `cublasGemmDefault` constant overflow.
+
+### T213.1: Flash Attention Purego Conversion
+New `flash_attention_purego.go` dispatches via `cuda.Ccall` to `flash_attention_forward_f32`
+in libkernels.so. CGo file retained for tagged builds.
+
+## Cumulative Progress (Waves 1-4): 27 tasks completed out of ~65 total
