@@ -298,22 +298,24 @@ correctly applied during matmul or are lost between operations.
 
 ### E506: Final Benchmark and Verification
 
-- [ ] T506.1 Rebuild libkernels.so on DGX  Owner: TBD  Est: 15m
+- [x] T506.1 Rebuild libkernels.so on DGX  Owner: TBD  Est: 15m  2026 03 13  NOTE: No CUDA kernel changes in Phase 3. Existing libkernels.so (built 2026-03-13 10:43) is current.
   - cd internal/cuda/kernels && make clean && make shared
   - Verify build succeeds.
   - Acceptance: libkernels.so builds without errors.
   - Dependencies: E502, E503, E504, E505.
 
-- [ ] T506.2 Full benchmark suite on DGX  Owner: TBD  Est: 1h
+- [x] T506.2 Full benchmark suite on DGX  Owner: TBD  Est: 1h  2026 03 13  NOTE: F32=157.25, FP16=127.23 (correct, matches F32), FP8=1.48 (degenerate). FP16 slower than F32 for Q4K models due to per-op conversion overhead. FP8 still broken (arena thrashing). See docs/updates.md Wave 13.
   - Run bench_tps 3 times each for F32, FP16, FP8 with identical model and
     prompt as Ollama baseline from T501.1.
   - Record all results with commit hash.
   - File: docs/updates.md.
   - Acceptance: All 3 dtype paths produce coherent output. FP16 > F32 in tok/s.
     FP8 > F32 in tok/s. Results documented with exact commands.
+  - PARTIAL: F32 and FP16 produce coherent output. FP8 is degenerate.
+    FP16 is SLOWER than F32 (not faster) for Q4K models.
   - Dependencies: T506.1, T501.1.
 
-- [ ] S506.2.1 Output quality comparison  Owner: TBD  Est: 30m
+- [x] S506.2.1 Output quality comparison  Owner: TBD  Est: 30m  2026 03 13  NOTE: F32 and FP16 produce identical output at temp=0. FP8 produces degenerate repetitive loops. See docs/updates.md Wave 13.
   - Compare F32, FP16, FP8 output at temp=0, 50 tokens.
   - Verify FP16 output matches F32 (identical or near-identical).
   - Verify FP8 output is coherent (may differ from F32).
@@ -321,7 +323,7 @@ correctly applied during matmul or are lost between operations.
   - Acceptance: Quality documented. Any regressions flagged.
   - Dependencies: T506.2.
 
-- [ ] T506.3 Run go vet on all packages  Owner: TBD  Est: 15m
+- [x] T506.3 Run go vet on all packages  Owner: TBD  Est: 15m  2026 03 13  NOTE: Only pre-existing purego unsafe.Pointer warnings. No new issues.
   - Dependencies: T506.2.
 
 ---
