@@ -1,11 +1,11 @@
-//go:build cuda
-
 package inference
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/zerfoo/zerfoo/internal/cuda"
 )
 
 func TestSaveLoadTRTEngine(t *testing.T) {
@@ -49,6 +49,9 @@ func TestLoadTRTEngineMiss(t *testing.T) {
 }
 
 func TestTRTCacheKey(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
 	key1, err := TRTCacheKey("model-a", "fp32")
 	if err != nil {
 		t.Fatalf("TRTCacheKey: %v", err)

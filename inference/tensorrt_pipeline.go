@@ -1,5 +1,3 @@
-//go:build cuda && tensorrt
-
 package inference
 
 import (
@@ -32,6 +30,9 @@ type TRTInferenceEngine struct {
 // available. Returns a ready-to-use TRTInferenceEngine.
 // If dynamicShapes is non-nil, the engine supports variable-size inputs.
 func buildTRTEngine(g *graph.Graph[float32], modelID string, opts *loadOptions, dynamicShapes *DynamicShapeConfig) (*TRTInferenceEngine, error) {
+	if !tensorrt.Available() {
+		return nil, fmt.Errorf("tensorrt pipeline: TensorRT library not available")
+	}
 	precision := opts.precision
 	if precision == "" {
 		precision = "fp32"

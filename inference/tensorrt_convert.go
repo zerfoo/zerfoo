@@ -1,5 +1,3 @@
-//go:build cuda && tensorrt
-
 package inference
 
 import (
@@ -76,6 +74,9 @@ func (e *UnsupportedOpError) Error() string {
 // If dynamicShapes is non-nil, an optimization profile is created with the
 // specified min/opt/max dimensions for each input.
 func ConvertGraphToTRT(g *graph.Graph[float32], workspaceBytes int, fp16 bool, dynamicShapes *DynamicShapeConfig) (*trtConversionResult, error) {
+	if !tensorrt.Available() {
+		return nil, fmt.Errorf("tensorrt convert: TensorRT library not available")
+	}
 	nodes := g.Nodes()
 
 	// Check for unsupported ops first.
