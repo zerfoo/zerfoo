@@ -529,6 +529,9 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...); r != nil || err != nil {
+			return r, err
+		}
 		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...)
 		}
@@ -552,6 +555,9 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...); r != nil || err != nil {
+			return r, err
+		}
 		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...)
 		}
@@ -575,6 +581,9 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...); r != nil || err != nil {
+			return r, err
+		}
 		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...)
 		}
@@ -598,6 +607,9 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if r, err := tryFP16NativeBinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...); r != nil || err != nil {
+			return r, err
+		}
 		if e.dtype == DTypeFP16 || e.dtype == DTypeFP8 {
 			return fp16BinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...)
 		}
