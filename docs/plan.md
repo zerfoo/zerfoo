@@ -354,7 +354,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
     measured and documented.
   - Dependencies: T406.4, T406.5.
 
-- [ ] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h  NOTE: GQA batch MatMul bug fixed (f261aa1), re-benchmark needed on DGX
+- [x] S406.6.1 FP8 parity and benchmark  Owner: TBD  Est: 1h  2026 03 13  NOTE: Benchmarked on DGX. FP16 124.50 tok/s (17% slower than F32 due to conversion overhead). FP8 1.45 tok/s (arena thrashing, degenerate output). Acceptance NOT fully met -- FP8 not coherent, no throughput improvement. See docs/updates.md for full results.
   - Compare output quality: FP32 vs BF16 vs FP16 vs FP8 at temp=0 for 50 tokens.
   - Measure tok/s for each precision. Document results.
   - FP8 output may diverge more from FP32 due to quantization noise.
