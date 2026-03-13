@@ -2049,3 +2049,59 @@ Phase 3 (26 tasks, 6 epics: E501-E506) is complete. Key accomplishments:
 | Zerfoo FP16 (gemma3) | 127.23 | Correct output, slower due to per-op overhead |
 | Zerfoo FP8 (gemma3) | 1.48 | Arena thrashing, degenerate output |
 | Ollama (gemma3) | 197.21 | Target (25% gap from F32) |
+
+### Phase 4 Completion Summary (2026-03-13)
+
+Phase 4 executed 30 tasks across 6 epics in 5 parallel waves (up to 5 agents).
+Closed the Ollama gap from 25% to 3% (157.25 -> 191.28 tok/s).
+
+**E601: Q4K GEMV Kernel Optimization -- Reverted.**
+Profiled Q4K GEMV: down_proj (K=6144) dominates at 51.3 us/call, 33% occupancy,
+28% bandwidth. Shared-memory-limited (24KB/block). Attempted block size 256 +
+vectorized uint4 loads + x-vector tiling. Register pressure increased 43->54,
+causing 12.2% regression (189->166 tok/s). Reverted to original kernel (128
+threads, 43 registers). Lesson: for memory-bound kernels on sm_121, register
+pressure from vectorization can eliminate occupancy gains from reduced smem.
+
+**E602: GQA D2H Elimination -- Complete.**
+Audited 15 .Data() calls. Only 2 in decode hot path (fused QK and splitMergedQKV).
+Both had GPU fast paths that are always taken during GPU decode. Replaced CPU
+fallbacks with hard errors. Verified zero D2H copies during decode on DGX.
+
+**E603: CUDA Graph Capture -- Infrastructure built, GQA blocks capture.**
+Built full CUDA graph capture/instantiate/replay infrastructure with arena reset
+floor, captured slot restore, async KV cache D2D memcpy, Pow scalar async D2H.
+GQA is position-dependent (RoPE angles computed on CPU, KV cache offset from CPU).
+Graph replay bakes in capture-time kernel args, producing wrong output for
+subsequent tokens. GQA appears at instruction 2 interleaved in every layer, so no
+contiguous capturable region exists. Graceful fallback to RunInstructions.
+To fix: pre-compute RoPE table for all positions on GPU, store KV offset in GPU
+memory. This is a significant refactor deferred to Phase 5+.
+
+**E604: FP8 Arena and Output Fix -- Fixed (partially).**
+Added grow-only output buffer to fp8Scratchpad (ensureC). Arena misses: 1841->4.
+Root cause of degenerate output: (1) fp8Scratchpad cached stale arena pointers
+after arena.Reset(); (2) embed_tokens/lm_head were FP8-quantized but used for
+gather, corrupting vocabulary mapping. Fixed both. FP8 CUDA: 53.70 tok/s with
+coherent output on CPU path. However, cublasLt FP8 is unsupported on sm_121
+(status 15), so all FP8 ops use dequant+FP16 fallback, which introduces quality
+degradation. FP8 quality on sm_121 remains degenerate (R606 materialized).
+
+**E605: Per-Token Overhead Reduction -- Complete.**
+Pre-allocate [1,1] token tensor, update in-place per decode step (both Generate
+and GenerateStream). Eliminates per-token tensor creation. Verified identical
+output and stable arena stats on DGX.
+
+**Key finding: FP16/FP8 dispatch overhead was the dominant regression.**
+The entire 157->189 tok/s recovery came from adding `e.dtype != DTypeF32` guards
+to skip ~600 failed Float16Storage/FP8E4M3Storage/BFloat16Storage type assertions
+per token on the F32 hot path. This was not in the plan -- discovered during
+pre-wave investigation.
+
+### Updated Performance (2026-03-13 post-Phase 4)
+
+| Config | tok/s | Notes |
+|--------|-------|-------|
+| Zerfoo F32 (gemma3) | 191.28 | 3-run avg (190.57, 191.41, 191.85) |
+| Zerfoo FP8 (gemma3) | 53.70 | Fixed but degenerate on sm_121 |
+| Ollama (gemma3) | 197.21 | Gap: 3.0% (5.93 tok/s) |
