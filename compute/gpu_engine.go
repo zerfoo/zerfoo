@@ -1166,16 +1166,24 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	}
 
 	// General N-D transpose via stride-based kernel.
+	// Precompute output strides on the host so the kernel avoids O(ndim^2) per thread.
+	outStrides := make([]int, rank)
+	outStride := 1
+	for i := rank - 1; i >= 0; i-- {
+		outStrides[i] = outStride
+		outStride *= outShape[i]
+	}
+
 	inStrides32 := make([]int32, rank)
-	outShape32 := make([]int32, rank)
+	outStrides32 := make([]int32, rank)
 	perm32 := make([]int32, rank)
 	for i := range rank {
 		inStrides32[i] = int32(inStrides[i])
-		outShape32[i] = int32(outShape[i])
+		outStrides32[i] = int32(outStrides[i])
 		perm32[i] = int32(axes[i])
 	}
 
-	if err := e.kernels.TransposeND(devIn, devOut, inStrides32, outShape32, perm32, rank, total, e.stream); err != nil {
+	if err := e.kernels.TransposeND(devIn, devOut, inStrides32, outStrides32, perm32, rank, total, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devOut, byteSize)
 		return nil, err
 	}
