@@ -1,12 +1,13 @@
 // rmsnorm.cu -- CUDA kernel for fused RMSNorm.
 // Computes: output[row] = input[row] * rsqrt(mean(input[row]^2) + eps) * weight
-// Single-pass per row using shared-memory reduction.
+// Single-pass per row using shared-memory reduction with warp shuffle finish.
 
 #include <cuda_runtime.h>
 #include <math.h>
 
 // Each block handles one row of length D.
-// Uses shared memory for parallel sum-of-squares reduction.
+// Uses shared memory for inter-warp reduction and warp shuffle for the
+// final intra-warp reduction to reduce shared memory traffic.
 __global__ void kernel_rmsnorm(const float* __restrict__ input,
                                 const float* __restrict__ weight,
                                 float* __restrict__ output,
@@ -27,13 +28,22 @@ __global__ void kernel_rmsnorm(const float* __restrict__ input,
     sdata[threadIdx.x] = local_sq;
     __syncthreads();
 
-    // Parallel reduction for sum of squares.
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    // Parallel reduction: shared memory for inter-warp, then warp shuffle.
+    for (int s = blockDim.x / 2; s >= 32; s >>= 1) {
         if (threadIdx.x < s) {
             sdata[threadIdx.x] += sdata[threadIdx.x + s];
         }
         __syncthreads();
     }
+    // Final warp reduction using __shfl_down_sync (no shared memory needed).
+    if (threadIdx.x < 32) {
+        float val = sdata[threadIdx.x];
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        }
+        if (threadIdx.x == 0) sdata[0] = val;
+    }
+    __syncthreads();
 
     // Compute scale = rsqrt(mean_sq + eps).
     float scale = rsqrtf(sdata[0] / (float)D + eps);

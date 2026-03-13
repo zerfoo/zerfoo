@@ -9,8 +9,8 @@
 #include <cuda_runtime.h>
 
 // Each block handles one (outer, inner) stripe along the softmax axis.
-// Uses shared memory for parallel max and sum reductions.
-// The scale factor is applied to each element before computing softmax.
+// Uses shared memory for inter-warp reductions and warp shuffle for the
+// final intra-warp steps to reduce shared memory traffic.
 __global__ void kernel_scaled_softmax(const float* input, float* output,
                                        int outer, int inner, int axisSize,
                                        float scale) {
@@ -31,13 +31,24 @@ __global__ void kernel_scaled_softmax(const float* input, float* output,
     sdata[threadIdx.x] = local_max;
     __syncthreads();
 
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    // Inter-warp max reduction via shared memory.
+    for (int s = blockDim.x / 2; s >= 32; s >>= 1) {
         if (threadIdx.x < s) {
             if (sdata[threadIdx.x + s] > sdata[threadIdx.x])
                 sdata[threadIdx.x] = sdata[threadIdx.x + s];
         }
         __syncthreads();
     }
+    // Final warp max reduction using __shfl_down_sync.
+    if (threadIdx.x < 32) {
+        float val = sdata[threadIdx.x];
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            float other = __shfl_down_sync(0xffffffff, val, offset);
+            if (other > val) val = other;
+        }
+        if (threadIdx.x == 0) sdata[0] = val;
+    }
+    __syncthreads();
     float max_val = sdata[0];
     __syncthreads();
 
@@ -52,12 +63,22 @@ __global__ void kernel_scaled_softmax(const float* input, float* output,
     sdata[threadIdx.x] = local_sum;
     __syncthreads();
 
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    // Inter-warp sum reduction via shared memory.
+    for (int s = blockDim.x / 2; s >= 32; s >>= 1) {
         if (threadIdx.x < s) {
             sdata[threadIdx.x] += sdata[threadIdx.x + s];
         }
         __syncthreads();
     }
+    // Final warp sum reduction using __shfl_down_sync.
+    if (threadIdx.x < 32) {
+        float val = sdata[threadIdx.x];
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            val += __shfl_down_sync(0xffffffff, val, offset);
+        }
+        if (threadIdx.x == 0) sdata[0] = val;
+    }
+    __syncthreads();
     float sum_val = sdata[0];
     __syncthreads();
 

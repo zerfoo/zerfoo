@@ -7,9 +7,10 @@
  * over KV tiles, accumulating the softmax numerator and denominator online
  * (log-sum-exp trick) so the full S = Q*K^T matrix is never materialized.
  *
- * Tile size BLOCK_SIZE controls shared memory usage. For head_dim up to 128
- * and BLOCK_SIZE=32, shared memory per block is 32KB which fits all GPUs
- * including Blackwell sm_121 (48KB static shared memory limit).
+ * Tile size BLOCK_SIZE controls shared memory usage. On sm_121 (Blackwell
+ * GB10, 228KB shared memory per SM) we use BLOCK_SIZE=64 with dynamic shared
+ * memory (64KB). On older architectures with the 48KB static limit we use
+ * BLOCK_SIZE=32 (32KB). Pass -DFLASH_BLOCK_SIZE=64 when compiling for sm_121.
  */
 
 #include "flash_attention.h"
@@ -17,13 +18,18 @@
 #include <math.h>
 
 /* Tile size for sequence dimension. Each block processes BLOCK_SIZE query rows.
- * Set to 32 for universal compatibility (32 * 128 * 4 * 2 = 32KB shared mem). */
-#define BLOCK_SIZE 32
+ * Default 32 (32 * 128 * 4 * 2 = 32KB). Set FLASH_BLOCK_SIZE=64 for sm_121
+ * (64 * 128 * 4 * 2 = 64KB, within 228KB shared memory capacity). */
+#ifndef FLASH_BLOCK_SIZE
+#define FLASH_BLOCK_SIZE 32
+#endif
+#define BLOCK_SIZE FLASH_BLOCK_SIZE
 
 /* Maximum head dimension supported. Adjust if models exceed this. */
 #define MAX_HEAD_DIM 128
 
-/* Kernel: one block per (batch, head, query_tile). */
+/* Kernel: one block per (batch, head, query_tile).
+ * Shared memory is allocated dynamically to support tile sizes > 48KB. */
 __global__ void flash_attention_kernel(
     const float* __restrict__ Q,
     const float* __restrict__ K,
@@ -51,9 +57,12 @@ __global__ void flash_attention_kernel(
 
     float scale = rsqrtf((float)head_dim);
 
-    /* Shared memory for K and V tiles. */
-    __shared__ float sK[BLOCK_SIZE][MAX_HEAD_DIM];
-    __shared__ float sV[BLOCK_SIZE][MAX_HEAD_DIM];
+    /* Shared memory for K and V tiles.
+     * Layout: sK[BLOCK_SIZE * head_dim] followed by sV[BLOCK_SIZE * head_dim].
+     * Using dynamic shared memory allows tile sizes > 48KB static limit. */
+    extern __shared__ float smem[];
+    float* sK = smem;
+    float* sV = smem + BLOCK_SIZE * head_dim;
 
     /* Per-thread accumulators for one query row (if tid < q_count). */
     float row_max = -FLT_MAX;
@@ -83,12 +92,13 @@ __global__ void flash_attention_kernel(
         int k_end = min(k_start + BLOCK_SIZE, seq_len);
         int k_count = k_end - k_start;
 
-        /* Cooperatively load K and V tile into shared memory. */
-        if (tid < k_count) {
-            int k_idx = k_start + tid;
+        /* Cooperatively load K and V tile into shared memory.
+         * With BLOCK_SIZE > warp size, multiple threads load in parallel. */
+        for (int row = tid; row < k_count; row += BLOCK_SIZE) {
+            int k_idx = k_start + row;
             for (int d = 0; d < head_dim; d++) {
-                sK[tid][d] = K_bh[k_idx * head_dim + d];
-                sV[tid][d] = V_bh[k_idx * head_dim + d];
+                sK[row * head_dim + d] = K_bh[k_idx * head_dim + d];
+                sV[row * head_dim + d] = V_bh[k_idx * head_dim + d];
             }
         }
         __syncthreads();
@@ -105,7 +115,7 @@ __global__ void flash_attention_kernel(
 
                 float s = 0.0f;
                 for (int d = 0; d < head_dim; d++) {
-                    s += q_row[d] * sK[j][d];
+                    s += q_row[d] * sK[j * head_dim + d];
                 }
 
                 /* Online softmax update (log-sum-exp trick). */
@@ -120,7 +130,7 @@ __global__ void flash_attention_kernel(
 
                 /* Rescale existing output accumulator. */
                 for (int d = 0; d < head_dim; d++) {
-                    acc[d] = acc[d] * exp_diff + expf(s - row_max) * sV[j][d];
+                    acc[d] = acc[d] * exp_diff + expf(s - row_max) * sV[j * head_dim + d];
                 }
             }
         }
@@ -153,7 +163,17 @@ extern "C" cudaError_t flash_attention_forward_f32(
     dim3 grid(num_bh, num_q_tiles);
     dim3 block(BLOCK_SIZE);
 
-    flash_attention_kernel<<<grid, block, 0, stream>>>(
+    /* Dynamic shared memory: sK[BLOCK_SIZE * head_dim] + sV[BLOCK_SIZE * head_dim]. */
+    size_t smem = 2 * BLOCK_SIZE * head_dim * sizeof(float);
+
+    /* For tile sizes requiring >48KB, opt in to extended shared memory. */
+    if (smem > 48 * 1024) {
+        cudaFuncSetAttribute(flash_attention_kernel,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             (int)smem);
+    }
+
+    flash_attention_kernel<<<grid, block, smem, stream>>>(
         Q, K, V, O, seq_len, head_dim, causal);
 
     return cudaGetLastError();
