@@ -52,6 +52,13 @@ type GPUArgmaxer interface {
 	GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error)
 }
 
+// FP16ToF32Converter is an optional interface for engines that can convert
+// a tensor with Float16Storage to a regular float32 GPU tensor. This is used
+// at the end of the FP16 forward pass to produce F32 logits for sampling.
+type FP16ToF32Converter interface {
+	ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)
+}
+
 // Engine defines the interface for a computation engine (e.g., CPU, GPU).
 // All tensor operations should be routed through an Engine implementation to ensure
 // hardware interoperability and optimized performance.

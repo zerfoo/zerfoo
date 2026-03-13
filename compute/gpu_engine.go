@@ -2216,6 +2216,52 @@ func (e *GPUEngine[T]) GPUArgmax(t *tensor.TensorNumeric[float32]) (int, error) 
 	return int(result), nil
 }
 
+// ConvertFP16ToF32 converts a tensor with Float16Storage to a regular float32
+// GPU tensor using the FP16->F32 kernel. Returns the input unchanged if it
+// does not have Float16Storage.
+func (e *GPUEngine[T]) ConvertFP16ToF32(t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	fs, ok := any(t.GetStorage()).(*tensor.Float16Storage)
+	if !ok {
+		return t, nil
+	}
+
+	fp16Ptr, _, _ := fs.GPUPtr()
+	if fp16Ptr == nil {
+		// CPU-side Float16Storage: decode via Slice (no GPU conversion possible).
+		data := fs.Slice()
+		out, err := tensor.New(t.Shape(), data)
+		if err != nil {
+			return nil, fmt.Errorf("ConvertFP16ToF32: create f32 tensor: %w", err)
+		}
+		return out, nil
+	}
+
+	e.setDevice()
+
+	nElems := fs.Len()
+	f32Bytes := nElems * f32Size
+	f32Ptr, err := e.pool.Alloc(e.deviceID, f32Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("ConvertFP16ToF32: alloc: %w", err)
+	}
+
+	if err := e.kernels.FP16ToF32(fp16Ptr, f32Ptr, nElems, e.stream); err != nil {
+		e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
+		return nil, fmt.Errorf("ConvertFP16ToF32: kernel: %w", err)
+	}
+
+	gs, err := tensor.NewGPUStorageFromPtr[float32](f32Ptr, nElems, e.deviceID)
+	if err != nil {
+		e.pool.Free(e.deviceID, f32Ptr, f32Bytes)
+		return nil, fmt.Errorf("ConvertFP16ToF32: gpu storage: %w", err)
+	}
+	out, err := tensor.NewWithStorage[float32](t.Shape(), gs)
+	if err != nil {
+		return nil, fmt.Errorf("ConvertFP16ToF32: wrap tensor: %w", err)
+	}
+	return out, nil
+}
+
 // GPUFusedRoPE applies rotary position embeddings in a single GPU kernel launch.
 // This replaces Split + 4 Mul + Sub + Add + Concat (8 operations, ~10 D2D memcpy) with 1 kernel.
 func (e *GPUEngine[T]) GPUFusedRoPE(input, cosAngles, sinAngles *tensor.TensorNumeric[T], rotaryDim int) (*tensor.TensorNumeric[T], error) {

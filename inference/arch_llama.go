@@ -124,6 +124,19 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 		return nil, err
 	}
 
+	// Convert FP16 logits to F32 for sampling. When the forward pass runs in
+	// FP16, the MatMul output uses Float16Storage. Sampling expects F32, so
+	// convert here at the boundary before returning logits.
+	if _, isFP16 := any(result.GetStorage()).(*tensor.Float16Storage); isFP16 {
+		if conv, ok := any(h.engine).(compute.FP16ToF32Converter); ok {
+			if f32t, ok := any(result).(*tensor.TensorNumeric[float32]); ok {
+				if converted, cErr := conv.ConvertFP16ToF32(f32t); cErr == nil {
+					result = any(converted).(*tensor.TensorNumeric[T])
+				}
+			}
+		}
+	}
+
 	// Apply logit softcapping: cap * tanh(logit / cap).
 	if h.softcapVal > 0 {
 		// GPU path: use engine operations to keep data on device.

@@ -161,6 +161,56 @@ func TestBuildLlamaGraph_ForwardNonNaN(t *testing.T) {
 	assertGraphForwardNonNaN(t, g, cfg.VocabSize)
 }
 
+func TestLMHeadNode_FP16WeightOutputIsF32(t *testing.T) {
+	// When the LM head weight has Float16Storage, the MatMul output
+	// should be converted to F32 for sampling compatibility.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	vocabSize, hiddenDim := 8, 4
+
+	// Create weight with Float16Storage.
+	f32Data := make([]float32, vocabSize*hiddenDim)
+	for i := range f32Data {
+		f32Data[i] = float32(i%7+1) * 0.01
+	}
+	fp16Stor := tensor.NewFloat16StorageFromF32(f32Data)
+	weight, err := tensor.NewWithStorage[float32]([]int{vocabSize, hiddenDim}, fp16Stor)
+	if err != nil {
+		t.Fatalf("create fp16 weight: %v", err)
+	}
+
+	head := &lmHeadNode[float32]{engine: engine, weight: weight}
+
+	// Input: [1, 2, hiddenDim]
+	inputData := make([]float32, 2*hiddenDim)
+	for i := range inputData {
+		inputData[i] = float32(i%5+1) * 0.1
+	}
+	input, err := tensor.New([]int{1, 2, hiddenDim}, inputData)
+	if err != nil {
+		t.Fatalf("create input: %v", err)
+	}
+
+	output, err := head.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output should have shape [1, 2, vocabSize].
+	if s := output.Shape(); len(s) != 3 || s[0] != 1 || s[1] != 2 || s[2] != vocabSize {
+		t.Fatalf("shape = %v, want [1, 2, %d]", s, vocabSize)
+	}
+
+	// On CPU engine, Float16Storage goes through CPU matmul path which
+	// produces regular float32 data. Verify output is valid (non-NaN).
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("invalid value at %d: %v", i, v)
+		}
+	}
+}
+
 func TestBuildLlamaGraph_MissingTensor(t *testing.T) {
 	cfg := &gguf.ModelConfig{
 		Architecture:     "llama",
