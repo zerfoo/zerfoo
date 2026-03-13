@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"strings"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -281,6 +282,11 @@ func decodeBF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 // The tensors are modified in place — the returned map is the same object.
 func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[string]*tensor.TensorNumeric[float32], error) {
 	for name, t := range tensors {
+		// Skip embedding and LM head weights — they are used for gather
+		// (not matmul) and FP8 quantization causes degenerate decode output.
+		if strings.Contains(name, "embed_tokens") || strings.Contains(name, "lm_head") {
+			continue
+		}
 		// Skip 1D tensors (norm weights, biases) — they are small and
 		// benefit more from full precision than from FP8 compression.
 		if len(t.Shape()) <= 1 {

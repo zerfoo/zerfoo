@@ -69,6 +69,15 @@ func (s *fp8Scratchpad) ensureB(pool gpuapi.MemPool, deviceID, byteSize int) (un
 	return ptr, nil
 }
 
+// reset clears cached arena pointers after an arena Reset.
+// scaleOne is NOT cleared because it is allocated as a weight (outside the arena).
+func (s *fp8Scratchpad) reset() {
+	s.fp16BufA = nil
+	s.fp16BufASize = 0
+	s.fp16BufB = nil
+	s.fp16BufBSize = 0
+}
+
 // free releases all scratchpad device memory back to the pool.
 func (s *fp8Scratchpad) free(pool gpuapi.MemPool, deviceID int) {
 	if s.fp16BufA != nil {
