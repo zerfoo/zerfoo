@@ -88,7 +88,7 @@ tables and correctness report.
 
 ### E401: Regression Bisect and Fix
 
-- [ ] T401.1 Bisect the 188->166 regression on DGX Spark  Owner: TBD  Est: 3h
+- [x] T401.1 Bisect the 188->166 regression on DGX Spark  Owner: TBD  Est: 3h
   - Build bench_tps at the pre-wave baseline commit (388e60d, 2026-03-12).
   - Verify 188+ tok/s is reproducible. If not, the regression is environmental.
   - If reproducible, bisect between 388e60d and current HEAD (~50 commits).
@@ -97,14 +97,14 @@ tables and correctness report.
   - Acceptance: Specific commit or set of commits identified as cause.
   - Dependencies: none.
 
-- [ ] T401.2 Fix or revert the regression-causing change  Owner: TBD  Est: 2h
+- [x] T401.2 Fix or revert the regression-causing change  Owner: TBD  Est: 2h
   - Based on bisect results, either fix the root cause or revert the change.
   - Likely candidates: int64 gather (T301.1), Q4_K dispatch checks (T304.2),
     SubSlice changes (T301.2), or managed memory detection (T303.1).
   - Acceptance: bench_tps >= 188.92 tok/s (3-run avg) on DGX Spark.
   - Dependencies: T401.1.
 
-- [ ] S401.2.1 Regression fix verification  Owner: TBD  Est: 30m
+- [x] S401.2.1 Regression fix verification  Owner: TBD  Est: 30m
   - Run bench_tps 3 times on DGX after fix. Report tok/s.
   - Acceptance: Average >= 188.92 tok/s. No functional regression (output coherent).
   - Dependencies: T401.2.
@@ -116,14 +116,14 @@ CUDAGraphExecutor splits the plan into capturable and non-capturable regions.
 EmbeddingLookup is already excluded. The remaining 5 D2H sites are deep in
 the inference pipeline and need GPU-resident alternatives.
 
-- [ ] T402.1 Eliminate D2H in MatMul weight pointer caching  Owner: TBD  Est: 1h
+- [x] T402.1 Eliminate D2H in MatMul weight pointer caching  Owner: TBD  Est: 1h
   - layers/core/matmul.go:106,117 -- getCachedTranspose calls b.Data()[0]
     to compare weight pointers. Replace with tensor identity comparison
     (pointer equality on the *TensorNumeric, not on the data slice).
   - Acceptance: getCachedTranspose never calls .Data() on GPU tensors.
   - Dependencies: none.
 
-- [ ] T402.2 Eliminate D2H in KV cache append CPU fallback  Owner: TBD  Est: 1h
+- [x] T402.2 Eliminate D2H in KV cache append CPU fallback  Owner: TBD  Est: 1h
   - generate/tensor_cache.go:110-111 -- copy(lb.kBuf, newK.Data()) is the
     CPU fallback when isGPU=false. During GPU inference isGPU should always
     be true. Add assertion or guard to ensure GPU path is always taken.
@@ -131,7 +131,7 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: No .Data() call during KV cache append in GPU inference.
   - Dependencies: none.
 
-- [ ] T402.3 Eliminate D2H in FFN split CPU fallback  Owner: TBD  Est: 1h
+- [x] T402.3 Eliminate D2H in FFN split CPU fallback  Owner: TBD  Est: 1h
   - layers/core/ffn.go:321 -- CPU fallback for FFN gate/up split calls
     merged.Data(). The GPU path at line 305 uses NewGPUStorageView.
     Verify the GPU path is always taken during GPU inference. If not,
@@ -139,7 +139,7 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: No .Data() call in FFN split during GPU inference.
   - Dependencies: none.
 
-- [ ] T402.4 Eliminate D2H in GQA CPU fallback paths  Owner: TBD  Est: 2h
+- [x] T402.4 Eliminate D2H in GQA CPU fallback paths  Owner: TBD  Est: 2h
   - grouped_query_attention.go:437 -- fused QK norm+RoPE CPU fallback.
   - grouped_query_attention.go:888 -- splitMergedQKV CPU fallback.
   - Both have GPU paths via SubSlice (lines 421-434 and 867-884).
