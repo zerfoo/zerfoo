@@ -72,12 +72,14 @@ tables and correctness report.
 | D31 | CUDA graph D2H elimination | Enable graph capture for -2.37ms/token |
 | D32 | Fused dequant+GEMV Q4_K validation | Halve Q4 memory bandwidth |
 | D33 | Kernel optimization benchmarks | Verify Wave 8 improvements on DGX |
+| D34 | BFloat16/Float16 inference path | 2x throughput potential via half-precision compute |
 
 ### Out of Scope
 
 - New model architectures.
 - Training optimization.
 - Multi-GPU / distributed inference.
+- FP8 inference (future, after BF16/FP16 is validated).
 - Managed memory optimization (known 13% regression, needs cudaMemPrefetchAsync research first).
 
 ---
@@ -215,6 +217,63 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: All tests pass.
   - Dependencies: T404.1.
 
+### E405: BFloat16/Float16 Inference Path
+
+Note: GB10 Blackwell supports native FP16 at 2x FP32 throughput and BF16
+at similar rates. The float16 package (github.com/zerfoo/float16) provides
+Go BFloat16 and Float16 types. cublasGemmEx purego wrapper already supports
+BF16/FP16 compute types. The goal is to run inference with half-precision
+weights and FP32 accumulation to halve memory bandwidth (the primary
+bottleneck on LPDDR5x).
+
+- [ ] T405.1 Add BFloat16 weight loading to GGUF loader  Owner: TBD  Est: 2h
+  - Detect BF16 weight type in GGUF files (GGMLTypeBF16 if it exists, or
+    convert F32 weights to BF16 at load time when a --bf16 flag is set).
+  - Store weights as float16.BFloat16 tensors using existing BFloat16Storage
+    or create BFloat16Storage if it does not exist.
+  - File: model/gguf/loader.go, tensor/storage.go.
+  - Acceptance: Model loads with BF16 weights. Memory usage halved vs F32.
+  - Dependencies: none.
+
+- [ ] T405.2 Wire BFloat16 MatMul through cublasGemmEx  Owner: TBD  Est: 3h
+  - When weights are BF16 and activations are FP32, use cublasGemmEx with
+    CUDA_R_16BF input type and CUDA_R_32F compute/output type (mixed precision).
+  - The cublasGemmEx purego wrapper (internal/cublas/cublas_purego.go) already
+    supports this via the computeType parameter.
+  - Add dispatch logic in GPUEngine.MatMul to detect BF16 storage and route
+    to GemmEx instead of Sgemm.
+  - File: compute/gpu_engine.go (MatMul path), internal/cublas/cublas_purego.go.
+  - Acceptance: BF16 weights x FP32 activations use GemmEx. Output correct
+    (max rel error < 1e-3 vs FP32 reference).
+  - Dependencies: T405.1.
+
+- [ ] T405.3 Add FP16 kernel variants for element-wise ops  Owner: TBD  Est: 3h
+  - Add __half variants of elementwise kernels (add, mul, rmsnorm, etc.) in
+    internal/cuda/kernels/. Use __half2 for 2-wide SIMD where possible.
+  - Add Go dispatch for FP16 via the purego path.
+  - Acceptance: FP16 kernels compile for sm_121. Parity with FP32 (rel error < 1e-3).
+  - Dependencies: none.
+
+- [ ] T405.4 Add full FP16 inference path  Owner: TBD  Est: 4h
+  - Enable running the entire forward pass in FP16: weights, activations,
+    and intermediates all in FP16. Use FP32 accumulation in reductions
+    (RMSNorm, Softmax) to avoid precision loss.
+  - Add --dtype=fp16 flag to bench_tps.
+  - File: compute/gpu_engine.go, generate/generator.go.
+  - Acceptance: bench_tps --dtype=fp16 produces coherent output. Throughput
+    measured and documented.
+  - Dependencies: T405.2, T405.3.
+
+- [ ] S405.4.1 BF16/FP16 parity and benchmark  Owner: TBD  Est: 1h
+  - Compare output quality: FP32 vs BF16 vs FP16 at temperature=0 for 50 tokens.
+  - Measure tok/s for each precision. Document results.
+  - Acceptance: BF16/FP16 output coherent. Throughput improvement documented.
+    Expected: ~1.5-2x improvement from halved memory bandwidth.
+  - Dependencies: T405.4.
+
+- [ ] T405.5 Run go vet on modified packages  Owner: TBD  Est: 15m
+  - Dependencies: S405.4.1.
+
 ---
 
 ## 4. Parallel Work
@@ -225,19 +284,21 @@ the inference pipeline and need GPU-resident alternatives.
 | Track B: CUDA Graph D2H | E402 (T402.1-T402.4) | 4 independent D2H elimination tasks. |
 | Track C: Q4_K Validation | E403 | Independent. Can run parallel with Track B. |
 | Track D: Kernel Benchmarks | E404 | Independent. Can run parallel with all. |
+| Track E: BF16/FP16 | E405 | Independent. Can run parallel with Tracks B-D. |
 
 Sync points:
 - After Track A (E401): re-baseline. All subsequent work builds on recovered perf.
 - After Track B (T402.1-T402.4): T402.5 (enable graph) unblocks.
+- After Track E (T405.1-T405.3): T405.4 (full FP16 path) unblocks.
 - After all tracks: final tok/s measurement against Ollama.
 
 Maximum parallelism:
 - Wave 1: T401.1 (regression bisect) + T402.1-T402.4 (D2H elimination, 4 parallel)
-  + T403.1 (Q4_K debug) + T404.1 (kernel rebuild). But T401.1 is highest priority
-  and should be done first or concurrently.
+  + T403.1 (Q4_K debug) + T404.1 (kernel rebuild). T401.1 is highest priority.
 - Wave 2: T401.2 (fix regression) + T402.5 (enable graph) + T403.2 (fix Q4_K)
-  + T404.2 (benchmark kernels).
-- Wave 3: Verification tasks (S401.2.1, T402.6, S402.6.1, S403.2.1, S404.2.1).
+  + T404.2 (benchmark kernels) + T405.1 (BF16 loading) + T405.3 (FP16 kernels).
+- Wave 3: T405.2 (BF16 MatMul) + T405.4 (full FP16 path) + verification tasks.
+- Wave 4: Final benchmarks (S405.4.1) + all remaining verification.
 
 ---
 
@@ -249,6 +310,7 @@ Maximum parallelism:
 | M79: CUDA graph operational | E402 | Graph capture succeeds, replay faster than per-op |
 | M80: Q4_K fused GEMV validated | E403 | Q4_K path >= Q4_0 path in tok/s |
 | M81: Surpass Ollama | E401-E404 | bench_tps > 197.21 tok/s |
+| M82: Half-precision inference | E405 | BF16/FP16 path produces coherent output with measured speedup |
 
 ---
 
@@ -260,6 +322,8 @@ Maximum parallelism:
 | R402 | D2H sites cannot be eliminated without major refactor | CUDA graph stays disabled | Medium | Document remaining sites. Consider graph capture for sub-regions only. |
 | R403 | Q4_K fused GEMV slower than Q4_0 dequant+cuBLAS | No gain from fusion | Low | Q4_K halves bandwidth; should be faster for bandwidth-bound workloads |
 | R404 | Register tuning causes subtle numerical differences | Incorrect output | Low | Run parity tests before and after on DGX |
+| R405 | FP16 precision loss in reductions causes incoherent output | Bad quality | Medium | Use FP32 accumulation in RMSNorm/Softmax. Compare output with FP32 reference. |
+| R406 | BF16 GGUF format not standardized | Cannot load BF16 models | Low | Convert F32 to BF16 at load time as fallback. |
 
 ---
 
@@ -291,6 +355,14 @@ A task is done when:
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-13 (Add BF16/FP16 Epic)
+
+Added E405: BFloat16/Float16 inference path (6 tasks: T405.1-T405.5, S405.4.1).
+GB10 Blackwell supports native FP16 at 2x FP32 throughput. Half-precision
+weights halve memory bandwidth (primary bottleneck on LPDDR5x). cublasGemmEx
+purego wrapper already supports BF16/FP16 compute types.
+Added Track E to parallel work, M82 milestone, R405/R406 risks.
 
 ### Change Summary -- 2026-03-13 (New Plan)
 
