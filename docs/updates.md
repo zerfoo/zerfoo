@@ -1897,3 +1897,81 @@ libkernels.so: rebuilt with sm_75
   - FP16 parity: **Yes** (identical output to F32)
 - Both FP16 and FP8 paths run end-to-end without crashing (GQA fix confirmed).
 - Performance optimization needed before either path can beat Ollama's 197.21 tok/s.
+
+---
+
+# T501.1 Apples-to-Apples Baseline: Ollama vs Zerfoo on DGX Spark
+
+Date: 2026-03-13
+
+## Summary
+
+Benchmarked Ollama and Zerfoo with identical model (Gemma 3 1B Q4_K_M) and
+prompt ("The quick brown fox") on DGX Spark GB10. Ollama averages 213.34 tok/s
+(warm), Zerfoo F32 averages 151.69 tok/s. Zerfoo is at **71.1%** of Ollama
+throughput -- a 61.65 tok/s gap.
+
+## Environment
+
+- **Hardware:** DGX Spark GB10, 128GB unified LPDDR5x (273 GB/s)
+- **Ollama version:** 0.17.7
+- **Zerfoo commit:** `2944f0a` (main)
+- **Model:** Gemma 3 1B Q4_K_M (`~/models/gemma3-gguf/model.gguf`)
+- **Prompt:** "The quick brown fox"
+- **Tokens:** 50 (Zerfoo), variable (Ollama, typically 36-68)
+- **Temperature:** 0 (greedy)
+
+## Ollama Results (3 warm runs)
+
+Command: `echo "The quick brown fox" | ollama run gemma3:1b --verbose`
+
+| Run | Eval Tokens | Eval Duration | Eval Rate (tok/s) | Notes |
+|-----|-------------|---------------|------------------:|-------|
+| 1   | 36          | 183.18ms      | 196.53            | Cold start (1.67s load) |
+| 2   | 36          | ~169ms        | 212.93            | Warm |
+| 3   | 36          | ~166ms        | 216.72            | Warm |
+| 4   | 68          | 323.26ms      | 210.36            | Warm |
+
+**Warm average (runs 2-4): 213.34 tok/s**
+
+Note: Run 1 excluded from warm average due to 1.67s model load overhead.
+
+## Zerfoo Results (3 runs, F32)
+
+Command:
+```
+export PATH=/usr/local/go/bin:/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+cd ~/zerfoo && go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf \
+  --device cuda --prompt 'The quick brown fox' --tokens 50
+```
+
+| Run | Tokens | Time   | Throughput (tok/s) | Arena Misses |
+|-----|--------|--------|-------------------:|-------------:|
+| 1   | 50     | 0.327s | 152.94             | 0            |
+| 2   | 50     | 0.331s | 151.12             | 0            |
+| 3   | 50     | 0.331s | 151.02             | 0            |
+
+**3-run average: 151.69 tok/s**
+
+GPU Arena: hits=26054, misses=0, resets=52, used=7.7 MB per run.
+
+## Comparison
+
+| Tool   | Avg tok/s (warm) | Relative |
+|--------|-----------------:|---------:|
+| Ollama | 213.34           | 100%     |
+| Zerfoo | 151.69           | 71.1%    |
+
+**Gap: 61.65 tok/s (28.9%)**
+
+## Observations
+
+1. Ollama's 213.34 tok/s is higher than the previously documented 197.21 tok/s
+   (measured 2026-03-12). This may be due to Ollama version differences or
+   warm-up state.
+2. Zerfoo's 151.69 tok/s is consistent with prior measurements (~149.52 tok/s).
+3. The gap is larger than previously estimated (28.9% vs 24.2%).
+4. Zerfoo arena shows zero misses, so arena overhead is not the bottleneck for
+   F32 inference.
+5. Both tools produce coherent output with the same model.
