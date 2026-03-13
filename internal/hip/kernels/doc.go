@@ -1,4 +1,4 @@
-// Package kernels provides Go wrappers for custom HIP kernels.
-// Build libhipkernels.a first: cd internal/hip/kernels && make
-// All functional code requires the "rocm" build tag.
+// Package kernels provides Go wrappers for custom HIP kernels via purego
+// dlopen. Build libhipkernels.so first: cd internal/hip/kernels && make.
+// No build tags required; use kernels.Available() to check runtime availability.
 package kernels
