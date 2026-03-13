@@ -191,6 +191,45 @@ func (p *ExecutionPlan[T]) PrepareSlots(inputs ...*tensor.TensorNumeric[T]) erro
 	return nil
 }
 
+// EnsureSlotsGPU uploads any CPU-resident scratch slot tensors to GPU. If a
+// pre-allocated GPU tensor exists for the slot (from a previous capture), the
+// CPU data is copied into it to preserve device addresses for CUDA graph
+// replay. Otherwise a new GPU tensor is allocated and stored in gpuSlotCache
+// for reuse.
+//
+// This is called after pre-capture instructions run (e.g. EmbeddingLookup
+// with quantized embedding tables that produce CPU tensors) to ensure the
+// capture region sees only GPU-resident data.
+func (p *ExecutionPlan[T]) EnsureSlotsGPU(gpuSlotCache map[int]*tensor.TensorNumeric[T]) {
+	frozenSet := make(map[int]bool, len(p.frozenIdx))
+	for _, fi := range p.frozenIdx {
+		frozenSet[fi] = true
+	}
+	for i, t := range p.scratchSlots {
+		if t == nil || frozenSet[i] {
+			continue
+		}
+		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+			continue // already GPU-resident
+		}
+		// Check for cached GPU buffer from previous capture.
+		if cached, ok := gpuSlotCache[i]; ok {
+			if gs, ok := cached.GetStorage().(*tensor.GPUStorage[T]); ok {
+				data := t.Data()
+				if err := gs.CopyFromHost(data, 0); err == nil {
+					p.scratchSlots[i] = cached
+					continue
+				}
+			}
+		}
+		// First time: allocate new GPU storage.
+		if gpuT, err := tensor.ToGPU(t); err == nil {
+			gpuSlotCache[i] = gpuT
+			p.scratchSlots[i] = gpuT
+		}
+	}
+}
+
 // InstructionCount returns the number of instructions in the plan.
 func (p *ExecutionPlan[T]) InstructionCount() int {
 	return len(p.instructions)

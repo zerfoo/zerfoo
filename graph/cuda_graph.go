@@ -43,6 +43,11 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// Fixed device buffer for the input token.
 	inputDevPtr unsafe.Pointer
 	inputBytes  int
+
+	// Cache of GPU tensors for slots that arrive as CPU from pre-capture
+	// (e.g. EmbeddingLookup with Q4K). Device addresses are reused across
+	// replays so the captured graph stays valid.
+	gpuSlotCache map[int]*tensor.TensorNumeric[T]
 }
 
 // NewCUDAGraphExecutor creates a graph executor for the given plan.
@@ -74,6 +79,7 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups:      warmups,
 		captureStart: captureStart,
 		captureEnd:   captureEnd,
+		gpuSlotCache: make(map[int]*tensor.TensorNumeric[T]),
 	}
 }
 
@@ -115,6 +121,12 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 			return g.plan.RunInstructions(ctx, inputs...)
 		}
 	}
+
+	// Ensure all slot data is GPU-resident before capture. Pre-capture
+	// instructions (e.g. EmbeddingLookup with Q4K embedding tables) may
+	// produce CPU tensors. Upload them now so the capture region sees only
+	// GPU-resident data and avoids sync D2H copies that break capture.
+	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
 	// Begin capture for the GPU-heavy region.
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
@@ -186,6 +198,9 @@ func (g *CUDAGraphExecutor[T]) replay(ctx context.Context, inputs ...*tensor.Ten
 			return nil, fmt.Errorf("cuda graph replay: pre-capture: %w", err)
 		}
 	}
+
+	// Ensure pre-capture outputs are GPU-resident before replay.
+	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
 	// Replay the captured graph.
 	if err := cuda.GraphLaunch(g.graphExec, g.stream); err != nil {
