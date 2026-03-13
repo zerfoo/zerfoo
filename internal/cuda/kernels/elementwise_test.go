@@ -310,6 +310,175 @@ func TestKernelFill(t *testing.T) {
 	}
 }
 
+func TestKernelBroadcastScalarMul(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	// scalar(2.0) * tensor([1,2,3,4,5,6]) via broadcast kernel
+	// Treat as [1,1,1,6] op [1,1,1,1], strides for b all 0.
+	a := []float32{1, 2, 3, 4, 5, 6}
+	b := []float32{2.0}
+
+	devA := toDevice(t, a)
+	defer func() { _ = cuda.Free(devA) }()
+	devB := toDevice(t, b)
+	defer func() { _ = cuda.Free(devB) }()
+
+	n := len(a)
+	devC, _ := cuda.Malloc(n * 4)
+	defer func() { _ = cuda.Free(devC) }()
+
+	// output shape [1,1,1,6], a strides [6,6,6,1], b strides [0,0,0,0]
+	if err := MulBroadcast4D(devA, devB, devC, 1, 1, 1, 6, 6, 6, 6, 1, 0, 0, 0, 0, nil); err != nil {
+		t.Fatalf("MulBroadcast4D: %v", err)
+	}
+
+	result := fromDevice(t, devC, n)
+	expected := []float32{2, 4, 6, 8, 10, 12}
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-6 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
+func TestKernelBroadcastRowAdd(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	// [3,4] + [1,4] => broadcast row
+	a := []float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+	}
+	b := []float32{10, 20, 30, 40}
+
+	devA := toDevice(t, a)
+	defer func() { _ = cuda.Free(devA) }()
+	devB := toDevice(t, b)
+	defer func() { _ = cuda.Free(devB) }()
+
+	n := len(a) // 12
+	devC, _ := cuda.Malloc(n * 4)
+	defer func() { _ = cuda.Free(devC) }()
+
+	// output shape [1,1,3,4], a strides [12,12,4,1], b strides [0,0,0,1]
+	if err := AddBroadcast4D(devA, devB, devC, 1, 1, 3, 4, 12, 12, 4, 1, 0, 0, 0, 1, nil); err != nil {
+		t.Fatalf("AddBroadcast4D: %v", err)
+	}
+
+	result := fromDevice(t, devC, n)
+	expected := []float32{
+		11, 22, 33, 44,
+		15, 26, 37, 48,
+		19, 30, 41, 52,
+	}
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-6 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
+func TestKernelBroadcastColMul(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	// [3,4] * [3,1] => column broadcast
+	a := []float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+	}
+	b := []float32{2, 3, 4}
+
+	devA := toDevice(t, a)
+	defer func() { _ = cuda.Free(devA) }()
+	devB := toDevice(t, b)
+	defer func() { _ = cuda.Free(devB) }()
+
+	n := len(a) // 12
+	devC, _ := cuda.Malloc(n * 4)
+	defer func() { _ = cuda.Free(devC) }()
+
+	// output shape [1,1,3,4], a strides [12,12,4,1], b strides [0,0,1,0]
+	if err := MulBroadcast4D(devA, devB, devC, 1, 1, 3, 4, 12, 12, 4, 1, 0, 0, 1, 0, nil); err != nil {
+		t.Fatalf("MulBroadcast4D: %v", err)
+	}
+
+	result := fromDevice(t, devC, n)
+	expected := []float32{
+		2, 4, 6, 8,
+		15, 18, 21, 24,
+		36, 40, 44, 48,
+	}
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-6 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
+func TestKernelBroadcast4D(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	// [2,3,1,4] + [1,1,2,4] => [2,3,2,4]
+	// a has shape [2,3,1,4], so a strides = [12, 4, 4, 1] (dim2 size=1, stride=4 but we use 0 for broadcast)
+	// b has shape [1,1,2,4], so b strides = [0, 0, 4, 1]
+	// output shape [2,3,2,4] = 48 elements
+
+	// a: 2*3*1*4 = 24 elements
+	a := make([]float32, 24)
+	for i := range a {
+		a[i] = float32(i + 1)
+	}
+	// b: 1*1*2*4 = 8 elements
+	b := make([]float32, 8)
+	for i := range b {
+		b[i] = float32((i + 1) * 10)
+	}
+
+	devA := toDevice(t, a)
+	defer func() { _ = cuda.Free(devA) }()
+	devB := toDevice(t, b)
+	defer func() { _ = cuda.Free(devB) }()
+
+	outN := 2 * 3 * 2 * 4
+	devC, _ := cuda.Malloc(outN * 4)
+	defer func() { _ = cuda.Free(devC) }()
+
+	// a strides for broadcast: shape [2,3,1,4] => [3*1*4, 1*4, 0, 1] = [12, 4, 0, 1]
+	// b strides for broadcast: shape [1,1,2,4] => [0, 0, 4, 1]
+	if err := AddBroadcast4D(devA, devB, devC, 2, 3, 2, 4, 12, 4, 0, 1, 0, 0, 4, 1, nil); err != nil {
+		t.Fatalf("AddBroadcast4D 4D: %v", err)
+	}
+
+	result := fromDevice(t, devC, outN)
+
+	// Verify by computing expected on CPU
+	expected := make([]float32, outN)
+	for i0 := 0; i0 < 2; i0++ {
+		for i1 := 0; i1 < 3; i1++ {
+			for i2 := 0; i2 < 2; i2++ {
+				for i3 := 0; i3 < 4; i3++ {
+					outIdx := i0*3*2*4 + i1*2*4 + i2*4 + i3
+					aIdx := i0*12 + i1*4 + 0 + i3*1 // dim2 broadcast => 0
+					bIdx := 0 + 0 + i2*4 + i3*1     // dim0,dim1 broadcast => 0
+					expected[outIdx] = a[aIdx] + b[bIdx]
+				}
+			}
+		}
+	}
+
+	for i := range expected {
+		if math.Abs(float64(result[i]-expected[i])) > 1e-6 {
+			t.Errorf("[%d] = %f, want %f", i, result[i], expected[i])
+		}
+	}
+}
+
 func TestKernelAddOnStream(t *testing.T) {
 	if !cuda.Available() {
 		t.Skip("CUDA not available")

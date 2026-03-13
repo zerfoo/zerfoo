@@ -17,6 +17,7 @@ func TestElementwiseParitySignatures(t *testing.T) {
 	type scalarFn = func(a unsafe.Pointer, scalar float32, c unsafe.Pointer, n int, s unsafe.Pointer) error
 	type unaryFn = func(a, c unsafe.Pointer, n int, s unsafe.Pointer) error
 	type broadcastFn = func(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error
+	type broadcast4DFn = func(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error
 
 	tests := []struct {
 		name string
@@ -51,6 +52,11 @@ func TestElementwiseParitySignatures(t *testing.T) {
 		{"SubBroadcast", assignFunc[broadcastFn](SubBroadcast)},
 		{"MulBroadcast", assignFunc[broadcastFn](MulBroadcast)},
 		{"DivBroadcast", assignFunc[broadcastFn](DivBroadcast)},
+		// broadcast 4D ops
+		{"AddBroadcast4D", assignFunc[broadcast4DFn](AddBroadcast4D)},
+		{"SubBroadcast4D", assignFunc[broadcast4DFn](SubBroadcast4D)},
+		{"MulBroadcast4D", assignFunc[broadcast4DFn](MulBroadcast4D)},
+		{"DivBroadcast4D", assignFunc[broadcast4DFn](DivBroadcast4D)},
 	}
 
 	for _, tt := range tests {
@@ -109,6 +115,11 @@ func TestElementwiseParityKernelLibSymbols(t *testing.T) {
 		{"launchSubBroadcast", k.launchSubBroadcast},
 		{"launchMulBroadcast", k.launchMulBroadcast},
 		{"launchDivBroadcast", k.launchDivBroadcast},
+		// broadcast 4D
+		{"launchAddBroadcast4D", k.launchAddBroadcast4D},
+		{"launchSubBroadcast4D", k.launchSubBroadcast4D},
+		{"launchMulBroadcast4D", k.launchMulBroadcast4D},
+		{"launchDivBroadcast4D", k.launchDivBroadcast4D},
 	}
 
 	for _, s := range symbols {
@@ -159,6 +170,11 @@ func TestElementwiseParityGracefulWithoutCUDA(t *testing.T) {
 		{"SubBroadcast", func() error { return SubBroadcast(nil, nil, nil, 1, 1, 1, 1, 1, 1, nil) }},
 		{"MulBroadcast", func() error { return MulBroadcast(nil, nil, nil, 1, 1, 1, 1, 1, 1, nil) }},
 		{"DivBroadcast", func() error { return DivBroadcast(nil, nil, nil, 1, 1, 1, 1, 1, 1, nil) }},
+		// broadcast 4D
+		{"AddBroadcast4D", func() error { return AddBroadcast4D(nil, nil, nil, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, nil) }},
+		{"SubBroadcast4D", func() error { return SubBroadcast4D(nil, nil, nil, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, nil) }},
+		{"MulBroadcast4D", func() error { return MulBroadcast4D(nil, nil, nil, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, nil) }},
+		{"DivBroadcast4D", func() error { return DivBroadcast4D(nil, nil, nil, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, nil) }},
 	}
 
 	for _, tt := range tests {

@@ -3,6 +3,7 @@ package tensor
 import (
 	"encoding/binary"
 	"fmt"
+	"unsafe"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/device"
@@ -80,6 +81,12 @@ func DequantizeQ4K(raw []byte, dst []float32) {
 type Q4KStorage struct {
 	raw []byte // raw super-block data
 	len int    // number of logical float32 elements
+
+	// GPU-resident copy of the raw bytes (optional).
+	// Set by GPUEngine.UploadWeights to avoid per-op H2D copies.
+	gpuPtr      unsafe.Pointer
+	gpuByteSize int
+	gpuDeviceID int
 }
 
 // NewQ4KStorageFromRaw creates Q4KStorage from raw super-block data.
@@ -118,6 +125,28 @@ func (q *Q4KStorage) Len() int                    { return q.len }
 func (q *Q4KStorage) Slice() []float32             { dst := make([]float32, q.len); q.Dequantize(dst); return dst }
 func (q *Q4KStorage) Set(_ []float32)              { panic("Q4KStorage is immutable") }
 func (q *Q4KStorage) DeviceType() device.Type      { return device.CPU }
+
+// RawBytes returns the raw Q4_K super-block data for GPU upload.
+// The layout is contiguous super-blocks, each 144 bytes.
+func (q *Q4KStorage) RawBytes() []byte { return q.raw }
+
+// NumBlocks returns the number of Q4_K super-blocks.
+func (q *Q4KStorage) NumBlocks() int {
+	return (q.len + q4KSuperBlockSize - 1) / q4KSuperBlockSize
+}
+
+// SetGPUPtr stores a pre-uploaded GPU device pointer for the raw bytes.
+func (q *Q4KStorage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	q.gpuPtr = ptr
+	q.gpuByteSize = byteSize
+	q.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the cached GPU device pointer, byte size, and device ID.
+// Returns nil if no GPU copy exists.
+func (q *Q4KStorage) GPUPtr() (unsafe.Pointer, int, int) {
+	return q.gpuPtr, q.gpuByteSize, q.gpuDeviceID
+}
 
 var _ Storage[float32] = (*Q4KStorage)(nil)
 

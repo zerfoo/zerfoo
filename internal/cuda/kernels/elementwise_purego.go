@@ -272,3 +272,59 @@ func DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, 
 		uintptr(M), uintptr(D), uintptr(s))
 	return checkKernel(ret, "div_broadcast")
 }
+
+// AddBroadcast4D launches the 4D broadcast add kernel.
+func AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("add_broadcast4d kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchAddBroadcast4D, uintptr(a), uintptr(b), uintptr(c),
+		uintptr(d0), uintptr(d1), uintptr(d2), uintptr(d3),
+		uintptr(sa0), uintptr(sa1), uintptr(sa2), uintptr(sa3),
+		uintptr(sb0), uintptr(sb1), uintptr(sb2), uintptr(sb3),
+		uintptr(s))
+	return checkKernel(ret, "add_broadcast4d")
+}
+
+// SubBroadcast4D launches the 4D broadcast sub kernel.
+func SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("sub_broadcast4d kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchSubBroadcast4D, uintptr(a), uintptr(b), uintptr(c),
+		uintptr(d0), uintptr(d1), uintptr(d2), uintptr(d3),
+		uintptr(sa0), uintptr(sa1), uintptr(sa2), uintptr(sa3),
+		uintptr(sb0), uintptr(sb1), uintptr(sb2), uintptr(sb3),
+		uintptr(s))
+	return checkKernel(ret, "sub_broadcast4d")
+}
+
+// MulBroadcast4D launches the 4D broadcast mul kernel.
+func MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("mul_broadcast4d kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchMulBroadcast4D, uintptr(a), uintptr(b), uintptr(c),
+		uintptr(d0), uintptr(d1), uintptr(d2), uintptr(d3),
+		uintptr(sa0), uintptr(sa1), uintptr(sa2), uintptr(sa3),
+		uintptr(sb0), uintptr(sb1), uintptr(sb2), uintptr(sb3),
+		uintptr(s))
+	return checkKernel(ret, "mul_broadcast4d")
+}
+
+// DivBroadcast4D launches the 4D broadcast div kernel.
+func DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("div_broadcast4d kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchDivBroadcast4D, uintptr(a), uintptr(b), uintptr(c),
+		uintptr(d0), uintptr(d1), uintptr(d2), uintptr(d3),
+		uintptr(sa0), uintptr(sa1), uintptr(sa2), uintptr(sa3),
+		uintptr(sb0), uintptr(sb1), uintptr(sb2), uintptr(sb3),
+		uintptr(s))
+	return checkKernel(ret, "div_broadcast4d")
+}

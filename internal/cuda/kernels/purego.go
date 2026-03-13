@@ -30,6 +30,10 @@ type KernelLib struct {
 	launchAddBroadcast, launchSubBroadcast uintptr
 	launchMulBroadcast, launchDivBroadcast uintptr
 
+	// broadcast 4D
+	launchAddBroadcast4D, launchSubBroadcast4D uintptr
+	launchMulBroadcast4D, launchDivBroadcast4D uintptr
+
 	// rmsnorm
 	launchRMSNorm uintptr
 
@@ -45,6 +49,9 @@ type KernelLib struct {
 
 	// gemm_q4
 	launchGemmQ4F32 uintptr
+
+	// gemv_q4k (fused dequant+GEMV for Q4_K_M)
+	launchGemvQ4KF32 uintptr
 
 	// gemm_q8
 	launchGemmQ8F32 uintptr
@@ -125,6 +132,11 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_sub_broadcast", &k.launchSubBroadcast},
 			{"launch_mul_broadcast", &k.launchMulBroadcast},
 			{"launch_div_broadcast", &k.launchDivBroadcast},
+			// broadcast 4D
+			{"launch_add_broadcast4d", &k.launchAddBroadcast4D},
+			{"launch_sub_broadcast4d", &k.launchSubBroadcast4D},
+			{"launch_mul_broadcast4d", &k.launchMulBroadcast4D},
+			{"launch_div_broadcast4d", &k.launchDivBroadcast4D},
 			// rmsnorm
 			{"launch_rmsnorm", &k.launchRMSNorm},
 			// gather
@@ -137,6 +149,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_repeat", &k.launchRepeat},
 			// gemm_q4
 			{"gemm_q4_f32", &k.launchGemmQ4F32},
+			// gemv_q4k (fused dequant+GEMV for Q4_K_M)
+			{"gemv_q4k_f32", &k.launchGemvQ4KF32},
 			// gemm_q8
 			{"gemm_q8_f32", &k.launchGemmQ8F32},
 			// argmax
