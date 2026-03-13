@@ -179,7 +179,7 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: Root cause identified. Document which calls fall through.
   - Dependencies: none.
 
-- [ ] T403.2 Fix Q4_K dispatch to handle all weight shapes  Owner: TBD  Est: 3h
+- [x] T403.2 Fix Q4_K dispatch to handle all weight shapes  Owner: TBD  Est: 3h
   - Based on T403.1 findings, fix the dispatch path so all Q4_K weights
     use the fused GEMV kernel for batch=1 and GPU dequantize+cuBLAS for
     batch>1.
@@ -235,7 +235,7 @@ bottleneck on LPDDR5x).
   - Acceptance: Model loads with BF16 weights. Memory usage halved vs F32.
   - Dependencies: none.
 
-- [ ] T405.2 Wire BFloat16 MatMul through cublasGemmEx  Owner: TBD  Est: 3h
+- [x] T405.2 Wire BFloat16 MatMul through cublasGemmEx  Owner: TBD  Est: 3h
   - When weights are BF16 and activations are FP32, use cublasGemmEx with
     CUDA_R_16BF input type and CUDA_R_32F compute/output type (mixed precision).
   - The cublasGemmEx purego wrapper (internal/cublas/cublas_purego.go) already
@@ -301,7 +301,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
     has max rel error < 0.1 (FP8 is very lossy).
   - Dependencies: none.
 
-- [ ] T406.2 Add FP8 weight quantization to GGUF loader  Owner: TBD  Est: 2h
+- [x] T406.2 Add FP8 weight quantization to GGUF loader  Owner: TBD  Est: 2h
   - Add --fp8 flag to convert F32 or BF16 weights to FP8E4M3 at load time.
   - Compute per-tensor absmax scale factor: scale = max(abs(tensor)) / 448.
   - Store scale factors alongside quantized weights.
@@ -309,7 +309,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
   - Acceptance: Model loads with FP8 weights. Memory usage is 1/4 of F32.
   - Dependencies: T406.1.
 
-- [ ] T406.3 Create purego wrappers for cublasLt API  Owner: TBD  Est: 4h
+- [x] T406.3 Create purego wrappers for cublasLt API  Owner: TBD  Est: 4h
   - Wrap via purego dlopen of libcublasLt.so:
     cublasLtCreate, cublasLtDestroy, cublasLtMatmulDescCreate,
     cublasLtMatmulDescSetAttribute, cublasLtMatrixLayoutCreate,
