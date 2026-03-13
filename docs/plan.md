@@ -383,21 +383,21 @@ enabling it after D2H elimination.
 
 ### E208: Megakernel Performance Investigation
 
-- [ ] T208.1 Profile megakernel with nsys on DGX Spark  Owner: TBD  Est: 2h
+- [x] T208.1 Profile megakernel with nsys on DGX Spark  Owner: TBD  Est: 2h
   - Run nsys profile on bench_tps with megakernel enabled.
   - Identify: kernel duration, occupancy, register usage, shared memory usage.
   - Compare with per-op kernels for the same operations.
   - Acceptance: Profile report with root cause for performance gap.
   - Dependencies: none.
 
-- [ ] T208.2 Fix or redesign megakernel based on profile  Owner: TBD  Est: 4h
+- [x] T208.2 Fix or redesign megakernel based on profile  Owner: TBD  Est: 4h
   - If fixable: optimize the code generator output (tiling, shared memory, etc.).
   - If not fixable: document why and rely on CUDA graph + fused kernels instead.
   - Acceptance: Megakernel >= 50 tok/s, OR documented decision to abandon
     megakernel in favor of CUDA graph approach.
   - Dependencies: T208.1.
 
-- [ ] S208.2.1 Megakernel benchmark comparison  Owner: TBD  Est: 30m
+- [x] S208.2.1 Megakernel benchmark comparison  Owner: TBD  Est: 30m
   - Compare megakernel tok/s with per-op tok/s and CUDA graph tok/s.
   - Acceptance: Results documented.
   - Dependencies: T208.2.
@@ -415,7 +415,7 @@ enabling it after D2H elimination.
   - Dependencies: none.
   - Note: NVCC -O3 --use_fast_math already applied (commit d1ed26a, negligible gain).
 
-- [ ] T209.2 Optimize shared memory usage in attention and reduction kernels  Owner: TBD  Est: 2h
+- [x] T209.2 Optimize shared memory usage in attention and reduction kernels  Owner: TBD  Est: 2h
   - Flash attention: tune BLOCK_SIZE for sm_121 shared memory capacity.
   - Reduction kernels: use warp shuffle instead of shared memory where possible.
   - Acceptance: Kernels pass parity tests. Benchmark improvement documented.
@@ -487,7 +487,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./internal/gpuapi/... without -tags cuda.
   - Dependencies: T211.2.
 
-- [ ] S211.3.1 cuDNN purego parity test  Owner: TBD  Est: 2h
+- [x] S211.3.1 cuDNN purego parity test  Owner: TBD  Est: 2h
   - Run each cuDNN operation (conv, batchnorm, activation, pooling, softmax)
     with purego path on DGX Spark.
   - Compare output with CPU reference. Max relative error < 1e-4.
@@ -517,7 +517,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./inference/... without -tags cuda.
   - Dependencies: T212.2.
 
-- [ ] S212.3.1 TensorRT purego integration test  Owner: TBD  Est: 2h
+- [x] S212.3.1 TensorRT purego integration test  Owner: TBD  Est: 2h
   - Run TensorRT inference pipeline on DGX Spark with purego path.
   - Compare output with standard inference path.
   - Acceptance: Tokens match. Test passes.
@@ -574,7 +574,7 @@ enabling it after D2H elimination.
   - Acceptance: Kernels dispatch via purego.
   - Dependencies: T214.3.
 
-- [ ] S214.4.1 ROCm purego integration test  Owner: TBD  Est: 2h
+- [x] S214.4.1 ROCm purego integration test  Owner: TBD  Est: 2h
   - Run basic inference on AMD GPU with purego ROCm path.
   - Acceptance: Inference produces correct output on AMD GPU.
   - Dependencies: T214.4.
@@ -601,7 +601,7 @@ enabling it after D2H elimination.
   - Acceptance: go build ./internal/gpuapi/... without opencl tag.
   - Dependencies: T215.2.
 
-- [ ] S215.3.1 OpenCL purego integration test  Owner: TBD  Est: 2h
+- [x] S215.3.1 OpenCL purego integration test  Owner: TBD  Est: 2h
   - Run basic inference on OpenCL device with purego path.
   - Acceptance: Inference produces output on OpenCL device.
   - Dependencies: T215.3.
@@ -618,7 +618,7 @@ enabling it after D2H elimination.
   - Acceptance: At least one path achieves > 197.21 tok/s (surpasses Ollama).
   - Dependencies: E301, E302, E303, E304.
 
-- [ ] T307.2 Compare Zerfoo vs Ollama output quality  Owner: TBD  Est: 1h
+- [x] T307.2 Compare Zerfoo vs Ollama output quality  Owner: TBD  Est: 1h
   - Same prompt, same model, temperature=0. Compare first 50 tokens.
   - Acceptance: Output is coherent and comparable to Ollama.
   - Dependencies: T307.1.
