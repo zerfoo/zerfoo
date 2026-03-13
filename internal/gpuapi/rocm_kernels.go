@@ -128,7 +128,7 @@ func (k *ROCmKernels) Transpose2D(input, output unsafe.Pointer, rows, cols int, 
 	return fmt.Errorf("Transpose2D: not implemented for ROCm")
 }
 
-func (k *ROCmKernels) TransposeND(input, output unsafe.Pointer, inStrides, outShape, perm []int32, ndim, total int, _ Stream) error {
+func (k *ROCmKernels) TransposeND(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, _ Stream) error {
 	return fmt.Errorf("TransposeND: not implemented for ROCm")
 }
 

@@ -60,11 +60,11 @@ type KernelRunner interface {
 	Transpose2D(input, output unsafe.Pointer, rows, cols int, stream Stream) error
 
 	// TransposeND permutes dimensions of an N-D tensor.
-	// inStrides/outShape/perm are int32 slices on host.
-	TransposeND(input, output unsafe.Pointer, inStrides, outShape, perm []int32, ndim, total int, stream Stream) error
+	// inStrides/outStrides/perm are int32 slices on host.
+	TransposeND(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, stream Stream) error
 
 	// Gather performs embedding table lookup: output[i,:] = table[indices[i],:].
-	// table: [V, D], indices: [N] int32 on device, output: [N, D].
+	// table: [V, D], indices: [N] int64 on device, output: [N, D].
 	Gather(table, indices, output unsafe.Pointer, N, D, V int, stream Stream) error
 
 	// RMSNorm computes fused RMSNorm: output = input * rsqrt(mean(input^2) + eps) * weight.

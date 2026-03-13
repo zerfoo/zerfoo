@@ -41,30 +41,24 @@ __global__ void kernel_transpose_2d(const float* __restrict__ input,
 // ---------- General N-D transpose ----------
 // Permutes dimensions of an N-D tensor using stride-based indexing.
 // Each thread handles one element: computes source flat index from output flat index.
+// Output strides are precomputed on the host to avoid O(ndim^2) work per thread.
 
 __global__ void kernel_transpose_nd(const float* __restrict__ input,
                                      float* __restrict__ output,
                                      const int* __restrict__ in_strides,
-                                     const int* __restrict__ out_shape,
+                                     const int* __restrict__ out_strides,
                                      const int* __restrict__ perm,
                                      int ndim, int total) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= total) return;
 
-    // Decompose output flat index into output coordinates.
+    // Decompose output flat index into output coordinates using
+    // precomputed output strides, then map to input via perm.
     int remaining = idx;
     int src_idx = 0;
     for (int d = 0; d < ndim; d++) {
-        int coord = remaining / 1;
-        // Compute output stride for dimension d.
-        int out_stride = 1;
-        for (int k = d + 1; k < ndim; k++) {
-            out_stride *= out_shape[k];
-        }
-        coord = remaining / out_stride;
-        remaining = remaining % out_stride;
-
-        // This output coordinate maps to input dimension perm[d].
+        int coord = remaining / out_strides[d];
+        remaining = remaining % out_strides[d];
         src_idx += coord * in_strides[perm[d]];
     }
 
@@ -85,13 +79,13 @@ cudaError_t launch_transpose_2d(const float* input, float* output,
 }
 
 cudaError_t launch_transpose_nd(const float* input, float* output,
-                                 const int* in_strides, const int* out_shape,
+                                 const int* in_strides, const int* out_strides,
                                  const int* perm, int ndim, int total,
                                  cudaStream_t stream) {
     int block = 256;
     int grid = (total + block - 1) / block;
     kernel_transpose_nd<<<grid, block, 0, stream>>>(input, output, in_strides,
-                                                     out_shape, perm, ndim, total);
+                                                     out_strides, perm, ndim, total);
     return cudaGetLastError();
 }
 

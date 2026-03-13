@@ -285,6 +285,107 @@ func TestTensorCache_ContextCarry(t *testing.T) {
 	}
 }
 
+// makeGPUTensor creates a GPU-backed tensor by uploading CPU data. Skips the
+// test if no GPU runtime is available.
+func makeGPUTensor(t *testing.T, shape []int, data []float32) *tensor.TensorNumeric[float32] {
+	t.Helper()
+	cpu := makeTensor(t, shape, data)
+	gpu, err := tensor.ToGPU(cpu)
+	if err != nil {
+		t.Skipf("GPU not available: %v", err)
+	}
+	return gpu
+}
+
+func TestTensorCache_UpdateGPU_D2D(t *testing.T) {
+	// Verify that when source tensors are GPU-resident, appendGPU uses D2D
+	// copy (CopyFromDevice) rather than falling back to src.Data() which
+	// would trigger a D2H transfer.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 2, 128)
+
+	k1 := makeGPUTensor(t, []int{1, 1, 4}, []float32{1, 2, 3, 4})
+	v1 := makeGPUTensor(t, []int{1, 1, 4}, []float32{5, 6, 7, 8})
+
+	if err := cache.Update(0, k1, v1); err != nil {
+		t.Fatalf("Update(0) first: %v", err)
+	}
+
+	// Verify the cache allocated GPU buffers.
+	lb := &cache.layers[0]
+	if !lb.isGPU {
+		t.Fatal("expected GPU-backed cache layer after GPU source update")
+	}
+	if lb.kStorage == nil || lb.vStorage == nil {
+		t.Fatal("expected non-nil GPU storage buffers")
+	}
+
+	// Append a second GPU tensor to exercise the D2D append path.
+	k2 := makeGPUTensor(t, []int{1, 2, 4}, []float32{9, 10, 11, 12, 13, 14, 15, 16})
+	v2 := makeGPUTensor(t, []int{1, 2, 4}, []float32{17, 18, 19, 20, 21, 22, 23, 24})
+
+	if err := cache.Update(0, k2, v2); err != nil {
+		t.Fatalf("Update(0) second: %v", err)
+	}
+
+	if cache.SeqLen() != 3 {
+		t.Errorf("SeqLen() = %d, want 3", cache.SeqLen())
+	}
+
+	// Read back via Get and verify the concatenated data.
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	shape := lkv.Key.Shape()
+	if len(shape) != 3 || shape[0] != 1 || shape[1] != 3 || shape[2] != 4 {
+		t.Errorf("Key shape = %v, want [1, 3, 4]", shape)
+	}
+
+	gotK := lkv.Key.Data()
+	wantK := []float32{1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16}
+	for i := range wantK {
+		if gotK[i] != wantK[i] {
+			t.Errorf("Key[%d] = %v, want %v", i, gotK[i], wantK[i])
+		}
+	}
+
+	gotV := lkv.Value.Data()
+	wantV := []float32{5, 6, 7, 8, 17, 18, 19, 20, 21, 22, 23, 24}
+	for i := range wantV {
+		if gotV[i] != wantV[i] {
+			t.Errorf("Value[%d] = %v, want %v", i, gotV[i], wantV[i])
+		}
+	}
+}
+
+func TestTensorCache_UpdateGPU_MultipleLayers(t *testing.T) {
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 2, 128)
+
+	for layer := range 2 {
+		k := makeGPUTensor(t, []int{1, 1, 4}, []float32{float32(layer), 2, 3, 4})
+		v := makeGPUTensor(t, []int{1, 1, 4}, []float32{float32(layer + 10), 20, 30, 40})
+		if err := cache.Update(layer, k, v); err != nil {
+			t.Fatalf("Update(layer=%d) error: %v", layer, err)
+		}
+	}
+
+	for layer := range 2 {
+		lkv, ok := cache.Get(layer)
+		if !ok {
+			t.Fatalf("Get(%d) should return true", layer)
+		}
+		if !cache.layers[layer].isGPU {
+			t.Errorf("layer %d should be GPU-backed", layer)
+		}
+		if got := lkv.Key.Data()[0]; got != float32(layer) {
+			t.Errorf("layer %d Key[0] = %v, want %v", layer, got, float32(layer))
+		}
+	}
+}
+
 func makeTensorF32(t *testing.T, shape []int, data []float32) *tensor.TensorNumeric[float32] {
 	t.Helper()
 	tn, err := tensor.New(shape, data)

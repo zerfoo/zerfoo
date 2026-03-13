@@ -125,8 +125,8 @@ func (k *CUDAKernels) Transpose2D(input, output unsafe.Pointer, rows, cols int, 
 	return kernels.Transpose2D(input, output, rows, cols, streamPtr(s))
 }
 
-func (k *CUDAKernels) TransposeND(input, output unsafe.Pointer, inStrides, outShape, perm []int32, ndim, total int, s Stream) error {
-	return kernels.TransposeND(input, output, inStrides, outShape, perm, ndim, total, streamPtr(s))
+func (k *CUDAKernels) TransposeND(input, output unsafe.Pointer, inStrides, outStrides, perm []int32, ndim, total int, s Stream) error {
+	return kernels.TransposeND(input, output, inStrides, outStrides, perm, ndim, total, streamPtr(s))
 }
 
 func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error { //nolint:gocritic // interface match

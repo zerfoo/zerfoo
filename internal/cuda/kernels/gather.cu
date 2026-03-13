@@ -1,18 +1,19 @@
 // gather.cu -- CUDA kernel for embedding table gather (lookup).
 // Each thread block handles one index, copying D elements from the table.
+// Indices are int64 (Go int on 64-bit platforms) to avoid CPU-side conversion.
 
 #include <cuda_runtime.h>
 
 // kernel_gather: output[i, :] = table[indices[i], :]
-// table: [V, D], indices: [N], output: [N, D]
+// table: [V, D], indices: [N] int64, output: [N, D]
 __global__ void kernel_gather(const float* __restrict__ table,
-                               const int* __restrict__ indices,
+                               const long long* __restrict__ indices,
                                float* __restrict__ output,
                                int N, int D, int V) {
     int row = blockIdx.x;
     if (row >= N) return;
 
-    int idx = indices[row];
+    int idx = (int)indices[row];
     // Clamp index to valid range.
     if (idx < 0) idx = 0;
     if (idx >= V) idx = V - 1;
@@ -29,7 +30,7 @@ __global__ void kernel_gather(const float* __restrict__ table,
 
 extern "C" {
 
-cudaError_t launch_gather(const float* table, const int* indices,
+cudaError_t launch_gather(const float* table, const long long* indices,
                            float* output, int N, int D, int V,
                            cudaStream_t stream) {
     int block = 256;

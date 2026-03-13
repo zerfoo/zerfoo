@@ -10,7 +10,7 @@ import (
 )
 
 // Gather launches the embedding table gather kernel.
-// table: [V, D], indices: [N], output: [N, D].
+// table: [V, D], indices: [N] int64, output: [N, D].
 func Gather(table unsafe.Pointer, indices unsafe.Pointer,
 	output unsafe.Pointer, N, D, V int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
 	k := klib()

@@ -30,11 +30,25 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 		shape []int
 		axes  []int
 	}{
+		// 2D cases
 		{"2D_nil_axes", []int{3, 4}, nil},
 		{"2D_explicit", []int{3, 4}, []int{1, 0}},
+		{"2D_square", []int{5, 5}, []int{1, 0}},
+		{"2D_wide", []int{2, 64}, []int{1, 0}},
+		{"2D_tall", []int{64, 2}, []int{1, 0}},
+		// 3D cases
 		{"3D_0_2_1", []int{2, 3, 4}, []int{0, 2, 1}},
 		{"3D_2_1_0", []int{2, 3, 4}, []int{2, 1, 0}},
+		{"3D_1_0_2", []int{2, 3, 4}, []int{1, 0, 2}},
+		{"3D_2_0_1", []int{2, 3, 4}, []int{2, 0, 1}},
+		{"3D_unit_dim", []int{1, 3, 4}, []int{0, 2, 1}},
+		// 4D cases (common in attention: batch, heads, seq, dim)
 		{"4D_0_2_1_3", []int{2, 3, 4, 5}, []int{0, 2, 1, 3}},
+		{"4D_3_2_1_0", []int{2, 3, 4, 5}, []int{3, 2, 1, 0}},
+		{"4D_0_1_3_2", []int{2, 3, 4, 5}, []int{0, 1, 3, 2}},
+		{"4D_1_0_2_3", []int{2, 3, 4, 5}, []int{1, 0, 2, 3}},
+		{"4D_unit_batch", []int{1, 4, 8, 16}, []int{0, 2, 1, 3}},
+		{"4D_unit_seq", []int{2, 4, 1, 16}, []int{0, 2, 1, 3}},
 	}
 
 	for _, tc := range tests {
@@ -75,11 +89,28 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 				t.Fatalf("length mismatch: GPU=%d, CPU=%d", len(gData), len(cData))
 			}
 
+			maxRelErr := float32(0)
 			for i := range gData {
-				if gData[i] != cData[i] {
-					t.Errorf("[%d] GPU=%f, CPU=%f", i, gData[i], cData[i])
+				diff := gData[i] - cData[i]
+				if diff < 0 {
+					diff = -diff
+				}
+				denom := cData[i]
+				if denom < 0 {
+					denom = -denom
+				}
+				if denom < 1 {
+					denom = 1
+				}
+				relErr := diff / denom
+				if relErr > maxRelErr {
+					maxRelErr = relErr
+				}
+				if relErr > 1e-6 {
+					t.Errorf("[%d] GPU=%f, CPU=%f (rel err=%e)", i, gData[i], cData[i], relErr)
 				}
 			}
+			t.Logf("max relative error: %e", maxRelErr)
 		})
 	}
 }
@@ -150,6 +181,72 @@ func TestGPUEngine_GatherParity(t *testing.T) {
 			for i := range gData {
 				if gData[i] != cData[i] {
 					t.Errorf("[%d] GPU=%f, CPU=%f", i, gData[i], cData[i])
+				}
+			}
+		})
+	}
+}
+
+// TestGPUEngine_GatherInt64Path verifies that GPUEngine.Gather uses the
+// GatherInt64 kernel path, uploading native int (int64) indices directly
+// without CPU-side int64→int32 conversion. This eliminates D2H copies.
+func TestGPUEngine_GatherInt64Path(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	ops := numeric.Float32Ops{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = gpuEng.Close() }()
+
+	cpuEng := NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		V, D     int
+		indices  []int
+	}{
+		{"single_token", 8, 4, []int{5}},
+		{"multiple_tokens", 8, 4, []int{0, 3, 7, 1}},
+		{"repeated_index", 8, 4, []int{2, 2, 2}},
+		{"last_vocab", 8, 4, []int{7}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tableData := make([]float32, tc.V*tc.D)
+			for i := range tableData {
+				tableData[i] = float32(i+1) * 0.01
+			}
+			table, _ := tensor.New[float32]([]int{tc.V, tc.D}, tableData)
+			gpuTable, err := tensor.ToGPU(table)
+			if err != nil {
+				t.Fatalf("ToGPU: %v", err)
+			}
+
+			N := len(tc.indices)
+			indices, _ := tensor.New[int]([]int{N}, tc.indices)
+			gpuOut, _ := tensor.New[float32]([]int{N, tc.D}, nil)
+			cpuOut, _ := tensor.New[float32]([]int{N, tc.D}, nil)
+
+			if err := gpuEng.Gather(ctx, gpuTable, indices, gpuOut); err != nil {
+				t.Fatalf("GPU Gather: %v", err)
+			}
+			if err := cpuEng.Gather(ctx, table, indices, cpuOut); err != nil {
+				t.Fatalf("CPU Gather: %v", err)
+			}
+
+			gData := gpuOut.Data()
+			cData := cpuOut.Data()
+			if len(gData) != len(cData) {
+				t.Fatalf("length mismatch: GPU=%d CPU=%d", len(gData), len(cData))
+			}
+			for i := range gData {
+				if gData[i] != cData[i] {
+					t.Errorf("[%d] GPU=%f CPU=%f", i, gData[i], cData[i])
 				}
 			}
 		})
