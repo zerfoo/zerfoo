@@ -515,3 +515,103 @@ Per decode token (Gemma 3, seqLen=1, 26 layers):
 - Down GEMV: 1 kernel
 - Fused Norm+Add (post-FFN norm + residual): 1 kernel (was 2)
 Total: ~13 kernels/layer x 26 layers = ~338 + overhead
+
+---
+
+# Session 2: Post-Target Results and CUDA Graph Infrastructure
+
+Date: 2026-03-12
+
+## Final Performance (256 tokens, 3 runs)
+
+| Run | tok/s |
+|-----|-------|
+| 1 | 188.20 |
+| 2 | 188.21 |
+| 3 | 190.35 |
+| **Average** | **188.92** |
+
+**Status: 95.8% of Ollama's 197.21 tok/s -- target exceeded.**
+
+## Work Completed
+
+### NVCC -O3 --use_fast_math (commit d1ed26a)
+- Negligible gain (+0.04%): kernels are bandwidth-bound on LPDDR5x
+
+### CUDA Graph Capture Infrastructure (commits ac6b72d through 587c6cd)
+- Purego bindings for cudaStreamBeginCapture, StreamEndCapture, GraphInstantiate, GraphLaunch, GraphDestroy, GraphExecDestroy
+- StreamProvider interface on GPUEngine exposing cudaStream_t
+- CUDAGraphExecutor with 3-phase execution: warmup, capture, replay
+- Pre-stages input tensor on GPU at fixed device address
+- Graceful fallback on capture failure
+- Currently disabled: D2H copies in GQA forward pass conflict with stream capture
+
+### D2H Copy Sites Blocking Graph Capture
+1. `GPUEngine.Gather` (compute/gpu_engine.go:1242): reads indices.Data() for int64->int32 conversion
+2. `GPUStorage.TrySlice` in GQA CPU fallback paths (grouped_query_attention.go:437,888)
+3. `tensor_cache.go:124`: appendGPU CPU fallback
+
+### cuBLAS Purego Status
+Already fully implemented: Sgemm, SgemmStridedBatched. Only GemmEx (mixed-precision, >14 args) is incomplete.
+
+## Remaining Plan Items (not required for 95% target)
+- E203-E205: GPU Transpose/Gather/Broadcasting improvements
+- E207: CUDA graph enablement (requires D2H elimination)
+- E208-E209: Megakernel investigation, kernel optimization
+- E210-E215: Purego conversions (cuDNN, TensorRT, CUTLASS, ROCm, OpenCL)
+- E216: Performance verification
+
+---
+
+# Wave 1: D2H Elimination + OpenAI Server + Transpose Kernel
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates in isolated worktrees)
+
+## Tasks Completed
+
+### E301: D2H Copy Elimination (all 3 sites resolved)
+
+1. **T301.1**: Gather kernel changed to accept int64 indices directly, eliminating
+   CPU int64→int32 conversion and the D2H copy it required.
+   - Files: gather.cu, gather.go, gather_purego.go, gpu_engine.go
+   - Commits: f698a29, fbc00ec, 0750c4e
+
+2. **T301.2**: Added `GPUStorage.SubSlice(offsetElems, length)` for GPU-side
+   pointer arithmetic. Replaced all `NewGPUStorageView` calls in GQA with
+   SubSlice — no D2H copy for slicing.
+   - Files: gpu_storage.go, grouped_query_attention.go
+   - Commits: e63f7d3, 0e3ebc2
+
+3. **T301.3**: Verified `appendGPU` already uses D2D copy correctly when source
+   is GPU-resident. Added GPU verification tests.
+   - Files: tensor_cache_test.go
+   - Commit: b4a9209
+
+**Impact: CUDA graph capture (E302) is now unblocked.**
+
+### E305: OpenAI Server Endpoints (4 features)
+
+- POST /v1/embeddings (single + batch)
+- DELETE /v1/models/:id (unload model)
+- GET /v1/models/:id (model info)
+- Usage token counting (prompt_tokens + completion_tokens) in all responses
+- 13 new tests, all pass
+- Commits: da539d3, 1b17557
+
+### T203.1: CUDA Transpose Kernel Optimization
+
+- Optimized N-D transpose kernel: precomputed output strides reduces per-thread
+  work from O(ndim²) to O(ndim)
+- Updated all Go dispatch interfaces (purego + CGO + stubs)
+- Expanded parity tests from 5 to 17 cases (2D/3D/4D, unit dims)
+- Commits: 82c8aea, b77fe8a, 289920a
+
+## Quality Gates
+
+| Gate | Status |
+|------|--------|
+| go build ./... | PASS |
+| go vet ./... | PASS (pre-existing unsafe.Pointer warnings only) |
+| All tests | PASS (pre-existing TestBatchGenerate race unrelated) |
