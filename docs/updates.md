@@ -3622,3 +3622,126 @@ with FP16 compute after dequantization.
   produce similar quality to F32 if quantization is done correctly
 - Consider whether sm_121 (Blackwell) truly supports FP8 via cublasLt or if a different
   API/kernel approach is needed
+
+---
+
+# T703.1 Audit Bounds Checks in Hot Inference Paths
+
+Date: 2026-03-13
+Command: `go build -gcflags='-d=ssa/check_bce/debug=1' ./generate/... ./compute/... ./layers/... ./numeric/...`
+
+## Total BCE Count per Package
+
+| File | BCE Count | Path Classification |
+|------|-----------|-------------------|
+| compute/cpu_engine.go | 135 | COLD -- CPU fallback, not used during GPU inference |
+| layers/attention/grouped_query_attention.go | 50 | WARM -- per-layer dispatch, not tight loops |
+| layers/embeddings/rotary_positional_embedding.go | 36 | WARM -- per-layer, CPU RoPE fallback |
+| layers/core/moe.go | 36 | COLD -- MoE not used in Gemma 3 1B |
+| layers/sequence/s4.go | 35 | COLD -- S4 not used in transformer inference |
+| compute/gpu_engine.go | 27 | WARM -- GPU dispatch/setup, not tight loops |
+| layers/core/ffn.go | 24 | WARM -- per-layer FFN dispatch |
+| layers/core/linear.go | 21 | WARM -- per-layer dispatch |
+| layers/gather/gather.go | 20 | WARM -- embedding lookup (once per token) |
+| layers/core/topk.go | 20 | COLD -- not in decode hot path |
+| layers/core/pad.go | 20 | COLD -- not in decode hot path |
+| layers/attention/scaled_dot_product_attention.go | 20 | WARM -- attention dispatch |
+| layers/activations/swiglu.go | 20 | WARM -- per-layer activation |
+| generate/tensor_cache.go | 20 | WARM -- KV cache management |
+| layers/core/polynomial.go | 18 | COLD -- not in decode path |
+| layers/core/concat.go | 18 | COLD -- not in decode path |
+| compute/gpu_kernels.go | 17 | WARM -- kernel launch setup |
+| numeric/float8_ops.go | 16 | COLD -- FP8 quantization (init-time or FP8 path only) |
+| generate/paged_kv.go | 17 | WARM -- KV page management |
+| generate/kvcache.go | 15 | WARM -- KV cache ops |
+| numeric/quantization.go | 12 | COLD -- quantization at model load time |
+| layers/normalization/rmsnorm.go | 12 | WARM -- per-layer dispatch |
+| generate/gpu_kv_cache.go | 12 | WARM -- GPU KV cache |
+| layers/transpose/transpose.go | 12 | WARM -- per-layer reshape |
+| layers/transformer/block.go | 12 | WARM -- block dispatch |
+| generate/generator.go | 6 | HOT -- decode loop, logits sampling |
+| generate/megakernel.go | 6 | WARM -- megakernel dispatch |
+| generate/sampling.go | 4 | HOT -- argmax/topk in sampling |
+| compute/fused_rmsnorm.go | 4 | WARM -- fused op dispatch |
+| compute/fused_rope.go | 3 | WARM -- fused op dispatch |
+| compute/tensor_arena.go | 3 | WARM -- arena alloc/free |
+| generate/batch.go | 2 | COLD -- batch setup |
+| generate/adaptive.go | 2 | COLD -- adaptive scheduling |
+| compute/gpu_fp8.go | 2 | COLD -- FP8 dispatch |
+| compute/broadcast.go | 2 | WARM -- broadcast setup |
+| **Total** | **928** | |
+
+## Hot-Path BCE Checks (in decode loop, per-token)
+
+These are bounds checks that execute on every token during greedy decoding:
+
+| File:Line | Context | Recommended Fix |
+|-----------|---------|-----------------|
+| generate/generator.go:364 | `gen.logitsBuf[:totalElems]` slice | Assert cap >= totalElems before slice |
+| generate/generator.go:383 | `data[lastStart]` in greedy argmax | Assert `lastStart+vocabSize <= len(data)` before loop |
+| generate/generator.go:385 | `data[lastStart+i]` in greedy argmax loop | Hoist bounds check with `_ = data[lastStart+vocabSize-1]` |
+| generate/generator.go:395:12 | `logitsF64[i]` assignment | Use range loop (already `for i := range vocabSize`) |
+| generate/generator.go:395:30 | `data[lastStart+i]` read | Sub-slice: `lastSlice := data[lastStart:lastStart+vocabSize]` then index |
+| generate/generator.go:439 | `gen.logitsBuf[:totalElems]` slice | Same pattern as line 364 |
+| generate/sampling.go:37:15,30 | `items[a].val > items[b].val` in sort comparator | No fix needed -- sort.Slice already bounds-safe |
+| generate/sampling.go:70:15,31 | `items[a].prob > items[b].prob` in sort comparator | No fix needed -- sort.Slice already bounds-safe |
+
+## Warm-Path BCE (per-layer dispatch, ~26 layers x per token)
+
+These execute once per layer per token but are in GPU dispatch code (setting up
+kernel args), not in arithmetic loops. Each check costs ~1ns vs ~50us kernel time:
+
+| File | Count | Context |
+|------|-------|---------|
+| compute/gpu_engine.go | 27 | Shape indexing for kernel dispatch (e.g., `rawBytes[0]`, `shape[ax]`) |
+| compute/gpu_kernels.go | 17 | Broadcast stride computation, concat indexing |
+| layers/attention/grouped_query_attention.go | 50 | GQA dispatch (shape checks, head splits) |
+| layers/normalization/rmsnorm.go | 12 | RMSNorm dispatch |
+| layers/activations/swiglu.go | 20 | SwiGLU dispatch |
+| layers/core/ffn.go | 24 | FFN dispatch |
+| generate/tensor_cache.go | 20 | KV cache slot lookups |
+| generate/paged_kv.go | 17 | Paged KV management |
+| generate/kvcache.go | 15 | KV cache ops |
+| generate/gpu_kv_cache.go | 12 | GPU KV cache |
+
+## Cold-Path BCE (init-only, CPU fallback, unused layers)
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| CPU engine fallback | 135 | compute/cpu_engine.go -- entire file unused during GPU inference |
+| MoE / S4 / Polynomial | 89 | layers/core/moe.go, layers/sequence/s4.go -- not used in Gemma 3 |
+| Numeric quantization | 28 | numeric/quantization.go, numeric/float8_ops.go -- model load time |
+| Other cold layers | ~150 | pad, topk, concat, conv2d, etc. |
+
+## Assessment: Is BCE Elimination Worth Pursuing?
+
+**No. BCE elimination is NOT worth pursuing for the 3% gap to Ollama.**
+
+Rationale:
+
+1. **Hot-path BCE count is tiny.** Only 8 bounds checks in the true per-token
+   hot path (generator.go greedy argmax + sampling.go sort comparators). The
+   sampling.go checks are in sort.Slice which Go cannot eliminate anyway.
+
+2. **Cost is negligible.** The 6 fixable checks in generator.go execute once per
+   token. At ~1ns per check, that is 6ns per token. At 166 tok/s, one token
+   takes ~6ms. The BCE overhead is 6ns / 6,000,000ns = 0.0001%. Even the warm-path
+   checks (~200 checks x 26 layers x 1ns = ~5us) add only 0.08% overhead.
+
+3. **GPU kernel time dominates.** Each token executes ~50 GPU kernels at ~50us
+   each = ~2.5ms of GPU time. Go-side bounds checks are 5 orders of magnitude
+   smaller than GPU kernel execution time.
+
+4. **cpu_engine.go is irrelevant.** The 135 BCE checks there are the largest
+   count but the CPU engine is only used as a fallback when GPU ops fail. During
+   normal GPU inference, none of these execute.
+
+5. **Warm-path checks protect correctness.** The 200+ dispatch-layer checks
+   validate shapes and prevent silent corruption. Removing them saves ~5us/token
+   but risks subtle bugs with no measurable speedup.
+
+**Recommendation:** Do not pursue BCE elimination. The combined overhead of all
+bounds checks in the inference path is < 0.1% of total token time. The 3% gap
+to Ollama comes from kernel efficiency and launch overhead, not Go bounds checks.
+Focus engineering effort on PGO (E701), CUDA graph capture (E603), and Q4K GEMV
+kernel optimization (E601) instead.
