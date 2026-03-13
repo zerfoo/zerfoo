@@ -20,9 +20,10 @@ func Available() bool {
 type CudaDataType int
 
 const (
-	CudaR32F  CudaDataType = 0  // CUDA_R_32F  (float32)
-	CudaR16F  CudaDataType = 2  // CUDA_R_16F  (float16)
-	CudaR16BF CudaDataType = 14 // CUDA_R_16BF (bfloat16)
+	CudaR32F    CudaDataType = 0  // CUDA_R_32F  (float32)
+	CudaR16F    CudaDataType = 2  // CUDA_R_16F  (float16)
+	CudaR16BF   CudaDataType = 14 // CUDA_R_16BF (bfloat16)
+	CudaR8F_E4M3 CudaDataType = 28 // CUDA_R_8F_E4M3 (fp8 e4m3)
 )
 
 // CublasComputeType identifies the compute precision for cublasGemmEx.
