@@ -88,6 +88,8 @@ func tensorByteSize(typ GGMLType, numElements int) (int, error) {
 	case GGMLTypeQ6_K:
 		nBlocks := (numElements + 255) / 256
 		return nBlocks * 210, nil // 128 bytes ql + 64 bytes qh + 16 bytes scales + 2 bytes d
+	case GGMLTypeBF16:
+		return numElements * 2, nil
 	default:
 		return 0, fmt.Errorf("unsupported GGML type %d", typ)
 	}
@@ -112,6 +114,8 @@ func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tens
 		return decodeQ5KTensor(shape, numElements, raw)
 	case GGMLTypeQ6_K:
 		return decodeQ6KTensor(shape, numElements, raw)
+	case GGMLTypeBF16:
+		return decodeBF16Tensor(shape, numElements, raw)
 	default:
 		return nil, fmt.Errorf("unsupported GGML type %d", typ)
 	}
@@ -147,13 +151,9 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0 for fast GPU dequantize path. Q4_K uses
-	// 256-element super-blocks not supported by standard GPU dequantize.
-	// TODO: re-enable Q4_K preservation once fused GEMV dispatch is validated.
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Preserve Q4_K storage for fused GEMV kernel dispatch.
+	// Re-enabled to diagnose throughput regression (was re-quantizing to Q4_0).
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -255,4 +255,12 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 		return nil, fmt.Errorf("Q8_0 decode: %w", err)
 	}
 	return tensor.NewWithStorage[float32](shape, q8)
+}
+
+func decodeBF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	bf16, err := tensor.NewBFloat16StorageFromRaw(raw, numElements)
+	if err != nil {
+		return nil, fmt.Errorf("BF16 decode: %w", err)
+	}
+	return tensor.NewWithStorage[float32](shape, bf16)
 }

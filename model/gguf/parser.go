@@ -47,7 +47,8 @@ const (
 	GGMLTypeQ4_K GGMLType = 12
 	GGMLTypeQ5_K GGMLType = 13
 	GGMLTypeQ6_K GGMLType = 14
-	GGMLTypeQ8_K GGMLType = 15
+	GGMLTypeQ8_K  GGMLType = 15
+	GGMLTypeBF16  GGMLType = 30
 )
 
 // File represents a parsed GGUF file.

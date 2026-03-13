@@ -309,3 +309,57 @@ func TestLoadTensors_UnsupportedType(t *testing.T) {
 		t.Error("expected error for unsupported tensor type")
 	}
 }
+
+func TestLoadTensors_BF16(t *testing.T) {
+	// Create a 1x4 BF16 tensor using float16.BFloat16FromFloat32.
+	vals := []float32{1.0, -0.5, 0.25, 3.14}
+	data := make([]byte, 2*len(vals))
+	for i, v := range vals {
+		bf := float16.BFloat16FromFloat32(v)
+		binary.LittleEndian.PutUint16(data[i*2:], bf.Bits())
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "test.bf16",
+		Dimensions: []uint64{4},
+		Type:       GGMLTypeBF16,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, data)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.bf16"]
+	if tns == nil {
+		t.Fatal("tensor test.bf16 not found")
+	}
+
+	// Verify storage is BFloat16Storage.
+	if _, ok := tns.GetStorage().(*tensor.BFloat16Storage); !ok {
+		t.Errorf("expected BFloat16Storage, got %T", tns.GetStorage())
+	}
+
+	// Verify dequantized values are close to original.
+	got := tns.Data()
+	for i, want := range vals {
+		diff := float32(math.Abs(float64(got[i] - want)))
+		// BF16 has ~7-bit mantissa, allow some tolerance.
+		if diff > 0.02 {
+			t.Errorf("index %d: got %v, want %v (diff=%v)", i, got[i], want, diff)
+		}
+	}
+
+	// Verify memory is halved vs F32.
+	bf16Storage := tns.GetStorage().(*tensor.BFloat16Storage)
+	if bf16Storage.ByteSize() != len(vals)*2 {
+		t.Errorf("ByteSize() = %d, want %d", bf16Storage.ByteSize(), len(vals)*2)
+	}
+}
