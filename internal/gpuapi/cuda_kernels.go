@@ -225,5 +225,9 @@ func (k *CUDAKernels) FP16ToF32(src, dst unsafe.Pointer, n int, s Stream) error 
 	return kernels.FP16ToF32(src, dst, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, s Stream) error {
+	return kernels.DequantFP8E4M3ToFP16(input, output, scale, n, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

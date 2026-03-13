@@ -226,5 +226,9 @@ func (k *ROCmKernels) FP16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("FP16ToF32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ Stream) error {
+	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for ROCm")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*ROCmKernels)(nil)

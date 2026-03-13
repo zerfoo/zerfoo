@@ -144,4 +144,8 @@ type KernelRunner interface {
 
 	// FP16ToF32 converts n FP16 elements to float32 on device.
 	FP16ToF32(src, dst unsafe.Pointer, n int, stream Stream) error
+
+	// DequantFP8E4M3ToFP16 dequantizes n FP8 E4M3 bytes to FP16 on device.
+	// output[i] = fp8_to_fp16(input[i]) * scale.
+	DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, stream Stream) error
 }
