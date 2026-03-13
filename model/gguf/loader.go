@@ -147,11 +147,13 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Preserve Q4_K storage directly. The fused GEMV kernel in
-	// internal/cuda/kernels/gemv_q4k.cu reads Q4_K super-blocks
-	// directly for batch=1 decode, halving memory bandwidth.
-	// For CPU-only or batch>1 paths, Q4KStorage.Dequantize is used.
-	return tensor.NewWithStorage[float32](shape, q4k)
+	// Re-quantize Q4_K to Q4_0 for fast GPU dequantize path. Q4_K uses
+	// 256-element super-blocks not supported by standard GPU dequantize.
+	// TODO: re-enable Q4_K preservation once fused GEMV dispatch is validated.
+	f32 := make([]float32, numElements)
+	q4k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
