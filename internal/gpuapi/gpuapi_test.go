@@ -45,6 +45,9 @@ func (stubBLAS) Sgemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ 
 func (stubBLAS) BFloat16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
 	return nil
 }
+func (stubBLAS) MixedBF16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
+	return nil
+}
 func (stubBLAS) SetStream(gpuapi.Stream) error { return nil }
 func (stubBLAS) Destroy() error                { return nil }
 

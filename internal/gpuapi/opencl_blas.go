@@ -32,6 +32,12 @@ func (b *OpenCLBlas) BFloat16Gemm(_, _, _ int, _ float32,
 	return fmt.Errorf("BFloat16Gemm: not supported on OpenCL backend")
 }
 
+func (b *OpenCLBlas) MixedBF16Gemm(_, _, _ int, _ float32,
+	_, _ unsafe.Pointer, _ float32, _ unsafe.Pointer,
+) error {
+	return fmt.Errorf("MixedBF16Gemm: not supported on OpenCL backend")
+}
+
 func (b *OpenCLBlas) SetStream(s Stream) error {
 	return b.handle.SetStream(s.Ptr())
 }

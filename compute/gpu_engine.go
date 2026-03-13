@@ -251,6 +251,26 @@ func (e *GPUEngine[T]) UploadWeights(tensors []*tensor.TensorNumeric[float32]) e
 			q4Uploaded++
 			continue
 		}
+		// Upload BFloat16 raw bytes to GPU and cache the pointer.
+		// BF16 weights (2 bytes/element) are used with cublasGemmEx for
+		// mixed-precision MatMul (BF16 weights × FP32 activations → FP32 output).
+		if bs, ok := any(t.GetStorage()).(*tensor.BFloat16Storage); ok {
+			if ptr, _, _ := bs.GPUPtr(); ptr != nil {
+				continue // already on GPU
+			}
+			rawBytes := bs.RawBytes()
+			devPtr, err := e.allocWeight(len(rawBytes))
+			if err != nil {
+				return fmt.Errorf("alloc BF16 GPU (shape %v): %w", t.Shape(), err)
+			}
+			if err := e.uploadBytes(devPtr, rawBytes); err != nil {
+				_ = e.runtime.Free(devPtr)
+				return fmt.Errorf("upload BF16 (shape %v): %w", t.Shape(), err)
+			}
+			bs.SetGPUPtr(devPtr, len(rawBytes), e.deviceID)
+			uploaded++
+			continue
+		}
 		// Upload float32 weights to GPU. With Pow, binary ops, and
 		// Split/Concat now running on GPU, float32 weights benefit from
 		// staying on device (eliminates per-op H2D copies for norm weights).
@@ -436,6 +456,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for Q8 quantized storage on B (virtual-transposed weights).
 	if qs, ok := any(b.GetStorage()).(*tensor.Q8Storage); ok {
 		return e.matMulQ8BWeight(ctx, a, qs, b, dst...)
+	}
+
+	// Check for BFloat16Storage on A (BF16 weights × FP32 activations).
+	if bs, ok := any(a.GetStorage()).(*tensor.BFloat16Storage); ok {
+		return e.matMulBF16(ctx, bs, a, b, dst...)
+	}
+
+	// Check for BFloat16Storage on B (BF16 weights as B operand).
+	if bs, ok := any(b.GetStorage()).(*tensor.BFloat16Storage); ok {
+		return e.matMulBF16BWeight(ctx, a, bs, b, dst...)
 	}
 
 	// float32 and BFloat16 have GPU BLAS paths; fall back for other types.
@@ -1318,6 +1348,168 @@ func (e *GPUEngine[T]) matMulQ8BWeight(ctx context.Context, a *tensor.TensorNume
 		return nil, err
 	}
 	return e.Reshape(ctx, cFlat, outShape, dst...)
+}
+
+// matMulBF16 handles MatMul where A has BFloat16Storage.
+// A is [M, K] in BF16, B is [K, N] in FP32 → C is [M, N] in FP32.
+// B's FP32 data is converted to BF16 on the fly, then MixedBF16Gemm
+// computes with BF16 inputs and FP32 output via cublasGemmEx.
+func (e *GPUEngine[T]) matMulBF16(ctx context.Context, bs *tensor.BFloat16Storage, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	if len(aShape) > 2 || len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if e.blas == nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	m := aShape[0]
+	k := aShape[1]
+	n := bShape[1]
+
+	e.setDevice()
+
+	// Get BF16 device pointer for A (pre-uploaded or upload now).
+	var devA unsafe.Pointer
+	var freeA func()
+	if ptr, _, _ := bs.GPUPtr(); ptr != nil {
+		devA = ptr
+		freeA = func() {}
+	} else {
+		aBytes := bs.RawBytes()
+		var err error
+		devA, err = e.pool.Alloc(e.deviceID, len(aBytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeA = func() { e.pool.Free(e.deviceID, devA, len(aBytes)) }
+		if err := e.runtime.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeA()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeA()
+
+	// Convert B from FP32 to BF16 and upload.
+	// BFloat16Storage is Storage[float32], so T is float32 here.
+	bData := b.Data()
+	bF32 := *(*[]float32)(unsafe.Pointer(&bData))
+	bBF16 := tensor.NewBFloat16Storage(bF32)
+	bBytes := bBF16.RawBytes()
+	devB, err := e.pool.Alloc(e.deviceID, len(bBytes))
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer e.pool.Free(e.deviceID, devB, len(bBytes))
+
+	if err := e.runtime.Memcpy(devB, unsafe.Pointer(&bBytes[0]), len(bBytes), gpuapi.MemcpyHostToDevice); err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// Allocate FP32 output.
+	cSize := m * n * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if err := e.blas.MixedBF16Gemm(m, n, k, 1.0, devA, devB, 0.0, devC); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	return makeGPUResult[T](e, []int{m, n}, devC, m*n, dst...)
+}
+
+// matMulBF16BWeight handles MatMul where B has BFloat16Storage.
+// A is [M, K] in FP32, B is [K, N] in BF16 → C is [M, N] in FP32.
+// A's FP32 data is converted to BF16 on the fly, then MixedBF16Gemm
+// computes with BF16 inputs and FP32 output via cublasGemmEx.
+func (e *GPUEngine[T]) matMulBF16BWeight(ctx context.Context, a *tensor.TensorNumeric[T], bs *tensor.BFloat16Storage, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	if len(aShape) < 2 || len(bShape) < 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	if len(bShape) > 2 {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if e.blas == nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// Flatten A's batch dims: [batch..., m, k] -> [m_total, k]
+	k := aShape[len(aShape)-1]
+	m := 1
+	for i := 0; i < len(aShape)-1; i++ {
+		m *= aShape[i]
+	}
+	n := bShape[1]
+
+	// Build output shape: [batch..., m_last, n].
+	outShape := make([]int, len(aShape))
+	copy(outShape, aShape[:len(aShape)-1])
+	outShape[len(outShape)-1] = n
+
+	e.setDevice()
+
+	// Convert A from FP32 to BF16 and upload.
+	// BFloat16Storage is Storage[float32], so T is float32 here.
+	aData := a.Data()
+	aF32 := *(*[]float32)(unsafe.Pointer(&aData))
+	aBF16 := tensor.NewBFloat16Storage(aF32)
+	aBytes := aBF16.RawBytes()
+	devA, err := e.pool.Alloc(e.deviceID, len(aBytes))
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+	defer e.pool.Free(e.deviceID, devA, len(aBytes))
+
+	if err := e.runtime.Memcpy(devA, unsafe.Pointer(&aBytes[0]), len(aBytes), gpuapi.MemcpyHostToDevice); err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	// Get BF16 device pointer for B (pre-uploaded or upload now).
+	var devB unsafe.Pointer
+	var freeB func()
+	if ptr, _, _ := bs.GPUPtr(); ptr != nil {
+		devB = ptr
+		freeB = func() {}
+	} else {
+		bBytes := bs.RawBytes()
+		devB, err = e.pool.Alloc(e.deviceID, len(bBytes))
+		if err != nil {
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+		freeB = func() { e.pool.Free(e.deviceID, devB, len(bBytes)) }
+		if err := e.runtime.Memcpy(devB, unsafe.Pointer(&bBytes[0]), len(bBytes), gpuapi.MemcpyHostToDevice); err != nil {
+			freeB()
+			return e.cpu.MatMul(ctx, a, b, dst...)
+		}
+	}
+	defer freeB()
+
+	// Allocate FP32 output.
+	cSize := m * n * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	if err := e.blas.MixedBF16Gemm(m, n, k, 1.0, devA, devB, 0.0, devC); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	return makeGPUResult[T](e, outShape, devC, m*n, dst...)
 }
 
 // --- GPU-accelerated and fallback methods ---

@@ -26,6 +26,16 @@ type BLAS interface {
 		beta float32, c unsafe.Pointer,
 	) error
 
+	// MixedBF16Gemm performs mixed-precision GEMM with BF16 weights and FP32 output:
+	//   C_f32 = alpha * A_bf16 * B_bf16 + beta * C_f32
+	// where A is m x k, B is k x n (both BFloat16), and C is m x n (float32).
+	// Computation uses CUBLAS_COMPUTE_32F for precision.
+	// Returns an error on backends that do not support mixed-precision GEMM.
+	MixedBF16Gemm(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+
 	// SetStream associates the BLAS handle with an asynchronous stream.
 	SetStream(stream Stream) error
 
