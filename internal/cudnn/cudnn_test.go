@@ -1,5 +1,3 @@
-//go:build cuda
-
 package cudnn
 
 import (
@@ -9,7 +7,15 @@ import (
 	"github.com/zerfoo/zerfoo/internal/cuda"
 )
 
+func skipIfNoAvailable(t *testing.T) {
+	t.Helper()
+	if !Available() {
+		t.Skip("cuDNN not available")
+	}
+}
+
 func TestCreateDestroyHandle(t *testing.T) {
+	skipIfNoAvailable(t)
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
@@ -20,6 +26,7 @@ func TestCreateDestroyHandle(t *testing.T) {
 }
 
 func TestHandleSetStream(t *testing.T) {
+	skipIfNoAvailable(t)
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
@@ -38,6 +45,7 @@ func TestHandleSetStream(t *testing.T) {
 }
 
 func TestCreateDestroyTensorDescriptor(t *testing.T) {
+	skipIfNoAvailable(t)
 	d, err := CreateTensorDescriptor()
 	if err != nil {
 		t.Fatalf("CreateTensorDescriptor: %v", err)
@@ -51,6 +59,7 @@ func TestCreateDestroyTensorDescriptor(t *testing.T) {
 }
 
 func TestTensorDescriptorSetNd(t *testing.T) {
+	skipIfNoAvailable(t)
 	d, err := CreateTensorDescriptor()
 	if err != nil {
 		t.Fatalf("CreateTensorDescriptor: %v", err)
@@ -65,6 +74,7 @@ func TestTensorDescriptorSetNd(t *testing.T) {
 }
 
 func TestTensorDescriptorSetNdMismatch(t *testing.T) {
+	skipIfNoAvailable(t)
 	d, err := CreateTensorDescriptor()
 	if err != nil {
 		t.Fatalf("CreateTensorDescriptor: %v", err)
@@ -78,6 +88,7 @@ func TestTensorDescriptorSetNdMismatch(t *testing.T) {
 }
 
 func TestCreateDestroyFilterDescriptor(t *testing.T) {
+	skipIfNoAvailable(t)
 	d, err := CreateFilterDescriptor()
 	if err != nil {
 		t.Fatalf("CreateFilterDescriptor: %v", err)
@@ -91,6 +102,7 @@ func TestCreateDestroyFilterDescriptor(t *testing.T) {
 }
 
 func TestCreateDestroyConvolutionDescriptor(t *testing.T) {
+	skipIfNoAvailable(t)
 	d, err := CreateConvolutionDescriptor()
 	if err != nil {
 		t.Fatalf("CreateConvolutionDescriptor: %v", err)
@@ -104,6 +116,7 @@ func TestCreateDestroyConvolutionDescriptor(t *testing.T) {
 }
 
 func TestCreateDestroyActivationDescriptor(t *testing.T) {
+	skipIfNoAvailable(t)
 	tests := []struct {
 		name string
 		mode ActivationMode
@@ -131,6 +144,7 @@ func TestCreateDestroyActivationDescriptor(t *testing.T) {
 }
 
 func TestCreateDestroyPoolingDescriptor(t *testing.T) {
+	skipIfNoAvailable(t)
 	tests := []struct {
 		name string
 		mode PoolingMode
@@ -157,6 +171,7 @@ func TestCreateDestroyPoolingDescriptor(t *testing.T) {
 
 // TestActivationForwardReLU tests an in-place ReLU activation on a small buffer.
 func TestActivationForwardReLU(t *testing.T) {
+	skipIfNoAvailable(t)
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
@@ -230,6 +245,7 @@ func TestActivationForwardReLU(t *testing.T) {
 
 // TestPoolingForwardMax tests a 2x2 max pooling on a 4x4 input.
 func TestPoolingForwardMax(t *testing.T) {
+	skipIfNoAvailable(t)
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
@@ -312,6 +328,7 @@ func TestPoolingForwardMax(t *testing.T) {
 
 // TestSoftmaxForward tests softmax on a small input.
 func TestSoftmaxForward(t *testing.T) {
+	skipIfNoAvailable(t)
 	h, err := CreateHandle()
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
