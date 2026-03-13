@@ -35,8 +35,16 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		return nil, fmt.Errorf("create engine (%s): %w", o.device, err)
 	}
 
-	// Apply FP16 compute precision if requested.
+	// Apply compute precision if requested.
 	applyDType(eng, o.dtype)
+
+	// Quantize weights to FP8 if requested. Must happen before buildArchGraph.
+	if o.dtype == "fp8" {
+		fmt.Println("Quantizing weights to FP8 E4M3...")
+		if _, err := gguf.QuantizeToFP8E4M3(gm.Tensors); err != nil {
+			return nil, fmt.Errorf("FP8 quantization: %w", err)
+		}
+	}
 
 	// Build architecture-specific graph.
 	g, embWeight, err := buildArchGraph(gm.Config.Architecture, gm.Tensors, gm.Config, eng)

@@ -19,6 +19,46 @@ import (
 	"github.com/zerfoo/zerfoo/types"
 )
 
+// mockDTypeSetter records the DType set on it.
+type mockDTypeSetter struct {
+	compute.Engine[float32]
+	dtype compute.DType
+}
+
+func (m *mockDTypeSetter) SetDType(d compute.DType) { m.dtype = d }
+
+func TestApplyDType(t *testing.T) {
+	tests := []struct {
+		dtype string
+		want  compute.DType
+	}{
+		{"fp16", compute.DTypeFP16},
+		{"fp8", compute.DTypeFP8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dtype, func(t *testing.T) {
+			mock := &mockDTypeSetter{}
+			applyDType(mock, tt.dtype)
+			if mock.dtype != tt.want {
+				t.Errorf("applyDType(%q) set dtype=%d, want %d", tt.dtype, mock.dtype, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyDType_NoOp(t *testing.T) {
+	tests := []string{"", "fp32"}
+	for _, dtype := range tests {
+		t.Run(dtype, func(t *testing.T) {
+			mock := &mockDTypeSetter{}
+			applyDType(mock, dtype)
+			if mock.dtype != compute.DTypeF32 {
+				t.Errorf("applyDType(%q) should be no-op, got dtype=%d", dtype, mock.dtype)
+			}
+		})
+	}
+}
+
 // fixedLogitsNode always returns logits where a specific token has the highest value.
 type fixedLogitsNode struct {
 	graph.NoParameters[float32]
