@@ -3,6 +3,7 @@ package serve
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
 )
+
+//go:embed openapi.yaml
+var openapiSpec []byte
 
 // Server wraps a loaded model and serves OpenAI-compatible HTTP endpoints.
 type Server struct {
@@ -55,6 +59,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("GET /v1/models/{id...}", s.handleModelInfo)
 	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.handleModelDelete)
+	s.mux.HandleFunc("GET /openapi.yaml", handleOpenAPISpec)
 	return s
 }
 
@@ -471,6 +476,12 @@ func (s *Server) buildModelObject() ModelObject {
 		OwnedBy:      "local",
 		Architecture: arch,
 	}
+}
+
+func handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml")
+	w.WriteHeader(http.StatusOK)
+	w.Write(openapiSpec) //nolint:errcheck
 }
 
 // --- Streaming ---

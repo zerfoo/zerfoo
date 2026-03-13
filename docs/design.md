@@ -1753,3 +1753,60 @@ Commits: 4bc6e9a, 51ea41d.
 - Degenerate output from both CPU and CUDA (pre-existing correctness bug).
 - internal/cublas/ and internal/cudnn/ remain behind //go:build cuda (CGo).
 - Pre-existing purego ccall SIGSEGV on linux/arm64 for packages calling real CUDA APIs.
+
+---
+
+## Ollama Performance Parity Achieved (2026-03-12)
+
+Zerfoo inference on DGX Spark GB10 reaches 188.92 tok/s average (3 runs),
+exceeding the 95% target of 187.35 tok/s. Ollama baseline: 197.21 tok/s.
+Current performance: 95.8% of Ollama. Model: Gemma 3 1B Q4_K_M GGUF.
+
+### Inference Correctness Fix
+- Root cause: weight loading order and RoPE frequency computation mismatch.
+- Fix verified: 50 tokens match Ollama output at temperature=0.
+
+### Performance Optimizations Applied
+| Optimization | Commit | Impact |
+|-------------|--------|--------|
+| Arena allocator (2GB bump-pointer, O(1) reset) | 33b0dee | 8.61 -> 80.35 tok/s |
+| Pre-allocated KV cache buffers | 7e80e21 | Eliminates malloc per token |
+| GQA KV head broadcast (eliminates ~192MB Repeat) | e92a04a | Reduces memory traffic |
+| MatMulTransposeB via cuBLAS SgemmNT | 74cac33, bb5e5fd | Saves 18 Transpose/token |
+| cublasSgemmStridedBatched (1 call vs 8 per attn) | 2bbbeb1 | Reduces launch overhead |
+| Fused QK RMSNorm+RoPE kernel | 42f4008 | Saves 78 kernel launches/token |
+| Zero-copy Q+K view (avoids Concat) | 27bf4d3 | Saves 26 kernel launches/token |
+| Fused post-FFN RMSNorm+residual Add | 6b22b47 | Saves 26 launches/token |
+| Fused SwiGLU kernel | c3835ad | Eliminates 5 ops per FFN layer |
+| Fused Scale+Softmax (shared-mem reductions) | (integrated) | Part of SDPA path |
+| NVCC -O3 --use_fast_math | d1ed26a | Negligible (bandwidth-bound) |
+
+### Performance Progression
+| Phase | tok/s |
+|-------|-------|
+| Initial GPU Q4 | 8.61 |
+| Arena allocator | 80.35 |
+| Previous session best | 177.49 |
+| Fused QK norm+RoPE | 183.23 |
+| Zero-copy Q+K view | 186.54 |
+| Fused norm+add | 189.78 |
+| 5-run average (session 1) | 188.01 |
+| 3-run average (session 2) | 188.92 |
+
+### CUDA Graph Infrastructure (Built, Disabled)
+- Runtime API wrappers: StreamBeginCapture, StreamEndCapture, GraphInstantiate,
+  GraphLaunch, GraphDestroy, GraphExecDestroy (internal/cuda/runtime_purego.go).
+- StreamProvider interface on GPUEngine (compute/engine.go).
+- CUDAGraphExecutor with 3-phase warmup/capture/replay (graph/cuda_graph.go).
+- Graceful fallback on capture failure.
+- Disabled because 3 D2H copy sites in the forward pass conflict with stream capture:
+  1. GPUEngine.Gather reads indices.Data() for int64->int32 conversion.
+  2. GPUStorage.TrySlice in GQA CPU fallback paths.
+  3. tensor_cache appendGPU CPU fallback.
+
+### OpenAI-Compatible Inference Server
+- Package: serve/ with server.go (395 lines).
+- Endpoints: POST /v1/chat/completions, POST /v1/completions, GET /v1/models.
+- SSE streaming, batch scheduling, speculative decoding support.
+- Wired into CLI via cmd/cli/serve.go.
+- See ADR-031 for architecture decision (server lives in Zerfoo, not Zonnx).

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/dndungu/Code/zerfoo/zonnx",
+      "/Users/dndungu/Code/zerfoo/zmf",
+      "/Users/dndungu/Code/zerfoo/float8",
+      "/Users/dndungu/Code/zerfoo/float16"
+    ]
+  }
+}

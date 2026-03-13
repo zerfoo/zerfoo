@@ -919,3 +919,32 @@ func TestServer_Close(t *testing.T) {
 		t.Errorf("Close error: %v", err)
 	}
 }
+
+// --- OpenAPI spec ---
+
+func TestHandleOpenAPISpec(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doGet(t, ts.URL+"/openapi.yaml")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/yaml" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/yaml")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != string(openapiSpec) {
+		t.Errorf("response body does not match embedded openapi.yaml")
+	}
+	if !strings.Contains(string(body), "openapi:") {
+		t.Errorf("response body does not look like valid OpenAPI YAML")
+	}
+}

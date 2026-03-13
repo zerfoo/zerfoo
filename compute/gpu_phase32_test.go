@@ -115,6 +115,65 @@ func TestGPUEngine_TransposeParity(t *testing.T) {
 	}
 }
 
+// TestGPUEngine_Transpose5DFallback verifies that >4D tensors fall back to CPU
+// while still producing correct results.
+func TestGPUEngine_Transpose5DFallback(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available")
+	}
+	ops := numeric.Float32Ops{}
+	gpuEng, err := NewGPUEngine[float32](ops)
+	if err != nil {
+		t.Fatalf("NewGPUEngine: %v", err)
+	}
+	defer func() { _ = gpuEng.Close() }()
+
+	cpuEng := NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	shape := []int{2, 3, 2, 2, 2}
+	axes := []int{4, 3, 2, 1, 0}
+	n := 1
+	for _, d := range shape {
+		n *= d
+	}
+	data := make([]float32, n)
+	for i := range data {
+		data[i] = float32(i+1) * 0.1
+	}
+	a, _ := tensor.New[float32](shape, data)
+	gpuA, err := tensor.ToGPU(a)
+	if err != nil {
+		t.Fatalf("ToGPU: %v", err)
+	}
+
+	gpuOut, err := gpuEng.Transpose(ctx, gpuA, axes)
+	if err != nil {
+		t.Fatalf("GPUEngine.Transpose (5D): %v", err)
+	}
+
+	cpuOut, err := cpuEng.Transpose(ctx, a, axes)
+	if err != nil {
+		t.Fatalf("CPUEngine.Transpose (5D): %v", err)
+	}
+
+	// >4D should fall back to CPU, so result should NOT have GPUStorage.
+	if _, ok := gpuOut.GetStorage().(*tensor.GPUStorage[float32]); ok {
+		t.Errorf("expected CPU fallback for 5D, got GPUStorage")
+	}
+
+	gData := gpuOut.Data()
+	cData := cpuOut.Data()
+	if len(gData) != len(cData) {
+		t.Fatalf("length mismatch: GPU=%d, CPU=%d", len(gData), len(cData))
+	}
+	for i := range gData {
+		if gData[i] != cData[i] {
+			t.Errorf("[%d] GPU=%f, CPU=%f", i, gData[i], cData[i])
+		}
+	}
+}
+
 // TestGPUEngine_GatherParity verifies GPU gather matches CPU for 1D and 2D indices.
 func TestGPUEngine_GatherParity(t *testing.T) {
 	if !cuda.Available() {

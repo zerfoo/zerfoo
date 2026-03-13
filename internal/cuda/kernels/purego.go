@@ -76,9 +76,6 @@ type KernelLib struct {
 
 	// scaled_softmax
 	launchScaledSoftmaxF32 uintptr
-
-	// gemv_q4k
-	launchGemvQ4KF32 uintptr
 }
 
 var (
@@ -167,8 +164,6 @@ func openKernelLib() (*KernelLib, error) {
 		{"fused_qk_norm_rope_f32", &k.launchFusedQKNormRoPEF32},
 		// scaled_softmax
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
-		// gemv_q4k
-		{"gemv_q4k_f32", &k.launchGemvQ4KF32},
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
