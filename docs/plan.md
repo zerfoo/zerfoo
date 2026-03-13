@@ -148,7 +148,7 @@ the inference pipeline and need GPU-resident alternatives.
   - Acceptance: No .Data() call in GQA during GPU decode.
   - Dependencies: none.
 
-- [ ] T402.5 Enable CUDA graph capture and verify on DGX  Owner: TBD  Est: 2h
+- [x] T402.5 Enable CUDA graph capture and verify on DGX  Owner: TBD  Est: 2h
   - Set ZERFOO_ENABLE_CUDA_GRAPH=1 and run bench_tps on DGX Spark.
   - Confirm "captured and instantiated successfully" log appears.
   - If capture still fails, diagnose the remaining D2H site.
@@ -188,7 +188,7 @@ the inference pipeline and need GPU-resident alternatives.
     >= 166 tok/s (no regression from current baseline).
   - Dependencies: T403.1.
 
-- [ ] S403.2.1 Q4_K end-to-end benchmark  Owner: TBD  Est: 30m
+- [x] S403.2.1 Q4_K end-to-end benchmark  Owner: TBD  Est: 30m
   - Run bench_tps 3 times with Q4_K preservation enabled.
   - Compare tok/s with Q4_0 re-quantization path.
   - Acceptance: Q4_K path >= Q4_0 path. Results documented.
@@ -254,7 +254,7 @@ bottleneck on LPDDR5x).
   - Acceptance: FP16 kernels compile for sm_121. Parity with FP32 (rel error < 1e-3).
   - Dependencies: none.
 
-- [ ] T405.4 Add full FP16 inference path  Owner: TBD  Est: 4h
+- [x] T405.4 Add full FP16 inference path  Owner: TBD  Est: 4h
   - Enable running the entire forward pass in FP16: weights, activations,
     and intermediates all in FP16. Use FP32 accumulation in reductions
     (RMSNorm, Softmax) to avoid precision loss.
@@ -333,7 +333,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
     correct (max rel error < 0.05 vs FP32 reference due to FP8 quantization).
   - Dependencies: T406.2, T406.3, E405 (FP16 kernels).
 
-- [ ] T406.5 Add FP8 element-wise kernel variants  Owner: TBD  Est: 3h
+- [x] T406.5 Add FP8 element-wise kernel variants  Owner: TBD  Est: 3h
   - Add __nv_fp8_e4m3 kernel variants for element-wise ops where beneficial.
   - For most ops (RMSNorm, Softmax), keep FP16/FP32 accumulation and only
     use FP8 for weight storage, not compute. The primary gain is from
