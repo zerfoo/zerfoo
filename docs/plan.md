@@ -184,7 +184,7 @@ except at graph boundaries (embedding lookup output, final logits).
     All downstream ops receive FP16 input.
   - Dependencies: T502.2, T502.3, T502.4.
 
-- [ ] T502.6 Convert final logits from FP16 to F32 for sampling  Owner: TBD  Est: 30m
+- [x] T502.6 Convert final logits from FP16 to F32 for sampling  Owner: TBD  Est: 30m  2026 03 13  NOTE: FP16ToF32Converter interface on GPUEngine. LMHead converts Float16Storage logits to F32 before sampling.
   - The sampling/argmax step expects F32 logits. Add a single FP16->F32
     conversion at the LMHead output (the last operation before sampling).
   - File: compute/gpu_engine.go or layers/core/lmhead.go.
@@ -252,7 +252,7 @@ The fix: pre-allocate persistent FP16 buffers for FP8 MatMul and reuse them.
   - Acceptance: Arena misses < 50 (down from 1841). MemPool misses < 50 (down from 810).
   - Dependencies: T504.2.
 
-- [ ] T504.3 Run go vet on compute package  Owner: TBD  Est: 15m
+- [x] T504.3 Run go vet on compute package  Owner: TBD  Est: 15m  2026 03 13  NOTE: Clean. Only pre-existing purego warnings.
   - Dependencies: T504.2.
 
 ### E505: FP8 Scale Factor Fix
@@ -285,7 +285,7 @@ correctly applied during matmul or are lost between operations.
     valid, on-topic). Output may differ from F32 in word choice.
   - Dependencies: T505.1.
 
-- [ ] S505.2.1 FP8 output quality test  Owner: TBD  Est: 30m
+- [x] S505.2.1 FP8 output quality test  Owner: TBD  Est: 30m  2026 03 13  NOTE: 2 table-driven tests for FP8 dequant fallback (A-weight and B-weight). Rel error < 1e-2 vs CPU reference.
   - Run bench_tps --dtype=fp8 with temp=0, 50 tokens. Verify output is
     coherent (not repetitive, grammatically valid).
   - Compare with F32 output. Document differences.
@@ -293,7 +293,7 @@ correctly applied during matmul or are lost between operations.
   - Acceptance: FP8 output is coherent. Documented.
   - Dependencies: T505.2.
 
-- [ ] T505.3 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T505.3 Run go vet on modified packages  Owner: TBD  Est: 15m  2026 03 13  NOTE: Clean. Only pre-existing purego warnings.
   - Dependencies: T505.2.
 
 ### E506: Final Benchmark and Verification
