@@ -40,6 +40,12 @@ func (b *ROCmBlas) BFloat16Gemm(_, _, _ int, _ float32,
 	return fmt.Errorf("BFloat16Gemm: not supported on ROCm backend")
 }
 
+func (b *ROCmBlas) MixedBF16Gemm(_, _, _ int, _ float32,
+	_, _ unsafe.Pointer, _ float32, _ unsafe.Pointer,
+) error {
+	return fmt.Errorf("MixedBF16Gemm: not supported on ROCm backend")
+}
+
 func (b *ROCmBlas) SetStream(stream Stream) error {
 	var ptr unsafe.Pointer
 	if stream != nil {

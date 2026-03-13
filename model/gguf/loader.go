@@ -151,14 +151,9 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0 until T403.2 adds GPU dequant+cuBLAS for
-	// non-GEMV Q4_K MatMul. Without that path, Q4_K falls through to CPU
-	// dequantization for batched MatMul, causing ~50% throughput regression.
-	// See docs/updates.md "T403.1 Q4_K dispatch investigation".
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Preserve Q4_K storage for fused GEMV kernel dispatch.
+	// Re-enabled to diagnose throughput regression (was re-quantizing to Q4_0).
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -263,9 +258,30 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 }
 
 func decodeBF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
-	bf16, err := tensor.NewBFloat16StorageFromRaw(raw, numElements)
-	if err != nil {
-		return nil, fmt.Errorf("BF16 decode: %w", err)
+	if len(raw) < numElements*2 {
+		return nil, fmt.Errorf("BF16 decode: need %d bytes, got %d", numElements*2, len(raw))
 	}
+	u16 := make([]uint16, numElements)
+	for i := range numElements {
+		u16[i] = uint16(raw[i*2]) | uint16(raw[i*2+1])<<8
+	}
+	bf16 := tensor.NewBFloat16StorageFromRaw(u16)
 	return tensor.NewWithStorage[float32](shape, bf16)
+}
+
+// QuantizeToFP8E4M3 converts all tensors in the map from their current storage
+// to FP8 E4M3 format with per-tensor absmax scaling. This reduces memory to
+// 1 byte per element (1/4 of F32) at the cost of reduced precision.
+// The tensors are modified in place — the returned map is the same object.
+func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[string]*tensor.TensorNumeric[float32], error) {
+	for name, t := range tensors {
+		f32 := t.Data()
+		fp8 := tensor.NewFP8E4M3Storage(f32)
+		quantized, err := tensor.NewWithStorage[float32](t.Shape(), fp8)
+		if err != nil {
+			return nil, fmt.Errorf("tensor %q: FP8 quantize: %w", name, err)
+		}
+		tensors[name] = quantized
+	}
+	return tensors, nil
 }

@@ -4,171 +4,139 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/float16"
 )
 
-func TestBFloat16StorageInterfaceCompliance(t *testing.T) {
-	var _ Storage[float32] = (*BFloat16Storage)(nil)
-}
-
-func TestBFloat16StorageRoundTrip(t *testing.T) {
+func TestBFloat16Storage_RoundTrip(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     []float32
-		tolerance float32
+		name string
+		src  []float32
 	}{
-		{
-			name:      "positive values",
-			input:     []float32{1.0, 2.0, 3.0, 4.0},
-			tolerance: 0.02,
-		},
-		{
-			name:      "negative values",
-			input:     []float32{-1.0, -0.5, -0.25, -3.14},
-			tolerance: 0.02,
-		},
-		{
-			name:      "mixed",
-			input:     []float32{0.0, 1.0, -1.0, 0.5, -0.5, 100.0, -100.0},
-			tolerance: 1.0, // BF16 has ~7-bit mantissa, large values lose precision
-		},
-		{
-			name:      "small values",
-			input:     []float32{0.001, 0.002, 0.003},
-			tolerance: 0.001,
-		},
-		{
-			name:      "single element",
-			input:     []float32{42.0},
-			tolerance: 0.5,
-		},
+		{"zeros", []float32{0, 0, 0, 0}},
+		{"positive", []float32{1.0, 2.0, 3.0, 4.0}},
+		{"negative", []float32{-1.0, -0.5, -0.25, -0.125}},
+		{"mixed", []float32{1.5, -2.5, 0.0, 100.0}},
+		{"small", []float32{0.001, 0.002, 0.003, 0.004}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewBFloat16StorageFromFloat32(tt.input)
-
-			if got := s.Len(); got != len(tt.input) {
-				t.Fatalf("Len() = %d, want %d", got, len(tt.input))
+			s := NewBFloat16Storage(tt.src)
+			if s.Len() != len(tt.src) {
+				t.Fatalf("Len() = %d, want %d", s.Len(), len(tt.src))
 			}
 
 			got := s.Slice()
-			if len(got) != len(tt.input) {
-				t.Fatalf("Slice() len = %d, want %d", len(got), len(tt.input))
+			if len(got) != len(tt.src) {
+				t.Fatalf("Slice() len = %d, want %d", len(got), len(tt.src))
 			}
 
-			for i, want := range tt.input {
-				diff := float32(math.Abs(float64(got[i] - want)))
-				if diff > tt.tolerance {
-					t.Errorf("index %d: got %v, want %v (diff=%v)", i, got[i], want, diff)
+			for i, want := range tt.src {
+				// BF16 has limited precision; compare with BF16 round-trip.
+				expected := float16.BFloat16FromFloat32(want).ToFloat32()
+				if got[i] != expected {
+					t.Errorf("Slice()[%d] = %v, want %v", i, got[i], expected)
 				}
 			}
 		})
 	}
 }
 
-func TestBFloat16StorageFromRaw(t *testing.T) {
-	// Create from float32, get raw bytes, then reconstruct from raw.
-	input := []float32{1.0, -2.0, 3.5, 0.0}
-	s1 := NewBFloat16StorageFromFloat32(input)
-	slice1 := s1.Slice()
+func TestBFloat16Storage_RawBytes(t *testing.T) {
+	src := []float32{1.0, 2.0, 3.0, 4.0}
+	s := NewBFloat16Storage(src)
 
-	s2, err := NewBFloat16StorageFromRaw(s1.raw, s1.Len())
-	if err != nil {
-		t.Fatalf("NewBFloat16StorageFromRaw: %v", err)
+	raw := s.RawBytes()
+	if len(raw) != len(src)*2 {
+		t.Fatalf("RawBytes() len = %d, want %d", len(raw), len(src)*2)
+	}
+}
+
+func TestBFloat16Storage_Set(t *testing.T) {
+	s := NewBFloat16Storage([]float32{1.0, 2.0})
+	s.Set([]float32{3.0, 4.0, 5.0})
+
+	if s.Len() != 3 {
+		t.Fatalf("after Set, Len() = %d, want 3", s.Len())
 	}
 
-	slice2 := s2.Slice()
-	for i := range slice1 {
-		if slice1[i] != slice2[i] {
-			t.Errorf("index %d: raw round-trip mismatch: %v != %v", i, slice1[i], slice2[i])
+	got := s.Slice()
+	expected := []float32{3.0, 4.0, 5.0}
+	for i, want := range expected {
+		bf := float16.BFloat16FromFloat32(want).ToFloat32()
+		if got[i] != bf {
+			t.Errorf("Slice()[%d] = %v, want %v", i, got[i], bf)
 		}
 	}
 }
 
-func TestBFloat16StorageFromRawErrors(t *testing.T) {
-	tests := []struct {
-		name        string
-		raw         []byte
-		numElements int
-	}{
-		{name: "zero elements", raw: []byte{0, 0}, numElements: 0},
-		{name: "negative elements", raw: []byte{0, 0}, numElements: -1},
-		{name: "too short", raw: []byte{0, 0}, numElements: 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewBFloat16StorageFromRaw(tt.raw, tt.numElements)
-			if err == nil {
-				t.Error("expected error, got nil")
-			}
-		})
+func TestBFloat16Storage_GPUPtr(t *testing.T) {
+	s := NewBFloat16Storage([]float32{1.0})
+
+	ptr, size, dev := s.GPUPtr()
+	if ptr != nil || size != 0 || dev != 0 {
+		t.Fatalf("initial GPUPtr should be nil/0/0")
 	}
 }
 
-func TestBFloat16StorageSet(t *testing.T) {
-	s := NewBFloat16StorageFromFloat32([]float32{1.0, 2.0})
-	s.Set([]float32{10.0, 20.0, 30.0})
-
-	if got := s.Len(); got != 3 {
-		t.Fatalf("Len() = %d after Set, want 3", got)
+func TestBFloat16Storage_FromRaw(t *testing.T) {
+	// Encode manually then create from raw.
+	src := []float32{1.0, -2.0}
+	encoded := make([]uint16, len(src))
+	for i, v := range src {
+		encoded[i] = uint16(float16.BFloat16FromFloat32(v))
 	}
 
+	s := NewBFloat16StorageFromRaw(encoded)
 	got := s.Slice()
-	want := []float32{10.0, 20.0, 30.0}
-	for i, w := range want {
-		diff := float32(math.Abs(float64(got[i] - w)))
-		if diff > 0.5 {
-			t.Errorf("index %d: got %v, want %v", i, got[i], w)
+	for i, want := range src {
+		expected := float16.BFloat16FromFloat32(want).ToFloat32()
+		if got[i] != expected {
+			t.Errorf("Slice()[%d] = %v, want %v", i, got[i], expected)
 		}
 	}
 }
 
-func TestBFloat16StorageSliceCached(t *testing.T) {
-	s := NewBFloat16StorageFromFloat32([]float32{1.0, 2.0, 3.0})
-	s1 := s.Slice()
-	s2 := s.Slice()
-	if &s1[0] != &s2[0] {
-		t.Error("Slice() should return cached slice on second call")
+func TestBFloat16Storage_Precision(t *testing.T) {
+	// Verify max relative error vs float32 is bounded.
+	src := make([]float32, 256)
+	for i := range src {
+		src[i] = float32(i-128) * 0.1
 	}
-}
 
-func TestBFloat16StorageSetInvalidatesCache(t *testing.T) {
-	s := NewBFloat16StorageFromFloat32([]float32{1.0, 2.0})
-	_ = s.Slice() // populate cache
-	s.Set([]float32{10.0, 20.0})
+	s := NewBFloat16Storage(src)
 	got := s.Slice()
-	if diff := float32(math.Abs(float64(got[0] - 10.0))); diff > 0.5 {
-		t.Errorf("Set did not invalidate cache: got %v, want ~10.0", got[0])
+
+	var maxRelErr float64
+	for i, want := range src {
+		if want == 0 {
+			continue
+		}
+		rel := math.Abs(float64(got[i]-want)) / math.Abs(float64(want))
+		if rel > maxRelErr {
+			maxRelErr = rel
+		}
+	}
+
+	// BF16 has ~0.8% relative precision (7-bit mantissa).
+	if maxRelErr > 1e-2 {
+		t.Errorf("max relative error = %e, want < 1e-2", maxRelErr)
 	}
 }
 
-func TestBFloat16StorageDeviceType(t *testing.T) {
-	s := NewBFloat16StorageFromFloat32([]float32{1.0})
-	if got := s.DeviceType(); got != device.CPU {
-		t.Errorf("DeviceType() = %v, want %v", got, device.CPU)
-	}
-}
-
-func TestBFloat16StorageByteSize(t *testing.T) {
-	s := NewBFloat16StorageFromFloat32([]float32{1.0, 2.0, 3.0})
-	if got := s.ByteSize(); got != 6 {
-		t.Errorf("ByteSize() = %d, want 6", got)
-	}
-}
-
-func TestBFloat16StorageMemoryHalved(t *testing.T) {
-	n := 1024
-	f32Data := make([]float32, n)
-	for i := range f32Data {
-		f32Data[i] = float32(i)
+func TestBFloat16Storage_Empty(t *testing.T) {
+	s := NewBFloat16Storage(nil)
+	if s.Len() != 0 {
+		t.Fatalf("Len() = %d, want 0", s.Len())
 	}
 
-	bf16 := NewBFloat16StorageFromFloat32(f32Data)
-	f32Bytes := n * 4
-	bf16Bytes := bf16.ByteSize()
+	got := s.Slice()
+	if len(got) != 0 {
+		t.Fatalf("Slice() len = %d, want 0", len(got))
+	}
 
-	if bf16Bytes != f32Bytes/2 {
-		t.Errorf("BF16 byte size %d is not half of F32 byte size %d", bf16Bytes, f32Bytes)
+	raw := s.RawBytes()
+	if raw != nil {
+		t.Fatalf("RawBytes() should be nil for empty storage")
 	}
 }

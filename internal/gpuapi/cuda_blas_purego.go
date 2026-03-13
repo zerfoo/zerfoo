@@ -47,6 +47,19 @@ func (b *CUDABlas) BFloat16Gemm(m, n, k int, alpha float32,
 	)
 }
 
+func (b *CUDABlas) MixedBF16Gemm(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.GemmEx(b.handle, m, n, k, alpha,
+		a, cublas.CudaR16BF,
+		bPtr, cublas.CudaR16BF,
+		beta,
+		c, cublas.CudaR32F,
+		cublas.CublasCompute32F,
+	)
+}
+
 // SgemmNT performs C = alpha * A * B^T + beta * C where A is [m, k] and
 // B is [n, k] (row-major). This avoids an explicit Transpose of B.
 func (b *CUDABlas) SgemmNT(m, n, k int, alpha float32,
