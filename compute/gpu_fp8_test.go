@@ -7,9 +7,48 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 )
+
+// fakeMemPool is a test-only MemPool that allocates host memory via byte slices.
+// It tracks allocation counts to verify reuse behavior.
+type fakeMemPool struct {
+	allocCount int
+	freeCount  int
+	live       map[unsafe.Pointer][]byte
+}
+
+func newFakeMemPool() *fakeMemPool {
+	return &fakeMemPool{live: make(map[unsafe.Pointer][]byte)}
+}
+
+func (p *fakeMemPool) Alloc(_ int, byteSize int) (unsafe.Pointer, error) {
+	p.allocCount++
+	buf := make([]byte, byteSize)
+	ptr := unsafe.Pointer(&buf[0])
+	p.live[ptr] = buf
+	return ptr, nil
+}
+
+func (p *fakeMemPool) Free(_ int, ptr unsafe.Pointer, _ int) {
+	p.freeCount++
+	delete(p.live, ptr)
+}
+
+func (p *fakeMemPool) AllocManaged(_, byteSize int) (unsafe.Pointer, error) {
+	return p.Alloc(0, byteSize)
+}
+
+func (p *fakeMemPool) FreeManaged(_ int, ptr unsafe.Pointer, byteSize int) {
+	p.Free(0, ptr, byteSize)
+}
+
+func (p *fakeMemPool) Drain() error           { return nil }
+func (p *fakeMemPool) Stats() (int, int)       { return len(p.live), 0 }
+
+var _ gpuapi.MemPool = (*fakeMemPool)(nil)
 
 func TestGPUEngine_MatMulFP8BWeight(t *testing.T) {
 	if !cuda.Available() {
@@ -258,5 +297,136 @@ func TestGPUEngine_FP8StorageDispatchDetected(t *testing.T) {
 	_, ok := any(tn.GetStorage()).(*tensor.FP8E4M3Storage)
 	if !ok {
 		t.Fatal("FP8E4M3Storage dispatch not detected via type assertion")
+	}
+}
+
+func TestFP8Scratchpad_EnsureGrows(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+	deviceID := 0
+
+	tests := []struct {
+		name     string
+		size     int
+		wantGrow bool // expect a new allocation
+	}{
+		{"initial_1024", 1024, true},
+		{"same_size_reuse", 1024, false},
+		{"smaller_reuse", 512, false},
+		{"grow_2048", 2048, true},
+		{"grow_4096", 4096, true},
+		{"equal_after_grow", 4096, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allocsBefore := pool.allocCount
+			ptr, err := s.ensure(pool, deviceID, tt.size)
+			if err != nil {
+				t.Fatalf("ensure(%d): %v", tt.size, err)
+			}
+			if ptr == nil {
+				t.Fatal("ensure returned nil pointer")
+			}
+			grew := pool.allocCount > allocsBefore
+			if grew != tt.wantGrow {
+				t.Errorf("grew=%v, want %v (allocs before=%d after=%d)",
+					grew, tt.wantGrow, allocsBefore, pool.allocCount)
+			}
+		})
+	}
+
+	// After all ensures, the internal size should be the max requested.
+	if s.fp16BufSize != 4096 {
+		t.Errorf("fp16BufSize=%d, want 4096", s.fp16BufSize)
+	}
+}
+
+func TestFP8Scratchpad_EnsureReusesPointer(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	ptr1, err := s.ensure(pool, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptr2, err := s.ensure(pool, 0, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr1 != ptr2 {
+		t.Error("ensure returned different pointer for smaller request; expected reuse")
+	}
+	ptr3, err := s.ensure(pool, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr1 != ptr3 {
+		t.Error("ensure returned different pointer for equal request; expected reuse")
+	}
+}
+
+func TestFP8Scratchpad_Free(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	// Allocate a buffer and a fake scaleOne.
+	if _, err := s.ensure(pool, 0, 256); err != nil {
+		t.Fatal(err)
+	}
+	scalePtr, err := pool.Alloc(0, f32Size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.scaleOne = scalePtr
+
+	if len(pool.live) != 2 {
+		t.Fatalf("expected 2 live allocations, got %d", len(pool.live))
+	}
+
+	s.free(pool, 0)
+
+	if s.fp16Buf != nil {
+		t.Error("fp16Buf not nil after free")
+	}
+	if s.fp16BufSize != 0 {
+		t.Error("fp16BufSize not 0 after free")
+	}
+	if s.scaleOne != nil {
+		t.Error("scaleOne not nil after free")
+	}
+}
+
+func TestFP8Scratchpad_FreeIdempotent(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	// Calling free on a zero-value scratchpad should not panic.
+	s.free(pool, 0)
+	if pool.freeCount != 0 {
+		t.Errorf("free on empty scratchpad caused %d frees", pool.freeCount)
+	}
+}
+
+func TestFP8Scratchpad_GrowFreesOldBuffer(t *testing.T) {
+	pool := newFakeMemPool()
+	var s fp8Scratchpad
+
+	if _, err := s.ensure(pool, 0, 128); err != nil {
+		t.Fatal(err)
+	}
+	if pool.allocCount != 1 || pool.freeCount != 0 {
+		t.Fatalf("after first ensure: allocs=%d frees=%d", pool.allocCount, pool.freeCount)
+	}
+
+	// Growing should free the old buffer and allocate a new one.
+	if _, err := s.ensure(pool, 0, 256); err != nil {
+		t.Fatal(err)
+	}
+	if pool.allocCount != 2 {
+		t.Errorf("allocs=%d, want 2", pool.allocCount)
+	}
+	if pool.freeCount != 1 {
+		t.Errorf("frees=%d, want 1 (old buffer should be freed)", pool.freeCount)
 	}
 }

@@ -96,7 +96,8 @@ func (e *GPUEngine[T]) getLtHandle() (*cublas.LtHandle, error) {
 
 // matMulFP8 handles MatMul where A has FP8E4M3Storage (FP8 weights as A).
 // A is [M, K] in FP8 E4M3, B is [K, N] in FP32 -> C is [M, N] in FP32.
-// Uses cublasLtMatmul with per-tensor scaling.
+// Tries cublasLtMatmul with per-tensor scaling first; if unavailable (e.g. SM < 8.9),
+// falls back to dequantizing FP8->FP16 and using MixedFP16Gemm.
 func (e *GPUEngine[T]) matMulFP8(
 	ctx context.Context,
 	fs *tensor.FP8E4M3Storage,
@@ -115,16 +116,6 @@ func (e *GPUEngine[T]) matMulFP8(
 
 	e.setDevice()
 
-	ltH, err := e.getLtHandle()
-	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
-	scratch, err := e.getFP8Scratch()
-	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
 	m := aShape[0]
 	k := aShape[1]
 	n := bShape[1]
@@ -137,6 +128,7 @@ func (e *GPUEngine[T]) matMulFP8(
 		freeA = func() {}
 	} else {
 		aBytes := fs.RawBytes()
+		var err error
 		devA, err = e.pool.Alloc(e.deviceID, len(aBytes))
 		if err != nil {
 			return e.cpu.MatMul(ctx, a, b, dst...)
@@ -149,6 +141,34 @@ func (e *GPUEngine[T]) matMulFP8(
 	}
 	defer freeA()
 
+	// Try cublasLt FP8 path first (requires SM 8.9+).
+	if result, err := e.tryLtMatMulFP8A(fs, devA, b, m, n, k, dst...); result != nil || err != nil {
+		return result, err
+	}
+
+	// Fallback: dequantize FP8 A to FP16, then use MixedFP16Gemm.
+	return e.fp8DequantMatMulA(fs, devA, b, m, n, k, dst...)
+}
+
+// tryLtMatMulFP8A attempts the cublasLt FP8 path for A-weight FP8 MatMul.
+// Returns (nil, nil) if cublasLt is not available so the caller can try a fallback.
+func (e *GPUEngine[T]) tryLtMatMulFP8A(
+	fs *tensor.FP8E4M3Storage,
+	devA unsafe.Pointer,
+	b *tensor.TensorNumeric[T],
+	m, n, k int,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	ltH, err := e.getLtHandle()
+	if err != nil {
+		return nil, nil // cublasLt not available, signal fallback
+	}
+
+	scratch, err := e.getFP8Scratch()
+	if err != nil {
+		return nil, nil
+	}
+
 	// Get A scale pointer on GPU.
 	var scaleAPtr unsafe.Pointer
 	var freeScaleA func()
@@ -158,13 +178,13 @@ func (e *GPUEngine[T]) matMulFP8(
 	} else {
 		scaleAPtr, err = e.pool.Alloc(e.deviceID, f32Size)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return nil, nil
 		}
 		freeScaleA = func() { e.pool.Free(e.deviceID, scaleAPtr, f32Size) }
 		scale := fs.Scale()
 		if err := e.runtime.Memcpy(scaleAPtr, unsafe.Pointer(&scale), f32Size, gpuapi.MemcpyHostToDevice); err != nil {
 			freeScaleA()
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return nil, nil
 		}
 	}
 	defer freeScaleA()
@@ -172,7 +192,7 @@ func (e *GPUEngine[T]) matMulFP8(
 	// Get F32 device pointer for B, convert to FP16 using scratchpad buffer.
 	devBF32, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return nil, nil
 	}
 	defer cleanupB()
 
@@ -180,7 +200,7 @@ func (e *GPUEngine[T]) matMulFP8(
 	fp16BSize := bElems * fp16Size
 	fp16B, err := scratch.ensure(e.pool, e.deviceID, fp16BSize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return nil, nil
 	}
 
 	if err := e.kernels.F32ToFP16(devBF32, fp16B, bElems, e.stream); err != nil {
@@ -198,14 +218,74 @@ func (e *GPUEngine[T]) matMulFP8(
 		return nil, fmt.Errorf("matMulFP8: alloc output: %w", err)
 	}
 
-	scaleAVal := fs.Scale()
-	scaleBVal := float32(1.0)
-	log.Printf("[FP8 diag] matMulFP8: m=%d n=%d k=%d scaleA=%.6g (fp8 weight) scaleB=%.6g (fp16 act) scaleAPtr=%v scaleBPtr=%v",
-		m, n, k, scaleAVal, scaleBVal, scaleAPtr, scaleBPtr)
-
 	if err := ltMatmulFP8(ltH, m, n, k, devA, scaleAPtr, cublas.CudaR8F_E4M3, fp16B, scaleBPtr, cublas.CudaR16F, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
-		return nil, fmt.Errorf("matMulFP8: cublasLtMatmul: %w", err)
+		// If heuristic fails (no algorithm), signal fallback instead of hard error.
+		log.Printf("[FP8] cublasLt FP8 path failed (m=%d n=%d k=%d): %v; falling back to dequant+FP16", m, n, k, err)
+		return nil, nil
+	}
+
+	return makeGPUResult[T](e, []int{m, n}, devC, cElems, dst...)
+}
+
+// fp8DequantMatMulA dequantizes FP8 A weights to FP16, converts F32 B to FP16,
+// and uses MixedFP16Gemm for the MatMul. Used as a fallback when cublasLt FP8 is unavailable.
+func (e *GPUEngine[T]) fp8DequantMatMulA(
+	fs *tensor.FP8E4M3Storage,
+	devA unsafe.Pointer,
+	b *tensor.TensorNumeric[T],
+	m, n, k int,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	if e.blas == nil {
+		return nil, fmt.Errorf("matMulFP8: no BLAS available for FP16 fallback")
+	}
+
+	aElems := m * k
+	bElems := k * n
+
+	// Dequantize FP8 A -> FP16.
+	fp16ASize := aElems * fp16Size
+	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8: alloc fp16A: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
+
+	if err := e.kernels.DequantFP8E4M3ToFP16(devA, fp16A, fs.Scale(), aElems, e.stream); err != nil {
+		return nil, fmt.Errorf("matMulFP8: dequant fp8->fp16 A: %w", err)
+	}
+
+	// Convert F32 B -> FP16.
+	devBF32, cleanupB, err := getDevicePtr(e, b)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8: getDevicePtr B: %w", err)
+	}
+	defer cleanupB()
+
+	fp16BSize := bElems * fp16Size
+	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8: alloc fp16B: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
+
+	if err := e.kernels.F32ToFP16(devBF32, fp16B, bElems, e.stream); err != nil {
+		return nil, fmt.Errorf("matMulFP8: f32->fp16 B: %w", err)
+	}
+
+	// Allocate F32 output.
+	cElems := m * n
+	cSize := cElems * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8: alloc output: %w", err)
+	}
+
+	// MixedFP16Gemm: FP16 inputs, FP32 output.
+	if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, fp16A, fp16B, 0.0, devC); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return nil, fmt.Errorf("matMulFP8: MixedFP16Gemm: %w", err)
 	}
 
 	return makeGPUResult[T](e, []int{m, n}, devC, cElems, dst...)
@@ -213,7 +293,8 @@ func (e *GPUEngine[T]) matMulFP8(
 
 // matMulFP8BWeight handles MatMul where B has FP8E4M3Storage (FP8 weights as B).
 // A is [batch..., M, K] in FP32, B is [K, N] in FP8 E4M3 -> C is [batch..., M, N] in FP32.
-// Uses cublasLtMatmul with per-tensor scaling.
+// Tries cublasLtMatmul with per-tensor scaling first; if unavailable (e.g. SM < 8.9),
+// falls back to dequantizing FP8->FP16 and using MixedFP16Gemm.
 func (e *GPUEngine[T]) matMulFP8BWeight(
 	ctx context.Context,
 	a *tensor.TensorNumeric[T],
@@ -232,16 +313,6 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	}
 
 	e.setDevice()
-
-	ltH, err := e.getLtHandle()
-	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
-
-	scratch, err := e.getFP8Scratch()
-	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
-	}
 
 	// Flatten A's batch dims: [batch..., m, k] -> [m_total, k]
 	k := aShape[len(aShape)-1]
@@ -264,6 +335,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 		freeB = func() {}
 	} else {
 		bBytes := fs.RawBytes()
+		var err error
 		devB, err = e.pool.Alloc(e.deviceID, len(bBytes))
 		if err != nil {
 			return e.cpu.MatMul(ctx, a, b, dst...)
@@ -276,6 +348,35 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	}
 	defer freeB()
 
+	// Try cublasLt FP8 path first (requires SM 8.9+).
+	if result, err := e.tryLtMatMulFP8B(a, fs, devB, m, n, k, outShape, dst...); result != nil || err != nil {
+		return result, err
+	}
+
+	// Fallback: dequantize FP8 B to FP16, then use MixedFP16Gemm.
+	return e.fp8DequantMatMulB(a, fs, devB, m, n, k, outShape, dst...)
+}
+
+// tryLtMatMulFP8B attempts the cublasLt FP8 path for B-weight FP8 MatMul.
+// Returns (nil, nil) if cublasLt is not available so the caller can try a fallback.
+func (e *GPUEngine[T]) tryLtMatMulFP8B(
+	a *tensor.TensorNumeric[T],
+	fs *tensor.FP8E4M3Storage,
+	devB unsafe.Pointer,
+	m, n, k int,
+	outShape []int,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	ltH, err := e.getLtHandle()
+	if err != nil {
+		return nil, nil
+	}
+
+	scratch, err := e.getFP8Scratch()
+	if err != nil {
+		return nil, nil
+	}
+
 	// Get B scale pointer on GPU.
 	var scaleBPtr unsafe.Pointer
 	var freeScaleB func()
@@ -285,13 +386,13 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	} else {
 		scaleBPtr, err = e.pool.Alloc(e.deviceID, f32Size)
 		if err != nil {
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return nil, nil
 		}
 		freeScaleB = func() { e.pool.Free(e.deviceID, scaleBPtr, f32Size) }
 		scale := fs.Scale()
 		if err := e.runtime.Memcpy(scaleBPtr, unsafe.Pointer(&scale), f32Size, gpuapi.MemcpyHostToDevice); err != nil {
 			freeScaleB()
-			return e.cpu.MatMul(ctx, a, b, dst...)
+			return nil, nil
 		}
 	}
 	defer freeScaleB()
@@ -299,7 +400,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	// Convert A from FP32 to FP16 using scratchpad buffer.
 	devAF32, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return nil, nil
 	}
 	defer cleanupA()
 
@@ -307,7 +408,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	fp16ASize := aElems * fp16Size
 	fp16A, err := scratch.ensure(e.pool, e.deviceID, fp16ASize)
 	if err != nil {
-		return e.cpu.MatMul(ctx, a, b, dst...)
+		return nil, nil
 	}
 
 	if err := e.kernels.F32ToFP16(devAF32, fp16A, aElems, e.stream); err != nil {
@@ -316,7 +417,6 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 
 	// A scale = 1.0 — use persistent scaleOne from scratchpad.
 	scaleAPtr := scratch.scaleOne
-	scaleAVal := float32(1.0)
 
 	// Allocate FP32 output.
 	cElems := m * n
@@ -326,14 +426,74 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 		return nil, fmt.Errorf("matMulFP8BWeight: alloc output: %w", err)
 	}
 
-	// cublasLtMatmul: A_fp16 [m,k] x B_fp8 [k,n] -> C_f32 [m,n]
-	scaleBVal := fs.Scale()
-	log.Printf("[FP8 diag] matMulFP8BWeight: m=%d n=%d k=%d scaleA=%.6g (fp16 act) scaleB=%.6g (fp8 weight) scaleAPtr=%v scaleBPtr=%v",
-		m, n, k, scaleAVal, scaleBVal, scaleAPtr, scaleBPtr)
-
 	if err := ltMatmulFP8(ltH, m, n, k, fp16A, scaleAPtr, cublas.CudaR16F, devB, scaleBPtr, cublas.CudaR8F_E4M3, devC, e.stream); err != nil {
 		e.pool.Free(e.deviceID, devC, cSize)
-		return nil, fmt.Errorf("matMulFP8BWeight: cublasLtMatmul: %w", err)
+		log.Printf("[FP8] cublasLt FP8 path failed (m=%d n=%d k=%d): %v; falling back to dequant+FP16", m, n, k, err)
+		return nil, nil
+	}
+
+	return makeGPUResult[T](e, outShape, devC, cElems, dst...)
+}
+
+// fp8DequantMatMulB dequantizes FP8 B weights to FP16, converts F32 A to FP16,
+// and uses MixedFP16Gemm for the MatMul. Used as a fallback when cublasLt FP8 is unavailable.
+func (e *GPUEngine[T]) fp8DequantMatMulB(
+	a *tensor.TensorNumeric[T],
+	fs *tensor.FP8E4M3Storage,
+	devB unsafe.Pointer,
+	m, n, k int,
+	outShape []int,
+	dst ...*tensor.TensorNumeric[T],
+) (*tensor.TensorNumeric[T], error) {
+	if e.blas == nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: no BLAS available for FP16 fallback")
+	}
+
+	aElems := m * k
+	bElems := k * n
+
+	// Convert F32 A -> FP16.
+	devAF32, cleanupA, err := getDevicePtr(e, a)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: getDevicePtr A: %w", err)
+	}
+	defer cleanupA()
+
+	fp16ASize := aElems * fp16Size
+	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: alloc fp16A: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
+
+	if err := e.kernels.F32ToFP16(devAF32, fp16A, aElems, e.stream); err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: f32->fp16 A: %w", err)
+	}
+
+	// Dequantize FP8 B -> FP16.
+	fp16BSize := bElems * fp16Size
+	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: alloc fp16B: %w", err)
+	}
+	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
+
+	if err := e.kernels.DequantFP8E4M3ToFP16(devB, fp16B, fs.Scale(), bElems, e.stream); err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: dequant fp8->fp16 B: %w", err)
+	}
+
+	// Allocate F32 output.
+	cElems := m * n
+	cSize := cElems * f32Size
+	devC, err := e.pool.Alloc(e.deviceID, cSize)
+	if err != nil {
+		return nil, fmt.Errorf("matMulFP8BWeight: alloc output: %w", err)
+	}
+
+	// MixedFP16Gemm: FP16 inputs, FP32 output.
+	if err := e.blas.MixedFP16Gemm(m, n, k, 1.0, fp16A, fp16B, 0.0, devC); err != nil {
+		e.pool.Free(e.deviceID, devC, cSize)
+		return nil, fmt.Errorf("matMulFP8BWeight: MixedFP16Gemm: %w", err)
 	}
 
 	return makeGPUResult[T](e, outShape, devC, cElems, dst...)
@@ -426,9 +586,6 @@ func ltMatmulFP8(
 	if len(results) == 0 {
 		return fmt.Errorf("no suitable cublasLt algorithm found for FP8 matmul")
 	}
-
-	log.Printf("[FP8 diag] ltMatmulFP8: m=%d n=%d k=%d aType=%d bType=%d scaleA=%v scaleB=%v aPtr=%v bPtr=%v",
-		m, n, k, aType, bType, scaleA, scaleB, aPtr, bPtr)
 
 	// alpha = 1.0, beta = 0.0 (host scalars, FP32).
 	alpha := float32(1.0)

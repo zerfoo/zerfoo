@@ -237,6 +237,9 @@ func (stubKernelRunner) F32ToFP16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) FP16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
 var _ gpuapi.KernelRunner = stubKernelRunner{}
 

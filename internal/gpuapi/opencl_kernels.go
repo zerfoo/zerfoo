@@ -236,5 +236,9 @@ func (k *OpenCLKernels) FP16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("FP16ToF32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ Stream) error {
+	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)
