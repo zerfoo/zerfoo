@@ -252,3 +252,20 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 	}
 	return tensor.NewWithStorage[float32](shape, q8)
 }
+
+// QuantizeToFP8E4M3 converts all tensors in the map from their current storage
+// to FP8 E4M3 format with per-tensor absmax scaling. This reduces memory to
+// 1 byte per element (1/4 of F32) at the cost of reduced precision.
+// The tensors are modified in place — the returned map is the same object.
+func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[string]*tensor.TensorNumeric[float32], error) {
+	for name, t := range tensors {
+		f32 := t.Data()
+		fp8 := tensor.NewFP8E4M3Storage(f32)
+		quantized, err := tensor.NewWithStorage[float32](t.Shape(), fp8)
+		if err != nil {
+			return nil, fmt.Errorf("tensor %q: FP8 quantize: %w", name, err)
+		}
+		tensors[name] = quantized
+	}
+	return tensors, nil
+}

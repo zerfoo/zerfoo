@@ -289,6 +289,174 @@ func TestLoadTensors_Empty(t *testing.T) {
 	}
 }
 
+func TestQuantizeToFP8E4M3(t *testing.T) {
+	tests := []struct {
+		name   string
+		vals   []float32
+		shape  []uint64
+		maxRel float64
+	}{
+		{
+			name:   "2x2 matrix",
+			vals:   []float32{1.0, 2.0, 3.0, 4.0},
+			shape:  []uint64{2, 2},
+			maxRel: 0.1,
+		},
+		{
+			name:   "1D vector",
+			vals:   []float32{-10.0, 0.0, 5.0, 100.0},
+			shape:  []uint64{4},
+			maxRel: 0.1,
+		},
+		{
+			name:   "powers of two",
+			vals:   []float32{1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0},
+			shape:  []uint64{8},
+			maxRel: 0.1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build a GGUF file with an F32 tensor.
+			data := make([]byte, len(tt.vals)*4)
+			for i, v := range tt.vals {
+				binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(v))
+			}
+
+			tensors := []TensorInfo{{
+				Name:       "w",
+				Dimensions: tt.shape,
+				Type:       GGMLTypeF32,
+				Offset:     0,
+			}}
+
+			r := buildGGUFWithTensors(t, tensors, data)
+			f, err := Parse(r)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+
+			loaded, err := LoadTensors(f, r)
+			if err != nil {
+				t.Fatalf("LoadTensors: %v", err)
+			}
+
+			// Quantize to FP8.
+			quantized, err := QuantizeToFP8E4M3(loaded)
+			if err != nil {
+				t.Fatalf("QuantizeToFP8E4M3: %v", err)
+			}
+
+			tns := quantized["w"]
+
+			// Verify storage type is FP8E4M3Storage.
+			if _, ok := tns.GetStorage().(*tensor.FP8E4M3Storage); !ok {
+				t.Fatalf("expected FP8E4M3Storage, got %T", tns.GetStorage())
+			}
+
+			// Verify dequantized values are close to original.
+			got := tns.Data()
+			for i, want := range tt.vals {
+				if want == 0 {
+					if got[i] != 0 {
+						t.Errorf("[%d] got %g, want 0", i, got[i])
+					}
+					continue
+				}
+				rel := math.Abs(float64(got[i]-want)) / math.Abs(float64(want))
+				if rel > tt.maxRel {
+					t.Errorf("[%d] got %g, want %g, rel error %g > %g", i, got[i], want, rel, tt.maxRel)
+				}
+			}
+		})
+	}
+}
+
+func TestQuantizeToFP8E4M3_MemoryReduction(t *testing.T) {
+	// Create an F32 tensor with 1024 elements (4096 bytes as F32).
+	vals := make([]float32, 1024)
+	for i := range vals {
+		vals[i] = float32(i-512) / 512.0
+	}
+
+	data := make([]byte, len(vals)*4)
+	for i, v := range vals {
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(v))
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "w",
+		Dimensions: []uint64{1024},
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, data)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	quantized, err := QuantizeToFP8E4M3(loaded)
+	if err != nil {
+		t.Fatalf("QuantizeToFP8E4M3: %v", err)
+	}
+
+	fp8 := quantized["w"].GetStorage().(*tensor.FP8E4M3Storage)
+	// FP8 stores 1 byte per element. Len() should equal element count.
+	if fp8.Len() != 1024 {
+		t.Errorf("FP8 storage Len() = %d, want 1024", fp8.Len())
+	}
+}
+
+func TestQuantizeToFP8E4M3_MultipleTensors(t *testing.T) {
+	// Two F32 tensors at different offsets.
+	data1 := make([]byte, 8)
+	binary.LittleEndian.PutUint32(data1[0:4], math.Float32bits(1.0))
+	binary.LittleEndian.PutUint32(data1[4:8], math.Float32bits(2.0))
+
+	data2 := make([]byte, 8)
+	binary.LittleEndian.PutUint32(data2[0:4], math.Float32bits(3.0))
+	binary.LittleEndian.PutUint32(data2[4:8], math.Float32bits(4.0))
+
+	var combined []byte
+	combined = append(combined, data1...)
+	combined = append(combined, data2...)
+
+	tensors := []TensorInfo{
+		{Name: "a", Dimensions: []uint64{2}, Type: GGMLTypeF32, Offset: 0},
+		{Name: "b", Dimensions: []uint64{2}, Type: GGMLTypeF32, Offset: 8},
+	}
+
+	r := buildGGUFWithTensors(t, tensors, combined)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	quantized, err := QuantizeToFP8E4M3(loaded)
+	if err != nil {
+		t.Fatalf("QuantizeToFP8E4M3: %v", err)
+	}
+
+	for _, name := range []string{"a", "b"} {
+		if _, ok := quantized[name].GetStorage().(*tensor.FP8E4M3Storage); !ok {
+			t.Errorf("tensor %q: expected FP8E4M3Storage, got %T", name, quantized[name].GetStorage())
+		}
+	}
+}
+
 func TestLoadTensors_UnsupportedType(t *testing.T) {
 	data := make([]byte, 16)
 	tensors := []TensorInfo{{
