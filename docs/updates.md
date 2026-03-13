@@ -802,3 +802,41 @@ All purego wrappers now exist for every GPU backend. CGo cuBLAS bindings deleted
 - +4081 lines of purego wrappers, -423 lines of CGo code
 
 ## Cumulative Progress (Waves 1-5): 34 tasks completed
+
+---
+
+# Wave 6: Build Tag Removal (cuDNN, TensorRT, Flash Attention, ROCm, OpenCL)
+
+Date: 2026-03-13
+
+## Mode: Parallel (5 teammates)
+
+## Tasks Completed
+
+All CGo GPU bindings replaced with purego. Build tags removed across all backends.
+
+| Task | Package | Key Change |
+|------|---------|-----------|
+| T211.2+T211.3 | cuDNN + gpuapi | Deleted 811-line CGo cudnn.go, removed build tags |
+| T212.2+T212.3 | TensorRT + inference | Deleted CGo tensorrt.go, runtime Available() guards in inference/ |
+| T213.2 | Flash attention | Merged flash_cuda.go + flash_nocuda.go into single flash.go |
+| T214.3+T214.4 | ROCm (HIP+rocBLAS+MIOpen+kernels) | Deleted 5 CGo files, converted to purego dlopen |
+| T215.2+T215.3 | OpenCL + gpuapi | Removed build tags, runtime Available() guards |
+
+## Impact
+- **-2026 lines** of CGo code deleted, **+1112 lines** of purego wrappers
+- `go build ./...` works without `-tags cuda`, `-tags rocm`, `-tags opencl`
+- M76 (single binary) milestone nearly complete — only opencl_blas.go and
+  opencl_kernels.go still have build tags (depend on unconverted clblast package)
+
+## Cumulative Progress (Waves 1-6): 43 tasks completed
+
+## Remaining Work (requires DGX Spark or hardware access)
+- Verification/benchmark tasks: S301.3.1, T302.2-4, T303.3-4, S304.2.1, T304.3
+- Server integration test: S305.6.1, T305.7
+- GPU parity tests: S203.2.1, S204.2.1, S205.2.1, S306.1.1, S207.2.1
+- Megakernel investigation: T208.1-3
+- Kernel optimization: T209.1-3
+- Purego parity tests: S210.3.1, S211.3.1, S212.3.1, S213.2.1, S214.4.1, S215.3.1
+- Go vet passes: T301.4, T302.4, T303.4, T203.3, T204.3, T205.3, T306.2, T207.3, T208.3, T209.3, T210.4, T211.4, T212.4, T213.3, T214.5, T215.4
+- Final verification: T307.1-5

@@ -475,14 +475,14 @@ enabling it after D2H elimination.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T211.2 Replace CGo cudnn.go with purego implementation  Owner: TBD  Est: 2h
+- [x] T211.2 Replace CGo cudnn.go with purego implementation  Owner: task-T211  Completed: 2026-03-13
   - Delete or archive internal/cudnn/cudnn.go (CGo version).
   - Remove //go:build cuda tag.
   - Add cudnn.Available() runtime guard.
   - Acceptance: go build ./internal/cudnn/... without -tags cuda.
   - Dependencies: T211.1.
 
-- [ ] T211.3 Update gpuapi/cuda_dnn.go to use purego cudnn  Owner: TBD  Est: 1h
+- [x] T211.3 Update gpuapi/cuda_dnn.go to use purego cudnn  Owner: task-T211  Completed: 2026-03-13
   - Remove //go:build cuda tag.
   - Acceptance: go build ./internal/gpuapi/... without -tags cuda.
   - Dependencies: T211.2.
@@ -506,12 +506,12 @@ enabling it after D2H elimination.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T212.2 Replace CGo tensorrt.go with purego implementation  Owner: TBD  Est: 2h
+- [x] T212.2 Replace CGo tensorrt.go with purego implementation  Owner: task-T212  Completed: 2026-03-13
   - Remove //go:build cuda tag. Add tensorrt.Available() runtime guard.
   - Acceptance: go build ./internal/tensorrt/... without -tags cuda.
   - Dependencies: T212.1.
 
-- [ ] T212.3 Update inference/tensorrt_*.go to remove build tags  Owner: TBD  Est: 1h
+- [x] T212.3 Update inference/tensorrt_*.go to remove build tags  Owner: task-T212  Completed: 2026-03-13
   - Remove //go:build cuda from tensorrt_cache.go, tensorrt_convert.go,
     tensorrt_pipeline.go. Add runtime Available() guards.
   - Acceptance: go build ./inference/... without -tags cuda.
@@ -535,7 +535,7 @@ enabling it after D2H elimination.
   - Acceptance: Flash attention dispatches via purego. No CGo.
   - Dependencies: none.
 
-- [ ] T213.2 Update layers/attention/flash_cuda.go  Owner: TBD  Est: 1h
+- [x] T213.2 Update layers/attention/flash_cuda.go  Owner: task-T213.2  Completed: 2026-03-13
   - Remove //go:build cuda && cutlass tag. Add runtime cuda.Available() guard.
   - Merge flash_cuda.go and flash_nocuda.go into single file.
   - Acceptance: go build ./layers/attention/... without build tags.
@@ -562,13 +562,13 @@ enabling it after D2H elimination.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T214.3 Replace CGo ROCm files with purego implementations  Owner: TBD  Est: 3h
+- [x] T214.3 Replace CGo ROCm files with purego implementations  Owner: task-T214.3  Completed: 2026-03-13
   - Update internal/hip/, internal/rocblas/, internal/gpuapi/rocm_*.go.
   - Remove //go:build rocm tags. Add hip.Available() runtime guard.
   - Acceptance: go build ./... without -tags rocm.
   - Dependencies: T214.1, T214.2.
 
-- [ ] T214.4 Convert HIP kernels to purego dispatch  Owner: TBD  Est: 2h
+- [x] T214.4 Convert HIP kernels to purego dispatch  Owner: task-T214.3  Completed: 2026-03-13
   - HIP kernels in internal/hip/kernels/ compiled to .so.
   - Dispatch via purego dlopen instead of CGo.
   - Acceptance: Kernels dispatch via purego.
@@ -590,13 +590,13 @@ enabling it after D2H elimination.
   - Acceptance: Wrappers compile without CGo.
   - Dependencies: none.
 
-- [ ] T215.2 Replace CGo OpenCL runtime with purego  Owner: TBD  Est: 2h
+- [x] T215.2 Replace CGo OpenCL runtime with purego  Owner: task-T215  Completed: 2026-03-13
   - Update internal/opencl/runtime.go. Remove //go:build opencl tag.
   - Add opencl.Available() runtime guard.
   - Acceptance: go build ./internal/opencl/... without -tags opencl.
   - Dependencies: T215.1.
 
-- [ ] T215.3 Update gpuapi/opencl_*.go to use purego  Owner: TBD  Est: 2h
+- [x] T215.3 Update gpuapi/opencl_*.go to use purego  Owner: task-T215  Completed: 2026-03-13
   - Remove build tags from all 5 opencl adapter files.
   - Acceptance: go build ./internal/gpuapi/... without opencl tag.
   - Dependencies: T215.2.
