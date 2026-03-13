@@ -111,7 +111,10 @@ func NewGPUEngine[T tensor.Numeric](ops numeric.Arithmetic[T], deviceID ...int) 
 		}
 	}
 
-	managedMem := cuda.ManagedMemorySupported(dev) && os.Getenv("ZERFOO_DISABLE_MANAGED_MEM") == ""
+	// Managed memory (cudaMallocManaged) is opt-in: on GB10 it causes ~13%
+	// throughput regression due to page fault overhead. Enable with
+	// ZERFOO_ENABLE_MANAGED_MEM=1 after validating with cudaMemPrefetchAsync.
+	managedMem := cuda.ManagedMemorySupported(dev) && os.Getenv("ZERFOO_ENABLE_MANAGED_MEM") != ""
 	l.Info("gpu engine initialized", "device", fmt.Sprintf("%d", dev), "pool", "enabled", "stream", "enabled", "managedMemory", fmt.Sprintf("%v", managedMem))
 
 	fallbackPool := cuda.NewMemPool()

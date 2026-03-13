@@ -164,7 +164,13 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 			// and the runtime supports graph APIs. The executor warms up for
 			// 2 runs, then captures all GPU work into a graph for near-zero
 			// launch overhead on subsequent tokens.
-			if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_DISABLE_CUDA_GRAPH") == "" {
+			// CUDA graph capture is disabled: many layers (GQA, FFN, MatMul,
+		// KV cache) still have .Data() calls in CPU fallback paths that
+		// trigger D2H copies incompatible with stream capture. The partial
+		// capture infrastructure is ready (graph/cuda_graph.go) but needs
+		// a deeper refactor to eliminate all D2H from the decode path.
+		// See docs/updates.md "DGX Spark Verification Session" for details.
+		if sp, ok := any(gen.engine).(compute.StreamProvider); ok && os.Getenv("ZERFOO_ENABLE_CUDA_GRAPH") != "" {
 				if streamPtr := sp.Stream(); streamPtr != nil {
 					if cuda.Available() && cuda.Lib().GraphAvailable() {
 						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2)
