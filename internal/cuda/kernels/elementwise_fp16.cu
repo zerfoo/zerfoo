@@ -265,3 +265,37 @@ cudaError_t launch_scaled_softmax_fp16(const void* input, void* output,
 }
 
 } // extern "C"
+
+// ---------- F32 <-> FP16 conversion kernels ----------
+
+__global__ void kernel_f32_to_fp16(const float* src, __half* dst, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        dst[idx] = __float2half(src[idx]);
+    }
+}
+
+__global__ void kernel_fp16_to_f32(const __half* src, float* dst, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        dst[idx] = __half2float(src[idx]);
+    }
+}
+
+extern "C" {
+
+cudaError_t launch_f32_to_fp16(const void* src, void* dst, int n, cudaStream_t stream) {
+    int block = 256;
+    int grid = (n + block - 1) / block;
+    kernel_f32_to_fp16<<<grid, block, 0, stream>>>((const float*)src, (__half*)dst, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_fp16_to_f32(const void* src, void* dst, int n, cudaStream_t stream) {
+    int block = 256;
+    int grid = (n + block - 1) / block;
+    kernel_fp16_to_f32<<<grid, block, 0, stream>>>((const __half*)src, (float*)dst, n);
+    return cudaGetLastError();
+}
+
+} // extern "C"

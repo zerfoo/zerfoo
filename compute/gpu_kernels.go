@@ -529,6 +529,9 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if e.dtype == DTypeFP16 {
+			return fp16BinaryOp(e, ctx, a, b, e.kernels.AddFP16, dst...)
+		}
 		e.setDevice()
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Add, dst...)
 	}
@@ -549,6 +552,9 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if e.dtype == DTypeFP16 {
+			return fp16BinaryOp(e, ctx, a, b, e.kernels.SubFP16, dst...)
+		}
 		e.setDevice()
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Sub, dst...)
 	}
@@ -569,6 +575,9 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if e.dtype == DTypeFP16 {
+			return fp16BinaryOp(e, ctx, a, b, e.kernels.MulFP16, dst...)
+		}
 		e.setDevice()
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Mul, dst...)
 	}
@@ -589,6 +598,9 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	}
 
 	if sameShape(a, b) {
+		if e.dtype == DTypeFP16 {
+			return fp16BinaryOp(e, ctx, a, b, e.kernels.DivFP16, dst...)
+		}
 		e.setDevice()
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Div, dst...)
 	}

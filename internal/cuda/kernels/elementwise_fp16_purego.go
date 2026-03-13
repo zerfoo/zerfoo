@@ -49,6 +49,26 @@ func DivFP16(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	return checkKernel(ret, "div_fp16")
 }
 
+// F32ToFP16 converts n float32 elements to FP16 on GPU.
+func F32ToFP16(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("f32_to_fp16 kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchF32ToFP16, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
+	return checkKernel(ret, "f32_to_fp16")
+}
+
+// FP16ToF32 converts n FP16 elements to float32 on GPU.
+func FP16ToF32(src, dst unsafe.Pointer, n int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("fp16_to_f32 kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchFP16ToF32, uintptr(src), uintptr(dst), uintptr(n), uintptr(s))
+	return checkKernel(ret, "fp16_to_f32")
+}
+
 // RMSNormFP16 launches the FP16 RMSNorm kernel with FP32 accumulation.
 // input: [rows, D], weight: [D], output: [rows, D].
 func RMSNormFP16(input, weight, output unsafe.Pointer, eps float32, rows, D int, s unsafe.Pointer) error {
