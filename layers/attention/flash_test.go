@@ -1,5 +1,3 @@
-//go:build !(cuda && cutlass)
-
 package attention
 
 import (
