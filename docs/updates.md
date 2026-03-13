@@ -1360,3 +1360,49 @@ The Wave 8 kernel optimizations (register capping, flash block size tuning, warp
 ## Conclusion
 
 Kernels build and run correctly with all Wave 8 optimizations. Throughput is stable at ~185 tok/s, consistent with the Wave 9 baseline. Future improvement will likely come from reducing kernel launch overhead (megakernel/graph capture) or prefill-path optimization rather than per-kernel register tuning.
+
+---
+
+# S403.2.1 Q4_K End-to-End Benchmark on DGX Spark
+
+Date: 2026-03-13
+
+## Summary
+
+Benchmarked the native Q4_K path (T403.2 fix: Q4_K weights preserved, not re-quantized to Q4_0) using GPU dequant + cuBLAS for non-GEMV operations. Results show Q4_K path is **slower** than the previous Q4_0 re-quantization baseline.
+
+## Setup
+
+- **Hardware:** DGX Spark GB10 (CUDA 13.0, sm_121)
+- **Model:** Gemma 3 1B Q4_K_M (`/home/ndungu/models/gemma3-gguf/model.gguf`)
+- **Commit:** 668a440 (main HEAD after T403.2 merge)
+- **Command:** `./bench_tps_q4k -model model.gguf -tokens 256 -prompt 'The meaning of life is' -device cuda`
+- **Baseline:** 186 tok/s (Q4_0 re-quantization path, Wave 9)
+
+## Results
+
+| Run | Tokens | Time (s) | Throughput (tok/s) |
+|-----|--------|----------:|-------------------:|
+| 1   | 256    | 2.040     | 125.47             |
+| 2   | 256    | 1.790     | 143.05             |
+| 3   | 256    | 2.035     | 125.79             |
+
+**Average: 131.4 tok/s**
+**Baseline (Q4_0 path): 186 tok/s**
+**Delta: -54.6 tok/s (-29.4%)**
+
+## Acceptance
+
+**NOT MET.** Q4_K path (131.4 tok/s) is significantly slower than Q4_0 baseline (186 tok/s).
+
+## Analysis
+
+The Q4_K native path using GPU dequant + cuBLAS is ~29% slower than the Q4_0 re-quantization path. Possible causes:
+
+1. **Dequantization overhead.** Q4_K has a more complex block format (super-blocks with 8 sub-blocks, 6-bit scales, 4-bit mins) compared to Q4_0's simpler format. The GPU dequant kernel may be adding significant overhead per matmul.
+2. **cuBLAS FP16 GEMM after dequant may be slower than the fused Q4_0 GEMV kernel.** The Q4_0 path uses a fused quantized GEMV that reads weights and computes in one pass, avoiding the intermediate FP16 materialization.
+3. **Memory bandwidth.** Dequanting Q4_K to FP16 before cuBLAS effectively doubles the memory footprint of each weight read (4 bits -> 16 bits), negating the compression advantage.
+
+## Recommendation
+
+The Q4_K dequant + cuBLAS approach adds overhead vs. the fused Q4_0 GEMV. To match or exceed Q4_0 performance, a fused Q4_K GEMV kernel (similar to `gemv_q4k.cu` but for all matrix sizes) would avoid the dequant-to-FP16 intermediate step. Alternatively, profile to confirm whether the bottleneck is in the dequant kernel or cuBLAS GEMM dispatch.
