@@ -2,6 +2,7 @@ package tensor
 
 import (
 	"math"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/device"
 )
@@ -12,6 +13,14 @@ type FP8E4M3Storage struct {
 	data  []byte
 	scale float32
 	len   int
+
+	// GPU pointer cache (like BFloat16Storage).
+	gpuPtr      unsafe.Pointer
+	gpuByteSize int
+	gpuDeviceID int
+
+	// GPU pointer for the per-tensor scale factor (single float32 on device).
+	scaleGPUPtr unsafe.Pointer
 }
 
 // NewFP8E4M3Storage quantizes float32 data into FP8 E4M3 format with absmax scaling.
@@ -69,6 +78,32 @@ func (s *FP8E4M3Storage) DeviceType() device.Type { return device.CPU }
 
 // Scale returns the per-tensor scale factor.
 func (s *FP8E4M3Storage) Scale() float32 { return s.scale }
+
+// RawBytes returns the raw FP8 data as a byte slice (1 byte per element).
+func (s *FP8E4M3Storage) RawBytes() []byte { return s.data }
+
+// SetGPUPtr stores a pre-uploaded GPU device pointer for the raw FP8 bytes.
+func (s *FP8E4M3Storage) SetGPUPtr(ptr unsafe.Pointer, byteSize, deviceID int) {
+	s.gpuPtr = ptr
+	s.gpuByteSize = byteSize
+	s.gpuDeviceID = deviceID
+}
+
+// GPUPtr returns the cached GPU device pointer, byte size, and device ID.
+// Returns nil if no GPU copy exists.
+func (s *FP8E4M3Storage) GPUPtr() (unsafe.Pointer, int, int) {
+	return s.gpuPtr, s.gpuByteSize, s.gpuDeviceID
+}
+
+// SetScaleGPUPtr stores the GPU device pointer for the per-tensor scale factor.
+func (s *FP8E4M3Storage) SetScaleGPUPtr(ptr unsafe.Pointer) {
+	s.scaleGPUPtr = ptr
+}
+
+// ScaleGPUPtr returns the GPU device pointer for the per-tensor scale factor.
+func (s *FP8E4M3Storage) ScaleGPUPtr() unsafe.Pointer {
+	return s.scaleGPUPtr
+}
 
 // Ensure FP8E4M3Storage implements Storage[float32].
 var _ Storage[float32] = (*FP8E4M3Storage)(nil)
