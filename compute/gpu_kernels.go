@@ -96,6 +96,27 @@ func makeGPUResult[T tensor.Numeric](e *GPUEngine[T], shape []int, devPtr unsafe
 	return t, nil
 }
 
+// makeGPUResultView creates a tensor backed by a non-owning view into a
+// scratchpad buffer. The returned tensor's Free/Release is a no-op, so the
+// scratchpad retains ownership of the device memory. This is safe because
+// inference operations are sequential: the output is consumed before the
+// scratchpad buffer is reused by the next MatMul call.
+func makeGPUResultView[T tensor.Numeric](e *GPUEngine[T], shape []int, devPtr unsafe.Pointer, numElems int, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	viewGS := tensor.NewGPUStorageViewFromPtr[T](devPtr, numElems, e.deviceID)
+
+	if len(dst) > 0 && dst[0] != nil {
+		dst[0].SetStorage(viewGS)
+		dst[0].SetShape(shape)
+		return dst[0], nil
+	}
+
+	t, err := tensor.NewWithStorage[T](shape, viewGS)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // broadcastStrides4D computes output shape (padded to 4D) and per-dim strides
 // for two broadcastable shapes. Returns false if shapes are not broadcastable
 // or exceed 4 dimensions.
