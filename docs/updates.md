@@ -1711,3 +1711,37 @@ All in `internal/cuda/` purego bindings — expected `unsafe.Pointer` usage for 
 | `internal/cuda/runtime_purego.go` | 204 | possible misuse of unsafe.Pointer |
 
 These are inherent to the purego FFI pattern and are not actionable.
+
+# T406.7: go vet Results (FP8 Inference Path)
+
+Date: 2026-03-13
+
+## Summary
+
+Ran `go vet` on all packages modified in E406 (FP8 inference path):
+
+```
+go vet ./compute/... ./tensor/... ./internal/cublas/... ./internal/cuda/kernels/... ./internal/gpuapi/... ./model/gguf/... ./inference/... ./cmd/bench_tps/...
+```
+
+**Result: PASS — zero issues found.**
+
+Exit code 0, no output. No new issues introduced by the FP8 inference path work.
+
+## Packages Checked
+
+| Package | Status |
+|---------|--------|
+| `compute/...` | Clean |
+| `tensor/...` | Clean |
+| `internal/cublas/...` | Clean |
+| `internal/cuda/kernels/...` | Clean |
+| `internal/gpuapi/...` | Clean |
+| `model/gguf/...` | Clean |
+| `inference/...` | Clean |
+| `cmd/bench_tps/...` | Clean |
+
+## Notes
+
+- No new `unsafe.Pointer` warnings from FP8 additions.
+- Pre-existing `unsafe.Pointer` warnings in `internal/cuda/` purego bindings remain (documented in T405.5 above) but are not in the packages checked here since `internal/cuda/` (non-kernels) was not in scope for E406.
