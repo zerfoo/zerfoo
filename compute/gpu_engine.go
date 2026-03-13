@@ -483,6 +483,12 @@ func (e *GPUEngine[T]) Stream() unsafe.Pointer {
 func (e *GPUEngine[T]) Close() error {
 	var firstErr error
 
+	// Free FP8 scratch buffers before draining the pool.
+	if e.fp8Scratch != nil {
+		e.fp8Scratch.free(e.pool, e.deviceID)
+		e.fp8Scratch = nil
+	}
+
 	if e.pool != nil {
 		if err := e.pool.Drain(); err != nil && firstErr == nil {
 			firstErr = err

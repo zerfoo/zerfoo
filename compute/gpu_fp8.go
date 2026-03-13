@@ -11,6 +11,76 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// fp8Scratchpad holds pre-allocated, reusable device buffers for FP8 MatMul.
+// Buffers are grow-only: if a call needs a larger buffer, the old one is freed
+// and a bigger one allocated. This avoids per-call arena allocations that
+// previously exhausted the 2GB arena and caused slow MemPool fallbacks.
+type fp8Scratchpad struct {
+	// fp16Buf is a reusable FP16 conversion buffer for activations (A or B).
+	fp16Buf     unsafe.Pointer
+	fp16BufSize int
+
+	// scaleOne is a persistent device float32 with value 1.0, used as the
+	// scale pointer for FP16 activations (which need no additional scaling).
+	scaleOne unsafe.Pointer
+}
+
+// ensure returns fp16Buf, growing it if needed. The returned pointer is owned
+// by the scratchpad and must NOT be freed by the caller.
+func (s *fp8Scratchpad) ensure(pool gpuapi.MemPool, deviceID, byteSize int) (unsafe.Pointer, error) {
+	if s.fp16Buf != nil && s.fp16BufSize >= byteSize {
+		return s.fp16Buf, nil
+	}
+	// Grow: free old, allocate new.
+	if s.fp16Buf != nil {
+		pool.Free(deviceID, s.fp16Buf, s.fp16BufSize)
+		s.fp16Buf = nil
+		s.fp16BufSize = 0
+	}
+	ptr, err := pool.Alloc(deviceID, byteSize)
+	if err != nil {
+		return nil, err
+	}
+	s.fp16Buf = ptr
+	s.fp16BufSize = byteSize
+	return ptr, nil
+}
+
+// free releases all scratchpad device memory back to the pool.
+func (s *fp8Scratchpad) free(pool gpuapi.MemPool, deviceID int) {
+	if s.fp16Buf != nil {
+		pool.Free(deviceID, s.fp16Buf, s.fp16BufSize)
+		s.fp16Buf = nil
+		s.fp16BufSize = 0
+	}
+	if s.scaleOne != nil {
+		pool.Free(deviceID, s.scaleOne, f32Size)
+		s.scaleOne = nil
+	}
+}
+
+// getFP8Scratch returns the engine's FP8 scratchpad, initializing it lazily.
+// The scaleOne device pointer is uploaded once on first call.
+func (e *GPUEngine[T]) getFP8Scratch() (*fp8Scratchpad, error) {
+	if e.fp8Scratch != nil {
+		return e.fp8Scratch, nil
+	}
+	s := &fp8Scratchpad{}
+	// Allocate and upload scale = 1.0 (used for FP16 activations).
+	ptr, err := e.pool.Alloc(e.deviceID, f32Size)
+	if err != nil {
+		return nil, fmt.Errorf("fp8Scratch: alloc scaleOne: %w", err)
+	}
+	one := float32(1.0)
+	if err := e.runtime.Memcpy(ptr, unsafe.Pointer(&one), f32Size, gpuapi.MemcpyHostToDevice); err != nil {
+		e.pool.Free(e.deviceID, ptr, f32Size)
+		return nil, fmt.Errorf("fp8Scratch: upload scaleOne: %w", err)
+	}
+	s.scaleOne = ptr
+	e.fp8Scratch = s
+	return s, nil
+}
+
 // getLtHandle returns the engine's cuBLASLt handle, creating it lazily.
 func (e *GPUEngine[T]) getLtHandle() (*cublas.LtHandle, error) {
 	if e.ltHandle != nil {
@@ -46,6 +116,11 @@ func (e *GPUEngine[T]) matMulFP8(
 	e.setDevice()
 
 	ltH, err := e.getLtHandle()
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	scratch, err := e.getFP8Scratch()
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -94,7 +169,7 @@ func (e *GPUEngine[T]) matMulFP8(
 	}
 	defer freeScaleA()
 
-	// Get F32 device pointer for B, convert to FP16.
+	// Get F32 device pointer for B, convert to FP16 using scratchpad buffer.
 	devBF32, cleanupB, err := getDevicePtr(e, b)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
@@ -103,26 +178,17 @@ func (e *GPUEngine[T]) matMulFP8(
 
 	bElems := k * n
 	fp16BSize := bElems * fp16Size
-	fp16B, err := e.pool.Alloc(e.deviceID, fp16BSize)
+	fp16B, err := scratch.ensure(e.pool, e.deviceID, fp16BSize)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
-	defer e.pool.Free(e.deviceID, fp16B, fp16BSize)
 
 	if err := e.kernels.F32ToFP16(devBF32, fp16B, bElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8: f32->fp16 B: %w", err)
 	}
 
-	// B scale = 1.0 (FP16 activations, no additional scaling needed).
-	scaleBVal := float32(1.0)
-	scaleBPtr, err := e.pool.Alloc(e.deviceID, f32Size)
-	if err != nil {
-		return nil, fmt.Errorf("matMulFP8: alloc scaleB: %w", err)
-	}
-	defer e.pool.Free(e.deviceID, scaleBPtr, f32Size)
-	if err := e.runtime.Memcpy(scaleBPtr, unsafe.Pointer(&scaleBVal), f32Size, gpuapi.MemcpyHostToDevice); err != nil {
-		return nil, fmt.Errorf("matMulFP8: upload scaleB: %w", err)
-	}
+	// B scale = 1.0 — use persistent scaleOne from scratchpad.
+	scaleBPtr := scratch.scaleOne
 
 	// Allocate FP32 output.
 	cElems := m * n
@@ -133,6 +199,7 @@ func (e *GPUEngine[T]) matMulFP8(
 	}
 
 	scaleAVal := fs.Scale()
+	scaleBVal := float32(1.0)
 	log.Printf("[FP8 diag] matMulFP8: m=%d n=%d k=%d scaleA=%.6g (fp8 weight) scaleB=%.6g (fp16 act) scaleAPtr=%v scaleBPtr=%v",
 		m, n, k, scaleAVal, scaleBVal, scaleAPtr, scaleBPtr)
 
@@ -167,6 +234,11 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	e.setDevice()
 
 	ltH, err := e.getLtHandle()
+	if err != nil {
+		return e.cpu.MatMul(ctx, a, b, dst...)
+	}
+
+	scratch, err := e.getFP8Scratch()
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
@@ -224,7 +296,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 	}
 	defer freeScaleB()
 
-	// Convert A from FP32 to FP16 on GPU.
+	// Convert A from FP32 to FP16 using scratchpad buffer.
 	devAF32, cleanupA, err := getDevicePtr(e, a)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
@@ -233,26 +305,18 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 
 	aElems := m * k
 	fp16ASize := aElems * fp16Size
-	fp16A, err := e.pool.Alloc(e.deviceID, fp16ASize)
+	fp16A, err := scratch.ensure(e.pool, e.deviceID, fp16ASize)
 	if err != nil {
 		return e.cpu.MatMul(ctx, a, b, dst...)
 	}
-	defer e.pool.Free(e.deviceID, fp16A, fp16ASize)
 
 	if err := e.kernels.F32ToFP16(devAF32, fp16A, aElems, e.stream); err != nil {
 		return nil, fmt.Errorf("matMulFP8BWeight: f32->fp16 A: %w", err)
 	}
 
-	// A scale = 1.0 (FP16 activations, no additional scaling needed).
+	// A scale = 1.0 — use persistent scaleOne from scratchpad.
+	scaleAPtr := scratch.scaleOne
 	scaleAVal := float32(1.0)
-	scaleAPtr, err := e.pool.Alloc(e.deviceID, f32Size)
-	if err != nil {
-		return nil, fmt.Errorf("matMulFP8BWeight: alloc scaleA: %w", err)
-	}
-	defer e.pool.Free(e.deviceID, scaleAPtr, f32Size)
-	if err := e.runtime.Memcpy(scaleAPtr, unsafe.Pointer(&scaleAVal), f32Size, gpuapi.MemcpyHostToDevice); err != nil {
-		return nil, fmt.Errorf("matMulFP8BWeight: upload scaleA: %w", err)
-	}
 
 	// Allocate FP32 output.
 	cElems := m * n
@@ -287,6 +351,7 @@ func (e *GPUEngine[T]) matMulFP8BWeight(
 //   - A_rm[m,k] is B_cm[k,m] (col-major)
 //   - B_rm[k,n] is A_cm[n,k] (col-major)
 //   - C_rm[m,n] is C_cm[n,m] (col-major)
+//
 // So we compute: C_cm = A_cm * B_cm, i.e. [n,k] * [k,m] = [n,m]
 func ltMatmulFP8(
 	ltH *cublas.LtHandle,
