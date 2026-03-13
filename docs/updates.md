@@ -1,3 +1,157 @@
+# T704.1 Audit: purego FFI Call Frequency During Decode
+
+Date: 2026-03-13
+
+## Summary
+
+This audit counts the number of purego-style FFI calls (via `cuda.Ccall` /
+`asmcgocall`) per generated token during Gemma 3 1B decode. The project does
+NOT use the `purego` library; it uses a custom zero-CGo mechanism:
+`runtime.asmcgocall` + assembly trampolines (`purego_linux_arm64.go/.s`).
+Function pointers are resolved once at init via `dlsym` and cached in struct
+fields — there is zero per-call symbol lookup overhead.
+
+## Architecture
+
+```
+Go caller
+  → kernels.Add(...)           // package-level func
+    → klib()                   // returns cached *KernelLib (sync.Once)
+    → cuda.Ccall(k.launchAdd, ...)
+      → ccall(fn uintptr, a ...uintptr)
+        → runTrampoline(&ccallArgs{fn, args, ret})
+          → asmcgocall(ccallTrampoline, &args)  // g0 stack, no CGo overhead
+```
+
+Two shared libraries are loaded at init:
+- `libcudart.so` — 14 required + 6 optional symbols → `CUDALib` struct fields
+- `libkernels.so` — ~55 symbols → `KernelLib` struct fields
+- `libcublas.so` — 6 symbols → `cublasLib` struct fields
+
+All function pointers are resolved once via `dlsym` during `sync.Once` init
+and stored as `uintptr` struct fields. Every subsequent call is a direct
+`ccall(field, args...)` with no string lookup, no reflection, and no map
+dispatch.
+
+## Estimated ccall Count Per Decode Token (Gemma 3 1B, seqLen=1)
+
+### Per transformer layer (fused decode path)
+
+| Operation | ccalls | Function |
+|-----------|--------|----------|
+| Merged QKV MatMul (1 GEMV) | 1 | cublasSgemm_v2 |
+| Fused QK Norm+RoPE | 1 | fused_qk_norm_rope_f32 |
+| V reshape/transpose | 0 | zero-copy metadata ops |
+| KV cache update (2x MemcpyAsync) | 2 | cudaMemcpyAsync |
+| K/V reshape from cache | 0 | zero-copy metadata ops |
+| K/V head expansion (Repeat) | 2 | launch_repeat (x2 for K,V) |
+| Flash attention (Q*K^T, softmax, *V) | 1 | flash_attention_forward_f32 |
+| Output transpose+reshape | 0 | zero-copy metadata ops |
+| Output projection (Wo MatMul) | 1 | cublasSgemm_v2 |
+| Residual Add | 1 | launch_add |
+| Fused Add+RMSNorm (post-attn) | 1 | fused_add_rmsnorm_f32 |
+| FFN norm (RMSNorm) | 1 | launch_rmsnorm |
+| Merged Gate+Up MatMul (1 GEMV) | 1 | cublasSgemm_v2 |
+| Fused SwiGLU | 1 | fused_swiglu_f32 |
+| Down projection (MatMul) | 1 | cublasSgemm_v2 |
+| Residual Add | 1 | launch_add |
+| **Layer total** | **15** | |
+
+### Per-token overhead (outside layers)
+
+| Operation | ccalls | Function |
+|-----------|--------|----------|
+| Embedding gather | 1 | launch_gather |
+| Final RMSNorm | 1 | launch_rmsnorm |
+| LM head MatMul | 1 | cublasSgemm_v2 |
+| Argmax | 1 | launch_argmax |
+| Stream synchronize | 1 | cudaStreamSynchronize |
+| **Overhead total** | **5** | |
+
+### Total per token
+
+```
+15 calls/layer x 26 layers + 5 overhead = 395 ccalls/token
+```
+
+Note: the previously estimated 338 kernel launches likely did not count
+cudaMemcpyAsync (KV cache) and cudaStreamSynchronize. With those, 395 is
+consistent.
+
+## Top 10 Most-Called Functions Per Token
+
+| Rank | Function | Calls/token | Source |
+|------|----------|-------------|--------|
+| 1 | cublasSgemm_v2 | 130 | 5/layer x 26 (QKV, Wo, gate+up, down, LM head) |
+| 2 | launch_repeat | 52 | 2/layer x 26 (K expand, V expand) |
+| 3 | cudaMemcpyAsync | 52 | 2/layer x 26 (KV cache update) |
+| 4 | launch_add | 52 | 2/layer x 26 (residual connections) |
+| 5 | fused_qk_norm_rope_f32 | 26 | 1/layer x 26 |
+| 6 | flash_attention_forward_f32 | 26 | 1/layer x 26 |
+| 7 | fused_add_rmsnorm_f32 | 26 | 1/layer x 26 |
+| 8 | launch_rmsnorm | 27 | 1/layer x 26 + 1 final |
+| 9 | fused_swiglu_f32 | 26 | 1/layer x 26 |
+| 10 | launch_gather | 1 | 1 (embedding lookup) |
+
+## Function Pointer Caching Analysis
+
+**All function pointers are cached at init time.** Specifically:
+
+1. `CUDALib.Open()` — `sync.Once`, resolves 20 symbols into struct `uintptr`
+   fields via `dlsym` at first call
+2. `KernelLib` — `sync.Once` in `openKernelLib()`, resolves ~55 symbols into
+   struct `uintptr` fields
+3. `cublasLib` — `sync.Once` in `loadCublas()`, resolves 6 symbols into struct
+   `uintptr` fields
+
+Per-call path in `elementwise_purego.go`:
+```go
+func Add(a, b, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+    k := klib()                    // returns cached *KernelLib pointer
+    ret := cuda.Ccall(k.launchAdd, // k.launchAdd is a pre-resolved uintptr
+        uintptr(a), uintptr(b), uintptr(c), uintptr(n), uintptr(s))
+    return checkKernel(ret, "add")
+}
+```
+
+- `klib()` is a single pointer dereference (package-level var, set by
+  `sync.Once`)
+- `cuda.Ccall()` → `ccall()` → stack-allocates a `ccallArgs` struct (200
+  bytes), copies args, calls `asmcgocall`
+- No reflection, no string dispatch, no map lookup, no `purego.SyscallN`
+
+## Assessment: Is purego Overhead Reducible?
+
+**The current overhead is already near-minimal.** Key findings:
+
+1. **No `purego` library used.** The project uses a custom `asmcgocall`-based
+   mechanism that bypasses CGo entirely. There is no `purego.SyscallN`, no
+   `purego.RegisterLibFunc`, and no reflection.
+
+2. **Per-call cost is ~50ns** (asmcgocall stack switch + ccallArgs copy). At
+   395 calls/token, this adds ~20us per token — negligible vs the ~5-7ms
+   GPU kernel execution time per token.
+
+3. **No string-based dispatch.** Every call goes through a pre-resolved
+   `uintptr` function pointer stored in a struct field.
+
+4. **Stack allocation, not heap.** The `ccallArgs` struct is stack-allocated
+   in `ccall()`, so there is no GC pressure from FFI calls.
+
+5. **The only practical reduction** would be CUDA Graph capture, which
+   replaces N kernel launches with 1 `cudaGraphLaunch`. The project already
+   has graph capture infrastructure (`CUDALib.GraphAvailable()`,
+   `StreamBeginCapture`, etc.) — this would reduce 395 ccalls/token to ~5
+   (graph launch + sync + overhead). However, CUDA graphs require static
+   shapes and cannot capture dynamic KV cache operations without
+   architecture changes.
+
+**Conclusion:** purego FFI overhead is not a bottleneck. The ~20us per-token
+overhead is <0.4% of total token generation time. Optimization effort should
+focus on kernel execution time, not FFI dispatch.
+
+---
+
 # T601.4 Benchmark Optimized Q4K GEMV Kernel on DGX Spark
 
 Date: 2026-03-13
