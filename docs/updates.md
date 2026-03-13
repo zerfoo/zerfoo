@@ -2033,3 +2033,90 @@ Possible causes:
   called, resulting in severe throughput degradation. The root cause is
   likely GPU architecture incompatibility (SM 7.5 does not support FP8
   in cublasLt, which requires SM 8.9+).
+
+---
+
+# T504.1 FP8 Arena Profiling Results
+
+Date: 2026-03-13
+Branch: feat/fp8-arena-profiling
+
+## Summary
+
+Profiled FP8 arena allocation on DGX Spark using `ZERFOO_ARENA_PROFILE=1`
+with `bench_tps --dtype=fp8 --tokens 10`. The 2GB arena is exhausted during
+every forward pass, causing 1801 arena misses that fall back to slow MemPool
+allocation. Total cumulative allocations across 12 forward passes: ~48 GB
+through a 2GB arena.
+
+## Key Metrics
+
+- Arena capacity: 2,147,483,648 bytes (2 GB)
+- Arena hits: 13,248 | Arena misses: 1,800 | Resets: 11
+- Fallback MemPool: hits=991, misses=810, cached=3,284.8 MB
+- Throughput: 1.33 tok/s (vs 151.69 tok/s for F32)
+- Output quality: degenerate ("is a fox is a fox is running to the")
+
+## Top 10 Largest Allocations by Total Bytes
+
+| Rank | Caller | Size per Alloc | Total Calls | Total Bytes | Misses |
+|------|--------|----------------|-------------|-------------|--------|
+| 1 | `compute.fp16MatMul:168` | 15,925,248 (15.2 MB) | 1,170 | 18.6 GB | 142 |
+| 2 | `compute.getDevicePtr:35` | 1,207,959,552 (1.15 GB) | 15 | 18.1 GB | 15 |
+| 3 | `compute.fp16MatMul:168` | 603,979,776 (576 MB) | 15 | 9.1 GB | 2 |
+| 4 | `compute.fp16MatMul:168` | 2,359,296 (2.3 MB) | 780 | 1.8 GB | 87 |
+| 5 | `compute.fp16MatMul:168` | 589,824 (576 KB) | 780 | 460 MB | 87 |
+| 6 | `compute.gpuScalarOp:497` | 1,048,576 (1 MB) | 26 | 27.3 MB | 2 |
+| 7 | `compute.gpuScalarOp:497` | 5,242,880 (5 MB) | 4 | 21 MB | 2 |
+| 8 | `compute.fp16MatMul:184` | 27,648 (27 KB) | 676 | 18.7 MB | 40 |
+| 9 | `compute.fp16MatMul:184` | 138,240 (135 KB) | 104 | 14.4 MB | 44 |
+| 10 | `compute.gpuUnaryOp:459` | 1,048,576 (1 MB) | 13 | 13.6 MB | 1 |
+
+## Root Cause Analysis
+
+### Primary offender: `compute.getDevicePtr:35` (1.15 GB per call)
+
+This function allocates a temporary FP16 copy of the full weight tensor for
+every MatMul call. At 1.15 GB per allocation, a single call consumes 54% of
+the 2GB arena. With 15 calls per 12 forward passes, this alone accounts for
+18.1 GB of arena pressure. Every one of these allocations is an arena miss
+since it cannot fit alongside other allocations.
+
+### Secondary offender: `compute.fp16MatMul:168` (multiple sizes)
+
+fp16MatMul line 168 allocates the FP16 conversion output buffer. The dominant
+size is 15.2 MB (1,170 calls = 18.6 GB total). These are the FP16 versions of
+activation tensors created during MatMul. With 26 transformer layers, each
+generating multiple MatMul calls per forward pass, these accumulate rapidly
+and push the arena past capacity within the first 2 layers.
+
+### Arena exhaustion pattern
+
+The RESET logs show the arena fills to ~2.0 GB within the first forward pass
+(hits=1206, misses=1). By the second pass, misses jump to 799 because the
+arena resets but the same allocation pattern repeats, and the 1.15 GB
+getDevicePtr allocation + subsequent fp16MatMul allocations exceed capacity
+within the first few layers.
+
+## Functions Causing Most Arena Pressure
+
+| Function | Purpose | Per-pass Bytes | Fix |
+|----------|---------|---------------|-----|
+| `compute.getDevicePtr` | Copies full weight matrix to FP16 | ~1.15 GB | Pre-convert weights to FP16 at load time (T503.1) |
+| `compute.fp16MatMul:168` | FP16 conversion output buffer | ~170 MB/layer | Pre-allocate reusable scratch buffers (T504.2) |
+| `compute.fp16MatMul:161` | FP16 conversion input buffer | ~4 MB/layer | Reuse input buffers across calls |
+| `compute.fp16MatMul:184` | FP16 MatMul output buffer | ~2 MB/layer | Write output directly to destination |
+| `compute.fp16FusedAddRMSNorm` | FP16 conversion for norm | ~0.1 MB/layer | Use native FP16 storage (T502.4) |
+
+## Recommendations
+
+1. **Pre-convert weights to FP16 at upload time** (T503.1): Eliminates the
+   1.15 GB getDevicePtr allocation entirely. This is the single biggest win.
+2. **Pre-allocate persistent FP16 scratch buffers** (T504.2): Allocate 2-3
+   reusable buffers sized to the largest MatMul dimension (15.2 MB) during
+   engine init. Rotate between them instead of allocating from the arena.
+3. **Native FP16 activation storage** (T502.x): If activations are stored as
+   FP16, fp16MatMul lines 161 and 168 (input/output conversion) become no-ops.
+4. **Consider increasing arena to 4 GB**: Even with scratch buffers, the
+   current 2 GB is tight for 26-layer models. The DGX Spark has 128 GB unified
+   memory, so 4 GB is feasible.
