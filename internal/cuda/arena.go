@@ -200,3 +200,8 @@ func (a *ArenaPool) UsedBytes() int {
 	defer a.mu.Unlock()
 	return a.offset
 }
+
+// Capacity returns the total arena capacity in bytes.
+func (a *ArenaPool) Capacity() int {
+	return a.capacity
+}
