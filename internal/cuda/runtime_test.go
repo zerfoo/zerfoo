@@ -214,6 +214,82 @@ func TestMemcpyAsyncNilStream(t *testing.T) {
 	}
 }
 
+func TestDeviceGetAttribute(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
+	// Query a well-known attribute (managed memory support).
+	val, err := DeviceGetAttribute(cudaDevAttrManagedMemory, 0)
+	if err != nil {
+		t.Fatalf("DeviceGetAttribute(cudaDevAttrManagedMemory, 0) failed: %v", err)
+	}
+	// Value should be 0 or 1.
+	if val != 0 && val != 1 {
+		t.Errorf("expected 0 or 1 for managedMemory attribute, got %d", val)
+	}
+	t.Logf("device 0: managedMemory=%d", val)
+}
+
+func TestManagedMemorySupported(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
+	supported := ManagedMemorySupported(0)
+	t.Logf("device 0: ManagedMemorySupported=%v", supported)
+
+	// If supported, verify both attributes are non-zero.
+	if supported {
+		managed, _ := DeviceGetAttribute(cudaDevAttrManagedMemory, 0)
+		concurrent, _ := DeviceGetAttribute(cudaDevAttrConcurrentManagedAccess, 0)
+		if managed == 0 || concurrent == 0 {
+			t.Errorf("ManagedMemorySupported=true but managed=%d, concurrent=%d", managed, concurrent)
+		}
+	}
+}
+
+func TestManagedMemorySupported_InvalidDevice(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+
+	// Invalid device should return false, not panic.
+	supported := ManagedMemorySupported(9999)
+	if supported {
+		t.Error("ManagedMemorySupported(9999) should return false for invalid device")
+	}
+}
+
+func TestMallocManagedRoundTrip(t *testing.T) {
+	if !Available() {
+		t.Skip("CUDA not available")
+	}
+	if !ManagedMemorySupported(0) {
+		t.Skip("managed memory not supported on device 0")
+	}
+
+	src := []float32{1.0, 2.0, 3.0, 4.0}
+	byteSize := len(src) * int(unsafe.Sizeof(src[0]))
+
+	ptr, err := MallocManaged(byteSize)
+	if err != nil {
+		t.Fatalf("MallocManaged failed: %v", err)
+	}
+	defer func() { _ = Free(ptr) }()
+
+	// Write directly to managed memory from CPU.
+	dst := unsafe.Slice((*float32)(ptr), len(src))
+	copy(dst, src)
+
+	// Read back from managed memory on CPU.
+	for i, v := range dst {
+		if v != src[i] {
+			t.Errorf("managed memory mismatch at %d: got %f, want %f", i, v, src[i])
+		}
+	}
+}
+
 func TestMemcpyDeviceToDevice(t *testing.T) {
 	if !Available() {
 		t.Skip("CUDA not available")

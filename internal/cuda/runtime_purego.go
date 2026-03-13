@@ -238,6 +238,44 @@ func DeviceComputeCapability(deviceID int) (major, minor int, err error) {
 	return int(maj), int(min), nil
 }
 
+// CUDA device attribute constants.
+const (
+	// cudaDevAttrManagedMemory indicates the device supports managed memory.
+	cudaDevAttrManagedMemory = 83
+	// cudaDevAttrConcurrentManagedAccess indicates the device supports
+	// concurrent access to managed memory from CPU and GPU without faulting.
+	cudaDevAttrConcurrentManagedAccess = 89
+)
+
+// DeviceGetAttribute queries a device attribute.
+func DeviceGetAttribute(attr, deviceID int) (int, error) {
+	l := lib()
+	if l == nil {
+		return 0, fmt.Errorf("cudaDeviceGetAttribute failed: cuda not available")
+	}
+	var value int32
+	ret := ccall(l.cudaDeviceGetAttribute, uintptr(unsafe.Pointer(&value)), uintptr(attr), uintptr(deviceID))
+	if ret != cudaSuccess {
+		return 0, fmt.Errorf("cudaDeviceGetAttribute(%d) failed: %s", attr, cudaErrorString(ret))
+	}
+	return int(value), nil
+}
+
+// ManagedMemorySupported returns true if the device supports unified
+// (managed) memory with concurrent access from CPU and GPU. On GB10 with
+// NVLink-C2C and shared LPDDR5x, this avoids all explicit H2D/D2H copies.
+func ManagedMemorySupported(deviceID int) bool {
+	managed, err := DeviceGetAttribute(cudaDevAttrManagedMemory, deviceID)
+	if err != nil || managed == 0 {
+		return false
+	}
+	concurrent, err := DeviceGetAttribute(cudaDevAttrConcurrentManagedAccess, deviceID)
+	if err != nil || concurrent == 0 {
+		return false
+	}
+	return true
+}
+
 // MemcpyAsync copies count bytes asynchronously on the given stream.
 func MemcpyAsync(dst, src unsafe.Pointer, count int, kind MemcpyKind, stream *Stream) error {
 	l := lib()
