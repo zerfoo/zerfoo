@@ -363,7 +363,7 @@ FP16 accumulation and the FP16 kernel infrastructure must be in place first.
     documented. Expected: ~2-4x over FP32 from quartered memory bandwidth.
   - Dependencies: T406.6.
 
-- [ ] T406.7 Run go vet on modified packages  Owner: TBD  Est: 15m
+- [x] T406.7 Run go vet on modified packages  Owner: TBD  Est: 15m
   - Dependencies: S406.6.1.
 
 ---
