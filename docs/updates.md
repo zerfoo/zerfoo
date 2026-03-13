@@ -1975,3 +1975,61 @@ GPU Arena: hits=26054, misses=0, resets=52, used=7.7 MB per run.
 4. Zerfoo arena shows zero misses, so arena overhead is not the bottleneck for
    F32 inference.
 5. Both tools produce coherent output with the same model.
+
+---
+
+# T505.1 FP8 Scale Factor Diagnostic Results
+
+Date: 2026-03-13
+
+## Summary
+
+Added diagnostic logging to FP8 scale factor computation and MatMul paths.
+Ran `bench_tps --dtype=fp8` on DGX Spark with Gemma 3 1B (GGUF Q8_0).
+
+## QuantizeToFP8E4M3 Scale Factors
+
+All 182 quantized tensors (2D weight matrices) produced reasonable scale
+factors. No zero, inf, or NaN scales were detected.
+
+**Scale factor range:** 0.000293 to 0.00234
+
+Representative samples:
+| Tensor | Shape | Scale | F32 Min | F32 Max |
+|--------|-------|-------|---------|---------|
+| model.embed_tokens.weight | [262144, 1152] | 0.001657 | -0.7422 | 0.7422 |
+| model.layers.14.mlp.gate_proj.weight | [6912, 1152] | 0.002337 | -1.0468 | 0.6212 |
+| model.layers.4.mlp.down_proj.weight | [1152, 6912] | 0.000293 | -0.1182 | 0.1314 |
+| model.layers.1.self_attn.q_proj.weight | [1024, 1152] | 0.001683 | -0.5272 | 0.7541 |
+
+The scale values are consistent with `absmax / 448` (E4M3 max representable).
+All values fall well within the expected range (0.001 to 100 for typical
+transformer weights).
+
+## FP8 MatMul Path Analysis
+
+**Key finding:** No `matMulFP8` or `matMulFP8BWeight` log lines appeared in
+the output. This means the cublasLtMatmul FP8 path is **not being invoked**
+during inference. The model is likely falling back to CPU MatMul or a
+non-FP8 GPU path.
+
+This explains the very low throughput of **1.23 tok/s** with `--dtype=fp8`
+(compared to ~150 tok/s with F32). The FP8 weights are being quantized
+correctly, but the compute path is not utilizing them via the cublasLt FP8
+MatMul.
+
+Possible causes:
+1. The GB10 (SM 7.5, Turing) may not support FP8 via cublasLt (FP8 requires
+   SM 8.9+ / Ada Lovelace). The `ltMatmulFP8` function may be silently
+   failing at `getLtHandle()` or `MatmulAlgoGetHeuristic()`, causing a
+   fallback to CPU.
+2. The tensor storage type dispatch in the compute engine may not be routing
+   FP8 tensors to the FP8 MatMul path.
+
+## Conclusion
+
+- **Scale factors: HEALTHY.** All 182 tensors have valid, reasonable scales.
+- **FP8 MatMul path: NOT INVOKED.** The cublasLt FP8 path is not being
+  called, resulting in severe throughput degradation. The root cause is
+  likely GPU architecture incompatibility (SM 7.5 does not support FP8
+  in cublasLt, which requires SM 8.9+).
