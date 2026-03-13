@@ -93,5 +93,17 @@ func (s *Float16Storage) SetGPUByteSize(byteSize int) {
 	s.gpuByteSize = byteSize
 }
 
+// NewFloat16StorageGPU creates a Float16Storage backed by a GPU device pointer.
+// The storage has no host data; only the GPU pointer is set.
+func NewFloat16StorageGPU(ptr unsafe.Pointer, numElems, deviceID int) *Float16Storage {
+	byteSize := numElems * 2
+	return &Float16Storage{
+		len:         numElems,
+		gpuPtr:      ptr,
+		gpuByteSize: byteSize,
+		gpuDeviceID: deviceID,
+	}
+}
+
 // Ensure Float16Storage implements Storage[float32].
 var _ Storage[float32] = (*Float16Storage)(nil)
