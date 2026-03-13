@@ -1037,3 +1037,166 @@ perspectives, exploring why it's such a complex question, and some common viewpo
 Zerfoo output quality is **coherent and acceptable** for raw text completion.
 The difference from Ollama is primarily due to chat template application rather
 than model quality issues. The earlier gibberish output bug has been resolved.
+
+---
+
+# T208.1: Megakernel Profiling and Root Cause Analysis
+
+Date: 2026-03-13
+
+## Environment
+
+- **Host**: ndungu@192.168.86.250 (DGX Spark, NVIDIA GB10 Blackwell)
+- **OS**: Linux 6.17.0-1008-nvidia aarch64
+- **CUDA**: 13.0, nsys available at /usr/local/bin/nsys
+- **nvcc**: /usr/local/cuda/bin/nvcc
+- **Binary**: bench_tps_v17b (ARM64 ELF)
+- **Model**: gemma3-gguf Q4_K_M
+
+## nsys Profiling
+
+nsys is available on DGX Spark but profiling the megakernel is impossible because
+**the megakernel never fires**. Running bench_tps with `-device cpu` confirms:
+
+```
+CompileTraced plan validation failed, falling back to Compile: instruction 0 (MatMul): input tensors cannot be nil
+megakernel: 4 unsupported ops: [EmbeddingLookup GroupedQueryAttention FFN LMHead]
+```
+
+Running with `-device cuda` fails earlier:
+```
+generate error: prefill forward: node[3] GroupedQueryAttention: mul_broadcast kernel: kernels not available
+```
+
+## Root Cause Analysis
+
+The megakernel has **two independent failure modes**, both of which must be resolved
+for it to fire:
+
+### Failure 1: CompileTraced Falls Back to Compile
+
+`compileGraph()` (generate/generator.go:139) tries `CompileTraced` first.
+`CompileTraced` (graph/compile.go:398) decomposes composite nodes (GroupedQueryAttention,
+FFN, etc.) into primitive ops (Add, MatMul, RMSNorm, etc.) by tracing through the
+EngineProxy. When traced, all ops would be primitive and supported by the emitter.
+
+However, `CompileTraced` validation fails with "input tensors cannot be nil" at
+instruction 0 (MatMul). This causes fallback to `Compile`, which produces composite
+op names directly from `node.OpType()`.
+
+**Root cause**: The traced plan replay cannot re-execute because traced ops reference
+tensor slots by ID, and the slot tensors from the tracing pass are not preserved
+correctly for replay (nil tensor at a frozen slot).
+
+### Failure 2: Composite Ops Have No Emitters
+
+When `Compile` is used (the fallback), the instruction tape contains composite ops:
+- `EmbeddingLookup` (layers/core/embedding)
+- `GroupedQueryAttention` (layers/attention)
+- `FFN` (layers/core/ffn)
+- `LMHead` (layers/core/lm_head)
+
+These are NOT in the `emitters` map (internal/codegen/optable.go). The emitter map
+only has ~55 primitive ops. `codegen.CheckSupport` rejects 4 composite ops and
+`tryCompileMegakernel` returns early at line 32.
+
+### Why Adding Composite Emitters Is Not Viable
+
+Composite ops like `GroupedQueryAttention` contain hundreds of primitive operations
+internally (KV cache management, RoPE, multi-head attention with softmax, etc.).
+Writing a single CUDA device function for each composite op would essentially
+mean reimplementing the entire transformer in hand-written CUDA — duplicating the
+existing fused kernel infrastructure (fused QK norm+RoPE, fused SwiGLU, etc.)
+with no additional benefit.
+
+## Architecture Comparison
+
+| Approach | Launch Overhead | Kernel Fusion | Maintenance | Status |
+|----------|----------------|---------------|-------------|--------|
+| **Megakernel** | 1 launch (entire forward pass) | All ops fused | Very high: must mirror all model logic in CUDA | Never fired |
+| **CUDA Graph** | 1 replay (captures N launches) | Per-op kernels + existing fused kernels | Low: captures existing kernels | Infrastructure ready, blocked by D2H |
+| **Per-op + Fused** | ~338 launches/token | 3 fused kernels | Moderate | Working, 166-188 tok/s |
+
+### Megakernel Fundamental Issues
+
+1. **Requires CompileTraced to work**: The megakernel design depends on the tracing
+   compiler decomposing composite ops into primitives. CompileTraced has a validation
+   failure, and fixing it is non-trivial (frozen slot tensor lifecycle management).
+
+2. **Single-thread execution model**: The emitted megakernel uses a single `tid`
+   per thread, with one global `num_elements` bound. This does not handle ops with
+   different parallelism requirements (e.g., MatMul needing M*N threads vs RMSNorm
+   needing only N threads). Real transformer inference requires different grid
+   dimensions per operation.
+
+3. **No synchronization between ops**: The megakernel body emits sequential ops
+   without `__syncthreads()` or inter-block barriers. Reductions (RMSNorm, Softmax)
+   produce incorrect results without proper thread synchronization within the
+   same kernel.
+
+4. **No cuBLAS integration**: MatMul ops emit `dev_gemv_f32()` — a hand-written
+   GEMV device function. cuBLAS Sgemm/SgemmStridedBatched, which provide the bulk
+   of compute performance, cannot be called from within a CUDA kernel.
+
+5. **Float32 only**: All data flows through float32 conversion (megakernel.go:87-89,
+   137-139). Q4_K_M quantized inference, which is the primary use case, requires
+   dequantization that the megakernel does not support.
+
+### CUDA Graph Advantages
+
+1. **Captures existing optimized kernels**: All fused kernels (QK norm+RoPE,
+   SwiGLU, norm+add) and cuBLAS calls are captured as-is.
+2. **Zero code duplication**: No need to rewrite ops in CUDA.
+3. **Correct synchronization**: Each op runs with its own grid/block dimensions.
+4. **Q4 support**: The fused dequant+GEMV kernel (gemv_q4k.cu) works within
+   the graph capture.
+5. **Near-zero launch overhead**: Graph replay replaces ~338 kernel launches
+   with a single `cudaGraphLaunch`.
+6. **Clear path to enablement**: Only requires eliminating remaining D2H copies
+   from the inference path (known sites documented in updates.md).
+
+## Decision: Abandon Megakernel, Prioritize CUDA Graph
+
+The megakernel approach should be **abandoned** in favor of CUDA graph capture +
+fused kernels for the following reasons:
+
+1. **Working infrastructure**: CUDA graph capture infrastructure is fully
+   implemented (graph/cuda_graph.go, purego bindings). Only D2H elimination
+   remains. The megakernel has never fired and has fundamental design issues.
+
+2. **Performance ceiling**: Even if the megakernel worked, it would use
+   hand-written GEMV instead of cuBLAS, resulting in lower compute throughput.
+   cuBLAS's GEMM kernels are highly optimized for each GPU architecture.
+
+3. **Maintenance burden**: The megakernel requires maintaining a parallel CUDA
+   implementation of every op. The fused kernel approach adds targeted fusions
+   (3 kernels) while reusing the existing engine infrastructure.
+
+4. **Expected impact**: CUDA graph replay is estimated to save ~1-2 tok/s from
+   launch overhead elimination (338 launches x ~3us each = ~1ms/token). Combined
+   with fixing the 188->166 regression, this could close the gap to Ollama.
+
+## Recommended Next Steps
+
+1. **Do not invest further in megakernel code** (generate/megakernel.go,
+   internal/codegen/optable.go, emit.go, runner.go, compile.go).
+
+2. **Fix CompileTraced validation failure** — this is independently valuable
+   for CUDA graph capture, which also benefits from traced primitive ops.
+
+3. **Eliminate remaining D2H copies** to enable CUDA graph capture:
+   - `layers/core/matmul.go:106,117` — weight pointer caching
+   - `generate/tensor_cache.go:110-111` — KV cache append CPU fallback
+   - `layers/core/ffn.go:321` — FFN split CPU fallback
+   - `grouped_query_attention.go:437,888` — GQA CPU fallback paths
+
+4. **Benchmark CUDA graph** once D2H is eliminated to measure actual
+   launch overhead savings on GB10.
+
+## Quality Gate Assessment
+
+| Gate | Status |
+|------|--------|
+| Profile report with root cause | PASS |
+| Decision: fix or abandon | PASS — abandon megakernel, prioritize CUDA graph |
+| nsys profiling | N/A — megakernel never fires, nothing to profile |
