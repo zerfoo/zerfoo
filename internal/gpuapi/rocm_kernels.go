@@ -194,5 +194,37 @@ func (k *ROCmKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) AddFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) SubFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) MulFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) DivFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) RMSNormFP16(_, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("RMSNormFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) ScaledSoftmaxFP16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) F32ToFP16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToFP16: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) FP16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("FP16ToF32: not implemented for ROCm")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*ROCmKernels)(nil)

@@ -126,4 +126,22 @@ type KernelRunner interface {
 	// ScaledSoftmaxF32 computes softmax(input * scale) in one kernel launch,
 	// replacing the MulScalar + Softmax chain (saves 1 kernel launch per call).
 	ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
+
+	// FP16 elementwise operations: inputs and outputs are __half (2 bytes each).
+	AddFP16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	SubFP16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	MulFP16(a, b, c unsafe.Pointer, n int, stream Stream) error
+	DivFP16(a, b, c unsafe.Pointer, n int, stream Stream) error
+
+	// RMSNormFP16 computes RMSNorm on FP16 data with FP32 accumulation.
+	RMSNormFP16(input, weight, output unsafe.Pointer, eps float32, rows, D int, stream Stream) error
+
+	// ScaledSoftmaxFP16 computes softmax(input * scale) on FP16 data with FP32 accumulation.
+	ScaledSoftmaxFP16(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, stream Stream) error
+
+	// F32ToFP16 converts n float32 elements to FP16 on device.
+	F32ToFP16(src, dst unsafe.Pointer, n int, stream Stream) error
+
+	// FP16ToF32 converts n FP16 elements to float32 on device.
+	FP16ToF32(src, dst unsafe.Pointer, n int, stream Stream) error
 }

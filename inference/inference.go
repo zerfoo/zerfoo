@@ -96,6 +96,7 @@ type loadOptions struct {
 	registry  registry.ModelRegistry
 	backend   string // "" or "default" for standard engine, "tensorrt" for TRT
 	precision string // "" or "fp32" for float32, "fp16" for half precision (TRT only)
+	dtype     string // "" or "fp32" for float32, "fp16" for FP16 compute
 	mmap      bool   // use mmap for model loading (unix only)
 }
 
@@ -142,6 +143,16 @@ func WithBackend(backend string) Option {
 func WithPrecision(precision string) Option {
 	return func(o *loadOptions) {
 		o.precision = precision
+	}
+}
+
+// WithDType sets the compute precision for the GPU engine.
+// Supported values: "" or "fp32" for full precision, "fp16" for FP16 compute.
+// FP16 mode converts activations F32->FP16 before GPU kernels and back after.
+// Has no effect on CPU engines.
+func WithDType(dtype string) Option {
+	return func(o *loadOptions) {
+		o.dtype = dtype
 	}
 }
 
@@ -219,6 +230,9 @@ func Load(modelID string, opts ...Option) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create engine (%s): %w", o.device, err)
 	}
+
+	// Apply FP16 compute precision if requested.
+	applyDType(eng, o.dtype)
 
 	globalAttrs := map[string]interface{}{}
 	if meta.RopeScaling != nil && meta.RopeScaling.Type == "yarn" {
@@ -738,6 +752,23 @@ func parseDevice(device string) (devType string, deviceID int, err error) {
 		return "opencl", id, nil
 	}
 	return "", 0, fmt.Errorf("unsupported device %q: expected \"cpu\", \"cuda\", \"cuda:N\", \"rocm\", \"rocm:N\", \"opencl\", or \"opencl:N\"", device)
+}
+
+// DTypeSetter is implemented by engines that support setting compute precision.
+type DTypeSetter interface {
+	SetDType(compute.DType)
+}
+
+// applyDType sets the compute precision on the engine if supported.
+func applyDType(eng compute.Engine[float32], dtype string) {
+	if dtype == "" || dtype == "fp32" {
+		return
+	}
+	if dtype == "fp16" {
+		if ds, ok := eng.(DTypeSetter); ok {
+			ds.SetDType(compute.DTypeFP16)
+		}
+	}
 }
 
 // NewTestModel constructs a Model from pre-built components.

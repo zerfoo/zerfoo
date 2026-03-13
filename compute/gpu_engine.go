@@ -15,6 +15,18 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
+// DType selects the compute precision for GPU operations.
+type DType int
+
+const (
+	// DTypeF32 uses float32 for all compute (default).
+	DTypeF32 DType = iota
+	// DTypeFP16 uses FP16 for elementwise ops and MatMul.
+	// Activations are converted F32->FP16 before compute and FP16->F32 after.
+	// Reductions (RMSNorm, Softmax) accumulate in FP32 for precision.
+	DTypeFP16
+)
+
 // GPUEngine is a GPU-accelerated implementation of the Engine interface.
 // MatMul uses BLAS for maximum performance. Elementwise, scalar, activation,
 // and math operations use native GPU kernels for float32 types.
@@ -36,6 +48,11 @@ type GPUEngine[T tensor.Numeric] struct {
 	stream   gpuapi.Stream
 	logger   log.Logger
 	deviceID int
+
+	// dtype selects FP16 or FP32 compute precision. When DTypeFP16,
+	// elementwise ops convert F32 inputs to FP16, run FP16 kernels,
+	// and convert outputs back to F32.
+	dtype DType
 
 	// oomFallbackCount tracks how many times an OOM triggered CPU fallback.
 	oomFallbackCount atomic.Int64
@@ -186,6 +203,18 @@ func (e *GPUEngine[T]) SetLogger(l log.Logger) {
 	}
 	e.logger = l
 	e.cpu.SetLogger(l)
+}
+
+// SetDType sets the compute precision for elementwise ops and MatMul.
+// DTypeFP16 enables the FP16 inference path: F32 inputs are converted to
+// FP16 on GPU, FP16 kernels run, and results are converted back to F32.
+func (e *GPUEngine[T]) SetDType(d DType) {
+	e.dtype = d
+}
+
+// DTypeValue returns the current compute precision.
+func (e *GPUEngine[T]) DTypeValue() DType {
+	return e.dtype
 }
 
 // UploadWeights copies CPU-resident tensors to GPU device memory in place.
@@ -464,6 +493,15 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 	// Check for BFloat16Storage on B (BF16 weights as B operand).
 	if bs, ok := any(b.GetStorage()).(*tensor.BFloat16Storage); ok {
 		return e.matMulBF16BWeight(ctx, a, bs, b, dst...)
+	}
+
+	// FP16 compute path: convert F32 inputs to FP16, run mixed-precision GEMM.
+	if e.dtype == DTypeFP16 && isFloat32[T]() {
+		aShape := a.Shape()
+		bShape := b.Shape()
+		if len(aShape) >= 2 && len(bShape) >= 2 {
+			return fp16MatMul(e, ctx, a, b, dst...)
+		}
 	}
 
 	// float32 and BFloat16 have GPU BLAS paths; fall back for other types.
@@ -2176,6 +2214,11 @@ func (e *GPUEngine[T]) GPUScaledSoftmax(input *tensor.TensorNumeric[T], scale fl
 
 	axisSize := shape[axis]
 
+	// FP16 path: convert to FP16, run FP16 scaled softmax, convert back.
+	if e.dtype == DTypeFP16 {
+		return fp16ScaledSoftmax(e, input, scale, outer, inner, axisSize)
+	}
+
 	devIn, cleanupIn, err := getDevicePtr(e, input)
 	if err != nil {
 		return nil, fmt.Errorf("GPUScaledSoftmax input: %w", err)
@@ -2205,6 +2248,11 @@ func (e *GPUEngine[T]) GPUFusedAddRMSNorm(
 	weight *tensor.TensorNumeric[T],
 	eps float32,
 ) (normed *tensor.TensorNumeric[T], residualOut *tensor.TensorNumeric[T], scales *tensor.TensorNumeric[T], err error) {
+	// FP16 path: decompose into F32 Add + FP16 RMSNorm.
+	if e.dtype == DTypeFP16 {
+		return fp16FusedAddRMSNorm(e, input, residual, weight, eps)
+	}
+
 	inShape := input.Shape()
 	if len(inShape) < 2 {
 		return nil, nil, nil, fmt.Errorf("GPUFusedAddRMSNorm: input must be at least 2D, got %v", inShape)

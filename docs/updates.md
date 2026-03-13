@@ -1360,3 +1360,132 @@ The Wave 8 kernel optimizations (register capping, flash block size tuning, warp
 ## Conclusion
 
 Kernels build and run correctly with all Wave 8 optimizations. Throughput is stable at ~185 tok/s, consistent with the Wave 9 baseline. Future improvement will likely come from reducing kernel launch overhead (megakernel/graph capture) or prefill-path optimization rather than per-kernel register tuning.
+
+---
+
+# S403.2.1 Q4_K End-to-End Benchmark on DGX Spark
+
+Date: 2026-03-13
+
+## Summary
+
+Benchmarked the native Q4_K path (T403.2 fix: Q4_K weights preserved, not re-quantized to Q4_0) using GPU dequant + cuBLAS for non-GEMV operations. Results show Q4_K path is **slower** than the previous Q4_0 re-quantization baseline.
+
+## Setup
+
+- **Hardware:** DGX Spark GB10 (CUDA 13.0, sm_121)
+- **Model:** Gemma 3 1B Q4_K_M (`/home/ndungu/models/gemma3-gguf/model.gguf`)
+- **Commit:** 668a440 (main HEAD after T403.2 merge)
+- **Command:** `./bench_tps_q4k -model model.gguf -tokens 256 -prompt 'The meaning of life is' -device cuda`
+- **Baseline:** 186 tok/s (Q4_0 re-quantization path, Wave 9)
+
+## Results
+
+| Run | Tokens | Time (s) | Throughput (tok/s) |
+|-----|--------|----------:|-------------------:|
+| 1   | 256    | 2.040     | 125.47             |
+| 2   | 256    | 1.790     | 143.05             |
+| 3   | 256    | 2.035     | 125.79             |
+
+**Average: 131.4 tok/s**
+**Baseline (Q4_0 path): 186 tok/s**
+**Delta: -54.6 tok/s (-29.4%)**
+
+## Acceptance
+
+**NOT MET.** Q4_K path (131.4 tok/s) is significantly slower than Q4_0 baseline (186 tok/s).
+
+## Analysis
+
+The Q4_K native path using GPU dequant + cuBLAS is ~29% slower than the Q4_0 re-quantization path. Possible causes:
+
+1. **Dequantization overhead.** Q4_K has a more complex block format (super-blocks with 8 sub-blocks, 6-bit scales, 4-bit mins) compared to Q4_0's simpler format. The GPU dequant kernel may be adding significant overhead per matmul.
+2. **cuBLAS FP16 GEMM after dequant may be slower than the fused Q4_0 GEMV kernel.** The Q4_0 path uses a fused quantized GEMV that reads weights and computes in one pass, avoiding the intermediate FP16 materialization.
+3. **Memory bandwidth.** Dequanting Q4_K to FP16 before cuBLAS effectively doubles the memory footprint of each weight read (4 bits -> 16 bits), negating the compression advantage.
+
+## Recommendation
+
+The Q4_K dequant + cuBLAS approach adds overhead vs. the fused Q4_0 GEMV. To match or exceed Q4_0 performance, a fused Q4_K GEMV kernel (similar to `gemv_q4k.cu` but for all matrix sizes) would avoid the dequant-to-FP16 intermediate step. Alternatively, profile to confirm whether the bottleneck is in the dequant kernel or cuBLAS GEMM dispatch.
+
+---
+
+# T402.5 CUDA Graph Capture: D2H Root Cause Analysis
+
+Date: 2026-03-13
+
+## Summary
+
+CUDA graph capture (`ZERFOO_ENABLE_CUDA_GRAPH=1`) fails during decode because
+synchronous device-to-host (D2H) memcpy operations occur inside the capture
+region. All remaining D2H sites have been precisely identified.
+
+## Prerequisite Fix: Kernel Library Loading
+
+FP8 and FP16-conversion symbols (`launch_fp8_add`, `launch_fp8_mul`,
+`launch_fp8_rmsnorm`, `launch_dequant_fp8e4m3_to_fp16`, `launch_f32_to_fp16`,
+`launch_fp16_to_f32`) have no corresponding CUDA source files yet. Because
+`openKernelLib()` in `internal/cuda/kernels/purego.go` treated every dlsym
+failure as fatal, the entire kernel library failed to load, breaking ALL GPU
+inference — not just graph capture.
+
+**Fix (committed on `feat/fp8-elementwise-kernels`, commit `7c36a43`):** Made
+these 6 symbols optional so missing dlsym is non-fatal. Callers must check the
+function pointer is non-zero before use.
+
+## Remaining D2H Sites Blocking Graph Capture
+
+All 4 TrySlice warnings (sizes 1152, 294912, 256, 256) trace back to a single
+root cause:
+
+### Root Cause: Q8Storage Embedding Weight Not Recognized as GPU
+
+1. `compute/gpu_engine.go:336-362` — `UploadWeights` uploads Q8 raw bytes to
+   GPU via `qs.SetGPUPtr()`, but the storage **type** remains `*tensor.Q8Storage`,
+   not `*tensor.GPUStorage[float32]`.
+
+2. `inference/arch_llama.go:222` — `embeddingLookupNode.Forward()` checks
+   `e.weight.GetStorage().(*tensor.GPUStorage[T])`. This type assertion fails
+   for Q8Storage, so it falls back to CPU Gather, producing a CPU output tensor.
+
+3. All downstream operations receive CPU input and cascade to CPU fallbacks:
+
+| # | D2H Site | Triggered By | Size |
+|---|----------|-------------|------|
+| 1 | `compute/fused_rmsnorm.go:21` | `gpu_fused_rmsnorm.go:13` — input is not `GPUStorage[float32]`, falls back to CPU FusedRMSNorm which calls `.Data()` | 1152 (modelDim) |
+| 2 | `compute/fused_rmsnorm.go:21` | Same path, for Q norm weight | 256 (headDim) |
+| 3 | `compute/fused_rmsnorm.go:21` | Same path, for K norm weight | 256 (headDim) |
+| 4 | `compute/cpu_engine.go:1010` via `gpu_engine.go:537` | MatMul CPU fallback when `getDevicePtr` calls `.Data()` on CPU tensor | 294912 (1152×256) |
+
+### Why It Cascades
+
+```
+EmbeddingLookup (Q8Storage weight → CPU fallback)
+  → CPU output tensor
+    → FusedAddRMSNorm receives CPU input → CPU fallback → .Data() D2H (1152)
+      → MatMul receives CPU input → CPU fallback → .Data() D2H (294912)
+        → FusedQKNormRoPE receives CPU Q/K → CPU fallback
+          → RMSNorm on Q → .Data() D2H (256)
+          → RMSNorm on K → .Data() D2H (256)
+```
+
+## Fix Options
+
+1. **Dequantize Q8 embedding to F32 during UploadWeights.** Convert the Q8
+   embedding weight to `GPUStorage[float32]` at load time. This increases VRAM
+   usage by ~4x for the embedding table but eliminates the type mismatch.
+
+2. **GPU Q8 Gather kernel.** Teach `gpu_engine.Gather` to handle Q8Storage
+   with GPU pointers — dequantize selected rows on-GPU into a GPUStorage output.
+   More memory-efficient but requires a new CUDA kernel.
+
+3. **Hybrid approach.** Keep Q8 on GPU but add a type-aware path in
+   `embeddingLookupNode.Forward()` that detects Q8Storage with a GPU pointer
+   and dispatches to a GPU dequant+gather operation.
+
+## Conclusion
+
+CUDA graph capture cannot succeed until the embedding lookup produces GPU
+output. The fix is straightforward (option 1 is simplest) but requires a code
+change in `compute/gpu_engine.go` UploadWeights or `inference/arch_llama.go`
+embedding lookup. Once the embedding output is on GPU, all downstream
+operations will use their existing GPU paths, eliminating all 4 D2H sites.

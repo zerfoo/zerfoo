@@ -26,6 +26,23 @@ type BLAS interface {
 		beta float32, c unsafe.Pointer,
 	) error
 
+	// Float16Gemm performs FP16 general matrix multiplication:
+	//   C = alpha * A * B + beta * C
+	// where A is m x k, B is k x n, and C is m x n.
+	// All matrices are contiguous row-major FP16 elements.
+	// Computation is performed in float32 for precision (CUBLAS_COMPUTE_32F).
+	Float16Gemm(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+
+	// MixedFP16Gemm performs mixed-precision GEMM with FP16 inputs and FP32 output:
+	//   C_f32 = alpha * A_fp16 * B_fp16 + beta * C_f32
+	MixedFP16Gemm(m, n, k int, alpha float32,
+		a unsafe.Pointer, b unsafe.Pointer,
+		beta float32, c unsafe.Pointer,
+	) error
+
 	// MixedBF16Gemm performs mixed-precision GEMM with BF16 weights and FP32 output:
 	//   C_f32 = alpha * A_bf16 * B_bf16 + beta * C_f32
 	// where A is m x k, B is k x n (both BFloat16), and C is m x n (float32).

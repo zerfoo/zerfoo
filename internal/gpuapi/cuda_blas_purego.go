@@ -47,6 +47,32 @@ func (b *CUDABlas) BFloat16Gemm(m, n, k int, alpha float32,
 	)
 }
 
+func (b *CUDABlas) Float16Gemm(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.GemmEx(b.handle, m, n, k, alpha,
+		a, cublas.CudaR16F,
+		bPtr, cublas.CudaR16F,
+		beta,
+		c, cublas.CudaR16F,
+		cublas.CublasCompute32F,
+	)
+}
+
+func (b *CUDABlas) MixedFP16Gemm(m, n, k int, alpha float32,
+	a unsafe.Pointer, bPtr unsafe.Pointer,
+	beta float32, c unsafe.Pointer,
+) error {
+	return cublas.GemmEx(b.handle, m, n, k, alpha,
+		a, cublas.CudaR16F,
+		bPtr, cublas.CudaR16F,
+		beta,
+		c, cublas.CudaR32F,
+		cublas.CublasCompute32F,
+	)
+}
+
 func (b *CUDABlas) MixedBF16Gemm(m, n, k int, alpha float32,
 	a unsafe.Pointer, bPtr unsafe.Pointer,
 	beta float32, c unsafe.Pointer,

@@ -193,5 +193,37 @@ func (k *CUDAKernels) ScaledSoftmaxF32(input, output unsafe.Pointer, outer, inne
 	return kernels.ScaledSoftmaxF32(input, output, outer, inner, axisSize, scale, streamPtr(s))
 }
 
+func (k *CUDAKernels) AddFP16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.AddFP16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) SubFP16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.SubFP16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) MulFP16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.MulFP16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) DivFP16(a, b, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.DivFP16(a, b, c, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) RMSNormFP16(input, weight, output unsafe.Pointer, eps float32, rows, D int, s Stream) error {
+	return kernels.RMSNormFP16(input, weight, output, eps, rows, D, streamPtr(s))
+}
+
+func (k *CUDAKernels) ScaledSoftmaxFP16(input, output unsafe.Pointer, outer, inner, axisSize int, scale float32, s Stream) error {
+	return kernels.ScaledSoftmaxFP16(input, output, outer, inner, axisSize, scale, streamPtr(s))
+}
+
+func (k *CUDAKernels) F32ToFP16(src, dst unsafe.Pointer, n int, s Stream) error {
+	return kernels.F32ToFP16(src, dst, n, streamPtr(s))
+}
+
+func (k *CUDAKernels) FP16ToF32(src, dst unsafe.Pointer, n int, s Stream) error {
+	return kernels.FP16ToF32(src, dst, n, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)

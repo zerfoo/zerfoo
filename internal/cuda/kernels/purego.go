@@ -91,6 +91,16 @@ type KernelLib struct {
 
 	// FP16 scaled_softmax
 	launchScaledSoftmaxFP16 uintptr
+
+	// FP16 conversion
+	launchF32ToFP16 uintptr
+	launchFP16ToF32 uintptr
+
+	// FP8 ops
+	launchDequantFP8E4M3ToFP16 uintptr
+	launchFP8Add               uintptr
+	launchFP8Mul               uintptr
+	launchFP8RMSNorm           uintptr
 }
 
 var (
@@ -192,10 +202,30 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_rmsnorm_fp16", &k.launchRMSNormFP16},
 		// FP16 scaled_softmax
 		{"launch_scaled_softmax_fp16", &k.launchScaledSoftmaxFP16},
+		// FP16 conversion
+		{"launch_f32_to_fp16", &k.launchF32ToFP16},
+		{"launch_fp16_to_f32", &k.launchFP16ToF32},
+		// FP8 ops
+		{"launch_dequant_fp8e4m3_to_fp16", &k.launchDequantFP8E4M3ToFP16},
+		{"launch_fp8_add", &k.launchFP8Add},
+		{"launch_fp8_mul", &k.launchFP8Mul},
+		{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
+		}
+		// Optional symbols: missing is non-fatal (kernel not compiled yet).
+		optionalSyms := map[string]bool{
+			"launch_f32_to_fp16":              true,
+			"launch_fp16_to_f32":              true,
+			"launch_dequant_fp8e4m3_to_fp16":  true,
+			"launch_fp8_add":                  true,
+			"launch_fp8_mul":                  true,
+			"launch_fp8_rmsnorm":              true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
 			if dlErr != nil {
+				if optionalSyms[s.name] {
+					continue // leave function pointer as 0; callers check before use
+				}
 				errKernelLib = fmt.Errorf("kernels: dlsym %s: %w", s.name, dlErr)
 				return
 			}

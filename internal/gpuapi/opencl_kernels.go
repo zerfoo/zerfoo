@@ -204,5 +204,37 @@ func (k *OpenCLKernels) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ flo
 	return fmt.Errorf("ScaledSoftmaxF32: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) AddFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("AddFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) SubFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("SubFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) MulFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("MulFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) DivFP16(_, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("DivFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) RMSNormFP16(_, _, _ unsafe.Pointer, _ float32, _, _ int, _ Stream) error {
+	return fmt.Errorf("RMSNormFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) ScaledSoftmaxFP16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ Stream) error {
+	return fmt.Errorf("ScaledSoftmaxFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) F32ToFP16(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("F32ToFP16: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) FP16ToF32(_, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("FP16ToF32: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)

@@ -58,6 +58,7 @@ func run() error {
 	maxTokens := flag.Int("tokens", 64, "max tokens to generate")
 	useMmap := flag.Bool("mmap", false, "use memory-mapped loading")
 	device := flag.String("device", "cpu", "compute device (cpu, cuda, cuda:0)")
+	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16)")
 	temperature := flag.Float64("temp", 0, "sampling temperature (0=greedy)")
 	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
 	flag.Parse()
@@ -78,16 +79,21 @@ func run() error {
 		return fmt.Errorf("usage: bench_tps -model /path/to/model/dir/or/file.gguf")
 	}
 
-	fmt.Printf("Loading model from %s (device=%s)...\n", *modelDir, *device)
+	fmt.Printf("Loading model from %s (device=%s, dtype=%s)...\n", *modelDir, *device, *dtype)
 	t0 := time.Now()
 
 	var mdl *inference.Model
 	var err error
+	opts := []inference.Option{
+		inference.WithMmap(*useMmap),
+		inference.WithDevice(*device),
+		inference.WithDType(*dtype),
+	}
 	if strings.HasSuffix(strings.ToLower(*modelDir), ".gguf") {
-		mdl, err = inference.LoadFile(*modelDir, inference.WithMmap(*useMmap), inference.WithDevice(*device))
+		mdl, err = inference.LoadFile(*modelDir, opts...)
 	} else {
 		reg := &dirRegistry{path: *modelDir}
-		mdl, err = inference.Load("bench", inference.WithRegistry(reg), inference.WithMmap(*useMmap), inference.WithDevice(*device))
+		mdl, err = inference.Load("bench", append(opts, inference.WithRegistry(reg))...)
 	}
 	if err != nil {
 		return fmt.Errorf("load error: %w", err)

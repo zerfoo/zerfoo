@@ -35,6 +35,9 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		return nil, fmt.Errorf("create engine (%s): %w", o.device, err)
 	}
 
+	// Apply FP16 compute precision if requested.
+	applyDType(eng, o.dtype)
+
 	// Build architecture-specific graph.
 	g, embWeight, err := buildArchGraph(gm.Config.Architecture, gm.Tensors, gm.Config, eng)
 	if err != nil {

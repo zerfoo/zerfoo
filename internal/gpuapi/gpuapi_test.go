@@ -45,6 +45,12 @@ func (stubBLAS) Sgemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ 
 func (stubBLAS) BFloat16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
 	return nil
 }
+func (stubBLAS) Float16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
+	return nil
+}
+func (stubBLAS) MixedFP16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
+	return nil
+}
 func (stubBLAS) MixedBF16Gemm(_, _, _ int, _ float32, _, _ unsafe.Pointer, _ float32, _ unsafe.Pointer) error {
 	return nil
 }
@@ -205,6 +211,30 @@ func (stubKernelRunner) FusedQKNormRoPEF32(_, _, _, _, _, _ unsafe.Pointer, _ fl
 	return nil
 }
 func (stubKernelRunner) ScaledSoftmaxF32(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) AddFP16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) SubFP16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) MulFP16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) DivFP16(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) RMSNormFP16(_, _, _ unsafe.Pointer, _ float32, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) ScaledSoftmaxFP16(_, _ unsafe.Pointer, _, _, _ int, _ float32, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) F32ToFP16(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) FP16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil
 }
 
