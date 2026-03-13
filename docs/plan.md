@@ -623,7 +623,7 @@ enabling it after D2H elimination.
   - Acceptance: Output is coherent and comparable to Ollama.
   - Dependencies: T307.1.
 
-- [ ] S307.2.1 Performance and correctness report  Owner: TBD  Est: 30m
+- [x] S307.2.1 Performance and correctness report  Owner: TBD  Est: 30m
   - Document all benchmark results in a table.
   - Include: Zerfoo (all paths), Ollama, theoretical max.
   - Acceptance: Report written to docs/QUALITY.md.
