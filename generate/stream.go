@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -33,6 +34,11 @@ func (f TokenStreamFunc) OnToken(token string, done bool) error {
 // GenerateStream produces text from a prompt, delivering each token to the
 // stream as it is generated. The final output matches what Generate would return.
 func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc SamplingConfig, stream TokenStream) error {
+	// Pin this goroutine to its current OS thread so CUDA context stays
+	// bound for the entire inference call (CUDA contexts are thread-local).
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
 	}
