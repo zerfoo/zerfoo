@@ -31,6 +31,8 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // Slice: reads start/end/axes indices from input tensors via Data() which
 // triggers D2H cudaMemcpy for GPU-resident index tensors.
 //
+// Reshape: reads dynamic target shape from second input tensor via Data().
+//
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
 // for KV cache appends. Now that TensorCache uses a GPU-resident counter
@@ -43,6 +45,7 @@ var nonCapturableOps = map[string]bool{
 	"AutoAttentionMask": true,
 	"AutoPositionIds":   true,
 	"Slice":             true,
+	"Reshape":           true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
