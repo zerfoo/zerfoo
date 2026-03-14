@@ -28,6 +28,9 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // and return them via tensor.New. Downstream ops (e.g. Mul) would call
 // getDevicePtr triggering cudaMemcpy H2D on the capturing stream.
 //
+// Slice: reads start/end/axes indices from input tensors via Data() which
+// triggers D2H cudaMemcpy for GPU-resident index tensors.
+//
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
 // for KV cache appends. Now that TensorCache uses a GPU-resident counter
@@ -39,6 +42,7 @@ var nonCapturableOps = map[string]bool{
 	"Gather":            true,
 	"AutoAttentionMask": true,
 	"AutoPositionIds":   true,
+	"Slice":             true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
