@@ -187,6 +187,12 @@ extern "C" cudaError_t flash_attention_forward_f32(
  * Decode-specific attention kernel with GPU-resident KV sequence length
  * and GQA support.
  *
+ * NOTE: This kernel is currently not called from Go. It was disabled because
+ * it caused a 51% regression (234 -> 114 tok/s on Gemma 3 1B) compared to
+ * cuBLAS SDPA at kv_len >= 256. The Go-side fast path was removed in the
+ * T1001.2 revert. The kernel is retained here for future optimization
+ * (e.g., warp-level parallelism, shared-memory tiling over KV positions).
+ *
  * During autoregressive decode, Q has 1 row per (batch, query_head) while
  * K/V are stored in the KV cache with heads packed in the dim dimension.
  *

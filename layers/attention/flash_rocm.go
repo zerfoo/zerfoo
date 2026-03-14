@@ -3,8 +3,6 @@
 package attention
 
 import (
-	"unsafe"
-
 	"github.com/zerfoo/zerfoo/device"
 	"github.com/zerfoo/zerfoo/internal/hip"
 	"github.com/zerfoo/zerfoo/internal/hip/kernels"
@@ -73,15 +71,4 @@ func tryFlashForward[T tensor.Numeric](
 	}
 
 	return tensor.NewWithStorage(shape, oGPU)
-}
-
-// tryFlashDecode is not yet implemented for ROCm.
-func tryFlashDecode[T tensor.Numeric](
-	q, k, v *tensor.TensorNumeric[T],
-	headDim, kvSeqLen, maxKVLen int,
-	kvLenPtr unsafe.Pointer,
-	numQueryHeads, numKVHeads int,
-	stream unsafe.Pointer,
-) (*tensor.TensorNumeric[T], error) {
-	return nil, nil
 }

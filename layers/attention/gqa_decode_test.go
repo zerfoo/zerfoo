@@ -31,12 +31,10 @@ func (e *repeatCountingEngine) Repeat(ctx context.Context, a *tensor.TensorNumer
 	return e.Engine.Repeat(ctx, a, axis, count, dst...)
 }
 
-// TestGQA_DecodePathSelection verifies that the decode fast path is
-// correctly selected for MHA (numQ == numKV) and skipped for GQA
-// (numQ != numKV). On CPU the flash_attention_decode kernel is never
-// available, so the decode fast path block is a no-op. The important
-// signal is that the fallback path for GQA does NOT call Repeat on
-// tensors with the full cached sequence dimension when seqLen=1.
+// TestGQA_DecodePathSelection verifies that the cuBLAS SDPA decode path
+// handles head replication correctly: MHA (numQ == numKV) needs no Repeat,
+// GQA needs Repeat for K and V, and MQA uses broadcast. It also verifies
+// that Repeat does not operate on the full cached sequence dimension.
 func TestGQA_DecodePathSelection(t *testing.T) {
 	modelDim := 16
 	headDim := 4
@@ -153,11 +151,9 @@ func TestGQA_DecodePathSelection(t *testing.T) {
 	}
 }
 
-// TestGQA_DecodeGuardPresent verifies the decode fast path guard
-// condition. The guard ensures that the flash_attention_decode kernel
-// is only used for non-GQA models (numQueryHeads == numKeyValueHeads).
-// This is a code-level assertion that would catch if someone re-enables
-// the decode fast path for GQA without the guard.
+// TestGQA_DecodeGuardPresent verifies that GQA decode with large KV caches
+// does not trigger excessive memory allocation via Repeat. This is a
+// regression guard against Repeat operating on maxSeqLen-sized buffers.
 func TestGQA_DecodeGuardPresent(t *testing.T) {
 	base := compute.NewCPUEngine(numeric.Float32Ops{})
 	eng := &repeatCountingEngine{Engine: base}

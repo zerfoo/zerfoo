@@ -613,67 +613,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, fmt.Errorf("kv cache update: %w", err)
 		}
 
-		// Decode fast path: use flash_attention_decode with GPU-resident KV
-		// length. This avoids cache.Get() which returns a view sized by the
-		// CPU-side seqLen (frozen during CUDA graph capture). The decode kernel
-		// reads the KV length from GPU memory at runtime.
-		// The kernel handles GQA head replication internally at register level,
-		// so K/V buffers keep their native [batch, maxSeqLen, numKVHeads*headDim]
-		// shape — no engine.Repeat needed.
-		decodeUsed := false
-		if seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads {
-			type fullBufferProvider interface {
-				GetFullBuffer(layer int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T])
-				MaxSeqLen() int
-			}
-			type kvSeqLenProvider interface {
-				KVSeqLenPtr() unsafe.Pointer
-			}
-			if fbp, ok := cache.(fullBufferProvider); ok {
-				bufK, bufV := fbp.GetFullBuffer(gqa.LayerIndex)
-				if bufK != nil && bufV != nil {
-					maxKVLen := fbp.MaxSeqLen()
-					cpuKVLen := cache.SeqLen()
-
-					// Get kvSeqLenPtr from cache (nil = use CPU value).
-					var kvLenPtr unsafe.Pointer
-					if ksp, ok := cache.(kvSeqLenProvider); ok {
-						kvLenPtr = ksp.KVSeqLenPtr()
-					}
-
-					// Get stream from engine.
-					var streamPtr unsafe.Pointer
-					realEng := compute.Engine[T](gqa.engine)
-					if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
-						realEng = proxy.Real()
-					}
-					if sp, ok := realEng.(compute.StreamProvider); ok {
-						streamPtr = sp.Stream()
-					}
-
-					// Reshape Q to [batch*numQueryHeads, 1, headDim].
-					qForDecode, reshapeErr := gqa.engine.Reshape(ctx, qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, 1, gqa.headDim})
-					if reshapeErr != nil {
-						return nil, reshapeErr
-					}
-
-					// Pass K/V as-is from cache: [batch, maxKVLen, numKVHeads*headDim].
-					// The kernel handles head indexing internally using strided access
-					// into the packed KV dimension (kv_dim = numKVHeads * headDim).
-					result, flashErr := tryFlashDecode(qForDecode, bufK, bufV, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, gqa.numQueryHeads, gqa.numKeyValueHeads, streamPtr)
-					if result != nil && flashErr == nil {
-						attnOutputHeads = result
-						decodeUsed = true
-					} else if flashErr != nil {
-						log.Printf("GQA: flash_attention_decode failed, falling back: %v", flashErr)
-					}
-				}
-			}
-		}
-
-		if !decodeUsed {
-			// Standard path: use cache.Get() to retrieve KV view, then SDPA.
-			var cachedK, cachedV *tensor.TensorNumeric[T]
+		// Standard path: use cache.Get() to retrieve KV view, then cuBLAS SDPA.
+		// Note: a flash_attention_decode kernel fast path was previously here but
+		// was removed because it caused a 51% regression (234 -> 114 tok/s) and
+		// was already disabled for GQA models (guard required numQ == numKV).
+		// cuBLAS SDPA achieves 233 tok/s on Gemma 3 1B without the kernel.
+		var cachedK, cachedV *tensor.TensorNumeric[T]
 			if gqa.blockTableReader != nil {
 				cachedK, cachedV, _ = gqa.blockTableReader.ReadKV(gqa.LayerIndex)
 			}
@@ -697,11 +642,10 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 				return nil, err
 			}
 			kvSeqLen = cachedSeqLen
-		}
 	}
 
-	// If decode path was not used, run SDPA (prefill or no-cache).
-	if attnOutputHeads == nil {
+	// Run SDPA (prefill, decode, or no-cache).
+	{
 		// 3. Grouped Query Attention: expand K/V to match Q head count.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
