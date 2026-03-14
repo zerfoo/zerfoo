@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -14,6 +16,9 @@ import (
 	"github.com/zerfoo/zerfoo/types"
 	"github.com/zerfoo/zmf"
 )
+
+// debugONNX returns true when ZERFOO_DEBUG_ONNX=1 is set.
+func debugONNX() bool { return os.Getenv("ZERFOO_DEBUG_ONNX") == "1" }
 
 // BuildOption configures optional behavior for BuildFromZMF.
 type BuildOption func(*buildConfig)
@@ -467,6 +472,9 @@ func (m *maskFromInputNode[T]) Forward(_ context.Context, inputs ...*tensor.Tens
 	for i := range data {
 		data[i] = T(1)
 	}
+	if debugONNX() {
+		log.Printf("[DEBUG_ONNX] maskFromInputNode: shape=%v all-ones mask (BUG: mask size matches current input only, not full seq+cache length)", shape)
+	}
 	return tensor.New(shape, data)
 }
 
@@ -489,6 +497,9 @@ func (p *positionIdsNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 	seqLen := shape[len(shape)-1]
 	for i := range data {
 		data[i] = T(i % seqLen)
+	}
+	if debugONNX() {
+		log.Printf("[DEBUG_ONNX] positionIdsNode: input_shape=%v seqLen=%d positions=%v (BUG: always starts at 0, ignores KV cache history)", shape, seqLen, data)
 	}
 	return tensor.New(shape, data)
 }
@@ -514,6 +525,9 @@ func (z *zeroKVCacheNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 		batch = inputs[0].Shape()[0]
 	}
 	shape := []int{batch, z.numHeads, 0, z.headDim}
+	if debugONNX() {
+		log.Printf("[DEBUG_ONNX] zeroKVCacheNode: returning empty cache shape=%v (BUG: never accumulates past KV, every token sees empty history)", shape)
+	}
 	return tensor.New(shape, []T{})
 }
 

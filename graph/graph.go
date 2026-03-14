@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -160,6 +162,24 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		}
 
 		g.memo[n] = output
+
+		// Debug: log node output for ONNX diagnosis.
+		if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" && output != nil {
+			opType := n.OpType()
+			shape := output.Shape()
+			// Log first/last few nodes and any Gather/MatMul/AutoPositionIds/AutoAttentionMask nodes.
+			logThis := nodeIdx < 5 || nodeIdx >= len(g.nodes)-3 ||
+				opType == "Gather" || opType == "MatMul" || opType == "LMHead" ||
+				opType == "AutoPositionIds" || opType == "AutoAttentionMask" || opType == "AutoZeroKVCache"
+			if logThis {
+				var first5 []float64
+				data := output.Data()
+				for i := 0; i < len(data) && i < 5; i++ {
+					first5 = append(first5, float64(data[i]))
+				}
+				log.Printf("[DEBUG_ONNX] node[%d] %s: shape=%v first5=%v", nodeIdx, opType, shape, first5)
+			}
+		}
 
 		// Release intermediate tensors whose consumers are all done.
 		if refCount != nil {

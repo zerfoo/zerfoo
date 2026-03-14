@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -244,6 +246,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	}
 	genCtx := WithCache(ctx, cacheProvider)
 
+	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+		log.Printf("[DEBUG_ONNX] Generate: cacheType=%T numLayers=%d maxSeqLen=%d vocabSize=%d",
+			cacheProvider, gen.config.NumLayers, gen.config.MaxSeqLen, gen.config.VocabSize)
+	}
+
 	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
 	for _, id := range sc.StopTokenIDs {
 		stopSet[id] = true
@@ -266,6 +273,10 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	nextToken, err := gen.sampleFromLogits(logits, sc, generatedIDs)
 	if err != nil {
 		return "", fmt.Errorf("sample after prefill: %w", err)
+	}
+
+	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+		log.Printf("[DEBUG_ONNX] Generate: prefill produced token %d, promptIDs=%v", nextToken, promptIDs)
 	}
 
 	if stopSet[nextToken] {
@@ -318,6 +329,15 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		nextToken, err = gen.sampleFromLogits(logits, sc, generatedIDs)
 		if err != nil {
 			return "", fmt.Errorf("sample: %w", err)
+		}
+
+		if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+			cacheSeq := -1
+			if cache, ok := GetCache[T](genCtx); ok {
+				cacheSeq = cache.SeqLen()
+			}
+			log.Printf("[DEBUG_ONNX] decode step: token=%d cacheSeqLen=%d generatedSoFar=%d",
+				nextToken, cacheSeq, len(generatedIDs)+1)
 		}
 
 		if stopSet[nextToken] {
@@ -404,6 +424,34 @@ func (gen *Generator[T]) sampleFromLogits(
 	lastStart := (seqLen - 1) * vocabSize
 	if lastStart+vocabSize > len(data) {
 		return 0, fmt.Errorf("logits data too short: %d < %d", len(data), lastStart+vocabSize)
+	}
+
+	// Debug: log top-5 logits for ONNX diagnosis.
+	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+		type tokenLogit struct {
+			id    int
+			logit float64
+		}
+		topN := make([]tokenLogit, vocabSize)
+		allZero := true
+		hasNaN := false
+		for i := 0; i < vocabSize; i++ {
+			v := float64(data[lastStart+i])
+			topN[i] = tokenLogit{id: i, logit: v}
+			if v != 0 {
+				allZero = false
+			}
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				hasNaN = true
+			}
+		}
+		sort.Slice(topN, func(a, b int) bool { return topN[a].logit > topN[b].logit })
+		top5 := topN
+		if len(top5) > 5 {
+			top5 = top5[:5]
+		}
+		log.Printf("[DEBUG_ONNX] sampleFromLogits: vocabSize=%d seqLen=%d allZero=%v hasNaN=%v top5=%v generated_so_far=%d",
+			vocabSize, seqLen, allZero, hasNaN, top5, len(generatedTokens))
 	}
 
 	// Greedy fast path: find argmax directly in the T buffer without
