@@ -10169,3 +10169,77 @@ mechanism addresses direct `getDevicePtr` H2D copies but does not cover:
 The fix is to either: (a) exclude these ops from the capture region, (b) cache
 scalar values and slice metadata during warmup, or (c) ensure all tensor data
 is GPU-resident and accessible without D2H copies during capture.
+
+---
+
+## 2026-03-14: S3100.1 + T3101.1 — DGX Fallback Verification + Transpose Diagnosis
+
+### S3100.1: Non-graph fallback output quality
+
+**Verdict: GARBAGE (still broken)**
+
+Both Llama 3 and Qwen 2.5 produce `!!!` garbage on the non-graph fallback path,
+even after the T3001.2 KV cache snapshot/restore fix was merged.
+
+**Llama 3 (fp32):**
+- Output: `!!!` (256 tokens of garbage)
+- Throughput: 16.68 tok/s
+- Graph capture fails at instruction 38 (Transpose): `transpose_2d kernel failed (cuda error 901)`
+- GPUStorage.TrySlice warnings: cudaMemcpy failed (legacy stream conflict)
+- GPU Arena: hits=220868 misses=0 resets=258 used=1057.8 MB
+
+**Qwen 2.5 (fp32):**
+- Output: `!!!` (256 tokens of garbage)
+- Throughput: 12.79 tok/s
+- Graph capture fails at instruction 76 (Transpose): `transpose_2d kernel failed (cuda error 901)`
+- Same GPUStorage.TrySlice warnings
+- GPU Arena: hits=363410 misses=0 resets=258 used=550.5 MB
+
+The KV cache fix alone is not sufficient. The garbage output likely stems from
+GPUStorage.TrySlice returning zero slices when cudaMemcpy fails during capture,
+which corrupts tensor data that feeds into subsequent operations.
+
+### T3101.1: Transpose CPU fallback diagnosis
+
+**Root cause identified: condition=notGPU (line 1781-1782)**
+
+Debug logging added to all 6 fallback exit points in `GPUEngine.Transpose`
+(compute/gpu_engine.go:1770-1900). Results from Llama 3 inference:
+
+**Only ONE fallback condition triggers:**
+```
+condition=notGPU storage=*tensor.CPUStorage[float32]
+```
+
+**Two tensor shapes trigger this fallback:**
+
+| Shape | Axes | Count per token | Description |
+|-------|------|----------------|-------------|
+| `[1 32 5 64]` | `[0 1 3 2]` | 32 (prefill, seqLen=5) | Attention V cache transpose |
+| `[1 32 1 64]` | `[0 1 3 2]` | 192 (decode, seqLen=1) | Attention V cache transpose |
+
+**Total fallback calls:** 224 across 10 generated tokens (32 per transformer layer).
+
+**No other fallback conditions fired:** notFloat32, axesMismatch, rankOver4,
+getDevicePtrFailed, poolAllocFailed — none of these triggered.
+
+**Mechanism of graph capture failure:**
+1. During graph capture, instruction 38/76 is a Transpose with GPUStorage
+   (shape like `[128256 2048]` for vocab projection), which correctly takes
+   the GPU path.
+2. However, BEFORE that instruction, an earlier Transpose call has CPUStorage
+   (the V cache tensor with shape `[1 32 N 64]`). This falls back to
+   `e.cpu.Transpose()` at line 1782.
+3. The CPU Transpose calls `t.Data()` on what may be an intermediate tensor
+   allocated from the GPU arena. This triggers a D2H cudaMemcpy on the
+   legacy stream, which conflicts with the capturing blocking stream.
+4. This poisons the CUDA graph capture state, causing subsequent GPU kernel
+   launches (like `transpose_2d`) to fail with cuda error 901.
+
+**Fix direction:** The V cache tensors with shape `[1 32 N 64]` need to be
+GPU-resident before graph capture. These are intermediate tensors (not frozen
+weights), so `PreUploadFrozenWeights` doesn't cover them. The KV cache tensors
+are computed during attention and should already be GPU-resident if the
+attention output is GPU-resident. The fact that they have CPUStorage suggests
+either: (a) the KV cache store operation copies data to CPU, or (b) the
+attention output is materialized on CPU before being stored in the cache.
