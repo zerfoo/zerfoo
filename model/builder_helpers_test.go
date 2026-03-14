@@ -108,13 +108,13 @@ func TestPositionIdsNode_Backward(t *testing.T) {
 	}
 }
 
-// --- zeroKVCacheNode tests ---
+// --- kvCacheIONode tests ---
 
 func TestZeroKVCacheNode(t *testing.T) {
-	node := &zeroKVCacheNode[float32]{numHeads: 8, headDim: 64}
+	node := &kvCacheIONode[float32]{numHeads: 8, headDim: 64}
 
-	if node.OpType() != "AutoZeroKVCache" {
-		t.Errorf("OpType = %q, want AutoZeroKVCache", node.OpType())
+	if node.OpType() != "AutoKVCacheIO" {
+		t.Errorf("OpType = %q, want AutoKVCacheIO", node.OpType())
 	}
 	if node.Attributes() != nil {
 		t.Error("expected nil Attributes")
@@ -152,7 +152,7 @@ func TestZeroKVCacheNode_Forward(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node := &zeroKVCacheNode[float32]{numHeads: tt.numHeads, headDim: tt.headDim}
+			node := &kvCacheIONode[float32]{numHeads: tt.numHeads, headDim: tt.headDim}
 			var inputs []*tensor.TensorNumeric[float32]
 			if tt.input != nil {
 				inputs = append(inputs, tt.input)
@@ -175,7 +175,7 @@ func TestZeroKVCacheNode_Forward(t *testing.T) {
 }
 
 func TestZeroKVCacheNode_Backward(t *testing.T) {
-	node := &zeroKVCacheNode[float32]{numHeads: 4, headDim: 32}
+	node := &kvCacheIONode[float32]{numHeads: 4, headDim: 32}
 	grads, err := node.Backward(context.Background(), 0, nil)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)

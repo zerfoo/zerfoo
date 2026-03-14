@@ -109,7 +109,7 @@ func BuildFromZMF[T tensor.Numeric](
 			if headDim == 0 {
 				headDim = 64
 			}
-			node := &zeroKVCacheNode[T]{numHeads: numHeads, headDim: headDim}
+			node := &kvCacheIONode[T]{numHeads: numHeads, headDim: headDim}
 			instantiatedNodes[name] = node
 			// Wire to primary input later (deferred).
 		case name == "attention_mask":
@@ -453,13 +453,40 @@ func BuildFromZMF[T tensor.Numeric](
 		return nil, err
 	}
 
+	// Wire KV cache feedback: link each present.N.{key,value} output back to
+	// its corresponding past_key_values.N.{key,value} input node so the graph
+	// automatically feeds KV state forward between decode steps.
+	for _, outputInfo := range model.Graph.Outputs {
+		name := outputInfo.Name
+		if !strings.HasPrefix(name, "present.") {
+			continue
+		}
+		// present.N.key -> past_key_values.N.key
+		pastName := strings.Replace(name, "present.", "past_key_values.", 1)
+		kvInput, inputOK := instantiatedNodes[pastName]
+		kvOutput, outputOK := instantiatedNodes[name]
+		if !inputOK || !outputOK {
+			continue
+		}
+		if stateful, ok := kvInput.(graph.StatefulInputNode[T]); ok {
+			built.AddKVPair(stateful, kvOutput)
+			if debugONNX() {
+				log.Printf("[DEBUG_ONNX] wired KV pair: %s -> %s", name, pastName)
+			}
+		}
+	}
+
 	// Optimization: fold Transpose nodes with constant inputs at load time.
 	// This pre-applies weight transposes so they don't run on every forward pass.
 	return graph.FoldConstantTransposes(built, engine)
 }
 
-// maskFromInputNode generates an all-ones attention mask from input_ids shape.
-type maskFromInputNode[T tensor.Numeric] struct{}
+// maskFromInputNode generates an all-ones attention mask covering the full
+// sequence length (past cached tokens + current tokens). It tracks the
+// accumulated sequence length internally, matching KV cache growth.
+type maskFromInputNode[T tensor.Numeric] struct {
+	pastLen int // accumulated past sequence length from prior forward passes
+}
 
 func (m *maskFromInputNode[T]) OpType() string                  { return "AutoAttentionMask" }
 func (m *maskFromInputNode[T]) Attributes() map[string]any       { return nil }
@@ -468,22 +495,34 @@ func (m *maskFromInputNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (m *maskFromInputNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	shape := inputs[0].Shape()
-	data := make([]T, inputs[0].Size())
+	curSeqLen := shape[len(shape)-1]
+	totalLen := m.pastLen + curSeqLen
+	batch := 1
+	if len(shape) >= 2 {
+		batch = shape[0]
+	}
+	maskShape := []int{batch, totalLen}
+	data := make([]T, batch*totalLen)
 	for i := range data {
 		data[i] = T(1)
 	}
 	if debugONNX() {
-		log.Printf("[DEBUG_ONNX] maskFromInputNode: shape=%v all-ones mask (BUG: mask size matches current input only, not full seq+cache length)", shape)
+		log.Printf("[DEBUG_ONNX] maskFromInputNode: pastLen=%d curSeqLen=%d totalLen=%d maskShape=%v", m.pastLen, curSeqLen, totalLen, maskShape)
 	}
-	return tensor.New(shape, data)
+	m.pastLen += curSeqLen
+	return tensor.New(maskShape, data)
 }
 
 func (m *maskFromInputNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
-// positionIdsNode generates sequential position IDs [0, 1, ..., seq_len-1] per batch.
-type positionIdsNode[T tensor.Numeric] struct{}
+// positionIdsNode generates sequential position IDs offset by the number of
+// previously generated tokens. It tracks position via an internal counter
+// that advances after each forward pass.
+type positionIdsNode[T tensor.Numeric] struct {
+	offset int // accumulated position offset from prior forward passes
+}
 
 func (p *positionIdsNode[T]) OpType() string                  { return "AutoPositionIds" }
 func (p *positionIdsNode[T]) Attributes() map[string]any       { return nil }
@@ -496,11 +535,12 @@ func (p *positionIdsNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 	data := make([]T, size)
 	seqLen := shape[len(shape)-1]
 	for i := range data {
-		data[i] = T(i % seqLen)
+		data[i] = T(p.offset + i%seqLen)
 	}
 	if debugONNX() {
-		log.Printf("[DEBUG_ONNX] positionIdsNode: input_shape=%v seqLen=%d positions=%v (BUG: always starts at 0, ignores KV cache history)", shape, seqLen, data)
+		log.Printf("[DEBUG_ONNX] positionIdsNode: input_shape=%v seqLen=%d offset=%d positions=%v", shape, seqLen, p.offset, data)
 	}
+	p.offset += seqLen
 	return tensor.New(shape, data)
 }
 
@@ -508,32 +548,51 @@ func (p *positionIdsNode[T]) Backward(_ context.Context, _ types.BackwardMode, _
 	return nil, nil
 }
 
-// zeroKVCacheNode generates a zero tensor with shape [batch, num_heads, 0, head_dim].
-type zeroKVCacheNode[T tensor.Numeric] struct {
+// kvCacheIONode provides past KV cache state as a graph input and receives
+// present KV cache state after each forward pass via SetStored. On the first
+// call it returns an empty tensor; on subsequent calls it returns the
+// previously stored present KV.
+type kvCacheIONode[T tensor.Numeric] struct {
 	numHeads int
 	headDim  int
+	stored   *tensor.TensorNumeric[T] // accumulated past KV from prior forward passes
 }
 
-func (z *zeroKVCacheNode[T]) OpType() string                  { return "AutoZeroKVCache" }
-func (z *zeroKVCacheNode[T]) Attributes() map[string]any       { return nil }
-func (z *zeroKVCacheNode[T]) OutputShape() []int               { return nil }
-func (z *zeroKVCacheNode[T]) Parameters() []*graph.Parameter[T] { return nil }
+func (z *kvCacheIONode[T]) OpType() string                  { return "AutoKVCacheIO" }
+func (z *kvCacheIONode[T]) Attributes() map[string]any       { return nil }
+func (z *kvCacheIONode[T]) OutputShape() []int               { return nil }
+func (z *kvCacheIONode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
-func (z *zeroKVCacheNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+// SetStored updates the stored KV tensor for the next forward pass.
+// Implements graph.StatefulInputNode.
+func (z *kvCacheIONode[T]) SetStored(t *tensor.TensorNumeric[T]) {
+	z.stored = t
+}
+
+func (z *kvCacheIONode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if z.stored != nil {
+		if debugONNX() {
+			log.Printf("[DEBUG_ONNX] kvCacheIONode: returning stored cache shape=%v", z.stored.Shape())
+		}
+		return z.stored, nil
+	}
 	batch := 1
 	if len(inputs) > 0 {
 		batch = inputs[0].Shape()[0]
 	}
 	shape := []int{batch, z.numHeads, 0, z.headDim}
 	if debugONNX() {
-		log.Printf("[DEBUG_ONNX] zeroKVCacheNode: returning empty cache shape=%v (BUG: never accumulates past KV, every token sees empty history)", shape)
+		log.Printf("[DEBUG_ONNX] kvCacheIONode: returning empty cache shape=%v (first call)", shape)
 	}
 	return tensor.New(shape, []T{})
 }
 
-func (z *zeroKVCacheNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (z *kvCacheIONode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
+
+// Ensure kvCacheIONode implements graph.StatefulInputNode.
+var _ graph.StatefulInputNode[float32] = (*kvCacheIONode[float32])(nil)
 
 // parameterNode is a special node type for parameters that are referenced as inputs.
 type parameterNode[T tensor.Numeric] struct {
