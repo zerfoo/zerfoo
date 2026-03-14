@@ -25,9 +25,20 @@ func (r *Range[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]
 	if len(inputs) != 3 {
 		return nil, fmt.Errorf("Range requires 3 inputs (start, limit, delta), got %d", len(inputs))
 	}
-	start := float64(inputs[0].Data()[0])
-	limit := float64(inputs[1].Data()[0])
-	delta := float64(inputs[2].Data()[0])
+
+	// Extract scalar values from each input, validating that each has at
+	// least one element. Inputs may be 0-D scalars (shape []) or 1-D
+	// tensors (shape [1]). Data() performs a D2H copy for GPU tensors.
+	names := [3]string{"start", "limit", "delta"}
+	vals := [3]float64{}
+	for i := 0; i < 3; i++ {
+		data := inputs[i].Data()
+		if len(data) == 0 {
+			return nil, fmt.Errorf("Range: %s input (inputs[%d]) has no data (shape=%v)", names[i], i, inputs[i].Shape())
+		}
+		vals[i] = float64(data[0])
+	}
+	start, limit, delta := vals[0], vals[1], vals[2]
 
 	if delta == 0 {
 		return nil, fmt.Errorf("Range: delta cannot be zero")

@@ -229,6 +229,59 @@ func TestRange_Backward(t *testing.T) {
 	}
 }
 
+func TestRange_Forward_ZeroDimScalar(t *testing.T) {
+	engine := makeEngine()
+	r := &Range[float32]{engine: engine}
+	ctx := context.Background()
+
+	// 0-D tensors (shape []) are common in ONNX models for Range inputs.
+	start, err := tensor.New([]int{}, []float32{0})
+	if err != nil {
+		t.Fatalf("create start: %v", err)
+	}
+	limit, err := tensor.New([]int{}, []float32{5})
+	if err != nil {
+		t.Fatalf("create limit: %v", err)
+	}
+	delta, err := tensor.New([]int{}, []float32{1})
+	if err != nil {
+		t.Fatalf("create delta: %v", err)
+	}
+
+	out, err := r.Forward(ctx, start, limit, delta)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	want := []float32{0, 1, 2, 3, 4}
+	if got := out.Shape(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("Shape = %v, want [5]", got)
+	}
+	testutils.AssertFloat32SliceApproxEqual(t, want, out.Data(), 1e-5, "output mismatch")
+}
+
+func TestRange_Forward_EmptyInput(t *testing.T) {
+	engine := makeEngine()
+	r := &Range[float32]{engine: engine}
+	ctx := context.Background()
+
+	// An input with no data should return an error, not panic.
+	empty, err := tensor.New([]int{0}, []float32{})
+	if err != nil {
+		t.Fatalf("create empty tensor: %v", err)
+	}
+	limit := makeTensor(t, []int{1}, []float32{5})
+	delta := makeTensor(t, []int{1}, []float32{1})
+
+	_, err = r.Forward(ctx, empty, limit, delta)
+	if err == nil {
+		t.Fatal("expected error for empty start input, got nil")
+	}
+	if !strings.Contains(err.Error(), "no data") {
+		t.Errorf("error should mention 'no data', got: %v", err)
+	}
+}
+
 func TestBuildRange(t *testing.T) {
 	engine := makeEngine()
 	ops := makeOps()
