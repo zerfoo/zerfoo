@@ -27,61 +27,50 @@ func (w *Where[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]
 		return nil, fmt.Errorf("Where requires 3 inputs (condition, x, y), got %d", len(inputs))
 	}
 	cond, x, y := inputs[0].Data(), inputs[1].Data(), inputs[2].Data()
-	n := len(cond)
+	shapeCond, shapeX, shapeY := inputs[0].Shape(), inputs[1].Shape(), inputs[2].Shape()
 
-	// Scalar broadcasting: if x or y is a single element, broadcast it.
-	xScalar := len(x) == 1
-	yScalar := len(y) == 1
-	condScalar := n == 1
-
-	if !xScalar && !condScalar && len(x) != n {
-		return nil, fmt.Errorf("Where: input sizes differ (cond=%d, x=%d, y=%d)", n, len(x), len(y))
+	// Compute broadcast output shape across all three inputs.
+	outShapeCX, padCond, padX, err := validatedBroadcast(shapeCond, shapeX)
+	if err != nil {
+		return nil, fmt.Errorf("Where: %w", err)
 	}
-	if !yScalar && !condScalar && len(y) != n {
-		return nil, fmt.Errorf("Where: input sizes differ (cond=%d, x=%d, y=%d)", n, len(x), len(y))
+	outShape, padCX, padY, err := validatedBroadcast(outShapeCX, shapeY)
+	if err != nil {
+		return nil, fmt.Errorf("Where: %w", err)
 	}
-
-	// Determine output size as the largest non-scalar input.
-	outN := n
-	if len(x) > outN {
-		outN = len(x)
-	}
-	if len(y) > outN {
-		outN = len(y)
+	ndim := len(outShape)
+	outSize := 1
+	for _, d := range outShape {
+		outSize *= d
 	}
 
-	out := make([]T, outN)
+	// Re-pad cond and x shapes to the final ndim (may have grown).
+	if len(padCond) < ndim {
+		padCond = padShapeTo(shapeCond, ndim)
+		padX = padShapeTo(shapeX, ndim)
+	}
+	_ = padCX // intermediate; cond and x already re-padded
+
+	out := make([]T, outSize)
 	for i := range out {
-		var cv T
-		if condScalar {
-			cv = cond[0]
+		ci := expandSrcIndex(i, ndim, outShape, padCond)
+		if cond[ci] != 0 {
+			out[i] = x[expandSrcIndex(i, ndim, outShape, padX)]
 		} else {
-			cv = cond[i]
+			out[i] = y[expandSrcIndex(i, ndim, outShape, padY)]
 		}
-		if cv != 0 {
-			if xScalar {
-				out[i] = x[0]
-			} else {
-				out[i] = x[i]
-			}
-		} else {
-			if yScalar {
-				out[i] = y[0]
-			} else {
-				out[i] = y[i]
-			}
-		}
-	}
-
-	// Use the largest input's shape for the output.
-	outShape := inputs[0].Shape()
-	if len(x) > n {
-		outShape = inputs[1].Shape()
-	}
-	if len(y) > len(x) && len(y) > n {
-		outShape = inputs[2].Shape()
 	}
 	return tensor.New(outShape, out)
+}
+
+// padShapeTo left-pads a shape to the given ndim with zeros.
+func padShapeTo(shape []int, ndim int) []int {
+	padded := make([]int, ndim)
+	off := ndim - len(shape)
+	for i, d := range shape {
+		padded[off+i] = d
+	}
+	return padded
 }
 
 func (w *Where[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {

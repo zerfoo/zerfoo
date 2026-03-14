@@ -51,16 +51,27 @@ func (g *Greater[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[
 		return tensor.New(inputs[1].Shape(), out)
 	}
 
-	if len(a) != len(b) {
-		return nil, fmt.Errorf("Greater: input sizes differ (%d vs %d)", len(a), len(b))
+	// General broadcasting.
+	shapeA, shapeB := inputs[0].Shape(), inputs[1].Shape()
+	outShape, padA, padB, err := validatedBroadcast(shapeA, shapeB)
+	if err != nil {
+		return nil, fmt.Errorf("Greater: %w", err)
 	}
-	out := make([]T, len(a))
-	for i := range a {
-		if float64(a[i]) > float64(b[i]) {
+	ndim := len(outShape)
+	outSize := 1
+	for _, d := range outShape {
+		outSize *= d
+	}
+
+	out := make([]T, outSize)
+	for i := range out {
+		ai := expandSrcIndex(i, ndim, outShape, padA)
+		bi := expandSrcIndex(i, ndim, outShape, padB)
+		if float64(a[ai]) > float64(b[bi]) {
 			out[i] = one
 		}
 	}
-	return tensor.New(inputs[0].Shape(), out)
+	return tensor.New(outShape, out)
 }
 
 func (g *Greater[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {

@@ -103,6 +103,45 @@ func broadcastShape(a, b []int) []int {
 	return out
 }
 
+// validatedBroadcast computes the broadcast output shape for two input shapes,
+// returning an error if the shapes are not broadcast-compatible. It also returns
+// the left-padded source shapes for use with expandSrcIndex.
+func validatedBroadcast(shapeA, shapeB []int) (outShape, padA, padB []int, err error) {
+	ndim := len(shapeA)
+	if len(shapeB) > ndim {
+		ndim = len(shapeB)
+	}
+	outShape = make([]int, ndim)
+	padA = make([]int, ndim)
+	padB = make([]int, ndim)
+	offA := ndim - len(shapeA)
+	offB := ndim - len(shapeB)
+	for i, d := range shapeA {
+		padA[offA+i] = d
+	}
+	for i, d := range shapeB {
+		padB[offB+i] = d
+	}
+	for i := range ndim {
+		da, db := padA[i], padB[i]
+		if da == 0 {
+			da = 1
+		}
+		if db == 0 {
+			db = 1
+		}
+		if da != db && da != 1 && db != 1 {
+			return nil, nil, nil, fmt.Errorf("shapes %v and %v are not broadcast-compatible", shapeA, shapeB)
+		}
+		if da > db {
+			outShape[i] = da
+		} else {
+			outShape[i] = db
+		}
+	}
+	return outShape, padA, padB, nil
+}
+
 func (e *Expand[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, fmt.Errorf("Expand backward not implemented")
 }
