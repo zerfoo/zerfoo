@@ -724,6 +724,16 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 				strideBVal = 0
 			}
 			strideC := int64(cMatSize)
+			if debugGPU {
+				e.logger.Debug("MatMul: SgemmStridedBatched call",
+					"m", fmt.Sprintf("%d", m),
+					"n", fmt.Sprintf("%d", n),
+					"k", fmt.Sprintf("%d", k),
+					"batchSize", fmt.Sprintf("%d", batchSize),
+					"devA", fmt.Sprintf("%p", devA),
+					"devB", fmt.Sprintf("%p", devB),
+					"devC", fmt.Sprintf("%p", devCTotal))
+			}
 			if err := batched.SgemmStridedBatched(m, n, k, 1.0,
 				devA, strideA, devB, strideBVal, 0.0,
 				devCTotal, strideC, batchSize); err != nil {
@@ -746,6 +756,17 @@ func (e *GPUEngine[T]) MatMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		batchDevA := unsafe.Add(devA, aOff)
 		batchDevB := unsafe.Add(devB, bOff)
 		batchDevC := unsafe.Add(devCTotal, cOff)
+
+		if debugGPU {
+			e.logger.Debug("MatMul: Sgemm call",
+				"batch", fmt.Sprintf("%d/%d", batch, batchSize),
+				"m", fmt.Sprintf("%d", m),
+				"n", fmt.Sprintf("%d", n),
+				"k", fmt.Sprintf("%d", k),
+				"devA", fmt.Sprintf("%p", batchDevA),
+				"devB", fmt.Sprintf("%p", batchDevB),
+				"devC", fmt.Sprintf("%p", batchDevC))
+		}
 
 		var blasErr error
 		if isBFloat16 {

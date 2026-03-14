@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
@@ -10,6 +11,14 @@ import (
 )
 
 const f32Size = int(unsafe.Sizeof(float32(0)))
+
+// debugGPU enables verbose GPU debug logging when ZERFOO_DEBUG_GPU=1.
+// Off by default to avoid any performance impact in normal operation.
+var debugGPU = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
+
+// largeAllocThreshold is the byte size above which allocations are logged
+// when debugGPU is enabled (100 MB).
+const largeAllocThreshold = 100 * 1024 * 1024
 
 // noopCleanup is a shared no-op function used by getDevicePtr when data is
 // already on the GPU. A package-level variable avoids allocating a new
@@ -56,10 +65,29 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 
 	devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
 	if err != nil {
+		if debugGPU && byteSize > largeAllocThreshold {
+			e.logger.Debug("getDevicePtr: pool.Alloc failed for large allocation",
+				"bytes", fmt.Sprintf("%d", byteSize),
+				"mb", fmt.Sprintf("%.1f", float64(byteSize)/(1024*1024)),
+				"error", err.Error())
+		}
 		return nil, nil, err
 	}
 
+	if debugGPU && byteSize > largeAllocThreshold {
+		e.logger.Debug("getDevicePtr: large H2D allocation",
+			"bytes", fmt.Sprintf("%d", byteSize),
+			"mb", fmt.Sprintf("%.1f", float64(byteSize)/(1024*1024)),
+			"ptr", fmt.Sprintf("%p", devPtr))
+	}
+
 	if err := e.runtime.Memcpy(devPtr, unsafe.Pointer(&data[0]), byteSize, gpuapi.MemcpyHostToDevice); err != nil {
+		if debugGPU {
+			e.logger.Debug("getDevicePtr: Memcpy H2D failed",
+				"bytes", fmt.Sprintf("%d", byteSize),
+				"ptr", fmt.Sprintf("%p", devPtr),
+				"error", err.Error())
+		}
 		e.pool.Free(e.deviceID, devPtr, byteSize)
 
 		return nil, nil, err
