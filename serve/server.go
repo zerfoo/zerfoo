@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/log"
+	"github.com/zerfoo/zerfoo/metrics/runtime"
 )
 
 //go:embed openapi.yaml
@@ -24,6 +28,9 @@ type Server struct {
 	mux        *http.ServeMux
 	batch      *BatchScheduler // optional; nil means direct calls
 	unloaded   bool            // true after DELETE /v1/models/:id
+	logger     log.Logger
+	metrics    *ServerMetrics
+	collector  runtime.Collector
 }
 
 // ServerOption configures the server.
@@ -35,6 +42,20 @@ type ServerOption func(*Server)
 func WithDraftModel(draft *inference.Model) ServerOption {
 	return func(s *Server) {
 		s.draftModel = draft
+	}
+}
+
+// WithLogger sets the logger for request logging.
+func WithLogger(l log.Logger) ServerOption {
+	return func(s *Server) {
+		s.logger = l
+	}
+}
+
+// WithMetrics sets the metrics collector for token rate and request tracking.
+func WithMetrics(c runtime.Collector) ServerOption {
+	return func(s *Server) {
+		s.collector = c
 	}
 }
 
@@ -53,18 +74,106 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
-	s.mux.HandleFunc("POST /v1/completions", s.handleCompletions)
-	s.mux.HandleFunc("POST /v1/embeddings", s.handleEmbeddings)
-	s.mux.HandleFunc("GET /v1/models", s.handleModels)
-	s.mux.HandleFunc("GET /v1/models/{id...}", s.handleModelInfo)
-	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.handleModelDelete)
-	s.mux.HandleFunc("GET /openapi.yaml", handleOpenAPISpec)
+	if s.logger == nil {
+		s.logger = log.Nop()
+	}
+	if s.collector == nil {
+		s.collector = runtime.Nop()
+	}
+	s.metrics = NewServerMetrics(s.collector)
+	s.mux.HandleFunc("POST /v1/chat/completions", s.recoveryMiddleware(s.handleChatCompletions))
+	s.mux.HandleFunc("POST /v1/completions", s.recoveryMiddleware(s.handleCompletions))
+	s.mux.HandleFunc("POST /v1/embeddings", s.recoveryMiddleware(s.handleEmbeddings))
+	s.mux.HandleFunc("GET /v1/models", s.recoveryMiddleware(s.handleModels))
+	s.mux.HandleFunc("GET /v1/models/{id...}", s.recoveryMiddleware(s.handleModelInfo))
+	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.recoveryMiddleware(s.handleModelDelete))
+	s.mux.HandleFunc("GET /openapi.yaml", s.recoveryMiddleware(handleOpenAPISpec))
+	s.mux.HandleFunc("GET /metrics", handleMetrics(s.collector))
 	return s
 }
 
 // Handler returns the HTTP handler for this server.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return s.logMiddleware(s.mux) }
+
+// statusRecorder wraps http.ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *Server) logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		latency := time.Since(start).Milliseconds()
+
+		modelID := ""
+		if info := s.model.Info(); info != nil {
+			modelID = info.ID
+		}
+
+		fields := []string{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"model", modelID,
+			"prompt_tokens", "0",
+			"completion_tokens", "0",
+			"latency_ms", strconv.FormatInt(latency, 10),
+			"status_code", strconv.Itoa(rec.status),
+		}
+
+		switch {
+		case rec.status >= 500:
+			s.logger.Error("request completed", fields...)
+		case rec.status >= 400:
+			s.logger.Warn("request completed", fields...)
+		default:
+			s.logger.Info("request completed", fields...)
+		}
+	})
+}
+
+func (s *Server) recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				msg := fmt.Sprintf("%v", rec)
+				s.logger.Error("panic recovered", "error", msg, "method", r.Method, "path", r.URL.Path)
+				fmt.Fprintf(os.Stderr, "panic recovered: %s %s: %s\n", r.Method, r.URL.Path, msg)
+				writeError(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next(w, r)
+	}
+}
+
+// isOOMError reports whether the error message indicates an out-of-memory condition.
+func isOOMError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "out of memory") ||
+		strings.Contains(msg, "oom") ||
+		strings.Contains(msg, "cannot allocate")
+}
+
+// inferenceErrorStatus returns the appropriate HTTP status code for an inference error.
+func inferenceErrorStatus(err error) int {
+	if isOOMError(err) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
 
 // --- Request/Response types ---
 
@@ -214,6 +323,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	var resp inference.Response
 	var err error
 
@@ -233,9 +343,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		resp, err = s.model.Chat(r.Context(), messages, opts...)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, inferenceErrorStatus(err), err.Error())
 		return
 	}
+
+	s.metrics.RecordRequest(resp.CompletionTokens, time.Since(start))
 
 	modelID := ""
 	if info := s.model.Info(); info != nil {
@@ -285,6 +397,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	var result string
 	var err error
 
@@ -300,7 +413,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, inferenceErrorStatus(err), err.Error())
 		return
 	}
 
@@ -319,6 +432,8 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 			completionTokens = len(ids)
 		}
 	}
+
+	s.metrics.RecordRequest(completionTokens, time.Since(start))
 
 	writeJSON(w, http.StatusOK, CompletionResponse{
 		ID:      fmt.Sprintf("cmpl-%d", time.Now().UnixNano()),
@@ -428,7 +543,7 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	for i, text := range inputs {
 		emb, err := s.model.Embed(r.Context(), text)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, inferenceErrorStatus(err), err.Error())
 			return
 		}
 		data = append(data, EmbeddingObject{
