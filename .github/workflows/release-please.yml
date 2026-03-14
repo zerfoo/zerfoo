@@ -32,12 +32,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - uses: actions/checkout@v4
-        with:
-          repository: zerfoo/zmf
-          path: zmf-checkout
-      - name: Link zmf as sibling directory
-        run: ln -s "$GITHUB_WORKSPACE/zmf-checkout" "$GITHUB_WORKSPACE/../zmf"
+      - name: Clone zmf as sibling directory
+        run: git clone --depth 1 https://github.com/zerfoo/zmf.git "$GITHUB_WORKSPACE/../zmf"
 
       - uses: actions/setup-go@v5
         with:
