@@ -951,6 +951,17 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 10. Fused dequant+GEMV Q4_K kernel ready but engine dispatch validation pending.
 11. Performance: 234 tok/s F32 with CUDA graph (18.7% faster than Ollama 197.21 tok/s). Phase 6 complete.
 12. cuBLAS status 7 FIXED (Phase 10): Root cause was stale GPU tensor caching in Transpose/MatMul layers. Arena ResetPool freed GPU memory, but cached tensors held nil devicePtrs. Fix: removed caching, use MatMulTransposeB (SgemmNT). ZMF models now complete inference but CUDA graph capture fails (H2D copies during capture, error 901) and non-graph fallback produces garbage output.
+13. CUDA graph capture for ZMF codegen models FIXED (Phase 11): Multiple D2H sync operations on the legacy stream during capture caused cuda error 901. Fixes applied:
+    - PreUploadFrozenWeights: uploads frozen CPU tensors to GPU before capture (69c48af).
+    - KV cache snapshot/restore: prevents double KV cache update on capture failure (425e0c6).
+    - Scalar constants kept CPU-resident: prevents Pow/Range D2H during capture (ce1e155).
+    - Transpose isGPU early exit removed: CPUStorage tensors use GPU kernel path (e5d4f38).
+    - Gather, Slice, Reshape, AutoAttentionMask, AutoPositionIds added to nonCapturableOps.
+    - Longest contiguous capturable region scan: handles non-capturable ops scattered in the instruction list (replaces edge-trimming logic).
+    - EnsureCaptureInputsGPU: uploads frozen scalar constants needed by capture-region instructions.
+    Result: ZMF codegen pipeline (fused ops) captures 99.5% of instructions, 232.86 tok/s (+26% vs no-graph).
+    ONNX models capture only 1-2% due to decomposed ops (Pow, ReduceMean, Sqrt, Gather, Slice, Reshape).
+    ONNX models also produce garbage output ("!!!") -- a pre-existing correctness bug unrelated to graph capture.
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
