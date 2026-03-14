@@ -385,6 +385,93 @@ func TestGPUKVCache_CloseIdempotent(t *testing.T) {
 	}
 }
 
+func TestGPUKVCache_AppendGPU_Validation(t *testing.T) {
+	alloc := newMockAllocator()
+	cache, err := NewGPUKVCache(alloc, 2, 4, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	// Use a valid pointer from a small allocation for dummy GPU pointers.
+	dummyBuf := make([]byte, 8)
+	dummy := unsafe.Pointer(&dummyBuf[0])
+
+	// Layer out of range.
+	if err := cache.AppendGPU(-1, dummy, dummy, nil); err == nil {
+		t.Error("expected error for negative layer")
+	}
+	if err := cache.AppendGPU(5, dummy, dummy, nil); err == nil {
+		t.Error("expected error for layer out of range")
+	}
+
+	// Fill cache to maxSeqLen via CPU Append to trigger overflow check.
+	tok := []float32{1, 2}
+	for pos := range 4 {
+		for layer := range 2 {
+			if err := cache.Append(layer, tok, tok, pos); err != nil {
+				t.Fatalf("Append layer=%d pos=%d: %v", layer, pos, err)
+			}
+		}
+	}
+
+	// Now AppendGPU should fail with overflow.
+	if err := cache.AppendGPU(0, dummy, dummy, nil); err == nil {
+		t.Error("expected overflow error from AppendGPU")
+	}
+}
+
+func TestGPUKVCache_SyncCounterFromGPU(t *testing.T) {
+	alloc := newMockAllocator()
+	cache, err := NewGPUKVCache(alloc, 1, 8, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	// Write a counter value of 5 to the mock GPU memory.
+	val := int32(5)
+	if err := alloc.Memcpy(cache.GPUCounterPtr(), unsafe.Pointer(&val), 4, gpuMemcpyHostToDevice); err != nil {
+		t.Fatal(err)
+	}
+
+	// SyncCounterFromGPU should read it back.
+	if err := cache.SyncCounterFromGPU(); err != nil {
+		t.Fatalf("SyncCounterFromGPU: %v", err)
+	}
+	if cache.SeqLen() != 5 {
+		t.Errorf("SeqLen = %d, want 5", cache.SeqLen())
+	}
+}
+
+func TestGPUKVCache_SyncCounterFromGPU_NilCounter(t *testing.T) {
+	alloc := newMockAllocator()
+	cache, err := NewGPUKVCache(alloc, 1, 4, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Close frees the counter.
+	_ = cache.Close()
+
+	if err := cache.SyncCounterFromGPU(); err == nil {
+		t.Error("expected error for nil counter")
+	}
+}
+
+func TestGPUKVCache_SyncCounterFromGPU_MemcpyError(t *testing.T) {
+	alloc := newMockAllocator()
+	cache, err := NewGPUKVCache(alloc, 1, 4, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	alloc.cpyErr = fmt.Errorf("memcpy failed")
+	if err := cache.SyncCounterFromGPU(); err == nil {
+		t.Error("expected memcpy error")
+	}
+}
+
 func TestGPUKVCache_MemoryBudget(t *testing.T) {
 	// Gemma 3 2B: 26 layers, 8 heads, 256 head_dim, 512 tokens
 	// Expected: 2 * 26 * 512 * 8 * 256 * 4 = ~104 MB

@@ -3,6 +3,8 @@ package generate
 import (
 	"fmt"
 	"unsafe"
+
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 )
 
 // GPUAllocator abstracts GPU memory operations so that GPUKVCache can be
@@ -164,6 +166,60 @@ func (c *GPUKVCache) Append(layerIdx int, k, v []float32, seqPos int) error {
 		c.seqLen++
 	}
 
+	return nil
+}
+
+// gpuMemcpyDeviceToHost is the Memcpy direction constant matching gpuapi.MemcpyKind.
+const gpuMemcpyDeviceToHost = 1
+
+// AppendGPU copies one token's K/V data from GPU-resident src pointers into the
+// KV cache using the offset_memcpy kernel. The kernel reads gpuCounter on the
+// GPU to compute the write offset, eliminating any D2H copy per token.
+// After writing K and V for the last layer, it increments the GPU counter via
+// the increment_counter kernel and advances the CPU seqLen for compatibility.
+//
+// kSrc and vSrc must each point to numHeads*headDim float32 values on the GPU.
+// stream is the CUDA stream for async execution.
+func (c *GPUKVCache) AppendGPU(layerIdx int, kSrc, vSrc unsafe.Pointer, stream unsafe.Pointer) error {
+	if layerIdx < 0 || layerIdx >= c.numLayers {
+		return fmt.Errorf("gpu_kv_cache: layer %d out of range [0, %d)", layerIdx, c.numLayers)
+	}
+	if c.seqLen >= c.maxSeqLen {
+		return fmt.Errorf("gpu_kv_cache: seqLen %d >= maxSeqLen %d", c.seqLen, c.maxSeqLen)
+	}
+
+	dim := c.numHeads * c.headDim
+	lb := &c.layers[layerIdx]
+
+	if err := kernels.OffsetMemcpy(lb.kPtr, kSrc, c.gpuCounter, dim, c.maxSeqLen, stream); err != nil {
+		return fmt.Errorf("gpu_kv_cache: offset_memcpy K layer %d: %w", layerIdx, err)
+	}
+	if err := kernels.OffsetMemcpy(lb.vPtr, vSrc, c.gpuCounter, dim, c.maxSeqLen, stream); err != nil {
+		return fmt.Errorf("gpu_kv_cache: offset_memcpy V layer %d: %w", layerIdx, err)
+	}
+
+	// Advance GPU counter and CPU seqLen after the last layer's append.
+	if layerIdx == c.numLayers-1 {
+		if err := kernels.IncrementCounter(c.gpuCounter, 1, stream); err != nil {
+			return fmt.Errorf("gpu_kv_cache: increment_counter: %w", err)
+		}
+		c.seqLen++
+	}
+
+	return nil
+}
+
+// SyncCounterFromGPU performs a D2H copy of the GPU counter to update the CPU
+// seqLen. Call this after the decode loop completes, not per token.
+func (c *GPUKVCache) SyncCounterFromGPU() error {
+	if c.gpuCounter == nil {
+		return fmt.Errorf("gpu_kv_cache: GPU counter not allocated")
+	}
+	var val int32
+	if err := c.alloc.Memcpy(unsafe.Pointer(&val), c.gpuCounter, 4, gpuMemcpyDeviceToHost); err != nil {
+		return fmt.Errorf("gpu_kv_cache: sync counter D2H: %w", err)
+	}
+	c.seqLen = int(val)
 	return nil
 }
 
