@@ -5,6 +5,7 @@ import (
 	"log"
 	"unsafe"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
@@ -15,12 +16,18 @@ import (
 // For GPU-resident tensors, buffers are backed by GPUStorage with direct D2D
 // memcpy appends. For CPU tensors, flat Go slices are used with copy.
 type tensorLayerBuf[T tensor.Numeric] struct {
-	// GPU path: pre-allocated persistent GPU memory.
+	// GPU path: pre-allocated persistent GPU memory (F32 mode).
 	kStorage *tensor.GPUStorage[T]
 	vStorage *tensor.GPUStorage[T]
 	// CPU path: pre-allocated flat buffers.
 	kBuf []T
 	vBuf []T
+
+	// FP16 KV cache: when kvFP16 is true, these hold the half-precision
+	// cache buffers (2 bytes/element instead of 4). The F32 kStorage/vStorage
+	// are used as scratch space for F32<->FP16 conversion on Get.
+	kFP16 *tensor.GPUStorage[float16.Float16]
+	vFP16 *tensor.GPUStorage[float16.Float16]
 
 	batch  int
 	dim    int
@@ -38,6 +45,13 @@ type TensorCache[T tensor.Numeric] struct {
 	layers    []tensorLayerBuf[T]
 	maxSeqLen int
 	stream    gpuapi.Stream // GPU stream for async D2D/H2D copies (nil for CPU)
+	kvFP16    bool          // when true, store KV cache in FP16 (GPU-only)
+
+	// Shared F32 scratch buffers for FP16→F32 readback in Get.
+	// Sized to batch*maxSeqLen*dim on first use. Reused across layers
+	// (Get is called sequentially per layer).
+	fp16ScratchK *tensor.GPUStorage[T]
+	fp16ScratchV *tensor.GPUStorage[T]
 
 	// GPU-resident int32 position counter for CUDA graph capture.
 	// When non-nil, Update uses offset_memcpy kernel (reads counter on GPU)
@@ -45,16 +59,36 @@ type TensorCache[T tensor.Numeric] struct {
 	gpuCounter *tensor.GPUStorage[int32]
 }
 
+// TensorCacheOption configures a TensorCache.
+type TensorCacheOption func(*tensorCacheOptions)
+
+type tensorCacheOptions struct {
+	kvFP16 bool
+}
+
+// WithKVDtype sets the KV cache storage dtype. Supported values: "fp32" (default), "fp16".
+// FP16 mode halves KV memory bandwidth but requires GPU and CUDA conversion kernels.
+func WithKVDtype(dtype string) TensorCacheOption {
+	return func(o *tensorCacheOptions) {
+		o.kvFP16 = dtype == "fp16"
+	}
+}
+
 // NewTensorCache creates a TensorCache backed by the given engine.
 // numLayers should match the model's transformer layer count.
 // maxSeqLen limits the total cached sequence length.
 // If the engine implements GPUStreamAccessor, async memcpy is used for
 // KV cache updates (required for CUDA graph capture compatibility).
-func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSeqLen int) *TensorCache[T] {
+func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSeqLen int, opts ...TensorCacheOption) *TensorCache[T] {
+	var o tensorCacheOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	tc := &TensorCache[T]{
 		engine:    engine,
 		layers:    make([]tensorLayerBuf[T], numLayers),
 		maxSeqLen: maxSeqLen,
+		kvFP16:    o.kvFP16,
 	}
 	if sa, ok := any(engine).(compute.GPUStreamAccessor); ok {
 		tc.stream = sa.GPUStream()
@@ -97,7 +131,14 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 
 		// Try GPU allocation first; fall back to CPU buffers.
 		_, isGPU := newK.GetStorage().(*tensor.GPUStorage[T])
-		if isGPU {
+		if isGPU && c.kvFP16 {
+			// FP16 mode: allocate half-size FP16 buffers for the cache,
+			// plus F32 scratch buffers for readback conversion in Get.
+			if err := allocFP16Buffers(lb, totalElems); err != nil {
+				isGPU = false
+			}
+		}
+		if isGPU && !c.kvFP16 {
 			kSt, err := tensor.NewGPUStorage[T](totalElems)
 			if err != nil {
 				isGPU = false
@@ -134,7 +175,10 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	// baked into captured CUDA graphs — it stays live across replays.
 	// The GPU counter is synced to the CPU seqLen at the end of prefill
 	// (see below), so by decode time it already holds the correct position.
-	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU {
+	//
+	// FP16 mode skips this path: offset_memcpy_fp16 is handled by T902.2.
+	// FP16 falls through to the regular append-with-conversion below.
+	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU && !c.kvFP16 {
 		kGS, kOK := newK.GetStorage().(*tensor.GPUStorage[T])
 		vGS, vOK := newV.GetStorage().(*tensor.GPUStorage[T])
 		if kOK && vOK {
@@ -164,7 +208,15 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	offset := lb.seqLen * dim * batch
 	numElems := seqLen * dim * batch
 
-	if lb.isGPU {
+	if lb.isGPU && c.kvFP16 && lb.kFP16 != nil {
+		// FP16 path: convert F32 source to FP16, then copy into FP16 cache.
+		if err := appendFP16(lb.kFP16, offset, numElems, newK, c.stream); err != nil {
+			return fmt.Errorf("append K fp16 layer %d: %w", layer, err)
+		}
+		if err := appendFP16(lb.vFP16, offset, numElems, newV, c.stream); err != nil {
+			return fmt.Errorf("append V fp16 layer %d: %w", layer, err)
+		}
+	} else if lb.isGPU {
 		if err := appendGPU(lb.kStorage, offset, numElems, newK, c.stream); err != nil {
 			return fmt.Errorf("append K layer %d: %w", layer, err)
 		}
@@ -251,6 +303,79 @@ func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], offset, numElems int
 	return dst.CopyFromHost(src.Data(), offset)
 }
 
+// allocFP16Buffers allocates half-precision GPU buffers for the KV cache layer.
+func allocFP16Buffers[T tensor.Numeric](lb *tensorLayerBuf[T], totalElems int) error {
+	kFP16, err := tensor.NewGPUStorage[float16.Float16](totalElems)
+	if err != nil {
+		return fmt.Errorf("alloc K FP16 storage: %w", err)
+	}
+	vFP16, err := tensor.NewGPUStorage[float16.Float16](totalElems)
+	if err != nil {
+		_ = kFP16.Free()
+		return fmt.Errorf("alloc V FP16 storage: %w", err)
+	}
+	lb.kFP16 = kFP16
+	lb.vFP16 = vFP16
+	return nil
+}
+
+// appendFP16 converts F32 source tensor data to FP16 and appends to the FP16 cache buffer.
+// The source tensor is expected to contain F32 data (the compute dtype).
+func appendFP16[T tensor.Numeric](dst *tensor.GPUStorage[float16.Float16], offset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
+	srcGS, isGPU := src.GetStorage().(*tensor.GPUStorage[T])
+	if !isGPU {
+		return fmt.Errorf("FP16 KV cache requires GPU-resident source tensors")
+	}
+
+	// Allocate a temporary FP16 buffer for the conversion output.
+	tmpFP16, err := tensor.NewGPUStorage[float16.Float16](numElems)
+	if err != nil {
+		return fmt.Errorf("alloc tmp FP16: %w", err)
+	}
+	defer func() { _ = tmpFP16.Free() }()
+
+	// Convert F32 → FP16.
+	streamPtr := unsafe.Pointer(nil)
+	if stream != nil {
+		streamPtr = stream.Ptr()
+	}
+	if err := kernels.F32ToFP16(srcGS.Ptr(), tmpFP16.Ptr(), numElems, streamPtr); err != nil {
+		return fmt.Errorf("f32_to_fp16: %w", err)
+	}
+
+	// Copy FP16 data into the cache at the correct offset.
+	if stream != nil {
+		return dst.CopyFromDeviceAsync(tmpFP16, offset, 0, numElems, stream)
+	}
+	return dst.CopyFromDevice(tmpFP16, offset, 0, numElems)
+}
+
+// ensureFP16Scratch allocates or grows the shared F32 scratch buffers for
+// FP16→F32 readback in Get. The scratch is reused across layers.
+func (c *TensorCache[T]) ensureFP16Scratch(minElems int) error {
+	if c.fp16ScratchK != nil && c.fp16ScratchK.Len() >= minElems {
+		return nil
+	}
+	if c.fp16ScratchK != nil {
+		_ = c.fp16ScratchK.Free()
+	}
+	if c.fp16ScratchV != nil {
+		_ = c.fp16ScratchV.Free()
+	}
+	var err error
+	c.fp16ScratchK, err = tensor.NewGPUStorage[T](minElems)
+	if err != nil {
+		return fmt.Errorf("alloc FP16 scratch K: %w", err)
+	}
+	c.fp16ScratchV, err = tensor.NewGPUStorage[T](minElems)
+	if err != nil {
+		_ = c.fp16ScratchK.Free()
+		c.fp16ScratchK = nil
+		return fmt.Errorf("alloc FP16 scratch V: %w", err)
+	}
+	return nil
+}
+
 // Get returns the cached key-value pair for the given layer.
 // For GPU-backed layers, returns a view into the pre-allocated buffer.
 // For CPU-backed layers, returns a tensor wrapping the buffer slice.
@@ -266,6 +391,29 @@ func (c *TensorCache[T]) Get(layer int) (*LayerKV[T], bool) {
 
 	viewElems := lb.batch * lb.seqLen * lb.dim
 	viewShape := []int{lb.batch, lb.seqLen, lb.dim}
+
+	if lb.isGPU && c.kvFP16 && lb.kFP16 != nil {
+		// FP16 readback: convert cached FP16 data to F32 scratch buffers.
+		if err := c.ensureFP16Scratch(viewElems); err != nil {
+			return nil, false
+		}
+		streamPtr := unsafe.Pointer(nil)
+		if c.stream != nil {
+			streamPtr = c.stream.Ptr()
+		}
+		kView := tensor.NewGPUStorageView(c.fp16ScratchK, 0, viewElems)
+		if err := kernels.FP16ToF32(lb.kFP16.Ptr(), kView.Ptr(), viewElems, streamPtr); err != nil {
+			return nil, false
+		}
+		kTensor, _ := tensor.NewWithStorage(viewShape, kView)
+
+		vView := tensor.NewGPUStorageView(c.fp16ScratchV, 0, viewElems)
+		if err := kernels.FP16ToF32(lb.vFP16.Ptr(), vView.Ptr(), viewElems, streamPtr); err != nil {
+			return nil, false
+		}
+		vTensor, _ := tensor.NewWithStorage(viewShape, vView)
+		return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
+	}
 
 	if lb.isGPU {
 		kView := tensor.NewGPUStorageView(lb.kStorage, 0, viewElems)
@@ -352,10 +500,26 @@ func (c *TensorCache[T]) Free() {
 			_ = c.layers[i].vStorage.Free()
 			c.layers[i].vStorage = nil
 		}
+		if c.layers[i].kFP16 != nil {
+			_ = c.layers[i].kFP16.Free()
+			c.layers[i].kFP16 = nil
+		}
+		if c.layers[i].vFP16 != nil {
+			_ = c.layers[i].vFP16.Free()
+			c.layers[i].vFP16 = nil
+		}
 		c.layers[i].kBuf = nil
 		c.layers[i].vBuf = nil
 		c.layers[i].seqLen = 0
 		c.layers[i].batch = 0
+	}
+	if c.fp16ScratchK != nil {
+		_ = c.fp16ScratchK.Free()
+		c.fp16ScratchK = nil
+	}
+	if c.fp16ScratchV != nil {
+		_ = c.fp16ScratchV.Free()
+		c.fp16ScratchV = nil
 	}
 	if c.gpuCounter != nil {
 		_ = c.gpuCounter.Free()

@@ -394,3 +394,180 @@ func makeTensorF32(t *testing.T, shape []int, data []float32) *tensor.TensorNume
 	}
 	return tn
 }
+
+func TestTensorCache_WithKVDtype_FP16_CPUFallback(t *testing.T) {
+	// FP16 mode with CPU tensors should fall back to F32 storage
+	// since FP16 conversion requires GPU kernels.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 2, 128, WithKVDtype("fp16"))
+
+	k := makeTensor(t, []int{1, 1, 4}, []float32{1, 2, 3, 4})
+	v := makeTensor(t, []int{1, 1, 4}, []float32{5, 6, 7, 8})
+
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	// CPU fallback: data should be stored as F32 and returned exactly.
+	gotK := lkv.Key.Data()
+	wantK := []float32{1, 2, 3, 4}
+	for i := range wantK {
+		if gotK[i] != wantK[i] {
+			t.Errorf("Key[%d] = %v, want %v", i, gotK[i], wantK[i])
+		}
+	}
+}
+
+func TestTensorCache_WithKVDtype_FP32_Default(t *testing.T) {
+	// WithKVDtype("fp32") should behave identically to no option.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp32"))
+
+	k := makeTensor(t, []int{1, 2, 4}, []float32{1, 2, 3, 4, 5, 6, 7, 8})
+	v := makeTensor(t, []int{1, 2, 4}, []float32{10, 20, 30, 40, 50, 60, 70, 80})
+
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if cache.SeqLen() != 2 {
+		t.Errorf("SeqLen() = %d, want 2", cache.SeqLen())
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	gotK := lkv.Key.Data()
+	wantK := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	for i := range wantK {
+		if gotK[i] != wantK[i] {
+			t.Errorf("Key[%d] = %v, want %v", i, gotK[i], wantK[i])
+		}
+	}
+}
+
+func TestTensorCache_FP16_GPU(t *testing.T) {
+	// GPU FP16 KV cache: verify F32→FP16→F32 roundtrip produces
+	// reasonable output (within FP16 precision).
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))
+
+	k := makeGPUTensor(t, []int{1, 1, 4}, []float32{1.0, 2.5, -3.0, 0.125})
+	v := makeGPUTensor(t, []int{1, 1, 4}, []float32{0.5, -1.5, 4.0, 0.0})
+
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	lb := &cache.layers[0]
+	if lb.kFP16 == nil || lb.vFP16 == nil {
+		t.Fatal("expected FP16 storage to be allocated for GPU tensors")
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true after FP16 Update")
+	}
+
+	// FP16 roundtrip: values representable in FP16 should survive exactly.
+	wantK := []float32{1.0, 2.5, -3.0, 0.125}
+	gotK := lkv.Key.Data()
+	for i := range wantK {
+		if diff := gotK[i] - wantK[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Key[%d] = %v, want ~%v (diff=%v)", i, gotK[i], wantK[i], diff)
+		}
+	}
+
+	wantV := []float32{0.5, -1.5, 4.0, 0.0}
+	gotV := lkv.Value.Data()
+	for i := range wantV {
+		if diff := gotV[i] - wantV[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Value[%d] = %v, want ~%v (diff=%v)", i, gotV[i], wantV[i], diff)
+		}
+	}
+}
+
+func TestTensorCache_FP16_GPU_MultiToken(t *testing.T) {
+	// Test FP16 KV cache with multi-token prefill followed by single-token append.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))
+
+	// Prefill: 3 tokens.
+	k1 := makeGPUTensor(t, []int{1, 3, 4}, []float32{
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+	})
+	v1 := makeGPUTensor(t, []int{1, 3, 4}, []float32{
+		10, 20, 30, 40,
+		50, 60, 70, 80,
+		90, 100, 110, 120,
+	})
+
+	if err := cache.Update(0, k1, v1); err != nil {
+		t.Fatalf("Update prefill: %v", err)
+	}
+	if cache.SeqLen() != 3 {
+		t.Errorf("SeqLen after prefill = %d, want 3", cache.SeqLen())
+	}
+
+	// Decode: 1 token.
+	k2 := makeGPUTensor(t, []int{1, 1, 4}, []float32{13, 14, 15, 16})
+	v2 := makeGPUTensor(t, []int{1, 1, 4}, []float32{130, 140, 150, 160})
+
+	if err := cache.Update(0, k2, v2); err != nil {
+		t.Fatalf("Update decode: %v", err)
+	}
+	if cache.SeqLen() != 4 {
+		t.Errorf("SeqLen after decode = %d, want 4", cache.SeqLen())
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	shape := lkv.Key.Shape()
+	if len(shape) != 3 || shape[0] != 1 || shape[1] != 4 || shape[2] != 4 {
+		t.Errorf("Key shape = %v, want [1, 4, 4]", shape)
+	}
+
+	// Verify key values survive FP16 roundtrip (all values are exactly
+	// representable in FP16).
+	wantK := []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	gotK := lkv.Key.Data()
+	for i := range wantK {
+		if diff := gotK[i] - wantK[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Key[%d] = %v, want ~%v", i, gotK[i], wantK[i])
+		}
+	}
+}
+
+func TestTensorCache_FP16_Free(t *testing.T) {
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))
+
+	k := makeGPUTensor(t, []int{1, 1, 4}, []float32{1, 2, 3, 4})
+	v := makeGPUTensor(t, []int{1, 1, 4}, []float32{5, 6, 7, 8})
+
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Get triggers scratch buffer allocation.
+	_, _ = cache.Get(0)
+
+	// Free should not panic.
+	cache.Free()
+
+	// After free, Get should return false.
+	if _, ok := cache.Get(0); ok {
+		t.Error("Get(0) after Free should return false")
+	}
+}
