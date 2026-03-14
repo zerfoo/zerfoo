@@ -30,14 +30,9 @@ var noopCleanup = func() {}
 // If the tensor has CPUStorage, allocates device memory from the pool,
 // copies H2D, and returns a cleanup function that returns the buffer to the pool.
 func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
-	if debugGPU {
-		e.logger.Debug("getDevicePtr: entry",
-			"storageType", fmt.Sprintf("%T", t.GetStorage()))
-	}
 	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 		if debugGPU {
-			e.logger.Debug("getDevicePtr: GPUStorage zero-copy",
-				"ptr", fmt.Sprintf("%p", gs.Ptr()))
+			fmt.Fprintf(os.Stderr, "getDevicePtr GPU: ptr=%p len=%d\n", gs.Ptr(), gs.Len())
 		}
 		return gs.Ptr(), noopCleanup, nil
 	}

@@ -193,20 +193,32 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	}
 
 	// Begin capture for the GPU-heavy region.
-	if debugGraphCapture {
-		log.Printf("capture: about to begin stream capture, region [%d, %d)", g.captureStart, g.captureEnd)
-	}
+	log.Printf("CUDA GRAPH: about to begin capture, instructions [%d, %d)", g.captureStart, g.captureEnd)
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
-	if debugGraphCapture {
-		log.Printf("capture: stream capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
-	}
+	log.Printf("CUDA GRAPH: capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
 
 	// Run capturable instructions — GPU operations are recorded.
-	captureErr := g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+	var captureErr error
+	if debugGraphCapture {
+		// Run instructions one at a time with logging to identify the exact failure point.
+		for i := g.captureStart; i < g.captureEnd; i++ {
+			opName := g.plan.InstructionOpName(i)
+			log.Printf("CUDA GRAPH capture: running instruction %d/%d op=%s", i, g.captureEnd-1, opName)
+			err := g.plan.RunInstructionRange(ctx, i, i+1)
+			if err != nil {
+				log.Printf("CUDA GRAPH capture: FAILED at instruction %d op=%s error=%v", i, opName, err)
+				captureErr = err
+				break
+			}
+			log.Printf("CUDA GRAPH capture: instruction %d op=%s OK", i, opName)
+		}
+	} else {
+		captureErr = g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+	}
 
 	// End capture.
 	capturedGraph, endErr := cuda.StreamEndCapture(g.stream)
@@ -215,10 +227,7 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 			log.Printf("cuda graph: end capture failed: %v", endErr)
 		}
 		if captureErr != nil {
-			log.Printf("cuda graph: capture region failed: %v", captureErr)
-			if debugGraphCapture {
-				log.Printf("capture: ERROR during capture region [%d, %d): %v", g.captureStart, g.captureEnd, captureErr)
-			}
+			log.Printf("CUDA GRAPH: capture failed: %v", captureErr)
 		}
 		g.failed = true
 		if capturedGraph != nil {
