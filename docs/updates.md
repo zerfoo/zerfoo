@@ -1,3 +1,114 @@
+# T903.1: Graph/No-Graph Divergence Bisection
+
+Date: 2026-03-14
+Branch: feat/pgo-profile
+
+## Summary
+
+Added debug dump infrastructure to bisect where CUDA graph and non-graph
+execution paths first diverge at temp=0 decode. The dumps are gated by
+ZERFOO_DEBUG_DUMP=1 and print the first 8 float32 values from key tensors
+to stderr at 5 checkpoints in the forward pass.
+
+## Debug Dump Checkpoints
+
+The following checkpoints are instrumented in `graph/compile.go`
+(`RunInstructionRange`):
+
+| # | Op Name | What It Captures |
+|---|---------|-----------------|
+| a | EmbeddingLookup | Input to transformer (first occurrence) |
+| b | GroupedQueryAttention | After first GQA attention output (layer 0) |
+| c | FFN | After first FFN output (layer 0) |
+| d | RMSNorm | After every RMSNorm (last = final norm) |
+| e | LMHead | Logits before sampling |
+
+## How to Test on DGX
+
+```bash
+# Build
+cd ~/zerfoo && git pull && cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
+
+# Run WITHOUT graph (baseline)
+export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
+ZERFOO_DISABLE_CUDA_GRAPH=1 ZERFOO_DEBUG_DUMP=1 \
+  /usr/local/go/bin/go run ./cmd/bench_tps \
+  --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 5 --prompt 'The quick brown fox' --device cuda --dtype fp32 \
+  2>dump_nograph.txt
+
+# Run WITH graph
+ZERFOO_DEBUG_DUMP=1 \
+  /usr/local/go/bin/go run ./cmd/bench_tps \
+  --model ~/models/gemma3-gguf/model.gguf \
+  --tokens 5 --prompt 'The quick brown fox' --device cuda --dtype fp32 \
+  2>dump_graph.txt
+
+# Compare
+diff dump_nograph.txt dump_graph.txt
+```
+
+## Code Analysis and Hypotheses
+
+### Architecture Overview
+
+The decode loop in `generate/generator.go` calls `plan.Run()` which routes
+to either `RunInstructions` (live) or `CUDAGraphExecutor.Run` (graph).
+
+The CUDA graph executor splits the plan into 3 regions:
+1. Pre-capture: EmbeddingLookup (non-capturable, runs live every call)
+2. Capture region: All GPU ops from RMSNorm through LMHead
+3. Post-capture: none
+
+During graph replay, only the captured GPU kernels execute. The Go-side
+code for captured instructions (e.g., GQA's Forward, FFN's Forward) does
+NOT re-execute — only the GPU kernels they launched are replayed.
+
+### Hypothesis 1: KV Cache View Size Frozen at Capture Time
+
+During capture, `cache.Get()` returns a view with `seqLen=N`. The
+attention kernel is launched with this KV seqLen as a parameter. On
+replay, the captured kernel always uses seqLen=N, even though new tokens
+have been appended to the KV buffer via `offset_memcpy`.
+
+If this is the cause, divergence would appear at the GroupedQueryAttention
+checkpoint and grow with each token.
+
+### Hypothesis 2: RoPE Position via GPU Counter Timing
+
+The `rope_select` kernel reads the GPU counter to determine the position
+for cos/sin angle lookup. During capture, the counter has value C. The
+kernel is captured with the device pointer (which stays valid), so on
+replay it reads the current counter value — this should be correct.
+
+However, if the counter increment happens after RoPE but before KV append
+in the captured graph, the position for KV append could be off by 1
+relative to the RoPE position.
+
+### Hypothesis 3: Floating-Point Ordering Difference
+
+CUDA graph replay guarantees the same kernel launch order and the same
+grid/block dimensions. However, if any kernel uses non-deterministic
+reduction (e.g., atomicAdd for softmax), the accumulation order could
+differ between capture and replay runs.
+
+This would produce very small differences (1e-6 range) that accumulate
+over tokens.
+
+## Files Modified
+
+- `graph/debug_dump.go` — debug dump utility (env-var gated)
+- `graph/compile.go` — dump hooks in `RunInstructionRange`
+
+## Next Steps (T903.2)
+
+After DGX testing identifies the divergence source:
+1. If KV cache size: make the attention kernel read actual seqLen from GPU
+2. If counter sync: fix increment ordering
+3. If FP ordering: document as known behavior (both outputs valid)
+
+---
+
 # S802.2.1: KV Cache GPU Append Test Results
 
 Date: 2026-03-13
