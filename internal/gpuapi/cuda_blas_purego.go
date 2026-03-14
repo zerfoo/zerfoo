@@ -137,7 +137,16 @@ func (b *CUDABlas) Handle() *cublas.Handle {
 
 func init() {
 	if cublas.Available() {
-		BLASFactory = func() (BLAS, error) { return NewCUDABlas() }
+		BLASFactory = func() (BLAS, error) {
+			b, err := NewCUDABlas()
+			if err != nil {
+				return nil, err
+			}
+			if cublasProfileEnabled {
+				return WrapWithProfiler(b), nil
+			}
+			return b, nil
+		}
 	}
 }
 
