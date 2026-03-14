@@ -148,4 +148,16 @@ type KernelRunner interface {
 	// DequantFP8E4M3ToFP16 dequantizes n FP8 E4M3 bytes to FP16 on device.
 	// output[i] = fp8_to_fp16(input[i]) * scale.
 	DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale float32, n int, stream Stream) error
+
+	// GPU-resident counter operations for CUDA graph position tracking.
+	IncrementCounter(counter unsafe.Pointer, delta int, stream Stream) error
+	ResetCounter(counter unsafe.Pointer, value int, stream Stream) error
+
+	// OffsetMemcpy copies dim floats from src to dst at offset counter*dim.
+	// counter is a GPU-resident int32. Used for GPU-driven KV cache append.
+	OffsetMemcpy(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, stream Stream) error
+
+	// RoPESelect copies halfRotary cos/sin values from the precomputed table
+	// at position counter[0]. Used for GPU-driven RoPE angle selection.
+	RoPESelect(cosTable, sinTable, cosOut, sinOut, counter unsafe.Pointer, halfRotary int, stream Stream) error
 }
