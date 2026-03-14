@@ -210,7 +210,8 @@ func (e *GPUEngine[T]) CudnnActivationForward(
 	}
 
 	// Pack shape into 4D for DNN (N=1, C=numElems, H=1, W=1 for 1D/2D/3D).
-	n4, c4, h4, w4 := 1, 1, 1, 1
+	n4, h4, w4 := 1, 1, 1
+	var c4 int
 	switch len(shape) {
 	case 4:
 		n4, c4, h4, w4 = shape[0], shape[1], shape[2], shape[3]
@@ -730,7 +731,8 @@ func (e *GPUEngine[T]) CudnnActivationBackward(
 		numElems *= d
 	}
 
-	n4, c4, h4, w4 := 1, 1, 1, 1
+	n4, h4, w4 := 1, 1, 1
+	var c4 int
 	switch len(shape) {
 	case 4:
 		n4, c4, h4, w4 = shape[0], shape[1], shape[2], shape[3]

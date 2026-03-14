@@ -714,11 +714,6 @@ func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.Tensor
 	return e.cpu.Pow(ctx, base, exponent, dst...)
 }
 
-func (e *GPUEngine[T]) gpuSubScalar(_ context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	e.setDevice()
-	return gpuScalarOp(e, a, toFloat32(scalar), e.kernels.SubScalar, dst...)
-}
-
 func (e *GPUEngine[T]) gpuExp(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() {
 		return e.cpu.Exp(ctx, a, dst...)
