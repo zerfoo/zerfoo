@@ -10243,3 +10243,113 @@ are computed during attention and should already be GPU-resident if the
 attention output is GPU-resident. The fact that they have CPUStorage suggests
 either: (a) the KV cache store operation copies data to CPU, or (b) the
 attention output is materialized on CPU before being stored in the cache.
+
+# Phase 11 Wave 4: DGX All-Model Verification (e5d4f38)
+
+Date: 2026-03-14
+Branch: main at e5d4f38
+DGX: libkernels.so rebuilt with nvcc sm_121
+
+## Context
+
+Three fixes merged to main since last verification:
+1. PreUploadFrozenWeights (69c48af) -- frozen CPU tensors uploaded to GPU
+2. Scalar constants kept CPU-resident (ce1e155) -- Pow + Range D2H eliminated
+3. Transpose isGPU early exit removed (e5d4f38) -- CPUStorage tensors use GPU kernel
+4. KV cache snapshot/restore (425e0c6) -- prevents double-update on capture failure
+
+## Results
+
+### Gemma 3 1B (GGUF Q4_K_M) -- PASS (Baseline)
+
+- Path: ~/models/gemma3-gguf/model.gguf
+- Throughput: **234.39 tok/s**
+- CUDA graph: captured instructions 1-184 of 185 (success)
+- Arena: hits=4868 misses=0 resets=258 used=7.6 MB
+- Output: Repetitive but non-garbage ("**Explanation: ..." pattern)
+
+### Llama 3.2 1B (ZMF F32) -- FAIL (graph capture fails, garbage output)
+
+- Path: ~/models/llama3
+- Throughput: 18.73 tok/s
+- CUDA graph: capture FAILED (error 901 on instruction 38 Transpose)
+  - WARNING: GPUStorage.TrySlice: cudaMemcpy failed: operation would make the
+    legacy stream depend on a capturing blocking stream
+- Output: "!!!!!!!!!!!!!" (garbage)
+- The Transpose isGPU early exit fix did NOT resolve this. The TrySlice D2H
+  memcpy on the legacy stream still occurs during graph capture.
+
+### Qwen 2.5 (ZMF F32) -- FAIL (graph capture fails, garbage output)
+
+- Path: ~/models/qwen25
+- Throughput: 15.99 tok/s
+- CUDA graph: capture FAILED (error 901 on instruction 76 Transpose)
+  - WARNING: GPUStorage.TrySlice: cudaMemcpy failed: operation would make the
+    legacy stream depend on a capturing blocking stream
+- Output: "!!!!!!!!!!!!!" (garbage)
+- Same root cause as Llama 3.
+
+### Mistral 7B (ZMF F32) -- FAIL (Range error)
+
+- Path: ~/models/mistral
+- Error: prefill forward: node[78] Range: Range: limit input (inputs[1]) has
+  no data (shape=[]) (input shapes: [[] [] []], dep ops: [Cast Cast Parameter])
+- Improvement: no longer panics (bounds check from 8f3efc6 works), but Range
+  still cannot read scalar GPU data.
+
+### Phi 4 (ZMF F32) -- FAIL (Pow kernel error)
+
+- Path: ~/models/phi4
+- Error: prefill forward: node[175] Pow: pow_scalar kernel failed (cuda error 1)
+  (input shapes: [[1 6 3072] []], dep ops: [Cast Parameter])
+- Unchanged from previous verification.
+
+## Summary Table
+
+| Model | Format | Status | tok/s | Graph Capture | Output Quality | Error |
+|-------|--------|--------|------:|:-------------:|----------------|-------|
+| Gemma 3 1B | GGUF Q4_K_M | PASS | 234.39 | Yes (1-184) | Repetitive | -- |
+| Llama 3.2 1B | ZMF F32 | FAIL | 18.73 | No (err 901) | Garbage (!!!) | Transpose TrySlice D2H |
+| Qwen 2.5 | ZMF F32 | FAIL | 15.99 | No (err 901) | Garbage (!!!) | Transpose TrySlice D2H |
+| Mistral 7B | ZMF F32 | FAIL | -- | -- | -- | Range empty scalar |
+| Phi 4 | ZMF F32 | FAIL | -- | -- | -- | pow_scalar cuda error 1 |
+
+**Overall Verdict: FAIL** -- Only Gemma 3 GGUF baseline passes. All 4 ZMF models fail.
+
+## Analysis
+
+The three fixes (PreUploadFrozenWeights, scalar CPU-resident, Transpose isGPU
+early exit removal) did NOT resolve the ZMF model failures:
+
+1. **Transpose (Llama 3, Qwen 2.5)**: The `isGPU` early exit removal (e5d4f38)
+   was intended to force CPUStorage tensors through the GPU transpose kernel.
+   However, the error still occurs at GPUStorage.TrySlice -- the CPU fallback
+   path in GPUEngine.Transpose is still being triggered. The issue is that the
+   Transpose op falls back to CPUEngine.Transpose for certain tensor shapes
+   (rank > 4 or axes/shape mismatch), and CPUEngine calls `a.Data()` which
+   triggers `GPUStorage.Slice()` -> `TrySlice()` -> sync D2H memcpy on the
+   legacy stream, conflicting with the capturing blocking stream.
+
+2. **Range (Mistral)**: The scalar constants fix (ce1e155) was intended to keep
+   scalars CPU-resident so `Data()` works. But Range still gets empty scalar
+   data, suggesting the fix doesn't cover the Cast -> Range path, or the
+   scalars are being uploaded to GPU despite the fix.
+
+3. **Pow (Phi 4)**: The pow_scalar kernel returns cuda error 1 (InvalidValue).
+   This may be a kernel launch configuration issue with the scalar exponent
+   tensor shape `[]`.
+
+## Suggested Next Steps
+
+1. **Transpose fix**: Instead of removing `isGPU` early exit, need to prevent
+   the CPU fallback entirely. Either implement GPU transpose for all shapes
+   (rank > 4), or detect the capture region and skip the fallback.
+
+2. **Non-graph fallback quality**: Even when graph capture fails, the non-graph
+   fallback produces garbage. The KV cache snapshot/restore should prevent
+   corruption, but the `!!!` output suggests either the KV cache is corrupted
+   or the TrySlice returning zero-length slices poisons subsequent computation.
+
+3. **Range/Pow scalar access**: Need to trace exactly where scalars get
+   uploaded to GPU in the ZMF model loading path to ensure ce1e155 covers
+   all scalar constant paths.
