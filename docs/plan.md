@@ -114,14 +114,14 @@ forward pass.
   - Acceptance: bench_tps with Llama 3 ZMF produces output without cuBLAS error.
   - Dependencies: T2001.1.
 
-- [ ] S2001.2.1 Test fix with all 4 models on DGX  Owner: TBD  Est: 1h
+- [x] S2001.2.1 Test fix with all 4 models on DGX  Owner: task-S2001.2.1  Completed: 2026-03-14
   - Re-run bench_tps for Llama 3, Qwen 2.5, Mistral 7B, Phi 4 on DGX.
   - Record tok/s and output quality for each.
   - File: docs/updates.md.
   - Acceptance: All 4 models produce coherent output at temp=0.
   - Dependencies: T2001.2.
 
-- [ ] S2001.2.2 Test fix locally with unit tests  Owner: TBD  Est: 30m
+- [x] S2001.2.2 Test fix locally with unit tests  Owner: task-S2001.2.2  Completed: 2026-03-14
   - go test ./compute/... ./graph/... -race -timeout 120s.
   - Verify T2000.1 (large MatMul) and T2000.5 (getDevicePtr lifecycle) pass.
   - Acceptance: All tests pass with -race.
@@ -142,13 +142,13 @@ forward pass.
   - Acceptance: Decode tok/s equal to or better than before.
   - Dependencies: T1001.1.
 
-- [ ] S1001.2.1 Test decode kernel changes  Owner: TBD  Est: 30m
+- [x] S1001.2.1 Test decode kernel changes  Owner: task-S1001.2.1  Completed: 2026-03-14
   - go test ./internal/cuda/kernels/... -race -timeout 120s.
   - Run bench_tps on DGX to verify no regression.
   - Acceptance: All kernel tests pass. Throughput >= 230 tok/s.
   - Dependencies: T1001.2.
 
-- [ ] T1001.3 Run go vet and make shared  Owner: TBD  Est: 15m
+- [x] T1001.3 Run go vet and make shared  Owner: task-T1001.3  Completed: 2026-03-14
   - go vet ./internal/cuda/...
   - make shared CUDA_ARCH=sm_121 on DGX.
   - Acceptance: No new warnings. Build succeeds.
