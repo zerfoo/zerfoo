@@ -1,4 +1,4 @@
-# Zerfoo Development Plan -- Phase 10 Remaining Work
+# Zerfoo Development Plan -- Phase 11: ZMF CUDA Graph Capture + README
 
 ## 1. Context
 
@@ -6,29 +6,56 @@ See docs/design.md for full architecture, package layout, and conventions.
 
 ### Problem Statement
 
-Phase 10 Wave 1 completed 5 test coverage and lint tasks. The remaining 14 tasks
-span four workstreams: (A) two more test coverage tasks, (B) the cuBLAS status 7
-graph execution bug fix, (C) Phase 8 technical debt (decode kernel + trampoline),
-and (D) DGX verification + README.
+Phase 10 fixed the cuBLAS status 7 error (stale tensor caching after arena ResetPool).
+ZMF F32 models now complete inference without crashes. However, two issues remain:
 
-The critical blocker is the cuBLAS status 7 error: all non-GGUF (ZMF F32) models
-fail on GPU at the LM head projection. cuBLAS works in isolation with large
-dimensions -- the failure is in how getDevicePtr handles H2D copies for 1GB+
-weight matrices during graph forward. See docs/updates.md for the deep dive.
+1. **CUDA graph capture fails for ZMF models.** During graph capture, the Transpose
+   instruction calls `getDevicePtr` on CPUStorage weight tensors, which issues
+   `cudaMemcpy` (H2D) on the legacy stream. This conflicts with the capturing
+   blocking stream, producing cuda error 901. The graph executor falls back to
+   non-graph execution.
+
+2. **Non-graph fallback produces garbage output.** When graph capture fails, the
+   fallback path produces `!!!` instead of coherent text. This suggests a
+   correctness bug in the non-graph decode path -- possibly related to
+   GPUStorage.TrySlice returning zero slices on memcpy failure, or arena pool
+   state corruption between tokens.
+
+3. **Pre-existing model-specific bugs.** Mistral 7B panics in Range op (index OOB).
+   Phi 4 fails with pow_scalar cuda error 1 (missing kernel).
+
+GGUF Q4K models are unaffected because Q4 storage uses virtual transpose (shape
+swap only, no data movement) and the Q4 GEMV kernel reads blocks in native order.
+The entire GGUF inference path stays GPU-resident, enabling clean graph capture.
+
+### Root Cause Detail
+
+`compute/gpu_kernels.go:getDevicePtr` (line 60-84) handles CPUStorage by:
+1. Calling `t.Data()` to get the CPU slice
+2. Allocating GPU memory via `e.pool.Alloc`
+3. Calling `e.runtime.Memcpy(H2D)` to upload
+
+Step 3 issues cudaMemcpy on the default/legacy stream. During CUDA graph capture
+on a different stream, this causes error 901: "operation would make the legacy
+stream depend on a capturing blocking stream."
+
+The fix is to ensure all weight tensors are GPU-resident BEFORE graph capture
+begins, eliminating H2D copies during the capture region.
 
 ### Objectives
 
-- O1: Fix the graph execution memory lifecycle bug (cuBLAS status 7).
-- O2: Complete test coverage (getDevicePtr lifecycle, CLI pull integration).
-- O3: Complete Phase 8 debt (decode kernel, trampoline).
-- O4: Verify FP16 KV cache and GQA decode fast path on DGX.
-- O5: Write README with quickstart once models are verified.
+- O1: Make ZMF F32 models work with CUDA graph capture on DGX.
+- O2: Fix the non-graph fallback garbage output.
+- O3: Fix Mistral Range op panic.
+- O4: Fix Phi 4 pow_scalar kernel error.
+- O5: Write README with quickstart and benchmark table.
 
 ### Non-Goals
 
 - New model architectures.
-- Performance optimization beyond Phase 7 work.
-- Training or fine-tuning.
+- Performance optimization beyond fixing correctness.
+- FP16/FP8 weight loading for ZMF models (future).
+- Multi-GPU / distributed inference.
 
 ### Constraints and Assumptions
 
@@ -36,16 +63,18 @@ weight matrices during graph forward. See docs/updates.md for the deep dive.
 - DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: sm_121, 273 GB/s LPDDR5x, 128GB unified memory.
 - Go 1.25 with purego GPU bindings (no CGo for CUDA).
-- GGUF Q4K models work. ZMF F32 models fail on GPU.
+- GGUF Q4K models work at 232 tok/s with graph capture.
+- ZMF F32 models complete inference but with garbage output.
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| ZMF model inference | All 4 ZMF models produce coherent output on GPU | bench_tps on DGX |
-| Test coverage | getDevicePtr lifecycle + CLI pull integration tests | go test ./... |
-| Phase 8 debt | Decode kernel profiled/resolved, trampoline fixed | DGX profiling + tests |
-| README | Users can go from clone to inference in 5 minutes | Manual walkthrough |
+| ZMF graph capture | Llama 3 + Qwen 2.5 use CUDA graph on DGX | bench_tps shows "captured instructions" |
+| ZMF output quality | Coherent text at temp=0 for Llama 3 + Qwen 2.5 | bench_tps output inspection |
+| Mistral inference | No panic, produces output | bench_tps on DGX |
+| Phi 4 inference | No kernel error, produces output | bench_tps on DGX |
+| README | Clone to inference in 5 minutes | Manual walkthrough |
 
 ---
 
@@ -55,150 +84,155 @@ weight matrices during graph forward. See docs/updates.md for the deep dive.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D200 | Fix cuBLAS status 7 in graph execution | Unblocks all non-GGUF models |
-| D201 | Remaining test coverage (getDevicePtr, CLI pull integration) | Prevents regressions |
-| D202 | Phase 8 decode kernel + trampoline resolution | Technical debt cleanup |
-| D203 | FP16 KV + GQA fast path verification on DGX | Phase 7 completion |
-| D204 | README with quickstart | First-time user experience |
+| D300 | Pre-upload ZMF weights to GPU before graph capture | Fixes CUDA graph capture failure |
+| D301 | Fix non-graph fallback garbage output | Correctness for non-graph path |
+| D302 | Fix Mistral Range op panic | Model coverage |
+| D303 | Fix Phi 4 pow_scalar kernel | Model coverage |
+| D304 | README with quickstart | First-time user experience |
 
 ### Out of Scope
 
-- New model architectures not already in the codebase.
-- Performance tuning beyond Phase 7 work.
-- Multi-GPU / distributed inference.
+- FP16 weight conversion for ZMF models.
+- Optimizing ZMF model throughput beyond enabling graph capture.
+- New model architectures.
 - Training, fine-tuning, RLHF.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E2000: Test Coverage Gaps (2 remaining)
+### E3000: Pre-Upload ZMF Weights to GPU
 
-- [x] T2000.5 Add getDevicePtr memory lifecycle test  Owner: task-T2000.5  Completed: 2026-03-14
-  - Test that getDevicePtr for large CPUStorage tensors returns valid GPU pointers.
-  - Test that sequential getDevicePtr calls (simulating graph forward) do not
-    return overlapping or freed memory.
-  - Test that cleanup functions properly free GPU memory.
-  - File: compute/gpu_kernels_test.go.
-  - Acceptance: No double-free or use-after-free detected. CUDA memcheck clean.
+The fix: upload all frozen weight tensors to GPU during model loading or graph
+compilation, so getDevicePtr finds GPUStorage (not CPUStorage) during the capture
+region and returns the pointer without any cudaMemcpy.
+
+- [ ] T3000.1 Add weight pre-upload to graph compilation  Owner: TBD  Est: 1.5h
+  - In graph/compile.go or graph/cuda_graph.go, after graph compilation and
+    before the first warmup run, iterate over all frozen slot tensors.
+  - For each frozen tensor with CPUStorage, upload to GPU via pool.Alloc +
+    runtime.Memcpy(H2D), wrap in GPUStorage, and replace the slot.
+  - This ensures all weights are GPU-resident before graph capture begins.
+  - The existing EnsureSlotsGPU in cuda_graph.go (line 163) only handles
+    pre-capture instruction outputs. Extend it or add a new PreUploadWeights
+    step that runs before warmup.
+  - File: graph/cuda_graph.go or graph/compile.go.
+  - Acceptance: getDevicePtr never encounters CPUStorage during graph capture
+    for ZMF models.
   - Dependencies: none.
 
-- [x] T2000.6 Add zerfoo pull CLI integration test  Owner: task-T2000.6  Completed: 2026-03-14
-  - Wire NewHFPullFunc into the CLI pull command (fix the broken pull path).
-  - Test the full CLI flow: NewPullCommand -> Run -> pulls from mock HF server.
-  - File: cmd/cli/pull_test.go.
-  - Acceptance: `go test ./cmd/cli/... -run TestPull` passes.
-  - Dependencies: none (T2000.2 completed).
-
-### E2001: Fix Graph Execution Memory Bug
-
-Root cause investigation from Phase 9 Wave 2: cuBLAS Sgemm works in isolation with
-large dimensions, but fails during graph forward pass. The issue is in how
-getDevicePtr handles H2D copies for 1GB+ weight matrices during the graph
-forward pass.
-
-- [x] T2001.1 Add debug logging to getDevicePtr for large allocations  Owner: task-T2001.1  Completed: 2026-03-14
-  - Log allocation size, pointer address, and memcpy result for allocations > 100MB.
-  - Log cuBLAS Sgemm arguments (m, n, k, pointers) before the call.
-  - Instrument compute/gpu_kernels.go and compute/gpu_engine.go.
-  - File: compute/gpu_kernels.go, compute/gpu_engine.go.
-  - Acceptance: Debug output shows the exact failure point.
-  - Dependencies: none.
-
-- [x] T2001.2 Diagnose and fix the cuBLAS status 7 root cause  Owner: task-T2001.2  Completed: 2026-03-14
-  - Run instrumented bench_tps on DGX with Llama 3 ZMF model.
-  - Analyze debug output: verify pointer validity, memcpy return codes, buffer sizes.
-  - Likely fixes: synchronize stream before cuBLAS call, check memcpy error return,
-    pre-allocate weight buffers during model load instead of on-demand H2D.
-  - File: compute/gpu_kernels.go or compute/gpu_engine.go.
-  - Acceptance: bench_tps with Llama 3 ZMF produces output without cuBLAS error.
-  - Dependencies: T2001.1.
-
-- [x] S2001.2.1 Test fix with all 4 models on DGX  Owner: task-S2001.2.1  Completed: 2026-03-14
-  - Re-run bench_tps for Llama 3, Qwen 2.5, Mistral 7B, Phi 4 on DGX.
-  - Record tok/s and output quality for each.
+- [ ] S3000.1.1 Test weight pre-upload with Llama 3 on DGX  Owner: TBD  Est: 30m
+  - Run bench_tps with Llama 3 ZMF: graph capture should succeed.
+  - Verify "captured instructions" appears in output.
+  - Compare tok/s with and without graph.
   - File: docs/updates.md.
-  - Acceptance: All 4 models produce coherent output at temp=0.
-  - Dependencies: T2001.2.
+  - Acceptance: CUDA graph captures successfully for Llama 3 ZMF.
+  - Dependencies: T3000.1.
 
-- [x] S2001.2.2 Test fix locally with unit tests  Owner: task-S2001.2.2  Completed: 2026-03-14
-  - go test ./compute/... ./graph/... -race -timeout 120s.
-  - Verify T2000.1 (large MatMul) and T2000.5 (getDevicePtr lifecycle) pass.
-  - Acceptance: All tests pass with -race.
-  - Dependencies: T2001.2.
+- [ ] S3000.1.2 Test weight pre-upload with Qwen 2.5 on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps with Qwen 2.5 ZMF.
+  - Acceptance: CUDA graph captures successfully for Qwen 2.5 ZMF.
+  - Dependencies: T3000.1.
 
-### E1001: Decode Kernel (Phase 8 retained)
+### E3001: Fix Non-Graph Fallback Garbage Output
 
-- [x] T1001.1 Profile flash_attention_decode on DGX  Owner: task-T1001.1  Completed: 2026-03-14
-  - Run nsys profile on bench_tps with Gemma 3 1B.
-  - Measure decode kernel time vs total decode time.
+When CUDA graph capture fails, the fallback produces garbage. This is a separate
+correctness bug that must be fixed regardless of graph capture success.
+
+- [ ] T3001.1 Diagnose non-graph fallback garbage output  Owner: TBD  Est: 1h
+  - Run bench_tps on DGX with CUDA graph disabled (if flag exists) or with
+    a model that forces non-graph execution.
+  - Add debug logging to the fallback path in graph/cuda_graph.go Run().
+  - Check if arena pool state (reset count, used memory) is correct between
+    tokens in non-graph mode.
+  - Check if GPUStorage.TrySlice failure (returns zero slice) propagates
+    garbage through the generation loop.
+  - File: graph/cuda_graph.go, generate/generator.go.
+  - Acceptance: Root cause identified.
+  - Dependencies: none.
+
+- [ ] T3001.2 Fix the non-graph fallback  Owner: TBD  Est: 1.5h
+  - Apply fix based on T3001.1 diagnosis.
+  - Likely fixes: ensure arena ResetPool does not corrupt in-flight tensors
+    in non-graph mode; handle TrySlice errors by retrying or pre-syncing.
+  - File: TBD based on diagnosis.
+  - Acceptance: bench_tps with Llama 3 ZMF produces coherent text without
+    CUDA graph.
+  - Dependencies: T3001.1.
+
+- [ ] S3001.2.1 Verify non-graph fix on DGX  Owner: TBD  Est: 30m
+  - Run bench_tps for Llama 3 and Qwen 2.5 without graph.
+  - Verify coherent output at temp=0.
+  - Dependencies: T3001.2.
+
+### E3002: Fix Mistral Range Op Panic
+
+- [ ] T3002.1 Diagnose Mistral Range op index OOB  Owner: TBD  Est: 1h
+  - Read layers/core/range_op.go:29 and trace the input shapes.
+  - Run with debug output on DGX: bench_tps with Mistral 7B.
+  - Check if the Range op receives empty inputs (length 0) causing index [0]
+    with length 0.
+  - Likely cause: tokenizer mismatch or graph builder issue for Mistral.
+  - File: layers/core/range_op.go, inference/arch_llama.go (Mistral uses
+    Llama architecture).
+  - Acceptance: Root cause identified.
+  - Dependencies: none.
+
+- [ ] T3002.2 Fix Range op for Mistral  Owner: TBD  Est: 1h
+  - Apply fix based on T3002.1 diagnosis.
+  - Add bounds checking to Range op to prevent panic.
+  - File: layers/core/range_op.go or inference/.
+  - Acceptance: bench_tps with Mistral 7B produces output without panic.
+  - Dependencies: T3002.1.
+
+- [ ] S3002.2.1 Test Mistral fix on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps with Mistral 7B, 20 tokens.
+  - Acceptance: No panic. Output produced.
+  - Dependencies: T3002.2.
+
+### E3003: Fix Phi 4 pow_scalar Kernel
+
+- [ ] T3003.1 Diagnose Phi 4 pow_scalar cuda error 1  Owner: TBD  Est: 1h
+  - Check if pow_scalar kernel exists in internal/cuda/kernels/.
+  - Check if Phi 4 architecture uses Pow nodes (GeLU approximation?).
+  - Read compute/gpu_engine.go Pow/PowScalar implementation.
+  - File: compute/gpu_engine.go, internal/cuda/kernels/.
+  - Acceptance: Root cause identified (missing kernel vs wrong dispatch).
+  - Dependencies: none.
+
+- [ ] T3003.2 Fix pow_scalar for Phi 4  Owner: TBD  Est: 1.5h
+  - Implement or fix the pow_scalar CUDA kernel.
+  - If the kernel is missing, add it to internal/cuda/kernels/ and wire it
+    through the purego bindings.
+  - File: internal/cuda/kernels/, compute/gpu_engine.go.
+  - Acceptance: bench_tps with Phi 4 produces output without kernel error.
+  - Dependencies: T3003.1.
+
+- [ ] S3003.2.1 Test Phi 4 fix on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps with Phi 4, 20 tokens.
+  - Acceptance: No kernel error. Output produced.
+  - Dependencies: T3003.2.
+
+### E3004: All-Model Verification
+
+- [ ] T3004.1 Run all 5 models on DGX and record results  Owner: TBD  Est: 1h
+  - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
+  - Record tok/s, output quality, CUDA graph status for each.
   - File: docs/updates.md.
-  - Acceptance: Profile data shows kernel time breakdown.
-  - Dependencies: none.
+  - Acceptance: All 5 models produce coherent output.
+  - Dependencies: S3000.1.1, S3001.2.1, S3002.2.1, S3003.2.1.
 
-- [x] T1001.2 Revert decode kernel to cuBLAS attention  Owner: task-T1001.2  Completed: 2026-03-14
-  - Based on T1001.1 profiling, either optimize or revert to cuBLAS attention.
-  - File: internal/cuda/kernels/flash_attention.cu.
-  - Acceptance: Decode tok/s equal to or better than before.
-  - Dependencies: T1001.1.
+### E3005: README
 
-- [x] S1001.2.1 Test decode kernel changes  Owner: task-S1001.2.1  Completed: 2026-03-14
-  - go test ./internal/cuda/kernels/... -race -timeout 120s.
-  - Run bench_tps on DGX to verify no regression.
-  - Acceptance: All kernel tests pass. Throughput >= 230 tok/s.
-  - Dependencies: T1001.2.
-
-- [x] T1001.3 Run go vet and make shared  Owner: task-T1001.3  Completed: 2026-03-14
-  - go vet ./internal/cuda/...
-  - make shared CUDA_ARCH=sm_121 on DGX.
-  - Acceptance: No new warnings. Build succeeds.
-  - Dependencies: T1001.2.
-
-### E1002: Purego Trampoline (Phase 8 retained)
-
-- [x] T1002.1 Diagnose purego trampoline segfault  Owner: task-T1002.1  Completed: 2026-03-14
-  - Reproduce segfault on DGX with a minimal test case.
-  - Check ccallTrampoline assembly for ARM64 AAPCS64 compliance.
-  - Verify stack alignment for 14+ argument C functions.
-  - File: internal/cuda/purego_linux_arm64.s.
-  - Acceptance: Root cause identified and documented.
-  - Dependencies: none.
-
-- [x] T1002.2 Verify trampoline (re-scoped: trampoline correct, arena test fix verified)  Owner: task-T1002.2  Completed: 2026-03-14
-  - Trampoline assembly is correct per T1002.1.
-  - Real fix: IsManaged() guards in arena tests (applied in T1002.1).
-  - Verified on DGX: 27 tests pass, no segfaults, bench_tps works.
-  - Dependencies: T1002.1.
-
-- [x] S1002.2.1 Verify trampoline fix on DGX  Owner: task-T1002.2  Completed: 2026-03-14
-  - Verified as part of T1002.2: go test ./internal/cuda/... passes, bench_tps works.
-  - Dependencies: T1002.2.
-
-### E2002: DGX Verification (Phase 7 leftover)
-
-- [x] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: task-S902.5.1  Completed: 2026-03-14
-  - Run bench_tps with --kv-dtype=fp16 on DGX, 20 tokens.
-  - Verify output quality (coherent text at temp=0).
-  - Acceptance: Output coherent. No pad tokens.
-  - Dependencies: none.
-
-- [x] S905.3.1 Test GQA decode fast path correctness  Owner: task-S905.3.1  Completed: 2026-03-14
-  - go test ./layers/attention/... -race -timeout 120s.
-  - Run bench_tps on DGX with 20 tokens, verify output matches standard path.
-  - Acceptance: All tests pass. Output coherent at temp=0.
-  - Dependencies: none.
-
-### E1103: README (blocked on model fix)
-
-- [ ] T1103.1 Write README.md with quickstart  Owner: TBD  Est: 1.5h
-  - Sections: What is Zerfoo, Installation, Quickstart (pull + run in 3 commands),
-    Supported Models (table with tok/s), API Usage (curl examples),
+- [ ] T3005.1 Write README.md with quickstart  Owner: TBD  Est: 1.5h
+  - Sections: What is Zerfoo, Installation, Quickstart (pull + run in 3
+    commands), Supported Models (table with tok/s), API Usage (curl examples),
     Performance (vs Ollama chart), Architecture Overview, Contributing.
-  - Include benchmark table from DGX results.
+  - Include benchmark table from T3004.1 results.
   - File: README.md.
   - Acceptance: A new user can go from clone to inference in 5 minutes
     following the README.
-  - Dependencies: S2001.2.1 (need verified model benchmarks).
+  - Dependencies: T3004.1.
 
 ---
 
@@ -206,37 +240,37 @@ forward pass.
 
 | Track | Epics/Tasks | Notes |
 |-------|-------------|-------|
-| Track A: Test Coverage | T2000.5, T2000.6 | Local tests, no DGX |
-| Track B: Graph Fix | T2001.1-S2001.2.2 | DGX for T2001.2+ |
-| Track C: Decode Kernel | T1001.1-T1001.3 | DGX-only |
-| Track D: Trampoline | T1002.1-S1002.2.1 | DGX-only |
-| Track E: Verification | S902.5.1, S905.3.1 | DGX-only |
+| Track A: Graph Capture | T3000.1, S3000.1.1, S3000.1.2 | DGX for verification |
+| Track B: Fallback Fix | T3001.1, T3001.2, S3001.2.1 | DGX for diagnosis |
+| Track C: Mistral | T3002.1, T3002.2, S3002.2.1 | DGX for reproduction |
+| Track D: Phi 4 | T3003.1, T3003.2, S3003.2.1 | DGX for reproduction |
+| Track E: README | T3005.1 | Blocked on T3004.1 |
 
 ### Maximum parallelism
 
-- Wave 2 (5 tasks): T2000.5 (getDevicePtr lifecycle test) + T2000.6 (CLI pull integration) +
-  T2001.1 (debug logging) + T1001.1 (decode kernel profile, DGX) + T1002.1 (trampoline diagnosis, DGX).
-  All 5 are independent.
+- Wave 1 (4 tasks): T3000.1 (weight pre-upload, local code) + T3001.1 (diagnose
+  fallback, DGX) + T3002.1 (diagnose Mistral, DGX) + T3003.1 (diagnose Phi 4, DGX).
+  All 4 are independent. T3000.1 is local code; the others need DGX.
 
-- Wave 3 (5 tasks): T2001.2 (fix cuBLAS root cause, DGX) + T1001.2 (optimize decode kernel, DGX) +
-  T1002.2 (fix trampoline, DGX) + S902.5.1 (FP16 KV test, DGX) + S905.3.1 (GQA fast path, DGX).
-  T2001.2 depends on T2001.1. T1001.2 depends on T1001.1. T1002.2 depends on T1002.1.
-  S902.5.1 and S905.3.1 are independent.
+- Wave 2 (5 tasks): S3000.1.1 (test Llama 3 graph, DGX) + S3000.1.2 (test Qwen 2.5,
+  DGX) + T3001.2 (fix fallback, DGX) + T3002.2 (fix Mistral) + T3003.2 (fix Phi 4).
+  S3000.1.x depend on T3000.1. T3001.2 depends on T3001.1. T3002.2 depends on T3002.1.
+  T3003.2 depends on T3003.1.
 
-- Wave 4 (5 tasks): S2001.2.1 (verify 4 models, DGX) + S2001.2.2 (local unit tests) +
-  S1001.2.1 (decode kernel tests) + T1001.3 (go vet + make shared) + S1002.2.1 (trampoline verify).
-  All depend on Wave 3 outputs.
+- Wave 3 (3 tasks): S3001.2.1 (verify fallback fix) + S3002.2.1 (verify Mistral) +
+  S3003.2.1 (verify Phi 4). All depend on Wave 2.
 
-- Wave 5 (1 task): T1103.1 (README -- depends on model verification results from Wave 4).
+- Wave 4 (1 task): T3004.1 (all-model verification). Depends on Wave 3.
+
+- Wave 5 (1 task): T3005.1 (README). Depends on T3004.1.
 
 ### Dependency minimization checklist applied
 
-a) T2000.5 and T2000.6 are independent of all DGX work.
-b) Graph fix debug logging (T2001.1) is independent of test coverage tasks.
-c) Decode kernel (E1001) and trampoline (E1002) are fully independent of each other.
-d) FP16 KV and GQA tests (E2002) are independent of everything else.
-e) README is the only task with a hard dependency on model fix results.
-f) Wave 2 saturates all 5 slots with zero inter-dependencies.
+a) Diagnosis tasks (T3001.1, T3002.1, T3003.1) are independent of T3000.1.
+b) T3000.1 (weight pre-upload) is pure local code, no DGX needed for implementation.
+c) All 4 model-specific tracks are independent of each other.
+d) Wave 1 has 4 tasks (could be 5 if T3001.1 is split, but diagnosis is atomic).
+e) README is the only task with a hard dependency on model verification.
 
 ---
 
@@ -244,11 +278,9 @@ f) Wave 2 saturates all 5 slots with zero inter-dependencies.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M200: Test coverage complete | T2000.6 | getDevicePtr + CLI pull integration tests pass |
-| M201: Models fixed | S2001.2.1 | All 4 ZMF models produce coherent GPU output |
-| M202: Phase 8 done | S1002.2.1 | Decode kernel resolved, trampoline fixed |
-| M203: Phase 7 verified | S905.3.1 | FP16 KV and GQA fast path verified on DGX |
-| M204: README published | T1103.1 | 5-minute quickstart verified |
+| M300: Graph capture works | S3000.1.1 | Llama 3 ZMF uses CUDA graph on DGX |
+| M301: All models run | T3004.1 | All 5 models produce coherent output |
+| M302: README published | T3005.1 | 5-minute quickstart verified |
 
 ---
 
@@ -256,10 +288,11 @@ f) Wave 2 saturates all 5 slots with zero inter-dependencies.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R2000 | cuBLAS status 7 root cause is deeper than memory lifecycle | Extended debugging | Medium | T2001.1 debug logging will narrow the search. Fallback: pre-allocate all weight buffers at model load time. |
-| R2001 | Trampoline segfault is a Go runtime/assembly interaction | Hard to fix | Medium | CGo fallback path exists (purego_linux_arm64_cgo.go) but needs CUDA headers. |
-| R2002 | FP16 KV still produces garbage | Feature unusable | Medium | FP16 KV is optional. F32 KV works at 234 tok/s. |
-| R2003 | Decode kernel optimization yields no speedup | Wasted effort | Low | T1001.1 profiling first. Can revert to cuBLAS attention. |
+| R3000 | Weight pre-upload increases GPU memory pressure | OOM on smaller GPUs | Low | DGX has 128GB unified. Pre-upload only frozen weights. |
+| R3001 | Non-graph garbage output is in generation loop, not graph executor | Harder fix | Medium | T3001.1 diagnosis will narrow. Check generate/generator.go token loop. |
+| R3002 | Mistral Range op panic is architectural mismatch | May need Mistral-specific graph builder | Medium | Llama builder may not handle sliding window attention. |
+| R3003 | Phi 4 needs a new CUDA kernel (pow_scalar) | Need to add .cu + purego binding | High | Simple kernel. Can use GPU Pow element-wise as fallback. |
+| R3004 | make shared link step fails on CUDA 13.0 | Build friction | Medium | Known workaround: pass .pic.o files explicitly to nvcc. |
 
 ---
 
@@ -294,42 +327,40 @@ A task is done when:
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-14 (Phase 10 Wave 1 Complete, Plan Trimmed)
+### Change Summary -- 2026-03-14 (Phase 11 Plan Created)
 
-Trimmed 5 completed tasks from Wave 1. Stable knowledge preserved in
-docs/design.md (updated known limitation 16, test coverage section).
+Trimmed all 36 completed Phase 10 tasks. Stable knowledge (cuBLAS fix root cause,
+decode kernel profiling results, trampoline diagnosis, FP16 KV results) preserved
+in docs/design.md and docs/updates.md. Created Phase 11 with 6 epics, 16 tasks.
 
-Completed and removed:
-- E2000 tasks T2000.1-T2000.4: large MatMul GPU tests, CLI pull tests, Range op
-  edge cases, graph forward tests (40+ new tests across 4 packages).
-- E2002 task S1003.4.1: CI strict lint verified, 3 lint fixes applied
-  (duplicate constantNode, errcheck in serve/metrics.go, dupl in serve/server_test.go).
-
-Remaining: 14 tasks across 6 epics. Designed for 4 waves (Wave 2-5) with up to
-5 parallel agents per wave. Wave 2 saturates all 5 slots.
-
-### Change Summary -- 2026-03-14 (Phase 10 Plan Created)
-
-Trimmed 16 completed tasks from Phase 9 plan. Created new epic E2000 (Test
-Coverage Gaps) with 6 tasks. Restructured E2001 with debug instrumentation
-approach. Retained Phase 8 E1001/E1002 and Phase 7 verification tasks.
-Total: 24 tasks across 6 epics.
+New issues identified from S2001.2.1 verification:
+- CUDA graph capture fails for ZMF models (cuda error 901 from H2D copies during capture)
+- Non-graph fallback produces garbage output
+- Mistral Range op panic (pre-existing)
+- Phi 4 pow_scalar kernel error (pre-existing)
 
 ---
 
 ## 9. Hand-off Notes
 
 - **Current version:** v1.1.0 (released 2026-03-14).
-- **Performance:** 234 tok/s F32 with CUDA graph (beats Ollama 197.21 by 18.7%).
-- **Branches:** fix/errcheck-issues has all work (~42 commits ahead of main).
-- **Key bug:** Non-GGUF models fail on GPU with cuBLAS status 7 at LM head.
-  cuBLAS works in isolation. See docs/updates.md for deep dive.
+- **Performance:** 232 tok/s Gemma 3 Q4K with CUDA graph (beats Ollama by 18.7%).
+- **Branch:** fix/errcheck-issues has all work (~58 commits ahead of main).
+- **Key bug (FIXED):** cuBLAS status 7 was stale tensor caching. Fixed by removing
+  Transpose/MatMul weight caching and using MatMulTransposeB.
+- **Current bugs:** ZMF models: CUDA graph capture fails (H2D during capture),
+  non-graph fallback produces garbage. Mistral: Range panic. Phi 4: pow_scalar error.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
 - **Build:** /usr/local/go/bin/go build ./...
 - **Benchmark:** export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
   && /usr/local/go/bin/go run ./cmd/bench_tps --model <path> --tokens 256
   --prompt 'The quick brown fox' --device cuda --dtype fp32
-- **Models on DGX:** ~/models/gemma3-gguf/model.gguf (works), ~/models/llama3/
-  (ZMF, fails), ~/models/qwen25/ (ZMF, fails), ~/models/mistral/ (ZMF, fails)
+- **Models on DGX:** ~/models/gemma3-gguf/model.gguf (232 tok/s), ~/models/llama3/
+  (16.93 tok/s, garbage), ~/models/qwen25/ (14.59 tok/s, garbage),
+  ~/models/mistral/ (Range panic), ~/models/phi4/ (pow_scalar error)
 - **Pre-commit hook:** Rejects multi-directory commits.
-- **OpenAI API endpoints:** /v1/chat/completions, /v1/completions, /v1/models, /metrics
+- **Key files for graph capture fix:**
+  - compute/gpu_kernels.go:32 -- getDevicePtr (H2D copy that breaks capture)
+  - graph/cuda_graph.go:142 -- captureAndRun (capture region)
+  - graph/cuda_graph.go:163 -- EnsureSlotsGPU (pre-capture GPU upload)
+  - tensor/gpu_storage.go:209 -- TrySlice (D2H copy)

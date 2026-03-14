@@ -950,7 +950,12 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 9. KV cache is optional -- not all graph architectures support it.
 10. Fused dequant+GEMV Q4_K kernel ready but engine dispatch validation pending.
 11. Performance: 234 tok/s F32 with CUDA graph (18.7% faster than Ollama 197.21 tok/s). Phase 6 complete.
-12. Non-GGUF (ZMF F32) models fail on GPU: cuBLAS status 7 at LM head projection for large vocab sizes (>128K). GGUF Q4K models bypass cuBLAS for LM head and work correctly. Root cause is in graph execution memory lifecycle, not cuBLAS dimensions.
+12. cuBLAS status 7 FIXED (Phase 10): Root cause was stale GPU tensor caching in Transpose/MatMul layers. Arena ResetPool freed GPU memory, but cached tensors held nil devicePtrs. Fix: removed caching, use MatMulTransposeB (SgemmNT). ZMF models now complete inference but CUDA graph capture fails (H2D copies during capture, error 901) and non-graph fallback produces garbage output.
+17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
+18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
+19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
+20. Phase 10 Wave 2 test coverage: getDevicePtr lifecycle tests (compute/gpu_kernels_test.go), CLI pull integration tests with httptest mock HF server (cmd/cli/pull_test.go), debug GPU logging (ZERFOO_DEBUG_GPU=1).
+21. EngineProxy.MatMulTransposeB fallback handles both 2D [1,0] and 3D [0,2,1] axes (Phase 10 fix).
 13. Serve layer hardened (Phase 9 Wave 1): structured request logging, /metrics endpoint, panic recovery with 503 for OOM.
 14. OpenAI API integration tests added (71 tests, serve/integration_test.go with //go:build integration).
 15. Lint debt resolved: errcheck, unused, ineffassign issues fixed. CI lint step now strict (no || true).
