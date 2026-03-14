@@ -222,17 +222,6 @@ func (t *BPETokenizer) SetSpecialTokenStrings(tokens map[string]int) {
 	t.specialTokens = tokens
 }
 
-// preTokenize splits text into words for BPE processing.
-func (t *BPETokenizer) preTokenize(text string) []string {
-	if t.byteLevelBPE {
-		return t.byteLevelPreTokenize(text)
-	}
-	if t.sentencePiece {
-		return t.sentencePiecePreTokenize(text, true)
-	}
-	return strings.Fields(text)
-}
-
 // sentencePiecePreTokenize implements SentencePiece-style pre-tokenization.
 // Text is split on whitespace boundaries. Words that follow a space get ▁
 // (U+2581) prepended. Newlines are emitted as separate tokens.
