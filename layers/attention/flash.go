@@ -84,23 +84,27 @@ func tryFlashForward[T tensor.Numeric](
 
 // tryFlashDecode attempts to use the decode-specific flash attention kernel.
 // This handles the autoregressive decode case where Q has 1 token but K/V
-// have kvSeqLen tokens (from the KV cache).
+// have kvSeqLen tokens (from the KV cache). Supports GQA where numQueryHeads
+// may differ from numKVHeads.
 //
-// Q:  [batchHeads, 1, headDim]
-// K:  [batchHeads, maxKVLen, headDim]  -- pre-allocated KV buffer
-// V:  [batchHeads, maxKVLen, headDim]
+// Q:  [batch*numQueryHeads, 1, headDim]
+// K:  [batch*numKVHeads, maxKVLen, headDim]  -- pre-allocated KV buffer
+// V:  [batch*numKVHeads, maxKVLen, headDim]
 //
-// kvSeqLen:  actual KV sequence length (used when kvLenPtr is nil).
-// kvLenPtr:  GPU-resident int32 pointer; when non-nil, the kernel reads
-//            the KV length from GPU memory, making it CUDA graph compatible.
-// maxKVLen:  stride of the KV buffer (allocated capacity).
-// stream:    CUDA stream for kernel launch.
+// kvSeqLen:       actual KV sequence length (used when kvLenPtr is nil).
+// kvLenPtr:       GPU-resident int32 pointer; when non-nil, the kernel reads
+//                 the KV length from GPU memory, making it CUDA graph compatible.
+// maxKVLen:       stride of the KV buffer (allocated capacity).
+// numQueryHeads:  number of query heads per batch element.
+// numKVHeads:     number of KV heads per batch element.
+// stream:         CUDA stream for kernel launch.
 //
 // Returns (result, nil) on success, (nil, nil) when not applicable.
 func tryFlashDecode[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim, kvSeqLen, maxKVLen int,
 	kvLenPtr unsafe.Pointer,
+	numQueryHeads, numKVHeads int,
 	stream unsafe.Pointer,
 ) (*tensor.TensorNumeric[T], error) {
 	if !cuda.Available() {
@@ -137,7 +141,7 @@ func tryFlashDecode[T tensor.Numeric](
 	if err := kernels.FlashAttentionDecode(
 		qGPU.Ptr(), kGPU.Ptr(), vGPU.Ptr(), oGPU.Ptr(),
 		batchHeads, maxKVLen, headDim, kvSeqLen,
-		kvLenPtr, stream,
+		kvLenPtr, numQueryHeads, numKVHeads, stream,
 	); err != nil {
 		oGPU.Free() //nolint:errcheck
 		return nil, err
