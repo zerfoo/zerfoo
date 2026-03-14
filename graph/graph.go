@@ -54,6 +54,28 @@ type Graph[T tensor.Numeric] struct {
 	maxDeps          int                         // max dependencies per node
 }
 
+// Resettable is implemented by nodes that carry state between forward passes
+// and need to be reset before a new generation sequence (e.g. position ID
+// counters, attention mask accumulators, KV cache buffers).
+type Resettable interface {
+	Reset()
+}
+
+// ResetStatefulNodes resets all nodes that implement the Resettable interface.
+// Call this before starting a new generation sequence to clear accumulated
+// state from previous runs.
+func (g *Graph[T]) ResetStatefulNodes() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, n := range g.nodes {
+		if r, ok := n.(Resettable); ok {
+			r.Reset()
+		}
+	}
+	// Also invalidate cached refcounts since graph state is changing.
+	g.cachedRefCount = nil
+}
+
 // AddKVPair registers a stateful input node that should receive the output
 // of another node after each forward pass. Used for ONNX KV cache feedback.
 func (g *Graph[T]) AddKVPair(input StatefulInputNode[T], output Node[T]) {
