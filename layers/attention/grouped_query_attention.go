@@ -621,7 +621,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// so K/V buffers keep their native [batch, maxSeqLen, numKVHeads*headDim]
 		// shape — no engine.Repeat needed.
 		decodeUsed := false
-		if seqLen == 1 {
+		if seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads {
 			type fullBufferProvider interface {
 				GetFullBuffer(layer int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T])
 				MaxSeqLen() int
