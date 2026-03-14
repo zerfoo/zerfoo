@@ -162,7 +162,7 @@ each model via `zerfoo pull`, run bench_tps, inspect output quality.
 The serve/ package has OpenAI-compatible endpoints but no integration tests.
 Add tests that start the server, make HTTP requests, and verify responses.
 
-- [ ] T1101.1 Add chat completions integration test  Owner: TBD  Est: 1h
+- [x] T1101.1 Add chat completions integration test  Owner: task-T1101.1  Est: 1h  Done: 2026-03-14
   - Start a serve instance with a small model (or mock engine).
   - POST /v1/chat/completions with a simple prompt.
   - Verify: 200 status, response has choices[0].message.content,
@@ -172,7 +172,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Test passes with go test -tags=integration.
   - Dependencies: none.
 
-- [ ] T1101.2 Add completions integration test  Owner: TBD  Est: 45m
+- [x] T1101.2 Add completions integration test  Owner: task-T1101.1  Est: 45m  Done: 2026-03-14
   - POST /v1/completions with a text prompt.
   - Verify: 200 status, response has choices[0].text.
   - Test streaming variant.
@@ -180,7 +180,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Test passes.
   - Dependencies: none.
 
-- [ ] T1101.3 Add models endpoint tests  Owner: TBD  Est: 30m
+- [x] T1101.3 Add models endpoint tests  Owner: task-T1101.1  Est: 30m  Done: 2026-03-14
   - GET /v1/models -- verify model list.
   - GET /v1/models/{id} -- verify model info.
   - DELETE /v1/models/{id} -- verify model unload.
@@ -188,7 +188,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Tests pass.
   - Dependencies: none.
 
-- [ ] T1101.4 Add error handling tests  Owner: TBD  Est: 30m
+- [x] T1101.4 Add error handling tests  Owner: task-T1101.1  Est: 30m  Done: 2026-03-14
   - POST with invalid JSON -- verify 400.
   - POST with missing model -- verify 404.
   - POST with empty messages -- verify 400.
@@ -204,7 +204,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
 
 ### E1102: Server Production Hardening
 
-- [ ] T1102.1 Add structured request logging  Owner: TBD  Est: 1h
+- [x] T1102.1 Add structured request logging  Owner: task-T1102.1  Est: 1h  Done: 2026-03-14
   - Log each request: method, path, model, prompt_tokens, completion_tokens,
     latency_ms, status_code.
   - Use the existing log/ package (structured leveled logging).
@@ -213,7 +213,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Every request logged with structured fields.
   - Dependencies: none.
 
-- [ ] T1102.2 Add token rate metrics  Owner: TBD  Est: 45m
+- [x] T1102.2 Add token rate metrics  Owner: task-T1102.2  Est: 45m  Done: 2026-03-14
   - Track: tokens_generated_total, tokens_per_second (rolling average),
     requests_total, request_latency_ms (histogram).
   - Use the existing metrics/runtime/ package (Counter, Gauge, Histogram).
@@ -222,7 +222,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Metrics endpoint returns valid counters after requests.
   - Dependencies: none.
 
-- [ ] T1102.3 Add graceful error recovery  Owner: TBD  Est: 45m
+- [x] T1102.3 Add graceful error recovery  Owner: task-T1102.3  Est: 45m  Done: 2026-03-14
   - Catch panics in request handlers (recover middleware).
   - Return 500 with structured error response instead of crashing.
   - Handle OOM during inference: catch allocator errors, return 503.
@@ -247,7 +247,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
     following the README.
   - Dependencies: T1100.5 (need verified models for the table).
 
-- [ ] T1103.2 Update CHANGELOG.md for v1.1.0  Owner: TBD  Est: 30m
+- [x] T1103.2 Update CHANGELOG.md for v1.1.0  Owner: task-T1103.2  Est: 30m  Done: 2026-03-14
   - Summarize Phase 6-7 changes in user-facing terms.
   - File: CHANGELOG.md.
   - Acceptance: CHANGELOG covers all features since v0.3.0.
