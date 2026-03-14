@@ -229,5 +229,22 @@ func (k *CUDAKernels) DequantFP8E4M3ToFP16(input, output unsafe.Pointer, scale f
 	return kernels.DequantFP8E4M3ToFP16(input, output, scale, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) IncrementCounter(counter unsafe.Pointer, delta int, s Stream) error {
+	return kernels.IncrementCounter(counter, delta, streamPtr(s))
+}
+
+func (k *CUDAKernels) ResetCounter(counter unsafe.Pointer, value int, s Stream) error {
+	return kernels.ResetCounter(counter, value, streamPtr(s))
+}
+
+func (k *CUDAKernels) OffsetMemcpy(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, s Stream) error {
+	return kernels.OffsetMemcpy(dst, src, counter, dim, maxSeqLen, streamPtr(s))
+}
+
+func (k *CUDAKernels) RoPESelect(cosTable, sinTable, cosOut, sinOut, counter unsafe.Pointer,
+	halfRotary int, s Stream) error {
+	return kernels.RoPESelect(cosTable, sinTable, cosOut, sinOut, counter, halfRotary, streamPtr(s))
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*CUDAKernels)(nil)
