@@ -121,18 +121,15 @@ region and returns the pointer without any cudaMemcpy.
     for ZMF models.
   - Dependencies: none.
 
-- [ ] S3000.1.1 Test weight pre-upload with Llama 3 on DGX  Owner: TBD  Est: 30m
-  - Run bench_tps with Llama 3 ZMF: graph capture should succeed.
-  - Verify "captured instructions" appears in output.
-  - Compare tok/s with and without graph.
-  - File: docs/updates.md.
-  - Acceptance: CUDA graph captures successfully for Llama 3 ZMF.
-  - Dependencies: T3000.1.
+- [x] S3000.1.1 Test weight pre-upload with Llama 3 on DGX  Owner: task-DGX  Done: 2026-03-14
+  - Result: Graph capture FAILED at instruction 38 (Transpose), cuda error 901.
+  - Root cause: GPUStorage.TrySlice does sync D2H memcpy on legacy stream during capture.
+  - PreUploadFrozenWeights fixed CPUStorage H2D, but TrySlice D2H is a different path.
+  - Fallback: 16.36 tok/s, garbage output (T3001.2 not yet deployed to DGX).
 
-- [ ] S3000.1.2 Test weight pre-upload with Qwen 2.5 on DGX  Owner: TBD  Est: 15m
-  - Run bench_tps with Qwen 2.5 ZMF.
-  - Acceptance: CUDA graph captures successfully for Qwen 2.5 ZMF.
-  - Dependencies: T3000.1.
+- [x] S3000.1.2 Test weight pre-upload with Qwen 2.5 on DGX  Owner: task-DGX  Done: 2026-03-14
+  - Result: Graph capture FAILED at instruction 76 (Transpose), same root cause.
+  - Fallback: 14.09 tok/s, garbage output.
 
 ### E3001: Fix Non-Graph Fallback Garbage Output
 
@@ -151,21 +148,19 @@ correctness bug that must be fixed regardless of graph capture success.
   - Acceptance: Root cause identified.
   - Dependencies: none.
 
-- [ ] T3001.2 Fix the non-graph fallback  Owner: TBD  Est: 1.5h
-  - Root cause: KV cache double-update during failed graph capture. captureAndRun
-    partially executes GQA layers (which call cache.Update()), then on failure the
-    fallback RunInstructions re-runs ALL instructions, double-incrementing seqLen.
-  - Fix: snapshot/restore KV cache seqLen around the capture attempt. Before
-    RunInstructionRange(captureStart, captureEnd), save each layer's lb.seqLen
-    (and GPU counter). If capture fails, restore snapshot before fallback.
-  - Files: graph/cuda_graph.go, generate/tensor_cache.go.
+- [x] T3001.2 Fix the non-graph fallback  Owner: task-T3001.2  Done: 2026-03-14 (425e0c6, 20c9423)
+  - Added snapshotCache callback to CUDAGraphExecutor
+  - Truncate() now resets GPU counters (gpuCounter + kvSeqLenCounter)
+  - Generator wires up snapshot: saves SeqLen() before capture, Truncate() on failure
+  - Files: graph/cuda_graph.go, generate/tensor_cache.go, generate/generator.go.
   - Acceptance: bench_tps with Llama 3 ZMF produces coherent text without
     CUDA graph.
   - Dependencies: T3001.1.
 
 - [ ] S3001.2.1 Verify non-graph fix on DGX  Owner: TBD  Est: 30m
-  - Run bench_tps for Llama 3 and Qwen 2.5 without graph.
-  - Verify coherent output at temp=0.
+  - Run bench_tps for Llama 3 and Qwen 2.5 with T3001.2 deployed.
+  - Graph capture still fails (TrySlice issue), but fallback should now produce
+    coherent output thanks to KV cache snapshot/restore.
   - Dependencies: T3001.2.
 
 ### E3002: Fix Mistral Range Op Panic
@@ -188,9 +183,9 @@ correctness bug that must be fixed regardless of graph capture success.
   - Acceptance: bench_tps with Mistral 7B produces output without panic.
   - Dependencies: T3002.1.
 
-- [ ] S3002.2.1 Test Mistral fix on DGX  Owner: TBD  Est: 15m
-  - Run bench_tps with Mistral 7B, 20 tokens.
-  - Acceptance: No panic. Output produced.
+- [x] S3002.2.1 Test Mistral fix on DGX  Owner: task-DGX  Done: 2026-03-14
+  - No panic (bounds check fix works). But Range op Data() returns empty for
+    GPU scalars during capture — same family of sync-during-capture bugs.
   - Dependencies: T3002.2.
 
 ### E3003: Fix Phi 4 pow_scalar Kernel
@@ -203,19 +198,15 @@ correctness bug that must be fixed regardless of graph capture success.
   - Acceptance: Root cause identified (missing kernel vs wrong dispatch).
   - Dependencies: none.
 
-- [ ] T3003.2 Fix pow_scalar for Phi 4  Owner: TBD  Est: 0.5h
-  - Root cause: stale libkernels.so on DGX built before pow_scalar was added.
-    Code is correct (kernel, bindings, symbol loading, dispatch all verified).
-  - Fix: rebuild libkernels.so on DGX with CUDA_ARCH=sm_121:
-    cd ~/zerfoo/internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
-  - File: internal/cuda/kernels/Makefile (no code changes needed).
-  - Acceptance: bench_tps with Phi 4 produces output without kernel error.
-  - Dependencies: T3003.1.
+- [x] T3003.2 Rebuild libkernels.so on DGX  Owner: task-DGX  Done: 2026-03-14
+  - Rebuilt with CUDA_ARCH=sm_121. pow_scalar kernel works during warmup.
+  - NEW ISSUE: pow_scalar path does D2H + Synchronize to read exponent, fails
+    during graph capture with cuda error 1. Needs gpuPow to cache scalar value
+    during warmup or mark Pow as non-capturable.
 
 - [ ] S3003.2.1 Test Phi 4 fix on DGX  Owner: TBD  Est: 15m
-  - Run bench_tps with Phi 4, 20 tokens.
-  - Acceptance: No kernel error. Output produced.
-  - Dependencies: T3003.2.
+  - Blocked: pow_scalar fails during graph capture (D2H during capture).
+  - Dependencies: T3003.2, new fix for Pow capture-safety.
 
 ### E3004: All-Model Verification
 
