@@ -175,10 +175,7 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	// baked into captured CUDA graphs — it stays live across replays.
 	// The GPU counter is synced to the CPU seqLen at the end of prefill
 	// (see below), so by decode time it already holds the correct position.
-	//
-	// FP16 mode skips this path: offset_memcpy_fp16 is handled by T902.2.
-	// FP16 falls through to the regular append-with-conversion below.
-	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU && !c.kvFP16 {
+	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU {
 		kGS, kOK := newK.GetStorage().(*tensor.GPUStorage[T])
 		vGS, vOK := newV.GetStorage().(*tensor.GPUStorage[T])
 		if kOK && vOK {
@@ -186,11 +183,22 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 			streamPtr := c.stream.Ptr()
 			tokenDim := dim * batch
 
-			if err := kernels.OffsetMemcpy(lb.kStorage.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-				return fmt.Errorf("offset_memcpy K layer %d: %w", layer, err)
-			}
-			if err := kernels.OffsetMemcpy(lb.vStorage.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-				return fmt.Errorf("offset_memcpy V layer %d: %w", layer, err)
+			if c.kvFP16 && lb.kFP16 != nil {
+				// FP16 path: offset_memcpy_fp16 converts F32 src to FP16
+				// and writes at the GPU-counter offset. Graph-capturable.
+				if err := kernels.OffsetMemcpyFP16(lb.kFP16.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+					return fmt.Errorf("offset_memcpy_fp16 K layer %d: %w", layer, err)
+				}
+				if err := kernels.OffsetMemcpyFP16(lb.vFP16.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+					return fmt.Errorf("offset_memcpy_fp16 V layer %d: %w", layer, err)
+				}
+			} else {
+				if err := kernels.OffsetMemcpy(lb.kStorage.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+					return fmt.Errorf("offset_memcpy K layer %d: %w", layer, err)
+				}
+				if err := kernels.OffsetMemcpy(lb.vStorage.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+					return fmt.Errorf("offset_memcpy V layer %d: %w", layer, err)
+				}
 			}
 
 			// Advance GPU counter and CPU seqLen after the last layer.

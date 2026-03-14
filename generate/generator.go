@@ -51,8 +51,16 @@ func DefaultSamplingConfig() SamplingConfig {
 type GeneratorOption func(*generatorOptions)
 
 type generatorOptions struct {
-	pagedKVMaxMB int // when > 0, use PagedKVCache with this memory budget
-	headDim      int // required for paged KV (auto-detected from model if 0)
+	pagedKVMaxMB int    // when > 0, use PagedKVCache with this memory budget
+	headDim      int    // required for paged KV (auto-detected from model if 0)
+	kvDtype      string // KV cache storage dtype: "fp32" (default) or "fp16"
+}
+
+// WithGeneratorKVDtype sets the KV cache storage dtype. Supported: "fp32" (default), "fp16".
+func WithGeneratorKVDtype(dtype string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.kvDtype = dtype
+	}
 }
 
 // WithPagedKV enables paged KV caching with the given memory budget in MB.
@@ -76,6 +84,7 @@ type Generator[T tensor.Numeric] struct {
 	pool      *compute.TensorPool[T]                    // reusable intermediate buffers
 	blockPool *BlockPool[T]                              // nil when using pre-allocated KV cache
 	headDim   int                                        // per-head dim for paged KV
+	kvDtype   string                                     // KV cache storage dtype ("fp32" or "fp16")
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
 }
@@ -98,6 +107,7 @@ func NewGenerator[T tensor.Numeric](
 		tokenizer: tok,
 		engine:    eng,
 		config:    cfg,
+		kvDtype:   gopts.kvDtype,
 	}
 
 	if g != nil {
@@ -216,7 +226,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
-		cacheProvider = NewTensorCache[T](gen.engine, gen.config.NumLayers, gen.config.MaxSeqLen)
+		cacheProvider = gen.newTensorCache()
 	} else {
 		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
 	}
@@ -431,6 +441,15 @@ func (gen *Generator[T]) idsToTensor(ids []int) (*tensor.TensorNumeric[T], error
 		data[i] = T(id)
 	}
 	return tensor.New([]int{1, len(ids)}, data)
+}
+
+// newTensorCache creates a TensorCache with the generator's KV dtype setting.
+func (gen *Generator[T]) newTensorCache() *TensorCache[T] {
+	var opts []TensorCacheOption
+	if gen.kvDtype == "fp16" {
+		opts = append(opts, WithKVDtype("fp16"))
+	}
+	return NewTensorCache[T](gen.engine, gen.config.NumLayers, gen.config.MaxSeqLen, opts...)
 }
 
 // checkStop checks if the decoded generated tokens contain any stop string.

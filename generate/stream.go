@@ -56,7 +56,7 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 	if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
-		cacheProvider = NewTensorCache[T](gen.engine, gen.config.NumLayers, gen.config.MaxSeqLen)
+		cacheProvider = gen.newTensorCache()
 	} else {
 		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
 	}
