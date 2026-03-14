@@ -182,7 +182,15 @@ __global__ void kernel_sub_scalar(const float* a, float scalar, float* c, int n)
 
 __global__ void kernel_pow_scalar(const float* a, float scalar, float* c, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) c[idx] = powf(a[idx], scalar);
+    if (idx < n) {
+        // Fast path for x^2 (used by ONNX RMSNorm): avoids powf() which
+        // returns NaN for negative bases (powf computes exp(s*log(x))).
+        if (scalar == 2.0f) {
+            c[idx] = a[idx] * a[idx];
+        } else {
+            c[idx] = powf(fabsf(a[idx]), scalar);
+        }
+    }
 }
 
 // ---------- Unary math ops ----------

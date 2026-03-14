@@ -25,7 +25,9 @@ __device__ __forceinline__ float dev_add_scalar(float a, float s) { return a + s
 __device__ __forceinline__ float dev_sub_scalar(float a, float s) { return a - s; }
 __device__ __forceinline__ float dev_mul_scalar(float a, float s) { return a * s; }
 __device__ __forceinline__ float dev_div_scalar(float a, float s) { return a / s; }
-__device__ __forceinline__ float dev_pow_scalar(float a, float s) { return powf(a, s); }
+__device__ __forceinline__ float dev_pow_scalar(float a, float s) {
+    return (s == 2.0f) ? a * a : powf(fabsf(a), s);
+}
 
 // ============================================================
 // T92.2: Unary device functions
