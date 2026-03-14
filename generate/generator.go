@@ -186,7 +186,19 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 								}
 							}
 						}
-						ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2, onCaptured)
+						// Snapshot/restore KV cache on capture failure to prevent
+					// double-updating the cache when falling back to RunInstructions.
+					snapshotCache := func(ctx context.Context) func() {
+						cache, ok := GetCache[T](ctx)
+						if !ok {
+							return func() {}
+						}
+						preCapSeqLen := cache.SeqLen()
+						return func() {
+							cache.Truncate(preCapSeqLen)
+						}
+					}
+					ge := graph.NewCUDAGraphExecutor[T](compiled, streamPtr, 2, onCaptured, snapshotCache)
 						compiled.SetMegakernelFn(func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 							return ge.Run(ctx, inputs...)
 						})

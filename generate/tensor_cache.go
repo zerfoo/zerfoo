@@ -537,11 +537,21 @@ func (c *TensorCache[T]) Reset() {
 
 // Truncate rolls back the cache to the given sequence length.
 // Pre-allocated buffers are kept; the data beyond newSeqLen is simply ignored.
+// GPU-resident counters (gpuCounter and kvSeqLenCounter) are also reset to
+// match newSeqLen so that GPU-side kernels (offset_memcpy, rope_select,
+// flash_attention_decode) see the correct position after rollback.
 func (c *TensorCache[T]) Truncate(newSeqLen int) {
 	for i := range c.layers {
 		if c.layers[i].seqLen > newSeqLen {
 			c.layers[i].seqLen = newSeqLen
 		}
+	}
+	val := int32(newSeqLen)
+	if c.gpuCounter != nil {
+		_ = c.gpuCounter.CopyFromHost([]int32{val}, 0)
+	}
+	if c.kvSeqLenCounter != nil {
+		_ = c.kvSeqLenCounter.CopyFromHost([]int32{val}, 0)
 	}
 }
 
