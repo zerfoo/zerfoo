@@ -32,3 +32,35 @@ func FlashAttentionForward(
 		c, uintptr(stream))
 	return checkKernel(ret, "flash_attention_forward_f32")
 }
+
+// FlashAttentionDecode computes single-query attention for autoregressive decode.
+//
+// Q: [numBH, 1, headDim]  -- single query per batch-head.
+// K: [numBH, maxKVLen, headDim]  -- pre-allocated KV cache buffer.
+// V: [numBH, maxKVLen, headDim]
+// O: [numBH, 1, headDim]  -- output.
+//
+// kvLen is the actual KV sequence length (used when kvLenPtr is nil).
+// kvLenPtr is a GPU-resident int32 pointer; when non-nil the kernel reads
+// the KV length from GPU memory at runtime, making it compatible with
+// CUDA graph replay (the value is not frozen at capture time).
+func FlashAttentionDecode(
+	Q, K, V, O unsafe.Pointer,
+	numBH, maxKVLen, headDim, kvLen int,
+	kvLenPtr unsafe.Pointer,
+	stream unsafe.Pointer,
+) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("flash_attention_decode_f32 kernel: kernels not available")
+	}
+	if k.launchFlashAttentionDecodeF32 == 0 {
+		return fmt.Errorf("flash_attention_decode_f32 kernel: symbol not loaded")
+	}
+	ret := cuda.Ccall(k.launchFlashAttentionDecodeF32,
+		uintptr(Q), uintptr(K), uintptr(V), uintptr(O),
+		uintptr(numBH), uintptr(maxKVLen), uintptr(headDim),
+		uintptr(kvLen), uintptr(kvLenPtr),
+		uintptr(stream))
+	return checkKernel(ret, "flash_attention_decode_f32")
+}

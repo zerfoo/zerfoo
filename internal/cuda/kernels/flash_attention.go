@@ -37,3 +37,23 @@ func FlashAttentionForward(
 	}
 	return nil
 }
+
+// FlashAttentionDecode computes single-query attention for autoregressive decode.
+func FlashAttentionDecode(
+	Q, K, V, O unsafe.Pointer,
+	numBH, maxKVLen, headDim, kvLen int,
+	kvLenPtr unsafe.Pointer,
+	stream unsafe.Pointer,
+) error {
+	err := C.flash_attention_decode_f32(
+		(*C.float)(Q), (*C.float)(K), (*C.float)(V), (*C.float)(O),
+		C.int(numBH), C.int(maxKVLen), C.int(headDim),
+		C.int(kvLen), (*C.int)(kvLenPtr),
+		C.cudaStream_t(stream),
+	)
+	if err != C.cudaSuccess {
+		return fmt.Errorf("flash_attention_decode_f32: %s",
+			C.GoString(C.cudaGetErrorString(err)))
+	}
+	return nil
+}
