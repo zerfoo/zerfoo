@@ -19,6 +19,7 @@ TEXT ·libc_dlerror_trampoline(SB),NOSPLIT,$0-0
 	JMP libc_dlerror(SB)
 
 // ccallTrampoline is called by asmcgocall(ccallTrampoline, &ccallArgs).
+// Verified correct on DGX Spark (GB10, ARM64) -- see docs/updates.md T1002.1.
 // It runs on the system stack (g0). R0 points to a ccallArgs struct:
 //
 //   struct ccallArgs {
