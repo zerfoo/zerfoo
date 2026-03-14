@@ -81,7 +81,8 @@ type KernelLib struct {
 	launchScaledSoftmaxF32 uintptr
 
 	// flash_attention
-	launchFlashAttentionF32 uintptr
+	launchFlashAttentionF32       uintptr
+	launchFlashAttentionDecodeF32 uintptr
 
 	// FP16 elementwise
 	launchAddFP16, launchSubFP16, launchMulFP16, launchDivFP16 uintptr
@@ -207,6 +208,7 @@ func openKernelLib() (*KernelLib, error) {
 		{"scaled_softmax_f32", &k.launchScaledSoftmaxF32},
 		// flash_attention
 		{"flash_attention_forward_f32", &k.launchFlashAttentionF32},
+		{"flash_attention_decode_f32", &k.launchFlashAttentionDecodeF32},
 		// FP16 elementwise
 		{"launch_add_fp16", &k.launchAddFP16},
 		{"launch_sub_fp16", &k.launchSubFP16},
@@ -237,6 +239,7 @@ func openKernelLib() (*KernelLib, error) {
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
+			"flash_attention_decode_f32":      true,
 			"launch_f32_to_fp16":              true,
 			"launch_fp16_to_f32":              true,
 			"launch_dequant_fp8e4m3_to_fp16":  true,
