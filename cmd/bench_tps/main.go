@@ -16,6 +16,7 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 	"github.com/zerfoo/zerfoo/registry"
 )
@@ -134,6 +135,9 @@ func run() error {
 	fmt.Printf("Generated tokens: %d\n", genTokens)
 	fmt.Printf("Time: %.3fs\n", elapsed.Seconds())
 	fmt.Printf("Throughput: %.2f tok/s\n", tps)
+
+	// Print cuBLAS profiling stats if ZERFOO_PROFILE_CUBLAS=1.
+	gpuapi.PrintCUBLASProfile()
 
 	// Print GPU memory pool stats if available.
 	if arena := cuda.DefaultArenaPool(); arena != nil {
