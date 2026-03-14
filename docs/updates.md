@@ -10353,3 +10353,63 @@ early exit removal) did NOT resolve the ZMF model failures:
 3. **Range/Pow scalar access**: Need to trace exactly where scalars get
    uploaded to GPU in the ZMF model loading path to ensure ce1e155 covers
    all scalar constant paths.
+
+---
+
+# Phase 11 Wave 4b: Gather nonCapturableOps Fix — All 5 Models (2026-03-14)
+
+**Commit**: `df3c7c0` (fix(graph): add Gather to nonCapturableOps for CUDA graph capture)
+**DGX**: ndungu@192.168.86.250, CUDA kernels rebuilt with `sm_121`
+
+## Results
+
+| Model | Format | Status | Graph Capture | tok/s | Output Quality |
+|-------|--------|--------|---------------|-------|----------------|
+| Gemma 3 | GGUF | Ran | Captured (instrs 1-184) | 142.09 | Incoherent (repetitive `**`, `This is the`) |
+| Llama 3 | ZMF | Ran | Disabled (Gather at instr 34 in [0,1610)) | 10.80 | Garbage (`!!!` repeated) |
+| Qwen 2.5 | ZMF | Ran | Disabled (Gather at instr 50 in [0,2712)) | 8.81 | Garbage (`!!!` repeated) |
+| Mistral 7B | ZMF | Error | N/A | N/A | `Range: limit input has no data (shape=[])` |
+| Phi 4 | ZMF | Error | N/A | N/A | `pow_scalar kernel failed (cuda error 1)` |
+
+## Analysis
+
+### Gather fix is insufficient for ZMF models
+
+The `nonCapturableOps` mechanism only trims non-capturable ops from the **edges** of the
+instruction range (start/end). For ZMF models, the Gather op appears in the **middle** of
+the instruction range (e.g., instruction 34 out of 1610 for Llama 3). The code correctly
+detects this and logs:
+
+```
+cuda graph: non-capturable op "Gather" at instruction 34 inside capture range [0, 1610), disabling graph
+```
+
+Graph capture is disabled, and inference falls back to normal execution — but the fallback
+still produces garbage `!!!` output for all ZMF models.
+
+### Gemma 3 GGUF: Graph captures but output still incoherent
+
+Graph capture succeeds (instructions 1-184) and throughput is high (142.09 tok/s), but
+output quality is poor — repetitive patterns like `This is the` and `**`. This matches
+prior observations and suggests an output quality issue separate from graph capture.
+
+### Mistral and Phi 4: Pre-existing errors
+
+These models fail during prefill with errors unrelated to graph capture:
+- **Mistral**: `Range: limit input has no data (shape=[])` — scalar constant not on GPU
+- **Phi 4**: `pow_scalar kernel failed (cuda error 1)` — same scalar upload issue
+
+These are the same errors seen in prior testing (S3100.1).
+
+## Verdict
+
+The Gather `nonCapturableOps` fix does NOT resolve CUDA graph capture for ZMF models.
+The Gather op is not at the edges of the instruction range — it appears early in the
+middle, so edge-trimming cannot help. A more sophisticated approach is needed:
+
+1. **Split capture into multiple regions** around non-capturable ops, or
+2. **Make Gather itself capturable** by eliminating the `TrySlice`/`cudaMemcpy` during
+   capture (e.g., use a GPU-side gather kernel that reads from device memory directly).
+
+Option 2 is likely more correct — the existing `gather.cu` kernel should be usable
+if the embedding weights are already on GPU and the index tensor is also on GPU.
