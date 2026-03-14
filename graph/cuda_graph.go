@@ -109,22 +109,22 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups = 1
 	}
 
-	// Determine capture region by scanning ALL instructions.
-	// captureStart is set to the instruction AFTER the last non-capturable op
-	// found from the front. captureEnd trims non-capturable ops from the back.
-	// This handles non-capturable ops anywhere in the instruction list (not
-	// just at the edges). For example, ZMF models have Gather at instruction
-	// 34 out of 1610 -- instructions 0-34 run pre-capture, 35-1609 are captured.
+	// Determine capture region: find the LONGEST contiguous run of capturable
+	// instructions. Non-capturable ops (EmbeddingLookup, Gather, Slice, etc.)
+	// may appear at the start, end, or scattered throughout the instruction
+	// list. The longest run is typically the transformer layers (attention +
+	// FFN) which form the bulk of GPU compute.
 	n := plan.InstructionCount()
-	captureStart := 0
-	for i := 0; i < n; i++ {
-		if nonCapturableOps[plan.InstructionOpName(i)] {
-			captureStart = i + 1
+	captureStart, captureEnd := 0, 0
+	runStart := 0
+	for i := 0; i <= n; i++ {
+		if i == n || nonCapturableOps[plan.InstructionOpName(i)] {
+			if i-runStart > captureEnd-captureStart {
+				captureStart = runStart
+				captureEnd = i
+			}
+			runStart = i + 1
 		}
-	}
-	captureEnd := n
-	for captureEnd > captureStart && nonCapturableOps[plan.InstructionOpName(captureEnd-1)] {
-		captureEnd--
 	}
 
 	if captureStart >= captureEnd {
