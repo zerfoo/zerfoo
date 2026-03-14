@@ -88,7 +88,7 @@ PGO uses a CPU profile collected during inference to guide compiler inlining
 and branch prediction. Go 1.21+ automatically uses default.pgo in the main
 package directory. Expected: 2-7% throughput improvement for zero code changes.
 
-- [ ] T701.1 Collect PGO profile on DGX  Owner: TBD  Est: 30m
+- [x] T701.1 Collect PGO profile on DGX  Owner: task-T701.1  Est: 30m  Done: 2026-03-13
   - Build and run bench_tps on DGX with -cpuprofile flag.
   - Generate profile: go test -bench=BenchmarkGenerate -cpuprofile=cpu.pprof
     or add pprof collection to bench_tps main.
@@ -99,7 +99,7 @@ package directory. Expected: 2-7% throughput improvement for zero code changes.
   - Acceptance: default.pgo exists and is >100KB. go build uses it (prints "PGO" in verbose).
   - Dependencies: none.
 
-- [ ] T701.2 Benchmark with PGO-optimized binary on DGX  Owner: TBD  Est: 30m
+- [x] T701.2 Benchmark with PGO-optimized binary on DGX  Owner: lead  Est: 30m  Done: 2026-03-13  NOTE: ~190 tok/s, no measurable PGO improvement (GPU-bound).
   - Rebuild bench_tps with default.pgo in place.
   - Run bench_tps 3 times on DGX, record results.
   - Compare with 191.28 tok/s baseline (without PGO).
@@ -107,7 +107,7 @@ package directory. Expected: 2-7% throughput improvement for zero code changes.
   - Acceptance: Results documented. Speedup quantified. If <1% improvement, note for analysis.
   - Dependencies: T701.1.
 
-- [ ] S701.2.1 Verify PGO output correctness  Owner: TBD  Est: 15m
+- [x] S701.2.1 Verify PGO output correctness  Owner: lead  Est: 15m  Done: 2026-03-13  NOTE: Identical output.
   - Run bench_tps with PGO binary at temp=0 and compare output with non-PGO.
   - Acceptance: Identical output tokens.
   - Dependencies: T701.2.
@@ -119,7 +119,7 @@ disabling GC during the decode loop eliminates unpredictable pauses. The arena
 allocator already handles GPU memory; CPU allocations in the hot path should be
 minimal.
 
-- [ ] T702.1 Measure GC impact during inference  Owner: TBD  Est: 30m
+- [x] T702.1 Measure GC impact during inference  Owner: task-T702.1  Est: 30m  Done: 2026-03-13  NOTE: Zero GC pauses during decode. Skip E702.
   - Run bench_tps on DGX with GODEBUG=gctrace=1.
   - Count GC pauses during the generation phase (after model load).
   - Record: number of pauses, total pause time, heap size.
@@ -127,7 +127,7 @@ minimal.
   - Acceptance: GC metrics documented.
   - Dependencies: none.
 
-- [ ] T702.2 Add GOGC=off for decode loop  Owner: TBD  Est: 45m
+- [x] T702.2 Add GOGC=off for decode loop  Owner: N/A  Est: 45m  Done: 2026-03-13  NOTE: Skipped -- zero GC pauses, no benefit.
   - In generate/generator.go: call debug.SetGCPercent(-1) before the decode
     loop starts, restore original value after generation completes.
   - Set debug.SetMemoryLimit(4 << 30) as safety net (4GB soft limit).
@@ -137,7 +137,7 @@ minimal.
     Memory does not grow unbounded during multi-request serving.
   - Dependencies: T702.1.
 
-- [ ] S702.2.1 Test GC-free decode correctness and memory  Owner: TBD  Est: 30m
+- [x] S702.2.1 Test GC-free decode correctness and memory  Owner: N/A  Est: 30m  Done: 2026-03-13  NOTE: Skipped.
   - Run bench_tps on DGX with GC disabled.
   - Verify identical output.
   - Run 3 consecutive generations to verify memory does not grow.
@@ -145,7 +145,7 @@ minimal.
   - Acceptance: Output identical. Memory stable across runs.
   - Dependencies: T702.2.
 
-- [ ] T702.3 Benchmark with GC disabled on DGX  Owner: TBD  Est: 30m
+- [x] T702.3 Benchmark with GC disabled on DGX  Owner: N/A  Est: 30m  Done: 2026-03-13  NOTE: Skipped.
   - Run bench_tps 3 times with GC disabled during decode.
   - Compare with baseline.
   - File: docs/updates.md.
@@ -158,7 +158,7 @@ Go inserts bounds checks on every slice access. In tight loops (sampling,
 tokenization, pre/post-processing), these add overhead. The compiler can
 eliminate bounds checks when it can prove the index is in range.
 
-- [ ] T703.1 Audit bounds checks in hot paths  Owner: TBD  Est: 45m
+- [x] T703.1 Audit bounds checks in hot paths  Owner: task-T703.1  Est: 45m  Done: 2026-03-13  NOTE: 928 BCE, only 8 hot-path (<0.1%). Skip E703.
   - Build with: go build -gcflags='-d=ssa/check_bce/debug=1' ./generate/... ./compute/... ./layers/...
   - Parse output to find remaining bounds checks in hot-path files.
   - Focus on: generate/generator.go, generate/sampling.go, compute/gpu_kernels.go,
@@ -168,7 +168,7 @@ eliminate bounds checks when it can prove the index is in range.
   - Acceptance: All hot-path bounds checks catalogued.
   - Dependencies: none.
 
-- [ ] T703.2 Eliminate hot-path bounds checks  Owner: TBD  Est: 1h
+- [x] T703.2 Eliminate hot-path bounds checks  Owner: N/A  Est: 1h  Done: 2026-03-13  NOTE: Skipped -- <0.1% overhead.
   - For each hot-path bounds check from T703.1, add the appropriate hint:
     a) Assert bounds once before the loop: _ = slice[n-1]
     b) Use range loops instead of index loops where possible.
@@ -179,12 +179,12 @@ eliminate bounds checks when it can prove the index is in range.
     checks in hot-path functions identified in T703.1.
   - Dependencies: T703.1.
 
-- [ ] S703.2.1 Test BCE changes correctness  Owner: TBD  Est: 30m
+- [x] S703.2.1 Test BCE changes correctness  Owner: N/A  Est: 30m  Done: 2026-03-13  NOTE: Skipped.
   - go test ./generate/... ./compute/... ./numeric/... -race -timeout 120s.
   - Acceptance: All tests pass.
   - Dependencies: T703.2.
 
-- [ ] T703.3 Benchmark with BCE eliminated on DGX  Owner: TBD  Est: 30m
+- [x] T703.3 Benchmark with BCE eliminated on DGX  Owner: N/A  Est: 30m  Done: 2026-03-13  NOTE: Skipped.
   - Run bench_tps 3 times on DGX after BCE changes.
   - Compare with baseline.
   - File: docs/updates.md.
@@ -197,7 +197,7 @@ Each CUDA kernel launch goes through purego function pointers. With ~338 kernel
 launches per token, reducing per-call overhead compounds. The key optimization
 is ensuring function pointers are resolved once at init time, not per call.
 
-- [ ] T704.1 Audit purego call frequency during decode  Owner: TBD  Est: 30m
+- [x] T704.1 Audit purego call frequency during decode  Owner: task-T704.1  Est: 30m  Done: 2026-03-13  NOTE: ~395 calls/token, ~20us total (<0.4%). Already optimal.
   - Count purego.SyscallN calls per token during decode.
   - Identify the top 10 most-called GPU functions.
   - Check if any function pointer resolution happens per-call vs per-init.
@@ -205,7 +205,7 @@ is ensuring function pointers are resolved once at init time, not per call.
   - Acceptance: Per-token purego call count documented. Top 10 functions listed.
   - Dependencies: none.
 
-- [ ] T704.2 Cache function pointers and reduce call count  Owner: TBD  Est: 1h
+- [x] T704.2 Cache function pointers and reduce call count  Owner: N/A  Est: 1h  Done: 2026-03-13  NOTE: Skipped -- already cached at init.
   - Verify all RegisterLibFunc calls happen at GPUEngine init, not per-op.
   - If any kernel dispatch goes through reflection per-call, cache the result.
   - Identify adjacent kernel launches that can be batched (e.g., two back-to-back
@@ -215,7 +215,7 @@ is ensuring function pointers are resolved once at init time, not per call.
     or documented as already optimal.
   - Dependencies: T704.1.
 
-- [ ] S704.2.1 Test purego changes correctness  Owner: TBD  Est: 15m
+- [x] S704.2.1 Test purego changes correctness  Owner: N/A  Est: 15m  Done: 2026-03-13  NOTE: Skipped.
   - go test ./internal/cuda/... ./compute/... -race -timeout 120s.
   - Acceptance: All tests pass.
   - Dependencies: T704.2.
@@ -226,7 +226,7 @@ CUDA contexts are thread-local. If the Go scheduler migrates a goroutine to a
 different OS thread mid-inference, CUDA context switches add latency.
 runtime.LockOSThread prevents this.
 
-- [ ] T705.1 Add runtime.LockOSThread to GPU inference path  Owner: TBD  Est: 30m
+- [x] T705.1 Add runtime.LockOSThread to GPU inference path  Owner: task-T705.1  Est: 30m  Done: 2026-03-13  NOTE: Caused 2.6% regression. Reverted.
   - In generate/generator.go: call runtime.LockOSThread() at the start of
     Generate/GenerateStream, defer runtime.UnlockOSThread().
   - Ensure this does not interfere with goroutine-based streaming.
@@ -235,14 +235,14 @@ runtime.LockOSThread prevents this.
     called after generation completes.
   - Dependencies: none.
 
-- [ ] S705.1.1 Test thread pinning correctness  Owner: TBD  Est: 15m
+- [x] S705.1.1 Test thread pinning correctness  Owner: task-T705.1  Est: 15m  Done: 2026-03-13  NOTE: Tests passed, but perf regressed. Reverted.
   - go test ./generate/... -race -timeout 120s.
   - Acceptance: All tests pass. No deadlocks.
   - Dependencies: T705.1.
 
 ### E706: Final Benchmark and Verification
 
-- [ ] T706.1 Full benchmark with all optimizations on DGX  Owner: TBD  Est: 1h
+- [x] T706.1 Full benchmark with all optimizations on DGX  Owner: lead  Est: 1h  Done: 2026-03-13  Result: 189.95 tok/s (PGO only, LockOSThread reverted).
   - Build with PGO. Enable GC-off. BCE eliminated. Thread pinning.
   - Run bench_tps 3 times on DGX with Gemma 3 1B Q4_K_M.
   - Record commit hash, all results.
@@ -250,12 +250,12 @@ runtime.LockOSThread prevents this.
   - Acceptance: Results documented. F32 > 197.21 tok/s (surpasses Ollama).
   - Dependencies: E701, E702, E703, E704, E705.
 
-- [ ] S706.1.1 Output quality verification  Owner: TBD  Est: 15m
+- [x] S706.1.1 Output quality verification  Owner: lead  Est: 15m  Done: 2026-03-13  NOTE: Identical output.
   - Verify F32 output at temp=0 matches baseline exactly.
   - Acceptance: Identical output tokens.
   - Dependencies: T706.1.
 
-- [ ] T706.2 Run go vet on all packages  Owner: TBD  Est: 15m
+- [x] T706.2 Run go vet on all packages  Owner: lead  Est: 15m  Done: 2026-03-13
   - go vet ./...
   - Acceptance: No new warnings beyond pre-existing purego patterns.
   - Dependencies: T706.1.
