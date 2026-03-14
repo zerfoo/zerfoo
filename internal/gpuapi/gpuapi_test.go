@@ -249,7 +249,13 @@ func (stubKernelRunner) ResetCounter(_ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) OffsetMemcpyFP16(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 func (stubKernelRunner) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
 	return nil
 }
 

@@ -242,8 +242,16 @@ func (k *ROCmKernels) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ Stream) e
 	return fmt.Errorf("OffsetMemcpy: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) OffsetMemcpyFP16(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("OffsetMemcpyFP16: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("RoPESelect: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("SgemvM1: not implemented for ROCm")
 }
 
 // Compile-time interface assertion.

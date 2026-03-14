@@ -241,9 +241,17 @@ func (k *CUDAKernels) OffsetMemcpy(dst, src, counter unsafe.Pointer, dim, maxSeq
 	return kernels.OffsetMemcpy(dst, src, counter, dim, maxSeqLen, streamPtr(s))
 }
 
+func (k *CUDAKernels) OffsetMemcpyFP16(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, s Stream) error {
+	return kernels.OffsetMemcpyFP16(dst, src, counter, dim, maxSeqLen, streamPtr(s))
+}
+
 func (k *CUDAKernels) RoPESelect(cosTable, sinTable, cosOut, sinOut, counter unsafe.Pointer,
 	halfRotary int, s Stream) error {
 	return kernels.RoPESelect(cosTable, sinTable, cosOut, sinOut, counter, halfRotary, streamPtr(s))
+}
+
+func (k *CUDAKernels) SgemvM1(y, A, x unsafe.Pointer, M, N int, s Stream) error {
+	return kernels.SgemvM1(y, A, x, M, N, streamPtr(s))
 }
 
 // Compile-time interface assertion.
