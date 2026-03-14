@@ -2,7 +2,6 @@ package cublas
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"unsafe"
 
@@ -151,11 +150,6 @@ func (h *Handle) SetStream(streamPtr unsafe.Pointer) error {
 // cuBLAS operation constants.
 const cublasOpN = 0 // CUBLAS_OP_N
 const cublasOpT = 1 // CUBLAS_OP_T
-
-// floatBits reinterprets a float32 as a uintptr (zero-extended from uint32).
-func floatBits(f float32) uintptr {
-	return uintptr(math.Float32bits(f))
-}
 
 // Sgemm performs single-precision general matrix multiplication.
 // Row-major to column-major conversion: swap A/B and m/n.
