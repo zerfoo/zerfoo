@@ -386,15 +386,6 @@ func TestTensorCache_UpdateGPU_MultipleLayers(t *testing.T) {
 	}
 }
 
-func makeTensorF32(t *testing.T, shape []int, data []float32) *tensor.TensorNumeric[float32] {
-	t.Helper()
-	tn, err := tensor.New(shape, data)
-	if err != nil {
-		t.Fatalf("tensor.New(%v) error: %v", shape, err)
-	}
-	return tn
-}
-
 func TestTensorCache_WithKVDtype_FP16_CPUFallback(t *testing.T) {
 	// FP16 mode with CPU tensors should fall back to F32 storage
 	// since FP16 conversion requires GPU kernels.
