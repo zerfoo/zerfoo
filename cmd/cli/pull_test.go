@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -12,8 +13,9 @@ import (
 
 // mockPullRegistry is a test double for registry.ModelRegistry.
 type mockPullRegistry struct {
-	models map[string]*registry.ModelInfo
-	pulled bool
+	models  map[string]*registry.ModelInfo
+	pulled  bool
+	pullErr error
 }
 
 func (r *mockPullRegistry) Get(id string) (*registry.ModelInfo, bool) {
@@ -23,6 +25,9 @@ func (r *mockPullRegistry) Get(id string) (*registry.ModelInfo, bool) {
 
 func (r *mockPullRegistry) Pull(_ context.Context, id string) (*registry.ModelInfo, error) {
 	r.pulled = true
+	if r.pullErr != nil {
+		return nil, r.pullErr
+	}
 	if info, ok := r.models[id]; ok {
 		return info, nil
 	}
@@ -141,6 +146,78 @@ func TestPullCommand_NilRegistry(t *testing.T) {
 	err := cmd.Run(context.Background(), []string{"nonexistent"})
 	if err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestPullCommand_PullError(t *testing.T) {
+	var buf bytes.Buffer
+	reg := &mockPullRegistry{
+		models:  map[string]*registry.ModelInfo{},
+		pullErr: errors.New("network timeout"),
+	}
+	cmd := NewPullCommand(reg, &buf)
+	err := cmd.Run(context.Background(), []string{"fail-model"})
+	if err == nil {
+		t.Fatal("expected error when Pull fails")
+	}
+	if !strings.Contains(err.Error(), "network timeout") {
+		t.Errorf("error = %q, want it to contain 'network timeout'", err.Error())
+	}
+	if !reg.pulled {
+		t.Error("expected Pull to be called")
+	}
+}
+
+func TestPullCommand_PullOutputIncludesSize(t *testing.T) {
+	var buf bytes.Buffer
+	reg := &mockPullRegistry{models: map[string]*registry.ModelInfo{}}
+	cmd := NewPullCommand(reg, &buf)
+	err := cmd.Run(context.Background(), []string{"size-model"})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Pulling size-model") {
+		t.Errorf("output = %q, want it to contain 'Pulling size-model'", output)
+	}
+	if !strings.Contains(output, "Size: 1024 bytes") {
+		t.Errorf("output = %q, want it to contain 'Size: 1024 bytes'", output)
+	}
+}
+
+func TestPullCommand_AlreadyCachedOutputIncludesPath(t *testing.T) {
+	var buf bytes.Buffer
+	reg := &mockPullRegistry{
+		models: map[string]*registry.ModelInfo{
+			"cached": {ID: "cached", Path: "/models/cached"},
+		},
+	}
+	cmd := NewPullCommand(reg, &buf)
+	err := cmd.Run(context.Background(), []string{"cached"})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "/models/cached") {
+		t.Errorf("output = %q, want it to contain path '/models/cached'", buf.String())
+	}
+	if reg.pulled {
+		t.Error("Pull should not be called for cached model")
+	}
+}
+
+func TestPullCommand_NilRegistryCreatesLocalRegistry(t *testing.T) {
+	tmp := t.TempDir()
+	var buf bytes.Buffer
+	cmd := NewPullCommand(nil, &buf)
+	// Use --cache-dir so the LocalRegistry targets a temp directory.
+	// Pull will fail because no pullFunc is set, but we verify the error
+	// comes from the registry (not a nil-pointer panic).
+	err := cmd.Run(context.Background(), []string{"--cache-dir", tmp, "org/test-model"})
+	if err == nil {
+		t.Fatal("expected error from LocalRegistry.Pull (no pull function configured)")
+	}
+	if !strings.Contains(err.Error(), "no pull function configured") {
+		t.Errorf("error = %q, want 'no pull function configured'", err.Error())
 	}
 }
 
