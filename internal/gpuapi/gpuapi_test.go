@@ -240,6 +240,18 @@ func (stubKernelRunner) FP16ToF32(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) e
 func (stubKernelRunner) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int, _ gpuapi.Stream) error {
 	return nil
 }
+func (stubKernelRunner) IncrementCounter(_ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) ResetCounter(_ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ gpuapi.Stream) error {
+	return nil
+}
+func (stubKernelRunner) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
+	return nil
+}
 
 var _ gpuapi.KernelRunner = stubKernelRunner{}
 
