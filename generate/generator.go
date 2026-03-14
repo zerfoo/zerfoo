@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -195,10 +194,7 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 // It tokenizes the prompt, runs the autoregressive loop with KV caching, and
 // returns the generated text (excluding the prompt).
 func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc SamplingConfig) (string, error) {
-	// Pin this goroutine to its current OS thread so CUDA context stays
-	// bound for the entire inference call (CUDA contexts are thread-local).
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+
 
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
