@@ -8,13 +8,6 @@ import (
 	"unsafe"
 )
 
-// vdotf32 computes the dot product of two float32 vectors using NEON.
-// n must be > 0. a and b must point to at least n float32 values.
-// Implemented in gemm_simd_arm64.s.
-//
-//go:noescape
-func vdotf32(a, b unsafe.Pointer, n int) float32
-
 // sgemmAccRowNeon computes c[j] += aVal * b[j] for j = 0..n-1 using NEON.
 // Implemented in gemm_simd_arm64.s.
 //
