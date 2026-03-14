@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/tensorrt"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -20,137 +19,9 @@ type TRTInferenceEngine struct {
 	context *tensorrt.ExecutionContext
 	stream  *cuda.Stream
 
-	inputNames   []string
-	outputName   string
-	profileIndex int  // optimization profile index; -1 means static shapes
-	dynamic      bool // whether dynamic shapes are enabled
-}
-
-// buildTRTEngine converts a graph to a TensorRT engine, using the cache if
-// available. Returns a ready-to-use TRTInferenceEngine.
-// If dynamicShapes is non-nil, the engine supports variable-size inputs.
-func buildTRTEngine(g *graph.Graph[float32], modelID string, opts *loadOptions, dynamicShapes *DynamicShapeConfig) (*TRTInferenceEngine, error) {
-	if !tensorrt.Available() {
-		return nil, fmt.Errorf("tensorrt pipeline: TensorRT library not available")
-	}
-	precision := opts.precision
-	if precision == "" {
-		precision = "fp32"
-	}
-	fp16 := precision == "fp16"
-
-	// Build cache key including dynamic shape ranges if present.
-	cacheKeyPrecision := precision
-	if dynamicShapes != nil && len(dynamicShapes.InputShapes) > 0 {
-		cacheKeyPrecision = fmt.Sprintf("%s|dyn_%d", precision, len(dynamicShapes.InputShapes))
-		for i, sr := range dynamicShapes.InputShapes {
-			cacheKeyPrecision = fmt.Sprintf("%s|%d:%v-%v-%v", cacheKeyPrecision, i, sr.Min, sr.Opt, sr.Max)
-		}
-	}
-	cacheKey, err := TRTCacheKey(modelID, cacheKeyPrecision)
-	if err != nil {
-		return nil, fmt.Errorf("tensorrt pipeline: cache key: %w", err)
-	}
-
-	var serialized []byte
-	var inputNames []string
-	var outputName string
-	profileIndex := -1
-
-	cached, err := LoadTRTEngine(cacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("tensorrt pipeline: cache load: %w", err)
-	}
-
-	if cached != nil {
-		// Cache hit -- use the cached engine.
-		serialized = cached
-		// We need to discover I/O names from the engine itself.
-	} else {
-		// Cache miss -- convert and build.
-		result, err := ConvertGraphToTRT(g, 1<<28, fp16, dynamicShapes) // 256 MB workspace
-		if err != nil {
-			return nil, fmt.Errorf("tensorrt pipeline: convert: %w", err)
-		}
-		serialized = result.serialized
-		inputNames = result.inputNames
-		outputName = result.outputName
-		profileIndex = result.profileIndex
-
-		// Save to cache.
-		if saveErr := SaveTRTEngine(cacheKey, serialized); saveErr != nil {
-			// Non-fatal: log but continue.
-			_ = saveErr
-		}
-	}
-
-	// Create runtime and deserialize.
-	logger := tensorrt.CreateLogger(tensorrt.SeverityWarning)
-
-	rt, err := tensorrt.CreateRuntime(logger)
-	if err != nil {
-		logger.Destroy()
-		return nil, fmt.Errorf("tensorrt pipeline: %w", err)
-	}
-
-	engine, err := rt.DeserializeEngine(serialized)
-	if err != nil {
-		rt.Destroy()
-		logger.Destroy()
-		return nil, fmt.Errorf("tensorrt pipeline: %w", err)
-	}
-
-	// Discover I/O names if from cache (no conversion result).
-	if inputNames == nil {
-		for i := 0; i < engine.NumIOTensors(); i++ {
-			name := engine.GetIOTensorName(i)
-			// Heuristic: input names start with "input_".
-			if len(name) >= 6 && name[:6] == "input_" {
-				inputNames = append(inputNames, name)
-			} else {
-				outputName = name
-			}
-		}
-	}
-
-	ctx, err := engine.CreateExecutionContext()
-	if err != nil {
-		engine.Destroy()
-		rt.Destroy()
-		logger.Destroy()
-		return nil, fmt.Errorf("tensorrt pipeline: %w", err)
-	}
-
-	stream, err := cuda.CreateStream()
-	if err != nil {
-		ctx.Destroy()
-		engine.Destroy()
-		rt.Destroy()
-		logger.Destroy()
-		return nil, fmt.Errorf("tensorrt pipeline: %w", err)
-	}
-
-	ie := &TRTInferenceEngine{
-		logger:       logger,
-		runtime:      rt,
-		engine:       engine,
-		context:      ctx,
-		stream:       stream,
-		inputNames:   inputNames,
-		outputName:   outputName,
-		profileIndex: profileIndex,
-		dynamic:      dynamicShapes != nil && len(dynamicShapes.InputShapes) > 0,
-	}
-
-	// Set the optimization profile on the context if dynamic shapes are used.
-	if ie.dynamic && profileIndex >= 0 {
-		if err := ctx.SetOptimizationProfile(profileIndex); err != nil {
-			ie.Close()
-			return nil, fmt.Errorf("tensorrt pipeline: %w", err)
-		}
-	}
-
-	return ie, nil
+	inputNames []string
+	outputName string
+	dynamic    bool // whether dynamic shapes are enabled
 }
 
 // Forward runs inference through TensorRT with the given input tensors.
