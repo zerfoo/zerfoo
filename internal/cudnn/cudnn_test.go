@@ -205,13 +205,13 @@ func TestActivationForwardReLU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc(x): %v", err)
 	}
-	defer cuda.Free(xDev)
+	defer func() { _ = cuda.Free(xDev) }()
 
 	yDev, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc(y): %v", err)
 	}
-	defer cuda.Free(yDev)
+	defer func() { _ = cuda.Free(yDev) }()
 
 	if err := cuda.Memcpy(xDev, unsafe.Pointer(&input[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy H2D: %v", err)
@@ -296,13 +296,13 @@ func TestPoolingForwardMax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc(x): %v", err)
 	}
-	defer cuda.Free(xDev)
+	defer func() { _ = cuda.Free(xDev) }()
 
 	yDev, err := cuda.Malloc(yBytes)
 	if err != nil {
 		t.Fatalf("Malloc(y): %v", err)
 	}
-	defer cuda.Free(yDev)
+	defer func() { _ = cuda.Free(yDev) }()
 
 	if err := cuda.Memcpy(xDev, unsafe.Pointer(&input[0]), xBytes, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy H2D: %v", err)
@@ -362,13 +362,13 @@ func TestSoftmaxForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc(x): %v", err)
 	}
-	defer cuda.Free(xDev)
+	defer func() { _ = cuda.Free(xDev) }()
 
 	yDev, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc(y): %v", err)
 	}
-	defer cuda.Free(yDev)
+	defer func() { _ = cuda.Free(yDev) }()
 
 	if err := cuda.Memcpy(xDev, unsafe.Pointer(&input[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy H2D: %v", err)

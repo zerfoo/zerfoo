@@ -46,7 +46,7 @@ func allocDevFloat32(t *testing.T, data []float32) unsafe.Pointer {
 		t.Fatalf("Malloc: %v", err)
 	}
 	if err := cuda.Memcpy(dev, unsafe.Pointer(&data[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		cuda.Free(dev)
+		_ = cuda.Free(dev)
 		t.Fatalf("Memcpy H2D: %v", err)
 	}
 	return dev
@@ -62,7 +62,7 @@ func allocDevZero(t *testing.T, count int) unsafe.Pointer {
 	}
 	zeros := make([]float32, count)
 	if err := cuda.Memcpy(dev, unsafe.Pointer(&zeros[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
-		cuda.Free(dev)
+		_ = cuda.Free(dev)
 		t.Fatalf("Memcpy H2D: %v", err)
 	}
 	return dev
@@ -178,9 +178,9 @@ func TestActivationForwardParity(t *testing.T) {
 			}
 
 			xDev := allocDevFloat32(t, tc.input)
-			defer cuda.Free(xDev)
+			defer func() { _ = cuda.Free(xDev) }()
 			yDev := allocDevZero(t, count)
-			defer cuda.Free(yDev)
+			defer func() { _ = cuda.Free(yDev) }()
 
 			actDesc, err := CreateActivationDescriptor()
 			if err != nil {
@@ -295,10 +295,10 @@ func TestPoolingForwardParity(t *testing.T) {
 			}
 
 			xDev := allocDevFloat32(t, tc.input)
-			defer cuda.Free(xDev)
+			defer func() { _ = cuda.Free(xDev) }()
 			outCount := outH * outW
 			yDev := allocDevZero(t, outCount)
-			defer cuda.Free(yDev)
+			defer func() { _ = cuda.Free(yDev) }()
 
 			if err := h.PoolingForward(poolDesc, 1.0, xDesc, xDev, 0.0, yDesc, yDev); err != nil {
 				t.Fatalf("PoolingForward: %v", err)
@@ -404,9 +404,9 @@ func TestSoftmaxForwardParity(t *testing.T) {
 			}
 
 			xDev := allocDevFloat32(t, tc.input)
-			defer cuda.Free(xDev)
+			defer func() { _ = cuda.Free(xDev) }()
 			yDev := allocDevZero(t, c)
-			defer cuda.Free(yDev)
+			defer func() { _ = cuda.Free(yDev) }()
 
 			if err := h.SoftmaxForward(SoftmaxAccurate, SoftmaxModeChannel, 1.0, xDesc, xDev, 0.0, yDesc, yDev); err != nil {
 				t.Fatalf("SoftmaxForward: %v", err)
@@ -500,11 +500,11 @@ func TestConvolutionForwardParity(t *testing.T) {
 	}
 
 	xDev := allocDevFloat32(t, input)
-	defer cuda.Free(xDev)
+	defer func() { _ = cuda.Free(xDev) }()
 	wDev := allocDevFloat32(t, filter)
-	defer cuda.Free(wDev)
+	defer func() { _ = cuda.Free(wDev) }()
 	yDev := allocDevZero(t, outCount)
-	defer cuda.Free(yDev)
+	defer func() { _ = cuda.Free(yDev) }()
 
 	wsSize, err := h.GetConvolutionForwardWorkspaceSize(xDesc, wDesc, convDesc, yDesc, ConvFwdAlgoImplicitGemm)
 	if err != nil {
@@ -516,7 +516,7 @@ func TestConvolutionForwardParity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Malloc workspace: %v", err)
 		}
-		defer cuda.Free(wsDev)
+		defer func() { _ = cuda.Free(wsDev) }()
 	}
 
 	if err := h.ConvolutionForward(1.0, xDesc, xDev, wDesc, wDev, convDesc,
@@ -609,17 +609,17 @@ func TestBatchNormInferenceParity(t *testing.T) {
 	}
 
 	xDev := allocDevFloat32(t, input)
-	defer cuda.Free(xDev)
+	defer func() { _ = cuda.Free(xDev) }()
 	yDev := allocDevZero(t, count)
-	defer cuda.Free(yDev)
+	defer func() { _ = cuda.Free(yDev) }()
 	scaleDev := allocDevFloat32(t, scale)
-	defer cuda.Free(scaleDev)
+	defer func() { _ = cuda.Free(scaleDev) }()
 	biasDev := allocDevFloat32(t, bias)
-	defer cuda.Free(biasDev)
+	defer func() { _ = cuda.Free(biasDev) }()
 	meanDev := allocDevFloat32(t, mean)
-	defer cuda.Free(meanDev)
+	defer func() { _ = cuda.Free(meanDev) }()
 	varDev := allocDevFloat32(t, variance)
-	defer cuda.Free(varDev)
+	defer func() { _ = cuda.Free(varDev) }()
 
 	if err := h.BatchNormalizationForwardInference(
 		BatchNormSpatial,
