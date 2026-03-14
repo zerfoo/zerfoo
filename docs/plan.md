@@ -1,67 +1,46 @@
-# Zerfoo Development Plan -- Push Beyond 300 tok/s (Phase 7)
+# Zerfoo Development Plan -- Technical Debt Cleanup (Phase 8)
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo F32 inference achieves 234.30 tok/s on DGX Spark GB10 with CUDA graph
-capture (Phase 6). This surpasses Ollama (197.21 tok/s) by 18.8%. However,
-bandwidth utilization is only ~60% of the 273 GB/s theoretical maximum.
+Zerfoo v1.1.0 shipped at 234 tok/s (18.7% faster than Ollama). Phase 7 is
+complete. Three technical debt items remain that affect developer experience,
+CI reliability, and code quality but do not block users.
 
-Phase 7 Wave 1 profiling (T901.1) revealed that cuBLAS is only 8% of decode
-time because weight matmuls already use the fused Q4K GEMV kernel. The original
-plan to replace cuBLAS with a custom SGEMV (T901.4-T901.6) has low ROI.
-
-The real bottleneck is the GQA attention path. The decode fast path
-(flash_attention_decode with GPU-resident kv_len) was built in T903.2 but
-causes a 93.7% regression for GQA models because engine.Repeat on full
-maxSeqLen KV buffer creates ~128 MB temporaries per token. The fast path is
-currently disabled for GQA (commit 9803ba1).
-
-The path to >300 tok/s is making flash_attention_decode handle GQA head
-replication inside the kernel at register level, eliminating Repeat entirely.
-Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
-
-See docs/design.md for architecture, docs/adr/033-how-we-beat-ollama.md for
-the full optimization history.
+See docs/design.md for full architecture and Phase 1-7 completion summaries.
+See docs/adr/033-how-we-beat-ollama.md for the performance optimization history.
 
 ### Objectives
 
-- O1: Make flash_attention_decode GQA-aware (register-level head replication).
-- O2: Re-enable decode fast path for GQA models without Repeat.
-- O3: Enable full CUDA graph capture of GQA attention path.
-- O4: Fix FP16 KV cache correctness bug (produces pad tokens).
-- O5: Achieve >300 tok/s on DGX Spark GB10 with Gemma 3 1B Q4_K_M.
+- O1: Optimize the GQA-aware flash_attention_decode kernel to match or beat
+  the cuBLAS SDPA path (currently 114 vs 234 tok/s), re-enabling the decode
+  fast path for GQA models.
+- O2: Fix the purego assembly trampoline segfault on Go 1.25/arm64 without -race.
+- O3: Fix the 276 pre-existing golangci-lint issues so CI lint is strict.
 
 ### Non-Goals
 
-- Custom SGEMV replacing cuBLAS (deferred, only 8% of decode time per T901.1).
-- Speculative decoding (orthogonal, layer on top later).
-- Persistent mega-kernel.
-- Prefill CUDA graph capture.
-- Q4K GEMV kernel rewrite.
-- Multi-GPU / distributed inference.
+- New features or model architectures.
+- Speculative decoding.
+- Multi-GPU.
+- Performance beyond 234 tok/s (unless O1 succeeds, then re-benchmark).
 
 ### Constraints and Assumptions
 
 - Pre-commit hook rejects multi-directory commits.
 - DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: sm_121 (Blackwell), 273 GB/s LPDDR5x, 128GB unified memory.
-- Baseline: 234.30 tok/s with CUDA graph (Phase 6).
-- Ollama: 197.21 tok/s (Gemma 3 1B Q4_K_M).
-- Gemma 3 1B GQA config: 8 query heads, 4 KV heads, head_dim=256.
-- Go profile: go test, go vet, go build as quality gates.
+- Go 1.25 with purego arm64 assembly trampoline.
 - CUDA kernels compiled with nvcc -arch=sm_121.
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| GQA decode kernel | Handles head replication internally | Unit test: output matches SDPA reference |
-| Zero Repeat | No engine.Repeat on KV buffer during decode | grep + profiling |
-| CUDA graph capture | Full decode including GQA attention captured | bench_tps shows graph executor |
-| FP16 KV correctness | Coherent output with --kv-dtype=fp16 | bench_tps output inspection |
-| Throughput target | >300 tok/s | bench_tps 3-run avg on DGX |
+| GQA decode kernel | >= 234 tok/s (match SDPA baseline) | bench_tps on DGX |
+| purego segfault | Zero segfaults without -race on arm64 | go test without -race on DGX |
+| Lint issues | Zero issues with strict golangci-lint | CI lint step passes without || true |
 
 ---
 
@@ -71,177 +50,144 @@ the full optimization history.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D84 | GQA-aware flash_attention_decode kernel | Eliminates Repeat, enables graph capture |
-| D85 | Re-enabled decode fast path for GQA | 15-25% speedup from graph capture |
-| D86 | FP16 KV correctness fix | Unblock FP16 KV cache feature |
-| D87 | Full CUDA graph decode with GQA | All decode ops captured and replayed |
+| D90 | Optimized GQA decode kernel or revert | Unblock >234 tok/s or clean up dead code |
+| D91 | purego trampoline fix | Reliable tests on arm64 without -race |
+| D92 | Clean lint baseline | Strict CI lint enforcement |
 
 ### Out of Scope
 
-- Custom SGEMV replacing cuBLAS (deferred, low ROI).
-- Speculative decoding.
-- Prefill graph capture.
-- Q4K GEMV changes.
-- Multi-GPU.
+- New features, new models, speculative decoding, multi-GPU.
+- Performance optimization beyond re-enabling the decode fast path.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E901: Custom F32 GEMV Kernel for Decode (PARTIALLY COMPLETE)
+### E1001: GQA Flash Attention Decode Kernel Optimization
 
-Profiling showed cuBLAS is only 8% of decode (not 30% as estimated).
-Kernel implemented and tested. Integration into GPUEngine deferred.
+The current flash_attention_decode kernel (E905) is 2x slower than cuBLAS SDPA
+for GQA models (114 vs 234 tok/s). The decode fast path is disabled for GQA.
 
-- [x] T901.1 Profile cuBLAS GEMV overhead on DGX  2026 03 14
-- [x] T901.2 Implement custom sgemv_m1 CUDA kernel  2026 03 14
-- [x] S901.2.1 Test sgemv_m1 correctness  2026 03 14
-- [x] T901.3 Add Go wrappers for sgemv_m1 (done as part of T901.2)  2026 03 14
+Decision: either optimize the kernel to match cuBLAS, or revert the dead code
+and document the lesson. See docs/adr/034-gqa-aware-flash-attention-decode.md.
 
-### Archived (deferred -- low ROI per T901.1 profiling)
-
-- T901.4 Replace cuBLAS SGEMV with custom kernel in GPUEngine -- Deferred.
-  cuBLAS is only 8% of decode time. Weight matmuls use Q4K GEMV, not cuBLAS.
-- T901.5 Microbenchmark sgemv_m1 vs cuBLAS on DGX -- Deferred. Done informally
-  during S901.2.1 (152 GFLOPS at 4096x4096).
-- T901.6 Run go vet and make shared -- Subsumed by T904.2.
-
-### E902: FP16 KV Cache (PARTIALLY COMPLETE)
-
-Infrastructure built. FP16 produces garbage output (all pad tokens).
-Correctness fix needed.
-
-- [x] T902.1 Add FP16 storage mode to TensorCache  2026 03 14
-- [x] S902.1.1 Test FP16 KV cache correctness  2026 03 14
-- [x] T902.2 Add FP16 offset_memcpy variant  2026 03 14
-- [x] S902.2.1 Test FP16 offset_memcpy  2026 03 14
-- [x] T902.3 Wire FP16 KV into the generator  2026 03 14
-
-- [x] T902.5 Fix FP16 KV correctness bug  2026 03 14
-  - FP16 KV produces all pad tokens on DGX. Likely cause: pointer type
-    mismatch in the FP16 conversion path, or the FP16-to-F32 read-back
-    is not wired correctly in the attention computation.
-  - Debug on DGX: add logging to trace the FP16 write/read path.
-  - Verify F32-to-FP16 conversion kernel output with a small test.
-  - Check if FP16 buffer pointers are passed correctly to flash_attention.
-  - File: generate/tensor_cache.go, layers/attention/grouped_query_attention.go.
-  - Acceptance: bench_tps --kv-dtype=fp16 produces coherent output at temp=0.
-  - Dependencies: none.
-
-- [ ] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: TBD  Est: 30m
-  - Run bench_tps with --kv-dtype=fp16 on DGX, 20 tokens.
-  - Verify output quality (coherent text at temp=0).
-  - Acceptance: Output coherent. No pad tokens.
-  - Dependencies: T902.5.
-
-- [x] T902.6 Run go vet on FP16 changes  2026 03 14 (verified in Wave 1 merge)
-  - go vet ./generate/... ./internal/cuda/...
-  - Acceptance: No new warnings.
-  - Dependencies: T902.5.
-
-### E903: Fix Graph/No-Graph Output Divergence (COMPLETE)
-
-- [x] T903.1 Bisect the divergence source  2026 03 14
-- [x] T903.2 Fix the divergence (GPU-resident kv_len)  2026 03 14
-- [x] S903.2.1 Verify divergence fix on DGX  2026 03 14
-
-### E905: GQA-Aware Flash Attention Decode Kernel
-
-The flash_attention_decode kernel (T903.2) reads KV length from GPU memory
-for CUDA graph capture. But for GQA models (numQueryHeads != numKVHeads),
-the decode fast path calls engine.Repeat on the full maxSeqLen KV buffer
-to expand KV heads, creating ~128 MB temporaries and regressing 93.7%.
-
-The fix: handle GQA head replication inside the kernel at register level.
-Each query head computes kv_head = q_head / (numQ / numKV) and indexes into
-the KV buffer directly. Zero extra memory traffic.
-
-Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
-
-- [x] T905.1 Add GQA support to flash_attention_decode kernel  2026 03 14
-  - Modify flash_attention_decode in internal/cuda/kernels/flash_attention.cu:
-    - Add numQueryHeads and numKVHeads parameters.
-    - In the inner loop, compute kv_head_idx = q_head_idx / (numQueryHeads / numKVHeads).
-    - Index K and V using kv_head_idx instead of q_head_idx.
-    - When numQueryHeads == numKVHeads, this is a no-op (same index).
-  - Update the launcher: launch_flash_attention_decode_gqa(..., numQueryHeads, numKVHeads).
-  - Alternatively, modify the existing launcher signature to add the two params.
-  - File: internal/cuda/kernels/flash_attention.cu.
-  - Acceptance: Kernel compiles. Output matches SDPA reference for GQA config
-    (8 Q heads, 4 KV heads, head_dim=256).
-  - Dependencies: none.
-
-- [x] S905.1.1 Test GQA flash_attention_decode correctness  2026 03 14 (tests added in T905.1)
-  - Test with Gemma 3 config: 8 Q heads, 4 KV heads, head_dim=256.
-  - Compare output with naive attention (QK^T softmax V) using CPU reference.
-  - Test with equal heads (numQ == numKV) to verify no regression.
-  - File: internal/cuda/kernels/flash_attention_test.go.
-  - Acceptance: Max absolute error < 1e-4 for both GQA and non-GQA configs.
-  - Dependencies: T905.1.
-
-- [x] T905.2 Add Go wrappers for GQA flash_attention_decode  2026 03 14 (done in T905.1)
-  - Update purego wrapper (flash_attention_purego.go) and CGo wrapper.
-  - Update KernelRunner interface if needed (add numQueryHeads, numKVHeads params).
-  - Register new symbol in KernelLib if a new launcher was added.
-  - Update stubs in OpenCL, ROCm, test mock.
-  - File: internal/cuda/kernels/, internal/gpuapi/.
-  - Acceptance: go build, go vet pass.
-  - Dependencies: T905.1.
-
-- [x] T905.3 Re-enable GQA decode fast path  2026 03 14
-  - In layers/attention/grouped_query_attention.go:
-    - Remove the numQueryHeads == numKVHeads guard on the decode fast path.
-    - Remove the engine.Repeat expansion code (lines 661-688).
-    - Instead, pass numQueryHeads and numKVHeads to the flash_attention_decode
-      call and let the kernel handle head replication.
-    - The kernel indexes K/V with kv_head, so the KV buffer shape stays
-      [batch, maxSeqLen, numKVHeads*headDim] without expansion.
-  - File: layers/attention/grouped_query_attention.go.
-  - Acceptance: bench_tps produces correct output with GQA. No engine.Repeat
-    calls during decode. Decode fast path active for GQA models.
-  - Dependencies: T905.2.
-
-- [ ] S905.3.1 Test GQA decode fast path correctness  Owner: TBD  Est: 30m
-  - go test ./layers/attention/... -race -timeout 120s.
-  - Run bench_tps on DGX with 20 tokens, verify output matches standard path.
-  - Acceptance: All tests pass. Output coherent at temp=0.
-  - Dependencies: T905.3.
-
-- [ ] T905.4 Verify CUDA graph capture with GQA decode  Owner: TBD  Est: 30m
-  - Run bench_tps on DGX and verify graph executor is active (no fallback).
-  - Check that GQA attention is included in the captured region.
+- [ ] T1001.1 Profile flash_attention_decode on DGX  Owner: TBD  Est: 1h
+  - Use nsight-sys or nvprof to identify the bottleneck in the decode kernel.
+  - Compare occupancy, memory throughput, and compute utilization vs cuBLAS.
+  - Hypotheses: (a) shared memory bank conflicts, (b) low occupancy from
+    register pressure, (c) suboptimal tiling for sm_121.
   - File: docs/updates.md.
-  - Acceptance: Graph capture succeeds. No "fallback" in logs.
-  - Dependencies: T905.3.
+  - Acceptance: Bottleneck identified with nsight data.
+  - Dependencies: none.
 
-- [x] T905.5 Run go vet and make shared  2026 03 14 (go vet clean, make shared pending DGX)
-  - go vet ./internal/cuda/... ./internal/gpuapi/... ./layers/...
+- [ ] T1001.2 Optimize or revert the decode kernel  Owner: TBD  Est: 2h
+  - If T1001.1 identifies a fixable bottleneck:
+    - Apply the optimization (e.g., reduce shared memory, increase occupancy,
+      use warp-level primitives, tune tile sizes for Blackwell).
+    - Re-benchmark on DGX.
+    - If >= 234 tok/s: re-enable decode fast path for GQA, remove the guard.
+    - If still slower: revert to disabled state.
+  - If T1001.1 shows the kernel is fundamentally limited:
+    - Remove the decode fast path code and flash_attention_decode kernel.
+    - Keep the GPU-resident kv_len counter (useful for future work).
+    - Document the lesson in docs/adr/034.
+  - File: internal/cuda/kernels/flash_attention.cu, layers/attention/.
+  - Acceptance: Either kernel matches SDPA throughput or dead code removed.
+  - Dependencies: T1001.1.
+
+- [ ] S1001.2.1 Test decode kernel changes  Owner: TBD  Est: 30m
+  - go test ./internal/cuda/kernels/... ./layers/attention/... -race -timeout 120s.
+  - If kernel optimized: bench_tps on DGX, verify >= 234 tok/s.
+  - If kernel reverted: verify 234 tok/s baseline maintained.
+  - Acceptance: Tests pass. Performance at or above 234 tok/s.
+  - Dependencies: T1001.2.
+
+- [ ] T1001.3 Run go vet and make shared  Owner: TBD  Est: 15m
+  - go vet ./internal/cuda/... ./layers/...
   - make shared CUDA_ARCH=sm_121 on DGX.
   - Acceptance: No new warnings. Build succeeds.
-  - Dependencies: T905.3.
+  - Dependencies: T1001.2.
 
-### E904: Final Benchmark and Verification
+### E1002: Fix purego Trampoline Segfault on arm64
 
-- [ ] T904.1 Full benchmark with all optimizations on DGX  Owner: TBD  Est: 1h
-  - Build with GQA decode kernel + FP16 KV fix.
-  - Run bench_tps 3 times with 256 tokens (F32 KV).
-  - Run bench_tps 3 times with 256 tokens (FP16 KV if fixed).
-  - Record commit hash, all results.
-  - Compare with 234.30 tok/s baseline and Ollama 197.21 tok/s.
+All CUDA kernel tests segfault without -race on Go 1.25/arm64 (DGX Spark).
+Tests pass with -race. The issue is in the purego assembly trampoline that
+bridges Go to C function calls (internal/cuda/purego_linux_arm64.go/.s).
+
+The -race flag changes Go's memory layout and stack behavior, masking the
+underlying alignment or stack size issue.
+
+- [ ] T1002.1 Diagnose the segfault root cause  Owner: TBD  Est: 1.5h
+  - On DGX, run kernel tests without -race under GDB or with GOTRACEBACK=crash:
+    GOTRACEBACK=crash go test ./internal/cuda/kernels/... -timeout 30s 2>&1
+  - Analyze the crash: stack trace, faulting instruction, register state.
+  - Read internal/cuda/purego_linux_arm64.go and purego_linux_arm64.s.
+  - Hypotheses: (a) stack alignment violation (arm64 requires 16-byte aligned SP),
+    (b) stack size too small for ccall trampoline, (c) signal handler conflict.
   - File: docs/updates.md.
-  - Acceptance: Results documented. Target: >300 tok/s.
-  - Dependencies: E905, T902.5.
-  - PREFLIGHT: git pull on DGX, rebuild kernels (make clean && make shared).
+  - Acceptance: Root cause identified with crash analysis.
+  - Dependencies: none.
 
-- [ ] S904.1.1 Output quality verification  Owner: TBD  Est: 15m
-  - Verify F32 output at temp=0. Graph and no-graph should match.
-  - Acceptance: Identical output tokens.
-  - Dependencies: T904.1.
+- [ ] T1002.2 Fix the trampoline  Owner: TBD  Est: 1.5h
+  - Based on T1002.1 findings, fix the assembly trampoline or Go wrapper.
+  - Common fixes: ensure SP alignment before ccall, increase goroutine stack,
+    use runtime.LockOSThread in the trampoline entry, fix signal mask.
+  - File: internal/cuda/purego_linux_arm64.go, internal/cuda/purego_linux_arm64.s.
+  - Acceptance: go test ./internal/cuda/kernels/... passes without -race on DGX.
+  - Dependencies: T1002.1.
 
-- [ ] T904.2 Run go vet on all packages  Owner: TBD  Est: 15m
-  - go vet ./...
-  - Acceptance: No new warnings beyond pre-existing purego patterns.
-  - Dependencies: T904.1.
+- [ ] S1002.2.1 Verify trampoline fix on DGX  Owner: TBD  Est: 30m
+  - Run full kernel test suite without -race on DGX.
+  - Run with -race to verify no regression.
+  - Acceptance: All tests pass both with and without -race.
+  - Dependencies: T1002.2.
+
+### E1003: Fix 276 Pre-existing golangci-lint Issues
+
+CI currently runs golangci-lint with || true to avoid blocking on 276
+pre-existing issues (164 errcheck, 27 dupl, 26 gocritic, etc.).
+
+- [ ] T1003.1 Categorize and triage lint issues  Owner: TBD  Est: 45m
+  - Run golangci-lint run locally, capture full output.
+  - Group by linter and severity.
+  - Decide per-category: fix, suppress with nolint, or disable the linter.
+  - File: docs/updates.md.
+  - Acceptance: Triage documented with action per category.
+  - Dependencies: none.
+
+- [ ] T1003.2 Fix errcheck issues (164 issues)  Owner: TBD  Est: 2h
+  - The largest category. Most are unchecked error returns from Close(),
+    Write(), or similar functions.
+  - Fix by either handling the error or adding _ = assignment with comment.
+  - Split into sub-PRs by package to keep commits focused.
+  - File: across all packages.
+  - Acceptance: golangci-lint errcheck reports zero issues.
+  - Dependencies: T1003.1.
+
+- [ ] T1003.3 Fix remaining lint issues  Owner: TBD  Est: 1.5h
+  - Fix or suppress: dupl (27), gocritic (26), noctx (12), errorlint (9),
+    nolintlint (9), gosec (7), staticcheck (7), unused (7), govet (2),
+    ineffassign (2), misspell (1), errname (3).
+  - For false positives: add targeted nolint comments with justification.
+  - For valid issues: fix them.
+  - File: across all packages.
+  - Acceptance: golangci-lint reports zero issues.
+  - Dependencies: T1003.1.
+
+- [ ] T1003.4 Remove || true from CI lint step  Owner: TBD  Est: 15m
+  - In .github/workflows/ci.yml, change:
+    golangci-lint run --new-from-rev=origin/main || true
+    to:
+    golangci-lint run
+  - This makes lint failures block PRs.
+  - File: .github/workflows/ci.yml.
+  - Acceptance: CI lint step runs without || true and passes.
+  - Dependencies: T1003.2, T1003.3.
+
+- [ ] S1003.4.1 Verify CI passes with strict lint  Owner: TBD  Est: 15m
+  - Push a test commit and verify CI passes.
+  - Acceptance: CI green with strict lint.
+  - Dependencies: T1003.4.
 
 ---
 
@@ -249,32 +195,22 @@ Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
 
 | Track | Epics/Tasks | Notes |
 |-------|-------------|-------|
-| Track A: GQA Kernel | E905 (T905.1-T905.5) | New CUDA kernel + GQA fast path |
-| Track B: FP16 Fix | T902.5-T902.6 | Debug + fix FP16 correctness |
-| Track C: Final Bench | E904 (T904.1-T904.2) | Depends on A, B |
+| Track A: Decode Kernel | E1001 (T1001.1-T1001.3) | Profile + optimize/revert |
+| Track B: Trampoline | E1002 (T1002.1-S1002.2.1) | DGX debugging |
+| Track C: Lint | E1003 (T1003.1-S1003.4.1) | Bulk code fixes |
 
 ### Maximum parallelism
 
-- Wave 1 (3 tasks): T905.1 (GQA kernel) + T902.5 (FP16 fix) + S905.1.1 (test GQA kernel).
-  T905.1 and T902.5 are independent. S905.1.1 can start when T905.1 is done.
-  Each agent implements + tests in same worktree.
+- Wave 1 (3 tasks): T1001.1 (profile kernel) + T1002.1 (diagnose segfault) +
+  T1003.1 (triage lint). All independent. All can start immediately.
 
-- Wave 2 (4 tasks): T905.2 (Go wrappers) + S902.5.1 (test FP16 on DGX) +
-  T905.3 (re-enable GQA fast path) + T902.6 (go vet FP16).
-  T905.2 depends on T905.1. T905.3 depends on T905.2.
+- Wave 2 (3 tasks): T1001.2 (optimize/revert kernel) + T1002.2 (fix trampoline) +
+  T1003.2 (fix errcheck). Each depends on its Wave 1 task.
 
-- Wave 3 (4 tasks): S905.3.1 (test GQA fast path) + T905.4 (verify graph) +
-  T905.5 (go vet + make) + T904.1 (full benchmark).
+- Wave 3 (4 tasks): S1001.2.1 (test kernel) + S1002.2.1 (test trampoline) +
+  T1003.3 (fix remaining lint) + T1001.3 (go vet).
 
-- Wave 4 (2 tasks): S904.1.1 (quality) + T904.2 (final vet).
-
-### Dependency minimization checklist applied
-
-a) GQA kernel (T905.1) and FP16 fix (T902.5) are fully independent.
-b) Go wrappers (T905.2) depend on kernel (T905.1) but can be parallelized
-   by having the same agent do both.
-c) T904.1 depends on both tracks but can start once GQA fast path works.
-d) Each agent works in its own worktree, so file conflicts are not blockers.
+- Wave 4 (2 tasks): T1003.4 (strict CI lint) + S1003.4.1 (verify CI).
 
 ---
 
@@ -282,10 +218,9 @@ d) Each agent works in its own worktree, so file conflicts are not blockers.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M124: GQA kernel ready | T905.2 | GQA flash_attention_decode compiles and passes tests |
-| M125: GQA fast path active | T905.4 | Decode fast path enabled for GQA, graph captured |
-| M126: FP16 KV fixed | S902.5.1 | FP16 KV produces coherent output |
-| M127: >300 tok/s | T904.1 | bench_tps 3-run avg >300 tok/s |
+| M130: Kernel decision | T1001.2 | Decode kernel optimized or reverted |
+| M131: Trampoline fixed | S1002.2.1 | Tests pass without -race on DGX |
+| M132: Lint clean | S1003.4.1 | CI lint strict and passing |
 
 ---
 
@@ -293,12 +228,9 @@ d) Each agent works in its own worktree, so file conflicts are not blockers.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R907 | GQA kernel register pressure from head index computation | Reduced occupancy | Low | Index computation is 1 integer divide + 1 multiply. Negligible vs attention math. |
-| R908 | GQA kernel shared memory layout incompatible with variable head counts | Wrong results | Medium | Test with multiple GQA ratios (2x, 4x, 8x). Use head_ratio parameter. |
-| R909 | FP16 KV bug is in the conversion kernel itself, not the wiring | Deeper fix needed | Medium | Test F32-to-FP16 kernel independently with known values on DGX. |
-| R910 | Graph capture still fails with GQA decode due to other non-capturable ops | Partial capture | Low | The only remaining non-capturable op is EmbeddingLookup (1/185). |
-| R911 | Combined speedup still under 300 tok/s | Goal not met | Medium | Recovering 156 attention launches should give ~15-25% improvement. 234 * 1.2 = 281. May need FP16 KV + speculative for >300. |
-| R902 | FP16 KV precision loss degrades output quality | Unusable output | Low | FP16 has 3 decimal digits of precision. Attention softmax operates on F32. |
+| R1001 | Decode kernel cannot be optimized to match cuBLAS | Revert needed | High | Profiling first. If unfixable, clean revert with lesson documented. |
+| R1002 | Trampoline segfault is a Go runtime bug, not fixable in user code | Stuck with -race workaround | Medium | Report upstream if confirmed. Use -race in CI as permanent workaround. |
+| R1003 | Fixing 276 lint issues introduces regressions | Broken code | Low | Fix in small batches with tests. Run full test suite after each batch. |
 
 ---
 
@@ -308,8 +240,8 @@ d) Each agent works in its own worktree, so file conflicts are not blockers.
 
 A task is done when:
 1. File changes match acceptance criteria.
-2. go build ./... passes without build tags.
-3. go test for the modified package passes with -race (Go code changes).
+2. go build ./... passes.
+3. go test for the modified package passes with -race.
 4. make shared builds without errors (CUDA kernel changes).
 5. Commit passes pre-commit hooks.
 6. Single directory per commit.
@@ -319,7 +251,7 @@ A task is done when:
 - Never commit files from different directories in the same commit.
 - Use Conventional Commits format.
 - Run go vet before committing.
-- Make small, logical commits. Do not let changes pile up.
+- Make small, logical commits.
 
 ### Quality Gates
 
@@ -327,114 +259,39 @@ A task is done when:
 - Vet: go vet ./...
 - Build: go build ./...
 - CUDA: make shared in internal/cuda/kernels/ (when .cu files change).
-- Benchmark: bench_tps on DGX Spark for performance-related changes.
-
-### Remote Host Protocol
-
-- Always rebuild libkernels.so on DGX before benchmarking (make clean && make shared).
-- Always git pull on DGX before benchmarking.
-- Record exact commit hash in benchmark results.
+- Lint: golangci-lint run (after E1003 complete).
 
 ---
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-14 (Phase 7 Plan Updated -- GQA Kernel Pivot)
+### Change Summary -- 2026-03-14 (Phase 8 Plan Created)
 
-Major plan revision based on Wave 1 profiling and benchmark findings:
+Phase 7 complete. v1.1.0 released. Trimmed all completed Phase 7 tasks to
+docs/design.md. Created Phase 8 plan for 3 open technical debt items:
 
-1. T901.1 profiling revealed cuBLAS is only 8% of decode time (weight matmuls
-   use Q4K GEMV, not cuBLAS). Deferred T901.4, T901.5, T901.6 (low ROI).
+- E1001: GQA decode kernel optimization or revert (4 tasks).
+- E1002: purego trampoline segfault fix (3 tasks).
+- E1003: Fix 276 golangci-lint issues (5 tasks).
 
-2. T903.2 decode fast path caused 93.7% regression for GQA models due to
-   engine.Repeat on full maxSeqLen KV buffer. Fixed by disabling fast path
-   for GQA (9803ba1), restoring 234.08 tok/s.
-
-3. FP16 KV produces pad tokens -- correctness bug. Added T902.5 to fix.
-
-4. Created new epic E905: GQA-Aware Flash Attention Decode Kernel. This is
-   now the primary optimization path. Register-level head replication inside
-   the kernel eliminates Repeat and enables full CUDA graph capture for GQA.
-
-5. Created ADR: docs/adr/034-gqa-aware-flash-attention-decode.md.
-
-Completed tasks: T901.1, T901.2, S901.2.1, T901.3, T902.1, S902.1.1,
-T902.2, S902.2.1, T902.3, T903.1, T903.2, S903.2.1.
-
-Remaining: 11 tasks (E905: 7 tasks, E902 fix: 3 tasks, E904: 3 tasks).
-
-### Change Summary -- 2026-03-14 (Phase 7 Plan Created)
-
-Created Phase 7 plan targeting >300 tok/s via custom GEMV + FP16 KV cache.
-Phase 6 (20 tasks, 4 epics) complete -- 234.30 tok/s, surpassed Ollama by 18.8%.
+Total: 12 tasks. Designed for 4 waves with 3-4 parallel agents per wave.
 
 ---
 
 ## 9. Hand-off Notes
 
-- **Prior plans:** Phase 1-6 complete. See docs/design.md and docs/adr/033-how-we-beat-ollama.md.
+- **Current version:** v1.1.0 (released 2026-03-14).
+- **Performance:** 234 tok/s F32 with CUDA graph (beats Ollama 197.21 by 18.7%).
+- **Prior plans:** Phase 1-7 complete. See docs/design.md.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
 - **Build kernels:** cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
 - **Benchmark:** export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
   && /usr/local/go/bin/go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf
   --tokens 256 --prompt 'The quick brown fox' --device cuda --dtype fp32
-- **GQA decode fast path (target for E905):**
-  - layers/attention/grouped_query_attention.go lines 616-710
-  - Currently disabled for GQA at line 621 (numQueryHeads == numKVHeads guard)
-  - Calls tryFlashDecode at line 701
-- **flash_attention_decode kernel (T903.2):**
-  - internal/cuda/kernels/flash_attention.cu -- flash_attention_decode_kernel
-  - Reads kv_len from GPU-resident pointer
-  - Currently does NOT handle GQA (assumes numQ == numKV heads)
-- **FP16 KV (broken):**
-  - generate/tensor_cache.go -- WithKVDtype("fp16"), appendFP16, Get conversion
-  - Produces all pad tokens on DGX. Conversion path needs debugging.
-- **GPU counter pattern:**
-  - internal/cuda/kernels/counter.cu -- increment_counter, reset_counter
-  - internal/cuda/kernels/offset_memcpy.cu -- GPU-indexed memcpy (F32 + FP16)
-  - internal/cuda/kernels/rope_select.cu -- GPU-indexed RoPE table lookup
-- **sgemv_m1 kernel (built but not wired into GPUEngine):**
-  - internal/cuda/kernels/sgemv_m1.cu -- 152 GFLOPS at 4096x4096
-  - Deferred integration: cuBLAS is only 8% of decode
+- **GQA decode fast path:** Disabled at line 624 of grouped_query_attention.go.
+  Guard: seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads.
+- **purego trampoline:** internal/cuda/purego_linux_arm64.go/.s.
+  Segfaults without -race on Go 1.25/arm64. Works with -race.
+- **Lint status:** 276 issues. CI uses || true. Categories: errcheck (164),
+  dupl (27), gocritic (26), noctx (12), errorlint (9), others.
 - **Pre-commit hook:** Rejects multi-directory commits.
-
----
-
-## 10. Appendix
-
-### GQA Head Replication in Kernel
-
-```
-Gemma 3 1B config:
-  numQueryHeads = 8
-  numKVHeads = 4
-  headRatio = numQueryHeads / numKVHeads = 2
-
-For query head q_idx (0..7):
-  kv_head_idx = q_idx / headRatio = q_idx / 2
-
-  q_idx=0 -> kv_head=0
-  q_idx=1 -> kv_head=0  (replicates KV head 0)
-  q_idx=2 -> kv_head=1
-  q_idx=3 -> kv_head=1  (replicates KV head 1)
-  q_idx=4 -> kv_head=2
-  q_idx=5 -> kv_head=2  (replicates KV head 2)
-  q_idx=6 -> kv_head=3
-  q_idx=7 -> kv_head=3  (replicates KV head 3)
-
-KV buffer layout: [batch, maxSeqLen, numKVHeads * headDim]
-  K for kv_head h at position p: K[b * maxSeqLen * dim + p * dim + h * headDim]
-
-This indexing happens at register level in the kernel inner loop.
-Zero extra memory allocation. Zero extra memory traffic.
-```
-
-### Performance Projection
-
-| Optimization | Estimated Savings | Estimated tok/s |
-|-------------|-------------------|-----------------|
-| Baseline (Phase 6) | -- | 234.30 |
-| GQA decode kernel (eliminate Repeat) | 0.3-0.5 ms | 250-270 |
-| CUDA graph capture of GQA attention | 0.5-0.8 ms | 280-320 |
-| FP16 KV cache (if fixed) | 0.1-0.3 ms | +5-10 additional |
-| Combined estimate | 0.9-1.6 ms savings | 290-330 |
