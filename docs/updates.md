@@ -1,3 +1,76 @@
+# T1002.1: Purego Trampoline Segfault Root Cause Analysis
+
+Date: 2026-03-14
+Branch: diag/purego-trampoline-segfault
+Hardware: DGX Spark (NVIDIA GB10, sm_121, ARM64)
+
+## Summary
+
+The segfault reported in `go test ./internal/cuda/...` on DGX is **NOT caused by
+the assembly trampoline**. The trampoline (`purego_linux_arm64.s`) is correct:
+register usage, stack alignment, AAPCS64 compliance, and return value propagation
+all verified via diagnostic tests on the DGX.
+
+## Root Cause
+
+Two bugs in the arena managed memory tests cause the segfault:
+
+1. **Missing `IsManaged()` guard in `TestArenaPool_ManagedMemory_ResetAndReuse`**:
+   The test creates an `ArenaPool` and immediately writes to the arena pointer from
+   the CPU via `unsafe.Slice`. However, `NewArenaPool` only uses `cudaMallocManaged`
+   when **both** the device supports it AND `ZERFOO_ENABLE_MANAGED_MEM=1` is set.
+   Without the env var, the arena allocates with `cudaMalloc` (device-only memory).
+   CPU access to a device pointer produces SIGSEGV (fault code=0x2, SEGV_ACCERR).
+
+2. **Same issue in `TestArenaPool_ManagedMemoryDataIntegrity`**: Used `t.Fatal`
+   instead of `t.Skip` when `IsManaged()` returns false, causing test failure
+   rather than graceful skip.
+
+The segfault address (`0x32ee00000`) matches exactly the address returned by
+`cudaMalloc` on the GB10 device -- device memory, not unified memory.
+
+## Trampoline Verification
+
+Diagnostic tests verified on DGX (all PASS):
+- `ccallArgs` struct layout matches assembly offsets (fn@0, args@8, ret@168)
+- `cudaGetDeviceCount`: 1 device detected via trampoline
+- `cudaMalloc` / `cudaFree`: round-trip via `cudaMemcpy` returns correct data
+- `cudaMallocManaged`: CPU write/read to unified pointer works correctly
+- `cudaGetDeviceProperties`: returns GB10, compute 12.1
+- `cudaGetErrorString`: return value propagation correct
+- `cudaMemcpyPeer` with 5 args: no crash on invalid args
+
+The AAPCS64 analysis of the assembly confirmed:
+- R0-R7 used correctly for first 8 args
+- Stack args placed at RSP+0 after SUB $96 (12 stack slots, 16-byte aligned)
+- R19/R20 (callee-saved) used to preserve args pointer and LR across C call
+- R9 (caller-saved scratch) holds function pointer for BLR
+- R10 (caller-saved scratch) used for stack arg loading
+- Return value stored from R0 to ret field at offset 168
+
+## Additional Findings
+
+- **`TestDlsymImplFailsOnInvalidHandle`** fails on DGX: `dlsym(NULL, "cudaMalloc")`
+  returns a non-zero address because `libcudart` is loaded with `RTLD_GLOBAL`, so
+  NULL handle searches the global symbol table. Test assumption is wrong on Linux
+  when CUDA symbols are loaded globally.
+
+- **Intermittent segfault on first run**: Occasionally the very first test run
+  segfaults even with the fix applied. Setting `GOTRACEBACK=system` prevents it,
+  suggesting a CUDA lazy initialization race. This is a separate issue from the
+  deterministic test bug.
+
+## Fix Applied
+
+- `arena_managed_test.go`: Added `IsManaged()` guard with `t.Skip` to
+  `TestArenaPool_ManagedMemory_ResetAndReuse`; changed `t.Fatal` to `t.Skip` in
+  `TestArenaPool_ManagedMemory_CPUWriteGPURead`.
+- `arena_test.go`: Changed `TestArenaPool_IsManaged` to log rather than assert
+  (env var dependency makes assertion fragile); changed `t.Fatal` to `t.Skip` in
+  `TestArenaPool_ManagedMemoryDataIntegrity`.
+
+---
+
 # Phase 9: GQA Decode Kernel + FP16 KV Fix Benchmark
 
 Date: 2026-03-13

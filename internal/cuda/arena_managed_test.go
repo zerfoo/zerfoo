@@ -25,7 +25,7 @@ func TestArenaPool_ManagedMemory_CPUWriteGPURead(t *testing.T) {
 	defer func() { _ = arena.Drain() }()
 
 	if !arena.IsManaged() {
-		t.Fatal("expected arena to use managed memory on a device that supports it")
+		t.Skip("arena not using managed memory (set ZERFOO_ENABLE_MANAGED_MEM=1)")
 	}
 
 	// Allocate a region and write a pattern from CPU.
@@ -69,6 +69,10 @@ func TestArenaPool_ManagedMemory_ResetAndReuse(t *testing.T) {
 		t.Fatalf("NewArenaPool: %v", err)
 	}
 	defer func() { _ = arena.Drain() }()
+
+	if !arena.IsManaged() {
+		t.Skip("arena not using managed memory (set ZERFOO_ENABLE_MANAGED_MEM=1)")
+	}
 
 	// First pass: allocate and write.
 	ptr1, err := arena.Alloc(0, 256)
