@@ -18,6 +18,19 @@ type TensorReleaser[T tensor.Numeric] interface {
 	Release(t *tensor.TensorNumeric[T])
 }
 
+// StatefulInputNode is implemented by graph input nodes that carry state
+// between forward passes (e.g., KV cache inputs in ONNX models).
+type StatefulInputNode[T tensor.Numeric] interface {
+	SetStored(t *tensor.TensorNumeric[T])
+}
+
+// kvPair links a stateful input node to the output node whose result
+// should be fed back into it after each forward pass.
+type kvPair[T tensor.Numeric] struct {
+	input  StatefulInputNode[T]
+	output Node[T]
+}
+
 // Graph represents a computation graph with a defined execution order.
 type Graph[T tensor.Numeric] struct {
 	mu          sync.Mutex
@@ -31,10 +44,20 @@ type Graph[T tensor.Numeric] struct {
 	parallel     bool
 	pool         TensorReleaser[T]
 
+	// KV cache state feedback: after Forward, each output node's result
+	// is copied back into the corresponding stateful input node.
+	kvPairs []kvPair[T]
+
 	// Cached decode-time allocations to avoid per-forward GC pressure.
 	cachedRefCount   map[Node[T]]int // static reference counts (recomputed on clear)
 	cachedNodeInputs []*tensor.TensorNumeric[T] // reusable buffer for node inputs
 	maxDeps          int                         // max dependencies per node
+}
+
+// AddKVPair registers a stateful input node that should receive the output
+// of another node after each forward pass. Used for ONNX KV cache feedback.
+func (g *Graph[T]) AddKVPair(input StatefulInputNode[T], output Node[T]) {
+	g.kvPairs = append(g.kvPairs, kvPair[T]{input: input, output: output})
 }
 
 // SetEngineProxy stores a reference to the EngineProxy used by this graph's layers.
@@ -115,6 +138,10 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 				if isConstantNode[T](n) {
 					g.cachedRefCount[n] = -1
 				}
+			}
+			// Protect KV pair output nodes from pool release.
+			for _, kv := range g.kvPairs {
+				g.cachedRefCount[kv.output] = -1
 			}
 		}
 		// Copy cached template into working refCount.
@@ -197,6 +224,13 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 					}
 				}
 			}
+		}
+	}
+
+	// Feed present KV outputs back into stateful input nodes for the next pass.
+	for _, kv := range g.kvPairs {
+		if t := g.memo[kv.output]; t != nil {
+			kv.input.SetStored(t)
 		}
 	}
 
