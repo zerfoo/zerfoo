@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
 )
@@ -507,6 +509,75 @@ func (rpe *RotaryPositionalEmbedding[T]) GetAngles(offset, seqLen int) (cos, sin
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	return cos, sin, halfRotary, nil
+}
+
+// GetAnglesGPU returns cos/sin angle tensors selected by a GPU-resident
+// counter, avoiding CPU-side offset computation. This enables CUDA graph
+// capture of the decode loop by keeping all position-dependent reads on GPU.
+// counterPtr is a device pointer to an int32 position counter (from GPUKVCache).
+// stream is the CUDA stream (unsafe.Pointer to cudaStream_t) for kernel launch.
+// seqLen is the number of positions to select (1 for decode).
+func (rpe *RotaryPositionalEmbedding[T]) GetAnglesGPU(counterPtr unsafe.Pointer, seqLen int, stream unsafe.Pointer) (
+	cos, sin *tensor.TensorNumeric[T], halfRotary int, err error,
+) {
+	halfRotary = rpe.rotaryDim / 2
+
+	// Lazily upload cos/sin tables to GPU if not done yet.
+	if !rpe.gpuUploaded {
+		checkEngine := compute.Engine[T](rpe.engine)
+		if proxy, ok := rpe.engine.(*compute.EngineProxy[T]); ok {
+			checkEngine = proxy.Real()
+		}
+		if _, ok := checkEngine.(compute.WeightUploader); ok {
+			if gpuCos, uploadErr := tensor.ToGPU(rpe.cosAngles); uploadErr == nil {
+				rpe.cosAngles = gpuCos
+			}
+			if gpuSin, uploadErr := tensor.ToGPU(rpe.sinAngles); uploadErr == nil {
+				rpe.sinAngles = gpuSin
+			}
+		}
+		rpe.gpuUploaded = true
+	}
+
+	cosGS, ok := rpe.cosAngles.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return nil, nil, 0, fmt.Errorf("GetAnglesGPU: cos table not on GPU")
+	}
+	sinGS, ok := rpe.sinAngles.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return nil, nil, 0, fmt.Errorf("GetAnglesGPU: sin table not on GPU")
+	}
+
+	// Allocate GPU output buffers for the selected cos/sin slice.
+	outLen := seqLen * halfRotary
+	cosOut, err := tensor.NewGPUStorage[T](outLen)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("GetAnglesGPU: alloc cos output: %w", err)
+	}
+	sinOut, err := tensor.NewGPUStorage[T](outLen)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("GetAnglesGPU: alloc sin output: %w", err)
+	}
+
+	// Launch rope_select kernel: reads counter[0] on GPU to index into the table.
+	if err := kernels.RoPESelect(
+		cosGS.Ptr(), sinGS.Ptr(),
+		cosOut.Ptr(), sinOut.Ptr(),
+		counterPtr, halfRotary, stream,
+	); err != nil {
+		return nil, nil, 0, fmt.Errorf("GetAnglesGPU: rope_select kernel: %w", err)
+	}
+
+	cos, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, cosOut)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	sin, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, sinOut)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
 	return cos, sin, halfRotary, nil
 }
 
