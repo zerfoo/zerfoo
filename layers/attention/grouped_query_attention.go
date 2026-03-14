@@ -617,11 +617,11 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// length. This avoids cache.Get() which returns a view sized by the
 		// CPU-side seqLen (frozen during CUDA graph capture). The decode kernel
 		// reads the KV length from GPU memory at runtime.
-		// Skip for GQA (numQueryHeads != numKVHeads): the Repeat on full
-		// maxSeqLen KV buffer is too expensive. TODO: make flash_attention_decode
-		// GQA-aware to avoid Repeat entirely.
+		// The kernel handles GQA head replication internally at register level,
+		// so K/V buffers keep their native [batch, maxSeqLen, numKVHeads*headDim]
+		// shape — no engine.Repeat needed.
 		decodeUsed := false
-		if seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads {
+		if seqLen == 1 {
 			type fullBufferProvider interface {
 				GetFullBuffer(layer int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T])
 				MaxSeqLen() int
@@ -657,48 +657,16 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 						return nil, reshapeErr
 					}
 
-					// Expand K/V to match Q head count by repeating along batch dim.
-					numBH := batchSize * gqa.numQueryHeads
-					kBuf := bufK
-					vBuf := bufV
-					if gqa.numQueryHeads != gqa.numKeyValueHeads {
-						// Reshape: [batch, maxKVLen, numKVHeads*headDim] -> [batch, numKVHeads, maxKVLen, headDim]
-						kBuf4D, reshapeErr := gqa.engine.Reshape(ctx, kBuf, []int{batchSize, gqa.numKeyValueHeads, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
-						vBuf4D, reshapeErr := gqa.engine.Reshape(ctx, vBuf, []int{batchSize, gqa.numKeyValueHeads, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
-						replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
-						kExpanded, expandErr := gqa.engine.Repeat(ctx, kBuf4D, 1, replicationFactor)
-						if expandErr != nil {
-							return nil, expandErr
-						}
-						vExpanded, expandErr := gqa.engine.Repeat(ctx, vBuf4D, 1, replicationFactor)
-						if expandErr != nil {
-							return nil, expandErr
-						}
-						// [batch, numQueryHeads, maxKVLen, headDim] -> [batch*numQueryHeads, maxKVLen, headDim]
-						kBuf, reshapeErr = gqa.engine.Reshape(ctx, kExpanded, []int{numBH, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
-						vBuf, reshapeErr = gqa.engine.Reshape(ctx, vExpanded, []int{numBH, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
-					} else {
-						// Same head count: reshape [batch, maxKVLen, dim] -> [batch*numQueryHeads, maxKVLen, headDim]
-						kBuf, reshapeErr = gqa.engine.Reshape(ctx, kBuf, []int{numBH, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
-						vBuf, reshapeErr = gqa.engine.Reshape(ctx, vBuf, []int{numBH, maxKVLen, gqa.headDim})
-						if reshapeErr != nil {
-							return nil, reshapeErr
-						}
+					// Reshape K/V to [batch*numKVHeads, maxKVLen, headDim].
+					// The kernel maps query heads to KV heads internally.
+					numKVBH := batchSize * gqa.numKeyValueHeads
+					kBuf, reshapeErr := gqa.engine.Reshape(ctx, bufK, []int{numKVBH, maxKVLen, gqa.headDim})
+					if reshapeErr != nil {
+						return nil, reshapeErr
+					}
+					vBuf, reshapeErr := gqa.engine.Reshape(ctx, bufV, []int{numKVBH, maxKVLen, gqa.headDim})
+					if reshapeErr != nil {
+						return nil, reshapeErr
 					}
 
 					result, flashErr := tryFlashDecode(qForDecode, kBuf, vBuf, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, gqa.numQueryHeads, gqa.numKeyValueHeads, streamPtr)
