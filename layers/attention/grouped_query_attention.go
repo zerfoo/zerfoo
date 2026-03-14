@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -388,11 +389,32 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			}
 
 			// Get cos/sin angles for the current position.
-			posOffset := 0
-			if hasCache {
-				posOffset = cache.SeqLen()
+			// GPU path: use GPU-resident counter to avoid CPU readback.
+			var cosAngles, sinAngles *tensor.TensorNumeric[T]
+			var halfRotary int
+			var angleErr error
+
+			type gpuCounterProvider interface {
+				GPUCounterPtr() unsafe.Pointer
 			}
-			cosAngles, sinAngles, halfRotary, angleErr := gqa.rope.GetAngles(posOffset, 1)
+			if gcp, ok := cache.(gpuCounterProvider); ok && gcp.GPUCounterPtr() != nil {
+				// Get stream from compute engine.
+				realEng := compute.Engine[T](gqa.engine)
+				if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+					realEng = proxy.Real()
+				}
+				if sp, ok := realEng.(compute.StreamProvider); ok {
+					cosAngles, sinAngles, halfRotary, angleErr = gqa.rope.GetAnglesGPU(gcp.GPUCounterPtr(), 1, sp.Stream())
+				}
+			}
+			// CPU fallback: no GPU counter or stream unavailable.
+			if cosAngles == nil && angleErr == nil {
+				posOffset := 0
+				if hasCache {
+					posOffset = cache.SeqLen()
+				}
+				cosAngles, sinAngles, halfRotary, angleErr = gqa.rope.GetAngles(posOffset, 1)
+			}
 			if angleErr != nil {
 				return nil, fmt.Errorf("fused QK norm+RoPE angles: %w", angleErr)
 			}
