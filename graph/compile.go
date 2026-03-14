@@ -153,6 +153,10 @@ func (p *ExecutionPlan[T]) Run(ctx context.Context, inputs ...*tensor.TensorNume
 // used by CUDAGraphExecutor to split execution into capturable and
 // non-capturable regions.
 func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end int) error {
+	// Reset per-token debug dump counters at the start of each range.
+	if debugDumpEnabled && start == 0 {
+		debugDumpSeen = make(map[string]int)
+	}
 	for i := start; i < end; i++ {
 		inst := &p.instructions[i]
 		ins := p.instrInputs[i]
@@ -167,6 +171,19 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 			return fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
 		}
 		p.scratchSlots[inst.OutputIdx] = result
+
+		// Debug dump: print first N values at key checkpoints.
+		if debugDumpEnabled && debugDumpCheckpoints[inst.OpName] {
+			count := debugDumpSeen[inst.OpName]
+			debugDumpSeen[inst.OpName] = count + 1
+			// For "only first" ops, dump only the first occurrence.
+			// For others (RMSNorm), dump all occurrences to identify the final one.
+			if !debugDumpOnlyFirst[inst.OpName] || count == 0 {
+				if f32t, ok := any(result).(*tensor.TensorNumeric[float32]); ok {
+					debugDumpTensor(fmt.Sprintf("inst_%d_%s[%d]", i, inst.OpName, count), f32t)
+				}
+			}
+		}
 	}
 	return nil
 }
