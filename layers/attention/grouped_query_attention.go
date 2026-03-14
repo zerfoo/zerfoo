@@ -701,7 +701,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 						}
 					}
 
-					result, flashErr := tryFlashDecode(qForDecode, kBuf, vBuf, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, streamPtr)
+					result, flashErr := tryFlashDecode(qForDecode, kBuf, vBuf, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, gqa.numQueryHeads, gqa.numKeyValueHeads, streamPtr)
 					if result != nil && flashErr == nil {
 						attnOutputHeads = result
 						decodeUsed = true

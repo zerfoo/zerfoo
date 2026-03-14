@@ -80,6 +80,7 @@ func tryFlashDecode[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim, kvSeqLen, maxKVLen int,
 	kvLenPtr unsafe.Pointer,
+	numQueryHeads, numKVHeads int,
 	stream unsafe.Pointer,
 ) (*tensor.TensorNumeric[T], error) {
 	return nil, nil
