@@ -57,6 +57,14 @@ type TensorCache[T tensor.Numeric] struct {
 	// When non-nil, Update uses offset_memcpy kernel (reads counter on GPU)
 	// instead of CPU-computed offsets, making the KV append capturable.
 	gpuCounter *tensor.GPUStorage[int32]
+
+	// GPU-resident int32 KV sequence length counter. Tracks the total number
+	// of tokens in the KV cache. The flash_attention_decode kernel reads this
+	// from GPU memory so the KV length is not frozen by CUDA graph capture.
+	//
+	// Incremented by 1 in Update() for the first layer (layer 0) during
+	// single-token decode, before attention runs for any layer.
+	kvSeqLenCounter *tensor.GPUStorage[int32]
 }
 
 // TensorCacheOption configures a TensorCache.
@@ -99,6 +107,11 @@ func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSe
 	if tc.stream != nil {
 		if gs, err := tensor.NewGPUStorageFromSlice([]int32{0}); err == nil {
 			tc.gpuCounter = gs
+		}
+		// KV sequence length counter: tracks total tokens in cache.
+		// Used by flash_attention_decode to read kv_len from GPU memory.
+		if gs, err := tensor.NewGPUStorageFromSlice([]int32{0}); err == nil {
+			tc.kvSeqLenCounter = gs
 		}
 	}
 	return tc
@@ -175,6 +188,16 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	// baked into captured CUDA graphs — it stays live across replays.
 	// The GPU counter is synced to the CPU seqLen at the end of prefill
 	// (see below), so by decode time it already holds the correct position.
+	//
+	// Increment kvSeqLenCounter at the first layer (layer 0) so that the
+	// flash_attention_decode kernel sees the correct KV length including
+	// the token being appended in this decode step. The increment is a
+	// GPU kernel (graph-capturable), so it stays live across replays.
+	if c.kvSeqLenCounter != nil && seqLen == 1 && layer == 0 {
+		if err := kernels.IncrementCounter(c.kvSeqLenCounter.Ptr(), 1, c.stream.Ptr()); err != nil {
+			return fmt.Errorf("increment kv_seq_len counter: %w", err)
+		}
+	}
 	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU {
 		kGS, kOK := newK.GetStorage().(*tensor.GPUStorage[T])
 		vGS, vOK := newV.GetStorage().(*tensor.GPUStorage[T])
@@ -242,14 +265,20 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	lb.seqLen += seqLen
 
 	// After prefill (seqLen > 1) completes for the last layer, sync the GPU
-	// counter to match the CPU seqLen. This ensures that when decode starts,
-	// offset_memcpy and rope_select kernels read the correct position from
-	// GPU memory. We use H2D memcpy here (outside CUDA graph capture) since
-	// prefill always runs before the graph executor starts capturing.
+	// counters to match the CPU seqLen. This ensures that when decode starts,
+	// offset_memcpy, rope_select, and flash_attention_decode kernels read
+	// the correct position from GPU memory. We use H2D memcpy here (outside
+	// CUDA graph capture) since prefill always runs before capture.
 	if c.gpuCounter != nil && seqLen > 1 && layer == len(c.layers)-1 {
 		val := int32(lb.seqLen)
 		if err := c.gpuCounter.CopyFromHost([]int32{val}, 0); err != nil {
 			return fmt.Errorf("sync GPU counter to %d after prefill: %w", val, err)
+		}
+	}
+	if c.kvSeqLenCounter != nil && seqLen > 1 && layer == len(c.layers)-1 {
+		val := int32(lb.seqLen)
+		if err := c.kvSeqLenCounter.CopyFromHost([]int32{val}, 0); err != nil {
+			return fmt.Errorf("sync KV seqLen counter to %d after prefill: %w", val, err)
 		}
 	}
 
@@ -437,6 +466,58 @@ func (c *TensorCache[T]) Get(layer int) (*LayerKV[T], bool) {
 	return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
 }
 
+// GetFullBuffer returns GPU-backed KV tensors spanning the full pre-allocated
+// buffer (maxSeqLen capacity) for the given layer. The shape is
+// [batch, maxSeqLen, dim]. This is used by flash_attention_decode which reads
+// the actual KV length from a GPU-resident counter, so it needs the buffer
+// with its full stride rather than a seqLen-trimmed view.
+// Returns nil if the layer is CPU-backed or not yet initialized.
+func (c *TensorCache[T]) GetFullBuffer(layer int) (k, v *tensor.TensorNumeric[T]) {
+	if layer < 0 || layer >= len(c.layers) {
+		return nil, nil
+	}
+	lb := &c.layers[layer]
+	if lb.batch == 0 || !lb.isGPU {
+		return nil, nil
+	}
+
+	fullElems := lb.batch * c.maxSeqLen * lb.dim
+	fullShape := []int{lb.batch, c.maxSeqLen, lb.dim}
+
+	if c.kvFP16 && lb.kFP16 != nil {
+		// FP16 path: convert full buffer to F32 scratch.
+		if err := c.ensureFP16Scratch(fullElems); err != nil {
+			return nil, nil
+		}
+		streamPtr := unsafe.Pointer(nil)
+		if c.stream != nil {
+			streamPtr = c.stream.Ptr()
+		}
+		kView := tensor.NewGPUStorageView(c.fp16ScratchK, 0, fullElems)
+		if err := kernels.FP16ToF32(lb.kFP16.Ptr(), kView.Ptr(), fullElems, streamPtr); err != nil {
+			return nil, nil
+		}
+		vView := tensor.NewGPUStorageView(c.fp16ScratchV, 0, fullElems)
+		if err := kernels.FP16ToF32(lb.vFP16.Ptr(), vView.Ptr(), fullElems, streamPtr); err != nil {
+			return nil, nil
+		}
+		kT, _ := tensor.NewWithStorage(fullShape, kView)
+		vT, _ := tensor.NewWithStorage(fullShape, vView)
+		return kT, vT
+	}
+
+	kView := tensor.NewGPUStorageView(lb.kStorage, 0, fullElems)
+	vView := tensor.NewGPUStorageView(lb.vStorage, 0, fullElems)
+	kT, _ := tensor.NewWithStorage(fullShape, kView)
+	vT, _ := tensor.NewWithStorage(fullShape, vView)
+	return kT, vT
+}
+
+// MaxSeqLen returns the maximum sequence length (buffer capacity).
+func (c *TensorCache[T]) MaxSeqLen() int {
+	return c.maxSeqLen
+}
+
 // SeqLen returns the current cached sequence length (from layer 0).
 func (c *TensorCache[T]) SeqLen() int {
 	if len(c.layers) == 0 {
@@ -446,14 +527,17 @@ func (c *TensorCache[T]) SeqLen() int {
 }
 
 // Reset clears sequence lengths to zero. Pre-allocated buffers are kept
-// for reuse; only data pointers are logically invalidated. The GPU counter
-// is also zeroed so that GPU-side kernels see the reset position.
+// for reuse; only data pointers are logically invalidated. The GPU counters
+// are also zeroed so that GPU-side kernels see the reset position.
 func (c *TensorCache[T]) Reset() {
 	for i := range c.layers {
 		c.layers[i].seqLen = 0
 	}
 	if c.gpuCounter != nil {
 		_ = c.gpuCounter.CopyFromHost([]int32{0}, 0)
+	}
+	if c.kvSeqLenCounter != nil {
+		_ = c.kvSeqLenCounter.CopyFromHost([]int32{0}, 0)
 	}
 }
 
@@ -477,6 +561,17 @@ func (c *TensorCache[T]) GPUCounterPtr() unsafe.Pointer {
 		return nil
 	}
 	return c.gpuCounter.Ptr()
+}
+
+// KVSeqLenPtr returns the device pointer to the GPU-resident int32 KV
+// sequence length counter. Returns nil if not allocated (CPU-only cache).
+// The flash_attention_decode kernel reads this pointer at runtime so the
+// KV length is not frozen by CUDA graph capture.
+func (c *TensorCache[T]) KVSeqLenPtr() unsafe.Pointer {
+	if c.kvSeqLenCounter == nil {
+		return nil
+	}
+	return c.kvSeqLenCounter.Ptr()
 }
 
 // SyncCounterFromGPU performs a D2H copy of the GPU counter to update the CPU
@@ -532,5 +627,9 @@ func (c *TensorCache[T]) Free() {
 	if c.gpuCounter != nil {
 		_ = c.gpuCounter.Free()
 		c.gpuCounter = nil
+	}
+	if c.kvSeqLenCounter != nil {
+		_ = c.kvSeqLenCounter.Free()
+		c.kvSeqLenCounter = nil
 	}
 }
