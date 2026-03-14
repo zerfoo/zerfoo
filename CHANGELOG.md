@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.1.0](https://github.com/zerfoo/zerfoo/compare/v1.0.1...v1.1.0) (2026-03-14)
+
+### Added
+
+* **OpenAI-compatible API server** -- `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/embeddings` endpoints with SSE streaming support for chat and text completions.
+* **HuggingFace Hub integration** -- download GGUF models directly via `zerfoo pull <model-id>` with progress reporting.
+* **CLI commands** -- `pull` (download models), `serve` (start API server), `run` (interactive chat).
+* **Model architecture support** -- Gemma 3, Llama 3, Mistral, Qwen, Phi, and DeepSeek architectures via GGUF loading.
+* **Batch scheduling** -- continuous batching scheduler for higher throughput under concurrent requests.
+* **GPU KV cache** -- GPU-resident key-value cache with `offset_memcpy` kernel for zero-copy append during decode.
+* **GPU RoPE** -- rotary positional embedding computed entirely on GPU via `rope_select` kernel, eliminating CPU-GPU roundtrips.
+* **Custom CUDA kernels** -- `counter`, `offset_memcpy`, `rope_select`, `sgemv_m1`, `flash_attention_decode` for decode-path acceleration.
+* **CUDA graph capture** -- full decode loop captured as a CUDA graph (184/185 instructions), eliminating per-token kernel launch overhead.
+* **GQA-aware flash attention decode** -- grouped-query attention support in the flash decode kernel, enabling CUDA graph capture for GQA models.
+* **FP16 KV cache mode** -- optional FP16 storage for key-value cache via `--kv-dtype fp16`.
+* **FP8 inference** -- FP8 E4M3 weight quantization and dequant-on-load for reduced memory footprint.
+* **Q4_K native support** -- preserve Q4_K_M storage from GGUF instead of re-quantizing, with fused dequant+GEMV kernel.
+* **Fused GPU operations** -- fused SwiGLU, fused RMSNorm, fused QK-RMSNorm+RoPE to reduce kernel launch count.
+* **OpenAPI specification** -- `/openapi.yaml` endpoint for client discovery.
+* **GoReleaser and release-please** -- automated semantic versioning and binary releases.
+* **DGX Spark (GB10) support** -- verified on NVIDIA GB10 (sm_121) with managed memory detection and arena allocator.
+
+### Performance
+
+* **234 tok/s** on Gemma 3 1B Q4_K_M -- 18.7% faster than Ollama's 197.21 tok/s.
+* CUDA graph capture delivers a 25.9% speedup over non-graph execution.
+* GPU-resident position counter and KV cache append eliminate all per-token CPU-GPU synchronization.
+* Custom `sgemv_m1` kernel for M=1 decode GEMV.
+* Batched strided GEMM via cuBLAS for multi-head attention.
+* PGO (profile-guided optimization) build support.
+* purego FFI replaces CGo for all CUDA/cuBLAS bindings, removing CGo call overhead.
+
+### Fixed
+
+* Data races in `BatchGenerate` on logits buffer and execution plan.
+* Q4_K/Q5_K/Q6_K dequantization correctness aligned with llama.cpp.
+* FP16 batch MatMul dimension handling for multi-head attention.
+* GPU counter synchronization between prefill and decode phases.
+* FP8 scratchpad pointer lifetime after arena reset.
+* BOS token prepending in streaming generation.
+
+### Changed
+
+* Replaced CGo cuBLAS bindings with purego implementation for portable builds.
+* CI lint runs only on new code to avoid blocking on pre-existing issues.
+* Benchmark regression checks are non-blocking in CI.
+
 ## [1.0.1](https://github.com/zerfoo/zerfoo/compare/v1.0.0...v1.0.1) (2026-03-14)
 
 
