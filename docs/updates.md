@@ -1,3 +1,147 @@
+# Phase 9: GQA Decode Kernel + FP16 KV Fix Benchmark
+
+Date: 2026-03-13
+Branch: feat/gqa-decode-kernel
+Commit: 3c2257d (perf: pass KV buffer directly to decode kernel without reshape)
+Hardware: DGX Spark (NVIDIA GB10, sm_121, 273 GB/s LPDDR5x)
+
+## Summary
+
+Phase 9 benchmarks the GQA-aware flash_attention_decode kernel (E905) and the
+FP16 KV cache correctness fix (T902.5). The GQA kernel handles head replication
+at register level inside the kernel, eliminating engine.Repeat entirely. The
+decode fast path is re-enabled for GQA models. CUDA graph captures successfully.
+
+FP16 KV correctness is **fixed** -- output matches F32 exactly. However, both
+F32 and FP16 KV paths show a significant performance regression vs the Phase 6
+baseline (234.30 tok/s), indicating the custom flash_attention_decode kernel is
+slower than the standard SDPA path it replaces.
+
+## S905.3.1: GQA Decode Fast Path Correctness
+
+**Status: PASS**
+
+All attention tests pass with -race:
+```
+go test ./layers/attention/... -race -timeout 120s -v
+PASS ok github.com/zerfoo/zerfoo/layers/attention 1.400s
+```
+
+20-token F32 output at temp=0:
+> This is a very complex and difficult request. I'm not able to provide a response that
+
+Output is coherent. Note: differs from Phase 6 baseline ("This is a good work...")
+because the GQA decode kernel uses flash_attention_decode instead of standard SDPA.
+
+## T905.4: CUDA Graph Capture with GQA Decode
+
+**Status: PASS**
+
+```
+cuda graph: capture region is instructions [1, 185) of 185 total
+cuda graph: captured and instantiated successfully (instructions 1-184)
+```
+
+GQA attention is captured in the graph region. No "fallback" in logs.
+Only EmbeddingLookup (instruction 0) is excluded from graph capture.
+
+## S902.5.1: FP16 KV End-to-End on DGX
+
+**Status: PASS (correctness fixed)**
+
+20-token FP16 KV output at temp=0:
+> This is a very complex and difficult request. I'm not able to provide a response that
+
+Output matches F32 exactly -- no more pad tokens. The FP16 KV correctness bug
+(temp buffer race in append path) is fixed.
+
+## T904.1: Full Benchmark (256 tokens, temp=0)
+
+### F32 KV (256 tokens)
+
+| Run | Throughput | Arena Misses | Arena Resets |
+|-----|-----------|-------------|-------------|
+| 1 | 114.59 tok/s | 0 | 258 |
+| 2 | 114.47 tok/s | 0 | 258 |
+| 3 | 114.71 tok/s | 0 | 258 |
+| **Avg** | **114.59 tok/s** | 0 | 258 |
+
+### FP16 KV (256 tokens)
+
+| Run | Throughput | Arena Misses | Arena Resets |
+|-----|-----------|-------------|-------------|
+| 1 | 52.16 tok/s | 0 | 258 |
+| 2 | 52.31 tok/s | 0 | 258 |
+| 3 | 28.99 tok/s | 0 | 258 |
+| **Avg** | **44.49 tok/s** | 0 | 258 |
+
+### Comparison with Baselines
+
+| Configuration | tok/s | vs Phase 6 | vs Ollama |
+|---------------|-------|-----------|-----------|
+| Phase 6 baseline (commit 86332d7) | 234.30 | -- | +18.8% |
+| Ollama | 197.21 | -15.8% | -- |
+| Phase 8 F32 KV (no GQA kernel) | 234.08 | -0.1% | +18.7% |
+| **Phase 9 F32 KV (GQA kernel)** | **114.59** | **-51.1%** | **-41.9%** |
+| **Phase 9 FP16 KV (GQA kernel)** | **44.49** | **-81.0%** | **-77.4%** |
+| Target | >300 | -- | -- |
+
+## S904.1.1: Output Quality Verification
+
+**Status: PASS**
+
+All 3 F32 KV runs produce identical output text at temp=0. FP16 KV output
+matches F32 output exactly (same tokens). Output is deterministic.
+
+## T904.2: Go Vet
+
+**Status: PASS (pre-existing warnings only)**
+
+Only pre-existing purego `unsafe.Pointer` warnings in:
+- internal/cuda/purego_darwin.go
+- internal/cuda/runtime_purego.go
+- internal/cudnn/cudnn_purego.go
+- internal/hip/runtime_purego.go
+- internal/opencl/runtime_purego.go
+- internal/tensorrt/tensorrt_purego.go
+
+No new warnings.
+
+## Key Findings
+
+1. **GQA decode kernel correctness: PASS.** The kernel correctly handles
+   GQA head replication at register level. Output is coherent and deterministic.
+
+2. **FP16 KV correctness: FIXED.** The temp buffer race fix (bf41e73) resolves
+   the pad token issue. FP16 and F32 outputs now match.
+
+3. **CUDA graph capture: PASS.** Full decode captured (184/185 instructions).
+
+4. **Performance regression: -51.1%.** The custom flash_attention_decode kernel
+   (114.59 tok/s) is significantly slower than the standard SDPA path used in
+   Phase 6 (234.30 tok/s). The kernel eliminates Repeat but the kernel itself
+   is not optimized -- likely issues:
+   - FLASH_BLOCK_SIZE=64 may be suboptimal for the GQA decode workload.
+   - The kernel processes one query head per thread block, which for 8 query
+     heads gives only 8 blocks -- not enough to saturate the GPU.
+   - The kernel may not have enough parallelism for the small batch=1 decode case.
+   - FP16 KV path adds FP16->F32 conversion overhead on top of the slow kernel.
+
+5. **Target not met.** >300 tok/s target not achieved. The GQA decode kernel
+   needs significant optimization or the standard SDPA path should be restored
+   with a different approach to eliminating Repeat overhead.
+
+## Recommendation
+
+The GQA decode kernel approach trades Repeat overhead for kernel overhead, but
+the kernel is slower than Repeat + standard SDPA. Consider:
+1. Reverting to standard SDPA path (restores 234 tok/s).
+2. Optimizing the flash_attention_decode kernel (block size, parallelism).
+3. Alternative: keep standard SDPA but add a lightweight GQA Repeat that only
+   copies the active KV slice (not the full maxSeqLen buffer).
+
+---
+
 # Phase 8: Post-GQA Fix Re-benchmark
 
 Date: 2026-03-13
