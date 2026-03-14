@@ -39,16 +39,19 @@ func FlashAttentionForward(
 }
 
 // FlashAttentionDecode computes single-query attention for autoregressive decode.
+// Supports GQA: numQueryHeads may differ from numKVHeads (must be a multiple).
 func FlashAttentionDecode(
 	Q, K, V, O unsafe.Pointer,
 	numBH, maxKVLen, headDim, kvLen int,
 	kvLenPtr unsafe.Pointer,
+	numQueryHeads, numKVHeads int,
 	stream unsafe.Pointer,
 ) error {
 	err := C.flash_attention_decode_f32(
 		(*C.float)(Q), (*C.float)(K), (*C.float)(V), (*C.float)(O),
 		C.int(numBH), C.int(maxKVLen), C.int(headDim),
 		C.int(kvLen), (*C.int)(kvLenPtr),
+		C.int(numQueryHeads), C.int(numKVHeads),
 		C.cudaStream_t(stream),
 	)
 	if err != C.cudaSuccess {

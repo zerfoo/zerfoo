@@ -217,19 +217,28 @@ __global__ void flash_attention_decode_kernel(
     float* __restrict__ O,
     int max_kv_len, int head_dim,
     int kv_len_param,
-    const int* __restrict__ kv_len_ptr)
+    const int* __restrict__ kv_len_ptr,
+    int num_q_heads, int num_kv_heads)
 {
-    int bh = blockIdx.x;    /* (batch, head) index */
+    int bh = blockIdx.x;    /* (batch, query_head) index */
     int tid = threadIdx.x;  /* thread within block [0, BLOCK_SIZE) */
 
     /* Read KV length from GPU memory if pointer is provided. */
     int kv_len = kv_len_ptr ? *kv_len_ptr : kv_len_param;
 
-    /* Q base: single row at [bh, 0, :] */
+    /* Compute KV head index for GQA. When num_q_heads == num_kv_heads,
+     * head_ratio=1 and kv_bh==bh (backward compatible). */
+    int head_ratio = num_q_heads / num_kv_heads;
+    int batch_idx = bh / num_q_heads;
+    int q_head = bh % num_q_heads;
+    int kv_head = q_head / head_ratio;
+    int kv_bh = batch_idx * num_kv_heads + kv_head;
+
+    /* Q/O base: single row at [bh, 0, :] (Q has num_q_heads per batch) */
     const float* Q_bh = Q + bh * head_dim;
-    /* K/V base: stride is max_kv_len * head_dim per batch-head */
-    const float* K_bh = K + bh * max_kv_len * head_dim;
-    const float* V_bh = V + bh * max_kv_len * head_dim;
+    /* K/V base: stride is max_kv_len * head_dim per KV head */
+    const float* K_bh = K + kv_bh * max_kv_len * head_dim;
+    const float* V_bh = V + kv_bh * max_kv_len * head_dim;
     float* O_bh = O + bh * head_dim;
 
     float scale = rsqrtf((float)head_dim);
@@ -323,13 +332,14 @@ extern "C" cudaError_t flash_attention_decode_f32(
     const float* Q, const float* K, const float* V, float* O,
     int num_bh, int max_kv_len, int head_dim,
     int kv_len, const int* kv_len_ptr,
+    int num_q_heads, int num_kv_heads,
     cudaStream_t stream)
 {
     if (head_dim > MAX_HEAD_DIM_DECODE) {
         return cudaErrorInvalidValue;
     }
 
-    /* One block per (batch, head). */
+    /* One block per (batch, query_head). num_bh = batch * num_q_heads. */
     dim3 grid(num_bh);
     dim3 block(BLOCK_SIZE);
 
@@ -343,7 +353,8 @@ extern "C" cudaError_t flash_attention_decode_f32(
     }
 
     flash_attention_decode_kernel<<<grid, block, smem, stream>>>(
-        Q, K, V, O, max_kv_len, head_dim, kv_len, kv_len_ptr);
+        Q, K, V, O, max_kv_len, head_dim, kv_len, kv_len_ptr,
+        num_q_heads, num_kv_heads);
 
     return cudaGetLastError();
 }
