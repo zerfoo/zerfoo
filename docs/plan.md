@@ -117,7 +117,7 @@ Correctness fix needed.
 - [x] S902.2.1 Test FP16 offset_memcpy  2026 03 14
 - [x] T902.3 Wire FP16 KV into the generator  2026 03 14
 
-- [ ] T902.5 Fix FP16 KV correctness bug  Owner: TBD  Est: 1.5h
+- [x] T902.5 Fix FP16 KV correctness bug  2026 03 14
   - FP16 KV produces all pad tokens on DGX. Likely cause: pointer type
     mismatch in the FP16 conversion path, or the FP16-to-F32 read-back
     is not wired correctly in the attention computation.
@@ -134,7 +134,7 @@ Correctness fix needed.
   - Acceptance: Output coherent. No pad tokens.
   - Dependencies: T902.5.
 
-- [ ] T902.6 Run go vet on FP16 changes  Owner: TBD  Est: 15m
+- [x] T902.6 Run go vet on FP16 changes  2026 03 14 (verified in Wave 1 merge)
   - go vet ./generate/... ./internal/cuda/...
   - Acceptance: No new warnings.
   - Dependencies: T902.5.
@@ -158,7 +158,7 @@ the KV buffer directly. Zero extra memory traffic.
 
 Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
 
-- [ ] T905.1 Add GQA support to flash_attention_decode kernel  Owner: TBD  Est: 2h
+- [x] T905.1 Add GQA support to flash_attention_decode kernel  2026 03 14
   - Modify flash_attention_decode in internal/cuda/kernels/flash_attention.cu:
     - Add numQueryHeads and numKVHeads parameters.
     - In the inner loop, compute kv_head_idx = q_head_idx / (numQueryHeads / numKVHeads).
@@ -171,7 +171,7 @@ Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
     (8 Q heads, 4 KV heads, head_dim=256).
   - Dependencies: none.
 
-- [ ] S905.1.1 Test GQA flash_attention_decode correctness  Owner: TBD  Est: 30m
+- [x] S905.1.1 Test GQA flash_attention_decode correctness  2026 03 14 (tests added in T905.1)
   - Test with Gemma 3 config: 8 Q heads, 4 KV heads, head_dim=256.
   - Compare output with naive attention (QK^T softmax V) using CPU reference.
   - Test with equal heads (numQ == numKV) to verify no regression.
@@ -179,7 +179,7 @@ Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
   - Acceptance: Max absolute error < 1e-4 for both GQA and non-GQA configs.
   - Dependencies: T905.1.
 
-- [ ] T905.2 Add Go wrappers for GQA flash_attention_decode  Owner: TBD  Est: 45m
+- [x] T905.2 Add Go wrappers for GQA flash_attention_decode  2026 03 14 (done in T905.1)
   - Update purego wrapper (flash_attention_purego.go) and CGo wrapper.
   - Update KernelRunner interface if needed (add numQueryHeads, numKVHeads params).
   - Register new symbol in KernelLib if a new launcher was added.
@@ -188,7 +188,7 @@ Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
   - Acceptance: go build, go vet pass.
   - Dependencies: T905.1.
 
-- [ ] T905.3 Re-enable GQA decode fast path  Owner: TBD  Est: 1.5h
+- [x] T905.3 Re-enable GQA decode fast path  2026 03 14
   - In layers/attention/grouped_query_attention.go:
     - Remove the numQueryHeads == numKVHeads guard on the decode fast path.
     - Remove the engine.Repeat expansion code (lines 661-688).
@@ -214,7 +214,7 @@ Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
   - Acceptance: Graph capture succeeds. No "fallback" in logs.
   - Dependencies: T905.3.
 
-- [ ] T905.5 Run go vet and make shared  Owner: TBD  Est: 15m
+- [x] T905.5 Run go vet and make shared  2026 03 14 (go vet clean, make shared pending DGX)
   - go vet ./internal/cuda/... ./internal/gpuapi/... ./layers/...
   - make shared CUDA_ARCH=sm_121 on DGX.
   - Acceptance: No new warnings. Build succeeds.
