@@ -57,13 +57,13 @@ func (d *CUDADNN) ConvForward(
 	if err != nil {
 		return fmt.Errorf("ConvForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	wDesc, err := cudnn.CreateFilterDescriptor()
 	if err != nil {
 		return fmt.Errorf("ConvForward: wDesc: %w", err)
 	}
-	defer wDesc.Destroy()
+	defer func() { _ = wDesc.Destroy() }()
 	if err := wDesc.Set4d(cudnn.Float32, cudnn.NCHW, wShape[0], wShape[1], wShape[2], wShape[3]); err != nil {
 		return fmt.Errorf("ConvForward: set wDesc: %w", err)
 	}
@@ -72,7 +72,7 @@ func (d *CUDADNN) ConvForward(
 	if err != nil {
 		return fmt.Errorf("ConvForward: convDesc: %w", err)
 	}
-	defer convDesc.Destroy()
+	defer func() { _ = convDesc.Destroy() }()
 	if err := convDesc.Set2d(pads[0], pads[1], strides[0], strides[1], dilations[0], dilations[1], cudnn.CrossCorrelation, cudnn.Float32); err != nil {
 		return fmt.Errorf("ConvForward: set convDesc: %w", err)
 	}
@@ -86,7 +86,7 @@ func (d *CUDADNN) ConvForward(
 	if err != nil {
 		return fmt.Errorf("ConvForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	algo := cudnn.ConvFwdAlgoImplicitGemm
 
@@ -114,7 +114,7 @@ func (d *CUDADNN) ConvForward(
 		if err != nil {
 			return fmt.Errorf("ConvForward: bDesc: %w", err)
 		}
-		defer bDesc.Destroy()
+		defer func() { _ = bDesc.Destroy() }()
 		if err := d.handle.AddTensor(1.0, bDesc, bias, 1.0, yDesc, y); err != nil {
 			return fmt.Errorf("ConvForward: add bias: %w", err)
 		}
@@ -135,7 +135,7 @@ func (d *CUDADNN) ConvBackwardData(
 	if err != nil {
 		return fmt.Errorf("ConvBackwardData: wDesc: %w", err)
 	}
-	defer wDesc.Destroy()
+	defer func() { _ = wDesc.Destroy() }()
 	if err := wDesc.Set4d(cudnn.Float32, cudnn.NCHW, wShape[0], wShape[1], wShape[2], wShape[3]); err != nil {
 		return fmt.Errorf("ConvBackwardData: set wDesc: %w", err)
 	}
@@ -144,19 +144,19 @@ func (d *CUDADNN) ConvBackwardData(
 	if err != nil {
 		return fmt.Errorf("ConvBackwardData: dyDesc: %w", err)
 	}
-	defer dyDesc.Destroy()
+	defer func() { _ = dyDesc.Destroy() }()
 
 	dxDesc, err := makeTensor4d(dxShape)
 	if err != nil {
 		return fmt.Errorf("ConvBackwardData: dxDesc: %w", err)
 	}
-	defer dxDesc.Destroy()
+	defer func() { _ = dxDesc.Destroy() }()
 
 	convDesc, err := cudnn.CreateConvolutionDescriptor()
 	if err != nil {
 		return fmt.Errorf("ConvBackwardData: convDesc: %w", err)
 	}
-	defer convDesc.Destroy()
+	defer func() { _ = convDesc.Destroy() }()
 	if err := convDesc.Set2d(pads[0], pads[1], strides[0], strides[1], dilations[0], dilations[1], cudnn.CrossCorrelation, cudnn.Float32); err != nil {
 		return fmt.Errorf("ConvBackwardData: set convDesc: %w", err)
 	}
@@ -201,19 +201,19 @@ func (d *CUDADNN) ConvBackwardFilter(
 	if err != nil {
 		return fmt.Errorf("ConvBackwardFilter: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	dyDesc, err := makeTensor4d(dyShape)
 	if err != nil {
 		return fmt.Errorf("ConvBackwardFilter: dyDesc: %w", err)
 	}
-	defer dyDesc.Destroy()
+	defer func() { _ = dyDesc.Destroy() }()
 
 	dwDesc, err := cudnn.CreateFilterDescriptor()
 	if err != nil {
 		return fmt.Errorf("ConvBackwardFilter: dwDesc: %w", err)
 	}
-	defer dwDesc.Destroy()
+	defer func() { _ = dwDesc.Destroy() }()
 	if err := dwDesc.Set4d(cudnn.Float32, cudnn.NCHW, dwShape[0], dwShape[1], dwShape[2], dwShape[3]); err != nil {
 		return fmt.Errorf("ConvBackwardFilter: set dwDesc: %w", err)
 	}
@@ -222,7 +222,7 @@ func (d *CUDADNN) ConvBackwardFilter(
 	if err != nil {
 		return fmt.Errorf("ConvBackwardFilter: convDesc: %w", err)
 	}
-	defer convDesc.Destroy()
+	defer func() { _ = convDesc.Destroy() }()
 	if err := convDesc.Set2d(pads[0], pads[1], strides[0], strides[1], dilations[0], dilations[1], cudnn.CrossCorrelation, cudnn.Float32); err != nil {
 		return fmt.Errorf("ConvBackwardFilter: set convDesc: %w", err)
 	}
@@ -267,19 +267,19 @@ func (d *CUDADNN) BatchNormForwardInference(
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	bnDesc, err := makeTensor4d([4]int{1, channels, 1, 1})
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: bnDesc: %w", err)
 	}
-	defer bnDesc.Destroy()
+	defer func() { _ = bnDesc.Destroy() }()
 
 	return d.handle.BatchNormalizationForwardInference(
 		cudnn.BatchNormSpatial,
@@ -307,19 +307,19 @@ func (d *CUDADNN) BatchNormForwardTraining(
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardTraining: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardTraining: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	bnDesc, err := makeTensor4d([4]int{1, channels, 1, 1})
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardTraining: bnDesc: %w", err)
 	}
-	defer bnDesc.Destroy()
+	defer func() { _ = bnDesc.Destroy() }()
 
 	return d.handle.BatchNormalizationForwardTraining(
 		cudnn.BatchNormSpatial,
@@ -348,25 +348,25 @@ func (d *CUDADNN) BatchNormBackward(
 	if err != nil {
 		return fmt.Errorf("BatchNormBackward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	dyDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("BatchNormBackward: dyDesc: %w", err)
 	}
-	defer dyDesc.Destroy()
+	defer func() { _ = dyDesc.Destroy() }()
 
 	dxDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("BatchNormBackward: dxDesc: %w", err)
 	}
-	defer dxDesc.Destroy()
+	defer func() { _ = dxDesc.Destroy() }()
 
 	bnDesc, err := makeTensor4d([4]int{1, channels, 1, 1})
 	if err != nil {
 		return fmt.Errorf("BatchNormBackward: bnDesc: %w", err)
 	}
-	defer bnDesc.Destroy()
+	defer func() { _ = bnDesc.Destroy() }()
 
 	return d.handle.BatchNormalizationBackward(
 		cudnn.BatchNormSpatial,
@@ -393,19 +393,19 @@ func (d *CUDADNN) ActivationForward(
 	if err != nil {
 		return fmt.Errorf("ActivationForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("ActivationForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	actDesc, err := cudnn.CreateActivationDescriptor()
 	if err != nil {
 		return fmt.Errorf("ActivationForward: actDesc: %w", err)
 	}
-	defer actDesc.Destroy()
+	defer func() { _ = actDesc.Destroy() }()
 	if err := actDesc.Set(cudnnActivationMode(mode), cudnn.NotPropagateNan, 0.0); err != nil {
 		return fmt.Errorf("ActivationForward: set actDesc: %w", err)
 	}
@@ -424,31 +424,31 @@ func (d *CUDADNN) ActivationBackward(
 	if err != nil {
 		return fmt.Errorf("ActivationBackward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	dyDesc, err := makeTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("ActivationBackward: dyDesc: %w", err)
 	}
-	defer dyDesc.Destroy()
+	defer func() { _ = dyDesc.Destroy() }()
 
 	xDesc, err := makeTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("ActivationBackward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	dxDesc, err := makeTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("ActivationBackward: dxDesc: %w", err)
 	}
-	defer dxDesc.Destroy()
+	defer func() { _ = dxDesc.Destroy() }()
 
 	actDesc, err := cudnn.CreateActivationDescriptor()
 	if err != nil {
 		return fmt.Errorf("ActivationBackward: actDesc: %w", err)
 	}
-	defer actDesc.Destroy()
+	defer func() { _ = actDesc.Destroy() }()
 	if err := actDesc.Set(cudnnActivationMode(mode), cudnn.NotPropagateNan, 0.0); err != nil {
 		return fmt.Errorf("ActivationBackward: set actDesc: %w", err)
 	}
@@ -467,19 +467,19 @@ func (d *CUDADNN) PoolingForward(
 	if err != nil {
 		return fmt.Errorf("PoolingForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(yShape)
 	if err != nil {
 		return fmt.Errorf("PoolingForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	poolDesc, err := cudnn.CreatePoolingDescriptor()
 	if err != nil {
 		return fmt.Errorf("PoolingForward: poolDesc: %w", err)
 	}
-	defer poolDesc.Destroy()
+	defer func() { _ = poolDesc.Destroy() }()
 	if err := poolDesc.Set2d(cudnnPoolingMode(mode), cudnn.NotPropagateNan, windowH, windowW, padH, padW, strideH, strideW); err != nil {
 		return fmt.Errorf("PoolingForward: set poolDesc: %w", err)
 	}
@@ -498,31 +498,31 @@ func (d *CUDADNN) PoolingBackward(
 	if err != nil {
 		return fmt.Errorf("PoolingBackward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	dyDesc, err := makeTensor4d(yShape)
 	if err != nil {
 		return fmt.Errorf("PoolingBackward: dyDesc: %w", err)
 	}
-	defer dyDesc.Destroy()
+	defer func() { _ = dyDesc.Destroy() }()
 
 	xDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("PoolingBackward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	dxDesc, err := makeTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("PoolingBackward: dxDesc: %w", err)
 	}
-	defer dxDesc.Destroy()
+	defer func() { _ = dxDesc.Destroy() }()
 
 	poolDesc, err := cudnn.CreatePoolingDescriptor()
 	if err != nil {
 		return fmt.Errorf("PoolingBackward: poolDesc: %w", err)
 	}
-	defer poolDesc.Destroy()
+	defer func() { _ = poolDesc.Destroy() }()
 	if err := poolDesc.Set2d(cudnnPoolingMode(mode), cudnn.NotPropagateNan, windowH, windowW, padH, padW, strideH, strideW); err != nil {
 		return fmt.Errorf("PoolingBackward: set poolDesc: %w", err)
 	}
@@ -539,13 +539,13 @@ func (d *CUDADNN) SoftmaxForward(
 	if err != nil {
 		return fmt.Errorf("SoftmaxForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("SoftmaxForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	return d.handle.SoftmaxForward(cudnn.SoftmaxAccurate, cudnn.SoftmaxModeChannel, 1.0, xDesc, x, 0.0, yDesc, y)
 }
@@ -561,13 +561,13 @@ func (d *CUDADNN) AddTensor(
 	if err != nil {
 		return fmt.Errorf("AddTensor: bDesc: %w", err)
 	}
-	defer bDesc.Destroy()
+	defer func() { _ = bDesc.Destroy() }()
 
 	yDesc, err := makeTensor4d(yShape)
 	if err != nil {
 		return fmt.Errorf("AddTensor: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	return d.handle.AddTensor(alpha, bDesc, b, beta, yDesc, y)
 }
@@ -581,7 +581,7 @@ func makeTensor4d(shape [4]int) (*cudnn.TensorDescriptor, error) {
 		return nil, err
 	}
 	if err := desc.Set4d(cudnn.NCHW, cudnn.Float32, shape[0], shape[1], shape[2], shape[3]); err != nil {
-		desc.Destroy()
+		_ = desc.Destroy()
 		return nil, err
 	}
 	return desc, nil

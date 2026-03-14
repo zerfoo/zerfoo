@@ -57,19 +57,19 @@ func (d *ROCmDNN) ConvForward(
 	if err != nil {
 		return fmt.Errorf("ConvForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	wDesc, err := miopenTensor4d(wShape)
 	if err != nil {
 		return fmt.Errorf("ConvForward: wDesc: %w", err)
 	}
-	defer wDesc.Destroy()
+	defer func() { _ = wDesc.Destroy() }()
 
 	convDesc, err := miopen.CreateConvolutionDescriptor()
 	if err != nil {
 		return fmt.Errorf("ConvForward: convDesc: %w", err)
 	}
-	defer convDesc.Destroy()
+	defer func() { _ = convDesc.Destroy() }()
 	if err := convDesc.Set2d(pads[0], pads[1], strides[0], strides[1], dilations[0], dilations[1], miopen.ConvolutionMode); err != nil {
 		return fmt.Errorf("ConvForward: set convDesc: %w", err)
 	}
@@ -83,7 +83,7 @@ func (d *ROCmDNN) ConvForward(
 	if err != nil {
 		return fmt.Errorf("ConvForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	// MIOpen requires workspace for algorithm search and execution.
 	wsSize, err := d.handle.ConvolutionForwardGetWorkspaceSize(xDesc, wDesc, convDesc, yDesc)
@@ -120,7 +120,7 @@ func (d *ROCmDNN) ConvForward(
 		if err != nil {
 			return fmt.Errorf("ConvForward: bDesc: %w", err)
 		}
-		defer bDesc.Destroy()
+		defer func() { _ = bDesc.Destroy() }()
 		if err := d.handle.OpTensorAdd(1.0, bDesc, bias, 1.0, yDesc, y); err != nil {
 			return fmt.Errorf("ConvForward: add bias: %w", err)
 		}
@@ -163,19 +163,19 @@ func (d *ROCmDNN) BatchNormForwardInference(
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := miopenTensor4d(xShape)
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	bnDesc, err := miopenTensor4d([4]int{1, channels, 1, 1})
 	if err != nil {
 		return fmt.Errorf("BatchNormForwardInference: bnDesc: %w", err)
 	}
-	defer bnDesc.Destroy()
+	defer func() { _ = bnDesc.Destroy() }()
 
 	return d.handle.BatchNormalizationForwardInference(
 		miopen.BatchNormSpatial,
@@ -224,19 +224,19 @@ func (d *ROCmDNN) ActivationForward(
 	if err != nil {
 		return fmt.Errorf("ActivationForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := miopenTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("ActivationForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	actDesc, err := miopen.CreateActivationDescriptor()
 	if err != nil {
 		return fmt.Errorf("ActivationForward: actDesc: %w", err)
 	}
-	defer actDesc.Destroy()
+	defer func() { _ = actDesc.Destroy() }()
 	if err := actDesc.Set(miopenActivationMode(mode), 0.0, 0.0, 0.0); err != nil {
 		return fmt.Errorf("ActivationForward: set actDesc: %w", err)
 	}
@@ -265,19 +265,19 @@ func (d *ROCmDNN) PoolingForward(
 	if err != nil {
 		return fmt.Errorf("PoolingForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := miopenTensor4d(yShape)
 	if err != nil {
 		return fmt.Errorf("PoolingForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	poolDesc, err := miopen.CreatePoolingDescriptor()
 	if err != nil {
 		return fmt.Errorf("PoolingForward: poolDesc: %w", err)
 	}
-	defer poolDesc.Destroy()
+	defer func() { _ = poolDesc.Destroy() }()
 	if err := poolDesc.Set2d(miopenPoolingMode(mode), windowH, windowW, padH, padW, strideH, strideW); err != nil {
 		return fmt.Errorf("PoolingForward: set poolDesc: %w", err)
 	}
@@ -319,13 +319,13 @@ func (d *ROCmDNN) SoftmaxForward(
 	if err != nil {
 		return fmt.Errorf("SoftmaxForward: xDesc: %w", err)
 	}
-	defer xDesc.Destroy()
+	defer func() { _ = xDesc.Destroy() }()
 
 	yDesc, err := miopenTensor4d(shape)
 	if err != nil {
 		return fmt.Errorf("SoftmaxForward: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	return d.handle.SoftmaxForward(miopen.SoftmaxAccurate, miopen.SoftmaxModeChannel, 1.0, xDesc, x, 0.0, yDesc, y)
 }
@@ -341,13 +341,13 @@ func (d *ROCmDNN) AddTensor(
 	if err != nil {
 		return fmt.Errorf("AddTensor: bDesc: %w", err)
 	}
-	defer bDesc.Destroy()
+	defer func() { _ = bDesc.Destroy() }()
 
 	yDesc, err := miopenTensor4d(yShape)
 	if err != nil {
 		return fmt.Errorf("AddTensor: yDesc: %w", err)
 	}
-	defer yDesc.Destroy()
+	defer func() { _ = yDesc.Destroy() }()
 
 	return d.handle.OpTensorAdd(alpha, bDesc, b, beta, yDesc, y)
 }
@@ -361,7 +361,7 @@ func miopenTensor4d(shape [4]int) (*miopen.TensorDescriptor, error) {
 		return nil, err
 	}
 	if err := desc.Set4d(miopen.Float32, shape[0], shape[1], shape[2], shape[3]); err != nil {
-		desc.Destroy()
+		_ = desc.Destroy()
 		return nil, err
 	}
 	return desc, nil
