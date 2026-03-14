@@ -107,7 +107,7 @@ The fix: upload all frozen weight tensors to GPU during model loading or graph
 compilation, so getDevicePtr finds GPUStorage (not CPUStorage) during the capture
 region and returns the pointer without any cudaMemcpy.
 
-- [ ] T3000.1 Add weight pre-upload to graph compilation  Owner: TBD  Est: 1.5h
+- [x] T3000.1 Add weight pre-upload to graph compilation  Owner: task-T3000.1  Est: 1.5h  Done: 2026-03-14 (69c48af)
   - In graph/compile.go or graph/cuda_graph.go, after graph compilation and
     before the first warmup run, iterate over all frozen slot tensors.
   - For each frozen tensor with CPUStorage, upload to GPU via pool.Alloc +
@@ -139,7 +139,7 @@ region and returns the pointer without any cudaMemcpy.
 When CUDA graph capture fails, the fallback produces garbage. This is a separate
 correctness bug that must be fixed regardless of graph capture success.
 
-- [ ] T3001.1 Diagnose non-graph fallback garbage output  Owner: TBD  Est: 1h
+- [x] T3001.1 Diagnose non-graph fallback garbage output  Owner: task-T3001.1  Est: 1h  Done: 2026-03-14 (diagnosis only, no code changes)
   - Run bench_tps on DGX with CUDA graph disabled (if flag exists) or with
     a model that forces non-graph execution.
   - Add debug logging to the fallback path in graph/cuda_graph.go Run().
@@ -152,10 +152,13 @@ correctness bug that must be fixed regardless of graph capture success.
   - Dependencies: none.
 
 - [ ] T3001.2 Fix the non-graph fallback  Owner: TBD  Est: 1.5h
-  - Apply fix based on T3001.1 diagnosis.
-  - Likely fixes: ensure arena ResetPool does not corrupt in-flight tensors
-    in non-graph mode; handle TrySlice errors by retrying or pre-syncing.
-  - File: TBD based on diagnosis.
+  - Root cause: KV cache double-update during failed graph capture. captureAndRun
+    partially executes GQA layers (which call cache.Update()), then on failure the
+    fallback RunInstructions re-runs ALL instructions, double-incrementing seqLen.
+  - Fix: snapshot/restore KV cache seqLen around the capture attempt. Before
+    RunInstructionRange(captureStart, captureEnd), save each layer's lb.seqLen
+    (and GPU counter). If capture fails, restore snapshot before fallback.
+  - Files: graph/cuda_graph.go, generate/tensor_cache.go.
   - Acceptance: bench_tps with Llama 3 ZMF produces coherent text without
     CUDA graph.
   - Dependencies: T3001.1.
@@ -167,7 +170,7 @@ correctness bug that must be fixed regardless of graph capture success.
 
 ### E3002: Fix Mistral Range Op Panic
 
-- [ ] T3002.1 Diagnose Mistral Range op index OOB  Owner: TBD  Est: 1h
+- [x] T3002.1 Diagnose Mistral Range op index OOB  Owner: task-T3002.1  Est: 1h  Done: 2026-03-14 (8f3efc6, fix included)
   - Read layers/core/range_op.go:29 and trace the input shapes.
   - Run with debug output on DGX: bench_tps with Mistral 7B.
   - Check if the Range op receives empty inputs (length 0) causing index [0]
@@ -178,10 +181,10 @@ correctness bug that must be fixed regardless of graph capture success.
   - Acceptance: Root cause identified.
   - Dependencies: none.
 
-- [ ] T3002.2 Fix Range op for Mistral  Owner: TBD  Est: 1h
-  - Apply fix based on T3002.1 diagnosis.
-  - Add bounds checking to Range op to prevent panic.
-  - File: layers/core/range_op.go or inference/.
+- [x] T3002.2 Fix Range op for Mistral  Owner: task-T3002.1  Est: 1h  Done: 2026-03-14 (8f3efc6, included in T3002.1)
+  - Bounds checking added to Range.Forward() — returns error instead of panic on empty Data().
+  - Deeper fix for T3002.2 follow-up: skip GPU upload of scalar constants in UploadWeights.
+  - File: layers/core/range_op.go.
   - Acceptance: bench_tps with Mistral 7B produces output without panic.
   - Dependencies: T3002.1.
 
@@ -192,7 +195,7 @@ correctness bug that must be fixed regardless of graph capture success.
 
 ### E3003: Fix Phi 4 pow_scalar Kernel
 
-- [ ] T3003.1 Diagnose Phi 4 pow_scalar cuda error 1  Owner: TBD  Est: 1h
+- [x] T3003.1 Diagnose Phi 4 pow_scalar cuda error 1  Owner: task-T3003.1  Est: 1h  Done: 2026-03-14 (diagnosis only — stale .so on DGX, needs rebuild)
   - Check if pow_scalar kernel exists in internal/cuda/kernels/.
   - Check if Phi 4 architecture uses Pow nodes (GeLU approximation?).
   - Read compute/gpu_engine.go Pow/PowScalar implementation.
@@ -200,11 +203,12 @@ correctness bug that must be fixed regardless of graph capture success.
   - Acceptance: Root cause identified (missing kernel vs wrong dispatch).
   - Dependencies: none.
 
-- [ ] T3003.2 Fix pow_scalar for Phi 4  Owner: TBD  Est: 1.5h
-  - Implement or fix the pow_scalar CUDA kernel.
-  - If the kernel is missing, add it to internal/cuda/kernels/ and wire it
-    through the purego bindings.
-  - File: internal/cuda/kernels/, compute/gpu_engine.go.
+- [ ] T3003.2 Fix pow_scalar for Phi 4  Owner: TBD  Est: 0.5h
+  - Root cause: stale libkernels.so on DGX built before pow_scalar was added.
+    Code is correct (kernel, bindings, symbol loading, dispatch all verified).
+  - Fix: rebuild libkernels.so on DGX with CUDA_ARCH=sm_121:
+    cd ~/zerfoo/internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
+  - File: internal/cuda/kernels/Makefile (no code changes needed).
   - Acceptance: bench_tps with Phi 4 produces output without kernel error.
   - Dependencies: T3003.1.
 
