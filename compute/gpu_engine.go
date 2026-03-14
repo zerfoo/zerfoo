@@ -1772,16 +1772,6 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
-	// Only use GPU path for GPU-resident tensors.
-	_, isGPU := a.GetStorage().(*tensor.GPUStorage[T])
-	isFP16 := false
-	if e.dtype != DTypeF32 {
-		_, isFP16 = any(a.GetStorage()).(*tensor.Float16Storage)
-	}
-	if !isGPU && !isFP16 {
-		return e.cpu.Transpose(ctx, a, axes, dst...)
-	}
-
 	e.setDevice()
 
 	shape := a.Shape()
@@ -1825,18 +1815,20 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 				return t, nil
 			}
 		}
-		gs := a.GetStorage().(*tensor.GPUStorage[T])
-		viewGS := gs.View(gs.Len())
-		t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
-		if tErr != nil {
-			return nil, tErr
+		if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok {
+			viewGS := gs.View(gs.Len())
+			t, tErr := tensor.NewWithStorage[T](outShape, viewGS)
+			if tErr != nil {
+				return nil, tErr
+			}
+			if len(dst) > 0 && dst[0] != nil {
+				dst[0].SetStorage(viewGS)
+				dst[0].SetShape(outShape)
+				return dst[0], nil
+			}
+			return t, nil
 		}
-		if len(dst) > 0 && dst[0] != nil {
-			dst[0].SetStorage(viewGS)
-			dst[0].SetShape(outShape)
-			return dst[0], nil
-		}
-		return t, nil
+		// CPUStorage: fall through to getDevicePtr + GPU kernel path.
 	}
 
 	// Compute total elements.
