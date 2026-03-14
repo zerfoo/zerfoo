@@ -287,9 +287,9 @@ func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[s
 		if strings.Contains(name, "embed_tokens") || strings.Contains(name, "lm_head") {
 			continue
 		}
-		// Skip 1D tensors (norm weights, biases) — they are small and
-		// benefit more from full precision than from FP8 compression.
-		if len(t.Shape()) <= 1 {
+		// Skip norm weights and biases — they are small and benefit more
+		// from full precision than from FP8 compression.
+		if strings.Contains(name, "norm") || strings.HasSuffix(name, ".bias") {
 			continue
 		}
 		f32 := t.Data()
