@@ -51,19 +51,19 @@ func TestSgemmParityCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc A: %v", err)
 	}
-	defer cuda.Free(devA)
+	defer func() { _ = cuda.Free(devA) }()
 
 	devB, err := cuda.Malloc(bBytes)
 	if err != nil {
 		t.Fatalf("Malloc B: %v", err)
 	}
-	defer cuda.Free(devB)
+	defer func() { _ = cuda.Free(devB) }()
 
 	devC, err := cuda.Malloc(cBytes)
 	if err != nil {
 		t.Fatalf("Malloc C: %v", err)
 	}
-	defer cuda.Free(devC)
+	defer func() { _ = cuda.Free(devC) }()
 
 	if err := cuda.Memcpy(devA, unsafe.Pointer(&a[0]), aBytes, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy A: %v", err)
@@ -76,7 +76,7 @@ func TestSgemmParityCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
 	}
-	defer h.Destroy()
+	defer func() { _ = h.Destroy() }()
 
 	if err := Sgemm(h, m, n, k, 1.0, devA, devB, 0.0, devC); err != nil {
 		t.Fatalf("Sgemm: %v", err)
@@ -134,19 +134,19 @@ func TestGemmExParityCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc A: %v", err)
 	}
-	defer cuda.Free(devA)
+	defer func() { _ = cuda.Free(devA) }()
 
 	devB, err := cuda.Malloc(bBytes)
 	if err != nil {
 		t.Fatalf("Malloc B: %v", err)
 	}
-	defer cuda.Free(devB)
+	defer func() { _ = cuda.Free(devB) }()
 
 	devC, err := cuda.Malloc(cBytes)
 	if err != nil {
 		t.Fatalf("Malloc C: %v", err)
 	}
-	defer cuda.Free(devC)
+	defer func() { _ = cuda.Free(devC) }()
 
 	if err := cuda.Memcpy(devA, unsafe.Pointer(&a[0]), aBytes, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy A: %v", err)
@@ -159,7 +159,7 @@ func TestGemmExParityCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateHandle: %v", err)
 	}
-	defer h.Destroy()
+	defer func() { _ = h.Destroy() }()
 
 	if err := GemmEx(h, m, n, k, 1.0,
 		devA, CudaR32F,
