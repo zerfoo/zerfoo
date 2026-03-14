@@ -153,6 +153,14 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		}
 	}
 
+	// Sync GPU counter back to CPU after decode loop completes.
+	type counterSyncer interface {
+		SyncCounterFromGPU() error
+	}
+	if cs, ok := cacheProvider.(counterSyncer); ok {
+		_ = cs.SyncCounterFromGPU()
+	}
+
 	return stream.OnToken("", true)
 }
 

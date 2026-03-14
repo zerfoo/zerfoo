@@ -309,6 +309,16 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		}
 	}
 
+	// Sync GPU counter back to CPU after decode loop completes.
+	// During CUDA graph replay, the GPU counter advances independently;
+	// this brings the CPU-side seqLen back in sync.
+	type counterSyncer interface {
+		SyncCounterFromGPU() error
+	}
+	if cs, ok := cacheProvider.(counterSyncer); ok {
+		_ = cs.SyncCounterFromGPU()
+	}
+
 	if len(generatedIDs) == 0 {
 		return "", nil
 	}
