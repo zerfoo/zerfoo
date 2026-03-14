@@ -21,6 +21,13 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
 // float→int conversion.
 //
+// Gather: uses CPU index tensors to select rows; triggers H2D copies
+// incompatible with stream capture.
+//
+// AutoAttentionMask / AutoPositionIds: allocate CPU tensors (make([]T, ...))
+// and return them via tensor.New. Downstream ops (e.g. Mul) would call
+// getDevicePtr triggering cudaMemcpy H2D on the capturing stream.
+//
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
 // for KV cache appends. Now that TensorCache uses a GPU-resident counter
@@ -28,7 +35,10 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 // all position-dependent state is read from GPU memory at replay time, making
 // GQA fully capturable.
 var nonCapturableOps = map[string]bool{
-	"EmbeddingLookup": true,
+	"EmbeddingLookup":   true,
+	"Gather":            true,
+	"AutoAttentionMask": true,
+	"AutoPositionIds":   true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
@@ -92,25 +102,22 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups = 1
 	}
 
-	// Determine capture region: find the first and last capturable instruction.
+	// Determine capture region by scanning ALL instructions.
+	// captureStart is set to the instruction AFTER the last non-capturable op
+	// found from the front. captureEnd trims non-capturable ops from the back.
+	// This handles non-capturable ops anywhere in the instruction list (not
+	// just at the edges). For example, ZMF models have Gather at instruction
+	// 34 out of 1610 -- instructions 0-34 run pre-capture, 35-1609 are captured.
 	n := plan.InstructionCount()
 	captureStart := 0
-	for captureStart < n && nonCapturableOps[plan.InstructionOpName(captureStart)] {
-		captureStart++
+	for i := 0; i < n; i++ {
+		if nonCapturableOps[plan.InstructionOpName(i)] {
+			captureStart = i + 1
+		}
 	}
 	captureEnd := n
 	for captureEnd > captureStart && nonCapturableOps[plan.InstructionOpName(captureEnd-1)] {
 		captureEnd--
-	}
-
-	// Check for non-capturable ops in the middle of the capture range.
-	// If any exist, we can't capture a contiguous region.
-	for i := captureStart; i < captureEnd; i++ {
-		if nonCapturableOps[plan.InstructionOpName(i)] {
-			log.Printf("cuda graph: non-capturable op %q at instruction %d inside capture range [%d, %d), disabling graph",
-				plan.InstructionOpName(i), i, captureStart, captureEnd)
-			return &CUDAGraphExecutor[T]{plan: plan, failed: true}
-		}
 	}
 
 	if captureStart >= captureEnd {
