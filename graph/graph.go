@@ -167,10 +167,10 @@ func (g *Graph[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[
 		if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" && output != nil {
 			opType := n.OpType()
 			shape := output.Shape()
-			// Log first/last few nodes and any Gather/MatMul/AutoPositionIds/AutoAttentionMask nodes.
-			logThis := nodeIdx < 5 || nodeIdx >= len(g.nodes)-3 ||
-				opType == "Gather" || opType == "MatMul" || opType == "LMHead" ||
-				opType == "AutoPositionIds" || opType == "AutoAttentionMask" || opType == "AutoZeroKVCache"
+			// Log first 120 nodes (covers embedding + first transformer layer),
+			// last 3 nodes, and key node types at any position.
+			logThis := nodeIdx < 120 || nodeIdx >= len(g.nodes)-3 ||
+				opType == "LMHead"
 			if logThis {
 				var first5 []float64
 				data := output.Data()
