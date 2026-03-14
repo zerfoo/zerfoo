@@ -78,7 +78,6 @@ type Generator[T tensor.Numeric] struct {
 	headDim   int                                        // per-head dim for paged KV
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
-	logitsBuf []T                                        // reusable buffer for logits sampling (avoids GC pressure)
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -366,14 +365,11 @@ func (gen *Generator[T]) sampleFromLogits(
 		}
 	}
 
-	// Reuse a persistent buffer for logits to avoid allocating 1MB+ per
-	// token. For GPU tensors, CopyTo avoids the double allocation of
-	// Data() which creates a new slice via GPUStorage.Slice().
+	// Allocate a local buffer for logits. A struct-level buffer would be
+	// racy when BatchGenerate spawns concurrent goroutines that each call
+	// Generate on the same Generator instance.
 	totalElems := seqLen * vocabSize
-	if cap(gen.logitsBuf) < totalElems {
-		gen.logitsBuf = make([]T, totalElems)
-	}
-	data := gen.logitsBuf[:totalElems]
+	data := make([]T, totalElems)
 
 	if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
 		if err := gs.CopyTo(data); err != nil {
