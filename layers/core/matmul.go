@@ -16,12 +16,6 @@ import (
 type MatMul[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	outputShape []int
-
-	// cachedBTranspose caches the transposed B operand when B requires
-	// transposition (constant weight case). Set on first Forward call
-	// and reused on subsequent calls to avoid transposing every time.
-	cachedBTranspose *tensor.TensorNumeric[T]
-	cachedB          *tensor.TensorNumeric[T] // the B tensor that was transposed
 }
 
 // NewMatMul creates a new MatMul layer.
@@ -66,7 +60,22 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 				return result, err
 			}
 
-			bTransposed, err := m.getCachedTranspose(ctx, b)
+			// Use MatMulTransposeB (C = A * B^T) when available, avoiding an
+			// explicit Transpose allocation. Caching a transposed tensor caused
+			// a use-after-free: the graph's arena pool reclaimed the GPU memory
+			// between forward passes, leaving a null device pointer that caused
+			// cuBLAS status 7 (INTERNAL_ERROR).
+			if tb, ok := m.engine.(compute.TransposeBMatMuler[T]); ok {
+				result, err := tb.MatMulTransposeB(ctx, a, b)
+				if err != nil {
+					return nil, err
+				}
+				m.outputShape = result.Shape()
+				return result, nil
+			}
+
+			// Fallback: explicit transpose each pass (no caching).
+			bTransposed, err := m.engine.Transpose(ctx, b, []int{1, 0})
 			if err != nil {
 				return nil, fmt.Errorf("failed to transpose second operand: %w", err)
 			}
@@ -91,22 +100,6 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	m.outputShape = result.Shape()
 
 	return result, nil
-}
-
-// getCachedTranspose returns the transposed B matrix, caching it for reuse
-// when the same B tensor (identified by pointer equality) is passed on subsequent calls.
-// This avoids re-transposing constant weight matrices on every forward pass.
-func (m *MatMul[T]) getCachedTranspose(ctx context.Context, b *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if m.cachedBTranspose != nil && m.cachedB == b {
-		return m.cachedBTranspose, nil
-	}
-	transposed, err := m.engine.Transpose(ctx, b, []int{1, 0})
-	if err != nil {
-		return nil, err
-	}
-	m.cachedBTranspose = transposed
-	m.cachedB = b
-	return transposed, nil
 }
 
 // tryQ4BTransposed checks if B has Q4 storage and computes C = A * B^T using
