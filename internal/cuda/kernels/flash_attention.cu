@@ -184,28 +184,33 @@ extern "C" cudaError_t flash_attention_forward_f32(
 }
 
 /* -----------------------------------------------------------------------
- * Decode-specific attention kernel with GPU-resident KV sequence length.
+ * Decode-specific attention kernel with GPU-resident KV sequence length
+ * and GQA support.
  *
- * During autoregressive decode, Q has 1 row per (batch, head) while K/V
- * have kv_len rows. The vanilla flash_attention_kernel assumes Q, K, V
- * share the same seq_len, which prevents its use during decode.
+ * During autoregressive decode, Q has 1 row per (batch, query_head) while
+ * K/V are stored in the KV cache with heads packed in the dim dimension.
  *
- * This kernel:
- *   - Q layout: [num_bh, 1, head_dim]          (single query token)
- *   - K layout: [num_bh, max_kv_len, head_dim]  (full KV buffer)
- *   - V layout: [num_bh, max_kv_len, head_dim]
- *   - O layout: [num_bh, 1, head_dim]
+ * Layouts:
+ *   Q:  [batch * num_q_heads, 1, head_dim]        (separated by head)
+ *   K:  [batch, max_kv_len, num_kv_heads * head_dim]  (heads packed in dim)
+ *   V:  [batch, max_kv_len, num_kv_heads * head_dim]
+ *   O:  [batch * num_q_heads, 1, head_dim]
  *
+ * kv_dim:     num_kv_heads * head_dim (stride between KV positions).
  * kv_len_ptr: GPU-resident int32 pointer. If non-null, the kernel reads
- * the actual KV length from *kv_len_ptr at runtime (not frozen by CUDA
- * graph capture). If null, kv_len_param is used directly.
+ *             the actual KV length from *kv_len_ptr at runtime (not frozen
+ *             by CUDA graph capture). If null, kv_len_param is used.
  *
- * Design: One thread block per (batch, head). Q is loaded into shared
- * memory. KV is processed in tiles of BLOCK_SIZE. For each K entry in the
- * tile, all threads cooperatively compute the dot product via parallel
- * reduction. Thread 0 then does the online softmax update and accumulates
- * the weighted V into a shared-memory accumulator. Finally thread 0 writes
- * the output.
+ * GQA: each query head maps to a KV head via kv_head = q_head / head_ratio.
+ * The kernel indexes into the packed KV dim: K_base + kv_head * head_dim.
+ * Between positions the stride is kv_dim (not head_dim).
+ *
+ * Design: One thread block per (batch, query_head). Q is loaded into shared
+ * memory. KV is iterated position by position. For each position, all
+ * threads cooperatively compute the dot product via parallel reduction.
+ * Thread 0 does the online softmax update and broadcasts rescaling factors.
+ * All threads update the shared-memory V accumulator. Finally thread 0
+ * writes the normalized output.
  *
  * This avoids large per-thread register arrays and works with head_dim up
  * to 256 without register spilling.
@@ -215,7 +220,7 @@ __global__ void flash_attention_decode_kernel(
     const float* __restrict__ K,
     const float* __restrict__ V,
     float* __restrict__ O,
-    int max_kv_len, int head_dim,
+    int max_kv_len, int head_dim, int kv_dim,
     int kv_len_param,
     const int* __restrict__ kv_len_ptr,
     int num_q_heads, int num_kv_heads)
@@ -227,19 +232,21 @@ __global__ void flash_attention_decode_kernel(
     int kv_len = kv_len_ptr ? *kv_len_ptr : kv_len_param;
 
     /* Compute KV head index for GQA. When num_q_heads == num_kv_heads,
-     * head_ratio=1 and kv_bh==bh (backward compatible). */
+     * head_ratio=1 and kv_head == q_head (backward compatible). */
     int head_ratio = num_q_heads / num_kv_heads;
     int batch_idx = bh / num_q_heads;
     int q_head = bh % num_q_heads;
     int kv_head = q_head / head_ratio;
-    int kv_bh = batch_idx * num_kv_heads + kv_head;
 
     /* Q/O base: single row at [bh, 0, :] (Q has num_q_heads per batch) */
     const float* Q_bh = Q + bh * head_dim;
-    /* K/V base: stride is max_kv_len * head_dim per KV head */
-    const float* K_bh = K + kv_bh * max_kv_len * head_dim;
-    const float* V_bh = V + kv_bh * max_kv_len * head_dim;
     float* O_bh = O + bh * head_dim;
+
+    /* K/V base: heads are packed in dim. For batch_idx b, kv_head h:
+     * base = K + b * max_kv_len * kv_dim + h * head_dim
+     * Position stride between K[pos] and K[pos+1] is kv_dim. */
+    const float* K_base = K + batch_idx * max_kv_len * kv_dim + kv_head * head_dim;
+    const float* V_base = V + batch_idx * max_kv_len * kv_dim + kv_head * head_dim;
 
     float scale = rsqrtf((float)head_dim);
 
@@ -267,13 +274,13 @@ __global__ void flash_attention_decode_kernel(
     float row_max = -FLT_MAX;
     float row_sum = 0.0f;
 
-    /* Iterate over K/V entries. */
+    /* Iterate over KV positions. Stride between positions is kv_dim. */
     for (int j = 0; j < kv_len; j++) {
         /* Step 1: parallel dot product Q * K[j]. Each thread handles a
          * stripe of the head dimension. */
         float partial = 0.0f;
         for (int d = tid; d < head_dim; d += BLOCK_SIZE) {
-            partial += sQ[d] * K_bh[j * head_dim + d];
+            partial += sQ[d] * K_base[j * kv_dim + d];
         }
         sPartial[tid] = partial;
         __syncthreads();
@@ -308,7 +315,7 @@ __global__ void flash_attention_decode_kernel(
             float exp_diff = sPartial[0];
             float exp_s = sPartial[1];
             for (int d = tid; d < head_dim; d += BLOCK_SIZE) {
-                sAcc[d] = sAcc[d] * exp_diff + exp_s * V_bh[j * head_dim + d];
+                sAcc[d] = sAcc[d] * exp_diff + exp_s * V_base[j * kv_dim + d];
             }
         }
         __syncthreads();
@@ -339,6 +346,8 @@ extern "C" cudaError_t flash_attention_decode_f32(
         return cudaErrorInvalidValue;
     }
 
+    int kv_dim = num_kv_heads * head_dim;
+
     /* One block per (batch, query_head). num_bh = batch * num_q_heads. */
     dim3 grid(num_bh);
     dim3 block(BLOCK_SIZE);
@@ -353,7 +362,7 @@ extern "C" cudaError_t flash_attention_decode_f32(
     }
 
     flash_attention_decode_kernel<<<grid, block, smem, stream>>>(
-        Q, K, V, O, max_kv_len, head_dim, kv_len, kv_len_ptr,
+        Q, K, V, O, max_kv_len, head_dim, kv_dim, kv_len, kv_len_ptr,
         num_q_heads, num_kv_heads);
 
     return cudaGetLastError();
