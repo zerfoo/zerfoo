@@ -1293,3 +1293,218 @@ func TestIntegration_AllEndpoints(t *testing.T) {
 		t.Errorf("after delete, models Data len = %d, want 0", len(postDelResult.Data))
 	}
 }
+
+// --- Panic recovery ---
+
+// panicNode panics during Forward.
+type panicNode struct {
+	graph.NoParameters[float32]
+}
+
+func (n *panicNode) OpType() string                     { return "Panic" }
+func (n *panicNode) Attributes() map[string]interface{} { return nil }
+func (n *panicNode) OutputShape() []int                 { return []int{1, 1, 8} }
+func (n *panicNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, nil
+}
+
+func (n *panicNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	panic("test panic in handler")
+}
+
+func buildPanicModel(t *testing.T) *inference.Model {
+	t.Helper()
+	vocabSize := 8
+	tok := tokenizer.NewWhitespaceTokenizer()
+	tok.AddToken("hello")
+	tok.AddToken("world")
+	tok.AddToken("foo")
+	tok.AddToken("bar")
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	b := graph.NewBuilder[float32](engine)
+	in := b.Input([]int{1, 1, 1})
+	node := &panicNode{}
+	b.AddNode(node, in)
+	g, err := b.Build(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gen := generate.NewGenerator(g, tok, engine, generate.ModelConfig{
+		VocabSize:  vocabSize,
+		MaxSeqLen:  32,
+		EOSTokenID: 2,
+		BOSTokenID: 1,
+		NumLayers:  0,
+	})
+
+	return inference.NewTestModel(gen, tok, engine,
+		inference.ModelMetadata{
+			VocabSize:  vocabSize,
+			NumLayers:  1,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+		},
+		&registry.ModelInfo{ID: "test-model", Path: "/tmp/test"},
+	)
+}
+
+// oomErrorNode returns an OOM error during Forward.
+type oomErrorNode struct {
+	graph.NoParameters[float32]
+}
+
+func (n *oomErrorNode) OpType() string                     { return "OOMError" }
+func (n *oomErrorNode) Attributes() map[string]interface{} { return nil }
+func (n *oomErrorNode) OutputShape() []int                 { return []int{1, 1, 8} }
+func (n *oomErrorNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, nil
+}
+
+func (n *oomErrorNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	return nil, errors.New("CUDA out of memory: tried to allocate 2.00 GiB")
+}
+
+func buildOOMModel(t *testing.T) *inference.Model {
+	t.Helper()
+	vocabSize := 8
+	tok := tokenizer.NewWhitespaceTokenizer()
+	tok.AddToken("hello")
+	tok.AddToken("world")
+	tok.AddToken("foo")
+	tok.AddToken("bar")
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	b := graph.NewBuilder[float32](engine)
+	in := b.Input([]int{1, 1, 1})
+	node := &oomErrorNode{}
+	b.AddNode(node, in)
+	g, err := b.Build(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gen := generate.NewGenerator(g, tok, engine, generate.ModelConfig{
+		VocabSize:  vocabSize,
+		MaxSeqLen:  32,
+		EOSTokenID: 2,
+		BOSTokenID: 1,
+		NumLayers:  0,
+	})
+
+	return inference.NewTestModel(gen, tok, engine,
+		inference.ModelMetadata{
+			VocabSize:  vocabSize,
+			NumLayers:  1,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+		},
+		&registry.ModelInfo{ID: "test-model", Path: "/tmp/test"},
+	)
+}
+
+func TestRecoveryMiddleware_PanicReturns500(t *testing.T) {
+	mdl := buildPanicModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "chat completions panic",
+			path: "/v1/chat/completions",
+			body: `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`,
+		},
+		{
+			name: "completions panic",
+			path: "/v1/completions",
+			body: `{"prompt":"hello","max_tokens":5}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := doPost(t, ts.URL+tt.path, "application/json", tt.body)
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500", resp.StatusCode)
+			}
+
+			var result map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatalf("decode error: %v", err)
+			}
+			errObj, ok := result["error"].(map[string]interface{})
+			if !ok {
+				t.Fatal("response missing error object")
+			}
+			msg, _ := errObj["message"].(string)
+			if msg != "internal server error" {
+				t.Errorf("error message = %q, want %q", msg, "internal server error")
+			}
+		})
+	}
+}
+
+func TestOOMError_Returns503(t *testing.T) {
+	mdl := buildOOMModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "chat completions OOM",
+			path: "/v1/chat/completions",
+			body: `{"messages":[{"role":"user","content":"hello"}],"max_tokens":5}`,
+		},
+		{
+			name: "completions OOM",
+			path: "/v1/completions",
+			body: `{"prompt":"hello","max_tokens":5}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := doPost(t, ts.URL+tt.path, "application/json", tt.body)
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestIsOOMError(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want bool
+	}{
+		{"CUDA out of memory: tried to allocate 2.00 GiB", true},
+		{"OOM killed", true},
+		{"cannot allocate memory", true},
+		{"forward error", false},
+		{"invalid request body", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			err := errors.New(tt.msg)
+			if got := isOOMError(err); got != tt.want {
+				t.Errorf("isOOMError(%q) = %v, want %v", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
