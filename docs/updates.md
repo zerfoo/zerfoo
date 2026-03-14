@@ -10413,3 +10413,74 @@ middle, so edge-trimming cannot help. A more sophisticated approach is needed:
 
 Option 2 is likely more correct — the existing `gather.cu` kernel should be usable
 if the embedding weights are already on GPU and the index tensor is also on GPU.
+
+---
+
+## Phase 11 Wave 4b: Capture Region Fix + Comprehensive DGX Testing
+
+**Date**: 2026-03-14
+**Branch**: debug-graph-capture
+**DGX**: ndungu@192.168.86.250 (GH200, sm_121)
+
+### Changes Made
+
+1. **Longest contiguous region scan** (`graph/cuda_graph.go`): Changed capture region
+   selection from "after last non-capturable op" to "longest contiguous run of capturable
+   instructions". Non-capturable ops are scattered throughout the instruction list, not
+   just at edges.
+
+2. **Expanded nonCapturableOps**:
+   - `Slice`: reads start/end/axes indices via `Data()` (D2H)
+   - `Reshape`: reads dynamic target shape via `Data()` (D2H)
+   - `AutoAttentionMask` / `AutoPositionIds`: create CPU tensors
+
+3. **EnsureCaptureInputsGPU** (`graph/compile.go`): New method that uploads frozen scalar
+   constants used as inputs to capture-region instructions. `PreUploadFrozenWeights` keeps
+   scalars on CPU for Range/Pow; this targets only capture-region inputs.
+
+### Test Results
+
+| Model | Instructions | Capture Range | % Captured | tok/s (graph) | tok/s (baseline) | Speedup | Output Quality |
+|-------|-------------|---------------|------------|--------------|-----------------|---------|---------------|
+| Llama 3 | 1610 | [2, 34) | 2.0% | 17.56 | 16.35 | +7% | "!!!" (pre-existing) |
+| Qwen 2.5 | 2712 | [2, 50) | 1.8% | 7.87 | -- | -- | "!!!" (pre-existing) |
+| Gemma 3 GGUF | 185 | [1, 185) | 99.5% | 232.86 | 184.97 | **+26%** | Coherent |
+
+### Key Finding: ONNX vs ZMF Instruction Sets
+
+**ONNX models (Llama 3, Qwen 2.5)** decompose RMSNorm into `Pow + ReduceMean + Sqrt + Div + Mul`.
+These decomposed ops read scalar values from GPU via `Data()` (D2H copies), making them
+non-capturable. Combined with scattered `Gather` (121), `Slice` (82), `Reshape` (100),
+`Shape` (71) ops, the longest contiguous capturable region is only ~32 instructions (~2%).
+
+**ZMF/GGUF models (Gemma 3)** use fused ops (`GroupedQueryAttention`, `FusedAddRMSNorm`,
+`FFN`, etc.) that operate entirely on GPU without D2H copies. Only `EmbeddingLookup` at
+instruction 0 is non-capturable, giving 184/185 captured instructions (**99.5%**).
+
+### Non-Capturable Ops (read GPU data to CPU during Forward)
+
+| Op | Count (Llama3) | Reason |
+|----|---------------|--------|
+| Gather | 121 | CPU index tensor, H2D copy |
+| Reshape | 100 | Reads shape from input tensor via Data() |
+| Slice | 82 | Reads start/end/axes via Data() |
+| Shape | 71 | Creates CPU tensor from shape metadata |
+| Expand | 39 | Reads shape data |
+| Where | 36 | Reads condition data |
+| Equal | 36 | Reads comparison data |
+| Pow | 32 | Reads scalar exponent via D2H (MemcpyAsync + Sync) |
+| ReduceMean | 32 | Internal cudaMemcpy for reduction |
+| Range | 5 | Reads start/stop/step scalars |
+
+### Conclusion
+
+CUDA graph capture is **highly effective for ZMF/GGUF models** (+26% throughput on Gemma 3),
+where fused GPU-only ops dominate. For ONNX models, the decomposed op structure with
+pervasive CPU-side data reads makes capture impractical without either:
+
+1. Fusing ONNX ops into GPU-only equivalents (e.g., fused RMSNorm kernel)
+2. Rewriting individual ops to avoid `Data()` / `Slice()` calls during capture
+3. Using CUDA graph section capture (capture only GPU-kernel-dense regions)
+
+The path of least resistance is to ensure all models use the ZMF codegen pipeline with
+fused ops, which naturally produces capture-compatible instruction streams.
