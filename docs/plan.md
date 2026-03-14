@@ -102,7 +102,7 @@ for the optimization journey.
   - Dependencies: T1003.1.
 - [x] T1003.3 Fix remaining lint issues  Owner: task-T1003.3  Est: 1.5h  Done: 2026-03-14
   - Dependencies: T1003.1.
-- [ ] T1003.4 Remove || true from CI lint step  Owner: TBD  Est: 15m
+- [x] T1003.4 Remove || true from CI lint step  Owner: team-lead  Est: 15m  Done: 2026-03-14
   - Dependencies: T1003.2, T1003.3.
 - [ ] S1003.4.1 Verify CI passes with strict lint  Owner: TBD  Est: 15m
   - Dependencies: T1003.4.
