@@ -197,7 +197,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: All error cases return appropriate HTTP status codes.
   - Dependencies: none.
 
-- [ ] T1101.5 Run go vet on serve package  Owner: TBD  Est: 15m
+- [x] T1101.5 Run go vet on serve package  Owner: team-lead  Est: 15m  Done: 2026-03-14
   - go vet ./serve/...
   - Acceptance: No new warnings.
   - Dependencies: T1101.1.
@@ -230,7 +230,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - Acceptance: Server survives panics and OOM without crashing.
   - Dependencies: none.
 
-- [ ] S1102.3.1 Test server hardening  Owner: TBD  Est: 30m
+- [x] S1102.3.1 Test server hardening  Owner: team-lead  Est: 30m  Done: 2026-03-14
   - go test ./serve/... -race -timeout 120s.
   - Acceptance: Tests pass including panic recovery and error cases.
   - Dependencies: T1102.1, T1102.2, T1102.3.
