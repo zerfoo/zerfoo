@@ -1,3 +1,127 @@
+# T1001.1: flash_attention_decode Kernel Profiling
+
+Date: 2026-03-14
+Branch: profile/decode-kernel-T1001.1
+Hardware: DGX Spark (NVIDIA GB10, sm_121, 273 GB/s LPDDR5x, 128GB unified)
+
+## Summary
+
+Profiled the flash_attention_decode kernel on DGX Spark to measure decode kernel
+time vs total decode time. Key finding: the kernel is currently **disabled** for
+GQA models (all shipped models), and when enabled causes a 51% performance
+regression. The kernel scales linearly with KV sequence length and exceeds the
+per-token time budget at kv_len >= 256.
+
+## Profiling Methodology
+
+1. **nsys**: NVIDIA Nsight Systems 2025.3.2 could not capture kernel-level data
+   because zerfoo uses purego (dlopen/dlsym on libcuda.so) rather than linking
+   against the CUDA runtime. nsys hooks the runtime library, not the driver API
+   called through dlsym. Attempted `--trace=cuda`, `--cuda-graph-trace=node`,
+   and `--cuda-um-cpu-page-faults=true` -- all produced empty kernel traces.
+
+2. **Go CPU profiling**: `bench_tps --cpuprofile` shows model loading (10.6s)
+   dominates the profile. Actual decode (1.1s for 256 tokens) appears as
+   `runtime._ExternalCode` (FFI calls invisible to Go profiler).
+
+3. **Direct kernel timing**: Wrote a Go test that calls FlashAttentionDecode
+   with CUDA stream synchronization to measure wall-clock kernel time at
+   Gemma 3 dimensions. This produced the most actionable data.
+
+## Current State: Kernel Not Used
+
+The decode fast path guard at `layers/attention/grouped_query_attention.go:624`:
+```go
+if seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads {
+```
+requires equal Q and KV head counts. All current models use GQA:
+- Gemma 3 1B: 4 Q-heads, 1 KV-head (4:1 ratio)
+- Llama 3 8B: 32 Q-heads, 8 KV-heads (4:1 ratio)
+
+The kernel supports GQA internally (`head_ratio = num_q_heads / num_kv_heads`),
+but the Go guard prevents it from being used. This was intentionally disabled
+after Phase 9 showed a 51% regression (234 -> 114 tok/s).
+
+Without the kernel, current throughput is **233 tok/s** (Gemma 3 1B, 256 tokens,
+F32, CUDA graph enabled).
+
+## bench_tps End-to-End Timing
+
+| Tokens | Throughput | Total Time | Per-Token |
+|--------|-----------|------------|-----------|
+| 20     | 123-128 tok/s | 0.16s | 7.8 ms |
+| 50     | 172-178 tok/s | 0.28s | 5.6 ms |
+| 256    | 233 tok/s | 1.10s | 4.29 ms |
+
+Throughput increases with token count because warm-up and CUDA graph capture
+are amortized. Steady-state decode budget is ~4290 us/token.
+
+## Kernel Microbenchmark: Gemma 3 1B Dimensions
+
+Measured flash_attention_decode_f32 kernel at Gemma 3 1B config
+(batch=1, 4 Q-heads, 1 KV-head, headDim=256, 26 layers):
+
+| KV Length | Per-Kernel | 26 Layers (1 token) | % of 4290 us Budget |
+|-----------|-----------|---------------------|---------------------|
+| 16        | 15.0 us   | 391 us              | 9.1%                |
+| 64        | 51.4 us   | 1,335 us            | 31.1%               |
+| 128       | 100.0 us  | 2,600 us            | 60.6%               |
+| 256       | 195.3 us  | 5,079 us            | 118.3% (exceeds)    |
+| 512       | 387.7 us  | 10,081 us           | 234.9% (exceeds)    |
+
+The kernel time scales linearly with KV length (~0.75 us per KV position per
+call). At kv_len >= 256, the attention kernel alone exceeds the total per-token
+budget, leaving no time for MatMul, RMSNorm, RoPE, and other ops.
+
+## Llama 3 8B Dimensions
+
+Profiling at Llama 3 8B dimensions (32 Q-heads, 8 KV-heads, headDim=128)
+triggered a segmentation fault -- this is the known purego trampoline issue
+(T1002.1) affecting calls with many arguments on ARM64.
+
+## Root Cause Analysis
+
+The kernel is slow because:
+
+1. **Sequential KV iteration**: The decode kernel iterates over KV positions
+   one-by-one (line 278: `for j = 0; j < kv_len; j++`). Each position requires
+   a parallel dot-product reduction + syncthreads, making it O(kv_len) in
+   synchronization barriers.
+
+2. **Low parallelism**: With batch=1 and 4 Q-heads, only 4 thread blocks launch.
+   The GB10 has enough SMs that most sit idle. BLOCK_SIZE=64 means 64 threads
+   per block, but headDim=256 means each thread handles 4 elements per KV
+   position -- reasonable but not enough to hide memory latency.
+
+3. **No KV tiling**: Unlike the prefill kernel which tiles both Q and KV, the
+   decode kernel loads one KV position at a time from global memory. For
+   kv_len=256 with kv_dim=256, that's 256 * 256 * 4 = 256 KB of K data read
+   sequentially from global memory.
+
+4. **Standard SDPA is faster**: The current fallback uses cuBLAS Sgemm for the
+   Q*K^T and softmax*V matrix multiplications. cuBLAS is highly optimized for
+   the GB10 and can leverage tensor cores even for F32 (via TF32). The custom
+   kernel cannot compete with cuBLAS for this workload shape.
+
+## Recommendations for T1001.2
+
+Based on profiling, the recommended action is to **revert to cuBLAS attention**
+for decode and remove the custom decode kernel:
+
+1. The kernel is already disabled for all GQA models.
+2. cuBLAS SDPA achieves 233 tok/s vs the kernel's ~114 tok/s.
+3. Optimizing the kernel to match cuBLAS would require:
+   - KV tiling to improve memory access patterns
+   - Warp-level parallelism (warp shuffle instead of shared memory reduction)
+   - Multiple KV positions per iteration to amortize sync barriers
+   - This is essentially rewriting FlashDecoding (Dao et al.) from scratch.
+4. The kernel adds code complexity without benefit.
+
+If the decode kernel is retained for future optimization, the GQA guard at
+line 624 should remain disabled until the kernel can match cuBLAS performance.
+
+---
+
 # Phase 9: GQA Decode Kernel + FP16 KV Fix Benchmark
 
 Date: 2026-03-13
