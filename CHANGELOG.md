@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/zerfoo/zerfoo/compare/v1.0.0...v1.0.1) (2026-03-14)
+
+
+### Bug Fixes
+
+* **ci:** add zmf checkout to release workflow for GoReleaser ([c01cd0c](https://github.com/zerfoo/zerfoo/commit/c01cd0c8d1ad2a09a9b2873ed8784decc0f9f810))
+
 ## 1.0.0 (2026-03-14)
 
 
