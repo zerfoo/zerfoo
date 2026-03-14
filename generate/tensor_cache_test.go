@@ -549,6 +549,171 @@ func TestTensorCache_FP16_GPU_MultiToken(t *testing.T) {
 	}
 }
 
+func TestTensorCache_FP16_GPU_MultiHead(t *testing.T) {
+	// Test FP16 KV cache with batch > 1 (GQA: multiple KV heads).
+	// Shape: [numKVHeads, seqLen, headDim] — e.g. 4 KV heads, 2 tokens, 4-dim.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))
+
+	k := makeGPUTensor(t, []int{4, 2, 4}, []float32{
+		// head 0
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		// head 1
+		9, 10, 11, 12,
+		13, 14, 15, 16,
+		// head 2
+		17, 18, 19, 20,
+		21, 22, 23, 24,
+		// head 3
+		25, 26, 27, 28,
+		29, 30, 31, 32,
+	})
+	v := makeGPUTensor(t, []int{4, 2, 4}, []float32{
+		100, 200, 300, 400,
+		500, 600, 700, 800,
+		110, 210, 310, 410,
+		510, 610, 710, 810,
+		120, 220, 320, 420,
+		520, 620, 720, 820,
+		130, 230, 330, 430,
+		530, 630, 730, 830,
+	})
+
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if cache.SeqLen() != 2 {
+		t.Errorf("SeqLen = %d, want 2", cache.SeqLen())
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	shape := lkv.Key.Shape()
+	if len(shape) != 3 || shape[0] != 4 || shape[1] != 2 || shape[2] != 4 {
+		t.Errorf("Key shape = %v, want [4, 2, 4]", shape)
+	}
+
+	wantK := []float32{
+		1, 2, 3, 4, 5, 6, 7, 8,
+		9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24,
+		25, 26, 27, 28, 29, 30, 31, 32,
+	}
+	gotK := lkv.Key.Data()
+	for i := range wantK {
+		if diff := gotK[i] - wantK[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Key[%d] = %v, want ~%v", i, gotK[i], wantK[i])
+		}
+	}
+
+	wantV := []float32{
+		100, 200, 300, 400, 500, 600, 700, 800,
+		110, 210, 310, 410, 510, 610, 710, 810,
+		120, 220, 320, 420, 520, 620, 720, 820,
+		130, 230, 330, 430, 530, 630, 730, 830,
+	}
+	gotV := lkv.Value.Data()
+	for i := range wantV {
+		if diff := gotV[i] - wantV[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Value[%d] = %v, want ~%v", i, gotV[i], wantV[i])
+		}
+	}
+}
+
+func TestTensorCache_FP16_GPU_MultiHead_PrefillAndDecode(t *testing.T) {
+	// Test multi-head FP16 KV cache with prefill followed by single-token decode.
+	// This mirrors the GQA decode path: prefill writes multiple tokens, then
+	// decode appends one token at a time.
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 2, 128, WithKVDtype("fp16"))
+
+	// Prefill layer 0: 2 KV heads, 3 tokens, headDim=4
+	k1 := makeGPUTensor(t, []int{2, 3, 4}, []float32{
+		// head 0: tokens 0-2
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11, 12,
+		// head 1: tokens 0-2
+		13, 14, 15, 16,
+		17, 18, 19, 20,
+		21, 22, 23, 24,
+	})
+	v1 := makeGPUTensor(t, []int{2, 3, 4}, []float32{
+		100, 200, 300, 400,
+		500, 600, 700, 800,
+		900, 1000, 1100, 1200,
+		110, 210, 310, 410,
+		510, 610, 710, 810,
+		910, 1010, 1110, 1210,
+	})
+
+	if err := cache.Update(0, k1, v1); err != nil {
+		t.Fatalf("Prefill layer 0: %v", err)
+	}
+
+	// Prefill layer 1 with different data.
+	k1L1 := makeGPUTensor(t, []int{2, 3, 4}, []float32{
+		31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+		43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+	})
+	v1L1 := makeGPUTensor(t, []int{2, 3, 4}, []float32{
+		131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142,
+		143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154,
+	})
+
+	if err := cache.Update(1, k1L1, v1L1); err != nil {
+		t.Fatalf("Prefill layer 1: %v", err)
+	}
+	if cache.SeqLen() != 3 {
+		t.Errorf("SeqLen after prefill = %d, want 3", cache.SeqLen())
+	}
+
+	// Decode: append 1 token to each layer.
+	k2 := makeGPUTensor(t, []int{2, 1, 4}, []float32{
+		25, 26, 27, 28, // head 0 token 3
+		29, 30, 31, 32, // head 1 token 3
+	})
+	v2 := makeGPUTensor(t, []int{2, 1, 4}, []float32{
+		1300, 1400, 1500, 1600,
+		1310, 1410, 1510, 1610,
+	})
+
+	if err := cache.Update(0, k2, v2); err != nil {
+		t.Fatalf("Decode layer 0: %v", err)
+	}
+	if cache.SeqLen() != 4 {
+		t.Errorf("SeqLen after decode = %d, want 4", cache.SeqLen())
+	}
+
+	// Verify layer 0 key data: 2 heads x 4 tokens x 4 dim.
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	shape := lkv.Key.Shape()
+	if len(shape) != 3 || shape[0] != 2 || shape[1] != 4 || shape[2] != 4 {
+		t.Errorf("Key shape = %v, want [2, 4, 4]", shape)
+	}
+
+	wantK := []float32{
+		// head 0
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27, 28,
+		// head 1
+		13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 29, 30, 31, 32,
+	}
+	gotK := lkv.Key.Data()
+	for i := range wantK {
+		if diff := gotK[i] - wantK[i]; diff > 0.01 || diff < -0.01 {
+			t.Errorf("Key[%d] = %v, want ~%v", i, gotK[i], wantK[i])
+		}
+	}
+}
+
 func TestTensorCache_FP16_Free(t *testing.T) {
 	eng := compute.NewCPUEngine(numeric.Float32Ops{})
 	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))

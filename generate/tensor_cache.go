@@ -356,35 +356,29 @@ func allocFP16Buffers[T tensor.Numeric](lb *tensorLayerBuf[T], totalElems int) e
 	return nil
 }
 
-// appendFP16 converts F32 source tensor data to FP16 and appends to the FP16 cache buffer.
-// The source tensor is expected to contain F32 data (the compute dtype).
+// appendFP16 converts F32 source tensor data to FP16 and writes directly into
+// the FP16 cache buffer at the given element offset. No temporary buffer is
+// allocated — the F32→FP16 kernel writes directly to dst + offset, which is
+// safe because the kernel is stream-ordered (async) and touches no other memory.
 func appendFP16[T tensor.Numeric](dst *tensor.GPUStorage[float16.Float16], offset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
 	srcGS, isGPU := src.GetStorage().(*tensor.GPUStorage[T])
 	if !isGPU {
 		return fmt.Errorf("FP16 KV cache requires GPU-resident source tensors")
 	}
 
-	// Allocate a temporary FP16 buffer for the conversion output.
-	tmpFP16, err := tensor.NewGPUStorage[float16.Float16](numElems)
-	if err != nil {
-		return fmt.Errorf("alloc tmp FP16: %w", err)
-	}
-	defer func() { _ = tmpFP16.Free() }()
+	// Convert F32 → FP16 directly into the cache at the correct offset.
+	// Pointer arithmetic: offset is in elements, each FP16 element is 2 bytes.
+	dstPtr := unsafe.Add(dst.Ptr(), offset*2)
 
-	// Convert F32 → FP16.
 	streamPtr := unsafe.Pointer(nil)
 	if stream != nil {
 		streamPtr = stream.Ptr()
 	}
-	if err := kernels.F32ToFP16(srcGS.Ptr(), tmpFP16.Ptr(), numElems, streamPtr); err != nil {
+	if err := kernels.F32ToFP16(srcGS.Ptr(), dstPtr, numElems, streamPtr); err != nil {
 		return fmt.Errorf("f32_to_fp16: %w", err)
 	}
 
-	// Copy FP16 data into the cache at the correct offset.
-	if stream != nil {
-		return dst.CopyFromDeviceAsync(tmpFP16, offset, 0, numElems, stream)
-	}
-	return dst.CopyFromDevice(tmpFP16, offset, 0, numElems)
+	return nil
 }
 
 // ensureFP16Scratch allocates or grows the shared F32 scratch buffers for
