@@ -595,6 +595,8 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// then retrieve full cached K/V for attention computation.
 	// kvSeqLen tracks the K/V sequence length (may differ from Q seqLen when cached).
 	kvSeqLen := seqLen
+	var attnOutputHeads *tensor.TensorNumeric[T]
+
 	if hasCache {
 		// Flatten K/V from [batch, numKVHeads, seqLen, headDim] to [batch*numKVHeads, seqLen, headDim]
 		// for storage and concat in the cache.
@@ -611,88 +613,180 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, fmt.Errorf("kv cache update: %w", err)
 		}
 
-		// Try block-table reader first (avoids gather-to-contiguous copy).
-		var cachedK, cachedV *tensor.TensorNumeric[T]
-		if gqa.blockTableReader != nil {
-			cachedK, cachedV, _ = gqa.blockTableReader.ReadKV(gqa.LayerIndex)
-		}
-
-		if cachedK == nil || cachedV == nil {
-			// Fall back to standard cache gather path.
-			lkv, ok := cache.Get(gqa.LayerIndex)
-			if !ok {
-				return nil, fmt.Errorf("kv cache: layer %d missing after update", gqa.LayerIndex)
+		// Decode fast path: use flash_attention_decode with GPU-resident KV
+		// length. This avoids cache.Get() which returns a view sized by the
+		// CPU-side seqLen (frozen during CUDA graph capture). The decode kernel
+		// reads the KV length from GPU memory at runtime.
+		decodeUsed := false
+		if seqLen == 1 {
+			type fullBufferProvider interface {
+				GetFullBuffer(layer int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T])
+				MaxSeqLen() int
 			}
-			cachedK = lkv.Key
-			cachedV = lkv.Value
+			type kvSeqLenProvider interface {
+				KVSeqLenPtr() unsafe.Pointer
+			}
+			if fbp, ok := cache.(fullBufferProvider); ok {
+				bufK, bufV := fbp.GetFullBuffer(gqa.LayerIndex)
+				if bufK != nil && bufV != nil {
+					maxKVLen := fbp.MaxSeqLen()
+					cpuKVLen := cache.SeqLen()
+
+					// Get kvSeqLenPtr from cache (nil = use CPU value).
+					var kvLenPtr unsafe.Pointer
+					if ksp, ok := cache.(kvSeqLenProvider); ok {
+						kvLenPtr = ksp.KVSeqLenPtr()
+					}
+
+					// Get stream from engine.
+					var streamPtr unsafe.Pointer
+					realEng := compute.Engine[T](gqa.engine)
+					if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+						realEng = proxy.Real()
+					}
+					if sp, ok := realEng.(compute.StreamProvider); ok {
+						streamPtr = sp.Stream()
+					}
+
+					// Reshape Q to [batch*numQueryHeads, 1, headDim].
+					qForDecode, reshapeErr := gqa.engine.Reshape(ctx, qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, 1, gqa.headDim})
+					if reshapeErr != nil {
+						return nil, reshapeErr
+					}
+
+					// Expand K/V to match Q head count by repeating along batch dim.
+					numBH := batchSize * gqa.numQueryHeads
+					kBuf := bufK
+					vBuf := bufV
+					if gqa.numQueryHeads != gqa.numKeyValueHeads {
+						// Reshape: [batch, maxKVLen, numKVHeads*headDim] -> [batch, numKVHeads, maxKVLen, headDim]
+						kBuf4D, reshapeErr := gqa.engine.Reshape(ctx, kBuf, []int{batchSize, gqa.numKeyValueHeads, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+						vBuf4D, reshapeErr := gqa.engine.Reshape(ctx, vBuf, []int{batchSize, gqa.numKeyValueHeads, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+						replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
+						kExpanded, expandErr := gqa.engine.Repeat(ctx, kBuf4D, 1, replicationFactor)
+						if expandErr != nil {
+							return nil, expandErr
+						}
+						vExpanded, expandErr := gqa.engine.Repeat(ctx, vBuf4D, 1, replicationFactor)
+						if expandErr != nil {
+							return nil, expandErr
+						}
+						// [batch, numQueryHeads, maxKVLen, headDim] -> [batch*numQueryHeads, maxKVLen, headDim]
+						kBuf, reshapeErr = gqa.engine.Reshape(ctx, kExpanded, []int{numBH, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+						vBuf, reshapeErr = gqa.engine.Reshape(ctx, vExpanded, []int{numBH, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+					} else {
+						// Same head count: reshape [batch, maxKVLen, dim] -> [batch*numQueryHeads, maxKVLen, headDim]
+						kBuf, reshapeErr = gqa.engine.Reshape(ctx, kBuf, []int{numBH, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+						vBuf, reshapeErr = gqa.engine.Reshape(ctx, vBuf, []int{numBH, maxKVLen, gqa.headDim})
+						if reshapeErr != nil {
+							return nil, reshapeErr
+						}
+					}
+
+					result, flashErr := tryFlashDecode(qForDecode, kBuf, vBuf, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, streamPtr)
+					if result != nil && flashErr == nil {
+						attnOutputHeads = result
+						decodeUsed = true
+					} else if flashErr != nil {
+						log.Printf("GQA: flash_attention_decode failed, falling back: %v", flashErr)
+					}
+				}
+			}
 		}
 
-		// Unflatten back to [batch, numKVHeads, cachedSeqLen, headDim].
-		cachedSeqLen := cachedK.Shape()[1]
-		kHeadsRoPE, err = gqa.engine.Reshape(ctx, cachedK, []int{batchSize, gqa.numKeyValueHeads, cachedSeqLen, gqa.headDim})
-		if err != nil {
-			return nil, err
+		if !decodeUsed {
+			// Standard path: use cache.Get() to retrieve KV view, then SDPA.
+			var cachedK, cachedV *tensor.TensorNumeric[T]
+			if gqa.blockTableReader != nil {
+				cachedK, cachedV, _ = gqa.blockTableReader.ReadKV(gqa.LayerIndex)
+			}
+
+			if cachedK == nil || cachedV == nil {
+				lkv, ok := cache.Get(gqa.LayerIndex)
+				if !ok {
+					return nil, fmt.Errorf("kv cache: layer %d missing after update", gqa.LayerIndex)
+				}
+				cachedK = lkv.Key
+				cachedV = lkv.Value
+			}
+
+			cachedSeqLen := cachedK.Shape()[1]
+			kHeadsRoPE, err = gqa.engine.Reshape(ctx, cachedK, []int{batchSize, gqa.numKeyValueHeads, cachedSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
+			}
+			vHeads, err = gqa.engine.Reshape(ctx, cachedV, []int{batchSize, gqa.numKeyValueHeads, cachedSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
+			}
+			kvSeqLen = cachedSeqLen
 		}
-		vHeads, err = gqa.engine.Reshape(ctx, cachedV, []int{batchSize, gqa.numKeyValueHeads, cachedSeqLen, gqa.headDim})
-		if err != nil {
-			return nil, err
+	}
+
+	// If decode path was not used, run SDPA (prefill or no-cache).
+	if attnOutputHeads == nil {
+		// 3. Grouped Query Attention: expand K/V to match Q head count.
+		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
+			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
+			kHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, kHeadsRoPE, 1, replicationFactor)
+			if expandErr != nil {
+				return nil, expandErr
+			}
+			vHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, vHeads, 1, replicationFactor)
+			if expandErr != nil {
+				return nil, expandErr
+			}
+			kHeadsRoPE = kHeadsExpanded
+			vHeads = vHeadsExpanded
 		}
-		kvSeqLen = cachedSeqLen
-	}
 
-	// 3. Grouped Query Attention: expand K/V to match Q head count.
-	// When numKVHeads == 1, MatMul batch broadcasting avoids the expensive
-	// Repeat that physically copies K/V data (b_batch=1 broadcast).
-	// For numKVHeads > 1, use Repeat to match batch dimensions exactly.
-	if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
-		replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
-		kHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, kHeadsRoPE, 1, replicationFactor)
-		if expandErr != nil {
-			return nil, expandErr
+		// 4. Apply Scaled Dot-Product Attention
+		qForSDPA, reshapeErr := gqa.engine.Reshape(ctx, qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
 		}
-		vHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, vHeads, 1, replicationFactor)
-		if expandErr != nil {
-			return nil, expandErr
+
+		kvBatchHeads := gqa.numQueryHeads
+		if gqa.numKeyValueHeads == 1 {
+			kvBatchHeads = gqa.numKeyValueHeads
 		}
-		kHeadsRoPE = kHeadsExpanded
-		vHeads = vHeadsExpanded
-	}
 
-	// 4. Apply Scaled Dot-Product Attention
-	// Q uses numQueryHeads; K/V use numQueryHeads (after Repeat) or numKVHeads
-	// (when broadcast). SDPA reshapes to 3D for batched attention.
-	qForSDPA, err := gqa.engine.Reshape(ctx, qHeadsRoPE, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
+		kForSDPA, reshapeErr := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
 
-	kvBatchHeads := gqa.numQueryHeads
-	if gqa.numKeyValueHeads == 1 {
-		kvBatchHeads = gqa.numKeyValueHeads
-	}
+		vForSDPA, reshapeErr := gqa.engine.Reshape(ctx, vHeads, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
+		if reshapeErr != nil {
+			return nil, reshapeErr
+		}
 
-	kForSDPA, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
+		if mask == nil && seqLen > 1 {
+			gqa.scaledDotProductAttention.SetCausal(true)
+		} else {
+			gqa.scaledDotProductAttention.SetCausal(false)
+		}
 
-	vForSDPA, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize * kvBatchHeads, kvSeqLen, gqa.headDim})
-	if err != nil {
-		return nil, err
-	}
-
-	// Enable causal masking during prefill (seqLen > 1) when no explicit mask
-	// is provided. Without this, each position attends to future tokens,
-	// producing garbage output.
-	if mask == nil && seqLen > 1 {
-		gqa.scaledDotProductAttention.SetCausal(true)
-	} else {
-		gqa.scaledDotProductAttention.SetCausal(false)
-	}
-
-	attnOutputHeads, err := gqa.scaledDotProductAttention.Forward(ctx, qForSDPA, kForSDPA, vForSDPA, mask)
-	if err != nil {
-		return nil, err
+		var sdpaErr error
+		attnOutputHeads, sdpaErr = gqa.scaledDotProductAttention.Forward(ctx, qForSDPA, kForSDPA, vForSDPA, mask)
+		if sdpaErr != nil {
+			return nil, sdpaErr
+		}
 	}
 
 	gqa.attnOutput = attnOutputHeads // Cache for backward

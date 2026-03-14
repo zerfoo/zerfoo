@@ -3,6 +3,8 @@
 package attention
 
 import (
+	"unsafe"
+
 	"github.com/zerfoo/zerfoo/device"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
@@ -26,7 +28,9 @@ func tryFlashForward[T tensor.Numeric](
 		return nil, nil
 	}
 
-	// Flash attention supports head_dim up to 128.
+	// Flash attention prefill kernel supports head_dim up to 128 (limited by
+	// register pressure from per-thread q_row[MAX_HEAD_DIM] and acc[MAX_HEAD_DIM]).
+	// For head_dim > 128 during decode, use tryFlashDecode instead.
 	if headDim > 128 {
 		return nil, nil
 	}
@@ -76,4 +80,69 @@ func tryFlashForward[T tensor.Numeric](
 	}
 
 	return tensor.NewWithStorage(shape, oGPU)
+}
+
+// tryFlashDecode attempts to use the decode-specific flash attention kernel.
+// This handles the autoregressive decode case where Q has 1 token but K/V
+// have kvSeqLen tokens (from the KV cache).
+//
+// Q:  [batchHeads, 1, headDim]
+// K:  [batchHeads, maxKVLen, headDim]  -- pre-allocated KV buffer
+// V:  [batchHeads, maxKVLen, headDim]
+//
+// kvSeqLen:  actual KV sequence length (used when kvLenPtr is nil).
+// kvLenPtr:  GPU-resident int32 pointer; when non-nil, the kernel reads
+//            the KV length from GPU memory, making it CUDA graph compatible.
+// maxKVLen:  stride of the KV buffer (allocated capacity).
+// stream:    CUDA stream for kernel launch.
+//
+// Returns (result, nil) on success, (nil, nil) when not applicable.
+func tryFlashDecode[T tensor.Numeric](
+	q, k, v *tensor.TensorNumeric[T],
+	headDim, kvSeqLen, maxKVLen int,
+	kvLenPtr unsafe.Pointer,
+	stream unsafe.Pointer,
+) (*tensor.TensorNumeric[T], error) {
+	if !cuda.Available() {
+		return nil, nil
+	}
+
+	if headDim > 256 {
+		return nil, nil
+	}
+
+	// Q must have seqLen=1 for decode.
+	qShape := q.Shape()
+	if len(qShape) < 3 || qShape[1] != 1 {
+		return nil, nil
+	}
+
+	if q.GetStorage().DeviceType() != device.CUDA {
+		return nil, nil
+	}
+
+	qGPU := q.GetStorage().(*tensor.GPUStorage[T])
+	kGPU := k.GetStorage().(*tensor.GPUStorage[T])
+	vGPU := v.GetStorage().(*tensor.GPUStorage[T])
+
+	batchHeads := qShape[0]
+
+	// Output: [batchHeads, 1, headDim]
+	n := batchHeads * headDim
+	oGPU, err := tensor.NewGPUStorage[T](n, qGPU.DeviceID())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := kernels.FlashAttentionDecode(
+		qGPU.Ptr(), kGPU.Ptr(), vGPU.Ptr(), oGPU.Ptr(),
+		batchHeads, maxKVLen, headDim, kvSeqLen,
+		kvLenPtr, stream,
+	); err != nil {
+		oGPU.Free() //nolint:errcheck
+		return nil, err
+	}
+
+	outShape := []int{batchHeads, 1, headDim}
+	return tensor.NewWithStorage(outShape, oGPU)
 }
