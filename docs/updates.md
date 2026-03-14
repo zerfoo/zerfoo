@@ -10069,3 +10069,103 @@ unsupported for megakernel (expected).
 - Investigate incoherent output on the standard SDPA path (possible regression).
 - Once output is coherent, relax the fast path guard to allow GQA models and
   verify kernel correctness by comparing output against the SDPA reference.
+
+---
+
+## Phase 11 Wave 2: DGX Benchmark Results (2026-03-14)
+
+**Commit:** `9fa4dc2` (main branch)
+**Platform:** DGX Spark (GB10, sm_121), libkernels.so rebuilt with CUDA_ARCH=sm_121
+
+### T3003.2: Phi 4 — pow_scalar kernel test
+
+| Metric | Value |
+|--------|-------|
+| Status | FAILED |
+| Error | `pow_scalar kernel failed (cuda error 1)` at node[175] Pow during prefill |
+| Tokens | N/A |
+| Throughput | N/A |
+| Output | N/A |
+
+**Analysis:** The pow_scalar kernel symbol is correctly exported in libkernels.so
+and the purego binding is in place. The kernel works during warm-up (non-graph
+path) but fails during prefill when CUDA graph capture is active. The Pow scalar
+path reads the exponent via `cudaMemcpyAsync` (D2H) + `stream.Synchronize()`
+which is illegal during graph capture. The error 1 (`cudaErrorInvalidValue`)
+comes from the D2H memcpy on the capturing stream. This is the same class of
+bug as the Transpose error 901 — operations that touch the legacy/default stream
+during graph capture.
+
+### S3000.1.1: Llama 3 — CUDA graph capture test
+
+| Metric | Value |
+|--------|-------|
+| Status | GRAPH CAPTURE FAILED |
+| Capture region | instructions [0, 1610) |
+| Failure | instruction 38 (Transpose): error 901 |
+| Throughput | 16.36 tok/s (non-graph fallback) |
+| Output quality | Garbage (all `!`) |
+| GPU Arena | hits=220868, misses=0, resets=258, used=1057.8 MB |
+
+**Analysis:** PreUploadFrozenWeights ran without error, but GPUStorage.TrySlice
+still issues sync cudaMemcpy on the legacy stream during capture. The Transpose
+at instruction 38 triggers error 901 ("legacy stream depends on capturing blocking
+stream"). The PreUploadFrozenWeights mechanism may not cover all weight access
+paths — specifically, TrySlice operations that read sub-tensor metadata via
+sync memcpy are not handled by the pre-upload.
+
+### S3000.1.2: Qwen 2.5 — CUDA graph capture test
+
+| Metric | Value |
+|--------|-------|
+| Status | GRAPH CAPTURE FAILED |
+| Capture region | instructions [0, 2712) |
+| Failure | instruction 76 (Transpose): error 901 |
+| Throughput | 14.09 tok/s (non-graph fallback) |
+| Output quality | Garbage (all `!`) |
+| GPU Arena | hits=363410, misses=0, resets=258, used=550.5 MB |
+
+**Analysis:** Same root cause as Llama 3. GPUStorage.TrySlice sync memcpy on
+the legacy stream during Transpose instruction breaks graph capture.
+
+### S3002.2.1: Mistral 7B — Range op test
+
+| Metric | Value |
+|--------|-------|
+| Status | FAILED (no panic) |
+| Error | `Range: limit input (inputs[1]) has no data (shape=[])` |
+| Throughput | N/A |
+| Output | N/A |
+| Load time | 34.8s |
+
+**Analysis:** The Range op bounds-checking fix (commit 8f3efc6) successfully
+prevents the index-out-of-bounds panic. However, the Range op now fails because
+`Data()` returns an empty slice for GPU scalar tensors during graph capture. The
+D2H copy inside `Data()` fails silently during capture, returning no data. The
+Range op correctly reports this as an error rather than panicking.
+
+### Summary
+
+| Task | Expected | Actual | Status |
+|------|----------|--------|--------|
+| T3003.2 (Phi 4 pow_scalar) | No kernel error | Error 1 during graph capture | BLOCKED — scalar D2H during capture |
+| S3000.1.1 (Llama 3 graph) | Graph captures | Error 901 at Transpose | BLOCKED — TrySlice sync memcpy |
+| S3000.1.2 (Qwen 2.5 graph) | Graph captures | Error 901 at Transpose | BLOCKED — TrySlice sync memcpy |
+| S3002.2.1 (Mistral Range) | No panic | No panic, but Data() empty | PARTIAL — panic fixed, new error |
+
+### Root Cause Pattern
+
+All four failures share a common root cause: **synchronous or default-stream
+memory operations during CUDA graph capture**. The PreUploadFrozenWeights
+mechanism addresses direct `getDevicePtr` H2D copies but does not cover:
+
+1. **GPUStorage.TrySlice** — reads sub-tensor data via sync cudaMemcpy on
+   the legacy stream (affects Transpose in Llama 3 and Qwen 2.5)
+2. **Pow scalar exponent reading** — uses MemcpyAsync D2H + Synchronize on
+   the engine stream during capture (affects Phi 4)
+3. **Range op Data()** — calls Data() which does sync D2H for GPU scalars
+   during capture (affects Mistral)
+
+The fix is to either: (a) exclude these ops from the capture region, (b) cache
+scalar values and slice metadata during warmup, or (c) ensure all tensor data
+is GPU-resident and accessible without D2H copies during capture.
