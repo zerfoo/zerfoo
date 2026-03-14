@@ -657,19 +657,10 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 						return nil, reshapeErr
 					}
 
-					// Reshape K/V to [batch*numKVHeads, maxKVLen, headDim].
-					// The kernel maps query heads to KV heads internally.
-					numKVBH := batchSize * gqa.numKeyValueHeads
-					kBuf, reshapeErr := gqa.engine.Reshape(ctx, bufK, []int{numKVBH, maxKVLen, gqa.headDim})
-					if reshapeErr != nil {
-						return nil, reshapeErr
-					}
-					vBuf, reshapeErr := gqa.engine.Reshape(ctx, bufV, []int{numKVBH, maxKVLen, gqa.headDim})
-					if reshapeErr != nil {
-						return nil, reshapeErr
-					}
-
-					result, flashErr := tryFlashDecode(qForDecode, kBuf, vBuf, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, gqa.numQueryHeads, gqa.numKeyValueHeads, streamPtr)
+					// Pass K/V as-is from cache: [batch, maxKVLen, numKVHeads*headDim].
+					// The kernel handles head indexing internally using strided access
+					// into the packed KV dimension (kv_dim = numKVHeads * headDim).
+					result, flashErr := tryFlashDecode(qForDecode, bufK, bufV, gqa.headDim, cpuKVLen, maxKVLen, kvLenPtr, gqa.numQueryHeads, gqa.numKeyValueHeads, streamPtr)
 					if result != nil && flashErr == nil {
 						attnOutputHeads = result
 						decodeUsed = true
