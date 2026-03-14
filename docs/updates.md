@@ -4839,7 +4839,6 @@ linear layer. These are the largest cuBLAS overhead contributor during decode.
    are likely attention output projection or similar non-Q4K layers. Investigating
    why these are slower than batched attention calls is worthwhile.
 
-<<<<<<< HEAD
 ## Lint Triage (T1003.1)
 
 Date: 2026-03-14
@@ -9900,9 +9899,6 @@ The AAPCS64 analysis of the assembly confirmed:
 
 ---
 
-=======
----
-
 ## S905.3.1: GQA Decode Fast Path Test Results (2026-03-14)
 
 ### Summary
@@ -9956,4 +9952,3 @@ unsupported for megakernel (expected).
 - Investigate incoherent output on the standard SDPA path (possible regression).
 - Once output is coherent, relax the fast path guard to allow GQA models and
   verify kernel correctness by comparing output against the SDPA reference.
->>>>>>> ad29a5b (docs(updates): add GQA decode fast path test results)
