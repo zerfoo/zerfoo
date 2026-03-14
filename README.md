@@ -1,242 +1,102 @@
 # Zerfoo
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zerfoo/zerfoo)](https://goreportcard.com/report/github.com/zerfoo/zerfoo)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+Go 1.25 ML inference framework with GPU acceleration. Supports GGUF (quantized)
+and ZMF (full-precision) model formats. Ships an OpenAI-compatible API server.
+Beats Ollama by 18% on throughput for Gemma 3 1B Q4K.
 
-Embed LLMs directly in Go applications. No Python. No sidecar. No HTTP calls to localhost.
+## Installation
 
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-reply, _ := model.Generate(ctx, "What is the capital of France?")
-fmt.Println(reply) // Paris is the capital of France.
-```
+Prerequisites:
 
-That's it. One binary, one import, one function call.
-
-## Install
+- Go 1.25 or later
+- CUDA toolkit (for GPU acceleration; optional for CPU-only usage)
 
 ```bash
-go get github.com/zerfoo/zerfoo@latest
+git clone https://github.com/zerfoo/zerfoo.git
+cd zerfoo
+go build ./...
 ```
 
-Gemma 3 1B Q4 is ~700 MB and runs on any laptop with 2 GB free RAM. No GPU required.
-
-## Examples
-
-### Chat bot in 10 lines
-
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-defer model.Close()
-
-reply, _ := model.Chat(ctx, []inference.Message{
-    {Role: "user", Content: "Write a haiku about Go"},
-})
-fmt.Println(reply.Content)
-```
-
-### Streaming tokens to a terminal
-
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-defer model.Close()
-
-model.GenerateStream(ctx, "Explain quantum computing", func(token string, done bool) error {
-    fmt.Print(token)
-    return nil
-})
-```
-
-### Summarize text inside a CLI tool
-
-```go
-func summarize(text string) string {
-    model, _ := inference.Load("gemma-3-1b-q4")
-    defer model.Close()
-
-    summary, _ := model.Generate(ctx,
-        "Summarize this in one sentence:\n\n"+text,
-        inference.WithMaxTokens(64),
-        inference.WithTemperature(0.3),
-    )
-    return summary
-}
-```
-
-### Add an AI endpoint to an existing HTTP server
-
-```go
-mux := http.NewServeMux()
-
-// Your existing routes
-mux.HandleFunc("GET /health", healthHandler)
-
-// Add LLM-powered endpoint
-model, _ := inference.Load("gemma-3-1b-q4")
-mux.HandleFunc("POST /ask", func(w http.ResponseWriter, r *http.Request) {
-    var req struct{ Question string }
-    json.NewDecoder(r.Body).Decode(&req)
-
-    answer, _ := model.Generate(r.Context(), req.Question,
-        inference.WithMaxTokens(256),
-    )
-    json.NewEncoder(w).Encode(map[string]string{"answer": answer})
-})
-
-http.ListenAndServe(":8080", mux)
-```
-
-### Drop-in OpenAI-compatible server
-
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-server := serve.NewServer(model)
-http.ListenAndServe(":8080", server.Handler())
-```
-
-Works with any OpenAI client library — just point it at `localhost:8080`.
-
-### Classify text with structured output
-
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-defer model.Close()
-
-prompt := `Classify this support ticket as "billing", "technical", or "general".
-Reply with only the category name.
-
-Ticket: I can't log in to my account after changing my password.
-
-Category:`
-
-category, _ := model.Generate(ctx, prompt,
-    inference.WithMaxTokens(4),
-    inference.WithTemperature(0),
-)
-fmt.Println(strings.TrimSpace(category)) // technical
-```
-
-### Generate code
-
-```go
-model, _ := inference.Load("gemma-3-2b-q4") // Larger model for code tasks
-defer model.Close()
-
-code, _ := model.Generate(ctx,
-    "Write a Go function that reverses a string. Return only the code.",
-    inference.WithMaxTokens(128),
-    inference.WithTemperature(0.2),
-)
-fmt.Println(code)
-```
-
-### Process a batch of inputs
-
-```go
-model, _ := inference.Load("gemma-3-1b-q4")
-defer model.Close()
-
-questions := []string{
-    "What is 2+2?",
-    "Name the largest ocean.",
-    "Who wrote Hamlet?",
-}
-
-for _, q := range questions {
-    answer, _ := model.Generate(ctx, q, inference.WithMaxTokens(32))
-    fmt.Printf("Q: %s\nA: %s\n\n", q, answer)
-}
-```
-
-## Recommended Models
-
-| Model | Size | RAM | Best for |
-|-------|------|-----|----------|
-| `gemma-3-1b-q4` | ~700 MB | 2 GB | Laptops, CI, edge devices, quick tasks |
-| `gemma-3-2b-q4` | ~1.5 GB | 4 GB | Code generation, longer reasoning |
-| `llama-3-8b-q4` | ~4.5 GB | 8 GB | Complex tasks, higher quality output |
-
-All models run on CPU out of the box. Add `inference.WithDevice("cuda")` for GPU acceleration.
-
-## Supported Architectures
-
-Gemma 3, LLaMA 3, Mistral, Qwen 2.5, DeepSeek, Phi-4 — in GGUF or ZMF format, with F32 or Q4_0 quantization.
-
-## CLI
+For GPU support, build the CUDA kernels first:
 
 ```bash
-go install github.com/zerfoo/zerfoo/cmd/zerfoo@latest
-
-zerfoo run gemma-3-1b-q4             # Interactive chat
-zerfoo serve gemma-3-1b-q4           # OpenAI-compatible API on :8080
-zerfoo predict -model gemma-3-1b-q4  # Batch inference from CSV/JSON
+cd internal/cuda/kernels && make shared && cd ../../../
 ```
+
+## Quickstart
+
+Pull a model and run inference:
+
+```bash
+go run ./cmd/zerfoo pull gemma3:1b
+go run ./cmd/zerfoo run gemma3:1b "The quick brown fox"
+```
+
+Or start the API server:
+
+```bash
+go run ./cmd/zerfoo serve --model gemma3:1b --port 8080
+```
+
+## Supported Models
+
+| Model | Format | Parameters | tok/s (DGX Spark) | CUDA Graph |
+|-------|--------|-----------|------------------:|:----------:|
+| Gemma 3 1B | GGUF Q4_K_M | 1B | 232.86 | Yes (99.5%) |
+| Llama 3.2 1B | ZMF F32 | 1B | 17.56 | Limited |
+| Qwen 2.5 | ZMF F32 | - | 7.87 | Limited |
+
+Benchmarks measured on NVIDIA DGX Spark GB10 (sm_121, 128 GB unified memory,
+LPDDR5x 273 GB/s).
+
+## API Usage
+
+Start the server, then send requests to the chat completions endpoint:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemma3:1b","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+The server implements the OpenAI chat completions API, so any OpenAI-compatible
+client library works out of the box -- just point it at `localhost:8080`.
 
 ## Performance
 
-| Metric | Value |
-|--------|-------|
-| Gemma 3 2B Q4 CPU (ARM64) | 3.60 tok/s |
-| CUDA Q4 GEMM (GB10) | 2,383 GFLOPS |
-| Q4 model compression | 3.7x smaller than F32 |
-| PagedAttention savings | 46% less memory |
+Gemma 3 1B Q4K: 232.86 tok/s with CUDA graph capture (+26% vs no-graph).
+Beats Ollama 197.21 tok/s by 18.1%.
 
-## How It Works
+Key optimizations:
 
-Zerfoo is a full ML framework written in Go — tensors, computation graphs, automatic differentiation, SIMD kernels, and CUDA support. The `inference` package wraps all of that into the simple API shown above.
+- CUDA graph capture (99.5% of decode ops captured)
+- GPU-resident tensor pipeline (zero D2H copies in the hot path)
+- Fused attention kernels
+- Arena memory pool
 
-Under the hood, `inference.Load` does:
-1. Downloads the model (or loads from cache)
-2. Memory-maps the weights (zero-copy, no heap allocation)
-3. Builds a static computation graph with optimized fused kernels
-4. Returns a `*Model` ready for generation
+## Architecture Overview
 
-```
-inference.Load("gemma-3-1b-q4")
-    │
-    ├── model/gguf    → Parse GGUF file, load Q4 weights
-    ├── graph/        → Build computation DAG, fold transposes
-    ├── compute/      → CPU engine with NEON/AVX2 SIMD, fused RMSNorm/RoPE
-    └── generate/     → Autoregressive decode with PagedKV cache
-```
+- **Engine[T] interface** -- unified compute abstraction across CPU and GPU
+  backends. All layers delegate arithmetic to Engine, enabling transparent
+  hardware acceleration.
+- **purego GPU bindings** -- CUDA runtime and cuBLAS loaded via dlopen at
+  startup. No CGo required.
+- **Graph compiler with CUDA graph capture** -- builds a static computation
+  DAG, captures it as a CUDA graph for near-zero launch overhead on decode.
+- **OpenAI-compatible HTTP server** -- chat completions, completions, model
+  listing, and SSE streaming.
 
-## Building with CUDA
-
-```bash
-# CPU only (default, no Cgo)
-go build ./cmd/zerfoo
-
-# With GPU support
-CGO_CFLAGS='-I/usr/local/cuda/include' \
-CGO_LDFLAGS='-L/usr/local/cuda/lib64' \
-go build -tags cuda ./cmd/zerfoo
-```
-
-## Project Structure
-
-```
-inference/       Load models and generate text (start here)
-serve/           OpenAI-compatible HTTP server
-compute/         Engine interface (34 ops), CPU and CUDA backends
-graph/           Computation DAG with automatic differentiation
-layers/          40+ layer types (attention, normalization, activations)
-tensor/          N-dimensional arrays with Q4/Q8 quantized storage
-generate/        Token sampling, speculative decoding, PagedKV cache
-model/           ZMF and GGUF model format loaders
-training/        SGD, Adam, AdamW optimizers and training loops
-internal/cuda/   CUDA kernels (Q4 GEMM, Flash Attention)
-internal/xblas/  NEON/AVX2 SIMD matrix multiply
-distributed/     gRPC-based distributed training
-```
+See [docs/design.md](docs/design.md) for the full architecture.
 
 ## Contributing
 
-See [docs/design.md](docs/design.md) for architecture decisions.
+Standard Go workflow: fork, branch, test, PR.
+
+The pre-commit hook enforces single-directory commits. Run tests before
+submitting:
 
 ```bash
-go test ./... -race -timeout 120s
-golangci-lint run ./...
+go test ./... -race
 ```
 
 ## License
