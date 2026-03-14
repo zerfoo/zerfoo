@@ -269,12 +269,8 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 // with quantized embedding tables that produce CPU tensors) to ensure the
 // capture region sees only GPU-resident data.
 func (p *ExecutionPlan[T]) EnsureSlotsGPU(gpuSlotCache map[int]*tensor.TensorNumeric[T]) {
-	frozenSet := make(map[int]bool, len(p.frozenIdx))
-	for _, fi := range p.frozenIdx {
-		frozenSet[fi] = true
-	}
 	for i, t := range p.scratchSlots {
-		if t == nil || frozenSet[i] {
+		if t == nil {
 			continue
 		}
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
