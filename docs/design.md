@@ -801,6 +801,10 @@ Documented exceptions (unreachable `tensor.New` error paths):
 - Integration tests for cross-package workflows.
 - Numerical gradient checking via finite differences.
 - MockEngine for unit testing layers in isolation.
+- Large-dimension MatMul GPU tests (Llama 3 128K vocab, Gemma 3 262K vocab) with CPU parity.
+- Range op edge case tests (16 cases: zero delta, wrong inputs, descending, empty range).
+- Multi-model graph forward tests (large LM head, 2-layer transformer, diamond graph).
+- CLI pull command tests (16 cases: error paths, nil registry, cached output).
 - Model parity on DGX Spark: 8 PASS (Llama3, Qwen25, FlashAttentionGQA),
   13 SKIP (no ZMF: Mistral, Phi4, Gemma3, DeepSeek, SigLIP; 1 device: MultiGPU).
   10 ONNX compatibility fixes applied during Phase 21. See [ADR-018](adr/018-model-parity-testing.md).
@@ -950,6 +954,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 13. Serve layer hardened (Phase 9 Wave 1): structured request logging, /metrics endpoint, panic recovery with 503 for OOM.
 14. OpenAI API integration tests added (71 tests, serve/integration_test.go with //go:build integration).
 15. Lint debt resolved: errcheck, unused, ineffassign issues fixed. CI lint step now strict (no || true).
+16. Phase 10 Wave 1 test coverage: large MatMul GPU tests (compute/gpu_engine_matmul_test.go), Range op edge cases (layers/core/range_op_test.go), graph forward tests (graph/forward_test.go), CLI pull tests expanded (cmd/cli/pull_test.go). CI strict lint verified and 3 additional lint fixes applied.
 
 ---
 
