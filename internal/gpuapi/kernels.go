@@ -157,7 +157,15 @@ type KernelRunner interface {
 	// counter is a GPU-resident int32. Used for GPU-driven KV cache append.
 	OffsetMemcpy(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, stream Stream) error
 
+	// OffsetMemcpyFP16 copies dim floats from F32 src to FP16 dst at offset counter*dim.
+	// counter is a GPU-resident int32. Used for GPU-driven FP16 KV cache append.
+	OffsetMemcpyFP16(dst, src, counter unsafe.Pointer, dim, maxSeqLen int, stream Stream) error
+
 	// RoPESelect copies halfRotary cos/sin values from the precomputed table
 	// at position counter[0]. Used for GPU-driven RoPE angle selection.
 	RoPESelect(cosTable, sinTable, cosOut, sinOut, counter unsafe.Pointer, halfRotary int, stream Stream) error
+
+	// SgemvM1 computes y = A*x for M=1 decode (single-token GEMV).
+	// y[M], A[M x N] row-major, x[N].
+	SgemvM1(y, A, x unsafe.Pointer, M, N int, stream Stream) error
 }

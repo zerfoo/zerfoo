@@ -107,10 +107,14 @@ type KernelLib struct {
 	launchResetCounter     uintptr
 
 	// offset_memcpy
-	launchOffsetMemcpy uintptr
+	launchOffsetMemcpy     uintptr
+	launchOffsetMemcpyFP16 uintptr
 
 	// rope_select
 	launchRoPESelect uintptr
+
+	// sgemv_m1
+	launchSgemvM1 uintptr
 }
 
 var (
@@ -225,8 +229,11 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_reset_counter", &k.launchResetCounter},
 		// offset_memcpy
 		{"launch_offset_memcpy", &k.launchOffsetMemcpy},
+		{"launch_offset_memcpy_fp16", &k.launchOffsetMemcpyFP16},
 		// rope_select
 		{"launch_rope_select", &k.launchRoPESelect},
+		// sgemv_m1
+		{"launch_sgemv_m1", &k.launchSgemvM1},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -239,7 +246,9 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_increment_counter":        true,
 			"launch_reset_counter":            true,
 			"launch_offset_memcpy":            true,
+			"launch_offset_memcpy_fp16":       true,
 			"launch_rope_select":              true,
+			"launch_sgemv_m1":                 true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)

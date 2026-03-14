@@ -252,8 +252,16 @@ func (k *OpenCLKernels) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ Stream)
 	return fmt.Errorf("OffsetMemcpy: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) OffsetMemcpyFP16(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("OffsetMemcpyFP16: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream) error {
 	return fmt.Errorf("RoPESelect: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) SgemvM1(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("SgemvM1: not implemented for OpenCL")
 }
 
 // Compile-time interface assertion.
