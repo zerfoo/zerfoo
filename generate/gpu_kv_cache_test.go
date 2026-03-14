@@ -395,16 +395,17 @@ func TestGPUKVCache_MemoryBudget(t *testing.T) {
 	}
 	defer func() { _ = cache.Close() }()
 
-	// 52 allocations: 26 layers * 2 (K + V).
-	if len(alloc.allocs) != 52 {
-		t.Errorf("allocations = %d, want 52", len(alloc.allocs))
+	// 53 allocations: 26 layers * 2 (K + V) + 1 GPU counter.
+	if len(alloc.allocs) != 53 {
+		t.Errorf("allocations = %d, want 53", len(alloc.allocs))
 	}
 
-	// Each buffer: 512 * 8 * 256 * 4 = 4,194,304 bytes.
+	// Each KV buffer: 512 * 8 * 256 * 4 = 4,194,304 bytes.
+	// GPU counter: 4 bytes (int32).
 	wantBufBytes := 512 * 8 * 256 * 4
 	for ptr, buf := range alloc.allocs {
-		if len(buf) != wantBufBytes {
-			t.Errorf("buf at %v has %d bytes, want %d", ptr, len(buf), wantBufBytes)
+		if len(buf) != wantBufBytes && len(buf) != 4 {
+			t.Errorf("buf at %v has %d bytes, want %d or 4", ptr, len(buf), wantBufBytes)
 		}
 	}
 }

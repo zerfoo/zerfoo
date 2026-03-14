@@ -31,14 +31,15 @@ type gpuLayerBuf struct {
 // during megakernel inference. Memory is allocated once at construction and
 // reused across generation steps.
 type GPUKVCache struct {
-	alloc     GPUAllocator
-	layers    []gpuLayerBuf
-	numLayers int
-	maxSeqLen int
-	headDim   int
-	numHeads  int
-	seqLen    int
-	bufBytes  int // per-layer buffer size in bytes (maxSeqLen * numHeads * headDim * 4)
+	alloc      GPUAllocator
+	layers     []gpuLayerBuf
+	numLayers  int
+	maxSeqLen  int
+	headDim    int
+	numHeads   int
+	seqLen     int
+	bufBytes   int            // per-layer buffer size in bytes (maxSeqLen * numHeads * headDim * 4)
+	gpuCounter unsafe.Pointer // GPU-allocated int32 position counter for CUDA graph capture
 }
 
 // NewGPUKVCache allocates GPU buffers for numLayers attention layers.
@@ -86,14 +87,37 @@ func NewGPUKVCache(alloc GPUAllocator, numLayers, maxSeqLen, numHeads, headDim i
 		layers[i] = gpuLayerBuf{kPtr: kPtr, vPtr: vPtr}
 	}
 
+	// Allocate a GPU-resident int32 counter for position tracking.
+	// This counter is used by CUDA graph-captured kernels (offset_memcpy,
+	// rope_select, increment_counter) instead of CPU-side seqLen.
+	counterPtr, err := alloc.Alloc(4) // sizeof(int32)
+	if err != nil {
+		for i := range numLayers {
+			_ = alloc.Free(layers[i].kPtr)
+			_ = alloc.Free(layers[i].vPtr)
+		}
+		return nil, fmt.Errorf("gpu_kv_cache: alloc GPU counter: %w", err)
+	}
+	// Zero-initialize the counter via H2D copy.
+	zero := int32(0)
+	if err := alloc.Memcpy(counterPtr, unsafe.Pointer(&zero), 4, gpuMemcpyHostToDevice); err != nil {
+		_ = alloc.Free(counterPtr)
+		for i := range numLayers {
+			_ = alloc.Free(layers[i].kPtr)
+			_ = alloc.Free(layers[i].vPtr)
+		}
+		return nil, fmt.Errorf("gpu_kv_cache: zero GPU counter: %w", err)
+	}
+
 	return &GPUKVCache{
-		alloc:     alloc,
-		layers:    layers,
-		numLayers: numLayers,
-		maxSeqLen: maxSeqLen,
-		headDim:   headDim,
-		numHeads:  numHeads,
-		bufBytes:  bufBytes,
+		alloc:      alloc,
+		layers:     layers,
+		numLayers:  numLayers,
+		maxSeqLen:  maxSeqLen,
+		headDim:    headDim,
+		numHeads:   numHeads,
+		bufBytes:   bufBytes,
+		gpuCounter: counterPtr,
 	}, nil
 }
 
@@ -159,10 +183,25 @@ func (c *GPUKVCache) SeqLen() int {
 	return c.seqLen
 }
 
+// GPUCounterPtr returns the device pointer to the GPU-resident int32 position
+// counter. Kernels (offset_memcpy, rope_select, increment_counter) use this
+// pointer to read/write the current sequence position on the GPU, enabling
+// CUDA graph capture of the decode loop.
+func (c *GPUKVCache) GPUCounterPtr() unsafe.Pointer {
+	return c.gpuCounter
+}
+
 // Reset resets the sequence position to zero without freeing GPU memory.
-// Buffers are reused for the next generation.
+// Buffers are reused for the next generation. The GPU counter is also
+// zeroed so that GPU-side kernels see the reset position.
 func (c *GPUKVCache) Reset() {
 	c.seqLen = 0
+	if c.gpuCounter != nil {
+		zero := int32(0)
+		// Best-effort: GPU counter reset failure is non-fatal since the CPU
+		// seqLen is the authoritative source during non-graph execution.
+		_ = c.alloc.Memcpy(c.gpuCounter, unsafe.Pointer(&zero), 4, gpuMemcpyHostToDevice)
+	}
 }
 
 // DevicePointerArrays returns GPU-resident arrays of float* pointers for K
@@ -217,6 +256,12 @@ func (c *GPUKVCache) Close() error {
 			}
 			c.layers[i].vPtr = nil
 		}
+	}
+	if c.gpuCounter != nil {
+		if err := c.alloc.Free(c.gpuCounter); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		c.gpuCounter = nil
 	}
 	return firstErr
 }
