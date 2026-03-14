@@ -530,20 +530,50 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 		// Set RoPE position offset from cached sequence length so that decode
 		// tokens get the correct absolute position rotation.
+		// GPU path: use GPU-resident counter to avoid CPU readback that would
+		// break CUDA graph capture.
+		gpuRoPEApplied := false
 		if hasCache {
-			gqa.rope.SetPositionOffset(cache.SeqLen())
+			type unfusedGPUCounterProvider interface {
+				GPUCounterPtr() unsafe.Pointer
+			}
+			if gcp, ok := cache.(unfusedGPUCounterProvider); ok && gcp.GPUCounterPtr() != nil {
+				realEng := compute.Engine[T](gqa.engine)
+				if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+					realEng = proxy.Real()
+				}
+				if sp, ok := realEng.(compute.StreamProvider); ok {
+					cosAngles, sinAngles, _, angleErr := gqa.rope.GetAnglesGPU(gcp.GPUCounterPtr(), seqLen, sp.Stream())
+					if angleErr == nil {
+						if provider, ok := realEng.(compute.FusedRoPEProvider[T]); ok {
+							qOut, qErr := provider.GPUFusedRoPE(qForRoPE, cosAngles, sinAngles, gqa.headDim)
+							kOut, kErr := provider.GPUFusedRoPE(kForRoPE, cosAngles, sinAngles, gqa.headDim)
+							if qErr == nil && kErr == nil {
+								qHeadsRoPE = qOut
+								kHeadsRoPE = kOut
+								gpuRoPEApplied = true
+							}
+						}
+					}
+				}
+			}
+			if !gpuRoPEApplied {
+				gqa.rope.SetPositionOffset(cache.SeqLen())
+			}
 		} else {
 			gqa.rope.SetPositionOffset(0)
 		}
 
-		qHeadsRoPE, err = gqa.rope.Forward(ctx, qForRoPE)
-		if err != nil {
-			return nil, err
-		}
+		if !gpuRoPEApplied {
+			qHeadsRoPE, err = gqa.rope.Forward(ctx, qForRoPE)
+			if err != nil {
+				return nil, err
+			}
 
-		kHeadsRoPE, err = gqa.rope.Forward(ctx, kForRoPE)
-		if err != nil {
-			return nil, err
+			kHeadsRoPE, err = gqa.rope.Forward(ctx, kForRoPE)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
