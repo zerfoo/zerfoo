@@ -2181,3 +2181,39 @@ from captured vs individual kernel launches.
 
 Bandwidth utilization: ~60% of 273 GB/s theoretical. Token time: 4.27ms.
 Theoretical max at full bandwidth: ~390 tok/s. Remaining headroom: ~40%.
+
+### Phase 7 Completion Summary (2026-03-14)
+
+Phase 7 investigated three optimization paths. >300 tok/s target not met but
+valuable infrastructure and findings delivered. Released as v1.1.0.
+
+**Key findings:**
+- cuBLAS is only 8% of decode time (T901.1). Weight matmuls use fused Q4K GEMV.
+  Custom SGEMV integration deferred (low ROI).
+- GQA-aware flash_attention_decode kernel (E905): functionally correct but 2x
+  slower than cuBLAS SDPA path (114 vs 234 tok/s). Disabled for GQA models.
+  The kernel needs Blackwell-specific optimizations (TMA, async copy) to compete.
+- FP16 KV cache (E902): working with --kv-dtype flag. Correctness bug fixed.
+- Graph/no-graph divergence (E903): fixed via GPU-resident kv_len counter.
+  Decode-specific flash_attention kernel reads KV length from GPU memory.
+- Performance regression tests added: operation count assertions, decode path
+  selection tests, benchmark gates.
+
+**New files (Phase 7):**
+- internal/cuda/kernels/sgemv_m1.cu -- custom F32 GEMV for M=1 (152 GFLOPS)
+- internal/gpuapi/cuda_blas_profile.go -- cuBLAS profiling wrapper
+- generate/decode_ops_test.go -- operation count regression tests
+- generate/bench_decode_test.go -- decode throughput benchmarks
+- layers/attention/gqa_decode_test.go -- GQA decode path selection tests
+- docs/adr/034-gqa-aware-flash-attention-decode.md -- GQA kernel decision
+
+**Performance unchanged:** 234.08 tok/s (F32 KV, CUDA graph, GQA via SDPA).
+
+### Known Technical Debt
+
+1. GQA decode fast path disabled (114 tok/s regression). Kernel needs optimization
+   or different approach (Blackwell TMA, speculative decoding).
+2. purego assembly trampoline segfaults without -race on Go 1.25/arm64 (DGX).
+   Tests pass with -race flag. Affects: internal/cuda/kernels/ tests on DGX.
+3. 276 pre-existing golangci-lint issues. CI uses --new-from-rev || true to
+   avoid blocking on legacy code.
