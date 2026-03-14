@@ -617,8 +617,11 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// length. This avoids cache.Get() which returns a view sized by the
 		// CPU-side seqLen (frozen during CUDA graph capture). The decode kernel
 		// reads the KV length from GPU memory at runtime.
+		// Skip for GQA (numQueryHeads != numKVHeads): the Repeat on full
+		// maxSeqLen KV buffer is too expensive. TODO: make flash_attention_decode
+		// GQA-aware to avoid Repeat entirely.
 		decodeUsed := false
-		if seqLen == 1 {
+		if seqLen == 1 && gqa.numQueryHeads == gqa.numKeyValueHeads {
 			type fullBufferProvider interface {
 				GetFullBuffer(layer int) (*tensor.TensorNumeric[T], *tensor.TensorNumeric[T])
 				MaxSeqLen() int
