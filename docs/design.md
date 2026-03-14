@@ -939,13 +939,17 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 2. GPU broadcasting supports up to 4D -- >4D cases fall back to CPU.
 3. Single GPU -- no multi-GPU or distributed GPU support.
 4. cuDNN operations (Conv2d, BatchNorm, activations, pooling, softmax) are non-interface methods on GPUEngine -- layers must call them explicitly rather than through Engine[T].
-5. CUDA graph capture disabled by default (ZERFOO_ENABLE_CUDA_GRAPH) -- remaining D2H copies in GQA/FFN/KV cache prevent full graph capture.
+5. CUDA graph capture enabled for decode (184/185 ops captured). Only EmbeddingLookup excluded.
 6. Managed memory disabled by default (ZERFOO_ENABLE_MANAGED_MEM) -- 13% regression on GB10 from page faults.
 7. float16/float8 GEMM upcasts to float32 -- no native half-precision element-wise kernels.
 8. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
 9. KV cache is optional -- not all graph architectures support it.
 10. Fused dequant+GEMV Q4_K kernel ready but engine dispatch validation pending.
-11. Performance at 84% of Ollama (166 vs 197.21 tok/s) -- CUDA graph enablement is the primary path to closing the gap.
+11. Performance: 234 tok/s F32 with CUDA graph (18.7% faster than Ollama 197.21 tok/s). Phase 6 complete.
+12. Non-GGUF (ZMF F32) models fail on GPU: cuBLAS status 7 at LM head projection for large vocab sizes (>128K). GGUF Q4K models bypass cuBLAS for LM head and work correctly. Root cause is in graph execution memory lifecycle, not cuBLAS dimensions.
+13. Serve layer hardened (Phase 9 Wave 1): structured request logging, /metrics endpoint, panic recovery with 503 for OOM.
+14. OpenAI API integration tests added (71 tests, serve/integration_test.go with //go:build integration).
+15. Lint debt resolved: errcheck, unused, ineffassign issues fixed. CI lint step now strict (no || true).
 
 ---
 

@@ -1,58 +1,60 @@
-# Zerfoo Development Plan -- Model Breadth and Production Serving (Phase 9)
+# Zerfoo Development Plan -- Remaining Issues and Test Coverage (Phase 10)
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo v1.1.0 achieves 234 tok/s on Gemma 3 1B Q4_K_M (18.7% faster than
-Ollama). The framework has an OpenAI-compatible API server, HuggingFace Hub
-download, and CLI commands (pull, serve, run). However, only Gemma 3 1B has
-been validated end-to-end on GPU. The other supported architectures (Llama 3,
-Mistral, Qwen, Phi, DeepSeek) have graph builders but no verified GPU
-inference. The serving layer lacks production hardening.
+Phase 9 Waves 1-3 completed 16 of 29 tasks: serve hardening, API integration
+tests, CHANGELOG, and lint cleanup. However, model verification revealed that
+all non-GGUF (ZMF F32) models fail on GPU. The cuBLAS status 7 error at the
+LM head projection is NOT a cuBLAS dimension limit -- direct testing proves
+cuBLAS handles these dimensions correctly. The failure occurs during graph
+execution, likely due to memory lifecycle issues when getDevicePtr copies 1GB+
+weight matrices host-to-device.
 
-Phase 8 (technical debt) handles the decode kernel, trampoline, and lint.
-Phase 9 runs in parallel or after Phase 8 -- it focuses on making zerfoo
-useful to real users by verifying more models and hardening the server.
+Additionally, the `zerfoo pull` CLI command is broken (no HF pull function
+configured), and several Phase 8 technical debt items remain (decode kernel
+profiling, purego trampoline segfault).
 
-See docs/design.md for architecture. See docs/adr/033-how-we-beat-ollama.md
-for the optimization journey.
+A key gap is test coverage: the cuBLAS failure, pull command regression, and
+Range op panic would have been caught earlier with targeted tests for large
+MatMul dimensions, CLI commands, and multi-model graph execution.
+
+See docs/design.md for full architecture. See docs/updates.md for model
+verification deep dive.
 
 ### Objectives
 
-- O1: Verify end-to-end GPU inference for Llama 3.2 1B, Llama 3.1 8B,
-  Qwen 2.5 7B, and Mistral 7B on DGX Spark.
-- O2: Fix any model-specific failures found during verification.
-- O3: Add production features to the serve layer: request logging,
-  token rate metrics, graceful model loading, and health checks.
-- O4: Add integration tests for the OpenAI API endpoints.
-- O5: Publish a README with quickstart, supported models, and benchmarks.
+- O1: Fix the graph execution memory lifecycle bug that causes cuBLAS status 7
+  on large vocab projections (affects all non-GGUF models).
+- O2: Add test coverage that would have caught these issues earlier: large MatMul,
+  multi-model graph execution, CLI pull command, Range op edge cases.
+- O3: Complete Phase 8 technical debt (decode kernel, trampoline, CI lint).
+- O4: Verify FP16 KV cache and GQA decode fast path on DGX.
+- O5: Write README with quickstart once models are verified.
 
 ### Non-Goals
 
+- New model architectures.
+- Performance optimization beyond Phase 7 work.
 - Training or fine-tuning.
-- Multi-GPU / distributed inference.
-- New model architectures beyond what is already built.
-- Performance optimization (Phase 7-8 scope).
-- Mobile or edge deployment.
 
 ### Constraints and Assumptions
 
 - Pre-commit hook rejects multi-directory commits.
 - DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: sm_121, 273 GB/s LPDDR5x, 128GB unified memory.
-- Models downloaded from HuggingFace Hub via `zerfoo pull`.
-- Go 1.25 with purego GPU bindings.
-- OpenAI API compatibility is the target API surface.
+- Go 1.25 with purego GPU bindings (no CGo for CUDA).
+- GGUF Q4K models work. ZMF F32 models fail on GPU.
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| Models verified | 4 additional models produce coherent output | bench_tps on DGX |
-| API tests | Integration tests for all OpenAI endpoints | go test ./serve/... |
-| Server uptime | Graceful handling of OOM, bad input, concurrent requests | Load test |
-| README | Users can go from zero to inference in 5 minutes | Manual walkthrough |
+| ZMF model inference | All 4 ZMF models produce coherent output on GPU | bench_tps on DGX |
+| Test coverage | Large MatMul, multi-model, CLI pull, Range op tests | go test ./... |
+| Phase 8 debt | Decode kernel profiled/resolved, lint CI strict | DGX profiling, CI green |
+| README | Users can go from clone to inference in 5 minutes | Manual walkthrough |
 
 ---
 
@@ -62,180 +64,185 @@ for the optimization journey.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D100 | Verified Llama 3.2 1B, Llama 3.1 8B inference | Broadest user demand |
-| D101 | Verified Qwen 2.5 7B inference | Growing Chinese/multilingual audience |
-| D102 | Verified Mistral 7B inference | Popular European model |
-| D103 | OpenAI API integration tests | Catch regressions in serving |
-| D104 | Server production features | Logging, metrics, graceful error handling |
-| D105 | README with quickstart | First-time user experience |
+| D200 | Fix cuBLAS status 7 in graph execution | Unblocks all non-GGUF models |
+| D201 | Test coverage for large MatMul, CLI, multi-model | Prevents regressions |
+| D202 | Phase 8 decode kernel + trampoline resolution | Technical debt cleanup |
+| D203 | FP16 KV + GQA fast path verification on DGX | Phase 7 completion |
+| D204 | README with quickstart | First-time user experience |
 
 ### Out of Scope
 
 - New model architectures not already in the codebase.
+- Performance tuning beyond Phase 7 work.
+- Multi-GPU / distributed inference.
 - Training, fine-tuning, RLHF.
-- Mobile deployment, WASM, edge inference.
-- Performance tuning (covered by Phase 7-8).
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### Phase 8 (retained -- technical debt, can run in parallel)
+### E2000: Test Coverage Gaps (NEW -- preventive tests)
+
+Tests that would have caught the model verification failures earlier.
+These can run locally on macOS without DGX.
+
+- [ ] T2000.1 Add large-dimension MatMul GPU test  Owner: TBD  Est: 45m
+  - Test cuBLAS Sgemm with m=5, n=128256, k=2048 (Llama 3 vocab size).
+  - Test cuBLAS Sgemm with m=5, n=262144, k=1152 (Gemma 3 vocab size).
+  - Test with actual getDevicePtr path (H2D copy of 1GB+ weight matrix).
+  - Test that MatMul result is correct (compare with CPU reference for small dims).
+  - File: compute/gpu_engine_matmul_test.go.
+  - Acceptance: Tests pass on CUDA device. Test fails if getDevicePtr returns invalid pointer.
+  - Dependencies: none.
+
+- [ ] T2000.2 Add CLI pull command unit test  Owner: TBD  Est: 30m
+  - Test that NewPullCommand with nil registry creates a LocalRegistry.
+  - Test that LocalRegistry.Pull calls the HF pull function.
+  - Test that PullCommand with a mock registry returns model info.
+  - Test the "already up to date" path.
+  - File: cmd/cli/pull_test.go.
+  - Acceptance: Tests cover the happy path, already-cached path, and error paths.
+  - Dependencies: none.
+
+- [ ] T2000.3 Add Range op edge case tests  Owner: TBD  Est: 30m
+  - Test Range op with empty input tensor (should return error, not panic).
+  - Test Range op with various model tokenizer configs.
+  - Test Range op with single-token input.
+  - File: layers/core/range_op_test.go.
+  - Acceptance: Range op never panics on valid inputs. Returns descriptive errors on invalid inputs.
+  - Dependencies: none.
+
+- [ ] T2000.4 Add multi-model graph forward test  Owner: TBD  Est: 1h
+  - Build a mock graph with a large final MatMul (simulating LM head with vocab > 32K).
+  - Run forward pass on CPU engine and verify correct output shape and values.
+  - Build a 2-layer transformer-like graph and verify forward pass completes.
+  - File: graph/forward_test.go.
+  - Acceptance: Graph forward with large final MatMul produces correct output.
+  - Dependencies: none.
+
+- [ ] T2000.5 Add getDevicePtr memory lifecycle test  Owner: TBD  Est: 45m
+  - Test that getDevicePtr for large CPUStorage tensors returns valid GPU pointers.
+  - Test that sequential getDevicePtr calls (simulating graph forward) do not
+    return overlapping or freed memory.
+  - Test that cleanup functions properly free GPU memory.
+  - File: compute/gpu_kernels_test.go.
+  - Acceptance: No double-free or use-after-free detected. CUDA memcheck clean.
+  - Dependencies: none.
+
+- [ ] T2000.6 Add zerfoo pull CLI integration test  Owner: TBD  Est: 30m
+  - Wire NewHFPullFunc into the CLI pull command (fix the broken pull path).
+  - Test the full CLI flow: NewPullCommand -> Run -> pulls from mock HF server.
+  - File: cmd/cli/pull_test.go.
+  - Acceptance: `go test ./cmd/cli/... -run TestPull` passes.
+  - Dependencies: T2000.2.
+
+### E2001: Fix Graph Execution Memory Bug
+
+Root cause investigation from Wave 2: cuBLAS Sgemm works in isolation with
+large dimensions, but fails during graph forward pass. The issue is in how
+getDevicePtr handles H2D copies for 1GB+ weight matrices during the graph
+forward pass.
+
+- [ ] T2001.1 Add debug logging to getDevicePtr for large allocations  Owner: TBD  Est: 30m
+  - Log allocation size, pointer address, and memcpy result for allocations > 100MB.
+  - Log cuBLAS Sgemm arguments (m, n, k, pointers) before the call.
+  - Instrument compute/gpu_kernels.go and compute/gpu_engine.go.
+  - File: compute/gpu_kernels.go, compute/gpu_engine.go.
+  - Acceptance: Debug output shows the exact failure point.
+  - Dependencies: none.
+
+- [ ] T2001.2 Diagnose and fix the cuBLAS status 7 root cause  Owner: TBD  Est: 2h
+  - Run instrumented bench_tps on DGX with Llama 3 ZMF model.
+  - Analyze debug output: verify pointer validity, memcpy return codes, buffer sizes.
+  - Likely fixes: synchronize stream before cuBLAS call, check memcpy error return,
+    pre-allocate weight buffers during model load instead of on-demand H2D.
+  - File: compute/gpu_kernels.go or compute/gpu_engine.go.
+  - Acceptance: bench_tps with Llama 3 ZMF produces output without cuBLAS error.
+  - Dependencies: T2001.1, T2000.1 (large MatMul test as regression guard).
+
+- [ ] S2001.2.1 Test fix with all 4 models on DGX  Owner: TBD  Est: 1h
+  - Re-run bench_tps for Llama 3, Qwen 2.5, Mistral 7B, Phi 4 on DGX.
+  - Record tok/s and output quality for each.
+  - File: docs/updates.md.
+  - Acceptance: All 4 models produce coherent output at temp=0.
+  - Dependencies: T2001.2.
+
+- [ ] S2001.2.2 Test fix locally with unit tests  Owner: TBD  Est: 30m
+  - go test ./compute/... ./graph/... -race -timeout 120s.
+  - Verify T2000.1 (large MatMul) and T2000.5 (getDevicePtr lifecycle) pass.
+  - Acceptance: All tests pass with -race.
+  - Dependencies: T2001.2.
+
+### E1001: Decode Kernel (Phase 8 retained)
 
 - [ ] T1001.1 Profile flash_attention_decode on DGX  Owner: TBD  Est: 1h
+  - Run nsys profile on bench_tps with Gemma 3 1B.
+  - Measure decode kernel time vs total decode time.
+  - File: docs/updates.md.
+  - Acceptance: Profile data shows kernel time breakdown.
   - Dependencies: none.
+
 - [ ] T1001.2 Optimize or revert the decode kernel  Owner: TBD  Est: 2h
+  - Based on T1001.1 profiling, either optimize or revert to cuBLAS attention.
+  - File: internal/cuda/kernels/flash_attention.cu.
+  - Acceptance: Decode tok/s equal to or better than before.
   - Dependencies: T1001.1.
+
 - [ ] S1001.2.1 Test decode kernel changes  Owner: TBD  Est: 30m
+  - go test ./internal/cuda/kernels/... -race -timeout 120s.
+  - Run bench_tps on DGX to verify no regression.
+  - Acceptance: All kernel tests pass. Throughput >= 230 tok/s.
   - Dependencies: T1001.2.
+
 - [ ] T1001.3 Run go vet and make shared  Owner: TBD  Est: 15m
+  - go vet ./internal/cuda/...
+  - make shared CUDA_ARCH=sm_121 on DGX.
+  - Acceptance: No new warnings. Build succeeds.
   - Dependencies: T1001.2.
+
+### E1002: Purego Trampoline (Phase 8 retained)
+
 - [ ] T1002.1 Diagnose purego trampoline segfault  Owner: TBD  Est: 1.5h
+  - Reproduce segfault on DGX with a minimal test case.
+  - Check ccallTrampoline assembly for ARM64 AAPCS64 compliance.
+  - Verify stack alignment for 14+ argument C functions.
+  - File: internal/cuda/purego_linux_arm64.s.
+  - Acceptance: Root cause identified and documented.
   - Dependencies: none.
+
 - [ ] T1002.2 Fix the trampoline  Owner: TBD  Est: 1.5h
+  - Apply fix based on T1002.1 diagnosis.
+  - File: internal/cuda/purego_linux_arm64.s or purego_linux_arm64.go.
+  - Acceptance: Segfault no longer reproduces.
   - Dependencies: T1002.1.
+
 - [ ] S1002.2.1 Verify trampoline fix on DGX  Owner: TBD  Est: 30m
+  - Run full test suite on DGX: go test ./internal/cuda/... -race.
+  - Run bench_tps to verify inference still works.
+  - Acceptance: No segfaults. All tests pass.
   - Dependencies: T1002.2.
-- [x] T1003.1 Categorize and triage lint issues  Owner: task-T1003.1  Est: 45m  Done: 2026-03-14
-  - Dependencies: none.
-- [x] T1003.2 Fix errcheck issues (164 issues)  Owner: task-T1003.2  Est: 2h  Done: 2026-03-14
-  - Dependencies: T1003.1.
-- [x] T1003.3 Fix remaining lint issues  Owner: task-T1003.3  Est: 1.5h  Done: 2026-03-14
-  - Dependencies: T1003.1.
-- [x] T1003.4 Remove || true from CI lint step  Owner: team-lead  Est: 15m  Done: 2026-03-14
-  - Dependencies: T1003.2, T1003.3.
+
+### E2002: Remaining Verification (Phase 7 leftover + CI)
+
 - [ ] S1003.4.1 Verify CI passes with strict lint  Owner: TBD  Est: 15m
-  - Dependencies: T1003.4.
-
-### E1100: Multi-Model Verification on DGX
-
-Verify that GPU inference produces coherent output for each model. Download
-each model via `zerfoo pull`, run bench_tps, inspect output quality.
-
-- [x] T1100.1 Verify Llama 3.2 1B on DGX  Owner: team-lead  Est: 1h  Done: 2026-03-14 FAIL: cuBLAS status 7 on vocab projection 128256
-  - Pull model: zerfoo pull meta-llama/Llama-3.2-1B-Instruct-GGUF
-  - Run bench_tps with 50 tokens on DGX.
-  - If output is degenerate, debug the graph builder (model/gguf/llama.go).
-  - Record tok/s and output quality.
-  - File: docs/updates.md.
-  - Acceptance: Coherent output at temp=0. Throughput documented.
+  - Push a branch and verify GitHub Actions CI passes with strict lint.
+  - If it fails, fix the new lint issues.
+  - Acceptance: CI green with golangci-lint (no || true).
   - Dependencies: none.
 
-- [x] T1100.2 Verify Llama 3.1 8B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 NOTE: No 8B GGUF available, tested Llama 3.2 1B ZMF instead
-  - Pull model: zerfoo pull meta-llama/Llama-3.1-8B-Instruct-GGUF
-  - Run bench_tps with 50 tokens on DGX.
-  - 8B model tests memory handling (larger KV cache, more layers).
-  - File: docs/updates.md.
-  - Acceptance: Coherent output. No OOM on 128GB unified memory.
+- [ ] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: TBD  Est: 30m
+  - Run bench_tps with --kv-dtype=fp16 on DGX, 20 tokens.
+  - Verify output quality (coherent text at temp=0).
+  - Acceptance: Output coherent. No pad tokens.
   - Dependencies: none.
 
-- [x] T1100.3 Verify Qwen 2.5 7B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 FAIL: cuBLAS status 7 on vocab projection 151936
-  - Pull model: zerfoo pull Qwen/Qwen2.5-7B-Instruct-GGUF
-  - Run bench_tps with 50 tokens on DGX.
-  - File: docs/updates.md.
-  - Acceptance: Coherent output at temp=0. Throughput documented.
+- [ ] S905.3.1 Test GQA decode fast path correctness  Owner: TBD  Est: 30m
+  - go test ./layers/attention/... -race -timeout 120s.
+  - Run bench_tps on DGX with 20 tokens, verify output matches standard path.
+  - Acceptance: All tests pass. Output coherent at temp=0.
   - Dependencies: none.
 
-- [x] T1100.4 Verify Mistral 7B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 FAIL: Range op panic (index out of range)
-  - Pull model: zerfoo pull mistralai/Mistral-7B-Instruct-v0.3-GGUF
-  - Run bench_tps with 50 tokens on DGX.
-  - File: docs/updates.md.
-  - Acceptance: Coherent output at temp=0. Throughput documented.
-  - Dependencies: none.
-
-- [ ] T1100.5 Fix model-specific inference failures  Owner: TBD  Est: 3h
-  - Based on T1100.1-T1100.4 findings, fix any model-specific bugs.
-  - Common issues: missing attention mask, wrong RoPE config, tokenizer
-    mismatch, architecture-specific layer wiring.
-  - File: model/gguf/, layers/, generate/.
-  - Acceptance: All 4 models produce coherent output.
-  - Dependencies: T1100.1, T1100.2, T1100.3, T1100.4.
-
-- [ ] S1100.5.1 Test model fixes  Owner: TBD  Est: 30m
-  - go test ./model/... ./layers/... ./generate/... -race -timeout 120s.
-  - Re-run failing models on DGX to verify fix.
-  - Acceptance: All tests pass. All models produce coherent output.
-  - Dependencies: T1100.5.
-
-### E1101: OpenAI API Integration Tests
-
-The serve/ package has OpenAI-compatible endpoints but no integration tests.
-Add tests that start the server, make HTTP requests, and verify responses.
-
-- [x] T1101.1 Add chat completions integration test  Owner: task-T1101.1  Est: 1h  Done: 2026-03-14
-  - Start a serve instance with a small model (or mock engine).
-  - POST /v1/chat/completions with a simple prompt.
-  - Verify: 200 status, response has choices[0].message.content,
-    usage.prompt_tokens > 0, usage.completion_tokens > 0.
-  - Test streaming: verify SSE format, data: [DONE] at end.
-  - File: serve/integration_test.go.
-  - Acceptance: Test passes with go test -tags=integration.
-  - Dependencies: none.
-
-- [x] T1101.2 Add completions integration test  Owner: task-T1101.1  Est: 45m  Done: 2026-03-14
-  - POST /v1/completions with a text prompt.
-  - Verify: 200 status, response has choices[0].text.
-  - Test streaming variant.
-  - File: serve/integration_test.go.
-  - Acceptance: Test passes.
-  - Dependencies: none.
-
-- [x] T1101.3 Add models endpoint tests  Owner: task-T1101.1  Est: 30m  Done: 2026-03-14
-  - GET /v1/models -- verify model list.
-  - GET /v1/models/{id} -- verify model info.
-  - DELETE /v1/models/{id} -- verify model unload.
-  - File: serve/integration_test.go.
-  - Acceptance: Tests pass.
-  - Dependencies: none.
-
-- [x] T1101.4 Add error handling tests  Owner: task-T1101.1  Est: 30m  Done: 2026-03-14
-  - POST with invalid JSON -- verify 400.
-  - POST with missing model -- verify 404.
-  - POST with empty messages -- verify 400.
-  - Test concurrent requests -- verify no panics.
-  - File: serve/integration_test.go.
-  - Acceptance: All error cases return appropriate HTTP status codes.
-  - Dependencies: none.
-
-- [x] T1101.5 Run go vet on serve package  Owner: team-lead  Est: 15m  Done: 2026-03-14
-  - go vet ./serve/...
-  - Acceptance: No new warnings.
-  - Dependencies: T1101.1.
-
-### E1102: Server Production Hardening
-
-- [x] T1102.1 Add structured request logging  Owner: task-T1102.1  Est: 1h  Done: 2026-03-14
-  - Log each request: method, path, model, prompt_tokens, completion_tokens,
-    latency_ms, status_code.
-  - Use the existing log/ package (structured leveled logging).
-  - Log at Info level for successful requests, Warn for errors.
-  - File: serve/server.go.
-  - Acceptance: Every request logged with structured fields.
-  - Dependencies: none.
-
-- [x] T1102.2 Add token rate metrics  Owner: task-T1102.2  Est: 45m  Done: 2026-03-14
-  - Track: tokens_generated_total, tokens_per_second (rolling average),
-    requests_total, request_latency_ms (histogram).
-  - Use the existing metrics/runtime/ package (Counter, Gauge, Histogram).
-  - Expose via /metrics endpoint (Prometheus format) or /debug/metrics.
-  - File: serve/metrics.go.
-  - Acceptance: Metrics endpoint returns valid counters after requests.
-  - Dependencies: none.
-
-- [x] T1102.3 Add graceful error recovery  Owner: task-T1102.3  Est: 45m  Done: 2026-03-14
-  - Catch panics in request handlers (recover middleware).
-  - Return 500 with structured error response instead of crashing.
-  - Handle OOM during inference: catch allocator errors, return 503.
-  - File: serve/server.go.
-  - Acceptance: Server survives panics and OOM without crashing.
-  - Dependencies: none.
-
-- [x] S1102.3.1 Test server hardening  Owner: team-lead  Est: 30m  Done: 2026-03-14
-  - go test ./serve/... -race -timeout 120s.
-  - Acceptance: Tests pass including panic recovery and error cases.
-  - Dependencies: T1102.1, T1102.2, T1102.3.
-
-### E1103: README and Documentation
+### E1103: README (retained -- blocked on model fix)
 
 - [ ] T1103.1 Write README.md with quickstart  Owner: TBD  Est: 1.5h
   - Sections: What is Zerfoo, Installation, Quickstart (pull + run in 3 commands),
@@ -245,13 +252,7 @@ Add tests that start the server, make HTTP requests, and verify responses.
   - File: README.md.
   - Acceptance: A new user can go from clone to inference in 5 minutes
     following the README.
-  - Dependencies: T1100.5 (need verified models for the table).
-
-- [x] T1103.2 Update CHANGELOG.md for v1.1.0  Owner: task-T1103.2  Est: 30m  Done: 2026-03-14
-  - Summarize Phase 6-7 changes in user-facing terms.
-  - File: CHANGELOG.md.
-  - Acceptance: CHANGELOG covers all features since v0.3.0.
-  - Dependencies: none.
+  - Dependencies: S2001.2.1 (need verified model benchmarks).
 
 ---
 
@@ -259,35 +260,40 @@ Add tests that start the server, make HTTP requests, and verify responses.
 
 | Track | Epics/Tasks | Notes |
 |-------|-------------|-------|
-| Track A: Model Verify | E1100 (T1100.1-T1100.4) | DGX testing, 4 models |
-| Track B: API Tests | E1101 (T1101.1-T1101.5) | serve/ integration tests |
-| Track C: Server Harden | E1102 (T1102.1-S1102.3.1) | Production features |
-| Track D: Docs | E1103 (T1103.1-T1103.2) | README + CHANGELOG |
-| Track E: Tech Debt | Phase 8 (E1001-E1003) | Can run in parallel |
+| Track A: Test Coverage | E2000 (T2000.1-T2000.6) | Local tests, no DGX |
+| Track B: Graph Fix | E2001 (T2001.1-S2001.2.2) | Needs DGX for T2001.2+ |
+| Track C: Decode Kernel | E1001 (T1001.1-T1001.3) | DGX-only |
+| Track D: Trampoline | E1002 (T1002.1-S1002.2.1) | DGX-only |
+| Track E: Verification | E2002 (S1003.4.1, S902.5.1, S905.3.1) | Mixed |
 
 ### Maximum parallelism
 
-- Wave 1 (5 tasks): T1100.1 (Llama 1B) + T1100.2 (Llama 8B) + T1100.3 (Qwen 7B) +
-  T1100.4 (Mistral 7B) + T1101.1 (chat completions test).
-  All 5 are independent. Model verification saturates DGX slots.
+- Wave 1 (5 tasks): T2000.1 (large MatMul test) + T2000.2 (CLI pull test) +
+  T2000.3 (Range op test) + T2000.4 (multi-model graph test) + S1003.4.1 (CI lint).
+  All 5 are independent. Pure code, no DGX needed.
 
-- Wave 2 (5 tasks): T1100.5 (fix model bugs) + T1101.2 (completions test) +
-  T1101.3 (models test) + T1101.4 (error test) + T1102.1 (request logging).
-  T1100.5 depends on Wave 1 model results. Others are independent.
+- Wave 2 (5 tasks): T2000.5 (getDevicePtr lifecycle test) + T2000.6 (CLI pull integration) +
+  T2001.1 (debug logging) + T1001.1 (decode kernel profile, DGX) + T1002.1 (trampoline diagnosis, DGX).
+  T2000.5-T2000.6 need Wave 1 context. T2001.1, T1001.1, T1002.1 are independent.
 
-- Wave 3 (5 tasks): S1100.5.1 (verify fixes) + T1101.5 (go vet serve) +
-  T1102.2 (metrics) + T1102.3 (error recovery) + T1103.2 (CHANGELOG).
+- Wave 3 (5 tasks): T2001.2 (fix cuBLAS root cause, DGX) + T1001.2 (optimize decode kernel, DGX) +
+  T1002.2 (fix trampoline, DGX) + S902.5.1 (FP16 KV test, DGX) + S905.3.1 (GQA fast path, DGX).
+  T2001.2 depends on T2001.1. T1001.2 depends on T1001.1. T1002.2 depends on T1002.1.
+  S902.5.1 and S905.3.1 are independent.
 
-- Wave 4 (3 tasks): S1102.3.1 (test hardening) + T1103.1 (README) +
-  Phase 8 Wave 1 tasks.
+- Wave 4 (5 tasks): S2001.2.1 (verify 4 models, DGX) + S2001.2.2 (local unit tests) +
+  S1001.2.1 (decode kernel tests) + T1001.3 (go vet + make shared) + S1002.2.1 (trampoline verify).
+
+- Wave 5 (1 task): T1103.1 (README -- depends on model verification results from Wave 4).
 
 ### Dependency minimization checklist applied
 
-a) All 4 model verification tasks (T1100.1-T1100.4) are fully independent.
-b) API tests (E1101) are independent of model verification.
-c) Server hardening (E1102) is independent of both.
-d) README depends on model results (needs benchmark table).
-e) Phase 8 tech debt is fully independent and can run in any wave.
+a) All 6 test coverage tasks (E2000) are independent of DGX work.
+b) Graph fix debug logging (T2001.1) is independent of test coverage tasks.
+c) Decode kernel (E1001) and trampoline (E1002) are fully independent of each other.
+d) FP16 KV and GQA tests (E2002) are independent of everything else.
+e) README is the only task with a hard dependency on model fix results.
+f) Wave 1 saturates all 5 slots with zero dependencies.
 
 ---
 
@@ -295,10 +301,11 @@ e) Phase 8 tech debt is fully independent and can run in any wave.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M140: Models verified | T1100.5 | 4 additional models produce coherent GPU output |
-| M141: API tested | T1101.5 | Integration tests for all OpenAI endpoints pass |
-| M142: Server hardened | S1102.3.1 | Logging, metrics, panic recovery working |
-| M143: README published | T1103.1 | 5-minute quickstart verified |
+| M200: Test coverage | T2000.6 | 6 new test files covering large MatMul, CLI, Range, multi-model |
+| M201: Models fixed | S2001.2.1 | All 4 ZMF models produce coherent GPU output |
+| M202: Phase 8 done | S1002.2.1 | Decode kernel resolved, trampoline fixed, CI strict |
+| M203: Phase 7 verified | S905.3.1 | FP16 KV and GQA fast path verified on DGX |
+| M204: README published | T1103.1 | 5-minute quickstart verified |
 
 ---
 
@@ -306,10 +313,11 @@ e) Phase 8 tech debt is fully independent and can run in any wave.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R1100 | 7B models OOM on DGX 128GB | Cannot verify 7B models | Low | Q4_K_M 7B is ~4GB. 128GB is plenty. |
-| R1101 | Model-specific bugs require deep architecture changes | Significant rework | Medium | Most issues are RoPE config or attention mask. Fix incrementally. |
-| R1102 | Integration tests flaky due to model loading time | CI unreliable | Medium | Use mock engine for CI tests. Real model tests on DGX only. |
-| R1103 | Tokenizer incompatibility with some models | Wrong output | Medium | Load tokenizer.json from GGUF metadata. Test encode/decode roundtrip. |
+| R2000 | cuBLAS status 7 root cause is deeper than memory lifecycle | Extended debugging | Medium | T2001.1 debug logging will narrow the search. Fallback: pre-allocate all weight buffers at model load time. |
+| R2001 | Trampoline segfault is a Go runtime/assembly interaction | Hard to fix | Medium | CGo fallback path exists (purego_linux_arm64_cgo.go) but needs CUDA headers. |
+| R2002 | FP16 KV still produces garbage | Feature unusable | Medium | FP16 KV is optional. F32 KV works at 234 tok/s. |
+| R2003 | Decode kernel optimization yields no speedup | Wasted effort | Low | T1001.1 profiling first. Can revert to cuBLAS attention. |
+| R2004 | Range op panic is a tokenizer compatibility issue | Affects Mistral only | Medium | T2000.3 tests will isolate. May need model-specific tokenizer config. |
 
 ---
 
@@ -344,19 +352,30 @@ A task is done when:
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-14 (Phase 9 Plan Created)
+### Change Summary -- 2026-03-14 (Phase 10 Plan Created)
 
-Phase 8 (technical debt) retained as parallel work. Created Phase 9 plan
-for model breadth and production serving:
+Trimmed 16 completed tasks from Phase 9 plan. Stable knowledge preserved in
+docs/design.md (updated known limitations 5, 11-15). Completed epics removed:
+E1101 (API tests), E1102 (serve hardening), E1003 (lint T1003.1-T1003.4).
+Completed tasks from E1100 (T1100.1-T1100.4) and E1103 (T1103.2) also removed.
 
-- E1100: Verify 4 additional models on DGX (Llama 1B, Llama 8B, Qwen 7B,
-  Mistral 7B). 6 tasks.
-- E1101: OpenAI API integration tests. 5 tasks.
-- E1102: Server production hardening (logging, metrics, error recovery). 4 tasks.
-- E1103: README and CHANGELOG. 2 tasks.
+Created new epic E2000 (Test Coverage Gaps) with 6 tasks targeting the specific
+failures discovered during model verification:
+- T2000.1: Large-dimension MatMul GPU test (would have caught cuBLAS issue)
+- T2000.2: CLI pull command test (would have caught broken pull)
+- T2000.3: Range op edge case tests (would have caught Mistral panic)
+- T2000.4: Multi-model graph forward test
+- T2000.5: getDevicePtr memory lifecycle test
+- T2000.6: CLI pull integration test (fix + test)
 
-Total Phase 9: 17 tasks. Phase 8: 12 tasks. Grand total: 29 tasks.
-Designed for 4 waves with up to 5 parallel agents per wave.
+Restructured E2001 (graph execution fix) with debug instrumentation approach
+based on Wave 2 investigation findings.
+
+Retained Phase 8 E1001 (decode kernel) and E1002 (trampoline) unchanged.
+Retained Phase 7 leftover DGX verification tasks.
+
+Total remaining: 24 tasks across 6 epics. Designed for 5 waves with up to
+5 parallel agents per wave.
 
 ---
 
@@ -364,16 +383,15 @@ Designed for 4 waves with up to 5 parallel agents per wave.
 
 - **Current version:** v1.1.0 (released 2026-03-14).
 - **Performance:** 234 tok/s F32 with CUDA graph (beats Ollama 197.21 by 18.7%).
-- **Prior plans:** Phase 1-7 complete. See docs/design.md.
+- **Branches:** fix/errcheck-issues has all Wave 1-3 work (~25 commits ahead of main).
+- **Key bug:** Non-GGUF models fail on GPU with cuBLAS status 7 at LM head.
+  cuBLAS works in isolation. See docs/updates.md for deep dive.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
 - **Build:** /usr/local/go/bin/go build ./...
 - **Benchmark:** export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
   && /usr/local/go/bin/go run ./cmd/bench_tps --model <path> --tokens 256
   --prompt 'The quick brown fox' --device cuda --dtype fp32
-- **Pull models:** /usr/local/go/bin/go run ./cmd/zerfoo pull <model-id>
-- **Serve:** /usr/local/go/bin/go run ./cmd/zerfoo serve <model-id> --port 8080
-- **Run (interactive):** /usr/local/go/bin/go run ./cmd/zerfoo run <model-id>
-- **Model aliases:** gemma-3-1b-q4, llama-3-1b-q4, llama-3-8b-q4, mistral-7b-q4,
-  qwen-2.5-7b-q4
-- **OpenAI API endpoints:** /v1/chat/completions, /v1/completions, /v1/models
+- **Models on DGX:** ~/models/gemma3-gguf/model.gguf (works), ~/models/llama3/
+  (ZMF, fails), ~/models/qwen25/ (ZMF, fails), ~/models/mistral/ (ZMF, fails)
 - **Pre-commit hook:** Rejects multi-directory commits.
+- **OpenAI API endpoints:** /v1/chat/completions, /v1/completions, /v1/models, /metrics
