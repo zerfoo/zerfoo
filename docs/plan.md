@@ -96,7 +96,7 @@ for the optimization journey.
   - Dependencies: T1002.1.
 - [ ] S1002.2.1 Verify trampoline fix on DGX  Owner: TBD  Est: 30m
   - Dependencies: T1002.2.
-- [ ] T1003.1 Categorize and triage lint issues  Owner: TBD  Est: 45m
+- [x] T1003.1 Categorize and triage lint issues  Owner: task-T1003.1  Est: 45m  Done: 2026-03-14
   - Dependencies: none.
 - [ ] T1003.2 Fix errcheck issues (164 issues)  Owner: TBD  Est: 2h
   - Dependencies: T1003.1.
