@@ -3,8 +3,10 @@ package generate
 import (
 	"fmt"
 	"log"
+	"unsafe"
 
 	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -36,6 +38,11 @@ type TensorCache[T tensor.Numeric] struct {
 	layers    []tensorLayerBuf[T]
 	maxSeqLen int
 	stream    gpuapi.Stream // GPU stream for async D2D/H2D copies (nil for CPU)
+
+	// GPU-resident int32 position counter for CUDA graph capture.
+	// When non-nil, Update uses offset_memcpy kernel (reads counter on GPU)
+	// instead of CPU-computed offsets, making the KV append capturable.
+	gpuCounter *tensor.GPUStorage[int32]
 }
 
 // NewTensorCache creates a TensorCache backed by the given engine.
@@ -51,6 +58,14 @@ func NewTensorCache[T tensor.Numeric](engine compute.Engine[T], numLayers, maxSe
 	}
 	if sa, ok := any(engine).(compute.GPUStreamAccessor); ok {
 		tc.stream = sa.GPUStream()
+	}
+	// Allocate a GPU-resident int32 counter for CUDA graph capture.
+	// The counter tracks the current sequence position on the GPU so that
+	// offset_memcpy and rope_select kernels can read it without D2H copies.
+	if tc.stream != nil {
+		if gs, err := tensor.NewGPUStorageFromSlice([]int32{0}); err == nil {
+			tc.gpuCounter = gs
+		}
 	}
 	return tc
 }
@@ -111,6 +126,35 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 			if err := promoteToGPU(lb, batch, c.maxSeqLen, dim); err != nil {
 				log.Printf("WARNING: KV cache layer %d: GPU promotion failed, D2H fallback: %v", layer, err)
 			}
+		}
+	}
+
+	// GPU counter path: use offset_memcpy kernel for single-token decode.
+	// The kernel reads the position from GPU memory, so the offset is not
+	// baked into captured CUDA graphs — it stays live across replays.
+	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU {
+		kGS, kOK := newK.GetStorage().(*tensor.GPUStorage[T])
+		vGS, vOK := newV.GetStorage().(*tensor.GPUStorage[T])
+		if kOK && vOK {
+			counterPtr := c.gpuCounter.Ptr()
+			streamPtr := c.stream.Ptr()
+			tokenDim := dim * batch
+
+			if err := kernels.OffsetMemcpy(lb.kStorage.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+				return fmt.Errorf("offset_memcpy K layer %d: %w", layer, err)
+			}
+			if err := kernels.OffsetMemcpy(lb.vStorage.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
+				return fmt.Errorf("offset_memcpy V layer %d: %w", layer, err)
+			}
+
+			// Advance GPU counter and CPU seqLen after the last layer.
+			if layer == len(c.layers)-1 {
+				if err := kernels.IncrementCounter(counterPtr, 1, streamPtr); err != nil {
+					return fmt.Errorf("increment_counter layer %d: %w", layer, err)
+				}
+			}
+			lb.seqLen += seqLen
+			return nil
 		}
 	}
 
@@ -231,10 +275,14 @@ func (c *TensorCache[T]) SeqLen() int {
 }
 
 // Reset clears sequence lengths to zero. Pre-allocated buffers are kept
-// for reuse; only data pointers are logically invalidated.
+// for reuse; only data pointers are logically invalidated. The GPU counter
+// is also zeroed so that GPU-side kernels see the reset position.
 func (c *TensorCache[T]) Reset() {
 	for i := range c.layers {
 		c.layers[i].seqLen = 0
+	}
+	if c.gpuCounter != nil {
+		_ = c.gpuCounter.CopyFromHost([]int32{0}, 0)
 	}
 }
 
@@ -246,6 +294,36 @@ func (c *TensorCache[T]) Truncate(newSeqLen int) {
 			c.layers[i].seqLen = newSeqLen
 		}
 	}
+}
+
+// GPUCounterPtr returns the device pointer to the GPU-resident int32 position
+// counter. Returns nil if no GPU counter is allocated (CPU-only cache).
+// Kernels (offset_memcpy, rope_select, increment_counter) use this pointer
+// to read/write the current sequence position on the GPU, enabling CUDA graph
+// capture of the decode loop.
+func (c *TensorCache[T]) GPUCounterPtr() unsafe.Pointer {
+	if c.gpuCounter == nil {
+		return nil
+	}
+	return c.gpuCounter.Ptr()
+}
+
+// SyncCounterFromGPU performs a D2H copy of the GPU counter to update the CPU
+// seqLen across all layers. Call this after the decode loop completes to bring
+// the CPU-side cursor back in sync with the GPU counter.
+func (c *TensorCache[T]) SyncCounterFromGPU() error {
+	if c.gpuCounter == nil {
+		return fmt.Errorf("tensor_cache: GPU counter not allocated")
+	}
+	buf := []int32{0}
+	if err := c.gpuCounter.CopyTo(buf); err != nil {
+		return fmt.Errorf("tensor_cache: sync counter D2H: %w", err)
+	}
+	pos := int(buf[0])
+	for i := range c.layers {
+		c.layers[i].seqLen = pos
+	}
+	return nil
 }
 
 // Free releases all pre-allocated GPU buffers. CPU buffers are left to GC.
@@ -263,5 +341,9 @@ func (c *TensorCache[T]) Free() {
 		c.layers[i].vBuf = nil
 		c.layers[i].seqLen = 0
 		c.layers[i].batch = 0
+	}
+	if c.gpuCounter != nil {
+		_ = c.gpuCounter.Free()
+		c.gpuCounter = nil
 	}
 }
