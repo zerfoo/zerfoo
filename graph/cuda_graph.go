@@ -52,7 +52,6 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 
 	// Fixed device buffer for the input token.
 	inputDevPtr unsafe.Pointer
-	inputBytes  int
 
 	// Cache of GPU tensors for slots that arrive as CPU from pre-capture
 	// (e.g. EmbeddingLookup with Q4K). Device addresses are reused across
