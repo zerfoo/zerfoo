@@ -51,6 +51,32 @@ DGX: main branch at 4b2f13b, libkernels.so rebuilt
 
 Common issue: cuBLAS INVALID_VALUE for vocab projections > 128K. Affects Llama 3 and Qwen 2.5.
 
+### Deep Dive: cuBLAS Status 7 Root Cause
+
+**NOT a cuBLAS dimension issue.** Direct testing proves cuBLAS Sgemm handles
+m=5, n=128256, k=2048 (and n=262144) correctly on GB10.
+
+The failure occurs only during graph execution. Likely causes (in order of probability):
+1. **Memory lifecycle**: The LM head weight matrix is in CPUStorage. CPU Transpose
+   creates a 1GB copy, then getDevicePtr allocates 1GB GPU memory and copies H2D.
+   If the H2D copy or GPU allocation silently fails, cuBLAS gets an invalid pointer.
+2. **Stream synchronization**: H2D copy and cuBLAS may be on different streams.
+   (Note: CUDA_LAUNCH_BLOCKING=1 did NOT fix, so this is less likely.)
+3. **Pool memory corruption**: ArenaPool or MemPool may reuse a buffer that's still
+   referenced by a pending kernel.
+
+**Key evidence:**
+- `ZERFOO_DISABLE_ARENA=1` does NOT fix (rules out arena-specific reuse)
+- `CUDA_LAUNCH_BLOCKING=1` does NOT fix (rules out async stream issues)
+- Direct cuBLAS test with same dimensions: PASS
+- Only affects non-Q4K matmuls (GGUF Q4K models bypass cuBLAS for LM head)
+
+**Next steps for T1100.5:**
+- Add debug logging to getDevicePtr for large allocations (>100MB)
+- Check if cudaMemcpy returns an error for the 1GB H2D copy
+- Try using MatMulTransposeB (SgemmNT) instead of Transpose+MatMul for LM head
+- Test with CPU device confirms model loads/runs (degenerate output is separate issue)
+
 ## Note on GGUF vs ZMF
 
 The plan specifies GGUF format models, but `zerfoo pull` is broken (no pull function configured
