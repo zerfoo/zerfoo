@@ -69,12 +69,21 @@ type CUDAGraphExecutor[T tensor.Numeric] struct {
 	// onCaptured is called after successful capture, allowing the caller
 	// to protect arena allocations from being reclaimed by Reset.
 	onCaptured func()
+
+	// snapshotCache is called before the capture region to snapshot KV cache
+	// state. It returns a restore function that is called if capture fails,
+	// allowing the caller to roll back cache mutations (e.g. Truncate seqLen
+	// and reset GPU counters) before the RunInstructions fallback.
+	snapshotCache func(ctx context.Context) func()
 }
 
 // NewCUDAGraphExecutor creates a graph executor for the given plan.
 // The optional onCaptured callback is invoked after a successful capture,
 // allowing the caller to protect arena allocations from being reclaimed.
-func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr unsafe.Pointer, warmups int, onCaptured func()) *CUDAGraphExecutor[T] {
+// The optional snapshotCache callback is called before the capture region to
+// snapshot KV cache state. It returns a restore function invoked on capture
+// failure, preventing double KV cache updates in the RunInstructions fallback.
+func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr unsafe.Pointer, warmups int, onCaptured func(), snapshotCache func(ctx context.Context) func()) *CUDAGraphExecutor[T] {
 	if warmups < 1 {
 		warmups = 1
 	}
@@ -115,13 +124,14 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 	}
 
 	return &CUDAGraphExecutor[T]{
-		plan:         plan,
-		stream:       cuda.StreamFromPtr(streamPtr),
-		warmups:      warmups,
-		captureStart: captureStart,
-		captureEnd:   captureEnd,
-		gpuSlotCache: make(map[int]*tensor.TensorNumeric[T]),
-		onCaptured:   onCaptured,
+		plan:            plan,
+		stream:          cuda.StreamFromPtr(streamPtr),
+		warmups:         warmups,
+		captureStart:    captureStart,
+		captureEnd:      captureEnd,
+		gpuSlotCache:    make(map[int]*tensor.TensorNumeric[T]),
+		onCaptured:    onCaptured,
+		snapshotCache: snapshotCache,
 	}
 }
 
@@ -170,6 +180,14 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// GPU-resident data and avoids sync D2H copies that break capture.
 	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
+	// Snapshot KV cache state before the capture region runs. If capture
+	// fails, restoreCache rolls back cache mutations (seqLen, GPU counters)
+	// so the RunInstructions fallback doesn't double-update the cache.
+	var restoreCache func()
+	if g.snapshotCache != nil {
+		restoreCache = g.snapshotCache(ctx)
+	}
+
 	// Begin capture for the GPU-heavy region.
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
@@ -193,6 +211,13 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		if capturedGraph != nil {
 			_ = cuda.GraphDestroy(capturedGraph)
 		}
+		// Restore KV cache state before fallback: the capture region ran
+		// GQA layers that called cache.Update(), incrementing seqLen and
+		// GPU counters. Without this restore, the fallback RunInstructions
+		// would double-update the cache for the same token.
+		if restoreCache != nil {
+			restoreCache()
+		}
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graph = capturedGraph
@@ -204,6 +229,10 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		_ = cuda.GraphDestroy(capturedGraph)
 		g.graph = nil
 		g.failed = true
+		// Restore KV cache state: capture region already ran cache.Update().
+		if restoreCache != nil {
+			restoreCache()
+		}
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
 	g.graphExec = exec

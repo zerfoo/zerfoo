@@ -99,7 +99,7 @@ func TestCUDAGraphExecutor_CorrectnessVsNonGraph(t *testing.T) {
 	}
 
 	// Now run with CUDA graph executor.
-	graphExec := NewCUDAGraphExecutor[float32](compiled, streamPtr, 2, nil)
+	graphExec := NewCUDAGraphExecutor[float32](compiled, streamPtr, 2, nil, nil)
 	defer graphExec.Destroy()
 
 	for i := range 10 {
@@ -169,7 +169,7 @@ func TestCUDAGraphExecutor_FallbackOnFailure(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 
-	graphExec := NewCUDAGraphExecutor[float32](compiled, streamPtr, 2, nil)
+	graphExec := NewCUDAGraphExecutor[float32](compiled, streamPtr, 2, nil, nil)
 	defer graphExec.Destroy()
 
 	// Run enough times to trigger warmup + capture + replay.
