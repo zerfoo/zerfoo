@@ -154,27 +154,26 @@ func TestFlashAttentionForwardNonCausal(t *testing.T) {
 }
 
 // naiveDecodeAttention computes the CPU reference for decode attention with GQA.
-// Q: [batch*numQHeads, headDim] (single token per head)
-// K: [batch*numKVHeads, kvLen, headDim]
-// V: [batch*numKVHeads, kvLen, headDim]
-// Returns O: [batch*numQHeads, headDim]
+// K/V layout: [batch, kvLen, numKVHeads*headDim] (heads packed in dim).
+// Q layout:   [batch*numQHeads, headDim] (one row per query head).
+// O layout:   [batch*numQHeads, headDim].
 func naiveDecodeAttention(Q, K, V []float32, batch, numQHeads, numKVHeads, kvLen, headDim int) []float32 {
 	O := make([]float32, batch*numQHeads*headDim)
 	scale := 1.0 / math.Sqrt(float64(headDim))
 	headRatio := numQHeads / numKVHeads
+	kvDim := numKVHeads * headDim
 
 	for b := 0; b < batch; b++ {
 		for qh := 0; qh < numQHeads; qh++ {
 			bh := b*numQHeads + qh
 			kvHead := qh / headRatio
-			kvBH := b*numKVHeads + kvHead
 
 			scores := make([]float64, kvLen)
 			maxScore := -math.MaxFloat64
 			for j := 0; j < kvLen; j++ {
 				dot := 0.0
 				for d := 0; d < headDim; d++ {
-					dot += float64(Q[bh*headDim+d]) * float64(K[kvBH*kvLen*headDim+j*headDim+d])
+					dot += float64(Q[bh*headDim+d]) * float64(K[b*kvLen*kvDim+j*kvDim+kvHead*headDim+d])
 				}
 				scores[j] = dot * scale
 				if scores[j] > maxScore {
@@ -194,7 +193,7 @@ func naiveDecodeAttention(Q, K, V []float32, batch, numQHeads, numKVHeads, kvLen
 			for d := 0; d < headDim; d++ {
 				acc := 0.0
 				for j := 0; j < kvLen; j++ {
-					acc += scores[j] * float64(V[kvBH*kvLen*headDim+j*headDim+d])
+					acc += scores[j] * float64(V[b*kvLen*kvDim+j*kvDim+kvHead*headDim+d])
 				}
 				O[bh*headDim+d] = float32(acc)
 			}
