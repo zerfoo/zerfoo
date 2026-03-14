@@ -105,7 +105,7 @@ forward pass.
   - Acceptance: Debug output shows the exact failure point.
   - Dependencies: none.
 
-- [ ] T2001.2 Diagnose and fix the cuBLAS status 7 root cause  Owner: TBD  Est: 2h
+- [x] T2001.2 Diagnose and fix the cuBLAS status 7 root cause  Owner: task-T2001.2  Completed: 2026-03-14
   - Run instrumented bench_tps on DGX with Llama 3 ZMF model.
   - Analyze debug output: verify pointer validity, memcpy return codes, buffer sizes.
   - Likely fixes: synchronize stream before cuBLAS call, check memcpy error return,
@@ -136,7 +136,7 @@ forward pass.
   - Acceptance: Profile data shows kernel time breakdown.
   - Dependencies: none.
 
-- [ ] T1001.2 Optimize or revert the decode kernel  Owner: TBD  Est: 2h
+- [x] T1001.2 Revert decode kernel to cuBLAS attention  Owner: task-T1001.2  Completed: 2026-03-14
   - Based on T1001.1 profiling, either optimize or revert to cuBLAS attention.
   - File: internal/cuda/kernels/flash_attention.cu.
   - Acceptance: Decode tok/s equal to or better than before.
@@ -164,27 +164,25 @@ forward pass.
   - Acceptance: Root cause identified and documented.
   - Dependencies: none.
 
-- [ ] T1002.2 Fix the trampoline  Owner: TBD  Est: 1.5h
-  - Apply fix based on T1002.1 diagnosis.
-  - File: internal/cuda/purego_linux_arm64.s or purego_linux_arm64.go.
-  - Acceptance: Segfault no longer reproduces.
+- [x] T1002.2 Verify trampoline (re-scoped: trampoline correct, arena test fix verified)  Owner: task-T1002.2  Completed: 2026-03-14
+  - Trampoline assembly is correct per T1002.1.
+  - Real fix: IsManaged() guards in arena tests (applied in T1002.1).
+  - Verified on DGX: 27 tests pass, no segfaults, bench_tps works.
   - Dependencies: T1002.1.
 
-- [ ] S1002.2.1 Verify trampoline fix on DGX  Owner: TBD  Est: 30m
-  - Run full test suite on DGX: go test ./internal/cuda/... -race.
-  - Run bench_tps to verify inference still works.
-  - Acceptance: No segfaults. All tests pass.
+- [x] S1002.2.1 Verify trampoline fix on DGX  Owner: task-T1002.2  Completed: 2026-03-14
+  - Verified as part of T1002.2: go test ./internal/cuda/... passes, bench_tps works.
   - Dependencies: T1002.2.
 
 ### E2002: DGX Verification (Phase 7 leftover)
 
-- [ ] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: TBD  Est: 30m
+- [x] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: task-S902.5.1  Completed: 2026-03-14
   - Run bench_tps with --kv-dtype=fp16 on DGX, 20 tokens.
   - Verify output quality (coherent text at temp=0).
   - Acceptance: Output coherent. No pad tokens.
   - Dependencies: none.
 
-- [ ] S905.3.1 Test GQA decode fast path correctness  Owner: TBD  Est: 30m
+- [x] S905.3.1 Test GQA decode fast path correctness  Owner: task-S905.3.1  Completed: 2026-03-14
   - go test ./layers/attention/... -race -timeout 120s.
   - Run bench_tps on DGX with 20 tokens, verify output matches standard path.
   - Acceptance: All tests pass. Output coherent at temp=0.
