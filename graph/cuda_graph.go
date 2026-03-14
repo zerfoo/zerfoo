@@ -17,6 +17,10 @@ import (
 // EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
 // float→int conversion.
 //
+// Gather: used by ZMF models for embedding lookup. Calls GPUStorage.TrySlice
+// (sync D2H cudaMemcpy on legacy stream) to read indices from GPU, which
+// conflicts with stream capture and poisons the capture state.
+//
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
 // for KV cache appends. Now that TensorCache uses a GPU-resident counter
@@ -25,6 +29,7 @@ import (
 // GQA fully capturable.
 var nonCapturableOps = map[string]bool{
 	"EmbeddingLookup": true,
+	"Gather":          true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
