@@ -42,7 +42,8 @@ type TensorCache[T tensor.Numeric] struct {
 	// GPU-resident int32 position counter for CUDA graph capture.
 	// When non-nil, Update uses offset_memcpy kernel (reads counter on GPU)
 	// instead of CPU-computed offsets, making the KV append capturable.
-	gpuCounter *tensor.GPUStorage[int32]
+	gpuCounter       *tensor.GPUStorage[int32]
+	gpuCounterSynced bool // true after GPU counter is synced to CPU seqLen post-prefill
 }
 
 // NewTensorCache creates a TensorCache backed by the given engine.
@@ -132,7 +133,20 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	// GPU counter path: use offset_memcpy kernel for single-token decode.
 	// The kernel reads the position from GPU memory, so the offset is not
 	// baked into captured CUDA graphs — it stays live across replays.
+	//
+	// On the first decode call after prefill, sync the GPU counter to match
+	// the CPU seqLen so that KV data is written at the correct offset and
+	// rope_select reads the correct position.
 	if c.gpuCounter != nil && seqLen == 1 && lb.isGPU {
+		if !c.gpuCounterSynced && lb.seqLen > 0 {
+			val := int32(lb.seqLen)
+			if err := c.gpuCounter.CopyFromHost([]int32{val}, 0); err != nil {
+				return fmt.Errorf("sync GPU counter to %d: %w", val, err)
+			}
+			c.gpuCounterSynced = true
+		} else if !c.gpuCounterSynced {
+			c.gpuCounterSynced = true
+		}
 		kGS, kOK := newK.GetStorage().(*tensor.GPUStorage[T])
 		vGS, vOK := newV.GetStorage().(*tensor.GPUStorage[T])
 		if kOK && vOK {
@@ -284,6 +298,7 @@ func (c *TensorCache[T]) Reset() {
 	if c.gpuCounter != nil {
 		_ = c.gpuCounter.CopyFromHost([]int32{0}, 0)
 	}
+	c.gpuCounterSynced = false
 }
 
 // Truncate rolls back the cache to the given sequence length.
