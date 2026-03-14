@@ -97,6 +97,7 @@ type loadOptions struct {
 	backend   string // "" or "default" for standard engine, "tensorrt" for TRT
 	precision string // "" or "fp32" for float32, "fp16" for half precision (TRT only)
 	dtype     string // "" or "fp32" for float32, "fp16" for FP16 compute
+	kvDtype   string // "" or "fp32" for float32, "fp16" for FP16 KV cache
 	mmap      bool   // use mmap for model loading (unix only)
 }
 
@@ -162,6 +163,14 @@ func WithDType(dtype string) Option {
 func WithMmap(enabled bool) Option {
 	return func(o *loadOptions) {
 		o.mmap = enabled
+	}
+}
+
+// WithKVDtype sets the KV cache storage dtype. Supported: "fp32" (default), "fp16".
+// FP16 halves KV cache bandwidth by storing keys/values in half precision.
+func WithKVDtype(dtype string) Option {
+	return func(o *loadOptions) {
+		o.kvDtype = dtype
 	}
 }
 
@@ -284,7 +293,7 @@ func Load(modelID string, opts ...Option) (*Model, error) {
 		}
 	}
 
-	m := assembleModel(mdl.Graph, tok, eng, meta, info, o.maxSeqLen)
+	m := assembleModel(mdl.Graph, tok, eng, meta, info, o.maxSeqLen, o.kvDtype)
 	m.closer = mmapCloser
 	return m, nil
 }
@@ -312,10 +321,16 @@ func assembleModel(
 	meta *ModelMetadata,
 	info *registry.ModelInfo,
 	maxSeqLenOverride int,
+	kvDtype string,
 ) *Model {
 	maxSeqLen := meta.MaxPositionEmbeddings
 	if maxSeqLenOverride > 0 {
 		maxSeqLen = maxSeqLenOverride
+	}
+
+	var genOpts []generate.GeneratorOption
+	if kvDtype == "fp16" {
+		genOpts = append(genOpts, generate.WithGeneratorKVDtype("fp16"))
 	}
 
 	gen := generate.NewGenerator(g, tok, eng, generate.ModelConfig{
@@ -324,7 +339,7 @@ func assembleModel(
 		EOSTokenID: meta.EOSTokenID,
 		BOSTokenID: meta.BOSTokenID,
 		NumLayers:  meta.NumLayers,
-	})
+	}, genOpts...)
 
 	return &Model{
 		generator: gen,

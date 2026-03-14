@@ -90,13 +90,18 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		maxSeqLen = o.maxSeqLen
 	}
 
+	var genOpts []generate.GeneratorOption
+	if o.kvDtype == "fp16" {
+		genOpts = append(genOpts, generate.WithGeneratorKVDtype("fp16"))
+	}
+
 	gen := generate.NewGenerator(g, tok, eng, generate.ModelConfig{
 		VocabSize:  meta.VocabSize,
 		MaxSeqLen:  maxSeqLen,
 		EOSTokenID: meta.EOSTokenID,
 		BOSTokenID: meta.BOSTokenID,
 		NumLayers:  meta.NumLayers,
-	})
+	}, genOpts...)
 
 	return &Model{
 		generator: gen,
