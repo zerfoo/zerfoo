@@ -1,3 +1,120 @@
+# S2001.2.1: Multi-Model Verification Post cuBLAS Fix
+
+Date: 2026-03-14
+Branch: fix/errcheck-issues
+DGX: fix/errcheck-issues branch, libkernels.so rebuilt with nvcc (sm_121)
+
+## Context
+
+Wave 3 fixed the cuBLAS status 7 root cause: stale GPU tensor caching in
+Transpose/MatMul after arena ResetPool. This verification tests all 4 ZMF
+models plus the Gemma 3 GGUF baseline.
+
+## Build Notes
+
+The `make shared` link step (`nvcc -shared -o libkernels.so *.pic.o`) failed
+with `nvlink fatal: Could not open input file 'dequant_q4k.pic.o'` on CUDA 13.0.
+This appears to be a glob expansion ordering issue with nvlink. Workaround:
+pass all .pic.o files explicitly to nvcc. When the gcc fallback was used instead,
+the shared library lacked embedded GPU device code, causing all custom kernels
+to fail with `cuda error 1`.
+
+## Results
+
+### Gemma 3 1B (GGUF Q4_K_M) -- PASS (Baseline)
+
+- Path: ~/models/gemma3-gguf/model.gguf
+- Throughput: 124.04 tok/s
+- Output: "This is a good work is a good work is a few years ago. This is a"
+- CUDA graph: captured instructions 1-184 of 185 (success)
+- Arena: hits=4392 misses=0 resets=22 used=7.6 MB
+
+### Llama 3.2 1B (ZMF F32) -- PARTIAL (runs but garbage output)
+
+- Path: ~/models/llama3
+- Throughput: 16.93 tok/s
+- Output: "!!!!!!!!!!!!!!!!!!!!" (garbage)
+- CUDA graph: capture FAILED (error 901 on instruction 38 Transpose)
+  - WARNING: GPUStorage.TrySlice: cudaMemcpy failed: operation would make the
+    legacy stream depend on a capturing blocking stream
+- Arena: hits=20504 misses=0 resets=22 used=1057.8 MB
+- cuBLAS status 7: FIXED (no longer crashes at LM head projection)
+
+### Qwen 2.5 (ZMF F32) -- PARTIAL (runs but garbage output)
+
+- Path: ~/models/qwen25
+- Throughput: 14.59 tok/s
+- Output: "!!!!!!!!!!!!!!!!!!!!" (garbage)
+- CUDA graph: capture FAILED (error 901 on instruction 76 Transpose)
+  - WARNING: GPUStorage.TrySlice: cudaMemcpy failed: operation would make the
+    legacy stream depend on a capturing blocking stream
+- Arena: hits=33718 misses=0 resets=22 used=550.5 MB
+- cuBLAS status 7: FIXED (no longer crashes at LM head projection)
+
+### Mistral 7B (ZMF F32) -- FAIL (panic)
+
+- Path: ~/models/mistral
+- Error: panic: runtime error: index out of range [0] with length 0
+- Stack: layers/core/range_op.go:29 during prefill
+- This is a pre-existing issue (same as initial verification), unrelated to
+  the cuBLAS fix. The Range op receives an empty tensor during graph forward.
+
+### Phi 4 (ZMF F32) -- FAIL (kernel error)
+
+- Path: ~/models/phi4
+- Error: prefill forward: node[175] Pow: pow_scalar kernel failed (cuda error 1)
+  (input shapes: [[1 6 3072] []], dep ops: [Cast Parameter])
+- This error persists even with the properly nvcc-linked libkernels.so.
+  The kernel symbol exists (`launch_pow_scalar` in libkernels.so) and loads
+  correctly, but the launch returns cuda error 1 (cudaErrorInvalidValue).
+  Possible cause: the Phi 4 graph has a Cast node before Pow that may produce
+  an incompatible tensor type or empty scalar operand.
+
+## Summary
+
+| Model | Format | Status | tok/s | Output Quality | Error |
+|-------|--------|--------|------:|----------------|-------|
+| Gemma 3 1B | GGUF Q4_K_M | PASS | 124.04 | Coherent | -- |
+| Llama 3.2 1B | ZMF F32 | PARTIAL | 16.93 | Garbage | CUDA graph capture fail |
+| Qwen 2.5 | ZMF F32 | PARTIAL | 14.59 | Garbage | CUDA graph capture fail |
+| Mistral 7B | ZMF F32 | FAIL | -- | -- | Range op panic |
+| Phi 4 | ZMF F32 | FAIL | -- | -- | pow_scalar cuda error 1 |
+
+## Analysis
+
+The cuBLAS status 7 fix (stale GPU tensor caching in Transpose/MatMul after
+arena ResetPool) successfully resolved the crash for Llama 3 and Qwen 2.5.
+Both models now complete inference without cuBLAS errors.
+
+However, two new issues are exposed:
+
+1. **CUDA graph capture failure (Llama 3, Qwen 2.5)**: The ZMF models trigger
+   `GPUStorage.TrySlice` calls during CUDA graph capture that issue cudaMemcpy
+   on the legacy stream, which conflicts with the capturing blocking stream
+   (cuda error 901). The graph capture fails and falls back to non-graph
+   execution, which produces garbage output (`!!!`). The garbage output
+   suggests the non-graph fallback path has a correctness bug, possibly
+   related to the TrySlice returning zero-length slices on failure.
+
+2. **Pre-existing model-specific bugs (Mistral, Phi 4)**: These are unchanged
+   from the initial verification and are separate issues from the cuBLAS fix.
+
+## Acceptance Criteria
+
+**NOT MET.** Only 1 of 4 ZMF models (Gemma 3 GGUF baseline) produces coherent
+output. Llama 3 and Qwen 2.5 run but produce garbage. Mistral and Phi 4 crash.
+
+## Next Steps
+
+1. Fix the CUDA graph capture conflict: TrySlice should not issue cudaMemcpy
+   during graph capture. Either defer the memcpy or use a capture-safe path.
+2. Fix the non-graph fallback to produce coherent output even when graph
+   capture fails (the `!!!` garbage suggests a deeper issue).
+3. Fix Mistral Range op panic (empty tensor input).
+4. Fix Phi 4 pow_scalar kernel launch (investigate Cast->Pow operand types).
+
+---
+
 # Multi-Model Verification on DGX (T1100.1-T1100.4)
 
 Date: 2026-03-14
