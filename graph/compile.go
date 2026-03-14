@@ -159,6 +159,9 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 	}
 	for i := start; i < end; i++ {
 		inst := &p.instructions[i]
+		if debugGraphCapture {
+			fmt.Printf("capture: executing instruction %d/%d op=%s\n", i, end, inst.OpName)
+		}
 		ins := p.instrInputs[i]
 		for j, idx := range inst.InputIdx {
 			ins[j] = p.scratchSlots[idx]
@@ -168,6 +171,9 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 		}
 		result, err := inst.Forward(ctx, ins)
 		if err != nil {
+			if debugGraphCapture {
+				fmt.Printf("capture: ERROR at instruction %d op=%s: %v\n", i, inst.OpName, err)
+			}
 			return fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
 		}
 		p.scratchSlots[inst.OutputIdx] = result
@@ -288,6 +294,44 @@ func (p *ExecutionPlan[T]) EnsureSlotsGPU(gpuSlotCache map[int]*tensor.TensorNum
 		if gpuT, err := tensor.ToGPU(t); err == nil {
 			gpuSlotCache[i] = gpuT
 			p.scratchSlots[i] = gpuT
+		}
+	}
+}
+
+// EnsureCaptureInputsGPU uploads CPU-resident slots that are inputs to
+// instructions in [start, end) to GPU. Unlike EnsureSlotsGPU, this includes
+// frozen scalar constants. Ops like Range/Pow that need host scalars are
+// typically outside the capture region; within the capture region, all data
+// must be GPU-resident to avoid cudaMemcpy during stream capture.
+func (p *ExecutionPlan[T]) EnsureCaptureInputsGPU(start, end int, gpuSlotCache map[int]*tensor.TensorNumeric[T]) {
+	// Collect all input slot indices used by capture-region instructions.
+	needed := make(map[int]bool)
+	for i := start; i < end; i++ {
+		for _, idx := range p.instructions[i].InputIdx {
+			needed[idx] = true
+		}
+	}
+
+	for idx := range needed {
+		t := p.scratchSlots[idx]
+		if t == nil {
+			continue
+		}
+		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+			continue
+		}
+		if cached, ok := gpuSlotCache[idx]; ok {
+			if gs, ok := cached.GetStorage().(*tensor.GPUStorage[T]); ok {
+				data := t.Data()
+				if err := gs.CopyFromHost(data, 0); err == nil {
+					p.scratchSlots[idx] = cached
+					continue
+				}
+			}
+		}
+		if gpuT, err := tensor.ToGPU(t); err == nil {
+			gpuSlotCache[idx] = gpuT
+			p.scratchSlots[idx] = gpuT
 		}
 	}
 }

@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/tensor"
 )
+
+// debugGraphCapture enables verbose capture debug logging when ZERFOO_DEBUG_GPU=1.
+var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
 // nonCapturableOps lists instruction op names that must run outside CUDA graph
 // capture. These ops perform CPU work or D2H copies that are incompatible with
@@ -17,9 +21,17 @@ import (
 // EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
 // float→int conversion.
 //
-// Gather: used by ZMF models for embedding lookup. Calls GPUStorage.TrySlice
-// (sync D2H cudaMemcpy on legacy stream) to read indices from GPU, which
-// conflicts with stream capture and poisons the capture state.
+// Gather: uses CPU index tensors to select rows; triggers H2D copies
+// incompatible with stream capture.
+//
+// AutoAttentionMask / AutoPositionIds: allocate CPU tensors (make([]T, ...))
+// and return them via tensor.New. Downstream ops (e.g. Mul) would call
+// getDevicePtr triggering cudaMemcpy H2D on the capturing stream.
+//
+// Slice: reads start/end/axes indices from input tensors via Data() which
+// triggers D2H cudaMemcpy for GPU-resident index tensors.
+//
+// Reshape: reads dynamic target shape from second input tensor via Data().
 //
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
@@ -28,8 +40,12 @@ import (
 // all position-dependent state is read from GPU memory at replay time, making
 // GQA fully capturable.
 var nonCapturableOps = map[string]bool{
-	"EmbeddingLookup": true,
-	"Gather":          true,
+	"EmbeddingLookup":   true,
+	"Gather":            true,
+	"AutoAttentionMask": true,
+	"AutoPositionIds":   true,
+	"Slice":             true,
+	"Reshape":           true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
@@ -93,22 +109,22 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 		warmups = 1
 	}
 
-	// Determine capture region by scanning ALL instructions.
-	// captureStart is set to the instruction AFTER the last non-capturable op
-	// found from the front. captureEnd trims non-capturable ops from the back.
-	// This handles non-capturable ops anywhere in the instruction list (not
-	// just at the edges). For example, ZMF models have Gather at instruction
-	// 34 out of 1610 -- instructions 0-34 run pre-capture, 35-1609 are captured.
+	// Determine capture region: find the LONGEST contiguous run of capturable
+	// instructions. Non-capturable ops (EmbeddingLookup, Gather, Slice, etc.)
+	// may appear at the start, end, or scattered throughout the instruction
+	// list. The longest run is typically the transformer layers (attention +
+	// FFN) which form the bulk of GPU compute.
 	n := plan.InstructionCount()
-	captureStart := 0
-	for i := 0; i < n; i++ {
-		if nonCapturableOps[plan.InstructionOpName(i)] {
-			captureStart = i + 1
+	captureStart, captureEnd := 0, 0
+	runStart := 0
+	for i := 0; i <= n; i++ {
+		if i == n || nonCapturableOps[plan.InstructionOpName(i)] {
+			if i-runStart > captureEnd-captureStart {
+				captureStart = runStart
+				captureEnd = i
+			}
+			runStart = i + 1
 		}
-	}
-	captureEnd := n
-	for captureEnd > captureStart && nonCapturableOps[plan.InstructionOpName(captureEnd-1)] {
-		captureEnd--
 	}
 
 	if captureStart >= captureEnd {
@@ -182,6 +198,12 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// GPU-resident data and avoids sync D2H copies that break capture.
 	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
+	// Also upload frozen scalar constants that are inputs to capture-region
+	// instructions. PreUploadFrozenWeights keeps scalars on CPU for ops like
+	// Range/Pow that read host values, but capture-region ops (Mul, Add, etc.)
+	// need all inputs on GPU to avoid cudaMemcpy during stream capture.
+	g.plan.EnsureCaptureInputsGPU(g.captureStart, g.captureEnd, g.gpuSlotCache)
+
 	// Snapshot KV cache state before the capture region runs. If capture
 	// fails, restoreCache rolls back cache mutations (seqLen, GPU counters)
 	// so the RunInstructions fallback doesn't double-update the cache.
@@ -191,14 +213,32 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	}
 
 	// Begin capture for the GPU-heavy region.
+	log.Printf("CUDA GRAPH: about to begin capture, instructions [%d, %d)", g.captureStart, g.captureEnd)
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
 	}
+	log.Printf("CUDA GRAPH: capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
 
 	// Run capturable instructions — GPU operations are recorded.
-	captureErr := g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+	var captureErr error
+	if debugGraphCapture {
+		// Run instructions one at a time with logging to identify the exact failure point.
+		for i := g.captureStart; i < g.captureEnd; i++ {
+			opName := g.plan.InstructionOpName(i)
+			log.Printf("CUDA GRAPH capture: running instruction %d/%d op=%s", i, g.captureEnd-1, opName)
+			err := g.plan.RunInstructionRange(ctx, i, i+1)
+			if err != nil {
+				log.Printf("CUDA GRAPH capture: FAILED at instruction %d op=%s error=%v", i, opName, err)
+				captureErr = err
+				break
+			}
+			log.Printf("CUDA GRAPH capture: instruction %d op=%s OK", i, opName)
+		}
+	} else {
+		captureErr = g.plan.RunInstructionRange(ctx, g.captureStart, g.captureEnd)
+	}
 
 	// End capture.
 	capturedGraph, endErr := cuda.StreamEndCapture(g.stream)
@@ -207,7 +247,7 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 			log.Printf("cuda graph: end capture failed: %v", endErr)
 		}
 		if captureErr != nil {
-			log.Printf("cuda graph: capture region failed: %v", captureErr)
+			log.Printf("CUDA GRAPH: capture failed: %v", captureErr)
 		}
 		g.failed = true
 		if capturedGraph != nil {

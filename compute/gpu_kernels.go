@@ -31,6 +31,9 @@ var noopCleanup = func() {}
 // copies H2D, and returns a cleanup function that returns the buffer to the pool.
 func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T]) (unsafe.Pointer, func(), error) {
 	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+		if debugGPU {
+			fmt.Fprintf(os.Stderr, "getDevicePtr GPU: ptr=%p len=%d\n", gs.Ptr(), gs.Len())
+		}
 		return gs.Ptr(), noopCleanup, nil
 	}
 
@@ -57,11 +60,18 @@ func getDevicePtr[T tensor.Numeric](e *GPUEngine[T], t *tensor.TensorNumeric[T])
 	}
 
 	// CPUStorage path: allocate from pool, copy H2D.
+	if debugGPU {
+		e.logger.Debug("getDevicePtr: CPUStorage H2D path",
+			"storageType", fmt.Sprintf("%T", t.GetStorage()))
+	}
 	data := t.Data()
 	n := len(data)
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
 	byteSize := n * elemSize
+	if debugGPU {
+		fmt.Fprintf(os.Stderr, "getDevicePtr CPU->GPU: n=%d bytes=%d (THIS BREAKS CAPTURE)\n", n, byteSize)
+	}
 
 	devPtr, err := e.pool.Alloc(e.deviceID, byteSize)
 	if err != nil {

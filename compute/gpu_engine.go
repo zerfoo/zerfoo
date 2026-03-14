@@ -1777,6 +1777,10 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	shape := a.Shape()
 	rank := len(shape)
 
+	if debugGPU {
+		fmt.Fprintf(os.Stderr, "TRANSPOSE: shape=%v rank=%d axes=%v storage=%T\n", shape, rank, axes, a.GetStorage())
+	}
+
 	// Default: reverse axes (same as CPU Transpose with nil axes).
 	if len(axes) == 0 {
 		axes = make([]int, rank)
@@ -1786,11 +1790,17 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	}
 
 	if len(axes) != rank {
+		if debugGPU {
+			fmt.Fprintf(os.Stderr, "TRANSPOSE CPU FALLBACK: reason=axes_rank_mismatch shape=%v\n", shape)
+		}
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
 	// GPU transpose kernel supports up to 4D; fall back to CPU for higher ranks.
 	if rank > 4 {
+		if debugGPU {
+			fmt.Fprintf(os.Stderr, "TRANSPOSE CPU FALLBACK: reason=rank_gt_4 shape=%v\n", shape)
+		}
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 
@@ -1805,6 +1815,9 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 	// single-token generation where seqLen=1. Check by comparing the
 	// non-unit dimensions in input vs output order.
 	if isTransposeReshape(shape, outShape) {
+		if debugGPU {
+			fmt.Fprintf(os.Stderr, "TRANSPOSE: reshape fast path shape=%v outShape=%v storage=%T\n", shape, outShape, a.GetStorage())
+		}
 		if e.dtype != DTypeF32 {
 			if fs, ok := any(a.GetStorage()).(*tensor.Float16Storage); ok {
 				storageT := any(fs).(tensor.Storage[T])
@@ -1845,11 +1858,20 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 		stride *= shape[i]
 	}
 
+	if debugGPU {
+		fmt.Fprintf(os.Stderr, "TRANSPOSE getDevicePtr: storage=%T\n", a.GetStorage())
+	}
 	devIn, cleanupIn, err := getDevicePtr(e, a)
 	if err != nil {
+		if debugGPU {
+			fmt.Fprintf(os.Stderr, "TRANSPOSE CPU FALLBACK: reason=getDevicePtr_failed shape=%v\n", shape)
+		}
 		return e.cpu.Transpose(ctx, a, axes, dst...)
 	}
 	defer cleanupIn()
+	if debugGPU {
+		fmt.Fprintf(os.Stderr, "TRANSPOSE getDevicePtr OK: ptr=%p\n", devIn)
+	}
 
 	byteSize := total * f32Size
 	devOut, err := e.pool.Alloc(e.deviceID, byteSize)
@@ -1859,6 +1881,11 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 
 	// Fast path: 2D transpose.
 	if rank == 2 && axes[0] == 1 && axes[1] == 0 {
+		if debugGPU {
+			e.logger.Debug("TRANSPOSE: using 2D fast path",
+				"rows", fmt.Sprintf("%d", shape[0]),
+				"cols", fmt.Sprintf("%d", shape[1]))
+		}
 		if err := e.kernels.Transpose2D(devIn, devOut, shape[0], shape[1], e.stream); err != nil {
 			e.pool.Free(e.deviceID, devOut, byteSize)
 			return nil, err
@@ -1868,6 +1895,11 @@ func (e *GPUEngine[T]) Transpose(ctx context.Context, a *tensor.TensorNumeric[T]
 
 	// General N-D transpose via stride-based kernel.
 	// Precompute output strides on the host so the kernel avoids O(ndim^2) per thread.
+	if debugGPU {
+		e.logger.Debug("TRANSPOSE: using general N-D path",
+			"rank", fmt.Sprintf("%d", rank),
+			"axes", fmt.Sprintf("%v", axes))
+	}
 	outStrides := make([]int, rank)
 	outStride := 1
 	for i := rank - 1; i >= 0; i-- {
