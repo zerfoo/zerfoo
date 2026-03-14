@@ -98,9 +98,9 @@ for the optimization journey.
   - Dependencies: T1002.2.
 - [x] T1003.1 Categorize and triage lint issues  Owner: task-T1003.1  Est: 45m  Done: 2026-03-14
   - Dependencies: none.
-- [ ] T1003.2 Fix errcheck issues (164 issues)  Owner: TBD  Est: 2h
+- [x] T1003.2 Fix errcheck issues (164 issues)  Owner: task-T1003.2  Est: 2h  Done: 2026-03-14
   - Dependencies: T1003.1.
-- [ ] T1003.3 Fix remaining lint issues  Owner: TBD  Est: 1.5h
+- [x] T1003.3 Fix remaining lint issues  Owner: task-T1003.3  Est: 1.5h  Done: 2026-03-14
   - Dependencies: T1003.1.
 - [ ] T1003.4 Remove || true from CI lint step  Owner: TBD  Est: 15m
   - Dependencies: T1003.2, T1003.3.
