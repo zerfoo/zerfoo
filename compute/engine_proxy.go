@@ -340,7 +340,15 @@ func (p *EngineProxy[T]) MatMulTransposeB(ctx context.Context, a, b *tensor.Tens
 		return result, err
 	}
 	// Fall back to Transpose + MatMul.
-	kT, err := p.Transpose(ctx, b, []int{0, 2, 1})
+	// Use the appropriate axes based on tensor dimensionality:
+	// 2D [rows, cols] -> [1, 0], 3D [batch, rows, cols] -> [0, 2, 1].
+	var axes []int
+	if len(b.Shape()) == 2 {
+		axes = []int{1, 0}
+	} else {
+		axes = []int{0, 2, 1}
+	}
+	kT, err := p.Transpose(ctx, b, axes)
 	if err != nil {
 		return nil, err
 	}
