@@ -86,7 +86,7 @@ verification deep dive.
 Tests that would have caught the model verification failures earlier.
 These can run locally on macOS without DGX.
 
-- [ ] T2000.1 Add large-dimension MatMul GPU test  Owner: TBD  Est: 45m
+- [x] T2000.1 Add large-dimension MatMul GPU test  Owner: task-T2000.1  Done: 2026-03-14
   - Test cuBLAS Sgemm with m=5, n=128256, k=2048 (Llama 3 vocab size).
   - Test cuBLAS Sgemm with m=5, n=262144, k=1152 (Gemma 3 vocab size).
   - Test with actual getDevicePtr path (H2D copy of 1GB+ weight matrix).
@@ -95,7 +95,7 @@ These can run locally on macOS without DGX.
   - Acceptance: Tests pass on CUDA device. Test fails if getDevicePtr returns invalid pointer.
   - Dependencies: none.
 
-- [ ] T2000.2 Add CLI pull command unit test  Owner: TBD  Est: 30m
+- [x] T2000.2 Add CLI pull command unit test  Owner: task-T2000.2  Done: 2026-03-14
   - Test that NewPullCommand with nil registry creates a LocalRegistry.
   - Test that LocalRegistry.Pull calls the HF pull function.
   - Test that PullCommand with a mock registry returns model info.
@@ -104,7 +104,7 @@ These can run locally on macOS without DGX.
   - Acceptance: Tests cover the happy path, already-cached path, and error paths.
   - Dependencies: none.
 
-- [ ] T2000.3 Add Range op edge case tests  Owner: TBD  Est: 30m
+- [x] T2000.3 Add Range op edge case tests  Owner: task-T2000.3  Done: 2026-03-14
   - Test Range op with empty input tensor (should return error, not panic).
   - Test Range op with various model tokenizer configs.
   - Test Range op with single-token input.
@@ -112,7 +112,7 @@ These can run locally on macOS without DGX.
   - Acceptance: Range op never panics on valid inputs. Returns descriptive errors on invalid inputs.
   - Dependencies: none.
 
-- [ ] T2000.4 Add multi-model graph forward test  Owner: TBD  Est: 1h
+- [x] T2000.4 Add multi-model graph forward test  Owner: task-T2000.4  Done: 2026-03-14
   - Build a mock graph with a large final MatMul (simulating LM head with vocab > 32K).
   - Run forward pass on CPU engine and verify correct output shape and values.
   - Build a 2-layer transformer-like graph and verify forward pass completes.
@@ -224,7 +224,7 @@ forward pass.
 
 ### E2002: Remaining Verification (Phase 7 leftover + CI)
 
-- [ ] S1003.4.1 Verify CI passes with strict lint  Owner: TBD  Est: 15m
+- [x] S1003.4.1 Verify CI passes with strict lint  Owner: task-S1003.4.1  Done: 2026-03-14
   - Push a branch and verify GitHub Actions CI passes with strict lint.
   - If it fails, fix the new lint issues.
   - Acceptance: CI green with golangci-lint (no || true).
