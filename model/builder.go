@@ -488,6 +488,7 @@ type maskFromInputNode[T tensor.Numeric] struct {
 	pastLen int // accumulated past sequence length from prior forward passes
 }
 
+func (m *maskFromInputNode[T]) Reset()                           { m.pastLen = 0 }
 func (m *maskFromInputNode[T]) OpType() string                  { return "AutoAttentionMask" }
 func (m *maskFromInputNode[T]) Attributes() map[string]any       { return nil }
 func (m *maskFromInputNode[T]) OutputShape() []int               { return nil }
@@ -524,6 +525,7 @@ type positionIdsNode[T tensor.Numeric] struct {
 	offset int // accumulated position offset from prior forward passes
 }
 
+func (p *positionIdsNode[T]) Reset()                           { p.offset = 0 }
 func (p *positionIdsNode[T]) OpType() string                  { return "AutoPositionIds" }
 func (p *positionIdsNode[T]) Attributes() map[string]any       { return nil }
 func (p *positionIdsNode[T]) OutputShape() []int               { return nil }
@@ -558,6 +560,7 @@ type kvCacheIONode[T tensor.Numeric] struct {
 	stored   *tensor.TensorNumeric[T] // accumulated past KV from prior forward passes
 }
 
+func (z *kvCacheIONode[T]) Reset()                           { z.stored = nil }
 func (z *kvCacheIONode[T]) OpType() string                  { return "AutoKVCacheIO" }
 func (z *kvCacheIONode[T]) Attributes() map[string]any       { return nil }
 func (z *kvCacheIONode[T]) OutputShape() []int               { return nil }
