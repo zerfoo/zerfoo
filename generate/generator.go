@@ -259,6 +259,10 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 
 	generatedIDs := make([]int, 0, sc.MaxNewTokens)
 
+	// Reset stateful auto-input nodes (position IDs, attention mask, KV cache
+	// buffers) so they start fresh for this generation sequence.
+	gen.graph.ResetStatefulNodes()
+
 	// Prefill: run the full prompt through the graph.
 	prefillTensor, err := gen.idsToTensor(promptIDs)
 	if err != nil {

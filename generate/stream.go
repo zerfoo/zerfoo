@@ -71,6 +71,9 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 	generatedIDs := make([]int, 0, sc.MaxNewTokens)
 	prevDecoded := ""
 
+	// Reset stateful auto-input nodes for this new generation sequence.
+	gen.graph.ResetStatefulNodes()
+
 	// Prefill.
 	prefillTensor, err := gen.idsToTensor(promptIDs)
 	if err != nil {
