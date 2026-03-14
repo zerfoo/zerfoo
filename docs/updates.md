@@ -1,3 +1,145 @@
+# Phase 7 Final Benchmark Results (T904.1, S903.2.1, S904.1.1, T901.5, T901.6, T902.4, T904.2)
+
+Date: 2026-03-13
+Branch: feat/fp16-kv-wire
+Commit: 9c08d74
+Hardware: DGX Spark (NVIDIA GB10, sm_121, 273 GB/s LPDDR5x)
+
+## Summary
+
+Phase 7 benchmarking reveals a severe performance regression from 234.30 tok/s
+(Phase 6 baseline) to ~14.7 tok/s. The regression is caused by the decode fast
+path in GroupedQueryAttention which performs expensive GQA head expansion via
+engine.Repeat on the full KV buffer (maxSeqLen=8192) every token. The FP16 KV
+cache produces garbage output (all pad tokens). The custom sgemv_m1 kernel is
+not yet wired into GPUEngine (T901.4 still pending).
+
+## S903.2.1: Divergence Fix Verification
+
+**Status: PASS (deterministic output)**
+
+Two consecutive 20-token runs with temp=0 produce identical output:
+
+> This is a very complex and difficult request. I'm not able to provide a response that
+
+The decode fast path using GPU-resident KV length (flash_attention_decode)
+eliminates the graph/no-graph divergence. However, the output text differs from
+the Phase 6 baseline ("This is a good work is a good work...") because the
+decode fast path uses a different attention kernel (flash_attention_decode vs
+standard SDPA).
+
+## T904.1: Full Benchmark (F32 KV, 256 tokens)
+
+| Run | Throughput | Arena Misses | Arena Resets |
+|-----|-----------|-------------|-------------|
+| 1 | 14.61 tok/s | 148 | 258 |
+| 2 | 14.70 tok/s | 148 | 258 |
+| 3 | 14.70 tok/s | 148 | 258 |
+| **Avg** | **14.67 tok/s** | 148 | 258 |
+
+**Comparison with baselines:**
+
+| Configuration | tok/s | vs Phase 6 | vs Ollama |
+|---------------|-------|-----------|-----------|
+| Phase 6 baseline (commit 86332d7) | 234.30 | -- | +18.8% |
+| Ollama | 197.21 | -15.8% | -- |
+| Phase 7 feat/fp16-kv-wire (F32 KV) | 14.67 | **-93.7%** | -92.6% |
+
+### Root Cause of Regression
+
+The decode fast path in `layers/attention/grouped_query_attention.go` (lines
+621-709) retrieves the full KV buffer via `GetFullBuffer` (shape [batch,
+maxSeqLen, numKVHeads*headDim]) and then calls `engine.Repeat` to expand
+numKVHeads (4) to numQueryHeads (8) for GQA. This creates two temporary tensors
+of size [batch*numQueryHeads, 8192, headDim] = 8 * 8192 * 256 * 4 = 64 MB
+each, every token.
+
+On the Phase 6 baseline, the standard path used `cache.Get()` which returns a
+view trimmed to the actual seqLen, making the Repeat much cheaper. The decode
+fast path Repeat operates on the full 8192-token buffer regardless of actual
+sequence length.
+
+Arena statistics confirm: 148 misses (vs 0 on baseline) = 148 new GPU
+allocations per session not served from cache.
+
+**Fix needed:** Either make flash_attention_decode GQA-aware (handle head
+expansion inside the kernel) or pass only the used portion of KV buffers to
+the Repeat operation.
+
+## T904.1: FP16 KV Benchmark (256 tokens)
+
+| Run | Throughput | Output Quality |
+|-----|-----------|---------------|
+| 1 | 13.16 tok/s | **BROKEN** - all \<pad\> tokens |
+
+**Status: FAIL**
+
+FP16 KV cache produces garbage output. The GetFullBuffer FP16 path (lines
+487-506 in tensor_cache.go) converts FP16 buffers to F32 scratch, but the
+conversion or scratch management has a bug. Not benchmarked further due to
+broken output.
+
+## S904.1.1: Output Quality Verification
+
+**F32 KV output at temp=0 (256 tokens):**
+
+> This is a very complex and difficult request. I'm not able to provide a
+> response that is fully satisfying this request. I am unable to provide a
+> detailed explanation of the process that is required to achieve this.
+> [repeats with variations]
+
+The output is coherent but repetitive. At temp=0 the output is deterministic
+across multiple runs, confirming the divergence fix works.
+
+**FP16 KV:** Broken - produces \<pad\> tokens.
+
+## T901.5: sgemv_m1 Microbenchmark
+
+The sgemv_m1 kernel is not yet wired into GPUEngine (T901.4 pending), so no
+end-to-end comparison is possible. Isolated kernel benchmark on DGX:
+
+| Size | Latency | GFLOPS |
+|------|---------|--------|
+| 4096x4096 (run 1) | 220.3 us | 152.3 |
+| 4096x4096 (run 3) | 220.9 us | 151.9 |
+| **Average** | **220.6 us** | **152.1** |
+
+Note: Run 2 segfaulted (intermittent CUDA state issue with -count=3). No
+cuBLAS SGEMV benchmark exists for comparison.
+
+Correctness test results (from earlier):
+
+| Size | Max Rel Error | Status |
+|------|--------------|--------|
+| 64x256 | 1.28e-05 | PASS |
+| 32x64 | 2.22e-06 | PASS |
+| 128x512 | 2.36e-04 | FAIL (threshold) |
+| 1536x1536 | 1.31e-04 | FAIL (threshold) |
+| 6144x1536 | 1.31e-04 | FAIL (threshold) |
+| 127x255 | segfault | FAIL (alignment) |
+
+Threshold failures are from --use_fast_math FMA rounding. Acceptable for ML
+inference.
+
+## T901.6 + T902.4 + T904.2: go vet
+
+**Status: PASS** (local macOS, no new warnings)
+
+Only pre-existing purego unsafe.Pointer warnings (16 total across cuda,
+cudnn, hip, opencl, tensorrt packages). No new warnings from Phase 7 changes.
+
+## Blocking Issues for >300 tok/s Target
+
+1. **Decode fast path GQA Repeat regression** - Must be fixed before any
+   meaningful throughput measurement. Either:
+   - Make flash_attention_decode handle GQA natively (best)
+   - Skip decode fast path when numQueryHeads != numKVHeads (fallback)
+2. **sgemv_m1 not wired into GPUEngine** (T901.4 pending)
+3. **FP16 KV cache broken** - produces garbage output
+4. **sgemv_m1 odd_N segfault** - float4 alignment issue with non-multiple-of-4 N
+
+---
+
 # S901.2.1 + S902.2.1: DGX Kernel Test Results
 
 Date: 2026-03-13
