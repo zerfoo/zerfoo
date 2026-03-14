@@ -4136,3 +4136,83 @@ numerical drift rather than a fundamental correctness problem.
 - Output quality: Coherent text, deterministic, but differs from no-graph baseline
 - Bug fix: GPU counter prefill sync (commit f85a525)
 - Remaining work: investigate graph/no-graph output divergence
+
+---
+
+# Phase 7: T901.1 -- cuBLAS SGEMM Profiling on DGX Spark
+
+## Setup
+
+Profiling added via `CUDABlasProfiler` wrapper in `internal/gpuapi/cuda_blas_profile.go`.
+Enabled with `ZERFOO_PROFILE_CUBLAS=1`. Records per-call timing, operation type,
+matrix dimensions, and batch count. Summary printed to stderr after generation.
+
+- Commit: feat/profile-cublas branch
+- Model: Gemma 3 1B Q4_K_M
+- Device: DGX Spark GB10 (sm_121)
+- Run: 50 decode tokens, prompt "The quick brown fox" (5 tokens), temp=0
+
+## Key Finding: Weight MatMuls Do NOT Use cuBLAS
+
+The Q4_K_M model uses a **fused dequant+GEMV kernel** (`GemvQ4KF32`) for all
+weight matrix multiplications during M=1 decode. cuBLAS is only invoked for
+**attention operations** (QK^T score computation and softmax*V value weighting).
+
+This is different from the plan assumption that cuBLAS SGEMV handles ~260 calls/token.
+
+## cuBLAS Call Pattern During Decode (per token)
+
+cuBLAS is used for attention only:
+
+| Operation | M | N | K | Batch | Calls/token | Avg Latency |
+|-----------|---|---|---|-------|-------------|-------------|
+| SgemmNTStridedBatched (QK^T) | 1 | seqLen | 256 | 4 | 1/layer (26) | ~4us |
+| SgemmStridedBatched (softmax*V) | 1 | 256 | seqLen | 4 | 1/layer (26) | ~4us |
+
+Total: **52 cuBLAS calls/token** (26 layers x 2 attention ops).
+
+## Profiling Results (50 decode tokens)
+
+```
+Total cuBLAS calls: 455
+Total cuBLAS time: 149.4ms
+
+Decode-only cuBLAS time (excluding prefill Sgemm): ~22ms / 50 tokens = 0.44ms/token
+
+Prefill dominated by: Sgemm(5, 256, 1152) x 26 calls = 127.6ms
+```
+
+### Per-operation breakdown (decode, M=1):
+
+| Operation | Dims | Batch | Calls | Total | Avg/call |
+|-----------|------|-------|-------|-------|----------|
+| Sgemm(1,256,1152) | 1x256x1152 | 1 | 65 | 17.3ms | 267us |
+| SgemmNTStridedBatched | 1xSeqx256 | 4 | varies | ~0.5ms | 4us |
+| SgemmStridedBatched | 1x256xSeq | 4 | varies | ~0.5ms | 4us |
+
+## Analysis
+
+- **Decode token time**: ~5.47ms (182.65 tok/s)
+- **cuBLAS time per decode token**: ~0.44ms
+- **cuBLAS fraction**: ~8% of decode time
+- **cuBLAS overhead per call (batched)**: ~4us (very small due to batched API)
+
+The Sgemm(1, 256, 1152) calls (267us avg) are likely the LM head or a non-Q4K
+linear layer. These are the largest cuBLAS overhead contributor during decode.
+
+## Implications for Custom GEMV (T901.2+)
+
+1. **Weight matmuls (Q4K) already bypass cuBLAS** -- the fused dequant+GEMV
+   kernel handles these. A custom F32 SGEMV would only help if we had F32 weight
+   layers, but Gemma 3 1B Q4_K_M does not.
+
+2. **Attention cuBLAS calls are small** -- batched API amortizes overhead to ~4us/call.
+   Replacing these with custom kernels would save at most ~0.4ms/token (~8%).
+
+3. **The bigger optimization opportunity is elsewhere** -- the remaining 40% bandwidth
+   gap is likely from fused Q4K GEMV efficiency (dequant overhead), KV cache
+   bandwidth (addressed by T902 FP16 KV), and kernel launch overhead.
+
+4. **The Sgemm(1, 256, 1152) calls at 267us each** are a potential target -- these
+   are likely attention output projection or similar non-Q4K layers. Investigating
+   why these are slower than batched attention calls is worthwhile.
