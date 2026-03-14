@@ -4839,6 +4839,7 @@ linear layer. These are the largest cuBLAS overhead contributor during decode.
    are likely attention output projection or similar non-Q4K layers. Investigating
    why these are slower than batched attention calls is worthwhile.
 
+<<<<<<< HEAD
 ## Lint Triage (T1003.1)
 
 Date: 2026-03-14
@@ -9899,3 +9900,60 @@ The AAPCS64 analysis of the assembly confirmed:
 
 ---
 
+=======
+---
+
+## S905.3.1: GQA Decode Fast Path Test Results (2026-03-14)
+
+### Summary
+
+Tested GQA decode fast path correctness on DGX Spark GB10 with Gemma 3 1B Q4_K_M.
+
+### Local Attention Tests
+
+All attention tests pass with race detector enabled:
+```
+go test ./layers/attention/... -race -timeout 120s -v
+PASS ok github.com/zerfoo/zerfoo/layers/attention 1.609s
+```
+
+### DGX bench_tps Results (20 tokens, temp=0, fp32)
+
+```
+Prompt: "The quick brown fox"
+Output: "This is a good work is a good work is a few years ago. This is a"
+Generated tokens: 20
+Time: 0.163s
+Throughput: 122.49 tok/s
+```
+
+CUDA graph captured instructions 1-184 of 185. GroupedQueryAttention listed as
+unsupported for megakernel (expected).
+
+### Key Findings
+
+1. **GQA decode fast path is disabled**: The guard at
+   `grouped_query_attention.go:624` requires `numQueryHeads == numKeyValueHeads`,
+   which excludes GQA models (Gemma 3: 8 query heads, 4 KV heads). This was
+   intentionally disabled per commit 9803ba1 due to a 93.7% regression from
+   `engine.Repeat` on full maxSeqLen KV buffers.
+
+2. **Output is incoherent at temp=0**: The standard SDPA path produces repetitive,
+   grammatically broken text ("This is a good work is a good work is a few years
+   ago"). This suggests a possible regression in the non-fast-path decode.
+
+3. **Throughput below baseline**: 122.49 tok/s is well below the Phase 6 baseline
+   of 234.30 tok/s, indicating performance regression.
+
+4. **The `tryFlashDecode` kernel supports GQA**: The kernel (`flash.go:103-152`)
+   already accepts separate `numQueryHeads` and `numKVHeads` parameters and passes
+   them to `kernels.FlashAttentionDecode`. The missing piece is the guard condition
+   at line 624 which needs to be relaxed from `==` to allow GQA ratios, plus
+   verification that the kernel handles GQA head replication correctly.
+
+### Next Steps
+
+- Investigate incoherent output on the standard SDPA path (possible regression).
+- Once output is coherent, relax the fast path guard to allow GQA models and
+  verify kernel correctness by comparing output against the SDPA reference.
+>>>>>>> ad29a5b (docs(updates): add GQA decode fast path test results)
