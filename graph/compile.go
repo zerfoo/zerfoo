@@ -159,6 +159,9 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 	}
 	for i := start; i < end; i++ {
 		inst := &p.instructions[i]
+		if debugGraphCapture {
+			fmt.Printf("capture: executing instruction %d/%d op=%s\n", i, end, inst.OpName)
+		}
 		ins := p.instrInputs[i]
 		for j, idx := range inst.InputIdx {
 			ins[j] = p.scratchSlots[idx]
@@ -168,6 +171,9 @@ func (p *ExecutionPlan[T]) RunInstructionRange(ctx context.Context, start, end i
 		}
 		result, err := inst.Forward(ctx, ins)
 		if err != nil {
+			if debugGraphCapture {
+				fmt.Printf("capture: ERROR at instruction %d op=%s: %v\n", i, inst.OpName, err)
+			}
 			return fmt.Errorf("instruction %d (%s): %w", i, inst.OpName, err)
 		}
 		p.scratchSlots[inst.OutputIdx] = result

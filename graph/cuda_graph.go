@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/tensor"
 )
+
+// debugGraphCapture enables verbose capture debug logging when ZERFOO_DEBUG_GPU=1.
+var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
 // nonCapturableOps lists instruction op names that must run outside CUDA graph
 // capture. These ops perform CPU work or D2H copies that are incompatible with
@@ -189,10 +193,16 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	}
 
 	// Begin capture for the GPU-heavy region.
+	if debugGraphCapture {
+		log.Printf("capture: about to begin stream capture, region [%d, %d)", g.captureStart, g.captureEnd)
+	}
 	if err := cuda.StreamBeginCapture(g.stream); err != nil {
 		log.Printf("cuda graph: begin capture failed: %v", err)
 		g.failed = true
 		return g.plan.RunInstructions(ctx, inputs...)
+	}
+	if debugGraphCapture {
+		log.Printf("capture: stream capture started, running instructions [%d, %d)", g.captureStart, g.captureEnd)
 	}
 
 	// Run capturable instructions — GPU operations are recorded.
@@ -206,6 +216,9 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 		}
 		if captureErr != nil {
 			log.Printf("cuda graph: capture region failed: %v", captureErr)
+			if debugGraphCapture {
+				log.Printf("capture: ERROR during capture region [%d, %d): %v", g.captureStart, g.captureEnd, captureErr)
+			}
 		}
 		g.failed = true
 		if capturedGraph != nil {
