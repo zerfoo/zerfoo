@@ -60,6 +60,7 @@ func run() error {
 	useMmap := flag.Bool("mmap", false, "use memory-mapped loading")
 	device := flag.String("device", "cpu", "compute device (cpu, cuda, cuda:0)")
 	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16, fp8)")
+	kvDtype := flag.String("kv-dtype", "fp32", "KV cache dtype (fp32, fp16)")
 	temperature := flag.Float64("temp", 0, "sampling temperature (0=greedy)")
 	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
 	flag.Parse()
@@ -80,7 +81,7 @@ func run() error {
 		return fmt.Errorf("usage: bench_tps -model /path/to/model/dir/or/file.gguf")
 	}
 
-	fmt.Printf("Loading model from %s (device=%s, dtype=%s)...\n", *modelDir, *device, *dtype)
+	fmt.Printf("Loading model from %s (device=%s, dtype=%s, kv-dtype=%s)...\n", *modelDir, *device, *dtype, *kvDtype)
 	t0 := time.Now()
 
 	var mdl *inference.Model
@@ -89,6 +90,7 @@ func run() error {
 		inference.WithMmap(*useMmap),
 		inference.WithDevice(*device),
 		inference.WithDType(*dtype),
+		inference.WithKVDtype(*kvDtype),
 	}
 	if strings.HasSuffix(strings.ToLower(*modelDir), ".gguf") {
 		mdl, err = inference.LoadFile(*modelDir, opts...)
