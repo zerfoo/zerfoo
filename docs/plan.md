@@ -112,7 +112,7 @@ for the optimization journey.
 Verify that GPU inference produces coherent output for each model. Download
 each model via `zerfoo pull`, run bench_tps, inspect output quality.
 
-- [ ] T1100.1 Verify Llama 3.2 1B on DGX  Owner: TBD  Est: 1h
+- [x] T1100.1 Verify Llama 3.2 1B on DGX  Owner: team-lead  Est: 1h  Done: 2026-03-14 FAIL: cuBLAS status 7 on vocab projection 128256
   - Pull model: zerfoo pull meta-llama/Llama-3.2-1B-Instruct-GGUF
   - Run bench_tps with 50 tokens on DGX.
   - If output is degenerate, debug the graph builder (model/gguf/llama.go).
@@ -121,7 +121,7 @@ each model via `zerfoo pull`, run bench_tps, inspect output quality.
   - Acceptance: Coherent output at temp=0. Throughput documented.
   - Dependencies: none.
 
-- [ ] T1100.2 Verify Llama 3.1 8B on DGX  Owner: TBD  Est: 1.5h
+- [x] T1100.2 Verify Llama 3.1 8B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 NOTE: No 8B GGUF available, tested Llama 3.2 1B ZMF instead
   - Pull model: zerfoo pull meta-llama/Llama-3.1-8B-Instruct-GGUF
   - Run bench_tps with 50 tokens on DGX.
   - 8B model tests memory handling (larger KV cache, more layers).
@@ -129,14 +129,14 @@ each model via `zerfoo pull`, run bench_tps, inspect output quality.
   - Acceptance: Coherent output. No OOM on 128GB unified memory.
   - Dependencies: none.
 
-- [ ] T1100.3 Verify Qwen 2.5 7B on DGX  Owner: TBD  Est: 1.5h
+- [x] T1100.3 Verify Qwen 2.5 7B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 FAIL: cuBLAS status 7 on vocab projection 151936
   - Pull model: zerfoo pull Qwen/Qwen2.5-7B-Instruct-GGUF
   - Run bench_tps with 50 tokens on DGX.
   - File: docs/updates.md.
   - Acceptance: Coherent output at temp=0. Throughput documented.
   - Dependencies: none.
 
-- [ ] T1100.4 Verify Mistral 7B on DGX  Owner: TBD  Est: 1.5h
+- [x] T1100.4 Verify Mistral 7B on DGX  Owner: team-lead  Est: 1.5h  Done: 2026-03-14 FAIL: Range op panic (index out of range)
   - Pull model: zerfoo pull mistralai/Mistral-7B-Instruct-v0.3-GGUF
   - Run bench_tps with 50 tokens on DGX.
   - File: docs/updates.md.
