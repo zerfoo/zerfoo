@@ -31,24 +31,28 @@ cudaError_t flash_attention_forward_f32(
     int causal, cudaStream_t stream);
 
 /* flash_attention_decode_f32 computes attention for single-query decode with
- * separate Q and KV sequence lengths.
+ * separate Q and KV sequence lengths. Supports GQA where num_q_heads may
+ * differ from num_kv_heads (num_q_heads must be a multiple of num_kv_heads).
  *
- * Q: [num_bh, 1, head_dim]           -- single query per batch-head.
- * K: [num_bh, max_kv_len, head_dim]  -- pre-allocated KV buffer.
- * V: [num_bh, max_kv_len, head_dim]
- * O: [num_bh, 1, head_dim]           -- output, same shape as Q.
- * num_bh:      batch * heads.
- * max_kv_len:  stride of K/V buffer (allocated capacity).
- * head_dim:    dimension per head.
- * kv_len:      actual KV sequence length (used if kv_len_ptr is null).
- * kv_len_ptr:  GPU-resident int32. If non-null, *kv_len_ptr is read at
- *              runtime for the actual KV length, making the kernel
- *              compatible with CUDA graph replay (the value is not frozen).
+ * Q: [batch * num_q_heads, 1, head_dim]            -- single query per head.
+ * K: [batch * num_kv_heads, max_kv_len, head_dim]  -- pre-allocated KV buffer.
+ * V: [batch * num_kv_heads, max_kv_len, head_dim]
+ * O: [batch * num_q_heads, 1, head_dim]            -- output, same shape as Q.
+ * num_bh:        batch * num_q_heads (grid size).
+ * max_kv_len:    stride of K/V buffer (allocated capacity).
+ * head_dim:      dimension per head.
+ * kv_len:        actual KV sequence length (used if kv_len_ptr is null).
+ * kv_len_ptr:    GPU-resident int32. If non-null, *kv_len_ptr is read at
+ *                runtime for the actual KV length, making the kernel
+ *                compatible with CUDA graph replay (the value is not frozen).
+ * num_q_heads:   number of query heads per batch element.
+ * num_kv_heads:  number of KV heads per batch element.
  */
 cudaError_t flash_attention_decode_f32(
     const float* Q, const float* K, const float* V, float* O,
     int num_bh, int max_kv_len, int head_dim,
     int kv_len, const int* kv_len_ptr,
+    int num_q_heads, int num_kv_heads,
     cudaStream_t stream);
 
 #ifdef __cplusplus

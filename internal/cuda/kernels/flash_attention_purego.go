@@ -34,11 +34,12 @@ func FlashAttentionForward(
 }
 
 // FlashAttentionDecode computes single-query attention for autoregressive decode.
+// Supports GQA: numQueryHeads may differ from numKVHeads (must be a multiple).
 //
-// Q: [numBH, 1, headDim]  -- single query per batch-head.
-// K: [numBH, maxKVLen, headDim]  -- pre-allocated KV cache buffer.
-// V: [numBH, maxKVLen, headDim]
-// O: [numBH, 1, headDim]  -- output.
+// Q: [batch*numQueryHeads, 1, headDim]   -- single query per head.
+// K: [batch*numKVHeads, maxKVLen, headDim]  -- pre-allocated KV cache buffer.
+// V: [batch*numKVHeads, maxKVLen, headDim]
+// O: [batch*numQueryHeads, 1, headDim]   -- output.
 //
 // kvLen is the actual KV sequence length (used when kvLenPtr is nil).
 // kvLenPtr is a GPU-resident int32 pointer; when non-nil the kernel reads
@@ -48,6 +49,7 @@ func FlashAttentionDecode(
 	Q, K, V, O unsafe.Pointer,
 	numBH, maxKVLen, headDim, kvLen int,
 	kvLenPtr unsafe.Pointer,
+	numQueryHeads, numKVHeads int,
 	stream unsafe.Pointer,
 ) error {
 	k := klib()
@@ -61,6 +63,7 @@ func FlashAttentionDecode(
 		uintptr(Q), uintptr(K), uintptr(V), uintptr(O),
 		uintptr(numBH), uintptr(maxKVLen), uintptr(headDim),
 		uintptr(kvLen), uintptr(kvLenPtr),
+		uintptr(numQueryHeads), uintptr(numKVHeads),
 		uintptr(stream))
 	return checkKernel(ret, "flash_attention_decode_f32")
 }
