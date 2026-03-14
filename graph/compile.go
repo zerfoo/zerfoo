@@ -208,6 +208,30 @@ func (p *ExecutionPlan[T]) PrepareSlots(inputs ...*tensor.TensorNumeric[T]) erro
 	return nil
 }
 
+// PreUploadFrozenWeights uploads all frozen (parameter/constant) slot tensors
+// that have CPU-backed storage to the GPU. The uploaded tensor replaces the
+// original in both the canonical slots array and any initialized scratch slots.
+// This must be called BEFORE warmup runs and BEFORE EnsureSlotsGPU so that
+// frozen weights are already GPU-resident when graph capture begins, avoiding
+// synchronous H2D copies on the capturing stream (which cause cuda error 901).
+func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
+	for _, idx := range p.frozenIdx {
+		t := p.slots[idx]
+		if t == nil {
+			continue
+		}
+		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+			continue // already GPU-resident
+		}
+		gpuT, err := tensor.ToGPU(t)
+		if err != nil {
+			return fmt.Errorf("PreUploadFrozenWeights: slot %d: %w", idx, err)
+		}
+		p.slots[idx] = gpuT
+	}
+	return nil
+}
+
 // EnsureSlotsGPU uploads any CPU-resident scratch slot tensors to GPU. If a
 // pre-allocated GPU tensor exists for the slot (from a previous capture), the
 // CPU data is copied into it to preserve device addresses for CUDA graph

@@ -106,6 +106,14 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 	}
 	log.Printf("cuda graph: capture region is instructions [%d, %d) of %d total", captureStart, captureEnd, n)
 
+	// Upload frozen weights to GPU before any warmup runs or graph capture.
+	// This prevents getDevicePtr from issuing synchronous H2D copies on the
+	// capturing stream, which would cause cuda error 901.
+	if err := plan.PreUploadFrozenWeights(); err != nil {
+		log.Printf("cuda graph: frozen weight pre-upload failed: %v", err)
+		return &CUDAGraphExecutor[T]{plan: plan, failed: true}
+	}
+
 	return &CUDAGraphExecutor[T]{
 		plan:         plan,
 		stream:       cuda.StreamFromPtr(streamPtr),
