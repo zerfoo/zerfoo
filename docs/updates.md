@@ -4838,3 +4838,109 @@ linear layer. These are the largest cuBLAS overhead contributor during decode.
 4. **The Sgemm(1, 256, 1152) calls at 267us each** are a potential target -- these
    are likely attention output projection or similar non-Q4K layers. Investigating
    why these are slower than batched attention calls is worthwhile.
+
+## Lint Triage (T1003.1)
+
+Date: 2026-03-14
+Tool: golangci-lint v1.64.8 (default linters, project .golangci.yml v2 format incompatible)
+Additional: go vet ./...
+
+### Summary
+
+Total golangci-lint issues: **62**
+Total go vet issues: **16**
+
+### Issues by Linter
+
+| Linter      | Count | Priority | Notes |
+|-------------|-------|----------|-------|
+| errcheck    | 50    | P1       | Unchecked error returns |
+| unused      | 10    | P2       | Dead code (functions, fields) |
+| ineffassign | 2     | P2       | Ineffectual assignments |
+
+### go vet Findings
+
+| Issue                       | Count | Priority | Notes |
+|-----------------------------|-------|----------|-------|
+| possible misuse of unsafe.Pointer | 16 | P0  | GPU runtime FFI pointer casts |
+
+### Priority Definitions
+
+- **P0 (Security/Correctness)**: Issues that could cause undefined behavior, data corruption, or security vulnerabilities. Fix immediately.
+- **P1 (Error Handling)**: Unchecked errors that could mask failures at runtime. Fix in dedicated pass.
+- **P2 (Style/Cleanup)**: Dead code, ineffectual assignments. Fix opportunistically.
+
+### Detailed Breakdown
+
+#### P0: go vet -- unsafe.Pointer misuse (16 issues)
+
+These are in GPU runtime FFI bindings where `unsafe.Pointer` is used to pass
+device pointers to C library calls via purego. This is inherent to the FFI
+pattern and may be intentional, but each site should be reviewed for correctness.
+
+Files affected:
+- `internal/cuda/runtime_purego.go` (4 issues)
+- `internal/cuda/purego_darwin.go` (1 issue)
+- `internal/hip/runtime_purego.go` (3 issues)
+- `internal/opencl/runtime_purego.go` (5 issues)
+- `internal/cudnn/cudnn_purego.go` (1 issue)
+- `internal/tensorrt/tensorrt_purego.go` (2 issues)
+
+#### P1: errcheck (50 issues)
+
+**Production code (33 issues)** -- all in GPU descriptor cleanup:
+- `internal/gpuapi/cuda_dnn.go` (28 issues) -- `defer desc.Destroy()` calls
+- `internal/gpuapi/rocm_dnn.go` (5 issues) -- same pattern
+
+These are `defer xDesc.Destroy()` calls where the error return is discarded.
+Pattern is consistent: GPU descriptor objects are destroyed in defers. While
+the error is unlikely to matter in practice (cleanup-on-exit), wrapping these
+is a straightforward fix.
+
+**Test code (17 issues)** -- in GPU test helpers:
+- `internal/cublas/cublas_purego_test.go` (5 issues)
+- `internal/tensorrt/tensorrt_test.go` (2 issues)
+- `internal/hip/hip_test.go` (1 issue)
+- `internal/cuda/kernels/flash_attention_purego_test.go` (6 issues)
+- `internal/cudnn/cudnn_parity_test.go` (1 issue)
+- `internal/cudnn/cudnn_test.go` (2 issues)
+
+Note: The .golangci.yml config excludes errcheck in `_test.go` files, so these
+17 test issues would not appear once the v2 config is supported. The plan
+mentions 164 errcheck issues -- the lower count (50) is because we ran with
+default config which uses narrower scope than the project config.
+
+#### P2: unused (10 issues)
+
+Dead functions and fields that can be safely removed:
+
+| Location | Symbol | Type |
+|----------|--------|------|
+| `pkg/tokenizer/bpe.go:226` | `(*BPETokenizer).preTokenize` | func |
+| `internal/cublas/cublas_purego.go:156` | `floatBits` | func |
+| `internal/xblas/gemm_simd_arm64.go:16` | `vdotf32` | func |
+| `internal/xblas/q4dot.go:36` | `q4DotRowScalar` | func |
+| `internal/xblas/q4dot.go:53` | `float16BitsToFloat32` | func |
+| `compute/gpu_kernels.go:717` | `(*GPUEngine[T]).gpuSubScalar` | func |
+| `generate/tensor_cache_test.go:389` | `makeTensorF32` | func |
+| `inference/tensorrt_pipeline.go:25` | `profileIndex` | field |
+| `inference/tensorrt_pipeline.go:32` | `buildTRTEngine` | func |
+| `graph/cuda_graph.go:55` | `inputBytes` | field |
+
+#### P2: ineffassign (2 issues)
+
+Both in `compute/gpu_cudnn.go` at lines 213 and 733. Variable `c4` is assigned
+but then overwritten before use.
+
+### Recommendations for Follow-up Tasks
+
+- **T1003.2 (fix errcheck)**: Focus on the 33 production errcheck issues first.
+  All are `defer desc.Destroy()` in cuDNN/MIOpen wrappers -- a helper function
+  like `deferDestroy(d Destroyable)` could handle all of them. The 17 test
+  issues will be excluded once the v2 config is loaded.
+- **T1003.3 (fix remaining lint)**: Remove the 10 unused symbols and fix the 2
+  ineffassign sites. Review the 16 unsafe.Pointer sites for correctness (these
+  may need `//nolint:govet` annotations with justification if intentional).
+- **Config**: Upgrade golangci-lint to a version supporting v2 config format
+  to get the full linter set (gocritic, staticcheck, gosec, etc.) running.
+  The current run used only the default linter set.
