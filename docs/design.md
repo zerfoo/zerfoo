@@ -2139,3 +2139,45 @@ The only viable path is making GQA CUDA-graph-compatible. Current blockers:
 Fix approach: GPU-resident position counter + pre-computed RoPE table indexing.
 The RoPE table is already GPU-resident; only the offset selection is CPU-side.
 CUDA graph infrastructure (capture/replay, arena floor, slot restore) is built.
+
+### Phase 6 Completion Summary (2026-03-14)
+
+Phase 6 executed 20 tasks across 4 epics to enable CUDA graph capture for the
+full decode loop. See docs/adr/032-gpu-resident-position-counter.md for the
+design decision and docs/adr/033-how-we-beat-ollama.md for the full journey.
+
+**Key changes:**
+- 3 new CUDA kernels: increment_counter, offset_memcpy, rope_select.
+- GPU-resident int32 position counter in TensorCache and GPUKVCache.
+- GQA decode path uses GPU counter for RoPE and KV append (no CPU SeqLen).
+- GQA removed from non-capturable ops list. 184/185 instructions captured.
+- Bug fix: GPU counter must be synced from CPU after prefill (H2D copy of
+  token count before decode starts).
+
+**New kernel files:**
+- internal/cuda/kernels/counter.cu -- atomicAdd increment + reset
+- internal/cuda/kernels/offset_memcpy.cu -- counter-indexed memcpy
+- internal/cuda/kernels/rope_select.cu -- counter-indexed RoPE table lookup
+
+**Key file changes:**
+- generate/tensor_cache.go -- gpuCounter field, AppendGPU, SyncCounterFromGPU
+- generate/gpu_kv_cache.go -- gpuCounter field, AppendGPU, SyncCounterFromGPU
+- layers/embeddings/rotary_positional_embedding.go -- GetAnglesGPU method
+- layers/attention/grouped_query_attention.go -- GPU RoPE path in fused + unfused
+- graph/cuda_graph.go -- GQA removed from nonCapturableOps
+- generate/generator.go, generate/stream.go -- SyncCounterFromGPU after decode
+
+**Known issue:** Graph and no-graph paths produce different (but both coherent
+and deterministic) output at temp=0. Likely floating-point ordering difference
+from captured vs individual kernel launches.
+
+### Updated Performance (2026-03-14 post-Phase 6)
+
+| Config | tok/s | Notes |
+|--------|-------|-------|
+| Zerfoo F32 + CUDA graph | 234.30 | 3-run avg: 235.09, 234.42, 233.39 |
+| Zerfoo F32 no graph | ~186 | Baseline without graph capture |
+| Ollama (gemma3) | 197.21 | Surpassed by 18.8% |
+
+Bandwidth utilization: ~60% of 273 GB/s theoretical. Token time: 4.27ms.
+Theoretical max at full bandwidth: ~390 tok/s. Remaining headroom: ~40%.
