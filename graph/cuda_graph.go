@@ -17,13 +17,14 @@ import (
 // EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
 // float→int conversion.
 //
-// GroupedQueryAttention: reads KV cache position from CPU (cache.SeqLen()),
-// computes RoPE angles on CPU, appends to KV cache at position-dependent
-// offsets. All of these are baked into captured kernel arguments and won't
-// update on replay, producing incorrect results.
+// GroupedQueryAttention was previously non-capturable because it read
+// cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
+// for KV cache appends. Now that TensorCache uses a GPU-resident counter
+// (offset_memcpy kernel) and GQA uses GPU RoPE selection (rope_select kernel),
+// all position-dependent state is read from GPU memory at replay time, making
+// GQA fully capturable.
 var nonCapturableOps = map[string]bool{
-	"EmbeddingLookup":        true,
-	"GroupedQueryAttention":  true,
+	"EmbeddingLookup": true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
