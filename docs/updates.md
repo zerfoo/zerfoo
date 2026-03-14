@@ -1,3 +1,65 @@
+# Multi-Model Verification on DGX (T1100.1-T1100.4)
+
+Date: 2026-03-14
+Branch: feat/error-recovery
+DGX: main branch at 4b2f13b, libkernels.so rebuilt
+
+## Results
+
+### Gemma 3 1B (GGUF, Q4_K_M) -- BASELINE PASS
+- Path: ~/models/gemma3-gguf/model.gguf
+- Throughput: 186.71 tok/s (F32, CUDA graph active)
+- Output: Coherent (repetitive at temp=0, expected for 1B model)
+- CUDA graph: captured instructions 1-184 of 185
+
+### Llama 3.2 1B (ZMF, F32) -- FAIL
+- Path: ~/models/llama3
+- Config: hidden_size=2048, vocab_size=128256, num_heads=32, num_kv_heads=8
+- Error: cuBLAS status 7 (INVALID_VALUE) on final MatMul [1,5,2048] x [2048,128256]
+- Root cause: Large vocab projection (128256) may exceed cuBLAS workspace or alignment limits
+- Action needed: Investigate cuBLAS workspace sizing for large N dimensions
+
+### Mistral 7B (ZMF, F32) -- FAIL
+- Path: ~/models/mistral
+- Error: panic in Range op -- index out of range [0] with length 0
+- Stack: layers/core/range_op.go:29 during prefill
+- Root cause: Likely tokenizer mismatch or graph builder issue for Mistral architecture
+- Action needed: Debug Range op input shapes for Mistral
+
+### Qwen 2.5 (ZMF, F32) -- FAIL
+- Path: ~/models/qwen25
+- Config: hidden_size=896, vocab_size=151936
+- Error: cuBLAS status 7 (INVALID_VALUE) on final MatMul [1,5,896] x [896,151936]
+- Root cause: Same as Llama 3 -- large vocab projection
+- Action needed: Same fix as Llama 3
+
+### Phi 4 (ZMF, F32) -- FAIL
+- Path: ~/models/phi4
+- Error: pow_scalar kernel failed (cuda error 1) on Pow node [1,6,3072]
+- Root cause: Missing or incompatible pow_scalar CUDA kernel
+- Action needed: Implement or fix pow_scalar kernel for Phi architecture
+
+## Summary
+
+| Model | Format | Status | Error Type |
+|-------|--------|--------|------------|
+| Gemma 3 1B | GGUF Q4_K_M | PASS | -- |
+| Llama 3.2 1B | ZMF F32 | FAIL | cuBLAS large vocab |
+| Mistral 7B | ZMF F32 | FAIL | Range op panic |
+| Qwen 2.5 | ZMF F32 | FAIL | cuBLAS large vocab |
+| Phi 4 | ZMF F32 | FAIL | Missing pow kernel |
+
+Common issue: cuBLAS INVALID_VALUE for vocab projections > 128K. Affects Llama 3 and Qwen 2.5.
+
+## Note on GGUF vs ZMF
+
+The plan specifies GGUF format models, but `zerfoo pull` is broken (no pull function configured
+in CLI). The existing models on DGX are in ZMF format. The ZMF loader exercises the same
+inference pipeline as GGUF for forward pass. The cuBLAS and kernel errors would affect both
+formats equally since they occur during inference, not loading.
+
+---
+
 # Phase 9: GQA Decode Kernel + FP16 KV Fix Benchmark
 
 Date: 2026-03-13
