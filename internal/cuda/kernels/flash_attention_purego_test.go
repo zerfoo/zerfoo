@@ -139,43 +139,43 @@ func TestFlashAttentionPuregoDecodeNonGQA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc Q: %v", err)
 	}
-	defer cuda.Free(devQ)
+	defer func() { _ = cuda.Free(devQ) }()
 
 	devK, err := cuda.Malloc(kvSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc K: %v", err)
 	}
-	defer cuda.Free(devK)
+	defer func() { _ = cuda.Free(devK) }()
 
 	devV, err := cuda.Malloc(kvSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc V: %v", err)
 	}
-	defer cuda.Free(devV)
+	defer func() { _ = cuda.Free(devV) }()
 
 	devO, err := cuda.Malloc(qSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc O: %v", err)
 	}
-	defer cuda.Free(devO)
+	defer func() { _ = cuda.Free(devO) }()
 
-	cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
-	cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
-	cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
 
 	stream, err := cuda.CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := FlashAttentionDecode(devQ, devK, devV, devO, numBH, kvLen, headDim, kvLen, nil, numQHeads, numKVHeads, stream.Ptr()); err != nil {
 		t.Fatalf("FlashAttentionDecode: %v", err)
 	}
-	stream.Synchronize()
+	_ = stream.Synchronize()
 
 	result := make([]float32, qSize)
-	cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
+	_ = cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
 
 	tol := 1e-4
 	mismatches := 0
@@ -222,43 +222,43 @@ func TestFlashAttentionPuregoDecodeGQA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc Q: %v", err)
 	}
-	defer cuda.Free(devQ)
+	defer func() { _ = cuda.Free(devQ) }()
 
 	devK, err := cuda.Malloc(kvSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc K: %v", err)
 	}
-	defer cuda.Free(devK)
+	defer func() { _ = cuda.Free(devK) }()
 
 	devV, err := cuda.Malloc(kvSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc V: %v", err)
 	}
-	defer cuda.Free(devV)
+	defer func() { _ = cuda.Free(devV) }()
 
 	devO, err := cuda.Malloc(qSize * 4)
 	if err != nil {
 		t.Fatalf("Malloc O: %v", err)
 	}
-	defer cuda.Free(devO)
+	defer func() { _ = cuda.Free(devO) }()
 
-	cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
-	cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
-	cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	_ = cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
 
 	stream, err := cuda.CreateStream()
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := FlashAttentionDecode(devQ, devK, devV, devO, numBH, kvLen, headDim, kvLen, nil, numQHeads, numKVHeads, stream.Ptr()); err != nil {
 		t.Fatalf("FlashAttentionDecode GQA: %v", err)
 	}
-	stream.Synchronize()
+	_ = stream.Synchronize()
 
 	result := make([]float32, qSize)
-	cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
+	_ = cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
 
 	tol := 1e-4
 	mismatches := 0
@@ -302,25 +302,25 @@ func TestFlashAttentionPuregoParityNonCausal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc Q: %v", err)
 	}
-	defer cuda.Free(devQ)
+	defer func() { _ = cuda.Free(devQ) }()
 
 	devK, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc K: %v", err)
 	}
-	defer cuda.Free(devK)
+	defer func() { _ = cuda.Free(devK) }()
 
 	devV, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc V: %v", err)
 	}
-	defer cuda.Free(devV)
+	defer func() { _ = cuda.Free(devV) }()
 
 	devO, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc O: %v", err)
 	}
-	defer cuda.Free(devO)
+	defer func() { _ = cuda.Free(devO) }()
 
 	if err := cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy Q: %v", err)
@@ -336,7 +336,7 @@ func TestFlashAttentionPuregoParityNonCausal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := FlashAttentionForward(devQ, devK, devV, devO, batch, heads, seqLen, headDim, false, stream.Ptr()); err != nil {
 		t.Fatalf("FlashAttentionForward: %v", err)
@@ -392,25 +392,25 @@ func TestFlashAttentionPuregoParityCausal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc Q: %v", err)
 	}
-	defer cuda.Free(devQ)
+	defer func() { _ = cuda.Free(devQ) }()
 
 	devK, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc K: %v", err)
 	}
-	defer cuda.Free(devK)
+	defer func() { _ = cuda.Free(devK) }()
 
 	devV, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc V: %v", err)
 	}
-	defer cuda.Free(devV)
+	defer func() { _ = cuda.Free(devV) }()
 
 	devO, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc O: %v", err)
 	}
-	defer cuda.Free(devO)
+	defer func() { _ = cuda.Free(devO) }()
 
 	if err := cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy Q: %v", err)
@@ -426,7 +426,7 @@ func TestFlashAttentionPuregoParityCausal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := FlashAttentionForward(devQ, devK, devV, devO, batch, heads, seqLen, headDim, true, stream.Ptr()); err != nil {
 		t.Fatalf("FlashAttentionForward (causal): %v", err)
