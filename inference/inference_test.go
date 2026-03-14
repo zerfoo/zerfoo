@@ -977,7 +977,7 @@ func TestAssembleModel(t *testing.T) {
 		}
 		info := &registry.ModelInfo{ID: "test", Path: "/tmp/test"}
 
-		m := assembleModel(g, tok, eng, meta, info, 0)
+		m := assembleModel(g, tok, eng, meta, info, 0, "")
 		if m == nil {
 			t.Fatal("expected non-nil model")
 		}
@@ -1005,7 +1005,7 @@ func TestAssembleModel(t *testing.T) {
 		}
 		info := &registry.ModelInfo{ID: "test", Path: "/tmp/test"}
 
-		m := assembleModel(g, tok, eng, meta, info, 2048)
+		m := assembleModel(g, tok, eng, meta, info, 2048, "")
 		if m == nil {
 			t.Fatal("expected non-nil model")
 		}
@@ -1035,7 +1035,7 @@ func TestAssembleModel(t *testing.T) {
 		}
 		info := &registry.ModelInfo{ID: "test", Path: "/tmp/test"}
 
-		m := assembleModel(g, tok, eng, meta, info, 0)
+		m := assembleModel(g, tok, eng, meta, info, 0, "")
 		result, err := m.Generate(context.Background(), "hello world",
 			WithTemperature(0), WithMaxTokens(10))
 		if err != nil {
