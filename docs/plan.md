@@ -74,7 +74,7 @@ weight matrices during graph forward. See docs/updates.md for the deep dive.
 
 ### E2000: Test Coverage Gaps (2 remaining)
 
-- [ ] T2000.5 Add getDevicePtr memory lifecycle test  Owner: TBD  Est: 45m
+- [x] T2000.5 Add getDevicePtr memory lifecycle test  Owner: task-T2000.5  Completed: 2026-03-14
   - Test that getDevicePtr for large CPUStorage tensors returns valid GPU pointers.
   - Test that sequential getDevicePtr calls (simulating graph forward) do not
     return overlapping or freed memory.
@@ -83,7 +83,7 @@ weight matrices during graph forward. See docs/updates.md for the deep dive.
   - Acceptance: No double-free or use-after-free detected. CUDA memcheck clean.
   - Dependencies: none.
 
-- [ ] T2000.6 Add zerfoo pull CLI integration test  Owner: TBD  Est: 30m
+- [x] T2000.6 Add zerfoo pull CLI integration test  Owner: task-T2000.6  Completed: 2026-03-14
   - Wire NewHFPullFunc into the CLI pull command (fix the broken pull path).
   - Test the full CLI flow: NewPullCommand -> Run -> pulls from mock HF server.
   - File: cmd/cli/pull_test.go.
@@ -97,7 +97,7 @@ large dimensions, but fails during graph forward pass. The issue is in how
 getDevicePtr handles H2D copies for 1GB+ weight matrices during the graph
 forward pass.
 
-- [ ] T2001.1 Add debug logging to getDevicePtr for large allocations  Owner: TBD  Est: 30m
+- [x] T2001.1 Add debug logging to getDevicePtr for large allocations  Owner: task-T2001.1  Completed: 2026-03-14
   - Log allocation size, pointer address, and memcpy result for allocations > 100MB.
   - Log cuBLAS Sgemm arguments (m, n, k, pointers) before the call.
   - Instrument compute/gpu_kernels.go and compute/gpu_engine.go.
@@ -129,7 +129,7 @@ forward pass.
 
 ### E1001: Decode Kernel (Phase 8 retained)
 
-- [ ] T1001.1 Profile flash_attention_decode on DGX  Owner: TBD  Est: 1h
+- [x] T1001.1 Profile flash_attention_decode on DGX  Owner: task-T1001.1  Completed: 2026-03-14
   - Run nsys profile on bench_tps with Gemma 3 1B.
   - Measure decode kernel time vs total decode time.
   - File: docs/updates.md.
@@ -156,7 +156,7 @@ forward pass.
 
 ### E1002: Purego Trampoline (Phase 8 retained)
 
-- [ ] T1002.1 Diagnose purego trampoline segfault  Owner: TBD  Est: 1.5h
+- [x] T1002.1 Diagnose purego trampoline segfault  Owner: task-T1002.1  Completed: 2026-03-14
   - Reproduce segfault on DGX with a minimal test case.
   - Check ccallTrampoline assembly for ARM64 AAPCS64 compliance.
   - Verify stack alignment for 14+ argument C functions.
