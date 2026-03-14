@@ -6,57 +6,61 @@
 
 Zerfoo F32 inference achieves 234.30 tok/s on DGX Spark GB10 with CUDA graph
 capture (Phase 6). This surpasses Ollama (197.21 tok/s) by 18.8%. However,
-bandwidth utilization is only ~60% of the 273 GB/s theoretical maximum. At
-full utilization, the hardware could sustain ~390 tok/s for this model size.
+bandwidth utilization is only ~60% of the 273 GB/s theoretical maximum.
 
-The remaining 40% gap comes from two sources:
-1. **cuBLAS SGEMV overhead for M=1 decode:** cuBLAS is optimized for large
-   matrix multiplications. For single-token decode (M=1), the library startup,
-   workspace allocation, and heuristic selection overhead is significant
-   relative to the actual compute. Each cuBLAS call adds ~3-5us overhead
-   beyond the memory transfer time.
-2. **F32 KV cache bandwidth:** KV cache reads/writes consume 4 bytes per
-   element. FP16 KV would halve this bandwidth and free memory bus for weight
-   loading, which is the actual bottleneck.
+Phase 7 Wave 1 profiling (T901.1) revealed that cuBLAS is only 8% of decode
+time because weight matmuls already use the fused Q4K GEMV kernel. The original
+plan to replace cuBLAS with a custom SGEMV (T901.4-T901.6) has low ROI.
+
+The real bottleneck is the GQA attention path. The decode fast path
+(flash_attention_decode with GPU-resident kv_len) was built in T903.2 but
+causes a 93.7% regression for GQA models because engine.Repeat on full
+maxSeqLen KV buffer creates ~128 MB temporaries per token. The fast path is
+currently disabled for GQA (commit 9803ba1).
+
+The path to >300 tok/s is making flash_attention_decode handle GQA head
+replication inside the kernel at register level, eliminating Repeat entirely.
+Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
 
 See docs/design.md for architecture, docs/adr/033-how-we-beat-ollama.md for
 the full optimization history.
 
 ### Objectives
 
-- O1: Replace cuBLAS SGEMV with custom GEMV kernels optimized for M=1 decode.
-- O2: Quantize KV cache to FP16 to halve KV bandwidth.
-- O3: Investigate and fix graph/no-graph output divergence from Phase 6.
-- O4: Achieve >300 tok/s on DGX Spark GB10 with Gemma 3 1B Q4_K_M.
+- O1: Make flash_attention_decode GQA-aware (register-level head replication).
+- O2: Re-enable decode fast path for GQA models without Repeat.
+- O3: Enable full CUDA graph capture of GQA attention path.
+- O4: Fix FP16 KV cache correctness bug (produces pad tokens).
+- O5: Achieve >300 tok/s on DGX Spark GB10 with Gemma 3 1B Q4_K_M.
 
 ### Non-Goals
 
-- Speculative decoding (orthogonal, can layer on top later).
-- Persistent mega-kernel (high complexity, unclear benefit with graph capture).
-- Prefill CUDA graph capture (variable seqLen, different optimization profile).
-- Q4K GEMV kernel rewrite (memory-bound, Phase 4 showed regression).
+- Custom SGEMV replacing cuBLAS (deferred, only 8% of decode time per T901.1).
+- Speculative decoding (orthogonal, layer on top later).
+- Persistent mega-kernel.
+- Prefill CUDA graph capture.
+- Q4K GEMV kernel rewrite.
 - Multi-GPU / distributed inference.
-- New model architectures.
 
 ### Constraints and Assumptions
 
 - Pre-commit hook rejects multi-directory commits.
 - DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: sm_121 (Blackwell), 273 GB/s LPDDR5x, 128GB unified memory.
-- Baseline: 234.30 tok/s with CUDA graph (Phase 6, commit 0891914).
+- Baseline: 234.30 tok/s with CUDA graph (Phase 6).
 - Ollama: 197.21 tok/s (Gemma 3 1B Q4_K_M).
+- Gemma 3 1B GQA config: 8 query heads, 4 KV heads, head_dim=256.
 - Go profile: go test, go vet, go build as quality gates.
 - CUDA kernels compiled with nvcc -arch=sm_121.
-- All GPU bindings use purego (no CGo for production builds).
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| Custom GEMV parity | Output matches cuBLAS bit-for-bit at temp=0 | Comparison test on DGX |
-| Custom GEMV speedup | >10% vs cuBLAS for M=1 GEMV | Microbenchmark on DGX |
-| FP16 KV bandwidth | KV cache at half the memory traffic | nvidia-smi or nsight |
-| Output divergence | Graph == no-graph at temp=0 | bench_tps comparison |
+| GQA decode kernel | Handles head replication internally | Unit test: output matches SDPA reference |
+| Zero Repeat | No engine.Repeat on KV buffer during decode | grep + profiling |
+| CUDA graph capture | Full decode including GQA attention captured | bench_tps shows graph executor |
+| FP16 KV correctness | Coherent output with --kv-dtype=fp16 | bench_tps output inspection |
 | Throughput target | >300 tok/s | bench_tps 3-run avg on DGX |
 
 ---
@@ -67,15 +71,15 @@ the full optimization history.
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D80 | Custom F32 GEMV kernel for M=1 | Eliminates cuBLAS overhead for decode |
-| D81 | FP16 KV cache storage + mixed-precision attention | Halves KV bandwidth |
-| D82 | Graph/no-graph output divergence fix | Correctness |
-| D83 | Updated CUDA graph with new kernels | All changes must remain graph-capturable |
+| D84 | GQA-aware flash_attention_decode kernel | Eliminates Repeat, enables graph capture |
+| D85 | Re-enabled decode fast path for GQA | 15-25% speedup from graph capture |
+| D86 | FP16 KV correctness fix | Unblock FP16 KV cache feature |
+| D87 | Full CUDA graph decode with GQA | All decode ops captured and replayed |
 
 ### Out of Scope
 
+- Custom SGEMV replacing cuBLAS (deferred, low ROI).
 - Speculative decoding.
-- Persistent mega-kernel.
 - Prefill graph capture.
 - Q4K GEMV changes.
 - Multi-GPU.
@@ -84,192 +88,153 @@ the full optimization history.
 
 ## 3. Checkable Work Breakdown
 
-### E901: Custom F32 GEMV Kernel for Decode
+### E901: Custom F32 GEMV Kernel for Decode (PARTIALLY COMPLETE)
 
-cuBLAS SGEMV has ~3-5us overhead per call for M=1. With ~10 SGEMV calls per
-layer (QKV projection, output projection, FFN up/gate/down) x 26 layers =
-~260 calls/token, replacing cuBLAS with a custom GEMV saves ~780-1300us/token
-(18-30% of 4.27ms token time).
+Profiling showed cuBLAS is only 8% of decode (not 30% as estimated).
+Kernel implemented and tested. Integration into GPUEngine deferred.
 
-The custom GEMV for M=1 is simpler than general GEMM: each thread block
-loads a row of the weight matrix and dot-products with the input vector.
-Shared memory is used only for the input vector (reused across all rows).
+- [x] T901.1 Profile cuBLAS GEMV overhead on DGX  2026 03 14
+- [x] T901.2 Implement custom sgemv_m1 CUDA kernel  2026 03 14
+- [x] S901.2.1 Test sgemv_m1 correctness  2026 03 14
+- [x] T901.3 Add Go wrappers for sgemv_m1 (done as part of T901.2)  2026 03 14
 
-- [ ] T901.1 Profile cuBLAS GEMV overhead on DGX  Owner: TBD  Est: 45m
-  - Run bench_tps with nsight-sys or manual timing around cuBLAS calls.
-  - Count cuBLAS SGEMV calls per token during decode.
-  - Measure per-call overhead (total time minus theoretical memory time).
-  - Document: call count, avg latency, overhead fraction.
-  - File: docs/updates.md.
-  - Acceptance: cuBLAS call count and overhead documented.
+### Archived (deferred -- low ROI per T901.1 profiling)
+
+- T901.4 Replace cuBLAS SGEMV with custom kernel in GPUEngine -- Deferred.
+  cuBLAS is only 8% of decode time. Weight matmuls use Q4K GEMV, not cuBLAS.
+- T901.5 Microbenchmark sgemv_m1 vs cuBLAS on DGX -- Deferred. Done informally
+  during S901.2.1 (152 GFLOPS at 4096x4096).
+- T901.6 Run go vet and make shared -- Subsumed by T904.2.
+
+### E902: FP16 KV Cache (PARTIALLY COMPLETE)
+
+Infrastructure built. FP16 produces garbage output (all pad tokens).
+Correctness fix needed.
+
+- [x] T902.1 Add FP16 storage mode to TensorCache  2026 03 14
+- [x] S902.1.1 Test FP16 KV cache correctness  2026 03 14
+- [x] T902.2 Add FP16 offset_memcpy variant  2026 03 14
+- [x] S902.2.1 Test FP16 offset_memcpy  2026 03 14
+- [x] T902.3 Wire FP16 KV into the generator  2026 03 14
+
+- [ ] T902.5 Fix FP16 KV correctness bug  Owner: TBD  Est: 1.5h
+  - FP16 KV produces all pad tokens on DGX. Likely cause: pointer type
+    mismatch in the FP16 conversion path, or the FP16-to-F32 read-back
+    is not wired correctly in the attention computation.
+  - Debug on DGX: add logging to trace the FP16 write/read path.
+  - Verify F32-to-FP16 conversion kernel output with a small test.
+  - Check if FP16 buffer pointers are passed correctly to flash_attention.
+  - File: generate/tensor_cache.go, layers/attention/grouped_query_attention.go.
+  - Acceptance: bench_tps --kv-dtype=fp16 produces coherent output at temp=0.
   - Dependencies: none.
 
-- [ ] T901.2 Implement custom sgemv_m1 CUDA kernel  Owner: TBD  Est: 1.5h
-  - Add kernel: `sgemv_m1(y, A, x, M, N, stream)` where y[M], A[M x N], x[N].
-  - Design: each block handles multiple rows. Threads within a block
-    cooperatively load x into shared memory, then each thread computes
-    partial dot product for its assigned rows.
-  - Use vectorized loads (float4) for both A and x to maximize bandwidth.
-  - Tune block size for sm_121 (256 threads, target 100% occupancy).
-  - File: internal/cuda/kernels/sgemv_m1.cu.
-  - Acceptance: Kernel compiles. Output matches cuBLAS SGEMV for random inputs.
-  - Dependencies: none.
-
-- [ ] S901.2.1 Test sgemv_m1 correctness  Owner: TBD  Est: 30m
-  - Compare output with cuBLAS for matrix sizes matching Gemma 3 1B layers:
-    - QKV: [1536, 1536], [256, 1536], [256, 1536]
-    - Output: [1536, 1536]
-    - FFN up/gate: [6144, 1536]
-    - FFN down: [1536, 6144]
-  - Acceptance: Max absolute error < 1e-5 for all sizes.
-  - Dependencies: T901.2.
-
-- [ ] T901.3 Add Go wrappers for sgemv_m1  Owner: TBD  Est: 45m
-  - Add purego wrapper (sgemv_m1_purego.go) and CGo wrapper (sgemv_m1_cgo.go).
-  - Register in KernelLib (purego.go) and KernelRunner interface.
-  - Update Makefile to include sgemv_m1.cu in SRCS.
-  - File: internal/cuda/kernels/, internal/gpuapi/.
-  - Acceptance: go build, go vet pass. Kernel callable from Go.
-  - Dependencies: T901.2.
-
-- [ ] T901.4 Replace cuBLAS SGEMV with custom kernel in GPUEngine  Owner: TBD  Est: 1.5h
-  - In compute/gpu_engine.go (or wherever cuBLAS SGEMV is called for MatMul):
-    - Detect M=1 case (single-token decode).
-    - Route to custom sgemv_m1 kernel instead of cuBLAS.
-    - Keep cuBLAS for M>1 (prefill, batch).
-  - File: compute/gpu_engine.go.
-  - Acceptance: bench_tps produces correct output. No cuBLAS calls for M=1 decode.
-  - Dependencies: T901.3.
-
-- [ ] S901.4.1 Test custom GEMV integration  Owner: TBD  Est: 30m
-  - go test ./compute/... -race -timeout 120s.
-  - Run bench_tps on DGX with 20 tokens, verify output correctness.
-  - Acceptance: All tests pass. Output coherent at temp=0.
-  - Dependencies: T901.4.
-
-- [ ] T901.5 Microbenchmark sgemv_m1 vs cuBLAS on DGX  Owner: TBD  Est: 30m
-  - Benchmark both kernels for all Gemma 3 1B matrix sizes.
-  - Record: throughput (GB/s), latency (us), speedup.
-  - File: docs/updates.md.
-  - Acceptance: Results documented. Custom kernel faster for M=1.
-  - Dependencies: T901.4.
-
-- [ ] T901.6 Run go vet and make shared  Owner: TBD  Est: 15m
-  - go vet ./internal/cuda/... ./internal/gpuapi/... ./compute/...
-  - make shared CUDA_ARCH=sm_121 on DGX.
-  - Acceptance: No new warnings. Build succeeds.
-  - Dependencies: T901.4.
-
-### E902: FP16 KV Cache
-
-KV cache stores key/value projections at F32 (4 bytes/element). Converting to
-FP16 (2 bytes/element) halves KV read/write bandwidth. For Gemma 3 1B with
-26 layers and dim=1536, at 256 tokens the KV cache is 26 x 2 x 256 x 1536 x 4
-= 78.6 MB (F32) vs 39.3 MB (FP16). The bandwidth saving grows linearly with
-sequence length.
-
-Mixed-precision attention: K and V stored as FP16, but attention computation
-remains F32. Convert F32 projections to FP16 before KV append, and FP16 back
-to F32 when reading from cache for attention. The F32-to-FP16 and FP16-to-F32
-conversion kernels already exist (launch_f32_to_fp16, launch_fp16_to_f32).
-
-- [ ] T902.1 Add FP16 storage mode to TensorCache  Owner: TBD  Est: 1.5h
-  - Add a `kvDtype` field to TensorCache (F32 or FP16).
-  - When kvDtype=FP16, allocate KV buffers with half the byte size.
-  - In Update/AppendGPU: call F32-to-FP16 conversion before writing to cache.
-  - In Get: call FP16-to-F32 conversion when reading from cache.
-  - Use the existing launch_f32_to_fp16 and launch_fp16_to_f32 kernels.
-  - File: generate/tensor_cache.go.
-  - Acceptance: TensorCache supports FP16 KV storage. F32 path unchanged.
-  - Dependencies: none.
-
-- [ ] S902.1.1 Test FP16 KV cache correctness  Owner: TBD  Est: 30m
-  - go test ./generate/... -race -timeout 120s.
-  - Compare FP16 KV output with F32 KV output for 10 tokens.
-  - Acceptance: Max absolute error < 1e-3 (FP16 precision). Tests pass.
-  - Dependencies: T902.1.
-
-- [ ] T902.2 Add FP16 offset_memcpy variant  Owner: TBD  Est: 1h
-  - The existing offset_memcpy kernel copies float32. Need a half-precision
-    variant: offset_memcpy_fp16(dst_fp16, src_f32, counter, dim, maxSeqLen).
-  - This kernel converts F32 src to FP16 during the copy, fusing the
-    conversion with the offset computation.
-  - File: internal/cuda/kernels/offset_memcpy.cu (add to existing file).
-  - Acceptance: Kernel compiles. Fused F32->FP16 copy correct.
-  - Dependencies: none.
-
-- [ ] S902.2.1 Test FP16 offset_memcpy  Owner: TBD  Est: 30m
-  - Set counter=3, copy F32 src, verify FP16 data at offset 3*dim.
-  - Acceptance: Test passes. Values match F32-to-FP16 reference.
-  - Dependencies: T902.2.
-
-- [ ] T902.3 Wire FP16 KV into the generator  Owner: TBD  Est: 1h
-  - Add a --kv-dtype flag to bench_tps (or auto-detect based on model config).
-  - When FP16 KV is enabled, pass kvDtype=FP16 to TensorCache constructor.
-  - Ensure CUDA graph capture still works with FP16 KV (offset_memcpy_fp16
-    must be graph-capturable).
-  - File: generate/generator.go, cmd/bench_tps/main.go.
-  - Acceptance: bench_tps supports --kv-dtype=fp16. Graph capture succeeds.
-  - Dependencies: T902.1, T902.2.
-
-- [ ] S902.3.1 Test FP16 KV end-to-end on DGX  Owner: TBD  Est: 30m
+- [ ] S902.5.1 Test FP16 KV end-to-end on DGX  Owner: TBD  Est: 30m
   - Run bench_tps with --kv-dtype=fp16 on DGX, 20 tokens.
   - Verify output quality (coherent text at temp=0).
-  - Acceptance: Output quality acceptable. No crashes.
-  - Dependencies: T902.3.
+  - Acceptance: Output coherent. No pad tokens.
+  - Dependencies: T902.5.
 
-- [ ] T902.4 Run go vet on modified packages  Owner: TBD  Est: 15m
-  - go vet ./generate/... ./internal/cuda/... ./cmd/bench_tps/...
+- [ ] T902.6 Run go vet on FP16 changes  Owner: TBD  Est: 15m
+  - go vet ./generate/... ./internal/cuda/...
   - Acceptance: No new warnings.
-  - Dependencies: T902.3.
+  - Dependencies: T902.5.
 
-### E903: Fix Graph/No-Graph Output Divergence
+### E903: Fix Graph/No-Graph Output Divergence (COMPLETE)
 
-Phase 6 found that CUDA graph and non-graph paths produce different output
-at temp=0. Both outputs are coherent and deterministic, but they differ.
-This suggests a subtle numerical difference in the captured vs live execution.
+- [x] T903.1 Bisect the divergence source  2026 03 14
+- [x] T903.2 Fix the divergence (GPU-resident kv_len)  2026 03 14
+- [x] S903.2.1 Verify divergence fix on DGX  2026 03 14
 
-- [ ] T903.1 Bisect the divergence source  Owner: TBD  Est: 1.5h
-  - Add debug logging to dump intermediate tensor values at key points:
-    after embedding, after first GQA, after first FFN, etc.
-  - Run both graph and non-graph paths with 5 tokens.
-  - Compare dumps to identify where values first diverge.
-  - Hypothesis: the offset_memcpy or rope_select kernel produces slightly
-    different results when captured vs live (e.g., different thread scheduling
-    affecting floating-point accumulation order).
-  - File: docs/updates.md.
-  - Acceptance: Divergence source identified and documented.
+### E905: GQA-Aware Flash Attention Decode Kernel
+
+The flash_attention_decode kernel (T903.2) reads KV length from GPU memory
+for CUDA graph capture. But for GQA models (numQueryHeads != numKVHeads),
+the decode fast path calls engine.Repeat on the full maxSeqLen KV buffer
+to expand KV heads, creating ~128 MB temporaries and regressing 93.7%.
+
+The fix: handle GQA head replication inside the kernel at register level.
+Each query head computes kv_head = q_head / (numQ / numKV) and indexes into
+the KV buffer directly. Zero extra memory traffic.
+
+Decision rationale: docs/adr/034-gqa-aware-flash-attention-decode.md.
+
+- [ ] T905.1 Add GQA support to flash_attention_decode kernel  Owner: TBD  Est: 2h
+  - Modify flash_attention_decode in internal/cuda/kernels/flash_attention.cu:
+    - Add numQueryHeads and numKVHeads parameters.
+    - In the inner loop, compute kv_head_idx = q_head_idx / (numQueryHeads / numKVHeads).
+    - Index K and V using kv_head_idx instead of q_head_idx.
+    - When numQueryHeads == numKVHeads, this is a no-op (same index).
+  - Update the launcher: launch_flash_attention_decode_gqa(..., numQueryHeads, numKVHeads).
+  - Alternatively, modify the existing launcher signature to add the two params.
+  - File: internal/cuda/kernels/flash_attention.cu.
+  - Acceptance: Kernel compiles. Output matches SDPA reference for GQA config
+    (8 Q heads, 4 KV heads, head_dim=256).
   - Dependencies: none.
 
-- [ ] T903.2 Fix the divergence  Owner: TBD  Est: 1h
-  - Based on T903.1 findings, fix the root cause.
-  - If it is floating-point ordering in graph replay, ensure kernels use
-    deterministic accumulation (e.g., same block/grid dimensions in both paths).
-  - If it is a counter sync issue, fix the sync.
-  - File: depends on T903.1 findings.
-  - Acceptance: Graph and no-graph output identical at temp=0 for 256 tokens.
-  - Dependencies: T903.1.
+- [ ] S905.1.1 Test GQA flash_attention_decode correctness  Owner: TBD  Est: 30m
+  - Test with Gemma 3 config: 8 Q heads, 4 KV heads, head_dim=256.
+  - Compare output with naive attention (QK^T softmax V) using CPU reference.
+  - Test with equal heads (numQ == numKV) to verify no regression.
+  - File: internal/cuda/kernels/flash_attention_test.go.
+  - Acceptance: Max absolute error < 1e-4 for both GQA and non-GQA configs.
+  - Dependencies: T905.1.
 
-- [ ] S903.2.1 Verify divergence fix on DGX  Owner: TBD  Est: 30m
-  - Run bench_tps on DGX in both graph and no-graph modes.
-  - Compare output tokens.
-  - Acceptance: Identical output at temp=0.
-  - Dependencies: T903.2.
+- [ ] T905.2 Add Go wrappers for GQA flash_attention_decode  Owner: TBD  Est: 45m
+  - Update purego wrapper (flash_attention_purego.go) and CGo wrapper.
+  - Update KernelRunner interface if needed (add numQueryHeads, numKVHeads params).
+  - Register new symbol in KernelLib if a new launcher was added.
+  - Update stubs in OpenCL, ROCm, test mock.
+  - File: internal/cuda/kernels/, internal/gpuapi/.
+  - Acceptance: go build, go vet pass.
+  - Dependencies: T905.1.
+
+- [ ] T905.3 Re-enable GQA decode fast path  Owner: TBD  Est: 1.5h
+  - In layers/attention/grouped_query_attention.go:
+    - Remove the numQueryHeads == numKVHeads guard on the decode fast path.
+    - Remove the engine.Repeat expansion code (lines 661-688).
+    - Instead, pass numQueryHeads and numKVHeads to the flash_attention_decode
+      call and let the kernel handle head replication.
+    - The kernel indexes K/V with kv_head, so the KV buffer shape stays
+      [batch, maxSeqLen, numKVHeads*headDim] without expansion.
+  - File: layers/attention/grouped_query_attention.go.
+  - Acceptance: bench_tps produces correct output with GQA. No engine.Repeat
+    calls during decode. Decode fast path active for GQA models.
+  - Dependencies: T905.2.
+
+- [ ] S905.3.1 Test GQA decode fast path correctness  Owner: TBD  Est: 30m
+  - go test ./layers/attention/... -race -timeout 120s.
+  - Run bench_tps on DGX with 20 tokens, verify output matches standard path.
+  - Acceptance: All tests pass. Output coherent at temp=0.
+  - Dependencies: T905.3.
+
+- [ ] T905.4 Verify CUDA graph capture with GQA decode  Owner: TBD  Est: 30m
+  - Run bench_tps on DGX and verify graph executor is active (no fallback).
+  - Check that GQA attention is included in the captured region.
+  - File: docs/updates.md.
+  - Acceptance: Graph capture succeeds. No "fallback" in logs.
+  - Dependencies: T905.3.
+
+- [ ] T905.5 Run go vet and make shared  Owner: TBD  Est: 15m
+  - go vet ./internal/cuda/... ./internal/gpuapi/... ./layers/...
+  - make shared CUDA_ARCH=sm_121 on DGX.
+  - Acceptance: No new warnings. Build succeeds.
+  - Dependencies: T905.3.
 
 ### E904: Final Benchmark and Verification
 
-- [ ] T904.1 Full benchmark with all Phase 7 optimizations on DGX  Owner: TBD  Est: 1h
-  - Build with custom GEMV + FP16 KV + divergence fix.
-  - Run bench_tps 3 times with 256 tokens.
+- [ ] T904.1 Full benchmark with all optimizations on DGX  Owner: TBD  Est: 1h
+  - Build with GQA decode kernel + FP16 KV fix.
+  - Run bench_tps 3 times with 256 tokens (F32 KV).
+  - Run bench_tps 3 times with 256 tokens (FP16 KV if fixed).
   - Record commit hash, all results.
   - Compare with 234.30 tok/s baseline and Ollama 197.21 tok/s.
   - File: docs/updates.md.
   - Acceptance: Results documented. Target: >300 tok/s.
-  - Dependencies: E901, E902, E903.
+  - Dependencies: E905, T902.5.
   - PREFLIGHT: git pull on DGX, rebuild kernels (make clean && make shared).
 
 - [ ] S904.1.1 Output quality verification  Owner: TBD  Est: 15m
-  - Verify F32 output at temp=0 matches graph==no-graph.
+  - Verify F32 output at temp=0. Graph and no-graph should match.
   - Acceptance: Identical output tokens.
   - Dependencies: T904.1.
 
@@ -284,39 +249,32 @@ This suggests a subtle numerical difference in the captured vs live execution.
 
 | Track | Epics/Tasks | Notes |
 |-------|-------------|-------|
-| Track A: Custom GEMV | E901 (T901.1-T901.6) | New CUDA kernel + integration |
-| Track B: FP16 KV | E902 (T902.1-T902.4) | TensorCache + new kernel variant |
-| Track C: Divergence Fix | E903 (T903.1-T903.2) | Debug + fix |
-| Track D: Final Bench | E904 (T904.1-T904.2) | Depends on A, B, C |
+| Track A: GQA Kernel | E905 (T905.1-T905.5) | New CUDA kernel + GQA fast path |
+| Track B: FP16 Fix | T902.5-T902.6 | Debug + fix FP16 correctness |
+| Track C: Final Bench | E904 (T904.1-T904.2) | Depends on A, B |
 
 ### Maximum parallelism
 
-- Wave 1 (5 tasks): T901.1 (profile cuBLAS) + T901.2 (custom GEMV kernel) +
-  T902.1 (FP16 TensorCache) + T902.2 (FP16 offset_memcpy) + T903.1 (bisect divergence).
-  All 5 are independent. Saturates all agent slots.
+- Wave 1 (3 tasks): T905.1 (GQA kernel) + T902.5 (FP16 fix) + S905.1.1 (test GQA kernel).
+  T905.1 and T902.5 are independent. S905.1.1 can start when T905.1 is done.
+  Each agent implements + tests in same worktree.
 
-- Wave 2 (5 tasks): S901.2.1 (test GEMV) + T901.3 (Go wrappers) +
-  S902.1.1 (test FP16 KV) + S902.2.1 (test FP16 memcpy) + T903.2 (fix divergence).
-  Each depends only on its Wave 1 predecessor.
+- Wave 2 (4 tasks): T905.2 (Go wrappers) + S902.5.1 (test FP16 on DGX) +
+  T905.3 (re-enable GQA fast path) + T902.6 (go vet FP16).
+  T905.2 depends on T905.1. T905.3 depends on T905.2.
 
-- Wave 3 (5 tasks): T901.4 (replace cuBLAS) + T902.3 (wire FP16 KV) +
-  S903.2.1 (verify fix) + T901.5 (microbenchmark) + T901.6 (go vet + make).
-  T901.4 depends on T901.3. T902.3 depends on T902.1 + T902.2.
+- Wave 3 (4 tasks): S905.3.1 (test GQA fast path) + T905.4 (verify graph) +
+  T905.5 (go vet + make) + T904.1 (full benchmark).
 
-- Wave 4 (4 tasks): S901.4.1 (test integration) + S902.3.1 (test FP16 e2e) +
-  T902.4 (go vet) + T904.1 (full benchmark).
-  T904.1 depends on all tracks but can start once GEMV + FP16 KV are wired.
-
-- Wave 5 (2 tasks): S904.1.1 (quality) + T904.2 (final vet).
+- Wave 4 (2 tasks): S904.1.1 (quality) + T904.2 (final vet).
 
 ### Dependency minimization checklist applied
 
-a) All 5 Wave 1 tasks are fully independent (different packages, different goals).
-b) Custom GEMV (Track A) and FP16 KV (Track B) touch different packages
-   (internal/cuda/kernels vs generate/) and can run fully in parallel.
-c) Divergence fix (Track C) is independent of performance work.
-d) T904.1 is the only task requiring all tracks to converge.
-e) Each agent works in its own worktree, so file conflicts are not blockers.
+a) GQA kernel (T905.1) and FP16 fix (T902.5) are fully independent.
+b) Go wrappers (T905.2) depend on kernel (T905.1) but can be parallelized
+   by having the same agent do both.
+c) T904.1 depends on both tracks but can start once GQA fast path works.
+d) Each agent works in its own worktree, so file conflicts are not blockers.
 
 ---
 
@@ -324,10 +282,10 @@ e) Each agent works in its own worktree, so file conflicts are not blockers.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M120: Custom GEMV ready | T901.4 | sgemv_m1 integrated, correct output |
-| M121: FP16 KV ready | T902.3 | FP16 KV cache wired, graph-capturable |
-| M122: Divergence fixed | T903.2 | Graph == no-graph output at temp=0 |
-| M123: >300 tok/s | T904.1 | bench_tps 3-run avg >300 tok/s |
+| M124: GQA kernel ready | T905.2 | GQA flash_attention_decode compiles and passes tests |
+| M125: GQA fast path active | T905.4 | Decode fast path enabled for GQA, graph captured |
+| M126: FP16 KV fixed | S902.5.1 | FP16 KV produces coherent output |
+| M127: >300 tok/s | T904.1 | bench_tps 3-run avg >300 tok/s |
 
 ---
 
@@ -335,12 +293,12 @@ e) Each agent works in its own worktree, so file conflicts are not blockers.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R901 | Custom GEMV slower than cuBLAS for some sizes | No speedup for those layers | Medium | Benchmark per-size. Keep cuBLAS fallback for sizes where custom is slower. |
-| R902 | FP16 KV precision loss degrades output quality | Unusable output | Low | FP16 has 3 decimal digits of precision. Attention softmax operates on F32. Monitor perplexity. |
-| R903 | Graph/no-graph divergence is inherent to CUDA graph replay | Cannot fix | Medium | If inherent, document as known behavior. Both outputs are valid. |
-| R904 | Combined optimizations still under 300 tok/s | Goal not met | Medium | 300 is aspirational. Any improvement over 234 is valuable. Re-evaluate and add speculative decoding. |
-| R905 | FP16 offset_memcpy not graph-capturable | FP16 KV breaks graph | Low | Same pattern as F32 offset_memcpy which is already captured. |
-| R906 | Custom GEMV register pressure on sm_121 | Reduced occupancy | Medium | Profile with --ptxas-options=-v. Limit to 32 registers like gemm_q4. |
+| R907 | GQA kernel register pressure from head index computation | Reduced occupancy | Low | Index computation is 1 integer divide + 1 multiply. Negligible vs attention math. |
+| R908 | GQA kernel shared memory layout incompatible with variable head counts | Wrong results | Medium | Test with multiple GQA ratios (2x, 4x, 8x). Use head_ratio parameter. |
+| R909 | FP16 KV bug is in the conversion kernel itself, not the wiring | Deeper fix needed | Medium | Test F32-to-FP16 kernel independently with known values on DGX. |
+| R910 | Graph capture still fails with GQA decode due to other non-capturable ops | Partial capture | Low | The only remaining non-capturable op is EmbeddingLookup (1/185). |
+| R911 | Combined speedup still under 300 tok/s | Goal not met | Medium | Recovering 156 attention launches should give ~15-25% improvement. 234 * 1.2 = 281. May need FP16 KV + speculative for >300. |
+| R902 | FP16 KV precision loss degrades output quality | Unusable output | Low | FP16 has 3 decimal digits of precision. Attention softmax operates on F32. |
 
 ---
 
@@ -381,74 +339,102 @@ A task is done when:
 
 ## 8. Progress Log
 
+### Change Summary -- 2026-03-14 (Phase 7 Plan Updated -- GQA Kernel Pivot)
+
+Major plan revision based on Wave 1 profiling and benchmark findings:
+
+1. T901.1 profiling revealed cuBLAS is only 8% of decode time (weight matmuls
+   use Q4K GEMV, not cuBLAS). Deferred T901.4, T901.5, T901.6 (low ROI).
+
+2. T903.2 decode fast path caused 93.7% regression for GQA models due to
+   engine.Repeat on full maxSeqLen KV buffer. Fixed by disabling fast path
+   for GQA (9803ba1), restoring 234.08 tok/s.
+
+3. FP16 KV produces pad tokens -- correctness bug. Added T902.5 to fix.
+
+4. Created new epic E905: GQA-Aware Flash Attention Decode Kernel. This is
+   now the primary optimization path. Register-level head replication inside
+   the kernel eliminates Repeat and enables full CUDA graph capture for GQA.
+
+5. Created ADR: docs/adr/034-gqa-aware-flash-attention-decode.md.
+
+Completed tasks: T901.1, T901.2, S901.2.1, T901.3, T902.1, S902.1.1,
+T902.2, S902.2.1, T902.3, T903.1, T903.2, S903.2.1.
+
+Remaining: 11 tasks (E905: 7 tasks, E902 fix: 3 tasks, E904: 3 tasks).
+
 ### Change Summary -- 2026-03-14 (Phase 7 Plan Created)
 
 Created Phase 7 plan targeting >300 tok/s via custom GEMV + FP16 KV cache.
 Phase 6 (20 tasks, 4 epics) complete -- 234.30 tok/s, surpassed Ollama by 18.8%.
-Phase 6 knowledge trimmed to docs/design.md.
-Updated docs/design.md with Phase 6 completion summary.
-
-Phase 7 focuses on 4 epics:
-- E901: Custom F32 GEMV kernel for decode (6 tasks + 2 tests).
-- E902: FP16 KV cache (4 tasks + 3 tests).
-- E903: Graph/no-graph output divergence fix (2 tasks + 1 test).
-- E904: Final benchmark (2 tasks + 1 test).
-
-Total: 14 implementation tasks, 6 test subtasks = 20 tasks.
-Designed for 5 waves with up to 5 parallel agents per wave.
 
 ---
 
 ## 9. Hand-off Notes
 
-- **Prior plans:** Phase 1 (89 tasks), Phase 2 (35 tasks), Phase 3 (26 tasks),
-  Phase 4 (30 tasks), Phase 5 (19 tasks), Phase 6 (20 tasks) complete.
-  See docs/design.md and docs/adr/033-how-we-beat-ollama.md.
+- **Prior plans:** Phase 1-6 complete. See docs/design.md and docs/adr/033-how-we-beat-ollama.md.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
 - **Build kernels:** cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
 - **Benchmark:** export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
   && /usr/local/go/bin/go run ./cmd/bench_tps --model ~/models/gemma3-gguf/model.gguf
   --tokens 256 --prompt 'The quick brown fox' --device cuda --dtype fp32
-- **cuBLAS SGEMV location:** compute/gpu_engine.go calls cublasSgemv_v2 via
-  internal/cublas/ purego bindings.
-- **FP16 conversion kernels (already exist):**
-  - internal/cuda/kernels/elementwise_fp16.cu -- launch_f32_to_fp16, launch_fp16_to_f32
-  - These are optional symbols in KernelLib (may need to verify they compile for sm_121).
-- **CUDA graph infrastructure:**
-  - graph/cuda_graph.go -- CUDAGraphExecutor with capture/replay
-  - generate/tensor_cache.go -- TensorCache with GPU counter, AppendGPU
+- **GQA decode fast path (target for E905):**
+  - layers/attention/grouped_query_attention.go lines 616-710
+  - Currently disabled for GQA at line 621 (numQueryHeads == numKVHeads guard)
+  - Calls tryFlashDecode at line 701
+- **flash_attention_decode kernel (T903.2):**
+  - internal/cuda/kernels/flash_attention.cu -- flash_attention_decode_kernel
+  - Reads kv_len from GPU-resident pointer
+  - Currently does NOT handle GQA (assumes numQ == numKV heads)
+- **FP16 KV (broken):**
+  - generate/tensor_cache.go -- WithKVDtype("fp16"), appendFP16, Get conversion
+  - Produces all pad tokens on DGX. Conversion path needs debugging.
 - **GPU counter pattern:**
   - internal/cuda/kernels/counter.cu -- increment_counter, reset_counter
-  - internal/cuda/kernels/offset_memcpy.cu -- GPU-indexed memcpy
+  - internal/cuda/kernels/offset_memcpy.cu -- GPU-indexed memcpy (F32 + FP16)
   - internal/cuda/kernels/rope_select.cu -- GPU-indexed RoPE table lookup
+- **sgemv_m1 kernel (built but not wired into GPUEngine):**
+  - internal/cuda/kernels/sgemv_m1.cu -- 152 GFLOPS at 4096x4096
+  - Deferred integration: cuBLAS is only 8% of decode
 - **Pre-commit hook:** Rejects multi-directory commits.
-- **Pre-existing issue:** BatchGenerate race on logitsBuf (unrelated to Phase 7).
 
 ---
 
 ## 10. Appendix
 
-### Bandwidth Utilization Analysis
+### GQA Head Replication in Kernel
 
-| Metric | Value | Source |
-|--------|-------|--------|
-| Current throughput | 234.30 tok/s | Phase 6 benchmark |
-| Token time | 4.27 ms | 1/234.30 |
-| Memory bandwidth | 273 GB/s | DGX Spark GB10 spec |
-| Model size (Q4_K_M) | ~700 MB | Estimated for Gemma 3 1B |
-| Theoretical min token time | ~2.56 ms | 700MB / 273GB/s |
-| Theoretical max tok/s | ~390 | 1/0.00256 |
-| Current utilization | ~60% | 2.56/4.27 |
-| cuBLAS overhead estimate | ~1.0-1.3 ms | 260 calls x 4us overhead |
-| FP16 KV savings estimate | ~0.2-0.5 ms | Depends on sequence length |
+```
+Gemma 3 1B config:
+  numQueryHeads = 8
+  numKVHeads = 4
+  headRatio = numQueryHeads / numKVHeads = 2
 
-### cuBLAS Call Pattern (Gemma 3 1B decode, M=1)
+For query head q_idx (0..7):
+  kv_head_idx = q_idx / headRatio = q_idx / 2
 
-Per transformer layer (26 layers):
-- QKV projection: 1x cublasSgemv (merged weight, M=1 N=1536 K=1536+256+256)
-- Output projection: 1x cublasSgemv (M=1 N=1536 K=1536)
-- FFN gate+up: 1x cublasSgemv (merged, M=1 N=12288 K=1536) or 2 separate
-- FFN down: 1x cublasSgemv (M=1 N=1536 K=6144)
+  q_idx=0 -> kv_head=0
+  q_idx=1 -> kv_head=0  (replicates KV head 0)
+  q_idx=2 -> kv_head=1
+  q_idx=3 -> kv_head=1  (replicates KV head 1)
+  q_idx=4 -> kv_head=2
+  q_idx=5 -> kv_head=2  (replicates KV head 2)
+  q_idx=6 -> kv_head=3
+  q_idx=7 -> kv_head=3  (replicates KV head 3)
 
-Total: ~4-5 cuBLAS calls/layer x 26 layers = 104-130 calls/token.
-Plus embedding, LM head: ~135-145 total cuBLAS calls per token.
+KV buffer layout: [batch, maxSeqLen, numKVHeads * headDim]
+  K for kv_head h at position p: K[b * maxSeqLen * dim + p * dim + h * headDim]
+
+This indexing happens at register level in the kernel inner loop.
+Zero extra memory allocation. Zero extra memory traffic.
+```
+
+### Performance Projection
+
+| Optimization | Estimated Savings | Estimated tok/s |
+|-------------|-------------------|-----------------|
+| Baseline (Phase 6) | -- | 234.30 |
+| GQA decode kernel (eliminate Repeat) | 0.3-0.5 ms | 250-270 |
+| CUDA graph capture of GQA attention | 0.5-0.8 ms | 280-320 |
+| FP16 KV cache (if fixed) | 0.1-0.3 ms | +5-10 additional |
+| Combined estimate | 0.9-1.6 ms savings | 290-330 |
