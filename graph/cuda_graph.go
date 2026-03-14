@@ -191,6 +191,12 @@ func (g *CUDAGraphExecutor[T]) captureAndRun(ctx context.Context, inputs ...*ten
 	// GPU-resident data and avoids sync D2H copies that break capture.
 	g.plan.EnsureSlotsGPU(g.gpuSlotCache)
 
+	// Also upload frozen scalar constants that are inputs to capture-region
+	// instructions. PreUploadFrozenWeights keeps scalars on CPU for ops like
+	// Range/Pow that read host values, but capture-region ops (Mul, Add, etc.)
+	// need all inputs on GPU to avoid cudaMemcpy during stream capture.
+	g.plan.EnsureCaptureInputsGPU(g.captureStart, g.captureEnd, g.gpuSlotCache)
+
 	// Snapshot KV cache state before the capture region runs. If capture
 	// fails, restoreCache rolls back cache mutations (seqLen, GPU counters)
 	// so the RunInstructions fallback doesn't double-update the cache.
