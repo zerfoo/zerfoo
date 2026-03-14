@@ -147,7 +147,8 @@ func (n *errorNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float3
 	return nil, errors.New("forward error")
 }
 
-func buildErrorModel(t *testing.T) *inference.Model {
+// buildModelWithNode builds a minimal inference.Model using the given node as the sole graph op.
+func buildModelWithNode(t *testing.T, node graph.Node[float32]) *inference.Model {
 	t.Helper()
 	vocabSize := 8
 	tok := tokenizer.NewWhitespaceTokenizer()
@@ -159,7 +160,6 @@ func buildErrorModel(t *testing.T) *inference.Model {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	b := graph.NewBuilder[float32](engine)
 	in := b.Input([]int{1, 1, 1})
-	node := &errorNode{}
 	b.AddNode(node, in)
 	g, err := b.Build(node)
 	if err != nil {
@@ -183,6 +183,11 @@ func buildErrorModel(t *testing.T) *inference.Model {
 		},
 		&registry.ModelInfo{ID: "test-model", Path: "/tmp/test"},
 	)
+}
+
+func buildErrorModel(t *testing.T) *inference.Model {
+	t.Helper()
+	return buildModelWithNode(t, &errorNode{})
 }
 
 // --- Chat Completions ---
@@ -1314,40 +1319,7 @@ func (n *panicNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float3
 
 func buildPanicModel(t *testing.T) *inference.Model {
 	t.Helper()
-	vocabSize := 8
-	tok := tokenizer.NewWhitespaceTokenizer()
-	tok.AddToken("hello")
-	tok.AddToken("world")
-	tok.AddToken("foo")
-	tok.AddToken("bar")
-
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-	b := graph.NewBuilder[float32](engine)
-	in := b.Input([]int{1, 1, 1})
-	node := &panicNode{}
-	b.AddNode(node, in)
-	g, err := b.Build(node)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gen := generate.NewGenerator(g, tok, engine, generate.ModelConfig{
-		VocabSize:  vocabSize,
-		MaxSeqLen:  32,
-		EOSTokenID: 2,
-		BOSTokenID: 1,
-		NumLayers:  0,
-	})
-
-	return inference.NewTestModel(gen, tok, engine,
-		inference.ModelMetadata{
-			VocabSize:  vocabSize,
-			NumLayers:  1,
-			EOSTokenID: 2,
-			BOSTokenID: 1,
-		},
-		&registry.ModelInfo{ID: "test-model", Path: "/tmp/test"},
-	)
+	return buildModelWithNode(t, &panicNode{})
 }
 
 // oomErrorNode returns an OOM error during Forward.
@@ -1368,40 +1340,7 @@ func (n *oomErrorNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[flo
 
 func buildOOMModel(t *testing.T) *inference.Model {
 	t.Helper()
-	vocabSize := 8
-	tok := tokenizer.NewWhitespaceTokenizer()
-	tok.AddToken("hello")
-	tok.AddToken("world")
-	tok.AddToken("foo")
-	tok.AddToken("bar")
-
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-	b := graph.NewBuilder[float32](engine)
-	in := b.Input([]int{1, 1, 1})
-	node := &oomErrorNode{}
-	b.AddNode(node, in)
-	g, err := b.Build(node)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gen := generate.NewGenerator(g, tok, engine, generate.ModelConfig{
-		VocabSize:  vocabSize,
-		MaxSeqLen:  32,
-		EOSTokenID: 2,
-		BOSTokenID: 1,
-		NumLayers:  0,
-	})
-
-	return inference.NewTestModel(gen, tok, engine,
-		inference.ModelMetadata{
-			VocabSize:  vocabSize,
-			NumLayers:  1,
-			EOSTokenID: 2,
-			BOSTokenID: 1,
-		},
-		&registry.ModelInfo{ID: "test-model", Path: "/tmp/test"},
-	)
+	return buildModelWithNode(t, &oomErrorNode{})
 }
 
 func TestRecoveryMiddleware_PanicReturns500(t *testing.T) {

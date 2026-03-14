@@ -78,9 +78,9 @@ func writeCounter(w http.ResponseWriter, name, help string, counters map[string]
 	if !ok {
 		return
 	}
-	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
-	fmt.Fprintf(w, "# TYPE %s counter\n", name)
-	fmt.Fprintf(w, "%s %d\n", name, v)
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	_, _ = fmt.Fprintf(w, "# TYPE %s counter\n", name)
+	_, _ = fmt.Fprintf(w, "%s %d\n", name, v)
 }
 
 func writeGauge(w http.ResponseWriter, name, help string, gauges map[string]float64) {
@@ -88,9 +88,9 @@ func writeGauge(w http.ResponseWriter, name, help string, gauges map[string]floa
 	if !ok {
 		return
 	}
-	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
-	fmt.Fprintf(w, "# TYPE %s gauge\n", name)
-	fmt.Fprintf(w, "%s %g\n", name, v)
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	_, _ = fmt.Fprintf(w, "# TYPE %s gauge\n", name)
+	_, _ = fmt.Fprintf(w, "%s %g\n", name, v)
 }
 
 func writeHistogram(w http.ResponseWriter, name, help string, histograms map[string]runtime.HistogramSnapshot) {
@@ -98,8 +98,8 @@ func writeHistogram(w http.ResponseWriter, name, help string, histograms map[str
 	if !ok {
 		return
 	}
-	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
-	fmt.Fprintf(w, "# TYPE %s histogram\n", name)
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	_, _ = fmt.Fprintf(w, "# TYPE %s histogram\n", name)
 
 	// Sort bucket boundaries.
 	bounds := make([]float64, 0, len(h.Buckets))
@@ -109,9 +109,9 @@ func writeHistogram(w http.ResponseWriter, name, help string, histograms map[str
 	sort.Float64s(bounds)
 
 	for _, b := range bounds {
-		fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, b, h.Buckets[b])
+		_, _ = fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, b, h.Buckets[b])
 	}
-	fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, h.Count)
-	fmt.Fprintf(w, "%s_sum %g\n", name, h.Sum)
-	fmt.Fprintf(w, "%s_count %d\n", name, h.Count)
+	_, _ = fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, h.Count)
+	_, _ = fmt.Fprintf(w, "%s_sum %g\n", name, h.Sum)
+	_, _ = fmt.Fprintf(w, "%s_count %d\n", name, h.Count)
 }
