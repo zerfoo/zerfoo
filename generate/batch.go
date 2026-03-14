@@ -2,7 +2,6 @@ package generate
 
 import (
 	"context"
-	"sync"
 
 	"github.com/zerfoo/zerfoo/tensor"
 )
@@ -30,18 +29,16 @@ type BatchResult struct {
 // parallelism as an interim solution.
 func (gen *Generator[T]) BatchGenerate(ctx context.Context, requests []BatchRequest) []BatchResult {
 	results := make([]BatchResult, len(requests))
-	var wg sync.WaitGroup
-	wg.Add(len(requests))
 
+	// Run sequentially: the Generator's ExecutionPlan shares scratch buffers
+	// that are not safe for concurrent use. True batched inference (batch
+	// dimension > 1 in a single forward pass) requires native batch support
+	// in the model graph, which is not yet implemented.
 	for i, req := range requests {
-		go func(idx int, r BatchRequest) {
-			defer wg.Done()
-			text, err := gen.Generate(ctx, r.Prompt, r.Sampling)
-			results[idx] = BatchResult{Text: text, Err: err}
-		}(i, req)
+		text, err := gen.Generate(ctx, req.Prompt, req.Sampling)
+		results[i] = BatchResult{Text: text, Err: err}
 	}
 
-	wg.Wait()
 	return results
 }
 
@@ -62,17 +59,11 @@ func (gen *Generator[T]) BatchGenerateStream(ctx context.Context, requests []Bat
 	}
 
 	errs := make([]error, len(requests))
-	var wg sync.WaitGroup
-	wg.Add(len(requests))
 
 	for i, req := range requests {
-		go func(idx int, r BatchRequest, stream TokenStream) {
-			defer wg.Done()
-			errs[idx] = gen.GenerateStream(ctx, r.Prompt, r.Sampling, stream)
-		}(i, req, streams[i])
+		errs[i] = gen.GenerateStream(ctx, req.Prompt, req.Sampling, streams[i])
 	}
 
-	wg.Wait()
 	return errs
 }
 
