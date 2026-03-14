@@ -56,11 +56,12 @@ func (c *PullCommand) Run(ctx context.Context, args []string) error {
 
 	reg := c.reg
 	if reg == nil {
-		var err error
-		reg, err = registry.NewLocalRegistry(cacheDir)
+		lr, err := registry.NewLocalRegistry(cacheDir)
 		if err != nil {
 			return fmt.Errorf("create registry: %w", err)
 		}
+		lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{}))
+		reg = lr
 	}
 
 	// Check if already cached.

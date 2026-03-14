@@ -3,8 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -210,14 +214,11 @@ func TestPullCommand_NilRegistryCreatesLocalRegistry(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := NewPullCommand(nil, &buf)
 	// Use --cache-dir so the LocalRegistry targets a temp directory.
-	// Pull will fail because no pullFunc is set, but we verify the error
-	// comes from the registry (not a nil-pointer panic).
+	// Pull will attempt to reach HuggingFace and fail (no real server).
+	// We verify we get an error (not a nil-pointer panic).
 	err := cmd.Run(context.Background(), []string{"--cache-dir", tmp, "org/test-model"})
 	if err == nil {
-		t.Fatal("expected error from LocalRegistry.Pull (no pull function configured)")
-	}
-	if !strings.Contains(err.Error(), "no pull function configured") {
-		t.Errorf("error = %q, want 'no pull function configured'", err.Error())
+		t.Fatal("expected error from LocalRegistry.Pull (HF unreachable)")
 	}
 }
 
@@ -225,4 +226,235 @@ func TestPullCommand_NilRegistryCreatesLocalRegistry(t *testing.T) {
 func TestPullCommand_Interface(t *testing.T) {
 	var _ Command = (*PullCommand)(nil)
 	_ = os.Stderr // use os to avoid unused import
+}
+
+// newMockHFServer creates an httptest server that simulates the HuggingFace
+// API (model listing) and CDN (file download). It returns the server and
+// separate API/CDN base URLs (they share the same server, differentiated by path prefix).
+func newMockHFServer(t *testing.T, modelID string, files map[string][]byte) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+
+	// API endpoint: GET /api/models/<org>/<model>
+	mux.HandleFunc("/api/models/"+modelID, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var siblings []registry.HFSibling
+		for name := range files {
+			siblings = append(siblings, registry.HFSibling{Filename: name})
+		}
+		resp := registry.HFModelInfo{ID: modelID, Siblings: siblings}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	})
+
+	// CDN endpoint: GET /cdn/<org>/<model>/resolve/main/<filename>
+	mux.HandleFunc("/cdn/"+modelID+"/resolve/main/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Extract filename from path after /cdn/<org>/<model>/resolve/main/
+		prefix := "/cdn/" + modelID + "/resolve/main/"
+		filename := strings.TrimPrefix(r.URL.Path, prefix)
+		data, ok := files[filename]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		if _, err := w.Write(data); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+
+	return httptest.NewServer(mux)
+}
+
+func TestPullCommand_Integration(t *testing.T) {
+	modelID := "testorg/testmodel"
+	modelConfig := []byte(`{"architectures":["TestArch"]}`)
+	modelONNX := []byte("fake-onnx-model-data-for-testing")
+	tokenizerJSON := []byte(`{"version":"1.0"}`)
+
+	tests := []struct {
+		name       string
+		modelID    string
+		files      map[string][]byte
+		wantOutput []string
+		wantFiles  []string
+	}{
+		{
+			name:    "pulls model with onnx and tokenizer",
+			modelID: modelID,
+			files: map[string][]byte{
+				"config.json":    modelConfig,
+				"model.onnx":     modelONNX,
+				"tokenizer.json": tokenizerJSON,
+				"README.md":      []byte("# readme"), // should be skipped
+			},
+			wantOutput: []string{
+				"Pulling " + modelID,
+				"Model saved to:",
+				"Size:",
+			},
+			wantFiles: []string{
+				"config.json",
+				"model.onnx",
+				"tokenizer.json",
+			},
+		},
+		{
+			name:    "pulls model with gguf format",
+			modelID: modelID,
+			files: map[string][]byte{
+				"model.gguf":  []byte("fake-gguf-data"),
+				"LICENSE":     []byte("MIT"), // should be skipped
+				"config.json": modelConfig,
+			},
+			wantOutput: []string{
+				"Pulling " + modelID,
+				"Model saved to:",
+			},
+			wantFiles: []string{
+				"model.gguf",
+				"config.json",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockHFServer(t, tt.modelID, tt.files)
+			defer srv.Close()
+
+			cacheDir := t.TempDir()
+
+			lr, err := registry.NewLocalRegistry(cacheDir)
+			if err != nil {
+				t.Fatalf("NewLocalRegistry: %v", err)
+			}
+			lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{
+				APIURL: srv.URL + "/api/models",
+				CDNURL: srv.URL + "/cdn",
+				Client: srv.Client(),
+			}))
+
+			var buf bytes.Buffer
+			cmd := NewPullCommand(lr, &buf)
+			err = cmd.Run(context.Background(), []string{tt.modelID})
+			if err != nil {
+				t.Fatalf("Run error: %v", err)
+			}
+
+			output := buf.String()
+			for _, want := range tt.wantOutput {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing %q, got: %s", want, output)
+				}
+			}
+
+			// Verify expected files were downloaded.
+			modelDir := filepath.Join(cacheDir, "testorg", "testmodel")
+			for _, wantFile := range tt.wantFiles {
+				path := filepath.Join(modelDir, wantFile)
+				data, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Errorf("expected file %s to exist: %v", wantFile, readErr)
+					continue
+				}
+				if len(data) == 0 {
+					t.Errorf("file %s is empty", wantFile)
+				}
+			}
+
+			// Verify skipped files were not downloaded.
+			skippedFiles := []string{"README.md", "LICENSE"}
+			for _, skip := range skippedFiles {
+				if _, ok := tt.files[skip]; !ok {
+					continue
+				}
+				path := filepath.Join(modelDir, skip)
+				if _, statErr := os.Stat(path); statErr == nil {
+					t.Errorf("file %s should not have been downloaded", skip)
+				}
+			}
+		})
+	}
+}
+
+func TestPullCommand_IntegrationAlreadyCached(t *testing.T) {
+	modelID := "testorg/cachedmodel"
+	files := map[string][]byte{
+		"config.json": []byte(`{"architectures":["TestArch"]}`),
+		"model.onnx":  []byte("onnx-data"),
+	}
+
+	srv := newMockHFServer(t, modelID, files)
+	defer srv.Close()
+
+	cacheDir := t.TempDir()
+
+	lr, err := registry.NewLocalRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("NewLocalRegistry: %v", err)
+	}
+	lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{
+		APIURL: srv.URL + "/api/models",
+		CDNURL: srv.URL + "/cdn",
+		Client: srv.Client(),
+	}))
+
+	var buf bytes.Buffer
+	cmd := NewPullCommand(lr, &buf)
+
+	// First pull.
+	if err := cmd.Run(context.Background(), []string{modelID}); err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Model saved to:") {
+		t.Errorf("first pull output = %q, want 'Model saved to:'", buf.String())
+	}
+
+	// Second pull should report already cached.
+	buf.Reset()
+	if err := cmd.Run(context.Background(), []string{modelID}); err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Already up to date") {
+		t.Errorf("second pull output = %q, want 'Already up to date'", buf.String())
+	}
+}
+
+func TestPullCommand_IntegrationServerError(t *testing.T) {
+	// Server that always returns 500.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cacheDir := t.TempDir()
+	lr, err := registry.NewLocalRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("NewLocalRegistry: %v", err)
+	}
+	lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{
+		APIURL: srv.URL + "/api/models",
+		CDNURL: srv.URL + "/cdn",
+		Client: srv.Client(),
+	}))
+
+	var buf bytes.Buffer
+	cmd := NewPullCommand(lr, &buf)
+	err = cmd.Run(context.Background(), []string{"org/model"})
+	if err == nil {
+		t.Fatal("expected error for server error response")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error = %q, want it to contain '500'", err.Error())
+	}
 }
