@@ -61,6 +61,218 @@ func naiveAttention(Q, K, V []float32, batch, heads, seqLen, headDim int, causal
 	return O
 }
 
+// naiveDecodeAttention computes the CPU reference for decode attention with GQA.
+func naiveDecodeAttention(Q, K, V []float32, batch, numQHeads, numKVHeads, kvLen, headDim int) []float32 {
+	O := make([]float32, batch*numQHeads*headDim)
+	scale := 1.0 / math.Sqrt(float64(headDim))
+	headRatio := numQHeads / numKVHeads
+
+	for b := 0; b < batch; b++ {
+		for qh := 0; qh < numQHeads; qh++ {
+			bh := b*numQHeads + qh
+			kvHead := qh / headRatio
+			kvBH := b*numKVHeads + kvHead
+
+			scores := make([]float64, kvLen)
+			maxScore := -math.MaxFloat64
+			for j := 0; j < kvLen; j++ {
+				dot := 0.0
+				for d := 0; d < headDim; d++ {
+					dot += float64(Q[bh*headDim+d]) * float64(K[kvBH*kvLen*headDim+j*headDim+d])
+				}
+				scores[j] = dot * scale
+				if scores[j] > maxScore {
+					maxScore = scores[j]
+				}
+			}
+
+			sum := 0.0
+			for j := 0; j < kvLen; j++ {
+				scores[j] = math.Exp(scores[j] - maxScore)
+				sum += scores[j]
+			}
+			for j := 0; j < kvLen; j++ {
+				scores[j] /= sum
+			}
+
+			for d := 0; d < headDim; d++ {
+				acc := 0.0
+				for j := 0; j < kvLen; j++ {
+					acc += scores[j] * float64(V[kvBH*kvLen*headDim+j*headDim+d])
+				}
+				O[bh*headDim+d] = float32(acc)
+			}
+		}
+	}
+	return O
+}
+
+func TestFlashAttentionPuregoDecodeNonGQA(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available (no GPU)")
+	}
+
+	batch, numQHeads, numKVHeads, headDim, kvLen := 1, 4, 4, 64, 32
+	numBH := batch * numQHeads
+
+	qSize := numBH * headDim
+	kvSize := batch * numKVHeads * kvLen * headDim
+
+	Q := make([]float32, qSize)
+	K := make([]float32, kvSize)
+	V := make([]float32, kvSize)
+
+	for i := range Q {
+		Q[i] = float32(i%7-3) * 0.1
+	}
+	for i := range K {
+		K[i] = float32(i%5-2) * 0.1
+		V[i] = float32(i%11-5) * 0.1
+	}
+
+	expected := naiveDecodeAttention(Q, K, V, batch, numQHeads, numKVHeads, kvLen, headDim)
+
+	devQ, err := cuda.Malloc(qSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc Q: %v", err)
+	}
+	defer cuda.Free(devQ)
+
+	devK, err := cuda.Malloc(kvSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc K: %v", err)
+	}
+	defer cuda.Free(devK)
+
+	devV, err := cuda.Malloc(kvSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc V: %v", err)
+	}
+	defer cuda.Free(devV)
+
+	devO, err := cuda.Malloc(qSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc O: %v", err)
+	}
+	defer cuda.Free(devO)
+
+	cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
+	cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
+
+	stream, err := cuda.CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+	defer stream.Destroy()
+
+	if err := FlashAttentionDecode(devQ, devK, devV, devO, numBH, kvLen, headDim, kvLen, nil, numQHeads, numKVHeads, stream.Ptr()); err != nil {
+		t.Fatalf("FlashAttentionDecode: %v", err)
+	}
+	stream.Synchronize()
+
+	result := make([]float32, qSize)
+	cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
+
+	tol := 1e-4
+	mismatches := 0
+	for i := range result {
+		diff := math.Abs(float64(result[i] - expected[i]))
+		if diff > tol {
+			if mismatches < 5 {
+				t.Errorf("output[%d] = %f, want %f (diff %e)", i, result[i], expected[i], diff)
+			}
+			mismatches++
+		}
+	}
+	if mismatches > 0 {
+		t.Errorf("total mismatches: %d / %d", mismatches, qSize)
+	}
+}
+
+func TestFlashAttentionPuregoDecodeGQA(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available (no GPU)")
+	}
+
+	batch, numQHeads, numKVHeads, headDim, kvLen := 1, 8, 4, 256, 32
+	numBH := batch * numQHeads
+
+	qSize := numBH * headDim
+	kvSize := batch * numKVHeads * kvLen * headDim
+
+	Q := make([]float32, qSize)
+	K := make([]float32, kvSize)
+	V := make([]float32, kvSize)
+
+	for i := range Q {
+		Q[i] = float32(i%7-3) * 0.1
+	}
+	for i := range K {
+		K[i] = float32(i%5-2) * 0.1
+		V[i] = float32(i%11-5) * 0.1
+	}
+
+	expected := naiveDecodeAttention(Q, K, V, batch, numQHeads, numKVHeads, kvLen, headDim)
+
+	devQ, err := cuda.Malloc(qSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc Q: %v", err)
+	}
+	defer cuda.Free(devQ)
+
+	devK, err := cuda.Malloc(kvSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc K: %v", err)
+	}
+	defer cuda.Free(devK)
+
+	devV, err := cuda.Malloc(kvSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc V: %v", err)
+	}
+	defer cuda.Free(devV)
+
+	devO, err := cuda.Malloc(qSize * 4)
+	if err != nil {
+		t.Fatalf("Malloc O: %v", err)
+	}
+	defer cuda.Free(devO)
+
+	cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), qSize*4, cuda.MemcpyHostToDevice)
+	cuda.Memcpy(devK, unsafe.Pointer(&K[0]), kvSize*4, cuda.MemcpyHostToDevice)
+	cuda.Memcpy(devV, unsafe.Pointer(&V[0]), kvSize*4, cuda.MemcpyHostToDevice)
+
+	stream, err := cuda.CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+	defer stream.Destroy()
+
+	if err := FlashAttentionDecode(devQ, devK, devV, devO, numBH, kvLen, headDim, kvLen, nil, numQHeads, numKVHeads, stream.Ptr()); err != nil {
+		t.Fatalf("FlashAttentionDecode GQA: %v", err)
+	}
+	stream.Synchronize()
+
+	result := make([]float32, qSize)
+	cuda.Memcpy(unsafe.Pointer(&result[0]), devO, qSize*4, cuda.MemcpyDeviceToHost)
+
+	tol := 1e-4
+	mismatches := 0
+	for i := range result {
+		diff := math.Abs(float64(result[i] - expected[i]))
+		if diff > tol {
+			if mismatches < 5 {
+				t.Errorf("output[%d] = %f, want %f (diff %e)", i, result[i], expected[i], diff)
+			}
+			mismatches++
+		}
+	}
+	if mismatches > 0 {
+		t.Errorf("total mismatches: %d / %d (GQA)", mismatches, qSize)
+	}
+}
+
 // TestFlashAttentionPuregoParityNonCausal verifies the purego flash attention
 // forward path matches naive CPU attention. Max rel error < 1e-4.
 func TestFlashAttentionPuregoParityNonCausal(t *testing.T) {
