@@ -101,6 +101,16 @@ type KernelLib struct {
 	launchFP8Add               uintptr
 	launchFP8Mul               uintptr
 	launchFP8RMSNorm           uintptr
+
+	// counter
+	launchIncrementCounter uintptr
+	launchResetCounter     uintptr
+
+	// offset_memcpy
+	launchOffsetMemcpy uintptr
+
+	// rope_select
+	launchRoPESelect uintptr
 }
 
 var (
@@ -210,6 +220,13 @@ func openKernelLib() (*KernelLib, error) {
 		{"launch_fp8_add", &k.launchFP8Add},
 		{"launch_fp8_mul", &k.launchFP8Mul},
 		{"launch_fp8_rmsnorm", &k.launchFP8RMSNorm},
+		// counter
+		{"launch_increment_counter", &k.launchIncrementCounter},
+		{"launch_reset_counter", &k.launchResetCounter},
+		// offset_memcpy
+		{"launch_offset_memcpy", &k.launchOffsetMemcpy},
+		// rope_select
+		{"launch_rope_select", &k.launchRoPESelect},
 		}
 		// Optional symbols: missing is non-fatal (kernel not compiled yet).
 		optionalSyms := map[string]bool{
@@ -219,6 +236,10 @@ func openKernelLib() (*KernelLib, error) {
 			"launch_fp8_add":                  true,
 			"launch_fp8_mul":                  true,
 			"launch_fp8_rmsnorm":              true,
+			"launch_increment_counter":        true,
+			"launch_reset_counter":            true,
+			"launch_offset_memcpy":            true,
+			"launch_rope_select":              true,
 		}
 		for _, s := range syms {
 			ptr, dlErr := cuda.Dlsym(lib, s.name)
