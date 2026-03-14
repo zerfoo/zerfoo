@@ -230,5 +230,21 @@ func (k *ROCmKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ int
 	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) IncrementCounter(_ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("IncrementCounter: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) ResetCounter(_ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ResetCounter: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("OffsetMemcpy: not implemented for ROCm")
+}
+
+func (k *ROCmKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("RoPESelect: not implemented for ROCm")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*ROCmKernels)(nil)

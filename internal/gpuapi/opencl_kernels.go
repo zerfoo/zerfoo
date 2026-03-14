@@ -240,5 +240,21 @@ func (k *OpenCLKernels) DequantFP8E4M3ToFP16(_, _ unsafe.Pointer, _ float32, _ i
 	return fmt.Errorf("DequantFP8E4M3ToFP16: not implemented for OpenCL")
 }
 
+func (k *OpenCLKernels) IncrementCounter(_ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("IncrementCounter: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) ResetCounter(_ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("ResetCounter: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) OffsetMemcpy(_, _, _ unsafe.Pointer, _, _ int, _ Stream) error {
+	return fmt.Errorf("OffsetMemcpy: not implemented for OpenCL")
+}
+
+func (k *OpenCLKernels) RoPESelect(_, _, _, _, _ unsafe.Pointer, _ int, _ Stream) error {
+	return fmt.Errorf("RoPESelect: not implemented for OpenCL")
+}
+
 // Compile-time interface assertion.
 var _ KernelRunner = (*OpenCLKernels)(nil)
