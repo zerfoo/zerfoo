@@ -1,3 +1,69 @@
+# Phase 8: Post-GQA Fix Re-benchmark
+
+Date: 2026-03-13
+Branch: feat/fp16-kv-wire
+Commit: 9803ba1 (fix: skip decode fast path for GQA)
+Hardware: DGX Spark (NVIDIA GB10, sm_121, 273 GB/s LPDDR5x)
+
+## Summary
+
+After disabling the decode fast path for GQA models (commit 9803ba1), F32 KV
+performance is fully restored to Phase 6 baseline levels. The fix skips the
+decode fast path when numQueryHeads != numKVHeads, avoiding the expensive
+Repeat on the full 8192-token KV buffer that caused the 93.7% regression.
+
+FP16 KV cache remains broken -- output is all `<pad>` tokens despite achieving
+good throughput (237.90 tok/s). The FP16 conversion path has a correctness bug.
+
+## F32 KV Benchmark (256 tokens, temp=0)
+
+| Run | Throughput | Arena Misses | Arena Resets |
+|-----|-----------|-------------|-------------|
+| 1 | 235.43 tok/s | 0 | 258 |
+| 2 | 233.35 tok/s | 0 | 258 |
+| 3 | 233.45 tok/s | 0 | 258 |
+| **Avg** | **234.08 tok/s** | 0 | 258 |
+
+## FP16 KV Benchmark (256 tokens, temp=0)
+
+| Run | Throughput | Output Quality |
+|-----|-----------|---------------|
+| 1 | 237.90 tok/s | BROKEN -- all `<pad>` tokens |
+
+## Comparison with Baselines
+
+| Configuration | tok/s | vs Phase 6 | vs Ollama |
+|---------------|-------|-----------|-----------|
+| Phase 6 baseline (commit 86332d7) | 234.30 | -- | +18.8% |
+| Ollama | 197.21 | -15.8% | -- |
+| **Phase 8 F32 KV (post-GQA fix)** | **234.08** | **-0.1%** | **+18.7%** |
+| Phase 7 F32 KV (pre-fix) | 14.67 | -93.7% | -92.6% |
+| Phase 8 FP16 KV | 237.90 | +1.5% | +20.6% |
+
+## Key Findings
+
+1. **F32 KV fully restored**: 234.08 tok/s matches Phase 6 baseline (234.30),
+   confirming the GQA decode fast path was the sole cause of the regression.
+
+2. **Zero arena misses**: The fix restored the Phase 6 code path which has no
+   arena misses (vs 148 misses with the decode fast path).
+
+3. **Output determinism**: All 3 F32 KV runs produce identical output text,
+   matching the Phase 6 baseline pattern ("This is a good work...").
+
+4. **FP16 KV still broken**: The FP16 KV path produces garbage output (all pad
+   tokens). The throughput is slightly higher than F32 (237.90 vs 234.08)
+   suggesting the smaller KV tensors do reduce memory bandwidth, but the
+   FP16<->FP32 conversion has a correctness bug that needs investigation.
+
+## Next Steps
+
+- Investigate FP16 KV correctness bug (pad token output)
+- Wire custom sgemv_m1 kernel into GPUEngine (T901.4)
+- Re-enable decode fast path for non-GQA models (MHA where numQueryHeads == numKVHeads)
+
+---
+
 # Phase 7 Final Benchmark Results (T904.1, S903.2.1, S904.1.1, T901.5, T901.6, T902.4, T904.2)
 
 Date: 2026-03-13
