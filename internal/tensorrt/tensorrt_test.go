@@ -257,13 +257,13 @@ func TestBuildAndRunReLUNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc input: %v", err)
 	}
-	defer cuda.Free(inputDev)
+	defer func() { _ = cuda.Free(inputDev) }()
 
 	outputDev, err := cuda.Malloc(byteSize)
 	if err != nil {
 		t.Fatalf("Malloc output: %v", err)
 	}
-	defer cuda.Free(outputDev)
+	defer func() { _ = cuda.Free(outputDev) }()
 
 	// Copy input to device
 	if err := cuda.Memcpy(inputDev, unsafe.Pointer(&inputData[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
@@ -285,7 +285,7 @@ func TestBuildAndRunReLUNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := ctx.EnqueueV3(stream.Ptr()); err != nil {
 		t.Fatalf("EnqueueV3: %v", err)
@@ -400,13 +400,13 @@ func TestBuildAndRunMatMulReLUNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc input: %v", err)
 	}
-	defer cuda.Free(inputDev)
+	defer func() { _ = cuda.Free(inputDev) }()
 
 	outputDev, err := cuda.Malloc(outputBytes)
 	if err != nil {
 		t.Fatalf("Malloc output: %v", err)
 	}
-	defer cuda.Free(outputDev)
+	defer func() { _ = cuda.Free(outputDev) }()
 
 	if err := cuda.Memcpy(inputDev, unsafe.Pointer(&inputData[0]), inputBytes, cuda.MemcpyHostToDevice); err != nil {
 		t.Fatalf("Memcpy H2D: %v", err)
@@ -424,7 +424,7 @@ func TestBuildAndRunMatMulReLUNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStream: %v", err)
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	if err := ctx.EnqueueV3(stream.Ptr()); err != nil {
 		t.Fatalf("EnqueueV3: %v", err)
