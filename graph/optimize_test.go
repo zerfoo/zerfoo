@@ -101,19 +101,19 @@ func (n *stubAddNode) Backward(_ context.Context, _ types.BackwardMode, _ *tenso
 	return nil, nil
 }
 
-// constantNode wraps a tensor as a graph node (emulates parameterNode from model/).
-type constantNode struct {
+// paramConstNode wraps a tensor as a graph node (emulates parameterNode from model/).
+type paramConstNode struct {
 	value *tensor.TensorNumeric[float32]
 }
 
-func (n *constantNode) OpType() string                  { return "Parameter" }
-func (n *constantNode) Attributes() map[string]interface{} { return nil }
-func (n *constantNode) OutputShape() []int               { return n.value.Shape() }
-func (n *constantNode) Parameters() []*Parameter[float32] { return nil }
-func (n *constantNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+func (n *paramConstNode) OpType() string                  { return "Parameter" }
+func (n *paramConstNode) Attributes() map[string]interface{} { return nil }
+func (n *paramConstNode) OutputShape() []int               { return n.value.Shape() }
+func (n *paramConstNode) Parameters() []*Parameter[float32] { return nil }
+func (n *paramConstNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return n.value, nil
 }
-func (n *constantNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+func (n *paramConstNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
 	return nil, nil
 }
 
@@ -127,7 +127,7 @@ func TestFoldConstantTransposes_ConstantInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paramNode := &constantNode{value: weight}
+	paramNode := &paramConstNode{value: weight}
 	transposeNode := &stubTransposeNode{engine: engine, perm: []int{1, 0}}
 	matmulNode := &stubMatMulNode{}
 
@@ -239,7 +239,7 @@ func TestFoldConstantTransposes_OutputMatchesWithinTolerance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paramNode := &constantNode{value: weight}
+	paramNode := &paramConstNode{value: weight}
 	transposeNode := &stubTransposeNode{engine: engine, perm: []int{1, 0}}
 	matmulNode := &stubMatMulNode{}
 
@@ -294,7 +294,7 @@ func TestFoldConstantTransposes_MultipleConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paramNode := &constantNode{value: weight}
+	paramNode := &paramConstNode{value: weight}
 	transposeNode := &stubTransposeNode{engine: engine, perm: []int{1, 0}}
 	matmulNode := &stubMatMulNode{}
 	addNode := &stubAddNode{}
