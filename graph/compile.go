@@ -220,8 +220,29 @@ func (p *ExecutionPlan[T]) PreUploadFrozenWeights() error {
 		if t == nil {
 			continue
 		}
+		// Compute total elements for scalar detection.
+		total := 1
+		for _, d := range t.Shape() {
+			total *= d
+		}
 		if _, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
-			continue // already GPU-resident
+			// If this is a scalar that's already on GPU, bring it back to CPU.
+			// Scalars are only read as host values by Range, Pow, etc.
+			// Keeping them on GPU forces D2H copies that break CUDA graph capture.
+			if total <= 1 {
+				data := t.Data()
+				cpuT, err := tensor.New[T](t.Shape(), data)
+				if err != nil {
+					continue
+				}
+				p.slots[idx] = cpuT
+			}
+			continue
+		}
+		// Skip scalar constants — they are read as host values by Range, Pow, etc.
+		// Uploading them to GPU forces D2H copies that break CUDA graph capture.
+		if total <= 1 {
+			continue
 		}
 		gpuT, err := tensor.ToGPU(t)
 		if err != nil {
