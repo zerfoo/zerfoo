@@ -70,7 +70,7 @@ func TestMemcpyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Malloc: %v", err)
 	}
-	defer Free(devPtr)
+	defer func() { _ = Free(devPtr) }()
 
 	// Host -> Device
 	if err := Memcpy(devPtr, unsafe.Pointer(&src[0]), n, MemcpyHostToDevice); err != nil {
