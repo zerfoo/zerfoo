@@ -64,8 +64,7 @@ func buildLlamaGraph(
 type lmHeadNode[T tensor.Numeric] struct {
 	engine     compute.Engine[T]
 	weight     *tensor.TensorNumeric[T]
-	weightT    *tensor.TensorNumeric[T] // pre-transposed weight [hiddenDim, vocabSize]
-	softcapVal float32                  // if > 0, apply softcapping: cap * tanh(logit/cap)
+	softcapVal float32 // if > 0, apply softcapping: cap * tanh(logit/cap)
 }
 
 func (h *lmHeadNode[T]) OpType() string                  { return "LMHead" }
@@ -92,28 +91,38 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 		return nil, err
 	}
 
-	// Pre-transpose weight once and cache for subsequent calls.
-	// Q4 storage uses virtual transpose (shape swap only, preserving Q4 data
-	// layout) so the Q4 GEMV kernel can read blocks in their native order.
-	// Other storage types use the engine's physical transpose.
-	if h.weightT == nil {
-		if _, ok := any(h.weight.GetStorage()).(*tensor.Q4Storage); ok {
-			ws := h.weight.Shape()
-			wT, tErr := tensor.NewWithStorage[T]([]int{ws[1], ws[0]}, h.weight.GetStorage())
-			if tErr != nil {
-				return nil, tErr
-			}
-			h.weightT = wT
-		} else {
-			wT, tErr := h.engine.Transpose(ctx, h.weight, []int{1, 0})
-			if tErr != nil {
-				return nil, tErr
-			}
-			h.weightT = wT
+	// Use MatMulTransposeB to compute flat * weight^T directly, avoiding an
+	// explicit Transpose allocation. Caching a transposed tensor caused a
+	// use-after-free: the graph's ref-counting released the tensor while the
+	// cache still held a reference, resulting in a null device pointer and
+	// cuBLAS status 7 (INTERNAL_ERROR).
+	//
+	// Q4 storage uses virtual transpose (shape swap only) so Q4 GEMV reads
+	// blocks in native order -- use regular MatMul for quantized weights.
+	var out *tensor.TensorNumeric[T]
+	if _, isQ4 := any(h.weight.GetStorage()).(*tensor.Q4Storage); isQ4 {
+		ws := h.weight.Shape()
+		wT, tErr := tensor.NewWithStorage[T]([]int{ws[1], ws[0]}, h.weight.GetStorage())
+		if tErr != nil {
+			return nil, tErr
 		}
+		out, err = h.engine.MatMul(ctx, flat, wT)
+	} else if _, isQ4K := any(h.weight.GetStorage()).(*tensor.Q4KStorage); isQ4K {
+		ws := h.weight.Shape()
+		wT, tErr := tensor.NewWithStorage[T]([]int{ws[1], ws[0]}, h.weight.GetStorage())
+		if tErr != nil {
+			return nil, tErr
+		}
+		out, err = h.engine.MatMul(ctx, flat, wT)
+	} else if tb, ok := h.engine.(compute.TransposeBMatMuler[T]); ok {
+		out, err = tb.MatMulTransposeB(ctx, flat, h.weight)
+	} else {
+		wT, tErr := h.engine.Transpose(ctx, h.weight, []int{1, 0})
+		if tErr != nil {
+			return nil, tErr
+		}
+		out, err = h.engine.MatMul(ctx, flat, wT)
 	}
-
-	out, err := h.engine.MatMul(ctx, flat, h.weightT)
 	if err != nil {
 		return nil, err
 	}
