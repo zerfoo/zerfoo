@@ -2105,3 +2105,37 @@ pre-wave investigation.
 | Zerfoo F32 (gemma3) | 191.28 | 3-run avg (190.57, 191.41, 191.85) |
 | Zerfoo FP8 (gemma3) | 53.70 | Fixed but degenerate on sm_121 |
 | Ollama (gemma3) | 197.21 | Gap: 3.0% (5.93 tok/s) |
+
+### Phase 5 Completion Summary (2026-03-13)
+
+Phase 5 executed 19 tasks across 6 epics to investigate Go-side optimizations.
+All 5 optimization tracks (PGO, GC, BCE, purego, thread pinning) were audited.
+
+**Key finding: The remaining 3.6% gap is entirely in CUDA kernel execution.**
+Go runtime is not the bottleneck:
+- GC: Zero pauses during decode (arena allocator handles GPU memory).
+- BCE: Only 8 hot-path bounds checks out of 928 total (<0.1% overhead).
+- Purego FFI: ~395 calls/token, ~20us total (<0.4% of token time). All function
+  pointers cached at init via dlsym + sync.Once.
+- PGO: No measurable improvement (hot path is in CUDA kernels, not Go code).
+- LockOSThread: Caused 2.6% regression (190->185 tok/s). On GB10 with unified
+  LPDDR5x, CUDA context migration is negligible but LockOSThread prevents Go
+  scheduler from using the pinned thread for other work. Reverted.
+
+### Updated Performance (2026-03-13 post-Phase 5)
+
+| Config | tok/s | Notes |
+|--------|-------|-------|
+| Zerfoo F32 (gemma3) | ~190 | Stable across PGO/no-PGO |
+| Ollama (gemma3) | 197.21 | Gap: 3.6% (7 tok/s) |
+
+### Path to Surpassing Ollama (Phase 6)
+
+The only viable path is making GQA CUDA-graph-compatible. Current blockers:
+1. cache.SeqLen() read from CPU (line 393 in grouped_query_attention.go)
+2. RoPE angle offset computed on CPU (line 395, calls GetAngles with posOffset)
+3. KV cache append at position-dependent offset (kvcache.go line 138, lb.cursor*dim)
+
+Fix approach: GPU-resident position counter + pre-computed RoPE table indexing.
+The RoPE table is already GPU-resident; only the offset selection is CPU-side.
+CUDA graph infrastructure (capture/replay, arena floor, slot restore) is built.
