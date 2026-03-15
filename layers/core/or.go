@@ -52,16 +52,27 @@ func (o *Or[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (
 		return tensor.New(inputs[1].Shape(), out)
 	}
 
-	if len(a) != len(b) {
-		return nil, fmt.Errorf("Or: input sizes differ (%d vs %d)", len(a), len(b))
+	// General N-D broadcasting.
+	shapeA, shapeB := inputs[0].Shape(), inputs[1].Shape()
+	outShape, padA, padB, err := validatedBroadcast(shapeA, shapeB)
+	if err != nil {
+		return nil, fmt.Errorf("Or: %w", err)
 	}
-	out := make([]T, len(a))
-	for i := range a {
-		if a[i] != zero || b[i] != zero {
+	ndim := len(outShape)
+	outSize := 1
+	for _, d := range outShape {
+		outSize *= d
+	}
+
+	out := make([]T, outSize)
+	for i := range out {
+		ai := expandSrcIndex(i, ndim, outShape, padA)
+		bi := expandSrcIndex(i, ndim, outShape, padB)
+		if a[ai] != zero || b[bi] != zero {
 			out[i] = one
 		}
 	}
-	return tensor.New(inputs[0].Shape(), out)
+	return tensor.New(outShape, out)
 }
 
 func (o *Or[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
