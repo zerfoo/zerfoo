@@ -1,4 +1,4 @@
-# Zerfoo Development Plan -- Phase 11b: README + ONNX Output Quality
+# Zerfoo Development Plan -- Phase 12: Per-Model Fixes + ONNX Verification
 
 ## 1. Context
 
@@ -6,34 +6,45 @@ See docs/design.md for full architecture, package layout, and conventions.
 
 ### Problem Statement
 
-Phase 11 (Waves 1-4) fixed CUDA graph capture for ZMF codegen models. The ZMF
-codegen pipeline (fused ops: GroupedQueryAttention, FusedAddRMSNorm, FFN) captures
-99.5% of instructions, achieving 232.86 tok/s (+26% vs no-graph). All graph
-capture work is DONE. See docs/design.md item 13 for the full list of fixes.
+Phase 11 achieved two major milestones: CUDA graph capture for ZMF codegen models
+(232.86 tok/s, 99.5% captured, +26%) and ONNX output quality fix for Llama 3
+(coherent text at temp=0). README is published. See docs/design.md items 13-14.
 
-Two tasks remain:
+Three ONNX models still have per-model bugs preventing correct inference:
 
-1. **README.** The project has no README. A quickstart guide with benchmark
-   table is needed for first-time users.
+1. **Qwen 2.5: Gather index OOB during decode.** `Gather index 7 out of bounds
+   [0,7)` during autoregressive decode. Likely an off-by-one in attention head
+   indexing -- the Gather op receives an index equal to the dimension size instead
+   of size-1. May be in the ONNX graph's head-splitting logic or in how the
+   StatefulInputNode feeds back KV cache tensors with unexpected shapes.
 
-2. **ONNX model output quality.** Llama 3, Qwen 2.5, Mistral 7B, and Phi 4
-   loaded via ONNX (not ZMF codegen) produce garbage output ("!!!" characters)
-   at temp=0. This is a pre-existing correctness bug unrelated to graph capture
-   -- it occurs with and without CUDA graph. The GGUF/ZMF codegen pipeline
-   (Gemma 3) produces correct output. The bug is in the ONNX model loading
-   or execution path, not in the compute engine.
+2. **Mistral 7B: Range error.** Range.Forward() receives empty Data() for GPU
+   scalar inputs. The bounds-check fix (8f3efc6) prevents the panic but returns
+   an error that stops inference. Root cause: scalar constants used by Mistral's
+   sliding window position encoding are on GPU; Range needs them on CPU. The
+   PreUploadFrozenWeights scalar exclusion (ce1e155) should handle this, but
+   Mistral may have additional scalars beyond the frozen set.
+
+3. **Phi 4: pow_scalar error during graph capture.** pow_scalar CUDA kernel
+   fails with error 1 during graph capture. The powf NaN fix (elementwise.cu)
+   addressed the computation correctness, but the kernel launch itself fails
+   during the capture region. The scalar exponent read path (D2H + Synchronize)
+   conflicts with stream capture. The scalar CPU-residence fix should handle
+   frozen exponents, but Phi 4 may have exponents that are not in the frozen set.
 
 ### Objectives
 
-- O1: Write README with quickstart and benchmark table.
-- O2: Diagnose and fix ONNX model garbage output on DGX.
+- O1: Fix Qwen 2.5 Gather index OOB to produce coherent output.
+- O2: Fix Mistral 7B Range error to produce coherent output.
+- O3: Fix Phi 4 pow_scalar capture error to produce coherent output.
+- O4: Verify all 5 models produce coherent output on DGX.
 
 ### Non-Goals
 
 - New model architectures.
-- FP16/FP8 weight loading for ZMF models (future).
+- FP16/FP8 weight loading for ZMF models.
 - Multi-GPU / distributed inference.
-- Further graph capture optimization (already at 99.5% for ZMF codegen).
+- CUDA graph capture for ONNX models (path forward is ZMF codegen migration).
 
 ### Constraints and Assumptions
 
@@ -41,15 +52,17 @@ Two tasks remain:
 - DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
 - DGX Spark GB10: sm_121, 273 GB/s LPDDR5x, 128GB unified memory.
 - Go 1.25 with purego GPU bindings (no CGo for CUDA).
-- ZMF codegen models work correctly (Gemma 3 GGUF: 232.86 tok/s, coherent).
-- ONNX models run without crashes but produce garbage output.
+- Llama 3 ONNX now works (17.56 tok/s, coherent text). Gemma 3 GGUF works
+  (232.86 tok/s, coherent text, 99.5% graph capture).
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| README | Clone to inference in 5 minutes | Manual walkthrough |
-| ONNX output quality | Coherent text at temp=0 for Llama 3 + Qwen 2.5 | bench_tps output inspection |
+| Qwen 2.5 output | Coherent text at temp=0 | bench_tps on DGX |
+| Mistral 7B output | No error, coherent text | bench_tps on DGX |
+| Phi 4 output | No kernel error, coherent text | bench_tps on DGX |
+| All models pass | 5/5 produce coherent output | bench_tps on DGX |
 
 ---
 
@@ -59,96 +72,115 @@ Two tasks remain:
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D400 | README with quickstart and benchmark table | First-time user experience |
-| D401 | ONNX output quality diagnosis | Identify root cause of garbage output |
-| D402 | ONNX output quality fix | Coherent text from ONNX models |
+| D500 | Qwen 2.5 Gather index fix | Model coverage |
+| D501 | Mistral 7B Range scalar fix | Model coverage |
+| D502 | Phi 4 pow_scalar capture fix | Model coverage |
+| D503 | All-model verification on DGX | Confirm all 5 models work |
 
 ### Out of Scope
 
 - FP16 weight conversion for ZMF models.
 - New model architectures.
 - Training, fine-tuning, RLHF.
-- CUDA graph capture for ONNX models (1-2% capture is acceptable; path
-  forward is migrating to ZMF codegen pipeline).
+- CUDA graph capture for ONNX models.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E3105: README
+### E3300: Fix Qwen 2.5 Gather Index OOB
 
-- [ ] T3105.1 Write README.md with quickstart  Owner: TBD  Est: 1.5h
-  - Sections: What is Zerfoo, Installation, Quickstart (pull + run in 3
-    commands), Supported Models (table with tok/s), API Usage (curl examples),
-    Performance (vs Ollama), Architecture Overview, Contributing.
-  - Benchmark table:
-    - Gemma 3 1B GGUF Q4K: 232.86 tok/s (CUDA graph, +26%)
-    - Llama 3.2 1B ZMF: 17.56 tok/s (ONNX, no graph -- output quality pending)
-    - Qwen 2.5 ZMF: 7.87 tok/s (ONNX, no graph -- output quality pending)
-  - File: README.md.
-  - Acceptance: A new user can go from clone to inference in 5 minutes.
+- [ ] T3300.1 Diagnose Qwen 2.5 Gather index OOB  Owner: TBD  Est: 1h
+  - Run bench_tps on DGX with ZERFOO_DEBUG_ONNX=1 for Qwen 2.5.
+  - Identify which Gather instruction triggers the OOB error.
+  - Trace the index tensor: where does the value 7 come from when the
+    dimension size is 7 (valid range [0,6])?
+  - Check if this is an off-by-one in the ONNX graph's head-splitting logic
+    or in how kvCacheIONode feeds back KV tensors.
+  - File: layers/gather/, model/builder.go, graph/graph.go.
+  - Acceptance: Root cause identified.
   - Dependencies: none.
 
-### E3200: ONNX Model Output Quality
+- [ ] T3300.2 Fix Qwen 2.5 Gather index OOB  Owner: TBD  Est: 1h
+  - Apply fix based on T3300.1 diagnosis.
+  - File: TBD.
+  - Acceptance: bench_tps with Qwen 2.5 produces coherent text at temp=0.
+  - Dependencies: T3300.1.
 
-ONNX-loaded models (Llama 3, Qwen 2.5, Mistral 7B, Phi 4) produce garbage
-output ("!!!" characters) at temp=0. The ZMF codegen pipeline (Gemma 3) works
-correctly. This suggests the bug is in the ONNX graph execution path, not in
-the compute engine itself.
+- [ ] S3300.2.1 Test Qwen 2.5 fix on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps for Qwen 2.5 with 256 tokens. Verify coherent output.
+  - Also run Llama 3 and Gemma 3 to confirm no regression.
+  - Dependencies: T3300.2.
 
-Likely areas to investigate:
-- Weight loading: incorrect tensor shapes, transposition, or data type conversion
-  during ONNX-to-ZMF conversion (zonnx/ package).
-- Graph execution order: topological sort may differ from expected ONNX order.
-- Attention mask or position encoding: ONNX models may need different mask/position
-  handling than the ZMF codegen path.
-- Normalization: ONNX decomposes RMSNorm into Pow+ReduceMean+Sqrt+Div+Mul; numerical
-  differences from the fused RMSNorm kernel could accumulate.
-- Token sampling: the generation loop may handle ONNX logits differently.
+- [ ] S3300.2.2 Run go vet and go test after fix  Owner: TBD  Est: 15m
+  - go vet ./..., go build ./..., go test for modified packages with -race.
+  - Dependencies: T3300.2.
 
-- [ ] T3200.1 Diagnose ONNX output quality on DGX  Owner: TBD  Est: 2h
-  - Run Llama 3 on DGX with debug logging at key points:
-    a) After weight loading: verify weight tensor shapes and values match expected
-       (compare first 10 values of embedding table, first attention Q/K/V weight).
-    b) After embedding lookup: print first 5 values of embedding output.
-    c) After first transformer layer: print first 5 logit values.
-    d) After final layer: print top-5 token predictions and their logits.
-  - Compare against a reference implementation (e.g., run same model in Python
-    with transformers library, or compare with ONNX Runtime output).
-  - Check if the first token prediction is correct (model produces a valid
-    continuation) or garbage from the start.
-  - If first token is correct but subsequent tokens degrade: the issue is in
-    the autoregressive loop (KV cache, position encoding).
-  - If first token is already garbage: the issue is in weight loading or
-    the forward pass itself.
-  - File: compute/gpu_engine.go, generate/generator.go, model/loader.go.
-  - Acceptance: Root cause identified with specific layer, tensor, or code path.
+### E3301: Fix Mistral 7B Range Error
+
+- [ ] T3301.1 Diagnose Mistral Range scalar source  Owner: TBD  Est: 1h
+  - Run bench_tps on DGX with ZERFOO_DEBUG_ONNX=1 for Mistral 7B.
+  - Identify which Range instruction fails and which scalar input has
+    empty Data().
+  - Check if the scalar is a frozen constant (should be handled by
+    PreUploadFrozenWeights scalar exclusion) or a dynamic intermediate.
+  - If dynamic: trace the computation that produces the scalar.
+  - File: layers/core/range_op.go, graph/compile.go, model/builder.go.
+  - Acceptance: Root cause identified.
   - Dependencies: none.
 
-- [ ] S3200.1.1 Run go vet and go build after diagnostic changes  Owner: TBD  Est: 10m
-  - go vet ./... and go build ./... must pass.
-  - Dependencies: T3200.1.
+- [ ] T3301.2 Fix Mistral Range error  Owner: TBD  Est: 1h
+  - Apply fix based on T3301.1 diagnosis.
+  - If the scalar is dynamic: add CPU readback before Range.Forward().
+  - If the scalar is frozen but not in frozenIdx: add it to the frozen set.
+  - File: TBD.
+  - Acceptance: bench_tps with Mistral 7B produces output without error.
+  - Dependencies: T3301.1.
 
-- [ ] T3200.2 Fix ONNX output quality  Owner: TBD  Est: 2h
-  - Apply fix based on T3200.1 diagnosis.
-  - The fix must not regress the ZMF codegen path (Gemma 3 GGUF).
-  - File: TBD based on diagnosis.
-  - Acceptance: bench_tps with Llama 3 ZMF produces coherent text at temp=0.
-  - Dependencies: T3200.1.
+- [ ] S3301.2.1 Test Mistral fix on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps for Mistral 7B with 20 tokens. Verify no error and
+    coherent output.
+  - Dependencies: T3301.2.
 
-- [ ] S3200.2.1 Test ONNX fix on DGX with all ONNX models  Owner: TBD  Est: 30m
-  - Run bench_tps for Llama 3, Qwen 2.5, Mistral 7B, Phi 4 on DGX.
-  - Verify coherent output at temp=0 for each.
-  - Also run Gemma 3 GGUF to confirm no regression.
+- [ ] S3301.2.2 Run go vet and go test after fix  Owner: TBD  Est: 15m
+  - go vet ./..., go build ./..., go test for modified packages with -race.
+  - Dependencies: T3301.2.
+
+### E3302: Fix Phi 4 pow_scalar Capture Error
+
+- [ ] T3302.1 Diagnose Phi 4 pow_scalar capture failure  Owner: TBD  Est: 1h
+  - Run bench_tps on DGX with ZERFOO_DEBUG_ONNX=1 for Phi 4.
+  - Identify the instruction that triggers the pow_scalar error.
+  - Check if the exponent scalar is in the frozen set (should be kept
+    CPU-resident by PreUploadFrozenWeights).
+  - If not frozen: the exponent is a dynamic intermediate and needs
+    different handling (cache during warmup, or mark Pow as non-capturable).
+  - File: compute/gpu_kernels.go, graph/compile.go.
+  - Acceptance: Root cause identified.
+  - Dependencies: none.
+
+- [ ] T3302.2 Fix Phi 4 pow_scalar error  Owner: TBD  Est: 1h
+  - Apply fix based on T3302.1 diagnosis.
+  - File: TBD.
+  - Acceptance: bench_tps with Phi 4 produces output without kernel error.
+  - Dependencies: T3302.1.
+
+- [ ] S3302.2.1 Test Phi 4 fix on DGX  Owner: TBD  Est: 15m
+  - Run bench_tps for Phi 4 with 20 tokens. Verify no error and output.
+  - Dependencies: T3302.2.
+
+- [ ] S3302.2.2 Run go vet and go test after fix  Owner: TBD  Est: 15m
+  - go vet ./..., go build ./..., go test for modified packages with -race.
+  - Dependencies: T3302.2.
+
+### E3303: All-Model Verification
+
+- [ ] T3303.1 Run all 5 models on DGX and record results  Owner: TBD  Est: 1h
+  - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
+  - Record tok/s, output quality, CUDA graph status for each.
   - File: docs/updates.md.
   - Acceptance: All 5 models produce coherent output.
-  - Dependencies: T3200.2.
-
-- [ ] S3200.2.2 Run go test and go vet after fix  Owner: TBD  Est: 15m
-  - go test ./... -race -timeout 120s for modified packages.
-  - go vet ./...
-  - go build ./...
-  - Dependencies: T3200.2.
+  - Dependencies: S3300.2.1, S3301.2.1, S3302.2.1.
 
 ---
 
@@ -156,26 +188,36 @@ Likely areas to investigate:
 
 | Track | Tasks | Notes |
 |-------|-------|-------|
-| Track A: README | T3105.1 | Local, no dependencies |
-| Track B: ONNX Diagnosis | T3200.1, S3200.1.1 | DGX for reproduction |
+| Track A: Qwen 2.5 | T3300.1, T3300.2, S3300.2.1, S3300.2.2 | DGX for diagnosis/test |
+| Track B: Mistral | T3301.1, T3301.2, S3301.2.1, S3301.2.2 | DGX for diagnosis/test |
+| Track C: Phi 4 | T3302.1, T3302.2, S3302.2.1, S3302.2.2 | DGX for diagnosis/test |
 
 ### Maximum parallelism
 
-- Wave 5 (2 tasks): T3105.1 (README, local) + T3200.1 (ONNX diagnosis, DGX).
-  Fully independent. Total: 2 teammates.
+- Wave 1 (3 tasks): T3300.1 (diagnose Qwen, DGX) + T3301.1 (diagnose Mistral,
+  DGX) + T3302.1 (diagnose Phi 4, DGX). All independent. DGX tasks should be
+  combined into one teammate to avoid GPU contention. Local code analysis can
+  run as separate teammates. Total: 1-3 teammates depending on DGX usage.
 
-- Wave 6 (2 tasks): T3200.2 (fix, depends T3200.1) + S3200.2.2 (lint after fix).
-  Sequential within track B. Total: 1 teammate.
+  NOTE: All 3 diagnosis tasks need DGX. Combine into 1 DGX teammate running
+  sequentially, plus up to 2 local code analysis teammates. Total: up to 3.
 
-- Wave 7 (1 task): S3200.2.1 (verify all models on DGX). Depends on T3200.2.
-  Total: 1 teammate.
+- Wave 2 (3 tasks): T3300.2 (fix Qwen) + T3301.2 (fix Mistral) + T3302.2 (fix
+  Phi 4). Each depends on its diagnosis. Local code, can run in parallel.
+  Total: 3 teammates.
+
+- Wave 3 (4 tasks): S3300.2.1 (test Qwen, DGX) + S3301.2.1 (test Mistral, DGX)
+  + S3302.2.1 (test Phi 4, DGX) + lint tasks. Combine DGX tests into 1 teammate.
+  Total: 1-2 teammates.
+
+- Wave 4 (1 task): T3303.1 (all-model verification, DGX). Total: 1 teammate.
 
 ### Dependency minimization checklist applied
 
-a) T3105.1 (README) has zero dependencies -- runs in Wave 5 alongside diagnosis.
-b) T3200.1 (ONNX diagnosis) has zero dependencies -- runs immediately on DGX.
-c) T3200.2 genuinely depends on T3200.1 (cannot fix without diagnosis).
-d) Wave 5 has 2 tasks (README is a large task, ONNX diagnosis needs DGX time).
+a) All 3 diagnosis tasks are independent and front-loaded in Wave 1.
+b) Fix tasks genuinely depend on diagnosis (cannot fix without root cause).
+c) DGX tasks combined to avoid GPU contention.
+d) Wave 1 has 3 parallelizable tasks (code analysis portions are local).
 
 ---
 
@@ -183,9 +225,9 @@ d) Wave 5 has 2 tasks (README is a large task, ONNX diagnosis needs DGX time).
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M400: README published | T3105.1 | 5-minute quickstart verified |
-| M401: ONNX diagnosed | T3200.1 | Root cause identified |
-| M402: All models coherent | S3200.2.1 | All 5 models produce coherent output on DGX |
+| M500: All bugs diagnosed | T3300.1, T3301.1, T3302.1 | Root cause identified for each |
+| M501: All bugs fixed | T3300.2, T3301.2, T3302.2 | Each model runs without error |
+| M502: All models coherent | T3303.1 | 5/5 models produce coherent output on DGX |
 
 ---
 
@@ -193,10 +235,11 @@ d) Wave 5 has 2 tasks (README is a large task, ONNX diagnosis needs DGX time).
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R3200 | ONNX garbage output is in weight conversion (zonnx package) | Harder fix, different repo | Medium | Compare weight values against Python reference. If zonnx issue, fix there and re-export. |
-| R3201 | ONNX garbage output has multiple independent causes per model | Per-model fixes needed | Medium | Start with Llama 3 (simplest). If fix generalizes, test on others. If not, diagnose each. |
-| R3202 | Numerical accumulation from decomposed RMSNorm | Subtle precision issue | Low | Compare fused vs decomposed RMSNorm output for same input. If drift > 1e-3, use fused path. |
-| R3203 | make shared link fails on CUDA 13.0 | Build friction | Medium | Known workaround: pass .pic.o files explicitly to nvcc. |
+| R3300 | Qwen 2.5 Gather OOB is in ONNX graph structure, not zerfoo code | Need to re-export model | Low | Check if head count differs from Llama 3. Qwen may use different GQA config. |
+| R3301 | Mistral sliding window attention is architecturally unsupported | Major feature gap | Medium | Mistral uses Llama architecture but with sliding window. May need Mistral-specific builder. |
+| R3302 | Phi 4 GeLU uses ops not in the capture-safe set | More nonCapturableOps | Medium | If pow_scalar is needed during capture for Phi 4, mark it non-capturable or cache the value. |
+| R3303 | Fixing one model breaks another | Regression | Low | Always test all 5 models after each fix (DGX verification). |
+| R3304 | make shared link fails on CUDA 13.0 | Build friction | Medium | Known workaround: pass .pic.o files explicitly to nvcc. |
 
 ---
 
@@ -240,46 +283,43 @@ A task is done when:
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-14 (Phase 11b: README + ONNX Quality)
+### Change Summary -- 2026-03-14 (Phase 12: Per-Model Fixes)
 
-Trimmed all completed Phase 11 graph capture epics (E3100-E3104) and their tasks.
-Stable knowledge (graph capture fixes, nonCapturableOps, longest-contiguous-region
-scan, benchmark results) preserved in docs/design.md item 13.
+Trimmed completed Phase 11b tasks (T3105.1 README, T3200.1 ONNX diagnosis,
+T3200.2 ONNX fix for Llama 3). Stable knowledge preserved in docs/design.md:
+- ONNX garbage output root causes (powf NaN, KV cache, position IDs, mask)
+- Llama 3 ONNX now coherent
 
-Phase 11 graph capture results:
-- ZMF codegen (Gemma 3 GGUF): 232.86 tok/s, 99.5% graph capture, +26% speedup.
-- ONNX models: 1-2% graph capture, garbage output (pre-existing correctness bug).
+Created Phase 12 with 3 epics for remaining per-model bugs:
+- E3300: Qwen 2.5 Gather index OOB (T3300.1, T3300.2)
+- E3301: Mistral 7B Range error (T3301.1, T3301.2)
+- E3302: Phi 4 pow_scalar capture error (T3302.1, T3302.2)
+- E3303: All-model verification (T3303.1)
 
-Remaining work restructured into Phase 11b:
-- E3105: README with quickstart (T3105.1, no dependencies).
-- E3200: ONNX output quality diagnosis + fix (T3200.1, T3200.2, S3200.2.1).
-
-No new ADRs needed. Existing ADR 023 covers D2H elimination strategy.
+No new ADRs needed.
 
 ---
 
 ## 9. Hand-off Notes
 
 - **Current version:** v1.1.0 (released 2026-03-14).
-- **Performance:** 232.86 tok/s Gemma 3 Q4K with CUDA graph (+26% vs no-graph,
-  beats Ollama 197.21 tok/s by 18.1%).
-- **Branch:** main at 1391219. All Phase 11 graph capture work merged.
-- **Graph capture status:** DONE for ZMF codegen (99.5% captured). ONNX models
-  capture 1-2% (acceptable; path forward is ZMF codegen migration).
-- **Current bug:** ONNX models (Llama 3, Qwen 2.5, Mistral, Phi 4) produce
-  garbage output ("!!!") at temp=0. Pre-existing, unrelated to graph capture.
+- **Performance:** 232.86 tok/s Gemma 3 Q4K with CUDA graph (+26% vs no-graph).
+- **Branch:** main at 48059df. All Phase 11 work merged.
+- **Working models:** Gemma 3 GGUF (232.86 tok/s, coherent, 99.5% graph capture),
+  Llama 3 ONNX (17.56 tok/s, coherent, 2% graph capture).
+- **Broken models:**
+  - Qwen 2.5: Gather index 7 OOB [0,7) during decode.
+  - Mistral 7B: Range error (empty Data() on GPU scalar).
+  - Phi 4: pow_scalar cuda error 1 during graph capture.
+- **Key fixes applied in Phase 11:**
+  - CUDA graph capture: 7 fixes (see docs/design.md item 13).
+  - ONNX correctness: powf NaN, StatefulInputNode KV feedback, position IDs,
+    attention mask, Greater/Where N-D broadcasting (see docs/design.md item 14).
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
 - **Build:** /usr/local/go/bin/go build ./...
 - **Benchmark:** export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
   && /usr/local/go/bin/go run ./cmd/bench_tps --model <path> --tokens 256
   --prompt 'The quick brown fox' --device cuda --dtype fp32
-- **Models on DGX:** ~/models/gemma3-gguf/model.gguf (232.86 tok/s, coherent),
-  ~/models/llama3/ (17.56 tok/s, garbage), ~/models/qwen25/ (7.87 tok/s, garbage),
-  ~/models/mistral/ (Range error), ~/models/phi4/ (pow_scalar error during capture)
+- **Models on DGX:** ~/models/gemma3-gguf/model.gguf, ~/models/llama3/,
+  ~/models/qwen25/, ~/models/mistral/, ~/models/phi4/
 - **Pre-commit hook:** Rejects multi-directory commits.
-- **Key files for ONNX diagnosis:**
-  - generate/generator.go -- autoregressive token loop
-  - generate/tensor_cache.go -- KV cache management
-  - model/loader.go -- ZMF model loading
-  - inference/ -- model architecture builders (arch_llama.go, etc.)
-  - graph/compile.go -- graph compilation and execution

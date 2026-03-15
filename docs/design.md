@@ -961,7 +961,13 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     - EnsureCaptureInputsGPU: uploads frozen scalar constants needed by capture-region instructions.
     Result: ZMF codegen pipeline (fused ops) captures 99.5% of instructions, 232.86 tok/s (+26% vs no-graph).
     ONNX models capture only 1-2% due to decomposed ops (Pow, ReduceMean, Sqrt, Gather, Slice, Reshape).
-    ONNX models also produce garbage output ("!!!") -- a pre-existing correctness bug unrelated to graph capture.
+    ONNX models previously produced garbage output ("!!!") -- root causes fixed:
+    - CUDA powf() NaN for negative bases: kernel_pow_scalar used powf(negative, 2.0) which returns NaN. Fixed with a*a for s==2, powf(fabsf(a), s) otherwise.
+    - KV cache never accumulated: zeroKVCacheNode returned empty cache every call. Fixed with StatefulInputNode interface + kvCacheIONode that feeds present KV outputs back as past KV inputs.
+    - Position IDs stuck at 0: positionIdsNode always generated [0..seqLen-1]. Fixed with offset counter tracking decode step.
+    - Attention mask: maskFromInputNode now tracks accumulated sequence length.
+    - Greater/Where ops: added N-D broadcasting for causal mask computation.
+    Llama 3 ONNX now produces coherent text. Remaining per-model issues: Qwen 2.5 (Gather index OOB), Mistral 7B (Range error), Phi 4 (pow_scalar capture error).
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
