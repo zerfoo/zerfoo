@@ -340,6 +340,116 @@ func TestByteLevelPreTokenize(t *testing.T) {
 	}
 }
 
+func TestLoadFromJSON_SentencePieceDecoder(t *testing.T) {
+	tests := []struct {
+		name          string
+		decoder       string
+		wantSP        bool
+	}{
+		{
+			name: "Metaspace decoder",
+			decoder: `{"type": "Metaspace"}`,
+			wantSP: true,
+		},
+		{
+			name: "Sequence with Replace U+2581",
+			decoder: `{
+				"type": "Sequence",
+				"decoders": [
+					{"type": "Replace", "pattern": {"String": "\u2581"}, "content": " "},
+					{"type": "Fuse"}
+				]
+			}`,
+			wantSP: true,
+		},
+		{
+			name: "no decoder",
+			decoder: "",
+			wantSP: false,
+		},
+		{
+			name: "non-SentencePiece decoder",
+			decoder: `{"type": "ByteLevel"}`,
+			wantSP: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decoderField := ""
+			if tt.decoder != "" {
+				decoderField = `,"decoder": ` + tt.decoder
+			}
+			fixture := `{
+  "model": {
+    "type": "BPE",
+    "vocab": {"\u2581hello": 0, "\u2581world": 1, "<s>": 2, "</s>": 3},
+    "merges": []
+  },
+  "added_tokens": [
+    {"id": 2, "content": "<s>", "special": true},
+    {"id": 3, "content": "</s>", "special": true}
+  ]` + decoderField + `}`
+
+			dir := t.TempDir()
+			path := filepath.Join(dir, "tokenizer.json")
+			if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			tok, err := LoadFromJSON(path)
+			if err != nil {
+				t.Fatalf("LoadFromJSON error: %v", err)
+			}
+
+			if tok.sentencePiece != tt.wantSP {
+				t.Errorf("sentencePiece = %v, want %v", tok.sentencePiece, tt.wantSP)
+			}
+		})
+	}
+}
+
+func TestLoadFromJSON_SentencePieceDecode(t *testing.T) {
+	// Test that tokens with U+2581 prefix are decoded with spaces.
+	fixture := `{
+  "model": {
+    "type": "BPE",
+    "vocab": {"\u2581hello": 0, "\u2581world": 1, "foo": 2},
+    "merges": []
+  },
+  "added_tokens": [],
+  "decoder": {"type": "Metaspace"}
+}`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokenizer.json")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, err := LoadFromJSON(path)
+	if err != nil {
+		t.Fatalf("LoadFromJSON error: %v", err)
+	}
+
+	// Decode tokens containing U+2581 prefix — should produce spaces.
+	decoded, err := tok.Decode([]int{0, 1})
+	if err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if decoded != "hello world" {
+		t.Errorf("Decode([0,1]) = %q, want %q", decoded, "hello world")
+	}
+
+	// Decode tokens without U+2581 — no spurious spaces.
+	decoded, err = tok.Decode([]int{2})
+	if err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if decoded != "foo" {
+		t.Errorf("Decode([2]) = %q, want %q", decoded, "foo")
+	}
+}
+
 func TestLoadFromJSON_EncodeWithSpecialTokens(t *testing.T) {
 	tok, err := LoadFromJSON(filepath.Join("testdata", "tokenizer.json"))
 	if err != nil {
