@@ -158,6 +158,56 @@ func TestBroadcastStrides4D_CrossBroadcast(t *testing.T) {
 	}
 }
 
+// TestBroadcastStrides4D_TrySliceShapes verifies that shapes causing TrySlice
+// cudaMemcpy failures (sizes 3, 48, 1) are handled by the 4D broadcast kernel,
+// preventing CPU fallback during CUDA graph capture.
+func TestBroadcastStrides4D_TrySliceShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		a, b      []int
+		wantShape [4]int
+		wantOK    bool
+	}{
+		{
+			"3x48x1_vs_1x48x1",
+			[]int{3, 48, 1}, []int{1, 48, 1},
+			[4]int{1, 3, 48, 1}, true,
+		},
+		{
+			"3x1x48_vs_1x3x48",
+			[]int{3, 1, 48}, []int{1, 3, 48},
+			[4]int{1, 3, 3, 48}, true,
+		},
+		{
+			"1x48x3_vs_2x48x3",
+			[]int{1, 48, 3}, []int{2, 48, 3},
+			[4]int{1, 2, 48, 3}, true,
+		},
+		{
+			"3x48x1_vs_3x48x64",
+			[]int{3, 48, 1}, []int{3, 48, 64},
+			[4]int{1, 3, 48, 64}, true,
+		},
+		{
+			"1x1x48_vs_3x1x48",
+			[]int{1, 1, 48}, []int{3, 1, 48},
+			[4]int{1, 3, 1, 48}, true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			outDims, _, _, ok := broadcastStrides4D(tc.a, tc.b)
+			if ok != tc.wantOK {
+				t.Fatalf("broadcastStrides4D ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && outDims != tc.wantShape {
+				t.Errorf("outDims = %v, want %v", outDims, tc.wantShape)
+			}
+		})
+	}
+}
+
 func TestTotalElements(t *testing.T) {
 	tests := []struct {
 		name  string
