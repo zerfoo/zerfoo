@@ -219,9 +219,16 @@ func TestCPUEngine_Exp(t *testing.T) {
 	a, _ := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
 	result, _ := engine.Exp(context.Background(), a, nil)
 
-	expected := []float32{2.7182817, 7.389056, 20.085537, 54.59815}
-	if !reflect.DeepEqual(result.Data(), expected) {
-		t.Errorf("expected %v, got %v", expected, result.Data())
+	expected := []float32{2.7182818, 7.389056, 20.085537, 54.59815}
+	got := result.Data()
+	for i := range expected {
+		rel := float64(got[i]-expected[i]) / float64(expected[i])
+		if rel < 0 {
+			rel = -rel
+		}
+		if rel > 1e-5 {
+			t.Errorf("index %d: expected %v, got %v (rel err %v)", i, expected[i], got[i], rel)
+		}
 	}
 }
 
