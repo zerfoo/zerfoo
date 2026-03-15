@@ -196,6 +196,24 @@ func (g *Gather[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	outputShape := []int{batchSize, numIndices, embeddingDim}
 	g.outputShape = outputShape
 
+	// Clamp indices to valid range [0, vocab) to handle cases where
+	// position IDs exceed dynamically-sliced tables (e.g. RoPE cos/sin).
+	vocab := paramShape[0]
+	idxData := indices.Data()
+	clamped := false
+	for i, v := range idxData {
+		if v < 0 {
+			idxData[i] = 0
+			clamped = true
+		} else if v >= vocab {
+			idxData[i] = vocab - 1
+			clamped = true
+		}
+	}
+	if clamped {
+		indices, _ = tensor.New[int](idxShape, idxData)
+	}
+
 	output, err := tensor.New[T](outputShape, nil)
 	if err != nil {
 		return nil, err

@@ -42,9 +42,18 @@ func (c *Cast[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T])
 	input := inputs[0]
 	c.outputShape = input.Shape()
 
-	// For same-type casting, we just return a copy of the input
-	// In a more complete implementation, this would handle type conversions
-	return input, nil
+	// Create a new tensor wrapper so the graph memo has a distinct object.
+	// Returning input directly causes aliased memo entries; the pool's
+	// ref-count release can free the upstream tensor before downstream
+	// consumers of this Cast node have run.
+	//
+	// For GPU storage with refcounting, use View to increment the refcount
+	// so the storage survives until both tensors are freed.
+	storage := input.GetStorage()
+	if gs, ok := storage.(*tensor.GPUStorage[T]); ok {
+		storage = gs.View(gs.Len())
+	}
+	return tensor.NewWithStorage[T](input.Shape(), storage)
 }
 
 // Backward computes the gradients for the Cast layer.

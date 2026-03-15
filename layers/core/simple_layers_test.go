@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -305,8 +306,8 @@ func TestCast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cast Forward: %v", err)
 	}
-	if out != input {
-		t.Error("Cast Forward should return same tensor for same type")
+	if !reflect.DeepEqual(out.Data(), input.Data()) {
+		t.Error("Cast Forward should return tensor with same data")
 	}
 
 	// OutputShape
