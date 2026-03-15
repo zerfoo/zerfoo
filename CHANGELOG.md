@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+* **GPU Cos/Sin kernels** -- CUDA kernel_cos/kernel_sin in elementwise.cu with purego bindings and GPUEngine dispatch. Eliminates D2H copies in rotary position embedding for ONNX models.
+* **GPU Expand op** -- layers/core/expand.go GPU path using broadcast multiply. Eliminates D2H in attention mask expansion.
+* **GPU ScatterND op** -- layers/core/scatternd.go GPU path using D2D memcpy with CPU-computed offsets. Eliminates D2H in KV cache scatter.
+* **Repetition penalty** -- generate/sampling.go applyRepetitionPenalty with --repetition-penalty CLI flag in run and bench_tps commands.
+* **SentencePiece tokenizer detection** -- pkg/tokenizer/loader.go LoadFromJSON parses decoder section from tokenizer.json, detects Metaspace decoder or U+2581 Replace rules.
+* **RMSNorm fusion pass** -- graph/fusion.go detects decomposed RMSNorm pattern (Pow+ReduceMean+Add+Sqrt+Div+Mul) and replaces with fused instruction. Pattern matching verified (33 fusions for Llama 3).
+* **Static Reshape capture** -- graph/cuda_graph.go isNonCapturable() distinguishes static (1-input) vs dynamic (2-input) Reshape for CUDA graph capture.
+
+### Fixed
+
+* **ConstantOfShape tensor fill** -- layers/core/constantofshape.go type switch was missing *zmf.Tensor case. ONNX ConstantOfShape fill values stored as tensor attributes silently defaulted to 0.0 instead of actual values (e.g., -FLT_MAX for causal masks). Root cause of Qwen 2.5 single-token repetition and Mistral garbled output.
+* **broadcastShape leading dims** -- gpuBroadcastOp flattenTo2D collapse guard falls back to 4D kernel when 2D flatten produces wrong element count.
+* **Or op N-D broadcasting** -- added N-D broadcasting via validatedBroadcast for boolean ops. Fixes Mistral attention mask.
+* **GPU broadcast 4D fallback** -- gpuBroadcastOp always tries gpuBroadcast4DOp before CPU fallback, preventing TrySlice cudaMemcpy during CUDA graph capture.
+* **CUDA graph nonCapturableOps** -- added ConstantOfShape and Shape (produce CPU tensors, cause cudaMemcpy H2D during capture).
+* **TestCPUEngine_Exp precision** -- uses 1e-5 relative tolerance for NEON fast path vs generic math.Exp.
+* **Cast aliasing** -- Cast.Forward returns new tensor wrapper with View refcount.
+* **Gather index clamping** -- clamps out-of-bounds indices for embedding lookup.
+
+### Performance
+
+* Gemma 3 GGUF: 232 tok/s baseline maintained (99.5% CUDA graph capture).
+* ONNX models: 4-16 tok/s (all models run without crashes, repetition penalty reduces repetitive output).
+* 42+ broadcast coverage tests added.
+
 ## [1.1.0](https://github.com/zerfoo/zerfoo/compare/v1.0.1...v1.1.0) (2026-03-14)
 
 ### Added
