@@ -40,7 +40,7 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var modelID, systemPrompt, cacheDir string
 	var temperature float64
 	var topK, maxTokens int
-	var topP float64
+	var topP, repetitionPenalty float64
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -90,6 +90,16 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 			}
 			systemPrompt = args[i+1]
 			i++
+		case "--repetition-penalty":
+			if i+1 >= len(args) {
+				return errors.New("--repetition-penalty requires a value")
+			}
+			v, err := strconv.ParseFloat(args[i+1], 64)
+			if err != nil {
+				return fmt.Errorf("--repetition-penalty: %w", err)
+			}
+			repetitionPenalty = v
+			i++
 		case "--cache-dir":
 			if i+1 >= len(args) {
 				return errors.New("--cache-dir requires a value")
@@ -133,6 +143,9 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	if maxTokens > 0 {
 		genOpts = append(genOpts, inference.WithMaxTokens(maxTokens))
 	}
+	if repetitionPenalty > 0 {
+		genOpts = append(genOpts, inference.WithRepetitionPenalty(repetitionPenalty))
+	}
 
 	_ = systemPrompt // reserved for future multi-turn chat support
 
@@ -172,12 +185,13 @@ func (c *RunCommand) Usage() string {
 Start an interactive chat session with a model.
 
 OPTIONS:
-  --temperature <float>   Sampling temperature (default: 1.0)
-  --top-k <int>           Top-K sampling (default: disabled)
-  --top-p <float>         Top-P nucleus sampling (default: 1.0)
-  --max-tokens <int>      Maximum tokens to generate (default: 256)
-  --system <prompt>       System prompt for context
-  --cache-dir <dir>       Override model cache directory`
+  --temperature <float>          Sampling temperature (default: 1.0)
+  --top-k <int>                  Top-K sampling (default: disabled)
+  --top-p <float>                Top-P nucleus sampling (default: 1.0)
+  --repetition-penalty <float>   Penalize repeated tokens (default: 1.0)
+  --max-tokens <int>             Maximum tokens to generate (default: 256)
+  --system <prompt>              System prompt for context
+  --cache-dir <dir>              Override model cache directory`
 }
 
 // Examples implements Command.Examples.
