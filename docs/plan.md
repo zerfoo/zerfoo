@@ -1,4 +1,4 @@
-# Zerfoo Development Plan -- Phase 15: Remaining Model Quality + Performance Regression
+# Zerfoo Development Plan -- Phase 16: ONNX Output Quality + CUDA Graph Coverage
 
 ## 1. Context
 
@@ -6,56 +6,45 @@ See docs/design.md for full architecture, package layout, and conventions.
 
 ### Problem Statement
 
-Phase 14 implemented GPU-native Cos/Sin/Expand/ScatterND ops (eliminating D2H
-copies), added repetition penalty to sampling, and fixed the ConstantOfShape
-tensor fill bug that caused broken causal masks for Qwen 2.5 and Mistral 7B.
+Phases 13-15 fixed all crash-causing bugs in the ONNX execution path. All 5
+models run on DGX without crashes and zero test failures. Gemma 3 GGUF achieves
+232 tok/s with 99.5% CUDA graph capture.
 
-Three issues remain from Phase 14 verification (DGX, 2026-03-15):
+Two categories of issues remain for ONNX models:
 
-1. **Mistral 7B tokenizer space decoding.** Output is "jumpedoverthequickbark..."
-   -- words are recognizable English but have no spaces between them. The
-   SentencePiece tokenizer uses a special `U+2581` (lower one eighth block,
-   displayed as `_`) prefix to mark word boundaries, which must be decoded as
-   a space character. The current tokenizer decoding path does not perform this
-   substitution.
+1. **Output quality.** All ONNX models produce repetitive text at temp=0. A
+   repetition penalty feature was implemented (--repetition-penalty flag) but
+   has never been tested end-to-end on DGX. Testing it is a quick win that
+   should immediately improve output quality for all ONNX models.
 
-2. **Phi 4 output regression.** Output degraded from "'s a new and the
-   following..." to "jjjjjjjjjj" (single-character repetition). CUDA graph
-   capture also fails with "cudaMemcpy failed: operation would make the legacy
-   stream depend on a capturing blocking stream" at instruction 75 (Mul).
-   The regression may be caused by the ConstantOfShape fix interacting
-   differently with Phi 4's graph structure, or by a separate issue in Phi 4's
-   execution path. Needs diagnosis.
+2. **ONNX model performance.** ONNX models run at 4-16 tok/s vs 232 tok/s for
+   Gemma 3 GGUF. The primary bottleneck is CUDA graph capture coverage:
+   - Gemma 3 GGUF captures 184/185 instructions (99.5%) using fused ops
+   - ONNX models capture only 32-66 of 1610-5300 instructions (1-4%)
+   The ONNX path decomposes operations like RMSNorm into 6-7 individual ops
+   (Pow, ReduceMean, Add, Sqrt, Div, Mul) that each require separate GPU
+   kernel launches. Fusing these into single ops would dramatically reduce
+   kernel launch overhead and increase CUDA graph capture coverage.
 
-3. **Gemma 3 GGUF throughput regression.** Performance dropped from 232.86 tok/s
-   (Phase 11 baseline) to 122.70 tok/s (Phase 14). This is a 47% regression
-   on the same hardware (DGX Spark GB10, sm_121). The GGUF/ZMF codegen pipeline
-   uses fused ops and should not be affected by ONNX-path changes. The
-   regression may be caused by: code changes affecting the hot path, Go runtime
-   changes, CUDA driver updates, or a measurement artifact. Needs profiling.
-
-4. **TestCPUEngine_Exp float precision failure.** Pre-existing test failure in
-   compute/cpu_engine_test.go:224. Expected [2.7182817 7.389056 20.085537
-   54.59815], got [2.7182794 7.389056 20.085533 54.59815]. This is a float32
-   precision issue in the CPU Exp implementation -- likely the expected values
-   were computed with a different math library. The fix is to widen the
-   tolerance or update the expected values to match Go's math.Exp output.
+3. **Phi 4 CUDA graph capture.** Still partially fails with TrySlice errors
+   during capture. The capture region shifted to [146,164) after Phase 15
+   fixes, but GPUStorage.TrySlice triggers cudaMemcpy during capture.
 
 ### Objectives
 
-- O1: Fix Mistral 7B tokenizer to decode SentencePiece word boundaries as spaces.
-- O2: Diagnose and fix Phi 4 output regression.
-- O3: Diagnose and fix Gemma 3 GGUF throughput regression.
-- O4: Fix TestCPUEngine_Exp precision failure.
-- O5: All 5 models produce usable output on DGX.
+- O1: Test repetition penalty on DGX with all ONNX models (quick win).
+- O2: Fuse decomposed ONNX RMSNorm ops into a single fused layer.
+- O3: Increase ONNX CUDA graph capture coverage from 1-4% toward 50%+.
+- O4: Investigate and fix Phi 4 TrySlice capture failures.
+- O5: All 5 models produce non-repetitive output on DGX.
 
 ### Non-Goals
 
 - New model architectures.
 - Multi-GPU / distributed inference.
 - Training, fine-tuning, RLHF.
-- FP16 mixed precision (deferred).
 - Matching ORT output bit-for-bit.
+- FP16 mixed precision (deferred to Phase 17).
 
 ### Constraints and Assumptions
 
@@ -64,19 +53,19 @@ Three issues remain from Phase 14 verification (DGX, 2026-03-15):
 - DGX Spark GB10: sm_121, 273 GB/s LPDDR5x, 128GB unified memory.
 - Go 1.25 with purego GPU bindings (no CGo for CUDA).
 - DGX requires `export PATH=/usr/local/cuda/bin:$PATH` before `make shared`.
-- DGX uses `upstream` HTTPS remote for fetch (origin SSH has host key issue).
-- All 5 models run without crashes (Phases 11-14 fixes).
-- PRs #64 and #65 (Phase 14 code) are open and need merging.
+- DGX uses `upstream` HTTPS remote for fetch.
+- All 5 models currently run without crashes (Phases 11-15 fixes).
+- Main at 4724c47 with all Phase 13-15 work merged.
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| Mistral 7B | Coherent text with spaces | bench_tps on DGX |
-| Phi 4 | No regression, coherent output | bench_tps on DGX |
-| Gemma 3 GGUF | 230+ tok/s restored | bench_tps on DGX |
-| TestCPUEngine_Exp | PASS | go test ./compute/... -race |
-| No regression | All other models still work | bench_tps on DGX |
+| Repetition penalty | Non-repetitive output for all ONNX models | bench_tps --repetition-penalty 1.2 on DGX |
+| ONNX graph capture | 50%+ instructions captured for Llama 3 | bench_tps log output on DGX |
+| ONNX throughput | 2x improvement for Llama 3 (target 25+ tok/s) | bench_tps on DGX |
+| No regression | Gemma 3 GGUF still 230+ tok/s | bench_tps on DGX |
+| Phi 4 graph capture | No TrySlice errors during capture | bench_tps log on DGX |
 
 ---
 
@@ -86,146 +75,154 @@ Three issues remain from Phase 14 verification (DGX, 2026-03-15):
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D800 | Mistral tokenizer space fix | SentencePiece word boundary decoding |
-| D801 | Phi 4 regression diagnosis and fix | Output quality restored |
-| D802 | Gemma 3 throughput regression diagnosis and fix | 232 tok/s restored |
-| D803 | TestCPUEngine_Exp fix | Clean test suite |
-| D804 | All-model verification on DGX | Confirm all fixes |
+| D900 | Repetition penalty DGX verification | Quick win for output quality |
+| D901 | ONNX RMSNorm fusion pass | Replace Pow+ReduceMean+Add+Sqrt+Div+Mul with FusedRMSNorm |
+| D902 | Phi 4 TrySlice capture fix | Fix remaining CUDA graph capture failure |
+| D903 | ONNX CUDA graph capture improvements | More ops in capture region |
+| D904 | All-model verification on DGX | Confirm improvements |
 
 ### Out of Scope
 
-- FP16 mixed precision.
+- FP16 mixed precision (deferred to Phase 17).
+- SwiGLU/GQA/FFN fusion (future phase).
 - New model architectures.
-- CUDA graph capture for ONNX models.
 - Training, fine-tuning, RLHF.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E3600: Mistral Tokenizer Space Fix
+### E3700: Repetition Penalty DGX Verification
 
-Mistral output has no spaces between tokens. The SentencePiece tokenizer uses
-U+2581 prefix to mark word boundaries. The tokenizer decoding path must
-replace this character with a space.
+The repetition penalty is implemented but never tested end-to-end on DGX.
+This is a zero-code-change verification task.
 
-- [x] T3600.1 Diagnose Mistral tokenizer space issue  Owner: agent  Done: 2026-03-15
-  - Read layers/tokenizers/ and any SentencePiece decoding code.
-  - Search for U+2581 handling, "sentencepiece", or byte-level BPE decoding.
-  - Check if the tokenizer config has a `decoder` field with
-    `type: "Replace"` or `type: "Strip"` rules.
-  - Read the Mistral tokenizer.json on DGX to understand its decoder config.
-  - File: layers/tokenizers/, inference/.
-  - Acceptance: Root cause identified. Missing U+2581-to-space replacement located.
+- [ ] T3700.1 Test repetition penalty on DGX with all ONNX models  Owner: TBD  Est: 30m
+  - DGX preflight: pull main, rebuild .so and binary.
+  - Run bench_tps with --repetition-penalty 1.2 for Llama 3, Qwen 2.5,
+    Mistral 7B, Phi 4. Compare output with and without penalty.
+  - Run Gemma 3 GGUF without penalty (regression check).
+  - File: docs/updates.md.
+  - Acceptance: Output is less repetitive with penalty=1.2. Record results.
   - Dependencies: none.
 
-- [x] T3600.2 Fix Mistral tokenizer space decoding  Owner: agent  Done: 2026-03-15
-  - Add U+2581 to space replacement in the token decoding path.
-  - This should be a general SentencePiece decoder fix, not Mistral-specific.
-  - Verify Llama 3 and Qwen 2.5 (which also use SentencePiece) still work.
-  - File: layers/tokenizers/ or inference/.
-  - Acceptance: Mistral output has spaces between words.
-  - Dependencies: T3600.1.
+### E3701: ONNX RMSNorm Fusion
 
-- [x] S3600.2.1 Test tokenizer space fix  Owner: agent  Done: 2026-03-15
-  - Unit test: decode tokens containing U+2581 prefix, verify spaces in output.
-  - Test: decode tokens without U+2581, verify no spurious spaces added.
-  - go test for affected package -race.
-  - Dependencies: T3600.2.
+ONNX models decompose RMSNorm into 6-7 individual ops per layer. Llama 3 has
+32 transformer layers, each with 2 RMSNorm calls = 64 RMSNorm instances =
+384-448 individual ops that could be replaced with 64 fused RMSNorm calls.
 
-- [x] S3600.2.2 Test Mistral on DGX  Owner: agent  Done: 2026-03-15
-  - bench_tps for Mistral 7B with 20 tokens.
-  - Acceptance: Output has spaces between words.
-  - Dependencies: T3600.2.
+The fused RMSNorm kernel already exists (internal/cuda/kernels/rmsnorm.cu)
+and is used by the ZMF codegen pipeline. The task is to add an ONNX graph
+optimization pass that detects the decomposed pattern and replaces it with
+the fused op.
 
-### E3601: Phi 4 Output Regression
-
-Phi 4 output regressed from semi-coherent to "jjjjjjjj". CUDA graph capture
-also fails. Need to diagnose whether the ConstantOfShape fix caused the
-regression or if there is a separate issue.
-
-- [x] T3601.1 Diagnose Phi 4 output regression  Owner: agent  Done: 2026-03-15
-  - Run Phi 4 on DGX with debug logging.
-  - Check ConstantOfShape nodes in Phi 4's graph: what fill values are used?
-    Did the fix change any values that should have been 0?
-  - Check CUDA graph capture failure: instruction 75 (Mul) does cudaMemcpy
-    during capture. Is this a new issue or pre-existing?
-  - Compare Phi 4 output before and after ConstantOfShape fix by temporarily
-    reverting the fix and re-running.
-  - Check if Phi 4 uses a different attention pattern than Llama/Qwen/Mistral.
-  - File: layers/core/constantofshape.go, compute/gpu_kernels.go.
-  - Acceptance: Root cause of regression identified.
+- [ ] T3701.1 Identify RMSNorm decomposition pattern in ONNX graph  Owner: TBD  Est: 1h
+  - Read graph/compile.go and graph/instruction.go to understand the compiled
+    instruction list for ONNX models.
+  - Print the instruction list for Llama 3 (first 50 instructions) to identify
+    the exact RMSNorm decomposition pattern.
+  - Document the pattern: which ops, in what order, with what connectivity.
+  - Check if Qwen 2.5, Mistral, and Phi 4 use the same decomposition.
+  - File: graph/.
+  - Acceptance: Exact op sequence for decomposed RMSNorm documented.
   - Dependencies: none.
 
-- [x] T3601.2 Fix Phi 4 CUDA graph capture  Owner: agent  Done: 2026-03-15
-  - Apply fix based on diagnosis.
-  - If ConstantOfShape fix is the cause, ensure the fix correctly handles
-    all Phi 4 ConstantOfShape nodes (some may legitimately need fill=0).
-  - Dependencies: T3601.1.
+- [ ] T3701.2 Implement ONNX graph fusion pass for RMSNorm  Owner: TBD  Est: 2h
+  - Add a graph optimization pass that scans the instruction list for the
+    RMSNorm decomposition pattern and replaces matching sequences with a
+    single FusedRMSNorm instruction.
+  - The pass runs after Compile but before CUDA graph capture.
+  - Use the existing RMSNorm layer (layers/normalization/rmsnorm.go) and
+    its GPU kernel (rmsnorm.cu).
+  - The pass must preserve the epsilon parameter from the Add op.
+  - File: graph/fusion.go (new file), graph/compile.go.
+  - Acceptance: Llama 3 instruction count drops by ~320 (64 fusions x ~5
+    ops eliminated per fusion). RMSNorm ops use the fused kernel.
+  - Dependencies: T3701.1.
 
-- [x] S3601.2.1 Test Phi 4 fix on DGX  Owner: agent  Done: 2026-03-15
-  - bench_tps for Phi 4 with 20 tokens.
-  - Acceptance: Output is at least as good as pre-Phase-14 ("'s a new and...").
-  - Dependencies: T3601.2.
+- [ ] S3701.2.1 Test RMSNorm fusion pass  Owner: TBD  Est: 45m
+  - Unit test: create a synthetic instruction list with the RMSNorm pattern,
+    verify the fusion pass detects and replaces it.
+  - Test with epsilon values from real models.
+  - go test ./graph/... -race.
+  - Dependencies: T3701.2.
 
-### E3602: Gemma 3 GGUF Throughput Regression
+- [ ] S3701.2.2 Test RMSNorm fusion on DGX  Owner: TBD  Est: 30m
+  - Run Llama 3 with fusion enabled. Verify instruction count dropped.
+  - Verify output quality is maintained (no numerical regression).
+  - Measure tok/s improvement.
+  - Dependencies: T3701.2, S3701.2.1.
 
-Gemma 3 GGUF dropped from 232.86 to 122.70 tok/s. This is the ZMF codegen
-pipeline which uses fused ops and should not be affected by ONNX-path changes.
+### E3702: Phi 4 TrySlice Capture Fix
 
-- [x] T3602.1 Profile Gemma 3 throughput regression  Owner: agent  Done: 2026-03-15
-  - Run Gemma 3 on DGX with CPU profiling: -cpuprofile=prof.out.
-  - Compare hot functions with Phase 11 baseline if available.
-  - Check if CUDA graph capture is still working (should capture 184/185 ops).
-  - Check if new GPU ops (Cos/Sin/Expand/ScatterND) are being dispatched
-    unnecessarily for GGUF models that use fused ops.
-  - Verify the Go version and CUDA driver version on DGX match Phase 11.
-  - Try running on the Phase 11 commit to establish if the regression is
-    code-related or environmental.
-  - File: cmd/bench_tps/main.go, graph/cuda_graph.go, compute/gpu_engine.go.
-  - Acceptance: Root cause of throughput regression identified.
+Phi 4 CUDA graph capture fails because GPUStorage.TrySlice triggers
+cudaMemcpy during stream capture. TrySlice reads a small header from GPU
+memory to determine slice bounds, which is incompatible with CUDA graph
+capture.
+
+- [ ] T3702.1 Diagnose Phi 4 TrySlice capture failure  Owner: TBD  Est: 1h
+  - Read compute/gpu_storage.go TrySlice implementation.
+  - Identify why TrySlice needs cudaMemcpy (likely reading tensor metadata
+    from GPU memory).
+  - Check which ops call TrySlice during the capture region.
+  - Determine if TrySlice can be made capture-safe by caching metadata
+    or using pre-computed offsets.
+  - File: compute/gpu_storage.go, graph/cuda_graph.go.
+  - Acceptance: Root cause documented. Fix approach identified.
   - Dependencies: none.
 
-- [x] T3602.2 Fix Gemma 3 throughput regression  Owner: agent  Done: 2026-03-15
-  - No fix needed. Regression was measurement artifact (20 tokens vs 256).
-  - 235.46 tok/s with 256 tokens (matches Phase 11 baseline).
-  - Dependencies: T3602.1.
+- [ ] T3702.2 Fix TrySlice for CUDA graph capture  Owner: TBD  Est: 1.5h
+  - Implement the fix based on diagnosis.
+  - Options: (a) cache slice metadata before capture, (b) pre-compute
+    offsets during warmup, (c) add ops that call TrySlice to nonCapturableOps.
+  - File: compute/gpu_storage.go or graph/cuda_graph.go.
+  - Acceptance: Phi 4 CUDA graph capture succeeds without TrySlice errors.
+  - Dependencies: T3702.1.
 
-- [x] S3602.2.1 Test Gemma 3 throughput on DGX  Owner: agent  Done: 2026-03-15
-  - bench_tps for Gemma 3 GGUF with 256 tokens.
-  - Acceptance: 230+ tok/s restored.
-  - Dependencies: T3602.2.
+- [ ] S3702.2.1 Test Phi 4 capture fix on DGX  Owner: TBD  Est: 15m
+  - bench_tps for Phi 4 on DGX. Verify no capture errors in log.
+  - Measure tok/s improvement from successful graph capture.
+  - Dependencies: T3702.2.
 
-### E3603: Fix TestCPUEngine_Exp Precision
+### E3703: ONNX CUDA Graph Capture Improvements
 
-Pre-existing test failure. The expected values do not match Go's math.Exp
-output for float32.
+Beyond RMSNorm fusion, additional ops may need to be excluded from capture
+or made capture-safe to increase the capturable instruction region.
 
-- [x] T3603.1 Fix TestCPUEngine_Exp precision failure  Owner: agent  Done: 2026-03-15
-  - Read compute/cpu_engine_test.go:224 to understand the test.
-  - Determine whether expected values or tolerance needs updating.
-  - If the CPU Exp implementation uses a custom fast-math approximation,
-    the test should use appropriate tolerance (1e-5 relative error).
-  - If the implementation uses math.Exp, update expected values to match.
-  - File: compute/cpu_engine_test.go.
-  - Acceptance: go test ./compute/... -race passes with zero failures.
+- [ ] T3703.1 Audit ONNX non-capturable ops  Owner: TBD  Est: 1h
+  - For each model (Llama 3, Qwen, Mistral, Phi 4), print the capture
+    region and list all ops that fall outside it.
+  - Categorize non-capturable ops: (a) inherently non-capturable (KV cache I/O),
+    (b) could be made capturable with code changes, (c) already handled.
+  - Identify the longest potential capture region if remaining blockers
+    were fixed.
+  - File: graph/cuda_graph.go.
+  - Acceptance: Per-model audit with capture improvement opportunities.
   - Dependencies: none.
 
-- [x] S3603.1.1 Run full compute test suite  Owner: agent  Done: 2026-03-15
-  - go build ./... && go vet ./... && go test ./compute/... -race -timeout 120s.
-  - Acceptance: Zero test failures (including the previously-failing Exp test).
-  - Dependencies: T3603.1.
+- [ ] T3703.2 Expand ONNX capture region  Owner: TBD  Est: 1.5h
+  - Based on audit, fix ops that can be made capture-safe.
+  - This may include: pre-uploading CPU tensors, caching metadata,
+    or splitting the capture into multiple regions.
+  - File: graph/cuda_graph.go, affected op files.
+  - Acceptance: Llama 3 capture coverage increases from 2% to 10%+.
+  - Dependencies: T3703.1.
 
-### E3604: All-Model Verification
+- [ ] S3703.2.1 Test capture improvements on DGX  Owner: TBD  Est: 15m
+  - bench_tps for all models. Verify improved capture coverage.
+  - Dependencies: T3703.2.
 
-- [x] T3604.1 Run all 5 models on DGX and record results  Owner: agent  Done: 2026-03-15
+### E3704: All-Model Verification
+
+- [ ] T3704.1 Run all 5 models on DGX with improvements  Owner: TBD  Est: 1h
   - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
   - Use --repetition-penalty 1.2 for ONNX models.
-  - Record tok/s, output quality for each.
+  - Record tok/s, capture coverage, output quality for each.
   - File: docs/updates.md.
-  - Acceptance: Gemma 3 >= 230 tok/s. Mistral has spaces. Phi 4 not regressed.
-    All models produce output without crashes.
-  - Dependencies: S3600.2.2, S3601.2.1, S3602.2.1, S3603.1.1.
+  - Acceptance: Gemma 3 >= 230 tok/s. ONNX models show measurable
+    improvement in throughput and/or output quality.
+  - Dependencies: T3700.1, S3701.2.2, S3702.2.1, S3703.2.1.
 
 ---
 
@@ -233,36 +230,38 @@ output for float32.
 
 | Track | Tasks | Notes |
 |-------|-------|-------|
-| Track A: Mistral Tokenizer | T3600.1, T3600.2, S3600.2.1, S3600.2.2 | Local code + DGX test |
-| Track B: Phi 4 Regression | T3601.1, T3601.2, S3601.2.1 | DGX diagnosis + fix |
-| Track C: Gemma 3 Perf | T3602.1, T3602.2, S3602.2.1 | DGX profiling + fix |
-| Track D: Exp Test Fix | T3603.1, S3603.1.1 | Local code only |
-| Track E: Final Verify | T3604.1 | DGX, depends on A-D |
+| Track A: Repetition Penalty | T3700.1 | DGX verification only |
+| Track B: RMSNorm Fusion | T3701.1, T3701.2, S3701.2.1, S3701.2.2 | Graph optimization |
+| Track C: Phi 4 TrySlice | T3702.1, T3702.2, S3702.2.1 | CUDA graph fix |
+| Track D: Capture Audit | T3703.1, T3703.2, S3703.2.1 | CUDA graph analysis |
+| Track E: Final Verify | T3704.1 | DGX, depends on A-D |
 
 ### Maximum parallelism
 
-- Wave 1 (4 tasks): T3600.1 (diagnose Mistral tokenizer) + T3601.1 (diagnose
-  Phi 4 regression, DGX) + T3602.1 (profile Gemma 3 regression, DGX) +
-  T3603.1 (fix Exp test). All independent. 4 teammates.
-  Note: T3601.1 and T3602.1 both need DGX. They can share DGX sequentially
-  within one agent, or run on separate SSH sessions.
+- Wave 1 (4 tasks): T3700.1 (test repetition penalty, DGX) + T3701.1
+  (identify RMSNorm pattern) + T3702.1 (diagnose TrySlice) + T3703.1
+  (audit non-capturable ops). All independent. 4 teammates.
 
-- Wave 2 (3 tasks): T3600.2 (fix Mistral tokenizer) + T3601.2 (fix Phi 4) +
-  T3602.2 (fix Gemma 3 perf). Each depends on its diagnosis. 3 teammates.
+- Wave 2 (3 tasks): T3701.2 (implement RMSNorm fusion) + T3702.2 (fix
+  TrySlice) + T3703.2 (expand capture region). Each depends on its
+  diagnosis. 3 teammates.
 
-- Wave 3 (4 tasks): S3600.2.1 (test tokenizer) + S3600.2.2 (test Mistral DGX) +
-  S3601.2.1 (test Phi 4 DGX) + S3602.2.1 (test Gemma 3 DGX) + S3603.1.1 (test
-  compute suite). Combine DGX tests into 1-2 agents. 2-3 teammates.
+- Wave 3 (3 tasks): S3701.2.1 (test fusion) + S3701.2.2 (test fusion DGX)
+  + S3702.2.1 (test TrySlice DGX) + S3703.2.1 (test capture DGX).
+  Combine DGX tests. 2-3 teammates.
 
-- Wave 4 (1 task): T3604.1 (all-model verification, DGX). 1 teammate.
+- Wave 4 (1 task): T3704.1 (all-model verification, DGX). 1 teammate.
 
 ### Dependency minimization checklist applied
 
-a) All 4 diagnosis/fix tasks in Wave 1 are independent.
-b) DGX tasks (T3601.1, T3602.1) can run in parallel via separate SSH sessions
-   since they test different models and do not contend for GPU memory.
-c) T3603.1 (Exp test fix) has zero dependencies and is purely local code.
-d) Wave 1 saturates 4 teammates with independent work.
+a) All 4 Wave 1 tasks are fully independent.
+b) RMSNorm pattern identification (T3701.1) is read-only analysis that
+   unblocks the implementation task.
+c) TrySlice diagnosis (T3702.1) and capture audit (T3703.1) can run in
+   parallel as they read different code paths.
+d) DGX tasks in Wave 1 (T3700.1) can run on a separate SSH session from
+   local code tasks.
+e) Wave 1 saturates 4 teammates.
 
 ---
 
@@ -270,9 +269,10 @@ d) Wave 1 saturates 4 teammates with independent work.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M800: Issues diagnosed | T3600.1, T3601.1, T3602.1 | All 3 regressions have root cause |
-| M801: Fixes applied | T3600.2, T3601.2, T3602.2, T3603.1 | All fixes in code, tests pass |
-| M802: All models verified | T3604.1 | 5/5 models produce usable output, Gemma 3 >= 230 tok/s |
+| M900: Quick wins | T3700.1 | Repetition penalty tested on DGX |
+| M901: Fusion implemented | T3701.2, S3701.2.1 | RMSNorm fusion pass works, tests pass |
+| M902: Graph capture improved | T3702.2, T3703.2 | Phi 4 capture fixed, ONNX coverage up |
+| M903: All models verified | T3704.1 | 5/5 models improved on DGX |
 
 ---
 
@@ -280,10 +280,11 @@ d) Wave 1 saturates 4 teammates with independent work.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R3600 | Mistral tokenizer fix breaks other SentencePiece models (Llama, Qwen) | Regression | Low | Test all SentencePiece models after fix. The U+2581 replacement is standard SentencePiece behavior. |
-| R3601 | Phi 4 regression is architectural (attention pattern incompatible with ConstantOfShape fix) | Harder fix | Medium | Revert ConstantOfShape fix selectively for Phi 4 if needed. Check if Phi 4 uses ConstantOfShape differently. |
-| R3602 | Gemma 3 regression is environmental (CUDA driver, Go version) not code | Cannot fix in code | Low | Bisect commits to isolate. If environmental, document as known limitation. |
-| R3603 | Fixing Exp test reveals other precision issues across test suite | More work | Low | Survey float32 comparison patterns in tests. Use tolerance-based comparisons. |
+| R3700 | RMSNorm decomposition pattern varies between models | Multiple fusion patterns needed | Medium | Start with Llama 3 pattern, extend to others. Document variations. |
+| R3701 | RMSNorm fusion changes numerical results | Output quality regression | Low | The fused kernel is already used by GGUF. Compare fused vs decomposed numerically. |
+| R3702 | TrySlice fix requires architectural changes to GPU storage | Large scope | Medium | Option (c) -- adding ops to nonCapturableOps -- is always available as fallback. |
+| R3703 | ONNX CUDA graph capture has fundamental limitations | Cannot reach 50% coverage | Medium | Even 10-20% coverage with fusion should give measurable speedup. |
+| R3704 | Repetition penalty at 1.2 produces incoherent output | No quality improvement | Low | Try different values (1.1, 1.3, 1.5). Penalty is model-dependent. |
 
 ---
 
@@ -318,30 +319,33 @@ A task is done when:
 
 1. ssh ndungu@192.168.86.250
 2. export PATH=/usr/local/cuda/bin:$PATH
-3. cd ~/zerfoo && git fetch upstream <branch> && git checkout <branch>
+3. cd ~/zerfoo && git fetch upstream main && git checkout main
 4. cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
 5. cd ~/zerfoo
 6. export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
-7. Verify: /usr/local/go/bin/go run ./cmd/bench_tps --help
+7. go build -o bench_tps ./cmd/bench_tps/ (ALWAYS rebuild binary)
+8. Verify: ./bench_tps --help
 
 ---
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-15 (Phase 15: Remaining Issues)
+### Change Summary -- 2026-03-15 (Phase 16: ONNX Quality + CUDA Graph)
 
-Trimmed completed Phase 14 work into docs/design.md:
-- GPU Cos/Sin/Expand/ScatterND kernels
-- ConstantOfShape tensor fill fix
-- Repetition penalty CLI
-- Phase 14 verification results per model
+Trimmed completed Phase 15 work into docs/design.md:
+- SentencePiece tokenizer fix (LoadFromJSON decoder parsing)
+- CUDA graph nonCapturableOps (ConstantOfShape, Shape)
+- TestCPUEngine_Exp tolerance fix
+- Gemma 3 measurement artifact confirmed (232 tok/s with 256 tokens)
+- Phi 4 stale binary issue (not code regression)
+- Phase 15 verification results per model
 
-Phase 15 created to address 4 remaining issues from Phase 14 verification:
-- E3600: Mistral tokenizer SentencePiece space decoding
-- E3601: Phi 4 output regression diagnosis
-- E3602: Gemma 3 throughput regression diagnosis
-- E3603: TestCPUEngine_Exp precision fix
-- E3604: All-model final verification
+Phase 16 created to address remaining ONNX quality and performance:
+- E3700: Repetition penalty DGX verification (quick win)
+- E3701: ONNX RMSNorm fusion (biggest performance lever)
+- E3702: Phi 4 TrySlice capture fix
+- E3703: ONNX CUDA graph capture improvements
+- E3704: All-model final verification
 
 No new ADRs needed.
 
@@ -350,26 +354,27 @@ No new ADRs needed.
 ## 9. Hand-off Notes
 
 - **Current version:** v1.1.0.
-- **Branch:** PRs #64 and #65 open for Phase 14 (feat/phase14-wave1, feat/phase14-wave2).
-  These must be merged before Phase 15 work begins.
-- **Model status after Phase 14 (DGX, feat/phase14-wave2 branch):**
-  - Gemma 3 GGUF: 122.70 tok/s (REGRESSED from 232), poor output
-  - Llama 3 ONNX: 12.90 tok/s, semi-coherent
-  - Qwen 2.5 ONNX: 15.54 tok/s, FIXED (no more single-token repetition)
-  - Mistral 7B ONNX: 3.65 tok/s, words coherent but no spaces (tokenizer)
-  - Phi 4 ONNX: 4.53 tok/s, REGRESSED to "jjjjjjjj"
-- **Key fixes applied in Phase 14:**
-  - GPU Cos/Sin/Expand/ScatterND (eliminate D2H copies)
-  - ConstantOfShape *zmf.Tensor fill value fix (constantofshape.go)
-  - Repetition penalty (--repetition-penalty CLI flag)
+- **Branch:** main at 4724c47. All Phase 13-15 work merged (PRs #64, #65, #66).
+- **Model status (DGX, main branch, Phase 15 verified):**
+  - Gemma 3 GGUF: 232.21 tok/s (256 tok), 99.5% graph capture, baseline
+  - Llama 3 ONNX: 12.93 tok/s, semi-coherent, 2% graph capture
+  - Qwen 2.5 ONNX: 15.79 tok/s, improved (no single-token repetition)
+  - Mistral 7B ONNX: 3.94 tok/s, spaces fixed, still repetitive
+  - Phi 4 ONNX: 4.14 tok/s, semi-coherent, CUDA graph capture partial
+- **Key ONNX bottleneck:** Decomposed ops = many kernel launches + low graph
+  capture. RMSNorm fusion is the highest-impact optimization.
+- **Repetition penalty:** --repetition-penalty flag implemented but not tested
+  on DGX. Quick win to verify.
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
-  IMPORTANT: Use `upstream` HTTPS remote for fetch (origin SSH has host key issue).
+  Use `upstream` HTTPS remote for fetch. ALWAYS rebuild binary before benchmarking.
   `export PATH=/usr/local/cuda/bin:$PATH` before `make shared`.
-- **Key files for Phase 15:**
-  - layers/tokenizers/ -- SentencePiece U+2581 decoding
-  - layers/core/constantofshape.go -- may need Phi 4 specific handling
-  - compute/cpu_engine_test.go:224 -- Exp precision test
-  - graph/cuda_graph.go -- Gemma 3 graph capture performance
+- **Key files:**
+  - graph/compile.go -- ONNX instruction compilation
+  - graph/cuda_graph.go -- CUDA graph capture, nonCapturableOps
+  - layers/normalization/rmsnorm.go -- fused RMSNorm (used by GGUF)
+  - internal/cuda/kernels/rmsnorm.cu -- fused RMSNorm kernel
+  - compute/gpu_storage.go -- TrySlice implementation
+  - cmd/bench_tps/main.go -- --repetition-penalty flag
 - **Models on DGX:** ~/models/gemma3-gguf/model.gguf, ~/models/llama3/,
   ~/models/qwen25/, ~/models/mistral/, ~/models/phi4/
 - **Pre-commit hook:** Rejects multi-directory commits.
