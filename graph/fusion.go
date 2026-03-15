@@ -69,7 +69,7 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		if divInst.OpName != "Div" || len(divInst.InputIdx) != 2 {
 			continue
 		}
-		xSlot := divInst.InputIdx[0]
+		_ = divInst.InputIdx[0] // xSlot (may differ from Pow's x due to Cast)
 		sqrtOutputSlot := divInst.InputIdx[1]
 
 		// Trace: Sqrt
@@ -171,9 +171,12 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			return any(out).(*tensor.TensorNumeric[T]), nil
 		}
 
+		// Use Pow's first input as x (the original input before any Cast ops).
+		// Div's first input may be a Cast output that depends on execution order.
+		powXSlot := powInst.InputIdx[0]
 		fusedInst := Instruction[T]{
 			Forward:   fwdFn,
-			InputIdx:  []int{xSlot, weightSlot},
+			InputIdx:  []int{powXSlot, weightSlot},
 			OutputIdx: mulInst.OutputIdx,
 			OpName:    "FusedRMSNorm",
 		}
