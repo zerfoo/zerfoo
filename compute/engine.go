@@ -127,6 +127,12 @@ type Engine[T tensor.Numeric] interface {
 	// Log computes the element-wise natural logarithm of a tensor.
 	Log(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 
+	// Sin computes the element-wise sine of a tensor.
+	Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+
+	// Cos computes the element-wise cosine of a tensor.
+	Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+
 	// Tanh applies the hyperbolic tangent activation function element-wise.
 	Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
 
