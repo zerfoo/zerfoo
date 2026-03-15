@@ -128,7 +128,7 @@ for ONNX models.
   - Write CPU vs GPU parity test for Sin.
   - Dependencies: T3500.2.
 
-- [ ] S3500.2.2 Run make shared on DGX after kernel changes  Owner: TBD  Est: 15m
+- [x] S3500.2.2 Run make shared on DGX after kernel changes  Owner: agent  Done: 2026-03-15
   - Rebuild libkernels.so with CUDA_ARCH=sm_121.
   - Dependencies: T3500.1, T3500.2.
 
@@ -156,7 +156,7 @@ tensors, it forces D2H copies. Used in attention mask construction.
 ScatterND in layers/core/scatternd.go operates on CPU data. Used by ONNX
 models for KV cache updates.
 
-- [ ] T3502.1 Add GPU ScatterND  Owner: TBD  Est: 2h
+- [x] T3502.1 Add GPU ScatterND  Owner: agent  Done: 2026-03-15
   - Implement ScatterND on GPU. This is more complex than Cos/Sin because
     it requires reading index tensors and performing scattered writes.
   - Option A: GPU kernel with atomicAdd for scattered updates.
@@ -166,7 +166,7 @@ models for KV cache updates.
   - Acceptance: ScatterND with GPU data tensor stays GPU-resident for data.
   - Dependencies: none.
 
-- [ ] S3502.1.1 Test GPU ScatterND  Owner: TBD  Est: 30m
+- [x] S3502.1.1 Test GPU ScatterND  Owner: agent  Done: 2026-03-15
   - CPU vs GPU parity test for ScatterND.
   - Dependencies: T3502.1.
 
@@ -207,7 +207,7 @@ construction or head count handling.
   - Acceptance: Root cause of single-token repetition identified.
   - Dependencies: none.
 
-- [ ] T3504.2 Fix Qwen 2.5 output  Owner: TBD  Est: 1h
+- [x] T3504.2 Fix Qwen 2.5 output  Owner: agent  Done: 2026-03-15
   - Apply fix based on diagnosis.
   - Dependencies: T3504.1.
 
@@ -221,7 +221,7 @@ construction or head count handling.
 Mistral produces garbled tokens without spaces. May be a tokenizer issue
 (SentencePiece vs BPE) or sliding window attention handling.
 
-- [ ] T3505.1 Diagnose Mistral garbled output  Owner: TBD  Est: 1.5h
+- [x] T3505.1 Diagnose Mistral garbled output  Owner: agent  Done: 2026-03-15
   - Run Mistral on DGX with debug logging.
   - Check tokenizer: is the BPE tokenizer handling Mistral's vocabulary
     correctly? Compare token IDs with Python tokenizer.
@@ -229,8 +229,8 @@ Mistral produces garbled tokens without spaces. May be a tokenizer issue
   - Acceptance: Root cause of garbled output identified.
   - Dependencies: none.
 
-- [ ] T3505.2 Fix Mistral output  Owner: TBD  Est: 1h
-  - Apply fix based on diagnosis.
+- [x] T3505.2 Fix Mistral output  Owner: agent  Done: 2026-03-15
+  - Same root cause as Qwen (ConstantOfShape). Fixed by T3504.2.
   - Dependencies: T3505.1.
 
 - [ ] S3505.2.1 Test Mistral fix on DGX  Owner: TBD  Est: 15m
