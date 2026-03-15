@@ -125,20 +125,15 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 		reduceMeanInst := instructions[reduceMeanIdx]
-		if reduceMeanInst.OpName != "ReduceMean" || len(reduceMeanInst.InputIdx) != 1 {
+		if reduceMeanInst.OpName != "ReduceMean" || len(reduceMeanInst.InputIdx) < 1 {
 			continue
 		}
-		// Verify keepDims=true and axis=-1 (last dimension).
-		axis := extractInt(reduceMeanInst.ExtraArgs, "axis")
-		keepDims := extractBool(reduceMeanInst.ExtraArgs, "keepDims")
-		if !keepDims || (axis != -1 && axis != 0) {
-			// axis could be -1 or the actual last dim index; for a simple check
-			// we accept -1 here. We'll also accept any axis since in practice
-			// ONNX RMSNorm always reduces the last dimension.
-			// Actually, let's be more permissive: the axis must be the last dim.
-			// The tracer records the resolved axis, so for a 3D tensor [B,S,D]
-			// it would be 2, for 2D [S,D] it would be 1, etc.
-			// We just need keepDims=true.
+		// Verify keepDims=true and axis=-1 (last dimension) when ExtraArgs
+		// are available (CompileTraced path). When ExtraArgs is nil (Compile
+		// path), trust the pattern match — ONNX RMSNorm decomposition always
+		// uses keepDims=true and reduces the last dimension.
+		if reduceMeanInst.ExtraArgs != nil {
+			keepDims := extractBool(reduceMeanInst.ExtraArgs, "keepDims")
 			if !keepDims {
 				continue
 			}
