@@ -3,7 +3,6 @@ package core //nolint:dupl // Sin follows the same unary trig-op pattern as Cos
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
@@ -22,27 +21,14 @@ func (s *Sin[T]) Attributes() map[string]any         { return nil }
 func (s *Sin[T]) OutputShape() []int                 { return nil }
 func (s *Sin[T]) Parameters() []*graph.Parameter[T]  { return nil }
 
-func (s *Sin[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (s *Sin[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("Sin requires 1 input, got %d", len(inputs))
 	}
-	data := inputs[0].Data()
-	out := make([]T, len(data))
-	switch d := any(data).(type) {
-	case []float32:
-		o := any(out).([]float32)
-		for i, v := range d {
-			o[i] = float32(math.Sin(float64(v)))
-		}
-	case []float64:
-		o := any(out).([]float64)
-		for i, v := range d {
-			o[i] = math.Sin(v)
-		}
-	default:
-		return nil, fmt.Errorf("Sin: unsupported type %T", data)
+	if s.engine != nil {
+		return s.engine.Sin(ctx, inputs[0])
 	}
-	return tensor.New(inputs[0].Shape(), out)
+	return nil, fmt.Errorf("Sin: engine not set")
 }
 
 func (s *Sin[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
