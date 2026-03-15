@@ -215,6 +215,16 @@ __global__ void kernel_rsqrt(const float* a, float* c, int n) {
     if (idx < n) c[idx] = rsqrtf(a[idx]);
 }
 
+__global__ void kernel_sin(const float* a, float* c, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) c[idx] = sinf(a[idx]);
+}
+
+__global__ void kernel_cos(const float* a, float* c, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) c[idx] = cosf(a[idx]);
+}
+
 __global__ void kernel_tanh(const float* a, float* c, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) c[idx] = tanhf(a[idx]);
@@ -531,6 +541,18 @@ cudaError_t launch_sqrt(const float* a, float* c, int n, cudaStream_t stream) {
 cudaError_t launch_rsqrt(const float* a, float* c, int n, cudaStream_t stream) {
     int grid, block; grid_config(n, &grid, &block);
     kernel_rsqrt<<<grid, block, 0, stream>>>(a, c, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_sin(const float* a, float* c, int n, cudaStream_t stream) {
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_sin<<<grid, block, 0, stream>>>(a, c, n);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_cos(const float* a, float* c, int n, cudaStream_t stream) {
+    int grid, block; grid_config(n, &grid, &block);
+    kernel_cos<<<grid, block, 0, stream>>>(a, c, n);
     return cudaGetLastError();
 }
 
