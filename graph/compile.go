@@ -697,6 +697,9 @@ func (g *Graph[T]) CompileTraced(ctx context.Context, inputs ...*tensor.TensorNu
 		}
 	}
 
+	// Step 6: Apply graph fusion passes.
+	instructions, frozenSlotIDs, slots, slotShapes = FuseRMSNorm(instructions, frozenSlotIDs, slots, slotShapes)
+
 	return &ExecutionPlan[T]{
 		instructions: instructions,
 		slots:        slots,
