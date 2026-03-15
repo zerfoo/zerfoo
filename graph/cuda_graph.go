@@ -33,6 +33,13 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 //
 // Reshape: reads dynamic target shape from second input tensor via Data().
 //
+// ConstantOfShape: allocates a CPU tensor filled with a constant value.
+// Downstream ops (e.g. Mul) would trigger cudaMemcpy H2D on the
+// capturing stream.
+//
+// Shape: produces a 1-D CPU tensor containing the shape of its input.
+// Downstream consumers trigger cudaMemcpy H2D during stream capture.
+//
 // GroupedQueryAttention was previously non-capturable because it read
 // cache.SeqLen() on the CPU for RoPE positions and used CPU-computed offsets
 // for KV cache appends. Now that TensorCache uses a GPU-resident counter
@@ -46,6 +53,8 @@ var nonCapturableOps = map[string]bool{
 	"AutoPositionIds":   true,
 	"Slice":             true,
 	"Reshape":           true,
+	"ConstantOfShape":   true,
+	"Shape":             true,
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
