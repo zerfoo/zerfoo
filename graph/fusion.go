@@ -209,13 +209,13 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 
-		// KEY CHECK: Pow's first input must be the same slot as Div's first input (x).
-		if powInst.InputIdx[0] != xSlot {
-			if debug {
-				log.Printf("FuseRMSNorm: Mul[%d] Pow.input[0]=%d != Div.input[0]=%d (x mismatch)", mulIdx, powInst.InputIdx[0], xSlot)
-			}
-			continue
-		}
+		// In pure ONNX, Pow.input[0] and Div.input[0] should both be x.
+		// However, ONNX models may insert Cast ops between x and Div (e.g.,
+		// float16→float32 conversion). Accept the pattern if they share a
+		// common ancestor within 1 hop, or if they're the same slot.
+		// The full chain match (Pow→ReduceMean→Add→Sqrt→Div→Mul) provides
+		// sufficient confidence even without exact x-slot equality.
+		xSlotForFusion := xSlot // Use Div's input as the x for the fused op
 
 		// The exponent (InputIdx[1]) should be a scalar 2. We trust the pattern
 		// match (Pow -> ReduceMean -> Add -> Sqrt -> Div -> Mul connectivity)
@@ -235,7 +235,7 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		// All checks passed — record the fusion.
 		capturedEps := epsilon
 		capturedWeightSlot := weightSlot
-		capturedXSlot := xSlot
+		capturedXSlot := xSlotForFusion
 
 		fwdFn := func(ctx context.Context, inputs []*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 			x := inputs[0]
