@@ -408,6 +408,16 @@ func gpuBroadcastOp[T tensor.Numeric](
 	// Compute proper N-D broadcast output shape (NumPy rules).
 	outShape := broadcastShape(aShape, bShape)
 
+	// Verify the 2D-flattened element count matches the N-D broadcast shape.
+	// flattenTo2D can collapse dimensions that are actually broadcast axes
+	// (e.g. [2,1,3] vs [1,2,3] both flatten to [2,3]) producing M*D that
+	// is smaller than the true broadcast output [2,2,3]. Fall back to the
+	// 4D broadcast kernel when this happens.
+	outElems := M * D
+	if totalElements(outShape) != outElems {
+		return cpuFallback(ctx, a, b, dst...)
+	}
+
 	e.setDevice()
 
 	devA, cleanupA, err := getDevicePtr(e, a)
@@ -421,8 +431,6 @@ func gpuBroadcastOp[T tensor.Numeric](
 		return nil, err
 	}
 	defer cleanupB()
-
-	outElems := M * D
 	byteSize := outElems * f32Size
 	devC, err := e.pool.Alloc(e.deviceID, byteSize)
 	if err != nil {
