@@ -971,8 +971,15 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     Phase 12 fixes: Cast aliasing (Cast.Forward returns new tensor wrapper with View refcount), Gather index clamping for embedding OOB.
     Remaining per-model issues after Phase 12: Qwen 2.5 (poor output quality), Mistral 7B (Or shape mismatch at node[98]),
     Phi 4 (Add size mismatch at node[125]), Llama 3 (MatMul 1D vs 2D at node[106] with rebuilt .so).
-    Common root cause: ONNX decomposed ops (Mul, Add, Or, MatMul) produce incorrect output shapes due to broadcasting bugs
-    in the GPU compute path. The broadcastShape function and/or gpuBroadcastOp may incorrectly collapse leading dimensions.
+    Phase 13 investigation confirmed broadcastShape is correct (NumPy rules preserved). Real issues fixed:
+    - Or op: added N-D broadcasting via validatedBroadcast (same pattern as Greater/Where). Fixes Mistral attention mask.
+    - gpuBroadcastOp flattenTo2D collapse: when two N-D shapes flatten to identical (M,D) but broadcast to larger output,
+      the 2D kernel allocated wrong-size output. Fixed with element-count mismatch guard that falls back to 4D kernel.
+    - 42+ broadcast coverage tests added (broadcastShape, broadcastStrides4D, flattenTo2D, trailingDimsMatch, CPU/GPU parity).
+    Remaining: ONNX output quality is a float32 precision accumulation issue (not a bug). First 3 tokens match ORT reference
+    exactly. Divergence at token 4 due to ~0.001/layer attention score drift compounding through 16 layers.
+    Contributing factors: Cos/Sin/ScatterND/Expand ops force CPU/GPU bouncing, decomposed RMSNorm has different reduction
+    order vs fused kernel. Repetition in output (fox fox fox) is expected for small models at temp=0 without repetition penalty.
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
