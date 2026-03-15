@@ -147,8 +147,10 @@ func TestFuseRMSNorm_NoPattern(t *testing.T) {
 	}
 }
 
-func TestFuseRMSNorm_BrokenChain(t *testing.T) {
-	// Pattern where Div's first input != Pow's first input (should NOT fuse).
+func TestFuseRMSNorm_DifferentXSlots(t *testing.T) {
+	// Pattern where Div's first input != Pow's first input.
+	// This is valid in ONNX models where Cast ops sit between x and Div.
+	// The fusion should still match (connectivity is valid).
 	noop := func(_ context.Context, _ []*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		return nil, nil
 	}
@@ -168,8 +170,45 @@ func TestFuseRMSNorm_BrokenChain(t *testing.T) {
 		{Forward: noop, InputIdx: []int{4}, OutputIdx: 5, OpName: "ReduceMean", ExtraArgs: map[string]any{"axis": -1, "keepDims": true}},
 		{Forward: noop, InputIdx: []int{5, 2}, OutputIdx: 6, OpName: "Add"},
 		{Forward: noop, InputIdx: []int{6}, OutputIdx: 7, OpName: "Sqrt"},
-		// Div's first input is 10, NOT 0 (Pow's first input) → broken chain.
+		// Div's first input is 10, NOT 0 (Pow's first input) — valid with Cast.
 		{Forward: noop, InputIdx: []int{10, 7}, OutputIdx: 8, OpName: "Div"},
+		{Forward: noop, InputIdx: []int{8, 3}, OutputIdx: 9, OpName: "Mul"},
+	}
+
+	got, _, _, _ := FuseRMSNorm(instructions, frozenIdx, slots, shapes)
+
+	// Should fuse: connectivity Pow→ReduceMean→Add→Sqrt→Div→Mul is valid.
+	if len(got) != 1 {
+		t.Fatalf("expected 1 fused instruction, got %d", len(got))
+	}
+	if got[0].OpName != "FusedRMSNorm" {
+		t.Fatalf("expected FusedRMSNorm, got %s", got[0].OpName)
+	}
+}
+
+func TestFuseRMSNorm_BrokenChain(t *testing.T) {
+	// Pattern where Sqrt is replaced with a different op → should NOT fuse.
+	noop := func(_ context.Context, _ []*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+		return nil, nil
+	}
+	expT, _ := tensor.New[float32]([]int{1}, []float32{2.0})
+	epsT, _ := tensor.New[float32]([]int{1}, []float32{1e-5})
+	weightT, _ := tensor.New[float32]([]int{4}, []float32{1, 1, 1, 1})
+
+	slots := make([]*tensor.TensorNumeric[float32], 12)
+	slots[1] = expT
+	slots[2] = epsT
+	slots[3] = weightT
+	shapes := make([][]int, 12)
+	frozenIdx := []int{1, 2, 3}
+
+	instructions := []Instruction[float32]{
+		{Forward: noop, InputIdx: []int{0, 1}, OutputIdx: 4, OpName: "Pow"},
+		{Forward: noop, InputIdx: []int{4}, OutputIdx: 5, OpName: "ReduceMean", ExtraArgs: map[string]any{"axis": -1, "keepDims": true}},
+		{Forward: noop, InputIdx: []int{5, 2}, OutputIdx: 6, OpName: "Add"},
+		// NOT Sqrt — broken chain.
+		{Forward: noop, InputIdx: []int{6}, OutputIdx: 7, OpName: "Exp"},
+		{Forward: noop, InputIdx: []int{0, 7}, OutputIdx: 8, OpName: "Div"},
 		{Forward: noop, InputIdx: []int{8, 3}, OutputIdx: 9, OpName: "Mul"},
 	}
 
