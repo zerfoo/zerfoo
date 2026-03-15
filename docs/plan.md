@@ -1,4 +1,4 @@
-# Zerfoo Development Plan -- Phase 14: ONNX Precision + GPU-Native Ops + Sampling
+# Zerfoo Development Plan -- Phase 15: Remaining Model Quality + Performance Regression
 
 ## 1. Context
 
@@ -6,49 +6,56 @@ See docs/design.md for full architecture, package layout, and conventions.
 
 ### Problem Statement
 
-Phase 13 confirmed all ONNX models run without crashes on DGX. The compute
-engine is correct -- broadcastShape, Or broadcasting, and flattenTo2D collapse
-are all fixed. 42+ coverage tests verify broadcast correctness.
+Phase 14 implemented GPU-native Cos/Sin/Expand/ScatterND ops (eliminating D2H
+copies), added repetition penalty to sampling, and fixed the ConstantOfShape
+tensor fill bug that caused broken causal masks for Qwen 2.5 and Mistral 7B.
 
-The remaining issue is **float32 precision accumulation**. Comparison with ONNX
-Runtime shows the first 3 generated tokens match exactly; divergence begins at
-token 4 due to ~0.001/layer attention score drift compounding through 16
-transformer layers. This is not a bug -- it is inherent to float32 with
-different GEMM accumulation orders.
+Three issues remain from Phase 14 verification (DGX, 2026-03-15):
 
-Four improvements will reduce precision drift and improve output quality:
+1. **Mistral 7B tokenizer space decoding.** Output is "jumpedoverthequickbark..."
+   -- words are recognizable English but have no spaces between them. The
+   SentencePiece tokenizer uses a special `U+2581` (lower one eighth block,
+   displayed as `_`) prefix to mark word boundaries, which must be decoded as
+   a space character. The current tokenizer decoding path does not perform this
+   substitution.
 
-1. **GPU-native Cos/Sin/Expand/ScatterND ops.** These ops currently force D2H
-   copies (`.Data()` on GPU tensors), creating CPU/GPU execution boundaries
-   that change float32 accumulation patterns. Keeping all computation on GPU
-   eliminates unnecessary precision-boundary crossings and improves performance.
+2. **Phi 4 output regression.** Output degraded from "'s a new and the
+   following..." to "jjjjjjjjjj" (single-character repetition). CUDA graph
+   capture also fails with "cudaMemcpy failed: operation would make the legacy
+   stream depend on a capturing blocking stream" at instruction 75 (Mul).
+   The regression may be caused by the ConstantOfShape fix interacting
+   differently with Phi 4's graph structure, or by a separate issue in Phi 4's
+   execution path. Needs diagnosis.
 
-2. **Qwen 2.5 / Mistral model-specific investigation.** Qwen produces
-   single-token repetition ("fox fox fox"), Mistral produces garbled tokens.
-   These patterns suggest model-specific bugs beyond precision drift (e.g.,
-   attention mask construction, tokenizer integration, head count mismatch).
+3. **Gemma 3 GGUF throughput regression.** Performance dropped from 232.86 tok/s
+   (Phase 11 baseline) to 122.70 tok/s (Phase 14). This is a 47% regression
+   on the same hardware (DGX Spark GB10, sm_121). The GGUF/ZMF codegen pipeline
+   uses fused ops and should not be affected by ONNX-path changes. The
+   regression may be caused by: code changes affecting the hot path, Go runtime
+   changes, CUDA driver updates, or a measurement artifact. Needs profiling.
 
-3. **Repetition penalty in sampling.** Small models at temp=0 without
-   repetition penalty naturally produce repetitive output. Adding repetition
-   penalty to the sampling path will improve output quality for all models.
-
-4. **FP16 mixed precision.** Running with fp16 weights and fp32 compute
-   constrains the precision space and may improve alignment with ORT (which
-   uses fp16 by default for transformer models).
+4. **TestCPUEngine_Exp float precision failure.** Pre-existing test failure in
+   compute/cpu_engine_test.go:224. Expected [2.7182817 7.389056 20.085537
+   54.59815], got [2.7182794 7.389056 20.085533 54.59815]. This is a float32
+   precision issue in the CPU Exp implementation -- likely the expected values
+   were computed with a different math library. The fix is to widen the
+   tolerance or update the expected values to match Go's math.Exp output.
 
 ### Objectives
 
-- O1: Implement GPU-native Cos, Sin, Expand, ScatterND ops.
-- O2: Investigate and fix Qwen 2.5 and Mistral model-specific output issues.
-- O3: Add repetition penalty to the generation sampling loop.
-- O4: All 5 models produce usable output on DGX.
+- O1: Fix Mistral 7B tokenizer to decode SentencePiece word boundaries as spaces.
+- O2: Diagnose and fix Phi 4 output regression.
+- O3: Diagnose and fix Gemma 3 GGUF throughput regression.
+- O4: Fix TestCPUEngine_Exp precision failure.
+- O5: All 5 models produce usable output on DGX.
 
 ### Non-Goals
 
 - New model architectures.
 - Multi-GPU / distributed inference.
 - Training, fine-tuning, RLHF.
-- Matching ORT output bit-for-bit (float32 precision limits make this impossible).
+- FP16 mixed precision (deferred).
+- Matching ORT output bit-for-bit.
 
 ### Constraints and Assumptions
 
@@ -57,18 +64,19 @@ Four improvements will reduce precision drift and improve output quality:
 - DGX Spark GB10: sm_121, 273 GB/s LPDDR5x, 128GB unified memory.
 - Go 1.25 with purego GPU bindings (no CGo for CUDA).
 - DGX requires `export PATH=/usr/local/cuda/bin:$PATH` before `make shared`.
-- All 5 models currently run without crashes (Phases 11-13 fixes).
-- Llama 3 produces semi-coherent output (first 3 tokens correct).
+- DGX uses `upstream` HTTPS remote for fetch (origin SSH has host key issue).
+- All 5 models run without crashes (Phases 11-14 fixes).
+- PRs #64 and #65 (Phase 14 code) are open and need merging.
 
 ### Success Metrics
 
 | Metric | Target | How Measured |
 |--------|--------|-------------|
-| GPU-native ops | Cos/Sin/Expand/ScatterND run on GPU without D2H | bench_tps with ZERFOO_DEBUG_GPU=1 |
-| Repetition penalty | Less repetitive output at temp=0 | bench_tps output inspection |
-| Qwen 2.5 | Coherent text (not single-token repetition) | bench_tps on DGX |
-| Mistral 7B | Coherent text (not garbled) | bench_tps on DGX |
-| No regression | Gemma 3 GGUF still 230+ tok/s | bench_tps on DGX |
+| Mistral 7B | Coherent text with spaces | bench_tps on DGX |
+| Phi 4 | No regression, coherent output | bench_tps on DGX |
+| Gemma 3 GGUF | 230+ tok/s restored | bench_tps on DGX |
+| TestCPUEngine_Exp | PASS | go test ./compute/... -race |
+| No regression | All other models still work | bench_tps on DGX |
 
 ---
 
@@ -78,175 +86,147 @@ Four improvements will reduce precision drift and improve output quality:
 
 | ID | Deliverable | Rationale |
 |----|-------------|-----------|
-| D700 | GPU Cos/Sin kernels | Eliminate D2H for rotary embedding ops |
-| D701 | GPU Expand op | Eliminate D2H for attention mask expansion |
-| D702 | GPU ScatterND op | Eliminate D2H for KV cache scatter |
-| D703 | Repetition penalty in sampling | Better output quality for all models |
-| D704 | Qwen 2.5 model-specific fix | Model coverage |
-| D705 | Mistral 7B model-specific fix | Model coverage |
-| D706 | All-model verification on DGX | Confirm improvements |
+| D800 | Mistral tokenizer space fix | SentencePiece word boundary decoding |
+| D801 | Phi 4 regression diagnosis and fix | Output quality restored |
+| D802 | Gemma 3 throughput regression diagnosis and fix | 232 tok/s restored |
+| D803 | TestCPUEngine_Exp fix | Clean test suite |
+| D804 | All-model verification on DGX | Confirm all fixes |
 
 ### Out of Scope
 
-- FP16 mixed precision (deferred to Phase 15).
+- FP16 mixed precision.
 - New model architectures.
+- CUDA graph capture for ONNX models.
 - Training, fine-tuning, RLHF.
-- Bit-for-bit ORT matching.
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E3500: GPU-Native Cos/Sin Kernels
+### E3600: Mistral Tokenizer Space Fix
 
-Cos and Sin ops in layers/core/cos.go and layers/core/sin.go call .Data() on
-GPU tensors, forcing D2H copies. These are used in rotary position embedding
-for ONNX models.
+Mistral output has no spaces between tokens. The SentencePiece tokenizer uses
+U+2581 prefix to mark word boundaries. The tokenizer decoding path must
+replace this character with a space.
 
-- [x] T3500.1 Add GPU Cos kernel  Owner: agent  Done: 2026-03-15
-  - Add a CUDA cos kernel to internal/cuda/kernels/elementwise.cu:
-    `kernel_cos(float* a, float* c, int n)` using `cosf()`.
-  - Add launcher and purego binding in elementwise_purego.go.
-  - Wire through KernelRunner interface and GPUEngine.
-  - Add gpuCos method to GPUEngine (same pattern as gpuExp, gpuSqrt).
-  - File: internal/cuda/kernels/elementwise.cu, compute/gpu_engine.go.
-  - Acceptance: Cos on GPU tensors runs on GPU without D2H copy.
+- [ ] T3600.1 Diagnose Mistral tokenizer space issue  Owner: TBD  Est: 45m
+  - Read layers/tokenizers/ and any SentencePiece decoding code.
+  - Search for U+2581 handling, "sentencepiece", or byte-level BPE decoding.
+  - Check if the tokenizer config has a `decoder` field with
+    `type: "Replace"` or `type: "Strip"` rules.
+  - Read the Mistral tokenizer.json on DGX to understand its decoder config.
+  - File: layers/tokenizers/, inference/.
+  - Acceptance: Root cause identified. Missing U+2581-to-space replacement located.
   - Dependencies: none.
 
-- [x] S3500.1.1 Test GPU Cos kernel  Owner: agent  Done: 2026-03-15
-  - Write CPU vs GPU parity test for Cos with various shapes.
-  - go test ./compute/... -race.
-  - Dependencies: T3500.1.
+- [ ] T3600.2 Fix Mistral tokenizer space decoding  Owner: TBD  Est: 45m
+  - Add U+2581 to space replacement in the token decoding path.
+  - This should be a general SentencePiece decoder fix, not Mistral-specific.
+  - Verify Llama 3 and Qwen 2.5 (which also use SentencePiece) still work.
+  - File: layers/tokenizers/ or inference/.
+  - Acceptance: Mistral output has spaces between words.
+  - Dependencies: T3600.1.
 
-- [x] T3500.2 Add GPU Sin kernel  Owner: agent  Done: 2026-03-15
-  - Same pattern as T3500.1 but using `sinf()`.
-  - File: internal/cuda/kernels/elementwise.cu, compute/gpu_engine.go.
-  - Acceptance: Sin on GPU tensors runs on GPU without D2H copy.
-  - Dependencies: none.
+- [ ] S3600.2.1 Test tokenizer space fix  Owner: TBD  Est: 30m
+  - Unit test: decode tokens containing U+2581 prefix, verify spaces in output.
+  - Test: decode tokens without U+2581, verify no spurious spaces added.
+  - go test for affected package -race.
+  - Dependencies: T3600.2.
 
-- [x] S3500.2.1 Test GPU Sin kernel  Owner: agent  Done: 2026-03-15
-  - Write CPU vs GPU parity test for Sin.
-  - Dependencies: T3500.2.
-
-- [x] S3500.2.2 Run make shared on DGX after kernel changes  Owner: agent  Done: 2026-03-15
-  - Rebuild libkernels.so with CUDA_ARCH=sm_121.
-  - Dependencies: T3500.1, T3500.2.
-
-### E3501: GPU-Native Expand Op
-
-Expand op in layers/core/expand.go operates entirely on CPU data. For GPU
-tensors, it forces D2H copies. Used in attention mask construction.
-
-- [x] T3501.1 Add GPU Expand using broadcast kernel  Owner: agent  Done: 2026-03-15
-  - Extend GPUEngine to handle Expand via the existing broadcast4D kernel.
-  - Expand(x, target_shape) is equivalent to broadcasting x against a tensor
-    of ones with target_shape. Reuse gpuBroadcast4DOp with a fill-ones buffer.
-  - Alternative: implement Expand as a stride-based view (zero-copy for
-    contiguous expansions).
-  - File: compute/gpu_engine.go, layers/core/expand.go.
-  - Acceptance: Expand on GPU tensors stays GPU-resident.
-  - Dependencies: none.
-
-- [x] S3501.1.1 Test GPU Expand  Owner: agent  Done: 2026-03-15
-  - CPU vs GPU parity test for Expand with shapes [1,5,1] -> [3,5,7].
-  - Dependencies: T3501.1.
-
-### E3502: GPU-Native ScatterND Op
-
-ScatterND in layers/core/scatternd.go operates on CPU data. Used by ONNX
-models for KV cache updates.
-
-- [x] T3502.1 Add GPU ScatterND  Owner: agent  Done: 2026-03-15
-  - Implement ScatterND on GPU. This is more complex than Cos/Sin because
-    it requires reading index tensors and performing scattered writes.
-  - Option A: GPU kernel with atomicAdd for scattered updates.
-  - Option B: Keep indices on CPU, compute offsets, then use D2D memcpy
-    for the actual data scatter (avoids atomic contention).
-  - File: internal/cuda/kernels/, compute/gpu_engine.go, layers/core/scatternd.go.
-  - Acceptance: ScatterND with GPU data tensor stays GPU-resident for data.
-  - Dependencies: none.
-
-- [x] S3502.1.1 Test GPU ScatterND  Owner: agent  Done: 2026-03-15
-  - CPU vs GPU parity test for ScatterND.
-  - Dependencies: T3502.1.
-
-### E3503: Repetition Penalty in Sampling
-
-Small models at temp=0 produce repetitive output without repetition penalty.
-Adding this to the sampling path improves quality for all models.
-
-- [x] T3503.1 Add repetition penalty to sampling  Owner: agent  Done: 2026-03-15
-  - In generate/sampling.go (or wherever top-k/top-p sampling is implemented),
-    add a repetition_penalty parameter (default 1.0 = no penalty).
-  - For each generated token, check if it appeared in the last N tokens.
-  - If so, divide its logit by repetition_penalty (for values > 0) or
-    multiply by repetition_penalty (for values < 0).
-  - Wire the parameter through the generation API and CLI flags.
-  - File: generate/sampling.go, generate/generator.go, cmd/cli/.
-  - Acceptance: bench_tps with --repetition-penalty 1.2 produces less
-    repetitive output.
-  - Dependencies: none.
-
-- [x] S3503.1.1 Test repetition penalty  Owner: agent  Done: 2026-03-15
-  - Unit test: verify logit modification for repeated tokens.
-  - Test with penalty=1.0 (no change) and penalty=1.5 (reduced logits).
-  - Dependencies: T3503.1.
-
-### E3504: Qwen 2.5 Model-Specific Investigation
-
-Qwen produces "fox fox fox..." (single-token repetition). This pattern
-suggests a bug beyond precision drift -- possibly in attention mask
-construction or head count handling.
-
-- [x] T3504.1 Diagnose Qwen 2.5 repetition  Owner: agent  Done: 2026-03-15
-  - Run Qwen on DGX with debug logging at attention mask, KV cache, and
-    logit stages.
-  - Compare attention mask shape vs expected (Qwen uses 7 KV heads, not 8).
-  - Check if the Gather index clamping fix (f0e4897) is masking a deeper
-    issue with head count.
-  - Acceptance: Root cause of single-token repetition identified.
-  - Dependencies: none.
-
-- [x] T3504.2 Fix Qwen 2.5 output  Owner: agent  Done: 2026-03-15
-  - Apply fix based on diagnosis.
-  - Dependencies: T3504.1.
-
-- [x] S3504.2.1 Test Qwen fix on DGX  Owner: agent  Done: 2026-03-15
-  - bench_tps for Qwen 2.5 with 20 tokens.
-  - Acceptance: Not single-token repetition.
-  - Dependencies: T3504.2.
-
-### E3505: Mistral 7B Model-Specific Investigation
-
-Mistral produces garbled tokens without spaces. May be a tokenizer issue
-(SentencePiece vs BPE) or sliding window attention handling.
-
-- [x] T3505.1 Diagnose Mistral garbled output  Owner: agent  Done: 2026-03-15
-  - Run Mistral on DGX with debug logging.
-  - Check tokenizer: is the BPE tokenizer handling Mistral's vocabulary
-    correctly? Compare token IDs with Python tokenizer.
-  - Check if sliding window attention parameters are applied correctly.
-  - Acceptance: Root cause of garbled output identified.
-  - Dependencies: none.
-
-- [x] T3505.2 Fix Mistral output  Owner: agent  Done: 2026-03-15
-  - Same root cause as Qwen (ConstantOfShape). Fixed by T3504.2.
-  - Dependencies: T3505.1.
-
-- [x] S3505.2.1 Test Mistral fix on DGX  Owner: agent  Done: 2026-03-15
+- [ ] S3600.2.2 Test Mistral on DGX  Owner: TBD  Est: 15m
   - bench_tps for Mistral 7B with 20 tokens.
-  - Dependencies: T3505.2.
+  - Acceptance: Output has spaces between words.
+  - Dependencies: T3600.2.
 
-### E3506: All-Model Verification
+### E3601: Phi 4 Output Regression
 
-- [x] T3506.1 Run all 5 models on DGX with improvements  Owner: agent  Done: 2026-03-15
-  - bench_tps for Gemma 3, Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
+Phi 4 output regressed from semi-coherent to "jjjjjjjj". CUDA graph capture
+also fails. Need to diagnose whether the ConstantOfShape fix caused the
+regression or if there is a separate issue.
+
+- [ ] T3601.1 Diagnose Phi 4 output regression  Owner: TBD  Est: 1.5h
+  - Run Phi 4 on DGX with debug logging.
+  - Check ConstantOfShape nodes in Phi 4's graph: what fill values are used?
+    Did the fix change any values that should have been 0?
+  - Check CUDA graph capture failure: instruction 75 (Mul) does cudaMemcpy
+    during capture. Is this a new issue or pre-existing?
+  - Compare Phi 4 output before and after ConstantOfShape fix by temporarily
+    reverting the fix and re-running.
+  - Check if Phi 4 uses a different attention pattern than Llama/Qwen/Mistral.
+  - File: layers/core/constantofshape.go, compute/gpu_kernels.go.
+  - Acceptance: Root cause of regression identified.
+  - Dependencies: none.
+
+- [ ] T3601.2 Fix Phi 4 output regression  Owner: TBD  Est: 1h
+  - Apply fix based on diagnosis.
+  - If ConstantOfShape fix is the cause, ensure the fix correctly handles
+    all Phi 4 ConstantOfShape nodes (some may legitimately need fill=0).
+  - Dependencies: T3601.1.
+
+- [ ] S3601.2.1 Test Phi 4 fix on DGX  Owner: TBD  Est: 15m
+  - bench_tps for Phi 4 with 20 tokens.
+  - Acceptance: Output is at least as good as pre-Phase-14 ("'s a new and...").
+  - Dependencies: T3601.2.
+
+### E3602: Gemma 3 GGUF Throughput Regression
+
+Gemma 3 GGUF dropped from 232.86 to 122.70 tok/s. This is the ZMF codegen
+pipeline which uses fused ops and should not be affected by ONNX-path changes.
+
+- [ ] T3602.1 Profile Gemma 3 throughput regression  Owner: TBD  Est: 1.5h
+  - Run Gemma 3 on DGX with CPU profiling: -cpuprofile=prof.out.
+  - Compare hot functions with Phase 11 baseline if available.
+  - Check if CUDA graph capture is still working (should capture 184/185 ops).
+  - Check if new GPU ops (Cos/Sin/Expand/ScatterND) are being dispatched
+    unnecessarily for GGUF models that use fused ops.
+  - Verify the Go version and CUDA driver version on DGX match Phase 11.
+  - Try running on the Phase 11 commit to establish if the regression is
+    code-related or environmental.
+  - File: cmd/bench_tps/main.go, graph/cuda_graph.go, compute/gpu_engine.go.
+  - Acceptance: Root cause of throughput regression identified.
+  - Dependencies: none.
+
+- [ ] T3602.2 Fix Gemma 3 throughput regression  Owner: TBD  Est: 1h
+  - Apply fix based on profiling.
+  - If the regression is in the compute engine, ensure the fix does not
+    break ONNX models.
+  - Dependencies: T3602.1.
+
+- [ ] S3602.2.1 Test Gemma 3 throughput on DGX  Owner: TBD  Est: 15m
+  - bench_tps for Gemma 3 GGUF with 256 tokens.
+  - Acceptance: 230+ tok/s restored.
+  - Dependencies: T3602.2.
+
+### E3603: Fix TestCPUEngine_Exp Precision
+
+Pre-existing test failure. The expected values do not match Go's math.Exp
+output for float32.
+
+- [ ] T3603.1 Fix TestCPUEngine_Exp precision failure  Owner: TBD  Est: 30m
+  - Read compute/cpu_engine_test.go:224 to understand the test.
+  - Determine whether expected values or tolerance needs updating.
+  - If the CPU Exp implementation uses a custom fast-math approximation,
+    the test should use appropriate tolerance (1e-5 relative error).
+  - If the implementation uses math.Exp, update expected values to match.
+  - File: compute/cpu_engine_test.go.
+  - Acceptance: go test ./compute/... -race passes with zero failures.
+  - Dependencies: none.
+
+- [ ] S3603.1.1 Run full compute test suite  Owner: TBD  Est: 15m
+  - go build ./... && go vet ./... && go test ./compute/... -race -timeout 120s.
+  - Acceptance: Zero test failures (including the previously-failing Exp test).
+  - Dependencies: T3603.1.
+
+### E3604: All-Model Verification
+
+- [ ] T3604.1 Run all 5 models on DGX and record results  Owner: TBD  Est: 1h
+  - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
   - Use --repetition-penalty 1.2 for ONNX models.
-  - Record tok/s, output quality, D2H copy count.
+  - Record tok/s, output quality for each.
   - File: docs/updates.md.
-  - Acceptance: All 5 models produce usable output. Zero D2H copies for
-    Cos/Sin/Expand during inference.
-  - Dependencies: S3500.2.2, S3501.1.1, T3503.1, S3504.2.1, S3505.2.1.
+  - Acceptance: Gemma 3 >= 230 tok/s. Mistral has spaces. Phi 4 not regressed.
+    All models produce output without crashes.
+  - Dependencies: S3600.2.2, S3601.2.1, S3602.2.1, S3603.1.1.
 
 ---
 
@@ -254,37 +234,36 @@ Mistral produces garbled tokens without spaces. May be a tokenizer issue
 
 | Track | Tasks | Notes |
 |-------|-------|-------|
-| Track A: GPU Cos/Sin | T3500.1, T3500.2, S3500.1.1, S3500.2.1 | CUDA kernels |
-| Track B: GPU Expand | T3501.1, S3501.1.1 | Compute engine |
-| Track C: GPU ScatterND | T3502.1, S3502.1.1 | CUDA kernel |
-| Track D: Sampling | T3503.1, S3503.1.1 | Generation loop |
-| Track E: Qwen | T3504.1, T3504.2, S3504.2.1 | DGX diagnosis |
-| Track F: Mistral | T3505.1, T3505.2, S3505.2.1 | DGX diagnosis |
+| Track A: Mistral Tokenizer | T3600.1, T3600.2, S3600.2.1, S3600.2.2 | Local code + DGX test |
+| Track B: Phi 4 Regression | T3601.1, T3601.2, S3601.2.1 | DGX diagnosis + fix |
+| Track C: Gemma 3 Perf | T3602.1, T3602.2, S3602.2.1 | DGX profiling + fix |
+| Track D: Exp Test Fix | T3603.1, S3603.1.1 | Local code only |
+| Track E: Final Verify | T3604.1 | DGX, depends on A-D |
 
 ### Maximum parallelism
 
-- Wave 1 (5 tasks): T3500.1 (GPU Cos) + T3500.2 (GPU Sin) + T3501.1 (GPU Expand)
-  + T3503.1 (repetition penalty) + T3504.1 (diagnose Qwen, DGX). All independent.
-  Total: 5 teammates. DGX tasks combined if needed.
+- Wave 1 (4 tasks): T3600.1 (diagnose Mistral tokenizer) + T3601.1 (diagnose
+  Phi 4 regression, DGX) + T3602.1 (profile Gemma 3 regression, DGX) +
+  T3603.1 (fix Exp test). All independent. 4 teammates.
+  Note: T3601.1 and T3602.1 both need DGX. They can share DGX sequentially
+  within one agent, or run on separate SSH sessions.
 
-- Wave 2 (4 tasks): T3502.1 (GPU ScatterND) + T3505.1 (diagnose Mistral, DGX)
-  + S3500.1.1 (test Cos) + S3500.2.1 (test Sin). Total: up to 4 teammates.
+- Wave 2 (3 tasks): T3600.2 (fix Mistral tokenizer) + T3601.2 (fix Phi 4) +
+  T3602.2 (fix Gemma 3 perf). Each depends on its diagnosis. 3 teammates.
 
-- Wave 3 (4 tasks): T3504.2 (fix Qwen) + T3505.2 (fix Mistral) + S3501.1.1
-  (test Expand) + S3503.1.1 (test repetition). Total: up to 4 teammates.
+- Wave 3 (4 tasks): S3600.2.1 (test tokenizer) + S3600.2.2 (test Mistral DGX) +
+  S3601.2.1 (test Phi 4 DGX) + S3602.2.1 (test Gemma 3 DGX) + S3603.1.1 (test
+  compute suite). Combine DGX tests into 1-2 agents. 2-3 teammates.
 
-- Wave 4 (3 tasks): S3504.2.1 (test Qwen, DGX) + S3505.2.1 (test Mistral, DGX)
-  + S3500.2.2 (rebuild .so, DGX). Combine DGX tasks. Total: 1-2 teammates.
-
-- Wave 5 (1 task): T3506.1 (all-model verification, DGX). Total: 1 teammate.
+- Wave 4 (1 task): T3604.1 (all-model verification, DGX). 1 teammate.
 
 ### Dependency minimization checklist applied
 
-a) GPU kernel tasks (Cos, Sin, Expand, ScatterND) are all independent.
-b) Repetition penalty has no code dependency on GPU ops.
-c) Qwen/Mistral diagnosis can start immediately on DGX.
-d) Wave 1 saturates 5 teammates with independent work.
-e) ScatterND deferred to Wave 2 to prioritize simpler ops.
+a) All 4 diagnosis/fix tasks in Wave 1 are independent.
+b) DGX tasks (T3601.1, T3602.1) can run in parallel via separate SSH sessions
+   since they test different models and do not contend for GPU memory.
+c) T3603.1 (Exp test fix) has zero dependencies and is purely local code.
+d) Wave 1 saturates 4 teammates with independent work.
 
 ---
 
@@ -292,10 +271,9 @@ e) ScatterND deferred to Wave 2 to prioritize simpler ops.
 
 | Milestone | Dependencies | Exit Criteria |
 |-----------|-------------|---------------|
-| M700: GPU ops implemented | T3500.1, T3500.2, T3501.1, T3502.1 | Cos/Sin/Expand/ScatterND run on GPU |
-| M701: Sampling improved | T3503.1 | Repetition penalty available via CLI flag |
-| M702: Model bugs fixed | T3504.2, T3505.2 | Qwen/Mistral produce coherent output |
-| M703: All models verified | T3506.1 | 5/5 models produce usable output on DGX |
+| M800: Issues diagnosed | T3600.1, T3601.1, T3602.1 | All 3 regressions have root cause |
+| M801: Fixes applied | T3600.2, T3601.2, T3602.2, T3603.1 | All fixes in code, tests pass |
+| M802: All models verified | T3604.1 | 5/5 models produce usable output, Gemma 3 >= 230 tok/s |
 
 ---
 
@@ -303,11 +281,10 @@ e) ScatterND deferred to Wave 2 to prioritize simpler ops.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R3500 | GPU Cos/Sin kernels have different precision than CPU math.Cos/Sin | Minor numerical drift | Low | Use cosf/sinf which match Go's float32 math. Add parity tests. |
-| R3501 | GPU ScatterND with atomics is slower than CPU for small scatter counts | No perf gain | Medium | Use option B (CPU indices + D2D memcpy) if atomic approach is slow. |
-| R3502 | Qwen/Mistral issues are in the zonnx converter, not zerfoo | Different repo to fix | Medium | Read the ONNX model files directly to check if the graph structure is correct. |
-| R3503 | Repetition penalty changes expected output for existing tests | Test breakage | Low | Default penalty=1.0 means no change. Only active when explicitly set. |
-| R3504 | make shared link fails on CUDA 13.0 | Build friction | Medium | Known workaround: pass .pic.o files explicitly. |
+| R3600 | Mistral tokenizer fix breaks other SentencePiece models (Llama, Qwen) | Regression | Low | Test all SentencePiece models after fix. The U+2581 replacement is standard SentencePiece behavior. |
+| R3601 | Phi 4 regression is architectural (attention pattern incompatible with ConstantOfShape fix) | Harder fix | Medium | Revert ConstantOfShape fix selectively for Phi 4 if needed. Check if Phi 4 uses ConstantOfShape differently. |
+| R3602 | Gemma 3 regression is environmental (CUDA driver, Go version) not code | Cannot fix in code | Low | Bisect commits to isolate. If environmental, document as known limitation. |
+| R3603 | Fixing Exp test reveals other precision issues across test suite | More work | Low | Survey float32 comparison patterns in tests. Use tolerance-based comparisons. |
 
 ---
 
@@ -342,7 +319,7 @@ A task is done when:
 
 1. ssh ndungu@192.168.86.250
 2. export PATH=/usr/local/cuda/bin:$PATH
-3. cd ~/zerfoo && git pull
+3. cd ~/zerfoo && git fetch upstream <branch> && git checkout <branch>
 4. cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121
 5. cd ~/zerfoo
 6. export LD_LIBRARY_PATH=$(pwd)/internal/cuda/kernels:/usr/local/cuda/lib64
@@ -352,26 +329,20 @@ A task is done when:
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-15 (Phase 14: Precision + GPU Ops + Sampling)
+### Change Summary -- 2026-03-15 (Phase 15: Remaining Issues)
 
-Trimmed completed Phase 13 work (broadcastShape audit, Or broadcasting fix,
-flattenTo2D collapse fix, 42+ broadcast coverage tests). Stable knowledge
-preserved in docs/design.md: broadcastShape is correct, Or uses validatedBroadcast,
-flattenTo2D element-count guard, float32 precision accumulation analysis.
+Trimmed completed Phase 14 work into docs/design.md:
+- GPU Cos/Sin/Expand/ScatterND kernels
+- ConstantOfShape tensor fill fix
+- Repetition penalty CLI
+- Phase 14 verification results per model
 
-Phase 13 investigation confirmed ONNX output quality is a float32 precision
-issue (not a bug). First 3 tokens match ORT exactly; divergence at token 4
-from ~0.001/layer drift. Contributing factors: CPU/GPU bouncing in Cos/Sin/
-Expand/ScatterND ops, decomposed RMSNorm accumulation order.
-
-Phase 14 targets 4 improvement areas:
-- E3500: GPU-native Cos/Sin kernels (eliminate D2H in rotary embedding)
-- E3501: GPU-native Expand (eliminate D2H in attention mask)
-- E3502: GPU-native ScatterND (eliminate D2H in KV cache scatter)
-- E3503: Repetition penalty in sampling (improve output quality)
-- E3504: Qwen 2.5 model-specific fix
-- E3505: Mistral 7B model-specific fix
-- E3506: All-model verification
+Phase 15 created to address 4 remaining issues from Phase 14 verification:
+- E3600: Mistral tokenizer SentencePiece space decoding
+- E3601: Phi 4 output regression diagnosis
+- E3602: Gemma 3 throughput regression diagnosis
+- E3603: TestCPUEngine_Exp precision fix
+- E3604: All-model final verification
 
 No new ADRs needed.
 
@@ -380,22 +351,26 @@ No new ADRs needed.
 ## 9. Hand-off Notes
 
 - **Current version:** v1.1.0.
-- **Performance:** 232.86 tok/s Gemma 3 Q4K with CUDA graph (+26%).
-- **Branch:** main at 400fad8. All Phase 11-13 work merged.
-- **Model status (all run without crashes):**
-  - Gemma 3 GGUF: 232 tok/s, coherent, 99.5% graph capture
-  - Llama 3 ONNX: 12.68 tok/s, semi-coherent (first 3 tokens correct, then repetitive)
-  - Qwen 2.5 ONNX: 15.40 tok/s, single-token repetition ("fox fox fox")
-  - Mistral 7B ONNX: 3.94 tok/s, garbled tokens
-  - Phi 4 ONNX: 4.25 tok/s, semi-coherent but noisy
-- **Root cause of ONNX output quality:** Float32 precision accumulation (~0.001/layer
-  drift). NOT a bug. Cos/Sin/Expand/ScatterND D2H bouncing contributes.
+- **Branch:** PRs #64 and #65 open for Phase 14 (feat/phase14-wave1, feat/phase14-wave2).
+  These must be merged before Phase 15 work begins.
+- **Model status after Phase 14 (DGX, feat/phase14-wave2 branch):**
+  - Gemma 3 GGUF: 122.70 tok/s (REGRESSED from 232), poor output
+  - Llama 3 ONNX: 12.90 tok/s, semi-coherent
+  - Qwen 2.5 ONNX: 15.54 tok/s, FIXED (no more single-token repetition)
+  - Mistral 7B ONNX: 3.65 tok/s, words coherent but no spaces (tokenizer)
+  - Phi 4 ONNX: 4.53 tok/s, REGRESSED to "jjjjjjjj"
+- **Key fixes applied in Phase 14:**
+  - GPU Cos/Sin/Expand/ScatterND (eliminate D2H copies)
+  - ConstantOfShape *zmf.Tensor fill value fix (constantofshape.go)
+  - Repetition penalty (--repetition-penalty CLI flag)
 - **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
-  IMPORTANT: `export PATH=/usr/local/cuda/bin:$PATH` before `make shared`.
-- **Key files:**
-  - layers/core/cos.go, layers/core/sin.go -- D2H bouncing ops to fix
-  - layers/core/expand.go -- D2H bouncing op to fix
-  - layers/core/scatternd.go -- D2H bouncing op to fix
-  - generate/sampling.go -- add repetition penalty
-  - internal/cuda/kernels/elementwise.cu -- add cos/sin kernels
+  IMPORTANT: Use `upstream` HTTPS remote for fetch (origin SSH has host key issue).
+  `export PATH=/usr/local/cuda/bin:$PATH` before `make shared`.
+- **Key files for Phase 15:**
+  - layers/tokenizers/ -- SentencePiece U+2581 decoding
+  - layers/core/constantofshape.go -- may need Phi 4 specific handling
+  - compute/cpu_engine_test.go:224 -- Exp precision test
+  - graph/cuda_graph.go -- Gemma 3 graph capture performance
+- **Models on DGX:** ~/models/gemma3-gguf/model.gguf, ~/models/llama3/,
+  ~/models/qwen25/, ~/models/mistral/, ~/models/phi4/
 - **Pre-commit hook:** Rejects multi-directory commits.
