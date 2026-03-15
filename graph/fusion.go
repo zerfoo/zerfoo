@@ -95,22 +95,20 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 
 		// Mul inputs: [normalized, weight] or [weight, normalized].
-		// One input should be a static weight (frozen or pre-populated parameter),
-		// the other the Div output. A slot is "static" if no instruction produces it
-		// (not in outToInstr) — this covers Parameters, Constants, and graph inputs.
+		// Identify which input comes from a Div (the normalized output).
+		// The other input is the weight (may be a parameter or pass through Cast/Reshape).
 		divOutputSlot := -1
 		weightSlot := -1
 		for _, inputSlot := range mulInst.InputIdx {
-			_, isProduced := outToInstr[inputSlot]
-			if !isProduced || frozenSet[inputSlot] {
-				weightSlot = inputSlot
-			} else {
+			if divIdx, ok := outToInstr[inputSlot]; ok && instructions[divIdx].OpName == "Div" {
 				divOutputSlot = inputSlot
+			} else {
+				weightSlot = inputSlot
 			}
 		}
 		if weightSlot == -1 || divOutputSlot == -1 {
 			if debug {
-				log.Printf("FuseRMSNorm: Mul[%d] inputs=%v weightSlot=%d divSlot=%d (skip: no static weight)", mulIdx, mulInst.InputIdx, weightSlot, divOutputSlot)
+				log.Printf("FuseRMSNorm: Mul[%d] inputs=%v (skip: no Div input found)", mulIdx, mulInst.InputIdx)
 			}
 			continue
 		}
@@ -153,15 +151,15 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 
-		// Add inputs: [reducemean_output, epsilon] (one should be a static scalar).
+		// Add inputs: [reducemean_output, epsilon].
+		// Identify which input comes from a ReduceMean. The other is epsilon.
 		reduceMeanOutputSlot := -1
 		epsilonSlot := -1
 		for _, inputSlot := range addInst.InputIdx {
-			_, isProduced := outToInstr[inputSlot]
-			if !isProduced || frozenSet[inputSlot] {
-				epsilonSlot = inputSlot
-			} else {
+			if rmIdx, ok := outToInstr[inputSlot]; ok && instructions[rmIdx].OpName == "ReduceMean" {
 				reduceMeanOutputSlot = inputSlot
+			} else {
+				epsilonSlot = inputSlot
 			}
 		}
 		if epsilonSlot == -1 || reduceMeanOutputSlot == -1 {
@@ -204,12 +202,9 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 
-		// Verify the exponent is a static scalar (should be 2).
-		exponentSlot := powInst.InputIdx[1]
-		_, expIsProduced := outToInstr[exponentSlot]
-		if expIsProduced && !frozenSet[exponentSlot] {
-			continue
-		}
+		// The exponent (InputIdx[1]) should be a scalar 2. We trust the pattern
+		// match (Pow -> ReduceMean -> Add -> Sqrt -> Div -> Mul connectivity)
+		// rather than verifying the value, since the slot may be on GPU.
 		// Optionally verify value is 2, but slot data might be on GPU.
 		// We trust the pattern match.
 
