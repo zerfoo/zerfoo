@@ -33,6 +33,40 @@ DGX: feat/phase14-wave2 branch, libkernels.so rebuilt with Cos/Sin kernels
 
 ---
 
+# T3403.1: Phase 13 All-Model Verification — ONNX Shape Fixes
+
+Date: 2026-03-14
+Branch: main at 4de2943
+DGX: main branch, libkernels.so rebuilt with CUDA_ARCH=sm_121
+
+## Context
+
+Phase 13 fixed three shape-related crashes in the ONNX execution path:
+- E3400: broadcastShape collapsing leading unit dims (Llama 3 MatMul 1D error)
+- E3401: Or/boolean op missing N-D broadcasting (Mistral shape mismatch)
+- E3402: Add storage size mismatch (Phi 4, same root cause as E3400)
+
+## Results
+
+| Model | Status | Tok/s | Output Quality | Notes |
+|-------|--------|-------|----------------|-------|
+| Gemma 3 GGUF | No crash | 123.43 | Poor (repetitive) | **Regression**: was 232.86 tok/s |
+| Llama 3 | No crash | 13.38 | Repetitive | Was crashing (MatMul 1D), now runs |
+| Qwen 2.5 | No crash | 15.38 | Repetitive (fox fox) | Was 5.26 tok/s, improved 3x |
+| Mistral 7B | No crash | 3.71 | Garbage tokens | Was crashing (Or shape), now runs |
+| Phi 4 | No crash | 3.55 | Poor | Was crashing (Add mismatch), now runs |
+
+## Assessment
+
+- **O1 (broadcast shape): MET** — Llama 3 no longer crashes with MatMul 1D error.
+- **O2 (Or broadcasting): MET** — Mistral no longer crashes with Or shape mismatch.
+- **O3 (Add mismatch): MET** — Phi 4 no longer crashes with storage size mismatch.
+- **O4 (coherent output): NOT MET** — All models produce output but none is coherent.
+  Output quality is a separate issue (precision, sampling) scoped for Phase 14.
+- **Gemma 3 regression**: 123.43 vs 232.86 tok/s (47% slower). Needs investigation.
+
+---
+
 # S2001.2.1: Multi-Model Verification Post cuBLAS Fix
 
 Date: 2026-03-14
