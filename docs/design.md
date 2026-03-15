@@ -1251,7 +1251,7 @@ ADR files in `docs/adr/`.
 | [027](adr/027-composition-prerequisite.md) | Composition Prerequisite | 34 | All layers must compose Engine primitives for tracing compiler |
 | [028](adr/028-tracing-compiler.md) | Tracing Compiler | 34 | EngineProxy records primitive ops during Forward(), automatic decomposition |
 | [029](adr/029-neon-simd-cpu-acceleration.md) | NEON SIMD CPU Acceleration | 34 | Plan9 assembly for hot-path ops, same-shape fast paths, tensor arena |
-| [030](adr/030-ollama-performance-parity.md) | Ollama Performance Parity | 34 | Performance strategy for matching/surpassing Ollama throughput |
+| [030](adr/030-ollama-performance-parity.md) | Inference Performance Strategy | 34 | Performance optimization strategy for competitive throughput |
 | [031](adr/031-openai-server-in-zerfoo.md) | OpenAI Server in Zerfoo | 34 | Server stays in Zerfoo serve/ package, not in Zonnx |
 | [034](adr/034-gqa-aware-flash-attention-decode.md) | GQA-Aware Flash Attention Decode | 34 | Grouped-query attention in decode kernel |
 

@@ -53,7 +53,7 @@
 
 ### Performance
 
-* **234 tok/s** on Gemma 3 1B Q4_K_M -- 18.7% faster than Ollama's 197.21 tok/s.
+* **234 tok/s** on Gemma 3 1B Q4_K_M with CUDA graph capture (+26% vs non-graph baseline).
 * CUDA graph capture delivers a 25.9% speedup over non-graph execution.
 * GPU-resident position counter and KV cache append eliminate all per-token CPU-GPU synchronization.
 * Custom `sgemv_m1` kernel for M=1 decode GEMV.
