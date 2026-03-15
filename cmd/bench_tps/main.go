@@ -62,6 +62,7 @@ func run() error {
 	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16, fp8)")
 	kvDtype := flag.String("kv-dtype", "fp32", "KV cache dtype (fp32, fp16)")
 	temperature := flag.Float64("temp", 0, "sampling temperature (0=greedy)")
+	repetitionPenalty := flag.Float64("repetition-penalty", 1.0, "repetition penalty (1.0=disabled)")
 	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
 	flag.Parse()
 
@@ -108,7 +109,7 @@ func run() error {
 
 	// Warm-up run (short).
 	fmt.Println("Warm-up...")
-	_, _ = mdl.Generate(context.Background(), *prompt, inference.WithMaxTokens(4), inference.WithTemperature(*temperature))
+	_, _ = mdl.Generate(context.Background(), *prompt, inference.WithMaxTokens(4), inference.WithTemperature(*temperature), inference.WithRepetitionPenalty(*repetitionPenalty))
 
 	// Timed run with streaming to count tokens.
 	fmt.Printf("Generating (temp=%.1f)...\n", *temperature)
@@ -123,7 +124,7 @@ func run() error {
 	})
 
 	t1 := time.Now()
-	err = mdl.GenerateStream(context.Background(), *prompt, handler, inference.WithMaxTokens(*maxTokens), inference.WithTemperature(*temperature))
+	err = mdl.GenerateStream(context.Background(), *prompt, handler, inference.WithMaxTokens(*maxTokens), inference.WithTemperature(*temperature), inference.WithRepetitionPenalty(*repetitionPenalty))
 	elapsed := time.Since(t1)
 	if err != nil {
 		return fmt.Errorf("generate error: %w", err)
