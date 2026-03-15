@@ -211,7 +211,7 @@ construction or head count handling.
   - Apply fix based on diagnosis.
   - Dependencies: T3504.1.
 
-- [ ] S3504.2.1 Test Qwen fix on DGX  Owner: TBD  Est: 15m
+- [x] S3504.2.1 Test Qwen fix on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for Qwen 2.5 with 20 tokens.
   - Acceptance: Not single-token repetition.
   - Dependencies: T3504.2.
@@ -233,13 +233,13 @@ Mistral produces garbled tokens without spaces. May be a tokenizer issue
   - Same root cause as Qwen (ConstantOfShape). Fixed by T3504.2.
   - Dependencies: T3505.1.
 
-- [ ] S3505.2.1 Test Mistral fix on DGX  Owner: TBD  Est: 15m
+- [x] S3505.2.1 Test Mistral fix on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for Mistral 7B with 20 tokens.
   - Dependencies: T3505.2.
 
 ### E3506: All-Model Verification
 
-- [ ] T3506.1 Run all 5 models on DGX with improvements  Owner: TBD  Est: 1h
+- [x] T3506.1 Run all 5 models on DGX with improvements  Owner: agent  Done: 2026-03-15
   - bench_tps for Gemma 3, Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
   - Use --repetition-penalty 1.2 for ONNX models.
   - Record tok/s, output quality, D2H copy count.
