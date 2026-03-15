@@ -2,13 +2,16 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/zmf"
 )
 
 // ConstantOfShape creates a tensor of a given shape filled with a constant value.
@@ -63,6 +66,20 @@ func BuildConstantOfShape[T tensor.Numeric](
 			value = ops.FromFloat32(val)
 		case int64:
 			value = ops.FromFloat64(float64(val))
+		case *zmf.Tensor:
+			if val != nil && len(val.GetData()) > 0 {
+				switch val.GetDtype() {
+				case zmf.Tensor_FLOAT32:
+					bits := binary.LittleEndian.Uint32(val.GetData()[:4])
+					value = ops.FromFloat32(math.Float32frombits(bits))
+				case zmf.Tensor_FLOAT64:
+					bits := binary.LittleEndian.Uint64(val.GetData()[:8])
+					value = ops.FromFloat64(math.Float64frombits(bits))
+				case zmf.Tensor_INT64:
+					n := int64(binary.LittleEndian.Uint64(val.GetData()[:8]))
+					value = ops.FromFloat64(float64(n))
+				}
+			}
 		}
 	}
 	return &ConstantOfShape[T]{engine: engine, value: value}, nil
