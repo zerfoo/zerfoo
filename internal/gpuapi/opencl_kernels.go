@@ -68,6 +68,10 @@ func (k *OpenCLKernels) Rsqrt(a, c unsafe.Pointer, n int, _ Stream) error {
 	return k.prog.Rsqrt(a, c, n)
 }
 
+func (k *OpenCLKernels) Sin(a, c unsafe.Pointer, n int, _ Stream) error {
+	return fmt.Errorf("sin kernel: not implemented for OpenCL")
+}
+
 func (k *OpenCLKernels) Tanh(a, c unsafe.Pointer, n int, _ Stream) error {
 	return k.prog.Tanh(a, c, n)
 }
