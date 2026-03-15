@@ -133,7 +133,7 @@ replace this character with a space.
   - go test for affected package -race.
   - Dependencies: T3600.2.
 
-- [ ] S3600.2.2 Test Mistral on DGX  Owner: TBD  Est: 15m
+- [x] S3600.2.2 Test Mistral on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for Mistral 7B with 20 tokens.
   - Acceptance: Output has spaces between words.
   - Dependencies: T3600.2.
@@ -163,7 +163,7 @@ regression or if there is a separate issue.
     all Phi 4 ConstantOfShape nodes (some may legitimately need fill=0).
   - Dependencies: T3601.1.
 
-- [ ] S3601.2.1 Test Phi 4 fix on DGX  Owner: TBD  Est: 15m
+- [x] S3601.2.1 Test Phi 4 fix on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for Phi 4 with 20 tokens.
   - Acceptance: Output is at least as good as pre-Phase-14 ("'s a new and...").
   - Dependencies: T3601.2.
@@ -218,7 +218,7 @@ output for float32.
 
 ### E3604: All-Model Verification
 
-- [ ] T3604.1 Run all 5 models on DGX and record results  Owner: TBD  Est: 1h
+- [x] T3604.1 Run all 5 models on DGX and record results  Owner: agent  Done: 2026-03-15
   - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
   - Use --repetition-penalty 1.2 for ONNX models.
   - Record tok/s, output quality for each.
