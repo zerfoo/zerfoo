@@ -97,7 +97,7 @@ Two categories of issues remain for ONNX models:
 The repetition penalty is implemented but never tested end-to-end on DGX.
 This is a zero-code-change verification task.
 
-- [ ] T3700.1 Test repetition penalty on DGX with all ONNX models  Owner: TBD  Est: 30m
+- [x] T3700.1 Test repetition penalty on DGX with all ONNX models  Owner: agent  Done: 2026-03-15
   - DGX preflight: pull main, rebuild .so and binary.
   - Run bench_tps with --repetition-penalty 1.2 for Llama 3, Qwen 2.5,
     Mistral 7B, Phi 4. Compare output with and without penalty.
@@ -117,7 +117,7 @@ and is used by the ZMF codegen pipeline. The task is to add an ONNX graph
 optimization pass that detects the decomposed pattern and replaces it with
 the fused op.
 
-- [ ] T3701.1 Identify RMSNorm decomposition pattern in ONNX graph  Owner: TBD  Est: 1h
+- [x] T3701.1 Identify RMSNorm decomposition pattern in ONNX graph  Owner: agent  Done: 2026-03-15
   - Read graph/compile.go and graph/instruction.go to understand the compiled
     instruction list for ONNX models.
   - Print the instruction list for Llama 3 (first 50 instructions) to identify
@@ -161,7 +161,7 @@ cudaMemcpy during stream capture. TrySlice reads a small header from GPU
 memory to determine slice bounds, which is incompatible with CUDA graph
 capture.
 
-- [ ] T3702.1 Diagnose Phi 4 TrySlice capture failure  Owner: TBD  Est: 1h
+- [x] T3702.1 Diagnose Phi 4 TrySlice capture failure  Owner: agent  Done: 2026-03-15
   - Read compute/gpu_storage.go TrySlice implementation.
   - Identify why TrySlice needs cudaMemcpy (likely reading tensor metadata
     from GPU memory).
@@ -190,7 +190,7 @@ capture.
 Beyond RMSNorm fusion, additional ops may need to be excluded from capture
 or made capture-safe to increase the capturable instruction region.
 
-- [ ] T3703.1 Audit ONNX non-capturable ops  Owner: TBD  Est: 1h
+- [x] T3703.1 Audit ONNX non-capturable ops  Owner: agent  Done: 2026-03-15
   - For each model (Llama 3, Qwen, Mistral, Phi 4), print the capture
     region and list all ops that fall outside it.
   - Categorize non-capturable ops: (a) inherently non-capturable (KV cache I/O),
