@@ -14,9 +14,9 @@ import (
 // debugGraphCapture enables verbose capture debug logging when ZERFOO_DEBUG_GPU=1.
 var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
-// nonCapturableOps lists instruction op names that must run outside CUDA graph
-// capture. These ops perform CPU work or D2H copies that are incompatible with
-// stream capture.
+// nonCapturableOps lists instruction op names that must always run outside
+// CUDA graph capture. These ops perform CPU work or D2H copies that are
+// incompatible with stream capture.
 //
 // EmbeddingLookup: reads token IDs from GPU via .Data() (D2H), does CPU
 // float→int conversion.
@@ -30,8 +30,6 @@ var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 //
 // Slice: reads start/end/axes indices from input tensors via Data() which
 // triggers D2H cudaMemcpy for GPU-resident index tensors.
-//
-// Reshape: reads dynamic target shape from second input tensor via Data().
 //
 // ConstantOfShape: allocates a CPU tensor filled with a constant value.
 // Downstream ops (e.g. Mul) would trigger cudaMemcpy H2D on the
@@ -52,9 +50,28 @@ var nonCapturableOps = map[string]bool{
 	"AutoAttentionMask": true,
 	"AutoPositionIds":   true,
 	"Slice":             true,
-	"Reshape":           true,
 	"ConstantOfShape":   true,
 	"Shape":             true,
+}
+
+// isNonCapturable returns true if the instruction at index i in the plan
+// cannot be captured in a CUDA graph. Most ops are checked via the
+// nonCapturableOps map, but some ops like Reshape are conditionally
+// capturable depending on their input count.
+//
+// Reshape with 1 input (static targetShape from attributes) is capture-safe:
+// it only reads input.Shape() (metadata) and calls engine.Reshape which is a
+// zero-copy GPU view operation. Reshape with 2 inputs (dynamic shape tensor)
+// calls .Data() on the shape tensor, triggering a D2H copy.
+func isNonCapturable[T tensor.Numeric](plan *ExecutionPlan[T], i int) bool {
+	inst := plan.instructions[i]
+	if nonCapturableOps[inst.OpName] {
+		return true
+	}
+	if inst.OpName == "Reshape" && len(inst.InputIdx) > 1 {
+		return true
+	}
+	return false
 }
 
 // CUDAGraphExecutor captures and replays a CUDA graph for an ExecutionPlan.
@@ -127,7 +144,7 @@ func NewCUDAGraphExecutor[T tensor.Numeric](plan *ExecutionPlan[T], streamPtr un
 	captureStart, captureEnd := 0, 0
 	runStart := 0
 	for i := 0; i <= n; i++ {
-		if i == n || nonCapturableOps[plan.InstructionOpName(i)] {
+		if i == n || isNonCapturable(plan, i) {
 			if i-runStart > captureEnd-captureStart {
 				captureStart = runStart
 				captureEnd = i
