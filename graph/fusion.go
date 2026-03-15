@@ -3,6 +3,8 @@ package graph
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/tensor"
@@ -46,6 +48,16 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 	}
 	var replacements []replacement
 
+	debug := os.Getenv("ZERFOO_DEBUG_FUSION") == "1"
+	if debug {
+		opCounts := make(map[string]int)
+		for _, inst := range instructions {
+			opCounts[inst.OpName]++
+		}
+		log.Printf("FuseRMSNorm: %d instructions, op counts: %v", len(instructions), opCounts)
+		log.Printf("FuseRMSNorm: %d frozen slots", len(frozenIdx))
+	}
+
 	// Scan for Mul ops and trace backward.
 	for mulIdx, mulInst := range instructions {
 		if mulInst.OpName != "Mul" || len(mulInst.InputIdx) != 2 {
@@ -67,6 +79,9 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			}
 		}
 		if weightSlot == -1 || divOutputSlot == -1 {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] inputs=%v weightSlot=%d divSlot=%d (skip: no frozen weight)", mulIdx, mulInst.InputIdx, weightSlot, divOutputSlot)
+			}
 			continue
 		}
 
@@ -77,6 +92,9 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 		divInst := instructions[divIdx]
 		if divInst.OpName != "Div" || len(divInst.InputIdx) != 2 {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] -> slot %d not Div (op=%s inputs=%d)", mulIdx, divOutputSlot, instructions[divIdx].OpName, len(instructions[divIdx].InputIdx))
+			}
 			continue
 		}
 
