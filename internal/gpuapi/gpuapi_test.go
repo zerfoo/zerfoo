@@ -115,6 +115,7 @@ func (stubKernelRunner) Exp(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error  
 func (stubKernelRunner) Log(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error    { return nil }
 func (stubKernelRunner) Sqrt(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error   { return nil }
 func (stubKernelRunner) Rsqrt(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error  { return nil }
+func (stubKernelRunner) Sin(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error    { return nil }
 func (stubKernelRunner) Tanh(_, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error   { return nil }
 func (stubKernelRunner) TanhPrime(_, _, _ unsafe.Pointer, _ int, _ gpuapi.Stream) error {
 	return nil

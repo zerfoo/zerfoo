@@ -18,6 +18,7 @@ type KernelRunner interface {
 	Log(a, c unsafe.Pointer, n int, stream Stream) error
 	Sqrt(a, c unsafe.Pointer, n int, stream Stream) error
 	Rsqrt(a, c unsafe.Pointer, n int, stream Stream) error
+	Sin(a, c unsafe.Pointer, n int, stream Stream) error
 	Tanh(a, c unsafe.Pointer, n int, stream Stream) error
 
 	// TanhPrime: c[i] = (1 - tanh(a[i])^2) * upstream[i]
