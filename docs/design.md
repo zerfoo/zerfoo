@@ -980,6 +980,22 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     exactly. Divergence at token 4 due to ~0.001/layer attention score drift compounding through 16 layers.
     Contributing factors: Cos/Sin/ScatterND/Expand ops force CPU/GPU bouncing, decomposed RMSNorm has different reduction
     order vs fused kernel. Repetition in output (fox fox fox) is expected for small models at temp=0 without repetition penalty.
+    Phase 14 fixes:
+    - GPU-native Cos/Sin kernels: CUDA kernel_cos/kernel_sin in elementwise.cu, purego bindings, GPUEngine.Cos/Sin methods.
+      Eliminates D2H copies in rotary position embedding for ONNX models.
+    - GPU-native Expand: layers/core/expand.go GPU path uses engine.Mul(input, ones) broadcast. Eliminates D2H in attention mask expansion.
+    - GPU-native ScatterND: layers/core/scatternd.go GPU path uses D2D memcpy with CPU-computed offsets. Eliminates D2H in KV cache scatter.
+    - Repetition penalty: generate/sampling.go applyRepetitionPenalty, CLI --repetition-penalty flag in cmd/cli/run.go and cmd/bench_tps/main.go.
+    - ConstantOfShape fix: layers/core/constantofshape.go type switch was missing *zmf.Tensor case. ONNX ConstantOfShape fill value
+      stored as tensor attribute silently defaulted to 0.0 instead of actual value (e.g., -FLT_MAX for causal masks). Fixed by decoding
+      tensor bytes for FLOAT32/FLOAT64/INT64 dtypes. This was root cause of both Qwen 2.5 single-token repetition and Mistral garbled output.
+    Phase 14 verification results (DGX, feat/phase14-wave2):
+    - Qwen 2.5: FIXED, 15.54 tok/s, no more single-token repetition
+    - Mistral 7B: Partially fixed, 3.65 tok/s, words coherent but no spaces (tokenizer SentencePiece issue)
+    - Llama 3: 12.90 tok/s, semi-coherent "jumps over the quick brown fox jumps over"
+    - Phi 4: REGRESSED to 4.53 tok/s, "jjjjjjjj" output, CUDA graph capture still fails
+    - Gemma 3 GGUF: 122.70 tok/s (regression from 232 tok/s baseline, not yet investigated)
+    Remaining issues after Phase 14: Mistral tokenizer spaces, Phi 4 regression, Gemma 3 throughput regression.
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
