@@ -61,6 +61,10 @@ func (k *CUDAKernels) Sin(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.Sin(a, c, n, streamPtr(s))
 }
 
+func (k *CUDAKernels) Cos(a, c unsafe.Pointer, n int, s Stream) error {
+	return kernels.Cos(a, c, n, streamPtr(s))
+}
+
 func (k *CUDAKernels) Tanh(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.Tanh(a, c, n, streamPtr(s))
 }

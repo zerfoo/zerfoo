@@ -62,6 +62,10 @@ func (k *ROCmKernels) Sin(a, c unsafe.Pointer, n int, s Stream) error {
 	return fmt.Errorf("sin kernel: not implemented for ROCm")
 }
 
+func (k *ROCmKernels) Cos(a, c unsafe.Pointer, n int, s Stream) error {
+	return fmt.Errorf("cos kernel: not implemented for ROCm")
+}
+
 func (k *ROCmKernels) Tanh(a, c unsafe.Pointer, n int, s Stream) error {
 	return kernels.Tanh(a, c, n, rocmStreamPtr(s))
 }
