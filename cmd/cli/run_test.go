@@ -77,6 +77,8 @@ func TestRunCommand_FlagParsing(t *testing.T) {
 		{"max-tokens missing value", []string{"--max-tokens"}, "--max-tokens requires a value"},
 		{"max-tokens invalid", []string{"--max-tokens", "abc", "m"}, "--max-tokens:"},
 		{"system missing value", []string{"--system"}, "--system requires a value"},
+		{"repetition-penalty missing value", []string{"--repetition-penalty"}, "--repetition-penalty requires a value"},
+		{"repetition-penalty invalid", []string{"--repetition-penalty", "abc", "m"}, "--repetition-penalty:"},
 		{"cache-dir missing value", []string{"--cache-dir"}, "--cache-dir requires a value"},
 		{"unexpected arg", []string{"model1", "model2"}, "unexpected argument"},
 	}
@@ -140,6 +142,7 @@ func TestRunCommand_REPL_WithOptions(t *testing.T) {
 		"--temperature", "0.5",
 		"--top-k", "10",
 		"--top-p", "0.9",
+		"--repetition-penalty", "1.2",
 		"--max-tokens", "5",
 		"--system", "You are helpful",
 		"--cache-dir", "/tmp/cache",
