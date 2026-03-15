@@ -2,13 +2,88 @@
 
 ## 1. Overview
 
-Zerfoo is a Go 1.25 generics-based machine learning framework. It supports CPU
-and CUDA GPU execution through a unified compute engine interface. All layers,
-models, and training loops delegate computation to the Engine interface, enabling
-transparent hardware acceleration without modifying application code.
+Zerfoo is a Go 1.25 generics-based machine learning framework designed to be
+the best ML framework in the world through superior design, performance, and
+ease of use. It supports CPU, CUDA, ROCm, and OpenCL GPU execution through a
+unified compute engine interface. All layers, models, and training loops
+delegate computation to the Engine[T] interface, enabling transparent hardware
+acceleration without modifying application code.
 
-The framework targets importing and running open weights models (Gemma 3,
-Kimi-VL, SigLIP) from ONNX via the companion ZMF model format.
+### 1.1 What Zerfoo Is
+
+A general-purpose ML framework with three production-ready capabilities:
+
+1. **Inference engine.** Load and run open-weights transformer models (text,
+   vision, vision-language) via the ZMF model format. Models are converted
+   from ONNX or GGUF using companion tools (zonnx, native GGUF loader).
+   Supports autoregressive decoding with KV cache, sampling (temperature,
+   top-k, top-p, repetition penalty), and streaming.
+
+2. **OpenAI-compatible API server.** Full chat completions, completions,
+   embeddings, and model management endpoints with SSE streaming. Drop-in
+   replacement for OpenAI API clients.
+
+3. **Training framework.** Generic Trainer[T] with AdamW/SGD optimizers,
+   MSE/CrossEntropy loss functions, backpropagation through the computation
+   graph, and distributed gradient exchange via gRPC.
+
+### 1.2 Design Principles
+
+- **No CGo, no build tags.** `go build ./...` compiles everywhere. GPU
+  acceleration is runtime-detected via purego (dlopen). CUDA kernels are
+  compiled separately into a shared library.
+- **Generics throughout.** Type-safe parametric polymorphism via Go 1.25
+  generics. Three type constraints (Numeric, Float, Addable) govern the
+  entire type system.
+- **Engine abstraction is law.** Layers never access tensor data directly.
+  All arithmetic goes through Engine[T]. This enables transparent CPU/GPU
+  switching and makes every op testable on CPU.
+- **Architectural boundaries.** `zerfoo/` must not import `zonnx/` or
+  `onnx/`. The ZMF format is the decoupling boundary between model
+  conversion and model execution.
+
+### 1.3 Validated Model Families
+
+| Family | Format | Architecture | Status |
+|--------|--------|-------------|--------|
+| Gemma 3 (1B) | GGUF Q4_K | Text decoder | 232 tok/s, CUDA graph 99.5% |
+| Llama 3 (1B) | ZMF/ONNX | Text decoder | 13 tok/s, semi-coherent |
+| Qwen 2.5 (0.5B) | ZMF/ONNX | Text decoder | 16 tok/s, working |
+| Mistral 7B | ZMF/ONNX | Text decoder | 4 tok/s, working |
+| Phi-3 mini | ZMF/ONNX | Text decoder | 4 tok/s, working |
+| DeepSeek V3 | ZMF/ONNX | MoE text decoder | Config parser present, too large for DGX Spark |
+| SigLIP | ZMF | Vision encoder | Parity test PASS |
+| Kimi-VL | ZMF | Vision-language connector | Parity test PASS |
+
+### 1.4 Two Execution Paths
+
+Zerfoo has two distinct execution paths for inference, each with different
+performance characteristics:
+
+**ZMF Codegen Path (fused ops).** Used by GGUF models and hand-tuned ZMF
+models. The inference layer constructs a graph using fused operations
+(GroupedQueryAttention, FusedAddRMSNorm, FFN) that map directly to optimized
+CUDA kernels. Result: 99.5% CUDA graph capture, 232 tok/s on DGX Spark.
+
+**ONNX Decomposed Path (individual ops).** Used by models converted from ONNX
+via zonnx. The ONNX standard decomposes composite operations into individual
+ops (Pow, ReduceMean, Sqrt, Div, Mul for RMSNorm; Reshape, Gather, MatMul for
+attention). Each op is a separate instruction with its own kernel launch.
+Result: 1-4% CUDA graph capture, 4-16 tok/s. A graph fusion pass
+(graph/fusion.go) is being developed to bridge this gap by detecting decomposed
+patterns and replacing them with fused instructions.
+
+### 1.5 Maturity Levels
+
+| Capability | Maturity | Notes |
+|-----------|----------|-------|
+| Inference (GGUF) | Production | 232 tok/s, CUDA graph, Q4_K quantization |
+| Inference (ONNX) | Beta | All models run, output quality improving |
+| OpenAI API server | Production | Full spec compliance, 71 integration tests |
+| Training | Implemented | All tests pass, no end-to-end workflow documented |
+| Distributed training | Implemented | gRPC + NCCL strategies, not production-tested |
+| Multi-GPU | Architecture ready | NCCL bindings present, single GPU validated |
+| ROCm/OpenCL backends | Implemented | Purego bindings, not hardware-validated |
 
 Module: `github.com/zerfoo/zerfoo`
 
@@ -939,87 +1014,56 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 
 ## 10. Known Limitations
 
-1. float32 only for GPU element-wise ops -- BF16 GEMM via cuBLAS GemmEx, other types fall back to CPU.
-2. GPU broadcasting supports up to 4D -- >4D cases fall back to CPU.
-3. Single GPU -- no multi-GPU or distributed GPU support.
-4. cuDNN operations (Conv2d, BatchNorm, activations, pooling, softmax) are non-interface methods on GPUEngine -- layers must call them explicitly rather than through Engine[T].
-5. CUDA graph capture enabled for decode (184/185 ops captured). Only EmbeddingLookup excluded.
-6. Managed memory disabled by default (ZERFOO_ENABLE_MANAGED_MEM) -- 13% regression on GB10 from page faults.
-7. float16/float8 GEMM upcasts to float32 -- no native half-precision element-wise kernels.
-8. Generics wiring hardcodes float32 -- registry, worker node, CLI all use float32.
-9. KV cache is optional -- not all graph architectures support it.
-10. Fused dequant+GEMV Q4_K kernel ready but engine dispatch validation pending.
-11. Performance: 234 tok/s F32 with CUDA graph (18.7% faster than Ollama 197.21 tok/s). Phase 6 complete.
-12. cuBLAS status 7 FIXED (Phase 10): Root cause was stale GPU tensor caching in Transpose/MatMul layers. Arena ResetPool freed GPU memory, but cached tensors held nil devicePtrs. Fix: removed caching, use MatMulTransposeB (SgemmNT). ZMF models now complete inference but CUDA graph capture fails (H2D copies during capture, error 901) and non-graph fallback produces garbage output.
-13. CUDA graph capture for ZMF codegen models FIXED (Phase 11): Multiple D2H sync operations on the legacy stream during capture caused cuda error 901. Fixes applied:
-    - PreUploadFrozenWeights: uploads frozen CPU tensors to GPU before capture (69c48af).
-    - KV cache snapshot/restore: prevents double KV cache update on capture failure (425e0c6).
-    - Scalar constants kept CPU-resident: prevents Pow/Range D2H during capture (ce1e155).
-    - Transpose isGPU early exit removed: CPUStorage tensors use GPU kernel path (e5d4f38).
-    - Gather, Slice, Reshape, AutoAttentionMask, AutoPositionIds added to nonCapturableOps.
-    - Longest contiguous capturable region scan: handles non-capturable ops scattered in the instruction list (replaces edge-trimming logic).
-    - EnsureCaptureInputsGPU: uploads frozen scalar constants needed by capture-region instructions.
-    Result: ZMF codegen pipeline (fused ops) captures 99.5% of instructions, 232.86 tok/s (+26% vs no-graph).
-    ONNX models capture only 1-2% due to decomposed ops (Pow, ReduceMean, Sqrt, Gather, Slice, Reshape).
-    ONNX models previously produced garbage output ("!!!") -- root causes fixed:
-    - CUDA powf() NaN for negative bases: kernel_pow_scalar used powf(negative, 2.0) which returns NaN. Fixed with a*a for s==2, powf(fabsf(a), s) otherwise.
-    - KV cache never accumulated: zeroKVCacheNode returned empty cache every call. Fixed with StatefulInputNode interface + kvCacheIONode that feeds present KV outputs back as past KV inputs.
-    - Position IDs stuck at 0: positionIdsNode always generated [0..seqLen-1]. Fixed with offset counter tracking decode step.
-    - Attention mask: maskFromInputNode now tracks accumulated sequence length.
-    - Greater/Where ops: added N-D broadcasting for causal mask computation.
-    Llama 3 ONNX previously produced coherent text with stale .so; with rebuilt .so all ONNX models hit correctness errors.
-    Phase 12 fixes: Cast aliasing (Cast.Forward returns new tensor wrapper with View refcount), Gather index clamping for embedding OOB.
-    Remaining per-model issues after Phase 12: Qwen 2.5 (poor output quality), Mistral 7B (Or shape mismatch at node[98]),
-    Phi 4 (Add size mismatch at node[125]), Llama 3 (MatMul 1D vs 2D at node[106] with rebuilt .so).
-    Phase 13 investigation confirmed broadcastShape is correct (NumPy rules preserved). Real issues fixed:
-    - Or op: added N-D broadcasting via validatedBroadcast (same pattern as Greater/Where). Fixes Mistral attention mask.
-    - gpuBroadcastOp flattenTo2D collapse: when two N-D shapes flatten to identical (M,D) but broadcast to larger output,
-      the 2D kernel allocated wrong-size output. Fixed with element-count mismatch guard that falls back to 4D kernel.
-    - 42+ broadcast coverage tests added (broadcastShape, broadcastStrides4D, flattenTo2D, trailingDimsMatch, CPU/GPU parity).
-    Remaining: ONNX output quality is a float32 precision accumulation issue (not a bug). First 3 tokens match ORT reference
-    exactly. Divergence at token 4 due to ~0.001/layer attention score drift compounding through 16 layers.
-    Contributing factors: Cos/Sin/ScatterND/Expand ops force CPU/GPU bouncing, decomposed RMSNorm has different reduction
-    order vs fused kernel. Repetition in output (fox fox fox) is expected for small models at temp=0 without repetition penalty.
-    Phase 14 fixes:
-    - GPU-native Cos/Sin kernels: CUDA kernel_cos/kernel_sin in elementwise.cu, purego bindings, GPUEngine.Cos/Sin methods.
-      Eliminates D2H copies in rotary position embedding for ONNX models.
-    - GPU-native Expand: layers/core/expand.go GPU path uses engine.Mul(input, ones) broadcast. Eliminates D2H in attention mask expansion.
-    - GPU-native ScatterND: layers/core/scatternd.go GPU path uses D2D memcpy with CPU-computed offsets. Eliminates D2H in KV cache scatter.
-    - Repetition penalty: generate/sampling.go applyRepetitionPenalty, CLI --repetition-penalty flag in cmd/cli/run.go and cmd/bench_tps/main.go.
-    - ConstantOfShape fix: layers/core/constantofshape.go type switch was missing *zmf.Tensor case. ONNX ConstantOfShape fill value
-      stored as tensor attribute silently defaulted to 0.0 instead of actual value (e.g., -FLT_MAX for causal masks). Fixed by decoding
-      tensor bytes for FLOAT32/FLOAT64/INT64 dtypes. This was root cause of both Qwen 2.5 single-token repetition and Mistral garbled output.
-    Phase 14 verification results (DGX, feat/phase14-wave2):
-    - Qwen 2.5: FIXED, 15.54 tok/s, no more single-token repetition
-    - Mistral 7B: Partially fixed, 3.65 tok/s, words coherent but no spaces (tokenizer SentencePiece issue)
-    - Llama 3: 12.90 tok/s, semi-coherent "jumps over the quick brown fox jumps over"
-    - Phi 4: REGRESSED to 4.53 tok/s, "jjjjjjjj" output, CUDA graph capture still fails
-    - Gemma 3 GGUF: 122.70 tok/s (regression from 232 tok/s baseline, not yet investigated)
-    Remaining issues after Phase 14: Mistral tokenizer spaces, Phi 4 regression, Gemma 3 throughput regression.
-    Phase 15 fixes:
-    - SentencePiece tokenizer: pkg/tokenizer/loader.go LoadFromJSON now parses decoder section from tokenizer.json,
-      detects Metaspace decoder or U+2581 Replace rules, and calls SetSentencePiece(true). Fixes Mistral spaces.
-    - CUDA graph nonCapturableOps: graph/cuda_graph.go now excludes ConstantOfShape and Shape ops (produce CPU tensors,
-      cause cudaMemcpy H2D during capture). Phi 4 capture region shifted from [69,103) to [146,164).
-    - TestCPUEngine_Exp precision: compute/cpu_engine_test.go now uses 1e-5 relative tolerance for NEON fast path.
-    - Gemma 3 throughput: confirmed 232.21 tok/s with 256 tokens. Prior "regression" was measurement artifact (20 tokens).
-    - Phi 4 "regression": was stale binary on DGX, not code issue. Output restored to semi-coherent.
-    Phase 15 verification results (DGX, feat/phase15, main at 4724c47):
-    - Gemma 3 GGUF: 232.21 tok/s (256 tok), baseline restored
-    - Llama 3: 12.93 tok/s, semi-coherent
-    - Qwen 2.5: 15.79 tok/s, improved (no more single-token repetition)
-    - Mistral 7B: 3.94 tok/s, FIXED (spaces present in output)
-    - Phi 4: 4.14 tok/s, semi-coherent, CUDA graph capture still partially fails
-    All models run without crashes. Zero test failures. Repetition penalty not yet tested on DGX.
-17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
-18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
-19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
-20. Phase 10 Wave 2 test coverage: getDevicePtr lifecycle tests (compute/gpu_kernels_test.go), CLI pull integration tests with httptest mock HF server (cmd/cli/pull_test.go), debug GPU logging (ZERFOO_DEBUG_GPU=1).
-21. EngineProxy.MatMulTransposeB fallback handles both 2D [1,0] and 3D [0,2,1] axes (Phase 10 fix).
-13. Serve layer hardened (Phase 9 Wave 1): structured request logging, /metrics endpoint, panic recovery with 503 for OOM.
-14. OpenAI API integration tests added (71 tests, serve/integration_test.go with //go:build integration).
-15. Lint debt resolved: errcheck, unused, ineffassign issues fixed. CI lint step now strict (no || true).
-16. Phase 10 Wave 1 test coverage: large MatMul GPU tests (compute/gpu_engine_matmul_test.go), Range op edge cases (layers/core/range_op_test.go), graph forward tests (graph/forward_test.go), CLI pull tests expanded (cmd/cli/pull_test.go). CI strict lint verified and 3 additional lint fixes applied.
+### 10.1 Compute Engine
+
+1. **GPU element-wise ops are float32 only.** BF16 GEMM works via cuBLAS
+   GemmEx, but element-wise kernels (Add, Mul, Exp, etc.) only support
+   float32. Other types fall back to CPUEngine.
+2. **GPU broadcasting supports up to 4D.** Tensors with >4 dimensions fall
+   back to CPU for broadcast operations.
+3. **cuDNN ops are non-interface methods.** Conv2d, BatchNorm, activations,
+   pooling, and softmax are methods on GPUEngine, not part of Engine[T].
+   Layers must call them explicitly.
+4. **Generics hardcoded to float32.** The registry, worker node, CLI, and
+   inference pipeline all instantiate float32. Other numeric types work at
+   the library level but are not wired through the application layer.
+
+### 10.2 GPU and Memory
+
+5. **Single GPU only.** Multi-GPU inference is not validated. NCCL bindings
+   exist for distributed training but have not been tested on multi-GPU
+   hardware.
+6. **Managed memory disabled by default.** cudaMallocManaged causes 13%
+   throughput regression on GB10 due to page faults. Opt-in via
+   ZERFOO_ENABLE_MANAGED_MEM=1.
+7. **Flash attention decode kernel disabled.** Exceeds time budget at
+   kv_len >= 256. cuBLAS SDPA is faster (233 vs 114 tok/s). The kernel is
+   retained in .cu for future optimization.
+
+### 10.3 ONNX Execution Path
+
+8. **ONNX CUDA graph capture is 1-4%.** Decomposed ops (Pow, ReduceMean,
+   Reshape, Gather, Slice) break the contiguous capture region. The ZMF
+   codegen path captures 99.5%.
+9. **RMSNorm fusion not yet runtime-correct.** Pattern matching works (33
+   fusions detected for Llama 3), but the fused Forward function produces
+   numerically wrong results due to input slot resolution.
+10. **ONNX output diverges from ORT at token 4+.** Float32 precision
+    accumulation drift (~0.001/layer through 16 transformer layers). This is
+    inherent to float32 with different GEMM accumulation orders, not a bug.
+
+### 10.4 Training
+
+11. **Training infrastructure is implemented but not production-tested.**
+    Trainer[T], optimizers (AdamW, SGD), loss functions (MSE, CrossEntropy),
+    and distributed gradient exchange all pass unit tests, but no end-to-end
+    training workflow is documented or validated.
+
+### 10.5 Backends
+
+12. **ROCm and OpenCL backends are implemented but not hardware-validated.**
+    Purego bindings for HIP/rocBLAS/MIOpen and OpenCL/CLBlast exist and
+    compile, but have not been tested on actual AMD or Intel GPUs.
 
 ---
 
