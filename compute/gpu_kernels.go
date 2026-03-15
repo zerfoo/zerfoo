@@ -274,12 +274,15 @@ func gpuBroadcast4DOp[T tensor.Numeric](
 
 // gpuBroadcastOp runs a broadcast binary kernel on two float32 tensors.
 // Supports 2D broadcasting: row broadcast ([1,D] op [M,D]), column broadcast
-// ([M,1] op [M,D]), and same-shape. Falls back to CPU for unsupported patterns.
+// ([M,1] op [M,D]), and same-shape. When the 2D path cannot handle a shape
+// pattern, the 4D broadcast kernel is tried automatically before falling back
+// to CPU, ensuring GPU broadcast ops never issue cudaMemcpy during capture.
 func gpuBroadcastOp[T tensor.Numeric](
 	e *GPUEngine[T],
 	ctx context.Context,
 	a, b *tensor.TensorNumeric[T],
 	kernelFn func(devA, devB, devC unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, stream gpuapi.Stream) error,
+	kernel4DFn func(devA, devB, devC unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, stream gpuapi.Stream) error,
 	cpuFallback func(context.Context, *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error),
 	dst ...*tensor.TensorNumeric[T],
 ) (*tensor.TensorNumeric[T], error) {
@@ -400,7 +403,10 @@ func gpuBroadcastOp[T tensor.Numeric](
 			saRow, saCol = 1, 0
 			sbRow, sbCol = bD, 1
 		default:
-			// Unsupported broadcast pattern.
+			// Unsupported 2D broadcast pattern — try 4D kernel before CPU.
+			if r, err := gpuBroadcast4DOp(e, a, b, kernel4DFn, dst...); r != nil || err != nil {
+				return r, err
+			}
 			return cpuFallback(ctx, a, b, dst...)
 		}
 	}
@@ -411,10 +417,13 @@ func gpuBroadcastOp[T tensor.Numeric](
 	// Verify the 2D-flattened element count matches the N-D broadcast shape.
 	// flattenTo2D can collapse dimensions that are actually broadcast axes
 	// (e.g. [2,1,3] vs [1,2,3] both flatten to [2,3]) producing M*D that
-	// is smaller than the true broadcast output [2,2,3]. Fall back to the
-	// 4D broadcast kernel when this happens.
+	// is smaller than the true broadcast output [2,2,3]. Try the 4D
+	// broadcast kernel before falling back to CPU.
 	outElems := M * D
 	if totalElements(outShape) != outElems {
+		if r, err := gpuBroadcast4DOp(e, a, b, kernel4DFn, dst...); r != nil || err != nil {
+			return r, err
+		}
 		return cpuFallback(ctx, a, b, dst...)
 	}
 
@@ -628,14 +637,7 @@ func (e *GPUEngine[T]) gpuAdd(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Add, dst...)
 	}
 
-	fallback4D := func(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-		if r, err := gpuBroadcast4DOp(e, a, b, e.kernels.AddBroadcast4D, dst...); r != nil || err != nil {
-			return r, err
-		}
-		return e.cpu.Add(ctx, a, b, dst...)
-	}
-
-	return gpuBroadcastOp(e, ctx, a, b, e.kernels.AddBroadcast, fallback4D, dst...)
+	return gpuBroadcastOp(e, ctx, a, b, e.kernels.AddBroadcast, e.kernels.AddBroadcast4D, e.cpu.Add, dst...)
 }
 
 func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -654,14 +656,7 @@ func (e *GPUEngine[T]) gpuSub(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Sub, dst...)
 	}
 
-	fallback4D := func(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-		if r, err := gpuBroadcast4DOp(e, a, b, e.kernels.SubBroadcast4D, dst...); r != nil || err != nil {
-			return r, err
-		}
-		return e.cpu.Sub(ctx, a, b, dst...)
-	}
-
-	return gpuBroadcastOp(e, ctx, a, b, e.kernels.SubBroadcast, fallback4D, dst...)
+	return gpuBroadcastOp(e, ctx, a, b, e.kernels.SubBroadcast, e.kernels.SubBroadcast4D, e.cpu.Sub, dst...)
 }
 
 func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -680,14 +675,7 @@ func (e *GPUEngine[T]) gpuMul(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Mul, dst...)
 	}
 
-	fallback4D := func(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-		if r, err := gpuBroadcast4DOp(e, a, b, e.kernels.MulBroadcast4D, dst...); r != nil || err != nil {
-			return r, err
-		}
-		return e.cpu.Mul(ctx, a, b, dst...)
-	}
-
-	return gpuBroadcastOp(e, ctx, a, b, e.kernels.MulBroadcast, fallback4D, dst...)
+	return gpuBroadcastOp(e, ctx, a, b, e.kernels.MulBroadcast, e.kernels.MulBroadcast4D, e.cpu.Mul, dst...)
 }
 
 func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -706,14 +694,7 @@ func (e *GPUEngine[T]) gpuDiv(ctx context.Context, a, b *tensor.TensorNumeric[T]
 		return gpuBinaryOp(e, ctx, a, b, e.kernels.Div, dst...)
 	}
 
-	fallback4D := func(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-		if r, err := gpuBroadcast4DOp(e, a, b, e.kernels.DivBroadcast4D, dst...); r != nil || err != nil {
-			return r, err
-		}
-		return e.cpu.Div(ctx, a, b, dst...)
-	}
-
-	return gpuBroadcastOp(e, ctx, a, b, e.kernels.DivBroadcast, fallback4D, dst...)
+	return gpuBroadcastOp(e, ctx, a, b, e.kernels.DivBroadcast, e.kernels.DivBroadcast4D, e.cpu.Div, dst...)
 }
 
 func (e *GPUEngine[T]) gpuPow(ctx context.Context, base, exponent *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
