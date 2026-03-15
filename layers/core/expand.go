@@ -21,7 +21,7 @@ func (e *Expand[T]) Attributes() map[string]any       { return nil }
 func (e *Expand[T]) OutputShape() []int               { return nil }
 func (e *Expand[T]) Parameters() []*graph.Parameter[T] { return nil }
 
-func (e *Expand[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (e *Expand[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		return nil, fmt.Errorf("Expand requires 2 inputs (input, shape), got %d", len(inputs))
 	}
@@ -34,10 +34,36 @@ func (e *Expand[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 	}
 
 	srcShape := input.Shape()
-	data := input.Data()
 
 	// Compute output shape using numpy-style broadcasting.
 	outShape := broadcastShape(srcShape, targetShape)
+
+	// GPU path: use broadcast multiply with ones to stay GPU-resident.
+	if _, ok := input.GetStorage().(*tensor.GPUStorage[T]); ok {
+		outSize := 1
+		for _, d := range outShape {
+			outSize *= d
+		}
+		ones := make([]T, outSize)
+		var one T
+		switch v := any(&one).(type) {
+		case *float32:
+			*v = 1.0
+		case *float64:
+			*v = 1.0
+		}
+		for i := range ones {
+			ones[i] = one
+		}
+		onesTensor, err := tensor.New(outShape, ones)
+		if err != nil {
+			return nil, fmt.Errorf("Expand: failed to create ones tensor: %w", err)
+		}
+		return e.engine.Mul(ctx, input, onesTensor)
+	}
+
+	// CPU path: direct element-wise expansion.
+	data := input.Data()
 	outSize := 1
 	for _, d := range outShape {
 		outSize *= d
