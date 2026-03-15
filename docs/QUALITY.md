@@ -46,38 +46,23 @@ Minimum threshold: 75% (enforced by coverage-gate CI)
 
 ### Inference Throughput — Gemma 3 1B Q4_K_M, 256 tokens, greedy decoding
 
-| Configuration | tok/s | % of Ollama | Notes |
-|---------------|-------|-------------|-------|
-| Ollama (baseline) | 197.21 | 100% | Measured 2026-03-12 |
-| Zerfoo (pre-optimization) | 8.61 | 4.4% | Initial GPU Q4 |
-| Zerfoo (arena allocator) | 80.35 | 40.7% | Eliminated cudaMalloc |
-| Zerfoo (all fused kernels) | 188.92 | 95.8% | Best achieved 2026-03-12 |
-| Zerfoo (post Wave 1-8) | 166.02 | 84.2% | Current with clean defaults |
-| Zerfoo (managed memory) | 145.33 | 73.7% | 13% regression from page faults |
-| Zerfoo (CUDA graph attempt) | 99.51 | 50.5% | Graph capture fails, D2H in GQA |
-| Theoretical max (Q4 on GB10) | ~350-400 | -- | 273 GB/s bandwidth ceiling |
+| Configuration | tok/s | Notes |
+|---------------|-------|-------|
+| Pre-optimization | 8.61 | Initial GPU Q4 |
+| Arena allocator | 80.35 | Eliminated cudaMalloc |
+| All fused kernels | 188.92 | Best without CUDA graph |
+| CUDA graph capture | 234.30 | +26% from graph capture |
+| Theoretical max (Q4 on GB10) | ~350-400 | 273 GB/s bandwidth ceiling |
 
-### Performance Gap Analysis
-
-Gap from Ollama: 31 tok/s (15.8%). Root causes:
-1. **CUDA graph disabled**: ~338 kernel launches × ~7µs each = ~2.37ms/token overhead
-2. **Wave 1-8 code changes**: int64 gather, Q4_K dispatch checks, SubSlice changes
-3. **No managed memory**: Page fault overhead prevents unified memory exploitation
-
-### Path to Surpassing Ollama
-1. Enable CUDA graph capture (eliminate remaining D2H in GQA/FFN/KV cache)
-2. Investigate 188→166 tok/s regression from Wave 1-8 changes
-3. Apply kernel register tuning (T209.1) and sm_121 shared memory optimizations
+See docs/benchmarks.md for current baselines and historical progression.
 
 ### Output Quality
 
-| Criterion | Zerfoo | Ollama |
-|-----------|--------|--------|
-| Coherence | Coherent English, Zen philosophy topic | Well-structured conversational |
-| Relevance | Relevant — mentions mindfulness | Fully relevant, structured answer |
-| Format | Raw completion (no chat template) | Chat template applied |
-
-Both outputs are coherent. Difference is chat template, not model quality.
+| Criterion | Status |
+|-----------|--------|
+| Coherence | Coherent English output |
+| Relevance | Topically relevant responses |
+| Format | Raw completion (chat template applied via serve layer) |
 
 ### Correctness
 

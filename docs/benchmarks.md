@@ -19,7 +19,7 @@ Hardware: DGX Spark GB10, sm_121, 128GB LPDDR5x, Go 1.25.0, CUDA 13.0
 
 | Date | Milestone | Tok/s | Notes |
 |------|-----------|-------|-------|
-| 2026-03-14 | Ollama parity surpassed | 234.30 | CUDA graph capture, +18.7% vs Ollama 197.21 |
+| 2026-03-14 | CUDA graph capture | 234.30 | +26% vs non-graph baseline |
 | 2026-03-13 | GPU-first pipeline | 6.84 | Phase 32, +33.6% from D2H elimination |
 | 2026-03-13 | Graph compilation | 6.86 | Phase 30, +5% from worker pool |
 | 2026-03-12 | NEON SIMD | 8.15 | Phase 34, +18.8% CPU acceleration |
