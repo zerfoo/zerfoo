@@ -12,10 +12,11 @@ import (
 
 // tokenizerJSON represents the HuggingFace tokenizer.json schema.
 type tokenizerJSON struct {
-	Model        modelJSON        `json:"model"`
-	AddedTokens  []addedTokenJSON `json:"added_tokens"`
+	Model        modelJSON         `json:"model"`
+	AddedTokens  []addedTokenJSON  `json:"added_tokens"`
 	PreTokenizer *preTokenizerJSON `json:"pre_tokenizer"`
-	Normalizer   *normalizerJSON  `json:"normalizer"`
+	Normalizer   *normalizerJSON   `json:"normalizer"`
+	Decoder      *decoderJSON      `json:"decoder"`
 }
 
 type modelJSON struct {
@@ -38,6 +39,17 @@ type preTokenizerJSON struct {
 type normalizerJSON struct {
 	Type        string           `json:"type"`
 	Normalizers []normalizerJSON `json:"normalizers"`
+}
+
+type decoderJSON struct {
+	Type     string             `json:"type"`
+	Pattern  *decoderPatternJSON `json:"pattern"`
+	Content  string             `json:"content"`
+	Decoders []decoderJSON      `json:"decoders"`
+}
+
+type decoderPatternJSON struct {
+	String string `json:"String"`
 }
 
 // LoadFromJSON reads a HuggingFace tokenizer.json file and returns a BPETokenizer.
@@ -73,6 +85,12 @@ func LoadFromJSON(path string) (*BPETokenizer, error) {
 
 	tok := NewBPETokenizer(tj.Model.Vocab, merges, special, byteLevelBPE)
 	tok.normalizer = normalizer
+
+	// Detect SentencePiece mode from the decoder config.
+	if isSentencePieceDecoder(tj.Decoder) {
+		tok.SetSentencePiece(true)
+	}
+
 	return tok, nil
 }
 
@@ -87,6 +105,29 @@ func isByteLevelPreTokenizer(pt *preTokenizerJSON) bool {
 	if pt.Type == "Sequence" {
 		for _, child := range pt.PreTokenizers {
 			if child.Type == "ByteLevel" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSentencePieceDecoder returns true if the decoder config indicates a
+// SentencePiece tokenizer. This is detected by a Metaspace decoder type or
+// a Replace rule that converts U+2581 (▁) to a space.
+func isSentencePieceDecoder(d *decoderJSON) bool {
+	if d == nil {
+		return false
+	}
+	if d.Type == "Metaspace" {
+		return true
+	}
+	if d.Type == "Replace" && d.Pattern != nil && d.Pattern.String == "\u2581" {
+		return true
+	}
+	if d.Type == "Sequence" {
+		for i := range d.Decoders {
+			if isSentencePieceDecoder(&d.Decoders[i]) {
 				return true
 			}
 		}
