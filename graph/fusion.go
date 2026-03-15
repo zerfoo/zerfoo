@@ -95,11 +95,14 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 
 		// Mul inputs: [normalized, weight] or [weight, normalized].
-		// One input should be a frozen weight, the other the Div output.
+		// One input should be a static weight (frozen or pre-populated parameter),
+		// the other the Div output. A slot is "static" if no instruction produces it
+		// (not in outToInstr) — this covers Parameters, Constants, and graph inputs.
 		divOutputSlot := -1
 		weightSlot := -1
 		for _, inputSlot := range mulInst.InputIdx {
-			if frozenSet[inputSlot] {
+			_, isProduced := outToInstr[inputSlot]
+			if !isProduced || frozenSet[inputSlot] {
 				weightSlot = inputSlot
 			} else {
 				divOutputSlot = inputSlot
@@ -107,7 +110,7 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 		if weightSlot == -1 || divOutputSlot == -1 {
 			if debug {
-				log.Printf("FuseRMSNorm: Mul[%d] inputs=%v weightSlot=%d divSlot=%d (skip: no frozen weight)", mulIdx, mulInst.InputIdx, weightSlot, divOutputSlot)
+				log.Printf("FuseRMSNorm: Mul[%d] inputs=%v weightSlot=%d divSlot=%d (skip: no static weight)", mulIdx, mulInst.InputIdx, weightSlot, divOutputSlot)
 			}
 			continue
 		}
@@ -150,11 +153,12 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 
-		// Add inputs: [reducemean_output, epsilon] (one should be frozen scalar).
+		// Add inputs: [reducemean_output, epsilon] (one should be a static scalar).
 		reduceMeanOutputSlot := -1
 		epsilonSlot := -1
 		for _, inputSlot := range addInst.InputIdx {
-			if frozenSet[inputSlot] {
+			_, isProduced := outToInstr[inputSlot]
+			if !isProduced || frozenSet[inputSlot] {
 				epsilonSlot = inputSlot
 			} else {
 				reduceMeanOutputSlot = inputSlot
@@ -200,9 +204,10 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			continue
 		}
 
-		// Verify the exponent is a frozen scalar (should be 2).
+		// Verify the exponent is a static scalar (should be 2).
 		exponentSlot := powInst.InputIdx[1]
-		if !frozenSet[exponentSlot] {
+		_, expIsProduced := outToInstr[exponentSlot]
+		if expIsProduced && !frozenSet[exponentSlot] {
 			continue
 		}
 		// Optionally verify value is 2, but slot data might be on GPU.
