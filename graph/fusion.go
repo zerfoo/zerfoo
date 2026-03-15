@@ -133,10 +133,16 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		// Trace: Sqrt
 		sqrtIdx, ok := outToInstr[sqrtOutputSlot]
 		if !ok {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] -> Div[%d] sqrtSlot=%d has no producer", mulIdx, divIdx, sqrtOutputSlot)
+			}
 			continue
 		}
 		sqrtInst := instructions[sqrtIdx]
 		if sqrtInst.OpName != "Sqrt" || len(sqrtInst.InputIdx) != 1 {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] -> Div[%d] -> slot %d not Sqrt (op=%s inputs=%d)", mulIdx, divIdx, sqrtOutputSlot, sqrtInst.OpName, len(sqrtInst.InputIdx))
+			}
 			continue
 		}
 
@@ -148,6 +154,9 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 		addInst := instructions[addIdx]
 		if addInst.OpName != "Add" || len(addInst.InputIdx) != 2 {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] -> Div -> Sqrt -> slot %d not Add (op=%s inputs=%d)", mulIdx, addOutputSlot, addInst.OpName, len(addInst.InputIdx))
+			}
 			continue
 		}
 
@@ -194,11 +203,17 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 		}
 		powInst := instructions[powIdx]
 		if powInst.OpName != "Pow" || len(powInst.InputIdx) != 2 {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] -> ...-> ReduceMean -> slot %d not Pow (op=%s inputs=%d)", mulIdx, powOutputSlot, powInst.OpName, len(powInst.InputIdx))
+			}
 			continue
 		}
 
 		// KEY CHECK: Pow's first input must be the same slot as Div's first input (x).
 		if powInst.InputIdx[0] != xSlot {
+			if debug {
+				log.Printf("FuseRMSNorm: Mul[%d] Pow.input[0]=%d != Div.input[0]=%d (x mismatch)", mulIdx, powInst.InputIdx[0], xSlot)
+			}
 			continue
 		}
 
