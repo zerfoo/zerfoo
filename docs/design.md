@@ -996,6 +996,21 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     - Phi 4: REGRESSED to 4.53 tok/s, "jjjjjjjj" output, CUDA graph capture still fails
     - Gemma 3 GGUF: 122.70 tok/s (regression from 232 tok/s baseline, not yet investigated)
     Remaining issues after Phase 14: Mistral tokenizer spaces, Phi 4 regression, Gemma 3 throughput regression.
+    Phase 15 fixes:
+    - SentencePiece tokenizer: pkg/tokenizer/loader.go LoadFromJSON now parses decoder section from tokenizer.json,
+      detects Metaspace decoder or U+2581 Replace rules, and calls SetSentencePiece(true). Fixes Mistral spaces.
+    - CUDA graph nonCapturableOps: graph/cuda_graph.go now excludes ConstantOfShape and Shape ops (produce CPU tensors,
+      cause cudaMemcpy H2D during capture). Phi 4 capture region shifted from [69,103) to [146,164).
+    - TestCPUEngine_Exp precision: compute/cpu_engine_test.go now uses 1e-5 relative tolerance for NEON fast path.
+    - Gemma 3 throughput: confirmed 232.21 tok/s with 256 tokens. Prior "regression" was measurement artifact (20 tokens).
+    - Phi 4 "regression": was stale binary on DGX, not code issue. Output restored to semi-coherent.
+    Phase 15 verification results (DGX, feat/phase15, main at 4724c47):
+    - Gemma 3 GGUF: 232.21 tok/s (256 tok), baseline restored
+    - Llama 3: 12.93 tok/s, semi-coherent
+    - Qwen 2.5: 15.79 tok/s, improved (no more single-token repetition)
+    - Mistral 7B: 3.94 tok/s, FIXED (spaces present in output)
+    - Phi 4: 4.14 tok/s, semi-coherent, CUDA graph capture still partially fails
+    All models run without crashes. Zero test failures. Repetition penalty not yet tested on DGX.
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
