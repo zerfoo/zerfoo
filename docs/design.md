@@ -967,7 +967,12 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     - Position IDs stuck at 0: positionIdsNode always generated [0..seqLen-1]. Fixed with offset counter tracking decode step.
     - Attention mask: maskFromInputNode now tracks accumulated sequence length.
     - Greater/Where ops: added N-D broadcasting for causal mask computation.
-    Llama 3 ONNX now produces coherent text. Remaining per-model issues: Qwen 2.5 (Gather index OOB), Mistral 7B (Range error), Phi 4 (pow_scalar capture error).
+    Llama 3 ONNX previously produced coherent text with stale .so; with rebuilt .so all ONNX models hit correctness errors.
+    Phase 12 fixes: Cast aliasing (Cast.Forward returns new tensor wrapper with View refcount), Gather index clamping for embedding OOB.
+    Remaining per-model issues after Phase 12: Qwen 2.5 (poor output quality), Mistral 7B (Or shape mismatch at node[98]),
+    Phi 4 (Add size mismatch at node[125]), Llama 3 (MatMul 1D vs 2D at node[106] with rebuilt .so).
+    Common root cause: ONNX decomposed ops (Mul, Add, Or, MatMul) produce incorrect output shapes due to broadcasting bugs
+    in the GPU compute path. The broadcastShape function and/or gpuBroadcastOp may incorrectly collapse leading dimensions.
 17. Decode kernel flash_attention_decode disabled for GQA models (Phase 10): kernel exceeds time budget at kv_len>=256 (118% of budget). cuBLAS SDPA achieves 233 tok/s vs kernel's 114 tok/s. Dead fast path code removed (-138 lines). Kernel retained in .cu for future optimization.
 18. Purego trampoline assembly correct (Phase 10): ARM64 AAPCS64 trampoline verified on DGX. Segfault was in arena managed memory tests (device-only pointer access from CPU). Fixed with IsManaged() guards.
 19. FP16 KV cache verified (Phase 10): identical output to F32, +11.2% throughput (138 vs 124 tok/s on DGX).
