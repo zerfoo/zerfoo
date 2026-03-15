@@ -141,14 +141,14 @@ the fused op.
     ops eliminated per fusion). RMSNorm ops use the fused kernel.
   - Dependencies: T3701.1.
 
-- [ ] S3701.2.1 Test RMSNorm fusion pass  Owner: TBD  Est: 45m
+- [x] S3701.2.1 Test RMSNorm fusion pass  Owner: agent  Done: 2026-03-15
   - Unit test: create a synthetic instruction list with the RMSNorm pattern,
     verify the fusion pass detects and replaces it.
   - Test with epsilon values from real models.
   - go test ./graph/... -race.
   - Dependencies: T3701.2.
 
-- [ ] S3701.2.2 Test RMSNorm fusion on DGX  Owner: TBD  Est: 30m
+- [x] S3701.2.2 Test RMSNorm fusion on DGX  Owner: agent  Done: 2026-03-15
   - Run Llama 3 with fusion enabled. Verify instruction count dropped.
   - Verify output quality is maintained (no numerical regression).
   - Measure tok/s improvement.
@@ -180,7 +180,7 @@ capture.
   - Acceptance: Phi 4 CUDA graph capture succeeds without TrySlice errors.
   - Dependencies: T3702.1.
 
-- [ ] S3702.2.1 Test Phi 4 capture fix on DGX  Owner: TBD  Est: 15m
+- [x] S3702.2.1 Test Phi 4 capture fix on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for Phi 4 on DGX. Verify no capture errors in log.
   - Measure tok/s improvement from successful graph capture.
   - Dependencies: T3702.2.
@@ -209,13 +209,13 @@ or made capture-safe to increase the capturable instruction region.
   - Acceptance: Llama 3 capture coverage increases from 2% to 10%+.
   - Dependencies: T3703.1.
 
-- [ ] S3703.2.1 Test capture improvements on DGX  Owner: TBD  Est: 15m
+- [x] S3703.2.1 Test capture improvements on DGX  Owner: agent  Done: 2026-03-15
   - bench_tps for all models. Verify improved capture coverage.
   - Dependencies: T3703.2.
 
 ### E3704: All-Model Verification
 
-- [ ] T3704.1 Run all 5 models on DGX with improvements  Owner: TBD  Est: 1h
+- [x] T3704.1 Run all 5 models on DGX with improvements  Owner: agent  Done: 2026-03-15
   - bench_tps for Gemma 3 (GGUF), Llama 3, Qwen 2.5, Mistral 7B, Phi 4.
   - Use --repetition-penalty 1.2 for ONNX models.
   - Record tok/s, capture coverage, output quality for each.
