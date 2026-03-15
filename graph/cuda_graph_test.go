@@ -11,6 +11,45 @@ import (
 	"github.com/zerfoo/zerfoo/types"
 )
 
+// TestIsNonCapturable verifies that the isNonCapturable function correctly
+// distinguishes static Reshape (1 input, capture-safe) from dynamic Reshape
+// (2 inputs, not capture-safe) and always-non-capturable ops.
+func TestIsNonCapturable(t *testing.T) {
+	tests := []struct {
+		name     string
+		opName   string
+		nInputs  int
+		wantSkip bool
+	}{
+		{"static Reshape (1 input)", "Reshape", 1, false},
+		{"dynamic Reshape (2 inputs)", "Reshape", 2, true},
+		{"EmbeddingLookup always non-capturable", "EmbeddingLookup", 1, true},
+		{"Gather always non-capturable", "Gather", 2, true},
+		{"Shape always non-capturable", "Shape", 1, true},
+		{"ConstantOfShape always non-capturable", "ConstantOfShape", 1, true},
+		{"Add is capturable", "Add", 2, false},
+		{"MatMul is capturable", "MatMul", 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inputIdx := make([]int, tt.nInputs)
+			for i := range inputIdx {
+				inputIdx[i] = i
+			}
+			plan := &ExecutionPlan[float32]{
+				instructions: []Instruction[float32]{
+					{OpName: tt.opName, InputIdx: inputIdx},
+				},
+			}
+			got := isNonCapturable(plan, 0)
+			if got != tt.wantSkip {
+				t.Errorf("isNonCapturable(%s, %d inputs) = %v, want %v",
+					tt.opName, tt.nInputs, got, tt.wantSkip)
+			}
+		})
+	}
+}
+
 // simpleAddNode is a graph node that adds 1.0 to every element of the input.
 // It uses only GPU-compatible operations (engine.AddScalar) so that CUDA
 // graph capture can record the kernel launches.
