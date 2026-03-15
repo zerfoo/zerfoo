@@ -103,7 +103,7 @@ Cos and Sin ops in layers/core/cos.go and layers/core/sin.go call .Data() on
 GPU tensors, forcing D2H copies. These are used in rotary position embedding
 for ONNX models.
 
-- [ ] T3500.1 Add GPU Cos kernel  Owner: TBD  Est: 1h
+- [x] T3500.1 Add GPU Cos kernel  Owner: agent  Done: 2026-03-15
   - Add a CUDA cos kernel to internal/cuda/kernels/elementwise.cu:
     `kernel_cos(float* a, float* c, int n)` using `cosf()`.
   - Add launcher and purego binding in elementwise_purego.go.
@@ -113,18 +113,18 @@ for ONNX models.
   - Acceptance: Cos on GPU tensors runs on GPU without D2H copy.
   - Dependencies: none.
 
-- [ ] S3500.1.1 Test GPU Cos kernel  Owner: TBD  Est: 30m
+- [x] S3500.1.1 Test GPU Cos kernel  Owner: agent  Done: 2026-03-15
   - Write CPU vs GPU parity test for Cos with various shapes.
   - go test ./compute/... -race.
   - Dependencies: T3500.1.
 
-- [ ] T3500.2 Add GPU Sin kernel  Owner: TBD  Est: 1h
+- [x] T3500.2 Add GPU Sin kernel  Owner: agent  Done: 2026-03-15
   - Same pattern as T3500.1 but using `sinf()`.
   - File: internal/cuda/kernels/elementwise.cu, compute/gpu_engine.go.
   - Acceptance: Sin on GPU tensors runs on GPU without D2H copy.
   - Dependencies: none.
 
-- [ ] S3500.2.1 Test GPU Sin kernel  Owner: TBD  Est: 30m
+- [x] S3500.2.1 Test GPU Sin kernel  Owner: agent  Done: 2026-03-15
   - Write CPU vs GPU parity test for Sin.
   - Dependencies: T3500.2.
 
@@ -137,7 +137,7 @@ for ONNX models.
 Expand op in layers/core/expand.go operates entirely on CPU data. For GPU
 tensors, it forces D2H copies. Used in attention mask construction.
 
-- [ ] T3501.1 Add GPU Expand using broadcast kernel  Owner: TBD  Est: 1.5h
+- [x] T3501.1 Add GPU Expand using broadcast kernel  Owner: agent  Done: 2026-03-15
   - Extend GPUEngine to handle Expand via the existing broadcast4D kernel.
   - Expand(x, target_shape) is equivalent to broadcasting x against a tensor
     of ones with target_shape. Reuse gpuBroadcast4DOp with a fill-ones buffer.
@@ -147,7 +147,7 @@ tensors, it forces D2H copies. Used in attention mask construction.
   - Acceptance: Expand on GPU tensors stays GPU-resident.
   - Dependencies: none.
 
-- [ ] S3501.1.1 Test GPU Expand  Owner: TBD  Est: 30m
+- [x] S3501.1.1 Test GPU Expand  Owner: agent  Done: 2026-03-15
   - CPU vs GPU parity test for Expand with shapes [1,5,1] -> [3,5,7].
   - Dependencies: T3501.1.
 
@@ -175,7 +175,7 @@ models for KV cache updates.
 Small models at temp=0 produce repetitive output without repetition penalty.
 Adding this to the sampling path improves quality for all models.
 
-- [ ] T3503.1 Add repetition penalty to sampling  Owner: TBD  Est: 1.5h
+- [x] T3503.1 Add repetition penalty to sampling  Owner: agent  Done: 2026-03-15
   - In generate/sampling.go (or wherever top-k/top-p sampling is implemented),
     add a repetition_penalty parameter (default 1.0 = no penalty).
   - For each generated token, check if it appeared in the last N tokens.
@@ -187,7 +187,7 @@ Adding this to the sampling path improves quality for all models.
     repetitive output.
   - Dependencies: none.
 
-- [ ] S3503.1.1 Test repetition penalty  Owner: TBD  Est: 30m
+- [x] S3503.1.1 Test repetition penalty  Owner: agent  Done: 2026-03-15
   - Unit test: verify logit modification for repeated tokens.
   - Test with penalty=1.0 (no change) and penalty=1.5 (reduced logits).
   - Dependencies: T3503.1.
@@ -198,7 +198,7 @@ Qwen produces "fox fox fox..." (single-token repetition). This pattern
 suggests a bug beyond precision drift -- possibly in attention mask
 construction or head count handling.
 
-- [ ] T3504.1 Diagnose Qwen 2.5 repetition  Owner: TBD  Est: 1.5h
+- [x] T3504.1 Diagnose Qwen 2.5 repetition  Owner: agent  Done: 2026-03-15
   - Run Qwen on DGX with debug logging at attention mask, KV cache, and
     logit stages.
   - Compare attention mask shape vs expected (Qwen uses 7 KV heads, not 8).
