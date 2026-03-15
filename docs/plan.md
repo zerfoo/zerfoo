@@ -128,7 +128,7 @@ the fused op.
   - Acceptance: Exact op sequence for decomposed RMSNorm documented.
   - Dependencies: none.
 
-- [ ] T3701.2 Implement ONNX graph fusion pass for RMSNorm  Owner: TBD  Est: 2h
+- [x] T3701.2 Implement ONNX graph fusion pass for RMSNorm  Owner: agent  Done: 2026-03-15
   - Add a graph optimization pass that scans the instruction list for the
     RMSNorm decomposition pattern and replaces matching sequences with a
     single FusedRMSNorm instruction.
@@ -172,7 +172,7 @@ capture.
   - Acceptance: Root cause documented. Fix approach identified.
   - Dependencies: none.
 
-- [ ] T3702.2 Fix TrySlice for CUDA graph capture  Owner: TBD  Est: 1.5h
+- [x] T3702.2 Fix TrySlice for CUDA graph capture  Owner: agent  Done: 2026-03-15
   - Implement the fix based on diagnosis.
   - Options: (a) cache slice metadata before capture, (b) pre-compute
     offsets during warmup, (c) add ops that call TrySlice to nonCapturableOps.
@@ -201,7 +201,7 @@ or made capture-safe to increase the capturable instruction region.
   - Acceptance: Per-model audit with capture improvement opportunities.
   - Dependencies: none.
 
-- [ ] T3703.2 Expand ONNX capture region  Owner: TBD  Est: 1.5h
+- [x] T3703.2 Expand ONNX capture region  Owner: agent  Done: 2026-03-15
   - Based on audit, fix ops that can be made capture-safe.
   - This may include: pre-uploading CPU tensors, caching metadata,
     or splitting the capture into multiple regions.
