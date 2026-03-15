@@ -1,8 +1,9 @@
 # Zerfoo
 
-Go 1.25 ML inference framework with GPU acceleration. Supports GGUF (quantized)
-and ZMF (full-precision) model formats. Ships an OpenAI-compatible API server.
-Beats Ollama by 18% on throughput for Gemma 3 1B Q4K.
+A Go ML framework built for inference performance. Pure Go with no CGo --
+GPU acceleration via runtime-loaded CUDA, ROCm, and OpenCL. Ships an
+OpenAI-compatible API server, quantized model support (GGUF Q4_K), and
+CUDA graph capture for near-zero kernel launch overhead.
 
 ## Installation
 
@@ -40,14 +41,17 @@ go run ./cmd/zerfoo serve --model gemma3:1b --port 8080
 
 ## Supported Models
 
-| Model | Format | Parameters | tok/s (DGX Spark) | CUDA Graph |
-|-------|--------|-----------|------------------:|:----------:|
-| Gemma 3 1B | GGUF Q4_K_M | 1B | 232.86 | Yes (99.5%) |
-| Llama 3.2 1B | ZMF F32 | 1B | 17.56 | Limited |
-| Qwen 2.5 | ZMF F32 | - | 7.87 | Limited |
+| Model | Format | Status |
+|-------|--------|--------|
+| Gemma 3 | GGUF Q4_K | Production (CUDA graph, highest throughput) |
+| Llama 3 | ZMF/ONNX | Working |
+| Qwen 2.5 | ZMF/ONNX | Working |
+| Mistral 7B | ZMF/ONNX | Working |
+| Phi-3/4 | ZMF/ONNX | Working |
+| SigLIP | ZMF | Vision encoder (parity tested) |
+| Kimi-VL | ZMF | Vision-language (parity tested) |
 
-Benchmarks measured on NVIDIA DGX Spark GB10 (sm_121, 128 GB unified memory,
-LPDDR5x 273 GB/s).
+See [docs/benchmarks.md](docs/benchmarks.md) for current throughput numbers.
 
 ## API Usage
 
@@ -62,29 +66,19 @@ curl http://localhost:8080/v1/chat/completions \
 The server implements the OpenAI chat completions API, so any OpenAI-compatible
 client library works out of the box -- just point it at `localhost:8080`.
 
-## Performance
-
-Gemma 3 1B Q4K: 232.86 tok/s with CUDA graph capture (+26% vs no-graph).
-Beats Ollama 197.21 tok/s by 18.1%.
-
-Key optimizations:
-
-- CUDA graph capture (99.5% of decode ops captured)
-- GPU-resident tensor pipeline (zero D2H copies in the hot path)
-- Fused attention kernels
-- Arena memory pool
-
-## Architecture Overview
+## Key Design Decisions
 
 - **Engine[T] interface** -- unified compute abstraction across CPU and GPU
   backends. All layers delegate arithmetic to Engine, enabling transparent
   hardware acceleration.
-- **purego GPU bindings** -- CUDA runtime and cuBLAS loaded via dlopen at
-  startup. No CGo required.
+- **purego GPU bindings** -- CUDA, ROCm, and OpenCL loaded via dlopen at
+  runtime. No CGo, no build tags. `go build ./...` works everywhere.
 - **Graph compiler with CUDA graph capture** -- builds a static computation
   DAG, captures it as a CUDA graph for near-zero launch overhead on decode.
-- **OpenAI-compatible HTTP server** -- chat completions, completions, model
-  listing, and SSE streaming.
+- **Arena memory allocator** -- pre-allocated bump-pointer arena serves all
+  inference allocations with O(1) reset per token.
+- **OpenAI-compatible HTTP server** -- chat completions, completions,
+  embeddings, model management, and SSE streaming.
 
 See [docs/design.md](docs/design.md) for the full architecture.
 
