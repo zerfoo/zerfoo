@@ -1,3 +1,38 @@
+# T3506.1: Phase 14 All-Model Verification — GPU Ops + ConstantOfShape Fix
+
+Date: 2026-03-15
+Branch: feat/phase14-wave2
+DGX: feat/phase14-wave2 branch, libkernels.so rebuilt with Cos/Sin kernels
+
+## Phase 14 Changes Verified
+- GPU Cos/Sin/Expand/ScatterND kernels (eliminate D2H copies)
+- ConstantOfShape tensor fill fix (causal mask now uses -FLT_MAX)
+- Repetition penalty CLI (not available in bench_tps on this branch)
+
+## Results
+
+| Model | Tok/s | Output | vs Phase 13 |
+|-------|-------|--------|-------------|
+| Gemma 3 GGUF | 122.70 | Poor (repetitive) | No change (was 123.43) |
+| Llama 3 | 12.90 | "jumps over the quick brown fox jumps over" | Improved (was pure repetition) |
+| Qwen 2.5 | 15.54 | "jumps over the foxes are running over" | **Fixed** (was "fox fox fox") |
+| Mistral 7B | 3.65 | "jumpedoverthequickbark..." (no spaces) | Partially fixed (words coherent, tokenizer issue) |
+| Phi 4 | 4.53 | "jjjjjjjjjj" | **Regressed** (was "'s a new and...") |
+
+## Assessment
+- **ConstantOfShape fix (T3504.2)**: Clear improvement for Qwen 2.5 and Mistral
+- **Mistral tokenizer**: SentencePiece ▁ prefix not decoded as space — separate bug
+- **Phi 4 regression**: CUDA graph capture still fails; output degraded
+- **Gemma 3 regression**: 122 tok/s vs 232 baseline — not investigated yet
+
+## Remaining Issues
+1. Mistral: tokenizer space decoding
+2. Phi 4: regression + CUDA graph capture failure
+3. Gemma 3: throughput regression (122 vs 232 tok/s)
+4. All models: repetition penalty not yet testable via bench_tps on DGX
+
+---
+
 # S2001.2.1: Multi-Model Verification Post cuBLAS Fix
 
 Date: 2026-03-14
