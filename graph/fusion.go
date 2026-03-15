@@ -55,7 +55,34 @@ func FuseRMSNorm[T tensor.Numeric](instructions []Instruction[T], frozenIdx []in
 			opCounts[inst.OpName]++
 		}
 		log.Printf("FuseRMSNorm: %d instructions, op counts: %v", len(instructions), opCounts)
-		log.Printf("FuseRMSNorm: %d frozen slots", len(frozenIdx))
+		log.Printf("FuseRMSNorm: %d frozen slots, %d total slots", len(frozenIdx), len(slots))
+		// Print first few frozen indices and first Div instruction inputs.
+		if len(frozenIdx) > 0 {
+			sample := frozenIdx
+			if len(sample) > 10 {
+				sample = sample[:10]
+			}
+			log.Printf("FuseRMSNorm: first frozen indices: %v", sample)
+		}
+		// Print first Div instruction to understand connectivity.
+		for i, inst := range instructions {
+			if inst.OpName == "Div" {
+				log.Printf("FuseRMSNorm: first Div[%d] inputs=%v output=%d", i, inst.InputIdx, inst.OutputIdx)
+				// Print the Mul that consumes this Div's output.
+				for j, m := range instructions {
+					if m.OpName == "Mul" {
+						for _, inp := range m.InputIdx {
+							if inp == inst.OutputIdx {
+								log.Printf("FuseRMSNorm: -> consumed by Mul[%d] inputs=%v, frozen status: [%v, %v]",
+									j, m.InputIdx, frozenSet[m.InputIdx[0]], frozenSet[m.InputIdx[1]])
+								break
+							}
+						}
+					}
+				}
+				break
+			}
+		}
 	}
 
 	// Scan for Mul ops and trace backward.
