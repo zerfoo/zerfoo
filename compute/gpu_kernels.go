@@ -770,6 +770,26 @@ func (e *GPUEngine[T]) gpuExp(ctx context.Context, a *tensor.TensorNumeric[T], d
 	return gpuUnaryOp(e, a, e.kernels.Exp, dst...)
 }
 
+func (e *GPUEngine[T]) gpuSin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Sin(ctx, a, dst...)
+	}
+
+	e.setDevice()
+
+	return gpuUnaryOp(e, a, e.kernels.Sin, dst...)
+}
+
+func (e *GPUEngine[T]) gpuCos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if !isFloat32[T]() {
+		return e.cpu.Cos(ctx, a, dst...)
+	}
+
+	e.setDevice()
+
+	return gpuUnaryOp(e, a, e.kernels.Cos, dst...)
+}
+
 func (e *GPUEngine[T]) gpuLog(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if !isFloat32[T]() {
 		return e.cpu.Log(ctx, a, dst...)

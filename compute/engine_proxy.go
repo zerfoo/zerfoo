@@ -171,6 +171,22 @@ func (p *EngineProxy[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], ds
 	return result, err
 }
 
+func (p *EngineProxy[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	result, err := p.real.Sin(ctx, a, dst...)
+	if err == nil {
+		p.record("Sin", []*tensor.TensorNumeric[T]{a}, result, nil)
+	}
+	return result, err
+}
+
+func (p *EngineProxy[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	result, err := p.real.Cos(ctx, a, dst...)
+	if err == nil {
+		p.record("Cos", []*tensor.TensorNumeric[T]{a}, result, nil)
+	}
+	return result, err
+}
+
 func (p *EngineProxy[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	result, err := p.real.Tanh(ctx, a, dst...)
 	if err == nil {

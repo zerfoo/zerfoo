@@ -1936,6 +1936,14 @@ func (e *GPUEngine[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], dst 
 	return e.gpuLog(ctx, a, dst...)
 }
 
+func (e *GPUEngine[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.gpuSin(ctx, a, dst...)
+}
+
+func (e *GPUEngine[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.gpuCos(ctx, a, dst...)
+}
+
 func (e *GPUEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.gpuTanh(ctx, a, dst...)
 }

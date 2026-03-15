@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	rand "math/rand/v2"
 	"reflect"
 	"runtime"
@@ -1499,6 +1500,50 @@ func (e *CPUEngine[T]) Exp(_ context.Context, a *tensor.TensorNumeric[T], dst ..
 	parallelFor(len(aData), func(start, end int) {
 		for i := start; i < end; i++ { //nolint:intrange
 			rData[i] = e.ops.Exp(aData[i])
+		}
+	})
+
+	return result, nil
+}
+
+// Sin computes the element-wise sine of a tensor.
+func (e *CPUEngine[T]) Sin(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Sin", time.Now())
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
+	result, err := e.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+	aData := a.Data()
+	rData := result.Data()
+
+	parallelFor(len(aData), func(start, end int) {
+		for i := start; i < end; i++ { //nolint:intrange
+			rData[i] = T(math.Sin(float64(aData[i])))
+		}
+	})
+
+	return result, nil
+}
+
+// Cos computes the element-wise cosine of a tensor.
+func (e *CPUEngine[T]) Cos(_ context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	defer e.recordOp("Cos", time.Now())
+	if a == nil {
+		return nil, errors.New("input tensor cannot be nil")
+	}
+	result, err := e.getOrCreateDest(a.Shape(), dst...)
+	if err != nil {
+		return nil, err
+	}
+	aData := a.Data()
+	rData := result.Data()
+
+	parallelFor(len(aData), func(start, end int) {
+		for i := start; i < end; i++ { //nolint:intrange
+			rData[i] = T(math.Cos(float64(aData[i])))
 		}
 	})
 

@@ -168,6 +168,14 @@ func (e *OpenCLEngine[T]) Log(ctx context.Context, a *tensor.TensorNumeric[T], d
 	return e.cpu.Log(ctx, a, dst...)
 }
 
+func (e *OpenCLEngine[T]) Sin(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.Sin(ctx, a, dst...)
+}
+
+func (e *OpenCLEngine[T]) Cos(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.cpu.Cos(ctx, a, dst...)
+}
+
 func (e *OpenCLEngine[T]) Tanh(ctx context.Context, a *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return e.cpu.Tanh(ctx, a, dst...)
 }
