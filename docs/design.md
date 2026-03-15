@@ -1113,7 +1113,36 @@ The inference pipeline provides an embeddable Go-native API for model loading an
 - `zerfoo run <model-id>` -- interactive chat with streaming output
 - `zerfoo serve --port <port>` -- start OpenAI-compatible HTTP server
 
-### 11.3 Data Flow
+### 11.3 GGUF Inference Pipeline
+
+GGUF models are loaded via `inference/load_gguf.go` using the `model/gguf`
+package. The pipeline extracts `gguf.ModelConfig` from GGUF metadata and
+selects an architecture builder based on `cfg.Architecture`:
+
+- `buildLlamaGraph` (`inference/arch_llama.go`) -- Llama family
+- `buildGemmaGraph` (`inference/arch_gemma.go`) -- Gemma family
+
+Both delegate to `buildTransformerGraph` (`inference/arch_common.go`), which
+constructs the decoder-only transformer graph. Architecture-specific
+differences are parameterized via `transformerGraphOpts`:
+
+- `embedScale` -- multiply embeddings by a constant (Gemma: sqrt(hidden_size))
+- `headDim` -- override computed head dimension (needed when head_dim != hidden_size/num_heads)
+- `rmsNormEps` -- RMSNorm epsilon (default 1e-5)
+- `activation` -- FFN activation function ("swiglu" or "gelu_pytorch_tanh")
+- `attnScale` -- custom attention scaling factor
+
+Key nodes defined in `inference/arch_llama.go`:
+- `embeddingLookupNode` -- token ID to embedding lookup with optional scaling
+- `lmHeadNode` -- hidden state to vocabulary logit projection
+
+Both implement `graph.EmbeddedFrozenProvider` so the graph compiler registers
+their embedded weights as frozen slots for megakernel compilation.
+
+See [ADR-035](adr/035-gemma3-architecture-parameterization.md) for architecture
+parameterization decisions.
+
+### 11.4 Data Flow
 
 ```
 HuggingFace model (ONNX/SafeTensors)
