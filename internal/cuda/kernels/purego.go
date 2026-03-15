@@ -20,8 +20,8 @@ type KernelLib struct {
 	launchSubScalar, launchPowScalar                  uintptr
 
 	// elementwise unary
-	launchExp, launchLog, launchSqrt, launchRsqrt, launchTanh uintptr
-	launchTanhPrime                                            uintptr
+	launchExp, launchLog, launchSqrt, launchRsqrt, launchSin, launchCos, launchTanh uintptr
+	launchTanhPrime                                                                 uintptr
 
 	// elementwise special
 	launchFill, launchSumAxis, launchSoftmax uintptr
@@ -158,6 +158,8 @@ func openKernelLib() (*KernelLib, error) {
 			{"launch_log", &k.launchLog},
 			{"launch_sqrt", &k.launchSqrt},
 			{"launch_rsqrt", &k.launchRsqrt},
+			{"launch_sin", &k.launchSin},
+			{"launch_cos", &k.launchCos},
 			{"launch_tanh", &k.launchTanh},
 			{"launch_tanh_prime", &k.launchTanhPrime},
 			// elementwise special

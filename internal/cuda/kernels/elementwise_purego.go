@@ -161,6 +161,26 @@ func Rsqrt(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	return checkKernel(ret, "rsqrt")
 }
 
+// Sin launches the elementwise sin kernel: c = sin(a).
+func Sin(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("sin kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchSin, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
+	return checkKernel(ret, "sin")
+}
+
+// Cos launches the elementwise cos kernel: c = cos(a).
+func Cos(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
+	k := klib()
+	if k == nil {
+		return fmt.Errorf("cos kernel: kernels not available")
+	}
+	ret := cuda.Ccall(k.launchCos, uintptr(a), uintptr(c), uintptr(n), uintptr(s))
+	return checkKernel(ret, "cos")
+}
+
 // Tanh launches the elementwise tanh kernel: c = tanh(a).
 func Tanh(a, c unsafe.Pointer, n int, s unsafe.Pointer) error {
 	k := klib()
