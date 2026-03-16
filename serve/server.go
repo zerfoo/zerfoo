@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/generate"
+	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/metrics/runtime"
@@ -177,16 +178,30 @@ func inferenceErrorStatus(err error) int {
 
 // --- Request/Response types ---
 
+// JSONSchemaFormat describes the json_schema object within a response_format request.
+type JSONSchemaFormat struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict,omitempty"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+// ResponseFormat controls the output structure of a chat completion.
+type ResponseFormat struct {
+	Type       string            `json:"type"` // "text" | "json_object" | "json_schema"
+	JSONSchema *JSONSchemaFormat `json:"json_schema,omitempty"`
+}
+
 // ChatCompletionRequest represents the OpenAI chat completion request.
 type ChatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	TopP        *float64      `json:"top_p,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream"`
-	Tools       []Tool        `json:"tools,omitempty"`
-	ToolChoice  *ToolChoice   `json:"tool_choice,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []ChatMessage   `json:"messages"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	TopP           *float64        `json:"top_p,omitempty"`
+	MaxTokens      *int            `json:"max_tokens,omitempty"`
+	Stream         bool            `json:"stream"`
+	Tools          []Tool          `json:"tools,omitempty"`
+	ToolChoice     *ToolChoice     `json:"tool_choice,omitempty"`
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
 
 // ChatMessage is a single message in the chat.
@@ -339,6 +354,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxTokens != nil {
 		opts = append(opts, inference.WithMaxTokens(*req.MaxTokens))
+	}
+
+	// Wire response_format json_schema into grammar-constrained decoding.
+	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && req.ResponseFormat.JSONSchema != nil {
+		var schema grammar.JSONSchema
+		if err := json.Unmarshal(req.ResponseFormat.JSONSchema.Schema, &schema); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json_schema: "+err.Error())
+			return
+		}
+		g, err := grammar.Convert(&schema)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "unsupported schema: "+err.Error())
+			return
+		}
+		opts = append(opts, inference.WithGrammar(g))
 	}
 
 	// Convert messages.
