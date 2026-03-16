@@ -125,9 +125,8 @@ structured output, and tool calling.
 - [x] T1.7 Update zerfoo go.mod to use ztensor v0.2.0 and ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
   - Removed local replace directive. Bumped both to v0.2.0. go build clean.
 
-- [ ] T1.8 Run go vet and linter across zerfoo, ztensor, ztoken  Owner: TBD  Est: 30m
-  - Deps: T1.7
-  - AC: Zero new warnings. Existing purego warnings documented.
+- [x] T1.8 Run go vet and linter across zerfoo, ztensor, ztoken  Owner: Claude  Done: 2026-03-16
+  - Branch chore/vet-lint-audit-2026-03-16. Zero new warnings. 16 pre-existing purego unsafe.Pointer warnings documented in QUALITY.md.
 
 ### E2: Model Coverage -- GGUF Graph Builders
 
@@ -162,9 +161,8 @@ can extend it via `transformerGraphOpts`. DeepSeek requires MLA + MoE layers
   - AC: All 6 architectures produce coherent multi-sentence output. Benchmark throughput recorded for each.
   - Models: Gemma 3 1B Q4_K_M, Llama 3 8B Q4_K_M, Mistral 7B Q4_K_M, Qwen 2.5 7B Q4_K_M, Phi 3 mini Q4_K_M, DeepSeek-V2-Lite Q8_0.
 
-- [ ] T2.7 Run go vet and linter on inference package  Owner: TBD  Est: 30m
-  - Deps: T2.5
-  - AC: Zero new warnings in inference/.
+- [x] T2.7 Run go vet and linter on inference package  Owner: Claude  Done: 2026-03-16
+  - Zero new warnings in inference/. All new arch files clean. No commit needed.
 
 ### E3: HuggingFace Model Download (ADR 039)
 
