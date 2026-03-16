@@ -210,10 +210,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
   - Package: top-level zerfoo/ package
   - Test: Unit test with a small test GGUF fixture.
 
-- [ ] T4.2 Implement Model.Chat() and Model.Generate()  Owner: TBD  Est: 3h
-  - Deps: T4.1
-  - AC: `model.Chat("prompt")` returns generated text as string. `model.Generate(ctx, prompt, opts...)` returns `*GenerateResult` with Text, TokenCount, Duration. Supports WithMaxTokens, WithTemperature, WithTopP options.
-  - Test: Unit test with mock engine. Integration test on DGX.
+- [x] T4.2 Implement Model.Chat() and Model.Generate()  Owner: Claude  Done: 2026-03-16
+  - Implemented in api.go alongside T4.1. Chat, Generate, GenerateResult, WithGenMaxTokens/Temperature/TopP all present.
 
 - [ ] T4.3 Implement Model.Embed()  Owner: TBD  Est: 3h
   - Deps: T4.1
