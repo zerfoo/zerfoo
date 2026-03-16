@@ -30,7 +30,7 @@ This is real. The framework runs real models at competitive speeds.
 
 Key initiatives:
 
-1. **GGUF-only inference** — GGUF is now the sole model format. The ONNX decomposed path has been removed (ADR-037). zonnx now outputs GGUF directly.
+1. **GGUF-only inference** — GGUF is the sole model format. zonnx converts ONNX models to GGUF.
 
 2. **Expand model coverage** — Add support for Llama 4, Gemma 3n, Phi-4, Command R, and other popular open-weights models as they release. The architecture builder system makes this straightforward.
 
@@ -80,7 +80,7 @@ Key initiatives:
 
 1. **Model hub CLI** — `zerfoo pull`, `zerfoo push`, `zerfoo list` with HuggingFace and custom registry support.
 
-2. **GGUF-only strategy** — GGUF is the sole model format. ZMF has been removed and the zmf repo is archived. zonnx now converts ONNX models to GGUF.
+2. **GGUF-only strategy** — GGUF is the sole model format. zonnx converts ONNX models to GGUF.
 
 3. **Multimodal** — Vision-language models (LLaVA, Gemma 3 with SigLIP encoder). The SigLIP architecture support is already partially built.
 

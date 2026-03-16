@@ -28,8 +28,6 @@ assignees: ""
   - [ ] Contains no direct references to `onnx` or `zonnx` outside of `docs`, `tests`, or `examples`.
 - [ ] **`zonnx` module:**
   - [ ] Does NOT import `github.com/zerfoo/zerfoo`.
-- [ ] **`zmf` module:**
-  - [ ] Depends ONLY on `protobuf` (and test-only utilities).
 
 ## Reviewers
 

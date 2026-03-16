@@ -8,10 +8,10 @@ verification run on DGX.
 | Model | Format | Tok/s | CUDA Graph % | Output Quality | Tokens | Date |
 |-------|--------|-------|-------------|----------------|--------|------|
 | Gemma 3 1B | GGUF Q4_K | 232.21 | 99.5% | Baseline | 256 | 2026-03-15 |
-| Llama 3 1B | ZMF/ONNX | 12.93 | 2.0% | Semi-coherent | 20 | 2026-03-15 |
-| Qwen 2.5 0.5B | ZMF/ONNX | 15.79 | 1.8% | Working (rep. penalty helps) | 20 | 2026-03-15 |
-| Mistral 7B | ZMF/ONNX | 3.94 | 1.2% | Working (spaces fixed) | 20 | 2026-03-15 |
-| Phi-3 mini | ZMF/ONNX | 4.14 | 0.5% | Semi-coherent | 20 | 2026-03-15 |
+| Llama 3 1B | GGUF | 12.93 | 2.0% | Semi-coherent | 20 | 2026-03-15 |
+| Qwen 2.5 0.5B | GGUF | 15.79 | 1.8% | Working (rep. penalty helps) | 20 | 2026-03-15 |
+| Mistral 7B | GGUF | 3.94 | 1.2% | Working (spaces fixed) | 20 | 2026-03-15 |
+| Phi-3 mini | GGUF | 4.14 | 0.5% | Semi-coherent | 20 | 2026-03-15 |
 
 Hardware: DGX Spark GB10, sm_121, 128GB LPDDR5x, Go 1.25.0, CUDA 13.0
 

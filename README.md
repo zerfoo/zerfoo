@@ -44,12 +44,12 @@ go run ./cmd/zerfoo serve --model gemma3:1b --port 8080
 | Model | Format | Status |
 |-------|--------|--------|
 | Gemma 3 | GGUF Q4_K | Production (CUDA graph, highest throughput) |
-| Llama 3 | ZMF/ONNX | Working |
-| Qwen 2.5 | ZMF/ONNX | Working |
-| Mistral 7B | ZMF/ONNX | Working |
-| Phi-3/4 | ZMF/ONNX | Working |
-| SigLIP | ZMF | Vision encoder (parity tested) |
-| Kimi-VL | ZMF | Vision-language (parity tested) |
+| Llama 3 | GGUF | Working |
+| Qwen 2.5 | GGUF | Working |
+| Mistral 7B | GGUF | Working |
+| Phi-3/4 | GGUF | Working |
+| SigLIP | GGUF | Vision encoder (parity tested) |
+| Kimi-VL | GGUF | Vision-language (parity tested) |
 
 See [docs/benchmarks.md](docs/benchmarks.md) for current throughput numbers.
 
