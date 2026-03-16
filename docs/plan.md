@@ -133,12 +133,12 @@ multiple sequences via per-sequence block tables. The work:
     Uses `PagedKVCache` for shared KV across sequences. Unit tests in `inference/batch_test.go`
     cover 1, 2, 4 concurrent sequences. `go test ./inference/ -run Batch -race` passes.
 
-- [ ] T2.2 Wire serve.BatchScheduler to GenerateBatch  Owner:  Done: (deps: T2.1✅)
+- [x] T2.2 Wire serve.BatchScheduler to GenerateBatch  Owner: Claude  Done: 2026-03-16
   - Acceptance: `Server.handleChat` uses `GenerateBatch` when batch size > 1.
     `serve/batch_test.go` integration test: 4 concurrent `/v1/chat/completions` requests
     all complete and return correct responses. No data races.
 
-- [ ] T2.3 go vet/lint clean on generate/ and serve/ after E2 changes  Owner:  Done: (deps: T2.2✅)
+- [x] T2.3 go vet/lint clean on generate/ and serve/ after E2 changes  Owner: Claude  Done: 2026-03-16
   - Acceptance: `go vet ./generate/... ./serve/...` 0 warnings;
     `golangci-lint run ./generate/... ./serve/...` 0 issues.
     Full test suite passes.
@@ -210,12 +210,12 @@ standalone Go program (`go run examples/<name>/main.go`).
     Phase 19 + Phase 20 deliverables grouped by category (Features, Bug Fixes,
     API, Performance). Follows Keep a Changelog format.
 
-- [ ] T5.3 Update README for v0.2.0  Owner:  Done: (deps: T5.2✅)
+- [x] T5.3 Update README for v0.2.0  Owner: Claude  Done: 2026-03-16
   - Acceptance: `README.md` top section shows one-line inference example
     (`zerfoo.Load` + `model.Chat`), HuggingFace download, structured output,
     and tool calling snippets. Badges: CI, Go version, License. No broken links.
 
-- [ ] T5.4 Tag and publish zerfoo v0.2.0  Owner:  Done: (deps: T5.1✅ T5.2✅ T5.3✅)
+- [x] T5.4 Tag and publish zerfoo v0.2.0  Owner: Claude  Done: 2026-03-16  Note: Tagged as v0.2.1 (v0.2.0 existed at d525c39 from prior session)
   - Acceptance: `git tag v0.2.0 && git push origin v0.2.0`. release-please PR
     auto-created (or manually created if CI not yet live). `go get
     github.com/zerfoo/zerfoo@v0.2.0` resolves successfully (may require GONOSUMDB
