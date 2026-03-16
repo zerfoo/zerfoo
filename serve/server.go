@@ -383,16 +383,38 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		modelID = info.ID
 	}
 
+	// Check for tool calls if tools were provided.
+	choice := ChatCompletionChoice{
+		Index:        0,
+		Message:      ChatMessage{Role: "assistant", Content: resp.Content},
+		FinishReason: "stop",
+	}
+
+	if len(req.Tools) > 0 {
+		tc := ToolChoice{Mode: "auto"}
+		if req.ToolChoice != nil {
+			tc = *req.ToolChoice
+		}
+		if result, ok := DetectToolCall(resp.Content, req.Tools, tc); ok {
+			choice.Message.Content = ""
+			choice.FinishReason = "tool_calls"
+			choice.ToolCalls = []ToolCall{{
+				ID:   result.ID,
+				Type: "function",
+				Function: ToolCallFunction{
+					Name:      result.FunctionName,
+					Arguments: string(result.Arguments),
+				},
+			}}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   modelID,
-		Choices: []ChatCompletionChoice{{
-			Index:        0,
-			Message:      ChatMessage{Role: "assistant", Content: resp.Content},
-			FinishReason: "stop",
-		}},
+		Choices: []ChatCompletionChoice{choice},
 		Usage: UsageInfo{
 			PromptTokens:     resp.PromptTokens,
 			CompletionTokens: resp.CompletionTokens,
