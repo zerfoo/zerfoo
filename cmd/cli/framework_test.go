@@ -1024,3 +1024,107 @@ func TestReadCSVData_EmptyFile(t *testing.T) {
 		t.Error("expected error for empty CSV file (no header)")
 	}
 }
+
+// --- splitFlag tests ---
+
+func TestSplitFlag(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantFlag  string
+		wantValue string
+		wantOK    bool
+	}{
+		{"--temperature=0.7", "--temperature", "0.7", true},
+		{"--model-path=/tmp/model.gguf", "--model-path", "/tmp/model.gguf", true},
+		{"--text=hello world", "--text", "hello world", true},
+		{"--verbose", "--verbose", "", false},
+		{"--output=", "--output", "", true}, // empty value after =
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			flag, value, ok := splitFlag(tt.input)
+			if flag != tt.wantFlag {
+				t.Errorf("flag = %q, want %q", flag, tt.wantFlag)
+			}
+			if value != tt.wantValue {
+				t.Errorf("value = %q, want %q", value, tt.wantValue)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+		})
+	}
+}
+
+// --- --flag=value syntax tests ---
+
+func TestParseArgs_EqualsSyntax(t *testing.T) {
+	cmd := NewPredictCommand(model.Float32ModelRegistry, float32From, float32To)
+	config, err := cmd.parseArgs([]string{
+		"--model-path=m.zmf",
+		"--data-path=d.csv",
+		"--output=o.csv",
+		"--verbose",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs with = syntax failed: %v", err)
+	}
+	if config.ModelPath != "m.zmf" {
+		t.Errorf("ModelPath = %q, want m.zmf", config.ModelPath)
+	}
+	if config.DataPath != "d.csv" {
+		t.Errorf("DataPath = %q, want d.csv", config.DataPath)
+	}
+	if config.Output != "o.csv" {
+		t.Errorf("Output = %q, want o.csv", config.Output)
+	}
+	if !config.Verbose {
+		t.Error("expected Verbose=true")
+	}
+}
+
+func TestParseArgs_MixedSyntax(t *testing.T) {
+	cmd := NewPredictCommand(model.Float32ModelRegistry, float32From, float32To)
+	config, err := cmd.parseArgs([]string{
+		"--model-path=m.zmf",
+		"--data-path", "d.csv",
+		"--output=o.csv",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs with mixed syntax failed: %v", err)
+	}
+	if config.ModelPath != "m.zmf" {
+		t.Errorf("ModelPath = %q, want m.zmf", config.ModelPath)
+	}
+	if config.DataPath != "d.csv" {
+		t.Errorf("DataPath = %q, want d.csv", config.DataPath)
+	}
+	if config.Output != "o.csv" {
+		t.Errorf("Output = %q, want o.csv", config.Output)
+	}
+}
+
+func TestTokenizeCommand_EqualsSyntax(t *testing.T) {
+	cmd := NewTokenizeCommand()
+	err := cmd.Run(context.Background(), []string{"--text=Hello world"})
+	if err != nil {
+		t.Fatalf("tokenize with --text=value failed: %v", err)
+	}
+}
+
+func TestTokenizeCommand_EqualsSyntaxWithVocab(t *testing.T) {
+	dir := t.TempDir()
+	vocabFile := filepath.Join(dir, "vocab.txt")
+	if err := os.WriteFile(vocabFile, []byte("hello\nworld\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewTokenizeCommand()
+	err := cmd.Run(context.Background(), []string{
+		"--vocab=" + vocabFile,
+		"--text=hello world",
+	})
+	if err != nil {
+		t.Fatalf("tokenize with --vocab=path --text=value failed: %v", err)
+	}
+}
