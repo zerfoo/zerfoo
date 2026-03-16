@@ -8,6 +8,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -617,12 +618,14 @@ func (c *TokenizeCommand) Examples() []string {
 // CLI provides the main command-line interface.
 type CLI struct {
 	registry *CommandRegistry
+	out      io.Writer
 }
 
 // NewCLI creates a new CLI instance.
 func NewCLI() *CLI {
 	return &CLI{
 		registry: NewCommandRegistry(),
+		out:      os.Stdout,
 	}
 }
 
@@ -637,26 +640,50 @@ func (c *CLI) Run(ctx context.Context, args []string) error {
 		return c.printUsage()
 	}
 
+	if args[0] == "--help" || args[0] == "-h" {
+		return c.printUsage()
+	}
+
 	cmdName := args[0]
 	cmd, exists := c.registry.Get(cmdName)
 	if !exists {
 		return fmt.Errorf("unknown command: %s\n\nUse 'help' to see available commands", cmdName)
 	}
 
+	for _, arg := range args[1:] {
+		if arg == "--help" || arg == "-h" {
+			return c.printCommandHelp(cmd)
+		}
+	}
+
 	return cmd.Run(ctx, args[1:])
 }
 
 func (c *CLI) printUsage() error {
-	fmt.Printf("Zerfoo CLI - Generic Machine Learning Framework\n\n")
-	fmt.Printf("USAGE:\n")
-	fmt.Printf("  zerfoo <command> [options]\n\n")
-	fmt.Printf("AVAILABLE COMMANDS:\n")
+	fmt.Fprintf(c.out, "Zerfoo CLI - Generic Machine Learning Framework\n\n")
+	fmt.Fprintf(c.out, "USAGE:\n")
+	fmt.Fprintf(c.out, "  zerfoo <command> [options]\n\n")
+	fmt.Fprintf(c.out, "AVAILABLE COMMANDS:\n")
 
 	for _, name := range c.registry.List() {
 		cmd, _ := c.registry.Get(name)
-		fmt.Printf("  %-12s %s\n", name, cmd.Description())
+		fmt.Fprintf(c.out, "  %-12s %s\n", name, cmd.Description())
 	}
 
-	fmt.Printf("\nUse 'zerfoo <command> --help' for more information about a command.\n")
+	fmt.Fprintf(c.out, "\nUse 'zerfoo <command> --help' for more information about a command.\n")
+	return nil
+}
+
+func (c *CLI) printCommandHelp(cmd Command) error {
+	fmt.Fprintf(c.out, "USAGE:\n  %s\n", cmd.Usage())
+
+	examples := cmd.Examples()
+	if len(examples) > 0 {
+		fmt.Fprintf(c.out, "\nEXAMPLES:\n")
+		for _, ex := range examples {
+			fmt.Fprintf(c.out, "  %s\n", ex)
+		}
+	}
+
 	return nil
 }
