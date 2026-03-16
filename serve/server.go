@@ -395,15 +395,32 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if req.ToolChoice != nil {
 			tc = *req.ToolChoice
 		}
+
+		var toolResult *ToolCallResult
 		if result, ok := DetectToolCall(resp.Content, req.Tools, tc); ok {
+			toolResult = result
+		} else if tc.Mode == "function" && tc.Function != nil {
+			// Forced tool choice: always return a tool call for the specified function.
+			args := json.RawMessage("{}")
+			if json.Valid([]byte(resp.Content)) {
+				args = json.RawMessage(resp.Content)
+			}
+			toolResult = &ToolCallResult{
+				ID:           generateCallID(),
+				FunctionName: tc.Function.Name,
+				Arguments:    args,
+			}
+		}
+
+		if toolResult != nil {
 			choice.Message.Content = ""
 			choice.FinishReason = "tool_calls"
 			choice.ToolCalls = []ToolCall{{
-				ID:   result.ID,
+				ID:   toolResult.ID,
 				Type: "function",
 				Function: ToolCallFunction{
-					Name:      result.FunctionName,
-					Arguments: string(result.Arguments),
+					Name:      toolResult.FunctionName,
+					Arguments: string(toolResult.Arguments),
 				},
 			}}
 		}

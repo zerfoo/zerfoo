@@ -155,6 +155,48 @@ func TestFindByRepoAndFile(t *testing.T) {
 	}
 }
 
+func TestFindByRepo(t *testing.T) {
+	m := &CacheManifest{}
+	m.Add(CachedModel{
+		RepoID:   "google/gemma-3-4b",
+		Filename: "gemma.gguf",
+		Path:     "/tmp/gemma.gguf",
+		Size:     1024,
+		AddedAt:  time.Now(),
+	})
+
+	tests := []struct {
+		name   string
+		repoID string
+		found  bool
+	}{
+		{"found", "google/gemma-3-4b", true},
+		{"not found", "meta/llama-3", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := m.FindByRepo(tt.repoID)
+			if ok != tt.found {
+				t.Errorf("FindByRepo(%q) found = %v, want %v",
+					tt.repoID, ok, tt.found)
+			}
+		})
+	}
+}
+
+func TestCacheDir(t *testing.T) {
+	dir, err := CacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".cache", "zerfoo", "models")
+	if dir != want {
+		t.Errorf("CacheDir() = %q, want %q", dir, want)
+	}
+}
+
 func TestSaveAndLoadManifest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "manifest.json")

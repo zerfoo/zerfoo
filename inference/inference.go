@@ -15,6 +15,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
+	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/ztensor/graph"
 	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/zerfoo/registry"
@@ -345,6 +346,15 @@ func WithRepetitionPenalty(p float64) GenerateOption {
 func WithStopStrings(ss ...string) GenerateOption {
 	return func(sc *generate.SamplingConfig) {
 		sc.StopStrings = ss
+	}
+}
+
+// WithGrammar sets a grammar state machine for constrained decoding.
+// When set, a token mask is applied at each sampling step to restrict output
+// to tokens that are valid according to the grammar.
+func WithGrammar(g *grammar.Grammar) GenerateOption {
+	return func(sc *generate.SamplingConfig) {
+		sc.GrammarState = g
 	}
 }
 

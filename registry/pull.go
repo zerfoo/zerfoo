@@ -27,6 +27,10 @@ type HFPullOptions struct {
 	CDNURL string
 	// Token is an optional HuggingFace API token for gated models.
 	Token string
+	// Quant selects a specific GGUF quantization (e.g. "Q4_K_M", "Q8_0").
+	// When set, only the matching GGUF file is downloaded instead of all model files.
+	// Default: "Q4_K_M".
+	Quant string
 	// OnProgress is called during file downloads.
 	OnProgress ProgressFunc
 	// Client overrides the HTTP client used for downloads.
@@ -71,7 +75,24 @@ func pullFromHF(ctx context.Context, opts HFPullOptions, modelID string, targetD
 		return nil, fmt.Errorf("list files: %w", err)
 	}
 
-	// 2. Download relevant files.
+	// 2. If quant is specified, resolve the matching GGUF file.
+	if opts.Quant != "" {
+		ggufFile, resolveErr := resolveGGUFByQuant(files, opts.Quant)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		size, dlErr := downloadFile(ctx, opts, modelID, ggufFile, targetDir)
+		if dlErr != nil {
+			return nil, fmt.Errorf("download %s: %w", ggufFile, dlErr)
+		}
+		return &ModelInfo{
+			ID:   modelID,
+			Path: targetDir,
+			Size: size,
+		}, nil
+	}
+
+	// 3. Download relevant files (no quant filter).
 	var totalSize int64
 	for _, f := range files {
 		if !shouldDownload(f.Filename) {
@@ -89,6 +110,40 @@ func pullFromHF(ctx context.Context, opts HFPullOptions, modelID string, targetD
 		Path: targetDir,
 		Size: totalSize,
 	}, nil
+}
+
+// resolveGGUFByQuant finds the GGUF file matching the requested quantization.
+func resolveGGUFByQuant(files []HFSibling, quant string) (string, error) {
+	upper := strings.ToUpper(quant)
+
+	// Collect GGUF files.
+	var ggufFiles []string
+	for _, f := range files {
+		if strings.HasSuffix(strings.ToLower(f.Filename), ".gguf") {
+			ggufFiles = append(ggufFiles, f.Filename)
+		}
+	}
+
+	if len(ggufFiles) == 0 {
+		return "", fmt.Errorf("no GGUF files found in repository")
+	}
+
+	// First pass: exact segment match (e.g., "Q4_K_M.gguf" or "Q4_K_M-").
+	for _, name := range ggufFiles {
+		nameUpper := strings.ToUpper(name)
+		if strings.Contains(nameUpper, upper+".GGUF") || strings.Contains(nameUpper, upper+"-") {
+			return name, nil
+		}
+	}
+
+	// Second pass: substring match.
+	for _, name := range ggufFiles {
+		if strings.Contains(strings.ToUpper(name), upper) {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no GGUF file matching quantization %q", quant)
 }
 
 // listModelFiles queries the HuggingFace API for model file listing.

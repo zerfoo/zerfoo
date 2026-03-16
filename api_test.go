@@ -42,14 +42,38 @@ func TestLoad_missingFile(t *testing.T) {
 	}
 }
 
-func TestLoad_huggingFaceStub(t *testing.T) {
-	_, err := Load("google/gemma-3-1b-it")
-	if err == nil {
-		t.Fatal("expected error for HuggingFace model ID, got nil")
+func TestParseModelID(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantRepo  string
+		wantQuant string
+	}{
+		{"owner/model", "google/gemma-3-4b", "google/gemma-3-4b", defaultQuant},
+		{"owner/model/quant", "google/gemma-3-4b/Q8_0", "google/gemma-3-4b", "Q8_0"},
+		{"bare name", "my-model", "my-model", defaultQuant},
 	}
-	want := "HuggingFace download not yet available"
-	if got := err.Error(); got != want && len(got) < len(want) {
-		t.Errorf("error = %q, want substring %q", got, want)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, quant := parseModelID(tt.input)
+			if repo != tt.wantRepo {
+				t.Errorf("parseModelID(%q) repo = %q, want %q", tt.input, repo, tt.wantRepo)
+			}
+			if quant != tt.wantQuant {
+				t.Errorf("parseModelID(%q) quant = %q, want %q", tt.input, quant, tt.wantQuant)
+			}
+		})
+	}
+}
+
+func TestLoadFromHuggingFace_cacheMiss(t *testing.T) {
+	// Calling loadFromHuggingFace with a non-existent model will fail
+	// at the HuggingFace API call (no network in CI), confirming the
+	// cache-miss path reaches the client.
+	_, err := loadFromHuggingFace("nonexistent-org/nonexistent-model")
+	if err == nil {
+		t.Fatal("expected error for non-existent HuggingFace model, got nil")
 	}
 }
 
