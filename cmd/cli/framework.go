@@ -164,7 +164,7 @@ func (c *PredictCommand[T]) Run(ctx context.Context, args []string) error {
 	}
 
 	// Load model
-	modelLoader, err := c.modelRegistry.GetModelLoader(ctx, "zmf", nil)
+	modelLoader, err := c.modelRegistry.GetModelLoader(ctx, "gguf", nil)
 	if err != nil {
 		return fmt.Errorf("failed to get model loader: %w", err)
 	}
@@ -223,8 +223,8 @@ OPTIONS:
 // Examples implements Command.Examples
 func (c *PredictCommand[T]) Examples() []string {
 	return []string{
-		"predict --model-path model.zmf --data-path data.csv --output predictions.csv",
-		"predict --model-path model.zmf --data-path data.csv --output pred.json --format json --include-probs",
+		"predict --model-path model.gguf --data-path data.csv --output predictions.csv",
+		"predict --model-path model.gguf --data-path data.csv --output pred.json --format json --include-probs",
 		"predict --config predict_config.json --verbose",
 	}
 }
