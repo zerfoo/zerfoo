@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/zerfoo/zerfoo/compare/v1.2.0...v1.2.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* **cli:** replace zmf references with gguf in predict command ([b410a33](https://github.com/zerfoo/zerfoo/commit/b410a33276839c10d50ec24f2e504bd6e2017276))
+
 ## [1.2.0](https://github.com/zerfoo/zerfoo/compare/v1.1.0...v1.2.0) (2026-03-15)
 
 
