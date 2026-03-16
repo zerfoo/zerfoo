@@ -331,13 +331,15 @@ func (s *InferenceSession[T]) emitToken(
 
 // graphForward runs a graph forward pass under the shared graph mutex.
 // It uses defer to ensure the mutex is released even if Forward panics.
-func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], _ bool) (*tensor.TensorNumeric[T], error) {
+func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], reset bool) (*tensor.TensorNumeric[T], error) {
 	s.graphMu.Lock()
 	defer s.graphMu.Unlock()
-	// Always reset stateful nodes before forward. The graph is shared across
-	// sessions, so any prior session's forward may have left stale state.
-	// Each session's KV cache is passed via context, providing isolation.
-	s.graph.ResetStatefulNodes()
+	// Only reset on prefill (first forward of a generation). Resetting on every
+	// decode step destroys CUDA graph capture, causing a 50%+ throughput regression.
+	// The KV cache context provides per-session isolation without needing a reset.
+	if reset {
+		s.graph.ResetStatefulNodes()
+	}
 	return s.graph.Forward(ctx, input)
 }
 
