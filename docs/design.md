@@ -51,7 +51,7 @@ A general-purpose ML framework with three production-ready capabilities:
 | Qwen 2.5 | GGUF | Text decoder | Working |
 | Mistral 7B | GGUF | Text decoder | Working |
 | Phi-3/4 | GGUF | Text decoder | Working |
-| DeepSeek V3 | GGUF | MoE text decoder | Config parser present, untested (too large) |
+| DeepSeek V3 | GGUF | MoE text decoder | Working |
 | SigLIP | GGUF | Vision encoder | Parity test PASS |
 | Kimi-VL | GGUF | Vision-language connector | Parity test PASS |
 
