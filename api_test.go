@@ -258,6 +258,90 @@ func TestEmbed_noEmbeddingWeights(t *testing.T) {
 	}
 }
 
+func TestEmbed_EmptyString(t *testing.T) {
+	dim := 4
+	vocab := 5 // 4 special + 1 real
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1
+
+	m := newTestModelWithEmbeddings([]string{"hello"}, dim, weights)
+
+	// An empty string produces no tokens, so Embed should return an error.
+	_, err := m.Embed([]string{""})
+	if err == nil {
+		t.Fatal("expected error embedding empty string, got nil")
+	}
+}
+
+func TestEmbed_ValidText(t *testing.T) {
+	dim := 4
+	vocab := 6 // 4 special + 2 real
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 3.0
+	weights[4*dim+1] = 4.0
+	weights[5*dim+2] = 1.0
+	weights[5*dim+3] = 2.0
+
+	m := newTestModelWithEmbeddings([]string{"hello", "world"}, dim, weights)
+
+	results, err := m.Embed([]string{"hello"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d embeddings, want 1", len(results))
+	}
+	if len(results[0].Vector) != dim {
+		t.Fatalf("embedding dim = %d, want %d", len(results[0].Vector), dim)
+	}
+	// Vector should contain non-zero float32 values.
+	allZero := true
+	for _, v := range results[0].Vector {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Error("expected non-zero embedding vector")
+	}
+}
+
+func TestEmbed_L2Normalized(t *testing.T) {
+	dim := 4
+	vocab := 6 // 4 special + 2 real
+	weights := make([]float32, vocab*dim)
+	// Set non-trivial weights so normalization is meaningful.
+	weights[4*dim+0] = 3.0
+	weights[4*dim+1] = 4.0
+	weights[5*dim+2] = 5.0
+	weights[5*dim+3] = 6.0
+
+	m := newTestModelWithEmbeddings([]string{"foo", "bar"}, dim, weights)
+
+	// Test single-token and multi-token inputs.
+	inputs := []string{"foo", "bar", "foo bar"}
+	results, err := m.Embed(inputs)
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+	if len(results) != len(inputs) {
+		t.Fatalf("got %d embeddings, want %d", len(results), len(inputs))
+	}
+
+	for i, emb := range results {
+		var magnitude float64
+		for _, v := range emb.Vector {
+			magnitude += float64(v) * float64(v)
+		}
+		magnitude = math.Sqrt(magnitude)
+		if diff := math.Abs(magnitude - 1.0); diff > 1e-5 {
+			t.Errorf("embedding[%d] (%q): L2 magnitude = %v, want ~1.0 (diff %v)",
+				i, inputs[i], magnitude, diff)
+		}
+	}
+}
+
 func TestChat_returnsGeneratedText(t *testing.T) {
 	m := &Model{
 		generateFunc: func(ctx context.Context, prompt string) (string, error) {
