@@ -89,6 +89,7 @@ type Generator[T tensor.Numeric] struct {
 	kvDtype   string                                     // KV cache storage dtype ("fp32" or "fp16")
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
+	mu        sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -217,7 +218,8 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 // It tokenizes the prompt, runs the autoregressive loop with KV caching, and
 // returns the generated text (excluding the prompt).
 func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc SamplingConfig) (string, error) {
-
+	gen.mu.Lock()
+	defer gen.mu.Unlock()
 
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
