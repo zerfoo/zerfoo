@@ -71,7 +71,11 @@ func (c *PullCommand) Run(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("create registry: %w", err)
 		}
-		lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{Quant: quant}))
+		progress := newProgressDisplay(c.out, isTTY(c.out))
+		lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{
+			Quant:      quant,
+			OnProgress: progress.callback,
+		}))
 		reg = lr
 	}
 

@@ -77,7 +77,9 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		loadOpts = append(loadOpts, inference.WithCacheDir(cacheDir))
 	}
 
+	li := startLoading(c.out)
 	mdl, err := c.loadFn(modelID, loadOpts...)
+	li.stop()
 	if err != nil {
 		return fmt.Errorf("load model: %w", err)
 	}

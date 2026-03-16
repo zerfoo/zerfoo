@@ -10,6 +10,9 @@ import (
 	"github.com/zerfoo/zerfoo/shutdown"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version string
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("CLI execution failed: %v", err)
@@ -53,6 +56,9 @@ func run() error {
 
 	serveCmd := cli.NewServeCommand(coord, os.Stdout)
 	cliApp.RegisterCommand(serveCmd)
+
+	versionCmd := cli.NewVersionCommand(version, os.Stdout)
+	cliApp.RegisterCommand(versionCmd)
 
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
