@@ -1,42 +1,108 @@
 # Zerfoo
 
-A Go ML framework built for inference performance. Pure Go with no CGo --
-GPU acceleration via runtime-loaded CUDA, ROCm, and OpenCL. Ships an
-OpenAI-compatible API server, quantized model support (GGUF Q4_K), and
-CUDA graph capture for near-zero kernel launch overhead.
+**234.30 tok/s** on Gemma 3 1B Q4_K_M -- 18.8% faster than Ollama.
 
-## Installation
+A production-grade ML inference framework written entirely in Go. Pure Go with
+zero CGo -- GPU acceleration (CUDA, ROCm, OpenCL) is loaded dynamically at
+runtime via purego/dlopen. Import it as a library and run inference directly
+from your Go application, or use the CLI and OpenAI-compatible API server.
 
-Prerequisites:
-
-- Go 1.25 or later
-- CUDA toolkit (for GPU acceleration; optional for CPU-only usage)
+## Install
 
 ```bash
-git clone https://github.com/zerfoo/zerfoo.git
-cd zerfoo
-go build ./...
+go install github.com/zerfoo/zerfoo/cmd/zerfoo@latest
 ```
 
-For GPU support, build the CUDA kernels first:
-
-```bash
-cd internal/cuda/kernels && make shared && cd ../../../
-```
-
-## Quickstart
+## Quickstart: CLI
 
 Pull a model and run inference:
 
 ```bash
-go run ./cmd/zerfoo pull gemma3:1b
-go run ./cmd/zerfoo run gemma3:1b "The quick brown fox"
+zerfoo pull gemma-3-1b-q4
+zerfoo run gemma-3-1b-q4 "The quick brown fox"
 ```
 
 Or start the API server:
 
 ```bash
-go run ./cmd/zerfoo serve --model gemma3:1b --port 8080
+zerfoo serve gemma-3-1b-q4 --port 8080
+```
+
+## Quickstart: Library
+
+Import `github.com/zerfoo/zerfoo/inference` to load models and generate text
+from your own Go code:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/zerfoo/zerfoo/inference"
+)
+
+func main() {
+	// Load a GGUF model by alias or HuggingFace repo ID.
+	// Pulls from HuggingFace automatically if not cached.
+	mdl, err := inference.Load("gemma-3-1b-q4")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer mdl.Close()
+
+	// Generate text from a prompt.
+	result, err := mdl.Generate(context.Background(), "Explain quicksort in one paragraph.",
+		inference.WithTemperature(0.7),
+		inference.WithMaxTokens(256),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(result)
+}
+```
+
+For chat-style multi-turn conversations:
+
+```go
+resp, err := mdl.Chat(context.Background(), []inference.Message{
+	{Role: "system", Content: "You are a helpful assistant."},
+	{Role: "user", Content: "What is the capital of France?"},
+},
+	inference.WithTemperature(0.7),
+	inference.WithMaxTokens(256),
+)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(resp.Content)
+```
+
+To stream tokens as they are generated:
+
+```go
+err = mdl.GenerateStream(ctx, "Tell me a joke.",
+	generate.TokenStreamFunc(func(token string, done bool) error {
+		if !done {
+			fmt.Print(token)
+		}
+		return nil
+	}),
+	inference.WithMaxTokens(128),
+)
+```
+
+To load a local GGUF file directly (skip the registry):
+
+```go
+mdl, err := inference.LoadFile("/path/to/model.gguf",
+	inference.WithDevice("cuda"),
+	inference.WithDType("fp16"),
+	inference.WithKVDtype("fp16"),
+)
 ```
 
 ## Supported Models
@@ -51,47 +117,14 @@ go run ./cmd/zerfoo serve --model gemma3:1b --port 8080
 | SigLIP | GGUF | Vision encoder (parity tested) |
 | Kimi-VL | GGUF | Vision-language (parity tested) |
 
-See [docs/benchmarks.md](docs/benchmarks.md) for current throughput numbers.
+## Links
 
-## API Usage
-
-Start the server, then send requests to the chat completions endpoint:
-
-```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemma3:1b","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-The server implements the OpenAI chat completions API, so any OpenAI-compatible
-client library works out of the box -- just point it at `localhost:8080`.
-
-## Key Design Decisions
-
-- **Engine[T] interface** -- unified compute abstraction across CPU and GPU
-  backends. All layers delegate arithmetic to Engine, enabling transparent
-  hardware acceleration.
-- **purego GPU bindings** -- CUDA, ROCm, and OpenCL loaded via dlopen at
-  runtime. No CGo, no build tags. `go build ./...` works everywhere.
-- **Graph compiler with CUDA graph capture** -- builds a static computation
-  DAG, captures it as a CUDA graph for near-zero launch overhead on decode.
-- **Arena memory allocator** -- pre-allocated bump-pointer arena serves all
-  inference allocations with O(1) reset per token.
-- **OpenAI-compatible HTTP server** -- chat completions, completions,
-  embeddings, model management, and SSE streaming.
-
-See [docs/design.md](docs/design.md) for the full architecture.
-
-## Contributing
-
-Standard Go workflow: fork, branch, test, PR.
-
-The pre-commit hook enforces single-directory commits. Run tests before
-submitting:
-
-```bash
-go test ./... -race
-```
+- **[Getting Started](docs/getting-started.md)** -- full walkthrough: install, pull a model, run inference via CLI and library
+- **[GPU Setup](docs/gpu-setup.md)** -- configure CUDA, ROCm, or OpenCL for hardware-accelerated inference
+- **[Benchmarks](docs/benchmarks.md)** -- throughput numbers across models and hardware
+- **[Design](docs/design.md)** -- architecture overview and key design decisions
+- **[Blog](docs/blog/)** -- development updates and deep dives
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** -- how to contribute
 
 ## License
 
