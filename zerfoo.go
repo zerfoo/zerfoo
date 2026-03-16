@@ -12,7 +12,6 @@ import (
 	"github.com/zerfoo/zerfoo/training"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
-	"github.com/zerfoo/zmf"
 
 	"github.com/zerfoo/zerfoo/layers/normalization"
 )
@@ -49,9 +48,6 @@ type (
 	// Numeric represents a numeric type constraint.
 	Numeric tensor.Numeric
 
-	// Model is a ZMF model.
-	ZMFModel = zmf.Model
-
 	// LayerBuilder is a function that builds a layer.
 	LayerBuilder[T tensor.Numeric] func(
 		engine compute.Engine[T],
@@ -65,16 +61,6 @@ type (
 // NewGraph creates a new computation graph.
 func NewGraph[T tensor.Numeric](engine compute.Engine[T]) *graph.Builder[T] {
 	return graph.NewBuilder[T](engine)
-}
-
-// BuildFromZMF builds a graph from a ZMF model.
-func BuildFromZMF[T tensor.Numeric](
-	engine compute.Engine[T],
-	ops numeric.Arithmetic[T],
-	m *zmf.Model,
-	opts ...model.BuildOption,
-) (*graph.Graph[T], error) {
-	return model.BuildFromZMF[T](engine, ops, m, opts...)
 }
 
 // RegisterLayer registers a new layer builder.
