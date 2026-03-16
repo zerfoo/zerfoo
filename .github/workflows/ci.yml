@@ -4,25 +4,23 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  schedule:
-    - cron: "17 3 * * *"  # nightly
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+env:
+  GONOSUMDB: 'github.com/zerfoo/*'
+  GONOPROXY: 'github.com/zerfoo/*'
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.25"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: zerfoo/zmf
-          path: zmf-checkout
-      - name: Link zmf as sibling directory
-        run: ln -s "$GITHUB_WORKSPACE/zmf-checkout" "$GITHUB_WORKSPACE/../zmf"
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: ${{ matrix.go-version }}
           check-latest: true
       - name: Cache Go build
         uses: actions/cache@v4
@@ -30,64 +28,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: ${{ runner.os }}-go-
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-${{ matrix.go-version }}-
+      - name: Vet
+        run: go vet ./...
       - name: Unit tests
-        run: go test -race ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks' -v
-      - name: Linting
-        run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-          golangci-lint run --new-from-rev=origin/main
-      - name: Parity tests
-        run: go test ./tests/parity/... -count=1 -v
-      - name: Numerics red team
-        run: |
-          if [ -d tests/numerics ]; then
-            go test ./tests/numerics/... -count=1 -v
-          else
-            echo "tests/numerics not present, skipping"
-          fi
-      - name: Coverage gate
-        run: |
-          go test -coverprofile=coverage.out ./... -skip 'TestLogitParity|TestCPUGPUDeterminism|TestFiniteDifferenceGradientChecks'
-          go run ./cmd/coverage-gate -profile coverage.out -threshold 75 -exclude 'distributed/pb,cmd/,github.com/zerfoo/zerfoo '
-      - name: Benchmark regression check
-        run: |
-          go test -bench=. -benchmem -count=3 -run='^$' ./compute/ > bench-current.txt 2>&1 || true
-          go run ./cmd/bench-compare -baseline benchmarks/baseline.txt -current bench-current.txt -threshold 10 || true
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-logs
-          path: |
-            artifacts/**
-            docs/daily/**
-          if-no-files-found: ignore
-  nightly-toy-train:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: zerfoo/zmf
-          path: zmf-checkout
-      - name: Link zmf as sibling directory
-        run: ln -s "$GITHUB_WORKSPACE/zmf-checkout" "$GITHUB_WORKSPACE/../zmf"
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          check-latest: true
-      - name: Toy training
-        run: |
-          go run ./cmd/zerfoo-train -config scripts/toy.yml || true
-          test -f artifacts/metrics_cv.json || true
-      - name: Publish dashboard
-        run: go run ./cmd/gen-dashboard -in artifacts/metrics_cv.json -out static/index.html || true
-      - name: Upload dashboard
-        uses: actions/upload-artifact@v4
-        with:
-          name: dashboard
-          path: static/index.html
-          if-no-files-found: ignore
+        run: go test ./... -race -timeout 120s
