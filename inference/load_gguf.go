@@ -112,13 +112,16 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		NumLayers:  meta.NumLayers,
 	}, genOpts...)
 
+	pool := make(chan *generate.InferenceSession[float32], 8)
+	pool <- gen.NewSession() // Pre-warm with one session for CUDA graph address reuse.
 	return &Model{
-		generator:  gen,
-		tokenizer:  tok,
-		engine:     eng,
-		config:     *meta,
-		embWeights: embData,
-		hiddenSize: embHiddenSize,
+		generator:   gen,
+		tokenizer:   tok,
+		engine:      eng,
+		config:      *meta,
+		embWeights:  embData,
+		hiddenSize:  embHiddenSize,
+		sessionPool: pool,
 	}, nil
 }
 

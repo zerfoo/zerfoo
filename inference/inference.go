@@ -30,6 +30,11 @@ type Model struct {
 	closer     io.Closer // mmap reader, if loaded with mmap
 	embWeights []float32 // flattened embedding table [vocabSize * hiddenSize]
 	hiddenSize int       // embedding dimension
+
+	// sessionPool reuses sessions to preserve GPU memory addresses across calls.
+	// CUDA graph capture records GPU pointers; reusing sessions keeps those
+	// pointers valid for graph replay. The pool grows on demand for concurrency.
+	sessionPool chan *generate.InferenceSession[float32]
 }
 
 // ModelMetadata holds model configuration loaded from config.json.
@@ -365,13 +370,41 @@ func buildSamplingConfig(opts []GenerateOption) generate.SamplingConfig {
 	return sc
 }
 
-// Generate produces text from a prompt. Each call creates a per-request
-// session with its own KV cache, enabling concurrent Generate calls on
-// the same Model without data races.
+// acquireSession gets a session from the pool or creates a new one.
+// Reusing sessions preserves GPU memory addresses for CUDA graph replay.
+func (m *Model) acquireSession() *generate.InferenceSession[float32] {
+	if m.sessionPool == nil {
+		return m.generator.NewSession()
+	}
+	select {
+	case sess := <-m.sessionPool:
+		return sess
+	default:
+		return m.generator.NewSession()
+	}
+}
+
+// releaseSession returns a session to the pool for reuse.
+func (m *Model) releaseSession(sess *generate.InferenceSession[float32]) {
+	if m.sessionPool == nil {
+		return
+	}
+	select {
+	case m.sessionPool <- sess:
+	default:
+		// Pool full, discard.
+	}
+}
+
+// Generate produces text from a prompt. Sessions are pooled to reuse GPU
+// memory addresses, enabling CUDA graph replay across calls. Concurrent
+// Generate calls get separate sessions from the pool.
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
-	sess := m.generator.NewSession()
-	return sess.Generate(ctx, prompt, sc)
+	sess := m.acquireSession()
+	result, err := sess.Generate(ctx, prompt, sc)
+	m.releaseSession(sess)
+	return result, err
 }
 
 // GenerateBatch processes multiple prompts concurrently and returns the
@@ -409,12 +442,14 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 	return results, nil
 }
 
-// GenerateStream delivers tokens one at a time via a callback. Each call
-// creates a per-request session with its own KV cache for concurrency.
+// GenerateStream delivers tokens one at a time via a callback. Sessions
+// are pooled to preserve GPU memory addresses for CUDA graph replay.
 func (m *Model) GenerateStream(ctx context.Context, prompt string, handler generate.TokenStream, opts ...GenerateOption) error {
 	sc := buildSamplingConfig(opts)
-	sess := m.generator.NewSession()
-	return sess.GenerateStream(ctx, prompt, sc, handler)
+	sess := m.acquireSession()
+	err := sess.GenerateStream(ctx, prompt, sc, handler)
+	m.releaseSession(sess)
+	return err
 }
 
 // Message represents a chat message.
@@ -432,11 +467,12 @@ type Response struct {
 }
 
 // Chat formats messages using the model's chat template and generates a response.
-// Each call creates a per-request session for concurrency.
+// Sessions are pooled to preserve CUDA graph replay.
 func (m *Model) Chat(ctx context.Context, messages []Message, opts ...GenerateOption) (Response, error) {
 	prompt := m.formatMessages(messages)
 	sc := buildSamplingConfig(opts)
-	sess := m.generator.NewSession()
+	sess := m.acquireSession()
+	defer m.releaseSession(sess)
 	result, err := sess.Generate(ctx, prompt, sc)
 	if err != nil {
 		return Response{}, err
