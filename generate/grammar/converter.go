@@ -96,21 +96,21 @@ type literalNode struct {
 }
 
 func (n *literalNode) advance(b byte) (node, bool) {
-	if len(n.remaining) == 0 || b != n.remaining[0] {
+	if n.remaining == "" || b != n.remaining[0] {
 		return nil, false
 	}
 	return &literalNode{remaining: n.remaining[1:]}, true
 }
 
 func (n *literalNode) validBytes() []byte {
-	if len(n.remaining) == 0 {
+	if n.remaining == "" {
 		return nil
 	}
 	return []byte{n.remaining[0]}
 }
 
 func (n *literalNode) isComplete() bool {
-	return len(n.remaining) == 0
+	return n.remaining == ""
 }
 
 // ---------------------------------------------------------------------------
@@ -991,56 +991,6 @@ func (n *anyJSONNode) isComplete() bool {
 	if n.state == anyInSub {
 		return n.sub.isComplete()
 	}
-	return false
-}
-
-// ---------------------------------------------------------------------------
-// sequenceNode — matches a sequence of nodes one after another.
-// Used internally.
-// ---------------------------------------------------------------------------
-
-type sequenceNode struct {
-	current node
-	rest    []func() (node, error) // lazy builders for remaining nodes
-}
-
-func (n *sequenceNode) advance(b byte) (node, bool) {
-	next, ok := n.current.advance(b)
-	if ok {
-		return &sequenceNode{current: next, rest: n.rest}, true
-	}
-	// If current is complete, try advancing into the next node.
-	if n.current.isComplete() && len(n.rest) > 0 {
-		nextNode, err := n.rest[0]()
-		if err != nil {
-			return nil, false
-		}
-		seq := &sequenceNode{current: nextNode, rest: n.rest[1:]}
-		return seq.advance(b)
-	}
-	return nil, false
-}
-
-func (n *sequenceNode) validBytes() []byte {
-	out := n.current.validBytes()
-	if n.current.isComplete() && len(n.rest) > 0 {
-		nextNode, err := n.rest[0]()
-		if err == nil {
-			out = append(out, nextNode.validBytes()...)
-		}
-	}
-	return out
-}
-
-func (n *sequenceNode) isComplete() bool {
-	if !n.current.isComplete() {
-		return false
-	}
-	if len(n.rest) == 0 {
-		return true
-	}
-	// All remaining must also be completable with zero input — not generally
-	// true, so return false.
 	return false
 }
 
