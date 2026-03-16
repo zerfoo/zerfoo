@@ -425,6 +425,43 @@ func TestLoadFile_FP16_GQA_Generate(t *testing.T) {
 	}
 }
 
+func TestLoadFile_FP8_GQA(t *testing.T) {
+	// Use the same GQA GGUF file (F32 weights) with FP8 quantization.
+	// This exercises the full LoadFile -> QuantizeToFP8E4M3 -> buildArchGraph path.
+	dir := t.TempDir()
+	path := writeTestGGUF(t, dir)
+
+	m, err := LoadFile(path, WithDType("fp8"))
+	if err != nil {
+		t.Fatalf("LoadFile with FP8: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	cfg := m.Config()
+	if cfg.Architecture != "llama" {
+		t.Errorf("Architecture = %q, want %q", cfg.Architecture, "llama")
+	}
+}
+
+func TestLoadFile_FP8_GQA_Generate(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestGGUF(t, dir)
+
+	m, err := LoadFile(path, WithDType("fp8"))
+	if err != nil {
+		t.Fatalf("LoadFile with FP8: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	result, err := m.Generate(t.Context(), "hello", WithMaxTokens(3), WithTemperature(0))
+	if err != nil {
+		t.Fatalf("Generate FP8: %v", err)
+	}
+	if result == "" {
+		t.Error("Generate returned empty string")
+	}
+}
+
 func TestLoadFile_NotGGUF(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "not-a-model.txt")
