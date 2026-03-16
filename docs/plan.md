@@ -250,10 +250,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 
 ### E6: Tool/Function Calling
 
-- [ ] T6.1 Implement tool definition parsing in chat API  Owner: TBD  Est: 3h
-  - Deps: none
-  - AC: Chat completions accept `tools` array with function definitions (name, description, parameters as JSON Schema). Stored in request context.
-  - Test: Unit test for tool definition parsing and validation.
+- [x] T6.1 Implement tool definition parsing in chat API  Owner: Claude  Done: 2026-03-16
+  - Branch feat/tool-definition-parsing. serve/tools.go + server.go changes. 36 test cases, -race clean.
 
 - [ ] T6.2 Implement tool call detection and response formatting  Owner: TBD  Est: 4h
   - Deps: T6.1, T5.3
