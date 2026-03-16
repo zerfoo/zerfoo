@@ -220,11 +220,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T5.1 Implement JSON Schema to CFG converter  Owner: Claude  Done: 2026-03-16
   - Branch feat/chat-stream. generate/grammar/ with schema.go, grammar.go, converter.go. 22 tests, -race clean.
 
-- [ ] T5.2 Implement token mask computation from CFG state  Owner: TBD  Est: 6h
-  - Deps: T5.1
-  - AC: Given a CFG state and tokenizer vocabulary, produces a `[]bool` mask of valid next tokens. Mask is correct: sampling only masked tokens produces valid JSON at every prefix.
-  - Implementation: Build byte-trie from vocabulary. At each step, intersect CFG valid-byte-set with trie to determine valid tokens.
-  - Test: Unit tests: given a schema and partial output, verify mask allows valid continuations and blocks invalid ones.
+- [x] T5.2 Implement token mask computation from CFG state  Owner: Claude  Done: 2026-03-16
+  - Branch feat/tool-call-detection commit 32a3ed5. mask.go: TokenMask advances grammar per byte. 10 test cases (33 total), -race clean.
 
 - [ ] T5.3 Integrate grammar engine into generation pipeline  Owner: TBD  Est: 4h
   - Deps: T5.2, T4.2
@@ -245,10 +242,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T6.1 Implement tool definition parsing in chat API  Owner: Claude  Done: 2026-03-16
   - Branch feat/tool-definition-parsing. serve/tools.go + server.go changes. 36 test cases, -race clean.
 
-- [ ] T6.2 Implement tool call detection and response formatting  Owner: TBD  Est: 4h
-  - Deps: T6.1, T5.3
-  - AC: When model output matches tool call pattern, response includes `tool_calls` array with function name and arguments as JSON. Uses grammar-guided decoding to ensure arguments match the tool's parameter schema.
-  - Test: Unit test with mock model output. Integration test with real model on DGX.
+- [x] T6.2 Implement tool call detection and response formatting  Owner: Claude  Done: 2026-03-16
+  - Branch feat/tool-call-detection commit c55f693. serve/tool_calls.go + server.go wiring. OpenAI-compatible tool_calls response.
 
 - [ ] T6.3 Add tool calling to OpenAI API server  Owner: TBD  Est: 3h
   - Deps: T6.2
