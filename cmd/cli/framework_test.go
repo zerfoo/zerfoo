@@ -1024,3 +1024,117 @@ func TestReadCSVData_EmptyFile(t *testing.T) {
 		t.Error("expected error for empty CSV file (no header)")
 	}
 }
+
+// --- --help flag tests ---
+
+// newTestCLI creates a CLI that writes to the given buffer instead of stdout.
+func newTestCLI(buf *strings.Builder) *CLI {
+	c := NewCLI()
+	c.out = buf
+	return c
+}
+
+func TestCLI_GlobalHelp(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewTokenizeCommand())
+
+	err := cliApp.Run(context.Background(), []string{"--help"})
+	if err != nil {
+		t.Fatalf("--help returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "AVAILABLE COMMANDS") {
+		t.Error("global --help should list available commands")
+	}
+	if !strings.Contains(out, "tokenize") {
+		t.Error("global --help should list the tokenize command")
+	}
+}
+
+func TestCLI_GlobalHelpShortFlag(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewTokenizeCommand())
+
+	err := cliApp.Run(context.Background(), []string{"-h"})
+	if err != nil {
+		t.Fatalf("-h returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "AVAILABLE COMMANDS") {
+		t.Error("-h should list available commands")
+	}
+}
+
+func TestCLI_CommandHelp(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewTokenizeCommand())
+
+	err := cliApp.Run(context.Background(), []string{"tokenize", "--help"})
+	if err != nil {
+		t.Fatalf("tokenize --help returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "USAGE:") {
+		t.Error("command --help should contain USAGE section")
+	}
+	if !strings.Contains(out, "--text") {
+		t.Error("tokenize --help should mention --text flag")
+	}
+	if !strings.Contains(out, "EXAMPLES:") {
+		t.Error("command --help should contain EXAMPLES section")
+	}
+}
+
+func TestCLI_CommandHelpShortFlag(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewTokenizeCommand())
+
+	err := cliApp.Run(context.Background(), []string{"tokenize", "-h"})
+	if err != nil {
+		t.Fatalf("tokenize -h returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "--text") {
+		t.Error("tokenize -h should mention --text flag")
+	}
+}
+
+func TestCLI_PredictCommandHelp(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewPredictCommand(model.Float32ModelRegistry, float32From, float32To))
+
+	err := cliApp.Run(context.Background(), []string{"predict", "--help"})
+	if err != nil {
+		t.Fatalf("predict --help returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "--model-path") {
+		t.Error("predict --help should mention --model-path")
+	}
+	if !strings.Contains(out, "EXAMPLES:") {
+		t.Error("predict --help should contain EXAMPLES section")
+	}
+}
+
+func TestCLI_HelpDoesNotRunCommand(t *testing.T) {
+	var buf strings.Builder
+	cliApp := newTestCLI(&buf)
+	cliApp.RegisterCommand(NewTokenizeCommand())
+
+	// Without --help, tokenize with no --text would error.
+	// With --help, it should print help and NOT error.
+	err := cliApp.Run(context.Background(), []string{"tokenize", "--help"})
+	if err != nil {
+		t.Fatalf("--help should not run the command: %v", err)
+	}
+}
