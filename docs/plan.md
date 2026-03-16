@@ -122,9 +122,8 @@ structured output, and tool calling.
 - [x] T1.6 Release ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
   - CHANGELOG created. Tag v0.2.0 created locally. Human must push: cd ztoken && git push origin main && git push origin v0.2.0
 
-- [ ] T1.7 Update zerfoo go.mod to use ztensor v0.2.0 and ztoken v0.2.0  Owner: TBD  Est: 30m
-  - Deps: T1.5, T1.6
-  - AC: `go mod tidy && go build ./... && go test ./...` passes.
+- [x] T1.7 Update zerfoo go.mod to use ztensor v0.2.0 and ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
+  - Removed local replace directive. Bumped both to v0.2.0. go build clean.
 
 - [ ] T1.8 Run go vet and linter across zerfoo, ztensor, ztoken  Owner: TBD  Est: 30m
   - Deps: T1.7
