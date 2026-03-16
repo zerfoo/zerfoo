@@ -11,6 +11,8 @@ import (
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	tokenizer "github.com/zerfoo/ztoken"
+
+	"github.com/zerfoo/zerfoo/generate/grammar"
 )
 
 // InferenceSession holds per-session state for independent, concurrent
@@ -77,6 +79,17 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		promptIDs = append([]int{s.config.BOSTokenID}, promptIDs...)
 	}
 
+	// Build grammar vocab cache if grammar-constrained decoding is active.
+	if sc.GrammarState != nil {
+		vocabSize := s.tokenizer.VocabSize()
+		sc.grammarVocab = make([]string, vocabSize)
+		for i := range vocabSize {
+			if tok, ok := s.tokenizer.GetToken(i); ok {
+				sc.grammarVocab[i] = tok
+			}
+		}
+	}
+
 	// Reset the cache for a fresh generation.
 	s.cache.Reset()
 	genCtx := WithCache(ctx, s.cache)
@@ -105,6 +118,11 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		return "", fmt.Errorf("sample after prefill: %w", err)
 	}
 
+	// Advance grammar state after sampling.
+	if sc.GrammarState != nil {
+		sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
+	}
+
 	if stopSet[nextToken] {
 		return "", nil
 	}
@@ -122,6 +140,10 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		if err := ctx.Err(); err != nil {
 			break
 		}
+		// Stop early if grammar is complete.
+		if sc.GrammarState != nil && sc.GrammarState.IsComplete() {
+			break
+		}
 
 		decodeBuf[0] = T(nextToken)
 
@@ -133,6 +155,11 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		nextToken, err = s.sampleFromLogits(logits, sc, generatedIDs)
 		if err != nil {
 			return "", fmt.Errorf("sample: %w", err)
+		}
+
+		// Advance grammar state after sampling.
+		if sc.GrammarState != nil {
+			sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
 		}
 
 		if stopSet[nextToken] {
@@ -172,6 +199,17 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 
 	if s.config.BOSTokenID > 0 {
 		promptIDs = append([]int{s.config.BOSTokenID}, promptIDs...)
+	}
+
+	// Build grammar vocab cache if grammar-constrained decoding is active.
+	if sc.GrammarState != nil {
+		vocabSize := s.tokenizer.VocabSize()
+		sc.grammarVocab = make([]string, vocabSize)
+		for i := range vocabSize {
+			if tok, ok := s.tokenizer.GetToken(i); ok {
+				sc.grammarVocab[i] = tok
+			}
+		}
 	}
 
 	s.cache.Reset()
@@ -293,12 +331,13 @@ func (s *InferenceSession[T]) emitToken(
 
 // graphForward runs a graph forward pass under the shared graph mutex.
 // It uses defer to ensure the mutex is released even if Forward panics.
-func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], reset bool) (*tensor.TensorNumeric[T], error) {
+func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], _ bool) (*tensor.TensorNumeric[T], error) {
 	s.graphMu.Lock()
 	defer s.graphMu.Unlock()
-	if reset {
-		s.graph.ResetStatefulNodes()
-	}
+	// Always reset stateful nodes before forward. The graph is shared across
+	// sessions, so any prior session's forward may have left stale state.
+	// Each session's KV cache is passed via context, providing isolation.
+	s.graph.ResetStatefulNodes()
 	return s.graph.Forward(ctx, input)
 }
 
@@ -341,7 +380,34 @@ func (s *InferenceSession[T]) sampleFromLogits(
 		return 0, fmt.Errorf("logits data too short: %d < %d", len(data), lastStart+vocabSize)
 	}
 
-	// Greedy fast path.
+	// Grammar masking: if a grammar state is active, apply token mask before sampling.
+	if sc.GrammarState != nil && len(sc.grammarVocab) > 0 {
+		logitsF64 := make([]float64, vocabSize)
+		for i := range vocabSize {
+			logitsF64[i] = float64(data[lastStart+i])
+		}
+
+		mask := grammar.TokenMask(sc.GrammarState, sc.grammarVocab)
+		applyTokenMask(logitsF64, mask)
+
+		if sc.RepetitionPenalty > 0 && sc.RepetitionPenalty != 1.0 {
+			applyRepetitionPenalty(logitsF64, generatedTokens, sc.RepetitionPenalty)
+		}
+
+		if sc.Temperature > 0 {
+			applyTemperature(logitsF64, sc.Temperature)
+			if sc.TopK > 0 && sc.TopK < vocabSize {
+				applyTopK(logitsF64, sc.TopK)
+			}
+			if sc.TopP > 0 && sc.TopP < 1.0 {
+				applyTopP(logitsF64, sc.TopP)
+			}
+			return sampleFromDistribution(logitsF64), nil
+		}
+		return argmax(logitsF64), nil
+	}
+
+	// Greedy fast path (no grammar).
 	if sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
 		best := 0
 		bestVal := data[lastStart]
