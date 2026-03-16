@@ -633,7 +633,7 @@ func TestModel_Embed_NotSupported(t *testing.T) {
 	vocabSize := 8
 	m := buildTestModel(t, vocabSize, []int{6, 2})
 
-	_, err := m.Embed(context.Background(), "hello")
+	_, err := m.Embed("hello")
 	if err == nil {
 		t.Error("expected error from Embed")
 	}
@@ -646,7 +646,7 @@ func TestModel_Embed_EmptyText(t *testing.T) {
 	vocabSize := 8
 	m := buildTestModel(t, vocabSize, []int{6})
 
-	_, err := m.Embed(context.Background(), "")
+	_, err := m.Embed("")
 	if err == nil {
 		t.Error("expected error for empty text")
 	}
@@ -1050,7 +1050,7 @@ func TestAssembleModel(t *testing.T) {
 
 func TestModel_Embed_ForwardError(t *testing.T) {
 	m := buildErrorModel(t)
-	_, err := m.Embed(context.Background(), "hello")
+	_, err := m.Embed("hello")
 	if err == nil {
 		t.Error("expected error from Embed when forward fails")
 	}

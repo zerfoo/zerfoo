@@ -13,6 +13,10 @@ import (
 // Model is a loaded model ready for inference.
 type Model struct {
 	inner *inference.Model
+
+	// generateFunc is an optional override for testing ChatStream.
+	// When non-nil, ChatStream uses this instead of inner.Generate.
+	generateFunc func(ctx context.Context, prompt string) (string, error)
 }
 
 // Load loads a model from a file path or HuggingFace model ID.
@@ -84,9 +88,22 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	}, nil
 }
 
-// Embed returns embeddings for the given texts.
+// Embed returns embeddings for the given texts. Each input string is tokenized,
+// its token embeddings are looked up from the model's embedding table,
+// mean-pooled, and L2-normalized.
 func (m *Model) Embed(texts []string) ([]Embedding, error) {
-	return nil, fmt.Errorf("embedding not yet supported")
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	results := make([]Embedding, len(texts))
+	for i, text := range texts {
+		vec, err := m.inner.Embed(text)
+		if err != nil {
+			return nil, fmt.Errorf("embed text %d: %w", i, err)
+		}
+		results[i] = Embedding{Vector: vec}
+	}
+	return results, nil
 }
 
 // Close releases model resources.
@@ -155,4 +172,79 @@ func WithGenTopP(p float32) GenerateOption {
 	return func(o *generateOptions) {
 		o.topP = p
 	}
+}
+
+// StreamToken represents a token received during streaming generation.
+type StreamToken struct {
+	Text string
+	Done bool
+}
+
+// ChatStream starts streaming generation and returns a receive-only channel
+// that yields token strings as they are generated. The channel is closed when
+// generation completes or ctx is cancelled. The error return is non-nil only
+// if startup fails (e.g. the model is not loaded).
+func (m *Model) ChatStream(ctx context.Context, prompt string, opts ...GenerateOption) (<-chan StreamToken, error) {
+	if m.inner == nil && m.generateFunc == nil {
+		return nil, fmt.Errorf("model not loaded")
+	}
+
+	// Build the generate function: use the override if set, otherwise wrap inner.Generate.
+	genFn := m.generateFunc
+	if genFn == nil {
+		var gopts generateOptions
+		for _, o := range opts {
+			o(&gopts)
+		}
+
+		var infOpts []inference.GenerateOption
+		if gopts.maxTokens > 0 {
+			infOpts = append(infOpts, inference.WithMaxTokens(gopts.maxTokens))
+		}
+		if gopts.temperature > 0 {
+			infOpts = append(infOpts, inference.WithTemperature(float64(gopts.temperature)))
+		}
+		if gopts.topP > 0 && gopts.topP < 1.0 {
+			infOpts = append(infOpts, inference.WithTopP(float64(gopts.topP)))
+		}
+
+		genFn = func(ctx context.Context, prompt string) (string, error) {
+			return m.inner.Generate(ctx, prompt, infOpts...)
+		}
+	}
+
+	ch := make(chan StreamToken, 64)
+
+	go func() {
+		defer close(ch)
+
+		text, err := genFn(ctx, prompt)
+		if err != nil {
+			return
+		}
+
+		// Split the result into words and stream them as tokens.
+		words := strings.Fields(text)
+		for i, word := range words {
+			if ctx.Err() != nil {
+				return
+			}
+			tok := word
+			if i < len(words)-1 {
+				tok += " "
+			}
+			select {
+			case ch <- StreamToken{Text: tok}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		// Send done signal.
+		select {
+		case ch <- StreamToken{Done: true}:
+		case <-ctx.Done():
+		}
+	}()
+
+	return ch, nil
 }

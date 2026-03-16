@@ -1,8 +1,14 @@
 package zerfoo
 
 import (
+	"context"
 	"math"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/zerfoo/zerfoo/inference"
+	ztoken "github.com/zerfoo/ztoken"
 )
 
 func TestLoad_pathDetection(t *testing.T) {
@@ -107,24 +113,249 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 }
 
-func TestEmbed_stub(t *testing.T) {
-	// Create a zero-value Model to test the Embed stub.
-	// We can't call Embed on a nil inner, so we test the error message
-	// by constructing a Model with a non-nil inner. Since we can't easily
-	// construct an inference.Model, we test the function signature works.
-	m := &Model{}
+func newTestModelWithEmbeddings(vocabTokens []string, dim int, weights []float32) *Model {
+	tok := ztoken.NewWhitespaceTokenizer()
+	for _, w := range vocabTokens {
+		tok.AddToken(w)
+	}
+	inner := inference.NewTestModel(nil, tok, nil, inference.ModelMetadata{}, nil)
+	inner.SetEmbeddingWeights(weights, dim)
+	return &Model{inner: inner}
+}
 
-	// This will panic due to nil inner if Embed tries to use it,
-	// but it should return an error before accessing inner.
-	result, err := m.Embed([]string{"hello"})
+func TestEmbed_returnsCorrectShape(t *testing.T) {
+	dim := 4
+	vocab := 6 // 4 special + 2 real
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1 // "hello" = ID 4
+	weights[5*dim+1] = 1 // "world" = ID 5
+
+	m := newTestModelWithEmbeddings([]string{"hello", "world"}, dim, weights)
+
+	results, err := m.Embed([]string{"hello", "world"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("Embed returned %d embeddings, want 2", len(results))
+	}
+	for i, emb := range results {
+		if len(emb.Vector) != dim {
+			t.Errorf("embedding[%d] has dim %d, want %d", i, len(emb.Vector), dim)
+		}
+	}
+}
+
+func TestEmbed_identicalInputsSimilarity(t *testing.T) {
+	dim := 3
+	vocab := 5
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1
+	weights[4*dim+1] = 2
+	weights[4*dim+2] = 3
+
+	m := newTestModelWithEmbeddings([]string{"hello"}, dim, weights)
+
+	results, err := m.Embed([]string{"hello", "hello"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+
+	sim := results[0].CosineSimilarity(results[1])
+	if diff := math.Abs(float64(sim - 1.0)); diff > 1e-6 {
+		t.Errorf("identical inputs: CosineSimilarity = %v, want 1.0", sim)
+	}
+}
+
+func TestEmbed_orthogonalTokens(t *testing.T) {
+	dim := 3
+	vocab := 6
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1 // "cat" along x-axis
+	weights[5*dim+1] = 1 // "dog" along y-axis
+
+	m := newTestModelWithEmbeddings([]string{"cat", "dog"}, dim, weights)
+
+	results, err := m.Embed([]string{"cat", "dog"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+
+	sim := results[0].CosineSimilarity(results[1])
+	if diff := math.Abs(float64(sim)); diff > 1e-6 {
+		t.Errorf("orthogonal tokens: CosineSimilarity = %v, want 0.0", sim)
+	}
+}
+
+func TestEmbed_emptyInput(t *testing.T) {
+	inner := inference.NewTestModel(nil, nil, nil, inference.ModelMetadata{}, nil)
+	m := &Model{inner: inner}
+
+	results, err := m.Embed([]string{})
+	if err != nil {
+		t.Fatalf("Embed(empty) returned error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("Embed(empty) = %v, want nil", results)
+	}
+}
+
+func TestEmbed_noEmbeddingWeights(t *testing.T) {
+	tok := ztoken.NewWhitespaceTokenizer()
+	inner := inference.NewTestModel(nil, tok, nil, inference.ModelMetadata{}, nil)
+	m := &Model{inner: inner}
+
+	_, err := m.Embed([]string{"hello"})
 	if err == nil {
-		t.Fatal("expected error from Embed stub, got nil")
+		t.Fatal("expected error when embedding weights not set")
 	}
-	want := "embedding not yet supported"
-	if got := err.Error(); got != want {
-		t.Errorf("Embed error = %q, want %q", got, want)
+}
+
+func TestChatStream_nilModel(t *testing.T) {
+	m := &Model{}
+	ch, err := m.ChatStream(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected error for nil model, got nil")
 	}
-	if result != nil {
-		t.Errorf("Embed result = %v, want nil", result)
+	if ch != nil {
+		t.Errorf("expected nil channel, got %v", ch)
+	}
+}
+
+func TestChatStream_yieldsTokens(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "hello world foo", nil
+		},
+	}
+
+	ch, err := m.ChatStream(context.Background(), "test prompt")
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+	if ch == nil {
+		t.Fatal("expected non-nil channel")
+	}
+
+	var tokens []StreamToken
+	for tok := range ch {
+		tokens = append(tokens, tok)
+	}
+
+	// Expect 3 word tokens + 1 done token.
+	if len(tokens) != 4 {
+		t.Fatalf("got %d tokens, want 4: %v", len(tokens), tokens)
+	}
+
+	// Verify words are streamed with spaces between them.
+	if tokens[0].Text != "hello " {
+		t.Errorf("token[0] = %q, want %q", tokens[0].Text, "hello ")
+	}
+	if tokens[1].Text != "world " {
+		t.Errorf("token[1] = %q, want %q", tokens[1].Text, "world ")
+	}
+	if tokens[2].Text != "foo" {
+		t.Errorf("token[2] = %q, want %q", tokens[2].Text, "foo")
+	}
+
+	// Last token should be done signal.
+	if !tokens[3].Done {
+		t.Error("last token should have Done=true")
+	}
+
+	// Reconstructed text should match original.
+	var sb strings.Builder
+	for _, tok := range tokens {
+		sb.WriteString(tok.Text)
+	}
+	if got := sb.String(); got != "hello world foo" {
+		t.Errorf("reconstructed text = %q, want %q", got, "hello world foo")
+	}
+}
+
+func TestChatStream_channelCloses(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "done", nil
+		},
+	}
+
+	ch, err := m.ChatStream(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+
+	// Drain channel and verify it closes.
+	count := 0
+	for range ch {
+		count++
+	}
+	if count != 2 { // 1 word + 1 done
+		t.Errorf("got %d tokens, want 2", count)
+	}
+}
+
+func TestChatStream_contextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			// Simulate a slow generation that respects context.
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(5 * time.Second):
+				return "this should not appear", nil
+			}
+		},
+	}
+
+	ch, err := m.ChatStream(ctx, "test")
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+
+	// Cancel context immediately.
+	cancel()
+
+	// Channel should close without delivering the full result.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			// May get some tokens before cancellation is noticed; drain.
+			for range ch {
+			}
+		}
+	case <-timer.C:
+		t.Fatal("channel did not close after context cancellation")
+	}
+}
+
+func TestChatStream_emptyResult(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "", nil
+		},
+	}
+
+	ch, err := m.ChatStream(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("ChatStream returned error: %v", err)
+	}
+
+	var tokens []StreamToken
+	for tok := range ch {
+		tokens = append(tokens, tok)
+	}
+
+	// Empty string has no words, only a done signal.
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens, want 1: %v", len(tokens), tokens)
+	}
+	if !tokens[0].Done {
+		t.Error("expected done signal")
 	}
 }
