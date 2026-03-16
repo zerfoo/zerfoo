@@ -9,7 +9,6 @@ import (
 	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zmf"
 )
 
 func TestBuildConstantOfShape_TensorFillValue(t *testing.T) {
@@ -94,31 +93,31 @@ func TestBuildConstantOfShape_TensorFillValue(t *testing.T) {
 	}
 }
 
-func makeFloat32Tensor(v float32) *zmf.Tensor {
+func makeFloat32Tensor(v float32) *tensorValue {
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, math.Float32bits(v))
-	return &zmf.Tensor{
-		Dtype: zmf.Tensor_FLOAT32,
+	return &tensorValue{
+		Dtype: tensorDTypeFloat32,
 		Shape: []int64{1},
 		Data:  data,
 	}
 }
 
-func makeFloat64Tensor(v float64) *zmf.Tensor {
+func makeFloat64Tensor(v float64) *tensorValue {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, math.Float64bits(v))
-	return &zmf.Tensor{
-		Dtype: zmf.Tensor_FLOAT64,
+	return &tensorValue{
+		Dtype: tensorDTypeFloat64,
 		Shape: []int64{1},
 		Data:  data,
 	}
 }
 
-func makeInt64Tensor(v int64) *zmf.Tensor {
+func makeInt64Tensor(v int64) *tensorValue {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, uint64(v))
-	return &zmf.Tensor{
-		Dtype: zmf.Tensor_INT64,
+	return &tensorValue{
+		Dtype: tensorDTypeInt64,
 		Shape: []int64{1},
 		Data:  data,
 	}
