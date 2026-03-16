@@ -1447,3 +1447,154 @@ func TestIsOOMError(t *testing.T) {
 		})
 	}
 }
+
+// --- Response Format ---
+
+func TestHandleChatCompletions_ResponseFormatJSONSchema(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Valid json_schema response_format — server should accept and return 200.
+	body := `{
+		"messages":[{"role":"user","content":"hello"}],
+		"max_tokens":5,
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"test_schema",
+				"strict":true,
+				"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}
+			}
+		}
+	}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, data)
+	}
+
+	var result ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if result.Object != "chat.completion" {
+		t.Errorf("Object = %q, want %q", result.Object, "chat.completion")
+	}
+	if len(result.Choices) != 1 {
+		t.Fatalf("Choices len = %d, want 1", len(result.Choices))
+	}
+}
+
+func TestHandleChatCompletions_ResponseFormatInvalidSchema(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{
+		"messages":[{"role":"user","content":"hello"}],
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"bad",
+				"schema":"not a json object"
+			}
+		}
+	}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleChatCompletions_ResponseFormatUnsupportedSchema(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Schema with $ref is unsupported and should return 400.
+	body := `{
+		"messages":[{"role":"user","content":"hello"}],
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"unsupported",
+				"schema":{"$ref":"#/definitions/Foo"}
+			}
+		}
+	}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleChatCompletions_ResponseFormatText(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// response_format type "text" should behave like no response_format (normal response).
+	body := `{
+		"messages":[{"role":"user","content":"hello"}],
+		"max_tokens":5,
+		"response_format":{"type":"text"}
+	}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, data)
+	}
+
+	var result ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(result.Choices) != 1 {
+		t.Fatalf("Choices len = %d, want 1", len(result.Choices))
+	}
+	if result.Choices[0].FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want %q", result.Choices[0].FinishReason, "stop")
+	}
+}
+
+func TestHandleChatCompletions_ResponseFormatJSONObject(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// json_object type is a pass-through (no grammar), should return 200.
+	body := `{
+		"messages":[{"role":"user","content":"hello"}],
+		"max_tokens":5,
+		"response_format":{"type":"json_object"}
+	}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, data)
+	}
+
+	var result ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(result.Choices) != 1 {
+		t.Fatalf("Choices len = %d, want 1", len(result.Choices))
+	}
+}

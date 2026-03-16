@@ -890,7 +890,7 @@ func TestPredictCommand_Run_FullPath(t *testing.T) {
 	_ = reg.RegisterModelProvider("standard", func(_ context.Context, _ map[string]any) (model.ModelProvider[float32], error) {
 		return &mockModelProvider{}, nil
 	})
-	_ = reg.RegisterModelLoader("zmf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
+	_ = reg.RegisterModelLoader("gguf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
 		return &mockModelLoader{instance: mockInst}, nil
 	})
 
@@ -921,7 +921,7 @@ func TestPredictCommand_Run_LoadModelError(t *testing.T) {
 	_ = reg.RegisterModelProvider("standard", func(_ context.Context, _ map[string]any) (model.ModelProvider[float32], error) {
 		return &mockModelProvider{}, nil
 	})
-	_ = reg.RegisterModelLoader("zmf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
+	_ = reg.RegisterModelLoader("gguf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
 		return &mockModelLoader{loadErr: true}, nil
 	})
 
@@ -958,7 +958,7 @@ func TestPredictCommand_Run_SaveResultsError(t *testing.T) {
 	_ = reg.RegisterModelProvider("standard", func(_ context.Context, _ map[string]any) (model.ModelProvider[float32], error) {
 		return &mockModelProvider{}, nil
 	})
-	_ = reg.RegisterModelLoader("zmf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
+	_ = reg.RegisterModelLoader("gguf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
 		return &mockModelLoader{instance: mockInst}, nil
 	})
 
@@ -989,7 +989,7 @@ func TestPredictCommand_Run_ForwardError(t *testing.T) {
 	_ = reg.RegisterModelProvider("standard", func(_ context.Context, _ map[string]any) (model.ModelProvider[float32], error) {
 		return &mockModelProvider{}, nil
 	})
-	_ = reg.RegisterModelLoader("zmf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
+	_ = reg.RegisterModelLoader("gguf", func(_ context.Context, _ map[string]any) (model.ModelLoader[float32], error) {
 		return &mockModelLoader{instance: mockInst}, nil
 	})
 
