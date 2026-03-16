@@ -541,7 +541,7 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	var data []EmbeddingObject
 	var totalTokens int
 	for i, text := range inputs {
-		emb, err := s.model.Embed(r.Context(), text)
+		emb, err := s.model.Embed(text)
 		if err != nil {
 			writeError(w, inferenceErrorStatus(err), err.Error())
 			return

@@ -82,8 +82,16 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		}
 	}
 
-	// Set embedding weight on the generator for token lookup.
-	_ = embWeight
+	// Capture embedding weights for the Embed() method.
+	var embData []float32
+	var embHiddenSize int
+	if embWeight != nil {
+		embData = embWeight.Data()
+		shape := embWeight.Shape()
+		if len(shape) >= 2 {
+			embHiddenSize = shape[1]
+		}
+	}
 
 	maxSeqLen := meta.MaxPositionEmbeddings
 	if o.maxSeqLen > 0 {
@@ -104,10 +112,12 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 	}, genOpts...)
 
 	return &Model{
-		generator: gen,
-		tokenizer: tok,
-		engine:    eng,
-		config:    *meta,
+		generator:  gen,
+		tokenizer:  tok,
+		engine:     eng,
+		config:     *meta,
+		embWeights: embData,
+		hiddenSize: embHiddenSize,
 	}, nil
 }
 

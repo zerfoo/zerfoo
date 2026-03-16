@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zerfoo/zerfoo/inference"
+	ztoken "github.com/zerfoo/ztoken"
 )
 
 func TestLoad_pathDetection(t *testing.T) {
@@ -110,25 +113,101 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 }
 
-func TestEmbed_stub(t *testing.T) {
-	// Create a zero-value Model to test the Embed stub.
-	// We can't call Embed on a nil inner, so we test the error message
-	// by constructing a Model with a non-nil inner. Since we can't easily
-	// construct an inference.Model, we test the function signature works.
-	m := &Model{}
+func newTestModelWithEmbeddings(vocabTokens []string, dim int, weights []float32) *Model {
+	tok := ztoken.NewWhitespaceTokenizer()
+	for _, w := range vocabTokens {
+		tok.AddToken(w)
+	}
+	inner := inference.NewTestModel(nil, tok, nil, inference.ModelMetadata{}, nil)
+	inner.SetEmbeddingWeights(weights, dim)
+	return &Model{inner: inner}
+}
 
-	// This will panic due to nil inner if Embed tries to use it,
-	// but it should return an error before accessing inner.
-	result, err := m.Embed([]string{"hello"})
+func TestEmbed_returnsCorrectShape(t *testing.T) {
+	dim := 4
+	vocab := 6 // 4 special + 2 real
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1 // "hello" = ID 4
+	weights[5*dim+1] = 1 // "world" = ID 5
+
+	m := newTestModelWithEmbeddings([]string{"hello", "world"}, dim, weights)
+
+	results, err := m.Embed([]string{"hello", "world"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("Embed returned %d embeddings, want 2", len(results))
+	}
+	for i, emb := range results {
+		if len(emb.Vector) != dim {
+			t.Errorf("embedding[%d] has dim %d, want %d", i, len(emb.Vector), dim)
+		}
+	}
+}
+
+func TestEmbed_identicalInputsSimilarity(t *testing.T) {
+	dim := 3
+	vocab := 5
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1
+	weights[4*dim+1] = 2
+	weights[4*dim+2] = 3
+
+	m := newTestModelWithEmbeddings([]string{"hello"}, dim, weights)
+
+	results, err := m.Embed([]string{"hello", "hello"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+
+	sim := results[0].CosineSimilarity(results[1])
+	if diff := math.Abs(float64(sim - 1.0)); diff > 1e-6 {
+		t.Errorf("identical inputs: CosineSimilarity = %v, want 1.0", sim)
+	}
+}
+
+func TestEmbed_orthogonalTokens(t *testing.T) {
+	dim := 3
+	vocab := 6
+	weights := make([]float32, vocab*dim)
+	weights[4*dim+0] = 1 // "cat" along x-axis
+	weights[5*dim+1] = 1 // "dog" along y-axis
+
+	m := newTestModelWithEmbeddings([]string{"cat", "dog"}, dim, weights)
+
+	results, err := m.Embed([]string{"cat", "dog"})
+	if err != nil {
+		t.Fatalf("Embed returned error: %v", err)
+	}
+
+	sim := results[0].CosineSimilarity(results[1])
+	if diff := math.Abs(float64(sim)); diff > 1e-6 {
+		t.Errorf("orthogonal tokens: CosineSimilarity = %v, want 0.0", sim)
+	}
+}
+
+func TestEmbed_emptyInput(t *testing.T) {
+	inner := inference.NewTestModel(nil, nil, nil, inference.ModelMetadata{}, nil)
+	m := &Model{inner: inner}
+
+	results, err := m.Embed([]string{})
+	if err != nil {
+		t.Fatalf("Embed(empty) returned error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("Embed(empty) = %v, want nil", results)
+	}
+}
+
+func TestEmbed_noEmbeddingWeights(t *testing.T) {
+	tok := ztoken.NewWhitespaceTokenizer()
+	inner := inference.NewTestModel(nil, tok, nil, inference.ModelMetadata{}, nil)
+	m := &Model{inner: inner}
+
+	_, err := m.Embed([]string{"hello"})
 	if err == nil {
-		t.Fatal("expected error from Embed stub, got nil")
-	}
-	want := "embedding not yet supported"
-	if got := err.Error(); got != want {
-		t.Errorf("Embed error = %q, want %q", got, want)
-	}
-	if result != nil {
-		t.Errorf("Embed result = %v, want nil", result)
+		t.Fatal("expected error when embedding weights not set")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,12 +22,14 @@ import (
 
 // Model is a loaded model ready for generation.
 type Model struct {
-	generator *generate.Generator[float32]
-	tokenizer tokenizer.Tokenizer
-	engine    compute.Engine[float32]
-	config    ModelMetadata
-	info      *registry.ModelInfo
-	closer    io.Closer // mmap reader, if loaded with mmap
+	generator  *generate.Generator[float32]
+	tokenizer  tokenizer.Tokenizer
+	engine     compute.Engine[float32]
+	config     ModelMetadata
+	info       *registry.ModelInfo
+	closer     io.Closer // mmap reader, if loaded with mmap
+	embWeights []float32 // flattened embedding table [vocabSize * hiddenSize]
+	hiddenSize int       // embedding dimension
 }
 
 // ModelMetadata holds model configuration loaded from config.json.
@@ -534,9 +537,19 @@ func formatGeneric(messages []Message) string {
 	return sb.String()
 }
 
-// Embed returns a float32 embedding vector for the given text.
-// It runs the model forward and mean-pools the last layer's hidden states.
-func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
+// EmbeddingWeights returns the flattened token embedding table and the
+// hidden dimension. Returns nil, 0 if embeddings are not available.
+func (m *Model) EmbeddingWeights() ([]float32, int) {
+	return m.embWeights, m.hiddenSize
+}
+
+// Embed returns an L2-normalized embedding vector for the given text by
+// looking up token embeddings from the model's embedding table and
+// mean-pooling them.
+func (m *Model) Embed(text string) ([]float32, error) {
+	if len(m.embWeights) == 0 || m.hiddenSize == 0 {
+		return nil, fmt.Errorf("model has no embedding weights")
+	}
 	ids, err := m.tokenizer.Encode(text)
 	if err != nil {
 		return nil, fmt.Errorf("encode: %w", err)
@@ -545,21 +558,38 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 		return nil, fmt.Errorf("text produced no tokens")
 	}
 
-	// Generate one token to get the last hidden state.
-	// For embeddings, we use the output of a forward pass and mean-pool.
-	result, err := m.generator.Generate(ctx, text, generate.SamplingConfig{
-		Temperature:  0,
-		MaxNewTokens: 1,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("forward: %w", err)
+	vocabSize := len(m.embWeights) / m.hiddenSize
+	dim := m.hiddenSize
+
+	// Mean-pool token embedding vectors.
+	vec := make([]float32, dim)
+	for _, id := range ids {
+		if id < 0 || id >= vocabSize {
+			continue
+		}
+		off := id * dim
+		for j := 0; j < dim; j++ {
+			vec[j] += m.embWeights[off+j]
+		}
+	}
+	scale := float32(1.0 / float64(len(ids)))
+	for j := range vec {
+		vec[j] *= scale
 	}
 
-	// Since we don't have direct access to hidden states, we return
-	// a hash of the result as a placeholder. Real implementation would
-	// need access to intermediate layer outputs.
-	_ = result
-	return nil, fmt.Errorf("embeddings not yet supported: model does not expose hidden states")
+	// L2 normalize.
+	var norm float64
+	for _, v := range vec {
+		norm += float64(v) * float64(v)
+	}
+	if norm > 0 {
+		invNorm := float32(1.0 / math.Sqrt(norm))
+		for j := range vec {
+			vec[j] *= invNorm
+		}
+	}
+
+	return vec, nil
 }
 
 // Close releases resources held by the model. If the model was loaded on a
@@ -731,4 +761,11 @@ func NewTestModel(
 		config:    meta,
 		info:      info,
 	}
+}
+
+// SetEmbeddingWeights sets the token embedding table for Embed().
+// weights is a flattened [vocabSize, hiddenSize] matrix.
+func (m *Model) SetEmbeddingWeights(weights []float32, hiddenSize int) {
+	m.embWeights = weights
+	m.hiddenSize = hiddenSize
 }

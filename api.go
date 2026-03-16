@@ -88,9 +88,22 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	}, nil
 }
 
-// Embed returns embeddings for the given texts.
+// Embed returns embeddings for the given texts. Each input string is tokenized,
+// its token embeddings are looked up from the model's embedding table,
+// mean-pooled, and L2-normalized.
 func (m *Model) Embed(texts []string) ([]Embedding, error) {
-	return nil, fmt.Errorf("embedding not yet supported")
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	results := make([]Embedding, len(texts))
+	for i, text := range texts {
+		vec, err := m.inner.Embed(text)
+		if err != nil {
+			return nil, fmt.Errorf("embed text %d: %w", i, err)
+		}
+		results[i] = Embedding{Vector: vec}
+	}
+	return results, nil
 }
 
 // Close releases model resources.
