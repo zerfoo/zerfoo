@@ -50,6 +50,11 @@ func LoadGGUF(path string) (*GGUFModel, error) {
 		mapped[canonical] = t
 	}
 
+	// Split merged QKV tensors (e.g., Phi attn_qkv.weight) into separate Q/K/V.
+	if err := gguf.SplitMergedQKV(mapped, cfg); err != nil {
+		return nil, fmt.Errorf("split merged QKV: %w", err)
+	}
+
 	return &GGUFModel{
 		Config:  cfg,
 		Tensors: mapped,
