@@ -1,0 +1,590 @@
+package inference
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/embeddings"
+	"github.com/zerfoo/zerfoo/layers/normalization"
+	"github.com/zerfoo/zerfoo/model/gguf"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
+)
+
+// buildDeepSeekGraph constructs a computation graph for the DeepSeek V2/V3
+// architecture from pre-loaded GGUF tensors. It returns the graph and the
+// embedding table tensor.
+//
+// DeepSeek uses Multi-head Latent Attention (MLA) which compresses KV into
+// a low-rank latent space, and Mixture of Experts (MoE) with shared + routed
+// experts.
+//
+// The architecture is:
+//
+//	Embed -> [RMSNorm -> MLA -> Add -> RMSNorm -> MoE -> Add] x N -> RMSNorm -> LMHead
+func buildDeepSeekGraph(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	engine compute.Engine[float32],
+) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
+	ops := numeric.Float32Ops{}
+
+	rmsEps := float32(1e-5)
+	if cfg.RMSNormEps > 0 {
+		rmsEps = cfg.RMSNormEps
+	}
+
+	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
+		t, ok := tensors[name]
+		if !ok {
+			return nil, fmt.Errorf("missing tensor %q", name)
+		}
+		return t, nil
+	}
+
+	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
+		return &graph.Parameter[float32]{Name: name, Value: t}
+	}
+
+	embedWeight, ok := tensors["model.embed_tokens.weight"]
+	if !ok {
+		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	}
+
+	lmHeadWeight, ok := tensors["lm_head.weight"]
+	if !ok {
+		lmHeadWeight = embedWeight
+	}
+
+	finalNormWeight, err := lookup("model.norm.weight")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	proxy := compute.NewEngineProxy[float32](engine)
+	builder := graph.NewBuilder[float32](proxy)
+	input := builder.Input([]int{1, 1})
+
+	// Embedding lookup.
+	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	hidden := builder.AddNode(embNode, input)
+
+	headDim := cfg.HiddenSize / cfg.NumHeads
+	if cfg.HeadDim > 0 {
+		headDim = cfg.HeadDim
+	}
+
+	kvLoraDim := cfg.KVLoRADim
+	if kvLoraDim == 0 {
+		kvLoraDim = headDim // fallback
+	}
+
+	for i := 0; i < cfg.NumLayers; i++ {
+		prefix := fmt.Sprintf("model.layers.%d.", i)
+		blkPrefix := fmt.Sprintf("blk.%d.", i)
+
+		// --- Input LayerNorm ---
+		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		if err != nil {
+			return nil, nil, err
+		}
+		inputNorm, err := normalization.NewRMSNormFromParam[float32](
+			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		normed := builder.AddNode(inputNorm, hidden)
+
+		// --- MLA (Multi-head Latent Attention) ---
+		kvAProjW, err := lookup(blkPrefix + "attn_kv_a_proj_with_mqa.weight")
+		if err != nil {
+			return nil, nil, err
+		}
+		kvBProjW, err := lookup(blkPrefix + "attn_kv_b_proj.weight")
+		if err != nil {
+			return nil, nil, err
+		}
+		qProjW, err := lookupMLAQProj(tensors, blkPrefix, prefix)
+		if err != nil {
+			return nil, nil, err
+		}
+		oProjW, err := lookupDeepSeekOProj(tensors, blkPrefix, prefix)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Transpose weights for Dense layers.
+		ctx := context.Background()
+		kvAProjWT, err := engine.Transpose(ctx, kvAProjW, []int{1, 0})
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d transpose kv_a_proj: %w", i, err)
+		}
+		kvBProjWT, err := engine.Transpose(ctx, kvBProjW, []int{1, 0})
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d transpose kv_b_proj: %w", i, err)
+		}
+		qProjWT, err := engine.Transpose(ctx, qProjW, []int{1, 0})
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d transpose q_proj: %w", i, err)
+		}
+		oProjWT, err := engine.Transpose(ctx, oProjW, []int{1, 0})
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d transpose o_proj: %w", i, err)
+		}
+
+		// Build Dense layers for MLA projections.
+		wQ := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("q_proj.weight", qProjWT)), nil,
+		)
+		wDKV := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("kv_a_proj.weight", kvAProjWT)), nil,
+		)
+
+		// Split B projection into separate K and V up-projections.
+		kvBShape := kvBProjWT.Shape()
+		kvBHalf := kvBShape[1] / 2
+		kvBData := kvBProjWT.Data()
+		ukData := make([]float32, kvBShape[0]*kvBHalf)
+		uvData := make([]float32, kvBShape[0]*kvBHalf)
+		for r := 0; r < kvBShape[0]; r++ {
+			copy(ukData[r*kvBHalf:(r+1)*kvBHalf], kvBData[r*kvBShape[1]:r*kvBShape[1]+kvBHalf])
+			copy(uvData[r*kvBHalf:(r+1)*kvBHalf], kvBData[r*kvBShape[1]+kvBHalf:(r+1)*kvBShape[1]])
+		}
+		ukWeight, err := tensor.New([]int{kvBShape[0], kvBHalf}, ukData)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d create uk weight: %w", i, err)
+		}
+		uvWeight, err := tensor.New([]int{kvBShape[0], kvBHalf}, uvData)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d create uv weight: %w", i, err)
+		}
+		wUK := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("kv_b_k_proj.weight", ukWeight)), nil,
+		)
+		wUV := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("kv_b_v_proj.weight", uvWeight)), nil,
+		)
+		wO := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("o_proj.weight", oProjWT)), nil,
+		)
+
+		// RoPE for MLA.
+		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
+			embeddings.WithRotaryBase(cfg.RopeTheta),
+		}
+		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
+			ctx, proxy, headDim, cfg.MaxSeqLen, ropeOpts...,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d rope: %w", i, err)
+		}
+
+		mla := attention.NewMultiHeadLatentAttention[float32](
+			proxy, ops, cfg.NumHeads, headDim, kvLoraDim,
+			wQ, wDKV, wUK, wUV, wO, rope,
+		)
+		attnOut := builder.AddNode(mla, normed)
+
+		// --- Fused Residual Add + Pre-FFN LayerNorm ---
+		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		if err != nil {
+			return nil, nil, err
+		}
+		fusedNode := &fusedAddRMSNormNode[float32]{engine: proxy, weight: postNormW, eps: rmsEps}
+		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
+
+		// --- MoE or standard FFN ---
+		var ffnOut graph.Node[float32]
+		if cfg.NumExperts > 0 {
+			ffnOut, err = buildDeepSeekMoE(
+				tensors, cfg, proxy, ops, builder, normed2, i, blkPrefix, prefix,
+			)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d moe: %w", i, err)
+			}
+		} else {
+			ffnOut, err = buildDeepSeekStandardFFN(tensors, cfg, proxy, ops, builder, normed2, prefix)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d ffn: %w", i, err)
+			}
+		}
+
+		// --- Residual Add ---
+		resAdd := &residualAddNode[float32]{engine: proxy, source: fusedNode}
+		hidden = builder.AddNode(resAdd, ffnOut)
+	}
+
+	// --- Final RMSNorm ---
+	finalNorm, err := normalization.NewRMSNormFromParam[float32](
+		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	normedFinal := builder.AddNode(finalNorm, hidden)
+
+	// --- LM Head ---
+	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	output := builder.AddNode(lmHead, normedFinal)
+
+	g, err := builder.Build(output)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build graph: %w", err)
+	}
+
+	g.SetEngineProxy(proxy)
+	return g, embedWeight, nil
+}
+
+// lookupMLAQProj finds the query projection weight for DeepSeek MLA.
+func lookupMLAQProj(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	blkPrefix, layerPrefix string,
+) (*tensor.TensorNumeric[float32], error) {
+	if t, ok := tensors[layerPrefix+"self_attn.q_proj.weight"]; ok {
+		return t, nil
+	}
+	if t, ok := tensors[blkPrefix+"attn_q_a_proj.weight"]; ok {
+		return t, nil
+	}
+	if t, ok := tensors[blkPrefix+"attn_q.weight"]; ok {
+		return t, nil
+	}
+	return nil, fmt.Errorf("missing query projection tensor for %s", blkPrefix)
+}
+
+// lookupDeepSeekOProj finds the output projection weight.
+func lookupDeepSeekOProj(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	blkPrefix, layerPrefix string,
+) (*tensor.TensorNumeric[float32], error) {
+	if t, ok := tensors[layerPrefix+"self_attn.o_proj.weight"]; ok {
+		return t, nil
+	}
+	if t, ok := tensors[blkPrefix+"attn_output.weight"]; ok {
+		return t, nil
+	}
+	return nil, fmt.Errorf("missing output projection tensor for %s", blkPrefix)
+}
+
+// buildDeepSeekMoE constructs the MoE sub-graph for a single DeepSeek layer.
+func buildDeepSeekMoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix, layerPrefix string,
+) (graph.Node[float32], error) {
+	numExperts := cfg.NumExperts
+	topK := cfg.NumExpertsPerToken
+	if topK == 0 {
+		topK = 6
+	}
+
+	// Load router weight.
+	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	}
+
+	// Load stacked expert weights.
+	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	}
+	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	}
+	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	}
+
+	// Split stacked expert weights into individual expert FFNs.
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	// Build shared expert if present.
+	if cfg.NumSharedExperts > 0 {
+		sharedFFN, err := buildSharedExpertFFN(tensors, proxy, ops, blkPrefix, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("shared expert: %w", err)
+		}
+		moe.SharedExpert = sharedFFN
+	}
+
+	// Reshape [batch, seqLen, hidden] -> [seqLen, hidden] for MoE.
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	// Router weight as constant node.
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	// Reshape back to [batch, seqLen, hidden].
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+
+// buildDeepSeekStandardFFN builds a standard SwiGLU FFN for layers without MoE.
+func buildDeepSeekStandardFFN(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	prefix string,
+) (graph.Node[float32], error) {
+	gateW, ok := tensors[prefix+"mlp.gate_proj.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.gate_proj.weight")
+	}
+	upW, ok := tensors[prefix+"mlp.up_proj.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.up_proj.weight")
+	}
+	downW, ok := tensors[prefix+"mlp.down_proj.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.down_proj.weight")
+	}
+
+	ffn, err := core.NewFFN[float32](
+		prefix+"mlp", proxy, ops,
+		cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
+		core.WithSwiGLU[float32](),
+		core.WithFFNNoBias[float32](),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	gateWT, err := proxy.Transpose(ctx, gateW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	upWT, err := proxy.Transpose(ctx, upW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	downWT, err := proxy.Transpose(ctx, downW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+
+	ffnParams := ffn.Parameters()
+	ffnParams[0].Value = gateWT
+	ffnParams[1].Value = downWT
+	ffnParams[2].Value = upWT
+
+	return builder.AddNode(ffn, normed), nil
+}
+
+// buildExpertFFN creates a single expert FFN from stacked expert weight tensors.
+func buildExpertFFN(
+	engine *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	gateExpsW, upExpsW, downExpsW *tensor.TensorNumeric[float32],
+	expertIdx, numExperts, hiddenDim, intermediateDim int,
+	name string,
+) (*core.FFN[float32], error) {
+	gateSlice, err := extractExpertSlice(gateExpsW, expertIdx, numExperts)
+	if err != nil {
+		return nil, fmt.Errorf("gate slice: %w", err)
+	}
+	upSlice, err := extractExpertSlice(upExpsW, expertIdx, numExperts)
+	if err != nil {
+		return nil, fmt.Errorf("up slice: %w", err)
+	}
+	downSlice, err := extractExpertSlice(downExpsW, expertIdx, numExperts)
+	if err != nil {
+		return nil, fmt.Errorf("down slice: %w", err)
+	}
+
+	ctx := context.Background()
+	gateWT, err := engine.Transpose(ctx, gateSlice, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	upWT, err := engine.Transpose(ctx, upSlice, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	downWT, err := engine.Transpose(ctx, downSlice, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+
+	ffn, err := core.NewFFN[float32](
+		name, engine, ops,
+		hiddenDim, intermediateDim, hiddenDim,
+		core.WithSwiGLU[float32](),
+		core.WithFFNNoBias[float32](),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	params := ffn.Parameters()
+	params[0].Value = gateWT
+	params[1].Value = downWT
+	params[2].Value = upWT
+
+	return ffn, nil
+}
+
+// extractExpertSlice extracts a single expert's weight from a stacked tensor.
+func extractExpertSlice(
+	stacked *tensor.TensorNumeric[float32],
+	expertIdx, numExperts int,
+) (*tensor.TensorNumeric[float32], error) {
+	shape := stacked.Shape()
+	if len(shape) == 3 {
+		rows := shape[1]
+		cols := shape[2]
+		data := stacked.Data()
+		start := expertIdx * rows * cols
+		end := start + rows*cols
+		sliceData := make([]float32, rows*cols)
+		copy(sliceData, data[start:end])
+		return tensor.New([]int{rows, cols}, sliceData)
+	}
+	if len(shape) == 2 {
+		totalRows := shape[0]
+		cols := shape[1]
+		rowsPerExpert := totalRows / numExperts
+		data := stacked.Data()
+		start := expertIdx * rowsPerExpert * cols
+		end := start + rowsPerExpert*cols
+		sliceData := make([]float32, rowsPerExpert*cols)
+		copy(sliceData, data[start:end])
+		return tensor.New([]int{rowsPerExpert, cols}, sliceData)
+	}
+	return nil, fmt.Errorf("unexpected stacked tensor shape %v", shape)
+}
+
+// buildSharedExpertFFN creates the shared expert FFN from GGUF tensors.
+func buildSharedExpertFFN(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	engine *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	blkPrefix string,
+	cfg *gguf.ModelConfig,
+) (*core.FFN[float32], error) {
+	gateW, ok := tensors[blkPrefix+"ffn_shared_expert_gate.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_gate.weight")
+	}
+	upW, ok := tensors[blkPrefix+"ffn_shared_expert_up.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_up.weight")
+	}
+	downW, ok := tensors[blkPrefix+"ffn_shared_expert_down.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_down.weight")
+	}
+
+	ctx := context.Background()
+	gateWT, err := engine.Transpose(ctx, gateW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	upWT, err := engine.Transpose(ctx, upW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	downWT, err := engine.Transpose(ctx, downW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+
+	ffn, err := core.NewFFN[float32](
+		blkPrefix+"shared_expert", engine, ops,
+		cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
+		core.WithSwiGLU[float32](),
+		core.WithFFNNoBias[float32](),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	params := ffn.Parameters()
+	params[0].Value = gateWT
+	params[1].Value = downWT
+	params[2].Value = upWT
+
+	return ffn, nil
+}
+
+// deepSeekReshapeNode reshapes between [batch, seqLen, hidden] and [seqLen, hidden]
+// for the MoE layer which expects 2D input.
+type deepSeekReshapeNode[T tensor.Numeric] struct {
+	engine  compute.Engine[T]
+	flatten bool // true: 3D->2D, false: 2D->3D (uses shape from second input)
+}
+
+func (n *deepSeekReshapeNode[T]) OpType() string { return "DeepSeekReshape" }
+
+func (n *deepSeekReshapeNode[T]) Attributes() map[string]any {
+	return map[string]any{"flatten": n.flatten}
+}
+
+func (n *deepSeekReshapeNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if n.flatten {
+		shape := inputs[0].Shape()
+		return n.engine.Reshape(ctx, inputs[0], []int{shape[0] * shape[1], shape[2]})
+	}
+	refShape := inputs[1].Shape()
+	return n.engine.Reshape(ctx, inputs[0], refShape)
+}
+
+func (n *deepSeekReshapeNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return nil, nil
+}
+
+func (n *deepSeekReshapeNode[T]) Parameters() []*graph.Parameter[T] { return nil }
+func (n *deepSeekReshapeNode[T]) OutputShape() []int                { return nil }
+
+// deepSeekConstNode wraps a tensor as a constant graph node.
+type deepSeekConstNode[T tensor.Numeric] struct {
+	value *tensor.TensorNumeric[T]
+}
+
+func (n *deepSeekConstNode[T]) OpType() string                    { return "Constant" }
+func (n *deepSeekConstNode[T]) Attributes() map[string]any        { return nil }
+func (n *deepSeekConstNode[T]) Parameters() []*graph.Parameter[T] { return nil }
+func (n *deepSeekConstNode[T]) OutputShape() []int                { return nil }
+
+func (n *deepSeekConstNode[T]) Forward(_ context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return n.value, nil
+}
+
+func (n *deepSeekConstNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return nil, nil
+}
