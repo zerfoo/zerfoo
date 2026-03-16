@@ -1,5 +1,3 @@
-// Package inference provides a high-level API for loading models and
-// generating text with minimal boilerplate.
 package inference
 
 import (
