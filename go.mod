@@ -3,10 +3,8 @@ module github.com/zerfoo/zerfoo
 go 1.25
 
 require (
-	github.com/google/go-cmp v0.7.0
 	github.com/zerfoo/float16 v0.2.0
 	github.com/zerfoo/float8 v0.2.0
-	github.com/zerfoo/zmf v0.3.0
 	gonum.org/v1/gonum v0.16.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.8
@@ -22,8 +20,9 @@ exclude google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de
 
 exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
-require google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+require (
+	github.com/google/go-cmp v0.7.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+)
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
-
-replace github.com/zerfoo/zmf => ../zmf
