@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-16
+
+### Added
+
+- `inference.GenerateBatch` for multi-sequence parallel generation
+- `serve.BatchScheduler` wired to `GenerateBatch` for concurrent request handling
+- Q5_K and Q6_K native float32 dequantization (replaces lossy Q4_0 re-quantization)
+- Release-please CI pipeline (`.github/workflows/release-please.yml`)
+- README Quick Start guide, badges, and feature examples
+
+### Fixed
+
+- `go vet` and `golangci-lint` clean across all packages (ptrFromUintptr, errcheck, gosec)
+
 ## [0.2.0] - 2026-03-16
 
 ### Added
