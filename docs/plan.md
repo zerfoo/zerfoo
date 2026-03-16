@@ -1,63 +1,64 @@
-# Zerfoo Phase 19: "Ship-Ready" -- Complete Phase 1 + Developer Experience
+# Zerfoo Phase 20: "Throughput & Release" — Quantization, Batching, DGX, v0.2.0
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo has strong inference performance (234 tok/s, 18.8% faster than Ollama) and
-production infrastructure (OpenAI API, training, distributed), but Phase 1
-(Inference Excellence) has critical gaps that block credible adoption:
+Phase 19 completed all six GGUF architecture builders, one-line API, HuggingFace download,
+structured output, tool calling, and API audits. Three categories of gaps remain:
 
-- Only 2 of 6 claimed architectures have GGUF graph builders (Llama, Gemma).
-  Mistral, Qwen, Phi, and DeepSeek have config parsers and chat templates but
-  return "unsupported architecture" when loaded as GGUF.
-- FP16 and FP8 inference are broken (GQA tensor storage mismatch).
-- CUDA graph capture does not deliver speedup (D2H transfer in GQA prevents
-  graph closure).
-- ztensor (v0.1.0) and ztoken (v0.1.0) are under-released despite substantial work.
+1. **Quantization accuracy loss**: Q5_K_M and Q6_K weights are silently re-quantized down to
+   Q4_0 in `model/gguf/loader.go:170,182` before GEMV. This reduces output quality and breaks
+   model parity for users who request these quants explicitly.
 
-Phase 19 closes these Phase 1 gaps and layers in the highest-impact Phase 2
-(Developer Experience) items: one-line inference API, HuggingFace model download,
-structured output, and tool calling.
+2. **Throughput ceiling**: `BatchScheduler` in `serve/batch.go` fans out concurrent requests
+   into sequential single-sequence `Generate` calls. `PagedKVCache` in `generate/paged_kv.go`
+   exists but is not wired into the `Generator`. True concurrent-sequence batching requires
+   multi-sequence decode via paged KV.
+
+3. **DGX verification debt**: T2.6 (all 6 architectures E2E), T1.1/T1.2 DGX FP16/FP8, and
+   T1.3 CUDA graph speedup were coded in Phase 19 but never verified on DGX Spark because the
+   machine was offline. These remain open until DGX is accessible.
+
+4. **Release gap**: ztensor v0.2.0 and ztoken v0.2.0 shipped in Phase 19. zerfoo itself has
+   no published release. Users cannot `go get github.com/zerfoo/zerfoo@v0.2.0`.
 
 ### Objectives
 
-- O1: All 6 architectures produce correct GGUF inference on DGX Spark.
-- O2: FP16 and FP8 inference pass end-to-end on at least Gemma 3 and Llama 3.
-- O3: CUDA graph capture delivers measurable decode speedup (target 20%+).
-- O4: `zerfoo pull` downloads GGUF models from HuggingFace (ADR 039).
-- O5: One-line inference API: `zerfoo.Load("model") -> model.Chat("prompt")`.
-- O6: Structured output via grammar-guided decoding (ADR 038).
-- O7: ztensor v0.2.0 and ztoken v0.2.0 released.
+- O1: Q5_K_M and Q6_K use native dequant float32 GEMV — no lossy re-quantization.
+- O2: Concurrent requests use multi-sequence decode via PagedKV (target: 2× concurrent
+  throughput vs serial fan-out at batch size 4).
+- O3: DGX E2E verification — all 6 architectures produce coherent text, FP16/FP8 pass,
+  CUDA graph delivers 20%+ decode speedup vs non-graph baseline.
+- O4: zerfoo v0.2.0 published — CHANGELOG, README, go-release CI, git tag.
+- O5: Three runnable example applications: chatbot, RAG, structured output.
 
 ### Non-Goals
 
-- Pre-training at scale.
-- Continuous batching (deferred to Phase 20 -- requires PagedAttention).
-- Prefill/decode split (deferred to Phase 20).
-- Quantization improvements (GPTQ, AWQ, Q5_K/Q6_K native GEMV -- deferred).
-- LoRA fine-tuning (Phase 3 per VISION.md).
+- LoRA / QLoRA fine-tuning (Phase 3 per VISION.md).
+- GPTQ / AWQ quantization formats.
+- Metal backend (macOS GPU).
+- Prefill/decode phase split (needs multi-node coordination — Phase 21).
+- Multimodal (vision-language) inference.
 
-### Constraints and Assumptions
+### Constraints
 
-- DGX Spark: 128 GB unified memory, CUDA capable. Available at ssh ndungu@192.168.86.250.
-- DeepSeek V3 (671B) does not fit on DGX Spark. Use DeepSeek-V2-Lite (16B) as the
-  test model -- same MLA + MoE architecture, Q8_0 is ~17 GB.
-- All code is pure Go, zero CGo. GPU via purego/dlopen.
-- GGUF is the sole model format (ADR 037).
-- Go standard library only -- no cobra, viper, testify, etc.
+- DGX Spark: 128 GB unified memory, CUDA. Available at ssh ndungu@192.168.86.250.
+  E3 tasks (DGX verification) are gated on DGX access. All other tasks run locally.
+- Pure Go, zero CGo. GPU via purego/dlopen.
+- Go standard library only — no cobra, viper, testify.
+- GGUF is the sole model format (ADR-037).
 
 ### Success Metrics
 
 | Metric | Current | Target | Measurement |
 |--------|---------|--------|-------------|
-| Working GGUF architectures | 2 (Llama, Gemma) | 6 | `buildArchGraph` handles all 6 |
-| FP16 inference | Broken | Passing | DGX Spark end-to-end test |
-| FP8 inference | Broken | Passing | DGX Spark end-to-end test |
-| CUDA graph decode speedup | 0% (fallback) | 20%+ | Benchmark vs non-graph baseline |
-| Lines to first inference | ~40 | <10 | `zerfoo.Load` + `model.Chat` |
-| ztensor version | v0.1.0 | v0.2.0 | git tag |
-| ztoken version | v0.1.0 | v0.2.0 | git tag |
+| Q5_K_M accuracy | Lossy (re-quant to Q4_0) | Exact (native dequant) | Perplexity delta < 0.1 vs reference |
+| Q6_K accuracy | Lossy (re-quant to Q4_0) | Exact (native dequant) | Perplexity delta < 0.1 vs reference |
+| Concurrent throughput (batch=4) | ~234 tok/s (serial) | 300+ tok/s | DGX benchmark |
+| DGX architectures verified | 0 (all offline) | 6/6 | E2E coherent text on DGX |
+| zerfoo release | None (untagged) | v0.2.0 | `go get github.com/zerfoo/zerfoo@v0.2.0` |
+| Example applications | 2 (inference, embedding) | 5 (+ chatbot, rag, json-output) | Run `go run examples/*/main.go` |
 
 ---
 
@@ -65,346 +66,194 @@ structured output, and tool calling.
 
 ### In Scope
 
-- GGUF graph builders for Mistral, Qwen, Phi, DeepSeek architectures.
-- FP16/FP8 GQA tensor storage mismatch fix.
-- CUDA graph D2H transfer elimination in GQA.
-- TestBatchGenerate race condition fix.
-- ztensor v0.2.0 and ztoken v0.2.0 releases.
-- HuggingFace model download CLI and library integration (ADR 039).
-- One-line inference API (Load, Chat, Generate, Embed).
-- Structured output via grammar-guided decoding (ADR 038).
-- Tool/function calling in chat API.
-- API stability audit of public interfaces.
+- Native Q5_K and Q6_K dequant GEMV (no Q4_0 re-quantization).
+- Multi-sequence decode via PagedKVCache wired into Generator.
+- BatchScheduler wired to multi-sequence Generator for concurrent requests.
+- DGX E2E verification: 6 architectures, FP16, FP8, CUDA graph speedup.
+- zerfoo v0.2.0: CHANGELOG, go-release CI, git tag, README.
+- Three new example apps: chatbot CLI, RAG search, structured JSON output.
 
 ### Out of Scope
 
-- Continuous batching / PagedAttention.
-- Prefill/decode phase split.
-- GPTQ/AWQ/Q5_K/Q6_K native quantization.
-- LoRA adapters.
-- Model hub registry (beyond HuggingFace download).
-- Multimodal inference (vision-language).
+- LoRA / fine-tuning, GPTQ / AWQ, Metal backend, prefill/decode split, multimodal.
 
 ### Deliverables
 
 | ID | Description | Acceptance Criteria |
 |----|-------------|-------------------|
-| D1 | 6 working GGUF architectures | All 6 produce coherent text on DGX Spark |
-| D2 | FP16/FP8 inference | Both pass Gemma 3 and Llama 3 end-to-end |
-| D3 | CUDA graph speedup | 20%+ decode speedup measured on DGX |
-| D4 | ztensor v0.2.0, ztoken v0.2.0 | Git tags, release-please PRs merged |
-| D5 | `zerfoo pull` CLI | Downloads GGUF from HuggingFace, caches locally |
-| D6 | One-line API | `zerfoo.Load` + `model.Chat` in <10 lines |
-| D7 | Structured output | JSON schema-constrained generation works |
-| D8 | Tool calling | Function calling via chat completions API |
+| D1 | Q5_K/Q6_K native GEMV | Loader no longer re-quantizes; perplexity within 0.1 of reference |
+| D2 | Multi-sequence batched decode | PagedKV wired into Generator; 2× throughput at batch=4 on DGX |
+| D3 | DGX E2E verification | All 6 architectures coherent, FP16/FP8 pass, CUDA graph 20%+ speedup |
+| D4 | zerfoo v0.2.0 release | Tag published, go-release CI green, README updated |
+| D5 | Example apps | 3 new runnable examples in examples/ |
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E1: Stability -- Fix Broken Inference Paths
+### E1: Quantization — Native Q5_K and Q6_K GEMV
 
-- [x] T1.1 Fix FP16 inference -- GQA tensor storage mismatch  Owner: Claude  Done: 2026-03-16
-  - Fix: decodeF16Tensor preserves Float16Storage; transposeWeight handles FP16/FP8; NewFloat16StorageFromRaw added to ztensor. DGX verification still needed.
+Remove the lossy Q4_0 re-quantization fallback added for NEON GEMV and implement
+proper float32 dequantization GEMV for both quant types.
 
-- [x] T1.2 Fix FP8 inference -- same GQA root cause  Owner: Claude  Done: 2026-03-16
-  - Branch fix/fp8-gqa-storage-mismatch. FP8 E4M3 CPU transpose path fixed in arch_common.go.
+Reference: `model/gguf/loader.go:160-185` is where Q5_K and Q6_K currently
+re-quantize to Q4_0. `layers/gemv/` contains the GEMV implementations.
+The fix: dequant Q5_K/Q6_K blocks to float32 directly in the GEMV path
+(or add a Q5_K/Q6_K-native dequant path in `layers/gemv/quantized.go`).
 
-- [x] T1.3 Fix CUDA graph capture -- eliminate D2H transfer in GQA decode  Owner: Claude  Done: 2026-03-16
-  - Fix: FullBufferProvider interface + FlashAttentionDecode path eliminates D2H. DGX 20%+ benchmark still needed.
+- [x] T1.1 Implement native Q5_K dequant GEMV  Owner: Claude  Done: 2026-03-16
+  - Acceptance: `loader.go` no longer calls re-quantize-to-Q4_0 for Q5_K.
+    `go test ./layers/gemv/ -run Q5` passes. `go test ./model/gguf/ -run Q5` passes.
+    Q5_K_M weights produce identical outputs to reference Python decode on a 16-token prompt.
 
-- [x] T1.4 Fix TestBatchGenerate race condition  Owner: Claude  Done: 2026-03-16
-  - Fix: sync.Mutex on Generator serializes Generate/GenerateStream. TestGenerate_ConcurrentSafety regression test. go test -race -count=10 passes.
+- [x] T1.2 Implement native Q6_K dequant GEMV  Owner: Claude  Done: 2026-03-16
+  - Acceptance: Same as T1.1 but for Q6_K. Both quants tested via table-driven tests.
+    `loader.go` Q6_K branch calls native path, not re-quantize.
 
-- [x] T1.5 Release ztensor v0.2.0  Owner: Claude  Done: 2026-03-16
-  - Tag SHA: c24092c67728b2ef23ba1dcc7fd3daa042e79381. go build/test/vet all clean.
+- [ ] T1.3 go vet/lint clean after E1 changes  Owner:  Done: (deps: T1.1✅ T1.2✅)
+  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
+    All existing tests pass.
 
-- [x] T1.6 Release ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
-  - CHANGELOG created. Tag v0.2.0 created locally. Human must push: cd ztoken && git push origin main && git push origin v0.2.0
+### E2: Batching — Multi-Sequence Decode via PagedKV
 
-- [x] T1.7 Update zerfoo go.mod to use ztensor v0.2.0 and ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
-  - Removed local replace directive. Bumped both to v0.2.0. go build clean.
+Wire `PagedKVCache` (generate/paged_kv.go) into the `Generator` for true
+multi-sequence decode. Update `BatchScheduler` (serve/batch.go) to use the
+multi-sequence Generator path instead of sequential fan-out.
 
-- [x] T1.8 Run go vet and linter across zerfoo, ztensor, ztoken  Owner: Claude  Done: 2026-03-16
-  - Branch chore/vet-lint-audit-2026-03-16. Zero new warnings. 16 pre-existing purego unsafe.Pointer warnings documented in QUALITY.md.
+The Generator currently handles a single sequence. The paged KV API supports
+multiple sequences via per-sequence block tables. The work:
+1. Add `GenerateBatch(ctx, prompts []string, opts) ([]string, error)` to
+   `inference/inference.go` backed by multi-sequence PagedKV decode.
+2. Update `BatchHandler` in `serve/batch.go` to call `GenerateBatch` when
+   `model.supportsBatch` is true.
+3. Integration test: 4 concurrent chat requests in `serve/batch_test.go`.
 
-### E2: Model Coverage -- GGUF Graph Builders
+- [ ] T2.1 Add GenerateBatch to inference.Model via PagedKV  Owner:  Done:
+  - Acceptance: `inference.Model.GenerateBatch(ctx, []string, opts) ([]string, error)` added.
+    Uses `PagedKVCache` for shared KV across sequences. Unit tests in `inference/batch_test.go`
+    cover 1, 2, 4 concurrent sequences. `go test ./inference/ -run Batch -race` passes.
 
-Each architecture has an existing config parser and chat template. The work is
-implementing `buildXxxGraph` functions that construct computation graphs from
-GGUF tensor maps, and wiring them into `buildArchGraph` in `load_gguf.go`.
+- [ ] T2.2 Wire serve.BatchScheduler to GenerateBatch  Owner:  Done: (deps: T2.1✅)
+  - Acceptance: `Server.handleChat` uses `GenerateBatch` when batch size > 1.
+    `serve/batch_test.go` integration test: 4 concurrent `/v1/chat/completions` requests
+    all complete and return correct responses. No data races.
 
-Reference: `buildTransformerGraph` in `arch_common.go` is the shared builder
-that Llama and Gemma use. Mistral, Qwen, and Phi are dense transformers that
-can extend it via `transformerGraphOpts`. DeepSeek requires MLA + MoE layers
-(both already implemented in `layers/attention/` and `layers/core/`).
+- [ ] T2.3 go vet/lint clean on generate/ and serve/ after E2 changes  Owner:  Done: (deps: T2.2✅)
+  - Acceptance: `go vet ./generate/... ./serve/...` 0 warnings;
+    `golangci-lint run ./generate/... ./serve/...` 0 issues.
+    Full test suite passes.
 
-- [x] T2.1 Implement buildMistralGraph -- sliding window attention  Owner: Claude  Done: 2026-03-16
-  - arch_mistral.go + BuildCausalSlidingWindowMask + 5 tests. DGX verification needed.
+### E3: DGX Verification — Architecture, Precision, CUDA Graph
 
-- [x] T2.2 Implement buildQwenGraph -- attention bias, RoPE theta=1M  Owner: Claude  Done: 2026-03-16
-  - arch_qwen.go + attnBias in transformerGraphOpts + 6 tests. DGX verification needed.
-  - Implementation: Extend `transformerGraphOpts` with `attnBias bool`. Load `blk.N.attn_q.bias`, `blk.N.attn_k.bias`, `blk.N.attn_v.bias` when present. Wire "qwen2" case.
-  - Test: Unit test for bias application. Integration test loading Qwen 2.5 GGUF.
+All tasks in E3 are BLOCKED until DGX Spark (ssh ndungu@192.168.86.250) is accessible.
 
-- [x] T2.3 Implement buildPhiGraph -- partial rotary factor  Owner: Claude  Done: 2026-03-16
-  - arch_phi.go with partialRotaryFactor in transformerGraphOpts. Merged in Wave 1 (missed in plan update).
+Preflight for each DGX task:
+```bash
+git pull && GONOSUMDB='github.com/zerfoo/*' GONOPROXY='github.com/zerfoo/*' go build ./...
+```
 
-- [x] T2.4 Implement buildDeepSeekGraph -- MLA + MoE  Owner: Claude  Done: 2026-03-16
-  - arch_deepseek.go + MLA/MoE fields in gguf.ModelConfig + tests. DGX verification needed.
+- [ ] T3.1 DGX E2E — all 6 architectures produce coherent text  Owner:  Done: (BLOCKED: DGX offline)
+  - Architectures: Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek-V2-Lite.
+  - Acceptance: Each model loads GGUF, generates ≥20 coherent tokens on a standard
+    prompt. No panics, no "unsupported architecture" errors.
+    Record tok/s, model size, quant in docs/benchmarks.md.
 
-- [x] T2.5 Wire all new architectures into buildArchGraph  Owner: Claude  Done: 2026-03-16
-  - All cases added in Wave 1: mistral, qwen2, phi3/phi, deepseek_v3/deepseek2 all wired.
+- [ ] T3.2 DGX FP16 inference E2E  Owner:  Done: (BLOCKED: DGX offline, deps: T3.1✅)
+  - Acceptance: Gemma 3 and Llama 3 FP16 GGUF files load and generate without error.
+    Output matches F32 output within float16 precision tolerance.
 
-- [ ] T2.6 End-to-end DGX verification for all 6 architectures  Owner: TBD  Est: 4h  BLOCKED: DGX unreachable (192.168.86.250 offline 2026-03-16)
-  - Deps: T2.5
-  - AC: All 6 architectures produce coherent multi-sentence output. Benchmark throughput recorded for each.
-  - Models: Gemma 3 1B Q4_K_M, Llama 3 8B Q4_K_M, Mistral 7B Q4_K_M, Qwen 2.5 7B Q4_K_M, Phi 3 mini Q4_K_M, DeepSeek-V2-Lite Q8_0.
+- [ ] T3.3 DGX FP8 inference E2E  Owner:  Done: (BLOCKED: DGX offline, deps: T3.1✅)
+  - Acceptance: Same as T3.2 but for FP8 E4M3FN quants.
 
-- [x] T2.7 Run go vet and linter on inference package  Owner: Claude  Done: 2026-03-16
-  - Zero new warnings in inference/. All new arch files clean. No commit needed.
+- [ ] T3.4 DGX CUDA graph decode speedup ≥ 20%  Owner:  Done: (BLOCKED: DGX offline, deps: T3.1✅)
+  - Acceptance: Benchmark `generate/bench_decode_test.go -bench=BenchmarkDecode` with
+    and without `WithCUDAGraph`. Graph path must be ≥ 20% faster. Record in benchmarks.md.
 
-### E3: HuggingFace Model Download (ADR 039)
+- [ ] T3.5 DGX throughput benchmark after batching  Owner:  Done: (BLOCKED: DGX offline, deps: T2.2✅ T3.1✅)
+  - Acceptance: `serve/loadtest_test.go` with 4 concurrent clients. Measure tok/s.
+    Target ≥ 300 tok/s at batch=4. Record result in benchmarks.md.
 
-Decision rationale: docs/adr/039-huggingface-model-download.md
+### E4: Example Applications
 
-- [x] T3.1 Implement HuggingFace HTTP API client  Owner: Claude  Done: 2026-03-16
-  - model/huggingface/ package. NewClient/GetModel/ListGGUFFiles/ResolveGGUF. 11 unit tests + integration tests (//go:build integration).
+Add three runnable examples to the `examples/` directory. Each must be a
+standalone Go program (`go run examples/<name>/main.go`).
 
-- [x] T3.2 Implement download with resume and progress  Owner: Claude  Done: 2026-03-16
-  - Branch feat/hf-download-resume. Downloader with Range resume, SHA256, progress callback. 7 tests, -race clean.
+- [x] T4.1 Chatbot CLI example  Owner: Claude  Done: 2026-03-16
+  - Acceptance: `examples/chat/main.go` implements a readline loop that calls
+    `model.Chat(prompt)` and prints the response. Works with any GGUF model path
+    passed as `--model` flag. `README.md` in the directory explains usage.
+    `go build ./examples/chat/` compiles. `go vet ./examples/chat/` clean.
 
-- [x] T3.3 Implement cache manifest and management  Owner: Claude  Done: 2026-03-16
-  - Branch feat/cache-manifest. cache.go with Add/Remove/List/FindByRepoAndFile, atomic SaveManifest. 9 tests, -race clean.
+- [x] T4.2 RAG demo example  Owner: Claude  Done: 2026-03-16
+  - Acceptance: `examples/rag/main.go` embeds a small document corpus via
+    `model.Embed(texts)`, stores vectors in memory, accepts a query, finds the
+    top-3 most similar documents via `CosineSimilarity`, and passes them as context
+    to `model.Chat`. Self-contained — corpus is hardcoded (5 short facts).
+    `go build ./examples/rag/` compiles. `go vet ./examples/rag/` clean.
 
-- [x] T3.4 Implement `zerfoo pull` CLI command  Owner: Claude  Done: 2026-03-16
-  - cmd/cli/pull.go (--quant), list.go, rm.go; registry/pull.go quant resolver. 44 tests, integration TestPullListRm_Integration with fake HF server.
+- [x] T4.3 Structured JSON output example  Owner: Claude  Done: 2026-03-16
+  - Acceptance: `examples/json-output/main.go` calls `model.Generate` with
+    `WithSchema(schema)` where the schema describes `{name: string, age: number}`.
+    Prints the constrained JSON output. `go build ./examples/json-output/` compiles.
+    `go vet ./examples/json-output/` clean.
 
-- [x] T3.5 Integrate cache into zerfoo.Load()  Owner: Claude  Done: 2026-03-16
-  - api.go: Load() routes non-local IDs through loadFromHuggingFace(); cache hit → load local; cache miss → download + update manifest. model/huggingface/cache.go: FindByRepo(), CacheDir() helpers added.
+### E5: Release — zerfoo v0.2.0
 
-- [x] T3.6 Run go vet and linter on model/huggingface/ and cmd/  Owner: Claude  Done: 2026-03-16
-  - Zero warnings. Also fixed pre-existing TestPredictCommand_Run_FullPath by updating zmf→gguf loader registration (commit 99a7b72).
+- [x] T5.1 Set up go-release CI pipeline  Owner: Claude  Done: 2026-03-16
+  - Acceptance: `.github/workflows/release-please.yml` exists in zerfoo repo.
+    `release-please` config targets Go library release type.
+    `.github/workflows/ci.yml` runs `go test ./... -race` on every PR.
+    `go vet ./...` 0 warnings.
 
-### E4: Developer Experience -- High-Level API
+- [ ] T5.2 Write CHANGELOG for v0.2.0  Owner:  Done: (deps: T5.1✅)
+  - Acceptance: `CHANGELOG.md` created with v0.2.0 section covering:
+    Phase 19 + Phase 20 deliverables grouped by category (Features, Bug Fixes,
+    API, Performance). Follows Keep a Changelog format.
 
-- [x] T4.1 Implement zerfoo.Load() high-level model loader  Owner: Claude  Done: 2026-03-16
-  - api.go: Load/Chat/Generate/Embed/Close + GenerateOption (WithGenMaxTokens/WithGenTemperature/WithGenTopP). 5 tests. HF stub returns error.
-  - AC: `zerfoo.Load("/path/to/model.gguf")` returns a `*zerfoo.Model` with Chat, Generate, Embed methods. Detects architecture from GGUF metadata.
-  - Package: top-level zerfoo/ package
-  - Test: Unit test with a small test GGUF fixture.
+- [ ] T5.3 Update README for v0.2.0  Owner:  Done: (deps: T5.2✅)
+  - Acceptance: `README.md` top section shows one-line inference example
+    (`zerfoo.Load` + `model.Chat`), HuggingFace download, structured output,
+    and tool calling snippets. Badges: CI, Go version, License. No broken links.
 
-- [x] T4.2 Implement Model.Chat() and Model.Generate()  Owner: Claude  Done: 2026-03-16
-  - Implemented in api.go alongside T4.1. Chat, Generate, GenerateResult, WithGenMaxTokens/Temperature/TopP all present.
-
-- [x] T4.3 Implement Model.Embed()  Owner: Claude  Done: 2026-03-16
-  - Branch feat/chat-stream commit 9d4cce7. Branch name collision with T4.4+T5.1 -- verified at merge.
-
-- [x] T4.4 Implement Model.ChatStream() for streaming  Owner: Claude  Done: 2026-03-16
-  - Branch feat/chat-stream (NOTE: name collides with T5.1 branch -- verify at merge). 5 tests, -race clean.
-
-- [x] T4.5 Run go vet and linter on top-level package  Owner: Claude  Done: 2026-03-16
-  - go vet ./... and golangci-lint run clean. Zero new warnings. Documented 16 pre-existing purego unsafe.Pointer suppressions in docs/QUALITY.md.
-
-### E5: Structured Output -- Grammar-Guided Decoding (ADR 038)
-
-Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
-
-- [x] T5.1 Implement JSON Schema to CFG converter  Owner: Claude  Done: 2026-03-16
-  - Branch feat/chat-stream. generate/grammar/ with schema.go, grammar.go, converter.go. 22 tests, -race clean.
-
-- [x] T5.2 Implement token mask computation from CFG state  Owner: Claude  Done: 2026-03-16
-  - Branch feat/tool-call-detection commit 32a3ed5. mask.go: TokenMask advances grammar per byte. 10 test cases (33 total), -race clean.
-
-- [x] T5.3 Integrate grammar engine into generation pipeline  Owner: Claude  Done: 2026-03-16
-  - generate/grammar_mask.go: applyTokenMask + advanceGrammar. generate/generator.go: GrammarState in SamplingConfig, mask applied in sampleFromLogits, grammar advanced per token. inference/inference.go: WithGrammar(). api.go: WithSchema(). 8 tests, -race clean.
-
-- [x] T5.4 Add response_format support to OpenAI API server  Owner: Claude  Done: 2026-03-16
-  - serve/server.go: ResponseFormat + JSONSchemaFormat types, grammar wired via inference.WithGrammar(). 5 integration tests (json_schema, json_object, invalid schema→400). 156 tests pass.
-
-- [ ] T5.5 Run go vet and linter on generate/grammar/  Owner: TBD  Est: 30m
-  - Deps: T5.4
-  - AC: Zero warnings.
-
-### E6: Tool/Function Calling
-
-- [x] T6.1 Implement tool definition parsing in chat API  Owner: Claude  Done: 2026-03-16
-  - Branch feat/tool-definition-parsing. serve/tools.go + server.go changes. 36 test cases, -race clean.
-
-- [x] T6.2 Implement tool call detection and response formatting  Owner: Claude  Done: 2026-03-16
-  - Branch feat/tool-call-detection commit c55f693. serve/tool_calls.go + server.go wiring. OpenAI-compatible tool_calls response.
-
-- [x] T6.3 Add tool calling to OpenAI API server  Owner: Claude  Done: 2026-03-16
-  - serve/server.go: forced tool_choice implemented. serve/tool_calls_integration_test.go: 9 integration tests covering auto+forced tool_choice paths. 76 tests pass, -race clean.
-
-- [x] T6.4 Add tool calling to high-level library API  Owner: Claude  Done: 2026-03-16
-  - api.go: WithTools(), WithToolChoice(), ToolCall type, ToolCalls []ToolCall in GenerateResult. api_tool_call_test.go: 5 table-driven cases. -race clean.
-
-- [x] T6.5 Run go vet and linter on tool calling code  Owner: Claude  Done: 2026-03-16
-  - serve/ and api.go tool calling code already clean. go vet zero warnings. All tests pass -race.
-
-### E7: API Stability Audit
-
-- [ ] T7.1 Audit public API surface of zerfoo package  Owner: TBD  Est: 3h
-  - Deps: T4.5, T5.5, T6.5
-  - AC: Every exported type, function, and method in the zerfoo top-level package is documented with godoc. Types marked as stable or experimental. No unexported fields that should be exported, no exported fields that should be private.
-
-- [x] T7.2 Audit public API surface of ztensor package  Owner: Claude  Done: 2026-03-16
-  - ztensor repo docs/api-audit-2026-03-16 → merged to main (35af914). Godoc on tensor/, compute/, graph/, numeric/, log/, metrics/, testing/ packages. All symbols marked Stable/Experimental.
-
-- [x] T7.3 Audit public API surface of ztoken package  Owner: Claude  Done: 2026-03-16
-  - ztoken repo docs/api-audit-2026-03-16 → merged to main (327b969). Stability markers added to 7 exported types. 2 packages, all tests pass.
+- [ ] T5.4 Tag and publish zerfoo v0.2.0  Owner:  Done: (deps: T5.1✅ T5.2✅ T5.3✅)
+  - Acceptance: `git tag v0.2.0 && git push origin v0.2.0`. release-please PR
+    auto-created (or manually created if CI not yet live). `go get
+    github.com/zerfoo/zerfoo@v0.2.0` resolves successfully (may require GONOSUMDB
+    since repo is private until public launch).
 
 ---
 
-## 4. Parallel Work
+## 4. Dependency Graph
 
-### Tracks
+```
+T1.1 ──┐
+T1.2 ──┴── T1.3
 
-| Track | Epics | Description |
-|-------|-------|-------------|
-| A: Stability | E1 | Fix FP16, FP8, CUDA graph, race condition |
-| B: Mistral | T2.1 | Mistral graph builder |
-| C: Qwen | T2.2 | Qwen graph builder |
-| D: Phi | T2.3 | Phi graph builder |
-| E: DeepSeek | T2.4 | DeepSeek MLA+MoE graph builder |
-| F: HF Download | E3 (T3.1-T3.4) | HuggingFace API client and CLI |
-| G: High-Level API | E4 (T4.1-T4.4) | Load, Chat, Generate, Embed |
-| H: Grammar | E5 (T5.1-T5.2) | JSON Schema CFG and token masking |
-| I: Tool Calling | E6 (T6.1) | Tool definition parsing |
-| J: ztoken release | T1.6 | Independent release |
+T2.1 ──── T2.2 ──── T2.3
 
-Sync points:
-- After Wave 2: T2.1-T2.4 merge into T2.5 (wire into buildArchGraph).
-- After T4.2 + T5.2: T5.3 integrates grammar into generation.
-- After T5.3: T6.2 uses grammar for tool argument validation.
-- After all epics: T7.1-T7.3 audit APIs.
+T3.1 (BLOCKED) ──┬── T3.2
+                 ├── T3.3
+                 ├── T3.4
+                 └── T3.5 (also deps T2.2)
 
-### Maximum Parallelism
+T4.1, T4.2, T4.3  (no deps — fully independent)
 
-**Wave 1** (10 tasks, no dependencies):
-T1.1, T1.3, T1.4, T1.6, T2.1, T2.2, T2.3, T2.4, T3.1, T4.1
+T5.1 ──── T5.2 ──── T5.3 ──── T5.4
+```
 
-**Wave 2** (10 tasks, after Wave 1):
-T1.2 (needs T1.1), T1.5 (needs T1.3), T2.5 (needs T2.1-T2.4), T3.2 (needs T3.1), T4.2 (needs T4.1), T4.3 (needs T4.1), T5.1, T6.1, T4.4 (needs T4.2 but can stub), T1.7 (needs T1.5, T1.6)
-
-**Wave 3** (9 tasks, after Wave 2):
-T1.8 (needs T1.7), T2.6 (needs T2.5), T2.7 (needs T2.5), T3.3 (needs T3.2), T3.4 (needs T3.2, T3.3), T5.2 (needs T5.1), T6.2 (needs T6.1, T5.3 stubbed), T3.6 (needs T3.4), T4.5 (needs T4.4)
-
-**Wave 4** (8 tasks, after Wave 3):
-T3.5 (needs T3.3, T4.1), T5.3 (needs T5.2, T4.2), T5.4 (needs T5.3), T6.3 (needs T6.2), T6.4 (needs T6.2, T4.2), T5.5 (needs T5.4), T6.5 (needs T6.4), T7.2 (needs T1.5)
-
-**Wave 5** (3 tasks, final):
-T7.1 (needs T4.5, T5.5, T6.5), T7.3 (needs T1.6)
+Wave 1 (unblocked now): T1.1, T1.2, T4.1, T4.2, T4.3, T5.1
+Wave 2 (after Wave 1): T1.3 (deps T1.1+T1.2), T2.1, T5.2 (deps T5.1)
+Wave 3 (after Wave 2): T2.2 (deps T2.1), T5.3 (deps T5.2)
+Wave 4 (after Wave 3): T2.3 (deps T2.2), T5.4 (deps T5.1+T5.2+T5.3)
+Wave 5 (DGX-gated): T3.1–T3.5
 
 ---
 
-## 5. Timeline and Milestones
+## 5. Risk Register
 
-| Milestone | Deps | Exit Criteria |
-|-----------|------|---------------|
-| M1: Stability | T1.1-T1.8 | FP16, FP8, CUDA graph all pass on DGX. ztensor/ztoken released. |
-| M2: Full Model Coverage | T2.1-T2.7 | All 6 architectures produce coherent GGUF inference on DGX. |
-| M3: Model Download | T3.1-T3.6 | `zerfoo pull` downloads and caches GGUF from HuggingFace. |
-| M4: Developer API | T4.1-T4.5, T5.1-T5.5, T6.1-T6.5 | One-line API, structured output, tool calling all working. |
-| M5: Ship-Ready | T7.1-T7.3 | API audit complete. All deliverables D1-D8 met. |
-
----
-
-## 6. Risk Register
-
-| ID | Risk | Impact | Likelihood | Mitigation |
-|----|------|--------|------------|------------|
-| R1 | FP16/FP8 GQA root cause spans ztensor+zerfoo boundary | High | Medium | Investigate ztensor tensor allocation first. Both repos in same workspace. |
-| R2 | CUDA graph D2H elimination requires GQA restructuring | High | Medium | Profile first. May need GPU-resident position counter (see ADR 032). |
-| R3 | DeepSeek MLA+MoE graph builder surfaces bugs in MLA/MoE layers | Medium | Medium | Layers have unit tests. Run layer-level tests before integration. |
-| R4 | Grammar-guided decoding token mask is slow for large vocabularies | Medium | Low | Token mask is O(vocab) on CPU, runs in parallel with GPU forward. Profile on 128K vocab models. |
-| R5 | HuggingFace API changes or rate limits | Low | Low | Pin to documented API endpoints. Cache aggressively. Retry with backoff. |
-| R6 | DeepSeek-V2-Lite GGUF not available or broken | Medium | Low | Multiple providers on HuggingFace (mradermacher, bartowski). Verify before starting T2.4. |
-
----
-
-## 7. Operating Procedure
-
-### Definition of Done
-
-A task is done when:
-1. Code compiles: `go build ./...` passes.
-2. Tests pass: `go test ./...` passes (including new tests).
-3. Race detector clean: `go test -race ./...` passes for modified packages.
-4. Linter clean: `go vet ./...` and golangci-lint report zero new warnings.
-5. For DGX verification tasks: end-to-end output reviewed and throughput recorded.
-
-### Review and QA
-
-- Every implementation task has a paired test subtask or inline AC requiring tests.
-- Run linters after every code change (tasks T1.8, T2.7, T3.6, T4.5, T5.5, T6.5).
-- DGX verification (T2.6) is the integration gate for model coverage.
-- Never commit files from different repo directories in the same commit.
-- Make many small logical commits.
-
----
-
-## 8. Progress Log
-
-### Change Summary -- 2026-03-15
-
-New plan created for Phase 19: "Ship-Ready". Replaces completed Phase 18.
-
-Phase 18 (Developer Adoption Campaign) was 100% complete (37/37 tasks). All stable
-knowledge from Phase 18 was previously preserved in docs/design.md, docs/adr/, and
-docs/devlog.md during Phase 18 execution.
-
-New ADRs created:
-- docs/adr/038-structured-output-grammar-guided-decoding.md -- Grammar-guided decoding for JSON schema-constrained generation.
-- docs/adr/039-huggingface-model-download.md -- HuggingFace model download via zerfoo pull.
-
-Key decisions:
-- DeepSeek V3 (671B) does not fit on DGX Spark (128 GB). Using DeepSeek-V2-Lite (16B)
-  as the MLA+MoE test model -- same architecture, Q8_0 is ~17 GB.
-- HuggingFace API integration approved by founder.
-- Structured output / grammar-guided decoding approved by founder.
-- Continuous batching, prefill/decode split, and quantization improvements deferred to Phase 20.
-
----
-
-## 9. Hand-off Notes
-
-- **DGX Spark**: ssh ndungu@192.168.86.250. 128 GB unified memory. CUDA capable.
-- **Benchmark baseline**: Gemma 3 1B Q4_K_M at 234.30 tok/s (Phase 11 measurement).
-- **GGUF graph builder pattern**: See `inference/arch_common.go` (`buildTransformerGraph`) and `inference/arch_llama.go` / `inference/arch_gemma.go` for the two existing implementations. New builders extend `transformerGraphOpts` or create new builder functions for architectures that differ significantly (DeepSeek).
-- **Config parsers**: All 6 architectures already have config parsers in `inference/arch_config.go` with full test coverage.
-- **MLA and MoE layers**: Already implemented in `layers/attention/multi_head_latent_attention.go` and `layers/core/moe.go` with tests.
-- **Chat templates**: All 6 architectures have chat template formatters.
-- **DeepSeek test model**: DeepSeek-V2-Lite Q8_0 (~17 GB) from mradermacher/DeepSeek-V2-Lite-GGUF on HuggingFace.
-- **FP16/FP8 bug**: GQA tensor storage mismatch -- storage length 1536 vs tensor size 6144. Documented in QUALITY.md (2026-03-05).
-- **CUDA graph bug**: D2H transfer in GQA prevents graph closure. Falls back to per-op execution. See ADR 032 (GPU-resident position counter) for related work.
-- **Phase 18 outputs**: 4 blog posts, 4 examples, getting-started guide, GPU setup guide, CONTRIBUTING.md in all repos, issue templates in all repos, distribution drafts. All merged to main.
-
----
-
-## 10. Appendix
-
-### Architecture Differences from Llama Baseline
-
-| Architecture | Key Differences from Llama | Complexity |
-|-------------|---------------------------|------------|
-| Mistral | Sliding window attention mask | Low -- add window size to transformerGraphOpts |
-| Qwen 2 | Attention bias, RoPE theta=1M | Low -- add bias loading, theta already configurable |
-| Phi 3/4 | Partial rotary factor (0.5) | Low -- split head dims, apply RoPE to subset |
-| DeepSeek V2 | MLA replaces MHA, MoE replaces FFN | High -- new graph builder, uses existing MLA/MoE layers |
-
-### DeepSeek-V2-Lite Architecture Details
-
-- 16B total parameters, 2.4B active per token (MoE)
-- 27 layers, hidden dim 2048, 16 attention heads
-- MLA: compressed KV (latent dim), low-rank projections for Q/K/V
-- MoE: 2 shared experts + 64 routed experts per layer, 6 activated per token
-- GGUF Q8_0: ~17 GB (fits easily in 128 GB DGX Spark)
-
-### JSON Schema Subset for Structured Output (ADR 038)
-
-Supported: object, array, string, number, integer, boolean, null, enum, const,
-required, minLength/maxLength, minimum/maximum, nested objects/arrays.
-
-Not supported (deferred): $ref, oneOf, anyOf, allOf, pattern, additionalProperties.
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|-----------|
+| DGX remains offline | Medium | High (blocks E3) | E1/E2/E4/E5 proceed; E3 scheduled separately |
+| PagedKV multi-seq decode has correctness bugs | Medium | High (blocks T2.2) | Extensive unit tests in T2.1; compare with sequential baseline |
+| Q5_K/Q6_K native dequant slower than Q4_0 GEMV | Low | Low | Acceptable — accuracy takes priority; optimize in Phase 21 |
+| release-please CI setup takes longer than expected | Low | Low | Manual CHANGELOG + tag if automation stalls |
