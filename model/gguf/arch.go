@@ -164,6 +164,7 @@ var tensorNameMap = map[string]string{
 	"attn_v.weight":      "self_attn.v_proj.weight",
 	"attn_qkv.weight":   "self_attn.qkv_proj.weight",
 	"attn_output.weight": "self_attn.o_proj.weight",
+	"attn_qkv.weight":   "self_attn.qkv_proj.weight",
 	"attn_q_norm.weight": "self_attn.q_norm.weight",
 	"attn_k_norm.weight": "self_attn.k_norm.weight",
 	"ffn_norm.weight":    "post_attention_layernorm.weight",

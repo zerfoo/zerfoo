@@ -2,150 +2,317 @@ package generate
 
 import (
 	"context"
+	"sync"
 	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
-func TestNewSession(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		BOSTokenID: 1,
-		NumLayers:  12,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
+func TestNewSession_CreatesIndependentCache(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6, 2})
 
-	session := gen.NewSession()
-	if session == nil {
-		t.Fatal("expected non-nil session")
-	}
-	if session.gen != gen {
-		t.Error("session should reference the parent generator")
-	}
-	if session.pos != 0 {
-		t.Errorf("initial position = %d, want 0", session.pos)
-	}
-	if session.cache == nil {
-		t.Fatal("session cache should be initialized")
-	}
-	if session.Cache() == nil {
-		t.Fatal("Cache() should return non-nil provider")
-	}
-}
-
-func TestSessionPosition(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
-	session := gen.NewSession()
-
-	if pos := session.Position(); pos != 0 {
-		t.Errorf("Position() = %d, want 0", pos)
-	}
-}
-
-func TestSessionReset(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
-	session := gen.NewSession()
-
-	// Manually advance position to simulate usage.
-	session.mu.Lock()
-	session.pos = 42
-	session.mu.Unlock()
-
-	session.Reset()
-
-	if pos := session.Position(); pos != 0 {
-		t.Errorf("after Reset, Position() = %d, want 0", pos)
-	}
-}
-
-func TestSessionGenerateStub(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
-	session := gen.NewSession()
-
-	_, err := session.Generate(context.Background(), "hello", DefaultSamplingConfig())
-	if err == nil {
-		t.Fatal("expected stub error from Generate")
-	}
-}
-
-func TestSessionGenerateStreamStub(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
-	session := gen.NewSession()
-
-	stream := TokenStreamFunc(func(token string, done bool) error {
-		return nil
-	})
-	err := session.GenerateStream(context.Background(), "hello", DefaultSamplingConfig(), stream)
-	if err == nil {
-		t.Fatal("expected stub error from GenerateStream")
-	}
-}
-
-func TestSessionString(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
-	session := gen.NewSession()
-
-	s := session.String()
-	if s == "" {
-		t.Fatal("String() should return non-empty description")
-	}
-}
-
-func TestMultipleSessions(t *testing.T) {
-	cfg := ModelConfig{
-		VocabSize:  32000,
-		MaxSeqLen:  2048,
-		EOSTokenID: 2,
-		NumLayers:  4,
-	}
-	gen := NewGenerator[float32](nil, nil, nil, cfg)
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  2,
+		},
+	)
 
 	s1 := gen.NewSession()
 	s2 := gen.NewSession()
 
-	if s1 == s2 {
-		t.Fatal("expected distinct session instances")
+	if s1.Cache() == nil {
+		t.Fatal("session 1 cache is nil")
 	}
-	if s1.cache == s2.cache {
-		t.Fatal("sessions should have independent caches")
+	if s2.Cache() == nil {
+		t.Fatal("session 2 cache is nil")
 	}
 
-	// Mutating one session should not affect the other.
-	s1.mu.Lock()
-	s1.pos = 10
-	s1.mu.Unlock()
-
-	if s2.Position() != 0 {
-		t.Error("s2 position should be unaffected by s1 mutation")
+	// Caches should be distinct objects.
+	c1 := s1.Cache()
+	c2 := s2.Cache()
+	if c1 == c2 {
+		t.Error("sessions should have independent caches, got same pointer")
 	}
 }
+
+func TestSession_Generate_Greedy(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6, 7, 2})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  0,
+		},
+	)
+
+	sess := gen.NewSession()
+	result, err := sess.Generate(context.Background(), "hello world", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Session.Generate error: %v", err)
+	}
+
+	if result != "foo bar" {
+		t.Errorf("Session.Generate = %q, want %q", result, "foo bar")
+	}
+}
+
+func TestSession_Generate_MaxTokens(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		},
+	)
+
+	sess := gen.NewSession()
+	result, err := sess.Generate(context.Background(), "hello", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 3,
+	})
+	if err != nil {
+		t.Fatalf("Session.Generate error: %v", err)
+	}
+
+	if result != "foo foo foo" {
+		t.Errorf("Session.Generate = %q, want %q", result, "foo foo foo")
+	}
+}
+
+func TestSession_Generate_ImmediateEOS(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{2})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		},
+	)
+
+	sess := gen.NewSession()
+	result, err := sess.Generate(context.Background(), "hello", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Session.Generate error: %v", err)
+	}
+
+	if result != "" {
+		t.Errorf("Session.Generate = %q, want empty string", result)
+	}
+}
+
+func TestSession_ConcurrentGenerate_NoRace(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+
+	const numSessions = 4
+
+	// Pre-create sessions before launching goroutines to avoid races
+	// in global state touched by NewCPUEngine.
+	sessions := make([]*InferenceSession[float32], numSessions)
+	for i := range numSessions {
+		g := buildTestGraph(t, vocabSize, []int{6, 7, 2})
+		gen := NewGenerator[float32](
+			g, tok,
+			compute.NewCPUEngine(numeric.Float32Ops{}),
+			ModelConfig{
+				VocabSize:  vocabSize,
+				MaxSeqLen:  32,
+				EOSTokenID: 2,
+				BOSTokenID: 1,
+				NumLayers:  0,
+			},
+		)
+		sessions[i] = gen.NewSession()
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(numSessions)
+	errs := make([]error, numSessions)
+	results := make([]string, numSessions)
+
+	for i := range numSessions {
+		go func(idx int) {
+			defer wg.Done()
+			result, err := sessions[idx].Generate(context.Background(), "hello world", SamplingConfig{
+				Temperature:  0,
+				MaxNewTokens: 10,
+			})
+			errs[idx] = err
+			results[idx] = result
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("session %d error: %v", i, err)
+		}
+	}
+
+	for i, result := range results {
+		if result != "foo bar" {
+			t.Errorf("session %d result = %q, want %q", i, result, "foo bar")
+		}
+	}
+}
+
+func TestSession_IndependentPositionState(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+
+	// Two sessions generating different amounts of tokens
+	// should maintain independent position state.
+	g1 := buildTestGraph(t, vocabSize, []int{6, 6, 6, 2})
+	gen1 := NewGenerator[float32](
+		g1, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  1,
+		},
+	)
+	s1 := gen1.NewSession()
+
+	g2 := buildTestGraph(t, vocabSize, []int{7, 2})
+	gen2 := NewGenerator[float32](
+		g2, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  1,
+		},
+	)
+	s2 := gen2.NewSession()
+
+	// Generate with session 1 first.
+	r1, err := s1.Generate(context.Background(), "hello", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("session 1 error: %v", err)
+	}
+
+	// Generate with session 2 should be unaffected by session 1.
+	r2, err := s2.Generate(context.Background(), "hello", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("session 2 error: %v", err)
+	}
+
+	if r1 != "foo foo foo" {
+		t.Errorf("session 1 result = %q, want %q", r1, "foo foo foo")
+	}
+	if r2 != "bar" {
+		t.Errorf("session 2 result = %q, want %q", r2, "bar")
+	}
+}
+
+func TestSession_KVCacheIsolation(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6, 7, 2})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  2,
+		},
+	)
+
+	s1 := gen.NewSession()
+	s2 := gen.NewSession()
+
+	// Generate with session 1.
+	_, err := s1.Generate(context.Background(), "hello", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 5,
+	})
+	if err != nil {
+		t.Fatalf("session 1 error: %v", err)
+	}
+
+	// Session 2's cache should still be empty (reset happens on Generate).
+	if s2.Cache().SeqLen() != 0 {
+		t.Errorf("session 2 cache SeqLen = %d, want 0 (isolated)", s2.Cache().SeqLen())
+	}
+}
+
+func TestSession_GeneratorGenerateStillWorks(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6, 7, 2})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  0,
+		},
+	)
+
+	// Create a session to verify it doesn't break Generator.
+	_ = gen.NewSession()
+
+	// Generator's Generate should still work normally.
+	result, err := gen.Generate(context.Background(), "hello world", SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Generator.Generate error: %v", err)
+	}
+
+	if result != "foo bar" {
+		t.Errorf("Generator.Generate = %q, want %q", result, "foo bar")
+	}
+}
+
