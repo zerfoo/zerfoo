@@ -4,18 +4,11 @@ package model
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/zerfoo/zerfoo/compute"
 	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
-	"github.com/zerfoo/zmf"
-	"google.golang.org/protobuf/proto"
 )
 
 // StandardModelInstance adapts the existing Model struct to implement ModelInstance interface.
@@ -29,7 +22,7 @@ type StandardModelInstance[T tensor.Numeric] struct {
 func NewStandardModelInstance[T tensor.Numeric](model *Model[T]) *StandardModelInstance[T] {
 	metadata := ModelMetadata{
 		Name:         "Standard Model",
-		Version:      model.ZMFVersion,
+		Version:      "1.0.0",
 		Architecture: "standard",
 		Framework:    "zerfoo",
 		CreatedAt:    time.Now().Format(time.RFC3339),
@@ -120,7 +113,7 @@ type StandardModelProvider[T tensor.Numeric] struct {
 // NewStandardModelProvider creates a new StandardModelProvider.
 func NewStandardModelProvider[T tensor.Numeric]() *StandardModelProvider[T] {
 	capabilities := ModelCapabilities{
-		SupportedTypes:      []string{"standard", "zmf"},
+		SupportedTypes:      []string{"standard"},
 		SupportedPrecisions: []string{"float32", "float64"},
 		SupportsTraining:    true,
 		SupportsInference:   true,
@@ -155,8 +148,7 @@ func (p *StandardModelProvider[T]) CreateModel(ctx context.Context, config Model
 func (p *StandardModelProvider[T]) CreateFromGraph(ctx context.Context, g *graph.Graph[T], config ModelConfig) (ModelInstance[T], error) {
 	// Create a Model instance from the graph
 	model := &Model[T]{
-		Graph:      g,
-		ZMFVersion: config.Version,
+		Graph: g,
 	}
 
 	instance := NewStandardModelInstance(model)
@@ -178,176 +170,6 @@ func (p *StandardModelProvider[T]) GetCapabilities() ModelCapabilities {
 // GetProviderInfo implements ModelProvider.GetProviderInfo
 func (p *StandardModelProvider[T]) GetProviderInfo() ProviderInfo {
 	return p.providerInfo
-}
-
-// ZMFModelLoader adapts existing ZMF loading functionality to the ModelLoader interface.
-type ZMFModelLoader[T tensor.Numeric] struct {
-	engine     compute.Engine[T]
-	ops        numeric.Arithmetic[T]
-	loaderInfo LoaderInfo
-}
-
-// NewZMFModelLoader creates a new ZMFModelLoader.
-// The engine and ops are required to reconstruct the computation graph from
-// the serialized ZMF model.
-func NewZMFModelLoader[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T]) *ZMFModelLoader[T] {
-	loaderInfo := LoaderInfo{
-		Name:             "ZMF Model Loader",
-		Version:          "1.0.0",
-		Description:      "Loads models from ZMF (Zerfoo Model Format) files",
-		SupportedFormats: []string{".zmf", ".zerfoo"},
-		StreamingLoad:    false,
-		LazyLoad:         false,
-	}
-
-	return &ZMFModelLoader[T]{
-		engine:     engine,
-		ops:        ops,
-		loaderInfo: loaderInfo,
-	}
-}
-
-// LoadFromPath implements ModelLoader.LoadFromPath
-func (l *ZMFModelLoader[T]) LoadFromPath(_ context.Context, path string) (ModelInstance[T], error) {
-	model, err := LoadModelFromZMF(l.engine, l.ops, path)
-	if err != nil {
-		return nil, fmt.Errorf("LoadFromPath: %w", err)
-	}
-	return NewStandardModelInstance(model), nil
-}
-
-// LoadFromReader implements ModelLoader.LoadFromReader
-func (l *ZMFModelLoader[T]) LoadFromReader(_ context.Context, reader io.Reader) (ModelInstance[T], error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("LoadFromReader: failed to read: %w", err)
-	}
-	return l.loadFromProtoBytes(data)
-}
-
-// LoadFromBytes implements ModelLoader.LoadFromBytes
-func (l *ZMFModelLoader[T]) LoadFromBytes(_ context.Context, data []byte) (ModelInstance[T], error) {
-	return l.loadFromProtoBytes(data)
-}
-
-// loadFromProtoBytes unmarshals ZMF protobuf bytes and builds a model.
-func (l *ZMFModelLoader[T]) loadFromProtoBytes(data []byte) (ModelInstance[T], error) {
-	zmfModel := &zmf.Model{}
-	if err := proto.Unmarshal(data, zmfModel); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ZMF data: %w", err)
-	}
-	g, err := BuildFromZMF(l.engine, l.ops, zmfModel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build graph from ZMF: %w", err)
-	}
-	model := &Model[T]{
-		Graph:      g,
-		ZMFVersion: zmfModel.ZmfVersion,
-	}
-	return NewStandardModelInstance(model), nil
-}
-
-// SupportsFormat implements ModelLoader.SupportsFormat
-func (l *ZMFModelLoader[T]) SupportsFormat(format string) bool {
-	for _, supported := range l.loaderInfo.SupportedFormats {
-		if supported == format {
-			return true
-		}
-	}
-	return false
-}
-
-// GetLoaderInfo implements ModelLoader.GetLoaderInfo
-func (l *ZMFModelLoader[T]) GetLoaderInfo() LoaderInfo {
-	return l.loaderInfo
-}
-
-// ZMFModelExporter adapts existing ZMF export functionality to the ModelExporter interface.
-type ZMFModelExporter[T tensor.Numeric] struct {
-	exporterInfo ExporterInfo
-}
-
-// NewZMFModelExporter creates a new ZMFModelExporter.
-func NewZMFModelExporter[T tensor.Numeric]() *ZMFModelExporter[T] {
-	exporterInfo := ExporterInfo{
-		Name:             "ZMF Model Exporter",
-		Version:          "1.0.0",
-		Description:      "Exports models to ZMF (Zerfoo Model Format) files",
-		SupportedFormats: []string{".zmf", ".zerfoo"},
-		Optimization:     false,
-		Quantization:     false,
-	}
-
-	return &ZMFModelExporter[T]{
-		exporterInfo: exporterInfo,
-	}
-}
-
-// ExportToPath implements ModelExporter.ExportToPath
-func (e *ZMFModelExporter[T]) ExportToPath(ctx context.Context, model ModelInstance[T], path string) error {
-	// Extract the underlying Model from the ModelInstance
-	standardInstance, ok := model.(*StandardModelInstance[T])
-	if !ok {
-		return fmt.Errorf("ZMFModelExporter can only export StandardModelInstance types")
-	}
-
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
-	}
-
-	// Use existing ZMF export functionality
-	exporter := NewZMFExporter[T]()
-	return exporter.Export(standardInstance.model, path)
-}
-
-// ExportToWriter implements ModelExporter.ExportToWriter
-func (e *ZMFModelExporter[T]) ExportToWriter(_ context.Context, model ModelInstance[T], writer io.Writer) error {
-	data, err := e.marshalModel(model)
-	if err != nil {
-		return err
-	}
-	_, err = writer.Write(data)
-	return err
-}
-
-// ExportToBytes implements ModelExporter.ExportToBytes
-func (e *ZMFModelExporter[T]) ExportToBytes(_ context.Context, model ModelInstance[T]) ([]byte, error) {
-	return e.marshalModel(model)
-}
-
-// marshalModel converts a ModelInstance to ZMF protobuf bytes.
-func (e *ZMFModelExporter[T]) marshalModel(model ModelInstance[T]) ([]byte, error) {
-	standardInstance, ok := model.(*StandardModelInstance[T])
-	if !ok {
-		return nil, fmt.Errorf("ZMFModelExporter can only export StandardModelInstance types")
-	}
-	exporter := NewZMFExporter[T]()
-	zmfModel, err := exporter.convertModelToZMF(standardInstance.model)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert model to ZMF: %w", err)
-	}
-	data, err := proto.Marshal(zmfModel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal ZMF model: %w", err)
-	}
-	return data, nil
-}
-
-// SupportsFormat implements ModelExporter.SupportsFormat
-func (e *ZMFModelExporter[T]) SupportsFormat(format string) bool {
-	for _, supported := range e.exporterInfo.SupportedFormats {
-		if supported == format {
-			return true
-		}
-	}
-	return false
-}
-
-// GetExporterInfo implements ModelExporter.GetExporterInfo
-func (e *ZMFModelExporter[T]) GetExporterInfo() ExporterInfo {
-	return e.exporterInfo
 }
 
 // BasicModelValidator provides basic model validation functionality.
@@ -482,6 +304,4 @@ func (v *BasicModelValidator[T]) GetValidatorInfo() ValidatorInfo {
 // Ensure adapters implement their respective interfaces
 var _ ModelInstance[float32] = (*StandardModelInstance[float32])(nil)
 var _ ModelProvider[float32] = (*StandardModelProvider[float32])(nil)
-var _ ModelLoader[float32] = (*ZMFModelLoader[float32])(nil)
-var _ ModelExporter[float32] = (*ZMFModelExporter[float32])(nil)
 var _ ModelValidator[float32] = (*BasicModelValidator[float32])(nil)

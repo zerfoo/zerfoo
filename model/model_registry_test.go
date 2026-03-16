@@ -20,7 +20,7 @@ func (s *stubSerializer[T]) Save(_ context.Context, _ ModelInstance[T], _ interf
 func (s *stubSerializer[T]) Load(_ context.Context, _ interface{}) (ModelInstance[T], error) {
 	return nil, nil
 }
-func (s *stubSerializer[T]) GetSupportedFormats() []string     { return []string{"zmf"} }
+func (s *stubSerializer[T]) GetSupportedFormats() []string     { return []string{"bin"} }
 func (s *stubSerializer[T]) GetSerializerInfo() SerializerInfo { return SerializerInfo{Name: "stub"} }
 
 // stubOptimizer implements ModelOptimizer for registry testing.
@@ -161,7 +161,7 @@ func TestModelRegistry_Exporter(t *testing.T) { //nolint:dupl // registry CRUD p
 	assertRegistryCRUD(t, registryComponentOps{
 		register: func(r *ModelRegistry[float32]) error {
 			return r.RegisterModelExporter("e1", func(_ context.Context, _ map[string]any) (ModelExporter[float32], error) {
-				return NewZMFModelExporter[float32](), nil
+				return nil, nil
 			})
 		},
 		registerDup: func(r *ModelRegistry[float32]) error {

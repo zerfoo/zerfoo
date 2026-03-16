@@ -11,7 +11,7 @@ import (
 	"github.com/zerfoo/zerfoo/tensor"
 )
 
-// LayerBuilder is a function that constructs a graph.Node (a layer) from ZMF parameters.
+// LayerBuilder is a function that constructs a graph.Node (a layer) from serialized parameters.
 type LayerBuilder[T tensor.Numeric] func(
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
@@ -20,7 +20,7 @@ type LayerBuilder[T tensor.Numeric] func(
 	attributes map[string]interface{},
 ) (graph.Node[T], error)
 
-// registry maps ZMF op_type strings to their corresponding LayerBuilder functions.
+// registry maps op_type strings to their corresponding LayerBuilder functions.
 var registry = make(map[string]interface{})
 
 // pkgLogger is the package-level logger for model operations.

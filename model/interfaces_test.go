@@ -345,9 +345,7 @@ func TestMockModelProvider(t *testing.T) {
 
 func TestStandardModelInstance_Integration(t *testing.T) {
 	// Create a simple mock model
-	model := &Model[float32]{
-		ZMFVersion: "1.0",
-	}
+	model := &Model[float32]{}
 
 	instance := NewStandardModelInstance(model)
 
@@ -357,8 +355,8 @@ func TestStandardModelInstance_Integration(t *testing.T) {
 		t.Errorf("Expected framework 'zerfoo', got %s", metadata.Framework)
 	}
 
-	if metadata.Version != "1.0" {
-		t.Errorf("Expected version '1.0', got %s", metadata.Version)
+	if metadata.Version != "1.0.0" {
+		t.Errorf("Expected version '1.0.0', got %s", metadata.Version)
 	}
 
 	// Test training mode

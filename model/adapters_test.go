@@ -1,10 +1,7 @@
 package model
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/compute"
@@ -12,11 +9,29 @@ import (
 	"github.com/zerfoo/zerfoo/numeric"
 	"github.com/zerfoo/zerfoo/tensor"
 	"github.com/zerfoo/zerfoo/types"
-	"github.com/zerfoo/zmf"
-	"google.golang.org/protobuf/proto"
 )
 
-// mockNodeF32 is a float32 variant of mockNode for loader round-trip tests.
+// mockNode is an int variant of a test graph node.
+type mockNode struct {
+	name        string
+	opType      string
+	outputShape []int
+	attributes  map[string]any
+	params      []*graph.Parameter[int]
+}
+
+func (m *mockNode) OpType() string                      { return m.opType }
+func (m *mockNode) OutputShape() []int                   { return m.outputShape }
+func (m *mockNode) Attributes() map[string]any           { return m.attributes }
+func (m *mockNode) Parameters() []*graph.Parameter[int]  { return m.params }
+func (m *mockNode) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
+	return inputs[0], nil
+}
+func (m *mockNode) Backward(_ context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
+	return []*tensor.TensorNumeric[int]{outputGradient}, nil
+}
+
+// mockNodeF32 is a float32 variant of mockNode.
 type mockNodeF32 struct {
 	name        string
 	opType      string
@@ -37,7 +52,6 @@ func (m *mockNodeF32) Backward(_ context.Context, _ types.BackwardMode, outputGr
 }
 
 // buildTestModel creates a minimal int Model for backward tests.
-// Uses mockNode from zmf_exporter_test.go (same package).
 func buildTestModel(t *testing.T) *Model[int] { //nolint:dupl // generic type differs from buildTestModelF32
 	t.Helper()
 	engine := compute.NewCPUEngine[int](numeric.IntOps{})
@@ -66,7 +80,7 @@ func buildTestModel(t *testing.T) *Model[int] { //nolint:dupl // generic type di
 	if err != nil {
 		t.Fatalf("failed to build graph: %v", err)
 	}
-	return &Model[int]{Graph: g, ZMFVersion: "1.0.0"}
+	return &Model[int]{Graph: g}
 }
 
 // buildTestModelF32 creates a minimal float32 Model for round-trip tests.
@@ -98,13 +112,13 @@ func buildTestModelF32(t *testing.T) *Model[float32] { //nolint:dupl // generic 
 	if err != nil {
 		t.Fatalf("failed to build graph: %v", err)
 	}
-	return &Model[float32]{Graph: g, ZMFVersion: "1.0.0"}
+	return &Model[float32]{Graph: g}
 }
 
 // --- StandardModelInstance.Backward tests ---
 
 func TestStandardModelInstance_Backward(t *testing.T) {
-	model := buildTestModel(t) // int model (uses mockNode from zmf_exporter_test.go)
+	model := buildTestModel(t)
 	instance := NewStandardModelInstance(model)
 	ctx := context.Background()
 
@@ -202,262 +216,6 @@ type modeTrackingNode struct {
 func (m *modeTrackingNode) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[int], _ ...*tensor.TensorNumeric[int]) ([]*tensor.TensorNumeric[int], error) {
 	*m.capturedMode = mode
 	return []*tensor.TensorNumeric[int]{outputGradient}, nil
-}
-
-// --- ZMFModelExporter tests ---
-
-func TestZMFModelExporter_ExportToWriter(t *testing.T) {
-	model := buildTestModelF32(t)
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	var buf bytes.Buffer
-	err := exporter.ExportToWriter(ctx, instance, &buf)
-	if err != nil {
-		t.Fatalf("ExportToWriter failed: %v", err)
-	}
-	if buf.Len() == 0 {
-		t.Fatal("expected non-empty output")
-	}
-
-	// Verify the bytes are valid ZMF protobuf.
-	zmfModel := &zmf.Model{}
-	if err := proto.Unmarshal(buf.Bytes(), zmfModel); err != nil {
-		t.Fatalf("exported bytes are not valid ZMF: %v", err)
-	}
-	if zmfModel.ZmfVersion != "1.0.0" {
-		t.Errorf("expected version 1.0.0, got %s", zmfModel.ZmfVersion)
-	}
-}
-
-func TestZMFModelExporter_ExportToBytes(t *testing.T) {
-	model := buildTestModelF32(t)
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	data, err := exporter.ExportToBytes(ctx, instance)
-	if err != nil {
-		t.Fatalf("ExportToBytes failed: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty data")
-	}
-
-	// Verify round-trip via ExportToPath produces identical bytes.
-	tmpFile := t.TempDir() + "/test.zmf"
-	err = exporter.ExportToPath(ctx, instance, tmpFile)
-	if err != nil {
-		t.Fatalf("ExportToPath failed: %v", err)
-	}
-	fileData, err := os.ReadFile(tmpFile) //nolint:gosec // test-only path from t.TempDir
-	if err != nil {
-		t.Fatalf("failed to read exported file: %v", err)
-	}
-	if !bytes.Equal(data, fileData) {
-		t.Error("ExportToBytes and ExportToPath produced different results")
-	}
-}
-
-func TestZMFModelExporter_SupportsFormat(t *testing.T) {
-	exporter := NewZMFModelExporter[float32]()
-	tests := []struct {
-		format string
-		want   bool
-	}{
-		{".zmf", true},
-		{".zerfoo", true},
-		{".onnx", false},
-	}
-	for _, tt := range tests {
-		if got := exporter.SupportsFormat(tt.format); got != tt.want {
-			t.Errorf("SupportsFormat(%q) = %v, want %v", tt.format, got, tt.want)
-		}
-	}
-}
-
-// --- ZMFModelLoader tests ---
-
-// registerMockOpBuilder registers a float32 MockOp layer builder so that
-// BuildFromZMF can reconstruct mock models. It should be called in each
-// loader test (safe to call multiple times; the registry silently overwrites).
-func registerMockOpBuilder() {
-	RegisterLayer("MockOp", func(
-		_ compute.Engine[float32],
-		_ numeric.Arithmetic[float32],
-		_ string,
-		_ map[string]*graph.Parameter[float32],
-		_ map[string]any,
-	) (graph.Node[float32], error) {
-		return &mockNodeF32{
-			opType:      "MockOp",
-			outputShape: []int{2, 2},
-			params:      []*graph.Parameter[float32]{},
-		}, nil
-	})
-}
-
-func TestZMFModelLoader_LoadFromBytes(t *testing.T) {
-	registerMockOpBuilder()
-
-	model := buildTestModelF32(t)
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	data, err := exporter.ExportToBytes(ctx, instance)
-	if err != nil {
-		t.Fatalf("ExportToBytes failed: %v", err)
-	}
-
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-
-	loaded, err := loader.LoadFromBytes(ctx, data)
-	if err != nil {
-		t.Fatalf("LoadFromBytes failed: %v", err)
-	}
-	if loaded == nil {
-		t.Fatal("expected non-nil model instance")
-	}
-	if meta := loaded.GetMetadata(); meta.Version != "1.0.0" {
-		t.Errorf("expected version 1.0.0, got %s", meta.Version)
-	}
-}
-
-func TestZMFModelLoader_LoadFromReader(t *testing.T) {
-	registerMockOpBuilder()
-
-	model := buildTestModelF32(t)
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	data, err := exporter.ExportToBytes(ctx, instance)
-	if err != nil {
-		t.Fatalf("ExportToBytes failed: %v", err)
-	}
-
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-
-	loaded, err := loader.LoadFromReader(ctx, bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("LoadFromReader failed: %v", err)
-	}
-	if loaded == nil {
-		t.Fatal("expected non-nil model instance")
-	}
-}
-
-func TestZMFModelLoader_LoadFromPath(t *testing.T) {
-	registerMockOpBuilder()
-
-	model := buildTestModelF32(t)
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	tmpFile := t.TempDir() + "/test.zmf"
-	err := exporter.ExportToPath(ctx, instance, tmpFile)
-	if err != nil {
-		t.Fatalf("ExportToPath failed: %v", err)
-	}
-
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-
-	loaded, err := loader.LoadFromPath(ctx, tmpFile)
-	if err != nil {
-		t.Fatalf("LoadFromPath failed: %v", err)
-	}
-	if loaded == nil {
-		t.Fatal("expected non-nil model instance")
-	}
-}
-
-func TestZMFModelLoader_SupportsFormat(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-
-	tests := []struct {
-		format string
-		want   bool
-	}{
-		{".zmf", true},
-		{".zerfoo", true},
-		{".onnx", false},
-		{".pt", false},
-	}
-	for _, tt := range tests {
-		if got := loader.SupportsFormat(tt.format); got != tt.want {
-			t.Errorf("SupportsFormat(%q) = %v, want %v", tt.format, got, tt.want)
-		}
-	}
-}
-
-func TestZMFModelLoader_GetLoaderInfo(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-
-	info := loader.GetLoaderInfo()
-	if info.Name != "ZMF Model Loader" {
-		t.Errorf("expected name 'ZMF Model Loader', got %q", info.Name)
-	}
-	if len(info.SupportedFormats) != 2 {
-		t.Errorf("expected 2 supported formats, got %d", len(info.SupportedFormats))
-	}
-}
-
-func TestZMFModelExporter_GetExporterInfo(t *testing.T) {
-	exporter := NewZMFModelExporter[float32]()
-	info := exporter.GetExporterInfo()
-	if info.Name != "ZMF Model Exporter" {
-		t.Errorf("expected name 'ZMF Model Exporter', got %q", info.Name)
-	}
-}
-
-func TestZMFModelExporter_MarshalModel_NilGraph(t *testing.T) {
-	// StandardModelInstance with nil graph - ExportToBytes should panic
-	// because convertModelToZMF calls graph.GetAllNodes which panics on nil.
-	model := &Model[float32]{}
-	instance := NewStandardModelInstance(model)
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic for nil graph in marshalModel")
-		}
-	}()
-
-	_, _ = exporter.ExportToBytes(ctx, instance)
-}
-
-func TestZMFModelExporter_NonStandardInstance(t *testing.T) {
-	exporter := NewZMFModelExporter[float32]()
-	ctx := context.Background()
-	mock := NewMockModelInstance[float32]()
-
-	// ExportToPath should fail for non-StandardModelInstance
-	err := exporter.ExportToPath(ctx, mock, "/tmp/should_not_exist.zmf")
-	if err == nil {
-		t.Error("expected error for non-StandardModelInstance in ExportToPath")
-	}
-
-	// ExportToWriter should fail for non-StandardModelInstance
-	var buf bytes.Buffer
-	err = exporter.ExportToWriter(ctx, mock, &buf)
-	if err == nil {
-		t.Error("expected error for non-StandardModelInstance in ExportToWriter")
-	}
-
-	// ExportToBytes should fail for non-StandardModelInstance
-	_, err = exporter.ExportToBytes(ctx, mock)
-	if err == nil {
-		t.Error("expected error for non-StandardModelInstance in ExportToBytes")
-	}
 }
 
 // --- StandardModelProvider tests ---
@@ -680,39 +438,6 @@ func TestBasicModelValidator_ValidateInputs_DimensionMismatch(t *testing.T) {
 	}
 }
 
-func TestZMFModelLoader_LoadFromBytes_InvalidProto(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-	ctx := context.Background()
-
-	_, err := loader.LoadFromBytes(ctx, []byte{0xFF, 0xFE, 0xFD})
-	if err == nil {
-		t.Error("expected error for invalid protobuf data")
-	}
-}
-
-func TestZMFModelLoader_LoadFromReader_InvalidProto(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-	ctx := context.Background()
-
-	_, err := loader.LoadFromReader(ctx, bytes.NewReader([]byte{0xFF, 0xFE}))
-	if err == nil {
-		t.Error("expected error for invalid protobuf in reader")
-	}
-}
-
-func TestZMFModelLoader_LoadFromPath_NotFound(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-	ctx := context.Background()
-
-	_, err := loader.LoadFromPath(ctx, "/nonexistent/path/model.zmf")
-	if err == nil {
-		t.Error("expected error for missing file")
-	}
-}
-
 // --- ValidateArchitecture additional edge cases ---
 
 func TestBasicModelValidator_ValidateArchitecture_NoInputs(t *testing.T) {
@@ -742,52 +467,6 @@ func TestBasicModelValidator_ValidateArchitecture_NoInputs(t *testing.T) {
 	err = validator.ValidateArchitecture(ctx, instance)
 	if err == nil {
 		t.Error("expected error for graph with no inputs")
-	}
-}
-
-// errorReader returns an error on Read.
-type errorReader struct{}
-
-func (e *errorReader) Read(_ []byte) (int, error) {
-	return 0, fmt.Errorf("simulated read error")
-}
-
-func TestZMFModelLoader_LoadFromReader_ReadError(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-	ctx := context.Background()
-
-	_, err := loader.LoadFromReader(ctx, &errorReader{})
-	if err == nil {
-		t.Error("expected error for failing reader")
-	}
-}
-
-func TestZMFModelLoader_LoadFromBytes_ValidProto_BadGraph(t *testing.T) {
-	// Create a valid protobuf that BuildFromZMF will fail on (unrecognized op type)
-	zmfModel := &zmf.Model{
-		Graph: &zmf.Graph{
-			Inputs: []*zmf.ValueInfo{
-				{Name: "input", Shape: []int64{1}},
-			},
-			Nodes: []*zmf.Node{
-				{Name: "bad", OpType: "UnknownOpType_ForTest", Inputs: []string{"input"}},
-			},
-			Outputs: []*zmf.ValueInfo{{Name: "bad"}},
-		},
-	}
-	data, err := proto.Marshal(zmfModel)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	loader := NewZMFModelLoader(engine, numeric.Float32Ops{})
-	ctx := context.Background()
-
-	_, err = loader.LoadFromBytes(ctx, data)
-	if err == nil {
-		t.Error("expected error for unrecognized op type in loaded model")
 	}
 }
 

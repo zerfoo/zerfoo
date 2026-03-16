@@ -10,9 +10,8 @@ import (
 
 // Model represents a complete model, including a token embedding layer and a computation graph.
 type Model[T tensor.Numeric] struct {
-	Embedding  *embeddings.TokenEmbedding[T]
-	Graph      *graph.Graph[T]
-	ZMFVersion string
+	Embedding *embeddings.TokenEmbedding[T]
+	Graph     *graph.Graph[T]
 }
 
 // NewModel creates a new model.
