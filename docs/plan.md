@@ -1,102 +1,63 @@
-# Zerfoo Phase 17: Repository Extraction + GGUF-Only Model Format
+# Zerfoo Phase 19: "Ship-Ready" -- Complete Phase 1 + Developer Experience
 
 ## 1. Context
 
 ### Problem Statement
 
-Two structural problems limit the Zerfoo ecosystem:
+Zerfoo has strong inference performance (234 tok/s, 18.8% faster than Ollama) and
+production infrastructure (OpenAI API, training, distributed), but Phase 1
+(Inference Excellence) has critical gaps that block credible adoption:
 
-**1. Monolithic zerfoo repository.** The zerfoo repo (~50,000 lines of Go)
-contains everything from tensor storage and GPU kernels to HTTP servers and
-gRPC distributed training. Importing GPU tensors or a BPE tokenizer pulls in
-the entire framework. See docs/adr/036-ztensor-ztoken-repo-extraction.md.
+- Only 2 of 6 claimed architectures have GGUF graph builders (Llama, Gemma).
+  Mistral, Qwen, Phi, and DeepSeek have config parsers and chat templates but
+  return "unsupported architecture" when loaded as GGUF.
+- FP16 and FP8 inference are broken (GQA tensor storage mismatch).
+- CUDA graph capture does not deliver speedup (D2H transfer in GQA prevents
+  graph closure).
+- ztensor (v0.1.0) and ztoken (v0.1.0) are under-released despite substantial work.
 
-**2. Two inference paths with 50x performance gap.** The GGUF path achieves
-232 tok/s with 99.5% CUDA graph capture. The ZMF/ONNX path achieves 4-16 tok/s
-with 1-4% capture. The ZMF path uses protobuf for tensor storage (no mmap, 2x
-memory), stores decomposed operation graphs that cannot be efficiently fused,
-and has a blocking bug (PR #70 RMSNorm fusion). Every model people want to run
-has GGUF variants on HuggingFace. See docs/adr/037-gguf-only-drop-zmf-model-format.md.
+Phase 19 closes these Phase 1 gaps and layers in the highest-impact Phase 2
+(Developer Experience) items: one-line inference API, HuggingFace model download,
+structured output, and tool calling.
 
 ### Objectives
 
-- O1: Extract tensor/compute/graph into `github.com/zerfoo/ztensor`.
-- O2: Extract tokenizer into `github.com/zerfoo/ztoken`.
-- O3: Drop ZMF as a model format. Make GGUF the sole model loading format.
-- O4: Remove ~7,500 lines of ZMF-dependent code from zerfoo. Close PR #70.
-- O5: Pivot zonnx from ONNX-to-ZMF to ONNX-to-GGUF converter.
-- O6: Archive the zmf repository.
-- O7: All tests pass in all repositories after changes.
+- O1: All 6 architectures produce correct GGUF inference on DGX Spark.
+- O2: FP16 and FP8 inference pass end-to-end on at least Gemma 3 and Llama 3.
+- O3: CUDA graph capture delivers measurable decode speedup (target 20%+).
+- O4: `zerfoo pull` downloads GGUF models from HuggingFace (ADR 039).
+- O5: One-line inference API: `zerfoo.Load("model") -> model.Chat("prompt")`.
+- O6: Structured output via grammar-guided decoding (ADR 038).
+- O7: ztensor v0.2.0 and ztoken v0.2.0 released.
 
 ### Non-Goals
 
-- New model architectures or performance optimizations.
-- Training checkpoint implementation (design only; implementation deferred).
-- Python bindings or documentation website.
-- Breaking the public API of zerfoo for existing GGUF users.
+- Pre-training at scale.
+- Continuous batching (deferred to Phase 20 -- requires PagedAttention).
+- Prefill/decode split (deferred to Phase 20).
+- Quantization improvements (GPTQ, AWQ, Q5_K/Q6_K native GEMV -- deferred).
+- LoRA fine-tuning (Phase 3 per VISION.md).
 
 ### Constraints and Assumptions
 
-- Pre-commit hook rejects multi-directory commits.
-- Each new repo needs: go.mod, LICENSE (Apache 2.0), README.md, Makefile,
-  .github/workflows/ci.yml, .gitignore, .goreleaser.yml, release-please config.
-- DGX Spark: ssh ndungu@192.168.86.250, project at ~/zerfoo.
-- Go 1.25 with purego GPU bindings (no CGo for CUDA).
-- Rebase and merge workflow (not squash, not merge commits).
-- Training checkpoint saving is currently unimplemented (SaveModel stub).
+- DGX Spark: 128 GB unified memory, CUDA capable. Available at ssh ndungu@192.168.86.250.
+- DeepSeek V3 (671B) does not fit on DGX Spark. Use DeepSeek-V2-Lite (16B) as the
+  test model -- same MLA + MoE architecture, Q8_0 is ~17 GB.
+- All code is pure Go, zero CGo. GPU via purego/dlopen.
+- GGUF is the sole model format (ADR 037).
+- Go standard library only -- no cobra, viper, testify, etc.
 
 ### Success Metrics
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| ztensor tests | 100% pass | `cd ztensor && go test ./...` |
-| ztoken tests | 100% pass | `cd ztoken && go test ./...` |
-| zerfoo tests | 100% pass after all changes | `cd zerfoo && go test ./...` |
-| zonnx tests | 100% pass after GGUF pivot | `cd zonnx && go test ./...` |
-| ztensor deps | Only float16, float8, stdlib | `go list -m all` |
-| ztoken deps | Only stdlib | `go list -m all` |
-| zerfoo zmf dep | Removed from go.mod | grep zmf go.mod returns nothing |
-| Code removed | ~7,500 lines of ZMF code deleted | git diff --stat |
-
-### Current State
-
-- v1.2.0 released. All Phase 13-16 work complete.
-- 5 models run on DGX Spark. Gemma 3 GGUF at 232 tok/s.
-- ONNX models at 4-16 tok/s. RMSNorm fusion blocked (PR #70).
-- Training SaveModel is a stub returning "not implemented".
-
-### Checkpoint and Architecture Storage Design
-
-**How will training checkpoints be stored without ZMF?**
-
-GGUF is the answer. GGUF supports:
-- Arbitrary key-value metadata (string, int, float, bool, arrays).
-- Named tensors with shapes, data types, and raw aligned data.
-- Mmap-friendly layout for fast loading.
-
-A training checkpoint GGUF file contains:
-- Model weights as named tensors (same names as inference GGUF).
-- Optimizer state as additional tensors with `optimizer.` prefix
-  (e.g., `optimizer.m.layers.0.weight` for Adam first moment).
-- Training metadata as key-value pairs: `training.epoch`, `training.step`,
-  `training.learning_rate`, `training.optimizer`, `training.loss`.
-- Architecture metadata: same keys GGUF already uses
-  (`llama.embedding_length`, `llama.block_count`, etc.).
-
-This means checkpoints are loadable by any GGUF reader (llama.cpp, Ollama)
-after stripping the optimizer tensors.
-
-**How will model architecture be described?**
-
-Architecture is NOT stored in a file. Instead, architecture-specific builders
-in zerfoo construct the computation graph from GGUF metadata at load time.
-Each architecture has a builder file (~200 lines):
-- `inference/arch_llama.go` (Llama, Mistral, Qwen, Phi, DeepSeek)
-- `inference/arch_gemma.go` (Gemma 2, 3)
-
-Adding a new architecture means writing a new builder that reads GGUF metadata
-and calls the layer constructors. This is the same approach llama.cpp uses.
-The graph is ephemeral (exists only in memory during inference), not serialized.
+| Metric | Current | Target | Measurement |
+|--------|---------|--------|-------------|
+| Working GGUF architectures | 2 (Llama, Gemma) | 6 | `buildArchGraph` handles all 6 |
+| FP16 inference | Broken | Passing | DGX Spark end-to-end test |
+| FP8 inference | Broken | Passing | DGX Spark end-to-end test |
+| CUDA graph decode speedup | 0% (fallback) | 20%+ | Benchmark vs non-graph baseline |
+| Lines to first inference | ~40 | <10 | `zerfoo.Load` + `model.Chat` |
+| ztensor version | v0.1.0 | v0.2.0 | git tag |
+| ztoken version | v0.1.0 | v0.2.0 | git tag |
 
 ---
 
@@ -104,265 +65,261 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 
 ### In Scope
 
-- Create github.com/zerfoo/ztensor with tensor/compute/graph code.
-- Create github.com/zerfoo/ztoken with tokenizer code.
-- Remove ZMF model loading, ZMF export, generic graph builder, tensor
-  codec, graph fusion pass, and all associated tests from zerfoo.
-- Remove `github.com/zerfoo/zmf` dependency from zerfoo go.mod.
-- Close PR #70 (RMSNorm fusion) as won't-fix.
-- Archive github.com/zerfoo/zmf repository.
-- Add GGUF writer to zonnx (pivot from ZMF output to GGUF output).
-- Update all documentation to reflect changes.
+- GGUF graph builders for Mistral, Qwen, Phi, DeepSeek architectures.
+- FP16/FP8 GQA tensor storage mismatch fix.
+- CUDA graph D2H transfer elimination in GQA.
+- TestBatchGenerate race condition fix.
+- ztensor v0.2.0 and ztoken v0.2.0 releases.
+- HuggingFace model download CLI and library integration (ADR 039).
+- One-line inference API (Load, Chat, Generate, Embed).
+- Structured output via grammar-guided decoding (ADR 038).
+- Tool/function calling in chat API.
+- API stability audit of public interfaces.
 
 ### Out of Scope
 
-- Implementing training checkpoint save/load (design only in this phase).
-- New model architectures.
-- Performance optimizations.
-- Multi-GPU or distributed changes.
+- Continuous batching / PagedAttention.
+- Prefill/decode phase split.
+- GPTQ/AWQ/Q5_K/Q6_K native quantization.
+- LoRA adapters.
+- Model hub registry (beyond HuggingFace download).
+- Multimodal inference (vision-language).
 
 ### Deliverables
 
 | ID | Description | Acceptance Criteria |
 |----|-------------|-------------------|
-| D1 | ztensor repo | `go test ./...` passes, CI green, v0.1.0 tagged |
-| D2 | ztoken repo | `go test ./...` passes, CI green, v0.1.0 tagged |
-| D3 | zerfoo without ZMF | `go test ./...` passes, zmf not in go.mod, ~7,500 lines removed |
-| D4 | zerfoo imports ztensor+ztoken | `go test ./...` passes with new imports |
-| D5 | zonnx GGUF output | `zonnx convert model.onnx -o model.gguf` works, tests pass |
-| D6 | zmf archived | Repository marked archived on GitHub |
-| D7 | Updated documentation | All CLAUDE.md, VISION.md, design.md reflect new structure |
+| D1 | 6 working GGUF architectures | All 6 produce coherent text on DGX Spark |
+| D2 | FP16/FP8 inference | Both pass Gemma 3 and Llama 3 end-to-end |
+| D3 | CUDA graph speedup | 20%+ decode speedup measured on DGX |
+| D4 | ztensor v0.2.0, ztoken v0.2.0 | Git tags, release-please PRs merged |
+| D5 | `zerfoo pull` CLI | Downloads GGUF from HuggingFace, caches locally |
+| D6 | One-line API | `zerfoo.Load` + `model.Chat` in <10 lines |
+| D7 | Structured output | JSON schema-constrained generation works |
+| D8 | Tool calling | Function calling via chat completions API |
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E1: Create ztensor Repository
+### E1: Stability -- Fix Broken Inference Paths
 
-- [x] T1.1 Create github.com/zerfoo/ztensor repo on GitHub  Owner: TBD  Est: 15m
-  - Acceptance: Empty repo exists with Apache 2.0 LICENSE.
-- [x] T1.2 Initialize go.mod and repo scaffolding  Owner: TBD  Est: 30m
-  - Create go.mod (module github.com/zerfoo/ztensor, go 1.25).
-  - Create .gitignore, Makefile with test/lint/bench targets.
-  - Deps: T1.1.
-  - Acceptance: `go build ./...` succeeds on empty module.
-- [x] T1.3 Copy leaf packages: types/, log/, metrics/runtime/  Owner: TBD  Est: 30m
-  - Zero internal imports. Copy verbatim, update import paths.
-  - Deps: T1.2.
-  - Acceptance: `go test ./types/... ./log/... ./metrics/...` passes.
-- [x] T1.4 Copy numeric/ package  Owner: TBD  Est: 30m
-  - Add float16 and float8 to go.mod. Update imports.
-  - Deps: T1.2.
-  - Acceptance: `go test ./numeric/...` passes.
-- [x] T1.5 Copy internal/ GPU and utility packages  Owner: TBD  Est: 2h
-  - Copy: cuda/, cublas/, cudnn/, gpuapi/, hip/, miopen/, nccl/, opencl/,
-    clblast/, rocblas/, tensorrt/, xblas/, workerpool/, codegen/.
-  - Update all import paths.
-  - Deps: T1.2.
-  - Acceptance: `go build ./internal/...` compiles. `go vet` passes.
-  - Risk: Assembly files (.s) reference Go symbols. Verify with go vet.
-- [x] T1.6 Copy device/ package  Owner: TBD  Est: 30m
-  - Depends on internal/cuda, internal/hip, internal/opencl.
-  - Deps: T1.5.
-  - Acceptance: `go test ./device/...` passes.
-- [x] T1.7 Copy tensor/ package  Owner: TBD  Est: 1h
-  - Depends on device/, internal/gpuapi/, internal/cuda/, float16, float8.
-  - Copy testing/testutils/ too.
-  - Deps: T1.5, T1.6.
-  - Acceptance: `go test ./tensor/...` passes.
-- [x] T1.8 Copy compute/ package  Owner: TBD  Est: 1h
-  - Depends on tensor/, numeric/, log/, metrics/, internal/*.
-  - Deps: T1.3, T1.4, T1.5, T1.7.
-  - Acceptance: `go test ./compute/...` passes.
-- [x] T1.9 Copy graph/ package  Owner: TBD  Est: 1h
-  - Depends on tensor/, compute/, types/, internal/cuda/.
-  - Include fusion.go (it moves to ztensor even though zerfoo no longer
-    needs it -- ztensor users might).
-  - Deps: T1.3, T1.7, T1.8.
-  - Acceptance: `go test ./graph/...` passes.
-- [x] T1.10 Run full ztensor test suite and linter  Owner: TBD  Est: 30m
-  - `go test ./...`, `go vet ./...`.
-  - Deps: T1.9.
-  - Acceptance: Zero failures, zero vet errors.
-- [x] T1.11 Add CI workflow, GoReleaser, release-please  Owner: TBD  Est: 30m
-  - Deps: T1.10.
-  - Acceptance: CI passes on push.
-- [x] T1.12 Write README.md  Owner: TBD  Est: 30m
-  - Deps: T1.10.
-  - Acceptance: README has module name, purpose, install, usage example.
-- [x] T1.13 Tag v0.1.0  Owner: TBD  Est: 15m
-  - Deps: T1.10, T1.11, T1.12.
-  - Acceptance: `go get github.com/zerfoo/ztensor@v0.1.0` works.
+- [ ] T1.1 Fix FP16 inference -- GQA tensor storage mismatch  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: FP16 Gemma 3 1B produces coherent text on DGX Spark. Storage length matches tensor size for all GQA weight tensors.
+  - Risk: Root cause may span ztensor tensor allocation and zerfoo GGUF loader.
 
-### E2: Create ztoken Repository
+- [ ] T1.2 Fix FP8 inference -- same GQA root cause  Owner: TBD  Est: 2h
+  - Deps: T1.1 (shares root cause)
+  - AC: FP8 Gemma 3 1B produces coherent text on DGX Spark.
 
-- [x] T2.1 Create github.com/zerfoo/ztoken repo on GitHub  Owner: TBD  Est: 15m
-  - Acceptance: Empty repo with Apache 2.0 LICENSE.
-- [x] T2.2 Initialize go.mod and scaffolding  Owner: TBD  Est: 15m
-  - Deps: T2.1.
-  - Acceptance: `go build ./...` succeeds.
-- [x] T2.3 Copy pkg/tokenizer/ as root package  Owner: TBD  Est: 30m
-  - Rename package to `ztoken`. Include testdata/.
-  - Zero internal imports to update.
-  - Deps: T2.2.
-  - Acceptance: `go test ./...` passes.
-- [x] T2.4 Extract GGUF tokenizer loader  Owner: TBD  Est: 1h
-  - Copy model/gguf/tokenizer.go to ztoken/gguf/.
-  - Define minimal metadata interface to avoid pulling full GGUF parser.
-  - Deps: T2.3.
-  - Acceptance: `go test ./gguf/...` passes.
-  - Risk: May need small amount of GGUF type duplication. Keep under 100 lines.
-- [x] T2.5 Run test suite and linter  Owner: TBD  Est: 15m
-  - Deps: T2.4.
-  - Acceptance: Zero failures.
-- [x] T2.6 Add CI, GoReleaser, release-please, README  Owner: TBD  Est: 30m
-  - Deps: T2.5.
-  - Acceptance: CI passes, README has usage example.
-- [x] T2.7 Tag v0.1.0  Owner: TBD  Est: 15m
-  - Deps: T2.5, T2.6.
-  - Acceptance: `go get github.com/zerfoo/ztoken@v0.1.0` works.
+- [ ] T1.3 Fix CUDA graph capture -- eliminate D2H transfer in GQA decode  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: CUDA graph captures the full decode step. Benchmark shows 20%+ decode speedup vs per-op execution.
+  - Risk: May require restructuring GQA to keep all intermediate tensors GPU-resident.
 
-### E3: Remove ZMF from zerfoo
+- [ ] T1.4 Fix TestBatchGenerate race condition  Owner: TBD  Est: 2h
+  - Deps: none
+  - AC: `go test -race ./generate/...` passes consistently (10 runs, 0 failures).
 
-- [x] T3.1 Delete ZMF model loading code  Owner: TBD  Est: 1h
-  - Delete: model/builder.go, model/zmf_loader.go, model/zmf_exporter.go,
-    model/zmf_mmap.go, model/tensor_encoder.go, model/tensor_decoder.go.
-  - Delete associated tests: model/builder_test.go, builder_graph_test.go,
-    builder_coverage_test.go, builder_helpers_test.go, zmf_loader_test.go,
-    zmf_exporter_test.go, zmf_mmap_test.go, tensor_codec_test.go.
-  - Deps: none (can start immediately).
-  - Acceptance: Deleted files do not exist. `go build ./...` may fail (fixed
-    in T3.2).
-- [x] T3.2 Remove ZMF references from model/ and zerfoo.go  Owner: TBD  Est: 1h
-  - Update model/adapters.go: remove ZMFModelLoader, ZMFModelExporter.
-  - Update zerfoo.go: remove BuildFromZMF and any ZMF-related public API.
-  - Update model/model.go: remove ZMFVersion field if present.
-  - Remove `github.com/zerfoo/zmf` from go.mod. Run `go mod tidy`.
-  - Deps: T3.1.
-  - Acceptance: `go build ./...` compiles. `grep zmf go.mod` returns nothing.
-- [x] T3.3 Delete graph fusion pass  Owner: TBD  Est: 30m
-  - Delete graph/fusion.go and graph/fusion_test.go.
-  - Remove FuseRMSNorm call from graph/compile.go.
-  - Deps: none (can start immediately).
-  - Acceptance: `go build ./graph/...` compiles without fusion.
-- [x] T3.4 Update ConstantOfShape to not import zmf  Owner: TBD  Est: 30m
-  - layers/core/constantofshape.go imports zmf for dtype constants.
-  - Replace zmf dtype references with local constants or ztensor types.
-  - Deps: T3.2.
-  - Acceptance: `go build ./layers/...` compiles.
-- [x] T3.5 Close PR #70 (RMSNorm fusion)  Owner: TBD  Est: 5m
-  - Close with comment: "Resolved by ADR-037. ZMF/ONNX path removed. Fusion
-    pass moved to ztensor for standalone use."
-  - Deps: T3.3.
-  - Acceptance: PR #70 closed on GitHub.
-- [x] T3.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
-  - `go test ./...` with race detector.
-  - Deps: T3.2, T3.3, T3.4.
-  - Acceptance: Zero test failures.
-- [x] T3.7 Run linter and go vet  Owner: TBD  Est: 15m
-  - Deps: T3.6.
-  - Acceptance: Zero issues.
+- [ ] T1.5 Release ztensor v0.2.0  Owner: TBD  Est: 1h
+  - Deps: T1.3 (CUDA graph fix lands in ztensor)
+  - AC: Git tag v0.2.0 on ztensor repo. release-please PR merged. CI green.
+  - Repo: ztensor
 
-### E4: Migrate zerfoo to Import ztensor and ztoken
+- [ ] T1.6 Release ztoken v0.2.0  Owner: TBD  Est: 1h
+  - Deps: none
+  - AC: Git tag v0.2.0 on ztoken repo. release-please PR merged. CI green.
+  - Repo: ztoken
 
-- [x] T4.1 Update go.mod to require ztensor and ztoken  Owner: TBD  Est: 15m
-  - Add require directives. Run go mod tidy.
-  - Deps: T1.13, T2.7, T3.6.
-  - Acceptance: `go mod tidy` succeeds.
-- [x] T4.2 Create type aliases for backward compatibility  Owner: TBD  Est: 2h
-  - In each migrated package directory, replace source with alias files
-    re-exporting from ztensor/ztoken.
-  - Deps: T4.1.
-  - Acceptance: `go build ./...` compiles.
-  - Risk: Go generic type alias syntax (Go 1.24+). Test first.
-- [x] T4.3 Update internal imports to ztensor  Owner: TBD  Est: 3h
-  - In layers/, inference/, generate/, training/, distributed/, serve/, cmd/,
-    model/, features/, data/, config/, health/, shutdown/, registry/:
-    replace zerfoo/tensor with ztensor/tensor, etc.
-  - Deps: T4.1.
-  - Acceptance: `go build ./...` compiles.
-- [x] T4.4 Update tokenizer imports to ztoken  Owner: TBD  Est: 30m
-  - Replace zerfoo/pkg/tokenizer with ztoken in all importers.
-  - Deps: T4.1.
-  - Acceptance: `go build ./...` compiles.
-- [x] T4.5 Remove migrated source from zerfoo  Owner: TBD  Est: 1h
-  - Delete original tensor/, compute/, graph/, numeric/, device/, types/,
-    log/, metrics/runtime/, all internal/ GPU packages, testing/testutils/,
-    pkg/tokenizer/. Keep only alias files.
-  - Deps: T4.2, T4.3, T4.4.
-  - Acceptance: No duplicate source. `go build ./...` compiles.
-- [x] T4.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
-  - Deps: T4.5.
-  - Acceptance: Zero test failures.
-- [x] T4.7 Run linter and go vet  Owner: TBD  Est: 15m
-  - Deps: T4.6.
-  - Acceptance: Zero issues.
+- [ ] T1.7 Update zerfoo go.mod to use ztensor v0.2.0 and ztoken v0.2.0  Owner: TBD  Est: 30m
+  - Deps: T1.5, T1.6
+  - AC: `go mod tidy && go build ./... && go test ./...` passes.
 
-### E5: Pivot zonnx to GGUF Output
+- [ ] T1.8 Run go vet and linter across zerfoo, ztensor, ztoken  Owner: TBD  Est: 30m
+  - Deps: T1.7
+  - AC: Zero new warnings. Existing purego warnings documented.
 
-- [x] T5.1 Implement GGUF writer in zonnx  Owner: TBD  Est: 3h
-  - Write pkg/gguf/writer.go implementing the GGUF v3 binary format:
-    magic, version, tensor count, metadata KV pairs, tensor info array,
-    alignment padding, raw tensor data.
-  - Support data types: F32, F16, BF16, Q4_0, Q8_0.
-  - Deps: none (can start immediately).
-  - Acceptance: Writer produces valid GGUF files readable by llama.cpp
-    gguf-dump tool.
-  - S5.1.1 Unit tests for GGUF writer  Owner: TBD  Est: 1h
-    - Test: round-trip write-then-read for each data type.
-    - Test: alignment, special values (NaN, Inf), empty tensors.
-- [x] T5.2 Map ONNX metadata to GGUF metadata  Owner: TBD  Est: 1h
-  - Convert ONNX model config (hidden_size, num_layers, vocab_size, etc.)
-    to GGUF key-value metadata using llama.cpp naming conventions
-    (e.g., `llama.embedding_length`, `llama.block_count`).
-  - Deps: T5.1.
-  - Acceptance: Metadata keys match llama.cpp expectations.
-  - S5.2.1 Tests for metadata mapping  Owner: TBD  Est: 30m
-- [x] T5.3 Map ONNX tensor names to GGUF tensor names  Owner: TBD  Est: 1h
-  - Convert ONNX/HuggingFace tensor names to GGUF conventions
-    (e.g., `model.layers.0.self_attn.q_proj.weight` to `blk.0.attn_q.weight`).
-  - Deps: T5.1.
-  - Acceptance: Tensor names match llama.cpp expectations.
-  - S5.3.1 Tests for tensor name mapping  Owner: TBD  Est: 30m
-- [x] T5.4 Update zonnx CLI to output GGUF  Owner: TBD  Est: 1h
-  - Change default output from ZMF to GGUF.
-  - `zonnx convert model.onnx -o model.gguf [--quantize q4_0]`
-  - Remove ZMF output code path.
-  - Remove `github.com/zerfoo/zmf` from zonnx go.mod.
-  - Deps: T5.1, T5.2, T5.3.
-  - Acceptance: `zonnx convert` produces GGUF. zmf not in go.mod.
-  - S5.4.1 Integration test: convert MNIST ONNX to GGUF  Owner: TBD  Est: 30m
-- [x] T5.5 Run full zonnx test suite and linter  Owner: TBD  Est: 30m
-  - Deps: T5.4.
-  - Acceptance: Zero failures.
+### E2: Model Coverage -- GGUF Graph Builders
 
-### E6: Archive zmf and Update Documentation
+Each architecture has an existing config parser and chat template. The work is
+implementing `buildXxxGraph` functions that construct computation graphs from
+GGUF tensor maps, and wiring them into `buildArchGraph` in `load_gguf.go`.
 
-- [x] T6.1 Archive github.com/zerfoo/zmf on GitHub  Owner: TBD  Est: 5m
-  - Mark repository as archived. Add notice to README.
-  - Deps: T3.6, T5.5 (both consumers removed).
-  - Acceptance: Repo shows "archived" badge. README says "Archived. Use GGUF."
-- [x] T6.2 Update root CLAUDE.md  Owner: TBD  Est: 30m
-  - Remove zmf from project map. Add ztensor and ztoken.
-  - Update dependency graph. Update from 5 repos to 6 active repos.
-  - Note zonnx now outputs GGUF.
-  - Deps: T4.6, T5.5.
-  - Acceptance: CLAUDE.md reflects current structure.
-- [x] T6.3 Update zerfoo CLAUDE.md  Owner: TBD  Est: 15m
-  - Note tensor/compute/graph are now in ztensor.
-  - Note GGUF is the sole model format. Remove ZMF references.
-  - Deps: T4.6.
-- [x] T6.4 Update docs/VISION.md  Owner: TBD  Est: 15m
-  - Reflect GGUF-only strategy and 6-repo ecosystem.
-  - Deps: T4.6.
-- [x] T6.5 Update docs/design.md  Owner: TBD  Est: 30m
-  - Remove Section 1.4 "Two Execution Paths" (now only one).
-  - Update package layout to show ztensor dependency.
-  - Remove ZMF/ONNX decomposed path references.
-  - Deps: T4.6.
-- [x] T6.6 Update docs/adr/README.md  Owner: TBD  Est: 5m
-  - Add ADR-037 entry.
-  - Deps: none (immediate).
+Reference: `buildTransformerGraph` in `arch_common.go` is the shared builder
+that Llama and Gemma use. Mistral, Qwen, and Phi are dense transformers that
+can extend it via `transformerGraphOpts`. DeepSeek requires MLA + MoE layers
+(both already implemented in `layers/attention/` and `layers/core/`).
+
+- [ ] T2.1 Implement buildMistralGraph -- sliding window attention  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: Mistral 7B GGUF produces coherent text on DGX Spark. Sliding window attention mask applied correctly (window size from config).
+  - Implementation: Extend `transformerGraphOpts` with `slidingWindowSize int`. Modify attention mask in `buildTransformerGraph` when > 0. Wire "mistral" case in `buildArchGraph`.
+  - Test: Unit test for sliding window mask shape. Integration test loading Mistral 7B GGUF.
+
+- [ ] T2.2 Implement buildQwenGraph -- attention bias, RoPE theta=1M  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: Qwen 2.5 GGUF produces coherent text on DGX Spark. Attention bias tensors loaded and applied. RoPE uses theta from config (1M for Qwen).
+  - Implementation: Extend `transformerGraphOpts` with `attnBias bool`. Load `blk.N.attn_q.bias`, `blk.N.attn_k.bias`, `blk.N.attn_v.bias` when present. Wire "qwen2" case.
+  - Test: Unit test for bias application. Integration test loading Qwen 2.5 GGUF.
+
+- [ ] T2.3 Implement buildPhiGraph -- partial rotary factor  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: Phi 3 or Phi 4 GGUF produces coherent text on DGX Spark. Partial rotary embedding applied to correct fraction of head dimensions.
+  - Implementation: Extend `transformerGraphOpts` with `partialRotaryFactor float32`. When > 0 and < 1, apply RoPE to first `factor * headDim` dims, pass-through the rest. Wire "phi3"/"phi" case.
+  - Test: Unit test for partial rotary split. Integration test loading Phi GGUF.
+
+- [ ] T2.4 Implement buildDeepSeekGraph -- MLA + MoE  Owner: TBD  Est: 8h
+  - Deps: none
+  - AC: DeepSeek-V2-Lite (16B) Q8_0 GGUF produces coherent text on DGX Spark.
+  - Implementation: New `arch_deepseek.go`. Use existing `layers/attention/MultiHeadLatentAttention` and `layers/core/MoE` layers. Build graph: embed -> N layers of (MLA attention + MoE FFN with shared + routed experts) -> RMSNorm -> LM head. Wire "deepseek_v3" and "deepseek2" cases.
+  - Test model: DeepSeek-V2-Lite Q8_0 (~17 GB, fits on DGX Spark 128 GB). Available at mradermacher/DeepSeek-V2-Lite-GGUF on HuggingFace.
+  - Risk: MLA + MoE graph is significantly more complex than dense transformers. May surface untested paths in MLA and MoE layer implementations.
+
+- [ ] T2.5 Wire all new architectures into buildArchGraph  Owner: TBD  Est: 1h
+  - Deps: T2.1, T2.2, T2.3, T2.4
+  - AC: `buildArchGraph` handles "llama", "gemma", "gemma3", "mistral", "qwen2", "phi3", "phi", "deepseek_v3", "deepseek2". Unknown architectures return clear error.
+
+- [ ] T2.6 End-to-end DGX verification for all 6 architectures  Owner: TBD  Est: 4h
+  - Deps: T2.5
+  - AC: All 6 architectures produce coherent multi-sentence output. Benchmark throughput recorded for each.
+  - Models: Gemma 3 1B Q4_K_M, Llama 3 8B Q4_K_M, Mistral 7B Q4_K_M, Qwen 2.5 7B Q4_K_M, Phi 3 mini Q4_K_M, DeepSeek-V2-Lite Q8_0.
+
+- [ ] T2.7 Run go vet and linter on inference package  Owner: TBD  Est: 30m
+  - Deps: T2.5
+  - AC: Zero new warnings in inference/.
+
+### E3: HuggingFace Model Download (ADR 039)
+
+Decision rationale: docs/adr/039-huggingface-model-download.md
+
+- [ ] T3.1 Implement HuggingFace HTTP API client  Owner: TBD  Est: 4h
+  - Deps: none
+  - AC: Can list repos, list files in a repo, resolve GGUF files by quant level. Supports HF_TOKEN for gated models. Uses Go standard library net/http only.
+  - Package: model/huggingface/
+  - Test: Unit tests with httptest mock server. Integration test against real HF API (skipped in CI via build tag).
+
+- [ ] T3.2 Implement download with resume and progress  Owner: TBD  Est: 4h
+  - Deps: T3.1
+  - AC: Downloads multi-GB GGUF files to ~/.cache/zerfoo/models/. Supports HTTP Range for resume. SHA256 verification. Progress bar on stderr.
+  - Test: Unit test for resume logic (partial file + Range header). Integration test downloading a small model.
+
+- [ ] T3.3 Implement cache manifest and management  Owner: TBD  Est: 2h
+  - Deps: T3.2
+  - AC: JSON manifest tracks cached models. `List()` returns cached models with sizes. `Remove()` deletes model and updates manifest.
+  - Test: Unit tests for manifest CRUD operations.
+
+- [ ] T3.4 Implement `zerfoo pull` CLI command  Owner: TBD  Est: 2h
+  - Deps: T3.2, T3.3
+  - AC: `zerfoo pull google/gemma-3-4b` downloads default Q4_K_M. `--quant Q8_0` selects quant. `zerfoo list` shows cached models. `zerfoo rm` removes.
+  - Package: cmd/
+  - Test: Integration test for pull/list/rm cycle.
+
+- [ ] T3.5 Integrate cache into zerfoo.Load()  Owner: TBD  Est: 2h
+  - Deps: T3.3, T4.1
+  - AC: `zerfoo.Load("google/gemma-3-4b")` checks cache, downloads if missing. `zerfoo.Load("/path/to/file.gguf")` still works. Path detection: starts with "/" or ".".
+  - Test: Unit test for path vs model-name detection. Integration test for cache hit/miss.
+
+- [ ] T3.6 Run go vet and linter on model/huggingface/ and cmd/  Owner: TBD  Est: 30m
+  - Deps: T3.4
+  - AC: Zero warnings.
+
+### E4: Developer Experience -- High-Level API
+
+- [ ] T4.1 Implement zerfoo.Load() high-level model loader  Owner: TBD  Est: 3h
+  - Deps: none (can use file path initially, HF integration added in T3.5)
+  - AC: `zerfoo.Load("/path/to/model.gguf")` returns a `*zerfoo.Model` with Chat, Generate, Embed methods. Detects architecture from GGUF metadata.
+  - Package: top-level zerfoo/ package
+  - Test: Unit test with a small test GGUF fixture.
+
+- [ ] T4.2 Implement Model.Chat() and Model.Generate()  Owner: TBD  Est: 3h
+  - Deps: T4.1
+  - AC: `model.Chat("prompt")` returns generated text as string. `model.Generate(ctx, prompt, opts...)` returns `*GenerateResult` with Text, TokenCount, Duration. Supports WithMaxTokens, WithTemperature, WithTopP options.
+  - Test: Unit test with mock engine. Integration test on DGX.
+
+- [ ] T4.3 Implement Model.Embed()  Owner: TBD  Est: 3h
+  - Deps: T4.1
+  - AC: `model.Embed([]string{"hello", "world"})` returns `[]Embedding` where Embedding has `Vector []float32` and `CosineSimilarity(other)` method.
+  - Test: Unit test verifying embedding shape and cosine similarity computation.
+
+- [ ] T4.4 Implement Model.ChatStream() for streaming  Owner: TBD  Est: 2h
+  - Deps: T4.2
+  - AC: `model.ChatStream(ctx, "prompt")` returns a channel or iterator yielding token strings as they are generated.
+  - Test: Unit test verifying streaming yields tokens incrementally.
+
+- [ ] T4.5 Run go vet and linter on top-level package  Owner: TBD  Est: 30m
+  - Deps: T4.4
+  - AC: Zero warnings.
+
+### E5: Structured Output -- Grammar-Guided Decoding (ADR 038)
+
+Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
+
+- [ ] T5.1 Implement JSON Schema to CFG converter  Owner: TBD  Est: 6h
+  - Deps: none
+  - AC: Converts JSON Schema (object, array, string, number, integer, boolean, null, enum, const, required, nested) to a context-free grammar state machine. Rejects unsupported features ($ref, oneOf, anyOf, pattern) with clear error.
+  - Package: generate/grammar/
+  - Test: Unit tests for each JSON Schema type. Edge cases: empty schema, deeply nested, enum with special chars.
+
+- [ ] T5.2 Implement token mask computation from CFG state  Owner: TBD  Est: 6h
+  - Deps: T5.1
+  - AC: Given a CFG state and tokenizer vocabulary, produces a `[]bool` mask of valid next tokens. Mask is correct: sampling only masked tokens produces valid JSON at every prefix.
+  - Implementation: Build byte-trie from vocabulary. At each step, intersect CFG valid-byte-set with trie to determine valid tokens.
+  - Test: Unit tests: given a schema and partial output, verify mask allows valid continuations and blocks invalid ones.
+
+- [ ] T5.3 Integrate grammar engine into generation pipeline  Owner: TBD  Est: 4h
+  - Deps: T5.2, T4.2
+  - AC: `model.Generate(ctx, prompt, zerfoo.WithSchema(schema))` produces guaranteed-valid JSON. Token mask applied before sampling at each decode step. Grammar engine runs on CPU in parallel with GPU forward pass.
+  - Test: Integration test: generate JSON matching a person schema (name + age), parse result with encoding/json.
+
+- [ ] T5.4 Add response_format support to OpenAI API server  Owner: TBD  Est: 3h
+  - Deps: T5.3
+  - AC: POST /v1/chat/completions with `response_format.type = "json_schema"` produces schema-constrained output. Matches OpenAI API spec for json_schema response format.
+  - Test: Integration test via HTTP client.
+
+- [ ] T5.5 Run go vet and linter on generate/grammar/  Owner: TBD  Est: 30m
+  - Deps: T5.4
+  - AC: Zero warnings.
+
+### E6: Tool/Function Calling
+
+- [ ] T6.1 Implement tool definition parsing in chat API  Owner: TBD  Est: 3h
+  - Deps: none
+  - AC: Chat completions accept `tools` array with function definitions (name, description, parameters as JSON Schema). Stored in request context.
+  - Test: Unit test for tool definition parsing and validation.
+
+- [ ] T6.2 Implement tool call detection and response formatting  Owner: TBD  Est: 4h
+  - Deps: T6.1, T5.3
+  - AC: When model output matches tool call pattern, response includes `tool_calls` array with function name and arguments as JSON. Uses grammar-guided decoding to ensure arguments match the tool's parameter schema.
+  - Test: Unit test with mock model output. Integration test with real model on DGX.
+
+- [ ] T6.3 Add tool calling to OpenAI API server  Owner: TBD  Est: 3h
+  - Deps: T6.2
+  - AC: POST /v1/chat/completions with `tools` parameter produces tool_calls in response. Supports `tool_choice: "auto"` and `tool_choice: {"type": "function", "function": {"name": "..."}}`.
+  - Test: Integration test via HTTP client.
+
+- [ ] T6.4 Add tool calling to high-level library API  Owner: TBD  Est: 2h
+  - Deps: T6.2, T4.2
+  - AC: `model.Chat(prompt, zerfoo.WithTools(tools...))` returns result with ToolCalls field.
+  - Test: Unit test with tool definitions.
+
+- [ ] T6.5 Run go vet and linter on tool calling code  Owner: TBD  Est: 30m
+  - Deps: T6.4
+  - AC: Zero warnings.
+
+### E7: API Stability Audit
+
+- [ ] T7.1 Audit public API surface of zerfoo package  Owner: TBD  Est: 3h
+  - Deps: T4.5, T5.5, T6.5
+  - AC: Every exported type, function, and method in the zerfoo top-level package is documented with godoc. Types marked as stable or experimental. No unexported fields that should be exported, no exported fields that should be private.
+
+- [ ] T7.2 Audit public API surface of ztensor package  Owner: TBD  Est: 2h
+  - Deps: T1.5
+  - AC: Same criteria as T7.1 for ztensor.
+
+- [ ] T7.3 Audit public API surface of ztoken package  Owner: TBD  Est: 1h
+  - Deps: T1.6
+  - AC: Same criteria as T7.1 for ztoken.
 
 ---
 
@@ -370,99 +327,53 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 
 ### Tracks
 
-| Track | Tasks | Description |
+| Track | Epics | Description |
 |-------|-------|-------------|
-| A: ztensor | T1.1-T1.13 | Create and populate ztensor repo |
-| B: ztoken | T2.1-T2.7 | Create and populate ztoken repo |
-| C: ZMF removal | T3.1-T3.7 | Delete ZMF code from zerfoo |
-| D: Migration | T4.1-T4.7 | Update zerfoo imports to ztensor/ztoken |
-| E: zonnx pivot | T5.1-T5.5 | GGUF writer and zonnx CLI update |
-| F: Docs + archive | T6.1-T6.6 | Archive zmf, update all docs |
+| A: Stability | E1 | Fix FP16, FP8, CUDA graph, race condition |
+| B: Mistral | T2.1 | Mistral graph builder |
+| C: Qwen | T2.2 | Qwen graph builder |
+| D: Phi | T2.3 | Phi graph builder |
+| E: DeepSeek | T2.4 | DeepSeek MLA+MoE graph builder |
+| F: HF Download | E3 (T3.1-T3.4) | HuggingFace API client and CLI |
+| G: High-Level API | E4 (T4.1-T4.4) | Load, Chat, Generate, Embed |
+| H: Grammar | E5 (T5.1-T5.2) | JSON Schema CFG and token masking |
+| I: Tool Calling | E6 (T6.1) | Tool definition parsing |
+| J: ztoken release | T1.6 | Independent release |
 
-### Sync Points
-
-- Tracks A, B, C, E all start in Wave 1 (independent).
-- Track D waits for A, B, C to complete (Sync 1).
-- Track F waits for C, D, E to complete (Sync 2).
+Sync points:
+- After Wave 2: T2.1-T2.4 merge into T2.5 (wire into buildArchGraph).
+- After T4.2 + T5.2: T5.3 integrates grammar into generation.
+- After T5.3: T6.2 uses grammar for tool argument validation.
+- After all epics: T7.1-T7.3 audit APIs.
 
 ### Maximum Parallelism
 
-**Wave 1** (10 agents, no dependencies):
-1. T1.1 -- Create ztensor repo
-2. T2.1 -- Create ztoken repo
-3. T3.1 -- Delete ZMF model loading code
-4. T3.3 -- Delete graph fusion pass
-5. T5.1 -- Implement GGUF writer in zonnx
-6. T6.6 -- Update ADR index
+**Wave 1** (10 tasks, no dependencies):
+T1.1, T1.3, T1.4, T1.6, T2.1, T2.2, T2.3, T2.4, T3.1, T4.1
 
-**Wave 2** (10 agents):
-1. T1.2 -- Initialize ztensor scaffolding
-2. T1.5 -- Copy internal/ GPU packages
-3. T1.3 -- Copy leaf packages
-4. T1.4 -- Copy numeric/
-5. T2.2 -- Initialize ztoken scaffolding
-6. T3.2 -- Remove ZMF references from model/ and zerfoo.go
-7. T5.2 -- Map ONNX metadata to GGUF metadata
-8. T5.3 -- Map ONNX tensor names to GGUF names
+**Wave 2** (10 tasks, after Wave 1):
+T1.2 (needs T1.1), T1.5 (needs T1.3), T2.5 (needs T2.1-T2.4), T3.2 (needs T3.1), T4.2 (needs T4.1), T4.3 (needs T4.1), T5.1, T6.1, T4.4 (needs T4.2 but can stub), T1.7 (needs T1.5, T1.6)
 
-**Wave 3** (10 agents):
-1. T1.6 -- Copy device/
-2. T1.7 -- Copy tensor/
-3. T2.3 -- Copy tokenizer to ztoken
-4. T2.4 -- Extract GGUF tokenizer loader
-5. T3.4 -- Update ConstantOfShape zmf imports
-6. T5.4 -- Update zonnx CLI to output GGUF
+**Wave 3** (9 tasks, after Wave 2):
+T1.8 (needs T1.7), T2.6 (needs T2.5), T2.7 (needs T2.5), T3.3 (needs T3.2), T3.4 (needs T3.2, T3.3), T5.2 (needs T5.1), T6.2 (needs T6.1, T5.3 stubbed), T3.6 (needs T3.4), T4.5 (needs T4.4)
 
-**Wave 4** (8 agents):
-1. T1.8 -- Copy compute/
-2. T2.5 -- Run ztoken tests
-3. T2.6 -- Add ztoken CI and README
-4. T3.5 -- Close PR #70
-5. T3.6 -- Run zerfoo test suite (ZMF removal)
-6. T5.5 -- Run zonnx test suite
+**Wave 4** (8 tasks, after Wave 3):
+T3.5 (needs T3.3, T4.1), T5.3 (needs T5.2, T4.2), T5.4 (needs T5.3), T6.3 (needs T6.2), T6.4 (needs T6.2, T4.2), T5.5 (needs T5.4), T6.5 (needs T6.4), T7.2 (needs T1.5)
 
-**Wave 5** (6 agents):
-1. T1.9 -- Copy graph/
-2. T2.7 -- Tag ztoken v0.1.0
-3. T3.7 -- Run zerfoo linter
-
-**Wave 6** (4 agents):
-1. T1.10 -- Run ztensor test suite
-2. T1.11 -- Add ztensor CI
-3. T1.12 -- Write ztensor README
-
-**Wave 7** (1 agent):
-1. T1.13 -- Tag ztensor v0.1.0
-
-**Wave 8** (4 agents, Sync 1: needs T1.13, T2.7, T3.7):
-1. T4.1 -- Update zerfoo go.mod
-2. T4.2 -- Create type aliases
-3. T4.3 -- Update internal imports to ztensor
-4. T4.4 -- Update tokenizer imports to ztoken
-
-**Wave 9** (3 agents):
-1. T4.5 -- Remove migrated source
-2. T4.6 -- Run full zerfoo test suite
-3. T4.7 -- Run linter
-
-**Wave 10** (6 agents, Sync 2: needs T4.6, T5.5):
-1. T6.1 -- Archive zmf repo
-2. T6.2 -- Update root CLAUDE.md
-3. T6.3 -- Update zerfoo CLAUDE.md
-4. T6.4 -- Update VISION.md
-5. T6.5 -- Update design.md
+**Wave 5** (3 tasks, final):
+T7.1 (needs T4.5, T5.5, T6.5), T7.3 (needs T1.6)
 
 ---
 
 ## 5. Timeline and Milestones
 
-| ID | Milestone | Exit Criteria | Depends On |
-|----|-----------|--------------|------------|
-| M1 | ztensor v0.1.0 | Tests pass, CI green, tagged | T1.13 |
-| M2 | ztoken v0.1.0 | Tests pass, CI green, tagged | T2.7 |
-| M3 | ZMF removed from zerfoo | ~7,500 lines deleted, zmf not in go.mod, PR #70 closed | T3.7 |
-| M4 | zonnx outputs GGUF | Converter produces valid GGUF, zmf not in go.mod | T5.5 |
-| M5 | Migration complete | zerfoo uses ztensor+ztoken, all tests pass, docs updated | T6.5 |
+| Milestone | Deps | Exit Criteria |
+|-----------|------|---------------|
+| M1: Stability | T1.1-T1.8 | FP16, FP8, CUDA graph all pass on DGX. ztensor/ztoken released. |
+| M2: Full Model Coverage | T2.1-T2.7 | All 6 architectures produce coherent GGUF inference on DGX. |
+| M3: Model Download | T3.1-T3.6 | `zerfoo pull` downloads and caches GGUF from HuggingFace. |
+| M4: Developer API | T4.1-T4.5, T5.1-T5.5, T6.1-T6.5 | One-line API, structured output, tool calling all working. |
+| M5: Ship-Ready | T7.1-T7.3 | API audit complete. All deliverables D1-D8 met. |
 
 ---
 
@@ -470,13 +381,12 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
-| R1 | Go generic type aliases have syntax limitations | High | Medium | Test alias syntax with Go 1.25 before T4.2. Fall back to wrapper types. |
-| R2 | Assembly files (.s) break in new module | Medium | Low | Run `go vet` and `go test -race` after copy. |
-| R3 | GGUF tokenizer extraction needs too much duplication | Medium | Medium | Define minimal metadata interface. Accept keeping loader in zerfoo if duplication exceeds 100 lines. |
-| R4 | Circular dependency between ztensor and zerfoo | High | Low | ztensor must never import zerfoo. Verify with `go mod graph`. |
-| R5 | GGUF writer produces files incompatible with llama.cpp | High | Medium | Test round-trip: zonnx writes GGUF, llama.cpp gguf-dump reads it. Use GGUF v3 spec exactly. |
-| R6 | ConstantOfShape or other layers have deep zmf dependency | Medium | Low | Audit all zmf import sites (18 files). Replace with local constants. |
-| R7 | Removing ZMF breaks users who import zerfoo for ZMF loading | Low | Low | No known external users. The zmf import in zerfoo.go is internal. |
+| R1 | FP16/FP8 GQA root cause spans ztensor+zerfoo boundary | High | Medium | Investigate ztensor tensor allocation first. Both repos in same workspace. |
+| R2 | CUDA graph D2H elimination requires GQA restructuring | High | Medium | Profile first. May need GPU-resident position counter (see ADR 032). |
+| R3 | DeepSeek MLA+MoE graph builder surfaces bugs in MLA/MoE layers | Medium | Medium | Layers have unit tests. Run layer-level tests before integration. |
+| R4 | Grammar-guided decoding token mask is slow for large vocabularies | Medium | Low | Token mask is O(vocab) on CPU, runs in parallel with GPU forward. Profile on 128K vocab models. |
+| R5 | HuggingFace API changes or rate limits | Low | Low | Pin to documented API endpoints. Cache aggressively. Retry with backoff. |
+| R6 | DeepSeek-V2-Lite GGUF not available or broken | Medium | Low | Multiple providers on HuggingFace (mradermacher, bartowski). Verify before starting T2.4. |
 
 ---
 
@@ -484,150 +394,83 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 
 ### Definition of Done
 
-- All tests pass (`go test ./...` with race detector).
-- `go vet ./...` reports zero issues.
-- No circular dependencies (`go mod graph` clean).
-- Code compiles on macOS ARM64 and Linux ARM64 (DGX Spark).
-- Each change is a small, focused commit.
+A task is done when:
+1. Code compiles: `go build ./...` passes.
+2. Tests pass: `go test ./...` passes (including new tests).
+3. Race detector clean: `go test -race ./...` passes for modified packages.
+4. Linter clean: `go vet ./...` and golangci-lint report zero new warnings.
+5. For DGX verification tasks: end-to-end output reviewed and throughput recorded.
 
 ### Review and QA
 
-- Each epic gets a PR with CI checks.
-- Verify `go get` works from clean environment after tagging.
-- Run zerfoo integration tests (TestProductionSmokeTest).
-- Test GGUF files from zonnx with llama.cpp gguf-dump for validation.
-
-### Commit Discipline
-
-- Never commit files from different directories in the same commit.
-- One logical change per commit.
-- Rebase and merge, never squash or merge commits.
+- Every implementation task has a paired test subtask or inline AC requiring tests.
+- Run linters after every code change (tasks T1.8, T2.7, T3.6, T4.5, T5.5, T6.5).
+- DGX verification (T2.6) is the integration gate for model coverage.
+- Never commit files from different repo directories in the same commit.
+- Make many small logical commits.
 
 ---
 
 ## 8. Progress Log
 
-### Change Summary -- 2026-03-16
-
-Phase 17 execution complete. All 52 tasks across 6 epics marked done.
-
-Completed:
-- E1 (T1.1-T1.13): ztensor repo created, populated, CI added, tagged v0.1.0
-- E2 (T2.1-T2.7): ztoken repo created, populated, CI added, tagged v0.1.0
-- E3 (T3.1-T3.7): ZMF removed from zerfoo (~7,500 lines deleted, zmf removed from go.mod)
-- E4 (T4.1-T4.7): zerfoo imports migrated to ztensor/ztoken, ~48K lines of source removed
-- E5 (T5.1-T5.5): zonnx GGUF writer + metadata/tensor mapping + CLI pivot
-- E6 (T6.1-T6.6): zmf archived, all docs updated for 7-repo ecosystem
-
-Deviations:
-- T4.2 (type aliases) skipped -- no external consumers, direct import rewrite sufficient
-- internal/ packages stayed in zerfoo (Go visibility rules prevent cross-module internal/ imports)
-- zmf remains in zonnx go.mod as intermediate for quantization (full removal deferred)
-
-### Change Summary -- 2026-03-15 (revision 2)
-
-Updated Phase 17 plan to incorporate GGUF-only model format decision.
-
-Changes from previous plan revision:
-- Added E3 (ZMF removal): T3.1-T3.7 to delete ~7,500 lines of ZMF code.
-- Added E5 (zonnx pivot): T5.1-T5.5 to implement GGUF writer and update CLI.
-- Added E6 tasks for archiving zmf and updating docs.
-- Added checkpoint storage design (GGUF-based) to Context section.
-- Created ADR-037 (docs/adr/037-gguf-only-drop-zmf-model-format.md).
-- Updated ADR-036 reference in dependency graph (zmf removed from zerfoo).
-- Renumbered E3 (was migration) to E4, E4 (was docs) to E6.
-- Updated parallel work section: ZMF removal and zonnx pivot run in Wave 1
-  alongside ztensor/ztoken creation, increasing parallelism.
-- Added R5, R6, R7 to risk register.
-- Updated milestones to include M3 (ZMF removed) and M4 (zonnx GGUF).
-
 ### Change Summary -- 2026-03-15
 
-New plan created for Phase 17: ztensor and ztoken repository extraction.
-Created ADR-036 (docs/adr/036-ztensor-ztoken-repo-extraction.md).
+New plan created for Phase 19: "Ship-Ready". Replaces completed Phase 18.
+
+Phase 18 (Developer Adoption Campaign) was 100% complete (37/37 tasks). All stable
+knowledge from Phase 18 was previously preserved in docs/design.md, docs/adr/, and
+docs/devlog.md during Phase 18 execution.
+
+New ADRs created:
+- docs/adr/038-structured-output-grammar-guided-decoding.md -- Grammar-guided decoding for JSON schema-constrained generation.
+- docs/adr/039-huggingface-model-download.md -- HuggingFace model download via zerfoo pull.
+
+Key decisions:
+- DeepSeek V3 (671B) does not fit on DGX Spark (128 GB). Using DeepSeek-V2-Lite (16B)
+  as the MLA+MoE test model -- same architecture, Q8_0 is ~17 GB.
+- HuggingFace API integration approved by founder.
+- Structured output / grammar-guided decoding approved by founder.
+- Continuous batching, prefill/decode split, and quantization improvements deferred to Phase 20.
 
 ---
 
 ## 9. Hand-off Notes
 
-- **Current version:** v1.2.0.
-- **Key decisions:**
-  - ADR-036: Extract ztensor and ztoken repositories.
-  - ADR-037: GGUF as sole model format, drop ZMF.
-- **ZMF removal scope:** 18 files import zmf. Core deletion is ~7,500 lines
-  (2,357 source + 5,124 tests). ConstantOfShape has a zmf dtype import that
-  needs local replacement.
-- **Checkpoint design:** Training checkpoints will be GGUF files with
-  optimizer tensors prefixed `optimizer.` and training metadata as KV pairs.
-  Not implemented yet (SaveModel is a stub).
-- **GGUF writer for zonnx:** Must implement GGUF v3 binary format. Reference:
-  llama.cpp gguf.py and the GGUF spec. Key: 64-byte alignment for tensor data.
-- **DGX Spark:** ssh ndungu@192.168.86.250. Project at ~/zerfoo.
-- **Pre-commit hook:** Rejects multi-directory commits.
-- **PR #70:** Close as won't-fix after T3.3 (fusion pass deleted).
+- **DGX Spark**: ssh ndungu@192.168.86.250. 128 GB unified memory. CUDA capable.
+- **Benchmark baseline**: Gemma 3 1B Q4_K_M at 234.30 tok/s (Phase 11 measurement).
+- **GGUF graph builder pattern**: See `inference/arch_common.go` (`buildTransformerGraph`) and `inference/arch_llama.go` / `inference/arch_gemma.go` for the two existing implementations. New builders extend `transformerGraphOpts` or create new builder functions for architectures that differ significantly (DeepSeek).
+- **Config parsers**: All 6 architectures already have config parsers in `inference/arch_config.go` with full test coverage.
+- **MLA and MoE layers**: Already implemented in `layers/attention/multi_head_latent_attention.go` and `layers/core/moe.go` with tests.
+- **Chat templates**: All 6 architectures have chat template formatters.
+- **DeepSeek test model**: DeepSeek-V2-Lite Q8_0 (~17 GB) from mradermacher/DeepSeek-V2-Lite-GGUF on HuggingFace.
+- **FP16/FP8 bug**: GQA tensor storage mismatch -- storage length 1536 vs tensor size 6144. Documented in QUALITY.md (2026-03-05).
+- **CUDA graph bug**: D2H transfer in GQA prevents graph closure. Falls back to per-op execution. See ADR 032 (GPU-resident position counter) for related work.
+- **Phase 18 outputs**: 4 blog posts, 4 examples, getting-started guide, GPU setup guide, CONTRIBUTING.md in all repos, issue templates in all repos, distribution drafts. All merged to main.
 
 ---
 
 ## 10. Appendix
 
-### Files to Delete from zerfoo (E3)
+### Architecture Differences from Llama Baseline
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| model/builder.go | 824 | Generic graph-from-ZMF construction |
-| model/zmf_loader.go | 95 | ZMF file loading |
-| model/zmf_exporter.go | 217 | ZMF file export |
-| model/zmf_mmap.go | 35 | ZMF mmap loading |
-| model/tensor_encoder.go | 136 | Tensor to ZMF protobuf |
-| model/tensor_decoder.go | 350 | ZMF protobuf to tensor |
-| model/adapters.go | 487 | ZMF adapter types (partial, keep non-ZMF parts) |
-| graph/fusion.go | 213 | RMSNorm fusion pass |
-| Tests for above | 5,124 | 10 test files |
-| **Total** | **~7,481** | |
+| Architecture | Key Differences from Llama | Complexity |
+|-------------|---------------------------|------------|
+| Mistral | Sliding window attention mask | Low -- add window size to transformerGraphOpts |
+| Qwen 2 | Attention bias, RoPE theta=1M | Low -- add bias loading, theta already configurable |
+| Phi 3/4 | Partial rotary factor (0.5) | Low -- split head dims, apply RoPE to subset |
+| DeepSeek V2 | MLA replaces MHA, MoE replaces FFN | High -- new graph builder, uses existing MLA/MoE layers |
 
-### Ecosystem After Phase 17
+### DeepSeek-V2-Lite Architecture Details
 
-```
-float16 --+
-float8  --+--> ztensor (tensor, compute, graph, GPU kernels, SIMD)
-          |
-          +--> zerfoo (GGUF inference, training, serving)
-ztoken -----+
-          |
-          +--> zonnx (ONNX to GGUF converter)
+- 16B total parameters, 2.4B active per token (MoE)
+- 27 layers, hidden dim 2048, 16 attention heads
+- MLA: compressed KV (latent dim), low-rank projections for Q/K/V
+- MoE: 2 shared experts + 64 routed experts per layer, 6 activated per token
+- GGUF Q8_0: ~17 GB (fits easily in 128 GB DGX Spark)
 
-zmf: ARCHIVED
-```
+### JSON Schema Subset for Structured Output (ADR 038)
 
-6 active repositories. 1 archived.
+Supported: object, array, string, number, integer, boolean, null, enum, const,
+required, minLength/maxLength, minimum/maximum, nested objects/arrays.
 
-### GGUF Training Checkpoint Schema
-
-```
-# Metadata KV pairs
-general.architecture = "llama"
-general.name = "my-finetuned-model"
-training.epoch = 5
-training.global_step = 15000
-training.learning_rate = 0.0001
-training.optimizer = "adamw"
-training.loss = 0.342
-training.beta1 = 0.9
-training.beta2 = 0.999
-
-# Model weight tensors (same as inference GGUF)
-token_embd.weight
-blk.0.attn_q.weight
-blk.0.attn_k.weight
-...
-
-# Optimizer state tensors (additional, stripped for inference)
-optimizer.m.token_embd.weight
-optimizer.v.token_embd.weight
-optimizer.m.blk.0.attn_q.weight
-optimizer.v.blk.0.attn_q.weight
-...
-```
-
-To produce an inference-ready GGUF from a checkpoint: strip all tensors
-with `optimizer.` prefix and remove `training.*` metadata keys.
+Not supported (deferred): $ref, oneOf, anyOf, allOf, pattern, additionalProperties.
