@@ -186,7 +186,7 @@ Qwen-family models. The ztoken library already supports this mode.
     for models with `tokenizer.ggml.model == "gpt2"`. Existing SentencePiece models
     (tokenizer.ggml.model == "llama") are unaffected.
 
-- [ ] T1.2 Add unit tests for byte-level BPE tokenizer extraction  Owner:  Est: 45m
+- [x] T1.2 Add unit tests for byte-level BPE tokenizer extraction  Owner: Claude  Done: 2026-03-16
   - Deps: T1.1
   - File: `model/gguf/tokenizer_test.go`
   - Add: `TestExtractTokenizer_ByteLevelBPE` that creates a GGUF File with
@@ -195,7 +195,7 @@ Qwen-family models. The ztoken library already supports this mode.
     enable byte-level BPE.
   - Acceptance: `go test ./model/gguf/ -run TestExtractTokenizer_ByteLevel -race` passes.
 
-- [ ] T1.3 go vet/lint clean after Qwen tokenizer fix  Owner:  Est: 15m
+- [x] T1.3 go vet/lint clean after Qwen tokenizer fix  Owner: Claude  Done: 2026-03-16
   - Deps: T1.1, T1.2
   - Acceptance: `go vet ./model/...` 0 warnings.
 
@@ -213,7 +213,7 @@ architecture graph builder can use them.
   - Acceptance: `MapTensorName("phi3", "blk.0.attn_qkv.weight")` returns
     `"model.layers.0.self_attn.qkv_proj.weight"`.
 
-- [ ] T2.2 Implement QKV tensor split in GGUF loader  Owner:  Est: 90m
+- [x] T2.2 Implement QKV tensor split in GGUF loader  Owner: Claude  Done: 2026-03-16
   - Deps: T2.1
   - File: `model/gguf/loader.go` (or new file `model/gguf/split.go`)
   - Add: `splitMergedQKV()` function called after tensor name mapping in `LoadGGUF`.
@@ -227,7 +227,7 @@ architecture graph builder can use them.
   - Acceptance: After splitting, the tensor map contains separate q_proj, k_proj, v_proj
     tensors with correct shapes. The original qkv_proj tensor is removed.
 
-- [ ] T2.3 Add unit tests for QKV split  Owner:  Est: 60m
+- [x] T2.3 Add unit tests for QKV split  Owner: Claude  Done: 2026-03-16
   - Deps: T2.2
   - Files: `model/gguf/split_test.go` or `model/gguf/loader_test.go`
   - Add: Tests for (a) MHA split (32 heads, 32 KV heads, head_dim=96, hidden_size=3072),
@@ -235,7 +235,7 @@ architecture graph builder can use them.
     (c) missing config values produce error, (d) bias splitting.
   - Acceptance: `go test ./model/gguf/ -run TestSplitMergedQKV -race` passes.
 
-- [ ] T2.4 Add Phi arch builder support for split QKV  Owner:  Est: 30m
+- [x] T2.4 Add Phi arch builder support for split QKV  Owner: Claude  Done: 2026-03-16
   - Deps: T2.2
   - File: `inference/arch_phi.go`
   - Verify: `buildPhiGraph` already works with separate q_proj, k_proj, v_proj tensors
@@ -243,7 +243,7 @@ architecture graph builder can use them.
     Add an integration test that builds a Phi graph from tensors containing split QKV.
   - Acceptance: `go test ./inference/ -run TestBuildPhiGraph -race` passes.
 
-- [ ] T2.5 go vet/lint clean after Phi QKV support  Owner:  Est: 15m
+- [x] T2.5 go vet/lint clean after Phi QKV support  Owner: Claude  Done: 2026-03-16
   - Deps: T2.1-T2.4
   - Acceptance: `go vet ./model/... ./inference/...` 0 warnings.
 
@@ -261,7 +261,7 @@ Route Mistral-architecture models to `buildMistralGraph` when GGUF metadata repo
     `buildMistralGraph`. A Gemma 3 file with SlidingWindowPattern=6 still uses
     `buildGemmaGraph`.
 
-- [ ] T3.2 Add unit tests for Mistral detection  Owner:  Est: 45m
+- [x] T3.2 Add unit tests for Mistral detection  Owner: Claude  Done: 2026-03-16
   - Deps: T3.1
   - File: `inference/load_gguf_test.go`
   - Add: Tests for (a) arch="llama" + sliding_window=4096 routes to Mistral,
@@ -269,7 +269,7 @@ Route Mistral-architecture models to `buildMistralGraph` when GGUF metadata repo
     sliding_window + pattern=6 stays Gemma.
   - Acceptance: `go test ./inference/ -run TestBuildArchGraph -race` passes.
 
-- [ ] T3.3 go vet/lint clean after Mistral detection  Owner:  Est: 15m
+- [x] T3.3 go vet/lint clean after Mistral detection  Owner: Claude  Done: 2026-03-16
   - Deps: T3.1, T3.2
   - Acceptance: `go vet ./inference/...` 0 warnings.
 
@@ -287,7 +287,7 @@ but the CLI, library integration tests, and example need work.
   - Acceptance: `zerfoo run model.gguf --json-schema '{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}' --prompt "Extract the name from: John Smith"`
     produces valid JSON matching the schema.
 
-- [ ] T4.2 Add unit tests for CLI --json-schema flag  Owner:  Est: 45m
+- [x] T4.2 Add unit tests for CLI --json-schema flag  Owner: Claude  Done: 2026-03-16
   - Deps: T4.1
   - File: `cmd/cli/run_test.go`
   - Add: Tests for (a) --json-schema parses correctly, (b) invalid schema produces
@@ -308,7 +308,7 @@ but the CLI, library integration tests, and example need work.
     library-level and explanation of server-level structured output.
   - Acceptance: `go build ./examples/json-output/` succeeds. README.md explains usage.
 
-- [ ] T4.5 go vet/lint clean after structured output  Owner:  Est: 15m
+- [x] T4.5 go vet/lint clean after structured output  Owner: Claude  Done: 2026-03-16
   - Deps: T4.1-T4.4
   - Acceptance: `go vet ./...` 0 warnings.
 
@@ -326,7 +326,7 @@ graph is shared (read-only), but KV cache and position state are per-session.
   - Acceptance: InferenceSession compiles and has method signatures for Generate and
     GenerateStream.
 
-- [ ] T5.2 Implement per-session KV cache allocation  Owner:  Est: 90m
+- [x] T5.2 Implement per-session KV cache allocation  Owner: Claude  Done: 2026-03-16
   - Deps: T5.1
   - File: `generate/session.go`, `generate/generator.go`
   - Change: Move KV cache creation from Generator construction to Session creation.
