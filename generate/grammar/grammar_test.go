@@ -211,11 +211,9 @@ func TestConstSchema(t *testing.T) {
 	if !ok || !final.IsComplete() {
 		t.Fatal("expected const string to match")
 	}
+	// "world" should be rejected — only "hello" is valid for this const.
 	if _, ok := feedString(g, `"world"`); ok {
-		// It should reject at 'w'.
-		if g2, ok2 := feedString(g, `"w`); ok2 && g2 != nil {
-			// After "w the next char doesn't match 'h', check further.
-		}
+		t.Fatal("expected const string to reject non-matching value")
 	}
 
 	// Integer const.

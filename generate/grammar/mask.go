@@ -8,7 +8,7 @@ package grammar
 func TokenMask(g *Grammar, vocab []string) []bool {
 	mask := make([]bool, len(vocab))
 	for i, tok := range vocab {
-		if len(tok) == 0 {
+		if tok == "" {
 			continue
 		}
 		cur := g
