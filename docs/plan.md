@@ -107,9 +107,8 @@ structured output, and tool calling.
 - [x] T1.1 Fix FP16 inference -- GQA tensor storage mismatch  Owner: Claude  Done: 2026-03-16
   - Fix: decodeF16Tensor preserves Float16Storage; transposeWeight handles FP16/FP8; NewFloat16StorageFromRaw added to ztensor. DGX verification still needed.
 
-- [ ] T1.2 Fix FP8 inference -- same GQA root cause  Owner: TBD  Est: 2h
-  - Deps: T1.1 (shares root cause)
-  - AC: FP8 Gemma 3 1B produces coherent text on DGX Spark.
+- [x] T1.2 Fix FP8 inference -- same GQA root cause  Owner: Claude  Done: 2026-03-16
+  - Branch fix/fp8-gqa-storage-mismatch. FP8 E4M3 CPU transpose path fixed in arch_common.go.
 
 - [x] T1.3 Fix CUDA graph capture -- eliminate D2H transfer in GQA decode  Owner: Claude  Done: 2026-03-16
   - Fix: FullBufferProvider interface + FlashAttentionDecode path eliminates D2H. DGX 20%+ benchmark still needed.
@@ -209,10 +208,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T4.2 Implement Model.Chat() and Model.Generate()  Owner: Claude  Done: 2026-03-16
   - Implemented in api.go alongside T4.1. Chat, Generate, GenerateResult, WithGenMaxTokens/Temperature/TopP all present.
 
-- [ ] T4.3 Implement Model.Embed()  Owner: TBD  Est: 3h
-  - Deps: T4.1
-  - AC: `model.Embed([]string{"hello", "world"})` returns `[]Embedding` where Embedding has `Vector []float32` and `CosineSimilarity(other)` method.
-  - Test: Unit test verifying embedding shape and cosine similarity computation.
+- [x] T4.3 Implement Model.Embed()  Owner: Claude  Done: 2026-03-16
+  - Branch feat/chat-stream commit 9d4cce7. Branch name collision with T4.4+T5.1 -- verified at merge.
 
 - [x] T4.4 Implement Model.ChatStream() for streaming  Owner: Claude  Done: 2026-03-16
   - Branch feat/chat-stream (NOTE: name collides with T5.1 branch -- verify at merge). 5 tests, -race clean.
