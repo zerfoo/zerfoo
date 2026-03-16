@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -19,13 +20,15 @@ import (
 // inference. Each session owns its own KV cache and position tracking,
 // allowing multiple sessions to generate simultaneously without data races.
 type InferenceSession[T tensor.Numeric] struct {
-	graph     *graph.Graph[T]
-	tokenizer tokenizer.Tokenizer
-	engine    compute.Engine[T]
-	config    ModelConfig
-	cache     CacheProvider[T]
-	graphMu   *sync.Mutex // shared mutex for graph Forward (graph is not concurrent-safe)
-	mu        sync.Mutex  // serializes Generate calls within this session
+	graph       *graph.Graph[T]
+	tokenizer   tokenizer.Tokenizer
+	engine      compute.Engine[T]
+	config      ModelConfig
+	cache       CacheProvider[T]
+	graphMu     *sync.Mutex // shared mutex for graph Forward (graph is not concurrent-safe)
+	mu          sync.Mutex  // serializes Generate calls within this session
+	compileOnce func(ctx context.Context, input *tensor.TensorNumeric[T]) // triggers graph compilation + CUDA graph capture
+	planRef     *atomic.Pointer[graph.ExecutionPlan[T]]                   // shared reference to compiled execution plan
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -42,12 +45,14 @@ func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 	}
 
 	return &InferenceSession[T]{
-		graph:     gen.graph,
-		tokenizer: gen.tokenizer,
-		engine:    gen.engine,
-		config:    gen.config,
-		cache:     cache,
-		graphMu:   &gen.mu,
+		graph:       gen.graph,
+		tokenizer:   gen.tokenizer,
+		engine:      gen.engine,
+		config:      gen.config,
+		cache:       cache,
+		graphMu:     &gen.mu,
+		compileOnce: gen.compileGraph,
+		planRef:     &gen.plan,
 	}
 }
 
@@ -340,7 +345,22 @@ func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.Te
 	if reset {
 		s.graph.ResetStatefulNodes()
 	}
-	return s.graph.Forward(ctx, input)
+
+	// Check if the graph has a compiled plan (CUDA graph captured).
+	if s.planRef != nil {
+		if p := s.planRef.Load(); p != nil {
+			return p.Run(ctx, input)
+		}
+	}
+
+	// No compiled plan yet — run uncompiled forward and trigger compilation.
+	result, err := s.graph.Forward(ctx, input)
+	if err == nil && !reset && s.compileOnce != nil {
+		// Trigger CUDA graph capture after the first decode forward.
+		// compileGraph is guarded by sync.Once inside Generator.
+		s.compileOnce(ctx, input)
+	}
+	return result, err
 }
 
 // idsToTensor converts token IDs to a [1, seqLen] input tensor.
