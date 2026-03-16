@@ -37,6 +37,10 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	// LayerIndex identifies this layer within a model for KV cache indexing.
 	LayerIndex int
 
+	// SlidingWindowSize, if > 0, restricts attention to the last N positions
+	// using a causal sliding window mask during prefill (seqLen > 1).
+	SlidingWindowSize int
+
 	// blockTableReader optionally reads KV from paged block tables directly.
 	blockTableReader BlockTableReader[T]
 
@@ -682,7 +686,11 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, reshapeErr
 		}
 
-		if mask == nil && seqLen > 1 {
+		if mask == nil && seqLen > 1 && gqa.SlidingWindowSize > 0 {
+			// Build causal sliding window mask for prefill.
+			mask = BuildCausalSlidingWindowMask[T](seqLen, gqa.SlidingWindowSize)
+			gqa.scaledDotProductAttention.SetCausal(false)
+		} else if mask == nil && seqLen > 1 {
 			gqa.scaledDotProductAttention.SetCausal(true)
 		} else {
 			gqa.scaledDotProductAttention.SetCausal(false)
@@ -982,6 +990,28 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 		return nil, nil, nil, err
 	}
 	return q, k, v, nil
+}
+
+// BuildCausalSlidingWindowMask creates a causal attention mask that also
+// restricts attention to the last windowSize positions. Positions outside
+// the window or in the future are set to a large negative value.
+// Shape: [1, 1, seqLen, seqLen].
+func BuildCausalSlidingWindowMask[T tensor.Numeric](seqLen, windowSize int) *tensor.TensorNumeric[T] {
+	// Use a runtime variable to avoid compile-time overflow check for narrow types.
+	var neg float64 = -1e9
+	largeNeg := T(neg)
+	data := make([]T, seqLen*seqLen)
+	for i := range seqLen {
+		for j := range seqLen {
+			if j <= i && i-j < windowSize {
+				data[i*seqLen+j] = 0
+			} else {
+				data[i*seqLen+j] = largeNeg
+			}
+		}
+	}
+	mask, _ := tensor.New[T]([]int{1, 1, seqLen, seqLen}, data)
+	return mask
 }
 
 // Statically assert that the type implements the graph.Node interface.
