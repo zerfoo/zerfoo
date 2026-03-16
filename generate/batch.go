@@ -34,8 +34,8 @@ func (gen *Generator[T]) BatchGenerate(ctx context.Context, requests []BatchRequ
 	// that are not safe for concurrent use. True batched inference (batch
 	// dimension > 1 in a single forward pass) requires native batch support
 	// in the model graph, which is not yet implemented.
-	for i, req := range requests {
-		text, err := gen.Generate(ctx, req.Prompt, req.Sampling)
+	for i := range requests {
+		text, err := gen.Generate(ctx, requests[i].Prompt, requests[i].Sampling)
 		results[i] = BatchResult{Text: text, Err: err}
 	}
 
@@ -60,8 +60,8 @@ func (gen *Generator[T]) BatchGenerateStream(ctx context.Context, requests []Bat
 
 	errs := make([]error, len(requests))
 
-	for i, req := range requests {
-		errs[i] = gen.GenerateStream(ctx, req.Prompt, req.Sampling, streams[i])
+	for i := range requests {
+		errs[i] = gen.GenerateStream(ctx, requests[i].Prompt, requests[i].Sampling, streams[i])
 	}
 
 	return errs

@@ -190,7 +190,7 @@ func gemvQ4Op(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
 
 func gatherOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
 	if len(meta.InputIdx) < 2 {
-		return "", fmt.Errorf("Gather requires 2 inputs (table, indices), got %d", len(meta.InputIdx))
+		return "", fmt.Errorf("gather requires 2 inputs (table, indices), got %d", len(meta.InputIdx))
 	}
 	return fmt.Sprintf("  dev_gather(slot_%d, frozen_%d, slot_%d, dim_%d);",
 		meta.OutputIdx, meta.InputIdx[0], meta.InputIdx[1], meta.OutputIdx), nil
@@ -251,7 +251,7 @@ func triluOp(meta graph.InstructionMeta, inputs []SlotInfo) (string, error) {
 
 func whereOp(meta graph.InstructionMeta, _ []SlotInfo) (string, error) {
 	if len(meta.InputIdx) < 3 {
-		return "", fmt.Errorf("Where requires 3 inputs (condition, a, b)")
+		return "", fmt.Errorf("where requires 3 inputs (condition, a, b)")
 	}
 	return fmt.Sprintf("  slot_%d[tid] = (slot_%d[tid] != 0.0f) ? slot_%d[tid] : slot_%d[tid];",
 		meta.OutputIdx, meta.InputIdx[0], meta.InputIdx[1], meta.InputIdx[2]), nil

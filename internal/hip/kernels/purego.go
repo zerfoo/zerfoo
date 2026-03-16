@@ -21,7 +21,7 @@ type KernelLib struct {
 
 	// elementwise unary
 	launchExp, launchLog, launchSqrt, launchRsqrt, launchTanh uintptr
-	launchTanhPrime                                            uintptr
+	launchTanhPrime                                           uintptr
 
 	// elementwise special
 	launchFill, launchSumAxis, launchSoftmax uintptr
@@ -60,7 +60,7 @@ func openKernelLib() (*KernelLib, error) {
 			lastErr = err
 		}
 		if handle == 0 {
-			errKernelLib = fmt.Errorf("hip kernels: dlopen libhipkernels failed: %v", lastErr)
+			errKernelLib = fmt.Errorf("hip kernels: dlopen libhipkernels failed: %w", lastErr)
 			return
 		}
 

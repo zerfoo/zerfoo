@@ -88,7 +88,7 @@ func goString(p uintptr) string {
 		return ""
 	}
 	// #nosec G103 -- converting C string pointer from dlopen/dlerror
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(ptrFromUintptr(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++

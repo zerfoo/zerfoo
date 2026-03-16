@@ -255,6 +255,7 @@ func (d *CUDADNN) ConvBackwardFilter(
 	return nil
 }
 
+//nolint:dupl // CUDA and ROCm DNN are structurally identical by design
 func (d *CUDADNN) BatchNormForwardInference(
 	x unsafe.Pointer, xShape [4]int,
 	scale, bias, mean, variance unsafe.Pointer,

@@ -25,8 +25,8 @@ func WithProgress(fn func(downloaded, total int64)) DownloadOption {
 }
 
 // WithSHA256 sets the expected SHA256 hex digest for post-download verification.
-func WithSHA256(hex string) DownloadOption {
-	return func(o *downloadOptions) { o.sha256 = hex }
+func WithSHA256(hexDigest string) DownloadOption {
+	return func(o *downloadOptions) { o.sha256 = hexDigest }
 }
 
 // Downloader handles GGUF file downloads with resume support.
@@ -51,7 +51,7 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, opts ..
 		fn(&o)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
 		return fmt.Errorf("huggingface: create directory: %w", err)
 	}
 
@@ -75,7 +75,7 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, opts ..
 	if err != nil {
 		return fmt.Errorf("huggingface: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -94,7 +94,7 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, opts ..
 	} else {
 		flag |= os.O_TRUNC
 	}
-	f, err := os.OpenFile(partialPath, flag, 0o644)
+	f, err := os.OpenFile(partialPath, flag, 0o600) //nolint:gosec // path constructed from destPath
 	if err != nil {
 		return fmt.Errorf("huggingface: open file: %w", err)
 	}
@@ -143,11 +143,11 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, opts ..
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path from controlled cache directory
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err

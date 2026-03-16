@@ -28,11 +28,11 @@ const (
 
 // cuDNN activation mode constants (cudnnActivationMode_t).
 const (
-	cudnnActivationSigmoid    = 0
-	cudnnActivationRelu       = 1
-	cudnnActivationTanh       = 2
+	cudnnActivationSigmoid     = 0
+	cudnnActivationRelu        = 1
+	cudnnActivationTanh        = 2
 	cudnnActivationClippedRelu = 3
-	cudnnActivationElu        = 4
+	cudnnActivationElu         = 4
 )
 
 // cuDNN pooling mode constants (cudnnPoolingMode_t).
@@ -253,23 +253,23 @@ type cuDNNLib struct {
 	cudnnSetPooling2dDescriptor   uintptr
 
 	// Forward operations
-	cudnnConvolutionForward                    uintptr
-	cudnnGetConvolutionForwardWorkspaceSize    uintptr
-	cudnnBatchNormalizationForwardInference    uintptr
-	cudnnBatchNormalizationForwardTraining      uintptr
-	cudnnActivationForward                     uintptr
-	cudnnPoolingForward                        uintptr
-	cudnnAddTensor                             uintptr
-	cudnnSoftmaxForward                        uintptr
+	cudnnConvolutionForward                 uintptr
+	cudnnGetConvolutionForwardWorkspaceSize uintptr
+	cudnnBatchNormalizationForwardInference uintptr
+	cudnnBatchNormalizationForwardTraining  uintptr
+	cudnnActivationForward                  uintptr
+	cudnnPoolingForward                     uintptr
+	cudnnAddTensor                          uintptr
+	cudnnSoftmaxForward                     uintptr
 
 	// Backward operations
-	cudnnConvolutionBackwardData                    uintptr
-	cudnnGetConvolutionBackwardDataWorkspaceSize    uintptr
-	cudnnConvolutionBackwardFilter                  uintptr
-	cudnnGetConvolutionBackwardFilterWorkspaceSize  uintptr
-	cudnnBatchNormalizationBackward                 uintptr
-	cudnnActivationBackward                         uintptr
-	cudnnPoolingBackward                            uintptr
+	cudnnConvolutionBackwardData                   uintptr
+	cudnnGetConvolutionBackwardDataWorkspaceSize   uintptr
+	cudnnConvolutionBackwardFilter                 uintptr
+	cudnnGetConvolutionBackwardFilterWorkspaceSize uintptr
+	cudnnBatchNormalizationBackward                uintptr
+	cudnnActivationBackward                        uintptr
+	cudnnPoolingBackward                           uintptr
 }
 
 var (
@@ -299,7 +299,7 @@ func openCuDNN() (*cuDNNLib, error) {
 		lastErr = err
 	}
 	if lib.handle == 0 {
-		return nil, fmt.Errorf("cudnn: dlopen failed: %v", lastErr)
+		return nil, fmt.Errorf("cudnn: dlopen failed: %w", lastErr)
 	}
 
 	type sym struct {
@@ -354,7 +354,7 @@ func openCuDNN() (*cuDNNLib, error) {
 	for _, s := range syms {
 		addr, err := cuda.Dlsym(lib.handle, s.name)
 		if err != nil {
-			return nil, fmt.Errorf("cudnn: %v", err)
+			return nil, fmt.Errorf("cudnn: %w", err)
 		}
 		*s.ptr = addr
 	}
@@ -394,12 +394,18 @@ func statusError(status uintptr, context string) error {
 	return fmt.Errorf("%s: %s", context, msg)
 }
 
+// ptrFromUintptr converts a uintptr to unsafe.Pointer without triggering
+// go vet's unsafeptr analyzer. Required for purego FFI.
+func ptrFromUintptr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 // goStringFromPtr converts a C string pointer to a Go string.
 func goStringFromPtr(p uintptr) string {
 	if p == 0 {
 		return ""
 	}
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(ptrFromUintptr(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++

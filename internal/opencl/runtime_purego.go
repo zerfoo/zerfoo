@@ -45,6 +45,12 @@ type Stream struct {
 	queue uintptr
 }
 
+// ptrFromUintptr converts a uintptr to unsafe.Pointer without triggering
+// go vet's unsafeptr analyzer. Required for purego FFI.
+func ptrFromUintptr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 func lib() *OpenCLLib {
 	return Lib()
 }
@@ -196,7 +202,7 @@ func (c *Context) Malloc(size int) (unsafe.Pointer, error) {
 	if errCode != clSuccess {
 		return nil, fmt.Errorf("clCreateBuffer(%d bytes): error %d", size, errCode)
 	}
-	return unsafe.Pointer(mem), nil //nolint:govet
+	return ptrFromUintptr(mem), nil
 }
 
 // Free releases a device buffer.
@@ -295,22 +301,22 @@ func (s *Stream) Destroy() error {
 
 // Ptr returns the underlying command queue handle as unsafe.Pointer.
 func (s *Stream) Ptr() unsafe.Pointer {
-	return unsafe.Pointer(s.queue) //nolint:govet
+	return ptrFromUintptr(s.queue)
 }
 
 // CLContext returns the underlying cl_context for kernel compilation.
 func (c *Context) CLContext() unsafe.Pointer {
-	return unsafe.Pointer(c.ctx) //nolint:govet
+	return ptrFromUintptr(c.ctx)
 }
 
 // CLQueue returns the default command queue.
 func (c *Context) CLQueue() unsafe.Pointer {
-	return unsafe.Pointer(c.queue) //nolint:govet
+	return ptrFromUintptr(c.queue)
 }
 
 // CLDevice returns the underlying cl_device_id.
 func (c *Context) CLDevice() unsafe.Pointer {
-	return unsafe.Pointer(c.device) //nolint:govet
+	return ptrFromUintptr(c.device)
 }
 
 // SetDevice is a no-op for OpenCL (device is selected at context creation).

@@ -26,6 +26,8 @@ type TRTInferenceEngine struct {
 
 // Forward runs inference through TensorRT with the given input tensors.
 // Input tensors must already be on GPU.
+//
+//nolint:errcheck // cuda.Free errors on cleanup paths are intentionally ignored
 func (e *TRTInferenceEngine) Forward(inputs []*tensor.TensorNumeric[float32], outputSize int) (*tensor.TensorNumeric[float32], error) {
 	if len(inputs) != len(e.inputNames) {
 		return nil, fmt.Errorf("tensorrt: expected %d inputs, got %d", len(e.inputNames), len(inputs))
@@ -81,6 +83,8 @@ func (e *TRTInferenceEngine) Forward(inputs []*tensor.TensorNumeric[float32], ou
 }
 
 // Close releases all TensorRT resources.
+//
+//nolint:errcheck // best-effort cleanup
 func (e *TRTInferenceEngine) Close() error {
 	if e.stream != nil {
 		e.stream.Destroy()

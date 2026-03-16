@@ -60,7 +60,7 @@ func tryFlashForward[T tensor.Numeric](
 		oGPU.Free() //nolint:errcheck
 		return nil, err
 	}
-	defer stream.Destroy()
+	defer func() { _ = stream.Destroy() }()
 
 	// Call the kernel with batch=batchHeads, heads=1 so each element of the
 	// first dimension maps to one thread block row in the kernel.

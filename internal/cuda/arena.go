@@ -174,7 +174,7 @@ func (a *ArenaPool) Drain() error {
 
 	var firstErr error
 	if a.base != nil {
-		if err := SetDevice(a.deviceID); err != nil && firstErr == nil {
+		if err := SetDevice(a.deviceID); err != nil {
 			firstErr = err
 		}
 		if err := Free(a.base); err != nil && firstErr == nil {

@@ -53,7 +53,7 @@ func main() {
 	mux.HandleFunc("POST /generate", handleGenerate(model, *maxTokens))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok")) //nolint:errcheck
+		w.Write([]byte("ok"))
 	})
 
 	addr := net.JoinHostPort("", *port)
@@ -104,6 +104,6 @@ func handleGenerate(model *inference.Model, defaultMaxTokens int) http.HandlerFu
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(generateResponse{Text: result}) //nolint:errcheck
+		json.NewEncoder(w).Encode(generateResponse{Text: result})
 	}
 }

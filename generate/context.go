@@ -39,6 +39,7 @@ type FullBufferProvider[T tensor.Numeric] interface {
 type kvCacheKey struct{}
 
 // WithKVCache returns a new context that carries the given KVCache.
+//
 // Deprecated: Use WithCache for CacheProvider-based caching.
 func WithKVCache[T tensor.Numeric](ctx context.Context, cache *KVCache[T]) context.Context {
 	if cache == nil {
@@ -54,6 +55,7 @@ func WithCache[T tensor.Numeric](ctx context.Context, cache CacheProvider[T]) co
 
 // GetKVCache extracts the KVCache from the context, if present.
 // It handles both direct *KVCache storage and CacheProvider interface storage.
+//
 // Deprecated: Use GetCache for CacheProvider-based caching.
 func GetKVCache[T tensor.Numeric](ctx context.Context) (*KVCache[T], bool) {
 	val := ctx.Value(kvCacheKey{})

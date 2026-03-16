@@ -35,7 +35,7 @@ func DetectToolCall(text string, tools []Tool, choice ToolChoice) (*ToolCallResu
 	}
 
 	trimmed := strings.TrimSpace(text)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	if trimmed == "" || trimmed[0] != '{' {
 		return nil, false
 	}
 

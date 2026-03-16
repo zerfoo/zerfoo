@@ -92,7 +92,7 @@ func generateTestCerts(t *testing.T, dir string) (caCertPath, serverCertPath, se
 }
 
 func writePEM(path, blockType string, data []byte) error {
-	f, err := os.Create(path) //nolint:gosec // test helper
+	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}

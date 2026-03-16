@@ -234,7 +234,7 @@ func Softmax(input, output unsafe.Pointer, outer, inner, axisSize int, s unsafe.
 }
 
 // AddBroadcast launches the broadcast add kernel.
-func AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
+func AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("add_broadcast kernel: kernels not available")
@@ -246,7 +246,7 @@ func AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, 
 }
 
 // SubBroadcast launches the broadcast sub kernel.
-func SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
+func SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("sub_broadcast kernel: kernels not available")
@@ -258,7 +258,7 @@ func SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, 
 }
 
 // MulBroadcast launches the broadcast mul kernel.
-func MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
+func MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("mul_broadcast kernel: kernels not available")
@@ -282,7 +282,7 @@ func Repeat(src, dst unsafe.Pointer, outerSize, axisDim, innerSize, reps int, s 
 }
 
 // DivBroadcast launches the broadcast div kernel.
-func DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
+func DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("div_broadcast kernel: kernels not available")
@@ -294,7 +294,7 @@ func DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, 
 }
 
 // AddBroadcast4D launches the 4D broadcast add kernel.
-func AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+func AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("add_broadcast4d kernel: kernels not available")
@@ -308,7 +308,7 @@ func AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, 
 }
 
 // SubBroadcast4D launches the 4D broadcast sub kernel.
-func SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+func SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("sub_broadcast4d kernel: kernels not available")
@@ -322,7 +322,7 @@ func SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, 
 }
 
 // MulBroadcast4D launches the 4D broadcast mul kernel.
-func MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+func MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("mul_broadcast4d kernel: kernels not available")
@@ -336,7 +336,7 @@ func MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, 
 }
 
 // DivBroadcast4D launches the 4D broadcast div kernel.
-func DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error { //nolint:gocritic
+func DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("div_broadcast4d kernel: kernels not available")

@@ -121,35 +121,35 @@ func (k *CUDAKernels) GemmQ8F32(aQ8, b, c unsafe.Pointer, m, kk, n int, s Stream
 	return kernels.GemmQ8F32(aQ8, b, c, m, kk, n, streamPtr(s))
 }
 
-func (k *CUDAKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) AddBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
 	return kernels.AddBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) SubBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
 	return kernels.SubBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) MulBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
 	return kernels.MulBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) DivBroadcast(a, b, c unsafe.Pointer, saRow, saCol, sbRow, sbCol, M, D int, s Stream) error {
 	return kernels.DivBroadcast(a, b, c, saRow, saCol, sbRow, sbCol, M, D, streamPtr(s))
 }
 
-func (k *CUDAKernels) AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+func (k *CUDAKernels) AddBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error {
 	return kernels.AddBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
 }
 
-func (k *CUDAKernels) SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+func (k *CUDAKernels) SubBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error {
 	return kernels.SubBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
 }
 
-func (k *CUDAKernels) MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+func (k *CUDAKernels) MulBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error {
 	return kernels.MulBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
 }
 
-func (k *CUDAKernels) DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error { //nolint:gocritic
+func (k *CUDAKernels) DivBroadcast4D(a, b, c unsafe.Pointer, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3 int, s Stream) error {
 	return kernels.DivBroadcast4D(a, b, c, d0, d1, d2, d3, sa0, sa1, sa2, sa3, sb0, sb1, sb2, sb3, streamPtr(s))
 }
 
@@ -161,11 +161,11 @@ func (k *CUDAKernels) TransposeND(input, output unsafe.Pointer, inStrides, outSt
 	return kernels.TransposeND(input, output, inStrides, outStrides, perm, ndim, total, streamPtr(s))
 }
 
-func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) Gather(table, indices, output unsafe.Pointer, N, D, V int, s Stream) error {
 	return kernels.Gather(table, indices, output, N, D, V, streamPtr(s))
 }
 
-func (k *CUDAKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) RMSNorm(input, weight, output, scales unsafe.Pointer, eps float32, rows, D int, s Stream) error {
 	return kernels.RMSNorm(input, weight, output, scales, eps, rows, D, streamPtr(s))
 }
 
@@ -185,7 +185,7 @@ func (k *CUDAKernels) FusedSwiGLUF32(w1, w3, output unsafe.Pointer, n int, s Str
 	return kernels.FusedSwiGLUF32(w1, w3, output, n, streamPtr(s))
 }
 
-func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error { //nolint:gocritic // interface match
+func (k *CUDAKernels) FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut unsafe.Pointer, eps float32, rows, D int, s Stream) error {
 	return kernels.FusedAddRMSNormF32(input, residual, weight, normedOut, sumOut, eps, rows, D, streamPtr(s))
 }
 

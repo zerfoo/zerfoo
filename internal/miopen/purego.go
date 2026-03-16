@@ -73,7 +73,7 @@ func Open() (*MIOpenLib, error) {
 		lastErr = err
 	}
 	if lib.handle == 0 {
-		return nil, fmt.Errorf("miopen: dlopen libMIOpen failed: %v", lastErr)
+		return nil, fmt.Errorf("miopen: dlopen libMIOpen failed: %w", lastErr)
 	}
 
 	type sym struct {
@@ -111,7 +111,7 @@ func Open() (*MIOpenLib, error) {
 	for _, s := range syms {
 		addr, err := cuda.Dlsym(lib.handle, s.name)
 		if err != nil {
-			return nil, fmt.Errorf("miopen: %v", err)
+			return nil, fmt.Errorf("miopen: %w", err)
 		}
 		*s.ptr = addr
 	}

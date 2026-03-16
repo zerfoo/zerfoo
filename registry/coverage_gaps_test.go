@@ -38,8 +38,7 @@ func TestLocalRegistry_List_WalkError(t *testing.T) {
 	if err := os.Chmod(orgDir, 0o000); err != nil {
 		t.Skip("cannot change permissions on this platform")
 	}
-	defer os.Chmod(orgDir, 0o750) //nolint:errcheck,gosec // test cleanup
-
+	defer os.Chmod(orgDir, 0o750)
 	// List should handle the walk error gracefully.
 	models := r.List()
 	// The error branch skips entries, so 0 models expected.
@@ -56,10 +55,10 @@ func TestHFPull_DownloadFileCreateError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
 		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "model.onnx"}}}
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(info)
 	})
 	mux.HandleFunc("/org/model/resolve/main/model.onnx", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("data")) //nolint:errcheck
+		w.Write([]byte("data"))
 	})
 
 	server := httptest.NewServer(mux)
@@ -77,8 +76,7 @@ func TestHFPull_DownloadFileCreateError(t *testing.T) {
 	if err := os.MkdirAll(readOnlyDir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(readOnlyDir, 0o750) //nolint:errcheck,gosec // test cleanup
-
+	defer os.Chmod(readOnlyDir, 0o750)
 	_, err := pullFn(context.Background(), "org/model", readOnlyDir)
 	if err == nil {
 		t.Error("expected error when target dir is read-only")

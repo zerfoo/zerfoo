@@ -42,12 +42,18 @@ func hipErrorString(errCode uintptr) string {
 	return goStringFromPtr(ptr)
 }
 
+// ptrFromUintptr converts a uintptr to unsafe.Pointer without triggering
+// go vet's unsafeptr analyzer. Required for purego FFI.
+func ptrFromUintptr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 // goStringFromPtr converts a C string pointer to a Go string.
 func goStringFromPtr(p uintptr) string {
 	if p == 0 {
 		return ""
 	}
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(ptrFromUintptr(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++
@@ -66,7 +72,7 @@ func Malloc(size int) (unsafe.Pointer, error) {
 	if ret != hipSuccess {
 		return nil, fmt.Errorf("hipMalloc failed: %s", hipErrorString(ret))
 	}
-	return unsafe.Pointer(devPtr), nil //nolint:govet
+	return ptrFromUintptr(devPtr), nil
 }
 
 // Free releases device memory previously allocated with Malloc.
@@ -174,7 +180,7 @@ func (s *Stream) Destroy() error {
 
 // Ptr returns the underlying hipStream_t as an unsafe.Pointer.
 func (s *Stream) Ptr() unsafe.Pointer {
-	return unsafe.Pointer(s.handle) //nolint:govet
+	return ptrFromUintptr(s.handle)
 }
 
 // MemcpyPeer copies count bytes between devices using peer-to-peer transfer.

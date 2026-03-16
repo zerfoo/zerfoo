@@ -1,3 +1,4 @@
+//nolint:dupl // ROCm mirrors CUDA API shape intentionally
 package gpuapi
 
 import (

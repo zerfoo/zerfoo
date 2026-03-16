@@ -156,7 +156,7 @@ func TestRun_CSVOutput(t *testing.T) {
 	}
 
 	// Check output file exists and has content.
-	data, err := os.ReadFile(outPath) //nolint:gosec // test file
+	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRun_CSVOutput(t *testing.T) {
 
 	// Check metadata file was created.
 	metaPath := filepath.Join(dir, "predictions_metadata.json")
-	metaData, err := os.ReadFile(metaPath) //nolint:gosec // test file
+	metaData, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("failed to read metadata: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestRun_JSONOutput(t *testing.T) {
 		t.Fatalf("run() error: %v", err)
 	}
 
-	data, err := os.ReadFile(outPath) //nolint:gosec // test file
+	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestRun_WithGroupAndProbs(t *testing.T) {
 		t.Fatalf("run() error: %v", err)
 	}
 
-	data, err := os.ReadFile(outPath) //nolint:gosec // test file
+	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestSavePredictionResult(t *testing.T) {
 	savePredictionResult(config, result)
 
 	metaPath := filepath.Join(dir, "test_output_metadata.json")
-	data, err := os.ReadFile(metaPath) //nolint:gosec // test file
+	data, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("metadata file not created: %v", err)
 	}

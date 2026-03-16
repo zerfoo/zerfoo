@@ -48,7 +48,7 @@ func Open() (*RocBLASLib, error) {
 		lastErr = err
 	}
 	if lib.handle == 0 {
-		return nil, fmt.Errorf("rocblas: dlopen librocblas failed: %v", lastErr)
+		return nil, fmt.Errorf("rocblas: dlopen librocblas failed: %w", lastErr)
 	}
 
 	type sym struct {
@@ -64,7 +64,7 @@ func Open() (*RocBLASLib, error) {
 	for _, s := range syms {
 		addr, err := cuda.Dlsym(lib.handle, s.name)
 		if err != nil {
-			return nil, fmt.Errorf("rocblas: %v", err)
+			return nil, fmt.Errorf("rocblas: %w", err)
 		}
 		*s.ptr = addr
 	}

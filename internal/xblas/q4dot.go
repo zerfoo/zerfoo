@@ -33,7 +33,7 @@ func q4DotBlockScalar(packed *byte, scale float32, x *float32, n int) float32 {
 // q4DotRowScalar computes the dot product of numBlocks consecutive Q4 blocks
 // against float32 activations using scalar code. Each block is 18 bytes:
 // 2 bytes float16 scale (LE) + 16 bytes packed nibbles.
-func q4DotRowScalar(blockPtr unsafe.Pointer, x *float32, numBlocks int) float32 {
+func q4DotRowScalar(blockPtr unsafe.Pointer, x *float32, numBlocks int) float32 { //nolint:unused // used on non-arm64 via q4dot_generic.go
 	base := (*byte)(blockPtr)
 	xSlice := unsafe.Slice(x, numBlocks*32)
 	var total float32
@@ -50,7 +50,7 @@ func q4DotRowScalar(blockPtr unsafe.Pointer, x *float32, numBlocks int) float32 
 }
 
 // float16BitsToFloat32 converts IEEE 754 half-precision bits to float32.
-func float16BitsToFloat32(bits uint16) float32 {
+func float16BitsToFloat32(bits uint16) float32 { //nolint:unused // used on non-arm64 via q4DotRowScalar
 	sign := uint32(bits>>15) & 1
 	exp := uint32(bits>>10) & 0x1F
 	frac := uint32(bits) & 0x3FF

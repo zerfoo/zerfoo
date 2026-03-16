@@ -40,18 +40,18 @@ func TRTCacheKey(modelID, precision string) (string, error) {
 // SaveTRTEngine writes a serialized TensorRT engine to the cache directory.
 func SaveTRTEngine(key string, data []byte) error {
 	dir := trtCacheDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("tensorrt cache: mkdir: %w", err)
 	}
 	path := filepath.Join(dir, key+".engine")
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // LoadTRTEngine reads a serialized TensorRT engine from the cache.
 // Returns nil, nil on cache miss (file not found).
 func LoadTRTEngine(key string) ([]byte, error) {
 	path := filepath.Join(trtCacheDir(), key+".engine")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed from cache dir + sanitized key
 	if os.IsNotExist(err) {
 		return nil, nil
 	}

@@ -168,7 +168,7 @@ func main() {
 		logitData := diagLogits.Data()
 		log.Printf("Logits shape: %v, len: %d", diagLogits.Shape(), len(logitData))
 
-		var minVal, maxVal float64 = math.Inf(1), math.Inf(-1)
+		var minVal, maxVal = math.Inf(1), math.Inf(-1)
 		var sum float64
 		nanCount := 0
 		for _, v := range logitData {

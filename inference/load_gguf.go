@@ -2,6 +2,7 @@ package inference
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -40,7 +41,7 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 
 	// Quantize weights to FP8 if requested. Must happen before buildArchGraph.
 	if o.dtype == "fp8" {
-		fmt.Println("Quantizing weights to FP8 E4M3...")
+		log.Println("Quantizing weights to FP8 E4M3...")
 		if _, err := gguf.QuantizeToFP8E4M3(gm.Tensors); err != nil {
 			return nil, fmt.Errorf("FP8 quantization: %w", err)
 		}

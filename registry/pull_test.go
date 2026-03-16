@@ -33,13 +33,13 @@ func TestNewHFPullFunc_MockServer(t *testing.T) {
 
 	// CDN endpoints: file downloads.
 	mux.HandleFunc("/test-org/test-model/resolve/main/model.onnx", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("fake-onnx-data")) //nolint:errcheck
+		w.Write([]byte("fake-onnx-data"))
 	})
 	mux.HandleFunc("/test-org/test-model/resolve/main/tokenizer.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"model": {"type": "BPE"}}`)) //nolint:errcheck
+		w.Write([]byte(`{"model": {"type": "BPE"}}`))
 	})
 	mux.HandleFunc("/test-org/test-model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"model_type": "gemma"}`)) //nolint:errcheck
+		w.Write([]byte(`{"model_type": "gemma"}`))
 	})
 
 	server := httptest.NewServer(mux)
@@ -93,10 +93,10 @@ func TestNewHFPullFunc_WithToken(t *testing.T) {
 	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(info)
 	})
 	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{}`)) //nolint:errcheck
+		w.Write([]byte(`{}`))
 	})
 
 	server := httptest.NewServer(mux)
@@ -154,11 +154,11 @@ func TestNewHFPullFunc_Progress(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
 		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(info)
 	})
 	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", "11")
-		w.Write([]byte(`{"test": 1}`)) //nolint:errcheck
+		w.Write([]byte(`{"test": 1}`))
 	})
 
 	server := httptest.NewServer(mux)
@@ -228,7 +228,7 @@ func TestNewHFPullFunc_DownloadError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
 		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "model.onnx"}}}
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(info)
 	})
 	mux.HandleFunc("/org/model/resolve/main/model.onnx", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -265,7 +265,7 @@ func TestNewHFPullFunc_EnvFallback(t *testing.T) {
 
 func TestNewHFPullFunc_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("not json")) //nolint:errcheck
+		w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
@@ -300,7 +300,7 @@ func TestResolveGGUFByQuant(t *testing.T) {
 		{"Q8_0", "model-Q8_0.gguf", false},
 		{"F16", "model-F16.gguf", false},
 		{"q4_k_m", "model-Q4_K_M.gguf", false}, // case insensitive
-		{"Q5_K_S", "", true},                     // not found
+		{"Q5_K_S", "", true},                   // not found
 	}
 
 	for _, tc := range tests {
@@ -343,10 +343,10 @@ func TestNewHFPullFunc_WithQuant(t *testing.T) {
 				{Filename: "config.json"},
 			},
 		}
-		json.NewEncoder(w).Encode(info) //nolint:errcheck
+		json.NewEncoder(w).Encode(info)
 	})
 	mux.HandleFunc("/org/model/resolve/main/model-Q8_0.gguf", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("fake-q8-data")) //nolint:errcheck
+		w.Write([]byte("fake-q8-data"))
 	})
 
 	server := httptest.NewServer(mux)

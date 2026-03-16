@@ -1,4 +1,4 @@
-package core //nolint:dupl // Cos follows the same unary trig-op pattern as Sin
+package core
 
 import (
 	"context"
@@ -18,9 +18,9 @@ type Cos[T tensor.Numeric] struct {
 }
 
 func (c *Cos[T]) OpType() string                    { return "Cos" }
-func (c *Cos[T]) Attributes() map[string]any         { return nil }
-func (c *Cos[T]) OutputShape() []int                 { return nil }
-func (c *Cos[T]) Parameters() []*graph.Parameter[T]  { return nil }
+func (c *Cos[T]) Attributes() map[string]any        { return nil }
+func (c *Cos[T]) OutputShape() []int                { return nil }
+func (c *Cos[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (c *Cos[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {

@@ -48,7 +48,7 @@ type cublasLib struct {
 var (
 	cblasLib     *cublasLib
 	cblasOnce    sync.Once
-	cblasLoadErr error
+	errCblasLoad error
 )
 
 // cuBLAS library paths to try.
@@ -97,9 +97,9 @@ func loadCublas() (*cublasLib, error) {
 
 func getCublasLib() (*cublasLib, error) {
 	cblasOnce.Do(func() {
-		cblasLib, cblasLoadErr = loadCublas()
+		cblasLib, errCblasLoad = loadCublas()
 	})
-	return cblasLib, cblasLoadErr
+	return cblasLib, errCblasLoad
 }
 
 // Handle wraps a cuBLAS handle (opaque pointer).
@@ -244,6 +244,7 @@ func SgemmNT(h *Handle, m, n, k int, alpha float32,
 //	c        - device pointer to C[0] (m x n, row-major), output
 //	strideC  - element stride between consecutive C matrices
 //	batch    - number of matrices in the batch
+//nolint:dupl // SgemmStridedBatched and SgemmNTStridedBatched differ in transpose flags
 func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
 	a unsafe.Pointer, strideA int64,
 	b unsafe.Pointer, strideB int64,
@@ -290,6 +291,7 @@ func SgemmStridedBatched(h *Handle, m, n, k int, alpha float32,
 
 // SgemmNTStridedBatched performs batched C = A * B^T using strided batched GEMM
 // with CUBLAS_OP_T on the B operand.
+//nolint:dupl // differs from SgemmStridedBatched in transpose flags
 func SgemmNTStridedBatched(h *Handle, m, n, k int, alpha float32,
 	a unsafe.Pointer, strideA int64,
 	b unsafe.Pointer, strideB int64,

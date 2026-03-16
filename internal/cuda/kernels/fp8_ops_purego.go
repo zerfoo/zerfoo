@@ -48,7 +48,7 @@ func FP8Mul(a, b, c unsafe.Pointer, scaleA, scaleB float32, n int, s unsafe.Poin
 // FP8RMSNorm launches the FP8 dequant+RMSNorm kernel.
 // input: FP8 E4M3 [rows, D], weight: FP16 [D], output: FP16 [rows, D].
 // Dequantizes input on load, computes RMSNorm with FP32 accumulation, writes FP16.
-func FP8RMSNorm(input, weight, output unsafe.Pointer, scale, eps float32, rows, D int, s unsafe.Pointer) error { //nolint:gocritic // match CGo API
+func FP8RMSNorm(input, weight, output unsafe.Pointer, scale, eps float32, rows, D int, s unsafe.Pointer) error {
 	k := klib()
 	if k == nil {
 		return fmt.Errorf("fp8_rmsnorm kernel: kernels not available")

@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/model"
-	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/ztensor/tensor"
+	tokenizer "github.com/zerfoo/ztoken"
 )
 
 // Command represents a generic CLI command with pluggable functionality.
@@ -286,7 +286,6 @@ func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, err
 	return &config, nil
 }
 
-//nolint:gosec
 func (c *PredictCommand[T]) loadConfig(path string, config *PredictCommandConfig) error {
 	// The path is provided by the user of the CLI tool.
 	data, err := os.ReadFile(path)
@@ -575,7 +574,7 @@ func (c *TokenizeCommand) Run(_ context.Context, args []string) error {
 
 // loadVocab loads a vocabulary file (one token per line) into the tokenizer.
 func (c *TokenizeCommand) loadVocab(path string) error {
-	file, err := os.Open(path) //nolint:gosec // user-provided path
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
