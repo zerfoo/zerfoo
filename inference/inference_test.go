@@ -633,12 +633,14 @@ func TestModel_Embed_NotSupported(t *testing.T) {
 	vocabSize := 8
 	m := buildTestModel(t, vocabSize, []int{6, 2})
 
+	// Embed requires embedding weights to be set via SetEmbeddingWeights.
+	// A freshly built test model has no embedding weights, so this should error.
 	_, err := m.Embed("hello")
 	if err == nil {
-		t.Error("expected error from Embed")
+		t.Error("expected error from Embed when embedding weights not set")
 	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("error = %q, want 'not yet supported'", err.Error())
+	if !strings.Contains(err.Error(), "embedding weights") {
+		t.Errorf("error = %q, want 'embedding weights'", err.Error())
 	}
 }
 
@@ -1050,12 +1052,13 @@ func TestAssembleModel(t *testing.T) {
 
 func TestModel_Embed_ForwardError(t *testing.T) {
 	m := buildErrorModel(t)
+	// buildErrorModel does not set embedding weights, so Embed errors before forward.
 	_, err := m.Embed("hello")
 	if err == nil {
-		t.Error("expected error from Embed when forward fails")
+		t.Error("expected error from Embed when embedding weights not set")
 	}
-	if !strings.Contains(err.Error(), "forward") {
-		t.Errorf("error = %q, want 'forward' prefix", err.Error())
+	if !strings.Contains(err.Error(), "embedding weights") {
+		t.Errorf("error = %q, want 'embedding weights'", err.Error())
 	}
 }
 
