@@ -42,6 +42,12 @@ func run() error {
 	pullCmd := cli.NewPullCommand(nil, os.Stdout)
 	cliApp.RegisterCommand(pullCmd)
 
+	listCmd := cli.NewListCommand(nil, os.Stdout)
+	cliApp.RegisterCommand(listCmd)
+
+	rmCmd := cli.NewRmCommand(nil, os.Stdout)
+	cliApp.RegisterCommand(rmCmd)
+
 	runCmd := cli.NewRunCommand(os.Stdin, os.Stdout)
 	cliApp.RegisterCommand(runCmd)
 
