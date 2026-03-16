@@ -532,6 +532,81 @@ func TestLoadTensors_BF16(t *testing.T) {
 	}
 }
 
+func TestDecodeQ6KTensor_NoReQuantization(t *testing.T) {
+	// Create 256 elements (1 Q6_K super-block = 210 bytes).
+	const numElements = 256
+	const blockBytes = 210
+	raw := make([]byte, blockBytes)
+
+	// Q6_K block layout (210 bytes):
+	//   ql: bytes [0, 128)   — low 4 bits of quants
+	//   qh: bytes [128, 192) — high 2 bits of quants
+	//   sc: bytes [192, 208) — int8 sub-block scales (16 values)
+	//   d:  bytes [208, 210) — float16 super-block scale
+
+	// Set super-block scale d = 1.0.
+	scaleBits := float16.FromFloat32(1.0).Bits()
+	binary.LittleEndian.PutUint16(raw[208:210], scaleBits)
+
+	// Set non-zero sub-block scales (int8).
+	for i := range 16 {
+		raw[192+i] = byte(i + 1)
+	}
+
+	// Set non-zero quantized values in ql region (first 128 bytes).
+	for i := range 128 {
+		raw[i] = byte((i % 15) + 1)
+	}
+
+	shape := []int{numElements}
+	tns, err := decodeQ6KTensor(shape, numElements, raw)
+	if err != nil {
+		t.Fatalf("decodeQ6KTensor: %v", err)
+	}
+
+	// Verify shape.
+	if len(tns.Shape()) != 1 || tns.Shape()[0] != numElements {
+		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+	}
+
+	// Verify storage is NOT Q4Storage — the whole point of this fix is to
+	// avoid lossy re-quantization to Q4_0.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); ok {
+		t.Fatal("decodeQ6KTensor must not re-quantize to Q4_0")
+	}
+
+	// Verify the tensor contains dequantized float32 data (not all zeros,
+	// since we set non-zero scale and quants).
+	data := tns.Data()
+	if len(data) != numElements {
+		t.Fatalf("data length = %d, want %d", len(data), numElements)
+	}
+	hasNonZero := false
+	for _, v := range data {
+		if v != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("expected non-zero dequantized values")
+	}
+
+	// Verify round-trip: dequantizing the same raw data directly should
+	// produce identical values.
+	q6k, err := tensor.NewQ6KStorageFromRaw(raw, numElements)
+	if err != nil {
+		t.Fatalf("NewQ6KStorageFromRaw: %v", err)
+	}
+	ref := make([]float32, numElements)
+	q6k.Dequantize(ref)
+	for i, want := range ref {
+		if data[i] != want {
+			t.Errorf("index %d: got %v, want %v", i, data[i], want)
+		}
+	}
+}
+
 func TestQuantizeToFP8E4M3_Skips1D(t *testing.T) {
 	// 1D tensor (norm weight) should NOT be quantized.
 	norm, _ := tensor.New[float32]([]int{4}, []float32{1, 2, 3, 4})
