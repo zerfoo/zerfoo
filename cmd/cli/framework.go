@@ -239,25 +239,43 @@ func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, err
 
 	// Simple argument parsing (in a real implementation, use flag or cobra)
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
+		arg := args[i]
+		var eqVal string
+		var hasEq bool
+		if flag, val, ok := splitFlag(arg); ok {
+			arg = flag
+			eqVal = val
+			hasEq = true
+		}
+		nextVal := func(flagName string) (string, error) {
+			if hasEq {
+				return eqVal, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", flagName)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
 		case "--model-path":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--model-path requires a value")
+			v, err := nextVal("--model-path")
+			if err != nil {
+				return nil, err
 			}
-			config.ModelPath = args[i+1]
-			i++
+			config.ModelPath = v
 		case "--data-path":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--data-path requires a value")
+			v, err := nextVal("--data-path")
+			if err != nil {
+				return nil, err
 			}
-			config.DataPath = args[i+1]
-			i++
+			config.DataPath = v
 		case "--output":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--output requires a value")
+			v, err := nextVal("--output")
+			if err != nil {
+				return nil, err
 			}
-			config.Output = args[i+1]
-			i++
+			config.Output = v
 		case "--verbose":
 			config.Verbose = true
 		case "--overwrite":
@@ -265,13 +283,13 @@ func (c *PredictCommand[T]) parseArgs(args []string) (*PredictCommandConfig, err
 		case "--include-probs":
 			config.IncludeProbs = true
 		case "--config":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--config requires a value")
+			v, err := nextVal("--config")
+			if err != nil {
+				return nil, err
 			}
-			if err := c.loadConfig(args[i+1], &config); err != nil {
+			if err := c.loadConfig(v, &config); err != nil {
 				return nil, fmt.Errorf("failed to load config: %w", err)
 			}
-			i++
 		}
 	}
 
@@ -540,19 +558,37 @@ func (c *TokenizeCommand) Run(_ context.Context, args []string) error {
 	var text, vocabPath string
 
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
+		arg := args[i]
+		var eqVal string
+		var hasEq bool
+		if flag, val, ok := splitFlag(arg); ok {
+			arg = flag
+			eqVal = val
+			hasEq = true
+		}
+		nextVal := func(flagName string) (string, error) {
+			if hasEq {
+				return eqVal, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", flagName)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
 		case "--text":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--text requires a value")
+			v, err := nextVal("--text")
+			if err != nil {
+				return err
 			}
-			text = args[i+1]
-			i++
+			text = v
 		case "--vocab":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--vocab requires a value")
+			v, err := nextVal("--vocab")
+			if err != nil {
+				return err
 			}
-			vocabPath = args[i+1]
-			i++
+			vocabPath = v
 		}
 	}
 
@@ -615,6 +651,16 @@ func (c *TokenizeCommand) Examples() []string {
 		`tokenize --text "Hello world"`,
 		`tokenize --text "The quick brown fox jumps over the lazy dog"`,
 	}
+}
+
+// splitFlag checks whether arg contains an "=" (e.g. "--flag=value") and, if
+// so, returns the flag name and value separately. When no "=" is present it
+// returns the original arg and an empty string with ok=false.
+func splitFlag(arg string) (flag, value string, ok bool) {
+	if idx := strings.Index(arg, "="); idx >= 0 {
+		return arg[:idx], arg[idx+1:], true
+	}
+	return arg, "", false
 }
 
 // CLI provides the main command-line interface.
