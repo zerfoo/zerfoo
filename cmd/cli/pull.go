@@ -32,7 +32,7 @@ func (c *PullCommand) Description() string {
 
 // Run implements Command.Run.
 func (c *PullCommand) Run(ctx context.Context, args []string) error {
-	var cacheDir, modelID string
+	var cacheDir, modelID, quant string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -41,6 +41,12 @@ func (c *PullCommand) Run(ctx context.Context, args []string) error {
 				return errors.New("--cache-dir requires a value")
 			}
 			cacheDir = args[i+1]
+			i++
+		case "--quant":
+			if i+1 >= len(args) {
+				return errors.New("--quant requires a value")
+			}
+			quant = args[i+1]
 			i++
 		default:
 			if modelID != "" {
@@ -54,13 +60,18 @@ func (c *PullCommand) Run(ctx context.Context, args []string) error {
 		return errors.New("model ID is required")
 	}
 
+	// Default quantization.
+	if quant == "" {
+		quant = "Q4_K_M"
+	}
+
 	reg := c.reg
 	if reg == nil {
 		lr, err := registry.NewLocalRegistry(cacheDir)
 		if err != nil {
 			return fmt.Errorf("create registry: %w", err)
 		}
-		lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{}))
+		lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{Quant: quant}))
 		reg = lr
 	}
 
@@ -70,7 +81,7 @@ func (c *PullCommand) Run(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(c.out, "Pulling %s...\n", modelID)
+	_, _ = fmt.Fprintf(c.out, "Pulling %s (quant: %s)...\n", modelID, quant)
 	info, err := reg.Pull(ctx, modelID)
 	if err != nil {
 		return fmt.Errorf("pull %q: %w", modelID, err)
@@ -88,14 +99,16 @@ func (c *PullCommand) Usage() string {
 Download and cache a model from a remote registry.
 
 OPTIONS:
+  --quant <type>     Quantization type (default: Q4_K_M)
   --cache-dir <dir>  Override default cache directory`
 }
 
 // Examples implements Command.Examples.
 func (c *PullCommand) Examples() []string {
 	return []string{
-		"pull google/gemma-3-1b",
-		"pull google/gemma-3-1b --cache-dir /data/models",
+		"pull google/gemma-3-4b",
+		"pull google/gemma-3-4b --quant Q8_0",
+		"pull google/gemma-3-4b --cache-dir /data/models",
 	}
 }
 

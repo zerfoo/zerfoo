@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,8 +39,20 @@ func (r *mockPullRegistry) Pull(_ context.Context, id string) (*registry.ModelIn
 	return &registry.ModelInfo{ID: id, Path: "/cache/" + id, Size: 1024}, nil
 }
 
-func (r *mockPullRegistry) List() []registry.ModelInfo { return nil }
-func (r *mockPullRegistry) Delete(_ string) error      { return nil }
+func (r *mockPullRegistry) List() []registry.ModelInfo {
+	var out []registry.ModelInfo
+	for _, info := range r.models {
+		out = append(out, *info)
+	}
+	return out
+}
+func (r *mockPullRegistry) Delete(id string) error {
+	if _, ok := r.models[id]; !ok {
+		return fmt.Errorf("model %q not found", id)
+	}
+	delete(r.models, id)
+	return nil
+}
 
 func TestPullCommand_Name(t *testing.T) {
 	cmd := NewPullCommand(nil, nil)
@@ -456,5 +469,133 @@ func TestPullCommand_IntegrationServerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("error = %q, want it to contain '500'", err.Error())
+	}
+}
+
+func TestPullCommand_QuantFlag(t *testing.T) {
+	var buf bytes.Buffer
+	reg := &mockPullRegistry{models: map[string]*registry.ModelInfo{}}
+	cmd := NewPullCommand(reg, &buf)
+	err := cmd.Run(context.Background(), []string{"--quant", "Q8_0", "org/model"})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "quant: Q8_0") {
+		t.Errorf("output = %q, want it to contain 'quant: Q8_0'", output)
+	}
+}
+
+func TestPullCommand_QuantFlagMissingValue(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewPullCommand(&mockPullRegistry{models: map[string]*registry.ModelInfo{}}, &buf)
+	err := cmd.Run(context.Background(), []string{"--quant"})
+	if err == nil {
+		t.Error("expected error for --quant without value")
+	}
+}
+
+func TestPullCommand_DefaultQuant(t *testing.T) {
+	var buf bytes.Buffer
+	reg := &mockPullRegistry{models: map[string]*registry.ModelInfo{}}
+	cmd := NewPullCommand(reg, &buf)
+	err := cmd.Run(context.Background(), []string{"org/model"})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "quant: Q4_K_M") {
+		t.Errorf("output = %q, want it to contain 'quant: Q4_K_M'", output)
+	}
+}
+
+// TestPullListRm_Integration tests the full pull/list/rm cycle using
+// a mock HuggingFace server and a real LocalRegistry.
+func TestPullListRm_Integration(t *testing.T) {
+	modelID := "testorg/testmodel"
+	ggufData := []byte("fake-gguf-model-data-for-testing")
+
+	srv := newMockHFServer(t, modelID, map[string][]byte{
+		"model-Q4_K_M.gguf": ggufData,
+		"config.json":       []byte(`{"architectures":["TestArch"]}`),
+	})
+	defer srv.Close()
+
+	cacheDir := t.TempDir()
+	lr, err := registry.NewLocalRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("NewLocalRegistry: %v", err)
+	}
+	lr.SetPullFunc(registry.NewHFPullFunc(registry.HFPullOptions{
+		APIURL: srv.URL + "/api/models",
+		CDNURL: srv.URL + "/cdn",
+		Client: srv.Client(),
+	}))
+
+	// Step 1: List — should be empty.
+	var buf bytes.Buffer
+	listCmd := NewListCommand(lr, &buf)
+	if err := listCmd.Run(context.Background(), nil); err != nil {
+		t.Fatalf("list (empty): %v", err)
+	}
+	if !strings.Contains(buf.String(), "No cached models") {
+		t.Errorf("expected 'No cached models', got: %s", buf.String())
+	}
+
+	// Step 2: Pull.
+	buf.Reset()
+	pullCmd := NewPullCommand(lr, &buf)
+	if err := pullCmd.Run(context.Background(), []string{modelID}); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Model saved to") {
+		t.Errorf("pull output missing 'Model saved to', got: %s", buf.String())
+	}
+
+	// Step 3: List — should show the model.
+	buf.Reset()
+	if err := listCmd.Run(context.Background(), nil); err != nil {
+		t.Fatalf("list (after pull): %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "REPO") {
+		t.Error("list output should contain header")
+	}
+	if !strings.Contains(output, modelID) {
+		t.Errorf("list output should contain %q, got: %s", modelID, output)
+	}
+
+	// Step 4: Pull again — should report already cached.
+	buf.Reset()
+	if err := pullCmd.Run(context.Background(), []string{modelID}); err != nil {
+		t.Fatalf("pull (cached): %v", err)
+	}
+	if !strings.Contains(buf.String(), "Already up to date") {
+		t.Errorf("expected 'Already up to date', got: %s", buf.String())
+	}
+
+	// Step 5: Remove.
+	buf.Reset()
+	rmCmd := NewRmCommand(lr, &buf)
+	if err := rmCmd.Run(context.Background(), []string{modelID}); err != nil {
+		t.Fatalf("rm: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Removed") {
+		t.Errorf("rm output missing 'Removed', got: %s", buf.String())
+	}
+
+	// Step 6: List — should be empty again.
+	buf.Reset()
+	if err := listCmd.Run(context.Background(), nil); err != nil {
+		t.Fatalf("list (after rm): %v", err)
+	}
+	if !strings.Contains(buf.String(), "No cached models") {
+		t.Errorf("expected 'No cached models' after rm, got: %s", buf.String())
+	}
+
+	// Step 7: Remove again — should error.
+	buf.Reset()
+	if err := rmCmd.Run(context.Background(), []string{modelID}); err == nil {
+		t.Error("expected error when removing already-deleted model")
 	}
 }
