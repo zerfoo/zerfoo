@@ -185,6 +185,8 @@ type ChatCompletionRequest struct {
 	TopP        *float64      `json:"top_p,omitempty"`
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 	Stream      bool          `json:"stream"`
+	Tools       []Tool        `json:"tools,omitempty"`
+	ToolChoice  *ToolChoice   `json:"tool_choice,omitempty"`
 }
 
 // ChatMessage is a single message in the chat.
@@ -212,11 +214,25 @@ type ChatCompletionResponse struct {
 	Usage   UsageInfo              `json:"usage"`
 }
 
+// ToolCallFunction holds the function name and arguments in a tool call response.
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolCall represents a tool invocation in the assistant's response.
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
 // ChatCompletionChoice is a single choice in the response.
 type ChatCompletionChoice struct {
 	Index        int         `json:"index"`
 	Message      ChatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
+	ToolCalls    []ToolCall  `json:"tool_calls,omitempty"`
 }
 
 // CompletionResponse is the non-streaming completion response.
@@ -297,6 +313,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, "messages array is required")
+		return
+	}
+
+	// Validate tools and tool_choice.
+	if len(req.Tools) > 0 {
+		if err := validateTools(req.Tools); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.logger.Debug("chat request includes tools", "tool_count", strconv.Itoa(len(req.Tools)))
+	}
+	if err := validateToolChoice(req.ToolChoice, req.Tools); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
