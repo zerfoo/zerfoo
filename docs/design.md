@@ -14,8 +14,8 @@ acceleration without modifying application code.
 A general-purpose ML framework with three production-ready capabilities:
 
 1. **Inference engine.** Load and run open-weights transformer models (text,
-   vision, vision-language) via the ZMF model format. Models are converted
-   from ONNX or GGUF using companion tools (zonnx, native GGUF loader).
+   vision, vision-language) via GGUF, the sole model format. Models are
+   converted from ONNX using zonnx (which now outputs GGUF).
    Supports autoregressive decoding with KV cache, sampling (temperature,
    top-k, top-p, repetition penalty), and streaming.
 
@@ -38,59 +38,45 @@ A general-purpose ML framework with three production-ready capabilities:
 - **Engine abstraction is law.** Layers never access tensor data directly.
   All arithmetic goes through Engine[T]. This enables transparent CPU/GPU
   switching and makes every op testable on CPU.
-- **Architectural boundaries.** `zerfoo/` must not import `zonnx/` or
-  `onnx/`. The ZMF format is the decoupling boundary between model
-  conversion and model execution.
+- **Architectural boundaries.** `zerfoo/` imports `github.com/zerfoo/ztensor`
+  for tensor/compute/graph and `github.com/zerfoo/ztoken` for tokenizer.
+  GGUF is the sole model format — ZMF has been removed.
 
 ### 1.3 Validated Model Families
 
 | Family | Format | Architecture | Status |
 |--------|--------|-------------|--------|
 | Gemma 3 | GGUF Q4_K | Text decoder | Production (CUDA graph, highest throughput) |
-| Llama 3 | ZMF/ONNX | Text decoder | Working (ONNX decomposed path) |
-| Qwen 2.5 | ZMF/ONNX | Text decoder | Working (ONNX decomposed path) |
-| Mistral 7B | ZMF/ONNX | Text decoder | Working (ONNX decomposed path) |
-| Phi-3/4 | ZMF/ONNX | Text decoder | Working (ONNX decomposed path) |
-| DeepSeek V3 | ZMF/ONNX | MoE text decoder | Config parser present, untested (too large) |
-| SigLIP | ZMF | Vision encoder | Parity test PASS |
-| Kimi-VL | ZMF | Vision-language connector | Parity test PASS |
+| Llama 3 | GGUF | Text decoder | Working |
+| Qwen 2.5 | GGUF | Text decoder | Working |
+| Mistral 7B | GGUF | Text decoder | Working |
+| Phi-3/4 | GGUF | Text decoder | Working |
+| DeepSeek V3 | GGUF | MoE text decoder | Config parser present, untested (too large) |
+| SigLIP | GGUF | Vision encoder | Parity test PASS |
+| Kimi-VL | GGUF | Vision-language connector | Parity test PASS |
 
 See docs/benchmarks.md for current throughput numbers per model.
 
-### 1.4 Two Execution Paths
+### 1.4 Execution Path
 
-Zerfoo has two distinct execution paths for inference, each with different
-performance characteristics:
-
-**ZMF Codegen Path (fused ops).** Used by GGUF models and hand-tuned ZMF
-models. The inference layer constructs a graph using fused operations
-(GroupedQueryAttention, FusedAddRMSNorm, FFN) that map directly to optimized
-CUDA kernels. Achieves near-complete CUDA graph capture and highest throughput.
-
-**ONNX Decomposed Path (individual ops).** Used by models converted from ONNX
-via zonnx. The ONNX standard decomposes composite operations into individual
-ops (Pow, ReduceMean, Sqrt, Div, Mul for RMSNorm; Reshape, Gather, MatMul for
-attention). Each op is a separate instruction with its own kernel launch.
-CUDA graph capture is limited because non-capturable ops (Reshape, Gather,
-Shape) are scattered throughout the instruction list. A graph fusion pass
-(graph/fusion.go) detects decomposed patterns and replaces them with fused
-instructions to bridge the performance gap.
-
-See docs/benchmarks.md for current throughput numbers per execution path.
+Zerfoo uses a single GGUF execution path. The inference layer constructs a
+graph using fused operations (GroupedQueryAttention, FusedAddRMSNorm, FFN)
+that map directly to optimized CUDA kernels. Achieves near-complete CUDA
+graph capture and highest throughput. The ONNX decomposed path was removed
+in ADR-037.
 
 ### 1.5 Maturity Levels
 
 | Capability | Maturity | Notes |
 |-----------|----------|-------|
 | Inference (GGUF) | Production | CUDA graph capture, Q4_K quantization |
-| Inference (ONNX) | Beta | All models run, output quality improving |
 | OpenAI API server | Production | Full spec compliance, 71 integration tests |
 | Training | Implemented | All tests pass, no end-to-end workflow documented |
 | Distributed training | Implemented | gRPC + NCCL strategies, not production-tested |
 | Multi-GPU | Architecture ready | NCCL bindings present, single GPU validated |
 | ROCm/OpenCL backends | Implemented | Purego bindings, not hardware-validated |
 
-Module: `github.com/zerfoo/zerfoo`
+Module: `github.com/zerfoo/zerfoo` (depends on `github.com/zerfoo/ztensor` and `github.com/zerfoo/ztoken`)
 
 ---
 
@@ -99,11 +85,17 @@ Module: `github.com/zerfoo/zerfoo`
 ### 2.1 Package Layout
 
 ```
-tensor/               TensorNumeric[T], Storage[T], type constraints (Numeric, Float, Addable)
-numeric/              Type-specific arithmetic (float32/64, float8, float16, int8, uint8), quantization
-compute/              Engine[T] interface, CPUEngine, GPUEngine (//go:build cuda)
-graph/                Computation graph, Node[T] interface, Builder, Parameter, topological execution
-model/                Model[T], ZMF loader/exporter, global layer registry, plugin registry
+# Provided by github.com/zerfoo/ztensor:
+# tensor/             TensorNumeric[T], Storage[T], type constraints (Numeric, Float, Addable)
+# numeric/            Type-specific arithmetic (float32/64, float8, float16, int8, uint8), quantization
+# compute/            Engine[T] interface, CPUEngine, GPUEngine
+# graph/              Computation graph, Node[T] interface, Builder, Parameter, topological execution
+# device/             Device, Allocator interfaces (CPU + CUDA)
+#
+# Provided by github.com/zerfoo/ztoken:
+# pkg/tokenizer/      BPE tokenizer loading from tokenizer.json
+
+model/                Model[T], GGUF loader, global layer registry, plugin registry
 layers/               Neural network layers organized by family (18 sub-packages)
   layers/core/          Add, Sub, Mul, MatMul, MatMulNBits, Cast, Concat, Constant, Conv2d, Dense,
                         FFN, FiLM, GlobalAvgPool, Linear, LMHead, MoE, Pad, Polynomial, Reshape,
@@ -130,7 +122,6 @@ training/             Trainer[T], DefaultTrainer, GradientStrategy, workflow int
 distributed/          gRPC-based distributed training: AllReduce, Barrier, Broadcast, TLS
   distributed/coordinator/ Coordinator gRPC server with worker registry and checkpoint tracking
   distributed/pb/       Generated protobuf/gRPC bindings
-device/               Device, Allocator interfaces (CPU + CUDA)
 config/               Generic JSON config loader with env var overrides and validation
 health/               HTTP health server (/healthz, /readyz, /debug/pprof/)
 metrics/              ML evaluation metrics (Pearson, Spearman, MSE, RMSE, MAE)
@@ -148,10 +139,8 @@ inference/            High-level inference API: Load, Generate, GenerateStream, 
 generate/             Autoregressive generation loop, sampling (temp, topK, topP, repetition), streaming
 registry/             Model registry with local cache, Pull/Get/List/Delete interface
 serve/                OpenAI-compatible HTTP server (chat completions, completions, models, SSE streaming)
-pkg/tokenizer/        BPE tokenizer loading from tokenizer.json, WhitespaceTokenizer for testing
 data/                 Dataset container (Sample, Batch, normalization)
 features/             Time-series feature transformers (Lag, Rolling, FFT)
-types/                Shared type definitions (BackwardMode)
 internal/xblas/       CPU BLAS wrappers (gonum GEMM for float32/64; upcast for float16/float8)
 internal/cuda/        CUDA runtime purego bindings (dlopen libcudart.so)
 internal/cublas/      cuBLAS purego bindings (dlopen libcublas.so)
@@ -163,12 +152,12 @@ tests/                Parity tests (env-var gated model forward pass tests)
 ### 2.2 Dependency Graph
 
 ```
-cmd/* --> model --> graph --> compute --> tensor
+cmd/* --> model --> graph --> compute --> tensor    (ztensor)
            |         |         |           |
            |         |    numeric.Arithmetic[T]
            |         |                  Storage[T]
-           |       types                /        \
-           |                  CPUStorage[T]  GPUStorage[T]
+           |         |                  /        \
+           |         |        CPUStorage[T]  GPUStorage[T]
        layers/*                                    |
            |                               internal/cuda
        graph.Node[T]
@@ -179,8 +168,9 @@ arithmetic goes through Engine[T]. This enables transparent CPU/GPU switching.
 
 ### 2.3 Architectural Boundaries
 
+- `zerfoo/` imports `github.com/zerfoo/ztensor` for tensor/compute/graph and `github.com/zerfoo/ztoken` for tokenizer.
 - `zerfoo/` must not import `zonnx/` or `onnx/` (verified by `make verify-architecture`).
-- `zonnx/` must not import `github.com/zerfoo/zerfoo` (decoupled via `zmf` format).
+- GGUF is the sole model format. ZMF has been removed (zmf repo archived).
 - All GPU backends use purego (dlopen-based) bindings. No CGo or build tags.
   `go build ./...` compiles everywhere without `-tags cuda`, `-tags rocm`, or
   `-tags opencl`. Runtime detection via `*.Available()` functions.
