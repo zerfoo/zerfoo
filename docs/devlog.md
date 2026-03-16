@@ -5,6 +5,15 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-15: Phase 16 all-model verification on DGX
+
+**Type:** benchmark
+**Tags:** DGX, all-models, Phase-16, repetition-penalty, CUDA-graph
+
+**Problem:** Phase 16 implemented RMSNorm fusion, Phi 4 TrySlice fix, static Reshape capturability, and repetition penalty verification. Needed end-to-end DGX validation.
+**Results:** All 5 models run without crashes. Repetition penalty (1.2) reduces repetition for all ONNX models. Static Reshape fix increased capturable instruction count. RMSNorm fusion pattern matching works (1610 -> 1445 instructions for Llama 3) but fused Forward produces wrong numerical output -- runtime slot resolution still needs fixing. Gemma 3 GGUF baseline confirmed at 232 tok/s (no regression).
+**Impact:** Output quality improved via repetition penalty. CUDA graph capture coverage improved via static Reshape. RMSNorm fusion blocked on runtime slot resolution (PR #70).
+
 ## 2026-03-15: RMSNorm fusion pattern matching works, runtime needs fixing
 
 **Type:** investigation
