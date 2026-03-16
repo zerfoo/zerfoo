@@ -84,6 +84,8 @@ func buildDeepSeekGraph(
 		kvLoraDim = headDim // fallback
 	}
 
+	ropeHeadDim := cfg.QKRopeHeadDim // 0 means full headDim (handled by MLA constructor)
+
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 		blkPrefix := fmt.Sprintf("blk.%d.", i)
@@ -174,19 +176,23 @@ func buildDeepSeekGraph(
 			core.NewLinearFromParam(proxy, param("o_proj.weight", oProjWT)), nil,
 		)
 
-		// RoPE for MLA.
+		// RoPE for MLA — applied only to ropeHeadDim dimensions.
+		ropeDim := headDim
+		if ropeHeadDim > 0 {
+			ropeDim = ropeHeadDim
+		}
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
 			embeddings.WithRotaryBase(cfg.RopeTheta),
 		}
 		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
-			ctx, proxy, headDim, cfg.MaxSeqLen, ropeOpts...,
+			ctx, proxy, ropeDim, cfg.MaxSeqLen, ropeOpts...,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("layer %d rope: %w", i, err)
 		}
 
 		mla := attention.NewMultiHeadLatentAttention[float32](
-			proxy, ops, cfg.NumHeads, headDim, kvLoraDim,
+			proxy, ops, cfg.NumHeads, headDim, kvLoraDim, ropeHeadDim,
 			wQ, wDKV, wUK, wUV, wO, rope,
 		)
 		attnOut := builder.AddNode(mla, normed)
