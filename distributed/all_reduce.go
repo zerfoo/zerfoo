@@ -1,5 +1,3 @@
-// Package distributed provides distributed training strategies and coordination mechanisms
-// for multi-node machine learning workloads in the Zerfoo framework.
 package distributed
 
 import (

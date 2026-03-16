@@ -1,5 +1,3 @@
-// Package cli provides a generic command-line interface framework for Zerfoo.
-// This framework uses the plugin registry system to enable extensible, configurable CLI tools.
 package cli
 
 import (
