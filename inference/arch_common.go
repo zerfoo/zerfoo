@@ -20,7 +20,9 @@ type transformerGraphOpts struct {
 	embedScale    float32 // multiply embeddings by this factor (0 = no scaling)
 	postNorm      bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
 	qkNorm        bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
-	logitSoftcap  float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
+	logitSoftcap        float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
+	slidingWindowSize   int     // if > 0, apply causal sliding window attention mask
+	partialRotaryFactor float32 // fraction of head dims to apply RoPE (0 or 1 = full RoPE)
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only
@@ -233,6 +235,9 @@ func buildTransformerGraph(
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
 			embeddings.WithRotaryBase(ropeBase),
 		}
+		if opts.partialRotaryFactor > 0 && opts.partialRotaryFactor < 1 {
+			ropeOpts = append(ropeOpts, embeddings.WithRotaryDimFraction(float64(opts.partialRotaryFactor)))
+		}
 		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
 			context.Background(), proxy, headDim, cfg.MaxSeqLen, ropeOpts...,
 		)
@@ -248,6 +253,9 @@ func buildTransformerGraph(
 			return nil, fmt.Errorf("layer %d gqa: %w", i, err)
 		}
 		gqa.LayerIndex = i
+		if opts.slidingWindowSize > 0 {
+			gqa.SlidingWindowSize = opts.slidingWindowSize
+		}
 
 		// Create merged QKV weight for single-GEMV decode optimization.
 		// Concatenates Q, K, V Q4 blocks row-wise so a single GEMV replaces

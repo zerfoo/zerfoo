@@ -24,6 +24,17 @@ type ModelConfig struct {
 	SlidingWindow        int     // sliding window size for local attention layers
 	SlidingWindowPattern int     // every Nth layer is global (0 = all global)
 	RMSNormEps           float32 // RMSNorm epsilon (0 = use default 1e-5)
+	PartialRotaryFactor  float32 // fraction of head dims to apply RoPE (0 = full rotation)
+
+	// DeepSeek MLA (Multi-head Latent Attention) fields.
+	KVLoRADim     int // KV compression rank (attention.kv_lora_rank)
+	QLoRADim      int // Q compression rank (attention.q_lora_rank)
+	QKRopeHeadDim int // RoPE head dimension for Q/K (attention.qk_rope_head_dim)
+
+	// DeepSeek MoE (Mixture of Experts) fields.
+	NumExperts         int // number of routed experts (expert_count)
+	NumExpertsPerToken int // experts activated per token (expert_used_count)
+	NumSharedExperts   int // number of shared experts (expert_shared_count)
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -101,6 +112,40 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	// Extract RMS norm epsilon.
 	if v, ok := f.GetFloat32(prefix + "attention.layer_norm_rms_epsilon"); ok {
 		cfg.RMSNormEps = v
+	}
+	// Extract partial rotary factor from rope.dimension_count.
+	// Phi models apply RoPE to only a fraction of head dimensions.
+	// factor = rope_dimension_count / head_dim.
+	if v, ok := f.GetUint32(prefix + "rope.dimension_count"); ok {
+		headDim := cfg.HiddenSize / cfg.NumHeads
+		if cfg.HeadDim > 0 {
+			headDim = cfg.HeadDim
+		}
+		if headDim > 0 {
+			cfg.PartialRotaryFactor = float32(v) / float32(headDim)
+		}
+	}
+
+	// Extract DeepSeek MLA fields.
+	if v, ok := f.GetUint32(prefix + "attention.kv_lora_rank"); ok {
+		cfg.KVLoRADim = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "attention.q_lora_rank"); ok {
+		cfg.QLoRADim = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "attention.qk_rope_head_dim"); ok {
+		cfg.QKRopeHeadDim = int(v)
+	}
+
+	// Extract DeepSeek MoE fields.
+	if v, ok := f.GetUint32(prefix + "expert_count"); ok {
+		cfg.NumExperts = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "expert_used_count"); ok {
+		cfg.NumExpertsPerToken = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
+		cfg.NumSharedExperts = int(v)
 	}
 
 	return cfg, nil

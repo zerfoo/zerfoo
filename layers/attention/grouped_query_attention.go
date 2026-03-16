@@ -9,6 +9,8 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
+	cudago "github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings" // For RoPE
@@ -36,6 +38,10 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 
 	// LayerIndex identifies this layer within a model for KV cache indexing.
 	LayerIndex int
+
+	// SlidingWindowSize, if > 0, restricts attention to the last N positions
+	// using a causal sliding window mask during prefill (seqLen > 1).
+	SlidingWindowSize int
 
 	// blockTableReader optionally reads KV from paged block tables directly.
 	blockTableReader BlockTableReader[T]
@@ -596,6 +602,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// kvSeqLen tracks the K/V sequence length (may differ from Q seqLen when cached).
 	kvSeqLen := seqLen
 	var attnOutputHeads *tensor.TensorNumeric[T]
+	flashDecodeUsed := false
 
 	if hasCache {
 		// Flatten K/V from [batch, numKVHeads, seqLen, headDim] to [batch*numKVHeads, seqLen, headDim]
@@ -613,12 +620,68 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, fmt.Errorf("kv cache update: %w", err)
 		}
 
-		// Standard path: use cache.Get() to retrieve KV view, then cuBLAS SDPA.
-		// Note: a flash_attention_decode kernel fast path was previously here but
-		// was removed because it caused a 51% regression (234 -> 114 tok/s) and
-		// was already disabled for GQA models (guard required numQ == numKV).
-		// cuBLAS SDPA achieves 233 tok/s on Gemma 3 1B without the kernel.
-		var cachedK, cachedV *tensor.TensorNumeric[T]
+		// CUDA graph-capturable path: use FlashAttentionDecode with fixed-size
+		// (maxSeqLen) KV buffers and a GPU-resident KV length counter. The kernel
+		// reads kvLen from GPU memory at runtime, so tensor shapes are fixed
+		// across graph replays (no D2H transfer, no baked-in dimensions).
+		//
+		// Requirements: (1) decode (seqLen==1), (2) cache implements
+		// FullBufferProvider with GPU KV counter, (3) CUDA kernels available,
+		// (4) Q is GPU-resident.
+		if seqLen == 1 && cudago.Available() {
+			if fbp, ok := cache.(generate.FullBufferProvider[T]); ok && fbp.KVSeqLenPtr() != nil {
+				fullK, fullV := fbp.GetFullBuffer(gqa.LayerIndex)
+				if fullK != nil && fullV != nil {
+					if qGS, ok := qHeadsRoPE.GetStorage().(*tensor.GPUStorage[T]); ok {
+						kGS, kOK := fullK.GetStorage().(*tensor.GPUStorage[T])
+						vGS, vOK := fullV.GetStorage().(*tensor.GPUStorage[T])
+						if kOK && vOK {
+							maxKVLen := fbp.MaxSeqLen()
+							kvLen := cache.SeqLen() // CPU fallback value; kernel uses GPU counter
+							numBH := batchSize * gqa.numQueryHeads
+
+							// Allocate output: [batch*numQueryHeads, 1, headDim]
+							oElems := numBH * gqa.headDim
+							oGPU, allocErr := tensor.NewGPUStorage[T](oElems, qGS.DeviceID())
+							if allocErr == nil {
+								// Get stream for kernel launch.
+								realEng := compute.Engine[T](gqa.engine)
+								if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+									realEng = proxy.Real()
+								}
+								var streamPtr unsafe.Pointer
+								if sp, ok := realEng.(compute.StreamProvider); ok {
+									streamPtr = sp.Stream()
+								}
+
+								flashErr := kernels.FlashAttentionDecode(
+									qGS.Ptr(), kGS.Ptr(), vGS.Ptr(), oGPU.Ptr(),
+									numBH, maxKVLen, gqa.headDim, kvLen,
+									fbp.KVSeqLenPtr(),
+									gqa.numQueryHeads, gqa.numKeyValueHeads,
+									streamPtr,
+								)
+								if flashErr == nil {
+									oShape := []int{batchSize * gqa.numQueryHeads, 1, gqa.headDim}
+									attnOutputHeads, err = tensor.NewWithStorage[T](oShape, oGPU)
+									if err == nil {
+										flashDecodeUsed = true
+									}
+								} else {
+									_ = oGPU.Free()
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if !flashDecodeUsed {
+			// Fallback: variable-size KV view + cuBLAS SDPA.
+			// This path is used during prefill (seqLen > 1), CPU inference,
+			// or when the cache doesn't support full-buffer access.
+			var cachedK, cachedV *tensor.TensorNumeric[T]
 			if gqa.blockTableReader != nil {
 				cachedK, cachedV, _ = gqa.blockTableReader.ReadKV(gqa.LayerIndex)
 			}
@@ -642,10 +705,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 				return nil, err
 			}
 			kvSeqLen = cachedSeqLen
+		}
 	}
 
-	// Run SDPA (prefill, decode, or no-cache).
-	{
+	// Run SDPA (prefill, decode without flash, or no-cache).
+	// Skip when FlashAttentionDecode already computed the output above.
+	if !flashDecodeUsed {
 		// 3. Grouped Query Attention: expand K/V to match Q head count.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
@@ -682,7 +747,11 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, reshapeErr
 		}
 
-		if mask == nil && seqLen > 1 {
+		if mask == nil && seqLen > 1 && gqa.SlidingWindowSize > 0 {
+			// Build causal sliding window mask for prefill.
+			mask = BuildCausalSlidingWindowMask[T](seqLen, gqa.SlidingWindowSize)
+			gqa.scaledDotProductAttention.SetCausal(false)
+		} else if mask == nil && seqLen > 1 {
 			gqa.scaledDotProductAttention.SetCausal(true)
 		} else {
 			gqa.scaledDotProductAttention.SetCausal(false)
@@ -982,6 +1051,28 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 		return nil, nil, nil, err
 	}
 	return q, k, v, nil
+}
+
+// BuildCausalSlidingWindowMask creates a causal attention mask that also
+// restricts attention to the last windowSize positions. Positions outside
+// the window or in the future are set to a large negative value.
+// Shape: [1, 1, seqLen, seqLen].
+func BuildCausalSlidingWindowMask[T tensor.Numeric](seqLen, windowSize int) *tensor.TensorNumeric[T] {
+	// Use a runtime variable to avoid compile-time overflow check for narrow types.
+	var neg float64 = -1e9
+	largeNeg := T(neg)
+	data := make([]T, seqLen*seqLen)
+	for i := range seqLen {
+		for j := range seqLen {
+			if j <= i && i-j < windowSize {
+				data[i*seqLen+j] = 0
+			} else {
+				data[i*seqLen+j] = largeNeg
+			}
+		}
+	}
+	mask, _ := tensor.New[T]([]int{1, 1, seqLen, seqLen}, data)
+	return mask
 }
 
 // Statically assert that the type implements the graph.Node interface.
