@@ -37,3 +37,5 @@
 | [033](033-how-we-beat-ollama.md) | How We Beat Ollama | Benchmarks |
 | [034](034-gqa-aware-flash-attention-decode.md) | GQA-Aware Flash Attention Decode | Attention |
 | [035](035-gemma3-architecture-parameterization.md) | Gemma 3 Architecture Parameterization | Models |
+| [036](036-ztensor-ztok-repo-extraction.md) | Extract ztensor and ztoken Repositories | Architecture |
+| [037](037-gguf-only-drop-zmf-model-format.md) | GGUF as Sole Model Format, Drop ZMF | Architecture |
