@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -61,12 +62,13 @@ func (r *CommandRegistry) Get(name string) (Command, bool) {
 	return cmd, exists
 }
 
-// List returns all registered command names.
+// List returns all registered command names in sorted order.
 func (r *CommandRegistry) List() []string {
 	names := make([]string, 0, len(r.commands))
 	for name := range r.commands {
 		names = append(names, name)
 	}
+	slices.Sort(names)
 	return names
 }
 
