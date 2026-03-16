@@ -40,7 +40,7 @@ A general-purpose ML framework with three production-ready capabilities:
   switching and makes every op testable on CPU.
 - **Architectural boundaries.** `zerfoo/` imports `github.com/zerfoo/ztensor`
   for tensor/compute/graph and `github.com/zerfoo/ztoken` for tokenizer.
-  GGUF is the sole model format — ZMF has been removed.
+  GGUF is the sole model format.
 
 ### 1.3 Validated Model Families
 
@@ -62,8 +62,7 @@ See docs/benchmarks.md for current throughput numbers per model.
 Zerfoo uses a single GGUF execution path. The inference layer constructs a
 graph using fused operations (GroupedQueryAttention, FusedAddRMSNorm, FFN)
 that map directly to optimized CUDA kernels. Achieves near-complete CUDA
-graph capture and highest throughput. The ONNX decomposed path was removed
-in ADR-037.
+graph capture and highest throughput.
 
 ### 1.5 Maturity Levels
 
@@ -170,7 +169,7 @@ arithmetic goes through Engine[T]. This enables transparent CPU/GPU switching.
 
 - `zerfoo/` imports `github.com/zerfoo/ztensor` for tensor/compute/graph and `github.com/zerfoo/ztoken` for tokenizer.
 - `zerfoo/` must not import `zonnx/` or `onnx/` (verified by `make verify-architecture`).
-- GGUF is the sole model format. ZMF has been removed (zmf repo archived).
+- GGUF is the sole model format.
 - All GPU backends use purego (dlopen-based) bindings. No CGo or build tags.
   `go build ./...` compiles everywhere without `-tags cuda`, `-tags rocm`, or
   `-tags opencl`. Runtime detection via `*.Available()` functions.
@@ -364,7 +363,7 @@ type LayerBuilder[T tensor.Numeric] func(
 
 `layers/registry.RegisterAll()` is the single entry point that wires all
 standard layers (including FFN) into `model.RegisterLayer[T]`. No layer
-package uses `init()` for registration. The ZMF model loader uses this
+package uses `init()` for registration. The GGUF model loader uses this
 registry to reconstruct graphs from serialized specs.
 
 ---
@@ -704,30 +703,14 @@ See [ADR-013](adr/013-opencl-backend.md) for details.
 ### 5.1 Pipeline Overview
 
 ```
-HuggingFace ONNX model
+HuggingFace model (GGUF / SafeTensors)
     |
     v
-zonnx (ONNX-to-ZMF converter, separate repo)
-    |
-    v
-ZMF file (github.com/zerfoo/zmf format)
-    |
-    v
-model.LoadModelFromZMF[T](engine, ops, path) -> Model[T]{Graph, ZMFVersion}
+inference.Load(modelID, opts...) -> inference.Model
     |
     v
 graph.Graph[T].Forward(ctx, inputs...)
 ```
-
-### 5.2 ZMF Model Format
-
-ZMF (Zerfoo Model Format) is a protobuf-based container storing:
-- Graph topology: nodes with op types, input/output edges, attributes
-- Parameters: named tensors with shape, dtype, and serialized data
-- Metadata: version, source model info
-
-The `model` package deserializes ZMF files and reconstructs `graph.Graph[T]`
-using the registered `LayerBuilder[T]` functions from `layers/registry`.
 
 ### 5.3 Supported Model Architectures
 
@@ -865,8 +848,8 @@ Documented exceptions (unreachable `tensor.New` error paths):
 
 - Table-driven tests using standard `testing` package (no testify).
 - Parity tests comparing GPU vs CPU output for every GPU-accelerated method.
-- Model parity tests gated by env vars (GEMMA3_ZMF_PATH, SIGLIP_ZMF_PATH, KIMI_CONNECTOR_ZMF_PATH,
-  LLAMA3_ZMF_PATH, MISTRAL_ZMF_PATH, QWEN25_ZMF_PATH, PHI4_ZMF_PATH, DEEPSEEK_ZMF_PATH).
+- Model parity tests gated by env vars (GEMMA3_GGUF_PATH, SIGLIP_GGUF_PATH, KIMI_CONNECTOR_GGUF_PATH,
+  LLAMA3_GGUF_PATH, MISTRAL_GGUF_PATH, QWEN25_GGUF_PATH, PHI4_GGUF_PATH, DEEPSEEK_GGUF_PATH).
 - Parity tests cover 6 model families: Gemma 3, Llama 3, Mistral, Qwen 2.5, Phi-4, DeepSeek V3.
 - Integration tests for cross-package workflows.
 - Numerical gradient checking via finite differences.
@@ -876,7 +859,7 @@ Documented exceptions (unreachable `tensor.New` error paths):
 - Multi-model graph forward tests (large LM head, 2-layer transformer, diamond graph).
 - CLI pull command tests (16 cases: error paths, nil registry, cached output).
 - Model parity on DGX Spark: 8 PASS (Llama3, Qwen25, FlashAttentionGQA),
-  13 SKIP (no ZMF: Mistral, Phi4, Gemma3, DeepSeek, SigLIP; 1 device: MultiGPU).
+  13 SKIP (no GGUF: Mistral, Phi4, Gemma3, DeepSeek, SigLIP; 1 device: MultiGPU).
   Multiple ONNX compatibility fixes applied. See [ADR-018](adr/018-model-parity-testing.md).
 
 ### 7.3 Excluded from Coverage Target
@@ -912,7 +895,6 @@ go test -run Parity -v ./compute/
 Direct (go.mod):
 - gonum.org/v1/gonum (BLAS)
 - google.golang.org/grpc + protobuf (distributed training)
-- github.com/zerfoo/zmf (model format)
 - github.com/zerfoo/float16, float8 (custom numeric types)
 - github.com/google/go-cmp (test comparisons)
 
@@ -1042,7 +1024,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
    (1 input, target shape from attributes) are capture-safe and no longer
    break the region; only dynamic Reshape (2+ inputs reading shape from a
    tensor) is non-capturable. The `isNonCapturable()` function in
-   graph/cuda_graph.go determines capturability per-instruction. The ZMF
+   graph/cuda_graph.go determines capturability per-instruction. The GGUF
    codegen path achieves near-complete capture. See docs/benchmarks.md.
 9. **RMSNorm fusion not yet runtime-correct.** Pattern matching works but
    the fused Forward function produces numerically wrong results due to
@@ -1070,8 +1052,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 
 ### 11.1 Companion Repositories
 
-- **zmf** (`github.com/zerfoo/zmf`): Zerfoo Model Format protobuf library.
-- **zonnx** (`github.com/zerfoo/zonnx`): ONNX-to-ZMF converter with per-operator builders.
+- **zonnx** (`github.com/zerfoo/zonnx`): ONNX-to-GGUF converter.
 - **float16** (`github.com/zerfoo/float16`): IEEE 754 float16 and bfloat16 types for Go.
 - **float8** (`github.com/zerfoo/float8`): E4M3 float8 type for Go.
 - **gemma3** (`github.com/zerfoo/gemma3`): Gemma 3 model support and conversion scripts.
@@ -1080,7 +1061,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 
 The inference pipeline provides an embeddable Go-native API for model loading and text generation.
 
-**Loading:** `inference.Load(modelID, opts...)` resolves a model via `registry.ModelRegistry`, reads `config.json` (metadata), `tokenizer.json` (BPE tokenizer), and `model.zmf` (weights), then wires a `generate.Generator[float32]` with a `graph.Graph[float32]` and `compute.CPUEngine[float32]`.
+**Loading:** `inference.Load(modelID, opts...)` resolves a model via `registry.ModelRegistry`, reads the GGUF file (weights + metadata) and `tokenizer.json` (BPE tokenizer), then wires a `generate.Generator[float32]` with a `graph.Graph[float32]` and `compute.CPUEngine[float32]`.
 
 **Generation:** `generate.Generator.Generate(ctx, prompt, config)` runs the autoregressive loop:
 1. Encode prompt via BPE tokenizer
@@ -1142,7 +1123,7 @@ parameterization decisions.
 HuggingFace model (ONNX/SafeTensors)
     |
     v (zonnx converter)
-ZMF file + config.json + tokenizer.json
+GGUF file + tokenizer.json
     |
     v (registry.Pull / inference.Load)
 inference.Model
