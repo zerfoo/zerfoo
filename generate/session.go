@@ -2,7 +2,9 @@ package generate
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -20,7 +22,8 @@ type InferenceSession[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	config    ModelConfig
 	cache     CacheProvider[T]
-	mu        sync.Mutex // serializes Generate calls within this session
+	graphMu   *sync.Mutex // shared mutex for graph Forward (graph is not concurrent-safe)
+	mu        sync.Mutex  // serializes Generate calls within this session
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -42,6 +45,7 @@ func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 		engine:    gen.engine,
 		config:    gen.config,
 		cache:     cache,
+		graphMu:   &gen.mu,
 	}
 }
 
@@ -85,16 +89,13 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 
 	generatedIDs := make([]int, 0, sc.MaxNewTokens)
 
-	// Reset stateful auto-input nodes for this generation.
-	s.graph.ResetStatefulNodes()
-
 	// Prefill: run the full prompt through the graph.
 	prefillTensor, err := s.idsToTensor(promptIDs)
 	if err != nil {
 		return "", fmt.Errorf("create prefill tensor: %w", err)
 	}
 
-	logits, err := s.graph.Forward(genCtx, prefillTensor)
+	logits, err := s.graphForward(genCtx, prefillTensor, true)
 	if err != nil {
 		return "", fmt.Errorf("prefill forward: %w", err)
 	}
@@ -124,7 +125,7 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 
 		decodeBuf[0] = T(nextToken)
 
-		logits, err = s.graph.Forward(genCtx, tokenTensor)
+		logits, err = s.graphForward(genCtx, tokenTensor, false)
 		if err != nil {
 			return "", fmt.Errorf("decode forward: %w", err)
 		}
@@ -149,6 +150,156 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		return "", fmt.Errorf("decode output: %w", err)
 	}
 	return result, nil
+}
+
+// GenerateStream produces text from a prompt using the session's own KV cache,
+// delivering each token to the stream as it is generated.
+func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string, sc SamplingConfig, stream TokenStream) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sc.MaxNewTokens <= 0 {
+		sc.MaxNewTokens = 256
+	}
+
+	promptIDs, err := s.tokenizer.Encode(prompt)
+	if err != nil {
+		return fmt.Errorf("encode prompt: %w", err)
+	}
+	if len(promptIDs) == 0 {
+		return fmt.Errorf("prompt produced no tokens")
+	}
+
+	if s.config.BOSTokenID > 0 {
+		promptIDs = append([]int{s.config.BOSTokenID}, promptIDs...)
+	}
+
+	s.cache.Reset()
+	genCtx := WithCache(ctx, s.cache)
+
+	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
+	for _, id := range sc.StopTokenIDs {
+		stopSet[id] = true
+	}
+	stopSet[s.config.EOSTokenID] = true
+
+	generatedIDs := make([]int, 0, sc.MaxNewTokens)
+	prevDecoded := ""
+
+	// Prefill.
+	prefillTensor, err := s.idsToTensor(promptIDs)
+	if err != nil {
+		return fmt.Errorf("create prefill tensor: %w", err)
+	}
+
+	logits, err := s.graphForward(genCtx, prefillTensor, true)
+	if err != nil {
+		return fmt.Errorf("prefill forward: %w", err)
+	}
+
+	nextToken, err := s.sampleFromLogits(logits, sc, generatedIDs)
+	if err != nil {
+		return fmt.Errorf("sample after prefill: %w", err)
+	}
+
+	if stopSet[nextToken] {
+		return stream.OnToken("", true)
+	}
+	generatedIDs = append(generatedIDs, nextToken)
+
+	if emitErr := s.emitToken(generatedIDs, &prevDecoded, sc.StopStrings, stream); emitErr != nil {
+		if errors.Is(emitErr, errStopString) {
+			return nil
+		}
+		return emitErr
+	}
+
+	decodeBuf := []T{T(nextToken)}
+	tokenTensor, tErr := tensor.New([]int{1, 1}, decodeBuf)
+	if tErr != nil {
+		return fmt.Errorf("create decode tensor: %w", tErr)
+	}
+
+	for range sc.MaxNewTokens - 1 {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+
+		decodeBuf[0] = T(nextToken)
+
+		logits, err = s.graphForward(genCtx, tokenTensor, false)
+		if err != nil {
+			return fmt.Errorf("decode forward: %w", err)
+		}
+
+		nextToken, err = s.sampleFromLogits(logits, sc, generatedIDs)
+		if err != nil {
+			return fmt.Errorf("sample: %w", err)
+		}
+
+		if stopSet[nextToken] {
+			break
+		}
+		generatedIDs = append(generatedIDs, nextToken)
+
+		if emitErr := s.emitToken(generatedIDs, &prevDecoded, sc.StopStrings, stream); emitErr != nil {
+			if errors.Is(emitErr, errStopString) {
+				return nil
+			}
+			return emitErr
+		}
+	}
+
+	return stream.OnToken("", true)
+}
+
+// emitToken decodes the full generated sequence, computes the incremental
+// difference from the previous decoding, and emits it to the stream.
+func (s *InferenceSession[T]) emitToken(
+	generatedIDs []int,
+	prevDecoded *string,
+	stopStrings []string,
+	stream TokenStream,
+) error {
+	decoded, err := s.tokenizer.Decode(generatedIDs)
+	if err != nil {
+		return fmt.Errorf("decode token: %w", err)
+	}
+
+	for _, ss := range stopStrings {
+		if idx := strings.Index(decoded, ss); idx >= 0 {
+			remaining := decoded[:idx]
+			if len(remaining) > len(*prevDecoded) {
+				delta := remaining[len(*prevDecoded):]
+				if err := stream.OnToken(delta, false); err != nil {
+					return err
+				}
+			}
+			if err := stream.OnToken("", true); err != nil {
+				return err
+			}
+			return errStopString
+		}
+	}
+
+	if len(decoded) > len(*prevDecoded) {
+		delta := decoded[len(*prevDecoded):]
+		*prevDecoded = decoded
+		return stream.OnToken(delta, false)
+	}
+	*prevDecoded = decoded
+	return nil
+}
+
+// graphForward runs a graph forward pass under the shared graph mutex.
+// It uses defer to ensure the mutex is released even if Forward panics.
+func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], reset bool) (*tensor.TensorNumeric[T], error) {
+	s.graphMu.Lock()
+	defer s.graphMu.Unlock()
+	if reset {
+		s.graph.ResetStatefulNodes()
+	}
+	return s.graph.Forward(ctx, input)
 }
 
 // idsToTensor converts token IDs to a [1, seqLen] input tensor.
