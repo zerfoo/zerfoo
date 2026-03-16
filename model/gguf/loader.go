@@ -167,11 +167,10 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Re-quantize Q5_K to Q4_0 for fast NEON GEMV.
+	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
 	f32 := make([]float32, numElements)
 	q5k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.New[float32](shape, f32)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {

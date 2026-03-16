@@ -228,6 +228,36 @@ func TestLoadTensors_Q8_0(t *testing.T) {
 	}
 }
 
+func TestDecodeQ5KTensor_NoReQuantization(t *testing.T) {
+	// Q5_K: 256 elements per super-block, 176 bytes per block.
+	const numElements = 256
+	const blockBytes = 176
+	raw := make([]byte, blockBytes) // all zeros — valid Q5_K block
+
+	tns, err := decodeQ5KTensor([]int{numElements}, numElements, raw)
+	if err != nil {
+		t.Fatalf("decodeQ5KTensor: %v", err)
+	}
+
+	// Verify shape.
+	if tns.Shape()[0] != numElements {
+		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+	}
+
+	// The returned tensor must NOT use Q4Storage — it should be plain F32.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); ok {
+		t.Fatal("decodeQ5KTensor should not re-quantize to Q4_0")
+	}
+
+	// All-zero Q5_K block dequantizes to all zeros.
+	got := tns.Data()
+	for i, v := range got {
+		if v != 0 {
+			t.Errorf("index %d: got %v, want 0", i, v)
+		}
+	}
+}
+
 func TestLoadTensors_MultipleTensors(t *testing.T) {
 	// Two F32 tensors at different offsets.
 	data1 := make([]byte, 8)
