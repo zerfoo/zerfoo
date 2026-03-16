@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/zerfoo/zerfoo/generate"
+	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/inference"
 )
 
@@ -38,6 +40,7 @@ func (c *RunCommand) Description() string {
 // Run implements Command.Run.
 func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var modelID, systemPrompt, cacheDir string
+	var jsonSchemaStr, prompt string
 	var temperature float64
 	var topK, maxTokens int
 	var topP, repetitionPenalty float64
@@ -124,6 +127,18 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 				return err
 			}
 			cacheDir = s
+		case "--json-schema":
+			s, err := nextVal("--json-schema")
+			if err != nil {
+				return err
+			}
+			jsonSchemaStr = s
+		case "--prompt":
+			s, err := nextVal("--prompt")
+			if err != nil {
+				return err
+			}
+			prompt = s
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])
@@ -134,6 +149,20 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 
 	if modelID == "" {
 		return errors.New("model ID is required")
+	}
+
+	// Parse and convert JSON schema if provided.
+	var grammarState *grammar.Grammar
+	if jsonSchemaStr != "" {
+		var schema grammar.JSONSchema
+		if err := json.Unmarshal([]byte(jsonSchemaStr), &schema); err != nil {
+			return fmt.Errorf("--json-schema: invalid JSON: %w", err)
+		}
+		g, err := grammar.Convert(&schema)
+		if err != nil {
+			return fmt.Errorf("--json-schema: %w", err)
+		}
+		grammarState = g
 	}
 
 	// Build load options.
@@ -165,6 +194,22 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	}
 	if repetitionPenalty > 0 {
 		genOpts = append(genOpts, inference.WithRepetitionPenalty(repetitionPenalty))
+	}
+	if grammarState != nil {
+		genOpts = append(genOpts, inference.WithGrammar(grammarState))
+	}
+
+	// Non-interactive mode: when --json-schema is set, generate once and exit.
+	if jsonSchemaStr != "" {
+		if prompt == "" {
+			return errors.New("--prompt is required when using --json-schema")
+		}
+		result, err := mdl.Generate(ctx, prompt, genOpts...)
+		if err != nil {
+			return fmt.Errorf("generate: %w", err)
+		}
+		_, _ = fmt.Fprint(c.out, result)
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(c.out, "Model loaded. Type your message (Ctrl-D to quit).\n\n")
@@ -222,7 +267,9 @@ OPTIONS:
   --repetition-penalty <float>   Penalize repeated tokens (default: 1.0)
   --max-tokens <int>             Maximum tokens to generate (default: 256)
   --system <prompt>              System prompt for context
-  --cache-dir <dir>              Override model cache directory`
+  --cache-dir <dir>              Override model cache directory
+  --json-schema <schema>         JSON Schema for structured output (non-interactive)
+  --prompt <text>                Prompt text (required with --json-schema)`
 }
 
 // Examples implements Command.Examples.
@@ -231,6 +278,7 @@ func (c *RunCommand) Examples() []string {
 		"run google/gemma-3-1b",
 		"run google/gemma-3-1b --temperature 0.7 --max-tokens 512",
 		`run google/gemma-3-1b --system "You are a helpful assistant"`,
+		`run google/gemma-3-1b --json-schema '{"type":"object","properties":{"name":{"type":"string"}}}' --prompt "Generate a name"`,
 	}
 }
 

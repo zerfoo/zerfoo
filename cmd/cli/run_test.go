@@ -219,3 +219,132 @@ func TestRunCommand_MixedEqualsSyntax(t *testing.T) {
 func TestRunCommand_Interface(t *testing.T) {
 	var _ Command = (*RunCommand)(nil)
 }
+
+func TestRunCommand_JSONSchemaParses(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader(""), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	schema := `{"type":"object","properties":{"name":{"type":"string"}}}`
+	err := cmd.Run(context.Background(), []string{
+		"--json-schema", schema,
+		"--prompt", "Generate a name",
+		"test-model",
+	})
+	if err != nil {
+		t.Fatalf("Run with --json-schema failed: %v", err)
+	}
+	// In non-interactive mode, output should be raw generation (no "Model loaded" banner).
+	if strings.Contains(out.String(), "Model loaded") {
+		t.Errorf("non-interactive mode should not print 'Model loaded', got %q", out.String())
+	}
+}
+
+func TestRunCommand_JSONSchemaInvalid(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader(""), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return nil, errors.New("should not be called")
+	}
+	err := cmd.Run(context.Background(), []string{
+		"--json-schema", "not valid json",
+		"--prompt", "test",
+		"test-model",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON schema")
+	}
+	if !strings.Contains(err.Error(), "--json-schema") {
+		t.Errorf("error = %q, want to contain '--json-schema'", err.Error())
+	}
+}
+
+func TestRunCommand_JSONSchemaUnsupported(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader(""), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return nil, errors.New("should not be called")
+	}
+	// $ref is unsupported by the grammar converter.
+	schema := `{"type":"object","$ref":"#/defs/foo"}`
+	err := cmd.Run(context.Background(), []string{
+		"--json-schema", schema,
+		"--prompt", "test",
+		"test-model",
+	})
+	if err == nil {
+		t.Fatal("expected error for unsupported schema feature")
+	}
+	if !strings.Contains(err.Error(), "--json-schema") {
+		t.Errorf("error = %q, want to contain '--json-schema'", err.Error())
+	}
+}
+
+func TestRunCommand_JSONSchemaRequiresPrompt(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader(""), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	schema := `{"type":"object","properties":{"name":{"type":"string"}}}`
+	err := cmd.Run(context.Background(), []string{
+		"--json-schema", schema,
+		"test-model",
+	})
+	if err == nil {
+		t.Fatal("expected error when --prompt is missing with --json-schema")
+	}
+	if !strings.Contains(err.Error(), "--prompt") {
+		t.Errorf("error = %q, want to contain '--prompt'", err.Error())
+	}
+}
+
+func TestRunCommand_JSONSchemaFlagParsing(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		err  string
+	}{
+		{"json-schema missing value", []string{"--json-schema"}, "--json-schema requires a value"},
+		{"prompt missing value", []string{"--prompt"}, "--prompt requires a value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := NewRunCommand(strings.NewReader(""), &out)
+			cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+				return nil, errors.New("should not be called")
+			}
+			err := cmd.Run(context.Background(), tc.args)
+			if err == nil {
+				t.Error("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.err) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tc.err)
+			}
+		})
+	}
+}
+
+func TestRunCommand_PromptWithoutSchema(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	// --prompt without --json-schema falls through to interactive mode.
+	cmd := NewRunCommand(strings.NewReader("hello\n"), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	err := cmd.Run(context.Background(), []string{
+		"--prompt", "ignored in interactive mode",
+		"test-model",
+	})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Model loaded") {
+		t.Errorf("should be interactive mode, got %q", out.String())
+	}
+}
