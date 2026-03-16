@@ -156,6 +156,13 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 			break
 		}
 
+		// Reset arena pool between tokens so intermediates are reclaimed.
+		// Without this, the GPU arena grows monotonically, fragmenting memory
+		// and preventing CUDA graph replay from reusing buffer addresses.
+		if resetter, ok := any(s.engine).(compute.PoolResetter); ok {
+			resetter.ResetPool()
+		}
+
 		decodeBuf[0] = T(nextToken)
 
 		logits, err = s.graphForward(genCtx, tokenTensor, false)
@@ -277,6 +284,11 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 			break
 		}
 
+		// Reset arena pool between tokens so intermediates are reclaimed.
+		if resetter, ok := any(s.engine).(compute.PoolResetter); ok {
+			resetter.ResetPool()
+		}
+
 		decodeBuf[0] = T(nextToken)
 
 		logits, err = s.graphForward(genCtx, tokenTensor, false)
@@ -391,6 +403,24 @@ func (s *InferenceSession[T]) sampleFromLogits(
 	}
 	vocabSize := shape[2]
 	seqLen := shape[1]
+
+	// GPU argmax fast path: for greedy decoding with GPU-resident logits,
+	// run argmax entirely on GPU. Copies 4 bytes instead of ~1MB of logits.
+	// Disabled when grammar-constrained decoding is active (must mask first).
+	if sc.GrammarState == nil && sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
+		if _, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
+			if am, ok := any(s.engine).(compute.GPUArgmaxer); ok {
+				if seqLen == 1 {
+					if f32t, ok := any(logits).(*tensor.TensorNumeric[float32]); ok {
+						idx, err := am.GPUArgmax(f32t)
+						if err == nil {
+							return idx, nil
+						}
+					}
+				}
+			}
+		}
+	}
 
 	totalElems := seqLen * vocabSize
 	data := make([]T, totalElems)
