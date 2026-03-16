@@ -57,7 +57,7 @@ func Open() (*HIPLib, error) {
 		lastErr = err
 	}
 	if lib.handle == 0 {
-		return nil, fmt.Errorf("hip: dlopen libamdhip64 failed: %v", lastErr)
+		return nil, fmt.Errorf("hip: dlopen libamdhip64 failed: %w", lastErr)
 	}
 
 	// Resolve all required function pointers.
@@ -81,7 +81,7 @@ func Open() (*HIPLib, error) {
 	for _, s := range syms {
 		addr, err := cuda.Dlsym(lib.handle, s.name)
 		if err != nil {
-			return nil, fmt.Errorf("hip: %v", err)
+			return nil, fmt.Errorf("hip: %w", err)
 		}
 		*s.ptr = addr
 	}

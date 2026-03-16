@@ -7,13 +7,13 @@ import (
 	"log"
 	"unsafe"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
 	cudago "github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings" // For RoPE
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -342,7 +342,6 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	gqa.qProj = qProj
 	gqa.kProj = kProj
 	gqa.vProj = vProj
-
 
 	// 2. Split into heads, apply optional Q/K norms, then RoPE
 	var qHeadsRoPE, kHeadsRoPE *tensor.TensorNumeric[T]
@@ -747,13 +746,14 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, reshapeErr
 		}
 
-		if mask == nil && seqLen > 1 && gqa.SlidingWindowSize > 0 {
+		switch {
+		case mask == nil && seqLen > 1 && gqa.SlidingWindowSize > 0:
 			// Build causal sliding window mask for prefill.
 			mask = BuildCausalSlidingWindowMask[T](seqLen, gqa.SlidingWindowSize)
 			gqa.scaledDotProductAttention.SetCausal(false)
-		} else if mask == nil && seqLen > 1 {
+		case mask == nil && seqLen > 1:
 			gqa.scaledDotProductAttention.SetCausal(true)
-		} else {
+		default:
 			gqa.scaledDotProductAttention.SetCausal(false)
 		}
 
@@ -1059,7 +1059,7 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 // Shape: [1, 1, seqLen, seqLen].
 func BuildCausalSlidingWindowMask[T tensor.Numeric](seqLen, windowSize int) *tensor.TensorNumeric[T] {
 	// Use a runtime variable to avoid compile-time overflow check for narrow types.
-	var neg float64 = -1e9
+	var neg = -1e9
 	largeNeg := T(neg)
 	data := make([]T, seqLen*seqLen)
 	for i := range seqLen {

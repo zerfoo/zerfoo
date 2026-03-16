@@ -107,7 +107,7 @@ type cublasLtLib struct {
 var (
 	ltLib     *cublasLtLib
 	ltOnce    sync.Once
-	ltLoadErr error
+	errLtLoad error
 )
 
 // cublasLt library paths to try.
@@ -162,9 +162,9 @@ func loadCublasLt() (*cublasLtLib, error) {
 
 func getCublasLtLib() (*cublasLtLib, error) {
 	ltOnce.Do(func() {
-		ltLib, ltLoadErr = loadCublasLt()
+		ltLib, errLtLoad = loadCublasLt()
 	})
-	return ltLib, ltLoadErr
+	return ltLib, errLtLoad
 }
 
 // LtAvailable returns true if the cuBLASLt library can be loaded at runtime.

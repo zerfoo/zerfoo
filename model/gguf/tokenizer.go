@@ -92,7 +92,7 @@ func ExtractTokenizer(f *File) (*tokenizer.BPETokenizer, error) {
 				}
 				// Type 3 = control/special token.
 				if tokenType == 3 && i < len(tokensArr) {
-					if s, ok := tokensArr[i].(string); ok && len(s) > 0 {
+					if s, ok := tokensArr[i].(string); ok && s != "" {
 						specialTokens[s] = i
 					}
 				}

@@ -1,3 +1,4 @@
+//nolint:dupl // CUDA and ROCm runtimes are structurally identical by design
 package gpuapi
 
 import (

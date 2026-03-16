@@ -12,8 +12,8 @@ import (
 // GemvQ4KF32 performs Q4_K fused dequant-GEMV: y = dequant(W_q4k) * x.
 // W_q4k is raw Q4_K super-blocks, x is [K] FP32, y is [M] FP32.
 func GemvQ4KF32(
-	W_q4k, x, y unsafe.Pointer, //nolint:gocritic // match CGo API
-	M, K int, //nolint:gocritic // match CGo API
+	W_q4k, x, y unsafe.Pointer,
+	M, K int,
 	stream unsafe.Pointer,
 ) error {
 	k := klib()

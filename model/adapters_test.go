@@ -21,9 +21,9 @@ type mockNode struct {
 }
 
 func (m *mockNode) OpType() string                      { return m.opType }
-func (m *mockNode) OutputShape() []int                   { return m.outputShape }
-func (m *mockNode) Attributes() map[string]any           { return m.attributes }
-func (m *mockNode) Parameters() []*graph.Parameter[int]  { return m.params }
+func (m *mockNode) OutputShape() []int                  { return m.outputShape }
+func (m *mockNode) Attributes() map[string]any          { return m.attributes }
+func (m *mockNode) Parameters() []*graph.Parameter[int] { return m.params }
 func (m *mockNode) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[int]) (*tensor.TensorNumeric[int], error) {
 	return inputs[0], nil
 }
@@ -52,7 +52,7 @@ func (m *mockNodeF32) Backward(_ context.Context, _ types.BackwardMode, outputGr
 }
 
 // buildTestModel creates a minimal int Model for backward tests.
-func buildTestModel(t *testing.T) *Model[int] { //nolint:dupl // generic type differs from buildTestModelF32
+func buildTestModel(t *testing.T) *Model[int] {
 	t.Helper()
 	engine := compute.NewCPUEngine[int](numeric.IntOps{})
 	builder := graph.NewBuilder[int](engine)
@@ -84,7 +84,7 @@ func buildTestModel(t *testing.T) *Model[int] { //nolint:dupl // generic type di
 }
 
 // buildTestModelF32 creates a minimal float32 Model for round-trip tests.
-func buildTestModelF32(t *testing.T) *Model[float32] { //nolint:dupl // generic type differs from buildTestModel
+func buildTestModelF32(t *testing.T) *Model[float32] {
 	t.Helper()
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	builder := graph.NewBuilder[float32](engine)

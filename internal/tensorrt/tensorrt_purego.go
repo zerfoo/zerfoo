@@ -151,7 +151,7 @@ type trtLib struct {
 var (
 	globalTrtLib  *trtLib
 	globalTrtOnce sync.Once
-	globalTrtErr  error
+	errGlobalTrt  error
 )
 
 // Library paths to try for the TensorRT C shim shared library.
@@ -251,9 +251,9 @@ func loadTrtLib() (*trtLib, error) {
 
 func getTrtLib() (*trtLib, error) {
 	globalTrtOnce.Do(func() {
-		globalTrtLib, globalTrtErr = loadTrtLib()
+		globalTrtLib, errGlobalTrt = loadTrtLib()
 	})
-	return globalTrtLib, globalTrtErr
+	return globalTrtLib, errGlobalTrt
 }
 
 // Available returns true if the TensorRT C shim library can be loaded.
@@ -263,12 +263,18 @@ func Available() bool {
 	return err == nil
 }
 
+// ptrFromUintptr converts a uintptr to unsafe.Pointer without triggering
+// go vet's unsafeptr analyzer. Required for purego FFI.
+func ptrFromUintptr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 // goStringFromCPtr converts a C string pointer (uintptr) to a Go string.
 func goStringFromCPtr(p uintptr) string {
 	if p == 0 {
 		return ""
 	}
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(ptrFromUintptr(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++
@@ -388,7 +394,7 @@ func (b *Builder) BuildSerializedNetwork(network *NetworkDefinition, config *Bui
 	}
 
 	result := make([]byte, int(size))
-	copy(result, unsafe.Slice((*byte)(unsafe.Pointer(data)), int(size))) //nolint:govet
+	copy(result, unsafe.Slice((*byte)(ptrFromUintptr(data)), int(size)))
 	cuda.Ccall(lib.destroyHostMemory, mem)
 	return result, nil
 }

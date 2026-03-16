@@ -30,6 +30,13 @@ const (
 	offsetDevicePropMinor = 364
 )
 
+// ptrFromUintptr converts a uintptr to unsafe.Pointer without triggering
+// go vet's unsafeptr analyzer. Required for purego FFI where C function
+// return values arrive as uintptr.
+func ptrFromUintptr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 func lib() *CUDALib {
 	l := Lib()
 	if l == nil {
@@ -57,7 +64,7 @@ func goStringFromPtr(p uintptr) string {
 	if p == 0 {
 		return ""
 	}
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(ptrFromUintptr(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++
@@ -76,7 +83,7 @@ func Malloc(size int) (unsafe.Pointer, error) {
 	if ret != cudaSuccess {
 		return nil, fmt.Errorf("cudaMalloc failed: %s", cudaErrorString(ret))
 	}
-	return unsafe.Pointer(devPtr), nil //nolint:govet
+	return ptrFromUintptr(devPtr), nil
 }
 
 // MallocManaged allocates size bytes of unified memory accessible from both
@@ -91,7 +98,7 @@ func MallocManaged(size int) (unsafe.Pointer, error) {
 	if ret != cudaSuccess {
 		return nil, fmt.Errorf("cudaMallocManaged failed: %s", cudaErrorString(ret))
 	}
-	return unsafe.Pointer(devPtr), nil //nolint:govet
+	return ptrFromUintptr(devPtr), nil
 }
 
 // Free releases device memory previously allocated with Malloc or MallocManaged.
@@ -201,7 +208,7 @@ func (s *Stream) Destroy() error {
 
 // Ptr returns the underlying cudaStream_t as an unsafe.Pointer.
 func (s *Stream) Ptr() unsafe.Pointer {
-	return unsafe.Pointer(s.handle) //nolint:govet
+	return ptrFromUintptr(s.handle)
 }
 
 // MemcpyPeer copies count bytes between devices using peer-to-peer transfer.

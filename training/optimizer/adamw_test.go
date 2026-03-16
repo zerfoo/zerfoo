@@ -74,7 +74,6 @@ func TestAdamW_Step_Basic(t *testing.T) {
 	}
 }
 
-//nolint:dupl // Intentional similarity with zero-gradient test to verify weight decay path using same harness
 func TestAdamW_Step_WithWeightDecay(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
@@ -399,7 +398,6 @@ func TestAdamW_Step_EdgeCases(t *testing.T) {
 	}
 }
 
-//nolint:dupl // Intentional similarity with TestAdamW_Step_WithWeightDecay to cover zero-gradient pathway using same harness
 func TestAdamW_Step_ZeroGradient(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}

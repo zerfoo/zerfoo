@@ -73,7 +73,7 @@ type packageCoverage struct {
 
 // parseCoverageProfile reads a Go coverage profile and returns per-package coverage percentages.
 func parseCoverageProfile(path string) (map[string]float64, error) {
-	f, err := os.Open(path) //nolint:gosec // caller-provided file path
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open profile: %w", err)
 	}

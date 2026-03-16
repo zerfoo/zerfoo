@@ -151,6 +151,7 @@ func (d *ROCmDNN) ConvBackwardFilter(
 	return fmt.Errorf("ConvBackwardFilter: not yet implemented")
 }
 
+//nolint:dupl // ROCm mirrors CUDA API shape intentionally
 func (d *ROCmDNN) BatchNormForwardInference(
 	x unsafe.Pointer, xShape [4]int,
 	scale, bias, mean, variance unsafe.Pointer,

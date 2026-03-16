@@ -45,7 +45,7 @@ func run(text, vocabPath string, w io.Writer) error {
 }
 
 func loadVocab(t *tokenizer.WhitespaceTokenizer, path string) error {
-	file, err := os.Open(path) //nolint:gosec // user-provided path
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}

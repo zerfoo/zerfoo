@@ -239,7 +239,8 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	offset := lb.seqLen * dim * batch
 	numElems := seqLen * dim * batch
 
-	if lb.isGPU && c.kvFP16 && lb.kFP16 != nil {
+	switch {
+	case lb.isGPU && c.kvFP16 && lb.kFP16 != nil:
 		// FP16 path: convert F32 source to FP16, then copy into FP16 cache.
 		if err := appendFP16(lb.kFP16, offset, numElems, newK, c.stream); err != nil {
 			return fmt.Errorf("append K fp16 layer %d: %w", layer, err)
@@ -247,14 +248,14 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		if err := appendFP16(lb.vFP16, offset, numElems, newV, c.stream); err != nil {
 			return fmt.Errorf("append V fp16 layer %d: %w", layer, err)
 		}
-	} else if lb.isGPU {
+	case lb.isGPU:
 		if err := appendGPU(lb.kStorage, offset, numElems, newK, c.stream); err != nil {
 			return fmt.Errorf("append K layer %d: %w", layer, err)
 		}
 		if err := appendGPU(lb.vStorage, offset, numElems, newV, c.stream); err != nil {
 			return fmt.Errorf("append V layer %d: %w", layer, err)
 		}
-	} else {
+	default:
 		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
 			log.Printf("WARNING: KV cache layer %d: CPU fallback with GPU tensor, D2H copy triggered", layer)
 		}

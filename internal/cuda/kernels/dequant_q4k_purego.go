@@ -12,8 +12,8 @@ import (
 // DequantQ4KF32 dequantizes Q4_K super-blocks to FP32 in global memory.
 // src is raw Q4_K super-blocks, dst is [rows, K] FP32.
 func DequantQ4KF32(
-	src, dst unsafe.Pointer, //nolint:gocritic // match CGo API
-	rows, K int, //nolint:gocritic // match CGo API
+	src, dst unsafe.Pointer,
+	rows, K int,
 	stream unsafe.Pointer,
 ) error {
 	k := klib()

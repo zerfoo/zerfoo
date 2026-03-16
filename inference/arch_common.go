@@ -493,8 +493,7 @@ func buildTransformerGraph(
 	// CPU: Q4 enables fast NEON GEMV. GPU: Q4 reduces weight read from
 	// 1.2 GB (F32) to 0.17 GB, using the optimized Q4 GEMV kernel.
 	if s := lmHeadWeight.GetStorage(); s != nil {
-		switch qs := any(s).(type) {
-		case *tensor.Q8Storage:
+		if qs, ok := any(s).(*tensor.Q8Storage); ok {
 			f32 := make([]float32, qs.Len())
 			qs.Dequantize(f32)
 			q4 := tensor.QuantizeQ4(f32)

@@ -1,6 +1,7 @@
 package huggingface
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -53,7 +54,7 @@ type apiSibling struct {
 func (c *Client) GetModel(id string) (*ModelInfo, error) {
 	url := fmt.Sprintf("%s/api/models/%s", c.baseURL, id)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("huggingface: create request: %w", err)
 	}
@@ -65,7 +66,7 @@ func (c *Client) GetModel(id string) (*ModelInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("huggingface: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("huggingface: unexpected status %d for model %q", resp.StatusCode, id)

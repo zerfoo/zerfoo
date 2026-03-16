@@ -16,7 +16,7 @@ import (
 func writeTestGGUF(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "test.gguf")
-	f, err := os.Create(path) //nolint:gosec // test file in temp dir
+	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestLoadFile_GGUF_Generate(t *testing.T) {
 func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "test_fp16_gqa.gguf")
-	f, err := os.Create(path) //nolint:gosec // test file in temp dir
+	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
@@ -265,7 +265,7 @@ func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 	numLayers := 1
 	numHeads := 4
 	numKVHeads := 1
-	headDim := hidden / numHeads // 4
+	headDim := hidden / numHeads  // 4
 	kvDim := headDim * numKVHeads // 4
 
 	type tensorDef struct {
@@ -280,10 +280,10 @@ func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}, 0},
 		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}, 0},
 		// These are the FP16 GQA weight tensors:
-		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}, 1},         // [hidden, hidden] -> [hidden, hidden]
-		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},           // [hidden, kvDim] -> [kvDim, hidden]
-		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},           // [hidden, kvDim] -> [kvDim, hidden]
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}, 1},     // [hidden, hidden] -> [hidden, hidden]
+		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}, 1},      // [hidden, hidden] -> [hidden, hidden]
+		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},       // [hidden, kvDim] -> [kvDim, hidden]
+		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},       // [hidden, kvDim] -> [kvDim, hidden]
+		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}, 1}, // [hidden, hidden] -> [hidden, hidden]
 		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}, 0},
 		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}, 1},
 		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}, 1},

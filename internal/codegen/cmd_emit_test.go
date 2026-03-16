@@ -1,7 +1,6 @@
 package codegen
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/zerfoo/ztensor/graph"
@@ -53,5 +52,5 @@ func TestEmitCheckRealOps(t *testing.T) {
 		}
 	}
 	t.Logf("all %d real model ops have emitters", len(realOps))
-	fmt.Printf("Supported ops: %d total\n", len(realOps))
+	t.Logf("Supported ops: %d total", len(realOps))
 }

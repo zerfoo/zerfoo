@@ -13,8 +13,8 @@ import (
 // A_q4 is in GPU separated layout (scales then data), B is [K, N] FP32, C is [M, N] FP32.
 // dataOffset is the byte offset from A_q4 to the packed data region.
 func GemmQ4F32(
-	A_q4, B, C unsafe.Pointer, //nolint:gocritic // match CGo API
-	M, K, N, dataOffset int, //nolint:gocritic // match CGo API
+	A_q4, B, C unsafe.Pointer,
+	M, K, N, dataOffset int,
 	stream unsafe.Pointer,
 ) error {
 	k := klib()

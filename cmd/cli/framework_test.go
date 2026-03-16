@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -552,7 +552,7 @@ func TestSaveResults_CSV(t *testing.T) {
 		t.Fatalf("saveResults failed: %v", err)
 	}
 
-	data, err := os.ReadFile(outputFile) //nolint:gosec // test reads temp file
+	data, err := os.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestSaveResults_JSON(t *testing.T) {
 		t.Fatalf("saveResults failed: %v", err)
 	}
 
-	data, err := os.ReadFile(outputFile) //nolint:gosec // test reads temp file
+	data, err := os.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("failed to read output: %v", err)
 	}

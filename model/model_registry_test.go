@@ -157,7 +157,7 @@ func assertRegistryCRUD(t *testing.T, ops registryComponentOps) {
 	}
 }
 
-func TestModelRegistry_Exporter(t *testing.T) { //nolint:dupl // registry CRUD pattern, structurally similar by design
+func TestModelRegistry_Exporter(t *testing.T) {
 	assertRegistryCRUD(t, registryComponentOps{
 		register: func(r *ModelRegistry[float32]) error {
 			return r.RegisterModelExporter("e1", func(_ context.Context, _ map[string]any) (ModelExporter[float32], error) {
@@ -182,7 +182,7 @@ func TestModelRegistry_Exporter(t *testing.T) { //nolint:dupl // registry CRUD p
 	})
 }
 
-func TestModelRegistry_Validator(t *testing.T) { //nolint:dupl // registry CRUD pattern, structurally similar by design
+func TestModelRegistry_Validator(t *testing.T) {
 	assertRegistryCRUD(t, registryComponentOps{
 		register: func(r *ModelRegistry[float32]) error {
 			return r.RegisterModelValidator("v1", func(_ context.Context, _ map[string]any) (ModelValidator[float32], error) {

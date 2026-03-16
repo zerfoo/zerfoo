@@ -43,7 +43,7 @@ func LoadManifest() (*CacheManifest, error) {
 }
 
 func loadManifestFrom(path string) (*CacheManifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path from ManifestPath()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &CacheManifest{}, nil
@@ -73,17 +73,17 @@ func saveManifestTo(m *CacheManifest, path string) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("huggingface: create cache dir: %w", err)
 	}
 
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("huggingface: write temp manifest: %w", err)
 	}
 
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) // best-effort cleanup
+		_ = os.Remove(tmp) // best-effort cleanup
 		return fmt.Errorf("huggingface: rename manifest: %w", err)
 	}
 	return nil

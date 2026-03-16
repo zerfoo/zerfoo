@@ -13,10 +13,7 @@ run:
 output:
   formats:
     text:
-      format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-  sort-results: true
+      path: stdout
 
 # Curated set: prefer fixable formatters + essential correctness & security linters.
 linters:
@@ -25,16 +22,11 @@ linters:
   enable:
     # Auto-fixable formatters / organizers
     - misspell         # spelling; supports --fix
-    #- whitespace       # common whitespace issues; supports --fix
-    #- wsl_v5           # consistent empty lines around blocks; many rules auto-fix
 
     # Correctness, readability, and maintainability
-    #- govet
     - staticcheck
-    #- revive
     - errcheck
     - ineffassign
-    #- unused
     - gocritic
     - nolintlint
     - lll
@@ -43,23 +35,14 @@ linters:
     # API, error, and return-shape hygiene
     - errorlint
     - errname
-    #- ireturn
 
     # Complexity/structure
-    #- gocyclo
-    #- cyclop
-    #- funlen
-    #- nestif
     - dupl
 
     # Testing quality
     - tparallel
-    #- thelper
-    #- testpackage
 
     # Tags and struct initialization
-    #- exhaustruct
-    #- tagliatelle  # disabled: existing snake_case JSON tags are an API contract
     - tagalign
 
     # Context and net/http usage
@@ -68,50 +51,18 @@ linters:
 
     # Codebase policy
     - depguard
-    #- gomodguard
     - forbidigo
     - copyloopvar
 
-  # Per-linter settings (v2 format).
+  # Per-linter settings.
   settings:
-    gofumpt:
-      extra-rules: true
-
-    gci:
-      skip-generated: true
-      # Put your module path here for local import grouping:
-      sections:
-        - standard
-        - default
-        - prefix(github.com/feza-inc)  # ← set to your module path
-      custom-order: true
-
     misspell:
       locale: US
-      ignore-words:
-        - zerfoo
-        - Feza
-      # misspell applies fixes when run with --fix
-
-    whitespace:
-      multi-if: true
-      multi-func: true
-
-    wsl_v5:
-      allow-assign-and-anything: false
-      allow-assign-and-call: false
-      allow-assign-and-return: false
-      allow-trailing-comment: false
-      force-case-trailing-whitespace: true
-      force-err-cuddling: true
-      strict-append: true
 
     govet:
       enable-all: false
       enable:
         - printf
-        #- shadow
-        - loopclosure
         - lostcancel
         - nilness
         - stringintconv
@@ -119,18 +70,8 @@ linters:
         - testinggoroutine
         - sortslice
         - waitgroup
-      settings:
-        printf:
-          funcs:
-            - (log.Logger).Printf
-            - (log.Logger).Fatalf
-            - (log.Logger).Panicf
-
-    staticcheck:
-      go: "1.23"
 
     revive:
-      # A compact, practical rule set. Many items are auto-fixable.
       rules:
         - name: blank-imports
         - name: context-as-argument
@@ -142,7 +83,6 @@ linters:
         - name: increment-decrement
         - name: indent-error-flow
         - name: optimize-operands-order
-        - name: range-val-in-closure
         - name: receiver-naming
         - name: unexported-return
         - name: var-naming
@@ -152,7 +92,6 @@ linters:
         - name: use-any
         - name: time-equal
         - name: redefines-builtin-id
-        - name: import-shadowing
         - name: early-return
         - name: empty-lines
         - name: package-comments
@@ -173,6 +112,8 @@ linters:
         - redundantSprint
         - sprintfQuotedString
         - timeExprSimplify
+      disabled-checks:
+        - captLocal
       settings:
         rangeExprCopy:
           sizeThreshold: 512
@@ -182,7 +123,6 @@ linters:
     lll:
       line-length: 320
       tab-width: 1
-      exclude-pattern: "^\\s*//|`"   # allow long comments and raw strings
 
     gocyclo:
       min-complexity: 12
@@ -195,39 +135,18 @@ linters:
       lines: 100
       statements: 60
 
-    exhaustruct:
-      allow-empty: false
-      # Common exemptions like Cobra commands:
-      exclude:
-        - '.+/cobra\\.Command$'
-
-    tagliatelle:
-      case:
-        rules:
-          json: camel
-          yaml: camel
-          xml: camel
+    staticcheck:
+      checks:
+        - "all"
+        - "-SA1019"  # Deprecated API usage — tracked separately, not a lint gate
+        - "-ST1000"  # Package comments — add incrementally, not a lint gate
+        - "-ST1003"  # Underscore names — some match C/CUDA API naming conventions
+        - "-ST1021"  # Comment form — add incrementally
 
     errorlint:
       errorf: true
       asserts: true
       comparison: true
-
-    wrapcheck:
-      # Require wrapping external errors. Allow standard wrapping helpers.
-      ignoreSigs:
-        - errors.Join(error, ...)
-        - errors.Is(error, error)
-        - errors.As(error, interface{})
-        - fmt.Errorf(string, ...)
-
-    ireturn:
-      allow:
-        - error
-        - fmt.Stringer
-        - io.Reader
-        - io.Writer
-        - context.Context
 
     depguard:
       rules:
@@ -248,92 +167,67 @@ linters:
               desc: "Deprecated since Go 1.16. Use os or io packages instead."
             - pkg: "math/rand$"
               desc: "Use math/rand/v2."
-          # You can add allow entries for specific submodules if needed.
-
-    gomodguard:
-      blocked:
-        modules:
-          - github.com/stretchr/testify:
-              reason: "Avoid external test frameworks; keep tests in stdlib."
-          - github.com/pkg/errors:
-              recommendations: ["errors"]
-              reason: "Prefer stdlib error wrapping."
-          - github.com/sirupsen/logrus:
-              recommendations: ["log/slog", "log"]
-              reason: "Prefer structured logging in stdlib."
-      allowed:
-        domains:
-          - golang.org
-          - go.uber.org
-          - google.golang.org
 
     gosec:
       severity: medium
       confidence: medium
       excludes:
-        - G404   # Allow math/rand in tests is still blocked by depguard in prod code
+        - G404   # Allow math/rand in tests
         - G115   # Int conv false positives in generics-heavy code
         - G704   # SSRF taint false positives on internal API/CDN URLs
         - G705   # XSS taint false positives on %q-escaped SSE error responses
-      # Tune paths where security checks are too noisy:
-      # Note: gosec is still run in tests, but we often skip specific rules via issues.exclude-rules.
 
     forbidigo:
       forbid:
         - pattern: '^print(ln)?$'
-        - pattern: '^fmt\\.Print.*$'  # avoid committing Print*; use logging
+        - pattern: '^fmt\.Print.*$'
       exclude-godoc-examples: true
       analyze-types: true
 
     copyloopvar:
       check-alias: true
 
+  # So useful linters do not spam in tests, examples, and generated code.
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocyclo
+          - cyclop
+          - dupl
+          - lll
+          - wrapcheck
+          - ireturn
+          - gocognit
+          - gosec
+          - errcheck
+          - noctx
+          - gocritic
+
+      - path: ^cmd/
+        linters:
+          - gosec
+          - forbidigo
+          - gocritic
+
+      - path: ^examples/
+        linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - forbidigo
+
+      - path: ".*_generated\\.go"
+        linters:
+          - all
+
+      # Allow long lines for URLs and comments.
+      - linters:
+          - lll
+        text: "https?://"
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-use-default: false
-  exclude-dirs:
-    - vendor
-    - third_party
-    - node_modules
-    - bin
-    - dist
-    - .git
-  exclude-files:
-    - ".*_generated\\.go"
-    - "zz_.*\\.go"
-
-  # So useful linters do not spam in tests and generated code.
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - funlen
-        - gocyclo
-        - cyclop
-        - dupl
-        - lll
-        - wrapcheck
-        - ireturn
-        - gocognit
-        - gosec         # keep tests readable; security is focused on prod paths
-        - errcheck      # test helper calls often ignore errors intentionally
-
-    - path: ^cmd/
-      linters:
-        - gosec         # file permissions (0644/0755) are standard for CLI tools
-        - forbidigo     # CLI tools need fmt.Print for user output
-        - gocritic      # exitAfterDefer is expected in main functions
-
-    - path: ".*_generated\\.go"
-      linters:
-        - all
-
-    # Allow long lines for URLs and comments.
-    - linters:
-        - lll
-      source: "https?://"
-
-    # Allow fmt.Print in cmd tools if you want; uncomment and adjust path:
-    # - path: ^cmd/
-    #   linters:
-    #     - forbidigo
