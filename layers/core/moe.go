@@ -213,7 +213,15 @@ func NewMixtureOfExperts[T tensor.Numeric](
 	}
 }
 
+// expertAssignment records a token's position and routing weight for one expert slot.
+type expertAssignment[T tensor.Numeric] struct {
+	tokenIdx int
+	weight   T
+}
+
 // Forward routes tokens to topK experts and returns the weighted sum [seqLen, modelDim].
+// For batch sizes > 1, tokens are grouped by expert and processed in batched forward calls
+// instead of sequential per-token dispatch.
 func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 2 {
 		return nil, fmt.Errorf("MixtureOfExperts requires 2 inputs (hiddenStates, gateWeight), got %d", len(inputs))
@@ -235,73 +243,98 @@ func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 		return nil, fmt.Errorf("MixtureOfExperts: gate routing: %w", err)
 	}
 
-	// Process each token independently and collect per-token outputs.
-	tokenOuts := make([]*tensor.TensorNumeric[T], seqLen)
-
+	// Validate expert indices early.
 	for t := 0; t < seqLen; t++ {
-		// Extract token row.
-		var token *tensor.TensorNumeric[T]
-		if seqLen == 1 {
-			token = hiddenStates
-		} else {
-			tokenData := make([]T, modelDim)
-			copy(tokenData, hiddenStates.Data()[t*modelDim:(t+1)*modelDim])
-			var terr error
-			token, terr = tensor.New[T]([]int{1, modelDim}, tokenData)
-			if terr != nil {
-				return nil, fmt.Errorf("MixtureOfExperts: create token tensor: %w", terr)
-			}
-		}
-
-		// Initialize per-token accumulator.
-		tokenOut, terr := tensor.New[T]([]int{1, modelDim}, make([]T, modelDim))
-		if terr != nil {
-			return nil, fmt.Errorf("MixtureOfExperts: create token output: %w", terr)
-		}
-
-		// Shared expert: runs on every token.
-		if m.SharedExpert != nil {
-			sharedOut, serr := m.SharedExpert.Forward(ctx, token)
-			if serr != nil {
-				return nil, fmt.Errorf("MixtureOfExperts: shared expert forward: %w", serr)
-			}
-			tokenOut, err = m.engine.Add(ctx, tokenOut, sharedOut)
-			if err != nil {
-				return nil, fmt.Errorf("MixtureOfExperts: add shared expert: %w", err)
-			}
-		}
-
 		for k := 0; k < m.topK; k++ {
-			expertIdx := indices[t][k]
-			if expertIdx >= len(m.experts) {
-				return nil, fmt.Errorf("MixtureOfExperts: expert index %d out of range (have %d experts)", expertIdx, len(m.experts))
+			if indices[t][k] >= len(m.experts) {
+				return nil, fmt.Errorf("MixtureOfExperts: expert index %d out of range (have %d experts)", indices[t][k], len(m.experts))
 			}
-			expertOut, eerr := m.experts[expertIdx].Forward(ctx, token)
+		}
+	}
+
+	// Initialize output accumulator [seqLen, modelDim] with zeros.
+	outData := make([]T, seqLen*modelDim)
+	out, err := tensor.New[T]([]int{seqLen, modelDim}, outData)
+	if err != nil {
+		return nil, fmt.Errorf("MixtureOfExperts: create output tensor: %w", err)
+	}
+
+	// Shared expert: runs on all tokens at once.
+	if m.SharedExpert != nil {
+		sharedOut, serr := m.SharedExpert.Forward(ctx, hiddenStates)
+		if serr != nil {
+			return nil, fmt.Errorf("MixtureOfExperts: shared expert forward: %w", serr)
+		}
+		out, err = m.engine.Add(ctx, out, sharedOut)
+		if err != nil {
+			return nil, fmt.Errorf("MixtureOfExperts: add shared expert: %w", err)
+		}
+	}
+
+	// Sequential path for batch_size=1: no grouping overhead needed.
+	if seqLen == 1 {
+		for k := 0; k < m.topK; k++ {
+			expertIdx := indices[0][k]
+			expertOut, eerr := m.experts[expertIdx].Forward(ctx, hiddenStates)
 			if eerr != nil {
 				return nil, fmt.Errorf("MixtureOfExperts: expert %d forward: %w", expertIdx, eerr)
 			}
-			// Use engine.MulScalar + engine.Add instead of element-wise loops.
-			w := weights[t][k]
-			scaled, serr := m.engine.MulScalar(ctx, expertOut, w)
+			scaled, serr := m.engine.MulScalar(ctx, expertOut, weights[0][k])
 			if serr != nil {
 				return nil, fmt.Errorf("MixtureOfExperts: scale expert %d: %w", expertIdx, serr)
 			}
-			tokenOut, err = m.engine.Add(ctx, tokenOut, scaled)
+			out, err = m.engine.Add(ctx, out, scaled)
 			if err != nil {
 				return nil, fmt.Errorf("MixtureOfExperts: add expert %d: %w", expertIdx, err)
 			}
 		}
-		tokenOuts[t] = tokenOut
+		m.outputShape = out.Shape()
+		return out, nil
 	}
 
-	// Concatenate per-token outputs along axis 0.
-	var out *tensor.TensorNumeric[T]
-	if seqLen == 1 {
-		out = tokenOuts[0]
-	} else {
-		out, err = m.engine.Concat(ctx, tokenOuts, 0)
-		if err != nil {
-			return nil, fmt.Errorf("MixtureOfExperts: concat token outputs: %w", err)
+	// Batched path: group tokens by expert, process each expert once with a batch.
+	expertTokens := make(map[int][]expertAssignment[T])
+	for t := 0; t < seqLen; t++ {
+		for k := 0; k < m.topK; k++ {
+			eid := indices[t][k]
+			expertTokens[eid] = append(expertTokens[eid], expertAssignment[T]{
+				tokenIdx: t,
+				weight:   weights[t][k],
+			})
+		}
+	}
+
+	hsData := hiddenStates.Data()
+
+	for eid, assignments := range expertTokens {
+		batchSize := len(assignments)
+
+		// Gather assigned token rows into a batch tensor [batchSize, modelDim].
+		batchData := make([]T, batchSize*modelDim)
+		for i, a := range assignments {
+			copy(batchData[i*modelDim:(i+1)*modelDim], hsData[a.tokenIdx*modelDim:(a.tokenIdx+1)*modelDim])
+		}
+		batchIn, terr := tensor.New[T]([]int{batchSize, modelDim}, batchData)
+		if terr != nil {
+			return nil, fmt.Errorf("MixtureOfExperts: create batch tensor for expert %d: %w", eid, terr)
+		}
+
+		// Single batched forward through the expert.
+		batchOut, eerr := m.experts[eid].Forward(ctx, batchIn)
+		if eerr != nil {
+			return nil, fmt.Errorf("MixtureOfExperts: expert %d batched forward: %w", eid, eerr)
+		}
+
+		// Scatter weighted results back to output.
+		eData := batchOut.Data()
+		outData = out.Data()
+		for i, a := range assignments {
+			w := a.weight
+			outOff := a.tokenIdx * modelDim
+			inOff := i * modelDim
+			for d := 0; d < modelDim; d++ {
+				outData[outOff+d] = m.ops.Add(outData[outOff+d], m.ops.Mul(eData[inOff+d], w))
+			}
 		}
 	}
 
