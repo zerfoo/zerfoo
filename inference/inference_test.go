@@ -587,6 +587,44 @@ func TestFormatMessages(t *testing.T) {
 			want:     "<|begin_of_sentence|>You are helpful.\n\nUser: Hello\n\nAssistant: Hi!\n\nUser: How are you?\n\nAssistant:",
 		},
 		{
+			name:     "deepseek system only",
+			template: "deepseek",
+			messages: []Message{{Role: "system", Content: "You are a coding assistant."}},
+			want:     "<|begin_of_sentence|>You are a coding assistant.\n\nAssistant:",
+		},
+		{
+			name:     "deepseek system and user",
+			template: "deepseek",
+			messages: []Message{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "What is Go?"},
+			},
+			want: "<|begin_of_sentence|>You are helpful.\n\nUser: What is Go?\n\nAssistant:",
+		},
+		{
+			name:     "deepseek user and assistant no system",
+			template: "deepseek",
+			messages: []Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi there!"},
+				{Role: "user", Content: "Tell me a joke."},
+			},
+			want: "<|begin_of_sentence|>User: Hello\n\nAssistant: Hi there!\n\nUser: Tell me a joke.\n\nAssistant:",
+		},
+		{
+			name:     "deepseek long multi-turn",
+			template: "deepseek",
+			messages: []Message{
+				{Role: "system", Content: "Be concise."},
+				{Role: "user", Content: "Hi"},
+				{Role: "assistant", Content: "Hello!"},
+				{Role: "user", Content: "What is 2+2?"},
+				{Role: "assistant", Content: "4"},
+				{Role: "user", Content: "Thanks"},
+			},
+			want: "<|begin_of_sentence|>Be concise.\n\nUser: Hi\n\nAssistant: Hello!\n\nUser: What is 2+2?\n\nAssistant: 4\n\nUser: Thanks\n\nAssistant:",
+		},
+		{
 			name:     "phi single",
 			template: "phi",
 			messages: singleUser,
