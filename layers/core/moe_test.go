@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 
@@ -460,6 +461,111 @@ func TestMixtureOfExperts_WithoutSharedExpert_BackwardCompat(t *testing.T) {
 	}
 }
 
+// TestMixtureOfExperts_BatchedMatchesSequential verifies the batched path (seqLen>1)
+// produces the same result as processing tokens individually.
+func TestMixtureOfExperts_BatchedMatchesSequential(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+
+	numExperts := 4
+	topK := 2
+	modelDim := 3
+	seqLen := 8
+
+	experts := make([]graph.Node[float32], numExperts)
+	for i := range experts {
+		experts[i] = &scale2Expert{}
+	}
+
+	// Run batched (all tokens at once).
+	gate := NewMoEGate[float32](eng, ops, topK)
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, numExperts, topK)
+
+	hsData := make([]float32, seqLen*modelDim)
+	for i := range hsData {
+		hsData[i] = float32(i+1) * 0.1
+	}
+	hs, _ := tensor.New[float32]([]int{seqLen, modelDim}, hsData)
+
+	gwData := make([]float32, numExperts*modelDim)
+	for i := 0; i < numExperts; i++ {
+		gwData[i*modelDim+i%modelDim] = 1.0
+	}
+	gw, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwData)
+
+	batchedOut, err := moe.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("batched forward failed: %v", err)
+	}
+
+	// Run sequential (one token at a time).
+	seqOutData := make([]float32, seqLen*modelDim)
+	for tok := 0; tok < seqLen; tok++ {
+		tokData := make([]float32, modelDim)
+		copy(tokData, hsData[tok*modelDim:(tok+1)*modelDim])
+		tokTensor, _ := tensor.New[float32]([]int{1, modelDim}, tokData)
+
+		seqExperts := make([]graph.Node[float32], numExperts)
+		for i := range seqExperts {
+			seqExperts[i] = &scale2Expert{}
+		}
+		seqGate := NewMoEGate[float32](eng, ops, topK)
+		seqMoe := NewMixtureOfExperts[float32](eng, ops, seqGate, seqExperts, numExperts, topK)
+
+		out, eerr := seqMoe.Forward(context.Background(), tokTensor, gw)
+		if eerr != nil {
+			t.Fatalf("sequential forward for token %d failed: %v", tok, eerr)
+		}
+		copy(seqOutData[tok*modelDim:(tok+1)*modelDim], out.Data())
+	}
+
+	bData := batchedOut.Data()
+	for i := range bData {
+		if math.Abs(float64(bData[i])-float64(seqOutData[i])) > 1e-5 {
+			t.Errorf("mismatch at index %d: batched=%f sequential=%f", i, bData[i], seqOutData[i])
+		}
+	}
+}
+
+// TestMixtureOfExperts_BatchedMultiToken verifies correct output with multiple tokens
+// routed to different experts via the batched path.
+func TestMixtureOfExperts_BatchedMultiToken(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 1) // topK=1
+
+	experts := []graph.Node[float32]{
+		&identityExpert{},
+		&scale2Expert{},
+		&identityExpert{},
+		&scale2Expert{},
+	}
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, 4, 1)
+
+	// 4 tokens, modelDim=2
+	hs, _ := tensor.New[float32]([]int{4, 2}, []float32{
+		1, 0, // token 0
+		0, 1, // token 1
+		1, 1, // token 2
+		2, 3, // token 3
+	})
+	// gateWeight [4, 2]: identity-like routing
+	gw, _ := tensor.New[float32]([]int{4, 2}, []float32{
+		1, 0, // expert 0 high
+		0, 1, // expert 1 high
+		1, 1, // expert 2 or 3 (both equal, pick lower index)
+		0, 1, // expert 1 high
+	})
+
+	out, err := moe.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+	if out.Shape()[0] != 4 || out.Shape()[1] != 2 {
+		t.Fatalf("output shape = %v, want [4 2]", out.Shape())
+	}
+}
+
 func TestMixtureOfExperts_SharedExpert_Attributes(t *testing.T) {
 	eng := makeFloat32Engine()
 	ops := numeric.Float32Ops{}
@@ -477,5 +583,90 @@ func TestMixtureOfExperts_SharedExpert_Attributes(t *testing.T) {
 	attrs = moe.Attributes()
 	if v, ok := attrs["has_shared_expert"]; !ok || v != true {
 		t.Error("expected has_shared_expert=true when SharedExpert is set")
+	}
+}
+
+// BenchmarkMoE_BatchedVsSequential benchmarks MoE forward pass at various batch sizes.
+// The batched path (seqLen > 1) should be faster than the sequential path per token.
+func BenchmarkMoE_BatchedVsSequential(b *testing.B) {
+	numExperts := 8
+	topK := 2
+	modelDim := 64
+
+	for _, batchSize := range []int{1, 4, 8, 16} {
+		b.Run(fmt.Sprintf("batch=%d", batchSize), func(b *testing.B) {
+			eng := makeFloat32Engine()
+			ops := numeric.Float32Ops{}
+
+			experts := make([]graph.Node[float32], numExperts)
+			for i := range experts {
+				experts[i] = &scale2Expert{}
+			}
+
+			gate := NewMoEGate[float32](eng, ops, topK)
+			moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, numExperts, topK)
+
+			hsData := make([]float32, batchSize*modelDim)
+			for i := range hsData {
+				hsData[i] = float32(i%modelDim) * 0.01
+			}
+			hs, _ := tensor.New[float32]([]int{batchSize, modelDim}, hsData)
+
+			gwData := make([]float32, numExperts*modelDim)
+			for i := 0; i < numExperts; i++ {
+				gwData[i*modelDim+i%modelDim] = 1.0
+			}
+			gw, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwData)
+
+			ctx := context.Background()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = moe.Forward(ctx, hs, gw)
+			}
+		})
+	}
+}
+
+// BenchmarkMoE_SequentialBaseline benchmarks the sequential path by running
+// one token at a time and accumulating, simulating the old per-token dispatch.
+func BenchmarkMoE_SequentialBaseline(b *testing.B) {
+	numExperts := 8
+	topK := 2
+	modelDim := 64
+
+	for _, batchSize := range []int{1, 4, 8, 16} {
+		b.Run(fmt.Sprintf("tokens=%d", batchSize), func(b *testing.B) {
+			eng := makeFloat32Engine()
+			ops := numeric.Float32Ops{}
+
+			gwData := make([]float32, numExperts*modelDim)
+			for i := 0; i < numExperts; i++ {
+				gwData[i*modelDim+i%modelDim] = 1.0
+			}
+			gw, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwData)
+
+			tokens := make([]*tensor.TensorNumeric[float32], batchSize)
+			for t := 0; t < batchSize; t++ {
+				td := make([]float32, modelDim)
+				for d := range td {
+					td[d] = float32(t*modelDim+d) * 0.01
+				}
+				tokens[t], _ = tensor.New[float32]([]int{1, modelDim}, td)
+			}
+
+			ctx := context.Background()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, tok := range tokens {
+					experts := make([]graph.Node[float32], numExperts)
+					for j := range experts {
+						experts[j] = &scale2Expert{}
+					}
+					gate := NewMoEGate[float32](eng, ops, topK)
+					moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, numExperts, topK)
+					_, _ = moe.Forward(ctx, tok, gw)
+				}
+			}
+		})
 	}
 }

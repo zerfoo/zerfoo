@@ -43,69 +43,87 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var topP, repetitionPenalty float64
 
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--temperature":
-			if i+1 >= len(args) {
-				return errors.New("--temperature requires a value")
+		arg := args[i]
+		var eqVal string
+		var hasEq bool
+		if flag, val, ok := splitFlag(arg); ok {
+			arg = flag
+			eqVal = val
+			hasEq = true
+		}
+		nextVal := func(flagName string) (string, error) {
+			if hasEq {
+				return eqVal, nil
 			}
-			v, err := strconv.ParseFloat(args[i+1], 64)
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", flagName)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
+		case "--temperature":
+			s, err := nextVal("--temperature")
+			if err != nil {
+				return err
+			}
+			v, err := strconv.ParseFloat(s, 64)
 			if err != nil {
 				return fmt.Errorf("--temperature: %w", err)
 			}
 			temperature = v
-			i++
 		case "--top-k":
-			if i+1 >= len(args) {
-				return errors.New("--top-k requires a value")
+			s, err := nextVal("--top-k")
+			if err != nil {
+				return err
 			}
-			v, err := strconv.Atoi(args[i+1])
+			v, err := strconv.Atoi(s)
 			if err != nil {
 				return fmt.Errorf("--top-k: %w", err)
 			}
 			topK = v
-			i++
 		case "--top-p":
-			if i+1 >= len(args) {
-				return errors.New("--top-p requires a value")
+			s, err := nextVal("--top-p")
+			if err != nil {
+				return err
 			}
-			v, err := strconv.ParseFloat(args[i+1], 64)
+			v, err := strconv.ParseFloat(s, 64)
 			if err != nil {
 				return fmt.Errorf("--top-p: %w", err)
 			}
 			topP = v
-			i++
 		case "--max-tokens":
-			if i+1 >= len(args) {
-				return errors.New("--max-tokens requires a value")
+			s, err := nextVal("--max-tokens")
+			if err != nil {
+				return err
 			}
-			v, err := strconv.Atoi(args[i+1])
+			v, err := strconv.Atoi(s)
 			if err != nil {
 				return fmt.Errorf("--max-tokens: %w", err)
 			}
 			maxTokens = v
-			i++
 		case "--system":
-			if i+1 >= len(args) {
-				return errors.New("--system requires a value")
+			s, err := nextVal("--system")
+			if err != nil {
+				return err
 			}
-			systemPrompt = args[i+1]
-			i++
+			systemPrompt = s
 		case "--repetition-penalty":
-			if i+1 >= len(args) {
-				return errors.New("--repetition-penalty requires a value")
+			s, err := nextVal("--repetition-penalty")
+			if err != nil {
+				return err
 			}
-			v, err := strconv.ParseFloat(args[i+1], 64)
+			v, err := strconv.ParseFloat(s, 64)
 			if err != nil {
 				return fmt.Errorf("--repetition-penalty: %w", err)
 			}
 			repetitionPenalty = v
-			i++
 		case "--cache-dir":
-			if i+1 >= len(args) {
-				return errors.New("--cache-dir requires a value")
+			s, err := nextVal("--cache-dir")
+			if err != nil {
+				return err
 			}
-			cacheDir = args[i+1]
-			i++
+			cacheDir = s
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])

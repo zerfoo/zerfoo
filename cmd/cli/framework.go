@@ -202,12 +202,12 @@ func (c *PredictCommand[T]) Run(ctx context.Context, args []string) error {
 // Usage implements Command.Usage
 func (c *PredictCommand[T]) Usage() string {
 	return `predict [OPTIONS]
-  
+
 Perform model inference using configurable providers.
 
 OPTIONS:
   --model-path <path>       Path to model file (required)
-  --data-path <path>        Path to input data (required)  
+  --data-path <path>        Path to input data (required)
   --output <path>           Output path for predictions (required)
   --model-provider <name>   Model provider name (default: standard)
   --data-provider <name>    Data provider name (default: csv)
