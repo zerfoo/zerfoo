@@ -2,18 +2,6 @@
 
 Thank you for your interest in contributing to Zerfoo, the Go-native ML inference and training framework. This guide will help you get started.
 
-## Table of Contents
-
-- [Development Setup](#development-setup)
-- [Building from Source](#building-from-source)
-- [Running Tests](#running-tests)
-- [Code Style](#code-style)
-- [Commit Conventions](#commit-conventions)
-- [Pull Request Process](#pull-request-process)
-- [Issue Reporting](#issue-reporting)
-- [Good First Issues](#good-first-issues)
-- [Key Conventions](#key-conventions)
-
 ## Development Setup
 
 ### Prerequisites
@@ -31,45 +19,31 @@ go mod tidy
 go test ./...
 ```
 
-Zerfoo depends on several sibling packages in the Zerfoo ecosystem:
+Zerfoo depends on several sibling packages fetched automatically by `go mod tidy`:
 
 - [`github.com/zerfoo/ztensor`](https://github.com/zerfoo/ztensor) — tensor, compute engine, computation graph
 - [`github.com/zerfoo/ztoken`](https://github.com/zerfoo/ztoken) — BPE tokenizer
 - [`github.com/zerfoo/float16`](https://github.com/zerfoo/float16) — IEEE 754 half-precision arithmetic
 - [`github.com/zerfoo/float8`](https://github.com/zerfoo/float8) — FP8 E4M3FN arithmetic
 
-These are fetched automatically by `go mod tidy`.
-
-## Building from Source
-
-```bash
-go build ./...
-```
-
-No CGo is required for CPU-only builds. GPU support is loaded dynamically at runtime via purego/dlopen, so `go build` works on any platform without a CUDA toolkit installed.
+No CGo is required for CPU-only builds. GPU support is loaded dynamically at runtime via purego/dlopen, so `go build ./...` works on any platform without a C compiler.
 
 ## Running Tests
 
 ```bash
-# Run all CPU tests (no GPU required)
-go test ./...
-
-# Run tests with race detector
-go test -race ./...
-
-# Run GPU tests (requires CUDA toolkit and a GPU)
-go test -tags cuda ./...
-
-# Run model parity tests (requires model files on disk)
-go test -run TestParity -count=1 ./tests/parity/...
-
-# Run tests with coverage
-go test -cover ./...
-go test -coverprofile=coverage.out ./...
+go test ./...            # All CPU tests (no GPU required)
+go test -race ./...      # Tests with race detector (required before submitting)
+go test -tags cuda ./... # GPU tests (requires CUDA toolkit and a GPU)
+go test -coverprofile=coverage.out ./...  # Coverage report
 go tool cover -html=coverage.out -o coverage.html
 ```
 
-All new code must have tests. Aim for at least 80% coverage on new packages.
+### Testing Requirements
+
+- All new code must have tests
+- Use **table-driven tests** with `t.Run` subtests
+- Always run with the **`-race` flag** before submitting
+- CI enforces a **75% coverage gate** on new packages
 
 ## Code Style
 
@@ -81,27 +55,19 @@ All new code must have tests. Aim for at least 80% coverage on new packages.
 
 ### Go Conventions
 
-- Follow standard Go naming: PascalCase for exported symbols, camelCase for unexported
-- Use table-driven tests with `t.Run` subtests
+- Prefer the **Go standard library** over third-party dependencies
+- Follow standard Go naming: PascalCase for exported, camelCase for unexported
 - Write documentation comments for all exported functions, types, and methods
-- Use the `Engine[T]` pattern for all tensor operations (see [Key Conventions](#key-conventions))
 - Use generics with `[T tensor.Numeric]` constraints — avoid type-specific code where generics work
+- All tensor arithmetic must flow through `compute.Engine[T]` (see [Key Conventions](#key-conventions))
 
 ## Commit Conventions
 
 We use [Conventional Commits](https://www.conventionalcommits.org/) for automated versioning with release-please.
 
-### Format
-
 ```
 <type>(<scope>): <description>
-
-[optional body]
-
-[optional footer(s)]
 ```
-
-### Types
 
 | Type | Description |
 |------|-------------|
@@ -113,29 +79,25 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) for automate
 | `chore` | Maintenance tasks, CI, dependencies |
 | `refactor` | Code change that neither fixes a bug nor adds a feature |
 
-### Examples
+Examples:
 
 ```
 feat(inference): add Qwen 2.5 architecture support
 fix(generate): correct KV cache eviction for sliding window attention
 perf(layers): fuse SiLU and gate projection into single kernel
-docs(serve): document rate limiting configuration
-test(training): add gradient accumulation integration tests
 ```
 
 ## Pull Request Process
 
-1. **One logical change per PR** — keep PRs focused and reviewable
-2. **Branch from `main`** and keep your branch up to date with rebase
+1. **Branch from `main`** and keep your branch up to date with rebase
+2. **One logical change per PR** — keep PRs focused and reviewable
 3. **All CI checks must pass** — tests, linting, formatting
 4. **Rebase and merge** — we do not use squash merges or merge commits
 5. **Reference related issues** — use `Fixes #123` or `Closes #123` in the PR description
-6. **Respond to review feedback** promptly
 
 ### Before Submitting
 
 ```bash
-go test ./...
 go test -race ./...
 go vet ./...
 golangci-lint run
@@ -145,27 +107,15 @@ golangci-lint run
 
 ### Bug Reports
 
-Please include:
-
-- **Description**: Clear summary of the bug
-- **Steps to reproduce**: Minimal code or commands to trigger the issue
-- **Expected behavior**: What should happen
-- **Actual behavior**: What happens instead
-- **Environment**: Go version, OS, architecture, GPU (if relevant)
-- **Model details**: Architecture, quantization type, file size (if model-related)
+Include: clear description, steps to reproduce, expected vs actual behavior, environment (Go version, OS, architecture, GPU), and model details if applicable.
 
 ### Feature Requests
 
-Please include:
-
-- **Problem statement**: What problem does this solve?
-- **Proposed solution**: How should it work?
-- **Alternatives considered**: Other approaches you thought about
-- **Use case**: How would you use this feature in practice?
+Include: problem statement, proposed solution, alternatives considered, and use case.
 
 ## Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/zerfoo/zerfoo/labels/good%20first%20issue) on GitHub. These are scoped, well-defined tasks suitable for new contributors.
+See [`docs/good-first-issues.md`](docs/good-first-issues.md) for a curated list of starter tasks, or browse issues labeled [`good first issue`](https://github.com/zerfoo/zerfoo/labels/good%20first%20issue) on GitHub.
 
 **How to claim an issue:**
 
@@ -173,42 +123,19 @@ Look for issues labeled [`good first issue`](https://github.com/zerfoo/zerfoo/la
 2. Fork the repo and create a feature branch
 3. Submit a PR referencing the issue
 
-Good areas for first contributions:
-
-- Adding test coverage for existing packages
-- Documentation improvements
-- Small bug fixes in CLI commands (`cmd/`)
-- Adding new sampling strategies in `generate/`
-
 ## Key Conventions
-
-These conventions are critical to maintaining consistency across the codebase:
 
 ### Engine[T] is law
 
 All tensor arithmetic must flow through `compute.Engine[T]`. Never operate on raw slices outside the engine — this enables transparent CPU/GPU switching and CUDA graph capture.
 
-```go
-// Good
-engine.MatMul(ctx, out, a, b)
-
-// Bad — bypasses the engine, breaks GPU support
-for i := range out.Data() {
-    out.Data()[i] = a.Data()[i] * b.Data()[i]
-}
-```
-
 ### No CGo by default
 
-GPU bindings use purego/dlopen. A plain `go build ./...` must compile on any platform without a C compiler. Build tags (`cuda`, `rocm`, `opencl`) are optional and only used for CGo-based alternative paths.
+GPU bindings use purego/dlopen. A plain `go build ./...` must compile on any platform without a C compiler.
 
 ### GGUF is the sole model format
 
-GGUF is the only supported model format. Do not add support for other formats (ONNX, SafeTensors, etc.) in this repo. Use `zonnx` to convert ONNX models to GGUF.
-
-### Generics throughout
-
-Use `[T tensor.Numeric]` constraints. Do not write float32-specific code where generics work.
+Do not add support for other formats (ONNX, SafeTensors, etc.) in this repo. Use [`zonnx`](https://github.com/zerfoo/zonnx) to convert ONNX models to GGUF.
 
 ### Fuse, don't fragment
 
