@@ -33,7 +33,8 @@ func (f TokenStreamFunc) OnToken(token string, done bool) error {
 // GenerateStream produces text from a prompt, delivering each token to the
 // stream as it is generated. The final output matches what Generate would return.
 func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc SamplingConfig, stream TokenStream) error {
-
+	gen.mu.Lock()
+	defer gen.mu.Unlock()
 
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256

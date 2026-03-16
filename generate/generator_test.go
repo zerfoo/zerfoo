@@ -1414,3 +1414,46 @@ func TestNewGenerator_WithPagedKV_InvalidParams(t *testing.T) {
 	}
 }
 
+// TestGenerate_ConcurrentSafety verifies that concurrent Generate calls on the
+// same Generator do not race. Without the mu serialization lock, this would
+// trigger data races on graph.ResetStatefulNodes() and graph.Forward() state.
+func TestGenerate_ConcurrentSafety(t *testing.T) {
+	tok := buildTestTokenizer()
+	vocabSize := 8
+	g := buildTestGraph(t, vocabSize, []int{6, 7, 2})
+
+	gen := NewGenerator[float32](
+		g, tok,
+		compute.NewCPUEngine(numeric.Float32Ops{}),
+		ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  32,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		},
+	)
+
+	const goroutines = 4
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	errs := make([]error, goroutines)
+
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+				Temperature:  0,
+				MaxNewTokens: 5,
+			})
+			errs[idx] = err
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
+}
+
