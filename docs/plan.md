@@ -336,7 +336,7 @@ graph is shared (read-only), but KV cache and position state are per-session.
   - Acceptance: Two sessions can exist simultaneously without data races.
     `go test ./generate/ -run TestSession -race` passes.
 
-- [ ] T5.3 Wire sessions into Model.Generate and GenerateStream  Owner:  Est: 60m
+- [x] T5.3 Wire sessions into Model.Generate and GenerateStream  Owner: Claude  Done: 2026-03-16
   - Deps: T5.2
   - Files: `inference/inference.go`, `generate/generator.go`
   - Change: `Model.Generate` and `Model.GenerateStream` create a per-request session
@@ -345,14 +345,14 @@ graph is shared (read-only), but KV cache and position state are per-session.
   - Acceptance: 4 concurrent `Model.Generate` calls execute in parallel without races.
     `go test ./... -race -count=1` passes.
 
-- [ ] T5.4 Add concurrent inference benchmark test  Owner:  Est: 45m
+- [x] T5.4 Add concurrent inference benchmark test  Owner: Claude  Done: 2026-03-16
   - Deps: T5.3
   - File: `generate/session_test.go`
   - Add: Benchmark test running 4 concurrent sessions generating 50 tokens each.
     Verify no races and throughput > 1x single-session baseline.
   - Acceptance: `go test ./generate/ -run TestConcurrentSessions -race -count=3` passes.
 
-- [ ] T5.5 go vet/lint clean after concurrent sessions  Owner:  Est: 15m
+- [x] T5.5 go vet/lint clean after concurrent sessions  Owner: Claude  Done: 2026-03-16
   - Deps: T5.1-T5.4
   - Acceptance: `go vet ./...` 0 warnings.
 
@@ -360,7 +360,7 @@ graph is shared (read-only), but KV cache and position state are per-session.
 
 Final quality gate after all epics complete.
 
-- [ ] T6.1 Full test suite pass  Owner:  Est: 30m
+- [x] T6.1 Full test suite pass  Owner: Claude  Done: 2026-03-16
   - Deps: T1.3, T2.5, T3.3, T4.5, T5.5
   - Acceptance: `go test ./... -race -count=1` passes with 0 failures.
     `go vet ./...` 0 warnings.
