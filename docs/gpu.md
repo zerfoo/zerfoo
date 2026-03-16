@@ -228,3 +228,8 @@ The existing codebase anticipated this extension:
 - `AllReduceStrategy[T]` already composes local + cross-node strategies.
 - `Engine[T]` interface is device-agnostic; multiple GPU engines can coexist.
 - `//go:build cuda` tag keeps GPU code cleanly separated.
+
+## Historical Investigation Reports
+
+- [gpu-engine-audit.md](gpu-engine-audit.md) — Phase 32 audit of GPUEngine H2D/D2H transfer patterns
+- [cuda-perop-perf-analysis.md](cuda-perop-perf-analysis.md) — Root cause analysis of CUDA per-op path being slower than CPU (resolved: cuBLAS converted to purego)

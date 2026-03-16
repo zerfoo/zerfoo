@@ -37,6 +37,10 @@ vendor
 todos.md
 GEMINI.md
 
+# Claude Code artifacts
+.claude/worktrees/
+docs/updates-archive-*.md
+
 # Build artifacts
 *.o
 bench-compare

@@ -1048,7 +1048,11 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 ### 10.3 ONNX Execution Path
 
 8. **ONNX CUDA graph capture is limited.** Decomposed ops (Pow, ReduceMean,
-   Reshape, Gather, Slice) break the contiguous capture region. The ZMF
+   Gather, Slice) break the contiguous capture region. Static Reshape ops
+   (1 input, target shape from attributes) are capture-safe and no longer
+   break the region; only dynamic Reshape (2+ inputs reading shape from a
+   tensor) is non-capturable. The `isNonCapturable()` function in
+   graph/cuda_graph.go determines capturability per-instruction. The ZMF
    codegen path achieves near-complete capture. See docs/benchmarks.md.
 9. **RMSNorm fusion not yet runtime-correct.** Pattern matching works but
    the fused Forward function produces numerically wrong results due to
