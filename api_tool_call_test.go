@@ -95,10 +95,8 @@ func TestGenerate_ToolCallDetection(t *testing.T) {
 				if len(result.ToolCalls[0].Arguments) == 0 {
 					t.Error("ToolCalls[0].Arguments should not be empty")
 				}
-			} else {
-				if len(result.ToolCalls) != 0 {
-					t.Errorf("expected no ToolCalls, got %d: %+v", len(result.ToolCalls), result.ToolCalls)
-				}
+			} else if len(result.ToolCalls) != 0 {
+				t.Errorf("expected no ToolCalls, got %d: %+v", len(result.ToolCalls), result.ToolCalls)
 			}
 
 			// Text should always be set regardless of tool call detection.

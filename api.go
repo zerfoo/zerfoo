@@ -16,7 +16,13 @@ import (
 	"github.com/zerfoo/zerfoo/serve"
 )
 
-// Model is a loaded model ready for inference.
+// Model is a loaded language model ready for inference.
+//
+// A Model is created via [Load] and used for text generation, embedding,
+// and tool-call detection. [Model.Close] must be called when the model is no
+// longer needed to release GPU and CPU resources.
+//
+// Stable.
 type Model struct {
 	inner *inference.Model
 
@@ -29,10 +35,13 @@ type Model struct {
 const defaultQuant = "Q4_K_M"
 
 // Load loads a model from a file path or HuggingFace model ID.
+//
 // Paths starting with "/", "./" or "../" are treated as local GGUF files.
 // All other strings are treated as HuggingFace model IDs (e.g. "google/gemma-3-4b"
 // or "google/gemma-3-4b/Q8_0"). If the model is not cached locally it will be
 // downloaded from HuggingFace.
+//
+// Stable.
 func Load(pathOrID string) (*Model, error) {
 	if isLocalPath(pathOrID) {
 		m, err := inference.LoadFile(pathOrID)
@@ -124,6 +133,8 @@ func isLocalPath(s string) bool {
 }
 
 // Chat runs a simple one-shot generation and returns the generated text.
+//
+// Stable.
 func (m *Model) Chat(prompt string) (string, error) {
 	result, err := m.Generate(context.Background(), prompt)
 	if err != nil {
@@ -132,7 +143,9 @@ func (m *Model) Chat(prompt string) (string, error) {
 	return result.Text, nil
 }
 
-// Generate runs generation with options.
+// Generate runs text generation with the given prompt and options.
+//
+// Stable.
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (*GenerateResult, error) {
 	var gopts generateOptions
 	for _, o := range opts {
@@ -205,9 +218,12 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	return result, nil
 }
 
-// Embed returns embeddings for the given texts. Each input string is tokenized,
-// its token embeddings are looked up from the model's embedding table,
-// mean-pooled, and L2-normalized.
+// Embed returns embeddings for the given texts.
+//
+// Each input string is tokenized, its token embeddings are looked up from the
+// model's embedding table, mean-pooled, and L2-normalized.
+//
+// Stable.
 func (m *Model) Embed(texts []string) ([]Embedding, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -224,11 +240,15 @@ func (m *Model) Embed(texts []string) ([]Embedding, error) {
 }
 
 // Close releases model resources.
+//
+// Stable.
 func (m *Model) Close() error {
 	return m.inner.Close()
 }
 
-// GenerateResult holds the result of a generation.
+// GenerateResult holds the result of a text generation call.
+//
+// Stable.
 type GenerateResult struct {
 	Text       string
 	TokenCount int
@@ -237,11 +257,15 @@ type GenerateResult struct {
 }
 
 // Embedding holds a text embedding vector.
+//
+// Stable.
 type Embedding struct {
 	Vector []float32
 }
 
-// CosineSimilarity computes cosine similarity with another embedding.
+// CosineSimilarity computes the cosine similarity between two embeddings.
+//
+// Stable.
 func (e Embedding) CosineSimilarity(other Embedding) float32 {
 	if len(e.Vector) == 0 || len(e.Vector) != len(other.Vector) {
 		return 0
@@ -271,10 +295,14 @@ type generateOptions struct {
 	schema      *grammar.JSONSchema
 }
 
-// GenerateOption is an option for Generate.
+// GenerateOption configures the behavior of [Model.Generate].
+//
+// Stable.
 type GenerateOption func(*generateOptions)
 
 // WithGenMaxTokens sets the maximum number of tokens to generate.
+//
+// Stable.
 func WithGenMaxTokens(n int) GenerateOption {
 	return func(o *generateOptions) {
 		o.maxTokens = n
@@ -282,13 +310,17 @@ func WithGenMaxTokens(n int) GenerateOption {
 }
 
 // WithGenTemperature sets the sampling temperature.
+//
+// Stable.
 func WithGenTemperature(t float32) GenerateOption {
 	return func(o *generateOptions) {
 		o.temperature = t
 	}
 }
 
-// WithGenTopP sets the top-p sampling parameter.
+// WithGenTopP sets the top-p (nucleus) sampling parameter.
+//
+// Stable.
 func WithGenTopP(p float32) GenerateOption {
 	return func(o *generateOptions) {
 		o.topP = p
@@ -296,15 +328,19 @@ func WithGenTopP(p float32) GenerateOption {
 }
 
 // StreamToken represents a token received during streaming generation.
+//
+// Stable.
 type StreamToken struct {
 	Text string
 	Done bool
 }
 
 // ChatStream starts streaming generation and returns a receive-only channel
-// that yields token strings as they are generated. The channel is closed when
-// generation completes or ctx is cancelled. The error return is non-nil only
-// if startup fails (e.g. the model is not loaded).
+// that yields [StreamToken] values as they are generated. The channel is closed
+// when generation completes or ctx is canceled. The error return is non-nil
+// only if startup fails (e.g. the model is not loaded).
+//
+// Stable.
 func (m *Model) ChatStream(ctx context.Context, prompt string, opts ...GenerateOption) (<-chan StreamToken, error) {
 	if m.inner == nil && m.generateFunc == nil {
 		return nil, fmt.Errorf("model not loaded")
@@ -350,12 +386,11 @@ func (m *Model) ChatStream(ctx context.Context, prompt string, opts ...GenerateO
 			if ctx.Err() != nil {
 				return
 			}
-			tok := word
 			if i < len(words)-1 {
-				tok += " "
+				word += " "
 			}
 			select {
-			case ch <- StreamToken{Text: tok}:
+			case ch <- StreamToken{Text: word}:
 			case <-ctx.Done():
 				return
 			}
@@ -371,6 +406,8 @@ func (m *Model) ChatStream(ctx context.Context, prompt string, opts ...GenerateO
 }
 
 // ToolCall represents a tool invocation detected in model output.
+//
+// Experimental.
 type ToolCall struct {
 	ID           string
 	FunctionName string
@@ -378,8 +415,11 @@ type ToolCall struct {
 }
 
 // WithTools configures the tools available for tool call detection.
-// When tools are provided, Generate will attempt to detect tool calls
-// in the model output and populate GenerateResult.ToolCalls.
+//
+// When tools are provided, [Model.Generate] will attempt to detect tool calls
+// in the model output and populate [GenerateResult.ToolCalls].
+//
+// Experimental.
 func WithTools(tools ...serve.Tool) GenerateOption {
 	return func(o *generateOptions) {
 		o.tools = tools
@@ -387,14 +427,19 @@ func WithTools(tools ...serve.Tool) GenerateOption {
 }
 
 // WithToolChoice sets the tool choice mode for tool call detection.
+//
+// Experimental.
 func WithToolChoice(choice serve.ToolChoice) GenerateOption {
 	return func(o *generateOptions) {
 		o.toolChoice = &choice
 	}
 }
 
-// WithSchema enables grammar-guided decoding. The model's output will be
-// constrained to valid JSON matching the given schema.
+// WithSchema enables grammar-guided decoding.
+//
+// The model's output will be constrained to valid JSON matching the given schema.
+//
+// Experimental.
 func WithSchema(schema grammar.JSONSchema) GenerateOption {
 	return func(o *generateOptions) {
 		o.schema = &schema
