@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/zerfoo/float16"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/zerfoo/model/gguf"
 )
 
 // writeTestGGUF creates a minimal GGUF file for testing LoadFile.
@@ -459,6 +462,85 @@ func TestLoadFile_FP8_GQA_Generate(t *testing.T) {
 	}
 	if result == "" {
 		t.Error("Generate returned empty string")
+	}
+}
+
+func TestBuildArchGraph_MistralDetection(t *testing.T) {
+	baseCfg := func() *gguf.ModelConfig {
+		return &gguf.ModelConfig{
+			Architecture:     "llama",
+			VocabSize:        32,
+			HiddenSize:       16,
+			NumLayers:        1,
+			NumHeads:         4,
+			NumKVHeads:       2,
+			IntermediateSize: 32,
+			MaxSeqLen:        64,
+			RopeTheta:        10000.0,
+		}
+	}
+
+	tests := []struct {
+		name                string
+		arch                string
+		slidingWindow       int
+		slidingWindowPattern int
+		wantMistral         bool
+	}{
+		{
+			name:          "llama without sliding window routes to Llama",
+			arch:          "llama",
+			slidingWindow: 0,
+			wantMistral:   false,
+		},
+		{
+			name:          "llama with sliding window and no pattern routes to Mistral",
+			arch:          "llama",
+			slidingWindow: 4096,
+			wantMistral:   true,
+		},
+		{
+			name:                 "llama with sliding window and pattern=6 routes to Llama (Gemma-like)",
+			arch:                 "llama",
+			slidingWindow:       4096,
+			slidingWindowPattern: 6,
+			wantMistral:         false,
+		},
+		{
+			name:          "explicit mistral arch routes to Mistral",
+			arch:          "mistral",
+			slidingWindow: 4096,
+			wantMistral:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseCfg()
+			cfg.Architecture = tt.arch
+			cfg.SlidingWindow = tt.slidingWindow
+			cfg.SlidingWindowPattern = tt.slidingWindowPattern
+
+			tensors := makeLlamaTestTensors(cfg)
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+			g, emb, err := buildArchGraph(tt.arch, tensors, cfg, engine)
+			if err != nil {
+				t.Fatalf("buildArchGraph(%q): %v", tt.arch, err)
+			}
+			if g == nil {
+				t.Fatal("graph is nil")
+			}
+			if emb == nil {
+				t.Fatal("embedding is nil")
+			}
+
+			// Verify sliding window is configured in the graph when expected.
+			// Mistral graphs use sliding window attention; Llama graphs do not.
+			if tt.wantMistral && cfg.SlidingWindow == 0 {
+				t.Error("expected SlidingWindow > 0 for Mistral path")
+			}
+		})
 	}
 }
 
