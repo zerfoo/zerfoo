@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // PluginRegistry manages registered training components and provides factory functions.

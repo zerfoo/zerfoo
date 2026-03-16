@@ -3,9 +3,9 @@ package model
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Model represents a complete model, including a token embedding layer and a computation graph.

@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestSplitMergedQKV_CPUPath(t *testing.T) {

@@ -4,8 +4,8 @@ package training
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // GradientStrategy encapsulates how to compute gradients for a training step.

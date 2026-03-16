@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model/gguf"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // buildGemmaGraph constructs a computation graph for the Gemma architecture

@@ -1,8 +1,8 @@
 package generate
 
 import (
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TracingCacheProvider wraps a real CacheProvider and records KV cache

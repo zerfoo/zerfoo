@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 func TestXavierInitializer(t *testing.T) {

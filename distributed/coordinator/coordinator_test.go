@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/ztensor/testing/testutils"
 )
 
 const bufSize = 1024 * 1024

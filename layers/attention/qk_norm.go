@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // QKNorm applies a form of normalization to Query (Q) and Key (K) tensors

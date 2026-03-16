@@ -4,11 +4,11 @@ package model
 import (
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/log"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/log"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // LayerBuilder is a function that constructs a graph.Node (a layer) from serialized parameters.

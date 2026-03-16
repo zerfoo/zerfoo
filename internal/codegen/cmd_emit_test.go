@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 func TestEmitMegakernelAllOpsSupported(t *testing.T) {

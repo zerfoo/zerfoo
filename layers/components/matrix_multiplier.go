@@ -3,8 +3,8 @@ package components
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // MatrixMultiplier handles matrix multiplication operations for layers.

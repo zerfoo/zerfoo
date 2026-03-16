@@ -14,8 +14,8 @@ import (
 
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
-	"github.com/zerfoo/zerfoo/log"
-	"github.com/zerfoo/zerfoo/metrics/runtime"
+	"github.com/zerfoo/ztensor/log"
+	"github.com/zerfoo/ztensor/metrics/runtime"
 )
 
 //go:embed openapi.yaml

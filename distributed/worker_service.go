@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
-	"github.com/zerfoo/zerfoo/log"
-	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
+	"github.com/zerfoo/ztensor/log"
+	metrics "github.com/zerfoo/ztensor/metrics/runtime"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

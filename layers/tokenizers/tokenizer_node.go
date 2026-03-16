@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // TokenizerNode converts a tensor of strings into a tensor of integer token IDs.

@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/internal/xblas"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // MatMul is a layer that performs matrix multiplication of two tensors.

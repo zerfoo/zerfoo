@@ -3,7 +3,7 @@ package generate
 import (
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // LayerKV holds the cached key and value tensors for a single attention layer.

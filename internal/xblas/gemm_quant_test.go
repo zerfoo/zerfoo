@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 type quantGemmTestCase struct {

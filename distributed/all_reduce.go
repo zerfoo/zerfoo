@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
-	"github.com/zerfoo/zerfoo/tensor"
+	metrics "github.com/zerfoo/ztensor/metrics/runtime"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Default histogram buckets for distributed operation duration (seconds).

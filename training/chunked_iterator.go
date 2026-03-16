@@ -3,7 +3,7 @@ package training
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ChunkLoader is a callback that returns the next chunk of batches.

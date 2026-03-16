@@ -2,8 +2,8 @@
 package training
 
 import (
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Batch groups the stable inputs for a single training step.

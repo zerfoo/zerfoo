@@ -3,10 +3,10 @@ package inference
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/model/gguf"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func makeGemmaTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric[float32] {

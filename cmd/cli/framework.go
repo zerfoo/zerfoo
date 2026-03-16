@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
-	"github.com/zerfoo/zerfoo/tensor"
+	tokenizer "github.com/zerfoo/ztoken"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Command represents a generic CLI command with pluggable functionality.

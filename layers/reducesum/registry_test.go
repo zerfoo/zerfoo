@@ -3,8 +3,8 @@ package reducesum
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 func TestBuildReduceSum_WithInt64Axes(t *testing.T) {

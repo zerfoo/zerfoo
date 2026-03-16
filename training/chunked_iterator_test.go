@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // makeTestBatch creates a batch with a single target value for testing.

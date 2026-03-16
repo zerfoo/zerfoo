@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 func TestBatchGenerate_MultipleRequests(t *testing.T) {

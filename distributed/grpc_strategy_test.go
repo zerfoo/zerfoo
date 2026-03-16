@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // --- Tensor conversion tests ---

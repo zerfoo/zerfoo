@@ -3,7 +3,7 @@ package loss
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Loss defines the interface for loss functions.

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/model/gguf"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // buildSyntheticGGUFFile creates a minimal GGUF file on disk with metadata and tensor data.

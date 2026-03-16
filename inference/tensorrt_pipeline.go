@@ -6,7 +6,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/tensorrt"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TRTInferenceEngine holds a TensorRT engine and execution context for

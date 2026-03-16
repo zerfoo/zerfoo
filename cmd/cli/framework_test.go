@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func float32From(f float64) float32 { return float32(f) }

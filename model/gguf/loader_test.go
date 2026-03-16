@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/float16"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // buildGGUFWithTensors creates a synthetic GGUF file with tensor data.

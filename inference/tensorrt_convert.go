@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/internal/tensorrt"
 	"github.com/zerfoo/zerfoo/layers/core"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ShapeRange defines min/opt/max dimensions for a single input tensor.

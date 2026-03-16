@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestTokenizerNode(t *testing.T) {

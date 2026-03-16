@@ -5,10 +5,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TestGQA_CachedForward verifies that sequential single-token cached forward

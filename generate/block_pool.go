@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Block holds pre-allocated key and value data for a fixed number of token

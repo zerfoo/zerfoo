@@ -5,10 +5,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/layers/core"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TestGemma3QuantizedInference tests end-to-end quantized inference simulation.

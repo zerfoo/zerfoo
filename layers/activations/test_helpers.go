@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // ActivationLayer defines the interface for activation layers used in tests.

@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/zerfoo/zerfoo/health"
-	"github.com/zerfoo/zerfoo/log"
-	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/log"
+	metrics "github.com/zerfoo/ztensor/metrics/runtime"
+	"github.com/zerfoo/ztensor/tensor"
 	"google.golang.org/grpc"
 )
 

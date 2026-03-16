@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
+	tokenizer "github.com/zerfoo/ztoken"
 )
 
 // ExtractTokenizer builds a BPETokenizer from GGUF metadata. GGUF files store

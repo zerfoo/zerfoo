@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // benchGQASetup creates a GQA layer with small dimensions, pre-fills a cache

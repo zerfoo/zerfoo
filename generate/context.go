@@ -3,7 +3,7 @@ package generate
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // CacheProvider is the interface implemented by both KVCache (pre-allocated)

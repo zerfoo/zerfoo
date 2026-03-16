@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/log"
+	"github.com/zerfoo/ztensor/log"
 )
 
 func TestLogging_SuccessfulRequest(t *testing.T) {

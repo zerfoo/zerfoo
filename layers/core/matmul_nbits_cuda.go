@@ -5,10 +5,10 @@ package core
 import (
 	"unsafe"
 
-	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/ztensor/device"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // tryQuantizedGemm attempts to use the fused INT4 GEMM CUDA kernel.

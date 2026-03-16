@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestPluginRegistry_AllProviderTypes(t *testing.T) {

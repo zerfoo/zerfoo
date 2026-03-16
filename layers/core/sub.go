@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // Sub is a layer that performs element-wise subtraction of two tensors.

@@ -3,7 +3,7 @@ package generate
 import (
 	"strings"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 // kvCacheOpNames lists the op names that indicate KV cache usage.

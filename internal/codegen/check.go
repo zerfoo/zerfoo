@@ -1,7 +1,7 @@
 package codegen
 
 import (
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 // CheckSupport verifies that all instructions in the tape have emitters.

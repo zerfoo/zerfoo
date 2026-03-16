@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	tokenizer "github.com/zerfoo/ztoken"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // SpeculativeGenerator implements speculative decoding using a small draft

@@ -3,7 +3,7 @@ package attention
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // RopeScaler is an interface for layers that support scaling of RoPE.

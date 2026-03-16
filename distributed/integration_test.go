@@ -9,7 +9,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/distributed"
 	"github.com/zerfoo/zerfoo/distributed/coordinator"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 	"google.golang.org/grpc"
 )
 

@@ -4,8 +4,8 @@ import (
 	"math"
 	rand "math/rand/v2"
 
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // WeightInitializer defines the interface for weight initialization strategies.

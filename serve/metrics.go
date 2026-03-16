@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zerfoo/zerfoo/metrics/runtime"
+	"github.com/zerfoo/ztensor/metrics/runtime"
 )
 
 // latencyBuckets are the histogram bucket boundaries for request latency in ms.

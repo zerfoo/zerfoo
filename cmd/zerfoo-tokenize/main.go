@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
+	tokenizer "github.com/zerfoo/ztoken"
 )
 
 func main() {

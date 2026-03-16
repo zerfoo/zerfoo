@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/ztensor/testing/testutils"
 )
 
 // mockGrpcServer is a mock implementation of grpc.ServiceRegistrar and grpc.Server for testing

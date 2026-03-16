@@ -4,7 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/ztensor/device"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 )
 

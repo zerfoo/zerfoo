@@ -3,11 +3,11 @@ package inference
 import (
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model/gguf"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // LoadFile loads a model from a local GGUF file and returns a ready-to-use Model.

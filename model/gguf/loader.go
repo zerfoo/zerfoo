@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/zerfoo/float16"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // LoadTensors reads tensor data from a parsed GGUF file and returns them as

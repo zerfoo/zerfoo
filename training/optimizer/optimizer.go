@@ -3,8 +3,8 @@ package optimizer
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Optimizer defines the interface for optimization algorithms.

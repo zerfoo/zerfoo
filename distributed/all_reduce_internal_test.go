@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	metrics "github.com/zerfoo/zerfoo/metrics/runtime"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/testing/testutils"
+	metrics "github.com/zerfoo/ztensor/metrics/runtime"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/testing/testutils"
 )
 
 func TestAllReduceStrategy_Init(t *testing.T) {

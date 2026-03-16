@@ -11,7 +11,7 @@ import (
 	"net/http/pprof"
 	"sync"
 
-	"github.com/zerfoo/zerfoo/log"
+	"github.com/zerfoo/ztensor/log"
 )
 
 // CheckFunc is a function that returns nil when healthy or an error when not.

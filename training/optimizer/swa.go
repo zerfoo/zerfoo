@@ -3,9 +3,9 @@ package optimizer
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // SWA wraps an Optimizer with Stochastic Weight Averaging.

@@ -29,7 +29,7 @@ github.com/zerfoo/zerfoo/config/loader.go:17.30,22.2 5 1
 	}
 
 	// log package: 6 of 9 statements covered = 66.7%
-	logCov, ok := results["github.com/zerfoo/zerfoo/log"]
+	logCov, ok := results["github.com/zerfoo/ztensor/log"]
 	if !ok {
 		t.Fatal("expected log package in results")
 	}
@@ -101,12 +101,12 @@ func TestIsExcluded(t *testing.T) {
 		prefixes []string
 		want     bool
 	}{
-		{"no prefixes", "github.com/zerfoo/zerfoo/log", nil, false},
+		{"no prefixes", "github.com/zerfoo/ztensor/log", nil, false},
 		{"matching prefix", "github.com/zerfoo/zerfoo/internal/cuda", []string{"internal/cuda"}, true},
-		{"non-matching prefix", "github.com/zerfoo/zerfoo/log", []string{"internal/cuda"}, false},
+		{"non-matching prefix", "github.com/zerfoo/ztensor/log", []string{"internal/cuda"}, false},
 		{"multiple prefixes match", "github.com/zerfoo/zerfoo/internal/hip", []string{"internal/cuda", "internal/hip"}, true},
 		{"whitespace prefix", "github.com/zerfoo/zerfoo/internal/cuda", []string{" internal/cuda "}, true},
-		{"empty prefixes", "github.com/zerfoo/zerfoo/log", []string{}, false},
+		{"empty prefixes", "github.com/zerfoo/ztensor/log", []string{}, false},
 	}
 
 	for _, tt := range tests {

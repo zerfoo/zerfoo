@@ -3,7 +3,7 @@ package generate
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestPagedKVCache_NewAndEmpty(t *testing.T) {

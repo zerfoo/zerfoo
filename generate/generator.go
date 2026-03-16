@@ -11,11 +11,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/internal/cuda"
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
-	"github.com/zerfoo/zerfoo/tensor"
+	tokenizer "github.com/zerfoo/ztoken"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ModelConfig holds model architecture parameters needed for generation.

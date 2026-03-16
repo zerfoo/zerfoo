@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 func TestEmitMegakernel(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 func TestGenerateStream_CollectTokens(t *testing.T) {

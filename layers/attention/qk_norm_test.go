@@ -5,10 +5,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/testing/testutils"
 )
 
 func calculateExpectedNormalizedTensor(input *tensor.TensorNumeric[float64], epsilon float64) *tensor.TensorNumeric[float64] {

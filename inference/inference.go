@@ -12,12 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
+	"github.com/zerfoo/ztensor/graph"
+	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/zerfoo/registry"
 )
 
@@ -219,83 +217,8 @@ func Load(modelID string, opts ...Option) (*Model, error) {
 		return LoadFile(ggufPath, opts...)
 	}
 
-	// Load config.json.
-	configPath := filepath.Join(info.Path, "config.json")
-	meta, err := loadMetadata(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	// Load tokenizer.
-	tokPath := filepath.Join(info.Path, "tokenizer.json")
-	tok, err := tokenizer.LoadFromJSON(tokPath)
-	if err != nil {
-		return nil, fmt.Errorf("load tokenizer: %w", err)
-	}
-
-	// Load ZMF model and build graph.
-	zmfPath := filepath.Join(info.Path, "model.zmf")
-	eng, err := createEngine(o.device)
-	if err != nil {
-		return nil, fmt.Errorf("create engine (%s): %w", o.device, err)
-	}
-
-	// Apply FP16 compute precision if requested.
-	applyDType(eng, o.dtype)
-
-	globalAttrs := map[string]interface{}{}
-	if meta.RopeScaling != nil && meta.RopeScaling.Type == "yarn" {
-		globalAttrs["rope_scaling_type"] = meta.RopeScaling.Type
-		globalAttrs["rope_scaling_factor"] = meta.RopeScaling.Factor
-		globalAttrs["rope_scaling_orig_max_len"] = meta.RopeScaling.OriginalMaxPositionEmbeddings
-	}
-	if meta.PartialRotaryFactor > 0 && meta.PartialRotaryFactor < 1.0 {
-		globalAttrs["partial_rotary_factor"] = meta.PartialRotaryFactor
-	}
-
-	var buildOpts []model.BuildOption
-	if len(globalAttrs) > 0 {
-		buildOpts = append(buildOpts, model.WithGlobalAttributes(globalAttrs))
-	}
-
-	var mdl *model.Model[float32]
-	var mmapCloser io.Closer
-	if o.mmap {
-		mdl, mmapCloser, err = loadZMFWithMmap(eng, zmfPath, buildOpts)
-		if err != nil {
-			return nil, fmt.Errorf("load model (mmap): %w", err)
-		}
-	} else {
-		mdl, err = model.LoadModelFromZMF[float32](eng, numeric.Float32Ops{}, zmfPath, buildOpts...)
-		if err != nil {
-			return nil, fmt.Errorf("load model: %w", err)
-		}
-	}
-
-	// Upload model weights to GPU if the engine supports it.
-	if uploader, ok := eng.(compute.WeightUploader); ok {
-		tensors := mdl.Graph.ConstantTensors()
-		if mdl.Embedding != nil {
-			for _, p := range mdl.Embedding.Parameters() {
-				tensors = append(tensors, p.Value)
-			}
-		}
-		// Also upload layer parameters (e.g. RMSNorm gain weights) that
-		// are embedded inside compute nodes rather than registered as
-		// top-level constant/parameter nodes in the graph.
-		for _, p := range mdl.Graph.Parameters() {
-			if p.Value != nil {
-				tensors = append(tensors, p.Value)
-			}
-		}
-		if err := uploader.UploadWeights(tensors); err != nil {
-			return nil, fmt.Errorf("upload weights to GPU: %w", err)
-		}
-	}
-
-	m := assembleModel(mdl.Graph, tok, eng, meta, info, o.maxSeqLen, o.kvDtype)
-	m.closer = mmapCloser
-	return m, nil
+	// ZMF loading was removed; only GGUF is supported via LoadFile.
+	return nil, fmt.Errorf("model %q has no GGUF file; ZMF loading is no longer supported", modelID)
 }
 
 // findGGUF looks for a .gguf file in the given directory.

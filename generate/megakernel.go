@@ -6,9 +6,9 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/internal/codegen"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // tryCompileMegakernel attempts to compile and load a megakernel for the

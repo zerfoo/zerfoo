@@ -3,7 +3,7 @@ package generate
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func makeTensor(t *testing.T, shape []int, data []float32) *tensor.TensorNumeric[float32] {

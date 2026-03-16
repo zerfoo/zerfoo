@@ -6,11 +6,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/normalization"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TestBatchNormalization_ZeroMean: when mean equals each channel value the output

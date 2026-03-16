@@ -6,10 +6,10 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/float16"
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // tensorLayerBuf holds pre-allocated K/V buffers for a single layer.

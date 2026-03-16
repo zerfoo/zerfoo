@@ -10,9 +10,9 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/nccl"
-	"github.com/zerfoo/zerfoo/log"
-	"github.com/zerfoo/zerfoo/metrics/runtime"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/log"
+	"github.com/zerfoo/ztensor/metrics/runtime"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // NcclStrategy implements InternalStrategy[T] using NCCL for GPU-native

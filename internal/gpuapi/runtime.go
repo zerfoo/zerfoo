@@ -3,7 +3,7 @@ package gpuapi
 import (
 	"unsafe"
 
-	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/ztensor/device"
 )
 
 // MemcpyKind specifies the direction of a memory copy operation.

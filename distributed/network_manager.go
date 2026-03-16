@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
-	"github.com/zerfoo/zerfoo/log"
+	"github.com/zerfoo/ztensor/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

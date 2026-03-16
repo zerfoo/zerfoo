@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/config"
 	"github.com/zerfoo/zerfoo/health"
-	"github.com/zerfoo/zerfoo/log"
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/log"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/zerfoo/shutdown"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TestProductionSmokeTest exercises the full lifecycle:

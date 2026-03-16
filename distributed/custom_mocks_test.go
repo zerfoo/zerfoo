@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/distributed/pb"
-	"github.com/zerfoo/zerfoo/log"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/log"
+	"github.com/zerfoo/ztensor/tensor"
 	"google.golang.org/grpc"
 )
 

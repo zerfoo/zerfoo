@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ModelRegistry manages registered model components and provides factory functions.

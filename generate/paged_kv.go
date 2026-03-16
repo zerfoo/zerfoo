@@ -3,7 +3,7 @@ package generate
 import (
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // PagedKVCache stores key-value tensors for autoregressive generation using

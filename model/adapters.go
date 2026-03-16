@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // StandardModelInstance adapts the existing Model struct to implement ModelInstance interface.

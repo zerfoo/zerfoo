@@ -3,7 +3,7 @@ package codegen
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 func TestCheckSupportAllSupported(t *testing.T) {

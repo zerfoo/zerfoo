@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerfoo/zerfoo/metrics/runtime"
+	"github.com/zerfoo/ztensor/metrics/runtime"
 )
 
 func TestServerMetrics_RecordRequest(t *testing.T) {

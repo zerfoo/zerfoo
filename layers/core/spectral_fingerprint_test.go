@@ -5,14 +5,14 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/registry"
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/testing/testutils"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/testing/testutils"
+	"github.com/zerfoo/ztensor/types"
 )
 
 func approxEqual(a, b, eps float32) bool {

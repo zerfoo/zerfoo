@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/log"
+	"github.com/zerfoo/ztensor/log"
 )
 
 func TestHealthz_ReturnsOK(t *testing.T) {

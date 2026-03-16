@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 // FrozenSlotMeta describes a frozen (constant/weight) slot for the emitter.

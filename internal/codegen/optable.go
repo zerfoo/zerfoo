@@ -6,7 +6,7 @@ package codegen
 import (
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/graph"
+	"github.com/zerfoo/ztensor/graph"
 )
 
 // SlotInfo describes a slot's shape for the emitter.

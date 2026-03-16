@@ -3,8 +3,8 @@ package components
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/testing/testutils"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/testing/testutils"
 )
 
 func TestNewXavierInitializer_FunctionalOptions(t *testing.T) {

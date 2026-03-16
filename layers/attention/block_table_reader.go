@@ -1,6 +1,6 @@
 package attention
 
-import "github.com/zerfoo/zerfoo/tensor"
+import "github.com/zerfoo/ztensor/tensor"
 
 // BlockTableReader reads key/value tensors directly from paged block tables,
 // avoiding the gather-to-contiguous copy. Implementations should iterate over

@@ -4,8 +4,8 @@ package training
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // Model defines the interface for a trainable model.

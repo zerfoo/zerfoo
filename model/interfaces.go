@@ -5,8 +5,8 @@ import (
 	"context"
 	"io"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ModelProvider creates and manages model instances with pluggable architectures.

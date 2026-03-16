@@ -3,7 +3,7 @@ package generate
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // BatchRequest represents a single generation request in a batch.

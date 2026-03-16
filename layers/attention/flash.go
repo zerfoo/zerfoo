@@ -3,10 +3,10 @@
 package attention
 
 import (
-	"github.com/zerfoo/zerfoo/device"
+	"github.com/zerfoo/ztensor/device"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // tryFlashForward attempts to use the fused flash attention CUDA kernel.

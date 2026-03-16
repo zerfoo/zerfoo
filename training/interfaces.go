@@ -4,8 +4,8 @@ package training
 import (
 	"context"
 
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TrainingWorkflow orchestrates the complete training process with pluggable components.

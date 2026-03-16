@@ -9,7 +9,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/nccl"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func TestNcclStrategy_NewAndFields(t *testing.T) {

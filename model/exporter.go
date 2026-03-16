@@ -1,6 +1,6 @@
 package model
 
-import "github.com/zerfoo/zerfoo/tensor"
+import "github.com/zerfoo/ztensor/tensor"
 
 // Exporter defines the interface for saving a zerfoo model to an external format.
 type Exporter[T tensor.Numeric] interface {

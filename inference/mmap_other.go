@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/model"
 )
 

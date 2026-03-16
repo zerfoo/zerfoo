@@ -3,7 +3,7 @@ package generate
 import (
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TestTensorCache_AppendGPU_UsesD2D verifies that when GPU-resident K/V

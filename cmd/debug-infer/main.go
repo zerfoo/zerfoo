@@ -11,7 +11,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 func printFirst(label string, data []float32, n int) {

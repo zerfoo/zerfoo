@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/compute"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/internal/cuda"
-	"github.com/zerfoo/zerfoo/graph"
-	"github.com/zerfoo/zerfoo/numeric"
-	"github.com/zerfoo/zerfoo/pkg/tokenizer"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/zerfoo/registry"
-	"github.com/zerfoo/zerfoo/tensor"
-	"github.com/zerfoo/zerfoo/types"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // mockDTypeSetter records the DType set on it.

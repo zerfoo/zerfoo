@@ -3,8 +3,8 @@
 package inference
 
 import (
-	"github.com/zerfoo/zerfoo/compute"
-	"github.com/zerfoo/zerfoo/numeric"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // createEngine returns a compute engine for the given device string.

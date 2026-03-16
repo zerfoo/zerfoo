@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/zerfoo/zerfoo/model/gguf"
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // GGUFModel holds a loaded GGUF model's configuration and tensors.

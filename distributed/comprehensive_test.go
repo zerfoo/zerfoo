@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/tensor"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ---------- BroadcastTensor tests ----------
