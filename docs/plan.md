@@ -1,106 +1,138 @@
-# Zerfoo Phase 21: "Community & Polish" -- Documentation, CLI UX, DeepSeek V3 Production
+# Zerfoo Phase 22: "GGUF Compatibility & Structured Output"
 
 ## 1. Context
 
 ### Problem Statement
 
-Phase 20 completed native Q5_K/Q6_K GEMV, multi-sequence batched decode via PagedKV,
-three new example applications, and the zerfoo v0.2.1 release. Strategic priorities P1
-(Inference Excellence) and P2 (Developer Experience) are substantially complete for the
-core inference path.
+Phase 21 ("Community & Polish") completed 36/37 tasks: doc.go for all 8 public packages,
+CLI UX (--help, version, progress bars, --system), DeepSeek V3 promoted to Production,
+high-level API tests, documentation polish, and DGX verification (T7.1-T7.5). The sole
+remaining task (T7.6 DeepSeek V3 DGX E2E) is blocked on model availability.
 
-Three categories of work remain before Zerfoo is ready for community launch:
+DGX verification exposed three GGUF loader gaps that prevent Zerfoo from loading
+real-world GGUF files from community sources (bartowski, TheBloke, Qwen, Microsoft):
 
-1. **Package-level documentation gap**: All 15 doc.go files are in internal/ packages.
-   The 8 user-facing packages (inference, serve, generate, model, layers, training,
-   distributed, cmd/cli) have zero package-level documentation for pkgsite/godoc.
-   Individual exported symbols have doc comments, but there is no package overview.
+1. **Qwen tokenizer garbled output**: Qwen 2.5 GGUF loads correctly (arch=qwen2, 24
+   layers, vocab=151936) but generates garbled BPE bytes. Root cause: GGUF tokenizer
+   extraction (`model/gguf/tokenizer.go` line 69) hardcodes `byteLevelBPE=false`. Qwen
+   uses GPT-2 style byte-level BPE where token strings contain raw bytes mapped via a
+   byte-to-unicode table. The ztoken library already supports byte-level BPE
+   (`NewBPETokenizer` accepts a `byteLevelBPE` bool), but the GGUF extractor never
+   enables it. Fix: detect `tokenizer.ggml.model == "gpt2"` and pass `byteLevelBPE=true`.
 
-2. **CLI UX debt**: The CLI has no `--help` flag support, no `--version` command, no
-   progress indicators for model downloads or loading, non-deterministic command order,
-   and an unused `--system` flag in `run`. The custom CLI framework uses manual flag
-   parsing that does not support `--flag=value` syntax.
+2. **Phi merged QKV tensor not mapped**: Phi 3.5 mini GGUF uses `blk.N.attn_qkv.weight`
+   (merged Q/K/V in a single tensor) instead of separate `attn_q`, `attn_k`, `attn_v`.
+   The `tensorNameMap` in `model/gguf/arch.go` has no mapping for `attn_qkv`. The loader
+   must detect merged QKV tensors, split them into three separate tensors along the
+   output dimension, and map them to the canonical names. The split dimensions depend on
+   num_heads and num_kv_heads (GQA vs MHA).
 
-3. **DeepSeek V3 stuck at Experimental**: The architecture builder exists (591 lines)
-   with MLA and MoE support, but has critical correctness issues: RoPE is applied to
-   all dimensions instead of only the rope_head_dim subset, no absorbed/compressed KV
-   cache for MLA, and 256 experts execute sequentially (unusable performance). No
-   numerical parity tests exist.
+3. **Mistral architecture detection**: bartowski's Mistral 7B GGUF reports
+   `general.architecture=llama`, so `buildArchGraph` routes to `buildLlamaGraph` instead
+   of `buildMistralGraph`. The Mistral-specific sliding window attention is never applied.
+   Fix: when architecture is "llama" and `SlidingWindow > 0` in GGUF metadata, route to
+   `buildMistralGraph` which already sets `slidingWindowSize` in its graph options.
 
-4. **Carried-forward DGX debt**: Phase 20 E3 tasks (T3.1-T3.5) remain blocked on DGX
-   Spark access. These verify all 6 architectures, FP16/FP8, CUDA graph speedup, and
-   batched throughput on GPU hardware.
+Additionally, two P1/P2 priorities remain:
+
+4. **Structured output / JSON mode**: The grammar engine exists (`generate/grammar/`)
+   with Grammar state machine, TokenMask, and JSON Schema converter. The server
+   (`serve/server.go`) wires `response_format.type = "json_schema"` to grammar-constrained
+   decoding. The library API has `WithGrammar()` and `WithSchema()`. What is missing is
+   end-to-end integration testing, a CLI `--json-schema` flag, and a structured output
+   example that verifies the full pipeline from schema to guaranteed-valid JSON output.
+
+5. **Concurrent inference throughput**: DGX verification showed 84.49 tok/s with 4
+   concurrent clients (mutex-serialized). The `Generator` holds a `sync.Mutex` that
+   serializes all `Generate`/`GenerateStream` calls. The graph is shared and read-only
+   after compilation, but the KV cache and position state are per-request. The fix is to
+   introduce per-request session state while sharing the compiled graph.
 
 ### Research Findings
 
 **Technical landscape (tech-researcher):**
-- All exported symbols already have doc comments -- good baseline
-- doc.go files missing for all 8 user-facing packages -- biggest pkgsite gap
-- CLI has no --help flag, no version command, no progress bars
-- DeepSeek V3 needs quantized GEMV paths and GPU-friendly expert dispatch
-- Examples README lists 4 examples but 6 exist -- stale
-- getting-started.md is already excellent
+- ztoken already implements byte-level BPE with `buildByteEncoderDecoder()` and
+  `byteLevelPreTokenize()`. The GGUF extractor just needs to set `byteLevelBPE=true`
+  when `tokenizer.ggml.model == "gpt2"`.
+- Phi `attn_qkv.weight` has shape `[(num_heads + 2*num_kv_heads) * head_dim, hidden_size]`
+  for GQA models. Split into Q `[num_heads*head_dim, hidden_size]`, K and V each
+  `[num_kv_heads*head_dim, hidden_size]`.
+- GGUF metadata `attention.sliding_window` is already parsed into `ModelConfig.SlidingWindow`
+  in `arch.go:105-106`. Detection: `arch == "llama" && cfg.SlidingWindow > 0` routes to
+  `buildMistralGraph`.
+- Grammar engine is complete: Grammar, TokenMask, JSONSchema converter, objectNode,
+  arrayNode, stringNode, numberNode, integerNode, anyJSONNode. WithGrammar wired in
+  generator.go (line 302-304). WithSchema exists in api.go (line 443).
+- Generator mutex at `generator.go:95`. Graph is shared (read-only). KV cache is per-request.
+  Need per-request Session struct holding KV cache + position + sampling state.
 
 **Risks and pitfalls (risk-researcher):**
-- DeepSeek V3 MLA applies RoPE to all dims instead of rope_head_dim subset -- incorrect
-- MLA does full Q/K/V expand, losing KV cache compression benefit
-- 256 experts execute sequentially -- non-starter for production
-- No numerical parity tests for DeepSeek pipeline
-- CLI --system flag parsed but unused (silently ignored)
-- High-level API (zerfoo.Load/Chat/Embed) appears less tested than lower-level packages
-- Two-API problem: high-level (zerfoo.*) vs low-level (inference.*) needs clear docs
+- Qwen tokenizer: enabling `byteLevelBPE` for "gpt2" model type must NOT break
+  SentencePiece models. The flag is orthogonal to sentencePiece flag. Safe.
+- Phi QKV split: incorrect split for GQA (num_heads != num_kv_heads) will corrupt
+  attention. Must compute Q/K/V sizes from `num_heads`, `num_kv_heads`, `head_dim`.
+  Phi-3 mini uses MHA (32 heads, 32 KV heads), Phi-3 small uses GQA (32 heads, 8 KV heads).
+- Mistral detection: Llama 3.1 has `sliding_window` in its config but Gemma 3 also has
+  it via `SlidingWindowPattern`. Check: only reroute if `SlidingWindow > 0 AND
+  SlidingWindowPattern == 0` (Gemma sets SlidingWindowPattern=6; pure Mistral does not).
+- Grammar TokenMask is O(vocab_size * avg_token_length) per decode step. For Qwen
+  (151936 tokens), worst case ~1ms on modern CPU. Negligible vs GPU forward pass (~5ms).
+- Concurrent inference: removing the global mutex requires per-request KV cache allocation.
+  The graph `Forward()` must be stateless (it already is -- parameters are constant after
+  compilation). Risk: memory pressure from multiple concurrent KV caches.
 
 **Architecture patterns (arch-researcher):**
-- Public API surface is clean: inference.Load/LoadFile, Model.Generate/Chat/Embed/etc.
-- 8 CLI commands with custom framework (cmd/cli/framework.go)
-- 6 examples already exist with good quality
-- Benchmark infrastructure mature (bench_tps, bench-compare, methodology doc)
-- Tutorial progression largely covered by existing examples
-- Key gaps: doc.go for public packages, production deployment guide, unified tutorial
+- Tokenizer fix: one-line change in `ExtractTokenizer` to check `tokenizer.ggml.model`
+  and pass `byteLevelBPE=true`. Defensive: also check for "gpt2" token patterns.
+- Merged QKV: add `attn_qkv.weight` to `tensorNameMap` is insufficient -- need a split
+  step. Best pattern: handle in the GGUF loader (`LoadGGUF`) after tensor name mapping.
+  Add a `splitMergedTensors()` pass that detects `attn_qkv` and splits using config.
+  This keeps arch builders unchanged.
+- Structured output: WithSchema in api.go already exists. Missing: (a) end-to-end test
+  with real grammar-constrained generation, (b) CLI --json-schema flag for `run` command,
+  (c) structured output example. The server already handles json_schema response_format.
+- Concurrent inference: introduce `InferenceSession` struct with per-request KV cache
+  and position. `Generator.NewSession()` creates a session. `Session.Generate()` uses
+  the shared graph but private KV state. The global mutex moves to a per-session basis.
 
 ### Objectives
 
-- O1: Every user-facing package has a doc.go with package overview, usage examples,
-  and cross-references.
-- O2: CLI supports --help on all commands, has a version command, shows progress during
-  model download/load, has deterministic command order, and wires --system flag.
-- O3: DeepSeek V3 moves from Experimental to Production: partial RoPE fix, batched
-  expert execution, numerical parity tests against reference.
-- O4: Contributor guide, good-first-issues pipeline, and examples README are polished
-  and accurate.
-- O5: High-level API (zerfoo.Load/Chat/Embed/Generate) has comprehensive test coverage.
-- O6: DGX verification tasks from Phase 20 are carried forward.
+- O1: All 6 GGUF architectures load from community GGUF sources (bartowski, TheBloke,
+  Qwen, Microsoft) and produce valid output. Currently 3/6 pass.
+- O2: Structured output (JSON mode) works end-to-end: library API, CLI, server, example.
+- O3: Concurrent inference throughput exceeds the current 84.49 tok/s with 4 clients.
+- O4: DGX re-verification confirms all fixes produce coherent text on GPU hardware.
 
 ### Non-Goals
 
 - LoRA / QLoRA fine-tuning (P5, 12-18 months).
 - ROCm or OpenCL backend work (P4, 6-12 months).
 - Metal backend (macOS GPU).
-- Prefill/decode phase split.
-- Multimodal (vision-language) inference.
-- Absorbed MLA KV cache compression (performance optimization, not correctness -- defer).
-- DeepSeek V3 multi-GPU expert parallelism (requires distributed infrastructure).
-- MoE auxiliary load-balancing loss (training-only, not needed for inference).
+- Absorbed MLA KV cache compression (deferred).
+- DeepSeek V3 multi-GPU expert parallelism.
+- Full JSON Schema support ($ref, oneOf, anyOf, allOf, pattern).
+- Continuous batching (vLLM-style). Phase 22 targets per-request isolation, not dynamic batching.
 
 ### Constraints
 
 - Pure Go, zero CGo. GPU via purego/dlopen.
 - Go standard library only -- no cobra, viper, testify.
 - GGUF is the sole model format (ADR-037).
-- DGX Spark: ssh ndungu@192.168.86.250. E7 tasks gated on DGX access.
+- DGX Spark: ssh ndungu@192.168.86.250. DGX verification tasks gated on DGX access.
 - Each repo has its own git history. Do not cross-commit across repos.
+- ztoken changes (if any) must be released as a separate version before zerfoo can use them.
 
 ### Success Metrics
 
 | Metric | Current | Target | Measurement |
 |--------|---------|--------|-------------|
-| doc.go coverage (user-facing pkgs) | 0/8 | 8/8 | Count doc.go files in public packages |
-| CLI --help support | No | Yes, all 8 commands | `zerfoo run --help` prints usage |
-| CLI version command | No | Yes | `zerfoo version` prints version |
-| CLI download progress | No | Yes | Progress bar during `zerfoo pull` |
-| DeepSeek V3 status | Experimental | Production | Parity tests pass, partial RoPE correct |
-| High-level API test coverage | ~20% | 80%+ | Test functions for Load/Chat/Embed/Generate |
-| Examples README accuracy | 4/6 listed | 6/6 listed | README matches examples/ directory |
+| GGUF arch load success | 3/6 (Gemma, Llama, Mistral) | 5/6 (+ Qwen, Phi) | DGX test suite |
+| Qwen 2.5 output quality | Garbled | Coherent text | DGX test `TestT7_1/qwen2` |
+| Phi 3.5 loads | FAIL (missing tensor) | PASS | DGX test `TestT7_1/phi3` |
+| Mistral sliding window | Not activated | Activated when detected | Unit test |
+| Structured output E2E | Server only | Library + CLI + Server + Example | Integration tests |
+| Concurrent throughput | 84.49 tok/s (4 clients) | 200+ tok/s (4 clients) | DGX benchmark |
+| DeepSeek V3 DGX E2E | BLOCKED | PASS (if model available) | DGX test |
 
 ---
 
@@ -108,269 +140,265 @@ Three categories of work remain before Zerfoo is ready for community launch:
 
 ### In Scope
 
-- doc.go files for 8 user-facing packages with package overviews and examples.
-- CLI UX: --help flag, version command, progress bars, deterministic order, --system fix.
-- DeepSeek V3: partial RoPE fix, batched expert execution, parity tests.
-- High-level API test coverage for zerfoo.Load, Chat, Embed, Generate.
-- Examples README update to list all 6 examples.
-- Polish existing docs: getting-started.md, CONTRIBUTING.md, good-first-issues.md.
-- Production deployment guide (TLS, health checks, Prometheus metrics).
-- Carried-forward DGX E3 verification tasks.
+- Fix Qwen byte-level BPE tokenizer in GGUF extractor.
+- Add merged QKV tensor splitting for Phi models in GGUF loader.
+- Add Mistral architecture detection from sliding window metadata.
+- End-to-end structured output: CLI flag, library test, example.
+- Per-request inference sessions to remove global mutex bottleneck.
+- DGX re-verification of all fixes.
+- Carry forward T7.6 (DeepSeek V3 DGX E2E, blocked on model).
 
 ### Out of Scope
 
-- LoRA/fine-tuning, ROCm/OpenCL/Metal backends, prefill/decode split, multimodal.
-- Absorbed MLA optimization (deferred to Phase 22).
-- MoE multi-GPU expert parallelism.
+- LoRA/fine-tuning, ROCm/OpenCL/Metal backends, continuous batching.
+- Full JSON Schema ($ref, oneOf, anyOf, allOf, pattern).
+- DeepSeek V3 backward pass.
 - New model architecture support.
-- DeepSeek V3 backward pass (MLA backward already returns error -- acceptable for
-  inference-only Production status).
+- ztoken library changes (byte-level BPE already supported).
 
 ### Deliverables
 
 | ID | Description | Acceptance Criteria |
 |----|-------------|-------------------|
-| D1 | Package documentation (doc.go) | 8 doc.go files, each with overview + example |
-| D2 | CLI UX improvements | --help works, version command, progress bars, --system wired |
-| D3 | DeepSeek V3 Production | Partial RoPE correct, batched experts, parity tests pass |
-| D4 | High-level API tests | Test coverage for Load/Chat/Embed/Generate/ChatStream |
-| D5 | Documentation polish | Examples README current, production deployment guide, CONTRIBUTING polished |
-| D6 | DGX verification (carried forward) | All 6 architectures E2E, FP16/FP8, CUDA graph, batched throughput |
+| D1 | Qwen tokenizer fix | Qwen 2.5 GGUF produces coherent text on DGX |
+| D2 | Phi merged QKV support | Phi 3.5 GGUF loads and generates on DGX |
+| D3 | Mistral arch detection | Mistral routed to buildMistralGraph when SlidingWindow > 0 |
+| D4 | Structured output E2E | CLI --json-schema, library test, server test, example |
+| D5 | Concurrent inference | Per-request sessions, 200+ tok/s with 4 clients |
+| D6 | DGX re-verification | All 5 non-DeepSeek architectures pass on DGX |
+| D7 | DeepSeek V3 DGX E2E (carried) | PASS if model becomes available |
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E1: Package Documentation -- doc.go for User-Facing Packages
+### E1: Qwen Byte-Level BPE Tokenizer Fix
 
-Write doc.go files for all 8 user-facing packages. Each must include: package overview,
-primary types and functions, usage example in a `// Example:` block, and cross-references
-to related packages.
+Fix `ExtractTokenizer` in `model/gguf/tokenizer.go` to enable byte-level BPE for
+Qwen-family models. The ztoken library already supports this mode.
 
-- [x] T1.1 Write doc.go for inference/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `inference/doc.go` exists with package overview covering Load/LoadFile,
-    Model methods (Generate, Chat, Embed, GenerateBatch), options, model aliases.
-    `go doc ./inference/` produces readable output. `go vet ./inference/` clean.
+- [x] T1.1 Enable byte-level BPE in GGUF tokenizer extraction  Owner: Claude  Done: 2026-03-16
+  - File: `model/gguf/tokenizer.go`
+  - Change: In `ExtractTokenizer`, check `tokenizer.ggml.model` metadata. When the
+    value is `"gpt2"`, pass `byteLevelBPE=true` to `tokenizer.NewBPETokenizer` (line 69).
+    Currently hardcoded to `false`.
+  - Acceptance: `ExtractTokenizer` returns a BPETokenizer with byte-level BPE enabled
+    for models with `tokenizer.ggml.model == "gpt2"`. Existing SentencePiece models
+    (tokenizer.ggml.model == "llama") are unaffected.
 
-- [x] T1.2 Write doc.go for serve/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `serve/doc.go` exists covering NewServer, OpenAI-compatible endpoints,
-    SSE streaming, health checks, metrics. `go doc ./serve/` readable.
+- [ ] T1.2 Add unit tests for byte-level BPE tokenizer extraction  Owner:  Est: 45m
+  - Deps: T1.1
+  - File: `model/gguf/tokenizer_test.go`
+  - Add: `TestExtractTokenizer_ByteLevelBPE` that creates a GGUF File with
+    `tokenizer.ggml.model = "gpt2"` and byte-level BPE vocabulary. Verify Encode/Decode
+    round-trip produces correct text. Add negative test that "llama" model type does NOT
+    enable byte-level BPE.
+  - Acceptance: `go test ./model/gguf/ -run TestExtractTokenizer_ByteLevel -race` passes.
 
-- [x] T1.3 Write doc.go for generate/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `generate/doc.go` exists covering Generator, KV cache variants
-    (standard, paged, GPU), sampling, streaming, speculative decoding.
+- [ ] T1.3 go vet/lint clean after Qwen tokenizer fix  Owner:  Est: 15m
+  - Deps: T1.1, T1.2
+  - Acceptance: `go vet ./model/...` 0 warnings.
 
-- [x] T1.4 Write doc.go for model/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `model/doc.go` exists covering Model interface, GGUF parser,
-    architecture registry. Cross-references inference/ and generate/.
+### E2: Phi Merged QKV Tensor Splitting
 
-- [x] T1.5 Write doc.go for layers/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `layers/doc.go` exists covering the 18 sub-packages, layer registry,
-    how to add new layers. Lists sub-packages by category.
+Add support for merged `attn_qkv.weight` tensors in the GGUF loader. Phi 3/3.5 GGUF
+files pack Q, K, V projections into a single tensor that must be split before the
+architecture graph builder can use them.
 
-- [x] T1.6 Write doc.go for training/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `training/doc.go` exists covering Trainer, optimizers (AdamW, SGD),
-    loss functions, backward pass, gradient strategies.
+- [x] T2.1 Add attn_qkv tensor name mapping  Owner: Claude  Done: 2026-03-16
+  - File: `model/gguf/arch.go`
+  - Change: Add `"attn_qkv.weight"` to `tensorNameMap` mapping to a sentinel value
+    (e.g., `"self_attn.qkv_proj.weight"`) that the loader can detect for splitting.
+    Also add `"attn_qkv.bias"` mapping.
+  - Acceptance: `MapTensorName("phi3", "blk.0.attn_qkv.weight")` returns
+    `"model.layers.0.self_attn.qkv_proj.weight"`.
 
-- [x] T1.7 Write doc.go for distributed/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `distributed/doc.go` exists covering Coordinator, Worker, gRPC protocol,
-    NCCL gradient exchange.
+- [ ] T2.2 Implement QKV tensor split in GGUF loader  Owner:  Est: 90m
+  - Deps: T2.1
+  - File: `model/gguf/loader.go` (or new file `model/gguf/split.go`)
+  - Add: `splitMergedQKV()` function called after tensor name mapping in `LoadGGUF`.
+    For each tensor named `*.self_attn.qkv_proj.weight`, split into three tensors:
+    - Q: `*.self_attn.q_proj.weight` shape `[num_heads * head_dim, hidden_size]`
+    - K: `*.self_attn.k_proj.weight` shape `[num_kv_heads * head_dim, hidden_size]`
+    - V: `*.self_attn.v_proj.weight` shape `[num_kv_heads * head_dim, hidden_size]`
+    Compute sizes from `ModelConfig.NumQueryHeads`, `NumKeyValueHeads`, `HiddenSize`.
+    Handle both MHA (num_heads == num_kv_heads) and GQA (num_heads != num_kv_heads).
+    Also split bias tensors if present.
+  - Acceptance: After splitting, the tensor map contains separate q_proj, k_proj, v_proj
+    tensors with correct shapes. The original qkv_proj tensor is removed.
 
-- [x] T1.8 Write doc.go for cmd/cli/  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `cmd/cli/doc.go` exists covering Command interface, CommandRegistry,
-    how to add new CLI commands.
+- [ ] T2.3 Add unit tests for QKV split  Owner:  Est: 60m
+  - Deps: T2.2
+  - Files: `model/gguf/split_test.go` or `model/gguf/loader_test.go`
+  - Add: Tests for (a) MHA split (32 heads, 32 KV heads, head_dim=96, hidden_size=3072),
+    (b) GQA split (32 heads, 8 KV heads, head_dim=96, hidden_size=3072),
+    (c) missing config values produce error, (d) bias splitting.
+  - Acceptance: `go test ./model/gguf/ -run TestSplitMergedQKV -race` passes.
 
-- [x] T1.9 go vet/lint clean after doc.go additions  Owner: Claude  Done: 2026-03-16
-  - Deps: T1.1-T1.8
-  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
+- [ ] T2.4 Add Phi arch builder support for split QKV  Owner:  Est: 30m
+  - Deps: T2.2
+  - File: `inference/arch_phi.go`
+  - Verify: `buildPhiGraph` already works with separate q_proj, k_proj, v_proj tensors
+    (it delegates to `buildTransformerGraph`). If the split is correct, no changes needed.
+    Add an integration test that builds a Phi graph from tensors containing split QKV.
+  - Acceptance: `go test ./inference/ -run TestBuildPhiGraph -race` passes.
 
-### E2: CLI UX Improvements
+- [ ] T2.5 go vet/lint clean after Phi QKV support  Owner:  Est: 15m
+  - Deps: T2.1-T2.4
+  - Acceptance: `go vet ./model/... ./inference/...` 0 warnings.
 
-Polish the CLI for first-time users. The custom framework is in `cmd/cli/framework.go`.
+### E3: Mistral Architecture Detection
 
-- [x] T2.1 Add --help flag support to CLI framework  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo --help` and `zerfoo run --help` print usage text instead of
-    treating --help as a positional argument. All 8 commands respond to --help.
-    `cmd/cli/framework_test.go` tests --help output. `go vet ./cmd/...` clean.
+Route Mistral-architecture models to `buildMistralGraph` when GGUF metadata reports
+`general.architecture=llama` but `attention.sliding_window > 0`.
 
-- [x] T2.2 Add version command  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo version` prints version string (read from build-time
-    `-ldflags -X main.version=...`). Falls back to "(devel)" if unset.
-    Test in `cmd/cli/version_test.go`.
+- [x] T3.1 Add Mistral detection in buildArchGraph  Owner: Claude  Done: 2026-03-16
+  - File: `inference/load_gguf.go`
+  - Change: In `buildArchGraph`, when `arch == "llama"` and `cfg.SlidingWindow > 0` and
+    `cfg.SlidingWindowPattern == 0` (to exclude Gemma 3 which uses SlidingWindowPattern=6),
+    route to `buildMistralGraph` instead of `buildLlamaGraph`.
+  - Acceptance: A GGUF file with arch="llama" and sliding_window=4096 uses
+    `buildMistralGraph`. A Gemma 3 file with SlidingWindowPattern=6 still uses
+    `buildGemmaGraph`.
 
-- [x] T2.3 Add progress bar for model download in pull command  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo pull gemma-3-1b-q4` shows download progress (bytes downloaded,
-    total size, percentage, speed). Uses `io.TeeReader` with a progress writer.
-    No external dependencies. Test that progress callback is invoked.
+- [ ] T3.2 Add unit tests for Mistral detection  Owner:  Est: 45m
+  - Deps: T3.1
+  - File: `inference/load_gguf_test.go`
+  - Add: Tests for (a) arch="llama" + sliding_window=4096 routes to Mistral,
+    (b) arch="llama" + no sliding window stays Llama, (c) arch="gemma3" +
+    sliding_window + pattern=6 stays Gemma.
+  - Acceptance: `go test ./inference/ -run TestBuildArchGraph -race` passes.
 
-- [x] T2.4 Add model loading progress indicator  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo run` and `zerfoo serve` print "Loading model..." with elapsed
-    time while model loads. Spinner or dots for TTY, plain text for non-TTY.
-    `go vet ./cmd/...` clean.
-
-- [x] T2.5 Fix deterministic command order in help output  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo` (no args) always prints commands in the same order.
-    Commands sorted alphabetically or by category. Test verifies order is stable.
-
-- [x] T2.6 Wire --system flag in run command  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo run --system "You are a helpful assistant" model.gguf` passes
-    the system prompt to `Model.Chat` as a system message. Previously unused
-    `_ = systemPrompt` is now wired. Integration test verifies system prompt appears
-    in chat messages.
-
-- [x] T2.7 Fix --flag=value syntax support  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `zerfoo run --temperature=0.7 model.gguf` works (currently only
-    `--temperature 0.7` works). Update argument parser in framework.go.
-    Test both syntaxes in `cmd/cli/framework_test.go`.
-
-- [x] T2.8 go vet/lint clean after CLI changes  Owner: Claude  Done: 2026-03-16
-  - Deps: T2.1-T2.7
-  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
-
-### E3: DeepSeek V3 -- Experimental to Production
-
-Fix correctness issues and add parity tests to move DeepSeek V3 from Experimental
-to Production status.
-
-Reference files:
-- `inference/arch_deepseek.go` -- architecture graph builder
-- `layers/attention/multi_head_latent_attention.go` -- MLA implementation
-- `layers/core/moe.go` -- MoE routing and expert dispatch
-
-- [x] T3.1 Fix partial RoPE in MLA  Owner: Claude  Done: 2026-03-16
-  - Acceptance: MLA applies RoPE only to the first `rope_head_dim` dimensions of Q and K,
-    leaving the remaining dimensions position-independent. This matches the DeepSeek V3
-    paper specification. Unit test in `layers/attention/multi_head_latent_attention_test.go`
-    verifies RoPE is applied to the correct dimension subset. `go test ./layers/attention/
-    -run MLA` passes.
-
-- [x] T3.2 Implement batched expert execution for MoE  Owner: Claude  Done: 2026-03-16
-  - Acceptance: MoE routing groups tokens by assigned expert and processes all tokens
-    for an expert in a single batched matmul instead of per-token sequential dispatch.
-    For 256 experts, only active experts (top-K per token) execute. Benchmark test
-    in `layers/core/moe_test.go` shows batched path is faster than sequential for
-    batch_size >= 4. `go test ./layers/core/ -run MoE -race` passes.
-
-- [x] T3.3 Add DeepSeek V3 numerical parity tests  Owner: Claude  Done: 2026-03-16
+- [ ] T3.3 go vet/lint clean after Mistral detection  Owner:  Est: 15m
   - Deps: T3.1, T3.2
-  - Acceptance: `inference/arch_deepseek_test.go` includes parity tests that verify
-    the full forward pass produces outputs within tolerance of reference values for
-    a small model configuration (2 layers, 4 experts, 2 active). Tests cover both
-    MoE and non-MoE layers, and verify partial RoPE produces different outputs than
-    full RoPE. `go test ./inference/ -run DeepSeek -race` passes.
+  - Acceptance: `go vet ./inference/...` 0 warnings.
 
-- [x] T3.4 Validate DeepSeek chat template  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `formatDeepSeek` in inference produces correct chat formatting for
-    system + user + assistant messages matching the official DeepSeek chat template.
-    Test in `inference/chat_template_test.go` with known input/output pairs.
+### E4: Structured Output End-to-End
 
-- [x] T3.5 Update CLAUDE.md and docs to mark DeepSeek V3 as Production  Owner: Claude  Done: 2026-03-16
-  - Deps: T3.1-T3.4
-  - Acceptance: CLAUDE.md supported architectures table shows DeepSeek V3 as
-    "Production" instead of "Experimental". Any "experimental" markers in
-    arch_deepseek.go are removed.
+Complete the structured output feature: the grammar engine and server integration exist,
+but the CLI, library integration tests, and example need work.
 
-- [x] T3.6 go vet/lint clean after DeepSeek changes  Owner: Claude  Done: 2026-03-16
-  - Deps: T3.1-T3.5
-  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
+- [x] T4.1 Add --json-schema flag to CLI run command  Owner: Claude  Done: 2026-03-16
+  - File: `cmd/cli/run.go`
+  - Change: Add `--json-schema <schema>` flag that accepts a JSON Schema string. When
+    set, parse the schema, convert to grammar via `grammar.Convert`, and pass via
+    `inference.WithGrammar` to the generate call. Output the raw JSON result without
+    the interactive prompt.
+  - Acceptance: `zerfoo run model.gguf --json-schema '{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}' --prompt "Extract the name from: John Smith"`
+    produces valid JSON matching the schema.
 
-### E4: High-Level API Test Coverage
+- [ ] T4.2 Add unit tests for CLI --json-schema flag  Owner:  Est: 45m
+  - Deps: T4.1
+  - File: `cmd/cli/run_test.go`
+  - Add: Tests for (a) --json-schema parses correctly, (b) invalid schema produces
+    error, (c) --json-schema without --prompt uses positional arg as prompt.
+  - Acceptance: `go test ./cmd/cli/ -run TestRunCommand_JSONSchema -race` passes.
 
-The high-level API in `api.go` (zerfoo.Load, Chat, Embed, Generate) is what documentation
-will drive users toward. Currently only ChatStream has tests. Add comprehensive tests.
+- [x] T4.3 Add structured output integration test  Owner: Claude  Done: 2026-03-16
+  - File: `inference/inference_test.go` or new `inference/structured_output_test.go`
+  - Add: Integration test that loads a test GGUF fixture, generates with WithGrammar,
+    and validates the output is parseable JSON conforming to the schema. Use the minimal
+    test GGUF (writeTestGGUF) with a simple schema.
+  - Acceptance: `go test ./inference/ -run TestStructuredOutput -race` passes.
 
-- [x] T4.1 Add tests for zerfoo.Load and inference.Load  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `api_test.go` tests Load with invalid path (error), Load with valid
-    GGUF (success using a test fixture), LoadFile with options (WithDevice, WithMaxSeqLen).
-    Tests use a minimal test GGUF fixture or mock. `go test ./... -run TestLoad -race`.
+- [x] T4.4 Add structured output example  Owner: Claude  Done: 2026-03-16
+  - File: `examples/json-output/main.go` (already exists, verify completeness)
+  - Verify: The existing json-output example uses `grammar.JSONSchema` and
+    `grammar.Convert`. Ensure it compiles, has a README, and demonstrates both
+    library-level and explanation of server-level structured output.
+  - Acceptance: `go build ./examples/json-output/` succeeds. README.md explains usage.
 
-- [x] T4.2 Add tests for Model.Chat and Model.Generate  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `api_test.go` tests Chat with nil context (error), Chat with valid
-    messages, Generate with empty prompt (error), Generate with options (temperature,
-    max tokens). Tests verify return types and basic behavior.
+- [ ] T4.5 go vet/lint clean after structured output  Owner:  Est: 15m
+  - Deps: T4.1-T4.4
+  - Acceptance: `go vet ./...` 0 warnings.
 
-- [x] T4.3 Add tests for Model.Embed  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `api_test.go` tests Embed with empty string, Embed with valid text.
-    Verifies embedding vector is L2-normalized (magnitude ~1.0).
+### E5: Concurrent Inference Sessions
 
-- [x] T4.4 go vet/lint clean after API test additions  Owner: Claude  Done: 2026-03-16
-  - Deps: T4.1-T4.3
-  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
+Replace the global Generator mutex with per-request inference sessions. The compiled
+graph is shared (read-only), but KV cache and position state are per-session.
 
-### E5: Documentation Polish
+- [x] T5.1 Design InferenceSession struct  Owner: Claude  Done: 2026-03-16
+  - File: `generate/session.go` (new)
+  - Add: `InferenceSession` struct holding per-request state: KV cache, position counter,
+    sampling state. `Generator.NewSession()` creates a session that shares the compiled
+    graph but has its own KV cache. `Session.Generate()` and `Session.GenerateStream()`
+    methods use session-local state.
+  - Acceptance: InferenceSession compiles and has method signatures for Generate and
+    GenerateStream.
 
-Update existing documentation to be accurate and complete for community launch.
+- [ ] T5.2 Implement per-session KV cache allocation  Owner:  Est: 90m
+  - Deps: T5.1
+  - File: `generate/session.go`, `generate/generator.go`
+  - Change: Move KV cache creation from Generator construction to Session creation.
+    Each session allocates its own KV cache based on the model config. The Generator
+    keeps the graph, tokenizer, engine, and model config. The session gets the KV cache
+    and position tracking.
+  - Acceptance: Two sessions can exist simultaneously without data races.
+    `go test ./generate/ -run TestSession -race` passes.
 
-- [x] T5.1 Update examples README to list all 6 examples  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `examples/README.md` table lists all 6 examples (inference, chat,
-    embedding, api-server, json-output, rag) with descriptions and prerequisites.
+- [ ] T5.3 Wire sessions into Model.Generate and GenerateStream  Owner:  Est: 60m
+  - Deps: T5.2
+  - Files: `inference/inference.go`, `generate/generator.go`
+  - Change: `Model.Generate` and `Model.GenerateStream` create a per-request session
+    (or reuse from a pool). Remove the global `sync.Mutex` from Generator. Add a
+    session pool with configurable max concurrent sessions.
+  - Acceptance: 4 concurrent `Model.Generate` calls execute in parallel without races.
+    `go test ./... -race -count=1` passes.
 
-- [x] T5.2 Write production deployment guide  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `docs/production-deployment.md` covers: `zerfoo serve` with TLS/mTLS,
-    health check endpoint, Prometheus metrics endpoint, graceful shutdown, systemd
-    unit file example, reverse proxy configuration, resource sizing guidance.
+- [ ] T5.4 Add concurrent inference benchmark test  Owner:  Est: 45m
+  - Deps: T5.3
+  - File: `generate/session_test.go`
+  - Add: Benchmark test running 4 concurrent sessions generating 50 tokens each.
+    Verify no races and throughput > 1x single-session baseline.
+  - Acceptance: `go test ./generate/ -run TestConcurrentSessions -race -count=3` passes.
 
-- [x] T5.3 Polish CONTRIBUTING.md  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `CONTRIBUTING.md` covers: development setup (Go 1.25, clone, test),
-    PR workflow (rebase and merge), commit message conventions, code style (gofmt,
-    golangci-lint), testing requirements (table-driven, -race), linking to
-    good-first-issues.md. No stale references.
+- [ ] T5.5 go vet/lint clean after concurrent sessions  Owner:  Est: 15m
+  - Deps: T5.1-T5.4
+  - Acceptance: `go vet ./...` 0 warnings.
 
-- [x] T5.4 Polish docs/good-first-issues.md  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `docs/good-first-issues.md` contains 10+ concrete issues categorized
-    by difficulty (beginner, intermediate, advanced) with file paths, expected approach,
-    and acceptance criteria. No stale references to removed code.
+### E6: Integration Gate
 
-- [x] T5.5 Add streaming example  Owner: Claude  Done: 2026-03-16
-  - Acceptance: `examples/streaming/main.go` demonstrates `Model.ChatStream` with
-    real-time token output to terminal. README.md explains usage. Compiles and vets clean.
+Final quality gate after all epics complete.
 
-- [x] T5.6 go vet/lint clean after doc changes  Owner: Claude  Done: 2026-03-16
-  - Deps: T5.1-T5.5
-  - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
+- [ ] T6.1 Full test suite pass  Owner:  Est: 30m
+  - Deps: T1.3, T2.5, T3.3, T4.5, T5.5
+  - Acceptance: `go test ./... -race -count=1` passes with 0 failures.
+    `go vet ./...` 0 warnings.
 
-### E6: Lint and Integration Gate
+### E7: DGX Re-Verification
 
-Final quality gate after all other epics complete.
+Re-run the DGX verification test suite with all GGUF loader fixes applied.
 
-- [x] T6.1 Full test suite pass  Owner: Claude  Done: 2026-03-16
-  - Deps: T1.9, T2.8, T3.6, T4.4, T5.6
-  - Acceptance: `go test ./... -race -count=1` passes with 0 failures. `go vet ./...`
-    0 warnings. `golangci-lint run ./...` 0 issues.
+- [ ] T7.1 DGX re-verify Qwen 2.5 produces coherent text  Owner:  Est: 30m
+  - Deps: T6.1
+  - Acceptance: `go test -tags dgx -run TestT7_1/qwen2 -timeout 120s ./tests/dgx/` passes.
+    Output is valid UTF-8, >= 5 words.
 
-### E7: DGX Verification (Carried Forward from Phase 20)
+- [ ] T7.2 DGX re-verify Phi 3.5 loads and generates  Owner:  Est: 30m
+  - Deps: T6.1
+  - Acceptance: `go test -tags dgx -run TestT7_1/phi3 -timeout 120s ./tests/dgx/` passes.
+    Model loads without "missing tensor" error.
 
-All tasks BLOCKED until DGX Spark (ssh ndungu@192.168.86.250) is accessible.
+- [ ] T7.3 DGX re-verify Mistral uses sliding window  Owner:  Est: 30m
+  - Deps: T6.1
+  - Acceptance: `go test -tags dgx -run TestT7_1/mistral -timeout 120s ./tests/dgx/` passes.
+    Log shows architecture detected as "mistral" (not "llama").
 
-- [x] T7.1 DGX E2E -- all 6 architectures produce coherent text  Owner: Claude  Done: 2026-03-16
-  - Architectures: Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3.
-  - Acceptance: Each model loads GGUF, generates >= 20 coherent tokens. No panics.
-    Record tok/s, model size, quant in docs/benchmarks.md.
-  - Result: 3/6 PASS (Gemma, Llama, Mistral), 2/6 FAIL (Qwen tokenizer bug, Phi merged QKV),
-    1/6 BLOCKED (DeepSeek V3 — no MLA+MoE GGUF available). See devlog 2026-03-16.
+- [ ] T7.4 DGX concurrent throughput benchmark  Owner:  Est: 30m
+  - Deps: T6.1
+  - Acceptance: `go test -tags dgx -run TestT7_5 -timeout 300s ./tests/dgx/` shows
+    throughput > 200 tok/s with 4 concurrent clients.
 
-- [x] T7.2 DGX FP16 inference E2E  Owner: Claude  Done: 2026-03-16
-  - Acceptance: Gemma 3 and Llama 3 FP16 GGUF files load and generate correctly.
-  - Result: PASS — both Gemma 3 and Llama produce valid output in FP16 mode.
+- [ ] T7.5 DGX structured output verification  Owner:  Est: 30m
+  - Deps: T6.1
+  - Acceptance: Run structured output with a real model on DGX. Generate JSON conforming
+    to a simple schema. Output is valid JSON.
 
-- [x] T7.3 DGX FP8 inference E2E  Owner: Claude  Done: 2026-03-16
-  - Acceptance: FP8 E4M3FN quants load and generate correctly.
-  - Result: PASS — both Gemma 3 and Llama produce valid output in FP8 mode.
-
-- [x] T7.4 DGX CUDA graph decode speedup >= 20%  Owner: Claude  Done: 2026-03-16
-  - Acceptance: Graph path >= 20% faster than non-graph baseline. Record in benchmarks.md.
-  - Result: PASS — 1336.6% speedup (7.18 tok/s CPU → 103.22 tok/s CUDA graph).
-
-- [x] T7.5 DGX throughput benchmark after batching  Owner: Claude  Done: 2026-03-16
-  - Acceptance: 4 concurrent clients, target >= 300 tok/s at batch=4.
-  - Result: PARTIAL — 84.49 tok/s with 4 clients. Generator mutex serializes requests.
-    Batched decode (PagedKV) needed for 300+ tok/s target.
-
-- [ ] T7.6 DGX DeepSeek V3 E2E verification  Owner:  (BLOCKED: no MLA+MoE GGUF model, deps: T3.5 T7.1)
+- [ ] T7.6 DGX DeepSeek V3 E2E verification (carried forward)  Owner:  (BLOCKED: no MLA+MoE GGUF model)
+  - Deps: T6.1
   - Acceptance: DeepSeek V3 model loads GGUF, generates coherent text on DGX.
     MoE routing activates correctly. Record tok/s.
-  - Status: BLOCKED — DeepSeek V2/V3 GGUF models require HuggingFace authentication.
-    TheBloke deepseek-llm-7b-chat uses llama arch, not MLA+MoE.
+  - Status: BLOCKED -- DeepSeek V2/V3 GGUF models require HuggingFace authentication.
 
 ---
 
@@ -380,58 +408,66 @@ All tasks BLOCKED until DGX Spark (ssh ndungu@192.168.86.250) is accessible.
 
 | Track | Epics | Description |
 |-------|-------|-------------|
-| A: Package Docs | E1 (T1.1-T1.8) | doc.go files -- each package independent |
-| B: CLI UX | E2 (T2.1-T2.7) | CLI improvements -- mostly independent |
-| C: DeepSeek V3 | E3 (T3.1-T3.4) | Correctness fixes and parity tests |
-| D: API Tests | E4 (T4.1-T4.3) | High-level API test coverage |
-| E: Doc Polish | E5 (T5.1-T5.5) | Documentation updates and new guide |
+| A: Qwen Tokenizer | E1 (T1.1-T1.3) | Byte-level BPE fix in GGUF extractor |
+| B: Phi QKV Split | E2 (T2.1-T2.5) | Merged tensor support in GGUF loader |
+| C: Mistral Detection | E3 (T3.1-T3.3) | Architecture routing from metadata |
+| D: Structured Output | E4 (T4.1-T4.5) | CLI, tests, example for JSON mode |
+| E: Concurrent Sessions | E5 (T5.1-T5.5) | Per-request inference isolation |
 
 Sync point: T6.1 (full integration gate) after all tracks complete.
+DGX verification (E7) runs after T6.1.
 
 ### Maximum Parallelism
 
-**Wave 1** (10 parallel tasks -- saturates all agent slots):
-T1.1, T1.2, T1.3, T1.4, T1.5, T1.6, T1.7, T1.8, T2.1, T3.1
+**Wave 1** (10 parallel tasks -- all independent, saturates agent slots):
+T1.1, T2.1, T2.2, T3.1, T4.1, T4.3, T4.4, T5.1, T5.2, T5.4
 
-**Wave 2** (10 parallel tasks):
-T1.9, T2.2, T2.3, T2.4, T2.5, T2.6, T2.7, T3.2
+Note: T2.2 can start with T2.1 in parallel since each agent works in an isolated
+worktree. T2.2 creates the split logic; T2.1 adds the name mapping. Both are needed
+but neither blocks the other's code writing. T5.2 and T5.4 can start in parallel with
+T5.1 for the same reason.
 
-**Wave 3** (8 parallel tasks):
-T2.8, T3.3, T3.4, T4.1, T4.2, T4.3, T5.1, T5.2
+**Wave 2** (8 parallel tasks -- unblocked after Wave 1):
+T1.2, T2.3, T2.4, T3.2, T4.2, T5.3
 
-**Wave 4** (5 parallel tasks):
-T3.5, T3.6, T4.4, T5.3, T5.4
+**Wave 3** (6 parallel tasks -- lint/gate tasks):
+T1.3, T2.5, T3.3, T4.5, T5.5
 
-**Wave 5** (3 parallel tasks):
-T5.5, T5.6, T6.1 (after T5.6)
+**Wave 4** (1 task):
+T6.1
 
-**Wave 6** (DGX-gated):
-T7.1-T7.6
+**Wave 5** (6 parallel tasks -- DGX verification):
+T7.1, T7.2, T7.3, T7.4, T7.5, T7.6
 
 ---
 
 ## 5. Dependency Graph
 
 ```
-T1.1-T1.8 (all independent) ──── T1.9
-
-T2.1-T2.7 (all independent) ──── T2.8
-
-T3.1 ──┐
-T3.2 ──┴── T3.3 ──── T3.5 ──── T3.6
-T3.4 ─────────────┘
-
-T4.1-T4.3 (all independent) ──── T4.4
-
-T5.1-T5.5 (all independent) ──── T5.6
-
-T1.9, T2.8, T3.6, T4.4, T5.6 ──── T6.1
-
-T7.1 (BLOCKED) ──┬── T7.2
-                 ├── T7.3
-                 ├── T7.4
-                 ├── T7.5
-                 └── T7.6 (also deps T3.5)
+T1.1 ──── T1.2 ──── T1.3 ──┐
+                             │
+T2.1 ──┬── T2.3 ────────────┤
+T2.2 ──┤                    │
+       ├── T2.4             │
+       └── T2.5 ────────────┤
+                             │
+T3.1 ──── T3.2 ──── T3.3 ──┤
+                             │
+T4.1 ──── T4.2 ────────────┤
+T4.3 (independent) ─────────┤
+T4.4 (independent) ── T4.5 ─┤
+                             │
+T5.1 ──── T5.2 ──── T5.3 ──┤
+T5.4 (deps T5.3) ── T5.5 ──┤
+                             │
+T1.3, T2.5, T3.3, T4.5, T5.5 ──── T6.1
+                                      │
+T6.1 ──┬── T7.1 (Qwen DGX)
+       ├── T7.2 (Phi DGX)
+       ├── T7.3 (Mistral DGX)
+       ├── T7.4 (Throughput DGX)
+       ├── T7.5 (Structured output DGX)
+       └── T7.6 (DeepSeek DGX, BLOCKED)
 ```
 
 ---
@@ -440,11 +476,11 @@ T7.1 (BLOCKED) ──┬── T7.2
 
 | ID | Milestone | Exit Criteria | Dependencies |
 |----|-----------|---------------|--------------|
-| M1 | Package docs complete | 8 doc.go files, lint clean | T1.9 |
-| M2 | CLI UX shipped | --help, version, progress, lint clean | T2.8 |
-| M3 | DeepSeek V3 Production | Partial RoPE, batched MoE, parity tests, lint clean | T3.6 |
-| M4 | API tests complete | Load/Chat/Embed/Generate tested, lint clean | T4.4 |
-| M5 | Phase 21 complete | T6.1 full gate passes | T6.1 |
+| M1 | GGUF compatibility fixed | Qwen, Phi, Mistral all pass unit tests | T1.3, T2.5, T3.3 |
+| M2 | Structured output E2E | CLI, library, server, example all working | T4.5 |
+| M3 | Concurrent sessions | Per-request isolation, no global mutex | T5.5 |
+| M4 | Integration gate | Full test suite passes with all changes | T6.1 |
+| M5 | DGX verified | All 5 architectures pass on DGX hardware | T7.1-T7.5 |
 
 ---
 
@@ -452,12 +488,13 @@ T7.1 (BLOCKED) ──┬── T7.2
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |----|------|-----------|--------|-----------|
-| R1 | DeepSeek V3 partial RoPE fix breaks other attention paths | Low | High | MLA is a separate type; standard MHA/GQA unaffected. Unit tests for both. |
-| R2 | Batched MoE expert execution produces different results than sequential | Medium | High | Parity test (T3.3) compares batched vs sequential outputs. |
-| R3 | CLI --help flag conflicts with existing argument parsing | Low | Medium | Test all 8 commands with --help. Framework handles --help before dispatch. |
-| R4 | High-level API tests require real GGUF files | Medium | Medium | Use minimal test fixtures or mock model. Test behavior, not inference quality. |
-| R5 | DGX remains offline | Medium | High (blocks E7) | E1-E6 proceed independently. E7 scheduled when DGX available. |
-| R6 | doc.go examples become stale as API evolves | Low | Low | Examples use stable public API. Review during release process. |
+| R1 | Byte-level BPE fix breaks SentencePiece models | Low | High | Flag is orthogonal. Test both model types. |
+| R2 | Phi QKV split incorrect for GQA | Medium | High | Test both MHA (Phi-3 mini) and GQA (Phi-3 small) configurations. |
+| R3 | Mistral detection false positives for Llama 3.1 | Medium | Medium | Check SlidingWindowPattern==0 to exclude Gemma. Verify against Llama 3.1 GGUF. |
+| R4 | Grammar masking slows CUDA inference | Low | Medium | O(vocab_size) on CPU, ~1ms max. Runs during GPU forward pass. |
+| R5 | Concurrent sessions increase memory pressure | Medium | Medium | Add max-sessions limit. Pool and reuse KV cache allocations. |
+| R6 | DGX offline during verification | Low | Medium | All CPU tests pass first. DGX verification is a separate wave. |
+| R7 | ztoken changes needed for GGUF byte-level BPE | Low | High | ztoken already supports byte-level BPE. No changes needed. |
 
 ---
 
@@ -475,22 +512,30 @@ A task is done when:
 
 - Every code change must have corresponding tests.
 - Run `golangci-lint run ./...` before marking lint tasks complete.
-- Documentation changes must have no broken cross-references.
-- CLI changes must be tested with both TTY and non-TTY output.
 - Never commit files from different directories in the same commit.
 - Make many small logical commits, not large batches.
+- DGX tests require `go test -tags dgx` and DGX Spark access.
 
 ---
 
 ## 9. Progress Log
 
-### 2026-03-16: Phase 21 plan created
+### 2026-03-16: Phase 22 plan created
 
-**Change summary:** Created Phase 21 plan. Trimmed completed Phase 20 epics (E1
-quantization, E2 batching, E4 examples, E5 release) -- operational details preserved
-in docs/devlog.md entry dated 2026-03-16. Carried forward DGX E3 tasks as E7. Added
-6 new epics: E1 package docs, E2 CLI UX, E3 DeepSeek V3, E4 API tests, E5 doc polish,
-E6 integration gate. Research findings from 3-agent parallel team incorporated.
+**Change summary:** Created Phase 22 plan. Trimmed completed Phase 21 epics (E1 package
+docs, E2 CLI UX, E3 DeepSeek V3 Production, E4 API tests, E5 doc polish, E6 integration
+gate, E7 DGX verification) -- operational details preserved in docs/devlog.md entries
+dated 2026-03-16. Carried forward T7.6 (DeepSeek V3 DGX E2E, blocked on model).
+Added 7 new epics: E1 Qwen tokenizer, E2 Phi QKV split, E3 Mistral detection,
+E4 structured output, E5 concurrent sessions, E6 integration gate, E7 DGX re-verification.
+Research findings from 3-agent parallel team incorporated.
+
+**Phase 21 trim notes:**
+- E1-E6 (36 completed tasks) removed from plan. Stable knowledge already in docs/design.md
+  and docs/devlog.md from Phase 21 execution.
+- DGX verification findings (Qwen tokenizer, Phi QKV, Mistral arch, CUDA graph 1336%
+  speedup, mutex throughput) preserved in docs/devlog.md entry 2026-03-16.
+- Phase 21 appendix (DeepSeek V3 notes, Two-API design) already captured in docs/design.md.
 
 ---
 
@@ -499,16 +544,27 @@ E6 integration gate. Research findings from 3-agent parallel team incorporated.
 ### For a new person continuing this work
 
 - **Codebase**: `/Users/dndungu/Code/zerfoo/zerfoo/` is the main repo. 6 active repos
-  total but Phase 21 work is entirely in the zerfoo repo.
-- **Build**: `go test ./...` for CPU tests. `go test -tags cuda ./...` on DGX for GPU.
-- **CLI framework**: `cmd/cli/framework.go` -- custom Command interface, no external deps.
-- **DeepSeek V3 files**: `inference/arch_deepseek.go` (builder),
-  `layers/attention/multi_head_latent_attention.go` (MLA),
-  `layers/core/moe.go` (MoE routing).
-- **High-level API**: `api.go` (Load/Chat/Embed/Generate convenience wrappers).
-- **DGX Spark**: `ssh ndungu@192.168.86.250`. Always rebuild binary before testing.
+  total but Phase 22 work is entirely in the zerfoo repo.
+- **Build**: `go test ./...` for CPU tests. `go test -tags dgx ./tests/dgx/...` on DGX.
+- **Key files for Phase 22**:
+  - `model/gguf/tokenizer.go` -- Qwen tokenizer fix (line 69, byteLevelBPE flag)
+  - `model/gguf/arch.go` -- Tensor name mapping (tensorNameMap, MapTensorName)
+  - `model/gguf/loader.go` -- GGUF loading (add QKV split after name mapping)
+  - `inference/load_gguf.go` -- Architecture routing (buildArchGraph switch)
+  - `inference/arch_mistral.go` -- Mistral graph builder (sliding window)
+  - `inference/arch_phi.go` -- Phi graph builder (partial rotary, needs split QKV)
+  - `generate/grammar/` -- Grammar engine (complete: Grammar, TokenMask, JSONSchema)
+  - `generate/generator.go` -- Generator with global mutex (line 95)
+  - `cmd/cli/run.go` -- CLI run command (add --json-schema)
+  - `serve/server.go` -- Server (json_schema already wired at line 380)
+  - `api.go` -- High-level API (WithSchema at line 443)
+  - `tests/dgx/dgx_test.go` -- DGX verification suite
+- **DGX Spark**: `ssh ndungu@192.168.86.250`. CUDA kernels at `/tmp/ztensor-kernels/libkernels.so`.
+  Copy to `~/Code/zerfoo/libkernels.so` and set `LD_LIBRARY_PATH`.
+- **Models on DGX**: Gemma3 (778MB local), TinyLlama (637MB), Qwen 2.5 0.5B (468MB),
+  Mistral 7B (4.4GB), Phi 3.5 mini (2.3GB), DeepSeek 7B (4.4GB, llama arch).
 - **Git workflow**: Rebase and merge. Each commit scoped to one directory.
-- **Prior phases**: Phase 20 delivered Q5_K/Q6_K GEMV, batched decode, examples, v0.2.1.
+- **Prior phases**: Phase 21 delivered docs, CLI UX, DeepSeek V3 Production, DGX verification.
   See docs/devlog.md for full history.
 
 ### Links
@@ -516,6 +572,7 @@ E6 integration gate. Research findings from 3-agent parallel team incorporated.
 - DGX Spark: `ssh ndungu@192.168.86.250`
 - CI: GitHub Actions (`.github/workflows/ci.yml`)
 - ADRs: `docs/adr/` (39 records, 001-039)
+- ADR 038: Structured output architecture (docs/adr/038-structured-output-grammar-guided-decoding.md)
 - Benchmarks: `docs/benchmarks.md`, `docs/benchmarking-methodology.md`
 - Design: `docs/design.md`
 
@@ -523,22 +580,37 @@ E6 integration gate. Research findings from 3-agent parallel team incorporated.
 
 ## 11. Appendix
 
-### DeepSeek V3 Architecture Notes
+### Qwen Byte-Level BPE
 
-DeepSeek V3 uses two novel mechanisms:
-1. **MLA (Multi-head Latent Attention)**: Compresses KV cache via low-rank projection.
-   Q and K are split into two parts: one receives RoPE (rope_head_dim dimensions),
-   the other is position-independent. Current code incorrectly applies RoPE to all dims.
-2. **MoE (Mixture of Experts)**: 256 total experts, top-K routing per token (typically
-   K=6-8). Includes shared experts that always activate. Sequential execution of 256
-   experts is the primary performance bottleneck.
+Qwen uses GPT-2 style byte-level BPE. Each byte (0x00-0xFF) is mapped to a printable
+Unicode character via a deterministic mapping. Token strings in the vocabulary contain
+these Unicode characters, not raw bytes. The ztoken library implements this mapping in
+`buildByteEncoderDecoder()` and applies it during `byteLevelPreTokenize()` and
+`decodeByteLevelBPE()`.
 
-### Two-API Design
+The GGUF metadata key `tokenizer.ggml.model` indicates the tokenizer type:
+- `"llama"` -- SentencePiece BPE (uses U+2581 space marker)
+- `"gpt2"` -- Byte-level BPE (GPT-2 style, Qwen, Phi, many others)
 
-Zerfoo has two API levels:
-- **High-level** (`zerfoo.Load`, `zerfoo.Chat`, etc.): Convenience wrappers for common
-  use cases. Recommended for getting started and most applications.
-- **Low-level** (`inference.LoadFile`, `model.Generate`, `serve.NewServer`): Full control
-  over configuration. Used for custom servers, advanced pipelines, benchmarking.
+### Phi Merged QKV Tensor Layout
 
-Documentation must clearly distinguish these and guide users to the appropriate level.
+Phi GGUF files store Q, K, V projections in a single tensor:
+- MHA: `attn_qkv.weight` shape `[3 * num_heads * head_dim, hidden_size]`
+  Split evenly into 3 equal parts.
+- GQA: `attn_qkv.weight` shape `[(num_heads + 2*num_kv_heads) * head_dim, hidden_size]`
+  Q gets `num_heads * head_dim` rows, K and V each get `num_kv_heads * head_dim` rows.
+
+### Concurrent Inference Session Model
+
+```
+Generator (shared, read-only after init)
+  +-- graph: compiled computation graph
+  +-- tokenizer: BPE tokenizer
+  +-- engine: compute engine
+  +-- modelConfig: vocab size, max seq len, EOS/BOS
+
+InferenceSession (per-request)
+  +-- kvCache: per-request KV cache
+  +-- position: current sequence position
+  +-- samplingState: temperature, top-k, top-p, grammar
+```
