@@ -12,9 +12,9 @@ func TestParseCoverageProfile_EdgeCases(t *testing.T) {
 
 	content := `mode: set
 no_colon_in_path 3 1
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 badnum 1
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 3 badcount
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 badnum 1
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 3 badcount
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 3 1
 `
 	if err := os.WriteFile(profile, []byte(content), 0o600); err != nil {
 		t.Fatal(err)

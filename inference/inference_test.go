@@ -730,16 +730,16 @@ func TestLoad_MissingConfig(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg))
 	if err == nil {
-		t.Error("expected error for missing config.json")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "load config") {
-		t.Errorf("error = %q, want 'load config' prefix", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 
 func TestLoad_MissingTokenizer(t *testing.T) {
 	dir := t.TempDir()
-	// Write config.json but no tokenizer.json.
+	// Write config.json but no GGUF file.
 	cfg := ModelMetadata{VocabSize: 100, NumLayers: 1}
 	data, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o600); err != nil {
@@ -753,16 +753,15 @@ func TestLoad_MissingTokenizer(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg))
 	if err == nil {
-		t.Error("expected error for missing tokenizer.json")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "load tokenizer") {
-		t.Errorf("error = %q, want 'load tokenizer' prefix", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 
 func TestLoad_MissingZMF(t *testing.T) {
 	dir := t.TempDir()
-	// Write valid config.json and minimal tokenizer.json, but no model.zmf.
 	cfg := ModelMetadata{VocabSize: 100, NumLayers: 1, MaxPositionEmbeddings: 128}
 	cfgData, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfgData, 0o600); err != nil {
@@ -781,10 +780,10 @@ func TestLoad_MissingZMF(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg))
 	if err == nil {
-		t.Error("expected error for missing model.zmf")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "load model") {
-		t.Errorf("error = %q, want 'load model' prefix", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 
@@ -813,10 +812,10 @@ func TestLoad_InvalidZMF(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg))
 	if err == nil {
-		t.Error("expected error for invalid model.zmf")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "load model") {
-		t.Errorf("error = %q, want 'load model' prefix", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 
@@ -1315,10 +1314,10 @@ func TestLoad_InvalidDevice(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg), WithDevice("tpu"))
 	if err == nil {
-		t.Error("expected error for unsupported device")
+		t.Error("expected error for unsupported device or no GGUF")
 	}
-	if !strings.Contains(err.Error(), "create engine") {
-		t.Errorf("error = %q, want 'create engine' prefix", err.Error())
+	if !strings.Contains(err.Error(), "create engine") && !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'create engine' or 'no GGUF file' substring", err.Error())
 	}
 }
 
@@ -1341,10 +1340,10 @@ func TestLoad_MmapMissingZMF(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg), WithMmap(true))
 	if err == nil {
-		t.Error("expected error for missing model.zmf with mmap")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "mmap") {
-		t.Errorf("error = %q, want mmap-related error", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 
@@ -1370,10 +1369,10 @@ func TestLoad_MmapInvalidZMF(t *testing.T) {
 	}
 	_, err := Load("test", WithRegistry(reg), WithMmap(true))
 	if err == nil {
-		t.Error("expected error for invalid model.zmf with mmap")
+		t.Error("expected error for directory without GGUF")
 	}
-	if !strings.Contains(err.Error(), "mmap") {
-		t.Errorf("error = %q, want mmap-related error", err.Error())
+	if !strings.Contains(err.Error(), "no GGUF file") {
+		t.Errorf("error = %q, want 'no GGUF file' substring", err.Error())
 	}
 }
 

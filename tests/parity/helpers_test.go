@@ -8,12 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
-	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/zerfoo/registry"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -36,17 +33,11 @@ func (r *dirRegistry) List() []registry.ModelInfo { return nil }
 func (r *dirRegistry) Delete(_ string) error      { return nil }
 
 // loadZMFGraph loads a ZMF model and returns the computation graph.
-func loadZMFGraph(t *testing.T, zmfPath string) *graph.Graph[float32] {
+// ZMF loading was removed; this always skips the test.
+func loadZMFGraph(t *testing.T, _ string) *graph.Graph[float32] {
 	t.Helper()
-	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-	m, err := model.LoadModelFromZMF[float32](eng, numeric.Float32Ops{}, zmfPath)
-	if err != nil {
-		t.Fatalf("LoadModelFromZMF failed: %v", err)
-	}
-	if m.Graph == nil {
-		t.Fatal("model graph is nil")
-	}
-	return m.Graph
+	t.Skip("ZMF loading is no longer supported")
+	return nil
 }
 
 // forwardPassConfig holds parameters for a forward pass test.

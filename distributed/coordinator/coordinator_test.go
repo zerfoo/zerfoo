@@ -125,7 +125,7 @@ func TestCoordinator_Start(t *testing.T) {
 		var sb syncBuffer
 
 		coord := NewCoordinator(&sb, 10*time.Second)
-		ml := &testutils.CustomMockListener{
+		ml := &customMockListener{
 			AcceptErr: errors.New("mock error"),
 			AddrVal:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345},
 		}

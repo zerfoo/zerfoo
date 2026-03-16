@@ -13,9 +13,9 @@ func TestParseCoverageProfile(t *testing.T) {
 	profile := filepath.Join(dir, "coverage.out")
 
 	content := `mode: set
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 3 1
-github.com/zerfoo/zerfoo/log/logger.go:17.30,22.2 3 1
-github.com/zerfoo/zerfoo/log/logger.go:24.30,29.2 3 0
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:17.30,22.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:24.30,29.2 3 0
 github.com/zerfoo/zerfoo/config/loader.go:10.30,15.2 5 1
 github.com/zerfoo/zerfoo/config/loader.go:17.30,22.2 5 1
 `
@@ -77,7 +77,7 @@ func TestParseCoverageProfile_MalformedLines(t *testing.T) {
 	content := `mode: set
 this is not a valid line
 another bad line without proper format
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 3 1
 `
 	if err := os.WriteFile(profile, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -124,9 +124,9 @@ func TestRun(t *testing.T) {
 
 	// Create a coverage profile
 	profileContent := `mode: set
-github.com/zerfoo/zerfoo/log/logger.go:10.30,15.2 3 1
-github.com/zerfoo/zerfoo/log/logger.go:17.30,22.2 3 1
-github.com/zerfoo/zerfoo/log/logger.go:24.30,29.2 3 0
+github.com/zerfoo/ztensor/log/logger.go:10.30,15.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:17.30,22.2 3 1
+github.com/zerfoo/ztensor/log/logger.go:24.30,29.2 3 0
 github.com/zerfoo/zerfoo/config/loader.go:10.30,15.2 5 1
 github.com/zerfoo/zerfoo/config/loader.go:17.30,22.2 5 1
 `

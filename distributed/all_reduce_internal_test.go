@@ -11,8 +11,8 @@ import (
 )
 
 func TestAllReduceStrategy_Init(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
-	customMockCross := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
+	customMockCross := new(CustomMockStrategy[float32])
 
 	t.Run("successful init for leader", func(t *testing.T) {
 		customMockLocal.OnInit(0, 4, "coord").ReturnInit(nil).OnceInit()
@@ -32,8 +32,8 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 	})
 
 	t.Run("successful init for non-leader", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 
 		customMockLocal.OnInit(1, 4, "coord").ReturnInit(nil).OnceInit()
 		customMockLocal.OnRank().ReturnRank(1).OnceRank()
@@ -51,8 +51,8 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 	})
 
 	t.Run("local init fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 
 		customMockLocal.OnInit(0, 4, "coord").ReturnInit(errors.New("local error")).OnceInit()
 
@@ -67,8 +67,8 @@ func TestAllReduceStrategy_Init(t *testing.T) {
 	})
 
 	t.Run("cross-node init fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 
 		customMockLocal.OnInit(0, 4, "coord").ReturnInit(nil).OnceInit()
 		customMockLocal.OnRank().ReturnRank(0).OnceRank()
@@ -92,8 +92,8 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 	gradients := map[string]*tensor.TensorNumeric[float32]{"param1": grad}
 
 	t.Run("leader performs all steps", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -114,8 +114,8 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 	})
 
 	t.Run("non-leader performs only local all-reduce and broadcast", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -137,8 +137,8 @@ func TestAllReduceStrategy_AllReduceGradients(t *testing.T) {
 
 func TestAllReduceStrategy_Barrier(t *testing.T) {
 	t.Run("leader performs all barriers", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -159,8 +159,8 @@ func TestAllReduceStrategy_Barrier(t *testing.T) {
 	})
 
 	t.Run("non-leader performs only local barrier", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -185,8 +185,8 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 	gradients := map[string]*tensor.TensorNumeric[float32]{"param1": grad}
 
 	t.Run("local all-reduce fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -202,8 +202,8 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 	})
 
 	t.Run("cross-node all-reduce fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -222,8 +222,8 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 	})
 
 	t.Run("broadcast fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -242,8 +242,8 @@ func TestAllReduceStrategy_AllReduceGradients_Error(t *testing.T) {
 
 func TestAllReduceStrategy_Barrier_Error(t *testing.T) {
 	t.Run("local barrier fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -259,8 +259,8 @@ func TestAllReduceStrategy_Barrier_Error(t *testing.T) {
 	})
 
 	t.Run("cross-node barrier fails", func(t *testing.T) {
-		customMockLocal := new(testutils.CustomMockStrategy[float32])
-		customMockCross := new(testutils.CustomMockStrategy[float32])
+		customMockLocal := new(CustomMockStrategy[float32])
+		customMockCross := new(CustomMockStrategy[float32])
 		strategy := &AllReduceStrategy[float32]{
 			localStrategy:     customMockLocal,
 			crossNodeStrategy: customMockCross,
@@ -280,7 +280,7 @@ func TestAllReduceStrategy_Barrier_Error(t *testing.T) {
 }
 
 func TestAllReduceStrategy_Rank(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
 	strategy := &AllReduceStrategy[float32]{
 		localStrategy: customMockLocal,
 	}
@@ -289,7 +289,7 @@ func TestAllReduceStrategy_Rank(t *testing.T) {
 }
 
 func TestAllReduceStrategy_Size(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
 	strategy := &AllReduceStrategy[float32]{
 		localStrategy: customMockLocal,
 	}
@@ -298,8 +298,8 @@ func TestAllReduceStrategy_Size(t *testing.T) {
 }
 
 func TestAllReduceStrategy_SetCollector(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
-	customMockCross := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
+	customMockCross := new(CustomMockStrategy[float32])
 	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
 
 	collector := metrics.NewInMemory()
@@ -354,8 +354,8 @@ func TestAllReduceStrategy_SetCollector(t *testing.T) {
 }
 
 func TestAllReduceStrategy_Close(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
-	customMockCross := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
+	customMockCross := new(CustomMockStrategy[float32])
 	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
 
 	// Close should not error (delegates to Shutdown which is a no-op for non-leader).
@@ -366,8 +366,8 @@ func TestAllReduceStrategy_Close(t *testing.T) {
 }
 
 func TestAllReduceStrategy_SetCollector_Nil(t *testing.T) {
-	customMockLocal := new(testutils.CustomMockStrategy[float32])
-	customMockCross := new(testutils.CustomMockStrategy[float32])
+	customMockLocal := new(CustomMockStrategy[float32])
+	customMockCross := new(CustomMockStrategy[float32])
 	strategy := NewAllReduceStrategy[float32](customMockLocal, customMockCross)
 	strategy.SetCollector(nil) // Should not panic; defaults to Nop.
 
