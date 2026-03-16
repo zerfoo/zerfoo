@@ -17,11 +17,12 @@ import (
 
 // transformerGraphOpts configures architecture-specific differences.
 type transformerGraphOpts struct {
-	embedScale    float32 // multiply embeddings by this factor (0 = no scaling)
-	postNorm      bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
-	qkNorm        bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
+	embedScale          float32 // multiply embeddings by this factor (0 = no scaling)
+	postNorm            bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
+	qkNorm              bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
 	logitSoftcap        float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
 	slidingWindowSize   int     // if > 0, apply causal sliding window attention mask
+	attnBias            bool    // if true, add bias to Q/K/V projections (Qwen 2)
 	partialRotaryFactor float32 // fraction of head dims to apply RoPE (0 or 1 = full RoPE)
 }
 
@@ -207,17 +208,30 @@ func buildTransformerGraph(
 			return nil, err
 		}
 
+		// Build Q/K/V/O Dense layers, optionally with attention bias (Qwen 2).
+		var qBias, kBias, vBias *core.Bias[float32]
+		if opts.attnBias {
+			if qB, ok := tensors[prefix+"self_attn.q_proj.bias"]; ok {
+				qBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.q_proj.bias", qB))
+			}
+			if kB, ok := tensors[prefix+"self_attn.k_proj.bias"]; ok {
+				kBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.k_proj.bias", kB))
+			}
+			if vB, ok := tensors[prefix+"self_attn.v_proj.bias"]; ok {
+				vBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.v_proj.bias", vB))
+			}
+		}
 		wq := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
-			nil,
+			qBias,
 		)
 		wk := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
-			nil,
+			kBias,
 		)
 		wv := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
-			nil,
+			vBias,
 		)
 		wo := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
