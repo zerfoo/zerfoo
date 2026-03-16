@@ -76,6 +76,22 @@ changelog:
     - title: "Other"
       order: 999
 
+homebrew_casks:
+  - name: zerfoo
+    binaries:
+      - zerfoo
+      - zerfoo-tokenize
+      - zerfoo-predict
+    repository:
+      owner: zerfoo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: "https://github.com/zerfoo/zerfoo"
+    description: "Production-grade ML inference framework for Go"
+
 release:
   github:
     owner: zerfoo
