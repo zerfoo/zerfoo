@@ -2,6 +2,11 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,5 +170,68 @@ func TestBatchScheduler_ContextCancellation(t *testing.T) {
 	_, err := sched.Submit(ctx, BatchRequest{Prompt: "test"})
 	if err == nil {
 		t.Error("expected error from canceled context")
+	}
+}
+
+func TestBatchScheduler_HTTPIntegration(t *testing.T) {
+	m := buildTestModel(t)
+
+	bs := NewBatchScheduler(BatchConfig{
+		MaxBatchSize: 4,
+		BatchTimeout: 100 * time.Millisecond,
+	})
+	srv := NewServer(m, WithBatchScheduler(bs))
+	bs.Start()
+	defer bs.Stop()
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	const n = 4
+	type result struct {
+		status int
+		body   string
+	}
+	results := make([]result, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i := range n {
+		go func(idx int) {
+			defer wg.Done()
+			payload := `{"model":"test-model","messages":[{"role":"user","content":"hello world"}]}`
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+				ts.URL+"/v1/chat/completions", strings.NewReader(payload))
+			if err != nil {
+				t.Errorf("request %d: %v", idx, err)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Errorf("request %d: %v", idx, err)
+				return
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			results[idx] = result{status: resp.StatusCode, body: string(body)}
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i, r := range results {
+		if r.status != http.StatusOK {
+			t.Errorf("request %d: status = %d, want %d; body: %s", i, r.status, http.StatusOK, r.body)
+			continue
+		}
+		var resp ChatCompletionResponse
+		if err := json.Unmarshal([]byte(r.body), &resp); err != nil {
+			t.Errorf("request %d: unmarshal: %v", i, err)
+			continue
+		}
+		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			t.Errorf("request %d: empty content in response", i)
+		}
 	}
 }
