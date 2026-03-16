@@ -9,6 +9,8 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
+	cudago "github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings" // For RoPE
@@ -600,6 +602,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// kvSeqLen tracks the K/V sequence length (may differ from Q seqLen when cached).
 	kvSeqLen := seqLen
 	var attnOutputHeads *tensor.TensorNumeric[T]
+	flashDecodeUsed := false
 
 	if hasCache {
 		// Flatten K/V from [batch, numKVHeads, seqLen, headDim] to [batch*numKVHeads, seqLen, headDim]
@@ -617,12 +620,68 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, fmt.Errorf("kv cache update: %w", err)
 		}
 
-		// Standard path: use cache.Get() to retrieve KV view, then cuBLAS SDPA.
-		// Note: a flash_attention_decode kernel fast path was previously here but
-		// was removed because it caused a 51% regression (234 -> 114 tok/s) and
-		// was already disabled for GQA models (guard required numQ == numKV).
-		// cuBLAS SDPA achieves 233 tok/s on Gemma 3 1B without the kernel.
-		var cachedK, cachedV *tensor.TensorNumeric[T]
+		// CUDA graph-capturable path: use FlashAttentionDecode with fixed-size
+		// (maxSeqLen) KV buffers and a GPU-resident KV length counter. The kernel
+		// reads kvLen from GPU memory at runtime, so tensor shapes are fixed
+		// across graph replays (no D2H transfer, no baked-in dimensions).
+		//
+		// Requirements: (1) decode (seqLen==1), (2) cache implements
+		// FullBufferProvider with GPU KV counter, (3) CUDA kernels available,
+		// (4) Q is GPU-resident.
+		if seqLen == 1 && cudago.Available() {
+			if fbp, ok := cache.(generate.FullBufferProvider[T]); ok && fbp.KVSeqLenPtr() != nil {
+				fullK, fullV := fbp.GetFullBuffer(gqa.LayerIndex)
+				if fullK != nil && fullV != nil {
+					if qGS, ok := qHeadsRoPE.GetStorage().(*tensor.GPUStorage[T]); ok {
+						kGS, kOK := fullK.GetStorage().(*tensor.GPUStorage[T])
+						vGS, vOK := fullV.GetStorage().(*tensor.GPUStorage[T])
+						if kOK && vOK {
+							maxKVLen := fbp.MaxSeqLen()
+							kvLen := cache.SeqLen() // CPU fallback value; kernel uses GPU counter
+							numBH := batchSize * gqa.numQueryHeads
+
+							// Allocate output: [batch*numQueryHeads, 1, headDim]
+							oElems := numBH * gqa.headDim
+							oGPU, allocErr := tensor.NewGPUStorage[T](oElems, qGS.DeviceID())
+							if allocErr == nil {
+								// Get stream for kernel launch.
+								realEng := compute.Engine[T](gqa.engine)
+								if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+									realEng = proxy.Real()
+								}
+								var streamPtr unsafe.Pointer
+								if sp, ok := realEng.(compute.StreamProvider); ok {
+									streamPtr = sp.Stream()
+								}
+
+								flashErr := kernels.FlashAttentionDecode(
+									qGS.Ptr(), kGS.Ptr(), vGS.Ptr(), oGPU.Ptr(),
+									numBH, maxKVLen, gqa.headDim, kvLen,
+									fbp.KVSeqLenPtr(),
+									gqa.numQueryHeads, gqa.numKeyValueHeads,
+									streamPtr,
+								)
+								if flashErr == nil {
+									oShape := []int{batchSize * gqa.numQueryHeads, 1, gqa.headDim}
+									attnOutputHeads, err = tensor.NewWithStorage[T](oShape, oGPU)
+									if err == nil {
+										flashDecodeUsed = true
+									}
+								} else {
+									_ = oGPU.Free()
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if !flashDecodeUsed {
+			// Fallback: variable-size KV view + cuBLAS SDPA.
+			// This path is used during prefill (seqLen > 1), CPU inference,
+			// or when the cache doesn't support full-buffer access.
+			var cachedK, cachedV *tensor.TensorNumeric[T]
 			if gqa.blockTableReader != nil {
 				cachedK, cachedV, _ = gqa.blockTableReader.ReadKV(gqa.LayerIndex)
 			}
@@ -646,10 +705,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 				return nil, err
 			}
 			kvSeqLen = cachedSeqLen
+		}
 	}
 
-	// Run SDPA (prefill, decode, or no-cache).
-	{
+	// Run SDPA (prefill, decode without flash, or no-cache).
+	// Skip when FlashAttentionDecode already computed the output above.
+	if !flashDecodeUsed {
 		// 3. Grouped Query Attention: expand K/V to match Q head count.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads

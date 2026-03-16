@@ -2,6 +2,7 @@ package generate
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -15,6 +16,24 @@ type CacheProvider[T tensor.Numeric] interface {
 	SeqLen() int
 	Reset()
 	Truncate(newSeqLen int)
+}
+
+// FullBufferProvider is an optional interface for caches that support
+// fixed-size (maxSeqLen) KV buffer access. This enables CUDA graph capture
+// for the decode attention loop: the FlashAttentionDecode kernel reads the
+// actual KV length from a GPU-resident counter (KVSeqLenPtr), so tensor
+// shapes stay fixed across graph replays.
+type FullBufferProvider[T tensor.Numeric] interface {
+	// GetFullBuffer returns GPU-backed KV tensors spanning the full
+	// pre-allocated buffer (maxSeqLen capacity) for the given layer.
+	// Shape is [batch, maxSeqLen, dim]. Returns nil if the layer is
+	// CPU-backed or not yet initialized.
+	GetFullBuffer(layer int) (k, v *tensor.TensorNumeric[T])
+	// MaxSeqLen returns the maximum sequence length (buffer capacity).
+	MaxSeqLen() int
+	// KVSeqLenPtr returns the device pointer to the GPU-resident int32
+	// KV sequence length counter. Returns nil if not allocated.
+	KVSeqLenPtr() unsafe.Pointer
 }
 
 type kvCacheKey struct{}
