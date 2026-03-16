@@ -156,7 +156,7 @@ can extend it via `transformerGraphOpts`. DeepSeek requires MLA + MoE layers
 - [x] T2.5 Wire all new architectures into buildArchGraph  Owner: Claude  Done: 2026-03-16
   - All cases added in Wave 1: mistral, qwen2, phi3/phi, deepseek_v3/deepseek2 all wired.
 
-- [ ] T2.6 End-to-end DGX verification for all 6 architectures  Owner: TBD  Est: 4h
+- [ ] T2.6 End-to-end DGX verification for all 6 architectures  Owner: TBD  Est: 4h  BLOCKED: DGX unreachable (192.168.86.250 offline 2026-03-16)
   - Deps: T2.5
   - AC: All 6 architectures produce coherent multi-sentence output. Benchmark throughput recorded for each.
   - Models: Gemma 3 1B Q4_K_M, Llama 3 8B Q4_K_M, Mistral 7B Q4_K_M, Qwen 2.5 7B Q4_K_M, Phi 3 mini Q4_K_M, DeepSeek-V2-Lite Q8_0.
@@ -174,10 +174,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T3.2 Implement download with resume and progress  Owner: Claude  Done: 2026-03-16
   - Branch feat/hf-download-resume. Downloader with Range resume, SHA256, progress callback. 7 tests, -race clean.
 
-- [ ] T3.3 Implement cache manifest and management  Owner: TBD  Est: 2h
-  - Deps: T3.2
-  - AC: JSON manifest tracks cached models. `List()` returns cached models with sizes. `Remove()` deletes model and updates manifest.
-  - Test: Unit tests for manifest CRUD operations.
+- [x] T3.3 Implement cache manifest and management  Owner: Claude  Done: 2026-03-16
+  - Branch feat/cache-manifest. cache.go with Add/Remove/List/FindByRepoAndFile, atomic SaveManifest. 9 tests, -race clean.
 
 - [ ] T3.4 Implement `zerfoo pull` CLI command  Owner: TBD  Est: 2h
   - Deps: T3.2, T3.3
