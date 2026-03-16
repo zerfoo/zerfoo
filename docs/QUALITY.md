@@ -115,10 +115,38 @@ FP16 conversion symbols. Fixed by updating the .so. Both FP16 and FP8 now
 fail with a GQA tensor storage length mismatch (`storage length (1536) does
 not match tensor size (6144)`), indicating a bug in the GQA FP16 compute path.
 
-## Linting
+## Static Analysis (2026-03-16)
 
-- golangci-lint v2 with project .golangci.yml
-- go vet: clean
+### go vet
+
+| Repo | Result | Notes |
+|------|--------|-------|
+| ztoken | PASS | Zero warnings |
+| ztensor | PASS* | 16 pre-existing purego unsafe.Pointer warnings only |
+| zerfoo | PASS* | Same 16 purego warnings (shared internal/ packages) |
+
+*Pre-existing purego `unsafe.Pointer` warnings are expected and intentional.
+These arise from dlopen-style GPU bindings via purego and cannot be avoided
+without CGo. They are safe because the pointer conversions follow the purego
+calling convention for passing device pointers to GPU runtime APIs.
+
+#### Pre-existing purego unsafe.Pointer Warnings (ztensor/zerfoo)
+
+| File | Line(s) | Package |
+|------|---------|---------|
+| internal/cuda/purego_darwin.go | 91 | cuda |
+| internal/cuda/runtime_purego.go | 60, 79, 94, 204 | cuda |
+| internal/hip/runtime_purego.go | 50, 69, 177 | hip |
+| internal/cudnn/cudnn_purego.go | 402 | cudnn |
+| internal/opencl/runtime_purego.go | 199, 298, 303, 308, 313 | opencl |
+| internal/tensorrt/tensorrt_purego.go | 271, 391 | tensorrt |
+
+### golangci-lint
+
+Not available on this machine. When available, use v2 with project .golangci.yml.
+
+### Other Linters
+
 - gosec: G704/G705 excluded (taint analysis false positives)
 
 ## Build
