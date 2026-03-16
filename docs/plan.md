@@ -177,16 +177,11 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T3.3 Implement cache manifest and management  Owner: Claude  Done: 2026-03-16
   - Branch feat/cache-manifest. cache.go with Add/Remove/List/FindByRepoAndFile, atomic SaveManifest. 9 tests, -race clean.
 
-- [ ] T3.4 Implement `zerfoo pull` CLI command  Owner: TBD  Est: 2h
-  - Deps: T3.2, T3.3
-  - AC: `zerfoo pull google/gemma-3-4b` downloads default Q4_K_M. `--quant Q8_0` selects quant. `zerfoo list` shows cached models. `zerfoo rm` removes.
-  - Package: cmd/
-  - Test: Integration test for pull/list/rm cycle.
+- [x] T3.4 Implement `zerfoo pull` CLI command  Owner: Claude  Done: 2026-03-16
+  - cmd/cli/pull.go (--quant), list.go, rm.go; registry/pull.go quant resolver. 44 tests, integration TestPullListRm_Integration with fake HF server.
 
-- [ ] T3.5 Integrate cache into zerfoo.Load()  Owner: TBD  Est: 2h
-  - Deps: T3.3, T4.1
-  - AC: `zerfoo.Load("google/gemma-3-4b")` checks cache, downloads if missing. `zerfoo.Load("/path/to/file.gguf")` still works. Path detection: starts with "/" or ".".
-  - Test: Unit test for path vs model-name detection. Integration test for cache hit/miss.
+- [x] T3.5 Integrate cache into zerfoo.Load()  Owner: Claude  Done: 2026-03-16
+  - api.go: Load() routes non-local IDs through loadFromHuggingFace(); cache hit → load local; cache miss → download + update manifest. model/huggingface/cache.go: FindByRepo(), CacheDir() helpers added.
 
 - [ ] T3.6 Run go vet and linter on model/huggingface/ and cmd/  Owner: TBD  Est: 30m
   - Deps: T3.4
@@ -222,10 +217,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T5.2 Implement token mask computation from CFG state  Owner: Claude  Done: 2026-03-16
   - Branch feat/tool-call-detection commit 32a3ed5. mask.go: TokenMask advances grammar per byte. 10 test cases (33 total), -race clean.
 
-- [ ] T5.3 Integrate grammar engine into generation pipeline  Owner: TBD  Est: 4h
-  - Deps: T5.2, T4.2
-  - AC: `model.Generate(ctx, prompt, zerfoo.WithSchema(schema))` produces guaranteed-valid JSON. Token mask applied before sampling at each decode step. Grammar engine runs on CPU in parallel with GPU forward pass.
-  - Test: Integration test: generate JSON matching a person schema (name + age), parse result with encoding/json.
+- [x] T5.3 Integrate grammar engine into generation pipeline  Owner: Claude  Done: 2026-03-16
+  - generate/grammar_mask.go: applyTokenMask + advanceGrammar. generate/generator.go: GrammarState in SamplingConfig, mask applied in sampleFromLogits, grammar advanced per token. inference/inference.go: WithGrammar(). api.go: WithSchema(). 8 tests, -race clean.
 
 - [ ] T5.4 Add response_format support to OpenAI API server  Owner: TBD  Est: 3h
   - Deps: T5.3
@@ -244,15 +237,11 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T6.2 Implement tool call detection and response formatting  Owner: Claude  Done: 2026-03-16
   - Branch feat/tool-call-detection commit c55f693. serve/tool_calls.go + server.go wiring. OpenAI-compatible tool_calls response.
 
-- [ ] T6.3 Add tool calling to OpenAI API server  Owner: TBD  Est: 3h
-  - Deps: T6.2
-  - AC: POST /v1/chat/completions with `tools` parameter produces tool_calls in response. Supports `tool_choice: "auto"` and `tool_choice: {"type": "function", "function": {"name": "..."}}`.
-  - Test: Integration test via HTTP client.
+- [x] T6.3 Add tool calling to OpenAI API server  Owner: Claude  Done: 2026-03-16
+  - serve/server.go: forced tool_choice implemented. serve/tool_calls_integration_test.go: 9 integration tests covering auto+forced tool_choice paths. 76 tests pass, -race clean.
 
-- [ ] T6.4 Add tool calling to high-level library API  Owner: TBD  Est: 2h
-  - Deps: T6.2, T4.2
-  - AC: `model.Chat(prompt, zerfoo.WithTools(tools...))` returns result with ToolCalls field.
-  - Test: Unit test with tool definitions.
+- [x] T6.4 Add tool calling to high-level library API  Owner: Claude  Done: 2026-03-16
+  - api.go: WithTools(), WithToolChoice(), ToolCall type, ToolCalls []ToolCall in GenerateResult. api_tool_call_test.go: 5 table-driven cases. -race clean.
 
 - [ ] T6.5 Run go vet and linter on tool calling code  Owner: TBD  Est: 30m
   - Deps: T6.4
