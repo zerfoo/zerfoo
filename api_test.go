@@ -77,6 +77,29 @@ func TestLoadFromHuggingFace_cacheMiss(t *testing.T) {
 	}
 }
 
+func TestLoad_EmptyModelID(t *testing.T) {
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("expected error for empty model ID, got nil")
+	}
+}
+
+func TestLoadFile_InvalidPath(t *testing.T) {
+	_, err := inference.LoadFile("/nonexistent/path/to/model.gguf")
+	if err == nil {
+		t.Fatal("expected error for non-existent GGUF file, got nil")
+	}
+}
+
+func TestLoadFile_WithOptions(t *testing.T) {
+	// LoadFile with options should still fail for a nonexistent file,
+	// confirming that options are accepted without panicking.
+	_, err := inference.LoadFile("/nonexistent/model.gguf", inference.WithMaxSeqLen(2048))
+	if err == nil {
+		t.Fatal("expected error for non-existent file with options, got nil")
+	}
+}
+
 func TestCosineSimilarity(t *testing.T) {
 	tests := []struct {
 		name string
