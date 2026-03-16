@@ -12,7 +12,7 @@ There is no production-grade ML inference framework written in Go. Python domina
 
 Zerfoo has grown from a proof-of-concept into a substantial framework:
 
-- **5 repositories**, ~50,000+ lines of Go, ~5,000 lines of CUDA C, ~2,000 lines of ARM/x86 assembly
+- **7 repositories (6 active, 1 archived)**, ~50,000+ lines of Go across repos, ~5,000 lines of CUDA C, ~2,000 lines of ARM/x86 assembly
 - **6 model architectures** running: Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3
 - **234 tok/s** on Gemma 3 1B Q4_K_M — 18.8% faster than Ollama
 - **25+ custom CUDA kernels** with zero-CGo purego bindings
@@ -30,7 +30,7 @@ This is real. The framework runs real models at competitive speeds.
 
 Key initiatives:
 
-1. **Fix RMSNorm fusion for ONNX path** — Currently the decomposed ONNX path runs at 4-16 tok/s because fused RMSNorm produces wrong numerical output. Fixing this unblocks a 3-6x improvement for all ONNX-imported models.
+1. **GGUF-only inference** — GGUF is now the sole model format. The ONNX decomposed path has been removed (ADR-037). zonnx now outputs GGUF directly.
 
 2. **Expand model coverage** — Add support for Llama 4, Gemma 3n, Phi-4, Command R, and other popular open-weights models as they release. The architecture builder system makes this straightforward.
 
@@ -80,7 +80,7 @@ Key initiatives:
 
 1. **Model hub CLI** — `zerfoo pull`, `zerfoo push`, `zerfoo list` with HuggingFace and custom registry support.
 
-2. **GGUF-first strategy** — GGUF is the community standard for quantized models. Invest in GGUF loading performance and compatibility over ONNX.
+2. **GGUF-only strategy** — GGUF is the sole model format. ZMF has been removed and the zmf repo is archived. zonnx now converts ONNX models to GGUF.
 
 3. **Multimodal** — Vision-language models (LLaVA, Gemma 3 with SigLIP encoder). The SigLIP architecture support is already partially built.
 
@@ -112,4 +112,4 @@ Key initiatives:
 - **Pre-training at scale** — Zerfoo is not for training GPT-5. Focus is inference + fine-tuning.
 - **Python API** — Go-first. If Python users want Zerfoo, they can use the OpenAI-compatible API.
 - **Custom hardware backends** — Support NVIDIA, AMD, and OpenCL. Don't chase TPU, Gaudi, or custom ASICs.
-- **ONNX runtime replacement** — zonnx converts ONNX to ZMF at build time. Runtime ONNX execution is not a goal.
+- **ONNX runtime replacement** — zonnx converts ONNX to GGUF at build time. Runtime ONNX execution is not a goal.
