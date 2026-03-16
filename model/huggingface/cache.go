@@ -137,3 +137,22 @@ func (m *CacheManifest) FindByRepoAndFile(repoID, filename string) (*CachedModel
 	}
 	return nil, false
 }
+
+// FindByRepo finds the first cached model matching the given repo ID.
+func (m *CacheManifest) FindByRepo(repoID string) (*CachedModel, bool) {
+	for i, model := range m.Models {
+		if model.RepoID == repoID {
+			return &m.Models[i], true
+		}
+	}
+	return nil, false
+}
+
+// CacheDir returns the directory where model files are stored (~/.cache/zerfoo/models/).
+func CacheDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("huggingface: home directory: %w", err)
+	}
+	return filepath.Join(home, ".cache", "zerfoo", "models"), nil
+}

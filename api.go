@@ -2,12 +2,18 @@ package zerfoo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/model/huggingface"
+	"github.com/zerfoo/zerfoo/serve"
 )
 
 // Model is a loaded model ready for inference.
@@ -19,9 +25,14 @@ type Model struct {
 	generateFunc func(ctx context.Context, prompt string) (string, error)
 }
 
+// defaultQuant is the preferred quantization when none is specified.
+const defaultQuant = "Q4_K_M"
+
 // Load loads a model from a file path or HuggingFace model ID.
 // Paths starting with "/", "./" or "../" are treated as local GGUF files.
-// All other strings are treated as HuggingFace model IDs (not yet supported).
+// All other strings are treated as HuggingFace model IDs (e.g. "google/gemma-3-4b"
+// or "google/gemma-3-4b/Q8_0"). If the model is not cached locally it will be
+// downloaded from HuggingFace.
 func Load(pathOrID string) (*Model, error) {
 	if isLocalPath(pathOrID) {
 		m, err := inference.LoadFile(pathOrID)
@@ -30,7 +41,81 @@ func Load(pathOrID string) (*Model, error) {
 		}
 		return &Model{inner: m}, nil
 	}
-	return nil, fmt.Errorf("HuggingFace download not yet available in this version; use a local file path")
+	return loadFromHuggingFace(pathOrID)
+}
+
+// parseModelID splits a model identifier into repo ID and optional quant.
+// Accepted formats:
+//
+//	"owner/model"            → ("owner/model", "Q4_K_M")
+//	"owner/model/Q8_0"       → ("owner/model", "Q8_0")
+func parseModelID(id string) (repoID, quant string) {
+	parts := strings.Split(id, "/")
+	if len(parts) == 3 {
+		return parts[0] + "/" + parts[1], parts[2]
+	}
+	return id, defaultQuant
+}
+
+// loadFromHuggingFace resolves a HuggingFace model ID through the cache,
+// downloading the GGUF file if not already present.
+func loadFromHuggingFace(id string) (*Model, error) {
+	repoID, quant := parseModelID(id)
+
+	manifest, err := huggingface.LoadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", id, err)
+	}
+
+	// Cache hit: model already downloaded.
+	if cached, ok := manifest.FindByRepo(repoID); ok {
+		if _, statErr := os.Stat(cached.Path); statErr == nil {
+			m, loadErr := inference.LoadFile(cached.Path)
+			if loadErr != nil {
+				return nil, fmt.Errorf("load cached %q: %w", cached.Path, loadErr)
+			}
+			return &Model{inner: m}, nil
+		}
+		// File missing on disk — fall through to re-download.
+	}
+
+	// Cache miss: resolve the best GGUF file and download it.
+	client := huggingface.NewClient()
+	fileInfo, err := client.ResolveGGUF(repoID, quant)
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", id, err)
+	}
+
+	cacheDir, err := huggingface.CacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", id, err)
+	}
+
+	destPath := filepath.Join(cacheDir, repoID, fileInfo.Filename)
+	downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repoID, fileInfo.Filename)
+
+	dl := huggingface.NewDownloader(nil)
+	if err := dl.Download(context.Background(), downloadURL, destPath); err != nil {
+		return nil, fmt.Errorf("load %q: download: %w", id, err)
+	}
+
+	// Update manifest.
+	info, _ := os.Stat(destPath)
+	manifest.Add(huggingface.CachedModel{
+		RepoID:   repoID,
+		Filename: fileInfo.Filename,
+		Path:     destPath,
+		Size:     info.Size(),
+	})
+	if err := huggingface.SaveManifest(manifest); err != nil {
+		return nil, fmt.Errorf("load %q: save manifest: %w", id, err)
+	}
+
+	m, err := inference.LoadFile(destPath)
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", id, err)
+	}
+	return &Model{inner: m}, nil
 }
 
 // isLocalPath returns true if the string looks like a local file path.
@@ -64,9 +149,22 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	if gopts.topP > 0 && gopts.topP < 1.0 {
 		infOpts = append(infOpts, inference.WithTopP(float64(gopts.topP)))
 	}
+	if gopts.schema != nil {
+		g, err := grammar.Convert(gopts.schema)
+		if err != nil {
+			return nil, fmt.Errorf("convert schema to grammar: %w", err)
+		}
+		infOpts = append(infOpts, inference.WithGrammar(g))
+	}
 
 	start := time.Now()
-	text, err := m.inner.Generate(ctx, prompt, infOpts...)
+	var text string
+	var err error
+	if m.generateFunc != nil {
+		text, err = m.generateFunc(ctx, prompt)
+	} else {
+		text, err = m.inner.Generate(ctx, prompt, infOpts...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -74,18 +172,37 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 
 	// Estimate token count from the tokenizer.
 	tokenCount := 0
-	tok := m.inner.Tokenizer()
-	if tok != nil {
-		if ids, encErr := tok.Encode(text); encErr == nil {
-			tokenCount = len(ids)
+	if m.inner != nil {
+		tok := m.inner.Tokenizer()
+		if tok != nil {
+			if ids, encErr := tok.Encode(text); encErr == nil {
+				tokenCount = len(ids)
+			}
 		}
 	}
 
-	return &GenerateResult{
+	result := &GenerateResult{
 		Text:       text,
 		TokenCount: tokenCount,
 		Duration:   duration,
-	}, nil
+	}
+
+	// Detect tool calls if tools are configured.
+	if len(gopts.tools) > 0 {
+		tc := serve.ToolChoice{Mode: "auto"}
+		if gopts.toolChoice != nil {
+			tc = *gopts.toolChoice
+		}
+		if tcResult, ok := serve.DetectToolCall(text, gopts.tools, tc); ok {
+			result.ToolCalls = []ToolCall{{
+				ID:           tcResult.ID,
+				FunctionName: tcResult.FunctionName,
+				Arguments:    tcResult.Arguments,
+			}}
+		}
+	}
+
+	return result, nil
 }
 
 // Embed returns embeddings for the given texts. Each input string is tokenized,
@@ -116,6 +233,7 @@ type GenerateResult struct {
 	Text       string
 	TokenCount int
 	Duration   time.Duration
+	ToolCalls  []ToolCall
 }
 
 // Embedding holds a text embedding vector.
@@ -148,6 +266,9 @@ type generateOptions struct {
 	maxTokens   int
 	temperature float32
 	topP        float32
+	tools       []serve.Tool
+	toolChoice  *serve.ToolChoice
+	schema      *grammar.JSONSchema
 }
 
 // GenerateOption is an option for Generate.
@@ -247,4 +368,35 @@ func (m *Model) ChatStream(ctx context.Context, prompt string, opts ...GenerateO
 	}()
 
 	return ch, nil
+}
+
+// ToolCall represents a tool invocation detected in model output.
+type ToolCall struct {
+	ID           string
+	FunctionName string
+	Arguments    json.RawMessage
+}
+
+// WithTools configures the tools available for tool call detection.
+// When tools are provided, Generate will attempt to detect tool calls
+// in the model output and populate GenerateResult.ToolCalls.
+func WithTools(tools ...serve.Tool) GenerateOption {
+	return func(o *generateOptions) {
+		o.tools = tools
+	}
+}
+
+// WithToolChoice sets the tool choice mode for tool call detection.
+func WithToolChoice(choice serve.ToolChoice) GenerateOption {
+	return func(o *generateOptions) {
+		o.toolChoice = &choice
+	}
+}
+
+// WithSchema enables grammar-guided decoding. The model's output will be
+// constrained to valid JSON matching the given schema.
+func WithSchema(schema grammar.JSONSchema) GenerateOption {
+	return func(o *generateOptions) {
+		o.schema = &schema
+	}
 }
