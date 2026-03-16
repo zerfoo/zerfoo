@@ -132,12 +132,11 @@ func decodeF32Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 }
 
 func decodeF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
-	data := make([]float32, numElements)
-	for i := range numElements {
-		bits := binary.LittleEndian.Uint16(raw[i*2 : i*2+2])
-		data[i] = float16.FromBits(bits).ToFloat32()
+	if len(raw) < numElements*2 {
+		return nil, fmt.Errorf("F16 decode: need %d bytes, got %d", numElements*2, len(raw))
 	}
-	return tensor.New[float32](shape, data)
+	fp16 := tensor.NewFloat16StorageFromRaw(raw[:numElements*2], numElements)
+	return tensor.NewWithStorage[float32](shape, fp16)
 }
 
 func decodeQ4Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
