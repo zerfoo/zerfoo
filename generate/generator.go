@@ -13,6 +13,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/ztensor/tensor"
@@ -35,7 +36,9 @@ type SamplingConfig struct {
 	RepetitionPenalty float64  // Penalize repeated tokens; 1.0 = disabled
 	MaxNewTokens      int      // Maximum number of tokens to generate
 	StopTokenIDs      []int    // Stop when any of these token IDs are generated
-	StopStrings       []string // Stop when output contains any of these strings
+	StopStrings       []string         // Stop when output contains any of these strings
+	GrammarState      *grammar.Grammar // Optional grammar for constrained decoding
+	grammarVocab      []string         // Cached token strings for grammar masking (built lazily)
 }
 
 // DefaultSamplingConfig returns a SamplingConfig with sensible defaults.
@@ -225,6 +228,17 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		sc.MaxNewTokens = 256
 	}
 
+	// Build grammar vocab cache once if grammar-constrained decoding is active.
+	if sc.GrammarState != nil {
+		vocabSize := gen.tokenizer.VocabSize()
+		sc.grammarVocab = make([]string, vocabSize)
+		for i := range vocabSize {
+			if tok, ok := gen.tokenizer.GetToken(i); ok {
+				sc.grammarVocab[i] = tok
+			}
+		}
+	}
+
 	promptIDs, err := gen.tokenizer.Encode(prompt)
 	if err != nil {
 		return "", fmt.Errorf("encode prompt: %w", err)
@@ -283,6 +297,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 
 	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
 		log.Printf("[DEBUG_ONNX] Generate: prefill produced token %d, promptIDs=%v", nextToken, promptIDs)
+	}
+
+	// Advance grammar state after sampling.
+	if sc.GrammarState != nil {
+		sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
 	}
 
 	if stopSet[nextToken] {
@@ -346,6 +365,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 				nextToken, cacheSeq, len(generatedIDs)+1)
 		}
 
+		// Advance grammar state after sampling.
+		if sc.GrammarState != nil {
+			sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
+		}
+
 		if stopSet[nextToken] {
 			break
 		}
@@ -353,6 +377,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 
 		if stopped, text := gen.checkStop(generatedIDs, sc.StopStrings); stopped {
 			return text, nil
+		}
+
+		// Stop early if grammar is complete (valid JSON fully generated).
+		if sc.GrammarState != nil && sc.GrammarState.IsComplete() {
+			break
 		}
 	}
 
@@ -393,7 +422,8 @@ func (gen *Generator[T]) sampleFromLogits(
 
 	// GPU argmax fast path: for greedy decoding with GPU-resident logits,
 	// run argmax entirely on GPU. Copies back 4 bytes instead of ~1MB.
-	if sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
+	// Disabled when grammar-constrained decoding is active (must mask first).
+	if sc.GrammarState == nil && sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
 		if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
 			if am, ok := gen.engine.(compute.GPUArgmaxer); ok {
 				// For [1, seqLen, vocabSize], the last position starts at (seqLen-1)*vocabSize.
@@ -462,7 +492,8 @@ func (gen *Generator[T]) sampleFromLogits(
 
 	// Greedy fast path: find argmax directly in the T buffer without
 	// allocating a float64 slice. This eliminates 2MB of allocation per token.
-	if sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
+	// Disabled when grammar-constrained decoding is active (must mask first).
+	if sc.GrammarState == nil && sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
 		best := 0
 		bestVal := data[lastStart]
 		for i := 1; i < vocabSize; i++ {
@@ -477,6 +508,12 @@ func (gen *Generator[T]) sampleFromLogits(
 	logitsF64 := make([]float64, vocabSize)
 	for i := range vocabSize {
 		logitsF64[i] = float64(data[lastStart+i])
+	}
+
+	// Apply grammar token mask before any other logit modification.
+	if sc.GrammarState != nil && len(sc.grammarVocab) > 0 {
+		mask := grammar.TokenMask(sc.GrammarState, sc.grammarVocab)
+		applyTokenMask(logitsF64, mask)
 	}
 
 	if sc.RepetitionPenalty > 0 && sc.RepetitionPenalty != 1.0 {
