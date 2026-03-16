@@ -52,6 +52,28 @@ func TestMapTensorName_Gemma(t *testing.T) {
 	}
 }
 
+func TestMapTensorName_Phi3_QKV(t *testing.T) {
+	tests := []struct {
+		gguf string
+		want string
+	}{
+		{"blk.0.attn_qkv.weight", "model.layers.0.self_attn.qkv_proj.weight"},
+		{"blk.5.attn_qkv.bias", "model.layers.5.self_attn.qkv_proj.bias"},
+		{"blk.31.attn_qkv.weight", "model.layers.31.self_attn.qkv_proj.weight"},
+		// Ensure other mappings still work for phi3.
+		{"blk.0.attn_q.weight", "model.layers.0.self_attn.q_proj.weight"},
+		{"blk.0.attn_output.weight", "model.layers.0.self_attn.o_proj.weight"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.gguf, func(t *testing.T) {
+			got := MapTensorName("phi3", tt.gguf)
+			if got != tt.want {
+				t.Errorf("MapTensorName(phi3, %q) = %q, want %q", tt.gguf, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMapTensorName_Unknown(t *testing.T) {
 	// Unknown names pass through unchanged.
 	got := MapTensorName("llama", "some.unknown.tensor")
