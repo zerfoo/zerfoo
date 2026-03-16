@@ -152,11 +152,8 @@ can extend it via `transformerGraphOpts`. DeepSeek requires MLA + MoE layers
   - Implementation: Extend `transformerGraphOpts` with `attnBias bool`. Load `blk.N.attn_q.bias`, `blk.N.attn_k.bias`, `blk.N.attn_v.bias` when present. Wire "qwen2" case.
   - Test: Unit test for bias application. Integration test loading Qwen 2.5 GGUF.
 
-- [ ] T2.3 Implement buildPhiGraph -- partial rotary factor  Owner: TBD  Est: 4h
-  - Deps: none
-  - AC: Phi 3 or Phi 4 GGUF produces coherent text on DGX Spark. Partial rotary embedding applied to correct fraction of head dimensions.
-  - Implementation: Extend `transformerGraphOpts` with `partialRotaryFactor float32`. When > 0 and < 1, apply RoPE to first `factor * headDim` dims, pass-through the rest. Wire "phi3"/"phi" case.
-  - Test: Unit test for partial rotary split. Integration test loading Phi GGUF.
+- [x] T2.3 Implement buildPhiGraph -- partial rotary factor  Owner: Claude  Done: 2026-03-16
+  - arch_phi.go with partialRotaryFactor in transformerGraphOpts. Merged in Wave 1 (missed in plan update).
 
 - [x] T2.4 Implement buildDeepSeekGraph -- MLA + MoE  Owner: Claude  Done: 2026-03-16
   - arch_deepseek.go + MLA/MoE fields in gguf.ModelConfig + tests. DGX verification needed.
