@@ -81,6 +81,26 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	if s.collector == nil {
 		s.collector = runtime.Nop()
 	}
+	// Auto-wire batch handler to use GenerateBatch when a BatchScheduler
+	// is attached but no handler has been configured.
+	if s.batch != nil && s.batch.config.Handler == nil {
+		s.batch.config.Handler = func(ctx context.Context, reqs []BatchRequest) []BatchResult {
+			prompts := make([]string, len(reqs))
+			for i, r := range reqs {
+				prompts[i] = r.Prompt
+			}
+			outputs, err := s.model.GenerateBatch(ctx, prompts)
+			results := make([]BatchResult, len(reqs))
+			for i := range results {
+				if err != nil {
+					results[i] = BatchResult{Err: err}
+				} else {
+					results[i] = BatchResult{Value: outputs[i]}
+				}
+			}
+			return results
+		}
+	}
 	s.metrics = NewServerMetrics(s.collector)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.recoveryMiddleware(s.handleChatCompletions))
 	s.mux.HandleFunc("POST /v1/completions", s.recoveryMiddleware(s.handleCompletions))
