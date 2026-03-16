@@ -183,9 +183,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T3.5 Integrate cache into zerfoo.Load()  Owner: Claude  Done: 2026-03-16
   - api.go: Load() routes non-local IDs through loadFromHuggingFace(); cache hit → load local; cache miss → download + update manifest. model/huggingface/cache.go: FindByRepo(), CacheDir() helpers added.
 
-- [ ] T3.6 Run go vet and linter on model/huggingface/ and cmd/  Owner: TBD  Est: 30m
-  - Deps: T3.4
-  - AC: Zero warnings.
+- [x] T3.6 Run go vet and linter on model/huggingface/ and cmd/  Owner: Claude  Done: 2026-03-16
+  - Zero warnings. Also fixed pre-existing TestPredictCommand_Run_FullPath by updating zmf→gguf loader registration (commit 99a7b72).
 
 ### E4: Developer Experience -- High-Level API
 
@@ -220,10 +219,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T5.3 Integrate grammar engine into generation pipeline  Owner: Claude  Done: 2026-03-16
   - generate/grammar_mask.go: applyTokenMask + advanceGrammar. generate/generator.go: GrammarState in SamplingConfig, mask applied in sampleFromLogits, grammar advanced per token. inference/inference.go: WithGrammar(). api.go: WithSchema(). 8 tests, -race clean.
 
-- [ ] T5.4 Add response_format support to OpenAI API server  Owner: TBD  Est: 3h
-  - Deps: T5.3
-  - AC: POST /v1/chat/completions with `response_format.type = "json_schema"` produces schema-constrained output. Matches OpenAI API spec for json_schema response format.
-  - Test: Integration test via HTTP client.
+- [x] T5.4 Add response_format support to OpenAI API server  Owner: Claude  Done: 2026-03-16
+  - serve/server.go: ResponseFormat + JSONSchemaFormat types, grammar wired via inference.WithGrammar(). 5 integration tests (json_schema, json_object, invalid schema→400). 156 tests pass.
 
 - [ ] T5.5 Run go vet and linter on generate/grammar/  Owner: TBD  Est: 30m
   - Deps: T5.4
@@ -243,9 +240,8 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 - [x] T6.4 Add tool calling to high-level library API  Owner: Claude  Done: 2026-03-16
   - api.go: WithTools(), WithToolChoice(), ToolCall type, ToolCalls []ToolCall in GenerateResult. api_tool_call_test.go: 5 table-driven cases. -race clean.
 
-- [ ] T6.5 Run go vet and linter on tool calling code  Owner: TBD  Est: 30m
-  - Deps: T6.4
-  - AC: Zero warnings.
+- [x] T6.5 Run go vet and linter on tool calling code  Owner: Claude  Done: 2026-03-16
+  - serve/ and api.go tool calling code already clean. go vet zero warnings. All tests pass -race.
 
 ### E7: API Stability Audit
 
