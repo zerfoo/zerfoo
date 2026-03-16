@@ -22,12 +22,14 @@ zerfoo pull gemma-3-1b-q4
 
 ## Available Examples
 
-| Example | Description |
-|---------|-------------|
-| [`inference/`](inference/) | Load a GGUF model and generate text from a prompt. Demonstrates the core `inference.LoadFile` and `model.Generate` API with sampling options (temperature, top-K, top-P) and token streaming. |
-| [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server backed by a GGUF model. Demonstrates `serve.NewServer` with graceful shutdown. Drop-in replacement for any OpenAI client. |
-| [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler. Demonstrates the pattern of loading a model once at startup and serving many concurrent requests through your own routing and request/response types. |
-| [`chat/`](chat/) | Interactive chatbot CLI. Demonstrates the `zerfoo.Load` and `model.Chat` one-line API with a readline loop. |
+| Example | Description | Prerequisites |
+|---------|-------------|---------------|
+| [`inference/`](inference/) | Load a GGUF model and generate text from a prompt. Demonstrates the core `inference.LoadFile` and `model.Generate` API with sampling options (temperature, top-K, top-P) and token streaming. | GGUF model file |
+| [`chat/`](chat/) | Interactive chatbot CLI. Demonstrates the `zerfoo.Load` and `model.Chat` one-line API with a readline loop. | GGUF model file |
+| [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler. Demonstrates the pattern of loading a model once at startup and serving many concurrent requests through your own routing and request/response types. | GGUF model file |
+| [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server backed by a GGUF model. Demonstrates `serve.NewServer` with graceful shutdown. Drop-in replacement for any OpenAI client. | GGUF model file |
+| [`json-output/`](json-output/) | Grammar-guided decoding that constrains model output to valid JSON matching a predefined schema. Useful for structured data extraction and tool-calling pipelines. | GGUF model file |
+| [`rag/`](rag/) | Retrieval-augmented generation pattern: embed a document corpus, retrieve the most relevant documents via cosine similarity, and generate answers grounded in those facts using `model.Embed` and `model.Chat`. | GGUF model file |
 
 ## Running an Example
 
