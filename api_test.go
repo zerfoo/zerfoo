@@ -258,6 +258,168 @@ func TestEmbed_noEmbeddingWeights(t *testing.T) {
 	}
 }
 
+func TestChat_returnsGeneratedText(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "Hello, I am a language model.", nil
+		},
+	}
+
+	text, err := m.Chat("hi")
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if text != "Hello, I am a language model." {
+		t.Errorf("Chat = %q, want %q", text, "Hello, I am a language model.")
+	}
+}
+
+func TestChat_emptyPrompt(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "response to empty", nil
+		},
+	}
+
+	text, err := m.Chat("")
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+	if text != "response to empty" {
+		t.Errorf("Chat = %q, want %q", text, "response to empty")
+	}
+}
+
+func TestChat_propagatesError(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "", context.Canceled
+		},
+	}
+
+	_, err := m.Chat("hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGenerate_returnsResult(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "generated text", nil
+		},
+	}
+
+	result, err := m.Generate(context.Background(), "test prompt")
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Generate returned nil result")
+	}
+	if result.Text != "generated text" {
+		t.Errorf("result.Text = %q, want %q", result.Text, "generated text")
+	}
+	if result.Duration <= 0 {
+		t.Errorf("result.Duration = %v, want > 0", result.Duration)
+	}
+}
+
+func TestGenerate_nilContext(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			if ctx == nil {
+				return "", context.Canceled
+			}
+			return "ok", nil
+		},
+	}
+
+	//nolint:staticcheck // SA1012: deliberately passing nil context to test behavior
+	_, err := m.Generate(nil, "test")
+	if err == nil {
+		t.Log("Generate with nil context succeeded (generateFunc handled it)")
+	}
+	_ = err
+}
+
+func TestGenerate_withOptions(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "options applied", nil
+		},
+	}
+
+	result, err := m.Generate(context.Background(), "test",
+		WithGenMaxTokens(100),
+		WithGenTemperature(0.7),
+		WithGenTopP(0.9),
+	)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if result.Text != "options applied" {
+		t.Errorf("result.Text = %q, want %q", result.Text, "options applied")
+	}
+}
+
+func TestGenerate_emptyPrompt(t *testing.T) {
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			if prompt == "" {
+				return "empty prompt response", nil
+			}
+			return "non-empty", nil
+		},
+	}
+
+	result, err := m.Generate(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if result.Text != "empty prompt response" {
+		t.Errorf("result.Text = %q, want %q", result.Text, "empty prompt response")
+	}
+}
+
+func TestGenerate_contextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately.
+
+	m := &Model{
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "", ctx.Err()
+		},
+	}
+
+	_, err := m.Generate(ctx, "test")
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
+	}
+}
+
+func TestGenerate_withTokenizer(t *testing.T) {
+	tok := ztoken.NewWhitespaceTokenizer()
+	tok.AddToken("hello")
+	tok.AddToken("world")
+	inner := inference.NewTestModel(nil, tok, nil, inference.ModelMetadata{}, nil)
+
+	m := &Model{
+		inner: inner,
+		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			return "hello world", nil
+		},
+	}
+
+	result, err := m.Generate(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if result.TokenCount == 0 {
+		t.Error("expected non-zero TokenCount when tokenizer is available")
+	}
+}
+
 func TestChatStream_nilModel(t *testing.T) {
 	m := &Model{}
 	ch, err := m.ChatStream(context.Background(), "hello")
