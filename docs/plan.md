@@ -117,10 +117,8 @@ structured output, and tool calling.
 - [x] T1.4 Fix TestBatchGenerate race condition  Owner: Claude  Done: 2026-03-16
   - Fix: sync.Mutex on Generator serializes Generate/GenerateStream. TestGenerate_ConcurrentSafety regression test. go test -race -count=10 passes.
 
-- [ ] T1.5 Release ztensor v0.2.0  Owner: TBD  Est: 1h
-  - Deps: T1.3 (CUDA graph fix lands in ztensor)
-  - AC: Git tag v0.2.0 on ztensor repo. release-please PR merged. CI green.
-  - Repo: ztensor
+- [x] T1.5 Release ztensor v0.2.0  Owner: Claude  Done: 2026-03-16
+  - Tag SHA: c24092c67728b2ef23ba1dcc7fd3daa042e79381. go build/test/vet all clean.
 
 - [x] T1.6 Release ztoken v0.2.0  Owner: Claude  Done: 2026-03-16
   - CHANGELOG created. Tag v0.2.0 created locally. Human must push: cd ztoken && git push origin main && git push origin v0.2.0
