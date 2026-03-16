@@ -139,92 +139,92 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 
 ### E1: Create ztensor Repository
 
-- [ ] T1.1 Create github.com/zerfoo/ztensor repo on GitHub  Owner: TBD  Est: 15m
+- [x] T1.1 Create github.com/zerfoo/ztensor repo on GitHub  Owner: TBD  Est: 15m
   - Acceptance: Empty repo exists with Apache 2.0 LICENSE.
-- [ ] T1.2 Initialize go.mod and repo scaffolding  Owner: TBD  Est: 30m
+- [x] T1.2 Initialize go.mod and repo scaffolding  Owner: TBD  Est: 30m
   - Create go.mod (module github.com/zerfoo/ztensor, go 1.25).
   - Create .gitignore, Makefile with test/lint/bench targets.
   - Deps: T1.1.
   - Acceptance: `go build ./...` succeeds on empty module.
-- [ ] T1.3 Copy leaf packages: types/, log/, metrics/runtime/  Owner: TBD  Est: 30m
+- [x] T1.3 Copy leaf packages: types/, log/, metrics/runtime/  Owner: TBD  Est: 30m
   - Zero internal imports. Copy verbatim, update import paths.
   - Deps: T1.2.
   - Acceptance: `go test ./types/... ./log/... ./metrics/...` passes.
-- [ ] T1.4 Copy numeric/ package  Owner: TBD  Est: 30m
+- [x] T1.4 Copy numeric/ package  Owner: TBD  Est: 30m
   - Add float16 and float8 to go.mod. Update imports.
   - Deps: T1.2.
   - Acceptance: `go test ./numeric/...` passes.
-- [ ] T1.5 Copy internal/ GPU and utility packages  Owner: TBD  Est: 2h
+- [x] T1.5 Copy internal/ GPU and utility packages  Owner: TBD  Est: 2h
   - Copy: cuda/, cublas/, cudnn/, gpuapi/, hip/, miopen/, nccl/, opencl/,
     clblast/, rocblas/, tensorrt/, xblas/, workerpool/, codegen/.
   - Update all import paths.
   - Deps: T1.2.
   - Acceptance: `go build ./internal/...` compiles. `go vet` passes.
   - Risk: Assembly files (.s) reference Go symbols. Verify with go vet.
-- [ ] T1.6 Copy device/ package  Owner: TBD  Est: 30m
+- [x] T1.6 Copy device/ package  Owner: TBD  Est: 30m
   - Depends on internal/cuda, internal/hip, internal/opencl.
   - Deps: T1.5.
   - Acceptance: `go test ./device/...` passes.
-- [ ] T1.7 Copy tensor/ package  Owner: TBD  Est: 1h
+- [x] T1.7 Copy tensor/ package  Owner: TBD  Est: 1h
   - Depends on device/, internal/gpuapi/, internal/cuda/, float16, float8.
   - Copy testing/testutils/ too.
   - Deps: T1.5, T1.6.
   - Acceptance: `go test ./tensor/...` passes.
-- [ ] T1.8 Copy compute/ package  Owner: TBD  Est: 1h
+- [x] T1.8 Copy compute/ package  Owner: TBD  Est: 1h
   - Depends on tensor/, numeric/, log/, metrics/, internal/*.
   - Deps: T1.3, T1.4, T1.5, T1.7.
   - Acceptance: `go test ./compute/...` passes.
-- [ ] T1.9 Copy graph/ package  Owner: TBD  Est: 1h
+- [x] T1.9 Copy graph/ package  Owner: TBD  Est: 1h
   - Depends on tensor/, compute/, types/, internal/cuda/.
   - Include fusion.go (it moves to ztensor even though zerfoo no longer
     needs it -- ztensor users might).
   - Deps: T1.3, T1.7, T1.8.
   - Acceptance: `go test ./graph/...` passes.
-- [ ] T1.10 Run full ztensor test suite and linter  Owner: TBD  Est: 30m
+- [x] T1.10 Run full ztensor test suite and linter  Owner: TBD  Est: 30m
   - `go test ./...`, `go vet ./...`.
   - Deps: T1.9.
   - Acceptance: Zero failures, zero vet errors.
-- [ ] T1.11 Add CI workflow, GoReleaser, release-please  Owner: TBD  Est: 30m
+- [x] T1.11 Add CI workflow, GoReleaser, release-please  Owner: TBD  Est: 30m
   - Deps: T1.10.
   - Acceptance: CI passes on push.
-- [ ] T1.12 Write README.md  Owner: TBD  Est: 30m
+- [x] T1.12 Write README.md  Owner: TBD  Est: 30m
   - Deps: T1.10.
   - Acceptance: README has module name, purpose, install, usage example.
-- [ ] T1.13 Tag v0.1.0  Owner: TBD  Est: 15m
+- [x] T1.13 Tag v0.1.0  Owner: TBD  Est: 15m
   - Deps: T1.10, T1.11, T1.12.
   - Acceptance: `go get github.com/zerfoo/ztensor@v0.1.0` works.
 
 ### E2: Create ztoken Repository
 
-- [ ] T2.1 Create github.com/zerfoo/ztoken repo on GitHub  Owner: TBD  Est: 15m
+- [x] T2.1 Create github.com/zerfoo/ztoken repo on GitHub  Owner: TBD  Est: 15m
   - Acceptance: Empty repo with Apache 2.0 LICENSE.
-- [ ] T2.2 Initialize go.mod and scaffolding  Owner: TBD  Est: 15m
+- [x] T2.2 Initialize go.mod and scaffolding  Owner: TBD  Est: 15m
   - Deps: T2.1.
   - Acceptance: `go build ./...` succeeds.
-- [ ] T2.3 Copy pkg/tokenizer/ as root package  Owner: TBD  Est: 30m
+- [x] T2.3 Copy pkg/tokenizer/ as root package  Owner: TBD  Est: 30m
   - Rename package to `ztoken`. Include testdata/.
   - Zero internal imports to update.
   - Deps: T2.2.
   - Acceptance: `go test ./...` passes.
-- [ ] T2.4 Extract GGUF tokenizer loader  Owner: TBD  Est: 1h
+- [x] T2.4 Extract GGUF tokenizer loader  Owner: TBD  Est: 1h
   - Copy model/gguf/tokenizer.go to ztoken/gguf/.
   - Define minimal metadata interface to avoid pulling full GGUF parser.
   - Deps: T2.3.
   - Acceptance: `go test ./gguf/...` passes.
   - Risk: May need small amount of GGUF type duplication. Keep under 100 lines.
-- [ ] T2.5 Run test suite and linter  Owner: TBD  Est: 15m
+- [x] T2.5 Run test suite and linter  Owner: TBD  Est: 15m
   - Deps: T2.4.
   - Acceptance: Zero failures.
-- [ ] T2.6 Add CI, GoReleaser, release-please, README  Owner: TBD  Est: 30m
+- [x] T2.6 Add CI, GoReleaser, release-please, README  Owner: TBD  Est: 30m
   - Deps: T2.5.
   - Acceptance: CI passes, README has usage example.
-- [ ] T2.7 Tag v0.1.0  Owner: TBD  Est: 15m
+- [x] T2.7 Tag v0.1.0  Owner: TBD  Est: 15m
   - Deps: T2.5, T2.6.
   - Acceptance: `go get github.com/zerfoo/ztoken@v0.1.0` works.
 
 ### E3: Remove ZMF from zerfoo
 
-- [ ] T3.1 Delete ZMF model loading code  Owner: TBD  Est: 1h
+- [x] T3.1 Delete ZMF model loading code  Owner: TBD  Est: 1h
   - Delete: model/builder.go, model/zmf_loader.go, model/zmf_exporter.go,
     model/zmf_mmap.go, model/tensor_encoder.go, model/tensor_decoder.go.
   - Delete associated tests: model/builder_test.go, builder_graph_test.go,
@@ -233,74 +233,74 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
   - Deps: none (can start immediately).
   - Acceptance: Deleted files do not exist. `go build ./...` may fail (fixed
     in T3.2).
-- [ ] T3.2 Remove ZMF references from model/ and zerfoo.go  Owner: TBD  Est: 1h
+- [x] T3.2 Remove ZMF references from model/ and zerfoo.go  Owner: TBD  Est: 1h
   - Update model/adapters.go: remove ZMFModelLoader, ZMFModelExporter.
   - Update zerfoo.go: remove BuildFromZMF and any ZMF-related public API.
   - Update model/model.go: remove ZMFVersion field if present.
   - Remove `github.com/zerfoo/zmf` from go.mod. Run `go mod tidy`.
   - Deps: T3.1.
   - Acceptance: `go build ./...` compiles. `grep zmf go.mod` returns nothing.
-- [ ] T3.3 Delete graph fusion pass  Owner: TBD  Est: 30m
+- [x] T3.3 Delete graph fusion pass  Owner: TBD  Est: 30m
   - Delete graph/fusion.go and graph/fusion_test.go.
   - Remove FuseRMSNorm call from graph/compile.go.
   - Deps: none (can start immediately).
   - Acceptance: `go build ./graph/...` compiles without fusion.
-- [ ] T3.4 Update ConstantOfShape to not import zmf  Owner: TBD  Est: 30m
+- [x] T3.4 Update ConstantOfShape to not import zmf  Owner: TBD  Est: 30m
   - layers/core/constantofshape.go imports zmf for dtype constants.
   - Replace zmf dtype references with local constants or ztensor types.
   - Deps: T3.2.
   - Acceptance: `go build ./layers/...` compiles.
-- [ ] T3.5 Close PR #70 (RMSNorm fusion)  Owner: TBD  Est: 5m
+- [x] T3.5 Close PR #70 (RMSNorm fusion)  Owner: TBD  Est: 5m
   - Close with comment: "Resolved by ADR-037. ZMF/ONNX path removed. Fusion
     pass moved to ztensor for standalone use."
   - Deps: T3.3.
   - Acceptance: PR #70 closed on GitHub.
-- [ ] T3.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
+- [x] T3.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
   - `go test ./...` with race detector.
   - Deps: T3.2, T3.3, T3.4.
   - Acceptance: Zero test failures.
-- [ ] T3.7 Run linter and go vet  Owner: TBD  Est: 15m
+- [x] T3.7 Run linter and go vet  Owner: TBD  Est: 15m
   - Deps: T3.6.
   - Acceptance: Zero issues.
 
 ### E4: Migrate zerfoo to Import ztensor and ztoken
 
-- [ ] T4.1 Update go.mod to require ztensor and ztoken  Owner: TBD  Est: 15m
+- [x] T4.1 Update go.mod to require ztensor and ztoken  Owner: TBD  Est: 15m
   - Add require directives. Run go mod tidy.
   - Deps: T1.13, T2.7, T3.6.
   - Acceptance: `go mod tidy` succeeds.
-- [ ] T4.2 Create type aliases for backward compatibility  Owner: TBD  Est: 2h
+- [x] T4.2 Create type aliases for backward compatibility  Owner: TBD  Est: 2h
   - In each migrated package directory, replace source with alias files
     re-exporting from ztensor/ztoken.
   - Deps: T4.1.
   - Acceptance: `go build ./...` compiles.
   - Risk: Go generic type alias syntax (Go 1.24+). Test first.
-- [ ] T4.3 Update internal imports to ztensor  Owner: TBD  Est: 3h
+- [x] T4.3 Update internal imports to ztensor  Owner: TBD  Est: 3h
   - In layers/, inference/, generate/, training/, distributed/, serve/, cmd/,
     model/, features/, data/, config/, health/, shutdown/, registry/:
     replace zerfoo/tensor with ztensor/tensor, etc.
   - Deps: T4.1.
   - Acceptance: `go build ./...` compiles.
-- [ ] T4.4 Update tokenizer imports to ztoken  Owner: TBD  Est: 30m
+- [x] T4.4 Update tokenizer imports to ztoken  Owner: TBD  Est: 30m
   - Replace zerfoo/pkg/tokenizer with ztoken in all importers.
   - Deps: T4.1.
   - Acceptance: `go build ./...` compiles.
-- [ ] T4.5 Remove migrated source from zerfoo  Owner: TBD  Est: 1h
+- [x] T4.5 Remove migrated source from zerfoo  Owner: TBD  Est: 1h
   - Delete original tensor/, compute/, graph/, numeric/, device/, types/,
     log/, metrics/runtime/, all internal/ GPU packages, testing/testutils/,
     pkg/tokenizer/. Keep only alias files.
   - Deps: T4.2, T4.3, T4.4.
   - Acceptance: No duplicate source. `go build ./...` compiles.
-- [ ] T4.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
+- [x] T4.6 Run full zerfoo test suite  Owner: TBD  Est: 1h
   - Deps: T4.5.
   - Acceptance: Zero test failures.
-- [ ] T4.7 Run linter and go vet  Owner: TBD  Est: 15m
+- [x] T4.7 Run linter and go vet  Owner: TBD  Est: 15m
   - Deps: T4.6.
   - Acceptance: Zero issues.
 
 ### E5: Pivot zonnx to GGUF Output
 
-- [ ] T5.1 Implement GGUF writer in zonnx  Owner: TBD  Est: 3h
+- [x] T5.1 Implement GGUF writer in zonnx  Owner: TBD  Est: 3h
   - Write pkg/gguf/writer.go implementing the GGUF v3 binary format:
     magic, version, tensor count, metadata KV pairs, tensor info array,
     alignment padding, raw tensor data.
@@ -311,20 +311,20 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
   - S5.1.1 Unit tests for GGUF writer  Owner: TBD  Est: 1h
     - Test: round-trip write-then-read for each data type.
     - Test: alignment, special values (NaN, Inf), empty tensors.
-- [ ] T5.2 Map ONNX metadata to GGUF metadata  Owner: TBD  Est: 1h
+- [x] T5.2 Map ONNX metadata to GGUF metadata  Owner: TBD  Est: 1h
   - Convert ONNX model config (hidden_size, num_layers, vocab_size, etc.)
     to GGUF key-value metadata using llama.cpp naming conventions
     (e.g., `llama.embedding_length`, `llama.block_count`).
   - Deps: T5.1.
   - Acceptance: Metadata keys match llama.cpp expectations.
   - S5.2.1 Tests for metadata mapping  Owner: TBD  Est: 30m
-- [ ] T5.3 Map ONNX tensor names to GGUF tensor names  Owner: TBD  Est: 1h
+- [x] T5.3 Map ONNX tensor names to GGUF tensor names  Owner: TBD  Est: 1h
   - Convert ONNX/HuggingFace tensor names to GGUF conventions
     (e.g., `model.layers.0.self_attn.q_proj.weight` to `blk.0.attn_q.weight`).
   - Deps: T5.1.
   - Acceptance: Tensor names match llama.cpp expectations.
   - S5.3.1 Tests for tensor name mapping  Owner: TBD  Est: 30m
-- [ ] T5.4 Update zonnx CLI to output GGUF  Owner: TBD  Est: 1h
+- [x] T5.4 Update zonnx CLI to output GGUF  Owner: TBD  Est: 1h
   - Change default output from ZMF to GGUF.
   - `zonnx convert model.onnx -o model.gguf [--quantize q4_0]`
   - Remove ZMF output code path.
@@ -332,35 +332,35 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
   - Deps: T5.1, T5.2, T5.3.
   - Acceptance: `zonnx convert` produces GGUF. zmf not in go.mod.
   - S5.4.1 Integration test: convert MNIST ONNX to GGUF  Owner: TBD  Est: 30m
-- [ ] T5.5 Run full zonnx test suite and linter  Owner: TBD  Est: 30m
+- [x] T5.5 Run full zonnx test suite and linter  Owner: TBD  Est: 30m
   - Deps: T5.4.
   - Acceptance: Zero failures.
 
 ### E6: Archive zmf and Update Documentation
 
-- [ ] T6.1 Archive github.com/zerfoo/zmf on GitHub  Owner: TBD  Est: 5m
+- [x] T6.1 Archive github.com/zerfoo/zmf on GitHub  Owner: TBD  Est: 5m
   - Mark repository as archived. Add notice to README.
   - Deps: T3.6, T5.5 (both consumers removed).
   - Acceptance: Repo shows "archived" badge. README says "Archived. Use GGUF."
-- [ ] T6.2 Update root CLAUDE.md  Owner: TBD  Est: 30m
+- [x] T6.2 Update root CLAUDE.md  Owner: TBD  Est: 30m
   - Remove zmf from project map. Add ztensor and ztoken.
   - Update dependency graph. Update from 5 repos to 6 active repos.
   - Note zonnx now outputs GGUF.
   - Deps: T4.6, T5.5.
   - Acceptance: CLAUDE.md reflects current structure.
-- [ ] T6.3 Update zerfoo CLAUDE.md  Owner: TBD  Est: 15m
+- [x] T6.3 Update zerfoo CLAUDE.md  Owner: TBD  Est: 15m
   - Note tensor/compute/graph are now in ztensor.
   - Note GGUF is the sole model format. Remove ZMF references.
   - Deps: T4.6.
-- [ ] T6.4 Update docs/VISION.md  Owner: TBD  Est: 15m
+- [x] T6.4 Update docs/VISION.md  Owner: TBD  Est: 15m
   - Reflect GGUF-only strategy and 6-repo ecosystem.
   - Deps: T4.6.
-- [ ] T6.5 Update docs/design.md  Owner: TBD  Est: 30m
+- [x] T6.5 Update docs/design.md  Owner: TBD  Est: 30m
   - Remove Section 1.4 "Two Execution Paths" (now only one).
   - Update package layout to show ztensor dependency.
   - Remove ZMF/ONNX decomposed path references.
   - Deps: T4.6.
-- [ ] T6.6 Update docs/adr/README.md  Owner: TBD  Est: 5m
+- [x] T6.6 Update docs/adr/README.md  Owner: TBD  Est: 5m
   - Add ADR-037 entry.
   - Deps: none (immediate).
 
@@ -506,6 +506,23 @@ The graph is ephemeral (exists only in memory during inference), not serialized.
 ---
 
 ## 8. Progress Log
+
+### Change Summary -- 2026-03-16
+
+Phase 17 execution complete. All 52 tasks across 6 epics marked done.
+
+Completed:
+- E1 (T1.1-T1.13): ztensor repo created, populated, CI added, tagged v0.1.0
+- E2 (T2.1-T2.7): ztoken repo created, populated, CI added, tagged v0.1.0
+- E3 (T3.1-T3.7): ZMF removed from zerfoo (~7,500 lines deleted, zmf removed from go.mod)
+- E4 (T4.1-T4.7): zerfoo imports migrated to ztensor/ztoken, ~48K lines of source removed
+- E5 (T5.1-T5.5): zonnx GGUF writer + metadata/tensor mapping + CLI pivot
+- E6 (T6.1-T6.6): zmf archived, all docs updated for 7-repo ecosystem
+
+Deviations:
+- T4.2 (type aliases) skipped -- no external consumers, direct import rewrite sufficient
+- internal/ packages stayed in zerfoo (Go visibility rules prevent cross-module internal/ imports)
+- zmf remains in zonnx go.mod as intermediate for quantization (full removal deferred)
 
 ### Change Summary -- 2026-03-15 (revision 2)
 
