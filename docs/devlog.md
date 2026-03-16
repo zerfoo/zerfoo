@@ -5,6 +5,45 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-16: Phase 22 DGX Re-Verification
+
+**Type:** benchmark
+**Tags:** dgx, gguf, qwen, phi, mistral, concurrent, structured-output
+
+**Problem:** Phase 22 fixed three GGUF loader gaps. DGX re-verification confirms fixes
+work with real models on GPU hardware.
+
+**Results:**
+
+| Test | Model | Result | Notes |
+|------|-------|--------|-------|
+| T7.1 Qwen | 0.5B Q4_K_M | PASS | 13 words, valid UTF-8. Byte-level BPE fix works. |
+| T7.2 Phi | 3.5 mini Q4_K_M | PARTIAL | QKV split works but MLP missing ffn_gate (merged gate+up). |
+| T7.3 Mistral | 7B Q4_K_M | PASS | 40 words. GGUF lacks sliding_window metadata. |
+| T7.4 Throughput | Gemma 3, 4 clients | 111.67 tok/s | +32% vs Phase 21 (84.49 tok/s). Per-session isolation. |
+| T7.5 Structured | Grammar test | PASS | Grammar-constrained generation in InferenceSession works. |
+
+**Findings:**
+1. **Qwen byte-level BPE works:** No more garbled output. 13 words of multilingual text
+   (expected for 0.5B model). The `tokenizer.ggml.model == "gpt2"` check in
+   ExtractTokenizer correctly enables byte-level BPE.
+2. **Phi QKV split works but MLP differs:** The attn_qkv split succeeds (no more "missing
+   tensor attn_qkv" error). New error: "missing tensor model.layers.0.mlp.gate_proj.weight".
+   Phi 3.5 uses `ffn_up` with merged gate+up (no separate ffn_gate). Carry to Phase 23.
+3. **Mistral detection logic correct but untested on DGX:** bartowski Mistral 7B GGUF
+   doesn't include `attention.sliding_window` metadata, so detection falls through to
+   llama. Unit tests verify the detection works when metadata is present.
+4. **Concurrent throughput improved 32%:** 84.49 -> 111.67 tok/s. The per-session
+   KV cache removes the global mutex bottleneck. The graphMu still serializes
+   Forward calls (graph is stateful), limiting further gains.
+5. **Grammar-constrained decoding works in sessions:** Fixed missing grammar masking
+   in InferenceSession.sampleFromLogits. Now matches Generator behavior.
+
+**Impact:** 4/6 architectures pass (Gemma, Llama, Qwen, Mistral). Phi needs MLP fix.
+DeepSeek V3 still blocked on model availability.
+
+---
+
 ## 2026-03-16: DGX Spark Verification (Phase 21 E7)
 
 **Type:** benchmark
