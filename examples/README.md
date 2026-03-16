@@ -1,14 +1,44 @@
 # Zerfoo Examples
 
-Runnable examples demonstrating how to use the Zerfoo ML framework in Go applications.
+These examples demonstrate Zerfoo's core value: embeddable ML inference in pure Go. Each example is a standalone program you can build and run with `go build`.
 
-| Example | Description | Status |
-|---------|-------------|--------|
-| [`inference/`](inference/) | Load a GGUF model and run inference | Available |
-<<<<<<< HEAD
-| [`api-server/`](api-server/) | Start an OpenAI-compatible API server | Available |
-| [`embedding/`](embedding/) | Embed inference in a Go HTTP handler | Available |
-=======
-| `api-server/` | Start an OpenAI-compatible API server | Coming soon |
-| `embedding/` | Embed inference in a Go HTTP handler | Coming soon |
->>>>>>> chore/add-issue-templates
+## Prerequisites
+
+- **Go 1.25 or later** -- [Download Go](https://go.dev/dl/)
+- **A GGUF model file** -- download one from [HuggingFace](https://huggingface.co/models?library=gguf&sort=trending). For a quick start, pull Gemma 3 1B Q4:
+
+```bash
+zerfoo pull google/gemma-3-1b-it-qat-q4_0-gguf
+```
+
+Or download directly:
+
+```bash
+# The model file will be cached in ~/.cache/zerfoo/
+zerfoo pull gemma-3-1b-q4
+```
+
+- **CUDA toolkit** (optional) -- only needed for GPU acceleration. All examples work on CPU out of the box.
+
+## Available Examples
+
+| Example | Description |
+|---------|-------------|
+| [`inference/`](inference/) | Load a GGUF model and generate text from a prompt. Demonstrates the core `inference.LoadFile` and `model.Generate` API with sampling options (temperature, top-K, top-P) and token streaming. |
+| [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server backed by a GGUF model. Demonstrates `serve.NewServer` with graceful shutdown. Drop-in replacement for any OpenAI client. |
+| [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler. Demonstrates the pattern of loading a model once at startup and serving many concurrent requests through your own routing and request/response types. |
+
+## Running an Example
+
+```bash
+# Build and run the inference example
+go build -o inference ./examples/inference/
+./inference path/to/model.gguf "What is the capital of France?"
+
+# With GPU acceleration (automatic if CUDA is available)
+./inference --device cuda path/to/model.gguf "What is the capital of France?"
+```
+
+## Further Reading
+
+See [docs/getting-started.md](../docs/getting-started.md) for a full tutorial covering CLI usage, library API, and the OpenAI-compatible server.
