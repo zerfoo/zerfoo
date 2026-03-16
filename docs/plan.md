@@ -209,9 +209,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T4.4 Implement Model.ChatStream() for streaming  Owner: Claude  Done: 2026-03-16
   - Branch feat/chat-stream (NOTE: name collides with T5.1 branch -- verify at merge). 5 tests, -race clean.
 
-- [ ] T4.5 Run go vet and linter on top-level package  Owner: TBD  Est: 30m
-  - Deps: T4.4
-  - AC: Zero warnings.
+- [x] T4.5 Run go vet and linter on top-level package  Owner: Claude  Done: 2026-03-16
+  - go vet ./... and golangci-lint run clean. Zero new warnings. Documented 16 pre-existing purego unsafe.Pointer suppressions in docs/QUALITY.md.
 
 ### E5: Structured Output -- Grammar-Guided Decoding (ADR 038)
 
