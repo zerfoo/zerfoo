@@ -253,13 +253,11 @@ Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
   - Deps: T4.5, T5.5, T6.5
   - AC: Every exported type, function, and method in the zerfoo top-level package is documented with godoc. Types marked as stable or experimental. No unexported fields that should be exported, no exported fields that should be private.
 
-- [ ] T7.2 Audit public API surface of ztensor package  Owner: TBD  Est: 2h
-  - Deps: T1.5
-  - AC: Same criteria as T7.1 for ztensor.
+- [x] T7.2 Audit public API surface of ztensor package  Owner: Claude  Done: 2026-03-16
+  - ztensor repo docs/api-audit-2026-03-16 → merged to main (35af914). Godoc on tensor/, compute/, graph/, numeric/, log/, metrics/, testing/ packages. All symbols marked Stable/Experimental.
 
-- [ ] T7.3 Audit public API surface of ztoken package  Owner: TBD  Est: 1h
-  - Deps: T1.6
-  - AC: Same criteria as T7.1 for ztoken.
+- [x] T7.3 Audit public API surface of ztoken package  Owner: Claude  Done: 2026-03-16
+  - ztoken repo docs/api-audit-2026-03-16 → merged to main (327b969). Stability markers added to 7 exported types. 2 packages, all tests pass.
 
 ---
 
