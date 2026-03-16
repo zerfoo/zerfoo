@@ -153,6 +153,69 @@ func TestRunCommand_REPL_WithOptions(t *testing.T) {
 	}
 }
 
+func TestRunCommand_SystemPrompt(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader("hello\n"), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	err := cmd.Run(context.Background(), []string{
+		"--system", "You are a helpful assistant",
+		"test-model",
+	})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "Model loaded") {
+		t.Errorf("output should contain 'Model loaded', got %q", output)
+	}
+	// When --system is set, Chat is used (non-streaming), so the response
+	// should appear as a complete line after the prompt marker.
+	if !strings.Contains(output, "> ") {
+		t.Errorf("output should contain prompt marker '> ', got %q", output)
+	}
+}
+
+func TestRunCommand_EqualsSyntax(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader("hello\n"), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	err := cmd.Run(context.Background(), []string{
+		"--temperature=0.7",
+		"--top-k=40",
+		"--max-tokens=256",
+		"test-model",
+	})
+	if err != nil {
+		t.Fatalf("Run with --flag=value syntax failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "Model loaded") {
+		t.Errorf("output should contain 'Model loaded', got %q", out.String())
+	}
+}
+
+func TestRunCommand_MixedEqualsSyntax(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader("hello\n"), &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+	err := cmd.Run(context.Background(), []string{
+		"--temperature=0.7",
+		"--top-k", "40",
+		"test-model",
+	})
+	if err != nil {
+		t.Fatalf("Run with mixed syntax failed: %v", err)
+	}
+}
+
 func TestRunCommand_Interface(t *testing.T) {
 	var _ Command = (*RunCommand)(nil)
 }
