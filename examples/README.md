@@ -27,6 +27,7 @@ zerfoo pull gemma-3-1b-q4
 | [`inference/`](inference/) | Load a GGUF model and generate text from a prompt. Demonstrates the core `inference.LoadFile` and `model.Generate` API with sampling options (temperature, top-K, top-P) and token streaming. |
 | [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server backed by a GGUF model. Demonstrates `serve.NewServer` with graceful shutdown. Drop-in replacement for any OpenAI client. |
 | [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler. Demonstrates the pattern of loading a model once at startup and serving many concurrent requests through your own routing and request/response types. |
+| [`chat/`](chat/) | Interactive chatbot CLI. Demonstrates the `zerfoo.Load` and `model.Chat` one-line API with a readline loop. |
 
 ## Running an Example
 
