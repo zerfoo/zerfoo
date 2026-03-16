@@ -3,7 +3,19 @@
 Current and historical performance measurements. Updated after each
 verification run on DGX.
 
-## Current Baselines (2026-03-15, main @ 4724c47)
+## Current Baselines (2026-03-16, main @ a5c54c3)
+
+| Model | Format | Tok/s | CUDA Graph % | Output Quality | Tokens | Date |
+|-------|--------|-------|-------------|----------------|--------|------|
+| Gemma 3 1B | GGUF Q4_0 | 103.22 (CUDA) / 9.20 (CPU) | 99.5% | Coherent | 50 | 2026-03-16 |
+| Gemma 3 1B FP16 | GGUF Q4_0 + FP16 | 9.20 (CPU) | - | Valid | 30 | 2026-03-16 |
+| Gemma 3 1B FP8 | GGUF Q4_0 + FP8 | ~0.5 (CPU) | - | Valid | 30 | 2026-03-16 |
+| TinyLlama 1.1B | GGUF Q4_K_M | 7.18 (CPU) | - | Low (small model) | 50 | 2026-03-16 |
+| Qwen 2.5 0.5B | GGUF Q4_K_M | ~13 (CPU) | - | Garbled (tokenizer bug) | 50 | 2026-03-16 |
+| Mistral 7B | GGUF Q4_K_M | ~0.55 (CPU) | - | Low (loads as llama) | 50 | 2026-03-16 |
+| Phi-3.5 mini | GGUF Q4_K_M | - | - | FAIL (merged QKV) | - | 2026-03-16 |
+
+### Previous Baselines (2026-03-15, main @ 4724c47)
 
 | Model | Format | Tok/s | CUDA Graph % | Output Quality | Tokens | Date |
 |-------|--------|-------|-------------|----------------|--------|------|
