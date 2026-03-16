@@ -73,19 +73,27 @@ func BuildMultiHeadLatentAttention[T tensor.Numeric](
 	wUV := core.NewDenseFromParams(core.NewLinearFromParam(engine, wuvParam), nil)
 	wO := core.NewDenseFromParams(core.NewLinearFromParam(engine, woParam), nil)
 
-	// Build RoPE.
+	// Partial RoPE dimension (0 means full headDim).
+	ropeHeadDim, _ := attributes["rope_head_dim"].(int)
+
+	// Build RoPE — sized to ropeHeadDim when partial RoPE is configured.
+	ropeDim := headDim
+	if ropeHeadDim > 0 && ropeHeadDim < headDim {
+		ropeDim = ropeHeadDim
+	}
+
 	base := 10000.0
 	if b, ok := attributes["rope_base"].(float64); ok {
 		base = b
 	}
 
 	rope, err := embeddings.NewRotaryPositionalEmbedding[T](
-		context.Background(), engine, headDim, maxSeqLen,
+		context.Background(), engine, ropeDim, maxSeqLen,
 		embeddings.WithRotaryBase(base),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
 	}
 
-	return NewMultiHeadLatentAttention(engine, ops, numHeads, headDim, kvLoraDim, wQ, wDKV, wUK, wUV, wO, rope), nil
+	return NewMultiHeadLatentAttention(engine, ops, numHeads, headDim, kvLoraDim, ropeHeadDim, wQ, wDKV, wUK, wUV, wO, rope), nil
 }
