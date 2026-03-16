@@ -214,10 +214,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
   - AC: `model.Embed([]string{"hello", "world"})` returns `[]Embedding` where Embedding has `Vector []float32` and `CosineSimilarity(other)` method.
   - Test: Unit test verifying embedding shape and cosine similarity computation.
 
-- [ ] T4.4 Implement Model.ChatStream() for streaming  Owner: TBD  Est: 2h
-  - Deps: T4.2
-  - AC: `model.ChatStream(ctx, "prompt")` returns a channel or iterator yielding token strings as they are generated.
-  - Test: Unit test verifying streaming yields tokens incrementally.
+- [x] T4.4 Implement Model.ChatStream() for streaming  Owner: Claude  Done: 2026-03-16
+  - Branch feat/chat-stream (NOTE: name collides with T5.1 branch -- verify at merge). 5 tests, -race clean.
 
 - [ ] T4.5 Run go vet and linter on top-level package  Owner: TBD  Est: 30m
   - Deps: T4.4
