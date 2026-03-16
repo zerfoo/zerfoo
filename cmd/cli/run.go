@@ -149,8 +149,6 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 		genOpts = append(genOpts, inference.WithRepetitionPenalty(repetitionPenalty))
 	}
 
-	_ = systemPrompt // reserved for future multi-turn chat support
-
 	_, _ = fmt.Fprintf(c.out, "Model loaded. Type your message (Ctrl-D to quit).\n\n")
 
 	scanner := bufio.NewScanner(c.in)
@@ -164,17 +162,30 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 			continue
 		}
 
-		// Stream the response.
-		err := mdl.GenerateStream(ctx, line, generate.TokenStreamFunc(func(token string, done bool) error {
-			if !done {
-				_, _ = fmt.Fprint(c.out, token)
+		if systemPrompt != "" {
+			// Use Chat to pass the system prompt via chat template formatting.
+			messages := []inference.Message{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: line},
 			}
-			return nil
-		}), genOpts...)
-		if err != nil {
-			return fmt.Errorf("generate: %w", err)
+			resp, err := mdl.Chat(ctx, messages, genOpts...)
+			if err != nil {
+				return fmt.Errorf("generate: %w", err)
+			}
+			_, _ = fmt.Fprintln(c.out, resp.Content)
+		} else {
+			// Stream the response when no system prompt is needed.
+			err := mdl.GenerateStream(ctx, line, generate.TokenStreamFunc(func(token string, done bool) error {
+				if !done {
+					_, _ = fmt.Fprint(c.out, token)
+				}
+				return nil
+			}), genOpts...)
+			if err != nil {
+				return fmt.Errorf("generate: %w", err)
+			}
+			_, _ = fmt.Fprintln(c.out)
 		}
-		_, _ = fmt.Fprintln(c.out)
 	}
 
 	return scanner.Err()
