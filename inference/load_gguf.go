@@ -123,6 +123,14 @@ func buildArchGraph(
 		return buildLlamaGraph(tensors, cfg, engine)
 	case "gemma", "gemma3":
 		return buildGemmaGraph(tensors, cfg, engine)
+	case "qwen2":
+		return buildQwenGraph(tensors, cfg, engine)
+	case "mistral":
+		return buildMistralGraph(tensors, cfg, engine)
+	case "phi3", "phi":
+		return buildPhiGraph(tensors, cfg, engine)
+	case "deepseek_v3", "deepseek2":
+		return buildDeepSeekGraph(tensors, cfg, engine)
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)
 	}
