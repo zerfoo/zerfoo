@@ -110,7 +110,7 @@ The fix: dequant Q5_K/Q6_K blocks to float32 directly in the GEMV path
   - Acceptance: Same as T1.1 but for Q6_K. Both quants tested via table-driven tests.
     `loader.go` Q6_K branch calls native path, not re-quantize.
 
-- [ ] T1.3 go vet/lint clean after E1 changes  Owner:  Done: (deps: T1.1✅ T1.2✅)
+- [x] T1.3 go vet/lint clean after E1 changes  Owner: Claude  Done: 2026-03-16
   - Acceptance: `go vet ./...` 0 warnings; `golangci-lint run ./...` 0 issues.
     All existing tests pass.
 
@@ -128,7 +128,7 @@ multiple sequences via per-sequence block tables. The work:
    `model.supportsBatch` is true.
 3. Integration test: 4 concurrent chat requests in `serve/batch_test.go`.
 
-- [ ] T2.1 Add GenerateBatch to inference.Model via PagedKV  Owner:  Done:
+- [x] T2.1 Add GenerateBatch to inference.Model via PagedKV  Owner: Claude  Done: 2026-03-16
   - Acceptance: `inference.Model.GenerateBatch(ctx, []string, opts) ([]string, error)` added.
     Uses `PagedKVCache` for shared KV across sequences. Unit tests in `inference/batch_test.go`
     cover 1, 2, 4 concurrent sequences. `go test ./inference/ -run Batch -race` passes.
@@ -205,7 +205,7 @@ standalone Go program (`go run examples/<name>/main.go`).
     `.github/workflows/ci.yml` runs `go test ./... -race` on every PR.
     `go vet ./...` 0 warnings.
 
-- [ ] T5.2 Write CHANGELOG for v0.2.0  Owner:  Done: (deps: T5.1✅)
+- [x] T5.2 Write CHANGELOG for v0.2.0  Owner: Claude  Done: 2026-03-16
   - Acceptance: `CHANGELOG.md` created with v0.2.0 section covering:
     Phase 19 + Phase 20 deliverables grouped by category (Features, Bug Fixes,
     API, Performance). Follows Keep a Changelog format.
