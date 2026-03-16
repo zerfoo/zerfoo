@@ -227,11 +227,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 
 Decision rationale: docs/adr/038-structured-output-grammar-guided-decoding.md
 
-- [ ] T5.1 Implement JSON Schema to CFG converter  Owner: TBD  Est: 6h
-  - Deps: none
-  - AC: Converts JSON Schema (object, array, string, number, integer, boolean, null, enum, const, required, nested) to a context-free grammar state machine. Rejects unsupported features ($ref, oneOf, anyOf, pattern) with clear error.
-  - Package: generate/grammar/
-  - Test: Unit tests for each JSON Schema type. Edge cases: empty schema, deeply nested, enum with special chars.
+- [x] T5.1 Implement JSON Schema to CFG converter  Owner: Claude  Done: 2026-03-16
+  - Branch feat/chat-stream. generate/grammar/ with schema.go, grammar.go, converter.go. 22 tests, -race clean.
 
 - [ ] T5.2 Implement token mask computation from CFG state  Owner: TBD  Est: 6h
   - Deps: T5.1
