@@ -175,10 +175,8 @@ Decision rationale: docs/adr/039-huggingface-model-download.md
 - [x] T3.1 Implement HuggingFace HTTP API client  Owner: Claude  Done: 2026-03-16
   - model/huggingface/ package. NewClient/GetModel/ListGGUFFiles/ResolveGGUF. 11 unit tests + integration tests (//go:build integration).
 
-- [ ] T3.2 Implement download with resume and progress  Owner: TBD  Est: 4h
-  - Deps: T3.1
-  - AC: Downloads multi-GB GGUF files to ~/.cache/zerfoo/models/. Supports HTTP Range for resume. SHA256 verification. Progress bar on stderr.
-  - Test: Unit test for resume logic (partial file + Range header). Integration test downloading a small model.
+- [x] T3.2 Implement download with resume and progress  Owner: Claude  Done: 2026-03-16
+  - Branch feat/hf-download-resume. Downloader with Range resume, SHA256, progress callback. 7 tests, -race clean.
 
 - [ ] T3.3 Implement cache manifest and management  Owner: TBD  Est: 2h
   - Deps: T3.2
