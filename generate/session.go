@@ -68,6 +68,12 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Hold the graph mutex for the entire generation to avoid per-step
+	// lock/unlock overhead. CUDA graph replay is ~0.5ms per step; even
+	// microseconds of mutex overhead per step compounds over 256+ steps.
+	s.graphMu.Lock()
+	defer s.graphMu.Unlock()
+
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
 	}
@@ -189,6 +195,9 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string, sc SamplingConfig, stream TokenStream) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.graphMu.Lock()
+	defer s.graphMu.Unlock()
 
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
@@ -336,17 +345,16 @@ func (s *InferenceSession[T]) emitToken(
 
 // graphForward runs a graph forward pass under the shared graph mutex.
 // It uses defer to ensure the mutex is released even if Forward panics.
+// graphForward runs a graph forward pass. The caller (Generate/GenerateStream)
+// must already hold s.graphMu.
 func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.TensorNumeric[T], reset bool) (*tensor.TensorNumeric[T], error) {
-	s.graphMu.Lock()
-	defer s.graphMu.Unlock()
 	// Only reset on prefill (first forward of a generation). Resetting on every
 	// decode step destroys CUDA graph capture, causing a 50%+ throughput regression.
-	// The KV cache context provides per-session isolation without needing a reset.
 	if reset {
 		s.graph.ResetStatefulNodes()
 	}
 
-	// Check if the graph has a compiled plan (CUDA graph captured).
+	// Use compiled execution plan (CUDA graph) if available.
 	if s.planRef != nil {
 		if p := s.planRef.Load(); p != nil {
 			return p.Run(ctx, input)
@@ -356,8 +364,6 @@ func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.Te
 	// No compiled plan yet — run uncompiled forward and trigger compilation.
 	result, err := s.graph.Forward(ctx, input)
 	if err == nil && !reset && s.compileOnce != nil {
-		// Trigger CUDA graph capture after the first decode forward.
-		// compileGraph is guarded by sync.Once inside Generator.
 		s.compileOnce(ctx, input)
 	}
 	return result, err
