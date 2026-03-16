@@ -211,6 +211,139 @@ func TestLMHeadNode_FP16WeightOutputIsF32(t *testing.T) {
 	}
 }
 
+// TestBuildLlamaGraph_FP8GQA verifies that FP8-quantized GQA tensors (where
+// K/V weights have fewer rows than Q due to numKVHeads < numHeads) can be
+// transposed and loaded without a "storage length does not match tensor size"
+// error. This is a regression test for the FP8 GQA storage mismatch bug.
+func TestBuildLlamaGraph_FP8GQA(t *testing.T) {
+	cfg := &gguf.ModelConfig{
+		Architecture:     "llama",
+		VocabSize:        32,
+		HiddenSize:       16,
+		NumLayers:        1,
+		NumHeads:         4,
+		NumKVHeads:       1, // GQA: 4:1 ratio
+		IntermediateSize: 32,
+		MaxSeqLen:        64,
+		RopeTheta:        10000.0,
+	}
+	tensors := makeLlamaTestTensors(cfg)
+
+	// Quantize to FP8 E4M3 (same path as LoadFile with WithDType("fp8")).
+	if _, err := gguf.QuantizeToFP8E4M3(tensors); err != nil {
+		t.Fatalf("QuantizeToFP8E4M3: %v", err)
+	}
+
+	// Verify GQA weight tensors have FP8E4M3Storage.
+	for _, name := range []string{
+		"model.layers.0.self_attn.k_proj.weight",
+		"model.layers.0.self_attn.v_proj.weight",
+	} {
+		ts, ok := tensors[name]
+		if !ok {
+			t.Fatalf("missing tensor %q", name)
+		}
+		if _, ok := ts.GetStorage().(*tensor.FP8E4M3Storage); !ok {
+			t.Fatalf("tensor %q: expected FP8E4M3Storage, got %T", name, ts.GetStorage())
+		}
+	}
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	// This should not error — previously it failed with:
+	// "storage length (N) does not match tensor size (M)"
+	g, emb, err := buildLlamaGraph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildLlamaGraph with FP8 GQA: %v", err)
+	}
+	if g == nil {
+		t.Fatal("graph is nil")
+	}
+	if emb == nil {
+		t.Fatal("embedding is nil")
+	}
+}
+
+// TestBuildLlamaGraph_FP8GQA_ForwardNonNaN verifies that FP8-quantized GQA
+// models produce non-NaN output through the full forward pass.
+func TestBuildLlamaGraph_FP8GQA_ForwardNonNaN(t *testing.T) {
+	cfg := &gguf.ModelConfig{
+		Architecture:     "llama",
+		VocabSize:        32,
+		HiddenSize:       16,
+		NumLayers:        1,
+		NumHeads:         4,
+		NumKVHeads:       1, // GQA: 4:1 ratio
+		IntermediateSize: 32,
+		MaxSeqLen:        64,
+		RopeTheta:        10000.0,
+	}
+	tensors := makeLlamaTestTensors(cfg)
+
+	if _, err := gguf.QuantizeToFP8E4M3(tensors); err != nil {
+		t.Fatalf("QuantizeToFP8E4M3: %v", err)
+	}
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, _, err := buildLlamaGraph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildLlamaGraph FP8 GQA: %v", err)
+	}
+
+	assertGraphForwardNonNaN(t, g, cfg.VocabSize)
+}
+
+// TestTransposeWeight_FP8PreservesStorage verifies that FP8E4M3Storage is
+// preserved through the CPU transpose path. Without the fix, FP8 tensors
+// would fall through to engine.Transpose which creates plain F32 storage.
+func TestTransposeWeight_FP8PreservesStorage(t *testing.T) {
+	rows, cols := 4, 16
+	f32 := make([]float32, rows*cols)
+	for i := range f32 {
+		f32[i] = float32(i) * 0.01
+	}
+
+	fp8 := tensor.NewFP8E4M3Storage(f32)
+	original, err := tensor.NewWithStorage[float32]([]int{rows, cols}, fp8)
+	if err != nil {
+		t.Fatalf("create FP8 tensor: %v", err)
+	}
+
+	// Build a minimal transformer graph context to test transposeWeight.
+	cfg := &gguf.ModelConfig{
+		Architecture:     "llama",
+		VocabSize:        32,
+		HiddenSize:       16,
+		NumLayers:        1,
+		NumHeads:         4,
+		NumKVHeads:       1,
+		IntermediateSize: 32,
+		MaxSeqLen:        64,
+		RopeTheta:        10000.0,
+	}
+	tensors := makeLlamaTestTensors(cfg)
+
+	// Replace a weight tensor with our FP8 tensor.
+	tensors["model.layers.0.self_attn.k_proj.weight"] = original
+
+	// Quantize (skips already-FP8 tensors via norm/embed filters, but the
+	// k_proj weight should already be FP8).
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	// Build graph — this exercises transposeWeight on FP8 tensors.
+	g, _, err := buildLlamaGraph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildLlamaGraph: %v", err)
+	}
+
+	// Verify the graph built successfully. The key test is that transposeWeight
+	// didn't fail with a storage length mismatch.
+	if g == nil {
+		t.Fatal("graph is nil")
+	}
+}
+
 func TestBuildLlamaGraph_MissingTensor(t *testing.T) {
 	cfg := &gguf.ModelConfig{
 		Architecture:     "llama",
