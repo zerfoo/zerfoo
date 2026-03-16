@@ -65,8 +65,12 @@ func ExtractTokenizer(f *File) (*tokenizer.BPETokenizer, error) {
 		special.PAD = int(v)
 	}
 
-	// GGUF tokenizers are not byte-level BPE (they use raw token strings).
-	tok := tokenizer.NewBPETokenizer(vocab, merges, special, false)
+	// GPT-2 style models use byte-level BPE encoding.
+	var byteLevelBPE bool
+	if model, ok := f.GetString("tokenizer.ggml.model"); ok && model == "gpt2" {
+		byteLevelBPE = true
+	}
+	tok := tokenizer.NewBPETokenizer(vocab, merges, special, byteLevelBPE)
 
 	// SentencePiece models (tokenizer.ggml.model = "llama") use ▁ (U+2581)
 	// as a space marker. Enable SentencePiece pre-tokenization for these.
