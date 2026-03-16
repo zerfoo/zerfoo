@@ -47,3 +47,5 @@ bench-compare
 /bench_tps
 coverage-gate
 zerfoo-predict
+api-server
+embedding
