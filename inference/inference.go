@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -370,6 +371,41 @@ func buildSamplingConfig(opts []GenerateOption) generate.SamplingConfig {
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
 	return m.generator.Generate(ctx, prompt, sc)
+}
+
+// GenerateBatch processes multiple prompts concurrently and returns the
+// generated text for each prompt. Results are returned in the same order as
+// the input prompts. If a prompt fails, its corresponding error is non-nil.
+//
+// [Deviation: Architectural] Used parallel goroutines instead of shared
+// PagedKV decode — full multi-seq requires deeper Generator refactor.
+func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...GenerateOption) ([]string, error) {
+	if len(prompts) == 0 {
+		return nil, nil
+	}
+
+	sc := buildSamplingConfig(opts)
+	results := make([]string, len(prompts))
+	errs := make([]error, len(prompts))
+
+	var wg sync.WaitGroup
+	wg.Add(len(prompts))
+	for i, prompt := range prompts {
+		go func(idx int, p string) {
+			defer wg.Done()
+			text, err := m.generator.Generate(ctx, p, sc)
+			results[idx] = text
+			errs[idx] = err
+		}(i, prompt)
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			return results, fmt.Errorf("batch generation: %w", err)
+		}
+	}
+	return results, nil
 }
 
 // GenerateStream delivers tokens one at a time via a callback.
