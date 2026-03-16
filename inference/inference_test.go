@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -1524,5 +1525,38 @@ func TestLoad_DetectsGGUFFile(t *testing.T) {
 	// The error should come from GGUF loading, not ZMF loading.
 	if strings.Contains(err.Error(), "load model") || strings.Contains(err.Error(), "config.json") {
 		t.Errorf("error = %q; should have tried GGUF path, not ZMF path", err.Error())
+	}
+}
+
+func TestModel_ConcurrentGenerate_NoRace(t *testing.T) {
+	m := buildTestModel(t, 8, []int{6, 7, 2})
+
+	const numClients = 4
+	var wg sync.WaitGroup
+	wg.Add(numClients)
+	errs := make([]error, numClients)
+	results := make([]string, numClients)
+
+	for i := range numClients {
+		go func(idx int) {
+			defer wg.Done()
+			result, err := m.Generate(context.Background(), "hello world",
+				WithTemperature(0), WithMaxTokens(10))
+			errs[idx] = err
+			results[idx] = result
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("client %d error: %v", i, err)
+		}
+	}
+
+	for i, result := range results {
+		if result != "foo bar" {
+			t.Errorf("client %d result = %q, want %q", i, result, "foo bar")
+		}
 	}
 }

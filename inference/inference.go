@@ -365,10 +365,13 @@ func buildSamplingConfig(opts []GenerateOption) generate.SamplingConfig {
 	return sc
 }
 
-// Generate produces text from a prompt.
+// Generate produces text from a prompt. Each call creates a per-request
+// session with its own KV cache, enabling concurrent Generate calls on
+// the same Model without data races.
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
-	return m.generator.Generate(ctx, prompt, sc)
+	sess := m.generator.NewSession()
+	return sess.Generate(ctx, prompt, sc)
 }
 
 // GenerateBatch processes multiple prompts concurrently and returns the
@@ -406,10 +409,12 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 	return results, nil
 }
 
-// GenerateStream delivers tokens one at a time via a callback.
+// GenerateStream delivers tokens one at a time via a callback. Each call
+// creates a per-request session with its own KV cache for concurrency.
 func (m *Model) GenerateStream(ctx context.Context, prompt string, handler generate.TokenStream, opts ...GenerateOption) error {
 	sc := buildSamplingConfig(opts)
-	return m.generator.GenerateStream(ctx, prompt, sc, handler)
+	sess := m.generator.NewSession()
+	return sess.GenerateStream(ctx, prompt, sc, handler)
 }
 
 // Message represents a chat message.
@@ -427,10 +432,12 @@ type Response struct {
 }
 
 // Chat formats messages using the model's chat template and generates a response.
+// Each call creates a per-request session for concurrency.
 func (m *Model) Chat(ctx context.Context, messages []Message, opts ...GenerateOption) (Response, error) {
 	prompt := m.formatMessages(messages)
 	sc := buildSamplingConfig(opts)
-	result, err := m.generator.Generate(ctx, prompt, sc)
+	sess := m.generator.NewSession()
+	result, err := sess.Generate(ctx, prompt, sc)
 	if err != nil {
 		return Response{}, err
 	}
