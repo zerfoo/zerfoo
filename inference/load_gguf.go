@@ -131,6 +131,13 @@ func buildArchGraph(
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	switch arch {
 	case "llama":
+		// Mistral models report arch="llama" in GGUF metadata but use
+		// sliding window attention. Detect this by checking for a non-zero
+		// SlidingWindow with SlidingWindowPattern==0 (pattern>0 indicates
+		// Gemma 3, which has its own builder).
+		if cfg.SlidingWindow > 0 && cfg.SlidingWindowPattern == 0 {
+			return buildMistralGraph(tensors, cfg, engine)
+		}
 		return buildLlamaGraph(tensors, cfg, engine)
 	case "gemma", "gemma3":
 		return buildGemmaGraph(tensors, cfg, engine)

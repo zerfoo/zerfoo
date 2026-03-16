@@ -656,6 +656,17 @@ func (n *objectNode) advance(b byte) (node, bool) {
 			}
 		}
 		if b == ',' {
+			// Only accept comma if there are unseen properties to emit.
+			hasUnseen := false
+			for _, k := range n.keys {
+				if !n.seen[k] {
+					hasUnseen = true
+					break
+				}
+			}
+			if !hasUnseen {
+				return nil, false
+			}
 			c := n.clone()
 			c.phase = objWantKeyOrClose
 			return c, true

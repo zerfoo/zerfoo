@@ -121,6 +121,95 @@ func TestExtractTokenizer_MissingTokens(t *testing.T) {
 	}
 }
 
+func TestExtractTokenizer_ByteLevelBPE(t *testing.T) {
+	// GPT-2 models should enable byte-level BPE. With byte-level BPE,
+	// printable ASCII bytes map to themselves so a vocab of ASCII characters
+	// works for encode/decode round-trips.
+	tokens := make([]any, 5)
+	tokens[0] = "<unk>"
+	tokens[1] = "<s>"
+	tokens[2] = "h"
+	tokens[3] = "i"
+	tokens[4] = "hi"
+
+	merges := []any{"h i"}
+
+	t.Run("gpt2", func(t *testing.T) {
+		f := &File{
+			Metadata: map[string]any{
+				"tokenizer.ggml.model":            "gpt2",
+				"tokenizer.ggml.tokens":           tokens,
+				"tokenizer.ggml.merges":           merges,
+				"tokenizer.ggml.bos_token_id":     uint32(1),
+				"tokenizer.ggml.eos_token_id":     uint32(1),
+				"tokenizer.ggml.unknown_token_id": uint32(0),
+			},
+		}
+
+		tok, err := ExtractTokenizer(f)
+		if err != nil {
+			t.Fatalf("ExtractTokenizer: %v", err)
+		}
+
+		// Byte-level BPE encode/decode round-trip should work for ASCII.
+		ids, err := tok.Encode("hi")
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		if len(ids) != 1 || ids[0] != 4 {
+			t.Errorf("Encode(\"hi\") = %v, want [4]", ids)
+		}
+
+		decoded, err := tok.Decode(ids)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if decoded != "hi" {
+			t.Errorf("Decode(%v) = %q, want %q", ids, decoded, "hi")
+		}
+	})
+
+	t.Run("llama", func(t *testing.T) {
+		// SentencePiece (llama) models should NOT use byte-level BPE.
+		// They use ▁ (U+2581) as a space prefix instead.
+		spTokens := make([]any, 7)
+		spTokens[0] = "<unk>"
+		spTokens[1] = "<s>"
+		spTokens[2] = "\u2581" // ▁
+		spTokens[3] = "h"
+		spTokens[4] = "i"
+		spTokens[5] = "\u2581h" // ▁h
+		spTokens[6] = "\u2581hi" // ▁hi
+
+		spMerges := []any{"\u2581 h", "\u2581h i"}
+
+		f := &File{
+			Metadata: map[string]any{
+				"tokenizer.ggml.model":            "llama",
+				"tokenizer.ggml.tokens":           spTokens,
+				"tokenizer.ggml.merges":           spMerges,
+				"tokenizer.ggml.bos_token_id":     uint32(1),
+				"tokenizer.ggml.eos_token_id":     uint32(1),
+				"tokenizer.ggml.unknown_token_id": uint32(0),
+			},
+		}
+
+		tok, err := ExtractTokenizer(f)
+		if err != nil {
+			t.Fatalf("ExtractTokenizer: %v", err)
+		}
+
+		// SentencePiece prepends ▁ to text, so "hi" becomes "▁hi" -> token 6.
+		ids, err := tok.Encode("hi")
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		if len(ids) != 1 || ids[0] != 6 {
+			t.Errorf("Encode(\"hi\") = %v, want [6]", ids)
+		}
+	})
+}
+
 func TestExtractTokenizer_NoMerges(t *testing.T) {
 	// A tokenizer with tokens but no merges should still work (character-level).
 	tokens := make([]any, 4)
