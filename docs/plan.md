@@ -168,7 +168,7 @@ CUDA graph capture. Currently it fails with "input tensors cannot be nil".
 Phi 3.5 GGUF files use `ffn_up.weight` with merged gate and up projections (no
 separate `ffn_gate.weight`). The tensor must be split similarly to the QKV split.
 
-- [ ] T3.1 Implement merged gate+up split in GGUF loader  Owner:  Est: 60m
+- [x] T3.1 Implement merged gate+up split in GGUF loader  Owner: Claude  Done: 2026-03-16
   - File: `model/gguf/split.go`
   - Add `splitMergedGateUp()` function. For tensors with no `ffn_gate` but `ffn_up`
     has double the expected intermediate size, split `ffn_up` into `gate_proj` and
@@ -177,7 +177,7 @@ separate `ffn_gate.weight`). The tensor must be split similarly to the QKV split
   - Acceptance: After split, both `mlp.gate_proj.weight` and `mlp.up_proj.weight`
     exist with correct shapes.
 
-- [ ] T3.2 Add unit tests for gate+up split  Owner:  Est: 45m
+- [x] T3.2 Add unit tests for gate+up split  Owner: Claude  Done: 2026-03-16
   - Deps: T3.1
   - File: `model/gguf/split_test.go`
   - Tests: (a) split with 2x intermediate size, (b) no split when gate exists,
