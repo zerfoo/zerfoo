@@ -152,14 +152,11 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0. The Q4_K GPU dequant+cuBLAS path is ~29%
-	// slower than Q4_0 fused GEMV (131 vs 186 tok/s on GB10). The Q4_K fused
-	// GEMV works for batch=1 but non-GEMV falls to expensive FP16 dequant.
-	// Until a fused Q4_K GEMM kernel is written, Q4_0 is faster end-to-end.
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Use native Q4_K storage. The GPU engine dispatches to fused GemvQ4KF32
+	// for batch=1 and dequant+cuBLAS for larger batches. Native Q4_K preserves
+	// the per-sub-block 6-bit scales that Q4_0 loses, avoiding the output
+	// quality regression from lossy re-quantization.
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -230,10 +227,10 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 		}
 	}
 
-	// Re-quantize to Q4_0 for fast NEON GEMV. This trades ~1 bit of precision
-	// for 8x bandwidth reduction during inference.
-	q4 := tensor.QuantizeQ4(data)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Keep as float32 — no lossy re-quantization. A native Q5_0 GEMV kernel
+	// would be ideal but doesn't exist yet. Float32 is accurate and uses
+	// standard cuBLAS SGEMM on GPU.
+	return tensor.New[float32](shape, data)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
