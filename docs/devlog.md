@@ -5,6 +5,155 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: 245 tok/s restored — two root causes found via bisect
+
+**Type:** benchmark
+**Tags:** performance, Phase 27, regression, root cause, fix, DGX Spark
+
+**Problem:** 234→186 tok/s regression after ztensor extraction.
+
+**Root causes (found via git bisect):**
+
+1. **Commit c39ca9f** — Re-introduced FlashAttentionDecode kernel in GQA.
+   The custom kernel uses 32 threads with shared memory (51% slower than
+   cuBLAS SDPA). Later disabled with `if false &&` but only recovered to 186.
+
+2. **Commit 420b157** — Removed Q4_0 re-quantization for Q5_K and Q6_K weights.
+   Changed GGUF loader to dequant to float32 instead of re-quantizing to Q4_0.
+   Float32 weights go through cuBLAS SGEMM (slow for M=1 decode) instead of
+   the fast Q4_0 GEMV kernel. 234→179 tok/s regression from this alone.
+
+**Fix:** Commit 8717a12 — Restored Q4_0 re-quantization for Q5_K and Q6_K.
+
+**Results after fix:**
+| Config | Before | After | Delta |
+|--------|--------|-------|-------|
+| 50t CUDA graph | 171 | 220 | +29% |
+| 256t CUDA graph | 186 | 245 | +32% |
+| 512t CUDA graph | 188 | 249 | +32% |
+| 256t no graph | 156 | 174 | +12% |
+| vs Ollama (204) | -5% | +20% | |
+
+**Impact:** Exceeds Phase 6 baseline (234 tok/s) by 4.7%. Exceeds Ollama by 20%.
+
+---
+
+## 2026-03-17: ROOT CAUSE FOUND — regression is in zerfoo code, not ztensor
+
+**Type:** investigation
+**Tags:** performance, Phase 27, regression, root cause, DGX Spark
+
+**Problem:** After eliminating Transpose guard, inlining, and Go version as causes,
+we tested whether the regression is in ztensor or zerfoo.
+
+**Test:** Built Phase 6 zerfoo source (commit 82aa2ca) linked against CURRENT ztensor
+(commit aa0541b, the latest with all Phase 7-24 changes) via `replace` directive.
+
+**Result:** 234.14 tok/s at 256 tokens with CUDA graphs!
+
+**Conclusion:** The regression is ENTIRELY in zerfoo code changes (Phases 7-24),
+not in ztensor. The Wave 1 diffs (T1.1-T1.4) were looking at the wrong repo.
+
+| Config | tok/s | Interpretation |
+|--------|-------|----------------|
+| Phase 6 zerfoo + Phase 6 ztensor (bench_phase6) | 232.85 | Original baseline |
+| Phase 6 zerfoo + current ztensor | **234.14** | ztensor is NOT the cause |
+| Current zerfoo + current ztensor (bench_tps) | 186.27 | zerfoo code is the cause |
+| Phase 6 source rebuilt with Go 1.26.1 | 233.11 | Go version NOT the cause |
+| Current + aggressive inlining (-l=4) | 185.85 | Inlining NOT the cause |
+
+**Next step:** Bisect zerfoo changes between 82aa2ca and current to find which
+commit(s) in zerfoo degraded throughput. Focus on generate/, inference/, and
+layers/ packages — these are the zerfoo-specific code that runs the decode loop.
+
+**Impact:** The Phase 27 plan needs to pivot from ztensor investigation to zerfoo
+code investigation. All ztensor findings (T1.1-T1.4) are still valid but did not
+find the regression because it was never in ztensor.
+
+---
+
+## 2026-03-17: Transpose guard restoration has zero performance impact
+
+**Type:** benchmark
+**Tags:** performance, ztensor, Phase 27, transpose, DGX Spark
+
+**Problem:** Phase 6 had a storage-type guard in GPUEngine.Transpose that only routed
+GPU-resident and FP16 tensors to the GPU path. Current version removed this guard.
+Hypothesis: the guard removal might cause unexpected H2D copies during CUDA graph
+capture/replay, degrading throughput.
+
+**Test:** Restored Phase 6 guard (commit aa0541b in ztensor), rebuilt bench_tps on DGX,
+benchmarked at 50/256/512 tokens.
+
+**Results:**
+| Config | Before Guard | After Guard | Delta |
+|--------|-------------|-------------|-------|
+| 50t CUDA graph | ~173 tok/s | 171.83 | -0.7% (noise) |
+| 256t CUDA graph | ~186 tok/s | 186.27 | +0.1% (noise) |
+| 512t CUDA graph | ~189 tok/s | 188.41 | -0.3% (noise) |
+| 256t no graph | ~156 tok/s | 155.92 | -0.1% (noise) |
+
+**Root cause:** The Transpose guard removal is NOT the regression source. All results
+within measurement noise. The regression is elsewhere.
+
+**Fix:** N/A. Guard left in place (harmless, matches Phase 6 behavior). Proceeding to
+Go compiler profiling (E1d) to test inlining hypothesis.
+
+**Impact:** Eliminates Transpose as a candidate. Only remaining hypotheses: Go compiler
+behavior changes (inlining, code layout, instruction cache) due to larger module.
+
+---
+
+## 2026-03-17: Phase 27 Wave 1 — Hot path diffs show no obvious regression source
+
+**Type:** investigation
+**Tags:** performance, ztensor, Phase 27, diff, llama.cpp
+
+**Problem:** Phase 26 identified ztensor extraction as the regression root cause (234→186 tok/s). Phase 27 Wave 1 diffed all 4 hot path files (Phase 6 82aa2ca vs current) to find what changed.
+
+**Findings — Diffs (T1.1-T1.4):**
+- **cuda_graph.go**: Capture algorithm improved (longest contiguous run vs linear trim). 6 new non-capturable ops. replayFast path exists but disabled. All changes are capture-time, not replay-time. **No hot path regression.**
+- **compile.go**: Only debug instrumentation added (guarded by disabled-by-default flags). PreUploadFrozenWeights and EnsureCaptureInputsGPU are new setup-time functions. **No hot path regression.**
+- **gpu_engine.go**: Q4_K dispatch still first check. New Q5_K/Q6_K/Q5_0 dispatch cases added after Q8 (never reached for Q4_K_M). Transpose guard removal (CPU tensors now route to GPU transpose). **Zero overhead for Q4_K_M decode.**
+- **internal/cuda/**: Core runtime (arena.go, purego.go, runtime_purego.go, mempool.go) is **IDENTICAL**. Only additions: new kernel files, sin/cos ops, pow bugfix.
+
+**Findings — llama.cpp Study (T2.1-T2.4):**
+- **CUDA graphs**: llama.cpp uses property-based warmup + cudaGraphExecUpdate for dynamic re-capture. Multiple graphs per context. VMM pool for address stability. Zerfoo captures once, replays forever.
+- **Q4 GEMV**: llama.cpp uses dp4a INT8 dot product intrinsic with Q8_1 pre-quantized input — 4 MACs/instruction vs Zerfoo's scalar float FMA. This is a 2-4x compute throughput gap.
+- **Flash attention decode**: llama.cpp vec kernel uses 128 threads, Q in registers, warp shuffles. Zerfoo uses 32 threads, shared memory, __syncthreads. Zerfoo's kernel regressed 51% when tested.
+- **Memory management**: llama.cpp has tensor lifetime analysis for intra-pass reuse + VMM virtual address reservation. Zerfoo bump arena has no intra-pass reuse.
+
+**Root cause (revised):** The hot path code for Q4_K_M is functionally identical to Phase 6. The 16% baseline regression (no-graph: 186→156) is likely from Go compiler behavior changes (larger module → different inlining/code layout → instruction cache effects) rather than explicit code changes. The Transpose guard removal in gpu_engine.go is the only behavioral hot path change worth investigating.
+
+**Impact:** Restoring Phase 6 code (T1.5-T1.8) may produce minimal changes since the hot path is already essentially Phase 6. If benchmark doesn't improve, investigation must shift to Go compiler analysis (pprof, inlining decisions, binary size comparison).
+
+---
+
+## 2026-03-17: Phase 26 diagnostic — ztensor extraction is the root cause of 234 to 186 regression
+
+**Type:** investigation
+**Tags:** performance, ztensor, CUDA graph, extraction, git bisect, nsight, DGX Spark
+
+**Problem:** nsight showed 2x kernel count (95K vs 46K for 256t). Actual regression is 234 to 186 tok/s.
+
+**Investigation:**
+1. nsight `--cuda-graph-trace=graph` vs `=node`: the 2x kernel count is likely a profiling artifact from nsight version differences (newer nsys 2025.3.2 stores graph events differently).
+2. Both versions: 185 instructions, capture region [1,185), Q4_0 re-quant, same GEMV kernel.
+3. Without CUDA graphs: Phase 6 = 186 tok/s, Current = 156 tok/s (16% baseline regression).
+4. With CUDA graphs: Phase 6 = 235 tok/s, Current = 186 tok/s.
+5. Module boundary (local `replace` directive) does NOT affect throughput (185.9 vs 185.8).
+6. Freshly rebuilding Phase 6 from commit 82aa2ca achieves 233 tok/s — environment is fine.
+7. Git bisect across 503 commits pinpoints regression to commit aeb710a (`chore(deps): bump ztensor to v0.2.0`). Before this commit (in-tree ztensor): 234 tok/s. After: 116 tok/s (further degraded by subsequent changes, partially recovered to 186).
+8. Generator-direct path (bypassing sessions) produces garbled output due to CUDA graph address mismatch. Sessions are necessary and NOT the bottleneck.
+
+**Root cause:** The ztensor code extracted to v0.2.0 was different from the Phase 6 in-tree code. The extraction included changes (from Phases 7-13) that degraded the GPU compute hot path. The 16% baseline (no-graph) regression and 7% reduced CUDA graph benefit compound to the 26% total gap.
+
+**Fix:** Restore the Phase 6 in-tree ztensor compute/graph code into the extracted ztensor module. Key files: compute/gpu_engine.go, graph/cuda_graph.go, graph/compile.go, internal/cuda/.
+
+**Impact:** This finding supersedes the Phase 25 devlog entry. The fix path is clear: diff Phase 6 in-tree vs current ztensor and restore Phase 6 behavior for the hot path.
+
+---
+
 ## 2026-03-17: Phase 25 investigation — 234 vs 186 tok/s regression remains unexplained
 
 **Type:** investigation

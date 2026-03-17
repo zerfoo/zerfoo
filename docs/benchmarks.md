@@ -3,7 +3,19 @@
 Current and historical performance measurements. Updated after each
 verification run on DGX.
 
-## Current Baselines (2026-03-16, main @ a5c54c3)
+## Current Baselines (2026-03-17, main @ 8717a12)
+
+| Model | Format | Tok/s | CUDA Graph | Tokens | Date | Commit |
+|-------|--------|-------|------------|--------|------|--------|
+| Gemma 3 1B | Q4_K_M | 220.34 | Yes | 50 | 2026-03-17 | 8717a12 |
+| Gemma 3 1B | Q4_K_M | 244.99 | Yes | 256 | 2026-03-17 | 8717a12 |
+| Gemma 3 1B | Q4_K_M | 249.04 | Yes | 512 | 2026-03-17 | 8717a12 |
+| Gemma 3 1B | Q4_K_M | 174.44 | No | 256 | 2026-03-17 | 8717a12 |
+| Ollama gemma3:1b | - | 203.60 | - | 989 | 2026-03-17 | - |
+
+Zerfoo vs Ollama: +20% at 256 tokens with CUDA graphs.
+
+### Previous Baselines (2026-03-16, main @ a5c54c3)
 
 | Model | Format | Tok/s | CUDA Graph % | Output Quality | Tokens | Date |
 |-------|--------|-------|-------------|----------------|--------|------|
@@ -31,6 +43,7 @@ Hardware: DGX Spark GB10, sm_121, 128GB LPDDR5x, Go 1.25.0, CUDA 13.0
 
 | Date | Milestone | Tok/s | Notes |
 |------|-----------|-------|-------|
+| 2026-03-17 | Q4_0 re-quant restored | 244.99 | +32% vs regression, +20% vs Ollama |
 | 2026-03-14 | CUDA graph capture | 234.30 | +26% vs non-graph baseline |
 | 2026-03-13 | GPU-first pipeline | 6.84 | Phase 32, +33.6% from D2H elimination |
 | 2026-03-13 | Graph compilation | 6.86 | Phase 30, +5% from worker pool |
