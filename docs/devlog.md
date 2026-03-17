@@ -5,6 +5,28 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: RMSNorm backward pass nil pointer dereference (confirmed bug)
+
+**Type:** finding
+**Tags:** training, RMSNorm, backward, nil pointer, normalization
+
+**Problem:** RMSNorm.Backward() in `layers/normalization/rmsnorm.go` uses `r.rms`
+in 4 places (lines 203, 240, 245, 250) and `r.inputTensor` without nil checks.
+Panics if Backward is called before Forward or if Forward fails partway through.
+Blocks any training workload using RMSNorm (all modern transformer architectures).
+
+**Root cause:** Forward caches `r.rms` in three code paths (lines 131, 147, 178).
+If none executes, `r.rms` remains nil from struct initialization. Backward has no
+guard. Sibling `SimplifiedLayerNormalization` has the correct pattern at lines 152-154.
+
+**Fix:** Add nil guard at top of Backward (line 199):
+`if r.rms == nil || r.inputTensor == nil { return nil, fmt.Errorf("...") }`
+Plus regression test calling Backward without Forward. Not yet applied.
+
+**Impact:** Blocks downstream training workloads. Workaround: use LayerNorm instead.
+
+---
+
 ## 2026-03-17: 245 tok/s restored — two root causes found via bisect
 
 **Type:** benchmark
