@@ -1,65 +1,77 @@
-# Phase 24: Native GGUF GEMV Kernels -- Beat Ollama With Correct Output
+# Phase 25: FP16 Weight Dequantization -- Beat Ollama by +18%
 
 ## 1. Context
 
 ### Problem Statement
 
-Zerfoo achieves 189 tok/s (Gemma 3 1B Q4_K_M, 512 tokens, CUDA graph, SDPA decode)
-on DGX Spark GB10. Ollama achieves 201 tok/s on the same hardware and model. The
-6% gap is caused by missing fused dequant-GEMV kernels for three GGUF quant types.
+Zerfoo achieves 188 tok/s (Gemma 3 1B Q4_K_M, 512 tokens, CUDA graph) on DGX Spark
+GB10. Ollama achieves 196 tok/s on the same hardware and model. We have publicly
+claimed +18% faster than Ollama, which requires 231+ tok/s.
 
-Gemma 3 1B Q4_K_M contains 340 tensors:
+**Current pipeline:** GGUF Q5_0/Q4_K tensors are dequantized to float32 (4 bytes/weight)
+and uploaded to GPU. cuBLAS SGEMM processes float32 weights. On Blackwell GB10 with
+273 GB/s bandwidth, float32 weights consume ~2.4 GB per token for the full model.
 
-| Type | Count | Current Handling | Kernel Path |
-|------|-------|-----------------|-------------|
-| F32  | 157   | Native float32  | cuBLAS SGEMM (fast) |
-| Q5_0 | 117   | Re-quant to Q4_0 | Fused Q4_0 GEMV (lossy) |
-| Q4_K | 39    | Re-quant to Q4_0 | Fused Q4_0 GEMV (lossy) |
-| Q8_0 | 14    | Native Q8 storage | Fused Q8 GEMM (fast) |
-| Q6_K | 13    | Dequant to F32   | cuBLAS SGEMM (2x bandwidth) |
+**Proposed pipeline:** Dequantize to FP16 (2 bytes/weight) instead of float32. The GPU
+engine already supports Float16Storage with cuBLAS FP16 GEMM using tensor cores on
+Blackwell. FP16 halves memory bandwidth (1.2 GB per token vs 2.4 GB), and tensor
+cores provide additional compute throughput.
 
-The Q5_0 (117 tensors) and Q4_K (39 tensors) re-quantization to Q4_0 is lossy --
-it drops precision bits and causes garbled output text. The Q6_K dequantization to
-float32 doubles memory bandwidth. All three types need fused dequant-GEMV kernels
-that read quantized data directly, dequantize in registers, and accumulate the dot
-product without touching global memory for intermediates.
+**Why this works:** Phase 24 proved that custom GEMV kernels are 2-3x slower than cuBLAS
+on Blackwell (50-89 tok/s vs 170 tok/s). cuBLAS is the right kernel path. The
+optimization is reducing the DATA SIZE that cuBLAS reads, not changing the kernel.
 
-The prior "234 tok/s beats Ollama" claim (ADR-033) was measured on Q4_0 ZMF format
-where ALL weights used the fast Q4_0 GEMV kernel. That benchmark produced garbled
-output. This phase delivers correct output AND competitive throughput on GGUF Q4_K_M.
+### Key Discovery (Phase 24)
+
+Phase 24 wrote native GEMV kernels for Q6_K, Q5_K, and Q5_0. All kernels compiled and
+passed parity tests, but were 2-3x slower than cuBLAS SGEMM on Blackwell due to
+cuBLAS's tensor core utilization and optimized memory access patterns. The kernels
+remain in ztensor for future optimization. See ADR-040.
+
+Phase 24 also discovered the "garbled output" bug was a corrupted model file (806 MB),
+not a code bug. Ollama's model file (815 MB) produces coherent text with our code.
 
 ### Objectives
 
-- O1: Write fused dequant-GEMV CUDA kernels for Q6_K, Q5_K, and Q5_0.
-- O2: Remove all lossy re-quantization from the GGUF loader.
-- O3: Achieve 200+ tok/s on Gemma 3 1B Q4_K_M with coherent output text.
-- O4: Beat Ollama (201 tok/s) on the same hardware and model.
+- O1: Dequantize Q5_0, Q4_K, Q5_K, Q6_K weights to FP16 in the GGUF loader.
+- O2: Ensure Float16Storage flows through UploadWeights to GPU without conversion to F32.
+- O3: Ensure PreUploadFrozenWeights does NOT re-convert FP16 to F32.
+- O4: Achieve 231+ tok/s on Gemma 3 1B Q4_K_M (512 tokens) on DGX Spark GB10.
+- O5: Verify output quality with the correct model file.
 
 ### Non-Goals
 
-- Q4_K GEMV optimization (existing kernel works, just 20% slower than Q4_0).
-- FP16 KV cache (separate optimization, not needed for throughput parity).
-- New model architectures or training features.
-- CompileTraced fix (separate issue).
+- Native quantized GEMV kernels (Phase 24 proved cuBLAS is faster on Blackwell).
+- FP16 KV cache (separate optimization).
+- New model architectures, training, CompileTraced.
 
 ### Constraints
 
-- Pure Go, zero CGo for the default build path.
-- CUDA kernels compiled separately via nvcc, loaded at runtime via purego/dlopen.
-- Kernels must target sm_121 (Blackwell GB10) with --use_fast_math.
-- Changes span two repos: ztensor (GPU engine dispatch, storage types) and
-  zerfoo (CUDA kernels, GGUF loader, purego bindings).
+- Pure Go, zero CGo.
+- Changes span two repos: ztensor (PreUploadFrozenWeights fix) and zerfoo (GGUF loader).
+- Float16Storage, NewFloat16StorageFromF32, and fp16MatMulNative already exist.
 - All existing tests must continue to pass.
+- The correct Gemma 3 model file is at ~/models/gemma3-q4km/model.gguf (815 MB, from Ollama).
 
 ### Success Metrics
 
 | Metric | Current | Target | Measurement |
 |--------|---------|--------|-------------|
-| Gemma 3 1B 50t  | 170 tok/s | 200+ | DGX bench |
-| Gemma 3 1B 256t | 187 tok/s | 200+ | DGX bench |
-| Gemma 3 1B 512t | 189 tok/s | 200+ | DGX bench |
-| vs Ollama | -6% | >= 0% | Side-by-side DGX bench |
-| Output quality | Garbled | Coherent | Manual inspection |
+| Gemma 3 1B 50t  | 172 tok/s | 220+ | DGX bench |
+| Gemma 3 1B 256t | 186 tok/s | 231+ | DGX bench |
+| Gemma 3 1B 512t | 188 tok/s | 231+ | DGX bench |
+| vs Ollama (196) | -4% | +18% | Side-by-side DGX bench |
+| Output quality | "capital-" (partial) | Coherent | Manual inspection |
+
+### Bandwidth Analysis
+
+```
+GB10 LPDDR5x bandwidth: 273 GB/s
+Gemma 3 1B weight reads (F32): ~2.4 GB/token -> max 114 tok/s
+Gemma 3 1B weight reads (FP16): ~1.2 GB/token -> max 228 tok/s
+Current 188 tok/s exceeds F32 limit -> GPU L2 cache + unified memory
+FP16 theoretical max 228 tok/s -> +16% over Ollama 196 (close to +18%)
+```
 
 ---
 
@@ -67,217 +79,126 @@ output. This phase delivers correct output AND competitive throughput on GGUF Q4
 
 ### In Scope
 
-- Three new CUDA kernels: gemv_q6k.cu, gemv_q5k.cu, gemv_q5_0.cu.
-- Purego Go bindings for each kernel (purego + CGo build-tag variants).
-- KernelRunner interface extension in ztensor gpuapi.
-- GPU engine MatMul dispatch for Q5KStorage, Q6KStorage, Q5_0Storage.
-- New Q5_0Storage type in ztensor tensor package.
-- GGUF loader changes: remove re-quantization, use native storage.
-- Parity tests comparing CUDA GEMV output to CPU dequant reference.
-- DGX benchmark after each kernel lands.
+- GGUF loader: convert Q5_0, Q4_K, Q5_K, Q6_K dequant output to Float16Storage.
+- ztensor UploadWeights: add FP16 raw bytes upload path for Float16Storage.
+- ztensor PreUploadFrozenWeights: skip Float16Storage (do NOT convert to F32).
+- DGX benchmark + quality verification.
+- Update CLAUDE.md with verified benchmark.
 
 ### Out of Scope
 
-- Q4_K GEMV performance tuning (current kernel is functional).
-- cuBLAS fallback path changes (kept as-is for batch > 1).
-- FP16 inference path.
-- Model architectures beyond Gemma 3.
+- Native GEMV kernel optimization (Phase 24 kernels remain for future use).
+- FP16 KV cache, new architectures, training.
+- F32 tensor handling changes (157 F32 tensors stay F32).
 
 ---
 
 ## 3. Checkable Work Breakdown
 
-### E1: Q6_K Fused Dequant-GEMV Kernel (13 tensors in model)
+### E1: GGUF Loader FP16 Dequantization
 
-Q6_K super-block: 210 bytes, 256 values. Layout:
-  - [0:128] ql: low 4 bits of each 6-bit value
-  - [128:192] qh: high 2 bits of each 6-bit value
-  - [192:208] sc: int8 scales for 16 sub-blocks of 16 values
-  - [208:210] fp16 d: super-block scale
+Convert quantized weight tensors to FP16 instead of F32 in the GGUF loader.
+Use `tensor.NewFloat16StorageFromF32` after dequantizing to float32.
 
-Dequant: val = d * sc[sub_block] * ((ql & 0xF) | ((qh >> shift) & 3) << 4) - 32)
+- [ ] T1.1 Convert Q5_0 dequant to FP16  Owner:  Est: 15m
+  - File: `zerfoo/model/gguf/loader.go`, function `decodeQ5_0Tensor`
+  - After dequantizing Q5_0 blocks to float32 data slice, convert:
+    `fp16 := tensor.NewFloat16StorageFromF32(data)`
+    `return tensor.NewWithStorage[float32](shape, fp16)`
+  - Keep the existing Q5_0 block decoding logic (it produces accurate float32).
+  - Acceptance: `go build ./...` passes. `go test ./model/gguf/ -race` passes.
 
-- [ ] T1.1 Write gemv_q6k.cu CUDA kernel  Owner:  Est: 60m
-  - File: `ztensor/internal/cuda/kernels/gemv_q6k.cu`
-  - Template: copy gemv_q4k.cu structure (shared mem x load, warp-per-row, shuffle reduce).
-  - Adapt dequantization to Q6_K layout: 128 ql bytes + 64 qh bytes + 16 sc bytes + 2 d bytes.
-  - Each lane processes strided super-blocks. Within each super-block, process two 128-element
-    halves. For each half, decode 4 groups of 32 elements using ql low/high nibbles + qh bit pairs.
-  - Block config: 4 warps/block (128 threads), shared mem = K * sizeof(float).
-  - Acceptance: kernel compiles with nvcc -arch=sm_121 -O3 --use_fast_math.
+- [ ] T1.2 Convert Q4_K dequant to FP16  Owner:  Est: 15m
+  - File: `zerfoo/model/gguf/loader.go`, function `decodeQ4KTensor`
+  - Current: dequant Q4_K to F32, re-quant to Q4_0. Change to: dequant Q4_K to F32,
+    convert to FP16: `fp16 := tensor.NewFloat16StorageFromF32(f32)`
+  - Remove the QuantizeQ4 call entirely.
+  - Acceptance: `go build ./...` passes. `go test ./model/gguf/ -race` passes.
 
-- [ ] T1.2 Write gemv_q6k.h header  Owner:  Est: 10m
-  - File: `ztensor/internal/cuda/kernels/gemv_q6k.h`
-  - Declare `extern "C" cudaError_t gemv_q6k_f32(const void* W, const float* x, float* y, int M, int K, cudaStream_t stream)`.
-  - Acceptance: header compiles.
+- [ ] T1.3 Convert Q5_K dequant to FP16  Owner:  Est: 10m
+  - File: `zerfoo/model/gguf/loader.go`, function `decodeQ5KTensor`
+  - Current: dequant to F32. Change to: dequant to F32 then NewFloat16StorageFromF32.
+  - Acceptance: builds and tests pass.
 
-- [ ] T1.3 Add purego Go binding for GemvQ6KF32  Owner:  Est: 20m
-  - Files: `ztensor/internal/cuda/kernels/gemv_q6k_purego.go` (build tag !cuda),
-    `ztensor/internal/cuda/kernels/gemv_q6k.go` (build tag cuda).
-  - Add `launchGemvQ6KF32 uintptr` to klib struct in purego.go.
-  - Add `{"gemv_q6k_f32", &k.launchGemvQ6KF32}` to symbol table.
+- [ ] T1.4 Convert Q6_K dequant to FP16  Owner:  Est: 10m
+  - File: `zerfoo/model/gguf/loader.go`, function `decodeQ6KTensor`
+  - Same pattern as Q5_K.
+  - Acceptance: builds and tests pass.
+
+### E2: ztensor UploadWeights FP16 Path
+
+Ensure UploadWeights uploads Float16Storage raw bytes to GPU instead of skipping.
+Currently line 431 skips Float16Storage. Change to upload FP16 raw bytes and set
+GPU pointer, similar to how BFloat16Storage is handled (lines 408-423).
+
+- [ ] T2.1 Add Float16Storage upload to UploadWeights  Owner:  Est: 30m
+  - File: `ztensor/compute/gpu_engine.go`, function UploadWeights
+  - Replace the Float16Storage skip (line 431-432) with an upload path:
+    ```
+    if fs, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+        if fs.GPUPtr() != nil { continue }  // already on GPU
+        rawBytes := fs.RawBytes()            // FP16 packed bytes
+        devPtr := allocWeight(len(rawBytes))
+        uploadBytes(devPtr, rawBytes)
+        fs.SetGPUPtr(devPtr, len(rawBytes), deviceID)
+        continue
+    }
+    ```
+  - Check that Float16Storage has RawBytes(), GPUPtr(), SetGPUPtr() methods.
+    If missing, add them (template from BFloat16Storage or Q4KStorage).
   - Acceptance: `go build ./...` passes in ztensor.
 
-- [ ] T1.4 Add GemvQ6KF32 to KernelRunner interface and CUDAKernels  Owner:  Est: 15m
-  - Files: `ztensor/internal/gpuapi/cuda_kernels.go`, add method.
-  - Add to KernelRunner interface if it exists, or to CUDAKernels struct.
-  - Acceptance: `go build ./...` passes.
+### E3: PreUploadFrozenWeights FP16 Skip
 
-- [ ] T1.5 Add Q6K MatMul dispatch to GPU engine  Owner:  Est: 30m
-  - File: `ztensor/compute/gpu_engine.go`
-  - Add `matMulQ6K` and `matMulQ6KBWeight` methods (template from matMulQ4K).
-  - In MatMul, check for `*tensor.Q6KStorage` on A or B, dispatch to new methods.
-  - GEMV path (n==1): upload raw Q6K bytes to GPU, call GemvQ6KF32.
-  - Non-GEMV path: dequant to F32 on GPU, then cuBLAS SGEMM (existing DequantQ4KF32
-    pattern but for Q6K -- needs a DequantQ6KF32 kernel too, OR dequant on CPU and
-    upload F32 for batch > 1 since it is rare in decode).
-  - Acceptance: `go test ./compute/ -race` passes.
+Prevent PreUploadFrozenWeights from converting Float16Storage to float32 via ToGPU.
 
-- [ ] T1.6 Write parity test for Q6K GEMV  Owner:  Est: 30m
-  - File: `ztensor/internal/cuda/kernels/gemv_q6k_test.go`
-  - Template: copy gemv_q4k_test.go pattern.
-  - Generate random Q6K data, run GemvQ6KF32 on GPU, compare to CPU reference
-    (DequantizeQ6K + float32 GEMV). Max abs error < 1e-3.
-  - Test with M=256, K=1536 (Gemma dimensions).
-  - Acceptance: test passes on DGX.
+- [ ] T3.1 Skip Float16Storage in PreUploadFrozenWeights  Owner:  Est: 15m
+  - File: `ztensor/graph/compile.go`, function PreUploadFrozenWeights
+  - Add check after the GPUStorage check (line 247):
+    ```
+    if _, ok := any(t.GetStorage()).(*tensor.Float16Storage); ok {
+        continue  // FP16 weights uploaded by UploadWeights, used by fp16MatMulNative
+    }
+    ```
+  - Acceptance: `go build ./...` and `go test ./graph/ -race` pass.
 
-- [ ] T1.7 Update GGUF loader to use native Q6K storage  Owner:  Est: 15m
-  - File: `zerfoo/model/gguf/loader.go`
-  - Change `decodeQ6KTensor` to return `tensor.NewWithStorage[float32](shape, q6k)`
-    instead of dequantizing to float32.
-  - Acceptance: `go test ./model/gguf/ -race` passes.
+### E4: Float16Storage GPU Support (if missing)
 
-- [ ] T1.8 Update Makefile and rebuild libkernels.so  Owner:  Est: 10m
-  - File: `ztensor/internal/cuda/kernels/Makefile` (and zerfoo copy if separate).
-  - Add gemv_q6k.cu to SRCS.
-  - Acceptance: `make shared CUDA_ARCH=sm_121` succeeds.
+Float16Storage may need GPU pointer fields for the upload path.
 
-### E2: Q5_K Fused Dequant-GEMV Kernel (0 in Gemma, present in other models)
+- [ ] T4.1 Add GPUPtr/SetGPUPtr/RawBytes to Float16Storage if missing  Owner:  Est: 20m
+  - File: `ztensor/tensor/fp16_storage.go`
+  - Check if Float16Storage already has: GPUPtr() (ptr, size, devID), SetGPUPtr(),
+    RawBytes() []byte. If any are missing, add them.
+  - Template: Q4KStorage or BFloat16Storage GPU pointer fields.
+  - Acceptance: `go build ./...` and `go test ./tensor/ -race` pass.
 
-Q5_K super-block: 176 bytes, 256 values. Layout:
-  - [0:2] fp16 d (super-block scale)
-  - [2:4] fp16 dmin (super-block min)
-  - [4:16] 12 bytes packed 6-bit scales/mins for 8 sub-blocks (same as Q4_K)
-  - [16:144] ql: 128 bytes low 4 bits
-  - [144:176] qh: 32 bytes high 1 bit per value (256 bits)
+### E5: Integration and Benchmark
 
-Dequant: val = sc * ((ql & 0xF) | (qh_bit << 4)) - mn
-Same structure as Q4_K but with an extra high bit from qh.
+- [ ] T5.1 Rebuild libkernels.so on DGX  Owner:  Est: 10m
+  - No new kernels needed (cuBLAS handles FP16). Just rebuild to ensure consistency.
+  - Pull latest code, vendor, build bench_tps binary.
 
-- [ ] T2.1 Write gemv_q5k.cu CUDA kernel  Owner:  Est: 60m
-  - File: `ztensor/internal/cuda/kernels/gemv_q5k.cu`
-  - Template: copy gemv_q4k.cu, add qh bit extraction.
-  - For each group of 64 elements: read ql (32 bytes) + extract qh bits.
-    Low nibbles + qh bit -> first 32 values. High nibbles + qh bit -> next 32.
-  - Same block config as Q4K: 4 warps/block, shared mem x.
-  - Acceptance: kernel compiles.
-
-- [ ] T2.2 Write gemv_q5k.h header  Owner:  Est: 10m
-- [ ] T2.3 Add purego Go binding for GemvQ5KF32  Owner:  Est: 20m
-- [ ] T2.4 Add GemvQ5KF32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
-
-- [ ] T2.5 Add Q5K MatMul dispatch to GPU engine  Owner:  Est: 30m
-  - File: `ztensor/compute/gpu_engine.go`
-  - Add `matMulQ5K` / `matMulQ5KBWeight` (template from Q4K dispatch).
-  - Acceptance: `go test ./compute/ -race` passes.
-
-- [ ] T2.6 Write parity test for Q5K GEMV  Owner:  Est: 30m
-  - Compare GPU GemvQ5KF32 to CPU DequantizeQ5K + GEMV. Max error < 1e-3.
-
-- [ ] T2.7 Update GGUF loader: Q5_K uses native storage  Owner:  Est: 10m
-  - decodeQ5KTensor returns NewWithStorage instead of dequant to F32.
-
-- [ ] T2.8 Update Makefile for gemv_q5k.cu  Owner:  Est: 10m
-
-### E3: Q5_0 Fused Dequant-GEMV Kernel (117 tensors -- BIGGEST IMPACT)
-
-Q5_0 block: 22 bytes, 32 values. Layout:
-  - [0:2] fp16 d (block scale)
-  - [2:6] 4 bytes qh: high bits (32 bits, one per element)
-  - [6:22] 16 bytes qs: packed nibbles (two 4-bit values per byte)
-
-Dequant: val = d * ((qs_nibble | (qh_bit << 4)) - 16)
-This is a simple format (no sub-blocks, no min). Simpler than Q4_K.
-
-NOTE: Q5_0 uses 32-element blocks (not 256 super-blocks like K-quants).
-The kernel needs a different blocking strategy: more blocks per row.
-
-- [ ] T3.1 Add Q5_0Storage type to ztensor  Owner:  Est: 30m
-  - File: `ztensor/tensor/quantized_q5_0.go` (new file)
-  - Fields: raw []byte, len int. Block size = 32, block bytes = 22.
-  - Methods: NewQ5_0StorageFromRaw, Dequantize, Len, Slice, Set (panic), DeviceType.
-  - Dequantize matches the decodeQ5_0Tensor logic in zerfoo/model/gguf/loader.go.
-  - Acceptance: `go test ./tensor/ -race` passes.
-
-- [ ] T3.2 Write gemv_q5_0.cu CUDA kernel  Owner:  Est: 60m
-  - File: `ztensor/internal/cuda/kernels/gemv_q5_0.cu`
-  - Block size = 32 elements, 22 bytes per block.
-  - Strategy: same warp-per-row approach but each lane processes more blocks
-    (32 elements per block vs 256 for K-quants = 8x more blocks per row).
-  - Shared mem x load, warp shuffle reduce.
-  - Acceptance: kernel compiles.
-
-- [ ] T3.3 Write gemv_q5_0.h header  Owner:  Est: 10m
-- [ ] T3.4 Add purego Go binding for GemvQ5_0F32  Owner:  Est: 20m
-- [ ] T3.5 Add GemvQ5_0F32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
-
-- [ ] T3.6 Add Q5_0 MatMul dispatch to GPU engine  Owner:  Est: 30m
-  - Check for *tensor.Q5_0Storage on A or B.
-  - GEMV path: upload raw bytes, call GemvQ5_0F32.
-  - Non-GEMV: dequant to F32 on CPU, upload, cuBLAS SGEMM.
-  - Acceptance: `go test ./compute/ -race` passes.
-
-- [ ] T3.7 Write parity test for Q5_0 GEMV  Owner:  Est: 30m
-  - Compare GPU GemvQ5_0F32 to CPU reference. Max error < 1e-3.
-
-- [ ] T3.8 Update GGUF loader: Q5_0 uses native storage  Owner:  Est: 15m
-  - File: `zerfoo/model/gguf/loader.go`
-  - Change decodeQ5_0Tensor to create Q5_0Storage from raw bytes
-    instead of dequantizing to float32 and re-quantizing to Q4_0.
-  - Acceptance: `go test ./model/gguf/ -race` passes.
-
-- [ ] T3.9 Update Makefile for gemv_q5_0.cu  Owner:  Est: 10m
-
-### E4: Remove Q4_K Re-Quantization
-
-Once native Q4_K GEMV dispatch exists (already in GPU engine), remove the lossy
-Q4_K-to-Q4_0 re-quantization in the GGUF loader.
-
-- [ ] T4.1 Update GGUF loader: Q4_K uses native storage  Owner:  Est: 15m
-  - File: `zerfoo/model/gguf/loader.go`
-  - Change decodeQ4KTensor to return NewWithStorage(shape, q4k) directly.
-  - Remove the dequant-to-F32 + QuantizeQ4 roundtrip.
-  - Acceptance: `go test ./model/gguf/ -race` passes.
-
-### E5: Integration, Benchmark, and Quality Gate
-
-- [ ] T5.1 Rebuild libkernels.so on DGX with all new kernels  Owner:  Est: 15m
-  - Run `make clean && make shared CUDA_ARCH=sm_121` on DGX.
-  - Copy libkernels.so to ~/Code/zerfoo/.
-  - Acceptance: binary loads and runs without kernel-not-found errors.
-
-- [ ] T5.2 Full test suite pass  Owner:  Est: 30m
-  - Deps: all above.
-  - Run `go test ./... -race` in both ztensor and zerfoo.
+- [ ] T5.2 Full test suite  Owner:  Est: 20m
+  - Deps: T1.1-T1.4, T2.1, T3.1, T4.1
+  - `go test ./... -race` in both ztensor and zerfoo.
   - Acceptance: zero failures.
 
-- [ ] T5.3 DGX benchmark: throughput  Owner:  Est: 30m
-  - Deps: T5.1, T5.2.
-  - Run bench_tps with Gemma 3 1B Q4_K_M at 50, 256, 512 tokens.
-  - Run Ollama side-by-side for comparison.
-  - Acceptance: Zerfoo >= 200 tok/s at 256+ tokens.
+- [ ] T5.3 DGX benchmark: throughput  Owner:  Est: 20m
+  - Deps: T5.1, T5.2
+  - bench_tps at 50, 256, 512 tokens with correct model file.
+  - Ollama side-by-side comparison.
+  - Acceptance: Zerfoo >= 231 tok/s at 256+ tokens.
 
-- [ ] T5.4 DGX benchmark: output quality  Owner:  Est: 30m
-  - Deps: T5.1, T5.2.
-  - Run bench_tps with "The capital of France is" and verify coherent output.
-  - Compare CPU vs GPU output for consistency.
-  - Acceptance: Output is coherent English text, not garbled.
+- [ ] T5.4 DGX benchmark: output quality  Owner:  Est: 15m
+  - Deps: T5.1, T5.2
+  - Verify "The capital of France is" produces coherent continuation.
+  - Acceptance: coherent English text.
 
-- [ ] T5.5 Update CLAUDE.md benchmark claim  Owner:  Est: 10m
-  - Deps: T5.3, T5.4.
-  - Update the "234.30 tok/s" claim with the new verified number.
-  - Only claim "faster than Ollama" if the benchmark proves it.
-  - Acceptance: CLAUDE.md reflects measured, reproducible results.
+- [ ] T5.5 Update CLAUDE.md  Owner:  Est: 10m
+  - Deps: T5.3, T5.4
+  - Update benchmark claim with verified FP16 numbers.
+  - Acceptance: claim matches measured results.
 
 ---
 
@@ -287,29 +208,21 @@ Q4_K-to-Q4_0 re-quantization in the GGUF loader.
 
 | Track | Tasks | Repo | Description |
 |-------|-------|------|-------------|
-| A: Q6_K kernel | T1.1-T1.8 | ztensor + zerfoo | Q6_K fused GEMV (13 tensors) |
-| B: Q5_K kernel | T2.1-T2.8 | ztensor + zerfoo | Q5_K fused GEMV (other models) |
-| C: Q5_0 kernel | T3.1-T3.9 | ztensor + zerfoo | Q5_0 fused GEMV (117 tensors) |
-| D: Q4_K loader | T4.1 | zerfoo | Remove Q4_K re-quantization |
+| A: Loader | T1.1-T1.4 | zerfoo | FP16 dequant in GGUF loader |
+| B: Upload | T2.1, T4.1 | ztensor | FP16 upload path |
+| C: Compile | T3.1 | ztensor | PreUploadFrozenWeights skip |
 
-Tracks A, B, C, D are fully independent. Each agent works in a worktree.
+All tracks are independent. One agent can handle all of Track A (same file).
+Tracks B and C touch different files in ztensor.
 
 ### Maximum Parallelism
 
-**Wave 1** (up to 10 tasks, all independent -- kernel + header + binding work):
-T1.1, T1.2, T2.1, T2.2, T3.1, T3.2, T3.3, T4.1
+**Wave 1** (3 agents, all independent):
+- Agent 1: T1.1, T1.2, T1.3, T1.4 (all loader changes, one file)
+- Agent 2: T4.1, T2.1 (Float16Storage GPU support + UploadWeights)
+- Agent 3: T3.1 (PreUploadFrozenWeights skip)
 
-NOTE: T1.1+T1.2, T2.1+T2.2, T3.2+T3.3 are header+kernel pairs that can be done
-by the same agent. So effectively 4-5 agents in Wave 1, each handling a full kernel
-(CUDA + header + purego binding + KernelRunner + engine dispatch + test + loader).
-
-Recommended agent assignment:
-- Agent 1: T1.1, T1.2, T1.3, T1.4, T1.5, T1.6, T1.7, T1.8 (full Q6_K stack)
-- Agent 2: T2.1, T2.2, T2.3, T2.4, T2.5, T2.6, T2.7, T2.8 (full Q5_K stack)
-- Agent 3: T3.1, T3.2, T3.3, T3.4, T3.5, T3.6, T3.7, T3.8, T3.9 (full Q5_0 stack)
-- Agent 4: T4.1 (Q4_K loader fix -- quick, then help with integration)
-
-**Wave 2** (after merge):
+**Wave 2** (sequential, after merge):
 T5.1, T5.2
 
 **Wave 3** (after tests pass):
@@ -321,11 +234,11 @@ T5.3, T5.4, T5.5
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |----|------|-----------|--------|-----------|
-| R1 | Kernel register pressure regresses throughput | Medium | High | Limit maxrregcount, profile occupancy. ADR-033 documents Q4K vectorization failure from register pressure. |
-| R2 | Q5_0 small block size (32) causes low occupancy | Medium | Medium | Use more warps per block or multiple blocks per row. Profile occupancy on sm_121. |
-| R3 | Native quant storage breaks existing float32 code paths | Low | High | Parity tests catch numerical divergence. Keep dequant fallback for non-GEMV paths. |
-| R4 | Output still garbled after removing re-quantization | Low | High | The re-quantization was identified as root cause. If output is still bad, investigate tokenizer/embedding scaling next. |
-| R5 | Kernels work but throughput < 200 tok/s | Medium | Medium | Profile to identify new bottleneck. The F32 tensors (157 of 340) still use cuBLAS SGEMM. |
+| R1 | FP16 precision loss causes output degradation | Low | Medium | FP16 has 10-bit mantissa; Q5_0 has 5-bit values. No precision loss for quantized source data. |
+| R2 | cuBLAS FP16 GEMM slower than SGEMM on Blackwell | Low | High | Blackwell has 4th-gen tensor cores optimized for FP16. If slower, fall back to F32. |
+| R3 | Float16Storage missing GPU pointer infrastructure | Medium | Low | Add GPUPtr/SetGPUPtr/RawBytes — straightforward, template from BFloat16Storage. |
+| R4 | PreUploadFrozenWeights re-converts FP16 to F32 | Medium | High | T3.1 explicitly adds skip. Verified by benchmark. |
+| R5 | 228 tok/s theoretical max insufficient for +18% claim | Medium | Medium | +18% over Ollama 196 = 231. Theoretical FP16 max = 228. Within 1%. GPU caching may push over. |
 
 ---
 
@@ -336,83 +249,35 @@ T5.3, T5.4, T5.5
 1. Code compiles: `go build ./...` in both repos.
 2. Tests pass: `go test ./... -race` in both repos.
 3. Lint clean: `go vet ./...` in both repos.
-4. CUDA kernel compiles: `nvcc -arch=sm_121 -O3 --use_fast_math`.
-5. Parity test: GPU GEMV matches CPU dequant + GEMV within 1e-3.
-6. DGX benchmark for throughput and quality tasks.
+4. DGX benchmark: throughput and quality verified.
+5. CLAUDE.md updated with verified numbers only.
 
 ---
 
 ## 7. Progress Log
 
-### 2026-03-17: Phase 24 plan created
+### 2026-03-17: Phase 25 plan created
 
-**Change summary:** Created Phase 24 plan for native GGUF GEMV kernels. Phase 23
-completed (Go-side overhead optimizations, CUDA graph capture fix, FlashAttentionDecode
-regression bisect and fix). Phase 23 tasks trimmed from plan -- stable knowledge
-preserved in docs/devlog.md.
+**Change summary:** Replaced Phase 24 plan with Phase 25. Phase 24 (native GEMV kernels)
+completed but kernels were 2-3x slower than cuBLAS on Blackwell. Kernel code remains
+in ztensor. Loader reverted to Q4_0 re-quant. Phase 24 findings preserved in
+docs/devlog.md and ADR-040.
 
-Key findings from Phase 23:
-- FlashAttentionDecode was 15% slower than SDPA (bisected, reverted in d0fe532)
-- CUDA graph capture works with SDPA path thanks to arena-safe allocation
-- Go overhead is <2% of total step time -- kernel efficiency is the bottleneck
-- The "234 tok/s beats Ollama" claim was on Q4_0 ZMF with garbled output
+Phase 25 approach: FP16 weight dequantization + cuBLAS FP16 GEMM with tensor cores.
+2x bandwidth reduction targets 228 tok/s theoretical max (= +16% over Ollama).
 
 ---
 
 ## 8. Hand-off Notes
 
 - **Repos**: ztensor at `/Users/dndungu/Code/zerfoo/ztensor/`, zerfoo at `../zerfoo/`
-- **Key files to modify**:
-  - `ztensor/internal/cuda/kernels/` -- new .cu, .h, _purego.go files
-  - `ztensor/internal/cuda/kernels/purego.go` -- add launch symbols to klib struct
-  - `ztensor/internal/gpuapi/cuda_kernels.go` -- add methods to CUDAKernels
-  - `ztensor/compute/gpu_engine.go` -- add MatMul dispatch for new storage types
-  - `ztensor/tensor/` -- add Q5_0Storage type
-  - `zerfoo/model/gguf/loader.go` -- remove re-quantization
-  - `zerfoo/internal/cuda/kernels/Makefile` -- add new .cu to SRCS
+- **Key files**:
+  - `zerfoo/model/gguf/loader.go` — dequant functions (decodeQ5_0Tensor, etc.)
+  - `ztensor/compute/gpu_engine.go` — UploadWeights, FP16 MatMul dispatch
+  - `ztensor/graph/compile.go` — PreUploadFrozenWeights
+  - `ztensor/tensor/fp16_storage.go` — Float16Storage type
 - **DGX**: `ssh ndungu@192.168.86.250`, `LD_LIBRARY_PATH=~/Code/zerfoo`
-- **Kernel rebuild**: `cd internal/cuda/kernels && make clean && make shared CUDA_ARCH=sm_121`
-- **Models**: Gemma Q4_K_M at `~/models/gemma3-q4km/model.gguf`
+- **Model**: `~/models/gemma3-q4km/model.gguf` (815 MB, Ollama version, produces coherent text)
 - **Ollama**: `/usr/local/bin/ollama`, model `gemma3:1b-it-q4_K_M`
-- **Template kernel**: `ztensor/internal/cuda/kernels/gemv_q4k.cu` -- all new kernels follow this pattern
-- **Template binding**: `ztensor/internal/cuda/kernels/gemv_q4k_purego.go`
-- **Template dispatch**: `ztensor/compute/gpu_engine.go` matMulQ4K / matMulQ4KBWeight
-
----
-
-## 9. Appendix
-
-### GGUF Quant Block Formats
-
-```
-Q4_K: 144 bytes / 256 values (4-bit + 6-bit sub-block scales)
-Q5_K: 176 bytes / 256 values (5-bit + 6-bit sub-block scales, same layout as Q4_K + qh)
-Q6_K: 210 bytes / 256 values (6-bit + int8 sub-block scales)
-Q5_0:  22 bytes /  32 values (5-bit, simple scale, no sub-blocks)
-Q4_0:  18 bytes /  32 values (4-bit, simple scale, no sub-blocks)
-```
-
-### Kernel Pattern (from gemv_q4k.cu)
-
-```
-1. Load input vector x into shared memory (all threads cooperate)
-2. One warp per row (4 warps per block = 128 threads)
-3. Each lane processes strided super-blocks within its row
-4. Within each super-block: decode scales, dequant in registers, FMA with x from shmem
-5. Warp shuffle reduction produces final dot product
-6. Lane 0 writes y[row]
-```
-
-### Bits Per Weight Comparison
-
-```
-Q4_0: 4.50 bits/weight (144 bytes / 256 values * 8)
-Q4_K: 4.50 bits/weight (144 bytes / 256 values * 8)
-Q5_0: 5.50 bits/weight ( 22 bytes /  32 values * 8)
-Q5_K: 5.50 bits/weight (176 bytes / 256 values * 8)
-Q6_K: 6.56 bits/weight (210 bytes / 256 values * 8)
-F32: 32.00 bits/weight
-```
-
-Native quantized GEMV reads only the quantized bytes (4.5-6.6 bits/weight).
-Dequant-to-F32 reads 32 bits/weight -- 5-7x more bandwidth.
+- **Key API**: `tensor.NewFloat16StorageFromF32([]float32) *Float16Storage`
+- **FP16 MatMul dispatch**: `gpu_engine.go:690-694` checks Float16Storage, calls fp16MatMulNative
