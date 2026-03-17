@@ -7,7 +7,7 @@ Pure Go ML inference framework -- embed any GGUF model in your Go application wi
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**234.30 tok/s** on Gemma 3 1B Q4_K_M -- 18.8% faster than Ollama.
+**245 tok/s** on Gemma 3 1B Q4_K_M -- 20% faster than Ollama.
 
 ## Quick Start
 

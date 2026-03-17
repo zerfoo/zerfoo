@@ -2,6 +2,8 @@
 
 *Performance deep-dive: how CUDA graph capture and fused kernels took Zerfoo from 186 tok/s to 234.30 tok/s on Gemma 3 1B.*
 
+> **Update 2026-03-17:** Current throughput is **245 tok/s** (20% faster than Ollama 204 tok/s). The Phase 6 journey below documents reaching 234.30 tok/s — Phase 27 pushed further via Q4_0 re-quantization in the GGUF loader.
+
 ## The Benchmark
 
 On the same hardware -- an NVIDIA DGX Spark (GB10 Grace Blackwell, 128 GB unified LPDDR5x) -- running the same model (Gemma 3 1B Q4_K_M GGUF), Zerfoo decodes at 234.30 tok/s. Ollama, which wraps llama.cpp's C++ inference engine, decodes at approximately 197 tok/s.

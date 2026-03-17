@@ -202,10 +202,10 @@ Here are the numbers. On a DGX Spark (GB10 Grace Blackwell), running Gemma 3 1B 
 
 | Runtime | Decode throughput | Notes |
 |---------|------------------|-------|
-| **Zerfoo** | **234.30 tok/s** | Pure Go, zero CGo, custom CUDA kernels via dlopen |
-| Ollama | ~197 tok/s | Go wrapper around llama.cpp (C++) |
+| **Zerfoo** | **245 tok/s** | Pure Go, zero CGo, custom CUDA kernels via dlopen |
+| Ollama | 204 tok/s | Go wrapper around llama.cpp (C++) |
 
-Zerfoo is 18.8% faster than Ollama on the same hardware, despite Ollama being a thin wrapper around C++. The performance comes from the kernels, not the binding mechanism:
+Zerfoo is 20% faster than Ollama on the same hardware, despite Ollama being a thin wrapper around C++. The performance comes from the kernels, not the binding mechanism:
 
 - **25+ custom CUDA kernels** including fused RoPE, fused SwiGLU, fused Add+RMSNorm, fused QK-Norm+RoPE, flash attention (prefill and decode), quantized GEMM/GEMV (Q4_0, Q4_K_M, Q8_0)
 - **CUDA graph capture** replays the entire decode step as a single graph launch, eliminating per-kernel launch overhead. 99.5% of decode instructions are captured.

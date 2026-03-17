@@ -93,7 +93,7 @@ For official benchmarks, always use `-tokens 256` or higher.
 
 | Model | Tok/s (decode) | CUDA Graph % | Date | Commit |
 |-------|---------------|-------------|------|--------|
-| Gemma 3 1B Q4_K_M | 234.30 | 99.5% | 2026-03-15 | See `docs/benchmarks.md` |
+| Gemma 3 1B Q4_K_M | 245 | 99.5% | 2026-03-17 | See `docs/benchmarks.md` |
 
 This number represents a 26% improvement over the non-graph baseline,
 achieved through CUDA graph capture of the decode path.
@@ -157,7 +157,7 @@ Current comparison (2026-03-15):
 
 | Runtime | Tok/s (decode) | Notes |
 |---------|---------------|-------|
-| Zerfoo | 234.30 | CUDA graph capture, Q4_K_M |
-| Ollama | ~197 | Same model, same hardware |
+| Zerfoo | 245 | CUDA graph capture, Q4_K_M |
+| Ollama | 204 | Same model, same hardware |
 
-Zerfoo is 18.8% faster than Ollama on this workload.
+Zerfoo is 20% faster than Ollama on this workload.

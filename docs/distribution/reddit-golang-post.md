@@ -2,7 +2,7 @@
 
 ## Title
 
-Zerfoo: Production-grade ML inference in pure Go -- zero CGo, 234 tok/s
+Zerfoo: Production-grade ML inference in pure Go -- zero CGo, 245 tok/s
 
 ## Body
 
@@ -36,8 +36,8 @@ streaming, batching, and speculative decoding.
 
 ### Performance
 
-On Gemma 3 1B Q4_K_M, Zerfoo decodes at **234.30 tok/s** on a DGX Spark --
-18.8% faster than Ollama on the same hardware with the same model file.
+On Gemma 3 1B Q4_K_M, Zerfoo decodes at **245 tok/s** on a DGX Spark --
+20% faster than Ollama on the same hardware with the same model file.
 CUDA graph capture covers 99.5% of the decode path. The benchmarking
 methodology, including reproduction steps, is documented here:
 https://github.com/zerfoo/zerfoo/blob/main/docs/benchmarking-methodology.md
