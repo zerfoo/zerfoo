@@ -401,11 +401,10 @@ func (m *Model) releaseSession(sess *generate.InferenceSession[float32]) {
 // Generate calls get separate sessions from the pool.
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
-	// Use Generator directly for maximum throughput. The Generator.Generate path
-	// creates a fresh cache per call, triggers graph compilation on first decode,
-	// and achieves 234+ tok/s with CUDA graph replay. Session-based path is
-	// reserved for concurrent access (acquireSession/releaseSession).
-	return m.generator.Generate(ctx, prompt, sc)
+	sess := m.acquireSession()
+	result, err := sess.Generate(ctx, prompt, sc)
+	m.releaseSession(sess)
+	return result, err
 }
 
 // GenerateBatch processes multiple prompts concurrently and returns the
@@ -447,7 +446,10 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 // are pooled to preserve GPU memory addresses for CUDA graph replay.
 func (m *Model) GenerateStream(ctx context.Context, prompt string, handler generate.TokenStream, opts ...GenerateOption) error {
 	sc := buildSamplingConfig(opts)
-	return m.generator.GenerateStream(ctx, prompt, sc, handler)
+	sess := m.acquireSession()
+	err := sess.GenerateStream(ctx, prompt, sc, handler)
+	m.releaseSession(sess)
+	return err
 }
 
 // Message represents a chat message.
