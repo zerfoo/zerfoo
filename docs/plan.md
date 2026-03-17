@@ -91,14 +91,14 @@ Eliminate per-step overhead in the Go-side decode loop.
 - [x] T1.1 Add ResetPool call between decode steps in session  Owner: Claude  Done: 2026-03-16
 - [x] T1.2 Add GPU argmax fast path to session sampling  Owner: Claude  Done: 2026-03-16
 
-- [ ] T1.3 Cache PoolResetter interface at session creation  Owner:  Est: 20m
+- [x] T1.3 Cache PoolResetter interface at session creation  Owner: Claude  Done: 2026-03-17
   - File: `generate/session.go`
   - Add a `poolResetter compute.PoolResetter` field to InferenceSession. Set it in
     NewSession with a type assertion. In the decode loop, replace the per-step
     `any(s.engine).(compute.PoolResetter)` with `if s.poolResetter != nil`.
   - Acceptance: No per-step type assertion. `go test ./generate/ -race` passes.
 
-- [ ] T1.4 Cache stopSet and pre-allocate generatedIDs in session  Owner:  Est: 15m
+- [x] T1.4 Cache stopSet and pre-allocate generatedIDs in session  Owner: Claude  Done: 2026-03-17
   - File: `generate/session.go`
   - The stopSet map is rebuilt every Generate call. Pre-allocate it once. Similarly,
     `generatedIDs := make([]int, 0, sc.MaxNewTokens)` allocates every call.
@@ -110,7 +110,7 @@ Eliminate per-step overhead in the Go-side decode loop.
 
 Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph launches.
 
-- [ ] T2.1 Add fast replay path that skips PrepareSlots/EnsureSlotsGPU  Owner:  Est: 60m
+- [x] T2.1 Add fast replay path that skips PrepareSlots/EnsureSlotsGPU  Owner: Claude  Done: 2026-03-17
   - File: `ztensor/graph/cuda_graph.go` method `replay()`
   - After the first successful replay, all slots are GPU-resident and capturedSlots
     are set. Add a `replayReady bool` flag. When true, skip:
@@ -121,7 +121,7 @@ Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph la
   - Acceptance: replay() does O(1) Go work between graph launches.
     `go test ./graph/ -race` passes.
 
-- [ ] T2.2 Convert capturedSlots from map to slice  Owner:  Est: 20m
+- [x] T2.2 Convert capturedSlots from map to slice  Owner: Claude  Done: 2026-03-17
   - File: `ztensor/graph/cuda_graph.go`
   - Replace `capturedSlots map[int]*tensor.TensorNumeric[T]` with a flat slice.
     Map iteration on every replay adds GC pressure and is slower than slice indexing.
@@ -135,7 +135,7 @@ Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph la
 
 ### E3: Session-Level Optimizations
 
-- [ ] T3.1 Skip EmbeddingLookup on replay when input unchanged  Owner:  Est: 45m
+- [x] T3.1 Skip EmbeddingLookup on replay when input unchanged  Owner: Claude  Done: 2026-03-17
   - File: `ztensor/graph/cuda_graph.go`
   - EmbeddingLookup is the pre-capture instruction (instruction 0). It runs on every
     replay step, doing a CPU table lookup and H2D copy. For the decode loop, the
@@ -145,7 +145,7 @@ Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph la
   - Acceptance: Pre-capture region does minimal work on replay. DGX benchmark shows
     improvement.
 
-- [ ] T3.2 Eliminate redundant context.Value lookups  Owner:  Est: 30m
+- [x] T3.2 Eliminate redundant context.Value lookups  Owner: Claude  Done: 2026-03-17 (investigation: overhead negligible, no code change)
   - File: `generate/session.go`, `generate/context.go`
   - `WithCache(ctx, s.cache)` and `GetCache(ctx)` do `context.WithValue` and
     `ctx.Value` on every forward call. Pass the cache directly via the session
