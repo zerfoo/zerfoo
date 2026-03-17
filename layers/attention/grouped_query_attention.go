@@ -321,8 +321,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// Check for KV cache in context.
 	cache, hasCache := generate.GetCache[T](ctx)
 	if debugGraphCapture && gqa.LayerIndex == 0 {
-		raw := ctx.Value(struct{}{}) // dummy to check if ctx is valid
-		log.Printf("GQA[0] GetCache: hasCache=%v cache=%v ctxDummy=%v", hasCache, cache != nil, raw)
+		log.Printf("GQA[0] GetCache: hasCache=%v cache=%v ctx=%p", hasCache, cache != nil, ctx)
 	}
 
 	// 1. Linear projections for Q, K, V
