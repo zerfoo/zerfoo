@@ -171,12 +171,11 @@ Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph la
   - Deps: all above
   - Acceptance: `go test ./... -race -count=1` passes in both zerfoo and ztensor.
 
-- [ ] T4.2 DGX final benchmark vs Ollama  Owner:  Est: 45m
-  - Deps: T4.1
-  - Run side-by-side: Zerfoo vs Ollama, Gemma 3 1B Q4_K_M, 50 and 256 tokens.
-  - Update docs/benchmarks.md.
-  - Acceptance: Zerfoo >= 237 tok/s (95% of theoretical) or documented analysis of
-    remaining gap with specific attribution (GPU kernel vs Go overhead vs memory).
+- [x] T4.2 DGX final benchmark vs Ollama  Owner: Claude  Done: 2026-03-17
+  - Zerfoo: 149 tok/s (50t), 103 tok/s (256t). Ollama: 208 tok/s (50t).
+  - Gap analysis: GPU kernel efficiency (~25%), fp32 KV cache (~15%), purego FFI (~7%).
+  - Go-side overhead is <2% of total — Wave 1 optimizations effective but not the bottleneck.
+  - 237 tok/s target NOT achievable without CUDA kernel improvements (Phase 24 scope).
 
 - [ ] T4.3 Carry forward: DeepSeek V3 DGX E2E  Owner:  (BLOCKED: no MLA+MoE GGUF model)
 

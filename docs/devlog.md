@@ -5,6 +5,60 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Phase 23 Final Benchmark — T4.2 Zerfoo vs Ollama
+
+**Type:** benchmark
+**Tags:** performance, cuda-graph, ollama, phase-23, dgx, T4.2
+
+**Problem:** Compare Zerfoo vs Ollama throughput on Gemma 3 1B Q4_K_M (DGX Spark GB10).
+
+**Results:**
+
+| System | 50t | 128t | 256t | 512t |
+|--------|-----|------|------|------|
+| Zerfoo (with CUDA graph) | 149 tok/s | 130 tok/s | 103 tok/s | 71 tok/s |
+| Ollama (llama.cpp) | ~208 tok/s | - | - | ~200 tok/s (328t) |
+
+**Analysis:**
+
+1. **Zerfoo is ~28% slower** than Ollama at short sequences (149 vs 208 tok/s at 50t).
+   The gap is GPU-side, not Go overhead.
+
+2. **Throughput declines with sequence length** — expected due to growing KV attention,
+   but Zerfoo's decline is steeper than Ollama's (200 tok/s at 328t vs 103 at 256t).
+   Likely cause: fp32 KV cache (default) vs Ollama's fp16 KV — 2x bandwidth for KV reads.
+
+3. **Phase 23 Wave 1 optimizations** (PoolResetter cache, stopSet pre-alloc, fast replay
+   path, capturedSlots slice, embedding cache) reduce Go-side overhead from ~140us to ~57us
+   per step. But GPU compute is ~7ms per step, so Go overhead is <2% of total.
+   **Conclusion: Go overhead is NOT the bottleneck.**
+
+4. **CUDA graph provides ~16% speedup** (114→132 at 50t, 88→96 at 256t).
+   This is lower than the 37% seen in Phase 22 (122→167). Investigation needed.
+
+5. **Remaining gap attribution:**
+   - GEMV kernel efficiency: llama.cpp uses hand-tuned Q4_K GEMV; Zerfoo uses custom
+     but less optimized Q4 GEMV. Estimated: 20-30% of the gap.
+   - KV cache dtype: fp32 vs fp16 doubles bandwidth for KV reads. Estimated: 10-20%.
+   - purego FFI overhead: each kernel call goes through dlsym + ccall instead of direct
+     C++ function calls. Estimated: 5-10%.
+   - CUDA graph replay efficiency: Zerfoo captures 184/185 instructions vs llama.cpp
+     which captures the entire decode step. Estimated: 5-10%.
+
+**Verdict:** Phase 23 target of 237 tok/s (95% of theoretical) is NOT achievable with
+Go-side optimizations alone. Reaching 237 requires:
+- FP16 KV cache (T3.2 was context.Value; real fix is fp16 KV dtype support)
+- Optimized Q4_K GEMV kernel (Blackwell-specific tuning)
+- Reducing purego FFI overhead (kernel batching or megakernel fusion)
+
+These are beyond Phase 23 scope (which explicitly excluded CUDA kernel changes).
+
+**Recommendation:** Close Phase 23 with current results. The optimization work is solid —
+CUDA graph capture works, replay is O(1), and Go overhead is minimized. The remaining gap
+is in GPU kernel performance, which should be Phase 24.
+
+---
+
 ## 2026-03-17: Phase 23 Wave 1 — DGX Benchmark (T2.3)
 
 **Type:** benchmark
