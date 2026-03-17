@@ -197,6 +197,10 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 
+	if r.rms == nil || r.inputTensor == nil {
+		return nil, fmt.Errorf("RMSNorm: backward called before forward: missing cached tensors")
+	}
+
 	input := r.inputTensor
 
 	// Gradient of the gain parameter
