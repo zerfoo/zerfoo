@@ -14,6 +14,8 @@ github.com/zerfoo/ztensor v0.2.1-0.20260317033341-bf569a30125e h1:/GiHLA2sO180uS
 github.com/zerfoo/ztensor v0.2.1-0.20260317033341-bf569a30125e/go.mod h1:6nj8x9hcZjLzJHhnwBx9po0OW4hB6nDZuG08SAP0Cc0=
 github.com/zerfoo/ztensor v0.2.1-0.20260317034454-a7e361cefdbd h1:OymdPLMVnef2Jc8ic9PriyXQBw9Wgvpfwf+vFE/rEXc=
 github.com/zerfoo/ztensor v0.2.1-0.20260317034454-a7e361cefdbd/go.mod h1:6nj8x9hcZjLzJHhnwBx9po0OW4hB6nDZuG08SAP0Cc0=
+github.com/zerfoo/ztensor v0.2.1-0.20260317035200-dafb96e46fbd h1:bCq8BmlfIaqXJ2NEEaSDjfyX7uZ34ogNvMVkQWtqYd8=
+github.com/zerfoo/ztensor v0.2.1-0.20260317035200-dafb96e46fbd/go.mod h1:6nj8x9hcZjLzJHhnwBx9po0OW4hB6nDZuG08SAP0Cc0=
 github.com/zerfoo/ztoken v0.2.0 h1:b+ktFCWzN6fa9RL0CRwIsjnbTlxzp6B6FQUcKuFki2s=
 github.com/zerfoo/ztoken v0.2.0/go.mod h1:XIkfp6+ALQcJ/q00t1AUnlKv6EiKrFiG7q8rElRp8TI=
 golang.org/x/net v0.25.0 h1:d/OCCoBEUq33pjydKrGQhw7IlUPI2Oylr+8qLx49kac=
