@@ -5,6 +5,41 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Bisect & Fix — FlashAttentionDecode was the throughput regression
+
+**Type:** investigation + fix
+**Tags:** performance, bisect, FlashAttentionDecode, SDPA, regression
+
+**Problem:** Throughput regressed from 234 tok/s (Phase 16) to 149 tok/s (Phase 23).
+
+**Investigation:** `git bisect` across 265 commits identified the first bad commit:
+`c39ca9f fix(inference): eliminate D2H transfer in GQA to enable CUDA graph capture`
+
+This commit added FlashAttentionDecode to replace SDPA during decode. The custom flash
+kernel was ~15% slower than cuBLAS SDPA for Gemma 3 1B's small attention dimensions
+(4 KV heads, 256 head dim).
+
+**Root cause:** FlashAttentionDecode was added because SDPA's gpuSoftmax allocates a
+buffer, and cudaMalloc during stream capture causes error 901. But with the ztensor
+prefill-skip fix, capture only happens during decode where all allocations go through
+the arena (bump pointer, no cudaMalloc). Arena allocations are capture-safe.
+
+**Fix:** Disabled FlashAttentionDecode, reverted to SDPA decode path. CUDA graph
+capture still works because arena-based softmax allocation is capture-safe.
+
+**Results after fix:**
+
+| Tokens | Before (FlashDecode) | After (SDPA) | Ollama | Gap |
+|--------|---------------------|-------------|--------|-----|
+| 50 | 149 tok/s | 170 tok/s | 208 tok/s | -18% |
+| 256 | 103 tok/s | 187 tok/s | 201 tok/s | -7% |
+| 512 | 71 tok/s | 189 tok/s | ~201 tok/s | -6% |
+
+The 256-token throughput went from 103 to 187 tok/s — an **82% improvement** from
+eliminating the FlashAttentionDecode bottleneck. At 512 tokens, we're within 6% of Ollama.
+
+---
+
 ## 2026-03-17: Phase 23 Final Benchmark — T4.2 Zerfoo vs Ollama
 
 **Type:** benchmark
