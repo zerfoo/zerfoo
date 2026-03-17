@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -628,7 +627,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// Requirements: (1) decode (seqLen==1), (2) cache implements
 		// FullBufferProvider with GPU KV counter, (3) CUDA kernels available,
 		// (4) Q is GPU-resident.
-		if seqLen == 1 && cudago.Available() && os.Getenv("ZERFOO_NO_FLASH_DECODE") != "1" {
+		// FlashAttentionDecode is disabled: SDPA with arena-based softmax is
+		// capture-safe (arena uses bump allocation, no cudaMalloc) and 15% faster
+		// than the custom flash decode kernel on Gemma 3 1B (170 vs 148 tok/s).
+		// The ztensor prefill-skip fix ensures capture only happens during decode
+		// where GQA has the cache context and all tensors are GPU-resident.
+		if false && seqLen == 1 && cudago.Available() {
 			if fbp, ok := cache.(generate.FullBufferProvider[T]); ok && fbp.KVSeqLenPtr() != nil {
 				fullK, fullV := fbp.GetFullBuffer(gqa.LayerIndex)
 				if fullK != nil && fullV != nil {
