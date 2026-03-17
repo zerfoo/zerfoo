@@ -152,14 +152,14 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q8_0. Q8_0 preserves much more precision than Q4_0
-	// (1 byte/elem vs 0.5) while keeping a compact CPU footprint that works
-	// well with unified memory. Q4_K→Q4_0 was lossy (dropped 6-bit sub-block
-	// scales). Q4_K→Q8_0 is nearly lossless for the 4-bit source data.
+	// Re-quantize Q4_K to Q4_0. The Q4_K fused GEMV kernel exists but native
+	// Q4_K is ~20% slower than Q4_0 GEMV (120 vs 149 tok/s on GB10). The Q4_0
+	// path trades per-sub-block 6-bit scale precision for throughput.
+	// TODO: optimize Q4_K GEMV to match Q4_0 speed, then use native Q4_K.
 	f32 := make([]float32, numElements)
 	q4k.Dequantize(f32)
-	q8 := tensor.QuantizeQ8(f32)
-	return tensor.NewWithStorage[float32](shape, q8)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -230,12 +230,11 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 		}
 	}
 
-	// Re-quantize to Q8_0. Q8_0 (1 byte/elem) preserves much more precision
-	// than Q4_0 (0.5 bytes/elem) while keeping compact CPU storage for
-	// efficient unified memory access. Q5_0→Q4_0 dropped 1 bit per weight;
-	// Q5_0→Q8_0 is nearly lossless for 5-bit source data.
-	q8 := tensor.QuantizeQ8(data)
-	return tensor.NewWithStorage[float32](shape, q8)
+	// Re-quantize to Q4_0 for fast fused GEMV. This trades ~1 bit of precision
+	// for 8x bandwidth reduction during inference. A native Q5_0 GEMV kernel
+	// would eliminate this quality tradeoff (TODO).
+	q4 := tensor.QuantizeQ4(data)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
