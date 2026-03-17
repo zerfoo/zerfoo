@@ -5,6 +5,43 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Phase 27 T4.3 — Final benchmark after dp4a + arena reuse
+
+**Type:** benchmark
+**Tags:** performance, dp4a, arena, Q4_K, DGX Spark, Gemma3
+
+**Problem:** Measure combined effect of T4.1 (dp4a INT8 Q4_K GEMV kernel) + T4.2
+(arena free-list with best-fit allocation and graph tensor lifetime analysis) on
+tok/s and GPU memory.
+
+**Root cause:** N/A (benchmark run).
+
+**Fix:** N/A.
+
+**Results (Gemma 3 1B Q4_K_M, DGX Spark GB10, CUDA graph):**
+| Tokens | Before (8717a12) | After (4e85b12) | Delta |
+|--------|-------------------|------------------|-------|
+| 50     | 220.34 tok/s      | 219.17 tok/s     | -0.5% |
+| 256    | 244.99 tok/s      | 245.15 tok/s     | +0.1% |
+| 512    | 249.04 tok/s      | 248.47 tok/s     | -0.2% |
+
+**Analysis:** Results are within noise margin (~1 tok/s). At batch=1 autoregressive
+decode, throughput is memory-bandwidth-bound on GB10 (128GB LPDDR5x). The dp4a INT8
+GEMV kernel (T4.1) reduces compute cycles but cannot improve performance when memory
+bandwidth is the bottleneck. dp4a benefits are expected at batch>1 where compute
+becomes limiting. Arena free-list reuse (T4.2) reduces allocation overhead but the
+effect is below measurement noise at this workload size.
+
+**GPU memory:** GB10 unified memory; nvidia-smi does not report per-process GPU
+memory. Arena reuse effect not directly measurable via nvidia-smi on this hardware.
+
+**Commits:** ztensor 3653fe1 (main), zerfoo 1fc1925 (main).
+
+**Impact:** Confirms T4.1 and T4.2 are performance-neutral at batch=1 decode.
+Baseline maintained at 245 tok/s (+20% vs Ollama 204 tok/s).
+
+---
+
 ## 2026-03-17: RMSNorm backward pass nil pointer dereference (confirmed bug)
 
 **Type:** finding
