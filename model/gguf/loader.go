@@ -178,10 +178,10 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
-	f32 := make([]float32, numElements)
-	q6k.Dequantize(f32)
-	return tensor.New[float32](shape, f32)
+	// Use native Q6_K storage. The GPU engine dispatches to fused GemvQ6KF32
+	// for batch=1 decode. PreUploadFrozenWeights skips Q6KStorage (preserves
+	// quantized format). UploadWeights handles GPU pre-upload of raw bytes.
+	return tensor.NewWithStorage[float32](shape, q6k)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
