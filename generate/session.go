@@ -30,6 +30,8 @@ type InferenceSession[T tensor.Numeric] struct {
 	compileOnce  func(ctx context.Context, input *tensor.TensorNumeric[T]) // triggers graph compilation + CUDA graph capture
 	planRef      *atomic.Pointer[graph.ExecutionPlan[T]]                   // shared reference to compiled execution plan
 	poolResetter compute.PoolResetter                                      // cached type assertion; nil if engine doesn't implement it
+	stopSet      map[int]bool                                              // reusable stop-token set, cleared and repopulated each call
+	generatedIDs []int                                                     // reusable slice for generated token IDs
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -112,13 +114,11 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 	s.cache.Reset()
 	genCtx := WithCache(ctx, s.cache)
 
-	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
-	for _, id := range sc.StopTokenIDs {
-		stopSet[id] = true
-	}
-	stopSet[s.config.EOSTokenID] = true
+	s.prepareStopSet(sc.StopTokenIDs)
+	stopSet := s.stopSet
 
-	generatedIDs := make([]int, 0, sc.MaxNewTokens)
+	s.prepareGeneratedIDs(sc.MaxNewTokens)
+	generatedIDs := s.generatedIDs[:0]
 
 	// Prefill: run the full prompt through the graph.
 	prefillTensor, err := s.idsToTensor(promptIDs)
@@ -243,13 +243,11 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 	s.cache.Reset()
 	genCtx := WithCache(ctx, s.cache)
 
-	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
-	for _, id := range sc.StopTokenIDs {
-		stopSet[id] = true
-	}
-	stopSet[s.config.EOSTokenID] = true
+	s.prepareStopSet(sc.StopTokenIDs)
+	stopSet := s.stopSet
 
-	generatedIDs := make([]int, 0, sc.MaxNewTokens)
+	s.prepareGeneratedIDs(sc.MaxNewTokens)
+	generatedIDs := s.generatedIDs[:0]
 	prevDecoded := ""
 
 	// Prefill.
@@ -395,6 +393,29 @@ func (s *InferenceSession[T]) idsToTensor(ids []int) (*tensor.TensorNumeric[T], 
 		data[i] = T(id)
 	}
 	return tensor.New([]int{1, len(ids)}, data)
+}
+
+// prepareStopSet clears and repopulates the session's reusable stop-token set.
+// If the map has not been allocated yet, it is created with sufficient capacity.
+func (s *InferenceSession[T]) prepareStopSet(stopTokenIDs []int) {
+	needed := len(stopTokenIDs) + 1 // +1 for EOS
+	if s.stopSet == nil {
+		s.stopSet = make(map[int]bool, needed)
+	} else {
+		clear(s.stopSet)
+	}
+	for _, id := range stopTokenIDs {
+		s.stopSet[id] = true
+	}
+	s.stopSet[s.config.EOSTokenID] = true
+}
+
+// prepareGeneratedIDs ensures the session's reusable generatedIDs slice has
+// at least the requested capacity. The caller resets length via [:0].
+func (s *InferenceSession[T]) prepareGeneratedIDs(minCap int) {
+	if cap(s.generatedIDs) < minCap {
+		s.generatedIDs = make([]int, 0, minCap)
+	}
 }
 
 // sampleFromLogits extracts the last-position logits from a [1, seqLen, vocabSize]
