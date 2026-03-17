@@ -184,7 +184,8 @@ separate `ffn_gate.weight`). The tensor must be split similarly to the QKV split
     (c) no split when up size matches intermediate exactly.
   - Acceptance: `go test ./model/gguf/ -run TestSplitMergedGateUp -race` passes.
 
-- [ ] T3.3 DGX verify Phi 3.5 loads and generates  Owner:  Est: 30m
+- [x] T3.3 DGX verify Phi 3.5 loads and generates  Owner: Claude  Done: 2026-03-16
+  - Result: PASS - arch=phi3, 32 layers, 15 words generated. QKV split + gate+up split work.
   - Deps: T3.1, T3.2
   - Acceptance: `go test -tags dgx -run TestT7_1/phi3 ./tests/dgx/` passes.
 
