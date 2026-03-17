@@ -5,6 +5,30 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Phase 25 investigation — 234 vs 186 tok/s regression remains unexplained
+
+**Type:** investigation
+**Tags:** performance, Q4 GEMV, cuBLAS, PreUploadFrozenWeights, EnsureCaptureInputsGPU, ztensor extraction
+
+**Problem:** Phase 6 (in-tree monorepo) achieves 234 tok/s at 256t. Current code (ztensor module) achieves 186 tok/s. Both use identical Q4 GEMV kernel (gemm_q4.cu, same binary in libkernels.so).
+
+**Investigation:**
+1. Profiled both: Phase 6 `_ExternalCode`=2070ms, current=2750ms (680ms gap for 512t = 1.33ms/token GPU overhead).
+2. Confirmed Q4 GEMV dispatch runs (839 calls, all GPUPtr=true). Q4 GEMV gives 186 -- same as cuBLAS SGEMM (F32). Neither path is faster on current code.
+3. Found `EnsureCaptureInputsGPU` was converting Q4->F32 during capture. Fixed with Q4 skip. No throughput change (still 186).
+4. Found Q8->F32 handler and FP16 upload handler in UploadWeights added during Phase 24/25. Removed both. No throughput change.
+5. Disabled replayFast (Phase 23 addition). No change.
+6. Tried BF16 weights, FP16 weights, Q8 re-quant. All slower or same.
+7. Tested with `replace` directive (local ztensor). Same 160 tok/s with Q4 skip.
+
+**Root cause:** Unknown. The 680ms GPU overhead is NOT from Go code (profiles identical). The CUDA graph replays the same kernel binary but 33% slower. Likely caused by differences in GPU memory allocation patterns, TLB/cache state, or graph executor infrastructure between the monorepo and extracted module. Requires nsight systems GPU-level profiling to isolate.
+
+**Fix:** N/A. The 186 tok/s baseline (cuBLAS SGEMM) is stable and within 5% of Ollama (196). The 234 recovery requires GPU-level investigation beyond Go profiling capabilities.
+
+**Impact:** The +18% claim (234 tok/s) cannot be reproduced with the current ztensor module structure. Suggest nsight systems profiling as next step, or reverting the ztensor extraction for the hot path.
+
+---
+
 ## 2026-03-17: Bisect & Fix — FlashAttentionDecode was the throughput regression
 
 **Type:** investigation + fix
