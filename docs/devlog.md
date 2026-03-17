@@ -5,6 +5,52 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-16: Phase 23 Performance Investigation
+
+**Type:** investigation
+**Tags:** performance, cuda-graph, session, resetpool, gpu-argmax, compile-traced
+
+**Problem:** Session.Generate throughput (159 tok/s at 50 tokens) is below Phase 20
+peak (234 tok/s). Investigation to recover and exceed.
+
+**Findings:**
+
+1. **Missing ResetPool**: Session decode loop did not call `engine.ResetPool()` between
+   steps. Generator did (line 332). Without it, GPU arena grows monotonically.
+   Fix: added ResetPool to both Generate and GenerateStream decode loops.
+
+2. **Missing GPU argmax**: Session always copied logits to CPU for sampling. Generator
+   had GPU argmax fast path (line 425). Fix: added GPU argmax when temperature=0,
+   no grammar, logits on GPU.
+
+3. **Impact of T1.1+T1.2**: Gemma 3 1B Q4_K_M on DGX:
+   - 50 tokens: 159 -> 167 tok/s (+5%)
+   - 100 tokens: 139 -> 146 tok/s (+5%)
+   - 256 tokens: 99 -> 105 tok/s (+6%)
+
+4. **CUDA graph provides only 1.4x speedup** (122 -> 166 tok/s). At Phase 20, CUDA
+   graph provided much larger gains. The CompileTraced path fails with "instruction 0
+   (MatMul): input tensors cannot be nil" and falls back to Compile. The Compile path
+   may produce less efficient execution plans.
+
+5. **Without CUDA graph**: 122 tok/s at 50 tokens. This is the pure compiled-plan
+   execution speed. The graph adds only ~44 tok/s on top.
+
+6. **Theoretical ceiling**: GB10 memory bandwidth ~200 GB/s. Gemma 1B Q4_K weights
+   ~800MB. Memory-bound decode: 800MB / 200GB/s = 4ms/token = 250 tok/s max.
+   Current 167 tok/s = 67% of theoretical.
+
+**Root cause of 234 gap:** The 234 tok/s was measured at Phase 20 with the old
+Generator.Generate path. The Generator creates a fresh KV cache each call and triggers
+compileGraph on the first decode step. The session path uses pooled sessions with
+pre-warmed KV caches. The CompileTraced failure means both paths use the fallback
+Compile, but the CUDA graph capture may be less efficient with the session's KV cache
+layout. Further investigation needed in ztensor graph compilation.
+
+**Fix:** T1.1+T1.2 applied. Next: investigate CompileTraced failure (T2.1).
+
+---
+
 ## 2026-03-16: Phase 22 DGX Re-Verification
 
 **Type:** benchmark
