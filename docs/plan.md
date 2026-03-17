@@ -133,15 +133,13 @@ Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph la
   - CUDA graph capture fails at GQA softmax (error 901). Wave 1 replay
     optimizations cannot show impact until capture is fixed. See devlog.
 
-- [ ] T2.4 Fix CUDA graph capture failure in GQA softmax  Owner:  Est: 60m
-  - File: GQA softmax kernel dispatch path (ztensor or zerfoo layers/attention/)
-  - CUDA graph capture fails at instruction 2 (GroupedQueryAttention) with
-    "softmax kernel failed (cuda error 901)". The scaled_softmax kernel
-    dispatch does something incompatible with stream capture (memory alloc,
-    D2H copy, or host sync).
-  - Investigate: Run with ZERFOO_DEBUG_GPU=1 to trace exact failure point
-    in the softmax dispatch chain.
-  - Acceptance: CUDA graph captures successfully. Benchmark shows improvement.
+- [x] T2.4 Fix CUDA graph capture failure in GQA softmax  Owner: Claude  Done: 2026-03-17
+  - Root cause: CUDA graph executor attempted capture during PREFILL (seqLen > 1).
+    During prefill, GQA takes SDPA path (not FlashAttentionDecode), which
+    triggers gpuSoftmax allocation incompatible with stream capture (error 901).
+  - Fix 1 (ztensor): Skip capture when input seqLen > 1, defer to first decode call.
+  - Fix 2 (zerfoo): Pre-allocate FlashAttentionDecode output buffer on first use.
+  - Result: CUDA graph captures successfully. 132 tok/s (50t), 96 tok/s (256t).
 
 ### E3: Session-Level Optimizations
 
