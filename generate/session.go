@@ -20,15 +20,16 @@ import (
 // inference. Each session owns its own KV cache and position tracking,
 // allowing multiple sessions to generate simultaneously without data races.
 type InferenceSession[T tensor.Numeric] struct {
-	graph       *graph.Graph[T]
-	tokenizer   tokenizer.Tokenizer
-	engine      compute.Engine[T]
-	config      ModelConfig
-	cache       CacheProvider[T]
-	graphMu     *sync.Mutex // shared mutex for graph Forward (graph is not concurrent-safe)
-	mu          sync.Mutex  // serializes Generate calls within this session
-	compileOnce func(ctx context.Context, input *tensor.TensorNumeric[T]) // triggers graph compilation + CUDA graph capture
-	planRef     *atomic.Pointer[graph.ExecutionPlan[T]]                   // shared reference to compiled execution plan
+	graph        *graph.Graph[T]
+	tokenizer    tokenizer.Tokenizer
+	engine       compute.Engine[T]
+	config       ModelConfig
+	cache        CacheProvider[T]
+	graphMu      *sync.Mutex // shared mutex for graph Forward (graph is not concurrent-safe)
+	mu           sync.Mutex  // serializes Generate calls within this session
+	compileOnce  func(ctx context.Context, input *tensor.TensorNumeric[T]) // triggers graph compilation + CUDA graph capture
+	planRef      *atomic.Pointer[graph.ExecutionPlan[T]]                   // shared reference to compiled execution plan
+	poolResetter compute.PoolResetter                                      // cached type assertion; nil if engine doesn't implement it
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -44,15 +45,21 @@ func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 		cache = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
 	}
 
+	var poolResetter compute.PoolResetter
+	if pr, ok := any(gen.engine).(compute.PoolResetter); ok {
+		poolResetter = pr
+	}
+
 	return &InferenceSession[T]{
-		graph:       gen.graph,
-		tokenizer:   gen.tokenizer,
-		engine:      gen.engine,
-		config:      gen.config,
-		cache:       cache,
-		graphMu:     &gen.mu,
-		compileOnce: gen.compileGraph,
-		planRef:     &gen.plan,
+		graph:        gen.graph,
+		tokenizer:    gen.tokenizer,
+		engine:       gen.engine,
+		config:       gen.config,
+		cache:        cache,
+		graphMu:      &gen.mu,
+		compileOnce:  gen.compileGraph,
+		planRef:      &gen.plan,
+		poolResetter: poolResetter,
 	}
 }
 
@@ -159,8 +166,8 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		// Reset arena pool between tokens so intermediates are reclaimed.
 		// Without this, the GPU arena grows monotonically, fragmenting memory
 		// and preventing CUDA graph replay from reusing buffer addresses.
-		if resetter, ok := any(s.engine).(compute.PoolResetter); ok {
-			resetter.ResetPool()
+		if s.poolResetter != nil {
+			s.poolResetter.ResetPool()
 		}
 
 		decodeBuf[0] = T(nextToken)
@@ -285,8 +292,8 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 		}
 
 		// Reset arena pool between tokens so intermediates are reclaimed.
-		if resetter, ok := any(s.engine).(compute.PoolResetter); ok {
-			resetter.ResetPool()
+		if s.poolResetter != nil {
+			s.poolResetter.ResetPool()
 		}
 
 		decodeBuf[0] = T(nextToken)
