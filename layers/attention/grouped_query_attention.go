@@ -61,13 +61,6 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	kDim      int // number of K output elements (numKVHeads * headDim)
 	vDim      int // number of V output elements (numKVHeads * headDim)
 
-	// Pre-allocated GPU buffer for FlashAttentionDecode output. Allocated on
-	// first decode call and reused on subsequent calls (including during CUDA
-	// graph capture/replay). Without this, tensor.NewGPUStorage would call
-	// cudaMalloc during stream capture, causing error 901.
-	flashDecodeOutput *tensor.GPUStorage[T]
-	flashDecodeElems  int // capacity in elements
-
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -646,24 +639,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 							kvLen := cache.SeqLen() // CPU fallback value; kernel uses GPU counter
 							numBH := batchSize * gqa.numQueryHeads
 
-							// Reuse pre-allocated GPU buffer for FlashAttentionDecode output.
-							// This avoids cudaMalloc during CUDA graph capture (error 901).
+							// Allocate output: [batch*numQueryHeads, 1, headDim]
 							oElems := numBH * gqa.headDim
-							if gqa.flashDecodeOutput == nil || gqa.flashDecodeElems < oElems {
-								if gqa.flashDecodeOutput != nil {
-									_ = gqa.flashDecodeOutput.Free()
-								}
-								newBuf, err := tensor.NewGPUStorage[T](oElems, qGS.DeviceID())
-								if err == nil {
-									gqa.flashDecodeOutput = newBuf
-									gqa.flashDecodeElems = oElems
-								}
-							}
-							oGPU := gqa.flashDecodeOutput
-							allocErr := error(nil)
-							if oGPU == nil {
-								allocErr = fmt.Errorf("flash decode output buffer not allocated")
-							}
+							oGPU, allocErr := tensor.NewGPUStorage[T](oElems, qGS.DeviceID())
 							if allocErr == nil {
 								// Get stream for kernel launch.
 								realEng := compute.Engine[T](gqa.engine)
@@ -688,7 +666,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 									if err == nil {
 										flashDecodeUsed = true
 									}
-								} // flash decode error: fall through to SDPA
+								} else {
+								_ = oGPU.Free()
+							}
 							}
 						}
 					}
