@@ -152,14 +152,12 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0. The Q4_K fused GEMV kernel exists but native
-	// Q4_K is ~20% slower than Q4_0 GEMV (120 vs 149 tok/s on GB10). The Q4_0
-	// path trades per-sub-block 6-bit scale precision for throughput.
-	// TODO: optimize Q4_K GEMV to match Q4_0 speed, then use native Q4_K.
+	// Dequantize Q4_K directly to float32 — accurate, no lossy Q4_0 step.
+	// PreUploadFrozenWeights uploads the float32 to GPU for cuBLAS SGEMM,
+	// which is 2-3x faster than custom GEMV kernels on Blackwell.
 	f32 := make([]float32, numElements)
 	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.New[float32](shape, f32)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -167,8 +165,10 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Native Q5_K storage with fused GemvQ5KF32 dispatch.
-	return tensor.NewWithStorage[float32](shape, q5k)
+	// Dequantize to float32 — accurate, cuBLAS SGEMM path.
+	f32 := make([]float32, numElements)
+	q5k.Dequantize(f32)
+	return tensor.New[float32](shape, f32)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -176,10 +176,10 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Use native Q6_K storage. The GPU engine dispatches to fused GemvQ6KF32
-	// for batch=1 decode. PreUploadFrozenWeights skips Q6KStorage (preserves
-	// quantized format). UploadWeights handles GPU pre-upload of raw bytes.
-	return tensor.NewWithStorage[float32](shape, q6k)
+	// Dequantize to float32 — accurate, cuBLAS SGEMM path.
+	f32 := make([]float32, numElements)
+	q6k.Dequantize(f32)
+	return tensor.New[float32](shape, f32)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
@@ -189,13 +189,39 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 // half of the block (positions 0-15) and the high nibble maps to the second
 // half (positions 16-31). This matches llama.cpp's dequantize_row_q5_0.
 func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
-	q5_0, err := tensor.NewQ5_0StorageFromRaw(raw, numElements)
-	if err != nil {
-		return nil, fmt.Errorf("Q5_0 decode: %w", err)
+	// Dequantize Q5_0 directly to float32 — accurate, no lossy Q4_0 step.
+	// The Q5_0→Q4_0 re-quantization dropped 1 bit per weight and caused
+	// garbled output. Direct float32 dequant preserves full Q5_0 precision.
+	// PreUploadFrozenWeights uploads to GPU for cuBLAS SGEMM.
+	const blockSize = 32
+	const halfBlock = blockSize / 2
+	const blockBytes = 22
+	nBlocks := (numElements + blockSize - 1) / blockSize
+
+	data := make([]float32, numElements)
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(raw[off : off+2])).ToFloat32()
+		qh := binary.LittleEndian.Uint32(raw[off+2 : off+6])
+		for j := range halfBlock {
+			packed := raw[off+6+j]
+			low4 := packed & 0x0F
+			high4 := packed >> 4
+			xh0 := uint8((qh>>uint(j))&1) << 4
+			x0 := int(low4|xh0) - 16
+			xh1 := uint8((qh>>uint(j+halfBlock))&1) << 4
+			x1 := int(high4|xh1) - 16
+			idx0 := bi*blockSize + j
+			idx1 := bi*blockSize + j + halfBlock
+			if idx0 < numElements {
+				data[idx0] = d * float32(x0)
+			}
+			if idx1 < numElements {
+				data[idx1] = d * float32(x1)
+			}
+		}
 	}
-	// Native Q5_0 storage with fused GemvQ5_0F32 dispatch.
-	// Eliminates the lossy Q5_0→Q4_0 re-quantization that caused garbled output.
-	return tensor.NewWithStorage[float32](shape, q5_0)
+	return tensor.New[float32](shape, data)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
