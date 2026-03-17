@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -627,7 +628,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// Requirements: (1) decode (seqLen==1), (2) cache implements
 		// FullBufferProvider with GPU KV counter, (3) CUDA kernels available,
 		// (4) Q is GPU-resident.
-		if seqLen == 1 && cudago.Available() {
+		if seqLen == 1 && cudago.Available() && os.Getenv("ZERFOO_NO_FLASH_DECODE") != "1" {
 			if fbp, ok := cache.(generate.FullBufferProvider[T]); ok && fbp.KVSeqLenPtr() != nil {
 				fullK, fullV := fbp.GetFullBuffer(gqa.LayerIndex)
 				if fullK != nil && fullV != nil {
