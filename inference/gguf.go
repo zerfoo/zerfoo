@@ -55,6 +55,11 @@ func LoadGGUF(path string) (*GGUFModel, error) {
 		return nil, fmt.Errorf("split merged QKV: %w", err)
 	}
 
+	// Split merged gate+up MLP tensors (e.g., Phi ffn_up with gate+up concatenated).
+	if err := gguf.SplitMergedGateUp(mapped, cfg); err != nil {
+		return nil, fmt.Errorf("split merged gate+up: %w", err)
+	}
+
 	return &GGUFModel{
 		Config:  cfg,
 		Tensors: mapped,
