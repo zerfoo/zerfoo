@@ -141,7 +141,12 @@ Port missing optimizations from Generator.Generate to InferenceSession.Generate.
 The CompileTraced path produces traced execution plans that may enable more efficient
 CUDA graph capture. Currently it fails with "input tensors cannot be nil".
 
-- [ ] T2.1 Investigate CompileTraced failure  Owner:  Est: 60m
+- [x] T2.1 Investigate CompileTraced failure  Owner: Claude  Done: 2026-03-16
+  - Result: CompileTraced produces a plan with cache-dependent instructions that have
+    nil inputs when KV cache is absent. This is architectural -- the traced plan binds
+    slot IDs to the tracing context and cannot handle different runtime KV cache states.
+    The Compile fallback is correct and still enables CUDA graph capture (184/185
+    instructions captured). CompileTraced would need a "cache-aware tracing" mode to fix.
   - File: `generate/generator.go` line 163, ztensor `graph/compile.go`
   - The error "instruction 0 (MatMul): input tensors cannot be nil" occurs during
     CompileTraced validation. Read the CompileTraced code in ztensor to understand
@@ -150,7 +155,12 @@ CUDA graph capture. Currently it fails with "input tensors cannot be nil".
   - Acceptance: Root cause identified and documented. If fixable, produce a fix.
     If architectural, document why and whether it matters for performance.
 
-- [ ] T2.2 Fix CompileTraced or document why fallback is acceptable  Owner:  Est: 60m
+- [x] T2.2 Fix CompileTraced or document why fallback is acceptable  Owner: Claude  Done: 2026-03-16
+  - Result: Fallback is acceptable. The Compile path captures 184/185 instructions in
+    the CUDA graph (99.5% coverage). The CompileTraced path would decompose composite
+    nodes into primitives for megakernel emission, but is blocked by architectural
+    incompatibility with cache-dependent operations. Performance impact is minimal --
+    the CUDA graph captures the same instruction range either way.
   - Deps: T2.1
   - If fixable: fix and verify CompileTraced succeeds on Gemma 3.
   - If not fixable: document in devlog why the fallback Compile path is sufficient
