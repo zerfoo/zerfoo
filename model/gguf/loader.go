@@ -227,10 +227,11 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 		}
 	}
 
-	// Keep as float32 — no lossy re-quantization. A native Q5_0 GEMV kernel
-	// would be ideal but doesn't exist yet. Float32 is accurate and uses
-	// standard cuBLAS SGEMM on GPU.
-	return tensor.New[float32](shape, data)
+	// Re-quantize to Q4_0 for fast fused GEMV. This trades ~1 bit of precision
+	// for 8x bandwidth reduction during inference. A native Q5_0 GEMV kernel
+	// would eliminate this quality tradeoff (TODO).
+	q4 := tensor.QuantizeQ4(data)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
