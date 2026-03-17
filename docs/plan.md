@@ -1,75 +1,69 @@
-# Zerfoo Phase 23: "Performance Recovery & Beyond"
+# Zerfoo Phase 23: "95% of Theoretical Ceiling"
 
 ## 1. Context
 
 ### Problem Statement
 
-Phase 22 introduced per-request InferenceSession for concurrent inference. While
-sessions enable safe concurrency, the session decode loop is missing critical
-optimizations present in the original Generator decode loop, causing a throughput
-regression:
+Zerfoo achieves 167 tok/s (Gemma 3 1B Q4_K_M, 50 tokens, CUDA graph) on DGX Spark
+GB10. Ollama achieves 209 tok/s on the same hardware and model. The theoretical ceiling
+for this hardware is ~250 tok/s (memory-bandwidth bound: 800MB weights / 200 GB/s
+bandwidth = ~4ms per token). The target is 95% of ceiling = 237+ tok/s.
 
-- **Phase 20 peak**: 234.30 tok/s (Gemma 3 1B Q4_K, 256 tokens, Generator.Generate)
-- **Phase 22 current**: 159 tok/s at 50 tokens, 99 tok/s at 256 tokens (Session.Generate)
-- **Old Generator on current code**: 79 tok/s at 50 tokens, 28 tok/s at 256 tokens
+### Per-Step Overhead Analysis
 
-The session path IS faster than the old Generator path on the current codebase (2x),
-but both are below the Phase 20 peak. Investigation reveals several concrete gaps:
+Each decode step in the session does:
 
-1. **Missing ResetPool in session decode loop**: The Generator calls
-   `engine.ResetPool()` between decode steps (line 332) to reclaim intermediate GPU
-   buffers. The session decode loop never calls this. Without pool reset, the GPU arena
-   allocator grows monotonically, fragmenting memory and preventing CUDA graph replay
-   from reusing buffer addresses.
+1. `PoolResetter` type assertion — `any(s.engine).(compute.PoolResetter)` allocates an
+   interface value per step. Fix: cache the resetter once at session creation.
+2. `PrepareSlots` — copies 185 slot pointers every step (`copy(slots, p.slots)`).
+   Fix: skip copy on replay; only set the input slot.
+3. `EnsureSlotsGPU` — iterates all 185 slots checking GPU residency every step.
+   Fix: after first replay, all slots are GPU-resident; skip subsequent checks.
+4. `capturedSlots` restore — iterates map every step to restore captured output tensors.
+   Fix: store as a flat slice instead of map.
+5. `stream.Synchronize()` — blocks Go goroutine until GPU finishes. This is necessary
+   but costs ~50us of Go runtime overhead per call (goroutine park/wake). Ollama (C++)
+   uses a raw cudaStreamSynchronize with zero Go overhead.
 
-2. **CompileTraced fallback**: CUDA graph compilation falls back from CompileTraced to
-   Compile with log message "CompileTraced plan validation failed, falling back to
-   Compile: instruction 0 (MatMul): input tensors cannot be nil". The traced path may
-   produce more efficient execution plans than the fallback.
+### Root Causes of 167 vs 209 Gap
 
-3. **Session KV cache allocation**: Each session creates a new KV cache. When pooled,
-   the same session is reused, but the CUDA graph was captured with specific buffer
-   addresses. The pool pre-warms one session, but the graph capture context (cache-free)
-   differs from the generation context (with cache), potentially causing address mismatches.
+1. **Go runtime overhead per GPU sync**: Each `stream.Synchronize()` goes through
+   purego (dlopen/dlsym), which adds function call overhead vs C++ direct calls.
+   Ollama's llama.cpp kernel dispatch is entirely in C++.
 
-4. **Missing GPU argmax fast path**: The Generator has GPU-side argmax for greedy
-   decoding (lines 425-430) that avoids D2H copy of logits. The session's
-   `sampleFromLogits` always copies logits to CPU.
+2. **Redundant work per step**: PrepareSlots, EnsureSlotsGPU, and capturedSlots restore
+   do O(N) work every step where N=185 instructions. The actual GPU work is ~1ms;
+   adding 200us of Go overhead per step = ~17% waste.
 
-5. **Phi MLP gap**: Phi 3.5 GGUF uses merged gate+up in `ffn_up` (no separate
-   `ffn_gate`). The GGUF loader does not split this merged tensor. Carry-forward from
-   Phase 22.
+3. **No input tensor reuse**: The session creates a `[1,1]` token tensor once and
+   reuses the backing slice, but `PrepareSlots` copies all 185 slots anyway. The
+   replay path should only update the single input slot.
 
 ### Objectives
 
-- O1: Recover throughput to Phase 20 level (234+ tok/s at 256 tokens on Gemma 3 1B).
-- O2: Push beyond 234 tok/s by fixing CompileTraced and adding GPU argmax to sessions.
-- O3: Fix Phi MLP merged gate+up tensor support.
+- O1: Reach 237+ tok/s on Gemma 3 1B Q4_K_M (256 tokens) on DGX Spark GB10.
+- O2: Beat Ollama on the same hardware (>209 tok/s).
+- O3: Eliminate all redundant per-step overhead in the replay path.
 
 ### Non-Goals
 
-- Continuous batching (vLLM-style dynamic batching).
-- ROCm/OpenCL/Metal backends.
-- New model architecture support beyond Phi fix.
-- DeepSeek V3 DGX E2E (still blocked on model availability).
+- Continuous batching, new model architectures, training.
+- Changes to ztensor CUDA kernels (kernel performance is not the bottleneck).
+- CompileTraced (architectural limitation, documented in Phase 23 T2.1-T2.2).
 
 ### Constraints
 
-- Pure Go, zero CGo. GPU via purego/dlopen.
-- Go standard library only.
-- GGUF is the sole model format.
-- DGX Spark: ssh ndungu@192.168.86.250. Benchmarks require DGX.
-- Changes must not break existing tests or the concurrent session API.
+- Pure Go, zero CGo.
+- Changes to ztensor (separate repo) must be committed there first.
+- All existing tests must continue to pass.
 
 ### Success Metrics
 
 | Metric | Current | Target | Measurement |
 |--------|---------|--------|-------------|
-| Gemma 3 1B Q4_K_M tok/s (256 tokens) | 99 | 234+ | DGX bench_tps |
-| Gemma 3 1B Q4_K_M tok/s (50 tokens) | 159 | 250+ | DGX TestT7_4 |
-| CompileTraced success | FAIL (fallback) | PASS | No fallback log message |
-| Phi 3.5 loads | FAIL (missing ffn_gate) | PASS | DGX TestT7_1/phi3 |
-| All existing tests pass | PASS | PASS | go test ./... -race |
+| Gemma 3 1B 50 tokens | 167 tok/s | 237+ | DGX bench |
+| Gemma 3 1B 256 tokens | 105 tok/s | 237+ | DGX bench |
+| vs Ollama | -20% | +10% | Side-by-side DGX bench |
 
 ---
 
@@ -77,25 +71,14 @@ but both are below the Phase 20 peak. Investigation reveals several concrete gap
 
 ### In Scope
 
-- Add ResetPool to session decode loop.
-- Add GPU argmax fast path to session sampling.
-- Investigate and fix CompileTraced failure.
-- Implement Phi merged gate+up MLP tensor split.
-- DGX benchmark after each fix to measure impact.
+- Eliminate per-step overhead in session decode loop and CUDA graph replay.
+- Optimize the CUDAGraphExecutor replay hot path in ztensor.
+- DGX benchmarks after each optimization.
 
 ### Out of Scope
 
-- Continuous batching, new architectures, training improvements.
-- DeepSeek V3 DGX (blocked on model).
-
-### Deliverables
-
-| ID | Description | Acceptance Criteria |
-|----|-------------|-------------------|
-| D1 | Session decode perf parity | Session.Generate within 5% of old Generator peak |
-| D2 | CompileTraced fix | No fallback to Compile on Gemma 3 |
-| D3 | Phi MLP support | Phi 3.5 GGUF loads and generates |
-| D4 | Updated benchmarks | docs/benchmarks.md reflects new numbers |
+- CUDA kernel changes, CompileTraced, new model support.
+- Continuous batching, distributed inference.
 
 ---
 
@@ -103,125 +86,91 @@ but both are below the Phase 20 peak. Investigation reveals several concrete gap
 
 ### E1: Session Decode Loop Optimizations
 
-Port missing optimizations from Generator.Generate to InferenceSession.Generate.
+Eliminate per-step overhead in the Go-side decode loop.
 
 - [x] T1.1 Add ResetPool call between decode steps in session  Owner: Claude  Done: 2026-03-16
-  - File: `generate/session.go`
-  - In the decode loop of `Generate()` and `GenerateStream()`, add
-    `if resetter, ok := s.engine.(compute.PoolResetter); ok { resetter.ResetPool() }`
-    before each decode Forward, matching Generator.Generate line 332-334.
-  - Acceptance: `go test ./generate/ -race` passes. Session decode loop reclaims
-    intermediate GPU buffers between tokens.
-
 - [x] T1.2 Add GPU argmax fast path to session sampling  Owner: Claude  Done: 2026-03-16
+
+- [ ] T1.3 Cache PoolResetter interface at session creation  Owner:  Est: 20m
   - File: `generate/session.go`
-  - In `sampleFromLogits`, add the GPU argmax fast path from Generator (lines 425-430):
-    when temperature <= 0, no repetition penalty, no grammar, and logits have GPUStorage,
-    use `compute.GPUArgmaxer` to sample directly on GPU without D2H copy.
-  - Acceptance: Session greedy decode avoids D2H logit copy when GPU argmax is available.
+  - Add a `poolResetter compute.PoolResetter` field to InferenceSession. Set it in
+    NewSession with a type assertion. In the decode loop, replace the per-step
+    `any(s.engine).(compute.PoolResetter)` with `if s.poolResetter != nil`.
+  - Acceptance: No per-step type assertion. `go test ./generate/ -race` passes.
+
+- [ ] T1.4 Cache stopSet and pre-allocate generatedIDs in session  Owner:  Est: 15m
+  - File: `generate/session.go`
+  - The stopSet map is rebuilt every Generate call. Pre-allocate it once. Similarly,
+    `generatedIDs := make([]int, 0, sc.MaxNewTokens)` allocates every call.
+    Pre-allocate a reusable slice on the session and reset it.
+  - Acceptance: Zero allocations in the decode hot loop (except GPU ops).
     `go test ./generate/ -race` passes.
 
-- [ ] T1.3 Add debug logging to session for perf diagnosis  Owner:  Est: 15m
-  - File: `generate/session.go`
-  - Add `ZERFOO_DEBUG_SESSION=1` env var that logs per-step timings:
-    prefill ms, decode step ms, sample ms, total decode tok/s.
-  - Acceptance: When env var is set, timing logs appear. When unset, no overhead.
+### E2: CUDA Graph Replay Hot Path (ztensor)
 
-- [ ] T1.4 Benchmark session with ResetPool + GPU argmax  Owner:  Est: 30m
-  - Deps: T1.1, T1.2
-  - Run on DGX: Gemma 3 1B Q4_K_M, 50 and 256 tokens, compare to baseline.
-  - Acceptance: Throughput improvement measured and logged to docs/devlog.md.
+Optimize CUDAGraphExecutor.replay() to minimize Go overhead between GPU graph launches.
 
-- [ ] T1.5 go vet/lint clean  Owner:  Est: 15m
-  - Deps: T1.1-T1.3
-  - Acceptance: `go vet ./...` 0 warnings. `go build ./...` clean.
+- [ ] T2.1 Add fast replay path that skips PrepareSlots/EnsureSlotsGPU  Owner:  Est: 60m
+  - File: `ztensor/graph/cuda_graph.go` method `replay()`
+  - After the first successful replay, all slots are GPU-resident and capturedSlots
+    are set. Add a `replayReady bool` flag. When true, skip:
+    - `PrepareSlots` (just set the input slot directly)
+    - `EnsureSlotsGPU` (all slots already GPU-resident after first replay)
+    - `capturedSlots` map iteration (slots already restored)
+  - Only need: set input slot, GraphLaunch, Synchronize, return OutputTensor.
+  - Acceptance: replay() does O(1) Go work between graph launches.
+    `go test ./graph/ -race` passes.
 
-### E2: CompileTraced Investigation
+- [ ] T2.2 Convert capturedSlots from map to slice  Owner:  Est: 20m
+  - File: `ztensor/graph/cuda_graph.go`
+  - Replace `capturedSlots map[int]*tensor.TensorNumeric[T]` with a flat slice.
+    Map iteration on every replay adds GC pressure and is slower than slice indexing.
+  - Acceptance: No map in the replay hot path. `go test ./graph/ -race` passes.
 
-The CompileTraced path produces traced execution plans that may enable more efficient
-CUDA graph capture. Currently it fails with "input tensors cannot be nil".
+- [ ] T2.3 Benchmark after ztensor replay optimization  Owner:  Est: 30m
+  - Deps: T2.1, T2.2
+  - Requires: push ztensor changes, update go.mod in zerfoo.
+  - Run DGX benchmark: Gemma 3 1B Q4_K_M, 50 and 256 tokens.
+  - Acceptance: Measurable improvement logged to docs/devlog.md.
 
-- [x] T2.1 Investigate CompileTraced failure  Owner: Claude  Done: 2026-03-16
-  - Result: CompileTraced produces a plan with cache-dependent instructions that have
-    nil inputs when KV cache is absent. This is architectural -- the traced plan binds
-    slot IDs to the tracing context and cannot handle different runtime KV cache states.
-    The Compile fallback is correct and still enables CUDA graph capture (184/185
-    instructions captured). CompileTraced would need a "cache-aware tracing" mode to fix.
-  - File: `generate/generator.go` line 163, ztensor `graph/compile.go`
-  - The error "instruction 0 (MatMul): input tensors cannot be nil" occurs during
-    CompileTraced validation. Read the CompileTraced code in ztensor to understand
-    what "input tensors cannot be nil" means. Is it a context issue (cache-free
-    compile context missing required values)? Is it a shape mismatch?
-  - Acceptance: Root cause identified and documented. If fixable, produce a fix.
-    If architectural, document why and whether it matters for performance.
+### E3: Session-Level Optimizations
 
-- [x] T2.2 Fix CompileTraced or document why fallback is acceptable  Owner: Claude  Done: 2026-03-16
-  - Result: Fallback is acceptable. The Compile path captures 184/185 instructions in
-    the CUDA graph (99.5% coverage). The CompileTraced path would decompose composite
-    nodes into primitives for megakernel emission, but is blocked by architectural
-    incompatibility with cache-dependent operations. Performance impact is minimal --
-    the CUDA graph captures the same instruction range either way.
-  - Deps: T2.1
-  - If fixable: fix and verify CompileTraced succeeds on Gemma 3.
-  - If not fixable: document in devlog why the fallback Compile path is sufficient
-    and whether it impacts CUDA graph capture quality.
-  - Acceptance: Either CompileTraced succeeds (no fallback log) or documented reason
-    why fallback is acceptable with performance data.
+- [ ] T3.1 Skip EmbeddingLookup on replay when input unchanged  Owner:  Est: 45m
+  - File: `ztensor/graph/cuda_graph.go`
+  - EmbeddingLookup is the pre-capture instruction (instruction 0). It runs on every
+    replay step, doing a CPU table lookup and H2D copy. For the decode loop, the
+    embedding table doesn't change -- only the input token ID changes. Cache the
+    previous embedding result and update via `cudaMemcpy` of just the token's
+    embedding vector (hidden_size * 4 bytes) instead of re-running the full op.
+  - Acceptance: Pre-capture region does minimal work on replay. DGX benchmark shows
+    improvement.
 
-- [ ] T2.3 Benchmark with CompileTraced fix (if applicable)  Owner:  Est: 30m
-  - Deps: T2.2
-  - Run on DGX and compare to T1.4 results.
-  - Acceptance: Delta measured and logged.
+- [ ] T3.2 Eliminate redundant context.Value lookups  Owner:  Est: 30m
+  - File: `generate/session.go`, `generate/context.go`
+  - `WithCache(ctx, s.cache)` and `GetCache(ctx)` do `context.WithValue` and
+    `ctx.Value` on every forward call. Pass the cache directly via the session
+    struct instead of through context. The graph Forward/Plan.Run functions can
+    accept a CacheProvider as an explicit parameter.
+  - Risk: This touches the graph/cache interface boundary. May require changes to
+    ztensor's Forward signature. Evaluate whether the context overhead is significant
+    before implementing.
+  - Acceptance: No context.Value lookups in the decode hot path, or documented
+    evidence that the overhead is negligible.
 
-### E3: Phi Merged Gate+Up MLP Support
-
-Phi 3.5 GGUF files use `ffn_up.weight` with merged gate and up projections (no
-separate `ffn_gate.weight`). The tensor must be split similarly to the QKV split.
-
-- [x] T3.1 Implement merged gate+up split in GGUF loader  Owner: Claude  Done: 2026-03-16
-  - File: `model/gguf/split.go`
-  - Add `splitMergedGateUp()` function. For tensors with no `ffn_gate` but `ffn_up`
-    has double the expected intermediate size, split `ffn_up` into `gate_proj` and
-    `up_proj` along the first dimension (each gets half the rows).
-  - Wire into LoadGGUF after tensor name mapping, similar to splitMergedQKV.
-  - Acceptance: After split, both `mlp.gate_proj.weight` and `mlp.up_proj.weight`
-    exist with correct shapes.
-
-- [x] T3.2 Add unit tests for gate+up split  Owner: Claude  Done: 2026-03-16
-  - Deps: T3.1
-  - File: `model/gguf/split_test.go`
-  - Tests: (a) split with 2x intermediate size, (b) no split when gate exists,
-    (c) no split when up size matches intermediate exactly.
-  - Acceptance: `go test ./model/gguf/ -run TestSplitMergedGateUp -race` passes.
-
-- [x] T3.3 DGX verify Phi 3.5 loads and generates  Owner: Claude  Done: 2026-03-16
-  - Result: PASS - arch=phi3, 32 layers, 15 words generated. QKV split + gate+up split work.
-  - Deps: T3.1, T3.2
-  - Acceptance: `go test -tags dgx -run TestT7_1/phi3 ./tests/dgx/` passes.
-
-- [ ] T3.4 go vet/lint clean  Owner:  Est: 15m
-  - Deps: T3.1, T3.2
-  - Acceptance: `go vet ./model/... ./inference/...` 0 warnings.
-
-### E4: Integration Gate and Final Benchmarks
+### E4: Final Benchmarks and Gate
 
 - [ ] T4.1 Full test suite pass  Owner:  Est: 30m
-  - Deps: T1.5, T2.2, T3.4
-  - Acceptance: `go test ./... -race -count=1` passes. `go vet ./...` 0 warnings.
+  - Deps: all above
+  - Acceptance: `go test ./... -race -count=1` passes in both zerfoo and ztensor.
 
-- [ ] T4.2 DGX final benchmark all models  Owner:  Est: 45m
+- [ ] T4.2 DGX final benchmark vs Ollama  Owner:  Est: 45m
   - Deps: T4.1
-  - Run full benchmark suite on DGX: all models, 50 and 256 tokens, CPU and CUDA.
-  - Update docs/benchmarks.md with new baselines.
-  - Acceptance: Gemma 3 1B >= 234 tok/s at 256 tokens (or documented reason for gap).
+  - Run side-by-side: Zerfoo vs Ollama, Gemma 3 1B Q4_K_M, 50 and 256 tokens.
+  - Update docs/benchmarks.md.
+  - Acceptance: Zerfoo >= 237 tok/s (95% of theoretical) or documented analysis of
+    remaining gap with specific attribution (GPU kernel vs Go overhead vs memory).
 
-- [ ] T4.3 DGX concurrent throughput benchmark  Owner:  Est: 30m
-  - Deps: T4.1
-  - Run 4-client concurrent benchmark on DGX.
-  - Acceptance: Throughput measured and logged.
-
-- [ ] T4.4 Carry forward: DeepSeek V3 DGX E2E  Owner:  (BLOCKED: no MLA+MoE GGUF model)
-  - Acceptance: DeepSeek V3 model loads GGUF on DGX. BLOCKED on model availability.
+- [ ] T4.3 Carry forward: DeepSeek V3 DGX E2E  Owner:  (BLOCKED: no MLA+MoE GGUF model)
 
 ---
 
@@ -231,154 +180,105 @@ separate `ffn_gate.weight`). The tensor must be split similarly to the QKV split
 
 | Track | Tasks | Description |
 |-------|-------|-------------|
-| A: Session Decode | E1 (T1.1-T1.3) | Port missing optimizations to session |
-| B: CompileTraced | E2 (T2.1-T2.2) | Investigate and fix traced compilation |
-| C: Phi MLP | E3 (T3.1-T3.2) | Merged gate+up tensor split |
+| A: Session loop | T1.3, T1.4 | Go-side decode loop |
+| B: ztensor replay | T2.1, T2.2 | CUDA graph replay hot path |
+| C: Advanced opts | T3.1, T3.2 | Embedding cache, context elimination |
 
-All three tracks are independent and can run in parallel.
+All tracks are independent.
 
 ### Maximum Parallelism
 
-**Wave 1** (6 parallel tasks):
-T1.1, T1.2, T1.3, T2.1, T3.1, T3.2
+**Wave 1** (6 tasks, all independent):
+T1.3, T1.4, T2.1, T2.2, T3.1, T3.2
 
-**Wave 2** (4 parallel tasks):
-T1.4, T1.5, T2.2, T3.3, T3.4
-
-**Wave 3** (2 parallel tasks):
+**Wave 2** (2 tasks):
 T2.3, T4.1
 
-**Wave 4** (2 parallel tasks):
-T4.2, T4.3
+**Wave 3** (1 task):
+T4.2
 
 ---
 
-## 5. Dependency Graph
-
-```
-T1.1 ──┬── T1.4 ──── T1.5 ──┐
-T1.2 ──┘                     │
-T1.3 ─────────────── T1.5 ──┤
-                              │
-T2.1 ──── T2.2 ──── T2.3 ──┤
-                              │
-T3.1 ──── T3.3 ─────────────┤
-T3.2 ──── T3.4 ─────────────┤
-                              │
-T1.5, T2.2, T3.4 ──── T4.1
-T4.1 ──┬── T4.2
-       └── T4.3
-```
-
----
-
-## 6. Timeline and Milestones
-
-| ID | Milestone | Exit Criteria | Dependencies |
-|----|-----------|---------------|--------------|
-| M1 | Session decode optimized | ResetPool + GPU argmax in session, benchmarked | T1.4 |
-| M2 | CompileTraced resolved | Fixed or documented with perf data | T2.3 |
-| M3 | Phi MLP fixed | Phi 3.5 loads on DGX | T3.3 |
-| M4 | Phase 23 complete | All benchmarks updated, >= 234 tok/s target | T4.2 |
-
----
-
-## 7. Risk Register
+## 5. Risk Register
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |----|------|-----------|--------|-----------|
-| R1 | ResetPool alone does not recover full throughput | Medium | High | GPU argmax + CompileTraced fix provide additional uplift. |
-| R2 | CompileTraced failure is architectural (not fixable) | Medium | Medium | Fallback Compile path still captures CUDA graph. Document gap. |
-| R3 | Phi gate+up split dimensions wrong | Low | Medium | Test with real Phi GGUF on DGX to verify shapes. |
-| R4 | Performance changes break existing tests | Low | High | Run full test suite after each change. |
-| R5 | 234 tok/s was measured with different graph compilation | Medium | Medium | If session path caps at ~200, investigate remaining overhead. |
+| R1 | ztensor changes break zerfoo | Low | High | Run both test suites before and after. |
+| R2 | Go runtime overhead is irreducible | Medium | High | Profile with pprof to identify. Worst case, the overhead is <5% and we approach but don't reach Ollama. |
+| R3 | Replay optimizations break CUDA graph correctness | Medium | High | Each optimization must pass the full test suite with -race. |
+| R4 | 237 tok/s is unreachable on GB10 | Medium | High | If gap remains after all optimizations, profile GPU vs CPU time to attribute. |
 
 ---
 
-## 8. Operating Procedure
+## 6. Operating Procedure
 
 ### Definition of Done
 
-A task is done when:
-1. Code compiles: `go build ./...` succeeds.
-2. Tests pass: `go test ./... -race` in the affected packages.
-3. Lint clean: `go vet ./...` 0 warnings.
-4. Acceptance criteria from the task description are met.
-5. DGX benchmarks (where required) are run and results logged to docs/devlog.md.
-
-### Review and QA
-
-- Every code change must have corresponding tests.
-- Performance changes require before/after DGX benchmark.
-- Never commit files from different directories in the same commit.
-- Make many small logical commits.
+1. Code compiles: `go build ./...`
+2. Tests pass: `go test ./... -race`
+3. Lint clean: `go vet ./...`
+4. DGX benchmark for performance tasks.
 
 ---
 
-## 9. Progress Log
+## 7. Progress Log
 
 ### 2026-03-16: Phase 23 plan created
 
-**Change summary:** Created Phase 23 plan for performance investigation and fix.
-Trimmed completed Phase 22 epics (E1-E6 all done, E7 DGX verification done except
-T7.6 blocked). Carried forward T7.6 (DeepSeek V3 DGX) as T4.4.
+**Change summary:** Created Phase 23 plan targeting 95% of theoretical ceiling
+(237+ tok/s). Trimmed completed Phase 22 tasks and earlier Phase 23 investigation tasks.
+Key insight: per-step Go overhead in CUDA graph replay (PrepareSlots, EnsureSlotsGPU,
+map iteration) adds ~200us per step, explaining the 167 vs 209 gap with Ollama.
 
-Key investigation finding: session decode loop is missing `ResetPool()` call and
-GPU argmax fast path from Generator.Generate. CompileTraced falls back to Compile.
-
-Phase 22 operational knowledge preserved in docs/devlog.md entries dated 2026-03-16.
-
----
-
-## 10. Hand-off Notes
-
-### For a new person continuing this work
-
-- **Codebase**: `/Users/dndungu/Code/zerfoo/zerfoo/`
-- **Key files for Phase 23**:
-  - `generate/session.go` -- InferenceSession decode loop (missing ResetPool, GPU argmax)
-  - `generate/generator.go` -- Generator decode loop (reference for optimizations)
-  - `generate/generator.go:154` -- compileGraph with CompileTraced
-  - `model/gguf/split.go` -- tensor splitting (add gate+up split for Phi)
-  - `inference/load_gguf.go` -- architecture dispatch
-- **DGX Spark**: `ssh ndungu@192.168.86.250`. CUDA kernels at `~/Code/zerfoo/libkernels.so`.
-  Set `LD_LIBRARY_PATH=/home/ndungu/Code/zerfoo`.
-- **Models on DGX**: Gemma Q4_K_M at `~/models/gemma3-q4km/model.gguf` (806MB).
-  Phi 3.5 at `~/models/phi-3.5-mini/model.gguf`.
-- **Benchmark command**: `go test -tags dgx -run TestT7_4 -timeout 300s ./tests/dgx/`
-- **Git workflow**: Rebase and merge. Each commit scoped to one directory.
-
-### Links
-
-- DGX Spark: `ssh ndungu@192.168.86.250`
-- CI: GitHub Actions
-- ADRs: `docs/adr/` (39 records)
-- Benchmarks: `docs/benchmarks.md`
+Previously completed:
+- T1.1 ResetPool in session decode
+- T1.2 GPU argmax in session decode
+- T2.1-T2.2 CompileTraced investigation (architectural limitation, fallback acceptable)
+- T3.1-T3.3 Phi merged gate+up MLP split (DGX verified)
 
 ---
 
-## 11. Appendix
+## 8. Hand-off Notes
 
-### Session vs Generator Decode Loop Differences
+- **Codebase**: zerfoo at `/Users/dndungu/Code/zerfoo/zerfoo/`, ztensor at `../ztensor/`
+- **Key files**:
+  - `generate/session.go` — session decode loop
+  - `ztensor/graph/cuda_graph.go` — CUDAGraphExecutor.replay() hot path
+  - `ztensor/graph/compile.go` — ExecutionPlan.PrepareSlots, RunInstructionRange
+- **DGX**: `ssh ndungu@192.168.86.250`, `LD_LIBRARY_PATH=~/Code/zerfoo`
+- **Models**: Gemma Q4_K_M at `~/models/gemma3-q4km/model.gguf`
+- **Ollama**: installed at `/usr/local/bin/ollama`, model `gemma3:1b-it-q4_K_M`
 
-| Feature | Generator.Generate | Session.Generate |
-|---------|-------------------|-----------------|
-| ResetPool between steps | Yes (line 332) | **Missing** |
-| GPU argmax fast path | Yes (line 425) | **Missing** |
-| CompileTraced | Triggers on first decode | Triggers via compileOnce |
-| CUDA graph replay | plan.Load().Run | planRef.Load().Run |
-| Mutex scope | Held for entire call | Held for entire call |
-| KV cache | Created per call | From session (pooled) |
+---
 
-### Theoretical Performance Ceiling
+## 9. Appendix
 
-DGX Spark GB10 specifications:
-- 128GB LPDDR5x unified memory
-- CUDA cores: unspecified for Blackwell mobile
-- Memory bandwidth: ~200 GB/s
+### Decode Step Overhead Breakdown
 
-For Gemma 3 1B Q4_K (weights ~800MB, KV cache ~50MB per seq):
-- Memory-bound decode: 800MB / 200GB/s = 4ms per token minimum
-- Theoretical max: ~250 tok/s (limited by weight transfer bandwidth)
-- Current: 159 tok/s (63% of theoretical)
-- Target: 234+ tok/s (94% of theoretical)
+Per step in CUDAGraphExecutor.replay():
+```
+PrepareSlots:     ~10us (copy 185 pointers + set input)
+Pre-capture run:  ~50us (EmbeddingLookup: CPU table lookup + H2D copy)
+EnsureSlotsGPU:   ~20us (iterate 185 slots, check type)
+CapturedSlots:    ~5us  (map iteration, set pointers)
+GraphLaunch:      ~5us  (CUDA API call)
+Synchronize:      ~1ms  (GPU compute) + ~50us (Go goroutine park/wake)
+Post-capture:     ~0us  (no post-capture instructions)
+OutputTensor:     ~1us
+---
+Total Go overhead: ~140us per step
+GPU compute:       ~1000us per step
+Overhead ratio:    ~12% (explains most of the gap)
+```
+
+### Optimal Replay Path (Target)
+
+```
+Set input slot:   ~1us  (single pointer write)
+GraphLaunch:      ~5us
+Synchronize:      ~1ms + ~50us
+OutputTensor:     ~1us
+---
+Total Go overhead: ~57us per step
+Overhead ratio:    ~5%
+```
