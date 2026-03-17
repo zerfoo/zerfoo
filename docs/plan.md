@@ -97,7 +97,7 @@ Q6_K super-block: 210 bytes, 256 values. Layout:
 
 Dequant: val = d * sc[sub_block] * ((ql & 0xF) | ((qh >> shift) & 3) << 4) - 32)
 
-- [x] T1.1 Write gemv_q6k.cu CUDA kernel  Owner:  Est: 60m
+- [ ] T1.1 Write gemv_q6k.cu CUDA kernel  Owner:  Est: 60m
   - File: `ztensor/internal/cuda/kernels/gemv_q6k.cu`
   - Template: copy gemv_q4k.cu structure (shared mem x load, warp-per-row, shuffle reduce).
   - Adapt dequantization to Q6_K layout: 128 ql bytes + 64 qh bytes + 16 sc bytes + 2 d bytes.
@@ -106,24 +106,24 @@ Dequant: val = d * sc[sub_block] * ((ql & 0xF) | ((qh >> shift) & 3) << 4) - 32)
   - Block config: 4 warps/block (128 threads), shared mem = K * sizeof(float).
   - Acceptance: kernel compiles with nvcc -arch=sm_121 -O3 --use_fast_math.
 
-- [x] T1.2 Write gemv_q6k.h header  Owner:  Est: 10m
+- [ ] T1.2 Write gemv_q6k.h header  Owner:  Est: 10m
   - File: `ztensor/internal/cuda/kernels/gemv_q6k.h`
   - Declare `extern "C" cudaError_t gemv_q6k_f32(const void* W, const float* x, float* y, int M, int K, cudaStream_t stream)`.
   - Acceptance: header compiles.
 
-- [x] T1.3 Add purego Go binding for GemvQ6KF32  Owner:  Est: 20m
+- [ ] T1.3 Add purego Go binding for GemvQ6KF32  Owner:  Est: 20m
   - Files: `ztensor/internal/cuda/kernels/gemv_q6k_purego.go` (build tag !cuda),
     `ztensor/internal/cuda/kernels/gemv_q6k.go` (build tag cuda).
   - Add `launchGemvQ6KF32 uintptr` to klib struct in purego.go.
   - Add `{"gemv_q6k_f32", &k.launchGemvQ6KF32}` to symbol table.
   - Acceptance: `go build ./...` passes in ztensor.
 
-- [x] T1.4 Add GemvQ6KF32 to KernelRunner interface and CUDAKernels  Owner:  Est: 15m
+- [ ] T1.4 Add GemvQ6KF32 to KernelRunner interface and CUDAKernels  Owner:  Est: 15m
   - Files: `ztensor/internal/gpuapi/cuda_kernels.go`, add method.
   - Add to KernelRunner interface if it exists, or to CUDAKernels struct.
   - Acceptance: `go build ./...` passes.
 
-- [x] T1.5 Add Q6K MatMul dispatch to GPU engine  Owner:  Est: 30m
+- [ ] T1.5 Add Q6K MatMul dispatch to GPU engine  Owner:  Est: 30m
   - File: `ztensor/compute/gpu_engine.go`
   - Add `matMulQ6K` and `matMulQ6KBWeight` methods (template from matMulQ4K).
   - In MatMul, check for `*tensor.Q6KStorage` on A or B, dispatch to new methods.
@@ -133,7 +133,7 @@ Dequant: val = d * sc[sub_block] * ((ql & 0xF) | ((qh >> shift) & 3) << 4) - 32)
     upload F32 for batch > 1 since it is rare in decode).
   - Acceptance: `go test ./compute/ -race` passes.
 
-- [x] T1.6 Write parity test for Q6K GEMV  Owner:  Est: 30m
+- [ ] T1.6 Write parity test for Q6K GEMV  Owner:  Est: 30m
   - File: `ztensor/internal/cuda/kernels/gemv_q6k_test.go`
   - Template: copy gemv_q4k_test.go pattern.
   - Generate random Q6K data, run GemvQ6KF32 on GPU, compare to CPU reference
@@ -141,13 +141,13 @@ Dequant: val = d * sc[sub_block] * ((ql & 0xF) | ((qh >> shift) & 3) << 4) - 32)
   - Test with M=256, K=1536 (Gemma dimensions).
   - Acceptance: test passes on DGX.
 
-- [x] T1.7 Update GGUF loader to use native Q6K storage  Owner:  Est: 15m
+- [ ] T1.7 Update GGUF loader to use native Q6K storage  Owner:  Est: 15m
   - File: `zerfoo/model/gguf/loader.go`
   - Change `decodeQ6KTensor` to return `tensor.NewWithStorage[float32](shape, q6k)`
     instead of dequantizing to float32.
   - Acceptance: `go test ./model/gguf/ -race` passes.
 
-- [x] T1.8 Update Makefile and rebuild libkernels.so  Owner:  Est: 10m
+- [ ] T1.8 Update Makefile and rebuild libkernels.so  Owner:  Est: 10m
   - File: `ztensor/internal/cuda/kernels/Makefile` (and zerfoo copy if separate).
   - Add gemv_q6k.cu to SRCS.
   - Acceptance: `make shared CUDA_ARCH=sm_121` succeeds.
@@ -164,7 +164,7 @@ Q5_K super-block: 176 bytes, 256 values. Layout:
 Dequant: val = sc * ((ql & 0xF) | (qh_bit << 4)) - mn
 Same structure as Q4_K but with an extra high bit from qh.
 
-- [x] T2.1 Write gemv_q5k.cu CUDA kernel  Owner:  Est: 60m
+- [ ] T2.1 Write gemv_q5k.cu CUDA kernel  Owner:  Est: 60m
   - File: `ztensor/internal/cuda/kernels/gemv_q5k.cu`
   - Template: copy gemv_q4k.cu, add qh bit extraction.
   - For each group of 64 elements: read ql (32 bytes) + extract qh bits.
@@ -172,22 +172,22 @@ Same structure as Q4_K but with an extra high bit from qh.
   - Same block config as Q4K: 4 warps/block, shared mem x.
   - Acceptance: kernel compiles.
 
-- [x] T2.2 Write gemv_q5k.h header  Owner:  Est: 10m
-- [x] T2.3 Add purego Go binding for GemvQ5KF32  Owner:  Est: 20m
-- [x] T2.4 Add GemvQ5KF32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
+- [ ] T2.2 Write gemv_q5k.h header  Owner:  Est: 10m
+- [ ] T2.3 Add purego Go binding for GemvQ5KF32  Owner:  Est: 20m
+- [ ] T2.4 Add GemvQ5KF32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
 
-- [x] T2.5 Add Q5K MatMul dispatch to GPU engine  Owner:  Est: 30m
+- [ ] T2.5 Add Q5K MatMul dispatch to GPU engine  Owner:  Est: 30m
   - File: `ztensor/compute/gpu_engine.go`
   - Add `matMulQ5K` / `matMulQ5KBWeight` (template from Q4K dispatch).
   - Acceptance: `go test ./compute/ -race` passes.
 
-- [x] T2.6 Write parity test for Q5K GEMV  Owner:  Est: 30m
+- [ ] T2.6 Write parity test for Q5K GEMV  Owner:  Est: 30m
   - Compare GPU GemvQ5KF32 to CPU DequantizeQ5K + GEMV. Max error < 1e-3.
 
-- [x] T2.7 Update GGUF loader: Q5_K uses native storage  Owner:  Est: 10m
+- [ ] T2.7 Update GGUF loader: Q5_K uses native storage  Owner:  Est: 10m
   - decodeQ5KTensor returns NewWithStorage instead of dequant to F32.
 
-- [x] T2.8 Update Makefile for gemv_q5k.cu  Owner:  Est: 10m
+- [ ] T2.8 Update Makefile for gemv_q5k.cu  Owner:  Est: 10m
 
 ### E3: Q5_0 Fused Dequant-GEMV Kernel (117 tensors -- BIGGEST IMPACT)
 
@@ -202,14 +202,14 @@ This is a simple format (no sub-blocks, no min). Simpler than Q4_K.
 NOTE: Q5_0 uses 32-element blocks (not 256 super-blocks like K-quants).
 The kernel needs a different blocking strategy: more blocks per row.
 
-- [x] T3.1 Add Q5_0Storage type to ztensor  Owner:  Est: 30m
+- [ ] T3.1 Add Q5_0Storage type to ztensor  Owner:  Est: 30m
   - File: `ztensor/tensor/quantized_q5_0.go` (new file)
   - Fields: raw []byte, len int. Block size = 32, block bytes = 22.
   - Methods: NewQ5_0StorageFromRaw, Dequantize, Len, Slice, Set (panic), DeviceType.
   - Dequantize matches the decodeQ5_0Tensor logic in zerfoo/model/gguf/loader.go.
   - Acceptance: `go test ./tensor/ -race` passes.
 
-- [x] T3.2 Write gemv_q5_0.cu CUDA kernel  Owner:  Est: 60m
+- [ ] T3.2 Write gemv_q5_0.cu CUDA kernel  Owner:  Est: 60m
   - File: `ztensor/internal/cuda/kernels/gemv_q5_0.cu`
   - Block size = 32 elements, 22 bytes per block.
   - Strategy: same warp-per-row approach but each lane processes more blocks
@@ -217,33 +217,33 @@ The kernel needs a different blocking strategy: more blocks per row.
   - Shared mem x load, warp shuffle reduce.
   - Acceptance: kernel compiles.
 
-- [x] T3.3 Write gemv_q5_0.h header  Owner:  Est: 10m
-- [x] T3.4 Add purego Go binding for GemvQ5_0F32  Owner:  Est: 20m
-- [x] T3.5 Add GemvQ5_0F32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
+- [ ] T3.3 Write gemv_q5_0.h header  Owner:  Est: 10m
+- [ ] T3.4 Add purego Go binding for GemvQ5_0F32  Owner:  Est: 20m
+- [ ] T3.5 Add GemvQ5_0F32 to KernelRunner and CUDAKernels  Owner:  Est: 15m
 
-- [x] T3.6 Add Q5_0 MatMul dispatch to GPU engine  Owner:  Est: 30m
+- [ ] T3.6 Add Q5_0 MatMul dispatch to GPU engine  Owner:  Est: 30m
   - Check for *tensor.Q5_0Storage on A or B.
   - GEMV path: upload raw bytes, call GemvQ5_0F32.
   - Non-GEMV: dequant to F32 on CPU, upload, cuBLAS SGEMM.
   - Acceptance: `go test ./compute/ -race` passes.
 
-- [x] T3.7 Write parity test for Q5_0 GEMV  Owner:  Est: 30m
+- [ ] T3.7 Write parity test for Q5_0 GEMV  Owner:  Est: 30m
   - Compare GPU GemvQ5_0F32 to CPU reference. Max error < 1e-3.
 
-- [x] T3.8 Update GGUF loader: Q5_0 uses native storage  Owner:  Est: 15m
+- [ ] T3.8 Update GGUF loader: Q5_0 uses native storage  Owner:  Est: 15m
   - File: `zerfoo/model/gguf/loader.go`
   - Change decodeQ5_0Tensor to create Q5_0Storage from raw bytes
     instead of dequantizing to float32 and re-quantizing to Q4_0.
   - Acceptance: `go test ./model/gguf/ -race` passes.
 
-- [x] T3.9 Update Makefile for gemv_q5_0.cu  Owner:  Est: 10m
+- [ ] T3.9 Update Makefile for gemv_q5_0.cu  Owner:  Est: 10m
 
 ### E4: Remove Q4_K Re-Quantization
 
 Once native Q4_K GEMV dispatch exists (already in GPU engine), remove the lossy
 Q4_K-to-Q4_0 re-quantization in the GGUF loader.
 
-- [x] T4.1 Update GGUF loader: Q4_K uses native storage  Owner:  Est: 15m
+- [ ] T4.1 Update GGUF loader: Q4_K uses native storage  Owner:  Est: 15m
   - File: `zerfoo/model/gguf/loader.go`
   - Change decodeQ4KTensor to return NewWithStorage(shape, q4k) directly.
   - Remove the dequant-to-F32 + QuantizeQ4 roundtrip.
