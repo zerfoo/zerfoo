@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -380,7 +381,7 @@ func (s *InferenceSession[T]) graphForward(ctx context.Context, input *tensor.Te
 
 	// No compiled plan yet — run uncompiled forward and trigger compilation.
 	result, err := s.graph.Forward(ctx, input)
-	if err == nil && !reset && s.compileOnce != nil {
+	if err == nil && !reset && s.compileOnce != nil && os.Getenv("ZERFOO_NO_COMPILE") == "" {
 		s.compileOnce(ctx, input)
 	}
 	return result, err
