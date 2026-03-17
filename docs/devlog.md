@@ -5,6 +5,51 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Phase 23 Wave 1 — DGX Benchmark (T2.3)
+
+**Type:** benchmark
+**Tags:** performance, cuda-graph, session, phase-23, dgx
+
+**Problem:** Phase 23 Wave 1 optimizations applied (T1.3-T3.2). DGX benchmark to
+measure impact.
+
+**Results:**
+
+| Config | Tokens | Throughput | CUDA Graph |
+|--------|--------|-----------|------------|
+| Gemma 3 1B Q4_K_M, cuda, fp32 | 50 | 114 tok/s | FAILED (error 901) |
+| Gemma 3 1B Q4_K_M, cuda, fp32 | 256 | 88 tok/s | FAILED (error 901) |
+
+**CUDA Graph Capture Failure:**
+- Capture region: instructions [1, 185) of 185
+- Fails at instruction 2 (GroupedQueryAttention): `softmax kernel failed (cuda error 901)`
+- Error 901 = "operation not permitted during stream capture"
+- The scaled_softmax kernel inside GQA is incompatible with CUDA stream capture
+- Without CUDA graph, throughput is 114 tok/s (50 tokens) — baseline without graph
+
+**Wave 1 Optimizations Applied:**
+- T1.3: PoolResetter cached (eliminates per-step type assertion)
+- T1.4: stopSet/generatedIDs pre-allocated (eliminates per-call allocations)
+- T2.1: Fast replay path (O(1) Go work after first replay)
+- T2.2: capturedSlots map→slice (reduces GC pressure)
+- T3.1: EmbeddingLookup GPU buffer cached (avoids full slot scan)
+- T3.2: context.Value overhead negligible (no change)
+
+**Analysis:**
+Wave 1 optimizations are all in the CUDA graph replay hot path. They cannot show
+measurable impact until graph capture succeeds. The capture failure is a pre-existing
+issue — the GQA scaled_softmax kernel does something incompatible with stream capture
+(likely a memory allocation or D2H copy inside the kernel dispatch path).
+
+**Next steps:**
+- Investigate GQA softmax kernel capture failure (likely in ztensor compute engine)
+- Once capture works, Wave 1 optimizations should reduce per-step overhead from ~140us
+  to ~57us (from plan appendix)
+
+**Commit:** 2739084 (ztensor v0.2.1-0 upgrade)
+
+---
+
 ## 2026-03-16: Phase 23 Performance Investigation
 
 **Type:** investigation

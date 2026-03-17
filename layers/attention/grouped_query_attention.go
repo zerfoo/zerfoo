@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -18,6 +19,9 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
+
+// debugGraphCapture enables verbose capture debug logging when ZERFOO_DEBUG_GPU=1.
+var debugGraphCapture = os.Getenv("ZERFOO_DEBUG_GPU") == "1"
 
 // GroupedQueryAttention implements grouped query attention mechanism.
 type GroupedQueryAttention[T tensor.Numeric] struct {
@@ -642,6 +646,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 						kGS, kOK := fullK.GetStorage().(*tensor.GPUStorage[T])
 						vGS, vOK := fullV.GetStorage().(*tensor.GPUStorage[T])
 						if kOK && vOK {
+							if debugGraphCapture {
+								log.Printf("GQA layer %d: FlashAttentionDecode path entered", gqa.LayerIndex)
+							}
 							maxKVLen := fbp.MaxSeqLen()
 							kvLen := cache.SeqLen() // CPU fallback value; kernel uses GPU counter
 							numBH := batchSize * gqa.numQueryHeads
@@ -730,6 +737,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// Run SDPA (prefill, decode without flash, or no-cache).
 	// Skip when FlashAttentionDecode already computed the output above.
 	if !flashDecodeUsed {
+		if debugGraphCapture && seqLen == 1 {
+			log.Printf("GQA layer %d: SDPA fallback (flash not used), cache=%v", gqa.LayerIndex, cache != nil)
+		}
 		// 3. Grouped Query Attention: expand K/V to match Q head count.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
