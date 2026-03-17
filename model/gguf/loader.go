@@ -152,14 +152,13 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0. The Q4_K fused GEMV kernel exists but native
-	// Q4_K is ~20% slower than Q4_0 GEMV (120 vs 149 tok/s on GB10). The Q4_0
-	// path trades per-sub-block 6-bit scale precision for throughput.
-	// TODO: optimize Q4_K GEMV to match Q4_0 speed, then use native Q4_K.
+	// Dequant Q4_K to float32 then convert to FP16. FP16 halves memory bandwidth
+	// (2 bytes vs 4) and enables cuBLAS FP16 GEMM with tensor cores on Blackwell.
+	// FP16 has 10-bit mantissa, more than enough for 4-bit source data.
 	f32 := make([]float32, numElements)
 	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	fp16 := tensor.NewFloat16StorageFromF32(f32)
+	return tensor.NewWithStorage[float32](shape, fp16)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -167,10 +166,11 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
+	// Dequant to float32 then FP16 for cuBLAS tensor core GEMM.
 	f32 := make([]float32, numElements)
 	q5k.Dequantize(f32)
-	return tensor.New[float32](shape, f32)
+	fp16 := tensor.NewFloat16StorageFromF32(f32)
+	return tensor.NewWithStorage[float32](shape, fp16)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -178,10 +178,11 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
+	// Dequant to float32 then FP16 for cuBLAS tensor core GEMM.
 	f32 := make([]float32, numElements)
 	q6k.Dequantize(f32)
-	return tensor.New[float32](shape, f32)
+	fp16 := tensor.NewFloat16StorageFromF32(f32)
+	return tensor.NewWithStorage[float32](shape, fp16)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
@@ -230,11 +231,12 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 		}
 	}
 
-	// Re-quantize to Q4_0 for fast fused GEMV. This trades ~1 bit of precision
-	// for 8x bandwidth reduction during inference. A native Q5_0 GEMV kernel
-	// would eliminate this quality tradeoff (TODO).
-	q4 := tensor.QuantizeQ4(data)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Convert to FP16 for cuBLAS tensor core GEMM. FP16 (2 bytes/weight) halves
+	// bandwidth vs F32 (4 bytes) and eliminates the lossy Q5_0→Q4_0 re-quantization
+	// that dropped 1 bit per weight. FP16 has 10-bit mantissa, preserving full
+	// Q5_0 precision (5-bit values range -16 to 15).
+	fp16 := tensor.NewFloat16StorageFromF32(data)
+	return tensor.NewWithStorage[float32](shape, fp16)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
