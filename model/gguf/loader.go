@@ -152,14 +152,7 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0. The Q4_K fused GEMV kernel exists but native
-	// Q4_K is ~20% slower than Q4_0 GEMV (120 vs 149 tok/s on GB10). The Q4_0
-	// path trades per-sub-block 6-bit scale precision for throughput.
-	// TODO: optimize Q4_K GEMV to match Q4_0 speed, then use native Q4_K.
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -167,10 +160,7 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
-	f32 := make([]float32, numElements)
-	q5k.Dequantize(f32)
-	return tensor.New[float32](shape, f32)
+	return tensor.NewWithStorage[float32](shape, q5k)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -178,63 +168,15 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Dequantize to float32 — accurate, no lossy re-quantization to Q4_0.
-	f32 := make([]float32, numElements)
-	q6k.Dequantize(f32)
-	return tensor.New[float32](shape, f32)
+	return tensor.NewWithStorage[float32](shape, q6k)
 }
 
-// decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
-// Q5_0 format: 32 elements per block, 22 bytes per block.
-// Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low 4-bit values.
-// Each byte in qs contains two 4-bit values: the low nibble maps to the first
-// half of the block (positions 0-15) and the high nibble maps to the second
-// half (positions 16-31). This matches llama.cpp's dequantize_row_q5_0.
 func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
-	const blockSize = 32
-	const halfBlock = blockSize / 2
-	const blockBytes = 22
-	nBlocks := (numElements + blockSize - 1) / blockSize
-
-	data := make([]float32, numElements)
-	for bi := range nBlocks {
-		off := bi * blockBytes
-		d := float16.FromBits(binary.LittleEndian.Uint16(raw[off : off+2])).ToFloat32()
-
-		// 4 bytes of high bits (32 bits, one per element).
-		qh := binary.LittleEndian.Uint32(raw[off+2 : off+6])
-
-		// 16 bytes of packed nibbles. Each byte yields two elements:
-		// low nibble -> position j (first half), high nibble -> position j+16 (second half).
-		for j := range halfBlock {
-			packed := raw[off+6+j]
-			low4 := packed & 0x0F
-			high4 := packed >> 4
-
-			// First half: position j, high bit at qh[j].
-			xh0 := uint8((qh>>uint(j))&1) << 4
-			x0 := int(low4|xh0) - 16
-
-			// Second half: position j+16, high bit at qh[j+16].
-			xh1 := uint8((qh>>uint(j+halfBlock))&1) << 4
-			x1 := int(high4|xh1) - 16
-
-			idx0 := bi*blockSize + j
-			idx1 := bi*blockSize + j + halfBlock
-			if idx0 < numElements {
-				data[idx0] = d * float32(x0)
-			}
-			if idx1 < numElements {
-				data[idx1] = d * float32(x1)
-			}
-		}
+	q5_0, err := tensor.NewQ5_0StorageFromRaw(raw, numElements)
+	if err != nil {
+		return nil, fmt.Errorf("Q5_0 decode: %w", err)
 	}
-
-	// Re-quantize to Q4_0 for fast fused GEMV. This trades ~1 bit of precision
-	// for 8x bandwidth reduction during inference. A native Q5_0 GEMV kernel
-	// would eliminate this quality tradeoff (TODO).
-	q4 := tensor.QuantizeQ4(data)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q5_0)
 }
 
 func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
