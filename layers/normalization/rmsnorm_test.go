@@ -2,6 +2,7 @@ package normalization
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -407,6 +408,104 @@ func TestRMSNorm_Backward_InvalidInputCount(t *testing.T) {
 	_, err = rms.Backward(context.Background(), types.FullBackprop, grad)
 	if err == nil {
 		t.Error("expected error for no inputs in Backward")
+	}
+}
+
+// TestRMSNormBackward is the regression test for T5.2: nil guard in Backward.
+func TestRMSNormBackward(t *testing.T) {
+	ctx := context.Background()
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	inputShape := []int{2, 3, 4}
+	inputData := make([]float32, 24)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.1
+	}
+	gradData := make([]float32, 24)
+	for i := range gradData {
+		gradData[i] = float32(i+1) * 0.01
+	}
+
+	tests := []struct {
+		name        string
+		runForward  bool
+		secondCall  bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "backward before forward returns error not panic",
+			runForward:  false,
+			wantErr:     true,
+			errContains: "backward called before forward",
+		},
+		{
+			name:       "forward then backward succeeds with non-nil gradients",
+			runForward: true,
+			wantErr:    false,
+		},
+		{
+			name:       "double backward succeeds (cached tensors reused)",
+			runForward: true,
+			secondCall: true,
+			wantErr:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rms, err := NewRMSNorm[float32]("test_backward", engine, ops, 4)
+			if err != nil {
+				t.Fatalf("NewRMSNorm failed: %v", err)
+			}
+
+			inputTensor, err := tensor.New[float32](inputShape, inputData)
+			if err != nil {
+				t.Fatalf("failed to create input tensor: %v", err)
+			}
+			gradTensor, err := tensor.New[float32](inputShape, gradData)
+			if err != nil {
+				t.Fatalf("failed to create grad tensor: %v", err)
+			}
+
+			if tc.runForward {
+				_, err = rms.Forward(ctx, inputTensor)
+				if err != nil {
+					t.Fatalf("Forward failed: %v", err)
+				}
+			}
+
+			grads, err := rms.Backward(ctx, types.FullBackprop, gradTensor, inputTensor)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("error %q does not contain %q", err.Error(), tc.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if grads == nil || len(grads) != 1 || grads[0] == nil {
+				t.Fatal("expected non-nil gradient slice with one element")
+			}
+			if !testutils.IntSliceEqual(grads[0].Shape(), inputShape) {
+				t.Errorf("gradient shape %v != input shape %v", grads[0].Shape(), inputShape)
+			}
+
+			if tc.secondCall {
+				grads2, err2 := rms.Backward(ctx, types.FullBackprop, gradTensor, inputTensor)
+				if err2 != nil {
+					t.Fatalf("second Backward failed: %v", err2)
+				}
+				if grads2 == nil || len(grads2) != 1 {
+					t.Fatal("second Backward returned nil gradients")
+				}
+			}
+		})
 	}
 }
 
