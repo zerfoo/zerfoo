@@ -401,9 +401,6 @@ func (m *Model) releaseSession(sess *generate.InferenceSession[float32]) {
 // Generate calls get separate sessions from the pool.
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
-	if os.Getenv("ZERFOO_BYPASS_SESSION") == "1" {
-		return m.generator.Generate(ctx, prompt, sc)
-	}
 	sess := m.acquireSession()
 	result, err := sess.Generate(ctx, prompt, sc)
 	m.releaseSession(sess)
@@ -449,9 +446,6 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 // are pooled to preserve GPU memory addresses for CUDA graph replay.
 func (m *Model) GenerateStream(ctx context.Context, prompt string, handler generate.TokenStream, opts ...GenerateOption) error {
 	sc := buildSamplingConfig(opts)
-	if os.Getenv("ZERFOO_BYPASS_SESSION") == "1" {
-		return m.generator.GenerateStream(ctx, prompt, sc, handler)
-	}
 	sess := m.acquireSession()
 	err := sess.GenerateStream(ctx, prompt, sc, handler)
 	m.releaseSession(sess)
