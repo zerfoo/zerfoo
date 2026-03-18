@@ -179,7 +179,7 @@ Decision: docs/adr/044-paged-attention-kv-block-manager.md
   Acceptance: 8 concurrent Gemma 3 1B sessions produce coherent output; KV memory
   waste below 4% (measured by BlockPool.FragmentationRatio()); test in tests/paged/.
 
-- [ ] T1.8 Benchmark: continuous batching vs current session pool [DGX]
+- [x] T1.8 Benchmark: continuous batching vs current session pool [DGX]
   Owner: Infra Eng  Est: 2h
   Deps: T1.7
   Acceptance: Throughput at 8 concurrent sessions >= 2x vs current session pool;
@@ -695,13 +695,13 @@ Decision: docs/adr/052-online-learning-safety-framework.md
   Acceptance: Trigger fires only if: data_count >= 500, hours_since_last >= 24,
   no active Wolf positions (stub Wolf API check); TestTrigger passes.
 
-- [ ] T13.2 Implement incremental LoRA updater in training/online/incremental.go
+- [x] T13.2 Implement incremental LoRA updater in training/online/incremental.go
   Owner: ML Eng  Est: 3h
   Deps: T13.1, T9.4
   Acceptance: 100 gradient steps with LR = base_lr/10 and gradient clip 0.5;
   updates only LoRA A,B matrices (base frozen); TestIncrementalUpdater passes.
 
-- [ ] T13.3 Implement safety validators in training/online/validator.go
+- [x] T13.3 Implement safety validators in training/online/validator.go
   Owner: ML Eng  Est: 3h
   Deps: T13.2
   Acceptance: Perplexity gate: new model within 5% of champion; KL gate: KL div
@@ -714,7 +714,7 @@ Decision: docs/adr/052-online-learning-safety-framework.md
   Acceptance: Rollback(version) swaps LoRA adapter in serve path in < 30 seconds;
   serving continues without restart; TestRollback passes.
 
-- [ ] T13.5 Implement audit log in training/online/audit.go
+- [x] T13.5 Implement audit log in training/online/audit.go
   Owner: ML Eng  Est: 2h
   Deps: T13.3
   Acceptance: Every trigger, update cycle, validator result, and promotion decision
@@ -738,21 +738,21 @@ Decision: docs/adr/052-online-learning-safety-framework.md
   champion; Registry.Shadow(id) marks shadow; bbolt-backed persistence;
   TestRegistry passes.
 
-- [ ] T14.2 Implement shadow mode inference in serve/registry/shadow.go
+- [x] T14.2 Implement shadow mode inference in serve/registry/shadow.go
   Owner: Infra Eng  Est: 3h
   Deps: T14.1
   Acceptance: ShadowRunner runs both champion and shadow models on every request;
   shadow output logged but not returned to client; latency impact < 5% (shadow
   runs async); TestShadowRunner passes.
 
-- [ ] T14.3 Implement champion-challenger routing in serve/registry/ab_router.go
+- [x] T14.3 Implement champion-challenger routing in serve/registry/ab_router.go
   Owner: Infra Eng  Est: 3h
   Deps: T14.1
   Acceptance: ABRouter routes traffic_split % of requests to challenger; deterministic
   by session_id hash (sticky routing); split adjustable at runtime via API;
   TestABRouter passes.
 
-- [ ] T14.4 Implement canary release controller in serve/registry/canary.go
+- [x] T14.4 Implement canary release controller in serve/registry/canary.go
   Owner: Infra Eng  Est: 3h
   Deps: T14.3
   Acceptance: Canary starts at 1% traffic; auto-ramps by 10% every 30 min if error
@@ -781,7 +781,7 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
   normalizes to [-1,1], converts to patch embeddings; supports JPEG and PNG;
   no CGo (pure Go image library); TestImagePreprocess passes.
 
-- [ ] T15.2 Implement generic VisionEncoder interface in inference/multimodal/vision_encoder.go
+- [x] T15.2 Implement generic VisionEncoder interface in inference/multimodal/vision_encoder.go
   Owner: ML Eng  Est: 2h
   Deps: T15.1
   Acceptance: VisionEncoder[T] interface with Encode(image) (*Tensor[T], error);
@@ -861,13 +861,13 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
 #### E17: Agentic Tool-Use Loop [Q3-Q4 2029]
 Decision: docs/adr/054-agentic-tool-use-loop.md
 
-- [ ] T17.1 Implement tool registry in generate/agent/tools.go
+- [x] T17.1 Implement tool registry in generate/agent/tools.go
   Owner: ML Eng  Est: 2h
   Deps: none
   Acceptance: ToolRegistry.Register(name, schema, handler) adds tool; handler is
   func(json.RawMessage) (string, error); TestToolRegistry passes.
 
-- [ ] T17.2 Implement function-call JSON grammar in generate/agent/function_call.go
+- [x] T17.2 Implement function-call JSON grammar in generate/agent/function_call.go
   Owner: ML Eng  Est: 3h
   Deps: T17.1
   Acceptance: When model outputs <tool_call> token, grammar switches to JSON schema
