@@ -237,3 +237,19 @@ func (c *PagedKVCache[T]) Truncate(newSeqLen int) {
 func (c *PagedKVCache[T]) NumLayers() int {
 	return c.numLayers
 }
+
+// InjectBlocks sets the cache's block table to the given pre-populated blocks
+// and advances all layer cursors to seqLen. This is used by the prefix cache
+// to inject cached KV data without running a forward pass.
+func (c *PagedKVCache[T]) InjectBlocks(blocks []*Block[T], seqLen int) {
+	c.blockTable = append(c.blockTable[:0], blocks...)
+	for i := range c.layerCursors {
+		c.layerCursors[i] = seqLen
+	}
+}
+
+// BlockTable returns the cache's current block table. This is used by the
+// prefix cache to snapshot blocks after prefill for caching.
+func (c *PagedKVCache[T]) BlockTable() []*Block[T] {
+	return c.blockTable
+}
