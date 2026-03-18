@@ -205,7 +205,7 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, mode t
 		return nil, err
 	}
 
-	sumDNormX, err := sln.engine.ReduceSum(ctx, dNormX, -1, true)
+	sumDNormX, err := sln.engine.ReduceSum(ctx, dNormX, len(dNormX.Shape())-1, true)
 	if err != nil {
 		return nil, err
 	}
