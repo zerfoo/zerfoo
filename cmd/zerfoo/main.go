@@ -60,6 +60,9 @@ func run() error {
 	versionCmd := cli.NewVersionCommand(version, os.Stdout)
 	cliApp.RegisterCommand(versionCmd)
 
+	automlCmd := cli.NewAutoMLCommand(os.Stdout)
+	cliApp.RegisterCommand(automlCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
