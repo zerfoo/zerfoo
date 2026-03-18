@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -625,6 +627,210 @@ func BenchmarkMoE_BatchedVsSequential(b *testing.B) {
 			}
 		})
 	}
+}
+
+// linearExpert multiplies each element by a fixed scale factor.
+// This has a known, well-defined gradient: dOut/dIn = scale.
+type linearExpert struct {
+	scale       float32
+	shape       []int
+	cachedInput *tensor.TensorNumeric[float32]
+}
+
+func (n *linearExpert) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	n.cachedInput = inputs[0]
+	src := inputs[0].Data()
+	out := make([]float32, len(src))
+	for i, v := range src {
+		out[i] = v * n.scale
+	}
+	t, err := tensor.New[float32](inputs[0].Shape(), out)
+	if err != nil {
+		return nil, err
+	}
+	n.shape = t.Shape()
+	return t, nil
+}
+
+func (n *linearExpert) Backward(_ context.Context, _ types.BackwardMode, outputGrad *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	if outputGrad == nil {
+		return nil, nil
+	}
+	ogData := outputGrad.Data()
+	dIn := make([]float32, len(ogData))
+	for i, v := range ogData {
+		dIn[i] = v * n.scale
+	}
+	t, err := tensor.New[float32](outputGrad.Shape(), dIn)
+	if err != nil {
+		return nil, err
+	}
+	return []*tensor.TensorNumeric[float32]{t}, nil
+}
+
+func (n *linearExpert) OpType() string                          { return "Linear" }
+func (n *linearExpert) Attributes() map[string]interface{}      { return nil }
+func (n *linearExpert) OutputShape() []int                      { return n.shape }
+func (n *linearExpert) Parameters() []*graph.Parameter[float32] { return nil }
+
+// moeForwardLoss runs a forward pass through a fresh MoE layer and returns
+// sum(output) as a scalar loss. Used for finite-difference gradient checking.
+func moeForwardLoss(
+	eng compute.Engine[float32],
+	ops numeric.Float32Ops,
+	experts []graph.Node[float32],
+	numExperts, topK int,
+	hs, gw *tensor.TensorNumeric[float32],
+) float32 {
+	gate := NewMoEGate[float32](eng, ops, topK)
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, experts, numExperts, topK)
+	out, err := moe.Forward(context.Background(), hs, gw)
+	if err != nil {
+		panic(err)
+	}
+	var sum float32
+	for _, v := range out.Data() {
+		sum += v
+	}
+	return sum
+}
+
+// TestMoEBackward verifies the MoE backward pass using finite differences.
+func TestMoEBackward(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+
+	numExperts := 4
+	topK := 2
+	modelDim := 8
+	seqLen := 2
+
+	rng := rand.New(rand.NewSource(42))
+
+	// Create experts with different scales so routing matters.
+	scales := []float32{1.5, 0.5, 2.0, 0.8}
+	makeExperts := func() []graph.Node[float32] {
+		experts := make([]graph.Node[float32], numExperts)
+		for i := range experts {
+			experts[i] = &linearExpert{scale: scales[i]}
+		}
+		return experts
+	}
+
+	// Random hidden states.
+	hsData := make([]float32, seqLen*modelDim)
+	for i := range hsData {
+		hsData[i] = rng.Float32()*2 - 1
+	}
+	hs, _ := tensor.New[float32]([]int{seqLen, modelDim}, hsData)
+
+	// Random gate weights.
+	gwData := make([]float32, numExperts*modelDim)
+	for i := range gwData {
+		gwData[i] = rng.Float32()*2 - 1
+	}
+	gw, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwData)
+
+	// Forward pass.
+	gate := NewMoEGate[float32](eng, ops, topK)
+	moe := NewMixtureOfExperts[float32](eng, ops, gate, makeExperts(), numExperts, topK)
+	out, err := moe.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// loss = sum(output)
+	outShape := out.Shape()
+	onesData := make([]float32, outShape[0]*outShape[1])
+	for i := range onesData {
+		onesData[i] = 1.0
+	}
+	dOut, _ := tensor.New[float32](outShape, onesData)
+
+	// Backward pass.
+	grads, err := moe.Backward(context.Background(), types.FullBackprop, dOut, hs, gw)
+	if err != nil {
+		t.Fatalf("Backward failed: %v", err)
+	}
+	if grads == nil || len(grads) < 2 {
+		t.Fatal("expected 2 gradients [dHS, dGW]")
+	}
+	dHS := grads[0]
+	dGW := grads[1]
+
+	if dHS == nil {
+		t.Fatal("dHS is nil")
+	}
+	if dGW == nil {
+		t.Fatal("dGW is nil")
+	}
+
+	// Finite difference check on hiddenStates.
+	eps := float32(1e-3)
+	tol := float32(5e-2) // Larger tolerance due to STE and routing discreteness.
+	dHSData := dHS.Data()
+
+	t.Run("dHiddenStates", func(t *testing.T) {
+		maxErr := float32(0)
+		for i := 0; i < len(hsData); i++ {
+			// f(x + eps)
+			hsPlus := make([]float32, len(hsData))
+			copy(hsPlus, hsData)
+			hsPlus[i] += eps
+			hsPlusTensor, _ := tensor.New[float32]([]int{seqLen, modelDim}, hsPlus)
+			lossPlus := moeForwardLoss(eng, ops, makeExperts(), numExperts, topK, hsPlusTensor, gw)
+
+			// f(x - eps)
+			hsMinus := make([]float32, len(hsData))
+			copy(hsMinus, hsData)
+			hsMinus[i] -= eps
+			hsMinusTensor, _ := tensor.New[float32]([]int{seqLen, modelDim}, hsMinus)
+			lossMinus := moeForwardLoss(eng, ops, makeExperts(), numExperts, topK, hsMinusTensor, gw)
+
+			fdGrad := (lossPlus - lossMinus) / (2 * eps)
+			analytic := dHSData[i]
+			diff := float32(math.Abs(float64(fdGrad - analytic)))
+			if diff > maxErr {
+				maxErr = diff
+			}
+		}
+		if maxErr > tol {
+			t.Errorf("dHiddenStates max finite-diff error = %e, want < %e", maxErr, tol)
+		} else {
+			t.Logf("dHiddenStates max finite-diff error = %e (tol %e)", maxErr, tol)
+		}
+	})
+
+	// Finite difference check on gate weights.
+	dGWData := dGW.Data()
+	t.Run("dGateWeight", func(t *testing.T) {
+		maxErr := float32(0)
+		for i := 0; i < len(gwData); i++ {
+			gwPlus := make([]float32, len(gwData))
+			copy(gwPlus, gwData)
+			gwPlus[i] += eps
+			gwPlusTensor, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwPlus)
+			lossPlus := moeForwardLoss(eng, ops, makeExperts(), numExperts, topK, hs, gwPlusTensor)
+
+			gwMinus := make([]float32, len(gwData))
+			copy(gwMinus, gwData)
+			gwMinus[i] -= eps
+			gwMinusTensor, _ := tensor.New[float32]([]int{numExperts, modelDim}, gwMinus)
+			lossMinus := moeForwardLoss(eng, ops, makeExperts(), numExperts, topK, hs, gwMinusTensor)
+
+			fdGrad := (lossPlus - lossMinus) / (2 * eps)
+			analytic := dGWData[i]
+			diff := float32(math.Abs(float64(fdGrad - analytic)))
+			if diff > maxErr {
+				maxErr = diff
+			}
+		}
+		if maxErr > tol {
+			t.Errorf("dGateWeight max finite-diff error = %e, want < %e", maxErr, tol)
+		} else {
+			t.Logf("dGateWeight max finite-diff error = %e (tol %e)", maxErr, tol)
+		}
+	})
 }
 
 // BenchmarkMoE_SequentialBaseline benchmarks the sequential path by running
