@@ -107,12 +107,17 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 		return nil, err
 	}
 
-	// Sum over all elements and negate for total loss
-	// Average over batch and sequence length
-	totalLoss, err := cel.engine.ReduceSum(ctx, gatheredLoss, -1, false, nil) // Sum all elements
-	if err != nil {
-		return nil, err
+	// Sum all elements by reducing each axis iteratively.
+	// NOTE: ztensor ReduceSum treats axis=-1 as "sum all axes at once" (bug),
+	// not as the last axis (Python convention). Use explicit positive indices.
+	reduced := gatheredLoss
+	for dim := len(gatheredLoss.Shape()) - 1; dim >= 0; dim-- {
+		reduced, err = cel.engine.ReduceSum(ctx, reduced, dim, false, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
+	totalLoss := reduced
 
 	// Negate the sum
 	negatedLoss, err := cel.engine.MulScalar(ctx, totalLoss, cel.engine.Ops().FromFloat64(-1.0), nil)
