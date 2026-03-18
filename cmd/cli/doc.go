@@ -1,4 +1,4 @@
-// Package cli provides the command-line interface framework for Zerfoo.
+// Package cli provides the command-line interface framework for Zerfoo. (Stability: stable)
 //
 // # Architecture
 //

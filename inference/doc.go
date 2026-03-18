@@ -1,6 +1,6 @@
 // Package inference provides a high-level API for loading GGUF models and
 // running text generation, chat, embedding, and speculative decoding with
-// minimal boilerplate.
+// minimal boilerplate. (Stability: stable)
 //
 // # Loading Models
 //

@@ -1,5 +1,5 @@
 // Package training provides neural network training orchestration for the
-// Zerfoo ML framework.
+// Zerfoo ML framework. (Stability: beta)
 //
 // The package implements a layered design: a core [Trainer] interface for
 // single-step parameter updates, a [DefaultTrainer] that wires together a

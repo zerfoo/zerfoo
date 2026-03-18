@@ -1,4 +1,4 @@
-// Package gpuapi defines internal interfaces for GPU runtime operations.
+// Package gpuapi defines internal interfaces for GPU runtime operations. (Stability: beta)
 //
 // The GPU Runtime Abstraction Layer (GRAL) decouples GPUEngine and GPUStorage
 // from vendor-specific APIs (CUDA, ROCm, OpenCL). Each vendor implements the

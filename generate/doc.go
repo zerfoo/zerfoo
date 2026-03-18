@@ -1,7 +1,7 @@
 // Package generate implements autoregressive text generation for transformer
 // models loaded by the inference package. It provides the core decode loop,
 // KV caching, token sampling, streaming output, batch generation, and
-// speculative decoding.
+// speculative decoding. (Stability: stable)
 //
 // # Generator
 //

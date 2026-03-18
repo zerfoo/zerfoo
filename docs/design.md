@@ -77,6 +77,95 @@ graph capture and highest throughput.
 
 Module: `github.com/zerfoo/zerfoo` (depends on `github.com/zerfoo/ztensor` and `github.com/zerfoo/ztoken`)
 
+### 1.6 Package Maturity
+
+Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
+
+- **Stable** — Production-tested, API frozen for v1.0. Breaking changes require a new major version.
+- **Beta** — Implemented and tested, API may change in minor releases. Not yet production-hardened.
+- **Alpha** — Experimental or newly added. API subject to change or removal without notice.
+
+| Package | Stability | Notes |
+|---------|-----------|-------|
+| `model/` | stable | Model[T] abstraction, GGUF loader, layer registry |
+| `model/gguf/` | stable | GGUF parser, production-validated across 6+ architectures |
+| `layers/` | stable | Layer interface, registry wiring |
+| `layers/core/` | stable | Foundational ops: Add, MatMul, Linear, FFN, MoE, etc. |
+| `layers/activations/` | stable | ReLU, GELU, SwiGLU, Softmax, etc. |
+| `layers/attention/` | stable | GQA, SDPA, multi-head attention |
+| `layers/normalization/` | stable | RMSNorm, LayerNorm, BatchNorm |
+| `layers/embeddings/` | stable | Token and rotary positional embeddings |
+| `layers/gather/` | stable | Embedding-table lookup |
+| `layers/transpose/` | stable | Transpose op |
+| `layers/reducesum/` | stable | ReduceSum op |
+| `layers/regularization/` | stable | Dropout |
+| `layers/transformer/` | stable | TransformerBlock |
+| `layers/registry/` | stable | Central layer registration |
+| `layers/components/` | stable | GradientComputer, MatrixMultiplier, WeightInitializer |
+| `inference/` | stable | GGUF model loading, architecture builders (Llama, Gemma, etc.) |
+| `generate/` | stable | Autoregressive decoding, KV cache, sampling, streaming |
+| `generate/speculative/` | beta | Speculative decoding strategies |
+| `generate/grammar/` | beta | JSON Schema to CFG constrained decoding |
+| `generate/agent/` | alpha | Agentic tool-use loop |
+| `serve/` | stable | OpenAI-compatible API server, SSE streaming |
+| `serve/batcher/` | beta | Continuous batching scheduler |
+| `serve/agent/` | alpha | Agentic loop HTTP adapter |
+| `serve/registry/` | beta | bbolt-backed model version registry |
+| `serve/cloud/` | alpha | Multi-tenant namespace isolation, GPU eviction, metering |
+| `serve/disaggregated/` | alpha | Disaggregated prefill/decode serving |
+| `config/` | stable | JSON config loader with env var overrides |
+| `health/` | stable | HTTP health check endpoints (/healthz, /readyz, /debug/pprof/) |
+| `shutdown/` | stable | Ordered shutdown coordinator |
+| `registry/` | stable | Model registry with local cache |
+| `data/` | beta | Dataset container (Sample, Batch, normalization) |
+| `features/` | beta | Time-series feature transformers (Lag, Rolling, FFT) |
+| `training/` | beta | Trainer[T], DefaultTrainer, gradient strategies |
+| `training/optimizer/` | beta | AdamW[T], SGD[T], EMA, SWA |
+| `training/loss/` | beta | MSE[T], CrossEntropyLoss[T] |
+| `training/lora/` | beta | LoRA/QLoRA fine-tuning adapters |
+| `training/fp8/` | alpha | FP8 mixed-precision training |
+| `training/nas/` | alpha | Neural architecture search (DARTS) |
+| `training/automl/` | alpha | Bayesian hyperparameter optimization, PBT |
+| `training/online/` | alpha | Online learning with drift detection |
+| `distributed/` | beta | gRPC-based distributed training |
+| `distributed/coordinator/` | beta | Coordinator server with worker registry |
+| `distributed/fsdp/` | alpha | Fully Sharded Data Parallelism |
+| `distributed/pb/` | beta | Generated protobuf/gRPC bindings |
+| `inference/multimodal/` | alpha | Vision, audio, and multi-modal inference |
+| `inference/parallel/` | alpha | Tensor and pipeline parallelism for multi-GPU |
+| `inference/timeseries/` | alpha | Time-series model architecture builders |
+| `layers/recurrent/` | beta | RNN layers |
+| `layers/sequence/` | beta | S4 structured state space |
+| `layers/ssm/` | alpha | Mamba SSM blocks |
+| `layers/hrm/` | alpha | Hierarchical Reasoning Model modules |
+| `layers/vision/` | beta | CLIP/SigLIP vision encoder |
+| `layers/audio/` | alpha | Whisper-style audio encoder |
+| `layers/features/` | beta | SpectralFeature layer |
+| `layers/timeseries/` | alpha | Time-series patch embedding, variable selection |
+| `layers/tokenizers/` | beta | TokenizerNode graph integration |
+| `model/hrm/` | alpha | HRM model types (experimental) |
+| `model/huggingface/` | beta | HuggingFace config parsing |
+| `tabular/` | alpha | Tabular ML model package |
+| `internal/cuda/` | stable | CUDA runtime purego bindings |
+| `internal/cuda/kernels/` | stable | Custom CUDA kernel wrappers (25+ kernels) |
+| `internal/cublas/` | stable | cuBLAS purego bindings |
+| `internal/cudnn/` | beta | cuDNN purego bindings |
+| `internal/tensorrt/` | alpha | TensorRT purego bindings |
+| `internal/gpuapi/` | beta | GPU Runtime Abstraction Layer (GRAL) |
+| `internal/xblas/` | stable | ARM NEON + AVX2 SIMD assembly |
+| `internal/codegen/` | alpha | Megakernel code generator |
+| `internal/workerpool/` | stable | Persistent goroutine pool |
+| `internal/nccl/` | beta | NCCL CGo bindings |
+| `internal/hip/` | alpha | AMD HIP runtime purego bindings |
+| `internal/hip/kernels/` | alpha | HIP kernel wrappers |
+| `internal/rocblas/` | alpha | AMD rocBLAS purego bindings |
+| `internal/miopen/` | alpha | AMD MIOpen purego bindings |
+| `internal/opencl/` | alpha | OpenCL 2.0 runtime purego bindings |
+| `internal/opencl/kernels/` | alpha | OpenCL kernel dispatch |
+| `internal/clblast/` | alpha | CLBlast BLAS wrappers |
+| `cmd/zerfoo/` | stable | Main CLI binary |
+| `cmd/cli/` | stable | CLI framework and command registry |
+
 ---
 
 ## 2. Core Architecture

@@ -1,6 +1,6 @@
 // Package layers provides neural network layer implementations for the Zerfoo
 // ML framework. It is organized into sub-packages by functional category, with
-// a central registry that wires every layer into the model builder.
+// a central registry that wires every layer into the model builder. (Stability: stable)
 //
 // # Sub-packages by category
 //

@@ -1,6 +1,6 @@
 // Package distributed provides multi-node distributed training for the Zerfoo
 // ML framework. It implements gradient synchronization, barrier coordination,
-// and tensor broadcasting across a cluster of worker nodes.
+// and tensor broadcasting across a cluster of worker nodes. (Stability: beta)
 //
 // # Architecture
 //

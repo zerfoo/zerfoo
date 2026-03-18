@@ -1,5 +1,5 @@
 // Package model provides the abstraction layer for representing, loading,
-// serializing, and managing neural network models in the Zerfoo framework.
+// serializing, and managing neural network models in the Zerfoo framework. (Stability: stable)
 //
 // # Model Representation
 //

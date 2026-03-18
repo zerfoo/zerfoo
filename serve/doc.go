@@ -1,4 +1,4 @@
-// Package serve provides an OpenAI-compatible HTTP API server for model inference.
+// Package serve provides an OpenAI-compatible HTTP API server for model inference. (Stability: stable)
 //
 // The server exposes REST endpoints that follow the OpenAI API specification,
 // enabling drop-in compatibility with existing OpenAI client libraries and tools.
