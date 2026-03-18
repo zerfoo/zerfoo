@@ -56,6 +56,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("mamba3", parseMamba3Config)
 	r.Register("jamba", parseJambaConfig)
 	r.Register("llava", parseLLaVAConfig)
+	r.Register("qwen_vl", parseQwenVLConfig)
 	return r
 }
 
@@ -332,6 +333,17 @@ func parseLLaVAConfig(raw map[string]interface{}) (*ModelMetadata, error) {
 		return nil, err
 	}
 	meta.Architecture = "llava"
+	return meta, nil
+}
+
+// parseQwenVLConfig parses Qwen-VL-family config.json fields.
+// Extends Qwen2 with vision encoder fields.
+func parseQwenVLConfig(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta, err := parseQwenConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	meta.Architecture = "qwen_vl"
 	return meta, nil
 }
 
