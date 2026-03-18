@@ -843,7 +843,7 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
   Acceptance: Loads Whisper GGUF weights; builds encoder graph;
   TestWhisperLoad passes with Whisper-base GGUF fixture.
 
-- [ ] T16.4 Implement audio+text inference session
+- [x] T16.4 Implement audio+text inference session (2026-03-17)
   Owner: ML Eng  Est: 3h
   Deps: T16.3
   Acceptance: Whisper encoder output merged with language model for transcript
@@ -939,7 +939,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   memory bandwidth model; calibrated against 20 measured DGX Spark benchmarks;
   R^2 > 0.85 on held-out architectures; TestLatencyEstimator passes.
 
-- [ ] T18.5 Implement architecture discretization in training/nas/discretize.go
+- [x] T18.5 Implement architecture discretization in training/nas/discretize.go (2026-03-17)
   Owner: Research Eng  Est: 2h
   Deps: T18.3
   Acceptance: Discretize(alpha_weights) selects argmax op per edge; validates
@@ -984,7 +984,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   batch_size, patch_size); dispatches trial to Worker; collects metrics; records
   best config; TestCoordinator passes with mock worker.
 
-- [ ] T19.4 CLI: zerfoo automl command
+- [x] T19.4 CLI: zerfoo automl command (2026-03-17)
   Owner: Research Eng  Est: 2h
   Deps: T19.3
   Acceptance: `zerfoo automl --model path --dataset jsonl --trials 50 --metric sharpe`
@@ -1047,7 +1047,7 @@ Note: Requires founder approval before implementation (per Feza governance).
   gateway; Cloud Storage model artifact bucket; `terraform plan` shows no errors
   on dry-run.
 
-- [ ] T21.5 Load test: 100 concurrent tenants on cloud API
+- [x] T21.5 Load test: 100 concurrent tenants on cloud API (2026-03-17)
   Owner: Infra Eng  Est: 2h
   Deps: T21.3
   Acceptance: 100 concurrent clients each sending 10 requests; P99 latency < 2s;
