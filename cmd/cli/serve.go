@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve"
@@ -41,7 +43,7 @@ func (c *ServeCommand) Description() string {
 
 // Run implements Command.Run.
 func (c *ServeCommand) Run(ctx context.Context, args []string) error {
-	var modelID, cacheDir, port string
+	var modelID, cacheDir, port, gpusRaw string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -56,6 +58,12 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 				return errors.New("--cache-dir requires a value")
 			}
 			cacheDir = args[i+1]
+			i++
+		case "--gpus":
+			if i+1 >= len(args) {
+				return errors.New("--gpus requires a value")
+			}
+			gpusRaw = args[i+1]
 			i++
 		default:
 			if modelID != "" {
@@ -77,6 +85,15 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		loadOpts = append(loadOpts, inference.WithCacheDir(cacheDir))
 	}
 
+	var gpuIDs []int
+	if gpusRaw != "" {
+		var err error
+		gpuIDs, err = parseGPUList(gpusRaw)
+		if err != nil {
+			return fmt.Errorf("invalid --gpus value: %w", err)
+		}
+	}
+
 	li := startLoading(c.out)
 	mdl, err := c.loadFn(modelID, loadOpts...)
 	li.stop()
@@ -84,7 +101,11 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("load model: %w", err)
 	}
 
-	srv := serve.NewServer(mdl)
+	var serverOpts []serve.ServerOption
+	if len(gpuIDs) > 0 {
+		serverOpts = append(serverOpts, serve.WithGPUs(gpuIDs))
+	}
+	srv := serve.NewServer(mdl, serverOpts...)
 	httpServer := &http.Server{
 		Addr:    net.JoinHostPort("", port),
 		Handler: srv.Handler(),
@@ -121,6 +142,36 @@ func (a shutdownAdapter) Close(ctx context.Context) error {
 	return a.srv.Shutdown(ctx)
 }
 
+// parseGPUList parses a comma-separated list of GPU IDs (e.g. "0,1,2,3")
+// and returns them as a sorted, deduplicated slice of non-negative integers.
+func parseGPUList(raw string) ([]int, error) {
+	parts := strings.Split(raw, ",")
+	seen := make(map[int]bool, len(parts))
+	ids := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil, fmt.Errorf("empty GPU ID in list")
+		}
+		id, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, fmt.Errorf("non-numeric GPU ID: %q", p)
+		}
+		if id < 0 {
+			return nil, fmt.Errorf("negative GPU ID: %d", id)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("duplicate GPU ID: %d", id)
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("empty GPU list")
+	}
+	return ids, nil
+}
+
 // Usage implements Command.Usage.
 func (c *ServeCommand) Usage() string {
 	return `serve [OPTIONS] <model-id>
@@ -130,6 +181,7 @@ Start an OpenAI-compatible HTTP inference server.
 OPTIONS:
   --port <port>       Listen port (default: 8080)
   --cache-dir <dir>   Override model cache directory
+  --gpus <ids>        Comma-separated GPU IDs to distribute model across (e.g. 0,1,2,3)
 
 ENDPOINTS:
   POST /v1/chat/completions   Chat completion
@@ -142,6 +194,7 @@ func (c *ServeCommand) Examples() []string {
 	return []string{
 		"serve google/gemma-3-1b",
 		"serve google/gemma-3-1b --port 9090",
+		"serve google/gemma-3-1b --gpus 0,1,2,3",
 	}
 }
 
