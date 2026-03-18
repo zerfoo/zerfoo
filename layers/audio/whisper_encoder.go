@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 )
@@ -432,6 +433,10 @@ func (e *WhisperEncoder[T]) Parameters() []*graph.Parameter[T] {
 	}
 	params = append(params, e.lnPost.Parameters()...)
 	return params
+}
+
+func (e *WhisperEncoder[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return nil, nil
 }
 
 // applyGELU applies the GELU activation function in-place.
