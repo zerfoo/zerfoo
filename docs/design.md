@@ -1268,4 +1268,336 @@ ADR files in `docs/adr/`.
 | [034](adr/034-gqa-aware-flash-attention-decode.md) | GQA-Aware Flash Attention Decode | 34 | Grouped-query attention in decode kernel |
 | [042](adr/042-dp4a-int8-q4k-gemv.md) | dp4a INT8 Q4_K GEMV with FP32 FMA Fallback | 27 | dp4a 4 MACs/instr vs scalar FMA, optional purego soft-symbol, zero regression at batch=1 |
 | [043](adr/043-arena-free-list-tensor-lifetime.md) | Arena Free-List with Tensor Lifetime Analysis | 27 | Best-fit free-list overlay on bump-pointer arena; lifetime analysis frees intermediates mid-pass |
+| [044](adr/044-paged-attention-kv-block-manager.md) | PagedAttention KV Block Manager | Y1 | Block pool, block table, paged attention CUDA kernel, continuous batching |
+| [045](adr/045-speculative-decoding.md) | Speculative Decoding | Y1 | External draft, self-draft, rejection sampling, adaptive alpha fallback |
+| [046](adr/046-fp8-nvfp4-quantization-roadmap.md) | FP8 and NVFP4 Quantization Roadmap | Y1-Y2 | FP8 E4M3 dynamic inference, NVFP4 E2M1 Blackwell, FP8 mixed-precision training |
+| [047](adr/047-disaggregated-prefill-decode-serving.md) | Disaggregated Prefill/Decode Serving | Y1 | gRPC prefill/decode workers, gateway routing, SSE multiplexing |
+| [048](adr/048-mamba-ssm-architecture-support.md) | Mamba/SSM Architecture Support | Y1 | Selective scan CUDA kernel, MambaBlock, SSMState, hybrid Jamba builder |
+| [049](adr/049-lora-qlora-finetuning.md) | LoRA/QLoRA Fine-Tuning | Y2 | LoraLinear, LoRA injection, NF4 base weights, adapter GGUF checkpoint |
+| [050](adr/050-distributed-training-fsdp.md) | Distributed Training FSDP-Equivalent | Y2 | Parameter sharding, NCCL AllGather/ReduceScatter, gradient accumulation, sharded optimizer |
+| [051](adr/051-time-series-ml-platform.md) | Time-Series ML Platform | Y3 | PatchTST, TFT, regime detector, feature store, quantile loss |
+| [052](adr/052-online-learning-safety-framework.md) | Online Learning Safety Framework | Y3 | Trigger conditions, incremental LoRA, perplexity/KL validators, rollback, audit log |
+| [053](adr/053-multimodal-inference-pipeline.md) | Multi-Modal Inference Pipeline | Y4 | VisionEncoder, projection connector, embedding merge, Whisper audio encoder |
+| [054](adr/054-agentic-tool-use-loop.md) | Agentic Tool-Use Loop | Y4 | Tool registry, function-call grammar, supervisor loop, OpenAI tools API |
+| [055](adr/055-neural-architecture-search.md) | Neural Architecture Search | Y5 | DARTS bilevel optimization, hardware-aware latency estimator, architecture discretization |
+| [056](adr/056-zerfoo-cloud-product.md) | Zerfoo Cloud Product | Y5 | Multi-tenant isolation, token metering, GPU LRU eviction, GKE Terraform (Proposed) |
 
+---
+
+## 15. PagedAttention and Continuous Batching
+
+PagedAttention manages KV cache memory as fixed-size blocks (16 tokens each) via
+a block pool and per-sequence block tables, eliminating memory fragmentation.
+
+**Components:**
+- `ztensor/graph/kv/block_pool.go` -- Zero-alloc warm-path block allocator
+- `ztensor/graph/kv/block_table.go` -- Logical-to-physical KV block mapping per sequence
+- `ztensor/internal/cuda/paged_attention.cu` -- CUDA kernel accepting block table pointer arrays
+- `serve/batcher/scheduler.go` -- Continuous batching scheduler assembling variable-length batches
+
+**Continuous batching** replaces fixed-batch session pools: completed sequences are
+freed immediately without waiting for the batch to finish. The scheduler assembles
+per-step batches with zero padding tokens. The ragged attention kernel
+(`ztensor/internal/cuda/ragged_attention.cu`) handles variable sequence lengths
+in the same batch using block-diagonal masking and online softmax.
+
+See [ADR-044](adr/044-paged-attention-kv-block-manager.md).
+
+---
+
+## 16. Quantization Extensions
+
+### 16.1 FP8 Dynamic Inference
+
+FP8 E4M3FN inference uses cublasLtMatmul for GEMM with per-tensor amax-based
+dynamic scaling. Requires sm_89+ (Ada Lovelace or newer). The dispatch path
+in GPUEngine.MatMul detects FP8-typed tensors and routes to the FP8 GEMM kernel;
+output is dequantized to FP16.
+
+- `ztensor/internal/cuda/fp8_gemm.cu` -- cublasLt FP8 GEMM kernel
+- `ztensor/compute/quantize.go` -- Per-tensor amax computation
+
+### 16.2 NVFP4 Inference (Blackwell)
+
+NVFP4 E2M1 with block-scale factors (block size 16) provides 3.5x memory reduction
+vs FP16. The GEMV kernel uses a LUT-based dequantization approach with warp shuffle
+reductions. Requires sm_100+ (Blackwell); falls back to FP8 on older hardware.
+
+- `ztensor/tensor/quantized.go` -- NVFloat4Storage encode/decode
+- `ztensor/internal/cuda/fp4_gemv.cu` -- NVFP4 GEMV kernel
+
+### 16.3 FP8 Mixed-Precision Training
+
+FP8 linear layers use FP8 GEMM for forward pass with FP32 gradient computation
+during backward. Dynamic loss scaling halves on inf/NaN and doubles every 2000
+clean steps. Master weights maintain FP32 copies for optimizer updates.
+
+- `training/fp8/linear.go` -- FP8Linear forward/backward
+- `training/fp8/loss_scaler.go` -- Dynamic loss scaling
+- `training/fp8/master_weights.go` -- FP32 master weight store
+
+See [ADR-046](adr/046-fp8-nvfp4-quantization-roadmap.md).
+
+---
+
+## 17. Speculative Decoding
+
+Two draft modes accelerate autoregressive generation:
+
+- **External draft** (`generate/speculative/external_draft.go`): Small model (e.g. 1B)
+  generates K draft tokens verified by the target model (e.g. 27B). Draft and target
+  share Engine[T] and block manager.
+- **Self-draft** (`generate/speculative/self_draft.go`): First N/2 layers of the target
+  model generate draft tokens. No separate model needed.
+
+Token acceptance uses Leviathan et al. 2023 rejection sampling
+(`generate/speculative/sampler.go`) to guarantee output distribution matches the
+target model. The generator automatically falls back to standard decode when
+acceptance rate (alpha) drops below 0.4.
+
+Prometheus metric `zerfoo_speculative_acceptance_rate` tracks rolling alpha.
+
+See [ADR-045](adr/045-speculative-decoding.md).
+
+---
+
+## 18. RadixAttention Prefix Caching
+
+A radix tree (`ztensor/graph/kv/radix_tree.go`) indexes KV blocks by token prefix.
+Sessions with identical system prompts share physical KV blocks via
+`PrefixCache` wrapping the radix tree. LRU eviction handles capacity overflow.
+
+See [ADR-044](adr/044-paged-attention-kv-block-manager.md).
+
+---
+
+## 19. Disaggregated Prefill/Decode Serving
+
+Separates prefill and decode into independent gRPC workers behind an API gateway:
+
+- `serve/disaggregated/prefill_worker.go` -- Runs prefill, streams FP16 KV blocks
+- `serve/disaggregated/decode_worker.go` -- Receives KV blocks, runs autoregressive decode
+- `serve/disaggregated/gateway.go` -- Least-loaded routing, SSE multiplexing, exponential backoff health check
+
+The gateway routes requests to the least-loaded prefill worker, which streams KV
+blocks to a decode worker. The decode worker streams tokens back through the
+gateway as SSE events.
+
+See [ADR-047](adr/047-disaggregated-prefill-decode-serving.md).
+
+---
+
+## 20. Mamba/SSM Architecture Support
+
+Mamba-3 state space models use O(d_state) recurrence instead of O(seq_len)
+attention, enabling linear-time inference at long sequence lengths.
+
+- `ztensor/internal/cuda/selective_scan.cu` -- Parallel scan CUDA kernel
+- `layers/ssm/mamba_block.go` -- MambaBlock[T] with input projection, conv1d,
+  selective scan, output projection; forward and backward passes
+- `generate/ssm_state.go` -- SSMState[T] managing hidden state across decode steps
+- `inference/arch_mamba.go` -- Mamba-3 GGUF loader
+- `inference/arch_jamba.go` -- Hybrid Jamba builder interleaving Mamba blocks and
+  Transformer layers per mamba_layer_indices metadata
+
+See [ADR-048](adr/048-mamba-ssm-architecture-support.md).
+
+---
+
+## 21. Training Infrastructure
+
+### 21.1 Full Backpropagation
+
+Backward passes implemented for all core layers: RMSNorm, GQA/MHA attention,
+SwiGLU/SiLU, RotaryEmbedding, DeepSeek MLA, and MoE routing (straight-through
+estimator for discrete top-K gating). Gradient checkpointing
+(`ztensor/graph/checkpoint.go`) recomputes activations during backward to reduce
+peak memory by 40%+.
+
+### 21.2 LoRA/QLoRA Fine-Tuning
+
+- `training/lora/linear.go` -- LoraLinear[T]: y = Wx + (alpha/r)*B*A*x
+- `training/lora/inject.go` -- InjectLoRA replaces named Linear layers, freezes base
+- `training/lora/qlora.go` -- QLoRATrainer loads NF4 base, trains LoRA adapters in BF16
+- `training/lora/checkpoint.go` -- Adapter save/load as GGUF v3 with lora.{layer}.weight_a/b naming
+- `training/optimizers/adamw8bit.go` -- 8-bit AdamW with block-wise quantization (4x memory reduction)
+- `cmd/finetune/main.go` -- CLI: `zerfoo finetune --model path --dataset jsonl --rank 16 --epochs 3`
+
+See [ADR-049](adr/049-lora-qlora-finetuning.md).
+
+### 21.3 FSDP Distributed Training
+
+ZeRO Stage 2 equivalent: parameter sharding across N ranks with NCCL AllGather
+before forward and ReduceScatter after backward.
+
+- `distributed/fsdp/sharded_module.go` -- ShardedModule splits parameters across devices
+- `distributed/nccl.go` -- NCCL AllGather/ReduceScatter via purego dlopen
+- `distributed/fsdp/grad_accum.go` -- M micro-step gradient accumulation
+- `distributed/fsdp/optimizer_shard.go` -- ShardedAdamW[T] with 1/N moment buffers per rank
+- `distributed/fsdp/checkpoint.go` -- AllGather + GGUF write on rank-0, scatter on load
+- `cmd/train-distributed/` -- CLI: `zerfoo train-distributed --ranks 4 --model path --dataset jsonl`
+
+See [ADR-050](adr/050-distributed-training-fsdp.md).
+
+---
+
+## 22. Time-Series ML Platform
+
+### 22.1 Architectures
+
+- `layers/timeseries/patch_embed.go` -- PatchEmbed[T]: splits 1D sequences into
+  non-overlapping patches with configurable size and embedding dimension
+- `inference/wolf/arch_patchtst.go` -- PatchTST: patch embed + Transformer encoder + projection head
+- `layers/timeseries/vsn.go` -- Variable Selection Network with Gated Residual Network
+- `inference/wolf/arch_tft.go` -- Temporal Fusion Transformer: static covariates, LSTM,
+  VSN, multi-head attention, quantile output (Q10/Q50/Q90)
+- `inference/wolf/arch_regime.go` -- Regime detector: GRU + 4-class softmax
+  (bull/bear/sideways/volatile)
+
+### 22.2 Feature Store
+
+`inference/wolf/features/store.go` provides a point-in-time-correct feature store
+with CSV offline loading and ring buffer (capacity 500) for online updates.
+No future timestamps permitted.
+
+### 22.3 Training
+
+- `training/loss/quantile.go` -- Pinball loss and differentiable Sharpe ratio metric
+- GGUF metadata keys: `ts.signal.patch_len`, `ts.signal.stride`, `ts.signal.input_features`
+- `cmd/wolf_train/main.go` -- Training script with time-ordered train/val split and early stopping
+
+See [ADR-051](adr/051-time-series-ml-platform.md).
+
+---
+
+## 23. Online Learning Safety Pipeline
+
+Incremental model updates with safety gates:
+
+- `training/online/trigger.go` -- Fires when data_count >= 500, hours_since_last >= 24
+- `training/online/incremental.go` -- 100 gradient steps at base_lr/10 with gradient clip 0.5;
+  updates only LoRA A,B matrices (base frozen)
+- `training/online/validator.go` -- Perplexity gate (within 5% of champion) and KL gate
+  (KL div < 0.1); both must pass before promotion
+- `training/online/rollback.go` -- Swaps LoRA adapter in serve path in under 30 seconds
+- `training/online/audit.go` -- Append-only NDJSON audit log for all trigger, update,
+  validation, and promotion events
+
+See [ADR-052](adr/052-online-learning-safety-framework.md).
+
+---
+
+## 24. Model Versioning and A/B Testing
+
+- `serve/registry/registry.go` -- bbolt-backed model registry with Register, List,
+  Promote (champion), Shadow operations
+- `serve/registry/shadow.go` -- ShadowRunner runs both champion and shadow models;
+  shadow output logged but not returned; async execution with under 5% latency impact
+- `serve/registry/ab_router.go` -- ABRouter with configurable traffic split;
+  deterministic session_id hash for sticky routing; runtime-adjustable split
+- `serve/registry/canary.go` -- CanaryController: starts at 1% traffic, auto-ramps
+  10% every 30 min if error rate and P99 within thresholds; auto-rollback on breach
+- Prometheus metrics per model version: `zerfoo_model_requests_total{model_id,version}`,
+  `zerfoo_model_latency_p99{model_id,version}`
+
+---
+
+## 25. Multi-Modal Inference
+
+### 25.1 Vision-Language
+
+- `inference/multimodal/preprocess.go` -- Pure Go image preprocessing (resize,
+  normalize to [-1,1], patch embedding conversion); JPEG and PNG
+- `inference/multimodal/vision_encoder.go` -- VisionEncoder[T] interface; SigLIP implementation
+- `inference/multimodal/connector.go` -- Linear projection from vision_dim to text_dim
+  via GGUF mm.projector.weight
+- `inference/multimodal/merge.go` -- Inserts vision embeddings at image token positions;
+  supports up to 4 images per request
+- `serve/vision.go` -- OpenAI API image_url content type support (base64 and URL)
+
+### 25.2 Audio Pipeline
+
+- `inference/multimodal/audio.go` -- Pure Go mel-spectrogram extraction (80 filterbanks)
+- `layers/audio/whisper_encoder.go` -- WhisperEncoder[T]: 2-layer conv1d + Transformer encoder
+- `inference/arch_whisper.go` -- Whisper GGUF loader and encoder graph builder
+- Audio+text inference session merges Whisper encoder output with language model
+- `POST /v1/audio/transcriptions` -- Multipart/form-data audio upload endpoint
+
+See [ADR-053](adr/053-multimodal-inference-pipeline.md).
+
+---
+
+## 26. Agentic Tool-Use Loop
+
+- `generate/agent/tools.go` -- ToolRegistry with Register(name, schema, handler)
+- `generate/agent/function_call.go` -- JSON grammar activated on tool_call token;
+  parses ToolCall struct from model output
+- `generate/agent/supervisor.go` -- Supervisor executes up to MaxIterations=10 steps;
+  detects tool call vs EOS; executes tool; appends result to context
+- `generate/agent/tools_market.go` -- 6 market tools (GetMarketData, GetOrderBook,
+  GetPortfolio, GetEarningsCalendar, SearchNews, SubmitOrder); RiskApprover gate
+  required for SubmitOrder
+- `serve/agent/openai_adapter.go` -- OpenAI tools parameter activates agentic mode;
+  streaming emits tool_calls delta events
+
+See [ADR-054](adr/054-agentic-tool-use-loop.md).
+
+---
+
+## 27. Neural Architecture Search and AutoML
+
+### 27.1 NAS (DARTS)
+
+- `training/nas/search_space.go` -- Discrete ops (Attention, MLP, Conv1D, SSMBlock),
+  connectivity patterns, hyperparameter ranges; JSON-serializable
+- `training/nas/darts_layer.go` -- DARTSLayer: softmax-weighted mixture of candidate ops
+  with learnable architecture parameters alpha
+- `training/nas/darts_optimizer.go` -- Bilevel optimizer: alpha updated by validation
+  gradient, weights updated by training gradient, alternating per step
+- `training/nas/hw_estimator.go` -- OLS linear latency model calibrated against DGX Spark
+- `training/nas/discretize.go` -- Argmax op selection per edge with max_params constraint
+- `training/nas/export.go` -- Export discovered architecture + weights as GGUF
+- `training/nas/signal_search.go` -- RunSignalNAS for time-series signal models
+
+### 27.2 AutoML
+
+- `training/automl/bayesian.go` -- Gaussian Process surrogate with Expected Improvement
+  acquisition function
+- `training/automl/pbt.go` -- Population-Based Training (N=8 agents, exploit+explore)
+- `training/automl/coordinator.go` -- Pluggable strategy coordinator with Worker interface
+  and early stopping
+- `cmd/automl/` -- CLI: `zerfoo automl --model path --dataset jsonl --trials 50 --metric sharpe`
+
+See [ADR-055](adr/055-neural-architecture-search.md).
+
+---
+
+## 28. Self-Improving Models
+
+- `training/online/feedback.go` -- FeedbackCollector subscribes to P&L events via gRPC;
+  labels signal predictions with realized returns for incremental fine-tuning
+- `training/online/drift.go` -- DriftDetector computes rolling 30-day Sharpe ratio;
+  alerts when current Sharpe < mean - 1 sigma
+- Automated NAS trigger on drift event: runs 2h search on latest data; proposes
+  replacement to online safety pipeline validators if discovered architecture
+  Sharpe >= current + 5%
+
+See [ADR-052](adr/052-online-learning-safety-framework.md).
+
+---
+
+## 29. Cloud Product
+
+Multi-tenant inference-as-a-service with per-tenant isolation and metering.
+
+- `serve/cloud/tenant.go` -- TenantRegistry with per-API-key quotas,
+  concurrency + rate limiting, model allowlist, HTTP middleware
+- `serve/cloud/billing.go` -- Token metering middleware counting prompt+completion
+  tokens; NDJSON usage recorder (Kafka adapter configurable)
+- `serve/cloud/resource_manager.go` -- GPU model LRU eviction with VRAM budget tracking
+- `infra/terraform/zerfoo-cloud/` -- GKE cluster with GPU node pool, Cloud Run API
+  gateway, GCS model artifact bucket
+
+Note: ADR-056 status is Proposed; requires founder approval before production deployment.
+
+See [ADR-056](adr/056-zerfoo-cloud-product.md).
