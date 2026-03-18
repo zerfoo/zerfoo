@@ -272,3 +272,123 @@ These issues require deeper understanding of the ML framework, GPU pipelines, or
   - Edge cases: division by zero gradient, sqrt of zero gradient
 - **Relevant code:** `layers/core/div.go:36-38`, `layers/core/sqrt.go:36-38`
 - **Estimated effort:** 2 hours
+
+---
+
+### 18. Add `String()` method to `device.Type` enum
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, enhancement
+- **Description:** The `device.Type` enum (`CPU`, `CUDA`, `ROCm`, `OpenCL`) in `device/device.go` lacks a `String()` method. When device types appear in error messages or log output, they render as opaque integers (e.g., `0`, `1`). Add a `String() string` method that returns human-readable names.
+- **Acceptance criteria:**
+  - `device.CPU.String()` returns `"CPU"`
+  - `device.CUDA.String()` returns `"CUDA"`
+  - `device.ROCm.String()` returns `"ROCm"`
+  - `device.OpenCL.String()` returns `"OpenCL"`
+  - Unknown values return `"Unknown(N)"` where N is the integer
+  - Test verifying all known device types
+- **Relevant code:** `device/device.go:20-31`
+- **Estimated effort:** 20 minutes
+
+---
+
+### 19. Add `R2Score` metric to the metrics package
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, enhancement
+- **Description:** The `metrics` package provides Pearson/Spearman correlation, MSE, RMSE, and MAE, but is missing R-squared (coefficient of determination), one of the most common evaluation metrics. Add an `R2Score(predictions, targets []float64) float64` function and include it in the `Metrics` struct returned by `CalculateMetrics`.
+- **Acceptance criteria:**
+  - `R2Score` function added, returning `1 - (SS_res / SS_tot)`
+  - Perfect predictions return `1.0`
+  - Constant predictions return `0.0`
+  - `Metrics` struct has an `R2` field populated by `CalculateMetrics`
+  - Tests covering perfect, imperfect, and edge cases (single element, all same target)
+- **Relevant code:** `metrics/metrics.go:9-36`
+- **Estimated effort:** 45 minutes
+
+---
+
+### 20. Add table-driven tests for tensor shape validation
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, testing
+- **Description:** The `tensor/shape.go` file defines shape utilities used throughout the framework but the test coverage for edge cases (zero-dimensional tensors, shapes with a zero extent, very high rank) is limited. Add comprehensive table-driven tests that verify `NumElements()`, `Rank()`, `Strides()`, and `Equal()` for scalar shapes, 1-D through 5-D, shapes with a zero dimension, and empty shapes.
+- **Acceptance criteria:**
+  - Table-driven tests for `NumElements`, `Rank`, `Strides`, `Equal` in `tensor/shape_test.go`
+  - Test cases: scalar (rank 0), 1-D, 2-D, 3-D, 4-D, 5-D, shape with a zero extent, empty shape
+  - All tests pass with `-race` flag
+- **Relevant code:** `tensor/shape.go`
+- **Estimated effort:** 45 minutes
+
+---
+
+### 21. Add doc comments to all exported CUDA kernel Go wrappers
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, documentation, cuda
+- **Description:** The Go wrapper files in `internal/cuda/kernels/` (e.g., `rmsnorm.go`, `gather.go`, `transpose.go`, `elementwise.go`) expose functions that call CUDA kernels via purego. Many lack GoDoc comments explaining what the kernel does, its parameters, and expected tensor layouts. Add doc comments to all exported functions following Go conventions.
+- **Acceptance criteria:**
+  - All exported functions in `internal/cuda/kernels/*.go` (non-test, non-purego stubs) have GoDoc comments
+  - Comments describe the operation, parameter meanings, and any shape requirements
+  - `go vet ./internal/cuda/kernels/...` passes
+- **Relevant code:** `internal/cuda/kernels/rmsnorm.go`, `internal/cuda/kernels/gather.go`, `internal/cuda/kernels/transpose.go`, `internal/cuda/kernels/elementwise.go`
+- **Estimated effort:** 1.5 hours
+
+---
+
+### 22. Add `--version` flag to the zonnx CLI
+
+- **Repo:** zonnx
+- **Labels:** good-first-issue, help-wanted, enhancement
+- **Description:** The `zonnx` CLI in `cmd/zonnx/main.go` has a TODO for printing version info. Add a `--version` flag that prints the version string (from a `version` variable set via `-ldflags` at build time, with a `"dev"` default). This is a standard CLI feature that helps users report bugs with version context.
+- **Acceptance criteria:**
+  - `zonnx --version` prints the version string and exits
+  - Version defaults to `"dev"` when not set via ldflags
+  - `-ldflags "-X main.version=v1.2.3"` sets the version at build time
+  - Test verifying default version output
+- **Relevant code:** `cmd/zonnx/main.go:162`
+- **Estimated effort:** 30 minutes
+
+---
+
+### 23. Implement `Backward` for `Pow` core layer
+
+- **Repo:** zerfoo
+- **Labels:** help-wanted, enhancement
+- **Description:** The `Pow` node in `layers/core/pow.go` returns `"Pow backward not implemented"`. Implementing its backward pass would enable gradient computation through power operations during training. The gradient of `a^b` is: `d/da = b * a^(b-1)` and `d/db = a^b * ln(a)`.
+- **Acceptance criteria:**
+  - `Pow.Backward` returns gradients for both inputs using the power rule
+  - Tests verify gradients against finite-difference approximation (relative error < 1e-3)
+  - Edge cases: zero base, negative base with integer exponent
+- **Relevant code:** `layers/core/pow.go:36-37`
+- **Estimated effort:** 1.5 hours
+
+---
+
+### 24. Add SIMD generic fallback tests for all xblas operations
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, testing, performance
+- **Description:** The `internal/xblas/` package has ARM NEON SIMD implementations (`*_arm64.s`) with generic Go fallbacks (`*_generic.go`). While individual operations have tests, there is no systematic parity test that verifies the generic fallback produces the same output as the SIMD path for each operation. Add a test file that runs all xblas operations through both paths and asserts results match within tolerance.
+- **Acceptance criteria:**
+  - Test file `internal/xblas/parity_test.go` created
+  - Tests cover: elementwise ops, exp, gemm, q4dot, rmsnorm, rope, scalar, silu, softmax
+  - Each test generates random input, runs the generic implementation, and verifies output matches within 1e-5 relative tolerance
+  - Tests pass on both arm64 (using SIMD) and amd64 (generic-only)
+- **Relevant code:** `internal/xblas/*_generic.go`, `internal/xblas/*_test.go`
+- **Estimated effort:** 2 hours
+
+---
+
+### 25. Add error message context to `device.Get` when device not found
+
+- **Repo:** ztensor
+- **Labels:** good-first-issue, help-wanted, enhancement
+- **Description:** When `device.Get("cuda:0")` fails because no GPU is available, the error message is `"device not found: cuda:0"` with no guidance. Improve the error to list available devices and suggest checking GPU setup, e.g., `"device not found: cuda:0 (available: [cpu]). See docs/gpu-setup.md for GPU configuration."`. This helps new users diagnose missing GPU drivers.
+- **Acceptance criteria:**
+  - Error message includes the list of registered device IDs
+  - Error message includes a pointer to documentation
+  - Test verifying the improved error message format
+  - Existing tests still pass
+- **Relevant code:** `device/device.go:50-59`
+- **Estimated effort:** 30 minutes
