@@ -213,26 +213,29 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 	if err != nil {
 		return nil, err
 	}
-	// Sum gradients over batch and sequence dimensions
-	dGainSum, err := r.engine.ReduceSum(ctx, dGain, 0, true)
-	if err != nil {
-		return nil, err
+	// Sum gradients over all dimensions except the last (feature) dimension.
+	dGainSum := dGain
+	ndim := len(dGain.Shape())
+	for dim := range ndim - 1 {
+		dGainSum, err = r.engine.ReduceSum(ctx, dGainSum, dim, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	dGainSum, err = r.engine.ReduceSum(ctx, dGainSum, 1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reshape reduced gradient from [1, 1, dim] to [dim] to match gain shape.
+	// Reshape reduced gradient to [dim] to match gain shape.
 	dGainSum, err = dGainSum.Reshape(r.gain.Value.Shape())
 	if err != nil {
 		return nil, fmt.Errorf("RMSNorm: failed to reshape gain gradient: %w", err)
 	}
 
-	r.gain.Gradient, err = r.engine.Add(ctx, r.gain.Gradient, dGainSum, r.gain.Gradient)
-	if err != nil {
-		return nil, err
+	if r.gain.Gradient == nil {
+		r.gain.Gradient = dGainSum
+	} else {
+		r.gain.Gradient, err = r.engine.Add(ctx, r.gain.Gradient, dGainSum, r.gain.Gradient)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Gradient of the input
@@ -266,7 +269,8 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 		return nil, err
 	}
 
-	sumDNormX, err = r.engine.ReduceSum(ctx, sumDNormX, -1, true)
+	lastDim := len(input.Shape()) - 1
+	sumDNormX, err = r.engine.ReduceSum(ctx, sumDNormX, lastDim, true)
 	if err != nil {
 		return nil, err
 	}

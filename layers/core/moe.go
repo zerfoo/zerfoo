@@ -31,6 +31,14 @@ type MoEGate[T tensor.Numeric] struct {
 	ops         numeric.Arithmetic[T]
 	topK        int
 	outputShape []int
+
+	// Cached forward state for backward pass.
+	cachedHiddenStates *tensor.TensorNumeric[T]
+	cachedGateWeight   *tensor.TensorNumeric[T]
+	cachedProbs        []T // softmax output flattened [seqLen * numExperts]
+	cachedIndices      [][]int
+	cachedWeights      [][]T
+	cachedNumExperts   int
 }
 
 // NewMoEGate creates a MoEGate layer with the given topK value.
@@ -96,6 +104,15 @@ func (g *MoEGate[T]) route(
 		weights[t] = topWeights
 	}
 
+	// Cache state for backward pass.
+	g.cachedHiddenStates = hiddenStates
+	g.cachedGateWeight = gateWeight
+	g.cachedProbs = make([]T, len(probData))
+	copy(g.cachedProbs, probData)
+	g.cachedIndices = indices
+	g.cachedWeights = weights
+	g.cachedNumExperts = numExperts
+
 	return indices, weights, nil
 }
 
@@ -127,9 +144,135 @@ func (g *MoEGate[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	return out, nil
 }
 
-// Backward returns nil (inference-only).
-func (g *MoEGate[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
+// Backward computes gradients for the MoE gate using the straight-through estimator.
+//
+// The top-K selection is a discrete operation. STE treats it as identity in the
+// backward pass: gradients flow through the softmax as if all experts were selected,
+// but only the top-K experts receive non-zero upstream gradient from the MoE output.
+//
+// Inputs must match the forward call: [hiddenStates, gateWeight].
+// outputGradient has shape [seqLen, topK] — gradient w.r.t. the normalized gate weights.
+//
+// Returns gradients [dHiddenStates, dGateWeight].
+func (g *MoEGate[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if outputGradient == nil || g.cachedIndices == nil {
+		return nil, nil
+	}
+
+	hiddenStates := g.cachedHiddenStates
+	gateWeight := g.cachedGateWeight
+	if hiddenStates == nil || gateWeight == nil {
+		return nil, nil
+	}
+
+	seqLen := len(g.cachedIndices)
+	numExperts := g.cachedNumExperts
+	topK := g.topK
+	if topK > numExperts {
+		topK = numExperts
+	}
+
+	zero := g.ops.FromFloat64(0)
+	ogData := outputGradient.Data()
+
+	// Step 1: Scatter outputGradient [seqLen, topK] into dProbs [seqLen, numExperts].
+	// STE: treat top-K selection as identity — place gradients at selected expert positions.
+	// Account for normalization: weights[k] = probs[k] / S where S = sum(top-K probs).
+	// Jacobian: d(p_i/S)/d(p_i) = (S - p_i) / S^2
+	//           d(p_i/S)/d(p_j) = -p_i / S^2  (for other selected j)
+	dProbs := make([]T, seqLen*numExperts)
+	for i := range dProbs {
+		dProbs[i] = zero
+	}
+
+	for t := 0; t < seqLen; t++ {
+		tIndices := g.cachedIndices[t]
+		probs := g.cachedProbs[t*numExperts : (t+1)*numExperts]
+
+		// Sum of selected probs.
+		sumProbs := zero
+		for _, idx := range tIndices {
+			sumProbs = g.ops.Add(sumProbs, probs[idx])
+		}
+		sumProbs2 := g.ops.Mul(sumProbs, sumProbs)
+
+		for ki, idxI := range tIndices {
+			dOut := ogData[t*topK+ki]
+			pI := probs[idxI]
+			for _, idxJ := range tIndices {
+				pJ := probs[idxJ]
+				if idxI == idxJ {
+					// d(p_i/S)/d(p_i) = (S - p_i) / S^2
+					num := g.ops.Sub(sumProbs, pI)
+					dProbs[t*numExperts+idxJ] = g.ops.Add(dProbs[t*numExperts+idxJ],
+						g.ops.Mul(dOut, g.ops.Div(num, sumProbs2)))
+				} else {
+					// d(p_i/S)/d(p_j) = -p_i / S^2
+					_ = pJ
+					neg := g.ops.Sub(zero, pI)
+					dProbs[t*numExperts+idxJ] = g.ops.Add(dProbs[t*numExperts+idxJ],
+						g.ops.Mul(dOut, g.ops.Div(neg, sumProbs2)))
+				}
+			}
+		}
+	}
+
+	// Step 2: Backprop through softmax.
+	// dLogits[t,i] = probs[t,i] * (dProbs[t,i] - dot(probs[t,:], dProbs[t,:]))
+	dLogits := make([]T, seqLen*numExperts)
+	for t := 0; t < seqLen; t++ {
+		probs := g.cachedProbs[t*numExperts : (t+1)*numExperts]
+		dot := zero
+		for j := 0; j < numExperts; j++ {
+			dot = g.ops.Add(dot, g.ops.Mul(probs[j], dProbs[t*numExperts+j]))
+		}
+		for j := 0; j < numExperts; j++ {
+			dLogits[t*numExperts+j] = g.ops.Mul(probs[j], g.ops.Sub(dProbs[t*numExperts+j], dot))
+		}
+	}
+
+	// Step 3: Backprop through logits = hiddenStates @ gateWeight.T.
+	// dHiddenStates = dLogits @ gateWeight  [seqLen, modelDim]
+	// dGateWeight = dLogits.T @ hiddenStates [numExperts, modelDim]
+	hsShape := hiddenStates.Shape()
+	modelDim := hsShape[1]
+	gwShape := gateWeight.Shape()
+
+	hsData := hiddenStates.Data()
+	gwData := gateWeight.Data()
+	dHSData := make([]T, seqLen*modelDim)
+	dGWData := make([]T, gwShape[0]*gwShape[1])
+
+	for t := 0; t < seqLen; t++ {
+		for d := 0; d < modelDim; d++ {
+			sum := zero
+			for e := 0; e < numExperts; e++ {
+				sum = g.ops.Add(sum, g.ops.Mul(dLogits[t*numExperts+e], gwData[e*modelDim+d]))
+			}
+			dHSData[t*modelDim+d] = sum
+		}
+	}
+
+	for e := 0; e < numExperts; e++ {
+		for d := 0; d < modelDim; d++ {
+			sum := zero
+			for t := 0; t < seqLen; t++ {
+				sum = g.ops.Add(sum, g.ops.Mul(dLogits[t*numExperts+e], hsData[t*modelDim+d]))
+			}
+			dGWData[e*modelDim+d] = sum
+		}
+	}
+
+	dHS, err := tensor.New[T](hsShape, dHSData)
+	if err != nil {
+		return nil, fmt.Errorf("MoEGate.Backward: create dHiddenStates: %w", err)
+	}
+	dGW, err := tensor.New[T](gwShape, dGWData)
+	if err != nil {
+		return nil, fmt.Errorf("MoEGate.Backward: create dGateWeight: %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{dHS, dGW}, nil
 }
 
 // OpType returns "MoEGate".
@@ -193,6 +336,14 @@ type MixtureOfExperts[T tensor.Numeric] struct {
 	numExperts   int
 	topK         int
 	outputShape  []int
+
+	// Cached forward state for backward pass.
+	cachedHiddenStates *tensor.TensorNumeric[T]
+	cachedGateWeight   *tensor.TensorNumeric[T]
+	cachedIndices      [][]int
+	cachedWeights      [][]T
+	cachedExpertOuts   map[int]*tensor.TensorNumeric[T] // expert index -> batched output
+	cachedAssignments  map[int][]expertAssignment[T]     // expert index -> token assignments
 }
 
 // NewMixtureOfExperts creates a MixtureOfExperts layer.
@@ -252,6 +403,14 @@ func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 		}
 	}
 
+	// Cache forward state for backward.
+	m.cachedHiddenStates = hiddenStates
+	m.cachedGateWeight = gateWeight
+	m.cachedIndices = indices
+	m.cachedWeights = weights
+	m.cachedExpertOuts = make(map[int]*tensor.TensorNumeric[T])
+	m.cachedAssignments = make(map[int][]expertAssignment[T])
+
 	// Initialize output accumulator [seqLen, modelDim] with zeros.
 	outData := make([]T, seqLen*modelDim)
 	out, err := tensor.New[T]([]int{seqLen, modelDim}, outData)
@@ -279,6 +438,10 @@ func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 			if eerr != nil {
 				return nil, fmt.Errorf("MixtureOfExperts: expert %d forward: %w", expertIdx, eerr)
 			}
+			// Cache expert output for backward.
+			m.cachedExpertOuts[expertIdx] = expertOut
+			m.cachedAssignments[expertIdx] = []expertAssignment[T]{{tokenIdx: 0, weight: weights[0][k]}}
+
 			scaled, serr := m.engine.MulScalar(ctx, expertOut, weights[0][k])
 			if serr != nil {
 				return nil, fmt.Errorf("MixtureOfExperts: scale expert %d: %w", expertIdx, serr)
@@ -325,6 +488,10 @@ func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 			return nil, fmt.Errorf("MixtureOfExperts: expert %d batched forward: %w", eid, eerr)
 		}
 
+		// Cache expert output and assignments for backward.
+		m.cachedExpertOuts[eid] = batchOut
+		m.cachedAssignments[eid] = assignments
+
 		// Scatter weighted results back to output.
 		eData := batchOut.Data()
 		outData = out.Data()
@@ -342,9 +509,152 @@ func (m *MixtureOfExperts[T]) Forward(ctx context.Context, inputs ...*tensor.Ten
 	return out, nil
 }
 
-// Backward returns nil (inference-only).
-func (m *MixtureOfExperts[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
+// Backward computes gradients for the MixtureOfExperts layer.
+//
+// The forward computation is:
+//
+//	output[t] = sum_k(weights[t][k] * expert_k(hiddenStates[t]))
+//
+// where weights come from softmax + top-K + normalize on router logits.
+//
+// Backward pass:
+//  1. dX from experts: sum_k(weights[k] * dOut) — assuming identity-like expert gradients
+//  2. dWeights: for each selected expert k, dot(dOut[t], expert_k(x[t]))
+//  3. Route dWeights through the gate backward (softmax + STE for top-K)
+//
+// Inputs must match forward: [hiddenStates, gateWeight].
+// Returns gradients [dHiddenStates, dGateWeight].
+func (m *MixtureOfExperts[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if outputGradient == nil || m.cachedIndices == nil {
+		return nil, nil
+	}
+
+	hiddenStates := m.cachedHiddenStates
+	gateWeight := m.cachedGateWeight
+	if hiddenStates == nil || gateWeight == nil {
+		return nil, nil
+	}
+
+	hsShape := hiddenStates.Shape()
+	seqLen, modelDim := hsShape[0], hsShape[1]
+	topK := m.topK
+	zero := m.ops.FromFloat64(0)
+
+	ogData := outputGradient.Data()
+
+	// dX accumulates gradient w.r.t. hiddenStates from the expert outputs.
+	dXData := make([]T, seqLen*modelDim)
+	for i := range dXData {
+		dXData[i] = zero
+	}
+
+	// dWeights[t][k] = dot(dOut[t], expertOut[t][k]) for the gate backward.
+	dWeightsData := make([]T, seqLen*topK)
+
+	// Pre-compute expert backward passes for each expert that was used.
+	// Each expert receives dOut weighted by the routing weight, but for the
+	// expert backward we need the unweighted dOut per token.
+	// We compute per-expert batched backward once, then scatter results.
+	expertDInputs := make(map[int]*tensor.TensorNumeric[T])
+	for eid, assignments := range m.cachedAssignments {
+		batchSize := len(assignments)
+		// Build batched dOut for this expert: for each assigned token,
+		// the gradient flowing into the expert is weight * dOut.
+		batchDOutData := make([]T, batchSize*modelDim)
+		for i, a := range assignments {
+			for d := 0; d < modelDim; d++ {
+				batchDOutData[i*modelDim+d] = ogData[a.tokenIdx*modelDim+d]
+			}
+		}
+		batchDOut, err := tensor.New[T]([]int{batchSize, modelDim}, batchDOutData)
+		if err != nil {
+			return nil, fmt.Errorf("MixtureOfExperts.Backward: create batch dOut for expert %d: %w", eid, err)
+		}
+
+		// Try expert backward.
+		expertGrads, err := m.experts[eid].Backward(ctx, mode, batchDOut)
+		if err != nil {
+			return nil, fmt.Errorf("MixtureOfExperts.Backward: expert %d backward: %w", eid, err)
+		}
+		if expertGrads != nil && len(expertGrads) > 0 && expertGrads[0] != nil {
+			expertDInputs[eid] = expertGrads[0]
+		}
+	}
+
+	for t := 0; t < seqLen; t++ {
+		for k := 0; k < topK; k++ {
+			eid := m.cachedIndices[t][k]
+			w := m.cachedWeights[t][k]
+
+			// Find this token's position in the expert's batch output.
+			expertOut := m.cachedExpertOuts[eid]
+			assignments := m.cachedAssignments[eid]
+			var batchIdx int
+			for bi, a := range assignments {
+				if a.tokenIdx == t {
+					batchIdx = bi
+					break
+				}
+			}
+
+			eData := expertOut.Data()
+
+			// dL/dWeight[t][k] = sum_d(dOut[t][d] * expertOut[batchIdx][d])
+			dw := zero
+			for d := 0; d < modelDim; d++ {
+				dOut := ogData[t*modelDim+d]
+				eVal := eData[batchIdx*modelDim+d]
+				dw = m.ops.Add(dw, m.ops.Mul(dOut, eVal))
+			}
+			dWeightsData[t*topK+k] = dw
+
+			// dX[t] += weight[t][k] * expert_grad[t]
+			// If expert provides backward, use its gradient; otherwise use dOut directly.
+			if eDIn, ok := expertDInputs[eid]; ok {
+				eDInData := eDIn.Data()
+				for d := 0; d < modelDim; d++ {
+					dXData[t*modelDim+d] = m.ops.Add(dXData[t*modelDim+d],
+						m.ops.Mul(w, eDInData[batchIdx*modelDim+d]))
+				}
+			} else {
+				for d := 0; d < modelDim; d++ {
+					dXData[t*modelDim+d] = m.ops.Add(dXData[t*modelDim+d],
+						m.ops.Mul(w, ogData[t*modelDim+d]))
+				}
+			}
+		}
+	}
+
+	// Build dWeights tensor and pass through gate backward.
+	dWeightsTensor, err := tensor.New[T]([]int{seqLen, topK}, dWeightsData)
+	if err != nil {
+		return nil, fmt.Errorf("MixtureOfExperts.Backward: create dWeights: %w", err)
+	}
+
+	gateGrads, err := m.gate.Backward(ctx, mode, dWeightsTensor, hiddenStates, gateWeight)
+	if err != nil {
+		return nil, fmt.Errorf("MixtureOfExperts.Backward: gate backward: %w", err)
+	}
+
+	// Combine dX from experts with dX from gate routing.
+	dXFromExperts, err := tensor.New[T](hsShape, dXData)
+	if err != nil {
+		return nil, fmt.Errorf("MixtureOfExperts.Backward: create dX: %w", err)
+	}
+
+	if gateGrads != nil && len(gateGrads) >= 1 && gateGrads[0] != nil {
+		dXFromExperts, err = m.engine.Add(ctx, dXFromExperts, gateGrads[0])
+		if err != nil {
+			return nil, fmt.Errorf("MixtureOfExperts.Backward: add gate dX: %w", err)
+		}
+	}
+
+	var dGW *tensor.TensorNumeric[T]
+	if gateGrads != nil && len(gateGrads) >= 2 {
+		dGW = gateGrads[1]
+	}
+
+	return []*tensor.TensorNumeric[T]{dXFromExperts, dGW}, nil
 }
 
 // OpType returns "MixtureOfExperts".
