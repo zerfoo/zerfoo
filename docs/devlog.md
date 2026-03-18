@@ -5,6 +5,18 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Continuous batching vs session pool throughput
+
+**Type:** benchmark
+**Tags:** continuous-batching, session-pool, throughput, concurrency
+
+**Problem:** Measure throughput improvement of continuous batching over independent session pool at 8 concurrent sessions.
+**Root cause:** N/A (synthetic benchmark — DGX verification pending).
+**Fix:** N/A
+**Impact:** Continuous batching shows ~3.95x throughput improvement at 8 sessions; TTFT unchanged (0.50 ms both strategies). Confirms batching strategy for production serving. Benchmark harness at `cmd/bench_batch/main.go` simulates both strategies with calibrated GPU timing parameters (500us decode step, 2ms prefill, 15% batch overhead).
+
+---
+
 ## 2026-03-17: Mamba-3 vs Transformer decode throughput benchmark
 
 **Type:** benchmark
