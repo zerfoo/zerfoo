@@ -5,6 +5,18 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Plan trim -- Waves 1-10 complete, E1-E14 removed
+
+**Type:** finding
+**Tags:** plan, trim, waves 1-10, online-learning, multimodal, agentic, nas, automl
+
+**Problem:** Plan grew to 1396 lines; 98 tasks completed across 10 waves; E1-E14 fully done.
+**Root cause:** N/A (routine maintenance trim).
+**Fix:** Removed E1-E12 and E14 entirely from plan. Updated Wave 10 task completions (T13.4, T14.5, T15.3, T15.4, T15.5, T16.1, T17.3, T18.1, T19.1, T20.1). Architecture knowledge routed to design.md sections 15-22. ADR index updated with 044-056.
+**Impact:** Plan trimmed to E13-E21 (remaining work). design.md extended with inference extensions, training infrastructure, time-series platform, online learning, model versioning, multimodal, agentic loop, and NAS/AutoML sections.
+
+---
+
 ## 2026-03-18: Continuous batching vs session pool throughput
 
 **Type:** benchmark
