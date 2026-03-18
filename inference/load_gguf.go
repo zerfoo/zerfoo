@@ -168,6 +168,8 @@ func buildArchGraph(
 		return buildMambaGraph(tensors, cfg, engine)
 	case "jamba":
 		return buildJambaGraph(tensors, cfg, engine)
+	case "whisper":
+		return buildWhisperGraph(tensors, cfg, engine)
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)
 	}
