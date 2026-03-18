@@ -1,5 +1,5 @@
-// Package wolf implements time-series model builders for the Wolf platform.
-package wolf
+// Package timeseries implements time-series model builders.
+package timeseries
 
 import (
 	"context"
