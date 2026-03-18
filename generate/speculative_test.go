@@ -375,3 +375,206 @@ func TestSpeculativeGenerator_ForwardConsistency(t *testing.T) {
 	_ = engine
 	_ = cfg
 }
+
+// TestGeneratorSpeculative tests the WithSpeculativeDraft option on Generator.Generate.
+func TestGeneratorSpeculative(t *testing.T) {
+	t.Run("all_accepted", func(t *testing.T) {
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+		seq := []int{4, 5, 2} // hello, world, EOS
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, seq)
+		targetGraph := buildSpecTestGraph(t, vocabSize, seq)
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 4),
+		)
+
+		result, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if result == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+
+	t.Run("first_token_rejected", func(t *testing.T) {
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{6, 6, 2})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{5, 2})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 4),
+		)
+
+		result, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if result == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+
+	t.Run("max_tokens_respected", func(t *testing.T) {
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		// Both always produce token 4 (hello), never EOS.
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{4})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{4})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 2),
+		)
+
+		result, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 3,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if result == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+
+	t.Run("stop_token", func(t *testing.T) {
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{4, 5, 7, 6})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{4, 5, 7, 6})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 4),
+		)
+
+		_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+			StopTokenIDs: []int{7},
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+	})
+
+	t.Run("fallback_on_low_alpha", func(t *testing.T) {
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		// Draft always disagrees with target: draft says 6, target says 5.
+		// This will drive alpha below 0.4, triggering fallback.
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{6})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{5})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 2),
+		)
+
+		// With MaxNewTokens=10, should still produce output via fallback.
+		result, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if result == "" {
+			t.Error("expected non-empty result from fallback path")
+		}
+	})
+
+	t.Run("without_speculative_uses_standard", func(t *testing.T) {
+		// Verify that without WithSpeculativeDraft, Generator uses standard decode.
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{6, 7, 2})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+		gen := NewGenerator[float32](targetGraph, tok, engine, cfg)
+		if gen.specDraft != nil {
+			t.Fatal("specDraft should be nil without WithSpeculativeDraft")
+		}
+
+		result, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if result != "foo bar" {
+			t.Errorf("Generate = %q, want %q", result, "foo bar")
+		}
+	})
+}

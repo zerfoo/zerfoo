@@ -56,15 +56,44 @@ func DefaultSamplingConfig() SamplingConfig {
 type GeneratorOption func(*generatorOptions)
 
 type generatorOptions struct {
-	pagedKVMaxMB int    // when > 0, use PagedKVCache with this memory budget
-	headDim      int    // required for paged KV (auto-detected from model if 0)
-	kvDtype      string // KV cache storage dtype: "fp32" (default) or "fp16"
+	pagedKVMaxMB      int    // when > 0, use PagedKVCache with this memory budget
+	headDim           int    // required for paged KV (auto-detected from model if 0)
+	kvDtype           string // KV cache storage dtype: "fp32" (default) or "fp16"
+	specDraft         *specDraftConfig // when non-nil, use speculative decoding
+	prefixCacheBlocks int    // when > 0, enable prefix caching with this many cached blocks
+}
+
+// specDraftConfig holds configuration for speculative decoding via a draft model.
+type specDraftConfig struct {
+	draftGraph     interface{} // *graph.Graph[T], stored as interface to avoid type param on generatorOptions
+	draftCfg       ModelConfig
+	draftLen       int     // K lookahead tokens per speculative step
+	fallbackAlpha  float64 // fall back to standard decode if rolling alpha < this
 }
 
 // WithGeneratorKVDtype sets the KV cache storage dtype. Supported: "fp32" (default), "fp16".
 func WithGeneratorKVDtype(dtype string) GeneratorOption {
 	return func(o *generatorOptions) {
 		o.kvDtype = dtype
+	}
+}
+
+// WithSpeculativeDraft enables speculative decoding using a separate draft
+// model graph. The draft model proposes draftLen tokens greedily per step,
+// then the target model verifies them in a single batched forward pass.
+// If the rolling acceptance rate drops below 0.4, generation falls back
+// to standard autoregressive decoding for the remainder.
+func WithSpeculativeDraft[T tensor.Numeric](draftGraph *graph.Graph[T], draftCfg ModelConfig, draftLen int) GeneratorOption {
+	if draftLen <= 0 {
+		draftLen = 4
+	}
+	return func(o *generatorOptions) {
+		o.specDraft = &specDraftConfig{
+			draftGraph:    draftGraph,
+			draftCfg:      draftCfg,
+			draftLen:      draftLen,
+			fallbackAlpha: 0.4,
+		}
 	}
 }
 
@@ -80,6 +109,15 @@ func WithPagedKV(maxMemoryMB, headDim int) GeneratorOption {
 	}
 }
 
+// WithPrefixCache enables prefix caching with the given capacity in blocks.
+// When enabled and paged KV is active, sessions that share the same system
+// prompt prefix reuse cached KV blocks instead of re-running prefill.
+func WithPrefixCache(capacityBlocks int) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.prefixCacheBlocks = capacityBlocks
+	}
+}
+
 // Generator produces text autoregressively using a loaded model graph.
 type Generator[T tensor.Numeric] struct {
 	graph     *graph.Graph[T]
@@ -92,7 +130,9 @@ type Generator[T tensor.Numeric] struct {
 	kvDtype   string                                     // KV cache storage dtype ("fp32" or "fp16")
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
-	mu        sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
+	mu          sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
+	specDraft   *specDraftConfig                           // nil unless speculative decoding is enabled
+	prefixCache *PrefixCache[T]                            // nil unless prefix caching is enabled
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -114,6 +154,7 @@ func NewGenerator[T tensor.Numeric](
 		engine:    eng,
 		config:    cfg,
 		kvDtype:   gopts.kvDtype,
+		specDraft: gopts.specDraft,
 	}
 
 	if g != nil {
@@ -127,6 +168,10 @@ func NewGenerator[T tensor.Numeric](
 			gen.blockPool = pool
 			gen.headDim = gopts.headDim
 		}
+	}
+
+	if gopts.prefixCacheBlocks > 0 && gen.blockPool != nil {
+		gen.prefixCache = NewPrefixCache[T](gopts.prefixCacheBlocks, gen.blockPool)
 	}
 
 	return gen
@@ -143,6 +188,9 @@ func (gen *Generator[T]) Engine() compute.Engine[T] { return gen.engine }
 
 // Config returns the model configuration.
 func (gen *Generator[T]) Config() ModelConfig { return gen.config }
+
+// GetPrefixCache returns the prefix cache, or nil if prefix caching is disabled.
+func (gen *Generator[T]) GetPrefixCache() *PrefixCache[T] { return gen.prefixCache }
 
 // compileGraph tries CompileTraced when an EngineProxy is available, with
 // graceful fallback to Compile on error or plan validation failure.
@@ -220,12 +268,23 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 // Generate produces text from a prompt using the given sampling configuration.
 // It tokenizes the prompt, runs the autoregressive loop with KV caching, and
 // returns the generated text (excluding the prompt).
+//
+// When WithSpeculativeDraft is configured, Generate uses speculative decoding:
+// the draft model proposes K tokens, the target model verifies them in one
+// forward pass. If the rolling acceptance rate (alpha) drops below 0.4,
+// generation falls back to standard autoregressive decoding.
 func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc SamplingConfig) (string, error) {
 	gen.mu.Lock()
 	defer gen.mu.Unlock()
 
 	if sc.MaxNewTokens <= 0 {
 		sc.MaxNewTokens = 256
+	}
+
+	// Speculative decoding path: delegate to SpeculativeGenerator with
+	// alpha-based fallback to standard decode.
+	if gen.specDraft != nil {
+		return gen.generateSpeculative(ctx, prompt, sc)
 	}
 
 	// Build grammar vocab cache once if grammar-constrained decoding is active.
@@ -570,4 +629,287 @@ func (gen *Generator[T]) checkStop(generatedIDs []int, stopStrings []string) (bo
 		}
 	}
 	return false, ""
+}
+
+// generateSpeculative runs speculative decoding using the configured draft
+// model. It starts with speculative steps, tracking the rolling acceptance
+// rate. If alpha drops below the fallback threshold (0.4), it switches to
+// standard autoregressive decoding for the remaining tokens.
+func (gen *Generator[T]) generateSpeculative(ctx context.Context, prompt string, sc SamplingConfig) (string, error) {
+	draftGraph, ok := gen.specDraft.draftGraph.(*graph.Graph[T])
+	if !ok {
+		return "", fmt.Errorf("speculative draft graph type mismatch")
+	}
+
+	promptIDs, err := gen.tokenizer.Encode(prompt)
+	if err != nil {
+		return "", fmt.Errorf("encode prompt: %w", err)
+	}
+	if len(promptIDs) == 0 {
+		return "", fmt.Errorf("prompt produced no tokens")
+	}
+
+	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
+	for _, id := range sc.StopTokenIDs {
+		stopSet[id] = true
+	}
+	stopSet[gen.config.EOSTokenID] = true
+
+	// Create KV caches for both models.
+	draftCache := NewKVCache[T](gen.specDraft.draftCfg.NumLayers, gen.specDraft.draftCfg.MaxSeqLen)
+	targetCache := NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
+
+	draftCtx := WithCache(ctx, CacheProvider[T](draftCache))
+	targetCtx := WithCache(ctx, CacheProvider[T](targetCache))
+
+	// Reset stateful nodes before generation.
+	gen.graph.ResetStatefulNodes()
+	draftGraph.ResetStatefulNodes()
+
+	// Prefill both models with the prompt.
+	prefillTensor, err := gen.idsToTensor(promptIDs)
+	if err != nil {
+		return "", fmt.Errorf("create prefill tensor: %w", err)
+	}
+
+	_, err = draftGraph.Forward(draftCtx, prefillTensor)
+	if err != nil {
+		return "", fmt.Errorf("draft prefill: %w", err)
+	}
+
+	targetLogits, err := gen.graph.Forward(targetCtx, prefillTensor)
+	if err != nil {
+		return "", fmt.Errorf("target prefill: %w", err)
+	}
+
+	// Sample first token from target.
+	firstToken, err := gen.sampleFromLogits(targetLogits, sc, nil)
+	if err != nil {
+		return "", fmt.Errorf("sample after prefill: %w", err)
+	}
+	if stopSet[firstToken] {
+		return "", nil
+	}
+
+	generatedIDs := []int{firstToken}
+	nextDraftInput := firstToken
+
+	tracker := newAdaptiveDraftLen(gen.specDraft.draftLen, 1, 8, 32)
+	fellBack := false
+
+	for len(generatedIDs) < sc.MaxNewTokens {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+
+		// Check if acceptance rate has dropped below threshold.
+		if tracker.Rate() < gen.specDraft.fallbackAlpha && tracker.count >= 8 {
+			fellBack = true
+			break
+		}
+
+		currentDraftLen := tracker.Current()
+		draftN := min(currentDraftLen, sc.MaxNewTokens-len(generatedIDs))
+
+		// Draft phase: generate draftN tokens greedily.
+		draftTokens := make([]int, 0, draftN)
+		draftInput := nextDraftInput
+
+		for range draftN {
+			tokenTensor, tErr := gen.idsToTensor([]int{draftInput})
+			if tErr != nil {
+				return "", fmt.Errorf("draft token tensor: %w", tErr)
+			}
+
+			draftLogits, fErr := draftGraph.Forward(draftCtx, tokenTensor)
+			if fErr != nil {
+				return "", fmt.Errorf("draft forward: %w", fErr)
+			}
+
+			draftToken, sErr := gen.sampleFromLogits(draftLogits, SamplingConfig{Temperature: 0}, nil)
+			if sErr != nil {
+				return "", fmt.Errorf("sample draft: %w", sErr)
+			}
+			draftTokens = append(draftTokens, draftToken)
+
+			if stopSet[draftToken] {
+				break
+			}
+			draftInput = draftToken
+		}
+
+		if len(draftTokens) == 0 {
+			break
+		}
+
+		// Verify phase: target processes all draft tokens in one forward pass.
+		verifyTensor, tErr := gen.idsToTensor(draftTokens)
+		if tErr != nil {
+			return "", fmt.Errorf("verify tensor: %w", tErr)
+		}
+
+		verifyLogits, fErr := gen.graph.Forward(targetCtx, verifyTensor)
+		if fErr != nil {
+			return "", fmt.Errorf("target verify forward: %w", fErr)
+		}
+
+		// Accept/reject: compare target's greedy output with draft tokens.
+		accepted, bonusToken := gen.specVerifyTokens(verifyLogits, draftTokens, stopSet)
+
+		// Emit accepted draft tokens.
+		stopped := false
+		for _, tok := range accepted {
+			if stopSet[tok] {
+				stopped = true
+				break
+			}
+			generatedIDs = append(generatedIDs, tok)
+			if len(generatedIDs) >= sc.MaxNewTokens {
+				stopped = true
+				break
+			}
+		}
+		if stopped {
+			break
+		}
+
+		// Emit the bonus token (target's correction or next token).
+		if bonusToken >= 0 {
+			if stopSet[bonusToken] {
+				break
+			}
+			generatedIDs = append(generatedIDs, bonusToken)
+		}
+
+		if len(generatedIDs) >= sc.MaxNewTokens {
+			break
+		}
+
+		// Record acceptance rate.
+		tracker.Record(len(accepted), len(draftTokens))
+
+		// Roll back caches if tokens were rejected.
+		correctSeqLen := len(promptIDs) + len(generatedIDs)
+		if draftCache.SeqLen() > correctSeqLen {
+			draftCache.Truncate(correctSeqLen)
+		}
+		if targetCache.SeqLen() > correctSeqLen {
+			targetCache.Truncate(correctSeqLen)
+		}
+
+		if len(generatedIDs) > 0 {
+			nextDraftInput = generatedIDs[len(generatedIDs)-1]
+		}
+
+		// Check stop strings.
+		if len(sc.StopStrings) > 0 {
+			if stopped, text := gen.checkStop(generatedIDs, sc.StopStrings); stopped {
+				return text, nil
+			}
+		}
+	}
+
+	// Fallback: continue with standard autoregressive decoding using the
+	// target model's KV cache (already populated with accepted tokens).
+	if fellBack && len(generatedIDs) < sc.MaxNewTokens {
+		lastToken := generatedIDs[len(generatedIDs)-1]
+		remaining := sc.MaxNewTokens - len(generatedIDs)
+
+		decodeBuf := []T{T(lastToken)}
+		tokenTensor, tErr := tensor.New([]int{1, 1}, decodeBuf)
+		if tErr != nil {
+			return "", fmt.Errorf("create fallback decode tensor: %w", tErr)
+		}
+
+		for range remaining {
+			if err := ctx.Err(); err != nil {
+				break
+			}
+
+			decodeBuf[0] = T(lastToken)
+			logits, fErr := gen.graph.Forward(targetCtx, tokenTensor)
+			if fErr != nil {
+				return "", fmt.Errorf("fallback decode forward: %w", fErr)
+			}
+
+			nextToken, sErr := gen.sampleFromLogits(logits, sc, generatedIDs)
+			if sErr != nil {
+				return "", fmt.Errorf("fallback sample: %w", sErr)
+			}
+
+			if stopSet[nextToken] {
+				break
+			}
+			generatedIDs = append(generatedIDs, nextToken)
+			lastToken = nextToken
+
+			if stopped, text := gen.checkStop(generatedIDs, sc.StopStrings); stopped {
+				return text, nil
+			}
+		}
+	}
+
+	if len(generatedIDs) == 0 {
+		return "", nil
+	}
+
+	result, err := gen.tokenizer.Decode(generatedIDs)
+	if err != nil {
+		return "", fmt.Errorf("decode output: %w", err)
+	}
+	return result, nil
+}
+
+// specVerifyTokens compares target logits against draft tokens for the
+// speculative decoding path integrated into Generator.
+func (gen *Generator[T]) specVerifyTokens(
+	targetLogits *tensor.TensorNumeric[T],
+	draftTokens []int,
+	stopSet map[int]bool,
+) (accepted []int, bonusToken int) {
+	shape := targetLogits.Shape()
+	vocabSize := shape[2]
+	seqLen := shape[1]
+	data := targetLogits.Data()
+
+	accepted = make([]int, 0, len(draftTokens))
+	bonusToken = -1
+
+	for i, dt := range draftTokens {
+		if i >= seqLen {
+			break
+		}
+
+		offset := i * vocabSize
+		targetToken := specArgmax(data[offset : offset+vocabSize])
+
+		switch {
+		case i == len(draftTokens)-1:
+			accepted = append(accepted, dt)
+			if !stopSet[dt] {
+				bonusToken = targetToken
+			}
+		case targetToken == draftTokens[i+1]:
+			accepted = append(accepted, dt)
+		default:
+			accepted = append(accepted, dt)
+			bonusToken = targetToken
+			return accepted, bonusToken
+		}
+	}
+
+	return accepted, bonusToken
+}
+
+// specArgmax returns the index of the maximum value in a slice.
+func specArgmax[T tensor.Numeric](data []T) int {
+	maxIdx := 0
+	maxVal := data[0]
+	for i := 1; i < len(data); i++ {
+		if data[i] > maxVal {
+			maxVal = data[i]
+			maxIdx = i
+		}
+	}
+	return maxIdx
 }
