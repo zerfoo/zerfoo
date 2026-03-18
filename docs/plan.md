@@ -154,13 +154,13 @@ Decision: docs/adr/044-paged-attention-kv-block-manager.md
   contiguous KV baseline (max diff < 1e-4 on float32); TestPagedAttentionKernel passes on DGX.
   Risk: Pointer indirection in CUDA kernel; verify sm_121 Blackwell compatibility.
 
-- [ ] T1.4 Wire paged attention into GPUEngine.GroupedQueryAttention [ztensor]
+- [x] T1.4 Wire paged attention into GPUEngine.GroupedQueryAttention [ztensor]
   Owner: Kernel Eng  Est: 3h
   Deps: T1.2, T1.3
   Acceptance: GQA with PagedKVCache produces identical logits to non-paged path on
   Gemma 3 1B (cosine similarity > 0.9999); no performance regression vs non-paged baseline.
 
-- [ ] T1.5 Implement continuous batching scheduler in serve/batcher/scheduler.go
+- [x] T1.5 Implement continuous batching scheduler in serve/batcher/scheduler.go
   Owner: Infra Eng  Est: 4h
   Deps: T1.2
   Acceptance: Scheduler assembles variable-length batches per step; completed sequences
@@ -209,7 +209,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
   Acceptance: MatMul dispatches to FP8 GEMM when both tensors have dtype FP8E4M3;
   output is FP16 (dequantized); no regression on FP32/FP16 paths.
 
-- [ ] T2.4 Implement NVFP4 E2M1 weight storage in ztensor/tensor/quantized.go [ztensor]
+- [x] T2.4 Implement NVFP4 E2M1 weight storage in ztensor/tensor/quantized.go [ztensor]
   Owner: Kernel Eng  Est: 4h
   Deps: none
   Acceptance: NVFloat4Storage encodes/decodes FP4 values with block-scale factors
@@ -240,13 +240,13 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
 #### E3: Speculative Decoding [Q2 2026]
 Decision: docs/adr/045-speculative-decoding.md
 
-- [ ] T3.1 Implement external draft model infrastructure in generate/speculative/external_draft.go
+- [x] T3.1 Implement external draft model infrastructure in generate/speculative/external_draft.go
   Owner: ML Eng  Est: 4h
   Deps: T1.2
   Acceptance: ExternalDraft.Generate(ctx, tokens, K) returns K draft tokens with log probs;
   draft and target share Engine[T] and block manager; TestExternalDraft passes.
 
-- [ ] T3.2 Implement self-speculative decoding in generate/speculative/self_draft.go
+- [x] T3.2 Implement self-speculative decoding in generate/speculative/self_draft.go
   Owner: ML Eng  Est: 4h
   Deps: none
   Acceptance: SelfDraft runs inference through first N/2 layers; output matches full
@@ -399,7 +399,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   --warmup flags; outputs tok/s, TTFT (ms), P99 latency (ms), GPU memory (MB);
   results exported as JSON for CI comparison.
 
-- [ ] T7.2 Add llama.cpp parity test comparing Zerfoo vs Ollama throughput
+- [x] T7.2 Add llama.cpp parity test comparing Zerfoo vs Ollama throughput
   Owner: Infra Eng  Est: 2h
   Deps: T7.1
   Acceptance: Test runs Zerfoo and Ollama on same model (Gemma 3 1B Q4_K_M);
@@ -467,7 +467,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   Deps: T8.1, T8.2, T8.3, T8.4
   Acceptance: Loss decreases monotonically for 100 steps; TestLlama3Training passes.
 
-- [ ] T8.9 Gradient checkpointing in graph/checkpoint.go [ztensor]
+- [x] T8.9 Gradient checkpointing in graph/checkpoint.go [ztensor]
   Owner: ML Eng  Est: 4h
   Deps: T8.1
   Acceptance: CheckpointedSegment recomputes activations during backward instead of
@@ -485,14 +485,14 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   Acceptance: LoraLinear[T] wraps Linear; forward y = Wx + (alpha/r)*B*A*x;
   A initialized N(0,1), B=0; only A,B in optimizer param group; TestLoraLinear passes.
 
-- [ ] T9.2 Implement LoRA injection walk in training/lora/inject.go
+- [x] T9.2 Implement LoRA injection walk in training/lora/inject.go
   Owner: ML Eng  Est: 3h
   Deps: T9.1
   Acceptance: InjectLoRA(model, rank, alpha, target_modules) replaces named Linear
   layers with LoraLinear; freezes base model parameters; count of trainable params
   <= 1% of total; TestLoraInject passes on Gemma 3 1B graph.
 
-- [ ] T9.3 Implement NF4 quantization in tensor/quantized.go (QLoRA base) [ztensor]
+- [x] T9.3 Implement NF4 quantization in tensor/quantized.go (QLoRA base) [ztensor]
   Owner: Kernel Eng  Est: 4h
   Deps: none
   Acceptance: NF4Storage quantizes/dequantizes with double quantization (block 64,
@@ -536,7 +536,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
 #### E10: Distributed Training FSDP-Equivalent [Q2-Q3 2027]
 Decision: docs/adr/050-distributed-training-fsdp.md
 
-- [ ] T10.1 Implement parameter sharding in distributed/fsdp/sharded_module.go
+- [x] T10.1 Implement parameter sharding in distributed/fsdp/sharded_module.go
   Owner: Infra Eng  Est: 5h
   Deps: T8.7
   Acceptance: ShardedModule splits parameter tensors across N devices (N=8 test);
