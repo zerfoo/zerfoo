@@ -2,10 +2,12 @@ package generate
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/metrics/runtime"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -575,6 +577,175 @@ func TestGeneratorSpeculative(t *testing.T) {
 		}
 		if result != "foo bar" {
 			t.Errorf("Generate = %q, want %q", result, "foo bar")
+		}
+	})
+}
+
+func TestAcceptanceMetric(t *testing.T) {
+	t.Run("all_accepted", func(t *testing.T) {
+		// Both draft and target always produce token 4 — every proposed
+		// token is accepted, so the gauge should converge to 1.0.
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{4})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{4})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+		collector := runtime.NewInMemory()
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 2),
+			WithMetrics(collector),
+		)
+
+		_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		snap := collector.Snapshot()
+		rate, ok := snap.Gauges["speculative_acceptance_rate"]
+		if !ok {
+			t.Fatal("speculative_acceptance_rate gauge not found")
+		}
+		if rate < 0.99 {
+			t.Errorf("acceptance rate = %f, want ~1.0 (all tokens accepted)", rate)
+		}
+	})
+
+	t.Run("low_acceptance", func(t *testing.T) {
+		// Draft always proposes 6 (foo), target always verifies as 5 (world).
+		// With draftLen=4, speculative verify accepts the first token then
+		// rejects (1 of 4 accepted = 0.25 rate).
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{6})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{5})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+		collector := runtime.NewInMemory()
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 4),
+			WithMetrics(collector),
+		)
+
+		_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		snap := collector.Snapshot()
+		rate, ok := snap.Gauges["speculative_acceptance_rate"]
+		if !ok {
+			t.Fatal("speculative_acceptance_rate gauge not found")
+		}
+		// With consistent disagreement and draftLen=4, acceptance is 1/4 = 0.25.
+		if rate > 0.5 {
+			t.Errorf("acceptance rate = %f, want <= 0.5 (low acceptance)", rate)
+		}
+	})
+
+	t.Run("partial_acceptance", func(t *testing.T) {
+		// Draft proposes [4, 5, 6], target accepts [4, 5] rejects 6 (wants 7).
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		draftGraph := buildSpecTestGraph(t, vocabSize, []int{4, 5, 6, 2})
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{4, 5, 7, 2})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			BOSTokenID: 1,
+			NumLayers:  1,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+		collector := runtime.NewInMemory()
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithSpeculativeDraft(draftGraph, cfg, 4),
+			WithMetrics(collector),
+		)
+
+		_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		snap := collector.Snapshot()
+		rate, ok := snap.Gauges["speculative_acceptance_rate"]
+		if !ok {
+			t.Fatal("speculative_acceptance_rate gauge not found")
+		}
+		// Rate should be between 0 and 1 (partial acceptance).
+		if rate <= 0.0 || rate >= 1.0 {
+			t.Errorf("acceptance rate = %f, want 0 < rate < 1 for partial acceptance", rate)
+		}
+	})
+
+	t.Run("no_speculative_gauge_stays_zero", func(t *testing.T) {
+		// Without speculative decoding, gauge should remain at default (0).
+		tok := buildTestTokenizer()
+		vocabSize := tok.VocabSize()
+
+		targetGraph := buildSpecTestGraph(t, vocabSize, []int{6, 7, 2})
+
+		cfg := ModelConfig{
+			VocabSize:  vocabSize,
+			MaxSeqLen:  128,
+			EOSTokenID: 2,
+			NumLayers:  0,
+		}
+		engine := compute.NewCPUEngine(numeric.Float32Ops{})
+		collector := runtime.NewInMemory()
+
+		gen := NewGenerator[float32](
+			targetGraph, tok, engine, cfg,
+			WithMetrics(collector),
+		)
+
+		_, err := gen.Generate(context.Background(), "hello", SamplingConfig{
+			Temperature:  0,
+			MaxNewTokens: 10,
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		snap := collector.Snapshot()
+		rate := snap.Gauges["speculative_acceptance_rate"]
+		if math.Abs(rate) > 1e-9 {
+			t.Errorf("acceptance rate = %f, want 0 (no speculative decoding)", rate)
 		}
 	})
 }

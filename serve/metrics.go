@@ -67,6 +67,7 @@ func handleMetrics(c runtime.Collector) http.HandlerFunc {
 
 		// Gauges.
 		writeGauge(w, "tokens_per_second", "Rolling average tokens per second", snap.Gauges)
+		writeGauge(w, "speculative_acceptance_rate", "Speculative decoding acceptance rate", snap.Gauges)
 
 		// Histograms.
 		writeHistogram(w, "request_latency_ms", "Request latency histogram", snap.Histograms)
