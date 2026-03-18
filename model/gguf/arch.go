@@ -218,7 +218,7 @@ func MapTensorName(arch string, ggufName string) string {
 
 	// Select architecture-specific name map.
 	nameMap := tensorNameMap
-	if arch == "gemma3" {
+	if arch == "gemma3" || arch == "gemma3n" {
 		nameMap = gemma3TensorNameMap
 	}
 
