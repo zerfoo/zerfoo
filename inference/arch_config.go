@@ -45,6 +45,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("gemma2", parseGemmaConfig)
 	r.Register("gemma3", parseGemmaConfig)
 	r.Register("llama", parseLlamaConfig)
+	r.Register("llama4", parseLlama4Config)
 	r.Register("mistral", parseMistralConfig)
 	r.Register("qwen2", parseQwenConfig)
 	r.Register("phi3", parsePhiConfig)
@@ -96,6 +97,33 @@ func parseLlamaConfig(raw map[string]interface{}) (*ModelMetadata, error) {
 	}
 	if meta.RopeTheta == 0 {
 		meta.RopeTheta = 500000 // Llama 3 default
+	}
+	return meta, nil
+}
+
+// parseLlama4Config parses Llama 4-family config.json fields.
+// Extends Llama with MoE fields (num_local_experts, num_experts_per_tok).
+func parseLlama4Config(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta := &ModelMetadata{
+		Architecture:          getString(raw, "model_type"),
+		VocabSize:             getInt(raw, "vocab_size"),
+		HiddenSize:            getInt(raw, "hidden_size"),
+		NumLayers:             getInt(raw, "num_hidden_layers"),
+		NumQueryHeads:         getInt(raw, "num_attention_heads"),
+		NumKeyValueHeads:      getInt(raw, "num_key_value_heads"),
+		IntermediateSize:      getInt(raw, "intermediate_size"),
+		MaxPositionEmbeddings: getInt(raw, "max_position_embeddings"),
+		EOSTokenID:            getInt(raw, "eos_token_id"),
+		BOSTokenID:            getInt(raw, "bos_token_id"),
+		RopeTheta:             getFloat(raw, "rope_theta"),
+		TieWordEmbeddings:     getBool(raw, "tie_word_embeddings"),
+		RopeScaling:           getRopeScaling(raw),
+		NumExperts:            getInt(raw, "num_local_experts"),
+		NumExpertsPerToken:    getInt(raw, "num_experts_per_tok"),
+		NumSharedExperts:      getInt(raw, "num_shared_experts"),
+	}
+	if meta.RopeTheta == 0 {
+		meta.RopeTheta = 500000 // Llama 4 default
 	}
 	return meta, nil
 }
