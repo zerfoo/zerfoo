@@ -952,7 +952,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   architecture config stored in GGUF metadata; exported model loads via standard
   inference path; TestNASExport passes.
 
-- [ ] T18.7 Run NAS for Wolf signal model: beats PatchTST baseline
+- [x] T18.7 Run NAS for Wolf signal model: beats PatchTST baseline (2026-03-17)
   Owner: Research Eng  Est: 4h (GPU-time intensive; run on DGX)
   Deps: T18.6, T12.8
   Acceptance: NAS search over 6h on DGX Spark; best discovered architecture
