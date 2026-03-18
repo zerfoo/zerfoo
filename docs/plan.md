@@ -197,7 +197,7 @@ These tasks are the highest priority and must be completed before any remaining
   Round-trip test: save, load, predict, compare outputs within 1e-7. TestSave,
   TestLoad, TestRoundTrip, TestLoad_InvalidFile, TestLoad_VersionMismatch.
 
-- [ ] W1.1.4 Implement tabular.Ensemble combining metee trees with MLP via stacking
+- [x] W1.1.4 Implement tabular.Ensemble combining metee trees with MLP via stacking (2026-03-18)
   Owner: ML Eng  Est: 4h
   Deps: W1.1.2
   Acceptance: `Ensemble` struct holds []*Model (MLP models) and metee booster references.
@@ -212,7 +212,7 @@ These tasks are the highest priority and must be completed before any remaining
 
 #### WE2: Advanced Tabular Architectures [2026 Q3]
 
-- [ ] W2.1.1 Implement tabular.FTTransformer (Feature Tokenizer + Transformer)
+- [x] W2.1.1 Implement tabular.FTTransformer (Feature Tokenizer + Transformer) (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W1.1.2
   Acceptance: `FTTransformer` model type in tabular package. Each numeric feature
@@ -222,7 +222,7 @@ These tasks are the highest priority and must be completed before any remaining
   Predict() interface as Model. TestFTTransformer_Forward, TestFTTransformer_Train,
   TestFTTransformer_Shapes.
 
-- [ ] W2.1.2 Implement tabular.TabNet (sequential attention with sparsemax)
+- [x] W2.1.2 Implement tabular.TabNet (sequential attention with sparsemax) (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W1.1.2
   Acceptance: `TabNet` model type. Sequential attention mechanism with sparsemax
@@ -231,7 +231,7 @@ These tasks are the highest priority and must be completed before any remaining
   blocks. Feature importance extractable via AttentionMasks() method.
   TestTabNet_Forward, TestTabNet_Sparsemax, TestTabNet_FeatureImportance.
 
-- [ ] W2.1.3 Implement tabular.SAINT (Self-Attention and Intersample Attention)
+- [x] W2.1.3 Implement tabular.SAINT (Self-Attention and Intersample Attention) (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W1.1.2
   Acceptance: `SAINT` model type. Two attention mechanisms: (1) self-attention across
@@ -239,7 +239,7 @@ These tasks are the highest priority and must be completed before any remaining
   Config: num_features, d_model, n_heads, n_layers, inter_sample_attention (bool).
   TestSAINT_Forward, TestSAINT_IntersampleAttention, TestSAINT_Train.
 
-- [ ] W2.1.4 Implement tabular.ResNet (residual MLP baseline)
+- [x] W2.1.4 Implement tabular.ResNet (residual MLP baseline) (2026-03-18)
   Owner: ML Eng  Est: 3h
   Deps: W1.1.2
   Acceptance: `TabResNet` model type. MLP with skip connections between hidden layers.
@@ -251,7 +251,7 @@ These tasks are the highest priority and must be completed before any remaining
 
 #### WE3: Time-Series Architectures [2026 Q3]
 
-- [ ] W2.2.1 Implement timeseries.TFT (Temporal Fusion Transformer)
+- [x] W2.2.1 Implement timeseries.TFT (Temporal Fusion Transformer) (2026-03-18)
   Owner: ML Eng  Est: 6h
   Deps: W1.1.2
   Acceptance: `timeseries` package in zerfoo. `TFT` model type. Variable selection
@@ -260,7 +260,7 @@ These tasks are the highest priority and must be completed before any remaining
   quantiles []float64. Predict returns multi-horizon forecasts with quantile estimates.
   TestTFT_Forward, TestTFT_VariableSelection, TestTFT_MultiHorizon.
 
-- [ ] W2.2.2 Implement timeseries.NBEATS (N-BEATS basis expansion)
+- [x] W2.2.2 Implement timeseries.NBEATS (N-BEATS basis expansion) (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W1.1.2
   Acceptance: `NBEATS` model type. Stack of blocks with basis expansion (trend +
@@ -268,7 +268,7 @@ These tasks are the highest priority and must be completed before any remaining
   n_blocks_per_stack, hidden_dim, n_harmonics. Double residual stacking architecture.
   TestNBEATS_Forward, TestNBEATS_BasisExpansion, TestNBEATS_Decomposition.
 
-- [ ] W2.2.3 Implement timeseries.PatchTST (Patch Time-Series Transformer)
+- [x] W2.2.3 Implement timeseries.PatchTST (Patch Time-Series Transformer) (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W1.1.2
   Acceptance: `PatchTST` model type. Channel-independent patching of time series,
@@ -858,7 +858,7 @@ Decision: docs/adr/059-edge-runtime-architecture.md
 
 - [x] T15.1 Implement build-tag-gated edge binary (2026-03-18)
   Owner: Arch Eng  Est: 4h  Deps: none
-- [ ] T15.2 Implement pre-optimized model format
+- [x] T15.2 Implement pre-optimized model format (2026-03-18)
   Owner: Arch Eng  Est: 4h  Deps: T15.1
 - [ ] T15.3 Cross-compile and test on Raspberry Pi 5
   Owner: Arch Eng  Est: 3h  Deps: T15.1
@@ -885,7 +885,7 @@ Decision: docs/adr/060-cloud-platform-architecture.md
 
 - [x] T17.1 Implement model repository server (2026-03-18)
   Owner: Platform Eng  Est: 5h  Deps: none
-- [ ] T17.2 Implement Kubernetes operator
+- [x] T17.2 Implement Kubernetes operator (2026-03-18)
   Owner: Platform Eng  Est: 8h  Deps: none
 - [x] T17.3 Implement adaptive batching (2026-03-18)
   Owner: Platform Eng  Est: 4h  Deps: none
