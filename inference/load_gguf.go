@@ -125,6 +125,18 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 	}, nil
 }
 
+// BuildArchGraph dispatches to the appropriate architecture-specific graph
+// builder. Exported for benchmark and integration tests that construct
+// synthetic weight maps without loading from GGUF files.
+func BuildArchGraph(
+	arch string,
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	engine compute.Engine[float32],
+) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
+	return buildArchGraph(arch, tensors, cfg, engine)
+}
+
 // buildArchGraph dispatches to the appropriate architecture-specific graph builder.
 func buildArchGraph(
 	arch string,
@@ -152,6 +164,8 @@ func buildArchGraph(
 		return buildPhiGraph(tensors, cfg, engine)
 	case "deepseek_v3", "deepseek2":
 		return buildDeepSeekGraph(tensors, cfg, engine)
+	case "mamba":
+		return buildMambaGraph(tensors, cfg, engine)
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)
 	}

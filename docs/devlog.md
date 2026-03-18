@@ -5,6 +5,18 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Multi-Architecture Benchmark — All 6 Supported Architectures
+
+**Type:** benchmark
+**Tags:** multi-arch, llama3, gemma3, mistral, qwen2, phi3, deepseek, benchmark
+
+**Problem:** Verify all 6 architectures build and run without panics.
+**Root cause:** N/A — smoke test and benchmark task.
+**Fix:** N/A
+**Impact:** Regression baseline for all architectures. TestMultiArchBenchmark passes with synthetic weights. All 6 architectures (Llama3, Gemma3, Mistral, Qwen2, Phi3, DeepSeek V3) produce finite output with correct shape [1, 4, vocabSize]. Exported BuildArchGraph for external benchmark/integration test use.
+
+---
+
 ## 2026-03-18: Speculative Decoding Benchmark — Gemma 3 1B draft + 27B target
 
 **Type:** benchmark
