@@ -33,6 +33,7 @@ type Server struct {
 	logger      log.Logger
 	metrics     *ServerMetrics
 	collector   runtime.Collector
+	gpus        []int           // GPU IDs to distribute model across
 }
 
 // ServerOption configures the server.
@@ -68,6 +69,18 @@ func WithBatchScheduler(bs *BatchScheduler) ServerOption {
 	return func(s *Server) {
 		s.batch = bs
 	}
+}
+
+// WithGPUs sets the GPU IDs to distribute the model across.
+func WithGPUs(ids []int) ServerOption {
+	return func(s *Server) {
+		s.gpus = ids
+	}
+}
+
+// GPUs returns the configured GPU IDs, or nil if not set.
+func (s *Server) GPUs() []int {
+	return s.gpus
 }
 
 // NewServer creates a Server for the given model.

@@ -163,3 +163,99 @@ func TestShutdownAdapter_Close(t *testing.T) {
 func TestServeCommand_Interface(t *testing.T) {
 	var _ Command = (*ServeCommand)(nil)
 }
+
+func TestParseGPUList(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    []int
+		wantErr string
+	}{
+		{"single GPU", "0", []int{0}, ""},
+		{"multiple GPUs", "0,1,2,3", []int{0, 1, 2, 3}, ""},
+		{"non-contiguous", "0,2,5", []int{0, 2, 5}, ""},
+		{"spaces around IDs", " 0 , 1 , 2 ", []int{0, 1, 2}, ""},
+		{"negative ID", "-1", nil, "negative GPU ID"},
+		{"non-numeric", "abc", nil, "non-numeric GPU ID"},
+		{"duplicate", "0,1,0", nil, "duplicate GPU ID"},
+		{"empty element", "0,,1", nil, "empty GPU ID"},
+		{"trailing comma", "0,1,", nil, "empty GPU ID"},
+		{"mixed invalid", "0,abc,2", nil, "non-numeric GPU ID"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseGPUList(tc.input)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("got[%d] = %d, want %d", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestServeCommand_GPUsFlag(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"gpus missing value", []string{"--gpus"}, "--gpus requires a value"},
+		{"gpus invalid", []string{"--gpus", "abc", "test-model"}, "invalid --gpus value"},
+		{"gpus negative", []string{"--gpus", "-1", "test-model"}, "invalid --gpus value"},
+		{"gpus duplicate", []string{"--gpus", "0,0", "test-model"}, "invalid --gpus value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := NewServeCommand(nil, &out)
+			cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+				return nil, errors.New("should not be called")
+			}
+			err := cmd.Run(context.Background(), tc.args)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServeCommand_GPUsFlagValid(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--gpus", "0,1,2,3", "test-model"})
+	}()
+
+	cancel()
+	err := <-errCh
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+}
