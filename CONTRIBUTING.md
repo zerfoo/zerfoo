@@ -1,6 +1,35 @@
 # Contributing to Zerfoo
 
-Thank you for your interest in contributing to Zerfoo, the Go-native ML inference and training framework. This guide will help you get started.
+Thank you for your interest in contributing to Zerfoo, the Go-native ML inference and training framework. This guide covers the full Zerfoo ecosystem and applies to all six repositories.
+
+## Code of Conduct
+
+All participants in the Zerfoo community are expected to treat each other with respect and professionalism. We are committed to providing a welcoming and inclusive environment for everyone.
+
+## Repository Structure
+
+Zerfoo is an ecosystem of six independent repositories (each with its own `go.mod`, CI, and releases):
+
+| Repository | Module | Purpose |
+|-----------|--------|---------|
+| [zerfoo](https://github.com/zerfoo/zerfoo) | `github.com/zerfoo/zerfoo` | Core ML framework: inference, training, serving |
+| [ztensor](https://github.com/zerfoo/ztensor) | `github.com/zerfoo/ztensor` | GPU-accelerated tensor, compute engine, computation graph |
+| [ztoken](https://github.com/zerfoo/ztoken) | `github.com/zerfoo/ztoken` | BPE tokenizer with HuggingFace compatibility |
+| [zonnx](https://github.com/zerfoo/zonnx) | `github.com/zerfoo/zonnx` | ONNX-to-GGUF converter CLI |
+| [float16](https://github.com/zerfoo/float16) | `github.com/zerfoo/float16` | IEEE 754 half-precision (Float16/BFloat16) arithmetic |
+| [float8](https://github.com/zerfoo/float8) | `github.com/zerfoo/float8` | FP8 E4M3FN arithmetic for quantized inference |
+
+**Dependency graph:**
+
+```
+float16 ─┐
+float8  ─┼──► ztensor ──► zerfoo
+ztoken ──┘
+
+zonnx (standalone)
+```
+
+Each repo is versioned and released independently. Do not treat this as a monorepo — submit PRs to the repository where the change belongs.
 
 ## Development Setup
 
@@ -10,21 +39,17 @@ Thank you for your interest in contributing to Zerfoo, the Go-native ML inferenc
 - **Git**
 - **CUDA Toolkit** (optional, for GPU-accelerated tests and development)
 
-### Clone and Verify
+### Clone and Build
+
+Each repository builds independently:
 
 ```bash
-git clone https://github.com/zerfoo/zerfoo.git
-cd zerfoo
+# Clone whichever repo you want to work on
+git clone https://github.com/zerfoo/<repo>.git
+cd <repo>
 go mod tidy
 go test ./...
 ```
-
-Zerfoo depends on several sibling packages fetched automatically by `go mod tidy`:
-
-- [`github.com/zerfoo/ztensor`](https://github.com/zerfoo/ztensor) — tensor, compute engine, computation graph
-- [`github.com/zerfoo/ztoken`](https://github.com/zerfoo/ztoken) — BPE tokenizer
-- [`github.com/zerfoo/float16`](https://github.com/zerfoo/float16) — IEEE 754 half-precision arithmetic
-- [`github.com/zerfoo/float8`](https://github.com/zerfoo/float8) — FP8 E4M3FN arithmetic
 
 No CGo is required for CPU-only builds. GPU support is loaded dynamically at runtime via purego/dlopen, so `go build ./...` works on any platform without a C compiler.
 
@@ -103,6 +128,46 @@ go vet ./...
 golangci-lint run
 ```
 
+### Review Process
+
+- All PRs require at least one maintainer approval
+- Maintainers may request changes — address feedback and force-push to update your branch
+- Once approved and CI is green, a maintainer will rebase-merge your PR
+
+## GPU Development
+
+### Build Tags
+
+GPU backends are opt-in via build tags. CPU-only builds require no tags:
+
+```bash
+go build ./...                # CPU only (default, works everywhere)
+go build -tags cuda ./...     # CUDA backend (requires CUDA toolkit)
+go build -tags rocm ./...     # ROCm backend (requires ROCm SDK)
+go build -tags opencl ./...   # OpenCL backend (requires OpenCL SDK)
+```
+
+### purego Bindings
+
+GPU libraries are loaded at runtime via purego/dlopen — not linked at compile time. This means:
+
+- `go build` never requires a C compiler or GPU SDK
+- GPU availability is detected at runtime
+- The same binary runs on CPU-only machines (gracefully falls back)
+
+When writing GPU code, use the `compute.Engine[T]` interface. Do not call CUDA/ROCm/OpenCL APIs directly outside of `internal/gpuapi/`.
+
+## Release Process
+
+All six repositories use [release-please](https://github.com/googleapis/release-please) for automated releases:
+
+1. Conventional Commit messages drive version bumps (`feat` = minor, `fix` = patch)
+2. release-please opens a release PR automatically when changes land on `main`
+3. Merging the release PR creates a GitHub release and Git tag
+4. Semantic versioning (`vMAJOR.MINOR.PATCH`) is enforced across all repos
+
+Breaking changes require a `BREAKING CHANGE:` footer in the commit message, which triggers a major version bump.
+
 ## Issue Reporting
 
 ### Bug Reports
@@ -140,3 +205,8 @@ Do not add support for other formats (ONNX, SafeTensors, etc.) in this repo. Use
 ### Fuse, don't fragment
 
 Prefer fused operations (`FusedAddRMSNorm`, `FusedSiluGate`, etc.) over sequences of primitive ops. Every eliminated kernel launch matters for tok/s.
+
+## Getting Help
+
+- **GitHub Discussions** — ask questions and share ideas on each repo's Discussions tab
+- **GitHub Issues** — report bugs or request features
