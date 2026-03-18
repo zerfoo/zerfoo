@@ -186,19 +186,19 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Deps: none
   Acceptance: nsight trace identifies top-5 bottlenecks; report in docs/devlog.md.
 
-- [ ] T1.2 Implement KV cache FP16 storage in generate/kv_cache.go
+- [x] T1.2 Implement KV cache FP16 storage in generate/kv_cache.go (2026-03-18)
   Owner: Kernel Eng  Est: 4h
   Deps: T1.1
   Acceptance: KV cache uses FP16 storage; 2x bandwidth reduction vs FP32; decode
   throughput improvement measurable; TestKVCacheFP16 passes.
 
-- [ ] T1.3 Optimize Q4_K GEMV kernel for Blackwell sm_121 in ztensor [ztensor]
+- [x] T1.3 Optimize Q4_K GEMV kernel for Blackwell sm_121 in ztensor [ztensor] (2026-03-18)
   Owner: Kernel Eng  Est: 6h
   Deps: T1.1
   Acceptance: GEMV kernel uses warp-level primitives optimized for sm_121; benchmark
   shows >= 10% improvement over current kernel on DGX Spark.
 
-- [ ] T1.4 Implement kernel launch batching to reduce driver overhead
+- [x] T1.4 Implement kernel launch batching to reduce driver overhead (2026-03-18)
   Owner: Kernel Eng  Est: 4h
   Deps: T1.1
   Acceptance: Multiple small kernels fused into batched launches; CUDA graph capture
@@ -224,25 +224,25 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Deps: none
   Acceptance: Gemma 3n mobile-optimized model runs inference; TestGemma3nForward passes.
 
-- [ ] T2.3 Implement Command R architecture builder in inference/arch_commandr.go
+- [x] T2.3 Implement Command R architecture builder in inference/arch_commandr.go (2026-03-18)
   Owner: Arch Eng  Est: 4h
   Deps: none
   Acceptance: Command R GGUF loads; long-context (128K) supported;
   TestCommandRForward passes.
 
-- [ ] T2.4 Implement Falcon architecture builder in inference/arch_falcon.go
+- [x] T2.4 Implement Falcon architecture builder in inference/arch_falcon.go (2026-03-18)
   Owner: Arch Eng  Est: 4h
   Deps: none
   Acceptance: Falcon GGUF loads; multi-query attention handled correctly;
   TestFalconForward passes.
 
-- [ ] T2.5 Implement Mixtral MoE architecture builder in inference/arch_mixtral.go
+- [x] T2.5 Implement Mixtral MoE architecture builder in inference/arch_mixtral.go (2026-03-18)
   Owner: Arch Eng  Est: 5h
   Deps: none
   Acceptance: Mixtral GGUF loads; MoE routing correct; top-K expert selection matches
   reference; TestMixtralForward passes.
 
-- [ ] T2.6 Implement RWKV architecture builder in inference/arch_rwkv.go
+- [x] T2.6 Implement RWKV architecture builder in inference/arch_rwkv.go (2026-03-18)
   Owner: Arch Eng  Est: 5h
   Deps: none
   Acceptance: RWKV GGUF loads; linear attention (WKV operator) correct;
@@ -254,7 +254,7 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: All 6 new architectures produce correct output vs reference; parity
   tolerance < 1e-3; TestNewArchParity passes.
 
-- [ ] T2.8 Implement exponential-trapezoidal SSM discretization in layers/ssm/ [ztensor]
+- [x] T2.8 Implement exponential-trapezoidal SSM discretization in layers/ssm/ (2026-03-18)
   Owner: Kernel Eng  Est: 4h
   Deps: none
   Acceptance: New discretization mode added to SSM recurrence replacing ZOH with
@@ -302,12 +302,12 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: GPTQ group-quantized weights decode correctly; round-trip error
   < 0.1% MSE vs FP16; TestGPTQDequant passes.
 
-- [ ] T3.2 Implement AWQ dequantization in ztensor/tensor/quantized_awq.go [ztensor]
+- [x] T3.2 Implement AWQ dequantization in ztensor/tensor/quantized_awq.go [ztensor] (2026-03-18)
   Owner: Kernel Eng  Est: 5h
   Deps: none
   Acceptance: AWQ activation-aware weights decode correctly; TestAWQDequant passes.
 
-- [ ] T3.3 Implement native Q5_K GEMV CUDA kernel in ztensor [ztensor]
+- [x] T3.3 Implement native Q5_K GEMV CUDA kernel in ztensor [ztensor] (2026-03-18)
   Owner: Kernel Eng  Est: 6h
   Deps: none
   Acceptance: Q5_K GEMV avoids re-quantization to Q4_0; direct decode from Q5_K
@@ -1399,6 +1399,13 @@ Waves 11-16 follow the same pattern completing E23-E33 (Years 6-10).
 
 ## Progress Log
 
+### 2026-03-18: GGUF writer consolidation plan created
+
+Created docs/plan-gguf-writer.md to consolidate 5 hand-rolled GGUF writers into a
+shared `ztensor/gguf` package. 3 epics (E1-E3), 18 tasks, 7 waves across ztensor,
+zerfoo, and zonnx repos. ADR-061 created (docs/adr/061-gguf-writer-in-ztensor.md).
+Closes the SaveModel "not implemented" gap in training/adapter.go.
+
 ### 2026-03-18: 10-year product roadmap created
 
 **Scope:** Created full 10-year product roadmap (2026-2036) expanding from completed
@@ -1438,7 +1445,9 @@ docs/adr/ (044-056), and docs/devlog.md. Removed completed epics: E1-E21
   `LD_LIBRARY_PATH=~/Code/zerfoo` before running GPU tests. Always rebuild binary.
 - **Baseline benchmark:** 245 tok/s, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graph,
   DGX Spark GB10. Target: 300+ (Year 1), 500+ (Year 3), 1000+ (Year 7).
-- **Current ADRs:** 001-060 in docs/adr/. Next ADR: 061.
+- **Current ADRs:** 001-061 in docs/adr/. Next ADR: 062.
+- **GGUF writer plan:** docs/plan-gguf-writer.md -- consolidates 5 hand-rolled
+  writers into shared ztensor/gguf package. See ADR-061.
 - **Architecture docs:** docs/design.md (29 sections), docs/benchmarks.md,
   docs/devlog.md.
 - **CI:** GitHub Actions in .github/workflows/. CPU tests in CI; GPU tests on DGX only.
@@ -1515,3 +1524,4 @@ docs/adr/ (044-056), and docs/devlog.md. Removed completed epics: E1-E21
 | 058 | API Stability v1.0 Contract | Accepted | 2027 |
 | 059 | Zerfoo Runtime -- Edge Inference Architecture | Accepted | 2028 |
 | 060 | Zerfoo Cloud Platform Architecture | Accepted | 2029 |
+| 061 | Shared GGUF Writer in ztensor | Accepted | 2026 |
