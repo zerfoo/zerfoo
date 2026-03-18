@@ -114,11 +114,13 @@ func NewModel(config ModelConfig, engine compute.Engine[float32], ops numeric.Ar
 	return m, nil
 }
 
-// newMLPLayer creates a layer with small random weight initialization.
+// newMLPLayer creates a layer with He (Kaiming) weight initialization,
+// which is better suited for ReLU networks.
 func newMLPLayer(in, out int) (mlpLayer, error) {
+	scale := float32(math.Sqrt(2.0 / float64(in)))
 	wData := make([]float32, in*out)
 	for i := range wData {
-		wData[i] = float32(rand.NormFloat64()) * 0.01
+		wData[i] = float32(rand.NormFloat64()) * scale
 	}
 	w, err := tensor.New[float32]([]int{in, out}, wData)
 	if err != nil {
