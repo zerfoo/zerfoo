@@ -173,7 +173,7 @@ Decision: docs/adr/044-paged-attention-kv-block-manager.md
   Acceptance: Kernel handles variable sequence lengths in same batch; attention masks
   prevent cross-sequence attention; TestRaggedAttention passes.
 
-- [ ] T1.7 Integration test: 8 concurrent sessions with PagedAttention
+- [x] T1.7 Integration test: 8 concurrent sessions with PagedAttention
   Owner: Infra Eng  Est: 2h
   Deps: T1.4, T1.5
   Acceptance: 8 concurrent Gemma 3 1B sessions produce coherent output; KV memory
@@ -223,13 +223,13 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
   baseline within 1% MSE; falls back to FP8 on non-Blackwell (ComputeCapability < 10.0);
   TestFP4Gemv passes on DGX.
 
-- [ ] T2.6 Integration test: FP8 end-to-end on Gemma 3 1B
+- [x] T2.6 Integration test: FP8 end-to-end on Gemma 3 1B
   Owner: ML Eng  Est: 2h
   Deps: T2.3
   Acceptance: Gemma 3 1B generates coherent text in FP8 mode; perplexity within 0.5
   of FP16 baseline on 100-token test set; throughput 30%+ above FP16 on DGX.
 
-- [ ] T2.7 Integration test: NVFP4 end-to-end on Gemma 3 1B [DGX Blackwell]
+- [x] T2.7 Integration test: NVFP4 end-to-end on Gemma 3 1B [DGX Blackwell]
   Owner: ML Eng  Est: 2h
   Deps: T2.5
   Acceptance: Gemma 3 1B generates coherent text in NVFP4 mode on DGX Spark;
@@ -376,13 +376,13 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   MambaBlock parameters; generates coherent text at inference; TestMamba3Load
   passes with test fixtures.
 
-- [ ] T6.5 Implement hybrid Jamba graph builder in inference/arch_jamba.go
+- [x] T6.5 Implement hybrid Jamba graph builder in inference/arch_jamba.go
   Owner: Arch Eng  Est: 3h
   Deps: T6.4
   Acceptance: Jamba builder interleaves Mamba blocks and Transformer layers per
   mamba_layer_indices metadata; TestJambaGraph passes with synthetic GGUF.
 
-- [ ] T6.6 Benchmark: Mamba-3 vs Transformer decode throughput [DGX]
+- [x] T6.6 Benchmark: Mamba-3 vs Transformer decode throughput [DGX]
   Owner: Arch Eng  Est: 2h
   Deps: T6.4
   Acceptance: Mamba-3 achieves >= 2x throughput vs equivalent Transformer at
@@ -576,7 +576,7 @@ Decision: docs/adr/050-distributed-training-fsdp.md
   Acceptance: 2-process training run on DGX Spark using 2 GPU contexts; loss
   converges identically to single-GPU on same seed; TestFSDP2GPU passes.
 
-- [ ] T10.7 CLI: zerfoo train-distributed command
+- [x] T10.7 CLI: zerfoo train-distributed command
   Owner: Infra Eng  Est: 2h
   Deps: T10.6
   Acceptance: `zerfoo train-distributed --ranks 4 --model path --dataset jsonl`
@@ -609,7 +609,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md (Phase 3)
   FP8 weights updated by casting; memory overhead measured and documented;
   TestMasterWeights passes.
 
-- [ ] T11.4 Integration test: FP8 LoRA fine-tune Gemma 3 1B [DGX]
+- [x] T11.4 Integration test: FP8 LoRA fine-tune Gemma 3 1B [DGX]
   Owner: ML Eng  Est: 2h
   Deps: T9.4, T11.3
   Acceptance: QLoRA + FP8 forward: loss converges; VRAM usage <= 18GB on 1B model;
@@ -689,7 +689,7 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
 #### E13: Online Learning Safety Pipeline [Q3 2028]
 Decision: docs/adr/052-online-learning-safety-framework.md
 
-- [ ] T13.1 Implement online learning trigger in training/online/trigger.go
+- [x] T13.1 Implement online learning trigger in training/online/trigger.go
   Owner: ML Eng  Est: 2h
   Deps: T12.8
   Acceptance: Trigger fires only if: data_count >= 500, hours_since_last >= 24,
@@ -730,7 +730,7 @@ Decision: docs/adr/052-online-learning-safety-framework.md
 
 #### E14: Model Versioning and A/B Testing [Q4 2028]
 
-- [ ] T14.1 Implement model registry in serve/registry/registry.go
+- [x] T14.1 Implement model registry in serve/registry/registry.go
   Owner: Infra Eng  Est: 4h
   Deps: none
   Acceptance: Registry.Register(model_id, gguf_path, metadata) adds version;
@@ -774,7 +774,7 @@ Decision: docs/adr/052-online-learning-safety-framework.md
 #### E15: Vision-Language Inference [Q1-Q2 2029]
 Decision: docs/adr/053-multimodal-inference-pipeline.md
 
-- [ ] T15.1 Implement image preprocessing pipeline in inference/multimodal/preprocess.go
+- [x] T15.1 Implement image preprocessing pipeline in inference/multimodal/preprocess.go
   Owner: ML Eng  Est: 3h
   Deps: none
   Acceptance: PreprocessImage([]byte, ImageFormat) resizes to target resolution,
