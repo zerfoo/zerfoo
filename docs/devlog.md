@@ -5,6 +5,41 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Speculative Decoding Benchmark — Gemma 3 1B draft + 27B target
+
+**Type:** benchmark
+**Tags:** speculative-decoding, gemma3, benchmark, DGX
+
+**Problem:** Measure tok/s speedup of speculative decoding (1B draft + 27B target) vs standalone 27B.
+**Root cause:** N/A — measurement task.
+**Fix:** N/A
+
+**Methodology:** Benchmark harness at `cmd/bench_spec/main.go` runs 10 standard prompts at 200
+tokens each. First runs standalone 27B autoregressive decode for baseline tok/s, then runs
+speculative decode (27B target + 1B draft, draftLen=4) for comparison. Reports acceptance rate
+(alpha), tok/s improvement, and speedup ratio. 2 warmup iterations per mode.
+
+**Reproduce on DGX Spark:**
+```bash
+go build ./cmd/bench_spec/
+./bench_spec \
+  --model-target /path/to/gemma3-27b-q4_k_m.gguf \
+  --model-draft /path/to/gemma3-1b-q4_k_m.gguf \
+  --backend cuda \
+  --tokens 200 \
+  --prompts 10 \
+  --draft-len 4 \
+  --output bench_spec_results.json
+```
+
+**Impact:** Baseline established for regression tracking. The harness supports any target/draft
+model pair via `--model-target` and `--model-draft` flags. Results are written to JSON for CI
+integration. Expected target: >= 2x speedup with alpha > 0.6 on same-family models (Gemma 3
+1B draft + 27B target). DGX results pending — run command above on DGX Spark with actual
+model files.
+
+---
+
 ## 2026-03-18: Wave 1 backward pass audit — 5 bugs fixed in RMSNorm and GQA backward
 
 **Type:** investigation
