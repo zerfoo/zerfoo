@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0](https://github.com/zerfoo/zerfoo/compare/v1.6.0...v1.7.0) (2026-03-18)
+
+
+### Features
+
+* **generate:** add FP16 KV cache storage ([7409503](https://github.com/zerfoo/zerfoo/commit/74095035670dfc55e5fa8a96b1b8d616d5d28205))
+* **inference:** add Command R architecture builder ([9198790](https://github.com/zerfoo/zerfoo/commit/91987903b226d870359160aa2e565db395b5667d))
+* **inference:** add Falcon architecture builder ([6d5686f](https://github.com/zerfoo/zerfoo/commit/6d5686f538fb7aa75558c1d1e062c75df6077e31))
+* **inference:** add LLaVA vision-language architecture builder ([8346d05](https://github.com/zerfoo/zerfoo/commit/8346d05befe3d2efac19f24347152bf03176b5b3))
+* **inference:** add Mixtral MoE architecture builder ([fcf0030](https://github.com/zerfoo/zerfoo/commit/fcf0030d856a539b39a8c99187f97b5a456d4088))
+* **inference:** add RWKV architecture builder ([5602db2](https://github.com/zerfoo/zerfoo/commit/5602db20024f14e78920fbcec0346bbf7103aea7))
+* **lint:** add deprecation comment linter ([5f50b98](https://github.com/zerfoo/zerfoo/commit/5f50b9848b8dc4ec453192df7fa5af0e826c2cc2))
+* **parallel:** add pipeline parallelism with micro-batch scheduling ([2a7b8b5](https://github.com/zerfoo/zerfoo/commit/2a7b8b5350ba745616400e3b4841805ce4e457fb))
+* **parallel:** add tensor parallelism for multi-GPU prefill ([063cc74](https://github.com/zerfoo/zerfoo/commit/063cc74b3ee58568e7511f827ae945c6d346360f))
+* **ssm:** add BCNorm stabilization layer for B/C matrices ([69d5f66](https://github.com/zerfoo/zerfoo/commit/69d5f66550a1aade326233f99c1451b9dd52f520))
+* **ssm:** add complex-valued SSM state tracking with RoPE ([4b8bb02](https://github.com/zerfoo/zerfoo/commit/4b8bb02930a97f44ddc7f5dd56d37e73cfee0004))
+* **ssm:** add exponential-trapezoidal discretization mode ([d567477](https://github.com/zerfoo/zerfoo/commit/d5674775b1df60e91a468916ebf962405ac936c6))
+* **ssm:** add MIMO multi-head SSM block ([587d42b](https://github.com/zerfoo/zerfoo/commit/587d42baea9c9ff446cf14cece1b4413cf51945f))
+
 ## [1.6.0](https://github.com/zerfoo/zerfoo/compare/v1.5.0...v1.6.0) (2026-03-18)
 
 
