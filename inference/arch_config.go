@@ -53,6 +53,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("phi", parsePhiConfig)
 	r.Register("deepseek_v3", parseDeepSeekConfig)
 	r.Register("mamba", parseMambaConfig)
+	r.Register("mamba3", parseMamba3Config)
 	r.Register("jamba", parseJambaConfig)
 	r.Register("llava", parseLLaVAConfig)
 	return r

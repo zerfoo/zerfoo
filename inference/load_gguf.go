@@ -166,6 +166,8 @@ func buildArchGraph(
 		return buildDeepSeekGraph(tensors, cfg, engine)
 	case "mamba":
 		return buildMambaGraph(tensors, cfg, engine)
+	case "mamba3":
+		return buildMamba3Graph(tensors, cfg, engine)
 	case "jamba":
 		return buildJambaGraph(tensors, cfg, engine)
 	case "whisper":

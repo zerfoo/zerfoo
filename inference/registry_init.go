@@ -13,6 +13,7 @@ func init() {
 	RegisterArchitecture("deepseek_v3", buildDeepSeekGraph)
 	RegisterArchitecture("deepseek2", buildDeepSeekGraph)
 	RegisterArchitecture("mamba", buildMambaGraph)
+	RegisterArchitecture("mamba3", buildMamba3Graph)
 	RegisterArchitecture("jamba", buildJambaGraph)
 	RegisterArchitecture("whisper", buildWhisperGraph)
 }
