@@ -167,7 +167,7 @@ Decision: docs/adr/044-paged-attention-kv-block-manager.md
   freed immediately without waiting for batch end; TestScheduler demonstrates zero
   padding tokens; throughput 2x vs fixed-batch at identical concurrency.
 
-- [ ] T1.6 Add ragged batching attention in ztensor/internal/cuda/ragged_attention.cu [ztensor]
+- [x] T1.6 Add ragged batching attention in ztensor/internal/cuda/ragged_attention.cu [ztensor] — DONE 2026-03-18: ragged_attention.cu + purego bindings, block-diagonal masking, online softmax
   Owner: Kernel Eng  Est: 5h
   Deps: T1.5
   Acceptance: Kernel handles variable sequence lengths in same batch; attention masks
@@ -203,7 +203,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
   Acceptance: ComputeAmax(tensor) returns correct FP32 max abs value; GPU path uses
   cuBLAS reduction; TestComputeAmax passes with race detector.
 
-- [ ] T2.3 Wire FP8 dispatch into GPUEngine.MatMul for FP8-typed tensors [ztensor]
+- [x] T2.3 Wire FP8 dispatch into GPUEngine.MatMul for FP8-typed tensors [ztensor] — DONE 2026-03-18: FP8Gemm interface + cublasLt dispatch, cosine sim > 0.99
   Owner: Kernel Eng  Est: 3h
   Deps: T2.1, T2.2
   Acceptance: MatMul dispatches to FP8 GEMM when both tensors have dtype FP8E4M3;
@@ -253,7 +253,7 @@ Decision: docs/adr/045-speculative-decoding.md
   model at temperature 0 more than 40% of time on standard prompts (alpha > 0.4);
   TestSelfDraft passes.
 
-- [ ] T3.3 Implement token acceptance loop with speculative sampling
+- [x] T3.3 Implement token acceptance loop with speculative sampling — DONE 2026-03-18: Leviathan et al. rejection sampling, 10 tests including chi-square goodness-of-fit
   in generate/speculative/sampler.go
   Owner: ML Eng  Est: 3h
   Deps: T3.1
@@ -312,13 +312,13 @@ Decision: docs/adr/047-disaggregated-prefill-decode-serving.md
   Acceptance: Proto defines PreFillRequest, KVBlockStream, DecodeRequest, TokenStream;
   protoc generates valid Go code; services compile.
 
-- [ ] T5.2 Implement prefill worker in serve/disaggregated/prefill_worker.go
+- [x] T5.2 Implement prefill worker in serve/disaggregated/prefill_worker.go — DONE 2026-03-18: gRPC PrefillWorkerServer, FP16 KV streaming
   Owner: Infra Eng  Est: 4h
   Deps: T5.1, T1.2
   Acceptance: Worker runs prefill forward pass; serializes KV blocks as FP16 bytes;
   streams blocks via gRPC; TestPrefillWorker passes with mock decode worker.
 
-- [ ] T5.3 Implement decode worker in serve/disaggregated/decode_worker.go
+- [x] T5.3 Implement decode worker in serve/disaggregated/decode_worker.go — DONE 2026-03-18: gRPC DecodeWorkerServer, greedy sampling, EOS/max-token stopping
   Owner: Infra Eng  Est: 4h
   Deps: T5.1, T1.2
   Acceptance: Worker receives KV block stream; reconstructs block table; runs
@@ -498,7 +498,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   Acceptance: NF4Storage quantizes/dequantizes with double quantization (block 64,
   sub-block 256); round-trip MSE < 0.01 vs BF16; TestNF4Quantization passes.
 
-- [ ] T9.4 Implement QLoRA trainer in training/lora/qlora.go
+- [x] T9.4 Implement QLoRA trainer in training/lora/qlora.go — DONE 2026-03-18: NF4 base weights frozen, LoRA adapters trained, QLoRATrainer struct
   Owner: ML Eng  Est: 4h
   Deps: T9.2, T9.3
   Acceptance: QLoRATrainer loads model in NF4; injects LoRA adapters; runs forward
@@ -551,13 +551,13 @@ Decision: docs/adr/050-distributed-training-fsdp.md
   of libnccl.so; correctness test sums tensors across 2 simulated ranks using
   loopback; TestNCCLOps passes on DGX.
 
-- [ ] T10.3 Implement gradient accumulation in distributed/fsdp/grad_accum.go
+- [x] T10.3 Implement gradient accumulation in distributed/fsdp/grad_accum.go — DONE 2026-03-18: GradAccum[T], M micro-steps averaged on Sync
   Owner: Infra Eng  Est: 2h
   Deps: T10.1
   Acceptance: GradAccum accumulates local gradients for M steps before sync;
   synchronized gradient matches M*step average; TestGradAccum passes.
 
-- [ ] T10.4 Implement sharded optimizer state in distributed/fsdp/optimizer_shard.go
+- [x] T10.4 Implement sharded optimizer state in distributed/fsdp/optimizer_shard.go — DONE 2026-03-18: ShardedAdamW[T], ZeRO Stage 2, moment buffers 1/N per rank
   Owner: Infra Eng  Est: 3h
   Deps: T10.1
   Acceptance: Each rank updates only its shard; moment tensors sized 1/N of total;
