@@ -272,7 +272,7 @@ Decision: docs/adr/045-speculative-decoding.md
   Deps: T3.4
   Acceptance: Metric visible at /metrics; value matches manual calculation from logs.
 
-- [ ] T3.6 Benchmark: speculative decoding speedup on Gemma 3 1B vs 27B [DGX]
+- [x] T3.6 Benchmark: speculative decoding speedup on Gemma 3 1B vs 27B [DGX]
   Owner: ML Eng  Est: 2h
   Deps: T3.4
   Acceptance: 27B target + 1B draft achieves >= 2x tok/s vs standalone 27B on
@@ -295,7 +295,7 @@ Decision: docs/adr/045-speculative-decoding.md
   Acceptance: Two sessions with identical system prompt share KV blocks for system
   prompt prefix (verified by BlockPool allocation count decreasing); TestPrefixCache passes.
 
-- [ ] T4.3 Benchmark: prefix cache hit rate on realistic multi-turn workload [DGX]
+- [x] T4.3 Benchmark: prefix cache hit rate on realistic multi-turn workload [DGX]
   Owner: Infra Eng  Est: 1h
   Deps: T4.2
   Acceptance: 10-user chat simulation achieves > 60% prefix cache hit rate;
@@ -337,7 +337,7 @@ Decision: docs/adr/047-disaggregated-prefill-decode-serving.md
   Acceptance: Full request cycle (prompt -> prefill worker -> decode worker ->
   response) produces coherent text; TTFT < 500ms on 7B model on DGX.
 
-- [ ] T5.6 Benchmark: disaggregated vs collocated throughput [DGX]
+- [x] T5.6 Benchmark: disaggregated vs collocated throughput [DGX]
   Owner: Infra Eng  Est: 1h
   Deps: T5.5
   Acceptance: Prefill throughput >= 3x vs collocated baseline at 16 concurrent
@@ -369,7 +369,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   to zero; state grows linearly with SSM dim not sequence length;
   TestSSMState passes.
 
-- [ ] T6.4 Implement Mamba-3 GGUF loader in inference/arch_mamba.go
+- [x] T6.4 Implement Mamba-3 GGUF loader in inference/arch_mamba.go
   Owner: Arch Eng  Est: 4h
   Deps: T6.2, T6.3
   Acceptance: Loads Mamba-3 GGUF model (when available); maps tensor names to
@@ -405,7 +405,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   Acceptance: Test runs Zerfoo and Ollama on same model (Gemma 3 1B Q4_K_M);
   asserts Zerfoo throughput >= Ollama * 1.3 (30% margin); fails CI if regression.
 
-- [ ] T7.3 Add multi-architecture benchmark: all 6 architectures
+- [x] T7.3 Add multi-architecture benchmark: all 6 architectures
   Owner: Infra Eng  Est: 2h
   Deps: T7.1
   Acceptance: Benchmark runs Llama3, Gemma3, Mistral, Qwen2, Phi3, DeepSeek V3;
@@ -570,7 +570,7 @@ Decision: docs/adr/050-distributed-training-fsdp.md
   shards from GGUF to each rank; round-trip produces identical forward output;
   TestDistributedCheckpoint passes.
 
-- [ ] T10.6 Integration test: 2-GPU FSDP training on DGX
+- [x] T10.6 Integration test: 2-GPU FSDP training on DGX
   Owner: Infra Eng  Est: 3h
   Deps: T10.2, T10.3, T10.5
   Acceptance: 2-process training run on DGX Spark using 2 GPU contexts; loss
@@ -602,7 +602,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md (Phase 3)
   gradients and halves scale if detected; doubles scale every 2000 steps without
   overflow; TestLossScaler passes.
 
-- [ ] T11.3 Implement master weight FP32 copy in training/fp8/master_weights.go
+- [x] T11.3 Implement master weight FP32 copy in training/fp8/master_weights.go
   Owner: ML Eng  Est: 2h
   Deps: T11.2
   Acceptance: Master weight store keeps FP32 copy; optimizer updates FP32 copy;
@@ -644,7 +644,7 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
   Acceptance: VSN computes variable importance weights via GRN (Gated Residual
   Network); output is weighted sum of feature embeddings; TestVSN passes.
 
-- [ ] T12.4 Implement Temporal Fusion Transformer builder in inference/wolf/arch_tft.go
+- [x] T12.4 Implement Temporal Fusion Transformer builder in inference/wolf/arch_tft.go
   Owner: Arch Eng  Est: 6h
   Deps: T12.3
   Acceptance: BuildTFT() constructs: static covariate encoders, LSTM encoder,
@@ -664,13 +664,13 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
   FeatureStore.UpdateOnline(asset, tick) appends to ring buffer (capacity 500);
   point-in-time correctness enforced (no future timestamps); TestFeatureStore passes.
 
-- [ ] T12.7 Implement GGUF loader for time-series GGUF metadata
+- [x] T12.7 Implement GGUF loader for time-series GGUF metadata
   Owner: ML Eng  Est: 2h
   Deps: T12.2
   Acceptance: GGUF metadata keys wolf.signal.patch_len, wolf.signal.stride,
   wolf.signal.input_features loaded and passed to BuildPatchTST; TestWolfGGUFLoader passes.
 
-- [ ] T12.8 Training script for PatchTST signal model
+- [x] T12.8 Training script for PatchTST signal model
   Owner: ML Eng  Est: 4h
   Deps: T12.2, T9.4
   Acceptance: cmd/wolf_train/main.go trains PatchTST on parquet feature files;
