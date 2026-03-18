@@ -24,8 +24,7 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	// TODO: move to inference/timeseries/ during wolf->timeseries rename
-	"github.com/zerfoo/zerfoo/inference/wolf"
+	"github.com/zerfoo/zerfoo/inference/timeseries"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
@@ -415,8 +414,7 @@ func run() error {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	// TODO: move to inference/timeseries/ during wolf->timeseries rename
-	patchCfg := wolf.PatchTSTConfig{
+	patchCfg := timeseries.PatchTSTConfig{
 		PatchLen:  cfg.patchLen,
 		Stride:    cfg.stride,
 		NumLayers: cfg.numLayers,
@@ -426,7 +424,7 @@ func run() error {
 		NumVars:   numVars,
 	}
 
-	patchGraph, err := wolf.BuildPatchTST[float32](patchCfg, engine)
+	patchGraph, err := timeseries.BuildPatchTST[float32](patchCfg, engine)
 	if err != nil {
 		return fmt.Errorf("build PatchTST: %w", err)
 	}

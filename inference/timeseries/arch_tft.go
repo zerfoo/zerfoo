@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -673,33 +672,6 @@ func (n *tftNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor
 // Statically assert that tftNode implements graph.Node.
 var _ graph.Node[float32] = (*tftNode[float32])(nil)
 
-// --- Helper functions (package-local) ---
-
-// newParam creates a parameter with Xavier-style initialization.
-func newParam[T tensor.Numeric](name string, rows, cols int) (*graph.Parameter[T], error) {
-	data := make([]T, rows*cols)
-	for i := range data {
-		data[i] = T(rand.Float64()*0.1 - 0.05)
-	}
-	t, err := tensor.New[T]([]int{rows, cols}, data)
-	if err != nil {
-		return nil, err
-	}
-	return graph.NewParameter[T](name, t, tensor.New[T])
-}
-
-// extractTimestep extracts a single timestep from a 3D tensor.
-// input: [batch, seqLen, dim], output: [batch, dim]
-func extractTimestep[T tensor.Numeric](input *tensor.TensorNumeric[T], t, batch, dim int) (*tensor.TensorNumeric[T], error) {
-	data := input.Data()
-	seqLen := input.Shape()[1]
-	out := make([]T, batch*dim)
-	for b := 0; b < batch; b++ {
-		srcOff := b*seqLen*dim + t*dim
-		copy(out[b*dim:(b+1)*dim], data[srcOff:srcOff+dim])
-	}
-	return tensor.New[T]([]int{batch, dim}, out)
-}
 
 // sigmoidFn computes sigmoid(x) = exp(x) / (1 + exp(x)) using composed engine primitives.
 func sigmoidFn[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
