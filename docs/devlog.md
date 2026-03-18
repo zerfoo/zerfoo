@@ -5,6 +5,55 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Benchmark 300+ tok/s attempt — 245 tok/s confirmed, bottleneck analysis (T1.5)
+
+**Type:** benchmark
+**Tags:** performance, benchmark, gemma-3-1b, q4_k_m, cuda, dgx-spark, sm_121
+
+**Goal:** Achieve 300+ tok/s on Gemma 3 1B Q4_K_M at 256 tokens with CUDA graphs on DGX Spark (GB10).
+
+**Result:** 245 tok/s confirmed. Target NOT met. Gap: ~22% below 300 tok/s.
+
+**Experiments run:**
+
+| Config | Tok/s | Notes |
+|--------|-------|-------|
+| Q4_K_M → Q4_0 re-quant + CUDA graphs (baseline) | 245.15 | Current production path |
+| Native Q4_K + sm_121 kernel (no re-quant) | 174.44 | 29% slower than Q4_0 path |
+
+**Key finding: Q4_K→Q4_0 re-quantization blocks sm_121 dispatch.**
+The GGUF loader (`model/gguf/loader.go:150-162`) re-quantizes all Q4_K weights to Q4_0 during model loading. This means the Q4_K GEMV kernel (including the sm_121-optimized variant) is never reached during inference — tensors have `Q4Storage`, not `Q4KStorage`, so `compute/gpu_engine.go` dispatches to the Q4_0 GEMV path.
+
+Disabling re-quantization to use native Q4_K with sm_121 yielded only 174 tok/s. The Q4_0 GEMV kernel is faster because:
+1. Q4_0 blocks are 18 bytes (vs Q4_K 144 bytes per super-block) — better cache utilization
+2. Q4_0 has simpler dequantization (no 6-bit sub-block scales)
+3. The Q4_0 GEMV kernel is more mature and better optimized
+
+**Infrastructure delivered:**
+- `elementwise_fp16_cgo.go`: CGo stubs for 8 FP16 kernel functions (fixes `cuda` build tag gap)
+- sm_121 dispatch wired in `gpuapi/cuda_kernels.go:GemvQ4KF32` (ready when native Q4_K becomes competitive)
+- DGX: `gemv_q4k_sm121.cu` added to Makefile, missing `cooperative_groups/reduce.h` include fixed, libkernels.so rebuilt
+
+**Bottleneck analysis — paths to 300+ tok/s:**
+
+1. **FP16 KV cache (T1.2, marked complete):** Halves KV bandwidth per token. If KV access is ~20% of decode time, this saves ~10% → ~270 tok/s. Needs verification that FP16 KV is active in the benchmark path.
+
+2. **Q4_0 GEMV kernel optimization:** The Q4_0 GEMV is the dominant kernel. Opportunities:
+   - Vectorized 128-bit loads (LDG.128) for weight data
+   - Warp-level reduction with `__shfl_down_sync` instead of shared memory
+   - Persistent thread blocks to reduce launch overhead
+   - Double-buffering weight loads to overlap with compute
+
+3. **Kernel fusion:** Fuse residual-add + RMSNorm into a single kernel (eliminates one global memory round-trip per layer). For 26 layers, this saves 52 memory passes.
+
+4. **Reduce host-device sync points:** Even with CUDA graph capture at 99.5%, the remaining 0.5% (sampling, token embedding lookup) causes GPU idle bubbles.
+
+5. **Batch multiple token positions:** Amortize kernel launch overhead across 2-4 speculative tokens.
+
+**Conclusion:** 300 tok/s likely requires a combination of (2) Q4_0 GEMV micro-optimization and (3) kernel fusion. Neither is a quick fix — each is a dedicated optimization sprint.
+
+---
+
 ## 2026-03-18: Decode hot path profiling — top 5 bottlenecks (T1.1)
 
 **Type:** investigation
