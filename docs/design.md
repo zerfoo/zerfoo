@@ -412,7 +412,7 @@ make shared CUDA_ARCH=sm_70        # V100
 | Gather | Embedding lookup (int32 + int64 indices) | Custom CUDA kernel |
 | Broadcasting | 4D element-wise Add, Sub, Mul, Div | Custom CUDA kernels (stride-based indexing) |
 | Fused | QK RMSNorm+RoPE, SwiGLU, Scale+Softmax, post-FFN norm+add | Custom CUDA kernels |
-| Fused | Dequant+GEMV Q4_K | Custom CUDA kernel (warp shuffle reduction) |
+| Fused | Dequant+GEMV Q4_K (FP32 FMA; dp4a INT8 variant auto-selected when available) | Custom CUDA kernels (warp shuffle reduction) |
 | Normalization | RMSNorm | Custom CUDA kernel (single-pass, shared-memory reduction) |
 
 ### 4.3 CPU Fallback Operations
@@ -450,9 +450,13 @@ Key helpers:
 #### Arena Allocator (internal/cuda/arena.go)
 
 Primary allocator for inference. 2GB pre-allocated bump-pointer arena with
-256-byte alignment. O(1) reset between tokens. During inference, all
-allocations are served by the arena with zero fallback. Allocation cost is
-a pointer bump (nanoseconds) vs cudaMalloc (microseconds).
+256-byte alignment. O(1) reset between tokens. A free-list overlay enables
+intra-pass intermediate buffer reuse: freed intermediates are tracked with
+best-fit allocation, block splitting, and coalescing. Tensor lifetime analysis
+in graph/compile.go identifies last-use points so intermediates can be freed
+mid-pass. During inference, all allocations are served by the arena with zero
+fallback. Allocation cost is a pointer bump (nanoseconds) vs cudaMalloc
+(microseconds).
 
 #### Memory Pool (internal/cuda/mempool.go)
 
@@ -1039,6 +1043,10 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
     Trainer[T], optimizers (AdamW, SGD), loss functions (MSE, CrossEntropy),
     and distributed gradient exchange all pass unit tests, but no end-to-end
     training workflow is documented or validated.
+12. **RMSNorm.Backward is nil-safe.** Returns an error (not panic) if called
+    before Forward or if Forward returned early. A nil guard at the top of
+    Backward checks r.rms and r.inputTensor before any dereference. See
+    SimplifiedLayerNormalization for the reference guard pattern.
 
 ### 10.5 Backends
 
@@ -1258,4 +1266,6 @@ ADR files in `docs/adr/`.
 | [030](adr/030-ollama-performance-parity.md) | Inference Performance Strategy | 34 | Performance optimization strategy for competitive throughput |
 | [031](adr/031-openai-server-in-zerfoo.md) | OpenAI Server in Zerfoo | 34 | Server stays in Zerfoo serve/ package, not in Zonnx |
 | [034](adr/034-gqa-aware-flash-attention-decode.md) | GQA-Aware Flash Attention Decode | 34 | Grouped-query attention in decode kernel |
+| [042](adr/042-dp4a-int8-q4k-gemv.md) | dp4a INT8 Q4_K GEMV with FP32 FMA Fallback | 27 | dp4a 4 MACs/instr vs scalar FMA, optional purego soft-symbol, zero regression at batch=1 |
+| [043](adr/043-arena-free-list-tensor-lifetime.md) | Arena Free-List with Tensor Lifetime Analysis | 27 | Best-fit free-list overlay on bump-pointer arena; lifetime analysis frees intermediates mid-pass |
 

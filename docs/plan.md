@@ -456,13 +456,13 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   Acceptance: SparseMoE.Backward() passes gradients through router (top-K gating);
   straight-through estimator for discrete routing; TestMoEBackward passes.
 
-- [ ] T8.7 End-to-end training loop test: Gemma 3 1B on synthetic data
+- [x] T8.7 End-to-end training loop test: Gemma 3 1B on synthetic data
   Owner: ML Eng  Est: 3h
   Deps: T8.1, T8.2, T8.3, T8.4
   Acceptance: Loss decreases monotonically for 100 steps on synthetic classification
   task; no NaN gradients; TestGemma3Training passes.
 
-- [ ] T8.8 End-to-end training loop test: Llama 3 on synthetic data
+- [x] T8.8 End-to-end training loop test: Llama 3 on synthetic data
   Owner: ML Eng  Est: 2h
   Deps: T8.1, T8.2, T8.3, T8.4
   Acceptance: Loss decreases monotonically for 100 steps; TestLlama3Training passes.
