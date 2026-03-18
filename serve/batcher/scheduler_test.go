@@ -76,11 +76,15 @@ func TestSchedulerZeroPadding(t *testing.T) {
 
 // TestSchedulerImmediateEviction verifies that completed sequences are freed
 // immediately without waiting for the rest of the batch to finish.
+//
+// The test submits a short request (1 token) and a long request (20 tokens)
+// sequentially to guarantee both are queued before the scheduler runs.
+// Both land in the same batch. The short request finishes in 1 step and must
+// be evicted immediately — its result is delivered while the long request
+// keeps running. We record completion timestamps (not goroutine scheduling
+// order) to make the assertion deterministic.
 func TestSchedulerImmediateEviction(t *testing.T) {
 	const maxBatch = 4
-
-	var mu sync.Mutex
-	completionOrder := []string{}
 
 	stepFn := func(_ context.Context, batch *StepBatch) {
 		for _, s := range batch.Slots {
@@ -91,15 +95,21 @@ func TestSchedulerImmediateEviction(t *testing.T) {
 		}
 	}
 
+	// Create the scheduler but don't start yet — queue both requests first
+	// so they land in the same batch deterministically.
 	sched := New(maxBatch, stepFn, WithPollInterval(100*time.Microsecond))
-	sched.Start()
-	defer sched.Stop()
 
-	// Submit one short (1 token) and one long (20 tokens) request concurrently.
+	// Submit both requests before starting the scheduler.
+	type completion struct {
+		id string
+		at time.Time
+	}
+	completions := make(chan completion, 2)
+
 	var wg sync.WaitGroup
 	for _, tc := range []struct {
-		id       string
-		maxToks  int
+		id      string
+		maxToks int
 	}{
 		{"short", 1},
 		{"long", 20},
@@ -117,20 +127,32 @@ func TestSchedulerImmediateEviction(t *testing.T) {
 				t.Errorf("request %s failed: %v", id, err)
 				return
 			}
-			mu.Lock()
-			completionOrder = append(completionOrder, id)
-			mu.Unlock()
+			completions <- completion{id: id, at: time.Now()}
 		}(tc.id, tc.maxToks)
 	}
-	wg.Wait()
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(completionOrder) < 2 {
-		t.Fatal("expected 2 completions")
+	// Give goroutines time to enqueue, then start.
+	time.Sleep(time.Millisecond)
+	sched.Start()
+	wg.Wait()
+	sched.Stop()
+	close(completions)
+
+	var results []completion
+	for c := range completions {
+		results = append(results, c)
 	}
-	if completionOrder[0] != "short" {
-		t.Errorf("expected 'short' to complete first, got order: %v", completionOrder)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 completions, got %d", len(results))
+	}
+
+	// Sort by timestamp to determine actual completion order.
+	if results[0].at.After(results[1].at) {
+		results[0], results[1] = results[1], results[0]
+	}
+	if results[0].id != "short" {
+		t.Errorf("expected 'short' to complete first, got order: [%s, %s]",
+			results[0].id, results[1].id)
 	}
 }
 
