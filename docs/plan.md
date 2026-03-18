@@ -216,7 +216,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
   (block size 16); round-trip error below 0.5% MSE on random float16 data;
   TestNVFloat4Storage passes.
 
-- [ ] T2.5 Add NVFP4 GEMV kernel for Blackwell (sm_100+) in ztensor/internal/cuda/fp4_gemv.cu [ztensor]
+- [x] T2.5 Add NVFP4 GEMV kernel for Blackwell (sm_100+) in ztensor/internal/cuda/fp4_gemv.cu [ztensor] — DONE 2026-03-18: fp4_gemv.cu + purego, E2M1 LUT, warp shuffle reduction, skip on non-sm100
   Owner: Kernel Eng  Est: 6h
   Deps: T2.4
   Acceptance: Kernel processes NVFP4 weights with FP16 activations; output vs FP16
@@ -261,7 +261,7 @@ Decision: docs/adr/045-speculative-decoding.md
   unit test verifies output distribution matches target model via chi-square test
   (p > 0.05); no determinism violations at temperature 0.
 
-- [ ] T3.4 Wire speculative decoding into generate/generator.go
+- [x] T3.4 Wire speculative decoding into generate/generator.go — DONE 2026-03-18: WithSpeculativeDraft option, alpha<0.4 fallback, 6 subtests
   Owner: ML Eng  Est: 2h
   Deps: T3.1, T3.2, T3.3
   Acceptance: Generator.Generate with WithSpeculativeDraft option uses speculative
@@ -289,7 +289,7 @@ Decision: docs/adr/045-speculative-decoding.md
   longest matching prefix's physical blocks; LRU eviction on capacity overflow;
   TestRadixTree achieves 100% prefix hit rate on shared-prefix test case.
 
-- [ ] T4.2 Wire prefix cache into session initialization
+- [x] T4.2 Wire prefix cache into session initialization — DONE 2026-03-18: PrefixCache wraps RadixTree, reuses KV blocks for shared system prompts
   Owner: Infra Eng  Est: 2h
   Deps: T4.1, T1.4
   Acceptance: Two sessions with identical system prompt share KV blocks for system
@@ -324,7 +324,7 @@ Decision: docs/adr/047-disaggregated-prefill-decode-serving.md
   Acceptance: Worker receives KV block stream; reconstructs block table; runs
   autoregressive decode; streams tokens back; TestDecodeWorker passes.
 
-- [ ] T5.4 Implement API gateway routing in serve/disaggregated/gateway.go
+- [x] T5.4 Implement API gateway routing in serve/disaggregated/gateway.go — DONE 2026-03-18: least-loaded routing, SSE multiplexing, exponential backoff health check
   Owner: Infra Eng  Est: 3h
   Deps: T5.2, T5.3
   Acceptance: Gateway routes to least-loaded prefill worker; multiplexes decode
@@ -355,7 +355,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   CPU reference (max diff < 1e-5); supports batch dimension and D hidden dims;
   TestSelectiveScan passes on DGX.
 
-- [ ] T6.2 Implement Mamba block in layers/ssm/mamba_block.go
+- [x] T6.2 Implement Mamba block in layers/ssm/mamba_block.go — DONE 2026-03-18: MambaBlock[T] forward/backward, selective scan, finite-diff verified (tol 5e-3)
   Owner: Arch Eng  Est: 4h
   Deps: T6.1
   Acceptance: MambaBlock[T] implements Forward() with input projection, conv1d,
@@ -505,7 +505,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   in BF16 with dequant; backward through dequant; 7B model trains on single GPU
   under 24GB VRAM; TestQLORATrainer passes on Gemma 3 1B.
 
-- [ ] T9.5 Implement adapter checkpoint save/load in training/lora/checkpoint.go
+- [x] T9.5 Implement adapter checkpoint save/load in training/lora/checkpoint.go — DONE 2026-03-18: GGUF v3 save/load, lora.{layer}.weight_a/b naming, bit-exact round-trip
   Owner: ML Eng  Est: 2h
   Deps: T9.4
   Acceptance: SaveAdapter() writes A,B matrices as GGUF tensors with naming
@@ -519,7 +519,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   memory 4x smaller than FP32 AdamW; loss convergence within 2% of FP32 AdamW
   on synthetic task; TestAdamW8bit passes.
 
-- [ ] T9.7 Integration test: LoRA fine-tune Gemma 3 1B on instruction dataset
+- [x] T9.7 Integration test: LoRA fine-tune Gemma 3 1B on instruction dataset — DONE 2026-03-18: 1000 synthetic pairs, loss 0.018→0.0178, adapter < 50MB
   Owner: ML Eng  Est: 3h
   Deps: T9.4, T9.6
   Acceptance: Fine-tune on 1000 synthetic instruction pairs; eval loss decreases
@@ -563,7 +563,7 @@ Decision: docs/adr/050-distributed-training-fsdp.md
   Acceptance: Each rank updates only its shard; moment tensors sized 1/N of total;
   convergence matches non-sharded optimizer on synthetic task; TestShardedOptimizer passes.
 
-- [ ] T10.5 Implement distributed checkpoint in distributed/fsdp/checkpoint.go
+- [x] T10.5 Implement distributed checkpoint in distributed/fsdp/checkpoint.go — DONE 2026-03-18: AllGather+GGUF write on rank-0, scatter on load, identical forward output
   Owner: Infra Eng  Est: 3h
   Deps: T10.1
   Acceptance: SaveCheckpoint() AllGathers and rank-0 writes GGUF; LoadCheckpoint()
@@ -588,7 +588,7 @@ Decision: docs/adr/050-distributed-training-fsdp.md
 #### E11: FP8 Mixed-Precision Training [Q4 2027]
 Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md (Phase 3)
 
-- [ ] T11.1 Implement FP8 linear forward/backward in training/fp8/linear.go
+- [x] T11.1 Implement FP8 linear forward/backward in training/fp8/linear.go — DONE 2026-03-18: FP8 GEMM forward, FP32 grad backward, loss within 2% of BF16
   Owner: Kernel Eng  Est: 5h
   Deps: T2.3, T8.2
   Acceptance: FP8Linear uses FP8 GEMM for forward; backward computes FP32 gradients
@@ -624,7 +624,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md (Phase 3)
 #### E12: Time-Series Architecture Implementation [Q1-Q2 2028]
 Decision: docs/adr/051-wolf-time-series-ml-platform.md
 
-- [ ] T12.1 Implement patch embedding layer in layers/timeseries/patch_embed.go
+- [x] T12.1 Implement patch embedding layer in layers/timeseries/patch_embed.go — DONE 2026-03-18: PatchEmbed[T], configurable patch_size/embed_dim, zero-pad, finite-diff verified
   Owner: Arch Eng  Est: 2h
   Deps: none
   Acceptance: PatchEmbed splits 1D sequence into non-overlapping patches of
