@@ -18,13 +18,29 @@ import (
 
 func TestMultiHeadLatentAttention_Backward(t *testing.T) {
 	mla := newTestMLA(t)
+	ctx := context.Background()
 
-	dOut, _ := tensor.New[float32]([]int{1, 3, 8}, nil)
 	input, _ := tensor.New[float32]([]int{1, 3, 8}, nil)
+	for i := range input.Data() {
+		input.Data()[i] = float32(i%7+1) * 0.01
+	}
 
-	_, err := mla.Backward(context.Background(), types.FullBackprop, dOut, input)
-	if err == nil {
-		t.Error("expected error from unimplemented MLA Backward")
+	out, err := mla.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	dOut, _ := tensor.New[float32](out.Shape(), nil)
+	for i := range dOut.Data() {
+		dOut.Data()[i] = 0.1
+	}
+
+	grads, err := mla.Backward(ctx, types.FullBackprop, dOut, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	if len(grads) != 1 {
+		t.Errorf("expected 1 gradient, got %d", len(grads))
 	}
 }
 
