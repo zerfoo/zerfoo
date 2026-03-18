@@ -270,7 +270,7 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   state-tracking capability without doubling memory. TestComplexSSMState passes;
   BCNorm stabilization layer added. TestBCNorm passes.
 
-- [ ] T2.10 Implement MIMO (multi-input multi-output) SSM heads in layers/ssm/
+- [x] T2.10 Implement MIMO (multi-input multi-output) SSM heads in layers/ssm/ (2026-03-18)
   Owner: Kernel Eng  Est: 4h
   Deps: T2.9
   Acceptance: MIMOMambaBlock supports multiple parallel state spaces with cross-channel
@@ -357,12 +357,12 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: Covers Engine[T], graph compilation, CUDA graph capture, GGUF loading,
   and the full inference pipeline. Includes diagrams. Targets new contributors.
 
-- [ ] T4.5 Write cookbook with 10+ recipes (embedding, serving, fine-tuning, streaming)
+- [x] T4.5 Write cookbook with 10+ recipes (embedding, serving, fine-tuning, streaming) (2026-03-18)
   Owner: DevRel  Est: 6h
   Deps: none
   Acceptance: 10+ self-contained recipes with copy-paste code; each tested in CI.
 
-- [ ] T4.6 Write benchmark comparison guide: Zerfoo vs Ollama vs llama.cpp
+- [x] T4.6 Write benchmark comparison guide: Zerfoo vs Ollama vs llama.cpp (2026-03-18)
   Owner: DevRel  Est: 3h
   Deps: T1.5
   Acceptance: Side-by-side tok/s comparison on same hardware; reproducible methodology;
@@ -384,7 +384,7 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: Covers repo structure, build instructions, test requirements, commit
   conventions, PR review process. Linked from all 6 repo READMEs.
 
-- [ ] T5.2 Create "good first issue" labels and 20+ starter issues across repos
+- [x] T5.2 Create "good first issue" labels and 20+ starter issues across repos (2026-03-18)
   Owner: DevRel  Est: 3h
   Deps: none
   Acceptance: 20+ issues labeled "good first issue" with clear description,
@@ -408,7 +408,7 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: 5 posts published: (1) Launch announcement, (2) Benchmark comparison,
   (3) Architecture deep dive, (4) "Why Go for ML?", (5) Migration from Ollama guide.
 
-- [ ] T5.6 Submit GopherCon 2026 talk proposal: "Native ML Inference in Go"
+- [x] T5.6 Submit GopherCon 2026 talk proposal: "Native ML Inference in Go" (2026-03-18)
   Owner: DevRel  Est: 3h
   Deps: T4.2
   Acceptance: CFP submitted with abstract, outline, and speaker bio. Backup plan:
@@ -453,7 +453,7 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
 #### E7: v1.0 Stable Release [Q1-Q2 2027]
 Decision: docs/adr/058-api-stability-v1-contract.md
 
-- [ ] T7.1 Audit and freeze Engine[T] interface
+- [x] T7.1 Audit and freeze Engine[T] interface (2026-03-18)
   Owner: Lead Eng  Est: 4h
   Deps: none
   Acceptance: Engine[T] interface reviewed; all methods documented; extension
@@ -465,7 +465,7 @@ Decision: docs/adr/058-api-stability-v1-contract.md
   Acceptance: Every sub-package labeled in design.md and package-level doc comment.
   Stable: inference/, generate/, serve/, model/, layers/. Beta: training/, distributed/.
 
-- [ ] T7.3 Implement deprecation linter in cmd/deprecation-check/main.go
+- [x] T7.3 Implement deprecation linter in cmd/deprecation-check/main.go (2026-03-18)
   Owner: Lead Eng  Est: 3h
   Deps: none
   Acceptance: Linter scans for `// Deprecated:` doc comments and verifies they include
@@ -527,13 +527,13 @@ Decision: docs/adr/058-api-stability-v1-contract.md
 
 #### E9: Multi-GPU Inference [Q2-Q3 2027]
 
-- [ ] T9.1 Implement tensor parallelism for prefill in inference/parallel/tensor_parallel.go
+- [x] T9.1 Implement tensor parallelism for prefill in inference/parallel/tensor_parallel.go (2026-03-18)
   Owner: Infra Eng  Est: 6h
   Deps: none
   Acceptance: Linear layers split across N GPUs; AllReduce after each layer;
   output matches single-GPU baseline; TestTensorParallel passes.
 
-- [ ] T9.2 Implement pipeline parallelism in inference/parallel/pipeline_parallel.go
+- [x] T9.2 Implement pipeline parallelism in inference/parallel/pipeline_parallel.go (2026-03-18)
   Owner: Infra Eng  Est: 6h
   Deps: none
   Acceptance: Transformer layers assigned to different GPUs; micro-batch pipelining;
@@ -555,7 +555,7 @@ Decision: docs/adr/058-api-stability-v1-contract.md
 
 #### E10: Vision-Language Model Expansion [Q3-Q4 2027]
 
-- [ ] T10.1 Implement LLaVA architecture builder in inference/arch_llava.go
+- [x] T10.1 Implement LLaVA architecture builder in inference/arch_llava.go (2026-03-18)
   Owner: Arch Eng  Est: 5h
   Deps: none
   Acceptance: LLaVA GGUF loads; CLIP vision encoder + Llama text decoder;
