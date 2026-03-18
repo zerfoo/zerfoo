@@ -34,3 +34,8 @@ jobs:
         run: go vet ./...
       - name: Unit tests
         run: go test ./... -race -timeout 120s
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          artifact-name: sbom-cyclonedx.json

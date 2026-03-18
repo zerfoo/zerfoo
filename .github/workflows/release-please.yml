@@ -17,3 +17,18 @@ jobs:
         id: release
         with:
           release-type: go
+      - name: Checkout code
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v4
+      - name: Generate SBOM
+        if: ${{ steps.release.outputs.release_created }}
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom-cyclonedx.json
+      - name: Upload SBOM to release
+        if: ${{ steps.release.outputs.release_created }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          files: sbom-cyclonedx.json
