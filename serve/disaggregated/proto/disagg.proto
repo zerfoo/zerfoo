@@ -1,0 +1,46 @@
+syntax = "proto3";
+package disagg;
+option go_package = "github.com/zerfoo/zerfoo/serve/disaggregated/proto;disaggpb";
+
+message PreFillRequest {
+  string request_id = 1;
+  repeated int32 token_ids = 2;
+  int32 max_new_tokens = 3;
+  float temperature = 4;
+}
+
+message KVBlock {
+  string request_id = 1;
+  int32 layer_idx = 2;
+  int32 block_idx = 3;
+  bytes k_data = 4;  // float16 bytes
+  bytes v_data = 5;  // float16 bytes
+}
+
+message KVBlockStream {
+  KVBlock block = 1;
+  bool done = 2;
+}
+
+message DecodeRequest {
+  string request_id = 1;
+  repeated KVBlock kv_blocks = 2;
+  repeated int32 token_ids = 3;
+  int32 max_new_tokens = 4;
+  float temperature = 5;
+}
+
+message TokenStream {
+  string request_id = 1;
+  int32 token_id = 2;
+  bool done = 3;
+  string finish_reason = 4;
+}
+
+service PrefillWorker {
+  rpc Prefill(PreFillRequest) returns (stream KVBlockStream);
+}
+
+service DecodeWorker {
+  rpc Decode(DecodeRequest) returns (stream TokenStream);
+}
