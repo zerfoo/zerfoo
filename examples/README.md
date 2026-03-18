@@ -24,22 +24,40 @@ zerfoo pull gemma-3-1b-q4
 
 | Example | Description | Prerequisites |
 |---------|-------------|---------------|
-| [`inference/`](inference/) | Load a GGUF model and generate text from a prompt. Demonstrates the core `inference.LoadFile` and `model.Generate` API with sampling options (temperature, top-K, top-P) and token streaming. | GGUF model file |
 | [`chat/`](chat/) | Interactive chatbot CLI. Demonstrates the `zerfoo.Load` and `model.Chat` one-line API with a readline loop. | GGUF model file |
-| [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler. Demonstrates the pattern of loading a model once at startup and serving many concurrent requests through your own routing and request/response types. | GGUF model file |
-| [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server backed by a GGUF model. Demonstrates `serve.NewServer` with graceful shutdown. Drop-in replacement for any OpenAI client. | GGUF model file |
-| [`json-output/`](json-output/) | Grammar-guided decoding that constrains model output to valid JSON matching a predefined schema. Useful for structured data extraction and tool-calling pipelines. | GGUF model file |
-| [`rag/`](rag/) | Retrieval-augmented generation pattern: embed a document corpus, retrieve the most relevant documents via cosine similarity, and generate answers grounded in those facts using `model.Embed` and `model.Chat`. | GGUF model file |
+| [`embedding-search/`](embedding-search/) | Semantic search over a document corpus using model embeddings and cosine similarity. | GGUF model file |
+| [`rag/`](rag/) | Retrieval-augmented generation: embed documents, retrieve relevant ones, and generate grounded answers. | GGUF model file |
+| [`code-completion/`](code-completion/) | Generate code completions from partial code snippets using `inference.LoadFile` and `model.Generate`. | GGUF model file |
+| [`summarization/`](summarization/) | Summarize text from a string or file using a language model. | GGUF model file |
+| [`translation/`](translation/) | Translate text between languages using a multilingual model. | GGUF model file |
+| [`classification/`](classification/) | Text classification with grammar-constrained JSON output using `inference.WithGrammar`. | GGUF model file |
+| [`vision-analysis/`](vision-analysis/) | Analyze images using a vision-capable model with `inference.Message.Images`. | Vision GGUF model + image |
+| [`audio-transcription/`](audio-transcription/) | Speech-to-text using the OpenAI-compatible `/v1/audio/transcriptions` endpoint. | Whisper GGUF model + audio file |
+| [`agentic-tool-use/`](agentic-tool-use/) | Function calling (tool use) with `zerfoo.WithTools` for agentic AI patterns. | GGUF model file |
+
+### Additional Examples
+
+| Example | Description | Prerequisites |
+|---------|-------------|---------------|
+| [`inference/`](inference/) | Load a GGUF model and generate text with sampling options and token streaming. | GGUF model file |
+| [`streaming/`](streaming/) | Streaming chat generation using `model.ChatStream` with per-token output. | GGUF model file |
+| [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler for concurrent request serving. | GGUF model file |
+| [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server with `serve.NewServer` and graceful shutdown. | GGUF model file |
+| [`json-output/`](json-output/) | Grammar-guided decoding that constrains output to valid JSON matching a schema. | GGUF model file |
 
 ## Running an Example
 
 ```bash
-# Build and run the inference example
-go build -o inference ./examples/inference/
-./inference path/to/model.gguf "What is the capital of France?"
+# Build and run the chat example
+go build -o chat ./examples/chat/
+./chat --model path/to/model.gguf
 
-# With GPU acceleration (automatic if CUDA is available)
-./inference --device cuda path/to/model.gguf "What is the capital of France?"
+# Build and run the code completion example
+go build -o code-completion ./examples/code-completion/
+./code-completion --model path/to/model.gguf --code "func fibonacci(n int) int {"
+
+# With GPU acceleration
+./code-completion --model path/to/model.gguf --device cuda --code "func add(a, b int) int {"
 ```
 
 ## Further Reading
