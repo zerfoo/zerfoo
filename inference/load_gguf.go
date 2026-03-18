@@ -166,6 +166,8 @@ func buildArchGraph(
 		return buildDeepSeekGraph(tensors, cfg, engine)
 	case "mamba":
 		return buildMambaGraph(tensors, cfg, engine)
+	case "jamba":
+		return buildJambaGraph(tensors, cfg, engine)
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)
 	}
