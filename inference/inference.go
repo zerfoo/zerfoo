@@ -456,6 +456,7 @@ func (m *Model) GenerateStream(ctx context.Context, prompt string, handler gener
 type Message struct {
 	Role    string // "system", "user", or "assistant"
 	Content string
+	Images  [][]byte // optional raw image data for vision models
 }
 
 // Response holds the result of a chat completion.
