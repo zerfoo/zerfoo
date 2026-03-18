@@ -55,8 +55,7 @@ func (ed *ExternalDraft[T]) Generate(ctx context.Context, tokens []int32, K int)
 	draftCtx := generate.WithCache(ctx, generate.CacheProvider[T](cache))
 
 	// Prefill: run all input tokens through the draft model.
-	prefillIDs := int32sToInts(tokens)
-	prefillTensor, err := idsToTensor[T](prefillIDs)
+	prefillTensor, err := intsToTensor[T](int32sToInts(tokens))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create prefill tensor: %w", err)
 	}
@@ -89,7 +88,7 @@ func (ed *ExternalDraft[T]) Generate(ctx context.Context, tokens []int32, K int)
 			break
 		}
 
-		tokenTensor, tErr := idsToTensor[T]([]int{int(nextToken)})
+		tokenTensor, tErr := intsToTensor[T]([]int{int(nextToken)})
 		if tErr != nil {
 			return nil, nil, fmt.Errorf("draft token tensor: %w", tErr)
 		}
@@ -155,6 +154,15 @@ func externalGreedyWithLogProb[T tensor.Numeric](logits *tensor.TensorNumeric[T]
 	logProb := float32(-math.Log(sumExp))
 
 	return int32(maxIdx), logProb, nil
+}
+
+// intsToTensor converts int token IDs to a [1, seqLen] input tensor.
+func intsToTensor[T tensor.Numeric](ids []int) (*tensor.TensorNumeric[T], error) {
+	data := make([]T, len(ids))
+	for i, id := range ids {
+		data[i] = T(id)
+	}
+	return tensor.New([]int{1, len(ids)}, data)
 }
 
 // int32sToInts converts a slice of int32 to a slice of int.
