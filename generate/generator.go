@@ -13,6 +13,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/metrics/runtime"
 	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	tokenizer "github.com/zerfoo/ztoken"
@@ -61,6 +62,7 @@ type generatorOptions struct {
 	kvDtype           string // KV cache storage dtype: "fp32" (default) or "fp16"
 	specDraft         *specDraftConfig // when non-nil, use speculative decoding
 	prefixCacheBlocks int    // when > 0, enable prefix caching with this many cached blocks
+	metricsCollector  runtime.Collector // optional metrics collector
 }
 
 // specDraftConfig holds configuration for speculative decoding via a draft model.
@@ -69,6 +71,15 @@ type specDraftConfig struct {
 	draftCfg       ModelConfig
 	draftLen       int     // K lookahead tokens per speculative step
 	fallbackAlpha  float64 // fall back to standard decode if rolling alpha < this
+}
+
+// WithMetrics attaches a metrics collector to the generator. When speculative
+// decoding is active, the generator updates a "speculative_acceptance_rate"
+// gauge after each verify step.
+func WithMetrics(c runtime.Collector) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.metricsCollector = c
+	}
 }
 
 // WithGeneratorKVDtype sets the KV cache storage dtype. Supported: "fp32" (default), "fp16".
@@ -130,9 +141,10 @@ type Generator[T tensor.Numeric] struct {
 	kvDtype   string                                     // KV cache storage dtype ("fp32" or "fp16")
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
-	mu          sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
-	specDraft   *specDraftConfig                           // nil unless speculative decoding is enabled
-	prefixCache *PrefixCache[T]                            // nil unless prefix caching is enabled
+	mu              sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
+	specDraft       *specDraftConfig                           // nil unless speculative decoding is enabled
+	prefixCache     *PrefixCache[T]                            // nil unless prefix caching is enabled
+	specAcceptRate  runtime.GaugeMetric                        // speculative acceptance rate gauge
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -148,13 +160,19 @@ func NewGenerator[T tensor.Numeric](
 		o(&gopts)
 	}
 
+	mc := gopts.metricsCollector
+	if mc == nil {
+		mc = runtime.Nop()
+	}
+
 	gen := &Generator[T]{
-		graph:     g,
-		tokenizer: tok,
-		engine:    eng,
-		config:    cfg,
-		kvDtype:   gopts.kvDtype,
-		specDraft: gopts.specDraft,
+		graph:          g,
+		tokenizer:      tok,
+		engine:         eng,
+		config:         cfg,
+		kvDtype:        gopts.kvDtype,
+		specDraft:      gopts.specDraft,
+		specAcceptRate: mc.Gauge("speculative_acceptance_rate"),
 	}
 
 	if g != nil {
@@ -785,8 +803,9 @@ func (gen *Generator[T]) generateSpeculative(ctx context.Context, prompt string,
 			break
 		}
 
-		// Record acceptance rate.
+		// Record acceptance rate and update the Prometheus gauge.
 		tracker.Record(len(accepted), len(draftTokens))
+		gen.specAcceptRate.Set(tracker.Rate())
 
 		// Roll back caches if tokens were rejected.
 		correctSeqLen := len(promptIDs) + len(generatedIDs)
