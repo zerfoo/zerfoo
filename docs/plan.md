@@ -141,13 +141,13 @@ Decision: docs/adr/044-paged-attention-kv-block-manager.md
   block to pool; zero allocation on warm path; TestBlockPool passes with race detector.
   Risk: Block size 16 may need tuning for non-standard head dims; parameterize.
 
-- [ ] T1.2 Implement block table per sequence in ztensor/graph/kv/block_table.go [ztensor]
+- [x] T1.2 Implement block table per sequence in ztensor/graph/kv/block_table.go [ztensor]
   Owner: Kernel Eng  Est: 3h
   Deps: T1.1
   Acceptance: BlockTable.Append(token_count) allocates blocks as needed; BlockTable.Free()
   returns all blocks to pool; logical-to-physical mapping is correct; TestBlockTable passes.
 
-- [ ] T1.3 Write paged attention CUDA kernel in ztensor/internal/cuda/paged_attention.cu [ztensor]
+- [x] T1.3 Write paged attention CUDA kernel in ztensor/internal/cuda/paged_attention.cu [ztensor]
   Owner: Kernel Eng  Est: 6h
   Deps: T1.1
   Acceptance: Kernel accepts block table pointer array; computes correct attention vs
@@ -197,7 +197,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md
   range); uses cublasLtMatmul with CUDA_R_8F_E4M3 dtypes; sm_89+ (Ada) required;
   TestFP8Gemm passes on DGX.
 
-- [ ] T2.2 Add per-tensor amax computation in ztensor/compute/quantize.go [ztensor]
+- [x] T2.2 Add per-tensor amax computation in ztensor/compute/quantize.go [ztensor]
   Owner: Kernel Eng  Est: 2h
   Deps: none
   Acceptance: ComputeAmax(tensor) returns correct FP32 max abs value; GPU path uses
@@ -282,7 +282,7 @@ Decision: docs/adr/045-speculative-decoding.md
 
 #### E4: RadixAttention Prefix Caching [Q2-Q3 2026]
 
-- [ ] T4.1 Implement radix tree for KV block prefix matching in graph/kv/radix_tree.go [ztensor]
+- [x] T4.1 Implement radix tree for KV block prefix matching in graph/kv/radix_tree.go [ztensor]
   Owner: Infra Eng  Est: 4h
   Deps: T1.1
   Acceptance: RadixTree.Insert(token_ids, blocks) correctly inserts; Match(prefix) returns
@@ -444,7 +444,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   Acceptance: RoPE.Backward() passes gradient through rotation; finite difference
   test within 1e-3; TestRoPEBackward passes.
 
-- [ ] T8.5 Implement backward for DeepSeek MLA (Multi-head Latent Attention)
+- [x] T8.5 Implement backward for DeepSeek MLA (Multi-head Latent Attention)
   Owner: ML Eng  Est: 4h
   Deps: T8.2
   Acceptance: MLA.Backward() correctly decomposes latent gradient into dQ_C, dKV_C;
@@ -479,7 +479,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
 #### E9: LoRA/QLoRA Fine-Tuning [Q1-Q2 2027]
 Decision: docs/adr/049-lora-qlora-finetuning.md
 
-- [ ] T9.1 Implement LoraLinear layer in training/lora/linear.go
+- [x] T9.1 Implement LoraLinear layer in training/lora/linear.go
   Owner: ML Eng  Est: 3h
   Deps: T8.2
   Acceptance: LoraLinear[T] wraps Linear; forward y = Wx + (alpha/r)*B*A*x;
@@ -512,7 +512,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   convention lora.{layer}.weight_a; LoadAdapter() restores and injects;
   round-trip produces identical forward output; TestLoraCheckpoint passes.
 
-- [ ] T9.6 Implement AdamW 8-bit optimizer in training/optimizers/adamw8bit.go
+- [x] T9.6 Implement AdamW 8-bit optimizer in training/optimizers/adamw8bit.go
   Owner: ML Eng  Est: 4h
   Deps: none
   Acceptance: AdamW8bit stores momentum/variance in INT8 with block-wise quantization;
@@ -544,7 +544,7 @@ Decision: docs/adr/050-distributed-training-fsdp.md
   gradients; peak per-GPU memory reduced >= 8x vs replicated baseline;
   TestShardedModule passes.
 
-- [ ] T10.2 Integrate NCCL AllGather and ReduceScatter in distributed/nccl.go
+- [x] T10.2 Integrate NCCL AllGather and ReduceScatter in distributed/nccl.go
   Owner: Infra Eng  Est: 4h
   Deps: none
   Acceptance: NCCLAllGather and NCCLReduceScatter wrappers work via purego dlopen
