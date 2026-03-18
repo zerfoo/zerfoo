@@ -6,4 +6,5 @@
 //
 // These interfaces are internal and not exported to users. The public Engine[T]
 // interface in compute/ is unchanged.
+// Stability: beta
 package gpuapi

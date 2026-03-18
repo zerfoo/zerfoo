@@ -92,4 +92,5 @@
 // [TracingCacheProvider] wraps a real CacheProvider and records KV cache
 // operations into a compute.Tracer during compilation tracing passes,
 // capturing the full attention dataflow including cache reads and writes.
+// Stability: stable
 package generate

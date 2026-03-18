@@ -56,4 +56,5 @@
 // [SignalContext] creates a context that cancels on SIGINT/SIGTERM and
 // optionally triggers a [shutdown.Coordinator] for graceful shutdown.
 // Long-running commands (serve, worker) use this to clean up on exit.
+// Stability: stable
 package cli

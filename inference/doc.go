@@ -79,4 +79,5 @@
 // see the [github.com/zerfoo/zerfoo/generate] package. For an
 // OpenAI-compatible HTTP server built on top of this package, see
 // [github.com/zerfoo/zerfoo/serve].
+// Stability: stable
 package inference

@@ -84,4 +84,5 @@
 //
 // Call [Server.Close] to gracefully stop the server, which drains the batch
 // scheduler if one is attached.
+// Stability: stable
 package serve

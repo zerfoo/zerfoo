@@ -1,2 +1,4 @@
-// Package attention provides attention mechanisms for neural networks. (Stability: stable)
+// Package attention provides attention mechanisms for neural networks.
+//
+// Stability: stable
 package attention

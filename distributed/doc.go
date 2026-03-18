@@ -77,4 +77,5 @@
 // All strategies and the worker service emit Prometheus-compatible metrics
 // (counters and histograms) through the ztensor metrics.Collector interface.
 // Use SetCollector to wire in a concrete collector.
+// Stability: beta
 package distributed

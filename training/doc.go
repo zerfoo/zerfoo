@@ -76,4 +76,5 @@
 //
 // See interfaces_doc.go for detailed documentation of the plugin
 // architecture and workflow interfaces.
+// Stability: beta
 package training

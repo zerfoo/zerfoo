@@ -67,4 +67,5 @@
 // constructs architecture-specific graphs, and by the text generation layer
 // (package [github.com/zerfoo/zerfoo/generate]) which drives autoregressive
 // token generation over a model's forward pass.
+// Stability: stable
 package model

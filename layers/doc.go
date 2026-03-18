@@ -85,4 +85,5 @@
 //  2. Register the layer in [registry.RegisterAll] by adding a
 //     [model.RegisterLayer] call with a unique name and the builder function.
 //  3. Write tests in the same sub-package.
+// Stability: stable
 package layers
