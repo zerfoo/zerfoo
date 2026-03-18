@@ -267,7 +267,7 @@ Decision: docs/adr/045-speculative-decoding.md
   Acceptance: Generator.Generate with WithSpeculativeDraft option uses speculative
   loop; fallback to standard decode if alpha < 0.4; TestGeneratorSpeculative passes.
 
-- [ ] T3.5 Add acceptance rate Prometheus metric (zerfoo_speculative_acceptance_rate)
+- [x] T3.5 Add acceptance rate Prometheus metric — DONE 2026-03-18: zerfoo_speculative_acceptance_rate gauge, rolling alpha tracking
   Owner: ML Eng  Est: 1h
   Deps: T3.4
   Acceptance: Metric visible at /metrics; value matches manual calculation from logs.
@@ -331,7 +331,7 @@ Decision: docs/adr/047-disaggregated-prefill-decode-serving.md
   token stream to SSE response; health check with exponential backoff;
   TestGateway passes with mock workers.
 
-- [ ] T5.5 Integration test: disaggregated serving end-to-end
+- [x] T5.5 Integration test: disaggregated serving end-to-end — DONE 2026-03-18: TestDisaggregatedE2E, mock workers, SSE token stream
   Owner: Infra Eng  Est: 2h
   Deps: T5.4
   Acceptance: Full request cycle (prompt -> prefill worker -> decode worker ->
@@ -362,7 +362,7 @@ Decision: docs/adr/048-mamba-ssm-architecture-support.md
   selective scan, output projection; backward pass computes correct gradients
   (verified vs finite difference); TestMambaBlock passes.
 
-- [ ] T6.3 Implement SSM session state management in generate/ssm_state.go
+- [x] T6.3 Implement SSM session state management in generate/ssm_state.go — DONE 2026-03-18: SSMState[T], O(d_state) not O(seq_len)
   Owner: Arch Eng  Est: 3h
   Deps: T6.2
   Acceptance: SSMState stores hidden state h_t across decode steps; Reset() clears
@@ -525,7 +525,7 @@ Decision: docs/adr/049-lora-qlora-finetuning.md
   Acceptance: Fine-tune on 1000 synthetic instruction pairs; eval loss decreases
   from baseline; adapter size < 50MB; generation quality improves on held-out examples.
 
-- [ ] T9.8 CLI: zerfoo finetune command in cmd/finetune/main.go
+- [x] T9.8 CLI: zerfoo finetune command in cmd/finetune/main.go — DONE 2026-03-18: flag parsing, JSONL dataset, adapter GGUF save
   Owner: ML Eng  Est: 3h
   Deps: T9.7
   Acceptance: `zerfoo finetune --model path --dataset jsonl --rank 16 --epochs 3`
@@ -595,7 +595,7 @@ Decision: docs/adr/046-fp8-nvfp4-quantization-roadmap.md (Phase 3)
   through dequantization; loss matches BF16 training within 2% on synthetic task;
   TestFP8Linear passes.
 
-- [ ] T11.2 Implement dynamic loss scaling in training/fp8/loss_scaler.go
+- [x] T11.2 Implement dynamic loss scaling in training/fp8/loss_scaler.go — DONE 2026-03-18: inf/NaN halving, 2000-step doubling
   Owner: ML Eng  Est: 3h
   Deps: T11.1
   Acceptance: LossScaler multiplies loss by scale factor; checks for inf/NaN in
@@ -631,14 +631,14 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
   configurable size; embedding output shape [batch, num_patches, embed_dim];
   TestPatchEmbed passes.
 
-- [ ] T12.2 Implement PatchTST model builder in inference/wolf/arch_patchtst.go
+- [x] T12.2 Implement PatchTST model builder in inference/wolf/arch_patchtst.go — DONE 2026-03-18: patch embed + Transformer + projection head
   Owner: Arch Eng  Est: 4h
   Deps: T12.1
   Acceptance: BuildPatchTST() constructs full model graph: patch embed + Transformer
   encoder + projection head; forward pass produces [batch, H, D] prediction;
   TestPatchTSTForward passes with synthetic input.
 
-- [ ] T12.3 Implement variable selection network in layers/timeseries/vsn.go (TFT)
+- [x] T12.3 Implement variable selection network in layers/timeseries/vsn.go — DONE 2026-03-18: GRN + VSN, importance weights sum to 1
   Owner: Arch Eng  Est: 4h
   Deps: none
   Acceptance: VSN computes variable importance weights via GRN (Gated Residual
@@ -651,13 +651,13 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
   VSN, multi-head attention, quantile output head; forward produces Q10/Q50/Q90
   return distributions; TestTFTForward passes with synthetic input.
 
-- [ ] T12.5 Implement regime detection model in inference/wolf/arch_regime.go
+- [x] T12.5 Implement regime detection model in inference/wolf/arch_regime.go — DONE 2026-03-18: GRU + 4-class softmax
   Owner: Arch Eng  Est: 4h
   Deps: T12.1
   Acceptance: BuildRegimeDetector() constructs LSTM + classification head; output
   is 4-class softmax (bull/bear/sideways/volatile); TestRegimeDetector passes.
 
-- [ ] T12.6 Implement Wolf feature store in inference/wolf/features/store.go
+- [x] T12.6 Implement Wolf feature store in inference/wolf/features/store.go — DONE 2026-03-18: CSV load, ring buffer cap 500, point-in-time
   Owner: ML Eng  Est: 4h
   Deps: none
   Acceptance: FeatureStore.LoadOffline(asset, start, end) reads parquet features;
@@ -677,7 +677,7 @@ Decision: docs/adr/051-wolf-time-series-ml-platform.md
   train/val split respects time order (no leakage); early stopping on val loss;
   saves adapter GGUF on best val checkpoint.
 
-- [ ] T12.9 Quantile loss and Sharpe-ratio metric in training/loss/quantile.go
+- [x] T12.9 Quantile loss and Sharpe-ratio metric in training/loss/quantile.go — DONE 2026-03-18: pinball loss, differentiable Sharpe
   Owner: ML Eng  Est: 2h
   Deps: none
   Acceptance: QuantileLoss(preds, targets, quantiles) correct vs sklearn reference;
