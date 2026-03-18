@@ -254,6 +254,44 @@ arch-researcher) on 2026-03-18. Key findings incorporated into this plan:
   Acceptance: All 6 new architectures produce correct output vs reference; parity
   tolerance < 1e-3; TestNewArchParity passes.
 
+- [ ] T2.8 Implement exponential-trapezoidal SSM discretization in layers/ssm/ [ztensor]
+  Owner: Kernel Eng  Est: 4h
+  Deps: none
+  Acceptance: New discretization mode added to SSM recurrence replacing ZOH with
+  exponential-trapezoidal formula from Mamba 3. Richer system dynamics than Mamba 2
+  simplified recurrence. TestExpTrapDiscretization passes; output matches reference
+  implementation within 1e-5.
+
+- [ ] T2.9 Implement complex-valued SSM state tracking with RoPE in layers/ssm/
+  Owner: Kernel Eng  Est: 4h
+  Deps: T2.8
+  Acceptance: SSM B/C matrices operate in complex domain via RoPE embeddings.
+  Reuses existing RoPE infrastructure from layers/attention/. Complex state expands
+  state-tracking capability without doubling memory. TestComplexSSMState passes;
+  BCNorm stabilization layer added. TestBCNorm passes.
+
+- [ ] T2.10 Implement MIMO (multi-input multi-output) SSM heads in layers/ssm/
+  Owner: Kernel Eng  Est: 4h
+  Deps: T2.9
+  Acceptance: MIMOMambaBlock supports multiple parallel state spaces with cross-channel
+  mixing. Configurable number of MIMO heads. Decode latency comparable to SISO variant.
+  TestMIMOSSM passes; downstream accuracy >= 1pp improvement over SISO on synthetic
+  benchmark.
+
+- [ ] T2.11 Implement Mamba 3 architecture builder in inference/arch_mamba3.go
+  Owner: Arch Eng  Est: 3h
+  Deps: T2.8, T2.9, T2.10
+  Acceptance: Mamba 3 GGUF loads and generates coherent text. Architecture uses
+  exponential-trapezoidal discretization, complex-valued states with RoPE, MIMO heads,
+  no causal convolution, interleaved MLP layers, QKNorm/BCNorm. Registered in
+  architecture registry. TestMamba3Forward passes.
+
+- [ ] T2.12 Add Mamba 3 to parity tests on DGX [DGX]
+  Owner: Arch Eng  Est: 2h
+  Deps: T2.11
+  Acceptance: Mamba 3 output matches reference implementation within 1e-3 tolerance
+  on DGX Spark. Results in docs/benchmarks.md. TestMamba3Parity passes.
+
 ---
 
 #### E3: Quantization Expansion [Q2-Q3 2026]
@@ -1163,36 +1201,41 @@ Wave 2 -- Unblocked by Wave 1:
 4. T2.3 Command R builder (Arch Eng) [no deps]
 5. T2.4 Falcon builder (Arch Eng) [no deps]
 6. T2.5 Mixtral builder (Arch Eng) [no deps]
-7. T3.2 AWQ dequantization [ztensor] (Kernel Eng) [no deps]
-8. T3.3 Native Q5_K GEMV [ztensor] (Kernel Eng) [no deps]
-9. T4.3 API reference docs (DevRel) [no deps]
-10. T5.2 Good first issues (DevRel) [no deps]
+7. T2.8 Exponential-trapezoidal SSM discretization (Kernel Eng) [no deps]
+8. T3.2 AWQ dequantization [ztensor] (Kernel Eng) [no deps]
+9. T3.3 Native Q5_K GEMV [ztensor] (Kernel Eng) [no deps]
+10. T4.3 API reference docs (DevRel) [no deps]
 
 Wave 3 -- Unblocked by Wave 2:
 1. T1.5 Benchmark 300+ tok/s (Kernel Eng) [needs T1.2, T1.3, T1.4]
 2. T2.6 RWKV builder (Arch Eng) [no deps]
-3. T3.4 Native Q6_K GEMV [ztensor] (Kernel Eng) [no deps]
-4. T3.5 W4A16 mixed precision [ztensor] (Kernel Eng) [needs T3.1]
-5. T3.6 W8A8 mixed precision [ztensor] (Kernel Eng) [no deps]
-6. T4.4 Architecture tour doc (DevRel) [no deps]
-7. T4.5 Cookbook recipes (DevRel) [no deps]
-8. T5.4 Discord server (DevRel) [no deps]
-9. T5.7 Example applications (DevRel) [no deps]
-10. T6.3 Extension docs (Lead Eng) [needs T6.1, T6.2]
+3. T2.9 Complex-valued SSM + RoPE + BCNorm (Kernel Eng) [needs T2.8]
+4. T3.4 Native Q6_K GEMV [ztensor] (Kernel Eng) [no deps]
+5. T3.5 W4A16 mixed precision [ztensor] (Kernel Eng) [needs T3.1]
+6. T3.6 W8A8 mixed precision [ztensor] (Kernel Eng) [no deps]
+7. T4.4 Architecture tour doc (DevRel) [no deps]
+8. T4.5 Cookbook recipes (DevRel) [no deps]
+9. T5.2 Good first issues (DevRel) [no deps]
+10. T5.7 Example applications (DevRel) [no deps]
 
 Wave 4 -- Integration and community push:
 1. T2.7 New arch parity tests (Arch Eng) [needs T2.1-T2.6]
-2. T4.6 Benchmark comparison guide (DevRel) [needs T1.5]
-3. T4.7 Video walkthrough (DevRel) [needs T4.2]
-4. T5.5 Blog posts (DevRel) [needs T4.2, T4.6]
-5. T5.6 GopherCon CFP (DevRel) [needs T4.2]
-6. T7.1 Audit Engine[T] interface (Lead Eng) [no deps]
-7. T7.3 Deprecation linter (Lead Eng) [no deps]
-8. T8.1 AMD GPU access (Infra Eng) [no deps]
-9. T13.4 Fuzz testing (Lead Eng) [no deps]
-10. T15.1 Edge binary (Arch Eng) [no deps]
+2. T2.10 MIMO SSM heads (Kernel Eng) [needs T2.9]
+3. T4.6 Benchmark comparison guide (DevRel) [needs T1.5]
+4. T4.7 Video walkthrough (DevRel) [needs T4.2]
+5. T5.4 Discord server (DevRel) [no deps]
+6. T5.5 Blog posts (DevRel) [needs T4.2, T4.6]
+7. T5.6 GopherCon CFP (DevRel) [needs T4.2]
+8. T6.3 Extension docs (Lead Eng) [needs T6.1, T6.2]
+9. T7.1 Audit Engine[T] interface (Lead Eng) [no deps]
+10. T7.3 Deprecation linter (Lead Eng) [no deps]
 
-Wave 5 -- v1.0 and ROCm:
+Wave 5 -- Mamba 3 assembly + v1.0 start:
+1. T2.11 Mamba 3 architecture builder (Arch Eng) [needs T2.8, T2.9, T2.10]
+2. T2.12 Mamba 3 parity tests on DGX (Arch Eng) [needs T2.11]
+3. T7.2 Label sub-package maturity (Lead Eng) [needs T7.1]
+
+Wave 6 -- v1.0 and ROCm:
 1. T7.2 Label sub-package maturity (Lead Eng) [needs T7.1]
 2. T7.4 Release-please v1.0 (Lead Eng) [needs T7.1]
 3. T7.5 Migration guide (DevRel) [needs T7.1]
@@ -1204,7 +1247,7 @@ Wave 5 -- v1.0 and ROCm:
 9. T10.2 Qwen-VL builder (Arch Eng) [no deps]
 10. T15.2 Pre-optimized model format (Arch Eng) [needs T15.1]
 
-Wave 6 -- Year 2-3 integration:
+Wave 7 -- Year 2-3 integration:
 1. T8.4 Port CUDA kernels to HIP [ztensor] (Kernel Eng) [needs T8.2]
 2. T8.6 ROCm CI (Infra Eng) [needs T8.4]
 3. T9.3 Multi-GPU CLI (Infra Eng) [needs T9.1, T9.2]
@@ -1216,7 +1259,7 @@ Wave 6 -- Year 2-3 integration:
 9. T13.1 Security auditor engagement (Lead Eng) [no deps]
 10. T15.3 Raspberry Pi test (Arch Eng) [needs T15.1]
 
-Wave 7 -- Enterprise foundation:
+Wave 8 -- Enterprise foundation:
 1. T8.5 ROCm benchmark (Kernel Eng) [needs T8.4]
 2. T9.4 Multi-GPU benchmark (Infra Eng) [needs T9.3]
 3. T10.3 Vision model benchmarks (Arch Eng) [needs T10.1, T10.2]
@@ -1228,7 +1271,7 @@ Wave 7 -- Enterprise foundation:
 9. T14.1 Compliance platform (Compliance) [no deps]
 10. T15.4 Jetson test (Arch Eng) [needs T15.1]
 
-Wave 8 -- SOC 2 and platform:
+Wave 9 -- SOC 2 and platform:
 1. T12.4 Enterprise contracts (Biz Dev) [needs T12.2]
 2. T14.2 Security controls (Infra Eng) [needs T14.1]
 3. T14.3 SOC 2 Type I audit (Compliance) [needs T14.2]
@@ -1240,7 +1283,7 @@ Wave 8 -- SOC 2 and platform:
 9. T17.3 Adaptive batching (Platform Eng) [no deps]
 10. T18.1 Enterprise repo setup (Lead Eng) [no deps]
 
-Wave 9 -- Cloud and enterprise features:
+Wave 10 -- Cloud and enterprise features:
 1. T14.4 SOC 2 Type II observation (Compliance) [needs T14.3]
 2. T16.3 500+ tok/s benchmark (Kernel Eng) [needs T16.1, T16.2]
 3. T17.4 Multi-model serving (Platform Eng) [no deps]
@@ -1252,7 +1295,7 @@ Wave 9 -- Cloud and enterprise features:
 9. T19.1 SOC 2 Type II completion (Compliance) [needs T14.4]
 10. T20.1 Metal compute bindings [ztensor] (Kernel Eng) [no deps]
 
-Wave 10 -- Year 5 multi-accelerator:
+Wave 11 -- Year 5 multi-accelerator:
 1. T17.6 GCP Marketplace (Biz Dev) [needs T17.5]
 2. T17.7 Azure Marketplace (Biz Dev) [needs T17.5]
 3. T20.2 Port kernels to Metal [ztensor] (Kernel Eng) [needs T20.1]
