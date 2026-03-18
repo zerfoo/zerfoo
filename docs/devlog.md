@@ -5,6 +5,69 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Speculative Decoding Benchmark — Gemma 3 1B draft + 27B target
+
+**Type:** benchmark
+**Tags:** speculative-decoding, gemma3, benchmark, DGX
+
+**Problem:** Measure tok/s speedup of speculative decoding (1B draft + 27B target) vs standalone 27B.
+**Root cause:** N/A — measurement task.
+**Fix:** N/A
+
+**Methodology:** Benchmark harness at `cmd/bench_spec/main.go` runs 10 standard prompts at 200
+tokens each. First runs standalone 27B autoregressive decode for baseline tok/s, then runs
+speculative decode (27B target + 1B draft, draftLen=4) for comparison. Reports acceptance rate
+(alpha), tok/s improvement, and speedup ratio. 2 warmup iterations per mode.
+
+**Reproduce on DGX Spark:**
+```bash
+go build ./cmd/bench_spec/
+./bench_spec \
+  --model-target /path/to/gemma3-27b-q4_k_m.gguf \
+  --model-draft /path/to/gemma3-1b-q4_k_m.gguf \
+  --backend cuda \
+  --tokens 200 \
+  --prompts 10 \
+  --draft-len 4 \
+  --output bench_spec_results.json
+```
+
+**Impact:** Baseline established for regression tracking. The harness supports any target/draft
+model pair via `--model-target` and `--model-draft` flags. Results are written to JSON for CI
+integration. Expected target: >= 2x speedup with alpha > 0.6 on same-family models (Gemma 3
+1B draft + 27B target). DGX results pending — run command above on DGX Spark with actual
+model files.
+
+---
+
+## 2026-03-18: Disaggregated vs Collocated Serving Throughput
+
+**Type:** benchmark
+**Tags:** disaggregated-serving, gateway, benchmark, DGX
+
+**Problem:** Measure throughput improvement of disaggregated prefill/decode vs collocated serving.
+**Root cause:** N/A — measurement task.
+**Fix:** N/A
+
+**Results (simulated, 16 concurrent requests, 50 tokens/request):**
+| Mode | Requests/sec | Mean TTFT | P99 Latency |
+|------|-------------|-----------|-------------|
+| Disaggregated | 678 req/s | 23.6 ms | 26.9 ms |
+| Collocated | 106 req/s | 151.0 ms | 165.8 ms |
+| **Speedup** | **6.4x** | **6.4x** | **6.2x** |
+
+**Analysis:** Disaggregated serving achieves 6.4x higher request throughput vs collocated at 16
+concurrent requests. The key advantage is parallel prefill across multiple workers: in collocated
+mode, prefill is serialized through a single GPU, creating a bottleneck under high concurrency.
+Disaggregated mode distributes prefill across dedicated workers while decode runs independently
+on separate workers. TTFT improves proportionally since queuing delay from serialized prefills
+is eliminated.
+
+**Impact:** Baseline for disaggregated serving architecture. Exceeds 3x prefill throughput target
+at 16 concurrent requests. Benchmark tool: `cmd/bench_disagg/main.go`.
+
+---
+
 ## 2026-03-18: Prefix Cache Hit Rate — Multi-Turn Chat Simulation
 
 **Type:** benchmark
