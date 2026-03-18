@@ -176,7 +176,7 @@ These tasks are the highest priority and must be completed before any remaining
   and confidence score. Direction is an enum type. Model uses float32 internally.
   Table-driven tests: TestNewModel, TestPredict_ThreeClasses, TestPredict_BatchConsistency.
 
-- [ ] W1.1.2 Implement tabular.Train using existing Trainer[T] + AdamW + CrossEntropy
+- [x] W1.1.2 Implement tabular.Train using existing Trainer[T] + AdamW + CrossEntropy (2026-03-18)
   Owner: ML Eng  Est: 4h
   Deps: W1.1.1
   Acceptance: `Train(data [][]float64, labels []int, config TrainConfig) (*Model, error)`.
@@ -187,7 +187,7 @@ These tasks are the highest priority and must be completed before any remaining
   logger. TestTrain_Convergence (XOR problem), TestTrain_Validation, TestTrain_GPU
   (build tag cuda).
 
-- [ ] W1.1.3 Implement tabular.Save and tabular.Load for model serialization
+- [x] W1.1.3 Implement tabular.Save and tabular.Load for model serialization (2026-03-18)
   Owner: ML Eng  Est: 3h
   Deps: W1.1.1
   Acceptance: `Save(model *Model, path string) error` writes binary file containing
@@ -776,7 +776,7 @@ Decision: docs/adr/058-api-stability-v1-contract.md
 - [x] T9.2 Implement pipeline parallelism (2026-03-18)
   Owner: Infra Eng  Est: 6h  Deps: none
 
-- [ ] T9.3 Add --gpus flag to zerfoo serve command
+- [x] T9.3 Add --gpus flag to zerfoo serve command (2026-03-18)
   Owner: Infra Eng  Est: 2h  Deps: T9.1, T9.2
   Acceptance: `zerfoo serve --gpus 0,1,2,3` distributes model across 4 GPUs.
 
@@ -856,7 +856,7 @@ Decision: docs/adr/058-api-stability-v1-contract.md
 #### E15: Edge Deployment (Zerfoo Runtime) [Q2-Q4 2028]
 Decision: docs/adr/059-edge-runtime-architecture.md
 
-- [ ] T15.1 Implement build-tag-gated edge binary
+- [x] T15.1 Implement build-tag-gated edge binary (2026-03-18)
   Owner: Arch Eng  Est: 4h  Deps: none
 - [ ] T15.2 Implement pre-optimized model format
   Owner: Arch Eng  Est: 4h  Deps: T15.1
@@ -873,7 +873,7 @@ Decision: docs/adr/059-edge-runtime-architecture.md
 
 - [ ] T16.1 Implement warp-specialized GEMV kernel [ztensor]
   Owner: Kernel Eng  Est: 6h  Deps: none
-- [ ] T16.2 Implement KV cache quantization (FP8 KV)
+- [x] T16.2 Implement KV cache quantization (FP8 KV) (2026-03-18)
   Owner: Kernel Eng  Est: 5h  Deps: none
 - [ ] T16.3 Benchmark: 500+ tok/s [DGX]
   Owner: Kernel Eng  Est: 2h  Deps: T16.1, T16.2
@@ -883,13 +883,13 @@ Decision: docs/adr/059-edge-runtime-architecture.md
 #### E17: Zerfoo Cloud GA [Q1-Q3 2029]
 Decision: docs/adr/060-cloud-platform-architecture.md
 
-- [ ] T17.1 Implement model repository server
+- [x] T17.1 Implement model repository server (2026-03-18)
   Owner: Platform Eng  Est: 5h  Deps: none
 - [ ] T17.2 Implement Kubernetes operator
   Owner: Platform Eng  Est: 8h  Deps: none
-- [ ] T17.3 Implement adaptive batching
+- [x] T17.3 Implement adaptive batching (2026-03-18)
   Owner: Platform Eng  Est: 4h  Deps: none
-- [ ] T17.4 Implement multi-model serving with LRU GPU eviction
+- [x] T17.4 Implement multi-model serving with LRU GPU eviction (2026-03-18)
   Owner: Platform Eng  Est: 5h  Deps: none
 - [ ] T17.5 List on AWS Marketplace
   Owner: Biz Dev  Est: 4h  Deps: T17.1, T17.2
@@ -956,9 +956,9 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E23: Evaluation Framework [Q2-Q3 2030]
 
-- [ ] T23.1 Implement automated benchmark suite
+- [x] T23.1 Implement automated benchmark suite (2026-03-18)
   Owner: Infra Eng  Est: 5h  Deps: none
-- [ ] T23.2 Implement model comparison tool
+- [x] T23.2 Implement model comparison tool (2026-03-18)
   Owner: ML Eng  Est: 4h  Deps: none
 
 ---
