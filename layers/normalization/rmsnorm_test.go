@@ -2,6 +2,7 @@ package normalization
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -522,4 +523,162 @@ func TestRMSNorm_SetName(t *testing.T) {
 	if params[0].Name != "renamed_gain" {
 		t.Errorf("SetName: gain parameter name = %q, want renamed_gain", params[0].Name)
 	}
+}
+
+// TestRMSNormBackward_FiniteDifference verifies that Backward() returns gradients
+// consistent with numerical finite-difference approximation.
+// For each input element i:
+//
+//	numerical_grad[i] = (loss(x + eps*e_i) - loss(x - eps*e_i)) / (2*eps)
+//
+// where loss = sum(rmsnorm.Forward(x)).
+// The analytical gradient from Backward(dLoss=ones) must match within 1e-3.
+func TestRMSNormBackward_FiniteDifference(t *testing.T) {
+	ctx := context.Background()
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	tests := []struct {
+		name  string
+		shape []int
+		dim   int
+	}{
+		{name: "2D_batch2_dim4", shape: []int{2, 4}, dim: 4},
+		{name: "3D_batch2_seq2_dim4", shape: []int{2, 2, 4}, dim: 4},
+		{name: "3D_batch1_seq1_dim4", shape: []int{1, 1, 4}, dim: 4},
+		{name: "3D_batch1_seq3_dim4", shape: []int{1, 3, 4}, dim: 4},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			total := 1
+			for _, d := range tc.shape {
+				total *= d
+			}
+
+			// Create input data with moderate values to keep finite-difference
+			// error within FP32 tolerance.
+			inputData := make([]float32, total)
+			for i := range inputData {
+				inputData[i] = float32(i+1) * 0.1
+			}
+
+			// Create non-uniform gain weights to test gain gradient path
+			gainData := make([]float32, tc.dim)
+			for i := range gainData {
+				gainData[i] = 1.0 + float32(i)*0.1
+			}
+			gainTensor, err := tensor.New[float32]([]int{tc.dim}, gainData)
+			if err != nil {
+				t.Fatalf("failed to create gain tensor: %v", err)
+			}
+			gainParam, err := graph.NewParameter[float32]("fd_gain", gainTensor, tensor.New[float32])
+			if err != nil {
+				t.Fatalf("failed to create gain parameter: %v", err)
+			}
+
+			rms, err := NewRMSNormFromParam(engine, ops, float32(1e-6), gainParam)
+			if err != nil {
+				t.Fatalf("NewRMSNormFromParam failed: %v", err)
+			}
+
+			// --- Analytical gradient via Backward ---
+			inputTensor, err := tensor.New[float32](tc.shape, inputData)
+			if err != nil {
+				t.Fatalf("failed to create input tensor: %v", err)
+			}
+
+			_, err = rms.Forward(ctx, inputTensor)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			// dLoss/dOutput = ones (loss = sum of output)
+			onesData := make([]float32, total)
+			for i := range onesData {
+				onesData[i] = 1.0
+			}
+			onesTensor, err := tensor.New[float32](tc.shape, onesData)
+			if err != nil {
+				t.Fatalf("failed to create ones tensor: %v", err)
+			}
+
+			// Reset gain gradient to zero before backward
+			rms.gain.Gradient = nil
+
+			grads, err := rms.Backward(ctx, types.FullBackprop, onesTensor, inputTensor)
+			if err != nil {
+				t.Fatalf("Backward failed: %v", err)
+			}
+			analyticalGrad := grads[0].Data()
+
+			// --- Numerical gradient via finite differences ---
+			const eps = 1e-3
+			numericalGrad := make([]float32, total)
+
+			for i := range total {
+				// f(x + eps*e_i)
+				plusData := make([]float32, total)
+				copy(plusData, inputData)
+				plusData[i] += eps
+				lossPlus := rmsnormLoss(t, ctx, engine, ops, tc.shape, tc.dim, plusData, gainData)
+
+				// f(x - eps*e_i)
+				minusData := make([]float32, total)
+				copy(minusData, inputData)
+				minusData[i] -= eps
+				lossMinus := rmsnormLoss(t, ctx, engine, ops, tc.shape, tc.dim, minusData, gainData)
+
+				numericalGrad[i] = float32((lossPlus - lossMinus) / (2 * eps))
+			}
+
+			// Compare
+			maxDiff := float32(0)
+			for i := range total {
+				diff := float32(math.Abs(float64(analyticalGrad[i] - numericalGrad[i])))
+				if diff > maxDiff {
+					maxDiff = diff
+				}
+			}
+
+			if maxDiff > 1e-3 {
+				t.Errorf("max absolute difference between analytical and numerical gradient: %e (threshold 1e-3)", maxDiff)
+				// Print first few mismatches for debugging
+				for i := range min(total, 8) {
+					t.Logf("  [%d] analytical=%.6f numerical=%.6f diff=%.6e", i, analyticalGrad[i], numericalGrad[i], analyticalGrad[i]-numericalGrad[i])
+				}
+			}
+		})
+	}
+}
+
+// rmsnormLoss computes sum(RMSNorm(x)) using a fresh RMSNorm layer to avoid
+// cached tensor interference from other evaluations.
+func rmsnormLoss(t *testing.T, ctx context.Context, engine compute.Engine[float32], ops numeric.Arithmetic[float32], shape []int, dim int, data, gainData []float32) float64 {
+	t.Helper()
+	gainTensor, err := tensor.New[float32]([]int{dim}, gainData)
+	if err != nil {
+		t.Fatalf("rmsnormLoss: failed to create gain tensor: %v", err)
+	}
+	gainParam, err := graph.NewParameter[float32]("fd_loss_gain", gainTensor, tensor.New[float32])
+	if err != nil {
+		t.Fatalf("rmsnormLoss: failed to create gain param: %v", err)
+	}
+	rms, err := NewRMSNormFromParam(engine, ops, float32(1e-6), gainParam)
+	if err != nil {
+		t.Fatalf("rmsnormLoss: NewRMSNormFromParam failed: %v", err)
+	}
+	inputTensor, err := tensor.New[float32](shape, data)
+	if err != nil {
+		t.Fatalf("rmsnormLoss: failed to create input: %v", err)
+	}
+	output, err := rms.Forward(ctx, inputTensor)
+	if err != nil {
+		t.Fatalf("rmsnormLoss: Forward failed: %v", err)
+	}
+	var sum float64
+	for _, v := range output.Data() {
+		sum += float64(v)
+	}
+	return sum
 }
