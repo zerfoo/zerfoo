@@ -5,6 +5,30 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Wave 1 backward pass audit — 5 bugs fixed in RMSNorm and GQA backward
+
+**Type:** investigation
+**Tags:** backward, rmsnorm, gqa, attention, ReduceSum, training, gradient
+
+**Problem:** Wave 1 T8.1/T8.2 audit found 5 pre-existing bugs in backward pass implementations.
+RMSNorm: (1) ReduceSum(axis=-1) summed all axes instead of last axis, corrupting input gradients
+for multi-row inputs; (2) hardcoded 2-step reduction for gain gradient assumed 3D inputs, failing
+on 2D; (3) nil gain.Gradient crash on first backward call. GQA: (1) same ReduceSum(-1) bug in
+scaled_dot_product_attention.go softmax Jacobian; (2) reverseHeadReplication assumed interleaved
+KV layout [kv0,kv0,kv1,kv1] but forward uses tiled layout [kv0,kv1,kv0,kv1], producing wrong
+dK/dV gradients for grouped query attention.
+
+**Root cause:** ztensor ReduceSum treats negative axis values as "sum all axes" rather than
+indexing from the end (Python convention). All callers using axis=-1 must use
+len(shape)-1 explicitly. Separate issue: GQA head replication layout was undocumented.
+
+**Fix:** T8.1 (commit 36a3489 on wave-1-task-T8.1 branch): explicit positive axis, loop over
+ndim-1 for gain reduction, nil guard. T8.2 (wave-1-task-T8.2): same axis fix in SDPA, correct
+reshape in reverseHeadReplication. All merged to main at zerfoo@e4f9dae.
+
+**Impact:** Any code calling ReduceSum with negative axis is likely broken. Audit all callers.
+T8.7/T8.8 (E2E training tests) were unblocked by these fixes.
+
 ## 2026-03-17: Phase 27 T4.3 — Final benchmark after dp4a + arena reuse
 
 **Type:** benchmark
@@ -56,9 +80,11 @@ Blocks any training workload using RMSNorm (all modern transformer architectures
 If none executes, `r.rms` remains nil from struct initialization. Backward has no
 guard. Sibling `SimplifiedLayerNormalization` has the correct pattern at lines 152-154.
 
-**Fix:** Add nil guard at top of Backward (line 199):
+**Fix:** Added nil guard at top of Backward (line 199):
 `if r.rms == nil || r.inputTensor == nil { return nil, fmt.Errorf("...") }`
-Plus regression test calling Backward without Forward. Not yet applied.
+Applied in commit f956329 (zerfoo). Regression tests (before-Forward, happy path,
+double-Backward) added in commit 7ea8be3. Full normalization suite passes with
+race detector.
 
 **Impact:** Blocks downstream training workloads. Workaround: use LayerNorm instead.
 
