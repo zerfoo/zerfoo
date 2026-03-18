@@ -837,7 +837,7 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
   Generic over [T tensor.Numeric]; output [T_frames, hidden_dim];
   TestWhisperEncoder passes with synthetic mel input.
 
-- [ ] T16.3 Implement audio GGUF loader in inference/arch_whisper.go
+- [x] T16.3 Implement audio GGUF loader in inference/arch_whisper.go — DONE 2026-03-18: WhisperConfig, GGUF weight mapping, encoder graph builder, 5 tests
   Owner: Arch Eng  Est: 3h
   Deps: T16.2
   Acceptance: Loads Whisper GGUF weights; builds encoder graph;
@@ -895,7 +895,7 @@ Decision: docs/adr/054-agentic-tool-use-loop.md
   response includes tool_calls in message; streaming emits tool_calls delta events;
   TestOpenAIToolsAPI passes.
 
-- [ ] T17.6 Integration test: Wolf agent executes 5-step research plan
+- [x] T17.6 Integration test: agent executes 5-step research plan — DONE 2026-03-18: TestAgentIntegration 5 subtests, timeout safety, multi-tool steps
   Owner: ML Eng  Est: 2h
   Deps: T17.4, T17.5
   Acceptance: Agent given "Research BTCUSD and recommend position size" executes
@@ -925,14 +925,14 @@ Decision: docs/adr/055-neural-architecture-search.md
   architecture parameters alpha are learnable; forward pass differentiable through
   softmax weights; TestDARTSLayer passes with gradient check.
 
-- [ ] T18.3 Implement DARTS bilevel optimizer in training/nas/darts_optimizer.go
+- [x] T18.3 Implement DARTS bilevel optimizer in training/nas/darts_optimizer.go — DONE 2026-03-18: inner/outer loop alternation, convergence verified on toy task
   Owner: Research Eng  Est: 4h
   Deps: T18.2
   Acceptance: Bilevel optimization: alpha updated by validation gradient; w updated
   by training gradient; alternates per step; TestDARTSOptimizer converges on
   toy architecture search task.
 
-- [ ] T18.4 Implement hardware-aware latency estimator in training/nas/hw_estimator.go
+- [x] T18.4 Implement hardware-aware latency estimator in training/nas/hw_estimator.go — DONE 2026-03-18: OLS linear model, DGX Spark profile, R^2=0.9998
   Owner: Research Eng  Est: 3h
   Deps: T18.1
   Acceptance: LatencyEstimate(arch) predicts inference latency from op counts and
@@ -977,7 +977,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   weights from top 20% to bottom 20% with perturbation; TestPBT produces
   better final metric than random search in 50 trials on toy task.
 
-- [ ] T19.3 Implement AutoML loop coordinator in training/automl/coordinator.go
+- [x] T19.3 Implement AutoML loop coordinator in training/automl/coordinator.go — DONE 2026-03-18: pluggable strategy, Worker interface, early stopping, mock worker tests
   Owner: Research Eng  Est: 3h
   Deps: T19.1, T19.2
   Acceptance: Coordinator orchestrates search over configurable space (LR, rank,
@@ -1027,20 +1027,20 @@ Note: Requires founder approval before implementation (per Feza governance).
   Acceptance: TenantRegistry manages per-API-key quotas; request routing enforces
   max_concurrent_requests and max_tokens_per_minute; TestTenantIsolation passes.
 
-- [ ] T21.2 Implement token metering middleware in serve/cloud/billing.go
+- [x] T21.2 Implement token metering middleware in serve/cloud/billing.go — DONE 2026-03-18: UsageRecorder interface, NDJSONRecorder, HTTP middleware, 7 tests
   Owner: Infra Eng  Est: 3h
   Deps: T21.1
   Acceptance: Middleware counts prompt+completion tokens per request; usage event
   published to NDJSON file (Kafka adapter configurable); TestBillingMiddleware passes.
 
-- [ ] T21.3 Implement GPU model LRU eviction in serve/cloud/resource_manager.go
+- [x] T21.3 Implement GPU model LRU eviction in serve/cloud/resource_manager.go — DONE 2026-03-18: VRAM budget tracking, LRU eviction, evict callback, 12 tests
   Owner: Infra Eng  Est: 4h
   Deps: T14.1
   Acceptance: ResourceManager tracks model VRAM usage; evicts LRU model when new
   model load would exceed memory budget; model reload from GGUF < 10s for 7B;
   TestResourceManager passes.
 
-- [ ] T21.4 GKE deployment Terraform in infra/terraform/zerfoo-cloud/
+- [x] T21.4 GKE deployment Terraform in infra/terraform/zerfoo-cloud/ — DONE 2026-03-18: 6 .tf files, GKE+GPU node pool, Cloud Run gateway, GCS bucket
   Owner: Infra Eng  Est: 4h
   Deps: none
   Acceptance: Terraform provisions GKE cluster with GPU node pool; Cloud Run API
