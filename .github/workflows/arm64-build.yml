@@ -1,0 +1,45 @@
+name: arm64-build
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+concurrency:
+  group: arm64-build-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GONOSUMDB: 'github.com/zerfoo/*'
+  GONOPROXY: 'github.com/zerfoo/*'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-1.25-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-1.25-${{ matrix.goos }}-${{ matrix.goarch }}-
+      - name: Vet
+        run: go vet ./cmd/zerfoo-edge/...
+      - name: Cross-compile zerfoo-edge
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o zerfoo-edge-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/zerfoo-edge/...
+      - name: Verify binary exists
+        run: test -f zerfoo-edge-${{ matrix.goos }}-${{ matrix.goarch }}
