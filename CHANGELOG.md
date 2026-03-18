@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0](https://github.com/zerfoo/zerfoo/compare/v1.5.0...v1.6.0) (2026-03-18)
+
+
+### Features
+
+* **plan:** add Mamba 3 architecture tasks T2.8-T2.12 ([f59490c](https://github.com/zerfoo/zerfoo/commit/f59490cfddee61669976bf033caae1dc5fb73726))
+
 ## [1.5.0](https://github.com/zerfoo/zerfoo/compare/v1.4.1...v1.5.0) (2026-03-18)
 
 
