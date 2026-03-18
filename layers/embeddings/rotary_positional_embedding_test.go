@@ -655,6 +655,104 @@ func TestRotaryPositionalEmbedding_PositionOffset(t *testing.T) {
 	})
 }
 
+func TestRoPEBackward(t *testing.T) {
+	// Finite difference verification of the RoPE backward pass.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	const (
+		batch   = 2
+		seqLen  = 4
+		headDim = 8
+		eps     = 1e-4
+		tol     = 1e-3
+	)
+
+	rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen, WithRotaryBase(10000.0))
+	if err != nil {
+		t.Fatalf("NewRotaryPositionalEmbedding failed: %v", err)
+	}
+
+	// Create input with non-trivial values.
+	inputData := make([]float64, batch*seqLen*headDim)
+	for i := range inputData {
+		inputData[i] = float64(i%11-5) * 0.1
+	}
+	input, err := tensor.New[float64]([]int{batch, seqLen, headDim}, inputData)
+	if err != nil {
+		t.Fatalf("input tensor: %v", err)
+	}
+
+	// Forward pass.
+	out, err := rpe.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Loss = sum(output). dLoss/dOutput = ones.
+	dOut, err := tensor.New[float64](out.Shape(), nil)
+	if err != nil {
+		t.Fatalf("dOut tensor: %v", err)
+	}
+	for i := range dOut.Data() {
+		dOut.Data()[i] = 1.0
+	}
+
+	// Backward pass.
+	grads, err := rpe.Backward(ctx, types.FullBackprop, dOut)
+	if err != nil {
+		t.Fatalf("Backward failed: %v", err)
+	}
+	if len(grads) != 1 {
+		t.Fatalf("expected 1 gradient, got %d", len(grads))
+	}
+	analyticGrad := grads[0].Data()
+
+	// Finite difference: for each input element, compute
+	// (f(x+eps) - f(x-eps)) / (2*eps) and compare with analytic gradient.
+	n := len(inputData)
+	for i := 0; i < n; i++ {
+		origVal := inputData[i]
+
+		// f(x + eps)
+		inputData[i] = origVal + eps
+		inPlus, _ := tensor.New[float64]([]int{batch, seqLen, headDim}, inputData)
+		// Must create a fresh RoPE to avoid stale cached slices.
+		rpePlus, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen, WithRotaryBase(10000.0))
+		outPlus, err := rpePlus.Forward(ctx, inPlus)
+		if err != nil {
+			t.Fatalf("Forward(+eps) failed at i=%d: %v", i, err)
+		}
+		sumPlus := 0.0
+		for _, v := range outPlus.Data() {
+			sumPlus += v
+		}
+
+		// f(x - eps)
+		inputData[i] = origVal - eps
+		inMinus, _ := tensor.New[float64]([]int{batch, seqLen, headDim}, inputData)
+		rpeMinus, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen, WithRotaryBase(10000.0))
+		outMinus, err := rpeMinus.Forward(ctx, inMinus)
+		if err != nil {
+			t.Fatalf("Forward(-eps) failed at i=%d: %v", i, err)
+		}
+		sumMinus := 0.0
+		for _, v := range outMinus.Data() {
+			sumMinus += v
+		}
+
+		// Restore
+		inputData[i] = origVal
+
+		numericGrad := (sumPlus - sumMinus) / (2 * eps)
+		diff := math.Abs(numericGrad - analyticGrad[i])
+		if diff > tol {
+			t.Errorf("gradient mismatch at index %d: numeric=%.6f analytic=%.6f diff=%.6f",
+				i, numericGrad, analyticGrad[i], diff)
+		}
+	}
+}
+
 func TestRotaryPositionalEmbedding_PartialRotation_ForwardBackward(t *testing.T) {
 	ctx := context.Background()
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
