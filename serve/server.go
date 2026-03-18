@@ -225,9 +225,13 @@ type ChatCompletionRequest struct {
 }
 
 // ChatMessage is a single message in the chat.
+// Content can be either a plain string or an array of content parts
+// (for vision requests with type:"text" and type:"image_url").
+// Custom JSON unmarshaling is in vision.go.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ImageURLs []ImageURL `json:"-"`
 }
 
 // CompletionRequest represents the OpenAI completion request.
@@ -391,10 +395,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		opts = append(opts, inference.WithGrammar(g))
 	}
 
-	// Convert messages.
+	// Convert messages and fetch any images.
 	messages := make([]inference.Message, len(req.Messages))
 	for i, m := range req.Messages {
 		messages[i] = inference.Message{Role: m.Role, Content: m.Content}
+		if len(m.ImageURLs) > 0 {
+			images, err := fetchImages(r.Context(), m.ImageURLs)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "image fetch error: "+err.Error())
+				return
+			}
+			messages[i].Images = images
+		}
 	}
 
 	if req.Stream {
