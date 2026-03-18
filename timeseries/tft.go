@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
@@ -19,12 +18,6 @@ type TFTConfig struct {
 	NHeads            int
 	NHorizons         int
 	Quantiles         []float64
-}
-
-// linearLayer holds weights and biases for a single linear transformation.
-type linearLayer struct {
-	weights *tensor.TensorNumeric[float32]
-	biases  *tensor.TensorNumeric[float32]
 }
 
 // grnWeights holds the parameters for a Gated Residual Network.
@@ -592,27 +585,6 @@ func (m *TFT) layerNorm(
 		return nil, err
 	}
 	return m.engine.Add(ctx, scaled, bias)
-}
-
-// newLinearLayer creates a linear layer with He (Kaiming) initialization.
-func newLinearLayer(in, out int) (linearLayer, error) {
-	scale := float32(math.Sqrt(2.0 / float64(in)))
-	wData := make([]float32, in*out)
-	for i := range wData {
-		wData[i] = float32(rand.NormFloat64()) * scale
-	}
-	w, err := tensor.New[float32]([]int{in, out}, wData)
-	if err != nil {
-		return linearLayer{}, err
-	}
-
-	bData := make([]float32, out)
-	b, err := tensor.New[float32]([]int{1, out}, bData)
-	if err != nil {
-		return linearLayer{}, err
-	}
-
-	return linearLayer{weights: w, biases: b}, nil
 }
 
 // newGRN creates a Gated Residual Network with initialized weights.

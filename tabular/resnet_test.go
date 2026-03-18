@@ -1,7 +1,6 @@
 package tabular
 
 import (
-	"math"
 	"testing"
 )
 
@@ -249,25 +248,35 @@ func TestTabResNet_Train(t *testing.T) {
 	}
 
 	// Test gradient flow by verifying that small weight changes affect output.
-	dir1, conf1, err := m.Predict([]float64{1.0, 0.0})
+	_, _, err = m.Predict([]float64{1.0, 0.0})
 	if err != nil {
 		t.Fatalf("Predict before perturbation: %v", err)
 	}
 
-	// Perturb the head weights significantly.
+	// Perturb the head weights asymmetrically: zero out all except class 0.
 	headWeights := m.head.weights.Data()
+	cols := 3 // number of output classes
 	for i := range headWeights {
-		headWeights[i] += 10.0
+		if i%cols == 0 {
+			headWeights[i] = 100.0
+		} else {
+			headWeights[i] = -100.0
+		}
 	}
+	// Also set biases to strongly favor class 0.
+	headBiases := m.head.biases.Data()
+	headBiases[0] = 100.0
+	headBiases[1] = -100.0
+	headBiases[2] = -100.0
 
-	dir2, conf2, err := m.Predict([]float64{1.0, 0.0})
+	dir2, _, err := m.Predict([]float64{1.0, 0.0})
 	if err != nil {
 		t.Fatalf("Predict after perturbation: %v", err)
 	}
 
-	// After large perturbation, output should change.
-	if dir1 == dir2 && math.Abs(conf1-conf2) < 1e-6 {
-		t.Error("output did not change after weight perturbation — gradient flow may be broken")
+	// After extreme perturbation, output should be class 0 (Long).
+	if dir2 != Long {
+		t.Errorf("expected Long after extreme perturbation toward class 0, got %v", dir2)
 	}
 }
 

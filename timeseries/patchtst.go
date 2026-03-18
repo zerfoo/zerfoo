@@ -28,12 +28,6 @@ func (c PatchTSTConfig) NumPatches() int {
 	return (c.InputLength-c.PatchLength)/c.Stride + 1
 }
 
-// linearLayer holds weights and biases for a linear projection.
-type linearLayer struct {
-	weights *tensor.TensorNumeric[float32]
-	biases  *tensor.TensorNumeric[float32]
-}
-
 // encoderLayer holds the weights for one transformer encoder layer.
 type encoderLayer struct {
 	qProj linearLayer
@@ -103,7 +97,7 @@ func NewPatchTST(config PatchTSTConfig, engine compute.Engine[float32], ops nume
 	var err error
 
 	// Patch embedding: patch_length -> d_model.
-	m.patchEmb, err = newLinear(config.PatchLength, config.DModel)
+	m.patchEmb, err = newLinearXavier(config.PatchLength, config.DModel)
 	if err != nil {
 		return nil, fmt.Errorf("patchtst: patch embedding: %w", err)
 	}
@@ -129,7 +123,7 @@ func NewPatchTST(config PatchTSTConfig, engine compute.Engine[float32], ops nume
 	}
 
 	// Output head: flatten num_patches * d_model -> output_dim.
-	m.head, err = newLinear(numPatches*config.DModel, config.OutputDim)
+	m.head, err = newLinearXavier(numPatches*config.DModel, config.OutputDim)
 	if err != nil {
 		return nil, fmt.Errorf("patchtst: output head: %w", err)
 	}
@@ -580,27 +574,6 @@ func (m *PatchTST) linear(ctx context.Context, x *tensor.TensorNumeric[float32],
 	return m.engine.Add(ctx, out, l.biases)
 }
 
-// newLinear creates a linear layer with Xavier initialization.
-func newLinear(in, out int) (linearLayer, error) {
-	scale := float32(math.Sqrt(2.0 / float64(in+out)))
-	wData := make([]float32, in*out)
-	for i := range wData {
-		wData[i] = float32(rand.NormFloat64()) * scale
-	}
-	w, err := tensor.New[float32]([]int{in, out}, wData)
-	if err != nil {
-		return linearLayer{}, err
-	}
-
-	bData := make([]float32, out)
-	b, err := tensor.New[float32]([]int{1, out}, bData)
-	if err != nil {
-		return linearLayer{}, err
-	}
-
-	return linearLayer{weights: w, biases: b}, nil
-}
-
 // newEncoderLayer creates a single transformer encoder layer.
 func newEncoderLayer(dModel, nHeads int) (encoderLayer, error) {
 	var l encoderLayer
@@ -608,27 +581,27 @@ func newEncoderLayer(dModel, nHeads int) (encoderLayer, error) {
 
 	ffnDim := dModel * 4
 
-	l.qProj, err = newLinear(dModel, dModel)
+	l.qProj, err = newLinearXavier(dModel, dModel)
 	if err != nil {
 		return l, fmt.Errorf("q proj: %w", err)
 	}
-	l.kProj, err = newLinear(dModel, dModel)
+	l.kProj, err = newLinearXavier(dModel, dModel)
 	if err != nil {
 		return l, fmt.Errorf("k proj: %w", err)
 	}
-	l.vProj, err = newLinear(dModel, dModel)
+	l.vProj, err = newLinearXavier(dModel, dModel)
 	if err != nil {
 		return l, fmt.Errorf("v proj: %w", err)
 	}
-	l.oProj, err = newLinear(dModel, dModel)
+	l.oProj, err = newLinearXavier(dModel, dModel)
 	if err != nil {
 		return l, fmt.Errorf("o proj: %w", err)
 	}
-	l.ffn1, err = newLinear(dModel, ffnDim)
+	l.ffn1, err = newLinearXavier(dModel, ffnDim)
 	if err != nil {
 		return l, fmt.Errorf("ffn1: %w", err)
 	}
-	l.ffn2, err = newLinear(ffnDim, dModel)
+	l.ffn2, err = newLinearXavier(ffnDim, dModel)
 	if err != nil {
 		return l, fmt.Errorf("ffn2: %w", err)
 	}

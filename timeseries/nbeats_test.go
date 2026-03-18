@@ -5,15 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
-
-func newTestEngine() (compute.Engine[float32], numeric.Arithmetic[float32]) {
-	ops := numeric.Float32Ops{}
-	return compute.NewCPUEngine[float32](ops), ops
-}
 
 func TestNBEATS_NewValidation(t *testing.T) {
 	engine, ops := newTestEngine()
