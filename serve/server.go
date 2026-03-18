@@ -28,10 +28,11 @@ type Server struct {
 	draftModel *inference.Model // optional; enables speculative decoding
 	mux        *http.ServeMux
 	batch      *BatchScheduler // optional; nil means direct calls
-	unloaded   bool            // true after DELETE /v1/models/:id
-	logger     log.Logger
-	metrics    *ServerMetrics
-	collector  runtime.Collector
+	unloaded    bool            // true after DELETE /v1/models/:id
+	transcriber Transcriber     // optional; enables /v1/audio/transcriptions
+	logger      log.Logger
+	metrics     *ServerMetrics
+	collector   runtime.Collector
 }
 
 // ServerOption configures the server.
@@ -108,6 +109,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("GET /v1/models", s.recoveryMiddleware(s.handleModels))
 	s.mux.HandleFunc("GET /v1/models/{id...}", s.recoveryMiddleware(s.handleModelInfo))
 	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.recoveryMiddleware(s.handleModelDelete))
+	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.recoveryMiddleware(s.handleAudioTranscriptions))
 	s.mux.HandleFunc("GET /openapi.yaml", s.recoveryMiddleware(handleOpenAPISpec))
 	s.mux.HandleFunc("GET /metrics", handleMetrics(s.collector))
 	return s
