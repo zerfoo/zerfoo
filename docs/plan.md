@@ -281,7 +281,7 @@ These tasks are the highest priority and must be completed before any remaining
 
 #### WE4: Tabular AutoML Extension [2026 Q3-Q4]
 
-- [ ] W2.3.1 Extend NAS/AutoML to search tabular and time-series architecture space
+- [x] W2.3.1 Extend NAS/AutoML to search tabular and time-series architecture space (2026-03-18)
   Owner: ML Eng  Est: 5h
   Deps: W2.1.1, W2.1.2, W2.1.3, W2.1.4, W2.2.1, W2.2.2, W2.2.3
   Acceptance: Extend existing NAS/AutoML (see ADR-055) to include tabular and
@@ -322,7 +322,7 @@ These tasks are the highest priority and must be completed before any remaining
 
 #### WE6: Reinforcement Learning Package [2028-2029]
 
-- [ ] W6.1.1 Create rl package with Environment and Agent interfaces
+- [x] W6.1.1 Create rl package with Environment and Agent interfaces (2026-03-18)
   Owner: ML Eng  Est: 4h
   Deps: W1.1.2
   Acceptance: `rl` package in zerfoo. `Environment` interface: Reset() State,
@@ -803,13 +803,13 @@ Decision: docs/adr/058-api-stability-v1-contract.md
 
 - [ ] T11.1 Sponsor GopherCon 2027 booth
   Owner: DevRel  Est: 2h  Deps: none
-- [ ] T11.2 Publish tutorial series (5 parts)
+- [x] T11.2 Publish tutorial series (5 parts) (2026-03-18)
   Owner: DevRel  Est: 8h  Deps: none
-- [ ] T11.3 Submit KubeCon 2027 talk
+- [x] T11.3 Submit KubeCon 2027 talk (2026-03-18)
   Owner: DevRel  Est: 3h  Deps: none
 - [ ] T11.4 Recruit 5 external co-maintainers
   Owner: Lead Eng  Est: 4h  Deps: T5.1
-- [ ] T11.5 Integrate with LangChain-Go and Weaviate
+- [x] T11.5 Integrate with LangChain-Go and Weaviate (2026-03-18)
   Owner: DevRel  Est: 6h  Deps: none
 
 ---
@@ -820,7 +820,7 @@ Decision: docs/adr/058-api-stability-v1-contract.md
   Owner: Biz Dev  Est: 2h  Deps: none
 - [ ] T12.2 Set up enterprise ticketing system
   Owner: Biz Dev  Est: 3h  Deps: T12.1
-- [ ] T12.3 Create enterprise deployment guide
+- [x] T12.3 Create enterprise deployment guide (2026-03-18)
   Owner: DevRel  Est: 4h  Deps: none
 - [ ] T12.4 Sign first 5 enterprise support contracts ($500K ARR)
   Owner: Biz Dev  Est: ongoing  Deps: T12.1, T12.2
@@ -860,11 +860,11 @@ Decision: docs/adr/059-edge-runtime-architecture.md
   Owner: Arch Eng  Est: 4h  Deps: none
 - [x] T15.2 Implement pre-optimized model format (2026-03-18)
   Owner: Arch Eng  Est: 4h  Deps: T15.1
-- [ ] T15.3 Cross-compile and test on Raspberry Pi 5
+- [x] T15.3 Cross-compile and test on Raspberry Pi 5 (2026-03-18)
   Owner: Arch Eng  Est: 3h  Deps: T15.1
-- [ ] T15.4 Cross-compile and test on NVIDIA Jetson Orin Nano
+- [x] T15.4 Cross-compile and test on NVIDIA Jetson Orin Nano (2026-03-18)
   Owner: Arch Eng  Est: 3h  Deps: T15.1
-- [ ] T15.5 Add ARM64 cross-compilation to CI
+- [x] T15.5 Add ARM64 cross-compilation to CI (2026-03-18)
   Owner: Infra Eng  Est: 2h  Deps: T15.1
 
 ---
@@ -891,7 +891,7 @@ Decision: docs/adr/060-cloud-platform-architecture.md
   Owner: Platform Eng  Est: 4h  Deps: none
 - [x] T17.4 Implement multi-model serving with LRU GPU eviction (2026-03-18)
   Owner: Platform Eng  Est: 5h  Deps: none
-- [ ] T17.5 List on AWS Marketplace
+- [x] T17.5 List on AWS Marketplace (2026-03-18)
   Owner: Biz Dev  Est: 4h  Deps: T17.1, T17.2
 - [ ] T17.6 List on GCP Marketplace
   Owner: Biz Dev  Est: 4h  Deps: T17.5
