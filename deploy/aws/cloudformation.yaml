@@ -1,0 +1,406 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Zerfoo ML Inference — AWS Marketplace deployment on ECS with ALB,
+  autoscaling, and CloudWatch monitoring.
+
+Parameters:
+  ProductCode:
+    Type: String
+    Description: AWS Marketplace product code for metering.
+
+  ContainerImage:
+    Type: String
+    Description: ECR image URI for the Zerfoo inference container.
+    Default: 709825985650.dkr.ecr.us-east-1.amazonaws.com/zerfoo/zerfoo:latest
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC in which to deploy the ECS service and ALB.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two public subnets for the ALB; private subnets for ECS tasks.
+
+  TaskCpu:
+    Type: Number
+    Default: 4096
+    Description: ECS task CPU units (1024 = 1 vCPU).
+
+  TaskMemory:
+    Type: Number
+    Default: 16384
+    Description: ECS task memory in MiB.
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: Initial number of ECS tasks.
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+    Description: Minimum number of ECS tasks for autoscaling.
+
+  MaxCapacity:
+    Type: Number
+    Default: 10
+    Description: Maximum number of ECS tasks for autoscaling.
+
+  TargetRequestsPerTask:
+    Type: Number
+    Default: 50
+    Description: Target requests per task for ALB-based autoscaling.
+
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM certificate ARN for HTTPS listener (leave empty for HTTP-only).
+
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, '']]
+
+Resources:
+
+  # ── Cluster ─────────────────────────────────────────────────────────────────
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${AWS::StackName}-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Product
+          Value: zerfoo
+        - Key: Stack
+          Value: !Ref AWS::StackName
+
+  # ── IAM ─────────────────────────────────────────────────────────────────────
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-task-execution'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MarketplaceMetering
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aws-marketplace:MeterUsage
+                  - aws-marketplace:ResolveCustomer
+                Resource: '*'
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-autoscaling'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole
+
+  # ── Networking ───────────────────────────────────────────────────────────────
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB — allow HTTP and HTTPS inbound
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS tasks — allow traffic from ALB only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  # ── Load Balancer ────────────────────────────────────────────────────────────
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${AWS::StackName}-alb'
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets: !Ref SubnetIds
+      Tags:
+        - Key: Stack
+          Value: !Ref AWS::StackName
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${AWS::StackName}-tg'
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - !If
+          - HasCertificate
+          - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: '443'
+              StatusCode: HTTP_301
+          - Type: forward
+            TargetGroupArn: !Ref TargetGroup
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ── ECS Task & Service ───────────────────────────────────────────────────────
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}'
+      RetentionInDays: 30
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-task'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: zerfoo
+          Image: !Ref ContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: ZERFOO_MARKETPLACE_PRODUCT_CODE
+              Value: !Ref ProductCode
+            - Name: ZERFOO_PORT
+              Value: '8080'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: zerfoo
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'curl -sf http://localhost:8080/health || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HTTPListener
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-service'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+          Subnets: !Ref SubnetIds
+      LoadBalancers:
+        - ContainerName: zerfoo
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      HealthCheckGracePeriodSeconds: 60
+
+  # ── Autoscaling ──────────────────────────────────────────────────────────────
+
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub 'service/${ECSCluster}/${ECSService.Name}'
+      RoleARN: !GetAtt AutoScalingRole.Arn
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  ScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-alb-requests-per-task'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: !Ref TargetRequestsPerTask
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Sub
+            - '${ALBSuffix}/${TargetGroupSuffix}'
+            - ALBSuffix: !GetAtt ALB.LoadBalancerFullName
+              TargetGroupSuffix: !GetAtt TargetGroup.TargetGroupFullName
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # ── CloudWatch Alarms ────────────────────────────────────────────────────────
+
+  HighP99LatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-high-p99-latency'
+      AlarmDescription: P99 latency exceeds 5 seconds
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: p99
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  UnhealthyTaskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-unhealthy-tasks'
+      AlarmDescription: ECS service has unhealthy tasks
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+        - Name: LoadBalancer
+          Value: !GetAtt ALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  High5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-high-5xx'
+      AlarmDescription: ALB 5xx error rate exceeds 5%
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ALB.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the Application Load Balancer.
+    Value: !GetAtt ALB.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-alb-dns'
+
+  ServiceArn:
+    Description: ARN of the ECS service.
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub '${AWS::StackName}-service-arn'
+
+  ClusterName:
+    Description: Name of the ECS cluster.
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-cluster-name'
+
+  LogGroupName:
+    Description: CloudWatch log group for ECS task logs.
+    Value: !Ref LogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-log-group'
