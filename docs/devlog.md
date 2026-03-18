@@ -5,6 +5,25 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: Mamba-3 vs Transformer decode throughput benchmark
+
+**Type:** benchmark
+**Tags:** mamba, transformer, throughput, sequence-length
+
+**Problem:** Compare Mamba-3 SSM vs Transformer attention decode throughput at context lengths 512, 2048, 8192.
+**Root cause:** N/A (synthetic benchmark — DGX verification pending).
+**Fix:** N/A
+**Impact:** Mamba-3 shows ~3.97x speedup at seq=8192 vs Transformer; confirms O(1) recurrence advantage for long contexts. At seq=512 speedup is 2.73x, at seq=2048 it is 2.98x. Benchmark uses FLOPs-based estimates with 30% compute utilization on 150 TFLOPS GPU. Standalone harness at `cmd/bench_mamba/main.go`.
+
+**Results (24-layer, d_model=2048, d_state=16, d_inner=4096, 16 heads):**
+| SeqLen | Mamba tok/s | Transformer tok/s | Speedup |
+|--------|------------|-------------------|---------|
+| 512    | 36952      | 13547             | 2.73x   |
+| 2048   | 36952      | 12418             | 2.98x   |
+| 8192   | 36952      | 9313              | 3.97x   |
+
+---
+
 ## 2026-03-18: Multi-Architecture Benchmark — All 6 Supported Architectures
 
 **Type:** benchmark
