@@ -243,7 +243,10 @@ func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, mode typ
 		return nil, err
 	}
 
-	sum, err := sdpa.engine.ReduceSum(ctx, mul, -1, true)
+	// Use explicit last axis index instead of -1 because ReduceSum treats
+	// negative axes as "sum over all axes" rather than counting from the end.
+	lastAxis := len(mul.Shape()) - 1
+	sum, err := sdpa.engine.ReduceSum(ctx, mul, lastAxis, true)
 	if err != nil {
 		return nil, err
 	}
