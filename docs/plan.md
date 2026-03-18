@@ -850,7 +850,7 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
   conditioned generation; Wolf use case: transcribe Fed call audio, extract key signals;
   TestAudioTextSession passes.
 
-- [ ] T16.5 Add audio input to serve API (multipart/form-data)
+- [x] T16.5 Add audio input to serve API (multipart/form-data) (2026-03-17)
   Owner: Infra Eng  Est: 2h
   Deps: T16.4
   Acceptance: /v1/audio/transcriptions endpoint; accepts audio file upload;
@@ -945,7 +945,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   Acceptance: Discretize(alpha_weights) selects argmax op per edge; validates
   resulting architecture against max_params constraint; TestDiscretize passes.
 
-- [ ] T18.6 Implement NAS export to GGUF in training/nas/export.go
+- [x] T18.6 Implement NAS export to GGUF in training/nas/export.go (2026-03-17)
   Owner: Research Eng  Est: 3h
   Deps: T18.5, T12.7
   Acceptance: Exports discovered architecture + trained weights as valid GGUF;
