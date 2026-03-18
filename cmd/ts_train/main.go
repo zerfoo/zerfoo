@@ -1,8 +1,8 @@
-// Command wolf_train trains a PatchTST signal model on offline feature data.
+// Command ts_train trains a PatchTST time-series signal model on offline feature data.
 //
 // Usage:
 //
-//	wolf_train --features-dir features/ --epochs 50 --output wolf_model.gguf
+//	ts_train --features-dir features/ --epochs 50 --output ts_model.gguf
 package main
 
 import (
@@ -24,6 +24,7 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+	// TODO: move to inference/timeseries/ during wolf->timeseries rename
 	"github.com/zerfoo/zerfoo/inference/wolf"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/zerfoo/training/loss"
@@ -61,7 +62,7 @@ func parseFlags() config {
 	flag.Float64Var(&cfg.lr, "lr", 1e-4, "learning rate")
 	flag.Float64Var(&cfg.valSplit, "val-split", 0.2, "fraction for validation")
 	flag.IntVar(&cfg.patience, "patience", 5, "early stopping patience")
-	flag.StringVar(&cfg.output, "output", "wolf_model.gguf", "output GGUF path")
+	flag.StringVar(&cfg.output, "output", "ts_model.gguf", "output GGUF path")
 	flag.Parse()
 	return cfg
 }
@@ -377,7 +378,7 @@ func computeQuantileLossAndGrad(output, targetTensor *tensor.TensorNumeric[float
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "wolf_train: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ts_train: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -414,6 +415,7 @@ func run() error {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
+	// TODO: move to inference/timeseries/ during wolf->timeseries rename
 	patchCfg := wolf.PatchTSTConfig{
 		PatchLen:  cfg.patchLen,
 		Stride:    cfg.stride,

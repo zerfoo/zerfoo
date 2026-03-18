@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-func TestWolfTrainFlags(t *testing.T) {
+func TestTSTrainFlags(t *testing.T) {
 	// Save and restore os.Args and flag state.
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 
-	os.Args = []string{"wolf_train"}
+	os.Args = []string{"ts_train"}
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 
 	cfg := parseFlags()
@@ -34,7 +34,7 @@ func TestWolfTrainFlags(t *testing.T) {
 		{"lr", cfg.lr, 1e-4},
 		{"val-split", cfg.valSplit, 0.2},
 		{"patience", cfg.patience, 5},
-		{"output", cfg.output, "wolf_model.gguf"},
+		{"output", cfg.output, "ts_model.gguf"},
 	}
 
 	for _, tt := range tests {
@@ -89,7 +89,7 @@ func TestTimeOrderedSplit(t *testing.T) {
 
 func TestEarlyStopping(t *testing.T) {
 	// Simulate val losses: improves at epoch 1 and 2, then stalls.
-	// With patience=3, should stop at epoch 6 (3 epochs without improvement after epoch 2).
+	// With patience=3, should stop at epoch 5 (3 epochs without improvement after epoch 2).
 	valLosses := []float32{0.5, 0.4, 0.41, 0.42, 0.43, 0.44}
 	patience := 3
 
