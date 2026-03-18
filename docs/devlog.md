@@ -5,6 +5,18 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-17: NAS signal model search runner (T18.7)
+
+**Type:** finding
+**Tags:** nas, signal-model, time-series, darts, patchtst
+
+**Problem:** Implement a NAS search runner for time-series signal models using DARTS bilevel optimization.
+**Root cause:** N/A (new feature).
+**Fix:** Added `training/nas/signal_search.go` with `RunSignalNAS` function that configures a DARTS search space for PatchTST-like architectures (patch embedding, transformer layers, temporal pooling). Wires up the bilevel optimizer, discretization, and GGUF export. Includes `SignalSearchConfig`, `SignalDataProvider` interface, `SharpeRatio` utility, and `DefaultSignalSearchSpace` (4 nodes, pool/skip/zero ops).
+**Impact:** Full NAS pipeline validated in simulation: search -> discretize -> export -> round-trip load. `TestNASSignalSearch` confirms architecture discovery with measurable Sharpe ratio and exportable result. Actual DGX Spark results pending — run with real signal data on GPU to measure convergence and discovered architecture quality.
+
+---
+
 ## 2026-03-18: Plan trim -- Waves 1-10 complete, E1-E14 removed
 
 **Type:** finding
