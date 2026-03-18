@@ -35,6 +35,14 @@ type ModelConfig struct {
 	NumExperts         int // number of routed experts (expert_count)
 	NumExpertsPerToken int // experts activated per token (expert_used_count)
 	NumSharedExperts   int // number of shared experts (expert_shared_count)
+
+	// Vision encoder fields (LLaVA, multimodal models).
+	VisionImageSize  int    // vision encoder input image size (e.g. 336)
+	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
+	VisionHiddenSize int    // vision encoder hidden dimension
+	VisionNumHeads   int    // vision encoder attention heads
+	VisionNumLayers  int    // vision encoder transformer layers
+	ProjectorType    string // multi-modal projector type ("linear" or "mlp")
 }
 
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
@@ -146,6 +154,26 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
 		cfg.NumSharedExperts = int(v)
+	}
+
+	// Extract vision encoder fields (LLaVA and multimodal models).
+	if v, ok := f.GetUint32("clip.vision.image_size"); ok {
+		cfg.VisionImageSize = int(v)
+	}
+	if v, ok := f.GetUint32("clip.vision.patch_size"); ok {
+		cfg.VisionPatchSize = int(v)
+	}
+	if v, ok := f.GetUint32("clip.vision.embedding_length"); ok {
+		cfg.VisionHiddenSize = int(v)
+	}
+	if v, ok := f.GetUint32("clip.vision.head_count"); ok {
+		cfg.VisionNumHeads = int(v)
+	}
+	if v, ok := f.GetUint32("clip.vision.block_count"); ok {
+		cfg.VisionNumLayers = int(v)
+	}
+	if v, ok := f.GetString("clip.vision.projector_type"); ok {
+		cfg.ProjectorType = v
 	}
 
 	return cfg, nil

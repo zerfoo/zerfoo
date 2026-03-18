@@ -54,6 +54,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("deepseek_v3", parseDeepSeekConfig)
 	r.Register("mamba", parseMambaConfig)
 	r.Register("jamba", parseJambaConfig)
+	r.Register("llava", parseLLaVAConfig)
 	return r
 }
 
@@ -319,6 +320,17 @@ func parseMambaConfig(raw map[string]interface{}) (*ModelMetadata, error) {
 	if meta.NumLayers == 0 {
 		meta.NumLayers = getInt(raw, "num_layers")
 	}
+	return meta, nil
+}
+
+// parseLLaVAConfig parses LLaVA-family config.json fields.
+// Extends Llama with vision encoder fields.
+func parseLLaVAConfig(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta, err := parseLlamaConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	meta.Architecture = "llava"
 	return meta, nil
 }
 

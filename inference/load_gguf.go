@@ -172,6 +172,8 @@ func buildArchGraph(
 		return buildWhisperGraph(tensors, cfg, engine)
 	case "llama4":
 		return buildLlama4Graph(tensors, cfg, engine)
+	case "llava":
+		return buildLLaVAGraph(tensors, cfg, engine)
 	default:
 		// Fall through to registry for dynamically registered architectures.
 		builder, ok := GetArchitecture(arch)
