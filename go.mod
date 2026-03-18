@@ -11,8 +11,9 @@ require (
 )
 
 require (
+	go.etcd.io/bbolt v1.4.3 // indirect
 	golang.org/x/net v0.25.0 // indirect
-	golang.org/x/sys v0.21.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 )
 
