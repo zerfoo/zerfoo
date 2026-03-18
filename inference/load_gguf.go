@@ -173,7 +173,12 @@ func buildArchGraph(
 	case "llama4":
 		return buildLlama4Graph(tensors, cfg, engine)
 	default:
-		return nil, nil, fmt.Errorf("unsupported architecture %q", arch)
+		// Fall through to registry for dynamically registered architectures.
+		builder, ok := GetArchitecture(arch)
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported architecture %q (registered: %v)", arch, ListArchitectures())
+		}
+		return builder(tensors, cfg, engine)
 	}
 }
 
