@@ -5,6 +5,86 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Decode hot path profiling — top 5 bottlenecks (T1.1)
+
+**Type:** investigation
+**Tags:** profiling, nsight, decode, hot-path, cuda, performance, dgx-spark
+
+**Problem:** Profile the autoregressive decode hot path to identify the top 5 performance bottlenecks for optimization prioritization. Analysis based on code-level trace of the critical path through `generate/generator.go`, `generate/session.go`, `layers/attention/grouped_query_attention.go`, and `inference/arch_common.go`.
+
+**Method:** Static analysis of the decode loop critical path, cross-referenced with kernel launch structure, memory access patterns, and CUDA graph capture boundaries. Profiling script `scripts/nsight-decode-profile.sh` created for DGX Spark nsight-sys validation.
+
+**Decode hot path per token (steady-state, CUDA graph captured):**
+```
+ResetPool → [decodeBuf update] → ExecutionPlan.Run():
+  EmbeddingLookup (Gather kernel)
+  Per-layer x N:
+    RMSNorm (input_layernorm)
+    GQA:
+      Merged QKV GEMV (Q4, single kernel) OR 3x separate Q/K/V MatMul
+      Fused QK Norm+RoPE (1 kernel) OR 4 separate kernels
+      KV Cache Update (offset_memcpy kernel)
+      Flash Attention Decode OR SDPA (MatMul + softmax + MatMul)
+      Output projection (MatMul)
+    FusedAddRMSNorm (residual + post_attention_layernorm)
+    FFN:
+      Merged Gate+Up GEMV (Q4, single kernel) OR 2x separate MatMul
+      SiLU activation + element-wise gate multiply
+      Down projection MatMul
+    Residual Add
+  Final RMSNorm
+  LM Head (MatMul, Q4 GEMV or cuBLAS SGEMM)
+→ sampleFromLogits (GPU argmax or D2H copy + CPU argmax)
+```
+
+**Top 5 Bottlenecks (predicted, pending nsight validation):**
+
+### 1. LM Head Projection — Vocabulary-sized MatMul
+**Location:** `inference/arch_llama.go:84-134` (`lmHeadNode.Forward`)
+**Impact:** Single largest kernel per decode step. For a 128k-vocab model (Llama 3), this is a GEMV of shape `[1, hidden_dim] x [hidden_dim, 128k]` — reading ~128k × hidden_dim × (Q4 = 0.5B/element) per token. Even with Q4 quantization, this is ~32MB of weight reads for hidden_dim=4096.
+**Evidence:** The LM head cannot be fused with anything upstream (it's the final projection). For Q4 weights, the Q4 GEMV kernel is used; for F32 weights, cuBLAS SGEMM is invoked. Both are memory-bandwidth-bound on the GV100 (900 GB/s).
+**Mitigation candidates:** Vocabulary pruning (top-k logit shortlist), FP8/INT4 LM head quantization, speculative decoding (amortizes LM head cost over K draft tokens).
+
+### 2. KV Cache Memory Bandwidth — D2D Copies on Cache Update
+**Location:** `generate/tensor_cache.go:18-68` (`TensorCache.Update`), `layers/attention/grouped_query_attention.go:311-339` (KV cache interaction)
+**Impact:** Each layer appends new K and V to GPU-resident cache via `offset_memcpy` kernel. At 32 layers, that's 64 D2D memcpy kernel launches per token. With FP32 KV, each layer reads/writes `2 × num_kv_heads × head_dim × 4 bytes` per position, plus the flash attention decode must read the entire KV history (`seq_len × num_kv_heads × head_dim × 4 bytes`) per layer.
+**Evidence:** For Gemma 3 1B at seq_len=2048: 18 layers × 2048 × 4 KV heads × 256 head_dim × 4 bytes × 2 (K+V) = ~300MB of KV reads per token across all layers. This is the dominant memory bandwidth consumer after the first few hundred tokens.
+**Mitigation candidates:** FP16 KV cache (already supported via `WithKVDtype("fp16")`), paged KV with block-granular eviction, GQA key-value compression.
+
+### 3. Per-Layer GEMV Projections — QKV + Output + FFN (5 GEMVs per layer)
+**Location:** `layers/attention/grouped_query_attention.go:316-339` (QKV), `layers/core/ffn.go` (gate+up+down)
+**Impact:** Each transformer layer executes 5 GEMV operations during decode: merged QKV (or 3 separate), output projection, merged gate+up (or 2 separate), and down projection. For a 32-layer model, that's 160 GEMV kernel launches. Even with merged QKV and gate+up optimizations, this is 96 kernel launches (3 per layer × 32 layers).
+**Evidence:** Q4 GEMV on GV100 is compute-bound for small matrices but memory-bandwidth-bound for larger ones. The merged QKV optimization (`MergeQ4Storage`) eliminates 2 launches per layer but the GEMV itself is still the core cost.
+**Mitigation candidates:** Megakernel compilation (already implemented in `generate/megakernel.go` — fuses all GEMVs into one launch), INT4 weight quantization with faster dequant kernels, persistent kernel approach.
+
+### 4. Kernel Launch Overhead — ~100+ Launches per Decode Step
+**Location:** Throughout the decode path; mitigated by CUDA graph capture in `generate/generator.go:246-283`
+**Impact:** Without CUDA graph capture, each decode step launches ~100-200 individual CUDA kernels (RMSNorm, GEMV, RoPE, softmax, element-wise ops, memcpy). At ~5µs per launch from the CPU driver, this adds ~0.5-1ms of pure launch overhead per token — significant when targeting >200 tok/s (5ms/token budget).
+**Evidence:** CUDA graph capture (`graph.NewCUDAGraphExecutor`) replaces these with a single graph replay (~10µs). However, graph capture has constraints: the `offset_memcpy` KV update kernel must use a GPU-resident counter (`gpuCounter` / `kvSeqLenCounter` in `TensorCache`) so the offset isn't frozen at capture time. If CUDA graph capture fails (logged at `generator.go:233`), fallback to per-instruction execution causes a major throughput regression.
+**Mitigation candidates:** Ensure CUDA graph capture succeeds on all supported architectures (monitor capture failure logs), megakernel codegen (eliminates launches entirely), persistent kernel scheduling.
+
+### 5. Logit Sampling — D2H Transfer for Non-Greedy Sampling
+**Location:** `generate/generator.go:488-614` (`sampleFromLogits`), `generate/session.go:472-582`
+**Impact:** For greedy decoding with GPU-resident logits, the GPU argmax fast path (`GPUArgmax`) copies only 4 bytes back to CPU. But for temperature/top-k/top-p sampling, the entire vocab logit vector must be copied D2H: `vocab_size × 4 bytes` = 512KB for a 128k vocab. This D2H transfer stalls the GPU pipeline.
+**Evidence:** The code at `generator.go:503-520` attempts GPU argmax first; if conditions aren't met (non-greedy, grammar masking, repetition penalty), it falls through to `gs.CopyTo(data)` which is a synchronous D2H of the full logit tensor. For streaming generation, this happens every token.
+**Mitigation candidates:** GPU-side top-k/top-p sampling kernel (compute softmax + multinomial on GPU, copy back only the selected token ID), GPU-side repetition penalty application, partial logit transfer (only top-K values).
+
+**Profiling script:** `scripts/nsight-decode-profile.sh` — runs `bench_tps` under `nsys profile` with CUDA/NVTX/osrt tracing and extracts top kernel durations. Execute on DGX Spark to validate predicted bottleneck ranking:
+```bash
+ssh ndungu@192.168.86.250
+cd /path/to/zerfoo
+./scripts/nsight-decode-profile.sh /path/to/gemma-3-1b-q4.gguf 128
+```
+
+**Next steps:**
+1. Run nsight trace on DGX Spark to validate bottleneck ranking with real kernel timings
+2. Confirm CUDA graph capture success rate on Gemma 3 / Llama 3 GGUF models
+3. Measure KV cache bandwidth consumption vs theoretical peak (900 GB/s on GV100)
+4. Profile megakernel vs per-instruction paths to quantify fusion benefit
+5. Benchmark GPU sampling kernel (if implemented) vs D2H+CPU sampling
+
+---
+
 ## 2026-03-17: NAS signal model search runner (T18.7)
 
 **Type:** finding
