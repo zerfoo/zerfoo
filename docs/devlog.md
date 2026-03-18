@@ -5,6 +5,27 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: Prefix Cache Hit Rate — Multi-Turn Chat Simulation
+
+**Type:** benchmark
+**Tags:** prefix-cache, kv-cache, benchmark, DGX
+
+**Problem:** Measure prefix cache hit rate and TTFT improvement on multi-turn workload.
+**Root cause:** N/A — measurement task.
+**Fix:** N/A
+**Results (10 users x 5 turns, 256-token system prompt, 32 history tokens/turn):**
+| Metric | Value | Target |
+|--------|-------|--------|
+| Hit rate | 98.0% | >= 60% |
+| TTFT reduction | 89.5% | >= 40% |
+| Total requests | 50 | — |
+| Cache hits | 49 | — |
+| Cache misses | 1 | — |
+
+**Impact:** Baseline for prefix cache effectiveness. The shared system prompt drives near-perfect hit rates across users; the first request from the first user is the only cold miss. Benchmark tool: `cmd/bench_prefix/main.go`.
+
+---
+
 ## 2026-03-18: Wave 1 backward pass audit — 5 bugs fixed in RMSNorm and GQA backward
 
 **Type:** investigation
