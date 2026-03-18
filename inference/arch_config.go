@@ -50,6 +50,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("phi3", parsePhiConfig)
 	r.Register("phi", parsePhiConfig)
 	r.Register("deepseek_v3", parseDeepSeekConfig)
+	r.Register("mamba", parseMambaConfig)
 	return r
 }
 
@@ -270,6 +271,25 @@ func getFloat(raw map[string]interface{}, key string) float64 {
 func getBool(raw map[string]interface{}, key string) bool {
 	v, _ := raw[key].(bool)
 	return v
+}
+
+// parseMambaConfig parses Mamba-family config.json fields.
+func parseMambaConfig(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta := &ModelMetadata{
+		Architecture: getString(raw, "model_type"),
+		VocabSize:    getInt(raw, "vocab_size"),
+		HiddenSize:   getInt(raw, "d_model"),
+		NumLayers:    getInt(raw, "num_hidden_layers"),
+		EOSTokenID:   getInt(raw, "eos_token_id"),
+		BOSTokenID:   getInt(raw, "bos_token_id"),
+	}
+	if meta.HiddenSize == 0 {
+		meta.HiddenSize = getInt(raw, "hidden_size")
+	}
+	if meta.NumLayers == 0 {
+		meta.NumLayers = getInt(raw, "num_layers")
+	}
+	return meta, nil
 }
 
 func getRopeScaling(raw map[string]interface{}) *RopeScalingConfig {
