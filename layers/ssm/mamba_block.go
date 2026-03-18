@@ -5,15 +5,33 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"math/rand/v2"
 
 	"github.com/zerfoo/zerfoo/layers/core"
+)
+
+// DiscretizationMode controls how the continuous SSM (A, B) is discretized.
+type DiscretizationMode int
+
+const (
+	// ZOH uses zero-order hold discretization (Mamba 1/2 default):
+	//   Ā = exp(Δ * A)
+	//   B̄ = Δ * B
+	ZOH DiscretizationMode = iota
+
+	// ExpTrap uses exponential-trapezoidal discretization (Mamba 3):
+	//   Ā = exp(Δ * A)
+	//   B̄ = Δ * (I + exp(Δ * A)) / 2 * B
+	//
+	// This gives richer system dynamics by taking a trapezoidal average of the
+	// continuous-time B at both endpoints of the discretization interval.
+	ExpTrap
 )
 
 func randomData[T tensor.Numeric](size int) []T {
@@ -49,6 +67,9 @@ type MambaBlock[T tensor.Numeric] struct {
 	dtRank  int
 	convKer int // conv1d kernel size
 
+	// Discretization mode (default: ZOH)
+	discMode DiscretizationMode
+
 	// Projections
 	inProj  *core.Linear[T] // d_model -> 2*d_inner
 	xProj   *core.Linear[T] // d_inner -> dt_rank + 2*d_state
@@ -78,6 +99,17 @@ type MambaBlock[T tensor.Numeric] struct {
 	cachedXPreConv *tensor.TensorNumeric[T] // x branch before conv1d
 }
 
+// MambaBlockOption is a functional option for configuring a MambaBlock.
+type MambaBlockOption[T tensor.Numeric] func(*MambaBlock[T])
+
+// WithDiscretizationMode sets the SSM discretization mode.
+// Defaults to ZOH for backward compatibility.
+func WithDiscretizationMode[T tensor.Numeric](mode DiscretizationMode) MambaBlockOption[T] {
+	return func(m *MambaBlock[T]) {
+		m.discMode = mode
+	}
+}
+
 // NewMambaBlock creates a new MambaBlock.
 //
 // Parameters:
@@ -86,11 +118,13 @@ type MambaBlock[T tensor.Numeric] struct {
 //   - dState: SSM state dimension (e.g. 16)
 //   - dtRank: rank of dt projection (typically dModel/16 or ceil(dModel/16))
 //   - convKer: depthwise conv1d kernel size (typically 4)
+//   - opts: optional functional options (e.g. WithDiscretizationMode)
 func NewMambaBlock[T tensor.Numeric](
 	name string,
 	engine compute.Engine[T],
 	ops numeric.Arithmetic[T],
 	dModel, dInner, dState, dtRank, convKer int,
+	opts ...MambaBlockOption[T],
 ) (*MambaBlock[T], error) {
 	if name == "" {
 		return nil, fmt.Errorf("layer name cannot be empty")
@@ -162,7 +196,7 @@ func NewMambaBlock[T tensor.Numeric](
 		return nil, err
 	}
 
-	return &MambaBlock[T]{
+	block := &MambaBlock[T]{
 		name:       name,
 		engine:     engine,
 		ops:        ops,
@@ -178,7 +212,12 @@ func NewMambaBlock[T tensor.Numeric](
 		convWeight: convWeight,
 		A:          aParam,
 		D:          dParam,
-	}, nil
+		discMode:   ZOH, // default
+	}
+	for _, opt := range opts {
+		opt(block)
+	}
+	return block, nil
 }
 
 func (m *MambaBlock[T]) OpType() string { return "MambaBlock" }
@@ -363,13 +402,22 @@ func (m *MambaBlock[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 
 // selectiveScan runs the SSM recurrence with selective (input-dependent) parameters.
 //
-// Discretization:
-//   dA = exp(dt * A)          [batch, seq, d_inner, d_state]
-//   dB = dt * B               [batch, seq, d_inner, d_state]
+// Discretization depends on m.discMode:
+//
+// ZOH (zero-order hold):
+//
+//	dA = exp(dt * A)          [batch, seq, d_inner, d_state]
+//	dB = dt * B               [batch, seq, d_inner, d_state]
+//
+// ExpTrap (exponential-trapezoidal, Mamba 3):
+//
+//	dA = exp(dt * A)
+//	dB = dt * (1 + dA) / 2 * B   (trapezoidal average at both endpoints)
 //
 // Recurrence (per batch, per d_inner channel):
-//   h[t] = dA[t] * h[t-1] + dB[t] * x[t]
-//   y[t] = C[t] . h[t] + D * x[t]
+//
+//	h[t] = dA[t] * h[t-1] + dB[t] * x[t]
+//	y[t] = C[t] . h[t] + D * x[t]
 //
 // Returns y [batch, seq, d_inner] and all states [batch, seq, d_inner, d_state].
 func (m *MambaBlock[T]) selectiveScan(
@@ -407,9 +455,16 @@ func (m *MambaBlock[T]) selectiveScan(
 					aReal := T(-math.Exp(float64(aLog)))
 					dA := T(math.Exp(float64(m.ops.Mul(dtVal, aReal))))
 
-					// dB = dt * B[t, n]
 					bVal := bDataSlice[bsOff*m.dState+n]
-					dB := m.ops.Mul(dtVal, bVal)
+					var dB T
+					switch m.discMode {
+					case ExpTrap:
+						// B̄ = Δ * (1 + exp(Δ*A)) / 2 * B
+						dB = m.ops.Mul(m.ops.Mul(dtVal, T((1.0+float64(dA))/2.0)), bVal)
+					default: // ZOH
+						// B̄ = Δ * B
+						dB = m.ops.Mul(dtVal, bVal)
+					}
 
 					// h[d,n] = dA * h[d,n] + dB * x[t,d]
 					hIdx := d*m.dState + n

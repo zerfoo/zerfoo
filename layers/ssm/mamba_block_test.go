@@ -402,3 +402,182 @@ func dotProduct(a, b []float32) float32 {
 	}
 	return s
 }
+
+// TestExpTrapDiscretization verifies the exponential-trapezoidal discretization
+// (Mamba 3) produces different (and correct) B̄ values compared to ZOH, and
+// that ZOH mode remains unchanged.
+//
+// Reference values are derived from the formula:
+//
+//	Ā = exp(Δ * A)
+//	ZOH:     B̄ = Δ * B
+//	ExpTrap: B̄ = Δ * (1 + Ā) / 2 * B
+func TestExpTrapDiscretization(t *testing.T) {
+	// We use a tiny SSM (dInner=1, dState=1) with controlled weights so we can
+	// compute the expected hidden state exactly by hand.
+	//
+	// Setup:
+	//   A (log-space): log(1) = 0  →  A_real = -exp(0) = -1.0
+	//   dt = fixed positive value (via softplus-inverse so softplus gives ~0.5)
+	//   B = 1.0, C = 1.0, D = 0.0 (no skip connection)
+	//   x = 1.0 (single time step, single batch)
+	//
+	// Discretized values:
+	//   Ā = exp(0.5 * (-1)) = exp(-0.5) ≈ 0.6065307
+	//   ZOH:     B̄ = 0.5 * 1.0 = 0.5
+	//   ExpTrap: B̄ = 0.5 * (1 + 0.6065307) / 2 * 1.0 ≈ 0.4016154
+	//
+	// With h[0] = 0 (initial state):
+	//   h[1] = Ā * 0 + B̄ * x = B̄
+	//   y[1] = C * h[1] + D * x = B̄
+	//
+	// So the scan output y equals B̄ directly.
+
+	const (
+		dt   = float64(0.5)
+		aLog = float64(0) // A stored in log-space; A_real = -exp(aLog) = -1
+	)
+
+	aReal := -math.Exp(aLog)
+	dA := math.Exp(dt * aReal) // ≈ 0.6065307
+
+	refZOH := dt * 1.0                    // B̄_ZOH = Δ * B
+	refExpTrap := dt * (1.0+dA) / 2.0 * 1.0 // B̄_ExpTrap = Δ * (1+Ā)/2 * B
+
+	const tol = 1e-5
+
+	tests := []struct {
+		name     string
+		mode     DiscretizationMode
+		wantScan float64 // expected y output (= B̄ for this setup)
+	}{
+		{"ZOH", ZOH, refZOH},
+		{"ExpTrap", ExpTrap, refExpTrap},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			ops := numeric.Float32Ops{}
+			engine := compute.NewCPUEngine(ops)
+
+			// dModel=1 dInner=1 dState=1 dtRank=1 convKer=1
+			block, err := NewMambaBlock[float32](
+				"test_disc", engine, ops,
+				1, 1, 1, 1, 1,
+				WithDiscretizationMode[float32](tt.mode),
+			)
+			if err != nil {
+				t.Fatalf("NewMambaBlock: %v", err)
+			}
+
+			// Override A to log(1)=0 (so A_real = -1) and D to 0 (no skip).
+			aData := block.A.Value.Data()
+			aData[0] = float32(aLog)
+			dData := block.D.Value.Data()
+			dData[0] = 0
+
+			// Zero out all linear projection weights/biases to isolate the SSM
+			// recurrence. We set them so the effective x=1, dt≈0.5, B=1, C=1
+			// reach selectiveScan unchanged.
+			//
+			// Strategy: bypass projections by directly calling selectiveScan with
+			// hand-crafted tensors.  We use softplus⁻¹(0.5) = log(exp(0.5)-1) ≈ 0.3133
+			// for dt so that after softplus we get exactly 0.5.
+
+			// softplus_inv(0.5) = log(exp(0.5) - 1)
+			dtRaw := float32(math.Log(math.Exp(dt) - 1))
+
+			batch, seqLen := 1, 1
+
+			xTensor, _ := tensor.New[float32]([]int{batch, seqLen, 1}, []float32{1.0})
+			dtTensor, _ := tensor.New[float32]([]int{batch, seqLen, 1}, []float32{dtRaw})
+			bTensor, _ := tensor.New[float32]([]int{batch, seqLen, 1}, []float32{1.0})
+			cTensor, _ := tensor.New[float32]([]int{batch, seqLen, 1}, []float32{1.0})
+
+			// Apply softplus to dtTensor to get actual dt ≈ 0.5
+			dtActual, err := block.applySoftplus(ctx, dtTensor)
+			if err != nil {
+				t.Fatalf("applySoftplus: %v", err)
+			}
+
+			y, _, err := block.selectiveScan(ctx, xTensor, dtActual, bTensor, cTensor, batch, seqLen)
+			if err != nil {
+				t.Fatalf("selectiveScan: %v", err)
+			}
+
+			got := float64(y.Data()[0])
+			diff := math.Abs(got - tt.wantScan)
+			if diff > tol {
+				t.Errorf("mode=%s: scan output=%.8f, want=%.8f (diff=%.2e > tol=%.2e)",
+					tt.name, got, tt.wantScan, diff, tol)
+			} else {
+				t.Logf("mode=%s: scan output=%.8f matches reference=%.8f (diff=%.2e)",
+					tt.name, got, tt.wantScan, diff)
+			}
+		})
+	}
+
+	// Sanity check: ZOH and ExpTrap must produce different outputs.
+	if math.Abs(refZOH-refExpTrap) < tol {
+		t.Errorf("ZOH and ExpTrap reference values are indistinguishable: ZOH=%.8f ExpTrap=%.8f",
+			refZOH, refExpTrap)
+	}
+}
+
+// TestExpTrapDiscretization_ZOHUnchanged verifies that adding the new
+// DiscretizationMode type does not change the behaviour of blocks created
+// without the option (ZOH must remain the default).
+func TestExpTrapDiscretization_ZOHUnchanged(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
+
+	// Block created with no option — must behave identically to explicit ZOH.
+	blockDefault, err := NewMambaBlock[float32]("default", engine, ops, 4, 8, 4, 2, 4)
+	if err != nil {
+		t.Fatalf("NewMambaBlock (default): %v", err)
+	}
+	blockZOH, err := NewMambaBlock[float32]("explicit_zoh", engine, ops, 4, 8, 4, 2, 4,
+		WithDiscretizationMode[float32](ZOH))
+	if err != nil {
+		t.Fatalf("NewMambaBlock (ZOH): %v", err)
+	}
+
+	if blockDefault.discMode != ZOH {
+		t.Errorf("default discMode: got %v, want ZOH(%v)", blockDefault.discMode, ZOH)
+	}
+	if blockZOH.discMode != ZOH {
+		t.Errorf("explicit ZOH discMode: got %v, want ZOH(%v)", blockZOH.discMode, ZOH)
+	}
+
+	// Both must produce identical outputs from the same input.
+	input := makeTestTensor(t, []int{1, 3, 4}, 99)
+
+	// Copy weights from blockDefault to blockZOH so both use the same parameters.
+	for i, p := range blockDefault.Parameters() {
+		pZOH := blockZOH.Parameters()[i]
+		src := p.Value.Data()
+		dst := pZOH.Value.Data()
+		copy(dst, src)
+	}
+
+	outDefault, err := blockDefault.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward (default): %v", err)
+	}
+	outZOH, err := blockZOH.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward (ZOH): %v", err)
+	}
+
+	dDefault := outDefault.Data()
+	dZOH := outZOH.Data()
+	for i := range dDefault {
+		diff := math.Abs(float64(dDefault[i] - dZOH[i]))
+		if diff > 1e-6 {
+			t.Errorf("output[%d]: default=%.8f, explicitZOH=%.8f (diff=%.2e)",
+				i, dDefault[i], dZOH[i], diff)
+		}
+	}
+}
