@@ -32,6 +32,7 @@ type InferenceSession[T tensor.Numeric] struct {
 	poolResetter compute.PoolResetter                                      // cached type assertion; nil if engine doesn't implement it
 	stopSet      map[int]bool                                              // reusable stop-token set, cleared and repopulated each call
 	generatedIDs []int                                                     // reusable slice for generated token IDs
+	prefixCache  *PrefixCache[T]                                           // shared prefix cache for KV block reuse; nil if disabled
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -62,6 +63,7 @@ func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 		compileOnce:  gen.compileGraph,
 		planRef:      &gen.plan,
 		poolResetter: poolResetter,
+		prefixCache:  gen.prefixCache,
 	}
 }
 
@@ -120,15 +122,62 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 	s.prepareGeneratedIDs(sc.MaxNewTokens)
 	generatedIDs := s.generatedIDs[:0]
 
-	// Prefill: run the full prompt through the graph.
-	prefillTensor, err := s.idsToTensor(promptIDs)
-	if err != nil {
-		return "", fmt.Errorf("create prefill tensor: %w", err)
+	// Check prefix cache for a matching KV block prefix to avoid redundant prefill.
+	prefillIDs := promptIDs
+	if s.prefixCache != nil {
+		if pagedCache, ok := s.cache.(*PagedKVCache[T]); ok {
+			promptIDs32 := intsToInt32(promptIDs)
+			cachedBlocks, matchedLen := s.prefixCache.Match(promptIDs32)
+			if matchedLen > 0 && matchedLen <= len(promptIDs) {
+				// Inject cached blocks into the PagedKVCache.
+				seqLen := matchedLen * pagedCache.blockSize
+				if seqLen > matchedLen {
+					seqLen = matchedLen
+				}
+				pagedCache.InjectBlocks(cachedBlocks, matchedLen)
+				prefillIDs = promptIDs[matchedLen:]
+			}
+		}
 	}
 
-	logits, err := s.graphForward(genCtx, prefillTensor, true)
-	if err != nil {
-		return "", fmt.Errorf("prefill forward: %w", err)
+	var logits *tensor.TensorNumeric[T]
+	if len(prefillIDs) > 0 {
+		// Prefill: run the (possibly shortened) prompt through the graph.
+		prefillTensor, ptErr := s.idsToTensor(prefillIDs)
+		if ptErr != nil {
+			return "", fmt.Errorf("create prefill tensor: %w", ptErr)
+		}
+
+		var fwdErr error
+		logits, fwdErr = s.graphForward(genCtx, prefillTensor, true)
+		if fwdErr != nil {
+			return "", fmt.Errorf("prefill forward: %w", fwdErr)
+		}
+	} else {
+		// Full prefix was cached — run a single-token forward to get logits
+		// for the last prompt position.
+		lastTok := promptIDs[len(promptIDs)-1]
+		lastTensor, ltErr := s.idsToTensor([]int{lastTok})
+		if ltErr != nil {
+			return "", fmt.Errorf("create last-token tensor: %w", ltErr)
+		}
+
+		var fwdErr error
+		logits, fwdErr = s.graphForward(genCtx, lastTensor, true)
+		if fwdErr != nil {
+			return "", fmt.Errorf("last-token forward: %w", fwdErr)
+		}
+	}
+
+	// Store the prompt's blocks in the prefix cache for future sessions.
+	if s.prefixCache != nil {
+		if pagedCache, ok := s.cache.(*PagedKVCache[T]); ok {
+			blocks := pagedCache.BlockTable()
+			if len(blocks) > 0 {
+				promptIDs32 := intsToInt32(promptIDs)
+				s.prefixCache.Insert(promptIDs32, blocks)
+			}
+		}
 	}
 
 	nextToken, err := s.sampleFromLogits(logits, sc, generatedIDs)
@@ -530,4 +579,13 @@ func (s *InferenceSession[T]) sampleFromLogits(
 	}
 
 	return sampleFromDistribution(logitsF64), nil
+}
+
+// intsToInt32 converts a slice of int to int32 for use with the radix tree.
+func intsToInt32(ids []int) []int32 {
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
 }
