@@ -1008,7 +1008,7 @@ Decision: docs/adr/055-neural-architecture-search.md
   raises alert if current Sharpe < 30-day mean - 1 sigma; TestDriftDetector passes
   with synthetic P&L streams showing injected degradation.
 
-- [ ] T20.3 Implement automated NAS trigger on drift event
+- [x] T20.3 Implement automated NAS trigger on drift event (2026-03-17)
   Owner: Research Eng  Est: 3h
   Deps: T20.2, T18.7
   Acceptance: On drift alert: AutoNAS runs 2h search on latest data; if discovered
