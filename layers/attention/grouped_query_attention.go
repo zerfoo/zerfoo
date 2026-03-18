@@ -799,20 +799,22 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 }
 
 // reverseHeadReplication sums gradients from replicated heads back to the
-// original KV head count.  It reshapes [batch*numQ, seq, headDim] →
-// [batch, numKV, repFactor, seq, headDim], sums along the repFactor
-// dimension (axis 2), then flattens back to [batch*numKV, seq, headDim].
+// original KV head count.  The forward uses engine.Repeat(axis=1, factor)
+// which tiles the KV heads: [kv0, kv1, kv0, kv1, ...].  To reverse this,
+// we reshape [batch*numQ, seq, headDim] →
+// [batch, repFactor, numKV, seq, headDim] and sum along axis 1 (repFactor),
+// then flatten back to [batch*numKV, seq, headDim].
 func (gqa *GroupedQueryAttention[T]) reverseHeadReplication(ctx context.Context, d *tensor.TensorNumeric[T], batchSize, seqLen int) (*tensor.TensorNumeric[T], error) {
 	repFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
 	d4, err := gqa.engine.Reshape(ctx, d, []int{batchSize, gqa.numQueryHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
-	d5, err := gqa.engine.Reshape(ctx, d4, []int{batchSize, gqa.numKeyValueHeads, repFactor, seqLen, gqa.headDim})
+	d5, err := gqa.engine.Reshape(ctx, d4, []int{batchSize, repFactor, gqa.numKeyValueHeads, seqLen, gqa.headDim})
 	if err != nil {
 		return nil, err
 	}
-	dSum, err := gqa.engine.ReduceSum(ctx, d5, 2, false)
+	dSum, err := gqa.engine.ReduceSum(ctx, d5, 1, false)
 	if err != nil {
 		return nil, err
 	}
