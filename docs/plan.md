@@ -708,7 +708,7 @@ Decision: docs/adr/052-online-learning-safety-framework.md
   < 0.1; both gates must pass before promotion; TestValidator passes with synthetic
   champion and challenger distributions.
 
-- [ ] T13.4 Implement model rollback in training/online/rollback.go
+- [x] T13.4 Implement model rollback in training/online/rollback.go
   Owner: ML Eng  Est: 2h
   Deps: T13.3
   Acceptance: Rollback(version) swaps LoRA adapter in serve path in < 30 seconds;
@@ -759,7 +759,7 @@ Decision: docs/adr/052-online-learning-safety-framework.md
   rate and latency P99 within thresholds; auto-rollback if thresholds exceeded;
   TestCanaryController passes.
 
-- [ ] T14.5 Add model performance metrics per version
+- [x] T14.5 Add model performance metrics per version
   Owner: Infra Eng  Est: 2h
   Deps: T14.2
   Acceptance: Prometheus metrics: zerfoo_model_requests_total{model_id,version},
@@ -787,20 +787,20 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
   Acceptance: VisionEncoder[T] interface with Encode(image) (*Tensor[T], error);
   SigLIP implementation wraps existing Gemma3 multimodal code; TestVisionEncoder passes.
 
-- [ ] T15.3 Implement projection connector in inference/multimodal/connector.go
+- [x] T15.3 Implement projection connector in inference/multimodal/connector.go
   Owner: ML Eng  Est: 2h
   Deps: T15.2
   Acceptance: ProjectionConnector applies linear projection from vision_dim to text_dim;
   weights loaded from GGUF mm.projector.weight; TestConnector passes.
 
-- [ ] T15.4 Implement text+vision embedding merge in inference/multimodal/merge.go
+- [x] T15.4 Implement text+vision embedding merge in inference/multimodal/merge.go
   Owner: ML Eng  Est: 3h
   Deps: T15.3
   Acceptance: MergeEmbeddings inserts vision embeddings at <image> token positions;
   supports up to 4 images per request; position IDs assigned correctly;
   TestMergeEmbeddings passes.
 
-- [ ] T15.5 Generalize GGUF loader for multi-modal metadata
+- [x] T15.5 Generalize GGUF loader for multi-modal metadata
   Owner: ML Eng  Est: 2h
   Deps: T15.2
   Acceptance: Loader reads vision.encoder.type, vision.hidden_size from GGUF;
@@ -823,7 +823,7 @@ Decision: docs/adr/053-multimodal-inference-pipeline.md
 
 #### E16: Audio Pipeline [Q2-Q3 2029]
 
-- [ ] T16.1 Implement mel-spectrogram extraction in inference/multimodal/audio.go
+- [x] T16.1 Implement mel-spectrogram extraction in inference/multimodal/audio.go
   Owner: ML Eng  Est: 3h
   Deps: none
   Acceptance: ExtractMelSpectrogram(pcm []float32, sampleRate int) returns [80, T]
@@ -874,7 +874,7 @@ Decision: docs/adr/054-agentic-tool-use-loop.md
   matching tool parameter schema; parsed ToolCall struct populated;
   TestFunctionCallDecoding passes with synthetic model output.
 
-- [ ] T17.3 Implement agentic loop supervisor in generate/agent/supervisor.go
+- [x] T17.3 Implement agentic loop supervisor in generate/agent/supervisor.go
   Owner: ML Eng  Est: 4h
   Deps: T17.2
   Acceptance: Supervisor executes up to MaxIterations=10 steps; detects tool call
@@ -911,7 +911,7 @@ Decision: docs/adr/054-agentic-tool-use-loop.md
 #### E18: Neural Architecture Search [Q1-Q2 2030]
 Decision: docs/adr/055-neural-architecture-search.md
 
-- [ ] T18.1 Define NAS search space in training/nas/search_space.go
+- [x] T18.1 Define NAS search space in training/nas/search_space.go
   Owner: Research Eng  Est: 3h
   Deps: T12.2
   Acceptance: SearchSpace defines discrete ops (Attention, MLP, Conv1D, SSMBlock),
@@ -963,7 +963,7 @@ Decision: docs/adr/055-neural-architecture-search.md
 
 #### E19: AutoML Hyperparameter Optimization [Q2-Q3 2030]
 
-- [ ] T19.1 Implement Bayesian optimization in training/automl/bayesian.go
+- [x] T19.1 Implement Bayesian optimization in training/automl/bayesian.go
   Owner: Research Eng  Est: 4h
   Deps: none
   Acceptance: BayesianOptimizer.Suggest() returns next hyperparameter config;
@@ -994,7 +994,7 @@ Decision: docs/adr/055-neural-architecture-search.md
 
 #### E20: Self-Improving Models and Live Feedback [Q3-Q4 2030]
 
-- [ ] T20.1 Implement market feedback signal collector in training/online/feedback.go
+- [x] T20.1 Implement market feedback signal collector in training/online/feedback.go
   Owner: ML Eng  Est: 3h
   Deps: T13.1
   Acceptance: FeedbackCollector subscribes to Wolf's P&L events via gRPC stream;
