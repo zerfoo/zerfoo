@@ -1,16 +1,18 @@
-package wolf
+// Package timeseries implements time-series model builders.
+package timeseries
 
 import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"github.com/zerfoo/zerfoo/layers/timeseries"
+	tslayers "github.com/zerfoo/zerfoo/layers/timeseries"
 )
 
 // TFTConfig holds configuration for the Temporal Fusion Transformer.
@@ -209,7 +211,7 @@ func lstmForward[T tensor.Numeric](
 		if err != nil {
 			return nil, err
 		}
-		iGate, err := sigmoid(ctx, engine, ops, iPre)
+		iGate, err := sigmoidFn(ctx, engine, ops, iPre)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +233,7 @@ func lstmForward[T tensor.Numeric](
 		if err != nil {
 			return nil, err
 		}
-		fGate, err := sigmoid(ctx, engine, ops, fPre)
+		fGate, err := sigmoidFn(ctx, engine, ops, fPre)
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +277,7 @@ func lstmForward[T tensor.Numeric](
 		if err != nil {
 			return nil, err
 		}
-		oGate, err := sigmoid(ctx, engine, ops, oPre)
+		oGate, err := sigmoidFn(ctx, engine, ops, oPre)
 		if err != nil {
 			return nil, err
 		}
@@ -328,10 +330,10 @@ type tftNode[T tensor.Numeric] struct {
 
 	// Static covariate encoder.
 	staticProj *graph.Parameter[T] // [numStatic, hiddenDim]
-	staticGRN  *timeseries.GRN[T]
+	staticGRN  *tslayers.GRN[T]
 
 	// Temporal VSN.
-	temporalVSN *timeseries.VSN[T]
+	temporalVSN *tslayers.VSN[T]
 
 	// Stacked LSTM encoder layers.
 	lstmLayers []*lstmLayer[T]
@@ -355,13 +357,13 @@ func newTFTNode[T tensor.Numeric](cfg TFTConfig, engine compute.Engine[T], ops n
 		return nil, err
 	}
 
-	staticGRN, err := timeseries.NewGRN[T]("tft_static_grn", engine, ops, cfg.HiddenDim, cfg.HiddenDim, cfg.HiddenDim)
+	staticGRN, err := tslayers.NewGRN[T]("tft_static_grn", engine, ops, cfg.HiddenDim, cfg.HiddenDim, cfg.HiddenDim)
 	if err != nil {
 		return nil, err
 	}
 
 	// Temporal VSN: each temporal feature is treated as a 1-dim variable.
-	temporalVSN, err := timeseries.NewVSN[T]("tft_temporal_vsn", engine, ops, cfg.NumTemporalFeatures, 1, cfg.HiddenDim)
+	temporalVSN, err := tslayers.NewVSN[T]("tft_temporal_vsn", engine, ops, cfg.NumTemporalFeatures, 1, cfg.HiddenDim)
 	if err != nil {
 		return nil, err
 	}
@@ -670,3 +672,44 @@ func (n *tftNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor
 
 // Statically assert that tftNode implements graph.Node.
 var _ graph.Node[float32] = (*tftNode[float32])(nil)
+
+// --- Helper functions (package-local) ---
+
+// newParam creates a parameter with Xavier-style initialization.
+func newParam[T tensor.Numeric](name string, rows, cols int) (*graph.Parameter[T], error) {
+	data := make([]T, rows*cols)
+	for i := range data {
+		data[i] = T(rand.Float64()*0.1 - 0.05)
+	}
+	t, err := tensor.New[T]([]int{rows, cols}, data)
+	if err != nil {
+		return nil, err
+	}
+	return graph.NewParameter[T](name, t, tensor.New[T])
+}
+
+// extractTimestep extracts a single timestep from a 3D tensor.
+// input: [batch, seqLen, dim], output: [batch, dim]
+func extractTimestep[T tensor.Numeric](input *tensor.TensorNumeric[T], t, batch, dim int) (*tensor.TensorNumeric[T], error) {
+	data := input.Data()
+	seqLen := input.Shape()[1]
+	out := make([]T, batch*dim)
+	for b := 0; b < batch; b++ {
+		srcOff := b*seqLen*dim + t*dim
+		copy(out[b*dim:(b+1)*dim], data[srcOff:srcOff+dim])
+	}
+	return tensor.New[T]([]int{batch, dim}, out)
+}
+
+// sigmoidFn computes sigmoid(x) = exp(x) / (1 + exp(x)) using composed engine primitives.
+func sigmoidFn[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	expX, err := engine.Exp(ctx, x)
+	if err != nil {
+		return nil, err
+	}
+	onePlusExpX, err := engine.AddScalar(ctx, expX, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	return engine.Div(ctx, expX, onePlusExpX)
+}
