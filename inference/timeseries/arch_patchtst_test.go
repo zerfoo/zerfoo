@@ -1,4 +1,4 @@
-package wolf
+package timeseries
 
 import (
 	"context"

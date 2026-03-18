@@ -105,3 +105,30 @@ func (p *BlockPool[T]) Available() int {
 func (p *BlockPool[T]) BlockSize() int {
 	return p.blockSize
 }
+
+// FragmentationRatio returns the fraction of allocated block capacity that is
+// wasted (allocated but unused token positions). A value of 0 means every
+// allocated block is fully used; higher values indicate internal fragmentation
+// from partially-filled blocks.
+func (p *BlockPool[T]) FragmentationRatio() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	allocated := len(p.blocks) - len(p.free)
+	if allocated == 0 {
+		return 0
+	}
+
+	totalCapacity := allocated * p.blockSize
+	var totalUsed int
+	for i := range p.blocks {
+		if p.blocks[i].Used > 0 {
+			totalUsed += p.blocks[i].Used
+		}
+	}
+
+	if totalCapacity == 0 {
+		return 0
+	}
+	return 1 - float64(totalUsed)/float64(totalCapacity)
+}
