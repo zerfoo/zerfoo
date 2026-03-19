@@ -527,7 +527,7 @@ Completed: W3.1.4 (batcher scheduler test fix). Trimmed 2026-03-18.
   Acceptance: Pre-existing Q5_K and Q6_K test failures resolved. All quantized GEMM/GEMV
   tests pass. TestQ5K_GEMV, TestQ6K_GEMV pass on DGX.
 
-- [ ] W3.1.5 Implement fused attention kernel with FlashAttention-2 [ztensor]
+- [x] W3.1.5 Implement fused attention kernel with FlashAttention-2 [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-002, UC-003, UC-004]
   Deps: W3.1.1
   Acceptance: FlashAttention-2 algorithm fused into single CUDA kernel. Supports
@@ -654,7 +654,7 @@ Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
 - [ ] T12.2 Set up enterprise ticketing system
   Owner: Biz Dev  Est: 3h  delivers: [enterprise ticketing system live]
   Deps: T12.1
-- [ ] T12.3 Create enterprise deployment guide
+- [x] T12.3 Create enterprise deployment guide (2026-03-19)
   Owner: DevRel  Est: 4h  delivers: [enterprise deployment guide published]
   Deps: none
 - [ ] T12.4 Sign first 5 enterprise support contracts ($500K ARR)
@@ -718,7 +718,7 @@ Completed: T15.1 (build-tag-gated edge binary). Trimmed 2026-03-18.
 
 Completed: T16.2 (KV cache FP8 quantization). Trimmed 2026-03-18.
 
-- [ ] T16.1 Implement warp-specialized GEMV kernel [ztensor]
+- [x] T16.1 Implement warp-specialized GEMV kernel [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-002, UC-003]
   Deps: none
 - [ ] T16.3 Benchmark: 500+ tok/s [DGX]
@@ -798,7 +798,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T21.1 Implement SYCL runtime bindings [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
   Deps: none
-- [ ] T21.2 Port GEMV and attention kernels to SYCL [ztensor]
+- [x] T21.2 Port GEMV and attention kernels to SYCL [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
   Deps: T21.1
 
@@ -952,7 +952,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E33: Performance Target 1000+ tok/s [2032-2035]
 
-- [ ] T33.1 Implement next-gen GPU architecture optimizations
+- [x] T33.1 Implement next-gen GPU architecture optimizations (2026-03-19)
   Owner: Kernel Eng  Est: ongoing  verifies: [UC-002, UC-003]
   Deps: none
 - [x] T33.2 Implement automatic hardware-specific kernel codegen (2026-03-19)
@@ -1007,7 +1007,7 @@ W3.1.5 depends on W3.1.1 from Wave 5.
 - [x] W2.2.1 TFT (ML Eng)  verifies: [UC-028] (2026-03-18)
 - [x] W2.2.2 N-BEATS (ML Eng)  verifies: [UC-029] (2026-03-18)
 - [x] W2.2.3 PatchTST (ML Eng)  verifies: [UC-030] (2026-03-18)
-- [ ] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004]
+- [x] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-19)
 
 #### Wave 7: AutoML + ROCm + Community (10 agents)
 
@@ -1033,13 +1033,13 @@ Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
 - [x] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033] (2026-03-18)
 - [ ] T8.4 Port CUDA to HIP [ztensor] (Kernel Eng)  verifies: [UC-035]
 - [ ] T12.2 Enterprise ticketing (Biz Dev)  delivers: [ticketing system]
-- [ ] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide]
+- [x] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide] (2026-03-19)
 - [ ] T13.2 Fix audit findings (Lead Eng)  verifies: [infrastructure]
 - [x] T15.2 Pre-optimized model format (Arch Eng)  verifies: [UC-022] (2026-03-18)
 - [ ] T15.3 Raspberry Pi test (Arch Eng)  verifies: [UC-022]
 - [ ] T15.4 Jetson test (Arch Eng)  verifies: [UC-022]
 - [x] T15.5 ARM64 CI (Infra Eng)  verifies: [infrastructure] (2026-03-18)
-- [ ] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003]
+- [x] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
 
 #### Wave 9: LoRA + SOC 2 + Platform (10 agents)
 
@@ -1069,7 +1069,7 @@ Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
 - [ ] T18.4 Audit logging (Platform Eng)  delivers: [audit logging]
 - [ ] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards]
 - [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
-- [ ] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure]
+- [x] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
 
 #### Wave 11: RL + Cross-Asset + GNN + Causal (5 agents)
 
@@ -1137,7 +1137,17 @@ Deps: T22.1 (done), T20.1 (done), W10.1.1 (done). All new files, no overlaps.
 - [x] W10.1.2 Batched multi-model inference [ztensor] (Kernel Eng)  verifies: [UC-016] (2026-03-19)
 - [x] T21.1 SYCL runtime bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
 
-Waves 17+ continue with remaining tasks based on dependency order and agent availability.
+#### Wave 17: FlashAttention-2 + Warp GEMV + SYCL Kernels + Next-Gen GPU + Enterprise Guide (5 agents)
+
+Deps: W3.1.1 (done), T21.1 (done). All new files except Makefile/purego.go overlap (resolved).
+
+- [x] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-19)
+- [x] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
+- [x] T21.2 Port GEMV/attention to SYCL [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] T33.1 Next-gen GPU optimizations (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
+- [x] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide] (2026-03-19)
+
+Waves 18+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
@@ -1232,6 +1242,17 @@ Waves 17+ continue with remaining tasks based on dependency order and agent avai
 ---
 
 ## Progress Log
+
+### 2026-03-19: Wave 17 execution (5 tasks, 5 parallel agents)
+
+Executed 5 unblocked tasks across WE3, E16, E21, E33, E12 with 5 parallel agents:
+- W3.1.5 FlashAttention-2 fused kernel (ztensor) — forward/decode with GQA, O(N) memory, online softmax
+- T16.1 Warp-specialized GEMV (ztensor) — decode-phase kernel, float4 vectorization, warp shuffle reduction
+- T21.2 SYCL GEMV and attention kernels (ztensor) — purego bindings, GRAL backend integration
+- T33.1 Next-gen GPU architecture optimizations (zerfoo) — Hopper TMA/wgmma, Blackwell cluster/FP4 detection
+- T12.3 Enterprise deployment guide (zerfoo) — 1011-line guide: K8s, scaling, monitoring, security, HA
+Merge conflict resolved: Makefile SRCS line (W3.1.5 + T16.1). Build fix: deduplicated parseComputeCap.
+All tests pass. Newly unblocked: T16.3 (needs T16.1, done).
 
 ### 2026-03-19: Wave 16 execution (5 tasks, 5 parallel agents)
 
