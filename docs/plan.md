@@ -620,7 +620,7 @@ Trimmed 2026-03-18.
 
 Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
 
-- [ ] T10.3 Add vision model benchmarks
+- [x] T10.3 Add vision model benchmarks (2026-03-19)
   Owner: Arch Eng  Est: 2h  verifies: [UC-002]
   Deps: none (T10.1, T10.2 complete)
 
@@ -631,7 +631,7 @@ Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
 - [ ] T11.1 Sponsor GopherCon 2027 booth
   Owner: DevRel  Est: 2h  delivers: [GopherCon 2027 booth presence]
   Deps: none
-- [ ] T11.2 Publish tutorial series (5 parts)
+- [x] T11.2 Publish tutorial series (5 parts) (2026-03-19)
   Owner: DevRel  Est: 8h  delivers: [5-part tutorial series published]
   Deps: none
 - [ ] T11.3 Submit KubeCon 2027 talk
@@ -640,7 +640,7 @@ Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
 - [ ] T11.4 Recruit 5 external co-maintainers
   Owner: Lead Eng  Est: 4h  delivers: [5 external co-maintainers onboarded]
   Deps: none
-- [ ] T11.5 Integrate with LangChain-Go and Weaviate
+- [x] T11.5 Integrate with LangChain-Go and Weaviate (2026-03-18)
   Owner: DevRel  Est: 6h  verifies: [UC-001, UC-007]
   Deps: none
 
@@ -648,7 +648,7 @@ Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
 
 #### E12: Enterprise Support Tier [Q1-Q2 2028]
 
-- [ ] T12.1 Define enterprise support SLA tiers
+- [x] T12.1 Define enterprise support SLA tiers (2026-03-19)
   Owner: Biz Dev  Est: 2h  delivers: [enterprise SLA tier definitions]
   Deps: none
 - [ ] T12.2 Set up enterprise ticketing system
@@ -781,7 +781,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E20: Apple Metal Backend [Q1-Q2 2030]
 
-- [ ] T20.1 Implement Metal compute shader bindings [ztensor]
+- [x] T20.1 Implement Metal compute shader bindings [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [UC-037]
   Deps: none
 - [ ] T20.2 Port critical CUDA kernels to Metal [ztensor]
@@ -806,7 +806,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E22: Auto-Optimization Framework [Q3-Q4 2030]
 
-- [ ] T22.1 Implement hardware profiling [ztensor]
+- [x] T22.1 Implement hardware profiling [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 4h  verifies: [infrastructure]
   Deps: none
 - [ ] T22.2 Implement automatic kernel selection
@@ -992,7 +992,7 @@ All deps met. Maximum parallelism across 3 tracks.
 - [ ] T5.4 Discord server (DevRel)  delivers: [Discord community]
 - [ ] T4.7 Video walkthrough (DevRel)  delivers: [YouTube walkthrough]
 - [ ] T9.4 Multi-GPU benchmark [DGX] (Infra Eng)  verifies: [UC-024]
-- [ ] T10.3 Vision model benchmarks (Arch Eng)  verifies: [UC-002]
+- [x] T10.3 Vision model benchmarks (Arch Eng)  verifies: [UC-002] (2026-03-19)
 - [ ] T8.1 Acquire AMD GPU (Infra Eng)  verifies: [UC-035]
 
 #### Wave 6: Advanced Tabular + Time-Series (8 agents)
@@ -1017,11 +1017,11 @@ Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
 - [ ] T8.2 Validate HIP bindings (Kernel Eng)  verifies: [UC-035]
 - [ ] T8.3 Validate rocBLAS (Kernel Eng)  verifies: [UC-035]
 - [ ] T11.1 GopherCon booth (DevRel)  delivers: [GopherCon 2027 presence]
-- [ ] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials]
+- [x] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials] (2026-03-19)
 - [ ] T11.3 KubeCon CFP (DevRel)  delivers: [KubeCon submission]
 - [ ] T11.4 Recruit co-maintainers (Lead Eng)  delivers: [5 co-maintainers]
 - [x] T11.5 LangChain-Go integration (DevRel)  verifies: [UC-001, UC-007] (2026-03-18)
-- [ ] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions]
+- [x] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions] (2026-03-19)
 - [ ] T13.1 Security auditor (Lead Eng)  delivers: [audit engagement]
 
 #### Wave 8: Transfer Learning + ROCm Port + Enterprise (10 agents)
@@ -1035,10 +1035,10 @@ Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
 - [ ] T12.2 Enterprise ticketing (Biz Dev)  delivers: [ticketing system]
 - [ ] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide]
 - [ ] T13.2 Fix audit findings (Lead Eng)  verifies: [infrastructure]
-- [ ] T15.2 Pre-optimized model format (Arch Eng)  verifies: [UC-022]
+- [x] T15.2 Pre-optimized model format (Arch Eng)  verifies: [UC-022] (2026-03-18)
 - [ ] T15.3 Raspberry Pi test (Arch Eng)  verifies: [UC-022]
 - [ ] T15.4 Jetson test (Arch Eng)  verifies: [UC-022]
-- [ ] T15.5 ARM64 CI (Infra Eng)  verifies: [infrastructure]
+- [x] T15.5 ARM64 CI (Infra Eng)  verifies: [infrastructure] (2026-03-18)
 - [ ] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003]
 
 #### Wave 9: LoRA + SOC 2 + Platform (10 agents)
@@ -1068,7 +1068,7 @@ Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
 - [ ] T18.3 RBAC (Platform Eng)  delivers: [RBAC system]
 - [ ] T18.4 Audit logging (Platform Eng)  delivers: [audit logging]
 - [ ] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards]
-- [ ] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037]
+- [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
 - [ ] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure]
 
 #### Wave 11: RL + Cross-Asset + GNN + Causal (5 agents)
