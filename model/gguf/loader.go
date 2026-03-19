@@ -167,13 +167,12 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Re-quantize Q5_K to Q4_0 for fast GEMV decode path.
-	// Native Q5_K dequant to float32 uses cuBLAS SGEMM which is ~30% slower
-	// for M=1 decode. Q4_0 GEMV kernel is the fastest path on GB10.
+	// Dequantize Q5_K to float32. Unlike Q4_K, we preserve the full Q5_K
+	// precision rather than re-quantizing to Q4_0, because Q5_K models are
+	// chosen specifically for higher quality.
 	f32 := make([]float32, numElements)
 	q5k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.New[float32](shape, f32)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -181,13 +180,12 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Re-quantize Q6_K to Q4_0 for fast GEMV decode path.
-	// Native Q6_K dequant to float32 uses cuBLAS SGEMM which is ~30% slower
-	// for M=1 decode. Q4_0 GEMV kernel is the fastest path on GB10.
+	// Dequantize Q6_K to float32. Unlike Q4_K, we preserve the full Q6_K
+	// precision rather than re-quantizing to Q4_0, because Q6_K models are
+	// chosen specifically for higher quality.
 	f32 := make([]float32, numElements)
 	q6k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.New[float32](shape, f32)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
