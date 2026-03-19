@@ -280,7 +280,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE5: Transfer Learning for Tabular (Internal Consumer) [2027-2028]
 
-- [ ] W5.1.1 Implement tabular.PreTrain for multi-asset base model
+- [x] W5.1.1 Implement tabular.PreTrain for multi-asset base model (2026-03-18, 405317b)
   Owner: ML Eng  Est: 5h  verifies: [UC-032]
   Deps: W2.3.1
   Acceptance: `PreTrain(allData [][][]float64, config PreTrainConfig) (*BaseModel, error)`.
@@ -508,20 +508,20 @@ consumer. They can run in parallel with Priority 1 tasks.
 
 Completed: W3.1.4 (batcher scheduler test fix). Trimmed 2026-03-18.
 
-- [ ] W3.1.1 Fix Q4_K to Q4_0 re-quantization to unblock sm_121 dispatch path [ztensor]
+- [x] W3.1.1 Fix Q4_K to Q4_0 re-quantization to unblock sm_121 dispatch path [ztensor] (2026-03-18, 10349fe)
   Owner: Kernel Eng  Est: 5h  verifies: [UC-002, UC-003, UC-004]
   Deps: none
   Acceptance: Q4_K GEMV dispatches directly on sm_121 without re-quantizing to Q4_0.
   The re-quantization path is the known blocker for 300+ tok/s. Fix in
   ztensor internal/cuda/ dispatch logic. TestQ4K_DirectDispatch_sm121 passes on DGX.
 
-- [ ] W3.1.2 Expand CUDA graph capture to 100% instruction coverage [ztensor]
+- [x] W3.1.2 Expand CUDA graph capture to 100% instruction coverage [ztensor] (2026-03-18, 33b54d9)
   Owner: Kernel Eng  Est: 4h  verifies: [UC-002, UC-003]
   Deps: none
   Acceptance: All inference path instructions captured in CUDA graph (currently 99.5%).
   Identify and fix remaining 0.5% uncaptured ops. TestCUDAGraph_FullCapture passes.
 
-- [ ] W3.1.3 Fix Q5_K_M and Q6_K quantized GEMM/GEMV kernel tests [ztensor]
+- [x] W3.1.3 Fix Q5_K_M and Q6_K quantized GEMM/GEMV kernel tests [ztensor] (2026-03-18, 488862c)
   Owner: Kernel Eng  Est: 4h  verifies: [UC-001, UC-002]
   Deps: none
   Acceptance: Pre-existing Q5_K and Q6_K test failures resolved. All quantized GEMM/GEMV
@@ -985,9 +985,9 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 All deps met. Maximum parallelism across 3 tracks.
 
 - [x] W1.1.4 tabular.Ensemble (ML Eng)  verifies: [UC-018] (2026-03-18)
-- [ ] W3.1.1 Fix Q4_K re-quantization [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004]
-- [ ] W3.1.2 CUDA graph 100% coverage [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003]
-- [ ] W3.1.3 Fix Q5_K/Q6_K tests [ztensor] (Kernel Eng)  verifies: [UC-001, UC-002]
+- [x] W3.1.1 Fix Q4_K re-quantization [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-18)
+- [x] W3.1.2 CUDA graph 100% coverage [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-18)
+- [x] W3.1.3 Fix Q5_K/Q6_K tests [ztensor] (Kernel Eng)  verifies: [UC-001, UC-002] (2026-03-18)
 - [ ] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002]
 - [ ] T5.4 Discord server (DevRel)  delivers: [Discord community]
 - [ ] T4.7 Video walkthrough (DevRel)  delivers: [YouTube walkthrough]
@@ -1020,7 +1020,7 @@ Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
 - [ ] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials]
 - [ ] T11.3 KubeCon CFP (DevRel)  delivers: [KubeCon submission]
 - [ ] T11.4 Recruit co-maintainers (Lead Eng)  delivers: [5 co-maintainers]
-- [ ] T11.5 LangChain-Go integration (DevRel)  verifies: [UC-001, UC-007]
+- [x] T11.5 LangChain-Go integration (DevRel)  verifies: [UC-001, UC-007] (2026-03-18)
 - [ ] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions]
 - [ ] T13.1 Security auditor (Lead Eng)  delivers: [audit engagement]
 
@@ -1028,7 +1028,7 @@ Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
 
 Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
 
-- [ ] W5.1.1 tabular.PreTrain (ML Eng)  verifies: [UC-032]
+- [x] W5.1.1 tabular.PreTrain (ML Eng)  verifies: [UC-032] (2026-03-18)
 - [ ] T8.4 Port CUDA to HIP [ztensor] (Kernel Eng)  verifies: [UC-035]
 - [ ] T12.2 Enterprise ticketing (Biz Dev)  delivers: [ticketing system]
 - [ ] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide]
@@ -1185,6 +1185,17 @@ tasks (E19-E33) based on dependency order and agent availability.
 - Added Discovery Summary section with use case wiring status and gap analysis.
 - Removed completed E23 epic entirely (benchmark suite + comparison tool).
 - Updated milestone M1 to reflect completed E1 and remaining validation tasks.
+
+### 2026-03-18: Wave 5-8 cross-wave execution (5 tasks)
+
+Executed unblocked tasks across Waves 5, 7, and 8 with 5 parallel agents:
+- W5.1.1 tabular.PreTrain (zerfoo, 405317b) — multi-asset pre-training with FineTune
+- W3.1.1 Q4_K sm_121 dispatch fix (ztensor, 10349fe) — added missing sm_121 branch
+- W3.1.2 CUDA graph 100% capture (ztensor, 33b54d9) — bypass mechanism for non-capturable ops
+- W3.1.3 Q5_K/Q6_K test fix (ztensor, 488862c) — absolute tolerance for near-zero values
+- T11.5 LangChain-Go + Weaviate integration (zerfoo, 56ef2b6) — READMEs + vet fix
+Wave 6 W3.1.5 (FlashAttention-2) now unblocked by W3.1.1.
+Wave 9 W5.1.2 (FineTuneLoRA) now unblocked by W5.1.1.
 
 ### 2026-03-18: Internal consumer roadmap integration
 
