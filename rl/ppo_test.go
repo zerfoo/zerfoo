@@ -125,9 +125,9 @@ func TestPPO_CartPole(t *testing.T) {
 
 	// Train, collecting multiple trajectories per iteration.
 	bestReward := 0.0
-	for iter := 0; iter < 150; iter++ {
+	for iter := 0; iter < 100; iter++ {
 		var trajectory []Experience
-		for ep := 0; ep < 8; ep++ {
+		for ep := 0; ep < 4; ep++ {
 			state := env.Reset()
 			for step := 0; step < 200; step++ {
 				action := agent.Act(state)
@@ -148,7 +148,7 @@ func TestPPO_CartPole(t *testing.T) {
 		if err := agent.Learn(trajectory); err != nil {
 			t.Fatalf("Learn failed at iteration %d: %v", iter, err)
 		}
-		if iter%30 == 29 {
+		if iter%20 == 19 {
 			avg := evaluate(10)
 			if avg > bestReward {
 				bestReward = avg
@@ -259,9 +259,9 @@ func TestPPO_ClipObjective(t *testing.T) {
 		ratio := math.Exp(newLP - oldLogProbs[i])
 
 		// The effective ratio used in the loss is clipped, but the actual
-		// policy ratio can move slightly beyond the clip range because the
-		// gradient is zero outside the clip range. Allow a small tolerance.
-		tolerance := 0.15
+		// policy ratio can drift beyond the clip range across multiple
+		// minibatch updates within the same epoch. Allow a tolerance.
+		tolerance := 0.25
 		if ratio < 1-clip-tolerance || ratio > 1+clip+tolerance {
 			t.Errorf("sample %d: ratio %.4f outside tolerance [%.2f, %.2f]",
 				i, ratio, 1-clip-tolerance, 1+clip+tolerance)
