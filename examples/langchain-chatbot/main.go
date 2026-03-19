@@ -36,7 +36,7 @@ func main() {
 	)
 
 	fmt.Printf("LangChain chatbot connected to %s (model: %s)\n", *server, *model)
-	fmt.Println("Type your message and press Enter. Type 'quit' to exit.\n")
+	fmt.Println("Type your message and press Enter. Type 'quit' to exit.")
 
 	ctx := context.Background()
 	scanner := bufio.NewScanner(os.Stdin)
