@@ -1234,63 +1234,7 @@ Executed 5 unblocked tasks across WE10, E20, E22 with 5 parallel agents:
 All tests pass. No new regressions (pre-existing Q5K/Q6K and bench_disagg failures unchanged).
 Newly unblocked: W10.1.2 (needs W10.1.1), T20.3 (needs T20.2), T25.1/T25.2 (T22.1 done).
 
-### 2026-03-19: Wave 11 execution (10 tasks, 10 parallel agents)
-
-Executed 10 unblocked tasks across WE7-WE12 and E28 with 10 parallel agents:
-- W7.3.2 causal.Intervene — do-calculus counterfactual prediction (f91c9cf)
-- W8.1.1 regime.HMM — Baum-Welch training, Viterbi decoding (e5f77ac)
-- W8.2.1 synth.MarketVAE — variational autoencoder for synthetic data (8c611a5)
-- W9.1.1 multi-objective NAS — NSGA-II Pareto frontier search (0e6ad92)
-- W9.2.1 meta.MAML — first-order MAML for few-shot learning (4505e4b)
-- W9.3.1 gp.Evolve — tree-based genetic programming (09fb996)
-- W11.1.1 online.EWC — elastic weight consolidation (61346f5)
-- W11.2.1 shared.LatentSpace — cross-model knowledge sharing (65e57a6)
-- W11.3.1 provenance.Tracker — cryptographic model lifecycle audit (8be1f6b)
-- T28.1 federated.FedAvg — federated learning strategy + coordinator (149cdf9)
-All tests pass. No new regressions (pre-existing Q5K/Q6K failures unchanged).
-Newly unblocked: W7.3.2→none, W8.2.2 (needs W8.2.1), W11.1.2 (needs W8.1.1),
-T28.2/T28.3/T28.4 (need T28.1).
-
-### 2026-03-18: Plan rewritten to enhanced plan skill format
-
-**Change summary:**
-- Rewrote plan to match enhanced /plan skill process with work type detection,
-  discovery summary, use case linking, and wave agent counts.
-- Created use case manifest: .claude/scratch/usecases-manifest.json (37 use cases).
-- Added `verifies: [UC-xxx]` to all engineering tasks linking to use cases.
-- Added `delivers: [outcome]` to all non-engineering tasks (DevRel, Biz Dev, Compliance).
-- Trimmed 6 fully completed epics: E1 (Performance 300+ tok/s), E3 (Quantization),
-  E6 (Plugin Architecture), E7 (v1.0 Release), E23 (Evaluation Framework),
-  and completed tasks from WE1 (3 of 4), WE13 (1 of 5), E2 (11 of 12), E4 (6 of 7),
-  E5 (6 of 7), E9 (3 of 4), E10 (2 of 3), E13 (2 of 4), E15 (1 of 5),
-  E16 (1 of 3), E17 (4 of 7).
-  Knowledge already preserved in docs/design.md, docs/adr/, and docs/devlog.md.
-- Enhanced wave plan with agent counts per wave (Waves 5-10, 8-10 agents each).
-- Added Discovery Summary section with use case wiring status and gap analysis.
-- Removed completed E23 epic entirely (benchmark suite + comparison tool).
-- Updated milestone M1 to reflect completed E1 and remaining validation tasks.
-
-### 2026-03-18: Wave 5-8 cross-wave execution (5 tasks)
-
-Executed unblocked tasks across Waves 5, 7, and 8 with 5 parallel agents:
-- W5.1.1 tabular.PreTrain (zerfoo, 405317b) — multi-asset pre-training with FineTune
-- W3.1.1 Q4_K sm_121 dispatch fix (ztensor, 10349fe) — added missing sm_121 branch
-- W3.1.2 CUDA graph 100% capture (ztensor, 33b54d9) — bypass mechanism for non-capturable ops
-- W3.1.3 Q5_K/Q6_K test fix (ztensor, 488862c) — absolute tolerance for near-zero values
-- T11.5 LangChain-Go + Weaviate integration (zerfoo, 56ef2b6) — READMEs + vet fix
-Wave 6 W3.1.5 (FlashAttention-2) now unblocked by W3.1.1.
-Wave 9 W5.1.2 (FineTuneLoRA) now unblocked by W5.1.1.
-
-### 2026-03-18: Internal consumer roadmap integration
-
-Integrated internal consumer roadmap as PRIORITY 1 (WE1-WE12, 42 W-series tasks).
-Pushed remaining 10-year roadmap tasks to PRIORITY 3. Created PRIORITY 2 for
-performance/bug fixes. Added milestones M0 and M0.5. ADR created: 062.
-
-### 2026-03-18: 10-year product roadmap created
-
-33 epics, 120+ tasks, 10-wave parallel execution plan. 15 risks. 8 milestones.
-ADRs created: 057, 058, 059, 060.
+Prior progress log entries trimmed 2026-03-19. Knowledge preserved in docs/devlog.md and git history.
 
 ---
 
