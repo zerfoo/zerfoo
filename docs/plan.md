@@ -198,7 +198,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE2: Advanced Tabular Architectures [2026 Q3]
 
-- [ ] W2.1.1 Implement tabular.FTTransformer (Feature Tokenizer + Transformer)
+- [x] W2.1.1 Implement tabular.FTTransformer (Feature Tokenizer + Transformer) (2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-025]
   Deps: none (W1.1.2 complete)
   Acceptance: `FTTransformer` model type in tabular package. Each numeric feature
@@ -217,7 +217,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   blocks. Feature importance extractable via AttentionMasks() method.
   TestTabNet_Forward, TestTabNet_Sparsemax, TestTabNet_FeatureImportance.
 
-- [ ] W2.1.3 Implement tabular.SAINT (Self-Attention and Intersample Attention)
+- [x] W2.1.3 Implement tabular.SAINT (Self-Attention and Intersample Attention) (2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-026]
   Deps: none (W1.1.2 complete)
   Acceptance: `SAINT` model type. Two attention mechanisms: (1) self-attention across
@@ -225,7 +225,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Config: num_features, d_model, n_heads, n_layers, inter_sample_attention (bool).
   TestSAINT_Forward, TestSAINT_IntersampleAttention, TestSAINT_Train.
 
-- [ ] W2.1.4 Implement tabular.ResNet (residual MLP baseline)
+- [x] W2.1.4 Implement tabular.ResNet (residual MLP baseline) (2026-03-18)
   Owner: ML Eng  Est: 3h  verifies: [UC-027]
   Deps: none (W1.1.2 complete)
   Acceptance: `TabResNet` model type. MLP with skip connections between hidden layers.
@@ -237,7 +237,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE3: Time-Series Architectures [2026 Q3]
 
-- [ ] W2.2.1 Implement timeseries.TFT (Temporal Fusion Transformer)
+- [x] W2.2.1 Implement timeseries.TFT (Temporal Fusion Transformer) (2026-03-18)
   Owner: ML Eng  Est: 6h  verifies: [UC-028]
   Deps: none (W1.1.2 complete)
   Acceptance: `timeseries` package in zerfoo. `TFT` model type. Variable selection
@@ -246,7 +246,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   quantiles []float64. Predict returns multi-horizon forecasts with quantile estimates.
   TestTFT_Forward, TestTFT_VariableSelection, TestTFT_MultiHorizon.
 
-- [ ] W2.2.2 Implement timeseries.NBEATS (N-BEATS basis expansion)
+- [x] W2.2.2 Implement timeseries.NBEATS (N-BEATS basis expansion) (2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-029]
   Deps: none (W1.1.2 complete)
   Acceptance: `NBEATS` model type. Stack of blocks with basis expansion (trend +
@@ -254,7 +254,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   n_blocks_per_stack, hidden_dim, n_harmonics. Double residual stacking architecture.
   TestNBEATS_Forward, TestNBEATS_BasisExpansion, TestNBEATS_Decomposition.
 
-- [ ] W2.2.3 Implement timeseries.PatchTST (Patch Time-Series Transformer)
+- [x] W2.2.3 Implement timeseries.PatchTST (Patch Time-Series Transformer) (2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-030]
   Deps: none (W1.1.2 complete)
   Acceptance: `PatchTST` model type. Channel-independent patching of time series,
@@ -1000,13 +1000,13 @@ All deps met. Maximum parallelism across 3 tracks.
 Deps: W1.1.4 not required for WE2/WE3 (they depend on W1.1.2 which is complete).
 W3.1.5 depends on W3.1.1 from Wave 5.
 
-- [ ] W2.1.1 FTTransformer (ML Eng)  verifies: [UC-025]
+- [x] W2.1.1 FTTransformer (ML Eng)  verifies: [UC-025] (2026-03-18)
 - [x] W2.1.2 TabNet (ML Eng)  verifies: [UC-016] (pre-existing, verified 2026-03-18)
-- [ ] W2.1.3 SAINT (ML Eng)  verifies: [UC-026]
-- [ ] W2.1.4 TabResNet (ML Eng)  verifies: [UC-027]
-- [ ] W2.2.1 TFT (ML Eng)  verifies: [UC-028]
-- [ ] W2.2.2 N-BEATS (ML Eng)  verifies: [UC-029]
-- [ ] W2.2.3 PatchTST (ML Eng)  verifies: [UC-030]
+- [x] W2.1.3 SAINT (ML Eng)  verifies: [UC-026] (2026-03-18)
+- [x] W2.1.4 TabResNet (ML Eng)  verifies: [UC-027] (2026-03-18)
+- [x] W2.2.1 TFT (ML Eng)  verifies: [UC-028] (2026-03-18)
+- [x] W2.2.2 N-BEATS (ML Eng)  verifies: [UC-029] (2026-03-18)
+- [x] W2.2.3 PatchTST (ML Eng)  verifies: [UC-030] (2026-03-18)
 - [ ] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004]
 
 #### Wave 7: AutoML + ROCm + Community (10 agents)
