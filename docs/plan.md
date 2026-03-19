@@ -384,7 +384,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   graph. KL divergence + reconstruction loss. TestMarketVAE_Generation,
   TestMarketVAE_LatentSpace.
 
-- [ ] W8.2.2 Implement synth.CrashGenerator for stress testing scenarios
+- [x] W8.2.2 Implement synth.CrashGenerator for stress testing scenarios (2026-03-19)
   Owner: ML Eng  Est: 4h  verifies: [infrastructure]
   Deps: W8.2.1
   Acceptance: `CrashGenerator` extends MarketVAE to generate extreme tail scenarios.
@@ -444,7 +444,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE11: Enterprise Features (Internal Consumer) [2032-2034]
 
-- [ ] W10.2.1 Implement Zerfoo Cloud managed inference service
+- [x] W10.2.1 Implement Zerfoo Cloud managed inference service (2026-03-19)
   Owner: Platform Eng  Est: 8h  verifies: [UC-036]
   Deps: T17.2
   Acceptance: See ADR-056. Multi-tenant inference service. Token-based billing.
@@ -473,7 +473,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   to prevent catastrophic forgetting. Fisher information matrix tracks parameter
   importance. TestEWC_PreventsForgetting, TestEWC_ContinuousUpdate.
 
-- [ ] W11.1.2 Implement monitor.DriftDetector + recover.AutoRetrain
+- [x] W11.1.2 Implement monitor.DriftDetector + recover.AutoRetrain (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W8.1.1
   Acceptance: `monitor` package detects performance degradation via statistical
@@ -820,7 +820,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E24: Custom Model Architecture SDK [Q1-Q3 2031]
 
-- [ ] T24.1 Implement model definition DSL
+- [x] T24.1 Implement model definition DSL (2026-03-19)
   Owner: Lead Eng  Est: 8h  verifies: [infrastructure]
   Deps: none
 - [ ] T24.2 Implement custom model training workflow
@@ -859,13 +859,13 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E27: Ecosystem Integrations [Q1-Q4 2031]
 
-- [ ] T27.1 Implement OCI-compatible model registry
+- [x] T27.1 Implement OCI-compatible model registry (2026-03-19)
   Owner: Platform Eng  Est: 6h  verifies: [UC-010]
   Deps: none
-- [ ] T27.2 Implement Kubernetes model cache DaemonSet
+- [x] T27.2 Implement Kubernetes model cache DaemonSet (2026-03-19)
   Owner: Platform Eng  Est: 4h  verifies: [UC-036]
   Deps: none
-- [ ] T27.3 Publish Helm chart
+- [x] T27.3 Publish Helm chart (2026-03-19)
   Owner: Platform Eng  Est: 3h  verifies: [UC-036]
   Deps: none
 
@@ -876,10 +876,10 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T28.1 Implement FederatedStrategy interface (2026-03-19)
   Owner: ML Eng  Est: 4h  verifies: [UC-019]
   Deps: none
-- [ ] T28.2 Implement FedProx strategy
+- [x] T28.2 Implement FedProx strategy (2026-03-19)
   Owner: ML Eng  Est: 3h  verifies: [UC-019]
   Deps: T28.1
-- [ ] T28.3 Implement differential privacy noise injection
+- [x] T28.3 Implement differential privacy noise injection (2026-03-19)
   Owner: ML Eng  Est: 4h  verifies: [infrastructure]
   Deps: T28.1
 - [ ] T28.4 Integration test: 4-client federated simulation
@@ -890,7 +890,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E29: On-Device Inference [Q2-Q4 2033]
 
-- [ ] T29.1 Implement gomobile bindings
+- [x] T29.1 Implement gomobile bindings (2026-03-19)
   Owner: Arch Eng  Est: 6h  verifies: [UC-022]
   Deps: none
 - [ ] T29.2 Create iOS demo app
@@ -1081,9 +1081,23 @@ Deps: W6.1.2/W6.1.3 need W6.1.1 (done). W7.1.1/W7.1.2/W7.3.1 need W5.1.2 (done).
 - [x] W7.1.2 GNN layers (ML Eng)  verifies: [infrastructure] (2026-03-19)
 - [x] W7.3.1 causal.DiscoverGraph (ML Eng)  verifies: [infrastructure] (2026-03-19)
 
-Waves 12+ continue with WE7-WE12 remaining tasks (causal.Intervene, regime, synthetic,
-meta-learning, hardware optimization, enterprise, continuous learning) interleaved
-with remaining T-series tasks (E19-E33) based on dependency order and agent availability.
+#### Wave 12: CrashGen + Monitor + Cloud + Federated + DSL + Registry + K8s + Mobile (10 agents)
+
+Deps: W8.2.2 needs W8.2.1 (done). W11.1.2 needs W8.1.1 (done). W10.2.1 needs T17.2 (done).
+T28.2/T28.3 need T28.1 (done). T24.1/T27.x/T29.1 have no deps.
+
+- [x] W8.2.2 synth.CrashGenerator (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W11.1.2 monitor.DriftDetector + recover.AutoRetrain (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W10.2.1 Zerfoo Cloud managed inference (Platform Eng)  verifies: [UC-036] (2026-03-19)
+- [x] T28.2 FedProx strategy (ML Eng)  verifies: [UC-019] (2026-03-19)
+- [x] T28.3 Differential privacy noise injection (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] T24.1 Model definition DSL (Lead Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] T27.1 OCI-compatible model registry (Platform Eng)  verifies: [UC-010] (2026-03-19)
+- [x] T27.2 K8s model cache DaemonSet (Platform Eng)  verifies: [UC-036] (2026-03-19)
+- [x] T27.3 Helm chart (Platform Eng)  verifies: [UC-036] (2026-03-19)
+- [x] T29.1 gomobile bindings (Arch Eng)  verifies: [UC-022] (2026-03-19)
+
+Waves 13+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
