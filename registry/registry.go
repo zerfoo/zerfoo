@@ -84,7 +84,10 @@ func (r *LocalRegistry) Pull(ctx context.Context, modelID string) (*ModelInfo, e
 		return nil, fmt.Errorf("no pull function configured")
 	}
 
-	targetDir := r.modelDir(modelID)
+	targetDir, err := r.modelDir(modelID)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(targetDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create model directory: %w", err)
 	}
@@ -110,7 +113,10 @@ func (r *LocalRegistry) Get(modelID string) (*ModelInfo, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	targetDir := r.modelDir(modelID)
+	targetDir, err := r.modelDir(modelID)
+	if err != nil {
+		return nil, false
+	}
 	info, err := r.readModelInfo(targetDir)
 	if err != nil {
 		return nil, false
@@ -145,7 +151,10 @@ func (r *LocalRegistry) Delete(modelID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	targetDir := r.modelDir(modelID)
+	targetDir, err := r.modelDir(modelID)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
 		return fmt.Errorf("model %q not found", modelID)
 	}
@@ -154,13 +163,24 @@ func (r *LocalRegistry) Delete(modelID string) error {
 
 // modelDir returns the cache directory path for a given model ID.
 // Model ID format: "org/model" -> cacheDir/org/model/
-func (r *LocalRegistry) modelDir(modelID string) string {
+// Returns an error if the resolved path escapes the cache directory.
+func (r *LocalRegistry) modelDir(modelID string) (string, error) {
 	// Sanitize the model ID to create a valid directory path.
 	parts := strings.SplitN(modelID, "/", 2)
+	var resolved string
 	if len(parts) == 2 {
-		return filepath.Join(r.cacheDir, parts[0], parts[1])
+		resolved = filepath.Join(r.cacheDir, parts[0], parts[1])
+	} else {
+		resolved = filepath.Join(r.cacheDir, modelID)
 	}
-	return filepath.Join(r.cacheDir, modelID)
+
+	// Resolve to absolute and verify containment within cacheDir.
+	cleaned := filepath.Clean(resolved)
+	cachePrefix := filepath.Clean(r.cacheDir) + string(filepath.Separator)
+	if !strings.HasPrefix(cleaned+string(filepath.Separator), cachePrefix) {
+		return "", fmt.Errorf("model ID %q resolves outside cache directory", modelID)
+	}
+	return cleaned, nil
 }
 
 // writeModelInfo writes a config.json with model metadata.

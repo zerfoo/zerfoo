@@ -242,9 +242,22 @@ func TestLocalRegistry_ModelDir(t *testing.T) {
 		{"single", filepath.Join(dir, "single")},
 	}
 	for _, tc := range tests {
-		got := r.modelDir(tc.modelID)
+		got, err := r.modelDir(tc.modelID)
+		if err != nil {
+			t.Errorf("modelDir(%q) unexpected error: %v", tc.modelID, err)
+			continue
+		}
 		if got != tc.want {
 			t.Errorf("modelDir(%q) = %q, want %q", tc.modelID, got, tc.want)
+		}
+	}
+
+	// Verify path traversal is rejected.
+	traversalIDs := []string{"../etc", "org/../../etc", "org/../../../passwd"}
+	for _, id := range traversalIDs {
+		_, err := r.modelDir(id)
+		if err == nil {
+			t.Errorf("modelDir(%q) should have returned error for path traversal", id)
 		}
 	}
 }

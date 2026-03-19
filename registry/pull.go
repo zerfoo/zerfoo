@@ -191,13 +191,23 @@ func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, ta
 		return 0, fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
+	// Validate filename to prevent path traversal from server-controlled values.
+	if strings.Contains(filename, "..") {
+		return 0, fmt.Errorf("invalid filename %q: contains path traversal", filename)
+	}
+
 	// Create subdirectories if needed (e.g., onnx/model.onnx).
 	destPath := filepath.Join(targetDir, filename)
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
+	cleaned := filepath.Clean(destPath)
+	targetPrefix := filepath.Clean(targetDir) + string(filepath.Separator)
+	if !strings.HasPrefix(cleaned, targetPrefix) && cleaned != filepath.Clean(targetDir) {
+		return 0, fmt.Errorf("invalid filename %q: resolves outside target directory", filename)
+	}
+	if err := os.MkdirAll(filepath.Dir(cleaned), 0o750); err != nil {
 		return 0, err
 	}
 
-	f, err := os.Create(destPath) //nolint:gosec // user-controlled target dir
+	f, err := os.Create(cleaned) //nolint:gosec // path validated above
 	if err != nil {
 		return 0, err
 	}
