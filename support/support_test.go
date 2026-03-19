@@ -1,0 +1,491 @@
+package support
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// --- Ticket lifecycle tests ---
+
+func TestTicketLifecycle(t *testing.T) {
+	store := NewStore()
+	ticket := store.Create("cust-1", "Cannot deploy", "Deployment fails on v2.3", P1High)
+
+	if ticket.Status != StatusOpen {
+		t.Fatalf("expected open, got %s", ticket.Status)
+	}
+	if ticket.ID == "" {
+		t.Fatal("expected non-empty ticket ID")
+	}
+	if ticket.CustomerID != "cust-1" {
+		t.Fatalf("expected cust-1, got %s", ticket.CustomerID)
+	}
+
+	now := time.Now().UTC()
+
+	// open -> triaged
+	if err := ticket.Transition(StatusTriaged, now); err != nil {
+		t.Fatalf("transition to triaged: %v", err)
+	}
+	// triaged -> in_progress
+	if err := ticket.Transition(StatusInProgress, now); err != nil {
+		t.Fatalf("transition to in_progress: %v", err)
+	}
+	// in_progress -> resolved
+	if err := ticket.Transition(StatusResolved, now); err != nil {
+		t.Fatalf("transition to resolved: %v", err)
+	}
+	if ticket.ResolvedAt.IsZero() {
+		t.Fatal("expected non-zero ResolvedAt")
+	}
+	// resolved -> closed
+	if err := ticket.Transition(StatusClosed, now); err != nil {
+		t.Fatalf("transition to closed: %v", err)
+	}
+	if ticket.ClosedAt.IsZero() {
+		t.Fatal("expected non-zero ClosedAt")
+	}
+}
+
+func TestInvalidTransition(t *testing.T) {
+	store := NewStore()
+	ticket := store.Create("cust-1", "Test", "", P2Medium)
+
+	// open -> in_progress is invalid (must go through triaged)
+	if err := ticket.Transition(StatusInProgress, time.Now()); err == nil {
+		t.Fatal("expected error for invalid transition")
+	}
+}
+
+func TestClosedTicketCannotTransition(t *testing.T) {
+	store := NewStore()
+	ticket := store.Create("cust-1", "Test", "", P3Low)
+	now := time.Now()
+	ticket.Transition(StatusClosed, now)
+	if err := ticket.Transition(StatusOpen, now); err == nil {
+		t.Fatal("expected error transitioning from closed")
+	}
+}
+
+// --- Store tests ---
+
+func TestStoreListByCustomer(t *testing.T) {
+	store := NewStore()
+	store.Create("cust-1", "Ticket A", "", P2Medium)
+	store.Create("cust-2", "Ticket B", "", P3Low)
+	store.Create("cust-1", "Ticket C", "", P1High)
+
+	tickets := store.ListByCustomer("cust-1")
+	if len(tickets) != 2 {
+		t.Fatalf("expected 2 tickets, got %d", len(tickets))
+	}
+}
+
+func TestStoreAddComment(t *testing.T) {
+	store := NewStore()
+	ticket := store.Create("cust-1", "Test", "", P2Medium)
+
+	c, err := store.AddComment(ticket.ID, "agent", "Working on it")
+	if err != nil {
+		t.Fatalf("add comment: %v", err)
+	}
+	if c.Author != "agent" {
+		t.Fatalf("expected author 'agent', got %s", c.Author)
+	}
+	if len(ticket.Comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(ticket.Comments))
+	}
+
+	// Comment on non-existent ticket.
+	_, err = store.AddComment("TKT-999999", "agent", "test")
+	if err == nil {
+		t.Fatal("expected error for missing ticket")
+	}
+}
+
+// --- Router tests ---
+
+func TestRouterAssignment(t *testing.T) {
+	router := NewRouter("general-support")
+	router.AddRule(P0Critical, "on-call-sre")
+	router.AddRule(P1High, "senior-engineers")
+
+	store := NewStore()
+	ticket := store.Create("cust-1", "Outage", "Production down", P0Critical)
+
+	if err := router.Route(ticket, store); err != nil {
+		t.Fatalf("route: %v", err)
+	}
+	if ticket.AssignedTo != "on-call-sre" {
+		t.Fatalf("expected on-call-sre, got %s", ticket.AssignedTo)
+	}
+	if ticket.Status != StatusTriaged {
+		t.Fatalf("expected triaged, got %s", ticket.Status)
+	}
+
+	// Fallback for P3.
+	ticket2 := store.Create("cust-2", "Question", "How to configure?", P3Low)
+	if err := router.Route(ticket2, store); err != nil {
+		t.Fatalf("route fallback: %v", err)
+	}
+	if ticket2.AssignedTo != "general-support" {
+		t.Fatalf("expected general-support, got %s", ticket2.AssignedTo)
+	}
+}
+
+func TestRouterNoFallback(t *testing.T) {
+	router := NewRouter("")
+	store := NewStore()
+	ticket := store.Create("cust-1", "Test", "", P3Low)
+	if err := router.Route(ticket, store); err == nil {
+		t.Fatal("expected error with no routing rule and no fallback")
+	}
+}
+
+// --- SLA tests ---
+
+func TestSLAResponseBreach(t *testing.T) {
+	tracker := NewSLATracker(DefaultSLAPolicies())
+
+	var breaches []Breach
+	tracker.OnBreach(func(b Breach) {
+		breaches = append(breaches, b)
+	})
+
+	store := NewStore()
+	ticket := store.Create("cust-1", "Outage", "", P0Critical)
+
+	// Check before response deadline — no breach.
+	soon := ticket.CreatedAt.Add(10 * time.Minute)
+	b := tracker.Check(ticket, soon)
+	if len(b) != 0 {
+		t.Fatalf("expected no breaches, got %d", len(b))
+	}
+
+	// Check after response deadline — breach.
+	late := ticket.CreatedAt.Add(20 * time.Minute)
+	b = tracker.Check(ticket, late)
+	if len(b) == 0 {
+		t.Fatal("expected response breach")
+	}
+	found := false
+	for _, br := range b {
+		if br.Type == BreachResponse {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected response breach type")
+	}
+	if len(breaches) == 0 {
+		t.Fatal("expected breach handler to have been called")
+	}
+}
+
+func TestSLAResolutionBreach(t *testing.T) {
+	tracker := NewSLATracker(DefaultSLAPolicies())
+	store := NewStore()
+	ticket := store.Create("cust-1", "Slow API", "", P2Medium)
+
+	// Triage it so response SLA is met.
+	ticket.Transition(StatusTriaged, ticket.CreatedAt.Add(1*time.Hour))
+
+	// Check well after resolution deadline (72h).
+	late := ticket.CreatedAt.Add(80 * time.Hour)
+	b := tracker.Check(ticket, late)
+	found := false
+	for _, br := range b {
+		if br.Type == BreachResolution {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected resolution breach")
+	}
+}
+
+func TestSLANoBreachWhenResolved(t *testing.T) {
+	tracker := NewSLATracker(DefaultSLAPolicies())
+	store := NewStore()
+	ticket := store.Create("cust-1", "Bug", "", P1High)
+
+	now := ticket.CreatedAt.Add(30 * time.Minute)
+	ticket.Transition(StatusTriaged, now)
+	ticket.Transition(StatusInProgress, now)
+	ticket.Transition(StatusResolved, now)
+
+	// Even well past deadline, no breach since resolved.
+	late := ticket.CreatedAt.Add(48 * time.Hour)
+	b := tracker.Check(ticket, late)
+	if len(b) != 0 {
+		t.Fatalf("expected no breaches for resolved ticket, got %d", len(b))
+	}
+}
+
+func TestSLACheckAll(t *testing.T) {
+	tracker := NewSLATracker(DefaultSLAPolicies())
+	store := NewStore()
+	store.Create("cust-1", "T1", "", P0Critical)
+	store.Create("cust-2", "T2", "", P1High)
+
+	// Way past all deadlines.
+	late := time.Now().Add(200 * time.Hour)
+	breaches := tracker.CheckAll(store, late)
+	if len(breaches) < 2 {
+		t.Fatalf("expected at least 2 breaches, got %d", len(breaches))
+	}
+}
+
+// --- Webhook tests ---
+
+func TestWebhookDispatch(t *testing.T) {
+	var received []WebhookEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event WebhookEvent
+		json.NewDecoder(r.Body).Decode(&event)
+		received = append(received, event)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dispatcher := NewWebhookDispatcher()
+	dispatcher.Register(WebhookTarget{
+		Name: "test-hook",
+		URL:  server.URL,
+	})
+
+	event := WebhookEvent{
+		Type:      EventTicketCreated,
+		Timestamp: time.Now().UTC(),
+		Payload:   map[string]string{"id": "TKT-000001"},
+	}
+	errs := dispatcher.Dispatch(t.Context(), event)
+	if len(errs) != 0 {
+		t.Fatalf("dispatch errors: %v", errs)
+	}
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(received))
+	}
+	if received[0].Type != EventTicketCreated {
+		t.Fatalf("expected ticket.created, got %s", received[0].Type)
+	}
+}
+
+func TestWebhookEventFilter(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dispatcher := NewWebhookDispatcher()
+	dispatcher.Register(WebhookTarget{
+		Name:   "sla-only",
+		URL:    server.URL,
+		Events: []EventType{EventSLABreach},
+	})
+
+	// Send a ticket.created event — should not fire.
+	event := WebhookEvent{Type: EventTicketCreated, Timestamp: time.Now().UTC()}
+	dispatcher.Dispatch(t.Context(), event)
+	if called {
+		t.Fatal("expected webhook not to fire for filtered event")
+	}
+}
+
+// --- API handler tests ---
+
+func newTestAPI() *API {
+	store := NewStore()
+	router := NewRouter("general-support")
+	router.AddRule(P0Critical, "on-call-sre")
+	sla := NewSLATracker(DefaultSLAPolicies())
+	return &API{
+		Store:    store,
+		Router:   router,
+		SLA:      sla,
+		Webhooks: NewWebhookDispatcher(),
+	}
+}
+
+func TestAPICreateTicket(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	body := `{"customer_id":"cust-1","subject":"Help","body":"Need help","priority":1}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var ticket Ticket
+	json.NewDecoder(rr.Body).Decode(&ticket)
+	if ticket.ID == "" {
+		t.Fatal("expected ticket ID")
+	}
+	if ticket.AssignedTo == "" {
+		t.Fatal("expected ticket to be assigned via router")
+	}
+}
+
+func TestAPICreateTicketValidation(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	body := `{"customer_id":"","subject":""}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestAPIListTickets(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create two tickets.
+	for _, subj := range []string{"A", "B"} {
+		body := `{"customer_id":"cust-1","subject":"` + subj + `","priority":2}`
+		req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+	}
+
+	req := httptest.NewRequest("GET", "/support/tickets?customer_id=cust-1", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var tickets []Ticket
+	json.NewDecoder(rr.Body).Decode(&tickets)
+	if len(tickets) != 2 {
+		t.Fatalf("expected 2 tickets, got %d", len(tickets))
+	}
+}
+
+func TestAPIGetTicket(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create a ticket.
+	body := `{"customer_id":"cust-1","subject":"Test","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	var created Ticket
+	json.NewDecoder(rr.Body).Decode(&created)
+
+	// Get it.
+	req = httptest.NewRequest("GET", "/support/tickets/"+created.ID, nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestAPIGetTicketNotFound(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/support/tickets/TKT-999999", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestAPIAddComment(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create ticket.
+	body := `{"customer_id":"cust-1","subject":"Test","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	var created Ticket
+	json.NewDecoder(rr.Body).Decode(&created)
+
+	// Add comment.
+	cbody := `{"author":"agent","body":"Looking into it"}`
+	req = httptest.NewRequest("POST", "/support/tickets/"+created.ID+"/comments", strings.NewReader(cbody))
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPICloseTicket(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create ticket.
+	body := `{"customer_id":"cust-1","subject":"Test","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	var created Ticket
+	json.NewDecoder(rr.Body).Decode(&created)
+
+	// Close it (triaged -> closed is valid).
+	req = httptest.NewRequest("POST", "/support/tickets/"+created.ID+"/close", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var closed Ticket
+	json.NewDecoder(rr.Body).Decode(&closed)
+	if closed.Status != StatusClosed {
+		t.Fatalf("expected closed, got %s", closed.Status)
+	}
+}
+
+func TestAPIPriorityString(t *testing.T) {
+	tests := []struct {
+		p    Priority
+		want string
+	}{
+		{P0Critical, "P0-Critical"},
+		{P1High, "P1-High"},
+		{P2Medium, "P2-Medium"},
+		{P3Low, "P3-Low"},
+		{Priority(99), "P99-Unknown"},
+	}
+	for _, tt := range tests {
+		if got := tt.p.String(); got != tt.want {
+			t.Errorf("Priority(%d).String() = %s, want %s", tt.p, got, tt.want)
+		}
+	}
+}
+
