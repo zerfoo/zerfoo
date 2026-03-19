@@ -2,8 +2,6 @@ package autoopt
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 )
 
 // GPUGeneration identifies a class of NVIDIA GPU microarchitecture.
@@ -83,8 +81,8 @@ type BlackwellCapabilities struct {
 
 // DetectGPUGeneration maps a CUDA compute capability string to a GPUGeneration.
 func DetectGPUGeneration(computeCap string) GPUGeneration {
-	major, _, ok := parseComputeCap(computeCap)
-	if !ok {
+	major, _ := parseComputeCap(computeCap)
+	if major == 0 {
 		return GPUGenUnknown
 	}
 	switch {
@@ -99,25 +97,7 @@ func DetectGPUGeneration(computeCap string) GPUGeneration {
 	}
 }
 
-// parseComputeCap parses a "major.minor" compute capability string.
-func parseComputeCap(s string) (major, minor int, ok bool) {
-	if s == "" {
-		return 0, 0, false
-	}
-	parts := strings.SplitN(s, ".", 2)
-	maj, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, false
-	}
-	min := 0
-	if len(parts) == 2 {
-		min, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return 0, 0, false
-		}
-	}
-	return maj, min, true
-}
+// parseComputeCap is defined in codegen.go.
 
 // DetectHopperCapabilities returns the Hopper feature set for SM90 GPUs.
 // Returns nil if the generation is not Hopper or later.
