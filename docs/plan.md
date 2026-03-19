@@ -288,7 +288,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Uses existing Trainer[T] with larger batch sizes. BaseModel is a Model with
   pre-trained weights. TestPreTrain_Convergence, TestPreTrain_TransferBenefit.
 
-- [ ] W5.1.2 Implement tabular.FineTuneLoRA for per-source LoRA adaptation
+- [x] W5.1.2 Implement tabular.FineTuneLoRA for per-source LoRA adaptation (2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-033]
   Deps: W5.1.1
   Acceptance: `FineTuneLoRA(base *BaseModel, data [][]float64, labels []int, config LoRAConfig) (*Adapter, error)`.
@@ -296,7 +296,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   target_layers. Reuses existing training/lora/ infrastructure. Adaptation completes
   in seconds on small datasets. TestFineTuneLoRA_FastAdaptation, TestFineTuneLoRA_Quality.
 
-- [ ] W5.1.3 Implement tabular.MergeAdapter for deployment without LoRA overhead
+- [x] W5.1.3 Implement tabular.MergeAdapter for deployment without LoRA overhead (2026-03-18)
   Owner: ML Eng  Est: 3h  verifies: [UC-033]
   Deps: W5.1.2
   Acceptance: `MergeAdapter(base *BaseModel, adapter *Adapter) (*Model, error)`.
@@ -308,7 +308,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE6: Reinforcement Learning Package [2028-2029]
 
-- [ ] W6.1.1 Create rl package with Environment and Agent interfaces
+- [x] W6.1.1 Create rl package with Environment and Agent interfaces (2026-03-18)
   Owner: ML Eng  Est: 4h  verifies: [infrastructure]
   Deps: none
   Acceptance: `rl` package in zerfoo. `Environment` interface: Reset() State,
@@ -699,7 +699,7 @@ Decision: docs/adr/059-edge-runtime-architecture.md
 
 Completed: T15.1 (build-tag-gated edge binary). Trimmed 2026-03-18.
 
-- [ ] T15.2 Implement pre-optimized model format
+- [x] T15.2 Implement pre-optimized model format (2026-03-18)
   Owner: Arch Eng  Est: 4h  verifies: [UC-022]
   Deps: none (T15.1 complete)
 - [ ] T15.3 Cross-compile and test on Raspberry Pi 5
@@ -708,7 +708,7 @@ Completed: T15.1 (build-tag-gated edge binary). Trimmed 2026-03-18.
 - [ ] T15.4 Cross-compile and test on NVIDIA Jetson Orin Nano
   Owner: Arch Eng  Est: 3h  verifies: [UC-022]
   Deps: none (T15.1 complete)
-- [ ] T15.5 Add ARM64 cross-compilation to CI
+- [x] T15.5 Add ARM64 cross-compilation to CI (2026-03-18)
   Owner: Infra Eng  Est: 2h  verifies: [infrastructure]
   Deps: none (T15.1 complete)
 
@@ -734,7 +734,7 @@ Decision: docs/adr/060-cloud-platform-architecture.md
 Completed: T17.1 (model repository), T17.3 (adaptive batching),
 T17.4 (multi-model LRU eviction). Trimmed 2026-03-18.
 
-- [ ] T17.2 Implement Kubernetes operator
+- [x] T17.2 Implement Kubernetes operator (2026-03-18)
   Owner: Platform Eng  Est: 8h  verifies: [UC-036]
   Deps: none
 - [ ] T17.5 List on AWS Marketplace
@@ -1029,6 +1029,8 @@ Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
 Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
 
 - [x] W5.1.1 tabular.PreTrain (ML Eng)  verifies: [UC-032] (2026-03-18)
+- [x] W5.1.2 tabular.FineTuneLoRA (ML Eng)  verifies: [UC-033] (2026-03-18)
+- [x] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033] (2026-03-18)
 - [ ] T8.4 Port CUDA to HIP [ztensor] (Kernel Eng)  verifies: [UC-035]
 - [ ] T12.2 Enterprise ticketing (Biz Dev)  delivers: [ticketing system]
 - [ ] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide]
@@ -1043,15 +1045,15 @@ Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
 
 Deps: W5.1.2 needs W5.1.1. T8.5/T8.6 need T8.4.
 
-- [ ] W5.1.2 tabular.FineTuneLoRA (ML Eng)  verifies: [UC-033]
-- [ ] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033]
+- [x] W5.1.2 tabular.FineTuneLoRA (ML Eng)  verifies: [UC-033] (2026-03-18)
+- [x] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033] (2026-03-18)
 - [ ] T8.5 ROCm benchmark (Kernel Eng)  verifies: [UC-035]
 - [ ] T8.6 ROCm CI (Infra Eng)  verifies: [infrastructure]
 - [ ] T14.1 Compliance platform (Compliance)  delivers: [compliance platform]
 - [ ] T16.3 Benchmark 500+ tok/s [DGX] (Kernel Eng)  verifies: [UC-002]
-- [ ] T17.2 Kubernetes operator (Platform Eng)  verifies: [UC-036]
+- [x] T17.2 Kubernetes operator (Platform Eng)  verifies: [UC-036] (2026-03-18)
 - [ ] T18.1 zerfoo-enterprise repo (Lead Eng)  verifies: [infrastructure]
-- [ ] W6.1.1 rl package interfaces (ML Eng)  verifies: [infrastructure]
+- [x] W6.1.1 rl package interfaces (ML Eng)  verifies: [infrastructure] (2026-03-18)
 - [ ] T12.4 Enterprise contracts (Biz Dev)  delivers: [$500K ARR contracts]
 
 #### Wave 10: RL + Enterprise Features + Cloud (10 agents)
