@@ -3,165 +3,90 @@ package tabular
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
-// Ensemble combines multiple MLP sub-models and optional tree predictions
-// via a stacking meta-learner. The meta-learner is a small MLP that takes
-// concatenated sub-model outputs and produces the final prediction.
+// MetaLearnerConfig holds configuration for the ensemble's meta-learner MLP.
+type MetaLearnerConfig struct {
+	HiddenDims []int
+}
+
+// Ensemble combines multiple tabular Models and an optional tree ensemble
+// via stacking. A learned meta-learner MLP fuses sub-model softmax outputs
+// and tree predictions into a final Direction prediction.
 type Ensemble struct {
 	models          []*Model
 	treePredictions func([]float64) []float64
 	metaLearner     *Model
+	engine          compute.Engine[float32]
+	ops             numeric.Arithmetic[float32]
 }
 
-// NewEnsemble creates an Ensemble from a set of MLP sub-models and an optional
-// tree predictions callback. The treePredictions function takes a feature vector
-// and returns tree ensemble output scores. Pass nil if no tree models are used.
-func NewEnsemble(models []*Model, treePredictions func([]float64) []float64) *Ensemble {
+// NewEnsemble creates an Ensemble from trained sub-models and an optional tree
+// prediction callback. treePredictions may be nil if no tree ensemble is used.
+// The callback receives raw features and returns tree ensemble outputs (e.g.,
+// class probabilities), decoupling the ensemble from any specific tree library.
+func NewEnsemble(models []*Model, treePredictions func([]float64) []float64, engine compute.Engine[float32], ops numeric.Arithmetic[float32]) (*Ensemble, error) {
+	if len(models) == 0 {
+		return nil, fmt.Errorf("tabular: ensemble: at least one model is required")
+	}
+
 	return &Ensemble{
 		models:          models,
 		treePredictions: treePredictions,
-	}
+		engine:          engine,
+		ops:             ops,
+	}, nil
 }
 
-// EnsembleTrainConfig holds hyperparameters for training the meta-learner.
-type EnsembleTrainConfig struct {
-	Epochs       int
-	BatchSize    int
-	LearningRate float64
-	WeightDecay  float64
-	HiddenDims   []int
-	Activation   Activation
-}
-
-// TrainEnsemble trains the stacking meta-learner on pre-computed sub-model
-// outputs and labels. subModelOutputs[i] is the concatenated output vector
-// from all sub-models (and tree predictions) for sample i. labels[i] must be
-// in [0, 3) corresponding to Long, Short, Flat.
-func (e *Ensemble) TrainEnsemble(subModelOutputs [][]float64, labels []int, config EnsembleTrainConfig, engine compute.Engine[float32], ops numeric.Arithmetic[float32]) error {
+// TrainMetaLearner trains the stacking meta-learner on pre-computed sub-model
+// outputs. subModelOutputs[i] is the concatenated softmax outputs from all
+// sub-models and tree predictions for sample i. labels[i] is in [0, 3).
+func (e *Ensemble) TrainMetaLearner(subModelOutputs [][]float64, labels []int, tc TrainConfig, mlc MetaLearnerConfig) error {
 	if len(subModelOutputs) == 0 {
 		return fmt.Errorf("tabular: ensemble: no training data provided")
 	}
 	if len(subModelOutputs) != len(labels) {
-		return fmt.Errorf("tabular: ensemble: data length %d != labels length %d", len(subModelOutputs), len(labels))
-	}
-	if config.Epochs <= 0 {
-		return fmt.Errorf("tabular: ensemble: Epochs must be positive")
-	}
-	if config.BatchSize <= 0 {
-		config.BatchSize = len(subModelOutputs)
-	}
-	if config.LearningRate <= 0 {
-		config.LearningRate = 0.01
-	}
-
-	numClasses := 3
-	inputDim := len(subModelOutputs[0])
-	for i, row := range subModelOutputs {
-		if len(row) != inputDim {
-			return fmt.Errorf("tabular: ensemble: row %d has %d features, expected %d", i, len(row), inputDim)
-		}
+		return fmt.Errorf("tabular: ensemble: outputs length %d != labels length %d", len(subModelOutputs), len(labels))
 	}
 	for i, l := range labels {
-		if l < 0 || l >= numClasses {
-			return fmt.Errorf("tabular: ensemble: label %d at index %d is out of range [0, %d)", l, i, numClasses)
+		if l < 0 || l >= 3 {
+			return fmt.Errorf("tabular: ensemble: label %d at index %d is out of range [0, 3)", l, i)
 		}
 	}
 
-	hiddenDims := config.HiddenDims
+	hiddenDims := mlc.HiddenDims
 	if len(hiddenDims) == 0 {
 		hiddenDims = []int{16}
 	}
 
 	mc := ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  hiddenDims,
-		DropoutRate: 0.0,
-		Activation:  config.Activation,
+		InputDim:   len(subModelOutputs[0]),
+		HiddenDims: hiddenDims,
+		Activation: ActivationReLU,
 	}
 
-	model, err := NewModel(mc, engine, ops)
+	model, err := Train(subModelOutputs, labels, tc, mc, e.engine, e.ops)
 	if err != nil {
-		return fmt.Errorf("tabular: ensemble: %w", err)
+		return fmt.Errorf("tabular: ensemble: train meta-learner: %w", err)
 	}
-
-	params, err := buildParams(model)
-	if err != nil {
-		return fmt.Errorf("tabular: ensemble: %w", err)
-	}
-
-	lr := float32(config.LearningRate)
-	wd := float32(config.WeightDecay)
-	opt := optimizer.NewAdamW[float32](engine, lr, 0.9, 0.999, 1e-8, wd)
-
-	ctx := context.Background()
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		perm := rand.Perm(len(subModelOutputs))
-
-		for batchStart := 0; batchStart < len(subModelOutputs); batchStart += config.BatchSize {
-			batchEnd := batchStart + config.BatchSize
-			if batchEnd > len(subModelOutputs) {
-				batchEnd = len(subModelOutputs)
-			}
-			batchSize := batchEnd - batchStart
-
-			inputData := make([]float32, batchSize*inputDim)
-			labelData := make([]int, batchSize)
-			for i := 0; i < batchSize; i++ {
-				idx := perm[batchStart+i]
-				for j := 0; j < inputDim; j++ {
-					inputData[i*inputDim+j] = float32(subModelOutputs[idx][j])
-				}
-				labelData[i] = labels[idx]
-			}
-
-			input, err := tensor.New[float32]([]int{batchSize, inputDim}, inputData)
-			if err != nil {
-				return err
-			}
-
-			logits, activations, preActivations, err := forwardPass(ctx, model, input)
-			if err != nil {
-				return fmt.Errorf("tabular: ensemble: forward: %w", err)
-			}
-
-			_, softmaxOut, err := crossEntropyLoss(ctx, engine, logits, labelData, batchSize, numClasses)
-			if err != nil {
-				return fmt.Errorf("tabular: ensemble: loss: %w", err)
-			}
-
-			err = backwardPass(ctx, model, engine, ops, params, activations, preActivations, input, softmaxOut, labelData, batchSize, numClasses)
-			if err != nil {
-				return fmt.Errorf("tabular: ensemble: backward: %w", err)
-			}
-
-			if err := opt.Step(ctx, params); err != nil {
-				return fmt.Errorf("tabular: ensemble: optimizer step: %w", err)
-			}
-		}
-	}
-
 	e.metaLearner = model
 	return nil
 }
 
-// Predict runs all sub-models and tree predictions, concatenates their outputs,
-// and feeds them through the meta-learner to produce a final Direction and
-// confidence score.
+// Predict runs all sub-models and the tree prediction callback on the given
+// features, concatenates their outputs, and feeds the result through the
+// trained meta-learner to produce a final Direction and confidence.
 func (e *Ensemble) Predict(features []float64) (Direction, float64, error) {
 	if e.metaLearner == nil {
-		return Flat, 0, fmt.Errorf("tabular: ensemble: meta-learner not trained")
+		return Flat, 0, fmt.Errorf("tabular: ensemble: meta-learner not trained; call TrainMetaLearner first")
 	}
 
-	metaInput, err := e.collectSubOutputs(features)
+	// Collect sub-model outputs.
+	metaInput, err := e.collectOutputs(features)
 	if err != nil {
 		return Flat, 0, err
 	}
@@ -169,42 +94,67 @@ func (e *Ensemble) Predict(features []float64) (Direction, float64, error) {
 	return e.metaLearner.Predict(metaInput)
 }
 
-// collectSubOutputs runs each sub-model and tree prediction callback,
-// concatenating all outputs into a single feature vector for the meta-learner.
-func (e *Ensemble) collectSubOutputs(features []float64) ([]float64, error) {
-	var outputs []float64
+// predictFromOutputs runs the meta-learner on pre-computed concatenated outputs.
+func (e *Ensemble) predictFromOutputs(outputs []float64) (Direction, float64, error) {
+	if e.metaLearner == nil {
+		return Flat, 0, fmt.Errorf("tabular: ensemble: meta-learner not trained")
+	}
+	return e.metaLearner.Predict(outputs)
+}
+
+// collectOutputs runs all sub-models and tree predictions, returning the
+// concatenated output vector with actual softmax probabilities.
+func (e *Ensemble) collectOutputs(features []float64) ([]float64, error) {
+	var metaInput []float64
 
 	for i, m := range e.models {
-		dir, conf, err := m.Predict(features)
+		probs, err := modelSoftmaxProbs(m, features)
 		if err != nil {
-			return nil, fmt.Errorf("tabular: ensemble: sub-model %d: %w", i, err)
+			return nil, fmt.Errorf("tabular: ensemble: model %d: %w", i, err)
 		}
-		// Encode direction as one-hot + confidence.
-		oneHot := make([]float64, 3)
-		oneHot[int(dir)] = 1.0
-		outputs = append(outputs, oneHot...)
-		outputs = append(outputs, conf)
+		metaInput = append(metaInput, probs...)
 	}
 
 	if e.treePredictions != nil {
-		treePreds := e.treePredictions(features)
-		outputs = append(outputs, treePreds...)
+		treeOut := e.treePredictions(features)
+		metaInput = append(metaInput, treeOut...)
 	}
 
-	return outputs, nil
+	return metaInput, nil
 }
 
-// GenerateSubModelOutputs generates the sub-model output matrix for a dataset.
-// This is used to prepare training data for TrainEnsemble.
-func (e *Ensemble) GenerateSubModelOutputs(data [][]float64) ([][]float64, error) {
-	outputs := make([][]float64, len(data))
-	for i, features := range data {
-		row, err := e.collectSubOutputs(features)
-		if err != nil {
-			return nil, fmt.Errorf("tabular: ensemble: sample %d: %w", i, err)
-		}
-		outputs[i] = row
+// modelSoftmaxProbs runs a forward pass through the model and returns the
+// full 3-class softmax probabilities as float64.
+func modelSoftmaxProbs(m *Model, features []float64) ([]float64, error) {
+	if len(features) != m.config.InputDim {
+		return nil, fmt.Errorf("expected %d features, got %d", m.config.InputDim, len(features))
 	}
-	return outputs, nil
-}
 
+	ctx := context.Background()
+
+	f32 := make([]float32, len(features))
+	for i, v := range features {
+		f32[i] = float32(v)
+	}
+	input, err := tensor.New[float32]([]int{1, m.config.InputDim}, f32)
+	if err != nil {
+		return nil, err
+	}
+
+	logits, _, _, err := forwardPass(ctx, m, input)
+	if err != nil {
+		return nil, err
+	}
+
+	probs, err := m.engine.Softmax(ctx, logits, -1)
+	if err != nil {
+		return nil, err
+	}
+
+	probData := probs.Data()
+	result := make([]float64, len(probData))
+	for i, v := range probData {
+		result[i] = float64(v)
+	}
+	return result, nil
+}
