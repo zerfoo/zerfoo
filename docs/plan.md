@@ -420,7 +420,7 @@ Completed: T13.3 (SBOM generation), T13.4 (fuzz testing). Trimmed 2026-03-18.
 - [x] T14.1 Deploy compliance automation platform (2026-03-19)
   Owner: Compliance  Est: 4h  delivers: [compliance platform deployed]
   Deps: none
-- [ ] T14.2 Implement required security controls
+- [x] T14.2 Implement required security controls (2026-03-19)
   Owner: Infra Eng  Est: 8h  delivers: [SOC 2 security controls implemented]
   Deps: T14.1
 - [ ] T14.3 Complete SOC 2 Type I audit
@@ -495,16 +495,16 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T18.1 Create zerfoo-enterprise repository (2026-03-19)
   Owner: Lead Eng  Est: 2h  verifies: [infrastructure]
   Deps: none
-- [ ] T18.2 Implement SSO/SAML authentication
+- [x] T18.2 Implement SSO/SAML authentication (2026-03-19)
   Owner: Platform Eng  Est: 6h  delivers: [SAML 2.0 SSO for enterprise]
   Deps: T18.1
-- [ ] T18.3 Implement RBAC
+- [x] T18.3 Implement RBAC (2026-03-19)
   Owner: Platform Eng  Est: 5h  delivers: [role-based access control]
   Deps: T18.1
-- [ ] T18.4 Implement audit logging
+- [x] T18.4 Implement audit logging (2026-03-19)
   Owner: Platform Eng  Est: 4h  delivers: [SOC 2-compliant audit logging]
   Deps: T18.1
-- [ ] T18.5 Implement monitoring dashboards
+- [x] T18.5 Implement monitoring dashboards (2026-03-19)
   Owner: Platform Eng  Est: 5h  delivers: [operational monitoring dashboards]
   Deps: T18.1
 
@@ -751,12 +751,12 @@ Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
 
 - [x] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
 - [x] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [ ] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 controls]
-- [ ] T17.5 AWS Marketplace (Biz Dev)  delivers: [AWS listing]
-- [ ] T18.2 SSO/SAML (Platform Eng)  delivers: [SAML 2.0 SSO]
-- [ ] T18.3 RBAC (Platform Eng)  delivers: [RBAC system]
-- [ ] T18.4 Audit logging (Platform Eng)  delivers: [audit logging]
-- [ ] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards]
+- [x] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 controls] (2026-03-19)
+- [x] T17.5 AWS Marketplace (Biz Dev)  delivers: [AWS listing] (2026-03-19)
+- [x] T18.2 SSO/SAML (Platform Eng)  delivers: [SAML 2.0 SSO] (2026-03-19)
+- [x] T18.3 RBAC (Platform Eng)  delivers: [RBAC system] (2026-03-19)
+- [x] T18.4 Audit logging (Platform Eng)  delivers: [audit logging] (2026-03-19)
+- [x] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards] (2026-03-19)
 - [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
 - [x] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
 
@@ -846,7 +846,17 @@ Deps: T12.1 (done), T17.2 (done), W10.2.2 (done). All new packages, no file over
 - [x] T17.5 AWS Marketplace listing (Biz Dev)  delivers: [AWS listing] (2026-03-19)
 - [x] T11.3 KubeCon 2027 CFP (DevRel)  delivers: [KubeCon submission] (2026-03-19)
 
-Waves 19+ continue with remaining tasks based on dependency order and agent availability.
+#### Wave 19: Enterprise Features + Security Controls (5 agents)
+
+Deps: T18.1 (done), T14.1 (done). T18.2-T18.5 in enterprise repo, T14.2 in zerfoo repo. No file overlaps.
+
+- [x] T18.2 SSO/SAML authentication (Platform Eng)  delivers: [SAML 2.0 SSO] (2026-03-19)
+- [x] T18.3 RBAC (Platform Eng)  delivers: [role-based access control] (2026-03-19)
+- [x] T18.4 Audit logging (Platform Eng)  delivers: [SOC 2 audit logging] (2026-03-19)
+- [x] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards] (2026-03-19)
+- [x] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 security controls] (2026-03-19)
+
+Waves 20+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
@@ -941,6 +951,17 @@ Waves 19+ continue with remaining tasks based on dependency order and agent avai
 ---
 
 ## Progress Log
+
+### 2026-03-19: Wave 19 execution (5 tasks, 5 parallel agents)
+
+Executed 5 unblocked tasks across E18, E14 with 5 parallel agents:
+- T18.2 SSO/SAML authentication (enterprise repo) — SAML 2.0 SP, multi-IdP, SLO, session management. 49 tests.
+- T18.3 RBAC (enterprise repo) — role inheritance, deny-precedence policy engine, tenant-scoped. 10 tests.
+- T18.4 Audit logging (enterprise repo) — tamper-evident hash chain, retention, JSON/CSV/SIEM export. 14 tests.
+- T18.5 Monitoring dashboards (enterprise repo) — metrics, alerts, health checks, Prometheus export. 27 tests.
+- T14.2 Security controls (zerfoo repo) — API keys, AES-256-GCM, rate limiting, IP filter, incident response. 13+ tests.
+All tests pass. Enterprise repo: 100 tests across 4 packages. Zerfoo security/: all pass.
+Newly unblocked: T14.3 (needs T14.2, done), T17.6/T17.7 (need T17.5, done).
 
 ### 2026-03-19: Wave 18 execution (5 tasks, 5 parallel agents)
 
