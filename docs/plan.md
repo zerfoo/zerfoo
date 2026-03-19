@@ -180,265 +180,61 @@ These tasks are the highest priority and must be completed before any remaining
 
 #### WE1: Tabular Model Package [2026 Q2 -- CRITICAL]
 
-Completed: W1.1.1 (tabular.Model), W1.1.2 (tabular.Train), W1.1.3 (tabular.Save/Load).
-Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md.
-
-- [x] W1.1.4 Implement tabular.Ensemble combining metee trees with MLP via stacking (2026-03-18, a79299d)
-  Owner: ML Eng  Est: 4h  verifies: [UC-018]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `Ensemble` struct holds []*Model (MLP models) and metee booster references.
-  `NewEnsemble(models []*Model, treePredictions func([]float64) []float64) *Ensemble`.
-  treePredictions is a callback that returns tree ensemble outputs (decouples from metee
-  import). `Predict(features []float64) (Direction, float64)` runs all sub-models,
-  concatenates outputs, feeds through a learned meta-learner (small MLP). Meta-learner
-  trained via `TrainEnsemble(subModelOutputs [][]float64, labels []int, config) error`.
-  TestEnsemble_CombinesModels, TestEnsemble_MetaLearnerConverges, TestEnsemble_Predict.
+Completed: W1.1.1-W1.1.4. Trimmed 2026-03-19.
 
 ---
 
 #### WE2: Advanced Tabular Architectures [2026 Q3]
 
-- [x] W2.1.1 Implement tabular.FTTransformer (Feature Tokenizer + Transformer) (2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-025]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `FTTransformer` model type in tabular package. Each numeric feature
-  tokenized via learned embedding, then processed by standard transformer encoder
-  (self-attention + FFN). Uses existing layers/attention/ and layers/normalization/.
-  Config: num_features, d_token, n_heads, n_layers, d_ffn, dropout. Implements same
-  Predict() interface as Model. TestFTTransformer_Forward, TestFTTransformer_Train,
-  TestFTTransformer_Shapes.
-
-- [x] W2.1.2 Implement tabular.TabNet (sequential attention with sparsemax) (pre-existing, verified 2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-016]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `TabNet` model type. Sequential attention mechanism with sparsemax
-  activation for feature selection. Config: input_dim, output_dim, n_steps,
-  relaxation_factor, sparsity_coefficient. Attentive transformer + feature transformer
-  blocks. Feature importance extractable via AttentionMasks() method.
-  TestTabNet_Forward, TestTabNet_Sparsemax, TestTabNet_FeatureImportance.
-
-- [x] W2.1.3 Implement tabular.SAINT (Self-Attention and Intersample Attention) (2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-026]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `SAINT` model type. Two attention mechanisms: (1) self-attention across
-  features within a sample, (2) intersample attention across samples within a batch.
-  Config: num_features, d_model, n_heads, n_layers, inter_sample_attention (bool).
-  TestSAINT_Forward, TestSAINT_IntersampleAttention, TestSAINT_Train.
-
-- [x] W2.1.4 Implement tabular.ResNet (residual MLP baseline) (2026-03-18)
-  Owner: ML Eng  Est: 3h  verifies: [UC-027]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `TabResNet` model type. MLP with skip connections between hidden layers.
-  Config: input_dim, output_dim, hidden_dims []int, dropout, normalization (batch/layer).
-  Simple but surprisingly strong baseline for tabular data.
-  TestTabResNet_Forward, TestTabResNet_Residuals, TestTabResNet_Train.
+Completed: W2.1.1-W2.1.4. Trimmed 2026-03-19.
 
 ---
 
 #### WE3: Time-Series Architectures [2026 Q3]
 
-- [x] W2.2.1 Implement timeseries.TFT (Temporal Fusion Transformer) (2026-03-18)
-  Owner: ML Eng  Est: 6h  verifies: [UC-028]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `timeseries` package in zerfoo. `TFT` model type. Variable selection
-  network + gated residual network + temporal self-attention + multi-horizon output.
-  Config: num_static_features, num_time_features, d_model, n_heads, n_horizons,
-  quantiles []float64. Predict returns multi-horizon forecasts with quantile estimates.
-  TestTFT_Forward, TestTFT_VariableSelection, TestTFT_MultiHorizon.
-
-- [x] W2.2.2 Implement timeseries.NBEATS (N-BEATS basis expansion) (2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-029]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `NBEATS` model type. Stack of blocks with basis expansion (trend +
-  seasonality). Config: input_length, output_length, stack_types (trend/seasonality/generic),
-  n_blocks_per_stack, hidden_dim, n_harmonics. Double residual stacking architecture.
-  TestNBEATS_Forward, TestNBEATS_BasisExpansion, TestNBEATS_Decomposition.
-
-- [x] W2.2.3 Implement timeseries.PatchTST (Patch Time-Series Transformer) (2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-030]
-  Deps: none (W1.1.2 complete)
-  Acceptance: `PatchTST` model type. Channel-independent patching of time series,
-  processed by transformer encoder. Config: input_length, patch_length, stride,
-  d_model, n_heads, n_layers, channel_independent (bool). Supports multivariate
-  time series with independent channel processing.
-  TestPatchTST_Forward, TestPatchTST_Patching, TestPatchTST_ChannelIndependence.
+Completed: W2.2.1-W2.2.3. Trimmed 2026-03-19.
 
 ---
 
 #### WE4: Tabular AutoML Extension [2026 Q3-Q4]
 
-- [x] W2.3.1 Extend NAS/AutoML to search tabular and time-series architecture space (2026-03-18, ad61709)
-  Owner: ML Eng  Est: 5h  verifies: [UC-031]
-  Deps: W2.1.1, W2.1.2, W2.1.3, W2.1.4, W2.2.1, W2.2.2, W2.2.3
-  Acceptance: Extend existing NAS/AutoML (see ADR-055) to include tabular and
-  time-series models in search space. Search space includes: Model (MLP), FTTransformer,
-  TabNet, SAINT, TabResNet, TFT, NBEATS, PatchTST. Hyperparameter search per
-  architecture. `AutoML(data, labels, config) (*BestModel, SearchReport)`.
-  TestAutoML_SearchSpace, TestAutoML_FindsBestArchitecture.
+Completed: W2.3.1. Trimmed 2026-03-19.
 
 ---
 
 #### WE5: Transfer Learning for Tabular (Internal Consumer) [2027-2028]
 
-- [x] W5.1.1 Implement tabular.PreTrain for multi-asset base model (2026-03-18, 405317b)
-  Owner: ML Eng  Est: 5h  verifies: [UC-032]
-  Deps: W2.3.1
-  Acceptance: `PreTrain(allData [][][]float64, config PreTrainConfig) (*BaseModel, error)`.
-  Pre-trains a tabular model on data from multiple sources to learn universal patterns.
-  Uses existing Trainer[T] with larger batch sizes. BaseModel is a Model with
-  pre-trained weights. TestPreTrain_Convergence, TestPreTrain_TransferBenefit.
-
-- [x] W5.1.2 Implement tabular.FineTuneLoRA for per-source LoRA adaptation (2026-03-18)
-  Owner: ML Eng  Est: 5h  verifies: [UC-033]
-  Deps: W5.1.1
-  Acceptance: `FineTuneLoRA(base *BaseModel, data [][]float64, labels []int, config LoRAConfig) (*Adapter, error)`.
-  Applies LoRA (Low-Rank Adaptation) to tabular model layers. Config: rank, alpha,
-  target_layers. Reuses existing training/lora/ infrastructure. Adaptation completes
-  in seconds on small datasets. TestFineTuneLoRA_FastAdaptation, TestFineTuneLoRA_Quality.
-
-- [x] W5.1.3 Implement tabular.MergeAdapter for deployment without LoRA overhead (2026-03-18)
-  Owner: ML Eng  Est: 3h  verifies: [UC-033]
-  Deps: W5.1.2
-  Acceptance: `MergeAdapter(base *BaseModel, adapter *Adapter) (*Model, error)`.
-  Merges LoRA adapter weights into base model for zero-overhead inference deployment.
-  Output model produces identical predictions to base+adapter but without LoRA forward
-  pass overhead. TestMergeAdapter_OutputParity, TestMergeAdapter_NoOverhead.
+Completed: W5.1.1-W5.1.3. Trimmed 2026-03-19.
 
 ---
 
 #### WE6: Reinforcement Learning Package [2028-2029]
 
-- [x] W6.1.1 Create rl package with Environment and Agent interfaces (2026-03-18)
-  Owner: ML Eng  Est: 4h  verifies: [infrastructure]
-  Deps: none
-  Acceptance: `rl` package in zerfoo. `Environment` interface: Reset() State,
-  Step(Action) (State, float64, bool). `Agent` interface: Act(State) Action,
-  Learn(Experience). `ReplayBuffer` with configurable capacity, priority sampling.
-  TestReplayBuffer_FIFO, TestReplayBuffer_PrioritySampling.
-
-- [x] W6.1.2 Implement PPO (Proximal Policy Optimization) on ztensor compute graph (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W6.1.1
-  Acceptance: `PPO` agent type implementing Agent interface. Clipped surrogate
-  objective, generalized advantage estimation. Config: clip_ratio, gamma, lambda,
-  n_epochs, batch_size. Trained via ztensor compute graph with Engine[T].
-  TestPPO_CartPole (converges on simple environment), TestPPO_ClipObjective.
-
-- [x] W6.1.3 Implement SAC (Soft Actor-Critic) for continuous action spaces (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W6.1.1
-  Acceptance: `SAC` agent type. Twin Q-networks, entropy regularization, automatic
-  temperature tuning. Handles continuous action spaces (position sizing is continuous).
-  TestSAC_ContinuousAction, TestSAC_EntropyTuning.
+Completed: W6.1.1-W6.1.3. Trimmed 2026-03-19.
 
 ---
 
 #### WE7: Cross-Asset and Causal Models [2029-2030]
 
-- [x] W7.1.1 Implement crossasset.Model with cross-attention mechanism (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `crossasset` package. `Model` takes features from multiple sources,
-  applies cross-attention so each source attends to features of correlated sources.
-  Config: n_sources, features_per_source, d_model, n_heads.
-  TestCrossAsset_Forward, TestCrossAsset_AttentionWeights.
-
-- [x] W7.1.2 Implement Graph Neural Network layers (GCN, GAT) (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `gnn` package. Graph Convolutional Network (GCN) and Graph Attention
-  Network (GAT) layers. Adjacency matrix + node features as input. Configurable
-  number of layers and hidden dims. TestGCN_Forward, TestGAT_AttentionMask.
-
-- [x] W7.3.1 Implement causal.DiscoverGraph for causal structure learning (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `causal` package. `DiscoverGraph(data [][]float64) (*CausalGraph, error)`.
-  Learns causal DAG from observational data using PC algorithm or NOTEARS.
-  TestDiscoverGraph_KnownStructure, TestDiscoverGraph_DAGConstraint.
-
-- [x] W7.3.2 Implement causal.Intervene for counterfactual prediction (2026-03-19)
-  Owner: ML Eng  Est: 4h  verifies: [infrastructure]
-  Deps: W7.3.1
-  Acceptance: `Intervene(graph *CausalGraph, intervention Intervention) (*Prediction, error)`.
-  Performs do-calculus intervention on causal graph. Returns predicted effect.
-  TestIntervene_SimpleChain, TestIntervene_Confounder.
+Completed: W7.1.1-W7.1.2, W7.3.1-W7.3.2. Trimmed 2026-03-19.
 
 ---
 
 #### WE8: Regime Detection and Synthetic Data [2030-2031]
 
-- [x] W8.1.1 Implement regime.HMM for regime classification (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `regime` package. `HMM` (Hidden Markov Model) with configurable number
-  of hidden states. Baum-Welch training, Viterbi decoding. States represent regimes
-  (trending, mean-reverting, volatile, crash). TestHMM_BaumWelch, TestHMM_Viterbi,
-  TestHMM_RegimeDetection.
-
-- [x] W8.2.1 Implement synth.MarketVAE for synthetic data generation (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `synth` package. `MarketVAE` -- Variational Autoencoder trained on
-  real data to generate realistic synthetic scenarios. Encoder/decoder on ztensor
-  graph. KL divergence + reconstruction loss. TestMarketVAE_Generation,
-  TestMarketVAE_LatentSpace.
-
-- [x] W8.2.2 Implement synth.CrashGenerator for stress testing scenarios (2026-03-19)
-  Owner: ML Eng  Est: 4h  verifies: [infrastructure]
-  Deps: W8.2.1
-  Acceptance: `CrashGenerator` extends MarketVAE to generate extreme tail scenarios.
-  Configurable severity, duration, correlation spike. TestCrashGenerator_ExtremeEvents,
-  TestCrashGenerator_CorrelationSpike.
+Completed: W8.1.1, W8.2.1-W8.2.2. Trimmed 2026-03-19.
 
 ---
 
 #### WE9: Self-Improving Systems [2031-2032]
 
-- [x] W9.1.1 Implement multi-objective NAS for domain-specific optimization (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [UC-031]
-  Deps: W7.1.1
-  Acceptance: Extend NAS to optimize for multiple objectives simultaneously
-  (e.g., accuracy AND inference latency AND model size). Pareto frontier search.
-  TestMultiObjectiveNAS_ParetoFrontier, TestMultiObjectiveNAS_Convergence.
-
-- [x] W9.2.1 Implement meta.MAML (Model-Agnostic Meta-Learning) (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `meta` package. `MAML` learns initialization weights that adapt to
-  new tasks in few gradient steps. Inner loop (task adaptation) + outer loop
-  (meta-update). TestMAML_FewShotAdaptation, TestMAML_MetaConvergence.
-
-- [x] W9.3.1 Implement gp.Evolve for genetic programming (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W7.1.1
-  Acceptance: `gp` package. `Evolve(primitives []Primitive, fitness FitnessFunc, config GPConfig) (*Program, error)`.
-  Tree-based genetic programming. Crossover, mutation, selection operators.
-  TestEvolve_SimpleFitness, TestEvolve_TreeOperations.
+Completed: W9.1.1, W9.2.1, W9.3.1. Trimmed 2026-03-19.
 
 ---
 
 #### WE10: Hardware Optimization for Tabular [2032-2034]
 
-- [x] W10.1.1 Implement TensorRT compilation for tabular models in ztensor [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-016]
-  Deps: W5.1.2
-  Acceptance: Tabular model graphs compiled to TensorRT for sub-10us per-source
-  inference. Uses existing TensorRT bindings (ADR-009).
-  TestTensorRT_TabularCompile, TestTensorRT_Latency.
-
-- [x] W10.1.2 Implement batched multi-model inference in ztensor [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-016]
-  Deps: W10.1.1
-  Acceptance: Run 1000+ per-source models in a single GPU kernel launch. Batch
-  dimension = number of sources. TestBatchedInference_1000Models,
-  TestBatchedInference_Throughput.
-
-- [x] W10.1.3 Implement FPGA backend via purego in ztensor [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
-  Deps: W9.1.1
-  Acceptance: FPGA runtime abstraction layer. Basic ops (MatMul, Add) via purego
-  bindings to FPGA runtime. TestFPGA_BasicOps, TestFPGA_Latency.
+Completed: W10.1.1-W10.1.3. Trimmed 2026-03-19.
 
 ---
 
@@ -466,34 +262,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE12: Continuous Learning and Provenance [2034-2036]
 
-- [x] W11.1.1 Implement online.Model with elastic weight consolidation (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W5.1.2
-  Acceptance: `online` package. Model supports continuous weight updates with EWC
-  to prevent catastrophic forgetting. Fisher information matrix tracks parameter
-  importance. TestEWC_PreventsForgetting, TestEWC_ContinuousUpdate.
-
-- [x] W11.1.2 Implement monitor.DriftDetector + recover.AutoRetrain (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W8.1.1
-  Acceptance: `monitor` package detects performance degradation via statistical
-  tests (Page-Hinkley, ADWIN). `recover` package triggers automatic rollback,
-  retrain, validate, redeploy pipeline. TestDriftDetector_DetectsShift,
-  TestAutoRetrain_Pipeline.
-
-- [x] W11.2.1 Implement shared.LatentSpace for cross-model knowledge sharing (2026-03-19)
-  Owner: ML Eng  Est: 5h  verifies: [infrastructure]
-  Deps: W7.1.1
-  Acceptance: `shared` package. Models share learned representations via a common
-  latent space. What one model learns helps other models via shared embedding.
-  TestLatentSpace_SharedRepresentation, TestLatentSpace_TransferBenefit.
-
-- [x] W11.3.1 Implement provenance.Tracker for model lifecycle audit (2026-03-19)
-  Owner: ML Eng  Est: 4h  delivers: [model provenance audit trail]
-  Deps: W5.1.2
-  Acceptance: `provenance` package. Cryptographic hashes for every training run,
-  dataset, hyperparameter, model version. Full DAG from prediction back to training
-  data. TestProvenance_HashChain, TestProvenance_DAGTraversal.
+Completed: W11.1.1-W11.1.2, W11.2.1, W11.3.1. Trimmed 2026-03-19.
 
 ---
 
@@ -506,33 +275,7 @@ consumer. They can run in parallel with Priority 1 tasks.
 
 #### WE13: Performance and Test Fixes [2026 Q2 -- parallel with WE1]
 
-Completed: W3.1.4 (batcher scheduler test fix). Trimmed 2026-03-18.
-
-- [x] W3.1.1 Fix Q4_K to Q4_0 re-quantization to unblock sm_121 dispatch path [ztensor] (2026-03-18, 10349fe)
-  Owner: Kernel Eng  Est: 5h  verifies: [UC-002, UC-003, UC-004]
-  Deps: none
-  Acceptance: Q4_K GEMV dispatches directly on sm_121 without re-quantizing to Q4_0.
-  The re-quantization path is the known blocker for 300+ tok/s. Fix in
-  ztensor internal/cuda/ dispatch logic. TestQ4K_DirectDispatch_sm121 passes on DGX.
-
-- [x] W3.1.2 Expand CUDA graph capture to 100% instruction coverage [ztensor] (2026-03-18, 33b54d9)
-  Owner: Kernel Eng  Est: 4h  verifies: [UC-002, UC-003]
-  Deps: none
-  Acceptance: All inference path instructions captured in CUDA graph (currently 99.5%).
-  Identify and fix remaining 0.5% uncaptured ops. TestCUDAGraph_FullCapture passes.
-
-- [x] W3.1.3 Fix Q5_K_M and Q6_K quantized GEMM/GEMV kernel tests [ztensor] (2026-03-18, 488862c)
-  Owner: Kernel Eng  Est: 4h  verifies: [UC-001, UC-002]
-  Deps: none
-  Acceptance: Pre-existing Q5_K and Q6_K test failures resolved. All quantized GEMM/GEMV
-  tests pass. TestQ5K_GEMV, TestQ6K_GEMV pass on DGX.
-
-- [x] W3.1.5 Implement fused attention kernel with FlashAttention-2 [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-002, UC-003, UC-004]
-  Deps: W3.1.1
-  Acceptance: FlashAttention-2 algorithm fused into single CUDA kernel. Supports
-  GQA head counts. Memory usage O(N) not O(N^2). TestFlashAttention2_Correctness,
-  TestFlashAttention2_MemoryBound passes on DGX.
+Completed: W3.1.1-W3.1.5. Trimmed 2026-03-19.
 
 ---
 
@@ -618,11 +361,7 @@ Trimmed 2026-03-18.
 
 #### E10: Vision-Language Model Expansion [Q3-Q4 2027]
 
-Completed: T10.1-T10.2 (LLaVA, Qwen-VL builders). Trimmed 2026-03-18.
-
-- [x] T10.3 Add vision model benchmarks (2026-03-19)
-  Owner: Arch Eng  Est: 2h  verifies: [UC-002]
-  Deps: none (T10.1, T10.2 complete)
+Completed: T10.1-T10.3. Trimmed 2026-03-19.
 
 ---
 
@@ -795,51 +534,25 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E21: Intel SYCL Backend [Q2-Q3 2030]
 
-- [x] T21.1 Implement SYCL runtime bindings [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
-  Deps: none
-- [x] T21.2 Port GEMV and attention kernels to SYCL [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
-  Deps: T21.1
+Completed: T21.1-T21.2. Trimmed 2026-03-19.
 
 ---
 
 #### E22: Auto-Optimization Framework [Q3-Q4 2030]
 
-- [x] T22.1 Implement hardware profiling [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 4h  verifies: [infrastructure]
-  Deps: none
-- [x] T22.2 Implement automatic kernel selection (2026-03-19)
-  Owner: Kernel Eng  Est: 5h  verifies: [UC-002]
-  Deps: T22.1
-- [x] T22.3 Implement automatic quantization recommendation (2026-03-19)
-  Owner: ML Eng  Est: 4h  verifies: [UC-001]
-  Deps: T22.1
+Completed: T22.1-T22.3. Trimmed 2026-03-19.
 
 ---
 
 #### E24: Custom Model Architecture SDK [Q1-Q3 2031]
 
-- [x] T24.1 Implement model definition DSL (2026-03-19)
-  Owner: Lead Eng  Est: 8h  verifies: [infrastructure]
-  Deps: none
-- [x] T24.2 Implement custom model training workflow (2026-03-19)
-  Owner: ML Eng  Est: 6h  verifies: [UC-019]
-  Deps: T24.1
-- [x] T24.3 Implement graph-level optimization passes (2026-03-19)
-  Owner: Kernel Eng  Est: 8h  verifies: [UC-002]
-  Deps: T24.1
+Completed: T24.1-T24.3. Trimmed 2026-03-19.
 
 ---
 
 #### E25: Heterogeneous Compute [Q2-Q4 2031]
 
-- [x] T25.1 Implement automatic workload splitting (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-024]
-  Deps: T22.1
-- [x] T25.2 Implement multi-accelerator scheduling (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-024]
-  Deps: T20.1
+Completed: T25.1-T25.2. Trimmed 2026-03-19.
 
 ---
 
@@ -859,32 +572,13 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E27: Ecosystem Integrations [Q1-Q4 2031]
 
-- [x] T27.1 Implement OCI-compatible model registry (2026-03-19)
-  Owner: Platform Eng  Est: 6h  verifies: [UC-010]
-  Deps: none
-- [x] T27.2 Implement Kubernetes model cache DaemonSet (2026-03-19)
-  Owner: Platform Eng  Est: 4h  verifies: [UC-036]
-  Deps: none
-- [x] T27.3 Publish Helm chart (2026-03-19)
-  Owner: Platform Eng  Est: 3h  verifies: [UC-036]
-  Deps: none
+Completed: T27.1-T27.3. Trimmed 2026-03-19.
 
 ---
 
 #### E28: Federated Learning [Q1-Q3 2033]
 
-- [x] T28.1 Implement FederatedStrategy interface (2026-03-19)
-  Owner: ML Eng  Est: 4h  verifies: [UC-019]
-  Deps: none
-- [x] T28.2 Implement FedProx strategy (2026-03-19)
-  Owner: ML Eng  Est: 3h  verifies: [UC-019]
-  Deps: T28.1
-- [x] T28.3 Implement differential privacy noise injection (2026-03-19)
-  Owner: ML Eng  Est: 4h  verifies: [infrastructure]
-  Deps: T28.1
-- [x] T28.4 Integration test: 4-client federated simulation (2026-03-19)
-  Owner: ML Eng  Est: 3h  verifies: [UC-019]
-  Deps: T28.1, T28.3
+Completed: T28.1-T28.4. Trimmed 2026-03-19.
 
 ---
 
@@ -952,12 +646,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E33: Performance Target 1000+ tok/s [2032-2035]
 
-- [x] T33.1 Implement next-gen GPU architecture optimizations (2026-03-19)
-  Owner: Kernel Eng  Est: ongoing  verifies: [UC-002, UC-003]
-  Deps: none
-- [x] T33.2 Implement automatic hardware-specific kernel codegen (2026-03-19)
-  Owner: Kernel Eng  Est: 10h  verifies: [UC-002]
-  Deps: T22.1
+Completed: T33.1-T33.2. Trimmed 2026-03-19.
 
 ---
 
@@ -1263,17 +952,6 @@ Executed 5 unblocked tasks across E25, E33, WE10, E21 with 5 parallel agents:
 - W10.1.2 Batched multi-model inference (ztensor) — batched/ package, 1000+ models in single batched GEMM
 - T21.1 SYCL runtime bindings (ztensor) — internal/sycl/ + internal/gpuapi/sycl_*.go via purego
 All tests pass. Newly unblocked: T21.2 (needs T21.1), T32.2 (ongoing).
-
-### 2026-03-19: Wave 15 execution (5 tasks, 5 parallel agents)
-
-Executed 5 unblocked tasks across WE10, E20, E22 with 5 parallel agents:
-- W10.1.1 TensorRT tabular compilation (ztensor) — CompileTabular[T] for sub-10us inference
-- W10.1.3 FPGA backend via purego (ztensor) — OpenCL-based FPGA runtime abstraction layer
-- T20.2 Port CUDA kernels to Metal (ztensor) — 30+ Metal compute shaders (GEMV, RMSNorm, RoPE, SwiGLU, etc.)
-- T22.2 Automatic kernel selection (zerfoo) — autoopt/kernel.go maps hardware profiles to optimal kernels
-- T22.3 Automatic quantization recommendation (zerfoo) — autoopt/quantrec.go recommends quant format
-All tests pass. No new regressions (pre-existing Q5K/Q6K and bench_disagg failures unchanged).
-Newly unblocked: W10.1.2 (needs W10.1.1), T20.3 (needs T20.2), T25.1/T25.2 (T22.1 done).
 
 Prior progress log entries trimmed 2026-03-19. Knowledge preserved in docs/devlog.md and git history.
 
