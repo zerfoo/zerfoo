@@ -208,7 +208,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Predict() interface as Model. TestFTTransformer_Forward, TestFTTransformer_Train,
   TestFTTransformer_Shapes.
 
-- [ ] W2.1.2 Implement tabular.TabNet (sequential attention with sparsemax)
+- [x] W2.1.2 Implement tabular.TabNet (sequential attention with sparsemax) (pre-existing, verified 2026-03-18)
   Owner: ML Eng  Est: 5h  verifies: [UC-016]
   Deps: none (W1.1.2 complete)
   Acceptance: `TabNet` model type. Sequential attention mechanism with sparsemax
@@ -1001,7 +1001,7 @@ Deps: W1.1.4 not required for WE2/WE3 (they depend on W1.1.2 which is complete).
 W3.1.5 depends on W3.1.1 from Wave 5.
 
 - [ ] W2.1.1 FTTransformer (ML Eng)  verifies: [UC-025]
-- [ ] W2.1.2 TabNet (ML Eng)  verifies: [UC-016]
+- [x] W2.1.2 TabNet (ML Eng)  verifies: [UC-016] (pre-existing, verified 2026-03-18)
 - [ ] W2.1.3 SAINT (ML Eng)  verifies: [UC-026]
 - [ ] W2.1.4 TabResNet (ML Eng)  verifies: [UC-027]
 - [ ] W2.2.1 TFT (ML Eng)  verifies: [UC-028]
