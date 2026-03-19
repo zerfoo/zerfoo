@@ -5,6 +5,38 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-18: GPUEngine transfer behavior audit — H2D/D2H patterns mapped
+
+**Type:** investigation
+**Tags:** gpu, cuda, transfer, h2d, d2h, performance, dgx-spark
+
+**Problem:** 43% cgocall overhead observed during GPU inference. Needed a complete audit of which GPUEngine methods run on GPU vs CPU fallback and what triggers H2D/D2H transfers.
+
+**Root cause:** Four transfer overhead sources identified:
+1. Model weights are CPUStorage at load time — every GPU op's first use triggers H2D via `getDevicePtr`. Fix: upload weights at load (T69.3).
+2. CPU fallback methods (Transpose=8.1% of inference time, Gather) break the GPU chain — produce CPUStorage, next GPU op re-uploads. Fix: GPU Transpose (E70), GPU Gather (E72).
+3. Binary op broadcasting fallback — `sameShape()` guard sends mismatched shapes to CPU. Fix: GPU broadcasting (E71).
+4. Q4 MatMul copies Q4 bytes every call from host. Fix: upload Q4 weight bytes at load (T69.3).
+
+**Fix:** N/A — audit only. Fixes tracked as T69.3, E70-E72.
+**Impact:** Pre-existing GPU residency already works for chained GPU ops when all inputs are GPUStorage. T69.2 (GPU-resident tensor creation) and T69.4 (logits D2H) found already implemented.
+
+---
+
+## 2026-03-11: CUDA per-op path 2.22 tok/s vs CPU 5.71 tok/s — MatMul CPU fallback root cause
+
+**Type:** investigation
+**Tags:** cuda, matmul, cublas, purego, performance, dgx-spark, gemma-3-1b
+
+**Problem:** CUDA per-op `plan.Run()` at 2.22 tok/s vs CPU at 5.71 tok/s on DGX Spark — GPU path 2.6x slower than CPU.
+
+**Root cause:** MatMul falls back to CPU without `-tags cuda`. `gpuapi.BLASFactory` is registered in `cuda_blas.go` with `//go:build cuda` — without the tag, `e.blas` is nil, and `GPUEngine.MatMul` delegates to `e.cpu.MatMul()`. This causes synchronous `cudaMemcpy` D2H/H2D round-trips for every MatMul (~108 per token for Gemma-3 1B, 18 layers * 6 MatMuls). Estimated ~54 ms transfer overhead per token on top of slow unoptimized CPU MatMul.
+
+**Fix:** Short-term: build with `-tags cuda`. Medium-term: convert cublas to purego (Phase 2, ADR-025). Long-term: megakernel path bypasses cuBLAS entirely.
+**Impact:** All elementwise ops (Add, Mul, Exp, Sqrt, Softmax) run on GPU via purego kernels. Only MatMul (the dominant cost) falls back. Q4 GEMV kernel works without cuBLAS but float32 models still need it.
+
+---
+
 ## 2026-03-18: Benchmark 300+ tok/s attempt — 245 tok/s confirmed, bottleneck analysis (T1.5)
 
 **Type:** benchmark
