@@ -7,6 +7,7 @@
 package cloud
 
 import (
+	"crypto/subtle"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -33,10 +34,13 @@ type TenantConfig struct {
 // Tenant represents a registered cloud tenant with runtime rate-limit state.
 // Always accessed via pointer; must not be copied.
 type Tenant struct {
-	ID          string
-	APIKey      string
-	RateLimit   int64
-	TokenBudget int64
+	ID     string
+	APIKey string
+
+	// rateLimit and tokenBudget are accessed atomically to avoid data races
+	// between concurrent AllowRequest/ConsumeTokens reads and Update writes.
+	rateLimit   atomic.Int64
+	tokenBudget atomic.Int64
 
 	// runtime state
 	requestCount atomic.Int64
@@ -49,8 +53,8 @@ func (t *Tenant) Config() TenantConfig {
 	return TenantConfig{
 		ID:          t.ID,
 		APIKey:      t.APIKey,
-		RateLimit:   t.RateLimit,
-		TokenBudget: t.TokenBudget,
+		RateLimit:   t.rateLimit.Load(),
+		TokenBudget: t.tokenBudget.Load(),
 	}
 }
 
@@ -71,7 +75,7 @@ func (t *Tenant) maybeReset() {
 func (t *Tenant) AllowRequest() bool {
 	t.maybeReset()
 	cur := t.requestCount.Add(1)
-	if cur > t.RateLimit {
+	if cur > t.rateLimit.Load() {
 		t.requestCount.Add(-1)
 		return false
 	}
@@ -85,7 +89,7 @@ func (t *Tenant) ConsumeTokens(n int64) bool {
 	for {
 		cur := t.tokenCount.Load()
 		next := cur + n
-		if next > t.TokenBudget {
+		if next > t.tokenBudget.Load() {
 			return false
 		}
 		if t.tokenCount.CompareAndSwap(cur, next) {
@@ -133,11 +137,11 @@ func (m *TenantManager) Create(cfg TenantConfig) error {
 	}
 
 	tenant := &Tenant{
-		ID:          cfg.ID,
-		APIKey:      cfg.APIKey,
-		RateLimit:   cfg.RateLimit,
-		TokenBudget: cfg.TokenBudget,
+		ID:     cfg.ID,
+		APIKey: cfg.APIKey,
 	}
+	tenant.rateLimit.Store(cfg.RateLimit)
+	tenant.tokenBudget.Store(cfg.TokenBudget)
 	tenant.lastReset.Store(time.Now().UnixNano())
 
 	m.byID[cfg.ID] = tenant
@@ -157,16 +161,18 @@ func (m *TenantManager) Get(id string) (*Tenant, error) {
 	return t, nil
 }
 
-// GetByAPIKey retrieves a tenant by API key.
+// GetByAPIKey retrieves a tenant by API key using constant-time comparison
+// to prevent timing side-channel attacks.
 func (m *TenantManager) GetByAPIKey(apiKey string) (*Tenant, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, ok := m.byAPIKey[apiKey]
-	if !ok {
-		return nil, errTenantNotFound
+	for _, t := range m.byID {
+		if subtle.ConstantTimeCompare([]byte(t.APIKey), []byte(apiKey)) == 1 {
+			return t, nil
+		}
 	}
-	return t, nil
+	return nil, errTenantNotFound
 }
 
 // Update modifies a tenant's rate limits and token budget.
@@ -182,8 +188,8 @@ func (m *TenantManager) Update(id string, rateLimit, tokenBudget int64) error {
 	if !ok {
 		return errTenantNotFound
 	}
-	t.RateLimit = rateLimit
-	t.TokenBudget = tokenBudget
+	t.rateLimit.Store(rateLimit)
+	t.tokenBudget.Store(tokenBudget)
 	return nil
 }
 
