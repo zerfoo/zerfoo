@@ -211,6 +211,71 @@ func newFTTransformerLayer(dToken, dFFN int) (ftTransformerLayer, error) {
 	return layer, nil
 }
 
+// Forward runs the FTTransformer forward pass on a batch of inputs.
+// Input shape: [batch, NumFeatures]. Output shape: [batch, 3] (logits).
+func (ft *FTTransformer) Forward(ctx context.Context, input *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	shape := input.Shape()
+	if len(shape) != 2 || shape[1] != ft.config.NumFeatures {
+		return nil, fmt.Errorf("tabular: expected input shape [batch, %d], got %v", ft.config.NumFeatures, shape)
+	}
+	batch := shape[0]
+	nf := ft.config.NumFeatures
+	dt := ft.config.DToken
+	seqLen := nf + 1
+
+	inputData := input.Data()
+	embData := ft.featureEmbeddings.Data()
+	biasData := ft.featureBiases.Data()
+
+	// Process each sample independently through the transformer.
+	allLogits := make([]float32, batch*3)
+	for b := 0; b < batch; b++ {
+		// Tokenize features for this sample.
+		tokenData := make([]float32, nf*dt)
+		for i := 0; i < nf; i++ {
+			fi := inputData[b*nf+i]
+			for j := 0; j < dt; j++ {
+				tokenData[i*dt+j] = fi*embData[i*dt+j] + biasData[i*dt+j]
+			}
+		}
+		tokens, err := tensor.New[float32]([]int{nf, dt}, tokenData)
+		if err != nil {
+			return nil, fmt.Errorf("tabular: tokenize sample %d: %w", b, err)
+		}
+
+		// Prepend CLS token -> [seqLen, DToken].
+		x, err := ft.engine.Concat(ctx, []*tensor.TensorNumeric[float32]{ft.clsToken, tokens}, 0)
+		if err != nil {
+			return nil, fmt.Errorf("tabular: concat cls sample %d: %w", b, err)
+		}
+
+		// Transformer encoder layers.
+		for i, layer := range ft.layers {
+			x, err = ft.transformerForward(ctx, x, layer, seqLen)
+			if err != nil {
+				return nil, fmt.Errorf("tabular: layer %d sample %d: %w", i, b, err)
+			}
+		}
+
+		// Extract CLS token (first row) -> [1, DToken].
+		clsData := x.Data()[:dt]
+		cls, err := tensor.New[float32]([]int{1, dt}, clsData)
+		if err != nil {
+			return nil, fmt.Errorf("tabular: extract cls sample %d: %w", b, err)
+		}
+
+		// Linear head -> [1, 3].
+		logits, err := ft.linearForward(ctx, cls, ft.head)
+		if err != nil {
+			return nil, fmt.Errorf("tabular: head sample %d: %w", b, err)
+		}
+
+		copy(allLogits[b*3:(b+1)*3], logits.Data())
+	}
+
+	return tensor.New[float32]([]int{batch, 3}, allLogits)
+}
+
 // Predict runs inference on the given features and returns a Direction and
 // confidence score. The features slice must have length equal to NumFeatures.
 func (ft *FTTransformer) Predict(features []float64) (Direction, float64, error) {
@@ -220,71 +285,27 @@ func (ft *FTTransformer) Predict(features []float64) (Direction, float64, error)
 
 	ctx := context.Background()
 
-	// Step 1: Feature tokenization.
-	// Each feature f_i is tokenized as: token_i = f_i * embedding_i + bias_i
-	// Result shape: [NumFeatures, DToken]
-	tokens, err := ft.tokenizeFeatures(ctx, features)
+	f32 := make([]float32, len(features))
+	for i, v := range features {
+		f32[i] = float32(v)
+	}
+	input, err := tensor.New[float32]([]int{1, ft.config.NumFeatures}, f32)
 	if err != nil {
-		return Flat, 0, fmt.Errorf("tabular: tokenize: %w", err)
+		return Flat, 0, err
 	}
 
-	// Step 2: Prepend CLS token -> [NumFeatures+1, DToken]
-	x, err := ft.engine.Concat(ctx, []*tensor.TensorNumeric[float32]{ft.clsToken, tokens}, 0)
+	logits, err := ft.Forward(ctx, input)
 	if err != nil {
-		return Flat, 0, fmt.Errorf("tabular: concat cls: %w", err)
+		return Flat, 0, err
 	}
 
-	// Step 3: Transformer encoder layers.
-	seqLen := ft.config.NumFeatures + 1
-	for i, layer := range ft.layers {
-		x, err = ft.transformerForward(ctx, x, layer, seqLen)
-		if err != nil {
-			return Flat, 0, fmt.Errorf("tabular: transformer layer %d: %w", i, err)
-		}
-	}
-
-	// Step 4: Extract CLS token (first row) -> [1, DToken]
-	clsData := x.Data()[:ft.config.DToken]
-	cls, err := tensor.New[float32]([]int{1, ft.config.DToken}, clsData)
-	if err != nil {
-		return Flat, 0, fmt.Errorf("tabular: extract cls: %w", err)
-	}
-
-	// Step 5: Linear head -> [1, 3]
-	logits, err := ft.linearForward(ctx, cls, ft.head)
-	if err != nil {
-		return Flat, 0, fmt.Errorf("tabular: head: %w", err)
-	}
-
-	// Step 6: Softmax and argmax.
 	probs, err := ft.engine.Softmax(ctx, logits, -1)
 	if err != nil {
-		return Flat, 0, fmt.Errorf("tabular: softmax: %w", err)
+		return Flat, 0, err
 	}
 
 	dir, conf := argmax(probs.Data())
 	return dir, conf, nil
-}
-
-// tokenizeFeatures converts raw numeric features into token embeddings.
-// Output shape: [NumFeatures, DToken].
-func (ft *FTTransformer) tokenizeFeatures(ctx context.Context, features []float64) (*tensor.TensorNumeric[float32], error) {
-	nf := ft.config.NumFeatures
-	dt := ft.config.DToken
-
-	// Build a diagonal-like scaling: each feature value multiplies its embedding row.
-	// feature_i * embedding_i[j] + bias_i[j] for all j in [0, DToken)
-	embData := ft.featureEmbeddings.Data()
-	biasData := ft.featureBiases.Data()
-	tokenData := make([]float32, nf*dt)
-	for i := 0; i < nf; i++ {
-		fi := float32(features[i])
-		for j := 0; j < dt; j++ {
-			tokenData[i*dt+j] = fi*embData[i*dt+j] + biasData[i*dt+j]
-		}
-	}
-
-	return tensor.New[float32]([]int{nf, dt}, tokenData)
 }
 
 // transformerForward applies one transformer encoder layer.
