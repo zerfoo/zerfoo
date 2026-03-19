@@ -427,7 +427,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   inference. Uses existing TensorRT bindings (ADR-009).
   TestTensorRT_TabularCompile, TestTensorRT_Latency.
 
-- [ ] W10.1.2 Implement batched multi-model inference in ztensor [ztensor]
+- [x] W10.1.2 Implement batched multi-model inference in ztensor [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-016]
   Deps: W10.1.1
   Acceptance: Run 1000+ per-source models in a single GPU kernel launch. Batch
@@ -795,7 +795,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E21: Intel SYCL Backend [Q2-Q3 2030]
 
-- [ ] T21.1 Implement SYCL runtime bindings [ztensor]
+- [x] T21.1 Implement SYCL runtime bindings [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
   Deps: none
 - [ ] T21.2 Port GEMV and attention kernels to SYCL [ztensor]
@@ -834,10 +834,10 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E25: Heterogeneous Compute [Q2-Q4 2031]
 
-- [ ] T25.1 Implement automatic workload splitting
+- [x] T25.1 Implement automatic workload splitting (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-024]
   Deps: T22.1
-- [ ] T25.2 Implement multi-accelerator scheduling
+- [x] T25.2 Implement multi-accelerator scheduling (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-024]
   Deps: T20.1
 
@@ -955,7 +955,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [ ] T33.1 Implement next-gen GPU architecture optimizations
   Owner: Kernel Eng  Est: ongoing  verifies: [UC-002, UC-003]
   Deps: none
-- [ ] T33.2 Implement automatic hardware-specific kernel codegen
+- [x] T33.2 Implement automatic hardware-specific kernel codegen (2026-03-19)
   Owner: Kernel Eng  Est: 10h  verifies: [UC-002]
   Deps: T22.1
 
@@ -1127,7 +1127,17 @@ Deps: W10.1.1 needs W5.1.2 (done). W10.1.3 needs W9.1.1 (done). T20.2 needs T20.
 - [x] T22.2 Automatic kernel selection (Kernel Eng)  verifies: [UC-002] (2026-03-19)
 - [x] T22.3 Automatic quantization recommendation (ML Eng)  verifies: [UC-001] (2026-03-19)
 
-Waves 16+ continue with remaining tasks based on dependency order and agent availability.
+#### Wave 16: Heterogeneous Compute + Batched Inference + SYCL (5 agents)
+
+Deps: T22.1 (done), T20.1 (done), W10.1.1 (done). All new files, no overlaps.
+
+- [x] T25.1 Automatic workload splitting (Kernel Eng)  verifies: [UC-024] (2026-03-19)
+- [x] T25.2 Multi-accelerator scheduling (Kernel Eng)  verifies: [UC-024] (2026-03-19)
+- [x] T33.2 Hardware-specific kernel codegen (Kernel Eng)  verifies: [UC-002] (2026-03-19)
+- [x] W10.1.2 Batched multi-model inference [ztensor] (Kernel Eng)  verifies: [UC-016] (2026-03-19)
+- [x] T21.1 SYCL runtime bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
+
+Waves 17+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
@@ -1222,6 +1232,16 @@ Waves 16+ continue with remaining tasks based on dependency order and agent avai
 ---
 
 ## Progress Log
+
+### 2026-03-19: Wave 16 execution (5 tasks, 5 parallel agents)
+
+Executed 5 unblocked tasks across E25, E33, WE10, E21 with 5 parallel agents:
+- T25.1 Automatic workload splitting (zerfoo) — autoopt/split.go with CostModel and WorkloadSplitter
+- T25.2 Multi-accelerator scheduling (zerfoo) — autoopt/scheduler.go with RoundRobin/LoadBalanced/Priority strategies
+- T33.2 Hardware-specific kernel codegen (zerfoo) — autoopt/codegen.go with GEMM/GEMV/Elementwise templates
+- W10.1.2 Batched multi-model inference (ztensor) — batched/ package, 1000+ models in single batched GEMM
+- T21.1 SYCL runtime bindings (ztensor) — internal/sycl/ + internal/gpuapi/sycl_*.go via purego
+All tests pass. Newly unblocked: T21.2 (needs T21.1), T32.2 (ongoing).
 
 ### 2026-03-19: Wave 15 execution (5 tasks, 5 parallel agents)
 
