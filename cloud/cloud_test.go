@@ -429,11 +429,12 @@ func TestTenantManager_CRUD(t *testing.T) {
 			t.Fatalf("Update: %v", err)
 		}
 		tenant, _ := tm.Get("t1")
-		if tenant.RateLimit != 20 {
-			t.Errorf("RateLimit = %d, want 20", tenant.RateLimit)
+		cfg := tenant.Config()
+		if cfg.RateLimit != 20 {
+			t.Errorf("RateLimit = %d, want 20", cfg.RateLimit)
 		}
-		if tenant.TokenBudget != 2000 {
-			t.Errorf("TokenBudget = %d, want 2000", tenant.TokenBudget)
+		if cfg.TokenBudget != 2000 {
+			t.Errorf("TokenBudget = %d, want 2000", cfg.TokenBudget)
 		}
 	})
 
