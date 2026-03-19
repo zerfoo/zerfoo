@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zerfoo Demo</string>
+    <string name="hint_model_path">GGUF model path</string>
+    <string name="hint_prompt">Enter prompt</string>
+    <string name="btn_load">Load Model</string>
+    <string name="btn_generate">Generate</string>
+</resources>
