@@ -633,6 +633,57 @@ func newEncoderLayer(dModel, nHeads int) (encoderLayer, error) {
 	return l, nil
 }
 
+// Predict runs inference on multivariate time series data using float64 slices.
+// input[channel][time] has one sub-slice per channel, each of length InputLength.
+// Returns output[channel][horizon] with OutputDim predictions per channel.
+// For single-channel input, pass a single sub-slice.
+func (m *PatchTST) Predict(input [][]float64) ([][]float64, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("patchtst: input must have at least one channel")
+	}
+	channels := len(input)
+	for c, ch := range input {
+		if len(ch) != m.config.InputLength {
+			return nil, fmt.Errorf("patchtst: channel %d length %d, want %d", c, len(ch), m.config.InputLength)
+		}
+	}
+
+	// Build float32 tensor [1, channels, input_length].
+	data := make([]float32, channels*m.config.InputLength)
+	for c, ch := range input {
+		for i, v := range ch {
+			data[c*m.config.InputLength+i] = float32(v)
+		}
+	}
+
+	var shape []int
+	if channels == 1 {
+		shape = []int{1, m.config.InputLength}
+	} else {
+		shape = []int{1, channels, m.config.InputLength}
+	}
+	t, err := tensor.New[float32](shape, data)
+	if err != nil {
+		return nil, fmt.Errorf("patchtst: create input tensor: %w", err)
+	}
+
+	ctx := context.Background()
+	out, err := m.Forward(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+
+	outData := out.Data()
+	result := make([][]float64, channels)
+	for c := range channels {
+		result[c] = make([]float64, m.config.OutputDim)
+		for i := range m.config.OutputDim {
+			result[c][i] = float64(outData[c*m.config.OutputDim+i])
+		}
+	}
+	return result, nil
+}
+
 // geluScalar computes the GELU approximation for a single float32 value.
 func geluScalar(x float32) float32 {
 	xf := float64(x)
