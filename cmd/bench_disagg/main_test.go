@@ -67,7 +67,8 @@ func TestDisaggFasterThanCollocated(t *testing.T) {
 
 func TestBinaryBuilds(t *testing.T) {
 	cmd := exec.Command("go", "build", "-o", os.DevNull, ".")
-	cmd.Dir = "/Users/dndungu/Code/zerfoo/zerfoo/.claude/worktrees/wave-1-task-T1.1/cmd/bench_disagg"
+	// Build from the package directory (where this test file lives).
+	cmd.Dir = "."
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
