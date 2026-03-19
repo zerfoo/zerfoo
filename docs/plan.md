@@ -450,7 +450,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Acceptance: See ADR-056. Multi-tenant inference service. Token-based billing.
   99.9% uptime SLO. TestCloud_MultiTenant, TestCloud_Billing.
 
-- [ ] W10.2.2 Implement enterprise features (audit logging, SSO, multi-tenancy)
+- [x] W10.2.2 Implement enterprise features (audit logging, SSO, multi-tenancy) (2026-03-19)
   Owner: Platform Eng  Est: 8h  delivers: [enterprise feature set for SOC 2]
   Deps: W10.2.1
   Acceptance: SOC 2 compliant audit logging. SAML 2.0 SSO. Tenant isolation.
@@ -823,10 +823,10 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T24.1 Implement model definition DSL (2026-03-19)
   Owner: Lead Eng  Est: 8h  verifies: [infrastructure]
   Deps: none
-- [ ] T24.2 Implement custom model training workflow
+- [x] T24.2 Implement custom model training workflow (2026-03-19)
   Owner: ML Eng  Est: 6h  verifies: [UC-019]
   Deps: T24.1
-- [ ] T24.3 Implement graph-level optimization passes
+- [x] T24.3 Implement graph-level optimization passes (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [UC-002]
   Deps: T24.1
 
@@ -882,7 +882,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T28.3 Implement differential privacy noise injection (2026-03-19)
   Owner: ML Eng  Est: 4h  verifies: [infrastructure]
   Deps: T28.1
-- [ ] T28.4 Integration test: 4-client federated simulation
+- [x] T28.4 Integration test: 4-client federated simulation (2026-03-19)
   Owner: ML Eng  Est: 3h  verifies: [UC-019]
   Deps: T28.1, T28.3
 
@@ -893,10 +893,10 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T29.1 Implement gomobile bindings (2026-03-19)
   Owner: Arch Eng  Est: 6h  verifies: [UC-022]
   Deps: none
-- [ ] T29.2 Create iOS demo app
+- [x] T29.2 Create iOS demo app (2026-03-19)
   Owner: Arch Eng  Est: 4h  verifies: [UC-022]
   Deps: T29.1
-- [ ] T29.3 Create Android demo app
+- [x] T29.3 Create Android demo app (2026-03-19)
   Owner: Arch Eng  Est: 4h  verifies: [UC-022]
   Deps: T29.1
 - [ ] T29.4 Benchmark on-device inference
@@ -941,7 +941,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E32: Architecture Expansion to 100+ Models [2035-2036]
 
-- [ ] T32.1 Implement automated architecture builder from GGUF metadata
+- [x] T32.1 Implement automated architecture builder from GGUF metadata (2026-03-19)
   Owner: Arch Eng  Est: 8h  verifies: [UC-001, UC-002]
   Deps: none
 - [ ] T32.2 Validate 100+ model architectures
@@ -1097,7 +1097,19 @@ T28.2/T28.3 need T28.1 (done). T24.1/T27.x/T29.1 have no deps.
 - [x] T27.3 Helm chart (Platform Eng)  verifies: [UC-036] (2026-03-19)
 - [x] T29.1 gomobile bindings (Arch Eng)  verifies: [UC-022] (2026-03-19)
 
-Waves 13+ continue with remaining tasks based on dependency order and agent availability.
+#### Wave 13: Custom Training + Graph Opt + Federated Sim + Auto Builder + Enterprise + Mobile (7 agents)
+
+Deps: T24.1 (done), T28.1/T28.3 (done), W10.2.1 (done), T29.1 (done). All new files, no overlaps.
+
+- [x] T24.2 Custom model training workflow (ML Eng)  verifies: [UC-019] (2026-03-19)
+- [x] T24.3 Graph-level optimization passes (Kernel Eng)  verifies: [UC-002] (2026-03-19)
+- [x] T28.4 4-client federated simulation (ML Eng)  verifies: [UC-019] (2026-03-19)
+- [x] T32.1 Automated architecture builder (Arch Eng)  verifies: [UC-001, UC-002] (2026-03-19)
+- [x] W10.2.2 Enterprise features (Platform Eng)  delivers: [enterprise SOC 2] (2026-03-19)
+- [x] T29.2 iOS demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
+- [x] T29.3 Android demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
+
+Waves 14+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
