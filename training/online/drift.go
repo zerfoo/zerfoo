@@ -81,6 +81,13 @@ func (d *DriftDetector) Observe(date time.Time, pnl float64) *DriftAlert {
 	sharpe := annualizedSharpe(returns)
 	d.sharpes = append(d.sharpes, sharpe)
 
+	// Cap sharpes history to 10x the window size to bound memory usage
+	// while retaining enough history for meaningful statistics.
+	maxSharpes := d.windowSize * 10
+	if len(d.sharpes) > maxSharpes {
+		d.sharpes = d.sharpes[len(d.sharpes)-maxSharpes:]
+	}
+
 	// Need at least 3 historical Sharpe values to compute a meaningful
 	// standard deviation for the threshold.
 	if len(d.sharpes) < 3 {
