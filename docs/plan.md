@@ -420,7 +420,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE10: Hardware Optimization for Tabular [2032-2034]
 
-- [ ] W10.1.1 Implement TensorRT compilation for tabular models in ztensor [ztensor]
+- [x] W10.1.1 Implement TensorRT compilation for tabular models in ztensor [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-016]
   Deps: W5.1.2
   Acceptance: Tabular model graphs compiled to TensorRT for sub-10us per-source
@@ -434,7 +434,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   dimension = number of sources. TestBatchedInference_1000Models,
   TestBatchedInference_Throughput.
 
-- [ ] W10.1.3 Implement FPGA backend via purego in ztensor [ztensor]
+- [x] W10.1.3 Implement FPGA backend via purego in ztensor [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [infrastructure]
   Deps: W9.1.1
   Acceptance: FPGA runtime abstraction layer. Basic ops (MatMul, Add) via purego
@@ -784,7 +784,7 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T20.1 Implement Metal compute shader bindings [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 8h  verifies: [UC-037]
   Deps: none
-- [ ] T20.2 Port critical CUDA kernels to Metal [ztensor]
+- [x] T20.2 Port critical CUDA kernels to Metal [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 10h  verifies: [UC-037]
   Deps: T20.1
 - [ ] T20.3 Benchmark Metal vs CPU on Apple M4 Max
@@ -809,10 +809,10 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 - [x] T22.1 Implement hardware profiling [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 4h  verifies: [infrastructure]
   Deps: none
-- [ ] T22.2 Implement automatic kernel selection
+- [x] T22.2 Implement automatic kernel selection (2026-03-19)
   Owner: Kernel Eng  Est: 5h  verifies: [UC-002]
   Deps: T22.1
-- [ ] T22.3 Implement automatic quantization recommendation
+- [x] T22.3 Implement automatic quantization recommendation (2026-03-19)
   Owner: ML Eng  Est: 4h  verifies: [UC-001]
   Deps: T22.1
 
@@ -1109,7 +1109,25 @@ Deps: T24.1 (done), T28.1/T28.3 (done), W10.2.1 (done), T29.1 (done). All new fi
 - [x] T29.2 iOS demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
 - [x] T29.3 Android demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
 
-Waves 14+ continue with remaining tasks based on dependency order and agent availability.
+#### Wave 14: Vision + Metal + Profiling + Tutorials + SLA (5 agents)
+
+- [x] T10.3 Vision model benchmarks (Arch Eng)  verifies: [UC-002] (2026-03-19)
+- [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
+- [x] T22.1 Hardware profiling [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials] (2026-03-19)
+- [x] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions] (2026-03-19)
+
+#### Wave 15: TensorRT + FPGA + Metal Kernels + Auto-Optimization (5 agents)
+
+Deps: W10.1.1 needs W5.1.2 (done). W10.1.3 needs W9.1.1 (done). T20.2 needs T20.1 (done). T22.2/T22.3 need T22.1 (done).
+
+- [x] W10.1.1 TensorRT tabular compilation [ztensor] (Kernel Eng)  verifies: [UC-016] (2026-03-19)
+- [x] W10.1.3 FPGA backend [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] T20.2 Port CUDA kernels to Metal [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
+- [x] T22.2 Automatic kernel selection (Kernel Eng)  verifies: [UC-002] (2026-03-19)
+- [x] T22.3 Automatic quantization recommendation (ML Eng)  verifies: [UC-001] (2026-03-19)
+
+Waves 16+ continue with remaining tasks based on dependency order and agent availability.
 
 ---
 
@@ -1204,6 +1222,17 @@ Waves 14+ continue with remaining tasks based on dependency order and agent avai
 ---
 
 ## Progress Log
+
+### 2026-03-19: Wave 15 execution (5 tasks, 5 parallel agents)
+
+Executed 5 unblocked tasks across WE10, E20, E22 with 5 parallel agents:
+- W10.1.1 TensorRT tabular compilation (ztensor) — CompileTabular[T] for sub-10us inference
+- W10.1.3 FPGA backend via purego (ztensor) — OpenCL-based FPGA runtime abstraction layer
+- T20.2 Port CUDA kernels to Metal (ztensor) — 30+ Metal compute shaders (GEMV, RMSNorm, RoPE, SwiGLU, etc.)
+- T22.2 Automatic kernel selection (zerfoo) — autoopt/kernel.go maps hardware profiles to optimal kernels
+- T22.3 Automatic quantization recommendation (zerfoo) — autoopt/quantrec.go recommends quant format
+All tests pass. No new regressions (pre-existing Q5K/Q6K and bench_disagg failures unchanged).
+Newly unblocked: W10.1.2 (needs W10.1.1), T20.3 (needs T20.2), T25.1/T25.2 (T22.1 done).
 
 ### 2026-03-19: Wave 11 execution (10 tasks, 10 parallel agents)
 
