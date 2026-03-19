@@ -56,9 +56,10 @@ type RoundResult struct {
 
 // Coordinator manages federated learning rounds using a pluggable strategy.
 type Coordinator struct {
-	strategy Strategy
-	config   CoordinatorConfig
-	round    int
+	strategy      Strategy
+	config        CoordinatorConfig
+	round         int
+	globalWeights []float64
 }
 
 // NewCoordinator creates a coordinator with the given strategy and config.
@@ -92,9 +93,6 @@ func (c *Coordinator) RunRound(clients []Client) (*RoundResult, error) {
 		return nil, errors.New("federated: not enough clients selected")
 	}
 
-	// Determine global weights to distribute.
-	var globalWeights []float64
-
 	// Collect updates from selected clients.
 	var updates []ModelUpdate
 	for _, id := range selected {
@@ -102,7 +100,7 @@ func (c *Coordinator) RunRound(clients []Client) (*RoundResult, error) {
 		if !ok {
 			continue
 		}
-		update, err := cl.Train(globalWeights)
+		update, err := cl.Train(c.globalWeights)
 		if err != nil {
 			return nil, err
 		}
@@ -120,6 +118,7 @@ func (c *Coordinator) RunRound(clients []Client) (*RoundResult, error) {
 		return nil, err
 	}
 	agg.Round = c.round
+	c.globalWeights = agg.Weights
 
 	return &RoundResult{
 		Model:   agg,
