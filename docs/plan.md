@@ -267,7 +267,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE4: Tabular AutoML Extension [2026 Q3-Q4]
 
-- [ ] W2.3.1 Extend NAS/AutoML to search tabular and time-series architecture space
+- [x] W2.3.1 Extend NAS/AutoML to search tabular and time-series architecture space (2026-03-18, ad61709)
   Owner: ML Eng  Est: 5h  verifies: [UC-031]
   Deps: W2.1.1, W2.1.2, W2.1.3, W2.1.4, W2.2.1, W2.2.2, W2.2.3
   Acceptance: Extend existing NAS/AutoML (see ADR-055) to include tabular and
@@ -1013,7 +1013,7 @@ W3.1.5 depends on W3.1.1 from Wave 5.
 
 Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
 
-- [ ] W2.3.1 AutoML tabular/timeseries (ML Eng)  verifies: [UC-031]
+- [x] W2.3.1 AutoML tabular/timeseries (ML Eng)  verifies: [UC-031] (2026-03-18, ad61709)
 - [ ] T8.2 Validate HIP bindings (Kernel Eng)  verifies: [UC-035]
 - [ ] T8.3 Validate rocBLAS (Kernel Eng)  verifies: [UC-035]
 - [ ] T11.1 GopherCon booth (DevRel)  delivers: [GopherCon 2027 presence]
