@@ -316,7 +316,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Learn(Experience). `ReplayBuffer` with configurable capacity, priority sampling.
   TestReplayBuffer_FIFO, TestReplayBuffer_PrioritySampling.
 
-- [ ] W6.1.2 Implement PPO (Proximal Policy Optimization) on ztensor compute graph
+- [x] W6.1.2 Implement PPO (Proximal Policy Optimization) on ztensor compute graph (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W6.1.1
   Acceptance: `PPO` agent type implementing Agent interface. Clipped surrogate
@@ -324,7 +324,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   n_epochs, batch_size. Trained via ztensor compute graph with Engine[T].
   TestPPO_CartPole (converges on simple environment), TestPPO_ClipObjective.
 
-- [ ] W6.1.3 Implement SAC (Soft Actor-Critic) for continuous action spaces
+- [x] W6.1.3 Implement SAC (Soft Actor-Critic) for continuous action spaces (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W6.1.1
   Acceptance: `SAC` agent type. Twin Q-networks, entropy regularization, automatic
@@ -335,7 +335,7 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
 
 #### WE7: Cross-Asset and Causal Models [2029-2030]
 
-- [ ] W7.1.1 Implement crossasset.Model with cross-attention mechanism
+- [x] W7.1.1 Implement crossasset.Model with cross-attention mechanism (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W5.1.2
   Acceptance: `crossasset` package. `Model` takes features from multiple sources,
@@ -343,14 +343,14 @@ Trimmed 2026-03-18. Knowledge preserved in docs/adr/062-tabular-model-package.md
   Config: n_sources, features_per_source, d_model, n_heads.
   TestCrossAsset_Forward, TestCrossAsset_AttentionWeights.
 
-- [ ] W7.1.2 Implement Graph Neural Network layers (GCN, GAT)
+- [x] W7.1.2 Implement Graph Neural Network layers (GCN, GAT) (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W5.1.2
   Acceptance: `gnn` package. Graph Convolutional Network (GCN) and Graph Attention
   Network (GAT) layers. Adjacency matrix + node features as input. Configurable
   number of layers and hidden dims. TestGCN_Forward, TestGAT_AttentionMask.
 
-- [ ] W7.3.1 Implement causal.DiscoverGraph for causal structure learning
+- [x] W7.3.1 Implement causal.DiscoverGraph for causal structure learning (2026-03-19)
   Owner: ML Eng  Est: 5h  verifies: [infrastructure]
   Deps: W5.1.2
   Acceptance: `causal` package. `DiscoverGraph(data [][]float64) (*CausalGraph, error)`.
@@ -1060,8 +1060,8 @@ Deps: W5.1.2 needs W5.1.1. T8.5/T8.6 need T8.4.
 
 Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
 
-- [ ] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure]
-- [ ] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure]
+- [x] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
 - [ ] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 controls]
 - [ ] T17.5 AWS Marketplace (Biz Dev)  delivers: [AWS listing]
 - [ ] T18.2 SSO/SAML (Platform Eng)  delivers: [SAML 2.0 SSO]
@@ -1071,9 +1071,19 @@ Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
 - [ ] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037]
 - [ ] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure]
 
-Waves 11+ continue with WE7-WE12 (cross-asset, regime, self-improving, hardware
-optimization, enterprise, continuous learning) interleaved with remaining T-series
-tasks (E19-E33) based on dependency order and agent availability.
+#### Wave 11: RL + Cross-Asset + GNN + Causal (5 agents)
+
+Deps: W6.1.2/W6.1.3 need W6.1.1 (done). W7.1.1/W7.1.2/W7.3.1 need W5.1.2 (done).
+
+- [x] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W7.1.1 crossasset.Model (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W7.1.2 GNN layers (ML Eng)  verifies: [infrastructure] (2026-03-19)
+- [x] W7.3.1 causal.DiscoverGraph (ML Eng)  verifies: [infrastructure] (2026-03-19)
+
+Waves 12+ continue with WE7-WE12 remaining tasks (causal.Intervene, regime, synthetic,
+meta-learning, hardware optimization, enterprise, continuous learning) interleaved
+with remaining T-series tasks (E19-E33) based on dependency order and agent availability.
 
 ---
 
