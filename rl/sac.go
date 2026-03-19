@@ -434,14 +434,22 @@ func (s *SAC) Learn(batch []Experience) error {
 	sgdUpdate(s.critic2.b3, s.c2Db3, cfg.LearningRate)
 
 	// ---- Update actor ----
-	// Actor loss: E[alpha * logProb - min(Q1, Q2)(s, a)]
-	// Use reparameterisation trick with numerical dQ/da via finite differences.
-	const eps = 1e-4
+	// Actor objective: maximise E[min(Q1,Q2)(s,a) - alpha*logProb].
+	// We use analytical gradients through the reparameterisation trick and
+	// backprop through critic1 for dQ/da.
 	totalLogProb := 0.0
 	invBatch := 1.0 / float64(len(batch))
 
+	// Reusable throwaway gradient buffers for critic backprop (not applied).
+	tmpCW1 := make([]float64, len(s.critic1.w1))
+	tmpCB1 := make([]float64, len(s.critic1.b1))
+	tmpCW2 := make([]float64, len(s.critic1.w2))
+	tmpCB2 := make([]float64, len(s.critic1.b2))
+	tmpCW3 := make([]float64, len(s.critic1.w3))
+	tmpCB3 := make([]float64, len(s.critic1.b3))
+
 	for _, exp := range batch {
-		// Forward through actor to get mean and log_std.
+		// Forward through actor.
 		actorCache, actorOut := s.actor.forwardCached(exp.State)
 		mean := actorOut[:actionDim]
 		logStd := actorOut[actionDim:]
@@ -464,68 +472,47 @@ func (s *SAC) Learn(batch []Experience) error {
 		}
 		totalLogProb += logProb
 
-		// Compute min(Q1, Q2) for the sampled action.
+		// Backprop through critic1 to get dQ/da.
 		cInput := append(copySlice(exp.State), action...)
-		q1 := s.critic1.forward(cInput)[0]
-		q2 := s.critic2.forward(cInput)[0]
-		minQ := q1
-		if q2 < q1 {
-			minQ = q2
-		}
+		cCache, _ := s.critic1.forwardCached(cInput)
 
-		// Compute dQ/da via finite differences for each action dimension.
-		dQda := make([]float64, actionDim)
-		for i := range actionDim {
-			cPlus := append(copySlice(exp.State), copySlice(action)...)
-			cPlus[cfg.StateDim+i] += eps
-			cMinus := append(copySlice(exp.State), copySlice(action)...)
-			cMinus[cfg.StateDim+i] -= eps
+		// Zero the throwaway buffers.
+		clear(tmpCW1)
+		clear(tmpCB1)
+		clear(tmpCW2)
+		clear(tmpCB2)
+		clear(tmpCW3)
+		clear(tmpCB3)
 
-			qp1 := s.critic1.forward(cPlus)[0]
-			qp2 := s.critic2.forward(cPlus)[0]
-			qpMin := qp1
-			if qp2 < qp1 {
-				qpMin = qp2
-			}
-			qm1 := s.critic1.forward(cMinus)[0]
-			qm2 := s.critic2.forward(cMinus)[0]
-			qmMin := qm1
-			if qm2 < qm1 {
-				qmMin = qm2
-			}
-			dQda[i] = (qpMin - qmMin) / (2 * eps)
-		}
+		dInput := s.critic1.backward(cCache, []float64{1.0},
+			tmpCW1, tmpCB1, tmpCW2, tmpCB2, tmpCW3, tmpCB3)
+		dQda := dInput[cfg.StateDim:] // gradient of Q w.r.t. action
 
-		// Gradient of actor loss w.r.t. actor output (mean, logStd).
-		// Loss = alpha * logProb - Q(s, a)
-		// d(Loss)/d(actorOut) via chain rule through reparameterisation.
+		// Gradient of actor loss w.r.t. actor outputs (mean, logStd).
+		// Loss = alpha*logProb - Q(s,a)  (minimise to maximise Q - alpha*logProb)
 		dActorOut := make([]float64, 2*actionDim)
 		for i := range actionDim {
 			a := action[i]
-			dtanh := math.Max(1-a*a, 1e-6)
+			dtanh := math.Max(1-a*a, 1e-6) // d(tanh)/d(u)
 			ls := clampLogStd(logStd[i])
 			std := math.Exp(ls)
 
-			// d(logProb)/da (tanh correction): 2a/(1-a^2)
+			// d(logProb)/d(a) from tanh correction: 2a/(1-a^2)
 			dLogProb_da := 2 * a / math.Max(1-a*a, 1e-6)
 
-			// d(Loss)/da = alpha * d(logProb)/da - dQ/da
+			// d(Loss)/d(a) = alpha * d(logProb)/d(a) - dQ/d(a)
 			dLoss_da := (s.alpha*dLogProb_da - dQda[i]) * invBatch
 
-			// da/du = 1 - a^2; du/dmean = 1; du/dlogStd = noise*std
+			// Chain rule through tanh: d(a)/d(u) = 1-a^2
 			dLoss_du := dLoss_da * dtanh
 
-			dActorOut[i] += dLoss_du                           // d/dmean
-			dActorOut[actionDim+i] += dLoss_du * noises[i] * std // d/dlogStd via u
-
-			// d(logProb)/dlogStd = -1 (from -ls term)
-			dActorOut[actionDim+i] += s.alpha * (-1) * invBatch
+			// d(u)/d(mean) = 1; d(u)/d(logStd) = noise * std
+			dActorOut[i] = dLoss_du
+			dActorOut[actionDim+i] = dLoss_du*noises[i]*std + s.alpha*(-1)*invBatch
 		}
 
 		s.actor.backward(actorCache, dActorOut,
 			s.actorDw1, s.actorDb1, s.actorDw2, s.actorDb2, s.actorDw3, s.actorDb3)
-
-		_ = minQ
 	}
 
 	sgdUpdate(s.actor.w1, s.actorDw1, cfg.LearningRate)
