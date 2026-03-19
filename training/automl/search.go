@@ -1,14 +1,15 @@
 package automl
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/zerfoo/tabular"
+	"github.com/zerfoo/zerfoo/timeseries"
 )
 
 // ArchKind identifies an architecture in the tabular/time-series search space.
@@ -327,18 +328,17 @@ func evalMLP(
 	return validateTabular(data, labels, valSplit, model.Predict, engine)
 }
 
-// evalTabNet trains and evaluates a TabNet model.
+// evalTabNet creates and evaluates a TabNet model.
 func evalTabNet(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
 	nSteps := int(clamp(params["n_steps"], 1, 10))
 	relaxation := clamp(params["relaxation"], 1.0, 3.0)
 	ftDim := int(clamp(params["ft_dim"], 8, 256))
-	lr := params["lr"]
 
 	cfg := tabular.TabNetConfig{
 		InputDim:              inputDim,
@@ -354,262 +354,272 @@ func evalTabNet(
 		return 0, err
 	}
 
-	// Simple training loop for TabNet.
-	return trainAndValidateTabNetLike(data, labels, valSplit, epochs, lr, engine, ops,
-		func(features []float64) (tabular.Direction, float64, error) {
-			return tn.Predict(features)
-		},
-		func(features []float64) (tabular.Direction, float64, error) {
-			return tn.Predict(features)
-		},
-	)
+	return validateTabular(data, labels, valSplit, tn.Predict, engine)
 }
 
-// evalFTTransformer evaluates using a lightweight MLP surrogate (FTTransformer not yet implemented).
-// The surrogate uses a larger hidden dim with GELU to approximate the FTTransformer's richer
-// feature interactions.
+// evalFTTransformer creates and evaluates an actual FTTransformer model.
 func evalFTTransformer(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
-	dToken := int(clamp(params["d_token"], 8, 512))
-	nLayers := int(clamp(params["n_layers"], 1, 8))
-	lr := params["lr"]
+	dToken := int(clamp(params["d_token"], 8, 192))
+	nHeads := int(clamp(params["n_heads"], 2, 8))
+	nLayers := int(clamp(params["n_layers"], 1, 4))
 	dropout := params["dropout"]
 
-	hiddenDims := make([]int, nLayers)
-	for i := range hiddenDims {
-		hiddenDims[i] = dToken
+	dToken = alignDim(dToken, nHeads)
+
+	cfg := tabular.FTTransformerConfig{
+		NumFeatures: inputDim,
+		DToken:      dToken,
+		NHeads:      nHeads,
+		NLayers:     nLayers,
+		DFFN:        dToken * 4,
+		DropoutRate:  dropout,
 	}
 
-	mc := tabular.ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  hiddenDims,
-		DropoutRate: dropout,
-		Activation:  tabular.ActivationGELU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
-	}
-
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
+	ft, err := tabular.NewFTTransformer(cfg, engine, ops)
 	if err != nil {
 		return 0, err
 	}
 
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
+	return validateTabular(data, labels, valSplit, ft.Predict, engine)
 }
 
-// evalSAINT evaluates using a MLP surrogate with deep layers (SAINT not yet implemented).
+// evalSAINT creates and evaluates an actual SAINT model.
 func evalSAINT(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
-	dModel := int(clamp(params["d_model"], 8, 512))
-	nLayers := int(clamp(params["n_layers"], 1, 8))
-	lr := params["lr"]
-	dropout := params["dropout"]
+	dModel := int(clamp(params["d_model"], 8, 192))
+	nHeads := int(clamp(params["n_heads"], 2, 8))
+	nLayers := int(clamp(params["n_layers"], 1, 4))
 
-	hiddenDims := make([]int, nLayers)
-	for i := range hiddenDims {
-		hiddenDims[i] = dModel
+	dModel = alignDim(dModel, nHeads)
+
+	cfg := tabular.SAINTConfig{
+		NumFeatures:          inputDim,
+		DModel:               dModel,
+		NHeads:               nHeads,
+		NLayers:              nLayers,
+		InterSampleAttention: true,
 	}
 
-	mc := tabular.ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  hiddenDims,
-		DropoutRate: dropout,
-		Activation:  tabular.ActivationGELU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
-	}
-
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
+	s, err := tabular.NewSAINT(cfg, engine, ops)
 	if err != nil {
 		return 0, err
 	}
 
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
+	return validateTabular(data, labels, valSplit, s.Predict, engine)
 }
 
-// evalTabResNet evaluates using a MLP surrogate (TabResNet not yet implemented).
-// Uses wider hidden dims to simulate skip connections.
+// evalTabResNet creates and evaluates an actual TabResNet model.
 func evalTabResNet(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
-	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
-) (float64, error) {
-	inputDim := len(data[0])
-	hiddenDim := int(clamp(params["hidden_dim"], 8, 512))
-	numBlocks := int(clamp(params["num_blocks"], 1, 8))
-	lr := params["lr"]
-	dropout := params["dropout"]
-
-	// Simulate ResNet with 2 layers per block.
-	hiddenDims := make([]int, numBlocks*2)
-	for i := range hiddenDims {
-		hiddenDims[i] = hiddenDim
-	}
-
-	mc := tabular.ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  hiddenDims,
-		DropoutRate: dropout,
-		Activation:  tabular.ActivationReLU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
-	}
-
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
-	if err != nil {
-		return 0, err
-	}
-
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
-}
-
-// evalTFT evaluates TFT by treating each sample's features as a time series.
-// Uses a surrogate MLP since a full TFT requires sequence data, not tabular row data.
-func evalTFT(
-	data [][]float64, labels []int,
-	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
 	hiddenDim := int(clamp(params["hidden_dim"], 8, 256))
-	nLSTMLayers := int(clamp(params["n_lstm_layers"], 1, 6))
-	lr := params["lr"]
+	numBlocks := int(clamp(params["num_blocks"], 1, 6))
+	dropout := params["dropout"]
 
-	hiddenDims := make([]int, nLSTMLayers)
+	hiddenDims := make([]int, numBlocks)
 	for i := range hiddenDims {
 		hiddenDims[i] = hiddenDim
 	}
 
-	mc := tabular.ModelConfig{
+	cfg := tabular.TabResNetConfig{
 		InputDim:    inputDim,
+		OutputDim:   3,
 		HiddenDims:  hiddenDims,
-		DropoutRate: 0.1,
-		Activation:  tabular.ActivationGELU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
+		DropoutRate: dropout,
+		Activation:  tabular.ActivationReLU,
+		Norm:        tabular.NormLayer,
 	}
 
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
+	rn, err := tabular.NewTabResNet(cfg, engine, ops)
 	if err != nil {
 		return 0, err
 	}
 
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
+	return validateTabular(data, labels, valSplit, rn.Predict, engine)
 }
 
-// evalNBEATS evaluates N-BEATS via a deep MLP surrogate (N-BEATS not yet implemented).
-func evalNBEATS(
+// evalTFT creates and evaluates an actual Temporal Fusion Transformer.
+// Tabular features are split into static and time covariates for the TFT interface.
+func evalTFT(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
-	stackWidth := int(clamp(params["stack_width"], 16, 1024))
-	nBlocks := int(clamp(params["n_blocks"], 1, 16))
-	lr := params["lr"]
+	hiddenDim := int(clamp(params["hidden_dim"], 16, 128))
+	nHeads := int(clamp(params["n_heads"], 1, 4))
 
-	hiddenDims := make([]int, nBlocks)
-	for i := range hiddenDims {
-		hiddenDims[i] = stackWidth
+	hiddenDim = alignDim(hiddenDim, nHeads)
+
+	// Split features: first half static, second half temporal (1 time step).
+	numStatic := inputDim / 2
+	if numStatic < 1 {
+		numStatic = 1
 	}
-	// Clamp hidden dims to reasonable size.
-	for i := range hiddenDims {
-		if hiddenDims[i] > 256 {
-			hiddenDims[i] = 256
+	numTime := inputDim - numStatic
+	if numTime < 1 {
+		numTime = 1
+		numStatic = inputDim - 1
+		if numStatic < 1 {
+			numStatic = 1
 		}
 	}
 
-	mc := tabular.ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  hiddenDims,
-		DropoutRate: 0.0,
-		Activation:  tabular.ActivationReLU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
+	cfg := timeseries.TFTConfig{
+		NumStaticFeatures: numStatic,
+		NumTimeFeatures:   numTime,
+		DModel:            hiddenDim,
+		NHeads:            nHeads,
+		NHorizons:         3,
+		Quantiles:         []float64{0.5},
 	}
 
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
+	tft, err := timeseries.NewTFT(cfg, engine, ops)
 	if err != nil {
 		return 0, err
 	}
 
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
+	predict := func(features []float64) (tabular.Direction, float64, error) {
+		staticF := features[:numStatic]
+		timeF := [][]float64{features[numStatic : numStatic+numTime]}
+		out, err := tft.Predict(staticF, timeF)
+		if err != nil {
+			return tabular.Flat, 0, err
+		}
+		// out is [NHorizons][nQuantiles] = [3][1]; treat horizon values as logits.
+		logits := make([]float32, len(out))
+		for i, row := range out {
+			if len(row) > 0 {
+				logits[i] = float32(row[0])
+			}
+		}
+		dir, conf := argmax(softmax(logits))
+		return dir, conf, nil
+	}
+
+	return validateTabular(data, labels, valSplit, predict, engine)
 }
 
-// evalPatchTST evaluates PatchTST via a transformer-like MLP surrogate.
-func evalPatchTST(
+// evalNBEATS creates and evaluates an actual N-BEATS model.
+// Tabular features are treated as a univariate time series (features = time steps),
+// and the forecast output (length 3) is interpreted as class logits.
+func evalNBEATS(
 	data [][]float64, labels []int,
 	params map[string]float64,
-	epochs int, valSplit float64,
+	_ int, valSplit float64,
 	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
 ) (float64, error) {
 	inputDim := len(data[0])
-	dModel := int(clamp(params["d_model"], 8, 512))
-	nHeads := int(clamp(params["n_heads"], 1, 16))
-	// Ensure dModel is divisible by nHeads.
-	if nHeads > 0 && dModel%nHeads != 0 {
-		dModel = (dModel/nHeads)*nHeads + nHeads
-	}
-	lr := params["lr"]
+	stackWidth := int(clamp(params["stack_width"], 64, 256))
+	nBlocks := int(clamp(params["n_blocks"], 2, 8))
 
-	mc := tabular.ModelConfig{
-		InputDim:    inputDim,
-		HiddenDims:  []int{dModel, dModel},
-		DropoutRate: 0.1,
-		Activation:  tabular.ActivationGELU,
-	}
-	tc := tabular.TrainConfig{
-		Epochs:          epochs,
-		BatchSize:       32,
-		LearningRate:    lr,
-		WeightDecay:     1e-4,
-		ValidationSplit: valSplit,
+	cfg := timeseries.NBEATSConfig{
+		InputLength:     inputDim,
+		OutputLength:    3, // 3 outputs → class logits
+		StackTypes:      []timeseries.StackType{timeseries.StackGeneric},
+		NBlocksPerStack: nBlocks,
+		HiddenDim:       stackWidth,
+		NHarmonics:      4,
 	}
 
-	model, err := tabular.Train(data, labels, tc, mc, engine, ops)
+	nb, err := timeseries.NewNBEATS(cfg, engine, ops)
 	if err != nil {
 		return 0, err
 	}
 
-	return validateTabular(data, labels, valSplit, model.Predict, engine)
+	ctx := context.Background()
+
+	predict := func(features []float64) (tabular.Direction, float64, error) {
+		f32 := make([]float32, len(features))
+		for i, v := range features {
+			f32[i] = float32(v)
+		}
+		input, err := tensor.New[float32]([]int{1, inputDim}, f32)
+		if err != nil {
+			return tabular.Flat, 0, err
+		}
+		out, err := nb.Forward(ctx, input)
+		if err != nil {
+			return tabular.Flat, 0, err
+		}
+		dir, conf := argmax(softmax(out.Forecast.Data()))
+		return dir, conf, nil
+	}
+
+	return validateTabular(data, labels, valSplit, predict, engine)
+}
+
+// evalPatchTST creates and evaluates an actual PatchTST model.
+// Tabular features are treated as a single-channel time series,
+// and the output dimension is set to 3 for classification.
+func evalPatchTST(
+	data [][]float64, labels []int,
+	params map[string]float64,
+	_ int, valSplit float64,
+	engine compute.Engine[float32], ops numeric.Arithmetic[float32],
+) (float64, error) {
+	inputDim := len(data[0])
+	patchLen := int(clamp(params["patch_len"], 1, float64(inputDim)))
+	dModel := int(clamp(params["d_model"], 8, 256))
+	nHeads := int(clamp(params["n_heads"], 1, 8))
+
+	dModel = alignDim(dModel, nHeads)
+
+	stride := patchLen / 2
+	if stride < 1 {
+		stride = 1
+	}
+
+	cfg := timeseries.PatchTSTConfig{
+		InputLength:        inputDim,
+		PatchLength:        patchLen,
+		Stride:             stride,
+		DModel:             dModel,
+		NHeads:             nHeads,
+		NLayers:            2,
+		OutputDim:          3, // 3 outputs → class logits
+		ChannelIndependent: false,
+	}
+
+	pt, err := timeseries.NewPatchTST(cfg, engine, ops)
+	if err != nil {
+		return 0, err
+	}
+
+	predict := func(features []float64) (tabular.Direction, float64, error) {
+		// Single channel: features as time points.
+		out, err := pt.Predict([][]float64{features})
+		if err != nil {
+			return tabular.Flat, 0, err
+		}
+		if len(out) == 0 || len(out[0]) < 3 {
+			return tabular.Flat, 0, fmt.Errorf("automl: patchtst output too short")
+		}
+		logits := make([]float32, 3)
+		for i := 0; i < 3; i++ {
+			logits[i] = float32(out[0][i])
+		}
+		dir, conf := argmax(softmax(logits))
+		return dir, conf, nil
+	}
+
+	return validateTabular(data, labels, valSplit, predict, engine)
 }
 
 // validateTabular evaluates a predict function on the validation split of data.
@@ -644,20 +654,11 @@ func validateTabular(
 	return float64(correct) / float64(valSize), nil
 }
 
-// trainAndValidateTabNetLike is a simple accuracy evaluator that trains by calling
-// Predict repeatedly on the validation set (TabNet has no exposed Train API).
-// For TabNet in automl context, we score based on the initialized model's validation accuracy.
-func trainAndValidateTabNetLike(
-	data [][]float64, labels []int, valSplit float64,
-	_ int, _ float64,
-	_ compute.Engine[float32], _ numeric.Arithmetic[float32],
-	_ func([]float64) (tabular.Direction, float64, error),
-	predict func([]float64) (tabular.Direction, float64, error),
-) (float64, error) {
-	return validateTabular(data, labels, valSplit, predict, nil)
-}
 
-// retrainBest trains the best architecture on all data and returns a BestModel.
+// retrainBest creates the best architecture with the winning hyperparameters
+// and returns a BestModel. For architectures with training support (MLP),
+// the model is trained on all data. For others, the model is instantiated
+// with the validated hyperparameters.
 func retrainBest(
 	data [][]float64, labels []int,
 	arch ArchKind, params map[string]float64,
@@ -667,9 +668,9 @@ func retrainBest(
 	inputDim := len(data[0])
 
 	switch arch {
-	case ArchMLP, ArchFTTransformer, ArchSAINT, ArchTabResNet, ArchTFT, ArchNBEATS, ArchPatchTST:
-		// All MLP-backed archs: build and train.
-		hiddenDim, numLayers := extractMLPShape(arch, params)
+	case ArchMLP:
+		hiddenDim := int(clamp(params["hidden_dim"], 8, 512))
+		numLayers := int(clamp(params["num_layers"], 1, 8))
 
 		mc := tabular.ModelConfig{
 			InputDim:    inputDim,
@@ -689,62 +690,175 @@ func retrainBest(
 		if err != nil {
 			return nil, err
 		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: model.Predict}, nil
 
-		return &BestModel{
-			Architecture: arch,
-			Params:       params,
-			Predictor:    model.Predict,
-		}, nil
+	case ArchFTTransformer:
+		dToken := int(clamp(params["d_token"], 8, 192))
+		nHeads := int(clamp(params["n_heads"], 2, 8))
+		nLayers := int(clamp(params["n_layers"], 1, 4))
+		dToken = alignDim(dToken, nHeads)
+
+		ft, err := tabular.NewFTTransformer(tabular.FTTransformerConfig{
+			NumFeatures: inputDim, DToken: dToken, NHeads: nHeads,
+			NLayers: nLayers, DFFN: dToken * 4, DropoutRate: params["dropout"],
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: ft.Predict}, nil
 
 	case ArchTabNet:
 		nSteps := int(clamp(params["n_steps"], 1, 10))
 		relaxation := clamp(params["relaxation"], 1.0, 3.0)
 		ftDim := int(clamp(params["ft_dim"], 8, 256))
 
-		cfg := tabular.TabNetConfig{
-			InputDim:              inputDim,
-			OutputDim:             3,
-			NSteps:                nSteps,
-			RelaxationFactor:      relaxation,
-			SparsityCoefficient:   1e-3,
+		tn, err := tabular.NewTabNet(tabular.TabNetConfig{
+			InputDim: inputDim, OutputDim: 3, NSteps: nSteps,
+			RelaxationFactor: relaxation, SparsityCoefficient: 1e-3,
 			FeatureTransformerDim: ftDim,
-		}
-		tn, err := tabular.NewTabNet(cfg, engine, ops)
+		}, engine, ops)
 		if err != nil {
 			return nil, err
 		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: tn.Predict}, nil
 
-		return &BestModel{
-			Architecture: arch,
-			Params:       params,
-			Predictor:    tn.Predict,
-		}, nil
+	case ArchSAINT:
+		dModel := int(clamp(params["d_model"], 8, 192))
+		nHeads := int(clamp(params["n_heads"], 2, 8))
+		nLayers := int(clamp(params["n_layers"], 1, 4))
+		dModel = alignDim(dModel, nHeads)
+
+		s, err := tabular.NewSAINT(tabular.SAINTConfig{
+			NumFeatures: inputDim, DModel: dModel, NHeads: nHeads,
+			NLayers: nLayers, InterSampleAttention: true,
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: s.Predict}, nil
+
+	case ArchTabResNet:
+		hiddenDim := int(clamp(params["hidden_dim"], 8, 256))
+		numBlocks := int(clamp(params["num_blocks"], 1, 6))
+
+		rn, err := tabular.NewTabResNet(tabular.TabResNetConfig{
+			InputDim: inputDim, OutputDim: 3,
+			HiddenDims: makeHiddenDims(hiddenDim, numBlocks),
+			DropoutRate: params["dropout"], Activation: tabular.ActivationReLU,
+			Norm: tabular.NormLayer,
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: rn.Predict}, nil
+
+	case ArchTFT:
+		hiddenDim := int(clamp(params["hidden_dim"], 16, 128))
+		nHeads := int(clamp(params["n_heads"], 1, 4))
+		hiddenDim = alignDim(hiddenDim, nHeads)
+		numStatic := inputDim / 2
+		if numStatic < 1 {
+			numStatic = 1
+		}
+		numTime := inputDim - numStatic
+		if numTime < 1 {
+			numTime = 1
+		}
+
+		tft, err := timeseries.NewTFT(timeseries.TFTConfig{
+			NumStaticFeatures: numStatic, NumTimeFeatures: numTime,
+			DModel: hiddenDim, NHeads: nHeads, NHorizons: 3,
+			Quantiles: []float64{0.5},
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		predict := func(features []float64) (tabular.Direction, float64, error) {
+			staticF := features[:numStatic]
+			timeF := [][]float64{features[numStatic : numStatic+numTime]}
+			out, err := tft.Predict(staticF, timeF)
+			if err != nil {
+				return tabular.Flat, 0, err
+			}
+			logits := make([]float32, len(out))
+			for i, row := range out {
+				if len(row) > 0 {
+					logits[i] = float32(row[0])
+				}
+			}
+			dir, conf := argmax(softmax(logits))
+			return dir, conf, nil
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: predict}, nil
+
+	case ArchNBEATS:
+		stackWidth := int(clamp(params["stack_width"], 64, 256))
+		nBlocks := int(clamp(params["n_blocks"], 2, 8))
+
+		nb, err := timeseries.NewNBEATS(timeseries.NBEATSConfig{
+			InputLength: inputDim, OutputLength: 3,
+			StackTypes:      []timeseries.StackType{timeseries.StackGeneric},
+			NBlocksPerStack: nBlocks, HiddenDim: stackWidth, NHarmonics: 4,
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		ctx := context.Background()
+		predict := func(features []float64) (tabular.Direction, float64, error) {
+			f32 := make([]float32, len(features))
+			for i, v := range features {
+				f32[i] = float32(v)
+			}
+			input, err := tensor.New[float32]([]int{1, inputDim}, f32)
+			if err != nil {
+				return tabular.Flat, 0, err
+			}
+			out, err := nb.Forward(ctx, input)
+			if err != nil {
+				return tabular.Flat, 0, err
+			}
+			dir, conf := argmax(softmax(out.Forecast.Data()))
+			return dir, conf, nil
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: predict}, nil
+
+	case ArchPatchTST:
+		patchLen := int(clamp(params["patch_len"], 1, float64(inputDim)))
+		dModel := int(clamp(params["d_model"], 8, 256))
+		nHeads := int(clamp(params["n_heads"], 1, 8))
+		dModel = alignDim(dModel, nHeads)
+		stride := patchLen / 2
+		if stride < 1 {
+			stride = 1
+		}
+
+		pt, err := timeseries.NewPatchTST(timeseries.PatchTSTConfig{
+			InputLength: inputDim, PatchLength: patchLen, Stride: stride,
+			DModel: dModel, NHeads: nHeads, NLayers: 2, OutputDim: 3,
+			ChannelIndependent: false,
+		}, engine, ops)
+		if err != nil {
+			return nil, err
+		}
+		predict := func(features []float64) (tabular.Direction, float64, error) {
+			out, err := pt.Predict([][]float64{features})
+			if err != nil {
+				return tabular.Flat, 0, err
+			}
+			if len(out) == 0 || len(out[0]) < 3 {
+				return tabular.Flat, 0, fmt.Errorf("automl: patchtst output too short")
+			}
+			logits := make([]float32, 3)
+			for i := 0; i < 3; i++ {
+				logits[i] = float32(out[0][i])
+			}
+			dir, conf := argmax(softmax(logits))
+			return dir, conf, nil
+		}
+		return &BestModel{Architecture: arch, Params: params, Predictor: predict}, nil
 
 	default:
 		return nil, fmt.Errorf("automl: unsupported architecture for retrain: %q", arch)
-	}
-}
-
-// extractMLPShape derives hidden_dim and num_layers from hyperparams for any MLP-backed arch.
-func extractMLPShape(arch ArchKind, params map[string]float64) (int, int) {
-	switch arch {
-	case ArchMLP:
-		return int(clamp(params["hidden_dim"], 8, 512)), int(clamp(params["num_layers"], 1, 8))
-	case ArchFTTransformer:
-		return int(clamp(params["d_token"], 8, 512)), int(clamp(params["n_layers"], 1, 8))
-	case ArchSAINT:
-		return int(clamp(params["d_model"], 8, 512)), int(clamp(params["n_layers"], 1, 8))
-	case ArchTabResNet:
-		return int(clamp(params["hidden_dim"], 8, 512)), int(clamp(params["num_blocks"], 1, 8)) * 2
-	case ArchTFT:
-		return int(clamp(params["hidden_dim"], 8, 256)), int(clamp(params["n_lstm_layers"], 1, 6))
-	case ArchNBEATS:
-		dim := int(clamp(params["stack_width"], 16, 256))
-		return dim, int(clamp(params["n_blocks"], 1, 16))
-	case ArchPatchTST:
-		return int(clamp(params["d_model"], 8, 512)), 2
-	default:
-		return 64, 2
 	}
 }
 
@@ -771,39 +885,55 @@ func clamp(v, min, max float64) float64 {
 	return v
 }
 
-// simpleAccuracy evaluates a classifier on labeled data without training.
-func simpleAccuracy(data [][]float64, labels []int, predict func([]float64) (tabular.Direction, float64, error)) float64 {
-	correct := 0
-	for i, row := range data {
-		dir, _, err := predict(row)
-		if err != nil {
-			continue
-		}
-		if int(dir) == labels[i] {
-			correct++
-		}
+// alignDim rounds dim up to the nearest multiple of nHeads.
+// Returns at least nHeads.
+func alignDim(dim, nHeads int) int {
+	if nHeads <= 0 {
+		return dim
 	}
-	if len(data) == 0 {
-		return 0
+	if dim%nHeads == 0 {
+		return dim
 	}
-	return float64(correct) / float64(len(data))
+	aligned := ((dim / nHeads) + 1) * nHeads
+	if aligned <= 0 {
+		return nHeads
+	}
+	return aligned
 }
 
-// syntheticTimeSeries converts tabular row data to a synthetic time-series tensor.
-// Used for time-series architectures that need sequence inputs.
-func syntheticTimeSeries(row []float64, seqLen int, engine compute.Engine[float32], ops numeric.Arithmetic[float32]) (*tensor.TensorNumeric[float32], error) {
-	numVars := len(row)
-	data := make([]float32, 1*seqLen*numVars)
-	rng := rand.New(rand.NewPCG(42, 0))
-	for t := range seqLen {
-		for v := range numVars {
-			noise := float32(rng.Float64()*0.1 - 0.05)
-			data[t*numVars+v] = float32(row[v]) + noise
+// softmax applies the softmax function to logits.
+func softmax(logits []float32) []float32 {
+	maxVal := logits[0]
+	for _, v := range logits[1:] {
+		if v > maxVal {
+			maxVal = v
 		}
 	}
-	return tensor.New[float32]([]int{1, seqLen, numVars}, data)
+	probs := make([]float32, len(logits))
+	var sum float32
+	for i, v := range logits {
+		probs[i] = float32(math.Exp(float64(v - maxVal)))
+		sum += probs[i]
+	}
+	if sum > 0 {
+		for i := range probs {
+			probs[i] /= sum
+		}
+	}
+	return probs
 }
 
-// Ensure syntheticTimeSeries, simpleAccuracy are used (or suppress unused warnings).
-var _ = syntheticTimeSeries
-var _ = simpleAccuracy
+// argmax returns the Direction and confidence for the highest-probability class.
+func argmax(probs []float32) (tabular.Direction, float64) {
+	if len(probs) < 3 {
+		return tabular.Flat, 0
+	}
+	best := 0
+	for i := 1; i < 3; i++ {
+		if probs[i] > probs[best] {
+			best = i
+		}
+	}
+	return tabular.Direction(best), float64(probs[best])
+}
+
