@@ -334,19 +334,19 @@ func (p *PPO) updateMinibatch(batch []Experience, indices []int, oldLogProbs, ad
 		adv := advantages[idx]
 
 		clipped := math.Max(1-clip, math.Min(1+clip, ratio))
-		var useClipped bool
-		if adv >= 0 {
-			useClipped = clipped*adv < ratio*adv
-		} else {
-			useClipped = clipped*adv > ratio*adv
-		}
+		surr1 := ratio * adv
+		surr2 := clipped * adv
 
-		// dLoss/dRatio: gradient of -min(ratio*adv, clipped*adv) / mbSize
+		// Gradient flows through ratio only when the unclipped term is the min.
+		// When the clipped term is the min, the gradient w.r.t. ratio is zero
+		// because clipped doesn't depend on ratio at the boundary.
 		var dRatio float64
-		if useClipped {
-			dRatio = 0 // gradient is zero when clipped
-		} else {
+		if surr1 <= surr2 {
+			// Unclipped term is the min (or equal) — gradient flows.
 			dRatio = -adv / mbSize
+		} else {
+			// Clipped term is the min — gradient is zero.
+			dRatio = 0
 		}
 
 		// dRatio/dLogProb = ratio (since ratio = exp(newLP - oldLP))
@@ -394,6 +394,10 @@ func (p *PPO) updateMinibatch(batch []Experience, indices []int, oldLogProbs, ad
 		val.hidden.backward(vfr.input, gradVHiddenPre, vHiddenWGrad, vHiddenBGrad)
 	}
 
+	// Clip gradients by global norm to stabilize training.
+	clipGradNorm(1.0, pHiddenWGrad, pHiddenBGrad, pMeanWGrad, pMeanBGrad, pLogStdGrad)
+	clipGradNorm(1.0, vHiddenWGrad, vHiddenBGrad, vOutWGrad, vOutBGrad)
+
 	// Apply gradients.
 	applyGrad(pol.hidden.weights, pHiddenWGrad, lr)
 	applyGrad(pol.hidden.biases, pHiddenBGrad, lr)
@@ -404,6 +408,26 @@ func (p *PPO) updateMinibatch(batch []Experience, indices []int, oldLogProbs, ad
 	applyGrad(val.hidden.biases, vHiddenBGrad, lr)
 	applyGrad(val.out.weights, vOutWGrad, lr)
 	applyGrad(val.out.biases, vOutBGrad, lr)
+}
+
+// clipGradNorm rescales all gradient slices so their combined L2 norm
+// does not exceed maxNorm. Nil slices are skipped.
+func clipGradNorm(maxNorm float64, grads ...[]float64) {
+	norm := 0.0
+	for _, gs := range grads {
+		for _, g := range gs {
+			norm += g * g
+		}
+	}
+	norm = math.Sqrt(norm)
+	if norm > maxNorm {
+		scale := maxNorm / norm
+		for _, gs := range grads {
+			for i := range gs {
+				gs[i] *= scale
+			}
+		}
+	}
 }
 
 // applyGrad performs params -= lr * grad.
