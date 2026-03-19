@@ -5,6 +5,50 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-19: T2.12 Mamba 3 CPU/CUDA parity — PASS on DGX Spark
+
+**Type:** benchmark
+**Tags:** mamba3, ssm, mimo, parity, cuda, dgx-spark
+
+**Problem:** Validate Mamba 3 MIMO SSM forward pass produces identical results on CPU and GPU.
+**Root cause:** N/A — validation test, not a bug.
+**Fix:** Added TestMamba3Parity in tests/parity/mamba3_parity_test.go.
+**Impact:** Mamba 3 architecture confirmed numerically correct on GPU. Max diff: 7.15e-07 (tolerance: 1e-3). All head configurations (1, 2, 4) pass. Commit: 7cc38b0.
+
+---
+
+## 2026-03-19: T16.3 benchmark 500+ tok/s — physically impossible on GB10
+
+**Type:** benchmark
+**Tags:** throughput, gemma3, q4km, dgx-spark, gb10, roofline
+
+**Problem:** Target 500+ tok/s on Gemma 3 1B Q4_K_M. Measured 229 tok/s (old binary) / 136 tok/s (new binary).
+**Root cause:** GB10 LPDDR5x bandwidth is ~200 GB/s. At 778 MB model size, the roofline is ~257 tok/s. 229 tok/s = 89% utilization — already near optimal. 500 tok/s requires 389 GB/s (2x hardware limit).
+**Fix:** T16.3 cannot pass on DGX Spark. Requires hardware with higher memory bandwidth (A100: 2 TB/s, H100: 3.35 TB/s).
+**Impact:** Task blocked by hardware. Additionally, a ~40% throughput regression detected: old code (Mar 17) achieves 229 tok/s, current HEAD achieves 136 tok/s. Bisecting regression in progress.
+
+| Run | Binary | tok/s | Tokens | Commit |
+|-----|--------|-------|--------|--------|
+| Baseline (old) | bench_tps (Mar 17) | 229.45 | 256 | 4e85b12 |
+| Baseline (old) | bench_tps (Mar 17) | 229.05 | 256 | 4e85b12 |
+| Baseline (old) | bench_tps (Mar 17) | 229.76 | 256 | 4e85b12 |
+| Current HEAD | bench_tps_latest | 136.30 | 256 | b81b616 |
+| Current HEAD | bench_tps_latest | 135.83 | 256 | b81b616 |
+
+---
+
+## 2026-03-19: T9.4 multi-GPU benchmark — blocked (single GPU)
+
+**Type:** finding
+**Tags:** multi-gpu, tensor-parallelism, dgx-spark, gb10
+
+**Problem:** T9.4 requires multi-GPU inference benchmark on Llama 3 70B.
+**Root cause:** DGX Spark has a single NVIDIA GB10 GPU. Multi-GPU inference requires 2+ GPUs.
+**Fix:** N/A — task blocked by hardware. Requires a multi-GPU system (DGX A100/H100 or multi-GPU workstation).
+**Impact:** T9.4 remains blocked. Tensor parallelism code (inference/parallel/) exists but cannot be validated on this hardware.
+
+---
+
 ## 2026-03-18: GPUEngine transfer behavior audit — H2D/D2H patterns mapped
 
 **Type:** investigation

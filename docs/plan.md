@@ -292,11 +292,12 @@ Completed: T2.1-T2.11 (Llama 4, Gemma 3n, Command R, Falcon, Mixtral, RWKV,
 parity tests, SSM discretization, complex SSM, MIMO SSM, Mamba 3).
 Trimmed 2026-03-18. Knowledge preserved in docs/adr/048-mamba-ssm-architecture-support.md.
 
-- [ ] T2.12 Add Mamba 3 to parity tests on DGX [DGX]
+- [x] T2.12 Add Mamba 3 to parity tests on DGX [DGX] (2026-03-19)
   Owner: Arch Eng  Est: 2h  verifies: [UC-002]
   Deps: none (T2.11 complete)
   Acceptance: Mamba 3 output matches reference implementation within 1e-3 tolerance
   on DGX Spark. TestMamba3Parity passes.
+  Result: max_diff=7.15e-07 across 1/2/4-head configs. Commit 7cc38b0.
 
 ---
 
@@ -353,9 +354,10 @@ blog posts, GopherCon proposal, example apps). Trimmed 2026-03-18.
 Completed: T9.1-T9.3 (tensor parallelism, pipeline parallelism, --gpus flag).
 Trimmed 2026-03-18.
 
-- [ ] T9.4 Benchmark: multi-GPU inference on Llama 3 70B [DGX]
+- [ ] T9.4 Benchmark: multi-GPU inference on Llama 3 70B [DGX, multi-GPU]
   Owner: Infra Eng  Est: 2h  verifies: [UC-024]
   Deps: none (T9.3 complete)
+  Blocker: DGX Spark has single GB10 GPU. Needs multi-GPU system.
 
 ---
 
@@ -460,9 +462,12 @@ Completed: T16.2 (KV cache FP8 quantization). Trimmed 2026-03-18.
 - [x] T16.1 Implement warp-specialized GEMV kernel [ztensor] (2026-03-19)
   Owner: Kernel Eng  Est: 6h  verifies: [UC-002, UC-003]
   Deps: none
-- [ ] T16.3 Benchmark: 500+ tok/s [DGX]
+- [ ] T16.3 Benchmark: 500+ tok/s [DGX, high-bandwidth GPU]
   Owner: Kernel Eng  Est: 2h  verifies: [UC-002]
   Deps: T16.1
+  Blocker: GB10 roofline is ~257 tok/s (200 GB/s BW, 778 MB model). 500 tok/s
+  needs A100/H100 class memory bandwidth. Also: regression from 245→136 tok/s
+  in current HEAD needs fixing first.
 
 ---
 
@@ -677,7 +682,7 @@ All deps met. Maximum parallelism across 3 tracks.
 - [x] W3.1.1 Fix Q4_K re-quantization [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-18)
 - [x] W3.1.2 CUDA graph 100% coverage [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-18)
 - [x] W3.1.3 Fix Q5_K/Q6_K tests [ztensor] (Kernel Eng)  verifies: [UC-001, UC-002] (2026-03-18)
-- [ ] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002]
+- [x] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002] (2026-03-19)
 - [ ] T5.4 Discord server (DevRel)  delivers: [Discord community]
 - [ ] T4.7 Video walkthrough (DevRel)  delivers: [YouTube walkthrough]
 - [ ] T9.4 Multi-GPU benchmark [DGX] (Infra Eng)  verifies: [UC-024]
@@ -872,7 +877,15 @@ Deps: T14.3 (done). Only codeable unblocked task remaining.
 
 - [x] T14.4 SOC 2 Type II observation (Compliance)  delivers: [observation framework] (2026-03-19)
 
-All remaining tasks are blocked by hardware access or human actions. See Hand-Off Notes.
+#### Wave 22: DGX Spark Benchmarks (1 agent, sequential)
+
+DGX Spark now available. T2.12 completed. T9.4 and T16.3 blocked by hardware limits.
+
+- [x] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002] (2026-03-19)
+- [ ] T9.4 Multi-GPU benchmark [DGX, multi-GPU] (Infra Eng)  verifies: [UC-024] — blocked: single GPU
+- [ ] T16.3 Benchmark 500+ tok/s [DGX, high-BW GPU] (Kernel Eng)  verifies: [UC-002] — blocked: GB10 roofline 257 tok/s
+
+Remaining tasks blocked by hardware access, human actions, or hardware limits. See Hand-Off Notes.
 
 ---
 
@@ -967,6 +980,15 @@ All remaining tasks are blocked by hardware access or human actions. See Hand-Of
 ---
 
 ## Progress Log
+
+### 2026-03-19: Wave 22 — DGX Spark benchmarks (1 of 3 tasks completed)
+
+DGX Spark available. Synced repo (git bundle), rebuilt CUDA kernels for sm_121.
+- T2.12 Mamba 3 CPU/CUDA parity: PASS. max_diff=7.15e-07 (tol=1e-3). All head configs pass.
+- T9.4 Multi-GPU benchmark: BLOCKED. DGX Spark has single GB10 GPU.
+- T16.3 500+ tok/s: BLOCKED. GB10 roofline is ~257 tok/s (200 GB/s BW). Currently 229 tok/s (89% utilization).
+  Also found ~40% throughput regression: old code 229 tok/s → current HEAD 136 tok/s. Bisecting.
+105/132 tasks complete (79.5%).
 
 ### 2026-03-19: Wave 21 execution (1 task, sequential)
 

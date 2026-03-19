@@ -3,7 +3,19 @@
 Current and historical performance measurements. Updated after each
 verification run on DGX.
 
-## Current Baselines (2026-03-17, ztensor @ 4e85b12)
+## Current Baselines (2026-03-19, main @ b81b616)
+
+| Model | Format | Tok/s | CUDA Graph | Tokens | Date | Commit | Notes |
+|-------|--------|-------|------------|--------|------|--------|-------|
+| Gemma 3 1B | Q4_K_M | 136.30 | Yes | 256 | 2026-03-19 | b81b616 | Regression from 245 — bisecting |
+| Gemma 3 1B | Q4_K_M | 229.45 | Yes | 256 | 2026-03-19 | 4e85b12 (old binary) | Old code, same kernels |
+
+**Regression alert:** Current HEAD achieves ~136 tok/s vs ~229 tok/s at commit 4e85b12.
+The regression is in Go code (generate/ or inference/), not in CUDA kernels.
+Roofline analysis: GB10 LPDDR5x ~200 GB/s → max ~257 tok/s for 778 MB model.
+500 tok/s target requires hardware with higher memory bandwidth.
+
+## Previous Baselines (2026-03-17, ztensor @ 4e85b12)
 
 | Model | Format | Tok/s | CUDA Graph | Tokens | Date | Commit |
 |-------|--------|-------|------------|--------|------|--------|
