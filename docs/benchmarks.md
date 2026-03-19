@@ -43,6 +43,30 @@ dp4a benefits will appear at larger batch sizes where compute becomes the bottle
 
 Hardware: DGX Spark GB10, sm_121, 128GB LPDDR5x, Go 1.25.0, CUDA 13.0
 
+## Vision Models
+
+Vision model benchmarks use synthetic weights with small dimensions for CI,
+and full GGUF models for hardware throughput validation.
+
+| Model | Test | Status | Env Var |
+|-------|------|--------|---------|
+| LLaVA | BenchmarkLLaVA_Throughput | Synthetic (CI) | - |
+| LLaVA | TestLLaVA_VisionPipeline | Full model | LLAVA_GGUF_PATH |
+| Qwen-VL | BenchmarkQwenVL_Throughput | Synthetic (CI) | - |
+| Qwen-VL | TestQwenVL_VisionPipeline | Full model | QWENVL_GGUF_PATH |
+
+Run synthetic benchmarks:
+```bash
+go test -bench BenchmarkLLaVA -count=1 ./tests/parity/
+go test -bench BenchmarkQwenVL -count=1 ./tests/parity/
+```
+
+Run full-model vision pipeline tests (requires GGUF files):
+```bash
+LLAVA_GGUF_PATH=/path/to/llava.gguf go test -run TestLLaVA_VisionPipeline -count=1 -v ./tests/parity/
+QWENVL_GGUF_PATH=/path/to/qwenvl.gguf go test -run TestQwenVL_VisionPipeline -count=1 -v ./tests/parity/
+```
+
 ## Performance Milestones
 
 | Date | Milestone | Tok/s | Notes |
