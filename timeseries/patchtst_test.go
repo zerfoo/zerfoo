@@ -294,6 +294,58 @@ func TestPatchTST_ChannelIndependence(t *testing.T) {
 	}
 }
 
+func TestPatchTST_Predict(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength:        16,
+		PatchLength:        4,
+		Stride:             4,
+		DModel:             8,
+		NHeads:             2,
+		NLayers:            1,
+		OutputDim:          3,
+		ChannelIndependent: true,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	// Single channel.
+	input1 := [][]float64{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}}
+	out1, err := model.Predict(input1)
+	if err != nil {
+		t.Fatalf("Predict single channel: %v", err)
+	}
+	if len(out1) != 1 || len(out1[0]) != 3 {
+		t.Fatalf("Predict single channel: got %d channels with %d outputs, want 1 channel with 3", len(out1), len(out1[0]))
+	}
+
+	// Multi-channel.
+	input2 := [][]float64{
+		{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+		{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115},
+	}
+	out2, err := model.Predict(input2)
+	if err != nil {
+		t.Fatalf("Predict multi-channel: %v", err)
+	}
+	if len(out2) != 2 || len(out2[0]) != 3 || len(out2[1]) != 3 {
+		t.Fatalf("Predict multi-channel: unexpected shape")
+	}
+
+	// Verify finite values.
+	for c, ch := range out2 {
+		for i, v := range ch {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Errorf("Predict output[%d][%d] = %v, want finite", c, i, v)
+			}
+		}
+	}
+}
+
 func TestNewPatchTST_Validation(t *testing.T) {
 	engine, ops := newTestEngine()
 

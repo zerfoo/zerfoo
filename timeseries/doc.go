@@ -1,4 +1,7 @@
-// Package timeseries provides time-series forecasting model types. (Stability: alpha)
+// Package timeseries provides time-series forecasting models built on ztensor.
+//
+// Models in this package accept static covariates and temporal features, producing
+// multi-horizon forecasts with optional quantile estimates.
 package timeseries
 
 import (
@@ -7,6 +10,12 @@ import (
 
 	"github.com/zerfoo/ztensor/tensor"
 )
+
+// Forecast represents a multi-horizon forecast with optional quantile estimates.
+type Forecast struct {
+	Horizons  []float64             // point forecasts per horizon
+	Quantiles map[float64][]float64 // quantile -> values per horizon (nil if no quantiles)
+}
 
 // linearLayer holds weights and biases for a single linear transformation.
 type linearLayer struct {
