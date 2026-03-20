@@ -6,7 +6,7 @@ Minimum threshold: 75% (enforced by coverage-gate CI)
 
 ### 100% Coverage
 - config, data, device, internal/xblas, layers/components, layers/registry,
-  layers/tokenizers, metrics, shutdown
+  metrics, shutdown
 
 ### 98-99%
 - compute (98.0%), distributed/coordinator (98.3%), features (99.0%),
@@ -28,8 +28,8 @@ Minimum threshold: 75% (enforced by coverage-gate CI)
 
 ### 90-94%
 - cmd/cli (93.6%), cmd/bench-compare (89.7%), health (90.0%),
-  layers/embeddings (92.9%), layers/features (93.8%),
-  layers/gather (93.5%), layers/sequence (94.0%), registry (93.2%)
+  layers/embeddings (92.9%),
+  layers/gather (93.5%), registry (93.2%)
 
 ### Below 90%
 - cmd/coverage-gate (84.9%), cmd/zerfoo-predict (76.6%), cmd/zerfoo-tokenize (74.1%)

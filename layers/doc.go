@@ -46,10 +46,10 @@
 //   - [github.com/zerfoo/zerfoo/layers/transformer] — Transformer building blocks
 //     (encoder/decoder Block).
 //
-// Sequence modeling:
+// State space models:
 //
-//   - [github.com/zerfoo/zerfoo/layers/sequence] — Sequence layers such as State
-//     Space Models.
+//   - [github.com/zerfoo/zerfoo/layers/ssm] — State space model layers
+//     (Mamba, RWKV, S4, MIMO SSM, complex state, B/C normalization).
 //
 // Recurrent:
 //
@@ -59,9 +59,7 @@
 //
 //   - [github.com/zerfoo/zerfoo/layers/components] — Reusable composite components
 //     built from lower-level layers.
-//   - [github.com/zerfoo/zerfoo/layers/features] — Feature extraction layers.
 //   - [github.com/zerfoo/zerfoo/layers/hrm] — Hierarchical Reasoning Model layers.
-//   - [github.com/zerfoo/zerfoo/layers/tokenizers] — Tokenizer integration layers.
 //
 // Registry:
 //

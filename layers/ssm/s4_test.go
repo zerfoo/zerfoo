@@ -1,4 +1,4 @@
-package sequence
+package ssm
 
 import (
 	"context"
@@ -12,13 +12,9 @@ import (
 	"github.com/zerfoo/ztensor/types"
 )
 
-func makeEngine() compute.Engine[float32] {
-	return compute.NewCPUEngine(numeric.Float32Ops{})
-}
-
 func TestNewS4_ValidParams(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -29,14 +25,14 @@ func TestNewS4_ValidParams(t *testing.T) {
 }
 
 func TestNewS4_InvalidParams(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	tests := []struct {
-		name     string
+		name      string
 		layerName string
-		inputDim int
-		stateDim int
+		inputDim  int
+		stateDim  int
 	}{
 		{"empty name", "", 4, 8},
 		{"zero input dim", "s4", 0, 8},
@@ -56,8 +52,8 @@ func TestNewS4_InvalidParams(t *testing.T) {
 }
 
 func TestS4_Attributes(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -73,8 +69,8 @@ func TestS4_Attributes(t *testing.T) {
 }
 
 func TestS4_OutputShape(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -91,8 +87,8 @@ func TestS4_OutputShape(t *testing.T) {
 }
 
 func TestS4_Parameters(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -124,8 +120,8 @@ func TestS4_Parameters(t *testing.T) {
 }
 
 func TestS4_Forward_Shape(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -150,8 +146,8 @@ func TestS4_Forward_Shape(t *testing.T) {
 }
 
 func TestS4_Forward_NonZeroOutput(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -186,8 +182,8 @@ func TestS4_Forward_NonZeroOutput(t *testing.T) {
 }
 
 func TestS4_Forward_FiniteOutput(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -216,8 +212,8 @@ func TestS4_Forward_FiniteOutput(t *testing.T) {
 }
 
 func TestS4_Forward_WrongInputCount(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -231,8 +227,8 @@ func TestS4_Forward_WrongInputCount(t *testing.T) {
 }
 
 func TestS4_Forward_WrongInputRank(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -248,8 +244,8 @@ func TestS4_Forward_WrongInputRank(t *testing.T) {
 }
 
 func TestS4_Forward_EdgeCase_SingleStep(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -268,8 +264,8 @@ func TestS4_Forward_EdgeCase_SingleStep(t *testing.T) {
 }
 
 func TestS4_Forward_EdgeCase_Dim1(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 1, 1)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -287,8 +283,8 @@ func TestS4_Forward_EdgeCase_Dim1(t *testing.T) {
 }
 
 func TestS4_Backward_Shape(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -327,8 +323,8 @@ func TestS4_Backward_Shape(t *testing.T) {
 }
 
 func TestS4_Backward_FiniteGradients(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -372,8 +368,8 @@ func TestS4_Backward_FiniteGradients(t *testing.T) {
 }
 
 func TestS4_Backward_WrongInputCount(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -402,8 +398,8 @@ func TestS4_Backward_WrongInputCount(t *testing.T) {
 }
 
 func TestS4_Forward_WrongInputCountMultiple(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -419,8 +415,8 @@ func TestS4_Forward_WrongInputCountMultiple(t *testing.T) {
 }
 
 func TestS4_RegistryBuilder_Valid(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	attrs := map[string]interface{}{
 		"input_dim": 4,
@@ -440,8 +436,8 @@ func TestS4_RegistryBuilder_Valid(t *testing.T) {
 }
 
 func TestS4_RegistryBuilder_MissingInputDim(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	attrs := map[string]interface{}{
 		"state_dim": 8,
@@ -457,8 +453,8 @@ func TestS4_RegistryBuilder_MissingInputDim(t *testing.T) {
 }
 
 func TestS4_RegistryBuilder_MissingStateDim(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	attrs := map[string]interface{}{
 		"input_dim": 4,
@@ -474,8 +470,8 @@ func TestS4_RegistryBuilder_MissingStateDim(t *testing.T) {
 }
 
 func TestS4_RegistryBuilder_WrongTypeDim(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	tests := []struct {
 		name  string
@@ -501,8 +497,8 @@ func TestS4_RegistryBuilder_WrongTypeDim(t *testing.T) {
 }
 
 func TestS4_Forward_LargerDimensions(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 	s4, err := NewS4[float32]("test_s4", engine, ops, 32, 16)
 	if err != nil {
 		t.Fatalf("NewS4: %v", err)
@@ -529,8 +525,8 @@ func TestS4_Forward_LargerDimensions(t *testing.T) {
 // TestS4_NumericalGradientCheck verifies analytical gradients against finite-difference
 // approximations for all parameters and the input.
 func TestS4_NumericalGradientCheck(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	const (
 		inputDim = 2
@@ -697,8 +693,8 @@ func TestS4_NumericalGradientCheck(t *testing.T) {
 // TestS4_Forward_Parity verifies that the engine-based Forward produces
 // identical results to a reference scalar implementation (S96.11.1).
 func TestS4_Forward_Parity(t *testing.T) {
-	engine := makeEngine()
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	tests := []struct {
 		name     string

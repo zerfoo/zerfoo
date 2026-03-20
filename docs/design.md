@@ -135,14 +135,11 @@ Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
 | `inference/parallel/` | alpha | Tensor and pipeline parallelism for multi-GPU |
 | `inference/timeseries/` | alpha | Time-series model architecture builders |
 | `layers/recurrent/` | beta | RNN layers |
-| `layers/sequence/` | beta | S4 structured state space |
-| `layers/ssm/` | alpha | Mamba SSM blocks |
+| `layers/ssm/` | alpha | Mamba, RWKV, S4 state space model blocks |
 | `layers/hrm/` | alpha | Hierarchical Reasoning Model modules |
 | `layers/vision/` | beta | CLIP/SigLIP vision encoder |
 | `layers/audio/` | alpha | Whisper-style audio encoder |
-| `layers/features/` | beta | SpectralFeature layer |
 | `layers/timeseries/` | alpha | Time-series patch embedding, variable selection |
-| `layers/tokenizers/` | beta | TokenizerNode graph integration |
 | `model/hrm/` | alpha | HRM model types (experimental) |
 | `model/huggingface/` | beta | HuggingFace config parsing |
 | `tabular/` | alpha | Tabular ML model package |
@@ -199,10 +196,8 @@ layers/               Neural network layers organized by family (18 sub-packages
   layers/components/    GradientComputer, MatrixMultiplier, WeightInitializer
   layers/transformer/   TransformerBlock
   layers/recurrent/     RNN
-  layers/sequence/      S4 (structured state space)
+  layers/ssm/           Mamba, RWKV, S4 (state space models)
   layers/hrm/           HModule, LModule (hierarchical recurrent model)
-  layers/features/      SpectralFeature
-  layers/tokenizers/    TokenizerNode
   layers/registry/      RegisterAll() -- central wiring of all layers into the model registry
 training/             Trainer[T], DefaultTrainer, GradientStrategy, workflow interfaces
   training/optimizer/   Optimizer[T] interface, AdamW[T], SGD[T]
@@ -934,7 +929,6 @@ Target: >= 95% statement coverage for all testable packages.
 Documented exceptions (unreachable `tensor.New` error paths):
 - layers/gather: 93.1%
 - layers/embeddings: 93.5%
-- layers/features: 93.8%
 - testing/testutils: 94.5%
 
 ### 7.2 Testing Patterns

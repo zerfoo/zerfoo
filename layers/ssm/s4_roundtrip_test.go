@@ -1,4 +1,4 @@
-package sequence
+package ssm
 
 import (
 	"testing"
@@ -9,9 +9,9 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 )
 
-func TestS4_ZMFRoundTrip(t *testing.T) {
-	engine := makeEngine()
+func TestS4_RoundTrip(t *testing.T) {
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	// Create an S4 layer with known parameters.
 	original, err := NewS4[float32]("test_s4", engine, ops, 4, 8)
@@ -28,7 +28,7 @@ func TestS4_ZMFRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Build params map as ZMF loading would provide.
+	// Build params map as loading would provide.
 	params := make(map[string]*graph.Parameter[float32])
 	for _, p := range origParams {
 		params[p.Name] = p
@@ -84,9 +84,9 @@ func TestS4_ZMFRoundTrip(t *testing.T) {
 	}
 }
 
-func TestS4_ZMFRoundTrip_WithoutParams(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+func TestS4_RoundTrip_WithoutParams(t *testing.T) {
 	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
 
 	// When no params are provided, builder should create fresh parameters.
 	builder, err := model.GetLayerBuilder[float32]("S4")

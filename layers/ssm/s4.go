@@ -1,5 +1,4 @@
-// Package sequence provides sequence modeling layers such as State Space Models.
-package sequence
+package ssm
 
 import (
 	"context"
@@ -434,7 +433,7 @@ func init() {
 			return nil, fmt.Errorf("missing or invalid attribute 'state_dim' for S4")
 		}
 
-		// Restore from ZMF parameters if available.
+		// Restore from saved parameters if available.
 		aLog := params[name+"_a_log"]
 		b := params[name+"_b"]
 		c := params[name+"_c"]
