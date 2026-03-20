@@ -18,7 +18,10 @@ import (
 
 	"github.com/zerfoo/zerfoo/distributed/coordinator"
 	"github.com/zerfoo/zerfoo/distributed/fsdp"
+	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -162,7 +165,7 @@ func (m *stubModel) Backward(_ context.Context, grad *tensor.TensorNumeric[float
 	return []*tensor.TensorNumeric[float32]{grad}, nil
 }
 
-// trainLoop runs the FSDP training loop with a synthetic model.
+// trainLoop runs the FSDP training loop with a synthetic model and AdamW optimizer.
 func trainLoop(ctx context.Context, cfg *config, out io.Writer) error {
 	const paramSize = 64
 
@@ -172,6 +175,12 @@ func trainLoop(ctx context.Context, cfg *config, out io.Writer) error {
 	}
 
 	sharded := fsdp.NewShardedModule[float32](model, cfg.rank, cfg.worldSize, nil)
+
+	// Create compute engine and AdamW optimizer.
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	opt := optimizer.NewAdamW[float32](engine, float32(cfg.lr), 0.9, 0.999, 1e-8, 0.01)
+	params := model.Parameters()
 
 	totalSteps := cfg.epochs * (paramSize / cfg.batchSize)
 	if totalSteps == 0 {
@@ -224,6 +233,11 @@ func trainLoop(ctx context.Context, cfg *config, out io.Writer) error {
 			_, err = sharded.Backward(ctx, grad, input)
 			if err != nil {
 				return fmt.Errorf("backward: %w", err)
+			}
+
+			// Optimizer step: update parameters using AdamW.
+			if err := opt.Step(ctx, params); err != nil {
+				return fmt.Errorf("optimizer step: %w", err)
 			}
 
 			step++

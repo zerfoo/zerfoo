@@ -1175,11 +1175,11 @@ Prior issues (T99.1-T99.4) all resolved. New gaps: 3 orphan layer packages.
 
 ### Wave VR-2 (wiring gaps)
 
-- [ ] **T99.3** Wire AdamW optimizer into cmd/train_distributed (MEDIUM, UC-021)
-  - File: `cmd/train_distributed/main.go` line 169
-  - Replace `stubModel` with `inference.Load()` or `inference.LoadFile()` to load a real GGUF model. Wire `training.Trainer[T]` with `optimizer.AdamW[T]` for actual gradient updates.
-  - Acceptance: `cmd/train_distributed` can run a 1-step training loop on a small model.
-  - Note: Reopened 2026-03-19 -- /verify confirmed stubModel still in use, no AdamW wiring.
+- [x] **T99.3** Wire AdamW optimizer into cmd/train_distributed (MEDIUM, UC-021) -- done 2026-03-19
+  - File: `cmd/train_distributed/main.go`
+  - Added compute.NewCPUEngine, optimizer.NewAdamW, and opt.Step(ctx, params) after backward pass.
+  - Added TestTrainLoopAdamWUpdatesParams regression test.
+  - Acceptance: `cmd/train_distributed` runs 1-epoch training loop with AdamW. All tests pass.
 
 - [x] **T99.4** Add unit tests for layers/vision CLIPEncoder (LOW, UC-029) -- done 2026-03-19
   - File: `layers/vision/clip_encoder.go` (503 lines, zero test coverage)

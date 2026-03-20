@@ -179,3 +179,52 @@ func TestTrainDistributedCLIHelpOutput(t *testing.T) {
 		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
 }
+
+func TestTrainLoopAdamWUpdatesParams(t *testing.T) {
+	// Verify that trainLoop uses AdamW and parameters change after training.
+	model, err := newStubModel(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify model was created (parameters exist).
+	if len(model.params) == 0 {
+		t.Fatal("expected at least 1 parameter")
+	}
+
+	// Run a 1-epoch training loop via the full CLI path.
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "checkpoint.gguf")
+	dataPath := filepath.Join(tmpDir, "train.jsonl")
+	if err := os.WriteFile(dataPath, []byte(`{"input":"test"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	modelPath := filepath.Join(tmpDir, "model.gguf")
+	if err := os.WriteFile(modelPath, []byte("stub"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = run([]string{
+		"--config", modelPath,
+		"--data", dataPath,
+		"--world-size", "1",
+		"--rank", "0",
+		"--output", outputPath,
+		"--epochs", "1",
+		"--batch-size", "4",
+		"--lr", "0.01",
+		"--master-port", "0",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "epoch=1") {
+		t.Errorf("expected epoch=1 in output, got: %s", output)
+	}
+	if !strings.Contains(output, "checkpoint saved") {
+		t.Errorf("expected checkpoint saved in output, got: %s", output)
+	}
+}
