@@ -1,13 +1,13 @@
 # zerfoo
 
-Pure Go ML inference framework -- embed any GGUF model in your Go application with `go build ./...`.
+Pure Go ML framework -- inference, training, and serving. Embed any GGUF model in your Go application with `go build ./...`.
 
 [![CI](https://github.com/zerfoo/zerfoo/actions/workflows/ci.yml/badge.svg)](https://github.com/zerfoo/zerfoo/actions/workflows/ci.yml)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**245 tok/s** on Gemma 3 1B Q4_K_M -- 20% faster than Ollama.
+**244 tok/s** on Gemma 3 1B Q4_K_M (95% memory bandwidth utilization) -- 20% faster than Ollama. Zero CGo. 20 model architectures. Tabular ML and time-series forecasting built in.
 
 ## Quick Start
 
@@ -132,15 +132,67 @@ for _, tc := range result.ToolCalls {
 
 ## Supported Models
 
-| Model | Format | Status |
-|-------|--------|--------|
-| Gemma 3 | GGUF Q4_K | Production (CUDA graph, highest throughput) |
-| Llama 3 | GGUF | Working |
-| Qwen 2.5 | GGUF | Working |
-| Mistral 7B | GGUF | Working |
-| Phi-3/4 | GGUF | Working |
-| SigLIP | GGUF | Vision encoder (parity tested) |
-| Kimi-VL | GGUF | Vision-language (parity tested) |
+### LLM Inference (20 architectures)
+
+| Architecture | Format | Special Features |
+|-------------|--------|-----------------|
+| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 244 tok/s |
+| Gemma 3n | GGUF | Mobile-optimized variant |
+| Llama 3 | GGUF | RoPE theta=500K |
+| Llama 4 | GGUF | Latest generation |
+| Mistral | GGUF | Sliding window attention |
+| Mixtral | GGUF | Mixture of Experts |
+| Qwen 2 | GGUF | Attention bias, RoPE theta=1M |
+| Phi 3/4 | GGUF | Partial rotary factor |
+| DeepSeek V3 | GGUF | MLA + MoE (batched) |
+| Command R | GGUF | Cohere architecture |
+| Falcon | GGUF | Multi-query attention |
+| RWKV | GGUF | Linear attention |
+| Mamba / Mamba 3 | GGUF | State space models (MIMO SSM) |
+| Jamba | GGUF | Hybrid Mamba-Transformer |
+| Whisper | GGUF | Audio transcription |
+| LLaVA | GGUF | Vision-language |
+| Qwen-VL | GGUF | Vision-language |
+
+New architectures are auto-detected from GGUF metadata.
+
+### Tabular ML
+
+| Architecture | Package | Use Case |
+|-------------|---------|----------|
+| MLP / Ensemble | `tabular` | Baseline tabular prediction |
+| FTTransformer | `tabular` | Attention-based tabular |
+| TabNet | `tabular` | Attentive feature selection |
+| SAINT | `tabular` | Self-attention + inter-sample |
+| TabResNet | `tabular` | Residual tabular networks |
+
+### Time-Series Forecasting
+
+| Architecture | Package | Use Case |
+|-------------|---------|----------|
+| TFT | `timeseries` | Temporal Fusion Transformer |
+| N-BEATS | `timeseries` | Basis expansion forecasting |
+| PatchTST | `timeseries` | Patch-based transformer |
+
+## Training
+
+Train tabular and time-series models with built-in AdamW, learning rate schedulers, and early stopping:
+
+```go
+import "github.com/zerfoo/zerfoo/tabular"
+
+model := tabular.NewEnsemble[float32](engine, tabular.EnsembleConfig{
+    InputDim:  10,
+    OutputDim: 1,
+    Models:    3,
+})
+trainer := tabular.NewTrainer(model, engine, tabular.TrainerConfig{
+    LR:     0.001,
+    Epochs: 50,
+})
+trainer.Fit(ctx, trainX, trainY)
+predictions, _ := model.Predict(ctx, testX)
+```
 
 ## CLI
 
@@ -150,6 +202,7 @@ go install github.com/zerfoo/zerfoo/cmd/zerfoo@latest
 zerfoo pull gemma-3-1b-q4          # download a model
 zerfoo run gemma-3-1b-q4 "Hello"   # generate text
 zerfoo serve gemma-3-1b-q4         # OpenAI-compatible API server
+zerfoo train -backend tabular ...  # train a tabular model
 zerfoo list                         # list cached models
 ```
 
@@ -163,6 +216,13 @@ See the [`examples/`](examples/) directory for runnable programs:
 - **[embedding](examples/embedding/)** -- embed inference in an HTTP server
 - **[api-server](examples/api-server/)** -- standalone API server
 - **[inference](examples/inference/)** -- basic text generation
+- **[streaming](examples/streaming/)** -- token streaming
+- **[fine-tuning](examples/fine-tuning/)** -- LoRA fine-tuning
+- **[automl](examples/automl/)** -- automated model selection
+- **[timeseries](examples/timeseries/)** -- time-series forecasting
+- **[distributed-training](examples/distributed-training/)** -- multi-node training
+- **[agentic-tool-use](examples/agentic-tool-use/)** -- function calling agent
+- **[audio-transcription](examples/audio-transcription/)** -- Whisper transcription
 
 ## Links
 
