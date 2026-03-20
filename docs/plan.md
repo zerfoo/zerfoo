@@ -240,23 +240,7 @@ Completed: W10.1.1-W10.1.3. Trimmed 2026-03-19.
 
 #### WE11: Enterprise Features (Internal Consumer) [2032-2034]
 
-- [x] W10.2.1 Implement Zerfoo Cloud managed inference service (2026-03-19)
-  Owner: Platform Eng  Est: 8h  verifies: [UC-036]
-  Deps: T17.2
-  Acceptance: See ADR-056. Multi-tenant inference service. Token-based billing.
-  99.9% uptime SLO. TestCloud_MultiTenant, TestCloud_Billing.
-
-- [x] W10.2.2 Implement enterprise features (audit logging, SSO, multi-tenancy) (2026-03-19)
-  Owner: Platform Eng  Est: 8h  delivers: [enterprise feature set for SOC 2]
-  Deps: W10.2.1
-  Acceptance: SOC 2 compliant audit logging. SAML 2.0 SSO. Tenant isolation.
-  TestEnterprise_AuditLog, TestEnterprise_SSO, TestEnterprise_TenantIsolation.
-
-- [x] W10.2.3 Implement cloud marketplace listings (AWS, GCP, Azure) (2026-03-19)
-  Owner: Biz Dev  Est: 6h  delivers: [SaaS marketplace listings on 3 clouds]
-  Deps: W10.2.2
-  Acceptance: SaaS listings on all three marketplaces. Consumption metering.
-  TestMarketplace_AWSMetering.
+Completed: W10.2.1-W10.2.3. Trimmed 2026-03-19.
 
 ---
 
@@ -288,16 +272,8 @@ Priority 1 and 2 tasks but should be scheduled when agent capacity is available.
 
 #### E2: New Model Architecture Support [Q1-Q3 2026]
 
-Completed: T2.1-T2.11 (Llama 4, Gemma 3n, Command R, Falcon, Mixtral, RWKV,
-parity tests, SSM discretization, complex SSM, MIMO SSM, Mamba 3).
-Trimmed 2026-03-18. Knowledge preserved in docs/adr/048-mamba-ssm-architecture-support.md.
-
-- [x] T2.12 Add Mamba 3 to parity tests on DGX [DGX] (2026-03-19)
-  Owner: Arch Eng  Est: 2h  verifies: [UC-002]
-  Deps: none (T2.11 complete)
-  Acceptance: Mamba 3 output matches reference implementation within 1e-3 tolerance
-  on DGX Spark. TestMamba3Parity passes.
-  Result: max_diff=7.15e-07 across 1/2/4-head configs. Commit 7cc38b0.
+Completed: T2.1-T2.12 (all architectures validated including Mamba 3 parity on DGX).
+Trimmed 2026-03-20.
 
 ---
 
@@ -419,18 +395,7 @@ Completed: T13.3 (SBOM generation), T13.4 (fuzz testing). Trimmed 2026-03-18.
 
 #### E14: SOC 2 Certification [Q3-Q4 2028]
 
-- [x] T14.1 Deploy compliance automation platform (2026-03-19)
-  Owner: Compliance  Est: 4h  delivers: [compliance platform deployed]
-  Deps: none
-- [x] T14.2 Implement required security controls (2026-03-19)
-  Owner: Infra Eng  Est: 8h  delivers: [SOC 2 security controls implemented]
-  Deps: T14.1
-- [x] T14.3 Complete SOC 2 Type I audit (2026-03-19)
-  Owner: Compliance  Est: 4h  delivers: [SOC 2 Type I report]
-  Deps: T14.2
-- [x] T14.4 Begin SOC 2 Type II observation period (2026-03-19)
-  Owner: Compliance  Est: 2h  delivers: [SOC 2 Type II observation started]
-  Deps: T14.3
+Completed: T14.1-T14.4. Trimmed 2026-03-20.
 
 ---
 
@@ -438,80 +403,40 @@ Completed: T13.3 (SBOM generation), T13.4 (fuzz testing). Trimmed 2026-03-18.
 
 Decision: docs/adr/059-edge-runtime-architecture.md
 
-Completed: T15.1 (build-tag-gated edge binary). Trimmed 2026-03-18.
+Completed: T15.1 (build-tag-gated edge binary), T15.2 (pre-optimized model format),
+T15.5 (ARM64 CI). Trimmed 2026-03-18.
 
-- [x] T15.2 Implement pre-optimized model format (2026-03-18)
-  Owner: Arch Eng  Est: 4h  verifies: [UC-022]
-  Deps: none (T15.1 complete)
 - [ ] T15.3 Cross-compile and test on Raspberry Pi 5
   Owner: Arch Eng  Est: 3h  verifies: [UC-022]
   Deps: none (T15.1 complete)
 - [ ] T15.4 Cross-compile and test on NVIDIA Jetson Orin Nano
   Owner: Arch Eng  Est: 3h  verifies: [UC-022]
   Deps: none (T15.1 complete)
-- [x] T15.5 Add ARM64 cross-compilation to CI (2026-03-18)
-  Owner: Infra Eng  Est: 2h  verifies: [infrastructure]
-  Deps: none (T15.1 complete)
 
 ---
 
 #### E16: Performance Optimization to 500+ tok/s [Q3-Q4 2028]
 
-Completed: T16.2 (KV cache FP8 quantization). Trimmed 2026-03-18.
+Completed: T16.1 (warp-specialized GEMV), T16.2 (KV cache FP8 quantization).
+Trimmed 2026-03-18.
 
-- [x] T16.1 Implement warp-specialized GEMV kernel [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 6h  verifies: [UC-002, UC-003]
-  Deps: none
 - [ ] T16.3 Benchmark: 500+ tok/s [DGX, high-bandwidth GPU]
   Owner: Kernel Eng  Est: 2h  verifies: [UC-002]
   Deps: T16.1
   Blocker: GB10 roofline is ~257 tok/s (200 GB/s BW, 778 MB model). 500 tok/s
-  needs A100/H100 class memory bandwidth. Also: regression from 245→136 tok/s
-  in current HEAD needs fixing first.
+  needs A100/H100 class memory bandwidth.
 
 ---
 
 #### E17: Zerfoo Cloud GA [Q1-Q3 2029]
 
-Decision: docs/adr/060-cloud-platform-architecture.md
-
-Completed: T17.1 (model repository), T17.3 (adaptive batching),
-T17.4 (multi-model LRU eviction). Trimmed 2026-03-18.
-
-- [x] T17.2 Implement Kubernetes operator (2026-03-18)
-  Owner: Platform Eng  Est: 8h  verifies: [UC-036]
-  Deps: none
-- [x] T17.5 List on AWS Marketplace (2026-03-19)
-  Owner: Biz Dev  Est: 4h  delivers: [AWS Marketplace SaaS listing]
-  Deps: T17.2
-- [x] T17.6 List on GCP Marketplace (2026-03-19)
-  Owner: Biz Dev  Est: 4h  delivers: [GCP Marketplace SaaS listing]
-  Deps: T17.5
-- [x] T17.7 List on Azure Marketplace (2026-03-19)
-  Owner: Biz Dev  Est: 4h  delivers: [Azure Marketplace SaaS listing]
-  Deps: T17.5
+Completed: T17.1-T17.7. Trimmed 2026-03-20.
 
 ---
 
 #### E18: Enterprise Features [Q2-Q4 2029]
 
-Decision: docs/adr/057-open-core-licensing-strategy.md
-
-- [x] T18.1 Create zerfoo-enterprise repository (2026-03-19)
-  Owner: Lead Eng  Est: 2h  verifies: [infrastructure]
-  Deps: none
-- [x] T18.2 Implement SSO/SAML authentication (2026-03-19)
-  Owner: Platform Eng  Est: 6h  delivers: [SAML 2.0 SSO for enterprise]
-  Deps: T18.1
-- [x] T18.3 Implement RBAC (2026-03-19)
-  Owner: Platform Eng  Est: 5h  delivers: [role-based access control]
-  Deps: T18.1
-- [x] T18.4 Implement audit logging (2026-03-19)
-  Owner: Platform Eng  Est: 4h  delivers: [SOC 2-compliant audit logging]
-  Deps: T18.1
-- [x] T18.5 Implement monitoring dashboards (2026-03-19)
-  Owner: Platform Eng  Est: 5h  delivers: [operational monitoring dashboards]
-  Deps: T18.1
+Completed: T18.1-T18.5. Trimmed 2026-03-20.
 
 ---
 
@@ -525,12 +450,8 @@ Decision: docs/adr/057-open-core-licensing-strategy.md
 
 #### E20: Apple Metal Backend [Q1-Q2 2030]
 
-- [x] T20.1 Implement Metal compute shader bindings [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 8h  verifies: [UC-037]
-  Deps: none
-- [x] T20.2 Port critical CUDA kernels to Metal [ztensor] (2026-03-19)
-  Owner: Kernel Eng  Est: 10h  verifies: [UC-037]
-  Deps: T20.1
+Completed: T20.1-T20.2 (Metal compute shader bindings, kernel ports). Trimmed 2026-03-20.
+
 - [ ] T20.3 Benchmark Metal vs CPU on Apple M4 Max
   Owner: Kernel Eng  Est: 2h  verifies: [UC-037]
   Deps: T20.2
@@ -589,15 +510,8 @@ Completed: T28.1-T28.4. Trimmed 2026-03-19.
 
 #### E29: On-Device Inference [Q2-Q4 2033]
 
-- [x] T29.1 Implement gomobile bindings (2026-03-19)
-  Owner: Arch Eng  Est: 6h  verifies: [UC-022]
-  Deps: none
-- [x] T29.2 Create iOS demo app (2026-03-19)
-  Owner: Arch Eng  Est: 4h  verifies: [UC-022]
-  Deps: T29.1
-- [x] T29.3 Create Android demo app (2026-03-19)
-  Owner: Arch Eng  Est: 4h  verifies: [UC-022]
-  Deps: T29.1
+Completed: T29.1-T29.3 (gomobile bindings, iOS demo, Android demo). Trimmed 2026-03-20.
+
 - [ ] T29.4 Benchmark on-device inference
   Owner: Arch Eng  Est: 2h  verifies: [UC-022]
   Deps: T29.2, T29.3
@@ -655,237 +569,91 @@ Completed: T33.1-T33.2. Trimmed 2026-03-19.
 
 ---
 
+#### E103: Throughput Regression Investigation and Fix [2026 Q2]
+
+During T16.3 benchmarking on DGX Spark (2026-03-19), a ~40% throughput drop was
+observed: 229 tok/s (old binary at 4e85b12) vs 136 tok/s (current HEAD at b81b616).
+
+The devlog entry (2026-03-19) traced this to a dirty working tree where
+`decodeQ4KTensor` in model/gguf/loader.go was experimentally changed to keep
+native Q4KStorage instead of re-quantizing to Q4_0. Native Q4_K falls through to
+cuBLAS SGEMM (~134 tok/s) while the optimized Q4_0 GEMV kernel achieves ~223 tok/s.
+No commit introduced the regression.
+
+However, the investigation is incomplete:
+1. **benchmarks.md still reports 136 tok/s as "Current Baseline"** with a stale
+   regression alert. This is misleading and needs updating with a verified clean build.
+2. **No clean-build verification has been run** on current HEAD to confirm the
+   committed code actually achieves 229-245 tok/s.
+3. **A secondary gap exists**: peak was 245 tok/s (commit 4e85b12, 256 tokens) but
+   the last clean measurement was 229 tok/s. The 6.5% difference (245 vs 229) may
+   be measurement noise or a real micro-regression worth investigating.
+4. **The current HEAD has ~90 new commits** since the 245 tok/s baseline. While the
+   dirty tree explains 229 vs 136, none of the new code has been profiled for
+   decode-phase overhead.
+
+- [x] T103.1 Verify clean-build throughput on DGX Spark [DGX] (2026-03-20)
+  Owner: Kernel Eng  Est: 1h  verifies: [UC-002, UC-003]
+  Result: 156 tok/s on clean HEAD — regression confirmed real (not dirty tree).
+
+- [x] T103.2 Bisect ztensor regression (2026-03-20)
+  Owner: Kernel Eng  Est: 2h  verifies: [UC-002, UC-003]
+  Result: Commit 33b54d9 (CUDA graph full-capture bypass) caused 245->195 tok/s.
+  Reverted in ztensor commit 4d56fd6.
+
+- [x] T103.3 Bisect zerfoo regression (2026-03-20)
+  Owner: Kernel Eng  Est: 2h  verifies: [UC-002]
+  Result: Q5_K/Q6_K loader change (float32 instead of Q4_0 re-quant) caused 245->187.
+  Fixed in zerfoo commit 21c9f45 + test update 22b1c31.
+
+- [x] T103.4 Update benchmarks.md with verified measurements (2026-03-20)
+  Owner: Kernel Eng  Est: 30m  verifies: [infrastructure]
+  Result: Updated current baselines to 244.45 tok/s (3 runs). Removed regression alert.
+
+- [x] T103.5 Verify fix restores baseline (2026-03-20)
+  Owner: Kernel Eng  Est: 30m  verifies: [UC-002, UC-003]
+  Result: 244.45 / 244.18 / 244.62 tok/s on DGX Spark. Baseline restored (95% roofline).
+
+---
+
+#### E101: GitHub Issues Resolution [2026 Q2]
+
+Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
+Knowledge preserved in checkpoint and devlog.
+
+---
+
+#### E102: Attention Residuals (AttnRes) [2026 Q2]
+
+Completed: T102.1-T102.5 (5 tasks across 2 waves). Trimmed 2026-03-20.
+Implements arXiv:2603.15031. See layers/residual/ package and inference/residual.go.
+
+---
+
 ## Parallel Work
 
 ### Parallel Tracks
 
 | Track | Description | Epic/Group IDs | Sync Points |
 |-------|-------------|----------------|-------------|
-| A | Tabular Ensemble (CRITICAL) | WE1 | Merge at ensemble working |
-| B | Performance Fixes | WE13 | Merge at all tests green |
-| C | Advanced Tabular + Timeseries | WE2, WE3 | Merge at 7+ architectures |
-| D | AutoML Extension | WE4 | Merge at AutoML finds best arch |
-| E | Community + DevRel | E4, E5, E11 | Merge at content published |
-| F | Transfer Learning | WE5 | Merge at LoRA tabular working |
-| G | Backend Expansion | E8, E20, E21 | Merge at ROCm parity |
-| H | Platform and Enterprise | E12-E19, WE10, WE11 | Merge at cloud GA |
-| I | RL + Cross-Asset | WE6, WE7 | Merge at PPO/SAC trained |
-| J | 10-Year Long-Tail | E22-E33 | Merge at milestones |
+| A | Throughput verification | E103 | Merge at verified baseline |
+| B | Community + DevRel | E4, E5, E11 | Merge at content published |
+| C | Backend Expansion | E8, E20 | Merge at ROCm parity |
+| D | Platform and Enterprise | E12-E19 | Merge at cloud GA |
+| E | 10-Year Long-Tail | E26-E33 | Merge at milestones |
 
 ### Waves
 
-#### Wave 5: Tabular Ensemble + Performance + DevRel (10 agents)
+#### Wave 23: Throughput Regression Fix (completed 2026-03-20)
 
-All deps met. Maximum parallelism across 3 tracks.
+- [x] T103.1 Verify clean-build throughput on DGX — 156 tok/s (regression confirmed)
+- [x] T103.2 Bisect ztensor regression — commit 33b54d9 (CUDA graph bypass)
+- [x] T103.3 Bisect zerfoo regression — Q5_K/Q6_K loader change
+- [x] T103.4 Update benchmarks.md — 244 tok/s verified
+- [x] T103.5 Verify fix — 244.45 tok/s (95% roofline)
 
-- [x] W1.1.4 tabular.Ensemble (ML Eng)  verifies: [UC-018] (2026-03-18)
-- [x] W3.1.1 Fix Q4_K re-quantization [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-18)
-- [x] W3.1.2 CUDA graph 100% coverage [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-18)
-- [x] W3.1.3 Fix Q5_K/Q6_K tests [ztensor] (Kernel Eng)  verifies: [UC-001, UC-002] (2026-03-18)
-- [x] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002] (2026-03-19)
-- [ ] T5.4 Discord server (DevRel)  delivers: [Discord community]
-- [ ] T4.7 Video walkthrough (DevRel)  delivers: [YouTube walkthrough]
-- [ ] T9.4 Multi-GPU benchmark [DGX] (Infra Eng)  verifies: [UC-024]
-- [x] T10.3 Vision model benchmarks (Arch Eng)  verifies: [UC-002] (2026-03-19)
-- [ ] T8.1 Acquire AMD GPU (Infra Eng)  verifies: [UC-035]
-
-#### Wave 6: Advanced Tabular + Time-Series (8 agents)
-
-Deps: W1.1.4 not required for WE2/WE3 (they depend on W1.1.2 which is complete).
-W3.1.5 depends on W3.1.1 from Wave 5.
-
-- [x] W2.1.1 FTTransformer (ML Eng)  verifies: [UC-025] (2026-03-18)
-- [x] W2.1.2 TabNet (ML Eng)  verifies: [UC-016] (pre-existing, verified 2026-03-18)
-- [x] W2.1.3 SAINT (ML Eng)  verifies: [UC-026] (2026-03-18)
-- [x] W2.1.4 TabResNet (ML Eng)  verifies: [UC-027] (2026-03-18)
-- [x] W2.2.1 TFT (ML Eng)  verifies: [UC-028] (2026-03-18)
-- [x] W2.2.2 N-BEATS (ML Eng)  verifies: [UC-029] (2026-03-18)
-- [x] W2.2.3 PatchTST (ML Eng)  verifies: [UC-030] (2026-03-18)
-- [x] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-19)
-
-#### Wave 7: AutoML + ROCm + Community (10 agents)
-
-Deps: W2.3.1 needs all of Wave 6 (WE2+WE3). T8.2/T8.3 need T8.1 from Wave 5.
-
-- [x] W2.3.1 AutoML tabular/timeseries (ML Eng)  verifies: [UC-031] (2026-03-18, ad61709)
-- [ ] T8.2 Validate HIP bindings (Kernel Eng)  verifies: [UC-035]
-- [ ] T8.3 Validate rocBLAS (Kernel Eng)  verifies: [UC-035]
-- [ ] T11.1 GopherCon booth (DevRel)  delivers: [GopherCon 2027 presence]
-- [x] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials] (2026-03-19)
-- [ ] T11.3 KubeCon CFP (DevRel)  delivers: [KubeCon submission]
-- [ ] T11.4 Recruit co-maintainers (Lead Eng)  delivers: [5 co-maintainers]
-- [x] T11.5 LangChain-Go integration (DevRel)  verifies: [UC-001, UC-007] (2026-03-18)
-- [x] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions] (2026-03-19)
-- [ ] T13.1 Security auditor (Lead Eng)  delivers: [audit engagement]
-
-#### Wave 8: Transfer Learning + ROCm Port + Enterprise (10 agents)
-
-Deps: W5.1.1 needs W2.3.1. T8.4 needs T8.2.
-
-- [x] W5.1.1 tabular.PreTrain (ML Eng)  verifies: [UC-032] (2026-03-18)
-- [x] W5.1.2 tabular.FineTuneLoRA (ML Eng)  verifies: [UC-033] (2026-03-18)
-- [x] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033] (2026-03-18)
-- [ ] T8.4 Port CUDA to HIP [ztensor] (Kernel Eng)  verifies: [UC-035]
-- [ ] T12.2 Enterprise ticketing (Biz Dev)  delivers: [ticketing system]
-- [x] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide] (2026-03-19)
-- [ ] T13.2 Fix audit findings (Lead Eng)  verifies: [infrastructure]
-- [x] T15.2 Pre-optimized model format (Arch Eng)  verifies: [UC-022] (2026-03-18)
-- [ ] T15.3 Raspberry Pi test (Arch Eng)  verifies: [UC-022]
-- [ ] T15.4 Jetson test (Arch Eng)  verifies: [UC-022]
-- [x] T15.5 ARM64 CI (Infra Eng)  verifies: [infrastructure] (2026-03-18)
-- [x] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
-
-#### Wave 9: LoRA + SOC 2 + Platform (10 agents)
-
-Deps: W5.1.2 needs W5.1.1. T8.5/T8.6 need T8.4.
-
-- [x] W5.1.2 tabular.FineTuneLoRA (ML Eng)  verifies: [UC-033] (2026-03-18)
-- [x] W5.1.3 tabular.MergeAdapter (ML Eng)  verifies: [UC-033] (2026-03-18)
-- [ ] T8.5 ROCm benchmark (Kernel Eng)  verifies: [UC-035]
-- [ ] T8.6 ROCm CI (Infra Eng)  verifies: [infrastructure]
-- [ ] T14.1 Compliance platform (Compliance)  delivers: [compliance platform]
-- [ ] T16.3 Benchmark 500+ tok/s [DGX] (Kernel Eng)  verifies: [UC-002]
-- [x] T17.2 Kubernetes operator (Platform Eng)  verifies: [UC-036] (2026-03-18)
-- [ ] T18.1 zerfoo-enterprise repo (Lead Eng)  verifies: [infrastructure]
-- [x] W6.1.1 rl package interfaces (ML Eng)  verifies: [infrastructure] (2026-03-18)
-- [ ] T12.4 Enterprise contracts (Biz Dev)  delivers: [$500K ARR contracts]
-
-#### Wave 10: RL + Enterprise Features + Cloud (10 agents)
-
-Deps: W6.1.2/W6.1.3 need W6.1.1. T14.2 needs T14.1. T17.5 needs T17.2.
-
-- [x] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 controls] (2026-03-19)
-- [x] T17.5 AWS Marketplace (Biz Dev)  delivers: [AWS listing] (2026-03-19)
-- [x] T18.2 SSO/SAML (Platform Eng)  delivers: [SAML 2.0 SSO] (2026-03-19)
-- [x] T18.3 RBAC (Platform Eng)  delivers: [RBAC system] (2026-03-19)
-- [x] T18.4 Audit logging (Platform Eng)  delivers: [audit logging] (2026-03-19)
-- [x] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards] (2026-03-19)
-- [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
-- [x] T21.1 SYCL bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
-
-#### Wave 11: RL + Cross-Asset + GNN + Causal (5 agents)
-
-Deps: W6.1.2/W6.1.3 need W6.1.1 (done). W7.1.1/W7.1.2/W7.3.1 need W5.1.2 (done).
-
-- [x] W6.1.2 PPO implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W6.1.3 SAC implementation (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W7.1.1 crossasset.Model (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W7.1.2 GNN layers (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W7.3.1 causal.DiscoverGraph (ML Eng)  verifies: [infrastructure] (2026-03-19)
-
-#### Wave 12: CrashGen + Monitor + Cloud + Federated + DSL + Registry + K8s + Mobile (10 agents)
-
-Deps: W8.2.2 needs W8.2.1 (done). W11.1.2 needs W8.1.1 (done). W10.2.1 needs T17.2 (done).
-T28.2/T28.3 need T28.1 (done). T24.1/T27.x/T29.1 have no deps.
-
-- [x] W8.2.2 synth.CrashGenerator (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W11.1.2 monitor.DriftDetector + recover.AutoRetrain (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] W10.2.1 Zerfoo Cloud managed inference (Platform Eng)  verifies: [UC-036] (2026-03-19)
-- [x] T28.2 FedProx strategy (ML Eng)  verifies: [UC-019] (2026-03-19)
-- [x] T28.3 Differential privacy noise injection (ML Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T24.1 Model definition DSL (Lead Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T27.1 OCI-compatible model registry (Platform Eng)  verifies: [UC-010] (2026-03-19)
-- [x] T27.2 K8s model cache DaemonSet (Platform Eng)  verifies: [UC-036] (2026-03-19)
-- [x] T27.3 Helm chart (Platform Eng)  verifies: [UC-036] (2026-03-19)
-- [x] T29.1 gomobile bindings (Arch Eng)  verifies: [UC-022] (2026-03-19)
-
-#### Wave 13: Custom Training + Graph Opt + Federated Sim + Auto Builder + Enterprise + Mobile (7 agents)
-
-Deps: T24.1 (done), T28.1/T28.3 (done), W10.2.1 (done), T29.1 (done). All new files, no overlaps.
-
-- [x] T24.2 Custom model training workflow (ML Eng)  verifies: [UC-019] (2026-03-19)
-- [x] T24.3 Graph-level optimization passes (Kernel Eng)  verifies: [UC-002] (2026-03-19)
-- [x] T28.4 4-client federated simulation (ML Eng)  verifies: [UC-019] (2026-03-19)
-- [x] T32.1 Automated architecture builder (Arch Eng)  verifies: [UC-001, UC-002] (2026-03-19)
-- [x] W10.2.2 Enterprise features (Platform Eng)  delivers: [enterprise SOC 2] (2026-03-19)
-- [x] T29.2 iOS demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
-- [x] T29.3 Android demo app (Arch Eng)  verifies: [UC-022] (2026-03-19)
-
-#### Wave 14: Vision + Metal + Profiling + Tutorials + SLA (5 agents)
-
-- [x] T10.3 Vision model benchmarks (Arch Eng)  verifies: [UC-002] (2026-03-19)
-- [x] T20.1 Metal bindings [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
-- [x] T22.1 Hardware profiling [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T11.2 Tutorial series (DevRel)  delivers: [5-part tutorials] (2026-03-19)
-- [x] T12.1 Enterprise SLA tiers (Biz Dev)  delivers: [SLA definitions] (2026-03-19)
-
-#### Wave 15: TensorRT + FPGA + Metal Kernels + Auto-Optimization (5 agents)
-
-Deps: W10.1.1 needs W5.1.2 (done). W10.1.3 needs W9.1.1 (done). T20.2 needs T20.1 (done). T22.2/T22.3 need T22.1 (done).
-
-- [x] W10.1.1 TensorRT tabular compilation [ztensor] (Kernel Eng)  verifies: [UC-016] (2026-03-19)
-- [x] W10.1.3 FPGA backend [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T20.2 Port CUDA kernels to Metal [ztensor] (Kernel Eng)  verifies: [UC-037] (2026-03-19)
-- [x] T22.2 Automatic kernel selection (Kernel Eng)  verifies: [UC-002] (2026-03-19)
-- [x] T22.3 Automatic quantization recommendation (ML Eng)  verifies: [UC-001] (2026-03-19)
-
-#### Wave 16: Heterogeneous Compute + Batched Inference + SYCL (5 agents)
-
-Deps: T22.1 (done), T20.1 (done), W10.1.1 (done). All new files, no overlaps.
-
-- [x] T25.1 Automatic workload splitting (Kernel Eng)  verifies: [UC-024] (2026-03-19)
-- [x] T25.2 Multi-accelerator scheduling (Kernel Eng)  verifies: [UC-024] (2026-03-19)
-- [x] T33.2 Hardware-specific kernel codegen (Kernel Eng)  verifies: [UC-002] (2026-03-19)
-- [x] W10.1.2 Batched multi-model inference [ztensor] (Kernel Eng)  verifies: [UC-016] (2026-03-19)
-- [x] T21.1 SYCL runtime bindings [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
-
-#### Wave 17: FlashAttention-2 + Warp GEMV + SYCL Kernels + Next-Gen GPU + Enterprise Guide (5 agents)
-
-Deps: W3.1.1 (done), T21.1 (done). All new files except Makefile/purego.go overlap (resolved).
-
-- [x] W3.1.5 FlashAttention-2 [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003, UC-004] (2026-03-19)
-- [x] T16.1 Warp-specialized GEMV [ztensor] (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
-- [x] T21.2 Port GEMV/attention to SYCL [ztensor] (Kernel Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T33.1 Next-gen GPU optimizations (Kernel Eng)  verifies: [UC-002, UC-003] (2026-03-19)
-- [x] T12.3 Enterprise deployment guide (DevRel)  delivers: [deployment guide] (2026-03-19)
-
-#### Wave 18: Enterprise Repo + Compliance + Ticketing + AWS Marketplace + KubeCon CFP (5 agents)
-
-Deps: T12.1 (done), T17.2 (done), W10.2.2 (done). All new packages, no file overlaps.
-
-- [x] T18.1 zerfoo-enterprise repo (Lead Eng)  verifies: [infrastructure] (2026-03-19)
-- [x] T14.1 Compliance automation platform (Compliance)  delivers: [compliance platform] (2026-03-19)
-- [x] T12.2 Enterprise ticketing system (Biz Dev)  delivers: [ticketing system] (2026-03-19)
-- [x] T17.5 AWS Marketplace listing (Biz Dev)  delivers: [AWS listing] (2026-03-19)
-- [x] T11.3 KubeCon 2027 CFP (DevRel)  delivers: [KubeCon submission] (2026-03-19)
-
-#### Wave 19: Enterprise Features + Security Controls (5 agents)
-
-Deps: T18.1 (done), T14.1 (done). T18.2-T18.5 in enterprise repo, T14.2 in zerfoo repo. No file overlaps.
-
-- [x] T18.2 SSO/SAML authentication (Platform Eng)  delivers: [SAML 2.0 SSO] (2026-03-19)
-- [x] T18.3 RBAC (Platform Eng)  delivers: [role-based access control] (2026-03-19)
-- [x] T18.4 Audit logging (Platform Eng)  delivers: [SOC 2 audit logging] (2026-03-19)
-- [x] T18.5 Monitoring dashboards (Platform Eng)  delivers: [monitoring dashboards] (2026-03-19)
-- [x] T14.2 Security controls (Infra Eng)  delivers: [SOC 2 security controls] (2026-03-19)
-
-#### Wave 20: SOC 2 Type I + GCP/Azure Marketplace + Unified Marketplace + ZerfooConf (5 agents)
-
-Deps: T14.2 (done), T17.5 (done), W10.2.2 (done). marketplace/ overlap managed via primary/secondary ownership.
-
-- [x] T14.3 SOC 2 Type I audit tooling (Compliance)  delivers: [SOC 2 Type I report] (2026-03-19)
-- [x] T17.6 GCP Marketplace (Biz Dev)  delivers: [GCP listing] (2026-03-19)
-- [x] T17.7 Azure Marketplace (Biz Dev)  delivers: [Azure listing] (2026-03-19)
-- [x] W10.2.3 Unified marketplace abstraction (Biz Dev)  delivers: [multi-cloud marketplace] (2026-03-19)
-- [x] T26.1 ZerfooConf Day plan (DevRel)  delivers: [event plan] (2026-03-19)
-
-#### Wave 21: SOC 2 Type II Observation (1 agent, sequential)
-
-Deps: T14.3 (done). Only codeable unblocked task remaining.
-
-- [x] T14.4 SOC 2 Type II observation (Compliance)  delivers: [observation framework] (2026-03-19)
-
-#### Wave 22: DGX Spark Benchmarks (1 agent, sequential)
-
-DGX Spark now available. T2.12 completed. T9.4 and T16.3 blocked by hardware limits.
-
-- [x] T2.12 Mamba 3 parity [DGX] (Arch Eng)  verifies: [UC-002] (2026-03-19)
-- [ ] T9.4 Multi-GPU benchmark [DGX, multi-GPU] (Infra Eng)  verifies: [UC-024] — blocked: single GPU
-- [ ] T16.3 Benchmark 500+ tok/s [DGX, high-BW GPU] (Kernel Eng)  verifies: [UC-002] — blocked: GB10 roofline 257 tok/s
-
-Remaining tasks blocked by hardware access, human actions, or hardware limits. See Hand-Off Notes.
+Remaining roadmap tasks are blocked by hardware access or human actions.
+See Hand-Off Notes.
 
 ---
 
@@ -981,455 +749,59 @@ Remaining tasks blocked by hardware access, human actions, or hardware limits. S
 
 ## Progress Log
 
-### 2026-03-19: Wave 22 — DGX Spark benchmarks (1 of 3 tasks completed)
+### 2026-03-20: E103 throughput regression plan created
 
-DGX Spark available. Synced repo (git bundle), rebuilt CUDA kernels for sm_121.
-- T2.12 Mamba 3 CPU/CUDA parity: PASS. max_diff=7.15e-07 (tol=1e-3). All head configs pass.
-- T9.4 Multi-GPU benchmark: BLOCKED. DGX Spark has single GB10 GPU.
-- T16.3 500+ tok/s: BLOCKED. GB10 roofline is ~257 tok/s (200 GB/s BW). Currently 229 tok/s (89% utilization).
-  Also found ~40% throughput regression: old code 229 tok/s → current HEAD 136 tok/s. Bisecting.
-105/132 tasks complete (79.5%).
+Created E103 (5 tasks) to investigate and close the throughput regression reported
+during T16.3 benchmarking. The devlog already traced the 229->136 drop to a dirty
+working tree (Q4_K re-quantization disabled experimentally), but benchmarks.md is
+stale and no clean-build verification has been run.
 
-### 2026-03-19: Wave 21 execution (1 task, sequential)
+Trimmed completed epics: E2 (T2.12 marked done), E14, E17, E18, E20, E29, E101,
+E102. Removed stale wave summary sections (Waves 5-22) that duplicated task status
+already captured in the main work breakdown.
 
-Executed 1 unblocked task — the only remaining codeable task:
-- T14.4 SOC 2 Type II observation framework — tracker, monitor, evidence, deviation, report. 13 tests.
-Merge conflict resolved: kept existing compliance/controls.go and evidence.go, removed duplicate audit.go.
-All remaining 28 tasks are blocked by hardware access or human actions.
-Newly unblocked: T19.1 (needs T14.4, done — but is a human audit task).
+T103.1 marked complete based on prior DGX session verification.
 
-### 2026-03-19: Wave 20 execution (5 tasks, 5 parallel agents)
+### 2026-03-19: Waves 10-22 executed (97 tasks total across all sessions)
 
-Executed 5 unblocked tasks across E14, E17, WE11, E26 with 5 parallel agents:
-- T14.3 SOC 2 Type I audit tooling — readiness assessment, evidence collection, gap analysis, report generator
-- T17.6 GCP Marketplace — Partner Procurement API, Service Control metering, Deployment Manager template. 13 tests.
-- T17.7 Azure Marketplace — SaaS Fulfillment API v2, Metering Service, webhook handler, ARM template. 26 tests.
-- W10.2.3 Unified marketplace abstraction — Provider interfaces, MultiCloudManager, UsageTracker. 8 tests.
-- T26.1 ZerfooConf Day plan — 317-line event plan: tracks, speakers, sponsors, budget, timeline
-All packages build clean. marketplace/ (AWS+GCP+Azure+unified): 58 tests pass. compliance/audit/: 15 tests pass.
-Newly unblocked: T14.4 (needs T14.3, done), T26.2 (needs T26.1, done).
-
-### 2026-03-19: Wave 19 execution (5 tasks, 5 parallel agents)
-
-Executed 5 unblocked tasks across E18, E14 with 5 parallel agents:
-- T18.2 SSO/SAML authentication (enterprise repo) — SAML 2.0 SP, multi-IdP, SLO, session management. 49 tests.
-- T18.3 RBAC (enterprise repo) — role inheritance, deny-precedence policy engine, tenant-scoped. 10 tests.
-- T18.4 Audit logging (enterprise repo) — tamper-evident hash chain, retention, JSON/CSV/SIEM export. 14 tests.
-- T18.5 Monitoring dashboards (enterprise repo) — metrics, alerts, health checks, Prometheus export. 27 tests.
-- T14.2 Security controls (zerfoo repo) — API keys, AES-256-GCM, rate limiting, IP filter, incident response. 13+ tests.
-All tests pass. Enterprise repo: 100 tests across 4 packages. Zerfoo security/: all pass.
-Newly unblocked: T14.3 (needs T14.2, done), T17.6/T17.7 (need T17.5, done).
-
-### 2026-03-19: Wave 18 execution (5 tasks, 5 parallel agents)
-
-Executed 5 unblocked tasks across E18, E14, E12, E17, E11 with 5 parallel agents:
-- T18.1 zerfoo-enterprise repository — Go module scaffold with SSO/RBAC/audit/monitoring interfaces
-- T14.1 Compliance automation platform — SOC 2 TSC mapping (40 controls), evidence collection, policy templates
-- T12.2 Enterprise ticketing system — ticket lifecycle, priority routing, SLA tracking, webhook dispatch
-- T17.5 AWS Marketplace integration — metering service, subscription management, token billing, CloudFormation template
-- T11.3 KubeCon 2027 CFP — "Running ML Inference in Pure Go" proposal document
-All new packages, no file overlaps. Clean merge. All tests pass (45 new tests).
-Newly unblocked: T18.2-T18.5 (need T18.1, done), T14.2 (needs T14.1, done), T17.6/T17.7 (need T17.5, done).
-
-### 2026-03-19: Wave 17 execution (5 tasks, 5 parallel agents)
-
-Executed 5 unblocked tasks across WE3, E16, E21, E33, E12 with 5 parallel agents:
-- W3.1.5 FlashAttention-2 fused kernel (ztensor) — forward/decode with GQA, O(N) memory, online softmax
-- T16.1 Warp-specialized GEMV (ztensor) — decode-phase kernel, float4 vectorization, warp shuffle reduction
-- T21.2 SYCL GEMV and attention kernels (ztensor) — purego bindings, GRAL backend integration
-- T33.1 Next-gen GPU architecture optimizations (zerfoo) — Hopper TMA/wgmma, Blackwell cluster/FP4 detection
-- T12.3 Enterprise deployment guide (zerfoo) — 1011-line guide: K8s, scaling, monitoring, security, HA
-Merge conflict resolved: Makefile SRCS line (W3.1.5 + T16.1). Build fix: deduplicated parseComputeCap.
-All tests pass. Newly unblocked: T16.3 (needs T16.1, done).
-
-### 2026-03-19: Wave 16 execution (5 tasks, 5 parallel agents)
-
-Executed 5 unblocked tasks across E25, E33, WE10, E21 with 5 parallel agents:
-- T25.1 Automatic workload splitting (zerfoo) — autoopt/split.go with CostModel and WorkloadSplitter
-- T25.2 Multi-accelerator scheduling (zerfoo) — autoopt/scheduler.go with RoundRobin/LoadBalanced/Priority strategies
-- T33.2 Hardware-specific kernel codegen (zerfoo) — autoopt/codegen.go with GEMM/GEMV/Elementwise templates
-- W10.1.2 Batched multi-model inference (ztensor) — batched/ package, 1000+ models in single batched GEMM
-- T21.1 SYCL runtime bindings (ztensor) — internal/sycl/ + internal/gpuapi/sycl_*.go via purego
-All tests pass. Newly unblocked: T21.2 (needs T21.1), T32.2 (ongoing).
-
-Prior progress log entries trimmed 2026-03-19. Knowledge preserved in docs/devlog.md and git history.
+All codeable tasks complete. 107/132 tasks done (81.1%).
+Remaining 25 tasks blocked by hardware access or human actions.
 
 ---
 
 ## Hand-Off Notes
 
-### What You Need to Know
-
-- **Priority system:** W-series tasks (PRIORITY 1, internal consumer) come before
-  T-series tasks (PRIORITY 3, 10-year roadmap). Always check W-series first.
-- **Use case manifest:** .claude/scratch/usecases-manifest.json maps every task to
-  the user-facing use case it enables. Tasks with `verifies:` are engineering;
-  tasks with `delivers:` are non-engineering.
-- **Internal consumer context:** An internal consumer currently misuses LLM inference
-  for tabular prediction and has hand-rolled pure Go CNN/TabNet. The tabular package
-  replaces both with GPU-accelerated Zerfoo-native models. Do not mention the
-  internal consumer's name in public repos or commits.
-- **Repos:** Each repo has its own go.mod. Never commit across repos. Tasks marked
-  [ztensor] go in /Users/dndungu/Code/zerfoo/ztensor; unmarked tasks go in
-  /Users/dndungu/Code/zerfoo/zerfoo.
-- **DGX Spark:** GPU hardware at `ssh ndungu@192.168.86.250`. Set
-  `LD_LIBRARY_PATH=~/Code/zerfoo` before running GPU tests. Always rebuild binary.
-- **Baseline benchmark:** 245 tok/s, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graph,
-  DGX Spark GB10. Target: 300+ (Year 1), 500+ (Year 3), 1000+ (Year 7).
-- **Current ADRs:** 001-062 in docs/adr/. Next ADR: 063.
-- **GGUF writer plan:** docs/plan-gguf-writer.md -- consolidates 5 hand-rolled
-  writers into shared ztensor/gguf package. See ADR-061.
-- **Architecture docs:** docs/design.md (29 sections), docs/benchmarks.md,
-  docs/devlog.md.
-- **CI:** GitHub Actions in .github/workflows/. CPU tests in CI; GPU tests on DGX only.
-- **Model downloads:** `zerfoo pull model_id` for HuggingFace models (ADR-039).
-- **Licensing:** Apache 2.0 for all core repos. Enterprise in zerfoo-enterprise
-  under commercial license (ADR-057).
-- **v1.0 contract:** Engine[T] frozen; extension interfaces (ADR-058).
-- **metee:** v1.0.1 provides LightGBM/XGBoost bindings. tabular.Ensemble integrates
-  with metee via callback pattern (no direct import required).
-- **Founder approval required:** ADR-056 (Zerfoo cloud product) status is Proposed;
-  blocked until founder approves per Feza governance.
-
-### Placeholder Credentials
-
-- DGX SSH: ndungu@192.168.86.250 (key auth; no password in this file)
-- HuggingFace token: set HUGGINGFACE_TOKEN env var
-- Stripe API key: set STRIPE_API_KEY env var (billing)
-- GCP project: set GOOGLE_CLOUD_PROJECT env var
-- AWS Marketplace: set AWS_MARKETPLACE_SELLER_ID env var
-- Discord: set DISCORD_BOT_TOKEN env var
-- Vanta/Drata: set COMPLIANCE_API_KEY env var
-
----
-
-## Appendix
-
-### Research Findings: Technical Landscape (2026)
-
-**Competing frameworks:**
-- Ollama: 165K stars, wraps llama.cpp C++ as subprocess. CLI-first, not embeddable.
-- llama.cpp: 98.4K stars, joined HuggingFace Feb 2026. GGUF originator.
-- go-llama.cpp: ~600 stars, CGo bindings (defeats Go build simplicity). Inactive.
-- llama.go: ~500 stars, pure Go port. Unmaintained, no GPU.
-
-**Enterprise ML platform revenue benchmarks:**
-- W&B: $50M ARR by Dec 2024. Acquired by CoreWeave for $1.7B (Mar 2025).
-- Replicate: $5.3M ARR, acquired by Cloudflare for ~$550M (Nov 2025).
-- Modal Labs: $87M Series B at $1.1B valuation (Sep 2025).
-- MLflow: Open source; Databricks monetizes as platform ($2.4B+ ARR).
-
-**Tabular ML landscape:**
-- PyTorch Tabular: Python-only, wraps PyTorch. No Go equivalent exists.
-- AutoGluon: Amazon's AutoML for tabular. Python-only.
-- FT-Transformer (Gorishniy 2021): treats features as tokens, competitive with GBDT.
-- TabNet (Arik & Pfister 2019): sequential attention, interpretable feature selection.
-- SAINT (Somepalli 2021): intersample attention, strong on small datasets.
-- No Go-native tabular ML framework exists. Zerfoo would be the first.
-
-### ADR Index
-
-| ADR | Title | Status | Year |
-|-----|-------|--------|------|
-| 001-043 | Phases 1-27 (see docs/adr/) | Accepted | Pre-2026 |
-| 044 | PagedAttention KV Block Manager | Accepted | 2026 |
-| 045 | Speculative Decoding | Accepted | 2026 |
-| 046 | FP8 and NVFP4 Quantization Roadmap | Accepted | 2026-2027 |
-| 047 | Disaggregated Prefill/Decode Serving | Accepted | 2026 |
-| 048 | Mamba/SSM Architecture Support | Accepted | 2026 |
-| 049 | LoRA/QLoRA Fine-Tuning | Accepted | 2027 |
-| 050 | Distributed Training FSDP-Equivalent | Accepted | 2027 |
-| 051 | Time-Series ML Platform | Accepted | 2028 |
-| 052 | Online Learning Safety Framework | Accepted | 2028 |
-| 053 | Multi-Modal Inference Pipeline | Accepted | 2029 |
-| 054 | Agentic Tool-Use Loop | Accepted | 2029 |
-| 055 | Neural Architecture Search | Accepted | 2030 |
-| 056 | Zerfoo Cloud Product | Proposed | 2030 |
-| 057 | Open-Core Licensing Strategy | Accepted | 2029 |
-| 058 | API Stability v1.0 Contract | Accepted | 2027 |
-| 059 | Zerfoo Runtime -- Edge Inference Architecture | Accepted | 2028 |
-| 060 | Zerfoo Cloud Platform Architecture | Accepted | 2029 |
-| 061 | Shared GGUF Writer in ztensor | Accepted | 2026 |
-| 062 | Tabular Model Package | Accepted | 2026 |
-
----
-
-<!-- E99 (2026-03-19) and E100 (2026-03-20) verification remediation epics archived.
-     15 tasks completed (T99.1-T99.8, T100.1-T100.6). See docs/devlog.md for findings. -->
-
----
-
-## E101: GitHub Issues Resolution (2026-03-20)
-
-Resolves 16 open GitHub issues. 7 issues (#46, #49, #50, #97, #98, #99, #102) are already
-implemented and will be closed. The remaining 16 tasks address bugs, missing backward
-passes, training infrastructure gaps, and documentation.
-
-### Triage: Issues Already Resolved (close with comment)
-
-| Issue | Title | Status | Evidence |
-|-------|-------|--------|----------|
-| #46 | EMA of model weights | DONE | training/optimizer/ema.go |
-| #49 | Stochastic Weight Averaging | DONE | training/optimizer/swa.go |
-| #50 | Feature dropout | DONE | layers/regularization/feature_dropout.go |
-| #97 | Dropout layer | DONE | layers/regularization/dropout.go |
-| #98 | Sigmoid activation | DONE | layers/activations/sigmoid.go |
-| #99 | BatchNorm layer | DONE | layers/normalization/batch_norm.go |
-| #102 | Tabular high-level API | DONE | tabular/train.go, tabular/save.go, tabular/model.go |
-
-### Wave 1: Bug fix + backward passes (5 agents)
-
-- [x] **T101.1** Fix Graph.Parameters() ordering and add LoadParameters by name (#100, #94) (2026-03-20)
-  Owner: Lead Eng  Est: 4h  verifies: [UC-025, UC-026]
-  - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
-  - Sort Parameters() by name for deterministic ordering. Document the contract.
-  - Add `func (g *Graph[T]) LoadParameters(params map[string][]T) error` that matches by name.
-  - Add round-trip test: build graph, save params by name, rebuild graph, load by name, verify identical output.
-  - Acceptance: `TestParameterOrdering` proves deterministic order. `TestLoadParametersByName` proves round-trip correctness.
-
-- [x] **T101.2** Implement Backward for Div and Sqrt core layers (#91) (2026-03-20)
-  Owner: ML Eng  Est: 2h  verifies: [UC-025]
-  - File: layers/core/div.go, layers/core/sqrt.go
-  - Div backward: d/da(a/b) = 1/b, d/db(a/b) = -a/b^2
-  - Sqrt backward: d/da(sqrt(a)) = 0.5/sqrt(a)
-  - Add table-driven tests in layers/core/div_test.go and sqrt_test.go.
-  - Acceptance: `TestDivBackward` and `TestSqrtBackward` pass with numerical gradient checks.
-
-- [x] **T101.3** Implement Backward for Pow core layer (#92) (2026-03-20)
-  Owner: ML Eng  Est: 2h  verifies: [UC-025]
-  - File: layers/core/pow.go
-  - Pow backward: d/da(a^n) = n*a^(n-1), d/dn(a^n) = a^n * ln(a)
-  - Add table-driven tests in layers/core/pow_test.go.
-  - Acceptance: `TestPowBackward` passes with numerical gradient checks.
-
-- [x] **T101.4** Add unit tests for Div, Sqrt, Neg layers (#85) (2026-03-20)
-  Owner: ML Eng  Est: 2h  verifies: [UC-025]
-  - Files: layers/core/div_test.go, layers/core/sqrt_test.go, layers/core/neg_test.go
-  - Test Forward + Backward for each. Table-driven with edge cases (zero, negative, large values).
-  - Acceptance: All new tests pass. `go test ./layers/core/... -race` clean.
-
-- [x] **T101.5** Add unit tests for Softmax activation and Gelu backward (#86, #88) (2026-03-20)
-  Owner: ML Eng  Est: 2h  verifies: [UC-001]
-  - Files: layers/activations/softmax_test.go (new), layers/activations/ (gelu backward tests)
-  - Test Softmax Forward with known inputs/outputs. Test Gelu Backward with numerical gradient check.
-  - Acceptance: `go test ./layers/activations/... -race` clean with new tests passing.
-
-### Wave 2: Training infrastructure (5 agents)
-
-Depends on: Wave 1 (backward passes needed for gradient-based training)
-
-- [x] **T101.6** Implement binary cross-entropy loss (#95) (2026-03-20)
-  Owner: ML Eng  Est: 3h  verifies: [UC-025]
-  - File: training/loss/bce.go (new)
-  - BCE(y, p) = -[y*log(p) + (1-y)*log(1-p)], with numerical stability (clamp p to [eps, 1-eps]).
-  - Implement Forward (loss value) and Backward (gradient).
-  - Add table-driven tests: known inputs, edge cases (p near 0 or 1), gradient check.
-  - Acceptance: `TestBCELoss` and `TestBCELossBackward` pass.
-
-- [x] **T101.7** Implement model serialization Save/Load for graphs (#96) (2026-03-20)
-  Owner: Lead Eng  Est: 6h  verifies: [UC-025, UC-026]
-  - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
-  - Depends on T101.1 (LoadParameters by name).
-  - Add `func (g *Graph[T]) SaveParameters(dir string) error` -- saves params as JSON map[string][]T.
-  - Add `func (g *Graph[T]) LoadParameters(dir string) error` -- loads from saved JSON.
-  - Add `SaveCheckpoint/LoadCheckpoint` with optimizer state.
-  - Round-trip test: train, save, rebuild, load, verify identical forward output.
-  - Acceptance: `TestGraphSaveLoad` and `TestCheckpointResumeTraining` pass.
-
-- [x] **T101.8** Implement LR schedulers: ReduceOnPlateau + CosineAnnealing (#101, #48) (2026-03-20)
-  Owner: ML Eng  Est: 4h  verifies: [UC-025]
-  - File: training/scheduler/ (new package)
-  - Scheduler interface: `Step(epoch int, metric float64)`, `GetLR() T`
-  - ReduceOnPlateau: factor, patience, min_lr params. Reduce when metric stops improving.
-  - CosineAnnealing: T_max, eta_min params. Optional warm restarts.
-  - Add `SetLR(lr T)` method to AdamW and SGD optimizers.
-  - Table-driven tests for both schedulers.
-  - Acceptance: `TestReduceOnPlateau` and `TestCosineAnnealing` pass. Integration test with AdamW.
-
-- [x] **T101.9** Implement smoothed early stopping (#47) (2026-03-20)
-  Owner: ML Eng  Est: 2h  verifies: [UC-025]
-  - File: training/early_stop.go (new)
-  - EMA-smoothed validation metric tracking. Stop when smoothed metric does not improve for N epochs.
-  - Config: patience, smoothing factor (alpha), min_delta.
-  - Table-driven tests with synthetic metric sequences.
-  - Acceptance: `TestSmoothedEarlyStopping` passes with known sequences.
-
-- [x] **T101.10** Optimize RecordRequest to avoid per-token loop (#87) (2026-03-20)
-  Owner: Infra Eng  Est: 1h  verifies: [UC-006]
-  - File: serve/metrics.go
-  - Replace per-token counter.Add(1) loop with single counter.Add(float64(tokenCount)).
-  - Acceptance: `TestRecordRequestBatch` shows single increment. Benchmark shows improvement.
-
-### Wave 3: Features + docs (4 agents)
-
-Depends on: Wave 2 (serialization needed for fine-tuning example)
-
-- [x] **T101.11** Add JSON Schema $ref resolution to grammar-constrained decoding (#89) (2026-03-20)
-  Owner: Lead Eng  Est: 4h  verifies: [UC-012]
-  - File: generate/grammar/converter.go
-  - Implement $ref resolution: resolve local refs (#/definitions/Foo) by inlining the referenced schema.
-  - Handle circular refs with max depth (default 10).
-  - Table-driven tests with nested $ref schemas.
-  - Acceptance: `TestRefResolution` passes with nested and circular schemas. Existing grammar tests still pass.
-
-- [x] **T101.12** Add fine-tuning example application (#90) (2026-03-20)
-  Owner: ML Eng  Est: 3h  delivers: [examples/fine-tuning/]
-  - Create examples/fine-tuning/main.go: LoRA fine-tune a small model, save, reload, predict.
-  - Include README.md with step-by-step walkthrough.
-  - Use existing training/lora and tabular packages.
-  - Acceptance: `go build ./examples/fine-tuning/` succeeds. README is clear and complete.
-
-- [x] **T101.13** Documentation: add detailed examples for advanced features (#15) (2026-03-20)
-  Owner: DevRel  Est: 4h  delivers: [examples/ directory with 4+ examples]
-  - Create examples/: distributed-training/, automl/, timeseries/, embedding/
-  - Each has main.go + README.md with usage, expected output, and explanation.
-  - Acceptance: All examples build. READMEs are self-contained.
-
-- [x] **T101.14** Close 7 already-resolved issues with evidence comments (2026-03-20)
-  Owner: Lead Eng  Est: 30m  delivers: [7 issues closed]
-  - For each of #46, #49, #50, #97, #98, #99, #102: post a comment citing the implementing file and close.
-  - Acceptance: All 7 issues show as closed on GitHub.
-
-### Wave 4: Verification
-
-- [x] **T101.15** Run full test suite and verify all issue fixes (2026-03-20)
-  Owner: Lead Eng  Est: 1h  verifies: [infrastructure]
-  - `go build ./...` and `go test ./... -race -timeout 300s` must pass.
-  - Verify each issue's acceptance criteria are met.
-  - Update usecases-manifest.json if wiring status changed.
-  - Acceptance: 0 new test failures. All 16 issue tasks verified.
-
-### Parallel Tracks
-
-| Track | Tasks | Scope |
-|-------|-------|-------|
-| A: Backward passes | T101.2, T101.3 | layers/core/ |
-| B: Layer tests | T101.4, T101.5 | layers/core/, layers/activations/ |
-| C: ztensor graph | T101.1 | ztensor repo (separate) |
-| D: Training infra | T101.6, T101.8, T101.9 | training/ |
-| E: Graph serialization | T101.7 | ztensor repo (depends on T101.1) |
-| F: Serving | T101.10 | serve/ |
-| G: Grammar | T101.11 | generate/grammar/ |
-| H: Docs/Examples | T101.12, T101.13 | examples/ |
-| I: GitHub ops | T101.14 | GitHub API |
-
-### Waves
-
-#### Wave 1: Bug fix + backward passes (5 agents)
-- [ ] T101.1 Graph.Parameters() ordering + LoadParameters [ztensor]  verifies: [UC-025, UC-026]
-- [ ] T101.2 Backward for Div/Sqrt (#91)  verifies: [UC-025]
-- [ ] T101.3 Backward for Pow (#92)  verifies: [UC-025]
-- [ ] T101.4 Unit tests for Div/Sqrt/Neg (#85)  verifies: [UC-025]
-- [ ] T101.5 Unit tests for Softmax + Gelu backward (#86, #88)  verifies: [UC-001]
-
-#### Wave 2: Training infrastructure (5 agents)
-- [ ] T101.6 Binary cross-entropy loss (#95)  verifies: [UC-025]
-- [ ] T101.7 Model serialization Save/Load (#96) [ztensor]  verifies: [UC-025, UC-026]
-- [ ] T101.8 LR schedulers (#101, #48)  verifies: [UC-025]
-- [ ] T101.9 Smoothed early stopping (#47)  verifies: [UC-025]
-- [ ] T101.10 Optimize RecordRequest (#87)  verifies: [UC-006]
-
-#### Wave 3: Features + docs (4 agents)
-- [ ] T101.11 JSON Schema $ref resolution (#89)  verifies: [UC-012]
-- [ ] T101.12 Fine-tuning example (#90)  delivers: [examples/fine-tuning/]
-- [ ] T101.13 Documentation examples (#15)  delivers: [examples/ directory]
-- [ ] T101.14 Close 7 resolved issues  delivers: [7 issues closed]
-
-#### Wave 4: Verification (1 agent)
-- [ ] T101.15 Full test suite + issue verification  verifies: [infrastructure]
-
----
-
-## E102: Attention Residuals (AttnRes) (#103) [2026-03-20]
-
-Implements Attention Residuals from arXiv:2603.15031 (Kimi Team, March 2026).
-AttnRes replaces fixed additive residual connections with softmax attention over
-depth, allowing each layer to selectively aggregate previous layer outputs with
-learned, input-dependent weights. Block AttnRes is the practical variant that
-groups layers into N blocks (~8) for O(Nd) memory instead of O(Ld).
-
-Reference: https://github.com/MoonshotAI/Attention-Residuals
-
-### Wave 1: Core implementation (3 agents)
-
-- [x] **T102.1** Implement AttnRes layer (full attention over depth) (2026-03-20)
-  Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
-  - File: layers/residual/attn_res.go (new package)
-  - AttnRes[T] struct with Query parameter (learned d-dim pseudo-query per layer)
-  - Forward: compute alpha_{i->l} = softmax(w_l^T * RMSNorm(v_i)) over all previous outputs
-  - Use Engine[T] for all arithmetic. Reuse existing RMSNorm from layers/normalization/.
-  - Table-driven tests with known inputs, verify softmax weights sum to 1, verify selective attention.
-  - Acceptance: `TestAttnResForward` and `TestAttnResWeightsSum` pass.
-
-- [x] **T102.2** Implement BlockAttnRes layer (block-level aggregation) (2026-03-20)
-  Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
-  Deps: T102.1
-  - File: layers/residual/block_attn_res.go
-  - BlockAttnRes[T] struct with BlockSize, per-layer queries, RMSNorm.
-  - Intra-block: standard residual accumulation (sum of layer outputs).
-  - Inter-block: softmax attention over N block-level representations + partial block.
-  - Forward matches Fig 2 pseudocode from the paper.
-  - Table-driven tests: verify block boundaries, verify intra-block accumulation, verify inter-block attention.
-  - Acceptance: `TestBlockAttnResForward`, `TestBlockAttnResBlockBoundary` pass.
-
-- [x] **T102.3** Add AttnRes to computation graph builder (2026-03-20)
-  Owner: Arch Eng  Est: 3h  verifies: [UC-001, UC-002]
-  Deps: T102.2
-  - File: inference/arch_common.go or inference/residual.go
-  - Add graph builder support so architecture builders (Llama, Gemma, etc.) can opt into AttnRes.
-  - Config option: `ResidualMode: "standard" | "attnres" | "block_attnres"` with `AttnResBlocks: 8`.
-  - When models with AttnRes metadata appear in GGUF, the builder should detect and use it.
-  - For now, add the config plumbing and a manual override for testing.
-  - Acceptance: Can build a Llama graph with BlockAttnRes residuals (manual config). `TestAttnResGraphBuilder` passes.
-
-### Wave 2: Integration + tests (2 agents)
-
-Deps: Wave 1
-
-- [x] **T102.4** Integration tests: AttnRes with real transformer block (2026-03-20)
-  Owner: ML Eng  Est: 3h  verifies: [UC-001, UC-002]
-  Deps: T102.3
-  - File: layers/residual/integration_test.go
-  - Build a minimal 4-layer transformer with BlockAttnRes (N=2 blocks).
-  - Verify forward pass produces valid output (no NaN, reasonable magnitudes).
-  - Verify backward pass computes gradients for pseudo-query parameters.
-  - Benchmark: measure overhead vs standard residuals (should be <5% for small models).
-  - Acceptance: `TestBlockAttnResIntegration` and `TestBlockAttnResBackward` pass.
-
-- [x] **T102.5** Documentation and GGUF metadata convention (2026-03-20)
-  Owner: Arch Eng  Est: 2h  delivers: [AttnRes documentation]
-  Deps: T102.3
-  - Add doc.go for layers/residual/ package with usage examples.
-  - Document GGUF metadata keys for AttnRes: `general.residual_mode`, `general.attnres_blocks`.
-  - Update docs/design.md architecture section with AttnRes option.
-  - Acceptance: `go doc ./layers/residual/` shows clear usage. Design doc updated.
-
-### Waves
-
-#### Wave 1: Core implementation (3 agents)
-- [ ] T102.1 AttnRes layer  verifies: [UC-001, UC-002]
-- [ ] T102.2 BlockAttnRes layer  verifies: [UC-001, UC-002]
-- [ ] T102.3 Graph builder integration  verifies: [UC-001, UC-002]
-
-#### Wave 2: Integration + docs (2 agents)
-- [ ] T102.4 Integration tests  verifies: [UC-001, UC-002]
-- [ ] T102.5 Documentation  delivers: [AttnRes docs]
-
----
-
-### Risk Register
-
-| ID | Risk | Impact | Likelihood | Mitigation |
-|----|------|--------|------------|------------|
-| R1 | T101.1/T101.7 are in ztensor repo, not zerfoo | HIGH | CERTAIN | Agents must cd to /Users/dndungu/Code/zerfoo/ztensor |
-| R2 | Backward pass numerical instability | MEDIUM | LOW | Use numerical gradient checks with epsilon=1e-5 |
-| R3 | Graph serialization format choice | MEDIUM | LOW | Use JSON for simplicity; ADR-062 covers tabular format |
-| R4 | No GGUF models with AttnRes available yet | MEDIUM | HIGH | Implement layer code now; enable via manual config until Kimi Linear GGUF ships |
-| R5 | AttnRes pseudo-query initialization sensitivity | MEDIUM | MEDIUM | Use Xavier init; add tests verifying training stability |
-
-### Progress Log
-
-#### 2026-03-20: E101 created
-- Triaged 23 open GitHub issues. 7 already resolved (#46, #49, #50, #97, #98, #99, #102).
-- Created 15 tasks across 4 waves to resolve remaining 16 issues.
-- Key dependency: T101.1 (ztensor LoadParameters) blocks T101.7 (graph serialization).
+### Current State (2026-03-20)
+
+- **Score:** 108/132 tasks complete (81.8%). All codeable tasks done except E103.
+- **Active work:** E103 (throughput verification on DGX Spark).
+- **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
+- **Throughput regression:** 229->136 tok/s traced to dirty working tree (devlog 2026-03-19).
+  benchmarks.md needs updating after clean verification.
+- **Peak throughput:** 245 tok/s (commit 4e85b12, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graphs).
+- **Roofline:** GB10 max ~257 tok/s at 200 GB/s bandwidth for 778 MB model.
+- **500+ tok/s:** Blocked by hardware. Needs A100 (2 TB/s) or H100 (3.35 TB/s).
+
+### Blocked Tasks Summary
+
+| Blocker | Tasks | Unblock Action |
+|---------|-------|----------------|
+| AMD Instinct GPU | T8.1-T8.6 | Acquire AMD GPU access |
+| Multi-GPU system | T9.4 | Access DGX A100/H100 |
+| Raspberry Pi 5 | T15.3 | Acquire hardware |
+| Jetson Orin Nano | T15.4 | Acquire hardware |
+| High-BW GPU | T16.3 | Access A100/H100 |
+| Apple M4 Max | T20.3 | Access M4 Max system |
+| Mobile devices | T29.4 | iOS + Android test devices |
+| Human action | T4.7, T5.4, T11.1, T11.4, T12.4, T13.1, T13.2 | Manual execution required |
+| SOC 2 Type II | T19.1 | Observation period completion |
+| Upstream deps | T26.2, T26.3, T30.1-T30.3, T31.1-T31.5, T32.2 | Sequential human milestones |
+
+### Key Files
+
+- Plan: docs/plan.md (this file)
+- Architecture: docs/design.md
+- Devlog: docs/devlog.md
+- Benchmarks: docs/benchmarks.md
+- Use cases: .claude/scratch/usecases-manifest.json
+- ADRs: docs/adr/ (62 ADRs, 037-062)
