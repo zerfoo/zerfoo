@@ -44,6 +44,7 @@ zerfoo pull gemma-3-1b-q4
 | [`embedding/`](embedding/) | Embed inference inside a custom Go HTTP handler for concurrent request serving. | GGUF model file |
 | [`api-server/`](api-server/) | Start an OpenAI-compatible HTTP server with `serve.NewServer` and graceful shutdown. | GGUF model file |
 | [`json-output/`](json-output/) | Grammar-guided decoding that constrains output to valid JSON matching a schema. | GGUF model file |
+| [`fine-tuning/`](fine-tuning/) | LoRA fine-tuning of a tabular model: pre-train, adapt, merge, save/load. | None (synthetic data) |
 
 ## Running an Example
 
