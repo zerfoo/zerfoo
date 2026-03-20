@@ -134,6 +134,7 @@ Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
 | `inference/multimodal/` | alpha | Vision, audio, and multi-modal inference |
 | `inference/parallel/` | alpha | Tensor and pipeline parallelism for multi-GPU |
 | `inference/timeseries/` | alpha | Time-series model architecture builders |
+| `layers/residual/` | alpha | Attention Residuals (AttnRes, BlockAttnRes) |
 | `layers/recurrent/` | beta | RNN layers |
 | `layers/ssm/` | alpha | Mamba, RWKV, S4 state space model blocks |
 | `layers/hrm/` | alpha | Hierarchical Reasoning Model modules |
@@ -1265,7 +1266,36 @@ one expert on every token and adds its output to the weighted routed sum.
 embedding weight matrix (transposed) as the output projection, halving the
 parameter count for the LM head.
 
-### 12.3 Config Registry
+### 12.3 Residual Connections
+
+Standard transformers use additive residual connections, where each layer's
+output is summed with its input. This is simple and effective, but treats all
+previous layers as equally important.
+
+**Attention Residuals** (`layers/residual/`, arXiv:2603.15031) replace fixed
+addition with learned, softmax-weighted aggregation over depth. Each layer
+carries a pseudo-query vector that attends over RMSNorm-projected keys from
+preceding layers, dynamically routing information across depth.
+
+Two variants are available:
+
+- **AttnRes** — Full attention residuals. Every layer attends over all previous
+  layer outputs. Maximum expressiveness at the cost of O(L*d) memory to retain
+  all L layer representations.
+
+- **BlockAttnRes** — Block attention residuals. L layers are partitioned into N
+  blocks. Within a block, outputs accumulate via standard addition. At block
+  boundaries, softmax attention aggregates block-level representations, reducing
+  memory to O(N*d). Using N=8 blocks recovers the majority of full AttnRes
+  benefit.
+
+**Configuration.** Architecture graph builders read a `ResidualConfig` to select
+the strategy. For GGUF models, the config is derived from two metadata keys:
+`general.residual_mode` (`"standard"`, `"attnres"`, or `"block_attnres"`) and
+`general.attnres_blocks` (block count, default 8). Models without these keys
+default to standard residuals with no extra overhead.
+
+### 12.4 Config Registry
 
 `inference.ConfigRegistry` maps model family names to config parsers that extract
 `ModelMetadata` from `config.json`. Each parser reads architecture-specific fields
@@ -1273,7 +1303,7 @@ parameter count for the LM head.
 to the common metadata struct. Global attributes (rope scaling, partial rotation)
 are injected via `model.WithGlobalAttributes` during graph construction.
 
-### 12.4 Parameter Name Resolver
+### 12.5 Parameter Name Resolver
 
 `model.ParamResolver` maps architecture-specific weight names (e.g., Llama's
 `q_proj.weight` vs DeepSeek's `kv_a_proj.weight`) to canonical names used by

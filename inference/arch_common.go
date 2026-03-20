@@ -18,7 +18,23 @@ import (
 // ResidualConfig controls the residual connection strategy used by
 // architecture graph builders. The default mode ("standard" or "") preserves
 // existing behaviour. "attnres" and "block_attnres" enable attention-weighted
-// residual connections when the layers/residual package provides them.
+// residual connections from the layers/residual package (arXiv:2603.15031).
+//
+// # GGUF metadata convention
+//
+// Models opt into attention residuals via two GGUF general-metadata keys:
+//
+//   - general.residual_mode (string): one of "standard" (default), "attnres",
+//     or "block_attnres". When absent or empty, standard additive residuals
+//     are used and no extra memory is allocated.
+//
+//   - general.attnres_blocks (uint32): number of blocks for the block_attnres
+//     variant. Ignored when residual_mode is not "block_attnres". Defaults to
+//     8 when unset, which recovers most of the benefit of full AttnRes.
+//
+// These keys follow the GGUF general metadata namespace convention
+// (see https://github.com/ggerganov/ggml/blob/master/docs/gguf.md).
+// [ResidualConfigFromGGUF] parses these values into a ResidualConfig.
 type ResidualConfig struct {
 	Mode      string // "standard" (default), "attnres", or "block_attnres"
 	NumBlocks int    // block count for "block_attnres" mode (default 8)
