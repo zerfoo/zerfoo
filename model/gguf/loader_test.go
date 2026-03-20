@@ -228,7 +228,7 @@ func TestLoadTensors_Q8_0(t *testing.T) {
 	}
 }
 
-func TestDecodeQ5KTensor_NoReQuantization(t *testing.T) {
+func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 	// Q5_K: 256 elements per super-block, 176 bytes per block.
 	const numElements = 256
 	const blockBytes = 176
@@ -244,9 +244,9 @@ func TestDecodeQ5KTensor_NoReQuantization(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// The returned tensor must NOT use Q4Storage — it should be plain F32.
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); ok {
-		t.Fatal("decodeQ5KTensor should not re-quantize to Q4_0")
+	// Q5_K is re-quantized to Q4_0 for fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatal("decodeQ5KTensor should re-quantize to Q4_0 for fast GEMV")
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -562,7 +562,7 @@ func TestLoadTensors_BF16(t *testing.T) {
 	}
 }
 
-func TestDecodeQ6KTensor_NoReQuantization(t *testing.T) {
+func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 	// Create 256 elements (1 Q6_K super-block = 210 bytes).
 	const numElements = 256
 	const blockBytes = 210
@@ -599,10 +599,9 @@ func TestDecodeQ6KTensor_NoReQuantization(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Verify storage is NOT Q4Storage — the whole point of this fix is to
-	// avoid lossy re-quantization to Q4_0.
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); ok {
-		t.Fatal("decodeQ6KTensor must not re-quantize to Q4_0")
+	// Q6_K is re-quantized to Q4_0 for fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatal("decodeQ6KTensor should re-quantize to Q4_0 for fast GEMV")
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,
@@ -640,9 +639,10 @@ func TestDecodeQ6KTensor_NoReQuantization(t *testing.T) {
 			maxErr = diff
 		}
 	}
-	// BF16 has 7-bit mantissa; allow small rounding errors from F32->BF16->F32.
-	if maxErr > 2.0 {
-		t.Errorf("max absolute error %v exceeds tolerance 2.0", maxErr)
+	// Q6_K -> float32 -> Q4_0 re-quantization is lossy (4-bit precision).
+	// Allow larger errors from the double quantization.
+	if maxErr > 64.0 {
+		t.Errorf("max absolute error %v exceeds tolerance 64.0", maxErr)
 	}
 }
 
