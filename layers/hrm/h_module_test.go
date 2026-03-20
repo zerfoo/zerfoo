@@ -111,6 +111,30 @@ func TestHModule_Forward(t *testing.T) {
 	}
 }
 
+func TestHModule_Forward_BatchGT1(t *testing.T) {
+	m := newHModule(t)
+	ctx := context.Background()
+
+	// batch=4, model_dim=16 — hidden state starts at [1, 16], should auto-resize.
+	input, err := tensor.New[float32]([]int{4, 16}, make([]float32, 4*16))
+	if err != nil {
+		t.Fatalf("failed to create input: %v", err)
+	}
+
+	output, err := m.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward with batch=4 failed: %v", err)
+	}
+
+	if got := output.Shape(); got[0] != 4 || got[1] != 16 {
+		t.Errorf("output shape = %v, want [4, 16]", got)
+	}
+
+	if m.HiddenState != output {
+		t.Error("HiddenState not updated after Forward")
+	}
+}
+
 func TestHModule_Forward3D(t *testing.T) {
 	m := newHModule(t)
 	ctx := context.Background()
