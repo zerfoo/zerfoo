@@ -12,6 +12,100 @@ import (
 	"github.com/zerfoo/ztensor/types"
 )
 
+func TestDivForward_Comprehensive(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	tests := []struct {
+		name string
+		a    []float32
+		b    []float32
+		want []float32
+	}{
+		{
+			name: "basic division",
+			a:    []float32{10, 20, 30, 40},
+			b:    []float32{2, 4, 5, 8},
+			want: []float32{5, 5, 6, 5},
+		},
+		{
+			name: "division by 1",
+			a:    []float32{3, 7, 11, 0},
+			b:    []float32{1, 1, 1, 1},
+			want: []float32{3, 7, 11, 0},
+		},
+		{
+			name: "large values",
+			a:    []float32{1e10, 1e12, 1e8, 1e6},
+			b:    []float32{1e5, 1e6, 1e4, 1e3},
+			want: []float32{1e5, 1e6, 1e4, 1e3},
+		},
+		{
+			name: "same tensor divided by itself",
+			a:    []float32{5, 13, 0.5, 100},
+			b:    []float32{5, 13, 0.5, 100},
+			want: []float32{1, 1, 1, 1},
+		},
+		{
+			name: "division by small numbers",
+			a:    []float32{1, 1, 1, 1},
+			b:    []float32{0.001, 0.01, 0.1, 0.0001},
+			want: []float32{1000, 100, 10, 10000},
+		},
+		{
+			name: "negative values",
+			a:    []float32{-10, 10, -10, 10},
+			b:    []float32{2, -2, -2, 2},
+			want: []float32{-5, -5, 5, 5},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := tensor.New[float32]([]int{1, len(tc.a)}, tc.a)
+			if err != nil {
+				t.Fatalf("creating tensor a: %v", err)
+			}
+			b, err := tensor.New[float32]([]int{1, len(tc.b)}, tc.b)
+			if err != nil {
+				t.Fatalf("creating tensor b: %v", err)
+			}
+
+			div := NewDiv[float32](engine)
+			out, err := div.Forward(context.Background(), a, b)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			got := out.Data()
+			for i := range tc.want {
+				if diff := math.Abs(float64(got[i] - tc.want[i])); diff > 1e-3 {
+					t.Errorf("out[%d] = %v, want %v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDivForward_WrongInputCount(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	div := NewDiv[float32](engine)
+
+	a, _ := tensor.New[float32]([]int{2}, []float32{1, 2})
+
+	if _, err := div.Forward(context.Background(), a); err == nil {
+		t.Error("expected error for 1 input")
+	}
+
+	b, _ := tensor.New[float32]([]int{2}, []float32{3, 4})
+	c, _ := tensor.New[float32]([]int{2}, []float32{5, 6})
+
+	if _, err := div.Forward(context.Background(), a, b, c); err == nil {
+		t.Error("expected error for 3 inputs")
+	}
+}
+
 func TestDivBackward(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -117,5 +211,15 @@ func TestDivBackwardWrongInputCount(t *testing.T) {
 	_, err := div.Backward(context.Background(), types.FullBackprop, dOut, a)
 	if err == nil {
 		t.Fatal("Expected error with wrong input count")
+	}
+}
+
+func TestDivOpType(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	div := NewDiv[float32](engine)
+
+	if got := div.OpType(); got != "Div" {
+		t.Errorf("OpType() = %q, want %q", got, "Div")
 	}
 }
