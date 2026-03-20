@@ -1292,7 +1292,7 @@ Depends on: Wave 2 (serialization needed for fine-tuning example)
 
 ### Wave 4: Verification
 
-- [ ] **T101.15** Run full test suite and verify all issue fixes
+- [x] **T101.15** Run full test suite and verify all issue fixes (2026-03-20)
   Owner: Lead Eng  Est: 1h  verifies: [infrastructure]
   - `go build ./...` and `go test ./... -race -timeout 300s` must pass.
   - Verify each issue's acceptance criteria are met.
