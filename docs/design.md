@@ -44,16 +44,29 @@ A general-purpose ML framework with three production-ready capabilities:
 
 ### 1.3 Validated Model Families
 
+20 architecture builders registered. New architectures are auto-detected
+from GGUF metadata via the AutoBuilder.
+
 | Family | Format | Architecture | Status |
 |--------|--------|-------------|--------|
-| Gemma 3 | GGUF Q4_K | Text decoder | Production (CUDA graph, highest throughput) |
+| Gemma 3 | GGUF Q4_K | Text decoder | Production (CUDA graph, 244 tok/s) |
+| Gemma 3n | GGUF | Mobile text decoder | Working |
 | Llama 3 | GGUF | Text decoder | Working |
-| Qwen 2.5 | GGUF | Text decoder | Working |
-| Mistral 7B | GGUF | Text decoder | Working |
-| Phi-3/4 | GGUF | Text decoder | Working |
-| DeepSeek V3 | GGUF | MoE text decoder | Working |
-| SigLIP | GGUF | Vision encoder | Parity test PASS |
-| Kimi-VL | GGUF | Vision-language connector | Parity test PASS |
+| Llama 4 | GGUF | Text decoder | Working |
+| Mistral | GGUF | Text decoder (sliding window) | Working |
+| Mixtral | GGUF | MoE text decoder | Working |
+| Qwen 2 | GGUF | Text decoder (attention bias) | Working |
+| Phi-3/4 | GGUF | Text decoder (partial RoPE) | Working |
+| DeepSeek V3 | GGUF | MoE text decoder (MLA) | Working |
+| Command R | GGUF | Text decoder | Working |
+| Falcon | GGUF | Text decoder (multi-query) | Working |
+| RWKV | GGUF | Linear attention | Working |
+| Mamba | GGUF | SSM (selective scan) | Working |
+| Mamba 3 | GGUF | MIMO SSM | Parity test PASS |
+| Jamba | GGUF | Hybrid Mamba-Transformer | Working |
+| Whisper | GGUF | Audio encoder-decoder | Working |
+| LLaVA | GGUF | Vision-language | Parity test PASS |
+| Qwen-VL | GGUF | Vision-language | Parity test PASS |
 
 See docs/benchmarks.md for current throughput numbers per model.
 
