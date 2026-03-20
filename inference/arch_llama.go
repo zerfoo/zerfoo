@@ -49,7 +49,9 @@ func buildLlamaGraph(
 		lmHeadWeight = embedWeight
 	}
 
-	g, err := buildTransformerGraph(tensors, cfg, engine, embedWeight, lmHeadWeight, transformerGraphOpts{})
+	g, err := buildTransformerGraph(tensors, cfg, engine, embedWeight, lmHeadWeight, transformerGraphOpts{
+		residual: ResidualConfigFromGGUF(cfg.ResidualMode, cfg.AttnResNumBlocks),
+	})
 	if err != nil {
 		return nil, nil, err
 	}

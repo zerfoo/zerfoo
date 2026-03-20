@@ -167,6 +167,68 @@ func TestExtractModelConfig_MissingArch(t *testing.T) {
 	}
 }
 
+func TestExtractModelConfig_ResidualConfig(t *testing.T) {
+	t.Run("attnres mode from metadata", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":    "llama",
+			"general.residual_mode":   "attnres",
+			"llama.embedding_length":  uint32(2048),
+			"llama.block_count":       uint32(22),
+			"llama.attention.head_count": uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.ResidualMode != "attnres" {
+			t.Errorf("ResidualMode = %q, want %q", cfg.ResidualMode, "attnres")
+		}
+	})
+
+	t.Run("block_attnres with custom blocks", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":    "llama",
+			"general.residual_mode":   "block_attnres",
+			"general.attnres_blocks":  uint32(4),
+			"llama.embedding_length":  uint32(2048),
+			"llama.block_count":       uint32(22),
+			"llama.attention.head_count": uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.ResidualMode != "block_attnres" {
+			t.Errorf("ResidualMode = %q, want %q", cfg.ResidualMode, "block_attnres")
+		}
+		if cfg.AttnResNumBlocks != 4 {
+			t.Errorf("AttnResNumBlocks = %d, want 4", cfg.AttnResNumBlocks)
+		}
+	})
+
+	t.Run("defaults to empty when not present", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":    "llama",
+			"llama.embedding_length":  uint32(2048),
+			"llama.block_count":       uint32(22),
+			"llama.attention.head_count": uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.ResidualMode != "" {
+			t.Errorf("ResidualMode = %q, want empty string", cfg.ResidualMode)
+		}
+		if cfg.AttnResNumBlocks != 0 {
+			t.Errorf("AttnResNumBlocks = %d, want 0", cfg.AttnResNumBlocks)
+		}
+	})
+}
+
 func TestExtractModelConfig_KVHeadsDefaultsToHeads(t *testing.T) {
 	meta := map[string]any{
 		"general.architecture":       "llama",

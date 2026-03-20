@@ -36,6 +36,10 @@ type ModelConfig struct {
 	NumExpertsPerToken int // experts activated per token (expert_used_count)
 	NumSharedExperts   int // number of shared experts (expert_shared_count)
 
+	// Residual connection configuration.
+	ResidualMode      string // "standard", "attnres", or "block_attnres" (default: "standard")
+	AttnResNumBlocks  int    // number of blocks for block_attnres mode (default: 8)
+
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
 	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
@@ -154,6 +158,14 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
 		cfg.NumSharedExperts = int(v)
+	}
+
+	// Extract residual connection configuration.
+	if v, ok := f.GetString("general.residual_mode"); ok {
+		cfg.ResidualMode = v
+	}
+	if v, ok := f.GetUint32("general.attnres_blocks"); ok {
+		cfg.AttnResNumBlocks = int(v)
 	}
 
 	// Extract vision encoder fields (LLaVA and multimodal models).

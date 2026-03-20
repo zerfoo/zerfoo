@@ -15,15 +15,64 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
+// ResidualConfig controls the residual connection strategy used by
+// architecture graph builders. The default mode ("standard" or "") preserves
+// existing behaviour. "attnres" and "block_attnres" enable attention-weighted
+// residual connections when the layers/residual package provides them.
+type ResidualConfig struct {
+	Mode      string // "standard" (default), "attnres", or "block_attnres"
+	NumBlocks int    // block count for "block_attnres" mode (default 8)
+}
+
+// DefaultResidualConfig returns a ResidualConfig with standard (no-op) residuals.
+func DefaultResidualConfig() ResidualConfig {
+	return ResidualConfig{Mode: "standard"}
+}
+
+// ResidualConfigFromGGUF builds a ResidualConfig from GGUF model metadata.
+// Missing keys produce the backward-compatible "standard" default.
+func ResidualConfigFromGGUF(mode string, numBlocks int) ResidualConfig {
+	cfg := DefaultResidualConfig()
+	if mode != "" {
+		cfg.Mode = mode
+	}
+	if numBlocks > 0 {
+		cfg.NumBlocks = numBlocks
+	}
+	if cfg.Mode == "block_attnres" && cfg.NumBlocks == 0 {
+		cfg.NumBlocks = 8
+	}
+	return cfg
+}
+
+// BuildResidualConnection returns a residual handler appropriate for the given
+// config. For "standard" mode (the default), it returns nil — callers should
+// fall through to existing residual-add logic. For "attnres" and
+// "block_attnres" modes, it returns a placeholder (nil for now); the actual
+// implementation will be wired once layers/residual/ ships AttnRes types.
+func BuildResidualConnection[T tensor.Numeric](config ResidualConfig, engine compute.Engine[T]) any {
+	switch config.Mode {
+	case "", "standard":
+		return nil
+	case "attnres", "block_attnres":
+		// Placeholder: actual AttnRes wiring will be added when models ship
+		// with AttnRes GGUF metadata and layers/residual/ is integrated.
+		return nil
+	default:
+		return nil
+	}
+}
+
 // transformerGraphOpts configures architecture-specific differences.
 type transformerGraphOpts struct {
-	embedScale          float32 // multiply embeddings by this factor (0 = no scaling)
-	postNorm            bool    // if true, apply post-attention and post-FFN norms (Gemma 3)
-	qkNorm              bool    // if true, apply RMSNorm to Q/K after projection (Gemma 3)
-	logitSoftcap        float32 // if > 0, apply logit softcapping: cap * tanh(logit/cap)
-	slidingWindowSize   int     // if > 0, apply causal sliding window attention mask
-	attnBias            bool    // if true, add bias to Q/K/V projections (Qwen 2)
-	partialRotaryFactor float32 // fraction of head dims to apply RoPE (0 or 1 = full RoPE)
+	embedScale          float32        // multiply embeddings by this factor (0 = no scaling)
+	postNorm            bool           // if true, apply post-attention and post-FFN norms (Gemma 3)
+	qkNorm              bool           // if true, apply RMSNorm to Q/K after projection (Gemma 3)
+	logitSoftcap        float32        // if > 0, apply logit softcapping: cap * tanh(logit/cap)
+	slidingWindowSize   int            // if > 0, apply causal sliding window attention mask
+	attnBias            bool           // if true, add bias to Q/K/V projections (Qwen 2)
+	partialRotaryFactor float32        // fraction of head dims to apply RoPE (0 or 1 = full RoPE)
+	residual            ResidualConfig // residual connection strategy
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only
