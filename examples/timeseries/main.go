@@ -24,7 +24,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== N-BEATS Time-Series Forecasting Example ===\n")
+	fmt.Println("=== N-BEATS Time-Series Forecasting Example ===")
 
 	const (
 		inputLen  = 24 // lookback window (e.g., 24 hours)

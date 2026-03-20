@@ -1179,7 +1179,7 @@ passes, training infrastructure gaps, and documentation.
 
 ### Wave 1: Bug fix + backward passes (5 agents)
 
-- [ ] **T101.1** Fix Graph.Parameters() ordering and add LoadParameters by name (#100, #94)
+- [x] **T101.1** Fix Graph.Parameters() ordering and add LoadParameters by name (#100, #94) (2026-03-20)
   Owner: Lead Eng  Est: 4h  verifies: [UC-025, UC-026]
   - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
   - Sort Parameters() by name for deterministic ordering. Document the contract.
@@ -1187,7 +1187,7 @@ passes, training infrastructure gaps, and documentation.
   - Add round-trip test: build graph, save params by name, rebuild graph, load by name, verify identical output.
   - Acceptance: `TestParameterOrdering` proves deterministic order. `TestLoadParametersByName` proves round-trip correctness.
 
-- [ ] **T101.2** Implement Backward for Div and Sqrt core layers (#91)
+- [x] **T101.2** Implement Backward for Div and Sqrt core layers (#91) (2026-03-20)
   Owner: ML Eng  Est: 2h  verifies: [UC-025]
   - File: layers/core/div.go, layers/core/sqrt.go
   - Div backward: d/da(a/b) = 1/b, d/db(a/b) = -a/b^2
@@ -1195,20 +1195,20 @@ passes, training infrastructure gaps, and documentation.
   - Add table-driven tests in layers/core/div_test.go and sqrt_test.go.
   - Acceptance: `TestDivBackward` and `TestSqrtBackward` pass with numerical gradient checks.
 
-- [ ] **T101.3** Implement Backward for Pow core layer (#92)
+- [x] **T101.3** Implement Backward for Pow core layer (#92) (2026-03-20)
   Owner: ML Eng  Est: 2h  verifies: [UC-025]
   - File: layers/core/pow.go
   - Pow backward: d/da(a^n) = n*a^(n-1), d/dn(a^n) = a^n * ln(a)
   - Add table-driven tests in layers/core/pow_test.go.
   - Acceptance: `TestPowBackward` passes with numerical gradient checks.
 
-- [ ] **T101.4** Add unit tests for Div, Sqrt, Neg layers (#85)
+- [x] **T101.4** Add unit tests for Div, Sqrt, Neg layers (#85) (2026-03-20)
   Owner: ML Eng  Est: 2h  verifies: [UC-025]
   - Files: layers/core/div_test.go, layers/core/sqrt_test.go, layers/core/neg_test.go
   - Test Forward + Backward for each. Table-driven with edge cases (zero, negative, large values).
   - Acceptance: All new tests pass. `go test ./layers/core/... -race` clean.
 
-- [ ] **T101.5** Add unit tests for Softmax activation and Gelu backward (#86, #88)
+- [x] **T101.5** Add unit tests for Softmax activation and Gelu backward (#86, #88) (2026-03-20)
   Owner: ML Eng  Est: 2h  verifies: [UC-001]
   - Files: layers/activations/softmax_test.go (new), layers/activations/ (gelu backward tests)
   - Test Softmax Forward with known inputs/outputs. Test Gelu Backward with numerical gradient check.
@@ -1218,7 +1218,7 @@ passes, training infrastructure gaps, and documentation.
 
 Depends on: Wave 1 (backward passes needed for gradient-based training)
 
-- [ ] **T101.6** Implement binary cross-entropy loss (#95)
+- [x] **T101.6** Implement binary cross-entropy loss (#95) (2026-03-20)
   Owner: ML Eng  Est: 3h  verifies: [UC-025]
   - File: training/loss/bce.go (new)
   - BCE(y, p) = -[y*log(p) + (1-y)*log(1-p)], with numerical stability (clamp p to [eps, 1-eps]).
@@ -1226,7 +1226,7 @@ Depends on: Wave 1 (backward passes needed for gradient-based training)
   - Add table-driven tests: known inputs, edge cases (p near 0 or 1), gradient check.
   - Acceptance: `TestBCELoss` and `TestBCELossBackward` pass.
 
-- [ ] **T101.7** Implement model serialization Save/Load for graphs (#96)
+- [x] **T101.7** Implement model serialization Save/Load for graphs (#96) (2026-03-20)
   Owner: Lead Eng  Est: 6h  verifies: [UC-025, UC-026]
   - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
   - Depends on T101.1 (LoadParameters by name).
@@ -1236,7 +1236,7 @@ Depends on: Wave 1 (backward passes needed for gradient-based training)
   - Round-trip test: train, save, rebuild, load, verify identical forward output.
   - Acceptance: `TestGraphSaveLoad` and `TestCheckpointResumeTraining` pass.
 
-- [ ] **T101.8** Implement LR schedulers: ReduceOnPlateau + CosineAnnealing (#101, #48)
+- [x] **T101.8** Implement LR schedulers: ReduceOnPlateau + CosineAnnealing (#101, #48) (2026-03-20)
   Owner: ML Eng  Est: 4h  verifies: [UC-025]
   - File: training/scheduler/ (new package)
   - Scheduler interface: `Step(epoch int, metric float64)`, `GetLR() T`
@@ -1246,7 +1246,7 @@ Depends on: Wave 1 (backward passes needed for gradient-based training)
   - Table-driven tests for both schedulers.
   - Acceptance: `TestReduceOnPlateau` and `TestCosineAnnealing` pass. Integration test with AdamW.
 
-- [ ] **T101.9** Implement smoothed early stopping (#47)
+- [x] **T101.9** Implement smoothed early stopping (#47) (2026-03-20)
   Owner: ML Eng  Est: 2h  verifies: [UC-025]
   - File: training/early_stop.go (new)
   - EMA-smoothed validation metric tracking. Stop when smoothed metric does not improve for N epochs.
@@ -1254,7 +1254,7 @@ Depends on: Wave 1 (backward passes needed for gradient-based training)
   - Table-driven tests with synthetic metric sequences.
   - Acceptance: `TestSmoothedEarlyStopping` passes with known sequences.
 
-- [ ] **T101.10** Optimize RecordRequest to avoid per-token loop (#87)
+- [x] **T101.10** Optimize RecordRequest to avoid per-token loop (#87) (2026-03-20)
   Owner: Infra Eng  Est: 1h  verifies: [UC-006]
   - File: serve/metrics.go
   - Replace per-token counter.Add(1) loop with single counter.Add(float64(tokenCount)).
@@ -1264,7 +1264,7 @@ Depends on: Wave 1 (backward passes needed for gradient-based training)
 
 Depends on: Wave 2 (serialization needed for fine-tuning example)
 
-- [ ] **T101.11** Add JSON Schema $ref resolution to grammar-constrained decoding (#89)
+- [x] **T101.11** Add JSON Schema $ref resolution to grammar-constrained decoding (#89) (2026-03-20)
   Owner: Lead Eng  Est: 4h  verifies: [UC-012]
   - File: generate/grammar/converter.go
   - Implement $ref resolution: resolve local refs (#/definitions/Foo) by inlining the referenced schema.
@@ -1272,20 +1272,20 @@ Depends on: Wave 2 (serialization needed for fine-tuning example)
   - Table-driven tests with nested $ref schemas.
   - Acceptance: `TestRefResolution` passes with nested and circular schemas. Existing grammar tests still pass.
 
-- [ ] **T101.12** Add fine-tuning example application (#90)
+- [x] **T101.12** Add fine-tuning example application (#90) (2026-03-20)
   Owner: ML Eng  Est: 3h  delivers: [examples/fine-tuning/]
   - Create examples/fine-tuning/main.go: LoRA fine-tune a small model, save, reload, predict.
   - Include README.md with step-by-step walkthrough.
   - Use existing training/lora and tabular packages.
   - Acceptance: `go build ./examples/fine-tuning/` succeeds. README is clear and complete.
 
-- [ ] **T101.13** Documentation: add detailed examples for advanced features (#15)
+- [x] **T101.13** Documentation: add detailed examples for advanced features (#15) (2026-03-20)
   Owner: DevRel  Est: 4h  delivers: [examples/ directory with 4+ examples]
   - Create examples/: distributed-training/, automl/, timeseries/, embedding/
   - Each has main.go + README.md with usage, expected output, and explanation.
   - Acceptance: All examples build. READMEs are self-contained.
 
-- [ ] **T101.14** Close 7 already-resolved issues with evidence comments
+- [x] **T101.14** Close 7 already-resolved issues with evidence comments (2026-03-20)
   Owner: Lead Eng  Est: 30m  delivers: [7 issues closed]
   - For each of #46, #49, #50, #97, #98, #99, #102: post a comment citing the implementing file and close.
   - Acceptance: All 7 issues show as closed on GitHub.

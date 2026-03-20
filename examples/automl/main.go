@@ -61,7 +61,7 @@ func (w *syntheticWorker) RunTrial(config automl.Config) (automl.Metric, error) 
 }
 
 func main() {
-	fmt.Println("=== AutoML Hyperparameter Search Example ===\n")
+	fmt.Println("=== AutoML Hyperparameter Search Example ===")
 
 	// --- Step 1: Define the search space ---
 	hparams := []automl.HParam{

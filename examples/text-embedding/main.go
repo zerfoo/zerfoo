@@ -36,7 +36,7 @@ func main() {
 	modelPath := flag.Arg(0)
 
 	// --- Step 1: Load the model ---
-	fmt.Println("=== Text Embedding Example ===\n")
+	fmt.Println("=== Text Embedding Example ===")
 	fmt.Printf("Loading model: %s\n", modelPath)
 	fmt.Printf("Device: %s\n\n", *device)
 
