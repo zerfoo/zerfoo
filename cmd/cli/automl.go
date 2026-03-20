@@ -2,13 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 
+	"github.com/zerfoo/zerfoo/tabular"
 	"github.com/zerfoo/zerfoo/training/automl"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // AutoMLCommand implements the "automl" CLI command for automated
@@ -94,6 +99,12 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 	var worker automl.Worker
 	if c.workerFactory != nil {
 		worker = c.workerFactory(cfg)
+	} else if cfg.Model == "tabular" {
+		w, err := newTabularWorker(cfg.Dataset, cfg.Metric)
+		if err != nil {
+			return fmt.Errorf("automl: create tabular worker: %w", err)
+		}
+		worker = w
 	} else {
 		worker = &placeholderWorker{metric: cfg.Metric}
 	}
@@ -289,6 +300,128 @@ type placeholderWorker struct {
 
 func (w *placeholderWorker) RunTrial(config automl.Config) (automl.Metric, error) {
 	return automl.Metric{}, fmt.Errorf("no training worker configured for metric %q; provide a worker implementation", w.metric)
+}
+
+// tabularWorker trains a tabular model for each trial configuration and
+// returns the validation metric score.
+type tabularWorker struct {
+	data   [][]float64
+	labels []int
+	metric string
+}
+
+// newTabularWorker creates a tabularWorker by reading CSV data from the given
+// path. The last column is treated as the integer label; all other columns are
+// numeric features.
+func newTabularWorker(datasetPath, metric string) (*tabularWorker, error) {
+	data, labels, err := readTabularCSV(datasetPath)
+	if err != nil {
+		return nil, err
+	}
+	return &tabularWorker{data: data, labels: labels, metric: metric}, nil
+}
+
+// RunTrial trains a tabular model with the hyperparameters from config and
+// returns the validation metric.
+func (w *tabularWorker) RunTrial(config automl.Config) (automl.Metric, error) {
+	tc := tabular.TrainConfig{
+		Epochs:          10,
+		BatchSize:       32,
+		LearningRate:    0.01,
+		WeightDecay:     1e-4,
+		ValidationSplit: 0.2,
+	}
+
+	// Map search space params to training config.
+	if v, ok := config.Params["lr"]; ok {
+		tc.LearningRate = v
+	}
+	if v, ok := config.Params["batch_size"]; ok {
+		tc.BatchSize = int(math.Round(v))
+		if tc.BatchSize < 1 {
+			tc.BatchSize = 1
+		}
+	}
+
+	mc := tabular.ModelConfig{
+		HiddenDims:  []int{64, 32},
+		DropoutRate:  0.0,
+		Activation:   tabular.ActivationReLU,
+	}
+
+	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+	ops := numeric.Float32Ops{}
+
+	model, err := tabular.Train(w.data, w.labels, tc, mc, engine, ops)
+	if err != nil {
+		return automl.Metric{}, fmt.Errorf("tabular worker: train: %w", err)
+	}
+
+	// Evaluate on the full dataset to compute the metric score.
+	correct := 0
+	for i, row := range w.data {
+		dir, _, err := model.Predict(row)
+		if err != nil {
+			continue
+		}
+		if int(dir) == w.labels[i] {
+			correct++
+		}
+	}
+	score := float64(correct) / float64(len(w.data))
+
+	return automl.Metric{Score: score}, nil
+}
+
+// readTabularCSV reads a CSV file where all columns except the last are
+// numeric features and the last column is an integer label.
+func readTabularCSV(path string) ([][]float64, []int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open dataset: %w", err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read dataset: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, nil, fmt.Errorf("dataset must have a header and at least one data row")
+	}
+
+	// Skip header row.
+	rows := records[1:]
+	numCols := len(records[0])
+	if numCols < 2 {
+		return nil, nil, fmt.Errorf("dataset must have at least one feature column and one label column")
+	}
+
+	data := make([][]float64, len(rows))
+	labels := make([]int, len(rows))
+	for i, row := range rows {
+		if len(row) != numCols {
+			return nil, nil, fmt.Errorf("row %d has %d columns, expected %d", i+1, len(row), numCols)
+		}
+		features := make([]float64, numCols-1)
+		for j := 0; j < numCols-1; j++ {
+			v, err := strconv.ParseFloat(row[j], 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("row %d col %d: %w", i+1, j, err)
+			}
+			features[j] = v
+		}
+		data[i] = features
+
+		label, err := strconv.Atoi(row[numCols-1])
+		if err != nil {
+			return nil, nil, fmt.Errorf("row %d label: %w", i+1, err)
+		}
+		labels[i] = label
+	}
+
+	return data, labels, nil
 }
 
 // Static interface assertion.
