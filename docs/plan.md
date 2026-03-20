@@ -1352,7 +1352,7 @@ Reference: https://github.com/MoonshotAI/Attention-Residuals
 
 ### Wave 1: Core implementation (3 agents)
 
-- [ ] **T102.1** Implement AttnRes layer (full attention over depth)
+- [x] **T102.1** Implement AttnRes layer (full attention over depth) (2026-03-20)
   Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
   - File: layers/residual/attn_res.go (new package)
   - AttnRes[T] struct with Query parameter (learned d-dim pseudo-query per layer)
@@ -1361,7 +1361,7 @@ Reference: https://github.com/MoonshotAI/Attention-Residuals
   - Table-driven tests with known inputs, verify softmax weights sum to 1, verify selective attention.
   - Acceptance: `TestAttnResForward` and `TestAttnResWeightsSum` pass.
 
-- [ ] **T102.2** Implement BlockAttnRes layer (block-level aggregation)
+- [x] **T102.2** Implement BlockAttnRes layer (block-level aggregation) (2026-03-20)
   Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
   Deps: T102.1
   - File: layers/residual/block_attn_res.go
@@ -1372,7 +1372,7 @@ Reference: https://github.com/MoonshotAI/Attention-Residuals
   - Table-driven tests: verify block boundaries, verify intra-block accumulation, verify inter-block attention.
   - Acceptance: `TestBlockAttnResForward`, `TestBlockAttnResBlockBoundary` pass.
 
-- [ ] **T102.3** Add AttnRes to computation graph builder
+- [x] **T102.3** Add AttnRes to computation graph builder (2026-03-20)
   Owner: Arch Eng  Est: 3h  verifies: [UC-001, UC-002]
   Deps: T102.2
   - File: inference/arch_common.go or inference/residual.go
