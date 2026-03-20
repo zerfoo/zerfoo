@@ -1156,3 +1156,199 @@ Prior progress log entries trimmed 2026-03-19. Knowledge preserved in docs/devlo
 
 <!-- E99 (2026-03-19) and E100 (2026-03-20) verification remediation epics archived.
      15 tasks completed (T99.1-T99.8, T100.1-T100.6). See docs/devlog.md for findings. -->
+
+---
+
+## E101: GitHub Issues Resolution (2026-03-20)
+
+Resolves 16 open GitHub issues. 7 issues (#46, #49, #50, #97, #98, #99, #102) are already
+implemented and will be closed. The remaining 16 tasks address bugs, missing backward
+passes, training infrastructure gaps, and documentation.
+
+### Triage: Issues Already Resolved (close with comment)
+
+| Issue | Title | Status | Evidence |
+|-------|-------|--------|----------|
+| #46 | EMA of model weights | DONE | training/optimizer/ema.go |
+| #49 | Stochastic Weight Averaging | DONE | training/optimizer/swa.go |
+| #50 | Feature dropout | DONE | layers/regularization/feature_dropout.go |
+| #97 | Dropout layer | DONE | layers/regularization/dropout.go |
+| #98 | Sigmoid activation | DONE | layers/activations/sigmoid.go |
+| #99 | BatchNorm layer | DONE | layers/normalization/batch_norm.go |
+| #102 | Tabular high-level API | DONE | tabular/train.go, tabular/save.go, tabular/model.go |
+
+### Wave 1: Bug fix + backward passes (5 agents)
+
+- [ ] **T101.1** Fix Graph.Parameters() ordering and add LoadParameters by name (#100, #94)
+  Owner: Lead Eng  Est: 4h  verifies: [UC-025, UC-026]
+  - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
+  - Sort Parameters() by name for deterministic ordering. Document the contract.
+  - Add `func (g *Graph[T]) LoadParameters(params map[string][]T) error` that matches by name.
+  - Add round-trip test: build graph, save params by name, rebuild graph, load by name, verify identical output.
+  - Acceptance: `TestParameterOrdering` proves deterministic order. `TestLoadParametersByName` proves round-trip correctness.
+
+- [ ] **T101.2** Implement Backward for Div and Sqrt core layers (#91)
+  Owner: ML Eng  Est: 2h  verifies: [UC-025]
+  - File: layers/core/div.go, layers/core/sqrt.go
+  - Div backward: d/da(a/b) = 1/b, d/db(a/b) = -a/b^2
+  - Sqrt backward: d/da(sqrt(a)) = 0.5/sqrt(a)
+  - Add table-driven tests in layers/core/div_test.go and sqrt_test.go.
+  - Acceptance: `TestDivBackward` and `TestSqrtBackward` pass with numerical gradient checks.
+
+- [ ] **T101.3** Implement Backward for Pow core layer (#92)
+  Owner: ML Eng  Est: 2h  verifies: [UC-025]
+  - File: layers/core/pow.go
+  - Pow backward: d/da(a^n) = n*a^(n-1), d/dn(a^n) = a^n * ln(a)
+  - Add table-driven tests in layers/core/pow_test.go.
+  - Acceptance: `TestPowBackward` passes with numerical gradient checks.
+
+- [ ] **T101.4** Add unit tests for Div, Sqrt, Neg layers (#85)
+  Owner: ML Eng  Est: 2h  verifies: [UC-025]
+  - Files: layers/core/div_test.go, layers/core/sqrt_test.go, layers/core/neg_test.go
+  - Test Forward + Backward for each. Table-driven with edge cases (zero, negative, large values).
+  - Acceptance: All new tests pass. `go test ./layers/core/... -race` clean.
+
+- [ ] **T101.5** Add unit tests for Softmax activation and Gelu backward (#86, #88)
+  Owner: ML Eng  Est: 2h  verifies: [UC-001]
+  - Files: layers/activations/softmax_test.go (new), layers/activations/ (gelu backward tests)
+  - Test Softmax Forward with known inputs/outputs. Test Gelu Backward with numerical gradient check.
+  - Acceptance: `go test ./layers/activations/... -race` clean with new tests passing.
+
+### Wave 2: Training infrastructure (5 agents)
+
+Depends on: Wave 1 (backward passes needed for gradient-based training)
+
+- [ ] **T101.6** Implement binary cross-entropy loss (#95)
+  Owner: ML Eng  Est: 3h  verifies: [UC-025]
+  - File: training/loss/bce.go (new)
+  - BCE(y, p) = -[y*log(p) + (1-y)*log(1-p)], with numerical stability (clamp p to [eps, 1-eps]).
+  - Implement Forward (loss value) and Backward (gradient).
+  - Add table-driven tests: known inputs, edge cases (p near 0 or 1), gradient check.
+  - Acceptance: `TestBCELoss` and `TestBCELossBackward` pass.
+
+- [ ] **T101.7** Implement model serialization Save/Load for graphs (#96)
+  Owner: Lead Eng  Est: 6h  verifies: [UC-025, UC-026]
+  - This is in **ztensor** repo at /Users/dndungu/Code/zerfoo/ztensor.
+  - Depends on T101.1 (LoadParameters by name).
+  - Add `func (g *Graph[T]) SaveParameters(dir string) error` -- saves params as JSON map[string][]T.
+  - Add `func (g *Graph[T]) LoadParameters(dir string) error` -- loads from saved JSON.
+  - Add `SaveCheckpoint/LoadCheckpoint` with optimizer state.
+  - Round-trip test: train, save, rebuild, load, verify identical forward output.
+  - Acceptance: `TestGraphSaveLoad` and `TestCheckpointResumeTraining` pass.
+
+- [ ] **T101.8** Implement LR schedulers: ReduceOnPlateau + CosineAnnealing (#101, #48)
+  Owner: ML Eng  Est: 4h  verifies: [UC-025]
+  - File: training/scheduler/ (new package)
+  - Scheduler interface: `Step(epoch int, metric float64)`, `GetLR() T`
+  - ReduceOnPlateau: factor, patience, min_lr params. Reduce when metric stops improving.
+  - CosineAnnealing: T_max, eta_min params. Optional warm restarts.
+  - Add `SetLR(lr T)` method to AdamW and SGD optimizers.
+  - Table-driven tests for both schedulers.
+  - Acceptance: `TestReduceOnPlateau` and `TestCosineAnnealing` pass. Integration test with AdamW.
+
+- [ ] **T101.9** Implement smoothed early stopping (#47)
+  Owner: ML Eng  Est: 2h  verifies: [UC-025]
+  - File: training/early_stop.go (new)
+  - EMA-smoothed validation metric tracking. Stop when smoothed metric does not improve for N epochs.
+  - Config: patience, smoothing factor (alpha), min_delta.
+  - Table-driven tests with synthetic metric sequences.
+  - Acceptance: `TestSmoothedEarlyStopping` passes with known sequences.
+
+- [ ] **T101.10** Optimize RecordRequest to avoid per-token loop (#87)
+  Owner: Infra Eng  Est: 1h  verifies: [UC-006]
+  - File: serve/metrics.go
+  - Replace per-token counter.Add(1) loop with single counter.Add(float64(tokenCount)).
+  - Acceptance: `TestRecordRequestBatch` shows single increment. Benchmark shows improvement.
+
+### Wave 3: Features + docs (4 agents)
+
+Depends on: Wave 2 (serialization needed for fine-tuning example)
+
+- [ ] **T101.11** Add JSON Schema $ref resolution to grammar-constrained decoding (#89)
+  Owner: Lead Eng  Est: 4h  verifies: [UC-012]
+  - File: generate/grammar/converter.go
+  - Implement $ref resolution: resolve local refs (#/definitions/Foo) by inlining the referenced schema.
+  - Handle circular refs with max depth (default 10).
+  - Table-driven tests with nested $ref schemas.
+  - Acceptance: `TestRefResolution` passes with nested and circular schemas. Existing grammar tests still pass.
+
+- [ ] **T101.12** Add fine-tuning example application (#90)
+  Owner: ML Eng  Est: 3h  delivers: [examples/fine-tuning/]
+  - Create examples/fine-tuning/main.go: LoRA fine-tune a small model, save, reload, predict.
+  - Include README.md with step-by-step walkthrough.
+  - Use existing training/lora and tabular packages.
+  - Acceptance: `go build ./examples/fine-tuning/` succeeds. README is clear and complete.
+
+- [ ] **T101.13** Documentation: add detailed examples for advanced features (#15)
+  Owner: DevRel  Est: 4h  delivers: [examples/ directory with 4+ examples]
+  - Create examples/: distributed-training/, automl/, timeseries/, embedding/
+  - Each has main.go + README.md with usage, expected output, and explanation.
+  - Acceptance: All examples build. READMEs are self-contained.
+
+- [ ] **T101.14** Close 7 already-resolved issues with evidence comments
+  Owner: Lead Eng  Est: 30m  delivers: [7 issues closed]
+  - For each of #46, #49, #50, #97, #98, #99, #102: post a comment citing the implementing file and close.
+  - Acceptance: All 7 issues show as closed on GitHub.
+
+### Wave 4: Verification
+
+- [ ] **T101.15** Run full test suite and verify all issue fixes
+  Owner: Lead Eng  Est: 1h  verifies: [infrastructure]
+  - `go build ./...` and `go test ./... -race -timeout 300s` must pass.
+  - Verify each issue's acceptance criteria are met.
+  - Update usecases-manifest.json if wiring status changed.
+  - Acceptance: 0 new test failures. All 16 issue tasks verified.
+
+### Parallel Tracks
+
+| Track | Tasks | Scope |
+|-------|-------|-------|
+| A: Backward passes | T101.2, T101.3 | layers/core/ |
+| B: Layer tests | T101.4, T101.5 | layers/core/, layers/activations/ |
+| C: ztensor graph | T101.1 | ztensor repo (separate) |
+| D: Training infra | T101.6, T101.8, T101.9 | training/ |
+| E: Graph serialization | T101.7 | ztensor repo (depends on T101.1) |
+| F: Serving | T101.10 | serve/ |
+| G: Grammar | T101.11 | generate/grammar/ |
+| H: Docs/Examples | T101.12, T101.13 | examples/ |
+| I: GitHub ops | T101.14 | GitHub API |
+
+### Waves
+
+#### Wave 1: Bug fix + backward passes (5 agents)
+- [ ] T101.1 Graph.Parameters() ordering + LoadParameters [ztensor]  verifies: [UC-025, UC-026]
+- [ ] T101.2 Backward for Div/Sqrt (#91)  verifies: [UC-025]
+- [ ] T101.3 Backward for Pow (#92)  verifies: [UC-025]
+- [ ] T101.4 Unit tests for Div/Sqrt/Neg (#85)  verifies: [UC-025]
+- [ ] T101.5 Unit tests for Softmax + Gelu backward (#86, #88)  verifies: [UC-001]
+
+#### Wave 2: Training infrastructure (5 agents)
+- [ ] T101.6 Binary cross-entropy loss (#95)  verifies: [UC-025]
+- [ ] T101.7 Model serialization Save/Load (#96) [ztensor]  verifies: [UC-025, UC-026]
+- [ ] T101.8 LR schedulers (#101, #48)  verifies: [UC-025]
+- [ ] T101.9 Smoothed early stopping (#47)  verifies: [UC-025]
+- [ ] T101.10 Optimize RecordRequest (#87)  verifies: [UC-006]
+
+#### Wave 3: Features + docs (4 agents)
+- [ ] T101.11 JSON Schema $ref resolution (#89)  verifies: [UC-012]
+- [ ] T101.12 Fine-tuning example (#90)  delivers: [examples/fine-tuning/]
+- [ ] T101.13 Documentation examples (#15)  delivers: [examples/ directory]
+- [ ] T101.14 Close 7 resolved issues  delivers: [7 issues closed]
+
+#### Wave 4: Verification (1 agent)
+- [ ] T101.15 Full test suite + issue verification  verifies: [infrastructure]
+
+### Risk Register
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R1 | T101.1/T101.7 are in ztensor repo, not zerfoo | HIGH | CERTAIN | Agents must cd to /Users/dndungu/Code/zerfoo/ztensor |
+| R2 | Backward pass numerical instability | MEDIUM | LOW | Use numerical gradient checks with epsilon=1e-5 |
+| R3 | Graph serialization format choice | MEDIUM | LOW | Use JSON for simplicity; ADR-062 covers tabular format |
+
+### Progress Log
+
+#### 2026-03-20: E101 created
+- Triaged 23 open GitHub issues. 7 already resolved (#46, #49, #50, #97, #98, #99, #102).
+- Created 15 tasks across 4 waves to resolve remaining 16 issues.
+- Key dependency: T101.1 (ztensor LoadParameters) blocks T101.7 (graph serialization).
