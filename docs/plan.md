@@ -1386,7 +1386,7 @@ Reference: https://github.com/MoonshotAI/Attention-Residuals
 
 Deps: Wave 1
 
-- [ ] **T102.4** Integration tests: AttnRes with real transformer block
+- [x] **T102.4** Integration tests: AttnRes with real transformer block (2026-03-20)
   Owner: ML Eng  Est: 3h  verifies: [UC-001, UC-002]
   Deps: T102.3
   - File: layers/residual/integration_test.go
@@ -1396,7 +1396,7 @@ Deps: Wave 1
   - Benchmark: measure overhead vs standard residuals (should be <5% for small models).
   - Acceptance: `TestBlockAttnResIntegration` and `TestBlockAttnResBackward` pass.
 
-- [ ] **T102.5** Documentation and GGUF metadata convention
+- [x] **T102.5** Documentation and GGUF metadata convention (2026-03-20)
   Owner: Arch Eng  Est: 2h  delivers: [AttnRes documentation]
   Deps: T102.3
   - Add doc.go for layers/residual/ package with usage examples.
