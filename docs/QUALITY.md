@@ -42,17 +42,17 @@ Minimum threshold: 75% (enforced by coverage-gate CI)
 - cmd/zerfoo-predict: main(), runNewCLI (requires cli framework), os.Exit paths
 - cmd/zerfoo-tokenize: main() and os.Exit paths
 
-## Performance Benchmarks (2026-03-13, DGX Spark GB10)
+## Performance Benchmarks (2026-03-20, DGX Spark GB10)
 
-### Inference Throughput — Gemma 3 1B Q4_K_M, 256 tokens, greedy decoding
+### Inference Throughput -- Gemma 3 1B Q4_K_M, 256 tokens, greedy decoding
 
 | Configuration | tok/s | Notes |
 |---------------|-------|-------|
 | Pre-optimization | 8.61 | Initial GPU Q4 |
 | Arena allocator | 80.35 | Eliminated cudaMalloc |
 | All fused kernels | 188.92 | Best without CUDA graph |
-| CUDA graph capture | 234.30 | +26% from graph capture |
-| Theoretical max (Q4 on GB10) | ~350-400 | 273 GB/s bandwidth ceiling |
+| CUDA graph capture | 244.45 | Current baseline (E103 fix) |
+| Roofline (GB10, 200 GB/s) | ~257 | 95% utilization achieved |
 
 See docs/benchmarks.md for current baselines and historical progression.
 
@@ -75,45 +75,16 @@ See docs/benchmarks.md for current baselines and historical progression.
 | go vet ./... | PASS (pre-existing purego warnings only) |
 | Test suite (DGX Spark) | PARTIAL (pre-existing race in TestBatchGenerate) |
 
-### CUDA Graph Benchmark (2026-03-13)
+### CUDA Graph Benchmark (2026-03-20)
 
 | Mode | Run 1 | Run 2 | Run 3 | Average |
 |------|-------|-------|-------|---------|
-| Per-op (baseline) | 183.16 | 183.94 | 184.27 | 183.79 |
-| CUDA graph enabled | 183.69 | 184.50 | 184.95 | 184.38 |
+| CUDA graph (longest-region) | 244.45 | 244.18 | 244.62 | 244.42 |
+| Ollama (gemma3:1b) | 203.60 | -- | -- | 203.60 |
 
-Graph capture fails (D2H in GQA). Falls back to per-op. No speedup.
-
-### CUDA Graph Correctness (2026-03-13)
-
-| Mode | Output (50 tokens, temp=0) | Match |
-|------|---------------------------|-------|
-| Per-op | "not to be to be to be..." | -- |
-| CUDA graph | "not to be to be to be..." | IDENTICAL |
-
-### FP16 Inference (2026-03-13)
-
-| Precision | Status | tok/s |
-|-----------|--------|-------|
-| FP32 | Working | 183.79 avg |
-| FP16 | SIGSEGV (null kernel ptr) | N/A |
-| BF16 | Not implemented | N/A |
-
-FP16 path crashes due to null function pointer in FP32-to-FP16 conversion
-kernel (purego symbol lookup failure). Needs debugging.
-
-### FP8/FP16 Inference Update (2026-03-13)
-
-| Precision | Status | tok/s |
-|-----------|--------|-------|
-| FP32 | Working | 122.08 |
-| FP16 | GQA storage mismatch | N/A |
-| FP8 | GQA storage mismatch | N/A |
-
-Root cause of prior SIGSEGV: stale `libkernels.so` in project root missing
-FP16 conversion symbols. Fixed by updating the .so. Both FP16 and FP8 now
-fail with a GQA tensor storage length mismatch (`storage length (1536) does
-not match tensor size (6144)`), indicating a bug in the GQA FP16 compute path.
+CUDA graph captures the longest contiguous capturable region (all transformer
+layers). EmbeddingLookup and other non-capturable ops run pre/post capture.
+Zerfoo is 20% faster than Ollama on the same hardware.
 
 ## Static Analysis (2026-03-16)
 
