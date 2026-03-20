@@ -1338,6 +1338,85 @@ Depends on: Wave 2 (serialization needed for fine-tuning example)
 #### Wave 4: Verification (1 agent)
 - [ ] T101.15 Full test suite + issue verification  verifies: [infrastructure]
 
+---
+
+## E102: Attention Residuals (AttnRes) (#103) [2026-03-20]
+
+Implements Attention Residuals from arXiv:2603.15031 (Kimi Team, March 2026).
+AttnRes replaces fixed additive residual connections with softmax attention over
+depth, allowing each layer to selectively aggregate previous layer outputs with
+learned, input-dependent weights. Block AttnRes is the practical variant that
+groups layers into N blocks (~8) for O(Nd) memory instead of O(Ld).
+
+Reference: https://github.com/MoonshotAI/Attention-Residuals
+
+### Wave 1: Core implementation (3 agents)
+
+- [ ] **T102.1** Implement AttnRes layer (full attention over depth)
+  Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
+  - File: layers/residual/attn_res.go (new package)
+  - AttnRes[T] struct with Query parameter (learned d-dim pseudo-query per layer)
+  - Forward: compute alpha_{i->l} = softmax(w_l^T * RMSNorm(v_i)) over all previous outputs
+  - Use Engine[T] for all arithmetic. Reuse existing RMSNorm from layers/normalization/.
+  - Table-driven tests with known inputs, verify softmax weights sum to 1, verify selective attention.
+  - Acceptance: `TestAttnResForward` and `TestAttnResWeightsSum` pass.
+
+- [ ] **T102.2** Implement BlockAttnRes layer (block-level aggregation)
+  Owner: ML Eng  Est: 4h  verifies: [UC-001, UC-002]
+  Deps: T102.1
+  - File: layers/residual/block_attn_res.go
+  - BlockAttnRes[T] struct with BlockSize, per-layer queries, RMSNorm.
+  - Intra-block: standard residual accumulation (sum of layer outputs).
+  - Inter-block: softmax attention over N block-level representations + partial block.
+  - Forward matches Fig 2 pseudocode from the paper.
+  - Table-driven tests: verify block boundaries, verify intra-block accumulation, verify inter-block attention.
+  - Acceptance: `TestBlockAttnResForward`, `TestBlockAttnResBlockBoundary` pass.
+
+- [ ] **T102.3** Add AttnRes to computation graph builder
+  Owner: Arch Eng  Est: 3h  verifies: [UC-001, UC-002]
+  Deps: T102.2
+  - File: inference/arch_common.go or inference/residual.go
+  - Add graph builder support so architecture builders (Llama, Gemma, etc.) can opt into AttnRes.
+  - Config option: `ResidualMode: "standard" | "attnres" | "block_attnres"` with `AttnResBlocks: 8`.
+  - When models with AttnRes metadata appear in GGUF, the builder should detect and use it.
+  - For now, add the config plumbing and a manual override for testing.
+  - Acceptance: Can build a Llama graph with BlockAttnRes residuals (manual config). `TestAttnResGraphBuilder` passes.
+
+### Wave 2: Integration + tests (2 agents)
+
+Deps: Wave 1
+
+- [ ] **T102.4** Integration tests: AttnRes with real transformer block
+  Owner: ML Eng  Est: 3h  verifies: [UC-001, UC-002]
+  Deps: T102.3
+  - File: layers/residual/integration_test.go
+  - Build a minimal 4-layer transformer with BlockAttnRes (N=2 blocks).
+  - Verify forward pass produces valid output (no NaN, reasonable magnitudes).
+  - Verify backward pass computes gradients for pseudo-query parameters.
+  - Benchmark: measure overhead vs standard residuals (should be <5% for small models).
+  - Acceptance: `TestBlockAttnResIntegration` and `TestBlockAttnResBackward` pass.
+
+- [ ] **T102.5** Documentation and GGUF metadata convention
+  Owner: Arch Eng  Est: 2h  delivers: [AttnRes documentation]
+  Deps: T102.3
+  - Add doc.go for layers/residual/ package with usage examples.
+  - Document GGUF metadata keys for AttnRes: `general.residual_mode`, `general.attnres_blocks`.
+  - Update docs/design.md architecture section with AttnRes option.
+  - Acceptance: `go doc ./layers/residual/` shows clear usage. Design doc updated.
+
+### Waves
+
+#### Wave 1: Core implementation (3 agents)
+- [ ] T102.1 AttnRes layer  verifies: [UC-001, UC-002]
+- [ ] T102.2 BlockAttnRes layer  verifies: [UC-001, UC-002]
+- [ ] T102.3 Graph builder integration  verifies: [UC-001, UC-002]
+
+#### Wave 2: Integration + docs (2 agents)
+- [ ] T102.4 Integration tests  verifies: [UC-001, UC-002]
+- [ ] T102.5 Documentation  delivers: [AttnRes docs]
+
+---
+
 ### Risk Register
 
 | ID | Risk | Impact | Likelihood | Mitigation |
@@ -1345,6 +1424,8 @@ Depends on: Wave 2 (serialization needed for fine-tuning example)
 | R1 | T101.1/T101.7 are in ztensor repo, not zerfoo | HIGH | CERTAIN | Agents must cd to /Users/dndungu/Code/zerfoo/ztensor |
 | R2 | Backward pass numerical instability | MEDIUM | LOW | Use numerical gradient checks with epsilon=1e-5 |
 | R3 | Graph serialization format choice | MEDIUM | LOW | Use JSON for simplicity; ADR-062 covers tabular format |
+| R4 | No GGUF models with AttnRes available yet | MEDIUM | HIGH | Implement layer code now; enable via manual config until Kimi Linear GGUF ships |
+| R5 | AttnRes pseudo-query initialization sensitivity | MEDIUM | MEDIUM | Use Xavier init; add tests verifying training stability |
 
 ### Progress Log
 
