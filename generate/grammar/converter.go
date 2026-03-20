@@ -6,17 +6,111 @@ import (
 	"strconv"
 )
 
+// maxRefDepth is the maximum recursion depth for $ref resolution. When this
+// depth is exceeded (e.g. circular references), the reference is replaced with
+// an empty schema that accepts any valid JSON value.
+const maxRefDepth = 10
+
 // Convert transforms a JSONSchema into a Grammar state machine. It returns an
-// error if the schema uses unsupported features.
+// error if the schema uses unsupported features or contains unresolvable $refs.
 func Convert(schema *JSONSchema) (*Grammar, error) {
-	if err := rejectUnsupported(schema); err != nil {
+	// Collect definitions from the root schema.
+	defs := mergeDefinitions(schema.Definitions, schema.Defs)
+
+	// Resolve all $ref pointers before validation.
+	resolved, err := resolveRefs(schema, defs, 0)
+	if err != nil {
 		return nil, err
 	}
-	n, err := buildNode(schema)
+
+	if err := rejectUnsupported(resolved); err != nil {
+		return nil, err
+	}
+	n, err := buildNode(resolved)
 	if err != nil {
 		return nil, err
 	}
 	return &Grammar{node: n}, nil
+}
+
+// mergeDefinitions merges "definitions" and "$defs" maps, with $defs taking
+// precedence on conflicts.
+func mergeDefinitions(definitions, defs map[string]*JSONSchema) map[string]*JSONSchema {
+	if len(definitions) == 0 && len(defs) == 0 {
+		return nil
+	}
+	merged := make(map[string]*JSONSchema, len(definitions)+len(defs))
+	for k, v := range definitions {
+		merged[k] = v
+	}
+	for k, v := range defs {
+		merged[k] = v
+	}
+	return merged
+}
+
+// resolveRefs recursively inlines $ref pointers. When depth exceeds
+// maxRefDepth the reference is replaced with an empty schema (any JSON value).
+func resolveRefs(s *JSONSchema, defs map[string]*JSONSchema, depth int) (*JSONSchema, error) {
+	if s == nil {
+		return nil, nil
+	}
+
+	// Handle $ref.
+	if s.Ref != "" {
+		if depth >= maxRefDepth {
+			// Circular reference protection — emit any-type schema.
+			return &JSONSchema{}, nil
+		}
+		name, err := parseLocalRef(s.Ref)
+		if err != nil {
+			return nil, err
+		}
+		target, ok := defs[name]
+		if !ok {
+			return nil, fmt.Errorf("unresolved $ref: %q (definition %q not found)", s.Ref, name)
+		}
+		// Resolve the target recursively (it may contain further $refs).
+		return resolveRefs(target, defs, depth+1)
+	}
+
+	// Deep-copy only the fields that may contain nested schemas.
+	out := *s // shallow copy
+	out.Definitions = nil
+	out.Defs = nil
+
+	if len(s.Properties) > 0 {
+		out.Properties = make(map[string]*JSONSchema, len(s.Properties))
+		for k, v := range s.Properties {
+			resolved, err := resolveRefs(v, defs, depth)
+			if err != nil {
+				return nil, err
+			}
+			out.Properties[k] = resolved
+		}
+	}
+	if s.Items != nil {
+		resolved, err := resolveRefs(s.Items, defs, depth)
+		if err != nil {
+			return nil, err
+		}
+		out.Items = resolved
+	}
+	return &out, nil
+}
+
+// parseLocalRef extracts the definition name from a local $ref pointer.
+// Supported formats:
+//
+//	"#/definitions/Foo" → "Foo"
+//	"#/$defs/Foo"       → "Foo"
+func parseLocalRef(ref string) (string, error) {
+	for _, prefix := range []string{"#/definitions/", "#/$defs/"} {
+		if len(ref) > len(prefix) && ref[:len(prefix)] == prefix {
+			return ref[len(prefix):], nil
+		}
+	}
+	return "", fmt.Errorf("unsupported $ref format: %q (only local #/definitions/ and #/$defs/ are supported)", ref)
 }
 
 func rejectUnsupported(s *JSONSchema) error {
@@ -24,7 +118,9 @@ func rejectUnsupported(s *JSONSchema) error {
 		return nil
 	}
 	if s.Ref != "" {
-		return fmt.Errorf("unsupported JSON Schema feature: $ref")
+		// This should not happen — refs are resolved before rejectUnsupported
+		// is called. If we get here, it means resolveRefs missed something.
+		return fmt.Errorf("unresolved $ref: %q", s.Ref)
 	}
 	if len(s.OneOf) > 0 {
 		return fmt.Errorf("unsupported JSON Schema feature: oneOf")

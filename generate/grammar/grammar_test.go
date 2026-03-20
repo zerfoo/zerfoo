@@ -501,7 +501,6 @@ func TestUnsupportedFeatures(t *testing.T) {
 		schema *JSONSchema
 		errMsg string
 	}{
-		{"$ref", &JSONSchema{Ref: "#/defs/Foo"}, "unsupported JSON Schema feature: $ref"},
 		{"oneOf", &JSONSchema{OneOf: []any{1}}, "unsupported JSON Schema feature: oneOf"},
 		{"anyOf", &JSONSchema{AnyOf: []any{1}}, "unsupported JSON Schema feature: anyOf"},
 		{"allOf", &JSONSchema{AllOf: []any{1}}, "unsupported JSON Schema feature: allOf"},
@@ -522,16 +521,16 @@ func TestUnsupportedFeatures(t *testing.T) {
 }
 
 func TestUnsupportedNested(t *testing.T) {
-	// Unsupported feature nested in a property.
+	// Unresolvable $ref nested in a property (no definitions provided).
 	schema := &JSONSchema{
 		Type: "object",
 		Properties: map[string]*JSONSchema{
-			"x": {Ref: "#/defs/X"},
+			"x": {Ref: "#/$defs/X"},
 		},
 	}
 	_, err := Convert(schema)
 	if err == nil {
-		t.Fatal("expected error for nested $ref")
+		t.Fatal("expected error for nested $ref without definition")
 	}
 }
 
@@ -623,6 +622,195 @@ func TestArrayOfStrings(t *testing.T) {
 	}
 	if !final.IsComplete() {
 		t.Fatalf("IsComplete(%q): got false", input)
+	}
+}
+
+func TestRefResolution_Simple(t *testing.T) {
+	// A schema with one $ref pointing to a definition.
+	schema := &JSONSchema{
+		Type: "object",
+		Properties: map[string]*JSONSchema{
+			"addr": {Ref: "#/definitions/Address"},
+		},
+		Required: []string{"addr"},
+		Definitions: map[string]*JSONSchema{
+			"Address": {
+				Type: "object",
+				Properties: map[string]*JSONSchema{
+					"city": {Type: "string"},
+				},
+				Required: []string{"city"},
+			},
+		},
+	}
+	g, err := Convert(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"addr":{"city":"NYC"}}`
+	final, ok := feedString(g, input)
+	if !ok {
+		t.Fatalf("feedString(%q): rejected", input)
+	}
+	if !final.IsComplete() {
+		t.Fatalf("IsComplete(%q): got false, want true", input)
+	}
+}
+
+func TestRefResolution_Defs(t *testing.T) {
+	// Same as Simple but using $defs instead of definitions.
+	schema := &JSONSchema{
+		Type: "object",
+		Properties: map[string]*JSONSchema{
+			"color": {Ref: "#/$defs/Color"},
+		},
+		Required: []string{"color"},
+		Defs: map[string]*JSONSchema{
+			"Color": {Type: "string"},
+		},
+	}
+	g, err := Convert(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"color":"red"}`
+	final, ok := feedString(g, input)
+	if !ok {
+		t.Fatalf("feedString(%q): rejected", input)
+	}
+	if !final.IsComplete() {
+		t.Fatalf("IsComplete(%q): got false, want true", input)
+	}
+}
+
+func TestRefResolution_Nested(t *testing.T) {
+	// $ref chain: A refs B, B refs C.
+	schema := &JSONSchema{
+		Type: "object",
+		Properties: map[string]*JSONSchema{
+			"val": {Ref: "#/definitions/A"},
+		},
+		Required: []string{"val"},
+		Definitions: map[string]*JSONSchema{
+			"A": {Ref: "#/definitions/B"},
+			"B": {Ref: "#/definitions/C"},
+			"C": {Type: "integer"},
+		},
+	}
+	g, err := Convert(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"val":42}`
+	final, ok := feedString(g, input)
+	if !ok {
+		t.Fatalf("feedString(%q): rejected", input)
+	}
+	if !final.IsComplete() {
+		t.Fatalf("IsComplete(%q): got false, want true", input)
+	}
+}
+
+func TestRefResolution_Circular(t *testing.T) {
+	// Circular $ref: A refs B, B refs A. Should not infinite loop.
+	// At max depth, the reference becomes an empty schema (any JSON).
+	schema := &JSONSchema{
+		Type: "object",
+		Properties: map[string]*JSONSchema{
+			"x": {Ref: "#/definitions/A"},
+		},
+		Required: []string{"x"},
+		Definitions: map[string]*JSONSchema{
+			"A": {
+				Type: "object",
+				Properties: map[string]*JSONSchema{
+					"child": {Ref: "#/definitions/B"},
+				},
+			},
+			"B": {
+				Type: "object",
+				Properties: map[string]*JSONSchema{
+					"child": {Ref: "#/definitions/A"},
+				},
+			},
+		},
+	}
+	g, err := Convert(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// At some depth the circular ref becomes any-JSON (empty schema).
+	// A simple object should be accepted.
+	input := `{"x":{}}`
+	final, ok := feedString(g, input)
+	if !ok {
+		t.Fatalf("feedString(%q): rejected", input)
+	}
+	if !final.IsComplete() {
+		t.Fatalf("IsComplete(%q): got false, want true", input)
+	}
+}
+
+func TestRefResolution_NotFound(t *testing.T) {
+	// $ref to non-existent definition returns error.
+	tests := []struct {
+		name   string
+		schema *JSONSchema
+	}{
+		{
+			name: "missing definition",
+			schema: &JSONSchema{
+				Type: "object",
+				Properties: map[string]*JSONSchema{
+					"x": {Ref: "#/definitions/DoesNotExist"},
+				},
+			},
+		},
+		{
+			name: "unsupported ref format",
+			schema: &JSONSchema{
+				Type: "object",
+				Properties: map[string]*JSONSchema{
+					"x": {Ref: "http://example.com/schema.json"},
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Convert(tc.schema)
+			if err == nil {
+				t.Fatal("expected error for unresolvable $ref")
+			}
+		})
+	}
+}
+
+func TestRefResolution_InArray(t *testing.T) {
+	// $ref used in array items.
+	schema := &JSONSchema{
+		Type: "array",
+		Items: &JSONSchema{Ref: "#/definitions/Item"},
+		Definitions: map[string]*JSONSchema{
+			"Item": {Type: "integer"},
+		},
+	}
+	g, err := Convert(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `[1,2,3]`
+	final, ok := feedString(g, input)
+	if !ok {
+		t.Fatalf("feedString(%q): rejected", input)
+	}
+	if !final.IsComplete() {
+		t.Fatalf("IsComplete(%q): got false, want true", input)
 	}
 }
 
