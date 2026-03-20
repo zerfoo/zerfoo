@@ -5,6 +5,53 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-20: E103 throughput regression root cause — two compounding bugs
+
+**Type:** investigation
+**Tags:** throughput, regression, Q4_K, Q6_K, GEMV, CUDA graph, DGX Spark
+
+**Problem:** 245 tok/s (commit 4e85b12) regressed to 156 tok/s on current HEAD.
+Prior investigation (2026-03-19) attributed the drop to a dirty working tree,
+but clean-build verification on DGX Spark (2026-03-20) showed the regression
+was real: 156 tok/s with both repos at HEAD.
+
+**Root cause:** Two independent regressions compounded:
+
+1. **ztensor: CUDA graph full-capture bypass (commit 33b54d9, 245->195 tok/s).**
+   Changed CUDA graph capture from "longest contiguous capturable region" to
+   "full capture with bypass". Non-capturable ops (EmbeddingLookup, Gather)
+   were moved inside the capture region as identity forwards, with the original
+   forwards running separately during replay. This added per-decode-step overhead:
+   allocations for input slices, individual Forward() calls for each bypassed op,
+   and a larger CUDA graph with identity nodes. Reverted to the original
+   longest-contiguous-region approach.
+
+2. **zerfoo: Q5_K/Q6_K de-quantization change (commit in model/gguf/loader.go,
+   245->187 tok/s).** Q5_K and Q6_K tensors were changed to keep float32 instead
+   of re-quantizing to Q4_0. In Q4_K_M models, attention output and FFN down
+   layers use Q6_K — these fell through to cuBLAS SGEMM (~30% slower for M=1
+   decode) instead of the optimized Q4_0 GEMV kernel. Restored re-quantization.
+
+**Fix:** Two commits:
+- ztensor: `4d56fd6` Revert CUDA graph full-capture (restores longest-region approach)
+- zerfoo: `21c9f45` Restore Q5_K/Q6_K re-quantization to Q4_0
+- zerfoo: `22b1c31` Update tests to expect Q4_0 storage
+
+**Impact:** Throughput restored to 244 tok/s (95% of GB10 roofline).
+
+| Config | Tok/s | Notes |
+|--------|-------|-------|
+| Old binary (4e85b12) + old kernels | 245.13 | Baseline |
+| New binary + new ztensor (before fix) | 156.23 | Both regressions |
+| Old zerfoo + new ztensor (before fix) | 195.05 | ztensor regression only |
+| New zerfoo + old ztensor (before fix) | 186.84 | zerfoo regression only |
+| New binary + fixes applied | 244.45 | Fixed |
+
+Bisection identified ztensor commit 33b54d9 by testing old zerfoo binary against
+ztensor checkpoints: 488862c (pre: 245 tok/s) vs 33b54d9 (post: 195 tok/s).
+
+---
+
 ## 2026-03-20: E100 full-system verification audit — all gaps resolved
 
 **Type:** finding
