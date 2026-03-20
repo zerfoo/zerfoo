@@ -33,8 +33,68 @@ func (p *Pow[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	return p.engine.Pow(ctx, inputs[0], inputs[1])
 }
 
-func (p *Pow[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("Pow backward not implemented")
+func (p *Pow[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("Pow backward requires 2 inputs, got %d", len(inputs))
+	}
+
+	base := inputs[0]
+	exp := inputs[1]
+	ops := p.engine.Ops()
+
+	// d/da(a^n) = n * a^(n-1)
+	oneData := make([]T, len(exp.Data()))
+	one := ops.One()
+	for i := range oneData {
+		oneData[i] = one
+	}
+	onesTensor, err := tensor.New[T](exp.Shape(), oneData)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: creating ones tensor: %w", err)
+	}
+
+	expM1, err := p.engine.Sub(ctx, exp, onesTensor)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: exp-1: %w", err)
+	}
+
+	basePowExpM1, err := p.engine.Pow(ctx, base, expM1)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: base^(exp-1): %w", err)
+	}
+
+	nTimesBasePow, err := p.engine.Mul(ctx, exp, basePowExpM1)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: n*base^(n-1): %w", err)
+	}
+
+	gradBase, err := p.engine.Mul(ctx, dOut, nTimesBasePow)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: dOut*gradBase: %w", err)
+	}
+
+	// d/dn(a^n) = a^n * ln(a)
+	output, err := p.engine.Pow(ctx, base, exp)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: base^exp: %w", err)
+	}
+
+	logBase, err := p.engine.Log(ctx, base)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: log(base): %w", err)
+	}
+
+	outputTimesLog, err := p.engine.Mul(ctx, output, logBase)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: output*log(base): %w", err)
+	}
+
+	gradExp, err := p.engine.Mul(ctx, dOut, outputTimesLog)
+	if err != nil {
+		return nil, fmt.Errorf("Pow backward: dOut*gradExp: %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{gradBase, gradExp}, nil
 }
 
 // BuildPow constructs a Pow node from attributes.
