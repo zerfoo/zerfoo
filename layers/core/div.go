@@ -33,8 +33,45 @@ func (d *Div[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	return d.engine.Div(ctx, inputs[0], inputs[1])
 }
 
-func (d *Div[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("Div backward not implemented")
+func (d *Div[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("Div backward requires 2 inputs, got %d", len(inputs))
+	}
+
+	a := inputs[0]
+	b := inputs[1]
+
+	// gradA = dOut / b  (d/da(a/b) = 1/b)
+	gradA, err := d.engine.Div(ctx, dOut, b)
+	if err != nil {
+		return nil, fmt.Errorf("Div backward gradA: %w", err)
+	}
+
+	// gradB = -dOut * a / (b * b)  (d/db(a/b) = -a/b²)
+	bSquared, err := d.engine.Mul(ctx, b, b)
+	if err != nil {
+		return nil, fmt.Errorf("Div backward b²: %w", err)
+	}
+
+	aOverBSq, err := d.engine.Div(ctx, a, bSquared)
+	if err != nil {
+		return nil, fmt.Errorf("Div backward a/b²: %w", err)
+	}
+
+	gradB, err := d.engine.Mul(ctx, dOut, aOverBSq)
+	if err != nil {
+		return nil, fmt.Errorf("Div backward dOut*a/b²: %w", err)
+	}
+
+	// Negate gradB
+	ops := d.engine.Ops()
+	negOne := ops.FromFloat32(-1.0)
+	gradB, err = d.engine.UnaryOp(ctx, gradB, func(x T) T { return ops.Mul(x, negOne) })
+	if err != nil {
+		return nil, fmt.Errorf("Div backward negate gradB: %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
 }
 
 // BuildDiv constructs a Div node from attributes.

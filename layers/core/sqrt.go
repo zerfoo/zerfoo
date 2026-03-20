@@ -33,8 +33,34 @@ func (s *Sqrt[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	return s.engine.Sqrt(ctx, inputs[0])
 }
 
-func (s *Sqrt[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("Sqrt backward not implemented")
+func (s *Sqrt[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("Sqrt backward requires 1 input, got %d", len(inputs))
+	}
+
+	a := inputs[0]
+
+	// gradA = dOut * 0.5 / sqrt(a)
+	sqrtA, err := s.engine.Sqrt(ctx, a)
+	if err != nil {
+		return nil, fmt.Errorf("Sqrt backward sqrt(a): %w", err)
+	}
+
+	ops := s.engine.Ops()
+	half := ops.FromFloat32(0.5)
+	halfOverSqrtA, err := s.engine.UnaryOp(ctx, sqrtA, func(x T) T {
+		return ops.Div(half, x)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Sqrt backward 0.5/sqrt(a): %w", err)
+	}
+
+	gradA, err := s.engine.Mul(ctx, dOut, halfOverSqrtA)
+	if err != nil {
+		return nil, fmt.Errorf("Sqrt backward dOut * 0.5/sqrt(a): %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{gradA}, nil
 }
 
 // BuildSqrt constructs a Sqrt node from attributes.
