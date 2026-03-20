@@ -35,9 +35,7 @@ func NewServerMetrics(c runtime.Collector) *ServerMetrics {
 // RecordRequest records a completed request's metrics.
 func (m *ServerMetrics) RecordRequest(tokens int, latency time.Duration) {
 	m.requestsTotal.Inc()
-	for range tokens {
-		m.tokensTotal.Inc()
-	}
+	m.tokensTotal.Add(int64(tokens))
 	ms := float64(latency.Microseconds()) / 1000.0
 	m.requestLatencyMs.Observe(ms)
 	if latency > 0 && tokens > 0 {

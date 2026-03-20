@@ -179,5 +179,10 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 	return nil
 }
 
+// SetLR sets the learning rate. This is typically called by a scheduler.
+func (a *AdamW[T]) SetLR(lr T) {
+	a.learningRate = lr
+}
+
 // Statically assert that the type implements the Optimizer interface.
 var _ Optimizer[float32] = (*AdamW[float32])(nil)
