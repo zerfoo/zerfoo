@@ -63,6 +63,9 @@ func run() error {
 	automlCmd := cli.NewAutoMLCommand(os.Stdout)
 	cliApp.RegisterCommand(automlCmd)
 
+	trainCmd := cli.NewTrainCommand(os.Stdout)
+	cliApp.RegisterCommand(trainCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
