@@ -3,17 +3,17 @@
 Current and historical performance measurements. Updated after each
 verification run on DGX.
 
-## Current Baselines (2026-03-19, main @ b81b616)
+## Current Baselines (2026-03-20, main @ 22b1c31 + ztensor @ 4d56fd6)
 
 | Model | Format | Tok/s | CUDA Graph | Tokens | Date | Commit | Notes |
 |-------|--------|-------|------------|--------|------|--------|-------|
-| Gemma 3 1B | Q4_K_M | 136.30 | Yes | 256 | 2026-03-19 | b81b616 | Regression from 245 — bisecting |
-| Gemma 3 1B | Q4_K_M | 229.45 | Yes | 256 | 2026-03-19 | 4e85b12 (old binary) | Old code, same kernels |
+| Gemma 3 1B | Q4_K_M | 244.45 | Yes | 256 | 2026-03-20 | 22b1c31 | Regression fixed (E103) |
+| Gemma 3 1B | Q4_K_M | 244.18 | Yes | 256 | 2026-03-20 | 22b1c31 | Run 2 |
+| Gemma 3 1B | Q4_K_M | 244.62 | Yes | 256 | 2026-03-20 | 22b1c31 | Run 3 |
 
-**Regression alert:** Current HEAD achieves ~136 tok/s vs ~229 tok/s at commit 4e85b12.
-The regression is in Go code (generate/ or inference/), not in CUDA kernels.
-Roofline analysis: GB10 LPDDR5x ~200 GB/s → max ~257 tok/s for 778 MB model.
-500 tok/s target requires hardware with higher memory bandwidth.
+Roofline analysis: GB10 LPDDR5x ~200 GB/s, max ~257 tok/s for 778 MB model.
+Current 244 tok/s = 95% bandwidth utilization.
+500 tok/s target requires hardware with higher memory bandwidth (A100/H100).
 
 ## Previous Baselines (2026-03-17, ztensor @ 4e85b12)
 
