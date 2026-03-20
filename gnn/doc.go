@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package gnn implements Graph Neural Network layers for node-level
 // representation learning on graph-structured data.
 //

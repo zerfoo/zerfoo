@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package crossasset provides a cross-attention model for multi-source feature
 // processing. Each source attends to features of all other sources via scaled
 // dot-product multi-head attention, enabling the model to learn inter-source

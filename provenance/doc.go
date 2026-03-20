@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package provenance provides cryptographic model lifecycle tracking.
 //
 // A Tracker maintains a hash chain of model lifecycle events — training runs,
