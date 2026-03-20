@@ -5,6 +5,43 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-20: E100 full-system verification audit — all gaps resolved
+
+**Type:** finding
+**Tags:** verification, wiring, audit, E100
+
+**Problem:** Full-system /verify audit found 5 wiring gaps (1 CRITICAL, 1 HIGH, 2 MEDIUM, 1 LOW) and 15 orphan packages across 78 directories and 32 use cases.
+
+**Root cause:** Gaps accumulated during rapid parallel wave execution (waves 1-22). Train CLI was missing, AutoML had placeholder worker, timeseries lacked Trainer integration, orphan packages never wired, stale binaries lingered.
+
+**Fix:** E100 remediation in 4 waves (T100.1-T100.6). Train subcommand added, tabularWorker implemented, timeseries adapters created (NBEATS/PatchTST/TFT), 15 packages marked experimental, 4 stale binaries removed. All 5 gaps verified resolved.
+
+**Impact:** 127/128 test packages pass (1 pre-existing flaky). 31/32 use cases fully wired (UC-022 upgraded from STUB to WIRED). Net +1,754 lines.
+
+---
+
+## 2026-03-19: Throughput regression bisect — dirty working tree, not a commit
+
+**Type:** investigation
+**Tags:** throughput, Q4_K, GEMV, DGX Spark, regression
+
+**Problem:** bench_tps_latest showed 134 tok/s vs 223 tok/s expected on Gemma 3 1B Q4_K_M.
+40% throughput regression suspected in ztensor or zerfoo commits.
+
+**Root cause:** The bench_tps_latest binary was built from a dirty working tree that had
+`decodeQ4KTensor` (model/gguf/loader.go:150) experimentally changed to keep native Q4KStorage
+instead of re-quantizing to Q4_0. Native Q4_K falls through to cuBLAS SGEMM (~134 tok/s)
+instead of the optimized Q4_0 GEMV kernel (~223 tok/s). No commit introduced the regression.
+
+**Fix:** N/A — the committed codebase is correct. The dirty-tree experiment was never committed.
+
+**Impact:** Clarifies that Q4_K→Q4_0 re-quantization is intentional for performance.
+Q5_K and Q6_K were also re-quantizing to Q4_0 (fixed in T99.1, commit f7e5b49) but those
+formats are chosen for quality, so the lossy re-quantization was a bug. Q4_K re-quantization
+is kept because Q4_K→Q4_0 quality loss is minimal and the GEMV speedup is ~40%.
+
+---
+
 ## 2026-03-19: T2.12 Mamba 3 CPU/CUDA parity — PASS on DGX Spark
 
 **Type:** benchmark
