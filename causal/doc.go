@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package causal provides causal structure learning from observational data.
 //
 // The primary entry point is DiscoverGraph, which implements the PC algorithm

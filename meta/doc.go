@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package meta provides meta-learning algorithms for few-shot adaptation. (Stability: alpha)
 //
 // The primary algorithm is MAML (Model-Agnostic Meta-Learning), which learns

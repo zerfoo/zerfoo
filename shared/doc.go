@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package shared provides a cross-model latent space for knowledge sharing.
 //
 // A LatentSpace defines a common embedding space that multiple models can

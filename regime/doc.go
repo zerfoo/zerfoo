@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package regime provides Hidden Markov Model (HMM) based regime classification
 // for time series data.
 //

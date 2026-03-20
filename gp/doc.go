@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package gp provides tree-based genetic programming. (Stability: alpha)
 //
 // Genetic programming evolves expression trees composed of primitive functions

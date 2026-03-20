@@ -1,3 +1,5 @@
+// Experimental — this package is not yet wired into the main framework.
+//
 // Package synth provides synthetic data generation using generative models.
 //
 // The primary entry point is MarketVAE, a Variational Autoencoder (VAE)
