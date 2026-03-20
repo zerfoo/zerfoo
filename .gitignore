@@ -48,4 +48,6 @@ bench-compare
 coverage-gate
 zerfoo-predict
 api-server
+debug-infer
 embedding
+zerfoo-train
