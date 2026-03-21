@@ -48,11 +48,15 @@ type Tenant struct {
 	lastReset    atomic.Int64 // unix nano
 }
 
+// redactedAPIKey is the placeholder returned instead of real API keys.
+const redactedAPIKey = "***redacted***"
+
 // Config returns a copyable snapshot of the tenant's configuration.
+// The APIKey field is redacted to prevent accidental credential leakage.
 func (t *Tenant) Config() TenantConfig {
 	return TenantConfig{
 		ID:          t.ID,
-		APIKey:      t.APIKey,
+		APIKey:      redactedAPIKey,
 		RateLimit:   t.rateLimit.Load(),
 		TokenBudget: t.tokenBudget.Load(),
 	}

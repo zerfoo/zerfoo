@@ -559,3 +559,52 @@ func TestTenantManager_CRUD(t *testing.T) {
 		}
 	})
 }
+
+func TestTenant_APIKeyRedaction(t *testing.T) {
+	rawKeys := []string{"secret-key-alpha", "secret-key-beta"}
+
+	tm := NewTenantManager()
+	tm.Create(TenantConfig{ID: "t1", APIKey: rawKeys[0], RateLimit: 10, TokenBudget: 1000})
+	tm.Create(TenantConfig{ID: "t2", APIKey: rawKeys[1], RateLimit: 20, TokenBudget: 2000})
+
+	t.Run("Config redacts API key", func(t *testing.T) {
+		tenant, err := tm.Get("t1")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		cfg := tenant.Config()
+		if cfg.APIKey == rawKeys[0] {
+			t.Errorf("Config().APIKey returned raw key %q, want redacted", cfg.APIKey)
+		}
+		if cfg.APIKey != redactedAPIKey {
+			t.Errorf("Config().APIKey = %q, want %q", cfg.APIKey, redactedAPIKey)
+		}
+	})
+
+	t.Run("List redacts all API keys", func(t *testing.T) {
+		configs := tm.List()
+		if len(configs) != 2 {
+			t.Fatalf("List() returned %d configs, want 2", len(configs))
+		}
+		for _, cfg := range configs {
+			for _, raw := range rawKeys {
+				if cfg.APIKey == raw {
+					t.Errorf("List() returned raw key %q for tenant %q", raw, cfg.ID)
+				}
+			}
+			if cfg.APIKey != redactedAPIKey {
+				t.Errorf("List() tenant %q APIKey = %q, want %q", cfg.ID, cfg.APIKey, redactedAPIKey)
+			}
+		}
+	})
+
+	t.Run("raw key still works for authentication", func(t *testing.T) {
+		tenant, err := tm.GetByAPIKey(rawKeys[0])
+		if err != nil {
+			t.Fatalf("GetByAPIKey should still work with raw key: %v", err)
+		}
+		if tenant.ID != "t1" {
+			t.Errorf("GetByAPIKey returned tenant %q, want %q", tenant.ID, "t1")
+		}
+	})
+}
