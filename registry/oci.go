@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// maxBlobSize is the maximum allowed size for a blob download (20 GB).
+var maxBlobSize = 20 << 30
+
 // Registry is an OCI distribution spec client for pushing and pulling
 // GGUF models as OCI artifacts.
 type Registry struct {
@@ -340,7 +343,14 @@ func (r *Registry) getBlob(ctx context.Context, repo, digest string) ([]byte, er
 		return nil, fmt.Errorf("blob GET returned status %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBlobSize)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxBlobSize {
+		return nil, fmt.Errorf("blob exceeds maximum size of %d bytes", maxBlobSize)
+	}
+	return data, nil
 }
 
 // setAuth sets basic auth on a request if credentials are configured.

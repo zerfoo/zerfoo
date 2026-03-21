@@ -521,6 +521,36 @@ func TestParseReference(t *testing.T) {
 	}
 }
 
+func TestRegistry_GetBlob_OversizedResponse(t *testing.T) {
+	// Temporarily lower maxBlobSize so we can test the rejection without
+	// allocating 20 GB of memory.
+	orig := maxBlobSize
+	maxBlobSize = 1024
+	defer func() { maxBlobSize = orig }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		// Write maxBlobSize+1 bytes to exceed the limit.
+		w.Write(make([]byte, 1025)) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+
+	_, err := reg.getBlob(context.Background(), "repo", "sha256:fake")
+	if err == nil {
+		t.Fatal("getBlob should reject oversized blob")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Verify the production default is 20 GB.
+	if orig != 20<<30 {
+		t.Errorf("default maxBlobSize = %d, want %d", orig, 20<<30)
+	}
+}
+
 func TestSha256Digest(t *testing.T) {
 	data := []byte("hello world")
 	got := sha256Digest(data)
