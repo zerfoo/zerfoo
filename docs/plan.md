@@ -1047,7 +1047,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 34: Medium Security Fixes -- GGUF and Infrastructure (5 agents)
 
-- [ ] T106.21 Add integer overflow checks to GGUF tensor parsing
+- [x] T106.21 Add integer overflow checks to GGUF tensor parsing
   Owner: ML Eng  Est: 1h  verifies: [UC-001]
   Deps: none
   Files: model/gguf/loader.go, model/gguf/parser.go
@@ -1058,7 +1058,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: crafted dimensions that would overflow are rejected with clear error.
   - go vet ./model/gguf/ clean.
 
-- [ ] T106.22 Add size limit to OCI blob download
+- [x] T106.22 Add size limit to OCI blob download
   Owner: ML Eng  Est: 30m  verifies: [UC-005]
   Deps: none
   Files: registry/oci.go
@@ -1068,7 +1068,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify oversized response is rejected.
   - go vet ./registry/ clean.
 
-- [ ] T106.23 Fix JSON injection in support API error response
+- [x] T106.23 Fix JSON injection in support API error response
   Owner: Security Eng  Est: 15m  verifies: [infrastructure]
   Deps: none
   Files: support/api.go
@@ -1077,7 +1077,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: error message containing double quotes is properly escaped.
   - go vet ./support/ clean.
 
-- [ ] T106.24 Add pod securityContext to Helm deployment
+- [x] T106.24 Add pod securityContext to Helm deployment
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: deploy/helm/zerfoo/templates/deployment.yaml, deploy/helm/zerfoo/values.yaml
@@ -1088,7 +1088,7 @@ Source: .claude/scratch/deep-review-report.md
   - Add corresponding values to values.yaml.
   - Verify: helm template renders correctly with security context.
 
-- [ ] T106.25 Restrict Cloud Run IAM from allUsers
+- [x] T106.25 Restrict Cloud Run IAM from allUsers
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: infra/terraform/zerfoo-cloud/cloud_run.tf
@@ -1309,11 +1309,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 34: Medium Fixes -- GGUF and Infrastructure (5 agents)
 
-- [ ] T106.21 Add integer overflow checks to GGUF parsing
-- [ ] T106.22 Add size limit to OCI blob download
-- [ ] T106.23 Fix JSON injection in support API error response
-- [ ] T106.24 Add pod securityContext to Helm deployment
-- [ ] T106.25 Restrict Cloud Run IAM from allUsers
+- [x] T106.21 Add integer overflow checks to GGUF parsing
+- [x] T106.22 Add size limit to OCI blob download
+- [x] T106.23 Fix JSON injection in support API error response
+- [x] T106.24 Add pod securityContext to Helm deployment
+- [x] T106.25 Restrict Cloud Run IAM from allUsers
 
 #### Wave 35: Medium Fixes -- Training and Layers (5 agents)
 
