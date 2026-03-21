@@ -89,3 +89,94 @@ func TestGenerateBatch_SinglePromptOutput(t *testing.T) {
 		t.Errorf("got %q, want %q", results[0], "foo")
 	}
 }
+
+func TestGenerateBatch_ConcurrencyLimit(t *testing.T) {
+	const numPrompts = 20
+
+	prompts := make([]string, numPrompts)
+	for i := range prompts {
+		prompts[i] = "hello"
+	}
+
+	// Verify that with maxBatchConcurrency=2 all prompts still complete correctly.
+	m := buildTestModel(t, 8, []int{6, 2})
+	m.maxBatchConcurrency = 2
+
+	results, err := m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != numPrompts {
+		t.Fatalf("got %d results, want %d", len(results), numPrompts)
+	}
+	for i, r := range results {
+		if r == "" {
+			t.Errorf("results[%d] is empty", i)
+		}
+	}
+
+	// With maxBatchConcurrency=1, generation is effectively serial — verify correctness.
+	m.maxBatchConcurrency = 1
+	results, err = m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
+	if err != nil {
+		t.Fatalf("unexpected error with concurrency=1: %v", err)
+	}
+	if len(results) != numPrompts {
+		t.Fatalf("got %d results, want %d", len(results), numPrompts)
+	}
+}
+
+func TestGenerateBatch_DefaultConcurrency(t *testing.T) {
+	m := buildTestModel(t, 8, []int{6, 2})
+
+	// maxBatchConcurrency is 0 (zero value) — should use defaultMaxBatchConcurrency.
+	if m.maxBatchConcurrency != 0 {
+		t.Fatalf("expected zero-value maxBatchConcurrency, got %d", m.maxBatchConcurrency)
+	}
+
+	prompts := make([]string, 20)
+	for i := range prompts {
+		prompts[i] = "hello"
+	}
+
+	results, err := m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 20 {
+		t.Fatalf("got %d results, want 20", len(results))
+	}
+}
+
+func TestGenerateBatch_SetMaxBatchConcurrency(t *testing.T) {
+	m := buildTestModel(t, 8, []int{6, 2})
+
+	// Verify SetMaxBatchConcurrency works.
+	m.SetMaxBatchConcurrency(4)
+	if m.maxBatchConcurrency != 4 {
+		t.Fatalf("expected maxBatchConcurrency=4, got %d", m.maxBatchConcurrency)
+	}
+
+	// Zero and negative values should be ignored.
+	m.SetMaxBatchConcurrency(0)
+	if m.maxBatchConcurrency != 4 {
+		t.Fatalf("SetMaxBatchConcurrency(0) should be ignored, got %d", m.maxBatchConcurrency)
+	}
+	m.SetMaxBatchConcurrency(-1)
+	if m.maxBatchConcurrency != 4 {
+		t.Fatalf("SetMaxBatchConcurrency(-1) should be ignored, got %d", m.maxBatchConcurrency)
+	}
+
+	// Should still work with the set value.
+	prompts := make([]string, 10)
+	for i := range prompts {
+		prompts[i] = "hello"
+	}
+	results, err := m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 10 {
+		t.Fatalf("got %d results, want 10", len(results))
+	}
+}
