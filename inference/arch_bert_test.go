@@ -98,6 +98,10 @@ func makeBertTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric
 		tensors[prefix+"ffn_norm.bias"] = zeros([]int{hidden})
 	}
 
+	// Pooler (CLS token projection + tanh).
+	tensors["cls_pooler.weight"] = fill([]int{hidden, hidden}, 0.02)
+	tensors["cls_pooler.bias"] = zeros([]int{hidden})
+
 	// Classification head.
 	tensors["cls.weight"] = fill([]int{numLabels, hidden}, 0.02)
 	tensors["cls.bias"] = zeros([]int{numLabels})

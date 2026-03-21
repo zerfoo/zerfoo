@@ -72,6 +72,12 @@ func writeTestBertGGUF(t *testing.T, dir string) string {
 		)
 	}
 
+	// Pooler (CLS token projection + tanh).
+	tensors = append(tensors,
+		tensorDef{"cls_pooler.weight", []uint64{uint64(hidden), uint64(hidden)}},
+		tensorDef{"cls_pooler.bias", []uint64{uint64(hidden)}},
+	)
+
 	// Classification head.
 	tensors = append(tensors,
 		tensorDef{"cls.weight", []uint64{uint64(hidden), uint64(numLabels)}},
