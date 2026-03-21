@@ -953,7 +953,7 @@ Source: .claude/scratch/deep-review-report.md
   - Existing tests still pass.
   - go vet ./layers/attention/ clean.
 
-- [ ] T106.13 Cap GenerateBatch concurrency
+- [x] T106.13 Cap GenerateBatch concurrency
   Owner: ML Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: inference/inference.go
@@ -975,7 +975,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: mock server returns mismatched hash -- verify file deleted and error returned.
   - go vet ./registry/ clean.
 
-- [ ] T106.15 Fix RegisterAlias concurrent map race
+- [x] T106.15 Fix RegisterAlias concurrent map race
   Owner: ML Eng  Est: 30m  verifies: [UC-001]
   Deps: none
   Files: inference/inference.go
@@ -1293,11 +1293,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 32: High Security Fixes -- Inference and Registry (5 agents)
 
-- [ ] T106.11 Convert panics to errors in layers/core/
-- [ ] T106.12 Convert panics to errors in layers/attention/
-- [ ] T106.13 Cap GenerateBatch concurrency
-- [ ] T106.14 Add SHA-256 checksum to HuggingFace downloads + atomic write
-- [ ] T106.15 Fix RegisterAlias concurrent map race
+- [x] T106.11 Convert panics to errors in layers/core/
+- [x] T106.12 Convert panics to errors in layers/attention/
+- [x] T106.13 Cap GenerateBatch concurrency
+- [x] T106.14 Add SHA-256 checksum to HuggingFace downloads + atomic write
+- [x] T106.15 Fix RegisterAlias concurrent map race
 
 #### Wave 33: Medium Fixes -- Data Exposure (5 agents)
 
