@@ -689,6 +689,98 @@ Files to fix:
 
 ---
 
+#### E105: Fix NaN/Inf in Windowed Training -- Issue #121 [2026 Q2 -- CRITICAL]
+
+GitHub issue #121: All four timeseries backends (DLinear, N-HiTS, CfC, PatchTST)
+produce NaN or -Inf weights when training on real-world high-dimensional data
+(1,623 features, 50K rows, feature scales spanning 10 orders of magnitude).
+
+Root cause analysis:
+1. No input normalization -- features range from 0.0001 (funding rates) to
+   millions (volumes). Without z-score normalization, gradients explode.
+2. No NaN/Inf detection -- once a weight becomes NaN, training continues
+   and poisons all subsequent computations. Should halt early with error.
+3. No LR warmup -- large initial gradients cause divergence in early epochs.
+Note: Gradient clipping IS already present (GradClip=1.0 default in
+DefaultTrainConfig). The issue incorrectly claims it is missing.
+
+Files affected: timeseries/dlinear.go, nhits.go, cfc.go, patchtst.go and
+their corresponding test files.
+
+- [ ] T105.1 Add WarmupEpochs to TrainConfig and z-score normalization helper
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: none
+  Acceptance:
+  - Add WarmupEpochs int field to TrainConfig (default 5 in DefaultTrainConfig).
+  - Add normalizeWindows(windows [][][]float64) ([][][]float64, means [][]float64, stds [][]float64)
+    helper that computes per-channel mean and std across all samples, returns
+    normalized windows with (x - mean) / (std + 1e-8).
+  - Add isFinite(v float64) bool helper.
+  - Unit tests for normalizeWindows with multi-scale input.
+  - `go vet ./timeseries/` clean.
+
+- [ ] T105.2 Apply normalization + NaN detection + warmup to DLinear TrainWindowed
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: T105.1
+  Acceptance:
+  - At entry of TrainWindowed, call normalizeWindows on input windows.
+  - Apply linear LR warmup: lr_effective = lr * min(1.0, float64(epoch+1) / float64(warmupEpochs)).
+  - After each epoch loss computation, check math.IsNaN(epochLoss) || math.IsInf(epochLoss, 0).
+    If true, return error: "dlinear: training diverged at epoch %d: loss=%v".
+  - Existing gradient clipping (GradClip=1.0) remains unchanged.
+  - Existing tests still pass.
+
+- [ ] T105.3 Apply normalization + NaN detection + warmup to N-HiTS TrainWindowed
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: T105.1
+  Acceptance:
+  - Same normalization, warmup, and NaN detection pattern as T105.2.
+  - Error message prefix: "nhits:".
+  - Existing tests still pass.
+
+- [ ] T105.4 Apply normalization + NaN detection + warmup to CfC TrainWindowed
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: T105.1
+  Acceptance:
+  - Same normalization, warmup, and NaN detection pattern as T105.2.
+  - Error message prefix: "cfc:".
+  - Existing tests still pass.
+
+- [ ] T105.5 Apply normalization + NaN detection + warmup to PatchTST TrainWindowed
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: T105.1
+  Acceptance:
+  - Same normalization, warmup, and NaN detection pattern as T105.2.
+  - Error message prefix: "patchtst:".
+  - Existing tests still pass.
+
+- [ ] T105.6 Add multi-scale divergence regression tests for all 4 backends
+  Owner: ML Eng  Est: 1.5h  verifies: [UC-026]
+  Deps: T105.2, T105.3, T105.4, T105.5
+  Acceptance:
+  - New test TestXxx_TrainWindowed_MultiScale in each backend test file.
+  - Create synthetic data with 100+ features spanning 10 orders of magnitude
+    (0.0001 to 1,000,000), 500+ samples, 20 epochs.
+  - Assert: training completes without error, final loss is finite (not NaN/Inf).
+  - Assert: all model weights are finite after training.
+  - Run: `go test -run MultiScale -timeout 120s ./timeseries/`
+
+- [ ] T105.7 Run go vet and linter on timeseries package
+  Owner: ML Eng  Est: 15m  verifies: [infrastructure]
+  Deps: T105.6
+  Acceptance:
+  - `go vet ./timeseries/` clean.
+  - `golangci-lint run ./timeseries/` clean.
+
+- [ ] T105.8 Close GitHub issue #121 with fix evidence
+  Owner: ML Eng  Est: 15m  delivers: [issue #121 closed with fix commit]
+  Deps: T105.7
+  Acceptance:
+  - Post comment on #121 citing fix commits, test output, and what changed.
+  - Close the issue.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -709,7 +801,7 @@ Implements arXiv:2603.15031. See layers/residual/ package and inference/residual
 
 | Track | Description | Epic/Group IDs | Sync Points |
 |-------|-------------|----------------|-------------|
-| A | HRM segfault fix | E104 | Merge at DGX verified |
+| A | Timeseries NaN fix | E105 | Merge at tests pass + issue closed |
 | B | Community + DevRel | E4, E5, E11 | Merge at content published |
 | C | Backend Expansion | E8, E20 | Merge at ROCm parity |
 | D | Platform and Enterprise | E12-E19 | Merge at cloud GA |
@@ -734,6 +826,26 @@ Implements arXiv:2603.15031. See layers/residual/ package and inference/residual
 
 - [x] T104.3 Verify fix on DGX Spark — 43 tests PASS, no segfault, race clean
 - [x] T104.4 Close GitHub issue #105 — comment posted with fix evidence
+
+#### Wave 26: TrainConfig + Normalization Helper (1 agent)
+
+- [ ] T105.1 Add WarmupEpochs to TrainConfig + normalizeWindows helper
+
+#### Wave 27: Per-Backend NaN Fix (4 agents)
+
+- [ ] T105.2 DLinear: normalization + NaN detection + warmup
+- [ ] T105.3 N-HiTS: normalization + NaN detection + warmup
+- [ ] T105.4 CfC: normalization + NaN detection + warmup
+- [ ] T105.5 PatchTST: normalization + NaN detection + warmup
+
+#### Wave 28: Multi-Scale Tests + Lint (2 agents)
+
+- [ ] T105.6 Multi-scale divergence regression tests (all 4 backends)
+- [ ] T105.7 Run go vet + linter on timeseries package
+
+#### Wave 29: Close Issue (1 agent)
+
+- [ ] T105.8 Close GitHub issue #121
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
@@ -832,6 +944,16 @@ See Hand-Off Notes.
 
 ## Progress Log
 
+### 2026-03-21: E105 created -- GitHub issue #121 NaN/Inf in windowed training
+
+Created E105 (8 tasks, 4 waves) to fix NaN/Inf divergence in all 4 timeseries
+backends (DLinear, N-HiTS, CfC, PatchTST) when training on high-dimensional
+real-world data (issue #121). Root cause: no input normalization when features
+span 10 orders of magnitude. Gradient clipping was already present (GradClip=1.0)
+contrary to the issue report. Fix adds z-score normalization, NaN/Inf early halt,
+and LR warmup. Wave 26 (config), Wave 27 (4 parallel backend fixes),
+Wave 28 (tests + lint), Wave 29 (close issue).
+
 ### 2026-03-20: E104 created -- GitHub issue #105 HRM segfault
 
 Created E104 (4 tasks) to fix HRM Forward() segfault on linux/arm64 (issue #105).
@@ -864,10 +986,10 @@ Remaining 25 tasks blocked by hardware access or human actions.
 
 ## Hand-Off Notes
 
-### Current State (2026-03-20)
+### Current State (2026-03-21)
 
-- **Score:** 113/136 tasks complete (83.1%). E103 done, E104 next.
-- **Active work:** E104 (HRM segfault fix, issue #105).
+- **Score:** 113/144 tasks complete (78.5%). E105 next (8 new tasks).
+- **Active work:** E105 (NaN/Inf fix in windowed training, issue #121).
 - **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
 - **Throughput:** 244 tok/s restored (E103 fixed two compounding regressions).
 - **Peak throughput:** 245 tok/s (commit 4e85b12, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graphs).
