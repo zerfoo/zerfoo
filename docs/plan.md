@@ -707,7 +707,7 @@ DefaultTrainConfig). The issue incorrectly claims it is missing.
 Files affected: timeseries/dlinear.go, nhits.go, cfc.go, patchtst.go and
 their corresponding test files.
 
-- [ ] T105.1 Add WarmupEpochs to TrainConfig and z-score normalization helper
+- [x] T105.1 Add WarmupEpochs to TrainConfig and z-score normalization helper (2026-03-21)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: none
   Acceptance:
@@ -719,7 +719,7 @@ their corresponding test files.
   - Unit tests for normalizeWindows with multi-scale input.
   - `go vet ./timeseries/` clean.
 
-- [ ] T105.2 Apply normalization + NaN detection + warmup to DLinear TrainWindowed
+- [x] T105.2 Apply normalization + NaN detection + warmup to DLinear TrainWindowed (2026-03-21)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: T105.1
   Acceptance:
@@ -730,7 +730,7 @@ their corresponding test files.
   - Existing gradient clipping (GradClip=1.0) remains unchanged.
   - Existing tests still pass.
 
-- [ ] T105.3 Apply normalization + NaN detection + warmup to N-HiTS TrainWindowed
+- [x] T105.3 Apply normalization + NaN detection + warmup to N-HiTS TrainWindowed (2026-03-21)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: T105.1
   Acceptance:
@@ -738,7 +738,7 @@ their corresponding test files.
   - Error message prefix: "nhits:".
   - Existing tests still pass.
 
-- [ ] T105.4 Apply normalization + NaN detection + warmup to CfC TrainWindowed
+- [x] T105.4 Apply normalization + NaN detection + warmup to CfC TrainWindowed (2026-03-21)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: T105.1
   Acceptance:
@@ -746,7 +746,7 @@ their corresponding test files.
   - Error message prefix: "cfc:".
   - Existing tests still pass.
 
-- [ ] T105.5 Apply normalization + NaN detection + warmup to PatchTST TrainWindowed
+- [x] T105.5 Apply normalization + NaN detection + warmup to PatchTST TrainWindowed (2026-03-21)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: T105.1
   Acceptance:
@@ -754,7 +754,7 @@ their corresponding test files.
   - Error message prefix: "patchtst:".
   - Existing tests still pass.
 
-- [ ] T105.6 Add multi-scale divergence regression tests for all 4 backends
+- [x] T105.6 Add multi-scale divergence regression tests for all 4 backends (2026-03-21)
   Owner: ML Eng  Est: 1.5h  verifies: [UC-026]
   Deps: T105.2, T105.3, T105.4, T105.5
   Acceptance:
@@ -765,14 +765,14 @@ their corresponding test files.
   - Assert: all model weights are finite after training.
   - Run: `go test -run MultiScale -timeout 120s ./timeseries/`
 
-- [ ] T105.7 Run go vet and linter on timeseries package
+- [x] T105.7 Run go vet and linter on timeseries package (2026-03-21)
   Owner: ML Eng  Est: 15m  verifies: [infrastructure]
   Deps: T105.6
   Acceptance:
   - `go vet ./timeseries/` clean.
   - `golangci-lint run ./timeseries/` clean.
 
-- [ ] T105.8 Close GitHub issue #121 with fix evidence
+- [x] T105.8 Close GitHub issue #121 with fix evidence (2026-03-21)
   Owner: ML Eng  Est: 15m  delivers: [issue #121 closed with fix commit]
   Deps: T105.7
   Acceptance:
@@ -827,25 +827,25 @@ Implements arXiv:2603.15031. See layers/residual/ package and inference/residual
 - [x] T104.3 Verify fix on DGX Spark — 43 tests PASS, no segfault, race clean
 - [x] T104.4 Close GitHub issue #105 — comment posted with fix evidence
 
-#### Wave 26: TrainConfig + Normalization Helper (1 agent)
+#### Wave 26: TrainConfig + Normalization Helper (completed 2026-03-21)
 
-- [ ] T105.1 Add WarmupEpochs to TrainConfig + normalizeWindows helper
+- [x] T105.1 Add WarmupEpochs to TrainConfig + normalizeWindows helper
 
-#### Wave 27: Per-Backend NaN Fix (4 agents)
+#### Wave 27: Per-Backend NaN Fix (completed 2026-03-21)
 
-- [ ] T105.2 DLinear: normalization + NaN detection + warmup
-- [ ] T105.3 N-HiTS: normalization + NaN detection + warmup
-- [ ] T105.4 CfC: normalization + NaN detection + warmup
-- [ ] T105.5 PatchTST: normalization + NaN detection + warmup
+- [x] T105.2 DLinear: normalization + NaN detection + warmup
+- [x] T105.3 N-HiTS: normalization + NaN detection + warmup
+- [x] T105.4 CfC: normalization + NaN detection + warmup
+- [x] T105.5 PatchTST: normalization + NaN detection + warmup
 
-#### Wave 28: Multi-Scale Tests + Lint (2 agents)
+#### Wave 28: Multi-Scale Tests + Lint (completed 2026-03-21)
 
-- [ ] T105.6 Multi-scale divergence regression tests (all 4 backends)
-- [ ] T105.7 Run go vet + linter on timeseries package
+- [x] T105.6 Multi-scale divergence regression tests (all 4 backends)
+- [x] T105.7 Run go vet + linter on timeseries package
 
-#### Wave 29: Close Issue (1 agent)
+#### Wave 29: Close Issue (completed 2026-03-21)
 
-- [ ] T105.8 Close GitHub issue #121
+- [x] T105.8 Close GitHub issue #121
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
@@ -988,8 +988,8 @@ Remaining 25 tasks blocked by hardware access or human actions.
 
 ### Current State (2026-03-21)
 
-- **Score:** 113/144 tasks complete (78.5%). E105 next (8 new tasks).
-- **Active work:** E105 (NaN/Inf fix in windowed training, issue #121).
+- **Score:** 121/144 tasks complete (84.0%). E105 complete. No open issues.
+- **Last completed:** E105 (NaN/Inf fix in windowed training, issue #121 closed).
 - **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
 - **Throughput:** 244 tok/s restored (E103 fixed two compounding regressions).
 - **Peak throughput:** 245 tok/s (commit 4e85b12, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graphs).
