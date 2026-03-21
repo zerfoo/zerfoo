@@ -1152,7 +1152,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 36: Tech Debt and Quality (5 agents)
 
-- [ ] T106.31 Replace stdlib log with structured logger in 7 files
+- [x] T106.31 Replace stdlib log with structured logger in 7 files
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: layers/attention/grouped_query_attention.go, generate/generator.go,
@@ -1164,7 +1164,7 @@ Source: .claude/scratch/deep-review-report.md
   - No stdlib log imports remain in production code (test files exempt).
   - go vet on each changed package clean.
 
-- [ ] T106.32 Cache ZERFOO_DEBUG_ONNX env var check
+- [x] T106.32 Cache ZERFOO_DEBUG_ONNX env var check
   Owner: ML Eng  Est: 15m  verifies: [UC-002]
   Deps: none
   Files: generate/generator.go
@@ -1173,7 +1173,7 @@ Source: .claude/scratch/deep-review-report.md
   - Replace os.Getenv("ZERFOO_DEBUG_ONNX") calls at lines 342, 375, 436 with debugOnnx.
   - go vet ./generate/ clean.
 
-- [ ] T106.33 Fix flaky TestMAML_MetaConvergence
+- [x] T106.33 Fix flaky TestMAML_MetaConvergence
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: meta/meta_test.go
@@ -1193,7 +1193,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: Config() and List() do not return raw API keys.
   - go vet ./cloud/ clean.
 
-- [ ] T106.35 Add OCI reference path traversal check
+- [x] T106.35 Add OCI reference path traversal check
   Owner: Security Eng  Est: 15m  verifies: [UC-005]
   Deps: none
   Files: registry/oci.go
@@ -1325,11 +1325,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 36: Tech Debt and Quality (5 agents)
 
-- [ ] T106.31 Replace stdlib log with structured logger
-- [ ] T106.32 Cache ZERFOO_DEBUG_ONNX env var check
-- [ ] T106.33 Fix flaky TestMAML_MetaConvergence
-- [ ] T106.34 Redact tenant API keys from Config/List
-- [ ] T106.35 Add OCI reference path traversal check
+- [x] T106.31 Replace stdlib log with structured logger
+- [x] T106.32 Cache ZERFOO_DEBUG_ONNX env var check
+- [x] T106.33 Fix flaky TestMAML_MetaConvergence
+- [x] T106.34 Redact tenant API keys from Config/List
+- [x] T106.35 Add OCI reference path traversal check
 
 #### Wave 37: Verification and Lint (2 agents)
 
