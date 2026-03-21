@@ -86,6 +86,66 @@ func (a *PatchTSTAdapter) Parameters() []*graph.Parameter[float32] {
 	return a.params
 }
 
+// NHiTSAdapter wraps an NHiTS model to satisfy training.Model[float32].
+// The Forward method runs the N-HiTS forward pass, producing a forecast tensor.
+type NHiTSAdapter struct {
+	Model  *NHiTS
+	params []*graph.Parameter[float32]
+}
+
+// NewNHiTSAdapter creates a trainable adapter for the given NHiTS model.
+func NewNHiTSAdapter(m *NHiTS) (*NHiTSAdapter, error) {
+	params, err := collectNHiTSParameters(m)
+	if err != nil {
+		return nil, fmt.Errorf("nhits adapter: %w", err)
+	}
+	return &NHiTSAdapter{Model: m, params: params}, nil
+}
+
+// Forward runs the NHiTS forward pass and returns the forecast tensor.
+// Expects a single input tensor of shape [batch, channels * inputLen].
+func (a *NHiTSAdapter) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("nhits adapter: expected 1 input, got %d", len(inputs))
+	}
+	return a.Model.Forward(ctx, inputs[0])
+}
+
+// Backward is not implemented for timeseries models.
+func (a *NHiTSAdapter) Backward(_ context.Context, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, fmt.Errorf("nhits adapter: Backward not implemented; use engine-level autograd or standalone training loops")
+}
+
+// Parameters returns all trainable parameters from the NHiTS model.
+func (a *NHiTSAdapter) Parameters() []*graph.Parameter[float32] {
+	return a.params
+}
+
+// collectNHiTSParameters collects all trainable parameters from an NHiTS model.
+func collectNHiTSParameters(m *NHiTS) ([]*graph.Parameter[float32], error) {
+	var params []*graph.Parameter[float32]
+
+	for si, stack := range m.stacks {
+		prefix := fmt.Sprintf("stack.%d", si)
+
+		for li, l := range stack.mlpLayers {
+			p, err := collectMLPParams(fmt.Sprintf("%s.mlp.%d", prefix, li), l)
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, p...)
+		}
+
+		p, err := collectMLPParams(prefix+".output_proj", stack.outputProj)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, p...)
+	}
+
+	return params, nil
+}
+
 // TFTAdapter wraps a TFT model to satisfy training.Model[float32].
 // The Forward method expects two inputs: static features [batch, numStaticFeatures]
 // and time features [batch, seqLen, numTimeFeatures]. It processes each batch
