@@ -3,6 +3,7 @@ package serve
 
 import (
 	"context"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -28,7 +30,7 @@ type Server struct {
 	draftModel *inference.Model // optional; enables speculative decoding
 	mux        *http.ServeMux
 	batch      *BatchScheduler // optional; nil means direct calls
-	unloaded    bool            // true after DELETE /v1/models/:id
+	unloaded    atomic.Bool     // true after DELETE /v1/models/:id
 	transcriber      Transcriber          // optional; enables /v1/audio/transcriptions
 	classifier       Classifier           // optional; enables /v1/classify
 	logger           log.Logger
@@ -36,6 +38,7 @@ type Server struct {
 	classifyMetrics  *ClassifyMetrics
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
+	apiKey      string          // optional; enables Bearer token auth
 }
 
 // ServerOption configures the server.
@@ -70,6 +73,15 @@ func WithMetrics(c runtime.Collector) ServerOption {
 func WithBatchScheduler(bs *BatchScheduler) ServerOption {
 	return func(s *Server) {
 		s.batch = bs
+	}
+}
+
+// WithAPIKey enables Bearer token authentication on all endpoints
+// except health checks (/healthz, /readyz), metrics (/metrics), and
+// the OpenAPI spec (/openapi.yaml).
+func WithAPIKey(key string) ServerOption {
+	return func(s *Server) {
+		s.apiKey = key
 	}
 }
 
@@ -133,7 +145,38 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 }
 
 // Handler returns the HTTP handler for this server.
-func (s *Server) Handler() http.Handler { return s.logMiddleware(s.mux) }
+func (s *Server) Handler() http.Handler {
+	var h http.Handler = s.mux
+	if s.apiKey != "" {
+		h = s.authMiddleware(h)
+	}
+	return s.logMiddleware(h)
+}
+
+// authMiddleware rejects requests that do not carry a valid Bearer token.
+// Health-check, metrics, and OpenAPI spec paths are exempt.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics", "/healthz", "/readyz", "/openapi.yaml":
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) {
+			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+			return
+		}
+		token := auth[len(prefix):]
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
+			writeError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // statusRecorder wraps http.ResponseWriter to capture the status code.
 type statusRecorder struct {
@@ -603,7 +646,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	if s.unloaded {
+	if s.unloaded.Load() {
 		writeJSON(w, http.StatusOK, ModelListResponse{Object: "list"})
 		return
 	}
@@ -618,7 +661,7 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if s.unloaded {
+	if s.unloaded.Load() {
 		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 		return
 	}
@@ -635,7 +678,7 @@ func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if s.unloaded {
+	if s.unloaded.Load() {
 		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 		return
 	}
@@ -647,7 +690,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.model.Close()
-	s.unloaded = true
+	s.unloaded.Store(true)
 
 	writeJSON(w, http.StatusOK, ModelDeleteResponse{
 		ID:      id,

@@ -1598,3 +1598,67 @@ func TestHandleChatCompletions_ResponseFormatJSONObject(t *testing.T) {
 		t.Fatalf("Choices len = %d, want 1", len(result.Choices))
 	}
 }
+
+func TestAuthMiddleware(t *testing.T) {
+	mdl := buildTestModel(t)
+	const apiKey = "test-secret-key"
+	srv := NewServer(mdl, WithAPIKey(apiKey))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	t.Run("no key returns 401", func(t *testing.T) {
+		resp := doGet(t, ts.URL+"/v1/models")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("wrong key returns 401", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/v1/models", http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer wrong-key")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("correct key returns 200", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/v1/models", http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("metrics skips auth", func(t *testing.T) {
+		resp := doGet(t, ts.URL+"/metrics")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("openapi.yaml skips auth", func(t *testing.T) {
+		resp := doGet(t, ts.URL+"/openapi.yaml")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+	})
+}

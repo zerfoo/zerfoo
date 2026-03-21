@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -43,7 +44,7 @@ func (c *ServeCommand) Description() string {
 
 // Run implements Command.Run.
 func (c *ServeCommand) Run(ctx context.Context, args []string) error {
-	var modelID, cacheDir, port, gpusRaw string
+	var modelID, cacheDir, port, gpusRaw, apiKey string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -65,12 +66,23 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 			}
 			gpusRaw = args[i+1]
 			i++
+		case "--api-key":
+			if i+1 >= len(args) {
+				return errors.New("--api-key requires a value")
+			}
+			apiKey = args[i+1]
+			i++
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])
 			}
 			modelID = args[i]
 		}
+	}
+
+	// Fall back to ZERFOO_API_KEY env var when --api-key is not provided.
+	if apiKey == "" {
+		apiKey = os.Getenv("ZERFOO_API_KEY")
 	}
 
 	if modelID == "" {
@@ -104,6 +116,9 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	var serverOpts []serve.ServerOption
 	if len(gpuIDs) > 0 {
 		serverOpts = append(serverOpts, serve.WithGPUs(gpuIDs))
+	}
+	if apiKey != "" {
+		serverOpts = append(serverOpts, serve.WithAPIKey(apiKey))
 	}
 	srv := serve.NewServer(mdl, serverOpts...)
 	httpServer := &http.Server{
@@ -182,6 +197,7 @@ OPTIONS:
   --port <port>       Listen port (default: 8080)
   --cache-dir <dir>   Override model cache directory
   --gpus <ids>        Comma-separated GPU IDs to distribute model across (e.g. 0,1,2,3)
+  --api-key <key>     Require Bearer token auth (env: ZERFOO_API_KEY)
 
 ENDPOINTS:
   POST /v1/chat/completions   Chat completion
