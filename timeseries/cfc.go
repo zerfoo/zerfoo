@@ -232,6 +232,9 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 		config.Epsilon = 1e-8
 	}
 
+	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
+	windows, _, _ = normalizeWindows(windows)
+
 	nParams := c.paramCount()
 	m := make([]float64, nParams)
 	v := make([]float64, nParams)
@@ -297,7 +300,8 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 				}
 			}
 
-			// AdamW update.
+			// AdamW update with LR warmup.
+			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			params := c.flatParams()
 			for i := range params {
@@ -305,12 +309,17 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 				v[i] = config.Beta2*v[i] + (1-config.Beta2)*grads[i]*grads[i]
 				mHat := m[i] / (1 - math.Pow(config.Beta1, t))
 				vHat := v[i] / (1 - math.Pow(config.Beta2, t))
-				*params[i] = *params[i] - config.LR*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
+				*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
 			}
 		}
 
 		result.LossHistory[epoch] = epochLoss / float64(nBatches)
 		result.FinalLoss = result.LossHistory[epoch]
+
+		// Early halt on NaN/Inf loss.
+		if !isFinite(result.FinalLoss) {
+			return nil, fmt.Errorf("cfc: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
+		}
 	}
 
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
