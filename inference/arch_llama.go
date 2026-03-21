@@ -242,11 +242,17 @@ func (e *embeddingLookupNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 	batch := shape[0]
 	sl := seqLen / batch
 
+	vocabSize := e.weight.Shape()[0]
+
 	// GPU path: use engine.Gather when weight has GPU storage.
 	if _, ok := e.weight.GetStorage().(*tensor.GPUStorage[T]); ok {
 		intIDs := make([]int, seqLen)
 		for i := range intIDs {
-			intIDs[i] = int(ids[i])
+			id := int(ids[i])
+			if id < 0 || id >= vocabSize {
+				return nil, fmt.Errorf("token ID %d out of range [0, %d)", id, vocabSize)
+			}
+			intIDs[i] = id
 		}
 		idxTensor, err := tensor.New([]int{seqLen}, intIDs)
 		if err != nil {
@@ -280,6 +286,9 @@ func (e *embeddingLookupNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 		row := make([]float32, hiddenDim)
 		for i := range seqLen {
 			id := int(ids[i])
+			if id < 0 || id >= vocabSize {
+				return nil, fmt.Errorf("token ID %d out of range [0, %d)", id, vocabSize)
+			}
 			q8.DequantizeRange(row, id*hiddenDim, hiddenDim)
 			for j := range hiddenDim {
 				out[i*hiddenDim+j] = T(row[j])
@@ -289,6 +298,9 @@ func (e *embeddingLookupNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 		embData := e.weight.Data()
 		for i := range seqLen {
 			id := int(ids[i])
+			if id < 0 || id >= vocabSize {
+				return nil, fmt.Errorf("token ID %d out of range [0, %d)", id, vocabSize)
+			}
 			for j := range hiddenDim {
 				out[i*hiddenDim+j] = embData[id*hiddenDim+j]
 			}

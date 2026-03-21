@@ -366,3 +366,63 @@ func TestBuildLlamaGraph_MissingTensor(t *testing.T) {
 		t.Fatal("expected error for missing tensors")
 	}
 }
+
+func TestEmbeddingLookupBoundsCheck(t *testing.T) {
+	const vocabSize = 8
+	const hiddenDim = 4
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	// Build a small embedding weight table [vocabSize, hiddenDim].
+	weightData := make([]float32, vocabSize*hiddenDim)
+	for i := range weightData {
+		weightData[i] = float32(i) * 0.1
+	}
+	weight, err := tensor.New([]int{vocabSize, hiddenDim}, weightData)
+	if err != nil {
+		t.Fatalf("create weight tensor: %v", err)
+	}
+
+	node := &embeddingLookupNode[float32]{
+		engine: engine,
+		weight: weight,
+	}
+
+	tests := []struct {
+		name string
+		id   float32
+	}{
+		{"negative ID", -1},
+		{"equal to vocab size", float32(vocabSize)},
+		{"above vocab size", float32(vocabSize + 10)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := tensor.New([]int{1, 1}, []float32{tc.id})
+			if err != nil {
+				t.Fatalf("create input tensor: %v", err)
+			}
+			_, err = node.Forward(context.Background(), input)
+			if err == nil {
+				t.Fatalf("expected error for token ID %v, got nil", tc.id)
+			}
+			t.Logf("got expected error: %v", err)
+		})
+	}
+
+	// Verify valid IDs still work.
+	t.Run("valid ID", func(t *testing.T) {
+		input, err := tensor.New([]int{1, 1}, []float32{0})
+		if err != nil {
+			t.Fatalf("create input tensor: %v", err)
+		}
+		out, err := node.Forward(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error for valid token ID: %v", err)
+		}
+		if out == nil {
+			t.Fatal("expected non-nil output for valid token ID")
+		}
+	})
+}
