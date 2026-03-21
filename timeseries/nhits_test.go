@@ -1,0 +1,557 @@
+package timeseries
+
+import (
+	"context"
+	"math"
+	"testing"
+
+	"github.com/zerfoo/ztensor/tensor"
+)
+
+func TestNHiTS_NewValidation(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	tests := []struct {
+		name    string
+		config  NHiTSConfig
+		wantErr bool
+	}{
+		{
+			name: "valid 3-stack",
+			config: NHiTSConfig{
+				InputLength:  24,
+				OutputLength: 12,
+				Channels:     1,
+				PoolKernels:  []int{2, 4, 8},
+				HiddenSize:   32,
+			},
+		},
+		{
+			name: "valid single stack multichannel",
+			config: NHiTSConfig{
+				InputLength:  16,
+				OutputLength: 8,
+				Channels:     3,
+				PoolKernels:  []int{4},
+				HiddenSize:   16,
+			},
+		},
+		{
+			name: "zero input length",
+			config: NHiTSConfig{
+				InputLength:  0,
+				OutputLength: 5,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero output length",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 0,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero channels",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 5,
+				Channels:     0,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty pool kernels",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 5,
+				Channels:     1,
+				PoolKernels:  []int{},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero hidden size",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 5,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   0,
+			},
+			wantErr: true,
+		},
+		{
+			name: "pool kernel exceeds input",
+			config: NHiTSConfig{
+				InputLength:  4,
+				OutputLength: 2,
+				Channels:     1,
+				PoolKernels:  []int{2, 8},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative pool kernel",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 5,
+				Channels:     1,
+				PoolKernels:  []int{-1},
+				HiddenSize:   16,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := NewNHiTS(tt.config, engine, ops)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m == nil {
+				t.Fatal("expected non-nil model")
+			}
+			if len(m.stacks) != len(tt.config.PoolKernels) {
+				t.Errorf("expected %d stacks, got %d", len(tt.config.PoolKernels), len(m.stacks))
+			}
+			for i, s := range m.stacks {
+				if s.poolKernel != tt.config.PoolKernels[i] {
+					t.Errorf("stack %d pool kernel = %d, want %d", i, s.poolKernel, tt.config.PoolKernels[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMaxPool1D(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   []float32
+		length int
+		kernel int
+		want   []float32
+	}{
+		{
+			name:   "basic kernel=2",
+			data:   []float32{1, 3, 2, 4, 5, 1},
+			length: 6,
+			kernel: 2,
+			want:   []float32{3, 4, 5},
+		},
+		{
+			name:   "kernel=3",
+			data:   []float32{1, 5, 2, 3, 8, 4},
+			length: 6,
+			kernel: 3,
+			want:   []float32{5, 8},
+		},
+		{
+			name:   "kernel=1 identity",
+			data:   []float32{3, 1, 4, 1, 5},
+			length: 5,
+			kernel: 1,
+			want:   []float32{3, 1, 4, 1, 5},
+		},
+		{
+			name:   "batch=2 kernel=2",
+			data:   []float32{1, 4, 2, 3, 5, 2, 6, 1},
+			length: 4,
+			kernel: 2,
+			want:   []float32{4, 3, 5, 6},
+		},
+		{
+			name:   "negative values",
+			data:   []float32{-5, -1, -3, -2},
+			length: 4,
+			kernel: 2,
+			want:   []float32{-1, -2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maxPool1D(tt.data, tt.length, tt.kernel)
+			if len(got) != len(tt.want) {
+				t.Fatalf("length = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("maxPool1D[%d] = %v, want %v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestLinearInterpolation(t *testing.T) {
+	// N-HiTS uses direct MLP output for each stack (no interpolation needed
+	// since output proj maps directly to outputLen). Verify the output
+	// projection dimensions are correct by checking forward pass shapes.
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	config := NHiTSConfig{
+		InputLength:  12,
+		OutputLength: 6,
+		Channels:     1,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+
+	// Verify stack output dimensions match outputLen.
+	for i, s := range m.stacks {
+		projShape := s.outputProj.weights.Shape()
+		if projShape[1] != config.OutputLength {
+			t.Errorf("stack %d output proj cols = %d, want %d", i, projShape[1], config.OutputLength)
+		}
+	}
+
+	// Verify forward produces correct shape.
+	data := make([]float32, 2*12)
+	for i := range data {
+		data[i] = float32(i) * 0.1
+	}
+	x, err := tensor.New[float32]([]int{2, 12}, data)
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+
+	pred, err := m.Forward(ctx, x)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if s := pred.Shape(); s[0] != 2 || s[1] != 6 {
+		t.Errorf("output shape = %v, want [2, 6]", s)
+	}
+}
+
+func TestNHiTS_Forward(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		config     NHiTSConfig
+		batch      int
+		wantErr    bool
+		errOnInput bool
+	}{
+		{
+			name: "single stack single batch",
+			config: NHiTSConfig{
+				InputLength:  12,
+				OutputLength: 6,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			batch: 1,
+		},
+		{
+			name: "3-stack batch 4",
+			config: NHiTSConfig{
+				InputLength:  24,
+				OutputLength: 12,
+				Channels:     1,
+				PoolKernels:  []int{2, 4, 8},
+				HiddenSize:   32,
+			},
+			batch: 4,
+		},
+		{
+			name: "multichannel",
+			config: NHiTSConfig{
+				InputLength:  16,
+				OutputLength: 8,
+				Channels:     3,
+				PoolKernels:  []int{2, 4},
+				HiddenSize:   16,
+			},
+			batch: 2,
+		},
+		{
+			name: "wrong input shape",
+			config: NHiTSConfig{
+				InputLength:  10,
+				OutputLength: 5,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			batch:      1,
+			wantErr:    true,
+			errOnInput: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := NewNHiTS(tt.config, engine, ops)
+			if err != nil {
+				t.Fatalf("NewNHiTS: %v", err)
+			}
+
+			cols := tt.config.Channels * tt.config.InputLength
+			if tt.errOnInput {
+				cols += 5
+			}
+			data := make([]float32, tt.batch*cols)
+			for i := range data {
+				data[i] = float32(i) * 0.01
+			}
+			x, err := tensor.New[float32]([]int{tt.batch, cols}, data)
+			if err != nil {
+				t.Fatalf("tensor.New: %v", err)
+			}
+
+			pred, err := m.Forward(ctx, x)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			shape := pred.Shape()
+			if len(shape) != 2 || shape[0] != tt.batch || shape[1] != tt.config.OutputLength {
+				t.Errorf("output shape = %v, want [%d, %d]", shape, tt.batch, tt.config.OutputLength)
+			}
+
+			pData := pred.Data()
+			for i, v := range pData {
+				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+					t.Errorf("output[%d] = %v, want finite", i, v)
+					break
+				}
+			}
+		})
+	}
+}
+
+func TestNHiTS_ForwardConsistency(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	config := NHiTSConfig{
+		InputLength:  12,
+		OutputLength: 6,
+		Channels:     1,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+
+	data := make([]float32, 2*12)
+	for i := range data {
+		data[i] = float32(i) * 0.1
+	}
+	x, err := tensor.New[float32]([]int{2, 12}, data)
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+
+	out1, err := m.Forward(ctx, x)
+	if err != nil {
+		t.Fatalf("Forward 1: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		out2, err := m.Forward(ctx, x)
+		if err != nil {
+			t.Fatalf("Forward %d: %v", i+2, err)
+		}
+		d1 := out1.Data()
+		d2 := out2.Data()
+		for j := range d1 {
+			if d1[j] != d2[j] {
+				t.Errorf("iteration %d: output[%d] = %v, want %v", i+2, j, d2[j], d1[j])
+				break
+			}
+		}
+	}
+}
+
+func TestNHiTS_ConvergenceSynthetic(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  8,
+		OutputLength: 4,
+		Channels:     1,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	// Generate synthetic data: simple linear trend y = 0.1 * t.
+	numSamples := 32
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+
+	for i := 0; i < numSamples; i++ {
+		offset := float64(i)
+		ch := make([]float64, config.InputLength)
+		for t := 0; t < config.InputLength; t++ {
+			ch[t] = 0.1 * (offset + float64(t))
+		}
+		windows[i] = [][]float64{ch}
+		for t := 0; t < config.OutputLength; t++ {
+			labels[i*config.OutputLength+t] = 0.1 * (offset + float64(config.InputLength+t))
+		}
+	}
+
+	tc := TrainConfig{
+		Epochs:       200,
+		LearningRate: 1e-3,
+		BatchSize:    16,
+		GradClip:     1.0,
+	}
+
+	result, err := m.TrainWindowed(windows, labels, tc)
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	// Loss should decrease.
+	if len(result.EpochLoss) < 2 {
+		t.Fatal("expected at least 2 epoch losses")
+	}
+	firstLoss := result.EpochLoss[0]
+	finalLoss := result.FinalLoss
+	if finalLoss >= firstLoss {
+		t.Errorf("loss did not decrease: first=%v, final=%v", firstLoss, finalLoss)
+	}
+
+	// Final loss should be reasonably small.
+	if finalLoss > 1.0 {
+		t.Errorf("final loss %v too high (want < 1.0)", finalLoss)
+	}
+
+	t.Logf("convergence: first_loss=%.6f final_loss=%.6f", firstLoss, finalLoss)
+}
+
+func TestNHiTS_RoundTrip(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  8,
+		OutputLength: 4,
+		Channels:     1,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	// Train briefly.
+	numSamples := 16
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+	for i := 0; i < numSamples; i++ {
+		ch := make([]float64, config.InputLength)
+		for t := 0; t < config.InputLength; t++ {
+			ch[t] = 0.1 * float64(t)
+		}
+		windows[i] = [][]float64{ch}
+		for t := 0; t < config.OutputLength; t++ {
+			labels[i*config.OutputLength+t] = 0.1 * float64(config.InputLength+t)
+		}
+	}
+
+	tc := TrainConfig{
+		Epochs:       50,
+		LearningRate: 1e-3,
+		BatchSize:    16,
+	}
+
+	_, err = m.TrainWindowed(windows, labels, tc)
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	// Save model.
+	tmpPath := t.TempDir() + "/nhits.json"
+	if err := m.Save(tmpPath); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Create new model and load.
+	m2, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+
+	testWindows := windows[:4]
+	pred, err := m2.PredictWindowed(tmpPath, testWindows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	if len(pred) != 4*config.OutputLength {
+		t.Fatalf("prediction length = %d, want %d", len(pred), 4*config.OutputLength)
+	}
+
+	// Predictions should be finite.
+	for i, v := range pred {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Errorf("pred[%d] = %v, want finite", i, v)
+			break
+		}
+	}
+
+	// Compare with original model's predictions.
+	origPred, err := m.PredictWindowed("", testWindows)
+	if err != nil {
+		t.Fatalf("original PredictWindowed: %v", err)
+	}
+
+	for i := range pred {
+		diff := math.Abs(pred[i] - origPred[i])
+		if diff > 1e-4 {
+			t.Errorf("pred[%d] = %v, orig = %v, diff = %v", i, pred[i], origPred[i], diff)
+			break
+		}
+	}
+}
