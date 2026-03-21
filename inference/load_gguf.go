@@ -172,6 +172,8 @@ func buildArchGraph(
 		return buildJambaGraph(tensors, cfg, engine)
 	case "whisper":
 		return buildWhisperGraph(tensors, cfg, engine)
+	case "bert":
+		return buildBertGraph(tensors, cfg, engine)
 	case "llama4":
 		return buildLlama4Graph(tensors, cfg, engine)
 	case "llava":
