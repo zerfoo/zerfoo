@@ -12,7 +12,10 @@ import (
 
 func TestAttentionHead_OpType(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	if got := ah.OpType(); got != "AttentionHead" {
 		t.Errorf("OpType() = %q, want %q", got, "AttentionHead")
@@ -21,7 +24,10 @@ func TestAttentionHead_OpType(t *testing.T) {
 
 func TestAttentionHead_Attributes(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	attrs := ah.Attributes()
 	headDim, ok := attrs["head_dim"].(int)
@@ -35,7 +41,10 @@ func TestAttentionHead_Attributes(t *testing.T) {
 
 func TestAttentionHead_OutputShape(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	shape := ah.OutputShape()
 	if len(shape) != 3 {
@@ -48,12 +57,15 @@ func TestAttentionHead_OutputShape(t *testing.T) {
 
 func TestAttentionHead_Forward_WrongInputCount(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	t1, _ := tensor.New[float32]([]int{1, 2, 8}, nil)
 	t2, _ := tensor.New[float32]([]int{1, 2, 8}, nil)
 
-	_, err := ah.Forward(context.Background(), t1, t2)
+	_, err = ah.Forward(context.Background(), t1, t2)
 	if err == nil {
 		t.Error("expected error for wrong input count")
 	}
@@ -61,41 +73,43 @@ func TestAttentionHead_Forward_WrongInputCount(t *testing.T) {
 
 func TestAttentionHead_Forward_Non3DInput(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	t1, _ := tensor.New[float32]([]int{8}, nil)
-	_, err := ah.Forward(context.Background(), t1)
+	_, err = ah.Forward(context.Background(), t1)
 	if err == nil {
 		t.Error("expected error for non-3D input")
 	}
 }
 
-func TestNewAttentionHead_PanicOnInvalidInputDim(t *testing.T) {
+func TestNewAttentionHead_ErrorOnInvalidInputDim(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic for inputDim <= 0")
-		}
-	}()
-	NewAttentionHead[float32](engine, 0, 4)
+	_, err := NewAttentionHead[float32](engine, 0, 4)
+	if err == nil {
+		t.Error("expected error for inputDim <= 0")
+	}
 }
 
-func TestNewAttentionHead_PanicOnInvalidHeadDim(t *testing.T) {
+func TestNewAttentionHead_ErrorOnInvalidHeadDim(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic for headDim <= 0")
-		}
-	}()
-	NewAttentionHead[float32](engine, 8, 0)
+	_, err := NewAttentionHead[float32](engine, 8, 0)
+	if err == nil {
+		t.Error("expected error for headDim <= 0")
+	}
 }
 
 func TestAttentionHead_Backward_WrongInputCount(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	dOut, _ := tensor.New[float32]([]int{1, 2, 4}, nil)
-	_, err := ah.Backward(context.Background(), 0, dOut)
+	_, err = ah.Backward(context.Background(), 0, dOut)
 	if err == nil {
 		t.Error("expected error for missing inputs in Backward")
 	}
@@ -103,11 +117,14 @@ func TestAttentionHead_Backward_WrongInputCount(t *testing.T) {
 
 func TestAttentionHead_Backward_Non3DInput(t *testing.T) {
 	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ah := NewAttentionHead[float32](engine, 8, 4)
+	ah, err := NewAttentionHead[float32](engine, 8, 4)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	dOut, _ := tensor.New[float32]([]int{4}, nil)
 	input2D, _ := tensor.New[float32]([]int{2, 8}, nil)
-	_, err := ah.Backward(context.Background(), 0, dOut, input2D)
+	_, err = ah.Backward(context.Background(), 0, dOut, input2D)
 	if err == nil {
 		t.Error("expected error for non-3D input in Backward")
 	}
@@ -119,7 +136,10 @@ func TestNewAttentionHead_WithOptions(t *testing.T) {
 	opt := func(o *AttentionHeadOptions[float32]) {
 		optCalled = true
 	}
-	ah := NewAttentionHead[float32](engine, 8, 4, opt)
+	ah, err := NewAttentionHead[float32](engine, 8, 4, opt)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 	if !optCalled {
 		t.Error("option was not called")
 	}
@@ -153,13 +173,16 @@ func TestAttentionHead_Forward_EngineErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fe := newFailingEngine(tc.failOn)
-			ah := NewAttentionHead[float32](fe, 8, 4)
+			ah, err := NewAttentionHead[float32](fe, 8, 4)
+			if err != nil {
+				t.Fatalf("NewAttentionHead failed: %v", err)
+			}
 
 			input, _ := tensor.New[float32]([]int{1, 3, 8}, nil)
 			for i := range input.Data() {
 				input.Data()[i] = float32(i%5+1) * 0.01
 			}
-			_, err := ah.Forward(context.Background(), input)
+			_, err = ah.Forward(context.Background(), input)
 			if err == nil {
 				t.Error("expected error")
 			}
@@ -209,7 +232,10 @@ func TestAttentionHead_Backward_EngineErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fe := newFailingEngine(tc.failOn)
-			ah := NewAttentionHead[float32](fe, 8, 4)
+			ah, err := NewAttentionHead[float32](fe, 8, 4)
+			if err != nil {
+				t.Fatalf("NewAttentionHead failed: %v", err)
+			}
 
 			input, _ := tensor.New[float32]([]int{1, 3, 8}, nil)
 			for i := range input.Data() {

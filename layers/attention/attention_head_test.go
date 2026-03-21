@@ -19,7 +19,10 @@ func TestAttentionHead(t *testing.T) {
 	headDim := 8
 
 	// Create an AttentionHead instance
-	attentionHead := NewAttentionHead[float32](engine, inputDim, headDim)
+	attentionHead, err := NewAttentionHead[float32](engine, inputDim, headDim)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	// Create a dummy input tensor
 	inputShape := []int{batchSize, seqLen, inputDim}
@@ -49,7 +52,10 @@ func TestAttentionHead(t *testing.T) {
 	testutils.AssertTrue(t, len(params) == 6, fmt.Sprintf("Expected 6 parameters (Q, K, V weights and biases), got %d", len(params)))
 
 	// Test with different input dimensions
-	attentionHead2 := NewAttentionHead[float32](engine, 16, 8)
+	attentionHead2, err := NewAttentionHead[float32](engine, 16, 8)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 	inputShape2 := []int{batchSize, seqLen, 16}
 
 	inputTensor2, err := tensor.New[float32](inputShape2, nil) // Corrected tensor creation

@@ -47,7 +47,7 @@ func WithBidirectionalAttention[T tensor.Numeric]() AttentionHeadOption[T] {
 // NewAttentionHead creates a new AttentionHead instance.
 // inputDim is the dimension of the input features.
 // headDim is the dimension of the query, key, and value vectors for this head.
-func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, headDim int, opts ...AttentionHeadOption[T]) *AttentionHead[T] {
+func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, headDim int, opts ...AttentionHeadOption[T]) (*AttentionHead[T], error) {
 	options := &AttentionHeadOptions[T]{}
 	for _, opt := range opts {
 		opt(options)
@@ -55,27 +55,27 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 
 	// Validate dimensions early to avoid invalid layers
 	if inputDim <= 0 {
-		panic(fmt.Errorf("invalid inputDim: %d; must be > 0", inputDim))
+		return nil, fmt.Errorf("invalid inputDim: %d; must be > 0", inputDim)
 	}
 
 	if headDim <= 0 {
-		panic(fmt.Errorf("invalid headDim: %d; must be > 0", headDim))
+		return nil, fmt.Errorf("invalid headDim: %d; must be > 0", headDim)
 	}
 
 	// Pass engine and its arithmetic operations to Dense layers
 	qProj, err := core.NewDense[T]("q_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
-		panic(fmt.Errorf("failed to create Q projection: %w", err))
+		return nil, fmt.Errorf("failed to create Q projection: %w", err)
 	}
 
 	kProj, err := core.NewDense[T]("k_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
-		panic(fmt.Errorf("failed to create K projection: %w", err))
+		return nil, fmt.Errorf("failed to create K projection: %w", err)
 	}
 
 	vProj, err := core.NewDense[T]("v_proj", engine, engine.Ops(), inputDim, headDim)
 	if err != nil {
-		panic(fmt.Errorf("failed to create V projection: %w", err))
+		return nil, fmt.Errorf("failed to create V projection: %w", err)
 	}
 
 	return &AttentionHead[T]{
@@ -84,7 +84,7 @@ func NewAttentionHead[T tensor.Numeric](engine compute.Engine[T], inputDim, head
 		kProj:  kProj,
 		vProj:  vProj,
 		sdpa:   NewScaledDotProductAttention[T](engine, headDim),
-	}
+	}, nil
 }
 
 // Forward computes the output of the attention head.

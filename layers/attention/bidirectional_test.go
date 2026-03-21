@@ -306,7 +306,10 @@ func TestAttentionHead_Bidirectional(t *testing.T) {
 	batchSize := 1
 	seqLen := 3
 
-	ah := NewAttentionHead[float32](engine, inputDim, headDim, WithBidirectionalAttention[float32]())
+	ah, err := NewAttentionHead[float32](engine, inputDim, headDim, WithBidirectionalAttention[float32]())
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	data := make([]float32, batchSize*seqLen*inputDim)
 	for i := range data {

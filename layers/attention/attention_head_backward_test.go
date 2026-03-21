@@ -19,7 +19,10 @@ func TestAttentionHead_Backward_GradientShapeAndFlow(t *testing.T) {
 	inputDim := 10
 	headDim := 8
 
-	ah := NewAttentionHead[float32](engine, inputDim, headDim)
+	ah, err := NewAttentionHead[float32](engine, inputDim, headDim)
+	if err != nil {
+		t.Fatalf("NewAttentionHead failed: %v", err)
+	}
 
 	// Input
 	inp, err := tensor.New[float32]([]int{batchSize, seqLen, inputDim}, nil)
