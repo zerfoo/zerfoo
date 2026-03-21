@@ -397,6 +397,41 @@ func TestDLinear_ParamCount(t *testing.T) {
 	}
 }
 
+func TestTrainResult_ModelPathAndMetrics(t *testing.T) {
+	m, err := NewDLinear(8, 4, 1, 3)
+	if err != nil {
+		t.Fatalf("NewDLinear: %v", err)
+	}
+
+	windows := [][][]float64{
+		{{1, 2, 3, 4, 5, 6, 7, 8}},
+		{{2, 3, 4, 5, 6, 7, 8, 9}},
+	}
+	labels := []float64{9, 10, 11, 12, 10, 11, 12, 13}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{Epochs: 5, LR: 1e-3})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	// ModelPath should be empty since TrainWindowed does not save weights.
+	if result.ModelPath != "" {
+		t.Errorf("ModelPath = %q, want empty string", result.ModelPath)
+	}
+
+	// Metrics should contain at least "mse".
+	if result.Metrics == nil {
+		t.Fatal("Metrics is nil, want non-nil map")
+	}
+	mse, ok := result.Metrics["mse"]
+	if !ok {
+		t.Fatal("Metrics missing 'mse' key")
+	}
+	if mse != result.FinalLoss {
+		t.Errorf("Metrics['mse'] = %v, want %v (FinalLoss)", mse, result.FinalLoss)
+	}
+}
+
 func TestDLinear_TrainWindowed_LabelMismatch(t *testing.T) {
 	m, err := NewDLinear(10, 5, 2, 3)
 	if err != nil {

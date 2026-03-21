@@ -313,6 +313,7 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 		result.FinalLoss = result.LossHistory[epoch]
 	}
 
+	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
 }
 

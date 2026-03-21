@@ -36,8 +36,10 @@ func DefaultTrainConfig() TrainConfig {
 
 // TrainResult holds training metrics.
 type TrainResult struct {
-	FinalLoss  float64   // loss at last epoch
-	LossHistory []float64 // loss per epoch
+	FinalLoss   float64            // loss at last epoch
+	LossHistory []float64          // loss per epoch
+	ModelPath   string             // path where model weights were saved
+	Metrics     map[string]float64 // e.g., "mse", "correlation", "directional_accuracy"
 }
 
 // DLinearConfig holds the configuration for a DLinear model.
@@ -308,6 +310,7 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 		result.FinalLoss = result.LossHistory[epoch]
 	}
 
+	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
 }
 

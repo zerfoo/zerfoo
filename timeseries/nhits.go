@@ -492,6 +492,7 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 	if len(result.LossHistory) > 0 {
 		result.FinalLoss = result.LossHistory[len(result.LossHistory)-1]
 	}
+	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
 }
 
