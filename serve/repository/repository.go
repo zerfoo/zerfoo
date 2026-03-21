@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +20,8 @@ var (
 	ErrNotFound = errors.New("repository: model not found")
 	// ErrAlreadyExists is returned when a model with the same ID already exists.
 	ErrAlreadyExists = errors.New("repository: model already exists")
+	// ErrPathTraversal is returned when a model ID attempts to escape the base directory.
+	ErrPathTraversal = errors.New("repository: path traversal detected")
 )
 
 // ModelMetadata describes a stored model.
@@ -60,16 +63,29 @@ func NewFileSystemRepository(baseDir string) (*FileSystemRepository, error) {
 	return &FileSystemRepository{baseDir: baseDir}, nil
 }
 
-func (r *FileSystemRepository) modelDir(id string) string {
-	return filepath.Join(r.baseDir, id)
+func (r *FileSystemRepository) modelDir(id string) (string, error) {
+	joined := filepath.Clean(filepath.Join(r.baseDir, id))
+	base := filepath.Clean(r.baseDir)
+	if joined == base || !strings.HasPrefix(joined, base+string(filepath.Separator)) {
+		return "", ErrPathTraversal
+	}
+	return joined, nil
 }
 
-func (r *FileSystemRepository) modelPath(id string) string {
-	return filepath.Join(r.modelDir(id), "model.gguf")
+func (r *FileSystemRepository) modelPath(id string) (string, error) {
+	dir, err := r.modelDir(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "model.gguf"), nil
 }
 
-func (r *FileSystemRepository) metadataPath(id string) string {
-	return filepath.Join(r.modelDir(id), "metadata.json")
+func (r *FileSystemRepository) metadataPath(id string) (string, error) {
+	dir, err := r.modelDir(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "metadata.json"), nil
 }
 
 // List returns metadata for all stored models.
@@ -109,7 +125,10 @@ func (r *FileSystemRepository) Upload(meta ModelMetadata, data io.Reader) error 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	dir := r.modelDir(meta.ID)
+	dir, err := r.modelDir(meta.ID)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(dir); err == nil {
 		return ErrAlreadyExists
 	}
@@ -119,7 +138,12 @@ func (r *FileSystemRepository) Upload(meta ModelMetadata, data io.Reader) error 
 	}
 
 	// Write model file and compute SHA256.
-	f, err := os.Create(r.modelPath(meta.ID))
+	mp, err := r.modelPath(meta.ID)
+	if err != nil {
+		os.RemoveAll(dir)
+		return err
+	}
+	f, err := os.Create(mp)
 	if err != nil {
 		os.RemoveAll(dir)
 		return fmt.Errorf("repository: create model file: %w", err)
@@ -155,15 +179,26 @@ func (r *FileSystemRepository) Delete(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	dir := r.modelDir(id)
-	if _, err := os.Stat(r.metadataPath(id)); errors.Is(err, os.ErrNotExist) {
+	dir, err := r.modelDir(id)
+	if err != nil {
+		return err
+	}
+	mdPath, err := r.metadataPath(id)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(mdPath); errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
 	return os.RemoveAll(dir)
 }
 
 func (r *FileSystemRepository) readMetadata(id string) (ModelMetadata, error) {
-	data, err := os.ReadFile(r.metadataPath(id))
+	mdPath, err := r.metadataPath(id)
+	if err != nil {
+		return ModelMetadata{}, err
+	}
+	data, err := os.ReadFile(mdPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ModelMetadata{}, ErrNotFound
@@ -182,7 +217,11 @@ func (r *FileSystemRepository) writeMetadata(meta ModelMetadata) error {
 	if err != nil {
 		return fmt.Errorf("repository: marshal metadata: %w", err)
 	}
-	if err := os.WriteFile(r.metadataPath(meta.ID), data, 0o644); err != nil {
+	mdPath, err2 := r.metadataPath(meta.ID)
+	if err2 != nil {
+		return err2
+	}
+	if err := os.WriteFile(mdPath, data, 0o644); err != nil {
 		return fmt.Errorf("repository: write metadata: %w", err)
 	}
 	return nil

@@ -51,6 +51,10 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	meta, err := h.repo.Get(id)
 	if err != nil {
+		if errors.Is(err, ErrPathTraversal) {
+			writeError(w, http.StatusBadRequest, "invalid model id")
+			return
+		}
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 			return
@@ -124,6 +128,10 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Upload(meta, file); err != nil {
+		if errors.Is(err, ErrPathTraversal) {
+			writeError(w, http.StatusBadRequest, "invalid model id")
+			return
+		}
 		if errors.Is(err, ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "model '"+req.ID+"' already exists")
 			return
@@ -151,6 +159,10 @@ type deleteResponse struct {
 func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.repo.Delete(id); err != nil {
+		if errors.Is(err, ErrPathTraversal) {
+			writeError(w, http.StatusBadRequest, "invalid model id")
+			return
+		}
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 			return

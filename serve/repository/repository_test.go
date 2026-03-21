@@ -185,6 +185,81 @@ func multipartUpload(t *testing.T, meta uploadRequest, fileContent string) (*byt
 	return &buf, w.FormDataContentType()
 }
 
+func TestRepository_PathTraversal(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{name: "parent escape", id: "../../etc", wantErr: true},
+		{name: "deep escape", id: "../../../tmp/evil", wantErr: true},
+		{name: "normal id", id: "gemma-3-1b", wantErr: false},
+		{name: "nested path", id: "org/model", wantErr: false},
+		{name: "dot only", id: ".", wantErr: true},
+		{name: "dot dot only", id: "..", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTestRepo(t)
+			_, err := repo.modelDir(tt.id)
+			if tt.wantErr {
+				if err != ErrPathTraversal {
+					t.Fatalf("modelDir(%q) = %v, want ErrPathTraversal", tt.id, err)
+				}
+				// Verify Get, Upload, and Delete also return the error.
+				if _, err := repo.Get(tt.id); err != ErrPathTraversal {
+					t.Errorf("Get(%q) = %v, want ErrPathTraversal", tt.id, err)
+				}
+				if err := repo.Upload(ModelMetadata{ID: tt.id, Name: "x"}, strings.NewReader("data")); err != ErrPathTraversal {
+					t.Errorf("Upload(%q) = %v, want ErrPathTraversal", tt.id, err)
+				}
+				if err := repo.Delete(tt.id); err != ErrPathTraversal {
+					t.Errorf("Delete(%q) = %v, want ErrPathTraversal", tt.id, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("modelDir(%q) = %v, want nil", tt.id, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRepository_PathTraversal_HTTP(t *testing.T) {
+	repo := newTestRepo(t)
+	handler := NewHandler(repo)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// GET with traversal ID should return 400.
+	req := httptest.NewRequest("GET", "/v1/models/..%2F..%2Fetc%2Fpasswd", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("GET traversal: status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	// DELETE with traversal ID should return 400.
+	req = httptest.NewRequest("DELETE", "/v1/models/..%2F..%2Fetc%2Fpasswd", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("DELETE traversal: status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	// POST with traversal ID should return 400.
+	buf, ct := multipartUpload(t, uploadRequest{
+		ID: "../../etc/evil", Name: "Evil",
+	}, "data")
+	req = httptest.NewRequest("POST", "/v1/models", buf)
+	req.Header.Set("Content-Type", ct)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("POST traversal: status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestRepository_HTTPHandlers(t *testing.T) {
 	tests := []struct {
 		name       string

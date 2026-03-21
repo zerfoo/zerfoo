@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -95,7 +96,11 @@ func TestCloud_MultiTenant(t *testing.T) {
 	// Verify tenant-specific data isolation.
 	t.Run("tenant data isolation", func(t *testing.T) {
 		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenantID := r.Header.Get("X-Tenant-ID")
+			tenant := tenantFromContext(r.Context())
+			tenantID := ""
+			if tenant != nil {
+				tenantID = tenant.ID
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"tenant_id": tenantID,
@@ -333,6 +338,96 @@ func TestCloud_RateLimit(t *testing.T) {
 		handler.ServeHTTP(w3, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 		if w3.Code != http.StatusOK {
 			t.Errorf("healthz restored status = %d, want 200", w3.Code)
+		}
+	})
+}
+
+func TestCloud_TenantContextPropagation(t *testing.T) {
+	t.Run("tenant available in context through middleware chain", func(t *testing.T) {
+		var capturedTenant *Tenant
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTenant = tenantFromContext(r.Context())
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usage": map[string]int{
+					"prompt_tokens":     5,
+					"completion_tokens": 3,
+					"total_tokens":      8,
+				},
+			})
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "ctx-t1", APIKey: "ctx-key-1", RateLimit: 100, TokenBudget: 10000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer ctx-key-1")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		if capturedTenant == nil {
+			t.Fatal("tenant was nil in context, expected non-nil")
+		}
+		if capturedTenant.ID != "ctx-t1" {
+			t.Errorf("tenant.ID = %q, want %q", capturedTenant.ID, "ctx-t1")
+		}
+	})
+
+	t.Run("no X-Tenant-ID header leaked to inner handler", func(t *testing.T) {
+		var headerVal string
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			headerVal = r.Header.Get("X-Tenant-ID")
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "leak-t1", APIKey: "leak-key-1", RateLimit: 100, TokenBudget: 10000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer leak-key-1")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if headerVal != "" {
+			t.Errorf("X-Tenant-ID header = %q, want empty (should use context instead)", headerVal)
+		}
+	})
+
+	t.Run("tenantFromContext returns nil for empty context", func(t *testing.T) {
+		ctx := context.Background()
+		if tenant := tenantFromContext(ctx); tenant != nil {
+			t.Errorf("tenantFromContext(empty) = %v, want nil", tenant)
+		}
+	})
+
+	t.Run("client-supplied X-Tenant-ID header cannot spoof tenant", func(t *testing.T) {
+		var capturedTenant *Tenant
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTenant = tenantFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "real", APIKey: "real-key", RateLimit: 100, TokenBudget: 10000})
+		cs.Tenants().Create(TenantConfig{ID: "victim", APIKey: "victim-key", RateLimit: 100, TokenBudget: 10000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer real-key")
+		req.Header.Set("X-Tenant-ID", "victim") // attacker tries to spoof
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if capturedTenant == nil {
+			t.Fatal("tenant was nil")
+		}
+		if capturedTenant.ID != "real" {
+			t.Errorf("tenant.ID = %q, want %q (spoofed header should be ignored)", capturedTenant.ID, "real")
 		}
 	})
 }

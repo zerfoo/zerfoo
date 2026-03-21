@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,6 +9,16 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// tenantKey is the private context key for storing the authenticated Tenant.
+type tenantKey struct{}
+
+// tenantFromContext returns the Tenant stored in ctx by authMiddleware,
+// or nil if no tenant is present.
+func tenantFromContext(ctx context.Context) *Tenant {
+	t, _ := ctx.Value(tenantKey{}).(*Tenant)
+	return t
+}
 
 // CloudServer wraps an HTTP handler with multi-tenant isolation, token billing,
 // rate limiting, and health checking for cloud deployments.
@@ -64,8 +75,8 @@ func (cs *CloudServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 }
 
-// authMiddleware extracts the Bearer token, resolves the tenant, and injects
-// the tenant ID into the request header for downstream use.
+// authMiddleware extracts the Bearer token, resolves the tenant, and stores
+// it in the request context for downstream middleware.
 func (cs *CloudServer) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := extractBearerToken(r)
@@ -80,8 +91,9 @@ func (cs *CloudServer) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Pass tenant ID to downstream middleware via header.
-		r.Header.Set("X-Tenant-ID", tenant.ID)
+		// Pass tenant to downstream middleware via context.
+		ctx := context.WithValue(r.Context(), tenantKey{}, tenant)
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -89,9 +101,8 @@ func (cs *CloudServer) authMiddleware(next http.Handler) http.Handler {
 // rateLimitMiddleware enforces per-tenant request rate limits and token budgets.
 func (cs *CloudServer) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenantID := r.Header.Get("X-Tenant-ID")
-		tenant, err := cs.tenants.Get(tenantID)
-		if err != nil {
+		tenant := tenantFromContext(r.Context())
+		if tenant == nil {
 			writeError(w, http.StatusInternalServerError, "tenant lookup failed")
 			return
 		}
@@ -109,7 +120,7 @@ func (cs *CloudServer) rateLimitMiddleware(next http.Handler) http.Handler {
 // billingMiddleware captures usage from response bodies and meters tokens.
 func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenantID := r.Header.Get("X-Tenant-ID")
+		tenant := tenantFromContext(r.Context())
 		capture := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(capture, r)
 
@@ -131,13 +142,13 @@ func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Consume from token budget.
-		if tenant, err := cs.tenants.Get(tenantID); err == nil {
+		if tenant != nil {
 			tenant.ConsumeTokens(int64(input + output))
 		}
 
 		// Record billing.
-		if cs.meter != nil {
-			cs.meter.Record(tenantID, input, output)
+		if cs.meter != nil && tenant != nil {
+			cs.meter.Record(tenant.ID, input, output)
 		}
 	})
 }
