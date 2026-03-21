@@ -291,6 +291,9 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 		config.Epsilon = 1e-8
 	}
 
+	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
+	windows, _, _ = normalizeWindows(windows)
+
 	// Flatten all parameters and their gradients for AdamW.
 	nParams := d.paramCount()
 	m := make([]float64, nParams) // first moment
@@ -370,7 +373,8 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 				}
 			}
 
-			// AdamW update.
+			// AdamW update with LR warmup.
+			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			params := d.flatParams()
 			for i := range params {
@@ -379,12 +383,17 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 				mHat := m[i] / (1 - math.Pow(config.Beta1, t))
 				vHat := v[i] / (1 - math.Pow(config.Beta2, t))
 				// AdamW: weight decay applied to param directly, not through gradient.
-				*params[i] = *params[i] - config.LR*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
+				*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
 			}
 		}
 
 		result.LossHistory[epoch] = epochLoss / float64(nBatches)
 		result.FinalLoss = result.LossHistory[epoch]
+
+		// Early halt on NaN/Inf loss.
+		if !isFinite(result.FinalLoss) {
+			return nil, fmt.Errorf("dlinear: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
+		}
 	}
 
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
