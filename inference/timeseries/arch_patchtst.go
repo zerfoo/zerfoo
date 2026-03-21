@@ -86,7 +86,7 @@ type patchTSTNode[T tensor.Numeric] struct {
 	// Final layer norm.
 	finalNorm *normalization.RMSNorm[T]
 
-	// Projection head: [dModel, horizon * numVars].
+	// Projection head: [dModel, horizon] (shared across variables).
 	projWeight *graph.Parameter[T]
 }
 
@@ -123,12 +123,12 @@ func newPatchTSTNode[T tensor.Numeric](cfg PatchTSTConfig, engine compute.Engine
 		return nil, fmt.Errorf("create final norm: %w", err)
 	}
 
-	projData := make([]T, cfg.DModel*cfg.Horizon*cfg.NumVars)
+	projData := make([]T, cfg.DModel*cfg.Horizon)
 	scale := T(math.Sqrt(2.0 / float64(cfg.DModel)))
 	for i := range projData {
 		projData[i] = ops.Mul(ops.FromFloat64(float64(i%7-3) * 0.1), scale)
 	}
-	projTensor, err := tensor.New[T]([]int{cfg.DModel, cfg.Horizon * cfg.NumVars}, projData)
+	projTensor, err := tensor.New[T]([]int{cfg.DModel, cfg.Horizon}, projData)
 	if err != nil {
 		return nil, err
 	}
@@ -300,57 +300,29 @@ func (n *patchTSTNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorN
 		return nil, fmt.Errorf("concat variable outputs: %w", err)
 	}
 
-	// Projection: [batch, numVars * d_model] -> [batch, horizon * numVars]
-	// We use a per-variable projection: reshape to [batch * numVars, d_model],
-	// project to [batch * numVars, horizon], then reshape to [batch, horizon, numVars].
+	// Channel-independent projection: reshape to [batch*numVars, d_model],
+	// project each variable independently to horizon, then reshape and transpose.
 	projected, err := n.engine.Reshape(ctx, stacked, []int{batch * numVars, n.cfg.DModel})
 	if err != nil {
 		return nil, fmt.Errorf("reshape for projection: %w", err)
 	}
 
-	// Project: [batch * numVars, d_model] @ [d_model, horizon * numVars] -> [batch * numVars, horizon * numVars]
-	// Actually, for channel-independent: project each variable's d_model to horizon.
-	// Use a simpler projection: [batch, numVars * d_model] @ [numVars * d_model, horizon * numVars]
-	// But that's too many params. Instead: shared projection per variable.
-	// Reshape back and use a smaller projection.
+	// Project: [batch*numVars, d_model] @ [d_model, horizon] -> [batch*numVars, horizon]
 	projected, err = n.engine.MatMul(ctx, projected, n.projWeight.Value)
 	if err != nil {
 		return nil, fmt.Errorf("projection matmul: %w", err)
 	}
 
-	// projected: [batch * numVars, horizon * numVars]
-	// We want [batch, horizon, numVars].
-	// Take only the diagonal blocks: for variable v, take columns [v*horizon : (v+1)*horizon].
-	// Simpler approach: reshape the stacked [batch, numVars*d_model] directly.
-	// Let's reconsider the projection design.
-
-	// Reshape projected to [batch, numVars, horizon, numVars] and take diagonal is complex.
-	// Instead, use a simpler design: project [batch*numVars, d_model] -> [batch*numVars, horizon]
-	// using a [d_model, horizon] weight.
-
-	// The projWeight is [d_model, horizon * numVars], but we only need [d_model, horizon].
-	// Let's slice the weight. For simplicity in this builder, we'll reshape the full output.
-
-	// projected is [batch * numVars, horizon * numVars]
-	// Reshape to [batch, numVars * horizon * numVars] then to [batch, horizon, numVars].
-	// This is a learned mapping, so any shape is fine as long as output is [batch, H, D].
-	totalOut := n.cfg.Horizon * n.cfg.NumVars
-	projected, err = n.engine.Reshape(ctx, projected, []int{batch, numVars * totalOut})
+	// Reshape to [batch, numVars, horizon].
+	projected, err = n.engine.Reshape(ctx, projected, []int{batch, numVars, n.cfg.Horizon})
 	if err != nil {
 		return nil, fmt.Errorf("reshape projected: %w", err)
 	}
 
-	// Final linear to get [batch, horizon * numVars] then reshape to [batch, horizon, numVars].
-	// Since we already have batch * numVars * horizon * numVars values, we need to reduce.
-	// Sum over the numVars copies to get [batch, horizon * numVars].
-	// Reshape to [batch, numVars, horizon, numVars], sum axis 1.
-	projected, err = n.engine.Reshape(ctx, projected, []int{batch, numVars, n.cfg.Horizon, n.cfg.NumVars})
+	// Transpose to [batch, horizon, numVars].
+	projected, err = n.engine.Transpose(ctx, projected, []int{0, 2, 1})
 	if err != nil {
-		return nil, fmt.Errorf("reshape for sum: %w", err)
-	}
-	projected, err = n.engine.ReduceMean(ctx, projected, 1, false)
-	if err != nil {
-		return nil, fmt.Errorf("reduce mean over vars: %w", err)
+		return nil, fmt.Errorf("transpose to [batch, horizon, numVars]: %w", err)
 	}
 
 	// Result: [batch, horizon, numVars]

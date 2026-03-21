@@ -126,3 +126,94 @@ func TestPatchTSTSingleBatch(t *testing.T) {
 		}
 	}
 }
+
+// TestPatchTSTChannelIndependence verifies that each variable's output depends
+// only on its own input, not on other variables. This confirms the projection
+// head uses channel-independent projection with no cross-variable mixing.
+func TestPatchTSTChannelIndependence(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	cfg := PatchTSTConfig{
+		PatchLen:  8,
+		Stride:    8,
+		NumLayers: 1,
+		NumHeads:  2,
+		DModel:    16,
+		Horizon:   4,
+		NumVars:   3,
+	}
+
+	batch, seqLen := 1, 32
+
+	// Create two inputs that differ only in variable 0.
+	dataA := make([]float32, batch*seqLen*cfg.NumVars)
+	dataB := make([]float32, batch*seqLen*cfg.NumVars)
+	for i := range dataA {
+		dataA[i] = float32(i%50) * 0.01
+		dataB[i] = dataA[i]
+	}
+	// Perturb only variable 0 in input B.
+	for s := 0; s < seqLen; s++ {
+		dataB[s*cfg.NumVars+0] += 1.0
+	}
+
+	inputA, err := tensor.New[float32]([]int{batch, seqLen, cfg.NumVars}, dataA)
+	if err != nil {
+		t.Fatalf("create inputA: %v", err)
+	}
+	inputB, err := tensor.New[float32]([]int{batch, seqLen, cfg.NumVars}, dataB)
+	if err != nil {
+		t.Fatalf("create inputB: %v", err)
+	}
+
+	nodeA, err := newPatchTSTNode[float32](cfg, engine, numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("newPatchTSTNode: %v", err)
+	}
+
+	ctx := context.Background()
+	outA, err := nodeA.Forward(ctx, inputA)
+	if err != nil {
+		t.Fatalf("Forward A: %v", err)
+	}
+	outB, err := nodeA.Forward(ctx, inputB)
+	if err != nil {
+		t.Fatalf("Forward B: %v", err)
+	}
+
+	// Verify output shape is [batch, horizon, numVars].
+	wantShape := []int{batch, cfg.Horizon, cfg.NumVars}
+	for i, s := range outA.Shape() {
+		if s != wantShape[i] {
+			t.Fatalf("output shape[%d]: got %d, want %d", i, s, wantShape[i])
+		}
+	}
+
+	dA := outA.Data()
+	dB := outB.Data()
+
+	// Variable 0 should differ (we perturbed its input).
+	var var0Diff float32
+	for h := 0; h < cfg.Horizon; h++ {
+		idx := h*cfg.NumVars + 0
+		diff := dA[idx] - dB[idx]
+		if diff < 0 {
+			diff = -diff
+		}
+		var0Diff += diff
+	}
+	if var0Diff < 1e-6 {
+		t.Error("variable 0 output should differ between A and B, but it did not")
+	}
+
+	// Variables 1 and 2 should be identical (their inputs are the same).
+	// Channel-independent projection means no cross-variable mixing.
+	for v := 1; v < cfg.NumVars; v++ {
+		for h := 0; h < cfg.Horizon; h++ {
+			idx := h*cfg.NumVars + v
+			if dA[idx] != dB[idx] {
+				t.Errorf("variable %d horizon %d: got A=%.8f B=%.8f, want identical (no cross-variable mixing)", v, h, dA[idx], dB[idx])
+			}
+		}
+	}
+}
