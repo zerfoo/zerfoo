@@ -44,11 +44,20 @@ func (sdpa *ScaledDotProductAttention[T]) SetCausal(causal bool) {
 
 // ScaledDotProductAttentionOptions holds configuration options for ScaledDotProductAttention.
 type ScaledDotProductAttentionOptions[T tensor.Numeric] struct {
-	// No specific options for now, but kept for consistency.
+	bidirectional bool // when true, causal masking is disabled
 }
 
 // ScaledDotProductAttentionOption applies an option to ScaledDotProductAttentionOptions.
 type ScaledDotProductAttentionOption[T tensor.Numeric] func(*ScaledDotProductAttentionOptions[T])
+
+// WithBidirectional returns an option that disables causal masking, allowing
+// every position to attend to every other position. This is required for
+// encoder-style models such as BERT.
+func WithBidirectional[T tensor.Numeric]() ScaledDotProductAttentionOption[T] {
+	return func(o *ScaledDotProductAttentionOptions[T]) {
+		o.bidirectional = true
+	}
+}
 
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
 func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], headDim int, opts ...ScaledDotProductAttentionOption[T]) *ScaledDotProductAttention[T] {
@@ -61,6 +70,13 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 		engine:  engine,
 		headDim: float64(headDim),
 	}
+}
+
+// NewBidirectionalSDPA creates a ScaledDotProductAttention layer with causal
+// masking disabled. All positions attend to all other positions, which is the
+// attention pattern used by encoder models such as BERT.
+func NewBidirectionalSDPA[T tensor.Numeric](engine compute.Engine[T], headDim int, opts ...ScaledDotProductAttentionOption[T]) *ScaledDotProductAttention[T] {
+	return NewScaledDotProductAttention(engine, headDim, append(opts, WithBidirectional[T]())...)
 }
 
 // Forward computes the scaled dot-product attention.
