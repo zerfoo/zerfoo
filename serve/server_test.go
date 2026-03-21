@@ -1693,3 +1693,108 @@ func TestRequestBodySizeLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestMaxTokensClamp(t *testing.T) {
+	mdl := buildTestModel(t)
+
+	t.Run("default_clamps_chat", func(t *testing.T) {
+		srv := NewServer(mdl)
+		if srv.maxTokens != 8192 {
+			t.Fatalf("default maxTokens = %d, want 8192", srv.maxTokens)
+		}
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":100000}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("default_clamps_completions", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","prompt":"hello","max_tokens":100000}`
+		resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("custom_max_tokens_option", func(t *testing.T) {
+		srv := NewServer(mdl, WithMaxTokens(256))
+		if srv.maxTokens != 256 {
+			t.Fatalf("maxTokens = %d, want 256", srv.maxTokens)
+		}
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":100000}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("within_limit_not_clamped", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":100}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	m := buildTestModel(t)
+
+	// Allow 2 requests with burst=2, rate=0 (no refill).
+	rl := security.NewRateLimiter(0, 2)
+	srv := NewServer(m, WithRateLimiter(rl))
+	handler := srv.Handler()
+
+	// First two requests should succeed.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: got status %d, want %d", i+1, rec.Code, http.StatusOK)
+		}
+	}
+
+	// Third request should be rate limited.
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+
+	var errResp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	errObj, ok := errResp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected error object in response")
+	}
+	if msg, _ := errObj["message"].(string); msg != "rate limit exceeded" {
+		t.Fatalf("got error message %q, want %q", msg, "rate limit exceeded")
+	}
+}

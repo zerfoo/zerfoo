@@ -474,8 +474,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Clamp max_tokens to server-side upper bound.
 	if req.MaxTokens != nil && *req.MaxTokens > s.maxTokens {
-ttclamped := s.maxTokens
-ttreq.MaxTokens = &clamped
+		clamped := s.maxTokens
+		req.MaxTokens = &clamped
 	}
 
 	// Build generation options.
@@ -627,6 +627,12 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.Prompt == "" {
 		writeError(w, http.StatusBadRequest, "prompt is required")
 		return
+	}
+
+	// Clamp max_tokens to server-side upper bound.
+	if req.MaxTokens != nil && *req.MaxTokens > s.maxTokens {
+		clamped := s.maxTokens
+		req.MaxTokens = &clamped
 	}
 
 	var opts []inference.GenerateOption
