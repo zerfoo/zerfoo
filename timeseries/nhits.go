@@ -263,20 +263,6 @@ type adamState struct {
 	v []float32
 }
 
-// TrainConfig holds hyperparameters for standalone windowed training.
-type TrainConfig struct {
-	Epochs       int
-	LearningRate float64
-	BatchSize    int
-	GradClip     float64 // max gradient L2 norm (0 = no clipping)
-}
-
-// TrainResult holds the result of a training run.
-type TrainResult struct {
-	FinalLoss  float64
-	EpochLoss  []float64
-	NumSamples int
-}
 
 // TrainWindowed trains the N-HiTS model on pre-windowed data using AdamW with
 // analytical gradient computation.
@@ -293,7 +279,7 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			len(labels), numSamples, n.config.OutputLength)
 	}
 
-	lr := config.LearningRate
+	lr := config.LR
 	if lr == 0 {
 		lr = 1e-3
 	}
@@ -307,7 +293,7 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 	}
 
 	ctx := context.Background()
-	result := &TrainResult{NumSamples: numSamples}
+	result := &TrainResult{}
 
 	// Collect all parameters in order: per stack, mlp layers (w,b) then output proj (w,b).
 	type paramRef struct {
@@ -500,11 +486,11 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 		}
 
 		avgLoss := epochLoss / float64(nBatches)
-		result.EpochLoss = append(result.EpochLoss, avgLoss)
+		result.LossHistory = append(result.LossHistory, avgLoss)
 	}
 
-	if len(result.EpochLoss) > 0 {
-		result.FinalLoss = result.EpochLoss[len(result.EpochLoss)-1]
+	if len(result.LossHistory) > 0 {
+		result.FinalLoss = result.LossHistory[len(result.LossHistory)-1]
 	}
 	return result, nil
 }

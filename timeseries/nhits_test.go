@@ -439,7 +439,7 @@ func TestNHiTS_ConvergenceSynthetic(t *testing.T) {
 
 	tc := TrainConfig{
 		Epochs:       200,
-		LearningRate: 1e-3,
+		LR: 1e-3,
 		BatchSize:    16,
 		GradClip:     1.0,
 	}
@@ -450,10 +450,10 @@ func TestNHiTS_ConvergenceSynthetic(t *testing.T) {
 	}
 
 	// Loss should decrease.
-	if len(result.EpochLoss) < 2 {
+	if len(result.LossHistory) < 2 {
 		t.Fatal("expected at least 2 epoch losses")
 	}
-	firstLoss := result.EpochLoss[0]
+	firstLoss := result.LossHistory[0]
 	finalLoss := result.FinalLoss
 	if finalLoss >= firstLoss {
 		t.Errorf("loss did not decrease: first=%v, final=%v", firstLoss, finalLoss)
@@ -502,7 +502,7 @@ func TestNHiTS_RoundTrip(t *testing.T) {
 
 	tc := TrainConfig{
 		Epochs:       50,
-		LearningRate: 1e-3,
+		LR: 1e-3,
 		BatchSize:    16,
 	}
 
