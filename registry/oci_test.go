@@ -492,6 +492,14 @@ func TestParseReference(t *testing.T) {
 			input:   "invalidref",
 			wantErr: true,
 		},
+		{
+			input:   "registry.example.com/../../etc/passwd:latest",
+			wantErr: true,
+		},
+		{
+			input:   "registry.example.com/repo/../secret:v1",
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {

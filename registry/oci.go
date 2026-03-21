@@ -97,6 +97,9 @@ func parseReference(ref string) (Reference, error) {
 	if r.Repository == "" {
 		return Reference{}, fmt.Errorf("invalid reference %q: empty repository", ref)
 	}
+	if strings.Contains(r.Repository, "..") {
+		return Reference{}, fmt.Errorf("invalid reference %q: repository contains path traversal", ref)
+	}
 	if r.Tag == "" && r.Digest == "" {
 		r.Tag = "latest"
 	}
