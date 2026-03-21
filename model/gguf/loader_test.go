@@ -646,6 +646,67 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 	}
 }
 
+func TestLoadTensors_DimensionExceedsMaxInt32(t *testing.T) {
+	// A single dimension > math.MaxInt32 should be rejected.
+	tensors := []TensorInfo{{
+		Name:       "test.overflow",
+		Dimensions: []uint64{uint64(math.MaxInt32) + 1},
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+	r := buildGGUFWithTensors(t, tensors, nil)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	_, err = LoadTensors(f, r)
+	if err == nil {
+		t.Fatal("expected error for dimension > MaxInt32")
+	}
+}
+
+func TestLoadTensors_TotalElementsOverflow(t *testing.T) {
+	// Two dimensions that individually fit in int32 but whose product exceeds 1<<34.
+	// 131072 * 131073 = 17,179,999,296 > 17,179,869,184 (1<<34)
+	tensors := []TensorInfo{{
+		Name:       "test.overflow",
+		Dimensions: []uint64{131072, 131073},
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+	r := buildGGUFWithTensors(t, tensors, nil)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	_, err = LoadTensors(f, r)
+	if err == nil {
+		t.Fatal("expected error for total elements > 1<<34")
+	}
+}
+
+func TestLoadTensors_ValidLargeDimensions(t *testing.T) {
+	// Dimensions that are large but within bounds should parse without error
+	// (though LoadTensors will fail at the read stage since we provide no data).
+	// This verifies the overflow check itself does not reject valid sizes.
+	// 4096 * 4096 = 16M elements, well within 1<<34.
+	tensors := []TensorInfo{{
+		Name:       "test.valid",
+		Dimensions: []uint64{4096, 4096},
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+	r := buildGGUFWithTensors(t, tensors, make([]byte, 4096*4096*4))
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	_, err = LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors should succeed for valid dimensions: %v", err)
+	}
+}
+
 func TestQuantizeToFP8E4M3_Skips1D(t *testing.T) {
 	// 1D tensor (norm weight) should NOT be quantized.
 	norm, _ := tensor.New[float32]([]int{4}, []float32{1, 2, 3, 4})

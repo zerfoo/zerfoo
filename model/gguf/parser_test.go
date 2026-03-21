@@ -303,3 +303,27 @@ func TestGetUint32_WrongType(t *testing.T) {
 		t.Error("GetUint32 with string value should return false")
 	}
 }
+
+func TestParse_TensorCountOverflow(t *testing.T) {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3))           // version
+	bw(&buf, uint64(100_001))     // tensor count exceeds limit
+	bw(&buf, uint64(0))           // metadata kv count
+	_, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("expected error for tensor count > 100000")
+	}
+}
+
+func TestParse_MetadataKVCountOverflow(t *testing.T) {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3))           // version
+	bw(&buf, uint64(0))           // tensor count
+	bw(&buf, uint64(1_000_001))   // metadata kv count exceeds limit
+	_, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("expected error for metadata kv count > 1000000")
+	}
+}

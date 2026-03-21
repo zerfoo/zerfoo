@@ -92,8 +92,14 @@ func Parse(r io.ReadSeeker) (*File, error) {
 	if err := binary.Read(r, binary.LittleEndian, &tensorCount); err != nil {
 		return nil, fmt.Errorf("read tensor count: %w", err)
 	}
+	if tensorCount > 100_000 {
+		return nil, fmt.Errorf("tensor count %d exceeds maximum (100000)", tensorCount)
+	}
 	if err := binary.Read(r, binary.LittleEndian, &metadataKVCount); err != nil {
 		return nil, fmt.Errorf("read metadata kv count: %w", err)
+	}
+	if metadataKVCount > 1_000_000 {
+		return nil, fmt.Errorf("metadata kv count %d exceeds maximum (1000000)", metadataKVCount)
 	}
 
 	// Parse metadata key-value pairs.

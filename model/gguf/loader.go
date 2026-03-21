@@ -21,10 +21,16 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 	for i := range f.Tensors {
 		ti := &f.Tensors[i]
 
-		// Compute number of elements.
-		numElements := 1
+		// Compute number of elements with overflow checks.
+		var numElements int64 = 1
 		for _, d := range ti.Dimensions {
-			numElements *= int(d)
+			if d > math.MaxInt32 {
+				return nil, fmt.Errorf("tensor %q: dimension %d exceeds maximum (%d)", ti.Name, d, int64(math.MaxInt32))
+			}
+			numElements *= int64(d)
+			if numElements > 1<<34 {
+				return nil, fmt.Errorf("tensor %q: total elements %d exceeds maximum (%d)", ti.Name, numElements, int64(1<<34))
+			}
 		}
 
 		// Convert dimensions to int for tensor API.
@@ -37,7 +43,7 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		}
 
 		// Compute byte size of this tensor's data.
-		dataSize, err := tensorByteSize(ti.Type, numElements)
+		dataSize, err := tensorByteSize(ti.Type, int(numElements))
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
@@ -55,7 +61,7 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		}
 
 		// Decode based on type.
-		t, err := decodeTensor(ti.Type, shape, numElements, raw)
+		t, err := decodeTensor(ti.Type, shape, int(numElements), raw)
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
