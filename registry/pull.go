@@ -2,9 +2,12 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -172,7 +175,8 @@ func listModelFiles(ctx context.Context, opts HFPullOptions, modelID string) ([]
 	return info.Siblings, nil
 }
 
-// downloadFile downloads a single file from HuggingFace CDN.
+// downloadFile downloads a single file from HuggingFace CDN using atomic
+// writes and optional SHA-256 checksum verification.
 func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, targetDir string) (int64, error) {
 	url := fmt.Sprintf("%s/%s/resolve/main/%s", opts.CDNURL, modelID, filename)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -207,12 +211,26 @@ func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, ta
 		return 0, err
 	}
 
-	f, err := os.Create(cleaned) //nolint:gosec // path validated above
+	// Extract expected SHA-256 from response headers if available.
+	expectedHash := extractSHA256(resp)
+
+	// Atomic write: download to a temp file, then rename on success.
+	tmpPath := cleaned + ".tmp"
+	f, err := os.Create(tmpPath) //nolint:gosec // path validated above
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close() //nolint:errcheck
 
+	// Ensure temp file is cleaned up on any error path.
+	success := false
+	defer func() {
+		f.Close() //nolint:errcheck
+		if !success {
+			os.Remove(tmpPath) //nolint:errcheck
+		}
+	}()
+
+	// Set up the reader pipeline: body -> progress -> tee(hash).
 	var reader io.Reader = resp.Body
 	if opts.OnProgress != nil {
 		reader = &progressReader{
@@ -222,11 +240,61 @@ func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, ta
 		}
 	}
 
+	// Compute SHA-256 while writing via TeeReader.
+	hasher := sha256.New()
+	reader = io.TeeReader(reader, hasher)
+
 	n, err := io.Copy(f, reader)
 	if err != nil {
 		return 0, err
 	}
+
+	// Verify checksum if the server provided one.
+	gotHash := hex.EncodeToString(hasher.Sum(nil))
+	if expectedHash != "" {
+		if gotHash != expectedHash {
+			return 0, fmt.Errorf("checksum mismatch for %s: expected %s, got %s", filename, expectedHash, gotHash)
+		}
+	} else {
+		slog.Warn("no SHA-256 checksum available from server, skipping verification", "file", filename)
+	}
+
+	// Atomic rename: temp file -> final path.
+	if err := os.Rename(tmpPath, cleaned); err != nil {
+		return 0, fmt.Errorf("rename temp file: %w", err)
+	}
+	success = true
+
 	return n, nil
+}
+
+// extractSHA256 extracts a SHA-256 hash from the HTTP response headers.
+// It checks X-Linked-Etag, ETag (for hex-encoded SHA-256), and Content-Sha256.
+func extractSHA256(resp *http.Response) string {
+	// HuggingFace uses X-Linked-Etag or ETag with quoted hex SHA-256.
+	for _, header := range []string{"X-Linked-Etag", "ETag", "Content-Sha256"} {
+		val := resp.Header.Get(header)
+		if val == "" {
+			continue
+		}
+		// Strip quotes from ETag values.
+		val = strings.Trim(val, "\"")
+		// A valid SHA-256 hex string is exactly 64 characters.
+		if len(val) == 64 && isHex(val) {
+			return strings.ToLower(val)
+		}
+	}
+	return ""
+}
+
+// isHex reports whether s contains only hexadecimal characters.
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // shouldDownload returns true if the file is relevant for model caching.

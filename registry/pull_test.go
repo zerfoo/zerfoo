@@ -2,11 +2,15 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -381,5 +385,173 @@ func TestNewHFPullFunc_WithQuant(t *testing.T) {
 	q4Path := filepath.Join(info.Path, "model-Q4_K_M.gguf")
 	if _, statErr := os.Stat(q4Path); !os.IsNotExist(statErr) {
 		t.Error("Q4_K_M GGUF should not be downloaded when Quant=Q8_0")
+	}
+}
+
+func TestDownloadFile_ChecksumMatch(t *testing.T) {
+	content := []byte("known content for checksum verification")
+	hash := sha256.Sum256(content)
+	hexHash := hex.EncodeToString(hash[:])
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
+		json.NewEncoder(w).Encode(info)
+	})
+	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("ETag", fmt.Sprintf("%q", hexHash))
+		w.Write(content)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err != nil {
+		t.Fatalf("Pull should succeed with matching checksum: %v", err)
+	}
+
+	// Verify the file exists at the final path with correct content.
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(content) {
+		t.Errorf("file content = %q, want %q", data, content)
+	}
+
+	// Verify no temp file remains.
+	tmpPath := filepath.Join(dir, "config.json.tmp")
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Error("temp file should not exist after successful download")
+	}
+}
+
+func TestDownloadFile_ChecksumMismatch(t *testing.T) {
+	content := []byte("actual content")
+	wrongHash := strings.Repeat("ab", 32) // 64 hex chars, wrong hash
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
+		json.NewEncoder(w).Encode(info)
+	})
+	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("ETag", fmt.Sprintf("%q", wrongHash))
+		w.Write(content)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err == nil {
+		t.Fatal("Pull should fail with mismatched checksum")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("error should mention checksum mismatch, got: %v", err)
+	}
+
+	// Verify neither final nor temp file exists.
+	finalPath := filepath.Join(dir, "config.json")
+	if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+		t.Error("final file should not exist after checksum mismatch")
+	}
+	tmpPath := filepath.Join(dir, "config.json.tmp")
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Error("temp file should not exist after checksum mismatch")
+	}
+}
+
+func TestDownloadFile_InterruptedDownload_NoPartialFile(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "model.gguf"}}}
+		json.NewEncoder(w).Encode(info)
+	})
+	mux.HandleFunc("/org/model/resolve/main/model.gguf", func(w http.ResponseWriter, _ *http.Request) {
+		// Write partial data then close connection abruptly by hijacking.
+		w.Header().Set("Content-Length", "1000000")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			w.Write([]byte("partial"))
+			f.Flush()
+		}
+		// Hijack the connection to simulate an interrupted download.
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, _ := hj.Hijack()
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err == nil {
+		t.Fatal("Pull should fail for interrupted download")
+	}
+
+	// The final file must not exist.
+	finalPath := filepath.Join(dir, "model.gguf")
+	if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+		t.Error("final file should not exist after interrupted download")
+	}
+
+	// The temp file must be cleaned up.
+	tmpPath := filepath.Join(dir, "model.gguf.tmp")
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Error("temp file should be cleaned up after interrupted download")
+	}
+}
+
+func TestExtractSHA256(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+		want   string
+	}{
+		{"quoted ETag", "ETag", `"abc123def456abc123def456abc123def456abc123def456abc123def456abcd"`, "abc123def456abc123def456abc123def456abc123def456abc123def456abcd"},
+		{"Content-Sha256", "Content-Sha256", "abc123def456abc123def456abc123def456abc123def456abc123def456abcd", "abc123def456abc123def456abc123def456abc123def456abc123def456abcd"},
+		{"non-hex ETag", "ETag", `"not-a-sha256-hash"`, ""},
+		{"short ETag", "ETag", `"abcdef"`, ""},
+		{"empty", "ETag", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			if tc.value != "" {
+				resp.Header.Set(tc.header, tc.value)
+			}
+			got := extractSHA256(resp)
+			if got != tc.want {
+				t.Errorf("extractSHA256() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
