@@ -1164,6 +1164,9 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 		config.Epsilon = 1e-8
 	}
 
+	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
+	windows, _, _ = normalizeWindows(windows)
+
 	// Extract float64 parameters.
 	params := m.extractParamsF64()
 	nParams := params.paramCount()
@@ -1246,7 +1249,8 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 				}
 			}
 
-			// AdamW update.
+			// AdamW update with LR warmup.
+			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			flatP := params.flatParams()
 			for i := range flatP {
@@ -1254,12 +1258,17 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 				adamV[i] = config.Beta2*adamV[i] + (1-config.Beta2)*grads[i]*grads[i]
 				mHat := adamM[i] / (1 - math.Pow(config.Beta1, t))
 				vHat := adamV[i] / (1 - math.Pow(config.Beta2, t))
-				*flatP[i] = *flatP[i] - config.LR*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*flatP[i]))
+				*flatP[i] = *flatP[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*flatP[i]))
 			}
 		}
 
 		result.LossHistory[epoch] = epochLoss / float64(nBatches)
 		result.FinalLoss = result.LossHistory[epoch]
+
+		// Early halt on NaN/Inf loss.
+		if !isFinite(result.FinalLoss) {
+			return nil, fmt.Errorf("patchtst: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
+		}
 	}
 
 	// Write trained parameters back to float32 tensors.
