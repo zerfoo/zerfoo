@@ -162,7 +162,9 @@ func (a *API) CloseTicket(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	if err := ticket.Transition(StatusClosed, now); err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusConflict)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 

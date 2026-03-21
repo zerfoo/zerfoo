@@ -471,6 +471,51 @@ func TestAPICloseTicket(t *testing.T) {
 	}
 }
 
+func TestAPICloseTicketConflictJSONEscaping(t *testing.T) {
+	api := newTestAPI()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create and close a ticket so that a second close triggers a conflict error.
+	body := `{"customer_id":"cust-1","subject":"Test","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	var created Ticket
+	json.NewDecoder(rr.Body).Decode(&created)
+
+	// First close succeeds.
+	req = httptest.NewRequest("POST", "/support/tickets/"+created.ID+"/close", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 on first close, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Second close should return 409 Conflict with a properly encoded JSON body.
+	req = httptest.NewRequest("POST", "/support/tickets/"+created.ID+"/close", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rr.Code)
+	}
+
+	// The response must be valid JSON with the error message properly escaped.
+	var errResp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+		t.Fatalf("response is not valid JSON: %v; body: %s", err, rr.Body.String())
+	}
+	if errResp["error"] == "" {
+		t.Fatal("expected non-empty error field in JSON response")
+	}
+
+	// Verify Content-Type header.
+	ct := rr.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected application/json content type, got %s", ct)
+	}
+}
+
 func TestAPIPriorityString(t *testing.T) {
 	tests := []struct {
 		p    Priority
