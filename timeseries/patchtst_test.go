@@ -613,3 +613,47 @@ func TestNewPatchTST_Validation(t *testing.T) {
 		})
 	}
 }
+
+func TestPatchTST_TrainWindowed_MultiScale(t *testing.T) {
+	// Issue #121: training on data with features spanning 10 orders of magnitude
+	// previously produced NaN/Inf weights. Normalization should prevent this.
+	// PatchTST uses numerical gradients (O(nParams * forward) per sample), so
+	// we keep the test small to avoid long runtimes.
+	engine, ops := newTestEngine()
+
+	nChannels := 3
+	inputLen := 8
+	outputDim := 1
+	config := PatchTSTConfig{
+		InputLength: inputLen,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   outputDim,
+	}
+
+	m, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(20, nChannels, inputLen, outputDim)
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       5,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 3,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	t.Logf("multi-scale training: final_loss=%.6f (5 epochs, 3 channels, 20 samples)", result.FinalLoss)
+}

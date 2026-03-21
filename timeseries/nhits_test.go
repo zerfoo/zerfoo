@@ -555,3 +555,46 @@ func TestNHiTS_RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestNHiTS_TrainWindowed_MultiScale(t *testing.T) {
+	// Issue #121: training on data with features spanning 10 orders of magnitude
+	// previously produced NaN/Inf weights. Normalization should prevent this.
+	engine, ops := newTestEngine()
+
+	nChannels := 5
+	inputLen := 8
+	outputLen := 4
+	config := NHiTSConfig{
+		InputLength:  inputLen,
+		OutputLength: outputLen,
+		Channels:     nChannels,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	windows, labels := makeMultiScaleWindows(500, nChannels, inputLen, outputLen)
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       20,
+		LR:           1e-3,
+		BatchSize:    32,
+		GradClip:     1.0,
+		WarmupEpochs: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
+}

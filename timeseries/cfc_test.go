@@ -353,3 +353,43 @@ func TestCfC_SaveWeightsCreatesFile(t *testing.T) {
 		t.Fatalf("weights file not created: %v", err)
 	}
 }
+
+func TestCfC_TrainWindowed_MultiScale(t *testing.T) {
+	// Issue #121: training on data with features spanning 10 orders of magnitude
+	// previously produced NaN/Inf weights. Normalization should prevent this.
+	nChannels := 5
+	inputLen := 8
+	outputLen := 1
+	config := CfCConfig{
+		InputSize:  nChannels,
+		HiddenSize: 16,
+		NumLayers:  1,
+		OutputSize: 1,
+		OutputLen:  outputLen,
+	}
+
+	m, err := NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(200, nChannels, inputLen, outputLen)
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       20,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	// Verify all weights are finite.
+	assertFiniteWeights(t, m.flatParams())
+	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 200 samples)", result.FinalLoss)
+}

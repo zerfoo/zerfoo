@@ -618,3 +618,35 @@ func TestNormalizeWindows_Empty(t *testing.T) {
 		t.Errorf("expected nil means/stds for nil input")
 	}
 }
+
+func TestDLinear_TrainWindowed_MultiScale(t *testing.T) {
+	// Issue #121: training on data with features spanning 10 orders of magnitude
+	// previously produced NaN/Inf weights. Normalization should prevent this.
+	nChannels := 5
+	inputLen := 10
+	outputLen := 3
+	m, err := NewDLinear(inputLen, outputLen, nChannels, 3)
+	if err != nil {
+		t.Fatalf("NewDLinear: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(500, nChannels, inputLen, nChannels*outputLen)
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       20,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	// Verify all weights are finite.
+	assertFiniteWeights(t, m.flatParams())
+	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
+}
