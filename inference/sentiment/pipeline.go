@@ -1,9 +1,13 @@
 package sentiment
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"strings"
+	"unicode"
 
 	"github.com/zerfoo/zerfoo/inference"
 )
@@ -39,6 +43,7 @@ type Pipeline struct {
 	batchSize  int
 	continuous bool
 	ownsModel  bool // true if Pipeline loaded the model and should close it
+	vocabErr   error
 }
 
 // Option configures a Pipeline.
@@ -81,6 +86,18 @@ func WithDevice(device string) Option {
 	return func(p *Pipeline) {}
 }
 
+// WithVocabFile loads a WordPiece vocabulary file and uses it as the tokenizer.
+func WithVocabFile(vocabPath string) Option {
+	return func(p *Pipeline) {
+		tok, err := loadWordPieceVocab(vocabPath)
+		if err != nil {
+			p.vocabErr = err
+			return
+		}
+		p.tokenizer = tok
+	}
+}
+
 // WithEncoder injects a pre-built encoder, bypassing GGUF file loading.
 // The caller retains ownership and must close the encoder separately.
 func WithEncoder(enc Encoder) Option {
@@ -107,6 +124,10 @@ func New(modelPath string, opts ...Option) (*Pipeline, error) {
 	for _, opt := range opts {
 		// Re-apply; WithDevice is a no-op on Pipeline fields.
 		opt(p)
+	}
+
+	if p.vocabErr != nil {
+		return nil, fmt.Errorf("sentiment.New: load vocab: %w", p.vocabErr)
 	}
 
 	if p.encoder == nil {
@@ -287,11 +308,126 @@ func defaultLabels(n int) []string {
 		return []string{"negative", "positive"}
 	}
 	if n == 3 {
-		return []string{"negative", "neutral", "positive"}
+		return []string{"positive", "negative", "neutral"}
 	}
 	labels := make([]string, n)
 	for i := range labels {
 		labels[i] = fmt.Sprintf("class_%d", i)
 	}
 	return labels
+}
+
+type wordPieceTokenizer struct {
+	vocab                   map[string]int
+	reverse                 map[int]string
+	unkID, clsID, sepID int
+}
+
+func loadWordPieceVocab(path string) (*wordPieceTokenizer, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open vocab: %w", err)
+	}
+	defer f.Close()
+	tok := &wordPieceTokenizer{vocab: make(map[string]int), reverse: make(map[int]string)}
+	scanner := bufio.NewScanner(f)
+	id := 0
+	for scanner.Scan() {
+		token := scanner.Text()
+		tok.vocab[token] = id
+		tok.reverse[id] = token
+		switch token {
+		case "[UNK]":
+			tok.unkID = id
+		case "[CLS]":
+			tok.clsID = id
+		case "[SEP]":
+			tok.sepID = id
+		}
+		id++
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(tok.vocab) == 0 {
+		return nil, fmt.Errorf("empty vocab")
+	}
+	return tok, nil
+}
+
+func (t *wordPieceTokenizer) Encode(text string) ([]int, error) {
+	ids := []int{t.clsID}
+	for _, word := range tokenizeBasic(text) {
+		ids = append(ids, t.tokenizeWord(strings.ToLower(word))...)
+	}
+	return append(ids, t.sepID), nil
+}
+
+func (t *wordPieceTokenizer) Decode(ids []int) (string, error) {
+	var parts []string
+	for _, id := range ids {
+		if tok, ok := t.reverse[id]; ok {
+			if strings.HasPrefix(tok, "##") {
+				parts = append(parts, tok[2:])
+			} else {
+				parts = append(parts, tok)
+			}
+		}
+	}
+	return strings.Join(parts, " "), nil
+}
+
+func (t *wordPieceTokenizer) tokenizeWord(word string) []int {
+	if id, ok := t.vocab[word]; ok {
+		return []int{id}
+	}
+	var ids []int
+	start := 0
+	for start < len(word) {
+		end := len(word)
+		matched := false
+		for end > start {
+			substr := word[start:end]
+			if start > 0 {
+				substr = "##" + substr
+			}
+			if id, ok := t.vocab[substr]; ok {
+				ids = append(ids, id)
+				start = end
+				matched = true
+				break
+			}
+			end--
+		}
+		if !matched {
+			ids = append(ids, t.unkID)
+			start++
+		}
+	}
+	return ids
+}
+
+func tokenizeBasic(text string) []string {
+	var tokens []string
+	var cur strings.Builder
+	for _, r := range text {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		} else if unicode.IsPunct(r) || (r >= 33 && r <= 47) || (r >= 58 && r <= 64) || (r >= 91 && r <= 96) || (r >= 123 && r <= 126) {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+			tokens = append(tokens, string(r))
+		} else {
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }

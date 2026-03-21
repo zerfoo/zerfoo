@@ -327,7 +327,7 @@ func TestDefaultLabels(t *testing.T) {
 		want []string
 	}{
 		{2, []string{"negative", "positive"}},
-		{3, []string{"negative", "neutral", "positive"}},
+		{3, []string{"positive", "negative", "neutral"}},
 		{5, []string{"class_0", "class_1", "class_2", "class_3", "class_4"}},
 	}
 	for _, tt := range tests {
