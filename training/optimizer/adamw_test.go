@@ -398,6 +398,159 @@ func TestAdamW_Step_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestAdamW_Step_NaNGradientReturnsError(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.001, 0.9, 0.999, 1e-8, 0.0)
+
+	value, err := tensor.New[float32]([]int{3}, []float32{1.0, 2.0, 3.0})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{3}, []float32{0.1, float32(math.NaN()), 0.3})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("weights", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	err = adamw.Step(ctx, []*graph.Parameter[float32]{param})
+	if err == nil {
+		t.Fatal("Expected error for NaN gradient, got nil")
+	}
+
+	if !errors.Is(err, err) { // sanity: err is non-nil
+		t.Fatal("Unexpected nil error")
+	}
+
+	expected := `adamw: NaN detected in gradient of parameter "weights" at index 1`
+	if err.Error() != expected {
+		t.Errorf("Error message mismatch:\n got: %s\nwant: %s", err.Error(), expected)
+	}
+}
+
+func TestAdamW_Step_InfGradientReturnsError(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.001, 0.9, 0.999, 1e-8, 0.0)
+
+	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{2}, []float32{float32(math.Inf(1)), 0.1})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("bias", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	err = adamw.Step(ctx, []*graph.Parameter[float32]{param})
+	if err == nil {
+		t.Fatal("Expected error for Inf gradient, got nil")
+	}
+
+	expected := `adamw: Inf detected in gradient of parameter "bias" at index 0`
+	if err.Error() != expected {
+		t.Errorf("Error message mismatch:\n got: %s\nwant: %s", err.Error(), expected)
+	}
+}
+
+func TestAdamW_Step_GradientClipping(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
+	adamw.SetMaxGradNorm(1.0)
+
+	// Gradient norm = sqrt(3^2 + 4^2) = 5.0, exceeds MaxGradNorm=1.0
+	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{2}, []float32{3.0, 4.0})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("param1", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	// Store original param values
+	originalValues := make([]float32, len(param.Value.Data()))
+	copy(originalValues, param.Value.Data())
+
+	err = adamw.Step(ctx, []*graph.Parameter[float32]{param})
+	testutils.AssertNoError(t, err, "Step should not error with clipped gradients")
+
+	// After clipping, the gradient norm should have been scaled to 1.0.
+	// Original gradient: [3, 4], norm=5, scale=1/5=0.2
+	// Clipped gradient: [0.6, 0.8], norm=1.0
+	// The parameters should have been updated with the clipped gradients.
+	// We verify indirectly by checking the parameters changed.
+	for i, original := range originalValues {
+		newVal := param.Value.Data()[i]
+		if newVal == original {
+			t.Errorf("Parameter value at index %d should have changed after clipped gradient update", i)
+		}
+	}
+}
+
+func TestAdamW_Step_GradientClippingActuallyClips(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
+	adamw.SetMaxGradNorm(1.0)
+
+	// Gradient norm = sqrt(3^2 + 4^2) = 5.0
+	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{2}, []float32{3.0, 4.0})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("param1", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	// Call the internal guard method directly to inspect gradient values after clipping.
+	err = adamw.guardAndClipGradients([]*graph.Parameter[float32]{param})
+	testutils.AssertNoError(t, err, "guardAndClipGradients should not error")
+
+	clippedData := param.Gradient.Data()
+	// Expected: [3*0.2, 4*0.2] = [0.6, 0.8]
+	testutils.AssertFloatEqual(t, 0.6, clippedData[0], 1e-5, "Clipped gradient[0] should be 0.6")
+	testutils.AssertFloatEqual(t, 0.8, clippedData[1], 1e-5, "Clipped gradient[1] should be 0.8")
+
+	// Verify clipped norm is ~1.0
+	clippedNorm := math.Sqrt(float64(clippedData[0])*float64(clippedData[0]) + float64(clippedData[1])*float64(clippedData[1]))
+	testutils.AssertFloatEqual(t, 1.0, clippedNorm, 1e-5, "Clipped gradient norm should be 1.0")
+}
+
+func TestAdamW_Step_NormalGradientUnchanged(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
+	adamw.SetMaxGradNorm(10.0)
+
+	// Gradient norm = sqrt(0.1^2 + 0.2^2) ≈ 0.224, well below MaxGradNorm=10.0
+	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{2}, []float32{0.1, 0.2})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("param1", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	// Call guard directly to verify gradients are untouched
+	err = adamw.guardAndClipGradients([]*graph.Parameter[float32]{param})
+	testutils.AssertNoError(t, err, "guardAndClipGradients should not error")
+
+	data := param.Gradient.Data()
+	testutils.AssertFloatEqual(t, 0.1, data[0], 1e-6, "Gradient[0] should be unchanged")
+	testutils.AssertFloatEqual(t, 0.2, data[1], 1e-6, "Gradient[1] should be unchanged")
+}
+
 func TestAdamW_Step_ZeroGradient(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}

@@ -3,7 +3,11 @@ package optimizer
 
 import (
 	"context"
+	"fmt"
+	"math"
 
+	"github.com/zerfoo/float16"
+	"github.com/zerfoo/float8"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
@@ -17,6 +21,7 @@ type AdamW[T tensor.Numeric] struct {
 	beta2        T
 	epsilon      T
 	weightDecay  T
+	maxGradNorm  float64 // If > 0, clip global gradient norm to this value.
 
 	// State variables for each parameter
 	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates
@@ -39,8 +44,19 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 	}
 }
 
+// SetMaxGradNorm sets the maximum gradient norm for gradient clipping.
+// If maxGradNorm <= 0, gradient clipping is disabled.
+func (a *AdamW[T]) SetMaxGradNorm(maxGradNorm float64) {
+	a.maxGradNorm = maxGradNorm
+}
+
 // Step updates the parameters based on their gradients.
 func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
+	// NaN/Inf guard and optional gradient clipping.
+	if err := a.guardAndClipGradients(params); err != nil {
+		return err
+	}
+
 	a.t++ // Increment timestep
 
 	// Bias correction terms
@@ -173,6 +189,93 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		var zero T
 		if err := a.engine.Fill(ctx, param.Gradient, zero); err != nil {
 			param.ClearGradient() // Fallback to CPU path.
+		}
+	}
+
+	return nil
+}
+
+// numericToFloat64 converts a tensor.Numeric value to float64.
+func numericToFloat64[T tensor.Numeric](v T) float64 {
+	switch val := any(v).(type) {
+	case float32:
+		return float64(val)
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int8:
+		return float64(val)
+	case int16:
+		return float64(val)
+	case int32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case uint:
+		return float64(val)
+	case uint8:
+		return float64(val)
+	case uint32:
+		return float64(val)
+	case uint64:
+		return float64(val)
+	case float16.Float16:
+		return float64(val.ToFloat32())
+	case float16.BFloat16:
+		return float64(val.ToFloat32())
+	case float8.Float8:
+		return val.ToFloat64()
+	default:
+		return 0
+	}
+}
+
+// guardAndClipGradients checks all gradient values for NaN/Inf and optionally
+// clips the global gradient norm to MaxGradNorm.
+func (a *AdamW[T]) guardAndClipGradients(params []*graph.Parameter[T]) error {
+	ops := a.engine.Ops()
+	var globalNormSq float64
+
+	for _, param := range params {
+		grad := param.Gradient
+		if grad == nil {
+			continue
+		}
+
+		data := grad.Data()
+		for i, v := range data {
+			f := numericToFloat64(v)
+			if math.IsNaN(f) {
+				return fmt.Errorf("adamw: NaN detected in gradient of parameter %q at index %d", param.Name, i)
+			}
+
+			if math.IsInf(f, 0) {
+				return fmt.Errorf("adamw: Inf detected in gradient of parameter %q at index %d", param.Name, i)
+			}
+
+			globalNormSq += f * f
+		}
+	}
+
+	if a.maxGradNorm > 0 {
+		globalNorm := math.Sqrt(globalNormSq)
+		if globalNorm > a.maxGradNorm {
+			scale := a.maxGradNorm / globalNorm
+			for _, param := range params {
+				grad := param.Gradient
+				if grad == nil {
+					continue
+				}
+
+				data := grad.Data()
+				for i, v := range data {
+					f := numericToFloat64(v)
+					data[i] = ops.FromFloat64(f * scale)
+				}
+
+				grad.SetData(data)
+			}
 		}
 	}
 
