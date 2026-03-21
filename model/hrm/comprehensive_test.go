@@ -212,21 +212,25 @@ func TestTrainStep_ForwardError(t *testing.T) {
 	}
 }
 
-func TestForward_LModuleError(t *testing.T) {
+func TestForward_LModuleHiddenStateResize(t *testing.T) {
 	model := makeModel(t)
 
-	// Set HiddenState to a tensor with incompatible shape so LModule.Forward fails
+	// Set HiddenState to a tensor with incompatible shape — Forward should auto-resize it.
 	wrongShape, _ := tensor.New[float32]([]int{3, 5, 7}, nil)
 	model.HModule.HiddenState = wrongShape
 
 	input, _ := tensor.New[float32]([]int{1, 16}, nil)
-	_, err := model.Forward(context.Background(), 1, 1, input)
-	if err == nil {
-		t.Error("expected error from LModule.Forward due to shape mismatch")
+	output, err := model.Forward(context.Background(), 1, 1, input)
+	if err != nil {
+		t.Fatalf("Forward should auto-resize hidden state, got error: %v", err)
+	}
+
+	if got := output.Shape(); got[0] != 1 {
+		t.Errorf("output batch dim = %d, want 1", got[0])
 	}
 }
 
-func TestForward_HModuleError(t *testing.T) {
+func TestForward_HModuleHiddenStateResize(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 	modelDim := 16
@@ -249,15 +253,17 @@ func TestForward_HModuleError(t *testing.T) {
 
 	input, _ := tensor.New[float32]([]int{1, 16}, nil)
 
-	// Corrupt HModule.HiddenState to an incompatible shape with LModule.HiddenState.
-	// Use tSteps=0 so the LModule loop is skipped, going directly to HModule.Forward.
-	// HModule.Forward does Add(lState=LModule.HiddenState [1,16], m.HiddenState [3,5,7]) -> error
+	// Corrupt HModule.HiddenState — Forward should auto-resize it.
 	wrongShape, _ := tensor.New[float32]([]int{3, 5, 7}, nil)
 	model.HModule.HiddenState = wrongShape
 
-	_, err = model.Forward(context.Background(), 1, 0, input)
-	if err == nil {
-		t.Error("expected error from HModule.Forward due to shape mismatch")
+	output, err := model.Forward(context.Background(), 1, 0, input)
+	if err != nil {
+		t.Fatalf("Forward should auto-resize hidden state, got error: %v", err)
+	}
+
+	if got := output.Shape(); got[0] != 1 {
+		t.Errorf("output batch dim = %d, want 1", got[0])
 	}
 }
 

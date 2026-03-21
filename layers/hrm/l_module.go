@@ -39,7 +39,7 @@ func NewLModule[T tensor.Numeric](
 		return nil, fmt.Errorf("new transformer block: %w", err)
 	}
 
-	initialState, err := tensor.New[T]([]int{1, modelDim}, nil)
+	initialState, err := tensor.New[T]([]int{1, modelDim}, make([]T, modelDim))
 	if err != nil {
 		return nil, fmt.Errorf("new initial state: %w", err)
 	}
@@ -77,6 +77,17 @@ func (m *LModule[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 
 	hState := inputs[0]
 	projectedInput := inputs[1]
+
+	// Resize hidden state if batch dimension mismatches input.
+	if m.HiddenState.Shape()[0] != hState.Shape()[0] {
+		batchSize := hState.Shape()[0]
+		var resizeErr error
+
+		m.HiddenState, resizeErr = tensor.New[T]([]int{batchSize, m.modelDim}, make([]T, batchSize*m.modelDim))
+		if resizeErr != nil {
+			return nil, fmt.Errorf("l_module resize hidden state: %w", resizeErr)
+		}
+	}
 
 	combinedInput, err := m.Block.Engine().Add(ctx, hState, projectedInput)
 	if err != nil {

@@ -90,6 +90,24 @@ func (m *HRM[T]) Forward(ctx context.Context, nSteps, tSteps int, inputs ...*ten
 		return nil, err
 	}
 
+	// Resize hidden states to match input batch dimension.
+	batchSize := projectedInput.Shape()[0]
+	modelDim := projectedInput.Shape()[1]
+
+	if m.HModule.HiddenState.Shape()[0] != batchSize {
+		m.HModule.HiddenState, err = tensor.New[T]([]int{batchSize, modelDim}, make([]T, batchSize*modelDim))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if m.LModule.HiddenState.Shape()[0] != batchSize {
+		m.LModule.HiddenState, err = tensor.New[T]([]int{batchSize, modelDim}, make([]T, batchSize*modelDim))
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Recurrent updates
 	for i := 0; i < nSteps; i++ {
 		for j := 0; j < tSteps; j++ {
