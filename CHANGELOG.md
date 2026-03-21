@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0](https://github.com/zerfoo/zerfoo/compare/v1.9.0...v1.10.0) (2026-03-21)
+
+
+### Features
+
+* **timeseries:** add ModelPath and Metrics to TrainResult (fixes [#118](https://github.com/zerfoo/zerfoo/issues/118)) ([7bd7cec](https://github.com/zerfoo/zerfoo/commit/7bd7cec97d9ad4a701eea012c1d4cce20186fe38))
+* **timeseries:** add TrainWindowed/PredictWindowed to PatchTST (fixes [#120](https://github.com/zerfoo/zerfoo/issues/120)) ([7d6cee2](https://github.com/zerfoo/zerfoo/commit/7d6cee2a92ca9d8adb030d42e4299a16dd7cd8b5))
+* **training:** add CreateWindows and ParseWindowSizes (fixes [#119](https://github.com/zerfoo/zerfoo/issues/119)) ([5c53faa](https://github.com/zerfoo/zerfoo/commit/5c53faa930d082ac8db3565297e29878a342bbe6))
+
+
+### Bug Fixes
+
+* **cuda:** use cgo build tag for arm64 dlopen trampolines ([2d2d7c6](https://github.com/zerfoo/zerfoo/commit/2d2d7c61f4176907f0363897e9a9e051e38398b7)), closes [#116](https://github.com/zerfoo/zerfoo/issues/116)
+
 ## [1.9.0](https://github.com/zerfoo/zerfoo/compare/v1.8.0...v1.9.0) (2026-03-21)
 
 
