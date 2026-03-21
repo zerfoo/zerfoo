@@ -987,7 +987,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 33: Medium Security Fixes -- Data Exposure (5 agents)
 
-- [ ] T106.16 Sanitize inference error messages to clients
+- [x] T106.16 Sanitize inference error messages to clients
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1000,7 +1000,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify CUDA error message is not leaked to client.
   - go vet ./serve/ clean.
 
-- [ ] T106.17 Add security headers middleware
+- [x] T106.17 Add security headers middleware
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1011,7 +1011,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify headers present on response.
   - go vet ./serve/ clean.
 
-- [ ] T106.18 Add request ID correlation middleware
+- [x] T106.18 Add request ID correlation middleware
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1022,7 +1022,7 @@ Source: .claude/scratch/deep-review-report.md
     or is a valid UUID when not provided.
   - go vet ./serve/ clean.
 
-- [ ] T106.19 Fix streaming chat template bypass
+- [x] T106.19 Fix streaming chat template bypass
   Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-003]
   Deps: none
   Files: serve/server.go
@@ -1033,7 +1033,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: streaming chat with system prompt produces same prompt as non-streaming.
   - go vet ./serve/ clean.
 
-- [ ] T106.20 Add request drain on model delete
+- [x] T106.20 Add request drain on model delete
   Owner: ML Eng  Est: 1h  verifies: [UC-003]
   Deps: T106.5
   Files: serve/server.go
@@ -1301,11 +1301,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 33: Medium Fixes -- Data Exposure (5 agents)
 
-- [ ] T106.16 Sanitize inference error messages
-- [ ] T106.17 Add security headers middleware
-- [ ] T106.18 Add request ID correlation middleware
-- [ ] T106.19 Fix streaming chat template bypass
-- [ ] T106.20 Add request drain on model delete
+- [x] T106.16 Sanitize inference error messages
+- [x] T106.17 Add security headers middleware
+- [x] T106.18 Add request ID correlation middleware
+- [x] T106.19 Fix streaming chat template bypass
+- [x] T106.20 Add request drain on model delete
 
 #### Wave 34: Medium Fixes -- GGUF and Infrastructure (5 agents)
 
