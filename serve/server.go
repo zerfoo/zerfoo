@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/generate/grammar"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/security"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/metrics/runtime"
 )
@@ -39,6 +41,8 @@ type Server struct {
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
 	apiKey      string          // optional; enables Bearer token auth
+	rateLimiter *security.RateLimiter // optional; enables per-IP rate limiting
+	maxTokens   int             // server-side upper bound for max_tokens (default 8192)
 }
 
 // ServerOption configures the server.
@@ -92,6 +96,23 @@ func WithGPUs(ids []int) ServerOption {
 	}
 }
 
+// WithMaxTokens sets the server-side upper bound for max_tokens in completion
+// requests. Any request asking for more tokens than this limit will be clamped.
+// The default is 8192.
+func WithMaxTokens(n int) ServerOption {
+	return func(s *Server) {
+		s.maxTokens = n
+	}
+}
+
+// WithRateLimiter enables per-IP rate limiting using the provided RateLimiter.
+// When set, requests that exceed the rate limit receive 429 Too Many Requests.
+func WithRateLimiter(rl *security.RateLimiter) ServerOption {
+	return func(s *Server) {
+		s.rateLimiter = rl
+	}
+}
+
 // GPUs returns the configured GPU IDs, or nil if not set.
 func (s *Server) GPUs() []int {
 	return s.gpus
@@ -99,7 +120,7 @@ func (s *Server) GPUs() []int {
 
 // NewServer creates a Server for the given model.
 func NewServer(m *inference.Model, opts ...ServerOption) *Server {
-	s := &Server{model: m, mux: http.NewServeMux()}
+	s := &Server{model: m, mux: http.NewServeMux(), maxTokens: 8192}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -150,6 +171,9 @@ func (s *Server) Handler() http.Handler {
 	if s.apiKey != "" {
 		h = s.authMiddleware(h)
 	}
+	if s.rateLimiter != nil {
+		h = s.rateLimitMiddleware(h)
+	}
 	return s.logMiddleware(h)
 }
 
@@ -172,6 +196,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		token := auth[len(prefix):]
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rateLimitMiddleware rejects requests that exceed the configured rate limit
+// for the client IP. Returns 429 Too Many Requests when the limit is exceeded.
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := security.ClientIP(r)
+		if !s.rateLimiter.Allow(ip) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -406,8 +443,13 @@ type ModelDeleteResponse struct {
 // --- Handlers ---
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -428,6 +470,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if err := validateToolChoice(req.ToolChoice, req.Tools); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Clamp max_tokens to server-side upper bound.
+	if req.MaxTokens != nil && *req.MaxTokens > s.maxTokens {
+ttclamped := s.maxTokens
+ttreq.MaxTokens = &clamped
 	}
 
 	// Build generation options.
@@ -565,8 +613,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req CompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -700,8 +753,13 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req EmbeddingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -869,6 +927,14 @@ func (s *Server) streamCompletion(w http.ResponseWriter, ctx context.Context, pr
 }
 
 // --- Helpers ---
+
+// isMaxBytesError reports whether the error (or any wrapped error) is an
+// *http.MaxBytesError, which is returned when http.MaxBytesReader's limit
+// is exceeded.
+func isMaxBytesError(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
+}
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

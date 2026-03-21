@@ -15,6 +15,7 @@ import (
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/zerfoo/security"
 	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/zerfoo/registry"
 	"github.com/zerfoo/ztensor/tensor"
@@ -1661,4 +1662,34 @@ func TestAuthMiddleware(t *testing.T) {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
 	})
+}
+
+func TestRequestBodySizeLimit(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Build a valid JSON body that exceeds 10 MB.
+	// Use a JSON object with a large string value so the decoder must
+	// read past the 10 MB limit before completing the parse.
+	bigValue := strings.Repeat("x", 11<<20) // 11 MB string
+	oversized := `{"prompt":"` + bigValue + `"}`
+
+	endpoints := []string{
+		"/v1/chat/completions",
+		"/v1/completions",
+		"/v1/embeddings",
+	}
+
+	for _, ep := range endpoints {
+		t.Run(ep, func(t *testing.T) {
+			resp := doPost(t, ts.URL+ep, "application/json", oversized)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want %d; body = %s", resp.StatusCode, http.StatusRequestEntityTooLarge, body)
+			}
+		})
+	}
 }
