@@ -786,5 +786,66 @@ func TestS4_Forward_Parity(t *testing.T) {
 	}
 }
 
+// TestS4_Backward_NilGradient verifies that Backward does not panic when
+// parameter gradients are nil (e.g., first call before optimizer init).
+func TestS4_Backward_NilGradient(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
+	s4, err := NewS4[float32]("test_s4", engine, ops, 2, 4)
+	if err != nil {
+		t.Fatalf("NewS4: %v", err)
+	}
+
+	// Explicitly set all parameter gradients to nil.
+	for _, p := range s4.Parameters() {
+		p.Gradient = nil
+	}
+
+	// Run forward to populate saved state.
+	inputData := make([]float32, 1*3*2)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.1
+	}
+	input, err := tensor.New[float32]([]int{1, 3, 2}, inputData)
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+	ctx := context.Background()
+	_, err = s4.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Backward with nil gradients should not panic.
+	gradData := make([]float32, 1*3*2)
+	for i := range gradData {
+		gradData[i] = 1.0
+	}
+	grad, err := tensor.New[float32]([]int{1, 3, 2}, gradData)
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+	inputGrads, err := s4.Backward(ctx, types.OneStepApproximation, grad, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+
+	if len(inputGrads) != 1 {
+		t.Fatalf("Backward returned %d gradients, want 1", len(inputGrads))
+	}
+
+	// Verify parameter gradients were initialized and are finite.
+	for _, p := range s4.Parameters() {
+		if p.Gradient == nil {
+			t.Fatalf("param %s gradient is still nil after Backward", p.Name)
+		}
+		for i, v := range p.Gradient.Data() {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				t.Fatalf("param %s gradient[%d] = %f (not finite)", p.Name, i, v)
+			}
+		}
+	}
+}
+
 // Compile-time interface check.
 var _ = (*S4[float32])(nil)

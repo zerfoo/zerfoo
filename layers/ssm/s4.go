@@ -398,6 +398,29 @@ func (s *S4[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient
 		}
 	}
 
+	// Ensure gradient tensors are initialized before accumulating.
+	for _, pair := range []struct {
+		param *graph.Parameter[T]
+		shape []int
+	}{
+		{s.aLog, []int{dim, s.stateDim}},
+		{s.b, []int{dim, s.stateDim}},
+		{s.c, []int{dim, s.stateDim}},
+		{s.d, []int{dim}},
+	} {
+		if pair.param.Gradient == nil {
+			size := 1
+			for _, d := range pair.shape {
+				size *= d
+			}
+			g, err := tensor.New[T](pair.shape, make([]T, size))
+			if err != nil {
+				return nil, fmt.Errorf("s4 init gradient for %s: %w", pair.param.Name, err)
+			}
+			pair.param.Gradient = g
+		}
+	}
+
 	// Accumulate parameter gradients.
 	for i := range daLog {
 		s.aLog.Gradient.Data()[i] += daLog[i]
