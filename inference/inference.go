@@ -20,6 +20,11 @@ import (
 	"github.com/zerfoo/zerfoo/registry"
 )
 
+// defaultMaxBatchConcurrency is the default limit on simultaneous goroutines
+// spawned by GenerateBatch. This prevents resource exhaustion when batching
+// many prompts on GPU-backed models.
+const defaultMaxBatchConcurrency = 8
+
 // Model is a loaded model ready for generation.
 type Model struct {
 	generator  *generate.Generator[float32]
@@ -30,6 +35,10 @@ type Model struct {
 	closer     io.Closer // mmap reader, if loaded with mmap
 	embWeights []float32 // flattened embedding table [vocabSize * hiddenSize]
 	hiddenSize int       // embedding dimension
+
+	// maxBatchConcurrency limits the number of simultaneous goroutines in
+	// GenerateBatch. Zero means use defaultMaxBatchConcurrency.
+	maxBatchConcurrency int
 
 	// sessionPool reuses sessions to preserve GPU memory addresses across calls.
 	// CUDA graph capture records GPU pointers; reusing sessions keeps those
@@ -69,19 +78,25 @@ type ModelMetadata struct {
 }
 
 // modelAliases maps short model names to HuggingFace repo IDs.
-var modelAliases = map[string]string{
-	"gemma-3-1b-q4":  "google/gemma-3-1b-it-qat-q4_0-gguf",
-	"gemma-3-2b-q4":  "google/gemma-3-2b-it-qat-q4_0-gguf",
-	"llama-3-1b-q4":  "meta-llama/Llama-3.2-1B-Instruct-GGUF",
-	"llama-3-8b-q4":  "meta-llama/Llama-3.1-8B-Instruct-GGUF",
-	"mistral-7b-q4":  "mistralai/Mistral-7B-Instruct-v0.3-GGUF",
-	"qwen-2.5-7b-q4": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-}
+var (
+	modelAliasesMu sync.RWMutex
+	modelAliases   = map[string]string{
+		"gemma-3-1b-q4":  "google/gemma-3-1b-it-qat-q4_0-gguf",
+		"gemma-3-2b-q4":  "google/gemma-3-2b-it-qat-q4_0-gguf",
+		"llama-3-1b-q4":  "meta-llama/Llama-3.2-1B-Instruct-GGUF",
+		"llama-3-8b-q4":  "meta-llama/Llama-3.1-8B-Instruct-GGUF",
+		"mistral-7b-q4":  "mistralai/Mistral-7B-Instruct-v0.3-GGUF",
+		"qwen-2.5-7b-q4": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+	}
+)
 
 // ResolveAlias returns the HuggingFace repo ID for a short alias.
 // If the name is not an alias, it is returned unchanged.
 func ResolveAlias(name string) string {
-	if id, ok := modelAliases[name]; ok {
+	modelAliasesMu.RLock()
+	id, ok := modelAliases[name]
+	modelAliasesMu.RUnlock()
+	if ok {
 		return id
 	}
 	return name
@@ -89,22 +104,25 @@ func ResolveAlias(name string) string {
 
 // RegisterAlias adds a custom short name -> HuggingFace repo ID mapping.
 func RegisterAlias(shortName, repoID string) {
+	modelAliasesMu.Lock()
 	modelAliases[shortName] = repoID
+	modelAliasesMu.Unlock()
 }
 
 // Option configures model loading.
 type Option func(*loadOptions)
 
 type loadOptions struct {
-	cacheDir  string
-	device    string
-	maxSeqLen int
-	registry  registry.ModelRegistry
-	backend   string // "" or "default" for standard engine, "tensorrt" for TRT
-	precision string // "" or "fp32" for float32, "fp16" for half precision (TRT only)
-	dtype     string // "" or "fp32" for float32, "fp16" for FP16 compute
-	kvDtype   string // "" or "fp32" for float32, "fp16" for FP16 KV cache
-	mmap      bool   // use mmap for model loading (unix only)
+	cacheDir            string
+	device              string
+	maxSeqLen           int
+	registry            registry.ModelRegistry
+	backend             string // "" or "default" for standard engine, "tensorrt" for TRT
+	precision           string // "" or "fp32" for float32, "fp16" for half precision (TRT only)
+	dtype               string // "" or "fp32" for float32, "fp16" for FP16 compute
+	kvDtype             string // "" or "fp32" for float32, "fp16" for FP16 KV cache
+	mmap                bool   // use mmap for model loading (unix only)
+	maxBatchConcurrency int    // max goroutines in GenerateBatch (0 = default)
 }
 
 // WithCacheDir sets the model cache directory.
@@ -177,6 +195,16 @@ func WithMmap(enabled bool) Option {
 func WithKVDtype(dtype string) Option {
 	return func(o *loadOptions) {
 		o.kvDtype = dtype
+	}
+}
+
+// WithMaxBatchConcurrency sets the maximum number of concurrent goroutines
+// that GenerateBatch will use. Values <= 0 are ignored (the default of 8 is used).
+func WithMaxBatchConcurrency(n int) Option {
+	return func(o *loadOptions) {
+		if n > 0 {
+			o.maxBatchConcurrency = n
+		}
 	}
 }
 
@@ -411,6 +439,9 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 // generated text for each prompt. Results are returned in the same order as
 // the input prompts. If a prompt fails, its corresponding error is non-nil.
 //
+// Concurrency is capped at maxBatchConcurrency (default 8) to prevent
+// resource exhaustion on GPU-backed models.
+//
 // [Deviation: Architectural] Used parallel goroutines instead of shared
 // PagedKV decode — full multi-seq requires deeper Generator refactor.
 func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...GenerateOption) ([]string, error) {
@@ -422,11 +453,19 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 	results := make([]string, len(prompts))
 	errs := make([]error, len(prompts))
 
+	maxConc := m.maxBatchConcurrency
+	if maxConc <= 0 {
+		maxConc = defaultMaxBatchConcurrency
+	}
+
+	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	wg.Add(len(prompts))
 	for i, prompt := range prompts {
 		go func(idx int, p string) {
 			defer wg.Done()
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
 			text, err := m.generator.Generate(ctx, p, sc)
 			results[idx] = text
 			errs[idx] = err
@@ -440,6 +479,14 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 		}
 	}
 	return results, nil
+}
+
+// SetMaxBatchConcurrency sets the maximum number of concurrent goroutines
+// that GenerateBatch will use. Values <= 0 are ignored.
+func (m *Model) SetMaxBatchConcurrency(n int) {
+	if n > 0 {
+		m.maxBatchConcurrency = n
+	}
 }
 
 // GenerateStream delivers tokens one at a time via a callback. Sessions

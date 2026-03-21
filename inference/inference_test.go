@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1447,7 +1448,58 @@ func TestRegisterAlias(t *testing.T) {
 		t.Errorf("ResolveAlias after RegisterAlias = %q, want %q", got, "my-org/my-model-gguf")
 	}
 	// Clean up.
+	modelAliasesMu.Lock()
 	delete(modelAliases, "my-model")
+	modelAliasesMu.Unlock()
+}
+
+func TestAliasConcurrentAccess(t *testing.T) {
+	const goroutines = 100
+	const iterations = 200
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2)
+
+	// Half the goroutines write aliases.
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				name := fmt.Sprintf("race-model-%d-%d", id, j)
+				RegisterAlias(name, "org/repo-"+name)
+			}
+		}(i)
+	}
+
+	// Half the goroutines read aliases.
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				name := fmt.Sprintf("race-model-%d-%d", id, j)
+				_ = ResolveAlias(name)
+				// Also resolve a built-in alias to exercise reads on existing keys.
+				_ = ResolveAlias("gemma-3-1b-q4")
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify a written alias is readable.
+	got := ResolveAlias("race-model-0-0")
+	if got != "org/repo-race-model-0-0" {
+		t.Errorf("ResolveAlias(race-model-0-0) = %q, want %q", got, "org/repo-race-model-0-0")
+	}
+
+	// Clean up all test aliases.
+	modelAliasesMu.Lock()
+	for i := 0; i < goroutines; i++ {
+		for j := 0; j < iterations; j++ {
+			delete(modelAliases, fmt.Sprintf("race-model-%d-%d", i, j))
+		}
+	}
+	modelAliasesMu.Unlock()
 }
 
 // --- findGGUF tests ---
