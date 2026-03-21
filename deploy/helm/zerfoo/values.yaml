@@ -26,6 +26,15 @@ env: []
   # - name: ZERFOO_LOG_LEVEL
   #   value: "info"
 
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
 resources:
   requests:
     cpu: "2"
