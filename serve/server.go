@@ -30,10 +30,10 @@ type Server struct {
 	batch      *BatchScheduler // optional; nil means direct calls
 	unloaded    bool            // true after DELETE /v1/models/:id
 	transcriber      Transcriber          // optional; enables /v1/audio/transcriptions
-	sentiment        SentimentClassifier  // optional; enables /v1/sentiment
+	classifier       Classifier           // optional; enables /v1/classify
 	logger           log.Logger
 	metrics          *ServerMetrics
-	sentimentMetrics *SentimentMetrics
+	classifyMetrics  *ClassifyMetrics
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
 }
@@ -118,7 +118,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 		}
 	}
 	s.metrics = NewServerMetrics(s.collector)
-	s.sentimentMetrics = NewSentimentMetrics(s.collector)
+	s.classifyMetrics = NewClassifyMetrics(s.collector)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.recoveryMiddleware(s.handleChatCompletions))
 	s.mux.HandleFunc("POST /v1/completions", s.recoveryMiddleware(s.handleCompletions))
 	s.mux.HandleFunc("POST /v1/embeddings", s.recoveryMiddleware(s.handleEmbeddings))
@@ -126,7 +126,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("GET /v1/models/{id...}", s.recoveryMiddleware(s.handleModelInfo))
 	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.recoveryMiddleware(s.handleModelDelete))
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.recoveryMiddleware(s.handleAudioTranscriptions))
-	s.mux.HandleFunc("POST /v1/sentiment", s.recoveryMiddleware(s.handleSentiment))
+	s.mux.HandleFunc("POST /v1/classify", s.recoveryMiddleware(s.handleClassify))
 	s.mux.HandleFunc("GET /openapi.yaml", s.recoveryMiddleware(handleOpenAPISpec))
 	s.mux.HandleFunc("GET /metrics", handleMetrics(s.collector))
 	return s
