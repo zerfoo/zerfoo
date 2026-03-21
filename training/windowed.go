@@ -1,5 +1,52 @@
 package training
 
+import (
+	"strconv"
+	"strings"
+)
+
+// CreateWindows converts flat rows into overlapping temporal windows.
+// Each window contains windowLen consecutive rows. Labels come from the last row's last element.
+func CreateWindows(data [][]float64, windowLen int) (windows [][][]float64, labels []float64) {
+	if windowLen <= 0 || len(data) < windowLen {
+		return nil, nil
+	}
+	n := len(data) - windowLen + 1
+	windows = make([][][]float64, n)
+	labels = make([]float64, n)
+	for i := 0; i < n; i++ {
+		window := make([][]float64, windowLen)
+		for j := 0; j < windowLen; j++ {
+			row := data[i+j]
+			window[j] = make([]float64, len(row))
+			copy(window[j], row)
+		}
+		windows[i] = window
+		lastRow := data[i+windowLen-1]
+		labels[i] = lastRow[len(lastRow)-1]
+	}
+	return windows, labels
+}
+
+// ParseWindowSizes parses a comma-separated string of window sizes.
+// Example: "15,30,60,120" -> []int{15, 30, 60, 120}
+func ParseWindowSizes(s string) []int {
+	parts := strings.Split(s, ",")
+	var sizes []int
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		v, err := strconv.Atoi(p)
+		if err != nil {
+			continue
+		}
+		sizes = append(sizes, v)
+	}
+	return sizes
+}
+
 // WindowedBackend is implemented by time-series models that consume temporal
 // windows rather than flat feature vectors. Walk-forward validators check for
 // this interface via type assertion before falling back to standard training.

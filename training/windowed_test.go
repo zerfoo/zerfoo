@@ -56,6 +56,109 @@ func (m *mockWindowedPredictor) PredictWindowed(modelPath string, windows [][][]
 	return out, nil
 }
 
+func TestCreateWindows(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       [][]float64
+		windowLen  int
+		wantN      int
+		wantLabels []float64
+	}{
+		{
+			name:       "basic 3-row window from 5 rows",
+			data:       [][]float64{{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}},
+			windowLen:  3,
+			wantN:      3,
+			wantLabels: []float64{6, 8, 10},
+		},
+		{
+			name:       "window equals data length",
+			data:       [][]float64{{1, 2}, {3, 4}},
+			windowLen:  2,
+			wantN:      1,
+			wantLabels: []float64{4},
+		},
+		{
+			name:      "window larger than data",
+			data:      [][]float64{{1, 2}},
+			windowLen: 5,
+			wantN:     0,
+		},
+		{
+			name:      "zero window length",
+			data:      [][]float64{{1, 2}, {3, 4}},
+			windowLen: 0,
+			wantN:     0,
+		},
+		{
+			name:      "negative window length",
+			data:      [][]float64{{1, 2}},
+			windowLen: -1,
+			wantN:     0,
+		},
+		{
+			name:      "nil data",
+			data:      nil,
+			windowLen: 3,
+			wantN:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			windows, labels := CreateWindows(tt.data, tt.windowLen)
+			if len(windows) != tt.wantN {
+				t.Fatalf("got %d windows, want %d", len(windows), tt.wantN)
+			}
+			if len(labels) != tt.wantN {
+				t.Fatalf("got %d labels, want %d", len(labels), tt.wantN)
+			}
+			for i, wl := range tt.wantLabels {
+				if labels[i] != wl {
+					t.Errorf("label[%d] = %v, want %v", i, labels[i], wl)
+				}
+			}
+			// Verify windows are deep copies.
+			if tt.wantN > 0 && tt.data != nil {
+				windows[0][0][0] = -999
+				if tt.data[0][0] == -999 {
+					t.Error("window data is not a deep copy of input")
+				}
+			}
+		})
+	}
+}
+
+func TestParseWindowSizes(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want []int
+	}{
+		{"basic", "15,30,60,120", []int{15, 30, 60, 120}},
+		{"single", "42", []int{42}},
+		{"with spaces", " 10 , 20 , 30 ", []int{10, 20, 30}},
+		{"empty string", "", nil},
+		{"invalid entries skipped", "10,abc,20", []int{10, 20}},
+		{"all invalid", "foo,bar", nil},
+		{"trailing comma", "5,10,", []int{5, 10}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseWindowSizes(tt.s)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("got[%d] = %d, want %d", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 // TestWindowedBackendCompilesBothInterfaces verifies that a type satisfying both
 // Backend and WindowedBackend compiles and can be assigned to both interface types.
 func TestWindowedBackendCompilesBothInterfaces(t *testing.T) {
