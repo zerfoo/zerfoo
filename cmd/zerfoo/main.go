@@ -69,6 +69,9 @@ func run() error {
 	sentimentCmd := cli.NewSentimentCommand(os.Stdout)
 	cliApp.RegisterCommand(sentimentCmd)
 
+	finetuneSentimentCmd := cli.NewFineTuneSentimentCommand(os.Stdout)
+	cliApp.RegisterCommand(finetuneSentimentCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
