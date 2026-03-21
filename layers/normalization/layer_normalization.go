@@ -92,6 +92,23 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 	}, nil
 }
 
+// NewLayerNormalizationFromParams creates a LayerNormalization layer from
+// existing gamma (weight) and beta (bias) parameters. This is used for
+// constructing layers from pre-loaded GGUF tensors during model loading.
+func NewLayerNormalizationFromParams[T tensor.Numeric](
+	engine compute.Engine[T],
+	epsilon T,
+	gamma *graph.Parameter[T],
+	beta *graph.Parameter[T],
+) *LayerNormalization[T] {
+	return &LayerNormalization[T]{
+		engine:  engine,
+		epsilon: epsilon,
+		gamma:   gamma,
+		beta:    beta,
+	}
+}
+
 // OutputShape returns the output shape, which is the same as the input shape.
 func (ln *LayerNormalization[T]) OutputShape() []int {
 	return ln.outputShape

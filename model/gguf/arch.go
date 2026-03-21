@@ -40,6 +40,11 @@ type ModelConfig struct {
 	ResidualMode      string // "standard", "attnres", or "block_attnres" (default: "standard")
 	AttnResNumBlocks  int    // number of blocks for block_attnres mode (default: 8)
 
+	// BERT encoder-only fields.
+	NumLabels    int     // number of output classes for sequence classification
+	PoolerType   string  // pooling strategy ("cls" or "mean")
+	LayerNormEps float32 // LayerNorm epsilon (0 = use default 1e-12)
+
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
 	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
@@ -160,6 +165,17 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 		cfg.NumSharedExperts = int(v)
 	}
 
+	// Extract BERT-specific fields.
+	if v, ok := f.GetUint32(prefix + "num_labels"); ok {
+		cfg.NumLabels = int(v)
+	}
+	if v, ok := f.GetString(prefix + "pooler_type"); ok {
+		cfg.PoolerType = v
+	}
+	if v, ok := f.GetFloat32(prefix + "attention.layer_norm_epsilon"); ok {
+		cfg.LayerNormEps = v
+	}
+
 	// Extract residual connection configuration.
 	if v, ok := f.GetString("general.residual_mode"); ok {
 		cfg.ResidualMode = v
@@ -230,6 +246,39 @@ var gemma3TensorNameMap = map[string]string{
 	"ffn_down.weight":            "mlp.down_proj.weight",
 }
 
+// bertTensorNameMap maps GGUF block-level tensor name suffixes to canonical names for BERT.
+var bertTensorNameMap = map[string]string{
+	"attn_norm.weight":   "attn_norm.weight",
+	"attn_norm.bias":     "attn_norm.bias",
+	"attn_q.weight":      "attn_q.weight",
+	"attn_q.bias":        "attn_q.bias",
+	"attn_k.weight":      "attn_k.weight",
+	"attn_k.bias":        "attn_k.bias",
+	"attn_v.weight":      "attn_v.weight",
+	"attn_v.bias":        "attn_v.bias",
+	"attn_output.weight": "attn_output.weight",
+	"attn_output.bias":   "attn_output.bias",
+	"ffn_up.weight":      "ffn_up.weight",
+	"ffn_up.bias":        "ffn_up.bias",
+	"ffn_down.weight":    "ffn_down.weight",
+	"ffn_down.bias":      "ffn_down.bias",
+	"ffn_norm.weight":    "ffn_norm.weight",
+	"ffn_norm.bias":      "ffn_norm.bias",
+}
+
+// bertGlobalTensorMap maps global GGUF tensor names for BERT.
+var bertGlobalTensorMap = map[string]string{
+	"token_embd.weight":      "token_embd.weight",
+	"position_embd.weight":   "position_embd.weight",
+	"token_type_embd.weight": "token_type_embd.weight",
+	"token_embd_norm.weight": "token_embd_norm.weight",
+	"token_embd_norm.bias":   "token_embd_norm.bias",
+	"cls_pooler.weight":      "cls_pooler.weight",
+	"cls_pooler.bias":        "cls_pooler.bias",
+	"cls.weight":             "cls.weight",
+	"cls.bias":               "cls.bias",
+}
+
 // globalTensorMap maps global GGUF tensor names to HuggingFace names.
 var globalTensorMap = map[string]string{
 	"token_embd.weight":  "model.embed_tokens.weight",
@@ -242,6 +291,24 @@ var globalTensorMap = map[string]string{
 // uses different norm names than "llama").
 // Unknown names pass through unchanged.
 func MapTensorName(arch string, ggufName string) string {
+	// BERT uses its own global and block-level name maps that preserve
+	// GGUF-style names (the BERT builder looks them up directly).
+	if arch == "bert" {
+		if mapped, ok := bertGlobalTensorMap[ggufName]; ok {
+			return mapped
+		}
+		m := blkPattern.FindStringSubmatch(ggufName)
+		if m == nil {
+			return ggufName
+		}
+		layerNum := m[1]
+		suffix := m[2]
+		if mapped, ok := bertTensorNameMap[suffix]; ok {
+			return "blk." + layerNum + "." + mapped
+		}
+		return ggufName
+	}
+
 	// Check global names first.
 	if mapped, ok := globalTensorMap[ggufName]; ok {
 		return mapped

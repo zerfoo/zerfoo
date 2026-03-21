@@ -16,4 +16,5 @@ func init() {
 	RegisterArchitecture("mamba3", buildMamba3Graph)
 	RegisterArchitecture("jamba", buildJambaGraph)
 	RegisterArchitecture("whisper", buildWhisperGraph)
+	RegisterArchitecture("bert", buildBertGraph)
 }
