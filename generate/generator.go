@@ -20,6 +20,9 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
+// debugOnnx caches the ZERFOO_DEBUG_ONNX environment variable check at init time.
+var debugOnnx = os.Getenv("ZERFOO_DEBUG_ONNX") == "1"
+
 // ModelConfig holds model architecture parameters needed for generation.
 type ModelConfig struct {
 	VocabSize  int // Total tokens in vocabulary
@@ -339,7 +342,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	}
 	genCtx := WithCache(ctx, cacheProvider)
 
-	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+	if debugOnnx {
 		log.Printf("[DEBUG_ONNX] Generate: cacheType=%T numLayers=%d maxSeqLen=%d vocabSize=%d",
 			cacheProvider, gen.config.NumLayers, gen.config.MaxSeqLen, gen.config.VocabSize)
 	}
@@ -372,7 +375,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		return "", fmt.Errorf("sample after prefill: %w", err)
 	}
 
-	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+	if debugOnnx {
 		log.Printf("[DEBUG_ONNX] Generate: prefill produced token %d, promptIDs=%v", nextToken, promptIDs)
 	}
 
@@ -433,7 +436,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			return "", fmt.Errorf("sample: %w", err)
 		}
 
-		if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+		if debugOnnx {
 			cacheSeq := -1
 			if cache, ok := GetCache[T](genCtx); ok {
 				cacheSeq = cache.SeqLen()
@@ -540,7 +543,7 @@ func (gen *Generator[T]) sampleFromLogits(
 	}
 
 	// Debug: log top-5 logits for ONNX diagnosis.
-	if os.Getenv("ZERFOO_DEBUG_ONNX") == "1" {
+	if debugOnnx {
 		type tokenLogit struct {
 			id    int
 			logit float64

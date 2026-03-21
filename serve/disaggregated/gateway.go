@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"sync"
@@ -364,7 +364,7 @@ func (g *Gateway) healthCheckLoop(ctx context.Context, w *workerEntry) {
 			backoff = g.healthInterval
 		} else {
 			if prev {
-				log.Printf("gateway: worker %s became unhealthy", w.addr)
+				slog.Warn("gateway: worker became unhealthy", "addr", w.addr)
 			}
 			backoff = time.Duration(math.Min(
 				float64(backoff*2),

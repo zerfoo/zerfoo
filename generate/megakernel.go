@@ -2,7 +2,7 @@ package generate
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"sync/atomic"
 
@@ -27,7 +27,7 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 	// Check if all ops are supported by the code generator.
 	unsupported := codegen.CheckSupport(instructions)
 	if len(unsupported) > 0 {
-		log.Printf("megakernel: %d unsupported ops: %v", len(unsupported), unsupported)
+		slog.Debug("megakernel: unsupported ops", "count", len(unsupported), "ops", unsupported)
 		return
 	}
 
@@ -59,7 +59,7 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 	// Emit CUDA source.
 	source, err := codegen.EmitMegakernel(cfg)
 	if err != nil {
-		log.Printf("megakernel: emit failed: %v", err)
+		slog.Debug("megakernel: emit failed", "error", err)
 		return
 	}
 
@@ -67,14 +67,14 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 	cacheDir := os.TempDir()
 	soPath, err := codegen.CachedCompile(source, cacheDir, "megakernel")
 	if err != nil {
-		log.Printf("megakernel: compile failed: %v", err)
+		slog.Debug("megakernel: compile failed", "error", err)
 		return
 	}
 
 	// Load the compiled .so.
 	runner, err := codegen.LoadMegakernel(soPath)
 	if err != nil {
-		log.Printf("megakernel: load failed: %v", err)
+		slog.Debug("megakernel: load failed", "error", err)
 		return
 	}
 
@@ -93,7 +93,7 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 
 	// Allocate GPU workspace and upload weights.
 	if err := runner.PrepareWorkspace(cfg, frozenData); err != nil {
-		log.Printf("megakernel: workspace preparation failed: %v", err)
+		slog.Debug("megakernel: workspace preparation failed", "error", err)
 		_ = runner.Close()
 		return
 	}
@@ -108,13 +108,13 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 			var kvErr error
 			kvCache, kvErr = NewGPUKVCache(alloc, numKVLayers, defaultMaxSeqLen, numHeads, headDim)
 			if kvErr != nil {
-				log.Printf("megakernel: failed to allocate GPU KV cache: %v", kvErr)
+				slog.Debug("megakernel: failed to allocate GPU KV cache", "error", kvErr)
 				_ = runner.Close()
 				return
 			}
 			kPtrs, vPtrs, ptrErr := kvCache.DevicePointerArrays()
 			if ptrErr != nil {
-				log.Printf("megakernel: failed to get KV device pointer arrays: %v", ptrErr)
+				slog.Debug("megakernel: failed to get KV device pointer arrays", "error", ptrErr)
 				_ = kvCache.Close()
 				_ = runner.Close()
 				return
@@ -166,5 +166,5 @@ func tryCompileMegakernel[T tensor.Numeric](plan *graph.ExecutionPlan[T], ready 
 	if ready != nil {
 		ready.Store(true)
 	}
-	log.Printf("megakernel: compiled and loaded (%d instructions, %s)", len(instructions), soPath)
+	slog.Info("megakernel: compiled and loaded", "instructions", len(instructions), "soPath", soPath)
 }

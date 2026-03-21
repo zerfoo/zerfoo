@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -320,10 +320,9 @@ func QuantizeToFP8E4M3(tensors map[string]*tensor.TensorNumeric[float32]) (map[s
 
 		fp8 := tensor.NewFP8E4M3Storage(f32)
 		scale := fp8.Scale()
-		log.Printf("[FP8 diag] QuantizeToFP8E4M3: tensor=%q shape=%v elems=%d scale=%.6g f32Min=%.6g f32Max=%.6g",
-			name, t.Shape(), len(f32), scale, f32Min, f32Max)
+		slog.Debug("QuantizeToFP8E4M3", "tensor", name, "shape", t.Shape(), "elems", len(f32), "scale", scale, "f32Min", f32Min, "f32Max", f32Max)
 		if scale == 0 || math.IsInf(float64(scale), 0) || math.IsNaN(float64(scale)) {
-			log.Printf("[FP8 diag] WARNING: tensor=%q has abnormal scale=%.6g", name, scale)
+			slog.Warn("tensor has abnormal scale", "tensor", name, "scale", scale)
 		}
 
 		quantized, err := tensor.NewWithStorage[float32](t.Shape(), fp8)

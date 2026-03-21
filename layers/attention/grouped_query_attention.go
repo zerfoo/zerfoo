@@ -4,7 +4,7 @@ package attention
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -1057,7 +1057,7 @@ func splitMergedQKV[T tensor.Numeric](merged *tensor.TensorNumeric[T], qDim, kDi
 	}
 
 	// CPU path: copy data.
-	log.Printf("WARNING: GQA splitMergedQKV CPU fallback triggered (D2H copy); expected GPUStorage but got %T", merged.GetStorage())
+	slog.Warn("GQA splitMergedQKV CPU fallback triggered (D2H copy)", "storageType", fmt.Sprintf("%T", merged.GetStorage()))
 	data := merged.Data()
 	qData := make([]T, batchElems*qDim)
 	kData := make([]T, batchElems*kDim)

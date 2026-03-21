@@ -2,7 +2,7 @@ package generate
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"unsafe"
 
 	"github.com/zerfoo/float16"
@@ -178,7 +178,7 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 	if !lb.isGPU {
 		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
 			if err := promoteToGPU(lb, batch, c.maxSeqLen, dim); err != nil {
-				log.Printf("WARNING: KV cache layer %d: GPU promotion failed, D2H fallback: %v", layer, err)
+				slog.Warn("KV cache GPU promotion failed, D2H fallback", "layer", layer, "error", err)
 			}
 		}
 	}
@@ -257,7 +257,7 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		}
 	default:
 		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
-			log.Printf("WARNING: KV cache layer %d: CPU fallback with GPU tensor, D2H copy triggered", layer)
+			slog.Warn("KV cache CPU fallback with GPU tensor, D2H copy triggered", "layer", layer)
 		}
 		copy(lb.kBuf[offset:offset+numElems], newK.Data())
 		copy(lb.vBuf[offset:offset+numElems], newV.Data())
