@@ -1798,3 +1798,24 @@ func TestRateLimitMiddleware(t *testing.T) {
 		t.Fatalf("got error message %q, want %q", msg, "rate limit exceeded")
 	}
 }
+
+func TestSecurityHeaders(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	expected := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":       "DENY",
+		"Cache-Control":         "no-store",
+	}
+	for header, want := range expected {
+		got := rec.Header().Get(header)
+		if got != want {
+			t.Errorf("header %s = %q, want %q", header, got, want)
+		}
+	}
+}

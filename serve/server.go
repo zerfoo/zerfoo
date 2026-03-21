@@ -3,6 +3,7 @@ package serve
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +35,7 @@ type Server struct {
 	mux        *http.ServeMux
 	batch      *BatchScheduler // optional; nil means direct calls
 	unloaded    atomic.Bool     // true after DELETE /v1/models/:id
+	inflight    sync.WaitGroup  // tracks in-flight inference requests
 	transcriber      Transcriber          // optional; enables /v1/audio/transcriptions
 	classifier       Classifier           // optional; enables /v1/classify
 	logger           log.Logger
@@ -174,7 +177,53 @@ func (s *Server) Handler() http.Handler {
 	if s.rateLimiter != nil {
 		h = s.rateLimitMiddleware(h)
 	}
-	return s.logMiddleware(h)
+	h = s.requestIDMiddleware(h)
+	h = s.logMiddleware(h)
+	return s.securityHeadersMiddleware(h)
+}
+
+// securityHeadersMiddleware sets standard security headers on every response.
+func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestIDKey is the context key for the request ID.
+type requestIDKey struct{}
+
+// RequestID returns the request ID from the context, or an empty string if not set.
+func RequestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+
+// requestIDMiddleware reads X-Request-Id from the request header; if absent,
+// it generates a UUID v4. The ID is stored in the request context and echoed
+// back in the X-Request-Id response header.
+func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if id == "" {
+			id = generateRequestID()
+		}
+		w.Header().Set("X-Request-Id", id)
+		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// generateRequestID produces a UUID v4 string using crypto/rand.
+func generateRequestID() string {
+	var buf [16]byte
+	_, _ = rand.Read(buf[:])
+	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
+	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
 // authMiddleware rejects requests that do not carry a valid Bearer token.
@@ -293,6 +342,33 @@ func inferenceErrorStatus(err error) int {
 		return http.StatusServiceUnavailable
 	}
 	return http.StatusInternalServerError
+}
+
+// isFileNotFoundError reports whether the error indicates a missing file or model.
+func isFileNotFoundError(err error) bool {
+	if os.IsNotExist(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such file") ||
+		strings.Contains(msg, "file not found") ||
+		strings.Contains(msg, "model not found")
+}
+
+// sanitizeError returns a safe, client-facing error message and logs the
+// original error details server-side. Internal details (file paths, stack
+// traces, memory addresses) are never exposed to the caller.
+func (s *Server) sanitizeError(err error) string {
+	s.logger.Error("inference error", "error", err.Error())
+
+	switch {
+	case isOOMError(err):
+		return "server temporarily overloaded, please retry"
+	case isFileNotFoundError(err):
+		return "model not available"
+	default:
+		return "inference failed"
+	}
 }
 
 // --- Request/Response types ---
