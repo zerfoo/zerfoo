@@ -616,6 +616,79 @@ However, the investigation is incomplete:
 
 ---
 
+#### E104: GitHub Issues Resolution (#105 HRM segfault) [2026 Q2]
+
+GitHub issue #105: HRM Forward() segfaults on linux/arm64 (DGX Spark GB10)
+with CGO_ENABLED=0 and tabular build tag. The crash occurs during the
+recurrent loop in HRM.Forward() when uninitialized hidden states (containing
+garbage data) are passed to ARM64 NEON assembly operations that have no
+null/alignment checks.
+
+Root cause (from code analysis):
+1. NewHModule/NewLModule create HiddenState via tensor.New with nil data,
+   which allocates uninitialized memory (Go zeroes the slice, but the tensor
+   is [1, modelDim] with batch=1 regardless of actual batch size).
+2. HRM.Forward() passes HiddenState directly to the recurrent loop without
+   resizing to match the input batch dimension.
+3. When Engine.Add() operates on tensors with mismatched shapes (batch=1 vs
+   batch=N), the ARM64 NEON assembly in xblas/elementwise_arm64.s dereferences
+   out-of-bounds memory, causing the segfault.
+
+Files to fix:
+- layers/hrm/h_module.go (HiddenState init + batch resize)
+- layers/hrm/l_module.go (HiddenState init + batch resize)
+- model/hrm/hrm.go (Forward: resize hidden states before recurrent loop)
+- model/hrm/hrm_test.go (integration test for recurrent loop)
+
+- [x] T104.1 Fix HModule/LModule hidden state initialization and batch handling (2026-03-20)
+  Owner: ML Eng  Est: 2h  verifies: [UC-025, UC-016]
+  Deps: none
+  Acceptance:
+  - In layers/hrm/h_module.go NewHModule: zero-initialize HiddenState explicitly
+    (pass make([]T, modelDim) instead of nil to tensor.New). Use shape [1, modelDim].
+  - In layers/hrm/l_module.go NewLModule: same zero-initialization fix.
+  - In HModule.Forward: at entry, check if HiddenState batch dim matches input
+    batch dim. If not, resize HiddenState to [batchSize, modelDim] with zeros.
+  - In LModule.Forward: same batch dim resize.
+  - In model/hrm/hrm.go Forward: before the recurrent loop, resize both
+    m.HModule.HiddenState and m.LModule.HiddenState to match projectedInput
+    batch dimension.
+  - Tests: TestHModule_Forward and TestLModule_Forward pass with batch > 1.
+  - `go build -tags tabular ./...` compiles cleanly.
+  - `go vet ./model/hrm/ ./layers/hrm/` clean.
+
+- [x] T104.2 Add integration test for HRM recurrent loop with real batch sizes (2026-03-20)
+  Owner: ML Eng  Est: 1h  verifies: [UC-025]
+  Deps: T104.1
+  Acceptance:
+  - New test TestHRM_Forward_RecurrentLoop in model/hrm/hrm_test.go.
+  - Creates HRM with small config (dim=16, nSteps=2, tSteps=3).
+  - Calls Forward() with batch of 32 samples and 10 features.
+  - Verifies: no panic, output shape is [32, 1], output contains finite values.
+  - Run: `go test -tags tabular -run TestHRM_Forward_RecurrentLoop -race ./model/hrm/`
+
+- [x] T104.3 Verify fix on DGX Spark (linux/arm64) [DGX] (2026-03-20)
+  Owner: ML Eng  Est: 1h  verifies: [UC-025, UC-016]
+  Deps: T104.1, T104.2
+  Result: 43 tests PASS on linux/arm64 (Go 1.26.1), no segfault, race clean.
+  Acceptance:
+  - SSH to DGX Spark (ndungu@192.168.86.250).
+  - Sync zerfoo repo. Build: `CGO_ENABLED=0 go build -tags tabular -o train-hrm ./cmd/train/`.
+  - Run the exact reproduction command from issue #105:
+    `./train-hrm -backend hrm -data data.csv -asset COIN -horizon 15m -epochs 5 -hrm-n 2 -hrm-t 4 -hrm-dim 32`
+  - Verify: no segfault, training completes, metrics printed.
+  - Run tests on DGX: `go test -tags tabular -race -timeout 120s ./model/hrm/ ./layers/hrm/`
+
+- [x] T104.4 Close GitHub issue #105 with fix evidence (2026-03-20)
+  Owner: ML Eng  Est: 15m  delivers: [issue #105 closed with fix commit]
+  Deps: T104.3
+  Result: Comment posted with fix commit + DGX verification. Issue was already closed.
+  Acceptance:
+  - Post comment on #105 citing the fix commit, test output, and DGX verification.
+  - Close the issue.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -636,7 +709,7 @@ Implements arXiv:2603.15031. See layers/residual/ package and inference/residual
 
 | Track | Description | Epic/Group IDs | Sync Points |
 |-------|-------------|----------------|-------------|
-| A | Throughput verification | E103 | Merge at verified baseline |
+| A | HRM segfault fix | E104 | Merge at DGX verified |
 | B | Community + DevRel | E4, E5, E11 | Merge at content published |
 | C | Backend Expansion | E8, E20 | Merge at ROCm parity |
 | D | Platform and Enterprise | E12-E19 | Merge at cloud GA |
@@ -651,6 +724,16 @@ Implements arXiv:2603.15031. See layers/residual/ package and inference/residual
 - [x] T103.3 Bisect zerfoo regression — Q5_K/Q6_K loader change
 - [x] T103.4 Update benchmarks.md — 244 tok/s verified
 - [x] T103.5 Verify fix — 244.45 tok/s (95% roofline)
+
+#### Wave 24: HRM Segfault Fix (completed 2026-03-20)
+
+- [x] T104.1 Fix HModule/LModule hidden state init + batch handling — auto-resize in Forward
+- [x] T104.2 Add HRM recurrent loop integration test — batch=32, 10 features, nSteps=2, tSteps=3
+
+#### Wave 25: DGX Verification + Issue Close (completed 2026-03-20)
+
+- [x] T104.3 Verify fix on DGX Spark — 43 tests PASS, no segfault, race clean
+- [x] T104.4 Close GitHub issue #105 — comment posted with fix evidence
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
@@ -749,6 +832,16 @@ See Hand-Off Notes.
 
 ## Progress Log
 
+### 2026-03-20: E104 created -- GitHub issue #105 HRM segfault
+
+Created E104 (4 tasks) to fix HRM Forward() segfault on linux/arm64 (issue #105).
+Root cause: uninitialized hidden states with batch=1 passed to recurrent loop
+that expects batch=N, causing out-of-bounds NEON memory access.
+Wave 24 (2 agents parallel) + Wave 25 (DGX verification + issue close).
+
+E103 completed earlier today: throughput regression fixed (244 tok/s restored).
+Trimmed E103 context to results only.
+
 ### 2026-03-20: E103 throughput regression plan created
 
 Created E103 (5 tasks) to investigate and close the throughput regression reported
@@ -773,11 +866,10 @@ Remaining 25 tasks blocked by hardware access or human actions.
 
 ### Current State (2026-03-20)
 
-- **Score:** 108/132 tasks complete (81.8%). All codeable tasks done except E103.
-- **Active work:** E103 (throughput verification on DGX Spark).
+- **Score:** 113/136 tasks complete (83.1%). E103 done, E104 next.
+- **Active work:** E104 (HRM segfault fix, issue #105).
 - **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
-- **Throughput regression:** 229->136 tok/s traced to dirty working tree (devlog 2026-03-19).
-  benchmarks.md needs updating after clean verification.
+- **Throughput:** 244 tok/s restored (E103 fixed two compounding regressions).
 - **Peak throughput:** 245 tok/s (commit 4e85b12, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graphs).
 - **Roofline:** GB10 max ~257 tok/s at 200 GB/s bandwidth for 778 MB model.
 - **500+ tok/s:** Blocked by hardware. Needs A100 (2 TB/s) or H100 (3.35 TB/s).

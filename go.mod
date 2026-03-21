@@ -1,18 +1,18 @@
 module github.com/zerfoo/zerfoo
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/zerfoo/float16 v0.2.0
 	github.com/zerfoo/float8 v0.2.0
+	go.etcd.io/bbolt v1.4.3
+	golang.org/x/image v0.37.0
 	gonum.org/v1/gonum v0.17.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.8
 )
 
 require (
-	go.etcd.io/bbolt v1.4.3 // indirect
-	golang.org/x/image v0.37.0 // indirect
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
@@ -24,11 +24,9 @@ exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/zerfoo/ztensor v0.2.1-0.20260318015243-1e4beaaa7c8b
+	github.com/zerfoo/ztensor v0.3.0
 	github.com/zerfoo/ztoken v0.2.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
-
-replace github.com/zerfoo/ztensor => /Users/dndungu/Code/zerfoo/ztensor
