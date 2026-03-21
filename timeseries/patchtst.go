@@ -2,9 +2,11 @@ package timeseries
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
@@ -689,4 +691,701 @@ func geluScalar(x float32) float32 {
 	xf := float64(x)
 	inner := math.Sqrt(2/math.Pi) * (xf + 0.044715*xf*xf*xf)
 	return float32(0.5 * xf * (1 + math.Tanh(inner)))
+}
+
+// geluF64 computes the GELU approximation for a float64 value.
+func geluF64(x float64) float64 {
+	inner := math.Sqrt(2/math.Pi) * (x + 0.044715*x*x*x)
+	return 0.5 * x * (1 + math.Tanh(inner))
+}
+
+// patchTSTParamsF64 holds a float64 copy of all PatchTST parameters for training.
+type patchTSTParamsF64 struct {
+	patchEmbW []float64 // [patchLen * dModel]
+	patchEmbB []float64 // [dModel]
+	posEmb    []float64 // [numPatches * dModel]
+	layers    []encoderLayerF64
+	headW     []float64 // [numPatches*dModel * outputDim]
+	headB     []float64 // [outputDim]
+}
+
+type encoderLayerF64 struct {
+	qW, qB []float64 // [dModel * dModel], [dModel]
+	kW, kB []float64
+	vW, vB []float64
+	oW, oB []float64
+	ffn1W  []float64 // [dModel * 4*dModel]
+	ffn1B  []float64 // [4*dModel]
+	ffn2W  []float64 // [4*dModel * dModel]
+	ffn2B  []float64 // [dModel]
+	norm1  []float64 // [dModel]
+	bias1  []float64 // [dModel]
+	norm2  []float64 // [dModel]
+	bias2  []float64 // [dModel]
+}
+
+// extractParamsF64 copies float32 tensor parameters to float64.
+func (m *PatchTST) extractParamsF64() *patchTSTParamsF64 {
+	p := &patchTSTParamsF64{}
+	p.patchEmbW = float32ToFloat64(m.patchEmb.weights.Data())
+	p.patchEmbB = float32ToFloat64(m.patchEmb.biases.Data())
+	p.posEmb = float32ToFloat64(m.posEmb.Data())
+
+	p.layers = make([]encoderLayerF64, len(m.layers))
+	for i, l := range m.layers {
+		p.layers[i] = encoderLayerF64{
+			qW: float32ToFloat64(l.qProj.weights.Data()),
+			qB: float32ToFloat64(l.qProj.biases.Data()),
+			kW: float32ToFloat64(l.kProj.weights.Data()),
+			kB: float32ToFloat64(l.kProj.biases.Data()),
+			vW: float32ToFloat64(l.vProj.weights.Data()),
+			vB: float32ToFloat64(l.vProj.biases.Data()),
+			oW: float32ToFloat64(l.oProj.weights.Data()),
+			oB: float32ToFloat64(l.oProj.biases.Data()),
+			ffn1W: float32ToFloat64(l.ffn1.weights.Data()),
+			ffn1B: float32ToFloat64(l.ffn1.biases.Data()),
+			ffn2W: float32ToFloat64(l.ffn2.weights.Data()),
+			ffn2B: float32ToFloat64(l.ffn2.biases.Data()),
+			norm1: float32ToFloat64(l.norm1.Data()),
+			bias1: float32ToFloat64(l.bias1.Data()),
+			norm2: float32ToFloat64(l.norm2.Data()),
+			bias2: float32ToFloat64(l.bias2.Data()),
+		}
+	}
+
+	p.headW = float32ToFloat64(m.head.weights.Data())
+	p.headB = float32ToFloat64(m.head.biases.Data())
+	return p
+}
+
+// writeBackF32 copies float64 parameters back to the float32 tensors.
+func (m *PatchTST) writeBackF32(p *patchTSTParamsF64) {
+	copy(m.patchEmb.weights.Data(), float64ToFloat32(p.patchEmbW))
+	copy(m.patchEmb.biases.Data(), float64ToFloat32(p.patchEmbB))
+	copy(m.posEmb.Data(), float64ToFloat32(p.posEmb))
+
+	for i := range m.layers {
+		copy(m.layers[i].qProj.weights.Data(), float64ToFloat32(p.layers[i].qW))
+		copy(m.layers[i].qProj.biases.Data(), float64ToFloat32(p.layers[i].qB))
+		copy(m.layers[i].kProj.weights.Data(), float64ToFloat32(p.layers[i].kW))
+		copy(m.layers[i].kProj.biases.Data(), float64ToFloat32(p.layers[i].kB))
+		copy(m.layers[i].vProj.weights.Data(), float64ToFloat32(p.layers[i].vW))
+		copy(m.layers[i].vProj.biases.Data(), float64ToFloat32(p.layers[i].vB))
+		copy(m.layers[i].oProj.weights.Data(), float64ToFloat32(p.layers[i].oW))
+		copy(m.layers[i].oProj.biases.Data(), float64ToFloat32(p.layers[i].oB))
+		copy(m.layers[i].ffn1.weights.Data(), float64ToFloat32(p.layers[i].ffn1W))
+		copy(m.layers[i].ffn1.biases.Data(), float64ToFloat32(p.layers[i].ffn1B))
+		copy(m.layers[i].ffn2.weights.Data(), float64ToFloat32(p.layers[i].ffn2W))
+		copy(m.layers[i].ffn2.biases.Data(), float64ToFloat32(p.layers[i].ffn2B))
+		copy(m.layers[i].norm1.Data(), float64ToFloat32(p.layers[i].norm1))
+		copy(m.layers[i].bias1.Data(), float64ToFloat32(p.layers[i].bias1))
+		copy(m.layers[i].norm2.Data(), float64ToFloat32(p.layers[i].norm2))
+		copy(m.layers[i].bias2.Data(), float64ToFloat32(p.layers[i].bias2))
+	}
+
+	copy(m.head.weights.Data(), float64ToFloat32(p.headW))
+	copy(m.head.biases.Data(), float64ToFloat32(p.headB))
+}
+
+// flatParams returns pointers to all trainable parameters in a flat slice (float64).
+// The order is: patchEmbW, patchEmbB, posEmb, per-layer (qW,qB,kW,kB,vW,vB,oW,oB,
+// ffn1W,ffn1B,ffn2W,ffn2B,norm1,bias1,norm2,bias2), headW, headB.
+func (p *patchTSTParamsF64) flatParams() []*float64 {
+	n := p.paramCount()
+	ptrs := make([]*float64, 0, n)
+	for i := range p.patchEmbW {
+		ptrs = append(ptrs, &p.patchEmbW[i])
+	}
+	for i := range p.patchEmbB {
+		ptrs = append(ptrs, &p.patchEmbB[i])
+	}
+	for i := range p.posEmb {
+		ptrs = append(ptrs, &p.posEmb[i])
+	}
+	for l := range p.layers {
+		for i := range p.layers[l].qW {
+			ptrs = append(ptrs, &p.layers[l].qW[i])
+		}
+		for i := range p.layers[l].qB {
+			ptrs = append(ptrs, &p.layers[l].qB[i])
+		}
+		for i := range p.layers[l].kW {
+			ptrs = append(ptrs, &p.layers[l].kW[i])
+		}
+		for i := range p.layers[l].kB {
+			ptrs = append(ptrs, &p.layers[l].kB[i])
+		}
+		for i := range p.layers[l].vW {
+			ptrs = append(ptrs, &p.layers[l].vW[i])
+		}
+		for i := range p.layers[l].vB {
+			ptrs = append(ptrs, &p.layers[l].vB[i])
+		}
+		for i := range p.layers[l].oW {
+			ptrs = append(ptrs, &p.layers[l].oW[i])
+		}
+		for i := range p.layers[l].oB {
+			ptrs = append(ptrs, &p.layers[l].oB[i])
+		}
+		for i := range p.layers[l].ffn1W {
+			ptrs = append(ptrs, &p.layers[l].ffn1W[i])
+		}
+		for i := range p.layers[l].ffn1B {
+			ptrs = append(ptrs, &p.layers[l].ffn1B[i])
+		}
+		for i := range p.layers[l].ffn2W {
+			ptrs = append(ptrs, &p.layers[l].ffn2W[i])
+		}
+		for i := range p.layers[l].ffn2B {
+			ptrs = append(ptrs, &p.layers[l].ffn2B[i])
+		}
+		for i := range p.layers[l].norm1 {
+			ptrs = append(ptrs, &p.layers[l].norm1[i])
+		}
+		for i := range p.layers[l].bias1 {
+			ptrs = append(ptrs, &p.layers[l].bias1[i])
+		}
+		for i := range p.layers[l].norm2 {
+			ptrs = append(ptrs, &p.layers[l].norm2[i])
+		}
+		for i := range p.layers[l].bias2 {
+			ptrs = append(ptrs, &p.layers[l].bias2[i])
+		}
+	}
+	for i := range p.headW {
+		ptrs = append(ptrs, &p.headW[i])
+	}
+	for i := range p.headB {
+		ptrs = append(ptrs, &p.headB[i])
+	}
+	return ptrs
+}
+
+// paramCount returns the total number of trainable parameters.
+func (p *patchTSTParamsF64) paramCount() int {
+	n := len(p.patchEmbW) + len(p.patchEmbB) + len(p.posEmb)
+	for _, l := range p.layers {
+		n += len(l.qW) + len(l.qB) + len(l.kW) + len(l.kB) +
+			len(l.vW) + len(l.vB) + len(l.oW) + len(l.oB) +
+			len(l.ffn1W) + len(l.ffn1B) + len(l.ffn2W) + len(l.ffn2B) +
+			len(l.norm1) + len(l.bias1) + len(l.norm2) + len(l.bias2)
+	}
+	n += len(p.headW) + len(p.headB)
+	return n
+}
+
+// forwardF64 runs the PatchTST forward pass purely in float64 (no ztensor).
+// input: [channels][inputLen]. Returns flat output of length outputDim.
+func (m *PatchTST) forwardF64(input [][]float64, params *patchTSTParamsF64) []float64 {
+	numPatches := m.config.NumPatches()
+	dModel := m.config.DModel
+	nHeads := m.config.NHeads
+	headDim := dModel / nHeads
+	ffnDim := dModel * 4
+
+	// For channel-independent mode, process each channel separately and average.
+	// For simplicity and following DLinear pattern, treat as single-sample:
+	// flatten channels * inputLen and process channel 0 only for univariate,
+	// or average channels for multivariate.
+	// Actually, following the Forward() method pattern: each channel is processed
+	// independently through the same transformer. Output is per-channel.
+	// For training with [channels][inputLen] -> outputDim labels, we average channels.
+
+	channels := len(input)
+	chanOutputs := make([][]float64, channels)
+
+	for ch := 0; ch < channels; ch++ {
+		// Extract patches from this channel.
+		patches := make([][]float64, numPatches)
+		for p := 0; p < numPatches; p++ {
+			start := p * m.config.Stride
+			patches[p] = make([]float64, m.config.PatchLength)
+			copy(patches[p], input[ch][start:start+m.config.PatchLength])
+		}
+
+		// Patch embedding: each patch through linear [patchLen -> dModel].
+		embedded := make([][]float64, numPatches)
+		for p := 0; p < numPatches; p++ {
+			embedded[p] = make([]float64, dModel)
+			for j := 0; j < dModel; j++ {
+				val := params.patchEmbB[j]
+				for k := 0; k < m.config.PatchLength; k++ {
+					val += patches[p][k] * params.patchEmbW[k*dModel+j]
+				}
+				embedded[p][j] = val
+			}
+		}
+
+		// Add positional embeddings.
+		for p := 0; p < numPatches; p++ {
+			for j := 0; j < dModel; j++ {
+				embedded[p][j] += params.posEmb[p*dModel+j]
+			}
+		}
+
+		// Transformer encoder layers.
+		x := embedded // [numPatches][dModel]
+		for li := 0; li < m.config.NLayers; li++ {
+			layer := &params.layers[li]
+
+			// Pre-norm 1 (layer norm).
+			normed := layerNormF64(x, layer.norm1, layer.bias1, dModel)
+
+			// Multi-head self-attention.
+			attnOut := multiHeadAttentionF64(normed, layer, nHeads, headDim, dModel)
+
+			// Residual.
+			for p := 0; p < numPatches; p++ {
+				for j := 0; j < dModel; j++ {
+					x[p][j] += attnOut[p][j]
+				}
+			}
+
+			// Pre-norm 2.
+			normed = layerNormF64(x, layer.norm2, layer.bias2, dModel)
+
+			// FFN.
+			ffnOut := make([][]float64, numPatches)
+			for p := 0; p < numPatches; p++ {
+				// Linear 1: dModel -> ffnDim.
+				h := make([]float64, ffnDim)
+				for j := 0; j < ffnDim; j++ {
+					val := layer.ffn1B[j]
+					for k := 0; k < dModel; k++ {
+						val += normed[p][k] * layer.ffn1W[k*ffnDim+j]
+					}
+					h[j] = geluF64(val)
+				}
+				// Linear 2: ffnDim -> dModel.
+				ffnOut[p] = make([]float64, dModel)
+				for j := 0; j < dModel; j++ {
+					val := layer.ffn2B[j]
+					for k := 0; k < ffnDim; k++ {
+						val += h[k] * layer.ffn2W[k*dModel+j]
+					}
+					ffnOut[p][j] = val
+				}
+			}
+
+			// Residual.
+			for p := 0; p < numPatches; p++ {
+				for j := 0; j < dModel; j++ {
+					x[p][j] += ffnOut[p][j]
+				}
+			}
+		}
+
+		// Flatten: [numPatches * dModel].
+		flat := make([]float64, numPatches*dModel)
+		for p := 0; p < numPatches; p++ {
+			copy(flat[p*dModel:(p+1)*dModel], x[p])
+		}
+
+		// Output head: [numPatches*dModel -> outputDim].
+		headIn := numPatches * dModel
+		out := make([]float64, m.config.OutputDim)
+		for j := 0; j < m.config.OutputDim; j++ {
+			val := params.headB[j]
+			for k := 0; k < headIn; k++ {
+				val += flat[k] * params.headW[k*m.config.OutputDim+j]
+			}
+			out[j] = val
+		}
+		chanOutputs[ch] = out
+	}
+
+	// Average across channels.
+	result := make([]float64, m.config.OutputDim)
+	for ch := 0; ch < channels; ch++ {
+		for j := 0; j < m.config.OutputDim; j++ {
+			result[j] += chanOutputs[ch][j]
+		}
+	}
+	for j := range result {
+		result[j] /= float64(channels)
+	}
+	return result
+}
+
+// layerNormF64 applies layer normalization in float64.
+// x: [seq][dModel], scale/bias: [dModel].
+func layerNormF64(x [][]float64, scale, bias []float64, dModel int) [][]float64 {
+	seq := len(x)
+	out := make([][]float64, seq)
+	for s := 0; s < seq; s++ {
+		// Mean.
+		mean := 0.0
+		for j := 0; j < dModel; j++ {
+			mean += x[s][j]
+		}
+		mean /= float64(dModel)
+
+		// Variance.
+		variance := 0.0
+		for j := 0; j < dModel; j++ {
+			d := x[s][j] - mean
+			variance += d * d
+		}
+		variance /= float64(dModel)
+
+		invStd := 1.0 / math.Sqrt(variance+1e-5)
+		out[s] = make([]float64, dModel)
+		for j := 0; j < dModel; j++ {
+			out[s][j] = (x[s][j]-mean)*invStd*scale[j] + bias[j]
+		}
+	}
+	return out
+}
+
+// multiHeadAttentionF64 computes multi-head self-attention in float64.
+// x: [seq][dModel].
+func multiHeadAttentionF64(x [][]float64, layer *encoderLayerF64, nHeads, headDim, dModel int) [][]float64 {
+	seq := len(x)
+
+	// Q, K, V projections.
+	q := linearF64(x, layer.qW, layer.qB, dModel, dModel)
+	k := linearF64(x, layer.kW, layer.kB, dModel, dModel)
+	v := linearF64(x, layer.vW, layer.vB, dModel, dModel)
+
+	// Split into heads and compute attention.
+	attnOut := make([][]float64, seq)
+	for s := range attnOut {
+		attnOut[s] = make([]float64, dModel)
+	}
+
+	scale := 1.0 / math.Sqrt(float64(headDim))
+	for h := 0; h < nHeads; h++ {
+		hOff := h * headDim
+
+		// Compute attention scores for this head.
+		scores := make([][]float64, seq)
+		for i := 0; i < seq; i++ {
+			scores[i] = make([]float64, seq)
+			for j := 0; j < seq; j++ {
+				dot := 0.0
+				for d := 0; d < headDim; d++ {
+					dot += q[i][hOff+d] * k[j][hOff+d]
+				}
+				scores[i][j] = dot * scale
+			}
+		}
+
+		// Softmax.
+		for i := 0; i < seq; i++ {
+			maxScore := scores[i][0]
+			for j := 1; j < seq; j++ {
+				if scores[i][j] > maxScore {
+					maxScore = scores[i][j]
+				}
+			}
+			sumExp := 0.0
+			for j := 0; j < seq; j++ {
+				scores[i][j] = math.Exp(scores[i][j] - maxScore)
+				sumExp += scores[i][j]
+			}
+			for j := 0; j < seq; j++ {
+				scores[i][j] /= sumExp
+			}
+		}
+
+		// Weighted sum of values.
+		for i := 0; i < seq; i++ {
+			for d := 0; d < headDim; d++ {
+				val := 0.0
+				for j := 0; j < seq; j++ {
+					val += scores[i][j] * v[j][hOff+d]
+				}
+				attnOut[i][hOff+d] = val
+			}
+		}
+	}
+
+	// Output projection.
+	return linearF64(attnOut, layer.oW, layer.oB, dModel, dModel)
+}
+
+// linearF64 computes x @ W + b in float64.
+// x: [n][inDim], W: [inDim*outDim] (row-major), b: [outDim].
+func linearF64(x [][]float64, w, b []float64, inDim, outDim int) [][]float64 {
+	n := len(x)
+	out := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		out[i] = make([]float64, outDim)
+		for j := 0; j < outDim; j++ {
+			val := b[j]
+			for k := 0; k < inDim; k++ {
+				val += x[i][k] * w[k*outDim+j]
+			}
+			out[i][j] = val
+		}
+	}
+	return out
+}
+
+// TrainWindowed trains the PatchTST model on windowed data using AdamW.
+// windows: [nSamples][channels][inputLen] input windows.
+// labels: flat slice of length nSamples * outputDim.
+func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
+	nSamples := len(windows)
+	if nSamples == 0 {
+		return nil, fmt.Errorf("patchtst: empty training set")
+	}
+
+	expectedLabels := nSamples * m.config.OutputDim
+	if len(labels) != expectedLabels {
+		return nil, fmt.Errorf("patchtst: expected %d labels, got %d", expectedLabels, len(labels))
+	}
+
+	for i, w := range windows {
+		if len(w) == 0 {
+			return nil, fmt.Errorf("patchtst: window %d has 0 channels", i)
+		}
+		for c, ch := range w {
+			if len(ch) != m.config.InputLength {
+				return nil, fmt.Errorf("patchtst: window %d channel %d has length %d, expected %d",
+					i, c, len(ch), m.config.InputLength)
+			}
+		}
+	}
+
+	if config.Epochs <= 0 {
+		config.Epochs = 100
+	}
+	if config.LR <= 0 {
+		config.LR = 1e-3
+	}
+	if config.Beta1 <= 0 {
+		config.Beta1 = 0.9
+	}
+	if config.Beta2 <= 0 {
+		config.Beta2 = 0.999
+	}
+	if config.Epsilon <= 0 {
+		config.Epsilon = 1e-8
+	}
+
+	// Extract float64 parameters.
+	params := m.extractParamsF64()
+	nParams := params.paramCount()
+	adamM := make([]float64, nParams)
+	adamV := make([]float64, nParams)
+
+	result := &TrainResult{
+		LossHistory: make([]float64, config.Epochs),
+	}
+
+	batchSize := nSamples
+	if config.BatchSize > 0 && config.BatchSize < nSamples {
+		batchSize = config.BatchSize
+	}
+
+	outDim := m.config.OutputDim
+
+	for epoch := 0; epoch < config.Epochs; epoch++ {
+		epochLoss := 0.0
+		nBatches := 0
+
+		for start := 0; start < nSamples; start += batchSize {
+			end := start + batchSize
+			if end > nSamples {
+				end = nSamples
+			}
+			bs := end - start
+
+			grads := make([]float64, nParams)
+			batchLoss := 0.0
+
+			for s := 0; s < bs; s++ {
+				pred := m.forwardF64(windows[start+s], params)
+				sampleLabels := labels[(start+s)*outDim : (start+s+1)*outDim]
+
+				for j := 0; j < outDim; j++ {
+					diff := pred[j] - sampleLabels[j]
+					batchLoss += diff * diff
+				}
+
+				// Numerical gradient via finite differences.
+				// This is O(nParams * forward) but correct and matches
+				// the analytical approach used by DLinear/CfC.
+				eps := 1e-5
+				flatP := params.flatParams()
+				for pi := range flatP {
+					orig := *flatP[pi]
+					*flatP[pi] = orig + eps
+					predPlus := m.forwardF64(windows[start+s], params)
+					*flatP[pi] = orig - eps
+					predMinus := m.forwardF64(windows[start+s], params)
+					*flatP[pi] = orig
+
+					grad := 0.0
+					for j := 0; j < outDim; j++ {
+						diff := pred[j] - sampleLabels[j]
+						dLossDpred := 2.0 * diff / float64(bs*outDim)
+						grad += dLossDpred * (predPlus[j] - predMinus[j]) / (2 * eps)
+					}
+					grads[pi] += grad
+				}
+			}
+
+			batchLoss /= float64(bs * outDim)
+			epochLoss += batchLoss
+			nBatches++
+
+			// Gradient clipping.
+			if config.GradClip > 0 {
+				norm := 0.0
+				for _, g := range grads {
+					norm += g * g
+				}
+				norm = math.Sqrt(norm)
+				if norm > config.GradClip {
+					scale := config.GradClip / norm
+					for i := range grads {
+						grads[i] *= scale
+					}
+				}
+			}
+
+			// AdamW update.
+			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
+			flatP := params.flatParams()
+			for i := range flatP {
+				adamM[i] = config.Beta1*adamM[i] + (1-config.Beta1)*grads[i]
+				adamV[i] = config.Beta2*adamV[i] + (1-config.Beta2)*grads[i]*grads[i]
+				mHat := adamM[i] / (1 - math.Pow(config.Beta1, t))
+				vHat := adamV[i] / (1 - math.Pow(config.Beta2, t))
+				*flatP[i] = *flatP[i] - config.LR*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*flatP[i]))
+			}
+		}
+
+		result.LossHistory[epoch] = epochLoss / float64(nBatches)
+		result.FinalLoss = result.LossHistory[epoch]
+	}
+
+	// Write trained parameters back to float32 tensors.
+	m.writeBackF32(params)
+
+	result.Metrics = map[string]float64{"mse": result.FinalLoss}
+	return result, nil
+}
+
+// PredictWindowed runs inference on windowed data.
+// windows: [nSamples][channels][inputLen].
+// Returns flat predictions of length nSamples * outputDim.
+func (m *PatchTST) PredictWindowed(modelPath string, windows [][][]float64) ([]float64, error) {
+	if modelPath != "" {
+		if err := m.loadWeights(modelPath); err != nil {
+			return nil, fmt.Errorf("patchtst: load weights: %w", err)
+		}
+	}
+
+	nSamples := len(windows)
+	if nSamples == 0 {
+		return nil, fmt.Errorf("patchtst: empty input")
+	}
+
+	params := m.extractParamsF64()
+	out := make([]float64, 0, nSamples*m.config.OutputDim)
+	for _, w := range windows {
+		pred := m.forwardF64(w, params)
+		out = append(out, pred...)
+	}
+	return out, nil
+}
+
+// patchTSTWeights is the JSON-serializable form of PatchTST parameters.
+type patchTSTWeights struct {
+	Config    PatchTSTConfig    `json:"config"`
+	PatchEmbW []float64        `json:"patch_emb_w"`
+	PatchEmbB []float64        `json:"patch_emb_b"`
+	PosEmb    []float64        `json:"pos_emb"`
+	Layers    []encoderLayerJSON `json:"layers"`
+	HeadW     []float64        `json:"head_w"`
+	HeadB     []float64        `json:"head_b"`
+}
+
+type encoderLayerJSON struct {
+	QW    []float64 `json:"q_w"`
+	QB    []float64 `json:"q_b"`
+	KW    []float64 `json:"k_w"`
+	KB    []float64 `json:"k_b"`
+	VW    []float64 `json:"v_w"`
+	VB    []float64 `json:"v_b"`
+	OW    []float64 `json:"o_w"`
+	OB    []float64 `json:"o_b"`
+	FFN1W []float64 `json:"ffn1_w"`
+	FFN1B []float64 `json:"ffn1_b"`
+	FFN2W []float64 `json:"ffn2_w"`
+	FFN2B []float64 `json:"ffn2_b"`
+	Norm1 []float64 `json:"norm1"`
+	Bias1 []float64 `json:"bias1"`
+	Norm2 []float64 `json:"norm2"`
+	Bias2 []float64 `json:"bias2"`
+}
+
+// SaveWeights writes the model weights to a JSON file.
+func (m *PatchTST) SaveWeights(path string) error {
+	p := m.extractParamsF64()
+	w := patchTSTWeights{
+		Config:    m.config,
+		PatchEmbW: p.patchEmbW,
+		PatchEmbB: p.patchEmbB,
+		PosEmb:    p.posEmb,
+		HeadW:     p.headW,
+		HeadB:     p.headB,
+	}
+	for _, l := range p.layers {
+		w.Layers = append(w.Layers, encoderLayerJSON{
+			QW: l.qW, QB: l.qB, KW: l.kW, KB: l.kB,
+			VW: l.vW, VB: l.vB, OW: l.oW, OB: l.oB,
+			FFN1W: l.ffn1W, FFN1B: l.ffn1B,
+			FFN2W: l.ffn2W, FFN2B: l.ffn2B,
+			Norm1: l.norm1, Bias1: l.bias1,
+			Norm2: l.norm2, Bias2: l.bias2,
+		})
+	}
+	data, err := json.Marshal(w)
+	if err != nil {
+		return fmt.Errorf("patchtst: marshal weights: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// loadWeights reads model weights from a JSON file.
+func (m *PatchTST) loadWeights(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var w patchTSTWeights
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	if w.Config != m.config {
+		return fmt.Errorf("patchtst: config mismatch: file has %+v, model has %+v", w.Config, m.config)
+	}
+	if len(w.Layers) != len(m.layers) {
+		return fmt.Errorf("patchtst: layer count mismatch: file=%d, model=%d", len(w.Layers), len(m.layers))
+	}
+
+	p := &patchTSTParamsF64{
+		patchEmbW: w.PatchEmbW,
+		patchEmbB: w.PatchEmbB,
+		posEmb:    w.PosEmb,
+		headW:     w.HeadW,
+		headB:     w.HeadB,
+	}
+	p.layers = make([]encoderLayerF64, len(w.Layers))
+	for i, l := range w.Layers {
+		p.layers[i] = encoderLayerF64{
+			qW: l.QW, qB: l.QB, kW: l.KW, kB: l.KB,
+			vW: l.VW, vB: l.VB, oW: l.OW, oB: l.OB,
+			ffn1W: l.FFN1W, ffn1B: l.FFN1B,
+			ffn2W: l.FFN2W, ffn2B: l.FFN2B,
+			norm1: l.Norm1, bias1: l.Bias1,
+			norm2: l.Norm2, bias2: l.Bias2,
+		}
+	}
+	m.writeBackF32(p)
+	return nil
 }

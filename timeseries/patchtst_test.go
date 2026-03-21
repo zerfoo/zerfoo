@@ -346,6 +346,196 @@ func TestPatchTST_Predict(t *testing.T) {
 	}
 }
 
+func TestPatchTST_TrainWindowed(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	nSamples := 10
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.OutputDim)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1) // 1 channel
+		windows[s][0] = make([]float64, config.InputLength)
+		for i := 0; i < config.InputLength; i++ {
+			windows[s][0][i] = float64(s+i) * 0.1
+		}
+		for o := 0; o < config.OutputDim; o++ {
+			labels[s*config.OutputDim+o] = float64(s) * 0.05
+		}
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:  5,
+		LR:      1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if len(result.LossHistory) != 5 {
+		t.Fatalf("loss history length = %d, want 5", len(result.LossHistory))
+	}
+	if result.FinalLoss != result.LossHistory[4] {
+		t.Errorf("FinalLoss = %v, want %v", result.FinalLoss, result.LossHistory[4])
+	}
+	if math.IsNaN(result.FinalLoss) || math.IsInf(result.FinalLoss, 0) {
+		t.Errorf("FinalLoss is not finite: %v", result.FinalLoss)
+	}
+	if result.Metrics == nil {
+		t.Fatal("Metrics is nil")
+	}
+	if _, ok := result.Metrics["mse"]; !ok {
+		t.Error("Metrics missing 'mse' key")
+	}
+}
+
+func TestPatchTST_PredictWindowed(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	windows := make([][][]float64, 3)
+	for s := 0; s < 3; s++ {
+		windows[s] = [][]float64{make([]float64, config.InputLength)}
+		for i := range windows[s][0] {
+			windows[s][0][i] = float64(i) * 0.1
+		}
+	}
+
+	preds, err := model.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	expectedLen := 3 * config.OutputDim
+	if len(preds) != expectedLen {
+		t.Fatalf("predictions length = %d, want %d", len(preds), expectedLen)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Errorf("prediction[%d] = %v, want finite", i, v)
+			break
+		}
+	}
+}
+
+func TestPatchTST_SaveLoadWeights(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := dir + "/patchtst.json"
+
+	if err := model.SaveWeights(path); err != nil {
+		t.Fatalf("SaveWeights: %v", err)
+	}
+
+	windows := [][][]float64{
+		{make([]float64, config.InputLength)},
+	}
+	for i := range windows[0][0] {
+		windows[0][0][i] = float64(i)
+	}
+
+	preds1, err := model.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	model2, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	preds2, err := model2.PredictWindowed(path, windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed with load: %v", err)
+	}
+
+	for i := range preds1 {
+		if math.Abs(preds1[i]-preds2[i]) > 1e-6 {
+			t.Errorf("loaded model prediction[%d] = %v, want %v", i, preds2[i], preds1[i])
+		}
+	}
+}
+
+func TestPatchTST_TrainWindowed_Empty(t *testing.T) {
+	engine, ops := newTestEngine()
+	config := PatchTSTConfig{
+		InputLength: 16, PatchLength: 4, Stride: 4,
+		DModel: 8, NHeads: 2, NLayers: 1, OutputDim: 2,
+	}
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	_, err = model.TrainWindowed(nil, nil, TrainConfig{Epochs: 5})
+	if err == nil {
+		t.Fatal("expected error for empty training set")
+	}
+}
+
+func TestPatchTST_PredictWindowed_Empty(t *testing.T) {
+	engine, ops := newTestEngine()
+	config := PatchTSTConfig{
+		InputLength: 16, PatchLength: 4, Stride: 4,
+		DModel: 8, NHeads: 2, NLayers: 1, OutputDim: 2,
+	}
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	_, err = model.PredictWindowed("", nil)
+	if err == nil {
+		t.Fatal("expected error for empty input")
+	}
+}
+
 func TestNewPatchTST_Validation(t *testing.T) {
 	engine, ops := newTestEngine()
 
