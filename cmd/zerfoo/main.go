@@ -66,6 +66,9 @@ func run() error {
 	trainCmd := cli.NewTrainCommand(os.Stdout)
 	cliApp.RegisterCommand(trainCmd)
 
+	sentimentCmd := cli.NewSentimentCommand(os.Stdout)
+	cliApp.RegisterCommand(sentimentCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
