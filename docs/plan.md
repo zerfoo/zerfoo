@@ -1099,7 +1099,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 35: Medium Fixes -- Training and Layers (5 agents)
 
-- [ ] T106.26 Fix worker pool Close() data race
+- [x] T106.26 Fix worker pool Close() data race
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: internal/workerpool/pool.go
@@ -1109,7 +1109,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: concurrent Close() calls do not panic.
   - go vet ./internal/workerpool/ clean.
 
-- [ ] T106.27 Add gradient clipping and NaN guard to AdamW
+- [x] T106.27 Add gradient clipping and NaN guard to AdamW
   Owner: ML Eng  Est: 1h  verifies: [UC-016]
   Deps: none
   Files: training/optimizer/adamw.go
@@ -1120,7 +1120,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: gradient with NaN returns error. Gradient exceeding norm is clipped.
   - go vet ./training/optimizer/ clean.
 
-- [ ] T106.28 Fix S4 backward nil gradient panic
+- [x] T106.28 Fix S4 backward nil gradient panic
   Owner: ML Eng  Est: 30m  verifies: [UC-001]
   Deps: none
   Files: layers/ssm/s4.go
@@ -1129,7 +1129,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: S4 backward on first call does not panic.
   - go vet ./layers/ssm/ clean.
 
-- [ ] T106.29 Fix LoRA backward nil gradient Add
+- [x] T106.29 Fix LoRA backward nil gradient Add
   Owner: ML Eng  Est: 30m  verifies: [UC-016]
   Deps: none
   Files: training/lora/ (identify exact file)
@@ -1138,7 +1138,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: LoRA backward on first call does not panic.
   - go vet ./training/lora/ clean.
 
-- [ ] T106.30 Fix PatchTST inference projection head
+- [x] T106.30 Fix PatchTST inference projection head
   Owner: ML Eng  Est: 1.5h  verifies: [UC-026]
   Deps: none
   Files: inference/timeseries/arch_patchtst.go
@@ -1317,11 +1317,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 35: Medium Fixes -- Training and Layers (5 agents)
 
-- [ ] T106.26 Fix worker pool Close() data race
-- [ ] T106.27 Add gradient clipping and NaN guard to AdamW
-- [ ] T106.28 Fix S4 backward nil gradient panic
-- [ ] T106.29 Fix LoRA backward nil gradient Add
-- [ ] T106.30 Fix PatchTST inference projection head
+- [x] T106.26 Fix worker pool Close() data race
+- [x] T106.27 Add gradient clipping and NaN guard to AdamW
+- [x] T106.28 Fix S4 backward nil gradient panic
+- [x] T106.29 Fix LoRA backward nil gradient Add
+- [x] T106.30 Fix PatchTST inference projection head
 
 #### Wave 36: Tech Debt and Quality (5 agents)
 
