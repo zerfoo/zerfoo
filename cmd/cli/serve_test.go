@@ -238,6 +238,63 @@ func TestServeCommand_GPUsFlag(t *testing.T) {
 	}
 }
 
+func TestServeCommand_TLSFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"tls-cert missing value", []string{"--tls-cert"}, "--tls-cert requires a value"},
+		{"tls-key missing value", []string{"--tls-key"}, "--tls-key requires a value"},
+		{"cert without key", []string{"--tls-cert", "cert.pem", "test-model"}, "both --tls-cert and --tls-key are required"},
+		{"key without cert", []string{"--tls-key", "key.pem", "test-model"}, "both --tls-cert and --tls-key are required"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := NewServeCommand(nil, &out)
+			cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+				return nil, errors.New("should not be called")
+			}
+			err := cmd.Run(context.Background(), tc.args)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServeCommand_TLSFlagsParsed(t *testing.T) {
+	// Verify both flags are accepted together (will fail at TLS load, not at flag parsing).
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--tls-cert", "cert.pem", "--tls-key", "key.pem", "test-model"})
+	}()
+
+	// Cancel immediately — the server will fail to start with invalid TLS files,
+	// but the important thing is no flag-parsing error occurred.
+	cancel()
+	err := <-errCh
+	// We expect either nil (context cancelled before TLS error) or a TLS-related error,
+	// but NOT a flag-parsing error.
+	if err != nil && strings.Contains(err.Error(), "both --tls-cert and --tls-key are required") {
+		t.Fatalf("unexpected flag validation error: %v", err)
+	}
+}
+
 func TestServeCommand_GPUsFlagValid(t *testing.T) {
 	mdl := buildCLITestModel(t)
 	var out bytes.Buffer

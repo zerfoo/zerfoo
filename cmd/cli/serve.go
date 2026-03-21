@@ -44,7 +44,7 @@ func (c *ServeCommand) Description() string {
 
 // Run implements Command.Run.
 func (c *ServeCommand) Run(ctx context.Context, args []string) error {
-	var modelID, cacheDir, port, gpusRaw, apiKey string
+	var modelID, cacheDir, port, gpusRaw, apiKey, tlsCert, tlsKey string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -72,6 +72,18 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 			}
 			apiKey = args[i+1]
 			i++
+		case "--tls-cert":
+			if i+1 >= len(args) {
+				return errors.New("--tls-cert requires a value")
+			}
+			tlsCert = args[i+1]
+			i++
+		case "--tls-key":
+			if i+1 >= len(args) {
+				return errors.New("--tls-key requires a value")
+			}
+			tlsKey = args[i+1]
+			i++
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])
@@ -90,6 +102,10 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	}
 	if port == "" {
 		port = "8080"
+	}
+
+	if (tlsCert != "") != (tlsKey != "") {
+		return errors.New("both --tls-cert and --tls-key are required")
 	}
 
 	var loadOpts []inference.Option
@@ -134,7 +150,11 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- httpServer.ListenAndServe()
+		if tlsCert != "" && tlsKey != "" {
+			errCh <- httpServer.ListenAndServeTLS(tlsCert, tlsKey)
+		} else {
+			errCh <- httpServer.ListenAndServe()
+		}
 	}()
 
 	select {
@@ -198,6 +218,8 @@ OPTIONS:
   --cache-dir <dir>   Override model cache directory
   --gpus <ids>        Comma-separated GPU IDs to distribute model across (e.g. 0,1,2,3)
   --api-key <key>     Require Bearer token auth (env: ZERFOO_API_KEY)
+  --tls-cert <path>   Path to TLS certificate file (requires --tls-key)
+  --tls-key <path>    Path to TLS private key file (requires --tls-cert)
 
 ENDPOINTS:
   POST /v1/chat/completions   Chat completion
