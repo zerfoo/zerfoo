@@ -279,9 +279,9 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			len(labels), numSamples, n.config.OutputLength)
 	}
 
-	lr := config.LR
-	if lr == 0 {
-		lr = 1e-3
+	baseLR := config.LR
+	if baseLR == 0 {
+		baseLR = 1e-3
 	}
 	batchSize := config.BatchSize
 	if batchSize <= 0 {
@@ -291,6 +291,9 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 	if epochs <= 0 {
 		epochs = 100
 	}
+
+	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
+	windows, _, _ = normalizeWindows(windows)
 
 	ctx := context.Background()
 	result := &TrainResult{}
@@ -478,15 +481,21 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 				paramIdx += len(stack.mlpLayers)*2 + 2
 			}
 
-			// Apply all gradients with AdamW.
+			// Apply all gradients with AdamW (with LR warmup).
+			lr := float32(warmupLR(baseLR, epoch, config.WarmupEpochs))
 			for i := range allParams {
 				n.clipGradients(allGrads[i], config.GradClip)
-				n.adamUpdate(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, float32(lr), wd, epoch+1)
+				n.adamUpdate(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, lr, wd, epoch+1)
 			}
 		}
 
 		avgLoss := epochLoss / float64(nBatches)
 		result.LossHistory = append(result.LossHistory, avgLoss)
+
+		// Early halt on NaN/Inf loss.
+		if !isFinite(avgLoss) {
+			return nil, fmt.Errorf("nhits: training diverged at epoch %d: loss=%v", epoch, avgLoss)
+		}
 	}
 
 	if len(result.LossHistory) > 0 {
