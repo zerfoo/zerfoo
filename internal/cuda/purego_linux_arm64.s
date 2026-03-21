@@ -2,24 +2,7 @@
 
 #include "textflag.h"
 
-// Assembly trampolines for dynamically imported C library functions
-// on Linux arm64. Each trampoline is a branch to the symbol resolved
-// by //go:cgo_import_dynamic at load time.
-
-TEXT ·libc_dlopen_trampoline(SB),NOSPLIT,$0-0
-	JMP libc_dlopen(SB)
-
-TEXT ·libc_dlsym_trampoline(SB),NOSPLIT,$0-0
-	JMP libc_dlsym(SB)
-
-TEXT ·libc_dlclose_trampoline(SB),NOSPLIT,$0-0
-	JMP libc_dlclose(SB)
-
-TEXT ·libc_dlerror_trampoline(SB),NOSPLIT,$0-0
-	JMP libc_dlerror(SB)
-
 // ccallTrampoline is called by asmcgocall(ccallTrampoline, &ccallArgs).
-// Verified correct on DGX Spark (GB10, ARM64) -- see docs/updates.md T1002.1.
 // It runs on the system stack (g0). R0 points to a ccallArgs struct:
 //
 //   struct ccallArgs {
@@ -38,7 +21,6 @@ TEXT ·libc_dlerror_trampoline(SB),NOSPLIT,$0-0
 // outgoing argument area below the Go-managed frame.
 TEXT ·ccallTrampoline(SB),NOSPLIT,$0
 	// Save args struct pointer and LR in callee-saved registers.
-	// LR was set by asmcgocall's BLR; we must preserve it for RET.
 	MOVD R0, R19
 	MOVD R30, R20
 
@@ -56,8 +38,6 @@ TEXT ·ccallTrampoline(SB),NOSPLIT,$0
 	MOVD 64(R19), R7
 
 	// Push outgoing stack argument area (96 bytes for args[8]-args[19]).
-	// This creates a fresh region at RSP+0 that the C callee sees as its
-	// incoming stack arguments, without touching the Go-saved LR above.
 	SUB $96, RSP
 	MOVD 72(R19), R10
 	MOVD R10, 0(RSP)

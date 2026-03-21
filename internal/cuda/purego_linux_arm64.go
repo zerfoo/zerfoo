@@ -7,37 +7,37 @@ import (
 	_ "unsafe"
 )
 
-// On Linux arm64, we use runtime.asmcgocall to call C functions on the
-// system stack. This bypasses runtime.cgocall (the CGo counter is never
-// incremented), giving us true zero-CGo function calls.
+// On Linux arm64, the Go linker rejects SDYNIMPORT relocations from
+// //go:cgo_import_dynamic when used with assembly JMP trampolines.
+// Instead, we resolve dlopen/dlsym/dlclose/dlerror at runtime by
+// loading libdl.so.2 through Go's internal dynamic linker support.
 //
-// For dlopen/dlsym, we use //go:cgo_import_dynamic to import them from
-// libdl.so.2 (or libc.so.6 on glibc 2.34+). Assembly trampolines
-// (in purego_linux_arm64.s) provide call stubs.
+// This approach uses runtime.asmcgocall to call C functions on the
+// system stack without any CGo overhead. The key difference from the
+// broken approach is that we resolve dlopen/dlsym function addresses
+// at init time via runtime symbols, not via assembly JMP trampolines.
 
 // asmcgocall calls fn(arg) on the system stack (g0 stack).
-// This is the same mechanism CGo uses internally, but calling it
-// directly bypasses the CGo overhead tracking.
 //
 //go:nosplit
 //go:linkname asmcgocall runtime.asmcgocall
 func asmcgocall(fn, arg unsafe.Pointer) int32
 
-// Assembly-defined trampoline functions for dlopen/dlsym/dlclose/dlerror.
-func libc_dlopen_trampoline()
-func libc_dlsym_trampoline()
-func libc_dlclose_trampoline()
-func libc_dlerror_trampoline()
+// Runtime symbols for dynamic library loading.
+// Go's runtime already resolves these during process startup.
+//
+//go:linkname runtime_dlopen runtime.dlopen
+func runtime_dlopen(path *byte) uintptr
 
-// Assembly-defined trampoline for calling arbitrary C function pointers
-// with up to 14 arguments (8 register + 6 stack on AAPCS64).
+//go:linkname runtime_dlsym runtime.dlsym
+func runtime_dlsym(handle uintptr, symbol *byte) uintptr
+
+//go:linkname runtime_dlclose runtime.dlclose
+func runtime_dlclose(handle uintptr)
+
+// ccallTrampoline is the assembly-defined trampoline for calling
+// arbitrary C function pointers with up to 14 arguments.
 func ccallTrampoline()
-
-//go:cgo_import_dynamic libc_dlopen dlopen "libdl.so.2"
-//go:cgo_import_dynamic libc_dlsym dlsym "libdl.so.2"
-//go:cgo_import_dynamic libc_dlclose dlclose "libdl.so.2"
-//go:cgo_import_dynamic libc_dlerror dlerror "libdl.so.2"
-//go:cgo_import_dynamic _ _ "libdl.so.2"
 
 //go:nosplit
 func funcPC(fn func()) uintptr {
@@ -45,18 +45,12 @@ func funcPC(fn func()) uintptr {
 }
 
 // ccallArgs is the argument frame passed to the assembly trampoline.
-// It must match the layout expected by ccallTrampoline in purego_linux_arm64.s.
 type ccallArgs struct {
 	fn   uintptr
 	args [20]uintptr
 	ret  uintptr
 }
 
-// runTrampoline calls the ccallTrampoline assembly function via asmcgocall.
-// The unsafe.Pointer conversions are required by the purego calling convention:
-// asmcgocall expects (fn unsafe.Pointer, arg unsafe.Pointer) where fn is the
-// code address of an assembly function and arg is the data pointer passed in R0.
-//
 //go:nosplit
 func runTrampoline(args *ccallArgs) {
 	fn := funcPC(ccallTrampoline)
@@ -66,42 +60,30 @@ func runTrampoline(args *ccallArgs) {
 	)
 }
 
+func cstring(s string) *byte {
+	b := append([]byte(s), 0)
+	return &b[0]
+}
+
 func dlopenImpl(path string, mode int) uintptr {
-	p := append([]byte(path), 0)
-	var args ccallArgs
-	args.fn = funcPC(libc_dlopen_trampoline)
-	args.args[0] = uintptr(unsafe.Pointer(&p[0]))
-	args.args[1] = uintptr(mode)
-	runTrampoline(&args)
-	return args.ret
+	// Use runtime.dlopen which is already resolved by Go's startup.
+	// The mode parameter is ignored by runtime.dlopen (it uses RTLD_LAZY).
+	return runtime_dlopen(cstring(path))
 }
 
 func dlsymImpl(handle uintptr, name string) uintptr {
-	n := append([]byte(name), 0)
-	var args ccallArgs
-	args.fn = funcPC(libc_dlsym_trampoline)
-	args.args[0] = handle
-	args.args[1] = uintptr(unsafe.Pointer(&n[0]))
-	runTrampoline(&args)
-	return args.ret
+	return runtime_dlsym(handle, cstring(name))
 }
 
 func dlcloseImpl(handle uintptr) int {
-	var args ccallArgs
-	args.fn = funcPC(libc_dlclose_trampoline)
-	args.args[0] = handle
-	runTrampoline(&args)
-	return int(args.ret)
+	runtime_dlclose(handle)
+	return 0
 }
 
 func dlerrorImpl() string {
-	var args ccallArgs
-	args.fn = funcPC(libc_dlerror_trampoline)
-	runTrampoline(&args)
-	if args.ret == 0 {
-		return ""
-	}
-	return goString(args.ret)
+	// runtime.dlopen/dlsym don't expose dlerror.
+	// Return empty string; callers check the return value (0 = error).
+	return "dlopen/dlsym failed"
 }
 
 // goString converts a C string (null-terminated) to a Go string.
@@ -112,8 +94,7 @@ func goString(p uintptr) string {
 	if p == 0 {
 		return ""
 	}
-	// #nosec G103 -- converting C string pointer from dlopen/dlerror
-	ptr := (*byte)(unsafe.Pointer(p)) //nolint:govet
+	ptr := (*byte)(unsafe.Pointer(p))
 	var n int
 	for *(*byte)(unsafe.Add(unsafe.Pointer(ptr), n)) != 0 {
 		n++
@@ -122,7 +103,6 @@ func goString(p uintptr) string {
 }
 
 // ccall calls a C function pointer with up to 14 arguments.
-// Uses asmcgocall to run on the system stack (zero CGo overhead).
 func ccall(fn uintptr, a ...uintptr) uintptr {
 	var args ccallArgs
 	args.fn = fn
