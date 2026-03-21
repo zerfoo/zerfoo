@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -61,6 +62,13 @@ func (c *SentimentCommand) Run(ctx context.Context, args []string) error {
 	}
 	if cfg.continuous {
 		opts = append(opts, sentiment.WithContinuous())
+	}
+
+	// Auto-detect vocab.txt alongside the model for WordPiece tokenization.
+	modelDir := filepath.Dir(cfg.modelPath)
+	vocabFile := filepath.Join(modelDir, "vocab.txt")
+	if _, err := os.Stat(vocabFile); err == nil {
+		opts = append(opts, sentiment.WithVocabFile(vocabFile))
 	}
 
 	pipe, err := sentiment.New(cfg.modelPath, opts...)
