@@ -1204,7 +1204,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 37: Verification and Lint (2 agents)
 
-- [ ] T106.36 Run go test -race on all changed packages
+- [x] T106.36 Run go test -race on all changed packages
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: T106.1-T106.35
   Acceptance:
@@ -1333,8 +1333,8 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 37: Verification and Lint (2 agents)
 
-- [ ] T106.36 Run go test -race on all changed packages
-- [ ] T106.37 Run go vet + linter on entire codebase
+- [x] T106.36 Run go test -race on all changed packages
+- [x] T106.37 Run go vet + linter on entire codebase
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
