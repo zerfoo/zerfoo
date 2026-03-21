@@ -92,6 +92,10 @@ func bertParityTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric[f
 		randTensor(p+"ffn_norm.bias", []int{h})
 	}
 
+	// Pooler (CLS token projection + tanh).
+	randTensor("cls_pooler.weight", []int{h, h})
+	randTensor("cls_pooler.bias", []int{h})
+
 	// Classification head.
 	randTensor("cls.weight", []int{cfg.NumLabels, h})
 	randTensor("cls.bias", []int{cfg.NumLabels})
