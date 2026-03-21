@@ -60,10 +60,20 @@ resource "google_cloud_run_v2_service" "api_gateway" {
   labels = local.labels
 }
 
-resource "google_cloud_run_v2_service_iam_member" "public_access" {
+# Dedicated service account for API invocation. Public access (allUsers) was
+# removed to enforce authentication and prevent unauthenticated internet
+# traffic from reaching the Cloud Run service (T106.25).
+resource "google_service_account" "api_invoker" {
+  account_id   = "zerfoo-api-invoker"
+  display_name = "Zerfoo API Gateway Invoker"
+  description  = "Service account authorized to invoke the zerfoo-api-gateway Cloud Run service"
+  project      = var.project_id
+}
+
+resource "google_cloud_run_v2_service_iam_member" "api_invoker_access" {
   project  = google_cloud_run_v2_service.api_gateway.project
   location = google_cloud_run_v2_service.api_gateway.location
   name     = google_cloud_run_v2_service.api_gateway.name
   role     = "roles/run.invoker"
-  member   = "allUsers"
+  member   = "serviceAccount:${google_service_account.api_invoker.email}"
 }
