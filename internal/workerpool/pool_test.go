@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -68,6 +69,21 @@ func TestPoolCloseMultiple(t *testing.T) {
 	p := New(4)
 	p.Close()
 	p.Close() // should not panic
+}
+
+func TestPoolCloseConcurrent(t *testing.T) {
+	p := New(4)
+	p.Submit([]func(){func() {}})
+
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.Close() // must not panic or race
+		}()
+	}
+	wg.Wait()
 }
 
 func TestPoolNoGoroutineLeak(t *testing.T) {

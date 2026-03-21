@@ -7,9 +7,9 @@ import "sync"
 
 // Pool is a fixed-size pool of long-lived worker goroutines.
 type Pool struct {
-	tasks  chan func()
-	wg     sync.WaitGroup
-	closed bool
+	tasks chan func()
+	wg    sync.WaitGroup
+	once  sync.Once
 }
 
 // New creates a pool with n worker goroutines that block on a shared task channel.
@@ -45,12 +45,10 @@ func (p *Pool) Submit(tasks []func()) {
 	done.Wait()
 }
 
-// Close shuts down the pool. It is safe to call multiple times.
+// Close shuts down the pool. It is safe to call concurrently and multiple times.
 func (p *Pool) Close() {
-	if p.closed {
-		return
-	}
-	p.closed = true
-	close(p.tasks)
-	p.wg.Wait()
+	p.once.Do(func() {
+		close(p.tasks)
+		p.wg.Wait()
+	})
 }
