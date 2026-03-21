@@ -18,20 +18,97 @@ type TrainConfig struct {
 	Beta1        float64 // AdamW beta1
 	Beta2        float64 // AdamW beta2
 	Epsilon      float64 // AdamW epsilon
+	WarmupEpochs int     // linear LR warmup over this many epochs (0 = no warmup)
 }
 
 // DefaultTrainConfig returns sensible defaults for training.
 func DefaultTrainConfig() TrainConfig {
 	return TrainConfig{
-		Epochs:      100,
-		LR:          1e-3,
-		WeightDecay: 1e-4,
-		GradClip:    1.0,
-		BatchSize:   0,
-		Beta1:       0.9,
-		Beta2:       0.999,
-		Epsilon:     1e-8,
+		Epochs:       100,
+		LR:           1e-3,
+		WeightDecay:  1e-4,
+		GradClip:     1.0,
+		BatchSize:    0,
+		Beta1:        0.9,
+		Beta2:        0.999,
+		Epsilon:      1e-8,
+		WarmupEpochs: 5,
 	}
+}
+
+// warmupLR returns the effective learning rate for the given epoch,
+// applying linear warmup over the first warmupEpochs epochs.
+func warmupLR(baseLR float64, epoch, warmupEpochs int) float64 {
+	if warmupEpochs <= 0 {
+		return baseLR
+	}
+	scale := float64(epoch+1) / float64(warmupEpochs)
+	if scale > 1.0 {
+		scale = 1.0
+	}
+	return baseLR * scale
+}
+
+// isFinite returns true if v is neither NaN nor Inf.
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// normalizeWindows applies z-score normalization per channel across all samples.
+// It returns the normalized windows, per-channel means, and per-channel standard
+// deviations. Each channel is normalized independently: x' = (x - mean) / (std + 1e-8).
+func normalizeWindows(windows [][][]float64) ([][][]float64, [][]float64, [][]float64) {
+	if len(windows) == 0 {
+		return windows, nil, nil
+	}
+	nChannels := len(windows[0])
+	inputLen := 0
+	if nChannels > 0 {
+		inputLen = len(windows[0][0])
+	}
+	nSamples := len(windows)
+
+	means := make([][]float64, nChannels)
+	stds := make([][]float64, nChannels)
+
+	for c := 0; c < nChannels; c++ {
+		means[c] = make([]float64, inputLen)
+		stds[c] = make([]float64, inputLen)
+
+		// Compute mean per timestep.
+		for i := 0; i < nSamples; i++ {
+			for t := 0; t < inputLen; t++ {
+				means[c][t] += windows[i][c][t]
+			}
+		}
+		for t := 0; t < inputLen; t++ {
+			means[c][t] /= float64(nSamples)
+		}
+
+		// Compute std per timestep.
+		for i := 0; i < nSamples; i++ {
+			for t := 0; t < inputLen; t++ {
+				d := windows[i][c][t] - means[c][t]
+				stds[c][t] += d * d
+			}
+		}
+		for t := 0; t < inputLen; t++ {
+			stds[c][t] = math.Sqrt(stds[c][t] / float64(nSamples))
+		}
+	}
+
+	// Normalize in-place copy.
+	out := make([][][]float64, nSamples)
+	for i := 0; i < nSamples; i++ {
+		out[i] = make([][]float64, nChannels)
+		for c := 0; c < nChannels; c++ {
+			out[i][c] = make([]float64, inputLen)
+			for t := 0; t < inputLen; t++ {
+				out[i][c][t] = (windows[i][c][t] - means[c][t]) / (stds[c][t] + 1e-8)
+			}
+		}
+	}
+	return out, means, stds
 }
 
 // TrainResult holds training metrics.

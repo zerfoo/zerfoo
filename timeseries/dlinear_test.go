@@ -466,3 +466,155 @@ func TestDLinear_SaveWeightsPath(t *testing.T) {
 		t.Fatalf("weights file not created: %v", err)
 	}
 }
+
+func TestIsFinite(t *testing.T) {
+	tests := []struct {
+		name string
+		v    float64
+		want bool
+	}{
+		{"zero", 0, true},
+		{"positive", 3.14, true},
+		{"negative", -1.5, true},
+		{"nan", math.NaN(), false},
+		{"pos_inf", math.Inf(1), false},
+		{"neg_inf", math.Inf(-1), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFinite(tt.v); got != tt.want {
+				t.Errorf("isFinite(%v) = %v, want %v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWarmupLR(t *testing.T) {
+	tests := []struct {
+		name         string
+		baseLR       float64
+		epoch        int
+		warmupEpochs int
+		want         float64
+	}{
+		{"epoch 0 of 5", 1e-3, 0, 5, 1e-3 * 1.0 / 5.0},
+		{"epoch 1 of 5", 1e-3, 1, 5, 1e-3 * 2.0 / 5.0},
+		{"epoch 4 of 5", 1e-3, 4, 5, 1e-3},
+		{"epoch 9 of 5", 1e-3, 9, 5, 1e-3},
+		{"no warmup", 1e-3, 0, 0, 1e-3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := warmupLR(tt.baseLR, tt.epoch, tt.warmupEpochs)
+			if math.Abs(got-tt.want) > 1e-15 {
+				t.Errorf("warmupLR(%v, %d, %d) = %v, want %v", tt.baseLR, tt.epoch, tt.warmupEpochs, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeWindows(t *testing.T) {
+	// 3 samples, 2 channels, 4 timesteps. Channel 0 has values ~100,
+	// channel 1 has values ~0.001. After normalization both should be ~O(1).
+	windows := [][][]float64{
+		{{100, 200, 300, 400}, {0.001, 0.002, 0.003, 0.004}},
+		{{110, 210, 310, 410}, {0.0015, 0.0025, 0.0035, 0.0045}},
+		{{90, 190, 290, 390}, {0.0005, 0.0015, 0.0025, 0.0035}},
+	}
+	out, means, stds := normalizeWindows(windows)
+
+	// Check dimensions.
+	if len(out) != 3 {
+		t.Fatalf("len(out) = %d, want 3", len(out))
+	}
+	if len(means) != 2 || len(stds) != 2 {
+		t.Fatalf("means/stds channels = %d/%d, want 2/2", len(means), len(stds))
+	}
+
+	// Verify normalized values are roughly zero-mean unit-variance.
+	for c := 0; c < 2; c++ {
+		for ts := 0; ts < 4; ts++ {
+			var sum, sumSq float64
+			for i := 0; i < 3; i++ {
+				sum += out[i][c][ts]
+				sumSq += out[i][c][ts] * out[i][c][ts]
+			}
+			mean := sum / 3.0
+			if math.Abs(mean) > 1e-6 {
+				t.Errorf("channel %d timestep %d: normalized mean = %v, want ~0", c, ts, mean)
+			}
+		}
+	}
+
+	// All outputs must be finite.
+	for i := range out {
+		for c := range out[i] {
+			for ts := range out[i][c] {
+				if !isFinite(out[i][c][ts]) {
+					t.Errorf("out[%d][%d][%d] = %v, want finite", i, c, ts, out[i][c][ts])
+				}
+			}
+		}
+	}
+}
+
+func TestNormalizeWindows_MultiScale(t *testing.T) {
+	// Simulate features spanning 10 orders of magnitude (like issue #121).
+	// 100 samples, 5 channels with scales: 1e-4, 1e-1, 1e2, 1e4, 1e6.
+	scales := []float64{1e-4, 1e-1, 1e2, 1e4, 1e6}
+	nSamples := 100
+	inputLen := 10
+	windows := make([][][]float64, nSamples)
+	for i := 0; i < nSamples; i++ {
+		windows[i] = make([][]float64, len(scales))
+		for c, scale := range scales {
+			windows[i][c] = make([]float64, inputLen)
+			for ts := 0; ts < inputLen; ts++ {
+				windows[i][c][ts] = scale * (1.0 + 0.1*float64(i%10))
+			}
+		}
+	}
+
+	out, means, stds := normalizeWindows(windows)
+
+	if len(out) != nSamples {
+		t.Fatalf("len(out) = %d, want %d", len(out), nSamples)
+	}
+	if len(means) != len(scales) {
+		t.Fatalf("len(means) = %d, want %d", len(means), len(scales))
+	}
+
+	// Every normalized value must be finite and within a reasonable range.
+	for i := range out {
+		for c := range out[i] {
+			for ts := range out[i][c] {
+				v := out[i][c][ts]
+				if !isFinite(v) {
+					t.Fatalf("out[%d][%d][%d] = %v, want finite", i, c, ts, v)
+				}
+				if math.Abs(v) > 100 {
+					t.Errorf("out[%d][%d][%d] = %v, unexpectedly large after normalization", i, c, ts, v)
+				}
+			}
+		}
+	}
+
+	// Stds should be positive for all channels.
+	for c := range stds {
+		for ts := range stds[c] {
+			if stds[c][ts] <= 0 {
+				t.Errorf("stds[%d][%d] = %v, want positive", c, ts, stds[c][ts])
+			}
+		}
+	}
+}
+
+func TestNormalizeWindows_Empty(t *testing.T) {
+	out, means, stds := normalizeWindows(nil)
+	if out != nil {
+		t.Errorf("expected nil output for nil input")
+	}
+	if means != nil || stds != nil {
+		t.Errorf("expected nil means/stds for nil input")
+	}
+}
