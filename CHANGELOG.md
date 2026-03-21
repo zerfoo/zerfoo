@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0](https://github.com/zerfoo/zerfoo/compare/v1.8.0...v1.9.0) (2026-03-21)
+
+
+### Features
+
+* **attention:** add bidirectional self-attention mode ([aa2b407](https://github.com/zerfoo/zerfoo/commit/aa2b407a73a5bde42dfe87af3bd0512220ee9d4b))
+* **cli:** add zerfoo finetune-sentiment subcommand ([2c7a1c1](https://github.com/zerfoo/zerfoo/commit/2c7a1c16056d471e93b2dce235c5725339d48395))
+* **cli:** add zerfoo sentiment subcommand ([a18c609](https://github.com/zerfoo/zerfoo/commit/a18c60930a233cbee4b67ccf31b9404f184c3750))
+* **inference:** add AttnRes residual config to graph builder ([db61339](https://github.com/zerfoo/zerfoo/commit/db61339918bf434dd33e6142f00c0a193dd3f9da))
+* **inference:** add BERT encoder-only architecture builder ([a041684](https://github.com/zerfoo/zerfoo/commit/a0416845694a3474b0c6d6885a8293d143983e22))
+* **inference:** add encoder-only GGUF model loading ([73a3d8c](https://github.com/zerfoo/zerfoo/commit/73a3d8c4a28cc0493dc46fda7c484e592cfd6005))
+* **layers/residual:** implement BlockAttnRes layer ([594281a](https://github.com/zerfoo/zerfoo/commit/594281aaf0802a898765dd24238db478f29a5e03))
+* **layers:** add AttnRes layer for attention residuals (arXiv:2603.15031) ([ecc8a9a](https://github.com/zerfoo/zerfoo/commit/ecc8a9af4f7a85f34c4bee1484aa8a5523d4fa81))
+* **layers:** add sequence classification head ([3a9cfb4](https://github.com/zerfoo/zerfoo/commit/3a9cfb487c196442a7a98b3771a348c5f3445ec6))
+* **sentiment:** add fine-tuning support for sentiment models ([7062e92](https://github.com/zerfoo/zerfoo/commit/7062e9299b596dc6a2f19e366a43363eb9083717))
+* **sentiment:** add sentiment classification inference pipeline ([7e93eb8](https://github.com/zerfoo/zerfoo/commit/7e93eb870560daaff0d432f0002e18f98a012bed))
+* **serve:** add /v1/sentiment API endpoint ([c060277](https://github.com/zerfoo/zerfoo/commit/c060277bddc405bd90377637d00498cc1c60c25a))
+* **timeseries:** add CfC closed-form continuous-time backend ([50be230](https://github.com/zerfoo/zerfoo/commit/50be2300a6a22dff74208214e2fe204cecc71a1a))
+* **timeseries:** add DLinear forecasting backend ([972772e](https://github.com/zerfoo/zerfoo/commit/972772ecfe108cec11ae192fa8334eccc84eccff))
+* **timeseries:** add N-HiTS multi-rate forecasting backend ([55f96f3](https://github.com/zerfoo/zerfoo/commit/55f96f322e3878d26636bc13f598d515e9b624c8))
+* **training:** add WindowedBackend and WindowedPredictor interfaces ([a4305b6](https://github.com/zerfoo/zerfoo/commit/a4305b663fd4bcb65604c81e1500c667d3a6707a))
+
+
+### Bug Fixes
+
+* **cuda:** port arm64 trampoline fix from ztensor (issue [#115](https://github.com/zerfoo/zerfoo/issues/115)) ([5952e31](https://github.com/zerfoo/zerfoo/commit/5952e31984bb8b73d6ad09234c3dfa92e433d6a7))
+* **gguf:** restore Q5_K/Q6_K re-quantization to Q4_0 for fast GEMV decode ([21c9f45](https://github.com/zerfoo/zerfoo/commit/21c9f4564fa35593e1c3e4733d62ac945b139d43))
+* **hrm:** resize hidden state to match input batch dimension ([5daba62](https://github.com/zerfoo/zerfoo/commit/5daba62caa4ec2a6cd0eb8283aa98b94724034ea)), closes [#105](https://github.com/zerfoo/zerfoo/issues/105)
+* **inference:** replace GQA+RoPE with direct self-attention for BERT encoder ([fe74b18](https://github.com/zerfoo/zerfoo/commit/fe74b188ed0d02d1f74636218d606275f6d9b01a))
+
 ## [1.8.0](https://github.com/zerfoo/zerfoo/compare/v1.7.0...v1.8.0) (2026-03-20)
 
 
