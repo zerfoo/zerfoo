@@ -519,6 +519,9 @@ type ModelDeleteResponse struct {
 // --- Handlers ---
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -689,6 +692,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req CompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
