@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0](https://github.com/zerfoo/zerfoo/compare/v1.10.0...v1.11.0) (2026-03-21)
+
+
+### Features
+
+* **cli:** add TLS support to serve command (T106.8) ([91de5e2](https://github.com/zerfoo/zerfoo/commit/91de5e22949d91286840d6259cbaea0fba942ae9))
+* **serve:** add request ID correlation middleware (T106.18) ([d31b2fc](https://github.com/zerfoo/zerfoo/commit/d31b2fc5f876e38ba78316a96a3fcde101ce29ea))
+
+
+### Bug Fixes
+
+* **cloud:** redact tenant API keys in Config/List responses (T106.34) ([50ac102](https://github.com/zerfoo/zerfoo/commit/50ac1021bfe266d13f590415e9d4bc73fae7f0a1))
+* **deploy:** add pod securityContext to Helm deployment (T106.24) ([6eb7a6e](https://github.com/zerfoo/zerfoo/commit/6eb7a6e54083d3403cbe6c6c05968690247f3f60))
+* **gguf:** add integer overflow checks to tensor parsing (T106.21) ([06bd6a3](https://github.com/zerfoo/zerfoo/commit/06bd6a37450b58aa61d6bdc6b24a0da4cdf837c2))
+* **inference:** add embedding lookup bounds check (T106.7) ([91486eb](https://github.com/zerfoo/zerfoo/commit/91486eb0e282f05e9cb8e6d9f786d351e84eb91b))
+* **inference:** cap GenerateBatch concurrency (T106.13) ([d2a3f18](https://github.com/zerfoo/zerfoo/commit/d2a3f187dda4a28a0afc17209f16c8ee2643e481))
+* **inference:** protect RegisterAlias with sync.RWMutex (T106.15) ([a6bcaea](https://github.com/zerfoo/zerfoo/commit/a6bcaea57a4df94d7bb9d5b78b64bf5564bb7870))
+* **infra:** restrict Cloud Run IAM from allUsers to service account (T106.25) ([273832c](https://github.com/zerfoo/zerfoo/commit/273832cc34bf64f1e0767ce8c8c47deffd9ab124))
+* **layers:** convert panic() to error returns in attention_head (T106.12) ([c15bcc0](https://github.com/zerfoo/zerfoo/commit/c15bcc00c0eab0668fb4ff86f9819faa217aad30))
+* **layers:** convert panic() to error returns in layers/core (T106.11) ([0a9feff](https://github.com/zerfoo/zerfoo/commit/0a9feff54f6f3e8ec8dc9b7204b4a9c857459981))
+* **lora:** handle nil gradient in backward pass (T106.29) ([61d6a55](https://github.com/zerfoo/zerfoo/commit/61d6a5530fb3a783b432c9068a807e28740ae7bf))
+* **meta:** set fixed seed in TestMAML_MetaConvergence for determinism (T106.33) ([a9a8bbd](https://github.com/zerfoo/zerfoo/commit/a9a8bbd66497f44cb375c84f89ab09d59884e66d))
+* **registry:** add checksum verification and atomic writes to HF downloads (T106.14) ([68ccae2](https://github.com/zerfoo/zerfoo/commit/68ccae20125d74048f806cea04d622afe66a79f6))
+* **registry:** add size limit to OCI blob download (T106.22) ([d7ca9c7](https://github.com/zerfoo/zerfoo/commit/d7ca9c74a82547f9e56834d30b21115ba3692421))
+* **registry:** reject OCI references with path traversal in repository (T106.35) ([9dc1bf9](https://github.com/zerfoo/zerfoo/commit/9dc1bf9c72d377e835d8f29b30970c04e4a2fb53))
+* **security:** complete Wave 30 -- 5 critical security fixes (E106) ([b242bb2](https://github.com/zerfoo/zerfoo/commit/b242bb26744136c304c744f3d716b0494fe6fb35))
+* **security:** complete Wave 32 -- T106.11-T106.15 ([c3c0ea2](https://github.com/zerfoo/zerfoo/commit/c3c0ea2d0de7b05620fcd1597ef4ddf394b0a8c0))
+* **security:** complete Wave 33 -- T106.16-T106.20 ([d5d5aab](https://github.com/zerfoo/zerfoo/commit/d5d5aab375e0384aa5eca1c92b571eb088ffa80a))
+* **security:** complete Wave 34 -- T106.21-T106.25 ([a8ead63](https://github.com/zerfoo/zerfoo/commit/a8ead634e5daba3b8e50685476a97dd3a7eb3751))
+* **security:** complete Wave 35 -- T106.26-T106.30 ([ffc44d8](https://github.com/zerfoo/zerfoo/commit/ffc44d8828197d522e16f9590a100f2313ff7120))
+* **security:** complete Wave 36 -- T106.31-T106.35 ([7dc59b0](https://github.com/zerfoo/zerfoo/commit/7dc59b0f7eb7c1da918fd7130123827b81a99f19))
+* **security:** merge Wave 32-33 worktree changes ([365fc3e](https://github.com/zerfoo/zerfoo/commit/365fc3e9f3da6b70c7a4e196aa872755c1f84afe))
+* **serve:** add path traversal protection to FileSystemRepository (T106.3) ([a205a4d](https://github.com/zerfoo/zerfoo/commit/a205a4db683ba3d1ed139ad3d84c44b61de5d4a7))
+* **serve:** add request body size limits to inference endpoints (T106.6) ([8200fb6](https://github.com/zerfoo/zerfoo/commit/8200fb6b2abd6df139ec03753b7830a1b14a36fc))
+* **serve:** add request body size limits to inference endpoints (T106.6) ([e1ef411](https://github.com/zerfoo/zerfoo/commit/e1ef4110389343ba0f646532c2b4a3ea286bfcd0))
+* **serve:** add security headers middleware (T106.17) ([af3e1f5](https://github.com/zerfoo/zerfoo/commit/af3e1f54a7d98ba6e23303cec91732841effe402))
+* **serve:** add SSRF protection to vision image fetch (T106.4) ([c0b4b40](https://github.com/zerfoo/zerfoo/commit/c0b4b40e23f9975ddeff8c763d678f4b6865f22c))
+* **serve:** wire authentication middleware into Server (T106.1) ([1f785ac](https://github.com/zerfoo/zerfoo/commit/1f785ac39a3183fe804c76fe21849135f046bc65))
+* **ssm:** add nil gradient check in S4 backward (T106.28) ([04d1a06](https://github.com/zerfoo/zerfoo/commit/04d1a06ec56ad6604c52bc642662b1a3390bf409))
+* **support:** use json.Encode for error responses (T106.23) ([c6a6242](https://github.com/zerfoo/zerfoo/commit/c6a6242dea7c969e322e54e78238318e6143a5fc))
+* **timeseries:** use channel-independent projection in PatchTST (T106.30) ([195efe8](https://github.com/zerfoo/zerfoo/commit/195efe8837c4b13c1e59642cd0cebdd5421bd6de))
+* **training:** add gradient clipping and NaN guard to AdamW (T106.27) ([8ed3c4e](https://github.com/zerfoo/zerfoo/commit/8ed3c4ef79ca6d6fa575854122038fdd06c728d2))
+* **workerpool:** use sync.Once for Close() to prevent data race (T106.26) ([8494b76](https://github.com/zerfoo/zerfoo/commit/8494b7655f9cb318a5fb6ef7119f55c2a772372d))
+
 ## [1.10.0](https://github.com/zerfoo/zerfoo/compare/v1.9.0...v1.10.0) (2026-03-21)
 
 
