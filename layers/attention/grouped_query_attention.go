@@ -61,6 +61,10 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	kDim      int // number of K output elements (numKVHeads * headDim)
 	vDim      int // number of V output elements (numKVHeads * headDim)
 
+	// bidirectional disables causal masking so every position attends to
+	// every other position (encoder-style attention).
+	bidirectional bool
+
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -89,8 +93,9 @@ func (gqa *GroupedQueryAttention[T]) Attributes() map[string]interface{} {
 
 // GQAOptions holds configuration options for the GroupedQueryAttention layer.
 type GQAOptions[T tensor.Numeric] struct {
-	Base      float64
-	MaxSeqLen int
+	Base          float64
+	MaxSeqLen     int
+	Bidirectional bool // when true, disables causal masking for encoder-style models
 }
 
 // GQAOption is a function that applies an option to GQAOptions.
@@ -107,6 +112,15 @@ func WithRopeBase[T tensor.Numeric](base float64) GQAOption[T] {
 func WithMaxSeqLen[T tensor.Numeric](maxSeqLen int) GQAOption[T] {
 	return func(o *GQAOptions[T]) {
 		o.MaxSeqLen = maxSeqLen
+	}
+}
+
+// WithBidirectionalGQA returns an option that disables causal masking in the
+// grouped query attention layer, allowing every position to attend to every
+// other position. This is required for encoder-style models such as BERT.
+func WithBidirectionalGQA[T tensor.Numeric]() GQAOption[T] {
+	return func(o *GQAOptions[T]) {
+		o.Bidirectional = true
 	}
 }
 
@@ -186,6 +200,7 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 		scaledDotProductAttention: scaledDotProductAttention,
 		wo:                        wo,
 		rope:                      rope,
+		bidirectional:             options.Bidirectional,
 	}, nil
 }
 
@@ -221,6 +236,11 @@ func NewGroupedQueryAttentionFromParams[T tensor.Numeric](
 		wo:                        wo,
 		rope:                      rope,
 	}, nil
+}
+
+// SetBidirectional enables or disables bidirectional (non-causal) attention.
+func (gqa *GroupedQueryAttention[T]) SetBidirectional(bidirectional bool) {
+	gqa.bidirectional = bidirectional
 }
 
 // OutputShape returns the output shape of the GroupedQueryAttention.
@@ -752,6 +772,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		}
 
 		switch {
+		case gqa.bidirectional:
+			// Encoder-style: no causal masking, all positions attend to all others.
+			gqa.scaledDotProductAttention.SetCausal(false)
 		case mask == nil && seqLen > 1 && gqa.SlidingWindowSize > 0:
 			// Build causal sliding window mask for prefill.
 			mask = BuildCausalSlidingWindowMask[T](seqLen, gqa.SlidingWindowSize)

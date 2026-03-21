@@ -27,13 +27,22 @@ type AttentionHead[T tensor.Numeric] struct {
 //
 //nolint:revive // exported type stutters as attention.AttentionHeadOptions; acceptable for clarity
 type AttentionHeadOptions[T tensor.Numeric] struct {
-	// No specific options for now, but kept for consistency.
+	bidirectional bool // when true, disables causal masking in SDPA
 }
 
 // AttentionHeadOption applies an option to AttentionHeadOptions.
 //
 //nolint:revive // exported type stutters as attention.AttentionHeadOption; acceptable for clarity
 type AttentionHeadOption[T tensor.Numeric] func(*AttentionHeadOptions[T])
+
+// WithBidirectionalAttention returns an option that disables causal masking,
+// allowing every token to attend to every other token. This is used by
+// encoder-style models such as BERT.
+func WithBidirectionalAttention[T tensor.Numeric]() AttentionHeadOption[T] {
+	return func(o *AttentionHeadOptions[T]) {
+		o.bidirectional = true
+	}
+}
 
 // NewAttentionHead creates a new AttentionHead instance.
 // inputDim is the dimension of the input features.
