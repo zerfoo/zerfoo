@@ -811,7 +811,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 30: Critical Security Fixes (5 agents)
 
-- [ ] T106.1 Wire authentication middleware into serve.Server
+- [x] T106.1 Wire authentication middleware into serve.Server
   Owner: Security Eng  Est: 2h  verifies: [UC-003, UC-004]
   Deps: none
   Files: serve/server.go, cmd/cli/serve.go
@@ -825,7 +825,7 @@ Source: .claude/scratch/deep-review-report.md
     Request with correct key returns 200. Skipped paths return 200 without key.
   - go vet ./serve/ ./cmd/cli/ clean.
 
-- [ ] T106.2 Replace X-Tenant-ID header with context.Context in cloud/server.go
+- [x] T106.2 Replace X-Tenant-ID header with context.Context in cloud/server.go
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: cloud/server.go
@@ -838,7 +838,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify tenant is correctly propagated through the middleware chain.
   - go vet ./cloud/ clean.
 
-- [ ] T106.3 Fix path traversal in FileSystemRepository
+- [x] T106.3 Fix path traversal in FileSystemRepository
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/repository/repository.go
@@ -850,7 +850,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: model ID "../../etc" returns error. Normal ID "gemma-3-1b" works.
   - go vet ./serve/repository/ clean.
 
-- [ ] T106.4 Add SSRF protection to vision image fetch
+- [x] T106.4 Add SSRF protection to vision image fetch
   Owner: Security Eng  Est: 1.5h  verifies: [UC-001]
   Deps: none
   Files: serve/vision.go
@@ -863,7 +863,7 @@ Source: .claude/scratch/deep-review-report.md
     URL to public host succeeds. Test with mock server.
   - go vet ./serve/ clean.
 
-- [ ] T106.5 Fix Server.unloaded data race
+- [x] T106.5 Fix Server.unloaded data race
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1277,11 +1277,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 30: Critical Security Fixes (5 agents)
 
-- [ ] T106.1 Wire authentication middleware into serve.Server
-- [ ] T106.2 Replace X-Tenant-ID header with context in cloud/server.go
-- [ ] T106.3 Fix path traversal in FileSystemRepository
-- [ ] T106.4 Add SSRF protection to vision image fetch
-- [ ] T106.5 Fix Server.unloaded data race
+- [x] T106.1 Wire authentication middleware into serve.Server
+- [x] T106.2 Replace X-Tenant-ID header with context in cloud/server.go
+- [x] T106.3 Fix path traversal in FileSystemRepository
+- [x] T106.4 Add SSRF protection to vision image fetch
+- [x] T106.5 Fix Server.unloaded data race
 
 #### Wave 31: High Security Fixes -- Serving (5 agents)
 
