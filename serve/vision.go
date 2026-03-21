@@ -6,11 +6,98 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/zerfoo/zerfoo/inference/multimodal"
 )
+
+// blockedSSRFHosts contains hostnames that must be blocked to prevent
+// Server-Side Request Forgery attacks against cloud metadata services.
+var blockedSSRFHosts = map[string]bool{
+	"metadata.google.internal": true,
+}
+
+// blockedSSRFIPs contains IP addresses that must be blocked to prevent
+// SSRF attacks against cloud metadata services (e.g. AWS/GCP/Azure).
+var blockedSSRFIPs = map[string]bool{
+	"169.254.169.254": true,
+}
+
+// maxImageRedirects is the maximum number of HTTP redirects allowed
+// when downloading an image.
+const maxImageRedirects = 3
+
+// imageHTTPClient is a dedicated HTTP client for downloading images,
+// configured with a timeout and redirect limit.
+var imageHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxImageRedirects {
+			return fmt.Errorf("too many redirects (max %d)", maxImageRedirects)
+		}
+		return nil
+	},
+}
+
+// ssrfValidator is the function used to validate image URLs against SSRF.
+// It defaults to validateImageURL but can be overridden in tests.
+var ssrfValidator = validateImageURL
+
+// validateImageURL checks the given URL for SSRF attacks by resolving
+// the hostname and blocking requests to loopback, private, link-local,
+// and cloud metadata addresses.
+func validateImageURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse URL: %w", err)
+	}
+
+	hostname := parsed.Hostname()
+
+	// Block known dangerous hostnames.
+	if blockedSSRFHosts[hostname] {
+		return fmt.Errorf("blocked SSRF target: %s", hostname)
+	}
+
+	// Block known dangerous IPs before DNS resolution.
+	if blockedSSRFIPs[hostname] {
+		return fmt.Errorf("blocked SSRF target: %s", hostname)
+	}
+
+	// Resolve hostname to IPs and check each one.
+	ips, err := net.DefaultResolver.LookupHost(ctx, hostname)
+	if err != nil {
+		return fmt.Errorf("resolve hostname %q: %w", hostname, err)
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if blockedSSRFIPs[ipStr] {
+			return fmt.Errorf("blocked SSRF target: %s", ipStr)
+		}
+		if ip.IsLoopback() {
+			return fmt.Errorf("blocked SSRF target: loopback address %s", ipStr)
+		}
+		if ip.IsPrivate() {
+			return fmt.Errorf("blocked SSRF target: private address %s", ipStr)
+		}
+		if ip.IsLinkLocalUnicast() {
+			return fmt.Errorf("blocked SSRF target: link-local unicast address %s", ipStr)
+		}
+		if ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("blocked SSRF target: link-local multicast address %s", ipStr)
+		}
+	}
+
+	return nil
+}
 
 // ContentPart represents a single element in a multi-part content array.
 type ContentPart struct {
@@ -122,12 +209,16 @@ func decodeDataURI(uri string) ([]byte, error) {
 }
 
 // downloadImage fetches an image from an HTTP(S) URL.
+// It validates the URL against SSRF attacks before making the request.
 func downloadImage(ctx context.Context, url string) ([]byte, error) {
+	if err := ssrfValidator(ctx, url); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := imageHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}

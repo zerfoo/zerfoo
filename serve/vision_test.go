@@ -2,6 +2,7 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"image"
@@ -81,6 +82,11 @@ func TestAPIVisionInput_HTTPImage(t *testing.T) {
 		w.Write(pngData)
 	}))
 	defer imgServer.Close()
+
+	// Bypass SSRF validation for the local test server (which runs on 127.0.0.1).
+	orig := ssrfValidator
+	ssrfValidator = func(ctx context.Context, rawURL string) error { return nil }
+	defer func() { ssrfValidator = orig }()
 
 	mdl := buildTestModel(t)
 	srv := NewServer(mdl)
@@ -251,4 +257,81 @@ func TestChatMessageUnmarshal_EmptyString(t *testing.T) {
 	if msg.Content != "" {
 		t.Errorf("Content = %q, want empty", msg.Content)
 	}
+}
+
+func TestSSRF_BlockLoopback(t *testing.T) {
+	ctx := context.Background()
+	_, err := downloadImage(ctx, "http://127.0.0.1/secret")
+	if err == nil {
+		t.Fatal("expected error for loopback address, got nil")
+	}
+	if !containsAny(err.Error(), "blocked SSRF target", "loopback") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSRF_BlockMetadataIP(t *testing.T) {
+	ctx := context.Background()
+	_, err := downloadImage(ctx, "http://169.254.169.254/latest/meta-data/")
+	if err == nil {
+		t.Fatal("expected error for metadata IP, got nil")
+	}
+	if !containsAny(err.Error(), "blocked SSRF target") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSRF_BlockMetadataHostname(t *testing.T) {
+	ctx := context.Background()
+	_, err := downloadImage(ctx, "http://metadata.google.internal/computeMetadata/v1/")
+	if err == nil {
+		t.Fatal("expected error for metadata.google.internal, got nil")
+	}
+	if !containsAny(err.Error(), "blocked SSRF target") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSRF_BlockPrivateAddress(t *testing.T) {
+	ctx := context.Background()
+	_, err := downloadImage(ctx, "http://10.0.0.1/internal")
+	if err == nil {
+		t.Fatal("expected error for private address, got nil")
+	}
+	if !containsAny(err.Error(), "blocked SSRF target", "private") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSRF_AllowPublicURL(t *testing.T) {
+	pngData := testPNG(t)
+	imgServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer imgServer.Close()
+
+	// Bypass SSRF validation for the local test server (which runs on 127.0.0.1).
+	orig := ssrfValidator
+	ssrfValidator = func(ctx context.Context, rawURL string) error { return nil }
+	defer func() { ssrfValidator = orig }()
+
+	ctx := context.Background()
+	got, err := downloadImage(ctx, imgServer.URL+"/image.png")
+	if err != nil {
+		t.Fatalf("unexpected error downloading from mock server: %v", err)
+	}
+	if !bytes.Equal(got, pngData) {
+		t.Errorf("downloaded data mismatch: got %d bytes, want %d bytes", len(got), len(pngData))
+	}
+}
+
+// containsAny returns true if s contains any of the given substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if bytes.Contains([]byte(s), []byte(sub)) {
+			return true
+		}
+	}
+	return false
 }
