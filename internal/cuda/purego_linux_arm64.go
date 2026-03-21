@@ -1,4 +1,4 @@
-//go:build linux && arm64 && !cuda
+//go:build linux && arm64 && !cgo
 
 package cuda
 
