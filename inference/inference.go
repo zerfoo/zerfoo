@@ -539,6 +539,21 @@ func (m *Model) Chat(ctx context.Context, messages []Message, opts ...GenerateOp
 	}, nil
 }
 
+// FormatMessages converts messages to the model's chat template format.
+// This is useful when callers need the formatted prompt without running inference,
+// e.g. for streaming paths that call GenerateStream separately.
+func (m *Model) FormatMessages(messages []Message) string {
+	return m.formatMessages(messages)
+}
+
+// ChatStream formats messages using the model's chat template and streams
+// the response token-by-token via the provided handler. This is the streaming
+// counterpart of Chat and ensures the same prompt formatting is applied.
+func (m *Model) ChatStream(ctx context.Context, messages []Message, handler generate.TokenStream, opts ...GenerateOption) error {
+	prompt := m.formatMessages(messages)
+	return m.GenerateStream(ctx, prompt, handler, opts...)
+}
+
 // formatMessages converts messages to the model's chat template format.
 func (m *Model) formatMessages(messages []Message) string {
 	template := strings.ToLower(m.config.ChatTemplate)

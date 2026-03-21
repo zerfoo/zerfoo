@@ -333,7 +333,8 @@ func isOOMError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "out of memory") ||
 		strings.Contains(msg, "oom") ||
-		strings.Contains(msg, "cannot allocate")
+		strings.Contains(msg, "cannot allocate") ||
+		strings.Contains(msg, "cuda")
 }
 
 // inferenceErrorStatus returns the appropriate HTTP status code for an inference error.
@@ -623,7 +624,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		resp, err = s.model.Chat(r.Context(), messages, opts...)
 	}
 	if err != nil {
-		writeError(w, inferenceErrorStatus(err), err.Error())
+		writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))
 		return
 	}
 
@@ -746,7 +747,7 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeError(w, inferenceErrorStatus(err), err.Error())
+		writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))
 		return
 	}
 
@@ -830,8 +831,10 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = s.model.Close()
+	// Reject new requests, drain in-flight ones, then close.
 	s.unloaded.Store(true)
+	s.inflight.Wait()
+	_ = s.model.Close()
 
 	writeJSON(w, http.StatusOK, ModelDeleteResponse{
 		ID:      id,
@@ -881,7 +884,7 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	for i, text := range inputs {
 		emb, err := s.model.Embed(text)
 		if err != nil {
-			writeError(w, inferenceErrorStatus(err), err.Error())
+			writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))
 			return
 		}
 		data = append(data, EmbeddingObject{
@@ -951,14 +954,9 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, ctx context.Context
 		return
 	}
 
-	// Format the prompt from messages.
-	var prompt strings.Builder
-	for _, m := range messages {
-		prompt.WriteString(m.Content)
-		prompt.WriteString(" ")
-	}
-
-	err := s.model.GenerateStream(ctx, prompt.String(), generate.TokenStreamFunc(func(token string, done bool) error {
+	// Use the model's chat template to format messages, matching the
+	// non-streaming Chat() path which calls model.formatMessages().
+	err := s.model.ChatStream(ctx, messages, generate.TokenStreamFunc(func(token string, done bool) error {
 		if done {
 			_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
 			flusher.Flush()
@@ -975,7 +973,7 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, ctx context.Context
 		return nil
 	}), opts...)
 	if err != nil {
-		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", err.Error())
+		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", s.sanitizeError(err))
 		flusher.Flush()
 	}
 }
@@ -1009,7 +1007,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, ctx context.Context, pr
 		return nil
 	}), opts...)
 	if err != nil {
-		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", err.Error())
+		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", s.sanitizeError(err))
 		flusher.Flush()
 	}
 }
