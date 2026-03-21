@@ -330,47 +330,38 @@ func TestSpectralFingerprint_Errors(t *testing.T) {
 	}
 }
 
-// ---------- Panic recovery tests ----------
+// ---------- Input validation error tests ----------
 
-func TestMul_Forward_PanicWrongInputs(t *testing.T) {
+func TestMul_Forward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	m := NewMul(engine)
 	a := makeTensor(t, []int{2}, []float32{1, 2})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Mul Forward with 1 input should panic")
-		}
-	}()
-	_, _ = m.Forward(context.Background(), a)
+	if _, err := m.Forward(context.Background(), a); err == nil {
+		t.Error("Mul Forward with 1 input should return error")
+	}
 }
 
-func TestMul_Backward_PanicWrongInputs(t *testing.T) {
+func TestMul_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	m := NewMul(engine)
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 	a := makeTensor(t, []int{2}, []float32{1, 2})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Mul Backward with 1 input should panic")
-		}
-	}()
-	_, _ = m.Backward(context.Background(), types.FullBackprop, g, a)
+	if _, err := m.Backward(context.Background(), types.FullBackprop, g, a); err == nil {
+		t.Error("Mul Backward with 1 input should return error")
+	}
 }
 
-func TestSub_Backward_PanicWrongInputs(t *testing.T) {
+func TestSub_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	s := NewSub(engine)
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 	a := makeTensor(t, []int{2}, []float32{1, 2})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Sub Backward with 1 input should panic")
-		}
-	}()
-	_, _ = s.Backward(context.Background(), types.FullBackprop, g, a)
+	if _, err := s.Backward(context.Background(), types.FullBackprop, g, a); err == nil {
+		t.Error("Sub Backward with 1 input should return error")
+	}
 }
 
 func TestReshape_Forward_ErrorWrongInputs(t *testing.T) {
@@ -388,106 +379,82 @@ func TestReshape_Forward_ErrorWrongInputs(t *testing.T) {
 	}
 }
 
-func TestReshape_Backward_PanicWrongInputs(t *testing.T) {
+func TestReshape_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	r := NewReshape(engine, []int{2})
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Reshape Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = r.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := r.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("Reshape Backward with 0 inputs should return error")
+	}
 }
 
-func TestCast_Forward_PanicWrongInputs(t *testing.T) {
+func TestCast_Forward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	c := NewCast(engine)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Cast Forward with 0 inputs should panic")
-		}
-	}()
-	_, _ = c.Forward(context.Background())
+	if _, err := c.Forward(context.Background()); err == nil {
+		t.Error("Cast Forward with 0 inputs should return error")
+	}
 }
 
-func TestCast_Backward_PanicWrongInputs(t *testing.T) {
+func TestCast_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	c := NewCast(engine)
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Cast Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = c.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := c.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("Cast Backward with 0 inputs should return error")
+	}
 }
 
-func TestConcat_Forward_PanicNoInputs(t *testing.T) {
+func TestConcat_Forward_ErrorNoInputs(t *testing.T) {
 	engine := makeEngine()
 	c := NewConcat[float32](engine, 0)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Concat Forward with 0 inputs should panic")
-		}
-	}()
-	_, _ = c.Forward(context.Background())
+	if _, err := c.Forward(context.Background()); err == nil {
+		t.Error("Concat Forward with 0 inputs should return error")
+	}
 }
 
-func TestConcat_Backward_PanicNoInputs(t *testing.T) {
+func TestConcat_Backward_ErrorNoInputs(t *testing.T) {
 	engine := makeEngine()
 	c := NewConcat[float32](engine, 0)
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Concat Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = c.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := c.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("Concat Backward with 0 inputs should return error")
+	}
 }
 
-func TestUnsqueeze_Forward_PanicWrongInputs(t *testing.T) {
+func TestUnsqueeze_Forward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	u := NewUnsqueeze(engine, []int{0})
 	a := makeTensor(t, []int{2}, []float32{1, 2})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Unsqueeze Forward with 2 inputs should panic")
-		}
-	}()
-	_, _ = u.Forward(context.Background(), a, a)
+	if _, err := u.Forward(context.Background(), a, a); err == nil {
+		t.Error("Unsqueeze Forward with 2 inputs should return error")
+	}
 }
 
-func TestUnsqueeze_Backward_PanicWrongInputs(t *testing.T) {
+func TestUnsqueeze_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	u := NewUnsqueeze(engine, []int{0})
 	g := makeTensor(t, []int{1, 2}, []float32{1, 2})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Unsqueeze Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = u.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := u.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("Unsqueeze Backward with 0 inputs should return error")
+	}
 }
 
-func TestMatMul_Backward_PanicWrongInputs(t *testing.T) {
+func TestMatMul_Backward_ErrorWrongInputs(t *testing.T) {
 	engine := makeEngine()
 	m := NewMatMul(engine)
 	g := makeTensor(t, []int{2, 2}, []float32{1, 0, 0, 1})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("MatMul Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = m.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := m.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("MatMul Backward with 0 inputs should return error")
+	}
 }
 
 // ---------- Constant Attributes dtype branches ----------
@@ -784,31 +751,25 @@ func TestMatMulNBits_ValidationErrors(t *testing.T) {
 	}
 }
 
-// ---------- RotaryEmbedding Forward panic ----------
+// ---------- RotaryEmbedding Forward/Backward error ----------
 
-func TestRotaryEmbedding_Forward_PanicNoInputs(t *testing.T) {
+func TestRotaryEmbedding_Forward_ErrorNoInputs(t *testing.T) {
 	engine := makeEngine()
 	re := NewRotaryEmbedding[float32](engine)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Forward with 0 inputs should panic")
-		}
-	}()
-	_, _ = re.Forward(context.Background())
+	if _, err := re.Forward(context.Background()); err == nil {
+		t.Error("Forward with 0 inputs should return error")
+	}
 }
 
-func TestRotaryEmbedding_Backward_PanicNoInputs(t *testing.T) {
+func TestRotaryEmbedding_Backward_ErrorNoInputs(t *testing.T) {
 	engine := makeEngine()
 	re := NewRotaryEmbedding[float32](engine)
 	g := makeTensor(t, []int{2}, []float32{1, 1})
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Backward with 0 inputs should panic")
-		}
-	}()
-	_, _ = re.Backward(context.Background(), types.FullBackprop, g)
+	if _, err := re.Backward(context.Background(), types.FullBackprop, g); err == nil {
+		t.Error("Backward with 0 inputs should return error")
+	}
 }
 
 // ---------- Dense Backward with bias error (3D gradient) ----------

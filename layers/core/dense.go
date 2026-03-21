@@ -17,17 +17,21 @@ type Dense[T tensor.Numeric] struct {
 	linear     *Linear[T]
 	bias       *Bias[T]
 	activation graph.Node[T]
+	optErr     error // deferred error from functional options
 }
 
 // DenseOpt is a functional option for configuring a Dense layer.
 type DenseOpt[T tensor.Numeric] func(*Dense[T])
 
 // WithBias adds a bias to the Dense layer.
+// The bias is created eagerly; if creation fails the error is stored and
+// surfaced by NewDense.
 func WithBias[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], outputFeatures int) DenseOpt[T] {
 	return func(d *Dense[T]) {
 		b, err := NewBias[T](d.name+"_bias", engine, ops, outputFeatures)
 		if err != nil {
-			panic(fmt.Sprintf("failed to create bias: %v", err))
+			d.optErr = fmt.Errorf("failed to create bias: %w", err)
+			return
 		}
 		d.bias = b
 	}
@@ -81,6 +85,9 @@ func NewDense[T tensor.Numeric](
 
 	for _, opt := range opts {
 		opt(d)
+		if d.optErr != nil {
+			return nil, d.optErr
+		}
 	}
 
 	return d, nil

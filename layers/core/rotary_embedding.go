@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -54,7 +55,7 @@ func (r *RotaryEmbedding[T]) OutputShape() []int {
 // Forward applies rotary embedding to the input.
 func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
-		panic("RotaryEmbedding layer requires at least 1 input")
+		return nil, fmt.Errorf("RotaryEmbedding layer requires at least 1 input")
 	}
 
 	input := inputs[0]
@@ -91,7 +92,7 @@ func (r *RotaryEmbedding[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 // Backward computes the gradients for the RotaryEmbedding layer.
 func (r *RotaryEmbedding[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
-		panic("RotaryEmbedding layer requires at least 1 input")
+		return nil, fmt.Errorf("RotaryEmbedding layer requires at least 1 input")
 	}
 
 	if r.inner == nil {

@@ -67,7 +67,7 @@ func (s *Sub[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 // Backward computes the gradients for the Sub layer.
 func (s *Sub[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
-		panic("Sub layer requires exactly 2 inputs")
+		return nil, fmt.Errorf("Sub layer requires exactly 2 inputs for backward, got %d", len(inputs))
 	}
 
 	// Gradient w.r.t. a: outputGradient (derivative of a - b w.r.t. a is 1)

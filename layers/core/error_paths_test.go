@@ -882,7 +882,7 @@ func TestDense_BackwardActivationError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Cast backward with 0 inputs panics, but that's panic not error.
+	// Cast backward with 0 inputs returns an error.
 	// Let's verify normal backward works with activation
 	grad := makeTensor(t, []int{1, 3}, []float32{1, 1, 1})
 	grads, err := d.Backward(ctx, types.FullBackprop, grad, input)

@@ -39,7 +39,7 @@ func (c *Concat[T]) Parameters() []*graph.Parameter[T] {
 // Forward computes the concatenation of input tensors along the specified axis.
 func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) == 0 {
-		panic("Concat layer requires at least 1 input")
+		return nil, fmt.Errorf("Concat layer requires at least 1 input")
 	}
 
 	// Handle single input case (no-op)
@@ -102,7 +102,7 @@ func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 // Backward computes the gradients for the Concat layer.
 func (c *Concat[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) == 0 {
-		panic("Concat layer requires at least 1 input")
+		return nil, fmt.Errorf("Concat layer requires at least 1 input")
 	}
 
 	// Handle single input case (gradient passes through unchanged)

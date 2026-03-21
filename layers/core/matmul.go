@@ -159,7 +159,7 @@ func (m *MatMul[T]) tryQ4BTransposed(a, b *tensor.TensorNumeric[T], aShape, bSha
 // Backward computes the gradients for the MatMul layer.
 func (m *MatMul[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
-		panic("MatMul layer requires exactly 2 inputs")
+		return nil, fmt.Errorf("MatMul layer requires exactly 2 inputs, got %d", len(inputs))
 	}
 
 	a := inputs[0]

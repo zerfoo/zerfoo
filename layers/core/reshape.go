@@ -74,7 +74,7 @@ func (r *Reshape[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 // Backward computes the gradients for the Reshape layer.
 func (r *Reshape[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
-		panic("Reshape layer requires exactly 1 input")
+		return nil, fmt.Errorf("Reshape layer requires exactly 1 input for backward, got %d", len(inputs))
 	}
 
 	input := inputs[0]

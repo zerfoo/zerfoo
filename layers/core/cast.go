@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -36,7 +37,7 @@ func (c *Cast[T]) Parameters() []*graph.Parameter[T] {
 // Forward computes the cast operation (for same type, this is essentially a copy).
 func (c *Cast[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
-		panic("Cast layer requires exactly 1 input")
+		return nil, fmt.Errorf("Cast layer requires exactly 1 input, got %d", len(inputs))
 	}
 
 	input := inputs[0]
@@ -59,7 +60,7 @@ func (c *Cast[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T])
 // Backward computes the gradients for the Cast layer.
 func (c *Cast[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
-		panic("Cast layer requires exactly 1 input")
+		return nil, fmt.Errorf("Cast layer requires exactly 1 input, got %d", len(inputs))
 	}
 
 	// For same-type casting, gradient passes through unchanged

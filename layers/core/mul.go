@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -36,7 +37,7 @@ func (m *Mul[T]) Parameters() []*graph.Parameter[T] {
 // Forward computes the element-wise multiplication of two input tensors.
 func (m *Mul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
-		panic("Mul layer requires exactly 2 inputs")
+		return nil, fmt.Errorf("Mul layer requires exactly 2 inputs, got %d", len(inputs))
 	}
 
 	a := inputs[0]
@@ -52,7 +53,7 @@ func (m *Mul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 // Backward computes the gradients for the Mul layer.
 func (m *Mul[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
-		panic("Mul layer requires exactly 2 inputs")
+		return nil, fmt.Errorf("Mul layer requires exactly 2 inputs, got %d", len(inputs))
 	}
 
 	a := inputs[0]

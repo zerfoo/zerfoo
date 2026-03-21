@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -38,7 +39,7 @@ func (u *Unsqueeze[T]) Parameters() []*graph.Parameter[T] {
 // Forward computes the unsqueeze operation by reshaping the input tensor.
 func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
-		panic("Unsqueeze layer requires exactly 1 input")
+		return nil, fmt.Errorf("Unsqueeze layer requires exactly 1 input, got %d", len(inputs))
 	}
 
 	input := inputs[0]
@@ -78,7 +79,7 @@ func (u *Unsqueeze[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 // Backward computes the gradients for the Unsqueeze layer.
 func (u *Unsqueeze[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
-		panic("Unsqueeze layer requires exactly 1 input")
+		return nil, fmt.Errorf("Unsqueeze layer requires exactly 1 input, got %d", len(inputs))
 	}
 
 	input := inputs[0]
