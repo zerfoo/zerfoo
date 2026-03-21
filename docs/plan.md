@@ -875,7 +875,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 31: High Security Fixes -- Serving (5 agents)
 
-- [ ] T106.6 Add request body size limits to inference endpoints
+- [x] T106.6 Add request body size limits to inference endpoints
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -885,7 +885,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: POST body > 10 MB returns 413 Request Entity Too Large.
   - go vet ./serve/ clean.
 
-- [ ] T106.7 Add embedding lookup bounds check
+- [x] T106.7 Add embedding lookup bounds check
   Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-002]
   Deps: none
   Files: inference/arch_llama.go
@@ -896,7 +896,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify out-of-range token ID returns error, not panic.
   - go vet ./inference/ clean.
 
-- [ ] T106.8 Add TLS support to serve CLI
+- [x] T106.8 Add TLS support to serve CLI
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: cmd/cli/serve.go
@@ -907,7 +907,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: verify TLS flags are parsed; verify error on mismatched flags.
   - go vet ./cmd/cli/ clean.
 
-- [ ] T106.9 Add server-side max_tokens cap
+- [x] T106.9 Add server-side max_tokens cap
   Owner: ML Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -918,7 +918,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: request with max_tokens=100000 gets clamped to 8192.
   - go vet ./serve/ clean.
 
-- [ ] T106.10 Add rate limiting middleware to serve.Server
+- [x] T106.10 Add rate limiting middleware to serve.Server
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1285,11 +1285,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 31: High Security Fixes -- Serving (5 agents)
 
-- [ ] T106.6 Add request body size limits to inference endpoints
-- [ ] T106.7 Add embedding lookup bounds check
-- [ ] T106.8 Add TLS support to serve CLI
-- [ ] T106.9 Add server-side max_tokens cap
-- [ ] T106.10 Add rate limiting middleware
+- [x] T106.6 Add request body size limits to inference endpoints
+- [x] T106.7 Add embedding lookup bounds check
+- [x] T106.8 Add TLS support to serve CLI
+- [x] T106.9 Add server-side max_tokens cap
+- [x] T106.10 Add rate limiting middleware
 
 #### Wave 32: High Security Fixes -- Inference and Registry (5 agents)
 
