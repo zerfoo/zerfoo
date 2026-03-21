@@ -28,6 +28,10 @@ type MAMLConfig struct {
 	MetaEpochs int
 	// HiddenDims specifies the hidden layer sizes for the internal MLP.
 	HiddenDims []int
+	// Seed, when non-nil, seeds the random number generator for reproducible
+	// weight initialization and task sampling. If nil, a non-deterministic
+	// source is used.
+	Seed *uint64
 }
 
 // AdaptedModel represents a model adapted to a specific task.
@@ -58,6 +62,7 @@ type MAML struct {
 	weights [][]float64 // meta-parameters: layer weight matrices
 	biases  [][]float64 // meta-parameters: layer bias vectors
 	dims    []int       // layer dimensions
+	rng     *rand.Rand  // random source for init and sampling
 }
 
 // NewMAML creates a new MAML instance with randomly initialized meta-parameters.
@@ -86,7 +91,14 @@ func NewMAML(config MAMLConfig) (*MAML, error) {
 		}
 	}
 
-	return &MAML{config: config}, nil
+	var rng *rand.Rand
+	if config.Seed != nil {
+		rng = rand.New(rand.NewPCG(*config.Seed, 0))
+	} else {
+		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	}
+
+	return &MAML{config: config, rng: rng}, nil
 }
 
 // MetaTrain runs the MAML meta-training loop across the given tasks.
@@ -117,7 +129,7 @@ func (m *MAML) MetaTrain(tasks []Task, config MAMLConfig) error {
 	// Outer loop: meta-training.
 	for epoch := 0; epoch < config.MetaEpochs; epoch++ {
 		// Sample tasks for this meta-batch.
-		sampled := sampleTasks(tasks, config.NTasksPerBatch)
+		sampled := m.sampleTasks(tasks, config.NTasksPerBatch)
 
 		// Accumulate meta-gradients across tasks.
 		metaGradW := zeroLike(m.weights)
@@ -224,7 +236,7 @@ func (m *MAML) initWeights() {
 		scale := math.Sqrt(2.0 / float64(in))
 		w := make([]float64, in*out)
 		for j := range w {
-			w[j] = rand.NormFloat64() * scale
+			w[j] = m.rng.NormFloat64() * scale
 		}
 		m.weights[i] = w
 		m.biases[i] = make([]float64, out)
@@ -386,10 +398,10 @@ func zeroLike(params [][]float64) [][]float64 {
 }
 
 // sampleTasks randomly samples n tasks (with replacement) from the pool.
-func sampleTasks(tasks []Task, n int) []Task {
+func (m *MAML) sampleTasks(tasks []Task, n int) []Task {
 	sampled := make([]Task, n)
 	for i := 0; i < n; i++ {
-		sampled[i] = tasks[rand.IntN(len(tasks))]
+		sampled[i] = tasks[m.rng.IntN(len(tasks))]
 	}
 	return sampled
 }

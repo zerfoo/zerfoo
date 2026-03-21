@@ -151,6 +151,7 @@ func TestMAML_MetaConvergence(t *testing.T) {
 		tasks[i] = newSinTask(amp, phase, 20, 10)
 	}
 
+	seed := uint64(42)
 	config := MAMLConfig{
 		InnerLR:        0.01,
 		OuterLR:        0.003,
@@ -158,6 +159,7 @@ func TestMAML_MetaConvergence(t *testing.T) {
 		NTasksPerBatch: 4,
 		MetaEpochs:     50,
 		HiddenDims:     []int{40, 40},
+		Seed:           &seed,
 	}
 
 	maml, err := NewMAML(config)
