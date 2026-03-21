@@ -47,9 +47,13 @@ func (s *stubLinear[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 	if err != nil {
 		return nil, err
 	}
-	s.weights.Gradient, err = s.engine.Add(ctx, s.weights.Gradient, dW)
-	if err != nil {
-		return nil, err
+	if s.weights.Gradient == nil {
+		s.weights.Gradient = dW
+	} else {
+		s.weights.Gradient, err = s.engine.Add(ctx, s.weights.Gradient, dW)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// dx = grad @ W^T
@@ -342,6 +346,62 @@ func TestLoraLinear_Backward(t *testing.T) {
 		if math.Abs(float64(fdGrad-analyticalGrad)) > 1e-2 {
 			t.Errorf("B gradient[%d]: finite diff = %f, analytical = %f", i, fdGrad, analyticalGrad)
 		}
+	}
+}
+
+func TestLoraLinear_Backward_NilGradient(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	ctx := context.Background()
+
+	dIn, dOut, rank := 3, 2, 2
+	alpha := float32(2.0)
+
+	// Create base with known weights.
+	wData := []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}
+	wTensor, _ := tensor.New[float32]([]int{dIn, dOut}, wData)
+	base, _ := newStubLinear[float32](engine, wTensor)
+
+	lora, _ := NewLoraLinear[float32]("test", base, rank, alpha, engine, dIn, dOut)
+
+	// Set known A and B values.
+	aData := []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6}
+	aTensor, _ := tensor.New[float32]([]int{rank, dIn}, aData)
+	lora.A.Value = aTensor
+
+	bData := []float32{0.1, 0.2, 0.3, 0.4}
+	bTensor, _ := tensor.New[float32]([]int{dOut, rank}, bData)
+	lora.B.Value = bTensor
+
+	x, _ := tensor.New[float32]([]int{1, dIn}, []float32{1.0, 2.0, 3.0})
+
+	// Forward to populate caches.
+	_, err := lora.Forward(ctx, x)
+	if err != nil {
+		t.Fatalf("forward failed: %v", err)
+	}
+
+	// Set gradients to nil to simulate first backward call with no prior gradient.
+	lora.A.Gradient = nil
+	lora.B.Gradient = nil
+	base.weights.Gradient = nil
+
+	// Backward should not panic when gradients are nil.
+	ones, _ := tensor.New[float32]([]int{1, dOut}, []float32{1, 1})
+	grads, err := lora.Backward(ctx, types.FullBackprop, ones, x)
+	if err != nil {
+		t.Fatalf("backward with nil gradients failed: %v", err)
+	}
+	if len(grads) == 0 || grads[0] == nil {
+		t.Fatal("expected non-nil input gradient from backward")
+	}
+
+	// Verify gradients were populated.
+	if lora.A.Gradient == nil {
+		t.Error("A.Gradient should not be nil after backward")
+	}
+	if lora.B.Gradient == nil {
+		t.Error("B.Gradient should not be nil after backward")
 	}
 }
 

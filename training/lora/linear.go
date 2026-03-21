@@ -197,9 +197,13 @@ func (l *LoraLinear[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 	if err != nil {
 		return nil, err
 	}
-	l.B.Gradient, err = l.engine.Add(ctx, l.B.Gradient, dB)
-	if err != nil {
-		return nil, err
+	if l.B.Gradient == nil {
+		l.B.Gradient = dB
+	} else {
+		l.B.Gradient, err = l.engine.Add(ctx, l.B.Gradient, dB)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// dA: gradient w.r.t. A
@@ -217,9 +221,13 @@ func (l *LoraLinear[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 	if err != nil {
 		return nil, err
 	}
-	l.A.Gradient, err = l.engine.Add(ctx, l.A.Gradient, dA)
-	if err != nil {
-		return nil, err
+	if l.A.Gradient == nil {
+		l.A.Gradient = dA
+	} else {
+		l.A.Gradient, err = l.engine.Add(ctx, l.A.Gradient, dA)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Propagate gradient to input through base layer
