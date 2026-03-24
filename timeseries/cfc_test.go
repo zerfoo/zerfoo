@@ -354,6 +354,63 @@ func TestCfC_SaveWeightsCreatesFile(t *testing.T) {
 	}
 }
 
+func TestCfC_TrainWindowed_Engine(t *testing.T) {
+	config := CfCConfig{InputSize: 1, HiddenSize: 8, OutputSize: 1, NumLayers: 1, OutputLen: 4}
+	m, err := NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	engine, ops := newTestEngine()
+	m.SetEngine(engine, ops)
+
+	// Generate synthetic linear ramp data.
+	nSamples := 30
+	inputLen := 8
+	windows := make([][][]float64, nSamples)
+	outDim := config.OutputSize * config.OutputLen
+	labels := make([]float64, nSamples*outDim)
+
+	for s := 0; s < nSamples; s++ {
+		offset := float64(s) * 0.3
+		windows[s] = make([][]float64, 1) // 1 channel
+		windows[s][0] = make([]float64, inputLen)
+		for i := 0; i < inputLen; i++ {
+			windows[s][0][i] = offset + float64(i)*0.1
+		}
+		for o := 0; o < config.OutputLen; o++ {
+			labels[s*outDim+o] = offset + float64(inputLen+o)*0.1
+		}
+	}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:      80,
+		LR:          1e-3,
+		WeightDecay: 1e-5,
+		GradClip:    1.0,
+		Beta1:       0.9,
+		Beta2:       0.999,
+		Epsilon:     1e-8,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed (engine): %v", err)
+	}
+
+	if len(result.LossHistory) != 80 {
+		t.Fatalf("loss history length = %d, want 80", len(result.LossHistory))
+	}
+
+	firstLoss := result.LossHistory[0]
+	lastLoss := result.FinalLoss
+	if lastLoss >= firstLoss {
+		t.Errorf("engine loss did not decrease: first=%v, last=%v", firstLoss, lastLoss)
+	}
+
+	// Verify all weights are finite.
+	assertFiniteWeights(t, m.flatParams())
+	t.Logf("engine convergence: first_loss=%.6f final_loss=%.6f ratio=%.4f", firstLoss, lastLoss, lastLoss/firstLoss)
+}
+
 func TestCfC_TrainWindowed_MultiScale(t *testing.T) {
 	// Issue #121: training on data with features spanning 10 orders of magnitude
 	// previously produced NaN/Inf weights. Normalization should prevent this.
