@@ -186,6 +186,8 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.recoveryMiddleware(s.handleModelDelete))
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.recoveryMiddleware(s.handleAudioTranscriptions))
 	s.mux.HandleFunc("POST /v1/classify", s.recoveryMiddleware(s.handleClassify))
+	s.mux.HandleFunc("GET /healthz", s.recoveryMiddleware(s.handleHealthz))
+	s.mux.HandleFunc("GET /readyz", s.recoveryMiddleware(s.handleReadyz))
 	s.mux.HandleFunc("GET /openapi.yaml", s.recoveryMiddleware(handleOpenAPISpec))
 	s.mux.HandleFunc("GET /metrics", handleMetrics(s.collector))
 	return s
@@ -1006,6 +1008,26 @@ func handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 	w.Write(openapiSpec) //nolint:errcheck
 }
 
+// handleHealthz returns 200 with {"status":"ok"} to indicate the server is alive.
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
+}
+
+// handleReadyz returns 200 with {"status":"ready"} if the model is loaded and
+// has not been unloaded, or 503 with {"status":"not ready"} otherwise.
+func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.model == nil || s.unloaded.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not ready"}) //nolint:errcheck
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ready"}) //nolint:errcheck
+}
+
 // --- Streaming ---
 
 func (s *Server) streamChatCompletion(w http.ResponseWriter, ctx context.Context, messages []inference.Message, opts []inference.GenerateOption) {
@@ -1020,6 +1042,13 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, ctx context.Context
 		return
 	}
 
+	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+	created := time.Now().Unix()
+	modelID := ""
+	if info := s.model.Info(); info != nil {
+		modelID = info.ID
+	}
+
 	// Use the model's chat template to format messages, matching the
 	// non-streaming Chat() path which calls model.formatMessages().
 	err := s.model.ChatStream(ctx, messages, generate.TokenStreamFunc(func(token string, done bool) error {
@@ -1029,6 +1058,10 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, ctx context.Context
 			return nil
 		}
 		chunk := map[string]interface{}{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   modelID,
 			"choices": []map[string]interface{}{
 				{"delta": map[string]string{"content": token}},
 			},
@@ -1056,6 +1089,13 @@ func (s *Server) streamCompletion(w http.ResponseWriter, ctx context.Context, pr
 		return
 	}
 
+	id := fmt.Sprintf("cmpl-%d", time.Now().UnixNano())
+	created := time.Now().Unix()
+	modelID := ""
+	if info := s.model.Info(); info != nil {
+		modelID = info.ID
+	}
+
 	err := s.model.GenerateStream(ctx, prompt, generate.TokenStreamFunc(func(token string, done bool) error {
 		if done {
 			_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -1063,6 +1103,10 @@ func (s *Server) streamCompletion(w http.ResponseWriter, ctx context.Context, pr
 			return nil
 		}
 		chunk := map[string]interface{}{
+			"id":      id,
+			"object":  "text_completion",
+			"created": created,
+			"model":   modelID,
 			"choices": []map[string]interface{}{
 				{"text": token},
 			},
