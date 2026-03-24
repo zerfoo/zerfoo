@@ -242,6 +242,12 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 		generatedIDs = append(generatedIDs, nextToken)
 	}
 
+	// Record token usage for billing middleware.
+	if usage := TokenUsageFromContext(ctx); usage != nil {
+		usage.SetPromptTokens(len(promptIDs))
+		usage.SetCompletionTokens(len(generatedIDs))
+	}
+
 	if len(generatedIDs) == 0 {
 		return "", nil
 	}
@@ -366,6 +372,12 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 			}
 			return emitErr
 		}
+	}
+
+	// Record token usage for billing middleware.
+	if usage := TokenUsageFromContext(ctx); usage != nil {
+		usage.SetPromptTokens(len(promptIDs))
+		usage.SetCompletionTokens(len(generatedIDs))
 	}
 
 	return stream.OnToken("", true)
