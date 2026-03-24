@@ -2,6 +2,7 @@ package timeseries
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 
@@ -597,4 +598,76 @@ func TestNHiTS_TrainWindowed_MultiScale(t *testing.T) {
 	}
 
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
+}
+
+func TestNHiTS_HighChannelNoNilPanic(t *testing.T) {
+	// Issue #123: NHiTS panics with nil pointer dereference in linearForward
+	// when called via TrainWindowed with 132 channels and various window sizes.
+	engine, ops := newTestEngine()
+
+	channels := 132
+	outputLen := 4
+
+	for _, inputLen := range []int{15, 30, 60, 120, 240} {
+		t.Run(fmt.Sprintf("window_%d", inputLen), func(t *testing.T) {
+			// Choose pool kernels that are valid for this input length.
+			var poolKernels []int
+			for _, k := range []int{2, 4, 8} {
+				if k <= inputLen {
+					poolKernels = append(poolKernels, k)
+				}
+			}
+
+			config := NHiTSConfig{
+				InputLength:  inputLen,
+				OutputLength: outputLen,
+				Channels:     channels,
+				PoolKernels:  poolKernels,
+				HiddenSize:   32,
+				NumMLPLayers: 2,
+			}
+
+			m, err := NewNHiTS(config, engine, ops)
+			if err != nil {
+				t.Fatalf("NewNHiTS: %v", err)
+			}
+			m.initWeightsSmall()
+
+			// Generate synthetic training data.
+			numSamples := 16
+			windows := make([][][]float64, numSamples)
+			labels := make([]float64, numSamples*outputLen)
+			for i := 0; i < numSamples; i++ {
+				w := make([][]float64, channels)
+				for c := 0; c < channels; c++ {
+					ch := make([]float64, inputLen)
+					for tt := 0; tt < inputLen; tt++ {
+						ch[tt] = 0.01 * float64(c+tt+i)
+					}
+					w[c] = ch
+				}
+				windows[i] = w
+				for tt := 0; tt < outputLen; tt++ {
+					labels[i*outputLen+tt] = 0.01 * float64(i+inputLen+tt)
+				}
+			}
+
+			result, err := m.TrainWindowed(windows, labels, TrainConfig{
+				Epochs:       10,
+				LR:           1e-4,
+				BatchSize:    8,
+				GradClip:     1.0,
+				WarmupEpochs: 3,
+			})
+			if err != nil {
+				t.Fatalf("TrainWindowed (window=%d): %v", inputLen, err)
+			}
+
+			if !isFinite(result.FinalLoss) {
+				t.Fatalf("final loss = %v, want finite (window=%d)", result.FinalLoss, inputLen)
+			}
+
+			t.Logf("window=%d: final_loss=%.6f", inputLen, result.FinalLoss)
+		})
+	}
 }

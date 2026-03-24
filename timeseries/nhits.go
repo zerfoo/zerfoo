@@ -95,8 +95,13 @@ func NewNHiTS(config NHiTSConfig, engine compute.Engine[float32], ops numeric.Ar
 }
 
 // pooledLen returns the output length after max-pooling with the given kernel.
+// Always returns at least 1 to prevent zero-dimension tensors.
 func pooledLen(inputLen, kernel int) int {
-	return inputLen / kernel
+	p := inputLen / kernel
+	if p == 0 {
+		return 1
+	}
+	return p
 }
 
 // newNHiTSStack creates a single N-HiTS stack.
@@ -104,9 +109,6 @@ func newNHiTSStack(inputLen, outputLen, channels, kernel, hiddenSize, nMLPLayers
 	s := nhitsStack{poolKernel: kernel}
 
 	pLen := pooledLen(inputLen, kernel)
-	if pLen == 0 {
-		pLen = 1
-	}
 	flatDim := pLen * channels
 
 	// Build MLP: flatDim -> hidden -> ... -> hidden.
@@ -197,9 +199,6 @@ func (m *NHiTS) stackForward(ctx context.Context, xData []float32, batch int, st
 
 	// Per-channel max-pooling then flatten.
 	pLen := pooledLen(inputLen, stack.poolKernel)
-	if pLen == 0 {
-		pLen = 1
-	}
 	flatDim := pLen * channels
 	flatData := make([]float32, batch*flatDim)
 
@@ -250,6 +249,9 @@ func (m *NHiTS) stackForward(ctx context.Context, xData []float32, batch int, st
 
 // linearForward computes x @ W + b.
 func (m *NHiTS) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
+	if l.weights == nil || l.biases == nil {
+		return nil, fmt.Errorf("nhits: nil weight/bias in linear layer")
+	}
 	out, err := m.engine.MatMul(ctx, x, l.weights)
 	if err != nil {
 		return nil, err
@@ -512,9 +514,6 @@ func (n *NHiTS) stackForwardWithIntermediates(ctx context.Context, xData []float
 	inputLen := n.config.InputLength
 
 	pLen := pooledLen(inputLen, stack.poolKernel)
-	if pLen == 0 {
-		pLen = 1
-	}
 	flatDim := pLen * channels
 	flatData := make([]float32, batch*flatDim)
 
