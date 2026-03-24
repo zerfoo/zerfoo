@@ -1433,7 +1433,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
 
 ##### Wave 51: Bug Fixes + API Gap (3 agents)
 
-- [ ] T110.1 Fix NHiTS segfault regression in linearForward (issue #152)
+- [x] T110.1 Fix NHiTS segfault regression in linearForward (issue #152) (2026-03-24)
   Owner: ML Eng  Est: 2h  verifies: [UC-026]
   Deps: none
   Files: timeseries/nhits.go, timeseries/nhits_test.go
@@ -1451,7 +1451,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
   - Close #152 with fix evidence.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestNHiTS pass.
 
-- [ ] T110.2 Implement FreTS backend with normalization and NaN protection (issue #153)
+- [x] T110.2 Implement FreTS backend with normalization and NaN protection (issue #153) (2026-03-24)
   Owner: ML Eng  Est: 4h  verifies: [UC-026]
   Deps: none
   Files: timeseries/frets.go (new), timeseries/frets_test.go (new)
@@ -1471,7 +1471,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
   - Close #153 with evidence.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestFreTS pass.
 
-- [ ] T110.3 Add WithEngine option to CfC constructor (issue #154)
+- [x] T110.3 Add WithEngine option to CfC constructor (issue #154) (2026-03-24)
   Owner: ML Eng  Est: 30m  verifies: [UC-026]
   Deps: none
   Files: timeseries/cfc.go, timeseries/cfc_engine.go
@@ -2162,8 +2162,17 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T108.31 Run go test -race on all changed packages (2026-03-23)
 - [x] T108.32 Run go vet and linter on entire codebase (2026-03-23)
 
-Remaining roadmap tasks are blocked by hardware access or human actions.
-See Hand-Off Notes.
+#### Wave 48-50: E109 Deep Review v1.12.0 Remediation (completed 2026-03-23)
+
+- [x] T109.1-T109.9 Security fixes across serve, cloud, inference, training packages
+
+#### Wave 51: E110 Bug Fixes + API Gap (3 agents, completed 2026-03-24)
+
+- [x] T110.1 Fix NHiTS segfault regression in linearForward (issue #152)
+- [x] T110.2 Implement FreTS backend with normalization and NaN protection (issue #153)
+- [x] T110.3 Add WithCfCEngine option to CfC constructor (issue #154)
+
+Remaining E110 tasks: Wave 52 (T110.4, T110.5), Wave 53 (T110.6).
 
 ---
 
