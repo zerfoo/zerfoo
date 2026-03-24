@@ -657,3 +657,64 @@ func TestPatchTST_TrainWindowed_MultiScale(t *testing.T) {
 
 	t.Logf("multi-scale training: final_loss=%.6f (5 epochs, 3 channels, 20 samples)", result.FinalLoss)
 }
+
+func TestPatchTST_TrainWindowed_EngineConvergence(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 8,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   1,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	nSamples := 15
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.OutputDim)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.InputLength)
+		sum := 0.0
+		for i := 0; i < config.InputLength; i++ {
+			v := float64(s*config.InputLength+i) * 0.01
+			windows[s][0][i] = v
+			sum += v
+		}
+		labels[s] = sum / float64(config.InputLength)
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   10,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if len(result.LossHistory) != 10 {
+		t.Fatalf("loss history length = %d, want 10", len(result.LossHistory))
+	}
+
+	for i, l := range result.LossHistory {
+		if !isFinite(l) {
+			t.Fatalf("epoch %d: loss is not finite: %v", i, l)
+		}
+	}
+
+	if result.LossHistory[9] >= result.LossHistory[0] {
+		t.Errorf("loss did not decrease: epoch 0 = %v, epoch 9 = %v",
+			result.LossHistory[0], result.LossHistory[9])
+	}
+
+	t.Logf("engine convergence: loss[0]=%.6f -> loss[9]=%.6f",
+		result.LossHistory[0], result.LossHistory[9])
+}
