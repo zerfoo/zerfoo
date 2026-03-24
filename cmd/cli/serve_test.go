@@ -55,7 +55,7 @@ func TestServeCommand_LoadError(t *testing.T) {
 	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
 		return nil, errors.New("load failed")
 	}
-	err := cmd.Run(context.Background(), []string{"test-model"})
+	err := cmd.Run(context.Background(), []string{"--allow-no-auth", "test-model"})
 	if err == nil {
 		t.Error("expected error from load")
 	}
@@ -98,7 +98,7 @@ func TestServeCommand_WithCoordinator(t *testing.T) {
 		return nil, errors.New("load failed")
 	}
 	// Fails at load, but exercises the coordinator path.
-	_ = cmd.Run(context.Background(), []string{"test-model"})
+	_ = cmd.Run(context.Background(), []string{"--allow-no-auth", "test-model"})
 }
 
 func TestServeCommand_StartsAndStopsOnCancel(t *testing.T) {
@@ -114,7 +114,7 @@ func TestServeCommand_StartsAndStopsOnCancel(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- cmd.Run(ctx, []string{"--port", "0", "test-model"})
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--allow-no-auth", "test-model"})
 	}()
 
 	// Give server a moment to start, then cancel.
@@ -141,7 +141,7 @@ func TestServeCommand_CustomPort(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- cmd.Run(ctx, []string{"--port", "0", "test-model"})
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--allow-no-auth", "test-model"})
 	}()
 
 	cancel()
@@ -206,6 +206,47 @@ func TestParseGPUList(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestServeCommand_NoKeyNoFlag(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return nil, errors.New("should not be called")
+	}
+	err := cmd.Run(context.Background(), []string{"test-model"})
+	if err == nil {
+		t.Fatal("expected error when no API key and no --allow-no-auth")
+	}
+	want := "set --api-key, ZERFOO_API_KEY, or --allow-no-auth"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want to contain %q", err.Error(), want)
+	}
+}
+
+func TestServeCommand_AllowNoAuth(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--allow-no-auth", "test-model"})
+	}()
+
+	cancel()
+	err := <-errCh
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !strings.Contains(out.String(), "no API key configured") {
+		t.Errorf("output = %q, want warning about no API key", out.String())
 	}
 }
 
@@ -281,7 +322,7 @@ func TestServeCommand_TLSFlagsParsed(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- cmd.Run(ctx, []string{"--port", "0", "--tls-cert", "cert.pem", "--tls-key", "key.pem", "test-model"})
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--allow-no-auth", "--tls-cert", "cert.pem", "--tls-key", "key.pem", "test-model"})
 	}()
 
 	// Cancel immediately — the server will fail to start with invalid TLS files,
@@ -307,7 +348,7 @@ func TestServeCommand_GPUsFlagValid(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- cmd.Run(ctx, []string{"--port", "0", "--gpus", "0,1,2,3", "test-model"})
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--allow-no-auth", "--gpus", "0,1,2,3", "test-model"})
 	}()
 
 	cancel()
