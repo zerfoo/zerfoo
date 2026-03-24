@@ -1587,7 +1587,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
 
 ##### Wave 55: Analytical Backprop for Slow Backends (4 agents)
 
-- [ ] T112.1 Replace ITransformer finite-difference gradients with analytical backprop
+- [x] T112.1 Replace ITransformer finite-difference gradients with analytical backprop (2026-03-24)
   Owner: ML Eng  Est: 4h  verifies: [UC-026]
   Deps: none
   Files: timeseries/itransformer.go
@@ -1606,7 +1606,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
   - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestITransformer pass.
 
-- [ ] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths)
+- [x] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths) (2026-03-24)
   Owner: ML Eng  Est: 5h  verifies: [UC-026]
   Deps: none
   Files: timeseries/patchtst_engine.go
@@ -1625,7 +1625,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
   - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestPatchTST pass.
 
-- [ ] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian)
+- [x] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian) (2026-03-24)
   Owner: ML Eng  Est: 3h  verifies: [UC-026]
   Deps: none
   Files: timeseries/cfc.go
@@ -1641,7 +1641,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
   - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestCfC pass.
 
-- [ ] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil)
+- [x] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil) (2026-03-24)
   Owner: ML Eng  Est: 1h  verifies: [UC-026]
   Deps: none
   Files: timeseries/mamba.go
@@ -2331,10 +2331,10 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 #### Wave 55: E112 Analytical Backprop (4 agents)
 
-- [ ] T112.1 Replace ITransformer finite-difference gradients with analytical backprop
-- [ ] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths)
-- [ ] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian)
-- [ ] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil)
+- [x] T112.1 Replace ITransformer finite-difference gradients with analytical backprop (2026-03-24)
+- [x] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths) (2026-03-24)
+- [x] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian) (2026-03-24)
+- [x] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil) (2026-03-24)
 
 #### Wave 56: E112 Benchmarks and Verification (2 agents)
 
