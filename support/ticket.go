@@ -3,7 +3,9 @@
 package support
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -154,12 +156,10 @@ func (s *Store) ListByCustomer(customerID string) []*Ticket {
 			result = append(result, t)
 		}
 	}
-	// Sort newest first.
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		if result[i].CreatedAt.Before(result[j].CreatedAt) {
-			result[i], result[j] = result[j], result[i]
-		}
-	}
+	// Sort newest first by UpdatedAt.
+	slices.SortFunc(result, func(a, b *Ticket) int {
+		return cmp.Compare(b.UpdatedAt.UnixNano(), a.UpdatedAt.UnixNano())
+	})
 	return result
 }
 

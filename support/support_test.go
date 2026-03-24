@@ -2,6 +2,7 @@ package support
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,6 +83,60 @@ func TestStoreListByCustomer(t *testing.T) {
 	tickets := store.ListByCustomer("cust-1")
 	if len(tickets) != 2 {
 		t.Fatalf("expected 2 tickets, got %d", len(tickets))
+	}
+}
+
+func TestListByCustomerOrderNewestFirst(t *testing.T) {
+	store := NewStore()
+
+	// Create 6 tickets for the same customer with staggered times.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	subjects := []string{"Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"}
+	for i, subj := range subjects {
+		store.mu.Lock()
+		store.nextID++
+		ts := base.Add(time.Duration(i) * time.Hour)
+		tk := &Ticket{
+			ID:         fmt.Sprintf("TKT-%06d", store.nextID),
+			CustomerID: "cust-sort",
+			Subject:    subj,
+			Priority:   P2Medium,
+			Status:     StatusOpen,
+			CreatedAt:  ts,
+			UpdatedAt:  ts,
+		}
+		store.tickets[tk.ID] = tk
+		store.mu.Unlock()
+	}
+
+	// Also update the 2nd ticket ("Bravo") to have the newest UpdatedAt,
+	// so we can verify sorting uses UpdatedAt, not CreatedAt.
+	for _, tk := range store.tickets {
+		if tk.Subject == "Bravo" {
+			tk.UpdatedAt = base.Add(100 * time.Hour)
+			break
+		}
+	}
+
+	// Add a ticket for a different customer to ensure filtering works.
+	store.Create("cust-other", "Unrelated", "", P3Low)
+
+	tickets := store.ListByCustomer("cust-sort")
+	if len(tickets) != 6 {
+		t.Fatalf("expected 6 tickets, got %d", len(tickets))
+	}
+
+	// Verify descending UpdatedAt order.
+	for i := 1; i < len(tickets); i++ {
+		if tickets[i].UpdatedAt.After(tickets[i-1].UpdatedAt) {
+			t.Fatalf("ticket at index %d (UpdatedAt=%v) is newer than ticket at index %d (UpdatedAt=%v)",
+				i, tickets[i].UpdatedAt, i-1, tickets[i-1].UpdatedAt)
+		}
+	}
+
+	// The first ticket should be "Bravo" since we gave it the latest UpdatedAt.
+	if tickets[0].Subject != "Bravo" {
+		t.Fatalf("expected first ticket to be Bravo (newest UpdatedAt), got %s", tickets[0].Subject)
 	}
 }
 
