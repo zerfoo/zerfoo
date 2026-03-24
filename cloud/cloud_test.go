@@ -3,10 +3,13 @@ package cloud
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/zerfoo/zerfoo/generate"
 )
 
 // fakeInferenceHandler returns a handler that echoes a fixed usage response.
@@ -222,6 +225,71 @@ func TestCloud_Billing(t *testing.T) {
 		}
 		if len(records) != 1 {
 			t.Fatalf("got %d records for t2, want 1", len(records))
+		}
+	})
+
+	t.Run("streaming SSE response produces billing via context", func(t *testing.T) {
+		// Simulate a streaming handler that writes SSE chunks (not valid JSON)
+		// but records token usage via the context-based TokenUsage.
+		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Write SSE chunks — not parseable as a single JSON object.
+			w.Header().Set("Content-Type", "text/event-stream")
+			for i := range 3 {
+				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"tok%d\"}}]}\n\n", i)
+			}
+			fmt.Fprint(w, "data: [DONE]\n\n")
+
+			// The generation layer records usage via context.
+			if usage := generate.TokenUsageFromContext(r.Context()); usage != nil {
+				usage.SetPromptTokens(42)
+				usage.SetCompletionTokens(3)
+			}
+		})
+
+		cs, store := setupCloudServer(sseHandler)
+		cs.Tenants().Create(TenantConfig{ID: "t-stream", APIKey: "key-stream", RateLimit: 1000, TokenBudget: 100000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer key-stream")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		records := store.All()
+		if len(records) != 1 {
+			t.Fatalf("got %d billing records, want 1", len(records))
+		}
+		r := records[0]
+		if r.TenantID != "t-stream" {
+			t.Errorf("TenantID = %q, want %q", r.TenantID, "t-stream")
+		}
+		if r.InputTokens != 42 {
+			t.Errorf("InputTokens = %d, want 42", r.InputTokens)
+		}
+		if r.OutputTokens != 3 {
+			t.Errorf("OutputTokens = %d, want 3", r.OutputTokens)
+		}
+	})
+
+	t.Run("non-streaming JSON fallback still works", func(t *testing.T) {
+		cs, store := setupCloudServer(fakeInferenceHandler(77, 33))
+		cs.Tenants().Create(TenantConfig{ID: "t-json", APIKey: "key-json", RateLimit: 1000, TokenBudget: 100000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer key-json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		records := store.All()
+		if len(records) != 1 {
+			t.Fatalf("got %d billing records, want 1", len(records))
+		}
+		if records[0].InputTokens != 77 {
+			t.Errorf("InputTokens = %d, want 77", records[0].InputTokens)
+		}
+		if records[0].OutputTokens != 33 {
+			t.Errorf("OutputTokens = %d, want 33", records[0].OutputTokens)
 		}
 	})
 }
