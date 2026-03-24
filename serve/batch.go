@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -157,8 +158,22 @@ func (s *BatchScheduler) executeBatch(batch []pendingRequest) {
 		reqs[i] = pr.req
 	}
 
-	// Use the first live context (all share the same handler).
-	results := s.config.Handler(live[0].ctx, reqs)
+	// Build a merged context that cancels only when ALL live requests cancel.
+	batchCtx, batchCancel := context.WithCancel(context.Background())
+	var once sync.Once
+	var remaining atomic.Int32
+	remaining.Store(int32(len(live)))
+	for _, pr := range live {
+		go func(ctx context.Context) {
+			<-ctx.Done()
+			if remaining.Add(-1) <= 0 {
+				once.Do(batchCancel)
+			}
+		}(pr.ctx)
+	}
+
+	results := s.config.Handler(batchCtx, reqs)
+	once.Do(batchCancel) // ensure merged context is always cleaned up
 
 	// Deliver results.
 	for i, pr := range live {

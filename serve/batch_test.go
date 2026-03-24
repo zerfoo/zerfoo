@@ -173,6 +173,74 @@ func TestBatchScheduler_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestBatchScheduler_FirstDisconnectDoesNotCancelBatch(t *testing.T) {
+	handlerCalled := make(chan struct{})
+	handlerCtx := make(chan context.Context, 1)
+
+	sched := NewBatchScheduler(BatchConfig{
+		MaxBatchSize: 4,
+		BatchTimeout: 50 * time.Millisecond,
+		Handler: func(ctx context.Context, reqs []BatchRequest) []BatchResult {
+			handlerCtx <- ctx
+			close(handlerCalled)
+			// Simulate work — give time for first request to cancel.
+			time.Sleep(100 * time.Millisecond)
+			results := make([]BatchResult, len(reqs))
+			for i, r := range reqs {
+				results[i] = BatchResult{Value: "done:" + r.Prompt}
+			}
+			return results
+		},
+	})
+
+	sched.Start()
+	defer sched.Stop()
+
+	// Request 0: will be cancelled immediately after batch starts.
+	ctx0, cancel0 := context.WithCancel(context.Background())
+	// Requests 1 and 2: stay alive.
+	ctx1 := context.Background()
+	ctx2 := context.Background()
+
+	var wg sync.WaitGroup
+	errs := make([]error, 3)
+	vals := make([]string, 3)
+
+	for i, ctx := range []context.Context{ctx0, ctx1, ctx2} {
+		wg.Add(1)
+		go func(idx int, c context.Context) {
+			defer wg.Done()
+			r, err := sched.Submit(c, BatchRequest{Prompt: "req"})
+			errs[idx] = err
+			vals[idx] = r.Value
+		}(i, ctx)
+	}
+
+	// Wait for handler to be invoked, then cancel the first request.
+	<-handlerCalled
+	cancel0()
+
+	// The batch context should NOT be cancelled — two requests are still alive.
+	bctx := <-handlerCtx
+	// Give a moment for the cancellation goroutine to run.
+	time.Sleep(20 * time.Millisecond)
+	if bctx.Err() != nil {
+		t.Fatalf("batch context cancelled after first request disconnect: %v", bctx.Err())
+	}
+
+	wg.Wait()
+
+	// Requests 1 and 2 must succeed.
+	for _, idx := range []int{1, 2} {
+		if errs[idx] != nil {
+			t.Errorf("request %d error: %v", idx, errs[idx])
+		}
+		if vals[idx] != "done:req" {
+			t.Errorf("request %d value = %q, want %q", idx, vals[idx], "done:req")
+		}
+	}
+}
+
 func TestBatchScheduler_HTTPIntegration(t *testing.T) {
 	m := buildTestModel(t)
 
