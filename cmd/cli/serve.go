@@ -45,9 +45,13 @@ func (c *ServeCommand) Description() string {
 // Run implements Command.Run.
 func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	var modelID, cacheDir, port, gpusRaw, apiKey, tlsCert, tlsKey string
+	var allowNoAuth bool
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--allow-no-auth":
+			allowNoAuth = true
+			continue
 		case "--port":
 			if i+1 >= len(args) {
 				return errors.New("--port requires a value")
@@ -120,6 +124,14 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("invalid --gpus value: %w", err)
 		}
+	}
+
+	// Require explicit opt-in when no API key is configured.
+	if apiKey == "" && !allowNoAuth {
+		return errors.New("set --api-key, ZERFOO_API_KEY, or --allow-no-auth")
+	}
+	if apiKey == "" && allowNoAuth {
+		_, _ = fmt.Fprintf(c.out, "WARN: serve: no API key configured, all endpoints are public\n")
 	}
 
 	li := startLoading(c.out)
@@ -218,6 +230,7 @@ OPTIONS:
   --cache-dir <dir>   Override model cache directory
   --gpus <ids>        Comma-separated GPU IDs to distribute model across (e.g. 0,1,2,3)
   --api-key <key>     Require Bearer token auth (env: ZERFOO_API_KEY)
+  --allow-no-auth     Allow starting without an API key (public endpoints)
   --tls-cert <path>   Path to TLS certificate file (requires --tls-key)
   --tls-key <path>    Path to TLS private key file (requires --tls-cert)
 

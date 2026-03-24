@@ -21,7 +21,7 @@ func TestServeCommand_WithCacheDir(t *testing.T) {
 		// Verify option was passed (we can't inspect it but at least exercise the path).
 		return nil, errors.New("expected load fail")
 	}
-	err := cmd.Run(context.Background(), []string{"--cache-dir", "/tmp/test-cache", "test-model"})
+	err := cmd.Run(context.Background(), []string{"--allow-no-auth", "--cache-dir", "/tmp/test-cache", "test-model"})
 	if err == nil {
 		t.Error("expected error from load")
 	}
@@ -43,7 +43,7 @@ func TestServeCommand_ListenAndServeError(t *testing.T) {
 	}
 
 	// Use an invalid port to force ListenAndServe to fail.
-	err := cmd.Run(context.Background(), []string{"--port", "invalid-port", "test-model"})
+	err := cmd.Run(context.Background(), []string{"--allow-no-auth", "--port", "invalid-port", "test-model"})
 	if err == nil {
 		t.Error("expected error from invalid port")
 	}
