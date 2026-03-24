@@ -35,7 +35,7 @@ type listResponse struct {
 func (h *Handler) handleList(w http.ResponseWriter, _ *http.Request) {
 	models, err := h.repo.List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if models == nil {
@@ -59,7 +59,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, meta)
@@ -136,14 +136,14 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "model '"+req.ID+"' already exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	// Re-read metadata to get computed fields (SHA256, size).
 	stored, err := h.repo.Get(req.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, stored)
@@ -167,7 +167,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "model '"+id+"' not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, deleteResponse{
