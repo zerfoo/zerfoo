@@ -10,19 +10,31 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+)
+
+const (
+	// maxWebhookBodySize is the maximum allowed webhook request body size (1 MB).
+	maxWebhookBodySize = 1 << 20
+
+	// maxWebhookAge is the maximum age of a webhook timestamp before it is rejected.
+	maxWebhookAge = 5 * time.Minute
+
+	// deduplicationTTL is how long operation IDs are retained for replay detection.
+	deduplicationTTL = 10 * time.Minute
 )
 
 // WebhookAction represents the type of subscription lifecycle event.
 type WebhookAction string
 
 const (
-	ActionChangePlan      WebhookAction = "ChangePlan"
-	ActionChangeQuantity  WebhookAction = "ChangeQuantity"
-	ActionSuspend         WebhookAction = "Suspend"
-	ActionReinstate       WebhookAction = "Reinstate"
-	ActionUnsubscribe     WebhookAction = "Unsubscribe"
-	ActionRenew           WebhookAction = "Renew"
+	ActionChangePlan     WebhookAction = "ChangePlan"
+	ActionChangeQuantity WebhookAction = "ChangeQuantity"
+	ActionSuspend        WebhookAction = "Suspend"
+	ActionReinstate      WebhookAction = "Reinstate"
+	ActionUnsubscribe    WebhookAction = "Unsubscribe"
+	ActionRenew          WebhookAction = "Renew"
 )
 
 // WebhookStatus represents the status of the operation in the webhook payload.
@@ -36,24 +48,24 @@ const (
 
 // WebhookPayload represents the JSON body of an Azure Marketplace webhook notification.
 type WebhookPayload struct {
-	ID               string        `json:"id"`
-	ActivityID       string        `json:"activityId"`
-	SubscriptionID   string        `json:"subscriptionId"`
-	OfferID          string        `json:"offerId"`
-	PublisherID      string        `json:"publisherId"`
-	PlanID           string        `json:"planId"`
-	Quantity         int           `json:"quantity,omitempty"`
-	Action           WebhookAction `json:"action"`
-	Timestamp        time.Time     `json:"timeStamp"`
-	Status           WebhookStatus `json:"status"`
-	OperationID      string        `json:"operationId"`
+	ID             string        `json:"id"`
+	ActivityID     string        `json:"activityId"`
+	SubscriptionID string        `json:"subscriptionId"`
+	OfferID        string        `json:"offerId"`
+	PublisherID    string        `json:"publisherId"`
+	PlanID         string        `json:"planId"`
+	Quantity       int           `json:"quantity,omitempty"`
+	Action         WebhookAction `json:"action"`
+	Timestamp      time.Time     `json:"timeStamp"`
+	Status         WebhookStatus `json:"status"`
+	OperationID    string        `json:"operationId"`
 }
 
 // WebhookHandler handles Azure Marketplace webhook notifications for
 // subscription lifecycle events.
 type WebhookHandler struct {
 	// Secret is the shared secret for HMAC-SHA256 signature validation.
-	// If empty, signature validation is skipped (not recommended for production).
+	// Must be non-empty; the handler returns 500 if not configured.
 	Secret string
 
 	// Manager handles subscription state transitions.
@@ -62,6 +74,13 @@ type WebhookHandler struct {
 	// OnEvent is an optional callback invoked after processing each webhook event.
 	// It can be used for logging, metrics, or custom business logic.
 	OnEvent func(payload WebhookPayload, err error)
+
+	// Now returns the current time. If nil, time.Now is used.
+	// Exposed for testing timestamp validation.
+	Now func() time.Time
+
+	// seen tracks recently processed operation IDs for deduplication.
+	seen sync.Map
 }
 
 // NewWebhookHandler creates a WebhookHandler with the given secret and subscription manager.
@@ -72,6 +91,13 @@ func NewWebhookHandler(secret string, manager *SubscriptionManager) *WebhookHand
 	}
 }
 
+func (h *WebhookHandler) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now()
+}
+
 // ServeHTTP implements http.Handler for Azure Marketplace webhook notifications.
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -79,24 +105,46 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	if h.Secret == "" {
+		http.Error(w, "webhook secret not configured", http.StatusInternalServerError)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodySize))
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
 
-	if h.Secret != "" {
-		sig := r.Header.Get("x-ms-signature")
-		if !h.verifySignature(body, sig) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
+	sig := r.Header.Get("x-ms-signature")
+	if !h.verifySignature(body, sig) {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
 	}
 
 	var payload WebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
+	}
+
+	// Reject webhooks with timestamps older than maxWebhookAge.
+	if !payload.Timestamp.IsZero() && h.now().Sub(payload.Timestamp) > maxWebhookAge {
+		http.Error(w, "webhook timestamp expired", http.StatusBadRequest)
+		return
+	}
+
+	// Deduplicate by operation ID.
+	if payload.OperationID != "" {
+		if _, loaded := h.seen.LoadOrStore(payload.OperationID, h.now()); loaded {
+			http.Error(w, "duplicate operation", http.StatusConflict)
+			return
+		}
+		// Schedule cleanup after TTL.
+		go func(opID string) {
+			time.Sleep(deduplicationTTL)
+			h.seen.Delete(opID)
+		}(payload.OperationID)
 	}
 
 	ctx := r.Context()

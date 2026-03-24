@@ -494,6 +494,23 @@ func TestTokenBilling_FlushEmpty(t *testing.T) {
 
 // --- Webhook Tests ---
 
+const testWebhookSecret = "test-secret-key"
+
+// signWebhookBody computes the HMAC-SHA256 signature for a webhook body.
+func signWebhookBody(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// signedWebhookRequest creates a signed POST request for webhook testing.
+func signedWebhookRequest(secret string, body []byte) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-ms-signature", signWebhookBody(secret, body))
+	return req
+}
+
 func TestWebhook_SuspendEvent(t *testing.T) {
 	store := NewMemorySubscriptionStore()
 	fulfillment := &mockFulfillmentAPI{}
@@ -502,18 +519,18 @@ func TestWebhook_SuspendEvent(t *testing.T) {
 
 	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
 
-	handler := NewWebhookHandler("", mgr)
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
 
 	payload := WebhookPayload{
 		ID:             "evt-1",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-suspend-1",
 		Action:         ActionSuspend,
 		Status:         WebhookStatusSuccess,
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
+	req := signedWebhookRequest(testWebhookSecret, body)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -536,17 +553,18 @@ func TestWebhook_UnsubscribeEvent(t *testing.T) {
 
 	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
 
-	handler := NewWebhookHandler("", mgr)
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
 
 	payload := WebhookPayload{
 		ID:             "evt-2",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-unsub-1",
 		Action:         ActionUnsubscribe,
 		Status:         WebhookStatusSuccess,
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := signedWebhookRequest(testWebhookSecret, body)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -569,16 +587,17 @@ func TestWebhook_ReinstateEvent(t *testing.T) {
 	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
 	mgr.Suspend(ctx, "sub-123")
 
-	handler := NewWebhookHandler("", mgr)
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
 
 	payload := WebhookPayload{
 		ID:             "evt-3",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-reinstate-1",
 		Action:         ActionReinstate,
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := signedWebhookRequest(testWebhookSecret, body)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -600,17 +619,18 @@ func TestWebhook_ChangePlanEvent(t *testing.T) {
 
 	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
 
-	handler := NewWebhookHandler("", mgr)
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
 
 	payload := WebhookPayload{
 		ID:             "evt-4",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-changeplan-1",
 		Action:         ActionChangePlan,
 		PlanID:         "enterprise",
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := signedWebhookRequest(testWebhookSecret, body)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -634,6 +654,7 @@ func TestWebhook_SignatureValidation(t *testing.T) {
 	payload := WebhookPayload{
 		ID:             "evt-5",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-sig-1",
 		Action:         ActionRenew,
 	}
 	body, _ := json.Marshal(payload)
@@ -649,12 +670,7 @@ func TestWebhook_SignatureValidation(t *testing.T) {
 	}
 
 	// Valid signature.
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	sig := hex.EncodeToString(mac.Sum(nil))
-
-	req = httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
-	req.Header.Set("x-ms-signature", sig)
+	req = signedWebhookRequest(secret, body)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -664,7 +680,7 @@ func TestWebhook_SignatureValidation(t *testing.T) {
 }
 
 func TestWebhook_MethodNotAllowed(t *testing.T) {
-	handler := NewWebhookHandler("", nil)
+	handler := NewWebhookHandler("secret", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
@@ -672,6 +688,89 @@ func TestWebhook_MethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestWebhook_EmptySecretReturns500(t *testing.T) {
+	handler := NewWebhookHandler("", nil)
+
+	payload := WebhookPayload{
+		ID:     "evt-nosecret",
+		Action: ActionRenew,
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("got status %d, want %d for empty secret", rec.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.Body.String(), "webhook secret not configured") {
+		t.Errorf("expected body to mention secret not configured, got: %s", rec.Body.String())
+	}
+}
+
+func TestWebhook_ExpiredTimestampReturns400(t *testing.T) {
+	handler := NewWebhookHandler(testWebhookSecret, nil)
+	handler.Now = func() time.Time {
+		return time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	}
+
+	payload := WebhookPayload{
+		ID:          "evt-expired",
+		OperationID: "op-expired-1",
+		Action:      ActionRenew,
+		Timestamp:   time.Date(2026, 3, 23, 11, 50, 0, 0, time.UTC), // 10 min old
+	}
+	body, _ := json.Marshal(payload)
+
+	req := signedWebhookRequest(testWebhookSecret, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d for expired timestamp", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), "timestamp expired") {
+		t.Errorf("expected body to mention timestamp expired, got: %s", rec.Body.String())
+	}
+}
+
+func TestWebhook_ReplayedOperationIDReturns409(t *testing.T) {
+	store := NewMemorySubscriptionStore()
+	fulfillment := &mockFulfillmentAPI{}
+	mgr := NewSubscriptionManager(store, fulfillment)
+	ctx := context.Background()
+	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
+
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
+
+	payload := WebhookPayload{
+		ID:             "evt-replay",
+		SubscriptionID: "sub-123",
+		OperationID:    "op-replay-1",
+		Action:         ActionRenew,
+	}
+	body, _ := json.Marshal(payload)
+
+	// First request should succeed.
+	req := signedWebhookRequest(testWebhookSecret, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request: got status %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	// Replayed request should return 409.
+	req = signedWebhookRequest(testWebhookSecret, body)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("replayed request: got status %d, want %d", rec.Code, http.StatusConflict)
 	}
 }
 
@@ -684,7 +783,7 @@ func TestWebhook_OnEventCallback(t *testing.T) {
 	mgr.ResolveAndActivate(ctx, "token-1", PlanDetails{PlanID: "basic"})
 
 	var callbackAction WebhookAction
-	handler := NewWebhookHandler("", mgr)
+	handler := NewWebhookHandler(testWebhookSecret, mgr)
 	handler.OnEvent = func(p WebhookPayload, err error) {
 		callbackAction = p.Action
 	}
@@ -692,11 +791,12 @@ func TestWebhook_OnEventCallback(t *testing.T) {
 	payload := WebhookPayload{
 		ID:             "evt-6",
 		SubscriptionID: "sub-123",
+		OperationID:    "op-callback-1",
 		Action:         ActionRenew,
 	}
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := signedWebhookRequest(testWebhookSecret, body)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
