@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0](https://github.com/zerfoo/zerfoo/compare/v1.12.0...v1.13.0) (2026-03-24)
+
+
+### Features
+
+* **timeseries:** add FreTS backend (issue [#153](https://github.com/zerfoo/zerfoo/issues/153)) ([09783bf](https://github.com/zerfoo/zerfoo/commit/09783bf1751c1ee32b55b63e6682c00bcfa17274))
+* **timeseries:** add iTransformer backend (issue [#155](https://github.com/zerfoo/zerfoo/issues/155)) ([6c53b2e](https://github.com/zerfoo/zerfoo/commit/6c53b2eef857c1a83a1890faf6137444008d60f5))
+* **timeseries:** add Mamba/SSM backend (issue [#156](https://github.com/zerfoo/zerfoo/issues/156)) ([f879283](https://github.com/zerfoo/zerfoo/commit/f8792830948991cd10d888c0c5867f9101d90697))
+* **timeseries:** add WithCfCEngine option to CfC constructor (issue [#154](https://github.com/zerfoo/zerfoo/issues/154)) ([fc80aac](https://github.com/zerfoo/zerfoo/commit/fc80aacf219eeab7b1b0aeead260afe4ccbc6bf9))
+* **timeseries:** rewrite Mamba backend to wrap layers/ssm.MambaBlock (issue [#156](https://github.com/zerfoo/zerfoo/issues/156)) ([d103e83](https://github.com/zerfoo/zerfoo/commit/d103e83b640200e3c82ea37ce172faa5c551b4ac))
+
+
+### Bug Fixes
+
+* **inference:** defer releaseSession in Generate and GenerateStream ([1079796](https://github.com/zerfoo/zerfoo/commit/1079796949b22c53fa92e2b95a901b34ffe720ad))
+* **inference:** use session pool in GenerateBatch instead of generator mutex (C-002) ([5405108](https://github.com/zerfoo/zerfoo/commit/5405108775e9ccb493fc7ff3f20700f66a37e6c8))
+* **security:** complete E109 deep review v1.12.0 remediation -- Waves 48-50 ([a9e2e30](https://github.com/zerfoo/zerfoo/commit/a9e2e3001bbad6edb0b655dd9195c76f9ba5c525))
+* **security:** remediate 3 High findings from v1.12.0 deep review ([743fbc6](https://github.com/zerfoo/zerfoo/commit/743fbc6f385fef0d6adf068c96308311ca46f824))
+* **security:** sanitize error in audio transcription response ([d045351](https://github.com/zerfoo/zerfoo/commit/d0453510b2c496d63a572fe1fa75629783375b9b))
+* **security:** suppress raw error details in repository handler 500 responses ([f782d4a](https://github.com/zerfoo/zerfoo/commit/f782d4a14f4c86785cfeaedc34c2316194ddf9ee))
+* **security:** suppress raw error in Azure webhook 500 response ([f13d3b8](https://github.com/zerfoo/zerfoo/commit/f13d3b8315a3efeb1a3da6a3518e52a95404c57d))
+* **security:** suppress raw error in disaggregated gateway SSE stream ([45f85a5](https://github.com/zerfoo/zerfoo/commit/45f85a51ca4beccca36c7b7cb2a33711b8ced6ea))
+* **serve:** check http.Flusher before WriteHeader in streaming handlers ([6610e67](https://github.com/zerfoo/zerfoo/commit/6610e67db508629d0e33eadf6108136ede38d037))
+* **timeseries:** prevent NHiTS segfault on small inputLen (issue [#152](https://github.com/zerfoo/zerfoo/issues/152)) ([2ebd9db](https://github.com/zerfoo/zerfoo/commit/2ebd9db35b68260aece3f26f3dc3b0039c784250))
+* **timeseries:** store normalization stats and apply in PredictWindowed ([2321568](https://github.com/zerfoo/zerfoo/commit/2321568f6789af0ce52fe64bc5f18de4b8077439))
+
 ## [1.12.0](https://github.com/zerfoo/zerfoo/compare/v1.11.1...v1.12.0) (2026-03-24)
 
 
