@@ -72,7 +72,7 @@ func (s *Server) handleAudioTranscriptions(w http.ResponseWriter, r *http.Reques
 
 	transcript, err := s.transcriber.Transcribe(r.Context(), audioData, language)
 	if err != nil {
-		writeError(w, inferenceErrorStatus(err), err.Error())
+		writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))
 		return
 	}
 
