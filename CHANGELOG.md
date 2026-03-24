@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0](https://github.com/zerfoo/zerfoo/compare/v1.14.0...v1.15.0) (2026-03-24)
+
+
+### Features
+
+* **timeseries:** add GPU engine training support to FreTS (issue [#158](https://github.com/zerfoo/zerfoo/issues/158)) ([429ef05](https://github.com/zerfoo/zerfoo/commit/429ef050e65426006ea9e1df33c6e2432ffd9213))
+* **timeseries:** add GPU engine training support to ITransformer ([d13ab07](https://github.com/zerfoo/zerfoo/commit/d13ab07921034f73ea99ccb692cc56497efeb2dc))
+
 ## [1.14.0](https://github.com/zerfoo/zerfoo/compare/v1.13.0...v1.14.0) (2026-03-24)
 
 
