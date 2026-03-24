@@ -487,7 +487,9 @@ func (m *Model) GenerateBatch(ctx context.Context, prompts []string, opts ...Gen
 			defer wg.Done()
 			sem <- struct{}{}        // acquire
 			defer func() { <-sem }() // release
-			text, err := m.generator.Generate(ctx, p, sc)
+			sess := m.acquireSession()
+			text, err := sess.Generate(ctx, p, sc)
+			m.releaseSession(sess)
 			results[idx] = text
 			errs[idx] = err
 		}(i, prompt)
