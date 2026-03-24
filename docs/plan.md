@@ -901,14 +901,14 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 40: Verification (2 agents)
 
-- [ ] T107.11 Run go test -race on all changed packages
+- [x] T107.11 Run go test -race on all changed packages
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: T107.1-T107.10
   Acceptance:
   - go test -race -timeout 300s ./serve/ ./layers/reducesum/ ./rl/ ./timeseries/
     ./support/ -- all pass, no races.
 
-- [ ] T107.12 Close GitHub issue #123 with fix evidence
+- [x] T107.12 Close GitHub issue #123 with fix evidence
   Owner: ML Eng  Est: 15m  delivers: [issue #123 closed with fix commit]
   Deps: T107.4, T107.11
   Acceptance:
@@ -1488,8 +1488,8 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 40: Verification (2 agents)
 
-- [ ] T107.11 Run go test -race on all changed packages
-- [ ] T107.12 Close GitHub issue #123
+- [x] T107.11 Run go test -race on all changed packages
+- [x] T107.12 Close GitHub issue #123
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
