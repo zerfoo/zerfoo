@@ -298,17 +298,23 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 			for s := 0; s < bs; s++ {
 				// Convert [channels][inputLen] to [inputLen][channels] for recurrent processing.
 				seqInput := transposeWindow(batchWindows[s])
-				sampleGrads, pred := c.backwardSample(seqInput)
 				sampleLabels := batchLabels[s*outDim : (s+1)*outDim]
 
+				// Forward pass to get predictions.
+				pred := c.forward(seqInput)
+
+				// Compute MSE upstream gradient: dLoss[j] = 2*(pred[j]-label[j]) / (bs*outDim).
+				dLoss := make([]float64, outDim)
 				for j := 0; j < outDim; j++ {
 					diff := pred[j] - sampleLabels[j]
 					batchLoss += diff * diff
-					dOut := 2.0 * diff / float64(bs*outDim)
-					// Accumulate gradients scaled by output gradient.
-					for p := range grads {
-						grads[p] += dOut * sampleGrads[j][p]
-					}
+					dLoss[j] = 2.0 * diff / float64(bs*outDim)
+				}
+
+				// Single backward pass with vector-Jacobian product.
+				sampleGrads := c.backwardSample(seqInput, dLoss)
+				for p := range grads {
+					grads[p] += sampleGrads[p]
 				}
 			}
 
@@ -357,9 +363,10 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 	return result, nil
 }
 
-// backwardSample computes per-output-element gradients for a single sample using BPTT.
-// Returns gradients[outDim][nParams] and predictions[outDim].
-func (c *CfC) backwardSample(input [][]float64) ([][]float64, []float64) {
+// backwardSample computes gradients for a single sample using BPTT with a
+// vector-Jacobian product. dLoss is the upstream gradient (length outDim).
+// Returns a single gradient vector (length nParams).
+func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 	seqLen := len(input)
 	hiddenSize := c.config.HiddenSize
 	numLayers := c.config.NumLayers
@@ -367,14 +374,12 @@ func (c *CfC) backwardSample(input [][]float64) ([][]float64, []float64) {
 	nParams := c.paramCount()
 
 	// Forward pass storing all intermediate states for BPTT.
-	// hStates[t][l] = hidden state at time t, layer l (after CfC step).
-	// hStates[t][l] has shape [hiddenSize].
 	type stepState struct {
-		h      []float64   // hidden state after step
-		tau    []float64   // time constants
-		preact []float64   // tanh pre-activation (before tanh)
-		x      []float64   // input to this layer
-		hPrev  []float64   // hidden state before step
+		h      []float64 // hidden state after step
+		tau    []float64 // time constants
+		preact []float64 // pre-activation (before tanh)
+		x      []float64 // input to this layer
+		hPrev  []float64 // hidden state before step
 	}
 
 	states := make([][]stepState, seqLen)
@@ -439,154 +444,132 @@ func (c *CfC) backwardSample(input [][]float64) ([][]float64, []float64) {
 	// Final hidden state.
 	finalH := hPrev[numLayers-1]
 
-	// Forward through output projection to get predictions.
-	pred := make([]float64, outDim)
+	grads := make([]float64, nParams)
+
+	// Output projection backward: dOutW[i][j] += finalH[i] * dLoss[j], dOutB[j] += dLoss[j].
+	outWOff := c.outWParamOffset()
+	outBOff := c.outBParamOffset()
+	for i := 0; i < hiddenSize; i++ {
+		for j := 0; j < outDim; j++ {
+			grads[outWOff+i*outDim+j] = finalH[i] * dLoss[j]
+		}
+	}
 	for j := 0; j < outDim; j++ {
-		pred[j] = c.outB[j]
-		for i := 0; i < hiddenSize; i++ {
-			pred[j] += finalH[i] * c.outW[i][j]
+		grads[outBOff+j] = dLoss[j]
+	}
+
+	// dH = dLoss @ outW^T: gradient of loss w.r.t. final hidden state.
+	dh := make([]float64, hiddenSize)
+	for i := 0; i < hiddenSize; i++ {
+		for j := 0; j < outDim; j++ {
+			dh[i] += c.outW[i][j] * dLoss[j]
 		}
 	}
 
-	// Compute gradients per output element.
-	allGrads := make([][]float64, outDim)
-	for oi := 0; oi < outDim; oi++ {
-		grads := make([]float64, nParams)
+	// BPTT: backpropagate through time and layers.
+	for t := seqLen - 1; t >= 0; t-- {
+		for l := numLayers - 1; l >= 0; l-- {
+			ss := states[t][l]
+			layer := c.layers[l]
+			inSize := len(layer.Wx)
+			layerOff := c.layerParamOffset(l)
 
-		// Gradient of output w.r.t. output projection weights.
-		outWOff := c.outWParamOffset()
-		for i := 0; i < hiddenSize; i++ {
-			grads[outWOff+i*outDim+oi] = finalH[i]
-		}
-		grads[c.outBParamOffset()+oi] = 1.0
+			tanhPreact := make([]float64, hiddenSize)
+			fVals := make([]float64, hiddenSize)
+			for j := 0; j < hiddenSize; j++ {
+				tauClamped := math.Max(ss.tau[j], 1e-6)
+				fVals[j] = math.Exp(-1.0 / tauClamped)
+				tanhPreact[j] = math.Tanh(ss.preact[j])
+			}
 
-		// dL/dh for the final hidden state from the output projection.
-		dh := make([]float64, hiddenSize)
-		for i := 0; i < hiddenSize; i++ {
-			dh[i] = c.outW[i][oi]
-		}
+			// Gradient w.r.t. preact: dh[j] * (1-f[j]) * (1 - tanh^2(preact[j]))
+			dPreact := make([]float64, hiddenSize)
+			for j := 0; j < hiddenSize; j++ {
+				dPreact[j] = dh[j] * (1 - fVals[j]) * (1 - tanhPreact[j]*tanhPreact[j])
+			}
 
-		// BPTT: backpropagate through time and layers.
-		for t := seqLen - 1; t >= 0; t-- {
-			// Back through layers (reverse order).
-			for l := numLayers - 1; l >= 0; l-- {
-				ss := states[t][l]
-				layer := c.layers[l]
-				inSize := len(layer.Wx)
-				layerOff := c.layerParamOffset(l)
+			// Gradient w.r.t. tau pre-activation.
+			dZtau := make([]float64, hiddenSize)
+			for j := 0; j < hiddenSize; j++ {
+				tauClamped := math.Max(ss.tau[j], 1e-6)
+				dfDtau := fVals[j] / (tauClamped * tauClamped)
+				dhDf := ss.hPrev[j] - tanhPreact[j]
+				dtauDz := ss.tau[j] * (1 - ss.tau[j])
+				dZtau[j] = dh[j] * dhDf * dfDtau * dtauDz
+			}
 
-				// h_new = f * h_old + (1-f) * tanh(preact)
-				// f = exp(-1/tau), tau = sigmoid(z_tau)
-
-				// For each hidden unit j:
-				tanhPreact := make([]float64, hiddenSize)
-				fVals := make([]float64, hiddenSize)
+			// Accumulate parameter gradients.
+			// Wx gradients.
+			wxOff := layerOff + hiddenSize*hiddenSize
+			for i := 0; i < inSize; i++ {
 				for j := 0; j < hiddenSize; j++ {
-					tauClamped := math.Max(ss.tau[j], 1e-6)
-					fVals[j] = math.Exp(-1.0 / tauClamped)
-					tanhPreact[j] = math.Tanh(ss.preact[j])
-				}
-
-				// Gradient w.r.t. preact: dh[j] * (1-f[j]) * (1 - tanh^2(preact[j]))
-				dPreact := make([]float64, hiddenSize)
-				for j := 0; j < hiddenSize; j++ {
-					dPreact[j] = dh[j] * (1 - fVals[j]) * (1 - tanhPreact[j]*tanhPreact[j])
-				}
-
-				// Gradient w.r.t. tau:
-				// df/dtau = exp(-1/tau) * (1/tau^2) = f / tau^2
-				// dh/df = h_old - tanh(preact)
-				// dh/dtau = dh/df * df/dtau
-				// dtau/dz = tau * (1-tau) (sigmoid derivative)
-				dZtau := make([]float64, hiddenSize)
-				for j := 0; j < hiddenSize; j++ {
-					tauClamped := math.Max(ss.tau[j], 1e-6)
-					dfDtau := fVals[j] / (tauClamped * tauClamped)
-					dhDf := ss.hPrev[j] - tanhPreact[j]
-					dtauDz := ss.tau[j] * (1 - ss.tau[j])
-					dZtau[j] = dh[j] * dhDf * dfDtau * dtauDz
-				}
-
-				// Accumulate parameter gradients.
-				// Wx gradients.
-				wxOff := layerOff + hiddenSize*hiddenSize // after Wh
-				for i := 0; i < inSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						grads[wxOff+i*hiddenSize+j] += dPreact[j] * ss.x[i]
-					}
-				}
-
-				// Wh gradients.
-				whOff := layerOff
-				for i := 0; i < hiddenSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						grads[whOff+i*hiddenSize+j] += dPreact[j] * ss.hPrev[i]
-					}
-				}
-
-				// Bh gradients.
-				bhOff := layerOff + hiddenSize*hiddenSize + inSize*hiddenSize
-				for j := 0; j < hiddenSize; j++ {
-					grads[bhOff+j] += dPreact[j]
-				}
-
-				// Wtau gradients.
-				wtauOff := bhOff + hiddenSize
-				for i := 0; i < inSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						grads[wtauOff+i*hiddenSize+j] += dZtau[j] * ss.x[i]
-					}
-				}
-				for i := 0; i < hiddenSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						grads[wtauOff+(inSize+i)*hiddenSize+j] += dZtau[j] * ss.hPrev[i]
-					}
-				}
-
-				// Btau gradients.
-				btauOff := wtauOff + (inSize+hiddenSize)*hiddenSize
-				for j := 0; j < hiddenSize; j++ {
-					grads[btauOff+j] += dZtau[j]
-				}
-
-				// Propagate dh backward.
-				// dh/dh_prev = f[j] (from the ODE update)
-				//            + (1-f[j]) * (1-tanh^2) * dPreact/dh_prev (through Wh)
-				//            + dhDf * dfDtau * dtauDz * dZtau/dh_prev (through Wtau's h part)
-				dhPrev := make([]float64, hiddenSize)
-				for i := 0; i < hiddenSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						dhPrev[i] += dPreact[j] * layer.Wh[i][j]
-						dhPrev[i] += dZtau[j] * layer.Wtau[inSize+i][j]
-					}
-					dhPrev[i] += dh[i] * fVals[i]
-				}
-
-				// If not the first layer, propagate to the layer below via dx.
-				if l > 0 {
-					dx := make([]float64, inSize)
-					for i := 0; i < inSize; i++ {
-						for j := 0; j < hiddenSize; j++ {
-							dx[i] += dPreact[j] * layer.Wx[i][j]
-							dx[i] += dZtau[j] * layer.Wtau[i][j]
-						}
-					}
-					dh = dx
-				} else {
-					dh = dhPrev
-				}
-
-				// For the current layer, update dh for the next time step backward.
-				if l == 0 {
-					dh = dhPrev
+					grads[wxOff+i*hiddenSize+j] += dPreact[j] * ss.x[i]
 				}
 			}
-		}
 
-		allGrads[oi] = grads
+			// Wh gradients.
+			whOff := layerOff
+			for i := 0; i < hiddenSize; i++ {
+				for j := 0; j < hiddenSize; j++ {
+					grads[whOff+i*hiddenSize+j] += dPreact[j] * ss.hPrev[i]
+				}
+			}
+
+			// Bh gradients.
+			bhOff := layerOff + hiddenSize*hiddenSize + inSize*hiddenSize
+			for j := 0; j < hiddenSize; j++ {
+				grads[bhOff+j] += dPreact[j]
+			}
+
+			// Wtau gradients.
+			wtauOff := bhOff + hiddenSize
+			for i := 0; i < inSize; i++ {
+				for j := 0; j < hiddenSize; j++ {
+					grads[wtauOff+i*hiddenSize+j] += dZtau[j] * ss.x[i]
+				}
+			}
+			for i := 0; i < hiddenSize; i++ {
+				for j := 0; j < hiddenSize; j++ {
+					grads[wtauOff+(inSize+i)*hiddenSize+j] += dZtau[j] * ss.hPrev[i]
+				}
+			}
+
+			// Btau gradients.
+			btauOff := wtauOff + (inSize+hiddenSize)*hiddenSize
+			for j := 0; j < hiddenSize; j++ {
+				grads[btauOff+j] += dZtau[j]
+			}
+
+			// Propagate dh backward.
+			dhPrev := make([]float64, hiddenSize)
+			for i := 0; i < hiddenSize; i++ {
+				for j := 0; j < hiddenSize; j++ {
+					dhPrev[i] += dPreact[j] * layer.Wh[i][j]
+					dhPrev[i] += dZtau[j] * layer.Wtau[inSize+i][j]
+				}
+				dhPrev[i] += dh[i] * fVals[i]
+			}
+
+			if l > 0 {
+				dx := make([]float64, inSize)
+				for i := 0; i < inSize; i++ {
+					for j := 0; j < hiddenSize; j++ {
+						dx[i] += dPreact[j] * layer.Wx[i][j]
+						dx[i] += dZtau[j] * layer.Wtau[i][j]
+					}
+				}
+				dh = dx
+			} else {
+				dh = dhPrev
+			}
+
+			if l == 0 {
+				dh = dhPrev
+			}
+		}
 	}
 
-	return allGrads, pred
+	return grads
 }
 
 // transposeWindow converts [channels][seqLen] to [seqLen][channels].

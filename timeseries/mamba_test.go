@@ -420,6 +420,65 @@ func TestMamba_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestMamba_TrainWindowed_NilEngine(t *testing.T) {
+	// Create Mamba with nil engine — TrainWindowed should auto-create CPUEngine.
+	config := MambaConfig{
+		Channels:     1,
+		InputLen:     8,
+		OutputLen:    4,
+		DModel:       16,
+		DState:       4,
+		DConv:        2,
+		ExpandFactor: 2,
+		NLayers:      1,
+	}
+	m, err := NewMamba(config, nil, nil)
+	if err != nil {
+		t.Fatalf("NewMamba with nil engine: %v", err)
+	}
+
+	// Simple synthetic data.
+	nSamples := 6
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.Channels*config.OutputLen)
+	for i := 0; i < nSamples; i++ {
+		windows[i] = make([][]float64, config.Channels)
+		for c := 0; c < config.Channels; c++ {
+			windows[i][c] = make([]float64, config.InputLen)
+			for ti := 0; ti < config.InputLen; ti++ {
+				windows[i][c][ti] = float64(i+1) * 0.3 * float64(ti+1)
+			}
+			for o := 0; o < config.OutputLen; o++ {
+				labels[i*config.Channels*config.OutputLen+c*config.OutputLen+o] = float64(i+1) * 0.5
+			}
+		}
+	}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   10,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed with nil engine: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Errorf("final loss is not finite: %v", result.FinalLoss)
+	}
+
+	// Loss should decrease.
+	if result.LossHistory[len(result.LossHistory)-1] >= result.LossHistory[0] {
+		t.Errorf("loss did not decrease: first=%.6f last=%.6f",
+			result.LossHistory[0], result.LossHistory[len(result.LossHistory)-1])
+	}
+
+	// Engine should still be nil on the original struct (no side effects).
+	if m.engine != nil {
+		t.Error("expected engine to remain nil after training")
+	}
+}
+
 func TestMamba_SaveWeightsCreatesFile(t *testing.T) {
 	engine, ops := newTestEngine()
 	config := MambaConfig{

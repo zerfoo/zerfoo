@@ -131,6 +131,16 @@ func (m *Mamba) allParams() []*graph.Parameter[float32] {
 	return params
 }
 
+// copyMambaParams copies parameter values from src to dst.
+// Both models must have the same config (same number and size of parameters).
+func copyMambaParams(src, dst *Mamba) {
+	srcParams := src.allParams()
+	dstParams := dst.allParams()
+	for i := range srcParams {
+		copy(dstParams[i].Value.Data(), srcParams[i].Value.Data())
+	}
+}
+
 // zeroGrads zeroes all parameter gradients.
 func (m *Mamba) zeroGrads() {
 	for _, p := range m.allParams() {
@@ -268,6 +278,30 @@ func (m *Mamba) backward(ctx context.Context, dOut []float32, cache *mambaCache)
 
 // TrainWindowed trains the Mamba model on windowed data using AdamW.
 func (m *Mamba) TrainWindowed(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
+	// CPU fallback: if no engine is set, create a temporary Mamba with a
+	// CPUEngine, train it, then copy learned weights back. This avoids side
+	// effects on the original struct's engine/layers while still allowing
+	// training without a GPU.
+	if m.engine == nil {
+		cpuEngine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+		cpuOps := numeric.Float32Ops{}
+		tmp, err := NewMamba(m.config, cpuEngine, cpuOps)
+		if err != nil {
+			return nil, fmt.Errorf("mamba: creating CPU fallback model: %w", err)
+		}
+		// Copy current weights into the temporary model.
+		copyMambaParams(m, tmp)
+		result, err := tmp.TrainWindowed(windows, labels, config)
+		if err != nil {
+			return nil, err
+		}
+		// Copy trained weights back to the original model.
+		copyMambaParams(tmp, m)
+		m.normMeans = tmp.normMeans
+		m.normStds = tmp.normStds
+		return result, nil
+	}
+
 	nSamples := len(windows)
 	if nSamples == 0 {
 		return nil, fmt.Errorf("mamba: empty training set")
