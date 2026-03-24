@@ -257,6 +257,36 @@ func TestBackward_WrongInputCount(t *testing.T) {
 	}
 }
 
+func TestBackward_InvalidAxis_ReturnsError(t *testing.T) {
+	engine := newEngine()
+	ctx := context.Background()
+
+	// Create a ReduceSum with axis 5, which is out of range for a 2D input.
+	r := New[float32](engine, []int{5}, true)
+
+	input, err := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	if err != nil {
+		t.Fatalf("failed to create input: %v", err)
+	}
+
+	dOut, err := tensor.New[float32]([]int{2, 3}, []float32{1, 1, 1, 1, 1, 1})
+	if err != nil {
+		t.Fatalf("failed to create dOut: %v", err)
+	}
+
+	_, err = r.Backward(ctx, types.FullBackprop, dOut, input)
+	if err == nil {
+		t.Fatal("Backward with invalid axis should return error, not panic")
+	}
+
+	// Also test negative axis.
+	rNeg := New[float32](engine, []int{-1}, true)
+	_, err = rNeg.Backward(ctx, types.FullBackprop, dOut, input)
+	if err == nil {
+		t.Fatal("Backward with negative axis should return error, not panic")
+	}
+}
+
 func TestGraphNodeInterface(t *testing.T) {
 	var _ graph.Node[float32] = (*ReduceSum[float32])(nil)
 }
