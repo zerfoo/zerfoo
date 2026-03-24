@@ -80,6 +80,10 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 
+networkPolicy:
+  enabled: false
+  ingressNamespace: ingress-nginx
+
 podAnnotations: {}
 podLabels: {}
 
