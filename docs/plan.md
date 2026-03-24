@@ -804,7 +804,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: oversized body returns 413. Internal error details not leaked.
   - go vet ./serve/ clean. go test -race ./serve/ pass.
 
-- [ ] T107.2 Convert panic to error return in reducesum Backward
+- [x] T107.2 Convert panic to error return in reducesum Backward (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-002]
   Deps: none
   Files: layers/reducesum/reducesum.go
@@ -814,7 +814,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: Backward with invalid axis returns error, not panic.
   - go vet ./layers/reducesum/ clean.
 
-- [ ] T107.3 Convert panic to error returns in rl/replay.go
+- [x] T107.3 Convert panic to error returns in rl/replay.go (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: rl/replay.go
@@ -929,7 +929,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 41: Critical Security Fixes (5 agents)
 
-- [ ] T108.1 Fix streaming billing bypass in cloud billing middleware (C1)
+- [x] T108.1 Fix streaming billing bypass in cloud billing middleware (C1) (2026-03-23)
   Owner: Security Eng  Est: 3h  verifies: [UC-003]
   Deps: none
   Files: cloud/server.go, serve/cloud/billing.go, generate/session.go
@@ -944,7 +944,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: non-streaming request still produces correct billing record.
   - go vet ./cloud/ ./serve/cloud/ ./generate/ clean.
 
-- [ ] T108.2 Implement SAML XML signature verification (C2)
+- [x] T108.2 Implement SAML XML signature verification (C2) (2026-03-23)
   Owner: Security Eng  Est: 3h  verifies: [UC-003]
   Deps: none
   Files: cloud/sso.go, go.mod
@@ -960,7 +960,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     Assertion without signature fails.
   - go vet ./cloud/ clean.
 
-- [ ] T108.3 Fix differential privacy hardcoded seed (C4)
+- [x] T108.3 Fix differential privacy hardcoded seed (C4) (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: federated/dp.go
@@ -973,7 +973,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: two NewDPStrategy calls produce different noise. Invalid config returns error.
   - go vet ./federated/ clean. go test -race ./federated/ pass.
 
-- [ ] T108.4 Remove pprof from public health server (C5)
+- [x] T108.4 Remove pprof from public health server (C5) (2026-03-23)
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: health/server.go
@@ -984,7 +984,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: GET /debug/pprof/ returns 404 on default health server.
   - go vet ./health/ clean.
 
-- [ ] T108.5 Implement cloud responseCapture http.Flusher (H13)
+- [x] T108.5 Implement cloud responseCapture http.Flusher (H13) (2026-03-23)
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: cloud/server.go
@@ -997,7 +997,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 42: High Security Fixes -- Cloud and Billing (5 agents)
 
-- [ ] T108.6 Pre-authorize token budget before request execution (H6, F2)
+- [x] T108.6 Pre-authorize token budget before request execution (H6, F2) (2026-03-23)
   Owner: Security Eng  Est: 2h  verifies: [UC-003]
   Deps: T108.1
   Files: cloud/server.go, cloud/tenant.go
@@ -1010,7 +1010,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: tenant with exhausted budget receives 429 before inference runs.
   - go vet ./cloud/ clean.
 
-- [ ] T108.7 Make Azure webhook signature validation mandatory (H8)
+- [x] T108.7 Make Azure webhook signature validation mandatory (H8) (2026-03-23)
   Owner: Security Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: marketplace/azure/webhook.go
@@ -1023,7 +1023,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     Replayed operation ID returns 409.
   - go vet ./marketplace/azure/ clean.
 
-- [ ] T108.8 Enable GKE private cluster and master authorized networks (H9)
+- [x] T108.8 Enable GKE private cluster and master authorized networks (H9) (2026-03-23)
   Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: infra/terraform/zerfoo-cloud/main.tf
@@ -1034,7 +1034,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Scope node OAuth scopes to devstorage.read_only, logging.write, monitoring (M15).
   - Validate: terraform plan shows expected changes.
 
-- [ ] T108.9 Hash tenant API keys (H10)
+- [x] T108.9 Hash tenant API keys (H10) (2026-03-23)
   Owner: Security Eng  Est: 2h  verifies: [UC-003]
   Deps: none
   Files: cloud/tenant.go
@@ -1047,7 +1047,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: Tenant struct does not contain raw API key. Lookup by key works.
   - go vet ./cloud/ clean.
 
-- [ ] T108.10 Add exponential backoff retry to marketplace metering (H11)
+- [x] T108.10 Add exponential backoff retry to marketplace metering (H11) (2026-03-23)
   Owner: ML Eng  Est: 2h  verifies: [infrastructure]
   Deps: none
   Files: marketplace/aws/metering.go, marketplace/azure/metering.go,
@@ -1113,7 +1113,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     Token counts are non-zero.
   - go vet ./serve/ clean.
 
-- [ ] T108.15 Add SAML XXE protection and replay prevention (H1, H2)
+- [x] T108.15 Add SAML XXE protection and replay prevention (H1, H2) (2026-03-23)
   Owner: Security Eng  Est: 2h  verifies: [UC-003]
   Deps: T108.2
   Files: cloud/sso.go
@@ -1883,21 +1883,21 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T107.11 Run go test -race on all changed packages
 - [x] T107.12 Close GitHub issue #123
 
-#### Wave 41: E108 Critical Security Fixes (5 agents)
+#### Wave 41: E108 Critical Security Fixes (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.1 Fix streaming billing bypass (C1)
-- [ ] T108.2 Implement SAML signature verification (C2)
-- [ ] T108.3 Fix DP hardcoded seed + config validation (C4, H14, M9)
-- [ ] T108.4 Remove pprof from public health server (C5)
-- [ ] T108.5 Implement cloud responseCapture http.Flusher (H13)
+- [x] T108.1 Fix streaming billing bypass (C1)
+- [x] T108.2 Implement SAML signature verification (C2)
+- [x] T108.3 Fix DP hardcoded seed + config validation (C4, H14, M9)
+- [x] T108.4 Remove pprof from public health server (C5)
+- [x] T108.5 Implement cloud responseCapture http.Flusher (H13)
 
-#### Wave 42: E108 High Fixes -- Cloud and Billing (5 agents)
+#### Wave 42: E108 High Fixes -- Cloud and Billing (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.6 Pre-authorize token budget before request (H6, F2)
-- [ ] T108.7 Mandatory Azure webhook signature + replay protection (H8, M2, M14)
-- [ ] T108.8 Enable GKE private cluster + restrict OAuth scopes (H9, M15)
-- [ ] T108.9 Hash tenant API keys + O(1) lookup (H10, H15)
-- [ ] T108.10 Add marketplace metering retry with backoff (H11)
+- [x] T108.6 Pre-authorize token budget before request (H6, F2)
+- [x] T108.7 Mandatory Azure webhook signature + replay protection (H8, M2, M14)
+- [x] T108.8 Enable GKE private cluster + restrict OAuth scopes (H9, M15)
+- [x] T108.9 Hash tenant API keys + O(1) lookup (H10, H15)
+- [x] T108.10 Add marketplace metering retry with backoff (H11)
 
 #### Wave 43: E108 High Fixes -- Serve and Auth (5 agents)
 
@@ -1905,7 +1905,7 @@ Source: .claude/scratch/deep-review-report.md
 - [ ] T108.12 Warn/refuse startup without API key (H4)
 - [ ] T108.13 Fix ClientIP trusted proxy validation (H5)
 - [ ] T108.14 Fix batch path chat template formatting (H12, F1, F8)
-- [ ] T108.15 SAML XXE protection + replay prevention (H1, H2)
+- [x] T108.15 SAML XXE protection + replay prevention (H1, H2) (2026-03-23)
 
 #### Wave 44: E108 Medium Fixes -- Infrastructure (5 agents)
 
