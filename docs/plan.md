@@ -1535,6 +1535,33 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
 
 ---
 
+#### E111: Verification Remediation [2026 Q2]
+
+Full-system learning verification (2026-03-24) found 1 bug fixed inline,
+plus 2 gaps worth tracking. Source: .claude/scratch/verify-report.md
+
+- [x] T111.1 Fix SimpleRNN bias gradient never computed (2026-03-24)
+  Owner: ML Eng  Est: 15m  verifies: [UC-001]
+  Deps: none
+  Files: layers/recurrent/rnn.go
+  Result: Added r.bias.Backward() call in Backward(). All tests pass.
+
+- [ ] T111.2 Implement BatchNorm backward pass for training use
+  Owner: ML Eng  Est: 2h  verifies: [UC-016]
+  Deps: none
+  Files: layers/normalization/batch_norm.go
+  Acceptance:
+  - BatchNorm.Backward() computes gradients for scale, bias, and input.
+  - Gradient matches finite-difference within 1e-3 tolerance.
+  - Loss decreases after optimizer step with BatchNorm in the graph.
+  - go vet ./layers/normalization/ clean.
+
+- [ ] T111.3 Re-run /verify to confirm all gaps resolved
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T111.2
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -2182,6 +2209,12 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T110.6 Full timeseries test suite pass (74s, all pass, race clean, vet clean)
 
 E110 complete (all 6 tasks done).
+
+#### Wave 54: E111 Verification Remediation (completed 2026-03-24)
+
+- [x] T111.1 Fix SimpleRNN bias gradient never computed
+
+E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 ---
 
