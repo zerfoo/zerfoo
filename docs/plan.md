@@ -1426,6 +1426,115 @@ Source: .claude/scratch/deep-review-report.md (2026-03-24)
 
 ---
 
+#### E110: GitHub Issues #152-#156 Resolution [2026 Q2]
+
+Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
+(CfC engine config), 2 features (iTransformer, Mamba/SSM backend).
+
+##### Wave 51: Bug Fixes + API Gap (3 agents)
+
+- [ ] T110.1 Fix NHiTS segfault regression in linearForward (issue #152)
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/nhits.go, timeseries/nhits_test.go
+  Acceptance:
+  - Root cause: newNHiTSStack creates MLP layers with dimension mismatch when
+    inputLen is small relative to poolKernel (pooledLen rounds down to 0, producing
+    flatDim=0 which creates a 0-column weight matrix; linearForward then dereferences
+    the nil tensor from a 0-dim MatMul).
+  - Fix: in newNHiTSStack, clamp pooledLen to minimum of 1. Validate flatDim > 0
+    and return a clear error if configuration is incompatible.
+  - Add guard in linearForward: if weights.Shape()[1] == 0, return error.
+  - Regression test: NHiTS with inputLen=10, channels=10, 3 stacks, 20 epochs.
+    Must not panic. Training completes with finite loss.
+  - DGX validation: reproduce the exact command from #152 on linux/arm64.
+  - Close #152 with fix evidence.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestNHiTS pass.
+
+- [ ] T110.2 Implement FreTS backend with normalization and NaN protection (issue #153)
+  Owner: ML Eng  Est: 4h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/frets.go (new), timeseries/frets_test.go (new)
+  Acceptance:
+  - FreTS (Frequency-enhanced Time Series, ICML 2023) uses discrete Fourier
+    transform for channel and temporal mixing.
+  - Implement: NewFreTS(config FreTSConfig) with channels, inputLen, outputLen,
+    topK (number of frequency components), hiddenSize.
+  - Forward: real FFT -> select top-K frequencies -> channel mixing MLP ->
+    temporal mixing MLP -> inverse FFT -> linear projection to outputLen.
+  - TrainWindowed: normalizeWindows (store stats), warmupLR, NaN/Inf detection,
+    AdamW with gradient clipping. Match pattern of existing backends.
+  - PredictWindowed: apply stored normalization, forward, return predictions.
+  - Save/Load: JSON weights including normMeans/normStds.
+  - Tests: convergence on synthetic data, NaN protection on multi-scale data,
+    save/load round-trip.
+  - Close #153 with evidence.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestFreTS pass.
+
+- [ ] T110.3 Add WithEngine option to CfC constructor (issue #154)
+  Owner: ML Eng  Est: 30m  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/cfc.go, timeseries/cfc_engine.go
+  Acceptance:
+  - Add CfCOption type (functional options pattern matching DLinear).
+  - Add WithCfCEngine(engine, ops) CfCOption.
+  - Change NewCfC signature: NewCfC(config CfCConfig, opts ...CfCOption).
+  - Remove or deprecate SetEngine method.
+  - Test: NewCfC with WithCfCEngine, verify engine-accelerated TrainWindowed works.
+  - Close #154 with evidence.
+  - go vet ./timeseries/ clean.
+
+##### Wave 52: New Architectures (2 agents)
+
+- [ ] T110.4 Implement iTransformer backend (issue #155)
+  Owner: ML Eng  Est: 6h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/itransformer.go (new), timeseries/itransformer_test.go (new)
+  Acceptance:
+  - iTransformer (ICLR 2024): inverts attention axis -- each variate is a token,
+    attention across variates, FFN learns per-variate temporal patterns.
+  - Implement: NewITransformer(config, engine, ops) with nLayers, nHeads, dModel,
+    dFF, inputLen, outputLen, channels.
+  - Forward: embed each variate (linear inputLen -> dModel) -> transformer encoder
+    layers (self-attention over variates, FFN) -> linear projection to outputLen.
+  - TrainWindowed: normalizeWindows, warmupLR, NaN/Inf detection, graph.Backward()
+    for gradients (engine path), forwardF64 fallback (CPU path).
+  - PredictWindowed: apply stored normalization.
+  - Tests: convergence on multivariate synthetic data, multi-channel prediction.
+  - Close #155 with evidence.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestITransformer pass.
+
+- [ ] T110.5 Implement Mamba/SSM backend (issue #156)
+  Owner: ML Eng  Est: 6h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/mamba.go (new), timeseries/mamba_test.go (new)
+  Acceptance:
+  - Mamba (NeurIPS 2023): selective state space model with input-dependent
+    selection mechanism. O(L) complexity for long sequences.
+  - Implement: NewMamba(config, engine, ops) with dModel, dState, dConv,
+    expandFactor, nLayers, inputLen, outputLen, channels.
+  - Forward: linear expansion -> causal conv1d -> SSM (discretize, selective scan)
+    -> linear projection -> residual + norm -> output projection.
+  - SSM scan: A, B, C, D matrices. Selective: B and C are input-dependent via
+    linear projections. Discretize via zero-order hold.
+  - TrainWindowed: normalizeWindows, warmupLR, NaN/Inf detection, AdamW.
+  - PredictWindowed: apply stored normalization.
+  - Tests: convergence, long sequence (inputLen=512) does not OOM.
+  - Close #156 with evidence.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestMamba pass.
+
+##### Wave 53: Verification (1 agent)
+
+- [ ] T110.6 Run go test -race on timeseries and verify all issues closed
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T110.1-T110.5
+  Acceptance:
+  - go test -race -timeout 300s ./timeseries/ -- all pass.
+  - go vet ./... clean.
+  - Verify issues #152-#156 are closed on GitHub.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
