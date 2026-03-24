@@ -5,18 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
-
-// SetEngine configures an optional compute engine for GPU-accelerated training.
-// When set, TrainWindowed dispatches to the engine-based path. Pass nil to
-// revert to the pure-Go CPU path.
-func (c *CfC) SetEngine(engine compute.Engine[float32], ops numeric.Arithmetic[float32]) {
-	c.engine = engine
-	c.ops = ops
-}
 
 // trainWindowedEngine implements GPU-accelerated CfC training using float32
 // tensor operations via the compute.Engine. The forward/backward BPTT logic

@@ -112,6 +112,9 @@ func newNHiTSStack(inputLen, outputLen, channels, kernel, hiddenSize, nMLPLayers
 
 	pLen := pooledLen(inputLen, kernel)
 	flatDim := pLen * channels
+	if flatDim <= 0 {
+		return nhitsStack{}, fmt.Errorf("invalid flatDim=%d (pooledLen=%d, channels=%d, kernel=%d, inputLen=%d)", flatDim, pLen, channels, kernel, inputLen)
+	}
 
 	// Build MLP: flatDim -> hidden -> ... -> hidden.
 	layers := make([]mlpLayer, nMLPLayers)
@@ -253,6 +256,10 @@ func (m *NHiTS) stackForward(ctx context.Context, xData []float32, batch int, st
 func (m *NHiTS) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
 	if l.weights == nil || l.biases == nil {
 		return nil, fmt.Errorf("nhits: nil weight/bias in linear layer")
+	}
+	wShape := l.weights.Shape()
+	if len(wShape) < 2 || wShape[0] == 0 || wShape[1] == 0 {
+		return nil, fmt.Errorf("nhits: invalid weight shape %v in linear layer", wShape)
 	}
 	out, err := m.engine.MatMul(ctx, x, l.weights)
 	if err != nil {

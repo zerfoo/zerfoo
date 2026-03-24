@@ -55,8 +55,20 @@ type CfC struct {
 	normStds  [][]float64 // per-channel normalization stds from training
 }
 
+// CfCOption configures a CfC model.
+type CfCOption func(*CfC)
+
+// WithCfCEngine sets the compute engine and arithmetic ops for GPU-accelerated
+// training. When set, TrainWindowed dispatches to the engine-based path.
+func WithCfCEngine(engine compute.Engine[float32], ops numeric.Arithmetic[float32]) CfCOption {
+	return func(c *CfC) {
+		c.engine = engine
+		c.ops = ops
+	}
+}
+
 // NewCfC creates a new CfC model with the given configuration.
-func NewCfC(config CfCConfig) (*CfC, error) {
+func NewCfC(config CfCConfig, opts ...CfCOption) (*CfC, error) {
 	if config.InputSize <= 0 {
 		return nil, fmt.Errorf("cfc: InputSize must be positive, got %d", config.InputSize)
 	}
@@ -95,6 +107,10 @@ func NewCfC(config CfCConfig) (*CfC, error) {
 		}
 	}
 	c.outB = make([]float64, outDim)
+
+	for _, opt := range opts {
+		opt(c)
+	}
 
 	return c, nil
 }
