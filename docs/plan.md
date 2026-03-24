@@ -917,6 +917,398 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ---
 
+#### E108: Deep Review v1.11.1 Remediation [2026 Q2 -- CRITICAL]
+
+Deep review of v1.11.1 (5 agents, 350+ files, ~298K lines) found 5 Critical,
+15 High, 24 Medium, 11 Low findings. E106/E107 already addressed auth middleware,
+body size limits, TLS, rate limiting, error sanitization, security headers,
+request IDs, panic-to-error conversions, and inflight tracking. E108 covers the
+REMAINING findings: cloud billing bypass, SAML hardening, DP seed fix, pprof
+exposure, scope enforcement, batch template fix, marketplace retry, infra hardening.
+Source: .claude/scratch/deep-review-report.md (2026-03-23)
+
+##### Wave 41: Critical Security Fixes (5 agents)
+
+- [ ] T108.1 Fix streaming billing bypass in cloud billing middleware (C1)
+  Owner: Security Eng  Est: 3h  verifies: [UC-003]
+  Deps: none
+  Files: cloud/server.go, serve/cloud/billing.go, generate/session.go
+  Acceptance:
+  - Add a tokenCounter callback to generate/session.go that tracks actual
+    prompt_tokens and completion_tokens during generation (not from response body).
+  - Surface counts via context value or return struct from GenerateStream.
+  - In cloud/server.go billingMiddleware, read token counts from context instead
+    of parsing JSON response body. Works for both streaming and non-streaming.
+  - In serve/cloud/billing.go, same approach.
+  - Test: streaming request (stream:true) produces correct billing record.
+  - Test: non-streaming request still produces correct billing record.
+  - go vet ./cloud/ ./serve/cloud/ ./generate/ clean.
+
+- [ ] T108.2 Implement SAML XML signature verification (C2)
+  Owner: Security Eng  Est: 3h  verifies: [UC-003]
+  Deps: none
+  Files: cloud/sso.go, go.mod
+  Acceptance:
+  - In ValidateAssertion, verify the XML digital signature against the IdP
+    certificate stored in SAMLMetadata.Certificate using crypto/x509 and
+    encoding/xml. Use standard library only (no goxmldsig dependency).
+  - Parse the SignatureValue and DigestValue from the SAML Response XML.
+  - Verify the digest of the signed element matches DigestValue.
+  - Verify the signature over the SignedInfo using the IdP certificate.
+  - Remove the "In production" comment at line 179.
+  - Test: assertion with valid signature passes. Tampered assertion fails.
+    Assertion without signature fails.
+  - go vet ./cloud/ clean.
+
+- [ ] T108.3 Fix differential privacy hardcoded seed (C4)
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: federated/dp.go
+  Acceptance:
+  - Replace math/rand seeded with 42 with crypto/rand-seeded source.
+  - Use crypto/rand to generate 8 bytes, convert to int64 for rand.NewSource.
+  - Validate DPConfig: Epsilon > 0, 0 < Delta < 1, ClipNorm > 0.
+    Return error from NewDPStrategy if validation fails.
+  - Add upper bound check on privacy budget accumulation (H14, M9).
+  - Test: two NewDPStrategy calls produce different noise. Invalid config returns error.
+  - go vet ./federated/ clean. go test -race ./federated/ pass.
+
+- [ ] T108.4 Remove pprof from public health server (C5)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: health/server.go
+  Acceptance:
+  - Remove pprof handler registrations from Handler() method.
+  - Add optional EnablePprof bool field to health.Server config.
+  - When enabled, register pprof on a separate localhost-only mux.
+  - Test: GET /debug/pprof/ returns 404 on default health server.
+  - go vet ./health/ clean.
+
+- [ ] T108.5 Implement cloud responseCapture http.Flusher (H13)
+  Owner: Security Eng  Est: 1h  verifies: [UC-003]
+  Deps: none
+  Files: cloud/server.go
+  Acceptance:
+  - Add Flush() method to responseCapture that delegates to the wrapped
+    ResponseWriter if it implements http.Flusher.
+  - This unblocks SSE streaming through the cloud middleware chain.
+  - Test: streaming response through cloud middleware produces SSE chunks.
+  - go vet ./cloud/ clean.
+
+##### Wave 42: High Security Fixes -- Cloud and Billing (5 agents)
+
+- [ ] T108.6 Pre-authorize token budget before request execution (H6, F2)
+  Owner: Security Eng  Est: 2h  verifies: [UC-003]
+  Deps: T108.1
+  Files: cloud/server.go, cloud/tenant.go
+  Acceptance:
+  - In billingMiddleware, before calling next.ServeHTTP:
+    1. Parse request body to extract max_tokens (default to s.maxTokens).
+    2. Call tenant.ConsumeTokens(estimatedTokens). If false, return 429.
+    3. After response, reconcile actual vs estimated usage.
+  - Check ConsumeTokens return value (currently discarded at line 145-147).
+  - Test: tenant with exhausted budget receives 429 before inference runs.
+  - go vet ./cloud/ clean.
+
+- [ ] T108.7 Make Azure webhook signature validation mandatory (H8)
+  Owner: Security Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: marketplace/azure/webhook.go
+  Acceptance:
+  - When h.Secret is empty, return 500 "webhook secret not configured".
+  - Add io.LimitReader(r.Body, 1<<20) for 1 MB body limit (M2).
+  - Add timestamp validation: reject webhooks older than 5 minutes (M14).
+  - Add operation ID deduplication with sync.Map and 10-minute TTL.
+  - Test: empty secret returns 500. Expired timestamp returns 400.
+    Replayed operation ID returns 409.
+  - go vet ./marketplace/azure/ clean.
+
+- [ ] T108.8 Enable GKE private cluster and master authorized networks (H9)
+  Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: infra/terraform/zerfoo-cloud/main.tf
+  Acceptance:
+  - Add private_cluster_config block with enable_private_nodes = true,
+    master_ipv4_cidr_block = "172.16.0.0/28".
+  - Add master_authorized_networks_config restricted to VPC CIDR (10.0.0.0/20).
+  - Scope node OAuth scopes to devstorage.read_only, logging.write, monitoring (M15).
+  - Validate: terraform plan shows expected changes.
+
+- [ ] T108.9 Hash tenant API keys (H10)
+  Owner: Security Eng  Est: 2h  verifies: [UC-003]
+  Deps: none
+  Files: cloud/tenant.go
+  Acceptance:
+  - Store SHA-256 hash of API key in Tenant struct, not raw key.
+  - In TenantManager.Create, hash the key before storing.
+  - In GetByAPIKey, hash the input key and compare hashes.
+  - Keep constant-time comparison on the hashes (not raw keys).
+  - Use byAPIKey map keyed by hash for O(1) lookup (H15).
+  - Test: Tenant struct does not contain raw API key. Lookup by key works.
+  - go vet ./cloud/ clean.
+
+- [ ] T108.10 Add exponential backoff retry to marketplace metering (H11)
+  Owner: ML Eng  Est: 2h  verifies: [infrastructure]
+  Deps: none
+  Files: marketplace/aws/metering.go, marketplace/azure/metering.go,
+         marketplace/gcp/metering.go
+  Acceptance:
+  - Add retry helper: 3 attempts with exponential backoff (1s, 2s, 4s) + jitter.
+  - Wrap SubmitUsage calls in all three providers with retry.
+  - Log each retry attempt at warn level.
+  - If all retries fail, log at error level with full context.
+  - Test: mock server returning 429 then 200 succeeds on retry.
+  - go vet ./marketplace/... clean.
+
+##### Wave 43: High Security Fixes -- Serve and Auth (5 agents)
+
+- [ ] T108.11 Enforce scope-based authorization on endpoints (H3)
+  Owner: Security Eng  Est: 2h  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go, security/apikey.go
+  Acceptance:
+  - Wire KeyStore into Server via WithKeyStore(ks *security.KeyStore) option.
+  - In authMiddleware, after validating Bearer token, look up key in KeyStore.
+  - Add scope requirements: DELETE /v1/models requires ScopeAdmin.
+    POST /v1/* requires ScopeInference. GET /v1/models requires ScopeReadOnly.
+  - Return 403 Forbidden when scope is insufficient.
+  - When KeyStore is nil (static API key mode), skip scope checks.
+  - Test: inference key can POST but not DELETE. Admin key can do both.
+  - go vet ./serve/ clean.
+
+- [ ] T108.12 Warn or refuse startup when API key is empty (H4)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go, cmd/cli/serve.go
+  Acceptance:
+  - When neither --api-key flag nor ZERFOO_API_KEY env var is set, log a
+    WARN-level message: "serve: no API key configured, all endpoints are public".
+  - Add --allow-no-auth flag (default false). When false and no key is set,
+    refuse to start with error: "set --api-key, ZERFOO_API_KEY, or --allow-no-auth".
+  - Test: no key + no flag = error. No key + --allow-no-auth = warning + starts.
+  - go vet ./serve/ ./cmd/cli/ clean.
+
+- [ ] T108.13 Fix ClientIP to validate trusted proxies (H5)
+  Owner: Security Eng  Est: 1h  verifies: [UC-003]
+  Deps: none
+  Files: security/network.go
+  Acceptance:
+  - Add trustedProxies []string parameter to NewRateLimiter or separate config.
+  - In ClientIP, only trust X-Forwarded-For if RemoteAddr is in trustedProxies.
+  - When not behind a trusted proxy, always use RemoteAddr.
+  - Update serve/server.go to pass trusted proxy config to rate limiter.
+  - Test: X-Forwarded-For from untrusted IP is ignored.
+  - go vet ./security/ ./serve/ clean.
+
+- [ ] T108.14 Fix batch path chat template formatting (H12, F1, F8)
+  Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - In handleChatCompletions batch path (lines 611-622), replace raw message
+    concatenation with s.model.FormatMessages(messages) or equivalent method
+    that applies the model's chat template.
+  - Ensure batch results include accurate prompt_tokens and completion_tokens.
+  - Test: batched chat with system prompt produces correctly formatted input.
+    Token counts are non-zero.
+  - go vet ./serve/ clean.
+
+- [ ] T108.15 Add SAML XXE protection and replay prevention (H1, H2)
+  Owner: Security Eng  Est: 2h  verifies: [UC-003]
+  Deps: T108.2
+  Files: cloud/sso.go
+  Acceptance:
+  - In ParseSAMLMetadata and ValidateAssertion, reject input containing
+    "<!DOCTYPE" or "<!ENTITY" (XXE prevention).
+  - Validate NotBefore timestamp with 5-minute clock skew tolerance.
+  - Track assertion IDs in sync.Map with 10-minute TTL to prevent replay.
+  - Reject assertions with previously seen IDs.
+  - Test: input with DOCTYPE rejected. Replayed assertion ID rejected.
+    Assertion before NotBefore rejected.
+  - go vet ./cloud/ clean.
+
+##### Wave 44: Medium Fixes -- Infrastructure and Headers (5 agents)
+
+- [ ] T108.16 Add CSP, HSTS, Referrer-Policy to security headers (M12 remainder)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - In securityHeadersMiddleware, add:
+    Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+    Strict-Transport-Security: max-age=63072000; includeSubDomains
+    Referrer-Policy: no-referrer
+    Permissions-Policy: camera=(), microphone=(), geolocation=()
+  - Test: verify all 7 headers present on response.
+  - go vet ./serve/ clean.
+
+- [ ] T108.17 Add Vary: Origin to CORS middleware (M13)
+  Owner: Security Eng  Est: 15m  verifies: [infrastructure]
+  Deps: none
+  Files: security/network.go
+  Acceptance:
+  - In CORSPolicy.Middleware, set Vary: Origin header when origin matches.
+  - Test: response includes Vary: Origin when CORS headers are set.
+  - go vet ./security/ clean.
+
+- [ ] T108.18 Pin GitHub Actions to commit SHA (M18)
+  Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: .github/workflows/ci.yml, .github/workflows/release-please.yml,
+         .github/workflows/arm64-build.yml, .github/workflows/benchmark.yml
+  Acceptance:
+  - Replace all tag-based action references (actions/checkout@v4, etc.)
+    with SHA-pinned references. Add tag as comment for readability.
+  - Verify: all workflows still trigger correctly.
+
+- [ ] T108.19 Add NetworkPolicy to Helm chart (M16)
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: deploy/helm/zerfoo/templates/networkpolicy.yaml, deploy/helm/zerfoo/values.yaml
+  Acceptance:
+  - Create networkpolicy.yaml template gated by networkPolicy.enabled value.
+  - Restrict ingress to specified namespace (default: ingress-nginx).
+  - Add networkPolicy section to values.yaml (enabled: false by default).
+  - Verify: helm template renders correctly.
+
+- [ ] T108.20 Support API auth middleware + body size limits (C3, M1)
+  Owner: Security Eng  Est: 2h  verifies: [UC-003]
+  Deps: none
+  Files: support/api.go
+  Acceptance:
+  - Wrap all support routes with auth middleware requiring valid Bearer token.
+  - In each handler, verify authenticated tenant ID matches customer_id param.
+  - Add http.MaxBytesReader(w, r.Body, 1<<20) to POST handlers.
+  - Test: unauthenticated request returns 401. Request for another tenant's
+    tickets returns 403. Oversized body returns 413.
+  - go vet ./support/ clean.
+
+##### Wave 45: Medium Fixes -- Correctness and Performance (5 agents)
+
+- [ ] T108.21 Fix batch scheduler context coupling (M22)
+  Owner: ML Eng  Est: 1h  verifies: [UC-003]
+  Deps: none
+  Files: serve/batch.go
+  Acceptance:
+  - In executeBatch, use context.Background() or merged context from all live
+    requests instead of live[0].ctx for the batch handler call.
+  - Cancel merged context only when ALL live requests are canceled.
+  - Test: first request disconnect does not cancel remaining batch members.
+  - go vet ./serve/ clean.
+
+- [ ] T108.22 Make session pool size configurable (F5, M23)
+  Owner: ML Eng  Est: 1h  verifies: [UC-003]
+  Deps: none
+  Files: inference/load_gguf.go, inference/inference.go
+  Acceptance:
+  - Add WithSessionPoolSize(n int) LoadOption.
+  - Replace hardcoded 8 in make(chan ..., 8) with configurable value.
+  - Initialize session pool in assembleModel (M23 fix).
+  - Default: 16 sessions. Minimum: 1.
+  - Test: LoadFile with custom pool size creates pool of correct size.
+  - go vet ./inference/ clean.
+
+- [ ] T108.23 Fix isOOMError false positives (F4)
+  Owner: ML Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - Replace strings.Contains(msg, "cuda") with specific OOM patterns:
+    "out of memory", "CUDA_ERROR_OUT_OF_MEMORY", "CUBLAS_STATUS_ALLOC_FAILED".
+  - Test: "cuda driver version mismatch" returns 500 not 503.
+    "out of memory" returns 503.
+  - go vet ./serve/ clean.
+
+- [ ] T108.24 Fix checkStop O(n^2) decoding (A7)
+  Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-002]
+  Deps: none
+  Files: generate/generator.go
+  Acceptance:
+  - Maintain a running decoded string across decode steps.
+  - On each step, decode only the new token and append to the running string.
+  - Check stop strings against the running string instead of full re-decode.
+  - Test: generation with stop strings produces correct output.
+  - Benchmark: 4096-token generation with stop string is measurably faster.
+  - go vet ./generate/ clean.
+
+- [ ] T108.25 Add graceful shutdown timeout (L9)
+  Owner: ML Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: cmd/cli/serve.go
+  Acceptance:
+  - Replace context.Background() in shutdown with 30-second timeout context.
+  - Log warning if shutdown timeout expires.
+  - Test: verify shutdown completes within timeout.
+  - go vet ./cmd/cli/ clean.
+
+##### Wave 46: Low Fixes and Tech Debt (5 agents)
+
+- [ ] T108.26 Add streaming chunk OpenAI-required fields (A9)
+  Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - In streamChatCompletion and streamCompletion, add id, object, created,
+    model fields to each SSE chunk.
+  - Test: streaming response chunks include all required OpenAI fields.
+  - go vet ./serve/ clean.
+
+- [ ] T108.27 Validate temperature/TopP/TopK ranges (L1)
+  Owner: ML Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - Reject temperature < 0. Clamp TopP to [0, 1]. Reject TopK < 0.
+  - Return 400 with descriptive error for invalid values.
+  - Test: negative temperature returns 400. TopP=1.5 clamped to 1.0.
+  - go vet ./serve/ clean.
+
+- [ ] T108.28 Register healthz/readyz on main serve mux (A2)
+  Owner: ML Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - Register handleHealthz and handleReadyz on the main serve mux.
+  - handleHealthz returns 200 {"status":"ok"}.
+  - handleReadyz returns 200 if model loaded, 503 otherwise.
+  - Test: GET /healthz returns 200. GET /readyz returns 200 with loaded model.
+  - go vet ./serve/ clean.
+
+- [ ] T108.29 Remove prefix cache dead computation (F7)
+  Owner: ML Eng  Est: 15m  verifies: [infrastructure]
+  Deps: none
+  Files: generate/session.go
+  Acceptance:
+  - Remove unused seqLen computation at lines 133-136.
+  - go vet ./generate/ clean.
+
+- [ ] T108.30 Use UTC for billing timestamps (F11)
+  Owner: ML Eng  Est: 15m  verifies: [infrastructure]
+  Deps: none
+  Files: cloud/billing.go
+  Acceptance:
+  - Replace time.Now() with time.Now().UTC() in billing record creation.
+  - go vet ./cloud/ clean.
+
+##### Wave 47: Verification (2 agents)
+
+- [ ] T108.31 Run go test -race on all changed packages
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: T108.1-T108.30
+  Acceptance:
+  - go test -race -timeout 300s ./serve/ ./cloud/ ./serve/cloud/ ./generate/
+    ./inference/ ./security/ ./support/ ./federated/ ./health/ ./marketplace/...
+  - All tests pass with no races detected.
+
+- [ ] T108.32 Run go vet and linter on entire codebase
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T108.31
+  Acceptance:
+  - go vet ./... clean.
+  - golangci-lint run ./... clean (or only warnings in unmodified code).
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -1363,7 +1755,7 @@ Source: .claude/scratch/deep-review-report.md
 
 | Track | Description | Epic/Group IDs | Sync Points |
 |-------|-------------|----------------|-------------|
-| A | Security Remediation (ACTIVE) | E106 | Merge at Wave 37 lint pass |
+| A | Security Remediation (ACTIVE) | E106, E107, E108 | Merge at Wave 47 lint pass |
 | B | Community + DevRel | E4, E5, E11 | Merge at content published |
 | C | Backend Expansion | E8, E20 | Merge at ROCm parity |
 | D | Platform and Enterprise | E12-E19 | Merge at cloud GA |
@@ -1491,6 +1883,59 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T107.11 Run go test -race on all changed packages
 - [x] T107.12 Close GitHub issue #123
 
+#### Wave 41: E108 Critical Security Fixes (5 agents)
+
+- [ ] T108.1 Fix streaming billing bypass (C1)
+- [ ] T108.2 Implement SAML signature verification (C2)
+- [ ] T108.3 Fix DP hardcoded seed + config validation (C4, H14, M9)
+- [ ] T108.4 Remove pprof from public health server (C5)
+- [ ] T108.5 Implement cloud responseCapture http.Flusher (H13)
+
+#### Wave 42: E108 High Fixes -- Cloud and Billing (5 agents)
+
+- [ ] T108.6 Pre-authorize token budget before request (H6, F2)
+- [ ] T108.7 Mandatory Azure webhook signature + replay protection (H8, M2, M14)
+- [ ] T108.8 Enable GKE private cluster + restrict OAuth scopes (H9, M15)
+- [ ] T108.9 Hash tenant API keys + O(1) lookup (H10, H15)
+- [ ] T108.10 Add marketplace metering retry with backoff (H11)
+
+#### Wave 43: E108 High Fixes -- Serve and Auth (5 agents)
+
+- [ ] T108.11 Enforce scope-based authorization (H3)
+- [ ] T108.12 Warn/refuse startup without API key (H4)
+- [ ] T108.13 Fix ClientIP trusted proxy validation (H5)
+- [ ] T108.14 Fix batch path chat template formatting (H12, F1, F8)
+- [ ] T108.15 SAML XXE protection + replay prevention (H1, H2)
+
+#### Wave 44: E108 Medium Fixes -- Infrastructure (5 agents)
+
+- [ ] T108.16 Add CSP, HSTS, Referrer-Policy headers (M12)
+- [ ] T108.17 Add Vary: Origin to CORS middleware (M13)
+- [ ] T108.18 Pin GitHub Actions to commit SHA (M18)
+- [ ] T108.19 Add NetworkPolicy to Helm chart (M16)
+- [ ] T108.20 Support API auth + body size limits (C3, M1)
+
+#### Wave 45: E108 Medium Fixes -- Correctness (5 agents)
+
+- [ ] T108.21 Fix batch scheduler context coupling (M22)
+- [ ] T108.22 Make session pool size configurable (F5, M23)
+- [ ] T108.23 Fix isOOMError false positives (F4)
+- [ ] T108.24 Fix checkStop O(n^2) decoding (A7)
+- [ ] T108.25 Add graceful shutdown timeout (L9)
+
+#### Wave 46: E108 Low Fixes and Tech Debt (5 agents)
+
+- [ ] T108.26 Add streaming chunk OpenAI fields (A9)
+- [ ] T108.27 Validate temperature/TopP/TopK ranges (L1)
+- [ ] T108.28 Register healthz/readyz on main mux (A2)
+- [ ] T108.29 Remove prefix cache dead computation (F7)
+- [ ] T108.30 Use UTC for billing timestamps (F11)
+
+#### Wave 47: E108 Verification (2 agents)
+
+- [ ] T108.31 Run go test -race on all changed packages
+- [ ] T108.32 Run go vet and linter on entire codebase
+
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
 
@@ -1536,6 +1981,10 @@ See Hand-Off Notes.
 | R16 | Unauthenticated API server in production | Critical | High | E106 Wave 30 fixes this. Wire security/ middleware into serve.Server. See ADR-065. |
 | R17 | SSRF via vision image fetch exposes cloud metadata | High | Medium | E106 T106.4 adds private IP blocking and DNS resolution validation. |
 | R18 | Path traversal in model repository enables arbitrary file deletion | High | Medium | E106 T106.3 adds containment validation to FileSystemRepository. |
+| R19 | Streaming billing bypass allows unlimited free inference | Critical | High | E108 T108.1 instruments generation layer for token counting. |
+| R20 | SAML signature not verified allows auth bypass | Critical | High | E108 T108.2 adds XML signature verification. |
+| R21 | Pprof heap dumps expose API keys and tenant data | Critical | Medium | E108 T108.4 removes pprof from public health server. |
+| R22 | Cloud SSE streaming broken (responseCapture lacks Flusher) | High | High | E108 T108.5 adds http.Flusher delegation. |
 
 ---
 
@@ -1590,6 +2039,25 @@ See Hand-Off Notes.
 ---
 
 ## Progress Log
+
+### 2026-03-23: E108 created -- Deep review v1.11.1 remediation
+
+Full deep review of v1.11.1 (5 agents, 350+ files, ~298K lines) found 5 Critical,
+15 High, 24 Medium, 11 Low findings. Cross-referenced against E106 (37 tasks, all
+complete) and E107 (12 tasks, 10 complete). Created E108 with 32 tasks across 7
+waves (41-47) covering the REMAINING findings not addressed by E106/E107.
+
+Key new findings:
+- C1: Streaming responses completely bypass cloud billing (revenue-critical)
+- C2: SAML signature verification still missing (auth bypass)
+- C4: Federated DP uses hardcoded seed=42 (privacy guarantee defeated)
+- C5: pprof endpoints exposed without auth (secrets in heap dumps)
+- H6/F2: Token budget checked post-response, return value discarded
+- H13: Cloud responseCapture breaks SSE streaming (all cloud streaming returns 500)
+- H11: Zero retry logic in marketplace metering (revenue loss)
+- H3: Scope-based authorization exists but never enforced
+
+E107 T107.2 (reducesum panic) and T107.3 (rl/replay panics) still open.
 
 ### 2026-03-23: E107 created -- v1.11.0 review remediation + issue #123
 
@@ -1657,8 +2125,8 @@ Remaining 25 tasks blocked by hardware access or human actions.
 
 ### Current State (2026-03-23)
 
-- **Score:** 158/193 tasks complete (81.9%). E107 added 12 tasks.
-- **Active epic:** E107 (v1.11.0 remediation + issue #123, 12 tasks, 3 waves).
+- **Score:** 158/225 tasks complete (70.2%). E108 added 32 tasks.
+- **Active epics:** E107 (2 tasks remaining: T107.2, T107.3), E108 (32 tasks, 7 waves).
 - **Last completed:** E106 (security remediation, 37/37 tasks, v1.11.0 released).
 - **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
 - **Throughput:** 244 tok/s restored (E103 fixed two compounding regressions).
@@ -1678,7 +2146,8 @@ Remaining 25 tasks blocked by hardware access or human actions.
 | Apple M4 Max | T20.3 | Access M4 Max system |
 | Mobile devices | T29.4 | iOS + Android test devices |
 | Human action | T4.7, T5.4, T11.1, T11.4, T12.4 | Manual execution required |
-| v1.11.0 remediation | T107.1-T107.12 | Execute E107 waves 38-40 via /apply |
+| E107 remainder | T107.2, T107.3 | Execute remaining E107 tasks |
+| E108 remediation | T108.1-T108.32 | Execute E108 waves 41-47 via /apply |
 | SOC 2 Type II | T19.1 | Observation period completion |
 | Upstream deps | T26.2, T26.3, T30.1-T30.3, T31.1-T31.5, T32.2 | Sequential human milestones |
 
