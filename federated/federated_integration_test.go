@@ -229,7 +229,10 @@ func TestFederated_4ClientSimulation(t *testing.T) {
 			ClipNorm:  10.0,
 			Mechanism: "gaussian",
 		}
-		dpStrategy := NewDPStrategy(NewFedAvg(), dpConfig)
+		dpStrategy, err := NewDPStrategy(NewFedAvg(), dpConfig)
+		if err != nil {
+			t.Fatalf("NewDPStrategy: %v", err)
+		}
 
 		clients := []Client{
 			newConvergingClient("c0", 100, target, make([]float64, nWeights), 0.5),
@@ -293,7 +296,10 @@ func TestFederated_4ClientSimulation(t *testing.T) {
 			ClipNorm:  5.0,
 			Mechanism: "laplacian",
 		}
-		dpStrategy := NewDPStrategy(NewFedAvg(), dpConfig)
+		dpStrategy, err := NewDPStrategy(NewFedAvg(), dpConfig)
+		if err != nil {
+			t.Fatalf("NewDPStrategy: %v", err)
+		}
 		clients := []Client{
 			newConvergingClient("c0", 100, target, make([]float64, nWeights), 0.5),
 			newConvergingClient("c1", 200, target, make([]float64, nWeights), 0.5),
@@ -327,7 +333,10 @@ func TestFederated_4ClientSimulation(t *testing.T) {
 			ClipNorm:  10.0,
 			Mechanism: "gaussian",
 		}
-		dpStrategy := NewDPStrategy(NewFedAvg(), dpConfig)
+		dpStrategy, err := NewDPStrategy(NewFedAvg(), dpConfig)
+		if err != nil {
+			t.Fatalf("NewDPStrategy: %v", err)
+		}
 		clients := []Client{
 			newConvergingClient("c0", 100, target, make([]float64, nWeights), 0.5),
 			newConvergingClient("c1", 200, target, make([]float64, nWeights), 0.5),

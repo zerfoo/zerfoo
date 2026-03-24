@@ -1,9 +1,12 @@
 package federated
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
-	"math/rand"
+	mrand "math/rand"
 	"sync"
 )
 
@@ -19,24 +22,46 @@ type DPConfig struct {
 	Mechanism string
 }
 
+// MaxCumulativeEpsilon is the upper bound on cumulative privacy budget.
+// Aggregation fails once this threshold is reached.
+const MaxCumulativeEpsilon = 1000.0
+
 // DPStrategy wraps any Strategy and adds differential privacy noise to
 // aggregated weights. It clips each client update to ClipNorm before
 // delegating to the inner strategy, then adds calibrated noise.
 type DPStrategy struct {
 	inner      Strategy
 	config     DPConfig
-	rng        *rand.Rand
+	rng        *mrand.Rand
 	accountant *PrivacyAccountant
 }
 
 // NewDPStrategy creates a DPStrategy that wraps inner with the given DP config.
-func NewDPStrategy(inner Strategy, config DPConfig) *DPStrategy {
+// It returns an error if the config is invalid.
+func NewDPStrategy(inner Strategy, config DPConfig) (*DPStrategy, error) {
+	if config.Epsilon <= 0 {
+		return nil, fmt.Errorf("dp: Epsilon must be > 0, got %v", config.Epsilon)
+	}
+	if config.Delta <= 0 || config.Delta >= 1 {
+		return nil, fmt.Errorf("dp: Delta must be in (0, 1), got %v", config.Delta)
+	}
+	if config.ClipNorm <= 0 {
+		return nil, fmt.Errorf("dp: ClipNorm must be > 0, got %v", config.ClipNorm)
+	}
+
+	// Seed math/rand from crypto/rand for non-deterministic DP noise.
+	var seed [8]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		return nil, fmt.Errorf("dp: failed to read crypto/rand: %w", err)
+	}
+	s := int64(binary.LittleEndian.Uint64(seed[:]))
+
 	return &DPStrategy{
 		inner:      inner,
 		config:     config,
-		rng:        rand.New(rand.NewSource(42)),
+		rng:        mrand.New(mrand.NewSource(s)),
 		accountant: &PrivacyAccountant{},
-	}
+	}, nil
 }
 
 // Accountant returns the privacy accountant tracking cumulative budget.
@@ -84,8 +109,11 @@ func (d *DPStrategy) Aggregate(updates []ModelUpdate) (*AggregatedModel, error) 
 		return nil, errors.New("dp: unsupported mechanism: " + d.config.Mechanism)
 	}
 
-	// Account for privacy spent this round.
+	// Account for privacy spent this round and enforce upper bound.
 	d.accountant.addRound(d.config.Epsilon, d.config.Delta)
+	if eps, _ := d.accountant.Spent(); eps > MaxCumulativeEpsilon {
+		return nil, fmt.Errorf("dp: cumulative epsilon %v exceeds maximum %v", eps, MaxCumulativeEpsilon)
+	}
 
 	return agg, nil
 }
@@ -121,7 +149,7 @@ func clipL2(weights []float64, maxNorm float64) []float64 {
 }
 
 // laplaceSample draws from a Laplace(0, scale) distribution using inverse CDF.
-func laplaceSample(rng *rand.Rand, scale float64) float64 {
+func laplaceSample(rng *mrand.Rand, scale float64) float64 {
 	u := rng.Float64() - 0.5
 	if u < 0 {
 		return scale * math.Log(1+2*u)
