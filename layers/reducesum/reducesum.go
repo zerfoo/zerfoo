@@ -120,6 +120,9 @@ func (r *ReduceSum[T]) Backward(ctx context.Context, _ types.BackwardMode, outpu
 	// Build a map for quick axis lookup
 	axesMap := make(map[int]bool)
 	for _, ax := range r.axes {
+		if ax < 0 || ax >= len(inputShape) {
+			return nil, fmt.Errorf("reducesum: unsupported axis %d for backward (input has %d dimensions)", ax, len(inputShape))
+		}
 		axesMap[ax] = true
 	}
 
