@@ -932,7 +932,7 @@ Source: .claude/scratch/deep-review-report.md
 
 ##### Wave 32: High Security Fixes -- Inference and Registry (5 agents)
 
-- [ ] T106.11 Convert panics to error returns in layers/core/
+- [x] T106.11 Convert panics to error returns in layers/core/
   Owner: ML Eng  Est: 2h  verifies: [UC-001, UC-002]
   Deps: none
   Files: layers/core/dense.go, cast.go, matmul.go, mul.go, sub.go, concat.go,
@@ -944,7 +944,7 @@ Source: .claude/scratch/deep-review-report.md
   - All existing tests still pass.
   - go vet ./layers/core/ clean.
 
-- [ ] T106.12 Convert panics to error returns in layers/attention/
+- [x] T106.12 Convert panics to error returns in layers/attention/
   Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-002]
   Deps: none
   Files: layers/attention/attention_head.go
@@ -963,7 +963,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test: batch of 100 prompts runs with only 8 concurrent goroutines.
   - go vet ./inference/ clean.
 
-- [ ] T106.14 Add SHA-256 checksum verification to HuggingFace downloads
+- [x] T106.14 Add SHA-256 checksum verification to HuggingFace downloads
   Owner: ML Eng  Est: 2h  verifies: [UC-005]
   Deps: none
   Files: registry/pull.go
@@ -1183,7 +1183,7 @@ Source: .claude/scratch/deep-review-report.md
   - Test passes reliably: go test -count=5 -run TestMAML_MetaConvergence ./meta/
   - go vet ./meta/ clean.
 
-- [ ] T106.34 Redact tenant API keys from Config()/List() responses
+- [x] T106.34 Redact tenant API keys from Config()/List() responses
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: cloud/tenant.go
@@ -1214,7 +1214,7 @@ Source: .claude/scratch/deep-review-report.md
     ./meta/ ./inference/timeseries/
   - All tests pass with no races detected.
 
-- [ ] T106.37 Run go vet and linter on entire codebase
+- [x] T106.37 Run go vet and linter on entire codebase
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T106.36
   Acceptance:
