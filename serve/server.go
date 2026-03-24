@@ -396,7 +396,8 @@ func isOOMError(err error) bool {
 	return strings.Contains(msg, "out of memory") ||
 		strings.Contains(msg, "oom") ||
 		strings.Contains(msg, "cannot allocate") ||
-		strings.Contains(msg, "cuda")
+		strings.Contains(msg, "cuda_error_out_of_memory") ||
+		strings.Contains(msg, "cublas_status_alloc_failed")
 }
 
 // inferenceErrorStatus returns the appropriate HTTP status code for an inference error.

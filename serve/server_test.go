@@ -1435,6 +1435,9 @@ func TestIsOOMError(t *testing.T) {
 		{"CUDA out of memory: tried to allocate 2.00 GiB", true},
 		{"OOM killed", true},
 		{"cannot allocate memory", true},
+		{"CUDA_ERROR_OUT_OF_MEMORY", true},
+		{"CUBLAS_STATUS_ALLOC_FAILED", true},
+		{"cuda driver version mismatch", false},
 		{"forward error", false},
 		{"invalid request body", false},
 	}
