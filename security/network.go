@@ -12,11 +12,12 @@ import (
 
 // RateLimiter implements a token-bucket rate limiter keyed by client IP.
 type RateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*bucket
-	rate     float64 // tokens per second
-	burst    int     // maximum tokens
-	cleanTTL time.Duration
+	mu             sync.Mutex
+	buckets        map[string]*bucket
+	rate           float64 // tokens per second
+	burst          int     // maximum tokens
+	cleanTTL       time.Duration
+	trustedProxies map[string]bool // IPs allowed to set X-Forwarded-For / X-Real-IP
 }
 
 type bucket struct {
@@ -33,6 +34,38 @@ func NewRateLimiter(rate float64, burst int) *RateLimiter {
 		burst:    burst,
 		cleanTTL: 10 * time.Minute,
 	}
+}
+
+// SetTrustedProxies configures the set of proxy IPs whose
+// X-Forwarded-For and X-Real-IP headers are trusted. When empty,
+// forwarding headers are never trusted and ClientIPFromRequest always
+// returns RemoteAddr.
+func (rl *RateLimiter) SetTrustedProxies(proxies []string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if len(proxies) == 0 {
+		rl.trustedProxies = nil
+		return
+	}
+	m := make(map[string]bool, len(proxies))
+	for _, p := range proxies {
+		m[p] = true
+	}
+	rl.trustedProxies = m
+}
+
+// TrustedProxies returns a copy of the current trusted proxy set.
+func (rl *RateLimiter) TrustedProxies() map[string]bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if rl.trustedProxies == nil {
+		return nil
+	}
+	cp := make(map[string]bool, len(rl.trustedProxies))
+	for k, v := range rl.trustedProxies {
+		cp[k] = v
+	}
+	return cp
 }
 
 // Allow reports whether a request from the given IP should be allowed.
@@ -164,17 +197,38 @@ func (p *CORSPolicy) Middleware(next http.Handler) http.Handler {
 
 // ClientIP extracts the client IP from a request, checking X-Forwarded-For
 // and X-Real-IP headers before falling back to RemoteAddr.
+//
+// Deprecated: ClientIP trusts forwarding headers from any source. Use
+// ClientIPTrusted with an explicit set of trusted proxy IPs instead.
 func ClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.SplitN(xff, ",", 2)
-		ip := strings.TrimSpace(parts[0])
-		if ip != "" {
-			return ip
+	return ClientIPTrusted(r, nil)
+}
+
+// ClientIPTrusted extracts the client IP from a request. Forwarding headers
+// (X-Forwarded-For, X-Real-IP) are only honoured when RemoteAddr is in
+// trustedProxies. When trustedProxies is nil or RemoteAddr is not listed,
+// the function returns the IP from RemoteAddr directly.
+func ClientIPTrusted(r *http.Request, trustedProxies map[string]bool) string {
+	remoteIP := remoteAddrIP(r)
+
+	if len(trustedProxies) > 0 && trustedProxies[remoteIP] {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.SplitN(xff, ",", 2)
+			ip := strings.TrimSpace(parts[0])
+			if ip != "" {
+				return ip
+			}
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
 		}
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
+
+	return remoteIP
+}
+
+// remoteAddrIP extracts the IP portion from r.RemoteAddr.
+func remoteAddrIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
