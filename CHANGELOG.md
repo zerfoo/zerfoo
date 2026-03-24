@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1](https://github.com/zerfoo/zerfoo/compare/v1.11.0...v1.11.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* **layers:** convert panic to error in reducesum Backward (T107.2) ([3bed57d](https://github.com/zerfoo/zerfoo/commit/3bed57d79640ccd5041e21958ee8a8eddeffc010))
+* **rl:** convert panic to error returns in replay buffer (T107.3) ([55c4bef](https://github.com/zerfoo/zerfoo/commit/55c4bef5f9f118ec2cca86b9a918f5e617f1352a))
+* **security:** complete Wave 38 -- T107.1-T107.5 (E107) ([fd3f8b7](https://github.com/zerfoo/zerfoo/commit/fd3f8b773ba926e80d8f70f1e10e22fef85d6cb1))
+* **security:** complete Wave 39 -- T107.6-T107.10 (E107) ([8148776](https://github.com/zerfoo/zerfoo/commit/81487767c166463fd1763c457f45d5c8bfece881))
+* **serve:** add body limit, error sanitization, inflight tracking to handleClassify (T107.1) ([273bd07](https://github.com/zerfoo/zerfoo/commit/273bd077f15f41c5f8ff84fa02654569d1bcffc0))
+* **serve:** add inflight tracking to handleEmbeddings (T107.7) ([87424ee](https://github.com/zerfoo/zerfoo/commit/87424ee6cd926d4e68531b58fa77b9cf8a889d52))
+* **serve:** use connect-time IP validation to prevent DNS rebinding SSRF (T107.5) ([0777bab](https://github.com/zerfoo/zerfoo/commit/0777babb48e5351e4c8bfdc3742dab5e22053545))
+* **support:** use slices.SortFunc for ListByCustomer ordering (T107.6) ([6d2847b](https://github.com/zerfoo/zerfoo/commit/6d2847b60d38a743b3d766ae0a5f79523087de85))
+* **timeseries:** fix NHiTS nil pointer in linearForward with high-channel data (T107.4, closes [#123](https://github.com/zerfoo/zerfoo/issues/123)) ([4578098](https://github.com/zerfoo/zerfoo/commit/45780985e69cf50b0ba87e957910a543de928e0b))
+
 ## [1.11.0](https://github.com/zerfoo/zerfoo/compare/v1.10.0...v1.11.0) (2026-03-21)
 
 
