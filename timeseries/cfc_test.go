@@ -131,28 +131,32 @@ func TestCfC_GradientVerification(t *testing.T) {
 
 	input := [][]float64{{0.5, -0.3}, {0.2, 0.7}, {-0.1, 0.4}}
 	eps := 1e-5
+	outDim := config.OutputSize * config.OutputLen
 
-	// Compute analytical gradients.
-	analyticalGrads, pred := m.backwardSample(input)
+	// Compute analytical gradients using vector-Jacobian product.
+	// Use unit upstream gradient for each output to recover full Jacobian row.
+	pred := m.forward(input)
 
-	// Check each parameter with finite differences.
 	maxErr := 0.0
 	nChecked := 0
-	for pi, p := range params {
-		orig := *p
+	for oi := 0; oi < outDim; oi++ {
+		dLoss := make([]float64, outDim)
+		dLoss[oi] = 1.0
+		analytical := m.backwardSample(input, dLoss)
 
-		*p = orig + eps
-		outPlus := m.forward(input)
-		*p = orig - eps
-		outMinus := m.forward(input)
-		*p = orig
+		for pi, p := range params {
+			orig := *p
 
-		for oi := 0; oi < len(pred); oi++ {
+			*p = orig + eps
+			outPlus := m.forward(input)
+			*p = orig - eps
+			outMinus := m.forward(input)
+			*p = orig
+
 			numerical := (outPlus[oi] - outMinus[oi]) / (2 * eps)
-			analytical := analyticalGrads[oi][pi]
 
-			absDiff := math.Abs(numerical - analytical)
-			denom := math.Max(math.Abs(numerical)+math.Abs(analytical), 1e-8)
+			absDiff := math.Abs(numerical - analytical[pi])
+			denom := math.Max(math.Abs(numerical)+math.Abs(analytical[pi]), 1e-8)
 			relErr := absDiff / denom
 
 			if relErr > maxErr {
@@ -162,11 +166,12 @@ func TestCfC_GradientVerification(t *testing.T) {
 
 			if relErr > 1e-3 && absDiff > 1e-6 {
 				t.Errorf("param %d, output %d: analytical=%v, numerical=%v, relErr=%v",
-					pi, oi, analytical, numerical, relErr)
+					pi, oi, analytical[pi], numerical, relErr)
 			}
 		}
 	}
 
+	_ = pred
 	t.Logf("gradient check: %d comparisons, max relative error = %.2e", nChecked, maxErr)
 }
 
