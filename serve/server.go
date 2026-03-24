@@ -44,6 +44,7 @@ type Server struct {
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
 	apiKey      string          // optional; enables Bearer token auth
+	keyStore    *security.KeyStore   // optional; enables scope-based authorization
 	rateLimiter *security.RateLimiter // optional; enables per-IP rate limiting
 	maxTokens   int             // server-side upper bound for max_tokens (default 8192)
 }
@@ -116,6 +117,28 @@ func WithRateLimiter(rl *security.RateLimiter) ServerOption {
 	}
 }
 
+// WithTrustedProxies configures the set of reverse-proxy IPs whose
+// X-Forwarded-For and X-Real-IP headers are trusted for client-IP
+// extraction. When the rate limiter is enabled, only requests arriving
+// from these addresses will have their forwarding headers honoured;
+// all other requests use RemoteAddr directly.
+func WithTrustedProxies(proxies []string) ServerOption {
+	return func(s *Server) {
+		if s.rateLimiter != nil {
+			s.rateLimiter.SetTrustedProxies(proxies)
+		}
+	}
+}
+
+// WithKeyStore enables scope-based authorization using the provided KeyStore.
+// When set, after Bearer token validation the middleware looks up the key in the
+// store and checks that it has a sufficient scope for the endpoint.
+func WithKeyStore(ks *security.KeyStore) ServerOption {
+	return func(s *Server) {
+		s.keyStore = ks
+	}
+}
+
 // GPUs returns the configured GPU IDs, or nil if not set.
 func (s *Server) GPUs() []int {
 	return s.gpus
@@ -171,7 +194,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 // Handler returns the HTTP handler for this server.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
-	if s.apiKey != "" {
+	if s.apiKey != "" || s.keyStore != nil {
 		h = s.authMiddleware(h)
 	}
 	if s.rateLimiter != nil {
@@ -243,6 +266,29 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		token := auth[len(prefix):]
+
+		// When a KeyStore is configured, validate against it and enforce scopes.
+		if s.keyStore != nil {
+			key := s.keyStore.Lookup(token)
+			if key == nil {
+				writeError(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			if !key.Valid(time.Now()) {
+				writeError(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			if required := requiredScope(r.Method, r.URL.Path); required != "" {
+				if !key.HasScope(required) {
+					writeError(w, http.StatusForbidden, "insufficient scope")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Static API key mode — no scope checks.
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid API key")
 			return
@@ -251,11 +297,27 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requiredScope returns the minimum scope required for the given HTTP method and path.
+// DELETE /v1/models requires ScopeAdmin. POST /v1/* requires ScopeInference.
+// GET /v1/models requires ScopeReadOnly. Returns empty string if no scope is required.
+func requiredScope(method, path string) security.Scope {
+	if method == http.MethodDelete && strings.HasPrefix(path, "/v1/models") {
+		return security.ScopeAdmin
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/") {
+		return security.ScopeInference
+	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/v1/models") {
+		return security.ScopeReadOnly
+	}
+	return ""
+}
+
 // rateLimitMiddleware rejects requests that exceed the configured rate limit
 // for the client IP. Returns 429 Too Many Requests when the limit is exceeded.
 func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := security.ClientIP(r)
+		ip := security.ClientIPTrusted(r, s.rateLimiter.TrustedProxies())
 		if !s.rateLimiter.Allow(ip) {
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return

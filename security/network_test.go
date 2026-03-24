@@ -152,6 +152,8 @@ func TestCORSWildcard(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
+	// ClientIP passes nil trustedProxies, so forwarding headers are never
+	// trusted — it always returns RemoteAddr.
 	tests := []struct {
 		name       string
 		xff        string
@@ -159,8 +161,8 @@ func TestClientIP(t *testing.T) {
 		remoteAddr string
 		want       string
 	}{
-		{"XFF first", "1.1.1.1, 2.2.2.2", "", "3.3.3.3:8080", "1.1.1.1"},
-		{"XRI", "", "4.4.4.4", "3.3.3.3:8080", "4.4.4.4"},
+		{"XFF ignored without trusted proxies", "1.1.1.1, 2.2.2.2", "", "3.3.3.3:8080", "3.3.3.3"},
+		{"XRI ignored without trusted proxies", "", "4.4.4.4", "3.3.3.3:8080", "3.3.3.3"},
 		{"RemoteAddr", "", "", "5.5.5.5:9090", "5.5.5.5"},
 		{"RemoteAddr no port", "", "", "6.6.6.6", "6.6.6.6"},
 	}
@@ -178,6 +180,102 @@ func TestClientIP(t *testing.T) {
 				t.Fatalf("ClientIP() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClientIPTrusted(t *testing.T) {
+	tests := []struct {
+		name           string
+		xff            string
+		xri            string
+		remoteAddr     string
+		trustedProxies map[string]bool
+		want           string
+	}{
+		{
+			name:           "XFF trusted proxy",
+			xff:            "1.1.1.1, 2.2.2.2",
+			remoteAddr:     "10.0.0.1:8080",
+			trustedProxies: map[string]bool{"10.0.0.1": true},
+			want:           "1.1.1.1",
+		},
+		{
+			name:           "XFF untrusted proxy ignored",
+			xff:            "1.1.1.1, 2.2.2.2",
+			remoteAddr:     "9.9.9.9:8080",
+			trustedProxies: map[string]bool{"10.0.0.1": true},
+			want:           "9.9.9.9",
+		},
+		{
+			name:           "XRI trusted proxy",
+			xri:            "4.4.4.4",
+			remoteAddr:     "10.0.0.1:8080",
+			trustedProxies: map[string]bool{"10.0.0.1": true},
+			want:           "4.4.4.4",
+		},
+		{
+			name:           "XRI untrusted proxy ignored",
+			xri:            "4.4.4.4",
+			remoteAddr:     "9.9.9.9:8080",
+			trustedProxies: map[string]bool{"10.0.0.1": true},
+			want:           "9.9.9.9",
+		},
+		{
+			name:           "nil trusted proxies ignores headers",
+			xff:            "1.1.1.1",
+			remoteAddr:     "3.3.3.3:8080",
+			trustedProxies: nil,
+			want:           "3.3.3.3",
+		},
+		{
+			name:           "empty trusted proxies ignores headers",
+			xff:            "1.1.1.1",
+			remoteAddr:     "3.3.3.3:8080",
+			trustedProxies: map[string]bool{},
+			want:           "3.3.3.3",
+		},
+		{
+			name:           "no headers returns RemoteAddr",
+			remoteAddr:     "5.5.5.5:9090",
+			trustedProxies: map[string]bool{"5.5.5.5": true},
+			want:           "5.5.5.5",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.xff != "" {
+				req.Header.Set("X-Forwarded-For", tt.xff)
+			}
+			if tt.xri != "" {
+				req.Header.Set("X-Real-IP", tt.xri)
+			}
+			if got := ClientIPTrusted(req, tt.trustedProxies); got != tt.want {
+				t.Fatalf("ClientIPTrusted() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRateLimiterSetTrustedProxies(t *testing.T) {
+	rl := NewRateLimiter(10, 5)
+
+	// Initially nil.
+	if tp := rl.TrustedProxies(); tp != nil {
+		t.Fatalf("expected nil trusted proxies, got %v", tp)
+	}
+
+	rl.SetTrustedProxies([]string{"10.0.0.1", "10.0.0.2"})
+	tp := rl.TrustedProxies()
+	if len(tp) != 2 || !tp["10.0.0.1"] || !tp["10.0.0.2"] {
+		t.Fatalf("unexpected trusted proxies: %v", tp)
+	}
+
+	// Clear.
+	rl.SetTrustedProxies(nil)
+	if tp := rl.TrustedProxies(); tp != nil {
+		t.Fatalf("expected nil after clear, got %v", tp)
 	}
 }
 
