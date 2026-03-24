@@ -8,6 +8,9 @@ import (
 	"math/rand/v2"
 	"os"
 	"sort"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // FreTSConfig holds the configuration for a FreTS model.
@@ -46,12 +49,27 @@ type FreTS struct {
 	outW []float64 // [channels * outputLen * inputLen]
 	outB []float64 // [channels * outputLen]
 
+	engine compute.Engine[float32]        // optional; enables GPU-accelerated training
+	ops    numeric.Arithmetic[float32]     // arithmetic ops for engine path
+
 	normMeans [][]float64 // per-channel normalization means from training
 	normStds  [][]float64 // per-channel normalization stds from training
 }
 
+// FreTSOption configures a FreTS model.
+type FreTSOption func(*FreTS)
+
+// WithFreTSEngine sets the compute engine for GPU-accelerated training.
+// When nil (the default), FreTS uses the pure-Go CPU training path.
+func WithFreTSEngine(engine compute.Engine[float32], ops numeric.Arithmetic[float32]) FreTSOption {
+	return func(f *FreTS) {
+		f.engine = engine
+		f.ops = ops
+	}
+}
+
 // NewFreTS creates a new FreTS model with the given configuration.
-func NewFreTS(config FreTSConfig) (*FreTS, error) {
+func NewFreTS(config FreTSConfig, opts ...FreTSOption) (*FreTS, error) {
 	if config.Channels <= 0 {
 		return nil, fmt.Errorf("frets: Channels must be positive, got %d", config.Channels)
 	}
@@ -92,6 +110,10 @@ func NewFreTS(config FreTSConfig) (*FreTS, error) {
 	outScale := math.Sqrt(2.0 / float64(config.InputLen+config.OutputLen))
 	f.outW = randNormSlice(config.Channels*config.OutputLen*config.InputLen, outScale)
 	f.outB = make([]float64, config.Channels*config.OutputLen)
+
+	for _, opt := range opts {
+		opt(f)
+	}
 
 	return f, nil
 }
@@ -667,6 +689,10 @@ func (f *FreTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 				return nil, fmt.Errorf("frets: window %d channel %d has length %d, expected %d", i, c, len(ch), f.config.InputLen)
 			}
 		}
+	}
+
+	if f.engine != nil {
+		return f.trainWindowedEngine(windows, labels, config)
 	}
 
 	if config.Epochs <= 0 {

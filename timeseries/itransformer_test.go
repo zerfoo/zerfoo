@@ -87,7 +87,7 @@ func TestNewITransformer_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewITransformer(tt.config)
+			_, err := NewITransformer(tt.config, nil, nil)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -109,7 +109,7 @@ func TestITransformer_Convergence(t *testing.T) {
 		NLayers:   1,
 	}
 
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestITransformer_MultiChannel(t *testing.T) {
 		NLayers:   1,
 	}
 
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestITransformer_SaveLoad(t *testing.T) {
 		NLayers:   1,
 	}
 
-	m1, err := NewITransformer(config)
+	m1, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestITransformer_SaveLoad(t *testing.T) {
 	}
 
 	// Load into new model and predict.
-	m2, err := NewITransformer(config)
+	m2, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestITransformer_SingleChannel(t *testing.T) {
 		NLayers:   1,
 	}
 
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestITransformer_TrainWindowed_Empty(t *testing.T) {
 		Channels: 2, InputLen: 8, OutputLen: 4,
 		DModel: 8, DFF: 16, NHeads: 2, NLayers: 1,
 	}
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestITransformer_PredictWindowed_Empty(t *testing.T) {
 		Channels: 2, InputLen: 8, OutputLen: 4,
 		DModel: 8, DFF: 16, NHeads: 2, NLayers: 1,
 	}
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestITransformer_GradientCheck(t *testing.T) {
 		NLayers:   1,
 	}
 
-	m, err := NewITransformer(config)
+	m, err := NewITransformer(config, nil, nil)
 	if err != nil {
 		t.Fatalf("NewITransformer: %v", err)
 	}

@@ -107,7 +107,7 @@ func TestAllBackends_CPUTrainingBenchmark(t *testing.T) {
 				m, err := NewITransformer(ITransformerConfig{
 					Channels: channels, InputLen: inputLen, OutputLen: outputLen,
 					DModel: 16, DFF: 32, NHeads: 2, NLayers: 1,
-				})
+				}, nil, nil)
 				if err != nil {
 					return nil, err
 				}
