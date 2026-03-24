@@ -1562,6 +1562,119 @@ plus 2 gaps worth tracking. Source: .claude/scratch/verify-report.md
 
 ---
 
+#### E112: CPU Training Performance -- Issue #157 [2026 Q2 -- CRITICAL]
+
+GitHub issue #157: ALL timeseries backends time out (>300s) on 1K rows x 5 features
+x 5 epochs when using the CPU (pure-Go) training path. Target: <1 second.
+
+Root cause (3 researchers, code-level audit):
+- ITransformer (~17K params): forward finite differences at lines 416-430. Each
+  gradient step does nParams+1 forward passes over the entire batch. Estimated
+  381 BILLION ops per epoch. This is the primary offender (~300-1900s alone).
+- PatchTST (~15K params): central finite differences in BOTH CPU path
+  (patchtst_engine.go:248-265) AND engine path (patchtst_engine.go:133-158).
+  2*nParams forward passes per sample. The engine path is equally broken.
+- CfC (~6.8K params): full Jacobian [outDim][nParams] via backwardSample (line 362).
+  5x slower than necessary (outDim=5). ~290KB transient allocs per sample.
+
+Already fast (proper analytical backprop): DLinear (110 params), NHiTS, FreTS (351 params).
+Mamba uses graph.Backward (engine-only, no CPU fallback but CPUEngine works without GPU).
+
+Secondary issues across all backends: flatParams() alloc per batch, math.Pow per
+parameter per batch, double decompose() in DLinear, no batch parallelism.
+
+Decision rationale: docs/adr/066-cpu-training-backprop.md
+
+##### Wave 55: Analytical Backprop for Slow Backends (4 agents)
+
+- [ ] T112.1 Replace ITransformer finite-difference gradients with analytical backprop
+  Owner: ML Eng  Est: 4h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/itransformer.go
+  Acceptance:
+  - Remove the forward finite-difference loop at lines 416-430 (the for-each-parameter
+    forward-pass perturbation).
+  - Implement backwardSample(input, pred, labels, config) that computes gradients via
+    chain rule through: output projection, layer norm, FFN (fc2 -> ReLU -> fc1),
+    multi-head self-attention (Q/K/V projections, softmax, output projection),
+    layer norm, variate embedding.
+  - Each layer's backward follows the pattern: dOutput -> dWeight += input^T @ dOutput,
+    dBias += sum(dOutput, axis=0), dInput = dOutput @ weight^T.
+  - Attention backward: dSoftmax -> mask -> dScores, then dQ/dK/dV via projections.
+  - Finite-difference gradient test: for 10 random parameters, verify analytical gradient
+    matches (f(x+eps) - f(x-eps)) / 2eps within 1e-4 relative tolerance.
+  - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestITransformer pass.
+
+- [ ] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths)
+  Owner: ML Eng  Est: 5h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/patchtst_engine.go
+  Acceptance:
+  - Remove the central finite-difference loop in trainWindowedCPU (lines 248-265).
+  - ALSO remove the finite-difference loop in trainWindowedEngine (lines 133-158) --
+    the engine path is equally broken (uses numerical gradients despite having an engine).
+  - Implement backward pass through: output head (linear), transformer encoder layers
+    (layer norm, multi-head attention, FFN), positional embedding addition, patch
+    embedding (linear). Reuse the forward cache (activations stored during forward).
+  - For the engine path, express backward ops as engine tensor ops (MatMul backward,
+    etc.) following the NHiTS stackBackwardEngine pattern.
+  - For the CPU path, use raw slice loops matching the FreTS backward() pattern.
+  - Finite-difference gradient test: for 10 random parameters, verify analytical gradient
+    matches (f(x+eps) - f(x-eps)) / 2eps within 1e-4 relative tolerance.
+  - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestPatchTST pass.
+
+- [ ] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian)
+  Owner: ML Eng  Est: 3h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/cfc.go
+  Acceptance:
+  - Change backwardSample signature from returning [][]float64 (Jacobian) to accepting
+    dLoss/dOutput []float64 upstream gradient and returning single []float64 gradient.
+  - Propagate dLoss/dOutput through: output projection backward, then BPTT through CfC
+    layers (reverse time steps): dH -> (1-f)*dtanh*(W_h^T @ dH) + f*dH_prev, where
+    f = exp(-dt/tau).
+  - Update TrainWindowed caller (lines 298-312) to compute dLoss/dOutput = 2*diff/N
+    and pass it to backwardSample instead of post-multiplying Jacobian rows.
+  - Finite-difference gradient test: 10 random parameters within 1e-4 relative tolerance.
+  - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestCfC pass.
+
+- [ ] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil)
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/mamba.go
+  Acceptance:
+  - In TrainWindowed, if m.engine is nil, create a temporary CPUEngine:
+    engine := compute.NewCPUEngine[float32](numeric.Float32Ops{}).
+  - Use the engine-based training path (which already has proper graph.Backward).
+  - Do NOT store the temporary engine on the struct (avoid side effects).
+  - Benchmark: 100 samples x 5 channels x 10 epochs completes in <2s on CPU.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestMamba pass.
+
+##### Wave 56: Benchmarks and Verification (2 agents)
+
+- [ ] T112.5 Add CPU training benchmark test for all 7 backends
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: T112.1, T112.2, T112.3, T112.4
+  Files: timeseries/benchmark_cpu_test.go
+  Acceptance:
+  - New test TestAllBackends_CPUTrainingBenchmark that trains each backend on
+    1000 samples x 5 channels x 5 epochs and asserts completion in <10s total.
+  - Report per-backend timing: samples/sec and total wall time.
+  - Assert no NaN/Inf in final loss.
+  - go test -tags tabular -run TestAllBackends_CPUTrainingBenchmark -timeout 30s ./timeseries/
+
+- [ ] T112.6 Close GitHub issue #157 with fix evidence
+  Owner: ML Eng  Est: 15m  delivers: [issue #157 closed with perf fix]
+  Deps: T112.5
+  Acceptance:
+  - Post comment on #157 citing fix commits, per-backend speedup, and benchmark results.
+  - Close the issue.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -2215,6 +2328,18 @@ E110 complete (all 6 tasks done).
 - [x] T111.1 Fix SimpleRNN bias gradient never computed
 
 E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
+
+#### Wave 55: E112 Analytical Backprop (4 agents)
+
+- [ ] T112.1 Replace ITransformer finite-difference gradients with analytical backprop
+- [ ] T112.2 Replace PatchTST finite-difference gradients with analytical backprop (BOTH paths)
+- [ ] T112.3 Refactor CfC backwardSample to return single gradient vector (not Jacobian)
+- [ ] T112.4 Add CPU fallback for Mamba training (auto-create CPUEngine when nil)
+
+#### Wave 56: E112 Benchmarks and Verification (2 agents)
+
+- [ ] T112.5 Add CPU training benchmark test for all 7 backends
+- [ ] T112.6 Close GitHub issue #157 with fix evidence
 
 ---
 
