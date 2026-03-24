@@ -31,10 +31,88 @@ var blockedSSRFIPs = map[string]bool{
 // when downloading an image.
 const maxImageRedirects = 3
 
+// isBlockedIP checks whether an IP address should be blocked for SSRF protection.
+// It returns a non-nil error if the IP is loopback, private, link-local, or a
+// known cloud metadata address.
+func isBlockedIP(ip net.IP) error {
+	ipStr := ip.String()
+	if blockedSSRFIPs[ipStr] {
+		return fmt.Errorf("blocked SSRF target: %s", ipStr)
+	}
+	if ip.IsLoopback() {
+		return fmt.Errorf("blocked SSRF target: loopback address %s", ipStr)
+	}
+	if ip.IsPrivate() {
+		return fmt.Errorf("blocked SSRF target: private address %s", ipStr)
+	}
+	if ip.IsLinkLocalUnicast() {
+		return fmt.Errorf("blocked SSRF target: link-local unicast address %s", ipStr)
+	}
+	if ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("blocked SSRF target: link-local multicast address %s", ipStr)
+	}
+	return nil
+}
+
+// ssrfSafeDialContext returns a DialContext function that validates every
+// resolved IP address against the SSRF blocklist before connecting.
+// This prevents DNS rebinding attacks by checking the IP at connect time
+// rather than in a separate pre-flight validation step.
+//
+// resolver may be nil, in which case net.DefaultResolver is used.
+func ssrfSafeDialContext(resolver *net.Resolver) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("split host/port: %w", err)
+		}
+
+		// Block known dangerous hostnames.
+		if blockedSSRFHosts[host] {
+			return nil, fmt.Errorf("blocked SSRF target: %s", host)
+		}
+
+		// Resolve hostname to IPs.
+		ips, err := resolver.LookupHost(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve hostname %q: %w", host, err)
+		}
+
+		// Check every resolved IP against the blocklist.
+		for _, ipStr := range ips {
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				continue
+			}
+			if err := isBlockedIP(ip); err != nil {
+				return nil, err
+			}
+		}
+
+		// All IPs are safe — connect to the first one that works.
+		var dialer net.Dialer
+		for _, ipStr := range ips {
+			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ipStr, port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			err = dialErr
+		}
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
+}
+
 // imageHTTPClient is a dedicated HTTP client for downloading images,
-// configured with a timeout and redirect limit.
+// configured with SSRF-safe connect-time IP validation, a timeout,
+// and a redirect limit.
 var imageHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		DialContext: ssrfSafeDialContext(nil),
+	},
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxImageRedirects {
 			return fmt.Errorf("too many redirects (max %d)", maxImageRedirects)
@@ -43,13 +121,18 @@ var imageHTTPClient = &http.Client{
 	},
 }
 
-// ssrfValidator is the function used to validate image URLs against SSRF.
-// It defaults to validateImageURL but can be overridden in tests.
-var ssrfValidator = validateImageURL
+// ssrfValidator is kept for test compatibility. It defaults to a no-op
+// because SSRF protection is now enforced at connect time via
+// ssrfSafeDialContext in the HTTP transport.
+var ssrfValidator = func(ctx context.Context, rawURL string) error { return nil }
 
 // validateImageURL checks the given URL for SSRF attacks by resolving
 // the hostname and blocking requests to loopback, private, link-local,
-// and cloud metadata addresses.
+// and cloud metadata addresses. It additionally blocks known dangerous
+// hostnames (e.g. metadata.google.internal).
+//
+// Note: This function performs a pre-flight check. The primary SSRF
+// protection is the connect-time validation in ssrfSafeDialContext.
 func validateImageURL(ctx context.Context, rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -79,20 +162,8 @@ func validateImageURL(ctx context.Context, rawURL string) error {
 		if ip == nil {
 			continue
 		}
-		if blockedSSRFIPs[ipStr] {
-			return fmt.Errorf("blocked SSRF target: %s", ipStr)
-		}
-		if ip.IsLoopback() {
-			return fmt.Errorf("blocked SSRF target: loopback address %s", ipStr)
-		}
-		if ip.IsPrivate() {
-			return fmt.Errorf("blocked SSRF target: private address %s", ipStr)
-		}
-		if ip.IsLinkLocalUnicast() {
-			return fmt.Errorf("blocked SSRF target: link-local unicast address %s", ipStr)
-		}
-		if ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("blocked SSRF target: link-local multicast address %s", ipStr)
+		if err := isBlockedIP(ip); err != nil {
+			return err
 		}
 	}
 
@@ -209,11 +280,9 @@ func decodeDataURI(uri string) ([]byte, error) {
 }
 
 // downloadImage fetches an image from an HTTP(S) URL.
-// It validates the URL against SSRF attacks before making the request.
+// SSRF protection is enforced at connect time by ssrfSafeDialContext
+// in the HTTP transport, preventing DNS rebinding attacks.
 func downloadImage(ctx context.Context, url string) ([]byte, error) {
-	if err := ssrfValidator(ctx, url); err != nil {
-		return nil, err
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
