@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,7 +25,16 @@ var (
 	errInvalidSignature = errors.New("cloud: SAML XML signature verification failed")
 	errInvalidDigest    = errors.New("cloud: SAML XML digest verification failed")
 	errInvalidCert      = errors.New("cloud: failed to parse IdP certificate")
+	errXXE              = errors.New("cloud: SAML XML contains prohibited DOCTYPE or ENTITY declaration")
+	errNotYetValid      = errors.New("cloud: SAML assertion is not yet valid (NotBefore)")
+	errReplayedAssertion = errors.New("cloud: SAML assertion ID has already been consumed (replay)")
 )
+
+// samlClockSkew is the maximum clock skew tolerance for NotBefore validation.
+const samlClockSkew = 5 * time.Minute
+
+// samlReplayTTL is how long consumed assertion IDs are retained for replay detection.
+const samlReplayTTL = 10 * time.Minute
 
 // SSOProvider defines the interface for SSO authentication.
 // Implementations handle protocol-specific details (SAML 2.0, OIDC, etc.).
@@ -91,6 +102,10 @@ type samlNameIDFormat struct {
 
 // ParseSAMLMetadata parses SAML 2.0 IdP metadata XML into a SAMLMetadata struct.
 func ParseSAMLMetadata(data []byte) (*SAMLMetadata, error) {
+	if err := rejectXXE(data); err != nil {
+		return nil, err
+	}
+
 	var desc samlEntityDescriptor
 	if err := xml.Unmarshal(data, &desc); err != nil {
 		return nil, err
@@ -137,8 +152,9 @@ func ParseSAMLMetadata(data []byte) (*SAMLMetadata, error) {
 
 // SAMLProvider implements SSOProvider for SAML 2.0.
 type SAMLProvider struct {
-	metadata *SAMLMetadata
-	tenantID string
+	metadata    *SAMLMetadata
+	tenantID    string
+	seenIDs     sync.Map // assertion ID -> expiry time for replay detection
 }
 
 // NewSAMLProvider creates a SAML 2.0 SSO provider from parsed metadata,
@@ -205,8 +221,13 @@ type samlAttributeValue struct {
 }
 
 // ValidateAssertion parses and validates a SAML 2.0 assertion, including
-// XML digital signature verification against the IdP certificate.
+// XXE protection, XML digital signature verification, NotBefore clock skew
+// tolerance, and assertion replay prevention.
 func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error) {
+	if err := rejectXXE(assertion); err != nil {
+		return nil, err
+	}
+
 	var resp samlResponse
 	if err := xml.Unmarshal(assertion, &resp); err != nil {
 		return nil, err
@@ -230,13 +251,32 @@ func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error)
 		return nil, errNoConditions
 	}
 
+	now := time.Now()
+
+	// Validate NotBefore with clock skew tolerance.
+	notBefore, err := time.Parse(time.RFC3339, cond.NotBefore)
+	if err != nil {
+		return nil, err
+	}
+	if now.Add(samlClockSkew).Before(notBefore) {
+		return nil, errNotYetValid
+	}
+
 	notOnOrAfter, err := time.Parse(time.RFC3339, cond.NotOnOrAfter)
 	if err != nil {
 		return nil, err
 	}
 
-	if time.Now().After(notOnOrAfter) {
+	if now.After(notOnOrAfter) {
 		return nil, errExpiredSAML
+	}
+
+	// Replay prevention: reject assertions with previously seen IDs.
+	assertionID := resp.Assertion.ID
+	if assertionID != "" {
+		if err := p.checkAndRecordAssertionID(assertionID); err != nil {
+			return nil, err
+		}
 	}
 
 	identity := &SSOIdentity{
@@ -364,4 +404,38 @@ func equalBytes(a, b []byte) bool {
 		v |= a[i] ^ b[i]
 	}
 	return v == 0
+}
+
+// rejectXXE checks for XML External Entity (XXE) attack patterns.
+// It rejects input containing <!DOCTYPE or <!ENTITY declarations.
+func rejectXXE(data []byte) error {
+	upper := bytes.ToUpper(data)
+	if bytes.Contains(upper, []byte("<!DOCTYPE")) || bytes.Contains(upper, []byte("<!ENTITY")) {
+		return errXXE
+	}
+	return nil
+}
+
+// checkAndRecordAssertionID implements replay prevention by tracking assertion IDs
+// in a sync.Map with a TTL. Returns errReplayedAssertion if the ID was already seen.
+func (p *SAMLProvider) checkAndRecordAssertionID(id string) error {
+	expiry := time.Now().Add(samlReplayTTL)
+
+	// Evict expired entries opportunistically.
+	p.seenIDs.Range(func(key, value any) bool {
+		if exp, ok := value.(time.Time); ok && time.Now().After(exp) {
+			p.seenIDs.Delete(key)
+		}
+		return true
+	})
+
+	// Try to store; if already present and not expired, it's a replay.
+	if existing, loaded := p.seenIDs.LoadOrStore(id, expiry); loaded {
+		if exp, ok := existing.(time.Time); ok && time.Now().Before(exp) {
+			return errReplayedAssertion
+		}
+		// Expired entry — overwrite with new expiry.
+		p.seenIDs.Store(id, expiry)
+	}
+	return nil
 }
