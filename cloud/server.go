@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/zerfoo/zerfoo/generate"
 )
 
 // tenantKey is the private context key for storing the authenticated Tenant.
@@ -118,25 +120,40 @@ func (cs *CloudServer) rateLimitMiddleware(next http.Handler) http.Handler {
 }
 
 // billingMiddleware captures usage from response bodies and meters tokens.
+// For streaming (SSE) responses, JSON parsing fails silently, so the middleware
+// also checks for token counts stored in the request context by the generation
+// session via [generate.TokenUsage].
 func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenant := tenantFromContext(r.Context())
+
+		// Inject a TokenUsage into the context so the generation layer can
+		// record prompt/completion counts regardless of response format.
+		usage := &generate.TokenUsage{}
+		ctx := generate.WithTokenUsage(r.Context(), usage)
+		r = r.WithContext(ctx)
+
 		capture := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(capture, r)
 
-		// Try to extract usage from the response.
-		var resp struct {
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(capture.body, &resp); err != nil {
-			return
+		// Prefer context-based usage (works for both streaming and non-streaming).
+		input := usage.PromptTokens()
+		output := usage.CompletionTokens()
+
+		// Fall back to JSON body parsing for handlers that don't use context-based usage.
+		if input == 0 && output == 0 {
+			var resp struct {
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(capture.body, &resp); err == nil {
+				input = resp.Usage.PromptTokens
+				output = resp.Usage.CompletionTokens
+			}
 		}
 
-		input := resp.Usage.PromptTokens
-		output := resp.Usage.CompletionTokens
 		if input == 0 && output == 0 {
 			return
 		}
