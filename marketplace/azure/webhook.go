@@ -155,7 +155,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if processErr != nil {
-		http.Error(w, processErr.Error(), http.StatusInternalServerError)
+		http.Error(w, "webhook processing failed", http.StatusInternalServerError)
 		return
 	}
 
