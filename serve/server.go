@@ -435,6 +435,26 @@ func (s *Server) sanitizeError(err error) string {
 	}
 }
 
+// validateSamplingParams checks temperature, top_p, and top_k values.
+// Temperature must be >= 0 (rejected otherwise). TopP is clamped to [0, 1].
+// TopK must be >= 0 (rejected otherwise).
+func validateSamplingParams(temperature *float64, topP *float64, topK *int) error {
+	if temperature != nil && *temperature < 0 {
+		return fmt.Errorf("temperature must be >= 0, got %g", *temperature)
+	}
+	if topP != nil {
+		if *topP < 0 {
+			*topP = 0
+		} else if *topP > 1 {
+			*topP = 1
+		}
+	}
+	if topK != nil && *topK < 0 {
+		return fmt.Errorf("top_k must be >= 0, got %d", *topK)
+	}
+	return nil
+}
+
 // --- Request/Response types ---
 
 // JSONSchemaFormat describes the json_schema object within a response_format request.
@@ -456,6 +476,7 @@ type ChatCompletionRequest struct {
 	Messages       []ChatMessage   `json:"messages"`
 	Temperature    *float64        `json:"temperature,omitempty"`
 	TopP           *float64        `json:"top_p,omitempty"`
+	TopK           *int            `json:"top_k,omitempty"`
 	MaxTokens      *int            `json:"max_tokens,omitempty"`
 	Stream         bool            `json:"stream"`
 	Tools          []Tool          `json:"tools,omitempty"`
@@ -478,6 +499,8 @@ type CompletionRequest struct {
 	Model       string   `json:"model"`
 	Prompt      string   `json:"prompt"`
 	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+	TopK        *int     `json:"top_k,omitempty"`
 	MaxTokens   *int     `json:"max_tokens,omitempty"`
 	Stream      bool     `json:"stream"`
 }
@@ -602,6 +625,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate sampling parameters.
+	if err := validateSamplingParams(req.Temperature, req.TopP, req.TopK); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Validate tools and tool_choice.
 	if len(req.Tools) > 0 {
 		if err := validateTools(req.Tools); err != nil {
@@ -628,6 +657,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TopP != nil {
 		opts = append(opts, inference.WithTopP(*req.TopP))
+	}
+	if req.TopK != nil {
+		opts = append(opts, inference.WithTopK(*req.TopK))
 	}
 	if req.MaxTokens != nil {
 		opts = append(opts, inference.WithMaxTokens(*req.MaxTokens))
@@ -775,6 +807,12 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate sampling parameters.
+	if err := validateSamplingParams(req.Temperature, req.TopP, req.TopK); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Clamp max_tokens to server-side upper bound.
 	if req.MaxTokens != nil && *req.MaxTokens > s.maxTokens {
 		clamped := s.maxTokens
@@ -784,6 +822,12 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	var opts []inference.GenerateOption
 	if req.Temperature != nil {
 		opts = append(opts, inference.WithTemperature(*req.Temperature))
+	}
+	if req.TopP != nil {
+		opts = append(opts, inference.WithTopP(*req.TopP))
+	}
+	if req.TopK != nil {
+		opts = append(opts, inference.WithTopK(*req.TopK))
 	}
 	if req.MaxTokens != nil {
 		opts = append(opts, inference.WithMaxTokens(*req.MaxTokens))
