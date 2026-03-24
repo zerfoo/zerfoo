@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zerfoo/zerfoo/generate"
 )
 
 func TestNDJSONRecorder(t *testing.T) {
@@ -237,5 +240,95 @@ func TestBillingMiddlewareResponsePassthrough(t *testing.T) {
 	}
 	if resp["id"] != "chatcmpl-123" {
 		t.Errorf("response id = %v, want chatcmpl-123", resp["id"])
+	}
+}
+
+func TestBillingMiddlewareStreamingSSE(t *testing.T) {
+	var buf bytes.Buffer
+	rec := NewNDJSONRecorder(&buf)
+
+	// Simulate a streaming handler that writes SSE chunks and records
+	// token usage via the context-based TokenUsage.
+	sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := range 5 {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"word%d\"}}]}\n\n", i)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+
+		// Generation layer records usage via context.
+		if usage := generate.TokenUsageFromContext(r.Context()); usage != nil {
+			usage.SetPromptTokens(128)
+			usage.SetCompletionTokens(5)
+		}
+	})
+
+	handler := BillingMiddleware(rec)(sseHandler)
+
+	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+	reqBody := `{"model":"llama3-8b","messages":[{"role":"user","content":"hello"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer key-stream")
+	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	line := strings.TrimSpace(buf.String())
+	if line == "" {
+		t.Fatal("no usage event recorded for streaming request")
+	}
+
+	var event UsageEvent
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if event.TenantID != "key-stream" {
+		t.Errorf("TenantID = %q, want %q", event.TenantID, "key-stream")
+	}
+	if event.Model != "llama3-8b" {
+		t.Errorf("Model = %q, want %q", event.Model, "llama3-8b")
+	}
+	if event.PromptTokens != 128 {
+		t.Errorf("PromptTokens = %d, want 128", event.PromptTokens)
+	}
+	if event.CompletionTokens != 5 {
+		t.Errorf("CompletionTokens = %d, want 5", event.CompletionTokens)
+	}
+}
+
+func TestBillingMiddlewareNonStreamingJSONFallback(t *testing.T) {
+	// Verify that non-streaming JSON responses still produce billing records
+	// via the JSON body fallback path (handler does not use context-based usage).
+	var buf bytes.Buffer
+	rec := NewNDJSONRecorder(&buf)
+
+	inner := fakeHandler(200, 75)
+	handler := BillingMiddleware(rec)(inner)
+
+	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gemma-3b"}`))
+	req.Header.Set("Authorization", "Bearer key-fallback")
+	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	line := strings.TrimSpace(buf.String())
+	if line == "" {
+		t.Fatal("no usage event recorded for non-streaming request")
+	}
+
+	var event UsageEvent
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if event.PromptTokens != 200 {
+		t.Errorf("PromptTokens = %d, want 200", event.PromptTokens)
+	}
+	if event.CompletionTokens != 75 {
+		t.Errorf("CompletionTokens = %d, want 75", event.CompletionTokens)
 	}
 }
