@@ -145,6 +145,12 @@ func (r *SimpleRNN[T]) Backward(ctx context.Context, mode types.BackwardMode, ou
 			return nil, err
 		}
 
+		// Bias gradient: the pre-activation gradient flows directly through the bias.
+		_, err = r.bias.Backward(ctx, mode, tanhGrad[0])
+		if err != nil {
+			return nil, err
+		}
+
 		return []*tensor.TensorNumeric[T]{dInput[0], dHidden[0]}, nil
 	}
 
