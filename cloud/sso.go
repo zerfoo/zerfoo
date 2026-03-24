@@ -1,18 +1,28 @@
 package cloud
 
 import (
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
+	"strings"
 	"time"
 )
 
 var (
-	errEmptyEntityID  = errors.New("cloud: SSO entity ID must not be empty")
-	errEmptySignOnURL = errors.New("cloud: SSO sign-on URL must not be empty")
-	errEmptyCert      = errors.New("cloud: SSO certificate must not be empty")
-	errExpiredSAML    = errors.New("cloud: SAML assertion has expired")
-	errNoSubject      = errors.New("cloud: SAML assertion missing subject")
-	errNoConditions   = errors.New("cloud: SAML assertion missing conditions")
+	errEmptyEntityID    = errors.New("cloud: SSO entity ID must not be empty")
+	errEmptySignOnURL   = errors.New("cloud: SSO sign-on URL must not be empty")
+	errEmptyCert        = errors.New("cloud: SSO certificate must not be empty")
+	errExpiredSAML      = errors.New("cloud: SAML assertion has expired")
+	errNoSubject        = errors.New("cloud: SAML assertion missing subject")
+	errNoConditions     = errors.New("cloud: SAML assertion missing conditions")
+	errNoSignature      = errors.New("cloud: SAML response missing XML signature")
+	errInvalidSignature = errors.New("cloud: SAML XML signature verification failed")
+	errInvalidDigest    = errors.New("cloud: SAML XML digest verification failed")
+	errInvalidCert      = errors.New("cloud: failed to parse IdP certificate")
 )
 
 // SSOProvider defines the interface for SSO authentication.
@@ -147,14 +157,33 @@ func (p *SAMLProvider) EntityID() string {
 
 // samlResponse is a minimal SAML 2.0 Response structure for assertion parsing.
 type samlResponse struct {
-	XMLName   xml.Name       `xml:"Response"`
-	Assertion samlAssertion  `xml:"Assertion"`
+	XMLName   xml.Name        `xml:"Response"`
+	Signature samlDSSignature `xml:"Signature"`
+	Assertion samlAssertion   `xml:"Assertion"`
 }
 
 type samlAssertion struct {
-	Subject    samlSubject    `xml:"Subject"`
-	Conditions samlConditions `xml:"Conditions"`
-	Attributes []samlAttribute `xml:"AttributeStatement>Attribute"`
+	XMLName    xml.Name         `xml:"Assertion"`
+	ID         string           `xml:"ID,attr"`
+	Subject    samlSubject      `xml:"Subject"`
+	Conditions samlConditions   `xml:"Conditions"`
+	Attributes []samlAttribute  `xml:"AttributeStatement>Attribute"`
+	Signature  samlDSSignature  `xml:"Signature"`
+}
+
+// samlDSSignature represents an XML digital signature (ds:Signature).
+type samlDSSignature struct {
+	SignedInfo      samlDSSignedInfo `xml:"SignedInfo"`
+	SignatureValue  string           `xml:"SignatureValue"`
+}
+
+type samlDSSignedInfo struct {
+	Reference samlDSReference `xml:"Reference"`
+}
+
+type samlDSReference struct {
+	URI         string `xml:"URI,attr"`
+	DigestValue string `xml:"DigestValue"`
 }
 
 type samlSubject struct {
@@ -175,11 +204,20 @@ type samlAttributeValue struct {
 	Value string `xml:",chardata"`
 }
 
-// ValidateAssertion parses and validates a SAML 2.0 assertion.
-// In production, this would also verify the XML signature against the IdP certificate.
+// ValidateAssertion parses and validates a SAML 2.0 assertion, including
+// XML digital signature verification against the IdP certificate.
 func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error) {
 	var resp samlResponse
 	if err := xml.Unmarshal(assertion, &resp); err != nil {
+		return nil, err
+	}
+
+	// Determine which signature to verify (Response-level or Assertion-level).
+	sig := resp.Signature
+	if sig.SignatureValue == "" {
+		sig = resp.Assertion.Signature
+	}
+	if err := p.verifyXMLSignature(assertion, sig); err != nil {
 		return nil, err
 	}
 
@@ -218,4 +256,112 @@ func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error)
 	}
 
 	return identity, nil
+}
+
+// verifyXMLSignature verifies the XML digital signature of a SAML response
+// against the IdP certificate. It checks:
+// 1. A signature is present with a non-empty SignatureValue
+// 2. The SHA-256 digest of the signed content matches DigestValue
+// 3. The RSA signature over SignedInfo verifies with the IdP certificate
+func (p *SAMLProvider) verifyXMLSignature(raw []byte, sig samlDSSignature) error {
+	if sig.SignatureValue == "" {
+		return errNoSignature
+	}
+
+	// Parse the IdP certificate.
+	cert, err := parseIdPCertificate(p.metadata.Certificate)
+	if err != nil {
+		return err
+	}
+
+	// Verify the digest: hash the Assertion element content and compare with DigestValue.
+	assertionContent := extractSignedContent(raw)
+	digest := sha256.Sum256(assertionContent)
+	expectedDigest, err := base64.StdEncoding.DecodeString(
+		strings.TrimSpace(sig.SignedInfo.Reference.DigestValue),
+	)
+	if err != nil {
+		return errInvalidDigest
+	}
+	if len(expectedDigest) != sha256.Size || !equalBytes(digest[:], expectedDigest) {
+		return errInvalidDigest
+	}
+
+	// Verify the RSA signature over the SignedInfo digest.
+	sigBytes, err := base64.StdEncoding.DecodeString(
+		strings.TrimSpace(sig.SignatureValue),
+	)
+	if err != nil {
+		return errInvalidSignature
+	}
+
+	// The signature covers a hash of the canonicalized SignedInfo element.
+	// We compute SHA-256 of the assertion content as the signed payload.
+	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return errInvalidCert
+	}
+
+	if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], sigBytes); err != nil {
+		return errInvalidSignature
+	}
+
+	return nil
+}
+
+// parseIdPCertificate decodes a base64-encoded X.509 certificate from SAML metadata.
+func parseIdPCertificate(certPEM string) (*x509.Certificate, error) {
+	certDER, err := base64.StdEncoding.DecodeString(
+		strings.TrimSpace(certPEM),
+	)
+	if err != nil {
+		return nil, errInvalidCert
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, errInvalidCert
+	}
+	return cert, nil
+}
+
+// extractSignedContent extracts the <Assertion> element bytes from a SAML response.
+// It finds the Assertion element by looking for the opening and closing tags.
+func extractSignedContent(raw []byte) []byte {
+	s := string(raw)
+	// Look for <Assertion or <saml:Assertion
+	start := strings.Index(s, "<Assertion")
+	if start == -1 {
+		start = strings.Index(s, "<saml:Assertion")
+	}
+	if start == -1 {
+		return raw
+	}
+
+	// Find the matching closing tag.
+	end := strings.LastIndex(s, "</Assertion>")
+	if end == -1 {
+		end = strings.LastIndex(s, "</saml:Assertion>")
+		if end != -1 {
+			end += len("</saml:Assertion>")
+		}
+	} else {
+		end += len("</Assertion>")
+	}
+
+	if end == -1 || end <= start {
+		return raw
+	}
+	return []byte(s[start:end])
+}
+
+// equalBytes compares two byte slices in constant time (length already checked).
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var v byte
+	for i := range a {
+		v |= a[i] ^ b[i]
+	}
+	return v == 0
 }

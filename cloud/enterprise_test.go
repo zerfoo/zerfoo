@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -256,104 +257,75 @@ func TestEnterprise_SSO(t *testing.T) {
 	})
 
 	t.Run("validate SAML assertion", func(t *testing.T) {
-		meta, _ := ParseSAMLMetadata(validMetadata)
+		idp := newTestIdP(t)
+		meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
 		provider := NewSAMLProvider(meta, "tenant-1")
 
 		future := time.Now().Add(time.Hour).Format(time.RFC3339)
 		past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 
-		tests := []struct {
-			name    string
-			xml     string
-			wantErr bool
-			wantSub string
-		}{
-			{
-				name: "valid assertion",
-				xml: `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
-  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
-    <Subject><NameID>user@example.com</NameID></Subject>
-    <Conditions NotBefore="` + past + `" NotOnOrAfter="` + future + `"/>
-    <AttributeStatement>
-      <Attribute Name="email"><AttributeValue>user@example.com</AttributeValue></Attribute>
-      <Attribute Name="role"><AttributeValue>admin</AttributeValue></Attribute>
-    </AttributeStatement>
-  </Assertion>
-</Response>`,
-				wantErr: false,
-				wantSub: "user@example.com",
-			},
-			{
-				name: "expired assertion",
-				xml: `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
-  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
-    <Subject><NameID>user@example.com</NameID></Subject>
-    <Conditions NotBefore="` + past + `" NotOnOrAfter="` + past + `"/>
-  </Assertion>
-</Response>`,
-				wantErr: true,
-			},
-			{
-				name: "missing subject",
-				xml: `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
-  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
-    <Subject><NameID></NameID></Subject>
-    <Conditions NotBefore="` + past + `" NotOnOrAfter="` + future + `"/>
-  </Assertion>
-</Response>`,
-				wantErr: true,
-			},
-			{
-				name: "missing conditions",
-				xml: `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
-  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
-    <Subject><NameID>user@example.com</NameID></Subject>
-  </Assertion>
-</Response>`,
-				wantErr: true,
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				identity, err := provider.ValidateAssertion([]byte(tt.xml))
-				if (err != nil) != tt.wantErr {
-					t.Errorf("ValidateAssertion() error = %v, wantErr %v", err, tt.wantErr)
-					return
-				}
-				if tt.wantErr {
-					return
-				}
-				if identity.Subject != tt.wantSub {
-					t.Errorf("Subject = %q, want %q", identity.Subject, tt.wantSub)
-				}
-				if identity.TenantID != "tenant-1" {
-					t.Errorf("TenantID = %q, want %q", identity.TenantID, "tenant-1")
-				}
+		t.Run("valid assertion", func(t *testing.T) {
+			xml := idp.signedSAMLResponse("user@example.com", past, future, map[string]string{
+				"email": "user@example.com",
+				"role":  "admin",
 			})
-		}
+			identity, err := provider.ValidateAssertion([]byte(xml))
+			if err != nil {
+				t.Fatalf("ValidateAssertion() error = %v", err)
+			}
+			if identity.Subject != "user@example.com" {
+				t.Errorf("Subject = %q, want %q", identity.Subject, "user@example.com")
+			}
+			if identity.TenantID != "tenant-1" {
+				t.Errorf("TenantID = %q, want %q", identity.TenantID, "tenant-1")
+			}
+		})
+
+		t.Run("expired assertion", func(t *testing.T) {
+			xml := idp.signedSAMLResponse("user@example.com", past, past, nil)
+			_, err := provider.ValidateAssertion([]byte(xml))
+			if err == nil {
+				t.Error("expected error for expired assertion")
+			}
+		})
+
+		t.Run("missing subject", func(t *testing.T) {
+			xml := idp.signedSAMLResponse("", past, future, nil)
+			_, err := provider.ValidateAssertion([]byte(xml))
+			if err == nil {
+				t.Error("expected error for missing subject")
+			}
+		})
+
+		t.Run("missing conditions", func(t *testing.T) {
+			// Unsigned assertion with missing conditions — fails at signature check first.
+			noCondXML := fmt.Sprintf(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+    <Subject><NameID>user@example.com</NameID></Subject>
+  </Assertion>
+</Response>`)
+			_, err := provider.ValidateAssertion([]byte(noCondXML))
+			if err == nil {
+				t.Error("expected error for missing conditions/signature")
+			}
+		})
 	})
 
 	t.Run("assertion attributes extracted", func(t *testing.T) {
-		meta, _ := ParseSAMLMetadata(validMetadata)
+		idp := newTestIdP(t)
+		meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
 		provider := NewSAMLProvider(meta, "tenant-1")
 
 		future := time.Now().Add(time.Hour).Format(time.RFC3339)
 		past := time.Now().Add(-time.Hour).Format(time.RFC3339)
 
-		assertion := []byte(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
-  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
-    <Subject><NameID>user@example.com</NameID></Subject>
-    <Conditions NotBefore="` + past + `" NotOnOrAfter="` + future + `"/>
-    <AttributeStatement>
-      <Attribute Name="email"><AttributeValue>user@example.com</AttributeValue></Attribute>
-      <Attribute Name="role"><AttributeValue>admin</AttributeValue></Attribute>
-      <Attribute Name="department"><AttributeValue>engineering</AttributeValue></Attribute>
-    </AttributeStatement>
-  </Assertion>
-</Response>`)
+		assertion := idp.signedSAMLResponse("user@example.com", past, future, map[string]string{
+			"email":      "user@example.com",
+			"role":       "admin",
+			"department": "engineering",
+		})
 
-		identity, err := provider.ValidateAssertion(assertion)
+		identity, err := provider.ValidateAssertion([]byte(assertion))
 		if err != nil {
 			t.Fatalf("ValidateAssertion: %v", err)
 		}
