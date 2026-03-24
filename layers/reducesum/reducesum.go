@@ -3,6 +3,7 @@ package reducesum
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -108,7 +109,7 @@ func (r *ReduceSum[T]) Backward(ctx context.Context, _ types.BackwardMode, outpu
 	// If keepDims is true, outputGradient already has 1s in reduced axes; just repeat along those axes.
 	// If keepDims is false, first reshape to re-insert 1s at reduced axes, then repeat.
 	if len(inputs) != 1 {
-		panic("ReduceSum layer requires exactly 1 input for backward")
+		return nil, fmt.Errorf("reducesum: backward requires exactly 1 input, got %d", len(inputs))
 	}
 
 	input := inputs[0]

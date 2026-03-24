@@ -240,14 +240,21 @@ func TestBackward_NoKeepDims(t *testing.T) {
 func TestBackward_WrongInputCount(t *testing.T) {
 	r := New[float32](newEngine(), []int{0}, true)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Backward with no inputs should panic")
-		}
-	}()
-
 	dOut, _ := tensor.New[float32]([]int{1}, nil)
-	_, _ = r.Backward(context.Background(), types.FullBackprop, dOut)
+
+	// Zero inputs should return error.
+	_, err := r.Backward(context.Background(), types.FullBackprop, dOut)
+	if err == nil {
+		t.Fatal("Backward with no inputs should return error")
+	}
+
+	// Two inputs should also return error.
+	input1, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	input2, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	_, err = r.Backward(context.Background(), types.FullBackprop, dOut, input1, input2)
+	if err == nil {
+		t.Fatal("Backward with two inputs should return error")
+	}
 }
 
 func TestGraphNodeInterface(t *testing.T) {
