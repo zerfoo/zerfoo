@@ -39,7 +39,7 @@ func (m *TokenMeter) Record(tenantID string, inputTokens, outputTokens int) erro
 		TenantID:     tenantID,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
-		Timestamp:    time.Now(),
+		Timestamp:    time.Now().UTC(),
 	})
 }
 
