@@ -1525,7 +1525,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
 
 ##### Wave 53: Verification (1 agent)
 
-- [ ] T110.6 Run go test -race on timeseries and verify all issues closed
+- [x] T110.6 Run go test -race on timeseries and verify all issues closed (2026-03-24)
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T110.1-T110.5
   Acceptance:
@@ -2177,7 +2177,11 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T110.4 Implement iTransformer backend (issue #155)
 - [x] T110.5 Implement Mamba/SSM backend wrapping layers/ssm.MambaBlock (issue #156)
 
-Remaining E110 tasks: Wave 53 (T110.6 verification).
+#### Wave 53: E110 Verification (completed 2026-03-24)
+
+- [x] T110.6 Full timeseries test suite pass (74s, all pass, race clean, vet clean)
+
+E110 complete (all 6 tasks done).
 
 ---
 
