@@ -767,3 +767,93 @@ func TestPatchTST_PredictWindowed_NormalizationApplied(t *testing.T) {
 		}
 	}
 }
+
+// TestPatchTST_GradientVerification checks that analytical gradients match
+// finite-difference gradients for the CPU backward pass.
+func TestPatchTST_GradientVerification(t *testing.T) {
+	config := PatchTSTConfig{
+		InputLength: 8,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      4,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	m, err := NewPatchTST(config, nil, nil)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	params := m.extractParamsF64()
+
+	// Single-channel input.
+	input := [][]float64{{0.1, -0.2, 0.3, 0.4, -0.1, 0.5, -0.3, 0.2}}
+	labels := []float64{1.0, -0.5}
+
+	// Forward with cache + analytical backward.
+	pred, cache := m.forwardF64WithCache(input, params)
+	outDim := config.OutputDim
+	dOutput := make([]float64, outDim)
+	for j := 0; j < outDim; j++ {
+		diff := pred[j] - labels[j]
+		dOutput[j] = 2.0 * diff / float64(outDim) // MSE gradient
+	}
+	analyticalGrads := m.backwardF64(dOutput, params, cache)
+
+	// Finite-difference gradients.
+	eps := 1e-5
+	flatP := params.flatParams()
+	nParams := len(flatP)
+
+	maxRelErr := 0.0
+	failCount := 0
+	for pi := 0; pi < nParams; pi++ {
+		orig := *flatP[pi]
+
+		*flatP[pi] = orig + eps
+		predPlus := m.forwardF64(input, params)
+		lossPlus := 0.0
+		for j := 0; j < outDim; j++ {
+			diff := predPlus[j] - labels[j]
+			lossPlus += diff * diff
+		}
+		lossPlus /= float64(outDim)
+
+		*flatP[pi] = orig - eps
+		predMinus := m.forwardF64(input, params)
+		lossMinus := 0.0
+		for j := 0; j < outDim; j++ {
+			diff := predMinus[j] - labels[j]
+			lossMinus += diff * diff
+		}
+		lossMinus /= float64(outDim)
+
+		*flatP[pi] = orig
+		fdGrad := (lossPlus - lossMinus) / (2 * eps)
+
+		// Relative error with numerical stability.
+		absErr := math.Abs(analyticalGrads[pi] - fdGrad)
+		denom := math.Max(math.Abs(analyticalGrads[pi]), math.Abs(fdGrad))
+		if denom < 1e-8 {
+			denom = 1e-8
+		}
+		relErr := absErr / denom
+		if relErr > maxRelErr {
+			maxRelErr = relErr
+		}
+		if relErr > 1e-2 {
+			failCount++
+			if failCount <= 5 {
+				t.Errorf("param[%d]: analytical=%.8e, fd=%.8e, relErr=%.4e",
+					pi, analyticalGrads[pi], fdGrad, relErr)
+			}
+		}
+	}
+
+	if failCount > 0 {
+		t.Errorf("%d/%d parameters exceed 1%% relative error", failCount, nParams)
+	}
+	t.Logf("gradient check: %d params, maxRelErr=%.4e, failures=%d", nParams, maxRelErr, failCount)
+}
