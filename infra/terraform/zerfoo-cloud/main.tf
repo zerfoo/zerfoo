@@ -73,6 +73,19 @@ resource "google_container_cluster" "primary" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
+
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = "10.0.0.0/20"
+      display_name = "VPC subnet"
+    }
+  }
+
   resource_labels = local.labels
 }
 
@@ -91,7 +104,9 @@ resource "google_container_node_pool" "cpu" {
     disk_type    = "pd-standard"
 
     oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/devstorage.read_only",
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
     ]
 
     labels = merge(local.labels, {
@@ -127,7 +142,9 @@ resource "google_container_node_pool" "gpu" {
     spot         = true
 
     oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/devstorage.read_only",
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
     ]
 
     guest_accelerator {
