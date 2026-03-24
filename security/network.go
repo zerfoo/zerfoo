@@ -183,6 +183,7 @@ func (p *CORSPolicy) Middleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", methods)
 			w.Header().Set("Access-Control-Allow-Headers", headers)
+			w.Header().Set("Vary", "Origin")
 			if p.MaxAge > 0 {
 				w.Header().Set("Access-Control-Max-Age", strconv.Itoa(p.MaxAge))
 			}

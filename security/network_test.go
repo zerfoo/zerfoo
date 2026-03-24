@@ -109,6 +109,9 @@ func TestCORSMiddleware(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://example.com" {
 		t.Fatalf("expected origin header, got %q", got)
 	}
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Fatalf("expected Vary: Origin when CORS headers are set, got %q", got)
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -131,6 +134,9 @@ func TestCORSMiddleware(t *testing.T) {
 
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("expected no origin header for non-matching origin, got %q", got)
+	}
+	if got := rec.Header().Get("Vary"); got != "" {
+		t.Fatalf("expected no Vary header for non-matching origin, got %q", got)
 	}
 }
 
