@@ -1822,3 +1822,80 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleHealthz(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doGet(t, ts.URL+"/healthz")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("status = %q, want %q", body["status"], "ok")
+	}
+}
+
+func TestHandleReadyz(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp := doGet(t, ts.URL+"/readyz")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if body["status"] != "ready" {
+		t.Errorf("status = %q, want %q", body["status"], "ready")
+	}
+}
+
+func TestHandleReadyz_AfterUnload(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Unload the model via DELETE /v1/models/{id}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/v1/models/test-model", http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	delResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete request: %v", err)
+	}
+	_ = delResp.Body.Close()
+
+	resp := doGet(t, ts.URL+"/readyz")
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if body["status"] != "not ready" {
+		t.Errorf("status = %q, want %q", body["status"], "not ready")
+	}
+}
