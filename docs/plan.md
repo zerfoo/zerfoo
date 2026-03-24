@@ -1675,6 +1675,78 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
 
 ---
 
+#### E113: GPU Engine Training for FreTS and ITransformer [2026 Q2]
+
+FreTS and ITransformer are the only 2 timeseries backends without GPU engine
+training support. The other 5 backends (DLinear, NHiTS, CfC, PatchTST, Mamba)
+all accept compute.Engine[float32] and have engine-based forward+backward paths
+that run on GPU. FreTS and ITransformer need the same treatment.
+
+Pattern to follow: dlinear_engine.go, cfc_engine.go, nhits.go (stackBackwardEngine).
+Each engine training path converts float64 weights to float32 tensors, runs
+forward through engine ops (MatMul, Add, etc.), computes loss, runs backward
+through engine ops, and applies AdamW with engine arithmetic.
+
+##### Wave 57: GPU Engine Training Paths (2 agents)
+
+- [ ] T113.1 Add GPU engine training support to FreTS
+  Owner: ML Eng  Est: 4h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/frets.go, timeseries/frets_engine.go (new)
+  Acceptance:
+  - Add engine and ops fields to FreTS struct.
+  - Add WithFreTSEngine(engine, ops) FreTSOption functional option.
+  - Change NewFreTS signature to NewFreTS(config FreTSConfig, opts ...FreTSOption).
+  - Create frets_engine.go with trainWindowedEngine method that:
+    a) Converts float64 weights to float32 tensors.
+    b) Runs forward pass through engine ops: DFT (keep on CPU since no engine DFT),
+       channel mixing MLP (MatMul + bias + ReLU via engine), temporal mixing MLP
+       (MatMul + bias + ReLU via engine), IDFT (CPU), output projection (engine MatMul).
+    c) Backward pass through engine ops: output projection backward, IDFT backward (CPU),
+       temporal MLP backward, channel MLP backward.
+    d) AdamW update using engine arithmetic (matching cfc_engine.go pattern).
+  - In TrainWindowed, route to trainWindowedEngine when engine != nil.
+  - Test: TestFreTS_TrainWindowed_Engine -- train with CPUEngine, verify convergence.
+  - Test: TestFreTS_TrainWindowed_NilEngine_Unchanged -- verify nil engine uses CPU path.
+  - Finite-difference gradient test for engine path.
+  - go build ./timeseries/ clean. go vet ./timeseries/ clean.
+  - go test -race -timeout 120s ./timeseries/ -run TestFreTS pass.
+
+- [ ] T113.2 Add GPU engine training support to ITransformer
+  Owner: ML Eng  Est: 4h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/itransformer.go, timeseries/itransformer_engine.go (new)
+  Acceptance:
+  - Add engine and ops fields to ITransformer struct.
+  - Change NewITransformer signature to accept engine and ops:
+    NewITransformer(config ITransformerConfig, engine compute.Engine[float32],
+    ops numeric.Arithmetic[float32]) (*ITransformer, error).
+    Engine/ops may be nil (falls back to CPU path).
+  - Create itransformer_engine.go with trainWindowedEngine method that:
+    a) Converts float64 weights to float32 tensors.
+    b) Engine forward: variate embedding (MatMul + bias), N encoder layers
+       (LayerNorm, multi-head attention via engine MatMul/Transpose/Softmax,
+       FFN via engine MatMul + GELU), output projection.
+    c) Engine backward: reverse of forward using engine ops.
+    d) AdamW update using engine arithmetic.
+  - In TrainWindowed, route to trainWindowedEngine when engine != nil.
+  - Test: TestITransformer_TrainWindowed_Engine -- train with CPUEngine, verify convergence.
+  - Finite-difference gradient test for engine path.
+  - go build ./timeseries/ clean. go vet ./timeseries/ clean.
+  - go test -race -timeout 120s ./timeseries/ -run TestITransformer pass.
+
+##### Wave 58: Verification (1 agent)
+
+- [ ] T113.3 Run go test -race and go vet on timeseries package
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T113.1, T113.2
+  Acceptance:
+  - go test -race -timeout 300s ./timeseries/ -- all pass.
+  - go vet ./timeseries/ clean.
+  - Verify all 7 backends now accept engine/ops and train on both CPU and GPU paths.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -2340,6 +2412,15 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 - [x] T112.5 Add CPU training benchmark test for all 7 backends (2026-03-24)
 - [x] T112.6 Close GitHub issue #157 with fix evidence (2026-03-24)
+
+#### Wave 57: E113 GPU Engine Training Paths (2 agents)
+
+- [ ] T113.1 Add GPU engine training support to FreTS
+- [ ] T113.2 Add GPU engine training support to ITransformer
+
+#### Wave 58: E113 Verification (1 agent)
+
+- [ ] T113.3 Run go test -race and go vet on timeseries package
 
 ---
 
