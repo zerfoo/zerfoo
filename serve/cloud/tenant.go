@@ -3,6 +3,8 @@ package cloud
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -106,6 +108,7 @@ func NewTenantRegistry() *TenantRegistry {
 }
 
 // Register adds a tenant with the given API key and configuration.
+// The API key is SHA-256 hashed before storage so raw keys never reside in memory.
 func (r *TenantRegistry) Register(apiKey string, cfg TenantConfig) error {
 	if apiKey == "" {
 		return errEmptyAPIKey
@@ -114,26 +117,30 @@ func (r *TenantRegistry) Register(apiKey string, cfg TenantConfig) error {
 		return err
 	}
 
+	keyHash := hashAPIKey(apiKey)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.tenants[apiKey]; exists {
+	if _, exists := r.tenants[keyHash]; exists {
 		return errAlreadyExists
 	}
 
 	t := &Tenant{Config: cfg}
 	t.tokens.Store(cfg.MaxTokensPerMinute)
 	t.lastReset.Store(time.Now().UnixNano())
-	r.tenants[apiKey] = t
+	r.tenants[keyHash] = t
 	return nil
 }
 
 // Get retrieves the tenant for the given API key.
 func (r *TenantRegistry) Get(apiKey string) (*Tenant, error) {
+	keyHash := hashAPIKey(apiKey)
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	t, ok := r.tenants[apiKey]
+	t, ok := r.tenants[keyHash]
 	if !ok {
 		return nil, errTenantNotFound
 	}
@@ -142,14 +149,22 @@ func (r *TenantRegistry) Get(apiKey string) (*Tenant, error) {
 
 // Remove deletes a tenant registration.
 func (r *TenantRegistry) Remove(apiKey string) error {
+	keyHash := hashAPIKey(apiKey)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.tenants[apiKey]; !ok {
+	if _, ok := r.tenants[keyHash]; !ok {
 		return errTenantNotFound
 	}
-	delete(r.tenants, apiKey)
+	delete(r.tenants, keyHash)
 	return nil
+}
+
+// hashAPIKey returns the hex-encoded SHA-256 hash of the given key.
+func hashAPIKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
 }
 
 // Middleware returns an HTTP middleware that enforces tenant isolation.

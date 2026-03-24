@@ -202,6 +202,11 @@ func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// maxCaptureSize limits the response body captured for billing fallback parsing.
+// Context-based token usage is the primary path; body capture is only used when
+// the context values are zero. 64 KB is enough for any non-streaming JSON response.
+const maxCaptureSize = 64 * 1024
+
 // responseCapture wraps http.ResponseWriter to capture the response body.
 type responseCapture struct {
 	http.ResponseWriter
@@ -215,7 +220,14 @@ func (rc *responseCapture) WriteHeader(code int) {
 }
 
 func (rc *responseCapture) Write(b []byte) (int, error) {
-	rc.body = append(rc.body, b...)
+	if len(rc.body) < maxCaptureSize {
+		remaining := maxCaptureSize - len(rc.body)
+		if len(b) > remaining {
+			rc.body = append(rc.body, b[:remaining]...)
+		} else {
+			rc.body = append(rc.body, b...)
+		}
+	}
 	return rc.ResponseWriter.Write(b)
 }
 

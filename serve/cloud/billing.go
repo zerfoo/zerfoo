@@ -65,6 +65,9 @@ type usageResponse struct {
 	} `json:"usage"`
 }
 
+// maxBillingCaptureSize limits the response body captured for billing fallback.
+const maxBillingCaptureSize = 64 * 1024
+
 // responseCapture wraps http.ResponseWriter to capture the response body.
 type responseCapture struct {
 	http.ResponseWriter
@@ -78,7 +81,14 @@ func (rc *responseCapture) WriteHeader(code int) {
 }
 
 func (rc *responseCapture) Write(b []byte) (int, error) {
-	rc.body.Write(b)
+	if rc.body.Len() < maxBillingCaptureSize {
+		remaining := maxBillingCaptureSize - rc.body.Len()
+		if len(b) > remaining {
+			rc.body.Write(b[:remaining])
+		} else {
+			rc.body.Write(b)
+		}
+	}
 	return rc.ResponseWriter.Write(b)
 }
 
