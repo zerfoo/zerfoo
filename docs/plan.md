@@ -1655,7 +1655,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
 
 ##### Wave 56: Benchmarks and Verification (2 agents)
 
-- [ ] T112.5 Add CPU training benchmark test for all 7 backends
+- [x] T112.5 Add CPU training benchmark test for all 7 backends (2026-03-24)
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: T112.1, T112.2, T112.3, T112.4
   Files: timeseries/benchmark_cpu_test.go
@@ -1666,7 +1666,7 @@ Decision rationale: docs/adr/066-cpu-training-backprop.md
   - Assert no NaN/Inf in final loss.
   - go test -tags tabular -run TestAllBackends_CPUTrainingBenchmark -timeout 30s ./timeseries/
 
-- [ ] T112.6 Close GitHub issue #157 with fix evidence
+- [x] T112.6 Close GitHub issue #157 with fix evidence (2026-03-24)
   Owner: ML Eng  Est: 15m  delivers: [issue #157 closed with perf fix]
   Deps: T112.5
   Acceptance:
@@ -2338,8 +2338,8 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 #### Wave 56: E112 Benchmarks and Verification (2 agents)
 
-- [ ] T112.5 Add CPU training benchmark test for all 7 backends
-- [ ] T112.6 Close GitHub issue #157 with fix evidence
+- [x] T112.5 Add CPU training benchmark test for all 7 backends (2026-03-24)
+- [x] T112.6 Close GitHub issue #157 with fix evidence (2026-03-24)
 
 ---
 
