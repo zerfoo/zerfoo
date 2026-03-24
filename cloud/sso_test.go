@@ -8,12 +8,32 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+var testAssertionCounter atomic.Int64
+
+// uniqueAssertionID returns a unique assertion ID for testing.
+func uniqueAssertionID() string {
+	n := testAssertionCounter.Add(1)
+	b := make([]byte, 8)
+	// Use counter + random bytes for uniqueness.
+	b[0] = byte(n >> 56)
+	b[1] = byte(n >> 48)
+	b[2] = byte(n >> 40)
+	b[3] = byte(n >> 32)
+	b[4] = byte(n >> 24)
+	b[5] = byte(n >> 16)
+	b[6] = byte(n >> 8)
+	b[7] = byte(n)
+	return "_" + hex.EncodeToString(b)
+}
 
 // testIdP holds a test identity provider's key pair and certificate.
 type testIdP struct {
@@ -72,10 +92,11 @@ func (idp *testIdP) signedSAMLResponse(subject, notBefore, notOnOrAfter string, 
 `, attrXML)
 	}
 
-	assertion := fmt.Sprintf(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion1">
+	assertionID := uniqueAssertionID()
+	assertion := fmt.Sprintf(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s">
     <Subject><NameID>%s</NameID></Subject>
     <Conditions NotBefore="%s" NotOnOrAfter="%s"/>
-%s  </Assertion>`, subject, notBefore, notOnOrAfter, attrStmt)
+%s  </Assertion>`, assertionID, subject, notBefore, notOnOrAfter, attrStmt)
 
 	// Compute digest of the Assertion element.
 	digest := sha256.Sum256([]byte(assertion))
@@ -91,14 +112,14 @@ func (idp *testIdP) signedSAMLResponse(subject, notBefore, notOnOrAfter string, 
 	return fmt.Sprintf(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
   <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
     <SignedInfo>
-      <Reference URI="#_assertion1">
+      <Reference URI="#%s">
         <DigestValue>%s</DigestValue>
       </Reference>
     </SignedInfo>
     <SignatureValue>%s</SignatureValue>
   </Signature>
   %s
-</Response>`, digestB64, sigB64, assertion)
+</Response>`, assertionID, digestB64, sigB64, assertion)
 }
 
 // testSAMLMetadata returns valid SAML metadata XML using the test IdP certificate.
@@ -198,6 +219,147 @@ func TestSAML_SignatureVerification(t *testing.T) {
 		_, err := provider.ValidateAssertion([]byte(xml))
 		if err == nil {
 			t.Fatal("expected error for invalid base64 signature")
+		}
+	})
+}
+
+func TestSAML_XXEProtection(t *testing.T) {
+	t.Run("DOCTYPE rejected in assertion", func(t *testing.T) {
+		xml := `<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+    <Subject><NameID>&xxe;</NameID></Subject>
+    <Conditions NotBefore="2020-01-01T00:00:00Z" NotOnOrAfter="2030-01-01T00:00:00Z"/>
+  </Assertion>
+</Response>`
+		idp := newTestIdP(t)
+		meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+		provider := NewSAMLProvider(meta, "t1")
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != errXXE {
+			t.Errorf("got error %v, want errXXE", err)
+		}
+	})
+
+	t.Run("ENTITY rejected in assertion", func(t *testing.T) {
+		xml := `<?xml version="1.0"?>
+<!ENTITY xxe "malicious">
+<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+    <Subject><NameID>user@example.com</NameID></Subject>
+  </Assertion>
+</Response>`
+		idp := newTestIdP(t)
+		meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+		provider := NewSAMLProvider(meta, "t1")
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != errXXE {
+			t.Errorf("got error %v, want errXXE", err)
+		}
+	})
+
+	t.Run("DOCTYPE rejected in metadata", func(t *testing.T) {
+		xml := `<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<EntityDescriptor entityID="https://evil.com" xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <IDPSSODescriptor>
+    <KeyDescriptor use="signing"><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>cert</X509Certificate></X509Data></KeyInfo></KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://evil.com/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`
+		_, err := ParseSAMLMetadata([]byte(xml))
+		if err != errXXE {
+			t.Errorf("got error %v, want errXXE", err)
+		}
+	})
+
+	t.Run("case insensitive DOCTYPE detection", func(t *testing.T) {
+		xml := `<?xml version="1.0"?>
+<!doctype foo>
+<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+    <Subject><NameID>user@example.com</NameID></Subject>
+  </Assertion>
+</Response>`
+		idp := newTestIdP(t)
+		meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+		provider := NewSAMLProvider(meta, "t1")
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != errXXE {
+			t.Errorf("got error %v, want errXXE", err)
+		}
+	})
+}
+
+func TestSAML_ReplayPrevention(t *testing.T) {
+	idp := newTestIdP(t)
+	meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+	provider := NewSAMLProvider(meta, "tenant-replay")
+
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+
+	// Generate the assertion once and reuse it for both calls.
+	assertionXML := idp.signedSAMLResponse("user@example.com", past, future, nil)
+
+	t.Run("first assertion accepted", func(t *testing.T) {
+		_, err := provider.ValidateAssertion([]byte(assertionXML))
+		if err != nil {
+			t.Fatalf("first assertion should succeed: %v", err)
+		}
+	})
+
+	t.Run("replayed assertion ID rejected", func(t *testing.T) {
+		_, err := provider.ValidateAssertion([]byte(assertionXML))
+		if err != errReplayedAssertion {
+			t.Errorf("got error %v, want errReplayedAssertion", err)
+		}
+	})
+
+	t.Run("different assertion ID accepted", func(t *testing.T) {
+		// A new assertion with a different ID should still succeed.
+		newXML := idp.signedSAMLResponse("user@example.com", past, future, nil)
+		_, err := provider.ValidateAssertion([]byte(newXML))
+		if err != nil {
+			t.Fatalf("different assertion ID should succeed: %v", err)
+		}
+	})
+}
+
+func TestSAML_NotBeforeValidation(t *testing.T) {
+	idp := newTestIdP(t)
+	meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+	provider := NewSAMLProvider(meta, "tenant-notbefore")
+
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+
+	t.Run("assertion before NotBefore minus skew rejected", func(t *testing.T) {
+		// NotBefore is 10 minutes in the future -- beyond the 5-minute skew tolerance.
+		farFuture := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
+		xml := idp.signedSAMLResponse("user@example.com", farFuture, future, nil)
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != errNotYetValid {
+			t.Errorf("got error %v, want errNotYetValid", err)
+		}
+	})
+
+	t.Run("assertion within clock skew accepted", func(t *testing.T) {
+		// NotBefore is 3 minutes in the future -- within the 5-minute skew tolerance.
+		nearFuture := time.Now().Add(3 * time.Minute).Format(time.RFC3339)
+		xml := idp.signedSAMLResponse("user@example.com", nearFuture, future, nil)
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != nil {
+			t.Fatalf("assertion within skew should succeed: %v", err)
+		}
+	})
+
+	t.Run("assertion with past NotBefore accepted", func(t *testing.T) {
+		past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+		xml := idp.signedSAMLResponse("user@example.com", past, future, nil)
+		_, err := provider.ValidateAssertion([]byte(xml))
+		if err != nil {
+			t.Fatalf("assertion with past NotBefore should succeed: %v", err)
 		}
 	})
 }
