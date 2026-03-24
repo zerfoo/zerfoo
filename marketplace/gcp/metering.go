@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // ServiceControlAPI abstracts GCP Service Control API calls for usage reporting.
@@ -69,6 +71,9 @@ type ServiceControlClient struct {
 	TokenSource TokenSource
 	// HTTPClient is the HTTP client used for API calls.
 	HTTPClient *http.Client
+	// Retry configures exponential backoff for metering calls.
+	// Zero value disables retry.
+	Retry marketplace.RetryConfig
 }
 
 const defaultServiceControlEndpoint = "https://servicecontrol.googleapis.com/v1"
@@ -79,6 +84,7 @@ func NewServiceControlClient(tokenSource TokenSource) *ServiceControlClient {
 		Endpoint:    defaultServiceControlEndpoint,
 		TokenSource: tokenSource,
 		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
+		Retry:       marketplace.DefaultRetryConfig(),
 	}
 }
 
@@ -90,6 +96,12 @@ func (c *ServiceControlClient) Report(ctx context.Context, serviceName string, o
 		return fmt.Errorf("marshal report request: %w", err)
 	}
 
+	return marketplace.RetryFunc(ctx, c.Retry, "gcp.Report", func() error {
+		return c.doReport(ctx, serviceName, data)
+	})
+}
+
+func (c *ServiceControlClient) doReport(ctx context.Context, serviceName string, data []byte) error {
 	path := "/services/" + serviceName + ":report"
 
 	var bodyReader io.Reader = &bytesReader{data: data}

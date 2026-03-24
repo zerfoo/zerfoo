@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // mockFulfillmentAPI is a test double for FulfillmentAPI.
@@ -302,6 +305,85 @@ func TestMeteringClient_PostBatchUsageEvent(t *testing.T) {
 	}
 	if out.Count != 2 {
 		t.Errorf("got count %d, want 2", out.Count)
+	}
+}
+
+func TestMeteringClient_PostUsageEvent_RetryOn429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("throttled"))
+			return
+		}
+		json.NewEncoder(w).Encode(UsageEventResult{
+			UsageEventID: "evt-retry",
+			Status:       MeteringStatusAccepted,
+			Dimension:    "tokens_1m",
+			Quantity:     5,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewMeteringClient(srv.URL, nil)
+	client.Retry = marketplace.RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   1 * time.Millisecond,
+		MaxJitter:   1 * time.Millisecond,
+	}
+
+	out, err := client.PostUsageEvent(context.Background(), UsageEvent{
+		ResourceID: "sub-1",
+		Quantity:   5,
+		Dimension:  "tokens_1m",
+		PlanID:     "basic",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.UsageEventID != "evt-retry" {
+		t.Errorf("got event ID %q, want %q", out.UsageEventID, "evt-retry")
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("got %d attempts, want 2", got)
+	}
+}
+
+func TestMeteringClient_PostBatchUsageEvent_RetryOn429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("throttled"))
+			return
+		}
+		json.NewEncoder(w).Encode(BatchUsageResult{
+			Results: []UsageEventResult{{UsageEventID: "evt-retry", Status: MeteringStatusAccepted}},
+			Count:   1,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewMeteringClient(srv.URL, nil)
+	client.Retry = marketplace.RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   1 * time.Millisecond,
+		MaxJitter:   1 * time.Millisecond,
+	}
+
+	out, err := client.PostBatchUsageEvent(context.Background(), []UsageEvent{
+		{ResourceID: "sub-1", Quantity: 3, Dimension: "tokens_1m"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Count != 1 {
+		t.Errorf("got count %d, want 1", out.Count)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("got %d attempts, want 3", got)
 	}
 }
 
