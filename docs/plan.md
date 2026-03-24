@@ -792,7 +792,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 38: Critical Gaps (5 agents)
 
-- [ ] T107.1 Add MaxBytesReader, sanitizeError, and inflight tracking to handleClassify
+- [x] T107.1 Add MaxBytesReader, sanitizeError, and inflight tracking to handleClassify
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/classify.go
@@ -823,7 +823,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Update callers to handle errors.
   - go vet ./rl/ clean. go test -race ./rl/ pass.
 
-- [ ] T107.4 Fix NHiTS nil pointer dereference in linearForward (issue #123)
+- [x] T107.4 Fix NHiTS nil pointer dereference in linearForward (issue #123)
   Owner: ML Eng  Est: 2h  verifies: [UC-026]
   Deps: none
   Files: timeseries/nhits.go
@@ -838,7 +838,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     must not panic. Forward pass must produce finite output.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestNHiTS pass.
 
-- [ ] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
+- [x] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
   Owner: Security Eng  Est: 1.5h  verifies: [UC-001]
   Deps: none
   Files: serve/vision.go
@@ -1472,11 +1472,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 38: v1.11.0 Critical Gaps (5 agents)
 
-- [ ] T107.1 Add MaxBytesReader + sanitizeError + inflight to handleClassify
-- [ ] T107.2 Convert reducesum Backward panic to error
-- [ ] T107.3 Convert rl/replay.go panics to errors
-- [ ] T107.4 Fix NHiTS nil pointer in linearForward (issue #123)
-- [ ] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
+- [x] T107.1 Add MaxBytesReader + sanitizeError + inflight to handleClassify
+- [x] T107.2 Convert reducesum Backward panic to error
+- [x] T107.3 Convert rl/replay.go panics to errors
+- [x] T107.4 Fix NHiTS nil pointer in linearForward (issue #123)
+- [x] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
 
 #### Wave 39: v1.11.0 Medium Fixes (5 agents)
 
