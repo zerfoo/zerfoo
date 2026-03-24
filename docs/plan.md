@@ -783,6 +783,140 @@ their corresponding test files.
 
 ---
 
+#### E107: v1.11.0 Review Remediation + Issue #123 [2026 Q2]
+
+Post-E106 deep review of v1.11.0 found 2 High, 7 Medium, 8 Low remaining findings.
+Plus GitHub issue #123: NHiTS nil pointer dereference in linearForward on
+TrainWindowed with 132-channel data.
+Source: .claude/scratch/deep-review-report.md (2026-03-23)
+
+##### Wave 38: Critical Gaps (5 agents)
+
+- [ ] T107.1 Add MaxBytesReader, sanitizeError, and inflight tracking to handleClassify
+  Owner: Security Eng  Est: 1h  verifies: [UC-003]
+  Deps: none
+  Files: serve/classify.go
+  Acceptance:
+  - Add r.Body = http.MaxBytesReader(w, r.Body, 10<<20) at handler entry.
+  - Add s.inflight.Add(1) and defer s.inflight.Done().
+  - Replace err.Error() with s.sanitizeError(err) in error response.
+  - Add isMaxBytesError check returning 413 for oversized requests.
+  - Test: oversized body returns 413. Internal error details not leaked.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+- [ ] T107.2 Convert panic to error return in reducesum Backward
+  Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-002]
+  Deps: none
+  Files: layers/reducesum/reducesum.go
+  Acceptance:
+  - Replace panic(fmt.Sprintf("unsupported axis %d", r.axis)) at line 111 with
+    return nil, fmt.Errorf("reducesum: unsupported axis %d for backward", r.axis).
+  - Test: Backward with invalid axis returns error, not panic.
+  - go vet ./layers/reducesum/ clean.
+
+- [ ] T107.3 Convert panic to error returns in rl/replay.go
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: rl/replay.go
+  Acceptance:
+  - Replace panic() at lines 20 and 60 with error returns.
+  - Update callers to handle errors.
+  - go vet ./rl/ clean. go test -race ./rl/ pass.
+
+- [ ] T107.4 Fix NHiTS nil pointer dereference in linearForward (issue #123)
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/nhits.go
+  Acceptance:
+  - Root cause: linearForward at line 253 dereferences l.weights which is nil
+    when the stack's MLP dimensions are miscalculated for high-channel data.
+  - Add nil check for l.weights and l.biases at top of linearForward:
+    if l.weights == nil || l.biases == nil { return nil, fmt.Errorf("nhits: nil weight/bias in linear layer") }
+  - Investigate and fix the root cause: verify newNHiTSStack creates correctly
+    sized MLP layers when channels=132 and various inputLen (15-240).
+  - Add test: NewNHiTS with 132 channels, TrainWindowed with windows 15,30,60,120,240
+    must not panic. Forward pass must produce finite output.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestNHiTS pass.
+
+- [ ] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
+  Owner: Security Eng  Est: 1.5h  verifies: [UC-001]
+  Deps: none
+  Files: serve/vision.go
+  Acceptance:
+  - Replace validateImageURL + separate HTTP request with a custom net.Dialer
+    that validates the resolved IP at connect time (in DialContext).
+  - The dialer checks ip.IsLoopback, ip.IsPrivate, ip.IsLinkLocalUnicast,
+    ip.IsLinkLocalMulticast, and blocks cloud metadata IPs.
+  - Remove the separate validateImageURL call (replaced by dialer validation).
+  - Test: DNS rebinding scenario (mock that returns different IPs) is blocked.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+##### Wave 39: Medium Fixes (5 agents)
+
+- [ ] T107.6 Fix ListByCustomer sort algorithm
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: support/ticket.go
+  Acceptance:
+  - Replace single-pass pairwise swap at lines 158-162 with slices.SortFunc
+    or sort.Slice using ticket.UpdatedAt for ordering.
+  - Test: ListByCustomer with 5+ tickets returns correctly ordered list.
+  - go vet ./support/ clean. go test -race ./support/ pass.
+
+- [ ] T107.7 Add inflight tracking to handleEmbeddings
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - Add s.inflight.Add(1) and defer s.inflight.Done() at top of handleEmbeddings.
+  - go vet ./serve/ clean.
+
+- [ ] T107.8 Add NaN detection to normalizeWindows input
+  Owner: ML Eng  Est: 30m  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/dlinear.go
+  Acceptance:
+  - In normalizeWindows, before computing mean/std, scan input for NaN using
+    isFinite helper. Return error if any NaN detected.
+  - Change return signature to include error.
+  - Update all callers (dlinear, nhits, cfc, patchtst TrainWindowed) to handle error.
+  - Test: input with NaN returns error.
+  - go vet ./timeseries/ clean.
+
+- [ ] T107.9 Disable public IPs in AWS QuickStart template
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: marketplace/aws/cfn/quickstart.yaml
+  Acceptance:
+  - Set AssignPublicIp: DISABLED in the ECS task networking config.
+  - Verify ALB still routes traffic to private task IPs.
+
+- [ ] T107.10 Restrict Azure ARM template firewall rules
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: marketplace/azure/arm/template.json
+  Acceptance:
+  - Replace 0.0.0.0/0 source address prefix with parameterized CIDR.
+  - Add parameter AllowedSourceCIDR with sensible default.
+
+##### Wave 40: Verification (2 agents)
+
+- [ ] T107.11 Run go test -race on all changed packages
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: T107.1-T107.10
+  Acceptance:
+  - go test -race -timeout 300s ./serve/ ./layers/reducesum/ ./rl/ ./timeseries/
+    ./support/ -- all pass, no races.
+
+- [ ] T107.12 Close GitHub issue #123 with fix evidence
+  Owner: ML Eng  Est: 15m  delivers: [issue #123 closed with fix commit]
+  Deps: T107.4, T107.11
+  Acceptance:
+  - Post comment on #123 citing fix commit, test output, and root cause.
+  - Close the issue.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -1336,6 +1470,27 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T106.36 Run go test -race on all changed packages
 - [x] T106.37 Run go vet + linter on entire codebase
 
+#### Wave 38: v1.11.0 Critical Gaps (5 agents)
+
+- [ ] T107.1 Add MaxBytesReader + sanitizeError + inflight to handleClassify
+- [ ] T107.2 Convert reducesum Backward panic to error
+- [ ] T107.3 Convert rl/replay.go panics to errors
+- [ ] T107.4 Fix NHiTS nil pointer in linearForward (issue #123)
+- [ ] T107.5 Fix DNS rebinding TOCTOU in SSRF validation
+
+#### Wave 39: v1.11.0 Medium Fixes (5 agents)
+
+- [ ] T107.6 Fix ListByCustomer sort algorithm
+- [ ] T107.7 Add inflight tracking to handleEmbeddings
+- [ ] T107.8 Add NaN detection to normalizeWindows input
+- [ ] T107.9 Disable public IPs in AWS QuickStart
+- [ ] T107.10 Restrict Azure ARM template firewall
+
+#### Wave 40: Verification (2 agents)
+
+- [ ] T107.11 Run go test -race on all changed packages
+- [ ] T107.12 Close GitHub issue #123
+
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
 
@@ -1436,6 +1591,17 @@ See Hand-Off Notes.
 
 ## Progress Log
 
+### 2026-03-23: E107 created -- v1.11.0 review remediation + issue #123
+
+Post-E106 deep review of v1.11.0 (4 agents) confirmed all 37 E106 fixes are correct.
+Found 2 High gaps: handleClassify missed during E106 (no MaxBytesReader, no sanitizeError,
+no inflight tracking), and 1 remaining panic in layers/reducesum/reducesum.go.
+Also found 7 Medium findings (DNS rebinding, broken ticket sort, RL panics, marketplace
+firewall rules, NaN detection gap) and 8 Low findings.
+
+GitHub issue #123: NHiTS nil pointer dereference in linearForward with 132-channel data.
+Created E107 with 12 tasks across 3 waves (38-40).
+
 ### 2026-03-21: E106 created -- Security remediation from deep review v1.10.0
 
 Deep review of v1.10.0 (10 agents, 350+ files, ~180K lines) found 2 Critical,
@@ -1489,11 +1655,11 @@ Remaining 25 tasks blocked by hardware access or human actions.
 
 ## Hand-Off Notes
 
-### Current State (2026-03-21)
+### Current State (2026-03-23)
 
-- **Score:** 121/181 tasks complete (66.9%). E106 added 37 security tasks.
-- **Active epic:** E106 (security remediation, 37 tasks, 8 waves).
-- **Last completed:** E105 (NaN/Inf fix in windowed training, issue #121 closed).
+- **Score:** 158/193 tasks complete (81.9%). E107 added 12 tasks.
+- **Active epic:** E107 (v1.11.0 remediation + issue #123, 12 tasks, 3 waves).
+- **Last completed:** E106 (security remediation, 37/37 tasks, v1.11.0 released).
 - **DGX Spark access:** ssh ndungu@192.168.86.250. GB10 GPU, sm_121, 128GB LPDDR5x.
 - **Throughput:** 244 tok/s restored (E103 fixed two compounding regressions).
 - **Peak throughput:** 245 tok/s (commit 4e85b12, Gemma 3 1B Q4_K_M, 256 tokens, CUDA graphs).
@@ -1512,7 +1678,7 @@ Remaining 25 tasks blocked by hardware access or human actions.
 | Apple M4 Max | T20.3 | Access M4 Max system |
 | Mobile devices | T29.4 | iOS + Android test devices |
 | Human action | T4.7, T5.4, T11.1, T11.4, T12.4 | Manual execution required |
-| Security remediation | T106.1-T106.37 | Execute E106 waves 30-37 via /apply |
+| v1.11.0 remediation | T107.1-T107.12 | Execute E107 waves 38-40 via /apply |
 | SOC 2 Type II | T19.1 | Observation period completion |
 | Upstream deps | T26.2, T26.3, T30.1-T30.3, T31.1-T31.5, T32.2 | Sequential human milestones |
 
