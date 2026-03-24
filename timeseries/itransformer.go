@@ -6,6 +6,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // ITransformerConfig holds the configuration for an iTransformer model.
@@ -55,13 +58,20 @@ type ITransformer struct {
 	projW [][]float64 // [dModel][outputLen]
 	projB []float64   // [outputLen]
 
+	// Optional GPU engine for accelerated training. When non-nil,
+	// TrainWindowed uses float32 tensor operations instead of the
+	// pure-Go float64 CPU path.
+	engine compute.Engine[float32]
+	ops    numeric.Arithmetic[float32]
+
 	// Normalization stats from training.
 	normMeans [][]float64
 	normStds  [][]float64
 }
 
-// NewITransformer creates a new iTransformer model.
-func NewITransformer(config ITransformerConfig) (*ITransformer, error) {
+// NewITransformer creates a new iTransformer model. The engine and ops
+// parameters are optional — pass nil to use the pure-Go CPU training path.
+func NewITransformer(config ITransformerConfig, engine compute.Engine[float32], ops numeric.Arithmetic[float32]) (*ITransformer, error) {
 	if config.Channels <= 0 {
 		return nil, fmt.Errorf("itransformer: Channels must be positive, got %d", config.Channels)
 	}
@@ -87,7 +97,7 @@ func NewITransformer(config ITransformerConfig) (*ITransformer, error) {
 		return nil, fmt.Errorf("itransformer: NLayers must be positive, got %d", config.NLayers)
 	}
 
-	m := &ITransformer{config: config}
+	m := &ITransformer{config: config, engine: engine, ops: ops}
 
 	// Variate embedding: inputLen -> dModel.
 	m.embedW = xavierMatrix(config.InputLen, config.DModel)
@@ -1027,6 +1037,10 @@ func (m *ITransformer) TrainWindowed(windows [][][]float64, labels []float64, co
 
 	// Z-score normalize inputs.
 	windows, m.normMeans, m.normStds = normalizeWindows(windows)
+
+	if m.engine != nil {
+		return m.trainWindowedEngine(windows, labels, config)
+	}
 
 	// Collect all parameters and initialize AdamW state.
 	params := m.flatParams()
