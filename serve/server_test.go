@@ -2027,3 +2027,49 @@ func TestHandleReadyz_AfterUnload(t *testing.T) {
 	}
 }
 
+// noFlushResponseRecorder implements http.ResponseWriter but NOT http.Flusher,
+// so streaming handlers can detect the absence of flush support.
+type noFlushResponseRecorder struct {
+	code   int
+	header http.Header
+	body   strings.Builder
+}
+
+func newNoFlushResponseRecorder() *noFlushResponseRecorder {
+	return &noFlushResponseRecorder{header: http.Header{}}
+}
+
+func (r *noFlushResponseRecorder) Header() http.Header        { return r.header }
+func (r *noFlushResponseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
+func (r *noFlushResponseRecorder) WriteHeader(code int)        { r.code = code }
+
+func TestStreamChatCompletion_NoFlusher(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	rec := newNoFlushResponseRecorder()
+
+	srv.streamChatCompletion(rec, context.Background(), nil, nil)
+
+	if rec.code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.body.String(), "streaming not supported") {
+		t.Errorf("body = %q, want error about streaming not supported", rec.body.String())
+	}
+}
+
+func TestStreamCompletion_NoFlusher(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	rec := newNoFlushResponseRecorder()
+
+	srv.streamCompletion(rec, context.Background(), "hello", nil)
+
+	if rec.code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.body.String(), "streaming not supported") {
+		t.Errorf("body = %q, want error about streaming not supported", rec.body.String())
+	}
+}
+
