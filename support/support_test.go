@@ -571,6 +571,159 @@ func TestAPICloseTicketConflictJSONEscaping(t *testing.T) {
 	}
 }
 
+// --- Auth middleware tests ---
+
+// testAuth returns an AuthFunc that maps "token-<tenantID>" to tenantID.
+func testAuth(token string) (string, bool) {
+	if strings.HasPrefix(token, "token-") {
+		return strings.TrimPrefix(token, "token-"), true
+	}
+	return "", false
+}
+
+func newTestAPIWithAuth() *API {
+	api := newTestAPI()
+	api.Auth = testAuth
+	return api
+}
+
+func TestAPIUnauthenticatedReturns401(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// No Authorization header at all.
+	req := httptest.NewRequest("GET", "/support/tickets?customer_id=cust-1", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPIInvalidTokenReturns401(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/support/tickets?customer_id=cust-1", nil)
+	req.Header.Set("Authorization", "Bearer bad-token")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPICrossTenantListReturns403(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Authenticated as cust-1, but requesting cust-2's tickets.
+	req := httptest.NewRequest("GET", "/support/tickets?customer_id=cust-2", nil)
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPICrossTenantGetReturns403(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create a ticket as cust-1.
+	body := `{"customer_id":"cust-1","subject":"My ticket","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d", rr.Code)
+	}
+	var created Ticket
+	json.NewDecoder(rr.Body).Decode(&created)
+
+	// Try to get it as cust-2.
+	req = httptest.NewRequest("GET", "/support/tickets/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer token-cust-2")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPICrossTenantCreateReturns403(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Authenticated as cust-1, but creating ticket for cust-2.
+	body := `{"customer_id":"cust-2","subject":"Sneaky","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPIOversizedBodyReturns413(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create valid JSON that exceeds 1 MiB. The body field contains a large string.
+	bigValue := strings.Repeat("a", (1<<20)+1)
+	bigBody := `{"customer_id":"cust-1","subject":"Test","body":"` + bigValue + `","priority":2}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(bigBody))
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAPIAuthenticatedRequestSucceeds(t *testing.T) {
+	api := newTestAPIWithAuth()
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+
+	// Create ticket as cust-1 with valid auth.
+	body := `{"customer_id":"cust-1","subject":"Help","body":"Need help","priority":1}`
+	req := httptest.NewRequest("POST", "/support/tickets", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// List own tickets.
+	req = httptest.NewRequest("GET", "/support/tickets?customer_id=cust-1", nil)
+	req.Header.Set("Authorization", "Bearer token-cust-1")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAPIPriorityString(t *testing.T) {
 	tests := []struct {
 		p    Priority
