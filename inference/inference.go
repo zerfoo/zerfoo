@@ -451,8 +451,8 @@ func (m *Model) releaseSession(sess *generate.InferenceSession[float32]) {
 func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (string, error) {
 	sc := buildSamplingConfig(opts)
 	sess := m.acquireSession()
+	defer m.releaseSession(sess)
 	result, err := sess.Generate(ctx, prompt, sc)
-	m.releaseSession(sess)
 	return result, err
 }
 
@@ -515,8 +515,8 @@ func (m *Model) SetMaxBatchConcurrency(n int) {
 func (m *Model) GenerateStream(ctx context.Context, prompt string, handler generate.TokenStream, opts ...GenerateOption) error {
 	sc := buildSamplingConfig(opts)
 	sess := m.acquireSession()
+	defer m.releaseSession(sess)
 	err := sess.GenerateStream(ctx, prompt, sc, handler)
-	m.releaseSession(sess)
 	return err
 }
 

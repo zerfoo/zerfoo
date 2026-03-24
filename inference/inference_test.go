@@ -1616,3 +1616,106 @@ func TestModel_ConcurrentGenerate_NoRace(t *testing.T) {
 	}
 	t.Logf("%d/%d clients produced non-empty output", nonEmpty, numClients)
 }
+
+// panicLogitsNode panics in Forward to simulate a generation failure.
+type panicLogitsNode struct {
+	graph.NoParameters[float32]
+	vocabSize int
+}
+
+func (n *panicLogitsNode) OpType() string                     { return "PanicLogits" }
+func (n *panicLogitsNode) Attributes() map[string]interface{} { return nil }
+func (n *panicLogitsNode) OutputShape() []int                 { return []int{1, 1, n.vocabSize} }
+func (n *panicLogitsNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, nil
+}
+func (n *panicLogitsNode) Forward(_ context.Context, _ ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	panic("simulated generation panic")
+}
+
+func buildPanicModel(t *testing.T) *Model {
+	t.Helper()
+	vocabSize := 8
+	tok := buildTestTokenizer()
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	b := graph.NewBuilder[float32](eng)
+	in := b.Input([]int{1, 1, 1})
+	node := &panicLogitsNode{vocabSize: vocabSize}
+	b.AddNode(node, in)
+	g, err := b.Build(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen := generate.NewGenerator(g, tok, eng, generate.ModelConfig{
+		VocabSize:  vocabSize,
+		MaxSeqLen:  32,
+		EOSTokenID: 2,
+		BOSTokenID: 1,
+		NumLayers:  0,
+	})
+	pool := make(chan *generate.InferenceSession[float32], 4)
+	return &Model{
+		generator: gen,
+		tokenizer: tok,
+		engine:    eng,
+		config: ModelMetadata{
+			Architecture: "test",
+			VocabSize:    vocabSize,
+			EOSTokenID:   2,
+			BOSTokenID:   1,
+		},
+		info: &registry.ModelInfo{
+			ID:   "panic-test",
+			Path: "/tmp/test",
+		},
+		sessionPool: pool,
+	}
+}
+
+func TestModel_Generate_SessionReturnedOnPanic(t *testing.T) {
+	m := buildPanicModel(t)
+
+	// Pre-fill pool with one session so we can track it.
+	sess := m.acquireSession()
+	m.releaseSession(sess)
+	if len(m.sessionPool) != 1 {
+		t.Fatalf("pool should have 1 session before test, got %d", len(m.sessionPool))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { recover() }()
+		m.Generate(context.Background(), "hello", WithMaxTokens(1))
+	}()
+	<-done
+
+	if len(m.sessionPool) != 1 {
+		t.Errorf("session pool should have 1 session after panic, got %d", len(m.sessionPool))
+	}
+}
+
+func TestModel_GenerateStream_SessionReturnedOnPanic(t *testing.T) {
+	m := buildPanicModel(t)
+
+	sess := m.acquireSession()
+	m.releaseSession(sess)
+	if len(m.sessionPool) != 1 {
+		t.Fatalf("pool should have 1 session before test, got %d", len(m.sessionPool))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { recover() }()
+		m.GenerateStream(context.Background(), "hello",
+			generate.TokenStreamFunc(func(string, bool) error { return nil }),
+			WithMaxTokens(1),
+		)
+	}()
+	<-done
+
+	if len(m.sessionPool) != 1 {
+		t.Errorf("session pool should have 1 session after panic, got %d", len(m.sessionPool))
+	}
+}
