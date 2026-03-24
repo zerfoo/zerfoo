@@ -1689,7 +1689,7 @@ through engine ops, and applies AdamW with engine arithmetic.
 
 ##### Wave 57: GPU Engine Training Paths (2 agents)
 
-- [ ] T113.1 Add GPU engine training support to FreTS
+- [x] T113.1 Add GPU engine training support to FreTS (2026-03-24)
   Owner: ML Eng  Est: 4h  verifies: [UC-026]
   Deps: none
   Files: timeseries/frets.go, timeseries/frets_engine.go (new)
@@ -1712,7 +1712,7 @@ through engine ops, and applies AdamW with engine arithmetic.
   - go build ./timeseries/ clean. go vet ./timeseries/ clean.
   - go test -race -timeout 120s ./timeseries/ -run TestFreTS pass.
 
-- [ ] T113.2 Add GPU engine training support to ITransformer
+- [x] T113.2 Add GPU engine training support to ITransformer (2026-03-24)
   Owner: ML Eng  Est: 4h  verifies: [UC-026]
   Deps: none
   Files: timeseries/itransformer.go, timeseries/itransformer_engine.go (new)
@@ -1737,7 +1737,7 @@ through engine ops, and applies AdamW with engine arithmetic.
 
 ##### Wave 58: Verification (1 agent)
 
-- [ ] T113.3 Run go test -race and go vet on timeseries package
+- [x] T113.3 Run go test -race and go vet on timeseries package (2026-03-24)
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T113.1, T113.2
   Acceptance:
@@ -2415,12 +2415,12 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 #### Wave 57: E113 GPU Engine Training Paths (2 agents)
 
-- [ ] T113.1 Add GPU engine training support to FreTS
-- [ ] T113.2 Add GPU engine training support to ITransformer
+- [x] T113.1 Add GPU engine training support to FreTS (2026-03-24)
+- [x] T113.2 Add GPU engine training support to ITransformer (2026-03-24)
 
 #### Wave 58: E113 Verification (1 agent)
 
-- [ ] T113.3 Run go test -race and go vet on timeseries package
+- [x] T113.3 Run go test -race and go vet on timeseries package (2026-03-24)
 
 ---
 
