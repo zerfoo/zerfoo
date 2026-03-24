@@ -295,6 +295,107 @@ func TestCloud_Billing(t *testing.T) {
 	})
 }
 
+func TestCloud_TokenBudgetPreAuth(t *testing.T) {
+	t.Run("exhausted budget returns 429 before inference", func(t *testing.T) {
+		var called bool
+		inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cs, _ := setupCloudServer(inner)
+		// Token budget of 10 — too small for defaultMaxTokens (4096).
+		cs.Tenants().Create(TenantConfig{ID: "t-budget", APIKey: "key-budget", RateLimit: 100, TokenBudget: 10})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer key-budget")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("status = %d, want 429", w.Code)
+		}
+		if called {
+			t.Error("inference handler should not have been called")
+		}
+		if w.Header().Get("Retry-After") == "" {
+			t.Error("expected Retry-After header on 429")
+		}
+	})
+
+	t.Run("request-specified max_tokens used for pre-auth", func(t *testing.T) {
+		var called bool
+		inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usage": map[string]int{
+					"prompt_tokens":     5,
+					"completion_tokens": 10,
+					"total_tokens":      15,
+				},
+			})
+		})
+
+		cs, _ := setupCloudServer(inner)
+		// Budget of 100 — enough for max_tokens=50 but not for defaultMaxTokens.
+		cs.Tenants().Create(TenantConfig{ID: "t-mt", APIKey: "key-mt", RateLimit: 100, TokenBudget: 100})
+		handler := cs.Handler()
+
+		body := `{"max_tokens": 50}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-mt")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", w.Code)
+		}
+		if !called {
+			t.Error("inference handler should have been called")
+		}
+	})
+
+	t.Run("reconciles estimated vs actual tokens", func(t *testing.T) {
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Report actual usage via context (15 tokens total).
+			if usage := generate.TokenUsageFromContext(r.Context()); usage != nil {
+				usage.SetPromptTokens(5)
+				usage.SetCompletionTokens(10)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cs, _ := setupCloudServer(inner)
+		// Budget of 200.
+		cs.Tenants().Create(TenantConfig{ID: "t-recon", APIKey: "key-recon", RateLimit: 100, TokenBudget: 200})
+		handler := cs.Handler()
+
+		// First request with max_tokens=100 — pre-authorizes 100, actual=15, refund 85.
+		body := `{"max_tokens": 100}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-recon")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("first request status = %d, want 200", w.Code)
+		}
+
+		// After reconciliation, budget used = 15 (not 100).
+		// A second request with max_tokens=100 should still succeed (15+100 <= 200).
+		req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req2.Header.Set("Authorization", "Bearer key-recon")
+		w2 := httptest.NewRecorder()
+		handler.ServeHTTP(w2, req2)
+
+		if w2.Code != http.StatusOK {
+			t.Errorf("second request status = %d, want 200 (reconciliation should have refunded tokens)", w2.Code)
+		}
+	})
+}
+
 func TestCloud_RateLimit(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -1,8 +1,10 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,22 +24,29 @@ func tenantFromContext(ctx context.Context) *Tenant {
 	return t
 }
 
+// defaultMaxTokens is the estimated token budget consumed when a request
+// does not specify max_tokens. It acts as a conservative upper bound for
+// pre-authorization so that budget checks happen before inference runs.
+const defaultMaxTokens = 4096
+
 // CloudServer wraps an HTTP handler with multi-tenant isolation, token billing,
 // rate limiting, and health checking for cloud deployments.
 type CloudServer struct {
-	tenants *TenantManager
-	meter   *TokenMeter
-	inner   http.Handler
-	healthy atomic.Bool
+	tenants   *TenantManager
+	meter     *TokenMeter
+	inner     http.Handler
+	maxTokens int64
+	healthy   atomic.Bool
 }
 
 // NewCloudServer creates a CloudServer that routes authenticated requests
 // to the given handler through tenant isolation middleware.
 func NewCloudServer(handler http.Handler, tenants *TenantManager, meter *TokenMeter) *CloudServer {
 	cs := &CloudServer{
-		tenants: tenants,
-		meter:   meter,
-		inner:   handler,
+		tenants:   tenants,
+		meter:     meter,
+		inner:     handler,
+		maxTokens: defaultMaxTokens,
 	}
 	cs.healthy.Store(true)
 	return cs
@@ -119,13 +128,39 @@ func (cs *CloudServer) rateLimitMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// billingMiddleware captures usage from response bodies and meters tokens.
-// For streaming (SSE) responses, JSON parsing fails silently, so the middleware
-// also checks for token counts stored in the request context by the generation
-// session via [generate.TokenUsage].
+// billingMiddleware pre-authorizes token budgets before inference runs
+// and reconciles actual usage afterward. For streaming (SSE) responses,
+// JSON parsing fails silently, so the middleware also checks for token
+// counts stored in the request context by the generation session via
+// [generate.TokenUsage].
 func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenant := tenantFromContext(r.Context())
+
+		// Parse max_tokens from the request body to estimate the token budget
+		// needed. Default to cs.maxTokens when not specified or unparseable.
+		estimated := cs.maxTokens
+		if r.Body != nil {
+			bodyBytes, err := io.ReadAll(r.Body)
+			r.Body.Close()
+			if err == nil && len(bodyBytes) > 0 {
+				var req struct {
+					MaxTokens *int64 `json:"max_tokens"`
+				}
+				if json.Unmarshal(bodyBytes, &req) == nil && req.MaxTokens != nil && *req.MaxTokens > 0 {
+					estimated = *req.MaxTokens
+				}
+				// Restore the body so downstream handlers can read it.
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			}
+		}
+
+		// Pre-authorize: reject before inference if budget is exhausted.
+		if tenant != nil && !tenant.ConsumeTokens(estimated) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "token budget exhausted")
+			return
+		}
 
 		// Inject a TokenUsage into the context so the generation layer can
 		// record prompt/completion counts regardless of response format.
@@ -154,17 +189,14 @@ func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		if input == 0 && output == 0 {
-			return
-		}
-
-		// Consume from token budget.
-		if tenant != nil {
-			tenant.ConsumeTokens(int64(input + output))
+		// Reconcile: return unused tokens from the pre-authorized estimate.
+		actual := int64(input + output)
+		if tenant != nil && actual < estimated {
+			tenant.RefundTokens(estimated - actual)
 		}
 
 		// Record billing.
-		if cs.meter != nil && tenant != nil {
+		if cs.meter != nil && tenant != nil && actual > 0 {
 			cs.meter.Record(tenant.ID, input, output)
 		}
 	})
