@@ -1129,7 +1129,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 44: Medium Fixes -- Infrastructure and Headers (5 agents)
 
-- [ ] T108.16 Add CSP, HSTS, Referrer-Policy to security headers (M12 remainder)
+- [x] T108.16 Add CSP, HSTS, Referrer-Policy to security headers (M12 remainder) (2026-03-23)
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1142,7 +1142,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: verify all 7 headers present on response.
   - go vet ./serve/ clean.
 
-- [ ] T108.17 Add Vary: Origin to CORS middleware (M13)
+- [x] T108.17 Add Vary: Origin to CORS middleware (M13) (2026-03-23)
   Owner: Security Eng  Est: 15m  verifies: [infrastructure]
   Deps: none
   Files: security/network.go
@@ -1151,7 +1151,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: response includes Vary: Origin when CORS headers are set.
   - go vet ./security/ clean.
 
-- [ ] T108.18 Pin GitHub Actions to commit SHA (M18)
+- [x] T108.18 Pin GitHub Actions to commit SHA (M18) (2026-03-23)
   Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: .github/workflows/ci.yml, .github/workflows/release-please.yml,
@@ -1161,7 +1161,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     with SHA-pinned references. Add tag as comment for readability.
   - Verify: all workflows still trigger correctly.
 
-- [ ] T108.19 Add NetworkPolicy to Helm chart (M16)
+- [x] T108.19 Add NetworkPolicy to Helm chart (M16) (2026-03-23)
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: deploy/helm/zerfoo/templates/networkpolicy.yaml, deploy/helm/zerfoo/values.yaml
@@ -1171,7 +1171,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Add networkPolicy section to values.yaml (enabled: false by default).
   - Verify: helm template renders correctly.
 
-- [ ] T108.20 Support API auth middleware + body size limits (C3, M1)
+- [x] T108.20 Support API auth middleware + body size limits (C3, M1) (2026-03-23)
   Owner: Security Eng  Est: 2h  verifies: [UC-003]
   Deps: none
   Files: support/api.go
@@ -1907,13 +1907,13 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T108.14 Fix batch path chat template formatting (H12, F1, F8) (2026-03-23)
 - [x] T108.15 SAML XXE protection + replay prevention (H1, H2) (2026-03-23)
 
-#### Wave 44: E108 Medium Fixes -- Infrastructure (5 agents)
+#### Wave 44: E108 Medium Fixes -- Infrastructure (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.16 Add CSP, HSTS, Referrer-Policy headers (M12)
-- [ ] T108.17 Add Vary: Origin to CORS middleware (M13)
-- [ ] T108.18 Pin GitHub Actions to commit SHA (M18)
-- [ ] T108.19 Add NetworkPolicy to Helm chart (M16)
-- [ ] T108.20 Support API auth + body size limits (C3, M1)
+- [x] T108.16 Add CSP, HSTS, Referrer-Policy headers (M12)
+- [x] T108.17 Add Vary: Origin to CORS middleware (M13)
+- [x] T108.18 Pin GitHub Actions to commit SHA (M18)
+- [x] T108.19 Add NetworkPolicy to Helm chart (M16)
+- [x] T108.20 Support API auth + body size limits (C3, M1)
 
 #### Wave 45: E108 Medium Fixes -- Correctness (5 agents)
 
