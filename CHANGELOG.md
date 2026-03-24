@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0](https://github.com/zerfoo/zerfoo/compare/v1.11.1...v1.12.0) (2026-03-24)
+
+
+### Features
+
+* **helm:** add NetworkPolicy template gated by networkPolicy.enabled ([969d1f6](https://github.com/zerfoo/zerfoo/commit/969d1f6e5280ec25c2e4ef46e3a50faa2a470d10))
+* **inference:** make session pool size configurable (T108.22) ([36ab0e9](https://github.com/zerfoo/zerfoo/commit/36ab0e93f1b1de4f3cd4f675637f7008306afb15))
+* **serve:** register healthz/readyz on main serve mux ([a250102](https://github.com/zerfoo/zerfoo/commit/a250102eff14050e7e350f8cfe1aa577904615dc))
+* **support:** add API auth middleware and body size limits ([5078f5d](https://github.com/zerfoo/zerfoo/commit/5078f5d68d0b8fe8d1d7daecea16bb6e4b811d18))
+* **timeseries:** add engine-accelerated backward pass for NHiTS TrainWindowed ([39797b7](https://github.com/zerfoo/zerfoo/commit/39797b7a0e881dba9f916bd2c8b8c34b5c563336)), closes [#133](https://github.com/zerfoo/zerfoo/issues/133)
+* **timeseries:** add engine-accelerated training path for PatchTST TrainWindowed ([c6de291](https://github.com/zerfoo/zerfoo/commit/c6de29100cece6ca944d4371db341228eec76a8f))
+* **timeseries:** add GPU-accelerated TrainWindowed for CfC ([#133](https://github.com/zerfoo/zerfoo/issues/133)) ([607952c](https://github.com/zerfoo/zerfoo/commit/607952ceafece2d347869774b721f33dcfc29cad))
+* **timeseries:** add GPU-accelerated TrainWindowed for DLinear ([#133](https://github.com/zerfoo/zerfoo/issues/133)) ([96f2f9c](https://github.com/zerfoo/zerfoo/commit/96f2f9cf9fd7304a78dc8e5432fd3f0d86a9f7ef))
+
+
+### Bug Fixes
+
+* **cloud:** implement http.Flusher on responseCapture ([6d5347d](https://github.com/zerfoo/zerfoo/commit/6d5347da92a45e5b8c7c2c6fbb258de06d0c10a5))
+* **cloud:** read streaming token usage from context in billingMiddleware (T108.1) ([97ce379](https://github.com/zerfoo/zerfoo/commit/97ce3797eec753cdf1d9634dc3f7028de480179c))
+* **cloud:** use UTC for billing timestamps (T108.30) ([741b4b7](https://github.com/zerfoo/zerfoo/commit/741b4b72173e770a467a4255476fdf5d39f91900))
+* **generate:** add TokenUsage context tracking for billing (T108.1) ([c2736c6](https://github.com/zerfoo/zerfoo/commit/c2736c6b46c4e2f37cd32c0643e0722821901192))
+* **generate:** eliminate O(n^2) checkStop decoding via incremental decode ([13fa2b8](https://github.com/zerfoo/zerfoo/commit/13fa2b88888d7fc38880312cc2fbda5ecd783253))
+* **generate:** remove unused seqLen computation in prefix cache path ([f840eef](https://github.com/zerfoo/zerfoo/commit/f840eef706f381032c37cc26a70ce5edb0809e41))
+* **reducesum:** return error instead of panic for invalid axis in Backward ([ff242db](https://github.com/zerfoo/zerfoo/commit/ff242db691a11a2f0cb160398ab82a945d770d6a))
+* **security:** add E108 deep review v1.11.1 remediation plan (32 tasks) ([bf837f3](https://github.com/zerfoo/zerfoo/commit/bf837f3ec66d7d0edf2be3b767df41afe3d7c289))
+* **security:** add exponential backoff retry to marketplace metering (T108.10) ([b2addbc](https://github.com/zerfoo/zerfoo/commit/b2addbce8817448e0c30c760231c13ea0d8797c1))
+* **security:** add SAML XXE protection and replay prevention (T108.15) ([bed8de1](https://github.com/zerfoo/zerfoo/commit/bed8de1dfd91ae2cc7be9ebfa0f297e3c891c122))
+* **security:** add Vary: Origin header to CORS middleware ([621b8a7](https://github.com/zerfoo/zerfoo/commit/621b8a7be8f7cc65867ca71269dc82edde4d6894))
+* **security:** complete E108 deep review remediation -- Waves 41-47 done ([ea9b223](https://github.com/zerfoo/zerfoo/commit/ea9b2231561cdd92197c588bb528a94e01838cb4))
+* **security:** complete Wave 42 -- T107.2-T107.3, T108.6-T108.10 ([e9bf8f7](https://github.com/zerfoo/zerfoo/commit/e9bf8f7103ba323df27fd25482fc678bde302881))
+* **security:** complete Wave 43 -- T108.11-T108.15 ([e8e91cf](https://github.com/zerfoo/zerfoo/commit/e8e91cf3fca3ceceb5a3a1c1f4f6f5450217f9ef))
+* **security:** complete Wave 44 -- T108.16-T108.20 ([314a6f9](https://github.com/zerfoo/zerfoo/commit/314a6f9f7ca148248716a8d48c6546be71f300aa))
+* **security:** complete Wave 45 -- T108.21-T108.25 ([e630fa0](https://github.com/zerfoo/zerfoo/commit/e630fa03b233904ffa71a13c2f65419b16583b63))
+* **security:** enable GKE private cluster and scope node OAuth (H9/M15) ([2618ec8](https://github.com/zerfoo/zerfoo/commit/2618ec8b9b9fbf069d6a07a4365c800e882d6740))
+* **security:** enforce scope-based authorization on endpoints (T108.11) ([b5f9296](https://github.com/zerfoo/zerfoo/commit/b5f92968dd54ecba95e316d6fb26ae04bf5f7d49))
+* **security:** hash tenant API keys with SHA-256 instead of storing raw keys (H10) ([750c296](https://github.com/zerfoo/zerfoo/commit/750c296409fda4c341e4f066a0c3c578feefb479))
+* **security:** implement SAML XML signature verification (T108.2) ([be1ac12](https://github.com/zerfoo/zerfoo/commit/be1ac12614ba45f46040d6dc054445f3204cb7f1))
+* **security:** make Azure webhook signature validation mandatory (H8) ([6b2470b](https://github.com/zerfoo/zerfoo/commit/6b2470b6d33e518a2f744763b907fb036d718c65))
+* **security:** pin GitHub Actions to commit SHAs ([67d3968](https://github.com/zerfoo/zerfoo/commit/67d3968057f8112892ad39fcd27839117e6a0ce0))
+* **security:** pre-authorize token budget before request execution (T108.6) ([430154b](https://github.com/zerfoo/zerfoo/commit/430154b396e692cfc97f37b00a028a833ba6c1c5))
+* **security:** replace hardcoded DP seed with crypto/rand and validate config ([f90c2e1](https://github.com/zerfoo/zerfoo/commit/f90c2e15175402251afc4f40fe9fb332ba9814d1))
+* **security:** validate trusted proxies before trusting forwarding headers ([98949a2](https://github.com/zerfoo/zerfoo/commit/98949a2c17274d7271ea289eabf96e917ae8bbf9))
+* **security:** warn or refuse startup when API key is empty (T108.12) ([7caa71c](https://github.com/zerfoo/zerfoo/commit/7caa71cbc2710afd7f8e8deccbff246f301d45a5))
+* **serve:** add 30-second graceful shutdown timeout ([9d71483](https://github.com/zerfoo/zerfoo/commit/9d7148321357113a9a86f028a77b0ff12f00d230))
+* **serve:** add OpenAI-required id/object/created/model fields to streaming chunks ([fc264e6](https://github.com/zerfoo/zerfoo/commit/fc264e638567b55e98f67bd7f1f8fc31b494a213))
+* **serve:** apply chat template in batch path instead of raw concatenation ([000b55f](https://github.com/zerfoo/zerfoo/commit/000b55ff794044cbd19141ab23923d88db2a1ce3))
+* **serve:** decouple batch context from individual request lifecycle ([df14cd0](https://github.com/zerfoo/zerfoo/commit/df14cd064469546921a255c96c988233ee7365b5))
+* **serve:** read streaming token usage from context in BillingMiddleware (T108.1) ([919cd2a](https://github.com/zerfoo/zerfoo/commit/919cd2a8276782c5112e11acbd7cd2bf976a3828))
+* **serve:** replace broad "cuda" match with specific OOM patterns in isOOMError ([2ae79a4](https://github.com/zerfoo/zerfoo/commit/2ae79a43493f626ef29585f376602274bb34c37d))
+* **serve:** validate sampling params temperature/TopP/TopK (T108.27) ([c46fb4f](https://github.com/zerfoo/zerfoo/commit/c46fb4ffde8e4d9b18d7f1565084108bd184cccf))
+
 ## [1.11.1](https://github.com/zerfoo/zerfoo/compare/v1.11.0...v1.11.1) (2026-03-24)
 
 
