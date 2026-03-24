@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // MeteringAPI abstracts AWS Marketplace Metering Service API calls.
@@ -60,11 +62,11 @@ type BatchMeterUsageOutput struct {
 
 // MeterUsageInput is the input for MeterUsage.
 type MeterUsageInput struct {
-	ProductCode        string    `json:"productCode"`
-	Dimension          string    `json:"dimension"`
-	Quantity           int       `json:"quantity"`
-	Timestamp          time.Time `json:"timestamp"`
-	UsageAllocations   []UsageAllocation `json:"usageAllocations,omitempty"`
+	ProductCode      string            `json:"productCode"`
+	Dimension        string            `json:"dimension"`
+	Quantity         int               `json:"quantity"`
+	Timestamp        time.Time         `json:"timestamp"`
+	UsageAllocations []UsageAllocation `json:"usageAllocations,omitempty"`
 }
 
 // UsageAllocation allows tagging usage with allocation metadata.
@@ -88,6 +90,9 @@ type MeteringClient struct {
 	Signer RequestSigner
 	// HTTPClient is the HTTP client used for API calls.
 	HTTPClient *http.Client
+	// Retry configures exponential backoff for metering calls.
+	// Zero value disables retry.
+	Retry marketplace.RetryConfig
 
 	mu sync.Mutex
 }
@@ -103,6 +108,7 @@ func NewMeteringClient(endpoint string, signer RequestSigner) *MeteringClient {
 		Endpoint:   endpoint,
 		Signer:     signer,
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		Retry:      marketplace.DefaultRetryConfig(),
 	}
 }
 
@@ -133,7 +139,12 @@ func (c *MeteringClient) BatchMeterUsage(ctx context.Context, input *BatchMeterU
 		return nil, fmt.Errorf("marshal batch meter usage request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, "AWSMPMeteringService.BatchMeterUsage", data)
+	var resp []byte
+	err = marketplace.RetryFunc(ctx, c.Retry, "aws.BatchMeterUsage", func() error {
+		var reqErr error
+		resp, reqErr = c.doRequest(ctx, "AWSMPMeteringService.BatchMeterUsage", data)
+		return reqErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("batch meter usage: %w", err)
 	}
@@ -152,7 +163,12 @@ func (c *MeteringClient) MeterUsage(ctx context.Context, input *MeterUsageInput)
 		return nil, fmt.Errorf("marshal meter usage request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, "AWSMPMeteringService.MeterUsage", data)
+	var resp []byte
+	err = marketplace.RetryFunc(ctx, c.Retry, "aws.MeterUsage", func() error {
+		var reqErr error
+		resp, reqErr = c.doRequest(ctx, "AWSMPMeteringService.MeterUsage", data)
+		return reqErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("meter usage: %w", err)
 	}

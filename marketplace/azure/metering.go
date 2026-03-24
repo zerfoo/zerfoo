@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // MeteringAPI abstracts Azure Marketplace Metering Service API calls.
@@ -30,22 +32,22 @@ type UsageEvent struct {
 
 // UsageEventResult contains the result of posting a single usage event.
 type UsageEventResult struct {
-	UsageEventID  string        `json:"usageEventId"`
+	UsageEventID  string         `json:"usageEventId"`
 	Status        MeteringStatus `json:"status"`
-	Quantity      float64       `json:"quantity"`
-	Dimension     string        `json:"dimension"`
-	EffectiveTime time.Time     `json:"effectiveStartTime"`
-	PlanID        string        `json:"planId"`
-	MessageTime   time.Time     `json:"messageTime"`
+	Quantity      float64        `json:"quantity"`
+	Dimension     string         `json:"dimension"`
+	EffectiveTime time.Time      `json:"effectiveStartTime"`
+	PlanID        string         `json:"planId"`
+	MessageTime   time.Time      `json:"messageTime"`
 }
 
 // MeteringStatus represents the status of a metering event.
 type MeteringStatus string
 
 const (
-	MeteringStatusAccepted   MeteringStatus = "Accepted"
-	MeteringStatusDuplicate  MeteringStatus = "Duplicate"
-	MeteringStatusExpired    MeteringStatus = "Expired"
+	MeteringStatusAccepted         MeteringStatus = "Accepted"
+	MeteringStatusDuplicate        MeteringStatus = "Duplicate"
+	MeteringStatusExpired          MeteringStatus = "Expired"
 	MeteringStatusResourceNotFound MeteringStatus = "ResourceNotFound"
 )
 
@@ -74,6 +76,10 @@ type MeteringClient struct {
 
 	// HTTPClient is the HTTP client used for API calls.
 	HTTPClient *http.Client
+
+	// Retry configures exponential backoff for metering calls.
+	// Zero value disables retry.
+	Retry marketplace.RetryConfig
 }
 
 // NewMeteringClient creates a new MeteringClient with the given endpoint and token provider.
@@ -83,6 +89,7 @@ func NewMeteringClient(endpoint string, tokenProvider TokenProvider) *MeteringCl
 		APIVersion:    "2018-08-31",
 		TokenProvider: tokenProvider,
 		HTTPClient:    &http.Client{Timeout: 30 * time.Second},
+		Retry:         marketplace.DefaultRetryConfig(),
 	}
 }
 
@@ -93,7 +100,12 @@ func (c *MeteringClient) PostUsageEvent(ctx context.Context, event UsageEvent) (
 		return nil, fmt.Errorf("marshal usage event: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/usageEvent", data)
+	var resp []byte
+	err = marketplace.RetryFunc(ctx, c.Retry, "azure.PostUsageEvent", func() error {
+		var reqErr error
+		resp, reqErr = c.doRequest(ctx, http.MethodPost, "/usageEvent", data)
+		return reqErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("post usage event: %w", err)
 	}
@@ -116,7 +128,12 @@ func (c *MeteringClient) PostBatchUsageEvent(ctx context.Context, events []Usage
 		return nil, fmt.Errorf("marshal batch usage events: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/batchUsageEvent", data)
+	var resp []byte
+	err = marketplace.RetryFunc(ctx, c.Retry, "azure.PostBatchUsageEvent", func() error {
+		var reqErr error
+		resp, reqErr = c.doRequest(ctx, http.MethodPost, "/batchUsageEvent", data)
+		return reqErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("post batch usage events: %w", err)
 	}

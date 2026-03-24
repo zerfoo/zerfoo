@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // mockMeteringAPI is a test double for MeteringAPI.
@@ -126,6 +129,87 @@ func TestMeteringClient_MeterUsage(t *testing.T) {
 	}
 	if out.MeteringRecordID != "rec-789" {
 		t.Errorf("got record ID %q, want %q", out.MeteringRecordID, "rec-789")
+	}
+}
+
+func TestMeteringClient_BatchMeterUsage_RetryOn429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("throttled"))
+			return
+		}
+		var input BatchMeterUsageInput
+		json.NewDecoder(r.Body).Decode(&input)
+		var results []UsageRecordResult
+		for _, rec := range input.UsageRecords {
+			results = append(results, UsageRecordResult{
+				UsageRecord:    rec,
+				MeteringStatus: "Success",
+			})
+		}
+		json.NewEncoder(w).Encode(BatchMeterUsageOutput{Results: results})
+	}))
+	defer srv.Close()
+
+	client := NewMeteringClient(srv.URL, nil)
+	client.Retry = marketplace.RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   1 * time.Millisecond,
+		MaxJitter:   1 * time.Millisecond,
+	}
+
+	out, err := client.BatchMeterUsage(context.Background(), &BatchMeterUsageInput{
+		ProductCode:  "prod-xyz",
+		UsageRecords: []UsageRecord{{CustomerIdentifier: "cust-1", Dimension: "tokens_1m", Quantity: 5, Timestamp: time.Now()}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("got %d results, want 1", len(out.Results))
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("got %d attempts, want 3", got)
+	}
+}
+
+func TestMeteringClient_MeterUsage_RetryOn429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("throttled"))
+			return
+		}
+		json.NewEncoder(w).Encode(MeterUsageOutput{MeteringRecordID: "rec-retry"})
+	}))
+	defer srv.Close()
+
+	client := NewMeteringClient(srv.URL, nil)
+	client.Retry = marketplace.RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   1 * time.Millisecond,
+		MaxJitter:   1 * time.Millisecond,
+	}
+
+	out, err := client.MeterUsage(context.Background(), &MeterUsageInput{
+		ProductCode: "prod-xyz",
+		Dimension:   "tokens_1m",
+		Quantity:    10,
+		Timestamp:   time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.MeteringRecordID != "rec-retry" {
+		t.Errorf("got record ID %q, want %q", out.MeteringRecordID, "rec-retry")
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("got %d attempts, want 2", got)
 	}
 }
 

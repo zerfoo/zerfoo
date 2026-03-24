@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zerfoo/zerfoo/marketplace"
 )
 
 // mockProcurementAPI is a test double for ProcurementAPI.
@@ -269,6 +272,51 @@ func TestServiceControlClient_ReportErrors(t *testing.T) {
 	err := client.Report(context.Background(), "svc", []Operation{{OperationID: "op-1"}})
 	if err == nil {
 		t.Fatal("expected error for report with errors")
+	}
+}
+
+func TestServiceControlClient_Report_RetryOn429(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("throttled"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ReportResponse{})
+	}))
+	defer srv.Close()
+
+	client := NewServiceControlClient(nil)
+	client.Endpoint = srv.URL
+	client.Retry = marketplace.RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   1 * time.Millisecond,
+		MaxJitter:   1 * time.Millisecond,
+	}
+
+	quantity := int64(5)
+	ops := []Operation{
+		{
+			OperationID: "op-retry",
+			ConsumerID:  "project:my-project",
+			MetricValues: []MetricValueSet{
+				{
+					MetricName:   DimensionTokens,
+					MetricValues: []MetricValue{{Int64Value: &quantity}},
+				},
+			},
+		},
+	}
+
+	err := client.Report(context.Background(), "zerfoo-marketplace.googleapis.com", ops)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("got %d attempts, want 3", got)
 	}
 }
 
