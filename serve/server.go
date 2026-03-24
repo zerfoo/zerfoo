@@ -44,6 +44,7 @@ type Server struct {
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
 	apiKey      string          // optional; enables Bearer token auth
+	keyStore    *security.KeyStore   // optional; enables scope-based authorization
 	rateLimiter *security.RateLimiter // optional; enables per-IP rate limiting
 	maxTokens   int             // server-side upper bound for max_tokens (default 8192)
 }
@@ -116,6 +117,15 @@ func WithRateLimiter(rl *security.RateLimiter) ServerOption {
 	}
 }
 
+// WithKeyStore enables scope-based authorization using the provided KeyStore.
+// When set, after Bearer token validation the middleware looks up the key in the
+// store and checks that it has a sufficient scope for the endpoint.
+func WithKeyStore(ks *security.KeyStore) ServerOption {
+	return func(s *Server) {
+		s.keyStore = ks
+	}
+}
+
 // GPUs returns the configured GPU IDs, or nil if not set.
 func (s *Server) GPUs() []int {
 	return s.gpus
@@ -171,7 +181,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 // Handler returns the HTTP handler for this server.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
-	if s.apiKey != "" {
+	if s.apiKey != "" || s.keyStore != nil {
 		h = s.authMiddleware(h)
 	}
 	if s.rateLimiter != nil {
@@ -243,12 +253,51 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		token := auth[len(prefix):]
+
+		// When a KeyStore is configured, validate against it and enforce scopes.
+		if s.keyStore != nil {
+			key := s.keyStore.Lookup(token)
+			if key == nil {
+				writeError(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			if !key.Valid(time.Now()) {
+				writeError(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			if required := requiredScope(r.Method, r.URL.Path); required != "" {
+				if !key.HasScope(required) {
+					writeError(w, http.StatusForbidden, "insufficient scope")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Static API key mode — no scope checks.
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requiredScope returns the minimum scope required for the given HTTP method and path.
+// DELETE /v1/models requires ScopeAdmin. POST /v1/* requires ScopeInference.
+// GET /v1/models requires ScopeReadOnly. Returns empty string if no scope is required.
+func requiredScope(method, path string) security.Scope {
+	if method == http.MethodDelete && strings.HasPrefix(path, "/v1/models") {
+		return security.ScopeAdmin
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/") {
+		return security.ScopeInference
+	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/v1/models") {
+		return security.ScopeReadOnly
+	}
+	return ""
 }
 
 // rateLimitMiddleware rejects requests that exceed the configured rate limit
@@ -609,16 +658,23 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if s.batch != nil {
-		// Build prompt from messages for batching.
-		var prompt strings.Builder
-		for _, m := range messages {
-			prompt.WriteString(m.Content)
-			prompt.WriteString(" ")
-		}
+		// Format messages using the model's chat template so the batch path
+		// produces the same prompt as the non-batch Chat path.
+		prompt := s.model.FormatMessages(messages)
 		var br BatchResult
-		br, err = s.batch.Submit(r.Context(), BatchRequest{Prompt: prompt.String()})
+		br, err = s.batch.Submit(r.Context(), BatchRequest{Prompt: prompt})
 		if err == nil {
 			resp = inference.Response{Content: br.Value}
+			// Count tokens so the response includes accurate usage info.
+			if tok := s.model.Tokenizer(); tok != nil {
+				if ids, encErr := tok.Encode(prompt); encErr == nil {
+					resp.PromptTokens = len(ids)
+				}
+				if ids, encErr := tok.Encode(br.Value); encErr == nil {
+					resp.CompletionTokens = len(ids)
+				}
+				resp.TokensUsed = resp.PromptTokens + resp.CompletionTokens
+			}
 		}
 	} else {
 		resp, err = s.model.Chat(r.Context(), messages, opts...)
