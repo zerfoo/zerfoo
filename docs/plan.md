@@ -1486,7 +1486,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
 
 ##### Wave 52: New Architectures (2 agents)
 
-- [ ] T110.4 Implement iTransformer backend (issue #155)
+- [x] T110.4 Implement iTransformer backend (issue #155) (2026-03-24)
   Owner: ML Eng  Est: 6h  verifies: [UC-026]
   Deps: none
   Files: timeseries/itransformer.go (new), timeseries/itransformer_test.go (new)
@@ -1504,7 +1504,7 @@ Five open issues: 2 bugs (NHiTS segfault regression, FreTS NaN), 1 API gap
   - Close #155 with evidence.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ -run TestITransformer pass.
 
-- [ ] T110.5 Implement Mamba/SSM backend (issue #156)
+- [x] T110.5 Implement Mamba/SSM backend (issue #156) (2026-03-24)
   Owner: ML Eng  Est: 6h  verifies: [UC-026]
   Deps: none
   Files: timeseries/mamba.go (new), timeseries/mamba_test.go (new)
@@ -2172,7 +2172,12 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T110.2 Implement FreTS backend with normalization and NaN protection (issue #153)
 - [x] T110.3 Add WithCfCEngine option to CfC constructor (issue #154)
 
-Remaining E110 tasks: Wave 52 (T110.4, T110.5), Wave 53 (T110.6).
+#### Wave 52: E110 New Architectures (2 agents, completed 2026-03-24)
+
+- [x] T110.4 Implement iTransformer backend (issue #155)
+- [x] T110.5 Implement Mamba/SSM backend wrapping layers/ssm.MambaBlock (issue #156)
+
+Remaining E110 tasks: Wave 53 (T110.6 verification).
 
 ---
 
