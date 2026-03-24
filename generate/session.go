@@ -130,10 +130,6 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 			cachedBlocks, matchedLen := s.prefixCache.Match(promptIDs32)
 			if matchedLen > 0 && matchedLen <= len(promptIDs) {
 				// Inject cached blocks into the PagedKVCache.
-				seqLen := matchedLen * pagedCache.blockSize
-				if seqLen > matchedLen {
-					seqLen = matchedLen
-				}
 				pagedCache.InjectBlocks(cachedBlocks, matchedLen)
 				prefillIDs = promptIDs[matchedLen:]
 			}
