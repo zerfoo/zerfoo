@@ -123,6 +123,7 @@ type loadOptions struct {
 	kvDtype             string // "" or "fp32" for float32, "fp16" for FP16 KV cache
 	mmap                bool   // use mmap for model loading (unix only)
 	maxBatchConcurrency int    // max goroutines in GenerateBatch (0 = default)
+	sessionPoolSize     int    // session pool capacity (0 = default 16)
 }
 
 // WithCacheDir sets the model cache directory.
@@ -205,6 +206,22 @@ func WithMaxBatchConcurrency(n int) Option {
 		if n > 0 {
 			o.maxBatchConcurrency = n
 		}
+	}
+}
+
+// defaultSessionPoolSize is the default capacity of the session pool.
+const defaultSessionPoolSize = 16
+
+// WithSessionPoolSize sets the session pool capacity. The pool buffers
+// inference sessions for reuse so that CUDA graph-captured GPU pointers
+// remain valid across calls. Minimum value is 1; values below 1 are
+// clamped to 1.
+func WithSessionPoolSize(n int) Option {
+	return func(o *loadOptions) {
+		if n < 1 {
+			n = 1
+		}
+		o.sessionPoolSize = n
 	}
 }
 
@@ -300,12 +317,16 @@ func assembleModel(
 		NumLayers:  meta.NumLayers,
 	}, genOpts...)
 
+	pool := make(chan *generate.InferenceSession[float32], defaultSessionPoolSize)
+	pool <- gen.NewSession() // Pre-warm with one session for CUDA graph address reuse.
+
 	return &Model{
-		generator: gen,
-		tokenizer: tok,
-		engine:    eng,
-		config:    *meta,
-		info:      info,
+		generator:   gen,
+		tokenizer:   tok,
+		engine:      eng,
+		config:      *meta,
+		info:        info,
+		sessionPool: pool,
 	}
 }
 
