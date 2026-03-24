@@ -313,7 +313,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		tok, err := tokenStream.Recv()
 		if err != nil {
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", "inference failed")
 			flusher.Flush()
 			return
 		}
