@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/inference/sentiment"
@@ -294,5 +295,40 @@ func TestClassifyEndpoint_MaxBatchBoundary(t *testing.T) {
 	}
 	if len(result.Data) != 256 {
 		t.Errorf("data length = %d, want 256", len(result.Data))
+	}
+}
+
+func TestClassifyEndpoint_OversizedBody(t *testing.T) {
+	ts := newClassifyServer(t, &mockClassifier{})
+	defer ts.Close()
+
+	bigValue := strings.Repeat("x", 11<<20) // 11 MB string
+	oversized := `{"model":"finbert","input":["` + bigValue + `"]}`
+
+	resp := doPost(t, ts.URL+"/v1/classify", "application/json", oversized)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d; body = %s", resp.StatusCode, http.StatusRequestEntityTooLarge, body)
+	}
+}
+
+func TestClassifyEndpoint_ErrorNotLeaked(t *testing.T) {
+	secret := "/var/data/models/secret-path/weights.bin: no such file"
+	sc := &mockClassifier{err: errors.New(secret)}
+	ts := newClassifyServer(t, sc)
+	defer ts.Close()
+
+	body := `{"model":"finbert","input":["hello"]}`
+	resp := doPost(t, ts.URL+"/v1/classify", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("internal error details leaked to client: %s", data)
+	}
+	if strings.Contains(string(data), "/var/data") {
+		t.Fatalf("file path leaked to client: %s", data)
 	}
 }

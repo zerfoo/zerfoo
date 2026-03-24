@@ -66,13 +66,21 @@ func NewClassifyMetrics(c runtime.Collector) *ClassifyMetrics {
 }
 
 func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+
 	if s.classifier == nil {
 		writeError(w, http.StatusNotImplemented, "text classification is not configured")
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req ClassifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -91,7 +99,7 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 
 	results, err := s.classifier.Classify(r.Context(), req.Input)
 	if err != nil {
-		writeError(w, inferenceErrorStatus(err), err.Error())
+		writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))
 		return
 	}
 
