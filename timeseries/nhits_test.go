@@ -600,6 +600,145 @@ func TestNHiTS_TrainWindowed_MultiScale(t *testing.T) {
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
 }
 
+func TestNHiTS_TrainWindowed_EngineBackward(t *testing.T) {
+	// Verify that the engine-accelerated backward path produces finite loss
+	// and converges, matching the behavior of the CPU path.
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  8,
+		OutputLength: 4,
+		Channels:     1,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	// Confirm engine is set (GPU path will be used).
+	if m.engine == nil {
+		t.Fatal("expected engine to be set")
+	}
+
+	// Generate synthetic data: simple linear trend.
+	numSamples := 32
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+
+	for i := 0; i < numSamples; i++ {
+		offset := float64(i)
+		ch := make([]float64, config.InputLength)
+		for tt := 0; tt < config.InputLength; tt++ {
+			ch[tt] = 0.1 * (offset + float64(tt))
+		}
+		windows[i] = [][]float64{ch}
+		for tt := 0; tt < config.OutputLength; tt++ {
+			labels[i*config.OutputLength+tt] = 0.1 * (offset + float64(config.InputLength+tt))
+		}
+	}
+
+	tc := TrainConfig{
+		Epochs:    200,
+		LR:        1e-3,
+		BatchSize: 16,
+		GradClip:  1.0,
+	}
+
+	result, err := m.TrainWindowed(windows, labels, tc)
+	if err != nil {
+		t.Fatalf("TrainWindowed with engine backward: %v", err)
+	}
+
+	// Loss must be finite throughout.
+	for i, loss := range result.LossHistory {
+		if !isFinite(loss) {
+			t.Fatalf("epoch %d: loss = %v, want finite", i, loss)
+		}
+	}
+
+	// Loss should decrease.
+	if len(result.LossHistory) < 2 {
+		t.Fatal("expected at least 2 epoch losses")
+	}
+	firstLoss := result.LossHistory[0]
+	finalLoss := result.FinalLoss
+	if finalLoss >= firstLoss {
+		t.Errorf("loss did not decrease: first=%v, final=%v", firstLoss, finalLoss)
+	}
+
+	// Final loss should be reasonably small.
+	if finalLoss > 1.0 {
+		t.Errorf("final loss %v too high (want < 1.0)", finalLoss)
+	}
+
+	t.Logf("engine backward: first_loss=%.6f final_loss=%.6f", firstLoss, finalLoss)
+}
+
+func TestNHiTS_TrainWindowed_EngineBackward_MultiChannel(t *testing.T) {
+	// Verify engine backward path works with multiple channels.
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  12,
+		OutputLength: 4,
+		Channels:     3,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	numSamples := 24
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+
+	for i := 0; i < numSamples; i++ {
+		w := make([][]float64, config.Channels)
+		for c := 0; c < config.Channels; c++ {
+			ch := make([]float64, config.InputLength)
+			for tt := 0; tt < config.InputLength; tt++ {
+				ch[tt] = 0.01 * float64(c+tt+i)
+			}
+			w[c] = ch
+		}
+		windows[i] = w
+		for tt := 0; tt < config.OutputLength; tt++ {
+			labels[i*config.OutputLength+tt] = 0.01 * float64(i+config.InputLength+tt)
+		}
+	}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       100,
+		LR:           1e-3,
+		BatchSize:    12,
+		GradClip:     1.0,
+		WarmupEpochs: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	if result.FinalLoss >= result.LossHistory[0] {
+		t.Errorf("loss did not decrease: first=%v, final=%v", result.LossHistory[0], result.FinalLoss)
+	}
+
+	t.Logf("engine backward multichannel: final_loss=%.6f", result.FinalLoss)
+}
+
 func TestNHiTS_HighChannelNoNilPanic(t *testing.T) {
 	// Issue #123: NHiTS panics with nil pointer dereference in linearForward
 	// when called via TrainWindowed with 132 channels and various window sizes.
