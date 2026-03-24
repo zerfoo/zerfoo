@@ -144,4 +144,35 @@ func TestReadyz_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestPprof_DisabledByDefault(t *testing.T) {
+	s := NewServer(log.Nop())
+
+	paths := []string{
+		"/debug/pprof/",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/symbol",
+	}
+	for _, p := range paths {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want %d", p, rec.Code, http.StatusNotFound)
+		}
+	}
+}
+
+func TestPprof_EnabledWithOption(t *testing.T) {
+	s := NewServer(log.Nop(), WithPprof())
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /debug/pprof/: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 var errUnhealthy = errors.New("unhealthy")

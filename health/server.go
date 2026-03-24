@@ -14,6 +14,17 @@ import (
 	"github.com/zerfoo/ztensor/log"
 )
 
+// Option configures a Server.
+type Option func(*Server)
+
+// WithPprof enables /debug/pprof/ endpoints on the health server.
+// By default, pprof endpoints are not registered.
+func WithPprof() Option {
+	return func(s *Server) {
+		s.enablePprof = true
+	}
+}
+
 // CheckFunc is a function that returns nil when healthy or an error when not.
 type CheckFunc func() error
 
@@ -25,17 +36,23 @@ type Response struct {
 
 // Server provides HTTP health check endpoints.
 type Server struct {
-	logger log.Logger
-	mu     sync.RWMutex
-	checks map[string]CheckFunc
+	logger      log.Logger
+	mu          sync.RWMutex
+	checks      map[string]CheckFunc
+	enablePprof bool
 }
 
 // NewServer creates a new health check server using the given logger.
-func NewServer(logger log.Logger) *Server {
-	return &Server{
+// Use WithPprof() to opt in to /debug/pprof/ endpoints.
+func NewServer(logger log.Logger, opts ...Option) *Server {
+	s := &Server{
 		logger: logger,
 		checks: make(map[string]CheckFunc),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // AddReadinessCheck registers a named readiness check. All registered checks
@@ -46,18 +63,20 @@ func (s *Server) AddReadinessCheck(name string, check CheckFunc) {
 	s.checks[name] = check
 }
 
-// Handler returns an http.Handler with /healthz, /readyz, and /debug/pprof routes.
+// Handler returns an http.Handler with /healthz and /readyz routes.
+// When WithPprof was passed to NewServer, /debug/pprof/ routes are also registered.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
 
-	// Register pprof handlers for runtime profiling.
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	if s.enablePprof {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 
 	return mux
 }

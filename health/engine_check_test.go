@@ -48,7 +48,7 @@ func TestEngineCheckGeneric_Healthy(t *testing.T) {
 }
 
 func TestPprofEndpoints(t *testing.T) {
-	srv := NewServer(log.Nop())
+	srv := NewServer(log.Nop(), WithPprof())
 	handler := srv.Handler()
 
 	endpoints := []string{
@@ -69,7 +69,7 @@ func TestPprofEndpoints(t *testing.T) {
 }
 
 func TestPprofIndex_ContainsProfiles(t *testing.T) {
-	srv := NewServer(log.Nop())
+	srv := NewServer(log.Nop(), WithPprof())
 	handler := srv.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
