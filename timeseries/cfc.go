@@ -49,8 +49,10 @@ type CfC struct {
 	// Optional GPU engine for accelerated training. When non-nil,
 	// TrainWindowed uses float32 tensor operations instead of the
 	// pure-Go float64 CPU path.
-	engine compute.Engine[float32]
-	ops    numeric.Arithmetic[float32]
+	engine    compute.Engine[float32]
+	ops       numeric.Arithmetic[float32]
+	normMeans [][]float64 // per-channel normalization means from training
+	normStds  [][]float64 // per-channel normalization stds from training
 }
 
 // NewCfC creates a new CfC model with the given configuration.
@@ -246,7 +248,7 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 	}
 
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
-	windows, _, _ = normalizeWindows(windows)
+	windows, c.normMeans, c.normStds = normalizeWindows(windows)
 
 	nParams := c.paramCount()
 	m := make([]float64, nParams)
@@ -603,6 +605,11 @@ func (c *CfC) PredictWindowed(modelPath string, windows [][][]float64) ([]float6
 		return nil, fmt.Errorf("cfc: empty input")
 	}
 
+	// Apply normalization from training if available.
+	if c.normMeans != nil {
+		windows = applyNormalization(windows, c.normMeans, c.normStds)
+	}
+
 	outDim := c.config.OutputSize * c.config.OutputLen
 	out := make([]float64, 0, nSamples*outDim)
 	for _, w := range windows {
@@ -706,10 +713,12 @@ func (c *CfC) flatParams() []*float64 {
 
 // cfcWeights is the JSON-serializable form of CfC parameters.
 type cfcWeights struct {
-	Config CfCConfig       `json:"config"`
-	Layers []cfcLayerFile  `json:"layers"`
-	OutW   [][]float64     `json:"out_w"`
-	OutB   []float64       `json:"out_b"`
+	Config    CfCConfig       `json:"config"`
+	Layers    []cfcLayerFile  `json:"layers"`
+	OutW      [][]float64     `json:"out_w"`
+	OutB      []float64       `json:"out_b"`
+	NormMeans [][]float64     `json:"norm_means,omitempty"`
+	NormStds  [][]float64     `json:"norm_stds,omitempty"`
 }
 
 type cfcLayerFile struct {
@@ -723,9 +732,11 @@ type cfcLayerFile struct {
 // SaveWeights writes the model weights to a JSON file.
 func (c *CfC) SaveWeights(path string) error {
 	w := cfcWeights{
-		Config: c.config,
-		OutW:   c.outW,
-		OutB:   c.outB,
+		Config:    c.config,
+		OutW:      c.outW,
+		OutB:      c.outB,
+		NormMeans: c.normMeans,
+		NormStds:  c.normStds,
 	}
 	for _, l := range c.layers {
 		w.Layers = append(w.Layers, cfcLayerFile{
@@ -768,5 +779,7 @@ func (c *CfC) loadWeights(path string) error {
 	}
 	c.outW = w.OutW
 	c.outB = w.OutB
+	c.normMeans = w.NormMeans
+	c.normStds = w.NormStds
 	return nil
 }

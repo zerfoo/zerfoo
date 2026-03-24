@@ -46,13 +46,15 @@ type encoderLayer struct {
 
 // PatchTST implements the Patch Time-Series Transformer.
 type PatchTST struct {
-	config   PatchTSTConfig
-	engine   compute.Engine[float32]
-	ops      numeric.Arithmetic[float32]
-	patchEmb linearLayer                    // patch_length -> d_model
-	posEmb   *tensor.TensorNumeric[float32] // [1, num_patches, d_model]
-	layers   []encoderLayer
-	head     linearLayer // num_patches * d_model -> output_dim
+	config    PatchTSTConfig
+	engine    compute.Engine[float32]
+	ops       numeric.Arithmetic[float32]
+	patchEmb  linearLayer                    // patch_length -> d_model
+	posEmb    *tensor.TensorNumeric[float32] // [1, num_patches, d_model]
+	layers    []encoderLayer
+	head      linearLayer // num_patches * d_model -> output_dim
+	normMeans [][]float64 // per-channel normalization means from training
+	normStds  [][]float64 // per-channel normalization stds from training
 }
 
 // NewPatchTST creates a new PatchTST model with the given configuration.
@@ -1165,7 +1167,7 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 	}
 
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
-	windows, _, _ = normalizeWindows(windows)
+	windows, m.normMeans, m.normStds = normalizeWindows(windows)
 
 	if m.engine != nil {
 		return m.trainWindowedEngine(windows, labels, config)
@@ -1188,6 +1190,11 @@ func (m *PatchTST) PredictWindowed(modelPath string, windows [][][]float64) ([]f
 		return nil, fmt.Errorf("patchtst: empty input")
 	}
 
+	// Apply normalization from training if available.
+	if m.normMeans != nil {
+		windows = applyNormalization(windows, m.normMeans, m.normStds)
+	}
+
 	params := m.extractParamsF64()
 	out := make([]float64, 0, nSamples*m.config.OutputDim)
 	for _, w := range windows {
@@ -1199,13 +1206,15 @@ func (m *PatchTST) PredictWindowed(modelPath string, windows [][][]float64) ([]f
 
 // patchTSTWeights is the JSON-serializable form of PatchTST parameters.
 type patchTSTWeights struct {
-	Config    PatchTSTConfig    `json:"config"`
-	PatchEmbW []float64        `json:"patch_emb_w"`
-	PatchEmbB []float64        `json:"patch_emb_b"`
-	PosEmb    []float64        `json:"pos_emb"`
+	Config    PatchTSTConfig     `json:"config"`
+	PatchEmbW []float64         `json:"patch_emb_w"`
+	PatchEmbB []float64         `json:"patch_emb_b"`
+	PosEmb    []float64         `json:"pos_emb"`
 	Layers    []encoderLayerJSON `json:"layers"`
-	HeadW     []float64        `json:"head_w"`
-	HeadB     []float64        `json:"head_b"`
+	HeadW     []float64         `json:"head_w"`
+	HeadB     []float64         `json:"head_b"`
+	NormMeans [][]float64       `json:"norm_means,omitempty"`
+	NormStds  [][]float64       `json:"norm_stds,omitempty"`
 }
 
 type encoderLayerJSON struct {
@@ -1237,6 +1246,8 @@ func (m *PatchTST) SaveWeights(path string) error {
 		PosEmb:    p.posEmb,
 		HeadW:     p.headW,
 		HeadB:     p.headB,
+		NormMeans: m.normMeans,
+		NormStds:  m.normStds,
 	}
 	for _, l := range p.layers {
 		w.Layers = append(w.Layers, encoderLayerJSON{
@@ -1291,5 +1302,7 @@ func (m *PatchTST) loadWeights(path string) error {
 		}
 	}
 	m.writeBackF32(p)
+	m.normMeans = w.NormMeans
+	m.normStds = w.NormStds
 	return nil
 }

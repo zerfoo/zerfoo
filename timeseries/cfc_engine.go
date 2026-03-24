@@ -44,7 +44,7 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 		config.Epsilon = 1e-8
 	}
 
-	windows, _, _ = normalizeWindows(windows)
+	windows, c.normMeans, c.normStds = normalizeWindows(windows)
 	ctx := context.Background()
 
 	// paramRef holds a float32 working copy and pointers back into the model's

@@ -718,3 +718,52 @@ func TestPatchTST_TrainWindowed_EngineConvergence(t *testing.T) {
 	t.Logf("engine convergence: loss[0]=%.6f -> loss[9]=%.6f",
 		result.LossHistory[0], result.LossHistory[9])
 }
+
+func TestPatchTST_PredictWindowed_NormalizationApplied(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	nChannels := 3
+	inputLen := 8
+	outputDim := 1
+	config := PatchTSTConfig{
+		InputLength: inputLen,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   outputDim,
+	}
+
+	m, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(20, nChannels, inputLen, outputDim)
+
+	_, err = m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       5,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 2,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if m.normMeans == nil || m.normStds == nil {
+		t.Fatal("normMeans/normStds not stored after training")
+	}
+
+	preds, err := m.PredictWindowed("", windows[:5])
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("prediction[%d] = %v, want finite", i, v)
+		}
+	}
+}
