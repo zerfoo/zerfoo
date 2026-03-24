@@ -265,6 +265,214 @@ type adamState struct {
 	v []float32
 }
 
+// stackBackwardEngine computes gradients for a single stack using engine tensor
+// operations (MatMul, Transpose, Sum) instead of manual triple-nested loops.
+// Returns gradient slices in order: [mlp0_dW, mlp0_dB, mlp1_dW, mlp1_dB, ..., proj_dW, proj_dB].
+func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN int, stack nhitsStack, intermediates [][]float32, pooledFlat []float32) ([][]float32, error) {
+	nMLP := len(stack.mlpLayers)
+	grads := make([][]float32, nMLP*2+2)
+
+	// Output proj backward: dW = lastH^T @ dH, dB = sum(dH, axis=0), newDH = dH @ W^T.
+	oDim := n.config.OutputLength
+	hDim := stack.outputProj.weights.Shape()[0]
+
+	lastH := intermediates[len(intermediates)-1]
+	lastHTensor, err := tensor.New[float32]([]int{batchN, hDim}, lastH)
+	if err != nil {
+		return nil, err
+	}
+	dHTensor, err := tensor.New[float32]([]int{batchN, oDim}, dH)
+	if err != nil {
+		return nil, err
+	}
+
+	// dW = lastH^T @ dH: [hDim, batchN] @ [batchN, oDim] = [hDim, oDim]
+	lastHT, err := n.engine.Transpose(ctx, lastHTensor, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	dWTensor, err := n.engine.MatMul(ctx, lastHT, dHTensor)
+	if err != nil {
+		return nil, err
+	}
+	grads[nMLP*2] = make([]float32, len(dWTensor.Data()))
+	copy(grads[nMLP*2], dWTensor.Data())
+
+	// dB = sum(dH, axis=0)
+	dBTensor, err := n.engine.Sum(ctx, dHTensor, 0, false)
+	if err != nil {
+		return nil, err
+	}
+	grads[nMLP*2+1] = make([]float32, len(dBTensor.Data()))
+	copy(grads[nMLP*2+1], dBTensor.Data())
+
+	// newDH = dH @ W^T: [batchN, oDim] @ [oDim, hDim] = [batchN, hDim]
+	wT, err := n.engine.Transpose(ctx, stack.outputProj.weights, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	newDHTensor, err := n.engine.MatMul(ctx, dHTensor, wT)
+	if err != nil {
+		return nil, err
+	}
+	dHTensor = newDHTensor
+
+	// MLP layers backward (reverse order).
+	for li := nMLP - 1; li >= 0; li-- {
+		l := &stack.mlpLayers[li]
+		lInDim := l.weights.Shape()[0]
+		lOutDim := l.weights.Shape()[1]
+
+		// ReLU gradient: zero out where post-ReLU activation <= 0.
+		postReLU := intermediates[li]
+		curDH := dHTensor.Data()
+		maskedDH := make([]float32, len(curDH))
+		copy(maskedDH, curDH)
+		for b := 0; b < batchN; b++ {
+			for i := 0; i < lOutDim; i++ {
+				if postReLU[b*lOutDim+i] <= 0 {
+					maskedDH[b*lOutDim+i] = 0
+				}
+			}
+		}
+		dHTensor, err = tensor.New[float32]([]int{batchN, lOutDim}, maskedDH)
+		if err != nil {
+			return nil, err
+		}
+
+		// Determine input to this layer.
+		var hInput []float32
+		if li == 0 {
+			hInput = pooledFlat
+		} else {
+			hInput = intermediates[li-1]
+		}
+		hInputTensor, err := tensor.New[float32]([]int{batchN, lInDim}, hInput)
+		if err != nil {
+			return nil, err
+		}
+
+		// dW = hInput^T @ dH: [lInDim, batchN] @ [batchN, lOutDim] = [lInDim, lOutDim]
+		hInputT, err := n.engine.Transpose(ctx, hInputTensor, []int{1, 0})
+		if err != nil {
+			return nil, err
+		}
+		dWTensor, err := n.engine.MatMul(ctx, hInputT, dHTensor)
+		if err != nil {
+			return nil, err
+		}
+		grads[li*2] = make([]float32, len(dWTensor.Data()))
+		copy(grads[li*2], dWTensor.Data())
+
+		// dB = sum(dH, axis=0)
+		dBTensor, err := n.engine.Sum(ctx, dHTensor, 0, false)
+		if err != nil {
+			return nil, err
+		}
+		grads[li*2+1] = make([]float32, len(dBTensor.Data()))
+		copy(grads[li*2+1], dBTensor.Data())
+
+		// newDH = dH @ W^T: [batchN, lOutDim] @ [lOutDim, lInDim] = [batchN, lInDim]
+		lwT, err := n.engine.Transpose(ctx, l.weights, []int{1, 0})
+		if err != nil {
+			return nil, err
+		}
+		dHTensor, err = n.engine.MatMul(ctx, dHTensor, lwT)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return grads, nil
+}
+
+// stackBackwardCPU computes gradients for a single stack using manual CPU loops.
+// This is the fallback path when no engine is available.
+func (n *NHiTS) stackBackwardCPU(dH []float32, batchN int, stack nhitsStack, intermediates [][]float32, pooledFlat []float32, allGrads [][]float32, paramIdx int) {
+	// Output proj backward.
+	lastH := intermediates[len(intermediates)-1]
+	oDim := n.config.OutputLength
+	hDim := stack.outputProj.weights.Shape()[0]
+	wData := stack.outputProj.weights.Data()
+
+	dW := make([]float32, hDim*oDim)
+	dB := make([]float32, oDim)
+	for b := 0; b < batchN; b++ {
+		for i := 0; i < hDim; i++ {
+			for j := 0; j < oDim; j++ {
+				dW[i*oDim+j] += lastH[b*hDim+i] * dH[b*oDim+j]
+			}
+		}
+		for j := 0; j < oDim; j++ {
+			dB[j] += dH[b*oDim+j]
+		}
+	}
+
+	newDH := make([]float32, batchN*hDim)
+	for b := 0; b < batchN; b++ {
+		for i := 0; i < hDim; i++ {
+			for j := 0; j < oDim; j++ {
+				newDH[b*hDim+i] += dH[b*oDim+j] * wData[i*oDim+j]
+			}
+		}
+	}
+	dH = newDH
+
+	nMLPLayers := len(stack.mlpLayers)
+	allGrads[paramIdx+nMLPLayers*2] = dW
+	allGrads[paramIdx+nMLPLayers*2+1] = dB
+
+	// MLP layers backward (reverse order).
+	for li := nMLPLayers - 1; li >= 0; li-- {
+		l := &stack.mlpLayers[li]
+		lWData := l.weights.Data()
+		lInDim := l.weights.Shape()[0]
+		lOutDim := l.weights.Shape()[1]
+
+		// ReLU gradient.
+		postReLU := intermediates[li]
+		for b := 0; b < batchN; b++ {
+			for i := 0; i < lOutDim; i++ {
+				if postReLU[b*lOutDim+i] <= 0 {
+					dH[b*lOutDim+i] = 0
+				}
+			}
+		}
+
+		var hInput []float32
+		if li == 0 {
+			hInput = pooledFlat
+		} else {
+			hInput = intermediates[li-1]
+		}
+
+		dW := make([]float32, lInDim*lOutDim)
+		dB := make([]float32, lOutDim)
+		for b := 0; b < batchN; b++ {
+			for i := 0; i < lInDim; i++ {
+				for j := 0; j < lOutDim; j++ {
+					dW[i*lOutDim+j] += hInput[b*lInDim+i] * dH[b*lOutDim+j]
+				}
+			}
+			for j := 0; j < lOutDim; j++ {
+				dB[j] += dH[b*lOutDim+j]
+			}
+		}
+
+		newDH := make([]float32, batchN*lInDim)
+		for b := 0; b < batchN; b++ {
+			for i := 0; i < lInDim; i++ {
+				for j := 0; j < lOutDim; j++ {
+					newDH[b*lInDim+i] += dH[b*lOutDim+j] * lWData[i*lOutDim+j]
+				}
+			}
+		}
+		dH = newDH
+
+		allGrads[paramIdx+li*2] = dW
+		allGrads[paramIdx+li*2+1] = dB
+	}
+}
 
 // TrainWindowed trains the N-HiTS model on pre-windowed data using AdamW with
 // analytical gradient computation.
@@ -377,6 +585,8 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			nBatches++
 
 			// Backward pass per stack, collecting all gradients.
+			// Uses engine tensor ops (MatMul, Transpose, Sum) when the engine
+			// is available, falling back to manual CPU loops otherwise.
 			allGrads := make([][]float32, len(allParams))
 			paramIdx := 0
 
@@ -388,95 +598,21 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 					return nil, err
 				}
 
-				// Backward from loss through output proj then MLP layers.
 				dH := make([]float32, len(lossGrad))
 				copy(dH, lossGrad)
 
-				// Output proj backward: h is intermediates[last], output is [batchN, outputLen].
-				{
-					lastH := intermediates[len(intermediates)-1]
-					wData := stack.outputProj.weights.Data()
-					oDim := n.config.OutputLength
-					hDim := stack.outputProj.weights.Shape()[0]
-
-					dW := make([]float32, hDim*oDim)
-					dB := make([]float32, oDim)
-					for b := 0; b < batchN; b++ {
-						for i := 0; i < hDim; i++ {
-							for j := 0; j < oDim; j++ {
-								dW[i*oDim+j] += lastH[b*hDim+i] * dH[b*oDim+j]
-							}
-						}
-						for j := 0; j < oDim; j++ {
-							dB[j] += dH[b*oDim+j]
-						}
+				if n.engine != nil {
+					// Engine-accelerated backward pass using tensor ops.
+					stackGrads, err := n.stackBackwardEngine(ctx, dH, batchN, *stack, intermediates, pooledFlat)
+					if err != nil {
+						return nil, fmt.Errorf("nhits train: engine backward stack %d: %w", si, err)
 					}
-
-					newDH := make([]float32, batchN*hDim)
-					for b := 0; b < batchN; b++ {
-						for i := 0; i < hDim; i++ {
-							for j := 0; j < oDim; j++ {
-								newDH[b*hDim+i] += dH[b*oDim+j] * wData[i*oDim+j]
-							}
-						}
+					for i, g := range stackGrads {
+						allGrads[paramIdx+i] = g
 					}
-					dH = newDH
-
-					// Store grads at correct indices (proj is after MLP layers).
-					nMLP := len(stack.mlpLayers)
-					allGrads[paramIdx+nMLP*2] = dW
-					allGrads[paramIdx+nMLP*2+1] = dB
-				}
-
-				// MLP layers backward (reverse order).
-				for li := len(stack.mlpLayers) - 1; li >= 0; li-- {
-					l := &stack.mlpLayers[li]
-					lWData := l.weights.Data()
-					lInDim := l.weights.Shape()[0]
-					lOutDim := l.weights.Shape()[1]
-
-					// ReLU gradient.
-					postReLU := intermediates[li]
-					for b := 0; b < batchN; b++ {
-						for i := 0; i < lOutDim; i++ {
-							if postReLU[b*lOutDim+i] <= 0 {
-								dH[b*lOutDim+i] = 0
-							}
-						}
-					}
-
-					var hInput []float32
-					if li == 0 {
-						hInput = pooledFlat
-					} else {
-						hInput = intermediates[li-1]
-					}
-
-					dW := make([]float32, lInDim*lOutDim)
-					dB := make([]float32, lOutDim)
-					for b := 0; b < batchN; b++ {
-						for i := 0; i < lInDim; i++ {
-							for j := 0; j < lOutDim; j++ {
-								dW[i*lOutDim+j] += hInput[b*lInDim+i] * dH[b*lOutDim+j]
-							}
-						}
-						for j := 0; j < lOutDim; j++ {
-							dB[j] += dH[b*lOutDim+j]
-						}
-					}
-
-					newDH := make([]float32, batchN*lInDim)
-					for b := 0; b < batchN; b++ {
-						for i := 0; i < lInDim; i++ {
-							for j := 0; j < lOutDim; j++ {
-								newDH[b*lInDim+i] += dH[b*lOutDim+j] * lWData[i*lOutDim+j]
-							}
-						}
-					}
-					dH = newDH
-
-					allGrads[paramIdx+li*2] = dW
-					allGrads[paramIdx+li*2+1] = dB
+				} else {
+					// CPU fallback: manual backward pass with raw slice loops.
+					n.stackBackwardCPU(dH, batchN, *stack, intermediates, pooledFlat, allGrads, paramIdx)
 				}
 
 				// Advance paramIdx past this stack's params.
