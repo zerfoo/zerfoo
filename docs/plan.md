@@ -1062,7 +1062,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 43: High Security Fixes -- Serve and Auth (5 agents)
 
-- [ ] T108.11 Enforce scope-based authorization on endpoints (H3)
+- [x] T108.11 Enforce scope-based authorization on endpoints (H3) (2026-03-23)
   Owner: Security Eng  Est: 2h  verifies: [UC-003]
   Deps: none
   Files: serve/server.go, security/apikey.go
@@ -1076,7 +1076,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: inference key can POST but not DELETE. Admin key can do both.
   - go vet ./serve/ clean.
 
-- [ ] T108.12 Warn or refuse startup when API key is empty (H4)
+- [x] T108.12 Warn or refuse startup when API key is empty (H4) (2026-03-23)
   Owner: Security Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go, cmd/cli/serve.go
@@ -1088,7 +1088,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: no key + no flag = error. No key + --allow-no-auth = warning + starts.
   - go vet ./serve/ ./cmd/cli/ clean.
 
-- [ ] T108.13 Fix ClientIP to validate trusted proxies (H5)
+- [x] T108.13 Fix ClientIP to validate trusted proxies (H5) (2026-03-23)
   Owner: Security Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: security/network.go
@@ -1100,7 +1100,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: X-Forwarded-For from untrusted IP is ignored.
   - go vet ./security/ ./serve/ clean.
 
-- [ ] T108.14 Fix batch path chat template formatting (H12, F1, F8)
+- [x] T108.14 Fix batch path chat template formatting (H12, F1, F8) (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-003]
   Deps: none
   Files: serve/server.go
@@ -1899,12 +1899,12 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T108.9 Hash tenant API keys + O(1) lookup (H10, H15)
 - [x] T108.10 Add marketplace metering retry with backoff (H11)
 
-#### Wave 43: E108 High Fixes -- Serve and Auth (5 agents)
+#### Wave 43: E108 High Fixes -- Serve and Auth (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.11 Enforce scope-based authorization (H3)
-- [ ] T108.12 Warn/refuse startup without API key (H4)
-- [ ] T108.13 Fix ClientIP trusted proxy validation (H5)
-- [ ] T108.14 Fix batch path chat template formatting (H12, F1, F8)
+- [x] T108.11 Enforce scope-based authorization (H3)
+- [x] T108.12 Warn/refuse startup without API key (H4)
+- [x] T108.13 Fix ClientIP trusted proxy validation (H5)
+- [x] T108.14 Fix batch path chat template formatting (H12, F1, F8) (2026-03-23)
 - [x] T108.15 SAML XXE protection + replay prevention (H1, H2) (2026-03-23)
 
 #### Wave 44: E108 Medium Fixes -- Infrastructure (5 agents)
