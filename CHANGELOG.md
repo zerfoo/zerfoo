@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0](https://github.com/zerfoo/zerfoo/compare/v1.13.0...v1.14.0) (2026-03-24)
+
+
+### Features
+
+* **timeseries:** add CPU fallback for Mamba training ([575b1da](https://github.com/zerfoo/zerfoo/commit/575b1dadbd5ee221f94a7a6a2d6edf2406c948f4))
+
+
+### Bug Fixes
+
+* **recurrent:** compute bias gradient in SimpleRNN backward pass ([3a79b45](https://github.com/zerfoo/zerfoo/commit/3a79b45d8b74e5ecc419ced1fcf9e4b4dfe737d5))
+
+
+### Performance Improvements
+
+* **timeseries:** refactor CfC backward from Jacobian to vector-Jacobian product ([ccb87d4](https://github.com/zerfoo/zerfoo/commit/ccb87d429d98f8038df3e9c22525dd6896c1c5d0))
+* **timeseries:** replace ITransformer finite-diff with analytical backprop ([80e2a93](https://github.com/zerfoo/zerfoo/commit/80e2a93846073157a155080c5b914f5b99fa4e81))
+* **timeseries:** replace PatchTST finite-diff with analytical backprop ([cbf58ff](https://github.com/zerfoo/zerfoo/commit/cbf58ff173e34cdeeaca8b235294ac505c84972a))
+
 ## [1.13.0](https://github.com/zerfoo/zerfoo/compare/v1.12.0...v1.13.0) (2026-03-24)
 
 
