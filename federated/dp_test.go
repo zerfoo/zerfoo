@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func mustNewDPStrategy(t *testing.T, inner Strategy, config DPConfig) *DPStrategy {
+	t.Helper()
+	dp, err := NewDPStrategy(inner, config)
+	if err != nil {
+		t.Fatalf("NewDPStrategy: %v", err)
+	}
+	return dp
+}
+
 func TestDP_NoiseInjection(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -31,7 +40,7 @@ func TestDP_NoiseInjection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dp := NewDPStrategy(NewFedAvg(), DPConfig{
+			dp := mustNewDPStrategy(t, NewFedAvg(), DPConfig{
 				Epsilon:   tt.epsilon,
 				Delta:     tt.delta,
 				ClipNorm:  tt.clipNorm,
@@ -59,6 +68,68 @@ func TestDP_NoiseInjection(t *testing.T) {
 			}
 			if allExact {
 				t.Error("expected noise to perturb weights, but all weights are exact")
+			}
+		})
+	}
+}
+
+func TestDP_NonDeterministicNoise(t *testing.T) {
+	config := DPConfig{
+		Epsilon:   1.0,
+		Delta:     1e-5,
+		ClipNorm:  1.0,
+		Mechanism: "gaussian",
+	}
+	dp1 := mustNewDPStrategy(t, NewFedAvg(), config)
+	dp2 := mustNewDPStrategy(t, NewFedAvg(), config)
+
+	updates := []ModelUpdate{
+		{ClientID: "a", Weights: []float64{1.0, 2.0, 3.0}, NSamples: 100},
+	}
+
+	agg1, err := dp1.Aggregate(updates)
+	if err != nil {
+		t.Fatalf("dp1.Aggregate: %v", err)
+	}
+	agg2, err := dp2.Aggregate(updates)
+	if err != nil {
+		t.Fatalf("dp2.Aggregate: %v", err)
+	}
+
+	// Two independently constructed DPStrategy instances should produce
+	// different noise (crypto/rand seeding). This could theoretically fail
+	// with probability ~0, but 3 float64 values matching is vanishingly unlikely.
+	allSame := true
+	for i := range agg1.Weights {
+		if agg1.Weights[i] != agg2.Weights[i] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("two NewDPStrategy instances produced identical noise; expected non-deterministic seeding")
+	}
+}
+
+func TestDP_InvalidConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		config DPConfig
+	}{
+		{"zero epsilon", DPConfig{Epsilon: 0, Delta: 1e-5, ClipNorm: 1.0, Mechanism: "gaussian"}},
+		{"negative epsilon", DPConfig{Epsilon: -1, Delta: 1e-5, ClipNorm: 1.0, Mechanism: "gaussian"}},
+		{"zero delta", DPConfig{Epsilon: 1.0, Delta: 0, ClipNorm: 1.0, Mechanism: "gaussian"}},
+		{"delta equals 1", DPConfig{Epsilon: 1.0, Delta: 1.0, ClipNorm: 1.0, Mechanism: "gaussian"}},
+		{"negative delta", DPConfig{Epsilon: 1.0, Delta: -0.1, ClipNorm: 1.0, Mechanism: "gaussian"}},
+		{"zero clip norm", DPConfig{Epsilon: 1.0, Delta: 1e-5, ClipNorm: 0, Mechanism: "gaussian"}},
+		{"negative clip norm", DPConfig{Epsilon: 1.0, Delta: 1e-5, ClipNorm: -1.0, Mechanism: "gaussian"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewDPStrategy(NewFedAvg(), tt.config)
+			if err == nil {
+				t.Error("expected error for invalid config, got nil")
 			}
 		})
 	}
@@ -107,7 +178,7 @@ func TestDP_GradientClipping(t *testing.T) {
 }
 
 func TestDP_GaussianSigma(t *testing.T) {
-	dp := NewDPStrategy(NewFedAvg(), DPConfig{
+	dp := mustNewDPStrategy(t, NewFedAvg(), DPConfig{
 		Epsilon:   1.0,
 		Delta:     1e-5,
 		ClipNorm:  1.0,
@@ -167,7 +238,7 @@ func TestDP_PrivacyBudget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dp := NewDPStrategy(NewFedAvg(), DPConfig{
+			dp := mustNewDPStrategy(t, NewFedAvg(), DPConfig{
 				Epsilon:   tt.epsilon,
 				Delta:     tt.delta,
 				ClipNorm:  1.0,
@@ -201,7 +272,7 @@ func TestDP_PrivacyBudget(t *testing.T) {
 }
 
 func TestDP_UnsupportedMechanism(t *testing.T) {
-	dp := NewDPStrategy(NewFedAvg(), DPConfig{
+	dp := mustNewDPStrategy(t, NewFedAvg(), DPConfig{
 		Epsilon:   1.0,
 		Delta:     1e-5,
 		ClipNorm:  1.0,
@@ -217,7 +288,7 @@ func TestDP_UnsupportedMechanism(t *testing.T) {
 }
 
 func TestDP_SelectClientsDelegates(t *testing.T) {
-	dp := NewDPStrategy(NewFedAvg(), DPConfig{
+	dp := mustNewDPStrategy(t, NewFedAvg(), DPConfig{
 		Epsilon:   1.0,
 		Delta:     1e-5,
 		ClipNorm:  1.0,
