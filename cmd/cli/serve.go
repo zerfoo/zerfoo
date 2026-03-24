@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve"
@@ -171,7 +172,13 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 
 	select {
 	case <-ctx.Done():
-		return httpServer.Shutdown(context.Background())
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutCancel()
+		if err := httpServer.Shutdown(shutCtx); err != nil {
+			_, _ = fmt.Fprintf(c.out, "WARN: serve: graceful shutdown timed out after 30s: %v\n", err)
+			return err
+		}
+		return nil
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
