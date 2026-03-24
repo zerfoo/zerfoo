@@ -389,8 +389,8 @@ func TestHandleChatCompletions_Stream(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Errorf("Content-Type = %q, want %q", ct, "text/event-stream")
 	}
-	// Drain the body to ensure no errors.
-	_, _ = io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(resp.Body)
+	assertSSEChunkFields(t, string(raw), "chatcmpl-", "chat.completion.chunk")
 }
 
 func TestHandleCompletions_Stream(t *testing.T) {
@@ -406,8 +406,8 @@ func TestHandleCompletions_Stream(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	// Drain the body to ensure no errors.
-	_, _ = io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(resp.Body)
+	assertSSEChunkFields(t, string(raw), "cmpl-", "text_completion")
 }
 
 // --- Error paths ---
