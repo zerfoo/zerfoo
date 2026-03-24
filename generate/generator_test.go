@@ -814,7 +814,9 @@ func TestCheckStop_NoStopStrings(t *testing.T) {
 	gen := &Generator[float32]{
 		tokenizer: buildTestTokenizer(),
 	}
-	stopped, _ := gen.checkStop([]int{6, 7}, nil)
+	var rd string
+	var dc int
+	stopped, _ := gen.checkStop([]int{6, 7}, nil, &rd, &dc)
 	if stopped {
 		t.Error("should not stop with no stop strings")
 	}
@@ -824,7 +826,9 @@ func TestCheckStop_NoMatch(t *testing.T) {
 	gen := &Generator[float32]{
 		tokenizer: buildTestTokenizer(),
 	}
-	stopped, _ := gen.checkStop([]int{6, 7}, []string{"xyz"})
+	var rd string
+	var dc int
+	stopped, _ := gen.checkStop([]int{6, 7}, []string{"xyz"}, &rd, &dc)
 	if stopped {
 		t.Error("should not stop when no match found")
 	}
@@ -867,7 +871,9 @@ func TestCheckStop_DecodeError(t *testing.T) {
 	gen := &Generator[float32]{
 		tokenizer: &errorTokenizer{},
 	}
-	stopped, _ := gen.checkStop([]int{1, 2}, []string{"test"})
+	var rd string
+	var dc int
+	stopped, _ := gen.checkStop([]int{1, 2}, []string{"test"}, &rd, &dc)
 	if stopped {
 		t.Error("should not stop when decode fails")
 	}
@@ -1453,6 +1459,55 @@ func TestGenerate_ConcurrentSafety(t *testing.T) {
 	for i, err := range errs {
 		if err != nil {
 			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
+}
+
+func TestCheckStop_Incremental(t *testing.T) {
+	gen := &Generator[float32]{
+		tokenizer: buildTestTokenizer(),
+	}
+	var rd string
+	var dc int
+
+	// Step 1: add token 6 ("foo"). No stop string match.
+	stopped, _ := gen.checkStop([]int{6}, []string{"bar"}, &rd, &dc)
+	if stopped {
+		t.Fatal("unexpected stop after first token")
+	}
+	if rd != "foo" {
+		t.Fatalf("running decoded = %q, want %q", rd, "foo")
+	}
+
+	// Step 2: add token 7 ("bar"). Should match stop string.
+	stopped, text := gen.checkStop([]int{6, 7}, []string{"bar"}, &rd, &dc)
+	if !stopped {
+		t.Fatal("expected stop after second token")
+	}
+	// "foo bar" with stop at "bar" → text before stop is "foo ".
+	if text != "foo " {
+		t.Fatalf("text = %q, want %q", text, "foo ")
+	}
+}
+
+func BenchmarkCheckStop_4096Tokens(b *testing.B) {
+	tok := buildTestTokenizer()
+	gen := &Generator[float32]{tokenizer: tok}
+
+	// Build a 4096-token sequence cycling through tokens 4-7.
+	ids := make([]int, 4096)
+	for i := range ids {
+		ids[i] = 4 + (i % 4)
+	}
+	stopStrings := []string{"zzz_never_match"}
+
+	b.ResetTimer()
+	for range b.N {
+		var rd string
+		var dc int
+		// Simulate incremental generation: call checkStop after each token.
+		for step := 1; step <= len(ids); step++ {
+			gen.checkStop(ids[:step], stopStrings, &rd, &dc)
 		}
 	}
 }

@@ -111,6 +111,10 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 	generatedIDs := []int{firstToken}
 	nextDraftInput := firstToken
 
+	// Running state for incremental stop-string checking.
+	var runningDecoded string
+	var decodedCount int
+
 	var tracker *adaptiveDraftLen
 	if sg.adaptive {
 		tracker = newAdaptiveDraftLen(sg.draftLen, 1, 8, 32)
@@ -224,7 +228,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 
 		// Check stop strings.
 		if len(sc.StopStrings) > 0 {
-			if stopped, text := sg.checkStop(generatedIDs, sc.StopStrings); stopped {
+			if stopped, text := sg.checkStop(generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
 				return text, nil
 			}
 		}
@@ -321,14 +325,37 @@ func (sg *SpeculativeGenerator[T]) idsToTensor(ids []int) (*tensor.TensorNumeric
 }
 
 // checkStop checks if the decoded generated tokens contain any stop string.
-func (sg *SpeculativeGenerator[T]) checkStop(generatedIDs []int, stopStrings []string) (bool, string) {
-	decoded, err := sg.tokenizer.Decode(generatedIDs)
-	if err != nil {
+// It maintains a running decoded string across calls to avoid re-decoding all
+// tokens on every step (which would be O(n^2) over a generation).
+func (sg *SpeculativeGenerator[T]) checkStop(generatedIDs []int, stopStrings []string, prevDecoded *string, prevCount *int) (bool, string) {
+	if len(generatedIDs) == *prevCount {
 		return false, ""
 	}
+
+	if *prevCount > 0 {
+		overlapIDs := generatedIDs[*prevCount-1:]
+		overlapDecoded, err := sg.tokenizer.Decode(overlapIDs)
+		if err != nil {
+			return false, ""
+		}
+		singleDecoded, err := sg.tokenizer.Decode(generatedIDs[*prevCount-1 : *prevCount])
+		if err != nil {
+			return false, ""
+		}
+		fragment := overlapDecoded[len(singleDecoded):]
+		*prevDecoded += fragment
+	} else {
+		decoded, err := sg.tokenizer.Decode(generatedIDs)
+		if err != nil {
+			return false, ""
+		}
+		*prevDecoded = decoded
+	}
+	*prevCount = len(generatedIDs)
+
 	for _, ss := range stopStrings {
-		if idx := strings.Index(decoded, ss); idx >= 0 {
-			return true, decoded[:idx]
+		if idx := strings.Index(*prevDecoded, ss); idx >= 0 {
+			return true, (*prevDecoded)[:idx]
 		}
 	}
 	return false, ""
