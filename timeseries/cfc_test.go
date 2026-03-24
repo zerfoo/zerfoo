@@ -450,3 +450,45 @@ func TestCfC_TrainWindowed_MultiScale(t *testing.T) {
 	assertFiniteWeights(t, m.flatParams())
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 200 samples)", result.FinalLoss)
 }
+
+func TestCfC_PredictWindowed_NormalizationApplied(t *testing.T) {
+	nChannels := 3
+	inputLen := 8
+	m, err := NewCfC(CfCConfig{
+		InputSize:  nChannels,
+		HiddenSize: 8,
+		OutputSize: 2,
+		NumLayers:  1,
+		OutputLen:  3,
+	})
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(100, nChannels, inputLen, 2*3)
+
+	_, err = m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       10,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 3,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if m.normMeans == nil || m.normStds == nil {
+		t.Fatal("normMeans/normStds not stored after training")
+	}
+
+	preds, err := m.PredictWindowed("", windows[:5])
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("prediction[%d] = %v, want finite", i, v)
+		}
+	}
+}

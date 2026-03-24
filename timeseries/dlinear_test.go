@@ -650,3 +650,40 @@ func TestDLinear_TrainWindowed_MultiScale(t *testing.T) {
 	assertFiniteWeights(t, m.flatParams())
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
 }
+
+func TestDLinear_PredictWindowed_NormalizationApplied(t *testing.T) {
+	inputLen := 10
+	outputLen := 3
+	nChannels := 3
+	m, err := NewDLinear(inputLen, outputLen, nChannels, 3)
+	if err != nil {
+		t.Fatalf("NewDLinear: %v", err)
+	}
+
+	windows, labels := makeMultiScaleWindows(100, nChannels, inputLen, nChannels*outputLen)
+
+	_, err = m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       10,
+		LR:           1e-3,
+		GradClip:     1.0,
+		WarmupEpochs: 3,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if m.normMeans == nil || m.normStds == nil {
+		t.Fatal("normMeans/normStds not stored after training")
+	}
+
+	preds, err := m.PredictWindowed("", windows[:5])
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("prediction[%d] = %v, want finite", i, v)
+		}
+	}
+}

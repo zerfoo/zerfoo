@@ -810,3 +810,53 @@ func TestNHiTS_HighChannelNoNilPanic(t *testing.T) {
 		})
 	}
 }
+
+func TestNHiTS_PredictWindowed_NormalizationApplied(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	nChannels := 3
+	inputLen := 8
+	outputLen := 4
+	config := NHiTSConfig{
+		InputLength:  inputLen,
+		OutputLength: outputLen,
+		Channels:     nChannels,
+		PoolKernels:  []int{2, 4},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	windows, labels := makeMultiScaleWindows(100, nChannels, inputLen, outputLen)
+
+	_, err = m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       10,
+		LR:           1e-3,
+		BatchSize:    32,
+		GradClip:     1.0,
+		WarmupEpochs: 3,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if m.normMeans == nil || m.normStds == nil {
+		t.Fatal("normMeans/normStds not stored after training")
+	}
+
+	preds, err := m.PredictWindowed("", windows[:5])
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("prediction[%d] = %v, want finite", i, v)
+		}
+	}
+}

@@ -139,6 +139,8 @@ type DLinear struct {
 	seasonalW [][]float64            // [channels][outputLen * inputLen]
 	seasonalB [][]float64            // [channels][outputLen]
 	engine    compute.Engine[float32] // optional; enables GPU-accelerated training
+	normMeans [][]float64            // per-channel normalization means from training
+	normStds  [][]float64            // per-channel normalization stds from training
 }
 
 // DLinearOption configures a DLinear model.
@@ -314,7 +316,7 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 	}
 
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
-	windows, _, _ = normalizeWindows(windows)
+	windows, d.normMeans, d.normStds = normalizeWindows(windows)
 
 	// Flatten all parameters and their gradients for AdamW.
 	nParams := d.paramCount()
@@ -422,6 +424,27 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 	return result, nil
 }
 
+// applyNormalization normalizes windows using stored means and stds from training.
+func applyNormalization(windows [][][]float64, means, stds [][]float64) [][][]float64 {
+	nSamples := len(windows)
+	if nSamples == 0 {
+		return windows
+	}
+	nChannels := len(windows[0])
+	inputLen := len(windows[0][0])
+	out := make([][][]float64, nSamples)
+	for i := 0; i < nSamples; i++ {
+		out[i] = make([][]float64, nChannels)
+		for c := 0; c < nChannels; c++ {
+			out[i][c] = make([]float64, inputLen)
+			for t := 0; t < inputLen; t++ {
+				out[i][c][t] = (windows[i][c][t] - means[c][t]) / (stds[c][t] + 1e-8)
+			}
+		}
+	}
+	return out
+}
+
 // PredictWindowed runs inference on windowed data.
 // windows: [nSamples][channels][inputLen].
 // Returns flat predictions of length nSamples * channels * outputLen.
@@ -436,6 +459,11 @@ func (d *DLinear) PredictWindowed(modelPath string, windows [][][]float64) ([]fl
 	nSamples := len(windows)
 	if nSamples == 0 {
 		return nil, fmt.Errorf("dlinear: empty input")
+	}
+
+	// Apply normalization from training if available.
+	if d.normMeans != nil {
+		windows = applyNormalization(windows, d.normMeans, d.normStds)
 	}
 
 	out := make([]float64, 0, nSamples*d.config.Channels*d.config.OutputLen)
@@ -499,6 +527,8 @@ type dlinearWeights struct {
 	TrendB     [][]float64     `json:"trend_b"`
 	SeasonalW  [][]float64     `json:"seasonal_w"`
 	SeasonalB  [][]float64     `json:"seasonal_b"`
+	NormMeans  [][]float64     `json:"norm_means,omitempty"`
+	NormStds   [][]float64     `json:"norm_stds,omitempty"`
 }
 
 // SaveWeights writes the model weights to a JSON file.
@@ -509,6 +539,8 @@ func (d *DLinear) SaveWeights(path string) error {
 		TrendB:    d.trendB,
 		SeasonalW: d.seasonalW,
 		SeasonalB: d.seasonalB,
+		NormMeans: d.normMeans,
+		NormStds:  d.normStds,
 	}
 	data, err := json.Marshal(w)
 	if err != nil {
@@ -534,5 +566,7 @@ func (d *DLinear) loadWeights(path string) error {
 	d.trendB = w.TrendB
 	d.seasonalW = w.SeasonalW
 	d.seasonalB = w.SeasonalB
+	d.normMeans = w.NormMeans
+	d.normStds = w.NormStds
 	return nil
 }

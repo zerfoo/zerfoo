@@ -39,10 +39,12 @@ type nhitsStack struct {
 // The hierarchical design lets different stacks capture patterns at different
 // temporal granularities.
 type NHiTS struct {
-	config NHiTSConfig
-	engine compute.Engine[float32]
-	ops    numeric.Arithmetic[float32]
-	stacks []nhitsStack
+	config    NHiTSConfig
+	engine    compute.Engine[float32]
+	ops       numeric.Arithmetic[float32]
+	stacks    []nhitsStack
+	normMeans [][]float64 // per-channel normalization means from training
+	normStds  [][]float64 // per-channel normalization stds from training
 }
 
 // NewNHiTS creates a new N-HiTS model with the given configuration.
@@ -503,7 +505,7 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 	}
 
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
-	windows, _, _ = normalizeWindows(windows)
+	windows, n.normMeans, n.normStds = normalizeWindows(windows)
 
 	ctx := context.Background()
 	result := &TrainResult{}
@@ -730,8 +732,10 @@ func (n *NHiTS) adamUpdate(params, grads []float32, state *adamState, beta1, bet
 
 // nhitsModelFile is the JSON structure for saving/loading N-HiTS models.
 type nhitsModelFile struct {
-	Config NHiTSConfig      `json:"config"`
-	Stacks []nhitsStackFile `json:"stacks"`
+	Config    NHiTSConfig      `json:"config"`
+	Stacks    []nhitsStackFile `json:"stacks"`
+	NormMeans [][]float64      `json:"norm_means,omitempty"`
+	NormStds  [][]float64      `json:"norm_stds,omitempty"`
 }
 
 type nhitsStackFile struct {
@@ -744,7 +748,7 @@ type nhitsStackFile struct {
 
 // Save writes the N-HiTS model to a JSON file.
 func (n *NHiTS) Save(path string) error {
-	mf := nhitsModelFile{Config: n.config}
+	mf := nhitsModelFile{Config: n.config, NormMeans: n.normMeans, NormStds: n.normStds}
 	for _, stack := range n.stacks {
 		sf := nhitsStackFile{PoolKernel: stack.poolKernel}
 		for _, l := range stack.mlpLayers {
@@ -774,6 +778,11 @@ func (n *NHiTS) PredictWindowed(modelPath string, windows [][][]float64) ([]floa
 
 	if len(windows) == 0 {
 		return nil, fmt.Errorf("nhits predict: no windows provided")
+	}
+
+	// Apply normalization from training if available.
+	if n.normMeans != nil {
+		windows = applyNormalization(windows, n.normMeans, n.normStds)
 	}
 
 	numSamples := len(windows)
@@ -833,6 +842,8 @@ func (n *NHiTS) Load(path string) error {
 		copy(stack.outputProj.biases.Data(), float64ToFloat32(sf.ProjBias))
 	}
 
+	n.normMeans = mf.NormMeans
+	n.normStds = mf.NormStds
 	return nil
 }
 

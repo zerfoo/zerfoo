@@ -31,7 +31,7 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 	}
 
 	nSamples := len(windows)
-	windows, _, _ = normalizeWindows(windows)
+	windows, d.normMeans, d.normStds = normalizeWindows(windows)
 
 	ctx := context.Background()
 	eng := d.engine
