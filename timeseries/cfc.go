@@ -6,6 +6,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // CfCConfig holds the configuration for a CfC model.
@@ -42,6 +45,12 @@ type CfC struct {
 	layers []cfcLayer
 	outW   [][]float64 // output projection [hiddenSize][outputSize * outputLen]
 	outB   []float64   // output bias [outputSize * outputLen]
+
+	// Optional GPU engine for accelerated training. When non-nil,
+	// TrainWindowed uses float32 tensor operations instead of the
+	// pure-Go float64 CPU path.
+	engine compute.Engine[float32]
+	ops    numeric.Arithmetic[float32]
 }
 
 // NewCfC creates a new CfC model with the given configuration.
@@ -214,6 +223,10 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 	expectedLabels := nSamples * outDim
 	if len(labels) != expectedLabels {
 		return nil, fmt.Errorf("cfc: expected %d labels, got %d", expectedLabels, len(labels))
+	}
+
+	if c.engine != nil {
+		return c.trainWindowedEngine(windows, labels, config)
 	}
 
 	if config.Epochs <= 0 {
