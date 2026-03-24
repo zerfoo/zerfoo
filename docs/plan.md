@@ -1309,6 +1309,123 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ---
 
+#### E109: Deep Review v1.12.0 Remediation [2026 Q2 -- CRITICAL]
+
+Deep review of v1.12.0 (3 agents, 240 tool calls, 1332 files, ~291K lines) found
+4 Critical functional bugs, 4 High error leaks, 13 Medium, 7 Low findings. E108
+already addressed billing bypass, SAML hardening, scope enforcement, security
+headers, and infrastructure hardening. E109 covers the NEW findings: session pool
+leak, batch serialization, normalization mismatch, streaming error ordering, and
+raw error leaks in 4 handlers.
+Source: .claude/scratch/deep-review-report.md (2026-03-24)
+
+##### Wave 48: Critical Functional Fixes (4 agents)
+
+- [x] T109.1 Defer releaseSession in Model.Generate and GenerateStream (C-001)
+  Owner: ML Eng  Est: 15m  verifies: [UC-001, UC-002]
+  Deps: none
+  Files: inference/inference.go
+  Acceptance:
+  - In Model.Generate (line 453), change direct call to defer:
+    `sess := m.acquireSession()` then `defer m.releaseSession(sess)`.
+  - In Model.GenerateStream (line 517), same change: `defer m.releaseSession(sess)`.
+  - Matches existing pattern in Model.Chat (line 543-544) which already defers.
+  - Test: session pool size does not decrease after a panic during generation.
+  - go vet ./inference/ clean. go test -race ./inference/ pass.
+
+- [x] T109.2 Fix GenerateBatch to use session pool instead of generator mutex (C-002)
+  Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-002]
+  Deps: T109.1
+  Files: inference/inference.go
+  Acceptance:
+  - In GenerateBatch (line 490), replace `m.generator.Generate(ctx, p, sc)` with
+    `sess := m.acquireSession(); text, err := sess.Generate(ctx, p, sc); m.releaseSession(sess)`.
+  - Use defer for releaseSession.
+  - This allows true parallel generation up to the session pool size.
+  - Test: GenerateBatch with 4 prompts completes faster than 4 sequential Generate calls.
+  - go vet ./inference/ clean. go test -race ./inference/ pass.
+
+- [x] T109.3 Store normalization statistics and apply in PredictWindowed (C-003)
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/dlinear.go, timeseries/nhits.go, timeseries/cfc.go,
+         timeseries/patchtst.go
+  Acceptance:
+  - Add normMeans [][]float64 and normStds [][]float64 fields to DLinear, NHiTS,
+    CfC, and PatchTST structs.
+  - In each TrainWindowed, store the returned means and stds from normalizeWindows:
+    `windows, m.normMeans, m.normStds = normalizeWindows(windows)`.
+  - Add applyNormalization helper that applies stored means/stds to input windows.
+  - In each PredictWindowed, if normMeans is non-nil, normalize inputs before forward.
+  - Include normMeans and normStds in Save/Load (JSON serialization).
+  - Test: train on data with large scale differences, predict on same data, verify
+    predictions match training-time forward pass output.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+- [x] T109.4 Check http.Flusher before WriteHeader in streaming handlers (C-004)
+  Owner: ML Eng  Est: 15m  verifies: [UC-001, UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - In streamChatCompletion (line 1077), move the Flusher type assertion
+    (lines 1083-1087) BEFORE the WriteHeader(200) call (line 1081).
+  - Same fix in streamCompletion if the same pattern exists.
+  - Test: streaming endpoint with non-Flusher writer returns 500 (not 200 with error body).
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+##### Wave 49: High Error Leak Fixes (4 agents)
+
+- [x] T109.5 Sanitize errors in repository handler (H-001)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/repository/handler.go
+  Acceptance:
+  - Replace all writeError(w, http.StatusInternalServerError, err.Error()) at
+    lines 38, 62, 139, 146, 170 with
+    writeError(w, http.StatusInternalServerError, "internal server error").
+  - Keep the 400-status error messages that describe user input issues (lines 89, 102, 117).
+  - Test: trigger a 500 error, verify response body does not contain filesystem paths.
+  - go vet ./serve/repository/ clean.
+
+- [x] T109.6 Sanitize Azure webhook processEvent error (H-002)
+  Owner: Security Eng  Est: 5m  verifies: [infrastructure]
+  Deps: none
+  Files: marketplace/azure/webhook.go
+  Acceptance:
+  - At line 158, replace `http.Error(w, processErr.Error(), http.StatusInternalServerError)`
+    with `http.Error(w, "webhook processing failed", http.StatusInternalServerError)`.
+  - go vet ./marketplace/azure/ clean.
+
+- [x] T109.7 Use sanitizeError in audio transcription handler (H-003)
+  Owner: Security Eng  Est: 5m  verifies: [UC-003]
+  Deps: none
+  Files: serve/audio.go
+  Acceptance:
+  - At line 75, replace `writeError(w, inferenceErrorStatus(err), err.Error())`
+    with `writeError(w, inferenceErrorStatus(err), s.sanitizeError(err))`.
+  - go vet ./serve/ clean.
+
+- [x] T109.8 Sanitize gRPC error in disaggregated gateway SSE stream (H-004)
+  Owner: Security Eng  Est: 5m  verifies: [UC-003]
+  Deps: none
+  Files: serve/disaggregated/gateway.go
+  Acceptance:
+  - At line 316, replace `fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())`
+    with `fmt.Fprintf(w, "event: error\ndata: %s\n\n", "inference failed")`.
+  - go vet ./serve/disaggregated/ clean.
+
+##### Wave 50: Verification (1 agent)
+
+- [x] T109.9 Run go test -race and go vet on all changed packages
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T109.1-T109.8
+  Acceptance:
+  - go test -race -timeout 300s ./inference/ ./serve/ ./serve/repository/
+    ./serve/disaggregated/ ./marketplace/azure/ ./timeseries/ -- all pass.
+  - go vet ./... clean.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
