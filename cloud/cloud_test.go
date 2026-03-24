@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -431,6 +432,74 @@ func TestCloud_TenantContextPropagation(t *testing.T) {
 		}
 	})
 }
+
+func TestCloud_SSEStreamingFlusher(t *testing.T) {
+	// Verify that responseCapture implements http.Flusher so that SSE
+	// streaming works through the cloud middleware chain.
+	t.Run("responseCapture exposes Flusher", func(t *testing.T) {
+		inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "streaming not supported", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+
+			chunks := []string{
+				"data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+				"data: {\"id\":\"2\",\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
+				"data: [DONE]\n\n",
+			}
+			for _, chunk := range chunks {
+				w.Write([]byte(chunk)) //nolint:errcheck
+				flusher.Flush()
+			}
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "stream-t1", APIKey: "stream-key", RateLimit: 100, TokenBudget: 100000})
+		handler := cs.Handler()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer stream-key")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "data: ") {
+			t.Errorf("expected SSE data chunks in body, got: %s", body)
+		}
+		if !strings.Contains(body, "[DONE]") {
+			t.Errorf("expected [DONE] sentinel in body, got: %s", body)
+		}
+	})
+
+	t.Run("Flush is no-op when inner writer lacks Flusher", func(t *testing.T) {
+		// Ensure Flush does not panic when the underlying writer
+		// does not implement http.Flusher.
+		rc := &responseCapture{
+			ResponseWriter: noFlushWriter{},
+			statusCode:     http.StatusOK,
+		}
+		// Must not panic.
+		rc.Flush()
+	})
+}
+
+// noFlushWriter is an http.ResponseWriter that does NOT implement http.Flusher,
+// used to verify that responseCapture.Flush degrades gracefully.
+type noFlushWriter struct{}
+
+func (noFlushWriter) Header() http.Header        { return http.Header{} }
+func (noFlushWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (noFlushWriter) WriteHeader(int)             {}
 
 func TestTenantManager_CRUD(t *testing.T) {
 	tests := []struct {
