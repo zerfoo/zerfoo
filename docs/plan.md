@@ -1185,7 +1185,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 45: Medium Fixes -- Correctness and Performance (5 agents)
 
-- [ ] T108.21 Fix batch scheduler context coupling (M22)
+- [x] T108.21 Fix batch scheduler context coupling (M22) (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: serve/batch.go
@@ -1196,7 +1196,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: first request disconnect does not cancel remaining batch members.
   - go vet ./serve/ clean.
 
-- [ ] T108.22 Make session pool size configurable (F5, M23)
+- [x] T108.22 Make session pool size configurable (F5, M23) (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [UC-003]
   Deps: none
   Files: inference/load_gguf.go, inference/inference.go
@@ -1208,7 +1208,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: LoadFile with custom pool size creates pool of correct size.
   - go vet ./inference/ clean.
 
-- [ ] T108.23 Fix isOOMError false positives (F4)
+- [x] T108.23 Fix isOOMError false positives (F4) (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1219,7 +1219,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     "out of memory" returns 503.
   - go vet ./serve/ clean.
 
-- [ ] T108.24 Fix checkStop O(n^2) decoding (A7)
+- [x] T108.24 Fix checkStop O(n^2) decoding (A7) (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [UC-001, UC-002]
   Deps: none
   Files: generate/generator.go
@@ -1231,7 +1231,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Benchmark: 4096-token generation with stop string is measurably faster.
   - go vet ./generate/ clean.
 
-- [ ] T108.25 Add graceful shutdown timeout (L9)
+- [x] T108.25 Add graceful shutdown timeout (L9) (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: cmd/cli/serve.go
@@ -1915,13 +1915,13 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T108.19 Add NetworkPolicy to Helm chart (M16)
 - [x] T108.20 Support API auth + body size limits (C3, M1)
 
-#### Wave 45: E108 Medium Fixes -- Correctness (5 agents)
+#### Wave 45: E108 Medium Fixes -- Correctness (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.21 Fix batch scheduler context coupling (M22)
-- [ ] T108.22 Make session pool size configurable (F5, M23)
-- [ ] T108.23 Fix isOOMError false positives (F4)
-- [ ] T108.24 Fix checkStop O(n^2) decoding (A7)
-- [ ] T108.25 Add graceful shutdown timeout (L9)
+- [x] T108.21 Fix batch scheduler context coupling (M22)
+- [x] T108.22 Make session pool size configurable (F5, M23)
+- [x] T108.23 Fix isOOMError false positives (F4)
+- [x] T108.24 Fix checkStop O(n^2) decoding (A7)
+- [x] T108.25 Add graceful shutdown timeout (L9)
 
 #### Wave 46: E108 Low Fixes and Tech Debt (5 agents)
 
