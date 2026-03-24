@@ -1,6 +1,7 @@
 package rl
 
 import (
+	"errors"
 	"math/rand/v2"
 )
 
@@ -14,15 +15,15 @@ type ReplayBuffer struct {
 }
 
 // NewReplayBuffer returns a ReplayBuffer with the given capacity.
-// capacity must be > 0.
-func NewReplayBuffer(capacity int) *ReplayBuffer {
+// capacity must be > 0; otherwise a non-nil error is returned.
+func NewReplayBuffer(capacity int) (*ReplayBuffer, error) {
 	if capacity <= 0 {
-		panic("rl: ReplayBuffer capacity must be > 0")
+		return nil, errors.New("rl: ReplayBuffer capacity must be > 0")
 	}
 	return &ReplayBuffer{
 		buf:      make([]Experience, capacity),
 		capacity: capacity,
-	}
+	}, nil
 }
 
 // Len returns the number of experiences currently stored.
@@ -52,12 +53,12 @@ func (rb *ReplayBuffer) Sample(batchSize int) []Experience {
 // SamplePrioritized returns batchSize experiences sampled proportionally to the
 // provided priorities slice (one weight per stored experience, index 0 = oldest).
 // priorities must have length equal to rb.Len(); any negative value is treated as 0.
-func (rb *ReplayBuffer) SamplePrioritized(batchSize int, priorities []float64) []Experience {
+func (rb *ReplayBuffer) SamplePrioritized(batchSize int, priorities []float64) ([]Experience, error) {
 	if rb.size == 0 || batchSize <= 0 {
-		return nil
+		return nil, nil
 	}
 	if len(priorities) != rb.size {
-		panic("rl: priorities length must equal ReplayBuffer.Len()")
+		return nil, errors.New("rl: priorities length must equal ReplayBuffer.Len()")
 	}
 
 	// Build cumulative weight array over the logical order of stored entries.
@@ -97,5 +98,5 @@ func (rb *ReplayBuffer) SamplePrioritized(batchSize int, priorities []float64) [
 		physIdx := (oldest + logicalIdx) % rb.capacity
 		out[i] = rb.buf[physIdx]
 	}
-	return out
+	return out, nil
 }

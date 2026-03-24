@@ -56,7 +56,10 @@ func TestReplayBuffer_FIFO(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rb := NewReplayBuffer(tc.capacity)
+			rb, err := NewReplayBuffer(tc.capacity)
+			if err != nil {
+				t.Fatalf("NewReplayBuffer(%d) error: %v", tc.capacity, err)
+			}
 			for _, r := range tc.add {
 				rb.Add(makeExp(r))
 			}
@@ -75,7 +78,10 @@ func TestReplayBuffer_FIFO(t *testing.T) {
 
 func TestReplayBuffer_PrioritySampling(t *testing.T) {
 	// Fill a buffer with experiences reward 0..4.
-	rb := NewReplayBuffer(5)
+	rb, err := NewReplayBuffer(5)
+	if err != nil {
+		t.Fatalf("NewReplayBuffer error: %v", err)
+	}
 	for i := 0; i < 5; i++ {
 		rb.Add(makeExp(float64(i)))
 	}
@@ -83,7 +89,10 @@ func TestReplayBuffer_PrioritySampling(t *testing.T) {
 	// Give all weight to the last entry (reward=4).
 	priorities := []float64{0, 0, 0, 0, 1e9}
 	const n = 1000
-	batch := rb.SamplePrioritized(n, priorities)
+	batch, err := rb.SamplePrioritized(n, priorities)
+	if err != nil {
+		t.Fatalf("SamplePrioritized error: %v", err)
+	}
 	if len(batch) != n {
 		t.Fatalf("SamplePrioritized returned %d items, want %d", len(batch), n)
 	}
@@ -96,16 +105,22 @@ func TestReplayBuffer_PrioritySampling(t *testing.T) {
 }
 
 func TestReplayBuffer_PrioritySampling_ZeroWeightsFallbackUniform(t *testing.T) {
-	rb := NewReplayBuffer(3)
+	rb, err := NewReplayBuffer(3)
+	if err != nil {
+		t.Fatalf("NewReplayBuffer error: %v", err)
+	}
 	for i := 0; i < 3; i++ {
 		rb.Add(makeExp(float64(i)))
 	}
 	priorities := []float64{0, 0, 0}
-	batch := rb.SamplePrioritized(30, priorities)
+	batch, err := rb.SamplePrioritized(30, priorities)
+	if err != nil {
+		t.Fatalf("SamplePrioritized error: %v", err)
+	}
 	if len(batch) != 30 {
 		t.Fatalf("expected 30 samples, got %d", len(batch))
 	}
-	// Just verify no panic and rewards are within [0,2].
+	// Just verify rewards are within [0,2].
 	for _, exp := range batch {
 		if exp.Reward < 0 || exp.Reward > 2 {
 			t.Errorf("unexpected reward %v", exp.Reward)
@@ -113,25 +128,45 @@ func TestReplayBuffer_PrioritySampling_ZeroWeightsFallbackUniform(t *testing.T) 
 	}
 }
 
-func TestReplayBuffer_PrioritiesLengthMismatchPanics(t *testing.T) {
-	rb := NewReplayBuffer(3)
+func TestReplayBuffer_PrioritiesLengthMismatchReturnsError(t *testing.T) {
+	rb, err := NewReplayBuffer(3)
+	if err != nil {
+		t.Fatalf("NewReplayBuffer error: %v", err)
+	}
 	rb.Add(makeExp(1))
 	rb.Add(makeExp(2))
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on priorities length mismatch, got none")
-		}
-	}()
-	rb.SamplePrioritized(1, []float64{1, 2, 3}) // len=3 but rb.Len()=2
+	_, err = rb.SamplePrioritized(1, []float64{1, 2, 3}) // len=3 but rb.Len()=2
+	if err == nil {
+		t.Error("expected error on priorities length mismatch, got nil")
+	}
 }
 
 func TestReplayBuffer_SampleEmpty(t *testing.T) {
-	rb := NewReplayBuffer(4)
+	rb, err := NewReplayBuffer(4)
+	if err != nil {
+		t.Fatalf("NewReplayBuffer error: %v", err)
+	}
 	if got := rb.Sample(5); got != nil {
 		t.Errorf("Sample on empty buffer should return nil, got %v", got)
 	}
-	if got := rb.SamplePrioritized(5, nil); got != nil {
+	got, err := rb.SamplePrioritized(5, nil)
+	if err != nil {
+		t.Fatalf("SamplePrioritized error: %v", err)
+	}
+	if got != nil {
 		t.Errorf("SamplePrioritized on empty buffer should return nil, got %v", got)
+	}
+}
+
+func TestNewReplayBuffer_InvalidCapacity(t *testing.T) {
+	for _, cap := range []int{0, -1, -100} {
+		rb, err := NewReplayBuffer(cap)
+		if err == nil {
+			t.Errorf("NewReplayBuffer(%d) expected error, got nil", cap)
+		}
+		if rb != nil {
+			t.Errorf("NewReplayBuffer(%d) expected nil buffer, got non-nil", cap)
+		}
 	}
 }

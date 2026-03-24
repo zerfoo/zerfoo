@@ -49,7 +49,10 @@ func TestSAC_ContinuousAction(t *testing.T) {
 		InitAlpha:    0.05,
 	}
 	agent := NewSAC(cfg)
-	buf := NewReplayBuffer(2000)
+	buf, err := NewReplayBuffer(2000)
+	if err != nil {
+		t.Fatalf("NewReplayBuffer error: %v", err)
+	}
 
 	// Collect experience and train.
 	for ep := range 150 {
