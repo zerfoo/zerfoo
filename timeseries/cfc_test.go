@@ -356,13 +356,11 @@ func TestCfC_SaveWeightsCreatesFile(t *testing.T) {
 
 func TestCfC_TrainWindowed_Engine(t *testing.T) {
 	config := CfCConfig{InputSize: 1, HiddenSize: 8, OutputSize: 1, NumLayers: 1, OutputLen: 4}
-	m, err := NewCfC(config)
+	engine, ops := newTestEngine()
+	m, err := NewCfC(config, WithCfCEngine(engine, ops))
 	if err != nil {
 		t.Fatalf("NewCfC: %v", err)
 	}
-
-	engine, ops := newTestEngine()
-	m.SetEngine(engine, ops)
 
 	// Generate synthetic linear ramp data.
 	nSamples := 30
