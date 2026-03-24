@@ -844,6 +844,9 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req EmbeddingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
