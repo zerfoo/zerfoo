@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+
+	"github.com/zerfoo/ztensor/compute"
 )
 
 // TrainConfig holds training hyperparameters for windowed time-series backends.
@@ -131,15 +133,27 @@ type DLinearConfig struct {
 // It decomposes input into trend and seasonal components using moving average,
 // then applies separate linear projections for each component per channel.
 type DLinear struct {
-	config     DLinearConfig
-	trendW     [][]float64 // [channels][outputLen * inputLen]
-	trendB     [][]float64 // [channels][outputLen]
-	seasonalW  [][]float64 // [channels][outputLen * inputLen]
-	seasonalB  [][]float64 // [channels][outputLen]
+	config    DLinearConfig
+	trendW    [][]float64            // [channels][outputLen * inputLen]
+	trendB    [][]float64            // [channels][outputLen]
+	seasonalW [][]float64            // [channels][outputLen * inputLen]
+	seasonalB [][]float64            // [channels][outputLen]
+	engine    compute.Engine[float32] // optional; enables GPU-accelerated training
+}
+
+// DLinearOption configures a DLinear model.
+type DLinearOption func(*DLinear)
+
+// WithEngine sets the compute engine for GPU-accelerated training.
+// When nil (the default), DLinear uses the pure-Go CPU training path.
+func WithEngine(engine compute.Engine[float32]) DLinearOption {
+	return func(d *DLinear) {
+		d.engine = engine
+	}
 }
 
 // NewDLinear creates a new DLinear model with the given configuration.
-func NewDLinear(inputLen, outputLen, channels, kernelSize int) (*DLinear, error) {
+func NewDLinear(inputLen, outputLen, channels, kernelSize int, opts ...DLinearOption) (*DLinear, error) {
 	if inputLen <= 0 {
 		return nil, fmt.Errorf("dlinear: inputLen must be positive, got %d", inputLen)
 	}
@@ -179,6 +193,10 @@ func NewDLinear(inputLen, outputLen, channels, kernelSize int) (*DLinear, error)
 		for i := range d.seasonalW[c] {
 			d.seasonalW[c][i] = rand.NormFloat64() * scale
 		}
+	}
+
+	for _, opt := range opts {
+		opt(d)
 	}
 
 	return d, nil
@@ -273,6 +291,10 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 				return nil, fmt.Errorf("dlinear: window %d channel %d has length %d, expected %d", i, c, len(ch), d.config.InputLen)
 			}
 		}
+	}
+
+	if d.engine != nil {
+		return d.trainWindowedEngine(windows, labels, config)
 	}
 
 	if config.Epochs <= 0 {
