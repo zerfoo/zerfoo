@@ -544,6 +544,47 @@ func TestBuildArchGraph_MistralDetection(t *testing.T) {
 	}
 }
 
+func TestLoadFile_SessionPoolSize(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestGGUF(t, dir)
+
+	t.Run("default pool size", func(t *testing.T) {
+		m, err := LoadFile(path)
+		if err != nil {
+			t.Fatalf("LoadFile: %v", err)
+		}
+		defer func() { _ = m.Close() }()
+
+		if cap(m.sessionPool) != defaultSessionPoolSize {
+			t.Errorf("sessionPool capacity = %d, want %d", cap(m.sessionPool), defaultSessionPoolSize)
+		}
+	})
+
+	t.Run("custom pool size", func(t *testing.T) {
+		m, err := LoadFile(path, WithSessionPoolSize(4))
+		if err != nil {
+			t.Fatalf("LoadFile: %v", err)
+		}
+		defer func() { _ = m.Close() }()
+
+		if cap(m.sessionPool) != 4 {
+			t.Errorf("sessionPool capacity = %d, want 4", cap(m.sessionPool))
+		}
+	})
+
+	t.Run("minimum clamped to 1", func(t *testing.T) {
+		m, err := LoadFile(path, WithSessionPoolSize(0))
+		if err != nil {
+			t.Fatalf("LoadFile: %v", err)
+		}
+		defer func() { _ = m.Close() }()
+
+		if cap(m.sessionPool) != 1 {
+			t.Errorf("sessionPool capacity = %d, want 1", cap(m.sessionPool))
+		}
+	})
+}
+
 func TestLoadFile_NotGGUF(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "not-a-model.txt")
