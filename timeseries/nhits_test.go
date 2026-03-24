@@ -811,6 +811,114 @@ func TestNHiTS_HighChannelNoNilPanic(t *testing.T) {
 	}
 }
 
+func TestNHiTS_SmallInputLen_NoSegfault(t *testing.T) {
+	// Issue #152: NHiTS segfaults when inputLen is small relative to poolKernel.
+	// This regression test verifies no panic occurs and training completes with finite loss.
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  10,
+		OutputLength: 4,
+		Channels:     10,
+		PoolKernels:  []int{2, 4, 8},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	numSamples := 32
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+
+	for i := 0; i < numSamples; i++ {
+		w := make([][]float64, config.Channels)
+		for c := 0; c < config.Channels; c++ {
+			ch := make([]float64, config.InputLength)
+			for tt := 0; tt < config.InputLength; tt++ {
+				ch[tt] = 0.01 * float64(c+tt+i)
+			}
+			w[c] = ch
+		}
+		windows[i] = w
+		for tt := 0; tt < config.OutputLength; tt++ {
+			labels[i*config.OutputLength+tt] = 0.01 * float64(i+config.InputLength+tt)
+		}
+	}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       20,
+		LR:           1e-3,
+		BatchSize:    16,
+		GradClip:     1.0,
+		WarmupEpochs: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	t.Logf("small inputLen regression: final_loss=%.6f", result.FinalLoss)
+}
+
+func TestNHiTS_PoolKernelEqualsInputLen(t *testing.T) {
+	// Edge case: poolKernel == inputLen should produce pooledLen=1 and work correctly.
+	engine, ops := newTestEngine()
+
+	config := NHiTSConfig{
+		InputLength:  8,
+		OutputLength: 4,
+		Channels:     1,
+		PoolKernels:  []int{8},
+		HiddenSize:   16,
+		NumMLPLayers: 2,
+	}
+
+	m, err := NewNHiTS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNHiTS: %v", err)
+	}
+	m.initWeightsSmall()
+
+	numSamples := 16
+	windows := make([][][]float64, numSamples)
+	labels := make([]float64, numSamples*config.OutputLength)
+
+	for i := 0; i < numSamples; i++ {
+		ch := make([]float64, config.InputLength)
+		for tt := 0; tt < config.InputLength; tt++ {
+			ch[tt] = 0.1 * float64(tt+i)
+		}
+		windows[i] = [][]float64{ch}
+		for tt := 0; tt < config.OutputLength; tt++ {
+			labels[i*config.OutputLength+tt] = 0.1 * float64(config.InputLength+tt+i)
+		}
+	}
+
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:       20,
+		LR:           1e-3,
+		BatchSize:    8,
+		GradClip:     1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+
+	t.Logf("poolKernel==inputLen: final_loss=%.6f", result.FinalLoss)
+}
+
 func TestNHiTS_PredictWindowed_NormalizationApplied(t *testing.T) {
 	engine, ops := newTestEngine()
 
