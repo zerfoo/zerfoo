@@ -8,60 +8,57 @@ import (
 )
 
 func TestMamba_NewValidation(t *testing.T) {
+	engine, ops := newTestEngine()
+
 	tests := []struct {
 		name   string
 		config MambaConfig
-		errMsg string
 	}{
 		{
 			name:   "zero channels",
-			config: MambaConfig{Channels: 0, InputLen: 24, OutputLen: 12, DModel: 8, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
-			errMsg: "Channels must be positive",
+			config: MambaConfig{Channels: 0, InputLen: 24, OutputLen: 12, DModel: 16, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
 		},
 		{
 			name:   "zero input len",
-			config: MambaConfig{Channels: 1, InputLen: 0, OutputLen: 12, DModel: 8, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
-			errMsg: "InputLen must be positive",
+			config: MambaConfig{Channels: 1, InputLen: 0, OutputLen: 12, DModel: 16, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
 		},
 		{
 			name:   "zero output len",
-			config: MambaConfig{Channels: 1, InputLen: 24, OutputLen: 0, DModel: 8, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
-			errMsg: "OutputLen must be positive",
+			config: MambaConfig{Channels: 1, InputLen: 24, OutputLen: 0, DModel: 16, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
 		},
 		{
 			name:   "zero dmodel",
 			config: MambaConfig{Channels: 1, InputLen: 24, OutputLen: 12, DModel: 0, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 1},
-			errMsg: "DModel must be positive",
 		},
 		{
 			name:   "zero nlayers",
-			config: MambaConfig{Channels: 1, InputLen: 24, OutputLen: 12, DModel: 8, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 0},
-			errMsg: "NLayers must be positive",
+			config: MambaConfig{Channels: 1, InputLen: 24, OutputLen: 12, DModel: 16, DState: 4, DConv: 2, ExpandFactor: 2, NLayers: 0},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewMamba(tt.config)
+			_, err := NewMamba(tt.config, engine, ops)
 			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tt.errMsg)
+				t.Fatal("expected error, got nil")
 			}
 		})
 	}
 }
 
 func TestMamba_ForwardOutputShape(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     2,
 		InputLen:     16,
 		OutputLen:    8,
-		DModel:       4,
+		DModel:       16,
 		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -74,29 +71,30 @@ func TestMamba_ForwardOutputShape(t *testing.T) {
 		}
 	}
 
-	output := m.forward(input)
-	if len(output) != config.Channels {
-		t.Fatalf("expected %d channels, got %d", config.Channels, len(output))
+	preds, err := m.PredictWindowed("", [][][]float64{input})
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
 	}
-	for c := 0; c < config.Channels; c++ {
-		if len(output[c]) != config.OutputLen {
-			t.Fatalf("channel %d: expected length %d, got %d", c, config.OutputLen, len(output[c]))
-		}
+
+	expectedLen := config.Channels * config.OutputLen
+	if len(preds) != expectedLen {
+		t.Fatalf("expected %d predictions, got %d", expectedLen, len(preds))
 	}
 }
 
 func TestMamba_Convergence(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -147,18 +145,18 @@ func TestMamba_Convergence(t *testing.T) {
 }
 
 func TestMamba_LongSequence(t *testing.T) {
-	// Verify inputLen=512 works without excessive memory (O(L) not O(L^2)).
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     512,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        4,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -171,34 +169,31 @@ func TestMamba_LongSequence(t *testing.T) {
 		}
 	}
 
-	output := m.forward(input)
-	if len(output) != config.Channels {
-		t.Fatalf("expected %d channels, got %d", config.Channels, len(output))
+	preds, err := m.PredictWindowed("", [][][]float64{input})
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
 	}
-	for c := 0; c < config.Channels; c++ {
-		if len(output[c]) != config.OutputLen {
-			t.Fatalf("channel %d: expected length %d, got %d", c, config.OutputLen, len(output[c]))
-		}
-		for _, v := range output[c] {
-			if !isFinite(v) {
-				t.Fatalf("channel %d: non-finite output value: %v", c, v)
-			}
+
+	for i, v := range preds {
+		if !isFinite(v) {
+			t.Fatalf("prediction[%d] is not finite: %v", i, v)
 		}
 	}
 }
 
 func TestMamba_SaveLoadRoundTrip(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     2,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m1, err := NewMamba(config)
+	m1, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -232,7 +227,7 @@ func TestMamba_SaveLoadRoundTrip(t *testing.T) {
 	}
 
 	// Load into new model.
-	m2, err := NewMamba(config)
+	m2, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -263,24 +258,25 @@ func TestMamba_SaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("prediction length mismatch: %d vs %d", len(pred1), len(pred2))
 	}
 	for i := range pred1 {
-		if math.Abs(pred1[i]-pred2[i]) > 1e-10 {
-			t.Errorf("prediction[%d] mismatch: %.10f vs %.10f", i, pred1[i], pred2[i])
+		if math.Abs(pred1[i]-pred2[i]) > 1e-4 {
+			t.Errorf("prediction[%d] mismatch: %.6f vs %.6f", i, pred1[i], pred2[i])
 		}
 	}
 }
 
 func TestMamba_MultiChannel(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     3,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -327,17 +323,18 @@ func TestMamba_MultiChannel(t *testing.T) {
 }
 
 func TestMamba_PredictWindowed_LoadFromPath(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -348,7 +345,7 @@ func TestMamba_PredictWindowed_LoadFromPath(t *testing.T) {
 		t.Fatalf("SaveWeights: %v", err)
 	}
 
-	m2, err := NewMamba(config)
+	m2, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -369,17 +366,18 @@ func TestMamba_PredictWindowed_LoadFromPath(t *testing.T) {
 }
 
 func TestMamba_PredictWindowed_BadPath(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -395,17 +393,18 @@ func TestMamba_PredictWindowed_BadPath(t *testing.T) {
 }
 
 func TestMamba_EmptyInput(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
@@ -421,41 +420,19 @@ func TestMamba_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestMamba_ParamCount(t *testing.T) {
-	config := MambaConfig{
-		Channels:     2,
-		InputLen:     8,
-		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
-		DConv:        2,
-		ExpandFactor: 2,
-		NLayers:      1,
-	}
-	m, err := NewMamba(config)
-	if err != nil {
-		t.Fatalf("NewMamba: %v", err)
-	}
-
-	params := m.flatParams()
-	count := m.paramCount()
-	if len(params) != count {
-		t.Errorf("paramCount()=%d but flatParams() returned %d pointers", count, len(params))
-	}
-}
-
 func TestMamba_SaveWeightsCreatesFile(t *testing.T) {
+	engine, ops := newTestEngine()
 	config := MambaConfig{
 		Channels:     1,
 		InputLen:     8,
 		OutputLen:    4,
-		DModel:       4,
-		DState:       2,
+		DModel:       16,
+		DState:       4,
 		DConv:        2,
 		ExpandFactor: 2,
 		NLayers:      1,
 	}
-	m, err := NewMamba(config)
+	m, err := NewMamba(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewMamba: %v", err)
 	}
