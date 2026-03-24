@@ -853,7 +853,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 39: Medium Fixes (5 agents)
 
-- [ ] T107.6 Fix ListByCustomer sort algorithm
+- [x] T107.6 Fix ListByCustomer sort algorithm
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: support/ticket.go
@@ -863,7 +863,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: ListByCustomer with 5+ tickets returns correctly ordered list.
   - go vet ./support/ clean. go test -race ./support/ pass.
 
-- [ ] T107.7 Add inflight tracking to handleEmbeddings
+- [x] T107.7 Add inflight tracking to handleEmbeddings
   Owner: Security Eng  Est: 15m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -871,7 +871,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Add s.inflight.Add(1) and defer s.inflight.Done() at top of handleEmbeddings.
   - go vet ./serve/ clean.
 
-- [ ] T107.8 Add NaN detection to normalizeWindows input
+- [x] T107.8 Add NaN detection to normalizeWindows input
   Owner: ML Eng  Est: 30m  verifies: [UC-026]
   Deps: none
   Files: timeseries/dlinear.go
@@ -883,7 +883,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: input with NaN returns error.
   - go vet ./timeseries/ clean.
 
-- [ ] T107.9 Disable public IPs in AWS QuickStart template
+- [x] T107.9 Disable public IPs in AWS QuickStart template
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: marketplace/aws/cfn/quickstart.yaml
@@ -891,7 +891,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Set AssignPublicIp: DISABLED in the ECS task networking config.
   - Verify ALB still routes traffic to private task IPs.
 
-- [ ] T107.10 Restrict Azure ARM template firewall rules
+- [x] T107.10 Restrict Azure ARM template firewall rules
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: marketplace/azure/arm/template.json
@@ -1480,11 +1480,11 @@ Source: .claude/scratch/deep-review-report.md
 
 #### Wave 39: v1.11.0 Medium Fixes (5 agents)
 
-- [ ] T107.6 Fix ListByCustomer sort algorithm
-- [ ] T107.7 Add inflight tracking to handleEmbeddings
-- [ ] T107.8 Add NaN detection to normalizeWindows input
-- [ ] T107.9 Disable public IPs in AWS QuickStart
-- [ ] T107.10 Restrict Azure ARM template firewall
+- [x] T107.6 Fix ListByCustomer sort algorithm
+- [x] T107.7 Add inflight tracking to handleEmbeddings
+- [x] T107.8 Add NaN detection to normalizeWindows input
+- [x] T107.9 Disable public IPs in AWS QuickStart
+- [x] T107.10 Restrict Azure ARM template firewall
 
 #### Wave 40: Verification (2 agents)
 
