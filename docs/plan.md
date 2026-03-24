@@ -1243,7 +1243,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 46: Low Fixes and Tech Debt (5 agents)
 
-- [ ] T108.26 Add streaming chunk OpenAI-required fields (A9)
+- [x] T108.26 Add streaming chunk OpenAI-required fields (A9) (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-001, UC-003]
   Deps: none
   Files: serve/server.go
@@ -1253,7 +1253,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: streaming response chunks include all required OpenAI fields.
   - go vet ./serve/ clean.
 
-- [ ] T108.27 Validate temperature/TopP/TopK ranges (L1)
+- [x] T108.27 Validate temperature/TopP/TopK ranges (L1) (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1263,7 +1263,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: negative temperature returns 400. TopP=1.5 clamped to 1.0.
   - go vet ./serve/ clean.
 
-- [ ] T108.28 Register healthz/readyz on main serve mux (A2)
+- [x] T108.28 Register healthz/readyz on main serve mux (A2) (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [UC-003]
   Deps: none
   Files: serve/server.go
@@ -1274,7 +1274,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Test: GET /healthz returns 200. GET /readyz returns 200 with loaded model.
   - go vet ./serve/ clean.
 
-- [ ] T108.29 Remove prefix cache dead computation (F7)
+- [x] T108.29 Remove prefix cache dead computation (F7) (2026-03-23)
   Owner: ML Eng  Est: 15m  verifies: [infrastructure]
   Deps: none
   Files: generate/session.go
@@ -1282,7 +1282,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
   - Remove unused seqLen computation at lines 133-136.
   - go vet ./generate/ clean.
 
-- [ ] T108.30 Use UTC for billing timestamps (F11)
+- [x] T108.30 Use UTC for billing timestamps (F11) (2026-03-23)
   Owner: ML Eng  Est: 15m  verifies: [infrastructure]
   Deps: none
   Files: cloud/billing.go
@@ -1292,7 +1292,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
 
 ##### Wave 47: Verification (2 agents)
 
-- [ ] T108.31 Run go test -race on all changed packages
+- [x] T108.31 Run go test -race on all changed packages (2026-03-23)
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: T108.1-T108.30
   Acceptance:
@@ -1300,7 +1300,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-23)
     ./inference/ ./security/ ./support/ ./federated/ ./health/ ./marketplace/...
   - All tests pass with no races detected.
 
-- [ ] T108.32 Run go vet and linter on entire codebase
+- [x] T108.32 Run go vet and linter on entire codebase (2026-03-23)
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T108.31
   Acceptance:
@@ -1923,18 +1923,18 @@ Source: .claude/scratch/deep-review-report.md
 - [x] T108.24 Fix checkStop O(n^2) decoding (A7)
 - [x] T108.25 Add graceful shutdown timeout (L9)
 
-#### Wave 46: E108 Low Fixes and Tech Debt (5 agents)
+#### Wave 46: E108 Low Fixes and Tech Debt (5 agents) -- COMPLETE (2026-03-23)
 
-- [ ] T108.26 Add streaming chunk OpenAI fields (A9)
-- [ ] T108.27 Validate temperature/TopP/TopK ranges (L1)
-- [ ] T108.28 Register healthz/readyz on main mux (A2)
-- [ ] T108.29 Remove prefix cache dead computation (F7)
-- [ ] T108.30 Use UTC for billing timestamps (F11)
+- [x] T108.26 Add streaming chunk OpenAI fields (A9)
+- [x] T108.27 Validate temperature/TopP/TopK ranges (L1)
+- [x] T108.28 Register healthz/readyz on main mux (A2)
+- [x] T108.29 Remove prefix cache dead computation (F7)
+- [x] T108.30 Use UTC for billing timestamps (F11)
 
 #### Wave 47: E108 Verification (2 agents)
 
-- [ ] T108.31 Run go test -race on all changed packages
-- [ ] T108.32 Run go vet and linter on entire codebase
+- [x] T108.31 Run go test -race on all changed packages (2026-03-23)
+- [x] T108.32 Run go vet and linter on entire codebase (2026-03-23)
 
 Remaining roadmap tasks are blocked by hardware access or human actions.
 See Hand-Off Notes.
