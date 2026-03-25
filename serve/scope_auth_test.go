@@ -127,6 +127,26 @@ func TestScopeAuthorization(t *testing.T) {
 		}
 	})
 
+	t.Run("GET /v1/unknown-future-endpoint requires ScopeReadOnly", func(t *testing.T) {
+		resp := doReq(t, http.MethodGet, ts.URL+"/v1/unknown-future-endpoint", readOnlyKey)
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			t.Fatalf("status = %d, want not 401/403", resp.StatusCode)
+		}
+	})
+
+	t.Run("no-scope key rejected for /v1/ paths", func(t *testing.T) {
+		noScopeKey, _, err := ks.Create("no-scope-key", []security.Scope{}, time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := doReq(t, http.MethodGet, ts.URL+"/v1/models", noScopeKey)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", resp.StatusCode)
+		}
+	})
+
 	t.Run("metrics skips auth with keystore", func(t *testing.T) {
 		resp := doReq(t, http.MethodGet, ts.URL+"/metrics", "")
 		defer resp.Body.Close()
@@ -172,6 +192,7 @@ func TestRequiredScope(t *testing.T) {
 		{http.MethodPost, "/v1/audio/transcriptions", security.ScopeInference},
 		{http.MethodGet, "/v1/models", security.ScopeReadOnly},
 		{http.MethodGet, "/v1/models/test", security.ScopeReadOnly},
+		{http.MethodGet, "/v1/unknown-future-endpoint", security.ScopeReadOnly},
 		{http.MethodGet, "/metrics", ""},
 		{http.MethodGet, "/healthz", ""},
 	}

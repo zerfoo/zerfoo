@@ -301,7 +301,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 // requiredScope returns the minimum scope required for the given HTTP method and path.
 // DELETE /v1/models requires ScopeAdmin. POST /v1/* requires ScopeInference.
-// GET /v1/models requires ScopeReadOnly. Returns empty string if no scope is required.
+// All /v1/ routes require at least ScopeReadOnly. Returns empty string for non-/v1/ paths.
 func requiredScope(method, path string) security.Scope {
 	if method == http.MethodDelete && strings.HasPrefix(path, "/v1/models") {
 		return security.ScopeAdmin
@@ -310,6 +310,9 @@ func requiredScope(method, path string) security.Scope {
 		return security.ScopeInference
 	}
 	if method == http.MethodGet && strings.HasPrefix(path, "/v1/models") {
+		return security.ScopeReadOnly
+	}
+	if strings.HasPrefix(path, "/v1/") {
 		return security.ScopeReadOnly
 	}
 	return ""
