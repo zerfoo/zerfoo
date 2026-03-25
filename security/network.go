@@ -179,13 +179,22 @@ func (p *CORSPolicy) Middleware(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && (origins["*"] || origins[origin]) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", methods)
-			w.Header().Set("Access-Control-Allow-Headers", headers)
-			w.Header().Set("Vary", "Origin")
-			if p.MaxAge > 0 {
-				w.Header().Set("Access-Control-Max-Age", strconv.Itoa(p.MaxAge))
+		if origin != "" {
+			if origins["*"] {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", methods)
+				w.Header().Set("Access-Control-Allow-Headers", headers)
+				if p.MaxAge > 0 {
+					w.Header().Set("Access-Control-Max-Age", strconv.Itoa(p.MaxAge))
+				}
+			} else if origins[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", methods)
+				w.Header().Set("Access-Control-Allow-Headers", headers)
+				w.Header().Set("Vary", "Origin")
+				if p.MaxAge > 0 {
+					w.Header().Set("Access-Control-Max-Age", strconv.Itoa(p.MaxAge))
+				}
 			}
 		}
 		if r.Method == http.MethodOptions {

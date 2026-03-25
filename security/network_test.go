@@ -152,8 +152,36 @@ func TestCORSWildcard(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://anything.com" {
-		t.Fatalf("expected wildcard to match, got %q", got)
+	// Wildcard config must return literal "*", not the reflected origin.
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected literal \"*\", got %q", got)
+	}
+	// Vary: Origin must NOT be set with a literal wildcard.
+	if got := rec.Header().Get("Vary"); got != "" {
+		t.Fatalf("expected no Vary header with wildcard origin, got %q", got)
+	}
+}
+
+func TestCORSNonWildcard(t *testing.T) {
+	policy := &CORSPolicy{
+		AllowedOrigins: []string{"https://example.com"},
+		AllowedMethods: []string{"GET", "POST"},
+		AllowedHeaders: []string{"Authorization"},
+	}
+	handler := policy.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://example.com")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Non-wildcard config reflects the matching origin.
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://example.com" {
+		t.Fatalf("expected reflected origin, got %q", got)
+	}
+	// Vary: Origin must be set for non-wildcard origins.
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Fatalf("expected Vary: Origin, got %q", got)
 	}
 }
 
