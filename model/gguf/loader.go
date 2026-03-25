@@ -158,7 +158,14 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	return tensor.NewWithStorage[float32](shape, q4k)
+	// Re-quantize Q4_K to Q4_0 for fast GEMV decode path. The Q4_K GEMV kernel
+	// is ~45% slower than Q4_0 GEMV on GB10 (128 vs 236 tok/s on Gemma 3 1B).
+	// The Q4_0 path trades per-sub-block 6-bit scale precision for throughput.
+	// TODO: optimize Q4_K GEMV kernel to match Q4_0 speed, then use native Q4_K.
+	f32 := make([]float32, numElements)
+	q4k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
