@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1](https://github.com/zerfoo/zerfoo/compare/v1.15.0...v1.15.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* **ssm:** center MambaBlock weight init and scale by 1/sqrt(fan_in) ([a97712e](https://github.com/zerfoo/zerfoo/commit/a97712ee7bbad4a6578fbc5a100414cb0e3ca038))
+* **timeseries:** add PredictWindowed nil-engine fallback and residual scaling ([0e6cb9a](https://github.com/zerfoo/zerfoo/commit/0e6cb9a9797be6648440d367b7fc045b85ebf83d))
+
 ## [1.15.0](https://github.com/zerfoo/zerfoo/compare/v1.14.0...v1.15.0) (2026-03-24)
 
 
