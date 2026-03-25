@@ -192,8 +192,22 @@ func TestBillingMiddlewareNoTenant(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	// Fail closed: missing tenant must return 500, not pass through.
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+
+	// Verify the error body is a JSON object with an error message.
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("response body is not valid JSON: %v", err)
+	}
+	if errResp.Error.Message != "billing: tenant context required" {
+		t.Errorf("error message = %q, want %q", errResp.Error.Message, "billing: tenant context required")
 	}
 
 	// No event should be recorded when there's no tenant.

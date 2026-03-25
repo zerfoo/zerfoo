@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -109,8 +111,7 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tenant := TenantFromContext(r.Context())
 			if tenant == nil {
-				// No tenant in context — pass through without metering.
-				next.ServeHTTP(w, r)
+				http.Error(w, `{"error":{"message":"billing: tenant context required"}}`, http.StatusInternalServerError)
 				return
 			}
 
@@ -161,7 +162,10 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 				CompletionTokens: completionTokens,
 				Timestamp:        time.Now().Unix(),
 			}
-			recorder.Record(event) //nolint:errcheck
+			if err := recorder.Record(event); err != nil {
+				fmt.Fprintf(os.Stderr, "billing: failed to record usage event tenant=%s model=%s prompt=%d completion=%d: %v\n",
+					tenantID, req.Model, promptTokens, completionTokens, err)
+			}
 		})
 	}
 }
