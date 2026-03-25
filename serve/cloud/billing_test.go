@@ -3,6 +3,8 @@ package cloud
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -157,8 +159,12 @@ func TestBillingMiddleware(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
 		t.Fatalf("unmarshal event: %v", err)
 	}
-	if event.TenantID != "key-abc" {
-		t.Errorf("TenantID = %q, want %q", event.TenantID, "key-abc")
+	wantHash := sha256Hex("key-abc")
+	if event.TenantID != wantHash {
+		t.Errorf("TenantID = %q, want SHA-256 hash %q", event.TenantID, wantHash)
+	}
+	if event.TenantID == "key-abc" {
+		t.Error("TenantID must not contain the raw API key")
 	}
 	if event.Model != "llama3-8b" {
 		t.Errorf("Model = %q, want %q", event.Model, "llama3-8b")
@@ -284,8 +290,12 @@ func TestBillingMiddlewareStreamingSSE(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
 		t.Fatalf("unmarshal event: %v", err)
 	}
-	if event.TenantID != "key-stream" {
-		t.Errorf("TenantID = %q, want %q", event.TenantID, "key-stream")
+	wantHash := sha256Hex("key-stream")
+	if event.TenantID != wantHash {
+		t.Errorf("TenantID = %q, want SHA-256 hash %q", event.TenantID, wantHash)
+	}
+	if event.TenantID == "key-stream" {
+		t.Error("TenantID must not contain the raw API key")
 	}
 	if event.Model != "llama3-8b" {
 		t.Errorf("Model = %q, want %q", event.Model, "llama3-8b")
@@ -330,5 +340,55 @@ func TestBillingMiddlewareNonStreamingJSONFallback(t *testing.T) {
 	}
 	if event.CompletionTokens != 75 {
 		t.Errorf("CompletionTokens = %d, want 75", event.CompletionTokens)
+	}
+}
+
+// sha256Hex returns the hex-encoded SHA-256 hash of s.
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func TestBillingMiddlewareTenantIDIsHashed(t *testing.T) {
+	var buf bytes.Buffer
+	rec := NewNDJSONRecorder(&buf)
+
+	inner := fakeHandler(42, 18)
+	handler := BillingMiddleware(rec)(inner)
+
+	const rawKey = "sk-secret-api-key-12345"
+	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	line := strings.TrimSpace(buf.String())
+	if line == "" {
+		t.Fatal("no usage event recorded")
+	}
+
+	var event UsageEvent
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+
+	// The tenant ID must NOT be the raw API key.
+	if event.TenantID == rawKey {
+		t.Fatal("TenantID contains raw API key — credentials must be hashed before recording")
+	}
+
+	// The tenant ID must be the SHA-256 hex digest of the raw key.
+	want := sha256Hex(rawKey)
+	if event.TenantID != want {
+		t.Errorf("TenantID = %q, want SHA-256 hash %q", event.TenantID, want)
+	}
+
+	// Verify it is a valid 64-character hex string (SHA-256 output).
+	if len(event.TenantID) != 64 {
+		t.Errorf("TenantID length = %d, want 64 (hex-encoded SHA-256)", len(event.TenantID))
 	}
 }

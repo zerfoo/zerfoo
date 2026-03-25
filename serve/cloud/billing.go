@@ -2,6 +2,8 @@ package cloud
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -115,7 +117,7 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 			// Read and buffer the request body to extract the model name.
 			var reqBody bytes.Buffer
 			if r.Body != nil {
-				io.Copy(&reqBody, r.Body) //nolint:errcheck
+				io.Copy(&reqBody, io.LimitReader(r.Body, 10<<20)) //nolint:errcheck
 				r.Body.Close()
 			}
 			r.Body = io.NopCloser(bytes.NewReader(reqBody.Bytes()))
@@ -149,7 +151,9 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 				return
 			}
 
-			tenantID := extractBearerToken(r)
+			raw := extractBearerToken(r)
+			h := sha256.Sum256([]byte(raw))
+			tenantID := hex.EncodeToString(h[:])
 			event := UsageEvent{
 				TenantID:         tenantID,
 				Model:            req.Model,
