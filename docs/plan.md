@@ -2128,7 +2128,7 @@ Maturity gap: code quality rated 4/5. 3 files over 1100 lines.
 
 ##### Wave 75: File Splits (3 agents)
 
-- [ ] T120.1 Split serve/server.go into focused files
+- [x] T120.1 Split serve/server.go into focused files
   Owner: Lead Eng  Est: 2h  verifies: [infrastructure]
   Deps: none
   Files: serve/server.go -> serve/server.go, serve/handlers.go, serve/types.go, serve/streaming.go
@@ -2140,7 +2140,7 @@ Maturity gap: code quality rated 4/5. 3 files over 1100 lines.
   - No exported API changes. All imports resolve.
   - go build ./... clean. go test -race ./serve/ pass.
 
-- [ ] T120.2 Split timeseries/itransformer.go into model + backward
+- [x] T120.2 Split timeseries/itransformer.go into model + backward
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: timeseries/itransformer.go -> itransformer.go + itransformer_backward.go
