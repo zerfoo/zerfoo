@@ -1747,6 +1747,117 @@ through engine ops, and applies AdamW with engine arithmetic.
 
 ---
 
+#### E114: GPU Verification Remediation [2026 Q2 -- HIGH]
+
+GPU verification on DGX Spark (2026-03-24) revealed 2 segfaults, 7+ test failures,
+and stale kernel libraries. Source: .claude/scratch/verify-gpu-report.md
+
+Root causes:
+1. Large MatMul (128256x4096) segfaults via purego cuBLAS on GB10 (VRAM or calling convention).
+2. FP16 MatMul segfaults on aarch64 purego path.
+3. Custom CUDA kernels (cos, softmax, transpose, gather) report "kernels not available"
+   because libkernels.so on DGX is stale (missing new symbols).
+4. BF16 MatMul relative error (1.3e-3 - 1.9e-3) exceeds 1e-3 test tolerance.
+5. CGo build fails (-tags cuda): stale libkernels.so missing SM_121 symbols + -lcublasLt.
+6. DGX repos are out of sync (at commit 7a0f00b5, missing v1.13-v1.15 code).
+
+##### Wave 59: DGX Sync and Kernel Rebuild (1 agent)
+
+- [ ] T114.1 Sync DGX repos and rebuild kernel library
+  Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Steps:
+  - SSH to ndungu@192.168.86.250.
+  - cd ~/Code/ztensor && git pull origin main.
+  - cd ~/Code/zerfoo && git pull origin main && fix go.mod replace path.
+  - cd ~/Code/ztensor/internal/cuda/kernels && make clean && make.
+  - Verify: go build ./... passes (both repos).
+  - Verify: go build -tags cuda ./... passes (ztensor).
+  Acceptance:
+  - Both repos at latest main. go build clean. libkernels.so rebuilt.
+
+##### Wave 60: Fix Large MatMul and FP16 Segfaults (2 agents)
+
+- [ ] T114.2 Add VRAM bounds check and graceful error for large cuBLAS MatMul
+  Owner: Kernel Eng  Est: 2h  verifies: [UC-001, UC-002]
+  Deps: T114.1
+  Files: ztensor/compute/gpu_engine.go
+  Acceptance:
+  - Before cuBLAS sgemm/hgemm calls, compute required workspace size.
+  - If workspace exceeds available VRAM (query via cudaMemGetInfo), return
+    error "matmul: required %d bytes exceeds available GPU memory %d bytes"
+    instead of segfaulting.
+  - Add test: TestGPUEngine_MatMulLargeVocab_GracefulError -- verify error
+    return (not crash) for 128256x4096 on GB10.
+  - Existing TestGPUEngine_MatMulSmallCPUReference still passes.
+
+- [ ] T114.3 Fix FP16 MatMul segfault on aarch64 purego path
+  Owner: Kernel Eng  Est: 3h  verifies: [UC-001, UC-002]
+  Deps: T114.1
+  Files: ztensor/compute/gpu_engine.go, ztensor/internal/cuda/cublas_purego.go
+  Acceptance:
+  - Reproduce FP16 segfault on DGX: go test -run TestGPUEngine_FP16 ./compute/.
+  - Root-cause: check purego calling convention for cublasHgemm on aarch64.
+    Likely issue: half-precision pointer alignment or cuBLAS workspace.
+  - Fix the crash (either fix the binding or fall back to FP32+convert).
+  - Test: TestGPUEngine_FP16 passes on DGX without segfault.
+
+##### Wave 61: Fix Kernel Availability and BF16 Tolerance (2 agents)
+
+- [ ] T114.4 Verify custom CUDA kernels load after libkernels.so rebuild
+  Owner: Kernel Eng  Est: 1h  verifies: [UC-001, UC-002]
+  Deps: T114.1
+  Steps:
+  - After T114.1 rebuilds libkernels.so, run on DGX:
+    go test -v -run 'TestGPUEngine_CosParity|TestGPUEngine_SoftmaxParity|TestGPUEngine_TransposeParity|TestGPUEngine_Gather' ./compute/
+  - If tests pass, mark done. If they still fail, investigate kernel loading
+    path in ztensor/internal/cuda/kernels/loader.go.
+  Acceptance:
+  - Cos, Softmax, Transpose, and Gather GPU parity tests all PASS on DGX.
+
+- [ ] T114.5 Fix BF16 MatMul tolerance or add tensor core detection
+  Owner: Kernel Eng  Est: 1h  verifies: [UC-001]
+  Deps: T114.1
+  Files: ztensor/compute/gpu_bf16_matmul_test.go
+  Acceptance:
+  - Option A: Relax BF16 test tolerance from 1e-3 to 2e-3 (if GB10 lacks
+    native BF16 tensor cores and accumulated rounding is expected).
+  - Option B: Add runtime tensor core capability detection; skip BF16 parity
+    test on GPUs without native BF16 support (sm_121 may not have BF16 TC).
+  - TestGPUEngine_MatMulBF16AWeight passes on DGX.
+  - TestGPUEngine_MatMulBF16BWeight_AfterUpload passes on DGX.
+
+##### Wave 62: Timeseries GPU Engine Verification (1 agent)
+
+- [ ] T114.6 Run timeseries GPU engine tests on DGX
+  Owner: ML Eng  Est: 1h  verifies: [UC-026]
+  Deps: T114.1
+  Steps:
+  - On DGX, run: go test -v -run 'Engine' ./timeseries/ -timeout 300s.
+  - Verify FreTS, ITransformer, DLinear, CfC, NHiTS, PatchTST, Mamba all
+    train successfully with GPUEngine[float32].
+  - If any fail, file separate bugs.
+  Acceptance:
+  - All 7 timeseries backends pass engine training tests on DGX GPU.
+
+##### Wave 63: Full GPU Test Suite and Report (1 agent)
+
+- [ ] T114.7 Run full GPU test suite on DGX and produce pass/fail report
+  Owner: QA Eng  Est: 2h  verifies: [infrastructure]
+  Deps: T114.2, T114.3, T114.4, T114.5, T114.6
+  Steps:
+  - Run: go test -v ./compute/ -timeout 300s 2>&1 | tee gpu-results.txt
+  - Run: go test -tags cuda -v ./... -timeout 300s 2>&1 | tee gpu-cgo-results.txt
+  - Produce summary: pass count, fail count, skip count.
+  - Append results to docs/devlog.md.
+  Acceptance:
+  - 0 segfaults. All float32 MatMul tests pass. BF16 tests pass.
+  - Custom kernel tests (cos, softmax, transpose, gather) pass.
+  - Timeseries GPU engine tests pass.
+  - Full report in docs/devlog.md.
+
+---
+
 #### E101: GitHub Issues Resolution [2026 Q2]
 
 Completed: T101.1-T101.15 (15 tasks across 4 waves). Trimmed 2026-03-20.
@@ -2422,6 +2533,28 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 
 - [x] T113.3 Run go test -race and go vet on timeseries package (2026-03-24)
 
+#### Wave 59: E114 DGX Sync + Kernel Rebuild (1 agent)
+
+- [ ] T114.1 Sync DGX repos and rebuild kernel library
+
+#### Wave 60: E114 Fix Segfaults (2 agents)
+
+- [ ] T114.2 Add VRAM bounds check for large cuBLAS MatMul
+- [ ] T114.3 Fix FP16 MatMul segfault on aarch64 purego
+
+#### Wave 61: E114 Kernel + BF16 Fixes (2 agents)
+
+- [ ] T114.4 Verify custom CUDA kernels load after rebuild
+- [ ] T114.5 Fix BF16 MatMul tolerance or add tensor core detection
+
+#### Wave 62: E114 Timeseries GPU Verify (1 agent)
+
+- [ ] T114.6 Run timeseries GPU engine tests on DGX
+
+#### Wave 63: E114 Full GPU Suite (1 agent)
+
+- [ ] T114.7 Run full GPU test suite and produce report
+
 ---
 
 ## Timeline and Milestones
@@ -2468,6 +2601,8 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 | R20 | SAML signature not verified allows auth bypass | Critical | High | E108 T108.2 adds XML signature verification. |
 | R21 | Pprof heap dumps expose API keys and tenant data | Critical | Medium | E108 T108.4 removes pprof from public health server. |
 | R22 | Cloud SSE streaming broken (responseCapture lacks Flusher) | High | High | E108 T108.5 adds http.Flusher delegation. |
+| R23 | GPU segfaults on large MatMul block production inference | Critical | High | E114 T114.2 adds VRAM bounds check before cuBLAS calls. |
+| R24 | Stale DGX kernel library blocks GPU testing | High | High | E114 T114.1 syncs repos and rebuilds libkernels.so. |
 
 ---
 
@@ -2522,6 +2657,15 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 ---
 
 ## Progress Log
+
+### 2026-03-24: E114 created -- GPU verification remediation
+
+GPU verification on DGX Spark found 2 segfaults (large MatMul, FP16), 7+ test
+failures ("kernels not available", BF16 tolerance), and stale kernel library.
+Created E114 with 7 tasks across 5 waves (59-63). Root causes: uncentered weight
+init (fixed in E113.5/Mamba #158), stale libkernels.so, missing VRAM bounds check,
+purego aarch64 calling convention issues. Risks R23, R24 added.
+Source: .claude/scratch/verify-gpu-report.md
 
 ### 2026-03-23: E108 created -- Deep review v1.11.1 remediation
 
