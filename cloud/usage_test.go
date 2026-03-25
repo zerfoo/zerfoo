@@ -110,8 +110,8 @@ func TestNDJSONRecorderConcurrent(t *testing.T) {
 	}
 }
 
-// fakeHandler returns a handler that responds with a JSON body containing usage info.
-func fakeHandler(promptTokens, completionTokens int) http.Handler {
+// fakeUsageHandler returns a handler that responds with a JSON body containing usage info.
+func fakeUsageHandler(promptTokens, completionTokens int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
 			"id":      "chatcmpl-123",
@@ -130,20 +130,25 @@ func fakeHandler(promptTokens, completionTokens int) http.Handler {
 	})
 }
 
+// newTestTenantContext creates a context with a Tenant for testing BillingMiddleware.
+func newTestTenantContext(ctx context.Context) context.Context {
+	tenant := &Tenant{ID: "test-tenant"}
+	tenant.rateLimit.Store(100)
+	tenant.tokenBudget.Store(100000)
+	return context.WithValue(ctx, tenantKey{}, tenant)
+}
+
 func TestBillingMiddleware(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(100, 50)
+	inner := fakeUsageHandler(100, 50)
 	handler := BillingMiddleware(rec)(inner)
 
-	// Inject tenant into context (simulating TenantRegistry middleware).
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	reqBody := `{"model":"llama3-8b","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer key-abc")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -187,7 +192,7 @@ func TestBillingMiddlewareNoTenant(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(100, 50)
+	inner := fakeUsageHandler(100, 50)
 	handler := BillingMiddleware(rec)(inner)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
@@ -222,14 +227,12 @@ func TestBillingMiddlewareZeroUsage(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(0, 0)
+	inner := fakeUsageHandler(0, 0)
 	handler := BillingMiddleware(rec)(inner)
 
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
 	req.Header.Set("Authorization", "Bearer key-abc")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -244,14 +247,12 @@ func TestBillingMiddlewareResponsePassthrough(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(20, 10)
+	inner := fakeUsageHandler(20, 10)
 	handler := BillingMiddleware(rec)(inner)
 
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
 	req.Header.Set("Authorization", "Bearer key-abc")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -288,12 +289,10 @@ func TestBillingMiddlewareStreamingSSE(t *testing.T) {
 
 	handler := BillingMiddleware(rec)(sseHandler)
 
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	reqBody := `{"model":"llama3-8b","messages":[{"role":"user","content":"hello"}],"stream":true}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer key-stream")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -331,14 +330,12 @@ func TestBillingMiddlewareNonStreamingJSONFallback(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(200, 75)
+	inner := fakeUsageHandler(200, 75)
 	handler := BillingMiddleware(rec)(inner)
 
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gemma-3b"}`))
 	req.Header.Set("Authorization", "Bearer key-fallback")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -380,12 +377,10 @@ func TestBillingMiddlewareBodyLimit(t *testing.T) {
 		rec := NewNDJSONRecorder(&buf)
 		handler := BillingMiddleware(rec)(inner)
 
-		tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 		bigBody := strings.NewReader(strings.Repeat("x", 11<<20))
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bigBody)
 		req.Header.Set("Authorization", "Bearer key-big")
-		ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-		req = req.WithContext(ctx)
+		req = req.WithContext(newTestTenantContext(req.Context()))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -399,15 +394,13 @@ func TestBillingMiddlewareBodyLimit(t *testing.T) {
 		var buf bytes.Buffer
 		rec := NewNDJSONRecorder(&buf)
 
-		inner := fakeHandler(10, 5)
+		inner := fakeUsageHandler(10, 5)
 		handler := BillingMiddleware(rec)(inner)
 
-		tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 		reqBody := `{"model":"llama3-8b","messages":[{"role":"user","content":"hello"}]}`
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 		req.Header.Set("Authorization", "Bearer key-normal")
-		ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-		req = req.WithContext(ctx)
+		req = req.WithContext(newTestTenantContext(req.Context()))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -441,15 +434,13 @@ func TestBillingMiddlewareTenantIDIsHashed(t *testing.T) {
 	var buf bytes.Buffer
 	rec := NewNDJSONRecorder(&buf)
 
-	inner := fakeHandler(42, 18)
+	inner := fakeUsageHandler(42, 18)
 	handler := BillingMiddleware(rec)(inner)
 
 	const rawKey = "sk-secret-api-key-12345"
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
 	req.Header.Set("Authorization", "Bearer "+rawKey)
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -493,14 +484,12 @@ func (f *failingRecorder) Record(event UsageEvent) error {
 func TestBillingMiddlewareRecordErrorIsLogged(t *testing.T) {
 	rec := &failingRecorder{err: errors.New("kafka: connection refused")}
 
-	inner := fakeHandler(100, 50)
+	inner := fakeUsageHandler(100, 50)
 	handler := BillingMiddleware(rec)(inner)
 
-	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
 	req.Header.Set("Authorization", "Bearer key-fail")
-	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
-	req = req.WithContext(ctx)
+	req = req.WithContext(newTestTenantContext(req.Context()))
 
 	// Capture stderr to verify the error is logged.
 	origStderr := os.Stderr

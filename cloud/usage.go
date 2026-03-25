@@ -69,37 +69,11 @@ type usageResponse struct {
 	} `json:"usage"`
 }
 
-// maxBillingCaptureSize limits the response body captured for billing fallback.
-const maxBillingCaptureSize = 64 * 1024
-
-// responseCapture wraps http.ResponseWriter to capture the response body.
-type responseCapture struct {
-	http.ResponseWriter
-	body       bytes.Buffer
-	statusCode int
-}
-
-func (rc *responseCapture) WriteHeader(code int) {
-	rc.statusCode = code
-	rc.ResponseWriter.WriteHeader(code)
-}
-
-func (rc *responseCapture) Write(b []byte) (int, error) {
-	if rc.body.Len() < maxBillingCaptureSize {
-		remaining := maxBillingCaptureSize - rc.body.Len()
-		if len(b) > remaining {
-			rc.body.Write(b[:remaining])
-		} else {
-			rc.body.Write(b)
-		}
-	}
-	return rc.ResponseWriter.Write(b)
-}
-
 // BillingMiddleware returns an HTTP middleware that meters prompt and completion
 // tokens per request and publishes usage events to the given recorder.
-// It expects the TenantRegistry middleware to run first so that TenantFromContext
-// returns a valid tenant. The tenant ID is taken from the apiKeyHeader value.
+// It expects the tenant authentication middleware to run first so that
+// tenantFromContext returns a valid tenant. The tenant ID is taken from
+// the Authorization header's Bearer token value.
 //
 // For streaming (SSE) responses, the JSON response body cannot be parsed as a
 // single object. The middleware injects a [generate.TokenUsage] into the request
@@ -109,7 +83,7 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant := TenantFromContext(r.Context())
+			tenant := tenantFromContext(r.Context())
 			if tenant == nil {
 				http.Error(w, `{"error":{"message":"billing: tenant context required"}}`, http.StatusInternalServerError)
 				return
@@ -132,7 +106,7 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 			r = r.WithContext(ctx)
 
 			// Capture the response body for token counting.
-			capture := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
+			capture := &billingResponseCapture{ResponseWriter: w, statusCode: http.StatusOK}
 			next.ServeHTTP(capture, r)
 
 			// Prefer context-based usage (works for both streaming and non-streaming).
@@ -168,4 +142,33 @@ func BillingMiddleware(recorder UsageRecorder) func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+// maxBillingCaptureSize limits the response body captured for billing fallback.
+const maxBillingCaptureSize = 64 * 1024
+
+// billingResponseCapture wraps http.ResponseWriter to capture the response body
+// for the standalone BillingMiddleware. This is separate from responseCapture in
+// server.go to avoid type conflicts (different buffer types).
+type billingResponseCapture struct {
+	http.ResponseWriter
+	body       bytes.Buffer
+	statusCode int
+}
+
+func (rc *billingResponseCapture) WriteHeader(code int) {
+	rc.statusCode = code
+	rc.ResponseWriter.WriteHeader(code)
+}
+
+func (rc *billingResponseCapture) Write(b []byte) (int, error) {
+	if rc.body.Len() < maxBillingCaptureSize {
+		remaining := maxBillingCaptureSize - rc.body.Len()
+		if len(b) > remaining {
+			rc.body.Write(b[:remaining])
+		} else {
+			rc.body.Write(b)
+		}
+	}
+	return rc.ResponseWriter.Write(b)
 }
