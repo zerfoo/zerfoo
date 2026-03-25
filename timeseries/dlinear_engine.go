@@ -1,18 +1,15 @@
 package timeseries
 
 import (
-	"context"
 	"fmt"
 	"math"
-
-	"github.com/zerfoo/ztensor/tensor"
 )
 
-// trainWindowedEngine implements TrainWindowed using the compute engine for
-// GPU-accelerated tensor operations. The moving-average decomposition is
-// performed on the CPU (it has no trainable parameters), then the linear
-// projections, MSE loss, and gradient computation are executed through the
-// engine. Weight updates use AdamW identical to the CPU path.
+// trainWindowedEngine implements TrainWindowed with fused CPU forward+backward.
+// DLinear's matrices are tiny (outputLen×inputLen, e.g. 12×24), so GPU kernel
+// launch + transfer overhead dominates. This path fuses forward, MSE loss, and
+// analytical gradient computation into a single CPU loop with zero tensor
+// allocations inside the training loop.
 func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
 	if config.Epochs <= 0 {
 		config.Epochs = 100
@@ -33,64 +30,40 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 	nSamples := len(windows)
 	windows, d.normMeans, d.normStds = normalizeWindows(windows)
 
-	ctx := context.Background()
-	eng := d.engine
 	channels := d.config.Channels
 	inputLen := d.config.InputLen
 	outputLen := d.config.OutputLen
 
-	trendWT := make([]*tensor.TensorNumeric[float32], channels)
-	trendBT := make([]*tensor.TensorNumeric[float32], channels)
-	seasonWT := make([]*tensor.TensorNumeric[float32], channels)
-	seasonBT := make([]*tensor.TensorNumeric[float32], channels)
+	// Copy weights to flat float32 slices for the training loop.
+	// Layout per channel: trendW [outputLen*inputLen], trendB [outputLen],
+	//                     seasonW [outputLen*inputLen], seasonB [outputLen].
+	trendW := make([][]float32, channels)
+	trendB := make([][]float32, channels)
+	seasonW := make([][]float32, channels)
+	seasonB := make([][]float32, channels)
 	for c := 0; c < channels; c++ {
-		var err error
-		if trendWT[c], err = tensor.New[float32]([]int{outputLen, inputLen}, float64ToFloat32(d.trendW[c])); err != nil {
-			return nil, fmt.Errorf("dlinear engine: trend weight tensor: %w", err)
-		}
-		if trendBT[c], err = tensor.New[float32]([]int{1, outputLen}, float64ToFloat32(d.trendB[c])); err != nil {
-			return nil, fmt.Errorf("dlinear engine: trend bias tensor: %w", err)
-		}
-		if seasonWT[c], err = tensor.New[float32]([]int{outputLen, inputLen}, float64ToFloat32(d.seasonalW[c])); err != nil {
-			return nil, fmt.Errorf("dlinear engine: seasonal weight tensor: %w", err)
-		}
-		if seasonBT[c], err = tensor.New[float32]([]int{1, outputLen}, float64ToFloat32(d.seasonalB[c])); err != nil {
-			return nil, fmt.Errorf("dlinear engine: seasonal bias tensor: %w", err)
-		}
+		trendW[c] = float64ToFloat32(d.trendW[c])
+		trendB[c] = float64ToFloat32(d.trendB[c])
+		seasonW[c] = float64ToFloat32(d.seasonalW[c])
+		seasonB[c] = float64ToFloat32(d.seasonalB[c])
 	}
 
-	type adamState struct {
-		m *tensor.TensorNumeric[float32]
-		v *tensor.TensorNumeric[float32]
-	}
-	newAdamState := func(shape []int) (*adamState, error) {
-		sz := 1
-		for _, s := range shape {
-			sz *= s
-		}
-		mT, err := tensor.New[float32](shape, make([]float32, sz))
-		if err != nil {
-			return nil, err
-		}
-		vT, err := tensor.New[float32](shape, make([]float32, sz))
-		if err != nil {
-			return nil, err
-		}
-		return &adamState{m: mT, v: vT}, nil
-	}
-
+	// AdamW state: m and v per parameter slice.
+	type adamState struct{ m, v []float32 }
 	type paramSet struct {
-		param *tensor.TensorNumeric[float32]
-		adam  *adamState
+		data []float32
+		adam adamState
 	}
-	var allParams []paramSet
+	allParams := make([]paramSet, channels*4)
 	for c := 0; c < channels; c++ {
-		for _, pt := range []*tensor.TensorNumeric[float32]{trendWT[c], trendBT[c], seasonWT[c], seasonBT[c]} {
-			as, err := newAdamState(pt.Shape())
-			if err != nil {
-				return nil, fmt.Errorf("dlinear engine: adam state: %w", err)
+		for j, p := range [][]float32{trendW[c], trendB[c], seasonW[c], seasonB[c]} {
+			allParams[c*4+j] = paramSet{
+				data: p,
+				adam: adamState{
+					m: make([]float32, len(p)),
+					v: make([]float32, len(p)),
+				},
 			}
-			allParams = append(allParams, paramSet{param: pt, adam: as})
 		}
 	}
 
@@ -115,10 +88,10 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			bs := end - start
 			batchLabels := labels[start*channels*outputLen : end*channels*outputLen]
 
-			// CPU gradient accumulators — one flat slice per parameter.
+			// Zero gradient accumulators.
 			gradSlices := make([][]float32, len(allParams))
 			for i, ps := range allParams {
-				gradSlices[i] = make([]float32, len(ps.param.Data()))
+				gradSlices[i] = make([]float32, len(ps.data))
 			}
 
 			batchLoss := 0.0
@@ -130,70 +103,42 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 				trends[s], seasonals[s] = d.decompose(windows[start+s])
 			}
 
+			scale := float32(2.0) / float32(bs*channels*outputLen)
+
 			for c := 0; c < channels; c++ {
-				// Gather batched inputs: [bs, inputLen].
-				trendData := make([]float32, bs*inputLen)
-				seasonData := make([]float32, bs*inputLen)
-				for s := 0; s < bs; s++ {
-					for i := 0; i < inputLen; i++ {
-						trendData[s*inputLen+i] = float32(trends[s][c][i])
-						seasonData[s*inputLen+i] = float32(seasonals[s][c][i])
-					}
-				}
-
-				// GPU: one batched MatMul for trend.
-				// W [outputLen, inputLen] × X^T [inputLen, bs] = [outputLen, bs]
-				trendBatch, err := tensor.New[float32]([]int{bs, inputLen}, trendData)
-				if err != nil {
-					return nil, err
-				}
-				trendBatchT, err := eng.Transpose(ctx, trendBatch, []int{1, 0})
-				if err != nil {
-					return nil, fmt.Errorf("dlinear engine: transpose trend batch: %w", err)
-				}
-				trendOutT, err := eng.MatMul(ctx, trendWT[c], trendBatchT)
-				if err != nil {
-					return nil, fmt.Errorf("dlinear engine: matmul trend batch: %w", err)
-				}
-
-				// GPU: one batched MatMul for seasonal.
-				seasonBatch, err := tensor.New[float32]([]int{bs, inputLen}, seasonData)
-				if err != nil {
-					return nil, err
-				}
-				seasonBatchT, err := eng.Transpose(ctx, seasonBatch, []int{1, 0})
-				if err != nil {
-					return nil, fmt.Errorf("dlinear engine: transpose seasonal batch: %w", err)
-				}
-				seasonOutT, err := eng.MatMul(ctx, seasonWT[c], seasonBatchT)
-				if err != nil {
-					return nil, fmt.Errorf("dlinear engine: matmul seasonal batch: %w", err)
-				}
-
-				// CPU: read back results and compute loss + gradients analytically.
-				// trendOutT, seasonOutT are [outputLen, bs] row-major.
-				trendOut := trendOutT.Data()
-				seasonOut := seasonOutT.Data()
-				trendBias := trendBT[c].Data()
-				seasonBias := seasonBT[c].Data()
-
+				tw := trendW[c]  // [outputLen * inputLen]
+				tb := trendB[c]  // [outputLen]
+				sw := seasonW[c] // [outputLen * inputLen]
+				sb := seasonB[c] // [outputLen]
 				paramBase := c * 4
-				scale := float32(2.0) / float32(bs*channels*outputLen)
 
 				for s := 0; s < bs; s++ {
+					trendIn := trends[s][c]
+					seasonIn := seasonals[s][c]
 					labelBase := s*channels*outputLen + c*outputLen
+
 					for o := 0; o < outputLen; o++ {
-						pred := trendOut[o*bs+s] + trendBias[o] + seasonOut[o*bs+s] + seasonBias[o]
+						// Fused forward: pred = W_trend·trend + b_trend + W_season·season + b_season
+						trendVal := tb[o]
+						seasonVal := sb[o]
+						wOff := o * inputLen
+						for i := 0; i < inputLen; i++ {
+							trendVal += tw[wOff+i] * float32(trendIn[i])
+							seasonVal += sw[wOff+i] * float32(seasonIn[i])
+						}
+						pred := trendVal + seasonVal
+
 						label := float32(batchLabels[labelBase+o])
 						diff := pred - label
 						batchLoss += float64(diff) * float64(diff)
 
+						// Analytical backward: dL/dW = dOut * input^T, dL/db = dOut.
 						dOut := diff * scale
-						gradSlices[paramBase+1][o] += dOut // trend bias
-						gradSlices[paramBase+3][o] += dOut // seasonal bias
+						gradSlices[paramBase+1][o] += dOut // trend bias grad
+						gradSlices[paramBase+3][o] += dOut // seasonal bias grad
 						for i := 0; i < inputLen; i++ {
-							gradSlices[paramBase][o*inputLen+i] += dOut * trendData[s*inputLen+i]
-							gradSlices[paramBase+2][o*inputLen+i] += dOut * seasonData[s*inputLen+i]
+							gradSlices[paramBase][wOff+i] += dOut * float32(trendIn[i])
+							gradSlices[paramBase+2][wOff+i] += dOut * float32(seasonIn[i])
 						}
 					}
 				}
@@ -232,17 +177,13 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			bc2 := float32(1.0 - math.Pow(float64(beta2), float64(t)))
 
 			for i, ps := range allParams {
-				mData := ps.adam.m.Data()
-				vData := ps.adam.v.Data()
-				pData := ps.param.Data()
-
-				for j := range pData {
+				for j := range ps.data {
 					g := gradSlices[i][j]
-					mData[j] = beta1*mData[j] + (1-beta1)*g
-					vData[j] = beta2*vData[j] + (1-beta2)*g*g
-					mHat := mData[j] / bc1
-					vHat := vData[j] / bc2
-					pData[j] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*pData[j])
+					ps.adam.m[j] = beta1*ps.adam.m[j] + (1-beta1)*g
+					ps.adam.v[j] = beta2*ps.adam.v[j] + (1-beta2)*g*g
+					mHat := ps.adam.m[j] / bc1
+					vHat := ps.adam.v[j] / bc2
+					ps.data[j] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*ps.data[j])
 				}
 			}
 		}
@@ -255,11 +196,12 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 		}
 	}
 
+	// Copy trained weights back to model.
 	for c := 0; c < channels; c++ {
-		copyF32ToF64(trendWT[c].Data(), d.trendW[c])
-		copyF32ToF64(trendBT[c].Data(), d.trendB[c])
-		copyF32ToF64(seasonWT[c].Data(), d.seasonalW[c])
-		copyF32ToF64(seasonBT[c].Data(), d.seasonalB[c])
+		copyF32ToF64(trendW[c], d.trendW[c])
+		copyF32ToF64(trendB[c], d.trendB[c])
+		copyF32ToF64(seasonW[c], d.seasonalW[c])
+		copyF32ToF64(seasonB[c], d.seasonalB[c])
 	}
 
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
