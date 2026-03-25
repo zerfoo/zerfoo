@@ -1,24 +1,29 @@
 # Enterprise Deployment Guide
 
 This guide covers deploying Zerfoo in production-grade enterprise environments:
-Kubernetes with the ZerfooInferenceService operator, multi-GPU inference, TLS/mTLS,
-Prometheus monitoring, adaptive batching auto-scaling, model repositories, multi-model
-serving with LRU eviction, security hardening, and troubleshooting.
+Kubernetes with Helm and the ZerfooInferenceService operator, multi-GPU inference,
+TLS/mTLS, Prometheus monitoring, adaptive batching, auto-scaling, model repositories,
+multi-model serving with LRU eviction, security hardening, and troubleshooting.
+
+For single-node deployments with systemd and nginx, see
+[Production Deployment Guide](production-deployment.md).
 
 ---
 
 ## Table of Contents
 
 1. [Prerequisites and System Requirements](#1-prerequisites-and-system-requirements)
-2. [Kubernetes Deployment with ZerfooInferenceService](#2-kubernetes-deployment-with-zerfooinferenceservice)
-3. [Multi-GPU Inference Setup](#3-multi-gpu-inference-setup)
-4. [TLS / mTLS Configuration](#4-tls--mtls-configuration)
-5. [Monitoring with Prometheus](#5-monitoring-with-prometheus)
-6. [Auto-Scaling with Adaptive Batching](#6-auto-scaling-with-adaptive-batching)
-7. [Model Repository Setup](#7-model-repository-setup)
-8. [Multi-Model Serving with LRU Eviction](#8-multi-model-serving-with-lru-eviction)
-9. [Security Hardening Checklist](#9-security-hardening-checklist)
-10. [Troubleshooting Guide](#10-troubleshooting-guide)
+2. [Installation](#2-installation)
+3. [Kubernetes Deployment](#3-kubernetes-deployment)
+4. [Scaling](#4-scaling)
+5. [Multi-GPU Inference](#5-multi-gpu-inference)
+6. [TLS / mTLS Configuration](#6-tls--mtls-configuration)
+7. [Monitoring and Observability](#7-monitoring-and-observability)
+8. [Model Management](#8-model-management)
+9. [Multi-Model Serving with LRU Eviction](#9-multi-model-serving-with-lru-eviction)
+10. [Performance Tuning](#10-performance-tuning)
+11. [Security Hardening](#11-security-hardening)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -26,23 +31,26 @@ serving with LRU eviction, security hardening, and troubleshooting.
 
 ### Software
 
-| Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| Go | 1.25+ | latest stable |
-| Kubernetes | 1.28+ | 1.30+ |
-| Linux kernel | 5.15+ | 6.1+ (for NVIDIA open driver) |
-| NVIDIA driver | 525+ (CUDA 12.0) | 550+ |
-| CUDA toolkit | 12.0 | 12.4+ |
+| Requirement | Minimum | Recommended | Notes |
+|-------------|---------|-------------|-------|
+| Go | 1.25+ | latest stable | Required only for building from source |
+| Kubernetes | 1.28+ | 1.30+ | `autoscaling/v2` API required for HPA |
+| Helm | 3.12+ | latest stable | For chart-based deployment |
+| Linux kernel | 5.15+ | 6.1+ | 6.1+ recommended for NVIDIA open driver |
+| NVIDIA GPU Operator | 24.3+ | latest | Installs drivers, device plugin, container toolkit |
+| NVIDIA driver | 525+ | 550+ | CUDA 12.0+ support |
+| CUDA | 12.0 | 12.4+ | Loaded dynamically at runtime via purego -- no CGo needed |
 
-### Hardware — CPU-Only
+### Hardware -- CPU-Only
 
-| Model Size | RAM | CPU Cores |
-|------------|-----|-----------|
-| 1B Q4_K_M | 2 GB | 4+ |
-| 7B Q4_K_M | 8 GB | 8+ |
-| 13B Q4_K_M | 16 GB | 16+ |
+| Model Size | RAM | CPU Cores | Notes |
+|------------|-----|-----------|-------|
+| 1B Q4_K_M | 2 GB | 4+ | Development and light traffic |
+| 3B Q4_K_M | 4 GB | 8+ | Moderate throughput |
+| 7B Q4_K_M | 8 GB | 8+ | Recommended minimum for production |
+| 13B Q4_K_M | 16 GB | 16+ | |
 
-### Hardware — GPU (CUDA / ROCm)
+### Hardware -- GPU (CUDA / ROCm)
 
 | Model Size | VRAM | System RAM | GPU Examples |
 |------------|------|------------|--------------|
@@ -50,6 +58,16 @@ serving with LRU eviction, security hardening, and troubleshooting.
 | 7B Q4_K_M | 6 GB | 8 GB | RTX 3080, A10 |
 | 13B Q4_K_M | 10 GB | 16 GB | RTX 4080, A30 |
 | 70B Q4_K_M | 40 GB | 64 GB | A100 80GB, H100, or multi-GPU |
+
+### Cluster Requirements
+
+- **GPU nodes**: NVIDIA GPU Operator installed, nodes labeled with
+  `nvidia.com/gpu.present=true`. Zerfoo loads CUDA at runtime via `dlopen` --
+  no special build flags are needed.
+- **Storage**: A `PersistentVolume` provisioner (e.g., `local-path`, EBS CSI,
+  GCE PD) for model weight storage.
+- **Container registry access**: Images are published to `ghcr.io/zerfoo/zerfoo`.
+  Configure `imagePullSecrets` if your cluster requires authentication.
 
 ### Key Notes
 
@@ -59,25 +77,191 @@ serving with LRU eviction, security hardening, and troubleshooting.
 - **GGUF is the only supported model format.** Ensure all models are in GGUF format
   before deployment. Use `zonnx` to convert ONNX models.
 - Model weights are memory-mapped. RSS will be close to the GGUF file size plus KV
-  cache overhead. Set `LimitMEMLOCK=infinity` in systemd.
+  cache overhead. Set `LimitMEMLOCK=infinity` in systemd for non-Kubernetes deployments.
 
 ---
 
-## 2. Kubernetes Deployment with ZerfooInferenceService
+## 2. Installation
 
-### Overview
+### Pre-built Container Images
 
-The `ZerfooInferenceService` operator (in `serve/`) manages the lifecycle of Zerfoo
-inference servers on Kubernetes. It reconciles custom resources into Deployments with
-health probes, Prometheus scraping annotations, and GPU resource requests.
+```bash
+# Pull the latest release image
+docker pull ghcr.io/zerfoo/zerfoo:latest
+
+# Or pin to a specific version
+docker pull ghcr.io/zerfoo/zerfoo:0.1.0
+```
+
+The container image includes the `zerfoo` binary with all CLI commands
+(`serve`, `run`, `pull`, `predict`, `tokenize`, `worker`).
+
+### Building from Source
+
+```bash
+# CPU-only build (zero CGo, compiles everywhere)
+go build -o zerfoo ./cmd/zerfoo
+
+# Build container image
+docker build -t ghcr.io/zerfoo/zerfoo:custom .
+```
+
+No build tags are required for CPU-only operation. GPU acceleration is loaded
+dynamically at runtime when CUDA libraries are available on the host.
+
+---
+
+## 3. Kubernetes Deployment
+
+### Helm Chart
+
+Zerfoo ships a Helm chart at `deploy/helm/zerfoo/`.
+
+#### Install
+
+```bash
+helm install zerfoo deploy/helm/zerfoo/ \
+  --namespace zerfoo \
+  --create-namespace \
+  --set model.name="google/gemma-3-1b" \
+  --set model.quantization="Q4_K_M"
+```
+
+#### Key Values
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `replicaCount` | `1` | Number of inference pods |
+| `image.repository` | `ghcr.io/zerfoo/zerfoo` | Container image |
+| `image.tag` | Chart `appVersion` | Image tag |
+| `model.name` | `""` | Model ID (e.g., `google/gemma-3-1b`) |
+| `model.quantization` | `Q4_K_M` | Quantization level |
+| `model.cacheDir` | `/models` | Model cache directory inside the container |
+| `server.port` | `8080` | Inference server listen port |
+| `resources.requests.cpu` | `2` | CPU request |
+| `resources.limits.memory` | `8Gi` | Memory limit |
+| `autoscaling.enabled` | `false` | Enable HPA |
+| `autoscaling.minReplicas` | `1` | Minimum replicas |
+| `autoscaling.maxReplicas` | `10` | Maximum replicas |
+| `ingress.enabled` | `false` | Enable Ingress resource |
+
+#### GPU-Enabled Deployment
+
+```yaml
+# values-gpu.yaml
+resources:
+  requests:
+    cpu: "4"
+    memory: 16Gi
+  limits:
+    cpu: "8"
+    memory: 32Gi
+    nvidia.com/gpu: "1"
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+nodeSelector:
+  nvidia.com/gpu.present: "true"
+
+volumes:
+  - name: model-storage
+    persistentVolumeClaim:
+      claimName: zerfoo-models
+
+volumeMounts:
+  - name: model-storage
+    mountPath: /models
+```
+
+```bash
+helm install zerfoo deploy/helm/zerfoo/ \
+  --namespace zerfoo \
+  --create-namespace \
+  -f values-gpu.yaml \
+  --set model.name="meta-llama/Llama-3-8B"
+```
+
+### ZerfooInferenceService Operator
+
+The `ZerfooInferenceService` operator (in `serve/operator/`) manages the lifecycle
+of Zerfoo inference servers on Kubernetes. It reconciles custom resources into
+Deployments with health probes, Prometheus scraping annotations, GPU resource
+requests, Services, and HorizontalPodAutoscalers.
 
 The health endpoints are provided by the `health` package (`health/server.go`):
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /healthz` | Liveness probe — process is alive |
-| `GET /readyz` | Readiness probe — model is loaded and serving |
+| `GET /healthz` | Liveness probe -- process is alive |
+| `GET /readyz` | Readiness probe -- model is loaded and serving |
+| `GET /health` | Combined health check |
 | `GET /debug/pprof/` | Runtime profiling (restrict to internal network) |
+
+#### Custom Resource Definition
+
+```yaml
+apiVersion: zerfoo.feza.ai/v1
+kind: ZerfooInferenceService
+metadata:
+  name: llama3-8b
+  namespace: zerfoo
+spec:
+  modelRef: "meta-llama/Llama-3-8B-Q4_K_M"
+  replicas: 3
+  minReplicas: 2
+  maxReplicas: 10
+  resources:
+    cpu: "4"
+    memory: "16Gi"
+    gpuMemory: "24Gi"
+  healthCheck:
+    path: "/health"
+    interval: 10s
+    timeout: 5s
+```
+
+The operator creates the following Kubernetes resources:
+
+| Resource | Naming Convention | Purpose |
+|----------|------------------|---------|
+| Deployment | `<name>-primary` | Primary inference pods |
+| Service | `<name>-svc` | ClusterIP service with selector `app: <name>` |
+| HPA | `<name>-hpa` | Autoscaler (when `minReplicas` and `maxReplicas` are set) |
+
+#### Canary Deployments
+
+The operator supports canary deployments with weighted traffic splitting:
+
+```yaml
+apiVersion: zerfoo.feza.ai/v1
+kind: ZerfooInferenceService
+metadata:
+  name: llama3-8b
+  namespace: zerfoo
+spec:
+  modelRef: "meta-llama/Llama-3-8B-Q4_K_M"
+  replicas: 3
+  minReplicas: 2
+  maxReplicas: 10
+  resources:
+    cpu: "4"
+    memory: "16Gi"
+    gpuMemory: "24Gi"
+  healthCheck:
+    path: "/health"
+    interval: 10s
+    timeout: 5s
+  canary:
+    modelRef: "meta-llama/Llama-3-8B-Q8_0"
+    weight: 10  # 10% traffic to canary
+```
+
+This creates a `<name>-canary` Deployment alongside the primary, with the
+Service distributing traffic according to the configured weights (90/10 in
+this example).
 
 ### Namespace and RBAC
 
@@ -116,27 +300,34 @@ subjects:
     namespace: zerfoo-system
 ```
 
-### Model PersistentVolumeClaim
+The Helm chart creates a dedicated ServiceAccount with
+`automountServiceAccountToken: false` by default. This prevents pods from
+accessing the Kubernetes API unless explicitly needed.
 
-Models (GGUF files) must be available to the pod. Use a `ReadOnlyMany` PVC backed
-by a shared NFS / EFS volume, or pre-populate an `emptyDir` via an init container.
+For the operator, create a scoped Role:
 
 ```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: zerfoo-models
-  namespace: zerfoo-system
-spec:
-  accessModes:
-    - ReadOnlyMany
-  storageClassName: efs-sc        # replace with your StorageClass
-  resources:
-    requests:
-      storage: 200Gi
+  name: zerfoo-operator
+  namespace: zerfoo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "update"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "create", "update"]
+  - apiGroups: ["zerfoo.feza.ai"]
+    resources: ["zerfooinferenceservices"]
+    verbs: ["get", "list", "watch", "update"]
 ```
 
-### Deployment
+### Deployment Manifest
 
 ```yaml
 apiVersion: apps/v1
@@ -236,6 +427,10 @@ spec:
               model: gemma-3-7b
 ```
 
+Adjust `livenessProbe.initialDelaySeconds` based on model size -- larger models
+take longer to load into GPU memory. A 70B model on a single GPU may need
+60-120 seconds.
+
 ### Service and Ingress
 
 ```yaml
@@ -286,11 +481,55 @@ spec:
                   name: http
 ```
 
-### HorizontalPodAutoscaler
+For streaming (SSE) support, ensure your load balancer or Ingress controller
+disables response buffering. The `proxy-buffering: "off"` annotation above
+handles this for nginx.
 
-Zerfoo exposes `tokens_per_second` as a Prometheus gauge. Use the
+---
+
+## 4. Scaling
+
+### Horizontal Pod Autoscaling
+
+Enable HPA via the Helm chart:
+
+```yaml
+# values-autoscaling.yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+```
+
+This creates a `HorizontalPodAutoscaler` using the `autoscaling/v2` API:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: zerfoo
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zerfoo
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+### Custom Metrics HPA
+
+For GPU workloads, scale on custom metrics instead of CPU. Use the
 [Prometheus Adapter](https://github.com/kubernetes-sigs/prometheus-adapter) to
-surface it as a custom metric for HPA:
+expose `tokens_per_second` or `request_latency_ms` as Kubernetes custom metrics:
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -321,9 +560,73 @@ spec:
           averageUtilization: 70
 ```
 
+You can also scale on request latency:
+
+```yaml
+metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: request_latency_ms_p99
+      target:
+        type: AverageValue
+        averageValue: "500"
+```
+
+### Disaggregated Prefill/Decode
+
+For high-throughput deployments, Zerfoo supports disaggregated serving where
+prefill and decode phases run on separate worker pools. The `serve/disaggregated/`
+package provides:
+
+- **Gateway**: Routes requests, distributes KV blocks between prefill and decode
+  workers using least-loaded scheduling.
+- **Prefill workers**: Handle prompt processing (compute-intensive, benefits from
+  high-bandwidth GPUs).
+- **Decode workers**: Handle autoregressive token generation (memory-bandwidth
+  bound).
+
+Configure the gateway with separate worker pools:
+
+```yaml
+# Prefill workers (compute-optimized GPU nodes)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zerfoo-prefill
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: zerfoo
+          image: ghcr.io/zerfoo/zerfoo:latest
+          args: ["worker", "--role", "prefill", "--port", "50051"]
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+---
+# Decode workers (memory-optimized GPU nodes)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zerfoo-decode
+spec:
+  replicas: 4
+  template:
+    spec:
+      containers:
+        - name: zerfoo
+          image: ghcr.io/zerfoo/zerfoo:latest
+          args: ["worker", "--role", "decode", "--port", "50052"]
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+```
+
 ---
 
-## 3. Multi-GPU Inference Setup
+## 5. Multi-GPU Inference
 
 Zerfoo distributes a single model across multiple GPUs using the `--gpus` flag,
 which accepts a comma-separated list of NVIDIA device IDs (implemented in
@@ -332,7 +635,7 @@ which accepts a comma-separated list of NVIDIA device IDs (implemented in
 ### CLI Usage
 
 ```bash
-# Single GPU (default — uses GPU 0 if CUDA is available)
+# Single GPU (default -- uses GPU 0 if CUDA is available)
 zerfoo serve meta-llama/llama-3-70b-q4_k_m
 
 # Two-GPU tensor parallel (GPUs 0 and 1)
@@ -365,9 +668,6 @@ srv := serve.NewServer(model,
 )
 ```
 
-The GPU IDs are passed through `serve.WithGPUs` (`serve/server.go:WithGPUs`) and
-stored on the `Server` struct for use by the compute engine during model loading.
-
 ### Kubernetes Multi-GPU Pod
 
 ```yaml
@@ -395,20 +695,45 @@ env:
 
 | Model | Quantization | GPUs | VRAM Each |
 |-------|-------------|------|-----------|
-| 7B | Q4_K_M | 1× | 6 GB |
-| 13B | Q4_K_M | 1× | 10 GB |
-| 70B | Q4_K_M | 2× A100 40GB | 40 GB |
-| 70B | Q8_0 | 4× A100 40GB | 40 GB |
-| 405B | Q4_K_M | 8× H100 80GB | 80 GB |
+| 7B | Q4_K_M | 1x | 6 GB |
+| 13B | Q4_K_M | 1x | 10 GB |
+| 70B | Q4_K_M | 2x A100 40GB | 40 GB |
+| 70B | Q8_0 | 4x A100 40GB | 40 GB |
+| 405B | Q4_K_M | 8x H100 80GB | 80 GB |
 
 ---
 
-## 4. TLS / mTLS Configuration
+## 6. TLS / mTLS Configuration
 
 The serve package returns a standard `http.Handler`. TLS is configured at the Go
 `http.Server` level or terminated at the ingress/proxy layer.
 
+### Ingress TLS (Recommended)
+
+Use the Helm chart's built-in Ingress with TLS:
+
+```yaml
+# values-tls.yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: inference.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: zerfoo-tls
+      hosts:
+        - inference.example.com
+```
+
 ### Application-Level TLS (TLS 1.3)
+
+For end-to-end encryption without an Ingress controller, embed TLS directly
+in the server:
 
 ```go
 import (
@@ -441,6 +766,11 @@ if err := httpServer.ListenAndServeTLS("server.crt", "server.key"); err != nil {
 ### Mutual TLS (mTLS)
 
 mTLS is required for service-to-service authentication in zero-trust environments.
+Zerfoo's distributed training layer (`distributed/tlsconfig.go`) provides mTLS
+support with CA certificate verification, client certificate authentication
+(`tls.RequireAndVerifyClientCert`), and minimum TLS 1.2.
+
+For the HTTP serving layer, configure mTLS at the application level:
 
 ```go
 import (
@@ -477,6 +807,8 @@ httpServer := &http.Server{
     TLSConfig: tlsConfig,
 }
 ```
+
+Or use a service mesh (Istio, Linkerd) for transparent mTLS between all pods.
 
 ### Certificate Management with cert-manager
 
@@ -549,24 +881,27 @@ server {
 
 ---
 
-## 5. Monitoring with Prometheus
+## 7. Monitoring and Observability
 
-### Exposed Metrics
+### Prometheus Metrics
 
-The `GET /metrics` endpoint (`serve/metrics.go`) exposes Prometheus text format.
-An `*runtime.InMemoryCollector` must be passed via `serve.WithMetrics`.
+Every Zerfoo server exposes a `GET /metrics` endpoint in Prometheus text
+exposition format. An `*runtime.InMemoryCollector` must be passed via
+`serve.WithMetrics`.
 
-| Metric | Type | Description | Labels |
-|--------|------|-------------|--------|
-| `requests_total` | Counter | Total completed requests | — |
-| `tokens_generated_total` | Counter | Total tokens generated | — |
-| `tokens_per_second` | Gauge | Rolling token generation rate | — |
-| `speculative_acceptance_rate` | Gauge | Speculative decoding acceptance rate | — |
-| `request_latency_ms` | Histogram | Request latency in ms | — |
+| Metric | Type | Description |
+|--------|------|-------------|
+| `requests_total` | Counter | Total completed inference requests |
+| `tokens_generated_total` | Counter | Total tokens generated across all requests |
+| `tokens_per_second` | Gauge | Rolling token generation rate (tok/s) |
+| `speculative_acceptance_rate` | Gauge | Speculative decoding acceptance rate (when enabled) |
+| `request_latency_ms` | Histogram | Request latency distribution |
 
 Histogram buckets: `10, 50, 100, 250, 500, 1000, 2500, 5000, 10000` ms.
 
-### Prometheus Scrape Config
+### Prometheus Scrape Configuration
+
+Static target:
 
 ```yaml
 scrape_configs:
@@ -578,7 +913,7 @@ scrape_configs:
     metrics_path: /metrics
 ```
 
-For Kubernetes using pod annotations:
+Kubernetes pod discovery:
 
 ```yaml
 scrape_configs:
@@ -603,34 +938,38 @@ scrape_configs:
         target_label: __address__
 ```
 
-### Grafana Dashboard Queries
+Or use a `PodMonitor` if you have the Prometheus Operator:
 
-**Token throughput:**
-```promql
-rate(tokens_generated_total[1m])
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: zerfoo
+  namespace: zerfoo
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zerfoo
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
 ```
 
-**Request rate:**
-```promql
-rate(requests_total[1m])
-```
+### Grafana Dashboard
 
-**p50 / p95 / p99 latency:**
-```promql
-histogram_quantile(0.50, rate(request_latency_ms_bucket[5m]))
-histogram_quantile(0.95, rate(request_latency_ms_bucket[5m]))
-histogram_quantile(0.99, rate(request_latency_ms_bucket[5m]))
-```
+Recommended panels for a Zerfoo operations dashboard:
 
-**Current tokens/s gauge:**
-```promql
-tokens_per_second
-```
-
-**Speculative decoding acceptance rate:**
-```promql
-speculative_acceptance_rate
-```
+| Panel | PromQL Query | Description |
+|-------|-------------|-------------|
+| Request Rate | `rate(requests_total[5m])` | Requests per second |
+| Token Throughput | `rate(tokens_generated_total[5m])` | Tokens per second (cluster-wide) |
+| Tokens/s per Pod | `tokens_per_second` | Per-pod generation rate |
+| P50 Latency | `histogram_quantile(0.5, rate(request_latency_ms_bucket[5m]))` | Median request latency |
+| P95 Latency | `histogram_quantile(0.95, rate(request_latency_ms_bucket[5m]))` | 95th percentile latency |
+| P99 Latency | `histogram_quantile(0.99, rate(request_latency_ms_bucket[5m]))` | Tail latency |
+| Speculative Acceptance | `speculative_acceptance_rate` | Draft model acceptance rate |
+| GPU Memory | `nvidia_gpu_memory_used_bytes` (from DCGM exporter) | GPU memory utilization |
 
 ### Alerting Rules
 
@@ -664,108 +1003,113 @@ groups:
           severity: critical
         annotations:
           summary: "Zerfoo instance down"
+
+      - alert: ZerfooNoRequests
+        expr: rate(requests_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Zerfoo is not processing any requests"
+
+      - alert: ZerfooOOM
+        expr: increase(requests_total{status="503"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Zerfoo returning 503 (possible OOM)"
 ```
+
+### Health Checks
+
+The Helm chart configures liveness and readiness probes by default:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+
+### Structured Logging
+
+Zerfoo logs every request with structured fields:
+
+```
+method=POST path=/v1/chat/completions model=gemma-3-1b prompt_tokens=0 completion_tokens=0 latency_ms=142 status_code=200
+```
+
+Collect logs via your cluster's logging stack (Fluentd, Loki, CloudWatch).
+Filter on `status_code >= 500` for error alerting.
 
 ---
 
-## 6. Auto-Scaling with Adaptive Batching
+## 8. Model Management
 
-Zerfoo provides two complementary batching mechanisms:
+### Model Format
 
-### Continuous Batching (`serve/batcher/scheduler.go`)
+Zerfoo uses **GGUF** as its sole model format. GGUF files are memory-mapped
+for efficient loading and support quantized formats (Q4_K_M, Q8_0, F16, F32).
 
-The `batcher.Scheduler` implements continuous batching — variable-length (ragged)
-batches with zero padding, immediate eviction of completed sequences, and slot
-back-fill without stalling active requests. This typically achieves 2× throughput
-over fixed batching.
+### Model Loading
 
-```go
-import "github.com/zerfoo/zerfoo/serve/batcher"
+Models are loaded at startup via the `model.name` Helm value. The server runs
+`zerfoo serve <model-id>` which:
 
-scheduler := batcher.New(
-    16,   // maxBatchSize — max concurrent active sequences
-    func(ctx context.Context, batch *batcher.StepBatch) {
-        // Run one forward pass; append one token to each Slot.GeneratedToks
-        // and set Slot.Done = true when EOS or max tokens reached.
-        runForwardPass(ctx, batch)
-    },
-    batcher.WithPollInterval(1*time.Millisecond),
-)
-scheduler.Start()
-defer scheduler.Stop()
+1. Resolves the model ID to a GGUF file (local path or HuggingFace download).
+2. Memory-maps the model weights.
+3. Builds the computation graph for the model architecture.
+4. Compiles the graph (with optional CUDA graph capture on GPU).
+
+### Persistent Model Storage
+
+Use a PersistentVolumeClaim to avoid re-downloading models on pod restart:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zerfoo-models
+  namespace: zerfoo-system
+spec:
+  accessModes:
+    - ReadOnlyMany           # ReadWriteOnce if single-node
+  storageClassName: efs-sc   # replace with your StorageClass
+  resources:
+    requests:
+      storage: 200Gi
 ```
 
-### Adaptive Batching (`serve/adaptive/batcher.go`)
+Reference in Helm values:
 
-The `adaptive.Batcher` dynamically adjusts batch size based on queue depth and
-latency EMA (exponential moving average, α=0.3):
+```yaml
+volumes:
+  - name: model-storage
+    persistentVolumeClaim:
+      claimName: zerfoo-models
 
-- **Scale up**: queue depth ≥ current batch size AND latency EMA ≤ target → double
-  batch size (capped at `MaxBatchSize`).
-- **Scale down**: latency EMA > target → reduce batch size by 25%.
-- **Hold**: otherwise.
-
-```go
-import "github.com/zerfoo/zerfoo/serve/adaptive"
-
-batcher := adaptive.New(adaptive.Config{
-    MinBatchSize:    1,
-    MaxBatchSize:    32,
-    TargetLatencyMS: 200.0,   // target p50 latency SLO in ms
-    QueueTimeoutMS:  50.0,    // max wait to fill a batch before dispatching
-}, handler)
-batcher.Start()
-defer batcher.Stop()
+volumeMounts:
+  - name: model-storage
+    mountPath: /models
 ```
 
-**Configuration reference (`adaptive.Config`):**
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `MinBatchSize` | 1 | Minimum batch size |
-| `MaxBatchSize` | 32 | Maximum batch size |
-| `TargetLatencyMS` | 100 | Latency SLO in ms; controls scale-down |
-| `QueueTimeoutMS` | 50 | Max wait time (ms) to fill a batch |
-
-### Wiring into the HTTP Server
-
-```go
-import "github.com/zerfoo/zerfoo/serve"
-
-bs := serve.NewBatchScheduler(serve.BatchConfig{
-    MaxBatchSize: 8,
-    BatchTimeout: 10 * time.Millisecond,
-    // Handler is auto-wired to model.GenerateBatch when nil
-})
-bs.Start()
-
-srv := serve.NewServer(model,
-    serve.WithBatchScheduler(bs),
-    serve.WithGPUs([]int{0, 1}),
-    serve.WithLogger(logger),
-    serve.WithMetrics(collector),
-)
-```
-
-When a `BatchScheduler` is attached and `Handler` is nil, the server auto-wires
-`model.GenerateBatch` as the handler (`serve/server.go:NewServer`).
-
-### Kubernetes HPA with Custom Metrics
-
-Use the Prometheus Adapter to expose `tokens_per_second` as a custom metric and
-configure HPA (see [Section 2](#2-kubernetes-deployment-with-zerfooinferenceservice)).
-For queue depth-based scaling, expose `adaptive.Batcher.BatchSize()` through a
-custom metrics endpoint.
-
----
-
-## 7. Model Repository Setup
+### Model Repository
 
 The `serve/repository` package implements a local filesystem model repository.
 Models are stored as `{baseDir}/{modelID}/model.gguf` with a `metadata.json`
 sidecar. SHA-256 is computed and stored on upload.
 
-### Directory Layout
+#### Directory Layout
 
 ```
 /models/
@@ -777,7 +1121,7 @@ sidecar. SHA-256 is computed and stored on upload.
     metadata.json
 ```
 
-### Go API
+#### Go API
 
 ```go
 import "github.com/zerfoo/zerfoo/serve/repository"
@@ -807,23 +1151,6 @@ fmt.Printf("Size: %d bytes, SHA256: %s\n", meta.Size, meta.SHA256)
 err = repo.Delete("gemma-3-7b-it-q4_k_m")
 ```
 
-### Kubernetes PVC-Backed Repository
-
-Mount the PVC at `/models` and configure `--cache-dir /models` so the CLI finds
-GGUF files there:
-
-```yaml
-args:
-  - "gemma-3-7b-it-q4_k_m"
-  - "--port"
-  - "8080"
-  - "--cache-dir"
-  - "/models"
-volumeMounts:
-  - name: models
-    mountPath: /models
-```
-
 ### Model Pre-population (Init Container)
 
 ```yaml
@@ -836,9 +1163,31 @@ initContainers:
         mountPath: /models
 ```
 
+### Model Version Registry
+
+The `serve/registry/` package provides a bbolt-backed model version registry
+for tracking, activating, and managing model versions. It supports:
+
+- Registering model versions with metadata and performance metrics
+- A/B testing between model versions (`serve/registry/ab_router.go`)
+- Canary deployments with traffic splitting (`serve/registry/canary.go`)
+- Shadow mode for comparing model outputs without affecting production traffic
+  (`serve/registry/shadow.go`)
+
+### Supported Architectures
+
+| Architecture | Status | Notes |
+|-------------|--------|-------|
+| Llama 3 | Production | RoPE theta=500K |
+| Gemma 3 | Production | Tied embeddings, QK norms, logit softcap |
+| Mistral | Production | Sliding window attention |
+| Qwen 2 | Production | Attention bias, RoPE theta=1M |
+| Phi 3/4 | Production | Partial rotary factor |
+| DeepSeek V3 | Production | MLA, MoE |
+
 ---
 
-## 8. Multi-Model Serving with LRU Eviction
+## 9. Multi-Model Serving with LRU Eviction
 
 The `serve/multimodel` package provides a `ModelManager` that loads multiple models
 on-demand within a GPU memory budget, evicting the least-recently-used model when
@@ -847,12 +1196,12 @@ a new load would exceed the budget.
 ### Architecture
 
 ```
-Request → ModelManager.Get("model-id")
-              │
-              ├── Already loaded? → promote to MRU, return handle
-              │
-              └── Not loaded:
-                    Evict LRU models until usedBytes + newSize ≤ MaxGPUMemoryBytes
+Request -> ModelManager.Get("model-id")
+              |
+              +-- Already loaded? -> promote to MRU, return handle
+              |
+              +-- Not loaded:
+                    Evict LRU models until usedBytes + newSize <= MaxGPUMemoryBytes
                     Load model via ModelLoader.Load()
                     Track in LRU list
 ```
@@ -874,8 +1223,6 @@ if err != nil {
 }
 defer manager.Close()
 ```
-
-**Config fields:**
 
 | Field | Description |
 |-------|-------------|
@@ -917,7 +1264,7 @@ loadedIDs := manager.Loaded()
 usedBytes := manager.UsedBytes()
 ```
 
-### Multi-Model Kubernetes Deployment
+### Kubernetes Multi-Model Deployment
 
 For deployments serving many models from a single pod, increase the memory budget
 and mount a larger model store:
@@ -929,22 +1276,149 @@ resources:
     memory: "128Gi"
 env:
   - name: ZERFOO_MAX_GPU_MEMORY_GB
-    value: "80"   # 2× A100 40GB
+    value: "80"   # 2x A100 40GB
 ```
 
 ---
 
-## 9. Security Hardening Checklist
+## 10. Performance Tuning
+
+### Quantization
+
+Choose quantization based on your latency/quality trade-off:
+
+| Quantization | Memory | Quality | Speed |
+|-------------|--------|---------|-------|
+| F32 | 4x | Baseline | Slowest |
+| F16 | 2x | Near-lossless | Moderate |
+| Q8_0 | 1x | Minimal degradation | Fast |
+| Q4_K_M | 0.5x | Good quality/size ratio | Fastest |
+
+Set via Helm:
+
+```yaml
+model:
+  quantization: "Q4_K_M"
+```
+
+### Batch Scheduling
+
+#### Continuous Batching (`serve/batcher/scheduler.go`)
+
+The `batcher.Scheduler` implements continuous batching -- variable-length (ragged)
+batches with zero padding, immediate eviction of completed sequences, and slot
+back-fill without stalling active requests. This typically achieves 2x throughput
+over fixed batching.
+
+```go
+import "github.com/zerfoo/zerfoo/serve/batcher"
+
+scheduler := batcher.New(
+    16,   // maxBatchSize -- max concurrent active sequences
+    func(ctx context.Context, batch *batcher.StepBatch) {
+        // Run one forward pass; append one token to each Slot.GeneratedToks
+        // and set Slot.Done = true when EOS or max tokens reached.
+        runForwardPass(ctx, batch)
+    },
+    batcher.WithPollInterval(1*time.Millisecond),
+)
+scheduler.Start()
+defer scheduler.Stop()
+```
+
+#### Adaptive Batching (`serve/adaptive/batcher.go`)
+
+The `adaptive.Batcher` dynamically adjusts batch size based on queue depth and
+latency EMA (exponential moving average, alpha=0.3):
+
+- **Scale up**: queue depth >= current batch size AND latency EMA <= target -> double
+  batch size (capped at `MaxBatchSize`).
+- **Scale down**: latency EMA > target -> reduce batch size by 25%.
+- **Hold**: otherwise.
+
+```go
+import "github.com/zerfoo/zerfoo/serve/adaptive"
+
+batcher := adaptive.New(adaptive.Config{
+    MinBatchSize:    1,
+    MaxBatchSize:    32,
+    TargetLatencyMS: 200.0,   // target p50 latency SLO in ms
+    QueueTimeoutMS:  50.0,    // max wait to fill a batch before dispatching
+}, handler)
+batcher.Start()
+defer batcher.Stop()
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `MinBatchSize` | 1 | Minimum batch size |
+| `MaxBatchSize` | 32 | Maximum batch size |
+| `TargetLatencyMS` | 100 | Latency SLO in ms; controls scale-down |
+| `QueueTimeoutMS` | 50 | Max wait time (ms) to fill a batch |
+
+#### Wiring into the HTTP Server
+
+```go
+import "github.com/zerfoo/zerfoo/serve"
+
+bs := serve.NewBatchScheduler(serve.BatchConfig{
+    MaxBatchSize: 8,
+    BatchTimeout: 10 * time.Millisecond,
+    // Handler is auto-wired to model.GenerateBatch when nil
+})
+bs.Start()
+
+srv := serve.NewServer(model,
+    serve.WithBatchScheduler(bs),
+    serve.WithGPUs([]int{0, 1}),
+    serve.WithLogger(logger),
+    serve.WithMetrics(collector),
+)
+```
+
+### CUDA Graph Capture
+
+On GPU, Zerfoo captures the inference computation graph as a CUDA graph on
+first execution, then replays it for subsequent requests. This eliminates
+kernel launch overhead and achieves up to 99.5% instruction coverage on the
+GGUF inference path.
+
+No configuration is needed -- CUDA graph capture is automatic when a GPU is
+available.
+
+### Speculative Decoding
+
+Enable speculative decoding with a small draft model to increase throughput
+for large models:
+
+```go
+srv := serve.NewServer(targetModel,
+    serve.WithDraftModel(draftModel),
+)
+```
+
+Monitor the `speculative_acceptance_rate` metric to verify the draft model
+is effective. Acceptance rates above 70% typically yield significant speedups.
+
+### Memory
+
+Model weights are memory-mapped. Pod RSS will be close to the GGUF file size
+plus KV cache overhead. Set resource limits accordingly and avoid memory
+overcommit on GPU nodes.
+
+---
+
+## 11. Security Hardening
 
 ### Network
 
-- [ ] Terminate TLS 1.3 at ingress or application level — never serve HTTP in
+- [ ] Terminate TLS 1.3 at ingress or application level -- never serve HTTP in
   production.
 - [ ] Restrict `GET /metrics` to the internal monitoring network (Prometheus
   scraper IP range), not the public internet.
 - [ ] Restrict `GET /debug/pprof/` to internal networks only (exposed by
   `health/server.go`).
-- [ ] Use mTLS for service-to-service communication (e.g., load balancer → server,
+- [ ] Use mTLS for service-to-service communication (e.g., load balancer -> server,
   or distributed training gRPC channels).
 - [ ] Apply Kubernetes `NetworkPolicy` to limit pod-to-pod traffic to only required
   ports (8080 inference, 8081 health).
@@ -977,13 +1451,25 @@ spec:
         - port: 8080   # metrics scrape
         - port: 8081   # health probes
   egress:
-    - {}   # allow egress for model downloads; tighten as needed
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow model downloads (if pulling at startup)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
 ```
 
 ### Container Hardening
 
 - [ ] Run as a non-root user (UID 1000).
-- [ ] Set `readOnlyRootFilesystem: true` — mount `/tmp` as `emptyDir` if needed.
+- [ ] Set `readOnlyRootFilesystem: true` -- mount `/tmp` as `emptyDir` if needed.
 - [ ] Set `allowPrivilegeEscalation: false`.
 - [ ] Drop all Linux capabilities; add only `IPC_LOCK` if huge pages are required.
 - [ ] Use a minimal base image (distroless or scratch + binary).
@@ -1008,6 +1494,38 @@ securityContext:
 - [ ] Use external secret stores (AWS Secrets Manager, Vault) for API keys and
   credentials; mount via the Secrets Store CSI driver.
 - [ ] Never log request bodies that may contain sensitive user data.
+
+Store model repository credentials as Kubernetes Secrets:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zerfoo-model-credentials
+  namespace: zerfoo
+type: Opaque
+stringData:
+  HF_TOKEN: "hf_xxxxxxxxxxxxxxxxxxxxx"
+```
+
+Reference in the Deployment:
+
+```yaml
+env:
+  - name: HF_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: zerfoo-model-credentials
+        key: HF_TOKEN
+```
+
+For production, use an external secrets operator (e.g., External Secrets
+Operator, HashiCorp Vault) to inject secrets from your secrets manager.
+
+### RBAC
+
+The Helm chart creates a dedicated ServiceAccount with
+`automountServiceAccountToken: false` by default.
 
 ### Pod Security
 
@@ -1042,7 +1560,7 @@ spec:
 
 ---
 
-## 10. Troubleshooting Guide
+## 12. Troubleshooting
 
 ### Server Does Not Start
 
@@ -1105,12 +1623,26 @@ spec:
    ```
 2. If `LatencyEMA` is high, reduce `TargetLatencyMS` or `MaxBatchSize` to shed
    load.
-3. Check for CUDA graph capture misses — examine startup logs for graph compilation
+3. Check for CUDA graph capture misses -- examine startup logs for graph compilation
    warnings.
 4. Profile with pprof (exposed at `/debug/pprof/` by `health/server.go`):
    ```bash
    go tool pprof http://localhost:8081/debug/pprof/profile?seconds=30
    ```
+
+### Pod Stuck in `Pending`
+
+- Check GPU availability: `kubectl describe node <node> | grep nvidia.com/gpu`
+- Verify NVIDIA GPU Operator is running: `kubectl get pods -n gpu-operator`
+- Check PVC binding: `kubectl get pvc -n zerfoo`
+
+### Pod in `CrashLoopBackOff`
+
+- Check logs: `kubectl logs -n zerfoo deploy/zerfoo --previous`
+- Common causes:
+  - Model not found (invalid `model.name`)
+  - Insufficient memory (increase `resources.limits.memory`)
+  - GPU out of memory (use a smaller quantization or more GPUs)
 
 ### Streaming (SSE) Broken at Proxy
 
@@ -1139,7 +1671,7 @@ individually (`serve/server.go:streamChatCompletion`).
    meta, err := repo.Get("foo")
    ```
 2. Verify `MaxGPUMemoryBytes` is large enough to hold at least one model.
-3. Check `PreloadModels` list — a failed preload aborts `NewModelManager`.
+3. Check `PreloadModels` list -- a failed preload aborts `NewModelManager`.
 
 ### Certificate / TLS Errors
 
@@ -1173,3 +1705,39 @@ failure`.
    ```bash
    curl http://localhost:8081/debug/pprof/goroutine?debug=1
    ```
+
+### Debug Logging
+
+Set the log level via environment variable:
+
+```yaml
+env:
+  - name: ZERFOO_LOG_LEVEL
+    value: "debug"
+```
+
+### Useful kubectl Commands
+
+```bash
+# Check pod status and events
+kubectl get pods -n zerfoo -o wide
+kubectl describe pod -n zerfoo <pod-name>
+
+# Stream logs
+kubectl logs -n zerfoo deploy/zerfoo -f
+
+# Check metrics endpoint
+kubectl port-forward -n zerfoo svc/zerfoo 8080:80
+curl localhost:8080/metrics
+
+# Check model info
+curl localhost:8080/v1/models
+
+# Test inference
+curl localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemma-3-1b", "messages": [{"role": "user", "content": "Hello"}]}'
+
+# Check HPA status
+kubectl get hpa -n zerfoo
+```
