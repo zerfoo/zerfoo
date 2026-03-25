@@ -407,3 +407,116 @@ func TestSAML_EmptyAssertionID(t *testing.T) {
 		t.Errorf("got error %v, want errEmptyAssertionID", err)
 	}
 }
+
+func TestSAML_XSWProtection(t *testing.T) {
+	idp := newTestIdP(t)
+	meta, err := ParseSAMLMetadata(idp.testSAMLMetadata())
+	if err != nil {
+		t.Fatalf("ParseSAMLMetadata: %v", err)
+	}
+
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+
+	tests := []struct {
+		name    string
+		build   func() string
+		wantErr error
+	}{
+		{
+			name: "valid signature passes",
+			build: func() string {
+				return idp.signedSAMLResponse("user@example.com", past, future, map[string]string{
+					"email": "user@example.com",
+				})
+			},
+			wantErr: nil,
+		},
+		{
+			name: "tampered assertion content fails",
+			build: func() string {
+				xml := idp.signedSAMLResponse("user@example.com", past, future, nil)
+				return strings.Replace(xml, "user@example.com", "attacker@evil.com", 1)
+			},
+			wantErr: errInvalidDigest,
+		},
+		{
+			name: "XSW attack with forged assertion after signed one",
+			build: func() string {
+				// Build a legitimately signed response.
+				signedXML := idp.signedSAMLResponse("legit@example.com", past, future, nil)
+
+				// Insert a forged Assertion (with a different ID) AFTER the signed one.
+				// Go's xml.Unmarshal overwrites struct fields with the last matching
+				// element, so the forged assertion would be parsed as resp.Assertion.
+				// The Reference URI validation catches this because the signature
+				// references the original assertion ID, not the forged one.
+				forgedAssertion := fmt.Sprintf(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="_forged_id">
+    <Subject><NameID>attacker@evil.com</NameID></Subject>
+    <Conditions NotBefore="%s" NotOnOrAfter="%s"/>
+  </Assertion>`, past, future)
+
+				// Insert the forged assertion before the closing </Response> tag.
+				return strings.Replace(signedXML,
+					"</Response>",
+					forgedAssertion+"\n</Response>", 1)
+			},
+			wantErr: errRefURIMismatch,
+		},
+		{
+			name: "mismatched Reference URI fails",
+			build: func() string {
+				// Build a valid assertion and sign it, but manually alter the
+				// Reference URI to point to a different ID.
+				assertionID := uniqueAssertionID()
+				assertion := fmt.Sprintf(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s">
+    <Subject><NameID>user@example.com</NameID></Subject>
+    <Conditions NotBefore="%s" NotOnOrAfter="%s"/>
+  </Assertion>`, assertionID, past, future)
+
+				digest := sha256.Sum256([]byte(assertion))
+				digestB64 := base64.StdEncoding.EncodeToString(digest[:])
+
+				sig, err := rsa.SignPKCS1v15(rand.Reader, idp.key, crypto.SHA256, digest[:])
+				if err != nil {
+					panic(fmt.Sprintf("sign: %v", err))
+				}
+				sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+				// Use a wrong URI that doesn't match the Assertion ID.
+				return fmt.Sprintf(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <SignedInfo>
+      <Reference URI="#_wrong_id">
+        <DigestValue>%s</DigestValue>
+      </Reference>
+    </SignedInfo>
+    <SignatureValue>%s</SignatureValue>
+  </Signature>
+  %s
+</Response>`, digestB64, sigB64, assertion)
+			},
+			wantErr: errRefURIMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewSAMLProvider(meta, "tenant-xsw")
+			xmlData := tt.build()
+			_, err := provider.ValidateAssertion([]byte(xmlData))
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error %v, got nil", tt.wantErr)
+			}
+			if err != tt.wantErr {
+				t.Errorf("got error %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}

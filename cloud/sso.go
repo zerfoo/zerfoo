@@ -29,6 +29,7 @@ var (
 	errNotYetValid      = errors.New("cloud: SAML assertion is not yet valid (NotBefore)")
 	errReplayedAssertion = errors.New("cloud: SAML assertion ID has already been consumed (replay)")
 	errEmptyAssertionID  = errors.New("cloud: SAML assertion missing required ID attribute")
+	errRefURIMismatch    = errors.New("cloud: SAML signature Reference URI does not match Assertion ID")
 )
 
 // samlClockSkew is the maximum clock skew tolerance for NotBefore validation.
@@ -239,7 +240,7 @@ func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error)
 	if sig.SignatureValue == "" {
 		sig = resp.Assertion.Signature
 	}
-	if err := p.verifyXMLSignature(assertion, sig); err != nil {
+	if err := p.verifyXMLSignature(assertion, sig, resp.Assertion.ID); err != nil {
 		return nil, err
 	}
 
@@ -303,11 +304,23 @@ func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error)
 // verifyXMLSignature verifies the XML digital signature of a SAML response
 // against the IdP certificate. It checks:
 // 1. A signature is present with a non-empty SignatureValue
-// 2. The SHA-256 digest of the signed content matches DigestValue
-// 3. The RSA signature over SignedInfo verifies with the IdP certificate
-func (p *SAMLProvider) verifyXMLSignature(raw []byte, sig samlDSSignature) error {
+// 2. The Reference URI matches the Assertion ID (prevents XSW attacks)
+// 3. The SHA-256 digest of the signed content matches DigestValue
+// 4. The RSA signature over SignedInfo verifies with the IdP certificate
+func (p *SAMLProvider) verifyXMLSignature(raw []byte, sig samlDSSignature, assertionID string) error {
 	if sig.SignatureValue == "" {
 		return errNoSignature
+	}
+
+	// Validate that the Reference URI points to the Assertion being verified.
+	// This prevents XML Signature Wrapping (XSW) attacks where a forged
+	// Assertion is inserted and the signature covers a different element.
+	refURI := sig.SignedInfo.Reference.URI
+	if refURI != "" {
+		refID := strings.TrimPrefix(refURI, "#")
+		if refID != assertionID {
+			return errRefURIMismatch
+		}
 	}
 
 	// Parse the IdP certificate.
@@ -317,7 +330,8 @@ func (p *SAMLProvider) verifyXMLSignature(raw []byte, sig samlDSSignature) error
 	}
 
 	// Verify the digest: hash the Assertion element content and compare with DigestValue.
-	assertionContent := extractSignedContent(raw)
+	// Extract the specific Assertion matching the Reference URI to prevent XSW.
+	assertionContent := extractSignedContent(raw, refURI)
 	digest := sha256.Sum256(assertionContent)
 	expectedDigest, err := base64.StdEncoding.DecodeString(
 		strings.TrimSpace(sig.SignedInfo.Reference.DigestValue),
@@ -367,33 +381,79 @@ func parseIdPCertificate(certPEM string) (*x509.Certificate, error) {
 }
 
 // extractSignedContent extracts the <Assertion> element bytes from a SAML response.
-// It finds the Assertion element by looking for the opening and closing tags.
-func extractSignedContent(raw []byte) []byte {
+// When refURI is non-empty (e.g. "#_abc123"), it finds the Assertion whose ID
+// attribute matches, preventing XSW attacks where a forged Assertion is placed
+// before the legitimate signed one.
+func extractSignedContent(raw []byte, refURI string) []byte {
 	s := string(raw)
-	// Look for <Assertion or <saml:Assertion
-	start := strings.Index(s, "<Assertion")
-	if start == -1 {
-		start = strings.Index(s, "<saml:Assertion")
-	}
-	if start == -1 {
-		return raw
+	targetID := ""
+	if refURI != "" {
+		targetID = strings.TrimPrefix(refURI, "#")
 	}
 
-	// Find the matching closing tag.
-	end := strings.LastIndex(s, "</Assertion>")
-	if end == -1 {
-		end = strings.LastIndex(s, "</saml:Assertion>")
-		if end != -1 {
-			end += len("</saml:Assertion>")
+	// Search for all Assertion opening tags and find the one matching targetID.
+	prefixes := []string{"<Assertion", "<saml:Assertion"}
+	closingTags := []string{"</Assertion>", "</saml:Assertion>"}
+
+	for _, prefix := range prefixes {
+		searchFrom := 0
+		for {
+			idx := strings.Index(s[searchFrom:], prefix)
+			if idx == -1 {
+				break
+			}
+			start := searchFrom + idx
+
+			// If we have a target ID, verify this Assertion has the right ID attribute.
+			if targetID != "" {
+				// Find the end of the opening tag to check attributes.
+				tagEnd := strings.Index(s[start:], ">")
+				if tagEnd == -1 {
+					break
+				}
+				openingTag := s[start : start+tagEnd+1]
+				idAttr := extractIDAttribute(openingTag)
+				if idAttr != targetID {
+					searchFrom = start + 1
+					continue
+				}
+			}
+
+			// Find the matching closing tag after this position.
+			for _, closingTag := range closingTags {
+				end := strings.LastIndex(s[start:], closingTag)
+				if end != -1 {
+					return []byte(s[start : start+end+len(closingTag)])
+				}
+			}
+			break
 		}
-	} else {
-		end += len("</Assertion>")
 	}
 
-	if end == -1 || end <= start {
-		return raw
+	// Fallback: return raw if no matching Assertion found.
+	return raw
+}
+
+// extractIDAttribute extracts the ID attribute value from an XML opening tag string.
+func extractIDAttribute(tag string) string {
+	// Look for ID="..." or ID='...'
+	idx := strings.Index(tag, "ID=\"")
+	if idx != -1 {
+		start := idx + 4
+		end := strings.Index(tag[start:], "\"")
+		if end != -1 {
+			return tag[start : start+end]
+		}
 	}
-	return []byte(s[start:end])
+	idx = strings.Index(tag, "ID='")
+	if idx != -1 {
+		start := idx + 4
+		end := strings.Index(tag[start:], "'")
+		if end != -1 {
+			return tag[start : start+end]
+		}
+	}
+	return ""
 }
 
 // equalBytes compares two byte slices in constant time (length already checked).
