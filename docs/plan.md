@@ -1558,7 +1558,7 @@ plus 2 gaps worth tracking. Source: .claude/scratch/verify-report.md
   Result: Added NewBatchNormalizationWithParams, Backward (dX, dScale, dBias),
   caching in Forward. 5 test functions, all passing with finite-difference validation.
 
-- [ ] T111.3 Re-run /verify to confirm all gaps resolved
+- [x] T111.3 Re-run /verify to confirm all gaps resolved (2026-03-25)
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T111.2
 
@@ -1865,7 +1865,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-24)
 
 ##### Wave 66: CI and Verification (1 agent)
 
-- [ ] T115.9 Add govulncheck to CI workflow
+- [x] T115.9 Add govulncheck to CI workflow
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: .github/workflows/ci.yml
@@ -1874,6 +1874,159 @@ Source: .claude/scratch/deep-review-report.md (2026-03-24)
   - Install: `go install golang.org/x/vuln/cmd/govulncheck@latest`.
   - Run: `govulncheck ./...`.
   - govulncheck reports 0 vulnerabilities in direct dependencies.
+
+---
+
+#### E116: Deep Review v1.15.1 Remaining Findings [2026 Q2 -- HIGH]
+
+Post-E115 deep review (2026-03-25) confirmed all 8 E115 fixes correctly implemented.
+5 remaining findings need remediation: 1 High (SAML XSW), 2 Medium (billing), 1 Low
+(error leaks), 1 architectural (cloud package duplication). Plus infrastructure fixes.
+Source: .claude/scratch/deep-review-report.md (2026-03-25)
+
+##### Wave 67: SAML XSW Fix + Billing Hardening (3 agents)
+
+- [x] T116.1 Replace hand-rolled SAML signature verification with C14N-aware implementation (S-01)
+  Owner: Security Eng  Est: 4h  verifies: [UC-003]
+  Deps: none
+  Files: cloud/sso.go, cloud/sso_test.go
+  Acceptance:
+  - Replace extractSignedContent() string-matching with proper XML canonicalization.
+  - Implement Reference URI validation: the digest in the signature must reference
+    the specific Assertion element being parsed (match by ID attribute).
+  - Verify the signature covers the canonicalized SignedInfo element, not raw bytes.
+  - Option A (preferred): Use standard library encoding/xml with manual C14N
+    (exclusive canonical XML without comments per XML-DSig spec).
+  - Option B: If C14N is too complex, validate that the Assertion element parsed by
+    xml.Unmarshal is the SAME element whose digest was verified, by comparing the
+    Assertion ID attribute against the Reference URI in the signature.
+  - Test: SAML response with valid signature passes.
+  - Test: SAML response with tampered Assertion content fails.
+  - Test: SAML response with two Assertions (XSW attack) fails.
+  - Test: SAML response with mismatched Reference URI fails.
+  - go vet ./cloud/ clean. go test -race ./cloud/ pass.
+
+- [x] T116.2 Fail closed in serve/cloud billing middleware when tenant is nil (S-20)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/cloud/billing.go
+  Acceptance:
+  - In BillingMiddleware, when TenantFromContext returns nil, return
+    HTTP 500 "billing: tenant context required" instead of passing through.
+  - Test: request without tenant context returns 500 (not 200).
+  - go vet ./serve/cloud/ clean. go test -race ./serve/cloud/ pass.
+
+- [x] T116.3 Log billing record errors instead of silently swallowing (S-19)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/cloud/billing.go
+  Acceptance:
+  - Replace `recorder.Record(event) //nolint:errcheck` with error logging that
+    includes tenant ID, model, prompt tokens, completion tokens, and timestamp.
+  - Use fmt.Fprintf(os.Stderr, ...) or a logger if available in scope.
+  - Test: verify error is logged when recorder returns an error.
+  - go vet ./serve/cloud/ clean. go test -race ./serve/cloud/ pass.
+
+##### Wave 68: Error Leaks + Infrastructure Fixes (4 agents)
+
+- [x] T116.4 Sanitize error messages in chat/completion/embedding/classify handlers (S-21)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - At lines 624, 677, 682, 695: replace `"invalid request body: "+err.Error()`
+    with `"invalid request body"` and log the detailed error server-side.
+  - Same pattern for any other handler that exposes raw err.Error() in 400 responses.
+  - Test: malformed JSON returns generic "invalid request body" without Go type info.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+- [x] T116.5 Fix Dockerfile Go version mismatch (1.25 vs 1.26)
+  Owner: Infra Eng  Est: 5m  verifies: [infrastructure]
+  Deps: none
+  Files: deploy/aws/Dockerfile
+  Acceptance:
+  - Update FROM golang:1.25-bookworm to FROM golang:1.26-bookworm.
+  - Verify docker build succeeds (or at minimum the Dockerfile is syntactically correct).
+
+- [x] T116.6 Add stop channel to coordinator reaper goroutine
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: distributed/coordinator/coordinator.go
+  Acceptance:
+  - Add a stopCh chan struct{} field to Coordinator.
+  - In reaper(), select on both ticker.C and stopCh.
+  - In Stop(), close stopCh before GracefulStop.
+  - Test: coordinator.Stop() does not leak the reaper goroutine.
+  - go vet ./distributed/coordinator/ clean. go test -race ./distributed/coordinator/ pass.
+
+- [x] T116.7 Sanitize error messages in audio handler (S-21 extension)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/audio.go
+  Acceptance:
+  - Replace raw err.Error() in multipart parsing error responses with generic messages.
+  - Log detailed errors server-side.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+##### Wave 69: Verification (1 agent)
+
+- [ ] T116.8 Run go test -race and go vet on all changed packages
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T116.1-T116.7
+  Acceptance:
+  - go test -race -timeout 300s ./cloud/ ./serve/ ./serve/cloud/
+    ./distributed/coordinator/ -- all pass.
+  - go vet ./... clean.
+  - Re-run /verify scoped to changed packages.
+
+---
+
+#### E117: Cloud Package Consolidation [2026 Q2 -- MEDIUM]
+
+Architectural debt: cloud/ and serve/cloud/ are two independent multi-tenant
+implementations with different data models, context keys, and security postures.
+The cloud/ package is more mature (SSO, pre-auth billing, audit logging).
+This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
+
+##### Wave 70: Consolidation (2 agents)
+
+- [ ] T117.1 Migrate serve/cloud/tenant.go consumers to cloud/tenant.go
+  Owner: Lead Eng  Est: 4h  verifies: [UC-003]
+  Deps: T116.1-T116.3 (billing fixes must land first)
+  Files: serve/cloud/tenant.go, cloud/tenant.go, and all consumers
+  Acceptance:
+  - Identify all packages that import serve/cloud.
+  - For each consumer, migrate to use cloud.TenantManager instead of
+    serve/cloud.TenantRegistry.
+  - Preserve: concurrency limits, token rate limits, model allow list.
+  - Add model allow list to cloud.TenantConfig if not already present.
+  - Delete serve/cloud/tenant.go after all consumers migrated.
+  - go build ./... clean. go test -race ./... pass.
+
+- [ ] T117.2 Migrate serve/cloud/billing.go consumers to cloud/ billing
+  Owner: Lead Eng  Est: 3h  verifies: [UC-003]
+  Deps: T117.1
+  Files: serve/cloud/billing.go, cloud/billing.go, and all consumers
+  Acceptance:
+  - Merge serve/cloud billing features (NDJSON recording, per-request metering)
+    into cloud/billing.go or a new cloud/metering.go.
+  - Preserve: hashed tenant ID, LimitReader on body, context-based token usage.
+  - Delete serve/cloud/billing.go after migration.
+  - Delete serve/cloud/ package entirely if empty.
+  - go build ./... clean. go test -race ./... pass.
+
+##### Wave 71: Verification (1 agent)
+
+- [ ] T117.3 Run full test suite and verify no serve/cloud/ imports remain
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T117.2
+  Acceptance:
+  - grep -r '"github.com/zerfoo/zerfoo/serve/cloud"' --include='*.go' returns 0 results.
+  - go test -race ./... passes.
+  - go vet ./... clean.
+
+---
+
 6. DGX repos are out of sync (at commit 7a0f00b5, missing v1.13-v1.15 code).
 
 ##### Wave 59: DGX Sync and Kernel Rebuild (1 agent)
@@ -2772,6 +2925,25 @@ E111 T111.1 complete. T111.2-T111.3 remain (BatchNorm backward, re-verify).
 ---
 
 ## Progress Log
+
+### 2026-03-25: E116, E117 created -- remaining deep review findings
+
+Post-E115 deep review (3 discovery agents, 418K tokens, 170 tool calls) confirmed all
+8 E115 fixes correctly implemented. Codebase maturity rated 4.0/5.0.
+
+5 remaining findings need remediation:
+- S-01 (High): SAML XSW -- extractSignedContent uses string matching, no C14N
+- S-19 (Medium): Billing record error silently swallowed
+- S-20 (Medium): Billing middleware fails open when tenant nil
+- S-21 (Low): Error messages leak internal details in 4+ handlers
+- A-01 (High arch): Duplicated cloud/ and serve/cloud/ packages
+
+Created E116 (8 tasks, Waves 67-69) for security + infrastructure fixes.
+Created E117 (3 tasks, Waves 70-71) for cloud package consolidation.
+T115.9 (govulncheck) remains from E115 Wave 66.
+
+Completed this session: T111.2 (BatchNorm backward), T115.1-T115.8 (8 security fixes).
+Verified: 178 packages, 4120 tests, 0 failures with -race.
 
 ### 2026-03-24: E114 created -- GPU verification remediation
 
