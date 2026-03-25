@@ -350,10 +350,18 @@ func (r *statusRecorder) Flush() {
 
 func (s *Server) logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.metrics.IncActiveRequests()
+		defer s.metrics.DecActiveRequests()
+
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		latency := time.Since(start).Milliseconds()
+
+		// Record error metrics for non-2xx responses.
+		if rec.status >= 400 {
+			s.metrics.RecordError(r.URL.Path, rec.status)
+		}
 
 		modelID := ""
 		if info := s.model.Info(); info != nil {

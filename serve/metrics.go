@@ -2,8 +2,12 @@ package serve
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/zerfoo/ztensor/metrics/runtime"
@@ -12,6 +16,36 @@ import (
 // latencyBuckets are the histogram bucket boundaries for request latency in ms.
 var latencyBuckets = []float64{10, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
 
+// ewma is a thread-safe exponentially weighted moving average.
+type ewma struct {
+	alpha float64
+	bits  atomic.Uint64
+	init  atomic.Bool
+}
+
+// update applies a new observation to the EWMA and returns the new value.
+func (e *ewma) update(v float64) float64 {
+	if !e.init.Load() {
+		// First observation seeds the EWMA.
+		e.bits.Store(math.Float64bits(v))
+		e.init.Store(true)
+		return v
+	}
+	for {
+		oldBits := e.bits.Load()
+		oldVal := math.Float64frombits(oldBits)
+		newVal := e.alpha*v + (1-e.alpha)*oldVal
+		if e.bits.CompareAndSwap(oldBits, math.Float64bits(newVal)) {
+			return newVal
+		}
+	}
+}
+
+// value returns the current EWMA value.
+func (e *ewma) value() float64 {
+	return math.Float64frombits(e.bits.Load())
+}
+
 // ServerMetrics records serving metrics using a runtime.Collector.
 type ServerMetrics struct {
 	collector        runtime.Collector
@@ -19,6 +53,10 @@ type ServerMetrics struct {
 	tokensTotal      runtime.CounterMetric
 	tokensPerSecond  runtime.GaugeMetric
 	requestLatencyMs runtime.HistogramMetric
+	tpsEWMA          ewma
+	tpsEWMAGauge     runtime.GaugeMetric
+	activeRequests   int64 // atomic; tracks in-flight requests
+	activeReqGauge   runtime.GaugeMetric
 }
 
 // NewServerMetrics creates a ServerMetrics backed by the given collector.
@@ -29,6 +67,9 @@ func NewServerMetrics(c runtime.Collector) *ServerMetrics {
 		tokensTotal:      c.Counter("tokens_generated_total"),
 		tokensPerSecond:  c.Gauge("tokens_per_second"),
 		requestLatencyMs: c.Histogram("request_latency_ms", latencyBuckets),
+		tpsEWMA:          ewma{alpha: 0.1},
+		tpsEWMAGauge:     c.Gauge("tokens_per_second_ewma"),
+		activeReqGauge:   c.Gauge("active_requests"),
 	}
 }
 
@@ -41,7 +82,34 @@ func (m *ServerMetrics) RecordRequest(tokens int, latency time.Duration) {
 	if latency > 0 && tokens > 0 {
 		tps := float64(tokens) / latency.Seconds()
 		m.tokensPerSecond.Set(tps)
+		avg := m.tpsEWMA.update(tps)
+		m.tpsEWMAGauge.Set(avg)
 	}
+}
+
+// RecordError increments the errors_total counter for the given endpoint and
+// HTTP status code. Labels are encoded in the counter name so that the
+// Prometheus exposition can emit them as {endpoint="...",status_code="..."}.
+func (m *ServerMetrics) RecordError(endpoint string, statusCode int) {
+	name := "errors_total{endpoint=\"" + endpoint + "\",status_code=\"" + strconv.Itoa(statusCode) + "\"}"
+	m.collector.Counter(name).Inc()
+}
+
+// IncActiveRequests increments the active request count and updates the gauge.
+func (m *ServerMetrics) IncActiveRequests() {
+	n := atomic.AddInt64(&m.activeRequests, 1)
+	m.activeReqGauge.Set(float64(n))
+}
+
+// DecActiveRequests decrements the active request count and updates the gauge.
+func (m *ServerMetrics) DecActiveRequests() {
+	n := atomic.AddInt64(&m.activeRequests, -1)
+	m.activeReqGauge.Set(float64(n))
+}
+
+// ActiveRequests returns the current number of in-flight requests.
+func (m *ServerMetrics) ActiveRequests() int64 {
+	return atomic.LoadInt64(&m.activeRequests)
 }
 
 // handleMetrics writes metrics in Prometheus text exposition format.
@@ -63,8 +131,13 @@ func handleMetrics(c runtime.Collector) http.HandlerFunc {
 		writeCounter(w, "requests_total", "Total number of requests", snap.Counters)
 		writeCounter(w, "tokens_generated_total", "Total tokens generated", snap.Counters)
 
+		// Labeled error counters.
+		writeLabeledCounters(w, "errors_total", "Total number of errors by endpoint and status code", snap.Counters)
+
 		// Gauges.
-		writeGauge(w, "tokens_per_second", "Rolling average tokens per second", snap.Gauges)
+		writeGauge(w, "tokens_per_second", "Last request tokens per second", snap.Gauges)
+		writeGauge(w, "tokens_per_second_ewma", "EWMA tokens per second", snap.Gauges)
+		writeGauge(w, "active_requests", "Number of in-flight requests", snap.Gauges)
 		writeGauge(w, "speculative_acceptance_rate", "Speculative decoding acceptance rate", snap.Gauges)
 
 		// Histograms.
@@ -90,6 +163,24 @@ func writeGauge(w http.ResponseWriter, name, help string, gauges map[string]floa
 	_, _ = fmt.Fprintf(w, "# HELP %s %s\n", name, help)
 	_, _ = fmt.Fprintf(w, "# TYPE %s gauge\n", name)
 	_, _ = fmt.Fprintf(w, "%s %g\n", name, v)
+}
+
+// writeLabeledCounters emits all counters whose names start with prefix + "{"
+// as a single metric family. The counter names contain embedded Prometheus
+// labels, e.g. errors_total{endpoint="/v1/completions",status_code="400"}.
+func writeLabeledCounters(w http.ResponseWriter, prefix, help string, counters map[string]int64) {
+	headerWritten := false
+	for name, v := range counters {
+		if !strings.HasPrefix(name, prefix+"{") {
+			continue
+		}
+		if !headerWritten {
+			_, _ = fmt.Fprintf(w, "# HELP %s %s\n", prefix, help)
+			_, _ = fmt.Fprintf(w, "# TYPE %s counter\n", prefix)
+			headerWritten = true
+		}
+		_, _ = fmt.Fprintf(w, "%s %d\n", name, v)
+	}
 }
 
 func writeHistogram(w http.ResponseWriter, name, help string, histograms map[string]runtime.HistogramSnapshot) {
