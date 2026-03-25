@@ -2027,6 +2027,186 @@ This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
 
 ---
 
+#### E118: Observability Metrics [2026 Q2 -- MEDIUM]
+
+Maturity gap: observability rated 3/5. Missing error rate counter, rolling
+throughput metric, per-model dimensions, and active request gauge. Target: 5/5.
+
+##### Wave 72: Metrics Enhancement (2 agents)
+
+- [ ] T118.1 Add error rate counter and active request gauge to serve metrics
+  Owner: Infra Eng  Est: 2h  verifies: [infrastructure]
+  Deps: none
+  Files: serve/metrics.go, serve/server.go
+  Acceptance:
+  - Add errors_total counter with labels: endpoint, status_code, error_type.
+  - Add active_requests gauge that increments on request start, decrements on end.
+  - Add per-model dimension to existing request and token counters.
+  - Increment errors_total in every error response path (4xx and 5xx).
+  - Test: after a failed request, errors_total is incremented.
+  - Test: during an in-flight request, active_requests is 1; after completion, 0.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+- [ ] T118.2 Replace last-write-wins tok/s gauge with EWMA
+  Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: serve/metrics.go
+  Acceptance:
+  - Replace the tokens_per_second gauge (which stores only the last request's
+    rate) with an exponentially weighted moving average (alpha=0.1).
+  - Expose as tokens_per_second_ewma gauge.
+  - Keep the per-request tokens_per_second for backward compatibility.
+  - Test: after 10 requests, EWMA converges toward the mean throughput.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+---
+
+#### E119: Persistent Store Interfaces [2026 Q2 -- MEDIUM]
+
+Maturity gap: architecture rated 3/5 partly because KeyStore, TenantRegistry,
+and support ticket Store are in-memory only. Server restart loses all data.
+Add Store interfaces with bbolt backends to match the pattern in serve/registry/.
+
+##### Wave 73: Store Interfaces (3 agents)
+
+- [ ] T119.1 Add persistent backend to security.KeyStore
+  Owner: Lead Eng  Est: 2h  verifies: [UC-003]
+  Deps: none
+  Files: security/apikey.go, security/apikey_bbolt.go (new)
+  Acceptance:
+  - Extract KeyStore operations into a KeyStoreBackend interface:
+    Store(hash string, key *APIKey) error; Load(hash string) *APIKey;
+    Delete(hash string) error; List() []*APIKey.
+  - Add MemoryKeyStoreBackend (current behavior) as default.
+  - Add BboltKeyStoreBackend backed by bbolt, using the same pattern
+    as serve/registry/registry.go.
+  - KeyStore constructor accepts optional backend; defaults to memory.
+  - Existing tests pass unchanged (memory backend).
+  - New test: bbolt backend round-trip (create, lookup, revoke, rotate).
+  - go vet ./security/ clean. go test -race ./security/ pass.
+
+- [ ] T119.2 Add persistent backend to support.Store
+  Owner: Lead Eng  Est: 2h  verifies: [UC-003]
+  Deps: none
+  Files: support/ticket.go, support/store_bbolt.go (new)
+  Acceptance:
+  - Extract Store operations into a TicketStoreBackend interface.
+  - Add MemoryStoreBackend (current behavior) as default.
+  - Add BboltStoreBackend backed by bbolt.
+  - Store constructor accepts optional backend; defaults to memory.
+  - Existing tests pass unchanged (memory backend).
+  - New test: bbolt backend round-trip (create, get, list, close).
+  - go vet ./support/ clean. go test -race ./support/ pass.
+
+- [ ] T119.3 Add persistent backend to cloud.TenantManager
+  Owner: Lead Eng  Est: 2h  verifies: [UC-003]
+  Deps: E117 (cloud consolidation must land first)
+  Files: cloud/tenant.go, cloud/tenant_bbolt.go (new)
+  Acceptance:
+  - Extract TenantManager storage into a TenantStoreBackend interface.
+  - Add MemoryTenantStoreBackend (current behavior) as default.
+  - Add BboltTenantStoreBackend backed by bbolt.
+  - TenantManager constructor accepts optional backend; defaults to memory.
+  - Existing tests pass unchanged (memory backend).
+  - New test: bbolt backend round-trip (register, get, update, remove).
+  - go vet ./cloud/ clean. go test -race ./cloud/ pass.
+
+##### Wave 74: Verification (1 agent)
+
+- [ ] T119.4 Verify all persistent backends work end-to-end
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: T119.1-T119.3
+  Acceptance:
+  - go test -race ./security/ ./support/ ./cloud/ pass.
+  - go vet ./... clean.
+
+---
+
+#### E120: God File Splits [2026 Q2 -- LOW]
+
+Maturity gap: code quality rated 4/5. 3 files over 1100 lines.
+
+##### Wave 75: File Splits (3 agents)
+
+- [ ] T120.1 Split serve/server.go into focused files
+  Owner: Lead Eng  Est: 2h  verifies: [infrastructure]
+  Deps: none
+  Files: serve/server.go -> serve/server.go, serve/handlers.go, serve/types.go, serve/streaming.go
+  Acceptance:
+  - serve/server.go: Server struct, NewServer, Handler, middleware, Close (<300 lines).
+  - serve/handlers.go: all handle* functions.
+  - serve/types.go: request/response types, ChatCompletionRequest, etc.
+  - serve/streaming.go: streamChatCompletion, streamCompletion.
+  - No exported API changes. All imports resolve.
+  - go build ./... clean. go test -race ./serve/ pass.
+
+- [ ] T120.2 Split timeseries/itransformer.go into model + backward
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: timeseries/itransformer.go -> itransformer.go + itransformer_backward.go
+  Acceptance:
+  - itransformer.go: struct, New, Forward, Train, Predict (<700 lines).
+  - itransformer_backward.go: backward pass, gradient computation.
+  - go build ./... clean. go test -race ./timeseries/ pass.
+
+- [ ] T120.3 Split timeseries/patchtst.go into model + backward
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: timeseries/patchtst.go -> patchtst.go + patchtst_backward.go
+  Acceptance:
+  - Same pattern as T120.2.
+  - go build ./... clean. go test -race ./timeseries/ pass.
+
+---
+
+#### E121: Backward Pass Error Propagation [2026 Q2 -- LOW]
+
+Maturity gap: error handling rated 4/5. Several arch builders and generate/
+silently discard tensor creation errors.
+
+##### Wave 76: Error Fixes (2 agents)
+
+- [ ] T121.1 Propagate tensor creation errors in architecture builders
+  Owner: ML Eng  Est: 1h  verifies: [infrastructure]
+  Deps: none
+  Files: inference/arch_common.go, inference/arch_llama4.go, inference/arch_falcon.go,
+         inference/arch_commandr.go
+  Acceptance:
+  - Replace `lmHeadWeight, _ = tensor.NewWithStorage(...)` with proper error
+    handling: return the error if tensor creation fails.
+  - Same for any other `_, _ = tensor.New(...)` patterns in these files.
+  - go build ./... clean. go test -race ./inference/ pass.
+
+- [ ] T121.2 Log GPU counter sync errors instead of discarding
+  Owner: ML Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: generate/generator.go, generate/stream.go
+  Acceptance:
+  - Replace `_ = cs.SyncCounterFromGPU()` with error logging:
+    `if err := cs.SyncCounterFromGPU(); err != nil { log.Warn(...) }`
+  - Same pattern for any other discarded GPU sync errors.
+  - go build ./... clean. go test -race ./generate/ pass.
+
+---
+
+#### E122: CodeQL in CI [2026 Q2 -- LOW]
+
+Maturity gap: CI/CD rated 4/5. Missing SAST/CodeQL scanning.
+
+##### Wave 77: CI Enhancement (1 agent)
+
+- [ ] T122.1 Add CodeQL analysis workflow
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: .github/workflows/codeql.yml (new)
+  Acceptance:
+  - Create .github/workflows/codeql.yml with Go language analysis.
+  - Trigger on push to main and PRs to main.
+  - Use actions/codeql-action pinned to SHA.
+  - Workflow passes on current codebase (0 errors).
+
+---
+
 6. DGX repos are out of sync (at commit 7a0f00b5, missing v1.13-v1.15 code).
 
 ##### Wave 59: DGX Sync and Kernel Rebuild (1 agent)
