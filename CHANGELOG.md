@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0](https://github.com/zerfoo/zerfoo/compare/v1.15.1...v1.16.0) (2026-03-25)
+
+
+### Features
+
+* **layers:** implement BatchNorm backward pass for training ([4f08575](https://github.com/zerfoo/zerfoo/commit/4f0857520b41ca952cb6cfab37ae622eeb3ef4a3))
+
+
+### Bug Fixes
+
+* **cloud:** add Reference URI validation to prevent SAML XSW attacks ([ef998b2](https://github.com/zerfoo/zerfoo/commit/ef998b2477494202acf24a51c99a0c147e63b4b9))
+* **cloud:** deduct excess tokens when actual usage exceeds pre-authorized estimate ([28916bb](https://github.com/zerfoo/zerfoo/commit/28916bb6a5d321a4919467e7303dd3c3be26bf7a))
+* **cloud:** enforce model allow list in tenant middleware ([657ba7f](https://github.com/zerfoo/zerfoo/commit/657ba7f827bc5823a5b24c327609112d12484ea5))
+* **cloud:** fail closed in billing middleware when tenant is nil ([fb289a8](https://github.com/zerfoo/zerfoo/commit/fb289a824cca00b03efb4fbb1eff0d80f7abd0f9))
+* **cloud:** hash API key in billing events to prevent credential exposure ([8fd0365](https://github.com/zerfoo/zerfoo/commit/8fd036524e569716d17c446a8da57153c4a718f6))
+* **cloud:** limit billing middleware body reads to 10MB ([3790b5f](https://github.com/zerfoo/zerfoo/commit/3790b5f27fdd79be89b2455c4ab3f166732f89dd))
+* **cloud:** log billing record errors instead of silently swallowing ([6c0240a](https://github.com/zerfoo/zerfoo/commit/6c0240a8051f85b098b7013afbcf2c1b22d45894))
+* **cloud:** reject SAML assertions with empty ID to prevent replay bypass ([2f892c8](https://github.com/zerfoo/zerfoo/commit/2f892c8e1749a293ecd0b96786bc3ce76aeb0a52))
+* **deploy:** update Dockerfile Go version from 1.25 to 1.26 ([e3e407f](https://github.com/zerfoo/zerfoo/commit/e3e407f2bc4613aa766f398059116d56f4962bbc))
+* **distributed:** add stop channel to coordinator reaper goroutine ([d89de2d](https://github.com/zerfoo/zerfoo/commit/d89de2d81d27b73ab1185eaf851b9b0465b39476))
+* **security:** send literal wildcard for CORS instead of reflecting origin ([6d2b566](https://github.com/zerfoo/zerfoo/commit/6d2b5664bd59316347e427d11ba7bdb477d6198e))
+* **serve:** require ScopeReadOnly for all /v1/ routes by default ([92ea4c1](https://github.com/zerfoo/zerfoo/commit/92ea4c1150be2d1f7e4d559ffab62d4cb94980b3))
+* **serve:** sanitize error messages in audio transcription handler ([8021815](https://github.com/zerfoo/zerfoo/commit/8021815cbaf6e5805969c0b1d8a07b9f98e37e36))
+* **serve:** sanitize error messages to prevent internal detail leakage ([013583d](https://github.com/zerfoo/zerfoo/commit/013583d635743cbd3b480880d3b554b648dd663a))
+* **support:** add SSRF protection to webhook dispatcher ([eaf144b](https://github.com/zerfoo/zerfoo/commit/eaf144b73305a7ead5b2ba47ee893361bddd7961))
+* **support:** use plain HTTP client in webhook filter test ([1dd8606](https://github.com/zerfoo/zerfoo/commit/1dd8606b1deb9c4882b440703c5431d14068b616))
+
 ## [1.15.1](https://github.com/zerfoo/zerfoo/compare/v1.15.0...v1.15.1) (2026-03-25)
 
 
