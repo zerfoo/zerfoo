@@ -180,7 +180,7 @@ Include: problem statement, proposed solution, alternatives considered, and use 
 
 ## Good First Issues
 
-See [`docs/good-first-issues.md`](docs/good-first-issues.md) for a curated list of starter tasks, or browse issues labeled [`good first issue`](https://github.com/zerfoo/zerfoo/labels/good%20first%20issue) on GitHub.
+See the [Contributing guide](https://zerfoo.feza.ai/docs/contributing/) on the documentation site for a curated list of starter tasks, or browse issues labeled [`good first issue`](https://github.com/zerfoo/zerfoo/labels/good%20first%20issue) on GitHub.
 
 **How to claim an issue:**
 
