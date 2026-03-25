@@ -1,6 +1,7 @@
 package timeseries
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -102,5 +103,61 @@ func TestITransformer_TrainWindowed_NilEngine(t *testing.T) {
 
 	if math.IsNaN(res.FinalLoss) || math.IsInf(res.FinalLoss, 0) {
 		t.Errorf("final loss is not finite: %f", res.FinalLoss)
+	}
+}
+
+// TestITransformer_EngineForwardParity verifies that the engine-based forward
+// pass produces output matching the CPU forward pass within float32 tolerance.
+func TestITransformer_EngineForwardParity(t *testing.T) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	channels := 5
+	inputLen := 16
+	outputLen := 6
+
+	config := ITransformerConfig{
+		Channels: channels, InputLen: inputLen, OutputLen: outputLen,
+		DModel: 32, DFF: 64, NHeads: 4, NLayers: 2,
+	}
+	m, err := NewITransformer(config, eng, numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewITransformer: %v", err)
+	}
+
+	rng := rand.New(rand.NewPCG(99, 0))
+	input := make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		input[c] = make([]float64, inputLen)
+		for i := range input[c] {
+			input[c][i] = rng.NormFloat64()
+		}
+	}
+
+	// CPU forward.
+	cpuOut, cpuCache := m.forwardWithCache(input)
+
+	// Engine forward.
+	engineOut, engineCache := m.forwardWithCacheEngine(context.Background(), input)
+
+	// Compare outputs.
+	const tol = 1e-3
+	for c := 0; c < channels; c++ {
+		for o := 0; o < outputLen; o++ {
+			diff := math.Abs(cpuOut[c][o] - engineOut[c][o])
+			if diff > tol {
+				t.Errorf("output[%d][%d]: cpu=%f engine=%f diff=%f > tol=%f",
+					c, o, cpuOut[c][o], engineOut[c][o], diff, tol)
+			}
+		}
+	}
+
+	// Compare cache preProj (tokens entering output projection).
+	for c := 0; c < channels; c++ {
+		for d := 0; d < config.DModel; d++ {
+			diff := math.Abs(cpuCache.preProj[c][d] - engineCache.preProj[c][d])
+			if diff > tol {
+				t.Errorf("preProj[%d][%d]: cpu=%f engine=%f diff=%f > tol=%f",
+					c, d, cpuCache.preProj[c][d], engineCache.preProj[c][d], diff, tol)
+			}
+		}
 	}
 }
