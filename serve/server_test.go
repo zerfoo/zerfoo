@@ -2073,3 +2073,71 @@ func TestStreamCompletion_NoFlusher(t *testing.T) {
 	}
 }
 
+// TestMalformedJSON_NoInternalDetails verifies that malformed JSON requests
+// return a generic error message without leaking Go internal type information.
+func TestMalformedJSON_NoInternalDetails(t *testing.T) {
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Each case must trigger a JSON decode error so we can verify
+	// the raw Go error string is not leaked to the client.
+	cases := []struct {
+		endpoint string
+		name     string
+		body     string
+	}{
+		// Type mismatch: string where float64 expected leaks "Go struct field" info.
+		{"/v1/chat/completions", "type_mismatch", `{"temperature":"not_a_number"}`},
+		{"/v1/completions", "type_mismatch", `{"temperature":"not_a_number"}`},
+		// Syntax error: triggers "invalid character" JSON errors.
+		{"/v1/chat/completions", "syntax_error", `{invalid json`},
+		{"/v1/completions", "syntax_error", `{invalid json`},
+		{"/v1/embeddings", "syntax_error", `{invalid json`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.endpoint+"/"+tc.name, func(t *testing.T) {
+			resp := doPost(t, ts.URL+tc.endpoint, "application/json", tc.body)
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			bodyStr := string(body)
+
+			// The response must NOT contain Go-internal type information.
+			leakPatterns := []string{
+				"Go struct field",
+				"json: cannot unmarshal",
+				"reflect.",
+				"runtime.",
+			}
+			for _, pattern := range leakPatterns {
+				if strings.Contains(bodyStr, pattern) {
+					t.Errorf("response body leaks internal details: contains %q\nbody: %s", pattern, bodyStr)
+				}
+			}
+
+			// Verify it contains the generic error message.
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(body, &errResp); err != nil {
+				t.Fatalf("unmarshal error response: %v", err)
+			}
+			if errResp.Error.Message != "invalid request body" {
+				t.Errorf("error message = %q, want %q", errResp.Error.Message, "invalid request body")
+			}
+		})
+	}
+}
+
