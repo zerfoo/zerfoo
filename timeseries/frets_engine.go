@@ -407,3 +407,274 @@ func (f *FreTS) adamStepScalar(params, mState, vState []float32, lr, bc1, bc2, e
 		params[i] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*params[i])
 	}
 }
+
+// fretsEngineMatMul computes vec @ mat using engine.MatMul.
+// vec has length rows, mat is [rows, cols] stored row-major.
+// Returns a slice of length cols. Falls back to scalar multiply on error.
+func fretsEngineMatMul(ctx context.Context, eng compute.Engine[float32], vec []float32, mat []float32, rows, cols int) []float32 {
+	vT, err := tensor.New[float32]([]int{1, rows}, vec)
+	if err != nil {
+		return fretsScalarMatMul(vec, mat, rows, cols)
+	}
+	mT, err := tensor.New[float32]([]int{rows, cols}, mat)
+	if err != nil {
+		return fretsScalarMatMul(vec, mat, rows, cols)
+	}
+	out, err := eng.MatMul(ctx, vT, mT)
+	if err != nil {
+		return fretsScalarMatMul(vec, mat, rows, cols)
+	}
+	return out.Data()
+}
+
+// fretsScalarMatMul computes vec @ mat on the CPU as a fallback.
+func fretsScalarMatMul(vec []float32, mat []float32, rows, cols int) []float32 {
+	out := make([]float32, cols)
+	for j := 0; j < cols; j++ {
+		var s float32
+		for i := 0; i < rows; i++ {
+			s += vec[i] * mat[i*cols+j]
+		}
+		out[j] = s
+	}
+	return out
+}
+
+// forwardWithCacheEngine runs the FreTS forward pass using engine.MatMul for
+// all MLP and output projection matrix multiplications. DFT/IDFT remain on CPU.
+// It populates the same fretsCache as forwardWithCache so the CPU backward pass
+// can be reused without modification.
+func (f *FreTS) forwardWithCacheEngine(ctx context.Context, eng compute.Engine[float32], input [][]float64,
+	chanW1T, chanB1T, chanW2T, chanB2T *tensor.TensorNumeric[float32],
+	tempW1T, tempB1T, tempW2T, tempB2T *tensor.TensorNumeric[float32],
+	outWT, outBT []*tensor.TensorNumeric[float32],
+) ([][]float64, *fretsCache) {
+	channels := f.config.Channels
+	inputLen := f.config.InputLen
+	topK := f.config.TopK
+	hidden := f.config.HiddenSize
+	cache := &fretsCache{}
+
+	// Step 1: DFT per channel, select top-K frequencies (CPU, complex arithmetic).
+	cache.allCoeffs = make([][]complex128, channels)
+	cache.topIndices = make([][]int, channels)
+	cache.freqRealPreChan = make([][]float64, channels)
+	cache.freqImagPreChan = make([][]float64, channels)
+
+	freqReal := make([][]float64, channels)
+	freqImag := make([][]float64, channels)
+
+	for c := 0; c < channels; c++ {
+		cache.allCoeffs[c] = dft(input[c])
+		cache.topIndices[c] = topKIndices(cache.allCoeffs[c], topK)
+		freqReal[c] = make([]float64, topK)
+		freqImag[c] = make([]float64, topK)
+		cache.freqRealPreChan[c] = make([]float64, topK)
+		cache.freqImagPreChan[c] = make([]float64, topK)
+		for i, idx := range cache.topIndices[c] {
+			freqReal[c][i] = real(cache.allCoeffs[c][idx])
+			freqImag[c][i] = imag(cache.allCoeffs[c][idx])
+			cache.freqRealPreChan[c][i] = freqReal[c][i]
+			cache.freqImagPreChan[c][i] = freqImag[c][i]
+		}
+	}
+
+	// Step 2: Channel mixing via engine.MatMul.
+	cache.chanHiddenReal = make([][]float64, topK)
+	cache.chanHiddenImag = make([][]float64, topK)
+	cache.chanPreActReal = make([][]float64, topK)
+	cache.chanPreActImag = make([][]float64, topK)
+	cache.chanInputReal = make([][]float64, topK)
+	cache.chanInputImag = make([][]float64, topK)
+
+	chanW1Data := chanW1T.Data()
+	chanB1Data := chanB1T.Data()
+	chanW2Data := chanW2T.Data()
+	chanB2Data := chanB2T.Data()
+
+	for k := 0; k < topK; k++ {
+		realIn32 := make([]float32, channels)
+		imagIn32 := make([]float32, channels)
+		for c := 0; c < channels; c++ {
+			realIn32[c] = float32(freqReal[c][k])
+			imagIn32[c] = float32(freqImag[c][k])
+		}
+		cache.chanInputReal[k] = make([]float64, channels)
+		cache.chanInputImag[k] = make([]float64, channels)
+		for c := 0; c < channels; c++ {
+			cache.chanInputReal[k][c] = freqReal[c][k]
+			cache.chanInputImag[k][c] = freqImag[c][k]
+		}
+
+		// Layer 1: realIn[1, channels] @ chanW1[channels, hidden] + chanB1
+		hReal32 := fretsEngineMatMul(ctx, eng, realIn32, chanW1Data, channels, hidden)
+		hImag32 := fretsEngineMatMul(ctx, eng, imagIn32, chanW1Data, channels, hidden)
+
+		preActReal := make([]float64, hidden)
+		preActImag := make([]float64, hidden)
+		hReal := make([]float64, hidden)
+		hImag := make([]float64, hidden)
+		hRealAct32 := make([]float32, hidden)
+		hImagAct32 := make([]float32, hidden)
+		for j := 0; j < hidden; j++ {
+			val := float64(hReal32[j] + chanB1Data[j])
+			preActReal[j] = val
+			if val > 0 {
+				hReal[j] = val
+				hRealAct32[j] = float32(val)
+			}
+			val = float64(hImag32[j] + chanB1Data[j])
+			preActImag[j] = val
+			if val > 0 {
+				hImag[j] = val
+				hImagAct32[j] = float32(val)
+			}
+		}
+		cache.chanHiddenReal[k] = hReal
+		cache.chanHiddenImag[k] = hImag
+		cache.chanPreActReal[k] = preActReal
+		cache.chanPreActImag[k] = preActImag
+
+		// Layer 2: hReal[1, hidden] @ chanW2[hidden, channels] + chanB2
+		realOut32 := fretsEngineMatMul(ctx, eng, hRealAct32, chanW2Data, hidden, channels)
+		imagOut32 := fretsEngineMatMul(ctx, eng, hImagAct32, chanW2Data, hidden, channels)
+
+		// Residual connection.
+		for c := 0; c < channels; c++ {
+			freqReal[c][k] += float64(realOut32[c] + chanB2Data[c])
+			freqImag[c][k] += float64(imagOut32[c] + chanB2Data[c])
+		}
+	}
+
+	// Save pre-temporal values.
+	cache.freqRealPreTemp = make([][]float64, channels)
+	cache.freqImagPreTemp = make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		cache.freqRealPreTemp[c] = make([]float64, topK)
+		cache.freqImagPreTemp[c] = make([]float64, topK)
+		copy(cache.freqRealPreTemp[c], freqReal[c])
+		copy(cache.freqImagPreTemp[c], freqImag[c])
+	}
+
+	// Step 3: Temporal mixing via engine.MatMul.
+	cache.tempHiddenReal = make([][]float64, channels)
+	cache.tempHiddenImag = make([][]float64, channels)
+	cache.tempPreActReal = make([][]float64, channels)
+	cache.tempPreActImag = make([][]float64, channels)
+	cache.tempInputReal = make([][]float64, channels)
+	cache.tempInputImag = make([][]float64, channels)
+
+	tempW1Data := tempW1T.Data()
+	tempB1Data := tempB1T.Data()
+	tempW2Data := tempW2T.Data()
+	tempB2Data := tempB2T.Data()
+
+	for c := 0; c < channels; c++ {
+		cache.tempInputReal[c] = make([]float64, topK)
+		cache.tempInputImag[c] = make([]float64, topK)
+		copy(cache.tempInputReal[c], freqReal[c])
+		copy(cache.tempInputImag[c], freqImag[c])
+
+		realIn32 := make([]float32, topK)
+		imagIn32 := make([]float32, topK)
+		for i := 0; i < topK; i++ {
+			realIn32[i] = float32(freqReal[c][i])
+			imagIn32[i] = float32(freqImag[c][i])
+		}
+
+		// Layer 1: freqReal[1, topK] @ tempW1[topK, hidden] + tempB1
+		hReal32 := fretsEngineMatMul(ctx, eng, realIn32, tempW1Data, topK, hidden)
+		hImag32 := fretsEngineMatMul(ctx, eng, imagIn32, tempW1Data, topK, hidden)
+
+		preActReal := make([]float64, hidden)
+		preActImag := make([]float64, hidden)
+		hReal := make([]float64, hidden)
+		hImag := make([]float64, hidden)
+		hRealAct32 := make([]float32, hidden)
+		hImagAct32 := make([]float32, hidden)
+		for j := 0; j < hidden; j++ {
+			val := float64(hReal32[j] + tempB1Data[j])
+			preActReal[j] = val
+			if val > 0 {
+				hReal[j] = val
+				hRealAct32[j] = float32(val)
+			}
+			val = float64(hImag32[j] + tempB1Data[j])
+			preActImag[j] = val
+			if val > 0 {
+				hImag[j] = val
+				hImagAct32[j] = float32(val)
+			}
+		}
+		cache.tempHiddenReal[c] = hReal
+		cache.tempHiddenImag[c] = hImag
+		cache.tempPreActReal[c] = preActReal
+		cache.tempPreActImag[c] = preActImag
+
+		// Layer 2: hReal[1, hidden] @ tempW2[hidden, topK] + tempB2
+		realOut32 := fretsEngineMatMul(ctx, eng, hRealAct32, tempW2Data, hidden, topK)
+		imagOut32 := fretsEngineMatMul(ctx, eng, hImagAct32, tempW2Data, hidden, topK)
+
+		// Residual connection.
+		for k := 0; k < topK; k++ {
+			freqReal[c][k] += float64(realOut32[k] + tempB2Data[k])
+			freqImag[c][k] += float64(imagOut32[k] + tempB2Data[k])
+		}
+	}
+
+	// Step 4: Reconstruct time domain signal via inverse DFT (CPU).
+	cache.reconstructed = make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		mixed := make([]complex128, len(cache.allCoeffs[c]))
+		for i, idx := range cache.topIndices[c] {
+			mixed[idx] = complex(freqReal[c][i], freqImag[c][i])
+		}
+		cache.reconstructed[c] = idft(mixed, inputLen)
+	}
+
+	// Step 5: Output projection via engine.MatMul.
+	output := make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		recon32 := make([]float32, inputLen)
+		for i := 0; i < inputLen; i++ {
+			recon32[i] = float32(cache.reconstructed[c][i])
+		}
+		// outW[outputLen, inputLen] @ recon[inputLen, 1] -> [outputLen, 1]
+		reconT, err := tensor.New[float32]([]int{inputLen, 1}, recon32)
+		if err != nil {
+			// Fallback to CPU.
+			output[c] = f.outputProjectCPU(c, cache.reconstructed[c])
+			continue
+		}
+		projT, err := eng.MatMul(ctx, outWT[c], reconT)
+		if err != nil {
+			output[c] = f.outputProjectCPU(c, cache.reconstructed[c])
+			continue
+		}
+		projData := projT.Data()
+		outBData := outBT[c].Data()
+		output[c] = make([]float64, f.config.OutputLen)
+		for o := 0; o < f.config.OutputLen; o++ {
+			output[c][o] = float64(projData[o] + outBData[o])
+		}
+	}
+
+	return output, cache
+}
+
+// outputProjectCPU is the scalar fallback for output projection when engine.MatMul fails.
+func (f *FreTS) outputProjectCPU(ch int, reconstructed []float64) []float64 {
+	inputLen := f.config.InputLen
+	outputLen := f.config.OutputLen
+	wOff := ch * outputLen * inputLen
+	bOff := ch * outputLen
+	out := make([]float64, outputLen)
+	for o := 0; o < outputLen; o++ {
+		val := f.outB[bOff+o]
+		for i := 0; i < inputLen; i++ {
+			val += f.outW[wOff+o*inputLen+i] * reconstructed[i]
+		}
+		out[o] = val
+	}
+	return out
+}
