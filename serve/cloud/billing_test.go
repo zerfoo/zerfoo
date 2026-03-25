@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -476,5 +478,59 @@ func TestBillingMiddlewareTenantIDIsHashed(t *testing.T) {
 	// Verify it is a valid 64-character hex string (SHA-256 output).
 	if len(event.TenantID) != 64 {
 		t.Errorf("TenantID length = %d, want 64 (hex-encoded SHA-256)", len(event.TenantID))
+	}
+}
+
+// failingRecorder is a UsageRecorder that always returns an error.
+type failingRecorder struct {
+	err error
+}
+
+func (f *failingRecorder) Record(event UsageEvent) error {
+	return f.err
+}
+
+func TestBillingMiddlewareRecordErrorIsLogged(t *testing.T) {
+	rec := &failingRecorder{err: errors.New("kafka: connection refused")}
+
+	inner := fakeHandler(100, 50)
+	handler := BillingMiddleware(rec)(inner)
+
+	tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"llama3-8b"}`))
+	req.Header.Set("Authorization", "Bearer key-fail")
+	ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+	req = req.WithContext(ctx)
+
+	// Capture stderr to verify the error is logged.
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	w.Close()
+	os.Stderr = origStderr
+
+	var stderrBuf bytes.Buffer
+	io.Copy(&stderrBuf, r)
+	r.Close()
+
+	output := stderrBuf.String()
+	if !strings.Contains(output, "billing: failed to record usage event") {
+		t.Errorf("expected billing error log on stderr, got: %q", output)
+	}
+	if !strings.Contains(output, "kafka: connection refused") {
+		t.Errorf("expected error message in log, got: %q", output)
+	}
+	if !strings.Contains(output, "model=llama3-8b") {
+		t.Errorf("expected model in log, got: %q", output)
+	}
+	if !strings.Contains(output, "prompt=100") {
+		t.Errorf("expected prompt token count in log, got: %q", output)
+	}
+	if !strings.Contains(output, "completion=50") {
+		t.Errorf("expected completion token count in log, got: %q", output)
 	}
 }
