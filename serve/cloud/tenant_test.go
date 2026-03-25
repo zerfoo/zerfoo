@@ -3,6 +3,7 @@ package cloud
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -350,6 +351,75 @@ func TestTenantIsolation(t *testing.T) {
 	if tenantB.ModelAllowed("llama3-8b") {
 		t.Error("tenant-b should not allow llama3-8b")
 	}
+}
+
+func TestMiddlewareModelAllowList(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("allowed model passes", func(t *testing.T) {
+		reg := NewTenantRegistry()
+		if err := reg.Register("key-allow", TenantConfig{
+			MaxConcurrentRequests: 5,
+			MaxTokensPerMinute:   10000,
+			ModelAllowList:        []string{"llama3"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		handler := reg.Middleware(ok)
+
+		body := `{"model":"llama3","messages":[]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-allow")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("disallowed model rejected", func(t *testing.T) {
+		reg := NewTenantRegistry()
+		if err := reg.Register("key-allow", TenantConfig{
+			MaxConcurrentRequests: 5,
+			MaxTokensPerMinute:   10000,
+			ModelAllowList:        []string{"llama3"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		handler := reg.Middleware(ok)
+
+		body := `{"model":"gemma3","messages":[]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-allow")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+		}
+	})
+
+	t.Run("empty allow list permits any model", func(t *testing.T) {
+		reg := NewTenantRegistry()
+		if err := reg.Register("key-open", TenantConfig{
+			MaxConcurrentRequests: 5,
+			MaxTokensPerMinute:   10000,
+			ModelAllowList:        nil,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		handler := reg.Middleware(ok)
+
+		body := `{"model":"any-model","messages":[]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-open")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
 }
 
 func TestModelAllowedEmptyList(t *testing.T) {

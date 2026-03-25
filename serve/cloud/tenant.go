@@ -2,10 +2,13 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -202,6 +205,24 @@ func (r *TenantRegistry) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		defer tenant.inflight.Add(-1)
+
+		// Enforce model allow list.
+		if len(tenant.Config.ModelAllowList) > 0 && req.Body != nil {
+			var buf bytes.Buffer
+			io.Copy(&buf, io.LimitReader(req.Body, 10<<20)) //nolint:errcheck
+			req.Body.Close()
+			req.Body = io.NopCloser(bytes.NewReader(buf.Bytes()))
+
+			var parsed struct {
+				Model string `json:"model"`
+			}
+			if json.Unmarshal(buf.Bytes(), &parsed) == nil && parsed.Model != "" {
+				if !tenant.ModelAllowed(parsed.Model) {
+					http.Error(w, "model not allowed", http.StatusForbidden)
+					return
+				}
+			}
+		}
 
 		ctx := context.WithValue(req.Context(), contextKey{}, tenant)
 		next.ServeHTTP(w, req.WithContext(ctx))
