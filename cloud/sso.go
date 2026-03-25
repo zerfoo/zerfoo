@@ -28,6 +28,7 @@ var (
 	errXXE              = errors.New("cloud: SAML XML contains prohibited DOCTYPE or ENTITY declaration")
 	errNotYetValid      = errors.New("cloud: SAML assertion is not yet valid (NotBefore)")
 	errReplayedAssertion = errors.New("cloud: SAML assertion ID has already been consumed (replay)")
+	errEmptyAssertionID  = errors.New("cloud: SAML assertion missing required ID attribute")
 )
 
 // samlClockSkew is the maximum clock skew tolerance for NotBefore validation.
@@ -271,12 +272,13 @@ func (p *SAMLProvider) ValidateAssertion(assertion []byte) (*SSOIdentity, error)
 		return nil, errExpiredSAML
 	}
 
-	// Replay prevention: reject assertions with previously seen IDs.
+	// Replay prevention: reject assertions with empty or previously seen IDs.
 	assertionID := resp.Assertion.ID
-	if assertionID != "" {
-		if err := p.checkAndRecordAssertionID(assertionID); err != nil {
-			return nil, err
-		}
+	if assertionID == "" {
+		return nil, errEmptyAssertionID
+	}
+	if err := p.checkAndRecordAssertionID(assertionID); err != nil {
+		return nil, err
 	}
 
 	identity := &SSOIdentity{

@@ -122,6 +122,35 @@ func (idp *testIdP) signedSAMLResponse(subject, notBefore, notOnOrAfter string, 
 </Response>`, assertionID, digestB64, sigB64, assertion)
 }
 
+// signedSAMLResponseNoID builds a SAML Response XML where the Assertion has no ID attribute.
+func (idp *testIdP) signedSAMLResponseNoID(subject, notBefore, notOnOrAfter string) string {
+	assertion := fmt.Sprintf(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+    <Subject><NameID>%s</NameID></Subject>
+    <Conditions NotBefore="%s" NotOnOrAfter="%s"/>
+  </Assertion>`, subject, notBefore, notOnOrAfter)
+
+	digest := sha256.Sum256([]byte(assertion))
+	digestB64 := base64.StdEncoding.EncodeToString(digest[:])
+
+	sig, err := rsa.SignPKCS1v15(rand.Reader, idp.key, crypto.SHA256, digest[:])
+	if err != nil {
+		panic(fmt.Sprintf("sign: %v", err))
+	}
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	return fmt.Sprintf(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+  <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <SignedInfo>
+      <Reference>
+        <DigestValue>%s</DigestValue>
+      </Reference>
+    </SignedInfo>
+    <SignatureValue>%s</SignatureValue>
+  </Signature>
+  %s
+</Response>`, digestB64, sigB64, assertion)
+}
+
 // testSAMLMetadata returns valid SAML metadata XML using the test IdP certificate.
 func (idp *testIdP) testSAMLMetadata() []byte {
 	return []byte(fmt.Sprintf(`<EntityDescriptor entityID="https://idp.example.com/saml" xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
@@ -362,4 +391,19 @@ func TestSAML_NotBeforeValidation(t *testing.T) {
 			t.Fatalf("assertion with past NotBefore should succeed: %v", err)
 		}
 	})
+}
+
+func TestSAML_EmptyAssertionID(t *testing.T) {
+	idp := newTestIdP(t)
+	meta, _ := ParseSAMLMetadata(idp.testSAMLMetadata())
+	provider := NewSAMLProvider(meta, "tenant-empty-id")
+
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+
+	xml := idp.signedSAMLResponseNoID("user@example.com", past, future)
+	_, err := provider.ValidateAssertion([]byte(xml))
+	if err != errEmptyAssertionID {
+		t.Errorf("got error %v, want errEmptyAssertionID", err)
+	}
 }
