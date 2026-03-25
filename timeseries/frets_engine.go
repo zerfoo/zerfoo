@@ -152,16 +152,11 @@ func (f *FreTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			for s := 0; s < bs; s++ {
 				sample := windows[start+s]
 
-				// Forward pass: DFT + top-K on CPU (float64).
-				pred, cache := f.forwardWithCache(sample)
-
-				// We reuse the CPU forward for DFT/channel-mix/temp-mix since
-				// those involve complex arithmetic. The engine path accelerates
-				// the output projection and AdamW.
-				//
-				// However, to get gradients through the engine path cleanly,
-				// we run the output projection via engine and compute gradients
-				// for all MLP weights using the CPU backward pass.
+				// Forward pass: DFT on CPU, MLP and output projection via engine.MatMul.
+				pred, cache := f.forwardWithCacheEngine(ctx, eng, sample,
+					chanW1T, chanB1T, chanW2T, chanB2T,
+					tempW1T, tempB1T, tempW2T, tempB2T,
+					outWT, outBT)
 
 				// Compute dOut and loss.
 				dOut := make([][]float64, channels)
