@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0](https://github.com/zerfoo/zerfoo/compare/v1.18.0...v1.19.0) (2026-03-25)
+
+
+### Features
+
+* **timeseries:** add batched forward pass for PatchTST engine training ([61a09d9](https://github.com/zerfoo/zerfoo/commit/61a09d94cae7890dc5c236c260700ea6a2e64a20)), closes [#169](https://github.com/zerfoo/zerfoo/issues/169)
+
 ## [1.18.0](https://github.com/zerfoo/zerfoo/compare/v1.17.2...v1.18.0) (2026-03-25)
 
 
