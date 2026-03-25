@@ -857,3 +857,162 @@ func TestPatchTST_GradientVerification(t *testing.T) {
 	}
 	t.Logf("gradient check: %d params, maxRelErr=%.4e, failures=%d", nParams, maxRelErr, failCount)
 }
+
+// TestPatchTST_BatchedForwardParity verifies that the batched forward pass
+// produces the same predictions as running forwardF64WithCacheEngine per sample.
+func TestPatchTST_BatchedForwardParity(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     2,
+		OutputDim:   3,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	ctx := context.Background()
+	params := model.extractParamsF64()
+
+	// Create batch of 5 samples with 2 channels each.
+	batchSize := 5
+	nChannels := 2
+	windows := make([][][]float64, batchSize)
+	for s := 0; s < batchSize; s++ {
+		windows[s] = make([][]float64, nChannels)
+		for c := 0; c < nChannels; c++ {
+			windows[s][c] = make([]float64, config.InputLength)
+			for i := 0; i < config.InputLength; i++ {
+				windows[s][c][i] = float64(s*100+c*10+i) * 0.01
+			}
+		}
+	}
+
+	// Per-sample forward pass (reference).
+	perSamplePreds := make([][]float64, batchSize)
+	for s := 0; s < batchSize; s++ {
+		pred, _, err := model.forwardF64WithCacheEngine(ctx, windows[s], params)
+		if err != nil {
+			t.Fatalf("forwardF64WithCacheEngine sample %d: %v", s, err)
+		}
+		perSamplePreds[s] = pred
+	}
+
+	// Batched forward pass.
+	batchPreds, batchCaches, err := model.forwardBatchF64WithCacheEngine(ctx, windows, params)
+	if err != nil {
+		t.Fatalf("forwardBatchF64WithCacheEngine: %v", err)
+	}
+
+	if len(batchPreds) != batchSize {
+		t.Fatalf("batched preds length = %d, want %d", len(batchPreds), batchSize)
+	}
+	if len(batchCaches) != batchSize {
+		t.Fatalf("batched caches length = %d, want %d", len(batchCaches), batchSize)
+	}
+
+	// Compare predictions within tolerance.
+	const tol = 1e-4
+	for s := 0; s < batchSize; s++ {
+		if len(batchPreds[s]) != config.OutputDim {
+			t.Fatalf("sample %d: batched pred length = %d, want %d", s, len(batchPreds[s]), config.OutputDim)
+		}
+		for j := 0; j < config.OutputDim; j++ {
+			diff := math.Abs(batchPreds[s][j] - perSamplePreds[s][j])
+			if diff > tol {
+				t.Errorf("sample %d output[%d]: batched=%.8f, per-sample=%.8f, diff=%.4e (> tol %.4e)",
+					s, j, batchPreds[s][j], perSamplePreds[s][j], diff, tol)
+			}
+		}
+	}
+
+	// Verify caches have correct structure.
+	for s := 0; s < batchSize; s++ {
+		if len(batchCaches[s].channels) != nChannels {
+			t.Errorf("sample %d: cache channels = %d, want %d", s, len(batchCaches[s].channels), nChannels)
+		}
+		for ch := 0; ch < nChannels; ch++ {
+			cc := &batchCaches[s].channels[ch]
+			if len(cc.layerCaches) != config.NLayers {
+				t.Errorf("sample %d ch %d: layerCaches = %d, want %d", s, ch, len(cc.layerCaches), config.NLayers)
+			}
+		}
+	}
+
+	t.Logf("parity check: %d samples, %d channels, %d layers — all predictions match within %.0e",
+		batchSize, nChannels, config.NLayers, tol)
+}
+
+// TestPatchTST_BatchedTrainConvergence verifies that training with the batched
+// forward pass produces decreasing loss, confirming end-to-end correctness.
+func TestPatchTST_BatchedTrainConvergence(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 8,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   1,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	nSamples := 20
+	nChannels := 2
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.OutputDim)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, nChannels)
+		sum := 0.0
+		for c := 0; c < nChannels; c++ {
+			windows[s][c] = make([]float64, config.InputLength)
+			for i := 0; i < config.InputLength; i++ {
+				v := float64(s*config.InputLength+c*10+i) * 0.01
+				windows[s][c][i] = v
+				sum += v
+			}
+		}
+		labels[s] = sum / float64(nChannels*config.InputLength)
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:    10,
+		LR:        1e-3,
+		GradClip:  1.0,
+		BatchSize: 5,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if len(result.LossHistory) != 10 {
+		t.Fatalf("loss history length = %d, want 10", len(result.LossHistory))
+	}
+
+	for i, l := range result.LossHistory {
+		if !isFinite(l) {
+			t.Fatalf("epoch %d: loss is not finite: %v", i, l)
+		}
+	}
+
+	if result.LossHistory[9] >= result.LossHistory[0] {
+		t.Errorf("loss did not decrease: epoch 0 = %v, epoch 9 = %v",
+			result.LossHistory[0], result.LossHistory[9])
+	}
+
+	t.Logf("batched train convergence: loss[0]=%.6f -> loss[9]=%.6f (batch_size=5, %d samples, %d channels)",
+		result.LossHistory[0], result.LossHistory[9], nSamples, nChannels)
+}
