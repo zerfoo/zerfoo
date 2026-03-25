@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -341,6 +342,77 @@ func TestBillingMiddlewareNonStreamingJSONFallback(t *testing.T) {
 	if event.CompletionTokens != 75 {
 		t.Errorf("CompletionTokens = %d, want 75", event.CompletionTokens)
 	}
+}
+
+func TestBillingMiddlewareBodyLimit(t *testing.T) {
+	t.Run("oversized body is truncated at 10MB", func(t *testing.T) {
+		var bodyLen int
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			bodyLen = len(b)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usage": map[string]int{
+					"prompt_tokens":     10,
+					"completion_tokens": 5,
+					"total_tokens":      15,
+				},
+			})
+		})
+
+		var buf bytes.Buffer
+		rec := NewNDJSONRecorder(&buf)
+		handler := BillingMiddleware(rec)(inner)
+
+		tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+		bigBody := strings.NewReader(strings.Repeat("x", 11<<20))
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bigBody)
+		req.Header.Set("Authorization", "Bearer key-big")
+		ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if bodyLen > 10<<20 {
+			t.Errorf("downstream saw %d bytes, want <= %d", bodyLen, 10<<20)
+		}
+	})
+
+	t.Run("normal request body still works", func(t *testing.T) {
+		var buf bytes.Buffer
+		rec := NewNDJSONRecorder(&buf)
+
+		inner := fakeHandler(10, 5)
+		handler := BillingMiddleware(rec)(inner)
+
+		tenant := &Tenant{Config: TenantConfig{MaxConcurrentRequests: 10, MaxTokensPerMinute: 10000}}
+		reqBody := `{"model":"llama3-8b","messages":[{"role":"user","content":"hello"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+		req.Header.Set("Authorization", "Bearer key-normal")
+		ctx := context.WithValue(req.Context(), contextKey{}, tenant)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		line := strings.TrimSpace(buf.String())
+		if line == "" {
+			t.Fatal("no usage event recorded")
+		}
+
+		var event UsageEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if event.PromptTokens != 10 {
+			t.Errorf("PromptTokens = %d, want 10", event.PromptTokens)
+		}
+	})
 }
 
 // sha256Hex returns the hex-encoded SHA-256 hash of s.
