@@ -294,6 +294,293 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 	return result, cache, nil
 }
 
+// forwardBatchF64WithCacheEngine runs the PatchTST forward pass for a batch of samples.
+// It concatenates patch data across samples for each linear projection, making a single
+// engine.MatMul call per projection per layer per channel, regardless of batch size.
+// This reduces GPU kernel launches from O(batchSize * layers * channels) to O(layers * channels).
+//
+// batchWindows: [batchSize][channels][inputLen]
+// Returns per-sample predictions and per-sample caches (backward pass needs individual caches).
+func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWindows [][][]float64, params *patchTSTParamsF64) ([][]float64, []*patchTSTCacheF64, error) {
+	batchSize := len(batchWindows)
+	numPatches := m.config.NumPatches()
+	dModel := m.config.DModel
+	nHeads := m.config.NHeads
+	headDim := dModel / nHeads
+	ffnDim := dModel * 4
+	channels := len(batchWindows[0])
+
+	// Allocate per-sample caches and channel outputs.
+	caches := make([]*patchTSTCacheF64, batchSize)
+	chanOutputs := make([][][]float64, batchSize) // [batchSize][channels][outputDim]
+	for s := 0; s < batchSize; s++ {
+		caches[s] = &patchTSTCacheF64{
+			channels: make([]patchTSTChannelCache, channels),
+		}
+		chanOutputs[s] = make([][]float64, channels)
+	}
+
+	for ch := 0; ch < channels; ch++ {
+		// Extract patches for all samples.
+		for s := 0; s < batchSize; s++ {
+			cc := &caches[s].channels[ch]
+			cc.patches = make([][]float64, numPatches)
+			for p := 0; p < numPatches; p++ {
+				start := p * m.config.Stride
+				cc.patches[p] = make([]float64, m.config.PatchLength)
+				copy(cc.patches[p], batchWindows[s][ch][start:start+m.config.PatchLength])
+			}
+		}
+
+		// Batch patch embedding: concatenate all samples' patches into [batchSize*numPatches][patchLen].
+		batchPatches := make([][]float64, batchSize*numPatches)
+		for s := 0; s < batchSize; s++ {
+			for p := 0; p < numPatches; p++ {
+				batchPatches[s*numPatches+p] = caches[s].channels[ch].patches[p]
+			}
+		}
+		batchEmbedded, err := m.linearF64Engine(ctx, batchPatches, params.patchEmbW, params.patchEmbB, m.config.PatchLength, dModel)
+		if err != nil {
+			return nil, nil, fmt.Errorf("batch patch embedding: %w", err)
+		}
+
+		// Split embedded results back per sample and add positional embeddings.
+		perSampleX := make([][][]float64, batchSize) // [batchSize][numPatches][dModel]
+		for s := 0; s < batchSize; s++ {
+			cc := &caches[s].channels[ch]
+			cc.embedded = batchEmbedded[s*numPatches : (s+1)*numPatches]
+
+			x := make([][]float64, numPatches)
+			for p := 0; p < numPatches; p++ {
+				x[p] = make([]float64, dModel)
+				for j := 0; j < dModel; j++ {
+					x[p][j] = cc.embedded[p][j] + params.posEmb[p*dModel+j]
+				}
+			}
+			perSampleX[s] = x
+		}
+
+		// Encoder layers.
+		for s := 0; s < batchSize; s++ {
+			cc := &caches[s].channels[ch]
+			cc.layerCaches = make([]encoderLayerCache, m.config.NLayers)
+			cc.layerInputs = make([][][]float64, m.config.NLayers)
+		}
+
+		for li := 0; li < m.config.NLayers; li++ {
+			layer := &params.layers[li]
+
+			// Save layer inputs and compute pre-norm 1 (CPU ops, per-sample).
+			for s := 0; s < batchSize; s++ {
+				cc := &caches[s].channels[ch]
+				lc := &cc.layerCaches[li]
+				cc.layerInputs[li] = copyMatrix(perSampleX[s])
+				lc.xBeforeNorm1 = copyMatrix(perSampleX[s])
+				lc.normed1, lc.mean1, lc.invStd1, lc.centered1 = layerNormF64WithCache(perSampleX[s], layer.norm1, layer.bias1, dModel)
+			}
+
+			// Batch Q/K/V projections: concatenate normed1 across samples.
+			batchNormed := make([][]float64, batchSize*numPatches)
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				for p := 0; p < numPatches; p++ {
+					batchNormed[s*numPatches+p] = lc.normed1[p]
+				}
+			}
+
+			batchQ, err := m.linearF64Engine(ctx, batchNormed, layer.qW, layer.qB, dModel, dModel)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch q proj: %w", li, err)
+			}
+			batchK, err := m.linearF64Engine(ctx, batchNormed, layer.kW, layer.kB, dModel, dModel)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch k proj: %w", li, err)
+			}
+			batchV, err := m.linearF64Engine(ctx, batchNormed, layer.vW, layer.vB, dModel, dModel)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch v proj: %w", li, err)
+			}
+
+			// Split Q/K/V back per sample. Compute attention on CPU per sample.
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				lc.q = batchQ[s*numPatches : (s+1)*numPatches]
+				lc.k = batchK[s*numPatches : (s+1)*numPatches]
+				lc.v = batchV[s*numPatches : (s+1)*numPatches]
+
+				seq := numPatches
+				lc.scores = make([][][]float64, nHeads)
+				lc.attnOut = make([][]float64, seq)
+				for i := range lc.attnOut {
+					lc.attnOut[i] = make([]float64, dModel)
+				}
+
+				scale := 1.0 / math.Sqrt(float64(headDim))
+				for h := 0; h < nHeads; h++ {
+					hOff := h * headDim
+					lc.scores[h] = make([][]float64, seq)
+					for i := 0; i < seq; i++ {
+						lc.scores[h][i] = make([]float64, seq)
+						for j := 0; j < seq; j++ {
+							dot := 0.0
+							for d := 0; d < headDim; d++ {
+								dot += lc.q[i][hOff+d] * lc.k[j][hOff+d]
+							}
+							lc.scores[h][i][j] = dot * scale
+						}
+					}
+					for i := 0; i < seq; i++ {
+						maxS := lc.scores[h][i][0]
+						for j := 1; j < seq; j++ {
+							if lc.scores[h][i][j] > maxS {
+								maxS = lc.scores[h][i][j]
+							}
+						}
+						sumExp := 0.0
+						for j := 0; j < seq; j++ {
+							lc.scores[h][i][j] = math.Exp(lc.scores[h][i][j] - maxS)
+							sumExp += lc.scores[h][i][j]
+						}
+						for j := 0; j < seq; j++ {
+							lc.scores[h][i][j] /= sumExp
+						}
+					}
+					for i := 0; i < seq; i++ {
+						for d := 0; d < headDim; d++ {
+							val := 0.0
+							for j := 0; j < seq; j++ {
+								val += lc.scores[h][i][j] * lc.v[j][hOff+d]
+							}
+							lc.attnOut[i][hOff+d] = val
+						}
+					}
+				}
+			}
+
+			// Batch output projection: concatenate attnOut across samples.
+			batchAttnOut := make([][]float64, batchSize*numPatches)
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				for p := 0; p < numPatches; p++ {
+					batchAttnOut[s*numPatches+p] = lc.attnOut[p]
+				}
+			}
+			batchAttnProj, err := m.linearF64Engine(ctx, batchAttnOut, layer.oW, layer.oB, dModel, dModel)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch o proj: %w", li, err)
+			}
+
+			// Split output projection, apply residual 1, pre-norm 2 (per-sample CPU ops).
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				lc.attnProjOut = batchAttnProj[s*numPatches : (s+1)*numPatches]
+
+				for p := 0; p < numPatches; p++ {
+					for j := 0; j < dModel; j++ {
+						perSampleX[s][p][j] += lc.attnProjOut[p][j]
+					}
+				}
+				lc.xAfterAttn = copyMatrix(perSampleX[s])
+
+				lc.xBeforeNorm2 = copyMatrix(perSampleX[s])
+				lc.normed2, lc.mean2, lc.invStd2, lc.centered2 = layerNormF64WithCache(perSampleX[s], layer.norm2, layer.bias2, dModel)
+			}
+
+			// Batch FFN layer 1: concatenate normed2 across samples.
+			batchNormed2 := make([][]float64, batchSize*numPatches)
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				for p := 0; p < numPatches; p++ {
+					batchNormed2[s*numPatches+p] = lc.normed2[p]
+				}
+			}
+			batchFFN1Raw, err := m.linearF64Engine(ctx, batchNormed2, layer.ffn1W, layer.ffn1B, dModel, ffnDim)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch ffn1: %w", li, err)
+			}
+
+			// Split FFN1 results, apply GELU (CPU), per sample.
+			perSampleFFN1Out := make([][][]float64, batchSize)
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				lc.ffn1PreAct = batchFFN1Raw[s*numPatches : (s+1)*numPatches]
+				lc.ffn1Out = make([][]float64, numPatches)
+				for p := 0; p < numPatches; p++ {
+					lc.ffn1Out[p] = make([]float64, ffnDim)
+					for j := 0; j < ffnDim; j++ {
+						lc.ffn1Out[p][j] = geluF64(lc.ffn1PreAct[p][j])
+					}
+				}
+				perSampleFFN1Out[s] = lc.ffn1Out
+			}
+
+			// Batch FFN layer 2: concatenate ffn1Out across samples.
+			batchFFN1Out := make([][]float64, batchSize*numPatches)
+			for s := 0; s < batchSize; s++ {
+				for p := 0; p < numPatches; p++ {
+					batchFFN1Out[s*numPatches+p] = perSampleFFN1Out[s][p]
+				}
+			}
+			batchFFN2Out, err := m.linearF64Engine(ctx, batchFFN1Out, layer.ffn2W, layer.ffn2B, ffnDim, dModel)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d batch ffn2: %w", li, err)
+			}
+
+			// Split FFN2 results, apply residual 2 (per-sample).
+			for s := 0; s < batchSize; s++ {
+				lc := &caches[s].channels[ch].layerCaches[li]
+				lc.ffn2Out = batchFFN2Out[s*numPatches : (s+1)*numPatches]
+
+				for p := 0; p < numPatches; p++ {
+					for j := 0; j < dModel; j++ {
+						perSampleX[s][p][j] += lc.ffn2Out[p][j]
+					}
+				}
+			}
+		}
+
+		// Output head: flatten and project per sample.
+		// The output head has input dim = numPatches*dModel which differs per-sample
+		// only in values, so we can batch this too.
+		headIn := numPatches * dModel
+		batchFlat := make([][]float64, batchSize)
+		for s := 0; s < batchSize; s++ {
+			cc := &caches[s].channels[ch]
+			cc.finalX = copyMatrix(perSampleX[s])
+
+			cc.flatInput = make([]float64, headIn)
+			for p := 0; p < numPatches; p++ {
+				copy(cc.flatInput[p*dModel:(p+1)*dModel], perSampleX[s][p])
+			}
+			batchFlat[s] = cc.flatInput
+		}
+
+		batchHeadOut, err := m.linearF64Engine(ctx, batchFlat, params.headW, params.headB, headIn, m.config.OutputDim)
+		if err != nil {
+			return nil, nil, fmt.Errorf("batch output head: %w", err)
+		}
+
+		for s := 0; s < batchSize; s++ {
+			chanOutputs[s][ch] = batchHeadOut[s]
+		}
+	}
+
+	// Average across channels per sample.
+	preds := make([][]float64, batchSize)
+	for s := 0; s < batchSize; s++ {
+		preds[s] = make([]float64, m.config.OutputDim)
+		for ch := 0; ch < channels; ch++ {
+			for j := 0; j < m.config.OutputDim; j++ {
+				preds[s][j] += chanOutputs[s][ch][j]
+			}
+		}
+		for j := range preds[s] {
+			preds[s][j] /= float64(channels)
+		}
+	}
+	return preds, caches, nil
+}
+
 // trainWindowedEngine runs the GPU/engine-accelerated training path.
 // It uses analytical backpropagation via float64 parameters, then writes
 // updated weights back to the float32 engine tensors each epoch.
