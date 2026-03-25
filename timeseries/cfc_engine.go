@@ -204,27 +204,19 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 						copy(ss.hPrev, hPrev[l])
 
 						// tau = sigmoid(Wtau * [x, h] + btau)
+						// Split Wtau into x-part [inSize, hiddenSize] and h-part [hiddenSize, hiddenSize].
+						tauX := c.cfcEngineMatMul(ctx, xF, wtauData[:inSize*hiddenSize], inSize, hiddenSize)
+						tauH := c.cfcEngineMatMul(ctx, hPrev[l], wtauData[inSize*hiddenSize:], hiddenSize, hiddenSize)
 						for j := 0; j < hiddenSize; j++ {
-							val := btauData[j]
-							for i := 0; i < inSize; i++ {
-								val += xF[i] * wtauData[i*hiddenSize+j]
-							}
-							for i := 0; i < hiddenSize; i++ {
-								val += hPrev[l][i] * wtauData[(inSize+i)*hiddenSize+j]
-							}
+							val := btauData[j] + tauX[j] + tauH[j]
 							ss.tau[j] = 1.0 / (1.0 + float32(math.Exp(float64(-val))))
 						}
 
 						// preact = Wx*x + Wh*h + bh (before tanh)
+						preX := c.cfcEngineMatMul(ctx, xF, wxData, inSize, hiddenSize)
+						preH := c.cfcEngineMatMul(ctx, hPrev[l], whData, hiddenSize, hiddenSize)
 						for j := 0; j < hiddenSize; j++ {
-							val := bhData[j]
-							for i := 0; i < inSize; i++ {
-								val += xF[i] * wxData[i*hiddenSize+j]
-							}
-							for i := 0; i < hiddenSize; i++ {
-								val += hPrev[l][i] * whData[i*hiddenSize+j]
-							}
-							ss.pre[j] = val
+							ss.pre[j] = bhData[j] + preX[j] + preH[j]
 						}
 
 						// h_new = f * h_old + (1-f) * tanh(pre)
@@ -249,12 +241,10 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 				outWData := allParams[numLayers*5].f32
 				outBData := allParams[numLayers*5+1].f32
 
+				projOut := c.cfcEngineMatMul(ctx, finalH, outWData, hiddenSize, outDim)
 				pred := make([]float32, outDim)
 				for j := 0; j < outDim; j++ {
-					pred[j] = outBData[j]
-					for i := 0; i < hiddenSize; i++ {
-						pred[j] += finalH[i] * outWData[i*outDim+j]
-					}
+					pred[j] = outBData[j] + projOut[j]
 				}
 
 				// MSE loss and output gradient for this sample.
@@ -448,6 +438,38 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
+}
+
+// cfcEngineMatMul computes vec @ mat using engine.MatMul.
+// vec has length rows, mat is [rows][cols] stored row-major with length rows*cols.
+// Returns a slice of length cols. Falls back to scalar multiply on error.
+func (c *CfC) cfcEngineMatMul(ctx context.Context, vec []float32, mat []float32, rows, cols int) []float32 {
+	vT, err := tensor.New[float32]([]int{1, rows}, vec)
+	if err != nil {
+		return cfcScalarMatMul(vec, mat, rows, cols)
+	}
+	mT, err := tensor.New[float32]([]int{rows, cols}, mat)
+	if err != nil {
+		return cfcScalarMatMul(vec, mat, rows, cols)
+	}
+	out, err := c.engine.MatMul(ctx, vT, mT)
+	if err != nil {
+		return cfcScalarMatMul(vec, mat, rows, cols)
+	}
+	return out.Data()
+}
+
+// cfcScalarMatMul computes vec @ mat on the CPU as a fallback.
+func cfcScalarMatMul(vec []float32, mat []float32, rows, cols int) []float32 {
+	out := make([]float32, cols)
+	for j := 0; j < cols; j++ {
+		var s float32
+		for i := 0; i < rows; i++ {
+			s += vec[i] * mat[i*cols+j]
+		}
+		out[j] = s
+	}
+	return out
 }
 
 // adamStepEngine performs a single AdamW update step using engine tensor
