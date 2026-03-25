@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.2](https://github.com/zerfoo/zerfoo/compare/v1.17.1...v1.17.2) (2026-03-25)
+
+
+### Bug Fixes
+
+* **timeseries:** use GPU engine for CfC forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([c67ec1f](https://github.com/zerfoo/zerfoo/commit/c67ec1fe2b6cfd86890724ac573566c2726fb61f))
+* **timeseries:** use GPU engine for FreTS forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([d8686c0](https://github.com/zerfoo/zerfoo/commit/d8686c0bbfe8e33af1af26c1b3a42630aeff5aab))
+* **timeseries:** use GPU engine for FreTS forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([99908e2](https://github.com/zerfoo/zerfoo/commit/99908e2f60f587daa7476839eea4c337d172dda7))
+* **timeseries:** use GPU engine for PatchTST forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([0d6be90](https://github.com/zerfoo/zerfoo/commit/0d6be907a507ccfe31bf42114cd310a6db0e69f3))
+* **timeseries:** use GPU engine MatMul for forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([c597b58](https://github.com/zerfoo/zerfoo/commit/c597b5872051b398849cbef24f5a9bd5f7a1b5d6))
+
 ## [1.17.1](https://github.com/zerfoo/zerfoo/compare/v1.17.0...v1.17.1) (2026-03-25)
 
 
