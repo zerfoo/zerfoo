@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -747,6 +748,98 @@ func TestAPIPriorityString(t *testing.T) {
 		if got := tt.p.String(); got != tt.want {
 			t.Errorf("Priority(%d).String() = %s, want %s", tt.p, got, tt.want)
 		}
+	}
+}
+
+// --- Bbolt backend tests ---
+
+func TestBboltStoreBackend(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tickets.db")
+	backend, err := NewBboltStoreBackend(dbPath)
+	if err != nil {
+		t.Fatalf("NewBboltStoreBackend: %v", err)
+	}
+	defer backend.Close()
+
+	store := NewStore(WithStoreBackend(backend))
+
+	// Create a ticket.
+	ticket := store.Create("cust-1", "Cannot deploy", "Deployment fails on v2.3", P1High)
+	if ticket.ID == "" {
+		t.Fatal("expected non-empty ticket ID")
+	}
+	if ticket.Status != StatusOpen {
+		t.Fatalf("expected open, got %s", ticket.Status)
+	}
+
+	// Get the ticket back.
+	got, ok := store.Get(ticket.ID)
+	if !ok {
+		t.Fatal("expected to find ticket")
+	}
+	if got.ID != ticket.ID {
+		t.Fatalf("expected ID %s, got %s", ticket.ID, got.ID)
+	}
+	if got.CustomerID != "cust-1" {
+		t.Fatalf("expected cust-1, got %s", got.CustomerID)
+	}
+	if got.Subject != "Cannot deploy" {
+		t.Fatalf("expected subject 'Cannot deploy', got %s", got.Subject)
+	}
+
+	// List by customer.
+	store.Create("cust-2", "Other issue", "", P3Low)
+	store.Create("cust-1", "Second ticket", "", P2Medium)
+
+	list := store.ListByCustomer("cust-1")
+	if len(list) != 2 {
+		t.Fatalf("expected 2 tickets for cust-1, got %d", len(list))
+	}
+
+	// Close the ticket (transition open -> closed).
+	now := time.Now().UTC()
+	if err := ticket.Transition(StatusClosed, now); err != nil {
+		t.Fatalf("transition to closed: %v", err)
+	}
+	// Persist the updated ticket.
+	if err := backend.Save(ticket); err != nil {
+		t.Fatalf("save after close: %v", err)
+	}
+
+	// Read it back and verify closed status round-trips.
+	got2, ok := store.Get(ticket.ID)
+	if !ok {
+		t.Fatal("expected to find closed ticket")
+	}
+	if got2.Status != StatusClosed {
+		t.Fatalf("expected closed, got %s", got2.Status)
+	}
+	if got2.ClosedAt.IsZero() {
+		t.Fatal("expected non-zero ClosedAt after close")
+	}
+
+	// Delete.
+	if err := backend.Delete(ticket.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	_, ok = store.Get(ticket.ID)
+	if ok {
+		t.Fatal("expected ticket to be deleted")
+	}
+
+	// Verify round-trip by reopening the database.
+	backend.Close()
+
+	backend2, err := NewBboltStoreBackend(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer backend2.Close()
+
+	// The remaining two tickets should still be there.
+	all := backend2.All()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 tickets after reopen, got %d", len(all))
 	}
 }
 

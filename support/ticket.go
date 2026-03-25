@@ -106,16 +106,87 @@ func (t *Ticket) Transition(to Status, now time.Time) error {
 	return nil
 }
 
-// Store is a thread-safe in-memory ticket store.
+// TicketStoreBackend defines the persistence interface for ticket storage.
+type TicketStoreBackend interface {
+	Save(ticket *Ticket) error
+	Get(id string) (*Ticket, bool)
+	ListByCustomer(customerID string) []*Ticket
+	Delete(id string) error
+}
+
+// memoryStoreBackend is the default in-memory backend.
+type memoryStoreBackend struct {
+	tickets map[string]*Ticket
+}
+
+func newMemoryStoreBackend() *memoryStoreBackend {
+	return &memoryStoreBackend{tickets: make(map[string]*Ticket)}
+}
+
+func (m *memoryStoreBackend) Save(ticket *Ticket) error {
+	m.tickets[ticket.ID] = ticket
+	return nil
+}
+
+func (m *memoryStoreBackend) Get(id string) (*Ticket, bool) {
+	t, ok := m.tickets[id]
+	return t, ok
+}
+
+func (m *memoryStoreBackend) ListByCustomer(customerID string) []*Ticket {
+	var result []*Ticket
+	for _, t := range m.tickets {
+		if t.CustomerID == customerID {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
+func (m *memoryStoreBackend) Delete(id string) error {
+	delete(m.tickets, id)
+	return nil
+}
+
+func (m *memoryStoreBackend) All() []*Ticket {
+	result := make([]*Ticket, 0, len(m.tickets))
+	for _, t := range m.tickets {
+		result = append(result, t)
+	}
+	return result
+}
+
+// StoreOption configures a Store.
+type StoreOption func(*Store)
+
+// WithStoreBackend sets the persistence backend for the Store.
+func WithStoreBackend(b TicketStoreBackend) StoreOption {
+	return func(s *Store) {
+		s.backend = b
+	}
+}
+
+// Store is a thread-safe ticket store backed by a pluggable storage backend.
 type Store struct {
 	mu      sync.RWMutex
-	tickets map[string]*Ticket
+	backend TicketStoreBackend
+	tickets map[string]*Ticket // alias for memory backend map; nil when using a persistent backend
 	nextID  int
 }
 
-// NewStore creates an empty ticket store.
-func NewStore() *Store {
-	return &Store{tickets: make(map[string]*Ticket)}
+// NewStore creates a ticket store. By default it uses an in-memory backend.
+// Use WithStoreBackend to supply a persistent backend.
+func NewStore(opts ...StoreOption) *Store {
+	s := &Store{}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.backend == nil {
+		mb := newMemoryStoreBackend()
+		s.backend = mb
+		s.tickets = mb.tickets
+	}
+	return s
 }
 
 // Create adds a new ticket and returns it.
@@ -134,7 +205,7 @@ func (s *Store) Create(customerID, subject, body string, priority Priority) *Tic
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	s.tickets[t.ID] = t
+	s.backend.Save(t)
 	return t
 }
 
@@ -142,20 +213,14 @@ func (s *Store) Create(customerID, subject, body string, priority Priority) *Tic
 func (s *Store) Get(id string) (*Ticket, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	t, ok := s.tickets[id]
-	return t, ok
+	return s.backend.Get(id)
 }
 
 // ListByCustomer returns all tickets for a customer, ordered by creation time (newest first).
 func (s *Store) ListByCustomer(customerID string) []*Ticket {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var result []*Ticket
-	for _, t := range s.tickets {
-		if t.CustomerID == customerID {
-			result = append(result, t)
-		}
-	}
+	result := s.backend.ListByCustomer(customerID)
 	// Sort newest first by UpdatedAt.
 	slices.SortFunc(result, func(a, b *Ticket) int {
 		return cmp.Compare(b.UpdatedAt.UnixNano(), a.UpdatedAt.UnixNano())
@@ -163,22 +228,27 @@ func (s *Store) ListByCustomer(customerID string) []*Ticket {
 	return result
 }
 
+// allLister is an optional interface that backends may implement to support
+// listing every ticket efficiently.
+type allLister interface {
+	All() []*Ticket
+}
+
 // All returns every ticket in the store.
 func (s *Store) All() []*Ticket {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	result := make([]*Ticket, 0, len(s.tickets))
-	for _, t := range s.tickets {
-		result = append(result, t)
+	if l, ok := s.backend.(allLister); ok {
+		return l.All()
 	}
-	return result
+	return nil
 }
 
 // AddComment appends a comment to the ticket.
 func (s *Store) AddComment(ticketID, author, body string) (*Comment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tickets[ticketID]
+	t, ok := s.backend.Get(ticketID)
 	if !ok {
 		return nil, fmt.Errorf("ticket %s not found", ticketID)
 	}
@@ -190,5 +260,6 @@ func (s *Store) AddComment(ticketID, author, body string) (*Comment, error) {
 	}
 	t.Comments = append(t.Comments, c)
 	t.UpdatedAt = c.CreatedAt
+	s.backend.Save(t)
 	return &c, nil
 }
