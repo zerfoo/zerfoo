@@ -42,6 +42,21 @@ func randomData[T tensor.Numeric](size int) []T {
 	return data
 }
 
+// scaleLinearWeights re-initializes the weights of a Linear layer with
+// centered Xavier-style initialization: N(0, scale^2). core.NewLinear
+// uses rand.Float32() in [0,1) which has mean 0.5 — the positive bias
+// causes activation explosion in deep networks. This function centers
+// the distribution and applies the given scale.
+func scaleLinearWeights[T tensor.Numeric](l *core.Linear[T], scale float64) {
+	for _, p := range l.Parameters() {
+		data := p.Value.Data()
+		for i := range data {
+			// Center: map [0,1) -> [-0.5, 0.5), then scale.
+			data[i] = T((float64(data[i]) - 0.5) * scale * 2)
+		}
+	}
+}
+
 // MambaBlock implements the Mamba selective state space model block.
 //
 // Architecture (Mamba-1 style):
@@ -196,6 +211,25 @@ func NewMambaBlock[T tensor.Numeric](
 		return nil, err
 	}
 
+	// Apply Xavier-style initialization: scale weights by 1/sqrt(fan_in).
+	// core.NewLinear initializes with rand.Float32() in [0,1), which causes
+	// activation explosion for larger models (e.g. dModel=64, NLayers=2).
+	scaleLinearWeights(inProj, 1.0/math.Sqrt(float64(dModel)))
+	scaleLinearWeights(xProj, 1.0/math.Sqrt(float64(dInner)))
+	scaleLinearWeights(outProj, 1.0/math.Sqrt(float64(dInner)))
+
+	// dt_proj: initialize with very small weights so that softplus(output) ≈ 0.7.
+	// This follows the Mamba paper's dt_init which targets dt ∈ [0.001, 0.1].
+	// Without this, large dt values cause the SSM recurrence to explode through
+	// the multiplicative dt*B*x interaction. See issue #158.
+	scaleLinearWeights(dtProj, 0.01/math.Sqrt(float64(dtRank)))
+
+	// Scale conv weights: depthwise conv has effective fan_in = conv_ker.
+	convScale := T(1.0 / math.Sqrt(float64(convKer)))
+	for i := range convData {
+		convData[i] *= convScale
+	}
+
 	block := &MambaBlock[T]{
 		name:       name,
 		engine:     engine,
@@ -218,6 +252,17 @@ func NewMambaBlock[T tensor.Numeric](
 		opt(block)
 	}
 	return block, nil
+}
+
+// ScaleOutputProj scales the output projection weights by the given factor.
+// Used by multi-layer models to apply residual scaling (1/sqrt(NLayers)).
+func (m *MambaBlock[T]) ScaleOutputProj(scale float64) {
+	for _, p := range m.outProj.Parameters() {
+		data := p.Value.Data()
+		for i := range data {
+			data[i] = T(float64(data[i]) * scale)
+		}
+	}
 }
 
 func (m *MambaBlock[T]) OpType() string { return "MambaBlock" }
