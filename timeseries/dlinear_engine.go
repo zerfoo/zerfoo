@@ -115,157 +115,108 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			bs := end - start
 			batchLabels := labels[start*channels*outputLen : end*channels*outputLen]
 
-			grads := make([]*tensor.TensorNumeric[float32], len(allParams))
+			// CPU gradient accumulators — one flat slice per parameter.
+			gradSlices := make([][]float32, len(allParams))
 			for i, ps := range allParams {
-				sz := 1
-				for _, s := range ps.param.Shape() {
-					sz *= s
+				gradSlices[i] = make([]float32, len(ps.param.Data()))
+			}
+
+			batchLoss := 0.0
+
+			// Decompose all samples on CPU (no trainable parameters).
+			trends := make([][][]float64, bs)
+			seasonals := make([][][]float64, bs)
+			for s := 0; s < bs; s++ {
+				trends[s], seasonals[s] = d.decompose(windows[start+s])
+			}
+
+			for c := 0; c < channels; c++ {
+				// Gather batched inputs: [bs, inputLen].
+				trendData := make([]float32, bs*inputLen)
+				seasonData := make([]float32, bs*inputLen)
+				for s := 0; s < bs; s++ {
+					for i := 0; i < inputLen; i++ {
+						trendData[s*inputLen+i] = float32(trends[s][c][i])
+						seasonData[s*inputLen+i] = float32(seasonals[s][c][i])
+					}
 				}
-				var err error
-				grads[i], err = tensor.New[float32](ps.param.Shape(), make([]float32, sz))
+
+				// GPU: one batched MatMul for trend.
+				// W [outputLen, inputLen] × X^T [inputLen, bs] = [outputLen, bs]
+				trendBatch, err := tensor.New[float32]([]int{bs, inputLen}, trendData)
 				if err != nil {
 					return nil, err
 				}
-			}
+				trendBatchT, err := eng.Transpose(ctx, trendBatch, []int{1, 0})
+				if err != nil {
+					return nil, fmt.Errorf("dlinear engine: transpose trend batch: %w", err)
+				}
+				trendOutT, err := eng.MatMul(ctx, trendWT[c], trendBatchT)
+				if err != nil {
+					return nil, fmt.Errorf("dlinear engine: matmul trend batch: %w", err)
+				}
 
-			batchLoss := float32(0)
+				// GPU: one batched MatMul for seasonal.
+				seasonBatch, err := tensor.New[float32]([]int{bs, inputLen}, seasonData)
+				if err != nil {
+					return nil, err
+				}
+				seasonBatchT, err := eng.Transpose(ctx, seasonBatch, []int{1, 0})
+				if err != nil {
+					return nil, fmt.Errorf("dlinear engine: transpose seasonal batch: %w", err)
+				}
+				seasonOutT, err := eng.MatMul(ctx, seasonWT[c], seasonBatchT)
+				if err != nil {
+					return nil, fmt.Errorf("dlinear engine: matmul seasonal batch: %w", err)
+				}
 
-			for s := 0; s < bs; s++ {
-				sample := windows[start+s]
-				trend, seasonal := d.decompose(sample)
+				// CPU: read back results and compute loss + gradients analytically.
+				// trendOutT, seasonOutT are [outputLen, bs] row-major.
+				trendOut := trendOutT.Data()
+				seasonOut := seasonOutT.Data()
+				trendBias := trendBT[c].Data()
+				seasonBias := seasonBT[c].Data()
 
-				for c := 0; c < channels; c++ {
-					trendIn, err := tensor.New[float32]([]int{1, inputLen}, float64ToFloat32(trend[c]))
-					if err != nil {
-						return nil, err
-					}
-					seasonIn, err := tensor.New[float32]([]int{1, inputLen}, float64ToFloat32(seasonal[c]))
-					if err != nil {
-						return nil, err
-					}
+				paramBase := c * 4
+				scale := float32(2.0) / float32(bs*channels*outputLen)
 
-					trendInT, err := eng.Transpose(ctx, trendIn, []int{1, 0})
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: transpose trend: %w", err)
-					}
-					trendOut, err := eng.MatMul(ctx, trendWT[c], trendInT)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: matmul trend: %w", err)
-					}
-					trendOut, err = eng.Reshape(ctx, trendOut, []int{1, outputLen})
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: reshape trend out: %w", err)
-					}
-					trendOut, err = eng.Add(ctx, trendOut, trendBT[c])
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: add trend bias: %w", err)
-					}
+				for s := 0; s < bs; s++ {
+					labelBase := s*channels*outputLen + c*outputLen
+					for o := 0; o < outputLen; o++ {
+						pred := trendOut[o*bs+s] + trendBias[o] + seasonOut[o*bs+s] + seasonBias[o]
+						label := float32(batchLabels[labelBase+o])
+						diff := pred - label
+						batchLoss += float64(diff) * float64(diff)
 
-					seasonInT, err := eng.Transpose(ctx, seasonIn, []int{1, 0})
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: transpose seasonal: %w", err)
-					}
-					seasonOut, err := eng.MatMul(ctx, seasonWT[c], seasonInT)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: matmul seasonal: %w", err)
-					}
-					seasonOut, err = eng.Reshape(ctx, seasonOut, []int{1, outputLen})
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: reshape seasonal out: %w", err)
-					}
-					seasonOut, err = eng.Add(ctx, seasonOut, seasonBT[c])
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: add seasonal bias: %w", err)
-					}
-
-					pred, err := eng.Add(ctx, trendOut, seasonOut)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: add outputs: %w", err)
-					}
-
-					labelStart := s*channels*outputLen + c*outputLen
-					labelT, err := tensor.New[float32]([]int{1, outputLen}, float64ToFloat32(batchLabels[labelStart:labelStart+outputLen]))
-					if err != nil {
-						return nil, err
-					}
-
-					diff, err := eng.Sub(ctx, pred, labelT)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: sub: %w", err)
-					}
-
-					diffSq, err := eng.Mul(ctx, diff, diff)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: mul diff: %w", err)
-					}
-					lossTensor, err := eng.Sum(ctx, diffSq, -1, false)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: sum loss: %w", err)
-					}
-					batchLoss += lossTensor.Data()[0]
-
-					scale := float32(2.0) / float32(bs*channels*outputLen)
-					dOut, err := eng.MulScalar(ctx, diff, scale)
-					if err != nil {
-						return nil, fmt.Errorf("dlinear engine: scale grad: %w", err)
-					}
-
-					paramBase := c * 4
-
-					dOutT, err := eng.Transpose(ctx, dOut, []int{1, 0})
-					if err != nil {
-						return nil, err
-					}
-					dTrendW, err := eng.MatMul(ctx, dOutT, trendIn)
-					if err != nil {
-						return nil, err
-					}
-					grads[paramBase], err = eng.Add(ctx, grads[paramBase], dTrendW)
-					if err != nil {
-						return nil, err
-					}
-
-					grads[paramBase+1], err = eng.Add(ctx, grads[paramBase+1], dOut)
-					if err != nil {
-						return nil, err
-					}
-
-					dSeasonW, err := eng.MatMul(ctx, dOutT, seasonIn)
-					if err != nil {
-						return nil, err
-					}
-					grads[paramBase+2], err = eng.Add(ctx, grads[paramBase+2], dSeasonW)
-					if err != nil {
-						return nil, err
-					}
-
-					grads[paramBase+3], err = eng.Add(ctx, grads[paramBase+3], dOut)
-					if err != nil {
-						return nil, err
+						dOut := diff * scale
+						gradSlices[paramBase+1][o] += dOut // trend bias
+						gradSlices[paramBase+3][o] += dOut // seasonal bias
+						for i := 0; i < inputLen; i++ {
+							gradSlices[paramBase][o*inputLen+i] += dOut * trendData[s*inputLen+i]
+							gradSlices[paramBase+2][o*inputLen+i] += dOut * seasonData[s*inputLen+i]
+						}
 					}
 				}
 			}
 
-			batchLossF64 := float64(batchLoss) / float64(bs*channels*outputLen)
+			batchLossF64 := batchLoss / float64(bs*channels*outputLen)
 			epochLoss += batchLossF64
 			nBatches++
 
 			if config.GradClip > 0 {
-				norm := float64(0)
-				for _, g := range grads {
-					for _, v := range g.Data() {
+				norm := 0.0
+				for _, g := range gradSlices {
+					for _, v := range g {
 						norm += float64(v) * float64(v)
 					}
 				}
 				norm = math.Sqrt(norm)
 				if norm > config.GradClip {
 					clipScale := float32(config.GradClip / norm)
-					for i, g := range grads {
-						clipped, err := eng.MulScalar(ctx, g, clipScale)
-						if err != nil {
-							return nil, err
+					for _, g := range gradSlices {
+						for j := range g {
+							g[j] *= clipScale
 						}
-						grads[i] = clipped
 					}
 				}
 			}
@@ -281,14 +232,14 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			bc2 := float32(1.0 - math.Pow(float64(beta2), float64(t)))
 
 			for i, ps := range allParams {
-				gData := grads[i].Data()
 				mData := ps.adam.m.Data()
 				vData := ps.adam.v.Data()
 				pData := ps.param.Data()
 
 				for j := range pData {
-					mData[j] = beta1*mData[j] + (1-beta1)*gData[j]
-					vData[j] = beta2*vData[j] + (1-beta2)*gData[j]*gData[j]
+					g := gradSlices[i][j]
+					mData[j] = beta1*mData[j] + (1-beta1)*g
+					vData[j] = beta2*vData[j] + (1-beta2)*g*g
 					mHat := mData[j] / bc1
 					vHat := vData[j] / bc2
 					pData[j] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*pData[j])

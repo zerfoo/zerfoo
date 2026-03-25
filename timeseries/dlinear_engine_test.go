@@ -3,6 +3,7 @@ package timeseries
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
@@ -152,4 +153,62 @@ func TestDLinear_TrainWindowed_Engine_MultiChannel(t *testing.T) {
 	}
 
 	t.Logf("engine multi-channel training: final_loss=%.6f", result.FinalLoss)
+}
+
+// TestDLinear_TrainWindowed_Engine_Issue172 reproduces the scenario from issue
+// #172: 500 samples, 20 channels, 3 epochs. The batched engine path should
+// complete in well under 1 second on CPU (the old per-sample path took ~3.7s
+// on GPU due to allocation overhead).
+func TestDLinear_TrainWindowed_Engine_Issue172(t *testing.T) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	inputLen := 24
+	outputLen := 12
+	channels := 20
+	nSamples := 500
+
+	m, err := NewDLinear(inputLen, outputLen, channels, 5, WithEngine(eng))
+	if err != nil {
+		t.Fatalf("NewDLinear: %v", err)
+	}
+
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*channels*outputLen)
+	for s := 0; s < nSamples; s++ {
+		offset := float64(s) * 0.5
+		windows[s] = make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			windows[s][c] = make([]float64, inputLen)
+			for i := 0; i < inputLen; i++ {
+				windows[s][c][i] = math.Sin(2*math.Pi*float64(i+int(offset))/24.0) + float64(c)*0.1
+			}
+		}
+		for c := 0; c < channels; c++ {
+			for o := 0; o < outputLen; o++ {
+				labels[s*channels*outputLen+c*outputLen+o] = math.Sin(2*math.Pi*float64(inputLen+o+int(offset))/24.0) + float64(c)*0.1
+			}
+		}
+	}
+
+	start := time.Now()
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   3,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if !isFinite(result.FinalLoss) {
+		t.Fatalf("final loss = %v, want finite", result.FinalLoss)
+	}
+	if result.FinalLoss >= result.LossHistory[0] {
+		t.Errorf("loss did not decrease: first=%v, last=%v", result.LossHistory[0], result.FinalLoss)
+	}
+
+	t.Logf("issue #172 scenario: 500 samples × 20 channels × 3 epochs = %.3fs, final_loss=%.6f", elapsed.Seconds(), result.FinalLoss)
+	if elapsed > 2*time.Second {
+		t.Errorf("training took %v, expected <2s (batched engine should eliminate per-sample allocation overhead)", elapsed)
+	}
 }
