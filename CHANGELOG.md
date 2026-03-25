@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1](https://github.com/zerfoo/zerfoo/compare/v1.17.0...v1.17.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* **serve:** remove duplicate declarations after file split ([15be5a7](https://github.com/zerfoo/zerfoo/commit/15be5a7537fbb6dd38c459fa63c1be99a2ec7f54))
+* **timeseries:** remove duplicate declarations after itransformer file split ([3146a8a](https://github.com/zerfoo/zerfoo/commit/3146a8acd1d03dfea266d772bd26ff655b719de8))
+
 ## [1.17.0](https://github.com/zerfoo/zerfoo/compare/v1.16.0...v1.17.0) (2026-03-25)
 
 
