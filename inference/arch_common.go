@@ -439,6 +439,24 @@ func buildTransformerGraph(
 				}
 			}
 		}
+		// Merged QKV for Q4_K quantized weights.
+		// Note: In Q4_K_M models, V may use Q6_K while Q/K use Q4_K. We only
+		// merge when all three are Q4KStorage to keep the storage type uniform.
+		if qQ4K, ok := any(qW.GetStorage()).(*tensor.Q4KStorage); ok {
+			if kQ4K, ok := any(kW.GetStorage()).(*tensor.Q4KStorage); ok {
+				if vQ4K, ok := any(vW.GetStorage()).(*tensor.Q4KStorage); ok {
+					mergedQ4K := tensor.MergeQ4KStorage(qQ4K, kQ4K, vQ4K)
+					qShape := qW.Shape()
+					kShape := kW.Shape()
+					vShape := vW.Shape()
+					nMerged := qShape[0] + kShape[0] + vShape[0]
+					mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4K)
+					if mergeErr == nil {
+						gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+					}
+				}
+			}
+		}
 
 		// Set Q/K norms if enabled (Gemma 3).
 		if opts.qkNorm {
@@ -550,6 +568,19 @@ func buildTransformerGraph(
 				upShape := upW.Shape()
 				nMerged := gateShape[0] + upShape[0]
 				mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{gateShape[1], nMerged}, mergedGateUpQ4)
+				if mergeErr == nil {
+					ffn.SetMergedGateUp(mergedT, gateShape[0], upShape[0])
+				}
+			}
+		}
+		// Merged Gate+Up for Q4_K quantized weights.
+		if gateQ4K, ok := any(gateW.GetStorage()).(*tensor.Q4KStorage); ok {
+			if upQ4K, ok := any(upW.GetStorage()).(*tensor.Q4KStorage); ok {
+				mergedGateUpQ4K := tensor.MergeQ4KStorage(gateQ4K, upQ4K)
+				gateShape := gateW.Shape()
+				upShape := upW.Shape()
+				nMerged := gateShape[0] + upShape[0]
+				mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{gateShape[1], nMerged}, mergedGateUpQ4K)
 				if mergeErr == nil {
 					ffn.SetMergedGateUp(mergedT, gateShape[0], upShape[0])
 				}
