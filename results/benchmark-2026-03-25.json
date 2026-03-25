@@ -1,0 +1,139 @@
+{
+  "date": "2026-03-25",
+  "commit": "294aa43",
+  "hardware": "DGX Spark GB10 (sm_121, 128GB LPDDR5x)",
+  "prompt": "Explain the theory of relativity in simple terms.",
+  "tokens": 128,
+  "runs": 3,
+  "sampling": "greedy (temp=0)",
+  "ollama_version": "0.17.7",
+  "results": [
+    {
+      "model": "gemma3-1b",
+      "architecture": "gemma3",
+      "size": "1B",
+      "zerfoo_tps": 236.38,
+      "ollama_tps": 204.37,
+      "ratio": 1.16,
+      "winner": "Zerfoo"
+    },
+    {
+      "model": "deepseek-r1-1.5b",
+      "architecture": "deepseek2",
+      "size": "1.5B",
+      "zerfoo_tps": 192.83,
+      "ollama_tps": 184.75,
+      "ratio": 1.04,
+      "winner": "Zerfoo"
+    },
+    {
+      "model": "llama3.2-3b",
+      "architecture": "llama",
+      "size": "3B",
+      "zerfoo_tps": 96.06,
+      "ollama_tps": 97.66,
+      "ratio": 0.98,
+      "winner": "Ollama"
+    },
+    {
+      "model": "phi3-mini",
+      "architecture": "phi3",
+      "size": "3.8B",
+      "zerfoo_tps": null,
+      "ollama_tps": 90.80,
+      "ratio": null,
+      "winner": "N/A",
+      "note": "Zerfoo GGUF load failed — likely HuggingFace GGUF format mismatch"
+    },
+    {
+      "model": "mistral-7b",
+      "architecture": "mistral",
+      "size": "7B",
+      "zerfoo_tps": 11.61,
+      "ollama_tps": 46.77,
+      "ratio": 0.25,
+      "winner": "Ollama",
+      "note": "Major regression — Zerfoo 4x slower than Ollama"
+    },
+    {
+      "model": "llama3.1-8b",
+      "architecture": "llama",
+      "size": "8B",
+      "zerfoo_tps": null,
+      "ollama_tps": 42.85,
+      "ratio": null,
+      "winner": "N/A",
+      "note": "Zerfoo GGUF load failed — likely HuggingFace GGUF format mismatch"
+    },
+    {
+      "model": "gemma3-4b",
+      "architecture": "gemma3",
+      "size": "4B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "GGUF file not downloaded in time"
+    },
+    {
+      "model": "qwen2.5-7b",
+      "architecture": "qwen2",
+      "size": "7B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "GGUF file not downloaded in time"
+    },
+    {
+      "model": "mixtral-8x7b",
+      "architecture": "mixtral",
+      "size": "47B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "Large model — GGUF and Ollama not yet acquired"
+    },
+    {
+      "model": "command-r-35b",
+      "architecture": "command-r",
+      "size": "35B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "Large model — GGUF and Ollama not yet acquired"
+    },
+    {
+      "model": "falcon-7b",
+      "architecture": "falcon",
+      "size": "7B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "GGUF not available — needs conversion via zonnx"
+    },
+    {
+      "model": "mamba-2.8b",
+      "architecture": "mamba",
+      "size": "2.8B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "GGUF not available — needs conversion via zonnx"
+    },
+    {
+      "model": "rwkv-7b",
+      "architecture": "rwkv",
+      "size": "7B",
+      "zerfoo_tps": null,
+      "ollama_tps": null,
+      "ratio": null,
+      "winner": "SKIP",
+      "note": "GGUF not available — needs conversion via zonnx"
+    }
+  ]
+}
