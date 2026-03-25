@@ -38,20 +38,23 @@ func (s *Server) handleAudioTranscriptions(w http.ResponseWriter, r *http.Reques
 	r.Body = http.MaxBytesReader(w, r.Body, maxAudioSize+1024)
 
 	if err := r.ParseMultipartForm(maxAudioSize); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		s.logger.Debug("invalid multipart form", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing required field 'file': "+err.Error())
+		s.logger.Debug("missing required field 'file'", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "missing required field 'file'")
 		return
 	}
 	defer file.Close()
 
 	audioData, err := io.ReadAll(io.LimitReader(file, maxAudioSize+1))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read audio file: "+err.Error())
+		s.logger.Debug("failed to read audio file", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "failed to read audio file")
 		return
 	}
 	if len(audioData) > maxAudioSize {
