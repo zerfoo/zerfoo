@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.1](https://github.com/zerfoo/zerfoo/compare/v1.20.0...v1.20.1) (2026-03-25)
+
+
+### Performance Improvements
+
+* **timeseries:** eliminate all GPU dispatch from DLinear training loop ([#172](https://github.com/zerfoo/zerfoo/issues/172)) ([9130526](https://github.com/zerfoo/zerfoo/commit/9130526f3ce8a0d16e7fd7a5a6e797186f8e4b83))
+
 ## [1.20.0](https://github.com/zerfoo/zerfoo/compare/v1.19.1...v1.20.0) (2026-03-25)
 
 
