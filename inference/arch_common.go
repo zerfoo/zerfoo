@@ -130,11 +130,29 @@ func buildTransformerGraph(
 
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 		s := t.GetStorage()
-		// GPU path: use virtual transpose for Q4 weights so the Q4Storage
-		// is preserved and the Q4 GEMV kernel can be used at inference time.
-		// Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
+		// GPU path: use virtual transpose for Q4/Q4K/Q5K/Q6K weights so the
+		// quantized storage is preserved and the GEMV kernel can be used at
+		// inference time. Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
 		if isGPUEngine {
 			if _, ok := any(s).(*tensor.Q4Storage); ok {
+				shape := t.Shape()
+				if len(shape) == 2 {
+					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				}
+			}
+			if _, ok := any(s).(*tensor.Q4KStorage); ok {
+				shape := t.Shape()
+				if len(shape) == 2 {
+					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				}
+			}
+			if _, ok := any(s).(*tensor.Q5KStorage); ok {
+				shape := t.Shape()
+				if len(shape) == 2 {
+					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				}
+			}
+			if _, ok := any(s).(*tensor.Q6KStorage); ok {
 				shape := t.Shape()
 				if len(shape) == 2 {
 					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
@@ -201,6 +219,24 @@ func buildTransformerGraph(
 			}
 		}
 		if _, ok := any(s).(*tensor.Q8Storage); ok {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+			}
+		}
+		if _, ok := any(s).(*tensor.Q4KStorage); ok {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+			}
+		}
+		if _, ok := any(s).(*tensor.Q5KStorage); ok {
+			shape := t.Shape()
+			if len(shape) == 2 {
+				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+			}
+		}
+		if _, ok := any(s).(*tensor.Q6KStorage); ok {
 			shape := t.Shape()
 			if len(shape) == 2 {
 				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
