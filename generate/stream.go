@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -162,7 +163,10 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		SyncCounterFromGPU() error
 	}
 	if cs, ok := cacheProvider.(counterSyncer); ok {
-		_ = cs.SyncCounterFromGPU()
+		if err := cs.SyncCounterFromGPU(); err != nil {
+			// Log but don't fail -- GPU counter desync is recoverable
+			fmt.Fprintf(os.Stderr, "warning: GPU counter sync failed: %v\n", err)
+		}
 	}
 
 	return stream.OnToken("", true)

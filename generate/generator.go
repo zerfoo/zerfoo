@@ -476,7 +476,10 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		SyncCounterFromGPU() error
 	}
 	if cs, ok := cacheProvider.(counterSyncer); ok {
-		_ = cs.SyncCounterFromGPU()
+		if err := cs.SyncCounterFromGPU(); err != nil {
+			// Log but don't fail -- GPU counter desync is recoverable
+			fmt.Fprintf(os.Stderr, "warning: GPU counter sync failed: %v\n", err)
+		}
 	}
 
 	if len(generatedIDs) == 0 {
