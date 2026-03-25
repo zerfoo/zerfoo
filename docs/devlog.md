@@ -5,6 +5,38 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-25: Multi-model benchmark — Zerfoo vs Ollama (6 architectures)
+
+**Type:** benchmark
+**Tags:** benchmark, ollama, multi-model, DGX Spark, throughput
+
+**Problem:** Zerfoo claimed 245 tok/s on Gemma 3 1B (20% faster than Ollama) but this was measured on a single model. Need head-to-head comparison across all supported architectures.
+
+**Root cause:** N/A (benchmark, not bug).
+
+**Results (DGX Spark GB10, commit 294aa43, Ollama v0.17.7, 128 tokens, 3 runs median, greedy):**
+
+| Model | Zerfoo (tok/s) | Ollama (tok/s) | Ratio | Winner |
+|-------|----------------|----------------|-------|--------|
+| Gemma 3 1B Q4_K_M | 236.38 | 204.37 | 1.16x | Zerfoo |
+| DeepSeek R1 1.5B Q4_K_M | 192.83 | 184.75 | 1.04x | Zerfoo |
+| Llama 3.2 3B Q4_K_M | 96.06 | 97.66 | 0.98x | ~Even |
+| Mistral 7B Q4_K_M | 11.61 | 46.77 | 0.25x | Ollama |
+| Phi 3 mini Q4_K_M | FAIL | 90.80 | N/A | GGUF load failure |
+| Llama 3.1 8B Q4_K_M | FAIL | 42.85 | N/A | GGUF load failure |
+
+**Key findings:**
+1. Gemma 3 1B advantage confirmed at 1.16x (down from 1.20x due to v1.19.0 codebase changes — still meets >= 1.15x target).
+2. DeepSeek R1 1.5B: Zerfoo slightly faster (1.04x).
+3. Llama 3.2 3B: Parity with Ollama (0.98x).
+4. **Mistral 7B: major regression** — Zerfoo 4x slower than Ollama. Only 11.61 tok/s vs expected ~50+ tok/s. Needs investigation (likely missing CUDA graph capture or fallback to CPU path for some ops).
+5. Phi 3 mini and Llama 3.1 8B: GGUF files from HuggingFace fail to load. Parser compatibility issue with these specific GGUF variants.
+6. ztensor v0.3.0 had linux/arm64 dlopen linker failure — upgraded to v0.4.1 to fix.
+
+**Impact:** README updated from "244 tok/s, 20% faster" to "236 tok/s, 16% faster". Website benchmarks page updated with multi-model comparison table. Mistral 7B regression needs separate issue.
+
+---
+
 ## 2026-03-20: E103 throughput regression root cause — two compounding bugs
 
 **Type:** investigation
