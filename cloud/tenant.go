@@ -116,6 +116,14 @@ func (t *Tenant) RefundTokens(n int64) {
 	t.tokenCount.Add(-n)
 }
 
+// DeductTokens unconditionally adds n tokens to the consumed count without
+// checking the budget. This is used to charge excess usage when actual token
+// generation exceeds the pre-authorized estimate (e.g. max_tokens=1 but the
+// model produced more tokens). Unlike ConsumeTokens, it never fails.
+func (t *Tenant) DeductTokens(n int64) {
+	t.tokenCount.Add(n)
+}
+
 // TenantManager provides CRUD operations on tenants, keyed by both tenant ID
 // and API key for O(1) lookups in either direction.
 type TenantManager struct {

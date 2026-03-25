@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -392,6 +393,55 @@ func TestCloud_TokenBudgetPreAuth(t *testing.T) {
 
 		if w2.Code != http.StatusOK {
 			t.Errorf("second request status = %d, want 200 (reconciliation should have refunded tokens)", w2.Code)
+		}
+	})
+
+	t.Run("deducts excess tokens when actual exceeds estimate", func(t *testing.T) {
+		// Simulate a request with max_tokens=1 but the model generates 50 tokens.
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if usage := generate.TokenUsageFromContext(r.Context()); usage != nil {
+				usage.SetPromptTokens(10)
+				usage.SetCompletionTokens(40)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cs, _ := setupCloudServer(inner)
+		// Budget of 100 tokens.
+		cs.Tenants().Create(TenantConfig{ID: "t-excess", APIKey: "key-excess", RateLimit: 100, TokenBudget: 100})
+		handler := cs.Handler()
+
+		// Request with max_tokens=1 — pre-authorizes only 1 token, but actual=50.
+		body := `{"max_tokens": 1}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-excess")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("first request status = %d, want 200", w.Code)
+		}
+
+		// After reconciliation the full 50 tokens should be consumed (not just 1).
+		// A second identical request should succeed only if budget has 50 left
+		// (100 - 50 = 50 remaining, pre-auth 1 OK, then 50 more deducted → 100 used).
+		req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req2.Header.Set("Authorization", "Bearer key-excess")
+		w2 := httptest.NewRecorder()
+		handler.ServeHTTP(w2, req2)
+
+		if w2.Code != http.StatusOK {
+			t.Fatalf("second request status = %d, want 200 (50 tokens remaining)", w2.Code)
+		}
+
+		// After two requests, 100 tokens consumed. A third should be rejected.
+		req3 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req3.Header.Set("Authorization", "Bearer key-excess")
+		w3 := httptest.NewRecorder()
+		handler.ServeHTTP(w3, req3)
+
+		if w3.Code != http.StatusTooManyRequests {
+			t.Errorf("third request status = %d, want 429 (budget exhausted after excess deductions)", w3.Code)
 		}
 	})
 }
@@ -795,6 +845,69 @@ func TestTenantManager_CRUD(t *testing.T) {
 		if len(tenants) != 2 {
 			t.Fatalf("List() len = %d, want 2", len(tenants))
 		}
+	})
+}
+
+func TestCloud_BillingBodyLimit(t *testing.T) {
+	t.Run("oversized body is truncated at 10MB", func(t *testing.T) {
+		var bodyLen int
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			bodyLen = len(b)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usage": map[string]int{
+					"prompt_tokens":     10,
+					"completion_tokens": 5,
+					"total_tokens":      15,
+				},
+			})
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "t-big", APIKey: "key-big", RateLimit: 1000, TokenBudget: 100000})
+		handler := cs.Handler()
+
+		// Create a body larger than 10MB.
+		bigBody := strings.NewReader(strings.Repeat("x", 11<<20))
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bigBody)
+		req.Header.Set("Authorization", "Bearer key-big")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		// The billing middleware should have limited the read to 10MB.
+		if bodyLen > 10<<20 {
+			t.Errorf("downstream saw %d bytes, want <= %d", bodyLen, 10<<20)
+		}
+	})
+
+	t.Run("normal request body still works", func(t *testing.T) {
+		var sawMaxTokens bool
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usage": map[string]int{
+					"prompt_tokens":     10,
+					"completion_tokens": 5,
+					"total_tokens":      15,
+				},
+			})
+		})
+
+		cs, _ := setupCloudServer(inner)
+		cs.Tenants().Create(TenantConfig{ID: "t-norm", APIKey: "key-norm", RateLimit: 1000, TokenBudget: 100000})
+		handler := cs.Handler()
+
+		body := `{"max_tokens": 42}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer key-norm")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		_ = sawMaxTokens
 	})
 }
 

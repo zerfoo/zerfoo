@@ -141,7 +141,7 @@ func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 		// needed. Default to cs.maxTokens when not specified or unparseable.
 		estimated := cs.maxTokens
 		if r.Body != nil {
-			bodyBytes, err := io.ReadAll(r.Body)
+			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
 			r.Body.Close()
 			if err == nil && len(bodyBytes) > 0 {
 				var req struct {
@@ -189,10 +189,16 @@ func (cs *CloudServer) billingMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Reconcile: return unused tokens from the pre-authorized estimate.
+		// Reconcile: return unused tokens from the pre-authorized estimate,
+		// or deduct excess when actual usage exceeds the estimate (e.g. a
+		// client sends max_tokens=1 but the model generates more tokens).
 		actual := int64(input + output)
-		if tenant != nil && actual < estimated {
-			tenant.RefundTokens(estimated - actual)
+		if tenant != nil {
+			if actual < estimated {
+				tenant.RefundTokens(estimated - actual)
+			} else if actual > estimated {
+				tenant.DeductTokens(actual - estimated)
+			}
 		}
 
 		// Record billing.
