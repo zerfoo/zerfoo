@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0](https://github.com/zerfoo/zerfoo/compare/v1.17.2...v1.18.0) (2026-03-25)
+
+
+### Features
+
+* **cloud:** add concurrency limit and model allow list to TenantManager ([7c9e401](https://github.com/zerfoo/zerfoo/commit/7c9e401043a236013b1c4b15c82451710a6bb444))
+* **cloud:** add persistent bbolt backend for TenantManager ([1266657](https://github.com/zerfoo/zerfoo/commit/126665745547f5b795374cf5a5852a512fd4bb51))
+
+
+### Bug Fixes
+
+* **timeseries:** use GPU engine for DLinear, NHiTS, Mamba forward pass in training ([#166](https://github.com/zerfoo/zerfoo/issues/166)) ([64a5795](https://github.com/zerfoo/zerfoo/commit/64a579537eae3d5df73c716e36810e31a343b073))
+
 ## [1.17.2](https://github.com/zerfoo/zerfoo/compare/v1.17.1...v1.17.2) (2026-03-25)
 
 
