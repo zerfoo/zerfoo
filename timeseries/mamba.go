@@ -17,6 +17,17 @@ import (
 	"github.com/zerfoo/zerfoo/layers/ssm"
 )
 
+// scaleParams re-centers and scales parameter values in-place.
+// Maps from [0,1) uniform to zero-centered [-scale, +scale) range.
+func scaleParams(params []*graph.Parameter[float32], scale float32) {
+	for _, p := range params {
+		data := p.Value.Data()
+		for i := range data {
+			data[i] = (data[i] - 0.5) * scale * 2
+		}
+	}
+}
+
 // MambaConfig holds the configuration for a Mamba model.
 type MambaConfig struct {
 	Channels     int // number of input channels
@@ -89,13 +100,19 @@ func NewMamba(config MambaConfig, engine compute.Engine[float32], ops numeric.Ar
 	}
 
 	// Input embedding: channels -> dModel.
+	// Scale weights by 1/sqrt(channels) to keep activations normalized.
 	embed, err := core.NewLinear[float32]("mamba_embed", engine, ops, config.Channels, config.DModel)
 	if err != nil {
 		return nil, fmt.Errorf("mamba: creating embed: %w", err)
 	}
+	scaleParams(embed.Parameters(), float32(1.0/math.Sqrt(float64(config.Channels))))
 	m.embed = embed
 
 	// Mamba blocks.
+	// Scale each block's output projection by 1/sqrt(NLayers) to prevent
+	// residual accumulation from causing activation explosion. This follows
+	// the GPT-2 / Mamba convention for deep residual networks.
+	resScale := 1.0 / math.Sqrt(float64(config.NLayers))
 	m.blocks = make([]*ssm.MambaBlock[float32], config.NLayers)
 	for l := 0; l < config.NLayers; l++ {
 		blk, err := ssm.NewMambaBlock[float32](
@@ -106,15 +123,19 @@ func NewMamba(config MambaConfig, engine compute.Engine[float32], ops numeric.Ar
 		if err != nil {
 			return nil, fmt.Errorf("mamba: creating block %d: %w", l, err)
 		}
+		// Scale the output projection by residual scale.
+		blk.ScaleOutputProj(resScale)
 		m.blocks[l] = blk
 	}
 
 	// Output head: dModel -> channels*outputLen.
+	// Scale weights by 1/sqrt(dModel).
 	outDim := config.Channels * config.OutputLen
 	head, err := core.NewLinear[float32]("mamba_head", engine, ops, config.DModel, outDim)
 	if err != nil {
 		return nil, fmt.Errorf("mamba: creating head: %w", err)
 	}
+	scaleParams(head.Parameters(), float32(1.0/math.Sqrt(float64(config.DModel))))
 	m.head = head
 
 	return m, nil
@@ -473,6 +494,23 @@ func (m *Mamba) PredictWindowed(modelPath string, windows [][][]float64) ([]floa
 		if err := m.loadWeights(modelPath); err != nil {
 			return nil, fmt.Errorf("mamba: load weights: %w", err)
 		}
+	}
+
+	// CPU fallback: if no engine is set, create a temporary Mamba with a
+	// CPUEngine, copy weights, run inference, and return. This mirrors the
+	// TrainWindowed fallback and fixes issue #158 where PredictWindowed
+	// would panic with nil pointer dereference on a nil-engine model.
+	if m.engine == nil {
+		cpuEngine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+		cpuOps := numeric.Float32Ops{}
+		tmp, err := NewMamba(m.config, cpuEngine, cpuOps)
+		if err != nil {
+			return nil, fmt.Errorf("mamba: creating CPU fallback model: %w", err)
+		}
+		copyMambaParams(m, tmp)
+		tmp.normMeans = m.normMeans
+		tmp.normStds = m.normStds
+		return tmp.PredictWindowed(modelPath, windows)
 	}
 
 	nSamples := len(windows)
