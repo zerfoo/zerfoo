@@ -228,7 +228,7 @@ func TestLoadTensors_Q8_0(t *testing.T) {
 	}
 }
 
-func TestDecodeQ5KTensor_NativeStorage(t *testing.T) {
+func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 	// Q5_K: 256 elements per super-block, 176 bytes per block.
 	const numElements = 256
 	const blockBytes = 176
@@ -245,8 +245,8 @@ func TestDecodeQ5KTensor_NativeStorage(t *testing.T) {
 	}
 
 	// Q5_K should use native Q5KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q5KStorage); !ok {
-		t.Fatalf("expected Q5KStorage, got %T", tns.GetStorage())
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatalf("expected Q4Storage after re-quant, got %T", tns.GetStorage())
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -562,7 +562,7 @@ func TestLoadTensors_BF16(t *testing.T) {
 	}
 }
 
-func TestDecodeQ6KTensor_NativeStorage(t *testing.T) {
+func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 	// Create 256 elements (1 Q6_K super-block = 210 bytes).
 	const numElements = 256
 	const blockBytes = 210
@@ -600,8 +600,8 @@ func TestDecodeQ6KTensor_NativeStorage(t *testing.T) {
 	}
 
 	// Q6_K should use native Q6KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q6KStorage); !ok {
-		t.Fatalf("expected Q6KStorage, got %T", tns.GetStorage())
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatalf("expected Q4Storage after re-quant, got %T", tns.GetStorage())
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,
@@ -621,18 +621,28 @@ func TestDecodeQ6KTensor_NativeStorage(t *testing.T) {
 		t.Error("expected non-zero dequantized values")
 	}
 
-	// Verify round-trip: dequantizing via the storage should produce
-	// identical values to dequantizing the same raw data directly.
+	// Verify approximate round-trip: Q6_K → F32 → Q4_0 → F32 is lossy,
+	// so values should be within re-quantization tolerance of the Q6_K originals.
 	q6k, err := tensor.NewQ6KStorageFromRaw(raw, numElements)
 	if err != nil {
 		t.Fatalf("NewQ6KStorageFromRaw: %v", err)
 	}
 	ref := make([]float32, numElements)
 	q6k.Dequantize(ref)
-	for i, want := range ref {
-		if data[i] != want {
-			t.Errorf("index %d: got %v, want %v", i, data[i], want)
+	maxErr := float32(0)
+	for i := range ref {
+		diff := data[i] - ref[i]
+		if diff < 0 {
+			diff = -diff
 		}
+		if diff > maxErr {
+			maxErr = diff
+		}
+	}
+	// Q4_0 has 4-bit precision per block of 32 values; typical error is
+	// proportional to the range of values in each block.
+	if maxErr > 50 {
+		t.Errorf("max re-quantization error = %v, want < 50", maxErr)
 	}
 }
 
