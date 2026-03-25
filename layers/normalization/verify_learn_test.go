@@ -121,6 +121,88 @@ func buildNormTestCases() []normLayerTestCase {
 				return forward, backward, params, input, targetData
 			},
 		},
+		{
+			name: "BatchNorm",
+			setup: func(t *testing.T, engine compute.Engine[float32], ops numeric.Arithmetic[float32], rng *rand.Rand) (
+				func(context.Context, *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error),
+				func(context.Context, *tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32]) error,
+				[]*graph.Parameter[float32],
+				*tensor.TensorNumeric[float32],
+				[]float32,
+			) {
+				const (
+					batch    = 2
+					channels = 8
+				)
+
+				// Create learnable scale and bias parameters.
+				scaleData := make([]float32, channels)
+				for i := range scaleData {
+					scaleData[i] = 1.0
+				}
+				scaleTensor, err := tensor.New[float32]([]int{channels}, scaleData)
+				if err != nil {
+					t.Fatalf("tensor.New scale: %v", err)
+				}
+				scaleParam, err := graph.NewParameter[float32]("bn_scale", scaleTensor, tensor.New[float32])
+				if err != nil {
+					t.Fatalf("graph.NewParameter scale: %v", err)
+				}
+
+				biasData := make([]float32, channels)
+				biasTensor, err := tensor.New[float32]([]int{channels}, biasData)
+				if err != nil {
+					t.Fatalf("tensor.New bias: %v", err)
+				}
+				biasParam, err := graph.NewParameter[float32]("bn_bias", biasTensor, tensor.New[float32])
+				if err != nil {
+					t.Fatalf("graph.NewParameter bias: %v", err)
+				}
+
+				bn := NewBatchNormalizationWithParams[float32](engine, ops, float32(1e-5), scaleParam, biasParam)
+
+				// Pre-computed running mean and variance.
+				meanData := make([]float32, channels)
+				mean, err := tensor.New[float32]([]int{channels}, meanData)
+				if err != nil {
+					t.Fatalf("tensor.New mean: %v", err)
+				}
+				varData := make([]float32, channels)
+				for i := range varData {
+					varData[i] = 1.0
+				}
+				variance, err := tensor.New[float32]([]int{channels}, varData)
+				if err != nil {
+					t.Fatalf("tensor.New variance: %v", err)
+				}
+
+				inputData := make([]float32, batch*channels)
+				for i := range inputData {
+					inputData[i] = float32(rng.NormFloat64()) * 0.5
+				}
+				input, err := tensor.New[float32]([]int{batch, channels}, inputData)
+				if err != nil {
+					t.Fatalf("tensor.New input: %v", err)
+				}
+
+				targetData := make([]float32, batch*channels)
+				for i := range targetData {
+					targetData[i] = float32(rng.NormFloat64()) * 0.1
+				}
+
+				params := bn.Parameters()
+
+				forward := func(ctx context.Context, in *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+					return bn.Forward(ctx, in, scaleParam.Value, biasParam.Value, mean, variance)
+				}
+				backward := func(ctx context.Context, outputGrad *tensor.TensorNumeric[float32], in *tensor.TensorNumeric[float32]) error {
+					_, err := bn.Backward(ctx, types.FullBackprop, outputGrad, in)
+					return err
+				}
+
+				return forward, backward, params, input, targetData
+			},
+		},
 	}
 }
 
@@ -203,11 +285,8 @@ func TestNormLayers_LossDecreases(t *testing.T) {
 	}
 }
 
-// TestBatchNorm_Backward explicitly tests that BatchNormalization backward
-// produces non-nil, non-zero gradients. BatchNorm currently has NO backward
-// implementation (returns nil, nil) and NO learnable parameters — this test
-// documents that gap and will fail once a real backward is implemented,
-// signaling that the learning test above should be updated to include BatchNorm.
+// TestBatchNorm_Backward tests that BatchNormalization backward produces
+// non-nil, non-zero gradients for input and accumulates parameter gradients.
 func TestBatchNorm_Backward(t *testing.T) {
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
@@ -219,7 +298,31 @@ func TestBatchNorm_Backward(t *testing.T) {
 	)
 	epsilon := float32(1e-5)
 
-	bn := NewBatchNormalization[float32](engine, ops, epsilon)
+	// Create learnable scale and bias parameters.
+	scaleData := make([]float32, channels)
+	for i := range scaleData {
+		scaleData[i] = 1.0
+	}
+	scaleTensor, err := tensor.New[float32]([]int{channels}, scaleData)
+	if err != nil {
+		t.Fatalf("tensor.New scale: %v", err)
+	}
+	scaleParam, err := graph.NewParameter[float32]("bn_scale", scaleTensor, tensor.New[float32])
+	if err != nil {
+		t.Fatalf("graph.NewParameter scale: %v", err)
+	}
+
+	biasData := make([]float32, channels)
+	biasTensor, err := tensor.New[float32]([]int{channels}, biasData)
+	if err != nil {
+		t.Fatalf("tensor.New bias: %v", err)
+	}
+	biasParam, err := graph.NewParameter[float32]("bn_bias", biasTensor, tensor.New[float32])
+	if err != nil {
+		t.Fatalf("graph.NewParameter bias: %v", err)
+	}
+
+	bn := NewBatchNormalizationWithParams[float32](engine, ops, epsilon, scaleParam, biasParam)
 
 	rng := rand.New(rand.NewPCG(42, 0))
 
@@ -231,23 +334,6 @@ func TestBatchNorm_Backward(t *testing.T) {
 	input, err := tensor.New[float32]([]int{batch, channels}, inputData)
 	if err != nil {
 		t.Fatalf("tensor.New input: %v", err)
-	}
-
-	// Scale (gamma): ones
-	scaleData := make([]float32, channels)
-	for i := range scaleData {
-		scaleData[i] = 1.0
-	}
-	scale, err := tensor.New[float32]([]int{channels}, scaleData)
-	if err != nil {
-		t.Fatalf("tensor.New scale: %v", err)
-	}
-
-	// Bias (beta): zeros
-	biasData := make([]float32, channels)
-	bias, err := tensor.New[float32]([]int{channels}, biasData)
-	if err != nil {
-		t.Fatalf("tensor.New bias: %v", err)
 	}
 
 	// Running mean: zeros
@@ -268,7 +354,7 @@ func TestBatchNorm_Backward(t *testing.T) {
 	}
 
 	// Forward pass.
-	output, err := bn.Forward(ctx, input, scale, bias, mean, variance)
+	output, err := bn.Forward(ctx, input, scaleParam.Value, biasTensor, mean, variance)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -283,22 +369,36 @@ func TestBatchNorm_Backward(t *testing.T) {
 		t.Fatalf("tensor.New outputGrad: %v", err)
 	}
 
-	// Backward pass — currently returns (nil, nil).
+	// Backward pass.
 	inputGrads, err := bn.Backward(ctx, types.FullBackprop, outputGrad, input)
 	if err != nil {
 		t.Fatalf("Backward returned unexpected error: %v", err)
 	}
 
-	// Document that BatchNorm backward is a no-op (inference-only).
-	// When a real backward is implemented, these checks should be flipped
-	// to assert non-nil, non-zero gradients.
-	if inputGrads != nil {
-		t.Log("BatchNorm backward now returns gradients — update TestNormLayers_LossDecreases to include BatchNorm")
+	// Input gradients must be non-nil and non-zero.
+	if inputGrads == nil || len(inputGrads) != 1 || inputGrads[0] == nil {
+		t.Fatal("expected non-nil gradient slice with one element")
 	}
 
-	// Document that BatchNorm has no learnable parameters.
+	hasNonZero := false
+	for _, v := range inputGrads[0].Data() {
+		if v != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("input gradient is all zeros")
+	}
+
+	// Parameter gradients must be non-nil and non-zero.
 	params := bn.Parameters()
-	if len(params) != 0 {
-		t.Log("BatchNorm now has learnable parameters — update TestNormLayers_LossDecreases to include BatchNorm")
+	if len(params) != 2 {
+		t.Fatalf("expected 2 parameters, got %d", len(params))
+	}
+	for _, p := range params {
+		if !hasNonZeroGradient(p) {
+			t.Errorf("parameter %q has zero gradient", p.Name)
+		}
 	}
 }

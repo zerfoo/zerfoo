@@ -11,7 +11,7 @@ import (
 	"github.com/zerfoo/ztensor/types"
 )
 
-// BatchNormalization implements inference-mode batch normalization.
+// BatchNormalization implements batch normalization with optional training support.
 // Forward expects 5 inputs: X, scale, B, mean, var (in that order).
 // Formula per element at channel c:
 //
@@ -20,16 +20,41 @@ import (
 // scale, B, mean, and var must have shape [C] matching X's channel dimension.
 // All operations use Engine primitives so they appear in the ExecutionPlan
 // instruction tape.
+//
+// When scale and bias are set as graph.Parameter (via NewBatchNormalizationWithParams),
+// Backward() computes and accumulates gradients for scale, bias, and input X.
 type BatchNormalization[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
 	epsilon     T
 	outputShape []int
+
+	// Learnable parameters (nil for inference-only mode).
+	scale *graph.Parameter[T]
+	bias  *graph.Parameter[T]
+
+	// Cache for backward pass (populated by Forward).
+	normalized *tensor.TensorNumeric[T] // (X - mean) / sqrt(var + eps)
+	std        *tensor.TensorNumeric[T] // sqrt(var + eps), broadcast shape [1,C,1,...]
+	scaleBC    *tensor.TensorNumeric[T] // scale reshaped to [1,C,1,...] for broadcasting
+	inputShape []int                    // shape of X from the last Forward call
 }
 
-// NewBatchNormalization creates a BatchNormalization layer.
+// NewBatchNormalization creates an inference-only BatchNormalization layer.
 func NewBatchNormalization[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], epsilon T) *BatchNormalization[T] {
 	return &BatchNormalization[T]{engine: engine, ops: ops, epsilon: epsilon}
+}
+
+// NewBatchNormalizationWithParams creates a BatchNormalization layer with
+// learnable scale and bias parameters for training.
+func NewBatchNormalizationWithParams[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], epsilon T, scale, bias *graph.Parameter[T]) *BatchNormalization[T] {
+	return &BatchNormalization[T]{
+		engine:  engine,
+		ops:     ops,
+		epsilon: epsilon,
+		scale:   scale,
+		bias:    bias,
+	}
 }
 
 // Forward computes batch normalization in inference mode.
@@ -117,13 +142,108 @@ func (b *BatchNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.T
 		return nil, fmt.Errorf("BatchNormalization: add bias: %w", err)
 	}
 
+	// Cache intermediates for backward pass.
+	b.normalized = normalized
+	b.std = std
+	b.scaleBC = scaleBC
+	b.inputShape = xShape
 	b.outputShape = out.Shape()
 	return out, nil
 }
 
-// Backward returns nil (inference-only).
-func (b *BatchNormalization[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
+// Backward computes gradients for scale, bias, and input X.
+//
+// For inference-mode BatchNorm (pre-computed mean/var):
+//
+//	dBias  = sum(dOut, dims except channel)
+//	dScale = sum(dOut * normalized, dims except channel)
+//	dX     = dOut * scale / sqrt(var + eps)
+//
+// inputs must contain exactly one tensor (X, matching the Forward call).
+// Forward must have been called first to populate cached intermediates.
+func (b *BatchNormalization[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("BatchNormalization: %w, expected 1 input for backward, got %d", graph.ErrInvalidInputCount, len(inputs))
+	}
+	if b.normalized == nil || b.std == nil || b.scaleBC == nil {
+		return nil, fmt.Errorf("BatchNormalization: backward called before forward: missing cached tensors")
+	}
+
+	// --- dX = dOut * scale / sqrt(var + eps) ---
+	// scaleBC and std are already in broadcast shape [1,C,1,...].
+	scaledDOut, err := b.engine.Mul(ctx, dOut, b.scaleBC)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization backward: mul dOut*scale: %w", err)
+	}
+	dInput, err := b.engine.Div(ctx, scaledDOut, b.std)
+	if err != nil {
+		return nil, fmt.Errorf("BatchNormalization backward: div by std: %w", err)
+	}
+
+	// --- Parameter gradients (only when parameters are set) ---
+	if b.scale != nil {
+		// dScale = sum(dOut * normalized, all dims except channel dim=1)
+		dScaleFull, err := b.engine.Mul(ctx, dOut, b.normalized)
+		if err != nil {
+			return nil, fmt.Errorf("BatchNormalization backward: mul dOut*normalized: %w", err)
+		}
+		dScale := dScaleFull
+		ndim := len(dScale.Shape())
+		// Reduce over all dims except dim 1 (channel).
+		// Reduce from highest dim to lowest, skipping dim 1.
+		for dim := ndim - 1; dim >= 0; dim-- {
+			if dim == 1 {
+				continue
+			}
+			dScale, err = b.engine.ReduceSum(ctx, dScale, dim, true)
+			if err != nil {
+				return nil, fmt.Errorf("BatchNormalization backward: reduce dScale dim %d: %w", dim, err)
+			}
+		}
+		dScale, err = dScale.Reshape(b.scale.Value.Shape())
+		if err != nil {
+			return nil, fmt.Errorf("BatchNormalization backward: reshape dScale: %w", err)
+		}
+
+		if b.scale.Gradient == nil {
+			b.scale.Gradient = dScale
+		} else {
+			b.scale.Gradient, err = b.engine.Add(ctx, b.scale.Gradient, dScale)
+			if err != nil {
+				return nil, fmt.Errorf("BatchNormalization backward: accumulate scale gradient: %w", err)
+			}
+		}
+	}
+
+	if b.bias != nil {
+		// dBias = sum(dOut, all dims except channel dim=1)
+		dBias := dOut
+		ndim := len(dBias.Shape())
+		for dim := ndim - 1; dim >= 0; dim-- {
+			if dim == 1 {
+				continue
+			}
+			dBias, err = b.engine.ReduceSum(ctx, dBias, dim, true)
+			if err != nil {
+				return nil, fmt.Errorf("BatchNormalization backward: reduce dBias dim %d: %w", dim, err)
+			}
+		}
+		dBias, err = dBias.Reshape(b.bias.Value.Shape())
+		if err != nil {
+			return nil, fmt.Errorf("BatchNormalization backward: reshape dBias: %w", err)
+		}
+
+		if b.bias.Gradient == nil {
+			b.bias.Gradient = dBias
+		} else {
+			b.bias.Gradient, err = b.engine.Add(ctx, b.bias.Gradient, dBias)
+			if err != nil {
+				return nil, fmt.Errorf("BatchNormalization backward: accumulate bias gradient: %w", err)
+			}
+		}
+	}
+
+	return []*tensor.TensorNumeric[T]{dInput}, nil
 }
 
 // OpType returns "BatchNormalization".
@@ -137,8 +257,21 @@ func (b *BatchNormalization[T]) Attributes() map[string]interface{} {
 // OutputShape returns the output shape (populated after Forward).
 func (b *BatchNormalization[T]) OutputShape() []int { return b.outputShape }
 
-// Parameters returns nil.
-func (b *BatchNormalization[T]) Parameters() []*graph.Parameter[T] { return nil }
+// Parameters returns the learnable parameters (scale and bias) when set,
+// or nil for inference-only mode.
+func (b *BatchNormalization[T]) Parameters() []*graph.Parameter[T] {
+	if b.scale == nil && b.bias == nil {
+		return nil
+	}
+	var params []*graph.Parameter[T]
+	if b.scale != nil {
+		params = append(params, b.scale)
+	}
+	if b.bias != nil {
+		params = append(params, b.bias)
+	}
+	return params
+}
 
 // BuildBatchNormalization constructs a BatchNormalization layer for the registry.
 // Reads "epsilon" (float32 or float64) from attributes; defaults to 1e-5.
