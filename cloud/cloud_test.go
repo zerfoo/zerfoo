@@ -911,6 +911,122 @@ func TestCloud_BillingBodyLimit(t *testing.T) {
 	})
 }
 
+func TestTenant_ModelAllowed(t *testing.T) {
+	tm := NewTenantManager()
+	if err := tm.Create(TenantConfig{
+		ID: "t-model", APIKey: "key-model", RateLimit: 100, TokenBudget: 10000,
+		ModelAllowList: []string{"llama3-8b", "gemma-2b"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tenant, _ := tm.Get("t-model")
+
+	if !tenant.ModelAllowed("llama3-8b") {
+		t.Error("ModelAllowed(llama3-8b) = false, want true")
+	}
+	if !tenant.ModelAllowed("gemma-2b") {
+		t.Error("ModelAllowed(gemma-2b) = false, want true")
+	}
+	if tenant.ModelAllowed("mistral-7b") {
+		t.Error("ModelAllowed(mistral-7b) = true, want false")
+	}
+}
+
+func TestTenant_ModelAllowedEmptyList(t *testing.T) {
+	tm := NewTenantManager()
+	if err := tm.Create(TenantConfig{
+		ID: "t-open", APIKey: "key-open", RateLimit: 100, TokenBudget: 10000,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tenant, _ := tm.Get("t-open")
+	if !tenant.ModelAllowed("any-model") {
+		t.Error("empty allow list should permit any model")
+	}
+}
+
+func TestTenant_AllowConcurrent(t *testing.T) {
+	tm := NewTenantManager()
+	if err := tm.Create(TenantConfig{
+		ID: "t-conc", APIKey: "key-conc", RateLimit: 100, TokenBudget: 10000,
+		MaxConcurrentRequests: 2,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tenant, _ := tm.Get("t-conc")
+
+	// First two should succeed
+	if !tenant.AllowConcurrent() {
+		t.Fatal("first AllowConcurrent should succeed")
+	}
+	if !tenant.AllowConcurrent() {
+		t.Fatal("second AllowConcurrent should succeed")
+	}
+
+	// Third should be rejected
+	if tenant.AllowConcurrent() {
+		t.Fatal("third AllowConcurrent should fail (limit=2)")
+	}
+
+	// Release one, then it should succeed again
+	tenant.ReleaseConcurrent()
+	if !tenant.AllowConcurrent() {
+		t.Fatal("AllowConcurrent should succeed after release")
+	}
+}
+
+func TestTenant_AllowConcurrentUnlimited(t *testing.T) {
+	tm := NewTenantManager()
+	if err := tm.Create(TenantConfig{
+		ID: "t-unlim", APIKey: "key-unlim", RateLimit: 100, TokenBudget: 10000,
+		// MaxConcurrentRequests: 0 (default, unlimited)
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tenant, _ := tm.Get("t-unlim")
+
+	// Should always succeed when unlimited
+	for i := 0; i < 100; i++ {
+		if !tenant.AllowConcurrent() {
+			t.Fatalf("AllowConcurrent should always succeed when unlimited (iteration %d)", i)
+		}
+	}
+}
+
+func TestTenant_ConfigIncludesNewFields(t *testing.T) {
+	tm := NewTenantManager()
+	if err := tm.Create(TenantConfig{
+		ID: "t-cfg", APIKey: "key-cfg", RateLimit: 50, TokenBudget: 5000,
+		MaxConcurrentRequests: 10,
+		ModelAllowList:        []string{"llama3", "gemma3"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tenant, _ := tm.Get("t-cfg")
+	cfg := tenant.Config()
+
+	if cfg.MaxConcurrentRequests != 10 {
+		t.Errorf("Config().MaxConcurrentRequests = %d, want 10", cfg.MaxConcurrentRequests)
+	}
+	if len(cfg.ModelAllowList) != 2 {
+		t.Errorf("Config().ModelAllowList len = %d, want 2", len(cfg.ModelAllowList))
+	}
+	if cfg.ModelAllowList[0] != "llama3" || cfg.ModelAllowList[1] != "gemma3" {
+		t.Errorf("Config().ModelAllowList = %v, want [llama3 gemma3]", cfg.ModelAllowList)
+	}
+
+	// Ensure the returned slice is a copy (not shared with internal state)
+	cfg.ModelAllowList[0] = "mutated"
+	if tenant.modelAllowList[0] == "mutated" {
+		t.Error("Config().ModelAllowList should be a defensive copy")
+	}
+}
+
 func TestTenant_APIKeyRedaction(t *testing.T) {
 	rawKeys := []string{"secret-key-alpha", "secret-key-beta"}
 
