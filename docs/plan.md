@@ -2027,6 +2027,89 @@ This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
 
 ---
 
+#### E123: GitHub Issue #166 -- GPU Training Path Not Used [2026 Q2 -- CRITICAL]
+
+Bug: TrainWindowed initializes GPU engine but all backends still use the pure-Go
+forwardF64/forwardWithCache CPU path for training. nvidia-smi shows 0% GPU utilization.
+Affects: ALL timeseries backends (DLinear, PatchTST, iTransformer, CfC, FreTS, NHiTS, Mamba).
+Impact: iTransformer/PatchTST timeout (>1h) on 28K rows x 253 features. With GPU: seconds.
+Source: https://github.com/zerfoo/zerfoo/issues/166
+
+Root cause: Each backend's TrainWindowed calls its own forwardWithCache (CPU float64)
+for the forward pass during training, not the engine.Forward (GPU tensor) path. The
+engine is created but never wired into the training loop's forward pass.
+
+Fix approach: For each backend, modify TrainWindowed to use the engine forward path
+when an engine is available, falling back to CPU forwardF64 only when engine is nil.
+The backward pass can remain CPU (analytical gradients) since it operates on cached
+intermediate values from the forward pass.
+
+##### Wave 78: GPU Training Forward Path (5 agents)
+
+- [ ] T123.1 Wire GPU engine forward into ITransformer.TrainWindowed
+  Owner: ML Eng  Est: 3h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/itransformer.go
+  Acceptance:
+  - When engine is non-nil, TrainWindowed uses engine.Forward for the forward pass
+    instead of forwardWithCache.
+  - Convert float64 windows to tensor input, run engine forward, convert output back.
+  - Backward pass remains analytical (CPU) using cached values from forward.
+  - Test: with mock GPU engine, verify engine.Forward is called during training.
+  - Test: training convergence matches CPU path within tolerance.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+- [ ] T123.2 Wire GPU engine forward into PatchTST.TrainWindowed
+  Owner: ML Eng  Est: 3h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/patchtst.go
+  Acceptance:
+  - Same pattern as T123.1 but for PatchTST.
+  - When engine is non-nil, use engine forward path.
+  - Test: engine.Forward called during training. Convergence matches CPU.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+- [ ] T123.3 Wire GPU engine forward into CfC.TrainWindowed
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/cfc.go
+  Acceptance:
+  - Same pattern as T123.1 for CfC.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+- [ ] T123.4 Wire GPU engine forward into FreTS.TrainWindowed
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/frets.go
+  Acceptance:
+  - Same pattern as T123.1 for FreTS.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+- [ ] T123.5 Wire GPU engine forward into DLinear, NHiTS, Mamba TrainWindowed
+  Owner: ML Eng  Est: 3h  verifies: [UC-026]
+  Deps: none
+  Files: timeseries/dlinear.go, timeseries/nhits.go, timeseries/mamba_ts.go
+  Acceptance:
+  - Same pattern for the remaining 3 backends.
+  - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
+
+##### Wave 79: Verification + DGX Benchmark (1 agent)
+
+- [ ] T123.6 Run GPU training benchmark on DGX and verify GPU utilization
+  Owner: ML Eng  Est: 2h  verifies: [UC-026]
+  Deps: T123.1-T123.5, T114.1 (DGX sync)
+  Steps:
+  - On DGX, run iTransformer TrainWindowed on 28K rows x 253 features.
+  - Monitor nvidia-smi: GPU utilization must be >0% during training.
+  - Compare wall-clock time vs CPU-only path.
+  - Close issue #166 with benchmark results.
+  Acceptance:
+  - GPU utilization >50% during training (not 0%).
+  - Training completes in <60s (vs >1h on CPU).
+  - Results appended to docs/devlog.md.
+
+---
+
 #### E118: Observability Metrics [2026 Q2 -- MEDIUM]
 
 Maturity gap: observability rated 3/5. Missing error rate counter, rolling
