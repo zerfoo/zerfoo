@@ -621,7 +621,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		s.logger.Debug("invalid request body", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -674,12 +675,14 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && req.ResponseFormat.JSONSchema != nil {
 		var schema grammar.JSONSchema
 		if err := json.Unmarshal(req.ResponseFormat.JSONSchema.Schema, &schema); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json_schema: "+err.Error())
+			s.logger.Debug("invalid json_schema", "error", err.Error())
+			writeError(w, http.StatusBadRequest, "invalid json_schema")
 			return
 		}
 		g, err := grammar.Convert(&schema)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "unsupported schema: "+err.Error())
+			s.logger.Debug("unsupported schema", "error", err.Error())
+			writeError(w, http.StatusBadRequest, "unsupported schema")
 			return
 		}
 		opts = append(opts, inference.WithGrammar(g))
@@ -692,7 +695,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if len(m.ImageURLs) > 0 {
 			images, err := fetchImages(r.Context(), m.ImageURLs)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "image fetch error: "+err.Error())
+				s.logger.Debug("image fetch error", "error", err.Error())
+				writeError(w, http.StatusBadRequest, "image fetch failed")
 				return
 			}
 			messages[i].Images = images
@@ -803,7 +807,8 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		s.logger.Debug("invalid request body", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -966,7 +971,8 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		s.logger.Debug("invalid request body", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 

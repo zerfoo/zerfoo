@@ -81,7 +81,8 @@ func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		s.logger.Debug("invalid request body", "error", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
