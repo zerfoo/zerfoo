@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0](https://github.com/zerfoo/zerfoo/compare/v1.19.1...v1.20.0) (2026-03-25)
+
+
+### Features
+
+* **scripts:** add Zerfoo vs Ollama benchmark comparison script ([fb4c637](https://github.com/zerfoo/zerfoo/commit/fb4c63732fcea783c7f192deda6d4d191c093ce3))
+
+
+### Bug Fixes
+
+* **scripts:** parse only decode eval rate from Ollama verbose output ([3e00e2e](https://github.com/zerfoo/zerfoo/commit/3e00e2e95fb8d540dea1b97a3e73d009c429b126))
+
 ## [1.19.1](https://github.com/zerfoo/zerfoo/compare/v1.19.0...v1.19.1) (2026-03-25)
 
 
