@@ -1546,7 +1546,7 @@ plus 2 gaps worth tracking. Source: .claude/scratch/verify-report.md
   Files: layers/recurrent/rnn.go
   Result: Added r.bias.Backward() call in Backward(). All tests pass.
 
-- [ ] T111.2 Implement BatchNorm backward pass for training use
+- [x] T111.2 Implement BatchNorm backward pass for training use (2026-03-24)
   Owner: ML Eng  Est: 2h  verifies: [UC-016]
   Deps: none
   Files: layers/normalization/batch_norm.go
@@ -1555,6 +1555,8 @@ plus 2 gaps worth tracking. Source: .claude/scratch/verify-report.md
   - Gradient matches finite-difference within 1e-3 tolerance.
   - Loss decreases after optimizer step with BatchNorm in the graph.
   - go vet ./layers/normalization/ clean.
+  Result: Added NewBatchNormalizationWithParams, Backward (dX, dScale, dBias),
+  caching in Forward. 5 test functions, all passing with finite-difference validation.
 
 - [ ] T111.3 Re-run /verify to confirm all gaps resolved
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
@@ -1759,6 +1761,119 @@ Root causes:
    because libkernels.so on DGX is stale (missing new symbols).
 4. BF16 MatMul relative error (1.3e-3 - 1.9e-3) exceeds 1e-3 test tolerance.
 5. CGo build fails (-tags cuda): stale libkernels.so missing SM_121 symbols + -lcublasLt.
+6. DGX repos are out of sync (at commit 7a0f00b5, missing v1.13-v1.15 code).
+
+---
+
+#### E115: Deep Review v1.15.1 Remediation [2026 Q2 -- HIGH]
+
+Deep review of v1.15.1 (11 agents, 800+ files, ~136K non-test LOC) found 3 High,
+9 Medium, 4 Low, 4 Info findings. E106/E107/E108/E109 already addressed the majority
+of prior findings. E115 covers the NEW findings from the 2026-03-24 review:
+SAML replay bypass, CORS wildcard reflection, token budget bypass, model allow list
+non-enforcement, billing middleware unbounded reads, and CI gaps.
+Source: .claude/scratch/deep-review-report.md (2026-03-24)
+
+##### Wave 64: High Security Fixes (3 agents)
+
+- [x] T115.1 Fix SAML replay bypass when assertion ID is empty (S-02) (2026-03-24)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: cloud/sso.go
+  Acceptance:
+  - In ValidateAssertion, reject assertions with empty ID attribute:
+    `if assertionID == "" { return nil, errors.New("cloud: SAML assertion missing required ID attribute") }`
+  - Move this check before checkAndRecordAssertionID call.
+  - Test: assertion without ID attribute is rejected.
+  - go vet ./cloud/ clean. go test -race ./cloud/ pass.
+
+- [x] T115.2 Add default ScopeReadOnly for all /v1/ GET routes (S-03) (2026-03-24)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/server.go
+  Acceptance:
+  - In requiredScope(), add fallback: if path starts with "/v1/", return ScopeReadOnly.
+  - This catches any future GET endpoints under /v1/ that aren't explicitly scoped.
+  - Test: GET request to /v1/unknown with read_only key passes, key with no scopes is rejected.
+  - go vet ./serve/ clean. go test -race ./serve/ pass.
+
+- [x] T115.3 Add LimitReader to both billing middleware body reads (S-04, S-05) (2026-03-24)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: cloud/server.go, serve/cloud/billing.go
+  Acceptance:
+  - In cloud/server.go billingMiddleware, wrap r.Body with io.LimitReader(r.Body, 10<<20)
+    before io.ReadAll.
+  - In serve/cloud/billing.go BillingMiddleware, wrap r.Body with io.LimitReader(r.Body, 10<<20)
+    before io.Copy.
+  - Test: request with body >10MB does not OOM the billing middleware.
+  - go vet ./cloud/ ./serve/cloud/ clean.
+
+##### Wave 65: Medium Security Fixes (5 agents)
+
+- [x] T115.4 Fix CORS wildcard origin reflection (S-15) (2026-03-24)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: security/network.go
+  Acceptance:
+  - When AllowedOrigins contains "*", send literal "Access-Control-Allow-Origin: *"
+    instead of reflecting the request Origin header.
+  - Do not set "Vary: Origin" with literal wildcard.
+  - Test: CORS preflight with wildcard config returns literal "*".
+  - go vet ./security/ clean. go test -race ./security/ pass.
+
+- [x] T115.5 Fix token budget bypass via low max_tokens (S-16) (2026-03-24)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: cloud/server.go
+  Acceptance:
+  - After inference completes, if actual > estimated, deduct excess:
+    `tenant.ConsumeTokens(actual - estimated)`.
+  - Test: request with max_tokens=1 that generates 100 tokens deducts 100 from budget.
+  - go vet ./cloud/ clean. go test -race ./cloud/ pass.
+
+- [x] T115.6 Enforce model allow list in serve/cloud middleware (S-17) (2026-03-24)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: serve/cloud/tenant.go
+  Acceptance:
+  - In TenantRegistry.Middleware, after tenant lookup, parse model from request body.
+  - Check tenant.ModelAllowed(model). Return 403 if model is not in allow list.
+  - Test: tenant with ModelAllowList=["llama3"] rejected for model "gemma3".
+  - go vet ./serve/cloud/ clean. go test -race ./serve/cloud/ pass.
+
+- [x] T115.7 Hash tenant ID in serve/cloud billing instead of raw API key (S-09) (2026-03-24)
+  Owner: Security Eng  Est: 15m  verifies: [UC-003]
+  Deps: none
+  Files: serve/cloud/billing.go
+  Acceptance:
+  - Replace `tenantID := extractBearerToken(r)` with SHA-256 hash of the token.
+  - Billing events should contain hashed key, not raw API key.
+  - Test: billing event TenantID does not match raw API key.
+  - go vet ./serve/cloud/ clean.
+
+- [x] T115.8 Add SSRF protection to webhook dispatcher (S-06) (2026-03-24)
+  Owner: Security Eng  Est: 30m  verifies: [UC-003]
+  Deps: none
+  Files: support/webhook.go
+  Acceptance:
+  - Create ssrfSafeWebhookClient() using the same pattern as serve/vision.go
+    ssrfSafeDialContext: block loopback, private, link-local, cloud metadata IPs.
+  - Use this client in NewWebhookDispatcher.
+  - Test: webhook to 127.0.0.1 is blocked. Webhook to 169.254.169.254 is blocked.
+  - go vet ./support/ clean. go test -race ./support/ pass.
+
+##### Wave 66: CI and Verification (1 agent)
+
+- [ ] T115.9 Add govulncheck to CI workflow
+  Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Files: .github/workflows/ci.yml
+  Acceptance:
+  - Add govulncheck step after go vet in ci.yml.
+  - Install: `go install golang.org/x/vuln/cmd/govulncheck@latest`.
+  - Run: `govulncheck ./...`.
+  - govulncheck reports 0 vulnerabilities in direct dependencies.
 6. DGX repos are out of sync (at commit 7a0f00b5, missing v1.13-v1.15 code).
 
 ##### Wave 59: DGX Sync and Kernel Rebuild (1 agent)
