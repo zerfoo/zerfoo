@@ -105,7 +105,8 @@ run_ollama() {
 
   # Parse: "eval rate:       204.32 tokens/s"
   local tps
-  tps=$(awk '/eval rate:/ { for (i=1; i<=NF; i++) if ($i == "tokens/s" && i > 1) print $(i-1) }' "$stderr_file")
+  # Match "eval rate:" but NOT "prompt eval rate:" -- strip leading whitespace first.
+  tps=$(sed 's/^[[:space:]]*//' "$stderr_file" | awk '/^eval rate:/ { for (i=1; i<=NF; i++) if ($i == "tokens/s" && i > 1) print $(i-1) }')
   rm -f "$stderr_file"
 
   if [ -z "$tps" ]; then
