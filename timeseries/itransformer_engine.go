@@ -8,6 +8,200 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
+// linearBatchEngine computes Y = X @ W + bias using engine.MatMul.
+// X: [rows x inDim], W: [inDim x outDim], bias: [outDim].
+// Returns [rows][outDim] as float64 slices (for cache compatibility).
+// Falls back to CPU linearForwardVec on any engine error.
+func (m *ITransformer) linearBatchEngine(ctx context.Context, xRows [][]float64, w [][]float64, bias []float64) [][]float64 {
+	rows := len(xRows)
+	inDim := len(w)
+	outDim := len(bias)
+
+	// Flatten X into [rows * inDim] float32.
+	xFlat := make([]float32, rows*inDim)
+	for r := 0; r < rows; r++ {
+		for j := 0; j < inDim; j++ {
+			xFlat[r*inDim+j] = float32(xRows[r][j])
+		}
+	}
+
+	// Flatten W into [inDim * outDim] float32.
+	wFlat := make([]float32, inDim*outDim)
+	for i := 0; i < inDim; i++ {
+		for j := 0; j < outDim; j++ {
+			wFlat[i*outDim+j] = float32(w[i][j])
+		}
+	}
+
+	xT, err := tensor.New[float32]([]int{rows, inDim}, xFlat)
+	if err != nil {
+		return linearBatchCPU(xRows, w, bias)
+	}
+	wT, err := tensor.New[float32]([]int{inDim, outDim}, wFlat)
+	if err != nil {
+		return linearBatchCPU(xRows, w, bias)
+	}
+
+	yT, err := m.engine.MatMul(ctx, xT, wT)
+	if err != nil {
+		return linearBatchCPU(xRows, w, bias)
+	}
+
+	// Read result back and add bias.
+	yData := yT.Data()
+	result := make([][]float64, rows)
+	for r := 0; r < rows; r++ {
+		result[r] = make([]float64, outDim)
+		for j := 0; j < outDim; j++ {
+			result[r][j] = float64(yData[r*outDim+j]) + float64(bias[j])
+		}
+	}
+	return result
+}
+
+// linearBatchCPU is the CPU fallback for linearBatchEngine.
+func linearBatchCPU(xRows [][]float64, w [][]float64, bias []float64) [][]float64 {
+	result := make([][]float64, len(xRows))
+	for r := range xRows {
+		result[r] = linearForwardVec(xRows[r], w, bias)
+	}
+	return result
+}
+
+// forwardWithCacheEngine runs the forward pass using engine.MatMul for all
+// linear projections while producing the same cache layout as forwardWithCache.
+// This allows the existing CPU backward pass to work unchanged.
+func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]float64) ([][]float64, iTransformerCache) {
+	channels := m.config.Channels
+	dModel := m.config.DModel
+	nHeads := m.config.NHeads
+	headDim := dModel / nHeads
+
+	cache := iTransformerCache{input: input}
+
+	// Step 1: Variate embedding — [channels x inputLen] @ [inputLen x dModel] + embedB.
+	tokens := m.linearBatchEngine(ctx, input, m.embedW, m.embedB)
+	cache.embedOut = deepCopy2D(tokens)
+
+	// Step 2: Encoder layers.
+	cache.layerCaches = make([]iTransformerLayerCache, len(m.layers))
+	for li, layer := range m.layers {
+		var lc iTransformerLayerCache
+		lc.inputTokens = deepCopy2D(tokens)
+		lc.preAttnTokens = deepCopy2D(tokens)
+
+		// --- Multi-head self-attention ---
+		// Q, K, V projections: [channels x dModel] @ [dModel x dModel].
+		Q := m.linearBatchEngine(ctx, tokens, layer.qW, layer.qB)
+		K := m.linearBatchEngine(ctx, tokens, layer.kW, layer.kB)
+		V := m.linearBatchEngine(ctx, tokens, layer.vW, layer.vB)
+		lc.Q = deepCopy2D(Q)
+		lc.K = deepCopy2D(K)
+		lc.V = deepCopy2D(V)
+
+		// Per-head scaled dot-product attention (kept on CPU — small channels x channels).
+		scale := 1.0 / math.Sqrt(float64(headDim))
+		attnConcat := make([][]float64, channels)
+		for c := range attnConcat {
+			attnConcat[c] = make([]float64, dModel)
+		}
+
+		lc.attnScores = make([][][]float64, nHeads)
+		for h := 0; h < nHeads; h++ {
+			off := h * headDim
+
+			scores := make([][]float64, channels)
+			for i := 0; i < channels; i++ {
+				scores[i] = make([]float64, channels)
+				for j := 0; j < channels; j++ {
+					dot := 0.0
+					for d := 0; d < headDim; d++ {
+						dot += Q[i][off+d] * K[j][off+d]
+					}
+					scores[i][j] = dot * scale
+				}
+			}
+			for i := 0; i < channels; i++ {
+				scores[i] = softmax(scores[i])
+			}
+			lc.attnScores[h] = scores
+
+			for i := 0; i < channels; i++ {
+				for d := 0; d < headDim; d++ {
+					val := 0.0
+					for j := 0; j < channels; j++ {
+						val += scores[i][j] * V[j][off+d]
+					}
+					attnConcat[i][off+d] = val
+				}
+			}
+		}
+		lc.attnConcat = deepCopy2D(attnConcat)
+
+		// Output projection: [channels x dModel] @ [dModel x dModel].
+		attnOut := m.linearBatchEngine(ctx, attnConcat, layer.oW, layer.oB)
+		lc.attnOut = deepCopy2D(attnOut)
+
+		// Residual + LN1.
+		preLN1 := make([][]float64, channels)
+		ln1Out := make([][]float64, channels)
+		lc.ln1Mu = make([]float64, channels)
+		lc.ln1Std = make([]float64, channels)
+		for c := 0; c < channels; c++ {
+			preLN1[c] = make([]float64, dModel)
+			for d := 0; d < dModel; d++ {
+				preLN1[c][d] = tokens[c][d] + attnOut[c][d]
+			}
+			ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNormCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
+		}
+		lc.preLN1 = deepCopy2D(preLN1)
+		lc.ln1Out = deepCopy2D(ln1Out)
+
+		// --- FFN ---
+		// fc1: [channels x dModel] @ [dModel x dFF].
+		fc1Out := m.linearBatchEngine(ctx, ln1Out, layer.fc1W, layer.fc1B)
+		geluOut := make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			geluOut[c] = make([]float64, len(fc1Out[c]))
+			for i := range fc1Out[c] {
+				geluOut[c][i] = gelu(fc1Out[c][i])
+			}
+		}
+
+		// fc2: [channels x dFF] @ [dFF x dModel].
+		fc2Out := m.linearBatchEngine(ctx, geluOut, layer.fc2W, layer.fc2B)
+
+		preLN2 := make([][]float64, channels)
+		ln2Out := make([][]float64, channels)
+		lc.ln2Mu = make([]float64, channels)
+		lc.ln2Std = make([]float64, channels)
+		for c := 0; c < channels; c++ {
+			preLN2[c] = make([]float64, dModel)
+			for d := 0; d < dModel; d++ {
+				preLN2[c][d] = ln1Out[c][d] + fc2Out[c][d]
+			}
+			ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNormCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
+		}
+		lc.fc1Out = deepCopy2D(fc1Out)
+		lc.geluOut = deepCopy2D(geluOut)
+		lc.fc2Out = deepCopy2D(fc2Out)
+		lc.preLN2 = deepCopy2D(preLN2)
+		lc.ln2Out = deepCopy2D(ln2Out)
+
+		tokens = ln2Out
+		cache.layerCaches[li] = lc
+	}
+
+	// Store pre-projection tokens.
+	cache.preProj = deepCopy2D(tokens)
+
+	// Step 3: Output projection: [channels x dModel] @ [dModel x outputLen].
+	output := m.linearBatchEngine(ctx, tokens, m.projW, m.projB)
+
+	_ = dModel
+	return output, cache
+}
+
 // trainWindowedEngine implements GPU-accelerated ITransformer training using
 // float32 tensor operations via the compute.Engine. The forward/backward
 // analytical backpropagation logic mirrors the CPU path but uses float32
@@ -231,13 +425,13 @@ func (m *ITransformer) trainWindowedEngine(windows [][][]float64, labels []float
 				}
 			}
 
-			// Use the existing analytical forward/backward path.
+			// Use engine-accelerated forward with CPU backward.
 			accGrads := newITransformerGrads(m.config)
 			batchLoss := 0.0
 			scale := 1.0 / float64(bs*channels*outputLen)
 
 			for s := 0; s < bs; s++ {
-				pred, cache := m.forwardWithCache(batchWindows[s])
+				pred, cache := m.forwardWithCacheEngine(ctx, batchWindows[s])
 
 				dOutput := make([][]float64, channels)
 				for c := 0; c < channels; c++ {
