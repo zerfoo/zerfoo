@@ -158,14 +158,7 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0. The Q4_K fused GEMV kernel exists but native
-	// Q4_K is ~20% slower than Q4_0 GEMV (120 vs 149 tok/s on GB10). The Q4_0
-	// path trades per-sub-block 6-bit scale precision for throughput.
-	// TODO: optimize Q4_K GEMV to match Q4_0 speed, then use native Q4_K.
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -173,13 +166,7 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Re-quantize Q5_K to Q4_0 for fast GEMV decode path.
-	// Native Q5_K dequant to float32 uses cuBLAS SGEMM which is ~30% slower
-	// for M=1 decode. Q4_0 GEMV kernel is the fastest path on GB10.
-	f32 := make([]float32, numElements)
-	q5k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q5k)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -187,13 +174,7 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Re-quantize Q6_K to Q4_0 for fast GEMV decode path.
-	// Native Q6_K dequant to float32 uses cuBLAS SGEMM which is ~30% slower
-	// for M=1 decode. Q4_0 GEMV kernel is the fastest path on GB10.
-	f32 := make([]float32, numElements)
-	q6k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q6k)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
