@@ -678,6 +678,44 @@ func TestCoordinator_Heartbeat_EmptyID(t *testing.T) {
 	testutils.AssertError(t, err, "expected an error for empty worker ID, got nil")
 }
 
+func TestCoordinator_ReaperStopsOnClose(t *testing.T) {
+	var buf syncBuffer
+
+	coord := NewCoordinator(&buf, 100*time.Millisecond)
+
+	// The reaper goroutine is already running from NewCoordinator.
+	// Stop the coordinator, which should signal the reaper to exit.
+	coord.Stop()
+
+	// If the reaper did not exit, the ticker would fire after 50ms and
+	// call evictStaleWorkers. We wait long enough for several ticks to
+	// confirm the reaper is no longer running.
+	time.Sleep(200 * time.Millisecond)
+
+	// Register a stale worker directly (bypassing gRPC) to verify
+	// the reaper is truly stopped and will NOT evict it.
+	coord.mu.Lock()
+	coord.workers["stale-worker"] = &WorkerInfo{
+		ID:            "stale-worker",
+		Address:       "addr-stale",
+		Rank:          0,
+		LastHeartbeat: time.Now().Add(-10 * time.Minute),
+	}
+	coord.mu.Unlock()
+
+	// Wait for what would have been a reaper tick.
+	time.Sleep(200 * time.Millisecond)
+
+	// The stale worker should still be present because the reaper has exited.
+	coord.mu.Lock()
+	_, ok := coord.workers["stale-worker"]
+	coord.mu.Unlock()
+
+	if !ok {
+		t.Error("expected stale worker to remain after Stop, but it was evicted — reaper goroutine did not exit")
+	}
+}
+
 func TestCoordinator_EndCheckpoint_EmptyWorkerID(t *testing.T) {
 	kit := setup(t)
 	ctx := context.Background()

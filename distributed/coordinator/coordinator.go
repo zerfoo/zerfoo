@@ -29,6 +29,8 @@ type Coordinator struct {
 	logger      log.Logger
 	lis         net.Listener
 	timeout     time.Duration
+	stopCh      chan struct{}
+	stopOnce    sync.Once
 }
 
 // WorkerInfo holds information about a worker in the cluster.
@@ -58,6 +60,7 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 		checkpoints: make(map[string]*CheckpointInfo),
 		logger:      l,
 		timeout:     timeout,
+		stopCh:      make(chan struct{}),
 	}
 	go c.reaper()
 
@@ -109,6 +112,8 @@ func (c *Coordinator) Addr() net.Addr {
 
 // Stop gracefully stops the coordinator service.
 func (c *Coordinator) Stop() {
+	c.stopOnce.Do(func() { close(c.stopCh) })
+
 	if c.server != nil {
 		c.logger.Info("stopping gRPC server")
 		c.server.GracefulStop()
@@ -117,6 +122,8 @@ func (c *Coordinator) Stop() {
 
 // GracefulStop gracefully stops the coordinator service.
 func (c *Coordinator) GracefulStop() {
+	c.stopOnce.Do(func() { close(c.stopCh) })
+
 	if c.server != nil {
 		c.server.GracefulStop()
 	}
@@ -126,18 +133,26 @@ func (c *Coordinator) reaper() {
 	ticker := time.NewTicker(c.timeout / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-
-		for id, worker := range c.workers {
-			if time.Since(worker.LastHeartbeat) > c.timeout {
-				c.logger.Warn("worker timed out", "worker", id)
-				delete(c.workers, id)
-				delete(c.ranks, worker.Rank)
-			}
+	for {
+		select {
+		case <-ticker.C:
+			c.evictStaleWorkers()
+		case <-c.stopCh:
+			return
 		}
+	}
+}
 
-		c.mu.Unlock()
+func (c *Coordinator) evictStaleWorkers() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for id, worker := range c.workers {
+		if time.Since(worker.LastHeartbeat) > c.timeout {
+			c.logger.Warn("worker timed out", "worker", id)
+			delete(c.workers, id)
+			delete(c.ranks, worker.Rank)
+		}
 	}
 }
 
