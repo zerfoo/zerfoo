@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0](https://github.com/zerfoo/zerfoo/compare/v1.16.0...v1.17.0) (2026-03-25)
+
+
+### Features
+
+* **security:** add persistent bbolt backend for KeyStore ([0d486ed](https://github.com/zerfoo/zerfoo/commit/0d486ed64e85894902e1ff9a53edfc2bbffa8ac3))
+* **serve:** add error rate counter and active request gauge to metrics ([f32ffcd](https://github.com/zerfoo/zerfoo/commit/f32ffcdca6a1d96cf949bbf8c7853f9a5055bef2))
+* **support:** add persistent bbolt backend for ticket store ([98f2f75](https://github.com/zerfoo/zerfoo/commit/98f2f75c100522a42782fcab960d79021365ab78))
+
+
+### Bug Fixes
+
+* **generate:** log GPU counter sync errors instead of discarding ([7900778](https://github.com/zerfoo/zerfoo/commit/7900778b8686b97dbdf6ea2825b30bfd5206ed12))
+* **inference:** propagate tensor creation errors in architecture builders ([27bd408](https://github.com/zerfoo/zerfoo/commit/27bd4083cedfad390b0697db325de3106b2ba6d5))
+
 ## [1.16.0](https://github.com/zerfoo/zerfoo/compare/v1.15.1...v1.16.0) (2026-03-25)
 
 
