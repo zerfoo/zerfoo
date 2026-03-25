@@ -228,7 +228,7 @@ func TestLoadTensors_Q8_0(t *testing.T) {
 	}
 }
 
-func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
+func TestDecodeQ5KTensor_NativeStorage(t *testing.T) {
 	// Q5_K: 256 elements per super-block, 176 bytes per block.
 	const numElements = 256
 	const blockBytes = 176
@@ -244,9 +244,9 @@ func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q5_K is re-quantized to Q4_0 for fast GEMV decode path.
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
-		t.Fatal("decodeQ5KTensor should re-quantize to Q4_0 for fast GEMV")
+	// Q5_K should use native Q5KStorage (no re-quantization).
+	if _, ok := tns.GetStorage().(*tensor.Q5KStorage); !ok {
+		t.Fatalf("expected Q5KStorage, got %T", tns.GetStorage())
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -562,7 +562,7 @@ func TestLoadTensors_BF16(t *testing.T) {
 	}
 }
 
-func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
+func TestDecodeQ6KTensor_NativeStorage(t *testing.T) {
 	// Create 256 elements (1 Q6_K super-block = 210 bytes).
 	const numElements = 256
 	const blockBytes = 210
@@ -599,9 +599,9 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q6_K is re-quantized to Q4_0 for fast GEMV decode path.
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
-		t.Fatal("decodeQ6KTensor should re-quantize to Q4_0 for fast GEMV")
+	// Q6_K should use native Q6KStorage (no re-quantization).
+	if _, ok := tns.GetStorage().(*tensor.Q6KStorage); !ok {
+		t.Fatalf("expected Q6KStorage, got %T", tns.GetStorage())
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,
@@ -621,28 +621,18 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Error("expected non-zero dequantized values")
 	}
 
-	// Verify round-trip: dequantizing the same raw data directly should
-	// produce identical values.
+	// Verify round-trip: dequantizing via the storage should produce
+	// identical values to dequantizing the same raw data directly.
 	q6k, err := tensor.NewQ6KStorageFromRaw(raw, numElements)
 	if err != nil {
 		t.Fatalf("NewQ6KStorageFromRaw: %v", err)
 	}
 	ref := make([]float32, numElements)
 	q6k.Dequantize(ref)
-	maxErr := float32(0)
 	for i, want := range ref {
-		diff := data[i] - want
-		if diff < 0 {
-			diff = -diff
+		if data[i] != want {
+			t.Errorf("index %d: got %v, want %v", i, data[i], want)
 		}
-		if diff > maxErr {
-			maxErr = diff
-		}
-	}
-	// Q6_K -> float32 -> Q4_0 re-quantization is lossy (4-bit precision).
-	// Allow larger errors from the double quantization.
-	if maxErr > 64.0 {
-		t.Errorf("max absolute error %v exceeds tolerance 64.0", maxErr)
 	}
 }
 
