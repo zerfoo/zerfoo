@@ -1970,7 +1970,7 @@ Source: .claude/scratch/deep-review-report.md (2026-03-25)
 
 ##### Wave 69: Verification (1 agent)
 
-- [ ] T116.8 Run go test -race and go vet on all changed packages
+- [x] T116.8 Run go test -race and go vet on all changed packages
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T116.1-T116.7
   Acceptance:
@@ -1990,7 +1990,7 @@ This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
 
 ##### Wave 70: Consolidation (2 agents)
 
-- [ ] T117.1 Migrate serve/cloud/tenant.go consumers to cloud/tenant.go
+- [x] T117.1 Migrate serve/cloud/tenant.go consumers to cloud/tenant.go
   Owner: Lead Eng  Est: 4h  verifies: [UC-003]
   Deps: T116.1-T116.3 (billing fixes must land first)
   Files: serve/cloud/tenant.go, cloud/tenant.go, and all consumers
@@ -2003,7 +2003,7 @@ This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
   - Delete serve/cloud/tenant.go after all consumers migrated.
   - go build ./... clean. go test -race ./... pass.
 
-- [ ] T117.2 Migrate serve/cloud/billing.go consumers to cloud/ billing
+- [x] T117.2 Migrate serve/cloud/billing.go consumers to cloud/ billing
   Owner: Lead Eng  Est: 3h  verifies: [UC-003]
   Deps: T117.1
   Files: serve/cloud/billing.go, cloud/billing.go, and all consumers
@@ -2017,7 +2017,7 @@ This epic consolidates serve/cloud/ into cloud/ to eliminate duplication.
 
 ##### Wave 71: Verification (1 agent)
 
-- [ ] T117.3 Run full test suite and verify no serve/cloud/ imports remain
+- [x] T117.3 Run full test suite and verify no serve/cloud/ imports remain
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T117.2
   Acceptance:
