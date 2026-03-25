@@ -395,94 +395,6 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 	return grads, nil
 }
 
-// stackBackwardCPU computes gradients for a single stack using manual CPU loops.
-// This is the fallback path when no engine is available.
-func (n *NHiTS) stackBackwardCPU(dH []float32, batchN int, stack nhitsStack, intermediates [][]float32, pooledFlat []float32, allGrads [][]float32, paramIdx int) {
-	// Output proj backward.
-	lastH := intermediates[len(intermediates)-1]
-	oDim := n.config.OutputLength
-	hDim := stack.outputProj.weights.Shape()[0]
-	wData := stack.outputProj.weights.Data()
-
-	dW := make([]float32, hDim*oDim)
-	dB := make([]float32, oDim)
-	for b := 0; b < batchN; b++ {
-		for i := 0; i < hDim; i++ {
-			for j := 0; j < oDim; j++ {
-				dW[i*oDim+j] += lastH[b*hDim+i] * dH[b*oDim+j]
-			}
-		}
-		for j := 0; j < oDim; j++ {
-			dB[j] += dH[b*oDim+j]
-		}
-	}
-
-	newDH := make([]float32, batchN*hDim)
-	for b := 0; b < batchN; b++ {
-		for i := 0; i < hDim; i++ {
-			for j := 0; j < oDim; j++ {
-				newDH[b*hDim+i] += dH[b*oDim+j] * wData[i*oDim+j]
-			}
-		}
-	}
-	dH = newDH
-
-	nMLPLayers := len(stack.mlpLayers)
-	allGrads[paramIdx+nMLPLayers*2] = dW
-	allGrads[paramIdx+nMLPLayers*2+1] = dB
-
-	// MLP layers backward (reverse order).
-	for li := nMLPLayers - 1; li >= 0; li-- {
-		l := &stack.mlpLayers[li]
-		lWData := l.weights.Data()
-		lInDim := l.weights.Shape()[0]
-		lOutDim := l.weights.Shape()[1]
-
-		// ReLU gradient.
-		postReLU := intermediates[li]
-		for b := 0; b < batchN; b++ {
-			for i := 0; i < lOutDim; i++ {
-				if postReLU[b*lOutDim+i] <= 0 {
-					dH[b*lOutDim+i] = 0
-				}
-			}
-		}
-
-		var hInput []float32
-		if li == 0 {
-			hInput = pooledFlat
-		} else {
-			hInput = intermediates[li-1]
-		}
-
-		dW := make([]float32, lInDim*lOutDim)
-		dB := make([]float32, lOutDim)
-		for b := 0; b < batchN; b++ {
-			for i := 0; i < lInDim; i++ {
-				for j := 0; j < lOutDim; j++ {
-					dW[i*lOutDim+j] += hInput[b*lInDim+i] * dH[b*lOutDim+j]
-				}
-			}
-			for j := 0; j < lOutDim; j++ {
-				dB[j] += dH[b*lOutDim+j]
-			}
-		}
-
-		newDH := make([]float32, batchN*lInDim)
-		for b := 0; b < batchN; b++ {
-			for i := 0; i < lInDim; i++ {
-				for j := 0; j < lOutDim; j++ {
-					newDH[b*lInDim+i] += dH[b*lOutDim+j] * lWData[i*lOutDim+j]
-				}
-			}
-		}
-		dH = newDH
-
-		allGrads[paramIdx+li*2] = dW
-		allGrads[paramIdx+li*2+1] = dB
-	}
-}
-
 // TrainWindowed trains the N-HiTS model on pre-windowed data using AdamW with
 // analytical gradient computation.
 //
@@ -594,8 +506,8 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			nBatches++
 
 			// Backward pass per stack, collecting all gradients.
-			// Uses engine tensor ops (MatMul, Transpose, Sum) when the engine
-			// is available, falling back to manual CPU loops otherwise.
+			// Uses engine tensor ops (MatMul, Transpose, Sum) — the same
+			// engine used by the forward pass (linearForward -> engine.MatMul).
 			allGrads := make([][]float32, len(allParams))
 			paramIdx := 0
 
@@ -610,18 +522,15 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 				dH := make([]float32, len(lossGrad))
 				copy(dH, lossGrad)
 
-				if n.engine != nil {
-					// Engine-accelerated backward pass using tensor ops.
-					stackGrads, err := n.stackBackwardEngine(ctx, dH, batchN, *stack, intermediates, pooledFlat)
-					if err != nil {
-						return nil, fmt.Errorf("nhits train: engine backward stack %d: %w", si, err)
-					}
-					for i, g := range stackGrads {
-						allGrads[paramIdx+i] = g
-					}
-				} else {
-					// CPU fallback: manual backward pass with raw slice loops.
-					n.stackBackwardCPU(dH, batchN, *stack, intermediates, pooledFlat, allGrads, paramIdx)
+				// Engine-accelerated backward pass using tensor ops (MatMul,
+				// Transpose, Sum). The forward pass above already uses
+				// engine.MatMul via linearForward.
+				stackGrads, err := n.stackBackwardEngine(ctx, dH, batchN, *stack, intermediates, pooledFlat)
+				if err != nil {
+					return nil, fmt.Errorf("nhits train: engine backward stack %d: %w", si, err)
+				}
+				for i, g := range stackGrads {
+					allGrads[paramIdx+i] = g
 				}
 
 				// Advance paramIdx past this stack's params.
