@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -49,6 +50,90 @@ func (wt *WebhookTarget) shouldFire(e EventType) bool {
 	return false
 }
 
+// blockedWebhookHosts contains hostnames blocked to prevent SSRF attacks
+// against cloud metadata services.
+var blockedWebhookHosts = map[string]bool{
+	"metadata.google.internal": true,
+}
+
+// blockedWebhookIPs contains IP addresses blocked to prevent SSRF attacks
+// against cloud metadata services (e.g. AWS/GCP/Azure).
+var blockedWebhookIPs = map[string]bool{
+	"169.254.169.254": true,
+}
+
+// isBlockedWebhookIP checks whether an IP address should be blocked for
+// SSRF protection. It blocks loopback, private, link-local, and known
+// cloud metadata addresses.
+func isBlockedWebhookIP(ip net.IP) error {
+	ipStr := ip.String()
+	if blockedWebhookIPs[ipStr] {
+		return fmt.Errorf("blocked SSRF target: %s", ipStr)
+	}
+	if ip.IsLoopback() {
+		return fmt.Errorf("blocked SSRF target: loopback address %s", ipStr)
+	}
+	if ip.IsPrivate() {
+		return fmt.Errorf("blocked SSRF target: private address %s", ipStr)
+	}
+	if ip.IsLinkLocalUnicast() {
+		return fmt.Errorf("blocked SSRF target: link-local unicast address %s", ipStr)
+	}
+	if ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("blocked SSRF target: link-local multicast address %s", ipStr)
+	}
+	return nil
+}
+
+// webhookSSRFDialContext returns a DialContext function that validates every
+// resolved IP address against the SSRF blocklist before connecting. This
+// prevents DNS rebinding attacks by checking the IP at connect time rather
+// than in a separate pre-flight validation step.
+func webhookSSRFDialContext(resolver *net.Resolver) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("split host/port: %w", err)
+		}
+
+		// Block known dangerous hostnames.
+		if blockedWebhookHosts[host] {
+			return nil, fmt.Errorf("blocked SSRF target: %s", host)
+		}
+
+		// Resolve hostname to IPs.
+		ips, err := resolver.LookupHost(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve hostname %q: %w", host, err)
+		}
+
+		// Check every resolved IP against the blocklist.
+		for _, ipStr := range ips {
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				continue
+			}
+			if err := isBlockedWebhookIP(ip); err != nil {
+				return nil, err
+			}
+		}
+
+		// All IPs are safe — connect to the first one that works.
+		var dialer net.Dialer
+		for _, ipStr := range ips {
+			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ipStr, port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			err = dialErr
+		}
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
+}
+
 // WebhookDispatcher sends events to registered webhook targets.
 type WebhookDispatcher struct {
 	mu      sync.RWMutex
@@ -56,10 +141,17 @@ type WebhookDispatcher struct {
 	client  *http.Client
 }
 
-// NewWebhookDispatcher creates a dispatcher with a default HTTP client.
+// NewWebhookDispatcher creates a dispatcher with an SSRF-safe HTTP client
+// that blocks connections to loopback, private, link-local, and cloud
+// metadata IP addresses.
 func NewWebhookDispatcher() *WebhookDispatcher {
 	return &WebhookDispatcher{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: webhookSSRFDialContext(nil),
+			},
+		},
 	}
 }
 

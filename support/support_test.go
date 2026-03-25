@@ -307,7 +307,11 @@ func TestWebhookDispatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dispatcher := NewWebhookDispatcher()
+	// Use a plain HTTP client (no SSRF protection) since httptest
+	// servers bind to 127.0.0.1 which would be blocked.
+	dispatcher := &WebhookDispatcher{
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
 	dispatcher.Register(WebhookTarget{
 		Name: "test-hook",
 		URL:  server.URL,
