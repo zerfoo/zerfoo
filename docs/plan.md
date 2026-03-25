@@ -2181,7 +2181,7 @@ Add Store interfaces with bbolt backends to match the pattern in serve/registry/
   - New test: bbolt backend round-trip (create, get, list, close).
   - go vet ./support/ clean. go test -race ./support/ pass.
 
-- [ ] T119.3 Add persistent backend to cloud.TenantManager
+- [x] T119.3 Add persistent backend to cloud.TenantManager
   Owner: Lead Eng  Est: 2h  verifies: [UC-003]
   Deps: E117 (cloud consolidation must land first)
   Files: cloud/tenant.go, cloud/tenant_bbolt.go (new)
@@ -2196,7 +2196,7 @@ Add Store interfaces with bbolt backends to match the pattern in serve/registry/
 
 ##### Wave 74: Verification (1 agent)
 
-- [ ] T119.4 Verify all persistent backends work end-to-end
+- [x] T119.4 Verify all persistent backends work end-to-end
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: T119.1-T119.3
   Acceptance:
