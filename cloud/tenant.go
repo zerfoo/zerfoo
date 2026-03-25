@@ -170,20 +170,102 @@ func (t *Tenant) ReleaseConcurrent() {
 	t.inflight.Add(-1)
 }
 
+// TenantStoreBackend abstracts persistence operations for tenant configurations.
+type TenantStoreBackend interface {
+	SaveTenant(id string, cfg TenantConfig) error
+	LoadTenant(id string) (*TenantConfig, bool)
+	DeleteTenant(id string) error
+	ListTenants() []TenantConfig
+}
+
+// memoryTenantStoreBackend is the default in-memory implementation.
+type memoryTenantStoreBackend struct {
+	tenants map[string]TenantConfig
+}
+
+func newMemoryTenantStoreBackend() *memoryTenantStoreBackend {
+	return &memoryTenantStoreBackend{tenants: make(map[string]TenantConfig)}
+}
+
+func (m *memoryTenantStoreBackend) SaveTenant(id string, cfg TenantConfig) error {
+	m.tenants[id] = cfg
+	return nil
+}
+
+func (m *memoryTenantStoreBackend) LoadTenant(id string) (*TenantConfig, bool) {
+	cfg, ok := m.tenants[id]
+	if !ok {
+		return nil, false
+	}
+	return &cfg, true
+}
+
+func (m *memoryTenantStoreBackend) DeleteTenant(id string) error {
+	delete(m.tenants, id)
+	return nil
+}
+
+func (m *memoryTenantStoreBackend) ListTenants() []TenantConfig {
+	out := make([]TenantConfig, 0, len(m.tenants))
+	for _, cfg := range m.tenants {
+		out = append(out, cfg)
+	}
+	return out
+}
+
+// TenantManagerOption configures a TenantManager.
+type TenantManagerOption func(*TenantManager)
+
+// WithTenantBackend sets the persistence backend for a TenantManager.
+func WithTenantBackend(b TenantStoreBackend) TenantManagerOption {
+	return func(m *TenantManager) {
+		m.backend = b
+	}
+}
+
 // TenantManager provides CRUD operations on tenants, keyed by both tenant ID
 // and API key for O(1) lookups in either direction.
 type TenantManager struct {
 	mu       sync.RWMutex
 	byID     map[string]*Tenant
 	byAPIKey map[string]*Tenant
+	backend  TenantStoreBackend
 }
 
-// NewTenantManager creates a new empty TenantManager.
-func NewTenantManager() *TenantManager {
-	return &TenantManager{
+// NewTenantManager creates a new empty TenantManager. By default it uses an
+// in-memory backend. Use WithTenantBackend to supply a persistent backend.
+func NewTenantManager(opts ...TenantManagerOption) *TenantManager {
+	m := &TenantManager{
 		byID:     make(map[string]*Tenant),
 		byAPIKey: make(map[string]*Tenant),
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	if m.backend == nil {
+		m.backend = newMemoryTenantStoreBackend()
+	}
+	// Hydrate in-memory maps from the backend.
+	for _, cfg := range m.backend.ListTenants() {
+		keyHash := hashAPIKey(cfg.APIKey)
+		var allowList []string
+		if len(cfg.ModelAllowList) > 0 {
+			allowList = make([]string, len(cfg.ModelAllowList))
+			copy(allowList, cfg.ModelAllowList)
+		}
+		tenant := &Tenant{
+			ID:                    cfg.ID,
+			apiKeyHash:            keyHash,
+			maxConcurrentRequests: cfg.MaxConcurrentRequests,
+			modelAllowList:        allowList,
+		}
+		tenant.rateLimit.Store(cfg.RateLimit)
+		tenant.tokenBudget.Store(cfg.TokenBudget)
+		tenant.lastReset.Store(time.Now().UnixNano())
+		m.byID[cfg.ID] = tenant
+		m.byAPIKey[keyHash] = tenant
+	}
+	return m
 }
 
 // Create registers a new tenant. The tenant ID and API key must be unique.
@@ -223,6 +305,10 @@ func (m *TenantManager) Create(cfg TenantConfig) error {
 	tenant.rateLimit.Store(cfg.RateLimit)
 	tenant.tokenBudget.Store(cfg.TokenBudget)
 	tenant.lastReset.Store(time.Now().UnixNano())
+
+	if err := m.backend.SaveTenant(cfg.ID, cfg); err != nil {
+		return err
+	}
 
 	m.byID[cfg.ID] = tenant
 	m.byAPIKey[keyHash] = tenant
@@ -276,6 +362,16 @@ func (m *TenantManager) Update(id string, rateLimit, tokenBudget int64) error {
 	}
 	t.rateLimit.Store(rateLimit)
 	t.tokenBudget.Store(tokenBudget)
+
+	// Persist updated config. LoadTenant gives us the stored config so we can
+	// update only the rate fields while preserving the API key and allow list.
+	if stored, ok := m.backend.LoadTenant(id); ok {
+		stored.RateLimit = rateLimit
+		stored.TokenBudget = tokenBudget
+		if err := m.backend.SaveTenant(id, *stored); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -287,6 +383,9 @@ func (m *TenantManager) Delete(id string) error {
 	t, ok := m.byID[id]
 	if !ok {
 		return errTenantNotFound
+	}
+	if err := m.backend.DeleteTenant(id); err != nil {
+		return err
 	}
 	delete(m.byID, id)
 	delete(m.byAPIKey, t.apiKeyHash)
