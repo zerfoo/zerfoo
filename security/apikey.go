@@ -51,19 +51,79 @@ func (k *APIKey) Valid(now time.Time) bool {
 	return true
 }
 
-// KeyStore manages API keys. It is safe for concurrent use.
-type KeyStore struct {
-	mu   sync.RWMutex
-	keys map[string]*APIKey // keyed by hash
-	byID map[string]*APIKey
+// KeyStoreBackend abstracts storage operations for API keys.
+type KeyStoreBackend interface {
+	Store(hash string, key *APIKey) error
+	Load(hash string) *APIKey
+	Delete(hash string) error
+	List() []*APIKey
 }
 
-// NewKeyStore returns an empty KeyStore.
-func NewKeyStore() *KeyStore {
-	return &KeyStore{
-		keys: make(map[string]*APIKey),
+// memoryBackend is the default in-memory implementation of KeyStoreBackend.
+type memoryBackend struct {
+	keys map[string]*APIKey
+}
+
+func newMemoryBackend() *memoryBackend {
+	return &memoryBackend{keys: make(map[string]*APIKey)}
+}
+
+func (m *memoryBackend) Store(hash string, key *APIKey) error {
+	m.keys[hash] = key
+	return nil
+}
+
+func (m *memoryBackend) Load(hash string) *APIKey {
+	return m.keys[hash]
+}
+
+func (m *memoryBackend) Delete(hash string) error {
+	delete(m.keys, hash)
+	return nil
+}
+
+func (m *memoryBackend) List() []*APIKey {
+	var result []*APIKey
+	for _, k := range m.keys {
+		result = append(result, k)
+	}
+	return result
+}
+
+// KeyStoreOption configures a KeyStore.
+type KeyStoreOption func(*KeyStore)
+
+// WithBackend sets the storage backend for a KeyStore.
+func WithBackend(b KeyStoreBackend) KeyStoreOption {
+	return func(s *KeyStore) {
+		s.backend = b
+	}
+}
+
+// KeyStore manages API keys. It is safe for concurrent use.
+type KeyStore struct {
+	mu      sync.RWMutex
+	byID    map[string]*APIKey
+	backend KeyStoreBackend
+}
+
+// NewKeyStore returns a KeyStore configured with the given options.
+// If no backend is provided, an in-memory backend is used.
+func NewKeyStore(opts ...KeyStoreOption) *KeyStore {
+	s := &KeyStore{
 		byID: make(map[string]*APIKey),
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	if s.backend == nil {
+		s.backend = newMemoryBackend()
+	}
+	// Populate byID index from backend for persistent backends.
+	for _, k := range s.backend.List() {
+		s.byID[k.ID] = k
+	}
+	return s
 }
 
 // Create generates a new API key with the given scopes and optional expiry.
@@ -97,7 +157,9 @@ func (s *KeyStore) Create(id string, scopes []Scope, expiresAt time.Time) (rawKe
 		return "", nil, errors.New("security: duplicate key ID")
 	}
 
-	s.keys[hash] = key
+	if err := s.backend.Store(hash, key); err != nil {
+		return "", nil, err
+	}
 	s.byID[id] = key
 	return rawKey, key, nil
 }
@@ -109,7 +171,7 @@ func (s *KeyStore) Lookup(rawKey string) *APIKey {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.keys[hash]
+	return s.backend.Load(hash)
 }
 
 // Revoke marks a key as revoked by its ID.
@@ -123,6 +185,9 @@ func (s *KeyStore) Revoke(id string) error {
 	}
 	k.Revoked = true
 	k.RevokedAt = time.Now()
+	if err := s.backend.Store(k.Hash, k); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -140,7 +205,7 @@ func (s *KeyStore) Rotate(id string, newExpiry time.Time) (rawKey string, key *A
 	old.Revoked = true
 	old.RevokedAt = time.Now()
 	delete(s.byID, id)
-	delete(s.keys, old.Hash)
+	_ = s.backend.Delete(old.Hash)
 	s.mu.Unlock()
 
 	return s.Create(id, scopes, newExpiry)
