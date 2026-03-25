@@ -2046,7 +2046,7 @@ intermediate values from the forward pass.
 
 ##### Wave 78: GPU Training Forward Path (5 agents)
 
-- [ ] T123.1 Wire GPU engine forward into ITransformer.TrainWindowed
+- [x] T123.1 Wire GPU engine forward into ITransformer.TrainWindowed
   Owner: ML Eng  Est: 3h  verifies: [UC-026]
   Deps: none
   Files: timeseries/itransformer.go
@@ -2059,7 +2059,7 @@ intermediate values from the forward pass.
   - Test: training convergence matches CPU path within tolerance.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
 
-- [ ] T123.2 Wire GPU engine forward into PatchTST.TrainWindowed
+- [x] T123.2 Wire GPU engine forward into PatchTST.TrainWindowed
   Owner: ML Eng  Est: 3h  verifies: [UC-026]
   Deps: none
   Files: timeseries/patchtst.go
@@ -2069,7 +2069,7 @@ intermediate values from the forward pass.
   - Test: engine.Forward called during training. Convergence matches CPU.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
 
-- [ ] T123.3 Wire GPU engine forward into CfC.TrainWindowed
+- [x] T123.3 Wire GPU engine forward into CfC.TrainWindowed
   Owner: ML Eng  Est: 2h  verifies: [UC-026]
   Deps: none
   Files: timeseries/cfc.go
@@ -2077,7 +2077,7 @@ intermediate values from the forward pass.
   - Same pattern as T123.1 for CfC.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
 
-- [ ] T123.4 Wire GPU engine forward into FreTS.TrainWindowed
+- [x] T123.4 Wire GPU engine forward into FreTS.TrainWindowed
   Owner: ML Eng  Est: 2h  verifies: [UC-026]
   Deps: none
   Files: timeseries/frets.go
@@ -2085,7 +2085,7 @@ intermediate values from the forward pass.
   - Same pattern as T123.1 for FreTS.
   - go vet ./timeseries/ clean. go test -race ./timeseries/ pass.
 
-- [ ] T123.5 Wire GPU engine forward into DLinear, NHiTS, Mamba TrainWindowed
+- [x] T123.5 Wire GPU engine forward into DLinear, NHiTS, Mamba TrainWindowed
   Owner: ML Eng  Est: 3h  verifies: [UC-026]
   Deps: none
   Files: timeseries/dlinear.go, timeseries/nhits.go, timeseries/mamba_ts.go
