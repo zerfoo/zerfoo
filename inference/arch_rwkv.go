@@ -127,7 +127,10 @@ func BuildRWKV(
 	if !ok {
 		// Create zero bias if missing.
 		zeroData := make([]float32, rc.HiddenSize)
-		outputNormBias, _ = tensor.New([]int{rc.HiddenSize}, zeroData)
+		outputNormBias, err = tensor.New([]int{rc.HiddenSize}, zeroData)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create output_norm zero bias: %w", err)
+		}
 	}
 
 	proxy := compute.NewEngineProxy[float32](engine)
@@ -143,7 +146,10 @@ func BuildRWKV(
 		ln0B, hasBias := tensors["blocks.0.ln0.bias"]
 		if !hasBias {
 			zeroData := make([]float32, rc.HiddenSize)
-			ln0B, _ = tensor.New([]int{rc.HiddenSize}, zeroData)
+			ln0B, err = tensor.New([]int{rc.HiddenSize}, zeroData)
+			if err != nil {
+				return nil, nil, fmt.Errorf("create blocks.0.ln0 zero bias: %w", err)
+			}
 		}
 		ln0Node := &rwkvLayerNormNode[float32]{
 			engine: proxy,
@@ -166,7 +172,10 @@ func BuildRWKV(
 		ln1B, ok := tensors[prefix+"ln1.bias"]
 		if !ok {
 			zeroData := make([]float32, rc.HiddenSize)
-			ln1B, _ = tensor.New([]int{rc.HiddenSize}, zeroData)
+			ln1B, err = tensor.New([]int{rc.HiddenSize}, zeroData)
+			if err != nil {
+				return nil, nil, fmt.Errorf("create %sln1 zero bias: %w", prefix, err)
+			}
 		}
 
 		ln1Node := &rwkvLayerNormNode[float32]{
@@ -206,7 +215,10 @@ func BuildRWKV(
 		ln2B, ok := tensors[prefix+"ln2.bias"]
 		if !ok {
 			zeroData := make([]float32, rc.HiddenSize)
-			ln2B, _ = tensor.New([]int{rc.HiddenSize}, zeroData)
+			ln2B, err = tensor.New([]int{rc.HiddenSize}, zeroData)
+			if err != nil {
+				return nil, nil, fmt.Errorf("create %sln2 zero bias: %w", prefix, err)
+			}
 		}
 
 		ln2Node := &rwkvLayerNormNode[float32]{

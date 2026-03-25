@@ -358,7 +358,10 @@ func buildMixtralGraph(
 			f32 := make([]float32, qs.Len())
 			qs.Dequantize(f32)
 			q4 := tensor.QuantizeQ4(f32)
-			lmHeadWeight, _ = tensor.NewWithStorage[float32](lmHeadWeight.Shape(), q4)
+			lmHeadWeight, err = tensor.NewWithStorage[float32](lmHeadWeight.Shape(), q4)
+			if err != nil {
+				return nil, nil, fmt.Errorf("transpose lm_head weight: %w", err)
+			}
 		}
 	}
 	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
