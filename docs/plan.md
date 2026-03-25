@@ -2034,7 +2034,7 @@ throughput metric, per-model dimensions, and active request gauge. Target: 5/5.
 
 ##### Wave 72: Metrics Enhancement (2 agents)
 
-- [ ] T118.1 Add error rate counter and active request gauge to serve metrics
+- [x] T118.1 Add error rate counter and active request gauge to serve metrics
   Owner: Infra Eng  Est: 2h  verifies: [infrastructure]
   Deps: none
   Files: serve/metrics.go, serve/server.go
@@ -2047,7 +2047,7 @@ throughput metric, per-model dimensions, and active request gauge. Target: 5/5.
   - Test: during an in-flight request, active_requests is 1; after completion, 0.
   - go vet ./serve/ clean. go test -race ./serve/ pass.
 
-- [ ] T118.2 Replace last-write-wins tok/s gauge with EWMA
+- [x] T118.2 Replace last-write-wins tok/s gauge with EWMA
   Owner: Infra Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: serve/metrics.go
@@ -2069,7 +2069,7 @@ Add Store interfaces with bbolt backends to match the pattern in serve/registry/
 
 ##### Wave 73: Store Interfaces (3 agents)
 
-- [ ] T119.1 Add persistent backend to security.KeyStore
+- [x] T119.1 Add persistent backend to security.KeyStore
   Owner: Lead Eng  Est: 2h  verifies: [UC-003]
   Deps: none
   Files: security/apikey.go, security/apikey_bbolt.go (new)
@@ -2085,7 +2085,7 @@ Add Store interfaces with bbolt backends to match the pattern in serve/registry/
   - New test: bbolt backend round-trip (create, lookup, revoke, rotate).
   - go vet ./security/ clean. go test -race ./security/ pass.
 
-- [ ] T119.2 Add persistent backend to support.Store
+- [x] T119.2 Add persistent backend to support.Store
   Owner: Lead Eng  Est: 2h  verifies: [UC-003]
   Deps: none
   Files: support/ticket.go, support/store_bbolt.go (new)
@@ -2149,7 +2149,7 @@ Maturity gap: code quality rated 4/5. 3 files over 1100 lines.
   - itransformer_backward.go: backward pass, gradient computation.
   - go build ./... clean. go test -race ./timeseries/ pass.
 
-- [ ] T120.3 Split timeseries/patchtst.go into model + backward
+- [x] T120.3 Split timeseries/patchtst.go into model + backward
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: timeseries/patchtst.go -> patchtst.go + patchtst_backward.go
@@ -2166,7 +2166,7 @@ silently discard tensor creation errors.
 
 ##### Wave 76: Error Fixes (2 agents)
 
-- [ ] T121.1 Propagate tensor creation errors in architecture builders
+- [x] T121.1 Propagate tensor creation errors in architecture builders
   Owner: ML Eng  Est: 1h  verifies: [infrastructure]
   Deps: none
   Files: inference/arch_common.go, inference/arch_llama4.go, inference/arch_falcon.go,
@@ -2177,7 +2177,7 @@ silently discard tensor creation errors.
   - Same for any other `_, _ = tensor.New(...)` patterns in these files.
   - go build ./... clean. go test -race ./inference/ pass.
 
-- [ ] T121.2 Log GPU counter sync errors instead of discarding
+- [x] T121.2 Log GPU counter sync errors instead of discarding
   Owner: ML Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: generate/generator.go, generate/stream.go
@@ -2195,7 +2195,7 @@ Maturity gap: CI/CD rated 4/5. Missing SAST/CodeQL scanning.
 
 ##### Wave 77: CI Enhancement (1 agent)
 
-- [ ] T122.1 Add CodeQL analysis workflow
+- [x] T122.1 Add CodeQL analysis workflow
   Owner: Infra Eng  Est: 30m  verifies: [infrastructure]
   Deps: none
   Files: .github/workflows/codeql.yml (new)
