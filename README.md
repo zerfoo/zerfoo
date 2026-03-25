@@ -224,13 +224,17 @@ See the [`examples/`](examples/) directory for runnable programs:
 - **[agentic-tool-use](examples/agentic-tool-use/)** -- function calling agent
 - **[audio-transcription](examples/audio-transcription/)** -- Whisper transcription
 
-## Links
+## Documentation
 
-- **[Getting Started](docs/getting-started.md)** -- full walkthrough: install, pull a model, run inference via CLI and library
-- **[GPU Setup](docs/gpu-setup.md)** -- configure CUDA, ROCm, or OpenCL for hardware-accelerated inference
-- **[Benchmarks](docs/benchmarks.md)** -- throughput numbers across models and hardware
-- **[Design](docs/design.md)** -- architecture overview and key design decisions
-- **[Blog](docs/blog/)** -- development updates and deep dives
+Full documentation at **[zerfoo.feza.ai/docs/](https://zerfoo.feza.ai/docs/)**
+
+- **[Getting Started](https://zerfoo.feza.ai/docs/getting-started/installation/)** -- install, pull a model, run inference
+- **[Tutorials](https://zerfoo.feza.ai/docs/tutorials/)** -- step-by-step guides
+- **[API Reference](https://zerfoo.feza.ai/docs/api/)** -- generate, inference, serve APIs
+- **[Cookbooks](https://zerfoo.feza.ai/docs/cookbooks/)** -- 12 runnable code recipes
+- **[Architecture](https://zerfoo.feza.ai/docs/architecture/)** -- GPU setup, architecture overview
+- **[Benchmarks](https://zerfoo.feza.ai/docs/reference/benchmarks/)** -- throughput numbers
+- **[Blog](https://zerfoo.feza.ai/docs/blog/)** -- development updates and deep dives
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** -- how to contribute
 
 ## License
