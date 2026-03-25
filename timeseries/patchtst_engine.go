@@ -620,23 +620,25 @@ func (m *PatchTST) trainWindowedEngine(windows [][][]float64, labels []float64, 
 			grads := make([]float64, nParams)
 			batchLoss := 0.0
 
+			batchWindows := windows[start:end]
+			preds, batchCaches, err := m.forwardBatchF64WithCacheEngine(ctx, batchWindows, params)
+			if err != nil {
+				return nil, fmt.Errorf("patchtst: engine batch forward: %w", err)
+			}
+
 			for s := 0; s < bs; s++ {
-				pred, cache, err := m.forwardF64WithCacheEngine(ctx, windows[start+s], params)
-				if err != nil {
-					return nil, fmt.Errorf("patchtst: engine forward at sample %d: %w", start+s, err)
-				}
 				sampleLabels := labels[(start+s)*outDim : (start+s+1)*outDim]
 
 				// Compute MSE loss and dL/dPred.
 				dOutput := make([]float64, outDim)
 				for j := 0; j < outDim; j++ {
-					diff := pred[j] - sampleLabels[j]
+					diff := preds[s][j] - sampleLabels[j]
 					batchLoss += diff * diff
 					dOutput[j] = 2.0 * diff / float64(bs*outDim)
 				}
 
 				// Analytical backward pass.
-				sampleGrads := m.backwardF64(dOutput, params, cache)
+				sampleGrads := m.backwardF64(dOutput, params, batchCaches[s])
 				for pi := range grads {
 					grads[pi] += sampleGrads[pi]
 				}
