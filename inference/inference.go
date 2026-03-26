@@ -68,6 +68,11 @@ type ModelMetadata struct {
 	AttentionBias      bool               `json:"attention_bias"`
 	PartialRotaryFactor float64           `json:"partial_rotary_factor"`
 
+	// Granite-specific fields.
+	EmbeddingMultiplier float64 `json:"embedding_multiplier,omitempty"`
+	ResidualMultiplier  float64 `json:"residual_multiplier,omitempty"`
+	LogitScale          float64 `json:"logit_scale,omitempty"`
+
 	// DeepSeek MLA and MoE fields.
 	KVLoRADim        int `json:"kv_lora_rank"`
 	QLoRADim         int `json:"q_lora_rank"`

@@ -55,6 +55,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("mamba", parseMambaConfig)
 	r.Register("mamba3", parseMamba3Config)
 	r.Register("jamba", parseJambaConfig)
+	r.Register("granite", parseGraniteConfig)
 	r.Register("llava", parseLLaVAConfig)
 	r.Register("qwen_vl", parseQwenVLConfig)
 	return r
@@ -208,6 +209,35 @@ func parsePhiConfig(raw map[string]interface{}) (*ModelMetadata, error) {
 	}
 	if meta.PartialRotaryFactor == 0 {
 		meta.PartialRotaryFactor = 1.0 // Full rotation by default
+	}
+	return meta, nil
+}
+
+// parseGraniteConfig parses IBM Granite-family config.json fields.
+// Granite is similar to Llama but adds embedding_multiplier, residual_multiplier,
+// and optional attention bias and logit softcapping.
+func parseGraniteConfig(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta := &ModelMetadata{
+		Architecture:          getString(raw, "model_type"),
+		VocabSize:             getInt(raw, "vocab_size"),
+		HiddenSize:            getInt(raw, "hidden_size"),
+		NumLayers:             getInt(raw, "num_hidden_layers"),
+		NumQueryHeads:         getInt(raw, "num_attention_heads"),
+		NumKeyValueHeads:      getInt(raw, "num_key_value_heads"),
+		IntermediateSize:      getInt(raw, "intermediate_size"),
+		MaxPositionEmbeddings: getInt(raw, "max_position_embeddings"),
+		EOSTokenID:            getInt(raw, "eos_token_id"),
+		BOSTokenID:            getInt(raw, "bos_token_id"),
+		RopeTheta:             getFloat(raw, "rope_theta"),
+		TieWordEmbeddings:     getBool(raw, "tie_word_embeddings"),
+		AttentionBias:         getBool(raw, "attention_bias"),
+		EmbeddingMultiplier:   getFloat(raw, "embedding_multiplier"),
+		ResidualMultiplier:    getFloat(raw, "residual_multiplier"),
+		LogitScale:            getFloat(raw, "logit_scale"),
+		RopeScaling:           getRopeScaling(raw),
+	}
+	if meta.RopeTheta == 0 {
+		meta.RopeTheta = 10000 // Granite default
 	}
 	return meta, nil
 }
