@@ -221,7 +221,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
   - Middleware can be disabled at runtime via config.
   - go test with httptest passes.
 
-- [ ] GG-T4.1 Parity tests against Ollama granite3-guardian
+- [x] GG-T4.1 Parity tests against Ollama granite3-guardian
   Owner: ML Eng  Est: 8h
   Files: tests/parity/guardian_test.go, tests/parity/testdata/guardian/
   Deps: GG-T2.2
@@ -494,9 +494,9 @@ Full task details in git history (commit that created plan-site.md).
 
 - [x] T11.1 Verify all site links  Est: 30m
 - [x] T11.2 Verify code examples compile  Est: 45m
-- [ ] T11.3 Run Lighthouse audit  Est: 15m
-- [ ] T11.4 Test mobile responsiveness  Est: 15m
-- [ ] T11.5 Test search functionality  Est: 15m
+- [x] T11.3 Run Lighthouse audit  Est: 15m
+- [x] T11.4 Test mobile responsiveness  Est: 15m
+- [x] T11.5 Test search functionality  Est: 15m
 
 ---
 
