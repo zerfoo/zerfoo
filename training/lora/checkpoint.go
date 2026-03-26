@@ -1,13 +1,13 @@
 package lora
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
 	"strings"
 
 	"github.com/zerfoo/zerfoo/model/gguf"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -33,136 +33,28 @@ func SaveAdapter[T tensor.Numeric](path string, m Model[T]) error {
 	}
 	defer f.Close()
 
-	// Build tensor info list. Each adapter contributes 2 tensors (A and B).
-	type tensorEntry struct {
-		name string
-		data []float32
-		rows int
-		cols int
-	}
-	var entries []tensorEntry
+	w := ztensorgguf.NewWriter()
+
+	// Metadata: general.architecture, lora.rank, lora.alpha.
+	rank := adapters[0].rank
+	alpha := adapters[0].alpha
+	w.AddMetadataString("general.architecture", "lora")
+	w.AddMetadataUint32("lora.rank", uint32(rank))
+	w.AddMetadataFloat32("lora.alpha", alpha)
+
+	// Add tensors. Each adapter contributes 2 tensors (A and B).
 	for _, ll := range adapters {
 		aData := toFloat32(ll.A.Value.Data())
 		aShape := ll.A.Value.Shape()
-		entries = append(entries, tensorEntry{
-			name: "lora." + ll.name + ".weight_a",
-			data: aData,
-			rows: aShape[0],
-			cols: aShape[1],
-		})
+		w.AddTensorF32("lora."+ll.name+".weight_a", aShape, aData)
 
 		bData := toFloat32(ll.B.Value.Data())
 		bShape := ll.B.Value.Shape()
-		entries = append(entries, tensorEntry{
-			name: "lora." + ll.name + ".weight_b",
-			data: bData,
-			rows: bShape[0],
-			cols: bShape[1],
-		})
+		w.AddTensorF32("lora."+ll.name+".weight_b", bShape, bData)
 	}
 
-	// Metadata: lora.rank, lora.alpha, general.architecture.
-	rank := adapters[0].rank
-	alpha := adapters[0].alpha
-	metadata := []struct {
-		key       string
-		valueType uint32
-		value     any
-	}{
-		{"general.architecture", gguf.TypeString, "lora"},
-		{"lora.rank", gguf.TypeUint32, uint32(rank)},
-		{"lora.alpha", gguf.TypeFloat32, alpha},
-	}
-
-	// Write GGUF v3 header.
-	if err := binary.Write(f, binary.LittleEndian, gguf.Magic); err != nil {
-		return fmt.Errorf("lora: write magic: %w", err)
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint32(3)); err != nil {
-		return fmt.Errorf("lora: write version: %w", err)
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(entries))); err != nil {
-		return fmt.Errorf("lora: write tensor count: %w", err)
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(metadata))); err != nil {
-		return fmt.Errorf("lora: write metadata count: %w", err)
-	}
-
-	// Write metadata key-value pairs.
-	for _, kv := range metadata {
-		if err := writeGGUFString(f, kv.key); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, kv.valueType); err != nil {
-			return err
-		}
-		switch kv.valueType {
-		case gguf.TypeString:
-			if err := writeGGUFString(f, kv.value.(string)); err != nil {
-				return err
-			}
-		case gguf.TypeUint32:
-			if err := binary.Write(f, binary.LittleEndian, kv.value.(uint32)); err != nil {
-				return err
-			}
-		case gguf.TypeFloat32:
-			if err := binary.Write(f, binary.LittleEndian, kv.value.(float32)); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Write tensor info entries. GGUF stores dimensions in GGML order
-	// (innermost-first): for a 2D tensor with shape [rows, cols],
-	// ne[0]=cols, ne[1]=rows.
-	var offset uint64
-	for _, e := range entries {
-		if err := writeGGUFString(f, e.name); err != nil {
-			return err
-		}
-		// n_dimensions
-		if err := binary.Write(f, binary.LittleEndian, uint32(2)); err != nil {
-			return err
-		}
-		// dimensions in GGML order: ne[0]=cols, ne[1]=rows
-		if err := binary.Write(f, binary.LittleEndian, uint64(e.cols)); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, uint64(e.rows)); err != nil {
-			return err
-		}
-		// type = F32
-		if err := binary.Write(f, binary.LittleEndian, uint32(gguf.GGMLTypeF32)); err != nil {
-			return err
-		}
-		// offset relative to data start
-		if err := binary.Write(f, binary.LittleEndian, offset); err != nil {
-			return err
-		}
-		offset += uint64(len(e.data)) * 4
-	}
-
-	// Align to 32-byte boundary for tensor data.
-	const alignment = 32
-	pos, err := f.Seek(0, 1)
-	if err != nil {
-		return fmt.Errorf("lora: seek current: %w", err)
-	}
-	padLen := (alignment - pos%alignment) % alignment
-	if padLen > 0 {
-		pad := make([]byte, padLen)
-		if _, err := f.Write(pad); err != nil {
-			return fmt.Errorf("lora: write alignment padding: %w", err)
-		}
-	}
-
-	// Write tensor data.
-	for _, e := range entries {
-		for _, v := range e.data {
-			if err := binary.Write(f, binary.LittleEndian, v); err != nil {
-				return fmt.Errorf("lora: write tensor data %q: %w", e.name, err)
-			}
-		}
+	if err := w.Write(f); err != nil {
+		return fmt.Errorf("lora: write GGUF: %w", err)
 	}
 
 	return nil
@@ -247,17 +139,6 @@ func LoadAdapter[T tensor.Numeric](path string, m Model[T]) error {
 		return fmt.Errorf("lora: no adapter tensors found in checkpoint")
 	}
 
-	return nil
-}
-
-// writeGGUFString writes a GGUF string (uint64 length + bytes).
-func writeGGUFString(f *os.File, s string) error {
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(s))); err != nil {
-		return fmt.Errorf("lora: write string length: %w", err)
-	}
-	if _, err := f.Write([]byte(s)); err != nil {
-		return fmt.Errorf("lora: write string data: %w", err)
-	}
 	return nil
 }
 
