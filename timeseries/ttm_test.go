@@ -1,0 +1,417 @@
+package timeseries
+
+import (
+	"context"
+	"math"
+	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+)
+
+func ttmTestConfig() TTMTrainConfig {
+	return TTMTrainConfig{
+		ContextLen:     16,
+		ForecastLen:    4,
+		NumChannels:    1,
+		PatchLen:       4,
+		DModel:         8,
+		NumMixerLayers: 1,
+		ChannelMixing:  false,
+		FreezeEncoder:  false,
+	}
+}
+
+func TestTTM_TrainWindowed_Convergence(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	// Generate synthetic sinusoidal training data.
+	nSamples := 20
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = math.Sin(float64(s+i) * 0.3)
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   50,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if len(result.LossHistory) != 50 {
+		t.Fatalf("loss history length = %d, want 50", len(result.LossHistory))
+	}
+
+	// Verify loss decreases: first loss should be larger than final loss.
+	if result.LossHistory[0] <= result.FinalLoss {
+		t.Errorf("loss did not decrease: first=%v, final=%v", result.LossHistory[0], result.FinalLoss)
+	}
+
+	if math.IsNaN(result.FinalLoss) || math.IsInf(result.FinalLoss, 0) {
+		t.Errorf("FinalLoss is not finite: %v", result.FinalLoss)
+	}
+
+	if _, ok := result.Metrics["mse"]; !ok {
+		t.Error("Metrics missing 'mse' key")
+	}
+}
+
+func TestTTM_PredictWindowed_Shape(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	nSamples := 5
+	windows := make([][][]float64, nSamples)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = float64(s+i) * 0.1
+		}
+	}
+
+	preds, err := model.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	expected := nSamples * config.ForecastLen
+	if len(preds) != expected {
+		t.Fatalf("PredictWindowed returned %d values, want %d", len(preds), expected)
+	}
+
+	for i, v := range preds {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Errorf("prediction[%d] is not finite: %v", i, v)
+		}
+	}
+}
+
+func TestTTM_FreezeEncoder(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	config.FreezeEncoder = true
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	// Save encoder weights before training.
+	paramsBefore := model.extractParamsF64()
+	encoderBefore := make([][]float64, len(paramsBefore.encoder))
+	for i, l := range paramsBefore.encoder {
+		encoderBefore[i] = l.appendGrads(nil)
+	}
+
+	// Generate training data.
+	nSamples := 10
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = math.Sin(float64(s+i) * 0.3)
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	_, err = model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   20,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	// Check encoder weights unchanged.
+	paramsAfter := model.extractParamsF64()
+	for i, l := range paramsAfter.encoder {
+		after := l.appendGrads(nil)
+		for j := range after {
+			if after[j] != encoderBefore[i][j] {
+				t.Fatalf("encoder block %d param %d changed from %v to %v (should be frozen)",
+					i, j, encoderBefore[i][j], after[j])
+			}
+		}
+	}
+
+	// Verify decoder weights DID change (at least some).
+	decoderBefore := make([][]float64, len(paramsBefore.decoder))
+	for i, l := range paramsBefore.decoder {
+		decoderBefore[i] = l.appendGrads(nil)
+	}
+	decoderChanged := false
+	for i, l := range paramsAfter.decoder {
+		after := l.appendGrads(nil)
+		for j := range after {
+			if after[j] != decoderBefore[i][j] {
+				decoderChanged = true
+				break
+			}
+		}
+		if decoderChanged {
+			break
+		}
+	}
+	if !decoderChanged {
+		t.Error("decoder weights did not change during training (expected fine-tuning)")
+	}
+}
+
+func TestTTM_Forward_Shape(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	// Create input: [batch=2, contextLen=16].
+	batch := 2
+	data := make([]float32, batch*config.ContextLen)
+	for i := range data {
+		data[i] = float32(i) * 0.01
+	}
+	input, err := tensor.New[float32]([]int{batch, config.ContextLen}, data)
+	if err != nil {
+		t.Fatalf("create input: %v", err)
+	}
+
+	ctx := context.Background()
+	out, err := model.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	shape := out.Shape()
+	if len(shape) != 2 || shape[0] != batch || shape[1] != config.ForecastLen {
+		t.Errorf("output shape = %v, want [%d, %d]", shape, batch, config.ForecastLen)
+	}
+}
+
+func TestTTM_TrainWindowed_Empty(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	_, err = model.TrainWindowed(nil, nil, TrainConfig{Epochs: 1})
+	if err == nil {
+		t.Error("expected error for empty training set")
+	}
+}
+
+func TestTTM_SaveLoadWeights(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	// Train briefly to get non-default weights.
+	nSamples := 5
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = float64(s+i) * 0.1
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = float64(s) * 0.05
+		}
+	}
+	_, err = model.TrainWindowed(windows, labels, TrainConfig{Epochs: 3, LR: 1e-3, GradClip: 1.0})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	path := t.TempDir() + "/ttm_weights.json"
+	if err := model.SaveWeights(path); err != nil {
+		t.Fatalf("SaveWeights: %v", err)
+	}
+
+	// Create a fresh model and load weights.
+	model2, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+	if err := model2.loadWeights(path); err != nil {
+		t.Fatalf("loadWeights: %v", err)
+	}
+
+	// Predictions should match.
+	preds1, err := model.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed model1: %v", err)
+	}
+	preds2, err := model2.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed model2: %v", err)
+	}
+	for i := range preds1 {
+		if math.Abs(preds1[i]-preds2[i]) > 1e-6 {
+			t.Errorf("prediction mismatch at %d: %v vs %v", i, preds1[i], preds2[i])
+		}
+	}
+}
+
+func TestTTMEngine_Forward(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	config := ttmTestConfig()
+	ttmEngine, err := NewTTMEngine[float32](config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTMEngine: %v", err)
+	}
+
+	ctx := context.Background()
+	batch := 2
+	numPatches := config.NumPatches()
+
+	// Create patched input: [batch, numPatches, patchLen].
+	data := make([]float32, batch*numPatches*config.PatchLen)
+	for i := range data {
+		data[i] = float32(i) * 0.01
+	}
+	input, err := tensor.New[float32]([]int{batch, numPatches, config.PatchLen}, data)
+	if err != nil {
+		t.Fatalf("create input: %v", err)
+	}
+
+	out, err := ttmEngine.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	shape := out.Shape()
+	if len(shape) != 2 || shape[0] != batch || shape[1] != config.ForecastLen {
+		t.Errorf("output shape = %v, want [%d, %d]", shape, batch, config.ForecastLen)
+	}
+
+	// Verify outputs are finite.
+	for i, v := range out.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Errorf("output[%d] is not finite: %v", i, v)
+		}
+	}
+}
+
+func TestTTMEngine_ExtractPatches(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	config := ttmTestConfig()
+	ttmEngine, err := NewTTMEngine[float32](config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTMEngine: %v", err)
+	}
+
+	ctx := context.Background()
+	batch := 3
+
+	data := make([]float32, batch*config.ContextLen)
+	for i := range data {
+		data[i] = float32(i)
+	}
+	input, err := tensor.New[float32]([]int{batch, config.ContextLen}, data)
+	if err != nil {
+		t.Fatalf("create input: %v", err)
+	}
+
+	patches, err := ttmEngine.ExtractPatches(ctx, input)
+	if err != nil {
+		t.Fatalf("ExtractPatches: %v", err)
+	}
+
+	numPatches := config.NumPatches()
+	shape := patches.Shape()
+	if len(shape) != 3 || shape[0] != batch || shape[1] != numPatches || shape[2] != config.PatchLen {
+		t.Errorf("patches shape = %v, want [%d, %d, %d]", shape, batch, numPatches, config.PatchLen)
+	}
+
+	// Verify first sample, first patch.
+	pData := patches.Data()
+	for i := 0; i < config.PatchLen; i++ {
+		if pData[i] != float32(i) {
+			t.Errorf("patch[0][0][%d] = %v, want %v", i, pData[i], float32(i))
+		}
+	}
+}
+
+func TestTTM_ChannelMixing(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	config.ChannelMixing = true
+	config.NumChannels = 2
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	nSamples := 10
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 2)
+		for c := 0; c < 2; c++ {
+			windows[s][c] = make([]float64, config.ContextLen)
+			for i := 0; i < config.ContextLen; i++ {
+				windows[s][c][i] = math.Sin(float64(s+i+c*3) * 0.3)
+			}
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   30,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if math.IsNaN(result.FinalLoss) || math.IsInf(result.FinalLoss, 0) {
+		t.Errorf("FinalLoss is not finite: %v", result.FinalLoss)
+	}
+}
