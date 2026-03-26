@@ -4,7 +4,9 @@ package training
 import (
 	"context"
 	"fmt"
+	"os"
 
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/zerfoo/training/optimizer"
@@ -282,9 +284,51 @@ func (s *SimpleModelProvider[T]) LoadModel(ctx context.Context, path string) (*g
 	return nil, fmt.Errorf("model loading not implemented in SimpleModelProvider")
 }
 
-// SaveModel implements ModelProvider.SaveModel
+// SaveModel implements ModelProvider.SaveModel by writing model parameters to
+// a GGUF file using the shared ztensor/gguf writer. Each graph parameter is
+// stored as a float32 tensor. The model info architecture name is written as
+// the general.architecture metadata key.
 func (s *SimpleModelProvider[T]) SaveModel(ctx context.Context, model *graph.Graph[T], path string) error {
-	return fmt.Errorf("model saving not implemented in SimpleModelProvider")
+	if model == nil {
+		return fmt.Errorf("training: SaveModel: model is nil")
+	}
+
+	params := model.Parameters()
+	if len(params) == 0 {
+		return fmt.Errorf("training: SaveModel: model has no parameters")
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("training: SaveModel: create file: %w", err)
+	}
+	defer f.Close()
+
+	w := ztensorgguf.NewWriter()
+
+	arch := s.modelInfo.Architecture
+	if arch == "" {
+		arch = "generic"
+	}
+	w.AddMetadataString("general.architecture", arch)
+	if s.modelInfo.Name != "" {
+		w.AddMetadataString("general.name", s.modelInfo.Name)
+	}
+
+	for _, p := range params {
+		data := p.Value.Data()
+		f32Data := make([]float32, len(data))
+		for i, v := range data {
+			f32Data[i] = float32(v)
+		}
+		w.AddTensorF32(p.Name, p.Value.Shape(), f32Data)
+	}
+
+	if err := w.Write(f); err != nil {
+		return fmt.Errorf("training: SaveModel: write GGUF: %w", err)
+	}
+
+	return nil
 }
 
 // GetModelInfo implements ModelProvider.GetModelInfo
