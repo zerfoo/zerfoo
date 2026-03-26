@@ -29,6 +29,8 @@ type TTMConfig struct {
 	NumMixerLayers int  // number of TSMixer blocks in the encoder backbone
 	ChannelMixing  bool // if true, include feature-mixing MLP in TSMixer blocks
 	Expansion      int  // MLP expansion factor, default 2
+	NumExogenous   int  // number of future exogenous channels (0 = none)
+	NumStatic      int  // number of static categorical features (0 = none)
 }
 
 // validateTTMConfig validates that the TTMConfig has all required fields set.
@@ -82,21 +84,36 @@ func BuildTTM[T tensor.Float](
 	cfg *TTMConfig,
 	engine compute.Engine[T],
 ) (*graph.Graph[T], error) {
+	g, _, err := buildTTMWithNode(tensors, cfg, engine)
+	return g, err
+}
+
+// buildTTMWithNode constructs a TTM graph and returns both the graph and the
+// internal node (needed for setting exogenous/static inputs before forward).
+func buildTTMWithNode[T tensor.Float](
+	tensors map[string]*tensor.TensorNumeric[T],
+	cfg *TTMConfig,
+	engine compute.Engine[T],
+) (*graph.Graph[T], *ttmNode[T], error) {
 	if err := validateTTMConfig(cfg); err != nil {
-		return nil, fmt.Errorf("invalid TTM config: %w", err)
+		return nil, nil, fmt.Errorf("invalid TTM config: %w", err)
 	}
 
 	ops := engine.Ops()
 	node, err := newTTMNode[T](tensors, cfg, engine, ops)
 	if err != nil {
-		return nil, fmt.Errorf("create TTM node: %w", err)
+		return nil, nil, fmt.Errorf("create TTM node: %w", err)
 	}
 
 	builder := graph.NewBuilder[T](engine)
 	input := builder.Input([]int{-1, cfg.ContextLen, cfg.NumChannels})
 	builder.AddNode(node, input)
 
-	return builder.Build(node)
+	g, err := builder.Build(node)
+	if err != nil {
+		return nil, nil, err
+	}
+	return g, node, nil
 }
 
 // ttmNode implements the full TTM forward pass as a single graph node.
@@ -114,9 +131,27 @@ type ttmNode[T tensor.Float] struct {
 	// Encoder output norm.
 	encoderNorm *normalization.LayerNormalization[T]
 
-	// Forecast head: linear [d_model] -> [forecast_patch_len].
+	// Forecast head: linear [d_model (+ d_model if exog)] -> [forecast_patch_len].
 	// forecast_patch_len = ForecastLen (projects directly to forecast length).
 	forecastHead *core.Linear[T]
+
+	// Exogenous variable projection: linear [num_exog] -> [d_model].
+	// nil when NumExogenous == 0.
+	exogProj *core.Linear[T]
+
+	// Static categorical feature embedding: linear [num_static] -> [d_model].
+	// nil when NumStatic == 0.
+	staticEmbed *core.Linear[T]
+
+	// exogInput holds exogenous data [batch, forecast_len, num_exog] set before
+	// calling Forward. nil when not in use. This is set via SetExogenous and
+	// cleared after each Forward call.
+	exogInput *tensor.TensorNumeric[T]
+
+	// staticInput holds static feature data [batch, num_static] set before
+	// calling Forward. nil when not in use. Set via SetStatic and cleared
+	// after each Forward call.
+	staticInput *tensor.TensorNumeric[T]
 }
 
 func newTTMNode[T tensor.Float](
@@ -163,8 +198,15 @@ func newTTMNode[T tensor.Float](
 		return nil, fmt.Errorf("create encoder norm: %w", err)
 	}
 
-	// Forecast head: maps [d_model] -> [forecast_len].
-	head, err := core.NewLinear[T]("ttm_forecast_head", engine, ops, cfg.DModel, cfg.ForecastLen)
+	// Forecast head input dimension: d_model + d_model if exogenous features
+	// are present (the exogenous projection outputs d_model and is concatenated).
+	forecastInputDim := cfg.DModel
+	if cfg.NumExogenous > 0 {
+		forecastInputDim += cfg.DModel
+	}
+
+	// Forecast head: maps [forecastInputDim] -> [forecast_len].
+	head, err := core.NewLinear[T]("ttm_forecast_head", engine, ops, forecastInputDim, cfg.ForecastLen)
 	if err != nil {
 		return nil, fmt.Errorf("create forecast head: %w", err)
 	}
@@ -177,7 +219,7 @@ func newTTMNode[T tensor.Float](
 		}
 	}
 
-	return &ttmNode[T]{
+	node := &ttmNode[T]{
 		cfg:           cfg,
 		engine:        engine,
 		ops:           ops,
@@ -185,7 +227,39 @@ func newTTMNode[T tensor.Float](
 		encoderBlocks: blocks,
 		encoderNorm:   encNorm,
 		forecastHead:  head,
-	}, nil
+	}
+
+	// Exogenous variable projection: [num_exog] -> [d_model].
+	if cfg.NumExogenous > 0 {
+		exogProj, exErr := core.NewLinear[T]("ttm_exog_proj", engine, ops, cfg.NumExogenous, cfg.DModel)
+		if exErr != nil {
+			return nil, fmt.Errorf("create exog projection: %w", exErr)
+		}
+		if w, ok := tensors["exog_proj.weight"]; ok {
+			params := exogProj.Parameters()
+			if len(params) > 0 {
+				params[0].Value = w
+			}
+		}
+		node.exogProj = exogProj
+	}
+
+	// Static categorical feature embedding: [num_static] -> [d_model].
+	if cfg.NumStatic > 0 {
+		staticEmbed, sErr := core.NewLinear[T]("ttm_static_embed", engine, ops, cfg.NumStatic, cfg.DModel)
+		if sErr != nil {
+			return nil, fmt.Errorf("create static embedding: %w", sErr)
+		}
+		if w, ok := tensors["static_embed.weight"]; ok {
+			params := staticEmbed.Parameters()
+			if len(params) > 0 {
+				params[0].Value = w
+			}
+		}
+		node.staticEmbed = staticEmbed
+	}
+
+	return node, nil
 }
 
 // loadBlockWeights loads GGUF tensor weights into a TSMixer block.
@@ -248,15 +322,31 @@ func (n *ttmNode[T]) Parameters() []*graph.Parameter[T] {
 	}
 	params = append(params, n.encoderNorm.Parameters()...)
 	params = append(params, n.forecastHead.Parameters()...)
+	if n.exogProj != nil {
+		params = append(params, n.exogProj.Parameters()...)
+	}
+	if n.staticEmbed != nil {
+		params = append(params, n.staticEmbed.Parameters()...)
+	}
 	return params
 }
 
 // Forward processes [batch, context_len, channels] input and produces
 // [batch, forecast_len, channels].
+//
+// Exogenous and static inputs are provided via SetExogenous/SetStatic
+// before calling Forward. They are consumed (cleared) after each call.
 func (n *ttmNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("TTM expects 1 input, got %d", len(inputs))
 	}
+
+	// Capture and clear exogenous/static state for this forward pass.
+	exogInput := n.exogInput
+	staticInput := n.staticInput
+	n.exogInput = nil
+	n.staticInput = nil
+
 	x := inputs[0]
 	shape := x.Shape()
 	if len(shape) != 3 {
@@ -275,6 +365,48 @@ func (n *ttmNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	x, err = n.normalizeInput(ctx, x, mean, std, batch, numChannels)
 	if err != nil {
 		return nil, fmt.Errorf("normalize input: %w", err)
+	}
+
+	// Compute static bias if static features are provided.
+	// Static features [batch, num_static] -> projected to [batch, d_model]
+	// and broadcast-added as bias to each mixer block's output.
+	var staticBias *tensor.TensorNumeric[T]
+	if n.staticEmbed != nil && staticInput != nil {
+		sShape := staticInput.Shape()
+		if len(sShape) != 2 || sShape[0] != batch || sShape[1] != n.cfg.NumStatic {
+			return nil, fmt.Errorf("static input must be [%d, %d], got %v", batch, n.cfg.NumStatic, sShape)
+		}
+		var sErr error
+		staticBias, sErr = n.staticEmbed.Forward(ctx, staticInput)
+		if sErr != nil {
+			return nil, fmt.Errorf("static embed: %w", sErr)
+		}
+		// staticBias is [batch, d_model]; expand to [batch, 1, d_model] for broadcasting.
+		staticBias, sErr = n.engine.Reshape(ctx, staticBias, []int{batch, 1, n.cfg.DModel})
+		if sErr != nil {
+			return nil, fmt.Errorf("reshape static bias: %w", sErr)
+		}
+	}
+
+	// Compute exogenous projection if exogenous variables are provided.
+	// Exogenous [batch, forecast_len, num_exog] -> mean-pooled and projected
+	// to [batch, d_model], then concatenated with encoder output before forecast head.
+	var exogProjected *tensor.TensorNumeric[T]
+	if n.exogProj != nil && exogInput != nil {
+		eShape := exogInput.Shape()
+		if len(eShape) != 3 || eShape[0] != batch || eShape[1] != n.cfg.ForecastLen || eShape[2] != n.cfg.NumExogenous {
+			return nil, fmt.Errorf("exogenous input must be [%d, %d, %d], got %v", batch, n.cfg.ForecastLen, n.cfg.NumExogenous, eShape)
+		}
+		// Mean-pool over forecast_len: [batch, forecast_len, num_exog] -> [batch, num_exog]
+		exogPooled, eErr := n.engine.ReduceMean(ctx, exogInput, 1, false)
+		if eErr != nil {
+			return nil, fmt.Errorf("exog mean pool: %w", eErr)
+		}
+		// Project: [batch, num_exog] -> [batch, d_model]
+		exogProjected, eErr = n.exogProj.Forward(ctx, exogPooled)
+		if eErr != nil {
+			return nil, fmt.Errorf("exog projection: %w", eErr)
+		}
 	}
 
 	// Process each channel independently through patch embed + encoder.
@@ -300,6 +432,15 @@ func (n *ttmNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 			if cErr != nil {
 				return nil, fmt.Errorf("encoder block %d channel %d: %w", i, c, cErr)
 			}
+
+			// Add static bias after each mixer block if available.
+			// staticBias is [batch, 1, d_model], hidden is [batch, num_patches, d_model].
+			if staticBias != nil {
+				hidden, cErr = n.engine.Add(ctx, hidden, staticBias)
+				if cErr != nil {
+					return nil, fmt.Errorf("add static bias block %d channel %d: %w", i, c, cErr)
+				}
+			}
 		}
 
 		// Encoder output norm.
@@ -314,7 +455,30 @@ func (n *ttmNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 			return nil, fmt.Errorf("mean pool channel %d: %w", c, cErr)
 		}
 
-		// Step 5-6: Forecast head: [batch, d_model] -> [batch, forecast_len]
+		// If exogenous features are configured, concatenate projected exogenous
+		// with encoder output: [batch, d_model] + [batch, d_model] -> [batch, 2*d_model].
+		// When exogenous data is not provided for this call, pad with zeros.
+		if n.exogProj != nil {
+			if exogProjected != nil {
+				hidden, cErr = n.engine.Concat(ctx, []*tensor.TensorNumeric[T]{hidden, exogProjected}, 1)
+				if cErr != nil {
+					return nil, fmt.Errorf("concat exog channel %d: %w", c, cErr)
+				}
+			} else {
+				// Pad with zeros for the exogenous portion.
+				zeros := make([]T, batch*n.cfg.DModel)
+				zeroTensor, zErr := tensor.New[T]([]int{batch, n.cfg.DModel}, zeros)
+				if zErr != nil {
+					return nil, fmt.Errorf("create exog zero pad channel %d: %w", c, zErr)
+				}
+				hidden, cErr = n.engine.Concat(ctx, []*tensor.TensorNumeric[T]{hidden, zeroTensor}, 1)
+				if cErr != nil {
+					return nil, fmt.Errorf("concat exog zeros channel %d: %w", c, cErr)
+				}
+			}
+		}
+
+		// Step 5-6: Forecast head: [batch, d_model (or 2*d_model)] -> [batch, forecast_len]
 		hidden, cErr = n.forecastHead.Forward(ctx, hidden)
 		if cErr != nil {
 			return nil, fmt.Errorf("forecast head channel %d: %w", c, cErr)
@@ -467,6 +631,7 @@ type TTMModel struct {
 	cfg     *TTMConfig
 	engine  compute.Engine[float32]
 	granite *GraniteTimeSeriesConfig
+	node    *ttmNode[float32] // retained to set exogenous/static inputs
 }
 
 // LoadTTM loads a TTM model from a GGUF file and returns an inference-ready model.
@@ -514,7 +679,7 @@ func LoadTTM(path string, opts ...Option) (*TTMModel, error) {
 		return nil, fmt.Errorf("load GGUF tensors: %w", err)
 	}
 
-	g, err := BuildTTM[float32](tensors, cfg, engine)
+	g, node, err := buildTTMWithNode[float32](tensors, cfg, engine)
 	if err != nil {
 		return nil, fmt.Errorf("build TTM graph: %w", err)
 	}
@@ -524,6 +689,7 @@ func LoadTTM(path string, opts ...Option) (*TTMModel, error) {
 		cfg:     cfg,
 		engine:  engine,
 		granite: graniteCfg,
+		node:    node,
 	}, nil
 }
 
@@ -568,6 +734,40 @@ func (m *TTMModel) Forecast(input [][]float64) ([][]float64, error) {
 	}
 
 	return result, nil
+}
+
+// ForecastWithExogenous runs inference with future exogenous variables.
+// Input is [context_len][channels], exogenous is [forecast_len][num_exog].
+// Output is [forecast_len][channels].
+func (m *TTMModel) ForecastWithExogenous(input [][]float64, exogenous [][]float64) ([][]float64, error) {
+	if m.cfg.NumExogenous <= 0 {
+		return nil, fmt.Errorf("model not configured for exogenous variables (NumExogenous=%d)", m.cfg.NumExogenous)
+	}
+	if len(exogenous) != m.cfg.ForecastLen {
+		return nil, fmt.Errorf("exogenous length must be %d, got %d", m.cfg.ForecastLen, len(exogenous))
+	}
+	if len(exogenous[0]) != m.cfg.NumExogenous {
+		return nil, fmt.Errorf("exogenous channels must be %d, got %d", m.cfg.NumExogenous, len(exogenous[0]))
+	}
+
+	// Build exogenous tensor [1, forecast_len, num_exog].
+	batch := 1
+	exogData := make([]float32, batch*m.cfg.ForecastLen*m.cfg.NumExogenous)
+	for t := range m.cfg.ForecastLen {
+		for e := range m.cfg.NumExogenous {
+			exogData[t*m.cfg.NumExogenous+e] = float32(exogenous[t][e])
+		}
+	}
+	exogTensor, err := tensor.New[float32]([]int{batch, m.cfg.ForecastLen, m.cfg.NumExogenous}, exogData)
+	if err != nil {
+		return nil, fmt.Errorf("create exogenous tensor: %w", err)
+	}
+
+	// Set exogenous on the node for this forward pass.
+	m.node.exogInput = exogTensor
+
+	// Delegate to standard Forecast (which calls the graph forward).
+	return m.Forecast(input)
 }
 
 // Config returns the TTM configuration.
