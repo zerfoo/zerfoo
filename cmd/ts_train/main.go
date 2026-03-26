@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -20,12 +19,12 @@ import (
 	"time"
 
 	"github.com/zerfoo/ztensor/compute"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 	"github.com/zerfoo/zerfoo/inference/timeseries"
-	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 )
@@ -207,122 +206,16 @@ func saveModelGGUF(path string, params []*graph.Parameter[float32]) error {
 	}
 	defer f.Close()
 
-	type tensorEntry struct {
-		name string
-		data []float32
-		dims []uint64
-	}
+	w := ztensorgguf.NewWriter()
+	w.AddMetadataString("general.architecture", "patchtst")
 
-	var entries []tensorEntry
 	for _, p := range params {
-		shape := p.Value.Shape()
-		dims := make([]uint64, len(shape))
-		// GGML order: innermost-first (reverse of row-major).
-		for i := range shape {
-			dims[i] = uint64(shape[len(shape)-1-i])
-		}
-		entries = append(entries, tensorEntry{
-			name: p.Name,
-			data: toFloat32(p.Value.Data()),
-			dims: dims,
-		})
+		data := make([]float32, len(p.Value.Data()))
+		copy(data, p.Value.Data())
+		w.AddTensorF32(p.Name, p.Value.Shape(), data)
 	}
 
-	// Metadata.
-	metadata := []struct {
-		key       string
-		valueType uint32
-		value     any
-	}{
-		{"general.architecture", gguf.TypeString, "patchtst"},
-	}
-
-	// GGUF v3 header.
-	if err := binary.Write(f, binary.LittleEndian, gguf.Magic); err != nil {
-		return err
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint32(3)); err != nil {
-		return err
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(entries))); err != nil {
-		return err
-	}
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(metadata))); err != nil {
-		return err
-	}
-
-	// Write metadata.
-	for _, kv := range metadata {
-		if err := writeGGUFString(f, kv.key); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, kv.valueType); err != nil {
-			return err
-		}
-		if err := writeGGUFString(f, kv.value.(string)); err != nil {
-			return err
-		}
-	}
-
-	// Write tensor info.
-	var offset uint64
-	for _, e := range entries {
-		if err := writeGGUFString(f, e.name); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, uint32(len(e.dims))); err != nil {
-			return err
-		}
-		for _, d := range e.dims {
-			if err := binary.Write(f, binary.LittleEndian, d); err != nil {
-				return err
-			}
-		}
-		if err := binary.Write(f, binary.LittleEndian, uint32(gguf.GGMLTypeF32)); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, offset); err != nil {
-			return err
-		}
-		offset += uint64(len(e.data)) * 4
-	}
-
-	// Align to 32 bytes.
-	pos, err := f.Seek(0, 1)
-	if err != nil {
-		return err
-	}
-	padLen := (32 - pos%32) % 32
-	if padLen > 0 {
-		if _, err := f.Write(make([]byte, padLen)); err != nil {
-			return err
-		}
-	}
-
-	// Write tensor data.
-	for _, e := range entries {
-		for _, v := range e.data {
-			if err := binary.Write(f, binary.LittleEndian, v); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func writeGGUFString(f *os.File, s string) error {
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(s))); err != nil {
-		return err
-	}
-	_, err := f.Write([]byte(s))
-	return err
-}
-
-func toFloat32(data []float32) []float32 {
-	out := make([]float32, len(data))
-	copy(out, data)
-	return out
+	return w.Write(f)
 }
 
 // computeQuantileLossAndGrad computes QuantileLoss and its gradient w.r.t. model output.
