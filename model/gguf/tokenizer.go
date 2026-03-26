@@ -72,6 +72,23 @@ func ExtractTokenizer(f *File) (*tokenizer.BPETokenizer, error) {
 	}
 	tok := tokenizer.NewBPETokenizer(vocab, merges, special, byteLevelBPE)
 
+	// Extract token scores for SentencePiece unigram models (e.g., Mistral, Llama).
+	// These models have no merges; they use scores for greedy encoding.
+	if scoresRaw, ok := f.Metadata["tokenizer.ggml.scores"]; ok {
+		if scoresArr, ok := scoresRaw.([]any); ok {
+			scores := make([]float32, len(scoresArr))
+			for i, v := range scoresArr {
+				switch s := v.(type) {
+				case float32:
+					scores[i] = s
+				case float64:
+					scores[i] = float32(s)
+				}
+			}
+			tok.SetScores(scores)
+		}
+	}
+
 	// SentencePiece models (tokenizer.ggml.model = "llama") use ▁ (U+2581)
 	// as a space marker. Enable SentencePiece pre-tokenization for these.
 	if model, ok := f.GetString("tokenizer.ggml.model"); ok && model == "llama" {
