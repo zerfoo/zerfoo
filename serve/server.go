@@ -34,9 +34,11 @@ type Server struct {
 	inflight    sync.WaitGroup  // tracks in-flight inference requests
 	transcriber      Transcriber          // optional; enables /v1/audio/transcriptions
 	classifier       Classifier           // optional; enables /v1/classify
+	guardEvaluator   GuardEvaluator       // optional; enables /v1/guard endpoints
 	logger           log.Logger
 	metrics          *ServerMetrics
 	classifyMetrics  *ClassifyMetrics
+	guardMetrics     *GuardMetrics
 	collector        runtime.Collector
 	gpus        []int           // GPU IDs to distribute model across
 	apiKey      string          // optional; enables Bearer token auth
@@ -174,6 +176,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	}
 	s.metrics = NewServerMetrics(s.collector)
 	s.classifyMetrics = NewClassifyMetrics(s.collector)
+	s.guardMetrics = NewGuardMetrics(s.collector)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.recoveryMiddleware(s.handleChatCompletions))
 	s.mux.HandleFunc("POST /v1/completions", s.recoveryMiddleware(s.handleCompletions))
 	s.mux.HandleFunc("POST /v1/embeddings", s.recoveryMiddleware(s.handleEmbeddings))
@@ -182,6 +185,9 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	s.mux.HandleFunc("DELETE /v1/models/{id...}", s.recoveryMiddleware(s.handleModelDelete))
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.recoveryMiddleware(s.handleAudioTranscriptions))
 	s.mux.HandleFunc("POST /v1/classify", s.recoveryMiddleware(s.handleClassify))
+	s.mux.HandleFunc("POST /v1/guard", s.recoveryMiddleware(s.handleGuard))
+	s.mux.HandleFunc("POST /v1/guard/batch", s.recoveryMiddleware(s.handleGuardBatch))
+	s.mux.HandleFunc("POST /v1/guard/scan", s.recoveryMiddleware(s.handleGuardScan))
 	s.mux.HandleFunc("GET /healthz", s.recoveryMiddleware(s.handleHealthz))
 	s.mux.HandleFunc("GET /readyz", s.recoveryMiddleware(s.handleReadyz))
 	s.mux.HandleFunc("GET /openapi.yaml", s.recoveryMiddleware(handleOpenAPISpec))
