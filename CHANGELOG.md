@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1](https://github.com/zerfoo/zerfoo/compare/v1.22.0...v1.22.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* **timeseries:** dispatch TTM TrainWindowed to GPU engine ([#207](https://github.com/zerfoo/zerfoo/issues/207)) ([38dd21a](https://github.com/zerfoo/zerfoo/commit/38dd21ad20cddc4b2031cfd2e9a131271c85fac5))
+
 ## [1.22.0](https://github.com/zerfoo/zerfoo/compare/v1.21.0...v1.22.0) (2026-03-26)
 
 
