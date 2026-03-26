@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0](https://github.com/zerfoo/zerfoo/compare/v1.23.0...v1.24.0) (2026-03-26)
+
+
+### Features
+
+* **timeseries:** add batched GPU forward pass for PatchTST training ([461e7c9](https://github.com/zerfoo/zerfoo/commit/461e7c90eb50361cf1a38e0a743c91042ed6e450))
+
 ## [1.23.0](https://github.com/zerfoo/zerfoo/compare/v1.22.1...v1.23.0) (2026-03-26)
 
 
