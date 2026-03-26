@@ -1,100 +1,55 @@
 package inference
 
 import (
-	"bytes"
-	"encoding/binary"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/model/gguf"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
 // buildSyntheticGGUFFile creates a minimal GGUF file on disk with metadata and tensor data.
 func buildSyntheticGGUFFile(t *testing.T, dir string) string {
 	t.Helper()
-	var buf bytes.Buffer
 
-	// Header
-	bw(&buf, gguf.Magic)
-	bw(&buf, uint32(3)) // version
-	bw(&buf, uint64(2)) // 2 tensors
-	bw(&buf, uint64(5)) // 5 metadata KV pairs
+	w := ztensorgguf.NewWriter()
 
-	// Metadata
-	writeKV(&buf, "general.architecture", "llama")
-	writeKV(&buf, "general.name", "test-gguf-model")
-	writeKV(&buf, "llama.embedding_length", uint32(64))
-	writeKV(&buf, "llama.block_count", uint32(2))
-	writeKV(&buf, "llama.attention.head_count", uint32(4))
+	// Metadata.
+	w.AddMetadataString("general.architecture", "llama")
+	w.AddMetadataString("general.name", "test-gguf-model")
+	w.AddMetadataUint32("llama.embedding_length", 64)
+	w.AddMetadataUint32("llama.block_count", 2)
+	w.AddMetadataUint32("llama.attention.head_count", 4)
 
-	// Tensor info: token_embd.weight (4 x 64 F32)
-	// GGUF stores dims in GGML order (innermost-first): [cols=64, rows=4].
-	writeStr(&buf, "token_embd.weight")
-	bw(&buf, uint32(2)) // 2 dimensions
-	bw(&buf, uint64(64))
-	bw(&buf, uint64(4))
-	bw(&buf, uint32(gguf.GGMLTypeF32))
-	bw(&buf, uint64(0)) // offset
-
-	// Tensor info: blk.0.attn_q.weight (64 Q4_0)
-	writeStr(&buf, "blk.0.attn_q.weight")
-	bw(&buf, uint32(1))
-	bw(&buf, uint64(64))
-	bw(&buf, uint32(gguf.GGMLTypeQ4_0))
-	bw(&buf, uint64(4*4*64)) // after F32 tensor
-
-	// Pad to 32-byte alignment.
-	pos := buf.Len()
-	const alignment = 32
-	padded := (pos + alignment - 1) / alignment * alignment
-	for range padded - pos {
-		buf.WriteByte(0)
+	// Tensor: token_embd.weight (4 x 64 F32, row-major shape [4, 64]).
+	f32Data := make([]float32, 4*64)
+	for i := range f32Data {
+		f32Data[i] = float32(i) / 256.0
 	}
+	w.AddTensorF32("token_embd.weight", []int{4, 64}, f32Data)
 
-	// Tensor data: token_embd.weight (4*64 = 256 float32 values)
-	for i := range 256 {
-		bw(&buf, float32(i)/256.0)
-	}
-
-	// Tensor data: blk.0.attn_q.weight (Q4_0: 64 elements = 2 blocks = 36 bytes)
+	// Tensor: blk.0.attn_q.weight (64 Q4_0, raw bytes).
 	src := make([]float32, 64)
 	for i := range src {
 		src[i] = float32(i-32) / 32.0
 	}
 	q4 := tensor.QuantizeQ4(src)
-	buf.Write(q4.RawBytes())
+	w.AddTensor("blk.0.attn_q.weight", ztensorgguf.TypeQ4_0, []int{64}, q4.RawBytes())
 
 	path := filepath.Join(dir, "test.gguf")
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	f, err := os.Create(path)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
+	}
+
 	return path
-}
-
-func bw(buf *bytes.Buffer, data any) {
-	if err := binary.Write(buf, binary.LittleEndian, data); err != nil {
-		panic(err)
-	}
-}
-
-func writeStr(buf *bytes.Buffer, s string) {
-	bw(buf, uint64(len(s)))
-	buf.WriteString(s)
-}
-
-func writeKV(buf *bytes.Buffer, key string, val any) {
-	writeStr(buf, key)
-	switch v := val.(type) {
-	case string:
-		bw(buf, gguf.TypeString)
-		writeStr(buf, v)
-	case uint32:
-		bw(buf, gguf.TypeUint32)
-		bw(buf, v)
-	}
 }
 
 func TestLoadGGUF(t *testing.T) {

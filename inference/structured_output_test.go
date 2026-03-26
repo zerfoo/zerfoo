@@ -1,13 +1,12 @@
 package inference
 
 import (
-	"encoding/binary"
 	"encoding/json"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/zerfoo/generate/grammar"
 )
 
@@ -16,14 +15,6 @@ import (
 // digits 0-9, minus, and lowercase letters a-z.
 func writeTestGGUF_JSON(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "test_json.gguf")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	w := &ggufWriter{f: f, t: t}
 
 	hidden := 16
 	inter := 32
@@ -52,92 +43,54 @@ func writeTestGGUF_JSON(t *testing.T, dir string) string {
 	tokStrings = append(tokStrings, " ")
 	vocab := len(tokStrings) // 3 + 5 + 11 + 26 + 1 = 46
 
-	type tensorDef struct {
-		name  string
-		shape []uint64
-	}
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"output_norm.weight", []uint64{uint64(hidden)}},
-		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
+		{"token_embd.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"output_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"output.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_q.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_k.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_v.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_output.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_gate.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_up.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_down.weight", []int{hidden, inter}, ztensorgguf.TypeF32},
 	}
 
-	metadataCount := 11 + 4 + 1
+	w := ztensorgguf.NewWriter()
 
-	w.writeUint32(0x46554747) // Magic "GGUF"
-	w.writeUint32(3)          // Version
-	w.writeUint64(uint64(len(tensors)))
-	w.writeUint64(uint64(metadataCount))
+	w.AddMetadataString("general.architecture", "llama")
+	w.AddMetadataString("general.name", "test-llama-json")
+	w.AddMetadataUint32("llama.vocab_size", uint32(vocab))
+	w.AddMetadataUint32("llama.embedding_length", uint32(hidden))
+	w.AddMetadataUint32("llama.block_count", uint32(numLayers))
+	w.AddMetadataUint32("llama.attention.head_count", uint32(numHeads))
+	w.AddMetadataUint32("llama.attention.head_count_kv", uint32(numKVHeads))
+	w.AddMetadataUint32("llama.feed_forward_length", uint32(inter))
+	w.AddMetadataUint32("llama.context_length", uint32(64))
+	w.AddMetadataFloat32("llama.rope.freq_base", 10000.0)
+	w.AddMetadataString("tokenizer.ggml.model", "gpt2")
+	w.AddMetadataStringArray("tokenizer.ggml.tokens", tokStrings)
+	w.AddMetadataStringArray("tokenizer.ggml.merges", nil)
+	w.AddMetadataUint32("tokenizer.ggml.bos_token_id", 1)
+	w.AddMetadataUint32("tokenizer.ggml.eos_token_id", 2)
+	w.AddMetadataUint32("tokenizer.ggml.unknown_token_id", 0)
 
-	w.writeStringKV("general.architecture", "llama")
-	w.writeStringKV("general.name", "test-llama-json")
-	w.writeUint32KV("llama.vocab_size", uint32(vocab))
-	w.writeUint32KV("llama.embedding_length", uint32(hidden))
-	w.writeUint32KV("llama.block_count", uint32(numLayers))
-	w.writeUint32KV("llama.attention.head_count", uint32(numHeads))
-	w.writeUint32KV("llama.attention.head_count_kv", uint32(numKVHeads))
-	w.writeUint32KV("llama.feed_forward_length", uint32(inter))
-	w.writeUint32KV("llama.context_length", uint32(64))
-	w.writeFloat32KV("llama.rope.freq_base", 10000.0)
-	w.writeStringKV("tokenizer.ggml.model", "gpt2")
-	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
-	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
-	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
-	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
-	w.writeUint32KV("tokenizer.ggml.unknown_token_id", 0)
-
-	// Compute tensor data offsets.
-	offsets := make([]uint64, len(tensors))
-	var currentOffset uint64
-	for i, td := range tensors {
-		offsets[i] = currentOffset
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		currentOffset += numElements * 4 // float32
-	}
-
-	// Write tensor info.
-	for i, td := range tensors {
-		w.writeGGUFString(td.name)
-		w.writeUint32(uint32(len(td.shape)))
-		for _, d := range td.shape {
-			w.writeUint64(d)
-		}
-		w.writeUint32(0) // GGMLTypeF32
-		w.writeUint64(offsets[i])
-	}
-
-	// Align to 32 bytes.
-	pos, _ := f.Seek(0, 1)
-	padding := (32 - pos%32) % 32
-	if padding > 0 {
-		pad := make([]byte, padding)
-		_, _ = f.Write(pad)
-	}
-
-	// Write tensor data: small deterministic values.
 	for _, td := range tensors {
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		for j := range numElements {
-			val := float32(math.Sin(float64(j)*0.01)) * 0.02
-			if err := binary.Write(f, binary.LittleEndian, val); err != nil {
-				t.Fatalf("write tensor data: %v", err)
-			}
-		}
+		n := numElements(td.shape)
+		w.AddTensorF32(td.name, td.shape, generateF32Data(n))
+	}
+
+	path := filepath.Join(dir, "test_json.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
 	}
 
 	return path
