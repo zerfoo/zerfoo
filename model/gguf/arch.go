@@ -45,6 +45,10 @@ type ModelConfig struct {
 	PoolerType   string  // pooling strategy ("cls" or "mean")
 	LayerNormEps float32 // LayerNorm epsilon (0 = use default 1e-12)
 
+	// Granite-specific fields.
+	EmbeddingMultiplier float32 // multiply embeddings by this factor (0 = no scaling)
+	ResidualMultiplier  float32 // multiply residual connections by this factor (0 = no scaling)
+
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
 	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
@@ -163,6 +167,20 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
 		cfg.NumSharedExperts = int(v)
+	}
+
+	// Extract Granite-specific fields.
+	if v, ok := f.GetFloat32(prefix + "embedding_multiplier"); ok {
+		cfg.EmbeddingMultiplier = v
+	}
+	if v, ok := f.GetFloat32(prefix + "residual_multiplier"); ok {
+		cfg.ResidualMultiplier = v
+	}
+	// Granite uses "logit_scale" for softcapping (reuse LogitSoftcap field).
+	if cfg.LogitSoftcap == 0 {
+		if v, ok := f.GetFloat32(prefix + "logit_scale"); ok {
+			cfg.LogitSoftcap = v
+		}
 	}
 
 	// Extract BERT-specific fields.
