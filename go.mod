@@ -24,11 +24,9 @@ exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/zerfoo/ztensor v0.6.0
+	github.com/zerfoo/ztensor v0.6.2
 	github.com/zerfoo/ztoken v0.2.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
-
-replace github.com/zerfoo/ztensor v0.6.0 => ../../../../ztensor
