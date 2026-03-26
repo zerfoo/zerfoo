@@ -210,6 +210,68 @@ func TestExtractTokenizer_ByteLevelBPE(t *testing.T) {
 	})
 }
 
+func TestExtractTokenizer_SentencePieceScores(t *testing.T) {
+	// SentencePiece unigram models have scores but no merges.
+	// The tokenizer uses greedy longest-match with score-based selection.
+	tokens := make([]any, 8)
+	tokens[0] = "<unk>"
+	tokens[1] = "<s>"
+	tokens[2] = "</s>"
+	tokens[3] = "\u2581"     // ▁
+	tokens[4] = "\u2581he"   // ▁he
+	tokens[5] = "llo"
+	tokens[6] = "\u2581hello" // ▁hello (longest match, best score)
+	tokens[7] = "o"
+
+	// Scores: negative log probs. Higher (closer to 0) = more likely.
+	// ▁hello should be preferred over ▁he + llo because it has a better score.
+	scores := make([]any, 8)
+	scores[0] = float32(0)     // <unk>
+	scores[1] = float32(0)     // <s>
+	scores[2] = float32(0)     // </s>
+	scores[3] = float32(-3.0)  // ▁
+	scores[4] = float32(-5.0)  // ▁he
+	scores[5] = float32(-5.0)  // llo
+	scores[6] = float32(-2.0)  // ▁hello (best score for this text)
+	scores[7] = float32(-6.0)  // o
+
+	f := &File{
+		Metadata: map[string]any{
+			"tokenizer.ggml.model":            "llama",
+			"tokenizer.ggml.tokens":           tokens,
+			"tokenizer.ggml.scores":           scores,
+			"tokenizer.ggml.bos_token_id":     uint32(1),
+			"tokenizer.ggml.eos_token_id":     uint32(2),
+			"tokenizer.ggml.unknown_token_id": uint32(0),
+		},
+	}
+
+	tok, err := ExtractTokenizer(f)
+	if err != nil {
+		t.Fatalf("ExtractTokenizer: %v", err)
+	}
+
+	// Encode "hello" -- SentencePiece prepends ▁, so it becomes "▁hello".
+	// With scores, the tokenizer should select token 6 (▁hello) as the
+	// longest match.
+	ids, err := tok.Encode("hello")
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("Encode(\"hello\") returned empty")
+	}
+
+	// Decode back and verify round-trip produces readable output.
+	decoded, err := tok.Decode(ids)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if decoded != "hello" {
+		t.Errorf("Decode(%v) = %q, want %q", ids, decoded, "hello")
+	}
+}
+
 func TestExtractTokenizer_NoMerges(t *testing.T) {
 	// A tokenizer with tokens but no merges should still work (character-level).
 	tokens := make([]any, 4)
