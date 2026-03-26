@@ -712,6 +712,11 @@ func (gen *Generator[T]) generateSpeculative(ctx context.Context, prompt string,
 		return "", fmt.Errorf("prompt produced no tokens")
 	}
 
+	// Prepend BOS token if configured.
+	if gen.config.BOSTokenID > 0 {
+		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
+	}
+
 	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
 	for _, id := range sc.StopTokenIDs {
 		stopSet[id] = true
