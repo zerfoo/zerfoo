@@ -45,14 +45,36 @@ func (n *fusedAddRMSNormNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 		// Fall through to unfused path on error.
 	}
 
-	// Fallback: separate Add + RMSNorm via engine operations.
+	// Unfused fallback: separate Add + GPU RMSNorm.
 	sum, err := n.engine.Add(ctx, addend, residual)
 	if err != nil {
 		return nil, err
 	}
 	n.residual = sum
 
-	// Use the CPU FusedRMSNorm path for float32.
+	// Use GPU-resident FusedRMSNormGPU to avoid D2H copies that break CUDA
+	// graph capture. The old path used CPU compute.FusedRMSNorm which called
+	// .Data() on GPU tensors, triggering cudaMemcpy D2H.
+	type gpuRMSNormer interface {
+		FusedRMSNormGPU(input, weight *tensor.TensorNumeric[float32], epsilon float32) (*tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], error)
+	}
+	if gpuNorm, ok := any(n.engine).(gpuRMSNormer); ok {
+		if f32Sum, ok2 := any(sum).(*tensor.TensorNumeric[float32]); ok2 {
+			if f32Weight, ok3 := any(n.weight).(*tensor.TensorNumeric[float32]); ok3 {
+				normed, _, err := gpuNorm.FusedRMSNormGPU(f32Sum, f32Weight, n.eps)
+				if err == nil {
+					if result, ok4 := any(normed).(*tensor.TensorNumeric[T]); ok4 {
+						return result, nil
+					}
+				}
+				// Fall through to CPU path on GPU RMSNorm error.
+			}
+		}
+	}
+
+	// Last resort: CPU FusedRMSNorm. WARNING: this calls .Data() on GPU
+	// tensors, which triggers D2H cudaMemcpy and breaks CUDA graph capture.
+	// This path should only be reached on CPU-only engines.
 	if f32Sum, ok := any(sum).(*tensor.TensorNumeric[float32]); ok {
 		if f32Weight, ok2 := any(n.weight).(*tensor.TensorNumeric[float32]); ok2 {
 			normed, _, err := compute.FusedRMSNorm(f32Sum, f32Weight, n.eps)
@@ -64,7 +86,7 @@ func (n *fusedAddRMSNormNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 			}
 		}
 	}
-	return nil, fmt.Errorf("FusedAddRMSNorm: no GPU provider and CPU fallback failed")
+	return nil, fmt.Errorf("FusedAddRMSNorm: all paths failed")
 }
 
 func (n *fusedAddRMSNormNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
