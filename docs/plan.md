@@ -343,12 +343,12 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### Wave 60: Fix Segfaults
 
-- [ ] T114.2 Add VRAM bounds check for large cuBLAS MatMul
+- [x] T114.2 Add VRAM bounds check for large cuBLAS MatMul
   Owner: Kernel Eng  Est: 2h  depends: T114.1
   Files: ztensor/compute/gpu_engine.go
   Acceptance: Error return (not segfault) for 128256x4096 on GB10.
 
-- [ ] T114.3 Fix FP16 MatMul segfault on aarch64 purego
+- [x] T114.3 Fix FP16 MatMul segfault on aarch64 purego
   Owner: Kernel Eng  Est: 3h  depends: T114.1
   Files: ztensor/compute/gpu_engine.go, ztensor/internal/cuda/cublas_purego.go
   Acceptance: TestGPUEngine_FP16 passes on DGX without segfault.
