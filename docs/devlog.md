@@ -5,6 +5,60 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-26: Mistral tokenizer FIXED — forward pass still produces garbage
+
+**Type:** investigation
+**Tags:** mistral, tokenizer, inference, forward-pass
+
+**Problem:** Mistral 7B inference produces garbage output despite achieving 44 tok/s after CUDA graph fix.
+
+**Root cause (tokenizer):** Resolved. Mistral uses SentencePiece greedy longest-match BPE, not byte-level BPE. ztoken v0.3.4 implements this correctly. Token IDs now match HuggingFace exactly: `[2592, 1117, 1040, 6333, 1070, 5611, 29572]`.
+
+**Remaining issue:** Forward pass produces incoherent output. Tokenizer is correct, so the bug is in the model forward pass. Hypotheses:
+1. Weight name mapping — Mistral GGUFs use `llama.*` tensor name prefixes; buildMistralGraph may map incorrectly.
+2. BOS token — generation pipeline may not prepend BOS (token ID 1) for Mistral.
+3. Sliding window attention — Mistral uses 4096-token sliding window; implementation may have off-by-one or missing mask.
+
+**Next steps:** MFP-T1 through MFP-T4 in plan.md. Priority: compare layer activations against llama.cpp reference.
+
+**Impact:** Mistral is blocked from production use. All other architectures (Gemma, DeepSeek, Llama, Qwen) produce correct output.
+
+---
+
+## 2026-03-26: Granite Guardian — all 13 tasks complete, 77ms latency
+
+**Type:** benchmark
+**Tags:** guardian, safety, latency, DGX Spark
+
+**Results:** Guardian evaluator pipeline fully shipped. Key metrics:
+- Single evaluation latency: 77ms median on DGX Spark (target <100ms PASS)
+- Parity: 15/15 verdicts match Ollama granite3-guardian (Yes/No + confidence within 0.05)
+- Components: arch builder, template engine, verdict parser, evaluator, batch eval, multi-risk scan, REST API, CLI, middleware
+
+---
+
+## 2026-03-26: Session summary — 320+ tasks complete, next phase planned
+
+**Type:** planning
+**Tags:** plan, trim, phase
+
+**Completed this session:**
+- Granite Time Series: 16/18 tasks (TTM, FlowState, TSPulse)
+- Granite Guardian: 13/13 tasks
+- GGUF Writer: 18/18 tasks (shared ztensor/gguf + migrations)
+- GPU Verification (E114): 7/7 tasks
+- Docs site: 48/48 tasks (61 pages)
+- Mistral tokenizer: FIXED (greedy longest-match)
+- Releases: ztoken v0.3.4, ztensor v0.6.2
+
+**Next phase priorities:**
+1. P1: Mistral forward pass fix (4 tasks)
+2. P2: Granite TS parity + benchmarks (2 tasks)
+3. P3: Multi-model benchmarks (6 tasks)
+4. P4: K-quant kernel optimization (4 tasks)
+
+---
+
 ## 2026-03-25: Multi-model benchmark — Zerfoo vs Ollama (6 architectures)
 
 **Type:** benchmark

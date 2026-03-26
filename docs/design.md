@@ -1727,3 +1727,52 @@ Multi-tenant inference-as-a-service with per-tenant isolation and metering.
 Note: ADR-056 status is Proposed; requires founder approval before production deployment.
 
 See [ADR-056](adr/056-zerfoo-cloud-product.md).
+
+---
+
+## 30. SentencePiece Tokenizer Integration
+
+Mistral and several other model families use SentencePiece BPE tokenization
+with greedy longest-match semantics (distinct from the byte-level BPE used by
+Llama/GPT). The ztoken library (v0.3.4+) implements this as a configurable
+tokenizer mode, detected from GGUF metadata (`tokenizer.ggml.pre`).
+
+Key design decisions:
+- Tokenizer selection is driven by GGUF metadata, not model family name.
+  `tokenizer.ggml.pre = "default"` selects greedy longest-match BPE.
+- Token IDs are validated against HuggingFace reference outputs during parity
+  tests to catch silent regressions.
+- BOS/EOS token handling is per-model: Mistral requires BOS prepend, some
+  models do not. The generation pipeline reads `tokenizer.ggml.add_bos_token`
+  from GGUF metadata.
+
+## 31. Guardian Evaluator Pipeline
+
+Granite Guardian uses a prompt-template-driven evaluation pipeline for content
+safety classification. The architecture separates concerns into four stages:
+
+1. **Template engine** (`inference/guardian_templates.go`) -- Renders
+   risk-specific prompt templates with user/assistant content slots.
+2. **Verdict parser** (`inference/guardian_verdict.go`) -- Extracts Yes/No
+   verdict and confidence from model logits (softmax over Yes/No token IDs).
+3. **Evaluator** (`inference/guardian_evaluator.go`) -- Orchestrates
+   single-risk and multi-risk batch evaluation. Reuses KV cache across
+   evaluations for the same context.
+4. **Middleware** (`serve/guardian_middleware.go`) -- Optional HTTP middleware
+   wrapping `/v1/chat/completions` for automatic input/output safety scanning.
+
+Latency: 77ms median single evaluation on DGX Spark (GB10).
+
+## 32. GGUF Writer Consolidation
+
+The shared `ztensor/gguf` package (ADR-061) consolidates five hand-rolled GGUF
+writers into a single implementation. Design:
+
+- `gguf.Writer` is append-only: metadata first, then tensors, then finalize.
+  This matches the GGUF v3 file layout (header, metadata KV, tensor info,
+  padding, tensor data).
+- Round-trip testing via minimal `gguf.Reader` ensures write correctness.
+- All consumers (zerfoo training checkpoints, zonnx converter, NAS export,
+  FSDP checkpoints, timeseries CLI) import the shared package.
+- Migration was mechanical: replace local writer calls with `gguf.NewWriter()`
+  and `gguf.AddMetadata*()` / `gguf.AddTensor()` methods.
