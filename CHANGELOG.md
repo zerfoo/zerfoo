@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **inference:** detect Mistral from GGUF metadata and fix tokenizer ([4c38e37](https://github.com/zerfoo/zerfoo/commit/4c38e37f075ed1550b5235602a39148984c16254))
 * **serve:** add Guardian guardrails middleware for chat completions ([d2304f2](https://github.com/zerfoo/zerfoo/commit/d2304f2da9765570ab81bced8565b36ffffa5575))
+* **timeseries:** wire crossasset package into training pipeline ([e7fdd53](https://github.com/zerfoo/zerfoo/commit/e7fdd53183027627b3f6af08be580568544a992e))
+
+## [1.23.0](https://github.com/zerfoo/zerfoo/compare/v1.22.1...v1.23.0) (2026-03-26)
+
+
+### Features
+
+* **inference:** detect Mistral from GGUF metadata and fix tokenizer ([4c38e37](https://github.com/zerfoo/zerfoo/commit/4c38e37f075ed1550b5235602a39148984c16254))
+* **serve:** add Guardian guardrails middleware for chat completions ([d2304f2](https://github.com/zerfoo/zerfoo/commit/d2304f2da9765570ab81bced8565b36ffffa5575))
 
 ## [1.22.1](https://github.com/zerfoo/zerfoo/compare/v1.22.0...v1.22.1) (2026-03-26)
 
