@@ -245,7 +245,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
   - Comparison table vs. Ollama.
   - Single evaluation latency < 100ms on GPU.
 
-- [ ] GG-T4.3 Safety benchmark accuracy evaluation
+- [x] GG-T4.3 Safety benchmark accuracy evaluation
   Owner: ML Eng  Est: 6h
   Files: tests/benchmark/guardian_accuracy_test.go
   Deps: GG-T2.2
