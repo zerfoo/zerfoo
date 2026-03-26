@@ -1262,3 +1262,19 @@ Framework ready for community launch phase.
 **Root cause:** Reshape was unconditionally in nonCapturableOps. Static Reshape (1 input, targetShape from attributes) doesn't call .Data() and is capture-safe. ~64 Reshape ops per model break the capture region.
 **Fix:** Added isNonCapturable() function that checks input count. Static Reshape (1 input) is now capturable.
 **Impact:** Removes ~64 capture-region breaks per model.
+
+## 2026-03-26: MFP-T1/T3 Mistral forward pass investigation
+
+**Type:** investigation
+**Tags:** mistral-7b, forward-pass, tokenizer, BOS
+
+**Problem:** Mistral 7B produces garbage output despite correct tokenization (IDs match HuggingFace), correct config (32L/4096H/14336I/32H/8KV), correct BOS handling, and correct tensor name mapping.
+**Investigation:**
+- MFP-T1: Weight name mapping is correct. Config reads llama.* prefix, tensors map via MapTensorName.
+- MFP-T3: BOS handling correct in all main generation paths. Fixed speculative decoding paths (PR #236).
+- GGUF Q5_K_M tensors are Q4_K/Q6_K, re-quantized to Q4_0 at load time (same as working Gemma 3 1B).
+- output.weight (LM head) maps to lm_head.weight correctly, separate from embedding.
+- No sliding_window metadata in GGUF (cfg.SlidingWindow=0).
+**Root cause:** Unknown. Forward pass produces wrong logits. Suspects: (1) Q5_K→Q4_0 re-quant loses too much precision for 7B, (2) RoPE theta=1M handling, (3) 7B-scale numerical issue.
+**Fix:** Needs MFP-T2 (activation comparison against llama.cpp reference layer by layer).
+**Impact:** All Mistral-family models produce garbage. Gemma/Llama/DeepSeek work fine.
