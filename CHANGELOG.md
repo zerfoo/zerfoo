@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0](https://github.com/zerfoo/zerfoo/compare/v1.20.1...v1.21.0) (2026-03-26)
+
+
+### Features
+
+* **cuda:** add Q6_K, Q5_K, and Q4_K SM121 GEMV kernels ([4823e4d](https://github.com/zerfoo/zerfoo/commit/4823e4dd8a79be35a9fdc737ec1c70d6e0862961))
+* **gguf:** keep native Q4_K/Q5_K/Q6_K storage instead of re-quantizing to Q4_0 ([92185ae](https://github.com/zerfoo/zerfoo/commit/92185aeba4ee69c3d99ed9049fdf644cf52e2107))
+* **inference:** add merged QKV and GateUp GEMV for Q4K storage ([e525907](https://github.com/zerfoo/zerfoo/commit/e525907216b3e54fd8271fceb5aade766de4a539))
+* **inference:** add virtual transpose for Q4K/Q5K/Q6K storage types ([7e56e5e](https://github.com/zerfoo/zerfoo/commit/7e56e5e36a7c11b676446ffc7f119b724c10e7a0))
+* **timeseries:** add dual-space encoder for Granite TSPulse ([b2ee997](https://github.com/zerfoo/zerfoo/commit/b2ee997b853f2d053c1931e13c9aff1385da1604))
+* **timeseries:** add FlowState architecture builder ([ec4808a](https://github.com/zerfoo/zerfoo/commit/ec4808a3832d5e5992d6772a79d97788ea6fdeab))
+* **timeseries:** add FlowState inference pipeline ([954fcb5](https://github.com/zerfoo/zerfoo/commit/954fcb52868c594bde275bd73d85c8dc01c435db))
+* **timeseries:** add GraniteTimeSeriesConfig for GGUF metadata ([a78021f](https://github.com/zerfoo/zerfoo/commit/a78021f985c7d1771b38afba8b786a4b9b517028))
+* **timeseries:** add SSM layer for Granite FlowState ([8e74170](https://github.com/zerfoo/zerfoo/commit/8e741703df36c6e065fbf5d9e99c7975656b8b9e))
+* **timeseries:** add TSMixer backbone layer for Granite TTM ([0916c11](https://github.com/zerfoo/zerfoo/commit/0916c11cc9ade7d476eb9be4014047521154ba99))
+* **timeseries:** add TSPulse architecture with multi-task heads ([934c782](https://github.com/zerfoo/zerfoo/commit/934c782f94527e1a6031897cbd1802a89b176e7d))
+* **timeseries:** add TSPulse inference pipeline ([040c37d](https://github.com/zerfoo/zerfoo/commit/040c37d25a6fb21618ff4fd294a37c3c6b815ba6))
+* **timeseries:** add TTM architecture builder for Granite TTM ([6b35039](https://github.com/zerfoo/zerfoo/commit/6b3503901f6e1b1752fc41299c964b167d92778f))
+* **timeseries:** add TTM exogenous variable support ([c3095c8](https://github.com/zerfoo/zerfoo/commit/c3095c88a6130824d1a9df2d3099dcfdcc1b7992))
+* **timeseries:** add TTM inference pipeline with normalization ([1a6ed34](https://github.com/zerfoo/zerfoo/commit/1a6ed347c5e5b2e91501718cf71d177bd58e2de6))
+* **timeseries:** add TTM training backend ([5f1febd](https://github.com/zerfoo/zerfoo/commit/5f1febdff212d67de8e9ba664331058c6d7f5e0c))
+
+
+### Bug Fixes
+
+* **cuda:** raise Q4 GEMV shared memory limit for 7B+ models ([8ac4bc2](https://github.com/zerfoo/zerfoo/commit/8ac4bc2559174406177d50b1de91418f8b894103))
+* **gguf:** restore Q4_K to Q4_0 re-quantization for GEMV performance ([6632798](https://github.com/zerfoo/zerfoo/commit/66327987267b80c03bfa300027f145c7cc6c7e25))
+* **gguf:** restore Q5_K/Q6_K to Q4_0 re-quantization for GEMV performance ([9f7aae3](https://github.com/zerfoo/zerfoo/commit/9f7aae3abcfad626a37d1bc952920c308f1d2c7d))
+* **inference:** use GPU RMSNorm fallback to prevent CUDA graph D2H copy ([da0f747](https://github.com/zerfoo/zerfoo/commit/da0f74787d98ebec4b53badf1b0d55cc25f905d8))
+
 ## [1.20.1](https://github.com/zerfoo/zerfoo/compare/v1.20.0...v1.20.1) (2026-03-25)
 
 
