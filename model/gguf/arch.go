@@ -2,6 +2,7 @@ package gguf
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 )
@@ -58,9 +59,43 @@ type ModelConfig struct {
 	ProjectorType    string // multi-modal projector type ("linear" or "mlp")
 }
 
+// DetectActualArchitecture checks GGUF metadata to detect models that
+// declare one architecture but are actually a different model family.
+// For example, Mistral GGUF files declare general.architecture = "llama"
+// but are identified by their model name, tokenizer pre-processor, or
+// vocabulary size.
+func DetectActualArchitecture(f *File, declared string) string {
+	if declared != "llama" {
+		return declared
+	}
+
+	// Check general.name for "mistral" (case-insensitive).
+	if name, ok := f.GetString("general.name"); ok {
+		lower := strings.ToLower(name)
+		if strings.Contains(lower, "mistral") {
+			slog.Info("detected Mistral model from general.name", "name", name, "declared", declared)
+			return "mistral"
+		}
+	}
+
+	// Check tokenizer.ggml.pre for "mistral" pre-tokenizer.
+	if pre, ok := f.GetString("tokenizer.ggml.pre"); ok {
+		lower := strings.ToLower(pre)
+		if strings.Contains(lower, "mistral") {
+			slog.Info("detected Mistral model from tokenizer.ggml.pre", "pre", pre, "declared", declared)
+			return "mistral"
+		}
+	}
+
+	return declared
+}
+
 // ExtractModelConfig reads GGUF metadata and returns a ModelConfig.
 // The architecture field (general.architecture) determines which metadata
-// key prefix to use (e.g., "llama." or "gemma.").
+// key prefix to use (e.g., "llama." or "gemma."). After extracting config
+// using the declared architecture's key prefix, the actual architecture is
+// detected via [DetectActualArchitecture] to handle models like Mistral
+// that declare "llama" but need different runtime behavior.
 func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	arch, ok := f.GetString("general.architecture")
 	if !ok || arch == "" {
@@ -221,6 +256,9 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	if v, ok := f.GetString("clip.vision.projector_type"); ok {
 		cfg.ProjectorType = v
 	}
+
+	// Detect the actual architecture — e.g. Mistral models that declare "llama".
+	cfg.Architecture = DetectActualArchitecture(f, cfg.Architecture)
 
 	return cfg, nil
 }
