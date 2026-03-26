@@ -180,6 +180,13 @@ extern "C" cudaError_t gemm_q4_f32(
         int grid = (M + rows_per_block - 1) / rows_per_block;
         int smem = K * sizeof(float);
 
+        /* For K > 12288 (> 48 KB shared memory), raise the per-block limit.
+         * Default is 48 KB; Blackwell SM has 228 KB available. */
+        if (smem > 49152) {
+            cudaFuncSetAttribute(gemv_q4_kernel,
+                cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+        }
+
         gemv_q4_kernel<<<grid, threads, smem, stream>>>(
             all_scales, all_data, B, C, M, K);
     } else {
