@@ -140,7 +140,7 @@ for _, tc := range result.ToolCalls {
 | Gemma 3n | GGUF | Mobile-optimized variant |
 | Llama 3 | GGUF | RoPE theta=500K |
 | Llama 4 | GGUF | Latest generation |
-| Mistral | GGUF | Sliding window attention |
+| Mistral | GGUF | Sliding window attention, 44 tok/s (7B Q4_K_M) |
 | Mixtral | GGUF | Mixture of Experts |
 | Qwen 2 | GGUF | Attention bias, RoPE theta=1M |
 | Phi 3/4 | GGUF | Partial rotary factor |
@@ -173,6 +173,18 @@ New architectures are auto-detected from GGUF metadata.
 | TFT | `timeseries` | Temporal Fusion Transformer |
 | N-BEATS | `timeseries` | Basis expansion forecasting |
 | PatchTST | `timeseries` | Patch-based transformer |
+
+### IBM Granite Time Series
+
+| Architecture | Format | Use Case |
+|-------------|--------|----------|
+| Granite TTM | GGUF | Zero-shot/few-shot time series forecasting |
+| Granite FlowState | GGUF | Continuous forecasting, timescale-invariant |
+| Granite TSPulse | GGUF | Anomaly detection, classification, imputation |
+
+Granite Time Series models are converted from HuggingFace using `granite2gguf`
+(part of `zonnx`). Supported tasks: forecasting, anomaly detection,
+classification, imputation, and embedding extraction.
 
 ## Training
 
