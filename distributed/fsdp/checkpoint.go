@@ -1,16 +1,17 @@
 package fsdp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/distributed"
 	"github.com/zerfoo/zerfoo/model/gguf"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -118,27 +119,12 @@ func allGatherGeneric(comm *distributed.NCCLComm, sendbuf, recvbuf unsafe.Pointe
 	return distributed.NCCLAllGather(comm, sendbuf, recvbuf, sendcount, 0)
 }
 
-// writeGGUF writes parameter tensors in GGUF v3 format.
+// writeGGUF writes parameter tensors in GGUF v3 format using the shared
+// ztensor/gguf writer.
 func writeGGUF[T tensor.Numeric](w io.Writer, params map[string][]T) error {
-	var buf bytes.Buffer
+	gw := ztensorgguf.NewWriter()
 
-	// Header: magic, version, tensor count, metadata KV count.
-	binary.Write(&buf, binary.LittleEndian, gguf.Magic)
-	binary.Write(&buf, binary.LittleEndian, uint32(3)) // version 3
-
-	tensorCount := uint64(len(params))
-	binary.Write(&buf, binary.LittleEndian, tensorCount)
-
-	// One metadata KV: "general.architecture" = "checkpoint"
-	metadataKVCount := uint64(1)
-	binary.Write(&buf, binary.LittleEndian, metadataKVCount)
-
-	// Write metadata KV: key
-	writeGGUFString(&buf, "general.architecture")
-	// Type: string
-	binary.Write(&buf, binary.LittleEndian, gguf.TypeString)
-	// Value
-	writeGGUFString(&buf, "checkpoint")
+	gw.AddMetadataString("general.architecture", "checkpoint")
 
 	// Sort parameter names for deterministic output.
 	names := make([]string, 0, len(params))
@@ -147,60 +133,35 @@ func writeGGUF[T tensor.Numeric](w io.Writer, params map[string][]T) error {
 	}
 	sort.Strings(names)
 
-	// Compute tensor data sizes and offsets.
+	// Determine element size and GGML type.
 	var zero T
 	elemSize := int(unsafe.Sizeof(zero))
+	ggmlType := ggmlTypeForElemSize(elemSize)
 
-	type tensorEntry struct {
-		name   string
-		data   []T
-		offset uint64
-	}
-	entries := make([]tensorEntry, 0, len(names))
-
-	var dataOffset uint64
+	// Add tensors as raw bytes with 1D (flat) shape.
 	for _, name := range names {
 		data := params[name]
-		entries = append(entries, tensorEntry{
-			name:   name,
-			data:   data,
-			offset: dataOffset,
-		})
-		dataOffset += uint64(len(data) * elemSize)
+		raw := sliceToBytes(data, elemSize)
+		gw.AddTensor(name, int(ggmlType), []int{len(data)}, raw)
 	}
 
-	// Write tensor info entries.
-	ggmlType := ggmlTypeForElemSize(elemSize)
-	for _, e := range entries {
-		writeGGUFString(&buf, e.name)
-		// 1 dimension (flat tensor).
-		binary.Write(&buf, binary.LittleEndian, uint32(1))
-		binary.Write(&buf, binary.LittleEndian, uint64(len(e.data)))
-		binary.Write(&buf, binary.LittleEndian, uint32(ggmlType))
-		binary.Write(&buf, binary.LittleEndian, e.offset)
-	}
+	return gw.Write(w)
+}
 
-	// Align to 32 bytes before tensor data.
-	const alignment = 32
-	pos := buf.Len()
-	padding := (alignment - (pos % alignment)) % alignment
-	for i := 0; i < padding; i++ {
-		buf.WriteByte(0)
-	}
-
-	// Write header + metadata + tensor info.
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return err
-	}
-
-	// Write tensor data.
-	for _, e := range entries {
-		if err := binary.Write(w, binary.LittleEndian, e.data); err != nil {
-			return fmt.Errorf("write tensor %q data: %w", e.name, err)
+// sliceToBytes converts a typed slice to raw little-endian bytes.
+func sliceToBytes[T tensor.Numeric](data []T, elemSize int) []byte {
+	b := make([]byte, len(data)*elemSize)
+	switch elemSize {
+	case 4:
+		for i, v := range data {
+			binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(float32(v)))
+		}
+	case 8:
+		for i, v := range data {
+			binary.LittleEndian.PutUint64(b[i*8:], math.Float64bits(float64(v)))
 		}
 	}
-
-	return nil
+	return b
 }
 
 // readGGUFCheckpoint reads a GGUF checkpoint file and returns full parameter
@@ -260,12 +221,6 @@ func readGGUFCheckpoint[T tensor.Numeric](path string) (map[string][]T, error) {
 	}
 
 	return result, nil
-}
-
-// writeGGUFString writes a GGUF-format string (uint64 length + bytes).
-func writeGGUFString(buf *bytes.Buffer, s string) {
-	binary.Write(buf, binary.LittleEndian, uint64(len(s)))
-	buf.WriteString(s)
 }
 
 // ggmlTypeForElemSize returns the GGML type constant for the given element size.
