@@ -197,7 +197,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 ### Granite Guardian -- 3 tasks remaining
 
-- [ ] GG-T3.3 Guardrails middleware for chat completions
+- [x] GG-T3.3 Guardrails middleware for chat completions
   Owner: ML Eng  Est: 6h
   Files: serve/guardian_middleware.go, serve/guardian_middleware_test.go
   Deps: GG-T2.4
@@ -282,23 +282,23 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### E5: CUDA Graph Capture Fix for Mistral 7B [zerfoo repo]
 
-- [ ] T5.2 Eliminate the D2H copy  Est: 3h  depends: T5.1 (done)
+- [x] T5.2 Eliminate the D2H copy  Est: 3h  depends: T5.1 (done)
   Fix identified call site from T5.1 investigation. Options: replace Slice()
   with GPU-side view, pre-allocate buffer, restructure KV cache.
   Acceptance: CUDA graph capture succeeds for Mistral 7B.
 
-- [ ] T5.3 Benchmark Mistral 7B with CUDA graphs  Est: 1h  depends: T5.2
+- [x] T5.3 Benchmark Mistral 7B with CUDA graphs  Est: 1h  depends: T5.2
   Target: >= 40 tok/s (from 11.6 baseline, parity with Ollama's 46.8).
   Acceptance: benchmark result recorded.
 
 #### E6: Mistral Architecture Detection and Tokenizer Fix [zerfoo repo]
 
-- [ ] T6.1 Detect Mistral from GGUF metadata  Est: 2h
+- [x] T6.1 Detect Mistral from GGUF metadata  Est: 2h
   Parse GGUF metadata to identify Mistral models (general.name, vocab size,
   sliding window config, tokenizer.ggml.pre).
   Acceptance: Mistral 7B GGUF correctly identified.
 
-- [ ] T6.2 Apply correct tokenizer for Mistral  Est: 2h  depends: T6.1
+- [x] T6.2 Apply correct tokenizer for Mistral  Est: 2h  depends: T6.1
   Configure BPE tokenizer with Mistral's vocabulary and special tokens.
   Acceptance: Mistral 7B produces coherent text output.
 
@@ -336,7 +336,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### Wave 59: DGX Sync and Kernel Rebuild
 
-- [ ] T114.1 Sync DGX repos and rebuild kernel library
+- [x] T114.1 Sync DGX repos and rebuild kernel library
   Owner: Infra Eng  Est: 1h
   Steps: SSH to DGX, pull both repos, rebuild libkernels.so.
   Acceptance: Both repos at latest main, go build clean.
@@ -355,7 +355,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### Wave 61: Kernel + BF16 Fixes
 
-- [ ] T114.4 Verify custom CUDA kernels load after rebuild
+- [x] T114.4 Verify custom CUDA kernels load after rebuild
   Owner: Kernel Eng  Est: 1h  depends: T114.1
   Acceptance: Cos, Softmax, Transpose, Gather GPU parity tests PASS on DGX.
 
@@ -365,7 +365,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### Wave 62: Timeseries GPU Verify
 
-- [ ] T114.6 Run timeseries GPU engine tests on DGX
+- [x] T114.6 Run timeseries GPU engine tests on DGX
   Owner: ML Eng  Est: 1h  depends: T114.1
   Acceptance: All 7 timeseries backends pass engine training on DGX GPU.
 
@@ -377,7 +377,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 ### GPU Training DGX Benchmark (E123)
 
-- [ ] T123.6 Run GPU training benchmark on DGX and verify GPU utilization
+- [x] T123.6 Run GPU training benchmark on DGX and verify GPU utilization
   Owner: ML Eng  Est: 2h  depends: T123.1-T123.5 (done), T114.1
   Steps: Run iTransformer on 28K rows on DGX, monitor nvidia-smi.
   Acceptance: GPU util >50%, training <60s, close issue #166.
@@ -393,23 +393,23 @@ Fix: batch N samples into single tensor for GPU forward pass.
 
 #### E1: Batched Forward Pass
 
-- [ ] T1.1 Add batched forward method to PatchTST engine path  Est: 2h
+- [x] T1.1 Add batched forward method to PatchTST engine path  Est: 2h
   Files: timeseries/patchtst_engine.go
   Description: Add `forwardBatchF64WithCacheEngine()` that packs batchWindows
   into a single [batchSize, channels, inputLen] tensor, calls Forward, unpacks.
   Acceptance: method returns correct predictions for batch of 4 samples.
 
-- [ ] T1.2 Modify trainWindowedEngine batch loop to use batched forward  Est: 1h
+- [x] T1.2 Modify trainWindowedEngine batch loop to use batched forward  Est: 1h
   Deps: T1.1
   Replace per-sample loop with batched forward call.
   Acceptance: same loss trajectory as per-sample version.
 
 #### E2: Testing and Verification
 
-- [ ] T2.1 Add numerical parity test  Est: 1h
+- [x] T2.1 Add numerical parity test  Est: 1h
   Batched forward produces same predictions as per-sample (within 1e-5).
 
-- [ ] T2.2 Add benchmark test  Est: 30m
+- [x] T2.2 Add benchmark test  Est: 30m
   Batched vs per-sample with 256 samples. Must be at least 10x faster.
 
 ### Shared GGUF Writer in ztensor
@@ -420,40 +420,40 @@ Decision: docs/adr/061-gguf-writer-in-ztensor.md
 
 #### E1: Create ztensor/gguf Package [ztensor repo]
 
-- [ ] T1.1 Create gguf/constants.go  Est: 30m
+- [x] T1.1 Create gguf/constants.go  Est: 30m
   GGUF v3 magic, version, alignment, type constants.
 
-- [ ] T1.2 Create gguf/writer.go  Est: 2h  depends: T1.1
+- [x] T1.2 Create gguf/writer.go  Est: 2h  depends: T1.1
   Writer struct with metadata and tensor methods. Based on zonnx/pkg/gguf/writer.go
   plus AddMetadataUint64 and AddMetadataUint32Array.
 
-- [ ] T1.3 Write unit tests for gguf/writer.go  Est: 1h30m  depends: T1.2
+- [x] T1.3 Write unit tests for gguf/writer.go  Est: 1h30m  depends: T1.2
   >= 90% line coverage.
 
-- [ ] T1.4 Create gguf/reader.go for round-trip testing  Est: 1h30m  depends: T1.1
+- [x] T1.4 Create gguf/reader.go for round-trip testing  Est: 1h30m  depends: T1.1
   Minimal reader for ztensor's own round-trip tests.
 
-- [ ] T1.5 Round-trip integration test: Writer -> Reader  Est: 1h  depends: T1.2, T1.4
+- [x] T1.5 Round-trip integration test: Writer -> Reader  Est: 1h  depends: T1.2, T1.4
 
-- [ ] T1.6 Run go vet and golangci-lint  Est: 15m  depends: T1.2-T1.5
+- [x] T1.6 Run go vet and golangci-lint  Est: 15m  depends: T1.2-T1.5
 
 #### E2: Migrate zerfoo Writers [zerfoo repo]
 
-- [ ] T2.1 Update zerfoo go.mod  Est: 15m  depends: E1
-- [ ] T2.2 Migrate training/lora/checkpoint.go  Est: 1h  depends: T2.1
-- [ ] T2.3 Migrate training/nas/export.go  Est: 1h  depends: T2.1
-- [ ] T2.4 Migrate distributed/fsdp/checkpoint.go  Est: 1h  depends: T2.1
-- [ ] T2.5 Migrate cmd/ts_train/main.go  Est: 45m  depends: T2.1
-- [ ] T2.6 Migrate inference test helpers  Est: 45m  depends: T2.1
-- [ ] T2.7 Implement SaveModel in training/adapter.go  Est: 1h30m  depends: T2.1
-- [ ] T2.8 Run go vet and golangci-lint  Est: 15m  depends: T2.2-T2.7
+- [x] T2.1 Update zerfoo go.mod  Est: 15m  depends: E1
+- [x] T2.2 Migrate training/lora/checkpoint.go  Est: 1h  depends: T2.1
+- [x] T2.3 Migrate training/nas/export.go  Est: 1h  depends: T2.1
+- [x] T2.4 Migrate distributed/fsdp/checkpoint.go  Est: 1h  depends: T2.1
+- [x] T2.5 Migrate cmd/ts_train/main.go  Est: 45m  depends: T2.1
+- [x] T2.6 Migrate inference test helpers  Est: 45m  depends: T2.1
+- [x] T2.7 Implement SaveModel in training/adapter.go  Est: 1h30m  depends: T2.1
+- [x] T2.8 Run go vet and golangci-lint  Est: 15m  depends: T2.2-T2.7
 
 #### E3: Migrate zonnx Writer [zonnx repo]
 
-- [ ] T3.1 Update zonnx go.mod  Est: 15m  depends: E1
-- [ ] T3.2 Migrate zonnx converter  Est: 1h  depends: T3.1
-- [ ] T3.3 Delete zonnx pkg/gguf/writer.go  Est: 30m  depends: T3.2
-- [ ] T3.4 Run go vet and golangci-lint  Est: 15m  depends: T3.2-T3.3
+- [x] T3.1 Update zonnx go.mod  Est: 15m  depends: E1
+- [x] T3.2 Migrate zonnx converter  Est: 1h  depends: T3.1
+- [x] T3.3 Delete zonnx pkg/gguf/writer.go  Est: 30m  depends: T3.2
+- [x] T3.4 Run go vet and golangci-lint  Est: 15m  depends: T3.2-T3.3
 
 ### Documentation Site Migration
 
