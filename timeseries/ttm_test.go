@@ -415,3 +415,199 @@ func TestTTM_ChannelMixing(t *testing.T) {
 		t.Errorf("FinalLoss is not finite: %v", result.FinalLoss)
 	}
 }
+
+func TestTTM_TrainWindowed_EngineDispatch(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	modelWithEngine, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM with engine: %v", err)
+	}
+
+	// Verify engine is set (dispatch should go to trainWindowedEngine).
+	if modelWithEngine.engine == nil {
+		t.Fatal("engine should not be nil")
+	}
+
+	// Create model without engine (nil engine should go to trainWindowedCPU).
+	modelWithoutEngine, err := NewTTM(config, nil, nil)
+	if err != nil {
+		t.Fatalf("NewTTM without engine: %v", err)
+	}
+	if modelWithoutEngine.engine != nil {
+		t.Fatal("engine should be nil")
+	}
+
+	nSamples := 10
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = math.Sin(float64(s+i) * 0.3)
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	// Both paths should train without error.
+	_, err = modelWithEngine.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   10,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed (engine path): %v", err)
+	}
+
+	_, err = modelWithoutEngine.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   10,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed (CPU path): %v", err)
+	}
+}
+
+func TestTTM_TrainWindowed_EngineParity(t *testing.T) {
+	// Verify that the engine path produces the same results as the CPU path
+	// (within float32 precision tolerance) by training both from identical
+	// initial weights.
+	engine, ops := newTestEngine()
+	config := ttmTestConfig()
+
+	modelEngine, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM (engine): %v", err)
+	}
+
+	modelCPU, err := NewTTM(config, nil, nil)
+	if err != nil {
+		t.Fatalf("NewTTM (cpu): %v", err)
+	}
+
+	// Copy weights from engine model to CPU model so they start identical.
+	copyTTMWeights(modelEngine, modelCPU)
+
+	nSamples := 15
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = math.Sin(float64(s+i) * 0.3)
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	trainCfg := TrainConfig{
+		Epochs:   5,
+		LR:       1e-3,
+		GradClip: 1.0,
+	}
+
+	resultEngine, err := modelEngine.TrainWindowed(windows, labels, trainCfg)
+	if err != nil {
+		t.Fatalf("TrainWindowed (engine): %v", err)
+	}
+
+	resultCPU, err := modelCPU.TrainWindowed(windows, labels, trainCfg)
+	if err != nil {
+		t.Fatalf("TrainWindowed (CPU): %v", err)
+	}
+
+	// Compare losses — the engine path uses float32 for MatMul, so allow
+	// some tolerance due to reduced precision.
+	const tol = 1e-3
+	for epoch := range resultEngine.LossHistory {
+		diff := math.Abs(resultEngine.LossHistory[epoch] - resultCPU.LossHistory[epoch])
+		relDiff := diff / (math.Abs(resultCPU.LossHistory[epoch]) + 1e-10)
+		if relDiff > tol {
+			t.Errorf("epoch %d: engine loss=%v, cpu loss=%v, relDiff=%v > tol %v",
+				epoch, resultEngine.LossHistory[epoch], resultCPU.LossHistory[epoch], relDiff, tol)
+		}
+	}
+}
+
+func TestTTM_TrainWindowed_EngineConvergence(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := ttmTestConfig()
+	model, err := NewTTM(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewTTM: %v", err)
+	}
+
+	nSamples := 20
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples*config.ForecastLen)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, 1)
+		windows[s][0] = make([]float64, config.ContextLen)
+		for i := 0; i < config.ContextLen; i++ {
+			windows[s][0][i] = math.Sin(float64(s+i) * 0.3)
+		}
+		for o := 0; o < config.ForecastLen; o++ {
+			labels[s*config.ForecastLen+o] = math.Sin(float64(s+config.ContextLen+o) * 0.3)
+		}
+	}
+
+	result, err := model.TrainWindowed(windows, labels, TrainConfig{
+		Epochs:   50,
+		LR:       1e-3,
+		GradClip: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("TrainWindowed: %v", err)
+	}
+
+	if result.LossHistory[0] <= result.FinalLoss {
+		t.Errorf("loss did not decrease via engine path: first=%v, final=%v",
+			result.LossHistory[0], result.FinalLoss)
+	}
+
+	if math.IsNaN(result.FinalLoss) || math.IsInf(result.FinalLoss, 0) {
+		t.Errorf("FinalLoss is not finite: %v", result.FinalLoss)
+	}
+}
+
+// copyTTMWeights copies float32 tensor weights from src to dst.
+func copyTTMWeights(src, dst *TTM) {
+	copyLinearLayer(&src.patchEmb, &dst.patchEmb)
+	copyLinearLayer(&src.head, &dst.head)
+	for i := range src.encoder {
+		copyMixerBlock(&src.encoder[i], &dst.encoder[i])
+	}
+	for i := range src.decoder {
+		copyMixerBlock(&src.decoder[i], &dst.decoder[i])
+	}
+}
+
+func copyLinearLayer(src, dst *linearLayer) {
+	srcW := src.weights.Data()
+	dstW := dst.weights.Data()
+	copy(dstW, srcW)
+	srcB := src.biases.Data()
+	dstB := dst.biases.Data()
+	copy(dstB, srcB)
+}
+
+func copyMixerBlock(src, dst *ttmMixerBlockF32) {
+	copyLinearLayer(&src.timeMLP1, &dst.timeMLP1)
+	copyLinearLayer(&src.timeMLP2, &dst.timeMLP2)
+	copy(dst.timeNorm.scale.Data(), src.timeNorm.scale.Data())
+	copy(dst.timeNorm.bias.Data(), src.timeNorm.bias.Data())
+	if src.channelMixing {
+		copyLinearLayer(&src.featMLP1, &dst.featMLP1)
+		copyLinearLayer(&src.featMLP2, &dst.featMLP2)
+		copy(dst.featNorm.scale.Data(), src.featNorm.scale.Data())
+		copy(dst.featNorm.bias.Data(), src.featNorm.bias.Data())
+	}
+}

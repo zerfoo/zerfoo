@@ -726,6 +726,10 @@ func (m *TTM) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 	}
 
 	windows, m.normMeans, m.normStds = normalizeWindows(windows)
+
+	if m.engine != nil {
+		return m.trainWindowedEngine(windows, labels, config)
+	}
 	return m.trainWindowedCPU(windows, labels, config)
 }
 
