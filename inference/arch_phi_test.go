@@ -1,14 +1,14 @@
 package inference
 
 import (
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/zerfoo/model/gguf"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/zerfoo/model/gguf"
 )
 
 func TestBuildPhiGraph_Builds(t *testing.T) {
@@ -160,14 +160,6 @@ func TestBuildPhiGraph_PartialRotaryFactors(t *testing.T) {
 // path including QKV split.
 func writeTestGGUF_Phi(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "test_phi.gguf")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	w := &ggufWriter{f: f, t: t}
 
 	hidden := 16
 	inter := 32
@@ -178,27 +170,23 @@ func writeTestGGUF_Phi(t *testing.T, dir string) string {
 	headDim := hidden / numHeads // 4
 	ropeDimCount := headDim / 2  // partial rotary factor = 0.5
 
-	qRows := numHeads * headDim                   // 16
-	kRows := numKVHeads * headDim                  // 8
-	vRows := numKVHeads * headDim                  // 8
-	qkvRows := qRows + kRows + vRows              // 32
+	qRows := numHeads * headDim      // 16
+	kRows := numKVHeads * headDim     // 8
+	vRows := numKVHeads * headDim     // 8
+	qkvRows := qRows + kRows + vRows // 32
 
-	type tensorDef struct {
-		name  string
-		shape []uint64
-	}
-	// GGUF dimensions in GGML order (innermost-first).
+	// Row-major shapes (outermost first).
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"output_norm.weight", []uint64{uint64(hidden)}},
-		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.attn_qkv.weight", []uint64{uint64(hidden), uint64(qkvRows)}},
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
+		{"token_embd.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"output_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"output.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_qkv.weight", []int{qkvRows, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_output.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_gate.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_up.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_down.weight", []int{hidden, inter}, ztensorgguf.TypeF32},
 	}
 
 	tokStrings := make([]string, vocab)
@@ -209,68 +197,40 @@ func writeTestGGUF_Phi(t *testing.T, dir string) string {
 		tokStrings[i] = string(rune('a' + i - 3))
 	}
 
-	metadataCount := 12 + 4 + 1 // 11 base + rope.dimension_count + tokenizer(4+1)
+	w := ztensorgguf.NewWriter()
 
-	w.writeUint32(0x46554747) // Magic
-	w.writeUint32(3)          // Version
-	w.writeUint64(uint64(len(tensors)))
-	w.writeUint64(uint64(metadataCount))
-
-	w.writeStringKV("general.architecture", "phi3")
-	w.writeStringKV("general.name", "test-phi3-merged-qkv")
-	w.writeUint32KV("phi3.vocab_size", uint32(vocab))
-	w.writeUint32KV("phi3.embedding_length", uint32(hidden))
-	w.writeUint32KV("phi3.block_count", uint32(numLayers))
-	w.writeUint32KV("phi3.attention.head_count", uint32(numHeads))
-	w.writeUint32KV("phi3.attention.head_count_kv", uint32(numKVHeads))
-	w.writeUint32KV("phi3.feed_forward_length", uint32(inter))
-	w.writeUint32KV("phi3.context_length", uint32(64))
-	w.writeFloat32KV("phi3.rope.freq_base", 10000.0)
-	w.writeUint32KV("phi3.rope.dimension_count", uint32(ropeDimCount))
-	w.writeStringKV("tokenizer.ggml.model", "gpt2")
-	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
-	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
-	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
-	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
-	w.writeUint32KV("tokenizer.ggml.unknown_token_id", 0)
-
-	offsets := make([]uint64, len(tensors))
-	var currentOffset uint64
-	for i, td := range tensors {
-		offsets[i] = currentOffset
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		currentOffset += numElements * 4
-	}
-
-	for i, td := range tensors {
-		w.writeGGUFString(td.name)
-		w.writeUint32(uint32(len(td.shape)))
-		for _, d := range td.shape {
-			w.writeUint64(d)
-		}
-		w.writeUint32(0) // GGMLTypeF32
-		w.writeUint64(offsets[i])
-	}
-
-	pos, _ := f.Seek(0, 1)
-	padding := (32 - pos%32) % 32
-	if padding > 0 {
-		pad := make([]byte, padding)
-		_, _ = f.Write(pad)
-	}
+	w.AddMetadataString("general.architecture", "phi3")
+	w.AddMetadataString("general.name", "test-phi3-merged-qkv")
+	w.AddMetadataUint32("phi3.vocab_size", uint32(vocab))
+	w.AddMetadataUint32("phi3.embedding_length", uint32(hidden))
+	w.AddMetadataUint32("phi3.block_count", uint32(numLayers))
+	w.AddMetadataUint32("phi3.attention.head_count", uint32(numHeads))
+	w.AddMetadataUint32("phi3.attention.head_count_kv", uint32(numKVHeads))
+	w.AddMetadataUint32("phi3.feed_forward_length", uint32(inter))
+	w.AddMetadataUint32("phi3.context_length", uint32(64))
+	w.AddMetadataFloat32("phi3.rope.freq_base", 10000.0)
+	w.AddMetadataUint32("phi3.rope.dimension_count", uint32(ropeDimCount))
+	w.AddMetadataString("tokenizer.ggml.model", "gpt2")
+	w.AddMetadataStringArray("tokenizer.ggml.tokens", tokStrings)
+	w.AddMetadataStringArray("tokenizer.ggml.merges", nil)
+	w.AddMetadataUint32("tokenizer.ggml.bos_token_id", 1)
+	w.AddMetadataUint32("tokenizer.ggml.eos_token_id", 2)
+	w.AddMetadataUint32("tokenizer.ggml.unknown_token_id", 0)
 
 	for _, td := range tensors {
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		for j := range numElements {
-			val := float32(math.Sin(float64(j)*0.01)) * 0.02
-			w.writeFloat32Raw(val)
-		}
+		n := numElements(td.shape)
+		w.AddTensorF32(td.name, td.shape, generateF32Data(n))
+	}
+
+	path := filepath.Join(dir, "test_phi.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
 	}
 
 	return path

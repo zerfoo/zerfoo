@@ -9,25 +9,61 @@ import (
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/compute"
+	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/zerfoo/model/gguf"
 )
+
+// tensorDef describes a tensor for test GGUF generation.
+type tensorDef struct {
+	name     string
+	shape    []int // row-major shape (outermost first); writer reverses for GGML
+	ggmlType int   // ztensorgguf.TypeF32, TypeF16, etc.
+}
+
+// generateF32Data creates deterministic float32 data for a tensor.
+func generateF32Data(numElements int) []float32 {
+	data := make([]float32, numElements)
+	for i := range data {
+		data[i] = float32(math.Sin(float64(i)*0.01)) * 0.02
+	}
+	return data
+}
+
+// f32ToBytes converts float32 slice to raw little-endian bytes.
+func f32ToBytes(data []float32) []byte {
+	b := make([]byte, len(data)*4)
+	for i, v := range data {
+		binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(v))
+	}
+	return b
+}
+
+// f32ToF16Bytes converts float32 slice to FP16 raw bytes.
+func f32ToF16Bytes(data []float32) []byte {
+	b := make([]byte, len(data)*2)
+	for i, v := range data {
+		f16 := float16.FromFloat32(v)
+		binary.LittleEndian.PutUint16(b[i*2:], f16.Bits())
+	}
+	return b
+}
+
+// numElements computes the total element count from a shape.
+func numElements(shape []int) int {
+	n := 1
+	for _, d := range shape {
+		n *= d
+	}
+	return n
+}
 
 // writeTestGGUF creates a minimal GGUF file for testing LoadFile.
 // It builds a tiny Llama-architecture model with the full GGUF structure:
 // header, metadata (including tokenizer), tensor info, and tensor data.
 func writeTestGGUF(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "test.gguf")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
 
-	w := &ggufWriter{f: f, t: t}
-
-	// Header: magic, version, tensor count, metadata KV count.
 	hidden := 16
 	inter := 32
 	vocab := 32
@@ -36,26 +72,21 @@ func writeTestGGUF(t *testing.T, dir string) string {
 	numKVHeads := 2
 	kvDim := (hidden / numHeads) * numKVHeads
 
-	// Pre-compute tensor info for building the header.
-	type tensorDef struct {
-		name  string
-		shape []uint64
-	}
-	// GGUF stores dimensions in GGML order (innermost-first: ne[0]=columns,
-	// ne[1]=rows). The loader reverses these to PyTorch convention.
+	// Shapes in row-major convention (outermost first).
+	// The writer reverses to GGML order internally.
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"output_norm.weight", []uint64{uint64(hidden)}},
-		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
+		{"token_embd.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"output_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"output.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_q.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_k.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_v.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_output.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_gate.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_up.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_down.weight", []int{hidden, inter}, ztensorgguf.TypeF32},
 	}
 
 	// Build tokenizer tokens array.
@@ -67,140 +98,45 @@ func writeTestGGUF(t *testing.T, dir string) string {
 		tokStrings[i] = string(rune('a' + i - 3))
 	}
 
-	// Count metadata KVs.
-	metadataCount := 11 // arch, name, vocab_size, embedding_length, block_count,
-	// head_count, head_count_kv, feed_forward_length, context_length,
-	// rope.freq_base, tokenizer model
-	metadataCount += 4 // tokenizer tokens, bos, eos, unk
-	metadataCount++    // tokenizer merges (empty)
+	w := ztensorgguf.NewWriter()
 
-	// Write header.
-	w.writeUint32(0x46554747) // Magic "GGUF" in little-endian
-	w.writeUint32(3)          // Version
-	w.writeUint64(uint64(len(tensors)))
-	w.writeUint64(uint64(metadataCount))
+	// Metadata.
+	w.AddMetadataString("general.architecture", "llama")
+	w.AddMetadataString("general.name", "test-llama")
+	w.AddMetadataUint32("llama.vocab_size", uint32(vocab))
+	w.AddMetadataUint32("llama.embedding_length", uint32(hidden))
+	w.AddMetadataUint32("llama.block_count", uint32(numLayers))
+	w.AddMetadataUint32("llama.attention.head_count", uint32(numHeads))
+	w.AddMetadataUint32("llama.attention.head_count_kv", uint32(numKVHeads))
+	w.AddMetadataUint32("llama.feed_forward_length", uint32(inter))
+	w.AddMetadataUint32("llama.context_length", uint32(64))
+	w.AddMetadataFloat32("llama.rope.freq_base", 10000.0)
+	w.AddMetadataString("tokenizer.ggml.model", "gpt2")
+	w.AddMetadataStringArray("tokenizer.ggml.tokens", tokStrings)
+	w.AddMetadataStringArray("tokenizer.ggml.merges", nil)
+	w.AddMetadataUint32("tokenizer.ggml.bos_token_id", 1)
+	w.AddMetadataUint32("tokenizer.ggml.eos_token_id", 2)
+	w.AddMetadataUint32("tokenizer.ggml.unknown_token_id", 0)
 
-	// Write metadata.
-	w.writeStringKV("general.architecture", "llama")
-	w.writeStringKV("general.name", "test-llama")
-	w.writeUint32KV("llama.vocab_size", uint32(vocab))
-	w.writeUint32KV("llama.embedding_length", uint32(hidden))
-	w.writeUint32KV("llama.block_count", uint32(numLayers))
-	w.writeUint32KV("llama.attention.head_count", uint32(numHeads))
-	w.writeUint32KV("llama.attention.head_count_kv", uint32(numKVHeads))
-	w.writeUint32KV("llama.feed_forward_length", uint32(inter))
-	w.writeUint32KV("llama.context_length", uint32(64))
-	w.writeFloat32KV("llama.rope.freq_base", 10000.0)
-	w.writeStringKV("tokenizer.ggml.model", "gpt2")
-	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
-	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
-	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
-	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
-	w.writeUint32KV("tokenizer.ggml.unknown_token_id", 0)
-
-	// Compute tensor data offsets.
-	offsets := make([]uint64, len(tensors))
-	var currentOffset uint64
-	for i, td := range tensors {
-		offsets[i] = currentOffset
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		currentOffset += numElements * 4 // float32
-	}
-
-	// Write tensor info.
-	for i, td := range tensors {
-		w.writeGGUFString(td.name)
-		w.writeUint32(uint32(len(td.shape)))
-		for _, d := range td.shape {
-			w.writeUint64(d)
-		}
-		w.writeUint32(0) // GGMLTypeF32
-		w.writeUint64(offsets[i])
-	}
-
-	// Align to 32 bytes.
-	pos, _ := f.Seek(0, 1)
-	padding := (32 - pos%32) % 32
-	if padding > 0 {
-		pad := make([]byte, padding)
-		_, _ = f.Write(pad)
-	}
-
-	// Write tensor data: small deterministic values.
+	// Add tensors with deterministic data.
 	for _, td := range tensors {
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		for j := range numElements {
-			val := float32(math.Sin(float64(j)*0.01)) * 0.02
-			w.writeFloat32Raw(val)
-		}
+		n := numElements(td.shape)
+		data := generateF32Data(n)
+		w.AddTensorF32(td.name, td.shape, data)
+	}
+
+	path := filepath.Join(dir, "test.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
 	}
 
 	return path
-}
-
-// ggufWriter helps write GGUF binary format.
-type ggufWriter struct {
-	f *os.File
-	t *testing.T
-}
-
-func (w *ggufWriter) writeUint32(v uint32) {
-	if err := binary.Write(w.f, binary.LittleEndian, v); err != nil {
-		w.t.Fatalf("write uint32: %v", err)
-	}
-}
-
-func (w *ggufWriter) writeUint64(v uint64) {
-	if err := binary.Write(w.f, binary.LittleEndian, v); err != nil {
-		w.t.Fatalf("write uint64: %v", err)
-	}
-}
-
-func (w *ggufWriter) writeFloat32Raw(v float32) {
-	if err := binary.Write(w.f, binary.LittleEndian, v); err != nil {
-		w.t.Fatalf("write float32: %v", err)
-	}
-}
-
-func (w *ggufWriter) writeGGUFString(s string) {
-	w.writeUint64(uint64(len(s)))
-	if _, err := w.f.Write([]byte(s)); err != nil {
-		w.t.Fatalf("write string bytes: %v", err)
-	}
-}
-
-func (w *ggufWriter) writeStringKV(key, value string) {
-	w.writeGGUFString(key)
-	w.writeUint32(8) // TypeString
-	w.writeGGUFString(value)
-}
-
-func (w *ggufWriter) writeUint32KV(key string, value uint32) {
-	w.writeGGUFString(key)
-	w.writeUint32(4) // TypeUint32
-	w.writeUint32(value)
-}
-
-func (w *ggufWriter) writeFloat32KV(key string, value float32) {
-	w.writeGGUFString(key)
-	w.writeUint32(6) // TypeFloat32
-	w.writeFloat32Raw(value)
-}
-
-func (w *ggufWriter) writeStringArrayKV(key string, values []string) {
-	w.writeGGUFString(key)
-	w.writeUint32(9) // TypeArray
-	w.writeUint32(8) // TypeString elements
-	w.writeUint64(uint64(len(values)))
-	for _, s := range values {
-		w.writeGGUFString(s)
-	}
 }
 
 func TestLoadFile_GGUF(t *testing.T) {
@@ -252,14 +188,6 @@ func TestLoadFile_GGUF_Generate(t *testing.T) {
 // match tensor size" error when loading FP16 GQA models.
 func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "test_fp16_gqa.gguf")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	w := &ggufWriter{f: f, t: t}
 
 	// GQA config: 4 query heads, 1 KV head (ratio = 4).
 	hidden := 16
@@ -271,26 +199,20 @@ func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 	headDim := hidden / numHeads  // 4
 	kvDim := headDim * numKVHeads // 4
 
-	type tensorDef struct {
-		name     string
-		shape    []uint64
-		ggmlType uint32 // 0=F32, 1=F16
-	}
-	// GGUF stores dimensions in GGML order (innermost-first).
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}, 0},
-		{"output_norm.weight", []uint64{uint64(hidden)}, 0},
-		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}, 0},
-		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}, 0},
-		// These are the FP16 GQA weight tensors:
-		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}, 1},      // [hidden, hidden] -> [hidden, hidden]
-		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},       // [hidden, kvDim] -> [kvDim, hidden]
-		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}, 1},       // [hidden, kvDim] -> [kvDim, hidden]
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}, 1}, // [hidden, hidden] -> [hidden, hidden]
-		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}, 0},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}, 1},
-		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}, 1},
-		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}, 1},
+		{"token_embd.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"output_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"output.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		// FP16 GQA weight tensors:
+		{"blk.0.attn_q.weight", []int{hidden, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.attn_k.weight", []int{kvDim, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.attn_v.weight", []int{kvDim, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.attn_output.weight", []int{hidden, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.ffn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_gate.weight", []int{inter, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.ffn_up.weight", []int{inter, hidden}, ztensorgguf.TypeF16},
+		{"blk.0.ffn_down.weight", []int{hidden, inter}, ztensorgguf.TypeF16},
 	}
 
 	tokStrings := make([]string, vocab)
@@ -301,89 +223,48 @@ func writeTestGGUF_FP16GQA(t *testing.T, dir string) string {
 		tokStrings[i] = string(rune('a' + i - 3))
 	}
 
-	metadataCount := 11 + 4 + 1
+	w := ztensorgguf.NewWriter()
 
-	w.writeUint32(0x46554747) // Magic
-	w.writeUint32(3)          // Version
-	w.writeUint64(uint64(len(tensors)))
-	w.writeUint64(uint64(metadataCount))
+	w.AddMetadataString("general.architecture", "llama")
+	w.AddMetadataString("general.name", "test-llama-fp16-gqa")
+	w.AddMetadataUint32("llama.vocab_size", uint32(vocab))
+	w.AddMetadataUint32("llama.embedding_length", uint32(hidden))
+	w.AddMetadataUint32("llama.block_count", uint32(numLayers))
+	w.AddMetadataUint32("llama.attention.head_count", uint32(numHeads))
+	w.AddMetadataUint32("llama.attention.head_count_kv", uint32(numKVHeads))
+	w.AddMetadataUint32("llama.feed_forward_length", uint32(inter))
+	w.AddMetadataUint32("llama.context_length", uint32(64))
+	w.AddMetadataFloat32("llama.rope.freq_base", 10000.0)
+	w.AddMetadataString("tokenizer.ggml.model", "gpt2")
+	w.AddMetadataStringArray("tokenizer.ggml.tokens", tokStrings)
+	w.AddMetadataStringArray("tokenizer.ggml.merges", nil)
+	w.AddMetadataUint32("tokenizer.ggml.bos_token_id", 1)
+	w.AddMetadataUint32("tokenizer.ggml.eos_token_id", 2)
+	w.AddMetadataUint32("tokenizer.ggml.unknown_token_id", 0)
 
-	w.writeStringKV("general.architecture", "llama")
-	w.writeStringKV("general.name", "test-llama-fp16-gqa")
-	w.writeUint32KV("llama.vocab_size", uint32(vocab))
-	w.writeUint32KV("llama.embedding_length", uint32(hidden))
-	w.writeUint32KV("llama.block_count", uint32(numLayers))
-	w.writeUint32KV("llama.attention.head_count", uint32(numHeads))
-	w.writeUint32KV("llama.attention.head_count_kv", uint32(numKVHeads))
-	w.writeUint32KV("llama.feed_forward_length", uint32(inter))
-	w.writeUint32KV("llama.context_length", uint32(64))
-	w.writeFloat32KV("llama.rope.freq_base", 10000.0)
-	w.writeStringKV("tokenizer.ggml.model", "gpt2")
-	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
-	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
-	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
-	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
-	w.writeUint32KV("tokenizer.ggml.unknown_token_id", 0)
-
-	// Compute tensor data offsets.
-	offsets := make([]uint64, len(tensors))
-	var currentOffset uint64
-	for i, td := range tensors {
-		offsets[i] = currentOffset
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		bytesPerElem := uint64(4) // F32
-		if td.ggmlType == 1 {
-			bytesPerElem = 2 // F16
-		}
-		currentOffset += numElements * bytesPerElem
-	}
-
-	// Write tensor info.
-	for i, td := range tensors {
-		w.writeGGUFString(td.name)
-		w.writeUint32(uint32(len(td.shape)))
-		for _, d := range td.shape {
-			w.writeUint64(d)
-		}
-		w.writeUint32(td.ggmlType)
-		w.writeUint64(offsets[i])
-	}
-
-	// Align to 32 bytes.
-	pos, _ := f.Seek(0, 1)
-	padding := (32 - pos%32) % 32
-	if padding > 0 {
-		pad := make([]byte, padding)
-		_, _ = f.Write(pad)
-	}
-
-	// Write tensor data.
 	for _, td := range tensors {
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
+		n := numElements(td.shape)
+		f32Data := generateF32Data(n)
+		switch td.ggmlType {
+		case ztensorgguf.TypeF32:
+			w.AddTensorF32(td.name, td.shape, f32Data)
+		case ztensorgguf.TypeF16:
+			w.AddTensor(td.name, ztensorgguf.TypeF16, td.shape, f32ToF16Bytes(f32Data))
 		}
-		for j := range numElements {
-			val := float32(math.Sin(float64(j)*0.01)) * 0.02
-			if td.ggmlType == 1 {
-				w.writeFloat16Raw(val)
-			} else {
-				w.writeFloat32Raw(val)
-			}
-		}
+	}
+
+	path := filepath.Join(dir, "test_fp16_gqa.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
 	}
 
 	return path
-}
-
-func (w *ggufWriter) writeFloat16Raw(v float32) {
-	f16 := float16.FromFloat32(v)
-	if err := binary.Write(w.f, binary.LittleEndian, f16.Bits()); err != nil {
-		w.t.Fatalf("write float16: %v", err)
-	}
 }
 
 func TestLoadFile_FP16_GQA(t *testing.T) {
@@ -481,11 +362,11 @@ func TestBuildArchGraph_MistralDetection(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                string
-		arch                string
-		slidingWindow       int
+		name                 string
+		arch                 string
+		slidingWindow        int
 		slidingWindowPattern int
-		wantMistral         bool
+		wantMistral          bool
 	}{
 		{
 			name:          "llama without sliding window routes to Llama",
@@ -502,9 +383,9 @@ func TestBuildArchGraph_MistralDetection(t *testing.T) {
 		{
 			name:                 "llama with sliding window and pattern=6 routes to Llama (Gemma-like)",
 			arch:                 "llama",
-			slidingWindow:       4096,
+			slidingWindow:        4096,
 			slidingWindowPattern: 6,
-			wantMistral:         false,
+			wantMistral:          false,
 		},
 		{
 			name:          "explicit mistral arch routes to Mistral",
@@ -590,14 +471,6 @@ func TestLoadFile_SessionPoolSize(t *testing.T) {
 // exercising the DetectActualArchitecture path.
 func writeTestGGUF_Mistral(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "test_mistral.gguf")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	w := &ggufWriter{f: f, t: t}
 
 	hidden := 16
 	inter := 32
@@ -607,23 +480,19 @@ func writeTestGGUF_Mistral(t *testing.T, dir string) string {
 	numKVHeads := 2
 	kvDim := (hidden / numHeads) * numKVHeads
 
-	type tensorDef struct {
-		name  string
-		shape []uint64
-	}
 	tensors := []tensorDef{
-		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"output_norm.weight", []uint64{uint64(hidden)}},
-		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
-		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}},
-		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
-		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
-		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
-		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
+		{"token_embd.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"output_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"output.weight", []int{vocab, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_q.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_k.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_v.weight", []int{kvDim, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.attn_output.weight", []int{hidden, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_norm.weight", []int{hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_gate.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_up.weight", []int{inter, hidden}, ztensorgguf.TypeF32},
+		{"blk.0.ffn_down.weight", []int{hidden, inter}, ztensorgguf.TypeF32},
 	}
 
 	tokStrings := make([]string, vocab)
@@ -634,73 +503,40 @@ func writeTestGGUF_Mistral(t *testing.T, dir string) string {
 		tokStrings[i] = string(rune('a' + i - 3))
 	}
 
-	// 11 arch metadata (including sliding_window) + 5 tokenizer = 16
-	metadataCount := 16
-
-	w.writeUint32(0x46554747) // Magic
-	w.writeUint32(3)          // Version
-	w.writeUint64(uint64(len(tensors)))
-	w.writeUint64(uint64(metadataCount))
+	w := ztensorgguf.NewWriter()
 
 	// Declares arch="llama" but name="Mistral-7B-Instruct-v0.3".
-	w.writeStringKV("general.architecture", "llama")
-	w.writeStringKV("general.name", "Mistral-7B-Instruct-v0.3")
-	w.writeUint32KV("llama.vocab_size", uint32(vocab))
-	w.writeUint32KV("llama.embedding_length", uint32(hidden))
-	w.writeUint32KV("llama.block_count", uint32(numLayers))
-	w.writeUint32KV("llama.attention.head_count", uint32(numHeads))
-	w.writeUint32KV("llama.attention.head_count_kv", uint32(numKVHeads))
-	w.writeUint32KV("llama.feed_forward_length", uint32(inter))
-	w.writeUint32KV("llama.context_length", uint32(32768))
-	w.writeFloat32KV("llama.rope.freq_base", 10000.0)
-	w.writeUint32KV("llama.attention.sliding_window", 4096)
-	w.writeStringKV("tokenizer.ggml.model", "llama")
-	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
-	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
-	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
-	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
+	w.AddMetadataString("general.architecture", "llama")
+	w.AddMetadataString("general.name", "Mistral-7B-Instruct-v0.3")
+	w.AddMetadataUint32("llama.vocab_size", uint32(vocab))
+	w.AddMetadataUint32("llama.embedding_length", uint32(hidden))
+	w.AddMetadataUint32("llama.block_count", uint32(numLayers))
+	w.AddMetadataUint32("llama.attention.head_count", uint32(numHeads))
+	w.AddMetadataUint32("llama.attention.head_count_kv", uint32(numKVHeads))
+	w.AddMetadataUint32("llama.feed_forward_length", uint32(inter))
+	w.AddMetadataUint32("llama.context_length", uint32(32768))
+	w.AddMetadataFloat32("llama.rope.freq_base", 10000.0)
+	w.AddMetadataUint32("llama.attention.sliding_window", 4096)
+	w.AddMetadataString("tokenizer.ggml.model", "llama")
+	w.AddMetadataStringArray("tokenizer.ggml.tokens", tokStrings)
+	w.AddMetadataStringArray("tokenizer.ggml.merges", nil)
+	w.AddMetadataUint32("tokenizer.ggml.bos_token_id", 1)
+	w.AddMetadataUint32("tokenizer.ggml.eos_token_id", 2)
 
-	// Compute tensor data offsets.
-	offsets := make([]uint64, len(tensors))
-	var currentOffset uint64
-	for i, td := range tensors {
-		offsets[i] = currentOffset
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		currentOffset += numElements * 4
-	}
-
-	// Write tensor info.
-	for i, td := range tensors {
-		w.writeGGUFString(td.name)
-		w.writeUint32(uint32(len(td.shape)))
-		for _, d := range td.shape {
-			w.writeUint64(d)
-		}
-		w.writeUint32(0) // GGMLTypeF32
-		w.writeUint64(offsets[i])
-	}
-
-	// Align to 32 bytes.
-	pos, _ := f.Seek(0, 1)
-	padding := (32 - pos%32) % 32
-	if padding > 0 {
-		pad := make([]byte, padding)
-		_, _ = f.Write(pad)
-	}
-
-	// Write tensor data.
 	for _, td := range tensors {
-		numElements := uint64(1)
-		for _, d := range td.shape {
-			numElements *= d
-		}
-		for j := range numElements {
-			val := float32(math.Sin(float64(j)*0.01)) * 0.02
-			w.writeFloat32Raw(val)
-		}
+		n := numElements(td.shape)
+		w.AddTensorF32(td.name, td.shape, generateF32Data(n))
+	}
+
+	path := filepath.Join(dir, "test_mistral.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := w.Write(f); err != nil {
+		t.Fatalf("write GGUF: %v", err)
 	}
 
 	return path
