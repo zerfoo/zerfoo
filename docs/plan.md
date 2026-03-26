@@ -233,7 +233,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
   - Confidence values within 0.05 of Ollama reference.
   - Tests run on DGX Spark.
 
-- [ ] GG-T4.2 Latency benchmarks
+- [x] GG-T4.2 Latency benchmarks
   Owner: Kernel Eng  Est: 6h
   Files: tests/benchmark/guardian_bench_test.go
   Deps: GG-T2.3
@@ -359,7 +359,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
   Owner: Kernel Eng  Est: 1h  depends: T114.1
   Acceptance: Cos, Softmax, Transpose, Gather GPU parity tests PASS on DGX.
 
-- [ ] T114.5 Fix BF16 MatMul tolerance or add tensor core detection
+- [x] T114.5 Fix BF16 MatMul tolerance or add tensor core detection
   Owner: Kernel Eng  Est: 1h  depends: T114.1
   Acceptance: BF16 MatMul tests pass on DGX.
 
@@ -371,7 +371,7 @@ Completed: T32.1 (automated architecture builder from GGUF metadata).
 
 #### Wave 63: Full GPU Suite
 
-- [ ] T114.7 Run full GPU test suite and produce report
+- [x] T114.7 Run full GPU test suite and produce report
   Owner: QA Eng  Est: 2h  depends: T114.2-T114.6
   Acceptance: 0 segfaults, all float32/BF16/kernel/timeseries tests pass.
 
