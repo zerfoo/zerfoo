@@ -463,19 +463,19 @@ Decision: docs/adr/064-docs-site-hugo.md
 
 #### E0: Documentation Audit and Cleanup
 
-- [ ] T0.1 Consolidate getting-started docs  Est: 45m
-- [ ] T0.2 Consolidate GPU setup docs  Est: 30m
-- [ ] T0.3 Consolidate enterprise deployment docs  Est: 45m
-- [ ] T0.4 Consolidate benchmark docs  Est: 30m
-- [ ] T0.5 Delete docsite/ directory  Est: 5m
-- [ ] T0.6 Verify internal docs classification  Est: 15m
+- [x] T0.1 Consolidate getting-started docs  Est: 45m
+- [x] T0.2 Consolidate GPU setup docs  Est: 30m
+- [x] T0.3 Consolidate enterprise deployment docs  Est: 45m
+- [x] T0.4 Consolidate benchmark docs  Est: 30m
+- [x] T0.5 Delete docsite/ directory  Est: 5m
+- [x] T0.6 Verify internal docs classification  Est: 15m
 
 #### E1: Hugo Infrastructure Setup
 
-- [ ] T1.1 Initialize Hugo project in zerfoo.github.io  Est: 1h
-- [ ] T1.2 Customize Hugo Book theme  Est: 1h  depends: T1.1
-- [ ] T1.3 GitHub Actions CI/CD  Est: 30m  depends: T1.1
-- [ ] T1.4 Navigation structure  Est: 30m  depends: T1.1
+- [x] T1.1 Initialize Hugo project in zerfoo.github.io  Est: 1h
+- [x] T1.2 Customize Hugo Book theme  Est: 1h  depends: T1.1
+- [x] T1.3 GitHub Actions CI/CD  Est: 30m  depends: T1.1
+- [x] T1.4 Navigation structure  Est: 30m  depends: T1.1
 
 #### E2-E9: Content Migration (30 tasks)
 
@@ -486,14 +486,14 @@ Full task details in git history (commit that created plan-site.md).
 
 #### E10: Repo Cleanup
 
-- [ ] T10.1 Delete migrated user-facing docs from repo  Est: 30m
-- [ ] T10.2 Update README.md links to website  Est: 20m
-- [ ] T10.3 Update CONTRIBUTING.md links  Est: 10m
+- [x] T10.1 Delete migrated user-facing docs from repo  Est: 30m
+- [x] T10.2 Update README.md links to website  Est: 20m
+- [x] T10.3 Update CONTRIBUTING.md links  Est: 10m
 
 #### E11: Final Verification
 
-- [ ] T11.1 Verify all site links  Est: 30m
-- [ ] T11.2 Verify code examples compile  Est: 45m
+- [x] T11.1 Verify all site links  Est: 30m
+- [x] T11.2 Verify code examples compile  Est: 45m
 - [ ] T11.3 Run Lighthouse audit  Est: 15m
 - [ ] T11.4 Test mobile responsiveness  Est: 15m
 - [ ] T11.5 Test search functionality  Est: 15m
