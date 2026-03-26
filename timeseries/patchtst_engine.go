@@ -303,6 +303,9 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 // Returns per-sample predictions and per-sample caches (backward pass needs individual caches).
 func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWindows [][][]float64, params *patchTSTParamsF64) ([][]float64, []*patchTSTCacheF64, error) {
 	batchSize := len(batchWindows)
+	if batchSize == 0 {
+		return nil, nil, fmt.Errorf("forwardBatchF64WithCacheEngine: empty batch")
+	}
 	numPatches := m.config.NumPatches()
 	dModel := m.config.DModel
 	nHeads := m.config.NHeads

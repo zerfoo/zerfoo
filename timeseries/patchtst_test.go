@@ -1016,3 +1016,147 @@ func TestPatchTST_BatchedTrainConvergence(t *testing.T) {
 	t.Logf("batched train convergence: loss[0]=%.6f -> loss[9]=%.6f (batch_size=5, %d samples, %d channels)",
 		result.LossHistory[0], result.LossHistory[9], nSamples, nChannels)
 }
+
+// TestPatchTST_BatchedForwardBatchSize1 verifies that batched forward with a
+// single sample produces the same result as the per-sample forward pass.
+func TestPatchTST_BatchedForwardBatchSize1(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	ctx := context.Background()
+	params := model.extractParamsF64()
+
+	// Single sample with 1 channel.
+	windows := [][][]float64{{make([]float64, config.InputLength)}}
+	for i := range windows[0][0] {
+		windows[0][0][i] = float64(i) * 0.1
+	}
+
+	// Per-sample reference.
+	perSamplePred, _, err := model.forwardF64WithCacheEngine(ctx, windows[0], params)
+	if err != nil {
+		t.Fatalf("forwardF64WithCacheEngine: %v", err)
+	}
+
+	// Batched with batch size 1.
+	batchPreds, batchCaches, err := model.forwardBatchF64WithCacheEngine(ctx, windows, params)
+	if err != nil {
+		t.Fatalf("forwardBatchF64WithCacheEngine: %v", err)
+	}
+
+	if len(batchPreds) != 1 {
+		t.Fatalf("batch preds length = %d, want 1", len(batchPreds))
+	}
+	if len(batchCaches) != 1 {
+		t.Fatalf("batch caches length = %d, want 1", len(batchCaches))
+	}
+
+	const tol = 1e-5
+	for j := 0; j < config.OutputDim; j++ {
+		diff := math.Abs(batchPreds[0][j] - perSamplePred[j])
+		if diff > tol {
+			t.Errorf("output[%d]: batched=%.8f, per-sample=%.8f, diff=%.4e (> tol %.4e)",
+				j, batchPreds[0][j], perSamplePred[j], diff, tol)
+		}
+	}
+}
+
+// TestPatchTST_BatchedForwardEmptyBatch verifies that an empty batch returns
+// an error instead of panicking.
+func TestPatchTST_BatchedForwardEmptyBatch(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 8,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   1,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	ctx := context.Background()
+	params := model.extractParamsF64()
+
+	_, _, err = model.forwardBatchF64WithCacheEngine(ctx, [][][]float64{}, params)
+	if err == nil {
+		t.Fatal("expected error for empty batch, got nil")
+	}
+}
+
+// BenchmarkPatchTST_BatchedVsPerSample benchmarks the batched forward pass
+// against the per-sample forward pass for 256 samples.
+func BenchmarkPatchTST_BatchedVsPerSample(b *testing.B) {
+	engine, ops := newTestEngine()
+
+	config := PatchTSTConfig{
+		InputLength: 16,
+		PatchLength: 4,
+		Stride:      4,
+		DModel:      8,
+		NHeads:      2,
+		NLayers:     1,
+		OutputDim:   2,
+	}
+
+	model, err := NewPatchTST(config, engine, ops)
+	if err != nil {
+		b.Fatalf("NewPatchTST: %v", err)
+	}
+
+	ctx := context.Background()
+	params := model.extractParamsF64()
+
+	nSamples := 256
+	nChannels := 1
+	windows := make([][][]float64, nSamples)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, nChannels)
+		for c := 0; c < nChannels; c++ {
+			windows[s][c] = make([]float64, config.InputLength)
+			for i := 0; i < config.InputLength; i++ {
+				windows[s][c][i] = float64(s*100+c*10+i) * 0.01
+			}
+		}
+	}
+
+	b.Run("PerSample", func(b *testing.B) {
+		for range b.N {
+			for s := 0; s < nSamples; s++ {
+				_, _, err := model.forwardF64WithCacheEngine(ctx, windows[s], params)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
+
+	b.Run("Batched", func(b *testing.B) {
+		for range b.N {
+			_, _, err := model.forwardBatchF64WithCacheEngine(ctx, windows, params)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
