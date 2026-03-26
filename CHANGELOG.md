@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0](https://github.com/zerfoo/zerfoo/compare/v1.21.0...v1.22.0) (2026-03-26)
+
+
+### Features
+
+* **cmd:** add guard CLI command for content moderation ([2d49727](https://github.com/zerfoo/zerfoo/commit/2d497273e97bafc5452938c4d961a40b94b840ac))
+* **guardian:** add evaluator for Guardian inference pipeline ([ef93276](https://github.com/zerfoo/zerfoo/commit/ef93276b3dd1b8a882ef22fe40ec2ea6053ad67c))
+* **guardian:** add prompt template engine for all risk categories ([cba58a5](https://github.com/zerfoo/zerfoo/commit/cba58a57ff2e5df87f0fc1b3f4f35a3ee47cf075))
+* **guardian:** add verdict parser for all Guardian output formats ([00fb100](https://github.com/zerfoo/zerfoo/commit/00fb100a240cf1df15f87ab5b2c145adee3c0002))
+* **inference:** add Granite architecture builder ([41b792d](https://github.com/zerfoo/zerfoo/commit/41b792dd53d529af67af5dc0e8bd425e77adc1cc))
+* **serve:** add Guardian content moderation API endpoints ([7e32c4c](https://github.com/zerfoo/zerfoo/commit/7e32c4c310336850f6aa6eecd5631ad2660c513a))
+
 ## [1.21.0](https://github.com/zerfoo/zerfoo/compare/v1.20.1...v1.21.0) (2026-03-26)
 
 
