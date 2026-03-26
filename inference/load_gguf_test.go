@@ -585,6 +585,168 @@ func TestLoadFile_SessionPoolSize(t *testing.T) {
 	})
 }
 
+// writeTestGGUF_Mistral creates a minimal GGUF file that declares arch="llama"
+// but has general.name="Mistral-7B-Instruct-v0.3" and a sliding window,
+// exercising the DetectActualArchitecture path.
+func writeTestGGUF_Mistral(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "test_mistral.gguf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	w := &ggufWriter{f: f, t: t}
+
+	hidden := 16
+	inter := 32
+	vocab := 32
+	numLayers := 1
+	numHeads := 4
+	numKVHeads := 2
+	kvDim := (hidden / numHeads) * numKVHeads
+
+	type tensorDef struct {
+		name  string
+		shape []uint64
+	}
+	tensors := []tensorDef{
+		{"token_embd.weight", []uint64{uint64(hidden), uint64(vocab)}},
+		{"output_norm.weight", []uint64{uint64(hidden)}},
+		{"output.weight", []uint64{uint64(hidden), uint64(vocab)}},
+		{"blk.0.attn_norm.weight", []uint64{uint64(hidden)}},
+		{"blk.0.attn_q.weight", []uint64{uint64(hidden), uint64(hidden)}},
+		{"blk.0.attn_k.weight", []uint64{uint64(hidden), uint64(kvDim)}},
+		{"blk.0.attn_v.weight", []uint64{uint64(hidden), uint64(kvDim)}},
+		{"blk.0.attn_output.weight", []uint64{uint64(hidden), uint64(hidden)}},
+		{"blk.0.ffn_norm.weight", []uint64{uint64(hidden)}},
+		{"blk.0.ffn_gate.weight", []uint64{uint64(hidden), uint64(inter)}},
+		{"blk.0.ffn_up.weight", []uint64{uint64(hidden), uint64(inter)}},
+		{"blk.0.ffn_down.weight", []uint64{uint64(inter), uint64(hidden)}},
+	}
+
+	tokStrings := make([]string, vocab)
+	tokStrings[0] = "<unk>"
+	tokStrings[1] = "<s>"
+	tokStrings[2] = "</s>"
+	for i := 3; i < vocab; i++ {
+		tokStrings[i] = string(rune('a' + i - 3))
+	}
+
+	// 11 arch metadata (including sliding_window) + 5 tokenizer = 16
+	metadataCount := 16
+
+	w.writeUint32(0x46554747) // Magic
+	w.writeUint32(3)          // Version
+	w.writeUint64(uint64(len(tensors)))
+	w.writeUint64(uint64(metadataCount))
+
+	// Declares arch="llama" but name="Mistral-7B-Instruct-v0.3".
+	w.writeStringKV("general.architecture", "llama")
+	w.writeStringKV("general.name", "Mistral-7B-Instruct-v0.3")
+	w.writeUint32KV("llama.vocab_size", uint32(vocab))
+	w.writeUint32KV("llama.embedding_length", uint32(hidden))
+	w.writeUint32KV("llama.block_count", uint32(numLayers))
+	w.writeUint32KV("llama.attention.head_count", uint32(numHeads))
+	w.writeUint32KV("llama.attention.head_count_kv", uint32(numKVHeads))
+	w.writeUint32KV("llama.feed_forward_length", uint32(inter))
+	w.writeUint32KV("llama.context_length", uint32(32768))
+	w.writeFloat32KV("llama.rope.freq_base", 10000.0)
+	w.writeUint32KV("llama.attention.sliding_window", 4096)
+	w.writeStringKV("tokenizer.ggml.model", "llama")
+	w.writeStringArrayKV("tokenizer.ggml.tokens", tokStrings)
+	w.writeStringArrayKV("tokenizer.ggml.merges", nil)
+	w.writeUint32KV("tokenizer.ggml.bos_token_id", 1)
+	w.writeUint32KV("tokenizer.ggml.eos_token_id", 2)
+
+	// Compute tensor data offsets.
+	offsets := make([]uint64, len(tensors))
+	var currentOffset uint64
+	for i, td := range tensors {
+		offsets[i] = currentOffset
+		numElements := uint64(1)
+		for _, d := range td.shape {
+			numElements *= d
+		}
+		currentOffset += numElements * 4
+	}
+
+	// Write tensor info.
+	for i, td := range tensors {
+		w.writeGGUFString(td.name)
+		w.writeUint32(uint32(len(td.shape)))
+		for _, d := range td.shape {
+			w.writeUint64(d)
+		}
+		w.writeUint32(0) // GGMLTypeF32
+		w.writeUint64(offsets[i])
+	}
+
+	// Align to 32 bytes.
+	pos, _ := f.Seek(0, 1)
+	padding := (32 - pos%32) % 32
+	if padding > 0 {
+		pad := make([]byte, padding)
+		_, _ = f.Write(pad)
+	}
+
+	// Write tensor data.
+	for _, td := range tensors {
+		numElements := uint64(1)
+		for _, d := range td.shape {
+			numElements *= d
+		}
+		for j := range numElements {
+			val := float32(math.Sin(float64(j)*0.01)) * 0.02
+			w.writeFloat32Raw(val)
+		}
+	}
+
+	return path
+}
+
+func TestLoadFile_MistralDetection(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestGGUF_Mistral(t, dir)
+
+	m, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	cfg := m.Config()
+	if cfg.Architecture != "mistral" {
+		t.Errorf("Architecture = %q, want %q", cfg.Architecture, "mistral")
+	}
+	if cfg.BOSTokenID != 1 {
+		t.Errorf("BOSTokenID = %d, want 1", cfg.BOSTokenID)
+	}
+	if cfg.EOSTokenID != 2 {
+		t.Errorf("EOSTokenID = %d, want 2", cfg.EOSTokenID)
+	}
+}
+
+func TestLoadFile_MistralDetection_Generate(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestGGUF_Mistral(t, dir)
+
+	m, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	defer func() { _ = m.Close() }()
+
+	result, err := m.Generate(t.Context(), "hello", WithMaxTokens(3), WithTemperature(0))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result == "" {
+		t.Error("Generate returned empty string")
+	}
+}
+
 func TestLoadFile_NotGGUF(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "not-a-model.txt")
