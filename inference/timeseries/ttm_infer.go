@@ -36,7 +36,7 @@ func newTTMInferenceFromConfig(cfg *TTMConfig) (*TTMInference, error) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	tensors := make(map[string]*tensor.TensorNumeric[float32])
 
-	g, err := BuildTTM[float32](tensors, cfg, engine)
+	g, node, err := buildTTMWithNode[float32](tensors, cfg, engine)
 	if err != nil {
 		return nil, fmt.Errorf("build TTM graph: %w", err)
 	}
@@ -45,6 +45,7 @@ func newTTMInferenceFromConfig(cfg *TTMConfig) (*TTMInference, error) {
 		graph:  g,
 		cfg:    cfg,
 		engine: engine,
+		node:   node,
 	}
 	return &TTMInference{
 		model:  m,
@@ -83,6 +84,39 @@ func (t *TTMInference) Forecast(input [][]float64) ([][]float64, error) {
 	result, err := t.model.Forecast(normalized)
 	if err != nil {
 		return nil, fmt.Errorf("model forecast: %w", err)
+	}
+
+	// Denormalize output back to original scale.
+	denormalized := denormalizeChannels(result, mean, std, t.config.ForecastLen, numChannels)
+
+	return denormalized, nil
+}
+
+// ForecastWithExogenous produces forecasts using future known exogenous variables.
+// Input shape: [context_len][channels] as [][]float64.
+// Exogenous shape: [forecast_len][num_exog] as [][]float64.
+// Output shape: [forecast_len][channels] as [][]float64.
+func (t *TTMInference) ForecastWithExogenous(input [][]float64, exogenous [][]float64) ([][]float64, error) {
+	if err := t.validateInput(input); err != nil {
+		return nil, err
+	}
+	if err := t.validateExogenous(exogenous); err != nil {
+		return nil, err
+	}
+
+	numChannels := t.config.NumChannels
+	contextLen := t.config.ContextLen
+
+	// Compute per-channel mean and std.
+	mean, std := channelMeanStd(input, contextLen, numChannels)
+
+	// Normalize input.
+	normalized := normalizeChannels(input, mean, std, contextLen, numChannels)
+
+	// Run model forward with exogenous data.
+	result, err := t.model.ForecastWithExogenous(normalized, exogenous)
+	if err != nil {
+		return nil, fmt.Errorf("model forecast with exogenous: %w", err)
 	}
 
 	// Denormalize output back to original scale.
@@ -175,6 +209,23 @@ func (t *TTMInference) validateInput(input [][]float64) error {
 	}
 	if len(input[0]) != t.config.NumChannels {
 		return fmt.Errorf("input channels must be %d, got %d", t.config.NumChannels, len(input[0]))
+	}
+	return nil
+}
+
+// validateExogenous checks that the exogenous input has the correct shape.
+func (t *TTMInference) validateExogenous(exogenous [][]float64) error {
+	if t.config.NumExogenous <= 0 {
+		return fmt.Errorf("model not configured for exogenous variables (NumExogenous=%d)", t.config.NumExogenous)
+	}
+	if len(exogenous) != t.config.ForecastLen {
+		return fmt.Errorf("exogenous forecast_len must be %d, got %d", t.config.ForecastLen, len(exogenous))
+	}
+	if len(exogenous) == 0 {
+		return fmt.Errorf("exogenous must not be empty")
+	}
+	if len(exogenous[0]) != t.config.NumExogenous {
+		return fmt.Errorf("exogenous channels must be %d, got %d", t.config.NumExogenous, len(exogenous[0]))
 	}
 	return nil
 }
