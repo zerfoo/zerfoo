@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0](https://github.com/zerfoo/zerfoo/compare/v1.26.2...v1.27.0) (2026-03-27)
+
+
+### Features
+
+* **inference:** add madvise hints for mmap GGUF loading ([315ba7b](https://github.com/zerfoo/zerfoo/commit/315ba7b7eca7aeee5a3f438dad8dcefd7151cce3))
+
 ## [1.26.2](https://github.com/zerfoo/zerfoo/compare/v1.26.1...v1.26.2) (2026-03-27)
 
 
