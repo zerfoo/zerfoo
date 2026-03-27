@@ -346,7 +346,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Add `WithKVDtype("q4")` and `WithKVDtype("q3")` GeneratorOptions.
   Acceptance: Options create correct cache type. Existing FP16/FP32 unchanged.
 
-- [ ] T35.3.4 GPU kernels for Q4/Q3 KV dequantization  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T35.3.4 GPU kernels for Q4/Q3 KV dequantization  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-03-27
   repo: ztensor  Deps: T35.3.1
   CUDA kernels for fused dequant-and-gather during attention.
   Acceptance: GPU path matches CPU within Q4 tolerance.
@@ -467,7 +467,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   numKVHeads, blockSize, topBlocks, topTokens, windowSize, ...opts)`
   Acceptance: Forward pass with all three paths active. Gradients flow.
 
-- [ ] T37.1.5 CUDA kernel for fused NSA  Owner: TBD  Est: 6h  verifies: [infrastructure]
+- [x] T37.1.5 CUDA kernel for fused NSA  Owner: TBD  Est: 6h  verifies: [infrastructure]  DONE 2026-03-27
   Deps: T37.1.4
   repo: ztensor
   File: internal/cuda/nsa_attention.cu
@@ -735,13 +735,13 @@ just dequantization lookup tables and GEMV dispatch.
   Most complex I-Quant format. Requires precomputed grid tables.
   Acceptance: Dequantized values match llama.cpp reference.
 
-- [ ] T41.1.4 GPU dequantization kernels for IQ types  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T41.1.4 GPU dequantization kernels for IQ types  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-03-27
   repo: ztensor  Deps: T41.1.1, T41.1.2, T41.1.3
   Files: internal/cuda/iq_dequant.cu, internal/gpuapi/kernels.go
   CUDA kernels: table lookup dequant for IQ4_NL, IQ3_S, IQ2_XXS.
   Acceptance: GPU matches CPU within tolerance.
 
-- [ ] T41.1.5 Wire I-Quant types into GGUF tensor loader  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T41.1.5 Wire I-Quant types into GGUF tensor loader  Owner: TBD  Est: 1.5h  verifies: [UC-001]  DONE 2026-03-27
   Deps: T41.1.1, T41.1.2, T41.1.3
   Files: inference/load_gguf.go, model/gguf/
   Recognize GGUF tensor types for IQ2_XXS, IQ3_S, IQ4_NL. Create
@@ -813,7 +813,7 @@ softmax, then reduces. Maximizes GPU memory bandwidth utilization.
   Acceptance: Output matches standard attention within 1e-4.
   Benchmark: >= 1.5x speedup on seqLen_KV > 1024 vs current decode kernel.
 
-- [ ] T43.1.2 Wire flash decode into attention layer  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T43.1.2 Wire flash decode into attention layer  Owner: TBD  Est: 2h  verifies: [UC-001]  DONE 2026-03-27
   Deps: T43.1.1
   File: layers/attention/scaled_dot_product_attention.go
   In tryFlashForward(): when seqLen_Q == 1 (decode mode), dispatch to
@@ -845,7 +845,7 @@ on demand. Adapter weights managed via existing arena allocator.
   Rank, alpha, and target layers stored in GGUF metadata.
   Acceptance: Adapter loads from GGUF. Shapes validated per layer.
 
-- [ ] T44.1.2 Implement LoRA weight merging in forward pass  Owner: TBD  Est: 3h  verifies: [UC-012]
+- [x] T44.1.2 Implement LoRA weight merging in forward pass  Owner: TBD  Est: 3h  verifies: [UC-012]  DONE 2026-03-27
   Deps: T44.1.1
   File: inference/lora/apply.go
   During forward pass, apply LoRA: output = base_output + scale * (x @ A^T @ B^T).
@@ -854,7 +854,7 @@ on demand. Adapter weights managed via existing arena allocator.
   per-request adapter selection).
   Acceptance: Forward with adapter matches merged-weight forward within 1e-5.
 
-- [ ] T44.1.3 Implement adapter cache with LRU eviction  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]
+- [x] T44.1.3 Implement adapter cache with LRU eviction  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]  DONE 2026-03-27
   Deps: T44.1.1
   File: inference/lora/cache.go
   Cache loaded adapters in GPU memory. LRU eviction when cache exceeds
@@ -1027,21 +1027,21 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 
 - [x] T35.2.1 QuaRot weight fusion in GGUF loader  Deps: T35.1.2
 - [x] T35.3.2 Q3 KV cache with codebook  Deps: T35.3.1
-- [ ] T35.3.4 GPU kernels Q4/Q3 KV dequant (ztensor)  Deps: T35.3.1
+- [x] T35.3.4 GPU kernels Q4/Q3 KV dequant (ztensor)  Deps: T35.3.1
 - [x] T36.2.1 EAGLE decode loop  Deps: T36.1.2
 - [x] T36.2.3 EAGLE weight loading from GGUF  Deps: T36.1.1
-- [ ] T37.1.5 Fused NSA CUDA kernel (ztensor)  Deps: T37.1.4
+- [x] T37.1.5 Fused NSA CUDA kernel (ztensor)  Deps: T37.1.4
 - [x] T38.1.2 Split MoE weights GPU/CPU  Deps: T38.1.1
 - [x] T39.2.1 TernaryStorage in GGUF loader  Deps: T39.1.1
 - [x] T34.4.1 SparseRoutedAttention layer  Deps: T34.1.1, T34.1.3, T34.2.1, T34.3.1
 - [x] T34.5.1 TieredKVStore  Deps: T34.2.1
 - [x] T40.1.2 Write converted weights as GGUF  Deps: T40.1.1
-- [ ] T41.1.4 GPU dequant kernels for IQ types (ztensor)  Deps: T41.1.1-T41.1.3
-- [ ] T41.1.5 Wire I-Quant types into GGUF loader  Deps: T41.1.1-T41.1.3
+- [x] T41.1.4 GPU dequant kernels for IQ types (ztensor)  Deps: T41.1.1-T41.1.3
+- [x] T41.1.5 Wire I-Quant types into GGUF loader  Deps: T41.1.1-T41.1.3
 - [x] T42.1.2 Cache-aware request scheduling  Deps: T42.1.1
-- [ ] T43.1.2 Wire flash decode into attention  Deps: T43.1.1
-- [ ] T44.1.2 LoRA weight merging in forward pass  Deps: T44.1.1
-- [ ] T44.1.3 Adapter cache with LRU eviction  Deps: T44.1.1
+- [x] T43.1.2 Wire flash decode into attention  Deps: T43.1.1
+- [x] T44.1.2 LoRA weight merging in forward pass  Deps: T44.1.1
+- [x] T44.1.3 Adapter cache with LRU eviction  Deps: T44.1.1
 
 #### Wave 4: Wiring + Options (10 agents)
 
