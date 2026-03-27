@@ -238,6 +238,15 @@ func NewGroupedQueryAttentionFromParams[T tensor.Numeric](
 	}, nil
 }
 
+// SetDocumentBoundaries sets document boundary positions for document-wise
+// RoPE. When boundaries are set, position IDs reset to 0 at each boundary
+// so each document receives independent positional encoding during
+// multi-document inference. Boundaries are sequence positions (0-indexed)
+// where new documents begin. Pass nil to disable document-wise mode.
+func (gqa *GroupedQueryAttention[T]) SetDocumentBoundaries(boundaries []int) {
+	gqa.rope.SetDocumentBoundaries(boundaries)
+}
+
 // SetBidirectional enables or disables bidirectional (non-causal) attention.
 func (gqa *GroupedQueryAttention[T]) SetBidirectional(bidirectional bool) {
 	gqa.bidirectional = bidirectional
