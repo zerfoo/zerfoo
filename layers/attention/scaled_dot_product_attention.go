@@ -26,9 +26,11 @@ func negInfValue[T tensor.Numeric]() T {
 
 // ScaledDotProductAttention implements the scaled dot-product attention mechanism.
 type ScaledDotProductAttention[T tensor.Numeric] struct {
-	engine  compute.Engine[T]
-	headDim float64 // Dimension of each head, used for scaling
-	causal  bool    // if true, apply causal masking to attention scores
+	engine        compute.Engine[T]
+	headDim       float64 // Dimension of each head, used for scaling
+	numQueryHeads int     // Number of query heads (for flash decode GQA dispatch)
+	numKVHeads    int     // Number of KV heads (for flash decode GQA dispatch)
+	causal        bool    // if true, apply causal masking to attention scores
 
 	// Cached tensors for backward pass
 	q                *tensor.TensorNumeric[T]
@@ -45,6 +47,8 @@ func (sdpa *ScaledDotProductAttention[T]) SetCausal(causal bool) {
 // ScaledDotProductAttentionOptions holds configuration options for ScaledDotProductAttention.
 type ScaledDotProductAttentionOptions[T tensor.Numeric] struct {
 	bidirectional bool // when true, causal masking is disabled
+	numQueryHeads int  // query head count for flash decode dispatch
+	numKVHeads    int  // KV head count for flash decode dispatch
 }
 
 // ScaledDotProductAttentionOption applies an option to ScaledDotProductAttentionOptions.
@@ -59,6 +63,15 @@ func WithBidirectional[T tensor.Numeric]() ScaledDotProductAttentionOption[T] {
 	}
 }
 
+// WithHeadCounts sets the query and KV head counts, enabling the split-KV
+// flash decode kernel for autoregressive decode with GQA support.
+func WithHeadCounts[T tensor.Numeric](numQueryHeads, numKVHeads int) ScaledDotProductAttentionOption[T] {
+	return func(o *ScaledDotProductAttentionOptions[T]) {
+		o.numQueryHeads = numQueryHeads
+		o.numKVHeads = numKVHeads
+	}
+}
+
 // NewScaledDotProductAttention creates a new ScaledDotProductAttention layer.
 func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], headDim int, opts ...ScaledDotProductAttentionOption[T]) *ScaledDotProductAttention[T] {
 	options := &ScaledDotProductAttentionOptions[T]{}
@@ -67,8 +80,10 @@ func NewScaledDotProductAttention[T tensor.Numeric](engine compute.Engine[T], he
 	}
 
 	return &ScaledDotProductAttention[T]{
-		engine:  engine,
-		headDim: float64(headDim),
+		engine:        engine,
+		headDim:       float64(headDim),
+		numQueryHeads: options.numQueryHeads,
+		numKVHeads:    options.numKVHeads,
 	}
 }
 
@@ -87,6 +102,14 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	sdpa.q = q
 	sdpa.k = k
 	sdpa.v = v
+
+	// Try split-KV flash decode for single-query autoregressive decode.
+	// This path handles the seqLen_Q==1 case that tryFlashForward rejects.
+	if mask == nil && sdpa.numQueryHeads > 0 && sdpa.numKVHeads > 0 {
+		if result, err := tryFlashDecode(q, k, v, int(sdpa.headDim), sdpa.numQueryHeads, sdpa.numKVHeads); result != nil || err != nil {
+			return result, err
+		}
+	}
 
 	// Try fused flash attention when no arbitrary mask is provided.
 	// Flash attention handles causal masking internally via the causal flag.
