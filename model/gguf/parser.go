@@ -271,22 +271,41 @@ func (f *File) GetString(key string) (string, bool) {
 	return s, ok
 }
 
-// GetUint32 returns a metadata uint32 value.
+// GetUint32 returns a metadata value as uint32. Handles uint32 natively
+// and also converts uint64, int32, and int64 values (common in HuggingFace
+// GGUFs for Phi3 and Llama 3.1 which store model dimensions as uint64).
 func (f *File) GetUint32(key string) (uint32, bool) {
 	v, ok := f.Metadata[key]
 	if !ok {
 		return 0, false
 	}
-	u, ok := v.(uint32)
-	return u, ok
+	switch n := v.(type) {
+	case uint32:
+		return n, true
+	case uint64:
+		return uint32(n), true
+	case int32:
+		return uint32(n), true
+	case int64:
+		return uint32(n), true
+	default:
+		return 0, false
+	}
 }
 
-// GetFloat32 returns a metadata float32 value.
+// GetFloat32 returns a metadata value as float32. Handles float32 natively
+// and also converts float64 values (common in some GGUF converters).
 func (f *File) GetFloat32(key string) (float32, bool) {
 	v, ok := f.Metadata[key]
 	if !ok {
 		return 0, false
 	}
-	f32, ok := v.(float32)
-	return f32, ok
+	switch n := v.(type) {
+	case float32:
+		return n, true
+	case float64:
+		return float32(n), true
+	default:
+		return 0, false
+	}
 }
