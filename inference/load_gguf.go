@@ -2,6 +2,7 @@ package inference
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -19,9 +20,21 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 	}
 
 	// Load and parse the GGUF file.
-	gm, err := LoadGGUF(path)
-	if err != nil {
-		return nil, err
+	var gm *GGUFModel
+	var mmapCloser io.Closer
+	if o.mmap {
+		var err error
+		gm, mmapCloser, err = LoadGGUFMmap(path)
+		if err != nil {
+			return nil, fmt.Errorf("mmap load: %w", err)
+		}
+		slog.Info("loaded GGUF via mmap", "path", path, "tensors", len(gm.Tensors))
+	} else {
+		var err error
+		gm, err = LoadGGUF(path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Extract tokenizer from GGUF metadata.
@@ -123,6 +136,7 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		tokenizer:   tok,
 		engine:      eng,
 		config:      *meta,
+		closer:      mmapCloser, // nil when heap-loaded; releases mmap on Close()
 		embWeights:  embData,
 		hiddenSize:  embHiddenSize,
 		sessionPool: pool,

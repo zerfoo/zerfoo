@@ -2,6 +2,7 @@ package inference
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -73,6 +74,84 @@ func LoadGGUF(path string) (*GGUFModel, error) {
 		Tensors: mapped,
 		File:    gf,
 	}, nil
+}
+
+// mmapCloser wraps the mmap cleanup function as an io.Closer so that the
+// Model can release the mapping when it is closed.
+type mmapCloser struct {
+	fn func() error
+}
+
+func (c *mmapCloser) Close() error { return c.fn() }
+
+// LoadGGUFMmap loads a GGUF model file using memory-mapped I/O. Instead of
+// reading tensor data into heap-allocated Go slices, the entire file is mmap'd
+// and tensors reference slices of the mapped region via MmapStorage. This gives
+// near-instant startup and keeps tensor data out of the Go heap.
+//
+// The returned io.Closer must be kept alive and closed when the model is no
+// longer needed -- it releases the memory mapping.
+func LoadGGUFMmap(path string) (*GGUFModel, io.Closer, error) {
+	// First pass: open and parse the GGUF header + tensor metadata.
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open GGUF file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	gf, err := gguf.Parse(f)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse GGUF: %w", err)
+	}
+
+	cfg, err := gguf.ExtractModelConfig(gf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("extract model config: %w", err)
+	}
+
+	// Memory-map the entire file.
+	mapped, cleanup, err := tensor.MmapFile(filepath.Clean(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("mmap GGUF file: %w", err)
+	}
+
+	slog.Info("mmap'd GGUF file", "path", path, "size_mb", len(mapped)/(1024*1024))
+
+	// Create tensors backed by mmap'd regions (zero-copy).
+	rawTensors, err := gguf.LoadTensorsMmap(gf, mapped)
+	if err != nil {
+		_ = cleanup()
+		return nil, nil, fmt.Errorf("load tensors (mmap): %w", err)
+	}
+
+	// Map GGUF tensor names to canonical Zerfoo names.
+	mappedTensors := make(map[string]*tensor.TensorNumeric[float32], len(rawTensors))
+	for name, t := range rawTensors {
+		canonical := gguf.MapTensorName(cfg.Architecture, name)
+		mappedTensors[canonical] = t
+	}
+
+	// Split merged QKV tensors (e.g., Phi attn_qkv.weight) into separate Q/K/V.
+	if err := gguf.SplitMergedQKV(mappedTensors, cfg); err != nil {
+		_ = cleanup()
+		return nil, nil, fmt.Errorf("split merged QKV: %w", err)
+	}
+
+	// Split merged gate+up MLP tensors.
+	if err := gguf.SplitMergedGateUp(mappedTensors, cfg); err != nil {
+		_ = cleanup()
+		return nil, nil, fmt.Errorf("split merged gate+up: %w", err)
+	}
+
+	// For mmap'd tensors, skip upgradeEmbeddingPrecision since MmapStorage
+	// handles dequantization lazily. The embedding precision upgrade only
+	// applies to Q4Storage (heap-loaded) tensors.
+
+	return &GGUFModel{
+		Config:  cfg,
+		Tensors: mappedTensors,
+		File:    gf,
+	}, &mmapCloser{fn: cleanup}, nil
 }
 
 // upgradeEmbeddingPrecision re-quantizes embedding and output projection tensors
