@@ -5,6 +5,20 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-27: Phi3/Llama3.1 GGUF load failure root cause
+
+**Type:** investigation
+**Tags:** gguf, parser, Phi3, Llama3.1, metadata
+
+**Problem:** Phi3 mini and Llama3.1 8B GGUFs from HuggingFace fail to load.
+ExtractModelConfig returns zero-valued config (vocab_size=0, etc.).
+**Root cause:** GetUint32/GetFloat32 in parser.go use direct type assertions
+(v.(uint32)) which fail silently when HuggingFace GGUFs store model dimensions
+as uint64 instead of uint32. Gemma/Mistral/Llama3.2 use uint32 so they work.
+**Fix:** Added type switch in GetUint32 (handles uint32/uint64/int32/int64) and
+GetFloat32 (handles float32/float64). Commit 1648db9.
+**Impact:** Unblocks Phi3 mini, Llama 3.1 8B, and any future GGUF with uint64 metadata.
+
 ## 2026-03-26: Mmap loading -- K-quant dequant fix and GPU dispatch
 
 **Type:** investigation

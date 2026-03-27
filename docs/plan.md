@@ -147,10 +147,10 @@ All models work — time to build the definitive comparison table.
   where Zerfoo < 0.95x Ollama.
   Acceptance: Published table with 6+ models, ratios, and hardware specs.
 
-- [ ] BMK-T4 Investigate Phi3/Llama3.1 GGUF load failures  Est: 2h
-  Both models fail to load from HuggingFace GGUFs. Investigate parser
-  compatibility — may be missing GGUF v3 metadata fields or tensor types.
-  Acceptance: Root cause documented in devlog; fix shipped or issue filed.
+- [x] BMK-T4 Investigate Phi3/Llama3.1 GGUF load failures  Est: 2h  2026 03 27
+  Root cause: GetUint32/GetFloat32 only matched uint32/float32 type assertions.
+  HuggingFace GGUFs for Phi3/Llama3.1 store dimensions as uint64. Added type
+  switch to handle uint64/int32/int64/float64. Fix shipped in commit 1648db9.
 
 ### P2: Mistral vs Ollama Head-to-Head
 
