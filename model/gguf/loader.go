@@ -98,6 +98,15 @@ func TensorByteSize(typ GGMLType, numElements int) (int, error) {
 		return nBlocks * 210, nil // 128 bytes ql + 64 bytes qh + 16 bytes scales + 2 bytes d
 	case GGMLTypeBF16:
 		return numElements * 2, nil
+	case GGMLTypeIQ4_NL:
+		nBlocks := (numElements + 31) / 32
+		return nBlocks * 18, nil // 2 bytes fp16 scale + 16 bytes packed nibbles
+	case GGMLTypeIQ3_S:
+		nBlocks := (numElements + 255) / 256
+		return nBlocks * 110, nil // 2 bytes fp16 d + 64 qs + 8 qh + 32 signs + 4 scales
+	case GGMLTypeIQ2_XXS:
+		nBlocks := (numElements + 255) / 256
+		return nBlocks * 68, nil // 4 bytes fp32 scale + 64 bytes packed 2-bit data
 	case GGMLTypeTQ2_0:
 		// 2 bits per value, 4 values per byte.
 		return (numElements + 3) / 4, nil
@@ -127,6 +136,12 @@ func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tens
 		return decodeQ6KTensor(shape, numElements, raw)
 	case GGMLTypeBF16:
 		return decodeBF16Tensor(shape, numElements, raw)
+	case GGMLTypeIQ4_NL:
+		return decodeIQ4NLTensor(shape, numElements, raw)
+	case GGMLTypeIQ3_S:
+		return decodeIQ3STensor(shape, numElements, raw)
+	case GGMLTypeIQ2_XXS:
+		return decodeIQ2XXSTensor(shape, numElements, raw)
 	case GGMLTypeTQ2_0:
 		return decodeTernaryTensor(shape, numElements, raw)
 	default:
@@ -300,6 +315,51 @@ func decodeTernaryTensor(shape []int, numElements int, raw []byte) (*tensor.Tens
 	copy(ts.RawBytes(), raw[:expectedBytes])
 	data := ts.Slice()
 	return tensor.New[float32](shape, data)
+}
+
+func decodeIQ4NLTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	s, err := tensor.NewIQ4NLStorageFromRaw(raw, numElements)
+	if err != nil {
+		return nil, fmt.Errorf("IQ4_NL decode: %w", err)
+	}
+	// Re-quantize IQ4_NL to Q4_0 for fast GEMV decode path.
+	f32 := make([]float32, numElements)
+	s.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
+}
+
+func decodeIQ3STensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	s, err := tensor.NewIQ3SStorageFromRaw(raw, numElements)
+	if err != nil {
+		return nil, fmt.Errorf("IQ3_S decode: %w", err)
+	}
+	// Re-quantize IQ3_S to Q4_0 for fast GEMV decode path.
+	f32 := make([]float32, numElements)
+	s.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
+}
+
+func decodeIQ2XXSTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	nBlocks := (numElements + 255) / 256
+	const bytesPerBlock = 64 // 256 elements / 4 per byte
+	const blockTotalBytes = 68 // 4 bytes scale + 64 bytes data
+	if len(raw) < nBlocks*blockTotalBytes {
+		return nil, fmt.Errorf("IQ2_XXS decode: need %d bytes, got %d", nBlocks*blockTotalBytes, len(raw))
+	}
+
+	s := tensor.NewIQ2XXSStorage(numElements)
+	for bi := range nBlocks {
+		off := bi * blockTotalBytes
+		scale := math.Float32frombits(binary.LittleEndian.Uint32(raw[off : off+4]))
+		s.SetBlock(bi, scale, raw[off+4:off+4+bytesPerBlock])
+	}
+
+	// Re-quantize IQ2_XXS to Q4_0 for fast GEMV decode path.
+	f32 := s.Dequantize()
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 // QuantizeToFP8E4M3 converts all tensors in the map from their current storage

@@ -816,6 +816,210 @@ func TestLoadTensors_TQ2_0_2D(t *testing.T) {
 	}
 }
 
+func TestGGMLTypeIQConstants(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  GGMLType
+		want uint32
+	}{
+		{"IQ2_XXS", GGMLTypeIQ2_XXS, 16},
+		{"IQ3_S", GGMLTypeIQ3_S, 21},
+		{"IQ4_NL", GGMLTypeIQ4_NL, 25},
+	}
+	for _, tt := range tests {
+		if uint32(tt.typ) != tt.want {
+			t.Errorf("GGMLType%s = %d, want %d", tt.name, uint32(tt.typ), tt.want)
+		}
+	}
+}
+
+func TestTensorByteSize_IQTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		typ         GGMLType
+		numElements int
+		wantBytes   int
+	}{
+		{"IQ4_NL/32", GGMLTypeIQ4_NL, 32, 18},
+		{"IQ4_NL/64", GGMLTypeIQ4_NL, 64, 36},
+		{"IQ4_NL/33", GGMLTypeIQ4_NL, 33, 36},  // 2 blocks
+		{"IQ3_S/256", GGMLTypeIQ3_S, 256, 110},
+		{"IQ3_S/512", GGMLTypeIQ3_S, 512, 220},
+		{"IQ3_S/257", GGMLTypeIQ3_S, 257, 220},  // 2 blocks
+		{"IQ2_XXS/256", GGMLTypeIQ2_XXS, 256, 68},
+		{"IQ2_XXS/512", GGMLTypeIQ2_XXS, 512, 136},
+		{"IQ2_XXS/257", GGMLTypeIQ2_XXS, 257, 136}, // 2 blocks
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := TensorByteSize(tt.typ, tt.numElements)
+			if err != nil {
+				t.Fatalf("TensorByteSize: %v", err)
+			}
+			if got != tt.wantBytes {
+				t.Errorf("got %d, want %d", got, tt.wantBytes)
+			}
+		})
+	}
+}
+
+func TestLoadTensors_IQ4_NL(t *testing.T) {
+	// Create IQ4_NL tensor: 32 elements = 1 block = 18 bytes.
+	const numElements = 32
+	raw := make([]byte, 18)
+	// Set fp16 scale = 1.0.
+	scaleBits := float16.FromFloat32(1.0).Bits()
+	binary.LittleEndian.PutUint16(raw[0:2], scaleBits)
+	// Set nibbles to non-zero pattern.
+	for i := range 16 {
+		raw[2+i] = byte(i%16) | byte((i+1)%16)<<4
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "test.iq4nl",
+		Dimensions: []uint64{uint64(numElements)},
+		Type:       GGMLTypeIQ4_NL,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.iq4nl"]
+	if tns == nil {
+		t.Fatal("tensor test.iq4nl not found")
+	}
+	if tns.Shape()[0] != numElements {
+		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+	}
+
+	// Should be re-quantized to Q4Storage.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Errorf("expected Q4Storage, got %T", tns.GetStorage())
+	}
+
+	// Verify data is not all zeros (non-trivial scale + nibbles).
+	got := tns.Data()
+	hasNonZero := false
+	for _, v := range got {
+		if v != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("expected non-zero dequantized values")
+	}
+}
+
+func TestLoadTensors_IQ3_S(t *testing.T) {
+	// Create IQ3_S tensor: 256 elements = 1 super-block = 110 bytes.
+	const numElements = 256
+	raw := make([]byte, 110)
+	// Set fp16 scale = 1.0.
+	scaleBits := float16.FromFloat32(1.0).Bits()
+	binary.LittleEndian.PutUint16(raw[0:2], scaleBits)
+	// Set non-zero sub-block scales (bytes 106-109).
+	for i := range 4 {
+		raw[106+i] = 0x11 // scale=1 for both nibbles
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "test.iq3s",
+		Dimensions: []uint64{uint64(numElements)},
+		Type:       GGMLTypeIQ3_S,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.iq3s"]
+	if tns == nil {
+		t.Fatal("tensor test.iq3s not found")
+	}
+	if tns.Shape()[0] != numElements {
+		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+	}
+
+	// Should be re-quantized to Q4Storage.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Errorf("expected Q4Storage, got %T", tns.GetStorage())
+	}
+}
+
+func TestLoadTensors_IQ2_XXS(t *testing.T) {
+	// Create IQ2_XXS tensor: 256 elements = 1 block = 68 bytes.
+	const numElements = 256
+	raw := make([]byte, 68)
+	// Set float32 scale = 1.0 (first 4 bytes).
+	binary.LittleEndian.PutUint32(raw[0:4], math.Float32bits(1.0))
+	// Set non-zero packed data (bytes 4-67).
+	for i := range 64 {
+		raw[4+i] = byte(i % 256) // diverse 2-bit patterns
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "test.iq2xxs",
+		Dimensions: []uint64{uint64(numElements)},
+		Type:       GGMLTypeIQ2_XXS,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.iq2xxs"]
+	if tns == nil {
+		t.Fatal("tensor test.iq2xxs not found")
+	}
+	if tns.Shape()[0] != numElements {
+		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+	}
+
+	// Should be re-quantized to Q4Storage.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Errorf("expected Q4Storage, got %T", tns.GetStorage())
+	}
+
+	// Verify data has non-zero values.
+	got := tns.Data()
+	hasNonZero := false
+	for _, v := range got {
+		if v != 0 {
+			hasNonZero = true
+			break
+		}
+	}
+	if !hasNonZero {
+		t.Error("expected non-zero dequantized values")
+	}
+}
+
 func TestTensorByteSize_TQ2_0(t *testing.T) {
 	tests := []struct {
 		numElements int
