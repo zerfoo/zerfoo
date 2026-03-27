@@ -43,7 +43,7 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		}
 
 		// Compute byte size of this tensor's data.
-		dataSize, err := tensorByteSize(ti.Type, int(numElements))
+		dataSize, err := TensorByteSize(ti.Type, int(numElements))
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
@@ -71,8 +71,8 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 	return result, nil
 }
 
-// tensorByteSize returns the number of bytes needed for a tensor of the given type and element count.
-func tensorByteSize(typ GGMLType, numElements int) (int, error) {
+// TensorByteSize returns the number of bytes needed for a tensor of the given type and element count.
+func TensorByteSize(typ GGMLType, numElements int) (int, error) {
 	switch typ {
 	case GGMLTypeF32:
 		return numElements * 4, nil
@@ -98,6 +98,9 @@ func tensorByteSize(typ GGMLType, numElements int) (int, error) {
 		return nBlocks * 210, nil // 128 bytes ql + 64 bytes qh + 16 bytes scales + 2 bytes d
 	case GGMLTypeBF16:
 		return numElements * 2, nil
+	case GGMLTypeTQ2_0:
+		// 2 bits per value, 4 values per byte.
+		return (numElements + 3) / 4, nil
 	default:
 		return 0, fmt.Errorf("unsupported GGML type %d", typ)
 	}
@@ -124,6 +127,8 @@ func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tens
 		return decodeQ6KTensor(shape, numElements, raw)
 	case GGMLTypeBF16:
 		return decodeBF16Tensor(shape, numElements, raw)
+	case GGMLTypeTQ2_0:
+		return decodeTernaryTensor(shape, numElements, raw)
 	default:
 		return nil, fmt.Errorf("unsupported GGML type %d", typ)
 	}
@@ -282,6 +287,19 @@ func decodeBF16Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 	}
 	bf16 := tensor.NewBFloat16StorageFromRaw(u16)
 	return tensor.NewWithStorage[float32](shape, bf16)
+}
+
+func decodeTernaryTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	expectedBytes := (numElements + 3) / 4
+	if len(raw) < expectedBytes {
+		return nil, fmt.Errorf("TQ2_0 decode: need %d bytes, got %d", expectedBytes, len(raw))
+	}
+	// Decode ternary (TQ2_0) values: 2 bits per element packed 4 per byte.
+	// Encoding matches TernaryStorage: 00=-1, 01=0, 10=+1 (bits - 1).
+	ts := tensor.NewTernaryStorage(numElements)
+	copy(ts.RawBytes(), raw[:expectedBytes])
+	data := ts.Slice()
+	return tensor.New[float32](shape, data)
 }
 
 // QuantizeToFP8E4M3 converts all tensors in the map from their current storage

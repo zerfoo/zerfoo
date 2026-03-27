@@ -42,7 +42,7 @@ func LoadTensorsMmap(f *File, mapped []byte) (map[string]*tensor.TensorNumeric[f
 		}
 
 		// Compute byte size of this tensor's data.
-		dataSize, err := tensorByteSize(ti.Type, int(numElements))
+		dataSize, err := TensorByteSize(ti.Type, int(numElements))
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
@@ -55,6 +55,18 @@ func LoadTensorsMmap(f *File, mapped []byte) (map[string]*tensor.TensorNumeric[f
 				ti.Name, offset, dataSize, len(mapped))
 		}
 		raw := mapped[offset:end]
+
+		// Ternary tensors are decoded eagerly because MmapStorage does not
+		// support the TQ2_0 quantization type. The copy is cheap since
+		// ternary packing is only 2 bits per element.
+		if ti.Type == GGMLTypeTQ2_0 {
+			t, err := decodeTernaryTensor(shape, int(numElements), raw)
+			if err != nil {
+				return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
+			}
+			result[ti.Name] = t
+			continue
+		}
 
 		// Map GGUF type to tensor.GGMLType.
 		qtype, err := mapGGMLType(ti.Type)
