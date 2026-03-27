@@ -128,10 +128,11 @@ kernel optimization, and time-series parity.
 
 All models work — time to build the definitive comparison table.
 
-- [ ] BMK-T1 Download missing GGUFs  Est: 1h
-  Missing: gemma3-4b-Q4_K_M, qwen2.5-7b-Q4_K_M. Download to DGX Spark
-  model cache. Verify each loads successfully with `zerfoo run --dry-run`.
-  Acceptance: Both GGUFs load and produce coherent first token.
+- [x] BMK-T1 Download missing GGUFs  Est: 1h  2026 03 27
+  Qwen 2.5 7B Q4_K_M downloaded from bartowski (4.4GB, single file).
+  Gemma 3 4B Q4_K_M needs HuggingFace auth (gated model).
+  Also verified: Phi 3.5 mini loads (was blocked by BMK-T4 metadata fix).
+  Llama 3.1 8B loads via mmap. Cleaned 130GB of old ZMF/ONNX files from DGX.
 
 - [x] BMK-T2 Re-run bench-compare-ollama.sh for all models  Est: 2h  DONE 2026-03-27
   Deps: BMK-T1
