@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.3](https://github.com/zerfoo/zerfoo/compare/v1.25.2...v1.25.3) (2026-03-27)
+
+
+### Bug Fixes
+
+* **attention:** use reshape+repeat for correct GQA KV head expansion ([f58b4e0](https://github.com/zerfoo/zerfoo/commit/f58b4e0196d6f98d295db9187ccb6ff195029fea))
+* **deps:** update ztensor to fix Repeat interleave for GQA ([279d557](https://github.com/zerfoo/zerfoo/commit/279d5576f782eb0421a11f370c4d4f490840a1ed))
+* **inference:** re-enable embedding Q8 upgrade ([c466246](https://github.com/zerfoo/zerfoo/commit/c466246632bd4ce94a023756c88603e8965c7efc))
+* **inference:** upgrade embedding/lm_head from Q4 to Q8 on load ([2830d2e](https://github.com/zerfoo/zerfoo/commit/2830d2e04db37a2bf3442cb77114e6154298bde1))
+
 ## [1.25.2](https://github.com/zerfoo/zerfoo/compare/v1.25.1...v1.25.2) (2026-03-26)
 
 
