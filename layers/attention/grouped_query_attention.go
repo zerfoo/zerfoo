@@ -736,18 +736,47 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// Skip when FlashAttentionDecode already computed the output above.
 	if !flashDecodeUsed {
 		// 3. Grouped Query Attention: expand K/V to match Q head count.
+		// Each KV head is repeated `replicationFactor` times consecutively
+		// so it pairs with its correct group of query heads:
+		// [kv0, kv0, kv0, kv1, kv1, kv1, ...] (not [kv0..7, kv0..7, kv0..7]).
+		//
+		// We use reshape+Repeat+reshape instead of a direct Repeat on the
+		// head axis. This ensures repeat-each semantics regardless of whether
+		// the engine's Repeat uses tile or interleave ordering: we insert a
+		// size-1 dimension per head, Repeat that (tiling 1 element = correct),
+		// then merge the repeated dimension back into the head axis.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
-			kHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, kHeadsRoPE, 1, replicationFactor)
-			if expandErr != nil {
-				return nil, expandErr
+			kSeqLen := kHeadsRoPE.Shape()[2]
+			// [batch, numKV, seqLen, headDim] -> [batch, numKV, 1, seqLen, headDim]
+			kr, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize, gqa.numKeyValueHeads, 1, kSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
 			}
-			vHeadsExpanded, expandErr := gqa.engine.Repeat(ctx, vHeads, 1, replicationFactor)
-			if expandErr != nil {
-				return nil, expandErr
+			// Repeat on axis 2: [batch, numKV, reps, seqLen, headDim]
+			kr, err = gqa.engine.Repeat(ctx, kr, 2, replicationFactor)
+			if err != nil {
+				return nil, err
 			}
-			kHeadsRoPE = kHeadsExpanded
-			vHeads = vHeadsExpanded
+			// Merge: [batch, numKV*reps, seqLen, headDim]
+			kHeadsRoPE, err = gqa.engine.Reshape(ctx, kr, []int{batchSize, gqa.numQueryHeads, kSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
+			}
+
+			vSeqLen := vHeads.Shape()[2]
+			vr, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize, gqa.numKeyValueHeads, 1, vSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
+			}
+			vr, err = gqa.engine.Repeat(ctx, vr, 2, replicationFactor)
+			if err != nil {
+				return nil, err
+			}
+			vHeads, err = gqa.engine.Reshape(ctx, vr, []int{batchSize, gqa.numQueryHeads, vSeqLen, gqa.headDim})
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// 4. Apply Scaled Dot-Product Attention
