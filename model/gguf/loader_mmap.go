@@ -87,6 +87,12 @@ func mapGGMLType(t GGMLType) (tensor.GGMLType, error) {
 		return tensor.GGMLTypeF16, nil
 	case GGMLTypeQ4_0:
 		return tensor.GGMLTypeQ4_0, nil
+	case GGMLTypeQ4_1:
+		return tensor.GGMLTypeQ4_1, nil
+	case GGMLTypeQ5_0:
+		return tensor.GGMLTypeQ5_0, nil
+	case GGMLTypeQ5_1:
+		return tensor.GGMLTypeQ5_1, nil
 	case GGMLTypeQ8_0:
 		return tensor.GGMLTypeQ8_0, nil
 	case GGMLTypeQ4_K:
