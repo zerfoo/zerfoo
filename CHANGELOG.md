@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0](https://github.com/zerfoo/zerfoo/compare/v1.25.5...v1.26.0) (2026-03-27)
+
+
+### Features
+
+* **gguf:** add LoadTensorsMmap for zero-copy mmap-based tensor loading ([6abd065](https://github.com/zerfoo/zerfoo/commit/6abd065fc5e04b4a244b58adb52a66f4470ceeec))
+* **inference:** wire WithMmap option to mmap-based GGUF loading ([793d071](https://github.com/zerfoo/zerfoo/commit/793d0715f07e684afc55a0a063a949a7893f2eae))
+
 ## [1.25.5](https://github.com/zerfoo/zerfoo/compare/v1.25.4...v1.25.5) (2026-03-27)
 
 
