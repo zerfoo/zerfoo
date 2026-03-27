@@ -229,3 +229,29 @@ func (c *CompressedKVCache[T]) Reset() {
 		c.layers[i].chunkCursor = 0
 	}
 }
+
+// Truncate reduces the cache to newSeqLen original tokens. Compressed chunks
+// that fall entirely within newSeqLen are kept; the recent buffer is trimmed
+// to cover the remainder. If newSeqLen falls in the middle of a compressed
+// chunk, that chunk and all subsequent data are discarded (lossy truncation).
+func (c *CompressedKVCache[T]) Truncate(newSeqLen int) {
+	chunksToKeep := newSeqLen / c.chunkSize
+	recentToKeep := newSeqLen % c.chunkSize
+
+	for i := range c.layers {
+		lb := &c.layers[i]
+		if lb.recentKeys == nil {
+			continue
+		}
+
+		if chunksToKeep < lb.numChunks {
+			lb.numChunks = chunksToKeep
+			lb.compressedKeys = lb.compressedKeys[:lb.batch*chunksToKeep*lb.dim]
+			lb.compressedVals = lb.compressedVals[:lb.batch*chunksToKeep*lb.dim]
+		}
+
+		if recentToKeep < lb.chunkCursor {
+			lb.chunkCursor = recentToKeep
+		}
+	}
+}

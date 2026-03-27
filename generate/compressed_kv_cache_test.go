@@ -421,3 +421,85 @@ func TestCompressedKVCache_BulkInsert(t *testing.T) {
 		t.Errorf("Key data = %v, want [3 5]", data)
 	}
 }
+
+func TestCompressedKVCache_Truncate(t *testing.T) {
+	engine := newTestEngine()
+	const dim = 2
+	const chunkSize = 2
+	cache := NewCompressedKVCache[float32](engine, 1, 1, dim, chunkSize)
+
+	// Insert 5 tokens: 2 chunks compressed + 1 recent.
+	for i := range 5 {
+		k := makeTensor(t, []int{1, 1, dim}, []float32{float32(i), float32(i)})
+		v := makeTensor(t, []int{1, 1, dim}, []float32{float32(i), float32(i)})
+		if err := cache.Update(0, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := cache.SeqLen(); got != 5 {
+		t.Fatalf("SeqLen() = %d, want 5", got)
+	}
+
+	// Truncate to 3 tokens: 1 full chunk (2 tokens) + 1 recent.
+	cache.Truncate(3)
+	if got := cache.SeqLen(); got != 3 {
+		t.Errorf("SeqLen() after Truncate(3) = %d, want 3", got)
+	}
+
+	// Truncate to 0 clears everything.
+	cache.Truncate(0)
+	if got := cache.SeqLen(); got != 0 {
+		t.Errorf("SeqLen() after Truncate(0) = %d, want 0", got)
+	}
+}
+
+func TestWithCompressedKV_CreatesCompressedKVCache(t *testing.T) {
+	cfg := ModelConfig{
+		VocabSize:  100,
+		MaxSeqLen:  512,
+		EOSTokenID: 2,
+		NumLayers:  4,
+	}
+	eng := newTestEngine()
+	gen := NewGenerator[float32](nil, nil, eng, cfg, WithCompressedKV(64))
+
+	if gen.compressedKVChunkSize != 64 {
+		t.Errorf("compressedKVChunkSize = %d, want 64", gen.compressedKVChunkSize)
+	}
+}
+
+func TestWithCompressedKV_DefaultChunkSize(t *testing.T) {
+	cfg := ModelConfig{
+		VocabSize:  100,
+		MaxSeqLen:  512,
+		EOSTokenID: 2,
+		NumLayers:  4,
+	}
+	eng := newTestEngine()
+
+	// chunkSize <= 0 defaults to 64.
+	gen := NewGenerator[float32](nil, nil, eng, cfg, WithCompressedKV(0))
+	if gen.compressedKVChunkSize != 64 {
+		t.Errorf("compressedKVChunkSize = %d, want 64 (default)", gen.compressedKVChunkSize)
+	}
+
+	gen = NewGenerator[float32](nil, nil, eng, cfg, WithCompressedKV(-10))
+	if gen.compressedKVChunkSize != 64 {
+		t.Errorf("compressedKVChunkSize = %d, want 64 (default for negative)", gen.compressedKVChunkSize)
+	}
+}
+
+func TestWithCompressedKV_DefaultCacheWithoutOption(t *testing.T) {
+	cfg := ModelConfig{
+		VocabSize:  100,
+		MaxSeqLen:  512,
+		EOSTokenID: 2,
+		NumLayers:  4,
+	}
+	eng := newTestEngine()
+	gen := NewGenerator[float32](nil, nil, eng, cfg)
+
+	if gen.compressedKVChunkSize != 0 {
+		t.Errorf("compressedKVChunkSize = %d, want 0 (disabled)", gen.compressedKVChunkSize)
+	}
+}

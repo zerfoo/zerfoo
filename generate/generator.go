@@ -60,12 +60,13 @@ func DefaultSamplingConfig() SamplingConfig {
 type GeneratorOption func(*generatorOptions)
 
 type generatorOptions struct {
-	pagedKVMaxMB      int    // when > 0, use PagedKVCache with this memory budget
-	headDim           int    // required for paged KV (auto-detected from model if 0)
-	kvDtype           string // KV cache storage dtype: "fp32" (default) or "fp16"
-	specDraft         *specDraftConfig // when non-nil, use speculative decoding
-	prefixCacheBlocks int    // when > 0, enable prefix caching with this many cached blocks
-	metricsCollector  runtime.Collector // optional metrics collector
+	pagedKVMaxMB          int    // when > 0, use PagedKVCache with this memory budget
+	headDim               int    // required for paged KV (auto-detected from model if 0)
+	kvDtype               string // KV cache storage dtype: "fp32" (default) or "fp16"
+	specDraft             *specDraftConfig // when non-nil, use speculative decoding
+	prefixCacheBlocks     int    // when > 0, enable prefix caching with this many cached blocks
+	metricsCollector      runtime.Collector // optional metrics collector
+	compressedKVChunkSize int    // when > 0, use CompressedKVCache with this chunk size
 }
 
 // specDraftConfig holds configuration for speculative decoding via a draft model.
@@ -132,6 +133,18 @@ func WithPrefixCache(capacityBlocks int) GeneratorOption {
 	}
 }
 
+// WithCompressedKV enables compressed KV caching using chunk-wise mean pooling.
+// When a chunk of chunkSize tokens fills up, it is compressed into a single
+// vector by averaging. If chunkSize <= 0, it defaults to 64.
+func WithCompressedKV(chunkSize int) GeneratorOption {
+	if chunkSize <= 0 {
+		chunkSize = 64
+	}
+	return func(o *generatorOptions) {
+		o.compressedKVChunkSize = chunkSize
+	}
+}
+
 // Generator produces text autoregressively using a loaded model graph.
 type Generator[T tensor.Numeric] struct {
 	graph     *graph.Graph[T]
@@ -145,9 +158,10 @@ type Generator[T tensor.Numeric] struct {
 	plan      atomic.Pointer[graph.ExecutionPlan[T]]     // compiled decode plan (nil until first decode)
 	planOnce  sync.Once                                  // ensures compile happens once
 	mu              sync.Mutex                                 // serializes Generate/GenerateStream calls (graph state is not concurrent-safe)
-	specDraft       *specDraftConfig                           // nil unless speculative decoding is enabled
-	prefixCache     *PrefixCache[T]                            // nil unless prefix caching is enabled
-	specAcceptRate  runtime.GaugeMetric                        // speculative acceptance rate gauge
+	specDraft             *specDraftConfig                           // nil unless speculative decoding is enabled
+	prefixCache           *PrefixCache[T]                            // nil unless prefix caching is enabled
+	specAcceptRate        runtime.GaugeMetric                        // speculative acceptance rate gauge
+	compressedKVChunkSize int                                        // when > 0, use CompressedKVCache
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -169,13 +183,14 @@ func NewGenerator[T tensor.Numeric](
 	}
 
 	gen := &Generator[T]{
-		graph:          g,
-		tokenizer:      tok,
-		engine:         eng,
-		config:         cfg,
-		kvDtype:        gopts.kvDtype,
-		specDraft:      gopts.specDraft,
-		specAcceptRate: mc.Gauge("speculative_acceptance_rate"),
+		graph:                 g,
+		tokenizer:             tok,
+		engine:                eng,
+		config:                cfg,
+		kvDtype:               gopts.kvDtype,
+		specDraft:             gopts.specDraft,
+		specAcceptRate:        mc.Gauge("speculative_acceptance_rate"),
+		compressedKVChunkSize: gopts.compressedKVChunkSize,
 	}
 
 	if g != nil {
@@ -333,7 +348,9 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	}
 
 	var cacheProvider CacheProvider[T]
-	if gen.blockPool != nil {
+	if gen.compressedKVChunkSize > 0 {
+		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
+	} else if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
 		cacheProvider = gen.newTensorCache()
