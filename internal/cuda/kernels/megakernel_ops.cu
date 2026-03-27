@@ -249,12 +249,12 @@ __device__ void dev_slice(float* out, const float* in,
 // ============================================================
 
 // dev_repeat replicates input along an axis (GQA K/V head replication).
-// For last-axis repeat: out[r*dim + i] = in[i] for r in [0, reps).
+// Uses repeat-each semantics: [a,b,c] x3 -> [a,a,a,b,b,b,c,c,c].
 __device__ void dev_repeat(float* out, const float* in,
                             int axis, int reps, int dim) {
     int total = dim * reps;
     for (int i = threadIdx.x; i < total; i += blockDim.x) {
-        out[i] = in[i % dim];
+        out[i] = in[i / reps];
     }
     __syncthreads();
 }
