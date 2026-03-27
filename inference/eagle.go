@@ -92,6 +92,153 @@ func argmaxLastPos[T tensor.Numeric](logits *tensor.TensorNumeric[T]) int {
 	return maxIdx
 }
 
+// eagleTensorNames maps EAGLE head components to their GGUF tensor name
+// suffixes under the "eagle." prefix. EAGLE weights can appear either as
+// extra tensors in the base GGUF file (prefixed with "eagle.") or in a
+// separate GGUF file (without the prefix).
+var eagleTensorNames = struct {
+	NormWeight string
+	NormBias   string
+	FC1Weight  string
+	FC2Weight  string
+}{
+	NormWeight: "eagle.norm.weight",
+	NormBias:   "eagle.norm.bias",
+	FC1Weight:  "eagle.fc1.weight",
+	FC2Weight:  "eagle.fc2.weight",
+}
+
+// LoadEAGLEWeights loads EAGLE head weights from a GGUF tensor map and
+// returns a fully constructed EAGLEHead. It looks for tensors under the
+// "eagle." prefix. If the prefix is not found, it tries unprefixed names
+// (for standalone EAGLE GGUF files).
+//
+// The function validates that all four weight tensors are present and that
+// their shapes are consistent with each other.
+func LoadEAGLEWeights(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	engine compute.Engine[float32],
+	ops numeric.Arithmetic[float32],
+) (*core.EAGLEHead[float32], error) {
+	// Try prefixed names first (base GGUF with extra eagle tensors),
+	// then unprefixed names (standalone EAGLE GGUF).
+	normWeight, normBias, fc1Weight, fc2Weight, err := resolveEAGLETensors(tensors)
+	if err != nil {
+		return nil, fmt.Errorf("load EAGLE weights: %w", err)
+	}
+
+	// Validate shapes are consistent.
+	if err := validateEAGLEShapes(normWeight, normBias, fc1Weight, fc2Weight); err != nil {
+		return nil, fmt.Errorf("load EAGLE weights: %w", err)
+	}
+
+	head, err := core.NewEAGLEHeadFromWeights(engine, ops, core.EAGLEHeadWeights[float32]{
+		NormGamma: normWeight,
+		NormBeta:  normBias,
+		FC1Weight: fc1Weight,
+		FC2Weight: fc2Weight,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load EAGLE weights: %w", err)
+	}
+
+	return head, nil
+}
+
+// HasEAGLEWeights returns true if the tensor map contains EAGLE head weights,
+// either under the "eagle." prefix or as unprefixed names.
+func HasEAGLEWeights(tensors map[string]*tensor.TensorNumeric[float32]) bool {
+	_, ok := tensors[eagleTensorNames.NormWeight]
+	if ok {
+		return true
+	}
+	// Check unprefixed names for standalone EAGLE GGUF.
+	_, ok = tensors["norm.weight"]
+	return ok
+}
+
+// resolveEAGLETensors looks up the four EAGLE weight tensors, trying prefixed
+// names first, then unprefixed.
+func resolveEAGLETensors(
+	tensors map[string]*tensor.TensorNumeric[float32],
+) (normWeight, normBias, fc1Weight, fc2Weight *tensor.TensorNumeric[float32], err error) {
+	type nameSet struct {
+		normWeight, normBias, fc1Weight, fc2Weight string
+	}
+
+	candidates := []nameSet{
+		// Prefixed: base GGUF with eagle.* extra tensors.
+		{
+			eagleTensorNames.NormWeight,
+			eagleTensorNames.NormBias,
+			eagleTensorNames.FC1Weight,
+			eagleTensorNames.FC2Weight,
+		},
+		// Unprefixed: standalone EAGLE GGUF file.
+		{"norm.weight", "norm.bias", "fc1.weight", "fc2.weight"},
+	}
+
+	for _, names := range candidates {
+		nw, ok1 := tensors[names.normWeight]
+		nb, ok2 := tensors[names.normBias]
+		f1, ok3 := tensors[names.fc1Weight]
+		f2, ok4 := tensors[names.fc2Weight]
+		if ok1 && ok2 && ok3 && ok4 {
+			return nw, nb, f1, f2, nil
+		}
+		// If some but not all are present, report the missing ones.
+		if ok1 || ok2 || ok3 || ok4 {
+			var missing []string
+			if !ok1 {
+				missing = append(missing, names.normWeight)
+			}
+			if !ok2 {
+				missing = append(missing, names.normBias)
+			}
+			if !ok3 {
+				missing = append(missing, names.fc1Weight)
+			}
+			if !ok4 {
+				missing = append(missing, names.fc2Weight)
+			}
+			return nil, nil, nil, nil, fmt.Errorf("incomplete EAGLE weights: missing %v", missing)
+		}
+	}
+
+	return nil, nil, nil, nil, fmt.Errorf("no EAGLE weights found (looked for %q and unprefixed variants)", eagleTensorNames.NormWeight)
+}
+
+// validateEAGLEShapes checks that the EAGLE weight tensor shapes are consistent.
+func validateEAGLEShapes(
+	normWeight, normBias, fc1Weight, fc2Weight *tensor.TensorNumeric[float32],
+) error {
+	// Norm weights must be 1D.
+	nwShape := normWeight.Shape()
+	nbShape := normBias.Shape()
+	if len(nwShape) != 1 {
+		return fmt.Errorf("norm.weight must be 1D, got shape %v", nwShape)
+	}
+	if len(nbShape) != 1 {
+		return fmt.Errorf("norm.bias must be 1D, got shape %v", nbShape)
+	}
+	hiddenDim := nwShape[0]
+	if nbShape[0] != hiddenDim {
+		return fmt.Errorf("norm.weight dim %d != norm.bias dim %d", hiddenDim, nbShape[0])
+	}
+
+	// FC weights must be 2D.
+	f1Shape := fc1Weight.Shape()
+	f2Shape := fc2Weight.Shape()
+	if len(f1Shape) != 2 {
+		return fmt.Errorf("fc1.weight must be 2D, got shape %v", f1Shape)
+	}
+	if len(f2Shape) != 2 {
+		return fmt.Errorf("fc2.weight must be 2D, got shape %v", f2Shape)
+	}
+
+	return nil
+}
+
 // GenerateDraftTokens uses an EAGLEHead to autoregressively generate draft
 // token IDs from the penultimate transformer layer's hidden state.
 //

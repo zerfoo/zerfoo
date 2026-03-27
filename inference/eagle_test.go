@@ -202,3 +202,126 @@ func TestEAGLEConfig(t *testing.T) {
 		t.Errorf("HiddenDim = %d, want 128", cfg.HiddenDim)
 	}
 }
+
+// makeEAGLETensors creates a GGUF-style tensor map with EAGLE head weights
+// using the given prefix (e.g. "eagle." or "").
+func makeEAGLETensors(prefix string, hidden int) map[string]*tensor.TensorNumeric[float32] {
+	tensors := make(map[string]*tensor.TensorNumeric[float32])
+	gamma, _ := tensor.New[float32]([]int{hidden}, make([]float32, hidden))
+	beta, _ := tensor.New[float32]([]int{hidden}, make([]float32, hidden))
+	fc1, _ := tensor.New[float32]([]int{hidden, hidden}, make([]float32, hidden*hidden))
+	fc2, _ := tensor.New[float32]([]int{hidden, hidden}, make([]float32, hidden*hidden))
+
+	// Set gamma to ones for a working LayerNorm.
+	for i := range gamma.Data() {
+		gamma.Data()[i] = 1.0
+	}
+
+	tensors[prefix+"norm.weight"] = gamma
+	tensors[prefix+"norm.bias"] = beta
+	tensors[prefix+"fc1.weight"] = fc1
+	tensors[prefix+"fc2.weight"] = fc2
+	return tensors
+}
+
+func TestLoadEAGLEWeights(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+	ops := &numeric.Float32Ops{}
+	const hidden = 32
+
+	t.Run("prefixed eagle tensors", func(t *testing.T) {
+		tensors := makeEAGLETensors("eagle.", hidden)
+		head, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err != nil {
+			t.Fatalf("LoadEAGLEWeights: %v", err)
+		}
+		if head == nil {
+			t.Fatal("expected non-nil head")
+		}
+		params := head.Parameters()
+		if len(params) != 4 {
+			t.Fatalf("expected 4 parameters, got %d", len(params))
+		}
+	})
+
+	t.Run("unprefixed eagle tensors", func(t *testing.T) {
+		tensors := makeEAGLETensors("", hidden)
+		head, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err != nil {
+			t.Fatalf("LoadEAGLEWeights: %v", err)
+		}
+		if head == nil {
+			t.Fatal("expected non-nil head")
+		}
+	})
+
+	t.Run("no eagle tensors", func(t *testing.T) {
+		tensors := map[string]*tensor.TensorNumeric[float32]{}
+		_, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err == nil {
+			t.Fatal("expected error for empty tensor map")
+		}
+	})
+
+	t.Run("missing fc2 weight", func(t *testing.T) {
+		tensors := makeEAGLETensors("eagle.", hidden)
+		delete(tensors, "eagle.fc2.weight")
+		_, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err == nil {
+			t.Fatal("expected error for missing fc2.weight")
+		}
+	})
+
+	t.Run("shape validation", func(t *testing.T) {
+		tensors := makeEAGLETensors("eagle.", hidden)
+		// Replace norm.weight with a 2D tensor to trigger shape validation.
+		bad, _ := tensor.New[float32]([]int{1, hidden}, make([]float32, hidden))
+		tensors["eagle.norm.weight"] = bad
+		_, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err == nil {
+			t.Fatal("expected error for 2D norm.weight")
+		}
+	})
+
+	t.Run("forward after load", func(t *testing.T) {
+		ctx := context.Background()
+		tensors := makeEAGLETensors("eagle.", hidden)
+		head, err := LoadEAGLEWeights(tensors, engine, ops)
+		if err != nil {
+			t.Fatalf("LoadEAGLEWeights: %v", err)
+		}
+		input, _ := tensor.New[float32]([]int{1, 1, hidden}, make([]float32, hidden))
+		out, err := head.Forward(ctx, input)
+		if err != nil {
+			t.Fatalf("Forward: %v", err)
+		}
+		shape := out.Shape()
+		if shape[0] != 1 || shape[1] != 1 || shape[2] != hidden {
+			t.Errorf("output shape = %v, want [1, 1, %d]", shape, hidden)
+		}
+	})
+}
+
+func TestHasEAGLEWeights(t *testing.T) {
+	const hidden = 16
+
+	t.Run("prefixed tensors", func(t *testing.T) {
+		tensors := makeEAGLETensors("eagle.", hidden)
+		if !HasEAGLEWeights(tensors) {
+			t.Error("expected HasEAGLEWeights=true for prefixed tensors")
+		}
+	})
+
+	t.Run("unprefixed tensors", func(t *testing.T) {
+		tensors := makeEAGLETensors("", hidden)
+		if !HasEAGLEWeights(tensors) {
+			t.Error("expected HasEAGLEWeights=true for unprefixed tensors")
+		}
+	})
+
+	t.Run("empty map", func(t *testing.T) {
+		if HasEAGLEWeights(map[string]*tensor.TensorNumeric[float32]{}) {
+			t.Error("expected HasEAGLEWeights=false for empty map")
+		}
+	})
+}

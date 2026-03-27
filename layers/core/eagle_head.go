@@ -141,3 +141,82 @@ func (h *EAGLEHead[T]) Parameters() []*graph.Parameter[T] {
 	params = append(params, h.fc2.Parameters()...)
 	return params
 }
+
+// EAGLEHeadWeights holds pre-loaded weight tensors for constructing an
+// EAGLEHead from GGUF data. All tensors must have compatible shapes:
+// fc1 and fc2 weights are [inputDim, outputDim], norm gamma and beta are [hiddenDim].
+type EAGLEHeadWeights[T tensor.Numeric] struct {
+	NormGamma *tensor.TensorNumeric[T] // LayerNorm scale, shape [hidden]
+	NormBeta  *tensor.TensorNumeric[T] // LayerNorm shift, shape [hidden]
+	FC1Weight *tensor.TensorNumeric[T] // First linear, shape [hidden, hidden]
+	FC2Weight *tensor.TensorNumeric[T] // Second linear, shape [hidden, hidden]
+}
+
+// NewEAGLEHeadFromWeights creates an EAGLEHead from pre-loaded weight tensors.
+// This is used during GGUF model loading to construct the head with trained weights
+// rather than random initialization.
+func NewEAGLEHeadFromWeights[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	w EAGLEHeadWeights[T],
+) (*EAGLEHead[T], error) {
+	if w.NormGamma == nil || w.NormBeta == nil || w.FC1Weight == nil || w.FC2Weight == nil {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: all weight tensors must be non-nil")
+	}
+
+	// Validate norm shapes match.
+	gammaShape := w.NormGamma.Shape()
+	betaShape := w.NormBeta.Shape()
+	if len(gammaShape) != 1 || len(betaShape) != 1 {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: norm gamma/beta must be 1D, got gamma %dD, beta %dD", len(gammaShape), len(betaShape))
+	}
+	hiddenDim := gammaShape[0]
+	if betaShape[0] != hiddenDim {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: norm gamma dim %d != beta dim %d", hiddenDim, betaShape[0])
+	}
+
+	// Validate fc1 shape.
+	fc1Shape := w.FC1Weight.Shape()
+	if len(fc1Shape) != 2 {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: fc1 weight must be 2D, got %dD", len(fc1Shape))
+	}
+
+	// Validate fc2 shape.
+	fc2Shape := w.FC2Weight.Shape()
+	if len(fc2Shape) != 2 {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: fc2 weight must be 2D, got %dD", len(fc2Shape))
+	}
+
+	// Build parameters from pre-loaded tensors.
+	gammaParam, err := graph.NewParameter[T]("eagle_norm_gamma", w.NormGamma, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: create gamma param: %w", err)
+	}
+	betaParam, err := graph.NewParameter[T]("eagle_norm_beta", w.NormBeta, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: create beta param: %w", err)
+	}
+
+	norm := normalization.NewLayerNormalizationFromParams[T](engine, ops.FromFloat64(1e-5), gammaParam, betaParam)
+
+	fc1Param, err := graph.NewParameter[T]("eagle_head_fc1_weights", w.FC1Weight, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: create fc1 param: %w", err)
+	}
+	fc1 := NewLinearFromParam[T](engine, fc1Param)
+
+	fc2Param, err := graph.NewParameter[T]("eagle_head_fc2_weights", w.FC2Weight, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("EAGLEHeadFromWeights: create fc2 param: %w", err)
+	}
+	fc2 := NewLinearFromParam[T](engine, fc2Param)
+
+	return &EAGLEHead[T]{
+		engine:  engine,
+		ops:     ops,
+		norm:    norm,
+		fc1:     fc1,
+		sigmoid: activations.NewSigmoid[T](engine, ops),
+		fc2:     fc2,
+	}, nil
+}
