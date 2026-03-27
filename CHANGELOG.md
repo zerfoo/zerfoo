@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.2](https://github.com/zerfoo/zerfoo/compare/v1.26.1...v1.26.2) (2026-03-27)
+
+
+### Bug Fixes
+
+* **inference:** MmapStorage LMHead virtual transpose + ztensor v0.9.2 ([b2bc37a](https://github.com/zerfoo/zerfoo/commit/b2bc37a0451c8f002b98c2b58952ee30eefb0531))
+* **inference:** use MatMulTransposeB for MmapStorage LMHead ([b3ad5d4](https://github.com/zerfoo/zerfoo/commit/b3ad5d401c8da338a9f4265b755dee2f521f7caf))
+
+
+### Reverts
+
+* remove MmapStorage LMHead path for debugging ([740574d](https://github.com/zerfoo/zerfoo/commit/740574d582f093dc215db71cd18e274436fd7dce))
+
 ## [1.26.1](https://github.com/zerfoo/zerfoo/compare/v1.26.0...v1.26.1) (2026-03-27)
 
 
