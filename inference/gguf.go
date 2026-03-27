@@ -147,6 +147,12 @@ func LoadGGUFMmap(path string) (*GGUFModel, io.Closer, error) {
 	// handles dequantization lazily. The embedding precision upgrade only
 	// applies to Q4Storage (heap-loaded) tensors.
 
+	// Switch madvise to random access for inference. During loading,
+	// MmapFile set MADV_SEQUENTIAL for read-ahead. During inference,
+	// layers are accessed in unpredictable patterns (especially with
+	// lazy dequant caching), so MADV_RANDOM disables wasteful read-ahead.
+	_ = tensor.MadviseRandom(mapped)
+
 	return &GGUFModel{
 		Config:  cfg,
 		Tensors: mappedTensors,
