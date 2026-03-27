@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.5](https://github.com/zerfoo/zerfoo/compare/v1.25.4...v1.25.5) (2026-03-27)
+
+
+### Bug Fixes
+
+* **attention:** guard flash prefill kernel against Q/K dimension mismatches ([5122bb9](https://github.com/zerfoo/zerfoo/commit/5122bb9da8a462b774ee5f9002c34b465905a533))
+
 ## [1.25.4](https://github.com/zerfoo/zerfoo/compare/v1.25.3...v1.25.4) (2026-03-27)
 
 
