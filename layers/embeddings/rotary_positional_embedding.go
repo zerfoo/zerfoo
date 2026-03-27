@@ -33,6 +33,11 @@ type RotaryPositionalEmbedding[T tensor.Numeric] struct {
 	// During autoregressive decode, set this to the current cache sequence
 	// length so the new token gets the correct positional rotation.
 	posOffset int
+	// documentBoundaries holds sequence positions where document boundaries
+	// occur. When set, position IDs reset to 0 at each boundary so that each
+	// document receives independent positional encoding. Boundaries must be
+	// sorted in ascending order and refer to positions within the sequence.
+	documentBoundaries []int
 }
 
 // RotaryPositionalEmbeddingOptions holds configuration options for RotaryPositionalEmbedding layers.
@@ -171,6 +176,60 @@ func NewRotaryPositionalEmbedding[T tensor.Numeric](
 	}, nil
 }
 
+// SetDocumentBoundaries sets document boundary positions for document-wise
+// RoPE. When boundaries are set, position IDs reset to 0 at each boundary
+// so each document gets independent positional encoding. Boundaries are
+// sequence positions (0-indexed) where new documents begin.
+// Pass nil to disable document-wise mode.
+func (rpe *RotaryPositionalEmbedding[T]) SetDocumentBoundaries(boundaries []int) {
+	rpe.documentBoundaries = boundaries
+}
+
+// gatherDocumentWiseAngles builds cos/sin tensors with document-local
+// positions. Position IDs reset to 0 at each boundary in documentBoundaries.
+// The result has shape [seqLen, halfRotary].
+func (rpe *RotaryPositionalEmbedding[T]) gatherDocumentWiseAngles(seqLen, halfRotary int) (
+	cos, sin *tensor.TensorNumeric[T], err error,
+) {
+	// Compute document-local position for each sequence position.
+	localPositions := make([]int, seqLen)
+	boundaryIdx := 0
+	localPos := 0
+	for i := 0; i < seqLen; i++ {
+		// Check if this position is a document boundary.
+		if boundaryIdx < len(rpe.documentBoundaries) && i == rpe.documentBoundaries[boundaryIdx] {
+			localPos = 0
+			boundaryIdx++
+		}
+		localPositions[i] = localPos
+		localPos++
+	}
+
+	// Gather cos/sin rows from the precomputed tables using local positions.
+	cosData := rpe.cosAngles.Data()
+	sinData := rpe.sinAngles.Data()
+	cosTableStride := rpe.cosAngles.Shape()[1] // halfRotary (or rotaryDim/2)
+
+	gatheredCos := make([]T, seqLen*halfRotary)
+	gatheredSin := make([]T, seqLen*halfRotary)
+	for i := 0; i < seqLen; i++ {
+		srcOff := localPositions[i] * cosTableStride
+		dstOff := i * halfRotary
+		copy(gatheredCos[dstOff:dstOff+halfRotary], cosData[srcOff:srcOff+halfRotary])
+		copy(gatheredSin[dstOff:dstOff+halfRotary], sinData[srcOff:srcOff+halfRotary])
+	}
+
+	cos, err = tensor.New[T]([]int{seqLen, halfRotary}, gatheredCos)
+	if err != nil {
+		return nil, nil, err
+	}
+	sin, err = tensor.New[T]([]int{seqLen, halfRotary}, gatheredSin)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cos, sin, nil
+}
+
 // SetPositionOffset sets the position offset for the next Forward call.
 // During autoregressive decode, call this with the current cache sequence
 // length so that the new token is rotated at the correct absolute position
@@ -231,9 +290,17 @@ func (rpe *RotaryPositionalEmbedding[T]) Forward(ctx context.Context, inputs ...
 	var cosSliced, sinSliced *tensor.TensorNumeric[T]
 	var err error
 
-	// GPU path: create non-owning views into GPU-resident cos/sin tables
-	// to avoid tensor.Slice() which unconditionally creates CPUStorage.
-	if cosGS, ok := rpe.cosAngles.GetStorage().(*tensor.GPUStorage[T]); ok {
+	// Document-wise RoPE: gather cos/sin rows using document-local positions
+	// instead of a contiguous slice. Position IDs reset to 0 at each
+	// document boundary so each document gets independent positional encoding.
+	if len(rpe.documentBoundaries) > 0 {
+		cosSliced, sinSliced, err = rpe.gatherDocumentWiseAngles(seqLen, halfRotary)
+		if err != nil {
+			return nil, err
+		}
+	} else if cosGS, ok := rpe.cosAngles.GetStorage().(*tensor.GPUStorage[T]); ok {
+		// GPU path: create non-owning views into GPU-resident cos/sin tables
+		// to avoid tensor.Slice() which unconditionally creates CPUStorage.
 		cosView := tensor.NewGPUStorageView(cosGS, off*halfRotary, seqLen*halfRotary)
 		cosSliced, err = tensor.NewWithStorage[T]([]int{seqLen, halfRotary}, cosView)
 		if err != nil {
