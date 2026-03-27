@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0](https://github.com/zerfoo/zerfoo/compare/v1.27.1...v1.28.0) (2026-03-27)
+
+
+### Features
+
+* **attention:** add NativeSparseAttention combining three NSA paths ([0cab558](https://github.com/zerfoo/zerfoo/commit/0cab5585c743475d03553f488268fc951eed6751))
+* **attention:** add NSA coarse-grained token compression path ([7ad09fc](https://github.com/zerfoo/zerfoo/commit/7ad09fc72f1a82d248413c625c70d6b0fad4eeec))
+* **attention:** add NSA fine-grained token selection path ([fe49385](https://github.com/zerfoo/zerfoo/commit/fe49385790616590283be52f9f0567d15581f960))
+* **attention:** add NSA sliding window attention path ([5201266](https://github.com/zerfoo/zerfoo/commit/52012669d9b1a6151548a2d927cbc80b58334cdf))
+* **attention:** wire document-wise RoPE into GQA layer ([2e8d2cd](https://github.com/zerfoo/zerfoo/commit/2e8d2cd0b5a9250995bf871023079aca9c49f079))
+* **embeddings:** add document-wise RoPE mode ([6a9e851](https://github.com/zerfoo/zerfoo/commit/6a9e8514fb785c62475648641aa4f63afd04023b))
+* **generate:** add CompressedKVCache with chunk-wise mean pooling ([d47105f](https://github.com/zerfoo/zerfoo/commit/d47105f1d056022ac13c4c66d64c15f46b557553))
+* **generate:** add hash-based RadixCache for KV block prefix matching ([1625cdf](https://github.com/zerfoo/zerfoo/commit/1625cdfa647c9c2a14a31b4a63459e034fea197f))
+* **generate:** add Q4 quantized KV cache storage ([8f5f35e](https://github.com/zerfoo/zerfoo/commit/8f5f35e230ec3ce5ca80f6ef487f4bd5dd4893cc))
+* **generate:** add WithCompressedKV generator option ([8dd2334](https://github.com/zerfoo/zerfoo/commit/8dd2334d498afdcbfff58ed464b10c48c9315669))
+* **inference:** add ExpertPlacementPolicy for hybrid CPU/GPU MoE ([183214f](https://github.com/zerfoo/zerfoo/commit/183214fe66969ef8b9b66e0d175e53efd48ae7e9))
+* **inference:** wire EAGLEHead into computation graph for draft generation ([e1b0e46](https://github.com/zerfoo/zerfoo/commit/e1b0e4649fe9d69d01471a33899bc0e149921dff))
+* **layers:** add EAGLEHead layer for self-speculative decoding ([27bcfd6](https://github.com/zerfoo/zerfoo/commit/27bcfd6d81783670a99e39b9ecb16eb21a92319e))
+* **lora:** add LoRA adapter weight format loader ([75d0134](https://github.com/zerfoo/zerfoo/commit/75d01347d64537cb6ffd9bf47fcd5a8ea5c4fc35))
+* **transmla:** add SVD decomposition for KV projection conversion ([a8dbeae](https://github.com/zerfoo/zerfoo/commit/a8dbeaee1a40696071d12f6fcf0ed79c8975947b))
+
 ## [1.27.1](https://github.com/zerfoo/zerfoo/compare/v1.27.0...v1.27.1) (2026-03-27)
 
 
