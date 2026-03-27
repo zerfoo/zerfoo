@@ -217,7 +217,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
   File: generate/compressed_kv_cache.go. Chunk-wise mean pooling via ReduceMean.
   Acceptance: Store 128 tokens, chunkSize=64, Get() returns [batch, 2, dim].
 
-- [ ] T34.2.2 Add CompressedKVCache generator option  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T34.2.2 Add CompressedKVCache generator option  Owner: TBD  Est: 1h  verifies: [UC-001]
   Deps: T34.2.1. Add `WithCompressedKV(chunkSize)`.
 
 - [ ] T34.2.3 Unit and integration tests for compressed cache  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
@@ -289,7 +289,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   product. Normalize by 1/sqrt(N). Support dimensions 64, 128, 256, 512.
   Acceptance: H * H^T = I verified for all supported sizes within 1e-6.
 
-- [ ] T35.1.2 Add Hadamard transform to Engine[T]  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T35.1.2 Add Hadamard transform to Engine[T]  Owner: TBD  Est: 3h  verifies: [infrastructure]
   repo: ztensor  Deps: T35.1.1
   Files: compute/engine.go, compute/cpu_engine.go, compute/gpu_engine.go
   Add `HadamardTransform(ctx, a, dst) error`. CPU: dense matmul with
@@ -324,7 +324,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E35.3: KV Cache Quantization
 
-- [ ] T35.3.1 Implement Q4 KV cache storage  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
+- [x] T35.3.1 Implement Q4 KV cache storage  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
   File: generate/kvcache_q4.go
   New CacheProvider[T] that stores KV in 4-bit quantized format.
   On Update(): quantize incoming FP32/FP16 KV to Q4 with per-channel
@@ -378,7 +378,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   to get draft token logits.
   Acceptance: Forward produces output of shape [batch, 1, hidden].
 
-- [ ] T36.1.2 Wire EAGLEHead into computation graph  Owner: TBD  Est: 3h  verifies: [UC-001, UC-007]
+- [x] T36.1.2 Wire EAGLEHead into computation graph  Owner: TBD  Est: 3h  verifies: [UC-001, UC-007]
   Deps: T36.1.1
   File: inference/eagle.go
   Extract the penultimate layer's output during decode. Feed it to
@@ -458,7 +458,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Output is the standard sliding-window attention result.
   Acceptance: Matches existing LocalAttention output exactly.
 
-- [ ] T37.1.4 Combine three paths into NativeSparseAttention  Owner: TBD  Est: 3h  verifies: [UC-001, UC-003]
+- [x] T37.1.4 Combine three paths into NativeSparseAttention  Owner: TBD  Est: 3h  verifies: [UC-001, UC-003]
   Deps: T37.1.1, T37.1.2, T37.1.3
   File: layers/attention/native_sparse_attention.go
   Combine outputs: O = gate_coarse * O_coarse + gate_fine * O_fine + gate_window * O_window.
@@ -503,7 +503,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E38.1: Expert Placement Strategy
 
-- [ ] T38.1.1 Implement ExpertPlacementPolicy  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]
+- [x] T38.1.1 Implement ExpertPlacementPolicy  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]
   File: inference/moe_placement.go
   Policy that decides which experts run on GPU vs CPU based on routing
   frequency. Shared experts (always active) -> GPU. Routed experts
@@ -568,7 +568,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Acceptance: Pack/unpack roundtrip preserves all values. 4x smaller
   than float32.
 
-- [ ] T39.1.2 Implement ternary GEMV (CPU)  Owner: TBD  Est: 3h  verifies: [UC-001, UC-009]
+- [x] T39.1.2 Implement ternary GEMV (CPU)  Owner: TBD  Est: 3h  verifies: [UC-001, UC-009]
   repo: ztensor  Deps: T39.1.1
   File: compute/ternary_gemv.go
   Matrix-vector multiply where weight matrix is ternary: y[i] = sum of
@@ -625,7 +625,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
 
 #### E40.1: SVD Weight Conversion Tool
 
-- [ ] T40.1.1 Implement SVD decomposition for KV projections  Owner: TBD  Est: 4h  verifies: [UC-010]
+- [x] T40.1.1 Implement SVD decomposition for KV projections  Owner: TBD  Est: 4h  verifies: [UC-010]
   File: inference/transmla/convert.go
   For each transformer layer, compute SVD of the concatenated K/V projection
   matrix W_KV = [W_K; W_V] of shape [2*numKVHeads*headDim, hidden].
@@ -765,7 +765,7 @@ improvement for shared-prefix workloads (system prompts, few-shot).
 
 **Reference:** SGLang (arXiv:2312.07104, NeurIPS 2024)
 
-- [ ] T42.1.1 Implement hash-based radix tree for KV blocks  Owner: TBD  Est: 4h  verifies: [UC-002, UC-011]
+- [x] T42.1.1 Implement hash-based radix tree for KV blocks  Owner: TBD  Est: 4h  verifies: [UC-002, UC-011]
   File: generate/radix_cache.go
   Replace the current PrefixCache radix tree with a hash-based version.
   Each node stores a hash of the token subsequence it represents.
@@ -838,7 +838,7 @@ on demand. Adapter weights managed via existing arena allocator.
 
 **Reference:** S-LoRA (arXiv:2311.03285), LoRAFusion (arXiv:2510.00206)
 
-- [ ] T44.1.1 Implement LoRA adapter weight format  Owner: TBD  Est: 2h  verifies: [UC-012]
+- [x] T44.1.1 Implement LoRA adapter weight format  Owner: TBD  Est: 2h  verifies: [UC-012]
   File: inference/lora/adapter.go
   Load LoRA adapter weights from a GGUF file. Adapter contains delta
   matrices A and B per layer: W_adapted = W_base + B * A.
@@ -1006,22 +1006,22 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 #### Wave 2: Kernels + Wiring (10 agents)
 
 - [ ] T34.1.2 CosineSimilarity GPU kernel (ztensor)  Deps: T34.1.1
-- [ ] T35.1.2 Hadamard transform Engine[T] (ztensor)  Deps: T35.1.1
-- [ ] T39.1.2 Ternary GEMV CPU (ztensor)  Deps: T39.1.1
+- [x] T35.1.2 Hadamard transform Engine[T] (ztensor)  Deps: T35.1.1
+- [x] T39.1.2 Ternary GEMV CPU (ztensor)  Deps: T39.1.1
 - [ ] T39.1.3 Ternary GEMV GPU kernel (ztensor)  Deps: T39.1.1
-- [ ] T34.2.2 CompressedKVCache generator option  Deps: T34.2.1
+- [x] T34.2.2 CompressedKVCache generator option  Deps: T34.2.1
 - [ ] T34.3.2 Wire DocumentWiseRoPE into GQA  Deps: T34.3.1
-- [ ] T36.1.2 Wire EAGLEHead into graph  Deps: T36.1.1
-- [ ] T37.1.4 Combine NSA three paths  Deps: T37.1.1, T37.1.2, T37.1.3
-- [ ] T38.1.1 ExpertPlacementPolicy  verifies: [UC-001, UC-008]
-- [ ] T35.3.1 Q4 KV cache storage  verifies: [UC-001, UC-002]
-- [ ] T40.1.1 SVD decomposition for KV projections  verifies: [UC-010]
+- [x] T36.1.2 Wire EAGLEHead into graph  Deps: T36.1.1
+- [x] T37.1.4 Combine NSA three paths  Deps: T37.1.1, T37.1.2, T37.1.3
+- [x] T38.1.1 ExpertPlacementPolicy  verifies: [UC-001, UC-008]
+- [x] T35.3.1 Q4 KV cache storage  verifies: [UC-001, UC-002]
+- [x] T40.1.1 SVD decomposition for KV projections  verifies: [UC-010]
 - [ ] T41.1.1 IQ4_NL dequantization CPU (ztensor)  verifies: [UC-001]
 - [ ] T41.1.2 IQ3_S dequantization CPU (ztensor)  verifies: [UC-001]
 - [ ] T41.1.3 IQ2_XXS dequantization CPU (ztensor)  verifies: [UC-001]
-- [ ] T42.1.1 Hash-based radix tree for KV blocks  verifies: [UC-002, UC-011]
+- [x] T42.1.1 Hash-based radix tree for KV blocks  verifies: [UC-002, UC-011]
 - [ ] T43.1.1 Split-KV flash decode kernel (ztensor)  verifies: [UC-001, UC-002]
-- [ ] T44.1.1 LoRA adapter weight format  verifies: [UC-012]
+- [x] T44.1.1 LoRA adapter weight format  verifies: [UC-012]
 
 #### Wave 3: Integration Layer (10 agents)
 
