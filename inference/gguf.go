@@ -66,7 +66,7 @@ func LoadGGUF(path string) (*GGUFModel, error) {
 	// and lm_head use gather (not GEMV), so Q4_0's 4-bit precision causes
 	// cumulative numerical errors in 7B+ models (Mistral, Llama 3.x). Q8 matches
 	// the precision Gemma uses natively and eliminates the quality degradation.
-	// upgradeEmbeddingPrecision(mapped) // temporarily disabled for GPU debugging
+	upgradeEmbeddingPrecision(mapped)
 
 	return &GGUFModel{
 		Config:  cfg,
