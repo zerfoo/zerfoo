@@ -150,18 +150,18 @@ func (s *MmapStorage) RawBytes() []byte { return s.data } // for GPU DMA
   repo: ztensor (v0.9.1)
   MmapStorage.Slice() uses sync.Once for lazy dequant. Fixed Q4_K/Q5_K/Q6_K
   dequantizers (delegated to reference DequantizeQ4K/Q5K/Q6K). Coherent output
-  confirmed on Gemma 3 1B Q4_K_M (CPU 3.68 tok/s, GPU 16.64 tok/s).
+  confirmed on Gemma 3 1B Q4_K_M (CPU 3.68 tok/s, GPU 25.5 tok/s).
 
 - [x] MM-T6 Skip re-quantization for mmap'd K-quants  Est: 2h  2026 03 27
-  repo: ztensor (v0.9.0) + zerfoo
+  repo: ztensor (v0.9.0-v0.9.6) + zerfoo (v1.26.2)
   GPU dispatch added: matMulMmap/matMulMmapB route MmapStorage through
-  GemvQ4KF32/GemvQ6KF32/GemvQ5KF32/GemmQ4F32/GemmQ8F32 kernels.
-  UploadWeights detects MmapStorage and uploads raw bytes by QType.
-  Coherent output on GPU confirmed. CUDA graph capture still fails
-  (LMHead virtual transpose incompatible with MmapStorage), limiting
-  throughput to ~20 tok/s vs 167 tok/s with heap+graph. Full parity
-  requires fixing the CUDA graph compiler to handle MmapStorage in
-  LMHead -- tracked as a future optimization.
+  quantized GEMV/GEMM kernels. LMHead uses MatMulTransposeB for MmapStorage.
+  Graph compiler skips all quantized storage (isQuantizedStorage helper).
+  UploadWeights skips MmapStorage (per-op dequant+upload instead).
+  Coherent output confirmed on Gemma 3 1B Q4_K_M at 25.5 tok/s GPU.
+  CUDA graph capture fails (per-op H2D copies during capture), limiting
+  throughput vs heap+graph (167 tok/s). Pre-uploading raw quantized bytes
+  causes misaligned address on ARM64 — future optimization to investigate.
 
 - [ ] MM-T7 Implement madvise hints for sequential/random access  Est: 2h
   repo: ztensor
