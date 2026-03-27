@@ -5,6 +5,48 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-26: Mistral debug — bug is NOT in lm_head or KV cache, IS in transformer body
+
+**Type:** investigation
+**Tags:** mistral, llama, inference, forward-pass, Q4
+
+**Problem:** Mistral 7B and Llama 3.x models produce garbage output. Gemma 3 works.
+
+**Key findings from `inference/mistral_debug_test.go`:**
+
+1. **CPU and GPU both produce garbage** — rules out GPU-specific bug. The issue is in
+   the graph builder or weight handling, not compute engine.
+2. **KV cache is NOT the problem** — the very first token from `Generate()` is already
+   wrong. Direct `graph.Forward()` (no cache) also produces wrong logits.
+3. **Q4 GEMV is correct** — F32 manual lm_head matmul and Q4 engine MatMul produce
+   identical argmax (token 6892) and 0.0000 max difference for a test vector.
+4. **The bug is in the transformer body** — the hidden state entering lm_head is wrong.
+   The 32-layer forward pass corrupts the representation so byte-level tokens (29xxx)
+   dominate the logit distribution instead of word tokens.
+5. **Gemma 3 works because it uses Q8 embeddings** — Gemma's embedding table is Q8Storage
+   (not Q4), which may avoid a corruption in the embedding lookup or early layers.
+   Llama 3.1 8B and Llama 3.2 3B (both Q4 embeddings) also produce garbage.
+6. **Tensor names, shapes, and config are all correct** — all 32 layers have all
+   expected tensors. Config: 32L/4096H/14336I/32H/8KV/RoPE 1M.
+7. **Position 0 logits are identical between seqLen=1 and seqLen=2** — causal mask works.
+
+**Hypothesis:** The merged QKV single-GEMV optimization (`SetMergedQKV`) or the merged
+Gate+Up optimization (`SetMergedGateUp`) may produce incorrect results when all three
+Q/K/V weights are Q4Storage. This optimization is unique to Q4/Q4K models. Gemma 3 Q4KM
+works because its attention weights use Q4Storage but embed/lm_head use Q8 — OR because
+the merged optimization has a subtle bug that only manifests with certain dimension
+combinations (e.g., 4096 hidden + 1024 KV dim vs Gemma's 1152 hidden + smaller dims).
+
+**Next steps:**
+- Disable merged QKV and merged GateUp, re-test. If output becomes correct, the merge
+  logic is the bug.
+- If still wrong, binary-search layers: run just 1 layer and check output.
+- Compare activations after layer 0 against llama.cpp reference.
+
+**Test:** `MISTRAL_GGUF=/path/to/model.gguf go test -v -run TestMistralDebugForward ./inference/`
+
+---
+
 ## 2026-03-26: Mistral tokenizer FIXED — forward pass still produces garbage
 
 **Type:** investigation
