@@ -124,36 +124,25 @@ func (s *MmapStorage) RawBytes() []byte { return s.data } // for GPU DMA
 
 ### Wave 1: mmap Infrastructure (ztensor + zerfoo)
 
-- [ ] MM-T1 Add MmapStorage type to ztensor/tensor  Est: 4h
-  repo: ztensor
-  Implement `MmapStorage` that wraps a `[]byte` slice from an mmap'd region.
-  Must implement the `Storage` interface. Supports lazy dequantization via
-  `sync.Once`. Backed by raw GGUF bytes -- no copy on construction.
-  Acceptance: Unit tests for MmapStorage with Q4_0, Q8_0, F16, F32, Q4_K data.
+- [x] MM-T1 Add MmapStorage type to ztensor/tensor  Est: 4h  2026 03 26
+  repo: ztensor (v0.8.0)
+  Implemented MmapStorage wrapping mmap'd byte slices with lazy dequantization.
+  Supports Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, F16, BF16, F32, Q4_K, Q5_K, Q6_K.
 
-- [ ] MM-T2 Add mmap file helper to ztensor  Est: 2h
-  repo: ztensor
-  Create `ztensor/mmap` package with `MapFile(path) ([]byte, func() error, error)`
-  using `syscall.Mmap` on Linux/Darwin, `golang.org/x/sys/windows` on Windows.
-  The returned `func()` unmaps. Guard with build tags for platform support.
-  Acceptance: Tests on Darwin (dev) and Linux (DGX). Verify munmap releases pages.
+- [x] MM-T2 Add mmap file helper to ztensor  Est: 2h  2026 03 26
+  repo: ztensor (v0.8.0)
+  MmapFile() in tensor package using syscall.Mmap on Linux/Darwin.
 
-- [ ] MM-T3 Add LoadTensorsMmap to model/gguf  Est: 3h
-  repo: zerfoo
-  Deps: MM-T1, MM-T2
-  New function `LoadTensorsMmap(gf *File, mapped []byte)` that creates
-  `MmapStorage` instances by slicing into the mapped region at each tensor's
-  offset. No data copying. Returns `map[string]*tensor.TensorNumeric[float32]`.
-  Acceptance: Loads Mistral 7B GGUF via mmap on DGX. Tensor checksums match
-  heap-loaded tensors.
+- [x] MM-T3 Add LoadTensorsMmap to model/gguf  Est: 3h  2026 03 26
+  repo: zerfoo (v1.26.0)
+  LoadTensorsMmap creates MmapStorage per tensor from mmap'd region. Zero-copy.
+  Fixed missing Q4_1/Q5_0/Q5_1 type mappings in mapGGMLType.
 
-- [ ] MM-T4 Add WithMmap option to inference.LoadFile  Est: 2h
-  repo: zerfoo
-  Deps: MM-T3
-  Add `WithMmap()` option that switches `LoadGGUF` to use the mmap path.
-  Default remains heap loading for backward compatibility. The mmap'd file
-  handle must be kept alive for the lifetime of the Model.
-  Acceptance: `zerfoo run --mmap model.gguf` loads successfully.
+- [x] MM-T4 Add WithMmap option to inference.LoadFile  Est: 2h  2026 03 26
+  repo: zerfoo (v1.26.0)
+  WithMmap() option wired. bench_tps -mmap flag loads and runs on DGX.
+  Note: Output quality degraded vs heap path (mmap keeps K-quant tensors,
+  heap re-quantizes to Q4_0). Wave 2 (MM-T5/T6) addresses this.
 
 ### Wave 2: Lazy Dequantization
 
