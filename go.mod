@@ -24,13 +24,9 @@ exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/zerfoo/ztensor v0.7.0
+	github.com/zerfoo/ztensor v0.8.0
 	github.com/zerfoo/ztoken v0.3.4
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
-
-// Temporary: point to ztensor feat/mmap-storage branch for MmapStorage type.
-// Remove this replace directive once ztensor is released with mmap support.
-replace github.com/zerfoo/ztensor => /Users/dndungu/Code/zerfoo/ztensor
