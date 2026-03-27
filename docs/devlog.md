@@ -5,6 +5,39 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-26: ALL MODELS COHERENT — two root-cause fixes ship
+
+**Type:** resolution
+**Tags:** repeat, flash-attention, GQA, GPU, coherence
+
+**Problem:** Mistral 7B, Llama 3.x, and DeepSeek R1 produced garbage output on both
+CPU and GPU. Gemma 3 worked only because its architecture avoided both bugs.
+
+**Root cause 1 — Repeat semantics (ztensor v0.6.3):**
+The `Repeat` operation used tile semantics (`[A,B] → [A,B,A,B]`) instead of
+repeat-each semantics (`[A,B] → [A,A,B,B]`). GQA KV head expansion requires
+repeat-each: each KV head must be duplicated N times consecutively to align with
+the corresponding query heads. Tile semantics scrambled the KV heads, producing
+corrupted attention patterns. Gemma 3 1B has 1 KV head (repeat factor = num_heads),
+which is equivalent under both semantics, so it was unaffected.
+
+**Root cause 2 — Flash attention decode path (zerfoo v1.25.5):**
+The fused flash attention kernel was invoked even when Q sequence length differs
+from K sequence length (i.e., during autoregressive decode where Q has seqLen=1
+but K has seqLen=context_length). The flash attention kernel assumes Q and K have
+equal sequence lengths. Fix: skip flash attention when Q/K seqLen differs, falling
+back to the standard attention path (Q×K^T → scale → mask → softmax → ×V).
+
+**Results after both fixes (DGX Spark, Q4_K_M, greedy sampling):**
+- Gemma 3 1B: 233 tok/s — coherent output (was already coherent)
+- DeepSeek R1 1.5B: ~140 tok/s — coherent output (was garbage)
+- Llama 3.2 3B: ~80 tok/s — coherent output (was garbage)
+- Mistral 7B: ~44 tok/s — coherent output (was garbage)
+
+All models now produce coherent English text on both CPU and GPU paths.
+
+---
+
 ## 2026-03-26: Mistral debug — bug is NOT in lm_head or KV cache, IS in transformer body
 
 **Type:** investigation
