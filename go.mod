@@ -30,3 +30,7 @@ require (
 )
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
+
+// Temporary: point to ztensor feat/mmap-storage branch for MmapStorage type.
+// Remove this replace directive once ztensor is released with mmap support.
+replace github.com/zerfoo/ztensor => /Users/dndungu/Code/zerfoo/ztensor
