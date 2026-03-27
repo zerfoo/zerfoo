@@ -5,6 +5,29 @@ Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ---
 
+## 2026-03-26: Mmap loading -- K-quant dequant fix and GPU dispatch
+
+**Type:** investigation
+**Tags:** mmap, Q4_K, Q5_K, Q6_K, dequantization, MmapStorage, GPU
+
+**Problem:** Mmap-loaded Gemma 3 1B Q4_K_M produced garbage output on both CPU and GPU.
+Tensor value comparison showed max diff of 0.51 between heap and mmap paths on
+`blk.11.attn_output.weight`, concentrated in `attn_output` and `ffn_down` tensors.
+**Investigation:** Compared per-element values for all 340 tensors (heap vs mmap).
+Q8_0 tensors (embeddings) matched exactly. Q4_K/Q5_K/Q6_K tensors had large diffs.
+Compared MmapStorage dequantizeQ4K with reference DequantizeQ4K in quantized_kquant.go.
+**Root cause:** MmapStorage K-quant dequantizers used interleaved element indexing
+(`dst[j*2], dst[j*2+1]`) instead of the grouped layout required by GGML
+(`dst[baseOut+l], dst[baseOut+l+32]` across 4 groups of 64 elements).
+Q5_K and Q6_K had analogous bugs with different element/bit packing.
+**Fix:** Replaced all three dequantizers with delegation to the reference
+DequantizeQ4K/Q5K/Q6K functions (ztensor v0.9.1). Also added MmapStorage GPU
+dispatch in UploadWeights and MatMul (ztensor v0.9.0) to route mmap tensors
+through quantized GEMV/GEMM kernels instead of the slow float32 fallback.
+**Impact:** Mmap output now coherent. GPU throughput 16.64 tok/s (vs 167 heap)
+due to CUDA graph capture failure: "instruction 184 (LMHead): number of axes 3
+must match tensor dimensions 2". Next step: fix CUDA graph capture for mmap path.
+
 ## 2026-03-26: ALL MODELS COHERENT — two root-cause fixes ship
 
 **Type:** resolution
