@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.4](https://github.com/zerfoo/zerfoo/compare/v1.25.3...v1.25.4) (2026-03-27)
+
+
+### Bug Fixes
+
+* **cuda:** sync Repeat kernel to repeat-each semantics ([31af31a](https://github.com/zerfoo/zerfoo/commit/31af31a35fd3f18273b05fd802b22f8e44999d67))
+
 ## [1.25.3](https://github.com/zerfoo/zerfoo/compare/v1.25.2...v1.25.3) (2026-03-27)
 
 
