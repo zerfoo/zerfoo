@@ -116,13 +116,6 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 			return nil, tErr
 		}
 		out, err = h.engine.MatMul(ctx, flat, wT)
-	} else if _, isMmap := any(h.weight.GetStorage()).(*tensor.MmapStorage); isMmap {
-		ws := h.weight.Shape()
-		wT, tErr := tensor.NewWithStorage[T]([]int{ws[1], ws[0]}, h.weight.GetStorage())
-		if tErr != nil {
-			return nil, tErr
-		}
-		out, err = h.engine.MatMul(ctx, flat, wT)
 	} else if tb, ok := h.engine.(compute.TransposeBMatMuler[T]); ok {
 		out, err = tb.MatMulTransposeB(ctx, flat, h.weight)
 	} else {
