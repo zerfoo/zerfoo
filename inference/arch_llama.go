@@ -116,6 +116,19 @@ func (h *lmHeadNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 			return nil, tErr
 		}
 		out, err = h.engine.MatMul(ctx, flat, wT)
+	} else if _, isMmap := any(h.weight.GetStorage()).(*tensor.MmapStorage); isMmap {
+		// MmapStorage: use MatMulTransposeB when available, falling back
+		// to explicit Transpose. Virtual transpose (shape swap) would work
+		// but the per-op matMulMmap dispatch handles B-weight correctly.
+		if tb, ok := h.engine.(compute.TransposeBMatMuler[T]); ok {
+			out, err = tb.MatMulTransposeB(ctx, flat, h.weight)
+		} else {
+			wT, tErr := h.engine.Transpose(ctx, h.weight, []int{1, 0})
+			if tErr != nil {
+				return nil, tErr
+			}
+			out, err = h.engine.MatMul(ctx, flat, wT)
+		}
 	} else if tb, ok := h.engine.(compute.TransposeBMatMuler[T]); ok {
 		out, err = tb.MatMulTransposeB(ctx, flat, h.weight)
 	} else {
