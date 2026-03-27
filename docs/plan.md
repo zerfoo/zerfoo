@@ -237,7 +237,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 
 #### E34.4: Sparse Routed Attention
 
-- [ ] T34.4.1 Implement SparseRoutedAttention layer  Owner: TBD  Est: 6h  verifies: [UC-003]
+- [x] T34.4.1 Implement SparseRoutedAttention layer  Owner: TBD  Est: 6h  verifies: [UC-003]
   Deps: T34.1.1, T34.1.3, T34.2.1, T34.3.1
   File: layers/attention/sparse_routed_attention.go
 
@@ -252,7 +252,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 
 #### E34.5: Tiered KV Storage and Memory Parallel
 
-- [ ] T34.5.1 Implement TieredKVStore  Owner: TBD  Est: 4h  verifies: [UC-003]
+- [x] T34.5.1 Implement TieredKVStore  Owner: TBD  Est: 4h  verifies: [UC-003]
   Deps: T34.2.1. File: generate/tiered_kv_store.go
 
 - [ ] T34.5.2 Add async CPU-to-GPU fetch  Owner: TBD  Est: 2h  verifies: [UC-003]
@@ -303,7 +303,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E35.2: QuaRot Weight Rotation at Load Time
 
-- [ ] T35.2.1 Implement QuaRot weight fusion in GGUF loader  Owner: TBD  Est: 4h  verifies: [UC-001, UC-006]
+- [x] T35.2.1 Implement QuaRot weight fusion in GGUF loader  Owner: TBD  Est: 4h  verifies: [UC-001, UC-006]
   File: inference/quarot.go
   After loading GGUF weights, fuse Hadamard rotation into Q/K/V/O projection
   matrices and FFN gate/up/down matrices. Rotation is absorbed into weights
@@ -333,7 +333,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Acceptance: Unit test -- store and retrieve 256 tokens, dequantized
   values within 0.05 of originals (Q4 tolerance).
 
-- [ ] T35.3.2 Implement Q3 KV cache with non-uniform codebook  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
+- [x] T35.3.2 Implement Q3 KV cache with non-uniform codebook  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
   Deps: T35.3.1
   File: generate/kvcache_q3.go
   KVQuant-style 3-bit quantization with sensitivity-weighted k-means
@@ -391,7 +391,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E36.2: EAGLE Speculative Decode Loop
 
-- [ ] T36.2.1 Implement EAGLE decode loop  Owner: TBD  Est: 4h  verifies: [UC-001, UC-007]
+- [x] T36.2.1 Implement EAGLE decode loop  Owner: TBD  Est: 4h  verifies: [UC-001, UC-007]
   Deps: T36.1.2
   File: generate/eagle_speculative.go
   Modified speculative decode loop:
@@ -409,7 +409,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   the EAGLE decode loop. Falls back to vanilla if head weights not found.
   Acceptance: Option creates EAGLE-enabled generator.
 
-- [ ] T36.2.3 EAGLE head weight loading from GGUF  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+- [x] T36.2.3 EAGLE head weight loading from GGUF  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.1.1
   File: inference/eagle.go
   Load EAGLE head weights from a separate GGUF file or from extra tensors
@@ -510,7 +510,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   (sparse activation) -> CPU. Configurable via threshold.
   Acceptance: Policy assigns experts to devices given routing statistics.
 
-- [ ] T38.1.2 Split MoE weights between GPU and CPU  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]
+- [x] T38.1.2 Split MoE weights between GPU and CPU  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]
   Deps: T38.1.1
   File: inference/moe_loader.go
   During GGUF loading, upload shared expert weights to GPU, keep routed
@@ -590,7 +590,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E39.2: BitNet Model Support
 
-- [ ] T39.2.1 Add TernaryStorage to GGUF loader  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
+- [x] T39.2.1 Add TernaryStorage to GGUF loader  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
   Deps: T39.1.1
   File: inference/load_gguf.go
   Recognize GGUF tensor type for ternary/1.58-bit weights. Create
@@ -638,7 +638,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Acceptance: Reconstructed W_KV = wUK^T * wDKV^T + wUV^T * wDKV^T
   approximates original within truncation error.
 
-- [ ] T40.1.2 Write converted weights as GGUF  Owner: TBD  Est: 2h  verifies: [UC-010]
+- [x] T40.1.2 Write converted weights as GGUF  Owner: TBD  Est: 2h  verifies: [UC-010]
   Deps: T40.1.1
   File: inference/transmla/convert.go
   Write a new GGUF file containing:
@@ -774,7 +774,7 @@ improvement for shared-prefix workloads (system prompts, few-shot).
   Acceptance: Insert 1000 prefixes, match returns correct blocks.
   LRU eviction frees blocks when pool is exhausted.
 
-- [ ] T42.1.2 Add cache-aware request scheduling  Owner: TBD  Est: 3h  verifies: [UC-002, UC-011]
+- [x] T42.1.2 Add cache-aware request scheduling  Owner: TBD  Est: 3h  verifies: [UC-002, UC-011]
   Deps: T42.1.1
   File: serve/batcher/scheduler.go
   When multiple requests are queued, sort by prefix cache hit ratio
@@ -1025,20 +1025,20 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 
 #### Wave 3: Integration Layer (10 agents)
 
-- [ ] T35.2.1 QuaRot weight fusion in GGUF loader  Deps: T35.1.2
-- [ ] T35.3.2 Q3 KV cache with codebook  Deps: T35.3.1
+- [x] T35.2.1 QuaRot weight fusion in GGUF loader  Deps: T35.1.2
+- [x] T35.3.2 Q3 KV cache with codebook  Deps: T35.3.1
 - [ ] T35.3.4 GPU kernels Q4/Q3 KV dequant (ztensor)  Deps: T35.3.1
-- [ ] T36.2.1 EAGLE decode loop  Deps: T36.1.2
-- [ ] T36.2.3 EAGLE weight loading from GGUF  Deps: T36.1.1
+- [x] T36.2.1 EAGLE decode loop  Deps: T36.1.2
+- [x] T36.2.3 EAGLE weight loading from GGUF  Deps: T36.1.1
 - [ ] T37.1.5 Fused NSA CUDA kernel (ztensor)  Deps: T37.1.4
-- [ ] T38.1.2 Split MoE weights GPU/CPU  Deps: T38.1.1
-- [ ] T39.2.1 TernaryStorage in GGUF loader  Deps: T39.1.1
-- [ ] T34.4.1 SparseRoutedAttention layer  Deps: T34.1.1, T34.1.3, T34.2.1, T34.3.1
-- [ ] T34.5.1 TieredKVStore  Deps: T34.2.1
-- [ ] T40.1.2 Write converted weights as GGUF  Deps: T40.1.1
+- [x] T38.1.2 Split MoE weights GPU/CPU  Deps: T38.1.1
+- [x] T39.2.1 TernaryStorage in GGUF loader  Deps: T39.1.1
+- [x] T34.4.1 SparseRoutedAttention layer  Deps: T34.1.1, T34.1.3, T34.2.1, T34.3.1
+- [x] T34.5.1 TieredKVStore  Deps: T34.2.1
+- [x] T40.1.2 Write converted weights as GGUF  Deps: T40.1.1
 - [ ] T41.1.4 GPU dequant kernels for IQ types (ztensor)  Deps: T41.1.1-T41.1.3
 - [ ] T41.1.5 Wire I-Quant types into GGUF loader  Deps: T41.1.1-T41.1.3
-- [ ] T42.1.2 Cache-aware request scheduling  Deps: T42.1.1
+- [x] T42.1.2 Cache-aware request scheduling  Deps: T42.1.1
 - [ ] T43.1.2 Wire flash decode into attention  Deps: T43.1.1
 - [ ] T44.1.2 LoRA weight merging in forward pass  Deps: T44.1.1
 - [ ] T44.1.3 Adapter cache with LRU eviction  Deps: T44.1.1
