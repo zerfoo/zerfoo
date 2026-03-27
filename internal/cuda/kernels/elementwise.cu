@@ -614,7 +614,7 @@ __global__ void kernel_repeat(const float* src, float* dst,
     int outer = temp / (axisDim * reps);
 
     // Map to source: strip out the repetition
-    int srcAxis = repAxis % axisDim;
+    int srcAxis = repAxis / reps;
     int srcIdx = (outer * axisDim + srcAxis) * innerSize + inner;
     dst[idx] = src[srcIdx];
 }
