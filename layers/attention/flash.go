@@ -33,6 +33,22 @@ func tryFlashForward[T tensor.Numeric](
 		return nil, nil
 	}
 
+	// The flash prefill kernel assumes Q and K/V share the same sequence
+	// length (it uses a single seq_len for all pointer arithmetic). During
+	// autoregressive decode with KV cache, Q has seqLen=1 while K/V have
+	// seqLen=cachedSeqLen. Using Q's seqLen to index into K/V produces wrong
+	// offsets and garbage output. Bail out so the cuBLAS SDPA path handles it.
+	if q.Shape()[1] != k.Shape()[1] {
+		return nil, nil
+	}
+
+	// The kernel uses Q's batch*heads dimension to index into K and V.
+	// If K/V have a different batch dimension (e.g., single KV head before
+	// repeat), the kernel would read out of bounds. Bail out.
+	if q.Shape()[0] != k.Shape()[0] {
+		return nil, nil
+	}
+
 	// Check that Q is on GPU.
 	if q.GetStorage().DeviceType() != device.CUDA {
 		return nil, nil

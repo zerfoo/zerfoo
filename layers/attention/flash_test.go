@@ -84,6 +84,65 @@ func TestSDPAFlashFallbackParity(t *testing.T) {
 	}
 }
 
+// TestTryFlashForwardSeqLenMismatch verifies that tryFlashForward bails out
+// (returns nil, nil) when Q and K have different sequence lengths, which
+// happens during autoregressive decode with a KV cache. The flash prefill
+// kernel uses a single seq_len for Q/K/V pointer arithmetic, so mismatched
+// lengths would produce wrong K/V offsets and garbage output.
+func TestTryFlashForwardSeqLenMismatch(t *testing.T) {
+	headDim := 64
+	// Q: decode token (seqLen=1), K/V: cached (seqLen=10)
+	q, _ := tensor.New([]int{4, 1, headDim}, make([]float32, 4*1*headDim))
+	k, _ := tensor.New([]int{4, 10, headDim}, make([]float32, 4*10*headDim))
+	v, _ := tensor.New([]int{4, 10, headDim}, make([]float32, 4*10*headDim))
+
+	result, err := tryFlashForward(q, k, v, headDim, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Fatal("expected nil result when Q and K have different seq_len")
+	}
+}
+
+// TestTryFlashForwardBatchMismatch verifies that tryFlashForward bails out
+// when Q and K have different batch*heads dimensions (e.g., single KV head
+// without prior repeat expansion).
+func TestTryFlashForwardBatchMismatch(t *testing.T) {
+	headDim := 64
+	// Q: 4 query heads, K/V: 1 KV head (not yet repeated)
+	q, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
+	k, _ := tensor.New([]int{1, 8, headDim}, make([]float32, 1*8*headDim))
+	v, _ := tensor.New([]int{1, 8, headDim}, make([]float32, 1*8*headDim))
+
+	result, err := tryFlashForward(q, k, v, headDim, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Fatal("expected nil result when Q and K have different batch dimensions")
+	}
+}
+
+// TestTryFlashForwardMatchingDims verifies that tryFlashForward does NOT
+// bail out when Q and K have matching dimensions (prefill scenario).
+// On CPU it still returns nil because CUDA is not available.
+func TestTryFlashForwardMatchingDims(t *testing.T) {
+	headDim := 64
+	q, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
+	k, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
+	v, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
+
+	result, err := tryFlashForward(q, k, v, headDim, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// On CPU, returns nil because CUDA is not available (not because of dim mismatch).
+	if result != nil {
+		t.Fatal("expected nil result on CPU (no CUDA)")
+	}
+}
+
 // naiveSoftmaxAttention computes softmax(Q*K^T / sqrt(d)) * V on CPU.
 // Q, K, V are [batchHeads, seqLen, headDim] in row-major order.
 func naiveSoftmaxAttention(qIn, kIn, vIn []float32, batchHeads, seqLen, headDim int) []float32 {
