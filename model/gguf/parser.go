@@ -48,8 +48,11 @@ const (
 	GGMLTypeQ5_K GGMLType = 13
 	GGMLTypeQ6_K GGMLType = 14
 	GGMLTypeQ8_K  GGMLType = 15
-	GGMLTypeBF16  GGMLType = 30
-	GGMLTypeTQ2_0 GGMLType = 35 // Ternary 2-bit: 4 values per byte {-1, 0, 1}
+	GGMLTypeIQ2_XXS GGMLType = 16 // Importance-weighted 2-bit (E8 lattice codebook)
+	GGMLTypeIQ3_S   GGMLType = 21 // Importance-weighted 3-bit with sub-block scales
+	GGMLTypeIQ4_NL  GGMLType = 25 // Non-linear 4-bit with lookup table
+	GGMLTypeBF16    GGMLType = 30
+	GGMLTypeTQ2_0   GGMLType = 35 // Ternary 2-bit: 4 values per byte {-1, 0, 1}
 )
 
 // File represents a parsed GGUF file.
