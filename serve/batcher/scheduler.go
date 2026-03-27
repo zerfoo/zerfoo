@@ -13,6 +13,7 @@ package batcher
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -73,6 +74,7 @@ type Scheduler struct {
 	maxBatchSize int
 	stepFn       StepFunc
 	pollInterval time.Duration
+	prefixCache  PrefixMatcher
 
 	mu      sync.Mutex
 	queue   []pending
@@ -83,6 +85,15 @@ type Scheduler struct {
 	wg   sync.WaitGroup
 }
 
+// PrefixMatcher reports how many leading tokens of a sequence are already
+// cached. The scheduler uses this to prioritize requests with high cache
+// hit ratios (matchLen / totalPromptLen), reducing redundant prefill work.
+type PrefixMatcher interface {
+	// Match returns the number of leading tokens in the sequence that are
+	// already present in the prefix cache.
+	Match(tokens []int) (matchLen int, blockIDs []int)
+}
+
 // Option configures a Scheduler.
 type Option func(*Scheduler)
 
@@ -90,6 +101,16 @@ type Option func(*Scheduler)
 func WithPollInterval(d time.Duration) Option {
 	return func(s *Scheduler) {
 		s.pollInterval = d
+	}
+}
+
+// WithPrefixCache enables cache-aware scheduling. When set, the scheduler
+// sorts queued requests by prefix cache hit ratio (matchLen / promptLen)
+// in descending order so that requests with the most cached prefix tokens
+// are promoted to active slots first, reducing redundant prefill computation.
+func WithPrefixCache(pm PrefixMatcher) Option {
+	return func(s *Scheduler) {
+		s.prefixCache = pm
 	}
 }
 
@@ -213,8 +234,14 @@ func (s *Scheduler) evictCompleted() {
 	s.active = alive
 }
 
-// fillSlots moves pending requests into active slots. Caller must hold s.mu.
+// fillSlots moves pending requests into active slots. When a PrefixMatcher
+// is configured, the queue is sorted by prefix cache hit ratio (descending)
+// so that requests whose prompts are mostly cached get scheduled first.
+// Caller must hold s.mu.
 func (s *Scheduler) fillSlots() {
+	if s.prefixCache != nil && len(s.queue) > 1 {
+		s.sortQueueByCacheHitRatio()
+	}
 	for len(s.active) < s.maxBatchSize && len(s.queue) > 0 {
 		p := s.queue[0]
 		s.queue = s.queue[1:]
@@ -222,6 +249,33 @@ func (s *Scheduler) fillSlots() {
 			Request: p.req,
 		}
 		s.active = append(s.active, slot)
+	}
+}
+
+// sortQueueByCacheHitRatio sorts the pending queue in descending order of
+// prefix cache hit ratio (matchLen / len(tokens)). Requests with a higher
+// fraction of cached prefix tokens are placed first. Caller must hold s.mu
+// and s.prefixCache must be non-nil.
+func (s *Scheduler) sortQueueByCacheHitRatio() {
+	type scored struct {
+		p     pending
+		ratio float64
+	}
+	scored_ := make([]scored, len(s.queue))
+	for i, p := range s.queue {
+		promptLen := len(p.req.Tokens)
+		if promptLen == 0 {
+			scored_[i] = scored{p: p, ratio: 0}
+			continue
+		}
+		matchLen, _ := s.prefixCache.Match(p.req.Tokens)
+		scored_[i] = scored{p: p, ratio: float64(matchLen) / float64(promptLen)}
+	}
+	sort.SliceStable(scored_, func(i, j int) bool {
+		return scored_[i].ratio > scored_[j].ratio
+	})
+	for i, sc := range scored_ {
+		s.queue[i] = sc.p
 	}
 }
 

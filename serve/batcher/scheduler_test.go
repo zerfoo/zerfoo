@@ -3,11 +3,37 @@ package batcher
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// stubPrefixMatcher implements PrefixMatcher for testing. It returns
+// preconfigured match lengths keyed by the first token in the sequence.
+type stubPrefixMatcher struct {
+	// matches maps the first token of a sequence to the number of tokens
+	// that are "cached". This is a simplistic stub — real caches use
+	// hash-based radix trees.
+	matches map[int]int
+}
+
+func (m *stubPrefixMatcher) Match(tokens []int) (int, []int) {
+	if len(tokens) == 0 {
+		return 0, nil
+	}
+	matchLen, ok := m.matches[tokens[0]]
+	if !ok || matchLen > len(tokens) {
+		return 0, nil
+	}
+	// Return dummy block IDs.
+	blockIDs := make([]int, matchLen)
+	for i := range blockIDs {
+		blockIDs[i] = i
+	}
+	return matchLen, blockIDs
+}
 
 // TestSchedulerZeroPadding verifies that the continuous batching scheduler
 // assembles ragged batches with zero padding tokens. Sequences of varying
@@ -311,5 +337,234 @@ func TestSchedulerContextCancellation(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error from canceled context")
+	}
+}
+
+// TestSchedulerCacheAwareOrdering verifies that when a PrefixMatcher is
+// configured, the scheduler fills slots preferring requests with the highest
+// prefix cache hit ratio (matchLen / promptLen).
+//
+// Three requests are queued before the scheduler starts:
+//   - "no-cache":  10 tokens, 0 cached  → ratio 0.0
+//   - "half-cache": 10 tokens, 5 cached → ratio 0.5
+//   - "full-cache": 10 tokens, 10 cached → ratio 1.0
+//
+// With maxBatchSize=1, only one request runs at a time. The scheduler
+// should pick them in order: full-cache, half-cache, no-cache.
+func TestSchedulerCacheAwareOrdering(t *testing.T) {
+	// Record the order in which requests are activated.
+	var mu sync.Mutex
+	var activationOrder []string
+
+	stepFn := func(_ context.Context, batch *StepBatch) {
+		for _, s := range batch.Slots {
+			if len(s.GeneratedToks) == 0 {
+				mu.Lock()
+				activationOrder = append(activationOrder, s.Request.ID)
+				mu.Unlock()
+			}
+			s.GeneratedToks = append(s.GeneratedToks, 1)
+			if len(s.GeneratedToks) >= s.Request.MaxNewTokens {
+				s.Done = true
+			}
+		}
+	}
+
+	matcher := &stubPrefixMatcher{
+		matches: map[int]int{
+			100: 10, // "full-cache" starts with token 100 → 10 matched
+			200: 5,  // "half-cache" starts with token 200 → 5 matched
+			// token 300 ("no-cache") has no entry → 0 matched
+		},
+	}
+
+	// maxBatchSize=1 forces sequential scheduling so we can observe order.
+	sched := New(1, stepFn,
+		WithPollInterval(100*time.Microsecond),
+		WithPrefixCache(matcher),
+	)
+
+	// Queue all requests before starting. Use tokens with distinguishable
+	// first elements so the stub matcher can identify them.
+	var wg sync.WaitGroup
+	requests := []Request{
+		{ID: "no-cache", Tokens: make([]int, 10), MaxNewTokens: 1},
+		{ID: "half-cache", Tokens: make([]int, 10), MaxNewTokens: 1},
+		{ID: "full-cache", Tokens: make([]int, 10), MaxNewTokens: 1},
+	}
+	// Set distinguishing first tokens.
+	requests[0].Tokens[0] = 300 // no match
+	requests[1].Tokens[0] = 200 // 5/10 = 0.5
+	requests[2].Tokens[0] = 100 // 10/10 = 1.0
+
+	for _, req := range requests {
+		wg.Add(1)
+		go func(r Request) {
+			defer wg.Done()
+			sched.Submit(context.Background(), r)
+		}(req)
+	}
+
+	// Let goroutines enqueue, then start.
+	time.Sleep(time.Millisecond)
+	sched.Start()
+	wg.Wait()
+	sched.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(activationOrder) != 3 {
+		t.Fatalf("expected 3 activations, got %d: %v", len(activationOrder), activationOrder)
+	}
+
+	want := []string{"full-cache", "half-cache", "no-cache"}
+	for i, id := range want {
+		if activationOrder[i] != id {
+			t.Errorf("activation[%d] = %q, want %q (full order: %v)", i, activationOrder[i], id, activationOrder)
+		}
+	}
+}
+
+// TestSchedulerCacheAwareNoPrefixCache verifies that the scheduler behaves
+// identically to FIFO when no PrefixMatcher is configured — the queue order
+// is preserved.
+func TestSchedulerCacheAwareNoPrefixCache(t *testing.T) {
+	var mu sync.Mutex
+	var activationOrder []string
+
+	stepFn := func(_ context.Context, batch *StepBatch) {
+		for _, s := range batch.Slots {
+			if len(s.GeneratedToks) == 0 {
+				mu.Lock()
+				activationOrder = append(activationOrder, s.Request.ID)
+				mu.Unlock()
+			}
+			s.GeneratedToks = append(s.GeneratedToks, 1)
+			if len(s.GeneratedToks) >= s.Request.MaxNewTokens {
+				s.Done = true
+			}
+		}
+	}
+
+	// No WithPrefixCache — should be FIFO.
+	sched := New(1, stepFn, WithPollInterval(100*time.Microsecond))
+
+	// Enqueue in deterministic order by adding directly under lock.
+	ids := []string{"first", "second", "third"}
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		req := Request{ID: id, Tokens: []int{1, 2, 3}, MaxNewTokens: 1}
+		ch := make(chan CompletionResult, 1)
+		sched.mu.Lock()
+		sched.queue = append(sched.queue, pending{req: req, result: ch})
+		sched.results[req.ID] = ch
+		sched.mu.Unlock()
+		wg.Add(1)
+		go func(c chan CompletionResult) {
+			defer wg.Done()
+			<-c
+		}(ch)
+	}
+
+	sched.Start()
+	wg.Wait()
+	sched.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(activationOrder) != 3 {
+		t.Fatalf("expected 3 activations, got %d", len(activationOrder))
+	}
+	for i, id := range ids {
+		if activationOrder[i] != id {
+			t.Errorf("activation[%d] = %q, want %q (FIFO order)", i, activationOrder[i], id)
+		}
+	}
+}
+
+// TestSortQueueByCacheHitRatio is a unit test for the sorting logic itself,
+// independent of the scheduling loop.
+func TestSortQueueByCacheHitRatio(t *testing.T) {
+	matcher := &stubPrefixMatcher{
+		matches: map[int]int{
+			10: 8, // 8/10 = 0.8
+			20: 2, // 2/10 = 0.2
+			30: 5, // 5/10 = 0.5
+		},
+	}
+
+	sched := &Scheduler{prefixCache: matcher}
+
+	makeTokens := func(first int) []int {
+		toks := make([]int, 10)
+		toks[0] = first
+		return toks
+	}
+
+	sched.queue = []pending{
+		{req: Request{ID: "low", Tokens: makeTokens(20)}},
+		{req: Request{ID: "high", Tokens: makeTokens(10)}},
+		{req: Request{ID: "mid", Tokens: makeTokens(30)}},
+		{req: Request{ID: "none", Tokens: makeTokens(99)}}, // no match → 0.0
+	}
+
+	sched.sortQueueByCacheHitRatio()
+
+	got := make([]string, len(sched.queue))
+	for i, p := range sched.queue {
+		got[i] = p.req.ID
+	}
+
+	want := []string{"high", "mid", "low", "none"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("queue[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+			break
+		}
+	}
+}
+
+// TestSchedulerCacheAwareStableSort verifies that requests with equal cache
+// hit ratios maintain their original FIFO order (stable sort).
+func TestSchedulerCacheAwareStableSort(t *testing.T) {
+	matcher := &stubPrefixMatcher{
+		matches: map[int]int{
+			10: 5, // All three use token 10 → same ratio
+		},
+	}
+
+	sched := &Scheduler{prefixCache: matcher}
+
+	makeTokens := func() []int {
+		toks := make([]int, 10)
+		toks[0] = 10
+		return toks
+	}
+
+	ids := []string{"a", "b", "c", "d"}
+	for _, id := range ids {
+		sched.queue = append(sched.queue, pending{
+			req: Request{ID: id, Tokens: makeTokens()},
+		})
+	}
+
+	sched.sortQueueByCacheHitRatio()
+
+	got := make([]string, len(sched.queue))
+	for i, p := range sched.queue {
+		got[i] = p.req.ID
+	}
+
+	// Equal ratios → original order preserved.
+	if !sort.SliceIsSorted(got, func(i, j int) bool { return got[i] < got[j] }) {
+		// They should still be in alphabetical order since that was the insertion order.
+		for i, id := range ids {
+			if got[i] != id {
+				t.Errorf("queue[%d] = %q, want %q — stable sort violated (full: %v)", i, got[i], id, got)
+				break
+			}
+		}
 	}
 }
