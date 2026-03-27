@@ -163,13 +163,14 @@ func (s *MmapStorage) RawBytes() []byte { return s.data } // for GPU DMA
   throughput vs heap+graph (167 tok/s). Pre-uploading raw quantized bytes
   causes misaligned address on ARM64 — future optimization to investigate.
 
-- [ ] MM-T7 Implement madvise hints for sequential/random access  Est: 2h
-  repo: ztensor
-  Deps: MM-T2
-  Call `madvise(MADV_SEQUENTIAL)` during initial load scan, then
-  `madvise(MADV_RANDOM)` for inference (random layer access pattern).
-  For prefill (sequential layer scan), use `MADV_WILLNEED` on next layer.
-  Acceptance: Measurable improvement in page fault rate during inference.
+- [x] MM-T7 Implement madvise hints for sequential/random access  Est: 2h  2026 03 27
+  repo: ztensor (v0.10.0-v0.10.1) + zerfoo
+  Added MadviseSequential/Random/WillNeed/DontNeed to ztensor tensor pkg.
+  MmapFile no longer sets MADV_SEQUENTIAL (caused 7x load time regression
+  from 8s to 55s on GB10). LoadGGUFMmap calls MadviseRandom after loading
+  to optimize for inference's random layer access pattern. MadviseWillNeed
+  and MadviseDontNeed available for future layer prefetch optimization.
+  Windows stubs are no-ops.
 
 ### Wave 3: GPU Integration
 
