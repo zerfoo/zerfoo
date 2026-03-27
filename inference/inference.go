@@ -127,6 +127,7 @@ type loadOptions struct {
 	dtype               string // "" or "fp32" for float32, "fp16" for FP16 compute
 	kvDtype             string // "" or "fp32" for float32, "fp16" for FP16 KV cache
 	mmap                bool   // use mmap for model loading (unix only)
+	quarot              bool   // fuse QuaRot Hadamard rotation into weights
 	maxBatchConcurrency int    // max goroutines in GenerateBatch (0 = default)
 	sessionPoolSize     int    // session pool capacity (0 = default 16)
 }
@@ -193,6 +194,16 @@ func WithDType(dtype string) Option {
 func WithMmap(enabled bool) Option {
 	return func(o *loadOptions) {
 		o.mmap = enabled
+	}
+}
+
+// WithQuaRot enables QuaRot (Quantization with Rotation) weight fusion.
+// When enabled, a normalized Walsh-Hadamard rotation is fused into Q/K/V/O
+// and FFN gate/up/down weight matrices after loading. This improves
+// quantization quality at zero runtime cost (arXiv:2404.00456).
+func WithQuaRot(enabled bool) Option {
+	return func(o *loadOptions) {
+		o.quarot = enabled
 	}
 }
 

@@ -60,6 +60,15 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		}
 	}
 
+	// Fuse QuaRot Hadamard rotation into weights if requested.
+	// Must happen after FP8 quantization and before graph building so the
+	// rotated weights are used directly — zero runtime cost.
+	if o.quarot {
+		if err := FuseQuaRotWeights(gm.Tensors, gm.Config.NumLayers); err != nil {
+			return nil, fmt.Errorf("quarot weight fusion: %w", err)
+		}
+	}
+
 	// Build architecture-specific graph.
 	g, embWeight, err := buildArchGraph(gm.Config.Architecture, gm.Tensors, gm.Config, eng)
 	if err != nil {

@@ -276,3 +276,43 @@ func TestLoadTensorsMmap_OutOfBounds(t *testing.T) {
 		t.Fatal("expected error for out-of-bounds tensor, got nil")
 	}
 }
+
+func TestLoadTensorsMmap_TQ2_0(t *testing.T) {
+	// Create ternary data: 8 values {-1, 0, 1, 1, 0, -1, 1, 0}.
+	values := []int8{-1, 0, 1, 1, 0, -1, 1, 0}
+	ts := tensor.NewTernaryStorageFrom(values)
+	raw := ts.RawBytes()
+
+	headerSize := 64
+	mapped := make([]byte, headerSize+len(raw))
+	copy(mapped[headerSize:], raw)
+
+	gf := &File{
+		DataOffset: int64(headerSize),
+		Tensors: []TensorInfo{
+			{
+				Name:       "test.ternary",
+				Dimensions: []uint64{8},
+				Type:       GGMLTypeTQ2_0,
+				Offset:     0,
+			},
+		},
+	}
+
+	loaded, err := LoadTensorsMmap(gf, mapped)
+	if err != nil {
+		t.Fatalf("LoadTensorsMmap: %v", err)
+	}
+
+	tns := loaded["test.ternary"]
+	if tns == nil {
+		t.Fatal("tensor test.ternary not found")
+	}
+
+	got := tns.Data()
+	for i, want := range values {
+		if got[i] != float32(want) {
+			t.Errorf("index %d: got %v, want %v", i, got[i], float32(want))
+		}
+	}
+}

@@ -49,6 +49,7 @@ const (
 	GGMLTypeQ6_K GGMLType = 14
 	GGMLTypeQ8_K  GGMLType = 15
 	GGMLTypeBF16  GGMLType = 30
+	GGMLTypeTQ2_0 GGMLType = 35 // Ternary 2-bit: 4 values per byte {-1, 0, 1}
 )
 
 // File represents a parsed GGUF file.

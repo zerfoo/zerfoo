@@ -733,3 +733,109 @@ func TestQuantizeToFP8E4M3_Skips1D(t *testing.T) {
 		t.Error("2D tensor should be quantized to FP8")
 	}
 }
+
+func TestLoadTensors_TQ2_0(t *testing.T) {
+	// Create a ternary tensor with 8 values: {-1, 0, 1, 1, 0, -1, 1, 0}.
+	// TernaryStorage encoding: 00=-1, 01=0, 10=1 (2 bits each, 4 per byte).
+	values := []int8{-1, 0, 1, 1, 0, -1, 1, 0}
+	ts := tensor.NewTernaryStorageFrom(values)
+	raw := ts.RawBytes()
+
+	tensors := []TensorInfo{{
+		Name:       "test.ternary",
+		Dimensions: []uint64{8},
+		Type:       GGMLTypeTQ2_0,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.ternary"]
+	if tns == nil {
+		t.Fatal("tensor test.ternary not found")
+	}
+	if tns.Shape()[0] != 8 {
+		t.Errorf("shape = %v, want [8]", tns.Shape())
+	}
+
+	got := tns.Data()
+	for i, want := range values {
+		if got[i] != float32(want) {
+			t.Errorf("index %d: got %v, want %v", i, got[i], float32(want))
+		}
+	}
+}
+
+func TestLoadTensors_TQ2_0_2D(t *testing.T) {
+	// 2x4 ternary matrix.
+	values := []int8{-1, 0, 1, 1, 0, -1, 1, 0}
+	ts := tensor.NewTernaryStorageFrom(values)
+	raw := ts.RawBytes()
+
+	tensors := []TensorInfo{{
+		Name:       "test.ternary2d",
+		Dimensions: []uint64{4, 2}, // GGUF order: cols=4, rows=2
+		Type:       GGMLTypeTQ2_0,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.ternary2d"]
+	if tns == nil {
+		t.Fatal("tensor test.ternary2d not found")
+	}
+	// Reversed from GGUF order: shape should be [2, 4].
+	if tns.Shape()[0] != 2 || tns.Shape()[1] != 4 {
+		t.Errorf("shape = %v, want [2 4]", tns.Shape())
+	}
+
+	got := tns.Data()
+	for i, want := range values {
+		if got[i] != float32(want) {
+			t.Errorf("index %d: got %v, want %v", i, got[i], float32(want))
+		}
+	}
+}
+
+func TestTensorByteSize_TQ2_0(t *testing.T) {
+	tests := []struct {
+		numElements int
+		wantBytes   int
+	}{
+		{1, 1},   // 1 element = 1 byte (ceil(1/4))
+		{4, 1},   // 4 elements = 1 byte
+		{5, 2},   // 5 elements = 2 bytes
+		{8, 2},   // 8 elements = 2 bytes
+		{32, 8},  // 32 elements = 8 bytes
+		{33, 9},  // 33 elements = 9 bytes
+	}
+	for _, tt := range tests {
+		got, err := TensorByteSize(GGMLTypeTQ2_0, tt.numElements)
+		if err != nil {
+			t.Errorf("TensorByteSize(TQ2_0, %d): unexpected error: %v", tt.numElements, err)
+			continue
+		}
+		if got != tt.wantBytes {
+			t.Errorf("TensorByteSize(TQ2_0, %d) = %d, want %d", tt.numElements, got, tt.wantBytes)
+		}
+	}
+}
