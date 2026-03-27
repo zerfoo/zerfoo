@@ -31,4 +31,4 @@ require (
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
 
-replace github.com/zerfoo/ztensor => ../../../../ztensor
+replace github.com/zerfoo/ztensor => ../ztensor
