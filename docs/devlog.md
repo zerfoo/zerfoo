@@ -1278,3 +1278,13 @@ Framework ready for community launch phase.
 **Root cause:** Unknown. Forward pass produces wrong logits. Suspects: (1) Q5_K→Q4_0 re-quant loses too much precision for 7B, (2) RoPE theta=1M handling, (3) 7B-scale numerical issue.
 **Fix:** Needs MFP-T2 (activation comparison against llama.cpp reference layer by layer).
 **Impact:** All Mistral-family models produce garbage. Gemma/Llama/DeepSeek work fine.
+
+## 2026-03-26: MFP-T2 Mistral activation investigation
+
+**Type:** investigation
+**Tags:** mistral-7b, forward-pass, embedding, activation
+
+**Problem:** Mistral 7B produces garbage despite correct embeddings (maxAbs=0.009 matches HuggingFace FP16 reference).
+**Root cause:** Unknown. Forward pass diverges from llama.cpp after embedding lookup. Ollama produces correct output with same GGUF.
+**Fix:** Needs layer-by-layer activation debug hooks comparing against llama.cpp.
+**Impact:** All Mistral-family GGUFs produce garbage.
