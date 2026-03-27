@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.1](https://github.com/zerfoo/zerfoo/compare/v1.26.0...v1.26.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* **gguf:** add Q4_1, Q5_0, Q5_1 type mappings to mmap loader ([42b5b19](https://github.com/zerfoo/zerfoo/commit/42b5b194aaab0cca3dc8dcf692504362a308b967))
+* **inference:** add MmapStorage virtual transpose path in LMHead ([3ef7a95](https://github.com/zerfoo/zerfoo/commit/3ef7a95d9d024c087525863f314bcc6f04def467))
+
 ## [1.26.0](https://github.com/zerfoo/zerfoo/compare/v1.25.5...v1.26.0) (2026-03-27)
 
 
