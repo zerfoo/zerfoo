@@ -200,7 +200,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
   repo: ztensor. Input: a=[M,D], b=[N,D]. Output: [M,N].
   Acceptance: Unit test with known vectors passes within 1e-6.
 
-- [ ] T34.1.2 Add CosineSimilarity GPU kernel  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T34.1.2 Add CosineSimilarity GPU kernel  Owner: TBD  Est: 3h  verifies: [infrastructure]
   repo: ztensor  Deps: T34.1.1
   Acceptance: GPU matches CPU within 1e-4; benchmark on DGX Spark.
 
@@ -229,7 +229,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
   File: layers/embeddings/rotary_positional_embedding.go
   Acceptance: Position IDs reset at boundaries; query uses global offset.
 
-- [ ] T34.3.2 Wire DocumentWiseRoPE into GQA  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
+- [x] T34.3.2 Wire DocumentWiseRoPE into GQA  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
   Deps: T34.3.1
 
 - [ ] T34.3.3 Tests for document-wise RoPE  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
@@ -578,7 +578,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Acceptance: Output matches dense float32 GEMV within 1e-6.
   Benchmark: >= 2x faster than float32 GEMV on CPU.
 
-- [ ] T39.1.3 Implement ternary GEMV GPU kernel  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T39.1.3 Implement ternary GEMV GPU kernel  Owner: TBD  Est: 3h  verifies: [infrastructure]
   repo: ztensor  Deps: T39.1.1
   File: internal/cuda/ternary_gemv.cu
   CUDA kernel: each thread processes a row, uses bit operations to
@@ -715,20 +715,20 @@ Add dequantization kernels for importance-weighted quantization types
 load a large fraction of community-quantized models. Minimal kernel work --
 just dequantization lookup tables and GEMV dispatch.
 
-- [ ] T41.1.1 Implement IQ4_NL dequantization (CPU)  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T41.1.1 Implement IQ4_NL dequantization (CPU)  Owner: TBD  Est: 2h  verifies: [UC-001]
   repo: ztensor
   File: tensor/iq4_storage.go
   IQ4_NL uses non-linear 4-bit quantization with a 16-entry lookup table.
   Dequant: output[i] = table[nibble[i]] * scale.
   Acceptance: Roundtrip test with known values within Q4 tolerance.
 
-- [ ] T41.1.2 Implement IQ3_S dequantization (CPU)  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T41.1.2 Implement IQ3_S dequantization (CPU)  Owner: TBD  Est: 2h  verifies: [UC-001]
   repo: ztensor
   File: tensor/iq3_storage.go
   IQ3_S uses 3-bit quantization with importance-weighted scales per super-block.
   Acceptance: Dequantized values match llama.cpp reference within tolerance.
 
-- [ ] T41.1.3 Implement IQ2_XXS dequantization (CPU)  Owner: TBD  Est: 3h  verifies: [UC-001]
+- [x] T41.1.3 Implement IQ2_XXS dequantization (CPU)  Owner: TBD  Est: 3h  verifies: [UC-001]
   repo: ztensor
   File: tensor/iq2_storage.go
   IQ2_XXS uses 2-bit quantization with grid-based codebook lookup.
@@ -803,7 +803,7 @@ softmax, then reduces. Maximizes GPU memory bandwidth utilization.
 
 **Reference:** FlashAttention-3 (arXiv:2407.08608, NeurIPS 2024)
 
-- [ ] T43.1.1 Implement split-KV decode kernel (CUDA)  Owner: TBD  Est: 6h  verifies: [UC-001, UC-002]
+- [x] T43.1.1 Implement split-KV decode kernel (CUDA)  Owner: TBD  Est: 6h  verifies: [UC-001, UC-002]
   repo: ztensor
   File: internal/cuda/flash_decode.cu
   For decode (seqLen_Q=1): split KV cache across S thread blocks.
@@ -1005,22 +1005,22 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 
 #### Wave 2: Kernels + Wiring (10 agents)
 
-- [ ] T34.1.2 CosineSimilarity GPU kernel (ztensor)  Deps: T34.1.1
+- [x] T34.1.2 CosineSimilarity GPU kernel (ztensor)  Deps: T34.1.1
 - [x] T35.1.2 Hadamard transform Engine[T] (ztensor)  Deps: T35.1.1
 - [x] T39.1.2 Ternary GEMV CPU (ztensor)  Deps: T39.1.1
-- [ ] T39.1.3 Ternary GEMV GPU kernel (ztensor)  Deps: T39.1.1
+- [x] T39.1.3 Ternary GEMV GPU kernel (ztensor)  Deps: T39.1.1
 - [x] T34.2.2 CompressedKVCache generator option  Deps: T34.2.1
-- [ ] T34.3.2 Wire DocumentWiseRoPE into GQA  Deps: T34.3.1
+- [x] T34.3.2 Wire DocumentWiseRoPE into GQA  Deps: T34.3.1
 - [x] T36.1.2 Wire EAGLEHead into graph  Deps: T36.1.1
 - [x] T37.1.4 Combine NSA three paths  Deps: T37.1.1, T37.1.2, T37.1.3
 - [x] T38.1.1 ExpertPlacementPolicy  verifies: [UC-001, UC-008]
 - [x] T35.3.1 Q4 KV cache storage  verifies: [UC-001, UC-002]
 - [x] T40.1.1 SVD decomposition for KV projections  verifies: [UC-010]
-- [ ] T41.1.1 IQ4_NL dequantization CPU (ztensor)  verifies: [UC-001]
-- [ ] T41.1.2 IQ3_S dequantization CPU (ztensor)  verifies: [UC-001]
-- [ ] T41.1.3 IQ2_XXS dequantization CPU (ztensor)  verifies: [UC-001]
+- [x] T41.1.1 IQ4_NL dequantization CPU (ztensor)  verifies: [UC-001]
+- [x] T41.1.2 IQ3_S dequantization CPU (ztensor)  verifies: [UC-001]
+- [x] T41.1.3 IQ2_XXS dequantization CPU (ztensor)  verifies: [UC-001]
 - [x] T42.1.1 Hash-based radix tree for KV blocks  verifies: [UC-002, UC-011]
-- [ ] T43.1.1 Split-KV flash decode kernel (ztensor)  verifies: [UC-001, UC-002]
+- [x] T43.1.1 Split-KV flash decode kernel (ztensor)  verifies: [UC-001, UC-002]
 - [x] T44.1.1 LoRA adapter weight format  verifies: [UC-012]
 
 #### Wave 3: Integration Layer (10 agents)
