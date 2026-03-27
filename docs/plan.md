@@ -11,7 +11,7 @@ memory, and research-driven inference optimizations).
 Task statuses updated 2026-03-27 based on merged PRs and git history.
 
 **Status summary:**
-- 330+ tasks completed across all plans
+- 370+ tasks completed across all plans (37 new in Waves 1-3)
 - ~20 active tasks remaining from prior phase
 - E34: MSA-inspired scalable memory (18 tasks)
 - E35-E39: Research-driven inference optimizations (44 tasks)

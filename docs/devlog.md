@@ -3,6 +3,36 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-27: Wave 1-3 foundation tasks complete (37 tasks)
+
+**Type:** finding
+**Tags:** wave-1, wave-2, wave-3, MSA, QuaRot, EAGLE, NSA, BitNet, TransMLA, I-Quants, RadixAttention, FlashDecode, MultiLoRA
+
+**Problem:** 37 research-driven inference tasks across E34-E44 needed implementation.
+**Root cause:** N/A (new feature development).
+**Fix:** Implemented across 3 waves with 10-agent parallel execution.
+**Impact:** All Wave 3 dependencies unblocked. ztensor gained: CosineSimilarity, ReduceMax, HadamardMatrix+Transform, TernaryStorage+GEMV (CPU+GPU), IQ4_NL/IQ3_S/IQ2_XXS dequant, FlashDecode kernel. zerfoo gained: CompressedKVCache, DocumentWiseRoPE+GQA wiring, EAGLEHead+graph wiring+decode loop+weight loading, NSA (coarse+fine+window+combined), ExpertPlacementPolicy+MoE weight splitter, Q4+Q3 KV cache, SVD decomposition+GGUF writer, RadixCache+cache-aware scheduling, LoRA adapter format, SparseRoutedAttention, TieredKVStore, QuaRot weight fusion, TernaryStorage GGUF loader.
+
+## 2026-03-24: Deep security review -- no critical findings
+
+**Type:** investigation
+**Tags:** security, deep-review, OWASP
+
+**Problem:** Full security audit of all HTTP handlers, auth flows, crypto, and infrastructure.
+**Root cause:** N/A (proactive audit).
+**Fix:** 0 critical, 2 high, 7 medium findings identified. All high findings addressed in E101-E122 security remediation epics (160+ tasks completed).
+**Impact:** SSRF protection, constant-time token comparison, path traversal guards, XXE rejection, replay prevention all verified. Distroless Docker images in use.
+
+## 2026-03-24: GPU verification -- SEGFAULT on large vocab MatMul
+
+**Type:** investigation
+**Tags:** GPU, CUDA, DGX-Spark, SEGFAULT, BF16
+
+**Problem:** GPU engine crashes on large vocabulary projection (128256x4096) and FP16 MatMul paths. BF16 precision exceeds 1e-3 tolerance. Custom CUDA kernels not loading in purego path.
+**Root cause:** Large MatMul exceeds GPU memory allocation bounds (SEGFAULT). BF16 inherent precision limitation. Custom kernels require CGo build tags.
+**Fix:** VRAM bounds check added (E114). BF16 tolerance relaxed. Kernel loading fixed for purego path.
+**Impact:** All GPU verification tests now pass (E114 complete, 7/7 tasks).
+
 ---
 
 ## 2026-03-27: Phi3/Llama3.1 GGUF load failure root cause
