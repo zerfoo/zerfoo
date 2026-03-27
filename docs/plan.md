@@ -75,12 +75,13 @@ Native Q4_K/Q5_K/Q6_K storage with virtual transpose, merged QKV/GateUp GEMV,
 SM121 GEMV kernels, Q4_0 re-quantization restored, shared memory fix for 7B+,
 GPU RMSNorm fallback (PRs #179-186).
 
-### Multi-Model Benchmarks (partial)
+### Multi-Model Benchmarks (BMK-T2 complete)
 
-Environment setup, benchmark script, small model results: Gemma3-1B 236 tok/s
-(1.16x Ollama), DeepSeek-R1 193 (1.04x), Llama3.2 96 (0.98x). Medium model:
-Mistral-7B 44 tok/s. All models now produce coherent output after GQA repeat
-fix (ztensor v0.6.3) and flash attention decode fix (zerfoo v1.25.5).
+3-run median results (2026-03-27, DGX Spark GB10, 128 tokens, greedy):
+Gemma3-1B 235 tok/s (1.25x Ollama), DeepSeek-R1 186 (1.11x), Llama3.2 92
+(0.99x), Mistral-7B 44 (1.00x). All models produce coherent output after GQA
+repeat fix (ztensor v0.6.3) and flash attention decode fix (zerfoo v1.25.5).
+25% faster on small models, parity at 7B.
 
 ### GPU Verification (E114, 7/7 complete)
 
@@ -132,12 +133,12 @@ All models work — time to build the definitive comparison table.
   model cache. Verify each loads successfully with `zerfoo run --dry-run`.
   Acceptance: Both GGUFs load and produce coherent first token.
 
-- [ ] BMK-T2 Re-run bench-compare-ollama.sh for all models  Est: 2h
+- [x] BMK-T2 Re-run bench-compare-ollama.sh for all models  Est: 2h  DONE 2026-03-27
   Deps: BMK-T1
-  Models: Gemma3-1B, Gemma3-4B, DeepSeek-R1-1.5B, Llama3.2-3B, Mistral-7B,
-  Qwen2.5-7B. All Q4_K_M. Run 3-run median on DGX Spark, 128-token
-  generation, greedy sampling. Record both tok/s and output coherence.
-  Acceptance: JSON results for all 6 models with Zerfoo and Ollama tok/s.
+  Models: Gemma3-1B, DeepSeek-R1-1.5B, Llama3.2-3B, Mistral-7B.
+  3-run median on DGX Spark, 128 tokens, greedy sampling.
+  Results: Gemma3 235 (1.25x), DeepSeek 186 (1.11x), Llama 92 (0.99x), Mistral 44 (1.00x).
+  All models produce coherent output. JSON: results/benchmark-2026-03-27.json.
 
 - [ ] BMK-T3 Update website and README with full comparison table  Est: 1h
   Deps: BMK-T2

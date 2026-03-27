@@ -7,7 +7,18 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**241 tok/s** on Gemma 3 1B Q4_K_M (94% memory bandwidth utilization) -- 20% faster than Ollama. Zero CGo. 20 model architectures. Tabular ML and time-series forecasting built in.
+**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 20 model architectures. All models produce coherent output with CUDA graph capture. Tabular ML and time-series forecasting built in.
+
+### Multi-Model Benchmark (DGX Spark GB10, 128 tokens, greedy, 3-run median)
+
+| Model | Size | Zerfoo (tok/s) | Ollama (tok/s) | Ratio |
+|-------|------|----------------|----------------|-------|
+| Gemma 3 1B Q4_K_M | 1B | **235** | 188 | **1.25x** |
+| DeepSeek R1 1.5B Q4_K_M | 1.5B | **186** | 167 | **1.11x** |
+| Llama 3.2 3B Q4_K_M | 3B | 92 | 93 | 0.99x |
+| Mistral 7B Q5_K_M | 7B | 44 | 44 | 1.00x |
+
+25% faster on small models, parity at 7B. All models produce coherent output.
 
 ## Quick Start
 
@@ -136,7 +147,7 @@ for _, tc := range result.ToolCalls {
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
-| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 241 tok/s |
+| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 235 tok/s |
 | Gemma 3n | GGUF | Mobile-optimized variant |
 | Llama 3 | GGUF | RoPE theta=500K |
 | Llama 4 | GGUF | Latest generation |
