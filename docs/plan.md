@@ -317,7 +317,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Add `WithQuaRot()` option and `--quarot` CLI flag.
   Acceptance: `zerfoo run --quarot model.gguf` applies rotation at load time.
 
-- [ ] T35.2.3 Tests for QuaRot weight fusion  Owner: TBD  Est: 2h  verifies: [UC-001, UC-006]
+- [x] T35.2.3 Tests for QuaRot weight fusion  Owner: TBD  Est: 2h  verifies: [UC-001, UC-006]
   Deps: T35.2.1, T35.2.2
   Test: load model with and without QuaRot, compare logits within tolerance.
   Acceptance: All tests pass.
@@ -351,7 +351,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   CUDA kernels for fused dequant-and-gather during attention.
   Acceptance: GPU path matches CPU within Q4 tolerance.
 
-- [ ] T35.3.5 Tests and benchmarks for quantized KV cache  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
+- [x] T35.3.5 Tests and benchmarks for quantized KV cache  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
   Deps: T35.3.1, T35.3.2, T35.3.3, T35.3.4
   Measure: memory reduction ratio, perplexity impact, tok/s impact.
   Acceptance: >= 3x memory reduction, < 1% quality degradation.
@@ -386,7 +386,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Apply the existing LM head to each draft hidden state to get draft tokens.
   Acceptance: Draft token generation produces valid token IDs.
 
-- [ ] T36.1.3 Tests for EAGLE head  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+- [x] T36.1.3 Tests for EAGLE head  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.1.1, T36.1.2
 
 #### E36.2: EAGLE Speculative Decode Loop
@@ -422,7 +422,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Target: >= 2x speedup with EAGLE head trained on the same model.
   Acceptance: Results in devlog with speedup ratios.
 
-- [ ] T36.2.5 Tests for EAGLE decode loop  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+- [x] T36.2.5 Tests for EAGLE decode loop  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.2.1, T36.2.2, T36.2.3
 
 - [ ] T36.2.6 Run go vet and linters for E36  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
@@ -483,7 +483,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Deps: T37.1.4
   Acceptance: Builder creates valid layer from GGUF attributes.
 
-- [ ] T37.2.2 Unit tests for NSA  Owner: TBD  Est: 3h  verifies: [UC-001, UC-003]
+- [x] T37.2.2 Unit tests for NSA  Owner: TBD  Est: 3h  verifies: [UC-001, UC-003]
   Deps: T37.1.4
   Tests: (1) Each path independently correct. (2) Combined output correct.
   (3) Degenerate: full selection = dense attention. (4) Backward pass.
@@ -518,7 +518,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   mapping expert_id -> device.
   Acceptance: Device map correctly partitions experts.
 
-- [ ] T38.1.3 Tests for expert placement  Owner: TBD  Est: 1.5h  verifies: [UC-001, UC-008]
+- [x] T38.1.3 Tests for expert placement  Owner: TBD  Est: 1.5h  verifies: [UC-001, UC-008]
   Deps: T38.1.1, T38.1.2
 
 #### E38.2: Async CPU Expert Execution
@@ -658,7 +658,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Show progress per layer. Report compression ratio on completion.
   Acceptance: CLI converts Gemma3-1B GGUF and reports compression ratio.
 
-- [ ] T40.1.4 Tests for SVD conversion  Owner: TBD  Est: 2h  verifies: [UC-010]
+- [x] T40.1.4 Tests for SVD conversion  Owner: TBD  Est: 2h  verifies: [UC-010]
   Deps: T40.1.1, T40.1.2, T40.1.3
   File: inference/transmla/convert_test.go
   Tests: (1) SVD decomposition roundtrip for small matrix within tolerance.
@@ -679,7 +679,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Acceptance: Converted GGUF loads and uses MLA path. Original GGUF
   continues to use GQA path. No regression on DeepSeek V3 MLA.
 
-- [ ] T40.2.2 Validate MLA KV cache stores latent vector  Owner: TBD  Est: 1.5h  verifies: [UC-001, UC-010]
+- [x] T40.2.2 Validate MLA KV cache stores latent vector  Owner: TBD  Est: 1.5h  verifies: [UC-001, UC-010]
   Deps: T40.2.1
   File: layers/attention/multi_head_latent_attention.go
   Verify that when MLA is used, the KV cache stores the compressed latent
@@ -748,7 +748,7 @@ just dequantization lookup tables and GEMV dispatch.
   corresponding storage and dispatch to I-Quant GEMV path.
   Acceptance: GGUF with IQ4_NL tensors loads and runs inference.
 
-- [ ] T41.1.6 Tests for I-Quant dequantization  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T41.1.6 Tests for I-Quant dequantization  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T41.1.1-T41.1.5
   Test each format: pack, dequant, GEMV, roundtrip accuracy.
   Acceptance: All tests pass CPU and GPU.
@@ -783,7 +783,7 @@ improvement for shared-prefix workloads (system prompts, few-shot).
   Acceptance: Scheduler prefers requests with cached prefixes.
   Throughput improvement measurable on repeated-prefix workload.
 
-- [ ] T42.1.3 Tests for radix cache and scheduling  Owner: TBD  Est: 2h  verifies: [UC-002, UC-011]
+- [x] T42.1.3 Tests for radix cache and scheduling  Owner: TBD  Est: 2h  verifies: [UC-002, UC-011]
   Deps: T42.1.1, T42.1.2
   Tests: (1) Hash collision handling. (2) LRU eviction correctness.
   (3) Scheduler ordering with mixed cache hit ratios.
@@ -870,7 +870,7 @@ on demand. Adapter weights managed via existing arena allocator.
   Acceptance: Two requests with different adapters produce different outputs.
   Request without adapter uses base model.
 
-- [ ] T44.1.5 Tests for Multi-LoRA serving  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]
+- [x] T44.1.5 Tests for Multi-LoRA serving  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]
   Deps: T44.1.1-T44.1.4
   Tests: (1) Adapter load/unload. (2) LRU eviction. (3) Per-request
   adapter selection via API. (4) Concurrent requests with different adapters.
@@ -1077,22 +1077,22 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 #### Wave 6: Tests + Benchmarks (10 agents)
 
 - [ ] T35.1.3 Tests for Hadamard (ztensor)  Deps: T35.1.1, T35.1.2
-- [ ] T35.2.3 Tests for QuaRot weight fusion  Deps: T35.2.1, T35.2.2
-- [ ] T35.3.5 Tests and benchmarks for quantized KV  Deps: T35.3.1-T35.3.4
-- [ ] T36.1.3 Tests for EAGLE head  Deps: T36.1.1, T36.1.2
+- [x] T35.2.3 Tests for QuaRot weight fusion  Deps: T35.2.1, T35.2.2  DONE 2026-03-27 PR #263
+- [x] T35.3.5 Tests and benchmarks for quantized KV  Deps: T35.3.1-T35.3.4  DONE 2026-03-27 PR #263
+- [x] T36.1.3 Tests for EAGLE head  Deps: T36.1.1, T36.1.2  DONE 2026-03-27 PR #263
 - [ ] T36.2.4 Benchmark EAGLE vs vanilla  Deps: T36.2.1
-- [ ] T36.2.5 Tests for EAGLE decode loop  Deps: T36.2.1-T36.2.3
-- [ ] T37.2.2 Unit tests for NSA  Deps: T37.1.4
-- [ ] T38.1.3 Tests for expert placement  Deps: T38.1.1, T38.1.2
+- [x] T36.2.5 Tests for EAGLE decode loop  Deps: T36.2.1-T36.2.3  DONE 2026-03-27 PR #263
+- [x] T37.2.2 Unit tests for NSA  Deps: T37.1.4  DONE 2026-03-27 PR #263
+- [x] T38.1.3 Tests for expert placement  Deps: T38.1.1, T38.1.2  DONE 2026-03-27 PR #263
 - [ ] T38.2.3 Tests and benchmarks for hybrid MoE  Deps: T38.2.1, T38.2.2
 - [ ] T39.1.4 Tests for ternary storage/GEMV  Deps: T39.1.1-T39.1.3
-- [ ] T40.1.4 Tests for SVD conversion  Deps: T40.1.1-T40.1.3
-- [ ] T40.2.2 Validate MLA KV cache stores latent  Deps: T40.2.1
+- [x] T40.1.4 Tests for SVD conversion  Deps: T40.1.1-T40.1.3  DONE 2026-03-27 PR #263
+- [x] T40.2.2 Validate MLA KV cache stores latent  Deps: T40.2.1  DONE 2026-03-27 PR #263
 - [ ] T40.2.4 Perplexity validation script  Deps: T40.2.1
-- [ ] T41.1.6 Tests for I-Quant dequantization  Deps: T41.1.1-T41.1.5
-- [ ] T42.1.3 Tests for radix cache and scheduling  Deps: T42.1.1, T42.1.2
+- [x] T41.1.6 Tests for I-Quant dequantization  Deps: T41.1.1-T41.1.5  DONE 2026-03-27 PR #263
+- [x] T42.1.3 Tests for radix cache and scheduling  Deps: T42.1.1, T42.1.2  DONE 2026-03-27 PR #263
 - [ ] T43.1.3 Tests and benchmarks flash decode  Deps: T43.1.1, T43.1.2
-- [ ] T44.1.5 Tests for Multi-LoRA serving  Deps: T44.1.1-T44.1.4
+- [x] T44.1.5 Tests for Multi-LoRA serving  Deps: T44.1.1-T44.1.4  DONE 2026-03-27 PR #263
 
 #### Wave 7: Final Lint + Integration (10 agents)
 
