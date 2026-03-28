@@ -347,3 +347,103 @@ func TestRadixCache_SingleToken(t *testing.T) {
 		t.Errorf("matchIDs = %v, want %v", matchIDs, ids)
 	}
 }
+
+func TestRadixCache_HashCollisionTwoPrefixes(t *testing.T) {
+	// Insert two prefixes that differ only in the second block. Both must
+	// be stored and retrievable independently even though they share the
+	// first block's hash.
+	rc := NewRadixCache(4, 100)
+
+	prefix1 := []int{1, 2, 3, 4, 10, 20, 30, 40}
+	prefix2 := []int{1, 2, 3, 4, 50, 60, 70, 80}
+
+	ids1 := rc.Insert(prefix1)
+	ids2 := rc.Insert(prefix2)
+
+	// First block IDs should be shared (same hash), second should differ.
+	if ids1[0] != ids2[0] {
+		t.Errorf("shared first block: ids1[0]=%d != ids2[0]=%d", ids1[0], ids2[0])
+	}
+	if ids1[1] == ids2[1] {
+		t.Errorf("divergent second block should have different IDs, both = %d", ids1[1])
+	}
+
+	// Both prefixes must match fully and independently.
+	matchLen1, mIDs1 := rc.Match(prefix1)
+	matchLen2, mIDs2 := rc.Match(prefix2)
+
+	if matchLen1 != 8 {
+		t.Errorf("prefix1 matchLen = %d, want 8", matchLen1)
+	}
+	if matchLen2 != 8 {
+		t.Errorf("prefix2 matchLen = %d, want 8", matchLen2)
+	}
+	for i := range ids1 {
+		if mIDs1[i] != ids1[i] {
+			t.Errorf("prefix1 block %d: got %d, want %d", i, mIDs1[i], ids1[i])
+		}
+	}
+	for i := range ids2 {
+		if mIDs2[i] != ids2[i] {
+			t.Errorf("prefix2 block %d: got %d, want %d", i, mIDs2[i], ids2[i])
+		}
+	}
+}
+
+func TestRadixCache_FullCacheInsert(t *testing.T) {
+	// Cache with exactly as many blocks as we need — no eviction should
+	// occur, and every insert should succeed.
+	rc := NewRadixCache(4, 4)
+
+	ids1 := rc.Insert([]int{1, 2, 3, 4, 5, 6, 7, 8})       // 2 blocks
+	ids2 := rc.Insert([]int{9, 10, 11, 12, 13, 14, 15, 16}) // 2 blocks
+
+	if len(ids1) != 2 || len(ids2) != 2 {
+		t.Fatalf("ids1=%d ids2=%d, want 2 each", len(ids1), len(ids2))
+	}
+
+	_, _, evictions := rc.Stats()
+	if evictions != 0 {
+		t.Errorf("evictions = %d, want 0 (cache exactly full, no overflow)", evictions)
+	}
+
+	// Both should still be matchable.
+	ml1, _ := rc.Match([]int{1, 2, 3, 4, 5, 6, 7, 8})
+	ml2, _ := rc.Match([]int{9, 10, 11, 12, 13, 14, 15, 16})
+	if ml1 != 8 {
+		t.Errorf("ml1 = %d, want 8", ml1)
+	}
+	if ml2 != 8 {
+		t.Errorf("ml2 = %d, want 8", ml2)
+	}
+}
+
+func TestRadixCache_LRUEvictsOldestLeaf(t *testing.T) {
+	// Insert three single-block prefixes into a cache with room for only 2.
+	// The first inserted (and never re-accessed) should be evicted.
+	rc := NewRadixCache(2, 2)
+
+	rc.Insert([]int{1, 2}) // block 0 — will become oldest
+	rc.Insert([]int{3, 4}) // block 1
+
+	// Re-access prefix [1,2] so prefix [3,4] becomes the coldest.
+	rc.Match([]int{1, 2})
+
+	// Insert a third prefix — must evict [3,4] (coldest).
+	rc.Insert([]int{5, 6})
+
+	ml, _ := rc.Match([]int{3, 4})
+	if ml != 0 {
+		t.Errorf("[3,4] matchLen = %d, want 0 (should be evicted)", ml)
+	}
+
+	ml, _ = rc.Match([]int{1, 2})
+	if ml != 2 {
+		t.Errorf("[1,2] matchLen = %d, want 2 (should survive)", ml)
+	}
+
+	ml, _ = rc.Match([]int{5, 6})
+	if ml != 2 {
+		t.Errorf("[5,6] matchLen = %d, want 2 (newly inserted)", ml)
+	}
+}

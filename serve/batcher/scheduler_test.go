@@ -526,6 +526,118 @@ func TestSortQueueByCacheHitRatio(t *testing.T) {
 	}
 }
 
+// TestSchedulerCacheAwareMixedRatios verifies correct ordering when the
+// scheduler has multiple batch slots and requests with a mix of cache hit
+// ratios. With maxBatchSize=2, the two highest-ratio requests should be
+// activated in the first batch.
+func TestSchedulerCacheAwareMixedRatios(t *testing.T) {
+	var mu sync.Mutex
+	var firstBatch []string
+
+	batchCount := 0
+	stepFn := func(_ context.Context, batch *StepBatch) {
+		mu.Lock()
+		batchCount++
+		if batchCount == 1 {
+			for _, s := range batch.Slots {
+				firstBatch = append(firstBatch, s.Request.ID)
+			}
+		}
+		mu.Unlock()
+		for _, s := range batch.Slots {
+			s.GeneratedToks = append(s.GeneratedToks, 1)
+			if len(s.GeneratedToks) >= s.Request.MaxNewTokens {
+				s.Done = true
+			}
+		}
+	}
+
+	matcher := &stubPrefixMatcher{
+		matches: map[int]int{
+			10: 10, // ratio 1.0
+			20: 7,  // ratio 0.7
+			30: 3,  // ratio 0.3
+			40: 0,  // ratio 0.0 (won't match)
+		},
+	}
+
+	// maxBatchSize=2: first batch should pick the top-2 ratios.
+	sched := New(2, stepFn,
+		WithPollInterval(100*time.Microsecond),
+		WithPrefixCache(matcher),
+	)
+
+	requests := []Request{
+		{ID: "low", Tokens: make([]int, 10), MaxNewTokens: 1},
+		{ID: "none", Tokens: make([]int, 10), MaxNewTokens: 1},
+		{ID: "high", Tokens: make([]int, 10), MaxNewTokens: 1},
+		{ID: "mid", Tokens: make([]int, 10), MaxNewTokens: 1},
+	}
+	requests[0].Tokens[0] = 30 // 0.3
+	requests[1].Tokens[0] = 40 // 0.0
+	requests[2].Tokens[0] = 10 // 1.0
+	requests[3].Tokens[0] = 20 // 0.7
+
+	var wg sync.WaitGroup
+	for _, req := range requests {
+		wg.Add(1)
+		go func(r Request) {
+			defer wg.Done()
+			sched.Submit(context.Background(), r)
+		}(req)
+	}
+
+	time.Sleep(time.Millisecond)
+	sched.Start()
+	wg.Wait()
+	sched.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(firstBatch) != 2 {
+		t.Fatalf("first batch had %d slots, want 2", len(firstBatch))
+	}
+
+	// The first batch should contain the two highest-ratio requests.
+	first := map[string]bool{firstBatch[0]: true, firstBatch[1]: true}
+	if !first["high"] || !first["mid"] {
+		t.Errorf("first batch = %v, want {high, mid}", firstBatch)
+	}
+}
+
+// TestSchedulerEmptyQueue verifies the scheduler handles an empty queue
+// gracefully — it polls without panicking and processes requests submitted
+// after start.
+func TestSchedulerEmptyQueue(t *testing.T) {
+	stepFn := func(_ context.Context, batch *StepBatch) {
+		for _, s := range batch.Slots {
+			s.GeneratedToks = append(s.GeneratedToks, 1)
+			s.Done = true
+		}
+	}
+
+	sched := New(4, stepFn, WithPollInterval(100*time.Microsecond))
+	sched.Start()
+	defer sched.Stop()
+
+	// Submit after start with no prior queue.
+	res, err := sched.Submit(context.Background(), Request{
+		ID:           "late",
+		Tokens:       []int{1, 2},
+		MaxNewTokens: 1,
+	})
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+	if res.RequestID != "late" {
+		t.Errorf("RequestID = %q, want %q", res.RequestID, "late")
+	}
+	if len(res.Tokens) != 1 {
+		t.Errorf("got %d tokens, want 1", len(res.Tokens))
+	}
+}
+
 // TestSchedulerCacheAwareStableSort verifies that requests with equal cache
 // hit ratios maintain their original FIFO order (stable sort).
 func TestSchedulerCacheAwareStableSort(t *testing.T) {
