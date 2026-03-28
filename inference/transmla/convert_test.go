@@ -196,6 +196,77 @@ func TestReconstructionError_ZeroMatrix(t *testing.T) {
 	}
 }
 
+func TestDecomposeKVProjection_OutputShapes(t *testing.T) {
+	// Verify that wDKV, wUK, wUV have the expected dimensions.
+	dK, dV, dModel, rank := 3, 2, 5, 2
+	wK := make([][]float64, dK)
+	for i := range wK {
+		wK[i] = make([]float64, dModel)
+		for j := range wK[i] {
+			wK[i][j] = float64(i*dModel + j + 1)
+		}
+	}
+	wV := make([][]float64, dV)
+	for i := range wV {
+		wV[i] = make([]float64, dModel)
+		for j := range wV[i] {
+			wV[i][j] = float64((dK+i)*dModel + j + 1)
+		}
+	}
+
+	wDKV, wUK, wUV, err := DecomposeKVProjection(wK, wV, rank)
+	if err != nil {
+		t.Fatalf("DecomposeKVProjection: %v", err)
+	}
+
+	// wDKV: dModel × rank
+	if got := len(wDKV); got != dModel {
+		t.Errorf("wDKV rows = %d, want %d (dModel)", got, dModel)
+	}
+	for i, row := range wDKV {
+		if len(row) != rank {
+			t.Errorf("wDKV[%d] cols = %d, want %d (rank)", i, len(row), rank)
+		}
+	}
+
+	// wUK: dK × rank
+	if got := len(wUK); got != dK {
+		t.Errorf("wUK rows = %d, want %d (dK)", got, dK)
+	}
+	for i, row := range wUK {
+		if len(row) != rank {
+			t.Errorf("wUK[%d] cols = %d, want %d (rank)", i, len(row), rank)
+		}
+	}
+
+	// wUV: dV × rank
+	if got := len(wUV); got != dV {
+		t.Errorf("wUV rows = %d, want %d (dV)", got, dV)
+	}
+	for i, row := range wUV {
+		if len(row) != rank {
+			t.Errorf("wUV[%d] cols = %d, want %d (rank)", i, len(row), rank)
+		}
+	}
+}
+
+func TestDecomposeKVProjection_RankExceedsDimension(t *testing.T) {
+	// When rank exceeds min(dK+dV, dModel), TruncatedSVD should return an error.
+	wK := [][]float64{
+		{1, 2},
+		{3, 4},
+	}
+	wV := [][]float64{
+		{5, 6},
+		{7, 8},
+	}
+	// Concatenated is 4×2, so min dim = 2. Rank 3 should fail.
+	_, _, _, err := DecomposeKVProjection(wK, wV, 3)
+	if err == nil {
+		t.Error("expected error when rank exceeds min(rows, cols), got nil")
+	}
+}
+
 func TestDecomposeKVProjection_Errors(t *testing.T) {
 	tests := []struct {
 		name string
