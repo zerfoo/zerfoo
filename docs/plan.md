@@ -172,7 +172,7 @@ All in ztensor repo. Q4_K is 45% slower than Q4_0.
 - [x] KQ-T1 Profile Q4_K vs Q4_0 GEMV  Est: 2h  repo: ztensor
   Acceptance: Root cause of 45% slowdown identified and documented.
 
-- [ ] KQ-T2 Optimize Q4_K GEMV kernel  Est: 4h  repo: ztensor  Deps: KQ-T1
+- [x] KQ-T2 Optimize Q4_K GEMV kernel  Est: 4h  repo: ztensor  Deps: KQ-T1
   Acceptance: Measurable improvement in BenchmarkGEMV.
 
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K loading  Est: 2h  Deps: KQ-T2
@@ -551,13 +551,13 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Begin CPU->GPU transfer of predicted expert weights asynchronously.
   Acceptance: Prefetch hit rate > 60% on DeepSeek-V3 routing patterns.
 
-- [ ] T38.2.3 Tests and benchmarks for hybrid MoE  Owner: TBD  Est: 2h  verifies: [UC-001, UC-008]
+- [x] T38.2.3 Tests and benchmarks for hybrid MoE  Owner: TBD  Est: 2h  verifies: [UC-001, UC-008]
   Deps: T38.2.1, T38.2.2
   Benchmark on DeepSeek-R1-1.5B (small MoE). Measure tok/s with
   hybrid vs GPU-only. Verify correctness via output comparison.
   Acceptance: Correct output. Performance documented in devlog.
 
-- [ ] T38.2.4 Run go vet and linters for E38  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T38.2.4 Run go vet and linters for E38  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T38.2.3
 
 ### P10: BitNet b1.58 Ternary Inference (E39)
@@ -1077,12 +1077,12 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] BMK-T1 Download missing GGUFs  verifies: [UC-001]
 - [x] BMK-T3 Update website with benchmark table  Deps: BMK-T2
 - [x] BMK-T4 Investigate Phi3/Llama3.1 load failures  verifies: [UC-001]
-- [ ] MHH-T1 Mistral quality comparison  verifies: [UC-001]
+- [x] MHH-T1 Mistral quality comparison  verifies: [UC-001]
 - [x] MHH-T3 Sliding window correctness  verifies: [UC-001]
 - [x] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
 - [ ] GTS-T1 Generate Python golden files  verifies: [UC-005]
 - [x] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
-- [ ] KQ-T2 Optimize Q4_K GEMV kernel (ztensor)  Deps: KQ-T1
+- [x] KQ-T2 Optimize Q4_K GEMV kernel (ztensor)  Deps: KQ-T1
 - [ ] GTS-T2 Run Zerfoo against golden files  Deps: GTS-T1
 
 #### Wave 6: Tests + Benchmarks (10 agents)
@@ -1095,11 +1095,11 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T36.2.5 Tests for EAGLE decode loop  Deps: T36.2.1-T36.2.3  DONE 2026-03-27 PR #263
 - [x] T37.2.2 Unit tests for NSA  Deps: T37.1.4  DONE 2026-03-27 PR #263
 - [x] T38.1.3 Tests for expert placement  Deps: T38.1.1, T38.1.2  DONE 2026-03-27 PR #263
-- [ ] T38.2.3 Tests and benchmarks for hybrid MoE  Deps: T38.2.1, T38.2.2
+- [x] T38.2.3 Tests and benchmarks for hybrid MoE  Deps: T38.2.1, T38.2.2
 - [x] T39.1.4 Tests for ternary storage/GEMV  Deps: T39.1.1-T39.1.3
 - [x] T40.1.4 Tests for SVD conversion  Deps: T40.1.1-T40.1.3  DONE 2026-03-27 PR #263
 - [x] T40.2.2 Validate MLA KV cache stores latent  Deps: T40.2.1  DONE 2026-03-27 PR #263
-- [ ] T40.2.4 Perplexity validation script  Deps: T40.2.1
+- [x] T40.2.4 Perplexity validation script  Deps: T40.2.1
 - [x] T41.1.6 Tests for I-Quant dequantization  Deps: T41.1.1-T41.1.5  DONE 2026-03-27 PR #263
 - [x] T42.1.3 Tests for radix cache and scheduling  Deps: T42.1.1, T42.1.2  DONE 2026-03-27 PR #263
 - [x] T43.1.3 Tests and benchmarks flash decode  Deps: T43.1.1, T43.1.2
@@ -1116,7 +1116,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T35.3.6 Run go vet E35  Deps: T35.2.3, T35.3.5
 - [x] T36.2.6 Run go vet E36  Deps: T36.2.5
 - [x] T37.2.3 Run go vet E37  Deps: T37.2.2
-- [ ] T38.2.4 Run go vet E38  Deps: T38.2.3
+- [x] T38.2.4 Run go vet E38  Deps: T38.2.3
 - [x] T40.2.3 TransMLA end-to-end integration test  Deps: T40.2.1, T40.2.2
 - [x] T41.1.7 Run go vet E41  Deps: T41.1.6
 - [x] T42.1.4 Run go vet E42  Deps: T42.1.3
