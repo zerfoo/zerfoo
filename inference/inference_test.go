@@ -334,6 +334,22 @@ func TestOptions(t *testing.T) {
 			t.Error("mmap not set")
 		}
 	})
+
+	t.Run("WithQuaRot", func(t *testing.T) {
+		o := &loadOptions{}
+		WithQuaRot(true)(o)
+		if !o.quarot {
+			t.Error("quarot not set")
+		}
+	})
+
+	t.Run("WithQuaRot_false", func(t *testing.T) {
+		o := &loadOptions{quarot: true}
+		WithQuaRot(false)(o)
+		if o.quarot {
+			t.Error("quarot should be false")
+		}
+	})
 }
 
 // --- GenerateOption tests ---
