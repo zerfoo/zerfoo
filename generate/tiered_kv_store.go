@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -61,6 +62,19 @@ type TieredKVStore[T tensor.Numeric] struct {
 	// coldDir is the directory for cold-tier files.
 	coldDir string
 	coldMu  sync.Mutex
+
+	// Async prefetch state.
+	prefetchCh     chan prefetchRequest[T]
+	prefetchCancel context.CancelFunc
+	prefetchWg     sync.WaitGroup
+	prefetchMu     sync.Mutex
+	prefetched     map[int]*LayerKV[T] // layer → prefetched data
+}
+
+// prefetchRequest represents a request to prefetch a layer from a cold tier.
+type prefetchRequest[T tensor.Numeric] struct {
+	layer int
+	store *TieredKVStore[T]
 }
 
 // TieredKVStoreConfig holds configuration for a TieredKVStore.
@@ -100,7 +114,8 @@ func NewTieredKVStore[T tensor.Numeric](engine compute.Engine[T], cfg TieredKVSt
 		states[i].tier = TierHot
 	}
 
-	return &TieredKVStore[T]{
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &TieredKVStore[T]{
 		hot:              NewKVCache[T](cfg.NumLayers, cfg.MaxSeqLen),
 		warm:             NewCompressedKVCache[T](engine, cfg.NumLayers, 1, 1, cfg.ChunkSize),
 		engine:           engine,
@@ -111,7 +126,13 @@ func NewTieredKVStore[T tensor.Numeric](engine compute.Engine[T], cfg TieredKVSt
 		demoteThreshold:  cfg.DemoteThreshold,
 		promoteThreshold: cfg.PromoteThreshold,
 		coldDir:          coldDir,
-	}, nil
+		prefetchCh:       make(chan prefetchRequest[T], cfg.NumLayers),
+		prefetchCancel:   cancel,
+		prefetched:       make(map[int]*LayerKV[T]),
+	}
+	s.prefetchWg.Add(1)
+	go s.prefetchLoop(ctx)
+	return s, nil
 }
 
 // NumLayers returns the number of layers in the store.
@@ -174,11 +195,14 @@ func (s *TieredKVStore[T]) SeqLen() int {
 	return s.hot.SeqLen()
 }
 
-// Reset clears all tiers and resets access counts.
+// Reset clears all tiers, resets access counts, and drains prefetched data.
 func (s *TieredKVStore[T]) Reset() {
 	s.hot.Reset()
 	s.warm.Reset()
 	s.clearColdDir()
+	s.prefetchMu.Lock()
+	s.prefetched = make(map[int]*LayerKV[T])
+	s.prefetchMu.Unlock()
 	for i := range s.layerStates {
 		s.layerStates[i].tier = TierHot
 		s.layerStates[i].accessCount = 0
@@ -404,8 +428,87 @@ func (s *TieredKVStore[T]) clearColdDir() {
 	}
 }
 
-// Close cleans up cold-tier temporary files.
+// PrefetchAsync queues the given layer positions for asynchronous prefetch
+// from cold/warm tiers to the hot tier. Layers already in the hot tier or
+// already prefetched are skipped. The caller continues execution immediately.
+func (s *TieredKVStore[T]) PrefetchAsync(positions []int) {
+	for _, layer := range positions {
+		if layer < 0 || layer >= s.numLayers {
+			continue
+		}
+		st := &s.layerStates[layer]
+		if st.tier == TierHot {
+			continue
+		}
+		s.prefetchMu.Lock()
+		_, already := s.prefetched[layer]
+		s.prefetchMu.Unlock()
+		if already {
+			continue
+		}
+		// Non-blocking send; drop if channel is full.
+		select {
+		case s.prefetchCh <- prefetchRequest[T]{layer: layer, store: s}:
+		default:
+		}
+	}
+}
+
+// GetPrefetched returns a previously prefetched LayerKV for the given layer
+// and removes it from the prefetch cache. Returns nil, false if no prefetched
+// data is available.
+func (s *TieredKVStore[T]) GetPrefetched(layer int) (*LayerKV[T], bool) {
+	s.prefetchMu.Lock()
+	defer s.prefetchMu.Unlock()
+	lkv, ok := s.prefetched[layer]
+	if ok {
+		delete(s.prefetched, layer)
+	}
+	return lkv, ok
+}
+
+// prefetchLoop runs in a background goroutine, processing prefetch requests.
+func (s *TieredKVStore[T]) prefetchLoop(ctx context.Context) {
+	defer s.prefetchWg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req, ok := <-s.prefetchCh:
+			if !ok {
+				return
+			}
+			st := &req.store.layerStates[req.layer]
+			if st.tier == TierHot {
+				continue
+			}
+			// Fetch the data from the current tier.
+			var lkv *LayerKV[T]
+			switch st.tier {
+			case TierWarm:
+				data, ok := req.store.warm.Get(req.layer)
+				if ok {
+					lkv = data
+				}
+			case TierCold:
+				data, ok := req.store.getCold(req.layer)
+				if ok {
+					lkv = data
+				}
+			}
+			if lkv != nil {
+				req.store.prefetchMu.Lock()
+				req.store.prefetched[req.layer] = lkv
+				req.store.prefetchMu.Unlock()
+			}
+		}
+	}
+}
+
+// Close stops the prefetch goroutine and cleans up cold-tier temporary files.
 func (s *TieredKVStore[T]) Close() error {
+	s.prefetchCancel()
+	s.prefetchWg.Wait()
 	s.clearColdDir()
 	return os.Remove(s.coldDir)
 }
