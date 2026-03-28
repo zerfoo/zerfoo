@@ -323,70 +323,10 @@ func buildTransformerGraph(
 		}
 		normed := builder.AddNode(inputNorm, hidden)
 
-		// --- Self Attention (GQA) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
-		if err != nil {
-			return nil, err
-		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
-		if err != nil {
-			return nil, err
-		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
-		if err != nil {
-			return nil, err
-		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
-		if err != nil {
-			return nil, err
-		}
-
-		qWT, err := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
-		if err != nil {
-			return nil, err
-		}
-		kWT, err := transposeWeight(prefix+"self_attn.k_proj.weight", kW)
-		if err != nil {
-			return nil, err
-		}
-		vWT, err := transposeWeight(prefix+"self_attn.v_proj.weight", vW)
-		if err != nil {
-			return nil, err
-		}
-		oWT, err := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
-		if err != nil {
-			return nil, err
-		}
-
-		// Build Q/K/V/O Dense layers, optionally with attention bias (Qwen 2).
-		var qBias, kBias, vBias *core.Bias[float32]
-		if opts.attnBias {
-			if qB, ok := tensors[prefix+"self_attn.q_proj.bias"]; ok {
-				qBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.q_proj.bias", qB))
-			}
-			if kB, ok := tensors[prefix+"self_attn.k_proj.bias"]; ok {
-				kBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.k_proj.bias", kB))
-			}
-			if vB, ok := tensors[prefix+"self_attn.v_proj.bias"]; ok {
-				vBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.v_proj.bias", vB))
-			}
-		}
-		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
-			qBias,
-		)
-		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
-			kBias,
-		)
-		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
-			vBias,
-		)
-		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
-			nil,
-		)
+		// --- Self Attention ---
+		// Check for TransMLA tensors: if present, use MLA instead of GQA.
+		transMLAPrefix := fmt.Sprintf("transmla.%d.", i)
+		_, hasTransMLA := tensors[transMLAPrefix+"wDKV"]
 
 		// Select RoPE base: global vs local based on layer pattern.
 		ropeBase := cfg.RopeTheta
@@ -409,82 +349,216 @@ func buildTransformerGraph(
 			return nil, fmt.Errorf("layer %d rope: %w", i, err)
 		}
 
-		gqa, err := attention.NewGroupedQueryAttentionFromParams[float32](
-			proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
-			wq, wk, wv, wo, rope, headDim,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("layer %d gqa: %w", i, err)
-		}
-		gqa.LayerIndex = i
-		if opts.slidingWindowSize > 0 {
-			gqa.SlidingWindowSize = opts.slidingWindowSize
-		}
+		var attnOut graph.Node[float32]
+		if hasTransMLA && cfg.TransMLAKVLoraDim > 0 {
+			// --- TransMLA path: use MultiHeadLatentAttention ---
+			qW, qErr := lookup(prefix + "self_attn.q_proj.weight")
+			if qErr != nil {
+				return nil, qErr
+			}
+			oW, oErr := lookup(prefix + "self_attn.o_proj.weight")
+			if oErr != nil {
+				return nil, oErr
+			}
+			dkvW, dkvErr := lookup(transMLAPrefix + "wDKV")
+			if dkvErr != nil {
+				return nil, dkvErr
+			}
+			ukW, ukErr := lookup(transMLAPrefix + "wUK")
+			if ukErr != nil {
+				return nil, ukErr
+			}
+			uvW, uvErr := lookup(transMLAPrefix + "wUV")
+			if uvErr != nil {
+				return nil, uvErr
+			}
 
-		// Create merged QKV weight for single-GEMV decode optimization.
-		// Concatenates Q, K, V Q4 blocks row-wise so a single GEMV replaces
-		// three separate projections during decode (seqLen=1).
-		if qQ4, ok := any(qW.GetStorage()).(*tensor.Q4Storage); ok {
-			if kQ4, ok := any(kW.GetStorage()).(*tensor.Q4Storage); ok {
-				if vQ4, ok := any(vW.GetStorage()).(*tensor.Q4Storage); ok {
-					mergedQ4 := tensor.MergeQ4Storage(qQ4, kQ4, vQ4)
-					qShape := qW.Shape()
-					kShape := kW.Shape()
-					vShape := vW.Shape()
-					nMerged := qShape[0] + kShape[0] + vShape[0]
-					mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4)
-					if mergeErr == nil {
-						gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+			qWT, tErr := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
+			if tErr != nil {
+				return nil, tErr
+			}
+			oWT, tErr := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
+			if tErr != nil {
+				return nil, tErr
+			}
+
+			// TransMLA tensors from the converter:
+			//   wDKV: [dModel, rank] — already [inputDim, outputDim], no transpose needed
+			//   wUK:  [dK, rank]     — stored as [outputDim, inputDim], needs transpose to [rank, dK]
+			//   wUV:  [dV, rank]     — stored as [outputDim, inputDim], needs transpose to [rank, dV]
+			ukWT, tErr := transposeWeight(transMLAPrefix+"wUK", ukW)
+			if tErr != nil {
+				return nil, tErr
+			}
+			uvWT, tErr := transposeWeight(transMLAPrefix+"wUV", uvW)
+			if tErr != nil {
+				return nil, tErr
+			}
+
+			wQ := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+			)
+			wDKV := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wDKV", dkvW)), nil,
+			)
+			wUK := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wUK", ukWT)), nil,
+			)
+			wUV := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wUV", uvWT)), nil,
+			)
+			wO := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+			)
+
+			mla := attention.NewMultiHeadLatentAttention[float32](
+				proxy, ops, cfg.NumHeads, headDim, cfg.TransMLAKVLoraDim, 0,
+				wQ, wDKV, wUK, wUV, wO, rope,
+			)
+			attnOut = builder.AddNode(mla, normed)
+		} else {
+			// --- Standard GQA path ---
+			qW, qErr := lookup(prefix + "self_attn.q_proj.weight")
+			if qErr != nil {
+				return nil, qErr
+			}
+			kW, kErr := lookup(prefix + "self_attn.k_proj.weight")
+			if kErr != nil {
+				return nil, kErr
+			}
+			vW, vErr := lookup(prefix + "self_attn.v_proj.weight")
+			if vErr != nil {
+				return nil, vErr
+			}
+			oW, oErr := lookup(prefix + "self_attn.o_proj.weight")
+			if oErr != nil {
+				return nil, oErr
+			}
+
+			qWT, tErr := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
+			if tErr != nil {
+				return nil, tErr
+			}
+			kWT, tErr := transposeWeight(prefix+"self_attn.k_proj.weight", kW)
+			if tErr != nil {
+				return nil, tErr
+			}
+			vWT, tErr := transposeWeight(prefix+"self_attn.v_proj.weight", vW)
+			if tErr != nil {
+				return nil, tErr
+			}
+			oWT, tErr := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
+			if tErr != nil {
+				return nil, tErr
+			}
+
+			// Build Q/K/V/O Dense layers, optionally with attention bias (Qwen 2).
+			var qBias, kBias, vBias *core.Bias[float32]
+			if opts.attnBias {
+				if qB, ok := tensors[prefix+"self_attn.q_proj.bias"]; ok {
+					qBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.q_proj.bias", qB))
+				}
+				if kB, ok := tensors[prefix+"self_attn.k_proj.bias"]; ok {
+					kBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.k_proj.bias", kB))
+				}
+				if vB, ok := tensors[prefix+"self_attn.v_proj.bias"]; ok {
+					vBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.v_proj.bias", vB))
+				}
+			}
+			wq := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+				qBias,
+			)
+			wk := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+				kBias,
+			)
+			wv := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+				vBias,
+			)
+			wo := core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+				nil,
+			)
+
+			gqa, gqaErr := attention.NewGroupedQueryAttentionFromParams[float32](
+				proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
+				wq, wk, wv, wo, rope, headDim,
+			)
+			if gqaErr != nil {
+				return nil, fmt.Errorf("layer %d gqa: %w", i, gqaErr)
+			}
+			gqa.LayerIndex = i
+			if opts.slidingWindowSize > 0 {
+				gqa.SlidingWindowSize = opts.slidingWindowSize
+			}
+
+			// Create merged QKV weight for single-GEMV decode optimization.
+			// Concatenates Q, K, V Q4 blocks row-wise so a single GEMV replaces
+			// three separate projections during decode (seqLen=1).
+			if qQ4, ok := any(qW.GetStorage()).(*tensor.Q4Storage); ok {
+				if kQ4, ok := any(kW.GetStorage()).(*tensor.Q4Storage); ok {
+					if vQ4, ok := any(vW.GetStorage()).(*tensor.Q4Storage); ok {
+						mergedQ4 := tensor.MergeQ4Storage(qQ4, kQ4, vQ4)
+						qShape := qW.Shape()
+						kShape := kW.Shape()
+						vShape := vW.Shape()
+						nMerged := qShape[0] + kShape[0] + vShape[0]
+						mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4)
+						if mergeErr == nil {
+							gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+						}
 					}
 				}
 			}
-		}
-		// Merged QKV for Q4_K quantized weights.
-		// Note: In Q4_K_M models, V may use Q6_K while Q/K use Q4_K. We only
-		// merge when all three are Q4KStorage to keep the storage type uniform.
-		if qQ4K, ok := any(qW.GetStorage()).(*tensor.Q4KStorage); ok {
-			if kQ4K, ok := any(kW.GetStorage()).(*tensor.Q4KStorage); ok {
-				if vQ4K, ok := any(vW.GetStorage()).(*tensor.Q4KStorage); ok {
-					mergedQ4K := tensor.MergeQ4KStorage(qQ4K, kQ4K, vQ4K)
-					qShape := qW.Shape()
-					kShape := kW.Shape()
-					vShape := vW.Shape()
-					nMerged := qShape[0] + kShape[0] + vShape[0]
-					mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4K)
-					if mergeErr == nil {
-						gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+			// Merged QKV for Q4_K quantized weights.
+			// Note: In Q4_K_M models, V may use Q6_K while Q/K use Q4_K. We only
+			// merge when all three are Q4KStorage to keep the storage type uniform.
+			if qQ4K, ok := any(qW.GetStorage()).(*tensor.Q4KStorage); ok {
+				if kQ4K, ok := any(kW.GetStorage()).(*tensor.Q4KStorage); ok {
+					if vQ4K, ok := any(vW.GetStorage()).(*tensor.Q4KStorage); ok {
+						mergedQ4K := tensor.MergeQ4KStorage(qQ4K, kQ4K, vQ4K)
+						qShape := qW.Shape()
+						kShape := kW.Shape()
+						vShape := vW.Shape()
+						nMerged := qShape[0] + kShape[0] + vShape[0]
+						mergedT, mergeErr := tensor.NewWithStorage[float32]([]int{qShape[1], nMerged}, mergedQ4K)
+						if mergeErr == nil {
+							gqa.SetMergedQKV(mergedT, qShape[0], kShape[0], vShape[0])
+						}
 					}
 				}
 			}
-		}
 
-		// Set Q/K norms if enabled (Gemma 3).
-		if opts.qkNorm {
-			qNormW, lookupErr := lookup(prefix + "self_attn.q_norm.weight")
-			if lookupErr != nil {
-				return nil, lookupErr
+			// Set Q/K norms if enabled (Gemma 3).
+			if opts.qkNorm {
+				qNormW, lookupErr := lookup(prefix + "self_attn.q_norm.weight")
+				if lookupErr != nil {
+					return nil, lookupErr
+				}
+				qNorm, normErr := normalization.NewRMSNormFromParam[float32](
+					proxy, ops, rmsEps, param(prefix+"self_attn.q_norm.weight", qNormW),
+				)
+				if normErr != nil {
+					return nil, normErr
+				}
+				kNormW, lookupErr := lookup(prefix + "self_attn.k_norm.weight")
+				if lookupErr != nil {
+					return nil, lookupErr
+				}
+				kNorm, normErr := normalization.NewRMSNormFromParam[float32](
+					proxy, ops, rmsEps, param(prefix+"self_attn.k_norm.weight", kNormW),
+				)
+				if normErr != nil {
+					return nil, normErr
+				}
+				gqa.SetQKNorms(qNorm, kNorm)
+				gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
 			}
-			qNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, rmsEps, param(prefix+"self_attn.q_norm.weight", qNormW),
-			)
-			if normErr != nil {
-				return nil, normErr
-			}
-			kNormW, lookupErr := lookup(prefix + "self_attn.k_norm.weight")
-			if lookupErr != nil {
-				return nil, lookupErr
-			}
-			kNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, rmsEps, param(prefix+"self_attn.k_norm.weight", kNormW),
-			)
-			if normErr != nil {
-				return nil, normErr
-			}
-			gqa.SetQKNorms(qNorm, kNorm)
-			gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
-		}
 
-		attnOut := builder.AddNode(gqa, normed)
+			attnOut = builder.AddNode(gqa, normed)
+		}
 
 		// --- Post-Attention Norm (Gemma 3: normalize before residual add) ---
 		if opts.postNorm {

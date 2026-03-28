@@ -37,6 +37,9 @@ type ModelConfig struct {
 	NumExpertsPerToken int // experts activated per token (expert_used_count)
 	NumSharedExperts   int // number of shared experts (expert_shared_count)
 
+	// TransMLA: converted MHA-to-MLA models (see ADR-069).
+	TransMLAKVLoraDim int // KV LoRA rank from transmla.kv_lora_dim metadata (0 = not a TransMLA model)
+
 	// Residual connection configuration.
 	ResidualMode      string // "standard", "attnres", or "block_attnres" (default: "standard")
 	AttnResNumBlocks  int    // number of blocks for block_attnres mode (default: 8)
@@ -227,6 +230,11 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetFloat32(prefix + "attention.layer_norm_epsilon"); ok {
 		cfg.LayerNormEps = v
+	}
+
+	// Extract TransMLA fields (MHA-to-MLA converted models).
+	if v, ok := f.GetUint32("transmla.kv_lora_dim"); ok {
+		cfg.TransMLAKVLoraDim = int(v)
 	}
 
 	// Extract residual connection configuration.
