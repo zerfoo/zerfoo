@@ -415,8 +415,49 @@ func TestExtractModelConfig_NemotronSSM(t *testing.T) {
 			t.Fatalf("ExtractModelConfig: %v", err)
 		}
 		if cfg.SSMStateSize != 0 || cfg.SSMConvKernel != 0 || cfg.SSMNumHeads != 0 {
+			t.Errorf("expected zero SSM fields for llama, got state=%d conv=%d heads=%d",
+				cfg.SSMStateSize, cfg.SSMConvKernel, cfg.SSMNumHeads)
+		}
+	})
+}
+
+func TestExtractModelConfig_ScoringFunc(t *testing.T) {
+	t.Run("defaults to softmax", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":       "llama",
+			"llama.embedding_length":     uint32(2048),
+			"llama.block_count":          uint32(22),
+			"llama.attention.head_count": uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.SSMStateSize != 0 || cfg.SSMConvKernel != 0 || cfg.SSMNumHeads != 0 {
 			t.Errorf("SSM fields should be zero for llama, got state=%d conv=%d heads=%d",
 				cfg.SSMStateSize, cfg.SSMConvKernel, cfg.SSMNumHeads)
+		}
+		if cfg.ScoringFunc != "softmax" {
+			t.Errorf("ScoringFunc = %q, want %q", cfg.ScoringFunc, "softmax")
+		}
+	})
+
+	t.Run("sigmoid from metadata", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":             "minimax-m2",
+			"minimax-m2.embedding_length":      uint32(3072),
+			"minimax-m2.block_count":           uint32(32),
+			"minimax-m2.attention.head_count":  uint32(24),
+			"minimax-m2.expert_gating_func":    "sigmoid",
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.ScoringFunc != "sigmoid" {
+			t.Errorf("ScoringFunc = %q, want %q", cfg.ScoringFunc, "sigmoid")
 		}
 	})
 }

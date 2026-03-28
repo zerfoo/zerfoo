@@ -60,6 +60,8 @@ type ModelConfig struct {
 
 	// Nemotron-H MoE shared expert count (expert_shared_count in nemotron_h_moe).
 	ExpertSharedCount int
+	// MoE expert gating configuration.
+	ScoringFunc string // expert gating scoring function ("softmax" or "sigmoid"; default: "softmax")
 
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
@@ -213,6 +215,12 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
 		cfg.NumSharedExperts = int(v)
+	}
+
+	// Extract expert gating scoring function (default: "softmax").
+	cfg.ScoringFunc = "softmax"
+	if v, ok := f.GetString(prefix + "expert_gating_func"); ok {
+		cfg.ScoringFunc = v
 	}
 
 	// Extract Granite-specific fields.
