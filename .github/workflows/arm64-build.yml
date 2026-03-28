@@ -12,14 +12,16 @@ env:
   GONOPROXY: 'github.com/zerfoo/*'
 jobs:
   build:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: arm64
-          - goos: darwin
-            goarch: arm64
+            runner: ubuntu-24.04-arm
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
@@ -36,11 +38,7 @@ jobs:
           restore-keys: ${{ runner.os }}-go-1.26-${{ matrix.goos }}-${{ matrix.goarch }}-
       - name: Vet
         run: go vet ./cmd/zerfoo-edge/...
-      - name: Cross-compile zerfoo-edge
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+      - name: Build zerfoo-edge
         run: go build -o zerfoo-edge-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/zerfoo-edge/...
       - name: Verify binary exists
         run: test -f zerfoo-edge-${{ matrix.goos }}-${{ matrix.goarch }}

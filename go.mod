@@ -8,13 +8,13 @@ require (
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/image v0.37.0
 	gonum.org/v1/gonum v0.17.0
-	google.golang.org/grpc v1.65.0
-	google.golang.org/protobuf v1.36.8
+	google.golang.org/grpc v1.79.3
+	google.golang.org/protobuf v1.36.10
 )
 
 require (
-	golang.org/x/net v0.25.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 )
 
@@ -23,10 +23,7 @@ exclude google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de
 exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/zerfoo/ztensor v0.14.0
 	github.com/zerfoo/ztoken v0.3.4
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 )
-
-replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240528184218-531527333157
