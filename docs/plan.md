@@ -269,6 +269,17 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [ ] T34.6.2 Integration test: compressed cache with existing models  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
   Deps: T34.6.1. Load Gemma3-1B with WithCompressedKV(64) on DGX Spark.
 
+- [ ] T34.6.3 Add sync.RWMutex to TieredKVStore for concurrent serve access  Owner: TBD  Est: 1.5h  verifies: [UC-002, UC-003]
+  Deps: T34.6.1
+  File: generate/tiered_kv_store.go
+  TieredKVStore has no synchronization. The serve path will call Get/Update/
+  PrefetchAsync/GetPrefetched from multiple goroutines (batcher, scheduler,
+  prefetch worker). Add sync.RWMutex: RLock for Get/GetPrefetched/Tier,
+  Lock for Update/Demote/Promote/Reset/PrefetchAsync. Restore the concurrent
+  access test (removed in PR #264 because it correctly detected the race).
+  Acceptance: `go test -race` passes with concurrent Get+Update+Prefetch.
+  Must be done BEFORE wiring TieredKVStore into serve/.
+
 ### P6: QuaRot + KVQuant -- Uniform 4-Bit Quantization (E35)
 
 Apply Hadamard rotation at GGUF load time to eliminate outlier features,
@@ -1116,6 +1127,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 - [ ] T34.6.1 Run go vet and linters all E34  Deps: all E34 tasks
 - [ ] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
+- [ ] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
 - [ ] T39.2.4 Run go vet E39  Deps: T39.2.3
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
 - [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
