@@ -958,3 +958,323 @@ func TestDocumentWiseRoPE_ClearBoundaries(t *testing.T) {
 		t.Error("document-wise output should differ from standard when boundaries are set")
 	}
 }
+
+func TestDocumentWiseRoPE_PositionResetAtBoundaries(t *testing.T) {
+	// Verify that position IDs reset to 0 at each document boundary by
+	// comparing the document-wise output against manually constructed
+	// per-document RoPE outputs.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	headDim := 4
+	maxSeq := 10
+
+	tests := []struct {
+		name       string
+		seqLen     int
+		boundaries []int
+		// wantLocalPos is the expected local position for each sequence position.
+		wantLocalPos []int
+	}{
+		{
+			name:         "single boundary at position 3",
+			seqLen:       6,
+			boundaries:   []int{3},
+			wantLocalPos: []int{0, 1, 2, 0, 1, 2},
+		},
+		{
+			name:         "three documents",
+			seqLen:       9,
+			boundaries:   []int{3, 6},
+			wantLocalPos: []int{0, 1, 2, 0, 1, 2, 0, 1, 2},
+		},
+		{
+			name:         "boundary at every position",
+			seqLen:       4,
+			boundaries:   []int{0, 1, 2, 3},
+			wantLocalPos: []int{0, 0, 0, 0},
+		},
+		{
+			name:         "boundary only at start",
+			seqLen:       5,
+			boundaries:   []int{0},
+			wantLocalPos: []int{0, 1, 2, 3, 4},
+		},
+		{
+			name:         "boundary at last position",
+			seqLen:       4,
+			boundaries:   []int{3},
+			wantLocalPos: []int{0, 1, 2, 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, maxSeq)
+			if err != nil {
+				t.Fatalf("NewRotaryPositionalEmbedding: %v", err)
+			}
+
+			// Use constant input so rotation is the only source of variation.
+			inputData := make([]float64, tt.seqLen*headDim)
+			for i := range inputData {
+				inputData[i] = 1.0
+			}
+			input, _ := tensor.New[float64]([]int{1, tt.seqLen, headDim}, inputData)
+
+			rpe.SetDocumentBoundaries(tt.boundaries)
+			outDoc, err := rpe.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			// Build expected output by looking up cos/sin at the local position.
+			halfRotary := headDim / 2
+			cosData := rpe.cosAngles.Data()
+			sinData := rpe.sinAngles.Data()
+			docData := outDoc.Data()
+
+			for pos := 0; pos < tt.seqLen; pos++ {
+				localP := tt.wantLocalPos[pos]
+				for j := 0; j < halfRotary; j++ {
+					cosVal := cosData[localP*halfRotary+j]
+					sinVal := sinData[localP*halfRotary+j]
+					// input is all 1s: rotated0 = 1*cos - 1*sin, rotated1 = 1*cos + 1*sin
+					wantR0 := cosVal - sinVal
+					wantR1 := cosVal + sinVal
+					gotR0 := docData[pos*headDim+j]
+					gotR1 := docData[pos*headDim+halfRotary+j]
+					if math.Abs(gotR0-wantR0) > 1e-10 {
+						t.Errorf("pos=%d dim=%d: rotated0=%v, want %v (localPos=%d)",
+							pos, j, gotR0, wantR0, localP)
+					}
+					if math.Abs(gotR1-wantR1) > 1e-10 {
+						t.Errorf("pos=%d dim=%d: rotated1=%v, want %v (localPos=%d)",
+							pos, j, gotR1, wantR1, localP)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDocumentWiseRoPE_GlobalOffsetIgnoredWhenBoundariesSet(t *testing.T) {
+	// When document boundaries are set, gatherDocumentWiseAngles computes
+	// local positions from the boundary list. The posOffset (global offset)
+	// is only used in the non-document-wise path. Verify that setting
+	// posOffset does not change the output when boundaries are active.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	headDim := 4
+	seqLen := 6
+	maxSeq := 16
+
+	tests := []struct {
+		name       string
+		offset     int
+		boundaries []int
+	}{
+		{"offset=0 with boundary", 0, []int{3}},
+		{"offset=5 with boundary", 5, []int{3}},
+		{"offset=10 with boundary", 10, []int{3}},
+	}
+
+	// Compute reference output with offset=0.
+	rpeRef, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, maxSeq)
+	if err != nil {
+		t.Fatalf("NewRotaryPositionalEmbedding: %v", err)
+	}
+
+	inputData := make([]float64, seqLen*headDim)
+	for i := range inputData {
+		inputData[i] = float64(i+1) * 0.1
+	}
+	inputRef, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+
+	rpeRef.SetDocumentBoundaries([]int{3})
+	rpeRef.SetPositionOffset(0)
+	outRef, err := rpeRef.Forward(ctx, inputRef)
+	if err != nil {
+		t.Fatalf("reference Forward: %v", err)
+	}
+	refData := outRef.Data()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rpe, err := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, maxSeq)
+			if err != nil {
+				t.Fatalf("NewRotaryPositionalEmbedding: %v", err)
+			}
+
+			input, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+			rpe.SetDocumentBoundaries(tt.boundaries)
+			rpe.SetPositionOffset(tt.offset)
+
+			out, err := rpe.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			for i, v := range out.Data() {
+				if math.Abs(v-refData[i]) > 1e-10 {
+					t.Errorf("index %d: got %v, want %v (offset=%d should not affect document-wise)",
+						i, v, refData[i], tt.offset)
+				}
+			}
+		})
+	}
+}
+
+func TestDocumentWiseRoPE_DiffersFromStandardAtBoundaries(t *testing.T) {
+	// Standard and document-wise RoPE must produce different outputs when
+	// a boundary resets positions mid-sequence.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	headDim := 4
+	seqLen := 8
+
+	tests := []struct {
+		name       string
+		boundaries []int
+	}{
+		{"single boundary at 4", []int{4}},
+		{"two boundaries", []int{2, 5}},
+		{"boundary at 1", []int{1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inputData := make([]float64, seqLen*headDim)
+			for i := range inputData {
+				inputData[i] = float64(i+1) * 0.1
+			}
+
+			// Standard RoPE
+			rpeStd, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+			inputStd, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+			outStd, err := rpeStd.Forward(ctx, inputStd)
+			if err != nil {
+				t.Fatalf("standard Forward: %v", err)
+			}
+
+			// Document-wise RoPE
+			rpeDoc, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+			rpeDoc.SetDocumentBoundaries(tt.boundaries)
+			inputDoc, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+			outDoc, err := rpeDoc.Forward(ctx, inputDoc)
+			if err != nil {
+				t.Fatalf("document-wise Forward: %v", err)
+			}
+
+			// Outputs must differ at positions after the first boundary.
+			firstBoundary := tt.boundaries[0]
+			anyDiffer := false
+			for pos := firstBoundary; pos < seqLen; pos++ {
+				for d := 0; d < headDim; d++ {
+					idx := pos*headDim + d
+					if outStd.Data()[idx] != outDoc.Data()[idx] {
+						anyDiffer = true
+						break
+					}
+				}
+				if anyDiffer {
+					break
+				}
+			}
+			if !anyDiffer {
+				t.Error("document-wise output should differ from standard at/after boundary positions")
+			}
+		})
+	}
+}
+
+func TestDocumentWiseRoPE_SingleDocumentMatchesStandard(t *testing.T) {
+	// A single document (no boundaries, or boundary only at position 0)
+	// must produce the same output as standard RoPE.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	headDim := 4
+	seqLen := 8
+
+	tests := []struct {
+		name       string
+		boundaries []int
+	}{
+		{"nil boundaries", nil},
+		{"empty slice", []int{}},
+		{"boundary at 0 only", []int{0}},
+	}
+
+	inputData := make([]float64, seqLen*headDim)
+	for i := range inputData {
+		inputData[i] = float64(i+1) * 0.1
+	}
+
+	// Reference: standard RoPE
+	rpeStd, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+	inputStd, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+	outStd, err := rpeStd.Forward(ctx, inputStd)
+	if err != nil {
+		t.Fatalf("standard Forward: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rpe, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+			rpe.SetDocumentBoundaries(tt.boundaries)
+			input, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+
+			out, err := rpe.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			for i, v := range out.Data() {
+				if math.Abs(v-outStd.Data()[i]) > 1e-10 {
+					t.Errorf("index %d: got %v, want %v", i, v, outStd.Data()[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDocumentWiseRoPE_EmptyBoundaryList(t *testing.T) {
+	// An empty boundary list should fall through to the standard RoPE path
+	// (no gatherDocumentWiseAngles call) and produce identical results.
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+
+	headDim := 4
+	seqLen := 6
+
+	inputData := make([]float64, seqLen*headDim)
+	for i := range inputData {
+		inputData[i] = float64(i+1) * 0.5
+	}
+
+	// Standard path (no SetDocumentBoundaries call at all)
+	rpeStd, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+	inputStd, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+	outStd, err := rpeStd.Forward(ctx, inputStd)
+	if err != nil {
+		t.Fatalf("standard Forward: %v", err)
+	}
+
+	// Explicitly set empty boundary list
+	rpeEmpty, _ := NewRotaryPositionalEmbedding[float64](ctx, engine, headDim, seqLen)
+	rpeEmpty.SetDocumentBoundaries([]int{})
+	inputEmpty, _ := tensor.New[float64]([]int{1, seqLen, headDim}, inputData)
+	outEmpty, err := rpeEmpty.Forward(ctx, inputEmpty)
+	if err != nil {
+		t.Fatalf("empty boundaries Forward: %v", err)
+	}
+
+	for i, v := range outEmpty.Data() {
+		if math.Abs(v-outStd.Data()[i]) > 1e-10 {
+			t.Errorf("index %d: empty boundaries=%v, standard=%v", i, v, outStd.Data()[i])
+		}
+	}
+}
