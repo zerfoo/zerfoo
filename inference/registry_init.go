@@ -21,4 +21,5 @@ func init() {
 	RegisterArchitecture("gpt2", buildGPT2Graph)
 	RegisterArchitecture("nemotron_h", buildNemotronHGraph)
 	RegisterArchitecture("nemotron_h_moe", buildNemotronHMoEGraph)
+	RegisterArchitecture("minimax-m2", buildMiniMaxM2Graph)
 }
