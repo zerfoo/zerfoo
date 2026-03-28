@@ -313,8 +313,7 @@ func decodeTernaryTensor(shape []int, numElements int, raw []byte) (*tensor.Tens
 	// Encoding matches TernaryStorage: 00=-1, 01=0, 10=+1 (bits - 1).
 	ts := tensor.NewTernaryStorage(numElements)
 	copy(ts.RawBytes(), raw[:expectedBytes])
-	data := ts.Slice()
-	return tensor.New[float32](shape, data)
+	return tensor.NewWithStorage[float32](shape, ts)
 }
 
 func decodeIQ4NLTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {

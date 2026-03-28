@@ -309,6 +309,11 @@ func TestLoadTensorsMmap_TQ2_0(t *testing.T) {
 		t.Fatal("tensor test.ternary not found")
 	}
 
+	// Verify TernaryStorage is preserved so MatMul can dispatch to ternary GEMV.
+	if _, ok := tns.GetStorage().(*tensor.TernaryStorage); !ok {
+		t.Errorf("expected TernaryStorage, got %T", tns.GetStorage())
+	}
+
 	got := tns.Data()
 	for i, want := range values {
 		if got[i] != float32(want) {

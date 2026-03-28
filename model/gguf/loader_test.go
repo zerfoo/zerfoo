@@ -767,6 +767,11 @@ func TestLoadTensors_TQ2_0(t *testing.T) {
 		t.Errorf("shape = %v, want [8]", tns.Shape())
 	}
 
+	// Verify TernaryStorage is preserved so MatMul can dispatch to ternary GEMV.
+	if _, ok := tns.GetStorage().(*tensor.TernaryStorage); !ok {
+		t.Errorf("expected TernaryStorage, got %T", tns.GetStorage())
+	}
+
 	got := tns.Data()
 	for i, want := range values {
 		if got[i] != float32(want) {
@@ -806,6 +811,11 @@ func TestLoadTensors_TQ2_0_2D(t *testing.T) {
 	// Reversed from GGUF order: shape should be [2, 4].
 	if tns.Shape()[0] != 2 || tns.Shape()[1] != 4 {
 		t.Errorf("shape = %v, want [2 4]", tns.Shape())
+	}
+
+	// Verify TernaryStorage is preserved for 2D tensors.
+	if _, ok := tns.GetStorage().(*tensor.TernaryStorage); !ok {
+		t.Errorf("expected TernaryStorage, got %T", tns.GetStorage())
 	}
 
 	got := tns.Data()
