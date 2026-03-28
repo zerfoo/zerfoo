@@ -18,4 +18,5 @@ func init() {
 	RegisterArchitecture("granite", buildGraniteGraph)
 	RegisterArchitecture("whisper", buildWhisperGraph)
 	RegisterArchitecture("bert", buildBertGraph)
+	RegisterArchitecture("gpt2", buildGPT2Graph)
 }
