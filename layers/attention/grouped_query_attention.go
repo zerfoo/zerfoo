@@ -96,6 +96,7 @@ type GQAOptions[T tensor.Numeric] struct {
 	Base          float64
 	MaxSeqLen     int
 	Bidirectional bool // when true, disables causal masking for encoder-style models
+	NoRoPE        bool // when true, skip RoPE creation (for models like GPT-2 that use learned position embeddings)
 }
 
 // GQAOption is a function that applies an option to GQAOptions.
@@ -121,6 +122,15 @@ func WithMaxSeqLen[T tensor.Numeric](maxSeqLen int) GQAOption[T] {
 func WithBidirectionalGQA[T tensor.Numeric]() GQAOption[T] {
 	return func(o *GQAOptions[T]) {
 		o.Bidirectional = true
+	}
+}
+
+// WithNoRoPE returns an option that disables rotary positional embeddings.
+// Models like GPT-2 use learned position embeddings instead of RoPE, so the
+// GQA layer should pass Q and K through without rotational encoding.
+func WithNoRoPE[T tensor.Numeric]() GQAOption[T] {
+	return func(o *GQAOptions[T]) {
+		o.NoRoPE = true
 	}
 }
 
@@ -182,9 +192,12 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 		return nil, fmt.Errorf("failed to create WO dense layer: %w", err)
 	}
 
-	rope, err := embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, options.MaxSeqLen, embeddings.WithRotaryBase(options.Base))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
+	var rope *embeddings.RotaryPositionalEmbedding[T]
+	if !options.NoRoPE {
+		rope, err = embeddings.NewRotaryPositionalEmbedding[T](context.Background(), engine, headDim, options.MaxSeqLen, embeddings.WithRotaryBase(options.Base))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create RotaryPositionalEmbedding: %w", err)
+		}
 	}
 
 	return &GroupedQueryAttention[T]{
@@ -244,7 +257,9 @@ func NewGroupedQueryAttentionFromParams[T tensor.Numeric](
 // multi-document inference. Boundaries are sequence positions (0-indexed)
 // where new documents begin. Pass nil to disable document-wise mode.
 func (gqa *GroupedQueryAttention[T]) SetDocumentBoundaries(boundaries []int) {
-	gqa.rope.SetDocumentBoundaries(boundaries)
+	if gqa.rope != nil {
+		gqa.rope.SetDocumentBoundaries(boundaries)
+	}
 }
 
 // SetBidirectional enables or disables bidirectional (non-causal) attention.
@@ -259,6 +274,9 @@ func (gqa *GroupedQueryAttention[T]) OutputShape() []int {
 
 // ScaleRope scales the rotary positional embeddings.
 func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float64) error {
+	if gqa.rope == nil {
+		return nil
+	}
 	return gqa.rope.Scale(ctx, factor)
 }
 
@@ -387,9 +405,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	}
 
 	// Fused QK norm+RoPE decode path: replaces 4 kernel launches with 1.
-	// Conditions: decode (seqLen=1), Q/K norm weights available, engine supports it.
+	// Conditions: decode (seqLen=1), RoPE enabled, Q/K norm weights available, engine supports it.
 	fusedQKNormRoPE := false
-	if seqLen == 1 && gqa.qNormWeight != nil && gqa.kNormWeight != nil {
+	if seqLen == 1 && gqa.rope != nil && gqa.qNormWeight != nil && gqa.kNormWeight != nil {
 		realEngine := compute.Engine[T](gqa.engine)
 		if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
 			realEngine = proxy.Real()
@@ -551,60 +569,72 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, reshapeErr
 		}
 
-		// Apply RoPE to Q and K
-		qForRoPE, reshapeErr := gqa.engine.Reshape(ctx, qHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
-		if reshapeErr != nil {
-			return nil, reshapeErr
-		}
-
-		kForRoPE, reshapeErr := gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
-		if reshapeErr != nil {
-			return nil, reshapeErr
-		}
-
-		// Set RoPE position offset from cached sequence length so that decode
-		// tokens get the correct absolute position rotation.
-		// GPU path: use GPU-resident counter to avoid CPU readback that would
-		// break CUDA graph capture.
-		gpuRoPEApplied := false
-		if hasCache {
-			type unfusedGPUCounterProvider interface {
-				GPUCounterPtr() unsafe.Pointer
+		if gqa.rope != nil {
+			// Apply RoPE to Q and K
+			qForRoPE, reshapeErr := gqa.engine.Reshape(ctx, qHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
+			if reshapeErr != nil {
+				return nil, reshapeErr
 			}
-			if gcp, ok := cache.(unfusedGPUCounterProvider); ok && gcp.GPUCounterPtr() != nil {
-				realEng := compute.Engine[T](gqa.engine)
-				if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
-					realEng = proxy.Real()
+
+			kForRoPE, reshapeErr := gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
+			if reshapeErr != nil {
+				return nil, reshapeErr
+			}
+
+			// Set RoPE position offset from cached sequence length so that decode
+			// tokens get the correct absolute position rotation.
+			// GPU path: use GPU-resident counter to avoid CPU readback that would
+			// break CUDA graph capture.
+			gpuRoPEApplied := false
+			if hasCache {
+				type unfusedGPUCounterProvider interface {
+					GPUCounterPtr() unsafe.Pointer
 				}
-				if sp, ok := realEng.(compute.StreamProvider); ok {
-					cosAngles, sinAngles, _, angleErr := gqa.rope.GetAnglesGPU(gcp.GPUCounterPtr(), seqLen, sp.Stream())
-					if angleErr == nil {
-						if provider, ok := realEng.(compute.FusedRoPEProvider[T]); ok {
-							qOut, qErr := provider.GPUFusedRoPE(qForRoPE, cosAngles, sinAngles, gqa.headDim)
-							kOut, kErr := provider.GPUFusedRoPE(kForRoPE, cosAngles, sinAngles, gqa.headDim)
-							if qErr == nil && kErr == nil {
-								qHeadsRoPE = qOut
-								kHeadsRoPE = kOut
-								gpuRoPEApplied = true
+				if gcp, ok := cache.(unfusedGPUCounterProvider); ok && gcp.GPUCounterPtr() != nil {
+					realEng := compute.Engine[T](gqa.engine)
+					if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+						realEng = proxy.Real()
+					}
+					if sp, ok := realEng.(compute.StreamProvider); ok {
+						cosAngles, sinAngles, _, angleErr := gqa.rope.GetAnglesGPU(gcp.GPUCounterPtr(), seqLen, sp.Stream())
+						if angleErr == nil {
+							if provider, ok := realEng.(compute.FusedRoPEProvider[T]); ok {
+								qOut, qErr := provider.GPUFusedRoPE(qForRoPE, cosAngles, sinAngles, gqa.headDim)
+								kOut, kErr := provider.GPUFusedRoPE(kForRoPE, cosAngles, sinAngles, gqa.headDim)
+								if qErr == nil && kErr == nil {
+									qHeadsRoPE = qOut
+									kHeadsRoPE = kOut
+									gpuRoPEApplied = true
+								}
 							}
 						}
 					}
 				}
+				if !gpuRoPEApplied {
+					gqa.rope.SetPositionOffset(cache.SeqLen())
+				}
+			} else {
+				gqa.rope.SetPositionOffset(0)
 			}
+
 			if !gpuRoPEApplied {
-				gqa.rope.SetPositionOffset(cache.SeqLen())
+				qHeadsRoPE, err = gqa.rope.Forward(ctx, qForRoPE)
+				if err != nil {
+					return nil, err
+				}
+
+				kHeadsRoPE, err = gqa.rope.Forward(ctx, kForRoPE)
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else {
-			gqa.rope.SetPositionOffset(0)
-		}
-
-		if !gpuRoPEApplied {
-			qHeadsRoPE, err = gqa.rope.Forward(ctx, qForRoPE)
+			// No RoPE: use Q and K heads as-is, reshaped for attention.
+			qHeadsRoPE, err = gqa.engine.Reshape(ctx, qHeads, []int{batchSize * gqa.numQueryHeads, seqLen, gqa.headDim})
 			if err != nil {
 				return nil, err
 			}
-
-			kHeadsRoPE, err = gqa.rope.Forward(ctx, kForRoPE)
+			kHeadsRoPE, err = gqa.engine.Reshape(ctx, kHeads, []int{batchSize * gqa.numKeyValueHeads, seqLen, gqa.headDim})
 			if err != nil {
 				return nil, err
 			}
@@ -946,13 +976,20 @@ func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.Ba
 	// dQ: [batch*numQ, seq, headDim], dK: [batch*numKV, seq, headDim], dV: [batch*numKV, seq, headDim]
 
 	// 5. RoPE backward (Q and K only; V does not go through RoPE)
-	dQAfterRoPE, err := gqa.rope.Backward(ctx, mode, dQ)
-	if err != nil {
-		return nil, fmt.Errorf("rope backward Q: %w", err)
-	}
-	dKAfterRoPE, err := gqa.rope.Backward(ctx, mode, dK)
-	if err != nil {
-		return nil, fmt.Errorf("rope backward K: %w", err)
+	var dQAfterRoPE, dKAfterRoPE []*tensor.TensorNumeric[T]
+	if gqa.rope != nil {
+		dQAfterRoPE, err = gqa.rope.Backward(ctx, mode, dQ)
+		if err != nil {
+			return nil, fmt.Errorf("rope backward Q: %w", err)
+		}
+		dKAfterRoPE, err = gqa.rope.Backward(ctx, mode, dK)
+		if err != nil {
+			return nil, fmt.Errorf("rope backward K: %w", err)
+		}
+	} else {
+		// No RoPE: gradients pass through unchanged.
+		dQAfterRoPE = []*tensor.TensorNumeric[T]{dQ}
+		dKAfterRoPE = []*tensor.TensorNumeric[T]{dK}
 	}
 
 	// 6. Reverse head split: reshape/transpose back to projection shapes

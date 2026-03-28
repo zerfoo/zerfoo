@@ -58,3 +58,114 @@ func TestGroupedQueryAttention_Forward_Shape(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupedQueryAttention_Forward_NoRoPE(t *testing.T) {
+	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+	tests := []struct {
+		name             string
+		batchSize        int
+		seqLen           int
+		modelDim         int
+		numQueryHeads    int
+		numKeyValueHeads int
+	}{
+		{
+			name:             "MHA no RoPE",
+			batchSize:        1,
+			seqLen:           5,
+			modelDim:         16,
+			numQueryHeads:    4,
+			numKeyValueHeads: 4,
+		},
+		{
+			name:             "GQA no RoPE",
+			batchSize:        2,
+			seqLen:           7,
+			modelDim:         16,
+			numQueryHeads:    4,
+			numKeyValueHeads: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gqa, err := NewGroupedQueryAttention[float32](
+				engine,
+				numeric.Float32Ops{},
+				tt.modelDim,
+				tt.numQueryHeads,
+				tt.numKeyValueHeads,
+				WithNoRoPE[float32](),
+			)
+			if err != nil {
+				t.Fatalf("failed to construct GQA: %v", err)
+			}
+
+			if gqa.rope != nil {
+				t.Fatal("expected rope to be nil when WithNoRoPE is set")
+			}
+
+			inp, err := tensor.New[float32]([]int{tt.batchSize, tt.seqLen, tt.modelDim}, nil)
+			if err != nil {
+				t.Fatalf("failed creating input: %v", err)
+			}
+			for i := range inp.Data() {
+				inp.Data()[i] = float32(i%13) / 10.0
+			}
+
+			out, err := gqa.Forward(context.Background(), inp)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			expected := []int{tt.batchSize, tt.seqLen, tt.modelDim}
+			if !testutils.IntSliceEqual(expected, out.Shape()) {
+				t.Fatalf("unexpected output shape: got %v want %v", out.Shape(), expected)
+			}
+
+			for i, v := range out.Data() {
+				if v != v { // NaN check
+					t.Fatalf("output contains NaN at idx %d", i)
+				}
+			}
+		})
+	}
+}
+
+func TestGroupedQueryAttention_NoRoPE_SetDocumentBoundaries(t *testing.T) {
+	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+	gqa, err := NewGroupedQueryAttention[float32](
+		engine,
+		numeric.Float32Ops{},
+		16, 4, 4,
+		WithNoRoPE[float32](),
+	)
+	if err != nil {
+		t.Fatalf("failed to construct GQA: %v", err)
+	}
+
+	// Should not panic when rope is nil.
+	gqa.SetDocumentBoundaries([]int{0, 3})
+	gqa.SetDocumentBoundaries(nil)
+}
+
+func TestGroupedQueryAttention_NoRoPE_ScaleRope(t *testing.T) {
+	engine := compute.NewCPUEngine(numeric.Float32Ops{})
+
+	gqa, err := NewGroupedQueryAttention[float32](
+		engine,
+		numeric.Float32Ops{},
+		16, 4, 4,
+		WithNoRoPE[float32](),
+	)
+	if err != nil {
+		t.Fatalf("failed to construct GQA: %v", err)
+	}
+
+	// Should return nil when rope is nil.
+	if err := gqa.ScaleRope(context.Background(), 2.0); err != nil {
+		t.Fatalf("ScaleRope with nil rope should return nil, got: %v", err)
+	}
+}
