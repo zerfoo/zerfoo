@@ -1,7 +1,7 @@
 package generate
 
 import (
-
+	"sync"
 	"testing"
 	"time"
 )
@@ -763,6 +763,83 @@ func TestTieredKVStore_PrefetchAsyncDedup(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("second PrefetchAsync did not produce data")
+}
+
+func TestTieredKVStore_ConcurrentAccess(t *testing.T) {
+	store := newTieredStore(t, 4, 128)
+
+	// Seed all layers with data.
+	for layer := range 4 {
+		k := makeTensor(t, []int{1, 1, 2}, []float32{float32(layer), float32(layer + 1)})
+		v := makeTensor(t, []int{1, 1, 2}, []float32{float32(layer + 10), float32(layer + 11)})
+		if err := store.Update(layer, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Demote layers 2 and 3 to warm and cold respectively.
+	if err := store.Demote(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(3); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(3); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	const goroutines = 8
+	const iterations = 50
+
+	// Concurrent reads from all tiers.
+	for g := range goroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			layer := id % 4
+			for range iterations {
+				store.Get(layer)
+			}
+		}(g)
+	}
+
+	// Concurrent updates.
+	for g := range goroutines / 2 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			layer := id % 2
+			for range iterations {
+				k := makeTensor(t, []int{1, 1, 2}, []float32{float32(id), float32(id + 1)})
+				v := makeTensor(t, []int{1, 1, 2}, []float32{float32(id + 10), float32(id + 11)})
+				store.Update(layer, k, v)
+			}
+		}(g)
+	}
+
+	// Concurrent tier queries.
+	for range goroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				for layer := range 4 {
+					store.Tier(layer)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Store should still be in a consistent state.
+	for layer := range 4 {
+		tier := store.Tier(layer)
+		if tier < TierHot || tier > TierCold {
+			t.Errorf("Tier(%d) = %d, out of valid range", layer, tier)
+		}
+	}
 }
 
 func TestTieredKVStore_ResetClearsPrefetched(t *testing.T) {

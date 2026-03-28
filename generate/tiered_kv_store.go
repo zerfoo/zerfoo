@@ -42,6 +42,8 @@ type tieredLayerState struct {
 // (compressed). If demoted again, data moves to the cold tier (disk).
 // Accessing a cold or warm layer promotes it back toward the hot tier.
 type TieredKVStore[T tensor.Numeric] struct {
+	mu sync.RWMutex // protects all tier state for concurrent serve access
+
 	hot  *KVCache[T]
 	warm *CompressedKVCache[T]
 
@@ -142,6 +144,8 @@ func (s *TieredKVStore[T]) NumLayers() int {
 
 // Tier returns the current storage tier for the given layer.
 func (s *TieredKVStore[T]) Tier(layer int) Tier {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if layer < 0 || layer >= s.numLayers {
 		return TierHot
 	}
@@ -152,6 +156,8 @@ func (s *TieredKVStore[T]) Tier(layer int) Tier {
 // Data is always written to the hot tier. If the layer was in a lower tier,
 // it is promoted to hot first.
 func (s *TieredKVStore[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if layer < 0 || layer >= s.numLayers {
 		return fmt.Errorf("layer index %d out of range [0, %d)", layer, s.numLayers)
 	}
@@ -172,6 +178,8 @@ func (s *TieredKVStore[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]
 // The data is retrieved from whichever tier the layer currently resides in.
 // Accessing a layer increments its access count.
 func (s *TieredKVStore[T]) Get(layer int) (*LayerKV[T], bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if layer < 0 || layer >= s.numLayers {
 		return nil, false
 	}
@@ -197,6 +205,8 @@ func (s *TieredKVStore[T]) SeqLen() int {
 
 // Reset clears all tiers, resets access counts, and drains prefetched data.
 func (s *TieredKVStore[T]) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.hot.Reset()
 	s.warm.Reset()
 	s.clearColdDir()
@@ -211,6 +221,8 @@ func (s *TieredKVStore[T]) Reset() {
 
 // Truncate reduces the hot tier cache to the given sequence length.
 func (s *TieredKVStore[T]) Truncate(newSeqLen int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.hot.Truncate(newSeqLen)
 }
 
@@ -218,6 +230,8 @@ func (s *TieredKVStore[T]) Truncate(newSeqLen int) {
 // Layers with low access counts are demoted; layers with high access counts
 // are promoted. Access counts are reset after management.
 func (s *TieredKVStore[T]) ManageTiers() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range s.layerStates {
 		st := &s.layerStates[i]
 		switch {
@@ -237,6 +251,8 @@ func (s *TieredKVStore[T]) ManageTiers() error {
 
 // Demote moves a layer one tier down (hot→warm, warm→cold).
 func (s *TieredKVStore[T]) Demote(layer int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if layer < 0 || layer >= s.numLayers {
 		return fmt.Errorf("layer index %d out of range [0, %d)", layer, s.numLayers)
 	}
@@ -245,6 +261,8 @@ func (s *TieredKVStore[T]) Demote(layer int) error {
 
 // Promote moves a layer one tier up (cold→warm, warm→hot).
 func (s *TieredKVStore[T]) Promote(layer int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if layer < 0 || layer >= s.numLayers {
 		return fmt.Errorf("layer index %d out of range [0, %d)", layer, s.numLayers)
 	}

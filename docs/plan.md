@@ -263,7 +263,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 
 #### E34.6: Integration and Validation
 
-- [ ] T34.6.1 Run go vet and linters on all new code  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T34.6.1 Run go vet and linters on all new code  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T34.2.3, T34.3.3, T34.4.4, T34.5.3
 
 - [ ] T34.6.2 Integration test: compressed cache with existing models  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
@@ -1087,7 +1087,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 #### Wave 6: Tests + Benchmarks (10 agents)
 
-- [ ] T35.1.3 Tests for Hadamard (ztensor)  Deps: T35.1.1, T35.1.2
+- [x] T35.1.3 Tests for Hadamard (ztensor)  Deps: T35.1.1, T35.1.2
 - [x] T35.2.3 Tests for QuaRot weight fusion  Deps: T35.2.1, T35.2.2  DONE 2026-03-27 PR #263
 - [x] T35.3.5 Tests and benchmarks for quantized KV  Deps: T35.3.1-T35.3.4  DONE 2026-03-27 PR #263
 - [x] T36.1.3 Tests for EAGLE head  Deps: T36.1.1, T36.1.2  DONE 2026-03-27 PR #263
@@ -1096,7 +1096,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T37.2.2 Unit tests for NSA  Deps: T37.1.4  DONE 2026-03-27 PR #263
 - [x] T38.1.3 Tests for expert placement  Deps: T38.1.1, T38.1.2  DONE 2026-03-27 PR #263
 - [ ] T38.2.3 Tests and benchmarks for hybrid MoE  Deps: T38.2.1, T38.2.2
-- [ ] T39.1.4 Tests for ternary storage/GEMV  Deps: T39.1.1-T39.1.3
+- [x] T39.1.4 Tests for ternary storage/GEMV  Deps: T39.1.1-T39.1.3
 - [x] T40.1.4 Tests for SVD conversion  Deps: T40.1.1-T40.1.3  DONE 2026-03-27 PR #263
 - [x] T40.2.2 Validate MLA KV cache stores latent  Deps: T40.2.1  DONE 2026-03-27 PR #263
 - [ ] T40.2.4 Perplexity validation script  Deps: T40.2.1
@@ -1107,7 +1107,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 #### Wave 7: Final Lint + Integration (10 agents)
 
-- [ ] T34.1.4 Run vet/tests ztensor primitives  Deps: T34.1.1-T34.1.3
+- [x] T34.1.4 Run vet/tests ztensor primitives  Deps: T34.1.1-T34.1.3
 - [x] T34.2.3 Compressed cache tests  Deps: T34.2.1, T34.2.2
 - [x] T34.3.3 Document-wise RoPE tests  Deps: T34.3.1, T34.3.2
 - [x] T34.4.4 Sparse routed attention tests  Deps: T34.4.1-T34.4.3
@@ -1125,9 +1125,9 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 #### Wave 8: Final Integration (5 agents)
 
-- [ ] T34.6.1 Run go vet and linters all E34  Deps: all E34 tasks
+- [x] T34.6.1 Run go vet and linters all E34  Deps: all E34 tasks
 - [ ] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
-- [ ] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
+- [x] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
 - [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
 - [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
