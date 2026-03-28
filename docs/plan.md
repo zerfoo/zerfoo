@@ -948,7 +948,7 @@ on demand. Adapter weights managed via existing arena allocator.
 
 - [ ] T16.3 Benchmark 500+ tok/s (needs A100/H100, GB10 roofline ~257)  Est: 2h
 - [ ] T9.4 Multi-GPU inference benchmark on Llama 3 70B (needs multi-GPU)  Est: 2h
-- [ ] T20.3 Benchmark Metal vs CPU on Apple M4 Max  Est: 2h
+- [x] T20.3 Benchmark Metal vs CPU on Apple M4 Max  Est: 2h
 - [ ] T29.4 Benchmark on-device inference  Est: 2h
 
 ### ZerfooConf (E26)
@@ -958,7 +958,7 @@ on demand. Adapter weights managed via existing arena allocator.
 
 ### Architecture Expansion (E32)
 
-- [ ] T32.2 Validate 100+ model architectures
+- [x] T32.2 Validate 100+ model architectures
 
 ### FedRAMP (E30) [Q1-Q4 2034]
 

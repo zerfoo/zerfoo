@@ -3,6 +3,45 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-28: T20.3 Metal vs CPU Benchmark on Apple M4
+
+**Type:** benchmark
+**Tags:** metal, m4, apple, cpu, benchmark
+
+**Problem:** Benchmark Metal GPU backend vs CPU on Apple M4.
+
+**Results (Apple M4, 10-core CPU, 10-core GPU):**
+
+Metal kernel tests: all 10 pass (Add, Sub, Mul, Div, Exp, Log, Sqrt, Sin, Cos, Tanh).
+
+CPU compute benchmarks (ztensor):
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| MatMul 64x64x64 | 29us | NEON SIMD |
+| MatMul 128x128x128 | 181us | NEON SIMD |
+| Add (100K) | 162us | |
+| Softmax (100K) | 206us | |
+| Q4_0 GEMV 4096x4096 | 692us | Fused dequant+SIMD |
+| Q4_K GEMV 4096x4096 | 4.3ms | Fused sub-block dequant |
+| Q5_K GEMV 4096x4096 | 4.3ms | |
+| FusedRMSNorm 128x1152 | 84us | 10x faster than unfused |
+| FusedRoPE 128x256 | 53us | 64x faster than unfused |
+| TTM Forward (32→8) | 40us | 48x faster than Python |
+
+Metal GPU path: kernel dispatch works. Full inference benchmark requires
+Metal compute shader compilation for MatMul/Attention kernels which are
+currently CUDA-only. Metal backend covers elementwise ops; MatMul and
+attention use CPU path on Apple Silicon.
+
+**Root cause:** Metal backend implements elementwise kernels but not MatMul/Attention.
+Full Metal inference requires porting the GEMM and attention CUDA kernels to MSL.
+
+**Fix:** N/A — Metal elementwise kernels work. MatMul/Attention Metal kernels are
+future work (E20 Apple Metal Backend was marked complete for the kernel subset).
+
+**Impact:** On Apple M4, inference runs on CPU with NEON SIMD. Metal accelerates
+elementwise ops. Full Metal inference needs MSL MatMul kernel.
+
 ## 2026-03-27: DGX Spark Integration Tests (Waves 4-8)
 
 **Type:** benchmark
