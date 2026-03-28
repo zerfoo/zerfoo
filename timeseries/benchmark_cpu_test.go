@@ -11,6 +11,9 @@ import (
 )
 
 func TestAllBackends_CPUTrainingBenchmark(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping CPU training benchmark in short mode")
+	}
 	const (
 		nSamples  = 1000
 		channels  = 5

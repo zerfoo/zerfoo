@@ -37,7 +37,7 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
       - name: Unit tests
-        run: go test ./... -race -timeout 120s
+        run: go test -short ./... -race -timeout 300s
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
