@@ -176,6 +176,11 @@ The base **Nemotron-H** architecture (`nemotron_h`) is the dense variant (no MoE
 
 ## Progress Log
 
+### 2026-03-28: Clarification — Nemotron-Cascade-2 confirmed
+- User confirmed the target is specifically Nemotron-Cascade-2 (30B-A3B).
+- The plan already covers this correctly via nemotron_h_moe architecture.
+- Nemotron-Cascade v1 (8B/14B) works via existing Qwen2 builder — no action needed.
+
 ### 2026-03-28: Plan created
 - Nemotron Cascade architecture support plan: 12 tasks, 3 waves
 - Two variants: nemotron_h (dense) and nemotron_h_moe (MoE)
