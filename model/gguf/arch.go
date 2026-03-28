@@ -310,6 +310,32 @@ var gemma3TensorNameMap = map[string]string{
 	"ffn_down.weight":            "mlp.down_proj.weight",
 }
 
+// gpt2TensorNameMap maps GGUF block-level tensor name suffixes for GPT-2.
+// GPT-2 uses fused QKV projections and biases on all linear layers.
+var gpt2TensorNameMap = map[string]string{
+	"attn_norm.weight":   "attn_norm.weight",
+	"attn_norm.bias":     "attn_norm.bias",
+	"attn_qkv.weight":    "attn_qkv.weight",
+	"attn_qkv.bias":      "attn_qkv.bias",
+	"attn_output.weight": "attn_output.weight",
+	"attn_output.bias":   "attn_output.bias",
+	"ffn_norm.weight":    "ffn_norm.weight",
+	"ffn_norm.bias":      "ffn_norm.bias",
+	"ffn_up.weight":      "ffn_up.weight",
+	"ffn_up.bias":        "ffn_up.bias",
+	"ffn_down.weight":    "ffn_down.weight",
+	"ffn_down.bias":      "ffn_down.bias",
+}
+
+// gpt2GlobalTensorMap maps global GGUF tensor names for GPT-2.
+var gpt2GlobalTensorMap = map[string]string{
+	"token_embd.weight":    "token_embd.weight",
+	"position_embd.weight": "position_embd.weight",
+	"output_norm.weight":   "output_norm.weight",
+	"output_norm.bias":     "output_norm.bias",
+	"output.weight":        "output.weight",
+}
+
 // bertTensorNameMap maps GGUF block-level tensor name suffixes to canonical names for BERT.
 var bertTensorNameMap = map[string]string{
 	"attn_norm.weight":   "attn_norm.weight",
@@ -355,10 +381,16 @@ var globalTensorMap = map[string]string{
 // uses different norm names than "llama").
 // Unknown names pass through unchanged.
 func MapTensorName(arch string, ggufName string) string {
-	// BERT uses its own global and block-level name maps that preserve
-	// GGUF-style names (the BERT builder looks them up directly).
-	if arch == "bert" {
-		if mapped, ok := bertGlobalTensorMap[ggufName]; ok {
+	// GPT-2 and BERT use their own global and block-level name maps that
+	// preserve GGUF-style names (their builders look them up directly).
+	if arch == "gpt2" || arch == "bert" {
+		globalMap := gpt2GlobalTensorMap
+		blockMap := gpt2TensorNameMap
+		if arch == "bert" {
+			globalMap = bertGlobalTensorMap
+			blockMap = bertTensorNameMap
+		}
+		if mapped, ok := globalMap[ggufName]; ok {
 			return mapped
 		}
 		m := blkPattern.FindStringSubmatch(ggufName)
@@ -367,7 +399,7 @@ func MapTensorName(arch string, ggufName string) string {
 		}
 		layerNum := m[1]
 		suffix := m[2]
-		if mapped, ok := bertTensorNameMap[suffix]; ok {
+		if mapped, ok := blockMap[suffix]; ok {
 			return "blk." + layerNum + "." + mapped
 		}
 		return ggufName

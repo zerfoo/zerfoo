@@ -74,6 +74,46 @@ func TestMapTensorName_Phi3_QKV(t *testing.T) {
 	}
 }
 
+func TestMapTensorName_GPT2(t *testing.T) {
+	tests := []struct {
+		gguf string
+		want string
+	}{
+		// Global tensors.
+		{"token_embd.weight", "token_embd.weight"},
+		{"position_embd.weight", "position_embd.weight"},
+		{"output_norm.weight", "output_norm.weight"},
+		{"output_norm.bias", "output_norm.bias"},
+		{"output.weight", "output.weight"},
+		// Block-level tensors (layer 0).
+		{"blk.0.attn_norm.weight", "blk.0.attn_norm.weight"},
+		{"blk.0.attn_norm.bias", "blk.0.attn_norm.bias"},
+		{"blk.0.attn_qkv.weight", "blk.0.attn_qkv.weight"},
+		{"blk.0.attn_qkv.bias", "blk.0.attn_qkv.bias"},
+		{"blk.0.attn_output.weight", "blk.0.attn_output.weight"},
+		{"blk.0.attn_output.bias", "blk.0.attn_output.bias"},
+		{"blk.0.ffn_norm.weight", "blk.0.ffn_norm.weight"},
+		{"blk.0.ffn_norm.bias", "blk.0.ffn_norm.bias"},
+		{"blk.0.ffn_up.weight", "blk.0.ffn_up.weight"},
+		{"blk.0.ffn_up.bias", "blk.0.ffn_up.bias"},
+		{"blk.0.ffn_down.weight", "blk.0.ffn_down.weight"},
+		{"blk.0.ffn_down.bias", "blk.0.ffn_down.bias"},
+		// Higher layer numbers.
+		{"blk.11.attn_qkv.weight", "blk.11.attn_qkv.weight"},
+		{"blk.11.ffn_down.bias", "blk.11.ffn_down.bias"},
+		// Unknown tensor passes through.
+		{"some.unknown.tensor", "some.unknown.tensor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.gguf, func(t *testing.T) {
+			got := MapTensorName("gpt2", tt.gguf)
+			if got != tt.want {
+				t.Errorf("MapTensorName(gpt2, %q) = %q, want %q", tt.gguf, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMapTensorName_Unknown(t *testing.T) {
 	// Unknown names pass through unchanged.
 	got := MapTensorName("llama", "some.unknown.tensor")
