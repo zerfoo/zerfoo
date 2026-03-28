@@ -55,8 +55,12 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 	}
 
 	var cacheProvider CacheProvider[T]
-	if gen.blockPool != nil {
+	if gen.compressedKVChunkSize > 0 {
+		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
+	} else if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
+	} else if qc, ok := gen.newQuantizedCache(); ok {
+		cacheProvider = qc
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
 		cacheProvider = gen.newTensorCache()
 	} else {

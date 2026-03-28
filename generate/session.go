@@ -40,8 +40,12 @@ type InferenceSession[T tensor.Numeric] struct {
 // maintains independent KV cache state for isolation.
 func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 	var cache CacheProvider[T]
-	if gen.blockPool != nil {
+	if gen.compressedKVChunkSize > 0 {
+		cache = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
+	} else if gen.blockPool != nil {
 		cache = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
+	} else if qc, ok := gen.newQuantizedCache(); ok {
+		cache = qc
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
 		cache = gen.newTensorCache()
 	} else {
