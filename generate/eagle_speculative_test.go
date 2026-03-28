@@ -363,6 +363,55 @@ func TestEAGLEVerifyTokens(t *testing.T) {
 			t.Errorf("expected bonus=7, got %d", bonus)
 		}
 	})
+
+	t.Run("partial_accept_mid_sequence", func(t *testing.T) {
+		// Draft tokens: [4, 5, 6, 7] (4 drafts)
+		// Target logits:
+		//   pos 0 -> 5 (matches draft[1]=5) -> accept 4
+		//   pos 1 -> 6 (matches draft[2]=6) -> accept 5
+		//   pos 2 -> 3 (disagrees with draft[3]=7) -> accept 6, bonus=3
+		data := make([]float32, 4*vocabSize)
+		for i := range data {
+			data[i] = -10.0
+		}
+		data[5] = 10.0               // pos 0 -> 5
+		data[vocabSize+6] = 10.0     // pos 1 -> 6
+		data[2*vocabSize+3] = 10.0   // pos 2 -> 3 (mismatch with draft[3]=7)
+		data[3*vocabSize+7] = 10.0   // pos 3 (never reached)
+
+		logits, _ := tensor.New[float32]([]int{1, 4, vocabSize}, data)
+		accepted, bonus := eg.verifyTokens(logits, []int{4, 5, 6, 7}, map[int]bool{2: true})
+
+		if len(accepted) != 3 {
+			t.Errorf("expected 3 accepted (partial), got %d: %v", len(accepted), accepted)
+		}
+		if bonus != 3 {
+			t.Errorf("expected bonus=3 (target correction), got %d", bonus)
+		}
+	})
+
+	t.Run("single_draft_token", func(t *testing.T) {
+		// Draft tokens: [4] (single draft)
+		// Position 0 is last -> accept 4, bonus = target's prediction (3)
+		data := make([]float32, vocabSize)
+		for i := range data {
+			data[i] = -10.0
+		}
+		data[3] = 10.0 // pos 0 -> 3
+
+		logits, _ := tensor.New[float32]([]int{1, 1, vocabSize}, data)
+		accepted, bonus := eg.verifyTokens(logits, []int{4}, map[int]bool{2: true})
+
+		if len(accepted) != 1 {
+			t.Errorf("expected 1 accepted, got %d", len(accepted))
+		}
+		if accepted[0] != 4 {
+			t.Errorf("accepted[0] = %d, want 4", accepted[0])
+		}
+		if bonus != 3 {
+			t.Errorf("expected bonus=3, got %d", bonus)
+		}
+	})
 }
 
 func TestEAGLEExtractLastPosition(t *testing.T) {
@@ -432,6 +481,37 @@ func TestEAGLEGenerate_ForwardError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error from forward function")
+	}
+}
+
+func TestEAGLEGenerate_ValidTokenIDs(t *testing.T) {
+	// Verify that all generated tokens are valid IDs within the vocabulary.
+	vocabSize := 8
+	hiddenDim := 16
+	// Target cycles through tokens 3, 4, 5, 6 — all valid, no EOS.
+	eg := buildTestEAGLEGenerator(t, []int{3, 4, 5, 6}, vocabSize, hiddenDim, 3)
+
+	sc := SamplingConfig{
+		Temperature:  0,
+		MaxNewTokens: 12,
+	}
+
+	result, err := eg.Generate(context.Background(), "hello", sc)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+	// Re-encode the result to verify all token IDs are valid.
+	ids, err := eg.tokenizer.Encode(result)
+	if err != nil {
+		t.Fatalf("re-encode result: %v", err)
+	}
+	for i, id := range ids {
+		if id < 0 || id >= vocabSize {
+			t.Errorf("token[%d] = %d, out of vocab range [0, %d)", i, id, vocabSize)
+		}
 	}
 }
 
