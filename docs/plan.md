@@ -241,10 +241,10 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
   Deps: T34.1.1, T34.1.3, T34.2.1, T34.3.1
   File: layers/attention/sparse_routed_attention.go
 
-- [ ] T34.4.2 Implement auxiliary contrastive routing loss  Owner: TBD  Est: 3h  verifies: [UC-004]
+- [x] T34.4.2 Implement auxiliary contrastive routing loss  Owner: TBD  Est: 3h  verifies: [UC-004]  DONE 2026-03-27 PR #262
   Deps: T34.4.1. File: training/loss/routing_contrastive.go
 
-- [ ] T34.4.3 Register SparseRoutedAttention in layer registry  Owner: TBD  Est: 1h  verifies: [UC-003]
+- [x] T34.4.3 Register SparseRoutedAttention in layer registry  Owner: TBD  Est: 1h  verifies: [UC-003]  DONE 2026-03-27 PR #262
   Deps: T34.4.1
 
 - [ ] T34.4.4 Unit tests for sparse routed attention  Owner: TBD  Est: 3h  verifies: [UC-003]
@@ -255,7 +255,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.5.1 Implement TieredKVStore  Owner: TBD  Est: 4h  verifies: [UC-003]
   Deps: T34.2.1. File: generate/tiered_kv_store.go
 
-- [ ] T34.5.2 Add async CPU-to-GPU fetch  Owner: TBD  Est: 2h  verifies: [UC-003]
+- [x] T34.5.2 Add async CPU-to-GPU fetch  Owner: TBD  Est: 2h  verifies: [UC-003]  DONE 2026-03-27 PR #262
   Deps: T34.5.1
 
 - [ ] T34.5.3 Tests for tiered storage  Owner: TBD  Est: 2h  verifies: [UC-003]
@@ -311,7 +311,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Acceptance: Rotated model produces identical output to unrotated model
   within 1e-3 tolerance (rotation is information-preserving).
 
-- [ ] T35.2.2 Add --quarot flag to CLI and LoadFile option  Owner: TBD  Est: 1h  verifies: [UC-001, UC-006]
+- [x] T35.2.2 Add --quarot flag to CLI and LoadFile option  Owner: TBD  Est: 1h  verifies: [UC-001, UC-006]  DONE 2026-03-27 PR #262
   Deps: T35.2.1
   Files: inference/options.go, cmd/run.go
   Add `WithQuaRot()` option and `--quarot` CLI flag.
@@ -341,7 +341,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   better accuracy (quantize keys before RoPE rotation).
   Acceptance: Perplexity degradation < 0.5 on a reference model.
 
-- [ ] T35.3.3 Add quantized KV cache generator options  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T35.3.3 Add quantized KV cache generator options  Owner: TBD  Est: 1h  verifies: [UC-001]  DONE 2026-03-27 PR #262
   Deps: T35.3.1, T35.3.2
   Add `WithKVDtype("q4")` and `WithKVDtype("q3")` GeneratorOptions.
   Acceptance: Options create correct cache type. Existing FP16/FP32 unchanged.
@@ -402,7 +402,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   5. Adaptively adjust N based on rolling acceptance rate (reuse adaptive.go).
   Acceptance: Generates identical output to vanilla autoregressive (greedy).
 
-- [ ] T36.2.2 Add WithEAGLE generator option  Owner: TBD  Est: 1h  verifies: [UC-001, UC-007]
+- [x] T36.2.2 Add WithEAGLE generator option  Owner: TBD  Est: 1h  verifies: [UC-001, UC-007]  DONE 2026-03-27 PR #262
   Deps: T36.2.1
   File: generate/generator.go
   `WithEAGLE(headWeightsPath string)` loads EAGLE head weights and enables
@@ -479,7 +479,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E37.2: Registration and Testing
 
-- [ ] T37.2.1 Register NativeSparseAttention in layer registry  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T37.2.1 Register NativeSparseAttention in layer registry  Owner: TBD  Est: 1h  verifies: [UC-001]  DONE 2026-03-27 PR #262
   Deps: T37.1.4
   Acceptance: Builder creates valid layer from GGUF attributes.
 
@@ -523,7 +523,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 
 #### E38.2: Async CPU Expert Execution
 
-- [ ] T38.2.1 Implement async CPU expert dispatch  Owner: TBD  Est: 4h  verifies: [UC-001, UC-008]
+- [x] T38.2.1 Implement async CPU expert dispatch  Owner: TBD  Est: 4h  verifies: [UC-001, UC-008]  DONE 2026-03-27 PR #262
   Deps: T38.1.2
   File: inference/moe_async.go
   When MoE layer routes tokens to CPU-resident experts, dispatch the
@@ -532,7 +532,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Use sync.WaitGroup for synchronization.
   Acceptance: Async dispatch produces identical output to serial execution.
 
-- [ ] T38.2.2 Implement prefetch for predicted expert activation  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]
+- [x] T38.2.2 Implement prefetch for predicted expert activation  Owner: TBD  Est: 3h  verifies: [UC-001, UC-008]  DONE 2026-03-27 PR #262
   Deps: T38.2.1
   File: inference/moe_prefetch.go
   Predict which experts will be needed in the next layer based on
@@ -597,7 +597,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   TernaryStorage and wire to ternary GEMV path in MatMul layer.
   Acceptance: GGUF with ternary tensors loads without error.
 
-- [ ] T39.2.2 Wire ternary MatMul into computation graph  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
+- [x] T39.2.2 Wire ternary MatMul into computation graph  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]  DONE 2026-03-27 PR #262
   Deps: T39.2.1, T39.1.2
   File: layers/core/matmul.go
   When weight tensor has TernaryStorage, dispatch to ternary GEMV
@@ -650,7 +650,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Use ztensor/gguf writer.
   Acceptance: Output GGUF loads without error. Tensor shapes match expected.
 
-- [ ] T40.1.3 Implement transmla CLI command  Owner: TBD  Est: 1.5h  verifies: [UC-010]
+- [x] T40.1.3 Implement transmla CLI command  Owner: TBD  Est: 1.5h  verifies: [UC-010]  DONE 2026-03-27 PR #262
   Deps: T40.1.2
   File: cmd/transmla/main.go
   CLI: `zerfoo transmla --rank 512 --input model.gguf --output model-mla.gguf`
@@ -668,7 +668,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
 
 #### E40.2: Automatic MLA Inference Path
 
-- [ ] T40.2.1 Detect TransMLA tensors in GGUF and wire MLA layer  Owner: TBD  Est: 3h  verifies: [UC-001, UC-010]
+- [x] T40.2.1 Detect TransMLA tensors in GGUF and wire MLA layer  Owner: TBD  Est: 3h  verifies: [UC-001, UC-010]  DONE 2026-03-27 PR #262
   Deps: T40.1.2
   File: inference/arch_common.go
   In `buildTransformerGraph()`, check if the GGUF contains tensors with
@@ -861,7 +861,7 @@ on demand. Adapter weights managed via existing arena allocator.
   configured max adapters. On cache miss, load adapter from disk.
   Acceptance: Cache hit returns adapter instantly. Eviction frees GPU memory.
 
-- [ ] T44.1.4 Add adapter selection to serve API  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]
+- [x] T44.1.4 Add adapter selection to serve API  Owner: TBD  Est: 2h  verifies: [UC-002, UC-012]  DONE 2026-03-27 PR #262
   Deps: T44.1.2, T44.1.3
   File: serve/server.go
   Add optional `model` field in ChatCompletionRequest that specifies
@@ -1045,19 +1045,19 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 
 #### Wave 4: Wiring + Options (10 agents)
 
-- [ ] T35.2.2 --quarot CLI flag  Deps: T35.2.1
-- [ ] T35.3.3 Quantized KV cache options  Deps: T35.3.1, T35.3.2
-- [ ] T36.2.2 WithEAGLE generator option  Deps: T36.2.1
-- [ ] T34.4.2 Contrastive routing loss  Deps: T34.4.1
-- [ ] T34.4.3 Register SparseRoutedAttention  Deps: T34.4.1
-- [ ] T34.5.2 Async CPU-to-GPU fetch  Deps: T34.5.1
-- [ ] T38.2.1 Async CPU expert dispatch  Deps: T38.1.2
-- [ ] T39.2.2 Wire ternary MatMul into graph  Deps: T39.2.1, T39.1.2
-- [ ] T37.2.1 Register NSA in layer registry  Deps: T37.1.4
-- [ ] T38.2.2 Prefetch predicted experts  Deps: T38.2.1
-- [ ] T40.1.3 TransMLA CLI command  Deps: T40.1.2
-- [ ] T40.2.1 Detect TransMLA tensors and wire MLA  Deps: T40.1.2
-- [ ] T44.1.4 Adapter selection in serve API  Deps: T44.1.2, T44.1.3
+- [x] T35.2.2 --quarot CLI flag  Deps: T35.2.1  DONE 2026-03-27 PR #262
+- [x] T35.3.3 Quantized KV cache options  Deps: T35.3.1, T35.3.2  DONE 2026-03-27 PR #262
+- [x] T36.2.2 WithEAGLE generator option  Deps: T36.2.1  DONE 2026-03-27 PR #262
+- [x] T34.4.2 Contrastive routing loss  Deps: T34.4.1  DONE 2026-03-27 PR #262
+- [x] T34.4.3 Register SparseRoutedAttention  Deps: T34.4.1  DONE 2026-03-27 PR #262
+- [x] T34.5.2 Async CPU-to-GPU fetch  Deps: T34.5.1  DONE 2026-03-27 PR #262
+- [x] T38.2.1 Async CPU expert dispatch  Deps: T38.1.2  DONE 2026-03-27 PR #262
+- [x] T39.2.2 Wire ternary MatMul into graph  Deps: T39.2.1, T39.1.2  DONE 2026-03-27 PR #262
+- [x] T37.2.1 Register NSA in layer registry  Deps: T37.1.4  DONE 2026-03-27 PR #262
+- [x] T38.2.2 Prefetch predicted experts  Deps: T38.2.1  DONE 2026-03-27 PR #262
+- [x] T40.1.3 TransMLA CLI command  Deps: T40.1.2  DONE 2026-03-27 PR #262
+- [x] T40.2.1 Detect TransMLA tensors and wire MLA  Deps: T40.1.2  DONE 2026-03-27 PR #262
+- [x] T44.1.4 Adapter selection in serve API  Deps: T44.1.2, T44.1.3  DONE 2026-03-27 PR #262
 
 #### Wave 5: Independent Existing Work (10 agents)
 
