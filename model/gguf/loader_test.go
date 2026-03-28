@@ -1475,3 +1475,115 @@ func TestTensorByteSize_TQ2_0(t *testing.T) {
 		}
 	}
 }
+
+func TestTensorByteSize_Q2K(t *testing.T) {
+	tests := []struct {
+		numElements int
+		wantBytes   int
+	}{
+		{256, 84},
+		{512, 168},
+		{257, 168}, // 2 blocks
+	}
+	for _, tt := range tests {
+		got, err := TensorByteSize(GGMLTypeQ2_K, tt.numElements)
+		if err != nil {
+			t.Fatalf("TensorByteSize(Q2_K, %d): %v", tt.numElements, err)
+		}
+		if got != tt.wantBytes {
+			t.Errorf("TensorByteSize(Q2_K, %d) = %d, want %d", tt.numElements, got, tt.wantBytes)
+		}
+	}
+}
+
+func TestTensorByteSize_Q3K(t *testing.T) {
+	tests := []struct {
+		numElements int
+		wantBytes   int
+	}{
+		{256, 110},
+		{512, 220},
+		{257, 220}, // 2 blocks
+	}
+	for _, tt := range tests {
+		got, err := TensorByteSize(GGMLTypeQ3_K, tt.numElements)
+		if err != nil {
+			t.Fatalf("TensorByteSize(Q3_K, %d): %v", tt.numElements, err)
+		}
+		if got != tt.wantBytes {
+			t.Errorf("TensorByteSize(Q3_K, %d) = %d, want %d", tt.numElements, got, tt.wantBytes)
+		}
+	}
+}
+
+func TestDecodeQ2KTensor(t *testing.T) {
+	const blockSize = 256
+	const blockBytes = 84
+	raw := make([]byte, blockBytes)
+
+	// Set d = 1.0 (fp16), dmin = 0.0 (fp16).
+	d16 := float16.FromFloat32(1.0)
+	binary.LittleEndian.PutUint16(raw[0:2], d16.Bits())
+	binary.LittleEndian.PutUint16(raw[2:4], 0) // dmin = 0
+
+	// Set all scales to 1 (low nibble = 1, high nibble = 0 for min).
+	for i := range 16 {
+		raw[4+i] = 0x01 // scale=1, min=0
+	}
+
+	// Set all qs to 0x55 = 01 01 01 01 in binary -> all quant values = 1.
+	for i := range 64 {
+		raw[20+i] = 0x55
+	}
+
+	tns, err := decodeQ2KTensor([]int{blockSize}, blockSize, raw)
+	if err != nil {
+		t.Fatalf("decodeQ2KTensor: %v", err)
+	}
+
+	data := tns.Data()
+	if len(data) != blockSize {
+		t.Fatalf("got %d elements, want %d", len(data), blockSize)
+	}
+
+	// With d=1, scale=1, min=0, quant=1: value = 1*1*1 - 0*0 = 1.0
+	// After Q4 re-quantization, values should be approximately 1.0.
+	for i, v := range data {
+		if v < 0.5 || v > 1.5 {
+			t.Errorf("index %d: got %v, want ~1.0", i, v)
+			break
+		}
+	}
+}
+
+func TestDecodeQ3KTensor(t *testing.T) {
+	const blockSize = 256
+	const blockBytes = 110
+	raw := make([]byte, blockBytes)
+
+	// Set d = 1.0 (fp16) at offset 108.
+	d16 := float16.FromFloat32(1.0)
+	binary.LittleEndian.PutUint16(raw[108:110], d16.Bits())
+
+	// hmask: all zeros -> high bit = 0 for all, so q |= 4 -> base quant += 4.
+	// qs: all zeros -> low 2 bits = 0 for all.
+	// So each 3-bit value = 4, then q - 4 = 0 -> all output values = 0.
+
+	tns, err := decodeQ3KTensor([]int{blockSize}, blockSize, raw)
+	if err != nil {
+		t.Fatalf("decodeQ3KTensor: %v", err)
+	}
+
+	data := tns.Data()
+	if len(data) != blockSize {
+		t.Fatalf("got %d elements, want %d", len(data), blockSize)
+	}
+
+	// All values should be ~0 (q-4 = 0, regardless of scale).
+	for i, v := range data {
+		if v < -0.5 || v > 0.5 {
+			t.Errorf("index %d: got %v, want ~0.0", i, v)
+			break
+		}
+	}
+}

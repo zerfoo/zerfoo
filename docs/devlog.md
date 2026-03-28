@@ -3,6 +3,26 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-27: Phi3/Llama3.1 GGUF Load Failure Investigation
+
+**Type:** investigation
+**Tags:** phi3, llama3.1, gguf, loader, Q2_K, Q3_K
+
+**Problem:** GGUF models for Phi-3 and Llama 3.1 fail to load with `unsupported GGML type 10` or `unsupported GGML type 11`. This affects K-quant models (Q4_K_M, Q3_K_M, Q2_K, etc.) where the quantizer uses Q2_K (type 10) and Q3_K (type 11) for smaller tensors (attention norms, biases) while using Q4_K/Q5_K for larger weight matrices.
+
+**Root cause:** The GGUF loader defined `GGMLTypeQ2_K` (10) and `GGMLTypeQ3_K` (11) as constants in `parser.go` but never implemented their decode paths in `loader.go`. Both `TensorByteSize` and `decodeTensor` fell through to the default `unsupported GGML type` error. The mmap loader (`loader_mmap.go`) also lacks Q2_K/Q3_K in its `mapGGMLType` function (requires ztensor GGMLType enum update).
+
+**Fix:** Added Q2_K and Q3_K decoders to `model/gguf/loader.go`:
+- `TensorByteSize`: Q2_K = 84 bytes/block (256 elements), Q3_K = 110 bytes/block (256 elements)
+- `decodeQ2KTensor`: dequantizes 2-bit quants with per-sub-block 4-bit scales/mins, re-quantizes to Q4_0
+- `decodeQ3KTensor`: dequantizes 3-bit quants (2-bit qs + 1-bit hmask) with 6-bit packed scales, re-quantizes to Q4_0
+- Tests added for byte size calculation and decode correctness
+
+**Impact:**
+- Unblocks loading of all K-quant Phi-3 and Llama 3.1 GGUF models via heap loading (`LoadGGUF`)
+- Mmap loading (`LoadGGUFMmap`) still blocked for Q2_K/Q3_K -- requires adding `GGMLTypeQ2_K` and `GGMLTypeQ3_K` to `ztensor/tensor/mmap_storage.go` and wiring dequantization in `MmapStorage.dequantize()`
+- Other missing types: Q4_1 (3), Q5_1 (7), Q8_1 (9), Q8_K (15) are defined but not decoded; these are rare in production GGUF files but could cause similar failures
+
 ## 2026-03-27: Wave 1-3 foundation tasks complete (37 tasks)
 
 **Type:** finding
