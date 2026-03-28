@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0](https://github.com/zerfoo/zerfoo/compare/v1.31.0...v1.32.0) (2026-03-28)
+
+
+### Features
+
+* add NewModel constructor and 5 pkg.go.dev Example functions ([ffc8c33](https://github.com/zerfoo/zerfoo/commit/ffc8c33731afef4b04301c0f8328e50e6246cc57))
+* **attention:** make RoPE optional in GQA for GPT-2 support ([ee8303a](https://github.com/zerfoo/zerfoo/commit/ee8303aa625772f0f8aac0c011b20409253f595b))
+* **gguf:** add GPT-2 tensor name mapping with position_embd support ([cbaf99f](https://github.com/zerfoo/zerfoo/commit/cbaf99f9b319ca1af6a3efc9ede629a0a37c3e0e))
+* **inference:** add GPT-2 architecture graph builder ([1d0ecc5](https://github.com/zerfoo/zerfoo/commit/1d0ecc5d6cc5b52765a0bf0c0a3167a7fa05caf2))
+* **inference:** add GPT-2 config parser for TinyStories support ([6368827](https://github.com/zerfoo/zerfoo/commit/6368827e4945ab478b205850b76d8aeb0cfec960))
+
 ## [1.31.0](https://github.com/zerfoo/zerfoo/compare/v1.30.0...v1.31.0) (2026-03-28)
 
 
