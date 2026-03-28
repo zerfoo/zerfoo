@@ -833,6 +833,118 @@ func TestMoEBackward(t *testing.T) {
 	})
 }
 
+// --- Sigmoid gating tests ---
+
+func TestMoEGate_SigmoidGating_TopKSelection(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 2, WithSigmoidGating[float32]())
+
+	// hiddenStates [1, 3], gateWeight [3, 3] identity
+	// Token [1, 0, 0] -> logits [1, 0, 0] -> sigmoid [0.731, 0.5, 0.5]
+	// Top-2 should pick expert 0 first (highest sigmoid), then expert 1 or 2.
+	hs, _ := tensor.New[float32]([]int{1, 3}, []float32{1, 0, 0})
+	gw, _ := tensor.New[float32]([]int{3, 3}, []float32{1, 0, 0, 0, 1, 0, 0, 0, 1})
+
+	out, err := gate.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+	if out.Shape()[0] != 1 || out.Shape()[1] != 2 {
+		t.Fatalf("shape = %v, want [1 2]", out.Shape())
+	}
+
+	// Verify top expert is expert 0 (highest logit=1 -> highest sigmoid).
+	if gate.cachedIndices[0][0] != 0 {
+		t.Errorf("top expert = %d, want 0", gate.cachedIndices[0][0])
+	}
+
+	// Verify weights sum to 1.0 (normalized).
+	data := out.Data()
+	sum := float64(data[0]) + float64(data[1])
+	if math.Abs(sum-1.0) > 1e-5 {
+		t.Errorf("weights sum = %f, want 1.0", sum)
+	}
+}
+
+func TestMoEGate_SigmoidGating_BiasShiftsSelection(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+
+	// Without bias: token [1,0,0] with identity gate -> expert 0 is top.
+	// With large bias on expert 2: sigmoid(0 + 10) >> sigmoid(1 + 0), so expert 2 wins.
+	bias, _ := tensor.New[float32]([]int{3}, []float32{0, 0, 10})
+	gate := NewMoEGate[float32](eng, ops, 1,
+		WithSigmoidGating[float32](),
+		WithRoutingBias[float32](bias),
+	)
+
+	hs, _ := tensor.New[float32]([]int{1, 3}, []float32{1, 0, 0})
+	gw, _ := tensor.New[float32]([]int{3, 3}, []float32{1, 0, 0, 0, 1, 0, 0, 0, 1})
+
+	_, err := gate.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Bias should shift expert 2 to the top.
+	if gate.cachedIndices[0][0] != 2 {
+		t.Errorf("top expert = %d, want 2 (bias should shift selection)", gate.cachedIndices[0][0])
+	}
+}
+
+func TestMoEGate_SigmoidGating_NormalizedWeights(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 3, WithSigmoidGating[float32]())
+
+	// 2 tokens, 4 experts, topK=3
+	hs, _ := tensor.New[float32]([]int{2, 4}, []float32{
+		1, 2, 0, -1,
+		-1, 0, 3, 1,
+	})
+	gw, _ := tensor.New[float32]([]int{4, 4}, []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	})
+
+	out, err := gate.Forward(context.Background(), hs, gw)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	data := out.Data()
+	topK := 3
+	for row := 0; row < 2; row++ {
+		sum := float64(0)
+		for k := 0; k < topK; k++ {
+			sum += float64(data[row*topK+k])
+		}
+		if math.Abs(sum-1.0) > 1e-5 {
+			t.Errorf("row %d: weights sum = %f, want ~1.0", row, sum)
+		}
+	}
+}
+
+func TestMoEGate_SigmoidGating_Attributes(t *testing.T) {
+	eng := makeFloat32Engine()
+	ops := numeric.Float32Ops{}
+	gate := NewMoEGate[float32](eng, ops, 2, WithSigmoidGating[float32]())
+	attrs := gate.Attributes()
+	if v, ok := attrs["sigmoid_gating"]; !ok || v != true {
+		t.Errorf("attributes[sigmoid_gating] = %v, want true", attrs["sigmoid_gating"])
+	}
+
+	// Without sigmoid gating, attribute should not be present.
+	gate2 := NewMoEGate[float32](eng, ops, 2)
+	attrs2 := gate2.Attributes()
+	if _, ok := attrs2["sigmoid_gating"]; ok {
+		t.Error("sigmoid_gating attribute should not be present when not enabled")
+	}
+}
+
 // BenchmarkMoE_SequentialBaseline benchmarks the sequential path by running
 // one token at a time and accumulating, simulating the old per-token dispatch.
 func BenchmarkMoE_SequentialBaseline(b *testing.B) {

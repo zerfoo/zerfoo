@@ -421,6 +421,51 @@ func TestExtractModelConfig_NemotronSSM(t *testing.T) {
 	})
 }
 
+func TestMapTensorName_MiniMaxM2(t *testing.T) {
+	tests := []struct {
+		gguf string
+		want string
+	}{
+		// Global tensors.
+		{"token_embd.weight", "token_embd.weight"},
+		{"output_norm.weight", "output_norm.weight"},
+		{"output.weight", "output.weight"},
+		// Block-level attention tensors.
+		{"blk.0.attn_norm.weight", "blk.0.attn_norm.weight"},
+		{"blk.0.attn_q.weight", "blk.0.attn_q.weight"},
+		{"blk.0.attn_k.weight", "blk.0.attn_k.weight"},
+		{"blk.0.attn_v.weight", "blk.0.attn_v.weight"},
+		{"blk.0.attn_output.weight", "blk.0.attn_output.weight"},
+		// QK norms.
+		{"blk.0.attn_q_norm.weight", "blk.0.attn_q_norm.weight"},
+		{"blk.0.attn_k_norm.weight", "blk.0.attn_k_norm.weight"},
+		// FFN norm.
+		{"blk.0.ffn_norm.weight", "blk.0.ffn_norm.weight"},
+		// MoE router.
+		{"blk.0.ffn_gate_inp.weight", "blk.0.ffn_gate_inp.weight"},
+		// MoE routing bias (unique to MiniMax-M2).
+		{"blk.0.exp_probs_b", "blk.0.exp_probs_b"},
+		// Stacked expert tensors.
+		{"blk.0.ffn_gate_exps.weight", "blk.0.ffn_gate_exps.weight"},
+		{"blk.0.ffn_up_exps.weight", "blk.0.ffn_up_exps.weight"},
+		{"blk.0.ffn_down_exps.weight", "blk.0.ffn_down_exps.weight"},
+		// Higher layer numbers.
+		{"blk.61.attn_q.weight", "blk.61.attn_q.weight"},
+		{"blk.61.exp_probs_b", "blk.61.exp_probs_b"},
+		{"blk.61.ffn_gate_exps.weight", "blk.61.ffn_gate_exps.weight"},
+		// Unknown tensor passes through.
+		{"some.unknown.tensor", "some.unknown.tensor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.gguf, func(t *testing.T) {
+			got := MapTensorName("minimax-m2", tt.gguf)
+			if got != tt.want {
+				t.Errorf("MapTensorName(minimax-m2, %q) = %q, want %q", tt.gguf, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractModelConfig_KVHeadsDefaultsToHeads(t *testing.T) {
 	meta := map[string]any{
 		"general.architecture":       "llama",
