@@ -183,7 +183,7 @@ All in ztensor repo. Q4_K is 45% slower than Q4_0.
 - [x] GTS-T1 Generate Python golden files  Est: 4h
   Acceptance: 10 golden files checked in with input/output pairs.
 
-- [ ] GTS-T2 Run Zerfoo against golden files  Est: 4h  Deps: GTS-T1
+- [x] GTS-T2 Run Zerfoo against golden files  Est: 4h  Deps: GTS-T1
   Acceptance: All 10 test cases pass within 1e-4 tolerance.
 
 - [ ] GTS-T3 Benchmark latency vs Python granite-tsfm  Est: 2h  Deps: GTS-T2
@@ -1083,7 +1083,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] GTS-T1 Generate Python golden files  verifies: [UC-005]
 - [x] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
 - [x] KQ-T2 Optimize Q4_K GEMV kernel (ztensor)  Deps: KQ-T1
-- [ ] GTS-T2 Run Zerfoo against golden files  Deps: GTS-T1
+- [x] GTS-T2 Run Zerfoo against golden files  Deps: GTS-T1
 
 #### Wave 6: Tests + Benchmarks (10 agents)
 
