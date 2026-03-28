@@ -453,6 +453,91 @@ func TestCompressedKVCache_Truncate(t *testing.T) {
 	}
 }
 
+func TestCompressedKVCache_CacheProviderCompliance(t *testing.T) {
+	// Compile-time interface assertion.
+	var _ CacheProvider[float32] = (*CompressedKVCache[float32])(nil)
+
+	// Exercise all CacheProvider methods through the interface.
+	engine := newTestEngine()
+	var cache CacheProvider[float32] = NewCompressedKVCache[float32](engine, 2, 1, 2, 2)
+
+	if cache.SeqLen() != 0 {
+		t.Fatalf("SeqLen() = %d, want 0", cache.SeqLen())
+	}
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{1, 2})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{3, 4})
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+	if s := lkv.Key.Shape(); s[0] != 1 || s[1] != 1 || s[2] != 2 {
+		t.Errorf("Key shape = %v, want [1 1 2]", s)
+	}
+
+	if cache.SeqLen() != 1 {
+		t.Errorf("SeqLen() = %d, want 1", cache.SeqLen())
+	}
+
+	cache.Truncate(0)
+	if cache.SeqLen() != 0 {
+		t.Errorf("SeqLen() after Truncate(0) = %d, want 0", cache.SeqLen())
+	}
+
+	// Re-populate and reset.
+	if err := cache.Update(0, k, v); err != nil {
+		t.Fatalf("Update after truncate: %v", err)
+	}
+	cache.Reset()
+	if cache.SeqLen() != 0 {
+		t.Errorf("SeqLen() after Reset = %d, want 0", cache.SeqLen())
+	}
+}
+
+func TestCompressedKVCache_ChunkSizeGreaterThanSeqLen(t *testing.T) {
+	engine := newTestEngine()
+	const dim = 2
+	const chunkSize = 100 // larger than the number of tokens we'll insert
+	cache := NewCompressedKVCache[float32](engine, 1, 1, dim, chunkSize)
+
+	// Insert 3 tokens, all within a single chunk (no compression).
+	tokens := [][]float32{{1, 2}, {3, 4}, {5, 6}}
+	for i, tok := range tokens {
+		k := makeTensor(t, []int{1, 1, dim}, tok)
+		v := makeTensor(t, []int{1, 1, dim}, tok)
+		if err := cache.Update(0, k, v); err != nil {
+			t.Fatalf("Update(%d): %v", i, err)
+		}
+	}
+
+	if got := cache.SeqLen(); got != 3 {
+		t.Errorf("SeqLen() = %d, want 3", got)
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) should return true")
+	}
+
+	// No compression happened — shape [1, 3, 2], raw tokens returned.
+	shape := lkv.Key.Shape()
+	if shape[0] != 1 || shape[1] != 3 || shape[2] != dim {
+		t.Errorf("Key shape = %v, want [1 3 %d]", shape, dim)
+	}
+
+	data := lkv.Key.Data()
+	want := []float32{1, 2, 3, 4, 5, 6}
+	for i, w := range want {
+		if data[i] != w {
+			t.Errorf("Key data[%d] = %v, want %v", i, data[i], w)
+		}
+	}
+}
+
 func TestWithCompressedKV_CreatesCompressedKVCache(t *testing.T) {
 	cfg := ModelConfig{
 		VocabSize:  100,
