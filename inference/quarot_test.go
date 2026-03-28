@@ -202,6 +202,239 @@ func TestFuseQuaRotWeights_PreservesShape(t *testing.T) {
 	}
 }
 
+func TestFuseQuaRotWeights_WithQuaRotFalseIsNoOp(t *testing.T) {
+	// When WithQuaRot(false) is set, FuseQuaRotWeights should never be called.
+	// This test verifies the opt-out path: applying the option with false
+	// leaves loadOptions.quarot == false, meaning the LoadFile path skips fusion.
+	// We verify this by checking that weights are identical before and after
+	// a simulated "no quarot" path.
+	hiddenDim := 4
+	intermediateDim := 8
+	tensors := makeTestWeights(1, hiddenDim, intermediateDim)
+
+	// Save originals.
+	originals := make(map[string][]float32)
+	for name, tns := range tensors {
+		data := tns.Data()
+		cp := make([]float32, len(data))
+		copy(cp, data)
+		originals[name] = cp
+	}
+
+	// Simulate the LoadFile path with quarot=false: skip FuseQuaRotWeights entirely.
+	o := &loadOptions{}
+	WithQuaRot(false)(o)
+	if o.quarot {
+		// This would trigger fusion — verify it doesn't.
+		t.Fatal("WithQuaRot(false) should leave quarot=false")
+	}
+
+	// Weights must be unchanged since fusion was not called.
+	for name, orig := range originals {
+		current := tensors[name].Data()
+		for i := range orig {
+			if orig[i] != current[i] {
+				t.Errorf("tensor %q[%d] changed without fusion: %f != %f",
+					name, i, current[i], orig[i])
+			}
+		}
+	}
+}
+
+func TestFuseQuaRotWeights_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		tensors map[string]*tensor.TensorNumeric[float32]
+		layers  int
+		wantErr string
+	}{
+		{
+			name:    "negative numLayers",
+			tensors: map[string]*tensor.TensorNumeric[float32]{},
+			layers:  -1,
+			wantErr: "numLayers must be positive",
+		},
+		{
+			name:    "zero numLayers",
+			tensors: map[string]*tensor.TensorNumeric[float32]{},
+			layers:  0,
+			wantErr: "numLayers must be positive",
+		},
+		{
+			name:    "missing Q projection",
+			tensors: map[string]*tensor.TensorNumeric[float32]{},
+			layers:  1,
+			wantErr: "missing tensor",
+		},
+		{
+			name: "non-power-of-2 hidden dim",
+			tensors: func() map[string]*tensor.TensorNumeric[float32] {
+				data := make([]float32, 3*6)
+				for i := range data {
+					data[i] = float32(i)
+				}
+				w, _ := tensor.New([]int{3, 6}, data)
+				return map[string]*tensor.TensorNumeric[float32]{
+					"model.layers.0.self_attn.q_proj.weight": w,
+				}
+			}(),
+			layers:  1,
+			wantErr: "not a power of 2",
+		},
+		{
+			name: "1D weight tensor",
+			tensors: func() map[string]*tensor.TensorNumeric[float32] {
+				data := make([]float32, 4)
+				w, _ := tensor.New([]int{4}, data)
+				return map[string]*tensor.TensorNumeric[float32]{
+					"model.layers.0.self_attn.q_proj.weight": w,
+				}
+			}(),
+			layers:  1,
+			wantErr: "expected 2D weight tensor",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := FuseQuaRotWeights(tt.tensors, tt.layers)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if got := err.Error(); !contains(got, tt.wantErr) {
+				t.Errorf("error %q does not contain %q", got, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFuseQuaRotWeights_SingleFusionChangesWeights(t *testing.T) {
+	// Verify that a single fusion actually modifies all weight tensors.
+	hiddenDim := 4
+	intermediateDim := 8
+	numLayers := 1
+	tensors := makeTestWeights(numLayers, hiddenDim, intermediateDim)
+
+	originals := make(map[string][]float32)
+	for name, tns := range tensors {
+		data := tns.Data()
+		cp := make([]float32, len(data))
+		copy(cp, data)
+		originals[name] = cp
+	}
+
+	if err := FuseQuaRotWeights(tensors, numLayers); err != nil {
+		t.Fatalf("fusion: %v", err)
+	}
+
+	for name, orig := range originals {
+		rotated := tensors[name].Data()
+		changed := false
+		for i := range orig {
+			if orig[i] != rotated[i] {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			t.Errorf("tensor %q was not modified by fusion", name)
+		}
+	}
+}
+
+func TestFuseQuaRotWeights_SkipsMissingOptionalTensors(t *testing.T) {
+	// If a layer is missing some optional projections (e.g., GQA with fewer
+	// K/V heads), fusion should succeed and only process present tensors.
+	hiddenDim := 4
+	data := make([]float32, hiddenDim*hiddenDim)
+	for i := range data {
+		data[i] = float32(i + 1)
+	}
+	qW, _ := tensor.New([]int{hiddenDim, hiddenDim}, data)
+	tensors := map[string]*tensor.TensorNumeric[float32]{
+		"model.layers.0.self_attn.q_proj.weight": qW,
+		// K, V, O, gate, up, down are all missing — should be skipped.
+	}
+
+	if err := FuseQuaRotWeights(tensors, 1); err != nil {
+		t.Fatalf("expected success with missing optional tensors, got: %v", err)
+	}
+
+	// Q projection should still be rotated.
+	rotated := tensors["model.layers.0.self_attn.q_proj.weight"].Data()
+	allSame := true
+	for i := range data {
+		if data[i] != rotated[i] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("Q projection should have been rotated")
+	}
+}
+
+func TestFuseQuaRotWeights_OutputToleranceMultiLayer(t *testing.T) {
+	// Verify the round-trip tolerance holds across multiple layers with
+	// varying intermediate dimensions (power-of-2).
+	tests := []struct {
+		name            string
+		numLayers       int
+		hiddenDim       int
+		intermediateDim int
+	}{
+		{"1-layer-dim4", 1, 4, 8},
+		{"2-layer-dim8", 2, 8, 16},
+		{"4-layer-dim16", 4, 16, 32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tensors := makeTestWeights(tt.numLayers, tt.hiddenDim, tt.intermediateDim)
+
+			originals := make(map[string][]float32)
+			for name, tns := range tensors {
+				d := tns.Data()
+				cp := make([]float32, len(d))
+				copy(cp, d)
+				originals[name] = cp
+			}
+
+			// Double-fuse (round trip).
+			if err := FuseQuaRotWeights(tensors, tt.numLayers); err != nil {
+				t.Fatalf("first fusion: %v", err)
+			}
+			if err := FuseQuaRotWeights(tensors, tt.numLayers); err != nil {
+				t.Fatalf("second fusion: %v", err)
+			}
+
+			for name, orig := range originals {
+				recovered := tensors[name].Data()
+				for i := range orig {
+					if diff := math.Abs(float64(recovered[i] - orig[i])); diff > 1e-3 {
+						t.Errorf("%q[%d]: got %f, want %f (diff %e)",
+							name, i, recovered[i], orig[i], diff)
+					}
+				}
+			}
+		})
+	}
+}
+
+// contains reports whether s contains substr.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // makeTestWeights creates a synthetic weight tensor map for testing.
 func makeTestWeights(numLayers, hiddenDim, intermediateDim int) map[string]*tensor.TensorNumeric[float32] {
 	tensors := make(map[string]*tensor.TensorNumeric[float32])
