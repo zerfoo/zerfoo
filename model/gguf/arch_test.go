@@ -114,6 +114,59 @@ func TestMapTensorName_GPT2(t *testing.T) {
 	}
 }
 
+func TestMapTensorName_NemotronH(t *testing.T) {
+	tests := []struct {
+		arch string
+		gguf string
+		want string
+	}{
+		// Global tensors (nemotron_h).
+		{"nemotron_h", "token_embd.weight", "token_embd.weight"},
+		{"nemotron_h", "output_norm.weight", "output_norm.weight"},
+		{"nemotron_h", "output.weight", "output.weight"},
+		// Attention block tensors (nemotron_h).
+		{"nemotron_h", "blk.0.attn_norm.weight", "blk.0.attn_norm.weight"},
+		{"nemotron_h", "blk.0.attn_q.weight", "blk.0.attn_q.weight"},
+		{"nemotron_h", "blk.0.attn_k.weight", "blk.0.attn_k.weight"},
+		{"nemotron_h", "blk.0.attn_v.weight", "blk.0.attn_v.weight"},
+		{"nemotron_h", "blk.0.attn_output.weight", "blk.0.attn_output.weight"},
+		{"nemotron_h", "blk.0.ffn_norm.weight", "blk.0.ffn_norm.weight"},
+		{"nemotron_h", "blk.0.ffn_gate.weight", "blk.0.ffn_gate.weight"},
+		{"nemotron_h", "blk.0.ffn_up.weight", "blk.0.ffn_up.weight"},
+		{"nemotron_h", "blk.0.ffn_down.weight", "blk.0.ffn_down.weight"},
+		// SSM tensors (nemotron_h).
+		{"nemotron_h", "blk.3.ssm_in.weight", "blk.3.ssm_in.weight"},
+		{"nemotron_h", "blk.3.ssm_conv1d.weight", "blk.3.ssm_conv1d.weight"},
+		{"nemotron_h", "blk.3.ssm_dt.weight", "blk.3.ssm_dt.weight"},
+		{"nemotron_h", "blk.3.ssm_A.weight", "blk.3.ssm_A.weight"},
+		{"nemotron_h", "blk.3.ssm_D.weight", "blk.3.ssm_D.weight"},
+		{"nemotron_h", "blk.3.ssm_out.weight", "blk.3.ssm_out.weight"},
+		// MoE tensors (nemotron_h_moe).
+		{"nemotron_h_moe", "blk.5.ffn_gate_inp.weight", "blk.5.ffn_gate_inp.weight"},
+		{"nemotron_h_moe", "blk.5.ffn_gate_exps.weight", "blk.5.ffn_gate_exps.weight"},
+		{"nemotron_h_moe", "blk.5.ffn_up_exps.weight", "blk.5.ffn_up_exps.weight"},
+		{"nemotron_h_moe", "blk.5.ffn_down_exps.weight", "blk.5.ffn_down_exps.weight"},
+		// SSM tensors also work under nemotron_h_moe.
+		{"nemotron_h_moe", "blk.2.ssm_in.weight", "blk.2.ssm_in.weight"},
+		{"nemotron_h_moe", "blk.2.ssm_A.weight", "blk.2.ssm_A.weight"},
+		// Global tensors (nemotron_h_moe).
+		{"nemotron_h_moe", "token_embd.weight", "token_embd.weight"},
+		{"nemotron_h_moe", "output_norm.weight", "output_norm.weight"},
+		{"nemotron_h_moe", "output.weight", "output.weight"},
+		// Unknown tensor passes through.
+		{"nemotron_h", "some.unknown.tensor", "some.unknown.tensor"},
+		{"nemotron_h_moe", "some.unknown.tensor", "some.unknown.tensor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arch+"/"+tt.gguf, func(t *testing.T) {
+			got := MapTensorName(tt.arch, tt.gguf)
+			if got != tt.want {
+				t.Errorf("MapTensorName(%q, %q) = %q, want %q", tt.arch, tt.gguf, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMapTensorName_Unknown(t *testing.T) {
 	// Unknown names pass through unchanged.
 	got := MapTensorName("llama", "some.unknown.tensor")
@@ -265,6 +318,105 @@ func TestExtractModelConfig_ResidualConfig(t *testing.T) {
 		}
 		if cfg.AttnResNumBlocks != 0 {
 			t.Errorf("AttnResNumBlocks = %d, want 0", cfg.AttnResNumBlocks)
+		}
+	})
+}
+
+func TestExtractModelConfig_NemotronSSM(t *testing.T) {
+	t.Run("nemotron_h_moe with SSM and shared experts", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                      "nemotron_h_moe",
+			"nemotron_h_moe.embedding_length":           uint32(4096),
+			"nemotron_h_moe.block_count":                uint32(52),
+			"nemotron_h_moe.attention.head_count":       uint32(32),
+			"nemotron_h_moe.attention.head_count_kv":    uint32(8),
+			"nemotron_h_moe.feed_forward_length":        uint32(8192),
+			"nemotron_h_moe.context_length":             uint32(4096),
+			"nemotron_h_moe.ssm.state_size":             uint32(128),
+			"nemotron_h_moe.ssm.conv_kernel":            uint32(4),
+			"nemotron_h_moe.ssm.num_heads":              uint32(64),
+			"nemotron_h_moe.expert_count":               uint32(128),
+			"nemotron_h_moe.expert_used_count":          uint32(6),
+			"nemotron_h_moe.expert_shared_count":        uint32(2),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.Architecture != "nemotron_h_moe" {
+			t.Errorf("Architecture = %q, want nemotron_h_moe", cfg.Architecture)
+		}
+		if cfg.SSMStateSize != 128 {
+			t.Errorf("SSMStateSize = %d, want 128", cfg.SSMStateSize)
+		}
+		if cfg.SSMConvKernel != 4 {
+			t.Errorf("SSMConvKernel = %d, want 4", cfg.SSMConvKernel)
+		}
+		if cfg.SSMNumHeads != 64 {
+			t.Errorf("SSMNumHeads = %d, want 64", cfg.SSMNumHeads)
+		}
+		if cfg.ExpertSharedCount != 2 {
+			t.Errorf("ExpertSharedCount = %d, want 2", cfg.ExpertSharedCount)
+		}
+		if cfg.NumExperts != 128 {
+			t.Errorf("NumExperts = %d, want 128", cfg.NumExperts)
+		}
+		if cfg.NumExpertsPerToken != 6 {
+			t.Errorf("NumExpertsPerToken = %d, want 6", cfg.NumExpertsPerToken)
+		}
+	})
+
+	t.Run("nemotron_h dense with SSM", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                  "nemotron_h",
+			"nemotron_h.embedding_length":           uint32(4096),
+			"nemotron_h.block_count":                uint32(32),
+			"nemotron_h.attention.head_count":       uint32(32),
+			"nemotron_h.feed_forward_length":        uint32(16384),
+			"nemotron_h.context_length":             uint32(8192),
+			"nemotron_h.ssm.state_size":             uint32(64),
+			"nemotron_h.ssm.conv_kernel":            uint32(4),
+			"nemotron_h.ssm.num_heads":              uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.Architecture != "nemotron_h" {
+			t.Errorf("Architecture = %q, want nemotron_h", cfg.Architecture)
+		}
+		if cfg.SSMStateSize != 64 {
+			t.Errorf("SSMStateSize = %d, want 64", cfg.SSMStateSize)
+		}
+		if cfg.SSMConvKernel != 4 {
+			t.Errorf("SSMConvKernel = %d, want 4", cfg.SSMConvKernel)
+		}
+		if cfg.SSMNumHeads != 32 {
+			t.Errorf("SSMNumHeads = %d, want 32", cfg.SSMNumHeads)
+		}
+		// No MoE fields for dense variant.
+		if cfg.ExpertSharedCount != 0 {
+			t.Errorf("ExpertSharedCount = %d, want 0", cfg.ExpertSharedCount)
+		}
+	})
+
+	t.Run("non-SSM arch has zero SSM fields", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":       "llama",
+			"llama.embedding_length":     uint32(4096),
+			"llama.block_count":          uint32(32),
+			"llama.attention.head_count": uint32(32),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.SSMStateSize != 0 || cfg.SSMConvKernel != 0 || cfg.SSMNumHeads != 0 {
+			t.Errorf("SSM fields should be zero for llama, got state=%d conv=%d heads=%d",
+				cfg.SSMStateSize, cfg.SSMConvKernel, cfg.SSMNumHeads)
 		}
 	})
 }

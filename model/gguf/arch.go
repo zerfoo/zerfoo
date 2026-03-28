@@ -53,6 +53,14 @@ type ModelConfig struct {
 	EmbeddingMultiplier float32 // multiply embeddings by this factor (0 = no scaling)
 	ResidualMultiplier  float32 // multiply residual connections by this factor (0 = no scaling)
 
+	// Nemotron-H SSM (Mamba-2) fields.
+	SSMStateSize  int // SSM state dimension (ssm.state_size)
+	SSMConvKernel int // SSM convolution kernel width (ssm.conv_kernel)
+	SSMNumHeads   int // SSM number of heads (ssm.num_heads)
+
+	// Nemotron-H MoE shared expert count (expert_shared_count in nemotron_h_moe).
+	ExpertSharedCount int
+
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
 	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
@@ -265,6 +273,24 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 		cfg.ProjectorType = v
 	}
 
+	// Extract Nemotron-H SSM fields. The SSM keys use the architecture prefix
+	// (e.g. "nemotron_h_moe.ssm.state_size" or "nemotron_h.ssm.state_size").
+	if v, ok := f.GetUint32(prefix + "ssm.state_size"); ok {
+		cfg.SSMStateSize = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "ssm.conv_kernel"); ok {
+		cfg.SSMConvKernel = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "ssm.num_heads"); ok {
+		cfg.SSMNumHeads = int(v)
+	}
+	// Nemotron-H MoE shared expert count (distinct from DeepSeek NumSharedExperts
+	// which uses the same GGUF key but is parsed above into NumSharedExperts).
+	// ExpertSharedCount is populated for nemotron_h_moe models.
+	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
+		cfg.ExpertSharedCount = int(v)
+	}
+
 	// Detect the actual architecture — e.g. Mistral models that declare "llama".
 	cfg.Architecture = DetectActualArchitecture(f, cfg.Architecture)
 
@@ -369,6 +395,73 @@ var bertGlobalTensorMap = map[string]string{
 	"cls.bias":               "cls.bias",
 }
 
+// nemotronHTensorNameMap maps GGUF block-level tensor name suffixes for Nemotron-H.
+// Nemotron-H is a hybrid architecture with attention, SSM (Mamba-2), and MoE layers.
+// SSM and MoE tensor names are preserved as-is (the graph builder looks them up directly).
+var nemotronHTensorNameMap = map[string]string{
+	// Attention tensors.
+	"attn_norm.weight":   "attn_norm.weight",
+	"attn_q.weight":      "attn_q.weight",
+	"attn_k.weight":      "attn_k.weight",
+	"attn_v.weight":      "attn_v.weight",
+	"attn_output.weight": "attn_output.weight",
+	"ffn_norm.weight":    "ffn_norm.weight",
+	"ffn_gate.weight":    "ffn_gate.weight",
+	"ffn_up.weight":      "ffn_up.weight",
+	"ffn_down.weight":    "ffn_down.weight",
+	// SSM (Mamba-2) tensors.
+	"ssm_in.weight":      "ssm_in.weight",
+	"ssm_conv1d.weight":  "ssm_conv1d.weight",
+	"ssm_dt.weight":      "ssm_dt.weight",
+	"ssm_A.weight":       "ssm_A.weight",
+	"ssm_D.weight":       "ssm_D.weight",
+	"ssm_out.weight":     "ssm_out.weight",
+	// MoE tensors.
+	"ffn_gate_inp.weight":  "ffn_gate_inp.weight",
+	"ffn_gate_exps.weight": "ffn_gate_exps.weight",
+	"ffn_up_exps.weight":   "ffn_up_exps.weight",
+	"ffn_down_exps.weight": "ffn_down_exps.weight",
+}
+
+// nemotronHGlobalTensorMap maps global GGUF tensor names for Nemotron-H.
+var nemotronHGlobalTensorMap = map[string]string{
+	"token_embd.weight":  "token_embd.weight",
+	"output_norm.weight": "output_norm.weight",
+	"output.weight":      "output.weight",
+}
+
+// minimaxM2TensorNameMap maps GGUF block-level tensor name suffixes for MiniMax-M2.
+// MiniMax-M2 uses GQA attention with QK norms plus sigmoid MoE with routing bias.
+// MoE tensors and routing bias are preserved as-is (the graph builder looks them up directly).
+var minimaxM2TensorNameMap = map[string]string{
+	// Attention norms and projections.
+	"attn_norm.weight":   "attn_norm.weight",
+	"attn_q.weight":      "attn_q.weight",
+	"attn_k.weight":      "attn_k.weight",
+	"attn_v.weight":      "attn_v.weight",
+	"attn_output.weight": "attn_output.weight",
+	// QK norms.
+	"attn_q_norm.weight": "attn_q_norm.weight",
+	"attn_k_norm.weight": "attn_k_norm.weight",
+	// FFN norm.
+	"ffn_norm.weight": "ffn_norm.weight",
+	// MoE router.
+	"ffn_gate_inp.weight": "ffn_gate_inp.weight",
+	// MoE routing bias (unique to MiniMax-M2).
+	"exp_probs_b": "exp_probs_b",
+	// Stacked expert tensors.
+	"ffn_gate_exps.weight": "ffn_gate_exps.weight",
+	"ffn_up_exps.weight":   "ffn_up_exps.weight",
+	"ffn_down_exps.weight": "ffn_down_exps.weight",
+}
+
+// minimaxM2GlobalTensorMap maps global GGUF tensor names for MiniMax-M2.
+var minimaxM2GlobalTensorMap = map[string]string{
+	"token_embd.weight":  "token_embd.weight",
+	"output_norm.weight": "output_norm.weight",
+	"output.weight":      "output.weight",
+}
+
 // globalTensorMap maps global GGUF tensor names to HuggingFace names.
 var globalTensorMap = map[string]string{
 	"token_embd.weight":  "model.embed_tokens.weight",
@@ -381,14 +474,20 @@ var globalTensorMap = map[string]string{
 // uses different norm names than "llama").
 // Unknown names pass through unchanged.
 func MapTensorName(arch string, ggufName string) string {
-	// GPT-2 and BERT use their own global and block-level name maps that
-	// preserve GGUF-style names (their builders look them up directly).
-	if arch == "gpt2" || arch == "bert" {
+	// GPT-2, BERT, and Nemotron-H use their own global and block-level name maps
+	// that preserve GGUF-style names (their builders look them up directly).
+	if arch == "gpt2" || arch == "bert" || arch == "nemotron_h" || arch == "nemotron_h_moe" || arch == "minimax-m2" {
 		globalMap := gpt2GlobalTensorMap
 		blockMap := gpt2TensorNameMap
 		if arch == "bert" {
 			globalMap = bertGlobalTensorMap
 			blockMap = bertTensorNameMap
+		} else if arch == "nemotron_h" || arch == "nemotron_h_moe" {
+			globalMap = nemotronHGlobalTensorMap
+			blockMap = nemotronHTensorNameMap
+		} else if arch == "minimax-m2" {
+			globalMap = minimaxM2GlobalTensorMap
+			blockMap = minimaxM2TensorNameMap
 		}
 		if mapped, ok := globalMap[ggufName]; ok {
 			return mapped

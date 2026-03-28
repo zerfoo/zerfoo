@@ -13,6 +13,21 @@ import (
 	"github.com/zerfoo/ztensor/types"
 )
 
+// MoEGateOption configures optional MoEGate behavior.
+type MoEGateOption[T tensor.Numeric] func(*MoEGate[T])
+
+// WithSigmoidGating enables sigmoid gating instead of softmax for expert routing.
+// When enabled, element-wise sigmoid is applied to logits instead of softmax.
+func WithSigmoidGating[T tensor.Numeric]() MoEGateOption[T] {
+	return func(g *MoEGate[T]) { g.sigmoidGating = true }
+}
+
+// WithRoutingBias sets an optional bias tensor added to logits before gating.
+// The bias shape must be [numExperts] and is broadcast across the sequence dimension.
+func WithRoutingBias[T tensor.Numeric](bias *tensor.TensorNumeric[T]) MoEGateOption[T] {
+	return func(g *MoEGate[T]) { g.routingBias = bias }
+}
+
 // MoEGate computes sparse top-k expert routing for Mixture of Experts.
 //
 // Forward expects exactly two inputs:
@@ -21,29 +36,36 @@ import (
 //
 // Steps:
 //  1. logits = hiddenStates @ gateWeight.T  -> [seqLen, numExperts]
-//  2. probs  = Softmax(logits, axis=1)       -> [seqLen, numExperts]
-//  3. For each token row: pick topK indices by descending probability.
-//  4. Normalize the topK scores so each row sums to 1.0.
+//  2. If routingBias is set, add bias to logits.
+//  3. probs  = Softmax(logits, axis=1) or Sigmoid(logits) if sigmoidGating is enabled.
+//  4. For each token row: pick topK indices by descending probability.
+//  5. Normalize the topK scores so each row sums to 1.0.
 //
 // Returns a [seqLen, topK] tensor of normalized expert weights.
 type MoEGate[T tensor.Numeric] struct {
-	engine      compute.Engine[T]
-	ops         numeric.Arithmetic[T]
-	topK        int
-	outputShape []int
+	engine         compute.Engine[T]
+	ops            numeric.Arithmetic[T]
+	topK           int
+	sigmoidGating  bool
+	routingBias    *tensor.TensorNumeric[T]
+	outputShape    []int
 
 	// Cached forward state for backward pass.
 	cachedHiddenStates *tensor.TensorNumeric[T]
 	cachedGateWeight   *tensor.TensorNumeric[T]
-	cachedProbs        []T // softmax output flattened [seqLen * numExperts]
+	cachedProbs        []T // softmax/sigmoid output flattened [seqLen * numExperts]
 	cachedIndices      [][]int
 	cachedWeights      [][]T
 	cachedNumExperts   int
 }
 
-// NewMoEGate creates a MoEGate layer with the given topK value.
-func NewMoEGate[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], topK int) *MoEGate[T] {
-	return &MoEGate[T]{engine: engine, ops: ops, topK: topK}
+// NewMoEGate creates a MoEGate layer with the given topK value and optional configuration.
+func NewMoEGate[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], topK int, opts ...MoEGateOption[T]) *MoEGate[T] {
+	g := &MoEGate[T]{engine: engine, ops: ops, topK: topK}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // route returns (expertIndices [seqLen][topK], expertWeights [seqLen][topK]).
@@ -60,9 +82,40 @@ func (g *MoEGate[T]) route(
 	if err != nil {
 		return nil, nil, fmt.Errorf("MoEGate: matmul: %w", err)
 	}
-	probs, err := g.engine.Softmax(ctx, logits, 1)
-	if err != nil {
-		return nil, nil, fmt.Errorf("MoEGate: softmax: %w", err)
+
+	// Add routing bias if present: logits += bias (broadcast across seqLen).
+	if g.routingBias != nil {
+		biasData := g.routingBias.Data()
+		logitsData := logits.Data()
+		seqLen := logits.Shape()[0]
+		numE := logits.Shape()[1]
+		for t := 0; t < seqLen; t++ {
+			for e := 0; e < numE; e++ {
+				logitsData[t*numE+e] = g.ops.Add(logitsData[t*numE+e], biasData[e])
+			}
+		}
+	}
+
+	var probs *tensor.TensorNumeric[T]
+	if g.sigmoidGating {
+		// Element-wise sigmoid: sigmoid(x) = exp(x) / (1 + exp(x))
+		expX, serr := g.engine.Exp(ctx, logits)
+		if serr != nil {
+			return nil, nil, fmt.Errorf("MoEGate: sigmoid exp: %w", serr)
+		}
+		onePlusExpX, serr := g.engine.AddScalar(ctx, expX, g.ops.One())
+		if serr != nil {
+			return nil, nil, fmt.Errorf("MoEGate: sigmoid add: %w", serr)
+		}
+		probs, err = g.engine.Div(ctx, expX, onePlusExpX)
+		if err != nil {
+			return nil, nil, fmt.Errorf("MoEGate: sigmoid div: %w", err)
+		}
+	} else {
+		probs, err = g.engine.Softmax(ctx, logits, 1)
+		if err != nil {
+			return nil, nil, fmt.Errorf("MoEGate: softmax: %w", err)
+		}
 	}
 
 	probData := probs.Data()
@@ -280,7 +333,11 @@ func (g *MoEGate[T]) OpType() string { return "MoEGate" }
 
 // Attributes returns the gate configuration.
 func (g *MoEGate[T]) Attributes() map[string]interface{} {
-	return map[string]interface{}{"top_k": g.topK}
+	attrs := map[string]interface{}{"top_k": g.topK}
+	if g.sigmoidGating {
+		attrs["sigmoid_gating"] = true
+	}
+	return attrs
 }
 
 // OutputShape returns the output shape from the last forward call.
