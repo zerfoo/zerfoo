@@ -1,0 +1,42 @@
+# Updates
+
+## 2026-03-27: Waves 4-8 Research Inference Optimizations
+
+39 tasks shipped across 4 PRs (#262, #263, #264, #265). Two bug fixes discovered and shipped.
+
+### New Features (Wave 4, PR #262)
+- **EAGLE speculative decoding**: `WithEAGLE(headWeightsPath)` generator option. Self-speculative decode loop with adaptive draft length.
+- **QuaRot weight fusion**: `--quarot` CLI flag and `WithQuaRot()` option. Hadamard rotation fused at load time.
+- **Quantized KV cache**: `WithKVDtype("q4")` / `WithKVDtype("q3")`. Q4: 7.5x memory reduction, Q3: 6.4x.
+- **TransMLA CLI**: `zerfoo transmla --rank 512 --input model.gguf --output model-mla.gguf`. SVD-based MHA-to-MLA conversion.
+- **TransMLA inference**: Auto-detection of TransMLA tensors in GGUF, wires MLA layer automatically.
+- **Multi-LoRA serving**: Per-request adapter selection via `model: "base:adapter"` in API.
+- **BitNet ternary MatMul**: Transparent ternary GEMV dispatch for BitNet b1.58 models.
+- **NSA layer registry**: NativeSparseAttention registered for GGUF builder.
+- **SparseRoutedAttention registry**: Registered for GGUF builder.
+- **Contrastive routing loss**: Auxiliary loss for sparse attention training.
+- **Async CPU-to-GPU prefetch**: TieredKVStore async prefetch with channel-based queue.
+- **Async CPU expert dispatch**: Goroutine pool for hybrid MoE CPU experts.
+- **Predictive expert prefetch**: 98% hit rate on DeepSeek-V3 patterns.
+
+### Test Coverage (Wave 6, PR #263 + Wave 7, PR #264)
+- QuaRot weight fusion (6 tests, roundtrip tolerance)
+- Quantized KV cache (Q4/Q3 memory reduction, quality degradation bounds)
+- EAGLE head (shape, determinism, batch sizes) + decode loop (verification, adaptive N)
+- NSA (degenerate, divergence, gate weighting)
+- SVD conversion (roundtrip, rank truncation, shapes)
+- I-Quant dequantization (IQ4_NL, IQ3_S, IQ2_XXS — 8 tests)
+- Radix cache + scheduler (hash collision, LRU, ordering)
+- Multi-LoRA (LRU eviction, concurrent, API selection)
+- Compressed KV cache, document-wise RoPE, sparse routed attention, tiered storage, BitNet loading
+- TransMLA end-to-end integration test
+- go vet clean for E35, E36, E37, E39, E41, E42, E44
+
+### Bug Fixes (Wave 7-8)
+- **TernaryStorage preserved in GGUF loader** (PR #264): `decodeTernaryTensor` was discarding TernaryStorage by calling `tensor.New` instead of `tensor.NewWithStorage`. BitNet GEMV dispatch now works for GGUF-loaded models.
+- **Q2_K/Q3_K tensor decoders** (PR #265): Phi-3 and Llama 3.1 GGUFs use Q2_K/Q3_K for norm/bias tensors. Constants were defined but decode paths were missing. Added decoders with dequantize-to-Q4 re-quantization.
+
+### Remaining (blocked by external dependencies)
+- ztensor repo: T34.1.4, T35.1.3, T39.1.4
+- DGX Spark: benchmarks, GPU integration tests
+- Python: Granite TS golden files

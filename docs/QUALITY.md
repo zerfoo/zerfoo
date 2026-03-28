@@ -120,6 +120,39 @@ Not available on this machine. When available, use v2 with project .golangci.yml
 
 - gosec: G704/G705 excluded (taint analysis false positives)
 
+## Research Inference Quality Gates (2026-03-27, Waves 4-8)
+
+### New Feature Quality (39 tasks, PRs #262-#265)
+
+| Epic | Feature | Build | Vet | Tests | Status |
+|------|---------|-------|-----|-------|--------|
+| E35 | QuaRot weight fusion | PASS | PASS | 6 tests | Shipped |
+| E35 | Quantized KV cache (Q4/Q3) | PASS | PASS | 7 tests, Q4: 7.5x reduction | Shipped |
+| E36 | EAGLE speculative decoding | PASS | PASS | 19 tests | Shipped |
+| E37 | Native Sparse Attention | PASS | PASS | 3+11 tests | Shipped |
+| E38 | Hybrid CPU/GPU MoE | PASS | PASS | 13+9 tests | Shipped |
+| E39 | BitNet ternary inference | PASS | PASS | 10 tests | Shipped |
+| E40 | TransMLA conversion + inference | PASS | PASS | 12+3 tests | Shipped |
+| E41 | I-Quant dequantization | PASS | PASS | 8 tests | Shipped |
+| E42 | RadixAttention KV cache | PASS | PASS | 18+10 tests | Shipped |
+| E43 | Flash decoding | PASS | PASS | Wired, DGX benchmark pending | Shipped |
+| E44 | Multi-LoRA serving | PASS | PASS | 7+3 tests | Shipped |
+
+### Bug Fixes
+
+| Bug | Root Cause | Fix | PR |
+|-----|-----------|-----|-----|
+| BitNet GEMV never dispatched from GGUF | `decodeTernaryTensor` called `tensor.New` instead of `tensor.NewWithStorage` | Preserve TernaryStorage | #264 |
+| Phi3/Llama3.1 GGUF load failure | Q2_K/Q3_K constants defined but no decode paths | Added decoders | #265 |
+
+### Pre-existing Failures (not introduced by Waves 4-8)
+
+| Test | Package | Status |
+|------|---------|--------|
+| TestGQABackward | layers/attention | FAIL (gradient mismatch, pre-existing) |
+| TestTSPulseClassify | inference/timeseries | Flaky (intermittent) |
+| CI arm64-build | GitHub Actions | FAIL (ztensor replace dir not available) |
+
 ## Build
 
 - `go build ./...`: clean

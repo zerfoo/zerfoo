@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 20 model architectures. All models produce coherent output with CUDA graph capture. Tabular ML and time-series forecasting built in.
+**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 20 model architectures. EAGLE speculative decoding, QuaRot quantization, Multi-LoRA serving, BitNet ternary inference. CUDA graph capture. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -37,6 +37,67 @@ Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX
 Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.json)
 
 </details>
+
+## Advanced Inference Features
+
+### EAGLE Speculative Decoding
+
+Self-speculative decoding using a lightweight prediction head — no draft model needed. Based on [EAGLE-3](https://arxiv.org/abs/2503.01840).
+
+```go
+m, _ := zerfoo.Load("google/gemma-3-1b")
+defer m.Close()
+result, _ := m.Generate(ctx, "Explain quantum computing.",
+    zerfoo.WithEAGLE("eagle-head.gguf"),
+)
+```
+
+### QuaRot Weight Fusion
+
+Hadamard rotation fused into weights at load time for uniform 4-bit quantization. Based on [QuaRot](https://arxiv.org/abs/2404.00456).
+
+```bash
+zerfoo run --quarot model.gguf "Hello world"
+```
+
+### Quantized KV Cache
+
+Reduce KV cache memory by 6-7x with Q4 or Q3 quantization:
+
+```go
+result, _ := m.Generate(ctx, prompt,
+    zerfoo.WithKVDtype("q4"),  // 7.5x memory reduction
+)
+```
+
+### TransMLA — MHA-to-MLA Conversion
+
+Convert any MHA/GQA model to Multi-Head Latent Attention via SVD decomposition. Reduces KV cache by 80%+. Based on [TransMLA](https://arxiv.org/abs/2502.07864).
+
+```bash
+zerfoo transmla --rank 512 --input model.gguf --output model-mla.gguf
+```
+
+### Multi-LoRA Serving
+
+Serve multiple LoRA adapters from a single base model. Per-request adapter selection via the OpenAI-compatible API:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -d '{"model": "gemma3-1b:my-lora", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+### BitNet Ternary Inference
+
+Native support for ternary weight models ({-1, 0, 1}) where matrix multiplication becomes integer addition/subtraction. Based on [BitNet b1.58](https://arxiv.org/abs/2402.17764).
+
+### Native Sparse Attention (NSA)
+
+Hardware-aligned three-path sparse attention: coarse compression, fine-grained selection, and sliding window. Fused CUDA kernel. Based on [NSA](https://arxiv.org/abs/2502.11089).
+
+### Hybrid CPU/GPU MoE
+
+Place shared MoE experts on GPU, offload routed experts to CPU with SIMD kernels. Predictive prefetching achieves 98% hit rate. Based on [KTransformers](https://arxiv.org/abs/2501.14018).
 
 ## Quick Start
 
@@ -172,7 +233,7 @@ for _, tc := range result.ToolCalls {
 | Mistral | GGUF | Sliding window attention, 44 tok/s (7B Q4_K_M) |
 | Mixtral | GGUF | Mixture of Experts |
 | Qwen 2 | GGUF | Attention bias, RoPE theta=1M |
-| Phi 3/4 | GGUF | Partial rotary factor |
+| Phi 3/4 | GGUF | Partial rotary factor, Q2_K/Q3_K support |
 | DeepSeek V3 | GGUF | MLA + MoE (batched) |
 | Command R | GGUF | Cohere architecture |
 | Falcon | GGUF | Multi-query attention |
@@ -240,11 +301,13 @@ predictions, _ := model.Predict(ctx, testX)
 ```bash
 go install github.com/zerfoo/zerfoo/cmd/zerfoo@latest
 
-zerfoo pull gemma-3-1b-q4          # download a model
-zerfoo run gemma-3-1b-q4 "Hello"   # generate text
-zerfoo serve gemma-3-1b-q4         # OpenAI-compatible API server
-zerfoo train -backend tabular ...  # train a tabular model
-zerfoo list                         # list cached models
+zerfoo pull gemma-3-1b-q4              # download a model
+zerfoo run gemma-3-1b-q4 "Hello"       # generate text
+zerfoo run --quarot model.gguf "Hello" # QuaRot weight fusion
+zerfoo serve gemma-3-1b-q4             # OpenAI-compatible API server
+zerfoo transmla --input m.gguf --output m-mla.gguf  # MHA→MLA conversion
+zerfoo train -backend tabular ...      # train a tabular model
+zerfoo list                             # list cached models
 ```
 
 ## Examples
