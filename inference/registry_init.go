@@ -22,4 +22,6 @@ func init() {
 	RegisterArchitecture("nemotron_h", buildNemotronHGraph)
 	RegisterArchitecture("nemotron_h_moe", buildNemotronHMoEGraph)
 	RegisterArchitecture("minimax-m2", buildMiniMaxM2Graph)
+	RegisterArchitecture("starcoder2", buildStarCoder2Graph)
+	RegisterArchitecture("internlm2", buildInternLM2Graph)
 }
