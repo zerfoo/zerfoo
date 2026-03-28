@@ -162,7 +162,7 @@ All models work -- time to build the definitive comparison table.
   Deps: MHH-T1
   Acceptance: Confirmed ratio documented in devlog with 3-run median.
 
-- [ ] MHH-T3 Test sliding window attention correctness  Est: 2h
+- [x] MHH-T3 Test sliding window attention correctness  Est: 2h
   Acceptance: Coherent output at 5000+ tokens; no degradation past window.
 
 ### P3: K-Quant Kernel Optimization
@@ -1078,7 +1078,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] BMK-T3 Update website with benchmark table  Deps: BMK-T2
 - [x] BMK-T4 Investigate Phi3/Llama3.1 load failures  verifies: [UC-001]
 - [ ] MHH-T1 Mistral quality comparison  verifies: [UC-001]
-- [ ] MHH-T3 Sliding window correctness  verifies: [UC-001]
+- [x] MHH-T3 Sliding window correctness  verifies: [UC-001]
 - [x] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
 - [ ] GTS-T1 Generate Python golden files  verifies: [UC-005]
 - [x] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
