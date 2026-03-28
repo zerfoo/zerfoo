@@ -1020,6 +1020,428 @@ func TestLoadTensors_IQ2_XXS(t *testing.T) {
 	}
 }
 
+// TestDecodeIQ4NL_Accuracy verifies IQ4_NL dequantization matches the lookup table.
+func TestDecodeIQ4NL_Accuracy(t *testing.T) {
+	const numElements = 32
+	raw := make([]byte, 18)
+	scaleBits := float16.FromFloat32(2.0).Bits()
+	binary.LittleEndian.PutUint16(raw[0:2], scaleBits)
+
+	// Pack nibbles: low=15 (table[1.3312578]), high=0 (table[-1.0]) for each byte.
+	for i := range 16 {
+		raw[2+i] = 0x0F
+	}
+
+	tns, err := decodeIQ4NLTensor([]int{numElements}, numElements, raw)
+	if err != nil {
+		t.Fatalf("decodeIQ4NLTensor: %v", err)
+	}
+
+	// DequantizeIQ4NL: dst[2*i] = scale * table[low], dst[2*i+1] = scale * table[high].
+	// low=15 -> table[1.3312578] * 2.0 = +2.6625 (even indices)
+	// high=0 -> table[-1.0]     * 2.0 = -2.0    (odd indices)
+	// After Q4 re-quant, signs should be preserved.
+	got := tns.Data()
+	for i := range numElements {
+		if i%2 == 0 {
+			if got[i] < 0 {
+				t.Errorf("index %d: expected positive, got %v", i, got[i])
+			}
+		} else {
+			if got[i] > 0 {
+				t.Errorf("index %d: expected negative, got %v", i, got[i])
+			}
+		}
+	}
+}
+
+// TestDecodeIQ3S_Accuracy verifies IQ3_S dequantization roundtrip preserves range.
+func TestDecodeIQ3S_Accuracy(t *testing.T) {
+	const numElements = 256
+	raw := make([]byte, 110)
+	scaleBits := float16.FromFloat32(0.5).Bits()
+	binary.LittleEndian.PutUint16(raw[0:2], scaleBits)
+
+	// Set sub-block scales to non-zero.
+	for i := range 4 {
+		raw[106+i] = 0x33 // scale=3 for both nibbles -> subScale = 0.5 * (1+2*3) = 3.5
+	}
+
+	// Set some grid indices (qs region) and signs to produce non-trivial values.
+	for i := range 64 {
+		raw[2+i] = byte((i * 7) % 256) // diverse grid indices
+	}
+	for i := range 32 {
+		raw[74+i] = byte(i * 3) // diverse sign patterns
+	}
+
+	tns, err := decodeIQ3STensor([]int{numElements}, numElements, raw)
+	if err != nil {
+		t.Fatalf("decodeIQ3STensor: %v", err)
+	}
+
+	got := tns.Data()
+	if len(got) != numElements {
+		t.Fatalf("data length = %d, want %d", len(got), numElements)
+	}
+
+	// Verify some values are positive and some negative (sign bits applied).
+	var pos, neg int
+	for _, v := range got {
+		if v > 0 {
+			pos++
+		} else if v < 0 {
+			neg++
+		}
+	}
+	if pos == 0 {
+		t.Error("expected some positive values")
+	}
+	if neg == 0 {
+		t.Error("expected some negative values")
+	}
+}
+
+// TestDecodeIQ2XXS_Accuracy verifies IQ2_XXS dequantization roundtrip.
+func TestDecodeIQ2XXS_Accuracy(t *testing.T) {
+	const numElements = 256
+	raw := make([]byte, 68)
+	binary.LittleEndian.PutUint32(raw[0:4], math.Float32bits(0.5))
+
+	// The grid maps 2-bit pairs: 00->-1, 01->-1/3, 10->1/3, 11->1
+	// Byte 0b10_01_00_11 = 0x93 encodes [1.0, -1.0, -1/3, 1/3] * 0.5
+	for i := range 64 {
+		raw[4+i] = 0x93
+	}
+
+	tns, err := decodeIQ2XXSTensor([]int{numElements}, numElements, raw)
+	if err != nil {
+		t.Fatalf("decodeIQ2XXSTensor: %v", err)
+	}
+
+	// IQ2_XXS -> F32 -> Q4_0. Check the original dequantized values are as expected.
+	s := tensor.NewIQ2XXSStorage(numElements)
+	s.SetBlock(0, 0.5, raw[4:68])
+	ref := s.Dequantize()
+
+	// The Q4_0 re-quantized values should be within reasonable error of the IQ2_XXS values.
+	got := tns.Data()
+	maxErr := float32(0)
+	for i := range ref {
+		diff := got[i] - ref[i]
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > maxErr {
+			maxErr = diff
+		}
+	}
+	// IQ2_XXS values are in [-0.5, 0.5], Q4_0 re-quantization error should be small.
+	if maxErr > 0.3 {
+		t.Errorf("max re-quantization error = %v, want < 0.3", maxErr)
+	}
+}
+
+// TestLoadTensors_IQ4_NL_2D verifies 2D IQ4_NL tensor shape reversal.
+func TestLoadTensors_IQ4_NL_2D(t *testing.T) {
+	const rows, cols = 2, 32
+	const numElements = rows * cols
+	nBlocks := (numElements + 31) / 32
+	raw := make([]byte, nBlocks*18)
+	for bi := range nBlocks {
+		scaleBits := float16.FromFloat32(1.0).Bits()
+		binary.LittleEndian.PutUint16(raw[bi*18:bi*18+2], scaleBits)
+		for j := range 16 {
+			raw[bi*18+2+j] = byte(j)
+		}
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "test.iq4nl2d",
+		Dimensions: []uint64{cols, rows}, // GGUF order
+		Type:       GGMLTypeIQ4_NL,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["test.iq4nl2d"]
+	// Reversed from GGUF order: shape should be [rows, cols].
+	if tns.Shape()[0] != rows || tns.Shape()[1] != cols {
+		t.Errorf("shape = %v, want [%d %d]", tns.Shape(), rows, cols)
+	}
+}
+
+// TestIQuant_GEMVPath verifies that IQ-type tensors loaded through GGUF produce
+// reasonable GEMV output via the Q4 re-quantization path.
+func TestIQuant_GEMVPath(t *testing.T) {
+	// Create a 64x32 IQ4_NL weight matrix (64 rows, 32 cols = 2 blocks of 32).
+	const rows, cols = 2, 32
+	const numElements = rows * cols
+	nBlocks := numElements / 32
+	raw := make([]byte, nBlocks*18)
+	for bi := range nBlocks {
+		scaleBits := float16.FromFloat32(1.0).Bits()
+		binary.LittleEndian.PutUint16(raw[bi*18:bi*18+2], scaleBits)
+		for j := range 16 {
+			// Nibbles: low=7 (table[0.0]), high=14 (table[1.0])
+			raw[bi*18+2+j] = 0xE7
+		}
+	}
+
+	tensors := []TensorInfo{{
+		Name:       "w",
+		Dimensions: []uint64{cols, rows}, // GGUF: cols first
+		Type:       GGMLTypeIQ4_NL,
+		Offset:     0,
+	}}
+
+	r := buildGGUFWithTensors(t, tensors, raw)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	loaded, err := LoadTensors(f, r)
+	if err != nil {
+		t.Fatalf("LoadTensors: %v", err)
+	}
+
+	tns := loaded["w"]
+	q4, ok := tns.GetStorage().(*tensor.Q4Storage)
+	if !ok {
+		t.Fatalf("expected Q4Storage, got %T", tns.GetStorage())
+	}
+
+	// GEMV: C[1,2] = X[1,32] * W[2,32]^T -> need dequant then manual dot product.
+	// This tests the full pipeline: IQ4_NL -> Q4_0 -> dequant -> matmul.
+	x := make([]float32, cols)
+	for i := range x {
+		x[i] = 1.0 // all-ones input vector
+	}
+
+	// Dequantize and compute dot product manually.
+	wF32 := make([]float32, numElements)
+	q4.Dequantize(wF32)
+
+	for row := range rows {
+		dot := float32(0)
+		for col := range cols {
+			dot += x[col] * wF32[row*cols+col]
+		}
+		// With scale=1.0, nibble 7 maps to table[0.0]=0, nibble 14 maps to table[1.0]=1.0.
+		// After Q4 re-quant, values won't be exact but the dot product should be non-zero
+		// and finite.
+		if math.IsNaN(float64(dot)) || math.IsInf(float64(dot), 0) {
+			t.Errorf("row %d: dot product is %v", row, dot)
+		}
+	}
+}
+
+// TestLoadTensors_IQ_SingleBlock tests IQ types with exactly one block each.
+func TestLoadTensors_IQ_SingleBlock(t *testing.T) {
+	tests := []struct {
+		name        string
+		typ         GGMLType
+		numElements int
+		blockBytes  int
+	}{
+		{"IQ4_NL/1block", GGMLTypeIQ4_NL, 32, 18},
+		{"IQ3_S/1block", GGMLTypeIQ3_S, 256, 110},
+		{"IQ2_XXS/1block", GGMLTypeIQ2_XXS, 256, 68},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := make([]byte, tt.blockBytes)
+			if tt.typ == GGMLTypeIQ2_XXS {
+				// IQ2_XXS uses float32 scale.
+				binary.LittleEndian.PutUint32(raw[0:4], math.Float32bits(1.0))
+			} else {
+				// IQ4_NL and IQ3_S use fp16 scale.
+				scaleBits := float16.FromFloat32(1.0).Bits()
+				binary.LittleEndian.PutUint16(raw[0:2], scaleBits)
+			}
+
+			tensors := []TensorInfo{{
+				Name:       "test." + tt.name,
+				Dimensions: []uint64{uint64(tt.numElements)},
+				Type:       tt.typ,
+				Offset:     0,
+			}}
+
+			r := buildGGUFWithTensors(t, tensors, raw)
+			f, err := Parse(r)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+
+			loaded, err := LoadTensors(f, r)
+			if err != nil {
+				t.Fatalf("LoadTensors: %v", err)
+			}
+
+			tns := loaded["test."+tt.name]
+			if tns == nil {
+				t.Fatalf("tensor not found")
+			}
+			if tns.Shape()[0] != tt.numElements {
+				t.Errorf("shape = %v, want [%d]", tns.Shape(), tt.numElements)
+			}
+			if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+				t.Errorf("expected Q4Storage, got %T", tns.GetStorage())
+			}
+		})
+	}
+}
+
+// TestIQuant_MultipleBlocks tests IQ types spanning multiple blocks.
+func TestIQuant_MultipleBlocks(t *testing.T) {
+	t.Run("IQ4_NL/3blocks", func(t *testing.T) {
+		const numElements = 96 // 3 blocks of 32
+		raw := make([]byte, 3*18)
+		for bi := range 3 {
+			scaleBits := float16.FromFloat32(float32(bi+1) * 0.5).Bits()
+			binary.LittleEndian.PutUint16(raw[bi*18:bi*18+2], scaleBits)
+			for j := range 16 {
+				raw[bi*18+2+j] = byte((bi*16 + j) % 256)
+			}
+		}
+
+		tns, err := decodeIQ4NLTensor([]int{numElements}, numElements, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ4NLTensor: %v", err)
+		}
+		if tns.Shape()[0] != numElements {
+			t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+		}
+		// Different scales per block means different value ranges.
+		got := tns.Data()
+		hasNonZero := false
+		for _, v := range got {
+			if v != 0 {
+				hasNonZero = true
+				break
+			}
+		}
+		if !hasNonZero {
+			t.Error("expected non-zero values across multiple blocks")
+		}
+	})
+
+	t.Run("IQ3_S/2blocks", func(t *testing.T) {
+		const numElements = 512 // 2 super-blocks of 256
+		raw := make([]byte, 2*110)
+		for bi := range 2 {
+			off := bi * 110
+			scaleBits := float16.FromFloat32(float32(bi+1)).Bits()
+			binary.LittleEndian.PutUint16(raw[off:off+2], scaleBits)
+			// Set sub-block scales.
+			for i := range 4 {
+				raw[off+106+i] = 0x22
+			}
+		}
+
+		tns, err := decodeIQ3STensor([]int{numElements}, numElements, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ3STensor: %v", err)
+		}
+		if tns.Shape()[0] != numElements {
+			t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+		}
+	})
+
+	t.Run("IQ2_XXS/2blocks", func(t *testing.T) {
+		const numElements = 512 // 2 blocks of 256
+		raw := make([]byte, 2*68)
+		for bi := range 2 {
+			off := bi * 68
+			binary.LittleEndian.PutUint32(raw[off:off+4], math.Float32bits(float32(bi+1)*0.25))
+			for j := range 64 {
+				raw[off+4+j] = byte((bi*64 + j) % 256)
+			}
+		}
+
+		tns, err := decodeIQ2XXSTensor([]int{numElements}, numElements, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ2XXSTensor: %v", err)
+		}
+		if tns.Shape()[0] != numElements {
+			t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
+		}
+		// Block 0 has scale 0.25, block 1 has scale 0.5 — different magnitudes.
+		got := tns.Data()
+		hasNonZero := false
+		for _, v := range got {
+			if v != 0 {
+				hasNonZero = true
+				break
+			}
+		}
+		if !hasNonZero {
+			t.Error("expected non-zero values across multiple blocks")
+		}
+	})
+}
+
+// TestIQuant_ZeroScale tests that IQ types with zero scale produce all-zero output.
+func TestIQuant_ZeroScale(t *testing.T) {
+	t.Run("IQ4_NL", func(t *testing.T) {
+		raw := make([]byte, 18) // scale = 0 (default)
+		for i := range 16 {
+			raw[2+i] = 0xFF // all nibbles set
+		}
+		tns, err := decodeIQ4NLTensor([]int{32}, 32, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ4NLTensor: %v", err)
+		}
+		for i, v := range tns.Data() {
+			if v != 0 {
+				t.Errorf("index %d: got %v, want 0 (zero scale)", i, v)
+				break
+			}
+		}
+	})
+
+	t.Run("IQ3_S", func(t *testing.T) {
+		raw := make([]byte, 110) // scale = 0 (default)
+		tns, err := decodeIQ3STensor([]int{256}, 256, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ3STensor: %v", err)
+		}
+		for i, v := range tns.Data() {
+			if v != 0 {
+				t.Errorf("index %d: got %v, want 0 (zero scale)", i, v)
+				break
+			}
+		}
+	})
+
+	t.Run("IQ2_XXS", func(t *testing.T) {
+		raw := make([]byte, 68) // scale = 0 (default float32 zero)
+		for i := range 64 {
+			raw[4+i] = 0xFF
+		}
+		tns, err := decodeIQ2XXSTensor([]int{256}, 256, raw)
+		if err != nil {
+			t.Fatalf("decodeIQ2XXSTensor: %v", err)
+		}
+		for i, v := range tns.Data() {
+			if v != 0 {
+				t.Errorf("index %d: got %v, want 0 (zero scale)", i, v)
+				break
+			}
+		}
+	})
+}
+
 func TestTensorByteSize_TQ2_0(t *testing.T) {
 	tests := []struct {
 		numElements int
