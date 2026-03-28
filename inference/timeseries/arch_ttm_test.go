@@ -340,3 +340,43 @@ func TestTTMOutputFinite(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkTTMForward benchmarks TTM inference matching the GTS-T3 Python config.
+func BenchmarkTTMForward(b *testing.B) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	tensors := make(map[string]*tensor.TensorNumeric[float32])
+
+	cfg := &TTMConfig{
+		ContextLen:     32,
+		ForecastLen:    8,
+		NumChannels:    1,
+		PatchLen:       8,
+		DModel:         64,
+		NumMixerLayers: 2,
+		ChannelMixing:  false,
+		Expansion:      2,
+	}
+	cfg.NumPatches = cfg.ContextLen / cfg.PatchLen
+
+	g, err := BuildTTM[float32](tensors, cfg, engine)
+	if err != nil {
+		b.Fatalf("BuildTTM: %v", err)
+	}
+
+	data := make([]float32, cfg.ContextLen)
+	for i := range data {
+		data[i] = float32(i) * 0.1
+	}
+	input, _ := tensor.New[float32]([]int{1, cfg.ContextLen, 1}, data)
+
+	ctx := context.Background()
+	// Warmup.
+	for range 5 {
+		g.Forward(ctx, input)
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		g.Forward(ctx, input)
+	}
+}
