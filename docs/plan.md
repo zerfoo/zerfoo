@@ -155,7 +155,7 @@ All models work -- time to build the definitive comparison table.
 
 ### P2: Mistral vs Ollama Head-to-Head
 
-- [ ] MHH-T1 Run Mistral 7B quality comparison  Est: 2h
+- [x] MHH-T1 Run Mistral 7B quality comparison  Est: 2h
   Acceptance: Quality scores documented; token agreement > 95% with greedy.
 
 - [ ] MHH-T2 Profile Mistral 7B performance gap  Est: 1h
@@ -208,7 +208,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
   repo: ztensor. Reuse SumAxis kernel pattern.
   Acceptance: Unit test on 3D tensor, CPU and GPU match.
 
-- [ ] T34.1.4 Run go vet and tests for ztensor primitives  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T34.1.4 Run go vet and tests for ztensor primitives  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   repo: ztensor  Deps: T34.1.1, T34.1.2, T34.1.3
 
 #### E34.2: KV Cache Compression
@@ -269,7 +269,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.6.2 Integration test: compressed cache with existing models  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
   Deps: T34.6.1. Load Gemma3-1B with WithCompressedKV(64) on DGX Spark.
 
-- [ ] T34.6.3 Add sync.RWMutex to TieredKVStore for concurrent serve access  Owner: TBD  Est: 1.5h  verifies: [UC-002, UC-003]
+- [x] T34.6.3 Add sync.RWMutex to TieredKVStore for concurrent serve access  Owner: TBD  Est: 1.5h  verifies: [UC-002, UC-003]
   Deps: T34.6.1
   File: generate/tiered_kv_store.go
   TieredKVStore has no synchronization. The serve path will call Get/Update/
@@ -307,7 +307,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   precomputed H. GPU: fast Walsh-Hadamard transform kernel (O(N log N)).
   Acceptance: CPU and GPU match within 1e-4. Benchmark on DGX Spark.
 
-- [ ] T35.1.3 Tests for Hadamard infrastructure  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T35.1.3 Tests for Hadamard infrastructure  Owner: TBD  Est: 1h  verifies: [infrastructure]
   repo: ztensor  Deps: T35.1.1, T35.1.2
   Tests: orthogonality, inverse, dimension mismatch error.
   Acceptance: All pass on CPU and GPU.
@@ -596,7 +596,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   select positive/negative addends, accumulates with warp reduction.
   Acceptance: GPU matches CPU. Benchmark on DGX Spark.
 
-- [ ] T39.1.4 Tests for ternary storage and GEMV  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T39.1.4 Tests for ternary storage and GEMV  Owner: TBD  Est: 2h  verifies: [infrastructure]
   repo: ztensor  Deps: T39.1.1, T39.1.2, T39.1.3
 
 #### E39.2: BitNet Model Support
@@ -708,7 +708,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   SVD truncation. (6) Verify KV cache memory reduction.
   Acceptance: Converted model produces coherent output. KV cache >= 4x smaller.
 
-- [ ] T40.2.4 Perplexity validation script  Owner: TBD  Est: 1.5h  verifies: [UC-010]
+- [x] T40.2.4 Perplexity validation script  Owner: TBD  Est: 1.5h  verifies: [UC-010]
   Deps: T40.2.1
   File: cmd/transmla/validate.go
   `zerfoo transmla validate --original model.gguf --converted model-mla.gguf`
@@ -716,7 +716,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Report perplexity for each. Flag if delta > 0.5 ppl.
   Acceptance: Script runs and reports perplexity comparison.
 
-- [ ] T40.2.5 Run go vet and linters for E40  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T40.2.5 Run go vet and linters for E40  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T40.1.4, T40.2.3, T40.2.4
 
 ### P12: GGUF I-Quant Dequantization (E41)
@@ -838,7 +838,7 @@ softmax, then reduces. Maximizes GPU memory bandwidth utilization.
   Benchmark: tok/s comparison with and without flash decode on Gemma3-1B.
   Acceptance: All tests pass. Benchmark results in devlog.
 
-- [ ] T43.1.4 Run go vet and linters for E43  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T43.1.4 Run go vet and linters for E43  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T43.1.3
 
 ### P15: Multi-LoRA Serving (E44)
@@ -1120,7 +1120,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T40.2.3 TransMLA end-to-end integration test  Deps: T40.2.1, T40.2.2
 - [x] T41.1.7 Run go vet E41  Deps: T41.1.6
 - [x] T42.1.4 Run go vet E42  Deps: T42.1.3
-- [ ] T43.1.4 Run go vet E43  Deps: T43.1.3
+- [x] T43.1.4 Run go vet E43  Deps: T43.1.3
 - [x] T44.1.6 Run go vet E44  Deps: T44.1.5
 
 #### Wave 8: Final Integration (5 agents)
@@ -1131,7 +1131,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
 - [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
-- [ ] T40.2.5 Run go vet E40  Deps: T40.1.4, T40.2.3, T40.2.4
+- [x] T40.2.5 Run go vet E40  Deps: T40.1.4, T40.2.3, T40.2.4
 
 ---
 
