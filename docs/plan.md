@@ -146,11 +146,11 @@ All models work -- time to build the definitive comparison table.
   Results: Gemma3 235 (1.25x), DeepSeek 186 (1.11x), Llama 92 (0.99x), Mistral 44 (1.00x).
   All models produce coherent output. JSON: results/benchmark-2026-03-27.json.
 
-- [ ] BMK-T3 Update website and README with full comparison table  Est: 1h
+- [x] BMK-T3 Update website and README with full comparison table  DONE 2026-03-27 PR #265  Est: 1h
   Deps: BMK-T2
   Acceptance: Published table with 6+ models, ratios, and hardware specs.
 
-- [ ] BMK-T4 Investigate Phi3/Llama3.1 GGUF load failures  Est: 2h
+- [x] BMK-T4 Investigate Phi3/Llama3.1 GGUF load failures  DONE 2026-03-27 PR #265  Est: 2h
   Acceptance: Root cause documented in devlog; fix shipped or issue filed.
 
 ### P2: Mistral vs Ollama Head-to-Head
@@ -618,7 +618,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 - [x] T39.2.3 Tests for BitNet model loading  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
   Deps: T39.2.1, T39.2.2
 
-- [ ] T39.2.4 Run go vet and linters for E39  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T39.2.4 Run go vet and linters for E39  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T39.2.3
 
 ### P11: TransMLA / MHA2MLA -- Retrofit MLA onto MHA Models (E40)
@@ -1075,8 +1075,8 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 These run in parallel with any wave -- no E34-E39 dependencies.
 
 - [ ] BMK-T1 Download missing GGUFs  verifies: [UC-001]
-- [ ] BMK-T3 Update website with benchmark table  Deps: BMK-T2
-- [ ] BMK-T4 Investigate Phi3/Llama3.1 load failures  verifies: [UC-001]
+- [x] BMK-T3 Update website with benchmark table  Deps: BMK-T2
+- [x] BMK-T4 Investigate Phi3/Llama3.1 load failures  verifies: [UC-001]
 - [ ] MHH-T1 Mistral quality comparison  verifies: [UC-001]
 - [ ] MHH-T3 Sliding window correctness  verifies: [UC-001]
 - [ ] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
@@ -1128,7 +1128,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [ ] T34.6.1 Run go vet and linters all E34  Deps: all E34 tasks
 - [ ] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
 - [ ] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
-- [ ] T39.2.4 Run go vet E39  Deps: T39.2.3
+- [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
 - [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
 - [ ] T40.2.5 Run go vet E40  Deps: T40.1.4, T40.2.3, T40.2.4
