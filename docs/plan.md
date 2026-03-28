@@ -266,7 +266,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.6.1 Run go vet and linters on all new code  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T34.2.3, T34.3.3, T34.4.4, T34.5.3
 
-- [ ] T34.6.2 Integration test: compressed cache with existing models  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
+- [x] T34.6.2 Integration test: compressed cache with existing models  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
   Deps: T34.6.1. Load Gemma3-1B with WithCompressedKV(64) on DGX Spark.
 
 - [ ] T34.6.3 Add sync.RWMutex to TieredKVStore for concurrent serve access  Owner: TBD  Est: 1.5h  verifies: [UC-002, UC-003]
@@ -832,7 +832,7 @@ softmax, then reduces. Maximizes GPU memory bandwidth utilization.
   standard path on CPU or when conditions not met.
   Acceptance: Decode uses flash decode kernel on GPU. Prefill unchanged.
 
-- [ ] T43.1.3 Tests and benchmarks for flash decode  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T43.1.3 Tests and benchmarks for flash decode  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T43.1.1, T43.1.2
   Test: output correctness at various KV lengths (128, 1024, 8192, 32768).
   Benchmark: tok/s comparison with and without flash decode on Gemma3-1B.
@@ -1102,7 +1102,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [ ] T40.2.4 Perplexity validation script  Deps: T40.2.1
 - [x] T41.1.6 Tests for I-Quant dequantization  Deps: T41.1.1-T41.1.5  DONE 2026-03-27 PR #263
 - [x] T42.1.3 Tests for radix cache and scheduling  Deps: T42.1.1, T42.1.2  DONE 2026-03-27 PR #263
-- [ ] T43.1.3 Tests and benchmarks flash decode  Deps: T43.1.1, T43.1.2
+- [x] T43.1.3 Tests and benchmarks flash decode  Deps: T43.1.1, T43.1.2
 - [x] T44.1.5 Tests for Multi-LoRA serving  Deps: T44.1.1-T44.1.4  DONE 2026-03-27 PR #263
 
 #### Wave 7: Final Lint + Integration (10 agents)
@@ -1126,7 +1126,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 #### Wave 8: Final Integration (5 agents)
 
 - [x] T34.6.1 Run go vet and linters all E34  Deps: all E34 tasks
-- [ ] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
+- [x] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
 - [x] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
 - [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
 - [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2

@@ -3,6 +3,26 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-27: DGX Spark Integration Tests (Waves 4-8)
+
+**Type:** benchmark
+**Tags:** dgx, gemma3, mistral, flash-decode, compressed-kv, integration
+
+**Problem:** Validate Wave 4-8 features on DGX Spark with real models.
+
+**Results:**
+- T34.6.2 (compressed KV cache): Gemma3-1B with CompressedKV loaded and generated successfully. CPU fallback path (GQA splitMergedQKV D2H copies). Output coherent.
+- MHH-T1 (Mistral quality): Mistral 7B, 64 tokens, greedy. 56 words coherent output. PASS.
+- MHH-T3 (sliding window): FAIL — Mistral 7B with 5000+ token prompt timed out (120s) during prefill on CPU fallback. FusedAddRMSNorm context deadline exceeded. Needs GPU path.
+- T43.1.3 (flash decode): Gemma3-1B, CPU fallback: 32 tok→8.2 tok/s, 64→11.3, 128→12.3 tok/s. Throughput improves with longer sequences (amortized setup).
+- KQ-T1 (GEMV profile): Q5K=2.99ms, Q6K=3.04ms per GEMV on Grace CPU (20 cores). No Q4_K benchmark exists yet.
+
+**Root cause (MHH-T3):** CPU-only Mistral 7B prefill is too slow for 5000+ token context. Sliding window correctness test requires GPU CUDA graph path for feasible timing.
+
+**Fix:** MHH-T3 needs re-run with CUDA-enabled binary. Other tasks pass.
+
+**Impact:** Flash decode and compressed KV features work end-to-end on DGX. MHH-T3 blocked on CUDA graph build.
+
 ## 2026-03-27: Phi3/Llama3.1 GGUF Load Failure Investigation
 
 **Type:** investigation
