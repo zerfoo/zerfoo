@@ -22,6 +22,10 @@ type ConvertGGUFOptions struct {
 	Rank int
 	// SourceArch is the original model architecture name (e.g., "llama").
 	SourceArch string
+	// OnLayerDone is called after each layer's K/V projection is decomposed.
+	// Arguments are the layer index (0-based) and total number of layers.
+	// May be nil.
+	OnLayerDone func(layer, total int)
 }
 
 // ConvertGGUF reads a source GGUF file, decomposes K/V projection weights
@@ -149,6 +153,7 @@ func ConvertGGUF(src io.ReadSeeker, dst io.Writer, opts ConvertGGUFOptions) erro
 	}
 
 	// Decompose K/V projections and add TransMLA tensors.
+	totalLayers := len(layerKV)
 	for layerIdx, kv := range layerKV {
 		kInfo, kOK := kv["k"]
 		vInfo, vOK := kv["v"]
@@ -185,6 +190,10 @@ func ConvertGGUF(src io.ReadSeeker, dst io.Writer, opts ConvertGGUFOptions) erro
 		w.AddTensorF32(prefix+"wDKV", []int{dModel, opts.Rank}, matrix64ToFlat32(wDKV))
 		w.AddTensorF32(prefix+"wUK", []int{dK, opts.Rank}, matrix64ToFlat32(wUK))
 		w.AddTensorF32(prefix+"wUV", []int{dV, opts.Rank}, matrix64ToFlat32(wUV))
+
+		if opts.OnLayerDone != nil {
+			opts.OnLayerDone(layerIdx, totalLayers)
+		}
 	}
 
 	return w.Write(dst)

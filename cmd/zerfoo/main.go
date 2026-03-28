@@ -75,6 +75,9 @@ func run() error {
 	finetuneSentimentCmd := cli.NewFineTuneSentimentCommand(os.Stdout)
 	cliApp.RegisterCommand(finetuneSentimentCmd)
 
+	transmlaCmd := cli.NewTransMLACommand(os.Stdout)
+	cliApp.RegisterCommand(transmlaCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
