@@ -186,7 +186,7 @@ All in ztensor repo. Q4_K is 45% slower than Q4_0.
 - [x] GTS-T2 Run Zerfoo against golden files  Est: 4h  Deps: GTS-T1
   Acceptance: All 10 test cases pass within 1e-4 tolerance.
 
-- [ ] GTS-T3 Benchmark latency vs Python granite-tsfm  Est: 2h  Deps: GTS-T2
+- [x] GTS-T3 Benchmark latency vs Python granite-tsfm  Est: 2h  Deps: GTS-T2
   Acceptance: Results recorded in devlog with comparison table.
 
 ### P5: MSA-Inspired Scalable Memory (E34)
@@ -1130,7 +1130,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
 - [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
 - [x] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
-- [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
+- [x] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
 - [x] T40.2.5 Run go vet E40  Deps: T40.1.4, T40.2.3, T40.2.4
 
 ---
