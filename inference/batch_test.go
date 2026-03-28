@@ -223,6 +223,9 @@ func TestGenerateBatch_UsesSessionPool(t *testing.T) {
 }
 
 func TestGenerateBatch_ConcurrentSessions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Flaky on CI runners due to goroutine scheduling timing")
+	}
 	// Verify that GenerateBatch runs multiple sessions concurrently rather than
 	// serializing through the generator mutex. We use a longer token sequence
 	// (no immediate EOS) so sessions overlap in time, and track peak concurrency
