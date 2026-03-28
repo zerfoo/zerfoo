@@ -61,8 +61,24 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.MaxTokens = &clamped
 	}
 
+	// Parse adapter from model field ("base:adapter" format).
+	_, adapterName := ParseModelAdapter(req.Model)
+	if adapterName != "" && s.adapterCache == nil {
+		writeError(w, http.StatusBadRequest, "adapter selection not enabled")
+		return
+	}
+	if adapterName != "" {
+		if _, err := s.adapterCache.resolveAdapter(adapterName); err != nil {
+			writeError(w, http.StatusBadRequest, "adapter not found: "+adapterName)
+			return
+		}
+	}
+
 	// Build generation options.
 	var opts []inference.GenerateOption
+	if adapterName != "" {
+		opts = append(opts, inference.WithAdapter(adapterName))
+	}
 	if req.Temperature != nil {
 		opts = append(opts, inference.WithTemperature(*req.Temperature))
 	}
@@ -234,7 +250,23 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		req.MaxTokens = &clamped
 	}
 
+	// Parse adapter from model field ("base:adapter" format).
+	_, complAdapterName := ParseModelAdapter(req.Model)
+	if complAdapterName != "" && s.adapterCache == nil {
+		writeError(w, http.StatusBadRequest, "adapter selection not enabled")
+		return
+	}
+	if complAdapterName != "" {
+		if _, err := s.adapterCache.resolveAdapter(complAdapterName); err != nil {
+			writeError(w, http.StatusBadRequest, "adapter not found: "+complAdapterName)
+			return
+		}
+	}
+
 	var opts []inference.GenerateOption
+	if complAdapterName != "" {
+		opts = append(opts, inference.WithAdapter(complAdapterName))
+	}
 	if req.Temperature != nil {
 		opts = append(opts, inference.WithTemperature(*req.Temperature))
 	}

@@ -44,7 +44,8 @@ type Server struct {
 	apiKey      string          // optional; enables Bearer token auth
 	keyStore    *security.KeyStore   // optional; enables scope-based authorization
 	rateLimiter *security.RateLimiter // optional; enables per-IP rate limiting
-	maxTokens   int             // server-side upper bound for max_tokens (default 8192)
+	maxTokens    int                  // server-side upper bound for max_tokens (default 8192)
+	adapterCache *AdapterCacheHandle // optional; enables per-request LoRA adapter selection
 }
 
 // ServerOption configures the server.
