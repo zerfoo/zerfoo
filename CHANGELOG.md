@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0](https://github.com/zerfoo/zerfoo/compare/v1.28.0...v1.29.0) (2026-03-28)
+
+
+### Features
+
+* **attention:** add SparseRoutedAttention layer ([1d29aee](https://github.com/zerfoo/zerfoo/commit/1d29aee7d53baacd955c1d8502e07143584bfd10))
+* **attention:** add SparseRoutedAttention layer ([060f98d](https://github.com/zerfoo/zerfoo/commit/060f98d2e5b851f4cb813b2ab7536e00fa34c7ea))
+* **attention:** register NativeSparseAttention in layer registry ([ccef2e1](https://github.com/zerfoo/zerfoo/commit/ccef2e1fdcaf41d94efc6b8673f1cf6cec8c70b3))
+* **attention:** register SparseRoutedAttention in layer registry ([78b1373](https://github.com/zerfoo/zerfoo/commit/78b1373f316d4353e78fca7f78bc1670b837c2c1))
+* **attention:** wire split-KV flash decode kernel for autoregressive decode ([fb53c41](https://github.com/zerfoo/zerfoo/commit/fb53c412f03db98ac9743a128039d3d939a1137d))
+* **batcher:** cache-aware request scheduling (T42.1.2) ([b84297b](https://github.com/zerfoo/zerfoo/commit/b84297b47e204a52702481d4020cb0c5a02173b3))
+* **cli:** add --quarot flag to run command for QuaRot weight fusion ([4799449](https://github.com/zerfoo/zerfoo/commit/4799449fde07e47b85ed0a3bd0d927cdf10dc80f))
+* **cmd:** implement transmla CLI command for MHA-to-MLA conversion ([3b6d618](https://github.com/zerfoo/zerfoo/commit/3b6d618257c8d26654967e515b665023101f98a9))
+* **generate:** add async CPU-to-GPU prefetch for tiered KV store ([42af0b7](https://github.com/zerfoo/zerfoo/commit/42af0b7c06fb79ac8e93d27c87afa457cdf22ac5))
+* **generate:** add Q3 KV cache with non-uniform codebook quantization ([b82e15d](https://github.com/zerfoo/zerfoo/commit/b82e15d70a42de95df7b2f5670ae236106ab5e40))
+* **generate:** add TieredKVStore with hot/warm/cold KV cache tiers ([1366297](https://github.com/zerfoo/zerfoo/commit/13662971f209809c01c281901951bbd7820ebe2d))
+* **generate:** add WithEAGLE generator option for speculative EAGLE decoding ([da93e0b](https://github.com/zerfoo/zerfoo/commit/da93e0b9f3138c0ec8aa11c74b86cbd8e8a8f867))
+* **generate:** wire WithGeneratorKVDtype q4/q3 into all cache creation paths ([557e856](https://github.com/zerfoo/zerfoo/commit/557e8561578b1e9b7e93456091bebbd796434a38))
+* **gguf:** add TQ2_0 ternary tensor type to GGUF loader ([5e59c8a](https://github.com/zerfoo/zerfoo/commit/5e59c8a542064f5fc9d6daa12b273dd805552da1))
+* **gguf:** wire IQ2_XXS, IQ3_S, IQ4_NL dequantization into GGUF loader ([f34bdb2](https://github.com/zerfoo/zerfoo/commit/f34bdb2c7aed2f23ec4f4bc9ada5f9f0b09642c0))
+* **inference:** add MoE weight splitter for GPU/CPU expert placement ([9ac4a63](https://github.com/zerfoo/zerfoo/commit/9ac4a632f7e4d1f1c717e99cefa6d43b9b5b9e08))
+* **inference:** detect TransMLA tensors and wire MLA inference path ([dd7be29](https://github.com/zerfoo/zerfoo/commit/dd7be2971aa78618dfcbc7719eabaee8b0609bc7))
+* **inference:** implement async CPU expert dispatch for hybrid MoE ([4c31e6c](https://github.com/zerfoo/zerfoo/commit/4c31e6cae37bed44848b886622cf49b9382276e7))
+* **inference:** implement predictive expert prefetch for hybrid MoE ([b5be277](https://github.com/zerfoo/zerfoo/commit/b5be2779508f6c958c9eb2a48546f1850d8aafb3))
+* **inference:** load EAGLE head weights from GGUF tensors ([bc3b332](https://github.com/zerfoo/zerfoo/commit/bc3b332c0f3fa6601c922b1f0535e407aed6be66))
+* **layers:** wire ternary MatMul dispatch for BitNet models ([ed52b21](https://github.com/zerfoo/zerfoo/commit/ed52b2192b2e9d50311d5b76aa23138e91c4b5a3))
+* **lora:** implement adapter cache with LRU eviction ([f3f8bd4](https://github.com/zerfoo/zerfoo/commit/f3f8bd4851a536a54d9e1d2b7391031fa927ee13))
+* **lora:** implement LoRA weight merging in forward pass ([1f1f3b8](https://github.com/zerfoo/zerfoo/commit/1f1f3b8c12d67e48443fea58344122ff32195845))
+* **serve:** add per-request LoRA adapter selection to API ([88f5049](https://github.com/zerfoo/zerfoo/commit/88f504931d8b55c5702b5951af47726ab478df8d))
+* **training:** add contrastive routing loss for sparse routed attention ([d1eb07f](https://github.com/zerfoo/zerfoo/commit/d1eb07fe100fd7ed6b37396e639a478f8c1e2405))
+* **transmla:** write converted TransMLA weights as GGUF ([08e72cd](https://github.com/zerfoo/zerfoo/commit/08e72cd85bdc4a64a078ce2ada5d1e368cd06e0a))
+* **transmla:** write converted TransMLA weights as GGUF ([c6bb6ae](https://github.com/zerfoo/zerfoo/commit/c6bb6ae0301217f0ea94746f2d0e748d083b820e))
+
+
+### Bug Fixes
+
+* **generate:** remove racy concurrent test for non-thread-safe TieredKVStore ([6553815](https://github.com/zerfoo/zerfoo/commit/65538159e1fd56d200e5e5709235deb40b73f3b3))
+* **gguf:** add Q2_K and Q3_K tensor type decoders for Phi3/Llama3.1 ([45b3b88](https://github.com/zerfoo/zerfoo/commit/45b3b8884ad7fec73c47ebbbe0a306e4926a6e8f))
+* **gguf:** preserve TernaryStorage in loader and add BitNet loading tests ([a071e48](https://github.com/zerfoo/zerfoo/commit/a071e483b7471136e044c14d60af4bfd445ba228))
+
 ## [1.28.0](https://github.com/zerfoo/zerfoo/compare/v1.27.1...v1.28.0) (2026-03-27)
 
 
