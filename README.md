@@ -9,16 +9,34 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 
 **235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 20 model architectures. All models produce coherent output with CUDA graph capture. Tabular ML and time-series forecasting built in.
 
-### Multi-Model Benchmark (DGX Spark GB10, 128 tokens, greedy, 3-run median)
+### Benchmarks
 
-| Model | Size | Zerfoo (tok/s) | Ollama (tok/s) | Ratio |
-|-------|------|----------------|----------------|-------|
-| Gemma 3 1B Q4_K_M | 1B | **235** | 188 | **1.25x** |
-| DeepSeek R1 1.5B Q4_K_M | 1.5B | **186** | 167 | **1.11x** |
-| Llama 3.2 3B Q4_K_M | 3B | 92 | 93 | 0.99x |
-| Mistral 7B Q5_K_M | 7B | 44 | 44 | 1.00x |
+Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX Spark GB10 (Grace Blackwell, sm_121, 128 GB LPDDR5x).
 
-25% faster on small models, parity at 7B. All models produce coherent output.
+| Model | Size | Quant | Zerfoo (tok/s) | Ollama (tok/s) | Ratio |
+|-------|------|-------|----------------|----------------|-------|
+| Gemma 3 1B | 1B | Q4_K_M | **235** | 188 | **1.25x** |
+| DeepSeek R1 1.5B | 1.5B | Q4_K_M | **186** | 167 | **1.11x** |
+| Llama 3.2 3B | 3B | Q4_K_M | 92 | 93 | 0.99x |
+| Mistral 7B | 7B | Q5_K_M | 44 | 44 | 1.00x |
+
+25% faster on small models, parity at 7B. All models produce coherent, verified output.
+
+<details>
+<summary>Methodology</summary>
+
+- **Hardware**: NVIDIA DGX Spark GB10 (Grace Blackwell, sm_121, 128 GB LPDDR5x unified memory)
+- **Prompt**: "Explain the theory of relativity in simple terms."
+- **Tokens**: 128 decode tokens per run
+- **Sampling**: greedy (temperature = 0)
+- **Runs**: 3-run median
+- **Date**: 2026-03-27
+- **Ollama version**: 0.17.7
+- **Notes**: All results verified for coherent output. Zerfoo uses CUDA graph capture with flash attention decode. GQA repeat fix applied (ztensor v0.6.3, zerfoo v1.25.5).
+
+Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.json)
+
+</details>
 
 ## Quick Start
 
