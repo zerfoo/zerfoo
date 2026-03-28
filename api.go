@@ -31,6 +31,20 @@ type Model struct {
 	generateFunc func(ctx context.Context, prompt string) (string, error)
 }
 
+// NewModel creates a Model with a custom generate function for testing
+// and demonstrations without loading a real GGUF model file. The provided
+// function is called by Generate, Chat, and ChatStream.
+//
+// This is useful for writing pkg.go.dev examples and unit tests:
+//
+//	m := zerfoo.NewModel(func(ctx context.Context, prompt string) (string, error) {
+//	    return "Hello from the model!", nil
+//	})
+//	result, _ := m.Generate(ctx, "Hi")
+func NewModel(fn func(ctx context.Context, prompt string) (string, error)) *Model {
+	return &Model{generateFunc: fn}
+}
+
 // defaultQuant is the preferred quantization when none is specified.
 const defaultQuant = "Q4_K_M"
 
