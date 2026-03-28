@@ -89,6 +89,9 @@ type transformerGraphOpts struct {
 	attnBias            bool           // if true, add bias to Q/K/V projections (Qwen 2)
 	partialRotaryFactor float32        // fraction of head dims to apply RoPE (0 or 1 = full RoPE)
 	residual            ResidualConfig // residual connection strategy
+	// penultimateNode will capture the hidden state at layer NumLayers-2
+	// for EAGLE head training once graph-level intermediate output capture
+	// is implemented. For now, EAGLE training uses synthetic pairs.
 }
 
 // buildTransformerGraph constructs a computation graph for a decoder-only

@@ -427,10 +427,34 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   in the main model's GGUF (if present under "eagle." prefix).
   Acceptance: Weights loaded and shapes validated.
 
-- [ ] T36.2.4 Benchmark EAGLE vs vanilla autoregressive  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
-  Deps: T36.2.1
-  Compare tok/s with and without EAGLE on Gemma3-1B and Llama3.2-3B.
-  Target: >= 2x speedup with EAGLE head trained on the same model.
+- [ ] T36.2.4a Add Graph.NodeOutput to ztensor  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  repo: ztensor. File: graph/graph.go
+  Add `func (g *Graph[T]) NodeOutput(n Node[T]) *TensorNumeric[T]` to expose
+  memo map for penultimate layer extraction. One-line method.
+  Acceptance: Method returns correct output after Forward.
+
+- [ ] T36.2.4b Implement penultimate feature collection  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+  Deps: T36.2.4a
+  File: inference/eagle_collect.go (new)
+  Load GGUF model, run forward on corpus text, capture penultimate layer
+  hidden states as (input[t], target[t+1]) training pairs.
+  Add penultimateNode field to transformerGraphOpts in arch_common.go.
+  Acceptance: Returns pairs with correct hidden dim shape.
+
+- [ ] T36.2.4c Implement eagle-train CLI command  Owner: TBD  Est: 3h  verifies: [UC-001, UC-007]
+  Deps: T36.2.4b
+  File: cmd/cli/eagle_train.go (new)
+  CLI: `zerfoo eagle-train --model m.gguf --corpus data.txt --output eagle.gguf`
+  Training loop: MSE loss on predicted vs actual next hidden state.
+  Uses AdamW, cosine annealing. Exports weights to GGUF with "eagle." prefix.
+  Acceptance: Loss decreases over epochs. GGUF loads via LoadEAGLEWeights.
+
+- [ ] T36.2.4d Train EAGLE head for Gemma3-1B and benchmark  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+  Deps: T36.2.4c
+  Run eagle-train on Gemma3-1B with wikitext corpus on DGX Spark.
+  Benchmark EAGLE vs vanilla autoregressive decode.
+  Target: >= 2x speedup.
+  Acceptance: Results documented in devlog with speedup ratio.
   Acceptance: Results in devlog with speedup ratios.
 
 - [x] T36.2.5 Tests for EAGLE decode loop  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]

@@ -78,6 +78,9 @@ func run() error {
 	transmlaCmd := cli.NewTransMLACommand(os.Stdout)
 	cliApp.RegisterCommand(transmlaCmd)
 
+	eagleTrainCmd := cli.NewEagleTrainCommand(os.Stdout)
+	cliApp.RegisterCommand(eagleTrainCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
