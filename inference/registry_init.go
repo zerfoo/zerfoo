@@ -19,4 +19,6 @@ func init() {
 	RegisterArchitecture("whisper", buildWhisperGraph)
 	RegisterArchitecture("bert", buildBertGraph)
 	RegisterArchitecture("gpt2", buildGPT2Graph)
+	RegisterArchitecture("nemotron_h", buildNemotronHGraph)
+	RegisterArchitecture("nemotron_h_moe", buildNemotronHMoEGraph)
 }
