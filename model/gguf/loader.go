@@ -96,6 +96,12 @@ func TensorByteSize(typ GGMLType, numElements int) (int, error) {
 	case GGMLTypeQ6_K:
 		nBlocks := (numElements + 255) / 256
 		return nBlocks * 210, nil // 128 bytes ql + 64 bytes qh + 16 bytes scales + 2 bytes d
+	case GGMLTypeQ2_K:
+		nBlocks := (numElements + 255) / 256
+		return nBlocks * 84, nil // 2 bytes d + 2 bytes dmin + 16 bytes scales + 64 bytes qs
+	case GGMLTypeQ3_K:
+		nBlocks := (numElements + 255) / 256
+		return nBlocks * 110, nil // 32 bytes hmask + 64 bytes qs + 12 bytes scales + 2 bytes d
 	case GGMLTypeBF16:
 		return numElements * 2, nil
 	case GGMLTypeIQ4_NL:
@@ -134,6 +140,10 @@ func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tens
 		return decodeQ5KTensor(shape, numElements, raw)
 	case GGMLTypeQ6_K:
 		return decodeQ6KTensor(shape, numElements, raw)
+	case GGMLTypeQ2_K:
+		return decodeQ2KTensor(shape, numElements, raw)
+	case GGMLTypeQ3_K:
+		return decodeQ3KTensor(shape, numElements, raw)
 	case GGMLTypeBF16:
 		return decodeBF16Tensor(shape, numElements, raw)
 	case GGMLTypeIQ4_NL:
@@ -263,6 +273,115 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 	// Re-quantize to Q4_0 for fast fused GEMV. This trades ~1 bit of precision
 	// for 8x bandwidth reduction during inference. A native Q5_0 GEMV kernel
 	// would eliminate this quality tradeoff (TODO).
+	q4 := tensor.QuantizeQ4(data)
+	return tensor.NewWithStorage[float32](shape, q4)
+}
+
+// decodeQ2KTensor decodes Q2_K blocks and re-quantizes to Q4_0 for fast GEMV.
+// Q2_K format: 256 elements per super-block, 84 bytes per block.
+// Layout: 2 bytes fp16 d + 2 bytes fp16 dmin + 16 bytes scales + 64 bytes qs.
+// Each byte in scales encodes two 4-bit values: low nibble = scale, high nibble = min.
+// Each byte in qs encodes four 2-bit quantized values.
+func decodeQ2KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	const blockSize = 256
+	const blockBytes = 84
+	nBlocks := (numElements + blockSize - 1) / blockSize
+
+	if len(raw) < nBlocks*blockBytes {
+		return nil, fmt.Errorf("Q2_K decode: need %d bytes, got %d", nBlocks*blockBytes, len(raw))
+	}
+
+	data := make([]float32, numElements)
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		d := float16.FromBits(binary.LittleEndian.Uint16(raw[off : off+2])).ToFloat32()
+		dmin := float16.FromBits(binary.LittleEndian.Uint16(raw[off+2 : off+4])).ToFloat32()
+		scales := raw[off+4 : off+4+16]
+		qs := raw[off+20 : off+20+64]
+
+		for j := range blockSize {
+			// Determine which sub-block (of 16) this element belongs to.
+			subBlock := j / 16
+			sc := scales[subBlock]
+			scaleVal := float32(sc & 0x0F)
+			minVal := float32(sc >> 4)
+
+			// Extract 2-bit quant from qs.
+			byteIdx := j / 4
+			bitShift := uint(j%4) * 2
+			q := (qs[byteIdx] >> bitShift) & 0x03
+
+			idx := bi*blockSize + j
+			if idx < numElements {
+				data[idx] = d*scaleVal*float32(q) - dmin*minVal
+			}
+		}
+	}
+
+	q4 := tensor.QuantizeQ4(data)
+	return tensor.NewWithStorage[float32](shape, q4)
+}
+
+// decodeQ3KTensor decodes Q3_K blocks and re-quantizes to Q4_0 for fast GEMV.
+// Q3_K format: 256 elements per super-block, 110 bytes per block.
+// Layout: 32 bytes hmask + 64 bytes qs (low 2 bits) + 12 bytes scales + 2 bytes fp16 d.
+// The 3-bit value is reconstructed as: low 2 bits from qs + high bit from hmask.
+func decodeQ3KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	const blockSize = 256
+	const blockBytes = 110
+	nBlocks := (numElements + blockSize - 1) / blockSize
+
+	if len(raw) < nBlocks*blockBytes {
+		return nil, fmt.Errorf("Q3_K decode: need %d bytes, got %d", nBlocks*blockBytes, len(raw))
+	}
+
+	data := make([]float32, numElements)
+	for bi := range nBlocks {
+		off := bi * blockBytes
+		hmask := raw[off : off+32]
+		qs := raw[off+32 : off+32+64]
+		scalesRaw := raw[off+96 : off+96+12]
+		d := float16.FromBits(binary.LittleEndian.Uint16(raw[off+108 : off+110])).ToFloat32()
+
+		// Decode 6-bit scales from 12-byte packed representation.
+		// 16 sub-blocks of 16 elements each. The 12 bytes encode 16 6-bit scales.
+		// Bytes 0-7: low 4 bits for scales 0-15 (two per byte, low/high nibble).
+		// Bytes 8-11: high 2 bits for scales 0-15 (four per byte, 2 bits each).
+		var scales [16]int8
+		for i := range 8 {
+			lo := scalesRaw[i] & 0x0F
+			hi := (scalesRaw[8+i/4] >> (2 * uint(i%4))) & 0x03
+			scales[i] = int8(lo|(hi<<4)) - 32
+		}
+		for i := range 8 {
+			lo := scalesRaw[i] >> 4
+			hi := (scalesRaw[10+i/4] >> (2 * uint(i%4))) & 0x03
+			scales[8+i] = int8(lo|(hi<<4)) - 32
+		}
+
+		for j := range blockSize {
+			subBlock := j / 16
+
+			// Low 2 bits from qs.
+			byteIdx := j / 4
+			bitShift := uint(j%4) * 2
+			q := int((qs[byteIdx] >> bitShift) & 0x03)
+
+			// High bit from hmask.
+			hmaskByte := j / 8
+			hmaskBit := uint(j % 8)
+			if (hmask[hmaskByte]>>hmaskBit)&1 == 0 {
+				q |= 4
+			}
+
+			// The 3-bit value is in [0, 7], center at 4 to get [-4, 3].
+			idx := bi*blockSize + j
+			if idx < numElements {
+				data[idx] = d * float32(scales[subBlock]) * float32(q-4)
+			}
+		}
+	}
+
 	q4 := tensor.QuantizeQ4(data)
 	return tensor.NewWithStorage[float32](shape, q4)
 }
