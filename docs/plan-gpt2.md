@@ -44,19 +44,19 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
 
 ### E1: Infrastructure Changes
 
-- [ ] T1.1 Make RoPE optional in GQA  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T1.1 Make RoPE optional in GQA  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: layers/attention/grouped_query_attention.go
   Add nil checks around RoPE usage (SetPositionOffset, GetAngles).
   When RoPE is nil, Q and K pass through without rotation.
   Acceptance: GQA works with rope=nil. Existing tests still pass.
 
-- [ ] T1.2 Add position_embd.weight to GGUF tensor name mapping  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T1.2 Add position_embd.weight to GGUF tensor name mapping  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: model/gguf/arch.go
   Add "position_embd.weight" to globalTensorMap.
   Add output_norm.bias handling for architectures with LayerNorm bias.
   Acceptance: MapTensorName("gpt2", "position_embd.weight") returns mapped name.
 
-- [ ] T1.3 Add GPT-2 config parser  Owner: TBD  Est: 0.5h  verifies: [UC-001]
+- [x] T1.3 Add GPT-2 config parser  Owner: TBD  Est: 0.5h  verifies: [UC-001]
   File: inference/arch_config.go
   Parse GPT-2 config: n_embd -> HiddenSize, n_layer -> NumLayers,
   n_head -> NumQueryHeads=NumKVHeads, n_positions -> MaxPositionEmbeddings.
@@ -66,7 +66,7 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
 
 ### E2: GPT-2 Graph Builder
 
-- [ ] T2.1 Implement GPT-2 graph builder  Owner: TBD  Est: 3h  verifies: [UC-001]
+- [x] T2.1 Implement GPT-2 graph builder  Owner: TBD  Est: 3h  verifies: [UC-001]
   File: inference/arch_gpt2.go (new)
   Graph: TokenEmbed + PosEmbed -> [LayerNorm -> GQA(rope=nil) -> ResidualAdd
   -> LayerNorm -> Linear+GELU+Linear -> ResidualAdd] x N -> LayerNorm -> LMHead
@@ -82,21 +82,21 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
 
   Acceptance: buildGPT2Graph returns valid graph. Forward produces [batch, seq, vocab].
 
-- [ ] T2.2 Register "gpt2" architecture  Owner: TBD  Est: 0.5h  verifies: [UC-001]
+- [x] T2.2 Register "gpt2" architecture  Owner: TBD  Est: 0.5h  verifies: [UC-001]
   File: inference/registry_init.go
   Add: RegisterArchitecture("gpt2", buildGPT2Graph)
   Acceptance: GetArchitecture("gpt2") returns non-nil builder.
 
 ### E3: Tests
 
-- [ ] T3.1 Unit tests for GPT-2 builder  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T3.1 Unit tests for GPT-2 builder  Owner: TBD  Est: 1.5h  verifies: [UC-001]
   File: inference/arch_gpt2_test.go (new)
   Tests: (1) Build graph with synthetic tensors (2 layers, 64 hidden, 2 heads).
   (2) Forward pass produces correct output shape. (3) Position offset works
   for autoregressive decode. (4) Tied embeddings work when output.weight absent.
   Acceptance: All tests pass with -race.
 
-- [ ] T3.2 Tensor name mapping tests  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T3.2 Tensor name mapping tests  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: model/gguf/arch_test.go (add to existing)
   Test MapTensorName for "gpt2" with all GPT-2 tensor names.
   Acceptance: All mappings correct.
@@ -108,13 +108,13 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
   Gate behind env var (ZERFOO_TEST_MODELS=1) for CI.
   Acceptance: Model loads and generates coherent children's story text.
 
-- [ ] T3.4 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T3.4 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Run: go build ./... && go vet ./... && go test ./inference/... -race
   Acceptance: Clean build, clean vet, all tests pass.
 
 ### E4: Documentation
 
-- [ ] T4.1 Update README with GPT-2 architecture  Owner: TBD  Est: 0.5h  delivers: [README update]
+- [x] T4.1 Update README with GPT-2 architecture  Owner: TBD  Est: 0.5h  delivers: [README update]
   Add GPT-2 row to architecture table. Update count to 25 (14 families).
   Acceptance: README reflects GPT-2 support.
 
@@ -135,20 +135,20 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
 ### Waves
 
 #### Wave 1: Foundation (3 agents)
-- [ ] T1.1 Make RoPE optional in GQA
-- [ ] T1.2 Add position_embd.weight to tensor mapping
-- [ ] T1.3 Add GPT-2 config parser
+- [x] T1.1 Make RoPE optional in GQA
+- [x] T1.2 Add position_embd.weight to tensor mapping
+- [x] T1.3 Add GPT-2 config parser
 
 #### Wave 2: Core Implementation (2 agents)
-- [ ] T2.1 Implement GPT-2 graph builder  Deps: T1.1, T1.2, T1.3
-- [ ] T2.2 Register "gpt2" architecture  Deps: T2.1
+- [x] T2.1 Implement GPT-2 graph builder  Deps: T1.1, T1.2, T1.3
+- [x] T2.2 Register "gpt2" architecture  Deps: T2.1
 
 #### Wave 3: Verification (4 agents)
-- [ ] T3.1 Unit tests for GPT-2 builder  Deps: T2.2
-- [ ] T3.2 Tensor name mapping tests  Deps: T1.2
+- [x] T3.1 Unit tests for GPT-2 builder  Deps: T2.2
+- [x] T3.2 Tensor name mapping tests  Deps: T1.2
 - [ ] T3.3 Integration test with TinyStories  Deps: T2.2
-- [ ] T3.4 Run go vet and linters  Deps: T2.2
-- [ ] T4.1 Update README  Deps: T2.2
+- [x] T3.4 Run go vet and linters  Deps: T2.2
+- [x] T4.1 Update README  Deps: T2.2
 
 ---
 

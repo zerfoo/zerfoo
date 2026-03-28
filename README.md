@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 24 model architectures (13 families). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
+**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 25 model architectures (14 families). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -228,7 +228,7 @@ for _, tc := range result.ToolCalls {
 
 ## Supported Models
 
-### LLM Inference (24 architectures, 13 model families)
+### LLM Inference (25 architectures, 14 model families)
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
@@ -244,6 +244,7 @@ for _, tc := range result.ToolCalls {
 | Command R | GGUF | Cohere architecture |
 | Falcon | GGUF | Multi-query attention |
 | RWKV | GGUF | Linear attention |
+| GPT-2 | GGUF | TinyStories, learned position embeddings |
 | Mamba / Mamba 3 | GGUF | State space models (MIMO SSM) |
 | Jamba | GGUF | Hybrid Mamba-Transformer |
 | Whisper | GGUF | Audio transcription |
