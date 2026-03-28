@@ -158,7 +158,7 @@ All models work -- time to build the definitive comparison table.
 - [x] MHH-T1 Run Mistral 7B quality comparison  Est: 2h
   Acceptance: Quality scores documented; token agreement > 95% with greedy.
 
-- [ ] MHH-T2 Profile Mistral 7B performance gap  Est: 1h
+- [x] MHH-T2 Profile Mistral 7B performance gap  Est: 1h
   Deps: MHH-T1
   Acceptance: Confirmed ratio documented in devlog with 3-run median.
 
@@ -1081,7 +1081,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [ ] MHH-T3 Sliding window correctness  verifies: [UC-001]
 - [ ] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
 - [ ] GTS-T1 Generate Python golden files  verifies: [UC-005]
-- [ ] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
+- [x] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
 - [ ] KQ-T2 Optimize Q4_K GEMV kernel (ztensor)  Deps: KQ-T1
 - [ ] GTS-T2 Run Zerfoo against golden files  Deps: GTS-T1
 
