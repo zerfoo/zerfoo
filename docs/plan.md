@@ -175,7 +175,7 @@ All in ztensor repo. Q4_K is 45% slower than Q4_0.
 - [x] KQ-T2 Optimize Q4_K GEMV kernel  Est: 4h  repo: ztensor  Deps: KQ-T1
   Acceptance: Measurable improvement in BenchmarkGEMV.
 
-- [ ] KQ-T3 Benchmark and re-enable native Q4_K loading  Est: 2h  Deps: KQ-T2
+- [x] KQ-T3 Benchmark and re-enable native Q4_K loading  Est: 2h  Deps: KQ-T2
   Target: >= 215 tok/s on Gemma 3 1B. Acceptance: All tests pass.
 
 ### P4: Granite TS Parity Tests
@@ -1129,7 +1129,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T34.6.2 Integration test on DGX Spark  Deps: T34.6.1
 - [x] T34.6.3 Add sync.RWMutex to TieredKVStore  Deps: T34.6.1
 - [x] T39.2.4 Run go vet E39  Deps: T39.2.3  DONE 2026-03-27 PR #265
-- [ ] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
+- [x] KQ-T3 Benchmark and re-enable native Q4_K  Deps: KQ-T2
 - [ ] GTS-T3 Benchmark vs Python granite-tsfm  Deps: GTS-T2
 - [x] T40.2.5 Run go vet E40  Deps: T40.1.4, T40.2.3, T40.2.4
 
