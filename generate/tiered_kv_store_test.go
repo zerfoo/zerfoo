@@ -2,6 +2,7 @@ package generate
 
 import (
 	"testing"
+	"time"
 )
 
 func newTieredStore(t *testing.T, numLayers, maxSeqLen int) *TieredKVStore[float32] {
@@ -559,5 +560,241 @@ func TestTieredKVStore_UpdateOutOfRange(t *testing.T) {
 	}
 	if err := store.Update(-1, k, v); err == nil {
 		t.Error("Update(-1) should return error")
+	}
+}
+
+func TestTieredKVStore_PrefetchAsyncFromCold(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{10, 20})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{30, 40})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatal(err)
+	}
+
+	// Demote to cold.
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Tier(0); got != TierCold {
+		t.Fatalf("Tier(0) = %d, want TierCold", got)
+	}
+
+	// Trigger async prefetch.
+	store.PrefetchAsync([]int{0})
+
+	// Wait for the background goroutine to process.
+	deadline := time.Now().Add(2 * time.Second)
+	var lkv *LayerKV[float32]
+	var ok bool
+	for time.Now().Before(deadline) {
+		lkv, ok = store.GetPrefetched(0)
+		if ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("PrefetchAsync did not produce data within timeout")
+	}
+
+	kData := lkv.Key.Data()
+	if kData[0] != 10 || kData[1] != 20 {
+		t.Errorf("Prefetched Key = %v, want [10 20]", kData)
+	}
+	vData := lkv.Value.Data()
+	if vData[0] != 30 || vData[1] != 40 {
+		t.Errorf("Prefetched Value = %v, want [30 40]", vData)
+	}
+}
+
+func TestTieredKVStore_PrefetchAsyncFromWarm(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{5, 6})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{7, 8})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatal(err)
+	}
+
+	// Demote to warm.
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Tier(0); got != TierWarm {
+		t.Fatalf("Tier(0) = %d, want TierWarm", got)
+	}
+
+	store.PrefetchAsync([]int{0})
+
+	deadline := time.Now().Add(2 * time.Second)
+	var lkv *LayerKV[float32]
+	var ok bool
+	for time.Now().Before(deadline) {
+		lkv, ok = store.GetPrefetched(0)
+		if ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("PrefetchAsync from warm did not produce data within timeout")
+	}
+
+	kData := lkv.Key.Data()
+	if kData[0] != 5 || kData[1] != 6 {
+		t.Errorf("Prefetched Key = %v, want [5 6]", kData)
+	}
+}
+
+func TestTieredKVStore_PrefetchAsyncSkipsHot(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{1, 2})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{3, 4})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatal(err)
+	}
+
+	// Layer is hot — prefetch should be a no-op.
+	store.PrefetchAsync([]int{0})
+	time.Sleep(50 * time.Millisecond)
+
+	_, ok := store.GetPrefetched(0)
+	if ok {
+		t.Error("PrefetchAsync should skip hot layers")
+	}
+}
+
+func TestTieredKVStore_PrefetchAsyncOutOfRange(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	// Should not panic for invalid positions.
+	store.PrefetchAsync([]int{-1, 5, 100})
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestTieredKVStore_PrefetchAsyncMultipleLayers(t *testing.T) {
+	store := newTieredStore(t, 3, 128)
+
+	for layer := range 3 {
+		k := makeTensor(t, []int{1, 1, 2}, []float32{float32(layer * 10), float32(layer*10 + 1)})
+		v := makeTensor(t, []int{1, 1, 2}, []float32{float32(layer * 20), float32(layer*20 + 1)})
+		if err := store.Update(layer, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Demote layers 0 and 2 to cold, keep 1 hot.
+	for _, layer := range []int{0, 2} {
+		if err := store.Demote(layer); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Demote(layer); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Prefetch all three — only 0 and 2 should be fetched.
+	store.PrefetchAsync([]int{0, 1, 2})
+
+	deadline := time.Now().Add(2 * time.Second)
+	got := make(map[int]bool)
+	for time.Now().Before(deadline) {
+		for _, layer := range []int{0, 2} {
+			if !got[layer] {
+				if _, ok := store.GetPrefetched(layer); ok {
+					got[layer] = true
+				}
+			}
+		}
+		if len(got) == 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if len(got) != 2 {
+		t.Errorf("expected 2 prefetched layers, got %d", len(got))
+	}
+
+	// Layer 1 was hot, should not be prefetched.
+	_, ok := store.GetPrefetched(1)
+	if ok {
+		t.Error("Layer 1 (hot) should not have been prefetched")
+	}
+}
+
+func TestTieredKVStore_PrefetchAsyncDedup(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{1, 2})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{3, 4})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+
+	// First prefetch.
+	store.PrefetchAsync([]int{0})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := store.GetPrefetched(0); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Second prefetch of same layer should still work after consuming.
+	store.PrefetchAsync([]int{0})
+	for time.Now().Before(deadline) {
+		if _, ok := store.GetPrefetched(0); ok {
+			return // success
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("second PrefetchAsync did not produce data")
+}
+
+func TestTieredKVStore_ResetClearsPrefetched(t *testing.T) {
+	store := newTieredStore(t, 1, 128)
+
+	k := makeTensor(t, []int{1, 1, 2}, []float32{1, 2})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{3, 4})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Demote(0); err != nil {
+		t.Fatal(err)
+	}
+
+	store.PrefetchAsync([]int{0})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := store.GetPrefetched(0); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Prefetch again, then reset before consuming.
+	store.PrefetchAsync([]int{0})
+	time.Sleep(50 * time.Millisecond)
+	store.Reset()
+
+	_, ok := store.GetPrefetched(0)
+	if ok {
+		t.Error("GetPrefetched should return false after Reset")
 	}
 }
