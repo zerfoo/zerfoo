@@ -44,6 +44,7 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var temperature float64
 	var topK, maxTokens int
 	var topP, repetitionPenalty float64
+	var quarot bool
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -139,6 +140,8 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 				return err
 			}
 			prompt = s
+		case "--quarot":
+			quarot = true
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])
@@ -169,6 +172,9 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var loadOpts []inference.Option
 	if cacheDir != "" {
 		loadOpts = append(loadOpts, inference.WithCacheDir(cacheDir))
+	}
+	if quarot {
+		loadOpts = append(loadOpts, inference.WithQuaRot(true))
 	}
 
 	li := startLoading(c.out)
@@ -269,7 +275,8 @@ OPTIONS:
   --system <prompt>              System prompt for context
   --cache-dir <dir>              Override model cache directory
   --json-schema <schema>         JSON Schema for structured output (non-interactive)
-  --prompt <text>                Prompt text (required with --json-schema)`
+  --prompt <text>                Prompt text (required with --json-schema)
+  --quarot                       Fuse QuaRot Hadamard rotation into weights at load time`
 }
 
 // Examples implements Command.Examples.
@@ -279,6 +286,7 @@ func (c *RunCommand) Examples() []string {
 		"run google/gemma-3-1b --temperature 0.7 --max-tokens 512",
 		`run google/gemma-3-1b --system "You are a helpful assistant"`,
 		`run google/gemma-3-1b --json-schema '{"type":"object","properties":{"name":{"type":"string"}}}' --prompt "Generate a name"`,
+		"run --quarot model.gguf",
 	}
 }
 

@@ -329,6 +329,35 @@ func TestRunCommand_JSONSchemaFlagParsing(t *testing.T) {
 	}
 }
 
+func TestRunCommand_QuaRotFlag(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewRunCommand(strings.NewReader("hello\n"), &out)
+	var called bool
+	cmd.loadFn = func(_ string, opts ...inference.Option) (*inference.Model, error) {
+		called = true
+		// --quarot should produce at least one load option.
+		if len(opts) == 0 {
+			t.Error("expected load options to include WithQuaRot, got none")
+		}
+		return mdl, nil
+	}
+	err := cmd.Run(context.Background(), []string{"--quarot", "test-model"})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !called {
+		t.Error("loadFn was not called")
+	}
+}
+
+func TestRunCommand_QuaRotUsage(t *testing.T) {
+	cmd := NewRunCommand(nil, nil)
+	if !strings.Contains(cmd.Usage(), "--quarot") {
+		t.Errorf("Usage() should contain '--quarot', got %q", cmd.Usage())
+	}
+}
+
 func TestRunCommand_PromptWithoutSchema(t *testing.T) {
 	mdl := buildCLITestModel(t)
 	var out bytes.Buffer
