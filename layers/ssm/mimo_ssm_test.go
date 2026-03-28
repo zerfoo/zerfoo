@@ -627,5 +627,172 @@ func TestMIMOSSM_VsSISO(t *testing.T) {
 	}
 }
 
+// TestMIMOSSM_NemotronHCompat verifies that MIMOMambaBlock produces correct
+// output shapes with Nemotron-H-like tensor dimensions. Nemotron-H's Mamba-2
+// layers use: ssm_in (input projection), ssm_conv1d (convolution), ssm_dt
+// (discretization), ssm_A (state matrix), ssm_D (skip connection), ssm_out
+// (output projection).
+//
+// This test exercises the following Nemotron-H dimension conventions:
+//   - d_inner = 2 * d_model (Nemotron-H doubles the hidden dim for SSM)
+//   - num_heads divides d_inner evenly, giving head_dim = d_inner / num_heads
+//   - ssm_state_size (d_state) is typically 128
+//   - conv_kernel is typically 4
+//   - A is [d_inner, d_state] (shared across heads, sliced per-head at load time)
+//   - D is [d_inner] (shared, sliced per-head)
+func TestMIMOSSM_NemotronHCompat(t *testing.T) {
+	// Nemotron-H-like dimensions at reduced scale:
+	// Real: dModel=4096, dInner=8192, dState=128, numHeads=64, headDim=128, convKer=4
+	// Test: dModel=8, dInner=16, dState=4, numHeads=4, headDim=4, convKer=4
+	tests := []struct {
+		name     string
+		dModel   int
+		dInner   int
+		dState   int
+		dtRank   int
+		convKer  int
+		numHeads int
+		batch    int
+		seqLen   int
+	}{
+		{
+			name:     "nemotron_h_small",
+			dModel:   8,
+			dInner:   16,
+			dState:   4,
+			dtRank:   4,
+			convKer:  4,
+			numHeads: 4,
+			batch:    1,
+			seqLen:   8,
+		},
+		{
+			name:     "nemotron_h_batch",
+			dModel:   8,
+			dInner:   16,
+			dState:   4,
+			dtRank:   4,
+			convKer:  4,
+			numHeads: 4,
+			batch:    2,
+			seqLen:   6,
+		},
+		{
+			name:     "nemotron_h_ratio_2x",
+			dModel:   16,
+			dInner:   32,
+			dState:   8,
+			dtRank:   8,
+			convKer:  4,
+			numHeads: 8,
+			batch:    1,
+			seqLen:   4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			ops := numeric.Float32Ops{}
+			engine := compute.NewCPUEngine(ops)
+
+			headDim := tt.dInner / tt.numHeads
+
+			block, err := NewMIMOMambaBlock[float32](
+				"nemotron_test", engine, ops,
+				tt.dModel, tt.dInner, tt.dState, tt.dtRank, tt.convKer, tt.numHeads,
+			)
+			if err != nil {
+				t.Fatalf("NewMIMOMambaBlock: %v", err)
+			}
+
+			// Verify internal dimension setup matches Nemotron-H expectations.
+			attrs := block.Attributes()
+			if got := attrs["head_dim"].(int); got != headDim {
+				t.Errorf("head_dim: got %d, want %d", got, headDim)
+			}
+			if got := attrs["num_heads"].(int); got != tt.numHeads {
+				t.Errorf("num_heads: got %d, want %d", got, tt.numHeads)
+			}
+
+			// Simulate GGUF weight loading: override A and D parameters with
+			// Nemotron-H-shaped tensors (A is [d_inner, d_state] sliced per-head,
+			// D is [d_inner] sliced per-head).
+			sharedAData := make([]float32, tt.dInner*tt.dState)
+			for i := range sharedAData {
+				sharedAData[i] = float32(math.Log(float64((i % tt.dState) + 1)))
+			}
+			sharedDData := make([]float32, tt.dInner)
+			for i := range sharedDData {
+				sharedDData[i] = 1.0
+			}
+
+			params := block.Parameters()
+			baseIdx := 4 // inProj, convWeight, xProj, dtProj
+			for h := 0; h < tt.numHeads; h++ {
+				// Slice shared A into per-head [headDim, dState]
+				perHeadA := make([]float32, headDim*tt.dState)
+				off := h * headDim * tt.dState
+				copy(perHeadA, sharedAData[off:off+headDim*tt.dState])
+				aT, aErr := tensor.New[float32]([]int{headDim, tt.dState}, perHeadA)
+				if aErr != nil {
+					t.Fatalf("head %d A tensor: %v", h, aErr)
+				}
+				aIdx := baseIdx + h*2
+				params[aIdx].Value = aT
+
+				// Slice shared D into per-head [headDim]
+				perHeadD := make([]float32, headDim)
+				dOff := h * headDim
+				copy(perHeadD, sharedDData[dOff:dOff+headDim])
+				dT, dErr := tensor.New[float32]([]int{headDim}, perHeadD)
+				if dErr != nil {
+					t.Fatalf("head %d D tensor: %v", h, dErr)
+				}
+				dIdx := baseIdx + h*2 + 1
+				params[dIdx].Value = dT
+			}
+
+			// Forward pass with Nemotron-H-like input.
+			input := makeTestTensor(t, []int{tt.batch, tt.seqLen, tt.dModel}, 42)
+			output, err := block.Forward(ctx, input)
+			if err != nil {
+				t.Fatalf("Forward: %v", err)
+			}
+
+			// Verify output shape is [batch, seqLen, dModel].
+			expectedShape := []int{tt.batch, tt.seqLen, tt.dModel}
+			gotShape := output.Shape()
+			if len(gotShape) != len(expectedShape) {
+				t.Fatalf("output shape length: got %d, want %d", len(gotShape), len(expectedShape))
+			}
+			for i := range expectedShape {
+				if gotShape[i] != expectedShape[i] {
+					t.Errorf("output shape[%d]: got %d, want %d", i, gotShape[i], expectedShape[i])
+				}
+			}
+
+			// Verify output is not all zeros and contains finite values.
+			outData := output.Data()
+			allZero := true
+			for _, v := range outData {
+				if v != 0 {
+					allZero = false
+					break
+				}
+			}
+			if allZero {
+				t.Error("output is all zeros")
+			}
+			for i, v := range outData {
+				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+					t.Errorf("output[%d] is not finite: %v", i, v)
+					break
+				}
+			}
+		})
+	}
+}
+
 // T is a type alias used in the diversity test for brevity.
 type T = float32
