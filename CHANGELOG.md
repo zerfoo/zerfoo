@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * add tool calling, structured output, and sub-package examples ([d4bc8fc](https://github.com/zerfoo/zerfoo/commit/d4bc8fcc31315174ac59055f10dfa1c73e8bc344))
 * **gguf:** add Nemotron-H SSM config fields and tensor name mappings ([16f2c4a](https://github.com/zerfoo/zerfoo/commit/16f2c4a07f71aff07b8ac23dbc011894218a8c01))
 * **gguf:** add ScoringFunc to ModelConfig for expert gating function ([4ba0cc2](https://github.com/zerfoo/zerfoo/commit/4ba0cc25402c887f32fe6f38a491a1b4772a8d98))
+* **inference:** add MiniMax-M2 architecture graph builder ([2ba8ad6](https://github.com/zerfoo/zerfoo/commit/2ba8ad615c8565ddd4ff14b9d6d16a9583d69467))
+* **inference:** add Nemotron-H + MiniMax-M2 architecture builders ([56b1ed8](https://github.com/zerfoo/zerfoo/commit/56b1ed82de4efd42447825ce6d368e5b41765b1e))
+* **inference:** add Nemotron-H dense and MoE graph builders ([bb91030](https://github.com/zerfoo/zerfoo/commit/bb91030996fb2292c77aa1086fc647b2ccbf3aa1))
+* **moe:** add sigmoid gating option for MoE expert routing ([69f0f5e](https://github.com/zerfoo/zerfoo/commit/69f0f5e213d4f8755fe5770a9a3dd926305810f6))
+
+
+### Bug Fixes
+
+* **ci:** add CGO_ENABLED=0 for cross-compile in arm64-build ([a1f4a85](https://github.com/zerfoo/zerfoo/commit/a1f4a85e01674d9c76d741e372211318e3c80333))
+* **ci:** remove local ztensor replace, use published v0.14.0 ([305a298](https://github.com/zerfoo/zerfoo/commit/305a298b24a2f681b60a14efda3a03a8fa75e88a))
+* **ci:** skip flaky TestGenerateBatch_ConcurrentSessions in short mode ([cc626f7](https://github.com/zerfoo/zerfoo/commit/cc626f7897f895266c6dac0f290dc63b4309368a))
+* **ci:** skip known-failing tests, increase timeout to 300s ([cc2aca0](https://github.com/zerfoo/zerfoo/commit/cc2aca01fa00b5bf0723fe3b4281fecebc8867f5))
+* **ci:** upgrade grpc v1.79.3 (CVE fix), use native arm64 runner ([85e13cc](https://github.com/zerfoo/zerfoo/commit/85e13cc9297a271a074b4eaf6e76b8bd9ad610b7))
+
+## [1.33.0](https://github.com/zerfoo/zerfoo/compare/v1.32.0...v1.33.0) (2026-03-28)
+
+
+### Features
+
+* add tool calling, structured output, and sub-package examples ([d4bc8fc](https://github.com/zerfoo/zerfoo/commit/d4bc8fcc31315174ac59055f10dfa1c73e8bc344))
+* **gguf:** add Nemotron-H SSM config fields and tensor name mappings ([16f2c4a](https://github.com/zerfoo/zerfoo/commit/16f2c4a07f71aff07b8ac23dbc011894218a8c01))
+* **gguf:** add ScoringFunc to ModelConfig for expert gating function ([4ba0cc2](https://github.com/zerfoo/zerfoo/commit/4ba0cc25402c887f32fe6f38a491a1b4772a8d98))
 * **moe:** add sigmoid gating option for MoE expert routing ([69f0f5e](https://github.com/zerfoo/zerfoo/commit/69f0f5e213d4f8755fe5770a9a3dd926305810f6))
 
 
