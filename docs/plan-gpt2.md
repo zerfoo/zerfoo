@@ -101,7 +101,7 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
   Test MapTensorName for "gpt2" with all GPT-2 tensor names.
   Acceptance: All mappings correct.
 
-- [ ] T3.3 Integration test with TinyStories-656K  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T3.3 Integration test with TinyStories-656K  Owner: TBD  Est: 1h  verifies: [UC-001]
   File: tests/parity/gpt2_tinystories_test.go (new)
   Download TinyStories-656K-Q4_K_M GGUF, load via inference.LoadFile,
   generate 10 tokens. Verify: loads without error, output is English text.
@@ -146,7 +146,7 @@ which Zerfoo does not support. Without it, pkg.go.dev examples must use stubs.
 #### Wave 3: Verification (4 agents)
 - [x] T3.1 Unit tests for GPT-2 builder  Deps: T2.2
 - [x] T3.2 Tensor name mapping tests  Deps: T1.2
-- [ ] T3.3 Integration test with TinyStories  Deps: T2.2
+- [x] T3.3 Integration test with TinyStories  Deps: T2.2
 - [x] T3.4 Run go vet and linters  Deps: T2.2
 - [x] T4.1 Update README  Deps: T2.2
 
