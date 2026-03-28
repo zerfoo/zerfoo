@@ -43,6 +43,7 @@ type SamplingConfig struct {
 	StopStrings       []string         // Stop when output contains any of these strings
 	GrammarState      *grammar.Grammar // Optional grammar for constrained decoding
 	grammarVocab      []string         // Cached token strings for grammar masking (built lazily)
+	AdapterName       string           // Optional LoRA adapter name for per-request selection
 }
 
 // DefaultSamplingConfig returns a SamplingConfig with sensible defaults.

@@ -14,6 +14,7 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/inference/lora"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/zerfoo/security"
 	tokenizer "github.com/zerfoo/ztoken"
@@ -2138,6 +2139,160 @@ func TestMalformedJSON_NoInternalDetails(t *testing.T) {
 				t.Errorf("error message = %q, want %q", errResp.Error.Message, "invalid request body")
 			}
 		})
+	}
+}
+
+func TestParseModelAdapter(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantBase    string
+		wantAdapter string
+	}{
+		{"gemma3-1b", "gemma3-1b", ""},
+		{"gemma3-1b:my-lora", "gemma3-1b", "my-lora"},
+		{"base:adapter:extra", "base", "adapter:extra"},
+		{"", "", ""},
+		{":adapter", "", "adapter"},
+	}
+	for _, tt := range tests {
+		base, adapter := ParseModelAdapter(tt.input)
+		if base != tt.wantBase || adapter != tt.wantAdapter {
+			t.Errorf("ParseModelAdapter(%q) = (%q, %q), want (%q, %q)",
+				tt.input, base, adapter, tt.wantBase, tt.wantAdapter)
+		}
+	}
+}
+
+func TestChatCompletions_AdapterNotEnabled(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m) // no adapter cache
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"model":"test-model:my-lora","messages":[{"role":"user","content":"hello"}]}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	var errResp struct {
+		Error struct{ Message string } `json:"error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&errResp)
+	if errResp.Error.Message != "adapter selection not enabled" {
+		t.Errorf("error = %q, want %q", errResp.Error.Message, "adapter selection not enabled")
+	}
+}
+
+func TestChatCompletions_AdapterNotFound(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m, WithAdapterCache(t.TempDir(), 4))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"model":"test-model:nonexistent","messages":[{"role":"user","content":"hello"}]}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	var errResp struct {
+		Error struct{ Message string } `json:"error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&errResp)
+	if !strings.Contains(errResp.Error.Message, "adapter not found") {
+		t.Errorf("error = %q, want containing %q", errResp.Error.Message, "adapter not found")
+	}
+}
+
+func TestChatCompletions_WithAdapter(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m, WithAdapterCache(t.TempDir(), 4))
+
+	// Pre-populate the adapter cache with a mock adapter.
+	srv.adapterCache.cache.Put("my-lora", &lora.Adapter{
+		Rank:        4,
+		Alpha:       4.0,
+		ScaleFactor: 1.0,
+		Layers:      map[string]*lora.Layer{},
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"model":"test-model:my-lora","messages":[{"role":"user","content":"hello"}]}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, respBody)
+	}
+
+	var chatResp ChatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(chatResp.Choices) == 0 {
+		t.Fatal("expected at least one choice")
+	}
+}
+
+func TestChatCompletions_NoAdapterUsesBaseModel(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m, WithAdapterCache(t.TempDir(), 4))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Request without adapter separator should use base model.
+	body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, respBody)
+	}
+}
+
+func TestCompletions_AdapterNotEnabled(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m) // no adapter cache
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"model":"test-model:my-lora","prompt":"hello"}`
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestCompletions_WithAdapter(t *testing.T) {
+	m := buildTestModel(t)
+	srv := NewServer(m, WithAdapterCache(t.TempDir(), 4))
+
+	srv.adapterCache.cache.Put("my-lora", &lora.Adapter{
+		Rank:        4,
+		Alpha:       4.0,
+		ScaleFactor: 1.0,
+		Layers:      map[string]*lora.Layer{},
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"model":"test-model:my-lora","prompt":"hello"}`
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, respBody)
 	}
 }
 

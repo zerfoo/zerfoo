@@ -427,6 +427,13 @@ func WithGrammar(g *grammar.Grammar) GenerateOption {
 	}
 }
 
+// WithAdapter sets the LoRA adapter name for per-request adapter selection.
+func WithAdapter(name string) GenerateOption {
+	return func(sc *generate.SamplingConfig) {
+		sc.AdapterName = name
+	}
+}
+
 func buildSamplingConfig(opts []GenerateOption) generate.SamplingConfig {
 	sc := generate.DefaultSamplingConfig()
 	for _, opt := range opts {
