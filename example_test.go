@@ -2,9 +2,11 @@ package zerfoo_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/zerfoo/zerfoo"
+	"github.com/zerfoo/zerfoo/serve"
 )
 
 func ExampleModel_Chat() {
@@ -61,6 +63,47 @@ func ExampleEmbedding_CosineSimilarity() {
 	sim := a.CosineSimilarity(b)
 	fmt.Printf("%.4f\n", sim)
 	// Output: 0.7071
+}
+
+func ExampleModel_Generate_toolCalling() {
+	// Model returns JSON that looks like a tool call.
+	m := zerfoo.NewModel(func(_ context.Context, _ string) (string, error) {
+		return `{"name":"get_weather","arguments":{"city":"Paris"}}`, nil
+	})
+
+	tools := []serve.Tool{{
+		Type: "function",
+		Function: serve.ToolFunction{
+			Name:        "get_weather",
+			Description: "Get the current weather for a city",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+		},
+	}}
+
+	result, err := m.Generate(context.Background(), "What is the weather in Paris?",
+		zerfoo.WithTools(tools...),
+	)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	if len(result.ToolCalls) > 0 {
+		fmt.Printf("%s %s\n", result.ToolCalls[0].FunctionName, result.ToolCalls[0].Arguments)
+	}
+	// Output: get_weather {"city":"Paris"}
+}
+
+func ExampleModel_Generate_structuredOutput() {
+	m := zerfoo.NewModel(func(_ context.Context, _ string) (string, error) {
+		return `{"name":"Alice","age":30}`, nil
+	})
+	result, err := m.Generate(context.Background(), "Generate a person named Alice who is 30.")
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println(result.Text)
+	// Output: {"name":"Alice","age":30}
 }
 
 func ExampleNewModel() {
