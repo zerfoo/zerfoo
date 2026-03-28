@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 20 model architectures. EAGLE speculative decoding, QuaRot quantization, Multi-LoRA serving, BitNet ternary inference. CUDA graph capture. Tabular ML and time-series forecasting built in.
+**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 24 model architectures (13 families). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -50,6 +50,12 @@ defer m.Close()
 result, _ := m.Generate(ctx, "Explain quantum computing.",
     zerfoo.WithEAGLE("eagle-head.gguf"),
 )
+```
+
+Train your own EAGLE head:
+
+```bash
+zerfoo eagle-train --model model.gguf --corpus data.txt --output eagle-head.gguf --epochs 5
 ```
 
 ### QuaRot Weight Fusion
@@ -222,7 +228,7 @@ for _, tc := range result.ToolCalls {
 
 ## Supported Models
 
-### LLM Inference (20 architectures)
+### LLM Inference (24 architectures, 13 model families)
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
@@ -305,7 +311,9 @@ zerfoo pull gemma-3-1b-q4              # download a model
 zerfoo run gemma-3-1b-q4 "Hello"       # generate text
 zerfoo run --quarot model.gguf "Hello" # QuaRot weight fusion
 zerfoo serve gemma-3-1b-q4             # OpenAI-compatible API server
+zerfoo eagle-train --model m.gguf --corpus data.txt --output eagle.gguf  # train EAGLE head
 zerfoo transmla --input m.gguf --output m-mla.gguf  # MHA→MLA conversion
+zerfoo transmla-validate --original m.gguf --converted m-mla.gguf  # perplexity comparison
 zerfoo train -backend tabular ...      # train a tabular model
 zerfoo list                             # list cached models
 ```
