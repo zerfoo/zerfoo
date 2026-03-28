@@ -134,7 +134,7 @@ inference optimizations.
 
 All models work -- time to build the definitive comparison table.
 
-- [ ] BMK-T1 Download missing GGUFs  Est: 1h
+- [x] BMK-T1 Download missing GGUFs  Est: 1h
   Missing: gemma3-4b-Q4_K_M, qwen2.5-7b-Q4_K_M. Download to DGX Spark
   model cache. Verify each loads successfully with `zerfoo run --dry-run`.
   Acceptance: Both GGUFs load and produce coherent first token.
@@ -169,7 +169,7 @@ All models work -- time to build the definitive comparison table.
 
 All in ztensor repo. Q4_K is 45% slower than Q4_0.
 
-- [ ] KQ-T1 Profile Q4_K vs Q4_0 GEMV  Est: 2h  repo: ztensor
+- [x] KQ-T1 Profile Q4_K vs Q4_0 GEMV  Est: 2h  repo: ztensor
   Acceptance: Root cause of 45% slowdown identified and documented.
 
 - [ ] KQ-T2 Optimize Q4_K GEMV kernel  Est: 4h  repo: ztensor  Deps: KQ-T1
@@ -1074,12 +1074,12 @@ available agent slots. Distributed across waves to stay under 10 per wave.
 
 These run in parallel with any wave -- no E34-E39 dependencies.
 
-- [ ] BMK-T1 Download missing GGUFs  verifies: [UC-001]
+- [x] BMK-T1 Download missing GGUFs  verifies: [UC-001]
 - [x] BMK-T3 Update website with benchmark table  Deps: BMK-T2
 - [x] BMK-T4 Investigate Phi3/Llama3.1 load failures  verifies: [UC-001]
 - [ ] MHH-T1 Mistral quality comparison  verifies: [UC-001]
 - [ ] MHH-T3 Sliding window correctness  verifies: [UC-001]
-- [ ] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
+- [x] KQ-T1 Profile Q4_K vs Q4_0 GEMV (ztensor)  verifies: [infrastructure]
 - [ ] GTS-T1 Generate Python golden files  verifies: [UC-005]
 - [x] MHH-T2 Profile Mistral performance gap  Deps: MHH-T1
 - [ ] KQ-T2 Optimize Q4_K GEMV kernel (ztensor)  Deps: KQ-T1
