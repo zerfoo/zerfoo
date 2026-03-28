@@ -56,9 +56,41 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("mamba3", parseMamba3Config)
 	r.Register("jamba", parseJambaConfig)
 	r.Register("granite", parseGraniteConfig)
+	r.Register("gpt2", parseGPT2Config)
 	r.Register("llava", parseLLaVAConfig)
 	r.Register("qwen_vl", parseQwenVLConfig)
 	return r
+}
+
+// parseGPT2Config parses GPT-2-family config.json fields.
+// GPT-2 uses different naming conventions than modern HuggingFace models:
+// n_embd, n_layer, n_head, n_positions, n_inner, layer_norm_epsilon.
+// GPT-2 is MHA (not GQA), so NumQueryHeads == NumKeyValueHeads.
+// TieWordEmbeddings is always true for GPT-2.
+func parseGPT2Config(raw map[string]interface{}) (*ModelMetadata, error) {
+	hiddenSize := getInt(raw, "n_embd")
+	intermediateSize := getInt(raw, "n_inner")
+	if intermediateSize == 0 {
+		intermediateSize = 4 * hiddenSize
+	}
+	nHead := getInt(raw, "n_head")
+	lnEps := getFloat(raw, "layer_norm_epsilon")
+	if lnEps == 0 {
+		lnEps = 1e-5
+	}
+	meta := &ModelMetadata{
+		Architecture:          getString(raw, "model_type"),
+		VocabSize:             getInt(raw, "vocab_size"),
+		HiddenSize:            hiddenSize,
+		NumLayers:             getInt(raw, "n_layer"),
+		NumQueryHeads:         nHead,
+		NumKeyValueHeads:      nHead,
+		IntermediateSize:      intermediateSize,
+		MaxPositionEmbeddings: getInt(raw, "n_positions"),
+		LayerNormEps:          lnEps,
+		TieWordEmbeddings:     true,
+	}
+	return meta, nil
 }
 
 // parseGemmaConfig parses Gemma-family config.json fields.

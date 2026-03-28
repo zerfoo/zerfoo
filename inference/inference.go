@@ -67,6 +67,7 @@ type ModelMetadata struct {
 	SlidingWindow      int                `json:"sliding_window"`
 	AttentionBias      bool               `json:"attention_bias"`
 	PartialRotaryFactor float64           `json:"partial_rotary_factor"`
+	LayerNormEps        float64           `json:"layer_norm_eps,omitempty"`
 
 	// Granite-specific fields.
 	EmbeddingMultiplier float64 `json:"embedding_multiplier,omitempty"`

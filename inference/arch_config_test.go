@@ -956,4 +956,126 @@ func assertMetadataEqual(t *testing.T, want, got ModelMetadata) {
 	if got.NumSharedExperts != want.NumSharedExperts {
 		t.Errorf("NumSharedExperts = %d, want %d", got.NumSharedExperts, want.NumSharedExperts)
 	}
+	if got.LayerNormEps != want.LayerNormEps {
+		t.Errorf("LayerNormEps = %g, want %g", got.LayerNormEps, want.LayerNormEps)
+	}
+}
+
+func TestGPT2ConfigParser(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]interface{}
+		want ModelMetadata
+	}{
+		{
+			name: "TinyStories-like full config",
+			raw: map[string]interface{}{
+				"model_type":          "gpt2",
+				"vocab_size":          float64(50257),
+				"n_embd":              float64(64),
+				"n_layer":             float64(8),
+				"n_head":              float64(16),
+				"n_positions":         float64(512),
+				"n_inner":             float64(256),
+				"layer_norm_epsilon":  float64(1e-5),
+			},
+			want: ModelMetadata{
+				Architecture:          "gpt2",
+				VocabSize:             50257,
+				HiddenSize:            64,
+				NumLayers:             8,
+				NumQueryHeads:         16,
+				NumKeyValueHeads:      16,
+				IntermediateSize:      256,
+				MaxPositionEmbeddings: 512,
+				LayerNormEps:          1e-5,
+				TieWordEmbeddings:     true,
+			},
+		},
+		{
+			name: "GPT-2 small (124M)",
+			raw: map[string]interface{}{
+				"model_type":          "gpt2",
+				"vocab_size":          float64(50257),
+				"n_embd":              float64(768),
+				"n_layer":             float64(12),
+				"n_head":              float64(12),
+				"n_positions":         float64(1024),
+				"layer_norm_epsilon":  float64(1e-5),
+			},
+			want: ModelMetadata{
+				Architecture:          "gpt2",
+				VocabSize:             50257,
+				HiddenSize:            768,
+				NumLayers:             12,
+				NumQueryHeads:         12,
+				NumKeyValueHeads:      12,
+				IntermediateSize:      3072, // 4 * 768
+				MaxPositionEmbeddings: 1024,
+				LayerNormEps:          1e-5,
+				TieWordEmbeddings:     true,
+			},
+		},
+		{
+			name: "minimal config defaults n_inner to 4*n_embd and layer_norm_epsilon to 1e-5",
+			raw: map[string]interface{}{
+				"model_type": "gpt2",
+				"vocab_size": float64(50257),
+				"n_embd":     float64(768),
+				"n_layer":    float64(12),
+				"n_head":     float64(12),
+			},
+			want: ModelMetadata{
+				Architecture:     "gpt2",
+				VocabSize:        50257,
+				HiddenSize:       768,
+				NumLayers:        12,
+				NumQueryHeads:    12,
+				NumKeyValueHeads: 12,
+				IntermediateSize: 3072,
+				LayerNormEps:     1e-5,
+				TieWordEmbeddings: true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseGPT2Config(tc.raw)
+			if err != nil {
+				t.Fatalf("parseGPT2Config error: %v", err)
+			}
+			assertMetadataEqual(t, tc.want, *got)
+		})
+	}
+}
+
+func TestDefaultArchConfigRegistry_GPT2Registered(t *testing.T) {
+	reg := DefaultArchConfigRegistry()
+
+	raw := map[string]interface{}{
+		"model_type": "gpt2",
+		"vocab_size": float64(50257),
+		"n_embd":     float64(768),
+		"n_layer":    float64(12),
+		"n_head":     float64(12),
+		"n_positions": float64(1024),
+	}
+	meta, err := reg.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if meta.Architecture != "gpt2" {
+		t.Errorf("Architecture = %q, want %q", meta.Architecture, "gpt2")
+	}
+	if meta.HiddenSize != 768 {
+		t.Errorf("HiddenSize = %d, want 768", meta.HiddenSize)
+	}
+	if !meta.TieWordEmbeddings {
+		t.Error("TieWordEmbeddings = false, want true")
+	}
+	if meta.NumQueryHeads != meta.NumKeyValueHeads {
+		t.Errorf("GPT-2 is MHA: NumQueryHeads (%d) must equal NumKeyValueHeads (%d)",
+			meta.NumQueryHeads, meta.NumKeyValueHeads)
+	}
 }
