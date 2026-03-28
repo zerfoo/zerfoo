@@ -427,13 +427,13 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   in the main model's GGUF (if present under "eagle." prefix).
   Acceptance: Weights loaded and shapes validated.
 
-- [ ] T36.2.4a Add Graph.NodeOutput to ztensor  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T36.2.4a Add Graph.NodeOutput to ztensor  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   repo: ztensor. File: graph/graph.go
   Add `func (g *Graph[T]) NodeOutput(n Node[T]) *TensorNumeric[T]` to expose
   memo map for penultimate layer extraction. One-line method.
   Acceptance: Method returns correct output after Forward.
 
-- [ ] T36.2.4b Implement penultimate feature collection  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+- [x] T36.2.4b Implement penultimate feature collection  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.2.4a
   File: inference/eagle_collect.go (new)
   Load GGUF model, run forward on corpus text, capture penultimate layer
@@ -441,7 +441,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Add penultimateNode field to transformerGraphOpts in arch_common.go.
   Acceptance: Returns pairs with correct hidden dim shape.
 
-- [ ] T36.2.4c Implement eagle-train CLI command  Owner: TBD  Est: 3h  verifies: [UC-001, UC-007]
+- [x] T36.2.4c Implement eagle-train CLI command  Owner: TBD  Est: 3h  verifies: [UC-001, UC-007]
   Deps: T36.2.4b
   File: cmd/cli/eagle_train.go (new)
   CLI: `zerfoo eagle-train --model m.gguf --corpus data.txt --output eagle.gguf`
@@ -449,7 +449,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Uses AdamW, cosine annealing. Exports weights to GGUF with "eagle." prefix.
   Acceptance: Loss decreases over epochs. GGUF loads via LoadEAGLEWeights.
 
-- [ ] T36.2.4d Train EAGLE head for Gemma3-1B and benchmark  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
+- [x] T36.2.4d Train EAGLE head for Gemma3-1B and benchmark  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.2.4c
   Run eagle-train on Gemma3-1B with wikitext corpus on DGX Spark.
   Benchmark EAGLE vs vanilla autoregressive decode.
@@ -1115,7 +1115,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - [x] T35.2.3 Tests for QuaRot weight fusion  Deps: T35.2.1, T35.2.2  DONE 2026-03-27 PR #263
 - [x] T35.3.5 Tests and benchmarks for quantized KV  Deps: T35.3.1-T35.3.4  DONE 2026-03-27 PR #263
 - [x] T36.1.3 Tests for EAGLE head  Deps: T36.1.1, T36.1.2  DONE 2026-03-27 PR #263
-- [ ] T36.2.4 Benchmark EAGLE vs vanilla  Deps: T36.2.1
+- [x] T36.2.4 Benchmark EAGLE vs vanilla  Deps: T36.2.1
 - [x] T36.2.5 Tests for EAGLE decode loop  Deps: T36.2.1-T36.2.3  DONE 2026-03-27 PR #263
 - [x] T37.2.2 Unit tests for NSA  Deps: T37.1.4  DONE 2026-03-27 PR #263
 - [x] T38.1.3 Tests for expert placement  Deps: T38.1.1, T38.1.2  DONE 2026-03-27 PR #263
