@@ -54,6 +54,12 @@ func (m *MatMul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	if aShape[len(aShape)-1] != bShape[len(bShape)-2] {
 		// Check if this is a case where b needs to be transposed (2D only).
 		if len(bShape) == 2 && aShape[len(aShape)-1] == bShape[1] {
+			// Ternary fast path: compute C = A * B^T directly from packed
+			// ternary weights using only additions and subtractions.
+			if result, err := m.tryTernaryBTransposed(a, b, aShape, bShape); result != nil || err != nil {
+				return result, err
+			}
+
 			// Q4 B fast path: compute C = A * B^T directly from Q4 blocks,
 			// avoiding both the transpose and the dequantization of the weight matrix.
 			if result, err := m.tryQ4BTransposed(a, b, aShape, bShape); result != nil || err != nil {
@@ -150,6 +156,62 @@ func (m *MatMul[T]) tryQ4BTransposed(a, b *tensor.TensorNumeric[T], aShape, bSha
 		aOff := i * mDim * kDim
 		cOff := i * mDim * bN
 		xblas.GemmF32Q4NT(mDim, bN, kDim, aData[aOff:aOff+mDim*kDim], q4, rData[cOff:cOff+mDim*bN])
+	}
+
+	m.outputShape = outputShape
+	return result, nil
+}
+
+// tryTernaryBTransposed checks if B has TernaryStorage and computes C = A * B^T
+// using the ternary GEMV kernel that operates on packed {-1, 0, 1} weights
+// with only additions and subtractions (no floating-point multiply).
+// Returns (nil, nil) if B is not ternary-backed or T is not float32.
+func (m *MatMul[T]) tryTernaryBTransposed(a, b *tensor.TensorNumeric[T], aShape, bShape []int) (*tensor.TensorNumeric[T], error) {
+	ts, ok := any(b.GetStorage()).(*tensor.TernaryStorage)
+	if !ok {
+		return nil, nil
+	}
+	aData, ok := any(a.Data()).([]float32)
+	if !ok {
+		return nil, nil
+	}
+
+	// B is [N, K] in ternary packed format.
+	bN, bK := bShape[0], bShape[1]
+
+	// Compute batch dimensions from A.
+	batchSize := 1
+	for i := 0; i < len(aShape)-2; i++ {
+		batchSize *= aShape[i]
+	}
+	mDim := aShape[len(aShape)-2]
+	kDim := aShape[len(aShape)-1]
+
+	if kDim != bK {
+		return nil, nil
+	}
+
+	// Build output shape: A's batch dims + [M, N].
+	outputShape := make([]int, len(aShape))
+	copy(outputShape, aShape[:len(aShape)-1])
+	outputShape[len(outputShape)-1] = bN
+
+	size := 1
+	for _, d := range outputShape {
+		size *= d
+	}
+	result, err := tensor.New[T](outputShape, make([]T, size))
+	if err != nil {
+		return nil, err
+	}
+	rData := any(result.Data()).([]float32)
+
+	for i := range batchSize {
+		for row := range mDim {
+			aOff := (i*mDim + row) * kDim
+			y := compute.TernaryGEMV(ts, aData[aOff:aOff+kDim], bN, bK)
+			copy(rData[(i*mDim+row)*bN:], y)
+		}
 	}
 
 	m.outputShape = outputShape
