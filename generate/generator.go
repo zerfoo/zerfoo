@@ -67,6 +67,7 @@ type generatorOptions struct {
 	prefixCacheBlocks     int    // when > 0, enable prefix caching with this many cached blocks
 	metricsCollector      runtime.Collector // optional metrics collector
 	compressedKVChunkSize int    // when > 0, use CompressedKVCache with this chunk size
+	eagleWeightsPath      string // when non-empty, enable EAGLE speculative decoding with weights from this GGUF path
 }
 
 // specDraftConfig holds configuration for speculative decoding via a draft model.
@@ -86,7 +87,8 @@ func WithMetrics(c runtime.Collector) GeneratorOption {
 	}
 }
 
-// WithGeneratorKVDtype sets the KV cache storage dtype. Supported: "fp32" (default), "fp16".
+// WithGeneratorKVDtype sets the KV cache storage dtype.
+// Supported: "fp32" (default), "fp16", "q4", "q3".
 func WithGeneratorKVDtype(dtype string) GeneratorOption {
 	return func(o *generatorOptions) {
 		o.kvDtype = dtype
@@ -145,6 +147,17 @@ func WithCompressedKV(chunkSize int) GeneratorOption {
 	}
 }
 
+// WithEAGLE enables EAGLE-style self-speculative decoding. headWeightsPath
+// points to a GGUF file containing the EAGLE head weights. When the file
+// exists at generation time the generator uses the EAGLE decode loop; if the
+// file is missing or the path is empty, it falls back to vanilla
+// autoregressive decoding.
+func WithEAGLE(headWeightsPath string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.eagleWeightsPath = headWeightsPath
+	}
+}
+
 // Generator produces text autoregressively using a loaded model graph.
 type Generator[T tensor.Numeric] struct {
 	graph     *graph.Graph[T]
@@ -162,6 +175,7 @@ type Generator[T tensor.Numeric] struct {
 	prefixCache           *PrefixCache[T]                            // nil unless prefix caching is enabled
 	specAcceptRate        runtime.GaugeMetric                        // speculative acceptance rate gauge
 	compressedKVChunkSize int                                        // when > 0, use CompressedKVCache
+	eagleWeightsPath      string                                     // when non-empty, EAGLE decode is preferred
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -191,6 +205,7 @@ func NewGenerator[T tensor.Numeric](
 		specDraft:             gopts.specDraft,
 		specAcceptRate:        mc.Gauge("speculative_acceptance_rate"),
 		compressedKVChunkSize: gopts.compressedKVChunkSize,
+		eagleWeightsPath:      gopts.eagleWeightsPath,
 	}
 
 	if g != nil {
@@ -227,6 +242,20 @@ func (gen *Generator[T]) Config() ModelConfig { return gen.config }
 
 // GetPrefixCache returns the prefix cache, or nil if prefix caching is disabled.
 func (gen *Generator[T]) GetPrefixCache() *PrefixCache[T] { return gen.prefixCache }
+
+// EAGLEWeightsPath returns the configured EAGLE head weights path, or empty
+// if EAGLE was not requested.
+func (gen *Generator[T]) EAGLEWeightsPath() string { return gen.eagleWeightsPath }
+
+// EAGLEEnabled reports whether EAGLE speculative decoding should be used.
+// It returns true only when a weights path was configured and the file exists.
+func (gen *Generator[T]) EAGLEEnabled() bool {
+	if gen.eagleWeightsPath == "" {
+		return false
+	}
+	_, err := os.Stat(gen.eagleWeightsPath)
+	return err == nil
+}
 
 // compileGraph tries CompileTraced when an EngineProxy is available, with
 // graceful fallback to Compile on error or plan validation failure.
@@ -352,6 +381,8 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
 	} else if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
+	} else if qc, ok := gen.newQuantizedCache(); ok {
+		cacheProvider = qc
 	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
 		cacheProvider = gen.newTensorCache()
 	} else {
@@ -648,6 +679,22 @@ func (gen *Generator[T]) idsToTensor(ids []int) (*tensor.TensorNumeric[T], error
 		data[i] = T(id)
 	}
 	return tensor.New([]int{1, len(ids)}, data)
+}
+
+// newQuantizedCache returns a Q4 or Q3 quantized KV cache when kvDtype
+// requests one and T is float32. Returns nil, false otherwise.
+func (gen *Generator[T]) newQuantizedCache() (CacheProvider[T], bool) {
+	switch gen.kvDtype {
+	case "q4":
+		if cp, ok := any(NewKVCacheQ4(gen.config.NumLayers, gen.config.MaxSeqLen)).(CacheProvider[T]); ok {
+			return cp, true
+		}
+	case "q3":
+		if cp, ok := any(NewKVCacheQ3(gen.config.NumLayers, gen.config.MaxSeqLen)).(CacheProvider[T]); ok {
+			return cp, true
+		}
+	}
+	return nil, false
 }
 
 // newTensorCache creates a TensorCache with the generator's KV dtype setting.
