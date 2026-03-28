@@ -220,7 +220,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.2.2 Add CompressedKVCache generator option  Owner: TBD  Est: 1h  verifies: [UC-001]
   Deps: T34.2.1. Add `WithCompressedKV(chunkSize)`.
 
-- [ ] T34.2.3 Unit and integration tests for compressed cache  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
+- [x] T34.2.3 Unit and integration tests for compressed cache  Owner: TBD  Est: 2h  verifies: [UC-001, UC-002]
   Deps: T34.2.1, T34.2.2
 
 #### E34.3: Document-wise RoPE
@@ -232,7 +232,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.3.2 Wire DocumentWiseRoPE into GQA  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
   Deps: T34.3.1
 
-- [ ] T34.3.3 Tests for document-wise RoPE  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
+- [x] T34.3.3 Tests for document-wise RoPE  Owner: TBD  Est: 2h  verifies: [UC-001, UC-003]
   Deps: T34.3.1, T34.3.2
 
 #### E34.4: Sparse Routed Attention
@@ -247,7 +247,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.4.3 Register SparseRoutedAttention in layer registry  Owner: TBD  Est: 1h  verifies: [UC-003]  DONE 2026-03-27 PR #262
   Deps: T34.4.1
 
-- [ ] T34.4.4 Unit tests for sparse routed attention  Owner: TBD  Est: 3h  verifies: [UC-003]
+- [x] T34.4.4 Unit tests for sparse routed attention  Owner: TBD  Est: 3h  verifies: [UC-003]
   Deps: T34.4.1, T34.4.2, T34.4.3
 
 #### E34.5: Tiered KV Storage and Memory Parallel
@@ -258,7 +258,7 @@ Decision rationale: docs/adr/067-msa-sparse-attention-memory.md
 - [x] T34.5.2 Add async CPU-to-GPU fetch  Owner: TBD  Est: 2h  verifies: [UC-003]  DONE 2026-03-27 PR #262
   Deps: T34.5.1
 
-- [ ] T34.5.3 Tests for tiered storage  Owner: TBD  Est: 2h  verifies: [UC-003]
+- [x] T34.5.3 Tests for tiered storage  Owner: TBD  Est: 2h  verifies: [UC-003]
   Deps: T34.5.1, T34.5.2
 
 #### E34.6: Integration and Validation
@@ -356,7 +356,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   Measure: memory reduction ratio, perplexity impact, tok/s impact.
   Acceptance: >= 3x memory reduction, < 1% quality degradation.
 
-- [ ] T35.3.6 Run go vet and linters for E35  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T35.3.6 Run go vet and linters for E35  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T35.2.3, T35.3.5
 
 ### P7: EAGLE-3 Self-Speculative Decoding (E36)
@@ -425,7 +425,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
 - [x] T36.2.5 Tests for EAGLE decode loop  Owner: TBD  Est: 2h  verifies: [UC-001, UC-007]
   Deps: T36.2.1, T36.2.2, T36.2.3
 
-- [ ] T36.2.6 Run go vet and linters for E36  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T36.2.6 Run go vet and linters for E36  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T36.2.5
 
 ### P8: NSA -- Native Sparse Attention (E37)
@@ -489,7 +489,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   (3) Degenerate: full selection = dense attention. (4) Backward pass.
   Acceptance: All pass CPU and GPU.
 
-- [ ] T37.2.3 Run go vet and linters for E37  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T37.2.3 Run go vet and linters for E37  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T37.2.2
 
 ### P9: CPU/GPU Hybrid MoE Inference (E38)
@@ -604,7 +604,7 @@ Decision rationale: docs/adr/068-research-driven-inference-priorities.md
   instead of standard MatMul. Transparent to architecture builders.
   Acceptance: Inference with ternary model produces coherent output.
 
-- [ ] T39.2.3 Tests for BitNet model loading  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
+- [x] T39.2.3 Tests for BitNet model loading  Owner: TBD  Est: 2h  verifies: [UC-001, UC-009]
   Deps: T39.2.1, T39.2.2
 
 - [ ] T39.2.4 Run go vet and linters for E39  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
@@ -688,7 +688,7 @@ Decision rationale: docs/adr/069-transmla-mha-to-mla-conversion.md
   Measure KV cache memory with and without TransMLA conversion.
   Acceptance: KV cache dimension equals kvLoraDim. Memory reduction >= 80%.
 
-- [ ] T40.2.3 Integration test: TransMLA end-to-end  Owner: TBD  Est: 2h  verifies: [UC-001, UC-010]
+- [x] T40.2.3 Integration test: TransMLA end-to-end  Owner: TBD  Est: 2h  verifies: [UC-001, UC-010]
   Deps: T40.2.1, T40.2.2
   File: tests/integration/transmla_test.go
   Pipeline: (1) Load original GGUF (Gemma3-1B). (2) Convert with rank=256.
@@ -753,7 +753,7 @@ just dequantization lookup tables and GEMV dispatch.
   Test each format: pack, dequant, GEMV, roundtrip accuracy.
   Acceptance: All tests pass CPU and GPU.
 
-- [ ] T41.1.7 Run go vet and linters for E41  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T41.1.7 Run go vet and linters for E41  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T41.1.6
 
 ### P13: RadixAttention KV Cache Upgrade (E42)
@@ -790,7 +790,7 @@ improvement for shared-prefix workloads (system prompts, few-shot).
   (4) Backward compatibility: existing PrefixCache API still works.
   Acceptance: All tests pass.
 
-- [ ] T42.1.4 Run go vet and linters for E42  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T42.1.4 Run go vet and linters for E42  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T42.1.3
 
 ### P14: Flash Decoding (E43)
@@ -876,7 +876,7 @@ on demand. Adapter weights managed via existing arena allocator.
   adapter selection via API. (4) Concurrent requests with different adapters.
   Acceptance: All tests pass.
 
-- [ ] T44.1.6 Run go vet and linters for E44  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T44.1.6 Run go vet and linters for E44  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T44.1.5
 
 ---
@@ -1097,20 +1097,20 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 #### Wave 7: Final Lint + Integration (10 agents)
 
 - [ ] T34.1.4 Run vet/tests ztensor primitives  Deps: T34.1.1-T34.1.3
-- [ ] T34.2.3 Compressed cache tests  Deps: T34.2.1, T34.2.2
-- [ ] T34.3.3 Document-wise RoPE tests  Deps: T34.3.1, T34.3.2
-- [ ] T34.4.4 Sparse routed attention tests  Deps: T34.4.1-T34.4.3
-- [ ] T34.5.3 Tiered storage tests  Deps: T34.5.1, T34.5.2
-- [ ] T39.2.3 Tests for BitNet loading  Deps: T39.2.1, T39.2.2
-- [ ] T35.3.6 Run go vet E35  Deps: T35.2.3, T35.3.5
-- [ ] T36.2.6 Run go vet E36  Deps: T36.2.5
-- [ ] T37.2.3 Run go vet E37  Deps: T37.2.2
+- [x] T34.2.3 Compressed cache tests  Deps: T34.2.1, T34.2.2
+- [x] T34.3.3 Document-wise RoPE tests  Deps: T34.3.1, T34.3.2
+- [x] T34.4.4 Sparse routed attention tests  Deps: T34.4.1-T34.4.3
+- [x] T34.5.3 Tiered storage tests  Deps: T34.5.1, T34.5.2
+- [x] T39.2.3 Tests for BitNet loading  Deps: T39.2.1, T39.2.2
+- [x] T35.3.6 Run go vet E35  Deps: T35.2.3, T35.3.5
+- [x] T36.2.6 Run go vet E36  Deps: T36.2.5
+- [x] T37.2.3 Run go vet E37  Deps: T37.2.2
 - [ ] T38.2.4 Run go vet E38  Deps: T38.2.3
-- [ ] T40.2.3 TransMLA end-to-end integration test  Deps: T40.2.1, T40.2.2
-- [ ] T41.1.7 Run go vet E41  Deps: T41.1.6
-- [ ] T42.1.4 Run go vet E42  Deps: T42.1.3
+- [x] T40.2.3 TransMLA end-to-end integration test  Deps: T40.2.1, T40.2.2
+- [x] T41.1.7 Run go vet E41  Deps: T41.1.6
+- [x] T42.1.4 Run go vet E42  Deps: T42.1.3
 - [ ] T43.1.4 Run go vet E43  Deps: T43.1.3
-- [ ] T44.1.6 Run go vet E44  Deps: T44.1.5
+- [x] T44.1.6 Run go vet E44  Deps: T44.1.5
 
 #### Wave 8: Final Integration (5 agents)
 
