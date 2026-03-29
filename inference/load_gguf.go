@@ -207,6 +207,8 @@ func buildArchGraph(
 		return buildLLaVAGraph(tensors, cfg, engine)
 	case "qwen_vl":
 		return buildQwenVLGraph(tensors, cfg, engine)
+	case "voxtral":
+		return buildVoxtralGraph(tensors, cfg, engine)
 	default:
 		// Fall through to registry for dynamically registered architectures.
 		builder, ok := GetArchitecture(arch)

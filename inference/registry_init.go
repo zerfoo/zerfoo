@@ -28,4 +28,5 @@ func init() {
 	RegisterArchitecture("exaone4", buildExaoneGraph)
 	RegisterArchitecture("dbrx", buildDBRXGraph)
 	RegisterArchitecture("olmo2", buildOLMo2Graph)
+	RegisterArchitecture("voxtral", buildVoxtralGraph)
 }

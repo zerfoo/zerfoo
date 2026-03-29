@@ -59,6 +59,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("gpt2", parseGPT2Config)
 	r.Register("llava", parseLLaVAConfig)
 	r.Register("qwen_vl", parseQwenVLConfig)
+	r.Register("voxtral", parseVoxtralConfig)
 	return r
 }
 
