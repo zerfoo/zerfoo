@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -874,5 +875,59 @@ func TestTieredKVStore_ResetClearsPrefetched(t *testing.T) {
 	_, ok := store.GetPrefetched(0)
 	if ok {
 		t.Error("GetPrefetched should return false after Reset")
+	}
+}
+
+func TestTieredKVStore_Close_UserProvidedColdDirNotDeleted(t *testing.T) {
+	// Provide an explicit ColdDir so the store does not own it.
+	coldDir := t.TempDir()
+
+	engine := newTestEngine()
+	store, err := NewTieredKVStore[float32](engine, TieredKVStoreConfig{
+		NumLayers: 1,
+		MaxSeqLen: 16,
+		ChunkSize: 2,
+		ColdDir:   coldDir,
+	})
+	if err != nil {
+		t.Fatalf("NewTieredKVStore: %v", err)
+	}
+
+	// Write data and demote it to the cold tier so a file is written.
+	k := makeTensor(t, []int{1, 1, 2}, []float32{1, 2})
+	v := makeTensor(t, []int{1, 1, 2}, []float32{3, 4})
+	if err := store.Update(0, k, v); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := store.Demote(0); err != nil { // hot -> warm
+		t.Fatalf("Demote hot->warm: %v", err)
+	}
+	if err := store.Demote(0); err != nil { // warm -> cold
+		t.Fatalf("Demote warm->cold: %v", err)
+	}
+
+	// Verify a cold file was written.
+	entries, err := os.ReadDir(coldDir)
+	if err != nil {
+		t.Fatalf("ReadDir before Close: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected cold-tier file(s) in user-provided ColdDir before Close")
+	}
+
+	// Close must NOT delete the user-provided directory or its contents.
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, statErr := os.Stat(coldDir); os.IsNotExist(statErr) {
+		t.Error("Close() deleted the user-provided ColdDir; it should be preserved")
+	}
+	remaining, err := os.ReadDir(coldDir)
+	if err != nil {
+		t.Fatalf("ReadDir after Close: %v", err)
+	}
+	if len(remaining) == 0 {
+		t.Error("Close() deleted cold-tier files in user-provided ColdDir; they should be preserved")
 	}
 }
