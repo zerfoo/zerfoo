@@ -97,6 +97,29 @@ result, _ := m.Generate(ctx, prompt,
 )
 ```
 
+### Tiered KV Cache
+
+Automatically spill KV cache across three storage tiers as sequences grow — no OOM, no manual tuning:
+
+- **Hot**: uncompressed tensors in GPU/CPU memory (recent tokens)
+- **Warm**: compressed in CPU memory via block quantization
+- **Cold**: serialized to disk as binary files (oldest tokens)
+
+Layers are promoted and demoted automatically based on access frequency. Async prefetch moves cold layers back to hot before the decoder needs them.
+
+```go
+result, _ := m.Generate(ctx, prompt,
+    zerfoo.WithTieredKV(generate.TieredKVStoreConfig{
+        ChunkSize:        64,  // warm-tier compression chunk size
+        DemoteThreshold:  2,   // demote layers accessed < 2 times
+        PromoteThreshold: 8,   // promote layers accessed > 8 times
+        // ColdDir: "/var/cache/kv" // optional: persist cold tier across calls
+    }),
+)
+```
+
+Enable it on the Model API via `zerfoo.WithTieredKV` (wraps `generate.WithTieredKV`). Useful for long-context inference where the KV cache exceeds GPU memory.
+
 ### TransMLA — MHA-to-MLA Conversion
 
 Convert any MHA/GQA model to Multi-Head Latent Attention via SVD decomposition. Reduces KV cache by 80%+. Based on [TransMLA](https://arxiv.org/abs/2502.07864).
@@ -125,6 +148,22 @@ Hardware-aligned three-path sparse attention: coarse compression, fine-grained s
 ### Hybrid CPU/GPU MoE
 
 Place shared MoE experts on GPU, offload routed experts to CPU with SIMD kernels. Predictive prefetching achieves 98% hit rate. Based on [KTransformers](https://arxiv.org/abs/2501.14018).
+
+### Audio Transcription
+
+Transcribe WAV audio to text using Whisper or Voxtral speech-to-text models. Audio is chunked into 30-second segments, mel spectrograms are extracted, and each chunk is decoded in parallel:
+
+```go
+wavData, _ := os.ReadFile("speech.wav")
+
+m, _ := zerfoo.Load("openai/whisper-large-v3")
+defer m.Close()
+
+text, err := m.Transcribe(context.Background(), wavData)
+fmt.Println(text)
+```
+
+Supports 16 kHz mono WAV input. Whisper uses 80 mel bins; Voxtral uses 128. Long audio is automatically chunked into 30-second segments and concatenated.
 
 ## Quick Start
 
@@ -349,6 +388,7 @@ zerfoo eagle-train --model m.gguf --corpus data.txt --output eagle.gguf  # train
 zerfoo transmla --input m.gguf --output m-mla.gguf  # MHA→MLA conversion
 zerfoo transmla-validate --original m.gguf --converted m-mla.gguf  # perplexity comparison
 zerfoo train -backend tabular ...      # train a tabular model
+zerfoo transcribe speech.wav --model whisper-large-v3  # speech to text
 zerfoo list                             # list cached models
 ```
 
