@@ -62,8 +62,12 @@ type TieredKVStore[T tensor.Numeric] struct {
 	promoteThreshold int
 
 	// coldDir is the directory for cold-tier files.
-	coldDir string
-	coldMu  sync.Mutex
+	// isTempColdDir is true when coldDir was created by NewTieredKVStore via
+	// os.MkdirTemp (i.e., cfg.ColdDir was empty). Close() only removes the
+	// directory when this flag is true; user-provided directories are left intact.
+	coldDir      string
+	isTempColdDir bool
+	coldMu       sync.Mutex
 
 	// Async prefetch state.
 	prefetchCh     chan prefetchRequest[T]
@@ -102,8 +106,9 @@ func NewTieredKVStore[T tensor.Numeric](engine compute.Engine[T], cfg TieredKVSt
 		cfg.PromoteThreshold = 5
 	}
 
+	isTempColdDir := cfg.ColdDir == ""
 	coldDir := cfg.ColdDir
-	if coldDir == "" {
+	if isTempColdDir {
 		var err error
 		coldDir, err = os.MkdirTemp("", "tiered-kv-cold-*")
 		if err != nil {
@@ -127,8 +132,9 @@ func NewTieredKVStore[T tensor.Numeric](engine compute.Engine[T], cfg TieredKVSt
 		chunkSize:        cfg.ChunkSize,
 		demoteThreshold:  cfg.DemoteThreshold,
 		promoteThreshold: cfg.PromoteThreshold,
-		coldDir:          coldDir,
-		prefetchCh:       make(chan prefetchRequest[T], cfg.NumLayers),
+		coldDir:           coldDir,
+		isTempColdDir:     isTempColdDir,
+		prefetchCh:        make(chan prefetchRequest[T], cfg.NumLayers),
 		prefetchCancel:   cancel,
 		prefetched:       make(map[int]*LayerKV[T]),
 	}
@@ -523,12 +529,19 @@ func (s *TieredKVStore[T]) prefetchLoop(ctx context.Context) {
 	}
 }
 
-// Close stops the prefetch goroutine and cleans up cold-tier temporary files.
+// Close stops the prefetch goroutine and cleans up cold-tier files.
+// When the cold directory was created by NewTieredKVStore (cfg.ColdDir was
+// empty), Close removes it. When the caller supplied their own ColdDir,
+// Close leaves the directory untouched so the caller can reuse it across
+// generation calls.
 func (s *TieredKVStore[T]) Close() error {
 	s.prefetchCancel()
 	s.prefetchWg.Wait()
-	s.clearColdDir()
-	return os.Remove(s.coldDir)
+	if s.isTempColdDir {
+		s.clearColdDir()
+		return os.Remove(s.coldDir)
+	}
+	return nil
 }
 
 // AccessCount returns the current access count for a layer.
