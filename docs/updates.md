@@ -1,5 +1,23 @@
 # Updates
 
+## 2026-03-29: v1.36.0 — Audio transcription, tiered KV cache, MiniMax-M2 fixes
+
+### zerfoo v1.36.0 / ztensor v0.15.0
+
+**New features:**
+- **`Model.Transcribe`**: Speech-to-text via Whisper or Voxtral. WAV input, mel spectrogram extraction, 30-second chunking, parallel greedy decode. CLI: `zerfoo transcribe`.
+- **`WithTieredKV`**: Hot/warm/cold tiered KV cache. Layers auto-demote to warm (compressed) or cold (disk) based on access frequency. Async prefetch for cold→hot. Unblocks long-context inference beyond GPU memory.
+- **ztensor: `MmapStorage.SliceElements`**: Zero-copy expert weight slicing for mmap'd MoE stacked weights.
+- **ztensor: Streaming GEMM**: Streaming GEMM for mmap'd tensors, enabling over-RAM CPU inference at scale.
+
+**Bug fixes:**
+- `fix(generate): Close() skips deletion of user-provided ColdDir` — TieredKVStore no longer removes a caller-supplied cold directory on close.
+- `fix(attention): QK norms applied before head reshape` — fixes MiniMax-M2 output quality.
+- `fix(inference): OOM eliminated during MoE graph build` — `NewFFNFromDense` removes ~857 GB phantom allocation for 256-expert models.
+- `fix(inference): Zero-copy expert slicing` — `buildExpertFFN` uses pre-existing weight slices via `NewFFNFromDense`.
+
+**Releases:** [zerfoo v1.36.0](https://github.com/zerfoo/zerfoo/releases/tag/v1.36.0) · [ztensor v0.15.0](https://github.com/zerfoo/ztensor/releases/tag/v0.15.0)
+
 ## 2026-03-29: E45 verification remediation shipped (PR #274)
 
 Resolved all gaps found by /verify audit. `WithTieredKV` GeneratorOption now exposes
