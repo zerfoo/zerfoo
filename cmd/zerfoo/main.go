@@ -81,6 +81,9 @@ func run() error {
 	eagleTrainCmd := cli.NewEagleTrainCommand(os.Stdout)
 	cliApp.RegisterCommand(eagleTrainCmd)
 
+	transcribeCmd := cli.NewTranscribeCommand(os.Stdout)
+	cliApp.RegisterCommand(transcribeCmd)
+
 	// Run CLI
 	return cliApp.Run(ctx, os.Args[1:])
 }
