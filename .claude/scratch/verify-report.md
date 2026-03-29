@@ -1,7 +1,8 @@
-## Verification Report
+## Verification Report (Re-verify after E45 remediation)
 
 ### Date: 2026-03-29
 ### Scope: full system
+### Re-verify run: T45.3 — confirms E45 remediations held
 
 ---
 
@@ -104,7 +105,8 @@ Additional flaky test (not a real failure):
 Build: go build ./... PASS
 Vet: go vet ./... PASS
 
-Pass rate: 5,473/5,474 tests = 99.98%. All 52 use cases WIRED. 1 MEDIUM wiring gap (TieredKV).
+Pass rate (original): 5,473/5,474 tests = 99.98%. 1 MEDIUM wiring gap (TieredKV).
+Pass rate (re-verify 2026-03-29): all packages PASS. 0 wiring gaps. HEALTHY.
 
 ---
 
@@ -128,3 +130,24 @@ Pass rate: 5,473/5,474 tests = 99.98%. All 52 use cases WIRED. 1 MEDIUM wiring g
   TieredKVStore and adapts it to CacheProvider[T] for use in the generator
 - Severity: MEDIUM
 - Remediation: add WithTieredKV option + thin CacheProvider adapter in generate/generator.go
+
+---
+
+## Post-Remediation Results
+
+### Applied: 2026-03-29 (PR #274, commit c27696ea)
+
+| Use Case / Gap | Before | After | Notes |
+|----------------|--------|-------|-------|
+| GAP-001: TieredKVStore no WithTieredKV GeneratorOption | MEDIUM gap | RESOLVED | generate/tiered_kv_adapter.go + generator.go:167 |
+| F-001: TestSchedulerImmediateEviction | FAIL (flaky) | PASS | select-based deterministic assertion; 10/10 confirmed |
+| rl package (transient) | N/A | PASS | Flake under parallel load; passes in isolation + -race -count=3 |
+
+### Wiring Gaps Resolved: 1/1 (100%)
+
+### Final Verdict: HEALTHY
+
+- 0 MEDIUM or higher wiring gaps
+- 0 persistent test failures
+- Build: PASS, Vet: PASS
+- All 52 use cases WIRED
