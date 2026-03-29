@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 33 model architectures (21 families). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
+**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 40 model architectures (24 families). **Run models larger than RAM** via memory-mapped I/O (229B MiniMax-M2 on 128 GB). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -37,6 +37,26 @@ Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX
 Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.json)
 
 </details>
+
+### Run Models Larger Than Your RAM
+
+Zerfoo memory-maps GGUF files by default, paging weights from NVMe on demand. No flags, no configuration. Models that exceed physical RAM load instantly and generate text — the OS virtual memory system handles the rest.
+
+| Model | Params | Quant | File Size | RAM | Status |
+|-------|--------|-------|-----------|-----|--------|
+| MiniMax-M2 | 229B (MoE) | Q4_K_M | 138 GB (3 shards) | 128 GB | Loads and generates text |
+
+```go
+// Load a 138 GB model on a 128 GB machine. That's it.
+m, _ := zerfoo.Load("./MiniMax-M2-Q4_K_M-00001-of-00003.gguf")
+defer m.Close()
+result, _ := m.Generate(ctx, "Explain quantum computing.")
+fmt.Println(result.Text)
+```
+
+**How it works**: `Load()` memory-maps the GGUF file(s) instead of reading them into heap memory. Tensor data stays on disk and is paged into RAM on demand by the OS. Split GGUF files (multiple shards) are detected and mapped automatically. Startup is near-instant regardless of model size — only metadata is parsed eagerly.
+
+**Why this matters**: Run 70B, 100B, or 200B+ parameter models on commodity hardware. A $3,000 DGX Spark with 128 GB RAM can serve a 229B parameter MoE model. Inference is NVMe-bound rather than RAM-bound, so faster storage means faster tokens.
 
 ## Advanced Inference Features
 
@@ -228,7 +248,7 @@ for _, tc := range result.ToolCalls {
 
 ## Supported Models
 
-### LLM Inference (33 architectures, 21 model families)
+### LLM Inference (40 architectures, 24 model families)
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
@@ -253,6 +273,9 @@ for _, tc := range result.ToolCalls {
 | EXAONE | GGUF | LG AI Research |
 | StarCoder 2 | GGUF | Code generation, sliding window |
 | DBRX | GGUF | Fine-grained MoE (16 experts, top-4) |
+| GLM-4 / ChatGLM | GGUF | Zhipu AI, dense + MoE variants |
+| Kimi K2 | GGUF | Linear attention MoE (Moonshot AI) |
+| LFM2 | GGUF | Liquid Foundation Model, hybrid MoE |
 | Mamba / Mamba 3 | GGUF | State space models (MIMO SSM) |
 | Jamba | GGUF | Hybrid Mamba-Transformer |
 | Whisper | GGUF | Audio transcription |
