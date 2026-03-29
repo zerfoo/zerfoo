@@ -42,20 +42,22 @@ Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.
 
 Zerfoo memory-maps GGUF files by default — no flags, no configuration. The entire file (or all shards of a split GGUF) is mmap'd via `syscall.Mmap`. Tensor data stays on disk and is paged into RAM on demand by the OS. Split GGUF files (multiple shards) are detected and mapped automatically from any shard path.
 
-**Results on DGX Spark (128 GB RAM):**
+**Results on DGX Spark (128 GB RAM, CPU-only):**
 
-| Model | Params | Quant | File Size | Shards | Load time | Ollama |
-|-------|--------|-------|-----------|--------|-----------|--------|
-| MiniMax-M2 | 229B (MoE) | Q4_K_M | 128.8 GB | 3 | **0.1s** | ❌ fails to load |
+| Model | Params | Quant | File Size | Shards | Load time | Generates tokens | Ollama |
+|-------|--------|-------|-----------|--------|-----------|-----------------|--------|
+| MiniMax-M2 | 229B (MoE) | Q4_K_M | 128.8 GB | 3 | **6.3s** | ✅ yes | ❌ fails to load |
 
 ```go
-// 128.8 GB model across 3 shards — loads in milliseconds.
-// All 809 tensors mapped. No heap allocation for weights.
+// 128.8 GB model across 3 shards on a 128 GB machine.
+// 809 tensors mapped. No heap allocation for weights.
 m, _ := zerfoo.Load("./MiniMax-M2-Q4_K_M-00001-of-00003.gguf")
 defer m.Close()
+result, _ := m.Generate(ctx, "The meaning of life is")
+// → "a priori is something"
 ```
 
-Startup is near-instant for any model size — only the GGUF header and tensor metadata are parsed eagerly. The OS pages data in from NVMe as tensors are accessed during inference.
+Startup maps all shards and parses tensor metadata — no weight data is read until inference. The OS pages 128.8 GB of Q4_K_M quantized weights from NVMe as each matrix multiply streams through its superblocks. Ollama returns a 500 error on the same model on the same hardware.
 
 ## Advanced Inference Features
 
