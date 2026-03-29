@@ -17,23 +17,28 @@ import (
 
 // WhisperEncoderConfig holds configuration for a WhisperEncoder.
 type WhisperEncoderConfig struct {
-	NumMels    int // Number of mel channels (input channels for conv frontend).
-	HiddenDim  int // Hidden dimension throughout the encoder.
-	NumHeads   int // Number of attention heads per transformer block.
-	NumLayers  int // Number of transformer encoder blocks.
-	KernelSize int // Kernel size for the conv1d frontend layers.
+	NumMels          int  // Number of mel channels (input channels for conv frontend).
+	HiddenDim        int  // Hidden dimension throughout the encoder.
+	NumHeads         int  // Number of attention heads per transformer block.
+	NumLayers        int  // Number of transformer encoder blocks.
+	KernelSize       int  // Kernel size for the conv1d frontend layers.
+	IntermediateSize int  // FFN intermediate size (0 = 4*HiddenDim for backward compatibility).
+	AttentionBias    bool // If true, Q/K/V projections include bias terms.
 }
 
 // transformerBlock holds the layers for a single transformer encoder block.
 type transformerBlock[T tensor.Numeric] struct {
-	ln1    *normalization.LayerNormalization[T]
-	qProj  *core.Linear[T]
-	kProj  *core.Linear[T]
-	vProj  *core.Linear[T]
-	oProj  *core.Linear[T]
-	ln2    *normalization.LayerNormalization[T]
-	ffn1   *core.Dense[T]
-	ffn2   *core.Dense[T]
+	ln1   *normalization.LayerNormalization[T]
+	qProj *core.Linear[T]
+	kProj *core.Linear[T]
+	vProj *core.Linear[T]
+	oProj *core.Linear[T]
+	ln2   *normalization.LayerNormalization[T]
+	ffn1  *core.Dense[T]
+	ffn2  *core.Dense[T]
+	qBias *graph.Parameter[T] // optional Q bias (nil when AttentionBias is false)
+	kBias *graph.Parameter[T] // optional K bias
+	vBias *graph.Parameter[T] // optional V bias
 }
 
 // WhisperEncoder implements a Whisper-style audio encoder with a 2-layer Conv1D
@@ -109,6 +114,9 @@ func NewWhisperEncoder[T tensor.Numeric](
 	// Build transformer blocks.
 	blocks := make([]transformerBlock[T], cfg.NumLayers)
 	ffnDim := cfg.HiddenDim * 4
+	if cfg.IntermediateSize > 0 {
+		ffnDim = cfg.IntermediateSize
+	}
 
 	for i := range blocks {
 		prefix := fmt.Sprintf("%s_block%d", name, i)
@@ -149,7 +157,7 @@ func NewWhisperEncoder[T tensor.Numeric](
 			return nil, fmt.Errorf("block %d ffn2: %w", i, err)
 		}
 
-		blocks[i] = transformerBlock[T]{
+		blk := transformerBlock[T]{
 			ln1:   ln1,
 			qProj: qProj,
 			kProj: kProj,
@@ -159,6 +167,31 @@ func NewWhisperEncoder[T tensor.Numeric](
 			ffn1:  ffn1,
 			ffn2:  ffn2,
 		}
+
+		if cfg.AttentionBias {
+			biasTensor := func(pname string) (*graph.Parameter[T], error) {
+				zeros := make([]T, cfg.HiddenDim)
+				t, err := tensor.New[T]([]int{cfg.HiddenDim}, zeros)
+				if err != nil {
+					return nil, err
+				}
+				return graph.NewParameter[T](pname, t, tensor.New[T])
+			}
+			blk.qBias, err = biasTensor(prefix + "_q_bias")
+			if err != nil {
+				return nil, fmt.Errorf("block %d q_bias: %w", i, err)
+			}
+			blk.kBias, err = biasTensor(prefix + "_k_bias")
+			if err != nil {
+				return nil, fmt.Errorf("block %d k_bias: %w", i, err)
+			}
+			blk.vBias, err = biasTensor(prefix + "_v_bias")
+			if err != nil {
+				return nil, fmt.Errorf("block %d v_bias: %w", i, err)
+			}
+		}
+
+		blocks[i] = blk
 	}
 
 	lnPost, err := normalization.NewLayerNormalization[T](engine, cfg.HiddenDim)
@@ -298,6 +331,17 @@ func (e *WhisperEncoder[T]) forwardBlock(
 		return nil, fmt.Errorf("v_proj: %w", err)
 	}
 
+	// Apply attention biases if present.
+	if block.qBias != nil {
+		addBiasInPlace(q, block.qBias.Value, e.ops)
+	}
+	if block.kBias != nil {
+		addBiasInPlace(k, block.kBias.Value, e.ops)
+	}
+	if block.vBias != nil {
+		addBiasInPlace(v, block.vBias.Value, e.ops)
+	}
+
 	// Compute multi-head self-attention manually
 	// Q, K, V are [batch*seqLen, hiddenDim]
 	qData := q.Data()
@@ -413,6 +457,9 @@ func (e *WhisperEncoder[T]) forwardBlock(
 }
 
 // Parameters returns all trainable parameters from the encoder.
+// The order is: conv1 params, conv2 params, [posEnc],
+// then per block: ln1, qProj, kProj, vProj, oProj, [qBias, kBias, vBias], ln2, ffn1, ffn2,
+// then lnPost params.
 func (e *WhisperEncoder[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
 	params = append(params, e.conv1.Parameters()...)
@@ -427,6 +474,15 @@ func (e *WhisperEncoder[T]) Parameters() []*graph.Parameter[T] {
 		params = append(params, b.kProj.Parameters()...)
 		params = append(params, b.vProj.Parameters()...)
 		params = append(params, b.oProj.Parameters()...)
+		if b.qBias != nil {
+			params = append(params, b.qBias)
+		}
+		if b.kBias != nil {
+			params = append(params, b.kBias)
+		}
+		if b.vBias != nil {
+			params = append(params, b.vBias)
+		}
 		params = append(params, b.ln2.Parameters()...)
 		params = append(params, b.ffn1.Parameters()...)
 		params = append(params, b.ffn2.Parameters()...)
@@ -435,8 +491,24 @@ func (e *WhisperEncoder[T]) Parameters() []*graph.Parameter[T] {
 	return params
 }
 
+// HasAttentionBias returns true if the encoder was configured with attention biases.
+func (e *WhisperEncoder[T]) HasAttentionBias() bool {
+	return e.cfg.AttentionBias
+}
+
 func (e *WhisperEncoder[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
+}
+
+// addBiasInPlace adds a 1D bias vector to a 2D tensor [rows, dim] in-place.
+func addBiasInPlace[T tensor.Numeric](t *tensor.TensorNumeric[T], bias *tensor.TensorNumeric[T], ops numeric.Arithmetic[T]) {
+	data := t.Data()
+	biasData := bias.Data()
+	dim := len(biasData)
+	for i, v := range data {
+		data[i] = ops.Add(v, biasData[i%dim])
+	}
+	t.SetData(data)
 }
 
 // applyGELU applies the GELU activation function in-place.
