@@ -23,7 +23,7 @@ exclude google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de
 exclude google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb
 
 require (
-	github.com/zerfoo/ztensor v0.14.0
+	github.com/zerfoo/ztensor v0.14.2-0.20260329054141-8d80b9143439
 	github.com/zerfoo/ztoken v0.3.4
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 )
