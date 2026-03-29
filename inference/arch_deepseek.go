@@ -433,6 +433,11 @@ func buildExpertFFN(
 		return nil, fmt.Errorf("down slice: %w", err)
 	}
 
+	// Build the FFN directly from pre-existing weight slices without going
+	// through NewFFN, which calls NewLinear internally and allocates
+	// inputDim*outputDim random float32 values per layer — only to be
+	// overwritten immediately. For MoE models with 256 experts × 62 layers,
+	// that wasted allocation is ~857 GB and OOM-kills the process.
 	ctx := context.Background()
 	gateWT, err := engine.Transpose(ctx, gateSlice, []int{1, 0})
 	if err != nil {
@@ -447,22 +452,16 @@ func buildExpertFFN(
 		return nil, err
 	}
 
-	ffn, err := core.NewFFN[float32](
-		name, engine, ops,
-		hiddenDim, intermediateDim, hiddenDim,
-		core.WithSwiGLU[float32](),
-		core.WithFFNNoBias[float32](),
-	)
-	if err != nil {
-		return nil, err
-	}
+	gateParam := &graph.Parameter[float32]{Name: name + "_gate", Value: gateWT}
+	upParam := &graph.Parameter[float32]{Name: name + "_up", Value: upWT}
+	downParam := &graph.Parameter[float32]{Name: name + "_down", Value: downWT}
 
-	params := ffn.Parameters()
-	params[0].Value = gateWT
-	params[1].Value = downWT
-	params[2].Value = upWT
+	w1 := core.NewDenseFromParams(core.NewLinearFromParam(engine, gateParam), nil)
+	w2 := core.NewDenseFromParams(core.NewLinearFromParam(engine, downParam), nil)
+	w3 := core.NewDenseFromParams(core.NewLinearFromParam(engine, upParam), nil)
 
-	return ffn, nil
+	return core.NewFFNFromDense[float32](name, engine, ops, w1, w2, w3,
+		core.WithSwiGLU[float32](), core.WithFFNNoBias[float32]())
 }
 
 // extractExpertSlice extracts a single expert's weight from a stacked tensor.

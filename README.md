@@ -38,25 +38,24 @@ Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.
 
 </details>
 
-### Run Models Larger Than Your RAM
+### Memory-Mapped Model Loading
 
-Zerfoo memory-maps GGUF files by default, paging weights from NVMe on demand. No flags, no configuration. Models that exceed physical RAM load instantly and generate text — the OS virtual memory system handles the rest.
+Zerfoo memory-maps GGUF files by default — no flags, no configuration. The entire file (or all shards of a split GGUF) is mmap'd via `syscall.Mmap`. Tensor data stays on disk and is paged into RAM on demand by the OS. Split GGUF files (multiple shards) are detected and mapped automatically from any shard path.
 
-| Model | Params | Quant | File Size | RAM | Status |
-|-------|--------|-------|-----------|-----|--------|
-| MiniMax-M2 | 229B (MoE) | Q4_K_M | 138 GB (3 shards) | 128 GB | Loads and generates text |
+**Results on DGX Spark (128 GB RAM):**
+
+| Model | Params | Quant | File Size | Shards | Load time | Ollama |
+|-------|--------|-------|-----------|--------|-----------|--------|
+| MiniMax-M2 | 229B (MoE) | Q4_K_M | 128.8 GB | 3 | **0.1s** | ❌ fails to load |
 
 ```go
-// Load a 138 GB model on a 128 GB machine. That's it.
+// 128.8 GB model across 3 shards — loads in milliseconds.
+// All 809 tensors mapped. No heap allocation for weights.
 m, _ := zerfoo.Load("./MiniMax-M2-Q4_K_M-00001-of-00003.gguf")
 defer m.Close()
-result, _ := m.Generate(ctx, "Explain quantum computing.")
-fmt.Println(result.Text)
 ```
 
-**How it works**: `Load()` memory-maps the GGUF file(s) instead of reading them into heap memory. Tensor data stays on disk and is paged into RAM on demand by the OS. Split GGUF files (multiple shards) are detected and mapped automatically. Startup is near-instant regardless of model size — only metadata is parsed eagerly.
-
-**Why this matters**: Run 70B, 100B, or 200B+ parameter models on commodity hardware. A $3,000 DGX Spark with 128 GB RAM can serve a 229B parameter MoE model. Inference is NVMe-bound rather than RAM-bound, so faster storage means faster tokens.
+Startup is near-instant for any model size — only the GGUF header and tensor metadata are parsed eagerly. The OS pages data in from NVMe as tensors are accessed during inference.
 
 ## Advanced Inference Features
 

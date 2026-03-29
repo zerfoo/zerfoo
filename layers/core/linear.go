@@ -198,6 +198,7 @@ func NewLinearFromParam[T tensor.Numeric](engine compute.Engine[T], param *graph
 	return &Linear[T]{
 		name:           param.Name,
 		engine:         engine,
+		ops:            engine.Ops(),
 		weights:        param,
 		inputFeatures:  shape[0],
 		outputFeatures: shape[1],

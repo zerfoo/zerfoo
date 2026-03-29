@@ -100,6 +100,36 @@ func NewFFN[T tensor.Numeric](
 	return f, nil
 }
 
+// NewFFNFromDense constructs an FFN from pre-built Dense layers.
+// Unlike NewFFN, this does NOT allocate random weight matrices — callers
+// supply Dense layers that already reference pre-loaded weight tensors.
+// This is the correct constructor for MoE expert FFNs where weights are
+// sliced from a stacked tensor and must not trigger fresh allocations.
+func NewFFNFromDense[T tensor.Numeric](
+	name string,
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	w1, w2, w3 *Dense[T],
+	opts ...FFNOpt[T],
+) (*FFN[T], error) {
+	f := &FFN[T]{
+		name:   name,
+		w1:     w1,
+		w2:     w2,
+		w3:     w3,
+		swiglu: activations.NewSwiGLU[T](engine, ops),
+	}
+	for _, opt := range opts {
+		opt(f)
+	}
+	if f.noBias {
+		f.w1.bias = nil
+		f.w2.bias = nil
+		f.w3.bias = nil
+	}
+	return f, nil
+}
+
 // OpType returns the operation type of the layer.
 func (f *FFN[T]) OpType() string {
 	return "FFN"
