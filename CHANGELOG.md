@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0](https://github.com/zerfoo/zerfoo/compare/v1.35.0...v1.36.0) (2026-03-29)
+
+
+### Features
+
+* **audio:** add mel spectrogram extraction, WAV parser, and transcribe CLI ([64e289a](https://github.com/zerfoo/zerfoo/commit/64e289a81da84685413c3edf9b6b61ffc865635f))
+* **bench_tps:** add --max-seq-len flag to cap KV cache allocation ([92f59c2](https://github.com/zerfoo/zerfoo/commit/92f59c288d711a75d85b3ed74da7069d16bbca66))
+* **generate:** add WithTieredKV GeneratorOption and CacheProvider adapter ([c27696e](https://github.com/zerfoo/zerfoo/commit/c27696ea99eb8c598fc46419bfe2ba35140924af))
+
+
+### Bug Fixes
+
+* **attention:** apply QK norms before head reshape for MiniMax-M2 ([4ed3955](https://github.com/zerfoo/zerfoo/commit/4ed3955ca5c8a787c60b1d90c1fe4234307c0095))
+* **audio:** wire mel spectrogram into Model.Transcribe for Voxtral ([0ba7a49](https://github.com/zerfoo/zerfoo/commit/0ba7a4979c4cd8877fb7b5401f17d687b46b55d1))
+* **batcher:** make TestSchedulerImmediateEviction deterministic ([d3951a3](https://github.com/zerfoo/zerfoo/commit/d3951a323c334677325f34ac63ce24e885b19b5c))
+* **generate:** Close() skips deletion of user-provided ColdDir ([68788ca](https://github.com/zerfoo/zerfoo/commit/68788ca256e6c85489409d8d4f7b7bf21f13e928))
+* **inference:** eliminate OOM during MoE graph build for over-RAM models ([decd668](https://github.com/zerfoo/zerfoo/commit/decd66820ad71bfcc8a42d7c2b1642dc3af23a51))
+* **inference:** zero-copy expert slicing for mmap'd MoE stacked weights ([d3427cf](https://github.com/zerfoo/zerfoo/commit/d3427cfd83008956d6d51604b03b5021f1d31a04))
+* **test:** ensure TestGenerate_returnsResult Duration &gt; 0 on fast hardware ([e2a6a35](https://github.com/zerfoo/zerfoo/commit/e2a6a35d463afb1b900c244923f770f715ea0781))
+
 ## [1.35.0](https://github.com/zerfoo/zerfoo/compare/v1.34.0...v1.35.0) (2026-03-29)
 
 
