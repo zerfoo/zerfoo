@@ -1,5 +1,28 @@
 # Updates
 
+## 2026-03-28: Architecture Expansion -- 40 architectures, 24 model families
+
+Session 3: 14 new architecture builders added. Full Ollama model coverage achieved.
+
+### New Architectures
+- **GPT-2**: Learned position embeddings, GELU, LayerNorm. Enables TinyStories for pkg.go.dev examples.
+- **Nemotron-H / Nemotron-H-MoE**: NVIDIA hybrid Mamba-2 + Attention + MoE (128 experts, top-6).
+- **MiniMax M2**: Sigmoid MoE gating with routing bias (256 experts, top-8), QK normalization.
+- **OLMo2**: AI2 Open Language Model (Llama-like).
+- **InternLM2**: Shanghai AI Lab (Llama-like).
+- **EXAONE / EXAONE4**: LG AI Research (Llama-like).
+- **StarCoder2**: BigCode, sliding window attention (Mistral-like).
+- **DBRX**: Databricks fine-grained MoE (16 experts, top-4).
+- **GLM4 / ChatGLM / GLM4-MoE**: Zhipu AI, dense + MoE variants.
+- **Kimi K2 (kimi-linear)**: Moonshot AI, linear attention MoE -- phi(Q)(phi(K)^T V) with ELU+1 feature map.
+- **LFM2 / LFM2-MoE**: Liquid AI Foundation Model, hybrid dense/MoE dispatch.
+
+### Other Deliverables
+- **pkg.go.dev Examples**: 9 Example functions with NewModel constructor (v1.32.0)
+- **CI Fixed**: All 6 repos green (grpc CVE, arm64 runner, purego vet exclusions)
+- **Website**: Updated models grid (18 cards), Go 1.26, new CLI commands
+- **Voxtral plan**: docs/plan-voxtral.md for Mistral speech-to-text (future)
+
 ## 2026-03-28: EAGLE Training, Q4_K Optimization, Granite TS Parity
 
 Session 2: 28 additional tasks completed (total 68 this cycle).
