@@ -1,8 +1,8 @@
 {
-  "generated": "2026-03-28",
-  "audit_phase": "Phase 2: Catalog use cases",
-  "scope": "full system",
-  "total_use_cases": 52,
+  "generated": "2026-03-29",
+  "audit_phase": "Phase 3: E46 Ecosystem v1 use cases added",
+  "scope": "full system including satellite libraries",
+  "total_use_cases": 57,
   "roles": [
     "cli_user",
     "library_user",
@@ -62,7 +62,12 @@
     {"id": "UC-049", "domain": "library", "name": "Create tensors and perform operations", "description": "Developer creates multi-dimensional tensors and performs numeric operations", "roles": ["library_user", "ml_researcher"], "interfaces": ["library"], "entry_points": ["zerfoo.NewTensor()", "tensor.TensorNumeric", "compute.Engine (operations)"], "priority": "P1", "wiring_status": "WIRED"},
     {"id": "UC-050", "domain": "library", "name": "Use RMSNorm normalization layer", "description": "Developer uses RMSNorm in custom architectures for stable training", "roles": ["library_user", "ml_researcher"], "interfaces": ["library"], "entry_points": ["zerfoo.NewRMSNorm()", "normalization.RMSNorm"], "priority": "P2", "wiring_status": "WIRED"},
     {"id": "UC-051", "domain": "training", "name": "Use LoRA for parameter-efficient fine-tuning", "description": "Developer fine-tunes large models with minimal parameters using Low-Rank Adaptation", "roles": ["library_user", "ml_researcher"], "interfaces": ["library"], "entry_points": ["training/lora.Adapter", "cmd finetune-sentiment", "inference.Option (WithLoRA)"], "priority": "P2", "wiring_status": "WIRED"},
-    {"id": "UC-052", "domain": "inference", "name": "Stream token generation responses", "description": "Client receives token-by-token generation via server-sent events (SSE)", "roles": ["api_user"], "interfaces": ["http"], "entry_points": ["POST /v1/chat/completions (stream=true)", "POST /v1/completions (stream=true)", "generate/stream.Stream"], "priority": "P1", "wiring_status": "WIRED"}
+    {"id": "UC-052", "domain": "inference", "name": "Stream token generation responses", "description": "Client receives token-by-token generation via server-sent events (SSE)", "roles": ["api_user"], "interfaces": ["http"], "entry_points": ["POST /v1/chat/completions (stream=true)", "POST /v1/completions (stream=true)", "generate/stream.Stream"], "priority": "P1", "wiring_status": "WIRED"},
+    {"id": "UC-L01", "domain": "library", "name": "Import stable float16/bfloat16 library", "description": "Developer imports float16 v1 and gets stable IEEE 754 arithmetic with no breaking changes across minor versions", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/float16"], "priority": "P1", "wiring_status": "PLANNED", "repo": "float16"},
+    {"id": "UC-L02", "domain": "library", "name": "Import stable float8 library", "description": "Developer imports float8 v1 for FP8 E4M3FN quantized arithmetic in inference pipelines", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/float8"], "priority": "P1", "wiring_status": "PLANNED", "repo": "float8"},
+    {"id": "UC-L03", "domain": "library", "name": "Import stable ztensor library", "description": "Developer imports ztensor v1 for tensor operations and GPU compute with stable API guarantees", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/ztensor"], "priority": "P0", "wiring_status": "PLANNED", "repo": "ztensor"},
+    {"id": "UC-L04", "domain": "library", "name": "Import stable ztoken library", "description": "Developer imports ztoken v1 for BPE tokenization compatible with HuggingFace models", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/ztoken"], "priority": "P1", "wiring_status": "PLANNED", "repo": "ztoken"},
+    {"id": "UC-L05", "domain": "model_conversion", "name": "Convert ONNX/SafeTensors model to GGUF", "description": "Developer runs zonnx v1 CLI to convert ONNX or SafeTensors models to GGUF format for use with zerfoo", "roles": ["cli_user", "ml_researcher"], "interfaces": ["cli"], "entry_points": ["github.com/zerfoo/zonnx"], "priority": "P1", "wiring_status": "PLANNED", "repo": "zonnx"}
   ],
   "endpoint_coverage": {
     "total_endpoints": 15,

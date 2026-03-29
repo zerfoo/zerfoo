@@ -1288,6 +1288,14 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-29: E46 Ecosystem v1 Release added (6 repos -> v1+)
+
+Added E46 covering all six active satellite libraries (float16, float8, ztensor, ztoken,
+zonnx, zerfoo). zerfoo is already at v1.36.0. Plan adds 5 sub-epics (E46.1-E46.5) with
+46 tasks across 4 waves to promote the remaining 5 libraries to v1.0.0. Priority order:
+zonnx first (2 tasks, API review only), then ztensor (8 tasks), ztoken (8 tasks), float8
+(10 tasks), float16 (18 tasks -- BFloat16 Phases 2-5). Created ADR-074.
+
 ### 2026-03-29: E45 Verification Remediation added
 
 Full-system health audit completed (/verify, 2026-03-29). Build PASS, 89/90 packages PASS.
@@ -1474,3 +1482,370 @@ Audit found 0 test failures, 1 LOW wiring gap (GAP-001).
   exists and its contents are intact.
 
 - [x] T45.3 Re-run /verify to confirm GAP-001 resolved  Owner: TBD  Est: 0.1h  DONE 2026-03-29 VERIFIED
+
+---
+
+## E46: Ecosystem v1 Release
+
+**Goal:** Promote all five sub-v1 libraries (zonnx, ztensor, ztoken, float8, float16) to v1.0.0.
+**Decision rationale:** docs/adr/074-satellite-libraries-v1-release-policy.md
+**Repo routing:** Each sub-epic targets a different repo. Agents must commit only within
+the named repo directory; the pre-commit hook rejects cross-directory commits.
+
+### Use Cases
+
+| ID | Name | Description |
+|----|------|-------------|
+| UC-L01 | Import stable float16/bfloat16 library | User imports float16 v1 and gets stable IEEE 754 arithmetic with no breaking changes |
+| UC-L02 | Import stable float8 library | User imports float8 v1 for FP8 quantized inference |
+| UC-L03 | Import stable ztensor library | User imports ztensor v1 for tensor and GPU compute |
+| UC-L04 | Import stable ztoken library | User imports ztoken v1 for BPE tokenization |
+| UC-L05 | Convert ONNX model to GGUF | User runs zonnx v1 to convert ONNX or SafeTensors to GGUF |
+
+---
+
+### E46.1: zonnx v1.0.0 (repo: /Users/dndungu/Code/zerfoo/zonnx)
+
+All planned features shipped at v0.9.0. Only API review and version bump needed.
+
+- [ ] T46.1.1 Review public API surface for stability  Owner: TBD  Est: 1h  verifies: [UC-L05]
+  Audit all exported types and functions in zonnx for breaking-change risk.
+  Remove or unexport any symbols that should not be part of the v1 contract.
+  Acceptance: go doc ./... lists only intentionally public symbols.
+
+- [ ] T46.1.2 Add API stability ADR in zonnx  Owner: TBD  Est: 1h  verifies: [UC-L05]
+  Create docs/adr/002-api-stability-v1.md documenting the v1 stability contract.
+  List exported types, their stability guarantees, and which are safe to extend
+  without a major version bump.
+
+- [ ] T46.1.3 Run go vet and tests in zonnx  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Acceptance: go build ./... and go test ./... both pass with no errors.
+
+- [ ] T46.1.4 Tag zonnx v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L05]
+  Trigger release-please to open a v1.0.0 release PR. Review and merge.
+  Acceptance: github.com/zerfoo/zonnx has a v1.0.0 tag and release.
+
+---
+
+### E46.2: ztensor v1.0.0 (repo: /Users/dndungu/Code/zerfoo/ztensor)
+
+Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, and API review.
+
+- [ ] T46.2.1 Write docs/design.md for ztensor  Owner: TBD  Est: 4h  verifies: [UC-L03]
+  Document: package layout (tensor/, compute/, graph/, device/, numeric/, internal/),
+  the compute.Engine[T] interface contract, CUDA/ROCm/OpenCL backend abstraction,
+  memory arena design, quantization types (Q4, Q8, FP16, BF16, FP8), and CUDA graph
+  capture lifecycle. General terms only -- no specific model names or benchmark numbers.
+  Acceptance: docs/design.md exists and covers all seven top-level packages.
+
+- [ ] T46.2.2 Write docs/QUALITY.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  This file is referenced in ci.yml but missing. Create docs/QUALITY.md covering:
+  test coverage expectations, GPU-only test tagging convention (//go:build cuda),
+  race detector policy, and the vet exclusions rationale for unsafe.Pointer packages.
+  Acceptance: docs/QUALITY.md exists; CI reference is satisfied.
+
+- [ ] T46.2.3 Produce stable-surface inventory for ztensor v1  Owner: TBD  Est: 3h  verifies: [UC-L03]
+  The v1 stability contract covers a narrow surface only. Churn from research epics
+  (E34-E44 each added new kernel primitives) makes a wide freeze impractical.
+  Stable v1 surface (no breaking changes without v2 bump):
+    - compute.Engine[T] interface (all methods)
+    - tensor.Tensor[T] type and its exported methods
+    - tensor.Numeric constraint
+    - device.Device interface
+    - numeric.* arithmetic functions
+  Explicitly NOT stable (may change in minor versions):
+    - internal/cuda, internal/xblas, internal/codegen, internal/gpuapi (already internal)
+    - Any kernel-level or backend-level exported types outside the five stable packages
+    - graph/ package (compilation pipeline still evolving)
+  Steps:
+    (a) Run `go doc ./...` and classify every exported symbol as stable or unstable.
+    (b) Unexport any symbol outside the stable surface that is not needed by zerfoo.
+    (c) For symbols that must stay exported (used by zerfoo) but are not stable, add a
+        doc comment: "// This API is not covered by the v1 stability guarantee."
+    (d) Write the resulting inventory to docs/adr/001-api-stability-v1.md.
+  Deps: T46.2.2
+  Acceptance: docs/adr/001-api-stability-v1.md exists with explicit stable/unstable lists;
+  no symbol outside the five stable packages is exported without a stability disclaimer.
+
+- [ ] T46.2.4 Verify zerfoo builds cleanly after T46.2.3 unexports  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  After unexporting transitional symbols, confirm zerfoo still builds.
+  Run: cd ../zerfoo && go build ./... (using a local replace directive if needed).
+  Fix any ztensor import breakage by either re-exporting with a disclaimer or updating
+  the zerfoo import to use an internal path.
+  Deps: T46.2.3
+  Acceptance: zerfoo builds with no errors against the updated ztensor.
+
+- [ ] T46.2.5 Add benchmark baseline to docs/devlog.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Run go test -bench=. ./tensor/... ./compute/... and record results in devlog.md.
+  This establishes a regression baseline before the v1 tag.
+  Acceptance: docs/devlog.md has a dated benchmark entry for ztensor.
+
+- [ ] T46.2.6 Run go vet and full test suite in ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Acceptance: go build ./... and go test -race -timeout 300s ./... both pass.
+
+- [ ] T46.2.7 Tag ztensor v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L03]
+  Trigger release-please to open a v1.0.0 release PR. Review and merge.
+  Acceptance: github.com/zerfoo/ztensor has a v1.0.0 tag and release.
+
+---
+
+### E46.3: ztoken v1.0.0 (repo: /Users/dndungu/Code/zerfoo/ztoken)
+
+Small, focused library. Needs design.md, expanded tests, and API review.
+
+- [ ] T46.3.1 Write docs/design.md for ztoken  Owner: TBD  Est: 2h  verifies: [UC-L04]
+  Document: BPE tokenizer architecture, GGUF tokenizer loading path, HuggingFace
+  compatibility layer, WordPiece variant, encode/decode interface contract.
+  Acceptance: docs/design.md exists; covers BPE, GGUF loader, and HF compat sections.
+
+- [ ] T46.3.2 Expand test coverage for edge cases  Owner: TBD  Est: 3h  verifies: [UC-L04]
+  Current: 5 test files. Add tests for:
+  (a) Round-trip encode/decode identity on 100 HuggingFace model vocabs.
+  (b) Byte-pair edge cases: unicode multibyte sequences, control chars.
+  (c) Error paths: malformed GGUF tokenizer metadata.
+  Acceptance: go test -race ./... passes; new tests cover the three categories.
+
+- [ ] T46.3.3 Create docs/adr/ directory and API stability ADR  Owner: TBD  Est: 1h  verifies: [UC-L04]
+  Create docs/adr/001-api-stability-v1.md for ztoken. The Tokenizer interface and
+  Encode/Decode functions are stable v1. Internal GGUF parsing helpers are not public API.
+  Acceptance: docs/adr/001-api-stability-v1.md exists.
+
+- [ ] T46.3.4 Run go vet and full test suite in ztoken  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Acceptance: go build ./... and go test -race ./... both pass.
+
+- [ ] T46.3.5 Tag ztoken v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L04]
+  Trigger release-please to open a v1.0.0 release PR. Review and merge.
+  Acceptance: github.com/zerfoo/ztoken has a v1.0.0 tag and release.
+
+---
+
+### E46.4: float8 v1.0.0 (repo: /Users/dndungu/Code/zerfoo/float8)
+
+Functional core with minimal documentation. Needs docs/, expanded tests, and API review.
+
+- [ ] T46.4.1 Write docs/design.md for float8  Owner: TBD  Est: 2h  verifies: [UC-L02]
+  Document: FP8 E4M3FN bit layout, lookup table strategy, arithmetic operations,
+  conversion to/from float32, no-infinities design rationale, use in ML inference.
+  Note: FP8 E5M2 is out of scope for v1 (see T46.4.8).
+  Acceptance: docs/design.md exists and covers the six documented sections.
+
+- [ ] T46.4.2 Verify FP8 E4M3FN arithmetic against NVIDIA cuDNN reference values  Owner: TBD  Est: 3h  verifies: [UC-L02]
+  Write a test file that encodes the complete E4M3FN value table (256 values) and
+  compares Add/Sub/Mul/Div results to expected IEEE 754 E4M3FN results.
+  Reference: NVIDIA FP8 Formats for Deep Learning (2022).
+  Acceptance: TestArithmeticCorrectness passes for all 256 representable values.
+
+- [ ] T46.4.3 Add benchmarks for float8 operations  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Add BenchmarkAdd, BenchmarkMul, BenchmarkFromFloat32, BenchmarkToFloat32.
+  Record baseline results in docs/devlog.md.
+  Acceptance: go test -bench=. ./... runs without errors.
+
+- [ ] T46.4.4 Expand error path tests  Owner: TBD  Est: 1h  verifies: [UC-L02]
+  Test: NaN propagation through all arithmetic ops, clamping of out-of-range float32
+  to E4M3FN max value, zero handling.
+  Acceptance: go test ./... covers error paths.
+
+- [ ] T46.4.5 Create docs/adr/ directory and API stability ADR  Owner: TBD  Est: 1h  verifies: [UC-L02]
+  Create docs/adr/001-api-stability-v1.md. Float8 (E4M3FN type, arithmetic functions,
+  conversions) is stable v1. FP8 E5M2 is explicitly deferred to v1.1+.
+  Acceptance: docs/adr/001-api-stability-v1.md exists.
+
+- [ ] T46.4.6 Run go vet and full test suite in float8  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Acceptance: go build ./... and go test -race ./... both pass.
+
+- [ ] T46.4.7 Tag float8 v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L02]
+  Trigger release-please to open a v1.0.0 release PR. Review and merge.
+  Acceptance: github.com/zerfoo/float8 has a v1.0.0 tag and release.
+
+- [ ] T46.4.8 Backlog: FP8 E5M2 support (deferred to v1.1)  Owner: TBD  Est: 8h  verifies: [UC-L02]
+  E5M2 format (1 sign, 5 exponent, 2 mantissa) is used on NVIDIA Ada Lovelace GPUs.
+  Implement after v1.0.0 tag as a non-breaking addition.
+  Deps: T46.4.7 (v1.0.0 must ship first)
+
+---
+
+### E46.5: float16 v1.0.0 (repo: /Users/dndungu/Code/zerfoo/float16)
+
+Float16 is stable. BFloat16 needs Phases 2-5 from the existing plan.md in that repo.
+
+- [ ] T46.5.1 BFloat16 Phase 2: ArithmeticMode support  Owner: TBD  Est: 4h  verifies: [UC-L01]
+  Implement BFloat16AddWithMode, SubWithMode, MulWithMode, DivWithMode with ArithmeticMode
+  parameter. Implement proper NaN propagation and gradual underflow. Add FMA stub.
+  Ref: float16/docs/plan.md Phase 2.1 and 2.2.
+  Acceptance: All Phase 2 functions implemented; go test -run TestBFloat16Arithmetic passes.
+
+- [ ] T46.5.2 BFloat16 Phase 2 tests  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  Tests: NaN propagation through all 4 arithmetic ops with each ArithmeticMode value,
+  gradual underflow at subnormal boundary, FMA correctness.
+  Deps: T46.5.1
+  Acceptance: go test -race ./... passes.
+
+- [ ] T46.5.3 BFloat16 Phase 3: Batch/slice operations  Owner: TBD  Est: 3h  verifies: [UC-L01]
+  Implement: BFloat16AddSlice, SubSlice, MulSlice, DivSlice, ScaleSlice,
+  BFloat16SliceFromFloat32, Float32SliceFromBFloat16, BFloat16SliceFromFloat64.
+  Ref: float16/docs/plan.md Phase 3.1 and 3.2.
+  Acceptance: All functions return correct results on random inputs; benchmarks added.
+
+- [ ] T46.5.4 BFloat16 Phase 3 tests and benchmarks  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  Deps: T46.5.3
+  Acceptance: go test -race ./... passes; BenchmarkBFloat16Slice exists.
+
+- [ ] T46.5.5 BFloat16 Phase 4: Math functions  Owner: TBD  Est: 4h  verifies: [UC-L01]
+  Implement: BFloat16Sqrt, Exp, Log, Log2, Sin, Cos, Tanh, Sigmoid.
+  Each function converts to float64 for computation and converts back.
+  Add FastMode variants for Sigmoid and Tanh using polynomial approximation.
+  Ref: float16/docs/plan.md Phase 4.1 and 4.2.
+  Acceptance: All math functions match float64 results within BFloat16 precision.
+
+- [ ] T46.5.6 BFloat16 Phase 4 tests  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  Deps: T46.5.5
+  Tests: Sqrt(4.0) == 2.0, Exp(0) == 1.0, Log(1) == 0, Sigmoid(0) ~= 0.5.
+  Edge cases: Sqrt(NaN), Log(-1).
+
+- [ ] T46.5.7 BFloat16 Phase 5: Parse and format  Owner: TBD  Est: 3h  verifies: [UC-L01]
+  Implement: BFloat16FromString, (b BFloat16) String() with format verbs (%e, %f, %g),
+  MarshalJSON, UnmarshalJSON, MarshalBinary, UnmarshalBinary.
+  Ref: float16/docs/plan.md Phase 5.1 and 5.2.
+  Acceptance: Round-trip marshal/unmarshal is lossless; String() matches float32 format.
+
+- [ ] T46.5.8 BFloat16 Phase 5 tests  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  Deps: T46.5.7
+  Tests: 100 random round-trip JSON encode/decode cycles; binary round-trip; %e %f %g
+  format verbs against float32 reference.
+
+- [ ] T46.5.9 Error handling infrastructure for BFloat16  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  Implement BFloat16Error type wrapping stdlib errors. Wire into ConversionMode strict
+  path and ArithmeticMode checked paths. Ref: float16/docs/plan.md missing item.
+  Acceptance: BFloat16 strict conversion returns typed error on overflow.
+
+- [ ] T46.5.10 Comprehensive BFloat16 test coverage  Owner: TBD  Est: 3h  verifies: [UC-L01]
+  Ensure >= 95% statement coverage for bfloat16.go and all Phase 2-5 files.
+  Run go test -cover ./... and fix any gaps. Add table-driven tests for all 256
+  8-bit boundary values (subnormal, normal, NaN, zero) through all operations.
+  Deps: T46.5.1 through T46.5.9
+
+- [ ] T46.5.11 Update float16 docs/plan.md to reflect Phase 2-5 completion  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Mark all completed Phase items as done. Remove the "BFloat16 Enhancement Plan"
+  title and rename to "Float16 v1 Release Notes" once all phases are complete.
+  Deps: T46.5.10
+
+- [ ] T46.5.12 Run go vet and full test suite in float16  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T46.5.10
+  Acceptance: go build ./... and go test -race ./... pass with no vet warnings.
+
+- [ ] T46.5.13 Tag float16 v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L01]
+  Deps: T46.5.12
+  Trigger release-please to open a v1.0.0 release PR. Review and merge.
+  Acceptance: github.com/zerfoo/float16 has a v1.0.0 tag and release.
+
+---
+
+### E46 Parallel Work
+
+#### Tracks
+
+| Track | Repo | Tasks | Description |
+|-------|------|-------|-------------|
+| V1: zonnx | zonnx | T46.1.1-T46.1.4 | API review, ADR, tag v1.0.0 |
+| V2: ztensor | ztensor | T46.2.1-T46.2.7 | design.md, QUALITY.md, API ADR, benchmark, tag |
+| V3: ztoken | ztoken | T46.3.1-T46.3.5 | design.md, edge case tests, API ADR, tag |
+| V4: float8 | float8 | T46.4.1-T46.4.7 | design.md, correctness tests, benchmarks, API ADR, tag |
+| V5: float16 | float16 | T46.5.1-T46.5.13 | BFloat16 Phases 2-5, error infra, coverage, tag |
+
+All five tracks are fully independent of each other. Any task in V1 can run in parallel
+with any task in V2, V3, V4, or V5. Within each track, tasks are sequential.
+
+#### Waves
+
+##### Wave E46-1: Foundations (5 agents)
+
+One agent per repo. All zero-dependency tasks in each track.
+
+- [ ] T46.1.1 Review zonnx public API surface  verifies: [UC-L05]
+- [ ] T46.2.1 Write ztensor docs/design.md  verifies: [UC-L03]
+- [ ] T46.3.1 Write ztoken docs/design.md  verifies: [UC-L04]
+- [ ] T46.4.1 Write float8 docs/design.md  verifies: [UC-L02]
+- [ ] T46.5.1 BFloat16 Phase 2: ArithmeticMode  verifies: [UC-L01]
+
+##### Wave E46-2: Docs + Tests (5 agents)
+
+- [ ] T46.1.2 Add zonnx API stability ADR  Deps: T46.1.1  verifies: [UC-L05]
+- [ ] T46.2.2 Write ztensor docs/QUALITY.md  Deps: T46.2.1  verifies: [infrastructure]
+- [ ] T46.3.2 Expand ztoken test coverage  Deps: T46.3.1  verifies: [UC-L04]
+- [ ] T46.4.2 Verify float8 arithmetic correctness  Deps: T46.4.1  verifies: [UC-L02]
+- [ ] T46.5.2 BFloat16 Phase 2 tests  Deps: T46.5.1  verifies: [UC-L01]
+
+##### Wave E46-3: Deep Work (5 agents)
+
+- [ ] T46.1.3 Run go vet and tests in zonnx  Deps: T46.1.2  verifies: [infrastructure]
+- [ ] T46.2.3 Create ztensor docs/adr/001 API stability  Deps: T46.2.2  verifies: [UC-L03]
+- [ ] T46.3.3 Create ztoken docs/adr/001 API stability  Deps: T46.3.2  verifies: [UC-L04]
+- [ ] T46.4.3 Add float8 benchmarks  Deps: T46.4.2  verifies: [infrastructure]
+- [ ] T46.5.3 BFloat16 Phase 3: Batch/slice ops  Deps: T46.5.2  verifies: [UC-L01]
+
+##### Wave E46-4: Verification + Final Tasks (5 agents)
+
+- [ ] T46.1.4 Tag zonnx v1.0.0  Deps: T46.1.3  verifies: [UC-L05]
+- [ ] T46.2.4 Verify zerfoo builds after ztensor unexports  Deps: T46.2.3  verifies: [UC-L03]
+- [ ] T46.3.4 Run go vet in ztoken  Deps: T46.3.3  verifies: [infrastructure]
+- [ ] T46.4.4 Expand float8 error path tests  Deps: T46.4.3  verifies: [UC-L02]
+- [ ] T46.5.4 BFloat16 Phase 3 tests  Deps: T46.5.3  verifies: [UC-L01]
+
+##### Wave E46-5: Remaining ztensor + float (5 agents)
+
+- [ ] T46.2.5 ztensor benchmark baseline  Deps: T46.2.4  verifies: [infrastructure]
+- [ ] T46.3.5 Tag ztoken v1.0.0  Deps: T46.3.4  verifies: [UC-L04]
+- [ ] T46.4.5 Create float8 docs/adr/001 API stability  Deps: T46.4.4  verifies: [UC-L02]
+- [ ] T46.5.5 BFloat16 Phase 4: Math functions  Deps: T46.5.4  verifies: [UC-L01]
+- [ ] T46.5.6 BFloat16 Phase 4 tests  Deps: T46.5.5  verifies: [UC-L01]
+
+##### Wave E46-6: Final Vet + Tags (5 agents)
+
+- [ ] T46.2.6 Run go vet in ztensor  Deps: T46.2.5  verifies: [infrastructure]
+- [ ] T46.4.6 Run go vet in float8  Deps: T46.4.5  verifies: [infrastructure]
+- [ ] T46.4.7 Tag float8 v1.0.0  Deps: T46.4.6  verifies: [UC-L02]
+- [ ] T46.5.7 BFloat16 Phase 5: Parse and format  Deps: T46.5.6  verifies: [UC-L01]
+- [ ] T46.5.8 BFloat16 Phase 5 tests  Deps: T46.5.7  verifies: [UC-L01]
+
+##### Wave E46-7: ztensor + float16 Finish (4 agents)
+
+- [ ] T46.2.7 Tag ztensor v1.0.0  Deps: T46.2.6  verifies: [UC-L03]
+- [ ] T46.5.9 BFloat16 error handling infrastructure  Deps: T46.5.8  verifies: [UC-L01]
+- [ ] T46.5.10 Comprehensive BFloat16 test coverage  Deps: T46.5.9  verifies: [UC-L01]
+- [ ] T46.5.11 Update float16 plan  Deps: T46.5.10  verifies: [infrastructure]
+
+##### Wave E46-8: float16 Final (2 agents)
+
+- [ ] T46.5.12 Run go vet in float16  Deps: T46.5.11  verifies: [infrastructure]
+- [ ] T46.5.13 Tag float16 v1.0.0  Deps: T46.5.12  verifies: [UC-L01]
+
+---
+
+### E46 Milestones
+
+| ID | Milestone | Exit Criteria | Target |
+|----|-----------|---------------|--------|
+| M-E46.1 | zonnx v1.0.0 released | v1.0.0 tag on github.com/zerfoo/zonnx | 2026-Q2 |
+| M-E46.2 | ztensor v1.0.0 released | v1.0.0 tag on github.com/zerfoo/ztensor | 2026-Q2 |
+| M-E46.3 | ztoken v1.0.0 released | v1.0.0 tag on github.com/zerfoo/ztoken | 2026-Q2 |
+| M-E46.4 | float8 v1.0.0 released | v1.0.0 tag on github.com/zerfoo/float8 | 2026-Q2 |
+| M-E46.5 | float16 v1.0.0 released | v1.0.0 tag on github.com/zerfoo/float16 | 2026-Q3 |
+| M-E46.6 | Full ecosystem v1+ | All 5 libraries at v1+; zerfoo already at v1.36+ | 2026-Q3 |
+
+### E46 Risks
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R36 | BFloat16 Phases 2-5 uncover semantic mismatches vs Float16 | Medium | Medium | Design tests against Float16 expected behavior first; defer mismatches as documented differences |
+| R37 | ztensor kernel/graph APIs keep changing as new research epics land | High | High | Narrow v1 stable surface to Engine[T], Tensor[T], Numeric, Device, numeric.*; mark everything else as unstable in doc comments; zerfoo can use unstable symbols as long as it pins a ztensor version |
+| R38 | zonnx v0.9 has an undiscovered API regression before v1 tag | Low | Low | Run full conversion suite against test ONNX models before tagging |
+| R39 | float8 correctness vs NVIDIA reference diverges on edge cases | Medium | Low | Test against complete 256-value table; document any intentional deviations |
+
+### E46 Hand-off Notes
+
+- Each sub-epic works in its own repo directory. Never commit across repos in one commit.
+- release-please is configured in all five repos. Triggering v1.0.0 requires an empty
+  commit or a PR with `Release-As: 1.0.0` in the PR description.
+- DGX Spark at ssh ndungu@192.168.86.250 is available for GPU benchmarks (ztensor).
+- float16/docs/plan.md is the reference for BFloat16 Phase 2-5 spec details.
+- zmf is archived and excluded from this plan. No v1 target.
