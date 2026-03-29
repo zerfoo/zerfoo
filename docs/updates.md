@@ -1,5 +1,31 @@
 # Updates
 
+## 2026-03-29: MiniMax-M2 229B inference verified on 128 GB DGX Spark
+
+First successful inference on a model larger than physical RAM. MiniMax-M2
+(229B MoE, 128.8 GB Q4_K_M, 3 shards) loads in 6.3s and generates tokens on a
+128 GB machine. Ollama fails to load the same model on the same hardware.
+
+### Changes (PRs decd668, 4ed3955, 0cd50bb)
+- **NewFFNFromDense constructor** (`layers/core/ffn.go`): eliminates ~857 GB
+  phantom allocation during MoE graph build (256 experts × 62 layers × 3 Dense
+  layers × random float32 allocation).
+- **Zero-copy expert slicing** (`inference/arch_deepseek.go`): `buildExpertFFN`
+  now uses pre-existing weight slices via `NewFFNFromDense` instead of calling
+  `NewFFN` which allocated and immediately overwrote random weights.
+- **NewLinearFromParam nil ops fix** (`layers/core/linear.go`): was missing
+  `ops: engine.Ops()`, causing panic at `Sigmoid.ops.One()` in `WithSwiGLU`.
+- **qkNormPreReshape for MiniMax-M2** (`layers/attention/grouped_query_attention.go`,
+  `inference/arch_minimax_m2.go`): MiniMax-M2 stores qNorm weights as `[nH×hD]`
+  not `[hD]`. Added flag to apply norm before head reshape.
+- **README + benchmarks.md**: updated with verified inference result.
+
+### Result
+```
+MiniMax-M2 229B Q4_K_M / 128 GB DGX Spark / CPU-only
+Load: 6.3s | Output: "The meaning of life is a priori is something" | 0.06 tok/s
+```
+
 ## 2026-03-28: Split-GGUF support and mmap-by-default
 
 Unlocks large-model loading: any split GGUF (70B+) loads transparently.

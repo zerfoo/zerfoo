@@ -3,6 +3,69 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-29: MiniMax-M2 229B inference verified on 128 GB DGX Spark
+
+**Type:** benchmark
+**Tags:** minimax-m2, mmap, oom, moe, over-ram-inference, qknorm
+
+**Problem:** MiniMax-M2 (229B, 128.8 GB Q4_K_M across 3 shards) OOM-killed
+during graph build on a 128 GB machine. Process was killed before generating
+a single token.
+
+**Root cause (four separate OOM sources, fixed sequentially):**
+
+1. **Streaming GEMM missing (streaming-GEMM branch, ztensor):** `tryQuantizedMatMul`
+   in `cpu_engine.go` had no case for `*tensor.MmapStorage`. Fell through to the
+   default path which called `.Data()` on the mmap'd tensor — materializing the
+   full weight matrix as float32 in heap. Fixed: added `GemmF32MmapNT` /
+   `GemmMmapF32` dispatch in ztensor v0.14.1 / v0.14.2.
+
+2. **KV cache 23.5 GB allocation at graph build:** MiniMax-M2 GGUF metadata
+   has `MaxSeqLen=196608`. `NewGroupedQueryAttentionFromParams` allocates
+   `2 × nLayers × nKVHeads × headDim × maxSeqLen × sizeof(float32)` at
+   build time. Added `--max-seq-len` flag to `bench_tps` to cap at 512 for
+   testing.
+
+3. **Expert extraction materializing all 256 experts:** `extractExpertSlice`
+   called `stacked.Data()` which materializes the full stacked expert tensor
+   (~4.8 GB per tensor type × 3 × 62 layers ≈ 893 GB). Fixed: added
+   `MmapStorage.SliceElements()` for zero-copy byte-range slicing; detect
+   MmapStorage in `extractExpertSlice` (ztensor v0.14.1, zerfoo PR decd668).
+
+4. **NewFFN random weight allocation (857 GB):** `buildExpertFFN` was calling
+   `core.NewFFN` which calls `NewLinear` → `randomData[T](inputDim×outputDim)`
+   three times per expert per layer. 256 experts × 62 layers × 3 × 18 MB ≈ 857 GB
+   allocated and immediately overwritten. Fixed: added `NewFFNFromDense` constructor
+   and used it in `buildExpertFFN` (PR decd668).
+
+**Additional fixes (same session):**
+
+- `NewLinearFromParam` was missing `ops: engine.Ops()` field. `WithSwiGLU`
+  accessed `f.w1.linear.ops` (nil), passing nil to `NewSwiGLU` → `Sigmoid.Forward`
+  panicked at `ops.One()`. Fixed in PR decd668.
+
+- MiniMax-M2 `attn_q_norm.weight` is shape `[nH×hD]` = `[6144]`, not `[hD]` = `[128]`.
+  GQA was applying qNorm after the head reshape (`[batch, seq, 48, 128]`), making
+  `[6144]` weight non-broadcastable. Added `qkNormPreReshape` flag to GQA (PR 4ed3955).
+  `arch_minimax_m2.go` detects `qNormShape > headDim` and sets the flag.
+
+**Results:**
+```
+Model: MiniMax-M2 229B Q4_K_M (128.8 GB, 3 shards, 809 tensors)
+Hardware: DGX Spark GB10, 128 GB RAM, CPU-only
+Load time: 6.3s (mmap, no heap weight allocation)
+Prompt: "The meaning of life is"
+Tokens: 4
+Output: "a priori is something"
+Throughput: 0.06 tok/s (NVMe-bound; GPU acceleration pending)
+Ollama: ❌ fails to load (500 error)
+Commit: 0cd50bb (README updated with results)
+```
+
+**Impact:** Zerfoo is now the only Go ML framework capable of running inference
+on models larger than physical RAM. The over-RAM story is verified end-to-end.
+Next step: GPU acceleration via CUDA streaming GEMM to improve throughput.
+
 ## 2026-03-28: Split-GGUF support + mmap default
 
 **Type:** finding
