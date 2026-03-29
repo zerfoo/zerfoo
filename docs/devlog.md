@@ -3,6 +3,26 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-28: Architecture Expansion -- 14 new builders shipped
+
+**Type:** finding
+**Tags:** architecture, gpt2, nemotron, minimax, glm, kimi, lfm2, ollama
+
+**Problem:** Zerfoo supported 28 GGUF architectures. Ollama library had 9
+models using unsupported architectures.
+
+**Root cause:** Missing graph builders for GPT-2, Nemotron-H, MiniMax-M2,
+GLM4, Kimi (linear attention), LFM2, OLMo2, InternLM2, EXAONE, StarCoder2, DBRX.
+
+**Fix:** Added 14 architecture builders across 6 plans. Key technical decisions:
+RoPE optional in GQA (ADR 070), sigmoid MoE gating (ADR 071), Kimi linear
+attention with ELU+1 feature map (ADR 072). Llama-like architectures (OLMo2,
+InternLM2, EXAONE) reuse buildTransformerGraph with thin wrappers.
+
+**Impact:** 40 architectures (24 families). Full Ollama model coverage achieved.
+pkg.go.dev examples enabled via GPT-2 + TinyStories. NewModel constructor
+added for stub-based examples (9 Example functions).
+
 ## 2026-03-28: T20.3 Metal vs CPU Benchmark on Apple M4
 
 **Type:** benchmark
