@@ -390,6 +390,7 @@ func TestChat_propagatesError(t *testing.T) {
 func TestGenerate_returnsResult(t *testing.T) {
 	m := &Model{
 		generateFunc: func(ctx context.Context, prompt string) (string, error) {
+			time.Sleep(time.Millisecond) // ensure Duration > 0 on fast hardware
 			return "generated text", nil
 		},
 	}
