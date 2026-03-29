@@ -1313,14 +1313,15 @@ standard generator API. The TieredKVStore does not implement CacheProvider[T] â€
 needed.
 
 **Acceptance criteria:**
-- [ ] Add a `tieredKVAdapter[T]` type in generate/ that wraps `TieredKVStore[T]` and implements
+- [x] Add a `tieredKVAdapter[T]` type in generate/ that wraps `TieredKVStore[T]` and implements
   `CacheProvider[T]` (seqLen, Update, Get, Reset, Truncate).
-- [ ] Add `WithTieredKV(cfg TieredKVStoreConfig) GeneratorOption` in generate/generator.go that
+- [x] Add `WithTieredKV(cfg TieredKVStoreConfig) GeneratorOption` in generate/generator.go that
   constructs a TieredKVStore and wires it as the generator's cache.
-- [ ] Add at least 2 unit tests: (a) generator uses tiered store when option set, (b) tiered store
+- [x] Add at least 2 unit tests: (a) generator uses tiered store when option set, (b) tiered store
   is closed/Reset on generator teardown.
-- [ ] `go test ./generate/... PASS`
+- [x] `go test ./generate/... PASS`
 
+**Completed:** 2026-03-29, PR #274 (c27696ea). 4 tests added.
 **Priority:** P2 (feature gap, not a regression; workaround is manual wiring)
 **Verifies:** TieredKV serving use case (long-context, over-RAM scenarios)
 
@@ -1332,12 +1333,13 @@ the scheduler's goroutine scheduling is non-deterministic at millisecond granula
 machine.
 
 **Acceptance criteria:**
-- [ ] Replace the strict ordering assertion with a statistical one: run N=10 trials, assert that
+- [x] Replace the strict ordering assertion with a statistical one: run N=10 trials, assert that
   the short request completes first in at least 8/10 trials (80% threshold).
   OR: use a mock clock / channel-based synchronization to make the test deterministic.
-- [ ] `go test -count=10 -run TestSchedulerImmediateEviction ./serve/batcher/` PASS consistently.
-- [ ] No other batcher tests regress.
+- [x] `go test -count=10 -run TestSchedulerImmediateEviction ./serve/batcher/` PASS consistently.
+- [x] No other batcher tests regress.
 
+**Completed:** 2026-03-29, PR #274 (c27696ea). select-based deterministic assertion.
 **Priority:** P3 (pre-existing flake, passes in isolation, no user-facing impact)
 **Verifies:** continuous batching correctness (UC-028)
 

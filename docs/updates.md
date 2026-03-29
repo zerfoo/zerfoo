@@ -1,5 +1,12 @@
 # Updates
 
+## 2026-03-29: E45 verification remediation shipped (PR #274)
+
+Resolved all gaps found by /verify audit. `WithTieredKV` GeneratorOption now exposes
+TieredKVStore through the standard generator API. `TestSchedulerImmediateEviction`
+is now deterministic (select-based, 10/10 passes). CI green, merged to main, v1.36.0
+release PR pending.
+
 ## 2026-03-29: MiniMax-M2 229B inference verified on 128 GB DGX Spark
 
 First successful inference on a model larger than physical RAM. MiniMax-M2
