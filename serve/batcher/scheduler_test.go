@@ -104,11 +104,12 @@ func TestSchedulerZeroPadding(t *testing.T) {
 // immediately without waiting for the rest of the batch to finish.
 //
 // The test submits a short request (1 token) and a long request (20 tokens)
-// sequentially to guarantee both are queued before the scheduler runs.
-// Both land in the same batch. The short request finishes in 1 step and must
-// be evicted immediately — its result is delivered while the long request
-// keeps running. We record completion timestamps (not goroutine scheduling
-// order) to make the assertion deterministic.
+// before starting the scheduler so both land in the same batch. The short
+// request finishes in 1 step and must be evicted immediately — its result is
+// delivered while the long request keeps running.
+//
+// Completion order is observed by selecting on both result channels from a
+// single goroutine, eliminating goroutine-scheduling non-determinism.
 func TestSchedulerImmediateEviction(t *testing.T) {
 	const maxBatch = 4
 
@@ -125,60 +126,46 @@ func TestSchedulerImmediateEviction(t *testing.T) {
 	// so they land in the same batch deterministically.
 	sched := New(maxBatch, stepFn, WithPollInterval(100*time.Microsecond))
 
-	// Submit both requests before starting the scheduler.
-	type completion struct {
-		id string
-		at time.Time
-	}
-	completions := make(chan completion, 2)
+	// Enqueue both requests directly under the lock so ordering is
+	// deterministic and we can observe their result channels from a
+	// single goroutine (no scheduling race).
+	shortCh := make(chan CompletionResult, 1)
+	longCh := make(chan CompletionResult, 1)
 
-	var wg sync.WaitGroup
-	for _, tc := range []struct {
-		id      string
-		maxToks int
-	}{
-		{"short", 1},
-		{"long", 20},
-	} {
-		wg.Add(1)
-		go func(id string, maxToks int) {
-			defer wg.Done()
-			req := Request{
-				ID:           id,
-				Tokens:       []int{1, 2, 3},
-				MaxNewTokens: maxToks,
-			}
-			_, err := sched.Submit(context.Background(), req)
-			if err != nil {
-				t.Errorf("request %s failed: %v", id, err)
-				return
-			}
-			completions <- completion{id: id, at: time.Now()}
-		}(tc.id, tc.maxToks)
-	}
+	sched.mu.Lock()
+	sched.queue = append(sched.queue,
+		pending{req: Request{ID: "short", Tokens: []int{1, 2, 3}, MaxNewTokens: 1}, result: shortCh},
+		pending{req: Request{ID: "long", Tokens: []int{1, 2, 3}, MaxNewTokens: 20}, result: longCh},
+	)
+	sched.results["short"] = shortCh
+	sched.results["long"] = longCh
+	sched.mu.Unlock()
 
-	// Give goroutines time to enqueue, then start.
-	time.Sleep(time.Millisecond)
 	sched.Start()
-	wg.Wait()
+
+	// Observe completion order from a single goroutine by selecting on
+	// both channels. The "short" channel should become readable at least
+	// 19 steps before "long", so it wins the select reliably.
+	var order []string
+	for i := 0; i < 2; i++ {
+		select {
+		case <-shortCh:
+			order = append(order, "short")
+			shortCh = nil // disable this case for the next iteration
+		case <-longCh:
+			order = append(order, "long")
+			longCh = nil
+		}
+	}
+
 	sched.Stop()
-	close(completions)
 
-	var results []completion
-	for c := range completions {
-		results = append(results, c)
+	if len(order) != 2 {
+		t.Fatalf("expected 2 completions, got %d", len(order))
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 completions, got %d", len(results))
-	}
-
-	// Sort by timestamp to determine actual completion order.
-	if results[0].at.After(results[1].at) {
-		results[0], results[1] = results[1], results[0]
-	}
-	if results[0].id != "short" {
+	if order[0] != "short" {
 		t.Errorf("expected 'short' to complete first, got order: [%s, %s]",
-			results[0].id, results[1].id)
+			order[0], order[1])
 	}
 }
 
