@@ -61,6 +61,11 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	kDim      int // number of K output elements (numKVHeads * headDim)
 	vDim      int // number of V output elements (numKVHeads * headDim)
 
+	// qkNormPreReshape, when true, applies Q/K norms before the head reshape
+	// (i.e., to Q of shape [batch, seq, nH*hD]) instead of after.
+	// MiniMax-M2 stores attn_q_norm.weight as [nH*hD] rather than [hD].
+	qkNormPreReshape bool
+
 	// bidirectional disables causal masking so every position attends to
 	// every other position (encoder-style attention).
 	bidirectional bool
@@ -285,6 +290,13 @@ func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float
 func (gqa *GroupedQueryAttention[T]) SetQKNorms(qNorm, kNorm graph.Node[T]) {
 	gqa.qNorm = qNorm
 	gqa.kNorm = kNorm
+}
+
+// SetQKNormPreReshape configures whether QK norms are applied before the
+// head reshape. Set true for architectures (e.g. MiniMax-M2) whose norm
+// weights are [nH*hD] rather than [hD].
+func (gqa *GroupedQueryAttention[T]) SetQKNormPreReshape(v bool) {
+	gqa.qkNormPreReshape = v
 }
 
 // SetQKNormWeights stores raw RMSNorm weights for the fused QK norm+RoPE
@@ -531,14 +543,30 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 	if !fusedQKNormRoPE {
 		// Unfused path: separate Q/K norm + transpose + RoPE.
+
+		// Pre-reshape Q norm: architectures whose norm weight is [nH*hD]
+		// (e.g. MiniMax-M2) normalize before per-head splitting.
+		if gqa.qkNormPreReshape && gqa.qNorm != nil {
+			qProj, err = gqa.qNorm.Forward(ctx, qProj)
+			if err != nil {
+				return nil, fmt.Errorf("qNorm (pre-reshape): %w", err)
+			}
+		}
+		if gqa.qkNormPreReshape && gqa.kNorm != nil {
+			kProj, err = gqa.kNorm.Forward(ctx, kProj)
+			if err != nil {
+				return nil, fmt.Errorf("kNorm (pre-reshape): %w", err)
+			}
+		}
+
 		// Q: (batch, seq_len, num_query_heads, head_dim)
 		qReshaped, reshapeErr := gqa.engine.Reshape(ctx, qProj, []int{batchSize, seqLen, gqa.numQueryHeads, gqa.headDim})
 		if reshapeErr != nil {
 			return nil, reshapeErr
 		}
 
-		// Apply per-head Q norm if set (Gemma 3).
-		if gqa.qNorm != nil {
+		// Apply per-head Q norm if set (Gemma 3) and not already applied above.
+		if !gqa.qkNormPreReshape && gqa.qNorm != nil {
 			qReshaped, err = gqa.qNorm.Forward(ctx, qReshaped)
 			if err != nil {
 				return nil, fmt.Errorf("qNorm: %w", err)
@@ -556,8 +584,8 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			return nil, reshapeErr
 		}
 
-		// Apply per-head K norm if set (Gemma 3).
-		if gqa.kNorm != nil {
+		// Apply per-head K norm if set (Gemma 3) and not already applied above.
+		if !gqa.qkNormPreReshape && gqa.kNorm != nil {
 			kReshaped, err = gqa.kNorm.Forward(ctx, kReshaped)
 			if err != nil {
 				return nil, fmt.Errorf("kNorm: %w", err)

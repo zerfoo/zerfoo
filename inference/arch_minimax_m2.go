@@ -201,6 +201,12 @@ func buildMiniMaxM2Graph(
 		}
 		gqa.SetQKNorms(qNorm, kNorm)
 		gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
+		// MiniMax-M2 stores q_norm weight as [nH*hD], not [hD]. Apply norm
+		// before the head reshape so the weight broadcasts correctly.
+		qNormShape := qNormW.Shape()
+		if len(qNormShape) > 0 && qNormShape[len(qNormShape)-1] > headDim {
+			gqa.SetQKNormPreReshape(true)
+		}
 
 		attnOut := builder.AddNode(gqa, normed)
 
