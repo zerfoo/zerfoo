@@ -58,6 +58,7 @@ func run() error {
 	prompt := flag.String("prompt", "The meaning of life is", "prompt text")
 	maxTokens := flag.Int("tokens", 64, "max tokens to generate")
 	noMmap := flag.Bool("no-mmap", false, "disable memory-mapped loading (mmap is on by default)")
+	maxSeqLen := flag.Int("max-seq-len", 0, "override max sequence length / KV cache size (0 = use model default)")
 	device := flag.String("device", "cpu", "compute device (cpu, cuda, cuda:0)")
 	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16, fp8)")
 	kvDtype := flag.String("kv-dtype", "fp32", "KV cache dtype (fp32, fp16)")
@@ -92,6 +93,9 @@ func run() error {
 		inference.WithDevice(*device),
 		inference.WithDType(*dtype),
 		inference.WithKVDtype(*kvDtype),
+	}
+	if *maxSeqLen > 0 {
+		opts = append(opts, inference.WithMaxSeqLen(*maxSeqLen))
 	}
 	if strings.HasSuffix(strings.ToLower(*modelDir), ".gguf") {
 		mdl, err = inference.LoadFile(*modelDir, opts...)
