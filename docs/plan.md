@@ -1448,3 +1448,29 @@ Merged all satellite plans. 330+ tasks complete. All models coherent.
 | UC-010 | TransMLA-converted inference | Load MHA model converted to MLA via SVD, serve with compressed KV cache |
 | UC-011 | Prefix-cached serving | Serve requests that share system prompts with automatic KV cache reuse |
 | UC-012 | Multi-LoRA serving | Serve multiple fine-tuned LoRA adapters from a single base model per-request |
+
+---
+
+## E45: Verification Remediation 2026-03-29
+
+Scope: WithTieredKV feature (feat/with-tiered-kv branch).
+Audit found 0 test failures, 1 LOW wiring gap (GAP-001).
+
+- [x] T45.1 Fix TieredKVStore.Close() to skip deletion of user-provided ColdDir  Owner: TBD  Est: 0.5h  verifies: [GAP-001]  DONE 2026-03-29 b944bde
+  File: generate/tiered_kv_store.go
+  Add a bool field `isTempColdDir` to TieredKVStore. Set it to true only when
+  cfg.ColdDir == "" (i.e., a MkdirTemp dir was created). In Close(), guard
+  clearColdDir() and os.Remove() behind `if s.isTempColdDir`. This prevents
+  deleting user-specified directories and their files.
+  Acceptance: go test -run TestTieredKVStore_Close ./generate/ passes including
+  a new subtest that provides a non-empty ColdDir and asserts the directory still
+  exists after Close().
+
+- [x] T45.2 Add TestTieredKVStore_Close_UserProvidedColdDirNotDeleted  Owner: TBD  Est: 0.5h  verifies: [GAP-001]  DONE 2026-03-29 0505e81
+  File: generate/tiered_kv_store_test.go
+  Deps: T45.1
+  Test: create a temp dir via t.TempDir(), pass it as cfg.ColdDir, write some
+  data (Update + Demote to cold), call Close(), assert the directory still
+  exists and its contents are intact.
+
+- [x] T45.3 Re-run /verify to confirm GAP-001 resolved  Owner: TBD  Est: 0.1h  DONE 2026-03-29 VERIFIED
