@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0](https://github.com/zerfoo/zerfoo/compare/v1.34.0...v1.35.0) (2026-03-29)
+
+
+### Features
+
+* **audio:** generalize WhisperEncoder with configurable intermediate size and attention bias ([1eeeb0b](https://github.com/zerfoo/zerfoo/commit/1eeeb0b5fbe2a9e67bf1133fb313b45980af9882))
+* **gguf:** add audio encoder config fields and Voxtral tensor name mapping ([ce9b18d](https://github.com/zerfoo/zerfoo/commit/ce9b18df707bf108f6e0af7e074ae79784e08110))
+* **inference:** add Voxtral speech-to-text architecture ([4aa1a77](https://github.com/zerfoo/zerfoo/commit/4aa1a778dea54e0c6b7dd6dea2403d64f18af367))
+* **inference:** add Voxtral speech-to-text architecture builder ([2a97f67](https://github.com/zerfoo/zerfoo/commit/2a97f67ca71fd17855c069dbcfb8acd9a3e75588))
+
 ## [1.34.0](https://github.com/zerfoo/zerfoo/compare/v1.33.0...v1.34.0) (2026-03-29)
 
 
