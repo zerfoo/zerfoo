@@ -466,33 +466,50 @@ func buildExpertFFN(
 }
 
 // extractExpertSlice extracts a single expert's weight from a stacked tensor.
+// For MmapStorage tensors, it slices the raw bytes at quantization-block
+// boundaries — no heap allocation and no dequantization. This is critical for
+// models whose stacked expert tensors exceed available RAM: calling Data() on a
+// Q4_K_M stacked tensor materializes all experts at once (e.g. ~4.8 GB per
+// tensor per layer × 3 types × 62 layers = ~893 GB for MiniMax-M2).
 func extractExpertSlice(
 	stacked *tensor.TensorNumeric[float32],
 	expertIdx, numExperts int,
 ) (*tensor.TensorNumeric[float32], error) {
 	shape := stacked.Shape()
-	if len(shape) == 3 {
-		rows := shape[1]
-		cols := shape[2]
-		data := stacked.Data()
-		start := expertIdx * rows * cols
-		end := start + rows*cols
-		sliceData := make([]float32, rows*cols)
-		copy(sliceData, data[start:end])
-		return tensor.New([]int{rows, cols}, sliceData)
-	}
-	if len(shape) == 2 {
+
+	var rows, cols, elemStart int
+	switch len(shape) {
+	case 3:
+		rows = shape[1]
+		cols = shape[2]
+		elemStart = expertIdx * rows * cols
+	case 2:
 		totalRows := shape[0]
-		cols := shape[1]
-		rowsPerExpert := totalRows / numExperts
-		data := stacked.Data()
-		start := expertIdx * rowsPerExpert * cols
-		end := start + rowsPerExpert*cols
-		sliceData := make([]float32, rowsPerExpert*cols)
-		copy(sliceData, data[start:end])
-		return tensor.New([]int{rowsPerExpert, cols}, sliceData)
+		cols = shape[1]
+		rows = totalRows / numExperts
+		elemStart = expertIdx * rows * cols
+	default:
+		return nil, fmt.Errorf("unexpected stacked tensor shape %v", shape)
 	}
-	return nil, fmt.Errorf("unexpected stacked tensor shape %v", shape)
+
+	elemEnd := elemStart + rows*cols
+	outShape := []int{rows, cols}
+
+	// Fast path: MmapStorage → zero-copy byte slice at block boundaries.
+	if ms, ok := any(stacked.GetStorage()).(*tensor.MmapStorage); ok {
+		sub, err := ms.SliceElements(elemStart, elemEnd)
+		if err != nil {
+			// Fall through to float32 path if alignment doesn't hold.
+			goto f32path
+		}
+		return tensor.NewWithStorage[float32](outShape, sub)
+	}
+
+f32path:
+	data := stacked.Data()
+	sliceData := make([]float32, rows*cols)
+	copy(sliceData, data[elemStart:elemEnd])
+	return tensor.New(outShape, sliceData)
 }
 
 // buildSharedExpertFFN creates the shared expert FFN from GGUF tensors.
