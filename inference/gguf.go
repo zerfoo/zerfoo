@@ -309,6 +309,7 @@ func (m *GGUFModel) ToModelMetadata() *ModelMetadata {
 		IntermediateSize:      m.Config.IntermediateSize,
 		RopeTheta:             m.Config.RopeTheta,
 		ChatTemplate:          chatTemplateForArch(m.Config.Architecture),
+		AudioNumMels:          m.Config.AudioNumMels,
 	}
 }
 

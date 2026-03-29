@@ -150,13 +150,13 @@ func (c *TranscribeCommand) Run(ctx context.Context, args []string) error {
 	}
 	defer model.Close()
 
-	// Generate transcription.
-	text, err := model.Generate(ctx, "[transcribe]",
+	// Transcribe audio.
+	text, err := model.Transcribe(ctx, wavData,
 		inference.WithMaxTokens(256),
 		inference.WithTemperature(0),
 	)
 	if err != nil {
-		return fmt.Errorf("generate: %w", err)
+		return fmt.Errorf("transcribe: %w", err)
 	}
 
 	fmt.Fprintln(c.out, text)

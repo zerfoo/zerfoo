@@ -74,6 +74,9 @@ type ModelMetadata struct {
 	ResidualMultiplier  float64 `json:"residual_multiplier,omitempty"`
 	LogitScale          float64 `json:"logit_scale,omitempty"`
 
+	// Audio model fields.
+	AudioNumMels int `json:"audio_num_mels,omitempty"` // Number of mel bins; 0 means use architecture default
+
 	// DeepSeek MLA and MoE fields.
 	KVLoRADim        int `json:"kv_lora_rank"`
 	QLoRADim         int `json:"q_lora_rank"`
