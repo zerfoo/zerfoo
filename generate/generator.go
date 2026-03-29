@@ -69,6 +69,7 @@ type generatorOptions struct {
 	metricsCollector      runtime.Collector // optional metrics collector
 	compressedKVChunkSize int    // when > 0, use CompressedKVCache with this chunk size
 	eagleWeightsPath      string // when non-empty, enable EAGLE speculative decoding with weights from this GGUF path
+	tieredKVCfg           *TieredKVStoreConfig // when non-nil, use TieredKVStore
 }
 
 // specDraftConfig holds configuration for speculative decoding via a draft model.
@@ -159,6 +160,16 @@ func WithEAGLE(headWeightsPath string) GeneratorOption {
 	}
 }
 
+// WithTieredKV enables tiered KV caching with hot/warm/cold storage tiers.
+// When enabled, a TieredKVStore is created per generation call using the
+// provided configuration. NumLayers and MaxSeqLen are filled from the model
+// config if left at zero.
+func WithTieredKV(cfg TieredKVStoreConfig) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.tieredKVCfg = &cfg
+	}
+}
+
 // Generator produces text autoregressively using a loaded model graph.
 type Generator[T tensor.Numeric] struct {
 	graph     *graph.Graph[T]
@@ -177,6 +188,7 @@ type Generator[T tensor.Numeric] struct {
 	specAcceptRate        runtime.GaugeMetric                        // speculative acceptance rate gauge
 	compressedKVChunkSize int                                        // when > 0, use CompressedKVCache
 	eagleWeightsPath      string                                     // when non-empty, EAGLE decode is preferred
+	tieredKVCfg           *TieredKVStoreConfig                       // when non-nil, use TieredKVStore per generation call
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -207,6 +219,7 @@ func NewGenerator[T tensor.Numeric](
 		specAcceptRate:        mc.Gauge("speculative_acceptance_rate"),
 		compressedKVChunkSize: gopts.compressedKVChunkSize,
 		eagleWeightsPath:      gopts.eagleWeightsPath,
+		tieredKVCfg:           gopts.tieredKVCfg,
 	}
 
 	if g != nil {
@@ -378,7 +391,22 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 	}
 
 	var cacheProvider CacheProvider[T]
-	if gen.compressedKVChunkSize > 0 {
+	var tieredStore *TieredKVStore[T]
+	if gen.tieredKVCfg != nil {
+		cfg := *gen.tieredKVCfg
+		if cfg.NumLayers == 0 {
+			cfg.NumLayers = gen.config.NumLayers
+		}
+		if cfg.MaxSeqLen == 0 {
+			cfg.MaxSeqLen = gen.config.MaxSeqLen
+		}
+		var err error
+		tieredStore, err = NewTieredKVStore[T](gen.engine, cfg)
+		if err != nil {
+			return "", fmt.Errorf("create tiered KV store: %w", err)
+		}
+		cacheProvider = &tieredKVAdapter[T]{store: tieredStore}
+	} else if gen.compressedKVChunkSize > 0 {
 		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
 	} else if gen.blockPool != nil {
 		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
@@ -388,6 +416,9 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		cacheProvider = gen.newTensorCache()
 	} else {
 		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
+	}
+	if tieredStore != nil {
+		defer tieredStore.Close()
 	}
 	genCtx := WithCache(ctx, cacheProvider)
 
