@@ -14,7 +14,7 @@ import (
 
 // LoadFile loads a model from a local GGUF file and returns a ready-to-use Model.
 func LoadFile(path string, opts ...Option) (*Model, error) {
-	o := &loadOptions{device: "cpu"}
+	o := &loadOptions{device: "cpu", mmap: true}
 	for _, opt := range opts {
 		opt(o)
 	}

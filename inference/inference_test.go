@@ -327,11 +327,11 @@ func TestOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithMmap", func(t *testing.T) {
-		o := &loadOptions{}
-		WithMmap(true)(o)
-		if !o.mmap {
-			t.Error("mmap not set")
+	t.Run("WithMmap_disable", func(t *testing.T) {
+		o := &loadOptions{mmap: true}
+		WithMmap(false)(o)
+		if o.mmap {
+			t.Error("mmap should be disabled")
 		}
 	})
 

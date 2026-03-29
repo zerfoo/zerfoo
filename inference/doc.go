@@ -53,7 +53,7 @@
 //   - [WithPrecision] — set TensorRT compute precision ("fp16")
 //   - [WithDType] — set GPU compute precision ("fp16", "fp8")
 //   - [WithKVDtype] — set KV cache storage precision ("fp16")
-//   - [WithMmap] — enable memory-mapped model loading on unix
+//   - [WithMmap] — control memory-mapped model loading (default: enabled)
 //
 // # Generate Options
 //

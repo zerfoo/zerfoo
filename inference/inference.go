@@ -127,7 +127,7 @@ type loadOptions struct {
 	precision           string // "" or "fp32" for float32, "fp16" for half precision (TRT only)
 	dtype               string // "" or "fp32" for float32, "fp16" for FP16 compute
 	kvDtype             string // "" or "fp32" for float32, "fp16" for FP16 KV cache
-	mmap                bool   // use mmap for model loading (unix only)
+	mmap                bool   // use mmap for model loading (unix only); default true
 	quarot              bool   // fuse QuaRot Hadamard rotation into weights
 	maxBatchConcurrency int    // max goroutines in GenerateBatch (0 = default)
 	sessionPoolSize     int    // session pool capacity (0 = default 16)
@@ -189,9 +189,11 @@ func WithDType(dtype string) Option {
 	}
 }
 
-// WithMmap enables memory-mapped model loading. When true, the ZMF file
-// is mapped into memory using syscall.Mmap instead of os.ReadFile, avoiding
-// heap allocation for model weights. Only supported on unix platforms.
+// WithMmap controls memory-mapped model loading. When true (the default),
+// the GGUF file is mapped into memory using mmap instead of reading into
+// heap-allocated slices. This gives near-instant startup, keeps tensor data
+// off the Go heap, and allows loading models larger than physical RAM —
+// the OS pages data in from disk on demand.
 func WithMmap(enabled bool) Option {
 	return func(o *loadOptions) {
 		o.mmap = enabled
@@ -246,6 +248,7 @@ func WithSessionPoolSize(n int) Option {
 func Load(modelID string, opts ...Option) (*Model, error) {
 	o := &loadOptions{
 		device: "cpu",
+		mmap:   true,
 	}
 	for _, opt := range opts {
 		opt(o)

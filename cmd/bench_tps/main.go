@@ -57,7 +57,7 @@ func run() error {
 	modelDir := flag.String("model", "", "path to model directory (config.json, tokenizer.json, model.zmf)")
 	prompt := flag.String("prompt", "The meaning of life is", "prompt text")
 	maxTokens := flag.Int("tokens", 64, "max tokens to generate")
-	useMmap := flag.Bool("mmap", false, "use memory-mapped loading")
+	noMmap := flag.Bool("no-mmap", false, "disable memory-mapped loading (mmap is on by default)")
 	device := flag.String("device", "cpu", "compute device (cpu, cuda, cuda:0)")
 	dtype := flag.String("dtype", "fp32", "compute precision (fp32, fp16, fp8)")
 	kvDtype := flag.String("kv-dtype", "fp32", "KV cache dtype (fp32, fp16)")
@@ -88,7 +88,7 @@ func run() error {
 	var mdl *inference.Model
 	var err error
 	opts := []inference.Option{
-		inference.WithMmap(*useMmap),
+		inference.WithMmap(!*noMmap),
 		inference.WithDevice(*device),
 		inference.WithDType(*dtype),
 		inference.WithKVDtype(*kvDtype),
