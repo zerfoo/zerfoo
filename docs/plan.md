@@ -1288,6 +1288,70 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-29: E45 Verification Remediation added
+
+Full-system health audit completed (/verify, 2026-03-29). Build PASS, 89/90 packages PASS.
+One MEDIUM wiring gap found: TieredKVStore has no WithTieredKV GeneratorOption. One pre-existing
+flaky test (TestSchedulerImmediateEviction). Two remediation tasks added as E45.
+
+---
+
+## E45: Verification Remediation 2026-03-29
+
+### Overview
+
+Two items flagged by the 2026-03-29 full-system /verify audit.
+
+### Tasks
+
+#### T45.1: Expose TieredKVStore as WithTieredKV GeneratorOption
+
+**Gap:** generate/tiered_kv_store.go is fully implemented (40+ tests, demote/promote, cold file
+persistence, async prefetch, thread-safe) but there is no `WithTieredKV(cfg TieredKVStoreConfig)
+GeneratorOption` in generate/generator.go. Users cannot enable tiered KV caching through the
+standard generator API. The TieredKVStore does not implement CacheProvider[T] — a thin adapter is
+needed.
+
+**Acceptance criteria:**
+- [ ] Add a `tieredKVAdapter[T]` type in generate/ that wraps `TieredKVStore[T]` and implements
+  `CacheProvider[T]` (seqLen, Update, Get, Reset, Truncate).
+- [ ] Add `WithTieredKV(cfg TieredKVStoreConfig) GeneratorOption` in generate/generator.go that
+  constructs a TieredKVStore and wires it as the generator's cache.
+- [ ] Add at least 2 unit tests: (a) generator uses tiered store when option set, (b) tiered store
+  is closed/Reset on generator teardown.
+- [ ] `go test ./generate/... PASS`
+
+**Priority:** P2 (feature gap, not a regression; workaround is manual wiring)
+**Verifies:** TieredKV serving use case (long-context, over-RAM scenarios)
+
+#### T45.2: Fix TestSchedulerImmediateEviction flaky timing assertion
+
+**Gap:** `TestSchedulerImmediateEviction` in serve/batcher fails non-deterministically under CPU
+load. The test asserts that a short request completes before a long request in absolute order, but
+the scheduler's goroutine scheduling is non-deterministic at millisecond granularity on a loaded
+machine.
+
+**Acceptance criteria:**
+- [ ] Replace the strict ordering assertion with a statistical one: run N=10 trials, assert that
+  the short request completes first in at least 8/10 trials (80% threshold).
+  OR: use a mock clock / channel-based synchronization to make the test deterministic.
+- [ ] `go test -count=10 -run TestSchedulerImmediateEviction ./serve/batcher/` PASS consistently.
+- [ ] No other batcher tests regress.
+
+**Priority:** P3 (pre-existing flake, passes in isolation, no user-facing impact)
+**Verifies:** continuous batching correctness (UC-028)
+
+#### T45.3: Re-run /verify to confirm all gaps resolved
+
+After T45.1 and T45.2 are complete, re-run `/verify` to confirm:
+- 0 MEDIUM or higher wiring gaps
+- 0 failing tests (or all failures documented as known external blockers)
+- Full report at .claude/scratch/verify-report.md updated
+
+**Blocked by:** T45.1, T45.2
+
+---
+
 ### 2026-03-27: Added E41-E44 (I-Quants, RadixAttention, Flash Decode, Multi-LoRA)
 
 Added four remaining high-value research items as epics E41-E44 (24 tasks total):
