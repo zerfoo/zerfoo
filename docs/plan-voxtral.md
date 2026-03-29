@@ -39,101 +39,101 @@ Audio -> Mel Spectrogram (128 bins) -> Whisper-large-v3 Encoder -> MLP Adapter (
 
 ### E1: Audio Encoder Upgrade
 
-- [ ] T1.1 Generalize WhisperEncoder for configurable mel bins and intermediate size  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T1.1 Generalize WhisperEncoder for configurable mel bins and intermediate size  Owner: TBD  Est: 1h  verifies: [infrastructure]
   File: layers/audio/whisper_encoder.go
   Add IntermediateSize field (default 4*HiddenDim). Support 128 mels.
   Acceptance: Existing Whisper tests pass. Config with 128 mels/5120 intermediate works.
 
-- [ ] T1.2 Add attention bias support to WhisperEncoder  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T1.2 Add attention bias support to WhisperEncoder  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: layers/audio/whisper_encoder.go
   Voxtral encoder has Q/K/V biases. Add optional bias loading.
   Acceptance: Encoder loads with and without bias tensors.
 
 ### E2: mmproj GGUF Loading
 
-- [ ] T2.1 Add audio config fields to ModelConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T2.1 Add audio config fields to ModelConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: model/gguf/arch.go
   Add: AudioHiddenSize, AudioNumLayers, AudioNumHeads, AudioNumMels,
   AudioIntermediateSize, AudioProjectorType, AudioProjectorStackFactor.
 
-- [ ] T2.2 Add Voxtral mmproj tensor name mapping  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T2.2 Add Voxtral mmproj tensor name mapping  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   File: model/gguf/arch.go
   Map a.conv1d.*, a.blk.*.ln1/ln2/attn_*/ffn_*, a.post_ln.*, mm.a.mlp.*.
 
-- [ ] T2.3 Implement two-file model loading for Voxtral  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T2.3 Implement two-file model loading for Voxtral  Owner: TBD  Est: 1.5h  verifies: [UC-001]
   Deps: T2.1, T2.2
   Follow LLaVA pattern (arch_llava.go) for loading main + mmproj GGUFs.
   Acceptance: Both files loaded, tensors merged under expected names.
 
 ### E3: Graph Builder
 
-- [ ] T3.1 Implement buildVoxtralGraph  Owner: TBD  Est: 4h  verifies: [UC-001]
+- [x] T3.1 Implement buildVoxtralGraph  Owner: TBD  Est: 4h  verifies: [UC-001]
   Deps: T1.1, T1.2, T2.3
   File: inference/arch_voxtral.go (new)
   Combine: WhisperEncoder -> frame stacking (4x) -> MLP adapter -> Llama decoder.
   Follow arch_llava.go pattern for multimodal merging.
   Acceptance: Graph builds from synthetic weights. Forward produces logits.
 
-- [ ] T3.2 Register "voxtral" architecture  Owner: TBD  Est: 0.25h  verifies: [UC-001]
+- [x] T3.2 Register "voxtral" architecture  Owner: TBD  Est: 0.25h  verifies: [UC-001]
   Deps: T3.1
   File: inference/registry_init.go
 
-- [ ] T3.3 Add parseVoxtralConfig  Owner: TBD  Est: 0.5h  verifies: [UC-001]
+- [x] T3.3 Add parseVoxtralConfig  Owner: TBD  Est: 0.5h  verifies: [UC-001]
   File: inference/arch_config.go
 
 ### E4: Audio Preprocessing
 
-- [ ] T4.1 Implement mel spectrogram extraction (128 bins)  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T4.1 Implement mel spectrogram extraction (128 bins)  Owner: TBD  Est: 2h  verifies: [UC-001]
   File: layers/audio/mel.go (new or extend existing)
   128 mel bins, 400 FFT, 160 hop, 16kHz. Whisper-compatible.
 
-- [ ] T4.2 Implement 30-second chunking with silence padding  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T4.2 Implement 30-second chunking with silence padding  Owner: TBD  Est: 1h  verifies: [UC-001]
   Deps: T4.1
 
 ### E5: Integration
 
-- [ ] T5.1 Unit tests for Voxtral builder  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T5.1 Unit tests for Voxtral builder  Owner: TBD  Est: 1.5h  verifies: [UC-001]
   Deps: T3.2
   Synthetic weight tests, forward pass, registration.
 
-- [ ] T5.2 Add /v1/audio/transcriptions API endpoint  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T5.2 Add /v1/audio/transcriptions API endpoint  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T3.2, T4.1
   File: serve/audio.go (new). OpenAI-compatible.
 
-- [ ] T5.3 Add `zerfoo transcribe` CLI command  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T5.3 Add `zerfoo transcribe` CLI command  Owner: TBD  Est: 1h  verifies: [UC-001]
   Deps: T5.2
 
-- [ ] T5.4 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T5.4 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T3.2
 
-- [ ] T5.5 Update README  Owner: TBD  Est: 0.5h  delivers: [README update]
+- [x] T5.5 Update README  Owner: TBD  Est: 0.5h  delivers: [README update]
 
 ---
 
 ## Waves
 
 #### Wave 1: Foundation (4 agents)
-- [ ] T1.1 Generalize WhisperEncoder
-- [ ] T1.2 Add attention bias support
-- [ ] T2.1 Audio config fields
-- [ ] T2.2 Voxtral tensor name mapping
+- [x] T1.1 Generalize WhisperEncoder
+- [x] T1.2 Add attention bias support
+- [x] T2.1 Audio config fields
+- [x] T2.2 Voxtral tensor name mapping
 
 #### Wave 2: Loading + Preprocessing (3 agents)
-- [ ] T2.3 Two-file model loading  Deps: T2.1, T2.2
-- [ ] T4.1 Mel spectrogram  (independent)
-- [ ] T4.2 Audio chunking  Deps: T4.1
+- [x] T2.3 Two-file model loading  Deps: T2.1, T2.2
+- [x] T4.1 Mel spectrogram  (independent)
+- [x] T4.2 Audio chunking  Deps: T4.1
 
 #### Wave 3: Builder (2 agents)
-- [ ] T3.1 buildVoxtralGraph  Deps: T1.1, T1.2, T2.3
-- [ ] T3.2 Register architecture  Deps: T3.1
-- [ ] T3.3 parseVoxtralConfig  (independent)
+- [x] T3.1 buildVoxtralGraph  Deps: T1.1, T1.2, T2.3
+- [x] T3.2 Register architecture  Deps: T3.1
+- [x] T3.3 parseVoxtralConfig  (independent)
 
 #### Wave 4: Integration (5 agents)
-- [ ] T5.1 Unit tests  Deps: T3.2
-- [ ] T5.2 Audio API endpoint  Deps: T3.2, T4.1
-- [ ] T5.3 CLI transcribe  Deps: T5.2
-- [ ] T5.4 go vet  Deps: T3.2
-- [ ] T5.5 README  Deps: T3.2
+- [x] T5.1 Unit tests  Deps: T3.2
+- [x] T5.2 Audio API endpoint  Deps: T3.2, T4.1
+- [x] T5.3 CLI transcribe  Deps: T5.2
+- [x] T5.4 go vet  Deps: T3.2
+- [x] T5.5 README  Deps: T3.2
 
 ---
 
