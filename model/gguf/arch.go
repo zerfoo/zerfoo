@@ -70,6 +70,15 @@ type ModelConfig struct {
 	VisionNumHeads   int    // vision encoder attention heads
 	VisionNumLayers  int    // vision encoder transformer layers
 	ProjectorType    string // multi-modal projector type ("linear" or "mlp")
+
+	// Audio encoder fields (Voxtral, multimodal speech-to-text models).
+	AudioHiddenSize           int    // audio encoder hidden dimension
+	AudioNumLayers            int    // audio encoder transformer layers
+	AudioNumHeads             int    // audio encoder attention heads
+	AudioNumMels              int    // number of mel spectrogram bins (e.g. 128)
+	AudioIntermediateSize     int    // audio encoder FFN intermediate size
+	AudioProjectorType        string // audio projector type (e.g. "mlp")
+	AudioProjectorStackFactor int    // number of consecutive frames to stack (e.g. 4)
 }
 
 // DetectActualArchitecture checks GGUF metadata to detect models that
@@ -281,6 +290,29 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 		cfg.ProjectorType = v
 	}
 
+	// Extract audio encoder fields (Voxtral mmproj models).
+	if v, ok := f.GetUint32("audio.embedding_length"); ok {
+		cfg.AudioHiddenSize = int(v)
+	}
+	if v, ok := f.GetUint32("audio.block_count"); ok {
+		cfg.AudioNumLayers = int(v)
+	}
+	if v, ok := f.GetUint32("audio.head_count"); ok {
+		cfg.AudioNumHeads = int(v)
+	}
+	if v, ok := f.GetUint32("audio.num_mel_bins"); ok {
+		cfg.AudioNumMels = int(v)
+	}
+	if v, ok := f.GetUint32("audio.feed_forward_length"); ok {
+		cfg.AudioIntermediateSize = int(v)
+	}
+	if v, ok := f.GetString("audio.projector_type"); ok {
+		cfg.AudioProjectorType = v
+	}
+	if v, ok := f.GetUint32("audio.projector_stack_factor"); ok {
+		cfg.AudioProjectorStackFactor = int(v)
+	}
+
 	// Extract Nemotron-H SSM fields. The SSM keys use the architecture prefix
 	// (e.g. "nemotron_h_moe.ssm.state_size" or "nemotron_h.ssm.state_size").
 	if v, ok := f.GetUint32(prefix + "ssm.state_size"); ok {
@@ -470,6 +502,48 @@ var minimaxM2GlobalTensorMap = map[string]string{
 	"output.weight":      "output.weight",
 }
 
+// voxtralAudioTensorMap maps Voxtral mmproj GGUF tensor name prefixes.
+// Audio encoder tensors are prefixed with "a." and adapter tensors with "mm.a.mlp.".
+// These are mapped to canonical names used by the Voxtral graph builder.
+var voxtralAudioTensorMap = map[string]string{
+	// Conv1D frontend.
+	"a.conv1d.0.weight": "a.conv1d.0.weight",
+	"a.conv1d.0.bias":   "a.conv1d.0.bias",
+	"a.conv1d.1.weight": "a.conv1d.1.weight",
+	"a.conv1d.1.bias":   "a.conv1d.1.bias",
+
+	// Post layer norm.
+	"a.post_ln.weight": "a.post_ln.weight",
+	"a.post_ln.bias":   "a.post_ln.bias",
+}
+
+// voxtralAudioBlockTensorMap maps per-block tensor suffixes for Voxtral audio encoder.
+var voxtralAudioBlockTensorMap = map[string]string{
+	"ln1.weight":      "ln1.weight",
+	"ln1.bias":        "ln1.bias",
+	"ln2.weight":      "ln2.weight",
+	"ln2.bias":        "ln2.bias",
+	"attn_q.weight":   "attn_q.weight",
+	"attn_q.bias":     "attn_q.bias",
+	"attn_k.weight":   "attn_k.weight",
+	"attn_k.bias":     "attn_k.bias",
+	"attn_v.weight":   "attn_v.weight",
+	"attn_v.bias":     "attn_v.bias",
+	"attn_o.weight":   "attn_o.weight",
+	"ffn_up.weight":   "ffn_up.weight",
+	"ffn_up.bias":     "ffn_up.bias",
+	"ffn_down.weight": "ffn_down.weight",
+	"ffn_down.bias":   "ffn_down.bias",
+}
+
+// voxtralAdapterTensorMap maps Voxtral MLP adapter (projector) tensor names.
+var voxtralAdapterTensorMap = map[string]string{
+	"mm.a.mlp.0.weight": "mm.a.mlp.0.weight",
+	"mm.a.mlp.0.bias":   "mm.a.mlp.0.bias",
+	"mm.a.mlp.2.weight": "mm.a.mlp.2.weight",
+	"mm.a.mlp.2.bias":   "mm.a.mlp.2.bias",
+}
+
 // globalTensorMap maps global GGUF tensor names to HuggingFace names.
 var globalTensorMap = map[string]string{
 	"token_embd.weight":  "model.embed_tokens.weight",
@@ -482,6 +556,23 @@ var globalTensorMap = map[string]string{
 // uses different norm names than "llama").
 // Unknown names pass through unchanged.
 func MapTensorName(arch string, ggufName string) string {
+	// Voxtral audio encoder tensors pass through unchanged (the builder looks them up directly).
+	if arch == "voxtral" {
+		// Global audio tensors.
+		if _, ok := voxtralAudioTensorMap[ggufName]; ok {
+			return ggufName
+		}
+		// Adapter tensors.
+		if _, ok := voxtralAdapterTensorMap[ggufName]; ok {
+			return ggufName
+		}
+		// Block-level audio tensors: "a.blk.N.suffix"
+		if strings.HasPrefix(ggufName, "a.blk.") {
+			return ggufName
+		}
+		// Fall through to standard tensor name mapping for text decoder tensors.
+	}
+
 	// GPT-2, BERT, and Nemotron-H use their own global and block-level name maps
 	// that preserve GGUF-style names (their builders look them up directly).
 	if arch == "gpt2" || arch == "bert" || arch == "nemotron_h" || arch == "nemotron_h_moe" || arch == "minimax-m2" {
