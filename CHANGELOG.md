@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0](https://github.com/zerfoo/zerfoo/compare/v1.33.0...v1.34.0) (2026-03-29)
+
+
+### Features
+
+* **inference:** add 5 Ollama-coverage architectures (Wave 1) ([8ecd322](https://github.com/zerfoo/zerfoo/commit/8ecd322754e511950572cdf4aaf5812ae0da7f62))
+* **inference:** add EXAONE architecture builder for LG AI Research models ([9e41a6a](https://github.com/zerfoo/zerfoo/commit/9e41a6acc70ddd25f81fd16ec6fab400ac74c87d))
+* **inference:** add GLM4, Kimi linear attention, and LFM2 architecture builders ([b80109d](https://github.com/zerfoo/zerfoo/commit/b80109d59d8803227af608a96e3860eae3b1a13a))
+* **inference:** add GLM4, Kimi linear attention, LFM2 builders ([fb65813](https://github.com/zerfoo/zerfoo/commit/fb65813e6e76d504e791bedeeb770463082e098d))
+* **inference:** add InternLM2 architecture builder ([bf77cb5](https://github.com/zerfoo/zerfoo/commit/bf77cb51b9e6c86686ccd3988b0e5785da00f74c))
+* **inference:** add OLMo2 and DBRX architecture builders ([749ac78](https://github.com/zerfoo/zerfoo/commit/749ac78204e72025db6cda9f6c6429b77390cd75))
+* **inference:** add split-GGUF support and default mmap loading ([a72391a](https://github.com/zerfoo/zerfoo/commit/a72391a0a4df15f5e40617dcec1e19ed4fa8556e))
+* **inference:** add StarCoder2 architecture builder ([968a78e](https://github.com/zerfoo/zerfoo/commit/968a78e89ad1772f3cf99ea6a425935613003067))
+
 ## [1.33.0](https://github.com/zerfoo/zerfoo/compare/v1.32.0...v1.33.0) (2026-03-28)
 
 
