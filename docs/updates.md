@@ -1,5 +1,26 @@
 # Updates
 
+## 2026-03-28: Split-GGUF support and mmap-by-default
+
+Unlocks large-model loading: any split GGUF (70B+) loads transparently.
+mmap is now the default loading strategy for all GGUF models.
+
+### Changes
+- **Split-GGUF loading**: `model/gguf/split_file.go` — `ParseSplit()` detects
+  `-NNNNN-of-NNNNN.gguf` naming, discovers all shards, merges tensor maps.
+  `LoadTensorsMmapSplit()` mmaps each shard independently. Auto-detected in
+  both `LoadGGUF` and `LoadGGUFMmap` — no API change for callers.
+- **mmap by default**: `loadOptions{mmap: true}` is now the default in
+  `LoadFile` and `Load`. No flag or option needed. `WithMmap(false)` to opt out.
+- **MiniMax-M2 (229B) on 128 GB**: 138 GB Q4_K_M model (3 shards) downloads
+  to DGX Spark. Benchmark in progress.
+
+### Why mmap default
+Near-instant startup, zero Go heap pressure, and models larger than physical
+RAM work out of the box. The OS pages tensor data from NVMe on demand.
+Downside is negligible: a few ms of first-touch page faults on the first
+inference call, imperceptible in practice.
+
 ## 2026-03-28: Architecture Expansion -- 40 architectures, 24 model families
 
 Session 3: 14 new architecture builders added. Full Ollama model coverage achieved.

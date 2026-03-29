@@ -201,39 +201,38 @@ func (s *MmapStorage) RawBytes() []byte { return s.data } // for GPU DMA
 
 ### Wave 4: Validation and Benchmarking
 
-- [ ] MM-T11 Download Qwen 2.5 72B Q4_K_M to DGX  Est: 1h
-  Download from bartowski/Qwen2.5-72B-Instruct-GGUF to DGX Spark model cache.
-  Verify file integrity (SHA256). Verify `zerfoo run --dry-run` parses metadata.
-  Acceptance: Model file on DGX, metadata parses correctly.
+- [x] MM-T4b Make mmap the default loading strategy  Est: 1h  2026-03-28
+  repo: zerfoo (v1.36.0)
+  Changed loadOptions to mmap: true in both LoadFile and Load. WithMmap(false)
+  to opt out. bench_tps --no-mmap flag replaces --mmap. All existing tests pass;
+  test suite now runs via mmap path by default (confirmed by "mmap'd GGUF file"
+  in test logs).
 
-- [ ] MM-T12 End-to-end mmap inference test (72B)  Est: 2h
-  Deps: MM-T4, MM-T6, MM-T11
-  Run `zerfoo run --mmap /models/qwen2.5-72b/Qwen2.5-72B-Instruct-Q4_K_M.gguf`
-  on DGX Spark. Verify coherent output on 5 diverse prompts (factual, creative,
-  code, reasoning, multilingual). Compare output quality against Ollama on same
-  model.
-  Acceptance: Coherent output on all 5 prompts. Load time < 10 seconds.
+- [x] MM-T4c Add split-GGUF (multi-shard) loading support  Est: 4h  2026-03-28
+  repo: zerfoo (v1.36.0)
+  Added model/gguf/split_file.go: ParseSplit(), LoadTensorsMmapSplit(),
+  LoadTensorsSplit(). Auto-detected in LoadGGUF/LoadGGUFMmap — callers see no
+  API change. 7 tests: discover shards, missing shard error, merged tensor map,
+  mmap split, heap split, non-split passthrough. Required for any 70B+ model
+  with split GGUF files (MiniMax-M2, Llama 3.1 405B, etc).
 
-- [ ] MM-T13 Benchmark: mmap vs heap loading (72B)  Est: 2h
+- [ ] MM-T11 Download MiniMax-M2 Q4_K_M to DGX  Est: 1h
+  [IN PROGRESS 2026-03-28] Downloading unsloth/MiniMax-M2-GGUF Q4_K_M (3 shards,
+  138 GB total) to ~/models/minimax-m2-q4km/ on DGX Spark. ~109 GB downloaded.
+  Acceptance: All 3 shards present, hf_download.log contains DOWNLOAD_COMPLETE.
+
+- [ ] MM-T12 End-to-end mmap inference test (MiniMax-M2, 138 GB on 128 GB)  Est: 2h
+  Deps: MM-T4c, MM-T11
+  Run bench_tps against MiniMax-M2 Q4_K_M on DGX Spark. Model exceeds physical
+  RAM (138 GB > 128 GB) — proves over-RAM inference via NVMe paging.
+  Acceptance: Coherent output. Load time < 30s. Document tok/s and RSS.
+
+- [ ] MM-T13 Ollama head-to-head: MiniMax-M2 Q4_K_M  Est: 1h
   Deps: MM-T12
-  Measure and compare on DGX Spark with Qwen 2.5 72B Q4_K_M (~42GB):
-  - Cold start time (first load after drop_caches)
-  - Warm start time (file in page cache)
-  - Peak RSS during loading
-  - Inference throughput (tok/s) -- should be identical once loaded
-  - Page fault rate during generation
-  Record results in docs/devlog.md.
-  Acceptance: mmap cold start < 15s, warm start < 1s, peak RSS < 8GB (vs ~42GB heap).
-
-- [ ] MM-T14 Stress test: Llama 3.1 405B Q4_K_M  Est: 3h
-  Deps: MM-T12
-  Download and test with Llama 3.1 405B Q4_K_M (~230GB GGUF). This model
-  does NOT fit in 128GB RAM -- requires mmap to page from NVMe on demand.
-  At NVMe Gen4 (~7 GB/s), expect ~3 tok/s decode throughput. This is slow
-  but PROVES that models larger than physical RAM can run via mmap.
-  Requires split-GGUF support or a merged single-file variant.
-  Acceptance: Model loads and produces coherent output. Document throughput
-  and page fault behavior. Note: ~3 tok/s is acceptable for a 405B proof-of-concept.
+  Import same 3-shard GGUF into Ollama via Modelfile. Run same prompt, same
+  token count. Record tok/s for both. Ollama also uses mmap (llama.cpp); the
+  comparison is pure Go vs C++ on identical hardware and model.
+  Acceptance: Both produce coherent output. Record relative tok/s in README.
 
 ---
 

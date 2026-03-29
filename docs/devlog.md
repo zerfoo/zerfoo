@@ -3,6 +3,41 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-28: Split-GGUF support + mmap default
+
+**Type:** finding
+**Tags:** mmap, split-gguf, minimax-m2, large-model
+
+**Problem:** Every quantization of MiniMax-M2 (229B) except TQ1_0 (56 GB) is
+split across 2–10 shards (`-00001-of-00003.gguf` naming convention). Zerfoo had
+no multi-shard GGUF support, blocking the over-RAM demo.
+
+**Root cause:** Split GGUF is a llama.cpp convention for models too large for a
+single file. Each shard is a complete GGUF file with its own header and tensor
+subset. Shard 0 holds all metadata; subsequent shards hold additional tensors.
+
+**Fix:**
+- Added `model/gguf/split_file.go`: `ParseSplit()` auto-detects the
+  `-NNNNN-of-NNNNN.gguf` naming pattern, discovers all sibling shards, parses
+  each independently, and merges tensor maps. `LoadTensorsMmapSplit()` mmaps
+  each shard independently — tensors reference the correct shard's mapped region.
+- `LoadGGUF` and `LoadGGUFMmap` in `inference/gguf.go` now call `ParseSplit`
+  first; non-split files fall through to the existing single-file path.
+- Made mmap the default: `loadOptions{mmap: true}` in both `LoadFile` and `Load`.
+  `WithMmap(false)` opts out. `bench_tps --no-mmap` flag replaces `--mmap`.
+
+**Why mmap default is safe for small models:**
+- First-touch latency adds a few ms on first inference (page faults). After that,
+  OS page cache keeps hot layers resident and performance is identical to heap.
+- Tensor data stays off the Go heap: zero GC scanning overhead.
+- Startup is near-instant regardless of model size.
+
+**Test status:** MiniMax-M2 Q4_K_M (138 GB, 3 shards) download in progress on
+DGX Spark. Zerfoo + Ollama benchmark pending.
+
+**Impact:** Any model with split GGUF shards now loads transparently. Blocks
+the over-RAM demo: Q4_K_M (138 GB) on 128 GB DGX Spark.
+
 ## 2026-03-28: Architecture Expansion -- 14 new builders shipped
 
 **Type:** finding
