@@ -968,3 +968,113 @@ func TestNHiTS_PredictWindowed_NormalizationApplied(t *testing.T) {
 		}
 	}
 }
+
+func TestNHiTS_ForwardBatchEngine(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		config   NHiTSConfig
+		batch    int
+	}{
+		{
+			name: "single channel single stack",
+			config: NHiTSConfig{
+				InputLength:  12,
+				OutputLength: 6,
+				Channels:     1,
+				PoolKernels:  []int{2},
+				HiddenSize:   16,
+			},
+			batch: 4,
+		},
+		{
+			name: "multi channel 3 stacks",
+			config: NHiTSConfig{
+				InputLength:  24,
+				OutputLength: 12,
+				Channels:     3,
+				PoolKernels:  []int{2, 4, 8},
+				HiddenSize:   32,
+			},
+			batch: 5,
+		},
+		{
+			name: "single sample",
+			config: NHiTSConfig{
+				InputLength:  8,
+				OutputLength: 4,
+				Channels:     2,
+				PoolKernels:  []int{2, 4},
+				HiddenSize:   16,
+				NumMLPLayers: 3,
+			},
+			batch: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := NewNHiTS(tt.config, engine, ops)
+			if err != nil {
+				t.Fatalf("NewNHiTS: %v", err)
+			}
+			m.initWeightsSmall()
+
+			channels := tt.config.Channels
+			inputLen := tt.config.InputLength
+			outputLen := tt.config.OutputLength
+
+			// Build 3D input [batch, channels, inputLen].
+			data3D := make([]float32, tt.batch*channels*inputLen)
+			for i := range data3D {
+				data3D[i] = float32(i)*0.01 + 0.1
+			}
+			input3D, err := tensor.New[float32]([]int{tt.batch, channels, inputLen}, data3D)
+			if err != nil {
+				t.Fatalf("tensor.New 3D: %v", err)
+			}
+
+			// Batched forward.
+			batchOut, err := m.forwardBatchEngine(ctx, input3D)
+			if err != nil {
+				t.Fatalf("forwardBatchEngine: %v", err)
+			}
+			batchShape := batchOut.Shape()
+			if len(batchShape) != 2 || batchShape[0] != tt.batch || batchShape[1] != outputLen {
+				t.Fatalf("batched output shape = %v, want [%d, %d]", batchShape, tt.batch, outputLen)
+			}
+
+			// Sample-by-sample forward using existing Forward method.
+			// Forward expects [batch, channels * inputLen] 2D input.
+			for b := 0; b < tt.batch; b++ {
+				sampleData := make([]float32, channels*inputLen)
+				for c := 0; c < channels; c++ {
+					for ti := 0; ti < inputLen; ti++ {
+						sampleData[c*inputLen+ti] = data3D[b*channels*inputLen+c*inputLen+ti]
+					}
+				}
+				sampleIn, err := tensor.New[float32]([]int{1, channels * inputLen}, sampleData)
+				if err != nil {
+					t.Fatalf("tensor.New sample: %v", err)
+				}
+				sampleOut, err := m.Forward(ctx, sampleIn)
+				if err != nil {
+					t.Fatalf("Forward sample %d: %v", b, err)
+				}
+
+				sampleOutData := sampleOut.Data()
+				batchOutData := batchOut.Data()
+				for o := 0; o < outputLen; o++ {
+					got := batchOutData[b*outputLen+o]
+					want := sampleOutData[o]
+					if diff := math.Abs(float64(got - want)); diff > 1e-5 {
+						t.Errorf("batch=%d, output[%d]: batched=%.8f, single=%.8f, diff=%.2e",
+							b, o, got, want, diff)
+					}
+				}
+			}
+		})
+	}
+}
