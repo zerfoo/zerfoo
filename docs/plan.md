@@ -2019,7 +2019,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   Same benchmark parameters as T47.5.1 but for iTransformer.
   Acceptance: Results in devlog. Target: < 60s.
 
-- [ ] T47.5.3 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T47.5.3 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-03-30 PR #285
   Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
   Acceptance: go build ./... and go test -race -timeout 300s ./timeseries/... pass.
 
@@ -2080,7 +2080,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   Acceptance: Forward end-to-end from input `[channels, inputLen]` to output
   `[channels, outputLen]`.
 
-- [ ] T48.1.4 Implement TimeMixer.TrainWindowed  Owner: TBD  Est: 2h  verifies: [UC-TS02]
+- [x] T48.1.4 Implement TimeMixer.TrainWindowed  Owner: TBD  Est: 2h  verifies: [UC-TS02]  DONE 2026-03-30 PR #285
   Deps: T48.1.3
   File: timeseries/timemixer.go
   Follow same pattern as PatchTST.TrainWindowed: AdamW optimizer, gradient clipping,
@@ -2112,7 +2112,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
 
 ### E48.3: TimeMixer Inference and Tests
 
-- [ ] T48.3.1 Implement TimeMixer inference graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.3.1 Implement TimeMixer inference graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #285
   Deps: T48.1.3
   File: inference/timeseries/arch_timemixer.go
   BuildTimeMixer[T] function that constructs a computation graph from GGUF weights.
@@ -2189,7 +2189,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Load weights from GGUF tensors. Wire to Engine[T] for GPU acceleration.
   Acceptance: Graph builds. Forward on synthetic input produces correct output shape.
 
-- [ ] T49.1.5 TiRex zero-shot inference pipeline  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.1.5 TiRex zero-shot inference pipeline  Owner: TBD  Est: 2h  verifies: [UC-TS03]  DONE 2026-03-30 PR #285
   Deps: T49.1.4
   File: timeseries/foundation.go
   ```go
@@ -2224,7 +2224,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   uses existing transformer layer types (self-attention, cross-attention, FFN).
   Acceptance: GGUF produced. Tensor names and shapes correct.
 
-- [ ] T49.2.3 Implement Chronos-2 graph builder  Owner: TBD  Est: 4h  verifies: [UC-TS03]
+- [x] T49.2.3 Implement Chronos-2 graph builder  Owner: TBD  Est: 4h  verifies: [UC-TS03]  DONE 2026-03-30 PR #285
   Deps: T49.2.1, T49.2.2
   File: inference/timeseries/arch_chronos.go
   BuildChronos[T]: T5 encoder (self-attention stacks) + decoder (self-attention +
@@ -2253,7 +2253,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   masked patches.
   Acceptance: GGUF produced with correct tensor shapes.
 
-- [ ] T49.3.3 Implement Moirai-2 graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.3.3 Implement Moirai-2 graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]  DONE 2026-03-30 PR #285
   Deps: T49.3.1, T49.3.2
   File: inference/timeseries/arch_moirai.go
   BuildMoirai[T]: Masked encoder transformer. Input patching with random masking
@@ -2360,13 +2360,13 @@ All zero-dependency tasks. Saturates all agent slots.
 
 - [ ] T47.5.1 Benchmark PatchTST 28K rows  Deps: T47.2.3
 - [ ] T47.5.2 Benchmark iTransformer 28K rows  Deps: T47.3.3
-- [ ] T47.5.3 Run go vet E47  Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
-- [ ] T48.1.4 TimeMixer TrainWindowed  Deps: T48.1.3
-- [ ] T48.3.1 TimeMixer inference graph builder  Deps: T48.1.3
+- [x] T47.5.3 Run go vet E47  DONE 2026-03-30 PR #285  Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
+- [x] T48.1.4 TimeMixer TrainWindowed  DONE 2026-03-30 PR #285  Deps: T48.1.3
+- [x] T48.3.1 TimeMixer inference graph builder  DONE 2026-03-30 PR #285  Deps: T48.1.3
 - [ ] T48.3.2 TimeMixer unit tests  Deps: T48.1.4, T48.2.3
-- [ ] T49.1.5 TiRex zero-shot pipeline  Deps: T49.1.4
-- [ ] T49.2.3 Chronos-2 graph builder  Deps: T49.2.1, T49.2.2
-- [ ] T49.3.3 Moirai-2 graph builder  Deps: T49.3.1, T49.3.2
+- [x] T49.1.5 TiRex zero-shot pipeline  DONE 2026-03-30 PR #285  Deps: T49.1.4
+- [x] T49.2.3 Chronos-2 graph builder  DONE 2026-03-30 PR #285  Deps: T49.2.1, T49.2.2
+- [x] T49.3.3 Moirai-2 graph builder  DONE 2026-03-30 PR #285  Deps: T49.3.1, T49.3.2
 - [ ] T49.4.2 Fine-tune API  Deps: T49.1.5
 
 ##### Wave E47-5: Final Lint + Parity (6 agents)
