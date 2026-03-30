@@ -474,6 +474,45 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			chanScale := float32(1.0 / float64(channels))
 
+			// Pre-compute weight transposes (used in backward, constant within batch).
+			headWT, err := m.engine.Transpose(ctx, params.headW, []int{1, 0})
+			if err != nil {
+				return nil, err
+			}
+			type layerTransposes struct {
+				qWT, kWT, vWT, oWT       *tensor.TensorNumeric[float32]
+				ffn1WT, ffn2WT           *tensor.TensorNumeric[float32]
+			}
+			layerWTs := make([]layerTransposes, m.config.NLayers)
+			for li := 0; li < m.config.NLayers; li++ {
+				layer := &params.layers[li]
+				lt := &layerWTs[li]
+				lt.qWT, err = m.engine.Transpose(ctx, layer.qW, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+				lt.kWT, err = m.engine.Transpose(ctx, layer.kW, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+				lt.vWT, err = m.engine.Transpose(ctx, layer.vW, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+				lt.oWT, err = m.engine.Transpose(ctx, layer.oW, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+				lt.ffn1WT, err = m.engine.Transpose(ctx, layer.ffn1W, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+				lt.ffn2WT, err = m.engine.Transpose(ctx, layer.ffn2W, []int{1, 0})
+				if err != nil {
+					return nil, err
+				}
+			}
+
 			// Single forward cache for all channels batched together.
 			fc := gpuBatchForwardCache{
 				layerCaches: make([]gpuBatchLayerCache, m.config.NLayers),
@@ -839,10 +878,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			}
 
 			// dFlat = dChanOut @ headW^T : [bsC, outDim] @ [outDim, headIn] = [bsC, headIn]
-			headWT, err := m.engine.Transpose(ctx, params.headW, []int{1, 0})
-			if err != nil {
-				return nil, err
-			}
 			dFlat, err := m.engine.MatMul(ctx, dChanOut, headWT)
 			if err != nil {
 				return nil, err
@@ -859,6 +894,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				layer := &params.layers[li]
 				lc := &fc.layerCaches[li]
 				dg := &grads.layers[li]
+				lt := &layerWTs[li]
 
 				// FFN2 backward: ONE MatMul each.
 				// dFFN2Out = dX (from residual 2).
@@ -888,11 +924,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 				// dFFN1Out = dFFN2Out @ ffn2W^T : [totalRows, dModel] @ [dModel, ffnDim]
-				ffn2WT, err := m.engine.Transpose(ctx, layer.ffn2W, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dFFN1Out, err := m.engine.MatMul(ctx, dX, ffn2WT)
+				dFFN1Out, err := m.engine.MatMul(ctx, dX, lt.ffn2WT)
 				if err != nil {
 					return nil, err
 				}
@@ -936,11 +968,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 				// dNormed2 = dFFN1PreAct @ ffn1W^T
-				ffn1WT, err := m.engine.Transpose(ctx, layer.ffn1W, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dNormed2, err := m.engine.MatMul(ctx, dFFN1PreAct, ffn1WT)
+				dNormed2, err := m.engine.MatMul(ctx, dFFN1PreAct, lt.ffn1WT)
 				if err != nil {
 					return nil, err
 				}
@@ -988,11 +1016,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 				// dAttnOut = dAttnProjOut @ oW^T
-				oWT, err := m.engine.Transpose(ctx, layer.oW, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dAttnOutT, err := m.engine.MatMul(ctx, dAttnProjOut, oWT)
+				dAttnOutT, err := m.engine.MatMul(ctx, dAttnProjOut, lt.oWT)
 				if err != nil {
 					return nil, err
 				}
@@ -1225,27 +1249,15 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 
 				// dNormed1 = dQ @ qW^T + dK @ kW^T + dV @ vW^T : ONE MatMul each.
-				qWT, err := m.engine.Transpose(ctx, layer.qW, []int{1, 0})
+				dN1q, err := m.engine.MatMul(ctx, dQT, lt.qWT)
 				if err != nil {
 					return nil, err
 				}
-				dN1q, err := m.engine.MatMul(ctx, dQT, qWT)
+				dN1k, err := m.engine.MatMul(ctx, dKT, lt.kWT)
 				if err != nil {
 					return nil, err
 				}
-				kWT, err := m.engine.Transpose(ctx, layer.kW, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dN1k, err := m.engine.MatMul(ctx, dKT, kWT)
-				if err != nil {
-					return nil, err
-				}
-				vWT, err := m.engine.Transpose(ctx, layer.vW, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dN1v, err := m.engine.MatMul(ctx, dVT, vWT)
+				dN1v, err := m.engine.MatMul(ctx, dVT, lt.vWT)
 				if err != nil {
 					return nil, err
 				}
