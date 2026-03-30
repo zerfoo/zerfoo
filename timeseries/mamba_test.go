@@ -1,6 +1,7 @@
 package timeseries
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -510,3 +511,159 @@ func TestMamba_SaveWeightsCreatesFile(t *testing.T) {
 		t.Fatal("saved file is empty")
 	}
 }
+
+func TestMamba_BatchedForwardParity(t *testing.T) {
+	engine, ops := newTestEngine()
+	config := MambaConfig{
+		Channels:     2,
+		InputLen:     16,
+		OutputLen:    4,
+		DModel:       16,
+		DState:       4,
+		DConv:        2,
+		ExpandFactor: 2,
+		NLayers:      2,
+	}
+	m, err := NewMamba(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewMamba: %v", err)
+	}
+
+	batch := 5
+	windows := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		windows[b] = make([][]float64, config.Channels)
+		for c := 0; c < config.Channels; c++ {
+			windows[b][c] = make([]float64, config.InputLen)
+			for i := 0; i < config.InputLen; i++ {
+				windows[b][c][i] = math.Sin(float64(b*100+c*10+i) * 0.1)
+			}
+		}
+	}
+
+	ctx := context.Background()
+	outDim := config.Channels * config.OutputLen
+
+	singleResults := make([]float32, 0, batch*outDim)
+	for b := 0; b < batch; b++ {
+		pred, _, err := m.forward(ctx, windows[b])
+		if err != nil {
+			t.Fatalf("forward sample %d: %v", b, err)
+		}
+		singleResults = append(singleResults, pred...)
+	}
+
+	batchResults, err := m.forwardBatch(ctx, windows)
+	if err != nil {
+		t.Fatalf("forwardBatch: %v", err)
+	}
+
+	if len(batchResults) != len(singleResults) {
+		t.Fatalf("length mismatch: single=%d batch=%d", len(singleResults), len(batchResults))
+	}
+
+	for i := range singleResults {
+		diff := math.Abs(float64(singleResults[i] - batchResults[i]))
+		if diff > 1e-4 {
+			t.Errorf("output[%d] mismatch: single=%.6f batch=%.6f diff=%.6e",
+				i, singleResults[i], batchResults[i], diff)
+		}
+	}
+}
+
+func TestMamba_BatchedForwardBatchSize1(t *testing.T) {
+	engine, ops := newTestEngine()
+	config := MambaConfig{
+		Channels:     1,
+		InputLen:     8,
+		OutputLen:    4,
+		DModel:       16,
+		DState:       4,
+		DConv:        2,
+		ExpandFactor: 2,
+		NLayers:      1,
+	}
+	m, err := NewMamba(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewMamba: %v", err)
+	}
+
+	windows := make([][][]float64, 1)
+	windows[0] = make([][]float64, config.Channels)
+	for c := 0; c < config.Channels; c++ {
+		windows[0][c] = make([]float64, config.InputLen)
+		for i := range windows[0][c] {
+			windows[0][c][i] = float64(i) * 0.2
+		}
+	}
+
+	ctx := context.Background()
+
+	singlePred, _, err := m.forward(ctx, windows[0])
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+
+	batchPred, err := m.forwardBatch(ctx, windows)
+	if err != nil {
+		t.Fatalf("forwardBatch: %v", err)
+	}
+
+	if len(singlePred) != len(batchPred) {
+		t.Fatalf("length mismatch: %d vs %d", len(singlePred), len(batchPred))
+	}
+
+	for i := range singlePred {
+		diff := math.Abs(float64(singlePred[i] - batchPred[i]))
+		if diff > 1e-5 {
+			t.Errorf("output[%d] mismatch: single=%.6f batch=%.6f", i, singlePred[i], batchPred[i])
+		}
+	}
+}
+
+func TestMamba_PredictWindowed_UsesBatchedPath(t *testing.T) {
+	engine, ops := newTestEngine()
+	config := MambaConfig{
+		Channels:     2,
+		InputLen:     8,
+		OutputLen:    4,
+		DModel:       16,
+		DState:       4,
+		DConv:        2,
+		ExpandFactor: 2,
+		NLayers:      1,
+	}
+	m, err := NewMamba(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewMamba: %v", err)
+	}
+
+	batch := 3
+	windows := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		windows[b] = make([][]float64, config.Channels)
+		for c := 0; c < config.Channels; c++ {
+			windows[b][c] = make([]float64, config.InputLen)
+			for i := range windows[b][c] {
+				windows[b][c][i] = float64(b*10+c*5+i) * 0.1
+			}
+		}
+	}
+
+	preds, err := m.PredictWindowed("", windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	expectedLen := batch * config.Channels * config.OutputLen
+	if len(preds) != expectedLen {
+		t.Fatalf("expected %d predictions, got %d", expectedLen, len(preds))
+	}
+
+	for i, v := range preds {
+		if !isFinite(v) {
+			t.Errorf("prediction[%d] is not finite: %v", i, v)
+		}
+	}
+}
+
