@@ -478,6 +478,177 @@ func TestNBEATS_Decomposition(t *testing.T) {
 	}
 }
 
+func TestNBEATS_ForwardBatched_Parity(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	config := NBEATSConfig{
+		InputLength:     12,
+		OutputLength:    6,
+		StackTypes:      []StackType{StackTrend, StackSeasonality, StackGeneric},
+		NBlocksPerStack: 2,
+		HiddenDim:       16,
+		NHarmonics:      3,
+	}
+
+	m, err := NewNBEATS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNBEATS: %v", err)
+	}
+
+	batch := 5
+	channels := 3
+	inputLen := config.InputLength
+	outputLen := config.OutputLength
+
+	// Build 3D input: [batch, channels, inputLen].
+	inData := make([]float32, batch*channels*inputLen)
+	for b := 0; b < batch; b++ {
+		for c := 0; c < channels; c++ {
+			for i := 0; i < inputLen; i++ {
+				inData[(b*channels+c)*inputLen+i] = float32(math.Sin(float64(b*100+c*10+i)*0.3)) + float32(c)*0.5
+			}
+		}
+	}
+	x3d, err := tensor.New[float32]([]int{batch, channels, inputLen}, inData)
+	if err != nil {
+		t.Fatalf("tensor.New 3D: %v", err)
+	}
+
+	// Batched forward.
+	batchOut, err := m.ForwardBatched(ctx, x3d)
+	if err != nil {
+		t.Fatalf("ForwardBatched: %v", err)
+	}
+
+	// Reference: manually average channels, then call Forward sample-by-sample.
+	for b := 0; b < batch; b++ {
+		avgData := make([]float32, inputLen)
+		for i := 0; i < inputLen; i++ {
+			var sum float32
+			for c := 0; c < channels; c++ {
+				sum += inData[(b*channels+c)*inputLen+i]
+			}
+			avgData[i] = sum / float32(channels)
+		}
+		singleIn, err := tensor.New[float32]([]int{1, inputLen}, avgData)
+		if err != nil {
+			t.Fatalf("tensor.New single: %v", err)
+		}
+		singleOut, err := m.Forward(ctx, singleIn)
+		if err != nil {
+			t.Fatalf("Forward sample %d: %v", b, err)
+		}
+
+		batchData := batchOut.Forecast.Data()
+		singleData := singleOut.Forecast.Data()
+		for j := 0; j < outputLen; j++ {
+			diff := math.Abs(float64(batchData[b*outputLen+j] - singleData[j]))
+			if diff > 1e-5 {
+				t.Errorf("sample %d output[%d]: batched=%.8f single=%.8f diff=%.4e",
+					b, j, batchData[b*outputLen+j], singleData[j], diff)
+			}
+		}
+	}
+}
+
+func TestNBEATS_ForwardBatched_SingleChannel(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	config := NBEATSConfig{
+		InputLength:     10,
+		OutputLength:    5,
+		StackTypes:      []StackType{StackGeneric},
+		NBlocksPerStack: 1,
+		HiddenDim:       16,
+		NHarmonics:      1,
+	}
+
+	m, err := NewNBEATS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNBEATS: %v", err)
+	}
+
+	batch := 3
+	inputLen := config.InputLength
+	outputLen := config.OutputLength
+
+	// Build 3D input with 1 channel.
+	inData := make([]float32, batch*1*inputLen)
+	for i := range inData {
+		inData[i] = float32(i) * 0.1
+	}
+	x3d, err := tensor.New[float32]([]int{batch, 1, inputLen}, inData)
+	if err != nil {
+		t.Fatalf("tensor.New 3D: %v", err)
+	}
+
+	// 2D input (same data).
+	x2d, err := tensor.New[float32]([]int{batch, inputLen}, inData)
+	if err != nil {
+		t.Fatalf("tensor.New 2D: %v", err)
+	}
+
+	batchOut, err := m.ForwardBatched(ctx, x3d)
+	if err != nil {
+		t.Fatalf("ForwardBatched: %v", err)
+	}
+	directOut, err := m.Forward(ctx, x2d)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	batchData := batchOut.Forecast.Data()
+	directData := directOut.Forecast.Data()
+	for i := 0; i < batch*outputLen; i++ {
+		diff := math.Abs(float64(batchData[i] - directData[i]))
+		if diff > 1e-5 {
+			t.Errorf("output[%d]: batched=%.8f direct=%.8f diff=%.4e",
+				i, batchData[i], directData[i], diff)
+		}
+	}
+}
+
+func TestNBEATS_ForwardBatched_InvalidShape(t *testing.T) {
+	engine, ops := newTestEngine()
+	ctx := context.Background()
+
+	config := NBEATSConfig{
+		InputLength:     10,
+		OutputLength:    5,
+		StackTypes:      []StackType{StackTrend},
+		NBlocksPerStack: 1,
+		HiddenDim:       16,
+		NHarmonics:      2,
+	}
+
+	m, err := NewNBEATS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNBEATS: %v", err)
+	}
+
+	// 2D input should fail.
+	x2d, err := tensor.New[float32]([]int{2, 10}, make([]float32, 20))
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+	_, err = m.ForwardBatched(ctx, x2d)
+	if err == nil {
+		t.Fatal("expected error for 2D input to ForwardBatched")
+	}
+
+	// Wrong inputLen should fail.
+	x3d, err := tensor.New[float32]([]int{2, 1, 8}, make([]float32, 16))
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+	_, err = m.ForwardBatched(ctx, x3d)
+	if err == nil {
+		t.Fatal("expected error for wrong inputLen")
+	}
+}
+
 func TestStackType_String(t *testing.T) {
 	tests := []struct {
 		st   StackType
