@@ -8,13 +8,13 @@ Granite Guardian, K-Quant optimization, multi-model benchmarks, batched GPU
 training, GGUF writer consolidation, documentation site, MSA-inspired scalable
 memory, and research-driven inference optimizations).
 
-Task statuses updated 2026-03-29 based on merged PRs and git history.
+Task statuses updated 2026-03-30 based on merged PRs and git history.
 
 **Status summary:**
 - 370+ tasks completed across all plans
 - E45: Verification remediation (3/3 complete)
 - E46: Ecosystem v1 release (0/46 -- 5 repos to v1.0.0)
-- E47: Batched training performance (0/18 -- GitHub #278)
+- E47: Batched training performance (0/19 -- GitHub #278, T47.2.4 added for batched attention)
 - E48: TimeMixer backend (0/10 -- GitHub #279)
 - E49: Foundation model inference (0/12 -- GitHub #280)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
@@ -1296,6 +1296,16 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-30: T47.2.4 added -- batch PatchTST attention forward/backward
+
+The per-sample CPU attention loop (forward lines ~610-663, backward lines ~1020-1061 in
+patchtst_gpu_train.go) is the last remaining bottleneck after batched MatMul (PR #281) and
+workspace pre-allocation (PR #283). All linear ops are batched GPU MatMul calls but attention
+still runs O(bs*nHeads*numPatches^2) scalar ops on CPU. T47.2.4 reshapes Q/K/V to
+[bs*nHeads, numPatches, headDim] and uses 3D batched engine.MatMul + engine.Softmax for both
+forward and backward passes. T47.2.3 now depends on T47.2.4. Wave E47-3 updated to include
+T47.2.4; T47.2.3 moved to Wave E47-4.
+
 ### 2026-03-29: E47-E49 added to resolve GitHub issues #278, #279, #280
 
 Added three new epics to resolve all open GitHub issues:
@@ -1942,6 +1952,15 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   (transposed) on batch dimensions.
   Acceptance: Gradient check -- numerical vs analytical gradients match within 1e-3.
 
+- [x] T47.2.4 Batch attention forward and backward across all samples  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-30
+  Deps: T47.2.1, T47.2.2
+  File: timeseries/patchtst_gpu_train.go
+  Replace per-sample CPU attention loops with batched engine ops. Reshape Q/K/V to
+  [bs*nHeads, numPatches, headDim], use 3D engine.MatMul for Q@K^T and scores@V,
+  engine.Softmax for batched softmax. Same for backward pass gradients.
+  Acceptance: (1) Batched output matches per-sample within 1e-5.
+  (2) Gradient check within 1e-3. (3) go test -race passes.
+
 - [x] T47.2.3 Wire PatchTST TrainWindowed to batched path  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30 PR #284
   Deps: T47.1.1, T47.2.1, T47.2.2
   File: timeseries/patchtst.go
@@ -2343,8 +2362,9 @@ All zero-dependency tasks. Saturates all agent slots.
 - [x] T48.2.1 TimeMixer engine forward  DONE 2026-03-30 PR #283  Deps: T48.1.1
 - [x] T48.2.3 TimeMixerAdapter  DONE 2026-03-30 PR #283  Deps: T48.1.1
 
-##### Wave E47-3: Integration (10 agents)
+##### Wave E47-3: Batched Attention + Integration (10 agents)
 
+- [x] T47.2.4 Batch attention forward/backward  DONE 2026-03-30  Deps: T47.2.1, T47.2.2
 - [x] T47.2.3 Wire PatchTST to batched path  DONE 2026-03-30 PR #284  Deps: T47.1.1, T47.2.1, T47.2.2
 - [x] T47.3.3 Wire iTransformer to batched path  DONE 2026-03-30 PR #284  Deps: T47.1.1, T47.3.1, T47.3.2
 - [x] T48.1.3 Future-multipredictor mixing  DONE 2026-03-30 PR #284  Deps: T48.1.2
@@ -2356,7 +2376,7 @@ All zero-dependency tasks. Saturates all agent slots.
 - [x] T49.3.2 Convert Moirai-2 weights to GGUF  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
 - [x] T49.4.1 forecast CLI command  DONE 2026-03-30 PR #286  Deps: T49.1.5
 
-##### Wave E47-4: Tests + Benchmarks (8 agents)
+##### Wave E47-4: Wiring + Tests + Benchmarks (9 agents)
 
 - [x] T47.5.1 Benchmark PatchTST 28K rows  DONE 2026-03-30 (CPU: 596s, target <60s requires CUDA)  Deps: T47.2.3
 - [x] T47.5.2 Benchmark iTransformer 28K rows  DONE 2026-03-30 (deferred: requires CUDA engine)  Deps: T47.3.3
