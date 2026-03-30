@@ -54,6 +54,7 @@ type FreTS struct {
 
 	normMeans [][]float64 // per-channel normalization means from training
 	normStds  [][]float64 // per-channel normalization stds from training
+	grads     []float64   // gradient accumulator for TrainableBackend
 }
 
 // FreTSOption configures a FreTS model.
@@ -695,120 +696,10 @@ func (f *FreTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 		return f.trainWindowedEngine(windows, labels, config)
 	}
 
-	if config.Epochs <= 0 {
-		config.Epochs = 100
-	}
-	if config.LR <= 0 {
-		config.LR = 1e-3
-	}
-	if config.Beta1 <= 0 {
-		config.Beta1 = 0.9
-	}
-	if config.Beta2 <= 0 {
-		config.Beta2 = 0.999
-	}
-	if config.Epsilon <= 0 {
-		config.Epsilon = 1e-8
-	}
-
 	// Z-score normalize inputs.
 	windows, f.normMeans, f.normStds = normalizeWindows(windows)
 
-	nParams := f.paramCount()
-	m := make([]float64, nParams)
-	v := make([]float64, nParams)
-
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
-	}
-
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			batchWindows := windows[start:end]
-			batchLabels := labels[start*f.config.Channels*f.config.OutputLen : end*f.config.Channels*f.config.OutputLen]
-
-			grads := make([]float64, nParams)
-			batchLoss := 0.0
-			bs := end - start
-
-			for s := 0; s < bs; s++ {
-				pred, cache := f.forwardWithCache(batchWindows[s])
-
-				// Compute dOut = 2 * (pred - label) / total_elements.
-				dOut := make([][]float64, f.config.Channels)
-				for c := 0; c < f.config.Channels; c++ {
-					dOut[c] = make([]float64, f.config.OutputLen)
-					for o := 0; o < f.config.OutputLen; o++ {
-						labelIdx := s*f.config.Channels*f.config.OutputLen + c*f.config.OutputLen + o
-						diff := pred[c][o] - batchLabels[labelIdx]
-						if !isFinite(diff) {
-							diff = 0
-						}
-						batchLoss += diff * diff
-						dOut[c][o] = 2.0 * diff / float64(bs*f.config.Channels*f.config.OutputLen)
-					}
-				}
-
-				sampleGrads := f.backward(dOut, cache)
-				for i := range grads {
-					grads[i] += sampleGrads[i]
-				}
-			}
-
-			batchLoss /= float64(bs * f.config.Channels * f.config.OutputLen)
-			epochLoss += batchLoss
-			nBatches++
-
-			// Gradient clipping.
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range grads {
-					norm += g * g
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					scale := config.GradClip / norm
-					for i := range grads {
-						grads[i] *= scale
-					}
-				}
-			}
-
-			// AdamW update with LR warmup.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			params := f.flatParams()
-			for i := range params {
-				m[i] = config.Beta1*m[i] + (1-config.Beta1)*grads[i]
-				v[i] = config.Beta2*v[i] + (1-config.Beta2)*grads[i]*grads[i]
-				mHat := m[i] / (1 - math.Pow(config.Beta1, t))
-				vHat := v[i] / (1 - math.Pow(config.Beta2, t))
-				*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("frets: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
-	return result, nil
+	return TrainLoop(f, windows, labels, config)
 }
 
 // PredictWindowed runs inference on windowed data.
@@ -896,6 +787,73 @@ func (f *FreTS) flatParams() []*float64 {
 
 	return params
 }
+
+// ForwardSample runs the FreTS forward pass on a single sample and returns
+// a flat output [channels*outputLen] with cached activations for BackwardSample.
+func (f *FreTS) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	output, cache := f.forwardWithCache(input)
+	flat := make([]float64, 0, f.config.Channels*f.config.OutputLen)
+	for c := 0; c < f.config.Channels; c++ {
+		flat = append(flat, output[c]...)
+	}
+	return flat, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (f *FreTS) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*fretsCache)
+	if !ok {
+		return fmt.Errorf("frets: invalid cache type")
+	}
+
+	if f.grads == nil {
+		f.grads = make([]float64, f.paramCount())
+	}
+
+	// Reshape flat dOutput [channels*outputLen] to [channels][outputLen].
+	dOut := make([][]float64, f.config.Channels)
+	for c := 0; c < f.config.Channels; c++ {
+		dOut[c] = dOutput[c*f.config.OutputLen : (c+1)*f.config.OutputLen]
+	}
+
+	sampleGrads := f.backward(dOut, cache)
+	for i := range sampleGrads {
+		f.grads[i] += sampleGrads[i]
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (f *FreTS) FlatGrads() []float64 {
+	if f.grads == nil {
+		f.grads = make([]float64, f.paramCount())
+	}
+	return f.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (f *FreTS) ZeroGrads() {
+	if f.grads == nil {
+		f.grads = make([]float64, f.paramCount())
+		return
+	}
+	for i := range f.grads {
+		f.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (f *FreTS) FlatParams() []*float64 {
+	return f.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (f *FreTS) ParamCount() int {
+	return f.paramCount()
+}
+
+// Compile-time check that FreTS implements TrainableBackend.
+var _ TrainableBackend = (*FreTS)(nil)
 
 // fretsWeights is the JSON-serializable form of FreTS parameters.
 type fretsWeights struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -164,8 +163,10 @@ type TTM struct {
 	encoder   []ttmMixerBlockF32
 	decoder   []ttmMixerBlockF32
 	head      linearLayer // forecastPatches * dModel -> forecastLen
-	normMeans [][]float64
-	normStds  [][]float64
+	normMeans   [][]float64
+	normStds    [][]float64
+	trainParams *ttmParamsF64 // extracted f64 params during training
+	grads       []float64    // gradient accumulator for TrainableBackend
 }
 
 // ttmMixerBlockF32 holds the float32 weights of a TSMixer block for inference.
@@ -1331,97 +1332,93 @@ func ttmLayerNormBackward(dNormed, centered [][]float64, invStd []float64,
 
 // trainWindowedCPU runs CPU-based training with analytical backpropagation.
 func (m *TTM) trainWindowedCPU(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
-	nSamples := len(windows)
-	outDim := m.config.ForecastLen
+	// Extract float64 params for training, store on model for TrainableBackend methods.
+	m.trainParams = m.extractParamsF64()
 
-	params := m.extractParamsF64()
-	trainableParams := params.flatParamsExcluding(m.config.FreezeEncoder)
-	nParams := len(trainableParams)
-	adamM := make([]float64, nParams)
-	adamV := make([]float64, nParams)
+	result, err := TrainLoop(m, windows, labels, config)
 
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
+	// Write trained params back to float32 tensors regardless of error,
+	// then clear training state.
+	if m.trainParams != nil {
+		m.writeBackF32(m.trainParams)
+		m.trainParams = nil
+		m.grads = nil
 	}
 
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			bs := end - start
-
-			grads := make([]float64, nParams)
-			batchLoss := 0.0
-
-			for s := 0; s < bs; s++ {
-				pred, cache := m.forwardF64WithCache(windows[start+s], params)
-				sampleLabels := labels[(start+s)*outDim : (start+s+1)*outDim]
-
-				dOutput := make([]float64, outDim)
-				for j := 0; j < outDim; j++ {
-					diff := pred[j] - sampleLabels[j]
-					batchLoss += diff * diff
-					dOutput[j] = 2.0 * diff / float64(bs*outDim)
-				}
-
-				sampleGrads := m.backwardF64(dOutput, params, cache, m.config.FreezeEncoder)
-				for pi := range grads {
-					grads[pi] += sampleGrads[pi]
-				}
-			}
-
-			batchLoss /= float64(bs * outDim)
-			epochLoss += batchLoss
-			nBatches++
-
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range grads {
-					norm += g * g
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					scale := config.GradClip / norm
-					for i := range grads {
-						grads[i] *= scale
-					}
-				}
-			}
-
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			for i := range trainableParams {
-				adamM[i] = config.Beta1*adamM[i] + (1-config.Beta1)*grads[i]
-				adamV[i] = config.Beta2*adamV[i] + (1-config.Beta2)*grads[i]*grads[i]
-				mHat := adamM[i] / (1 - math.Pow(config.Beta1, t))
-				vHat := adamV[i] / (1 - math.Pow(config.Beta2, t))
-				*trainableParams[i] = *trainableParams[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*trainableParams[i]))
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("ttm: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	m.writeBackF32(params)
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
-	return result, nil
+	return result, err
 }
+
+// ForwardSample runs the TTM forward pass on a single sample and returns
+// a flat output [forecastLen] with cached activations for BackwardSample.
+func (m *TTM) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	if m.trainParams == nil {
+		return nil, nil, fmt.Errorf("ttm: ForwardSample called outside training context")
+	}
+	output, cache := m.forwardF64WithCache(input, m.trainParams)
+	return output, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (m *TTM) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*ttmCacheF64)
+	if !ok {
+		return fmt.Errorf("ttm: invalid cache type")
+	}
+	if m.trainParams == nil {
+		return fmt.Errorf("ttm: BackwardSample called outside training context")
+	}
+
+	nParams := m.ParamCount()
+	if m.grads == nil {
+		m.grads = make([]float64, nParams)
+	}
+
+	sampleGrads := m.backwardF64(dOutput, m.trainParams, cache, m.config.FreezeEncoder)
+	for i := range sampleGrads {
+		m.grads[i] += sampleGrads[i]
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (m *TTM) FlatGrads() []float64 {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+	}
+	return m.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (m *TTM) ZeroGrads() {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+		return
+	}
+	for i := range m.grads {
+		m.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (m *TTM) FlatParams() []*float64 {
+	if m.trainParams == nil {
+		return nil
+	}
+	return m.trainParams.flatParamsExcluding(m.config.FreezeEncoder)
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (m *TTM) ParamCount() int {
+	if m.trainParams != nil {
+		return len(m.trainParams.flatParamsExcluding(m.config.FreezeEncoder))
+	}
+	// Estimate from config without extracting.
+	p := m.extractParamsF64()
+	return len(p.flatParamsExcluding(m.config.FreezeEncoder))
+}
+
+// Compile-time check that TTM implements TrainableBackend.
+var _ TrainableBackend = (*TTM)(nil)
 
 // Helper functions for float64 matrix operations.
 
