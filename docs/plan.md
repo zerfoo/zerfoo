@@ -1548,7 +1548,7 @@ All planned features shipped at v0.9.0. Only API review and version bump needed.
   Remove or unexport any symbols that should not be part of the v1 contract.
   Acceptance: go doc ./... lists only intentionally public symbols.
 
-- [ ] T46.1.2 Add API stability ADR in zonnx  Owner: TBD  Est: 1h  verifies: [UC-L05]
+- [x] T46.1.2 Add API stability ADR in zonnx  Owner: TBD  Est: 1h  verifies: [UC-L05]  DONE 2026-03-30 zonnx PR #21
   Create docs/adr/002-api-stability-v1.md documenting the v1 stability contract.
   List exported types, their stability guarantees, and which are safe to extend
   without a major version bump.
@@ -1573,7 +1573,7 @@ Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, a
   capture lifecycle. General terms only -- no specific model names or benchmark numbers.
   Acceptance: docs/design.md exists and covers all seven top-level packages.
 
-- [ ] T46.2.2 Write docs/QUALITY.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T46.2.2 Write docs/QUALITY.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #42
   This file is referenced in ci.yml but missing. Create docs/QUALITY.md covering:
   test coverage expectations, GPU-only test tagging convention (//go:build cuda),
   race detector policy, and the vet exclusions rationale for unsafe.Pointer packages.
@@ -1633,7 +1633,7 @@ Small, focused library. Needs design.md, expanded tests, and API review.
   compatibility layer, WordPiece variant, encode/decode interface contract.
   Acceptance: docs/design.md exists; covers BPE, GGUF loader, and HF compat sections.
 
-- [ ] T46.3.2 Expand test coverage for edge cases  Owner: TBD  Est: 3h  verifies: [UC-L04]
+- [x] T46.3.2 Expand test coverage for edge cases  Owner: TBD  Est: 3h  verifies: [UC-L04]  DONE 2026-03-30 ztoken PR #8
   Current: 5 test files. Add tests for:
   (a) Round-trip encode/decode identity on 100 HuggingFace model vocabs.
   (b) Byte-pair edge cases: unicode multibyte sequences, control chars.
@@ -1664,7 +1664,7 @@ Functional core with minimal documentation. Needs docs/, expanded tests, and API
   Note: FP8 E5M2 is out of scope for v1 (see T46.4.8).
   Acceptance: docs/design.md exists and covers the six documented sections.
 
-- [ ] T46.4.2 Verify FP8 E4M3FN arithmetic against NVIDIA cuDNN reference values  Owner: TBD  Est: 3h  verifies: [UC-L02]
+- [x] T46.4.2 Verify FP8 E4M3FN arithmetic against NVIDIA cuDNN reference values  Owner: TBD  Est: 3h  verifies: [UC-L02]  DONE 2026-03-30 float8 PR #13
   Write a test file that encodes the complete E4M3FN value table (256 values) and
   compares Add/Sub/Mul/Div results to expected IEEE 754 E4M3FN results.
   Reference: NVIDIA FP8 Formats for Deep Learning (2022).
@@ -1709,7 +1709,7 @@ Float16 is stable. BFloat16 needs Phases 2-5 from the existing plan.md in that r
   Ref: float16/docs/plan.md Phase 2.1 and 2.2.
   Acceptance: All Phase 2 functions implemented; go test -run TestBFloat16Arithmetic passes.
 
-- [ ] T46.5.2 BFloat16 Phase 2 tests  Owner: TBD  Est: 2h  verifies: [UC-L01]
+- [x] T46.5.2 BFloat16 Phase 2 tests  Owner: TBD  Est: 2h  verifies: [UC-L01]  DONE 2026-03-30 float16 PR #10
   Tests: NaN propagation through all 4 arithmetic ops with each ArithmeticMode value,
   gradual underflow at subnormal boundary, FMA correctness.
   Deps: T46.5.1
@@ -1804,11 +1804,11 @@ One agent per repo. All zero-dependency tasks in each track.
 
 ##### Wave E46-2: Docs + Tests (5 agents)
 
-- [ ] T46.1.2 Add zonnx API stability ADR  Deps: T46.1.1  verifies: [UC-L05]
-- [ ] T46.2.2 Write ztensor docs/QUALITY.md  Deps: T46.2.1  verifies: [infrastructure]
-- [ ] T46.3.2 Expand ztoken test coverage  Deps: T46.3.1  verifies: [UC-L04]
-- [ ] T46.4.2 Verify float8 arithmetic correctness  Deps: T46.4.1  verifies: [UC-L02]
-- [ ] T46.5.2 BFloat16 Phase 2 tests  Deps: T46.5.1  verifies: [UC-L01]
+- [x] T46.1.2 Add zonnx API stability ADR  DONE 2026-03-30 zonnx PR #21  Deps: T46.1.1  verifies: [UC-L05]
+- [x] T46.2.2 Write ztensor docs/QUALITY.md  DONE 2026-03-30 ztensor PR #42  Deps: T46.2.1  verifies: [infrastructure]
+- [x] T46.3.2 Expand ztoken test coverage  DONE 2026-03-30 ztoken PR #8  Deps: T46.3.1  verifies: [UC-L04]
+- [x] T46.4.2 Verify float8 arithmetic correctness  DONE 2026-03-30 float8 PR #13  Deps: T46.4.1  verifies: [UC-L02]
+- [x] T46.5.2 BFloat16 Phase 2 tests  DONE 2026-03-30 float16 PR #10  Deps: T46.5.1  verifies: [UC-L01]
 
 ##### Wave E46-3: Deep Work (5 agents)
 
