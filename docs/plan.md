@@ -1916,7 +1916,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   Acceptance: DataLoader produces correct batch tensors; shuffled order differs across epochs;
   all samples visited exactly once per epoch.
 
-- [ ] T47.1.2 Unit tests for DataLoader  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+- [x] T47.1.2 Unit tests for DataLoader  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]  DONE 2026-03-30 PR #283
   Deps: T47.1.1
   File: timeseries/dataloader_test.go
   Tests: (1) All samples visited per epoch. (2) Shuffle produces different order. (3) Partial
@@ -1934,7 +1934,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   Attention: `[batch*channels*nHeads, numPatches, headDim]`.
   Acceptance: Batched forward output matches sample-by-sample forward within 1e-5.
 
-- [ ] T47.2.2 Implement PatchTST batched backward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+- [x] T47.2.2 Implement PatchTST batched backward  Owner: TBD  Est: 4h  verifies: [UC-TS01]  DONE 2026-03-30 PR #283
   Deps: T47.2.1
   File: timeseries/patchtst_backward.go
   Rewrite backward pass to compute gradients on full `[batch, ...]` tensors.
@@ -1957,7 +1957,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   operates on `[batch, channels, dModel]`. Attention across channels: `[batch*nHeads, channels, headDim]`.
   Acceptance: Batched output matches sample-by-sample within 1e-5.
 
-- [ ] T47.3.2 Implement iTransformer batched backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T47.3.2 Implement iTransformer batched backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-30 PR #283
   Deps: T47.3.1
   File: timeseries/itransformer_backward.go
   Acceptance: Gradient check passes within 1e-3.
@@ -1995,12 +1995,12 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   TSMixer blocks operate on `[batch, numPatches, dModel]`.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.6 Implement batched forward for N-HiTS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.6 Implement batched forward for N-HiTS  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30 PR #283
   File: timeseries/nhits.go
   Hierarchical pooling + stack forward batched.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.7 Implement batched forward for N-BEATS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.7 Implement batched forward for N-BEATS  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30 PR #283
   File: timeseries/nbeats.go
   Stack architecture batched (basis expansion on `[batch, backcast_len]`).
   Acceptance: Batched matches sample-by-sample.
@@ -2061,7 +2061,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   Acceptance: Decomposition produces trend + seasonal at each scale; reconstruction
   (trend + seasonal) equals original within 1e-6.
 
-- [ ] T48.1.2 Implement past-decomposable mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.1.2 Implement past-decomposable mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #283
   Deps: T48.1.1
   File: timeseries/timemixer.go
   Mix decomposed seasonal and trend components across scales:
@@ -2089,7 +2089,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
 
 ### E48.2: TimeMixer Engine and Adapter
 
-- [ ] T48.2.1 Implement TimeMixer engine-accelerated forward  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.2.1 Implement TimeMixer engine-accelerated forward  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #283
   Deps: T48.1.3
   File: timeseries/timemixer_engine.go
   Engine-backed MatMul for all MLP layers. Moving average via engine Conv1D or manual
@@ -2103,7 +2103,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   mixing weights, prediction heads.
   Acceptance: Gradient check passes within 1e-3.
 
-- [ ] T48.2.3 Add TimeMixerAdapter to trainable.go  Owner: TBD  Est: 1.5h  verifies: [UC-TS02]
+- [x] T48.2.3 Add TimeMixerAdapter to trainable.go  Owner: TBD  Est: 1.5h  verifies: [UC-TS02]  DONE 2026-03-30 PR #283
   Deps: T48.1.3
   File: timeseries/trainable.go
   Implement TimeMixerAdapter satisfying `training.Model[float32]` interface.
@@ -2164,7 +2164,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   All ops via Engine[T]: MatMul, Exp, Sigmoid, Tanh, element-wise mul/add/div.
   Acceptance: Forward produces correct output shape. Manual computation matches.
 
-- [ ] T49.1.2 Implement mLSTM cell layer  Owner: TBD  Est: 4h  verifies: [UC-TS03]
+- [x] T49.1.2 Implement mLSTM cell layer  Owner: TBD  Est: 4h  verifies: [UC-TS03]  DONE 2026-03-30 PR #283
   File: layers/timeseries/mlstm.go
   Matrix LSTM with covariance memory update (xLSTM paper).
   Key/value: k_t = W_k * x_t, v_t = W_v * x_t, q_t = W_q * x_t.
@@ -2174,7 +2174,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Exponential gating same as sLSTM. Matrix memory C is [dModel, dModel].
   Acceptance: Forward correct. Outer product update verified on small matrix.
 
-- [ ] T49.1.3 Convert TiRex HuggingFace weights to GGUF  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.1.3 Convert TiRex HuggingFace weights to GGUF  Owner: TBD  Est: 3h  verifies: [UC-TS03]  DONE 2026-03-30 PR #283
   File: inference/timeseries/convert_tirex.go (or extend zonnx with TiRex support)
   Download NX-AI/TiRex SafeTensors from HuggingFace. Map tensor names to GGUF
   convention: tirex.block.{layer}.slstm.* / tirex.block.{layer}.mlstm.*.
@@ -2332,16 +2332,16 @@ All zero-dependency tasks. Saturates all agent slots.
 
 ##### Wave E47-2: Backward + Wiring (10 agents)
 
-- [ ] T47.1.2 DataLoader tests  Deps: T47.1.1
-- [ ] T47.2.2 PatchTST batched backward  Deps: T47.2.1
-- [ ] T47.3.2 iTransformer batched backward  Deps: T47.3.1
-- [ ] T47.4.6 N-HiTS batched forward  verifies: [UC-TS01]
-- [ ] T47.4.7 N-BEATS batched forward  verifies: [UC-TS01]
-- [ ] T48.1.2 Past-decomposable mixing  Deps: T48.1.1
-- [ ] T49.1.2 mLSTM cell layer  verifies: [UC-TS03]
-- [ ] T49.1.3 Convert TiRex weights to GGUF  verifies: [UC-TS03]
-- [ ] T48.2.1 TimeMixer engine forward  Deps: T48.1.1
-- [ ] T48.2.3 TimeMixerAdapter  Deps: T48.1.1
+- [x] T47.1.2 DataLoader tests  DONE 2026-03-30 PR #283  Deps: T47.1.1
+- [x] T47.2.2 PatchTST batched backward  DONE 2026-03-30 PR #283  Deps: T47.2.1
+- [x] T47.3.2 iTransformer batched backward  DONE 2026-03-30 PR #283  Deps: T47.3.1
+- [x] T47.4.6 N-HiTS batched forward  DONE 2026-03-30 PR #283  verifies: [UC-TS01]
+- [x] T47.4.7 N-BEATS batched forward  DONE 2026-03-30 PR #283  verifies: [UC-TS01]
+- [x] T48.1.2 Past-decomposable mixing  DONE 2026-03-30 PR #283  Deps: T48.1.1
+- [x] T49.1.2 mLSTM cell layer  DONE 2026-03-30 PR #283  verifies: [UC-TS03]
+- [x] T49.1.3 Convert TiRex weights to GGUF  DONE 2026-03-30 PR #283  verifies: [UC-TS03]
+- [x] T48.2.1 TimeMixer engine forward  DONE 2026-03-30 PR #283  Deps: T48.1.1
+- [x] T48.2.3 TimeMixerAdapter  DONE 2026-03-30 PR #283  Deps: T48.1.1
 
 ##### Wave E47-3: Integration (10 agents)
 
