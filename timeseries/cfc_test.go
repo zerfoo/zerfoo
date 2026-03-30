@@ -495,3 +495,97 @@ func TestCfC_PredictWindowed_NormalizationApplied(t *testing.T) {
 		}
 	}
 }
+
+func TestCfC_ForwardBatch_Parity(t *testing.T) {
+	config := CfCConfig{InputSize: 3, HiddenSize: 8, OutputSize: 2, NumLayers: 2, OutputLen: 4}
+	m, err := NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	// Create batch of 7 samples with 3 channels, inputLen=5.
+	batchSize := 7
+	nChannels := 3
+	inputLen := 5
+	windows := make([][][]float64, batchSize)
+	for s := 0; s < batchSize; s++ {
+		windows[s] = make([][]float64, nChannels)
+		for c := 0; c < nChannels; c++ {
+			windows[s][c] = make([]float64, inputLen)
+			for i := 0; i < inputLen; i++ {
+				windows[s][c][i] = float64(s*100+c*10+i) * 0.01
+			}
+		}
+	}
+
+	// Per-sample forward pass (reference).
+	outDim := config.OutputSize * config.OutputLen
+	perSamplePreds := make([][]float64, batchSize)
+	for s := 0; s < batchSize; s++ {
+		seqInput := transposeWindow(windows[s])
+		pred := m.forward(seqInput)
+		perSamplePreds[s] = pred
+	}
+
+	// Batched forward pass.
+	batchPreds := m.ForwardBatch(windows)
+
+	if len(batchPreds) != batchSize {
+		t.Fatalf("batched preds length = %d, want %d", len(batchPreds), batchSize)
+	}
+
+	const tol = 1e-12
+	for s := 0; s < batchSize; s++ {
+		if len(batchPreds[s]) != outDim {
+			t.Fatalf("sample %d: batched pred length = %d, want %d", s, len(batchPreds[s]), outDim)
+		}
+		for j := 0; j < outDim; j++ {
+			diff := math.Abs(batchPreds[s][j] - perSamplePreds[s][j])
+			if diff > tol {
+				t.Errorf("sample %d output[%d]: batched=%.15f, per-sample=%.15f, diff=%.4e",
+					s, j, batchPreds[s][j], perSamplePreds[s][j], diff)
+			}
+		}
+	}
+
+	t.Logf("parity check: %d samples, %d channels, %d layers — all predictions match within %.0e",
+		batchSize, nChannels, config.NumLayers, tol)
+}
+
+func TestCfC_ForwardBatch_EmptyBatch(t *testing.T) {
+	config := CfCConfig{InputSize: 2, HiddenSize: 4, OutputSize: 1, NumLayers: 1, OutputLen: 3}
+	m, err := NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	out := m.ForwardBatch(nil)
+	if out != nil {
+		t.Fatalf("expected nil for empty batch, got %v", out)
+	}
+}
+
+func TestCfC_ForwardBatch_SingleSample(t *testing.T) {
+	config := CfCConfig{InputSize: 2, HiddenSize: 6, OutputSize: 1, NumLayers: 1, OutputLen: 2}
+	m, err := NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	windows := [][][]float64{
+		{{0.1, 0.2, 0.3, 0.4}, {0.5, 0.6, 0.7, 0.8}},
+	}
+
+	seqInput := transposeWindow(windows[0])
+	singlePred := m.forward(seqInput)
+	batchPreds := m.ForwardBatch(windows)
+
+	if len(batchPreds) != 1 {
+		t.Fatalf("batch preds length = %d, want 1", len(batchPreds))
+	}
+	for j := range singlePred {
+		if batchPreds[0][j] != singlePred[j] {
+			t.Errorf("output[%d]: batched=%v, single=%v", j, batchPreds[0][j], singlePred[j])
+		}
+	}
+}
