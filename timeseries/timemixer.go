@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // TimeMixerConfig holds configuration for a TimeMixer model.
@@ -32,10 +35,13 @@ type TimeMixer struct {
 	// maWeights holds learnable moving average kernel weights per scale.
 	// maWeights[s] has length 2^(s+1) for scale s (0-indexed).
 	maWeights [][]float64
+
+	engine compute.Engine[float32]    // optional; enables GPU-accelerated forward
+	ops    numeric.Arithmetic[float32] // arithmetic ops for engine path
 }
 
 // NewTimeMixer creates a new TimeMixer model with the given configuration.
-func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
+func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 	if cfg.NumScales <= 0 {
 		cfg.NumScales = 4
 	}
@@ -61,6 +67,10 @@ func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
 			m.maWeights[s][i] = 1.0/float64(kernelSize) + rand.NormFloat64()*0.01
 		}
 		normalizeWeights(m.maWeights[s])
+	}
+
+	for _, opt := range opts {
+		opt(m)
 	}
 
 	return m
