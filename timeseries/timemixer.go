@@ -116,6 +116,9 @@ type TimeMixer struct {
 
 	engine compute.Engine[float32]    // optional; enables GPU-accelerated forward
 	ops    numeric.Arithmetic[float32] // arithmetic ops for engine path
+
+	// Training state for TrainableBackend.
+	grads []float64 // gradient accumulator
 }
 
 // NewTimeMixer creates a new TimeMixer model with the given configuration.
@@ -436,111 +439,133 @@ func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, epoch
 	}
 
 	nSamples := len(windows)
-	params := m.flatParams()
-	nParams := len(params)
+	outDim := m.config.NumFeatures * m.config.OutputLen
 
-	// AdamW state.
-	lr := 1e-3
-	beta1, beta2, eps := 0.9, 0.999, 1e-8
-	weightDecay := 0.01
-	gradClip := 1.0
-	warmupEpochs := min(5, epochs/5+1)
-
-	mState := make([]float64, nParams)
-	vState := make([]float64, nParams)
-
-	result := &TrainResult{}
-
-	for epoch := 0; epoch < epochs; epoch++ {
-		epochLoss := 0.0
-
-		// Linear warmup.
-		currentLR := lr
-		if epoch < warmupEpochs {
-			currentLR = lr * float64(epoch+1) / float64(warmupEpochs)
+	// Expand scalar labels to match the full output dimension.
+	// The original interface passes one scalar per sample; replicate it
+	// across all feature/output positions so TrainLoop's MSE is equivalent.
+	expandedLabels := make([]float64, nSamples*outDim)
+	for s := 0; s < nSamples; s++ {
+		for j := 0; j < outDim; j++ {
+			expandedLabels[s*outDim+j] = labels[s]
 		}
-
-		for s := 0; s < nSamples; s++ {
-			input := windows[s]
-			target := labels[s]
-
-			// Forward with cache.
-			msOut, cache := m.forwardWithCache(input)
-			pred := m.predict(msOut)
-
-			// MSE loss (average across features and output positions).
-			nf := m.config.NumFeatures
-			outLen := m.config.OutputLen
-			loss := 0.0
-			dScales := make([]scaleDecomposition, len(msOut.Scales))
-			for si := range dScales {
-				dScales[si].trend = make([][]float64, nf)
-				dScales[si].seasonal = make([][]float64, nf)
-				for f := 0; f < nf; f++ {
-					dScales[si].trend[f] = make([]float64, m.config.InputLen)
-					dScales[si].seasonal[f] = make([]float64, m.config.InputLen)
-				}
-			}
-
-			count := 0
-			for f := 0; f < nf; f++ {
-				for j := 0; j < outLen; j++ {
-					diff := pred[f][j] - target
-					loss += diff * diff
-					count++
-
-					// Gradient of MSE w.r.t. prediction.
-					dPred := 2.0 * diff / float64(count)
-
-					// Propagate through predict: average of trend across scales.
-					nScales := float64(len(msOut.Scales))
-					srcIdx := m.config.InputLen - outLen + j
-					if srcIdx < 0 {
-						srcIdx = 0
-					}
-					for si := range dScales {
-						dScales[si].trend[f][srcIdx] += dPred / nScales
-					}
-				}
-			}
-			if count > 0 {
-				loss /= float64(count)
-			}
-			epochLoss += loss
-
-			// Backward.
-			grads := newTimeMixerGrads(m)
-			m.backward(dScales, cache, &grads)
-			gradVec := grads.collectGrads(m)
-
-			// Gradient clipping.
-			norm := 0.0
-			for _, g := range gradVec {
-				norm += g * g
-			}
-			norm = math.Sqrt(norm)
-			if norm > gradClip {
-				scale := gradClip / norm
-				for i := range gradVec {
-					gradVec[i] *= scale
-				}
-			}
-
-			// AdamW update.
-			t := float64(epoch*nSamples + s + 1)
-			for i, p := range params {
-				g := gradVec[i]
-				mState[i] = beta1*mState[i] + (1-beta1)*g
-				vState[i] = beta2*vState[i] + (1-beta2)*g*g
-				mHat := mState[i] / (1 - math.Pow(beta1, t))
-				vHat := vState[i] / (1 - math.Pow(beta2, t))
-				*p -= currentLR * (mHat/(math.Sqrt(vHat)+eps) + weightDecay*(*p))
-			}
-		}
-
-		avgLoss := epochLoss / float64(nSamples)
-		result.LossHistory = append(result.LossHistory, avgLoss)
 	}
 
-	return result, nil
+	config := TrainConfig{
+		Epochs:       epochs,
+		LR:           1e-3,
+		WeightDecay:  0.01,
+		GradClip:     1.0,
+		WarmupEpochs: min(5, epochs/5+1),
+	}
+	return TrainLoop(m, windows, expandedLabels, config)
 }
+
+// ForwardSample runs the TimeMixer forward pass on a single sample and returns
+// a flat output with cached activations for BackwardSample.
+func (m *TimeMixer) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	msOut, cache := m.forwardWithCache(input)
+	pred := m.predict(msOut)
+
+	// Flatten [numFeatures][outputLen] to [numFeatures*outputLen].
+	nf := m.config.NumFeatures
+	outLen := m.config.OutputLen
+	if outLen <= 0 {
+		outLen = m.config.InputLen
+	}
+	flat := make([]float64, nf*outLen)
+	for f := 0; f < nf; f++ {
+		copy(flat[f*outLen:], pred[f])
+	}
+
+	return flat, &timeMixerTrainCache{msOut: msOut, cache: cache}, nil
+}
+
+// timeMixerTrainCache holds the forward pass state for BackwardSample.
+type timeMixerTrainCache struct {
+	msOut *MultiScaleOutput
+	cache *timeMixerCache
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (m *TimeMixer) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	tc, ok := cacheIface.(*timeMixerTrainCache)
+	if !ok {
+		return fmt.Errorf("timemixer: invalid cache type")
+	}
+
+	nf := m.config.NumFeatures
+	outLen := m.config.OutputLen
+	if outLen <= 0 {
+		outLen = m.config.InputLen
+	}
+
+	// Convert flat dOutput [nf*outLen] to dScales for backward.
+	dScales := make([]scaleDecomposition, len(tc.msOut.Scales))
+	for si := range dScales {
+		dScales[si].trend = make([][]float64, nf)
+		dScales[si].seasonal = make([][]float64, nf)
+		for f := 0; f < nf; f++ {
+			dScales[si].trend[f] = make([]float64, m.config.InputLen)
+			dScales[si].seasonal[f] = make([]float64, m.config.InputLen)
+		}
+	}
+
+	// Propagate through predict: average of trend across scales.
+	nScales := float64(len(tc.msOut.Scales))
+	for f := 0; f < nf; f++ {
+		for j := 0; j < outLen; j++ {
+			dPred := dOutput[f*outLen+j]
+			srcIdx := m.config.InputLen - outLen + j
+			if srcIdx < 0 {
+				srcIdx = 0
+			}
+			for si := range dScales {
+				dScales[si].trend[f][srcIdx] += dPred / nScales
+			}
+		}
+	}
+
+	// Backward into structured grads, then accumulate into flat grads.
+	structGrads := newTimeMixerGrads(m)
+	m.backward(dScales, tc.cache, &structGrads)
+	gradVec := structGrads.collectGrads(m)
+
+	flatGrads := m.FlatGrads()
+	for i := range flatGrads {
+		flatGrads[i] += gradVec[i]
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (m *TimeMixer) FlatGrads() []float64 {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+	}
+	return m.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (m *TimeMixer) ZeroGrads() {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+		return
+	}
+	for i := range m.grads {
+		m.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (m *TimeMixer) FlatParams() []*float64 {
+	return m.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (m *TimeMixer) ParamCount() int {
+	return len(m.flatParams())
+}
+
+// Compile-time check that TimeMixer implements TrainableBackend.
+var _ TrainableBackend = (*TimeMixer)(nil)

@@ -55,6 +55,10 @@ type PatchTST struct {
 	head      linearLayer // num_patches * d_model -> output_dim
 	normMeans [][]float64 // per-channel normalization means from training
 	normStds  [][]float64 // per-channel normalization stds from training
+
+	// Training state for TrainableBackend (CPU path only).
+	trainParams *patchTSTParamsF64 // extracted f64 params, set during TrainWindowed
+	grads       []float64          // gradient accumulator for TrainableBackend
 }
 
 // NewPatchTST creates a new PatchTST model with the given configuration.
@@ -743,8 +747,83 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 	if m.engine != nil {
 		return m.trainWindowedEngine(windows, labels, config)
 	}
-	return m.trainWindowedCPU(windows, labels, config)
+
+	// Extract float64 params for CPU training via TrainLoop.
+	m.trainParams = m.extractParamsF64()
+	m.grads = nil
+
+	result, err := TrainLoop(m, windows, labels, config)
+
+	// Write trained params back to float32 tensors.
+	m.writeBackF32(m.trainParams)
+	m.trainParams = nil
+
+	return result, err
 }
+
+// ForwardSample runs the PatchTST forward pass on a single sample and returns
+// a flat output with cached activations for BackwardSample.
+func (m *PatchTST) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	if m.trainParams == nil {
+		return nil, nil, fmt.Errorf("patchtst: ForwardSample requires active training state (call TrainWindowed)")
+	}
+	output, cache := m.forwardF64WithCache(input, m.trainParams)
+	return output, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (m *PatchTST) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*patchTSTCacheF64)
+	if !ok {
+		return fmt.Errorf("patchtst: invalid cache type")
+	}
+	sampleGrads := m.backwardF64(dOutput, m.trainParams, cache)
+	grads := m.FlatGrads()
+	for i := range grads {
+		grads[i] += sampleGrads[i]
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (m *PatchTST) FlatGrads() []float64 {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+	}
+	return m.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (m *PatchTST) ZeroGrads() {
+	if m.grads == nil {
+		m.grads = make([]float64, m.ParamCount())
+		return
+	}
+	for i := range m.grads {
+		m.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (m *PatchTST) FlatParams() []*float64 {
+	if m.trainParams == nil {
+		return nil
+	}
+	return m.trainParams.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (m *PatchTST) ParamCount() int {
+	if m.trainParams != nil {
+		return m.trainParams.paramCount()
+	}
+	// Compute from config without extracting params.
+	p := m.extractParamsF64()
+	return p.paramCount()
+}
+
+// Compile-time check that PatchTST implements TrainableBackend.
+var _ TrainableBackend = (*PatchTST)(nil)
 
 // PredictWindowed runs inference on windowed data.
 // windows: [nSamples][channels][inputLen].
