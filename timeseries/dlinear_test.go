@@ -489,30 +489,6 @@ func TestIsFinite(t *testing.T) {
 	}
 }
 
-func TestWarmupLR(t *testing.T) {
-	tests := []struct {
-		name         string
-		baseLR       float64
-		epoch        int
-		warmupEpochs int
-		want         float64
-	}{
-		{"epoch 0 of 5", 1e-3, 0, 5, 1e-3 * 1.0 / 5.0},
-		{"epoch 1 of 5", 1e-3, 1, 5, 1e-3 * 2.0 / 5.0},
-		{"epoch 4 of 5", 1e-3, 4, 5, 1e-3},
-		{"epoch 9 of 5", 1e-3, 9, 5, 1e-3},
-		{"no warmup", 1e-3, 0, 0, 1e-3},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := warmupLR(tt.baseLR, tt.epoch, tt.warmupEpochs)
-			if math.Abs(got-tt.want) > 1e-15 {
-				t.Errorf("warmupLR(%v, %d, %d) = %v, want %v", tt.baseLR, tt.epoch, tt.warmupEpochs, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNormalizeWindows(t *testing.T) {
 	// 3 samples, 2 channels, 4 timesteps. Channel 0 has values ~100,
 	// channel 1 has values ~0.001. After normalization both should be ~O(1).

@@ -38,19 +38,6 @@ func DefaultTrainConfig() TrainConfig {
 	}
 }
 
-// warmupLR returns the effective learning rate for the given epoch,
-// applying linear warmup over the first warmupEpochs epochs.
-func warmupLR(baseLR float64, epoch, warmupEpochs int) float64 {
-	if warmupEpochs <= 0 {
-		return baseLR
-	}
-	scale := float64(epoch+1) / float64(warmupEpochs)
-	if scale > 1.0 {
-		scale = 1.0
-	}
-	return baseLR * scale
-}
-
 // isFinite returns true if v is neither NaN nor Inf.
 func isFinite(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
@@ -141,6 +128,14 @@ type DLinear struct {
 	engine    compute.Engine[float32] // optional; enables GPU-accelerated training
 	normMeans [][]float64            // per-channel normalization means from training
 	normStds  [][]float64            // per-channel normalization stds from training
+	grads     []float64              // gradient accumulator for TrainableBackend
+}
+
+// dlinearCache holds activations from a forward pass needed for backpropagation.
+type dlinearCache struct {
+	trend    [][]float64 // [channels][inputLen] — trend component
+	seasonal [][]float64 // [channels][inputLen] — seasonal component
+	output   [][]float64 // [channels][outputLen] — model output
 }
 
 // DLinearOption configures a DLinear model.
@@ -299,129 +294,10 @@ func (d *DLinear) TrainWindowed(windows [][][]float64, labels []float64, config 
 		return d.trainWindowedEngine(windows, labels, config)
 	}
 
-	if config.Epochs <= 0 {
-		config.Epochs = 100
-	}
-	if config.LR <= 0 {
-		config.LR = 1e-3
-	}
-	if config.Beta1 <= 0 {
-		config.Beta1 = 0.9
-	}
-	if config.Beta2 <= 0 {
-		config.Beta2 = 0.999
-	}
-	if config.Epsilon <= 0 {
-		config.Epsilon = 1e-8
-	}
-
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
 	windows, d.normMeans, d.normStds = normalizeWindows(windows)
 
-	// Flatten all parameters and their gradients for AdamW.
-	nParams := d.paramCount()
-	m := make([]float64, nParams) // first moment
-	v := make([]float64, nParams) // second moment
-
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
-	}
-
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			batchWindows := windows[start:end]
-			batchLabels := labels[start*d.config.Channels*d.config.OutputLen : end*d.config.Channels*d.config.OutputLen]
-
-			grads := make([]float64, nParams)
-			batchLoss := 0.0
-			bs := end - start
-
-			for s := 0; s < bs; s++ {
-				pred := d.forward(batchWindows[s])
-				trend, seasonal := d.decompose(batchWindows[s])
-
-				for c := 0; c < d.config.Channels; c++ {
-					for o := 0; o < d.config.OutputLen; o++ {
-						labelIdx := s*d.config.Channels*d.config.OutputLen + c*d.config.OutputLen + o
-						diff := pred[c][o] - batchLabels[labelIdx]
-						batchLoss += diff * diff
-
-						// Gradient of MSE: 2*diff / total_elements
-						dOut := 2.0 * diff / float64(bs*d.config.Channels*d.config.OutputLen)
-
-						// Gradients for trend linear.
-						tOff := d.trendParamOffset(c)
-						for i := 0; i < d.config.InputLen; i++ {
-							grads[tOff+o*d.config.InputLen+i] += dOut * trend[c][i]
-						}
-						grads[tOff+d.config.OutputLen*d.config.InputLen+o] += dOut
-
-						// Gradients for seasonal linear.
-						sOff := d.seasonalParamOffset(c)
-						for i := 0; i < d.config.InputLen; i++ {
-							grads[sOff+o*d.config.InputLen+i] += dOut * seasonal[c][i]
-						}
-						grads[sOff+d.config.OutputLen*d.config.InputLen+o] += dOut
-					}
-				}
-			}
-
-			batchLoss /= float64(bs * d.config.Channels * d.config.OutputLen)
-			epochLoss += batchLoss
-			nBatches++
-
-			// Gradient clipping.
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range grads {
-					norm += g * g
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					scale := config.GradClip / norm
-					for i := range grads {
-						grads[i] *= scale
-					}
-				}
-			}
-
-			// AdamW update with LR warmup.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			params := d.flatParams()
-			for i := range params {
-				m[i] = config.Beta1*m[i] + (1-config.Beta1)*grads[i]
-				v[i] = config.Beta2*v[i] + (1-config.Beta2)*grads[i]*grads[i]
-				mHat := m[i] / (1 - math.Pow(config.Beta1, t))
-				vHat := v[i] / (1 - math.Pow(config.Beta2, t))
-				// AdamW: weight decay applied to param directly, not through gradient.
-				*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		// Early halt on NaN/Inf loss.
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("dlinear: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
-	return result, nil
+	return TrainLoop(d, windows, labels, config)
 }
 
 // applyNormalization normalizes windows using stored means and stds from training.
@@ -519,6 +395,90 @@ func (d *DLinear) flatParams() []*float64 {
 	}
 	return params
 }
+
+// ForwardSample runs the DLinear forward pass on a single sample and returns
+// a flat output with cached activations for BackwardSample.
+func (d *DLinear) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	trend, seasonal := d.decompose(input)
+	output := d.forward(input)
+
+	flat := make([]float64, 0, d.config.Channels*d.config.OutputLen)
+	for c := 0; c < d.config.Channels; c++ {
+		flat = append(flat, output[c]...)
+	}
+
+	cache := &dlinearCache{
+		trend:    trend,
+		seasonal: seasonal,
+		output:   output,
+	}
+	return flat, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (d *DLinear) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*dlinearCache)
+	if !ok {
+		return fmt.Errorf("dlinear: invalid cache type")
+	}
+
+	if d.grads == nil {
+		d.grads = make([]float64, d.paramCount())
+	}
+
+	for c := 0; c < d.config.Channels; c++ {
+		for o := 0; o < d.config.OutputLen; o++ {
+			dOut := dOutput[c*d.config.OutputLen+o]
+
+			// Gradients for trend linear.
+			tOff := d.trendParamOffset(c)
+			for i := 0; i < d.config.InputLen; i++ {
+				d.grads[tOff+o*d.config.InputLen+i] += dOut * cache.trend[c][i]
+			}
+			d.grads[tOff+d.config.OutputLen*d.config.InputLen+o] += dOut
+
+			// Gradients for seasonal linear.
+			sOff := d.seasonalParamOffset(c)
+			for i := 0; i < d.config.InputLen; i++ {
+				d.grads[sOff+o*d.config.InputLen+i] += dOut * cache.seasonal[c][i]
+			}
+			d.grads[sOff+d.config.OutputLen*d.config.InputLen+o] += dOut
+		}
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (d *DLinear) FlatGrads() []float64 {
+	if d.grads == nil {
+		d.grads = make([]float64, d.paramCount())
+	}
+	return d.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (d *DLinear) ZeroGrads() {
+	if d.grads == nil {
+		d.grads = make([]float64, d.paramCount())
+		return
+	}
+	for i := range d.grads {
+		d.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (d *DLinear) FlatParams() []*float64 {
+	return d.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (d *DLinear) ParamCount() int {
+	return d.paramCount()
+}
+
+// Compile-time check that DLinear implements TrainableBackend.
+var _ TrainableBackend = (*DLinear)(nil)
 
 // dlinearWeights is the JSON-serializable form of DLinear parameters.
 type dlinearWeights struct {
