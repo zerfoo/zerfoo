@@ -1942,7 +1942,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   (transposed) on batch dimensions.
   Acceptance: Gradient check -- numerical vs analytical gradients match within 1e-3.
 
-- [ ] T47.2.3 Wire PatchTST TrainWindowed to batched path  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.2.3 Wire PatchTST TrainWindowed to batched path  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30 PR #284
   Deps: T47.1.1, T47.2.1, T47.2.2
   File: timeseries/patchtst.go
   When engine is set (WithEngine option), TrainWindowed uses DataLoader + forwardBatchEngine
@@ -1962,7 +1962,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
   File: timeseries/itransformer_backward.go
   Acceptance: Gradient check passes within 1e-3.
 
-- [ ] T47.3.3 Wire iTransformer TrainWindowed to batched path  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+- [x] T47.3.3 Wire iTransformer TrainWindowed to batched path  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]  DONE 2026-03-30 PR #284
   Deps: T47.1.1, T47.3.1, T47.3.2
   File: timeseries/itransformer.go
   Acceptance: TrainWindowed with engine produces decreasing loss.
@@ -2070,7 +2070,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   - Bottom-up mixing: coarse scale informs fine scale via additive residuals
   Acceptance: Forward produces mixed seasonal and trend representations.
 
-- [ ] T48.1.3 Implement future-multipredictor mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.1.3 Implement future-multipredictor mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #284
   Deps: T48.1.2
   File: timeseries/timemixer.go
   Generate scale-specific forecasts and combine:
@@ -2096,7 +2096,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   cumsum+subtract. GPU path for the mixing MLPs.
   Acceptance: Engine forward matches pure-Go forward within 1e-4.
 
-- [ ] T48.2.2 Implement TimeMixer backward pass  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.2.2 Implement TimeMixer backward pass  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #284
   Deps: T48.2.1
   File: timeseries/timemixer_backward.go
   Gradient computation for all learnable parameters: decomposition weights, scale MLPs,
@@ -2181,7 +2181,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Write GGUF with architecture metadata (num_layers, hidden_dim, block_types).
   Acceptance: GGUF file produced. Tensor count and shapes match HuggingFace checkpoint.
 
-- [ ] T49.1.4 Implement TiRex graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.1.4 Implement TiRex graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]  DONE 2026-03-30 PR #284
   Deps: T49.1.1, T49.1.2, T49.1.3
   File: inference/timeseries/arch_tirex.go
   BuildTiRex[T] function following existing pattern (arch_patchtst.go, arch_ttm.go).
@@ -2211,14 +2211,14 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
 
 ### E49.2: Chronos-2 (T5 Encoder-Decoder)
 
-- [ ] T49.2.1 Implement value tokenizer for Chronos  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.2.1 Implement value tokenizer for Chronos  Owner: TBD  Est: 2h  verifies: [UC-TS03]  DONE 2026-03-30 PR #284
   File: layers/timeseries/value_tokenizer.go
   Chronos tokenizes continuous values into discrete bins. Bin edges are learned
   during pre-training and stored in model config. Tokenize: map float -> bin index.
   Detokenize: map bin index -> bin center (or sample from bin distribution).
   Acceptance: Round-trip tokenize/detokenize within bin width tolerance.
 
-- [ ] T49.2.2 Convert Chronos-2 weights to GGUF  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.2.2 Convert Chronos-2 weights to GGUF  DONE 2026-03-30 PR #284  Owner: TBD  Est: 2h  verifies: [UC-TS03]
   File: inference/timeseries/convert_chronos.go
   Map T5 encoder-decoder weights (amazon/chronos-t5-*) to GGUF. T5 architecture
   uses existing transformer layer types (self-attention, cross-attention, FFN).
@@ -2240,14 +2240,14 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
 
 ### E49.3: Moirai-2 (Masked Encoder)
 
-- [ ] T49.3.1 Implement any-variate input projection  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.3.1 Implement any-variate input projection  Owner: TBD  Est: 2h  verifies: [UC-TS03]  DONE 2026-03-30 PR #284
   File: layers/timeseries/variate_projection.go
   Moirai-2 handles arbitrary numbers of variates by projecting each variate
   independently, then concatenating with a frequency embedding. Supports
   different variates having different lengths (padding + attention mask).
   Acceptance: Projection handles 1, 5, 20 variates correctly.
 
-- [ ] T49.3.2 Convert Moirai-2 weights to GGUF  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.3.2 Convert Moirai-2 weights to GGUF  DONE 2026-03-30 PR #284  Owner: TBD  Est: 2h  verifies: [UC-TS03]
   File: inference/timeseries/convert_moirai.go
   Map Salesforce/moirai-2-* weights to GGUF. Standard transformer encoder with
   masked patches.
@@ -2345,15 +2345,15 @@ All zero-dependency tasks. Saturates all agent slots.
 
 ##### Wave E47-3: Integration (10 agents)
 
-- [ ] T47.2.3 Wire PatchTST to batched path  Deps: T47.1.1, T47.2.1, T47.2.2
-- [ ] T47.3.3 Wire iTransformer to batched path  Deps: T47.1.1, T47.3.1, T47.3.2
-- [ ] T48.1.3 Future-multipredictor mixing  Deps: T48.1.2
-- [ ] T48.2.2 TimeMixer backward  Deps: T48.2.1
-- [ ] T49.1.4 TiRex graph builder  Deps: T49.1.1, T49.1.2, T49.1.3
-- [ ] T49.2.1 Chronos value tokenizer  verifies: [UC-TS03]
-- [ ] T49.2.2 Convert Chronos-2 weights to GGUF  verifies: [UC-TS03]
-- [ ] T49.3.1 Any-variate input projection  verifies: [UC-TS03]
-- [ ] T49.3.2 Convert Moirai-2 weights to GGUF  verifies: [UC-TS03]
+- [x] T47.2.3 Wire PatchTST to batched path  DONE 2026-03-30 PR #284  Deps: T47.1.1, T47.2.1, T47.2.2
+- [x] T47.3.3 Wire iTransformer to batched path  DONE 2026-03-30 PR #284  Deps: T47.1.1, T47.3.1, T47.3.2
+- [x] T48.1.3 Future-multipredictor mixing  DONE 2026-03-30 PR #284  Deps: T48.1.2
+- [x] T48.2.2 TimeMixer backward  DONE 2026-03-30 PR #284  Deps: T48.2.1
+- [x] T49.1.4 TiRex graph builder  DONE 2026-03-30 PR #284  Deps: T49.1.1, T49.1.2, T49.1.3
+- [x] T49.2.1 Chronos value tokenizer  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
+- [x] T49.2.2 Convert Chronos-2 weights to GGUF  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
+- [x] T49.3.1 Any-variate input projection  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
+- [x] T49.3.2 Convert Moirai-2 weights to GGUF  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
 - [ ] T49.4.1 forecast CLI command  Deps: T49.1.5
 
 ##### Wave E47-4: Tests + Benchmarks (8 agents)
