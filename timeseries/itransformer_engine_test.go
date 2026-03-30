@@ -8,7 +8,82 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
+
+
+// TestITransformer_ForwardBatchEngine_Parity verifies that the batched engine
+// forward pass produces output matching sample-by-sample forward within 1e-5.
+func TestITransformer_ForwardBatchEngine_Parity(t *testing.T) {
+	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	channels := 4
+	inputLen := 10
+	outputLen := 3
+	batch := 5
+
+	config := ITransformerConfig{
+		Channels: channels, InputLen: inputLen, OutputLen: outputLen,
+		DModel: 16, DFF: 32, NHeads: 2, NLayers: 2,
+	}
+	m, err := NewITransformer(config, eng, numeric.Float32Ops{})
+	if err != nil {
+		t.Fatalf("NewITransformer: %v", err)
+	}
+
+	rng := rand.New(rand.NewPCG(42, 0))
+
+	// Build input data.
+	inputData := make([]float32, batch*channels*inputLen)
+	samples := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		samples[b] = make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			samples[b][c] = make([]float64, inputLen)
+			for i := 0; i < inputLen; i++ {
+				v := rng.NormFloat64()
+				samples[b][c][i] = v
+				inputData[b*channels*inputLen+c*inputLen+i] = float32(v)
+			}
+		}
+	}
+
+	// Sample-by-sample forward (reference).
+	sampleOutputs := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		sampleOutputs[b] = m.forward(samples[b])
+	}
+
+	// Batched forward.
+	inputTensor, err := tensor.New[float32]([]int{batch, channels, inputLen}, inputData)
+	if err != nil {
+		t.Fatalf("tensor.New: %v", err)
+	}
+	batchOut, err := m.forwardBatchEngine(context.Background(), inputTensor)
+	if err != nil {
+		t.Fatalf("forwardBatchEngine: %v", err)
+	}
+
+	outShape := batchOut.Shape()
+	if outShape[0] != batch || outShape[1] != channels || outShape[2] != outputLen {
+		t.Fatalf("output shape = %v, want [%d, %d, %d]", outShape, batch, channels, outputLen)
+	}
+
+	outData := batchOut.Data()
+	const tol = 1e-5
+	for b := 0; b < batch; b++ {
+		for c := 0; c < channels; c++ {
+			for o := 0; o < outputLen; o++ {
+				got := float64(outData[b*channels*outputLen+c*outputLen+o])
+				want := sampleOutputs[b][c][o]
+				diff := math.Abs(got - want)
+				if diff > tol {
+					t.Errorf("batch[%d] chan[%d] out[%d]: got=%f want=%f diff=%f > tol=%f",
+						b, c, o, got, want, diff, tol)
+				}
+			}
+		}
+	}
+}
 
 func TestITransformer_TrainWindowed_Engine(t *testing.T) {
 	eng := compute.NewCPUEngine[float32](numeric.Float32Ops{})
