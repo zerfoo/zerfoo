@@ -2319,16 +2319,16 @@ Sync points:
 
 All zero-dependency tasks. Saturates all agent slots.
 
-- [ ] T47.1.1 Implement DataLoader  verifies: [UC-TS01]
-- [ ] T47.2.1 PatchTST batched forward  verifies: [UC-TS01]
-- [ ] T47.3.1 iTransformer batched forward  verifies: [UC-TS01]
-- [ ] T47.4.1 DLinear batched forward  verifies: [UC-TS01]
-- [ ] T47.4.2 Mamba batched forward  verifies: [UC-TS01]
-- [ ] T48.1.1 TimeMixer multi-scale decomposition  verifies: [UC-TS02]
-- [ ] T49.1.1 sLSTM cell layer  verifies: [UC-TS03]
-- [ ] T47.4.3 CfC batched forward  verifies: [UC-TS01]
-- [ ] T47.4.4 FreTS batched forward  verifies: [UC-TS01]
-- [ ] T47.4.5 TTM batched forward  verifies: [UC-TS01]
+- [x] T47.1.1 Implement DataLoader  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.2.1 PatchTST batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.3.1 iTransformer batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.4.1 DLinear batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.4.2 Mamba batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T48.1.1 TimeMixer multi-scale decomposition  DONE 2026-03-30 PR #281  verifies: [UC-TS02]
+- [x] T49.1.1 sLSTM cell layer  DONE 2026-03-30 PR #281  verifies: [UC-TS03]
+- [x] T47.4.3 CfC batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.4.4 FreTS batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
+- [x] T47.4.5 TTM batched forward  DONE 2026-03-30 PR #281  verifies: [UC-TS01]
 
 ##### Wave E47-2: Backward + Wiring (10 agents)
 
