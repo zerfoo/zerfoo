@@ -74,6 +74,67 @@ func TestFreTS_TrainWindowed_Engine(t *testing.T) {
 	t.Logf("engine training: first_loss=%.6f, final_loss=%.6f", firstLoss, lastLoss)
 }
 
+func TestFreTS_ForwardBatch_MatchesSampleBySample(t *testing.T) {
+	inputLen := 32
+	outputLen := 8
+	channels := 3
+	batch := 10
+
+	config := FreTSConfig{
+		Channels:   channels,
+		InputLen:   inputLen,
+		OutputLen:  outputLen,
+		TopK:       4,
+		HiddenSize: 16,
+	}
+	m, err := NewFreTS(config)
+	if err != nil {
+		t.Fatalf("NewFreTS: %v", err)
+	}
+
+	// Build input: [batch][channels][inputLen].
+	inputs := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		inputs[b] = make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			inputs[b][c] = make([]float64, inputLen)
+			for i := 0; i < inputLen; i++ {
+				inputs[b][c][i] = math.Sin(float64(b*channels*inputLen+c*inputLen+i)*0.3) + float64(c)*0.5
+			}
+		}
+	}
+
+	// Sample-by-sample reference.
+	want := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		want[b] = m.forward(inputs[b])
+	}
+
+	// Batched forward.
+	got := m.forwardBatch(inputs)
+
+	if len(got) != batch {
+		t.Fatalf("forwardBatch returned %d samples, want %d", len(got), batch)
+	}
+	for b := 0; b < batch; b++ {
+		if len(got[b]) != channels {
+			t.Fatalf("sample %d: got %d channels, want %d", b, len(got[b]), channels)
+		}
+		for c := 0; c < channels; c++ {
+			if len(got[b][c]) != outputLen {
+				t.Fatalf("sample %d channel %d: got len %d, want %d", b, c, len(got[b][c]), outputLen)
+			}
+			for o := 0; o < outputLen; o++ {
+				diff := math.Abs(got[b][c][o] - want[b][c][o])
+				if diff > 1e-9 {
+					t.Errorf("sample %d channel %d output %d: got %v, want %v (diff %v)",
+						b, c, o, got[b][c][o], want[b][c][o], diff)
+				}
+			}
+		}
+	}
+}
+
 func TestFreTS_TrainWindowed_NilEngine_Unchanged(t *testing.T) {
 	config := FreTSConfig{
 		Channels:   1,
