@@ -26,9 +26,9 @@ func WithTimeMixerEngine(engine compute.Engine[float32], ops numeric.Arithmetic[
 // computed via engine.MatMul by constructing a causal convolution (Toeplitz)
 // matrix from the learnable kernel weights. Falls back to the CPU path on
 // any engine error.
-func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*MultiScaleOutput, error) {
+func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*TimeMixerOutput, error) {
 	if m.engine == nil {
-		return m.Forward(input)
+		fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 	}
 
 	if len(input) == 0 {
@@ -55,7 +55,7 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Mult
 	}
 	xT, err := tensor.New[float32]([]int{nf, inputLen}, xFlat)
 	if err != nil {
-		return m.Forward(input)
+		fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 	}
 
 	scales := make([]scaleDecomposition, m.config.NumScales)
@@ -85,7 +85,7 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Mult
 
 		toepT, err := tensor.New[float32]([]int{inputLen, inputLen}, toepFlat)
 		if err != nil {
-			return m.Forward(input)
+			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 		}
 
 		// Transpose x to [inputLen x numFeatures] so we can do toeplitz @ xT
@@ -106,20 +106,20 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Mult
 		}
 		toepTransT, err := tensor.New[float32]([]int{inputLen, inputLen}, toepTransFlat)
 		if err != nil {
-			return m.Forward(input)
+			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 		}
 		_ = toepT
 
 		// trend = x @ toeplitz^T : [nf x inputLen] @ [inputLen x inputLen] = [nf x inputLen]
 		trendT, err := m.engine.MatMul(ctx, xT, toepTransT)
 		if err != nil {
-			return m.Forward(input)
+			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 		}
 
 		// seasonal = x - trend (via engine.Sub)
 		seasonalT, err := m.engine.Sub(ctx, xT, trendT)
 		if err != nil {
-			return m.Forward(input)
+			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
 		}
 
 		// Unpack trend and seasonal back to [][]float64.
@@ -142,5 +142,28 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Mult
 	}
 
 	mixed := m.pastDecomposableMixing(scales)
-	return &MultiScaleOutput{Scales: mixed}, nil
+
+	// Compute softmax mixing weights.
+	smWeights := make([]float64, len(m.mixWeights))
+	copy(smWeights, m.mixWeights)
+	normalizeWeights(smWeights)
+
+	// Project each scale and combine forecasts.
+	outLen := m.config.OutputLen
+	forecast := make([][]float64, nf)
+	for f := 0; f < nf; f++ {
+		forecast[f] = make([]float64, outLen)
+		for s := 0; s < len(mixed); s++ {
+			trendProj := linearProject(mixed[s].trend[f], m.trendHeads[s], outLen)
+			seasonProj := linearProject(mixed[s].seasonal[f], m.seasonalHeads[s], outLen)
+			for j := 0; j < outLen; j++ {
+				forecast[f][j] += smWeights[s] * (trendProj[j] + seasonProj[j])
+			}
+		}
+	}
+
+	return &TimeMixerOutput{
+		Forecast:         forecast,
+		MultiScaleOutput: MultiScaleOutput{Scales: mixed},
+	}, nil
 }
