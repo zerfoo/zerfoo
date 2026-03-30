@@ -1227,8 +1227,8 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 		}
 
 		// Backward through feat layer norm.
-		dNormInput := ttmLayerNormBackward(dNormed, mc.featCentered, mc.featInvStd,
-			layer.featNormScale, grads.featNormScale, grads.featNormBias, nPatches, dModel)
+		dNormInput := layerNormBackwardF64(dNormed, mc.featCentered, mc.featInvStd,
+			layer.featNormScale, grads.featNormScale, grads.featNormBias, dModel)
 
 		// Add residual gradient.
 		for p := 0; p < nPatches; p++ {
@@ -1283,8 +1283,8 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 	dNormed := transposeMatrix(dNormedT, dModel, nPatches)
 
 	// Backward through time layer norm.
-	dNormInput := ttmLayerNormBackward(dNormed, mc.centered, mc.invStd,
-		layer.timeNormScale, grads.timeNormScale, grads.timeNormBias, nPatches, dModel)
+	dNormInput := layerNormBackwardF64(dNormed, mc.centered, mc.invStd,
+		layer.timeNormScale, grads.timeNormScale, grads.timeNormBias, dModel)
 
 	// Add residual gradient.
 	for p := 0; p < nPatches; p++ {
@@ -1294,40 +1294,6 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 	}
 
 	return dNormInput
-}
-
-// ttmLayerNormBackward computes gradients through layer normalization.
-func ttmLayerNormBackward(dNormed, centered [][]float64, invStd []float64,
-	scale, gradScale, gradBias []float64, n, dModel int) [][]float64 {
-	dx := make([][]float64, n)
-	for p := 0; p < n; p++ {
-		dx[p] = make([]float64, dModel)
-		// Compute dNormedScaled = dNormed * scale.
-		dScaled := make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			gradBias[j] += dNormed[p][j]
-			gradScale[j] += dNormed[p][j] * centered[p][j] * invStd[p]
-			dScaled[j] = dNormed[p][j] * scale[j]
-		}
-
-		// dCentered = dScaled * invStd.
-		// dx = dCentered - mean(dCentered) - centered * mean(dCentered * centered) * invStd^2
-		meanDScaled := 0.0
-		meanDScaledCentered := 0.0
-		for j := 0; j < dModel; j++ {
-			dc := dScaled[j] * invStd[p]
-			meanDScaled += dc
-			meanDScaledCentered += dc * centered[p][j] * invStd[p]
-		}
-		meanDScaled /= float64(dModel)
-		meanDScaledCentered /= float64(dModel)
-
-		for j := 0; j < dModel; j++ {
-			dc := dScaled[j] * invStd[p]
-			dx[p][j] = dc - meanDScaled - centered[p][j]*invStd[p]*meanDScaledCentered
-		}
-	}
-	return dx
 }
 
 // trainWindowedCPU runs CPU-based training with analytical backpropagation.
