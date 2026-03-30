@@ -90,8 +90,8 @@ func newMixingMLP(numScales, hiddenSize int) *mixingMLP {
 
 // TimeMixer implements the TimeMixer time-series forecasting model (ICLR 2024).
 // It decomposes input into trend and seasonal components at multiple scales
-// using learnable moving average weights, then mixes across scales using
-// past-decomposable mixing with bottom-up residual connections.
+// using learnable moving average weights, then produces forecasts via
+// scale-specific linear heads combined with learned mixing weights.
 type TimeMixer struct {
 	config TimeMixerConfig
 
@@ -103,6 +103,16 @@ type TimeMixer struct {
 	seasonalMLPs []*mixingMLP
 	// trendMLPs holds one mixing MLP per layer for trend components.
 	trendMLPs []*mixingMLP
+
+	// trendHeads[s] is a linear projection [inputLen][outputLen] for scale s trend.
+	trendHeads [][][]float64
+
+	// seasonalHeads[s] is a linear projection [inputLen][outputLen] for scale s seasonal.
+	seasonalHeads [][][]float64
+
+	// mixWeights holds the raw (pre-softmax) mixing weights per scale.
+	// Length: NumScales. Softmax is applied at inference time.
+	mixWeights []float64
 
 	engine compute.Engine[float32]    // optional; enables GPU-accelerated forward
 	ops    numeric.Arithmetic[float32] // arithmetic ops for engine path
@@ -121,10 +131,13 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 	}
 
 	m := &TimeMixer{
-		config:       cfg,
-		maWeights:    make([][]float64, cfg.NumScales),
-		seasonalMLPs: make([]*mixingMLP, cfg.NumLayers),
-		trendMLPs:    make([]*mixingMLP, cfg.NumLayers),
+		config:        cfg,
+		maWeights:     make([][]float64, cfg.NumScales),
+		seasonalMLPs:  make([]*mixingMLP, cfg.NumLayers),
+		trendMLPs:     make([]*mixingMLP, cfg.NumLayers),
+		trendHeads:    make([][][]float64, cfg.NumScales),
+		seasonalHeads: make([][][]float64, cfg.NumScales),
+		mixWeights:    make([]float64, cfg.NumScales),
 	}
 
 	// Initialize learnable MA weights per scale with uniform initialization
@@ -143,6 +156,26 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 	for l := 0; l < cfg.NumLayers; l++ {
 		m.seasonalMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
 		m.trendMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
+	}
+
+	// Initialize scale-specific linear heads with Xavier uniform initialization.
+	xavierBound := math.Sqrt(6.0 / float64(cfg.InputLen+cfg.OutputLen))
+	for s := 0; s < cfg.NumScales; s++ {
+		m.trendHeads[s] = make([][]float64, cfg.InputLen)
+		m.seasonalHeads[s] = make([][]float64, cfg.InputLen)
+		for i := 0; i < cfg.InputLen; i++ {
+			m.trendHeads[s][i] = make([]float64, cfg.OutputLen)
+			m.seasonalHeads[s][i] = make([]float64, cfg.OutputLen)
+			for j := 0; j < cfg.OutputLen; j++ {
+				m.trendHeads[s][i][j] = (rand.Float64()*2 - 1) * xavierBound
+				m.seasonalHeads[s][i][j] = (rand.Float64()*2 - 1) * xavierBound
+			}
+		}
+	}
+
+	// Initialize mixing weights to uniform (equal contribution from each scale).
+	for s := range m.mixWeights {
+		m.mixWeights[s] = 0.0
 	}
 
 	for _, opt := range opts {
@@ -308,16 +341,38 @@ func (m *TimeMixer) pastDecomposableMixing(scales []scaleDecomposition) []scaleD
 	return scales
 }
 
-// MultiScaleOutput holds the decomposed and mixed multi-scale representation from Forward.
+// MultiScaleOutput holds the decomposed and mixed multi-scale representation.
 type MultiScaleOutput struct {
 	// Scales contains the mixed trend and seasonal components at each scale.
 	// Scales[s].trend and Scales[s].seasonal are [numFeatures][inputLen].
 	Scales []scaleDecomposition
 }
 
-// Forward takes input [numFeatures][inputLen] and produces the mixed
-// multi-scale representation via decomposition followed by past-decomposable mixing.
-func (m *TimeMixer) Forward(input [][]float64) (*MultiScaleOutput, error) {
+// TimeMixerOutput holds the forecast output and decomposed multi-scale representation.
+type TimeMixerOutput struct {
+	// Forecast is the final combined forecast: [numFeatures][outputLen].
+	Forecast [][]float64
+	// Scales contains the mixed decomposition (for inspection/debugging).
+	MultiScaleOutput
+}
+
+// linearProject applies a linear projection head [inputLen][outputLen] to an
+// input vector [inputLen], producing output [outputLen].
+func linearProject(input []float64, weight [][]float64, outputLen int) []float64 {
+	out := make([]float64, outputLen)
+	for i, x := range input {
+		for j := 0; j < outputLen; j++ {
+			out[j] += x * weight[i][j]
+		}
+	}
+	return out
+}
+
+// Forward takes input [numFeatures][inputLen] and produces a forecast
+// [numFeatures][outputLen] by decomposing at multiple scales, projecting
+// each scale's trend and seasonal components via learned linear heads,
+// and combining with softmax-gated mixing weights.
+func (m *TimeMixer) Forward(input [][]float64) (*TimeMixerOutput, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("timemixer: empty input")
 	}
@@ -332,7 +387,31 @@ func (m *TimeMixer) Forward(input [][]float64) (*MultiScaleOutput, error) {
 
 	scales := m.decompose(input)
 	mixed := m.pastDecomposableMixing(scales)
-	return &MultiScaleOutput{Scales: mixed}, nil
+
+	// Compute softmax mixing weights.
+	smWeights := make([]float64, len(m.mixWeights))
+	copy(smWeights, m.mixWeights)
+	normalizeWeights(smWeights)
+
+	// Project each scale's trend and seasonal, combine with mixing weights.
+	nf := m.config.NumFeatures
+	outLen := m.config.OutputLen
+	forecast := make([][]float64, nf)
+	for f := 0; f < nf; f++ {
+		forecast[f] = make([]float64, outLen)
+		for s := 0; s < len(mixed); s++ {
+			trendProj := linearProject(mixed[s].trend[f], m.trendHeads[s], outLen)
+			seasonProj := linearProject(mixed[s].seasonal[f], m.seasonalHeads[s], outLen)
+			for j := 0; j < outLen; j++ {
+				forecast[f][j] += smWeights[s] * (trendProj[j] + seasonProj[j])
+			}
+		}
+	}
+
+	return &TimeMixerOutput{
+		Forecast:         forecast,
+		MultiScaleOutput: MultiScaleOutput{Scales: mixed},
+	}, nil
 }
 
 // MAWeights returns the learnable moving average weights for the given scale.

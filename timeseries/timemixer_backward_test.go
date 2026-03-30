@@ -92,7 +92,7 @@ func TestTimeMixer_Backward_GradientCheck(t *testing.T) {
 	// Loss function for finite differences.
 	lossFn := func() float64 {
 		out, _ := m.Forward(input)
-		p := m.predict(out)
+		p := m.predict(&out.MultiScaleOutput)
 		loss := 0.0
 		for f := 0; f < cfg.NumFeatures; f++ {
 			for i := 0; i < cfg.OutputLen; i++ {
@@ -180,7 +180,7 @@ func TestTimeMixer_Backward_LossReduction(t *testing.T) {
 
 	computeLoss := func() float64 {
 		out, _ := m.Forward(input)
-		p := m.predict(out)
+		p := m.predict(&out.MultiScaleOutput)
 		loss := 0.0
 		for f := 0; f < cfg.NumFeatures; f++ {
 			for i := 0; i < cfg.OutputLen; i++ {
@@ -320,7 +320,7 @@ func TestTimeMixer_Backward_MultiLayer(t *testing.T) {
 
 	lossFn := func() float64 {
 		out, _ := m.Forward(input)
-		p := m.predict(out)
+		p := m.predict(&out.MultiScaleOutput)
 		loss := 0.0
 		for f := 0; f < cfg.NumFeatures; f++ {
 			for i := 0; i < cfg.OutputLen; i++ {
