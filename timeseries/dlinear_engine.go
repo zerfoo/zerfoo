@@ -49,17 +49,16 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 	}
 
 	// AdamW state: m and v per parameter slice.
-	type adamState struct{ m, v []float32 }
 	type paramSet struct {
 		data []float32
-		adam adamState
+		adam adamStateF32
 	}
 	allParams := make([]paramSet, channels*4)
 	for c := 0; c < channels; c++ {
 		for j, p := range [][]float32{trendW[c], trendB[c], seasonW[c], seasonB[c]} {
 			allParams[c*4+j] = paramSet{
 				data: p,
-				adam: adamState{
+				adam: adamStateF32{
 					m: make([]float32, len(p)),
 					v: make([]float32, len(p)),
 				},

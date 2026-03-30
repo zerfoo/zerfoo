@@ -123,13 +123,9 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 	allParams = append(allParams, paramRef{outBPtrs, outBF32})
 
 	// AdamW state per parameter group.
-	type adamF32 struct {
-		m []float32
-		v []float32
-	}
-	adamStates := make([]adamF32, len(allParams))
+	adamStates := make([]adamStateF32, len(allParams))
 	for i, p := range allParams {
-		adamStates[i] = adamF32{m: make([]float32, len(p.f32)), v: make([]float32, len(p.f32))}
+		adamStates[i] = adamStateF32{m: make([]float32, len(p.f32)), v: make([]float32, len(p.f32))}
 	}
 
 	result := &TrainResult{LossHistory: make([]float64, config.Epochs)}
