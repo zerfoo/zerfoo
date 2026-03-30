@@ -1543,7 +1543,7 @@ the named repo directory; the pre-commit hook rejects cross-directory commits.
 
 All planned features shipped at v0.9.0. Only API review and version bump needed.
 
-- [ ] T46.1.1 Review public API surface for stability  Owner: TBD  Est: 1h  verifies: [UC-L05]
+- [x] T46.1.1 Review public API surface for stability  Owner: TBD  Est: 1h  verifies: [UC-L05]  DONE 2026-03-30 zonnx PR #20
   Audit all exported types and functions in zonnx for breaking-change risk.
   Remove or unexport any symbols that should not be part of the v1 contract.
   Acceptance: go doc ./... lists only intentionally public symbols.
@@ -1566,7 +1566,7 @@ All planned features shipped at v0.9.0. Only API review and version bump needed.
 
 Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, and API review.
 
-- [ ] T46.2.1 Write docs/design.md for ztensor  Owner: TBD  Est: 4h  verifies: [UC-L03]
+- [x] T46.2.1 Write docs/design.md for ztensor  Owner: TBD  Est: 4h  verifies: [UC-L03]  DONE 2026-03-30 ztensor PR #41
   Document: package layout (tensor/, compute/, graph/, device/, numeric/, internal/),
   the compute.Engine[T] interface contract, CUDA/ROCm/OpenCL backend abstraction,
   memory arena design, quantization types (Q4, Q8, FP16, BF16, FP8), and CUDA graph
@@ -1628,7 +1628,7 @@ Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, a
 
 Small, focused library. Needs design.md, expanded tests, and API review.
 
-- [ ] T46.3.1 Write docs/design.md for ztoken  Owner: TBD  Est: 2h  verifies: [UC-L04]
+- [x] T46.3.1 Write docs/design.md for ztoken  Owner: TBD  Est: 2h  verifies: [UC-L04]  DONE 2026-03-30 ztoken PR #7
   Document: BPE tokenizer architecture, GGUF tokenizer loading path, HuggingFace
   compatibility layer, WordPiece variant, encode/decode interface contract.
   Acceptance: docs/design.md exists; covers BPE, GGUF loader, and HF compat sections.
@@ -1658,7 +1658,7 @@ Small, focused library. Needs design.md, expanded tests, and API review.
 
 Functional core with minimal documentation. Needs docs/, expanded tests, and API review.
 
-- [ ] T46.4.1 Write docs/design.md for float8  Owner: TBD  Est: 2h  verifies: [UC-L02]
+- [x] T46.4.1 Write docs/design.md for float8  Owner: TBD  Est: 2h  verifies: [UC-L02]  DONE 2026-03-30 float8 PR #12
   Document: FP8 E4M3FN bit layout, lookup table strategy, arithmetic operations,
   conversion to/from float32, no-infinities design rationale, use in ML inference.
   Note: FP8 E5M2 is out of scope for v1 (see T46.4.8).
@@ -1703,7 +1703,7 @@ Functional core with minimal documentation. Needs docs/, expanded tests, and API
 
 Float16 is stable. BFloat16 needs Phases 2-5 from the existing plan.md in that repo.
 
-- [ ] T46.5.1 BFloat16 Phase 2: ArithmeticMode support  Owner: TBD  Est: 4h  verifies: [UC-L01]
+- [x] T46.5.1 BFloat16 Phase 2: ArithmeticMode support  Owner: TBD  Est: 4h  verifies: [UC-L01]  DONE 2026-03-30 float16 PR #8
   Implement BFloat16AddWithMode, SubWithMode, MulWithMode, DivWithMode with ArithmeticMode
   parameter. Implement proper NaN propagation and gradual underflow. Add FMA stub.
   Ref: float16/docs/plan.md Phase 2.1 and 2.2.
@@ -1796,11 +1796,11 @@ with any task in V2, V3, V4, or V5. Within each track, tasks are sequential.
 
 One agent per repo. All zero-dependency tasks in each track.
 
-- [ ] T46.1.1 Review zonnx public API surface  verifies: [UC-L05]
-- [ ] T46.2.1 Write ztensor docs/design.md  verifies: [UC-L03]
-- [ ] T46.3.1 Write ztoken docs/design.md  verifies: [UC-L04]
-- [ ] T46.4.1 Write float8 docs/design.md  verifies: [UC-L02]
-- [ ] T46.5.1 BFloat16 Phase 2: ArithmeticMode  verifies: [UC-L01]
+- [x] T46.1.1 Review zonnx public API surface  DONE 2026-03-30 zonnx PR #20  verifies: [UC-L05]
+- [x] T46.2.1 Write ztensor docs/design.md  DONE 2026-03-30 ztensor PR #41  verifies: [UC-L03]
+- [x] T46.3.1 Write ztoken docs/design.md  DONE 2026-03-30 ztoken PR #7  verifies: [UC-L04]
+- [x] T46.4.1 Write float8 docs/design.md  DONE 2026-03-30 float8 PR #12  verifies: [UC-L02]
+- [x] T46.5.1 BFloat16 Phase 2: ArithmeticMode  DONE 2026-03-30 float16 PR #8  verifies: [UC-L01]
 
 ##### Wave E46-2: Docs + Tests (5 agents)
 
