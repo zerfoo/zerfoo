@@ -19,6 +19,7 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E49: Foundation model inference (0/12 -- GitHub #280)
 - E50: GPU training kernel elimination (1/6 -- weight transpose caching done, layer norm/GELU reverted)
 - E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
+- E52: DRY composition refactoring (0/7 -- eliminate ~5K duplicated lines in timeseries/)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1298,6 +1299,14 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-30: E52 added -- DRY composition refactoring for timeseries
+
+Added E52 with 7 tasks based on deep-review audit. timeseries/ has ~5,329 duplicated lines (28%).
+Tier 1 (Wave 1): shared math_ops.go (7 GELUs -> 1 generic), shared engine wrappers (delete TTM
+copies), shared adamw_f32.go (4 adamState -> 1), TimeMixer TrainConfig fix. Tier 2 (Wave 2):
+consolidated layernorm_ops.go (11 -> 5 canonical). Estimated ~500 lines eliminated.
+patchtst_gpu_train.go is NOT touched (performance-justified divergence).
+
 ### 2026-03-30: E51 added -- CUDA graph capture for training
 
 Added E51 with 6 tasks to capture the PatchTST forward+backward pass as a CUDA graph
@@ -2480,7 +2489,7 @@ transposes outside the batch loop.
 
 ### E50.4: Cache Weight Transposes
 
-- [ ] T50.4.1 Pre-compute weight transposes before batch loop  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+- [x] T50.4.1 Pre-compute weight transposes before batch loop  Owner: TBD  Est: 1h  verifies: [UC-TS01]  DONE 2026-03-30 0fbaf2e8
   File: timeseries/patchtst_gpu_train.go
   Before the epoch loop, compute and store: qWT, kWT, vWT, oWT, ffn1WT, ffn2WT, headWT
   for each encoder layer. These are used in the backward pass but recomputed every batch.
@@ -2514,7 +2523,7 @@ transposes outside the batch loop.
 
 - [ ] T50.1.1 Layer norm forward on engine
 - [ ] T50.3.1 GELU forward/backward on engine
-- [ ] T50.4.1 Cache weight transposes
+- [x] T50.4.1 Cache weight transposes  DONE 2026-03-30 0fbaf2e8
 
 ##### Wave E50-2: Dependent + validation (3 agents)
 
@@ -2631,6 +2640,109 @@ eliminating ALL intermediate synchronization.
 - [ ] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1
 - [ ] T51.5.1 Run go vet and tests  Deps: T51.4.1
 - [ ] T51.5.2 Benchmark on DGX Spark  Deps: T51.5.1
+
+---
+
+## E52: DRY Composition Refactoring (timeseries/)
+
+**Problem:** Deep-review audit found ~5,329 duplicated lines (28%) in timeseries/ (19,150 lines).
+7 GELU implementations, 11 layer norms, 3 matMul wrappers, 4 adamState structs, 3 clipGradients,
+2 identical copyMatrix functions. TTM has character-for-character copies of PatchTST engine wrappers.
+
+**Goal:** Eliminate unjustified duplication via shared helper files. Reduce timeseries/ by ~500 lines
+while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performance-justified).
+
+### E52.1: Shared Math Ops
+
+- [ ] T52.1.1 Create timeseries/math_ops.go with generic GELU and helpers  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Create timeseries/math_ops.go with:
+  (1) `func geluScalar[T ~float32 | ~float64](x T) T` -- replaces 4 implementations:
+      patchtst.go:695, patchtst_backward.go:677, itransformer.go:353, ttm.go:1436
+  (2) `func geluDeriv[T ~float32 | ~float64](x T) T` -- replaces 3 implementations:
+      patchtst_backward.go:655, patchtst_gpu_train.go:1416, itransformer_backward.go:6
+  (3) `func copyMatrix(x [][]float64) [][]float64` -- replaces 2 implementations:
+      patchtst_backward.go:668, itransformer_backward.go:163 (deepCopy2D)
+  (4) `func softmaxF64(x []float64) []float64` -- replaces itransformer.go:309
+  Delete the old implementations and update all callers.
+  Acceptance: go build ./timeseries/ clean. go test ./timeseries/ passes.
+
+### E52.2: Shared Engine Wrappers
+
+- [ ] T52.2.1 Extract matMulEngine and linearF64Engine as free functions  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Move from PatchTST receiver methods to package-level functions:
+  (1) `func matMulEngine(engine compute.Engine[float32], ctx context.Context, a, b [][]float64) ([][]float64, error)`
+      Currently: patchtst_engine.go:21 (PatchTST method), ttm_train_engine.go:15 (TTM method -- exact copy)
+  (2) `func linearF64Engine(engine compute.Engine[float32], ctx context.Context, x [][]float64, w, b []float64, inDim, outDim int) ([][]float64, error)`
+      Currently: patchtst_engine.go:98 (PatchTST), ttm_train_engine.go:72 (TTM -- exact copy)
+  Delete TTM copies. Update PatchTST and TTM callers to use free functions.
+  Acceptance: go build clean. go test passes. TTM and PatchTST engine training produce same results.
+
+### E52.3: Shared AdamW F32
+
+- [ ] T52.3.1 Create timeseries/adamw_f32.go for shared f32 optimizer ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Create timeseries/adamw_f32.go with:
+  (1) `type adamStateF32 struct { m, v []float32 }` -- replaces 4 definitions:
+      nhits.go:276, cfc_engine.go:130, frets_engine.go:113, dlinear_engine.go:52
+  (2) `func clipGradientsF32(grad []float32, maxNorm float64)` -- replaces:
+      nhits.go:634 (NHiTS method)
+  (3) `func adamWUpdateF32(params, grads []float32, state *adamStateF32, ...)` -- replaces:
+      nhits.go:652 (NHiTS method)
+  Delete old per-backend definitions. Update callers.
+  Acceptance: go build clean. go test passes.
+
+### E52.4: TimeMixer TrainConfig
+
+- [ ] T52.4.1 Fix TimeMixer TrainWindowed to accept TrainConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Change timemixer.go:433 from:
+    `func (m *TimeMixer) TrainWindowed(windows, labels, epochs int) (*TrainResult, error)`
+  To:
+    `func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error)`
+  Use config.Epochs, config.LR, config.BatchSize etc. internally.
+  Update all callers (tests, adapters).
+  Acceptance: go build clean. go test passes. TimeMixer can use shared training infra.
+
+### E52.5: Consolidated Layer Norm
+
+- [ ] T52.5.1 Create timeseries/layernorm_ops.go with canonical implementations  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T52.1.1
+  Create timeseries/layernorm_ops.go with 5 canonical functions:
+  (1) `func layerNormF64(x [][]float64, scale, bias []float64, d int) [][]float64`
+      Replaces: patchtst_backward.go:993
+  (2) `func layerNormF64WithCache(x [][]float64, scale, bias []float64, d int) (normed, centered [][]float64, invStd []float64)`
+      Replaces: patchtst_backward.go:556
+  (3) `func layerNormBackwardF64(dOut, centered [][]float64, invStd []float64, scale, dScale, dBias []float64, d int) [][]float64`
+      Replaces: patchtst_backward.go:593, ttm.go:1300
+  (4) `func layerNorm1D(x, scale, bias []float64) []float64`
+      Replaces: itransformer.go:329
+  (5) `func layerNorm1DCached(x, scale, bias []float64) (normed []float64, mu, std float64)`
+      Replaces: itransformer_backward.go:290
+  Engine-based layer norms (PatchTST.layerNorm, TTM.layerNormF32, TFT.layerNorm) stay as
+  methods since they use different tensor APIs, but extract the common body into a helper.
+  Delete old implementations. Update all callers.
+  Acceptance: go build clean. go test passes. Gradient checks still within tolerance.
+
+### E52.6: Validation
+
+- [ ] T52.6.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
+  Acceptance: go vet ./timeseries/ clean. go test -race ./timeseries/ passes.
+  Verify: no unused imports, no unused functions from old implementations.
+
+### E52 Parallel Work
+
+#### Waves
+
+##### Wave E52-1: Independent refactors (4 agents)
+
+- [ ] T52.1.1 Shared math ops (GELU, copyMatrix, softmax)
+- [ ] T52.2.1 Shared engine wrappers (matMulEngine, linearF64Engine)
+- [ ] T52.3.1 Shared AdamW F32
+- [ ] T52.4.1 TimeMixer TrainConfig fix
+
+##### Wave E52-2: Dependent + validation (2 agents)
+
+- [ ] T52.5.1 Consolidated layer norm  Deps: T52.1.1
+- [ ] T52.6.1 Run go vet and tests  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
 
 ---
 
