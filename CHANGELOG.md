@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0](https://github.com/zerfoo/zerfoo/compare/v1.36.0...v1.37.0) (2026-03-30)
+
+
+### Features
+
+* **cli:** add zerfoo forecast command ([ebaf984](https://github.com/zerfoo/zerfoo/commit/ebaf984298b7bac8304fd2575c1e9ba726d4745d))
+* **timeseries:** add CfC batched forward pass ([9a41bee](https://github.com/zerfoo/zerfoo/commit/9a41bee07eda57a365f4b84ce3c736fbd949fd6e))
+* **timeseries:** add Chronos value tokenizer ([86e93eb](https://github.com/zerfoo/zerfoo/commit/86e93eb6611ed4f7731ac24426f02807495b764b))
+* **timeseries:** add Chronos-2 SafeTensors-to-GGUF converter ([50deee8](https://github.com/zerfoo/zerfoo/commit/50deee8812a7880918df287b7e0541e17ad4a21d))
+* **timeseries:** add Chronos-2 T5 graph builder ([317b7d3](https://github.com/zerfoo/zerfoo/commit/317b7d344e6db99b08ad7bf6fd54fe4f1d9acdff))
+* **timeseries:** add DataLoader for batched tensor iteration ([3f60e8f](https://github.com/zerfoo/zerfoo/commit/3f60e8f4f62568457e0cef058d7190959a21a549))
+* **timeseries:** add DLinear batched forward pass ([77a9efc](https://github.com/zerfoo/zerfoo/commit/77a9efce5de4c59f9af86429ac8f7b6b60c42bc0))
+* **timeseries:** add foundation model fine-tune API ([be4e6ce](https://github.com/zerfoo/zerfoo/commit/be4e6ceb1c61ece700ceec44e64c39251e00a1f5))
+* **timeseries:** add foundation model zero-shot inference pipeline ([840ef7a](https://github.com/zerfoo/zerfoo/commit/840ef7a6b4382785667c6100a1989badcde6f250))
+* **timeseries:** add foundation model zero-shot inference pipeline ([5c717d2](https://github.com/zerfoo/zerfoo/commit/5c717d2119dd41062faed80c8e5a602d7f6c35b8))
+* **timeseries:** add FreTS batched forward pass ([958e08b](https://github.com/zerfoo/zerfoo/commit/958e08b3f4a9b163c8b7264750e19967062ccd1b))
+* **timeseries:** add iTransformer batched backward pass ([7e704fa](https://github.com/zerfoo/zerfoo/commit/7e704fa2182f89330c492cd24e575475d2a958cc))
+* **timeseries:** add iTransformer batched forward pass ([401b6de](https://github.com/zerfoo/zerfoo/commit/401b6dec690af6069528c9642578a54929e91ee6))
+* **timeseries:** add Mamba batched forward pass ([2345211](https://github.com/zerfoo/zerfoo/commit/2345211cbfdaf324ff731b3662c21a062d0c5ac8))
+* **timeseries:** add mLSTM cell layer with covariance memory ([e443805](https://github.com/zerfoo/zerfoo/commit/e4438058407ebace2b981d28c91ef355206dff27))
+* **timeseries:** add Moirai-2 any-variate input projection ([d496b2c](https://github.com/zerfoo/zerfoo/commit/d496b2ced84014f2c66e5a39f5e69cde12a88a6b))
+* **timeseries:** add Moirai-2 masked encoder graph builder ([b709afa](https://github.com/zerfoo/zerfoo/commit/b709afa4e50bf6bb324e7758584846c77b5220b5))
+* **timeseries:** add Moirai-2 SafeTensors-to-GGUF converter ([926276e](https://github.com/zerfoo/zerfoo/commit/926276e210055f2dbe846a34b61bda4278736d92))
+* **timeseries:** add N-BEATS batched forward pass ([52ac585](https://github.com/zerfoo/zerfoo/commit/52ac5853a0af9924bc123477148fe5ced0d8ccf0))
+* **timeseries:** add N-HiTS batched forward pass ([0c43783](https://github.com/zerfoo/zerfoo/commit/0c4378367bb7a809cf77b6213e9b04e63fc98ac9))
+* **timeseries:** add PatchTST batched backward pass ([3cdc795](https://github.com/zerfoo/zerfoo/commit/3cdc795efd226053e474603f02a87bfc8a8d6df1))
+* **timeseries:** add sLSTM cell layer with exponential gating ([37b7761](https://github.com/zerfoo/zerfoo/commit/37b77616d1c64ac72430ab59b28c77db9d742a4c))
+* **timeseries:** add TimeMixer backward pass ([e87895e](https://github.com/zerfoo/zerfoo/commit/e87895ea7c517f534e898f75e05211f28c85e913))
+* **timeseries:** add TimeMixer engine-accelerated forward ([1028ad6](https://github.com/zerfoo/zerfoo/commit/1028ad6a9fd4056282a5aaf2c4b30e443b9e29cc))
+* **timeseries:** add TimeMixer inference graph builder ([fb94912](https://github.com/zerfoo/zerfoo/commit/fb94912aaa11baf2a8a4b1ff649d30094c250fe9))
+* **timeseries:** add TimeMixer multi-scale decomposition ([2542283](https://github.com/zerfoo/zerfoo/commit/25422831b9df79d55ae9b99c79855e9e7c740341))
+* **timeseries:** add TimeMixer past-decomposable mixing ([b7ca336](https://github.com/zerfoo/zerfoo/commit/b7ca336cc7efb918031723ebc5ef83877486b2bb))
+* **timeseries:** add TimeMixer TrainWindowed ([2e7f40c](https://github.com/zerfoo/zerfoo/commit/2e7f40c1a75f8e562ec75ce6158f91f5b0d7b97b))
+* **timeseries:** add TimeMixerAdapter for training interface ([e6f7eb5](https://github.com/zerfoo/zerfoo/commit/e6f7eb5c04b52ddf880ad954d0b19b8a39895f71))
+* **timeseries:** add TiRex SafeTensors-to-GGUF converter ([58834ce](https://github.com/zerfoo/zerfoo/commit/58834cef1a9c5a87220eed302c802c640818494f))
+* **timeseries:** add TiRex xLSTM graph builder ([f46d620](https://github.com/zerfoo/zerfoo/commit/f46d62084361e9ed759424b8068a5bf2a40969fc))
+* **timeseries:** add TTM batched forward pass ([59ecf10](https://github.com/zerfoo/zerfoo/commit/59ecf10425095234cae0df8abe106775586f111e))
+* **timeseries:** wire iTransformer TrainWindowed to batched path ([e0078b8](https://github.com/zerfoo/zerfoo/commit/e0078b8a4328869adc9569cbe8d66642bcb9c734))
+* **timeseries:** wire PatchTST TrainWindowed to batched path via DataLoader ([bbba353](https://github.com/zerfoo/zerfoo/commit/bbba3539229b84a3bfe910cdbe8afd5cd2c42e15))
+
+
+### Bug Fixes
+
+* **timeseries:** add mixing to TimeMixer engine forward, fix roundtrip test ([cb61c5a](https://github.com/zerfoo/zerfoo/commit/cb61c5a951ccc311f3177a9b2614eff2d45f1bef))
+* **timeseries:** integrate TimeMixer multipredictor mixing with backward pass ([3bd6bce](https://github.com/zerfoo/zerfoo/commit/3bd6bceaf6d6df9b87537efb1f894aeb47d0fb60))
+* **timeseries:** skip near-zero gradients in PatchTST gradient check ([9bfab88](https://github.com/zerfoo/zerfoo/commit/9bfab88378dad80fc660f9266e9c91dd01ddd6de))
+
 ## [1.36.0](https://github.com/zerfoo/zerfoo/compare/v1.35.0...v1.36.0) (2026-03-29)
 
 
