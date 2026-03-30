@@ -17,6 +17,7 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E47: Batched training performance (0/19 -- GitHub #278, T47.2.4 added for batched attention)
 - E48: TimeMixer backend (0/10 -- GitHub #279)
 - E49: Foundation model inference (0/12 -- GitHub #280)
+- E50: GPU training kernel elimination (0/6 -- layer norm, GELU, transpose caching)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1296,6 +1297,14 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-30: E50 added -- GPU training kernel elimination
+
+Added E50 with 6 tasks to move layer norm, GELU, and weight transpose caching to engine ops.
+After channel batching (PR #292, 63.7s/epoch on DGX Spark), CPU operations on larger tensors
+are the dominant bottleneck. E50 eliminates CPU round-trips by implementing layer norm
+forward/backward and GELU forward/backward using engine.Sum/Mul/Sub/Sqrt/Tanh/Add ops.
+Weight transposes cached outside batch loop. 2 waves, 3 agents each.
+
 ### 2026-03-30: T47.2.4 added -- batch PatchTST attention forward/backward
 
 The per-sample CPU attention loop (forward lines ~610-663, backward lines ~1020-1061 in
@@ -2397,6 +2406,111 @@ All zero-dependency tasks. Saturates all agent slots.
 - [x] T49.3.4 Moirai-2 parity tests  DONE 2026-03-30 PR #286  Deps: T49.3.3
 - [x] T49.4.3 Run go vet E49  DONE 2026-03-30  Deps: T49.1.6, T49.2.4, T49.3.4
 - [x] T49.4.1 forecast CLI command  DONE 2026-03-30 PR #286  Deps: T49.1.5
+
+---
+
+## E50: GPU Training Kernel Elimination (GitHub Issue #278)
+
+**Problem:** After channel batching (PR #292), PatchTST GPU training still takes 63.7s/epoch
+on DGX Spark (target: 6s/epoch for <60s total at 10 epochs). Profiling shows the remaining
+time is dominated by CPU operations that pull data off GPU, process on CPU, and push back:
+layer norm forward/backward (8 calls/layer on [7680, 64] matrices), GELU forward/backward
+(4 calls/layer on [7680, 256] matrices), and redundant weight transpose computation
+(same weights transposed every batch iteration).
+
+**Goal:** Replace all CPU bottleneck operations with engine ops (engine.Sum, engine.Mul,
+engine.Sub, engine.MulScalar, engine.Sqrt, engine.Tanh, engine.Add, engine.Div) so the
+full forward/backward loop can execute on GPU without CPU round-trips. Cache weight
+transposes outside the batch loop.
+
+**File:** timeseries/patchtst_gpu_train.go
+
+### E50.1: Layer Norm Forward on Engine
+
+- [ ] T50.1.1 Implement engine-based layer norm forward  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/patchtst_gpu_train.go
+  Replace layerNormF32WithCache with engine ops:
+  (1) mean = engine.Sum(x, -1, keepDims=true) / dModel via engine.MulScalar
+  (2) centered = engine.Sub(x, mean)
+  (3) var = engine.Sum(engine.Mul(centered, centered), -1, keepDims=true) / dModel
+  (4) invStd = 1 / engine.Sqrt(engine.AddScalar(var, 1e-5))
+  (5) normed = engine.Mul(engine.Mul(centered, invStd), scale) + bias via engine.Add
+  Update gpuBatchLayerCache: change centered1/2 from [][]float32 to *tensor.TensorNumeric[float32],
+  invStd1/2 from []float32 to *tensor.TensorNumeric[float32].
+  Cache xInput (pre-norm) for backward. Remove matFromTensor/tensorFromMat calls for layer norm.
+  Acceptance: go test -run TestPatchTST passes. Gradient check within 1e-3.
+
+### E50.2: Layer Norm Backward on Engine
+
+- [ ] T50.2.1 Implement engine-based layer norm backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  Deps: T50.1.1
+  File: timeseries/patchtst_gpu_train.go
+  Replace layerNormBackwardF32 with engine ops. The backward formula:
+  (1) dScale += engine.Sum(dOut * centered * invStd, axis=0)
+  (2) dBias += engine.Sum(dOut, axis=0)
+  (3) dNorm = engine.Mul(dOut, scale)  -- broadcast [1, dModel] over [rows, dModel]
+  (4) dotScaleGrad = engine.Sum(dNorm * centered, -1, keepDims=true)
+  (5) dotMeanGrad = engine.Sum(dNorm, -1, keepDims=true)
+  (6) dInput = invStd * (dNorm - (dotMeanGrad + centered * invStd^2 * dotScaleGrad) / dModel)
+  All operations use engine.Mul, engine.Sub, engine.Sum, engine.MulScalar, engine.Add.
+  Acceptance: Gradient check (numerical vs analytical) within 1e-3. go test passes.
+
+### E50.3: GELU Forward/Backward on Engine
+
+- [ ] T50.3.1 Implement engine-based GELU forward and backward  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/patchtst_gpu_train.go
+  GELU forward: gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+  Using engine ops: engine.Mul, engine.MulScalar, engine.Add, engine.Tanh, engine.AddScalar.
+  Cache the tanh result and the inner term for backward.
+  GELU backward: dgelu = 0.5 * (1 + tanh_val) + 0.5 * x * (1 - tanh_val^2) * sqrt(2/pi) * (1 + 3*0.044715*x^2)
+  Using engine.Mul, engine.MulScalar, engine.Sub, engine.Add.
+  Update lc.ffn1PreAct caching to store values needed for backward.
+  Remove geluScalar and geluDerivF32 CPU functions.
+  Acceptance: Gradient check within 1e-3. go test passes. Forward output matches CPU within 1e-5.
+
+### E50.4: Cache Weight Transposes
+
+- [ ] T50.4.1 Pre-compute weight transposes before batch loop  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  File: timeseries/patchtst_gpu_train.go
+  Before the epoch loop, compute and store: qWT, kWT, vWT, oWT, ffn1WT, ffn2WT, headWT
+  for each encoder layer. These are used in the backward pass but recomputed every batch.
+  Add a gpuWeightTransposes struct to hold them. Recompute only when weights change (once
+  per optimizer step, not once per batch -- but since we update weights every batch,
+  recompute at start of each batch iteration instead of inside backward pass to avoid
+  redundant computation when multiple backward calls reference the same weight).
+  Actually: weights change every batch via AdamW, so compute transposes once at the start
+  of each backward pass (not inside the per-layer loop). This saves nLayers-1 redundant
+  transposes per weight matrix per batch.
+  Acceptance: go test passes. No behavioral change.
+
+### E50.5: Validation and Benchmark
+
+- [ ] T50.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
+  Acceptance: go vet ./timeseries/ clean. go test ./timeseries/ passes.
+
+- [ ] T50.5.2 Benchmark on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T50.5.1
+  Run 28K x 20ch x 10 epochs on DGX Spark with GPU engine.
+  Compare: before E50 (63.7s/epoch) vs after E50.
+  Target: significant reduction toward <6s/epoch.
+  Acceptance: Results documented. Measurable speedup.
+
+### E50 Parallel Work
+
+#### Waves
+
+##### Wave E50-1: Independent implementations (3 agents)
+
+- [ ] T50.1.1 Layer norm forward on engine
+- [ ] T50.3.1 GELU forward/backward on engine
+- [ ] T50.4.1 Cache weight transposes
+
+##### Wave E50-2: Dependent + validation (3 agents)
+
+- [ ] T50.2.1 Layer norm backward on engine  Deps: T50.1.1
+- [ ] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
+- [ ] T50.5.2 Benchmark on DGX Spark  Deps: T50.5.1
 
 ### E47-E49 Risks
 
