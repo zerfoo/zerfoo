@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -18,11 +19,11 @@ type matMulBufs struct {
 	b []float32
 }
 
-func (m *PatchTST) matMulEngine(ctx context.Context, a, b [][]float64) ([][]float64, error) {
-	return m.matMulEngineWithBufs(ctx, a, b, nil)
+func matMulEngine(engine compute.Engine[float32], ctx context.Context, a, b [][]float64) ([][]float64, error) {
+	return matMulEngineWithBufs(engine, ctx, a, b, nil)
 }
 
-func (m *PatchTST) matMulEngineWithBufs(ctx context.Context, a, b [][]float64, bufs *matMulBufs) ([][]float64, error) {
+func matMulEngineWithBufs(engine compute.Engine[float32], ctx context.Context, a, b [][]float64, bufs *matMulBufs) ([][]float64, error) {
 	rows := len(a)
 	if rows == 0 {
 		return nil, nil
@@ -74,7 +75,7 @@ func (m *PatchTST) matMulEngineWithBufs(ctx context.Context, a, b [][]float64, b
 		return nil, fmt.Errorf("matMulEngine: create b tensor: %w", err)
 	}
 
-	cTensor, err := m.engine.MatMul(ctx, aTensor, bTensor)
+	cTensor, err := engine.MatMul(ctx, aTensor, bTensor)
 	if err != nil {
 		return nil, fmt.Errorf("matMulEngine: matmul: %w", err)
 	}
@@ -95,7 +96,7 @@ func (m *PatchTST) matMulEngineWithBufs(ctx context.Context, a, b [][]float64, b
 // x: [n][inDim], W: [inDim*outDim] (row-major), b: [outDim].
 // The matrix multiplication is performed via engine.MatMul in float32;
 // bias addition remains in float64.
-func (m *PatchTST) linearF64Engine(ctx context.Context, x [][]float64, w, b []float64, inDim, outDim int) ([][]float64, error) {
+func linearF64Engine(engine compute.Engine[float32], ctx context.Context, x [][]float64, w, b []float64, inDim, outDim int) ([][]float64, error) {
 	n := len(x)
 
 	// Reshape flat w [inDim*outDim] into [inDim][outDim] for matMulEngine.
@@ -104,7 +105,7 @@ func (m *PatchTST) linearF64Engine(ctx context.Context, x [][]float64, w, b []fl
 		wMat[i] = w[i*outDim : (i+1)*outDim]
 	}
 
-	out, err := m.matMulEngine(ctx, x, wMat)
+	out, err := matMulEngine(engine, ctx, x, wMat)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 
 		// Patch embedding: each patch through linear [patchLen -> dModel].
 		var err error
-		cc.embedded, err = m.linearF64Engine(ctx, cc.patches, params.patchEmbW, params.patchEmbB, m.config.PatchLength, dModel)
+		cc.embedded, err = linearF64Engine(m.engine, ctx, cc.patches, params.patchEmbW, params.patchEmbB, m.config.PatchLength, dModel)
 		if err != nil {
 			return nil, nil, fmt.Errorf("patch embedding: %w", err)
 		}
@@ -179,15 +180,15 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 			lc.normed1, lc.mean1, lc.invStd1, lc.centered1 = layerNormF64WithCache(x, layer.norm1, layer.bias1, dModel)
 
 			// Multi-head self-attention: Q/K/V projections via engine.
-			lc.q, err = m.linearF64Engine(ctx, lc.normed1, layer.qW, layer.qB, dModel, dModel)
+			lc.q, err = linearF64Engine(m.engine, ctx, lc.normed1, layer.qW, layer.qB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d q proj: %w", li, err)
 			}
-			lc.k, err = m.linearF64Engine(ctx, lc.normed1, layer.kW, layer.kB, dModel, dModel)
+			lc.k, err = linearF64Engine(m.engine, ctx, lc.normed1, layer.kW, layer.kB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d k proj: %w", li, err)
 			}
-			lc.v, err = m.linearF64Engine(ctx, lc.normed1, layer.vW, layer.vB, dModel, dModel)
+			lc.v, err = linearF64Engine(m.engine, ctx, lc.normed1, layer.vW, layer.vB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d v proj: %w", li, err)
 			}
@@ -244,7 +245,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 			}
 
 			// Output projection via engine.
-			lc.attnProjOut, err = m.linearF64Engine(ctx, lc.attnOut, layer.oW, layer.oB, dModel, dModel)
+			lc.attnProjOut, err = linearF64Engine(m.engine, ctx, lc.attnOut, layer.oW, layer.oB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d o proj: %w", li, err)
 			}
@@ -262,7 +263,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 			lc.normed2, lc.mean2, lc.invStd2, lc.centered2 = layerNormF64WithCache(x, layer.norm2, layer.bias2, dModel)
 
 			// FFN layer 1 via engine (matmul + bias), then GELU on CPU.
-			ffn1Raw, err := m.linearF64Engine(ctx, lc.normed2, layer.ffn1W, layer.ffn1B, dModel, ffnDim)
+			ffn1Raw, err := linearF64Engine(m.engine, ctx, lc.normed2, layer.ffn1W, layer.ffn1B, dModel, ffnDim)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d ffn1: %w", li, err)
 			}
@@ -276,7 +277,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 			}
 
 			// FFN layer 2 via engine.
-			lc.ffn2Out, err = m.linearF64Engine(ctx, lc.ffn1Out, layer.ffn2W, layer.ffn2B, ffnDim, dModel)
+			lc.ffn2Out, err = linearF64Engine(m.engine, ctx, lc.ffn1Out, layer.ffn2W, layer.ffn2B, ffnDim, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d ffn2: %w", li, err)
 			}
@@ -300,7 +301,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 		// Output head via engine.
 		headIn := numPatches * dModel
 		flatMat := [][]float64{cc.flatInput}
-		headOut, err := m.linearF64Engine(ctx, flatMat, params.headW, params.headB, headIn, m.config.OutputDim)
+		headOut, err := linearF64Engine(m.engine, ctx, flatMat, params.headW, params.headB, headIn, m.config.OutputDim)
 		if err != nil {
 			return nil, nil, fmt.Errorf("output head: %w", err)
 		}
@@ -368,7 +369,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 				batchPatches[s*numPatches+p] = caches[s].channels[ch].patches[p]
 			}
 		}
-		batchEmbedded, err := m.linearF64Engine(ctx, batchPatches, params.patchEmbW, params.patchEmbB, m.config.PatchLength, dModel)
+		batchEmbedded, err := linearF64Engine(m.engine, ctx, batchPatches, params.patchEmbW, params.patchEmbB, m.config.PatchLength, dModel)
 		if err != nil {
 			return nil, nil, fmt.Errorf("batch patch embedding: %w", err)
 		}
@@ -417,15 +418,15 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 				}
 			}
 
-			batchQ, err := m.linearF64Engine(ctx, batchNormed, layer.qW, layer.qB, dModel, dModel)
+			batchQ, err := linearF64Engine(m.engine, ctx, batchNormed, layer.qW, layer.qB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch q proj: %w", li, err)
 			}
-			batchK, err := m.linearF64Engine(ctx, batchNormed, layer.kW, layer.kB, dModel, dModel)
+			batchK, err := linearF64Engine(m.engine, ctx, batchNormed, layer.kW, layer.kB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch k proj: %w", li, err)
 			}
-			batchV, err := m.linearF64Engine(ctx, batchNormed, layer.vW, layer.vB, dModel, dModel)
+			batchV, err := linearF64Engine(m.engine, ctx, batchNormed, layer.vW, layer.vB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch v proj: %w", li, err)
 			}
@@ -494,7 +495,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 					batchAttnOut[s*numPatches+p] = lc.attnOut[p]
 				}
 			}
-			batchAttnProj, err := m.linearF64Engine(ctx, batchAttnOut, layer.oW, layer.oB, dModel, dModel)
+			batchAttnProj, err := linearF64Engine(m.engine, ctx, batchAttnOut, layer.oW, layer.oB, dModel, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch o proj: %w", li, err)
 			}
@@ -523,7 +524,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 					batchNormed2[s*numPatches+p] = lc.normed2[p]
 				}
 			}
-			batchFFN1Raw, err := m.linearF64Engine(ctx, batchNormed2, layer.ffn1W, layer.ffn1B, dModel, ffnDim)
+			batchFFN1Raw, err := linearF64Engine(m.engine, ctx, batchNormed2, layer.ffn1W, layer.ffn1B, dModel, ffnDim)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch ffn1: %w", li, err)
 			}
@@ -550,7 +551,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 					batchFFN1Out[s*numPatches+p] = perSampleFFN1Out[s][p]
 				}
 			}
-			batchFFN2Out, err := m.linearF64Engine(ctx, batchFFN1Out, layer.ffn2W, layer.ffn2B, ffnDim, dModel)
+			batchFFN2Out, err := linearF64Engine(m.engine, ctx, batchFFN1Out, layer.ffn2W, layer.ffn2B, ffnDim, dModel)
 			if err != nil {
 				return nil, nil, fmt.Errorf("layer %d batch ffn2: %w", li, err)
 			}
@@ -584,7 +585,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 			batchFlat[s] = cc.flatInput
 		}
 
-		batchHeadOut, err := m.linearF64Engine(ctx, batchFlat, params.headW, params.headB, headIn, m.config.OutputDim)
+		batchHeadOut, err := linearF64Engine(m.engine, ctx, batchFlat, params.headW, params.headB, headIn, m.config.OutputDim)
 		if err != nil {
 			return nil, nil, fmt.Errorf("batch output head: %w", err)
 		}
