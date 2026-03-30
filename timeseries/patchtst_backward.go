@@ -201,7 +201,7 @@ func (m *PatchTST) forwardF64WithCache(input [][]float64, params *patchTSTParams
 						val += lc.normed2[p][k] * layer.ffn1W[k*ffnDim+j]
 					}
 					lc.ffn1PreAct[p][j] = val
-					lc.ffn1Out[p][j] = geluF64(val)
+					lc.ffn1Out[p][j] = geluScalar[float64](val)
 				}
 				lc.ffn2Out[p] = make([]float64, dModel)
 				for j := 0; j < dModel; j++ {
@@ -347,7 +347,7 @@ func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cac
 			for p := 0; p < numPatches; p++ {
 				dFFN1PreAct[p] = make([]float64, ffnDim)
 				for j := 0; j < ffnDim; j++ {
-					dFFN1PreAct[p][j] = dFFN1Out[p][j] * geluDerivF64(lc.ffn1PreAct[p][j])
+					dFFN1PreAct[p][j] = dFFN1Out[p][j] * geluDeriv[float64](lc.ffn1PreAct[p][j])
 				}
 			}
 
@@ -651,34 +651,7 @@ func linearBackwardF64Accum(dY, x [][]float64, w []float64, dX [][]float64, dW, 
 	}
 }
 
-// geluDerivF64 computes the derivative of the GELU approximation.
-func geluDerivF64(x float64) float64 {
-	c := math.Sqrt(2.0 / math.Pi)
-	inner := c * (x + 0.044715*x*x*x)
-	tanh := math.Tanh(inner)
-	// d/dx tanh(inner) = (1 - tanh^2) * d(inner)/dx
-	// d(inner)/dx = c * (1 + 3*0.044715*x^2)
-	dInner := c * (1 + 3*0.044715*x*x)
-	// GELU(x) = 0.5 * x * (1 + tanh(inner))
-	// GELU'(x) = 0.5 * (1 + tanh) + 0.5 * x * (1 - tanh^2) * dInner
-	return 0.5*(1+tanh) + 0.5*x*(1-tanh*tanh)*dInner
-}
 
-// copyMatrix creates a deep copy of a 2D float64 slice.
-func copyMatrix(x [][]float64) [][]float64 {
-	out := make([][]float64, len(x))
-	for i := range x {
-		out[i] = make([]float64, len(x[i]))
-		copy(out[i], x[i])
-	}
-	return out
-}
-
-// geluF64 computes the GELU approximation for a float64 value.
-func geluF64(x float64) float64 {
-	inner := math.Sqrt(2/math.Pi) * (x + 0.044715*x*x*x)
-	return 0.5 * x * (1 + math.Tanh(inner))
-}
 
 // patchTSTParamsF64 holds a float64 copy of all PatchTST parameters for training.
 type patchTSTParamsF64 struct {
@@ -935,7 +908,7 @@ func (m *PatchTST) forwardF64(input [][]float64, params *patchTSTParamsF64) []fl
 					for k := 0; k < dModel; k++ {
 						val += normed[p][k] * layer.ffn1W[k*ffnDim+j]
 					}
-					h[j] = geluF64(val)
+					h[j] = geluScalar[float64](val)
 				}
 				// Linear 2: ffnDim -> dModel.
 				ffnOut[p] = make([]float64, dModel)

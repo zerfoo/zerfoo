@@ -692,13 +692,6 @@ func (m *PatchTST) Predict(input [][]float64) ([][]float64, error) {
 	return result, nil
 }
 
-// geluScalar computes the GELU approximation for a single float32 value.
-func geluScalar(x float32) float32 {
-	xf := float64(x)
-	inner := math.Sqrt(2/math.Pi) * (xf + 0.044715*xf*xf*xf)
-	return float32(0.5 * xf * (1 + math.Tanh(inner)))
-}
-
 // TrainWindowed trains the PatchTST model on windowed data using AdamW.
 // windows: [nSamples][channels][inputLen] input windows.
 // labels: flat slice of length nSamples * outputDim.

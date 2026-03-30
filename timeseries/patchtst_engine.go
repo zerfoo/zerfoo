@@ -271,7 +271,7 @@ func (m *PatchTST) forwardF64WithCacheEngine(ctx context.Context, input [][]floa
 			for p := 0; p < numPatches; p++ {
 				lc.ffn1Out[p] = make([]float64, ffnDim)
 				for j := 0; j < ffnDim; j++ {
-					lc.ffn1Out[p][j] = geluF64(ffn1Raw[p][j])
+					lc.ffn1Out[p][j] = geluScalar[float64](ffn1Raw[p][j])
 				}
 			}
 
@@ -537,7 +537,7 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 				for p := 0; p < numPatches; p++ {
 					lc.ffn1Out[p] = make([]float64, ffnDim)
 					for j := 0; j < ffnDim; j++ {
-						lc.ffn1Out[p][j] = geluF64(lc.ffn1PreAct[p][j])
+						lc.ffn1Out[p][j] = geluScalar[float64](lc.ffn1PreAct[p][j])
 					}
 				}
 				perSampleFFN1Out[s] = lc.ffn1Out

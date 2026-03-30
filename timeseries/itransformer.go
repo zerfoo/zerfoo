@@ -225,7 +225,7 @@ func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransforme
 		ffnOut := linearForwardVec(tokens[c], layer.fc1W, layer.fc1B)
 		// GELU activation.
 		for i := range ffnOut {
-			ffnOut[i] = gelu(ffnOut[i])
+			ffnOut[i] = geluScalar[float64](ffnOut[i])
 		}
 		ffnOut = linearForwardVec(ffnOut, layer.fc2W, layer.fc2B)
 
@@ -282,7 +282,7 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 
 		// Softmax over variate dimension.
 		for i := 0; i < channels; i++ {
-			scores[i] = softmax(scores[i])
+			scores[i] = softmaxF64(scores[i])
 		}
 
 		// Weighted sum of values.
@@ -305,25 +305,6 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 	return out
 }
 
-// softmax computes softmax in-place with numerical stability.
-func softmax(x []float64) []float64 {
-	max := x[0]
-	for _, v := range x[1:] {
-		if v > max {
-			max = v
-		}
-	}
-	sum := 0.0
-	out := make([]float64, len(x))
-	for i, v := range x {
-		out[i] = math.Exp(v - max)
-		sum += out[i]
-	}
-	for i := range out {
-		out[i] /= sum
-	}
-	return out
-}
 
 // layerNorm applies layer normalization: y = scale * (x - mean) / (std + eps) + bias.
 func layerNorm(x, scale, bias []float64) []float64 {
@@ -349,10 +330,6 @@ func layerNorm(x, scale, bias []float64) []float64 {
 	return out
 }
 
-// gelu approximates the GELU activation function.
-func gelu(x float64) float64 {
-	return 0.5 * x * (1.0 + math.Tanh(math.Sqrt(2.0/math.Pi)*(x+0.044715*x*x*x)))
-}
 
 // TrainWindowed trains the iTransformer model on windowed data using AdamW.
 // windows: [nSamples][channels][inputLen].

@@ -1209,7 +1209,7 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 		for p := 0; p < nPatches; p++ {
 			dFeatMLP1Pre[p] = make([]float64, ffnDim)
 			for j := 0; j < ffnDim; j++ {
-				dFeatMLP1Pre[p][j] = dFeatMLP1Out[p][j] * geluGrad(mc.featMLP1Pre[p][j])
+				dFeatMLP1Pre[p][j] = dFeatMLP1Out[p][j] * geluDeriv[float64](mc.featMLP1Pre[p][j])
 			}
 		}
 
@@ -1262,7 +1262,7 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 	for p := 0; p < dModel; p++ {
 		dMLP1Pre[p] = make([]float64, nPatches)
 		for j := 0; j < nPatches; j++ {
-			dMLP1Pre[p][j] = dMLP1Out[p][j] * geluGrad(mc.mlp1Pre[p][j])
+			dMLP1Pre[p][j] = dMLP1Out[p][j] * geluDeriv[float64](mc.mlp1Pre[p][j])
 		}
 	}
 
@@ -1438,7 +1438,7 @@ func geluMatrix(x [][]float64) [][]float64 {
 	for i := range x {
 		out[i] = make([]float64, len(x[i]))
 		for j := range x[i] {
-			out[i][j] = geluF64(x[i][j])
+			out[i][j] = geluScalar[float64](x[i][j])
 		}
 	}
 	return out
