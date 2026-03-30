@@ -461,12 +461,10 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		epochLoss := 0.0
 		nBatches := 0
 
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			bs := end - start
+		// Drop partial final batch for consistent tensor shapes (required for CUDA graph capture).
+		fullBatches := nSamples - (nSamples % batchSize)
+		for start := 0; start < fullBatches; start += batchSize {
+			bs := batchSize
 			bsC := bs * channels           // batch dimension includes all channels
 			totalRows := bsC * numPatches  // total rows for encoder
 
@@ -755,7 +753,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			// AdamW update.
 			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
+			t := float64(epoch*(fullBatches/batchSize) + nBatches)
 			beta1 := float32(config.Beta1)
 			beta2 := float32(config.Beta2)
 			eps := float32(config.Epsilon)
