@@ -745,7 +745,7 @@ func (m *PatchTST) TrainWindowed(windows [][][]float64, labels []float64, config
 	windows, m.normMeans, m.normStds = normalizeWindows(windows)
 
 	if m.engine != nil {
-		return m.trainWindowedEngine(windows, labels, config)
+		return m.trainWindowedGPU(windows, labels, config)
 	}
 
 	// Extract float64 params for CPU training via TrainLoop.
