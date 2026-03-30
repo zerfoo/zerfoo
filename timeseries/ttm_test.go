@@ -611,3 +611,80 @@ func copyMixerBlock(src, dst *ttmMixerBlockF32) {
 		copy(dst.featNorm.bias.Data(), src.featNorm.bias.Data())
 	}
 }
+
+func TestTTM_BatchForwardParity(t *testing.T) {
+	engine, ops := newTestEngine()
+
+	for _, tc := range []struct {
+		name          string
+		channelMixing bool
+		numChannels   int
+	}{
+		{"single_channel", false, 1},
+		{"multi_channel", false, 2},
+		{"channel_mixing", true, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := ttmTestConfig()
+			config.ChannelMixing = tc.channelMixing
+			config.NumChannels = tc.numChannels
+
+			model, err := NewTTM(config, engine, ops)
+			if err != nil {
+				t.Fatalf("NewTTM: %v", err)
+			}
+
+			ctx := context.Background()
+			params := model.extractParamsF64()
+			batch := 4
+
+			// Build synthetic windows [batch][channels][contextLen].
+			windows := make([][][]float64, batch)
+			for s := 0; s < batch; s++ {
+				windows[s] = make([][]float64, tc.numChannels)
+				for ch := 0; ch < tc.numChannels; ch++ {
+					windows[s][ch] = make([]float64, config.ContextLen)
+					for i := 0; i < config.ContextLen; i++ {
+						windows[s][ch][i] = math.Sin(float64(s*tc.numChannels*config.ContextLen+ch*config.ContextLen+i) * 0.1)
+					}
+				}
+			}
+
+			// Sample-by-sample forward using forwardF64WithCacheEngine.
+			sampleResults := make([][]float64, batch)
+			for s := 0; s < batch; s++ {
+				pred, _, err := model.forwardF64WithCacheEngine(ctx, windows[s], params)
+				if err != nil {
+					t.Fatalf("sample %d forward: %v", s, err)
+				}
+				sampleResults[s] = pred
+			}
+
+			// Batched forward.
+			batchResults, err := model.batchForwardF64Engine(ctx, windows, params)
+			if err != nil {
+				t.Fatalf("batchForwardF64Engine: %v", err)
+			}
+
+			if len(batchResults) != batch {
+				t.Fatalf("batch results length = %d, want %d", len(batchResults), batch)
+			}
+
+			// Compare outputs.
+			const tol = 1e-9
+			for s := 0; s < batch; s++ {
+				if len(batchResults[s]) != config.ForecastLen {
+					t.Errorf("sample %d: output length = %d, want %d", s, len(batchResults[s]), config.ForecastLen)
+					continue
+				}
+				for j := 0; j < config.ForecastLen; j++ {
+					diff := math.Abs(sampleResults[s][j] - batchResults[s][j])
+					if diff > tol {
+						t.Errorf("sample %d output[%d]: sample=%.12f batch=%.12f diff=%.2e",
+							s, j, sampleResults[s][j], batchResults[s][j], diff)
+					}
+				}
+			}
+		})
+	}
+}
