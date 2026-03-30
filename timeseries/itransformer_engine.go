@@ -81,23 +81,23 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 
 	// Step 1: Variate embedding — [channels x inputLen] @ [inputLen x dModel] + embedB.
 	tokens := m.linearBatchEngine(ctx, input, m.embedW, m.embedB)
-	cache.embedOut = deepCopy2D(tokens)
+	cache.embedOut = copyMatrix(tokens)
 
 	// Step 2: Encoder layers.
 	cache.layerCaches = make([]iTransformerLayerCache, len(m.layers))
 	for li, layer := range m.layers {
 		var lc iTransformerLayerCache
-		lc.inputTokens = deepCopy2D(tokens)
-		lc.preAttnTokens = deepCopy2D(tokens)
+		lc.inputTokens = copyMatrix(tokens)
+		lc.preAttnTokens = copyMatrix(tokens)
 
 		// --- Multi-head self-attention ---
 		// Q, K, V projections: [channels x dModel] @ [dModel x dModel].
 		Q := m.linearBatchEngine(ctx, tokens, layer.qW, layer.qB)
 		K := m.linearBatchEngine(ctx, tokens, layer.kW, layer.kB)
 		V := m.linearBatchEngine(ctx, tokens, layer.vW, layer.vB)
-		lc.Q = deepCopy2D(Q)
-		lc.K = deepCopy2D(K)
-		lc.V = deepCopy2D(V)
+		lc.Q = copyMatrix(Q)
+		lc.K = copyMatrix(K)
+		lc.V = copyMatrix(V)
 
 		// Per-head scaled dot-product attention (kept on CPU — small channels x channels).
 		scale := 1.0 / math.Sqrt(float64(headDim))
@@ -122,7 +122,7 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 				}
 			}
 			for i := 0; i < channels; i++ {
-				scores[i] = softmax(scores[i])
+				scores[i] = softmaxF64(scores[i])
 			}
 			lc.attnScores[h] = scores
 
@@ -136,11 +136,11 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 				}
 			}
 		}
-		lc.attnConcat = deepCopy2D(attnConcat)
+		lc.attnConcat = copyMatrix(attnConcat)
 
 		// Output projection: [channels x dModel] @ [dModel x dModel].
 		attnOut := m.linearBatchEngine(ctx, attnConcat, layer.oW, layer.oB)
-		lc.attnOut = deepCopy2D(attnOut)
+		lc.attnOut = copyMatrix(attnOut)
 
 		// Residual + LN1.
 		preLN1 := make([][]float64, channels)
@@ -154,8 +154,8 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 			}
 			ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNormCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
 		}
-		lc.preLN1 = deepCopy2D(preLN1)
-		lc.ln1Out = deepCopy2D(ln1Out)
+		lc.preLN1 = copyMatrix(preLN1)
+		lc.ln1Out = copyMatrix(ln1Out)
 
 		// --- FFN ---
 		// fc1: [channels x dModel] @ [dModel x dFF].
@@ -164,7 +164,7 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 		for c := 0; c < channels; c++ {
 			geluOut[c] = make([]float64, len(fc1Out[c]))
 			for i := range fc1Out[c] {
-				geluOut[c][i] = gelu(fc1Out[c][i])
+				geluOut[c][i] = geluScalar[float64](fc1Out[c][i])
 			}
 		}
 
@@ -182,18 +182,18 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 			}
 			ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNormCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
 		}
-		lc.fc1Out = deepCopy2D(fc1Out)
-		lc.geluOut = deepCopy2D(geluOut)
-		lc.fc2Out = deepCopy2D(fc2Out)
-		lc.preLN2 = deepCopy2D(preLN2)
-		lc.ln2Out = deepCopy2D(ln2Out)
+		lc.fc1Out = copyMatrix(fc1Out)
+		lc.geluOut = copyMatrix(geluOut)
+		lc.fc2Out = copyMatrix(fc2Out)
+		lc.preLN2 = copyMatrix(preLN2)
+		lc.ln2Out = copyMatrix(ln2Out)
 
 		tokens = ln2Out
 		cache.layerCaches[li] = lc
 	}
 
 	// Store pre-projection tokens.
-	cache.preProj = deepCopy2D(tokens)
+	cache.preProj = copyMatrix(tokens)
 
 	// Step 3: Output projection: [channels x dModel] @ [dModel x outputLen].
 	output := m.linearBatchEngine(ctx, tokens, m.projW, m.projB)
@@ -258,7 +258,7 @@ func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.Ten
 					}
 				}
 				for i := 0; i < channels; i++ {
-					scores[i] = softmax(scores[i])
+					scores[i] = softmaxF64(scores[i])
 				}
 				for i := 0; i < channels; i++ {
 					for d := 0; d < headDim; d++ {
@@ -280,7 +280,7 @@ func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.Ten
 			fc1Out := m.linearBatchEngine(ctx, tokens, layer.fc1W, layer.fc1B)
 			for c := 0; c < channels; c++ {
 				for i := range fc1Out[c] {
-					fc1Out[c][i] = gelu(fc1Out[c][i])
+					fc1Out[c][i] = geluScalar[float64](fc1Out[c][i])
 				}
 			}
 			fc2Out := m.linearBatchEngine(ctx, fc1Out, layer.fc2W, layer.fc2B)

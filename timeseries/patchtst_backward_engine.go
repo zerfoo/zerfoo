@@ -172,7 +172,7 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 					idx := s*numPatches + p
 					batchDFFN1PreAct[idx] = make([]float64, ffnDim)
 					for j := 0; j < ffnDim; j++ {
-						batchDFFN1PreAct[idx][j] = batchDFFN1Out[idx][j] * geluDerivF64(lc.ffn1PreAct[p][j])
+						batchDFFN1PreAct[idx][j] = batchDFFN1Out[idx][j] * geluDeriv[float64](lc.ffn1PreAct[p][j])
 					}
 				}
 			}

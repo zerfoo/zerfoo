@@ -2,16 +2,6 @@ package timeseries
 
 import "math"
 
-// geluGrad computes the derivative of the GELU activation.
-func geluGrad(x float64) float64 {
-	c := math.Sqrt(2.0 / math.Pi)
-	inner := c * (x + 0.044715*x*x*x)
-	tanhVal := math.Tanh(inner)
-	sech2 := 1.0 - tanhVal*tanhVal
-	dinnerDx := c * (1.0 + 3.0*0.044715*x*x)
-	return 0.5*(1.0+tanhVal) + 0.5*x*sech2*dinnerDx
-}
-
 // iTransformerCache stores intermediate activations needed for backward pass.
 type iTransformerCache struct {
 	// Input to the model: [channels][inputLen].
@@ -137,7 +127,7 @@ func (m *ITransformer) forwardWithCache(input [][]float64) ([][]float64, iTransf
 	for c := 0; c < channels; c++ {
 		tokens[c] = linearForwardVec(input[c], m.embedW, m.embedB)
 	}
-	cache.embedOut = deepCopy2D(tokens)
+	cache.embedOut = copyMatrix(tokens)
 
 	// Step 2: Encoder layers.
 	cache.layerCaches = make([]iTransformerLayerCache, len(m.layers))
@@ -148,7 +138,7 @@ func (m *ITransformer) forwardWithCache(input [][]float64) ([][]float64, iTransf
 	}
 
 	// Store pre-projection tokens.
-	cache.preProj = deepCopy2D(tokens)
+	cache.preProj = copyMatrix(tokens)
 
 	// Step 3: Output projection.
 	output := make([][]float64, channels)
@@ -160,15 +150,6 @@ func (m *ITransformer) forwardWithCache(input [][]float64) ([][]float64, iTransf
 	return output, cache
 }
 
-func deepCopy2D(src [][]float64) [][]float64 {
-	dst := make([][]float64, len(src))
-	for i := range src {
-		dst[i] = make([]float64, len(src[i]))
-		copy(dst[i], src[i])
-	}
-	return dst
-}
-
 // encoderLayerForwardCached runs one encoder layer, returning cached activations.
 func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTransformerLayer) ([][]float64, iTransformerLayerCache) {
 	channels := len(tokens)
@@ -177,8 +158,8 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 	headDim := dModel / nHeads
 
 	lc := iTransformerLayerCache{
-		inputTokens:   deepCopy2D(tokens),
-		preAttnTokens: deepCopy2D(tokens),
+		inputTokens:   copyMatrix(tokens),
+		preAttnTokens: copyMatrix(tokens),
 	}
 
 	// --- Multi-head self-attention ---
@@ -190,9 +171,9 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		K[c] = linearForwardVec(tokens[c], layer.kW, layer.kB)
 		V[c] = linearForwardVec(tokens[c], layer.vW, layer.vB)
 	}
-	lc.Q = deepCopy2D(Q)
-	lc.K = deepCopy2D(K)
-	lc.V = deepCopy2D(V)
+	lc.Q = copyMatrix(Q)
+	lc.K = copyMatrix(K)
+	lc.V = copyMatrix(V)
 
 	scale := 1.0 / math.Sqrt(float64(headDim))
 	attnConcat := make([][]float64, channels)
@@ -216,7 +197,7 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 			}
 		}
 		for i := 0; i < channels; i++ {
-			scores[i] = softmax(scores[i])
+			scores[i] = softmaxF64(scores[i])
 		}
 		lc.attnScores[h] = scores
 
@@ -230,14 +211,14 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 			}
 		}
 	}
-	lc.attnConcat = deepCopy2D(attnConcat)
+	lc.attnConcat = copyMatrix(attnConcat)
 
 	// Output projection.
 	attnOut := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
 		attnOut[c] = linearForwardVec(attnConcat[c], layer.oW, layer.oB)
 	}
-	lc.attnOut = deepCopy2D(attnOut)
+	lc.attnOut = copyMatrix(attnOut)
 
 	// Residual + LN1.
 	preLN1 := make([][]float64, channels)
@@ -251,8 +232,8 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		}
 		ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNormCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
 	}
-	lc.preLN1 = deepCopy2D(preLN1)
-	lc.ln1Out = deepCopy2D(ln1Out)
+	lc.preLN1 = copyMatrix(preLN1)
+	lc.ln1Out = copyMatrix(ln1Out)
 
 	// --- FFN ---
 	fc1Out := make([][]float64, channels)
@@ -267,7 +248,7 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		fc1Out[c] = linearForwardVec(ln1Out[c], layer.fc1W, layer.fc1B)
 		geluOut[c] = make([]float64, len(fc1Out[c]))
 		for i := range fc1Out[c] {
-			geluOut[c][i] = gelu(fc1Out[c][i])
+			geluOut[c][i] = geluScalar[float64](fc1Out[c][i])
 		}
 		fc2Out[c] = linearForwardVec(geluOut[c], layer.fc2W, layer.fc2B)
 
@@ -277,11 +258,11 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		}
 		ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNormCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
 	}
-	lc.fc1Out = deepCopy2D(fc1Out)
-	lc.geluOut = deepCopy2D(geluOut)
-	lc.fc2Out = deepCopy2D(fc2Out)
-	lc.preLN2 = deepCopy2D(preLN2)
-	lc.ln2Out = deepCopy2D(ln2Out)
+	lc.fc1Out = copyMatrix(fc1Out)
+	lc.geluOut = copyMatrix(geluOut)
+	lc.fc2Out = copyMatrix(fc2Out)
+	lc.preLN2 = copyMatrix(preLN2)
+	lc.ln2Out = copyMatrix(ln2Out)
 
 	return ln2Out, lc
 }
@@ -402,7 +383,7 @@ func (m *ITransformer) encoderLayerBackward(
 		// GELU backward.
 		dFC1Out := make([]float64, dFF)
 		for i := 0; i < dFF; i++ {
-			dFC1Out[i] = dGeluOut[i] * geluGrad(lc.fc1Out[c][i])
+			dFC1Out[i] = dGeluOut[i] * geluDeriv[float64](lc.fc1Out[c][i])
 		}
 
 		// fc1: ln1Out @ fc1W + fc1B -> fc1Out
