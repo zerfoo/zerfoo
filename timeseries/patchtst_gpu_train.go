@@ -298,33 +298,121 @@ func (g *gpuGrads) allParamTensors() []*tensor.TensorNumeric[float32] {
 	return ts
 }
 
-// gpuLayerCache stores per-sample per-layer forward activations needed for backward.
+// gpuLayerCache stores per-layer forward activations needed for backward.
 type gpuLayerCache struct {
-	normed1   *tensor.TensorNumeric[float32] // [numPatches, dModel]
-	q, k, v   *tensor.TensorNumeric[float32] // [numPatches, dModel]
-	scores    [][][]float32                   // [nHeads][seq][seq] - small, CPU
-	attnOut   *tensor.TensorNumeric[float32]  // [numPatches, dModel]
-	normed2   *tensor.TensorNumeric[float32]  // [numPatches, dModel]
-	ffn1PreAct *tensor.TensorNumeric[float32] // [numPatches, ffnDim]
-	ffn1Out   *tensor.TensorNumeric[float32]  // [numPatches, ffnDim]
-	// LayerNorm cache (CPU, small).
-	centered1 [][]float32 // [numPatches][dModel]
-	invStd1   []float32   // [numPatches]
-	centered2 [][]float32
-	invStd2   []float32
+	normed1    *tensor.TensorNumeric[float32] // [numPatches, dModel]
+	q, k, v    *tensor.TensorNumeric[float32] // [numPatches, dModel]
+	scores     [][][]float32                   // [nHeads][seq][seq] - small, CPU
+	attnOut    *tensor.TensorNumeric[float32]  // [numPatches, dModel]
+	normed2    *tensor.TensorNumeric[float32]  // [numPatches, dModel]
+	ffn1PreAct *tensor.TensorNumeric[float32]  // [numPatches, ffnDim]
+	ffn1Out    *tensor.TensorNumeric[float32]  // [numPatches, ffnDim]
+	centered1  [][]float32                     // [numPatches][dModel]
+	invStd1    []float32                       // [numPatches]
+	centered2  [][]float32
+	invStd2    []float32
 }
 
-// gpuChannelCache stores per-sample per-channel data.
+// gpuChannelCache stores per-channel data reused across samples.
 type gpuChannelCache struct {
-	patches    *tensor.TensorNumeric[float32] // [numPatches, patchLen]
-	embedded   *tensor.TensorNumeric[float32] // [numPatches, dModel]
-	flatInput  *tensor.TensorNumeric[float32] // [1, headIn]
+	patches     *tensor.TensorNumeric[float32] // [numPatches, patchLen]
+	embedded    *tensor.TensorNumeric[float32] // [numPatches, dModel]
+	flatInput   *tensor.TensorNumeric[float32] // [1, headIn]
 	layerCaches []gpuLayerCache
 }
 
-// gpuSampleCache is the full per-sample cache.
-type gpuSampleCache struct {
-	channels []gpuChannelCache
+// gpuWorkspace pre-allocates channel caches and reusable buffers.
+type gpuWorkspace struct {
+	channels     []gpuChannelCache
+	attnOutBuf   []float32 // [numPatches * dModel] reused per attention computation
+	ffn1OutBuf   []float32 // [numPatches * ffnDim] reused per GELU computation
+	flatBuf      []float32 // [headIn] reused per flatten
+	// Backward buffers.
+	dFFN2Buf     []float32 // [numPatches * dModel]
+	dFFN1PreBuf  []float32 // [numPatches * ffnDim]
+	dQBuf        []float32 // [numPatches * dModel]
+	dKBuf        []float32 // [numPatches * dModel]
+	dVBuf        []float32 // [numPatches * dModel]
+}
+
+// allocGPUWorkspace creates pre-allocated workspace for the training loop.
+func allocGPUWorkspace(numPatches, patchLen, dModel, ffnDim, headIn, nLayers, nChannels, nHeads int) (*gpuWorkspace, error) {
+	w := &gpuWorkspace{}
+	var err error
+
+	alloc := func(shape []int, size int) (*tensor.TensorNumeric[float32], error) {
+		return tensor.New[float32](shape, make([]float32, size))
+	}
+
+	w.channels = make([]gpuChannelCache, nChannels)
+	for ch := range w.channels {
+		c := &w.channels[ch]
+		if c.patches, err = alloc([]int{numPatches, patchLen}, numPatches*patchLen); err != nil {
+			return nil, err
+		}
+		if c.embedded, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+			return nil, err
+		}
+		if c.flatInput, err = alloc([]int{1, headIn}, headIn); err != nil {
+			return nil, err
+		}
+		c.layerCaches = make([]gpuLayerCache, nLayers)
+		for li := range c.layerCaches {
+			lc := &c.layerCaches[li]
+			if lc.normed1, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.q, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.k, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.v, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.attnOut, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.normed2, err = alloc([]int{numPatches, dModel}, numPatches*dModel); err != nil {
+				return nil, err
+			}
+			if lc.ffn1PreAct, err = alloc([]int{numPatches, ffnDim}, numPatches*ffnDim); err != nil {
+				return nil, err
+			}
+			if lc.ffn1Out, err = alloc([]int{numPatches, ffnDim}, numPatches*ffnDim); err != nil {
+				return nil, err
+			}
+			seq := numPatches
+			lc.scores = make([][][]float32, nHeads)
+			for h := 0; h < nHeads; h++ {
+				lc.scores[h] = make([][]float32, seq)
+				for i := 0; i < seq; i++ {
+					lc.scores[h][i] = make([]float32, seq)
+				}
+			}
+		}
+	}
+
+	w.attnOutBuf = make([]float32, numPatches*dModel)
+	w.ffn1OutBuf = make([]float32, numPatches*ffnDim)
+	w.flatBuf = make([]float32, headIn)
+	w.dFFN2Buf = make([]float32, numPatches*dModel)
+	w.dFFN1PreBuf = make([]float32, numPatches*ffnDim)
+	w.dQBuf = make([]float32, numPatches*dModel)
+	w.dKBuf = make([]float32, numPatches*dModel)
+	w.dVBuf = make([]float32, numPatches*dModel)
+
+	return w, nil
+}
+
+// copyMatToTensor copies a [][]float32 matrix into an existing tensor's data buffer.
+func copyMatToTensor(mat [][]float32, dst *tensor.TensorNumeric[float32]) {
+	data := dst.Data()
+	cols := len(mat[0])
+	for i, row := range mat {
+		copy(data[i*cols:(i+1)*cols], row)
+	}
 }
 
 // layerNormF32WithCache performs layer norm on CPU and returns cached values.
@@ -433,6 +521,20 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		}
 	}
 
+	channels := len(windows[0])
+
+	// Pre-allocate workspace (channel caches and reusable buffers).
+	ws, err := allocGPUWorkspace(numPatches, m.config.PatchLength, dModel, ffnDim, headIn, m.config.NLayers, channels, nHeads)
+	if err != nil {
+		return nil, fmt.Errorf("patchtst gpu: alloc workspace: %w", err)
+	}
+
+	// Pre-allocate per-channel sample input buffers.
+	sampleWindows := make([][]float32, channels)
+	for ch := range sampleWindows {
+		sampleWindows[ch] = make([]float32, m.config.InputLength)
+	}
+
 	result := &TrainResult{
 		LossHistory: make([]float64, config.Epochs),
 	}
@@ -461,41 +563,33 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 			}
 
-			channels := len(windows[0])
 			chanScale := float32(1.0 / float64(channels))
 
 			// Forward pass + backward for each sample in batch.
 			batchLoss := 0.0
+			chanOutputs := make([][]float32, channels)
+
 			for s := 0; s < bs; s++ {
 				sIdx := start + s
 				sampleLabels := labels[sIdx*outDim : (sIdx+1)*outDim]
 
-				// Convert input to float32.
-				sampleWindows := make([][]float32, channels)
+				// Convert input to float32 (reuse buffers).
 				for ch := 0; ch < channels; ch++ {
-					sampleWindows[ch] = make([]float32, m.config.InputLength)
 					for j := range sampleWindows[ch] {
 						sampleWindows[ch][j] = float32(windows[sIdx][ch][j])
 					}
 				}
 
 				// Forward pass per channel, accumulating output.
-				chanOutputs := make([][]float32, channels)
-				caches := make([]gpuChannelCache, channels)
-
 				for ch := 0; ch < channels; ch++ {
-					cc := &caches[ch]
+					cc := &ws.channels[ch]
 
-					// Extract patches.
-					patchData := make([]float32, numPatches*m.config.PatchLength)
+					// Extract patches into pre-allocated tensor.
+					patchData := cc.patches.Data()
 					for p := 0; p < numPatches; p++ {
 						startP := p * m.config.Stride
 						copy(patchData[p*m.config.PatchLength:(p+1)*m.config.PatchLength],
 							sampleWindows[ch][startP:startP+m.config.PatchLength])
-					}
-					cc.patches, err = tensor.New[float32]([]int{numPatches, m.config.PatchLength}, patchData)
-					if err != nil {
-						return nil, err
 					}
 
 					// Patch embedding: patches @ patchEmbW + patchEmbB.
@@ -515,20 +609,16 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					}
 
 					// Encoder layers.
-					cc.layerCaches = make([]gpuLayerCache, m.config.NLayers)
 					for li := 0; li < m.config.NLayers; li++ {
 						layer := &params.layers[li]
 						lc := &cc.layerCaches[li]
 
-						// Layer norm 1 on CPU.
+						// Layer norm 1 on CPU, copy into pre-allocated tensor.
 						xData := matFromTensor(x, numPatches, dModel)
 						normed1, cent1, invStd1 := layerNormF32WithCache(xData, layer.norm1.Data(), layer.bias1.Data(), dModel)
 						lc.centered1 = cent1
 						lc.invStd1 = invStd1
-						lc.normed1, err = tensorFromMat(normed1, numPatches, dModel)
-						if err != nil {
-							return nil, err
-						}
+						copyMatToTensor(normed1, lc.normed1)
 
 						// Q/K/V projections via engine.
 						lc.q, err = m.engine.MatMul(ctx, lc.normed1, layer.qW)
@@ -561,15 +651,15 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						kData := lc.k.Data()
 						vData := lc.v.Data()
 						seq := numPatches
-						lc.scores = make([][][]float32, nHeads)
-						attnOutData := make([]float32, seq*dModel)
+						attnOutData := ws.attnOutBuf
+						for i := range attnOutData {
+							attnOutData[i] = 0
+						}
 
 						scale := float32(1.0 / math.Sqrt(float64(headDim)))
 						for h := 0; h < nHeads; h++ {
 							hOff := h * headDim
-							lc.scores[h] = make([][]float32, seq)
 							for i := 0; i < seq; i++ {
-								lc.scores[h][i] = make([]float32, seq)
 								for j := 0; j < seq; j++ {
 									dot := float32(0)
 									for d := 0; d < headDim; d++ {
@@ -606,10 +696,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 								}
 							}
 						}
-						lc.attnOut, err = tensor.New[float32]([]int{seq, dModel}, attnOutData)
-						if err != nil {
-							return nil, err
-						}
+						// Copy attention output into pre-allocated tensor.
+						copy(lc.attnOut.Data(), attnOutData)
 
 						// Output projection.
 						attnProj, err := m.engine.MatMul(ctx, lc.attnOut, layer.oW)
@@ -627,15 +715,12 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 							return nil, err
 						}
 
-						// Layer norm 2 on CPU.
+						// Layer norm 2 on CPU, copy into pre-allocated tensor.
 						xData = matFromTensor(x, numPatches, dModel)
 						normed2, cent2, invStd2 := layerNormF32WithCache(xData, layer.norm2.Data(), layer.bias2.Data(), dModel)
 						lc.centered2 = cent2
 						lc.invStd2 = invStd2
-						lc.normed2, err = tensorFromMat(normed2, numPatches, dModel)
-						if err != nil {
-							return nil, err
-						}
+						copyMatToTensor(normed2, lc.normed2)
 
 						// FFN1 via engine.
 						lc.ffn1PreAct, err = m.engine.MatMul(ctx, lc.normed2, layer.ffn1W)
@@ -647,15 +732,11 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 							return nil, err
 						}
 
-						// GELU on CPU.
+						// GELU on CPU, write into pre-allocated ffn1Out.
 						ffn1Data := lc.ffn1PreAct.Data()
-						ffn1OutData := make([]float32, len(ffn1Data))
+						ffn1OutData := lc.ffn1Out.Data()
 						for j := range ffn1Data {
 							ffn1OutData[j] = geluScalar(ffn1Data[j])
-						}
-						lc.ffn1Out, err = tensor.New[float32]([]int{numPatches, ffnDim}, ffn1OutData)
-						if err != nil {
-							return nil, err
 						}
 
 						// FFN2 via engine.
@@ -675,15 +756,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						}
 					}
 
-					// Flatten for output head.
-					flatData := make([]float32, headIn)
-					copy(flatData, matFromTensor(x, numPatches, dModel)[0][:0]) // noop; use x.Data()
-					xd := x.Data()
-					copy(flatData, xd)
-					cc.flatInput, err = tensor.New[float32]([]int{1, headIn}, flatData)
-					if err != nil {
-						return nil, err
-					}
+					// Flatten for output head: copy into pre-allocated flatInput.
+					copy(cc.flatInput.Data(), x.Data())
 
 					// Output head.
 					headOut, err := m.engine.MatMul(ctx, cc.flatInput, params.headW)
@@ -694,7 +768,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					chanOutputs[ch] = headOut.Data()
+					outCopy := make([]float32, outDim)
+					copy(outCopy, headOut.Data())
+					chanOutputs[ch] = outCopy
 				}
 
 				// Average channel outputs.
@@ -715,16 +791,14 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 
 				// --- Backward pass ---
-				// dL/dPred for this sample.
 				dPred := make([]float32, outDim)
 				for j := 0; j < outDim; j++ {
 					dPred[j] = 2.0 * (pred[j] - float32(sampleLabels[j])) / float32(bs*outDim)
 				}
 
 				for ch := 0; ch < channels; ch++ {
-					cc := &caches[ch]
+					cc := &ws.channels[ch]
 
-					// Scale by 1/channels.
 					dChanOut := make([]float32, outDim)
 					for j := range dChanOut {
 						dChanOut[j] = dPred[j] * chanScale
@@ -734,8 +808,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						return nil, err
 					}
 
-					// Head backward: out = flatInput @ headW + headB.
-					// dHeadW += flatInput^T @ dChanOut.
+					// Head backward.
 					flatInputT, err := m.engine.Transpose(ctx, cc.flatInput, []int{1, 0})
 					if err != nil {
 						return nil, err
@@ -748,12 +821,10 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					// dHeadB += dChanOut.
 					grads.headB, err = m.engine.Add(ctx, grads.headB, dChanOutT)
 					if err != nil {
 						return nil, err
 					}
-					// dFlat = dChanOut @ headW^T.
 					headWT, err := m.engine.Transpose(ctx, params.headW, []int{1, 0})
 					if err != nil {
 						return nil, err
@@ -763,7 +834,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						return nil, err
 					}
 
-					// Unflatten dFlat to [numPatches, dModel].
 					dX, err := m.engine.Reshape(ctx, dFlat, []int{numPatches, dModel})
 					if err != nil {
 						return nil, err
@@ -777,15 +847,13 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 						dXData := dX.Data()
 
-						// FFN2 backward: ffn2Out = ffn1Out @ ffn2W + ffn2B.
-						dFFN2Out := make([]float32, numPatches*dModel)
-						copy(dFFN2Out, dXData)
-						dFFN2OutT, err := tensor.New[float32]([]int{numPatches, dModel}, dFFN2Out)
+						// FFN2 backward.
+						copy(ws.dFFN2Buf, dXData)
+						dFFN2OutT, err := tensor.New[float32]([]int{numPatches, dModel}, ws.dFFN2Buf)
 						if err != nil {
 							return nil, err
 						}
 
-						// dFFN2W += ffn1Out^T @ dFFN2Out.
 						ffn1OutT, err := m.engine.Transpose(ctx, lc.ffn1Out, []int{1, 0})
 						if err != nil {
 							return nil, err
@@ -798,7 +866,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						if err != nil {
 							return nil, err
 						}
-						// dFFN2B += sum(dFFN2Out, axis=0).
 						dFB, err := m.engine.Sum(ctx, dFFN2OutT, 0, false)
 						if err != nil {
 							return nil, err
@@ -811,7 +878,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						if err != nil {
 							return nil, err
 						}
-						// dFFN1Out = dFFN2Out @ ffn2W^T.
 						ffn2WT, err := m.engine.Transpose(ctx, layer.ffn2W, []int{1, 0})
 						if err != nil {
 							return nil, err
@@ -824,7 +890,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						// GELU backward on CPU.
 						dFFN1OutData := dFFN1Out.Data()
 						ffn1PreActData := lc.ffn1PreAct.Data()
-						dFFN1PreActData := make([]float32, len(dFFN1OutData))
+						dFFN1PreActData := ws.dFFN1PreBuf
 						for j := range dFFN1OutData {
 							dFFN1PreActData[j] = dFFN1OutData[j] * geluDerivF32(ffn1PreActData[j])
 						}
@@ -833,7 +899,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 							return nil, err
 						}
 
-						// FFN1 backward: ffn1PreAct = normed2 @ ffn1W + ffn1B.
+						// FFN1 backward.
 						normed2T, err := m.engine.Transpose(ctx, lc.normed2, []int{1, 0})
 						if err != nil {
 							return nil, err
@@ -871,14 +937,13 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						dNormed2Data := matFromTensor(dNormed2, numPatches, dModel)
 						dXAfterAttn := layerNormBackwardF32(dNormed2Data, lc.centered2, lc.invStd2,
 							layer.norm2.Data(), dg.norm2.Data(), dg.bias2.Data(), dModel)
-						// Add residual from FFN path (dX from residual2).
 						for p := 0; p < numPatches; p++ {
 							for j := 0; j < dModel; j++ {
 								dXAfterAttn[p][j] += dXData[p*dModel+j]
 							}
 						}
 
-						// oProj backward: attnProjOut = attnOut @ oW + oB.
+						// oProj backward.
 						dAttnProjOutT, err := tensorFromMat(dXAfterAttn, numPatches, dModel)
 						if err != nil {
 							return nil, err
@@ -922,9 +987,18 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						kData := lc.k.Data()
 						vData := lc.v.Data()
 						seq := numPatches
-						dQData := make([]float32, seq*dModel)
-						dKData := make([]float32, seq*dModel)
-						dVData := make([]float32, seq*dModel)
+						dQData := ws.dQBuf
+						dKData := ws.dKBuf
+						dVData := ws.dVBuf
+						for i := range dQData {
+							dQData[i] = 0
+						}
+						for i := range dKData {
+							dKData[i] = 0
+						}
+						for i := range dVData {
+							dVData[i] = 0
+						}
 
 						attnScale := float32(1.0 / math.Sqrt(float64(headDim)))
 						for h := 0; h < nHeads; h++ {
@@ -941,7 +1015,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 								}
 							}
 
-							// Softmax backward.
 							for i := 0; i < seq; i++ {
 								dot := float32(0)
 								for j := 0; j < seq; j++ {
@@ -975,7 +1048,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 							return nil, err
 						}
 
-						// dQW, dKW, dVW.
 						dQW, err := m.engine.MatMul(ctx, normed1T, dQT)
 						if err != nil {
 							return nil, err
@@ -1077,7 +1149,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						dNormed1Data := matFromTensor(dNormed1, numPatches, dModel)
 						dLayerInput := layerNormBackwardF32(dNormed1Data, lc.centered1, lc.invStd1,
 							layer.norm1.Data(), dg.norm1.Data(), dg.bias1.Data(), dModel)
-						// Add residual from attention path.
 						for p := 0; p < numPatches; p++ {
 							for j := 0; j < dModel; j++ {
 								dLayerInput[p][j] += dXAfterAttn[p][j]
@@ -1097,7 +1168,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						dPosData[j] += dXData[j]
 					}
 
-					// Patch embedding backward: embedded = patches @ patchEmbW + patchEmbB.
+					// Patch embedding backward.
 					patchesT, err := m.engine.Transpose(ctx, cc.patches, []int{1, 0})
 					if err != nil {
 						return nil, err
