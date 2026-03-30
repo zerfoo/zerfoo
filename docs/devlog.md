@@ -1627,3 +1627,15 @@ Framework ready for community launch phase.
 **Root cause:** Unknown. Forward pass diverges from llama.cpp after embedding lookup. Ollama produces correct output with same GGUF.
 **Fix:** Needs layer-by-layer activation debug hooks comparing against llama.cpp.
 **Impact:** All Mistral-family GGUFs produce garbage.
+
+## 2026-03-30: Batched Training 28K Benchmark (CPU Engine)
+
+**Type:** benchmark
+**Tags:** PatchTST, iTransformer, batched training, DGX Spark, CPU engine
+
+**Problem:** E47 target: train PatchTST on 28K rows x 20 features x 24 window x 10 epochs in <60s on DGX Spark.
+**Result:** PatchTST 28K via CPU engine: 595.7s (loss 0.059 -> 0.010, correct convergence).
+**Root cause:** CPU engine path does batched forward/backward but all ops are Go loops, not CUDA kernels. The <60s target requires CUDA engine acceleration for MatMul and attention in the training path.
+**Fix:** Wire CUDA engine to TrainWindowed path (requires CUDA streaming GEMM for mmap'd tensors).
+**Impact:** Batched training is functionally correct and converges. Performance improvement requires GPU kernel integration.
+**Commit:** v1.37.0 (9a289ff9)
