@@ -1836,11 +1836,11 @@ One agent per repo. All zero-dependency tasks in each track.
 
 ##### Wave E46-6: Final Vet + Tags (5 agents)
 
-- [ ] T46.2.6 Run go vet in ztensor  Deps: T46.2.5  verifies: [infrastructure]
-- [ ] T46.4.6 Run go vet in float8  Deps: T46.4.5  verifies: [infrastructure]
-- [ ] T46.4.7 Tag float8 v1.0.0  Deps: T46.4.6  verifies: [UC-L02]
-- [ ] T46.5.7 BFloat16 Phase 5: Parse and format  Deps: T46.5.6  verifies: [UC-L01]
-- [ ] T46.5.8 BFloat16 Phase 5 tests  Deps: T46.5.7  verifies: [UC-L01]
+- [x] T46.2.6 Run go vet in ztensor  DONE 2026-03-30 PASS  Deps: T46.2.5  verifies: [infrastructure]
+- [x] T46.4.6 Run go vet in float8  DONE 2026-03-30 float8 PR #17 (2 test fixes)  Deps: T46.4.5  verifies: [infrastructure]
+- [x] T46.4.7 Tag float8 v1.0.0  DONE 2026-03-30 v1.0.0 released  Deps: T46.4.6  verifies: [UC-L02]
+- [x] T46.5.7 BFloat16 Phase 5: Parse and format  DONE 2026-03-30 float16 PR #14  Deps: T46.5.6  verifies: [UC-L01]
+- [x] T46.5.8 BFloat16 Phase 5 tests  DONE 2026-03-30 (included in T46.5.7)  Deps: T46.5.7  verifies: [UC-L01]
 
 ##### Wave E46-7: ztensor + float16 Finish (4 agents)
 
