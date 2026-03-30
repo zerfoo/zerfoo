@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // TimeMixerConfig holds configuration for a TimeMixer model.
@@ -100,10 +103,13 @@ type TimeMixer struct {
 	seasonalMLPs []*mixingMLP
 	// trendMLPs holds one mixing MLP per layer for trend components.
 	trendMLPs []*mixingMLP
+
+	engine compute.Engine[float32]    // optional; enables GPU-accelerated forward
+	ops    numeric.Arithmetic[float32] // arithmetic ops for engine path
 }
 
 // NewTimeMixer creates a new TimeMixer model with the given configuration.
-func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
+func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 	if cfg.NumScales <= 0 {
 		cfg.NumScales = 4
 	}
@@ -137,6 +143,10 @@ func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
 	for l := 0; l < cfg.NumLayers; l++ {
 		m.seasonalMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
 		m.trendMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
+	}
+
+	for _, opt := range opts {
+		opt(m)
 	}
 
 	return m
