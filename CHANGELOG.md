@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.1](https://github.com/zerfoo/zerfoo/compare/v1.38.0...v1.38.1) (2026-03-30)
+
+
+### Performance Improvements
+
+* **timeseries:** batch PatchTST training across channels for 20x fewer engine calls ([c97931c](https://github.com/zerfoo/zerfoo/commit/c97931ce2422078eb806b152064fad93085b5733))
+* **timeseries:** cache weight transposes outside backward loop ([0fbaf2e](https://github.com/zerfoo/zerfoo/commit/0fbaf2e8504bf1a7f9d1c11bb4f7d135a684757c))
+* **timeseries:** eliminate tileBias/tilePosEmb allocations via broadcasting ([4e884a3](https://github.com/zerfoo/zerfoo/commit/4e884a37feefad603276a78b61b7854ba0c4b659))
+* **timeseries:** move layer norm and GELU to engine ops ([e7d3436](https://github.com/zerfoo/zerfoo/commit/e7d343647c54b946747bbff05cacdc7f33290ef6))
+* **timeseries:** replace per-sample CPU attention with batched engine ops ([4924b8e](https://github.com/zerfoo/zerfoo/commit/4924b8eeebb58b5a9707b57c2c3c617f7162820d))
+* **ts_train:** use GPU engine when CUDA is available ([8b21eea](https://github.com/zerfoo/zerfoo/commit/8b21eea6662a29e60937140f3779d522436386e0))
+
 ## [1.38.0](https://github.com/zerfoo/zerfoo/compare/v1.37.0...v1.38.0) (2026-03-30)
 
 
