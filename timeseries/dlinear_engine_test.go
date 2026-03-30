@@ -212,3 +212,57 @@ func TestDLinear_TrainWindowed_Engine_Issue172(t *testing.T) {
 		t.Errorf("training took %v, expected <2s (batched engine should eliminate per-sample allocation overhead)", elapsed)
 	}
 }
+
+func TestDLinear_ForwardBatch_MatchesSampleBySample(t *testing.T) {
+	inputLen := 12
+	outputLen := 6
+	channels := 3
+	batch := 10
+
+	m, err := NewDLinear(inputLen, outputLen, channels, 5)
+	if err != nil {
+		t.Fatalf("NewDLinear: %v", err)
+	}
+
+	// Build input: [batch][channels][inputLen].
+	inputs := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		inputs[b] = make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			inputs[b][c] = make([]float64, inputLen)
+			for i := 0; i < inputLen; i++ {
+				inputs[b][c][i] = math.Sin(float64(b*channels*inputLen+c*inputLen+i)*0.3) + float64(c)*0.5
+			}
+		}
+	}
+
+	// Sample-by-sample reference.
+	want := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		want[b] = m.forward(inputs[b])
+	}
+
+	// Batched forward.
+	got := m.forwardBatch(inputs)
+
+	if len(got) != batch {
+		t.Fatalf("forwardBatch returned %d samples, want %d", len(got), batch)
+	}
+	for b := 0; b < batch; b++ {
+		if len(got[b]) != channels {
+			t.Fatalf("sample %d: got %d channels, want %d", b, len(got[b]), channels)
+		}
+		for c := 0; c < channels; c++ {
+			if len(got[b][c]) != outputLen {
+				t.Fatalf("sample %d channel %d: got len %d, want %d", b, c, len(got[b][c]), outputLen)
+			}
+			for o := 0; o < outputLen; o++ {
+				diff := math.Abs(got[b][c][o] - want[b][c][o])
+				if diff > 1e-5 {
+					t.Errorf("sample %d channel %d output %d: got %v, want %v (diff %v)",
+						b, c, o, got[b][c][o], want[b][c][o], diff)
+				}
+			}
+		}
+	}
+}
