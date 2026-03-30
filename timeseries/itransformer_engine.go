@@ -202,6 +202,106 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 	return output, cache
 }
 
+// forwardBatchEngine runs the iTransformer forward pass on a batch of samples
+// using the compute engine for linear projections.
+// Input shape: [batch, channels, inputLen]. Output shape: [batch, channels, outputLen].
+func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	shape := input.Shape()
+	if len(shape) != 3 {
+		return nil, fmt.Errorf("itransformer: forwardBatchEngine expects 3D input [batch, channels, inputLen], got shape %v", shape)
+	}
+	batch := shape[0]
+	channels := shape[1]
+	inputLen := shape[2]
+	if channels != m.config.Channels {
+		return nil, fmt.Errorf("itransformer: expected %d channels, got %d", m.config.Channels, channels)
+	}
+	if inputLen != m.config.InputLen {
+		return nil, fmt.Errorf("itransformer: expected inputLen %d, got %d", m.config.InputLen, inputLen)
+	}
+	dModel := m.config.DModel
+	nHeads := m.config.NHeads
+	headDim := dModel / nHeads
+	outputLen := m.config.OutputLen
+	data := input.Data()
+	outFlat := make([]float32, batch*channels*outputLen)
+	for b := 0; b < batch; b++ {
+		sampleInput := make([][]float64, channels)
+		for c := 0; c < channels; c++ {
+			sampleInput[c] = make([]float64, inputLen)
+			off := b*channels*inputLen + c*inputLen
+			for i := 0; i < inputLen; i++ {
+				sampleInput[c][i] = float64(data[off+i])
+			}
+		}
+		tokens := m.linearBatchEngine(ctx, sampleInput, m.embedW, m.embedB)
+		for _, layer := range m.layers {
+			Q := m.linearBatchEngine(ctx, tokens, layer.qW, layer.qB)
+			K := m.linearBatchEngine(ctx, tokens, layer.kW, layer.kB)
+			V := m.linearBatchEngine(ctx, tokens, layer.vW, layer.vB)
+			scale := 1.0 / math.Sqrt(float64(headDim))
+			attnConcat := make([][]float64, channels)
+			for c := range attnConcat {
+				attnConcat[c] = make([]float64, dModel)
+			}
+			for h := 0; h < nHeads; h++ {
+				hoff := h * headDim
+				scores := make([][]float64, channels)
+				for i := 0; i < channels; i++ {
+					scores[i] = make([]float64, channels)
+					for j := 0; j < channels; j++ {
+						dot := 0.0
+						for d := 0; d < headDim; d++ {
+							dot += Q[i][hoff+d] * K[j][hoff+d]
+						}
+						scores[i][j] = dot * scale
+					}
+				}
+				for i := 0; i < channels; i++ {
+					scores[i] = softmax(scores[i])
+				}
+				for i := 0; i < channels; i++ {
+					for d := 0; d < headDim; d++ {
+						val := 0.0
+						for j := 0; j < channels; j++ {
+							val += scores[i][j] * V[j][hoff+d]
+						}
+						attnConcat[i][hoff+d] = val
+					}
+				}
+			}
+			attnOut := m.linearBatchEngine(ctx, attnConcat, layer.oW, layer.oB)
+			for c := 0; c < channels; c++ {
+				for d := 0; d < dModel; d++ {
+					tokens[c][d] += attnOut[c][d]
+				}
+				tokens[c] = layerNorm(tokens[c], layer.ln1Scale, layer.ln1Bias)
+			}
+			fc1Out := m.linearBatchEngine(ctx, tokens, layer.fc1W, layer.fc1B)
+			for c := 0; c < channels; c++ {
+				for i := range fc1Out[c] {
+					fc1Out[c][i] = gelu(fc1Out[c][i])
+				}
+			}
+			fc2Out := m.linearBatchEngine(ctx, fc1Out, layer.fc2W, layer.fc2B)
+			for c := 0; c < channels; c++ {
+				for d := 0; d < dModel; d++ {
+					tokens[c][d] += fc2Out[c][d]
+				}
+				tokens[c] = layerNorm(tokens[c], layer.ln2Scale, layer.ln2Bias)
+			}
+		}
+		output := m.linearBatchEngine(ctx, tokens, m.projW, m.projB)
+		for c := 0; c < channels; c++ {
+			off := b*channels*outputLen + c*outputLen
+			for o := 0; o < outputLen; o++ {
+				outFlat[off+o] = float32(output[c][o])
+			}
+		}
+	}
+	return tensor.New[float32]([]int{batch, channels, outputLen}, outFlat)
+}
+
 // trainWindowedEngine implements GPU-accelerated ITransformer training using
 // float32 tensor operations via the compute.Engine. The forward/backward
 // analytical backpropagation logic mirrors the CPU path but uses float32
