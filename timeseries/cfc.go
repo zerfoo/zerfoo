@@ -178,6 +178,104 @@ func (c *CfC) forward(input [][]float64) []float64 {
 	return out
 }
 
+// ForwardBatch runs the CfC forward pass on a batch of windowed samples.
+// windows: [batch][channels][inputLen], returns: [batch][outputSize * outputLen].
+// Each sample maintains an independent hidden state. The ODE integration is
+// batched across samples at each time step to reduce allocation overhead.
+func (c *CfC) ForwardBatch(windows [][][]float64) [][]float64 {
+	batch := len(windows)
+	if batch == 0 {
+		return nil
+	}
+
+	hiddenSize := c.config.HiddenSize
+	numLayers := c.config.NumLayers
+	outDim := c.config.OutputSize * c.config.OutputLen
+
+	// Transpose all windows: [batch][channels][inputLen] -> [batch][seqLen][channels].
+	inputs := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		inputs[b] = transposeWindow(windows[b])
+	}
+
+	seqLen := len(inputs[0])
+
+	// Allocate per-sample hidden states: [batch][hiddenSize].
+	h := make([][]float64, batch)
+	for b := 0; b < batch; b++ {
+		h[b] = make([]float64, hiddenSize)
+	}
+
+	// Process all time steps, batching samples at each step.
+	for t := 0; t < seqLen; t++ {
+		// x[b] is the input for sample b at time t.
+		x := make([][]float64, batch)
+		for b := 0; b < batch; b++ {
+			x[b] = inputs[b][t]
+		}
+
+		for l := 0; l < numLayers; l++ {
+			layer := c.layers[l]
+			inSize := len(layer.Wx)
+
+			for b := 0; b < batch; b++ {
+				xb := x[b]
+				hb := h[b]
+
+				// Compute tau = sigmoid(Wtau * [x, h] + btau).
+				tau := make([]float64, hiddenSize)
+				for j := 0; j < hiddenSize; j++ {
+					val := layer.Btau[j]
+					for i := 0; i < inSize; i++ {
+						val += xb[i] * layer.Wtau[i][j]
+					}
+					for i := 0; i < hiddenSize; i++ {
+						val += hb[i] * layer.Wtau[inSize+i][j]
+					}
+					tau[j] = sigmoid(val)
+				}
+
+				// Compute pre-activation: tanh(Wx*x + Wh*h + bh).
+				preact := make([]float64, hiddenSize)
+				for j := 0; j < hiddenSize; j++ {
+					val := layer.Bh[j]
+					for i := 0; i < inSize; i++ {
+						val += xb[i] * layer.Wx[i][j]
+					}
+					for i := 0; i < hiddenSize; i++ {
+						val += hb[i] * layer.Wh[i][j]
+					}
+					preact[j] = math.Tanh(val)
+				}
+
+				// Closed-form ODE update: h_new = f * h_old + (1-f) * preact.
+				hNew := make([]float64, hiddenSize)
+				for j := 0; j < hiddenSize; j++ {
+					tauClamped := math.Max(tau[j], 1e-6)
+					f := math.Exp(-1.0 / tauClamped)
+					hNew[j] = f*hb[j] + (1-f)*preact[j]
+				}
+
+				h[b] = hNew
+				x[b] = hNew // feed hidden state to next layer
+			}
+		}
+	}
+
+	// Output projection for each sample.
+	out := make([][]float64, batch)
+	for b := 0; b < batch; b++ {
+		out[b] = make([]float64, outDim)
+		for j := 0; j < outDim; j++ {
+			out[b][j] = c.outB[j]
+			for i := 0; i < hiddenSize; i++ {
+				out[b][j] += h[b][i] * c.outW[i][j]
+			}
+		}
+	}
+	return out
+}
+
 // cfcStep computes a single CfC time step for one layer.
 // h(t) = f * h(t-1) + (1-f) * tanh(Wx*x + Wh*h + bh)
 // where f = exp(-dt/tau), tau = sigmoid(Wtau*[x,h] + btau), dt = 1.0.
