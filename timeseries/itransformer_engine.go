@@ -152,7 +152,7 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 			for d := 0; d < dModel; d++ {
 				preLN1[c][d] = tokens[c][d] + attnOut[c][d]
 			}
-			ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNormCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
+			ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNorm1DCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
 		}
 		lc.preLN1 = copyMatrix(preLN1)
 		lc.ln1Out = copyMatrix(ln1Out)
@@ -180,7 +180,7 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 			for d := 0; d < dModel; d++ {
 				preLN2[c][d] = ln1Out[c][d] + fc2Out[c][d]
 			}
-			ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNormCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
+			ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNorm1DCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
 		}
 		lc.fc1Out = copyMatrix(fc1Out)
 		lc.geluOut = copyMatrix(geluOut)
@@ -275,7 +275,7 @@ func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.Ten
 				for d := 0; d < dModel; d++ {
 					tokens[c][d] += attnOut[c][d]
 				}
-				tokens[c] = layerNorm(tokens[c], layer.ln1Scale, layer.ln1Bias)
+				tokens[c] = layerNorm1D(tokens[c], layer.ln1Scale, layer.ln1Bias)
 			}
 			fc1Out := m.linearBatchEngine(ctx, tokens, layer.fc1W, layer.fc1B)
 			for c := 0; c < channels; c++ {
@@ -288,7 +288,7 @@ func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.Ten
 				for d := 0; d < dModel; d++ {
 					tokens[c][d] += fc2Out[c][d]
 				}
-				tokens[c] = layerNorm(tokens[c], layer.ln2Scale, layer.ln2Bias)
+				tokens[c] = layerNorm1D(tokens[c], layer.ln2Scale, layer.ln2Bias)
 			}
 		}
 		output := m.linearBatchEngine(ctx, tokens, m.projW, m.projB)

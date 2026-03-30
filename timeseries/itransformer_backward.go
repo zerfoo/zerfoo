@@ -230,7 +230,7 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		for d := 0; d < dModel; d++ {
 			preLN1[c][d] = tokens[c][d] + attnOut[c][d]
 		}
-		ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNormCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
+		ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNorm1DCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
 	}
 	lc.preLN1 = copyMatrix(preLN1)
 	lc.ln1Out = copyMatrix(ln1Out)
@@ -256,7 +256,7 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		for d := 0; d < dModel; d++ {
 			preLN2[c][d] = ln1Out[c][d] + fc2Out[c][d]
 		}
-		ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNormCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
+		ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNorm1DCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
 	}
 	lc.fc1Out = copyMatrix(fc1Out)
 	lc.geluOut = copyMatrix(geluOut)
@@ -265,30 +265,6 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 	lc.ln2Out = copyMatrix(ln2Out)
 
 	return ln2Out, lc
-}
-
-// layerNormCached computes layer norm and returns output, mean, std.
-func layerNormCached(x, scale, bias []float64) ([]float64, float64, float64) {
-	n := len(x)
-	mean := 0.0
-	for _, v := range x {
-		mean += v
-	}
-	mean /= float64(n)
-
-	variance := 0.0
-	for _, v := range x {
-		d := v - mean
-		variance += d * d
-	}
-	variance /= float64(n)
-	std := math.Sqrt(variance + 1e-5)
-
-	out := make([]float64, n)
-	for i := range x {
-		out[i] = scale[i]*(x[i]-mean)/std + bias[i]
-	}
-	return out, mean, std
 }
 
 // backward computes analytical gradients given dLoss/dOutput.

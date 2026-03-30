@@ -552,89 +552,6 @@ func newEncoderLayerF64Grad(dModel, ffnDim int) encoderLayerF64Grad {
 	}
 }
 
-// layerNormF64WithCache applies layer normalization and returns cached intermediates.
-func layerNormF64WithCache(x [][]float64, scale, bias []float64, dModel int) (normed [][]float64, means []float64, invStds []float64, centered [][]float64) {
-	seq := len(x)
-	normed = make([][]float64, seq)
-	means = make([]float64, seq)
-	invStds = make([]float64, seq)
-	centered = make([][]float64, seq)
-
-	for s := 0; s < seq; s++ {
-		mean := 0.0
-		for j := 0; j < dModel; j++ {
-			mean += x[s][j]
-		}
-		mean /= float64(dModel)
-		means[s] = mean
-
-		variance := 0.0
-		centered[s] = make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			centered[s][j] = x[s][j] - mean
-			variance += centered[s][j] * centered[s][j]
-		}
-		variance /= float64(dModel)
-
-		invStd := 1.0 / math.Sqrt(variance+1e-5)
-		invStds[s] = invStd
-
-		normed[s] = make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			normed[s][j] = centered[s][j]*invStd*scale[j] + bias[j]
-		}
-	}
-	return
-}
-
-// layerNormBackwardF64 computes the backward pass through layer normalization.
-// dOut: [seq][dModel], centered: [seq][dModel], invStd: [seq], scale: [dModel].
-// Accumulates into dScale and dBias. Returns dInput: [seq][dModel].
-func layerNormBackwardF64(dOut [][]float64, centered [][]float64, invStd []float64, scale []float64, dScale, dBias []float64, dModel int) [][]float64 {
-	seq := len(dOut)
-	dInput := make([][]float64, seq)
-	d := float64(dModel)
-
-	for s := 0; s < seq; s++ {
-		// dNormed = dOut * scale (element-wise).
-		dNormed := make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			dNormed[j] = dOut[s][j] * scale[j]
-			// Accumulate scale/bias gradients.
-			dScale[j] += dOut[s][j] * centered[s][j] * invStd[s]
-			dBias[j] += dOut[s][j]
-		}
-
-		// LayerNorm backward:
-		// xhat = centered * invStd
-		// dVar = sum(dNormed * centered) * (-0.5) * invStd^3
-		// dMean = sum(dNormed) * (-invStd) + dVar * (-2/d) * sum(centered)
-		//       = sum(dNormed) * (-invStd)  [since sum(centered)=0]
-		// dInput = dNormed * invStd + dVar * (2*centered/d) + dMean/d
-		//
-		// Simplified:
-		// dInput[j] = invStd * (dNormed[j] - mean(dNormed) - xhat[j]*mean(dNormed*xhat))
-
-		// Compute mean(dNormed) and mean(dNormed * xhat).
-		meanDN := 0.0
-		meanDNxhat := 0.0
-		for j := 0; j < dModel; j++ {
-			xhat := centered[s][j] * invStd[s]
-			meanDN += dNormed[j]
-			meanDNxhat += dNormed[j] * xhat
-		}
-		meanDN /= d
-		meanDNxhat /= d
-
-		dInput[s] = make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			xhat := centered[s][j] * invStd[s]
-			dInput[s][j] = invStd[s] * (dNormed[j] - meanDN - xhat*meanDNxhat)
-		}
-	}
-	return dInput
-}
-
 // linearBackwardF64Accum computes backward for y = x @ W + b and accumulates gradients.
 // dY: [n][outDim], x: [n][inDim], W: [inDim*outDim] row-major.
 // Accumulates into dX, dW, dB.
@@ -959,36 +876,6 @@ func (m *PatchTST) forwardF64(input [][]float64, params *patchTSTParamsF64) []fl
 		result[j] /= float64(channels)
 	}
 	return result
-}
-
-// layerNormF64 applies layer normalization in float64.
-// x: [seq][dModel], scale/bias: [dModel].
-func layerNormF64(x [][]float64, scale, bias []float64, dModel int) [][]float64 {
-	seq := len(x)
-	out := make([][]float64, seq)
-	for s := 0; s < seq; s++ {
-		// Mean.
-		mean := 0.0
-		for j := 0; j < dModel; j++ {
-			mean += x[s][j]
-		}
-		mean /= float64(dModel)
-
-		// Variance.
-		variance := 0.0
-		for j := 0; j < dModel; j++ {
-			d := x[s][j] - mean
-			variance += d * d
-		}
-		variance /= float64(dModel)
-
-		invStd := 1.0 / math.Sqrt(variance+1e-5)
-		out[s] = make([]float64, dModel)
-		for j := 0; j < dModel; j++ {
-			out[s][j] = (x[s][j]-mean)*invStd*scale[j] + bias[j]
-		}
-	}
-	return out
 }
 
 // multiHeadAttentionF64 computes multi-head self-attention in float64.

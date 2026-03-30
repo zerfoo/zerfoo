@@ -217,7 +217,7 @@ func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransforme
 		for d := 0; d < dModel; d++ {
 			tokens[c][d] += attnOut[c][d]
 		}
-		tokens[c] = layerNorm(tokens[c], layer.ln1Scale, layer.ln1Bias)
+		tokens[c] = layerNorm1D(tokens[c], layer.ln1Scale, layer.ln1Bias)
 	}
 
 	// Feed-forward network per variate.
@@ -233,7 +233,7 @@ func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransforme
 		for d := 0; d < dModel; d++ {
 			tokens[c][d] += ffnOut[d]
 		}
-		tokens[c] = layerNorm(tokens[c], layer.ln2Scale, layer.ln2Bias)
+		tokens[c] = layerNorm1D(tokens[c], layer.ln2Scale, layer.ln2Bias)
 	}
 
 	return tokens
@@ -301,31 +301,6 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 	out := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
 		out[c] = linearForwardVec(attnConcat[c], layer.oW, layer.oB)
-	}
-	return out
-}
-
-
-// layerNorm applies layer normalization: y = scale * (x - mean) / (std + eps) + bias.
-func layerNorm(x, scale, bias []float64) []float64 {
-	n := len(x)
-	mean := 0.0
-	for _, v := range x {
-		mean += v
-	}
-	mean /= float64(n)
-
-	variance := 0.0
-	for _, v := range x {
-		d := v - mean
-		variance += d * d
-	}
-	variance /= float64(n)
-	std := math.Sqrt(variance + 1e-5)
-
-	out := make([]float64, n)
-	for i := range x {
-		out[i] = scale[i]*(x[i]-mean)/std + bias[i]
 	}
 	return out
 }
