@@ -22,6 +22,7 @@ var (
 	_ trainingModel = (*NBEATSAdapter)(nil)
 	_ trainingModel = (*PatchTSTAdapter)(nil)
 	_ trainingModel = (*TFTAdapter)(nil)
+	_ trainingModel = (*TimeMixerAdapter)(nil)
 )
 
 func TestNBEATSAdapter(t *testing.T) {
@@ -281,6 +282,102 @@ func TestTFTAdapter(t *testing.T) {
 				params := adapter.Parameters()
 				if len(params) == 0 {
 					t.Error("expected non-empty parameters")
+				}
+				return nil
+			},
+		},
+		{
+			name: "parameter names are unique",
+			fn: func() error {
+				params := adapter.Parameters()
+				seen := make(map[string]bool)
+				for _, p := range params {
+					if seen[p.Name] {
+						t.Errorf("duplicate parameter name: %s", p.Name)
+					}
+					seen[p.Name] = true
+				}
+				return nil
+			},
+		},
+		{
+			name: "backward returns error",
+			fn: func() error {
+				_, err := adapter.Backward(context.Background(), nil)
+				return err
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.fn()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("got err=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestTimeMixerAdapter(t *testing.T) {
+	m := NewTimeMixer(TimeMixerConfig{
+		InputLen:    12,
+		OutputLen:   6,
+		NumFeatures: 2,
+		NumScales:   3,
+	})
+
+	adapter, err := NewTimeMixerAdapter(m)
+	if err != nil {
+		t.Fatalf("NewTimeMixerAdapter: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		fn      func() error
+		wantErr bool
+	}{
+		{
+			name: "forward returns correct shape",
+			fn: func() error {
+				// [batch=2, channels*inputLen = 2*12 = 24]
+				input, err := tensor.New[float32]([]int{2, 24}, make([]float32, 48))
+				if err != nil {
+					return err
+				}
+				out, err := adapter.Forward(context.Background(), input)
+				if err != nil {
+					return err
+				}
+				shape := out.Shape()
+				// [batch=2, channels*outputLen = 2*6 = 12]
+				if len(shape) != 2 || shape[0] != 2 || shape[1] != 12 {
+					t.Errorf("expected shape [2, 12], got %v", shape)
+				}
+				return nil
+			},
+		},
+		{
+			name: "forward rejects wrong input count",
+			fn: func() error {
+				a, _ := tensor.New[float32]([]int{1, 24}, make([]float32, 24))
+				b, _ := tensor.New[float32]([]int{1, 24}, make([]float32, 24))
+				_, err := adapter.Forward(context.Background(), a, b)
+				return err
+			},
+			wantErr: true,
+		},
+		{
+			name: "parameters match scale count",
+			fn: func() error {
+				params := adapter.Parameters()
+				if len(params) == 0 {
+					t.Error("expected non-empty parameters")
+				}
+				// 3 scales = 3 ma_weights parameters.
+				if len(params) != 3 {
+					t.Errorf("expected 3 parameters, got %d", len(params))
 				}
 				return nil
 			},

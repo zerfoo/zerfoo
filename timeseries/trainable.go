@@ -244,6 +244,120 @@ func (a *TFTAdapter) Parameters() []*graph.Parameter[float32] {
 	return a.params
 }
 
+// TimeMixerAdapter wraps a TimeMixer model to satisfy training.Model[float32].
+// The Forward method takes a flat [batch, channels * inputLen] tensor,
+// decomposes each sample at multiple scales, averages the trend components,
+// and returns the last outputLen timesteps as [batch, channels * outputLen].
+type TimeMixerAdapter struct {
+	Model  *TimeMixer
+	params []*graph.Parameter[float32]
+}
+
+// NewTimeMixerAdapter creates a trainable adapter for the given TimeMixer model.
+func NewTimeMixerAdapter(m *TimeMixer) (*TimeMixerAdapter, error) {
+	params, err := collectTimeMixerParameters(m)
+	if err != nil {
+		return nil, fmt.Errorf("timemixer adapter: %w", err)
+	}
+	return &TimeMixerAdapter{Model: m, params: params}, nil
+}
+
+// Forward runs the TimeMixer forward pass.
+// Expects a single input tensor of shape [batch, channels * inputLen].
+// Returns [batch, channels * outputLen].
+func (a *TimeMixerAdapter) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("timemixer adapter: expected 1 input, got %d", len(inputs))
+	}
+
+	shape := inputs[0].Shape()
+	if len(shape) != 2 {
+		return nil, fmt.Errorf("timemixer adapter: expected 2D input [batch, channels*inputLen], got shape %v", shape)
+	}
+
+	batch := shape[0]
+	cfg := a.Model.config
+	flatIn := cfg.NumFeatures * cfg.InputLen
+	if shape[1] != flatIn {
+		return nil, fmt.Errorf("timemixer adapter: input dim %d != channels(%d) * inputLen(%d)", shape[1], cfg.NumFeatures, cfg.InputLen)
+	}
+
+	outLen := cfg.OutputLen
+	if outLen <= 0 {
+		outLen = cfg.InputLen
+	}
+	flatOut := cfg.NumFeatures * outLen
+	outData := make([]float32, batch*flatOut)
+	data := inputs[0].Data()
+
+	for b := 0; b < batch; b++ {
+		// Reshape flat input into [numFeatures][inputLen].
+		features := make([][]float64, cfg.NumFeatures)
+		for f := 0; f < cfg.NumFeatures; f++ {
+			features[f] = make([]float64, cfg.InputLen)
+			for i := 0; i < cfg.InputLen; i++ {
+				features[f][i] = float64(data[b*flatIn+f*cfg.InputLen+i])
+			}
+		}
+
+		msOut, err := a.Model.Forward(features)
+		if err != nil {
+			return nil, fmt.Errorf("timemixer adapter: batch %d: %w", b, err)
+		}
+
+		// Average trend across scales and take last outputLen timesteps.
+		nScales := float64(len(msOut.Scales))
+		for f := 0; f < cfg.NumFeatures; f++ {
+			for i := 0; i < outLen; i++ {
+				srcIdx := cfg.InputLen - outLen + i
+				if srcIdx < 0 {
+					srcIdx = 0
+				}
+				avg := 0.0
+				for _, sc := range msOut.Scales {
+					avg += sc.trend[f][srcIdx]
+				}
+				outData[b*flatOut+f*outLen+i] = float32(avg / nScales)
+			}
+		}
+	}
+
+	return tensor.New[float32]([]int{batch, flatOut}, outData)
+}
+
+// Backward is not implemented for timeseries models.
+func (a *TimeMixerAdapter) Backward(_ context.Context, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
+	return nil, fmt.Errorf("timemixer adapter: Backward not implemented; use engine-level autograd or standalone training loops")
+}
+
+// Parameters returns all trainable parameters from the TimeMixer model.
+func (a *TimeMixerAdapter) Parameters() []*graph.Parameter[float32] {
+	return a.params
+}
+
+// collectTimeMixerParameters collects all trainable parameters from a TimeMixer model.
+func collectTimeMixerParameters(m *TimeMixer) ([]*graph.Parameter[float32], error) {
+	var params []*graph.Parameter[float32]
+
+	for s := 0; s < len(m.maWeights); s++ {
+		data := make([]float32, len(m.maWeights[s]))
+		for i, v := range m.maWeights[s] {
+			data[i] = float32(v)
+		}
+		t, err := tensor.New[float32]([]int{len(data)}, data)
+		if err != nil {
+			return nil, err
+		}
+		p, err := graph.NewParameter(fmt.Sprintf("ma_weights.%d", s), t, tensor.New[float32])
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, p)
+	}
+
+	return params, nil
+}
+
 // collectLinearParams collects weight and bias parameters from a linearLayer.
 func collectLinearParams(prefix string, l linearLayer) ([]*graph.Parameter[float32], error) {
 	w, err := graph.NewParameter(prefix+".weight", l.weights, tensor.New[float32])
