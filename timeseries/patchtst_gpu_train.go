@@ -307,11 +307,10 @@ type gpuBatchLayerCache struct {
 	normed2    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
 	ffn1PreAct *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
 	ffn1Out    *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
-	geluTanh   *tensor.TensorNumeric[float32]  // [totalRows, ffnDim] - cached tanh for GELU backward
-	centered1  *tensor.TensorNumeric[float32]  // [totalRows, dModel]
-	invStd1    *tensor.TensorNumeric[float32]  // [totalRows, 1]
-	centered2  *tensor.TensorNumeric[float32]  // [totalRows, dModel]
-	invStd2    *tensor.TensorNumeric[float32]  // [totalRows, 1]
+	centered1  [][]float32                     // [bs*numPatches][dModel]
+	invStd1    []float32                       // [bs*numPatches]
+	centered2  [][]float32
+	invStd2    []float32
 	xResidual  *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
 	xAfterAttn *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
 }
@@ -323,6 +322,77 @@ type gpuBatchForwardCache struct {
 	layerCaches []gpuBatchLayerCache
 }
 
+// copyMatToTensor copies a [][]float32 matrix into an existing tensor's data buffer.
+func copyMatToTensor(mat [][]float32, dst *tensor.TensorNumeric[float32]) {
+	data := dst.Data()
+	cols := len(mat[0])
+	for i, row := range mat {
+		copy(data[i*cols:(i+1)*cols], row)
+	}
+}
+
+// layerNormF32WithCache performs layer norm on CPU and returns cached values.
+// x: [seq][dModel], scale/bias: [dModel].
+func layerNormF32WithCache(x [][]float32, scale, bias []float32, dModel int) ([][]float32, [][]float32, []float32) {
+	seq := len(x)
+	normed := make([][]float32, seq)
+	centered := make([][]float32, seq)
+	invStds := make([]float32, seq)
+
+	for s := 0; s < seq; s++ {
+		mean := float32(0)
+		for j := 0; j < dModel; j++ {
+			mean += x[s][j]
+		}
+		mean /= float32(dModel)
+
+		variance := float32(0)
+		centered[s] = make([]float32, dModel)
+		for j := 0; j < dModel; j++ {
+			centered[s][j] = x[s][j] - mean
+			variance += centered[s][j] * centered[s][j]
+		}
+		variance /= float32(dModel)
+		invStd := float32(1.0 / math.Sqrt(float64(variance)+1e-5))
+		invStds[s] = invStd
+
+		normed[s] = make([]float32, dModel)
+		for j := 0; j < dModel; j++ {
+			normed[s][j] = centered[s][j]*invStd*scale[j] + bias[j]
+		}
+	}
+	return normed, centered, invStds
+}
+
+// layerNormBackwardF32 computes backward pass through layer norm on CPU.
+// Accumulates into dScale, dBias.
+func layerNormBackwardF32(dOut, centered [][]float32, invStd []float32, scale, dScale, dBias []float32, dModel int) [][]float32 {
+	seq := len(dOut)
+	dInput := make([][]float32, seq)
+	d := float32(dModel)
+
+	for s := 0; s < seq; s++ {
+		dInput[s] = make([]float32, dModel)
+		// dScale += dOut * centered * invStd
+		// dBias += dOut
+		dotScaleGrad := float32(0)
+		dotMeanGrad := float32(0)
+		for j := 0; j < dModel; j++ {
+			normVal := centered[s][j] * invStd[s]
+			dScale[j] += dOut[s][j] * normVal
+			dBias[j] += dOut[s][j]
+			// dNorm = dOut * scale
+			dNorm := dOut[s][j] * scale[j]
+			dotScaleGrad += dNorm * centered[s][j]
+			dotMeanGrad += dNorm
+		}
+		for j := 0; j < dModel; j++ {
+			dNorm := dOut[s][j] * scale[j]
+			dInput[s][j] = invStd[s] * (dNorm - (dotMeanGrad+centered[s][j]*invStd[s]*invStd[s]*dotScaleGrad)/d)
+		}
+	}
+	return dInput
+}
 
 
 // trainWindowedGPU runs the full GPU training loop for PatchTST.
@@ -513,53 +583,12 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// Layer norm 1 via engine ops.
-				// mean = Sum(x, -1, keepDims) / dModel
-				mean1, err := m.engine.Sum(ctx, x, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				mean1, err = m.engine.MulScalar(ctx, mean1, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				// centered = x - mean
-				lc.centered1, err = m.engine.Sub(ctx, x, mean1)
-				if err != nil {
-					return nil, err
-				}
-				// var = Sum(centered^2, -1, keepDims) / dModel
-				centSq1, err := m.engine.Mul(ctx, lc.centered1, lc.centered1)
-				if err != nil {
-					return nil, err
-				}
-				var1, err := m.engine.Sum(ctx, centSq1, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				var1, err = m.engine.MulScalar(ctx, var1, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				// invStd = 1 / sqrt(var + eps)
-				var1, err = m.engine.AddScalar(ctx, var1, 1e-5)
-				if err != nil {
-					return nil, err
-				}
-				lc.invStd1, err = m.engine.Sqrt(ctx, var1)
-				if err != nil {
-					return nil, err
-				}
-				// normed = centered * scale / sqrt(var+eps) + bias
-				lc.normed1, err = m.engine.Div(ctx, lc.centered1, lc.invStd1)
-				if err != nil {
-					return nil, err
-				}
-				lc.normed1, err = m.engine.Mul(ctx, lc.normed1, layer.norm1)
-				if err != nil {
-					return nil, err
-				}
-				lc.normed1, err = m.engine.Add(ctx, lc.normed1, layer.bias1)
+				// Layer norm 1 on CPU (over all bsC*numPatches rows).
+				xData := matFromTensor(x, totalRows, dModel)
+				normed1, cent1, invStd1 := layerNormF32WithCache(xData, layer.norm1.Data(), layer.bias1.Data(), dModel)
+				lc.centered1 = cent1
+				lc.invStd1 = invStd1
+				lc.normed1, err = tensorFromMat(normed1, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -706,48 +735,12 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// Layer norm 2 via engine ops.
-				mean2, err := m.engine.Sum(ctx, x, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				mean2, err = m.engine.MulScalar(ctx, mean2, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				lc.centered2, err = m.engine.Sub(ctx, x, mean2)
-				if err != nil {
-					return nil, err
-				}
-				centSq2, err := m.engine.Mul(ctx, lc.centered2, lc.centered2)
-				if err != nil {
-					return nil, err
-				}
-				var2, err := m.engine.Sum(ctx, centSq2, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				var2, err = m.engine.MulScalar(ctx, var2, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				var2, err = m.engine.AddScalar(ctx, var2, 1e-5)
-				if err != nil {
-					return nil, err
-				}
-				lc.invStd2, err = m.engine.Sqrt(ctx, var2)
-				if err != nil {
-					return nil, err
-				}
-				lc.normed2, err = m.engine.Div(ctx, lc.centered2, lc.invStd2)
-				if err != nil {
-					return nil, err
-				}
-				lc.normed2, err = m.engine.Mul(ctx, lc.normed2, layer.norm2)
-				if err != nil {
-					return nil, err
-				}
-				lc.normed2, err = m.engine.Add(ctx, lc.normed2, layer.bias2)
+				// Layer norm 2 on CPU.
+				xData = matFromTensor(x, totalRows, dModel)
+				normed2, cent2, invStd2 := layerNormF32WithCache(xData, layer.norm2.Data(), layer.bias2.Data(), dModel)
+				lc.centered2 = cent2
+				lc.invStd2 = invStd2
+				lc.normed2, err = tensorFromMat(normed2, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -763,46 +756,13 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// GELU via engine ops: gelu(x) = 0.5 * x * (1 + tanh(c * (x + 0.044715 * x^3)))
-				// where c = sqrt(2/pi).
-				geluC := float32(math.Sqrt(2.0 / math.Pi))
-				// x^3 = x * x * x
-				xSq, err := m.engine.Mul(ctx, lc.ffn1PreAct, lc.ffn1PreAct)
-				if err != nil {
-					return nil, err
+				// GELU on CPU.
+				ffn1Data := lc.ffn1PreAct.Data()
+				ffn1OutData := make([]float32, totalRows*ffnDim)
+				for j := range ffn1Data {
+					ffn1OutData[j] = geluScalar(ffn1Data[j])
 				}
-				xCu, err := m.engine.Mul(ctx, xSq, lc.ffn1PreAct)
-				if err != nil {
-					return nil, err
-				}
-				// inner = c * (x + 0.044715 * x^3)
-				inner, err := m.engine.MulScalar(ctx, xCu, 0.044715)
-				if err != nil {
-					return nil, err
-				}
-				inner, err = m.engine.Add(ctx, lc.ffn1PreAct, inner)
-				if err != nil {
-					return nil, err
-				}
-				inner, err = m.engine.MulScalar(ctx, inner, geluC)
-				if err != nil {
-					return nil, err
-				}
-				// tanh_val = tanh(inner)
-				lc.geluTanh, err = m.engine.Tanh(ctx, inner)
-				if err != nil {
-					return nil, err
-				}
-				// gelu = 0.5 * x * (1 + tanh_val)
-				onePlusTanh, err := m.engine.AddScalar(ctx, lc.geluTanh, 1.0)
-				if err != nil {
-					return nil, err
-				}
-				lc.ffn1Out, err = m.engine.Mul(ctx, lc.ffn1PreAct, onePlusTanh)
-				if err != nil {
-					return nil, err
-				}
-				lc.ffn1Out, err = m.engine.MulScalar(ctx, lc.ffn1Out, 0.5)
+				lc.ffn1Out, err = tensor.New[float32]([]int{totalRows, ffnDim}, ffn1OutData)
 				if err != nil {
 					return nil, err
 				}
@@ -969,61 +929,14 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// GELU backward via engine ops.
-				// dgelu = dOut * (0.5*(1+tanh) + 0.5*x*(1-tanh^2)*c*(1+3*0.044715*x^2))
-				geluC := float32(math.Sqrt(2.0 / math.Pi))
-				// term1 = 0.5 * (1 + tanh_val)
-				term1, err := m.engine.AddScalar(ctx, lc.geluTanh, 1.0)
-				if err != nil {
-					return nil, err
+				// GELU backward on CPU.
+				dFFN1OutData := dFFN1Out.Data()
+				ffn1PreActData := lc.ffn1PreAct.Data()
+				dFFN1PreActData := make([]float32, totalRows*ffnDim)
+				for j := range dFFN1OutData {
+					dFFN1PreActData[j] = dFFN1OutData[j] * geluDerivF32(ffn1PreActData[j])
 				}
-				term1, err = m.engine.MulScalar(ctx, term1, 0.5)
-				if err != nil {
-					return nil, err
-				}
-				// term2 = 0.5 * x * (1 - tanh^2) * c * (1 + 3*0.044715*x^2)
-				tanhSq, err := m.engine.Mul(ctx, lc.geluTanh, lc.geluTanh)
-				if err != nil {
-					return nil, err
-				}
-				oneMinusTanhSq, err := m.engine.MulScalar(ctx, tanhSq, -1.0)
-				if err != nil {
-					return nil, err
-				}
-				oneMinusTanhSq, err = m.engine.AddScalar(ctx, oneMinusTanhSq, 1.0)
-				if err != nil {
-					return nil, err
-				}
-				xSqBack, err := m.engine.Mul(ctx, lc.ffn1PreAct, lc.ffn1PreAct)
-				if err != nil {
-					return nil, err
-				}
-				innerDeriv, err := m.engine.MulScalar(ctx, xSqBack, 3.0*0.044715)
-				if err != nil {
-					return nil, err
-				}
-				innerDeriv, err = m.engine.AddScalar(ctx, innerDeriv, 1.0)
-				if err != nil {
-					return nil, err
-				}
-				term2, err := m.engine.Mul(ctx, lc.ffn1PreAct, oneMinusTanhSq)
-				if err != nil {
-					return nil, err
-				}
-				term2, err = m.engine.Mul(ctx, term2, innerDeriv)
-				if err != nil {
-					return nil, err
-				}
-				term2, err = m.engine.MulScalar(ctx, term2, 0.5*geluC)
-				if err != nil {
-					return nil, err
-				}
-				// dgelu = term1 + term2
-				geluDeriv, err := m.engine.Add(ctx, term1, term2)
-				if err != nil {
-					return nil, err
-				}
-				dFFN1PreAct, err := m.engine.Mul(ctx, dFFN1Out, geluDeriv)
+				dFFN1PreAct, err := tensor.New[float32]([]int{totalRows, ffnDim}, dFFN1PreActData)
 				if err != nil {
 					return nil, err
 				}
@@ -1060,99 +973,20 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// LayerNorm2 backward via engine ops + residual add.
-				// dScale += Sum(dNormed2 * centered2 / std2, axis=0)
-				normVal2, err := m.engine.Div(ctx, lc.centered2, lc.invStd2)
-				if err != nil {
-					return nil, err
-				}
-				dScaleContrib2, err := m.engine.Mul(ctx, dNormed2, normVal2)
-				if err != nil {
-					return nil, err
-				}
-				dSc2, err := m.engine.Sum(ctx, dScaleContrib2, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dSc2, err = m.engine.Reshape(ctx, dSc2, dg.norm2.Shape())
-				if err != nil {
-					return nil, err
-				}
-				dg.norm2, err = m.engine.Add(ctx, dg.norm2, dSc2)
-				if err != nil {
-					return nil, err
-				}
-				// dBias += Sum(dNormed2, axis=0)
-				dBi2, err := m.engine.Sum(ctx, dNormed2, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dBi2, err = m.engine.Reshape(ctx, dBi2, dg.bias2.Shape())
-				if err != nil {
-					return nil, err
-				}
-				dg.bias2, err = m.engine.Add(ctx, dg.bias2, dBi2)
-				if err != nil {
-					return nil, err
-				}
-				// dNorm = dNormed2 * scale (broadcast)
-				dNorm2, err := m.engine.Mul(ctx, dNormed2, layer.norm2)
-				if err != nil {
-					return nil, err
-				}
-				// dotScaleGrad = Sum(dNorm * centered, -1, keepDims)
-				dotSG2, err := m.engine.Mul(ctx, dNorm2, lc.centered2)
-				if err != nil {
-					return nil, err
-				}
-				dotSG2, err = m.engine.Sum(ctx, dotSG2, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				// dotMeanGrad = Sum(dNorm, -1, keepDims)
-				dotMG2, err := m.engine.Sum(ctx, dNorm2, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				// invStdSq = centered / std^2 = centered / (std * std)
-				stdSq2, err := m.engine.Mul(ctx, lc.invStd2, lc.invStd2)
-				if err != nil {
-					return nil, err
-				}
-				centDivStdSq2, err := m.engine.Div(ctx, lc.centered2, stdSq2)
-				if err != nil {
-					return nil, err
-				}
-				// correction = (dotMeanGrad + centered/std^2 * dotScaleGrad) / dModel
-				correction2, err := m.engine.Mul(ctx, centDivStdSq2, dotSG2)
-				if err != nil {
-					return nil, err
-				}
-				correction2, err = m.engine.Add(ctx, dotMG2, correction2)
-				if err != nil {
-					return nil, err
-				}
-				correction2, err = m.engine.MulScalar(ctx, correction2, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				// dInput = (1/std) * (dNorm - correction)
-				dLN2Input, err := m.engine.Sub(ctx, dNorm2, correction2)
-				if err != nil {
-					return nil, err
-				}
-				dXAfterAttn, err := m.engine.Div(ctx, dLN2Input, lc.invStd2)
-				if err != nil {
-					return nil, err
-				}
-				// Add residual gradient from FFN path.
-				dXAfterAttn, err = m.engine.Add(ctx, dXAfterAttn, dX)
-				if err != nil {
-					return nil, err
+				// LayerNorm2 backward on CPU + residual add.
+				dNormed2Data := matFromTensor(dNormed2, totalRows, dModel)
+				dXAfterAttn := layerNormBackwardF32(dNormed2Data, lc.centered2, lc.invStd2,
+					layer.norm2.Data(), dg.norm2.Data(), dg.bias2.Data(), dModel)
+				// Add residual gradient from FFN path (dX flows through residual 2).
+				dXData := dX.Data()
+				for r := 0; r < totalRows; r++ {
+					for j := 0; j < dModel; j++ {
+						dXAfterAttn[r][j] += dXData[r*dModel+j]
+					}
 				}
 
 				// oProj backward: ONE MatMul each.
-				dAttnProjOut := dXAfterAttn
+				dAttnProjOut, err := tensorFromMat(dXAfterAttn, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -1436,85 +1270,18 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// LayerNorm1 backward via engine ops + residual add.
-				normVal1, err := m.engine.Div(ctx, lc.centered1, lc.invStd1)
-				if err != nil {
-					return nil, err
-				}
-				dScaleContrib1, err := m.engine.Mul(ctx, dNormed1, normVal1)
-				if err != nil {
-					return nil, err
-				}
-				dSc1, err := m.engine.Sum(ctx, dScaleContrib1, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dSc1, err = m.engine.Reshape(ctx, dSc1, dg.norm1.Shape())
-				if err != nil {
-					return nil, err
-				}
-				dg.norm1, err = m.engine.Add(ctx, dg.norm1, dSc1)
-				if err != nil {
-					return nil, err
-				}
-				dBi1, err := m.engine.Sum(ctx, dNormed1, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dBi1, err = m.engine.Reshape(ctx, dBi1, dg.bias1.Shape())
-				if err != nil {
-					return nil, err
-				}
-				dg.bias1, err = m.engine.Add(ctx, dg.bias1, dBi1)
-				if err != nil {
-					return nil, err
-				}
-				dNorm1, err := m.engine.Mul(ctx, dNormed1, layer.norm1)
-				if err != nil {
-					return nil, err
-				}
-				dotSG1, err := m.engine.Mul(ctx, dNorm1, lc.centered1)
-				if err != nil {
-					return nil, err
-				}
-				dotSG1, err = m.engine.Sum(ctx, dotSG1, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				dotMG1, err := m.engine.Sum(ctx, dNorm1, 1, true)
-				if err != nil {
-					return nil, err
-				}
-				stdSq1, err := m.engine.Mul(ctx, lc.invStd1, lc.invStd1)
-				if err != nil {
-					return nil, err
-				}
-				centDivStdSq1, err := m.engine.Div(ctx, lc.centered1, stdSq1)
-				if err != nil {
-					return nil, err
-				}
-				correction1, err := m.engine.Mul(ctx, centDivStdSq1, dotSG1)
-				if err != nil {
-					return nil, err
-				}
-				correction1, err = m.engine.Add(ctx, dotMG1, correction1)
-				if err != nil {
-					return nil, err
-				}
-				correction1, err = m.engine.MulScalar(ctx, correction1, 1.0/float32(dModel))
-				if err != nil {
-					return nil, err
-				}
-				dLN1Input, err := m.engine.Sub(ctx, dNorm1, correction1)
-				if err != nil {
-					return nil, err
-				}
-				dLayerInput, err := m.engine.Div(ctx, dLN1Input, lc.invStd1)
-				if err != nil {
-					return nil, err
-				}
+				// LayerNorm1 backward on CPU + residual add.
+				dNormed1Data := matFromTensor(dNormed1, totalRows, dModel)
+				dLayerInput := layerNormBackwardF32(dNormed1Data, lc.centered1, lc.invStd1,
+					layer.norm1.Data(), dg.norm1.Data(), dg.bias1.Data(), dModel)
 				// Add residual gradient from attention path.
-				dX, err = m.engine.Add(ctx, dLayerInput, dXAfterAttn)
+				for r := 0; r < totalRows; r++ {
+					for j := 0; j < dModel; j++ {
+						dLayerInput[r][j] += dXAfterAttn[r][j]
+					}
+				}
+
+				dX, err = tensorFromMat(dLayerInput, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -1624,6 +1391,35 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
+}
+
+// matFromTensor extracts a [][]float32 from a 2D tensor.
+func matFromTensor(t *tensor.TensorNumeric[float32], rows, cols int) [][]float32 {
+	data := t.Data()
+	result := make([][]float32, rows)
+	for i := 0; i < rows; i++ {
+		result[i] = data[i*cols : (i+1)*cols]
+	}
+	return result
+}
+
+// tensorFromMat creates a 2D tensor from [][]float32.
+func tensorFromMat(m [][]float32, rows, cols int) (*tensor.TensorNumeric[float32], error) {
+	data := make([]float32, rows*cols)
+	for i := 0; i < rows; i++ {
+		copy(data[i*cols:(i+1)*cols], m[i])
+	}
+	return tensor.New[float32]([]int{rows, cols}, data)
+}
+
+// geluDerivF32 computes the GELU derivative in float32.
+func geluDerivF32(x float32) float32 {
+	xf := float64(x)
+	c := math.Sqrt(2.0 / math.Pi)
+	inner := c * (xf + 0.044715*xf*xf*xf)
+	tanh := math.Tanh(inner)
+	dInner := c * (1 + 3*0.044715*xf*xf)
+	return float32(0.5 * (1 + tanh) + 0.5*xf*(1-tanh*tanh)*dInner)
 }
 
 // writeBackF32FromGPU writes GPU params back to model float32 tensors.
