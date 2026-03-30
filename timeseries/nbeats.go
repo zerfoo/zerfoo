@@ -431,6 +431,39 @@ func (m *NBEATS) linearForward(ctx context.Context, x *tensor.TensorNumeric[floa
 	return m.engine.Add(ctx, out, l.biases)
 }
 
+// ForwardBatched runs the N-BEATS forward pass on a 3D input tensor.
+// Input x has shape [batch, channels, inputLen]. The channels are averaged
+// to produce a [batch, inputLen] tensor which is then passed through the
+// standard Forward path. Returns NBEATSOutput with forecast of shape
+// [batch, outputLen].
+func (m *NBEATS) ForwardBatched(ctx context.Context, x *tensor.TensorNumeric[float32]) (*NBEATSOutput, error) {
+	shape := x.Shape()
+	if len(shape) != 3 {
+		return nil, fmt.Errorf("nbeats: ForwardBatched expects 3D input [batch, channels, inputLen], got shape %v", shape)
+	}
+	batch, channels, inputLen := shape[0], shape[1], shape[2]
+	if inputLen != m.config.InputLength {
+		return nil, fmt.Errorf("nbeats: expected inputLen %d, got %d", m.config.InputLength, inputLen)
+	}
+
+	// Average across channels: [batch, channels, inputLen] -> [batch, inputLen].
+	var flat *tensor.TensorNumeric[float32]
+	var err error
+	if channels == 1 {
+		flat, err = m.engine.Reshape(ctx, x, []int{batch, inputLen})
+		if err != nil {
+			return nil, fmt.Errorf("nbeats: reshape single channel: %w", err)
+		}
+	} else {
+		flat, err = m.engine.ReduceMean(ctx, x, 1, false)
+		if err != nil {
+			return nil, fmt.Errorf("nbeats: reduce channels: %w", err)
+		}
+	}
+
+	return m.Forward(ctx, flat)
+}
+
 // Decompose runs forward and returns the per-stack decomposition of the forecast.
 // This is useful for interpretable forecasting: separating trend from seasonality.
 func (m *NBEATS) Decompose(ctx context.Context, x *tensor.TensorNumeric[float32]) (map[StackType]*tensor.TensorNumeric[float32], error) {

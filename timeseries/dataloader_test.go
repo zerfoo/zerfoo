@@ -174,6 +174,7 @@ func TestDataLoader_ShapeCorrectness(t *testing.T) {
 		{"3ch_16len_1out", 3, 16, 1},
 		{"5ch_4len_3out", 5, 4, 3},
 		{"2ch_32len_2out", 2, 32, 2},
+		{"20ch_8len_1out", 20, 8, 1},
 	}
 
 	for _, tt := range tests {
@@ -262,6 +263,44 @@ func TestDataLoader_LenEmpty(t *testing.T) {
 	dl := NewDataLoader(nil, nil, 4, false)
 	if dl.Len() != 0 {
 		t.Errorf("Len() = %d, want 0 for empty loader", dl.Len())
+	}
+}
+
+func TestDataLoader_DataValues(t *testing.T) {
+	nSamples := 4
+	channels := 2
+	inputLen := 3
+	outputDim := 2
+	windows, labels := makeWindows(nSamples, channels, inputLen, outputDim)
+	dl := NewDataLoader(windows, labels, nSamples, false)
+
+	inputT, labelT, ok := dl.Next()
+	if !ok {
+		t.Fatal("expected batch")
+	}
+
+	inputData := inputT.Data()
+	for i := 0; i < nSamples; i++ {
+		for c := 0; c < channels; c++ {
+			for tt := 0; tt < inputLen; tt++ {
+				got := inputData[i*channels*inputLen+c*inputLen+tt]
+				want := float32(windows[i][c][tt])
+				if got != want {
+					t.Errorf("input[%d][%d][%d] = %v, want %v", i, c, tt, got, want)
+				}
+			}
+		}
+	}
+
+	labelData := labelT.Data()
+	for i := 0; i < nSamples; i++ {
+		for d := 0; d < outputDim; d++ {
+			got := labelData[i*outputDim+d]
+			want := float32(labels[i*outputDim+d])
+			if got != want {
+				t.Errorf("label[%d][%d] = %v, want %v", i, d, got, want)
+			}
+		}
 	}
 }
 
