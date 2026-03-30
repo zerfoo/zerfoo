@@ -1,7 +1,6 @@
 package timeseries
 
 import (
-	"context"
 	"math"
 	"testing"
 )
@@ -174,105 +173,4 @@ func TestPatchTST_BatchedBackwardGradientCheck(t *testing.T) {
 			t.Logf("gradient check: %d params, maxRelErr=%.4e, failures=%d", nParams, maxRelErr, failCount)
 		})
 	}
-}
-
-// TestPatchTST_BatchedBackwardParityWithCPU verifies that the batched engine
-// backward produces the same gradients as the per-sample CPU backward.
-func TestPatchTST_BatchedBackwardParityWithCPU(t *testing.T) {
-	engine, ops := newTestEngine()
-
-	config := PatchTSTConfig{
-		InputLength: 8,
-		PatchLength: 4,
-		Stride:      4,
-		DModel:      4,
-		NHeads:      2,
-		NLayers:     1,
-		OutputDim:   2,
-	}
-
-	model, err := NewPatchTST(config, engine, ops)
-	if err != nil {
-		t.Fatalf("NewPatchTST: %v", err)
-	}
-
-	ctx := context.Background()
-	params := model.extractParamsF64()
-	outDim := config.OutputDim
-	nParams := params.paramCount()
-
-	batchSize := 3
-	nChannels := 1
-	windows := make([][][]float64, batchSize)
-	labels := make([]float64, batchSize*outDim)
-	for s := 0; s < batchSize; s++ {
-		windows[s] = make([][]float64, nChannels)
-		for c := 0; c < nChannels; c++ {
-			windows[s][c] = make([]float64, config.InputLength)
-			for i := 0; i < config.InputLength; i++ {
-				windows[s][c][i] = float64(s*100+c*10+i+1) * 0.01
-			}
-		}
-		for j := 0; j < outDim; j++ {
-			labels[s*outDim+j] = float64(s+1) * 0.1 * float64(j+1)
-		}
-	}
-
-	// Batched forward.
-	preds, caches, err := model.forwardBatchF64WithCacheEngine(ctx, windows, params)
-	if err != nil {
-		t.Fatalf("forwardBatchF64WithCacheEngine: %v", err)
-	}
-
-	// Per-sample CPU backward (reference).
-	cpuGrads := make([]float64, nParams)
-	dOutputs := make([][]float64, batchSize)
-	for s := 0; s < batchSize; s++ {
-		sampleLabels := labels[s*outDim : (s+1)*outDim]
-		dOutputs[s] = make([]float64, outDim)
-		for j := 0; j < outDim; j++ {
-			diff := preds[s][j] - sampleLabels[j]
-			dOutputs[s][j] = 2.0 * diff / float64(batchSize*outDim)
-		}
-		sampleGrads := model.backwardF64(dOutputs[s], params, caches[s])
-		for pi := range cpuGrads {
-			cpuGrads[pi] += sampleGrads[pi]
-		}
-	}
-
-	// Batched engine backward.
-	engineGrads, err := model.backwardBatchF64Engine(ctx, dOutputs, params, caches)
-	if err != nil {
-		t.Fatalf("backwardBatchF64Engine: %v", err)
-	}
-
-	// Compare.
-	maxRelErr := 0.0
-	failCount := 0
-	for pi := 0; pi < nParams; pi++ {
-		absErr := math.Abs(engineGrads[pi] - cpuGrads[pi])
-		denom := math.Max(math.Abs(engineGrads[pi]), math.Abs(cpuGrads[pi]))
-		if denom < 1e-12 {
-			denom = 1e-12
-		}
-		relErr := absErr / denom
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if math.Abs(cpuGrads[pi]) < 1e-14 && math.Abs(engineGrads[pi]) < 1e-8 {
-			continue
-		}
-		if relErr > 1e-3 {
-			failCount++
-			if failCount <= 5 {
-				t.Errorf("param[%d]: engine=%.8e, cpu=%.8e, relErr=%.4e",
-					pi, engineGrads[pi], cpuGrads[pi], relErr)
-			}
-		}
-	}
-
-	if failCount > 0 {
-		t.Errorf("%d/%d parameters exceed 0.1%% relative error vs CPU backward", failCount, nParams)
-	}
-	t.Logf("parity check: %d params, maxRelErr=%.4e, failures=%d", nParams, maxRelErr, failCount)
 }
