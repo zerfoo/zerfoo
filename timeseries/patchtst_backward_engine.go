@@ -11,6 +11,10 @@ import (
 // dY: [n][outDim], x: [n][inDim], W: [inDim*outDim] row-major.
 // Accumulates into dX, dW, dB.
 func (m *PatchTST) linearBackwardF64EngineAccum(ctx context.Context, dY, x [][]float64, w []float64, dX [][]float64, dW, dB []float64, inDim, outDim int) error {
+	return m.linearBackwardF64EngineAccumWithBufs(ctx, dY, x, w, dX, dW, dB, inDim, outDim, nil)
+}
+
+func (m *PatchTST) linearBackwardF64EngineAccumWithBufs(ctx context.Context, dY, x [][]float64, w []float64, dX [][]float64, dW, dB []float64, inDim, outDim int, bufs *matMulBufs) error {
 	n := len(dY)
 
 	// dW += x^T @ dY : [inDim][n] @ [n][outDim] = [inDim][outDim]
@@ -21,7 +25,7 @@ func (m *PatchTST) linearBackwardF64EngineAccum(ctx context.Context, dY, x [][]f
 			xT[k][i] = x[i][k]
 		}
 	}
-	dWMat, err := m.matMulEngine(ctx, xT, dY)
+	dWMat, err := m.matMulEngineWithBufs(ctx, xT, dY, bufs)
 	if err != nil {
 		return fmt.Errorf("linearBackwardF64EngineAccum dW: %w", err)
 	}
@@ -39,7 +43,7 @@ func (m *PatchTST) linearBackwardF64EngineAccum(ctx context.Context, dY, x [][]f
 			wT[j][k] = w[k*outDim+j]
 		}
 	}
-	dXMat, err := m.matMulEngine(ctx, dY, wT)
+	dXMat, err := m.matMulEngineWithBufs(ctx, dY, wT, bufs)
 	if err != nil {
 		return fmt.Errorf("linearBackwardF64EngineAccum dX: %w", err)
 	}
@@ -87,6 +91,9 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 	dHeadW := make([]float64, len(params.headW))
 	dHeadB := make([]float64, len(params.headB))
 
+	// Shared buffer pool for engine MatMul calls to reduce allocation churn.
+	var mmBufs matMulBufs
+
 	channels := len(caches[0].channels)
 	chanScale := 1.0 / float64(channels)
 
@@ -112,7 +119,7 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 		for s := 0; s < batchSize; s++ {
 			batchDFlat[s] = make([]float64, headIn)
 		}
-		err := m.linearBackwardF64EngineAccum(ctx, batchDChanOut, batchFlatInput, params.headW, batchDFlat, dHeadW, dHeadB, headIn, outDim)
+		err := m.linearBackwardF64EngineAccumWithBufs(ctx, batchDChanOut, batchFlatInput, params.headW, batchDFlat, dHeadW, dHeadB, headIn, outDim, &mmBufs)
 		if err != nil {
 			return nil, fmt.Errorf("head backward: %w", err)
 		}
@@ -152,7 +159,7 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 			for i := range batchDFFN1Out {
 				batchDFFN1Out[i] = make([]float64, ffnDim)
 			}
-			err = m.linearBackwardF64EngineAccum(ctx, batchDFFN2Out, batchFFN1Out, layer.ffn2W, batchDFFN1Out, dg.ffn2W, dg.ffn2B, ffnDim, dModel)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDFFN2Out, batchFFN1Out, layer.ffn2W, batchDFFN1Out, dg.ffn2W, dg.ffn2B, ffnDim, dModel, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d ffn2 backward: %w", li, err)
 			}
@@ -182,7 +189,7 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 			for i := range batchDNormed2 {
 				batchDNormed2[i] = make([]float64, dModel)
 			}
-			err = m.linearBackwardF64EngineAccum(ctx, batchDFFN1PreAct, batchNormed2, layer.ffn1W, batchDNormed2, dg.ffn1W, dg.ffn1B, dModel, ffnDim)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDFFN1PreAct, batchNormed2, layer.ffn1W, batchDNormed2, dg.ffn1W, dg.ffn1B, dModel, ffnDim, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d ffn1 backward: %w", li, err)
 			}
@@ -219,12 +226,14 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 			for i := range batchDAttnOut {
 				batchDAttnOut[i] = make([]float64, dModel)
 			}
-			err = m.linearBackwardF64EngineAccum(ctx, batchDAttnProjOut, batchAttnOut, layer.oW, batchDAttnOut, dg.oW, dg.oB, dModel, dModel)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDAttnProjOut, batchAttnOut, layer.oW, batchDAttnOut, dg.oW, dg.oB, dModel, dModel, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d oProj backward: %w", li, err)
 			}
 
-			// Attention backward (CPU, per sample) — compute dQ, dK, dV.
+			// Attention backward (CPU with pre-allocated scratch buffers).
+			// For small sequence lengths (typical: 6 patches), CPU is faster than GPU
+			// due to kernel launch overhead. Pre-allocate scratch to reduce GC pressure.
 			seq := numPatches
 			batchDQ := make([][]float64, batchSize*numPatches)
 			batchDK := make([][]float64, batchSize*numPatches)
@@ -236,6 +245,11 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 			}
 
 			attnScale := 1.0 / math.Sqrt(float64(headDim))
+
+			// Pre-allocate scratch for softmax backward (reused per sample per head).
+			dScoresScratch := make([]float64, seq*seq)
+			dLogitsScratch := make([]float64, seq*seq)
+
 			for s := 0; s < batchSize; s++ {
 				lc := &caches[s].channels[ch].layerCaches[li]
 				dAttnOut := batchDAttnOut[s*numPatches : (s+1)*numPatches]
@@ -246,44 +260,47 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 				for h := 0; h < nHeads; h++ {
 					hOff := h * headDim
 
-					// dAttnOut -> dScores, dV.
-					dScores := make([][]float64, seq)
+					// Zero scratch buffers.
+					for i := range dScoresScratch {
+						dScoresScratch[i] = 0
+					}
+
+					// dScores[i][j] = sum_d(dAttnOut[i][hOff+d] * V[j][hOff+d])
+					// dV[j][hOff+d] += scores[h][i][j] * dAttnOut[i][hOff+d]
 					for i := 0; i < seq; i++ {
-						dScores[i] = make([]float64, seq)
 						for j := 0; j < seq; j++ {
+							ds := 0.0
+							score := lc.scores[h][i][j]
 							for d := 0; d < headDim; d++ {
-								dScores[i][j] += dAttnOut[i][hOff+d] * lc.v[j][hOff+d]
-								dV[j][hOff+d] += lc.scores[h][i][j] * dAttnOut[i][hOff+d]
+								da := dAttnOut[i][hOff+d]
+								ds += da * lc.v[j][hOff+d]
+								dV[j][hOff+d] += score * da
 							}
+							dScoresScratch[i*seq+j] = ds
 						}
 					}
 
-					// Softmax backward.
-					dLogits := make([][]float64, seq)
+					// Softmax backward + scale: dLogits[i][j] = scores[i][j] * (dScores[i][j] - dot) * scale
 					for i := 0; i < seq; i++ {
-						dLogits[i] = make([]float64, seq)
 						dot := 0.0
 						for j := 0; j < seq; j++ {
-							dot += lc.scores[h][i][j] * dScores[i][j]
+							dot += lc.scores[h][i][j] * dScoresScratch[i*seq+j]
 						}
 						for j := 0; j < seq; j++ {
-							dLogits[i][j] = lc.scores[h][i][j] * (dScores[i][j] - dot)
-						}
-					}
-
-					// Scale backward.
-					for i := 0; i < seq; i++ {
-						for j := 0; j < seq; j++ {
-							dLogits[i][j] *= attnScale
+							dLogitsScratch[i*seq+j] = lc.scores[h][i][j] * (dScoresScratch[i*seq+j] - dot) * attnScale
 						}
 					}
 
-					// QK^T backward.
+					// QK^T backward: dQ[i] += dLogits[i][j]*K[j], dK[j] += dLogits[i][j]*Q[i]
 					for i := 0; i < seq; i++ {
 						for j := 0; j < seq; j++ {
+							dl := dLogitsScratch[i*seq+j]
+							if dl == 0 {
+								continue
+							}
 							for d := 0; d < headDim; d++ {
-								dQ[i][hOff+d] += dLogits[i][j] * lc.k[j][hOff+d]
-								dK[j][hOff+d] += dLogits[i][j] * lc.q[i][hOff+d]
+								dQ[i][hOff+d] += dl * lc.k[j][hOff+d]
+								dK[j][hOff+d] += dl * lc.q[i][hOff+d]
 							}
 						}
 					}
@@ -304,15 +321,15 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 				batchDNormed1[i] = make([]float64, dModel)
 			}
 
-			err = m.linearBackwardF64EngineAccum(ctx, batchDQ, batchNormed1, layer.qW, batchDNormed1, dg.qW, dg.qB, dModel, dModel)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDQ, batchNormed1, layer.qW, batchDNormed1, dg.qW, dg.qB, dModel, dModel, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d qProj backward: %w", li, err)
 			}
-			err = m.linearBackwardF64EngineAccum(ctx, batchDK, batchNormed1, layer.kW, batchDNormed1, dg.kW, dg.kB, dModel, dModel)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDK, batchNormed1, layer.kW, batchDNormed1, dg.kW, dg.kB, dModel, dModel, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d kProj backward: %w", li, err)
 			}
-			err = m.linearBackwardF64EngineAccum(ctx, batchDV, batchNormed1, layer.vW, batchDNormed1, dg.vW, dg.vB, dModel, dModel)
+			err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDV, batchNormed1, layer.vW, batchDNormed1, dg.vW, dg.vB, dModel, dModel, &mmBufs)
 			if err != nil {
 				return nil, fmt.Errorf("layer %d vProj backward: %w", li, err)
 			}
@@ -358,7 +375,7 @@ func (m *PatchTST) backwardBatchF64Engine(ctx context.Context, dOutputs [][]floa
 		for i := range batchDPatches {
 			batchDPatches[i] = make([]float64, m.config.PatchLength)
 		}
-		err = m.linearBackwardF64EngineAccum(ctx, batchDX, batchPatches, params.patchEmbW, batchDPatches, dPatchEmbW, dPatchEmbB, m.config.PatchLength, dModel)
+		err = m.linearBackwardF64EngineAccumWithBufs(ctx, batchDX, batchPatches, params.patchEmbW, batchDPatches, dPatchEmbW, dPatchEmbB, m.config.PatchLength, dModel, &mmBufs)
 		if err != nil {
 			return nil, fmt.Errorf("patch embedding backward: %w", err)
 		}
