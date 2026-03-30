@@ -824,13 +824,41 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// GELU on CPU.
-				ffn1Data := lc.ffn1PreAct.Data()
-				ffn1OutData := make([]float32, totalRows*ffnDim)
-				for j := range ffn1Data {
-					ffn1OutData[j] = geluScalar(ffn1Data[j])
+				// GELU via engine ops: gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+				geluIn := lc.ffn1PreAct
+				geluX3, err := m.engine.Mul(ctx, geluIn, geluIn)
+				if err != nil {
+					return nil, err
 				}
-				lc.ffn1Out, err = tensor.New[float32]([]int{totalRows, ffnDim}, ffn1OutData)
+				geluX3, err = m.engine.Mul(ctx, geluX3, geluIn) // x^3
+				if err != nil {
+					return nil, err
+				}
+				geluInner, err := m.engine.MulScalar(ctx, geluX3, float32(0.044715)) // 0.044715 * x^3
+				if err != nil {
+					return nil, err
+				}
+				geluInner, err = m.engine.Add(ctx, geluIn, geluInner) // x + 0.044715*x^3
+				if err != nil {
+					return nil, err
+				}
+				geluInner, err = m.engine.MulScalar(ctx, geluInner, float32(math.Sqrt(2.0/math.Pi))) // sqrt(2/pi) * (...)
+				if err != nil {
+					return nil, err
+				}
+				lc.geluTanhVal, err = m.engine.Tanh(ctx, geluInner) // tanh(...)
+				if err != nil {
+					return nil, err
+				}
+				onePlusTanh, err := m.engine.AddScalar(ctx, lc.geluTanhVal, float32(1.0)) // 1 + tanh(...)
+				if err != nil {
+					return nil, err
+				}
+				lc.ffn1Out, err = m.engine.Mul(ctx, geluIn, onePlusTanh) // x * (1 + tanh(...))
+				if err != nil {
+					return nil, err
+				}
+				lc.ffn1Out, err = m.engine.MulScalar(ctx, lc.ffn1Out, float32(0.5)) // 0.5 * x * (1 + tanh(...))
 				if err != nil {
 					return nil, err
 				}
@@ -997,14 +1025,73 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// GELU backward on CPU.
-				dFFN1OutData := dFFN1Out.Data()
-				ffn1PreActData := lc.ffn1PreAct.Data()
-				dFFN1PreActData := make([]float32, totalRows*ffnDim)
-				for j := range dFFN1OutData {
-					dFFN1PreActData[j] = dFFN1OutData[j] * geluDerivF32(ffn1PreActData[j])
+				// GELU backward via engine ops.
+				// d/dx[gelu] = 0.5*(1+tanh) + 0.5*x*(1-tanh^2)*sqrt(2/pi)*(1+3*0.044715*x^2)
+				geluX := lc.ffn1PreAct
+				tanhVal := lc.geluTanhVal
+
+				// term1 = 0.5 * (1 + tanh)
+				term1, err := m.engine.AddScalar(ctx, tanhVal, float32(1.0))
+				if err != nil {
+					return nil, err
 				}
-				dFFN1PreAct, err := tensor.New[float32]([]int{totalRows, ffnDim}, dFFN1PreActData)
+				term1, err = m.engine.MulScalar(ctx, term1, float32(0.5))
+				if err != nil {
+					return nil, err
+				}
+
+				// sech^2 = 1 - tanh^2
+				tanhSq, err := m.engine.Mul(ctx, tanhVal, tanhVal)
+				if err != nil {
+					return nil, err
+				}
+				sechSq, err := m.engine.MulScalar(ctx, tanhSq, float32(-1.0))
+				if err != nil {
+					return nil, err
+				}
+				sechSq, err = m.engine.AddScalar(ctx, sechSq, float32(1.0))
+				if err != nil {
+					return nil, err
+				}
+
+				// du/dx = sqrt(2/pi) * (1 + 3*0.044715*x^2)
+				xSq, err := m.engine.Mul(ctx, geluX, geluX)
+				if err != nil {
+					return nil, err
+				}
+				dudx, err := m.engine.MulScalar(ctx, xSq, float32(3*0.044715))
+				if err != nil {
+					return nil, err
+				}
+				dudx, err = m.engine.AddScalar(ctx, dudx, float32(1.0))
+				if err != nil {
+					return nil, err
+				}
+				dudx, err = m.engine.MulScalar(ctx, dudx, float32(math.Sqrt(2.0/math.Pi)))
+				if err != nil {
+					return nil, err
+				}
+
+				// term2 = 0.5 * x * sech^2 * du/dx
+				term2, err := m.engine.Mul(ctx, geluX, sechSq)
+				if err != nil {
+					return nil, err
+				}
+				term2, err = m.engine.Mul(ctx, term2, dudx)
+				if err != nil {
+					return nil, err
+				}
+				term2, err = m.engine.MulScalar(ctx, term2, float32(0.5))
+				if err != nil {
+					return nil, err
+				}
+
+				// geluDeriv = term1 + term2
+				geluDeriv, err := m.engine.Add(ctx, term1, term2)
+				if err != nil {
+					return nil, err
+				}
+				dFFN1PreAct, err := m.engine.Mul(ctx, dFFN1Out, geluDeriv)
 				if err != nil {
 					return nil, err
 				}
@@ -1482,16 +1569,6 @@ func tensorFromMat(m [][]float32, rows, cols int) (*tensor.TensorNumeric[float32
 		copy(data[i*cols:(i+1)*cols], m[i])
 	}
 	return tensor.New[float32]([]int{rows, cols}, data)
-}
-
-// geluDerivF32 computes the GELU derivative in float32.
-func geluDerivF32(x float32) float32 {
-	xf := float64(x)
-	c := math.Sqrt(2.0 / math.Pi)
-	inner := c * (xf + 0.044715*xf*xf*xf)
-	tanh := math.Tanh(inner)
-	dInner := c * (1 + 3*0.044715*xf*xf)
-	return float32(0.5 * (1 + tanh) + 0.5*xf*(1-tanh*tanh)*dInner)
 }
 
 // writeBackF32FromGPU writes GPU params back to model float32 tensors.
