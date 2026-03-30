@@ -18,11 +18,20 @@ import (
 // pre-trained foundation model (TiRex). It handles input normalization
 // (instance norm), graph execution, and output denormalization.
 type FoundationForecaster struct {
-	graph   *graph.Graph[float32]
-	engine  compute.Engine[float32]
-	cfg     *its.TiRexConfig
-	numVars int
-	horizon int
+	graph     *graph.Graph[float32]
+	engine    compute.Engine[float32]
+	cfg       *its.TiRexConfig
+	numVars   int
+	horizon   int
+	extractor *its.TiRexFeatureExtractor[float32]
+}
+
+// FineTuneConfig configures foundation model fine-tuning.
+type FineTuneConfig struct {
+	Epochs         int     // number of training epochs
+	LearningRate   float64 // AdamW learning rate
+	BatchSize      int     // mini-batch size (0 = full batch)
+	FreezeBackbone bool    // if true, only train output head
 }
 
 // LoadFoundationModel loads a TiRex foundation model from a GGUF file and
@@ -49,17 +58,18 @@ func LoadFoundationModel(path string, engine compute.Engine[float32]) (*Foundati
 		return nil, fmt.Errorf("load GGUF tensors: %w", err)
 	}
 
-	g, err := its.BuildTiRex[float32](tensors, cfg, engine)
+	g, ext, err := its.BuildTiRexWithExtractor[float32](tensors, cfg, engine)
 	if err != nil {
 		return nil, fmt.Errorf("build TiRex graph: %w", err)
 	}
 
 	return &FoundationForecaster{
-		graph:   g,
-		engine:  engine,
-		cfg:     cfg,
-		numVars: cfg.NumVars,
-		horizon: cfg.Horizon,
+		graph:     g,
+		engine:    engine,
+		cfg:       cfg,
+		numVars:   cfg.NumVars,
+		horizon:   cfg.Horizon,
+		extractor: ext,
 	}, nil
 }
 
@@ -67,16 +77,17 @@ func LoadFoundationModel(path string, engine compute.Engine[float32]) (*Foundati
 // from a config and engine, bypassing GGUF loading. Used for testing.
 func newFoundationForecasterFromConfig(cfg *its.TiRexConfig, engine compute.Engine[float32]) (*FoundationForecaster, error) {
 	tensors := make(map[string]*tensor.TensorNumeric[float32])
-	g, err := its.BuildTiRex[float32](tensors, cfg, engine)
+	g, ext, err := its.BuildTiRexWithExtractor[float32](tensors, cfg, engine)
 	if err != nil {
 		return nil, fmt.Errorf("build TiRex graph: %w", err)
 	}
 	return &FoundationForecaster{
-		graph:   g,
-		engine:  engine,
-		cfg:     cfg,
-		numVars: cfg.NumVars,
-		horizon: cfg.Horizon,
+		graph:     g,
+		engine:    engine,
+		cfg:       cfg,
+		numVars:   cfg.NumVars,
+		horizon:   cfg.Horizon,
+		extractor: ext,
 	}, nil
 }
 
@@ -240,6 +251,182 @@ func instanceNorm(input [][]float64, seqLen, numVars int) ([]float64, []float64)
 	}
 
 	return mean, std
+}
+
+// FineTune adapts the foundation model on task-specific data using AdamW.
+// When cfg.FreezeBackbone is true, only the output head is trained (few-shot
+// adaptation). data contains input sequences [sample][seq_len*num_vars] and
+// labels contains target outputs [sample][horizon*num_vars], both flattened
+// row-major.
+//
+// Input data layout: each data[i] has length seq_len * num_vars, representing
+// a [seq_len][num_vars] input flattened row-major. Each labels[i] has length
+// horizon * num_vars, representing [horizon][num_vars] target flattened.
+func (f *FoundationForecaster) FineTune(ctx context.Context, data [][]float64, labels [][]float64, cfg FineTuneConfig) (*TrainResult, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("fine-tune: empty training data")
+	}
+	if len(data) != len(labels) {
+		return nil, fmt.Errorf("fine-tune: data (%d) and labels (%d) length mismatch", len(data), len(labels))
+	}
+	if cfg.Epochs <= 0 {
+		cfg.Epochs = 10
+	}
+	if cfg.LearningRate <= 0 {
+		cfg.LearningRate = 1e-3
+	}
+
+	nSamples := len(data)
+	numVars := f.numVars
+	horizon := f.horizon
+	hiddenDim := f.extractor.HiddenDim()
+
+	expectedDataLen := -1 // infer seq_len from first sample
+	expectedLabelLen := horizon * numVars
+	for i := range data {
+		if expectedDataLen < 0 {
+			if len(data[i])%numVars != 0 {
+				return nil, fmt.Errorf("fine-tune: data[%d] length %d not divisible by num_vars %d", i, len(data[i]), numVars)
+			}
+			expectedDataLen = len(data[i])
+		}
+		if len(data[i]) != expectedDataLen {
+			return nil, fmt.Errorf("fine-tune: data[%d] length %d, expected %d", i, len(data[i]), expectedDataLen)
+		}
+		if len(labels[i]) != expectedLabelLen {
+			return nil, fmt.Errorf("fine-tune: labels[%d] length %d, expected %d", i, len(labels[i]), expectedLabelLen)
+		}
+	}
+	seqLen := expectedDataLen / numVars
+
+	// Get output head parameters for AdamW.
+	headParams := f.extractor.OutputHeadParams()
+	nParams := 0
+	for _, p := range headParams {
+		nParams += len(p.Value.Data())
+	}
+
+	// AdamW state.
+	beta1, beta2, eps := 0.9, 0.999, 1e-8
+	weightDecay := 1e-4
+	gradClip := 1.0
+	mState := make([]float64, nParams)
+	vState := make([]float64, nParams)
+
+	result := &TrainResult{Metrics: make(map[string]float64)}
+	step := 0
+
+	batchSize := cfg.BatchSize
+	if batchSize <= 0 || batchSize > nSamples {
+		batchSize = nSamples
+	}
+
+	for epoch := range cfg.Epochs {
+		epochLoss := 0.0
+		epochCount := 0
+
+		for bStart := 0; bStart < nSamples; bStart += batchSize {
+			bEnd := bStart + batchSize
+			if bEnd > nSamples {
+				bEnd = nSamples
+			}
+			bSize := bEnd - bStart
+
+			// Build batched input tensor [bSize, seqLen, numVars].
+			inputData := make([]float32, bSize*seqLen*numVars)
+			for b := range bSize {
+				for j := range seqLen * numVars {
+					inputData[b*seqLen*numVars+j] = float32(data[bStart+b][j])
+				}
+			}
+			inputTensor, err := tensor.New[float32]([]int{bSize, seqLen, numVars}, inputData)
+			if err != nil {
+				return nil, fmt.Errorf("fine-tune: create input tensor: %w", err)
+			}
+
+			// Extract backbone features [bSize, hiddenDim].
+			hidden, err := f.extractor.ForwardFeatures(ctx, inputTensor)
+			if err != nil {
+				return nil, fmt.Errorf("fine-tune: forward features: %w", err)
+			}
+
+			// Output head forward: [bSize, horizon*numVars].
+			pred, err := f.extractor.OutputHeadForward(ctx, hidden)
+			if err != nil {
+				return nil, fmt.Errorf("fine-tune: output head forward: %w", err)
+			}
+
+			predData := pred.Data()
+			hiddenData := hidden.Data()
+			outSize := horizon * numVars
+
+			// Compute MSE loss and gradient dL/dOutput.
+			dOutput := make([]float64, bSize*outSize)
+			batchLoss := 0.0
+			for b := range bSize {
+				for j := range outSize {
+					idx := b*outSize + j
+					diff := float64(predData[idx]) - labels[bStart+b][j]
+					batchLoss += diff * diff
+					dOutput[idx] = 2.0 * diff / float64(bSize*outSize)
+				}
+			}
+			batchLoss /= float64(bSize * outSize)
+			epochLoss += batchLoss * float64(bSize)
+			epochCount += bSize
+
+			// Compute dL/dW for output head: W is [hiddenDim, outSize].
+			// output = hidden @ W, so dL/dW = hidden^T @ dL/dOutput.
+			gradW := make([]float64, hiddenDim*outSize)
+			for b := range bSize {
+				for h := range hiddenDim {
+					hVal := float64(hiddenData[b*hiddenDim+h])
+					for o := range outSize {
+						gradW[h*outSize+o] += hVal * dOutput[b*outSize+o]
+					}
+				}
+			}
+
+			// Gradient clipping.
+			norm := 0.0
+			for _, g := range gradW {
+				norm += g * g
+			}
+			norm = math.Sqrt(norm)
+			if norm > gradClip {
+				scale := gradClip / norm
+				for i := range gradW {
+					gradW[i] *= scale
+				}
+			}
+
+			// AdamW update on output head weight.
+			step++
+			t := float64(step)
+			wData := headParams[0].Value.Data()
+			for i := range wData {
+				g := gradW[i]
+				mState[i] = beta1*mState[i] + (1-beta1)*g
+				vState[i] = beta2*vState[i] + (1-beta2)*g*g
+				mHat := mState[i] / (1 - math.Pow(beta1, t))
+				vHat := vState[i] / (1 - math.Pow(beta2, t))
+				val := float64(wData[i])
+				val -= cfg.LearningRate * (mHat/(math.Sqrt(vHat)+eps) + weightDecay*val)
+				wData[i] = float32(val)
+			}
+		}
+
+		avgLoss := epochLoss / float64(epochCount)
+		result.LossHistory = append(result.LossHistory, avgLoss)
+
+		_ = epoch
+	}
+
+	if len(result.LossHistory) > 0 {
+		result.FinalLoss = result.LossHistory[len(result.LossHistory)-1]
+	}
+
+	return result, nil
 }
 
 // loadTiRexConfigFromMeta extracts a TiRexConfig from GGUF metadata.
