@@ -17,7 +17,8 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E47: Batched training performance (0/19 -- GitHub #278, T47.2.4 added for batched attention)
 - E48: TimeMixer backend (0/10 -- GitHub #279)
 - E49: Foundation model inference (0/12 -- GitHub #280)
-- E50: GPU training kernel elimination (0/6 -- layer norm, GELU, transpose caching)
+- E50: GPU training kernel elimination (1/6 -- weight transpose caching done, layer norm/GELU reverted)
+- E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1297,6 +1298,15 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 
 ## Progress Log
 
+### 2026-03-30: E51 added -- CUDA graph capture for training
+
+Added E51 with 6 tasks to capture the PatchTST forward+backward pass as a CUDA graph
+and replay it for subsequent batches, eliminating all Go-to-GPU synchronization overhead.
+E50 engine layer norm/GELU was reverted (2x slower due to kernel launch overhead on small
+tensors). Created ADR-077 for the capture strategy: drop partial batches (not pad),
+capture combined forward+backward, pre-allocate all tensors, keep AdamW outside graph.
+T51.3.1 is in ztensor repo (Engine interface extension). 2 waves, 3 agents each.
+
 ### 2026-03-30: E50 added -- GPU training kernel elimination
 
 Added E50 with 6 tasks to move layer norm, GELU, and weight transpose caching to engine ops.
@@ -2511,6 +2521,118 @@ transposes outside the batch loop.
 - [ ] T50.2.1 Layer norm backward on engine  Deps: T50.1.1
 - [ ] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
 - [ ] T50.5.2 Benchmark on DGX Spark  Deps: T50.5.1
+
+---
+
+## E51: CUDA Graph Capture for Training (GitHub Issue #278)
+
+**Problem:** PatchTST GPU training takes 63.7s/epoch on DGX Spark despite channel batching
+and batched attention. The bottleneck is Go-to-GPU synchronization: ~500 engine op calls per
+batch, each requiring a Go round-trip. Moving ops to engine (E50) made things 2x slower
+because element-wise engine ops have more launch overhead than CPU for small tensors.
+The fundamental fix: capture the entire forward+backward pass as a CUDA graph and replay it,
+eliminating ALL intermediate synchronization.
+
+**Goal:** Capture the PatchTST forward+backward pass as a CUDA graph. First batch runs normally
+(warmup), second batch captures, subsequent batches replay. Target: <6s/epoch (10x speedup).
+
+**Decision rationale:** docs/adr/077-cuda-graph-training-capture.md
+
+**Key decisions:**
+- Drop partial batches (not pad) for fixed tensor shapes during replay
+- Capture combined forward+backward graph (one graph per batch iteration)
+- Implement in zerfoo training loop, not in ztensor graph compiler
+- Pre-allocate all tensors before capture; warmup on first batch
+- AdamW and loss computation stay outside graph (they call .Data() which triggers D2H)
+
+**Closes:** GitHub issue #278
+
+### E51.1: Drop Partial Batches
+
+- [ ] T51.1.1 Skip partial final batch in trainWindowedGPU  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+  File: timeseries/patchtst_gpu_train.go
+  When nSamples % batchSize != 0, stop the batch loop before the partial batch.
+  Change `for start := 0; start < nSamples; start += batchSize` to stop at
+  `nSamples - (nSamples % batchSize)`. Log a warning if samples are dropped.
+  Acceptance: go test passes. Training on 28001 samples with batch=64 produces
+  same result as 28000 samples (last sample silently dropped).
+
+### E51.2: Pre-allocate Tensor Workspace
+
+- [ ] T51.2.1 Pre-allocate all layer caches and intermediates before batch loop  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/patchtst_gpu_train.go
+  CUDA graph capture fails on cudaMalloc during capture. Currently, tensor.New
+  and engine ops allocate GPU memory on demand. Pre-allocate:
+  (1) gpuBatchForwardCache with all layer caches (normed1/2, q/k/v, scores, attnOut,
+  ffn1PreAct, ffn1Out, centered1/2, invStd1/2, xResidual, xAfterAttn, flatInput, patches)
+  (2) All backward intermediates (dX, dFlat, dChanOut, dAttnProjOut, etc.)
+  Use engine ops with dst parameter (pre-allocated destination) to avoid new allocations.
+  Acceptance: go test passes. No new tensor.New or engine allocations inside the
+  forward/backward block (verify by counting allocations in a test).
+
+### E51.3: Add Engine Capture/Replay API
+
+- [ ] T51.3.1 Add BeginCapture/EndCapture/Replay to Engine interface  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Repo: ztensor. File: compute/engine.go, compute/gpu_engine.go, compute/cpu_engine.go
+  Add three methods to the Engine[T] interface:
+  - `BeginCapture(ctx) error` -- starts CUDA stream capture (no-op on CPU engine)
+  - `EndCapture(ctx) (GraphHandle, error)` -- ends capture, returns opaque handle
+  - `ReplayGraph(ctx, GraphHandle) error` -- replays captured graph (on CPU: re-execute ops)
+  GraphHandle is an interface{} (opaque, engine-specific).
+  GPUEngine implementation calls cuda.StreamBeginCapture/EndCapture/GraphInstantiate/GraphLaunch.
+  CPUEngine implementation records op sequence during capture, replays during replay.
+  Acceptance: GPU engine captures and replays a simple MatMul+Add sequence correctly.
+  Unit test: capture MatMul+Add, replay 3 times, verify output matches non-captured execution.
+
+### E51.4: Wire Graph Capture into Training Loop
+
+- [ ] T51.4.1 Integrate capture/replay into trainWindowedGPU  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  Deps: T51.1.1, T51.2.1, T51.3.1
+  File: timeseries/patchtst_gpu_train.go
+  Training loop structure becomes:
+  ```
+  batch 0: warmup (normal execution, establishes tensor sizes)
+  batch 1: engine.BeginCapture() -> forward+backward -> engine.EndCapture() -> graphHandle
+  batch 2..N: engine.ReplayGraph(graphHandle) (tensors updated in-place)
+  ```
+  Before each replay: update input patches tensor and zero gradients (these are writes
+  to pre-allocated buffers, not new allocations -- compatible with graph replay).
+  After each replay: run AdamW on CPU (outside graph).
+  Handle epoch boundaries: recapture at start of each epoch if shuffling changes data order
+  (graph replays with same tensor addresses, data content changes via memcpy before replay).
+  Acceptance: Training convergence matches non-captured execution within 1e-4 tolerance.
+  Gradient check passes. go test -run TestPatchTST passes.
+
+### E51.5: Validation and Benchmark
+
+- [ ] T51.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T51.4.1
+  Acceptance: go vet clean. go test ./timeseries/ passes. go test ./... passes in ztensor.
+
+- [ ] T51.5.2 Benchmark on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T51.5.1
+  Run 28K x 20ch x 10 epochs on DGX Spark with GPU engine + graph capture.
+  Compare: before (63.7s/epoch) vs after.
+  Target: <6s/epoch (<60s for 10 epochs).
+  Acceptance: Results documented in devlog. Measurable speedup. Issue #278 closed if target met.
+
+### E51 Parallel Work
+
+#### Waves
+
+##### Wave E51-1: Foundation (3 agents)
+
+- [ ] T51.1.1 Drop partial batches
+- [ ] T51.2.1 Pre-allocate tensor workspace
+- [ ] T51.3.1 Add Engine capture/replay API (ztensor repo)
+
+##### Wave E51-2: Integration + validation (3 agents)
+
+- [ ] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1
+- [ ] T51.5.1 Run go vet and tests  Deps: T51.4.1
+- [ ] T51.5.2 Benchmark on DGX Spark  Deps: T51.5.1
+
+---
 
 ### E47-E49 Risks
 
