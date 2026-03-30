@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0](https://github.com/zerfoo/zerfoo/compare/v1.37.0...v1.38.0) (2026-03-30)
+
+
+### Features
+
+* **timeseries:** add full GPU training loop for PatchTST ([dd5aa66](https://github.com/zerfoo/zerfoo/commit/dd5aa66e29aeac2c60831839e817379529fa431a))
+
+
+### Bug Fixes
+
+* **timeseries:** wire trainWindowedGPU as the engine training path ([bc00ae3](https://github.com/zerfoo/zerfoo/commit/bc00ae3bcbaeac01e4df75c135fa6f8499b1eabc))
+
+
+### Performance Improvements
+
+* **timeseries:** batch GPU training across samples for 64x fewer kernel launches ([158ddf6](https://github.com/zerfoo/zerfoo/commit/158ddf628826cc6a5d1dded1a1905b66f32e420e))
+* **timeseries:** optimize PatchTST backward with buffer pooling ([89c713a](https://github.com/zerfoo/zerfoo/commit/89c713ae7d864d8814817924daed4e2ccbe1e6c5))
+* **timeseries:** pre-allocate GPU training workspace ([0d9b0b3](https://github.com/zerfoo/zerfoo/commit/0d9b0b3977a2640c79f7c132a0f6e7bf509426ff))
+
 ## [1.37.0](https://github.com/zerfoo/zerfoo/compare/v1.36.0...v1.37.0) (2026-03-30)
 
 
