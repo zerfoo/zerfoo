@@ -45,6 +45,10 @@ type NHiTS struct {
 	stacks    []nhitsStack
 	normMeans [][]float64 // per-channel normalization means from training
 	normStds  [][]float64 // per-channel normalization stds from training
+
+	// Float64 shadow parameters and gradient accumulator for TrainableBackend (CPU path).
+	f64Params []float64 // flat float64 copy of all stack weights/biases
+	grads     []float64 // gradient accumulator
 }
 
 // NewNHiTS creates a new N-HiTS model with the given configuration.
@@ -410,6 +414,27 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			len(labels), numSamples, n.config.OutputLength)
 	}
 
+	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
+	windows, n.normMeans, n.normStds = normalizeWindows(windows)
+
+	if n.engine != nil {
+		return n.trainWindowedEngine(windows, labels, config)
+	}
+
+	// CPU path: use float64 shadow params and shared TrainLoop.
+	n.initF64Params()
+	result, err := TrainLoop(n, windows, labels, config)
+	if err != nil {
+		return nil, err
+	}
+	n.syncF64ToTensors()
+	return result, nil
+}
+
+// trainWindowedEngine trains using the float32 engine-accelerated path.
+func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
+	numSamples := len(windows)
+
 	baseLR := config.LR
 	if baseLR == 0 {
 		baseLR = 1e-3
@@ -422,9 +447,6 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 	if epochs <= 0 {
 		epochs = 100
 	}
-
-	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
-	windows, n.normMeans, n.normStds = normalizeWindows(windows)
 
 	ctx := context.Background()
 	result := &TrainResult{}
@@ -506,8 +528,6 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 			nBatches++
 
 			// Backward pass per stack, collecting all gradients.
-			// Uses engine tensor ops (MatMul, Transpose, Sum) — the same
-			// engine used by the forward pass (linearForward -> engine.MatMul).
 			allGrads := make([][]float32, len(allParams))
 			paramIdx := 0
 
@@ -522,9 +542,6 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 				dH := make([]float32, len(lossGrad))
 				copy(dH, lossGrad)
 
-				// Engine-accelerated backward pass using tensor ops (MatMul,
-				// Transpose, Sum). The forward pass above already uses
-				// engine.MatMul via linearForward.
 				stackGrads, err := n.stackBackwardEngine(ctx, dH, batchN, *stack, intermediates, pooledFlat)
 				if err != nil {
 					return nil, fmt.Errorf("nhits train: engine backward stack %d: %w", si, err)
@@ -533,7 +550,6 @@ func (n *NHiTS) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 					allGrads[paramIdx+i] = g
 				}
 
-				// Advance paramIdx past this stack's params.
 				paramIdx += len(stack.mlpLayers)*2 + 2
 			}
 
@@ -645,6 +661,341 @@ func (n *NHiTS) adamUpdate(params, grads []float32, state *adamState, beta1, bet
 		params[i] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*params[i])
 	}
 }
+
+// nhitsCache holds activations from a per-sample forward pass needed for backpropagation.
+type nhitsCache struct {
+	// Per-stack intermediates.
+	stackPooled  [][]float64   // [stack] flattened pooled input
+	stackPreReLU [][][]float64 // [stack][mlpLayer] pre-ReLU activations
+	stackPostAct [][][]float64 // [stack][mlpLayer] post-ReLU activations
+}
+
+// nhitsF64ParamCount returns the total number of trainable parameters.
+func (n *NHiTS) nhitsF64ParamCount() int {
+	count := 0
+	for _, stack := range n.stacks {
+		for _, l := range stack.mlpLayers {
+			s := l.weights.Shape()
+			count += s[0] * s[1] // weights
+			count += l.biases.Shape()[1] // biases
+		}
+		s := stack.outputProj.weights.Shape()
+		count += s[0] * s[1]
+		count += stack.outputProj.biases.Shape()[1]
+	}
+	return count
+}
+
+// initF64Params copies float32 tensor parameters into a flat float64 buffer.
+func (n *NHiTS) initF64Params() {
+	total := n.nhitsF64ParamCount()
+	n.f64Params = make([]float64, total)
+	idx := 0
+	for _, stack := range n.stacks {
+		for _, l := range stack.mlpLayers {
+			for _, v := range l.weights.Data() {
+				n.f64Params[idx] = float64(v)
+				idx++
+			}
+			for _, v := range l.biases.Data() {
+				n.f64Params[idx] = float64(v)
+				idx++
+			}
+		}
+		for _, v := range stack.outputProj.weights.Data() {
+			n.f64Params[idx] = float64(v)
+			idx++
+		}
+		for _, v := range stack.outputProj.biases.Data() {
+			n.f64Params[idx] = float64(v)
+			idx++
+		}
+	}
+}
+
+// syncF64ToTensors copies float64 parameters back to float32 tensors.
+func (n *NHiTS) syncF64ToTensors() {
+	idx := 0
+	for si := range n.stacks {
+		stack := &n.stacks[si]
+		for li := range stack.mlpLayers {
+			data := stack.mlpLayers[li].weights.Data()
+			for i := range data {
+				data[i] = float32(n.f64Params[idx])
+				idx++
+			}
+			data = stack.mlpLayers[li].biases.Data()
+			for i := range data {
+				data[i] = float32(n.f64Params[idx])
+				idx++
+			}
+		}
+		data := stack.outputProj.weights.Data()
+		for i := range data {
+			data[i] = float32(n.f64Params[idx])
+			idx++
+		}
+		data = stack.outputProj.biases.Data()
+		for i := range data {
+			data[i] = float32(n.f64Params[idx])
+			idx++
+		}
+	}
+}
+
+// nhitsStackF64Forward runs a pure float64 forward pass for one stack on a single sample.
+// input: [channels][inputLen], returns [outputLen] and per-layer intermediates.
+func (n *NHiTS) nhitsStackF64Forward(input [][]float64, stackIdx int, paramOffset int) ([]float64, []float64, [][]float64, [][]float64) {
+	stack := &n.stacks[stackIdx]
+	channels := n.config.Channels
+	inputLen := n.config.InputLength
+
+	// Max-pool each channel.
+	pLen := pooledLen(inputLen, stack.poolKernel)
+	pooledFlat := make([]float64, channels*pLen)
+	for c := 0; c < channels; c++ {
+		for i := 0; i < pLen; i++ {
+			start := i * stack.poolKernel
+			maxVal := math.Inf(-1)
+			end := start + stack.poolKernel
+			if end > inputLen {
+				end = inputLen
+			}
+			for j := start; j < end; j++ {
+				if input[c][j] > maxVal {
+					maxVal = input[c][j]
+				}
+			}
+			pooledFlat[c*pLen+i] = maxVal
+		}
+	}
+
+	// MLP layers with ReLU.
+	h := pooledFlat
+	var preReLU, postAct [][]float64
+	off := paramOffset
+
+	for _, l := range stack.mlpLayers {
+		wShape := l.weights.Shape()
+		inDim, outDim := wShape[0], wShape[1]
+		bShape := l.biases.Shape()
+		bDim := bShape[1]
+
+		// Linear: h @ W + b
+		out := make([]float64, outDim)
+		for j := 0; j < outDim; j++ {
+			out[j] = n.f64Params[off+inDim*outDim+j] // bias
+		}
+		for i := 0; i < inDim; i++ {
+			for j := 0; j < outDim; j++ {
+				out[j] += h[i] * n.f64Params[off+i*outDim+j]
+			}
+		}
+		preReLU = append(preReLU, append([]float64(nil), out...))
+
+		// ReLU
+		for i := range out {
+			if out[i] < 0 {
+				out[i] = 0
+			}
+		}
+		postAct = append(postAct, append([]float64(nil), out...))
+		h = out
+		off += inDim*outDim + bDim
+	}
+
+	// Output projection (no activation).
+	projShape := stack.outputProj.weights.Shape()
+	inDim, outDim := projShape[0], projShape[1]
+	result := make([]float64, outDim)
+	for j := 0; j < outDim; j++ {
+		result[j] = n.f64Params[off+inDim*outDim+j] // bias
+	}
+	for i := 0; i < inDim; i++ {
+		for j := 0; j < outDim; j++ {
+			result[j] += h[i] * n.f64Params[off+i*outDim+j]
+		}
+	}
+
+	return result, pooledFlat, preReLU, postAct
+}
+
+// nhitsStackParamCount returns the number of parameters in a stack.
+func (n *NHiTS) nhitsStackParamCount(stackIdx int) int {
+	stack := &n.stacks[stackIdx]
+	count := 0
+	for _, l := range stack.mlpLayers {
+		s := l.weights.Shape()
+		count += s[0]*s[1] + l.biases.Shape()[1]
+	}
+	s := stack.outputProj.weights.Shape()
+	count += s[0]*s[1] + stack.outputProj.biases.Shape()[1]
+	return count
+}
+
+// ForwardSample runs the N-HiTS forward pass on a single sample using float64 params.
+// Input: [channels][inputLen], returns (flatOutput [outputLen], cache, error).
+func (n *NHiTS) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	output := make([]float64, n.config.OutputLength)
+	cache := &nhitsCache{
+		stackPooled:  make([][]float64, len(n.stacks)),
+		stackPreReLU: make([][][]float64, len(n.stacks)),
+		stackPostAct: make([][][]float64, len(n.stacks)),
+	}
+
+	paramOff := 0
+	for si := range n.stacks {
+		stackOut, pooled, preReLU, postAct := n.nhitsStackF64Forward(input, si, paramOff)
+		for i := range output {
+			output[i] += stackOut[i]
+		}
+		cache.stackPooled[si] = pooled
+		cache.stackPreReLU[si] = preReLU
+		cache.stackPostAct[si] = postAct
+		paramOff += n.nhitsStackParamCount(si)
+	}
+
+	return output, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (n *NHiTS) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*nhitsCache)
+	if !ok {
+		return fmt.Errorf("nhits: invalid cache type")
+	}
+
+	if n.grads == nil {
+		n.grads = make([]float64, n.nhitsF64ParamCount())
+	}
+
+	paramOff := 0
+	for si := range n.stacks {
+		stack := &n.stacks[si]
+
+		// dH starts as dOutput (each stack's output is summed).
+		dH := append([]float64(nil), dOutput...)
+		off := paramOff
+
+		// Compute parameter offsets for each layer in this stack.
+		layerOffsets := make([]int, len(stack.mlpLayers)+1)
+		tmpOff := paramOff
+		for li, l := range stack.mlpLayers {
+			layerOffsets[li] = tmpOff
+			s := l.weights.Shape()
+			tmpOff += s[0]*s[1] + l.biases.Shape()[1]
+		}
+		layerOffsets[len(stack.mlpLayers)] = tmpOff // output proj offset
+
+		// Backward through output projection.
+		projOff := layerOffsets[len(stack.mlpLayers)]
+		projShape := stack.outputProj.weights.Shape()
+		projIn, projOut := projShape[0], projShape[1]
+
+		// Last hidden layer activation (input to output proj).
+		var lastH []float64
+		if len(cache.stackPostAct[si]) > 0 {
+			lastH = cache.stackPostAct[si][len(cache.stackPostAct[si])-1]
+		} else {
+			lastH = cache.stackPooled[si]
+		}
+
+		// dW_proj, dB_proj, dH_new
+		newDH := make([]float64, projIn)
+		for i := 0; i < projIn; i++ {
+			for j := 0; j < projOut; j++ {
+				n.grads[projOff+i*projOut+j] += lastH[i] * dH[j]
+				newDH[i] += dH[j] * n.f64Params[projOff+i*projOut+j]
+			}
+		}
+		for j := 0; j < projOut; j++ {
+			n.grads[projOff+projIn*projOut+j] += dH[j]
+		}
+		dH = newDH
+
+		// Backward through MLP layers in reverse.
+		for li := len(stack.mlpLayers) - 1; li >= 0; li-- {
+			l := &stack.mlpLayers[li]
+			lOff := layerOffsets[li]
+			lShape := l.weights.Shape()
+			lIn, lOut := lShape[0], lShape[1]
+
+			// ReLU backward: mask where pre-ReLU <= 0.
+			preReLU := cache.stackPreReLU[si][li]
+			for i := range dH {
+				if preReLU[i] <= 0 {
+					dH[i] = 0
+				}
+			}
+
+			// Input to this layer.
+			var hInput []float64
+			if li == 0 {
+				hInput = cache.stackPooled[si]
+			} else {
+				hInput = cache.stackPostAct[si][li-1]
+			}
+
+			// dW, dB, dH_new
+			newDH2 := make([]float64, lIn)
+			for i := 0; i < lIn; i++ {
+				for j := 0; j < lOut; j++ {
+					n.grads[lOff+i*lOut+j] += hInput[i] * dH[j]
+					newDH2[i] += dH[j] * n.f64Params[lOff+i*lOut+j]
+				}
+			}
+			for j := 0; j < lOut; j++ {
+				n.grads[lOff+lIn*lOut+j] += dH[j]
+			}
+			dH = newDH2
+		}
+
+		off = paramOff
+		_ = off
+		paramOff += n.nhitsStackParamCount(si)
+	}
+
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (n *NHiTS) FlatGrads() []float64 {
+	if n.grads == nil {
+		n.grads = make([]float64, n.nhitsF64ParamCount())
+	}
+	return n.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (n *NHiTS) ZeroGrads() {
+	if n.grads == nil {
+		n.grads = make([]float64, n.nhitsF64ParamCount())
+		return
+	}
+	for i := range n.grads {
+		n.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters.
+func (n *NHiTS) FlatParams() []*float64 {
+	if n.f64Params == nil {
+		n.initF64Params()
+	}
+	ptrs := make([]*float64, len(n.f64Params))
+	for i := range n.f64Params {
+		ptrs[i] = &n.f64Params[i]
+	}
+	return ptrs
+}
+
+// ParamCount returns the total number of trainable parameters.
+func (n *NHiTS) ParamCount() int {
+	return n.nhitsF64ParamCount()
+}
+
+// Compile-time check that NHiTS implements TrainableBackend.
+var _ TrainableBackend = (*NHiTS)(nil)
 
 // nhitsModelFile is the JSON structure for saving/loading N-HiTS models.
 type nhitsModelFile struct {

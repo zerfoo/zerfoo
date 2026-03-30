@@ -67,6 +67,9 @@ type ITransformer struct {
 	// Normalization stats from training.
 	normMeans [][]float64
 	normStds  [][]float64
+
+	// Gradient accumulator for TrainableBackend.
+	grads []float64
 }
 
 // NewITransformer creates a new iTransformer model. The engine and ops
@@ -399,99 +402,7 @@ func (m *ITransformer) TrainWindowed(windows [][][]float64, labels []float64, co
 		return m.trainWindowedEngine(windows, labels, config)
 	}
 
-	// Collect all parameters and initialize AdamW state.
-	params := m.flatParams()
-	nParams := len(params)
-	mState := make([]float64, nParams) // first moment
-	vState := make([]float64, nParams) // second moment
-
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
-	}
-
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			bs := end - start
-			batchWindows := windows[start:end]
-			batchLabels := labels[start*m.config.Channels*m.config.OutputLen : end*m.config.Channels*m.config.OutputLen]
-
-			// Analytical gradient computation via backpropagation.
-			accGrads := newITransformerGrads(m.config)
-			batchLoss := 0.0
-			scale := 1.0 / float64(bs*m.config.Channels*m.config.OutputLen)
-
-			for s := 0; s < bs; s++ {
-				pred, cache := m.forwardWithCache(batchWindows[s])
-
-				// Compute per-sample MSE loss and dLoss/dOutput.
-				dOutput := make([][]float64, m.config.Channels)
-				for c := 0; c < m.config.Channels; c++ {
-					dOutput[c] = make([]float64, m.config.OutputLen)
-					for o := 0; o < m.config.OutputLen; o++ {
-						labelIdx := s*m.config.Channels*m.config.OutputLen + c*m.config.OutputLen + o
-						diff := pred[c][o] - batchLabels[labelIdx]
-						batchLoss += diff * diff
-						dOutput[c][o] = 2.0 * diff * scale
-					}
-				}
-
-				m.backward(dOutput, cache, &accGrads)
-			}
-			batchLoss *= scale
-
-			grads := accGrads.collectGrads(m.config)
-			epochLoss += batchLoss
-			nBatches++
-
-			// Gradient clipping.
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range grads {
-					norm += g * g
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					s := config.GradClip / norm
-					for i := range grads {
-						grads[i] *= s
-					}
-				}
-			}
-
-			// AdamW update with LR warmup.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			for i := range params {
-				mState[i] = config.Beta1*mState[i] + (1-config.Beta1)*grads[i]
-				vState[i] = config.Beta2*vState[i] + (1-config.Beta2)*grads[i]*grads[i]
-				mHat := mState[i] / (1 - math.Pow(config.Beta1, t))
-				vHat := vState[i] / (1 - math.Pow(config.Beta2, t))
-				*params[i] -= lr * (mHat/(math.Sqrt(vHat)+config.Epsilon) + config.WeightDecay*(*params[i]))
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("itransformer: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
-	return result, nil
+	return TrainLoop(m, windows, labels, config)
 }
 
 // PredictWindowed runs inference on windowed data.
@@ -604,6 +515,84 @@ func (m *ITransformer) flatParams() []*float64 {
 
 	return params
 }
+
+// paramCount returns the total number of trainable parameters.
+func (m *ITransformer) paramCount() int {
+	return len(m.flatParams())
+}
+
+// ForwardSample runs the iTransformer forward pass on a single sample and returns
+// a flat output with cached activations for BackwardSample.
+func (m *ITransformer) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	output, cache := m.forwardWithCache(input)
+
+	flat := make([]float64, 0, m.config.Channels*m.config.OutputLen)
+	for c := 0; c < m.config.Channels; c++ {
+		flat = append(flat, output[c]...)
+	}
+	return flat, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (m *ITransformer) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(iTransformerCache)
+	if !ok {
+		return fmt.Errorf("itransformer: invalid cache type")
+	}
+
+	if m.grads == nil {
+		m.grads = make([]float64, m.paramCount())
+	}
+
+	// Reshape flat dOutput [channels*outputLen] -> [channels][outputLen].
+	dOut2D := make([][]float64, m.config.Channels)
+	for c := 0; c < m.config.Channels; c++ {
+		dOut2D[c] = dOutput[c*m.config.OutputLen : (c+1)*m.config.OutputLen]
+	}
+
+	// Use the existing structured gradient accumulation.
+	accGrads := newITransformerGrads(m.config)
+	m.backward(dOut2D, cache, &accGrads)
+
+	// Add collected gradients into the flat buffer.
+	collected := accGrads.collectGrads(m.config)
+	for i, g := range collected {
+		m.grads[i] += g
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (m *ITransformer) FlatGrads() []float64 {
+	if m.grads == nil {
+		m.grads = make([]float64, m.paramCount())
+	}
+	return m.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (m *ITransformer) ZeroGrads() {
+	if m.grads == nil {
+		m.grads = make([]float64, m.paramCount())
+		return
+	}
+	for i := range m.grads {
+		m.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (m *ITransformer) FlatParams() []*float64 {
+	return m.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (m *ITransformer) ParamCount() int {
+	return m.paramCount()
+}
+
+// Compile-time check that ITransformer implements TrainableBackend.
+var _ TrainableBackend = (*ITransformer)(nil)
 
 // iTransformerWeights is the JSON-serializable form of iTransformer parameters.
 type iTransformerWeights struct {
