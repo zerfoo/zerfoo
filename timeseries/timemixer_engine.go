@@ -141,5 +141,6 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Mult
 		}
 	}
 
-	return &MultiScaleOutput{Scales: scales}, nil
+	mixed := m.pastDecomposableMixing(scales)
+	return &MultiScaleOutput{Scales: mixed}, nil
 }

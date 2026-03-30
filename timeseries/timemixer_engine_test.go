@@ -65,17 +65,16 @@ func TestTimeMixer_ForwardEngine_Parity(t *testing.T) {
 	}
 }
 
-// TestTimeMixer_ForwardEngine_RoundTrip verifies trend+seasonal=input for engine path.
-func TestTimeMixer_ForwardEngine_RoundTrip(t *testing.T) {
-	engine, ops := newTestEngine()
-
+// TestTimeMixer_ForwardEngine_DecomposeRoundTrip verifies trend+seasonal=input
+// at the decomposition stage (before mixing transforms the components).
+func TestTimeMixer_ForwardEngine_DecomposeRoundTrip(t *testing.T) {
 	cfg := TimeMixerConfig{
 		InputLen:    24,
 		OutputLen:   6,
 		NumFeatures: 2,
 		NumScales:   3,
 	}
-	m := NewTimeMixer(cfg, WithTimeMixerEngine(engine, ops))
+	m := NewTimeMixer(cfg)
 
 	input := make([][]float64, cfg.NumFeatures)
 	for f := range input {
@@ -85,13 +84,11 @@ func TestTimeMixer_ForwardEngine_RoundTrip(t *testing.T) {
 		}
 	}
 
-	out, err := m.ForwardEngine(context.Background(), input)
-	if err != nil {
-		t.Fatalf("ForwardEngine failed: %v", err)
-	}
+	// Test decomposition directly (before mixing).
+	scales := m.decompose(input)
 
-	const tol = 1e-4
-	for s, sc := range out.Scales {
+	const tol = 1e-10
+	for s, sc := range scales {
 		for f := 0; f < cfg.NumFeatures; f++ {
 			for i := 0; i < cfg.InputLen; i++ {
 				reconstructed := sc.trend[f][i] + sc.seasonal[f][i]
