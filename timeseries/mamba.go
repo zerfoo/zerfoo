@@ -241,6 +241,72 @@ func (m *Mamba) forward(ctx context.Context, input [][]float64) ([]float32, *mam
 	return headOut.Data(), cache, nil
 }
 
+// forwardBatch runs the forward pass on a batch of samples simultaneously.
+// Input: [batch][channels][inputLen], returns flat [batch * channels * outputLen].
+// The SSM scan processes all batch samples in parallel via [batch, seqLen, dModel] tensors.
+func (m *Mamba) forwardBatch(ctx context.Context, inputs [][][]float64) ([]float32, error) {
+	batch := len(inputs)
+	channels := m.config.Channels
+	seqLen := m.config.InputLen
+	dModel := m.config.DModel
+	outDim := channels * m.config.OutputLen
+
+	// Build input tensor [batch, seqLen, channels].
+	inData := make([]float32, batch*seqLen*channels)
+	for b := 0; b < batch; b++ {
+		for t := 0; t < seqLen; t++ {
+			for c := 0; c < channels; c++ {
+				inData[(b*seqLen+t)*channels+c] = float32(inputs[b][c][t])
+			}
+		}
+	}
+	inTensor, err := tensor.New[float32]([]int{batch, seqLen, channels}, inData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Embed: [batch, seqLen, channels] -> [batch, seqLen, dModel].
+	x, err := m.embed.Forward(ctx, inTensor)
+	if err != nil {
+		return nil, fmt.Errorf("mamba: embed forward: %w", err)
+	}
+
+	// Process through Mamba blocks with residual connections.
+	for l := 0; l < m.config.NLayers; l++ {
+		out, err := m.blocks[l].Forward(ctx, x)
+		if err != nil {
+			return nil, fmt.Errorf("mamba: block %d forward: %w", l, err)
+		}
+		x, err = m.engine.Add(ctx, x, out)
+		if err != nil {
+			return nil, fmt.Errorf("mamba: block %d residual: %w", l, err)
+		}
+	}
+
+	// Extract last timestep for each batch: [batch, seqLen, dModel] -> [batch, dModel].
+	xData := x.Data()
+	lastData := make([]float32, batch*dModel)
+	for b := 0; b < batch; b++ {
+		srcOff := (b*seqLen + seqLen - 1) * dModel
+		copy(lastData[b*dModel:(b+1)*dModel], xData[srcOff:srcOff+dModel])
+	}
+	lastTensor, err := tensor.New[float32]([]int{batch, dModel}, lastData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Head: [batch, dModel] -> [batch, channels*outputLen].
+	headOut, err := m.head.Forward(ctx, lastTensor)
+	if err != nil {
+		return nil, fmt.Errorf("mamba: head forward: %w", err)
+	}
+
+	// Return flat output [batch * outDim].
+	result := make([]float32, batch*outDim)
+	copy(result, headOut.Data())
+	return result, nil
+}
+
 // mambaCache holds intermediate tensors for backward pass.
 type mambaCache struct {
 	input        *tensor.TensorNumeric[float32]
@@ -522,21 +588,24 @@ func (m *Mamba) PredictWindowed(modelPath string, windows [][][]float64) ([]floa
 		windows = applyNormalization(windows, m.normMeans, m.normStds)
 	}
 
-	ctx := context.Background()
-	outDim := m.config.Channels * m.config.OutputLen
-	out := make([]float64, 0, nSamples*outDim)
-
-	for _, w := range windows {
+	// Validate channel counts.
+	for i, w := range windows {
 		if len(w) != m.config.Channels {
-			return nil, fmt.Errorf("mamba: expected %d channels, got %d", m.config.Channels, len(w))
+			return nil, fmt.Errorf("mamba: window %d expected %d channels, got %d", i, m.config.Channels, len(w))
 		}
-		predData, _, err := m.forward(ctx, w)
-		if err != nil {
-			return nil, fmt.Errorf("mamba: forward: %w", err)
-		}
-		for _, v := range predData {
-			out = append(out, float64(v))
-		}
+	}
+
+	ctx := context.Background()
+
+	// Use batched forward pass for all samples simultaneously.
+	predData, err := m.forwardBatch(ctx, windows)
+	if err != nil {
+		return nil, fmt.Errorf("mamba: forward batch: %w", err)
+	}
+
+	out := make([]float64, len(predData))
+	for i, v := range predData {
+		out[i] = float64(v)
 	}
 	return out, nil
 }
