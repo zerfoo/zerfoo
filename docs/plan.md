@@ -8,15 +8,15 @@ Granite Guardian, K-Quant optimization, multi-model benchmarks, batched GPU
 training, GGUF writer consolidation, documentation site, MSA-inspired scalable
 memory, and research-driven inference optimizations).
 
-Task statuses updated 2026-03-27 based on merged PRs and git history.
+Task statuses updated 2026-03-29 based on merged PRs and git history.
 
 **Status summary:**
-- 370+ tasks completed across all plans (37 new in Waves 1-3)
-- ~20 active tasks remaining from prior phase
-- E34: MSA-inspired scalable memory (18 tasks)
-- E35-E39: Research-driven inference optimizations (44 tasks)
-- E40: TransMLA/MHA2MLA conversion (9 tasks)
-- E41-E44: GGUF I-Quants, RadixAttention, Flash Decoding, Multi-LoRA (24 tasks) -- NEW
+- 370+ tasks completed across all plans
+- E45: Verification remediation (3/3 complete)
+- E46: Ecosystem v1 release (0/46 -- 5 repos to v1.0.0)
+- E47: Batched training performance (0/18 -- GitHub #278)
+- E48: TimeMixer backend (0/10 -- GitHub #279)
+- E49: Foundation model inference (0/12 -- GitHub #280)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1269,6 +1269,12 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ### K-Quant
 - Q4_K GEMV is 45% slower than Q4_0 on GB10. Infrastructure merged.
 
+### Time Series Research (E47-E49)
+- TimeMixer: Decomposable Multiscale Mixing (ICLR 2024, https://github.com/kwuking/TimeMixer)
+- Chronos-2: Multivariate Time Series Foundation Model (Amazon, 2025)
+- TiRex: xLSTM Foundation Model for Time Series (NX-AI, 2025, arXiv:2505.23719)
+- Moirai-2: Any-Variate Foundation Model (Salesforce, 2025)
+
 ### ADRs Referenced
 - ADR-037: GGUF sole model format
 - ADR-057: Apache 2.0 licensing
@@ -1283,10 +1289,25 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - ADR-067: MSA-inspired sparse attention for scalable memory
 - ADR-068: Research-driven inference optimization priorities
 - ADR-069: TransMLA -- Retrofit MLA onto MHA/GQA models
+- ADR-075: Batched training with kernel fusion for time series
+- ADR-076: Foundation model inference via gRPC Python bridge
 
 ---
 
 ## Progress Log
+
+### 2026-03-29: E47-E49 added to resolve GitHub issues #278, #279, #280
+
+Added three new epics to resolve all open GitHub issues:
+- E47 (batched training, #278): 18 tasks. DataLoader infrastructure, batched forward/backward
+  for all 9 timeseries backends. Target: 28K rows trains in < 60s on DGX Spark. Created ADR-075.
+- E48 (TimeMixer, #279): 10 tasks. Multi-scale decomposition MLP architecture following the
+  PatchTST/iTransformer adapter pattern. Training + inference + engine support.
+- E49 (foundation models, #280): 17 tasks. Native Go inference for TiRex (xLSTM), Chronos-2
+  (T5), Moirai-2 (masked encoder). New layers: sLSTM, mLSTM, value tokenizer, variate
+  projection. GGUF weight conversion, graph builders, parity tests, CLI. Created ADR-076.
+Added 3 use cases (UC-TS01, UC-TS02, UC-TS03). Added risks R40-R44. Added milestones M-E47
+through M-E49 (all 2026-Q2). 5 waves (E47-1 through E47-5) using up to 10 agents per wave.
 
 ### 2026-03-29: E46 Ecosystem v1 Release added (6 repos -> v1+)
 
@@ -1435,6 +1456,17 @@ Merged all satellite plans. 330+ tasks complete. All models coherent.
 - E44 (Multi-LoRA) is entirely in zerfoo. Adapter format uses standard GGUF.
 - GGUF is the sole model format (ADR-037).
 - Gemma3-1B Q4_K_M is cached on DGX Spark for integration tests.
+- E47 (batched training) is entirely in zerfoo/timeseries/. Key insight: replace
+  per-sample GPU calls with batch-level tensor operations. DataLoader converts
+  float64 slices to float32 tensors once, then iterates mini-batches.
+- E48 (TimeMixer) follows exact same pattern as PatchTST. Reference implementation:
+  github.com/kwuking/TimeMixer. Key architecture: multi-scale decomposition via
+  learnable moving averages, then MLP mixing across scales.
+- E49 (foundation models) is native Go. New xLSTM layers (sLSTM, mLSTM) go in
+  layers/timeseries/. Graph builders go in inference/timeseries/. Weight converters
+  produce GGUF from HuggingFace SafeTensors. Parity tests need golden files generated
+  from Python reference (one-time, checked into tests/golden/).
+- Platform for E47-E49: linux/arm64 (DGX Spark with Grace Hopper GPU).
 
 ---
 
@@ -1456,6 +1488,9 @@ Merged all satellite plans. 330+ tasks complete. All models coherent.
 | UC-010 | TransMLA-converted inference | Load MHA model converted to MLA via SVD, serve with compressed KV cache |
 | UC-011 | Prefix-cached serving | Serve requests that share system prompts with automatic KV cache reuse |
 | UC-012 | Multi-LoRA serving | Serve multiple fine-tuned LoRA adapters from a single base model per-request |
+| UC-TS01 | Train time series efficiently | Train PatchTST/iTransformer on 28K+ rows with GPU-batched forward in < 60s |
+| UC-TS02 | TimeMixer forecasting | Multi-scale decomposition MLP training and inference |
+| UC-TS03 | Foundation model zero-shot | Zero-shot forecasting via Chronos-2/TiRex/Moirai-2 gRPC bridge |
 
 ---
 
@@ -1849,3 +1884,514 @@ One agent per repo. All zero-dependency tasks in each track.
 - DGX Spark at ssh ndungu@192.168.86.250 is available for GPU benchmarks (ztensor).
 - float16/docs/plan.md is the reference for BFloat16 Phase 2-5 spec details.
 - zmf is archived and excluded from this plan. No v1 target.
+
+---
+
+## E47: Batched Training Performance (GitHub Issue #278)
+
+**Problem:** Training any time series backend on real-world datasets (28K+ rows x 20 features)
+times out on both CPU and GPU. Root cause: per-sample Go dispatch overhead. The Go training
+loop calls GPU for individual tensor ops per sample, with Go-to-GPU-to-Go round-trip dominating.
+GPU utilization is 0% during TrainWindowed. Currently 100-1000x slower than LightGBM on same data.
+
+**Goal:** Make TrainWindowed practical for 28K+ row datasets. Target: train PatchTST on 28K rows
+x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
+
+**Decision rationale:** docs/adr/075-batched-training-kernel-fusion.md
+
+**Closes:** GitHub issue #278
+
+### E47.1: DataLoader and Batched Tensor Infrastructure
+
+- [ ] T47.1.1 Implement timeseries.DataLoader  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  File: timeseries/dataloader.go
+  DataLoader converts raw `[][][]float64` windows + `[]float64` labels into mini-batches
+  of `tensor.TensorNumeric[float32]`. Methods:
+  - `NewDataLoader(windows [][][]float64, labels []float64, batchSize int, shuffle bool) *DataLoader`
+  - `Len() int` (number of batches)
+  - `Next() (inputBatch *tensor.TensorNumeric[float32], labelBatch *tensor.TensorNumeric[float32], ok bool)`
+  - `Reset()` (reshuffle and restart iteration)
+  Input tensor shape: `[batchSize, channels, inputLen]`. Label tensor: `[batchSize, outputDim]`.
+  Uses Fisher-Yates shuffle. Handles final partial batch (pad or drop configurable).
+  Acceptance: DataLoader produces correct batch tensors; shuffled order differs across epochs;
+  all samples visited exactly once per epoch.
+
+- [ ] T47.1.2 Unit tests for DataLoader  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+  Deps: T47.1.1
+  File: timeseries/dataloader_test.go
+  Tests: (1) All samples visited per epoch. (2) Shuffle produces different order. (3) Partial
+  batch handling. (4) Reset restarts iteration. (5) Shape correctness for various channel counts.
+  Acceptance: go test -race ./timeseries/ passes.
+
+### E47.2: Batched Forward Pass for PatchTST
+
+- [ ] T47.2.1 Implement PatchTST batched forward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+  File: timeseries/patchtst_engine.go
+  Add `forwardBatchEngine(ctx context.Context, input *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)`.
+  Input: `[batch, channels, inputLen]`. Output: `[batch, outputDim]`.
+  All MatMul, LayerNorm, and multi-head attention calls operate on full batch.
+  Patch extraction: `[batch*channels, numPatches, patchLen]`.
+  Attention: `[batch*channels*nHeads, numPatches, headDim]`.
+  Acceptance: Batched forward output matches sample-by-sample forward within 1e-5.
+
+- [ ] T47.2.2 Implement PatchTST batched backward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+  Deps: T47.2.1
+  File: timeseries/patchtst_backward.go
+  Rewrite backward pass to compute gradients on full `[batch, ...]` tensors.
+  Loss is mean-reduced across batch. Gradient accumulation uses engine MatMul
+  (transposed) on batch dimensions.
+  Acceptance: Gradient check -- numerical vs analytical gradients match within 1e-3.
+
+- [ ] T47.2.3 Wire PatchTST TrainWindowed to batched path  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T47.1.1, T47.2.1, T47.2.2
+  File: timeseries/patchtst.go
+  When engine is set (WithEngine option), TrainWindowed uses DataLoader + forwardBatchEngine
+  + batched backward. Legacy sample-by-sample path preserved for no-engine case.
+  Acceptance: TrainWindowed with engine produces decreasing loss on synthetic data.
+
+### E47.3: Batched Forward Pass for iTransformer
+
+- [ ] T47.3.1 Implement iTransformer batched forward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  File: timeseries/itransformer_engine.go
+  Add `forwardBatchEngine()`. Input: `[batch, channels, inputLen]`. Variate embedding
+  operates on `[batch, channels, dModel]`. Attention across channels: `[batch*nHeads, channels, headDim]`.
+  Acceptance: Batched output matches sample-by-sample within 1e-5.
+
+- [ ] T47.3.2 Implement iTransformer batched backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  Deps: T47.3.1
+  File: timeseries/itransformer_backward.go
+  Acceptance: Gradient check passes within 1e-3.
+
+- [ ] T47.3.3 Wire iTransformer TrainWindowed to batched path  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+  Deps: T47.1.1, T47.3.1, T47.3.2
+  File: timeseries/itransformer.go
+  Acceptance: TrainWindowed with engine produces decreasing loss.
+
+### E47.4: Batched Forward for Remaining Backends
+
+- [ ] T47.4.1 Implement batched forward for DLinear  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/dlinear_engine.go
+  DLinear is simple (decompose + linear). Batch: `[batch, channels, inputLen]` ->
+  decompose -> two linear projections -> `[batch, outputLen]`.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.2 Implement batched forward for Mamba  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  File: timeseries/mamba.go
+  SSM scan must operate on `[batch, seqLen, dModel]` in parallel.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.3 Implement batched forward for CfC  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/cfc_engine.go
+  ODE integration step batched across samples.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.4 Implement batched forward for FreTS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/frets_engine.go
+  FFT and frequency-domain mixing batched.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.5 Implement batched forward for TTM  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/ttm_train_engine.go
+  TSMixer blocks operate on `[batch, numPatches, dModel]`.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.6 Implement batched forward for N-HiTS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/nhits.go
+  Hierarchical pooling + stack forward batched.
+  Acceptance: Batched matches sample-by-sample.
+
+- [ ] T47.4.7 Implement batched forward for N-BEATS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  File: timeseries/nbeats.go
+  Stack architecture batched (basis expansion on `[batch, backcast_len]`).
+  Acceptance: Batched matches sample-by-sample.
+
+### E47.5: Benchmarks and Validation
+
+- [ ] T47.5.1 Benchmark PatchTST 28K rows on DGX Spark  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T47.2.3
+  Run PatchTST TrainWindowed with 28K rows x 20 features x 24 window x 10 epochs on DGX Spark.
+  Compare wall-clock time: batched GPU vs legacy CPU vs legacy GPU.
+  Target: < 60 seconds (legacy: > 300 seconds).
+  Acceptance: Benchmark results recorded in docs/devlog.md. Target met.
+
+- [ ] T47.5.2 Benchmark iTransformer 28K rows on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T47.3.3
+  Same benchmark parameters as T47.5.1 but for iTransformer.
+  Acceptance: Results in devlog. Target: < 60s.
+
+- [ ] T47.5.3 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
+  Acceptance: go build ./... and go test -race -timeout 300s ./timeseries/... pass.
+
+---
+
+## E48: TimeMixer Backend (GitHub Issue #279)
+
+**Problem:** TimeMixer (ICLR 2024) is a multi-scale decomposition + MLP mixing architecture
+that achieves SOTA on long and short-term forecasting. It is one of 4 target architectures
+for time series experimentation alongside PatchTST, iTransformer, and Mamba (already in Zerfoo).
+
+**Goal:** Implement TimeMixer following the same adapter pattern as PatchTST/iTransformer.
+Support TrainWindowed API, engine-accelerated forward, and inference graph builder.
+
+**Reference:** "TimeMixer: Decomposable Multiscale Mixing for Time Series Forecasting" (ICLR 2024)
+**Code:** https://github.com/kwuking/TimeMixer
+**Closes:** GitHub issue #279
+
+### E48.1: TimeMixer Core Implementation
+
+- [ ] T48.1.1 Implement multi-scale decomposition  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  File: timeseries/timemixer.go
+  TimeMixerConfig:
+  ```
+  type TimeMixerConfig struct {
+      InputLen    int // lookback window
+      OutputLen   int // forecast horizon
+      NumFeatures int // number of variates
+      NumScales   int // number of decomposition scales (default 4)
+      HiddenSize  int // hidden dimension (default 256)
+      NumLayers   int // number of mixer layers (default 3)
+      Dropout     float64
+  }
+  ```
+  Implement learnable multi-scale seasonal-trend decomposition:
+  - For each scale s (1..NumScales): apply moving average with kernel size 2^s
+  - Decompose into trend (MA output) and seasonal (residual) at each scale
+  - Store scale-specific components as `[channels, scaleLen, features]`
+  Acceptance: Decomposition produces trend + seasonal at each scale; reconstruction
+  (trend + seasonal) equals original within 1e-6.
+
+- [ ] T48.1.2 Implement past-decomposable mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.1.1
+  File: timeseries/timemixer.go
+  Mix decomposed seasonal and trend components across scales:
+  - Seasonal mixing: MLP that takes multi-scale seasonal components, mixes across scales
+  - Trend mixing: MLP that takes multi-scale trend components, mixes across scales
+  - Bottom-up mixing: coarse scale informs fine scale via additive residuals
+  Acceptance: Forward produces mixed seasonal and trend representations.
+
+- [ ] T48.1.3 Implement future-multipredictor mixing  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.1.2
+  File: timeseries/timemixer.go
+  Generate scale-specific forecasts and combine:
+  - Each scale produces a forecast via scale-specific linear head
+  - Combine forecasts with learned mixing weights (softmax-gated)
+  - Final output: `[channels, outputLen]`
+  Acceptance: Forward end-to-end from input `[channels, inputLen]` to output
+  `[channels, outputLen]`.
+
+- [ ] T48.1.4 Implement TimeMixer.TrainWindowed  Owner: TBD  Est: 2h  verifies: [UC-TS02]
+  Deps: T48.1.3
+  File: timeseries/timemixer.go
+  Follow same pattern as PatchTST.TrainWindowed: AdamW optimizer, gradient clipping,
+  warmup, MSE loss. Uses sample-by-sample forward (batched forward added in E47).
+  Acceptance: Training on synthetic sinusoidal data produces decreasing loss.
+
+### E48.2: TimeMixer Engine and Adapter
+
+- [ ] T48.2.1 Implement TimeMixer engine-accelerated forward  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.1.3
+  File: timeseries/timemixer_engine.go
+  Engine-backed MatMul for all MLP layers. Moving average via engine Conv1D or manual
+  cumsum+subtract. GPU path for the mixing MLPs.
+  Acceptance: Engine forward matches pure-Go forward within 1e-4.
+
+- [ ] T48.2.2 Implement TimeMixer backward pass  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.2.1
+  File: timeseries/timemixer_backward.go
+  Gradient computation for all learnable parameters: decomposition weights, scale MLPs,
+  mixing weights, prediction heads.
+  Acceptance: Gradient check passes within 1e-3.
+
+- [ ] T48.2.3 Add TimeMixerAdapter to trainable.go  Owner: TBD  Est: 1.5h  verifies: [UC-TS02]
+  Deps: T48.1.3
+  File: timeseries/trainable.go
+  Implement TimeMixerAdapter satisfying `training.Model[float32]` interface.
+  Input: `[batch, channels * inputLen]`. Output: `[batch, channels * outputLen]`.
+  Acceptance: Adapter Forward/Parameters/Backward work correctly.
+
+### E48.3: TimeMixer Inference and Tests
+
+- [ ] T48.3.1 Implement TimeMixer inference graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.1.3
+  File: inference/timeseries/arch_timemixer.go
+  BuildTimeMixer[T] function that constructs a computation graph from GGUF weights.
+  Reuses existing graph builder pattern from arch_patchtst.go.
+  Acceptance: Graph builds without error. Forward produces correct output shape.
+
+- [ ] T48.3.2 Unit tests for TimeMixer  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T48.1.4, T48.2.3
+  File: timeseries/timemixer_test.go
+  Tests: (1) Decomposition roundtrip. (2) Forward shape correctness. (3) Training
+  produces decreasing loss on synthetic data. (4) Adapter interface. (5) Multi-scale
+  mixing at different scale counts. (6) Channel-independent mode.
+  Acceptance: go test -race ./timeseries/ passes.
+
+- [ ] T48.3.3 Run go vet and linters for E48  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T48.3.2
+  Acceptance: go vet ./... clean. go test ./timeseries/... passes.
+
+---
+
+## E49: Foundation Model Inference (GitHub Issue #280)
+
+**Problem:** Foundation models for time series (Chronos-2, TiRex, Moirai-2) forecast unseen
+series zero-shot, pre-trained on billions of time points. Need inference wrapper for
+HuggingFace weights, fine-tune API, and batch inference.
+
+**Goal:** Native Go zero-shot time series forecasting using pre-trained foundation models.
+Convert HuggingFace weights to GGUF via zonnx, implement architecture graph builders
+composing existing Zerfoo layers, add new layer primitives only where needed.
+
+**Decision rationale:** docs/adr/076-native-foundation-model-inference.md
+**Closes:** GitHub issue #280
+
+**Models (priority order):**
+1. TiRex (NX-AI): xLSTM, 35M params, #1 on GIFT-Eval -- simplest, highest impact
+2. Chronos-2 (Amazon): T5 encoder-decoder, 20M-710M params, multivariate
+3. Moirai-2 (Salesforce): Masked encoder, any-variate, any-frequency
+
+### E49.1: TiRex (xLSTM) -- Native Go
+
+- [ ] T49.1.1 Implement sLSTM cell layer  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  File: layers/timeseries/slstm.go
+  Scalar LSTM with exponential gating (xLSTM paper, arXiv:2405.04517).
+  Exponential input gate: i_t = exp(W_i * x_t + R_i * h_{t-1} + b_i).
+  Exponential forget gate: f_t = exp(W_f * x_t + R_f * h_{t-1} + b_f).
+  Normalizer state: n_t = f_t * n_{t-1} + i_t.
+  Cell state: c_t = f_t * c_{t-1} + i_t * z_t (z_t = tanh(W_z * x + R_z * h + b_z)).
+  Hidden state: h_t = o_t * (c_t / n_t) where o_t = sigmoid(W_o * x + R_o * h + b_o).
+  All ops via Engine[T]: MatMul, Exp, Sigmoid, Tanh, element-wise mul/add/div.
+  Acceptance: Forward produces correct output shape. Manual computation matches.
+
+- [ ] T49.1.2 Implement mLSTM cell layer  Owner: TBD  Est: 4h  verifies: [UC-TS03]
+  File: layers/timeseries/mlstm.go
+  Matrix LSTM with covariance memory update (xLSTM paper).
+  Key/value: k_t = W_k * x_t, v_t = W_v * x_t, q_t = W_q * x_t.
+  Matrix cell: C_t = f_t * C_{t-1} + i_t * (v_t * k_t^T) (outer product update).
+  Normalizer: n_t = f_t * n_{t-1} + i_t * k_t.
+  Hidden: h_t = o_t * (C_t * q_t) / max(|n_t^T * q_t|, 1).
+  Exponential gating same as sLSTM. Matrix memory C is [dModel, dModel].
+  Acceptance: Forward correct. Outer product update verified on small matrix.
+
+- [ ] T49.1.3 Convert TiRex HuggingFace weights to GGUF  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  File: inference/timeseries/convert_tirex.go (or extend zonnx with TiRex support)
+  Download NX-AI/TiRex SafeTensors from HuggingFace. Map tensor names to GGUF
+  convention: tirex.block.{layer}.slstm.* / tirex.block.{layer}.mlstm.*.
+  Write GGUF with architecture metadata (num_layers, hidden_dim, block_types).
+  Acceptance: GGUF file produced. Tensor count and shapes match HuggingFace checkpoint.
+
+- [ ] T49.1.4 Implement TiRex graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  Deps: T49.1.1, T49.1.2, T49.1.3
+  File: inference/timeseries/arch_tirex.go
+  BuildTiRex[T] function following existing pattern (arch_patchtst.go, arch_ttm.go).
+  Stack of alternating sLSTM and mLSTM blocks. Input projection, output head.
+  Load weights from GGUF tensors. Wire to Engine[T] for GPU acceleration.
+  Acceptance: Graph builds. Forward on synthetic input produces correct output shape.
+
+- [ ] T49.1.5 TiRex zero-shot inference pipeline  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  Deps: T49.1.4
+  File: timeseries/foundation.go
+  ```go
+  type FoundationForecaster struct { ... }
+  func LoadFoundationModel(path string, engine compute.Engine[float32]) (*FoundationForecaster, error)
+  func (f *FoundationForecaster) Forecast(ctx context.Context, input [][]float64, horizon int) ([][]float64, error)
+  func (f *FoundationForecaster) BatchForecast(ctx context.Context, inputs [][][]float64, horizon int) ([][][]float64, error)
+  ```
+  Wraps graph execution. Handles input normalization (instance norm) and
+  denormalization of predictions. Supports batch inference.
+  Acceptance: Forecast returns predictions of correct shape and non-degenerate values.
+
+- [ ] T49.1.6 TiRex parity tests against HuggingFace reference  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  Deps: T49.1.5
+  File: timeseries/tirex_test.go
+  Generate golden files: run TiRex in Python on 10 input series, save input/output
+  pairs. Load GGUF in Go, run same inputs, compare outputs within 1e-3 tolerance.
+  Acceptance: All 10 test cases pass within tolerance.
+
+### E49.2: Chronos-2 (T5 Encoder-Decoder)
+
+- [ ] T49.2.1 Implement value tokenizer for Chronos  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  File: layers/timeseries/value_tokenizer.go
+  Chronos tokenizes continuous values into discrete bins. Bin edges are learned
+  during pre-training and stored in model config. Tokenize: map float -> bin index.
+  Detokenize: map bin index -> bin center (or sample from bin distribution).
+  Acceptance: Round-trip tokenize/detokenize within bin width tolerance.
+
+- [ ] T49.2.2 Convert Chronos-2 weights to GGUF  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  File: inference/timeseries/convert_chronos.go
+  Map T5 encoder-decoder weights (amazon/chronos-t5-*) to GGUF. T5 architecture
+  uses existing transformer layer types (self-attention, cross-attention, FFN).
+  Acceptance: GGUF produced. Tensor names and shapes correct.
+
+- [ ] T49.2.3 Implement Chronos-2 graph builder  Owner: TBD  Est: 4h  verifies: [UC-TS03]
+  Deps: T49.2.1, T49.2.2
+  File: inference/timeseries/arch_chronos.go
+  BuildChronos[T]: T5 encoder (self-attention stacks) + decoder (self-attention +
+  cross-attention stacks). Uses existing ScaledDotProductAttention, LayerNorm,
+  Linear, GELU layers. Input: tokenized values. Output: logits over bin vocabulary.
+  Acceptance: Graph builds. Forward produces logits of shape [batch, horizon, vocab_size].
+
+- [ ] T49.2.4 Chronos-2 parity tests  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  Deps: T49.2.3
+  File: timeseries/chronos_test.go
+  Golden file comparison against HuggingFace reference. 10 test series.
+  Acceptance: Output logits match within 1e-3.
+
+### E49.3: Moirai-2 (Masked Encoder)
+
+- [ ] T49.3.1 Implement any-variate input projection  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  File: layers/timeseries/variate_projection.go
+  Moirai-2 handles arbitrary numbers of variates by projecting each variate
+  independently, then concatenating with a frequency embedding. Supports
+  different variates having different lengths (padding + attention mask).
+  Acceptance: Projection handles 1, 5, 20 variates correctly.
+
+- [ ] T49.3.2 Convert Moirai-2 weights to GGUF  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  File: inference/timeseries/convert_moirai.go
+  Map Salesforce/moirai-2-* weights to GGUF. Standard transformer encoder with
+  masked patches.
+  Acceptance: GGUF produced with correct tensor shapes.
+
+- [ ] T49.3.3 Implement Moirai-2 graph builder  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  Deps: T49.3.1, T49.3.2
+  File: inference/timeseries/arch_moirai.go
+  BuildMoirai[T]: Masked encoder transformer. Input patching with random masking
+  during training (no masking during inference). Frequency-aware position embeddings.
+  Uses existing attention, norm, and linear layers.
+  Acceptance: Graph builds. Forward produces forecast of correct shape.
+
+- [ ] T49.3.4 Moirai-2 parity tests  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  Deps: T49.3.3
+  File: timeseries/moirai_test.go
+  Golden file comparison. 10 test series.
+  Acceptance: Output matches within 1e-3.
+
+### E49.4: CLI and Integration
+
+- [ ] T49.4.1 Add `zerfoo forecast` CLI command  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+  Deps: T49.1.5
+  File: cmd/cli/forecast.go
+  CLI: `zerfoo forecast --model tirex --input data.csv --horizon 24`
+  Reads CSV (columns = variates, rows = time steps). Loads GGUF model.
+  Outputs forecast as CSV or JSON.
+  Acceptance: CLI produces forecast output for TiRex model.
+
+- [ ] T49.4.2 Fine-tune API for foundation models  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+  Deps: T49.1.5
+  File: timeseries/foundation.go
+  ```go
+  func (f *FoundationForecaster) FineTune(ctx context.Context, data [][]float64, labels [][]float64, cfg FineTuneConfig) (*TrainResult, error)
+  ```
+  Freeze backbone, train output head on task-specific data (few-shot adaptation).
+  Uses existing training.Trainer with AdamW optimizer.
+  Acceptance: Fine-tuning on synthetic data produces decreasing loss.
+
+- [ ] T49.4.3 Run go vet and linters for E49  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T49.1.6, T49.2.4, T49.3.4
+  Acceptance: go vet ./... clean. go test ./... passes.
+
+---
+
+### E47-E49 Parallel Work
+
+#### Tracks
+
+| Track | Tasks | Description |
+|-------|-------|-------------|
+| W: DataLoader | T47.1.* | Shared batched tensor infrastructure |
+| X: PatchTST Batch | T47.2.* | PatchTST batched forward/backward |
+| Y: iTransformer Batch | T47.3.* | iTransformer batched forward/backward |
+| Z: Other Backends | T47.4.* | DLinear/Mamba/CfC/FreTS/TTM/N-HiTS/N-BEATS batch |
+| AA: TimeMixer | T48.1.*, T48.2.*, T48.3.* | TimeMixer full implementation |
+| BB: Foundation Native | T49.1.*, T49.2.*, T49.3.*, T49.4.* | Native Go foundation model inference |
+
+Sync points:
+- Track X (PatchTST Batch) depends on Track W (DataLoader) for T47.2.3.
+- Track Y (iTransformer Batch) depends on Track W (DataLoader) for T47.3.3.
+- Track Z (Other Backends) has no dependency on W (batched but not yet wired to DataLoader).
+- Track AA (TimeMixer) is fully independent.
+- Track BB (Foundation Bridge) is fully independent.
+
+#### Waves
+
+##### Wave E47-1: Foundation + Independent (10 agents)
+
+All zero-dependency tasks. Saturates all agent slots.
+
+- [ ] T47.1.1 Implement DataLoader  verifies: [UC-TS01]
+- [ ] T47.2.1 PatchTST batched forward  verifies: [UC-TS01]
+- [ ] T47.3.1 iTransformer batched forward  verifies: [UC-TS01]
+- [ ] T47.4.1 DLinear batched forward  verifies: [UC-TS01]
+- [ ] T47.4.2 Mamba batched forward  verifies: [UC-TS01]
+- [ ] T48.1.1 TimeMixer multi-scale decomposition  verifies: [UC-TS02]
+- [ ] T49.1.1 sLSTM cell layer  verifies: [UC-TS03]
+- [ ] T47.4.3 CfC batched forward  verifies: [UC-TS01]
+- [ ] T47.4.4 FreTS batched forward  verifies: [UC-TS01]
+- [ ] T47.4.5 TTM batched forward  verifies: [UC-TS01]
+
+##### Wave E47-2: Backward + Wiring (10 agents)
+
+- [ ] T47.1.2 DataLoader tests  Deps: T47.1.1
+- [ ] T47.2.2 PatchTST batched backward  Deps: T47.2.1
+- [ ] T47.3.2 iTransformer batched backward  Deps: T47.3.1
+- [ ] T47.4.6 N-HiTS batched forward  verifies: [UC-TS01]
+- [ ] T47.4.7 N-BEATS batched forward  verifies: [UC-TS01]
+- [ ] T48.1.2 Past-decomposable mixing  Deps: T48.1.1
+- [ ] T49.1.2 mLSTM cell layer  verifies: [UC-TS03]
+- [ ] T49.1.3 Convert TiRex weights to GGUF  verifies: [UC-TS03]
+- [ ] T48.2.1 TimeMixer engine forward  Deps: T48.1.1
+- [ ] T48.2.3 TimeMixerAdapter  Deps: T48.1.1
+
+##### Wave E47-3: Integration (10 agents)
+
+- [ ] T47.2.3 Wire PatchTST to batched path  Deps: T47.1.1, T47.2.1, T47.2.2
+- [ ] T47.3.3 Wire iTransformer to batched path  Deps: T47.1.1, T47.3.1, T47.3.2
+- [ ] T48.1.3 Future-multipredictor mixing  Deps: T48.1.2
+- [ ] T48.2.2 TimeMixer backward  Deps: T48.2.1
+- [ ] T49.1.4 TiRex graph builder  Deps: T49.1.1, T49.1.2, T49.1.3
+- [ ] T49.2.1 Chronos value tokenizer  verifies: [UC-TS03]
+- [ ] T49.2.2 Convert Chronos-2 weights to GGUF  verifies: [UC-TS03]
+- [ ] T49.3.1 Any-variate input projection  verifies: [UC-TS03]
+- [ ] T49.3.2 Convert Moirai-2 weights to GGUF  verifies: [UC-TS03]
+- [ ] T49.4.1 forecast CLI command  Deps: T49.1.5
+
+##### Wave E47-4: Tests + Benchmarks (8 agents)
+
+- [ ] T47.5.1 Benchmark PatchTST 28K rows  Deps: T47.2.3
+- [ ] T47.5.2 Benchmark iTransformer 28K rows  Deps: T47.3.3
+- [ ] T47.5.3 Run go vet E47  Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
+- [ ] T48.1.4 TimeMixer TrainWindowed  Deps: T48.1.3
+- [ ] T48.3.1 TimeMixer inference graph builder  Deps: T48.1.3
+- [ ] T48.3.2 TimeMixer unit tests  Deps: T48.1.4, T48.2.3
+- [ ] T49.1.5 TiRex zero-shot pipeline  Deps: T49.1.4
+- [ ] T49.2.3 Chronos-2 graph builder  Deps: T49.2.1, T49.2.2
+- [ ] T49.3.3 Moirai-2 graph builder  Deps: T49.3.1, T49.3.2
+- [ ] T49.4.2 Fine-tune API  Deps: T49.1.5
+
+##### Wave E47-5: Final Lint + Parity (6 agents)
+
+- [ ] T48.3.3 Run go vet E48  Deps: T48.3.2
+- [ ] T49.1.6 TiRex parity tests  Deps: T49.1.5
+- [ ] T49.2.4 Chronos-2 parity tests  Deps: T49.2.3
+- [ ] T49.3.4 Moirai-2 parity tests  Deps: T49.3.3
+- [ ] T49.4.3 Run go vet E49  Deps: T49.1.6, T49.2.4, T49.3.4
+- [ ] T49.4.1 forecast CLI command  Deps: T49.1.5
+
+### E47-E49 Risks
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R40 | Batched backward correctness for attention layers is error-prone | High | Medium | Gradient check (numerical vs analytical) as acceptance criteria for every backward task; reference PyTorch autograd output |
+| R41 | xLSTM cell numerical stability (exponential gating overflow) | Medium | Medium | Clamp gate pre-activations; use log-space computation for normalizer state; validate against HuggingFace reference |
+| R42 | TimeMixer multi-scale decomposition hyperparameter sensitivity | Medium | Medium | Default to 4 scales; expose all hyperparameters in config; validate on ETT benchmark before shipping |
+| R43 | Foundation model HuggingFace weights change format across versions | Low | Medium | Pin transformers version in requirements.txt; test against specific model revisions |
+| R44 | Batched GPU memory exceeds DGX Spark VRAM on large datasets | Medium | Low | DataLoader batch size is configurable; default to batch_size=64; document VRAM requirements per backend |
+
+### E47-E49 Milestones
+
+| ID | Milestone | Exit Criteria | Target |
+|----|-----------|---------------|--------|
+| M-E47 | Batched training practical | PatchTST 28K rows trains in < 60s on DGX Spark | 2026-Q2 |
+| M-E48 | TimeMixer shipped | TimeMixer TrainWindowed + inference graph builder; tests pass | 2026-Q2 |
+| M-E49 | Foundation models accessible | All 3 models produce zero-shot forecasts via gRPC bridge | 2026-Q2 |

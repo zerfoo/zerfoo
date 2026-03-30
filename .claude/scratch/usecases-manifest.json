@@ -1,8 +1,8 @@
 {
   "generated": "2026-03-29",
-  "audit_phase": "Phase 3: E46 Ecosystem v1 use cases added",
+  "audit_phase": "Phase 4: E47-E49 GitHub issues #278-#280 added",
   "scope": "full system including satellite libraries",
-  "total_use_cases": 57,
+  "total_use_cases": 60,
   "roles": [
     "cli_user",
     "library_user",
@@ -67,7 +67,10 @@
     {"id": "UC-L02", "domain": "library", "name": "Import stable float8 library", "description": "Developer imports float8 v1 for FP8 E4M3FN quantized arithmetic in inference pipelines", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/float8"], "priority": "P1", "wiring_status": "PLANNED", "repo": "float8"},
     {"id": "UC-L03", "domain": "library", "name": "Import stable ztensor library", "description": "Developer imports ztensor v1 for tensor operations and GPU compute with stable API guarantees", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/ztensor"], "priority": "P0", "wiring_status": "PLANNED", "repo": "ztensor"},
     {"id": "UC-L04", "domain": "library", "name": "Import stable ztoken library", "description": "Developer imports ztoken v1 for BPE tokenization compatible with HuggingFace models", "roles": ["library_user"], "interfaces": ["library"], "entry_points": ["github.com/zerfoo/ztoken"], "priority": "P1", "wiring_status": "PLANNED", "repo": "ztoken"},
-    {"id": "UC-L05", "domain": "model_conversion", "name": "Convert ONNX/SafeTensors model to GGUF", "description": "Developer runs zonnx v1 CLI to convert ONNX or SafeTensors models to GGUF format for use with zerfoo", "roles": ["cli_user", "ml_researcher"], "interfaces": ["cli"], "entry_points": ["github.com/zerfoo/zonnx"], "priority": "P1", "wiring_status": "PLANNED", "repo": "zonnx"}
+    {"id": "UC-L05", "domain": "model_conversion", "name": "Convert ONNX/SafeTensors model to GGUF", "description": "Developer runs zonnx v1 CLI to convert ONNX or SafeTensors models to GGUF format for use with zerfoo", "roles": ["cli_user", "ml_researcher"], "interfaces": ["cli"], "entry_points": ["github.com/zerfoo/zonnx"], "priority": "P1", "wiring_status": "PLANNED", "repo": "zonnx"},
+    {"id": "UC-TS01", "domain": "training", "name": "Train time series model on large dataset efficiently", "description": "User trains PatchTST/iTransformer/Mamba on 28K+ row datasets with GPU-batched forward pass completing in under 60s", "roles": ["ml_researcher", "library_user"], "interfaces": ["library"], "entry_points": ["timeseries.TrainWindowed()", "timeseries.DataLoader"], "priority": "P1", "wiring_status": "PLANNED"},
+    {"id": "UC-TS02", "domain": "training", "name": "Run TimeMixer multi-scale forecasting", "description": "User creates a TimeMixer model with multi-scale decomposition and trains/infers on multivariate time series", "roles": ["ml_researcher", "library_user"], "interfaces": ["library"], "entry_points": ["timeseries.NewTimeMixer()", "timeseries.TimeMixerConfig"], "priority": "P2", "wiring_status": "PLANNED"},
+    {"id": "UC-TS03", "domain": "inference", "name": "Zero-shot time series forecasting with foundation models", "description": "User runs zero-shot forecasting on unseen series using pre-trained TiRex/Chronos-2/Moirai-2 via native Go GGUF inference", "roles": ["ml_researcher", "library_user"], "interfaces": ["library", "cli"], "entry_points": ["timeseries.LoadFoundationModel()", "cmd forecast"], "priority": "P2", "wiring_status": "PLANNED"}
   ],
   "endpoint_coverage": {
     "total_endpoints": 15,
