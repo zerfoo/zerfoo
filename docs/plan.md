@@ -19,7 +19,8 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E49: Foundation model inference (0/12 -- GitHub #280)
 - E50: GPU training kernel elimination (3/6 -- layer norm fwd, GELU fwd/bwd, weight transpose caching done)
 - E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
-- E52: DRY composition refactoring (0/7 -- eliminate ~5K duplicated lines in timeseries/)
+- E52: DRY composition refactoring (7/7 complete -- shared math_ops, adamw_f32, layernorm_ops, engine wrappers)
+- E53: Unified training forward/backward (0/6 -- extract shared encoder, eliminate 3 forward + 2 backward impls)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1298,6 +1299,15 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-03-30: E53 added -- unified training forward/backward (GPU path DRY)
+
+Added E53 with 6 tasks to extract the PatchTST encoder forward/backward as shared functions
+in patchtst_encoder.go. After E50 moved layer norm and GELU to engine ops, the GPU path
+uses the same engine API as inference. E53 extracts encoderForward/encoderBackward from
+patchtst_gpu_train.go, wires GPU train and inference to use them, then eliminates
+patchtst_engine.go forward paths and patchtst_backward_engine.go entirely.
+Target: reduce PatchTST from 6,196 to ~3,500 lines. 3 waves (1+3+1 agents).
 
 ### 2026-03-30: E52 added -- DRY composition refactoring for timeseries
 
@@ -2743,6 +2753,126 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 - [x] T52.5.1 Consolidated layer norm  Deps: T52.1.1
 - [x] T52.6.1 Run go vet and tests  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
+
+---
+
+## E53: Unified Training Forward/Backward (GPU Path DRY)
+
+**Problem:** PatchTST has 5 forward pass implementations and 3 backward pass implementations
+across 5 files (6,196 lines). The deep-review audit found they share identical control flow
+but differ in numeric type (float32 tensor vs float64 slice) and dispatch mechanism (engine
+ops vs manual loops). After E50 moved layer norm and GELU to engine ops, patchtst_gpu_train.go
+now uses the same engine API as inference -- the structural gap has narrowed.
+
+**Goal:** Write the forward and backward encoder logic once, parameterized by a dispatch
+strategy, eliminating 3 of the 5 forward implementations and 2 of the 3 backward
+implementations. Target: reduce PatchTST from 6,196 lines to ~3,500 lines.
+
+**Approach:** Extract the encoder forward and backward as generic functions that accept an
+engine and operate on `*tensor.TensorNumeric[float32]`. The CPU f64 path (patchtst_backward.go)
+stays separate because it uses a fundamentally different data layout ([][]float64 slices).
+The engine-based f64 path (patchtst_engine.go) converts f64->f32 for engine calls anyway,
+so it can delegate to the shared f32 encoder. The GPU path (patchtst_gpu_train.go) already
+uses f32 tensors and engine ops -- it becomes the reference implementation.
+
+**Files retained after refactoring:**
+- `patchtst.go` -- config, constructor, inference Forward (delegates to shared encoder)
+- `patchtst_backward.go` -- CPU f64 training (kept: different data layout, no engine)
+- `patchtst_gpu_train.go` -- GPU f32 fused training (becomes the shared encoder source)
+- `patchtst_encoder.go` (NEW) -- shared encoder forward/backward with caching
+
+**Files eliminated:**
+- `patchtst_engine.go` -- replaced by shared encoder + f64<->f32 adapter
+- `patchtst_backward_engine.go` -- replaced by shared encoder backward
+
+### E53.1: Extract Shared Encoder Forward
+
+- [ ] T53.1.1 Create patchtst_encoder.go with shared encoderForward  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  File: timeseries/patchtst_encoder.go (NEW)
+  Extract from patchtst_gpu_train.go the encoder forward logic as:
+  `func encoderForward(ctx, engine, x *tensor.TensorNumeric[float32], layers []gpuEncoderLayer,
+  nLayers, totalRows, dModel, nHeads, headDim, ffnDim int) (*tensor.TensorNumeric[float32], []gpuBatchLayerCache, error)`
+  This function takes a float32 tensor input and engine, runs the full encoder
+  (layer norm, Q/K/V, attention, FFN, residuals), and returns the output plus
+  per-layer caches needed for backward.
+  The function is called by:
+  (1) patchtst_gpu_train.go trainWindowedGPU (replaces inline forward)
+  (2) patchtst.go inference Forward (replaces current per-channel loop)
+  Acceptance: go build clean. go test passes. Inference output unchanged.
+
+### E53.2: Extract Shared Encoder Backward
+
+- [ ] T53.2.1 Add encoderBackward to patchtst_encoder.go  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T53.1.1
+  File: timeseries/patchtst_encoder.go
+  Extract from patchtst_gpu_train.go the encoder backward logic as:
+  `func encoderBackward(ctx, engine, dX *tensor.TensorNumeric[float32], layers []gpuEncoderLayer,
+  grads []gpuEncoderLayer, layerCaches []gpuBatchLayerCache, layerWTs []layerTransposes,
+  totalRows, dModel, nHeads, headDim, ffnDim int) (*tensor.TensorNumeric[float32], error)`
+  This includes attention backward, FFN backward, layer norm backward, and residual gradients.
+  Accumulates into grads. Returns dX for patch embedding backward.
+  Acceptance: Gradient check within 1e-3. go test passes.
+
+### E53.3: Wire patchtst_gpu_train.go to Shared Encoder
+
+- [ ] T53.3.1 Replace inline forward/backward in GPU train with shared encoder  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T53.1.1, T53.2.1
+  File: timeseries/patchtst_gpu_train.go
+  Replace the ~800 lines of inline encoder forward/backward with calls to
+  encoderForward/encoderBackward. Keep: patch extraction, channel batching,
+  head projection, loss computation, AdamW, gradient clipping.
+  Acceptance: Training convergence unchanged. Gradient check passes. go test passes.
+
+### E53.4: Eliminate patchtst_engine.go Forward
+
+- [ ] T53.4.1 Replace engine forward paths with shared encoder  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T53.1.1
+  Files: patchtst_engine.go, patchtst.go
+  Replace forwardF64WithCacheEngine and forwardBatchF64WithCacheEngine with:
+  (1) Convert f64 input to f32 tensor
+  (2) Call encoderForward
+  (3) Convert f32 output back to f64
+  The f64<->f32 conversion is a thin adapter. Delete the 400+ lines of duplicated
+  engine forward code.
+  Acceptance: Forward parity test passes (batched matches per-sample within 1e-4).
+
+### E53.5: Eliminate patchtst_backward_engine.go
+
+- [ ] T53.5.1 Replace engine backward with shared encoder backward  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T53.2.1, T53.4.1
+  Files: patchtst_backward_engine.go, patchtst_engine.go
+  Replace backwardBatchF64Engine with:
+  (1) Convert f64 cache/gradients to f32 tensors
+  (2) Call encoderBackward
+  (3) Convert f32 gradients back to f64
+  Delete patchtst_backward_engine.go entirely (412 lines).
+  Acceptance: Gradient check passes. Backward parity test passes.
+
+### E53.6: Validation
+
+- [ ] T53.6.1 Run go vet, full test suite, verify line count reduction  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T53.3.1, T53.5.1
+  Acceptance: go vet clean. go test -race passes. PatchTST total lines < 4,000
+  (down from 6,196). No behavioral changes.
+
+### E53 Parallel Work
+
+#### Waves
+
+##### Wave E53-1: Extract shared encoder (1 agent -- sequential, same file)
+
+- [ ] T53.1.1 Shared encoder forward
+- [ ] T53.2.1 Shared encoder backward  Deps: T53.1.1
+
+##### Wave E53-2: Wire and eliminate (3 agents)
+
+- [ ] T53.3.1 Wire GPU train to shared encoder  Deps: T53.1.1, T53.2.1
+- [ ] T53.4.1 Eliminate engine forward paths  Deps: T53.1.1
+- [ ] T53.5.1 Eliminate engine backward  Deps: T53.2.1, T53.4.1
+
+##### Wave E53-3: Validation (1 agent)
+
+- [ ] T53.6.1 Full validation  Deps: T53.3.1, T53.5.1
 
 ---
 
