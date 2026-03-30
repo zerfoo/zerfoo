@@ -1812,11 +1812,11 @@ One agent per repo. All zero-dependency tasks in each track.
 
 ##### Wave E46-3: Deep Work (5 agents)
 
-- [ ] T46.1.3 Run go vet and tests in zonnx  Deps: T46.1.2  verifies: [infrastructure]
-- [ ] T46.2.3 Create ztensor docs/adr/001 API stability  Deps: T46.2.2  verifies: [UC-L03]
-- [ ] T46.3.3 Create ztoken docs/adr/001 API stability  Deps: T46.3.2  verifies: [UC-L04]
-- [ ] T46.4.3 Add float8 benchmarks  Deps: T46.4.2  verifies: [infrastructure]
-- [ ] T46.5.3 BFloat16 Phase 3: Batch/slice ops  Deps: T46.5.2  verifies: [UC-L01]
+- [x] T46.1.3 Run go vet and tests in zonnx  DONE 2026-03-30 zonnx PR #22  Deps: T46.1.2  verifies: [infrastructure]
+- [x] T46.2.3 Create ztensor docs/adr/001 API stability  DONE 2026-03-30 ztensor PR #43  Deps: T46.2.2  verifies: [UC-L03]
+- [x] T46.3.3 Create ztoken docs/adr/001 API stability  DONE 2026-03-30 ztoken PR #9  Deps: T46.3.2  verifies: [UC-L04]
+- [x] T46.4.3 Add float8 benchmarks  DONE 2026-03-30 float8 PR #14  Deps: T46.4.2  verifies: [infrastructure]
+- [x] T46.5.3 BFloat16 Phase 3: Batch/slice ops  DONE 2026-03-30 float16 PR #11  Deps: T46.5.2  verifies: [UC-L01]
 
 ##### Wave E46-4: Verification + Final Tasks (5 agents)
 
