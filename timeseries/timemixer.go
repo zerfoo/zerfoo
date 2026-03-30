@@ -424,3 +424,123 @@ func (m *TimeMixer) MAWeights(scale int) []float64 {
 	copy(out, m.maWeights[scale])
 	return out
 }
+
+// TrainWindowed trains the TimeMixer on windowed time-series data using AdamW
+// with gradient clipping and linear LR warmup.
+func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, epochs int) (*TrainResult, error) {
+	if len(windows) == 0 {
+		return nil, fmt.Errorf("timemixer: empty training data")
+	}
+	if len(windows) != len(labels) {
+		return nil, fmt.Errorf("timemixer: windows (%d) and labels (%d) length mismatch", len(windows), len(labels))
+	}
+
+	nSamples := len(windows)
+	params := m.flatParams()
+	nParams := len(params)
+
+	// AdamW state.
+	lr := 1e-3
+	beta1, beta2, eps := 0.9, 0.999, 1e-8
+	weightDecay := 0.01
+	gradClip := 1.0
+	warmupEpochs := min(5, epochs/5+1)
+
+	mState := make([]float64, nParams)
+	vState := make([]float64, nParams)
+
+	result := &TrainResult{}
+
+	for epoch := 0; epoch < epochs; epoch++ {
+		epochLoss := 0.0
+
+		// Linear warmup.
+		currentLR := lr
+		if epoch < warmupEpochs {
+			currentLR = lr * float64(epoch+1) / float64(warmupEpochs)
+		}
+
+		for s := 0; s < nSamples; s++ {
+			input := windows[s]
+			target := labels[s]
+
+			// Forward with cache.
+			msOut, cache := m.forwardWithCache(input)
+			pred := m.predict(msOut)
+
+			// MSE loss (average across features and output positions).
+			nf := m.config.NumFeatures
+			outLen := m.config.OutputLen
+			loss := 0.0
+			dScales := make([]scaleDecomposition, len(msOut.Scales))
+			for si := range dScales {
+				dScales[si].trend = make([][]float64, nf)
+				dScales[si].seasonal = make([][]float64, nf)
+				for f := 0; f < nf; f++ {
+					dScales[si].trend[f] = make([]float64, m.config.InputLen)
+					dScales[si].seasonal[f] = make([]float64, m.config.InputLen)
+				}
+			}
+
+			count := 0
+			for f := 0; f < nf; f++ {
+				for j := 0; j < outLen; j++ {
+					diff := pred[f][j] - target
+					loss += diff * diff
+					count++
+
+					// Gradient of MSE w.r.t. prediction.
+					dPred := 2.0 * diff / float64(count)
+
+					// Propagate through predict: average of trend across scales.
+					nScales := float64(len(msOut.Scales))
+					srcIdx := m.config.InputLen - outLen + j
+					if srcIdx < 0 {
+						srcIdx = 0
+					}
+					for si := range dScales {
+						dScales[si].trend[f][srcIdx] += dPred / nScales
+					}
+				}
+			}
+			if count > 0 {
+				loss /= float64(count)
+			}
+			epochLoss += loss
+
+			// Backward.
+			grads := newTimeMixerGrads(m)
+			m.backward(dScales, cache, &grads)
+			gradVec := grads.collectGrads(m)
+
+			// Gradient clipping.
+			norm := 0.0
+			for _, g := range gradVec {
+				norm += g * g
+			}
+			norm = math.Sqrt(norm)
+			if norm > gradClip {
+				scale := gradClip / norm
+				for i := range gradVec {
+					gradVec[i] *= scale
+				}
+			}
+
+			// AdamW update.
+			t := float64(epoch*nSamples + s + 1)
+			for i, p := range params {
+				g := gradVec[i]
+				mState[i] = beta1*mState[i] + (1-beta1)*g
+				vState[i] = beta2*vState[i] + (1-beta2)*g*g
+				mHat := mState[i] / (1 - math.Pow(beta1, t))
+				vHat := vState[i] / (1 - math.Pow(beta2, t))
+				*p -= currentLR * (mHat/(math.Sqrt(vHat)+eps) + weightDecay*(*p))
+			}
+		}
+
+		avgLoss := epochLoss / float64(nSamples)
+		result.LossHistory = append(result.LossHistory, avgLoss)
+	}
+
+	return result, nil
+}
