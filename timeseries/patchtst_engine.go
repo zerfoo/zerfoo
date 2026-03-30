@@ -585,11 +585,11 @@ func (m *PatchTST) forwardBatchF64WithCacheEngine(ctx context.Context, batchWind
 }
 
 // trainWindowedEngine runs the GPU/engine-accelerated training path.
-// It uses analytical backpropagation via float64 parameters, then writes
-// updated weights back to the float32 engine tensors each epoch.
-// The forward pass uses engine.MatMul for all linear projections (Q/K/V/O,
-// FFN, patch embedding, output head) while keeping softmax, GELU, layer norm,
-// and residual connections on CPU.
+// It uses a DataLoader for shuffled mini-batch iteration and analytical
+// backpropagation via float64 parameters, then writes updated weights back
+// to the float32 engine tensors each epoch.
+// The forward pass uses forwardBatchF64WithCacheEngine (engine.MatMul for all
+// linear projections) and the backward pass uses backwardBatchF64Engine.
 func (m *PatchTST) trainWindowedEngine(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
 	ctx := context.Background()
 	nSamples := len(windows)
@@ -609,20 +609,28 @@ func (m *PatchTST) trainWindowedEngine(windows [][][]float64, labels []float64, 
 		batchSize = config.BatchSize
 	}
 
+	dl := NewDataLoader(windows, labels, batchSize, true)
+
 	for epoch := 0; epoch < config.Epochs; epoch++ {
+		dl.Reset()
 		epochLoss := 0.0
 		nBatches := 0
 
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
+		for {
+			batchIndices, ok := dl.NextIndices()
+			if !ok {
+				break
 			}
-			bs := end - start
+			bs := len(batchIndices)
+
+			// Gather batch windows by index.
+			batchWindows := make([][][]float64, bs)
+			for i, idx := range batchIndices {
+				batchWindows[i] = windows[idx]
+			}
 
 			batchLoss := 0.0
 
-			batchWindows := windows[start:end]
 			preds, batchCaches, err := m.forwardBatchF64WithCacheEngine(ctx, batchWindows, params)
 			if err != nil {
 				return nil, fmt.Errorf("patchtst: engine batch forward: %w", err)
@@ -631,7 +639,8 @@ func (m *PatchTST) trainWindowedEngine(windows [][][]float64, labels []float64, 
 			// Compute per-sample MSE loss and dL/dPred.
 			dOutputs := make([][]float64, bs)
 			for s := 0; s < bs; s++ {
-				sampleLabels := labels[(start+s)*outDim : (start+s+1)*outDim]
+				idx := batchIndices[s]
+				sampleLabels := labels[idx*outDim : (idx+1)*outDim]
 				dOutputs[s] = make([]float64, outDim)
 				for j := 0; j < outDim; j++ {
 					diff := preds[s][j] - sampleLabels[j]
@@ -665,7 +674,7 @@ func (m *PatchTST) trainWindowedEngine(windows [][][]float64, labels []float64, 
 			}
 
 			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
+			t := float64(epoch*dl.Len() + nBatches)
 			flatP := params.flatParams()
 			for i := range flatP {
 				adamM[i] = config.Beta1*adamM[i] + (1-config.Beta1)*grads[i]

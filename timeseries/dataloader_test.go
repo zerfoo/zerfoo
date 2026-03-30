@@ -304,6 +304,80 @@ func TestDataLoader_DataValues(t *testing.T) {
 	}
 }
 
+func TestDataLoader_NextIndices(t *testing.T) {
+	nSamples := 10
+	windows, labels := makeWindows(nSamples, 1, 4, 1)
+
+	tests := []struct {
+		name      string
+		batchSize int
+		wantCount int // expected number of batches
+	}{
+		{"exact_division", 5, 2},
+		{"partial_batch", 3, 4},
+		{"single_batch", 10, 1},
+		{"batch_of_one", 1, 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dl := NewDataLoader(windows, labels, tt.batchSize, false)
+
+			seen := make(map[int]bool)
+			batchCount := 0
+			for {
+				indices, ok := dl.NextIndices()
+				if !ok {
+					break
+				}
+				batchCount++
+				for _, idx := range indices {
+					if idx < 0 || idx >= nSamples {
+						t.Errorf("index %d out of range [0, %d)", idx, nSamples)
+					}
+					if seen[idx] {
+						t.Errorf("duplicate index %d", idx)
+					}
+					seen[idx] = true
+				}
+			}
+
+			if batchCount != tt.wantCount {
+				t.Errorf("got %d batches, want %d", batchCount, tt.wantCount)
+			}
+			if len(seen) != nSamples {
+				t.Errorf("visited %d samples, want %d", len(seen), nSamples)
+			}
+		})
+	}
+}
+
+func TestDataLoader_NextIndicesDoesNotAlias(t *testing.T) {
+	windows, labels := makeWindows(6, 1, 4, 1)
+	dl := NewDataLoader(windows, labels, 3, false)
+
+	first, ok := dl.NextIndices()
+	if !ok {
+		t.Fatal("expected first batch")
+	}
+	firstCopy := make([]int, len(first))
+	copy(firstCopy, first)
+
+	second, ok := dl.NextIndices()
+	if !ok {
+		t.Fatal("expected second batch")
+	}
+
+	// Mutating second should not affect first.
+	second[0] = -999
+	if first[0] == -999 {
+		t.Error("NextIndices returned aliased slices")
+	}
+	if !equalInts(first, firstCopy) {
+		t.Error("first batch was mutated by second call")
+	}
+}
+
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
 		return false

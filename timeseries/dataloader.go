@@ -117,6 +117,24 @@ func (dl *DataLoader) Next() (inputBatch *tensor.TensorNumeric[float32], labelBa
 	return inputT, labelT, true
 }
 
+// NextIndices returns the indices of the next batch of samples without
+// constructing tensors. ok is false when all batches have been consumed.
+func (dl *DataLoader) NextIndices() (indices []int, ok bool) {
+	n := len(dl.windows)
+	if dl.pos >= n {
+		return nil, false
+	}
+
+	end := dl.pos + dl.batchSize
+	if end > n {
+		end = n
+	}
+	batch := make([]int, end-dl.pos)
+	copy(batch, dl.indices[dl.pos:end])
+	dl.pos = end
+	return batch, true
+}
+
 // Reset reshuffles (if enabled) and restarts iteration from the beginning.
 func (dl *DataLoader) Reset() {
 	dl.pos = 0
