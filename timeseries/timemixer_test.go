@@ -494,3 +494,247 @@ func itoa(n int) string {
 	}
 	return s
 }
+
+func TestTimeMixerForecastShape(t *testing.T) {
+	tests := []struct {
+		name     string
+		features int
+		inputLen int
+		outLen   int
+		scales   int
+	}{
+		{"1feat_16in_4out_2scales", 1, 16, 4, 2},
+		{"3feat_32in_8out_4scales", 3, 32, 8, 4},
+		{"5feat_64in_16out_6scales", 5, 64, 16, 6},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := TimeMixerConfig{
+				InputLen:    tt.inputLen,
+				OutputLen:   tt.outLen,
+				NumFeatures: tt.features,
+				NumScales:   tt.scales,
+			}
+			m := NewTimeMixer(cfg)
+
+			input := make([][]float64, tt.features)
+			for f := range input {
+				input[f] = make([]float64, tt.inputLen)
+				for i := range input[f] {
+					input[f][i] = math.Sin(float64(i)*0.2) * float64(f+1)
+				}
+			}
+
+			out, err := m.Forward(input)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			if len(out.Forecast) != tt.features {
+				t.Fatalf("Forecast has %d features, want %d", len(out.Forecast), tt.features)
+			}
+			for f := 0; f < tt.features; f++ {
+				if len(out.Forecast[f]) != tt.outLen {
+					t.Errorf("Forecast[%d] length %d, want %d", f, len(out.Forecast[f]), tt.outLen)
+				}
+			}
+
+			// Forecast values should be finite.
+			for f := 0; f < tt.features; f++ {
+				for j := 0; j < tt.outLen; j++ {
+					if math.IsNaN(out.Forecast[f][j]) || math.IsInf(out.Forecast[f][j], 0) {
+						t.Errorf("Forecast[%d][%d] = %v, want finite", f, j, out.Forecast[f][j])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestTimeMixerTrainWindowedDecreasingLoss(t *testing.T) {
+	cfg := TimeMixerConfig{
+		InputLen:    24,
+		OutputLen:   6,
+		NumFeatures: 1,
+		NumScales:   2,
+		HiddenSize:  16,
+		NumLayers:   1,
+	}
+	m := NewTimeMixer(cfg)
+
+	// Generate synthetic sinusoidal training data.
+	nSamples := 20
+	windows := make([][][]float64, nSamples)
+	labels := make([]float64, nSamples)
+	for s := 0; s < nSamples; s++ {
+		windows[s] = make([][]float64, cfg.NumFeatures)
+		for f := 0; f < cfg.NumFeatures; f++ {
+			windows[s][f] = make([]float64, cfg.InputLen)
+			for i := 0; i < cfg.InputLen; i++ {
+				windows[s][f][i] = math.Sin(float64(s+i) * 0.3)
+			}
+		}
+		// Label is next value in the sine wave.
+		labels[s] = math.Sin(float64(s+cfg.InputLen) * 0.3)
+	}
+
+	result, err := m.TrainWindowed(windows, labels, 30)
+	if err != nil {
+		t.Fatalf("TrainWindowed failed: %v", err)
+	}
+
+	if len(result.LossHistory) != 30 {
+		t.Fatalf("expected 30 loss entries, got %d", len(result.LossHistory))
+	}
+
+	// Compare average of first 5 epochs vs last 5 epochs.
+	earlyAvg := 0.0
+	for _, l := range result.LossHistory[:5] {
+		earlyAvg += l
+	}
+	earlyAvg /= 5.0
+
+	lateAvg := 0.0
+	for _, l := range result.LossHistory[len(result.LossHistory)-5:] {
+		lateAvg += l
+	}
+	lateAvg /= 5.0
+
+	if lateAvg >= earlyAvg {
+		t.Errorf("loss did not decrease: early avg=%.6f, late avg=%.6f", earlyAvg, lateAvg)
+	}
+}
+
+func TestTimeMixerMultiScaleMixingValues(t *testing.T) {
+	// Verify that different scale counts produce different decompositions,
+	// confirming multi-scale mixing is effective.
+	inputLen := 32
+	outLen := 8
+	features := 2
+
+	input := make([][]float64, features)
+	for f := range input {
+		input[f] = make([]float64, inputLen)
+		for i := range input[f] {
+			input[f][i] = math.Sin(float64(i)*0.4) + math.Cos(float64(i)*0.1)*float64(f+1)
+		}
+	}
+
+	for _, numScales := range []int{2, 4, 6} {
+		t.Run("scales_"+itoa(numScales), func(t *testing.T) {
+			cfg := TimeMixerConfig{
+				InputLen:    inputLen,
+				OutputLen:   outLen,
+				NumFeatures: features,
+				NumScales:   numScales,
+			}
+			m := NewTimeMixer(cfg)
+
+			out, err := m.Forward(input)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			if len(out.Scales) != numScales {
+				t.Fatalf("expected %d scales, got %d", numScales, len(out.Scales))
+			}
+
+			// Verify different scales have different trend patterns
+			// (due to different MA kernel sizes).
+			rawScales := m.decompose(input)
+			for s1 := 0; s1 < numScales; s1++ {
+				for s2 := s1 + 1; s2 < numScales; s2++ {
+					diff := 0.0
+					for i := 0; i < inputLen; i++ {
+						diff += math.Abs(rawScales[s1].trend[0][i] - rawScales[s2].trend[0][i])
+					}
+					if diff < 1e-10 {
+						t.Errorf("scales %d and %d have identical trends — decomposition is not multi-scale", s1, s2)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestTimeMixerChannelIndependence(t *testing.T) {
+	cfg := TimeMixerConfig{
+		InputLen:    16,
+		OutputLen:   4,
+		NumFeatures: 3,
+		NumScales:   2,
+		HiddenSize:  8,
+		NumLayers:   1,
+	}
+	m := NewTimeMixer(cfg)
+
+	// Create input where each feature is distinct.
+	input := make([][]float64, cfg.NumFeatures)
+	for f := range input {
+		input[f] = make([]float64, cfg.InputLen)
+		for i := range input[f] {
+			input[f][i] = math.Sin(float64(i)*0.3+float64(f)*2.0) * float64(f+1)
+		}
+	}
+
+	out, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Modify only feature 0 and verify other features produce
+	// identical forecasts, confirming channel independence.
+	modified := make([][]float64, cfg.NumFeatures)
+	for f := range modified {
+		modified[f] = make([]float64, cfg.InputLen)
+		copy(modified[f], input[f])
+	}
+	// Perturb feature 0.
+	for i := range modified[0] {
+		modified[0][i] += 10.0
+	}
+
+	out2, err := m.Forward(modified)
+	if err != nil {
+		t.Fatalf("Forward with modified input failed: %v", err)
+	}
+
+	// Features 1 and 2 should be unchanged in the decomposition.
+	for s := range out.Scales {
+		for f := 1; f < cfg.NumFeatures; f++ {
+			for i := 0; i < cfg.InputLen; i++ {
+				if out.Scales[s].trend[f][i] != out2.Scales[s].trend[f][i] {
+					t.Errorf("scale %d feature %d index %d: trend changed (%.6f -> %.6f) when only feature 0 was modified",
+						s, f, i, out.Scales[s].trend[f][i], out2.Scales[s].trend[f][i])
+				}
+				if out.Scales[s].seasonal[f][i] != out2.Scales[s].seasonal[f][i] {
+					t.Errorf("scale %d feature %d index %d: seasonal changed when only feature 0 was modified",
+						s, f, i)
+				}
+			}
+		}
+	}
+
+	// Feature 0 forecast should be different.
+	same := true
+	for j := 0; j < cfg.OutputLen; j++ {
+		if out.Forecast[0][j] != out2.Forecast[0][j] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("feature 0 forecast unchanged despite input perturbation")
+	}
+
+	// Features 1 and 2 forecasts should be identical.
+	for f := 1; f < cfg.NumFeatures; f++ {
+		for j := 0; j < cfg.OutputLen; j++ {
+			if out.Forecast[f][j] != out2.Forecast[f][j] {
+				t.Errorf("feature %d forecast[%d] changed (%.6f -> %.6f) when only feature 0 was modified",
+					f, j, out.Forecast[f][j], out2.Forecast[f][j])
+			}
+		}
+	}
+}
