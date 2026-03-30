@@ -1844,15 +1844,15 @@ One agent per repo. All zero-dependency tasks in each track.
 
 ##### Wave E46-7: ztensor + float16 Finish (4 agents)
 
-- [ ] T46.2.7 Tag ztensor v1.0.0  Deps: T46.2.6  verifies: [UC-L03]
-- [ ] T46.5.9 BFloat16 error handling infrastructure  Deps: T46.5.8  verifies: [UC-L01]
-- [ ] T46.5.10 Comprehensive BFloat16 test coverage  Deps: T46.5.9  verifies: [UC-L01]
-- [ ] T46.5.11 Update float16 plan  Deps: T46.5.10  verifies: [infrastructure]
+- [x] T46.2.7 Tag ztensor v1.0.0  DONE 2026-03-30 v1.0.0 released  Deps: T46.2.6  verifies: [UC-L03]
+- [x] T46.5.9 BFloat16 error handling infrastructure  DONE 2026-03-30 float16 PR #15  Deps: T46.5.8  verifies: [UC-L01]
+- [x] T46.5.10 Comprehensive BFloat16 test coverage  DONE 2026-03-30 float16 PR #15  Deps: T46.5.9  verifies: [UC-L01]
+- [x] T46.5.11 Update float16 plan  DONE 2026-03-30 float16 PR #15  Deps: T46.5.10  verifies: [infrastructure]
 
 ##### Wave E46-8: float16 Final (2 agents)
 
-- [ ] T46.5.12 Run go vet in float16  Deps: T46.5.11  verifies: [infrastructure]
-- [ ] T46.5.13 Tag float16 v1.0.0  Deps: T46.5.12  verifies: [UC-L01]
+- [x] T46.5.12 Run go vet in float16  DONE 2026-03-30 PASS  Deps: T46.5.11  verifies: [infrastructure]
+- [x] T46.5.13 Tag float16 v1.0.0  DONE 2026-03-30 v1.0.0 released  Deps: T46.5.12  verifies: [UC-L01]
 
 ---
 
