@@ -272,11 +272,6 @@ func (m *NHiTS) linearForward(ctx context.Context, x *tensor.TensorNumeric[float
 	return m.engine.Add(ctx, out, l.biases)
 }
 
-// adamState holds first and second moment estimates for AdamW.
-type adamState struct {
-	m []float32
-	v []float32
-}
 
 // stackBackwardEngine computes gradients for a single stack using engine tensor
 // operations (MatMul, Transpose, Sum) instead of manual triple-nested loops.
@@ -471,9 +466,9 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 	}
 
 	// AdamW state per parameter.
-	paramStates := make([]adamState, len(allParams))
+	paramStates := make([]adamStateF32, len(allParams))
 	for i, p := range allParams {
-		paramStates[i] = adamState{m: make([]float32, len(p.data)), v: make([]float32, len(p.data))}
+		paramStates[i] = adamStateF32{m: make([]float32, len(p.data)), v: make([]float32, len(p.data))}
 	}
 
 	beta1, beta2, eps := float32(0.9), float32(0.999), float32(1e-8)
@@ -556,8 +551,8 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			// Apply all gradients with AdamW (with LR warmup).
 			lr := float32(warmupLR(baseLR, epoch, config.WarmupEpochs))
 			for i := range allParams {
-				n.clipGradients(allGrads[i], config.GradClip)
-				n.adamUpdate(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, lr, wd, epoch+1)
+				clipGradientsF32(allGrads[i], config.GradClip)
+				adamWUpdateF32(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, lr, wd, epoch+1)
 			}
 		}
 
@@ -630,37 +625,6 @@ func (n *NHiTS) stackForwardWithIntermediates(ctx context.Context, xData []float
 	return intermediates, pooledFlat, nil
 }
 
-// clipGradients clips gradient vector by L2 norm.
-func (n *NHiTS) clipGradients(grad []float32, maxNorm float64) {
-	if maxNorm <= 0 {
-		return
-	}
-	var norm float64
-	for _, g := range grad {
-		norm += float64(g) * float64(g)
-	}
-	norm = math.Sqrt(norm)
-	if norm > maxNorm {
-		scale := float32(maxNorm / norm)
-		for i := range grad {
-			grad[i] *= scale
-		}
-	}
-}
-
-// adamUpdate applies one AdamW step in-place.
-func (n *NHiTS) adamUpdate(params, grads []float32, state *adamState, beta1, beta2, eps, lr, wd float32, t int) {
-	bc1 := float32(1.0) - float32(math.Pow(float64(beta1), float64(t)))
-	bc2 := float32(1.0) - float32(math.Pow(float64(beta2), float64(t)))
-
-	for i := range params {
-		state.m[i] = beta1*state.m[i] + (1-beta1)*grads[i]
-		state.v[i] = beta2*state.v[i] + (1-beta2)*grads[i]*grads[i]
-		mHat := state.m[i] / bc1
-		vHat := state.v[i] / bc2
-		params[i] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*params[i])
-	}
-}
 
 // nhitsCache holds activations from a per-sample forward pass needed for backpropagation.
 type nhitsCache struct {

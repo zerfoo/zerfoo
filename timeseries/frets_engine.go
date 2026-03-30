@@ -110,14 +110,10 @@ func (f *FreTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 	}
 
 	// AdamW state.
-	type adamState struct {
-		m []float32
-		v []float32
-	}
-	adamStates := make([]adamState, len(allParams))
+	adamStates := make([]adamStateF32, len(allParams))
 	for i, p := range allParams {
 		n := len(p.Data())
-		adamStates[i] = adamState{m: make([]float32, n), v: make([]float32, n)}
+		adamStates[i] = adamStateF32{m: make([]float32, n), v: make([]float32, n)}
 	}
 
 	result := &TrainResult{
