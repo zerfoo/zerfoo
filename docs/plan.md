@@ -1553,10 +1553,10 @@ All planned features shipped at v0.9.0. Only API review and version bump needed.
   List exported types, their stability guarantees, and which are safe to extend
   without a major version bump.
 
-- [ ] T46.1.3 Run go vet and tests in zonnx  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T46.1.3 Run go vet and tests in zonnx  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Acceptance: go build ./... and go test ./... both pass with no errors.
 
-- [ ] T46.1.4 Tag zonnx v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L05]
+- [x] T46.1.4 Tag zonnx v1.0.0 via release-please PR  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [UC-L05]
   Trigger release-please to open a v1.0.0 release PR. Review and merge.
   Acceptance: github.com/zerfoo/zonnx has a v1.0.0 tag and release.
 
@@ -1579,7 +1579,7 @@ Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, a
   race detector policy, and the vet exclusions rationale for unsafe.Pointer packages.
   Acceptance: docs/QUALITY.md exists; CI reference is satisfied.
 
-- [ ] T46.2.3 Produce stable-surface inventory for ztensor v1  Owner: TBD  Est: 3h  verifies: [UC-L03]
+- [x] T46.2.3 Produce stable-surface inventory  DONE 2026-03-30 for ztensor v1  Owner: TBD  Est: 3h  verifies: [UC-L03]
   The v1 stability contract covers a narrow surface only. Churn from research epics
   (E34-E44 each added new kernel primitives) makes a wide freeze impractical.
   Stable v1 surface (no breaking changes without v2 bump):
@@ -1602,7 +1602,7 @@ Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, a
   Acceptance: docs/adr/001-api-stability-v1.md exists with explicit stable/unstable lists;
   no symbol outside the five stable packages is exported without a stability disclaimer.
 
-- [ ] T46.2.4 Verify zerfoo builds cleanly after T46.2.3 unexports  Owner: TBD  Est: 1h  verifies: [UC-L03]
+- [x] T46.2.4 Verify zerfoo builds cleanly  DONE 2026-03-30 after T46.2.3 unexports  Owner: TBD  Est: 1h  verifies: [UC-L03]
   After unexporting transitional symbols, confirm zerfoo still builds.
   Run: cd ../zerfoo && go build ./... (using a local replace directive if needed).
   Fix any ztensor import breakage by either re-exporting with a disclaimer or updating
@@ -1610,15 +1610,15 @@ Extensive test coverage (192 files). Needs design.md, missing docs/QUALITY.md, a
   Deps: T46.2.3
   Acceptance: zerfoo builds with no errors against the updated ztensor.
 
-- [ ] T46.2.5 Add benchmark baseline to docs/devlog.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T46.2.5 Add benchmark baseline  DONE 2026-03-30 to docs/devlog.md for ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Run go test -bench=. ./tensor/... ./compute/... and record results in devlog.md.
   This establishes a regression baseline before the v1 tag.
   Acceptance: docs/devlog.md has a dated benchmark entry for ztensor.
 
-- [ ] T46.2.6 Run go vet and full test suite in ztensor  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T46.2.6 Run go vet and full test suite in ztensor  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Acceptance: go build ./... and go test -race -timeout 300s ./... both pass.
 
-- [ ] T46.2.7 Tag ztensor v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L03]
+- [x] T46.2.7 Tag ztensor v1.0.0 via release-please PR  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [UC-L03]
   Trigger release-please to open a v1.0.0 release PR. Review and merge.
   Acceptance: github.com/zerfoo/ztensor has a v1.0.0 tag and release.
 
@@ -1640,15 +1640,15 @@ Small, focused library. Needs design.md, expanded tests, and API review.
   (c) Error paths: malformed GGUF tokenizer metadata.
   Acceptance: go test -race ./... passes; new tests cover the three categories.
 
-- [ ] T46.3.3 Create docs/adr/ directory and API stability ADR  Owner: TBD  Est: 1h  verifies: [UC-L04]
+- [x] T46.3.3 Create docs/adr/ directory and API stability ADR  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L04]
   Create docs/adr/001-api-stability-v1.md for ztoken. The Tokenizer interface and
   Encode/Decode functions are stable v1. Internal GGUF parsing helpers are not public API.
   Acceptance: docs/adr/001-api-stability-v1.md exists.
 
-- [ ] T46.3.4 Run go vet and full test suite in ztoken  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T46.3.4 Run go vet and full test suite in ztoken  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Acceptance: go build ./... and go test -race ./... both pass.
 
-- [ ] T46.3.5 Tag ztoken v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L04]
+- [x] T46.3.5 Tag ztoken v1.0.0 via release-please PR  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [UC-L04]
   Trigger release-please to open a v1.0.0 release PR. Review and merge.
   Acceptance: github.com/zerfoo/ztoken has a v1.0.0 tag and release.
 
@@ -1670,25 +1670,25 @@ Functional core with minimal documentation. Needs docs/, expanded tests, and API
   Reference: NVIDIA FP8 Formats for Deep Learning (2022).
   Acceptance: TestArithmeticCorrectness passes for all 256 representable values.
 
-- [ ] T46.4.3 Add benchmarks for float8 operations  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T46.4.3 Add benchmarks for float8 operations  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Add BenchmarkAdd, BenchmarkMul, BenchmarkFromFloat32, BenchmarkToFloat32.
   Record baseline results in docs/devlog.md.
   Acceptance: go test -bench=. ./... runs without errors.
 
-- [ ] T46.4.4 Expand error path tests  Owner: TBD  Est: 1h  verifies: [UC-L02]
+- [x] T46.4.4 Expand error path tests  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L02]
   Test: NaN propagation through all arithmetic ops, clamping of out-of-range float32
   to E4M3FN max value, zero handling.
   Acceptance: go test ./... covers error paths.
 
-- [ ] T46.4.5 Create docs/adr/ directory and API stability ADR  Owner: TBD  Est: 1h  verifies: [UC-L02]
+- [x] T46.4.5 Create docs/adr/ directory and API stability ADR  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L02]
   Create docs/adr/001-api-stability-v1.md. Float8 (E4M3FN type, arithmetic functions,
   conversions) is stable v1. FP8 E5M2 is explicitly deferred to v1.1+.
   Acceptance: docs/adr/001-api-stability-v1.md exists.
 
-- [ ] T46.4.6 Run go vet and full test suite in float8  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T46.4.6 Run go vet and full test suite in float8  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Acceptance: go build ./... and go test -race ./... both pass.
 
-- [ ] T46.4.7 Tag float8 v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L02]
+- [x] T46.4.7 Tag float8 v1.0.0 via release-please PR  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [UC-L02]
   Trigger release-please to open a v1.0.0 release PR. Review and merge.
   Acceptance: github.com/zerfoo/float8 has a v1.0.0 tag and release.
 
@@ -1715,60 +1715,60 @@ Float16 is stable. BFloat16 needs Phases 2-5 from the existing plan.md in that r
   Deps: T46.5.1
   Acceptance: go test -race ./... passes.
 
-- [ ] T46.5.3 BFloat16 Phase 3: Batch/slice operations  Owner: TBD  Est: 3h  verifies: [UC-L01]
+- [x] T46.5.3 BFloat16 Phase 3: Batch/slice operations  DONE 2026-03-30  Owner: TBD  Est: 3h  verifies: [UC-L01]
   Implement: BFloat16AddSlice, SubSlice, MulSlice, DivSlice, ScaleSlice,
   BFloat16SliceFromFloat32, Float32SliceFromBFloat16, BFloat16SliceFromFloat64.
   Ref: float16/docs/plan.md Phase 3.1 and 3.2.
   Acceptance: All functions return correct results on random inputs; benchmarks added.
 
-- [ ] T46.5.4 BFloat16 Phase 3 tests and benchmarks  Owner: TBD  Est: 1h  verifies: [UC-L01]
+- [x] T46.5.4 BFloat16 Phase 3 tests and benchmarks  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L01]
   Deps: T46.5.3
   Acceptance: go test -race ./... passes; BenchmarkBFloat16Slice exists.
 
-- [ ] T46.5.5 BFloat16 Phase 4: Math functions  Owner: TBD  Est: 4h  verifies: [UC-L01]
+- [x] T46.5.5 BFloat16 Phase 4: Math functions  DONE 2026-03-30  Owner: TBD  Est: 4h  verifies: [UC-L01]
   Implement: BFloat16Sqrt, Exp, Log, Log2, Sin, Cos, Tanh, Sigmoid.
   Each function converts to float64 for computation and converts back.
   Add FastMode variants for Sigmoid and Tanh using polynomial approximation.
   Ref: float16/docs/plan.md Phase 4.1 and 4.2.
   Acceptance: All math functions match float64 results within BFloat16 precision.
 
-- [ ] T46.5.6 BFloat16 Phase 4 tests  Owner: TBD  Est: 1h  verifies: [UC-L01]
+- [x] T46.5.6 BFloat16 Phase 4 tests  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L01]
   Deps: T46.5.5
   Tests: Sqrt(4.0) == 2.0, Exp(0) == 1.0, Log(1) == 0, Sigmoid(0) ~= 0.5.
   Edge cases: Sqrt(NaN), Log(-1).
 
-- [ ] T46.5.7 BFloat16 Phase 5: Parse and format  Owner: TBD  Est: 3h  verifies: [UC-L01]
+- [x] T46.5.7 BFloat16 Phase 5: Parse and format  DONE 2026-03-30  Owner: TBD  Est: 3h  verifies: [UC-L01]
   Implement: BFloat16FromString, (b BFloat16) String() with format verbs (%e, %f, %g),
   MarshalJSON, UnmarshalJSON, MarshalBinary, UnmarshalBinary.
   Ref: float16/docs/plan.md Phase 5.1 and 5.2.
   Acceptance: Round-trip marshal/unmarshal is lossless; String() matches float32 format.
 
-- [ ] T46.5.8 BFloat16 Phase 5 tests  Owner: TBD  Est: 1h  verifies: [UC-L01]
+- [x] T46.5.8 BFloat16 Phase 5 tests  DONE 2026-03-30  Owner: TBD  Est: 1h  verifies: [UC-L01]
   Deps: T46.5.7
   Tests: 100 random round-trip JSON encode/decode cycles; binary round-trip; %e %f %g
   format verbs against float32 reference.
 
-- [ ] T46.5.9 Error handling infrastructure for BFloat16  Owner: TBD  Est: 2h  verifies: [UC-L01]
+- [x] T46.5.9 Error handling infrastructure for BFloat16  DONE 2026-03-30  Owner: TBD  Est: 2h  verifies: [UC-L01]
   Implement BFloat16Error type wrapping stdlib errors. Wire into ConversionMode strict
   path and ArithmeticMode checked paths. Ref: float16/docs/plan.md missing item.
   Acceptance: BFloat16 strict conversion returns typed error on overflow.
 
-- [ ] T46.5.10 Comprehensive BFloat16 test coverage  Owner: TBD  Est: 3h  verifies: [UC-L01]
+- [x] T46.5.10 Comprehensive BFloat16 test coverage  DONE 2026-03-30  Owner: TBD  Est: 3h  verifies: [UC-L01]
   Ensure >= 95% statement coverage for bfloat16.go and all Phase 2-5 files.
   Run go test -cover ./... and fix any gaps. Add table-driven tests for all 256
   8-bit boundary values (subnormal, normal, NaN, zero) through all operations.
   Deps: T46.5.1 through T46.5.9
 
-- [ ] T46.5.11 Update float16 docs/plan.md to reflect Phase 2-5 completion  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T46.5.11 Update float16 docs/plan.md  DONE 2026-03-30 to reflect Phase 2-5 completion  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Mark all completed Phase items as done. Remove the "BFloat16 Enhancement Plan"
   title and rename to "Float16 v1 Release Notes" once all phases are complete.
   Deps: T46.5.10
 
-- [ ] T46.5.12 Run go vet and full test suite in float16  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T46.5.12 Run go vet and full test suite in float16  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T46.5.10
   Acceptance: go build ./... and go test -race ./... pass with no vet warnings.
 
-- [ ] T46.5.13 Tag float16 v1.0.0 via release-please PR  Owner: TBD  Est: 0.5h  verifies: [UC-L01]
+- [x] T46.5.13 Tag float16 v1.0.0 via release-please PR  DONE 2026-03-30  Owner: TBD  Est: 0.5h  verifies: [UC-L01]
   Deps: T46.5.12
   Trigger release-please to open a v1.0.0 release PR. Review and merge.
   Acceptance: github.com/zerfoo/float16 has a v1.0.0 tag and release.
@@ -1903,7 +1903,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
 
 ### E47.1: DataLoader and Batched Tensor Infrastructure
 
-- [ ] T47.1.1 Implement timeseries.DataLoader  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T47.1.1 Implement timeseries.DataLoader  DONE 2026-03-30 PR #281  Owner: TBD  Est: 3h  verifies: [UC-TS01]
   File: timeseries/dataloader.go
   DataLoader converts raw `[][][]float64` windows + `[]float64` labels into mini-batches
   of `tensor.TensorNumeric[float32]`. Methods:
@@ -1925,7 +1925,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
 
 ### E47.2: Batched Forward Pass for PatchTST
 
-- [ ] T47.2.1 Implement PatchTST batched forward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+- [x] T47.2.1 Implement PatchTST batched forward  DONE 2026-03-30 PR #281  Owner: TBD  Est: 4h  verifies: [UC-TS01]
   File: timeseries/patchtst_engine.go
   Add `forwardBatchEngine(ctx context.Context, input *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error)`.
   Input: `[batch, channels, inputLen]`. Output: `[batch, outputDim]`.
@@ -1951,7 +1951,7 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
 
 ### E47.3: Batched Forward Pass for iTransformer
 
-- [ ] T47.3.1 Implement iTransformer batched forward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T47.3.1 Implement iTransformer batched forward  DONE 2026-03-30 PR #281  Owner: TBD  Est: 3h  verifies: [UC-TS01]
   File: timeseries/itransformer_engine.go
   Add `forwardBatchEngine()`. Input: `[batch, channels, inputLen]`. Variate embedding
   operates on `[batch, channels, dModel]`. Attention across channels: `[batch*nHeads, channels, headDim]`.
@@ -1969,28 +1969,28 @@ x 20 features x 24 window x 10 epochs in under 60 seconds on DGX Spark GPU.
 
 ### E47.4: Batched Forward for Remaining Backends
 
-- [ ] T47.4.1 Implement batched forward for DLinear  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.1 Implement batched forward for DLinear  DONE 2026-03-30 PR #281  Owner: TBD  Est: 2h  verifies: [UC-TS01]
   File: timeseries/dlinear_engine.go
   DLinear is simple (decompose + linear). Batch: `[batch, channels, inputLen]` ->
   decompose -> two linear projections -> `[batch, outputLen]`.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.2 Implement batched forward for Mamba  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T47.4.2 Implement batched forward for Mamba  DONE 2026-03-30 PR #281  Owner: TBD  Est: 3h  verifies: [UC-TS01]
   File: timeseries/mamba.go
   SSM scan must operate on `[batch, seqLen, dModel]` in parallel.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.3 Implement batched forward for CfC  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.3 Implement batched forward for CfC  DONE 2026-03-30 PR #281  Owner: TBD  Est: 2h  verifies: [UC-TS01]
   File: timeseries/cfc_engine.go
   ODE integration step batched across samples.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.4 Implement batched forward for FreTS  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.4 Implement batched forward for FreTS  DONE 2026-03-30 PR #281  Owner: TBD  Est: 2h  verifies: [UC-TS01]
   File: timeseries/frets_engine.go
   FFT and frequency-domain mixing batched.
   Acceptance: Batched matches sample-by-sample.
 
-- [ ] T47.4.5 Implement batched forward for TTM  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T47.4.5 Implement batched forward for TTM  DONE 2026-03-30 PR #281  Owner: TBD  Est: 2h  verifies: [UC-TS01]
   File: timeseries/ttm_train_engine.go
   TSMixer blocks operate on `[batch, numPatches, dModel]`.
   Acceptance: Batched matches sample-by-sample.
@@ -2040,7 +2040,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
 
 ### E48.1: TimeMixer Core Implementation
 
-- [ ] T48.1.1 Implement multi-scale decomposition  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.1.1 Implement multi-scale decomposition  DONE 2026-03-30 PR #281  Owner: TBD  Est: 3h  verifies: [UC-TS02]
   File: timeseries/timemixer.go
   TimeMixerConfig:
   ```
@@ -2153,7 +2153,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
 
 ### E49.1: TiRex (xLSTM) -- Native Go
 
-- [ ] T49.1.1 Implement sLSTM cell layer  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.1.1 Implement sLSTM cell layer  DONE 2026-03-30 PR #281  Owner: TBD  Est: 3h  verifies: [UC-TS03]
   File: layers/timeseries/slstm.go
   Scalar LSTM with exponential gating (xLSTM paper, arXiv:2405.04517).
   Exponential input gate: i_t = exp(W_i * x_t + R_i * h_{t-1} + b_i).
