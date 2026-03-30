@@ -1820,11 +1820,11 @@ One agent per repo. All zero-dependency tasks in each track.
 
 ##### Wave E46-4: Verification + Final Tasks (5 agents)
 
-- [ ] T46.1.4 Tag zonnx v1.0.0  Deps: T46.1.3  verifies: [UC-L05]
-- [ ] T46.2.4 Verify zerfoo builds after ztensor unexports  Deps: T46.2.3  verifies: [UC-L03]
-- [ ] T46.3.4 Run go vet in ztoken  Deps: T46.3.3  verifies: [infrastructure]
-- [ ] T46.4.4 Expand float8 error path tests  Deps: T46.4.3  verifies: [UC-L02]
-- [ ] T46.5.4 BFloat16 Phase 3 tests  Deps: T46.5.3  verifies: [UC-L01]
+- [x] T46.1.4 Tag zonnx v1.0.0  DONE 2026-03-30 v1.0.0 released  Deps: T46.1.3  verifies: [UC-L05]
+- [x] T46.2.4 Verify zerfoo builds after ztensor unexports  DONE 2026-03-30 PASS  Deps: T46.2.3  verifies: [UC-L03]
+- [x] T46.3.4 Run go vet in ztoken  DONE 2026-03-30 PASS (4 fixes)  Deps: T46.3.3  verifies: [infrastructure]
+- [x] T46.4.4 Expand float8 error path tests  DONE 2026-03-30 float8 PR #15  Deps: T46.4.3  verifies: [UC-L02]
+- [x] T46.5.4 BFloat16 Phase 3 tests  DONE 2026-03-30 float16 PR #12  Deps: T46.5.3  verifies: [UC-L01]
 
 ##### Wave E46-5: Remaining ztensor + float (5 agents)
 
