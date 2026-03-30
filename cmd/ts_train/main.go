@@ -305,7 +305,16 @@ func run() error {
 
 	// Build PatchTST model.
 	ops := numeric.Float32Ops{}
-	engine := compute.NewCPUEngine[float32](ops)
+	var engine compute.Engine[float32]
+	gpuEngine, gpuErr := compute.NewGPUEngine[float32](ops)
+	if gpuErr == nil {
+		engine = gpuEngine
+		defer gpuEngine.Close()
+		log.Printf("using GPU engine (CUDA)")
+	} else {
+		engine = compute.NewCPUEngine[float32](ops)
+		log.Printf("using CPU engine (CUDA not available: %v)", gpuErr)
+	}
 
 	patchCfg := timeseries.PatchTSTConfig{
 		PatchLen:  cfg.patchLen,
