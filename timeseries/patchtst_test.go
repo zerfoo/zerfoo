@@ -843,6 +843,11 @@ func TestPatchTST_GradientVerification(t *testing.T) {
 		if relErr > maxRelErr {
 			maxRelErr = relErr
 		}
+		// Skip near-zero gradients where relative error is meaningless
+		// (analytical ~ 1e-17 vs finite-diff ~ 1e-10 is numerical noise).
+		if math.Abs(analyticalGrads[pi]) < 1e-12 && math.Abs(fdGrad) < 1e-6 {
+			continue
+		}
 		if relErr > 1e-2 {
 			failCount++
 			if failCount <= 5 {
