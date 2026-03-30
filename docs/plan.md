@@ -2119,7 +2119,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   Reuses existing graph builder pattern from arch_patchtst.go.
   Acceptance: Graph builds without error. Forward produces correct output shape.
 
-- [ ] T48.3.2 Unit tests for TimeMixer  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+- [x] T48.3.2 Unit tests for TimeMixer  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-03-30 PR #286
   Deps: T48.1.4, T48.2.3
   File: timeseries/timemixer_test.go
   Tests: (1) Decomposition roundtrip. (2) Forward shape correctness. (3) Training
@@ -2202,7 +2202,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   denormalization of predictions. Supports batch inference.
   Acceptance: Forecast returns predictions of correct shape and non-degenerate values.
 
-- [ ] T49.1.6 TiRex parity tests against HuggingFace reference  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.1.6 TiRex parity tests  DONE 2026-03-30 PR #286 against HuggingFace reference  Owner: TBD  Est: 3h  verifies: [UC-TS03]
   Deps: T49.1.5
   File: timeseries/tirex_test.go
   Generate golden files: run TiRex in Python on 10 input series, save input/output
@@ -2232,7 +2232,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Linear, GELU layers. Input: tokenized values. Output: logits over bin vocabulary.
   Acceptance: Graph builds. Forward produces logits of shape [batch, horizon, vocab_size].
 
-- [ ] T49.2.4 Chronos-2 parity tests  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.2.4 Chronos-2 parity tests  DONE 2026-03-30 PR #286  Owner: TBD  Est: 2h  verifies: [UC-TS03]
   Deps: T49.2.3
   File: timeseries/chronos_test.go
   Golden file comparison against HuggingFace reference. 10 test series.
@@ -2261,7 +2261,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Uses existing attention, norm, and linear layers.
   Acceptance: Graph builds. Forward produces forecast of correct shape.
 
-- [ ] T49.3.4 Moirai-2 parity tests  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.3.4 Moirai-2 parity tests  DONE 2026-03-30 PR #286  Owner: TBD  Est: 2h  verifies: [UC-TS03]
   Deps: T49.3.3
   File: timeseries/moirai_test.go
   Golden file comparison. 10 test series.
@@ -2269,7 +2269,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
 
 ### E49.4: CLI and Integration
 
-- [ ] T49.4.1 Add `zerfoo forecast` CLI command  Owner: TBD  Est: 2h  verifies: [UC-TS03]
+- [x] T49.4.1 Add `zerfoo forecast` CLI command  Owner: TBD  Est: 2h  verifies: [UC-TS03]  DONE 2026-03-30 PR #286
   Deps: T49.1.5
   File: cmd/cli/forecast.go
   CLI: `zerfoo forecast --model tirex --input data.csv --horizon 24`
@@ -2277,7 +2277,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Outputs forecast as CSV or JSON.
   Acceptance: CLI produces forecast output for TiRex model.
 
-- [ ] T49.4.2 Fine-tune API for foundation models  Owner: TBD  Est: 3h  verifies: [UC-TS03]
+- [x] T49.4.2 Fine-tune API  DONE 2026-03-30 PR #286 for foundation models  Owner: TBD  Est: 3h  verifies: [UC-TS03]
   Deps: T49.1.5
   File: timeseries/foundation.go
   ```go
@@ -2354,7 +2354,7 @@ All zero-dependency tasks. Saturates all agent slots.
 - [x] T49.2.2 Convert Chronos-2 weights to GGUF  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
 - [x] T49.3.1 Any-variate input projection  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
 - [x] T49.3.2 Convert Moirai-2 weights to GGUF  DONE 2026-03-30 PR #284  verifies: [UC-TS03]
-- [ ] T49.4.1 forecast CLI command  Deps: T49.1.5
+- [x] T49.4.1 forecast CLI command  DONE 2026-03-30 PR #286  Deps: T49.1.5
 
 ##### Wave E47-4: Tests + Benchmarks (8 agents)
 
@@ -2363,20 +2363,20 @@ All zero-dependency tasks. Saturates all agent slots.
 - [x] T47.5.3 Run go vet E47  DONE 2026-03-30 PR #285  Deps: T47.2.3, T47.3.3, T47.4.1-T47.4.7
 - [x] T48.1.4 TimeMixer TrainWindowed  DONE 2026-03-30 PR #285  Deps: T48.1.3
 - [x] T48.3.1 TimeMixer inference graph builder  DONE 2026-03-30 PR #285  Deps: T48.1.3
-- [ ] T48.3.2 TimeMixer unit tests  Deps: T48.1.4, T48.2.3
+- [x] T48.3.2 TimeMixer unit tests  DONE 2026-03-30 PR #286  Deps: T48.1.4, T48.2.3
 - [x] T49.1.5 TiRex zero-shot pipeline  DONE 2026-03-30 PR #285  Deps: T49.1.4
 - [x] T49.2.3 Chronos-2 graph builder  DONE 2026-03-30 PR #285  Deps: T49.2.1, T49.2.2
 - [x] T49.3.3 Moirai-2 graph builder  DONE 2026-03-30 PR #285  Deps: T49.3.1, T49.3.2
-- [ ] T49.4.2 Fine-tune API  Deps: T49.1.5
+- [x] T49.4.2 Fine-tune API  DONE 2026-03-30 PR #286  Deps: T49.1.5
 
 ##### Wave E47-5: Final Lint + Parity (6 agents)
 
 - [ ] T48.3.3 Run go vet E48  Deps: T48.3.2
-- [ ] T49.1.6 TiRex parity tests  Deps: T49.1.5
-- [ ] T49.2.4 Chronos-2 parity tests  Deps: T49.2.3
-- [ ] T49.3.4 Moirai-2 parity tests  Deps: T49.3.3
+- [x] T49.1.6 TiRex parity tests  DONE 2026-03-30 PR #286  Deps: T49.1.5
+- [x] T49.2.4 Chronos-2 parity tests  DONE 2026-03-30 PR #286  Deps: T49.2.3
+- [x] T49.3.4 Moirai-2 parity tests  DONE 2026-03-30 PR #286  Deps: T49.3.3
 - [ ] T49.4.3 Run go vet E49  Deps: T49.1.6, T49.2.4, T49.3.4
-- [ ] T49.4.1 forecast CLI command  Deps: T49.1.5
+- [x] T49.4.1 forecast CLI command  DONE 2026-03-30 PR #286  Deps: T49.1.5
 
 ### E47-E49 Risks
 
