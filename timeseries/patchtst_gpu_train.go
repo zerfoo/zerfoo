@@ -307,12 +307,13 @@ type gpuBatchLayerCache struct {
 	normed2    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
 	ffn1PreAct *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
 	ffn1Out    *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
-	centered1  [][]float32                     // [bs*numPatches][dModel]
-	invStd1    []float32                       // [bs*numPatches]
-	centered2  [][]float32
-	invStd2    []float32
-	xResidual  *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
-	xAfterAttn *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
+	centered1  *tensor.TensorNumeric[float32]   // [bs*numPatches, dModel]
+	invStd1    *tensor.TensorNumeric[float32]  // [bs*numPatches, 1]
+	centered2  *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
+	invStd2    *tensor.TensorNumeric[float32]  // [bs*numPatches, 1]
+	xResidual   *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
+	xAfterAttn  *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
+	geluTanhVal *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim] cached for backward
 }
 
 // gpuBatchForwardCache stores batched forward data across all channels.
@@ -362,6 +363,81 @@ func layerNormF32WithCache(x [][]float32, scale, bias []float32, dModel int) ([]
 		}
 	}
 	return normed, centered, invStds
+}
+
+// layerNormForwardEngine performs layer norm using engine ops.
+// x: [rows, dModel], scale: [1, dModel], bias: [1, dModel].
+// Returns normed [rows, dModel], centered [rows, dModel], invStd [rows, 1].
+func (m *PatchTST) layerNormForwardEngine(ctx context.Context, x, scale, bias *tensor.TensorNumeric[float32], rows, dModel int) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
+	invD := float32(1.0) / float32(dModel)
+
+	// mean = Sum(x, axis=1, keepDims=true) * (1/dModel)  -> [rows, 1]
+	mean, err := m.engine.Sum(ctx, x, 1, true)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	mean, err = m.engine.MulScalar(ctx, mean, invD)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// centered = x - mean  (broadcast [rows,1] over [rows, dModel])
+	centered, err = m.engine.Sub(ctx, x, mean)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// variance = Sum(centered*centered, axis=1, keepDims=true) * (1/dModel)  -> [rows, 1]
+	centSq, err := m.engine.Mul(ctx, centered, centered)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	variance, err := m.engine.Sum(ctx, centSq, 1, true)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	variance, err = m.engine.MulScalar(ctx, variance, invD)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// invStd = 1 / sqrt(variance + eps)  -> [rows, 1]
+	varEps, err := m.engine.AddScalar(ctx, variance, 1e-5)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	stddev, err := m.engine.Sqrt(ctx, varEps)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	onesData := make([]float32, rows)
+	for i := range onesData {
+		onesData[i] = 1.0
+	}
+	ones, err := tensor.New[float32]([]int{rows, 1}, onesData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	invStd, err = m.engine.Div(ctx, ones, stddev)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// normed = centered * invStd * scale + bias  (broadcast [rows,1] and [1,dModel])
+	normed, err = m.engine.Mul(ctx, centered, invStd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	normed, err = m.engine.Mul(ctx, normed, scale)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	normed, err = m.engine.Add(ctx, normed, bias)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return normed, centered, invStd, nil
 }
 
 // layerNormBackwardF32 computes backward pass through layer norm on CPU.
@@ -583,12 +659,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// Layer norm 1 on CPU (over all bsC*numPatches rows).
-				xData := matFromTensor(x, totalRows, dModel)
-				normed1, cent1, invStd1 := layerNormF32WithCache(xData, layer.norm1.Data(), layer.bias1.Data(), dModel)
-				lc.centered1 = cent1
-				lc.invStd1 = invStd1
-				lc.normed1, err = tensorFromMat(normed1, totalRows, dModel)
+				// Layer norm 1 via engine ops (over all bsC*numPatches rows).
+				lc.normed1, lc.centered1, lc.invStd1, err = m.layerNormForwardEngine(ctx, x, layer.norm1, layer.bias1, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -735,12 +807,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// Layer norm 2 on CPU.
-				xData = matFromTensor(x, totalRows, dModel)
-				normed2, cent2, invStd2 := layerNormF32WithCache(xData, layer.norm2.Data(), layer.bias2.Data(), dModel)
-				lc.centered2 = cent2
-				lc.invStd2 = invStd2
-				lc.normed2, err = tensorFromMat(normed2, totalRows, dModel)
+				// Layer norm 2 via engine ops.
+				lc.normed2, lc.centered2, lc.invStd2, err = m.layerNormForwardEngine(ctx, x, layer.norm2, layer.bias2, totalRows, dModel)
 				if err != nil {
 					return nil, err
 				}
@@ -975,7 +1043,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 				// LayerNorm2 backward on CPU + residual add.
 				dNormed2Data := matFromTensor(dNormed2, totalRows, dModel)
-				dXAfterAttn := layerNormBackwardF32(dNormed2Data, lc.centered2, lc.invStd2,
+				centered2Mat := matFromTensor(lc.centered2, totalRows, dModel)
+				invStd2Flat := lc.invStd2.Data() // [rows*1] flat slice
+				dXAfterAttn := layerNormBackwardF32(dNormed2Data, centered2Mat, invStd2Flat,
 					layer.norm2.Data(), dg.norm2.Data(), dg.bias2.Data(), dModel)
 				// Add residual gradient from FFN path (dX flows through residual 2).
 				dXData := dX.Data()
@@ -1272,7 +1342,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 				// LayerNorm1 backward on CPU + residual add.
 				dNormed1Data := matFromTensor(dNormed1, totalRows, dModel)
-				dLayerInput := layerNormBackwardF32(dNormed1Data, lc.centered1, lc.invStd1,
+				centered1Mat := matFromTensor(lc.centered1, totalRows, dModel)
+				invStd1Flat := lc.invStd1.Data() // [rows*1] flat slice
+				dLayerInput := layerNormBackwardF32(dNormed1Data, centered1Mat, invStd1Flat,
 					layer.norm1.Data(), dg.norm1.Data(), dg.bias1.Data(), dModel)
 				// Add residual gradient from attention path.
 				for r := 0; r < totalRows; r++ {
