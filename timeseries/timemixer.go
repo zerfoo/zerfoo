@@ -23,15 +23,83 @@ type scaleDecomposition struct {
 	seasonal [][]float64 // [numFeatures][inputLen]
 }
 
+// mixingMLP holds the weight and bias parameters for a two-layer MLP that
+// mixes components across scales. Input dimension is numScales, hidden
+// dimension is hiddenSize, output dimension is numScales.
+type mixingMLP struct {
+	w1   [][]float64 // [hiddenSize][numScales]
+	b1   []float64   // [hiddenSize]
+	w2   [][]float64 // [numScales][hiddenSize]
+	b2   []float64   // [numScales]
+}
+
+// forward runs the two-layer MLP with ReLU activation.
+// Input: [numScales], output: [numScales].
+func (mlp *mixingMLP) forward(x []float64) []float64 {
+	hidden := make([]float64, len(mlp.b1))
+	for i := range hidden {
+		sum := mlp.b1[i]
+		for j, v := range x {
+			sum += mlp.w1[i][j] * v
+		}
+		// ReLU
+		if sum < 0 {
+			sum = 0
+		}
+		hidden[i] = sum
+	}
+	out := make([]float64, len(mlp.b2))
+	for i := range out {
+		sum := mlp.b2[i]
+		for j, v := range hidden {
+			sum += mlp.w2[i][j] * v
+		}
+		out[i] = sum
+	}
+	return out
+}
+
+// newMixingMLP creates a mixing MLP with Kaiming uniform initialization.
+func newMixingMLP(numScales, hiddenSize int) *mixingMLP {
+	// Kaiming uniform: U(-bound, bound) where bound = sqrt(6 / fan_in)
+	bound1 := math.Sqrt(6.0 / float64(numScales))
+	w1 := make([][]float64, hiddenSize)
+	for i := range w1 {
+		w1[i] = make([]float64, numScales)
+		for j := range w1[i] {
+			w1[i][j] = (rand.Float64()*2 - 1) * bound1
+		}
+	}
+	b1 := make([]float64, hiddenSize)
+
+	bound2 := math.Sqrt(6.0 / float64(hiddenSize))
+	w2 := make([][]float64, numScales)
+	for i := range w2 {
+		w2[i] = make([]float64, hiddenSize)
+		for j := range w2[i] {
+			w2[i][j] = (rand.Float64()*2 - 1) * bound2
+		}
+	}
+	b2 := make([]float64, numScales)
+
+	return &mixingMLP{w1: w1, b1: b1, w2: w2, b2: b2}
+}
+
 // TimeMixer implements the TimeMixer time-series forecasting model (ICLR 2024).
 // It decomposes input into trend and seasonal components at multiple scales
-// using learnable moving average weights.
+// using learnable moving average weights, then mixes across scales using
+// past-decomposable mixing with bottom-up residual connections.
 type TimeMixer struct {
 	config TimeMixerConfig
 
 	// maWeights holds learnable moving average kernel weights per scale.
 	// maWeights[s] has length 2^(s+1) for scale s (0-indexed).
 	maWeights [][]float64
+
+	// seasonalMLPs holds one mixing MLP per layer for seasonal components.
+	seasonalMLPs []*mixingMLP
+	// trendMLPs holds one mixing MLP per layer for trend components.
+	trendMLPs []*mixingMLP
 }
 
 // NewTimeMixer creates a new TimeMixer model with the given configuration.
@@ -47,8 +115,10 @@ func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
 	}
 
 	m := &TimeMixer{
-		config:    cfg,
-		maWeights: make([][]float64, cfg.NumScales),
+		config:       cfg,
+		maWeights:    make([][]float64, cfg.NumScales),
+		seasonalMLPs: make([]*mixingMLP, cfg.NumLayers),
+		trendMLPs:    make([]*mixingMLP, cfg.NumLayers),
 	}
 
 	// Initialize learnable MA weights per scale with uniform initialization
@@ -61,6 +131,12 @@ func NewTimeMixer(cfg TimeMixerConfig) *TimeMixer {
 			m.maWeights[s][i] = 1.0/float64(kernelSize) + rand.NormFloat64()*0.01
 		}
 		normalizeWeights(m.maWeights[s])
+	}
+
+	// Initialize mixing MLPs for each layer.
+	for l := 0; l < cfg.NumLayers; l++ {
+		m.seasonalMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
+		m.trendMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
 	}
 
 	return m
@@ -134,15 +210,103 @@ func (m *TimeMixer) decompose(input [][]float64) []scaleDecomposition {
 	return scales
 }
 
-// MultiScaleOutput holds the decomposed multi-scale representation from Forward.
+// pastDecomposableMixing applies bottom-up mixing across scales for both
+// seasonal and trend components. For each layer, an MLP learns mixing weights
+// across scales, and coarse-scale information flows to finer scales via
+// additive residual connections.
+//
+// The mixing iterates from coarsest to finest scale (bottom-up). At each
+// position (feature, time), the MLP takes the vector of values across all
+// scales and produces new mixed values. The result at scale s is then added
+// as a residual to scale s-1 (the next finer scale).
+func (m *TimeMixer) pastDecomposableMixing(scales []scaleDecomposition) []scaleDecomposition {
+	numScales := len(scales)
+	nf := len(scales[0].trend)
+	seqLen := len(scales[0].trend[0])
+
+	for l := 0; l < m.config.NumLayers; l++ {
+		seasonalMLP := m.seasonalMLPs[l]
+		trendMLP := m.trendMLPs[l]
+
+		// Collect cross-scale vectors, apply MLP, then write back.
+		// For seasonal:
+		newSeasonal := make([]scaleDecomposition, numScales)
+		newTrend := make([]scaleDecomposition, numScales)
+		for s := 0; s < numScales; s++ {
+			newSeasonal[s] = scaleDecomposition{
+				trend:    scales[s].trend,
+				seasonal: make([][]float64, nf),
+			}
+			newTrend[s] = scaleDecomposition{
+				trend:    make([][]float64, nf),
+				seasonal: scales[s].seasonal,
+			}
+			for f := 0; f < nf; f++ {
+				newSeasonal[s].seasonal[f] = make([]float64, seqLen)
+				newTrend[s].trend[f] = make([]float64, seqLen)
+			}
+		}
+
+		scaleVec := make([]float64, numScales)
+
+		// Mix seasonal across scales.
+		for f := 0; f < nf; f++ {
+			for t := 0; t < seqLen; t++ {
+				for s := 0; s < numScales; s++ {
+					scaleVec[s] = scales[s].seasonal[f][t]
+				}
+				mixed := seasonalMLP.forward(scaleVec)
+				for s := 0; s < numScales; s++ {
+					newSeasonal[s].seasonal[f][t] = mixed[s]
+				}
+			}
+		}
+
+		// Mix trend across scales.
+		for f := 0; f < nf; f++ {
+			for t := 0; t < seqLen; t++ {
+				for s := 0; s < numScales; s++ {
+					scaleVec[s] = scales[s].trend[f][t]
+				}
+				mixed := trendMLP.forward(scaleVec)
+				for s := 0; s < numScales; s++ {
+					newTrend[s].trend[f][t] = mixed[s]
+				}
+			}
+		}
+
+		// Bottom-up residual: coarse scale (higher index) adds to next finer scale.
+		// Iterate from coarsest-1 down to finest.
+		for s := numScales - 2; s >= 0; s-- {
+			for f := 0; f < nf; f++ {
+				for t := 0; t < seqLen; t++ {
+					newSeasonal[s].seasonal[f][t] += newSeasonal[s+1].seasonal[f][t]
+					newTrend[s].trend[f][t] += newTrend[s+1].trend[f][t]
+				}
+			}
+		}
+
+		// Assemble updated scales for next layer.
+		for s := 0; s < numScales; s++ {
+			scales[s] = scaleDecomposition{
+				trend:    newTrend[s].trend,
+				seasonal: newSeasonal[s].seasonal,
+			}
+		}
+	}
+
+	return scales
+}
+
+// MultiScaleOutput holds the decomposed and mixed multi-scale representation from Forward.
 type MultiScaleOutput struct {
-	// Scales contains the trend and seasonal decomposition at each scale.
+	// Scales contains the mixed trend and seasonal components at each scale.
 	// Scales[s].trend and Scales[s].seasonal are [numFeatures][inputLen].
 	Scales []scaleDecomposition
 }
 
-// Forward takes input [numFeatures][inputLen] and produces the decomposed
-// multi-scale representation.
+// Forward takes input [numFeatures][inputLen] and produces the mixed
+// multi-scale representation via decomposition followed by past-decomposable mixing.
 func (m *TimeMixer) Forward(input [][]float64) (*MultiScaleOutput, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("timemixer: empty input")
@@ -157,7 +321,8 @@ func (m *TimeMixer) Forward(input [][]float64) (*MultiScaleOutput, error) {
 	}
 
 	scales := m.decompose(input)
-	return &MultiScaleOutput{Scales: scales}, nil
+	mixed := m.pastDecomposableMixing(scales)
+	return &MultiScaleOutput{Scales: mixed}, nil
 }
 
 // MAWeights returns the learnable moving average weights for the given scale.

@@ -23,13 +23,9 @@ func TestTimeMixerDecompositionRoundtrip(t *testing.T) {
 		}
 	}
 
-	out, err := m.Forward(input)
-	if err != nil {
-		t.Fatalf("Forward failed: %v", err)
-	}
-
-	// For each scale, trend + seasonal must equal the original input.
-	for s, sc := range out.Scales {
+	// Test decompose directly for roundtrip (before mixing).
+	scales := m.decompose(input)
+	for s, sc := range scales {
 		for f := 0; f < cfg.NumFeatures; f++ {
 			for i := 0; i < cfg.InputLen; i++ {
 				reconstructed := sc.trend[f][i] + sc.seasonal[f][i]
@@ -136,18 +132,20 @@ func TestTimeMixerDifferentNumFeatures(t *testing.T) {
 				t.Fatalf("Forward failed: %v", err)
 			}
 
-			// Roundtrip check for all features and scales.
+			// After mixing, shapes must still be correct.
 			for s, sc := range out.Scales {
 				if len(sc.trend) != nf {
 					t.Errorf("scale %d: got %d features, want %d", s, len(sc.trend), nf)
 				}
+				if len(sc.seasonal) != nf {
+					t.Errorf("scale %d: got %d seasonal features, want %d", s, len(sc.seasonal), nf)
+				}
 				for f := 0; f < nf; f++ {
-					for i := 0; i < cfg.InputLen; i++ {
-						reconstructed := sc.trend[f][i] + sc.seasonal[f][i]
-						diff := math.Abs(reconstructed - input[f][i])
-						if diff > 1e-6 {
-							t.Errorf("scale %d feature %d index %d: roundtrip diff %.2e", s, f, i, diff)
-						}
+					if len(sc.trend[f]) != cfg.InputLen {
+						t.Errorf("scale %d feature %d: trend length %d, want %d", s, f, len(sc.trend[f]), cfg.InputLen)
+					}
+					if len(sc.seasonal[f]) != cfg.InputLen {
+						t.Errorf("scale %d feature %d: seasonal length %d, want %d", s, f, len(sc.seasonal[f]), cfg.InputLen)
 					}
 				}
 			}
@@ -207,6 +205,280 @@ func TestTimeMixerMAWeightsSumToOne(t *testing.T) {
 		if math.Abs(sum-1.0) > 1e-10 {
 			t.Errorf("scale %d: weights sum to %.15f, want 1.0", s, sum)
 		}
+	}
+}
+
+func TestTimeMixerMixingOutputShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		inputLen  int
+		features  int
+		numScales int
+		numLayers int
+		hidden    int
+	}{
+		{"small", 16, 2, 2, 1, 32},
+		{"medium", 32, 3, 4, 3, 64},
+		{"large", 64, 5, 3, 2, 128},
+		{"single_layer", 24, 1, 3, 1, 16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := TimeMixerConfig{
+				InputLen:    tt.inputLen,
+				OutputLen:   4,
+				NumFeatures: tt.features,
+				NumScales:   tt.numScales,
+				HiddenSize:  tt.hidden,
+				NumLayers:   tt.numLayers,
+			}
+			m := NewTimeMixer(cfg)
+
+			input := make([][]float64, tt.features)
+			for f := range input {
+				input[f] = make([]float64, tt.inputLen)
+				for i := range input[f] {
+					input[f][i] = math.Sin(float64(i)*0.5) * float64(f+1)
+				}
+			}
+
+			out, err := m.Forward(input)
+			if err != nil {
+				t.Fatalf("Forward failed: %v", err)
+			}
+
+			if len(out.Scales) != tt.numScales {
+				t.Fatalf("expected %d scales, got %d", tt.numScales, len(out.Scales))
+			}
+
+			for s, sc := range out.Scales {
+				if len(sc.trend) != tt.features {
+					t.Errorf("scale %d: trend features %d, want %d", s, len(sc.trend), tt.features)
+				}
+				if len(sc.seasonal) != tt.features {
+					t.Errorf("scale %d: seasonal features %d, want %d", s, len(sc.seasonal), tt.features)
+				}
+				for f := 0; f < tt.features; f++ {
+					if len(sc.trend[f]) != tt.inputLen {
+						t.Errorf("scale %d feature %d: trend length %d, want %d", s, f, len(sc.trend[f]), tt.inputLen)
+					}
+					if len(sc.seasonal[f]) != tt.inputLen {
+						t.Errorf("scale %d feature %d: seasonal length %d, want %d", s, f, len(sc.seasonal[f]), tt.inputLen)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestTimeMixerBottomUpResidual(t *testing.T) {
+	cfg := TimeMixerConfig{
+		InputLen:    16,
+		OutputLen:   4,
+		NumFeatures: 1,
+		NumScales:   3,
+		HiddenSize:  8,
+		NumLayers:   1,
+	}
+	m := NewTimeMixer(cfg)
+
+	// Set MLP weights to identity-like to make residual effect observable.
+	// Zero out all weights and set diagonal of w2*w1 to 1 (skip MLP transform).
+	mlp := m.seasonalMLPs[0]
+	for i := range mlp.w1 {
+		for j := range mlp.w1[i] {
+			mlp.w1[i][j] = 0
+		}
+		mlp.b1[i] = 0
+	}
+	for i := range mlp.w2 {
+		for j := range mlp.w2[i] {
+			mlp.w2[i][j] = 0
+		}
+		mlp.b2[i] = 0
+	}
+	// With zero MLP, seasonal outputs are all zero from MLP.
+	// Bottom-up residual adds coarse to fine, so scale 0 gets sum of all
+	// zero MLP outputs (still zero). Let's use a non-trivial identity instead.
+
+	// Make w1 = I (first numScales rows), w2 = I (first numScales cols).
+	ns := cfg.NumScales
+	for i := 0; i < ns && i < len(mlp.w1); i++ {
+		mlp.w1[i][i] = 1.0
+	}
+	for i := 0; i < ns; i++ {
+		if i < len(mlp.w2[i]) {
+			mlp.w2[i][i] = 1.0
+		}
+	}
+	// Now the seasonal MLP is approximately identity for positive inputs.
+	// With ReLU, only positive values pass through.
+
+	// Do the same for trend MLP.
+	tmlp := m.trendMLPs[0]
+	for i := range tmlp.w1 {
+		for j := range tmlp.w1[i] {
+			tmlp.w1[i][j] = 0
+		}
+		tmlp.b1[i] = 0
+	}
+	for i := range tmlp.w2 {
+		for j := range tmlp.w2[i] {
+			tmlp.w2[i][j] = 0
+		}
+		tmlp.b2[i] = 0
+	}
+	for i := 0; i < ns && i < len(tmlp.w1); i++ {
+		tmlp.w1[i][i] = 1.0
+	}
+	for i := 0; i < ns; i++ {
+		if i < len(tmlp.w2[i]) {
+			tmlp.w2[i][i] = 1.0
+		}
+	}
+
+	input := make([][]float64, 1)
+	input[0] = make([]float64, cfg.InputLen)
+	for i := range input[0] {
+		input[0][i] = float64(i) + 1.0 // all positive
+	}
+
+	out, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// With identity MLP and bottom-up residual, finer scales should have
+	// larger values than coarser scales (they accumulate residuals).
+	// Check that scale 0 seasonal values >= scale 1 >= scale 2.
+	for i := 0; i < cfg.InputLen; i++ {
+		s0 := math.Abs(out.Scales[0].seasonal[0][i])
+		s2 := math.Abs(out.Scales[2].seasonal[0][i])
+		// Scale 0 (finest) should be >= scale 2 (coarsest) due to bottom-up accumulation.
+		if s0 < s2-1e-10 {
+			t.Errorf("index %d: finest scale seasonal %.6f < coarsest %.6f (bottom-up residual not working)",
+				i, s0, s2)
+		}
+	}
+}
+
+func TestTimeMixerMixingTransforms(t *testing.T) {
+	cfg := TimeMixerConfig{
+		InputLen:    16,
+		OutputLen:   4,
+		NumFeatures: 2,
+		NumScales:   3,
+		HiddenSize:  32,
+		NumLayers:   2,
+	}
+	m := NewTimeMixer(cfg)
+
+	input := make([][]float64, cfg.NumFeatures)
+	for f := range input {
+		input[f] = make([]float64, cfg.InputLen)
+		for i := range input[f] {
+			input[f][i] = math.Sin(float64(i)*0.3) + float64(f)*2.0
+		}
+	}
+
+	// Get decomposition without mixing.
+	rawScales := m.decompose(input)
+
+	// Get full forward output (with mixing).
+	out, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward failed: %v", err)
+	}
+
+	// Mixing should produce different values from raw decomposition.
+	different := false
+	for s := range rawScales {
+		for f := 0; f < cfg.NumFeatures; f++ {
+			for i := 0; i < cfg.InputLen; i++ {
+				if math.Abs(rawScales[s].seasonal[f][i]-out.Scales[s].seasonal[f][i]) > 1e-10 {
+					different = true
+					break
+				}
+			}
+			if different {
+				break
+			}
+		}
+		if different {
+			break
+		}
+	}
+	if !different {
+		t.Error("mixing did not transform the seasonal components — MLP had no effect")
+	}
+}
+
+func TestTimeMixerMixingDeterministic(t *testing.T) {
+	cfg := TimeMixerConfig{
+		InputLen:    16,
+		OutputLen:   4,
+		NumFeatures: 2,
+		NumScales:   3,
+		HiddenSize:  32,
+		NumLayers:   2,
+	}
+	m := NewTimeMixer(cfg)
+
+	input := make([][]float64, cfg.NumFeatures)
+	for f := range input {
+		input[f] = make([]float64, cfg.InputLen)
+		for i := range input[f] {
+			input[f][i] = float64(i) * 0.1
+		}
+	}
+
+	out1, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward 1 failed: %v", err)
+	}
+	out2, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward 2 failed: %v", err)
+	}
+
+	// Same model, same input -> same output.
+	for s := range out1.Scales {
+		for f := 0; f < cfg.NumFeatures; f++ {
+			for i := 0; i < cfg.InputLen; i++ {
+				if out1.Scales[s].trend[f][i] != out2.Scales[s].trend[f][i] {
+					t.Errorf("scale %d feature %d index %d: trend not deterministic", s, f, i)
+				}
+				if out1.Scales[s].seasonal[f][i] != out2.Scales[s].seasonal[f][i] {
+					t.Errorf("scale %d feature %d index %d: seasonal not deterministic", s, f, i)
+				}
+			}
+		}
+	}
+}
+
+func TestMixingMLPForward(t *testing.T) {
+	mlp := newMixingMLP(3, 8)
+
+	// Zero input should produce output equal to bias pass-through.
+	input := []float64{0, 0, 0}
+	out := mlp.forward(input)
+	if len(out) != 3 {
+		t.Fatalf("expected output length 3, got %d", len(out))
+	}
+
+	// Non-zero input should produce non-zero output (with high probability given random init).
+	input2 := []float64{1.0, 2.0, 3.0}
+	out2 := mlp.forward(input2)
+	allZero := true
+	for _, v := range out2 {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Error("MLP produced all-zero output for non-zero input")
 	}
 }
 
