@@ -278,6 +278,89 @@ func TestLoadTiRexConfigFromMeta(t *testing.T) {
 	}
 }
 
+func TestFineTuneDecreasingLoss(t *testing.T) {
+	fc := newTestForecaster(t, 2, 2, 8, 4, 2)
+	ctx := context.Background()
+
+	// Generate synthetic training data: simple linear trend.
+	nSamples := 20
+	seqLen := 8
+	numVars := 2
+	horizon := 4
+
+	data := make([][]float64, nSamples)
+	labels := make([][]float64, nSamples)
+	for s := range nSamples {
+		data[s] = make([]float64, seqLen*numVars)
+		labels[s] = make([]float64, horizon*numVars)
+		base := float64(s) * 0.5
+		for t := range seqLen {
+			for c := range numVars {
+				data[s][t*numVars+c] = base + float64(t)*0.1*float64(c+1)
+			}
+		}
+		for t := range horizon {
+			for c := range numVars {
+				labels[s][t*numVars+c] = base + float64(seqLen+t)*0.1*float64(c+1)
+			}
+		}
+	}
+
+	cfg := FineTuneConfig{
+		Epochs:         30,
+		LearningRate:   1e-2,
+		BatchSize:      0,
+		FreezeBackbone: true,
+	}
+
+	result, err := fc.FineTune(ctx, data, labels, cfg)
+	if err != nil {
+		t.Fatalf("FineTune: %v", err)
+	}
+
+	if len(result.LossHistory) != 30 {
+		t.Fatalf("LossHistory length: got %d, want 30", len(result.LossHistory))
+	}
+
+	// Verify loss decreased from first to last epoch.
+	firstLoss := result.LossHistory[0]
+	finalLoss := result.FinalLoss
+	if finalLoss >= firstLoss {
+		t.Errorf("loss did not decrease: first=%f, final=%f", firstLoss, finalLoss)
+	}
+
+	// Verify all losses are finite.
+	for i, l := range result.LossHistory {
+		if math.IsNaN(l) || math.IsInf(l, 0) {
+			t.Fatalf("LossHistory[%d] is non-finite: %v", i, l)
+		}
+	}
+}
+
+func TestFineTuneValidation(t *testing.T) {
+	fc := newTestForecaster(t, 2, 2, 8, 4, 2)
+	ctx := context.Background()
+	cfg := FineTuneConfig{Epochs: 5, LearningRate: 1e-3, FreezeBackbone: true}
+
+	// Empty data.
+	_, err := fc.FineTune(ctx, nil, nil, cfg)
+	if err == nil {
+		t.Error("expected error for empty data")
+	}
+
+	// Mismatched lengths.
+	_, err = fc.FineTune(ctx, [][]float64{{1, 2, 3, 4}}, nil, cfg)
+	if err == nil {
+		t.Error("expected error for mismatched data/labels")
+	}
+
+	// Wrong label length.
+	_, err = fc.FineTune(ctx, [][]float64{{1, 2, 3, 4, 5, 6, 7, 8}}, [][]float64{{1}}, cfg)
+	if err == nil {
+		t.Error("expected error for wrong label length")
+	}
+}
+
 func TestLoadTiRexConfigDefaults(t *testing.T) {
 	meta := map[string]interface{}{
 		"tirex.block_count": uint32(2),

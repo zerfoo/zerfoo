@@ -446,3 +446,187 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 func (n *tiRexNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
+
+// TiRexFeatureExtractor provides access to backbone features and output head
+// parameters for fine-tuning. It runs the TiRex forward pass up to (but not
+// including) the output head, returning the hidden representation.
+type TiRexFeatureExtractor[T tensor.Float] struct {
+	node *tiRexNode[T]
+}
+
+// ForwardFeatures runs the TiRex backbone (input projection, xLSTM blocks,
+// layer norm) and returns the hidden representation [batch, hidden_dim].
+func (e *TiRexFeatureExtractor[T]) ForwardFeatures(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.node.forwardFeatures(ctx, input)
+}
+
+// OutputHeadForward applies the output head linear layer to hidden features,
+// returning [batch, horizon*num_vars].
+func (e *TiRexFeatureExtractor[T]) OutputHeadForward(ctx context.Context, hidden *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	return e.node.outputHead.Forward(ctx, hidden)
+}
+
+// OutputHeadParams returns the trainable parameters of the output head.
+func (e *TiRexFeatureExtractor[T]) OutputHeadParams() []*graph.Parameter[T] {
+	return e.node.outputHead.Parameters()
+}
+
+// HiddenDim returns the hidden dimension of the backbone.
+func (e *TiRexFeatureExtractor[T]) HiddenDim() int {
+	return e.node.cfg.HiddenDim
+}
+
+// BuildTiRexWithExtractor constructs a TiRex computation graph and returns
+// both the graph and a feature extractor for fine-tuning.
+func BuildTiRexWithExtractor[T tensor.Float](
+	tensors map[string]*tensor.TensorNumeric[T],
+	cfg *TiRexConfig,
+	engine compute.Engine[T],
+) (*graph.Graph[T], *TiRexFeatureExtractor[T], error) {
+	if err := validateTiRexConfig(cfg); err != nil {
+		return nil, nil, fmt.Errorf("invalid TiRex config: %w", err)
+	}
+
+	ops := engine.Ops()
+	node, err := newTiRexNode[T](tensors, cfg, engine, ops)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create TiRex node: %w", err)
+	}
+
+	builder := graph.NewBuilder[T](engine)
+	input := builder.Input([]int{-1, -1, cfg.InputDim})
+	builder.AddNode(node, input)
+
+	g, err := builder.Build(node)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return g, &TiRexFeatureExtractor[T]{node: node}, nil
+}
+
+// forwardFeatures runs the backbone up to the output head.
+func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	shape := input.Shape()
+	if len(shape) != 3 {
+		return nil, fmt.Errorf("TiRex input must be 3D [batch, seq_len, input_dim], got shape %v", shape)
+	}
+
+	batch, seqLen, inputDim := shape[0], shape[1], shape[2]
+	if inputDim != n.cfg.InputDim {
+		return nil, fmt.Errorf("TiRex input dim mismatch: got %d, want %d", inputDim, n.cfg.InputDim)
+	}
+
+	d := n.cfg.HiddenDim
+
+	flat, err := n.engine.Reshape(ctx, input, []int{batch * seqLen, inputDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape input: %w", err)
+	}
+	projected, err := n.inputProj.Forward(ctx, flat)
+	if err != nil {
+		return nil, fmt.Errorf("input projection: %w", err)
+	}
+	projected, err = n.engine.Reshape(ctx, projected, []int{batch, seqLen, d})
+	if err != nil {
+		return nil, fmt.Errorf("reshape projected: %w", err)
+	}
+
+	type slstmState struct {
+		h, c, n *tensor.TensorNumeric[T]
+	}
+	type mlstmState struct {
+		h    *tensor.TensorNumeric[T]
+		cMat *tensor.TensorNumeric[T]
+		n    *tensor.TensorNumeric[T]
+	}
+	slstmStates := make([]slstmState, n.cfg.NumLayers)
+	mlstmStates := make([]mlstmState, n.cfg.NumLayers)
+
+	for i, block := range n.blocks {
+		switch block.blockType {
+		case "slstm":
+			zeros := make([]T, batch*d)
+			h, hErr := tensor.New[T]([]int{batch, d}, zeros)
+			if hErr != nil {
+				return nil, fmt.Errorf("init sLSTM h block %d: %w", i, hErr)
+			}
+			c, cErr := tensor.New[T]([]int{batch, d}, make([]T, batch*d))
+			if cErr != nil {
+				return nil, fmt.Errorf("init sLSTM c block %d: %w", i, cErr)
+			}
+			nState, nErr := tensor.New[T]([]int{batch, d}, make([]T, batch*d))
+			if nErr != nil {
+				return nil, fmt.Errorf("init sLSTM n block %d: %w", i, nErr)
+			}
+			slstmStates[i] = slstmState{h: h, c: c, n: nState}
+		case "mlstm":
+			h, hErr := tensor.New[T]([]int{batch, d}, make([]T, batch*d))
+			if hErr != nil {
+				return nil, fmt.Errorf("init mLSTM h block %d: %w", i, hErr)
+			}
+			cMat, cErr := tensor.New[T]([]int{batch, d, d}, make([]T, batch*d*d))
+			if cErr != nil {
+				return nil, fmt.Errorf("init mLSTM C block %d: %w", i, cErr)
+			}
+			nState, nErr := tensor.New[T]([]int{batch, d}, make([]T, batch*d))
+			if nErr != nil {
+				return nil, fmt.Errorf("init mLSTM n block %d: %w", i, nErr)
+			}
+			mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState}
+		}
+	}
+
+	projData := projected.Data()
+	var finalHidden *tensor.TensorNumeric[T]
+
+	for t := range seqLen {
+		stepData := make([]T, batch*d)
+		for b := range batch {
+			copy(stepData[b*d:(b+1)*d], projData[b*seqLen*d+t*d:b*seqLen*d+(t+1)*d])
+		}
+		stepInput, sErr := tensor.New[T]([]int{batch, d}, stepData)
+		if sErr != nil {
+			return nil, fmt.Errorf("extract time step %d: %w", t, sErr)
+		}
+
+		blockInput := stepInput
+		for i, block := range n.blocks {
+			switch block.blockType {
+			case "slstm":
+				st := slstmStates[i]
+				h, c, nState, fErr := block.slstm.Forward(ctx, blockInput, st.h, st.c, st.n)
+				if fErr != nil {
+					return nil, fmt.Errorf("sLSTM block %d step %d: %w", i, t, fErr)
+				}
+				slstmStates[i] = slstmState{h: h, c: c, n: nState}
+				blockInput = h
+			case "mlstm":
+				st := mlstmStates[i]
+				h, cMat, nState, fErr := block.mlstm.Forward(ctx, blockInput, st.h, st.cMat, st.n)
+				if fErr != nil {
+					return nil, fmt.Errorf("mLSTM block %d step %d: %w", i, t, fErr)
+				}
+				mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState}
+				blockInput = h
+			}
+		}
+
+		finalHidden = blockInput
+	}
+
+	finalHidden, err = n.engine.Reshape(ctx, finalHidden, []int{batch, 1, d})
+	if err != nil {
+		return nil, fmt.Errorf("reshape for norm: %w", err)
+	}
+	finalHidden, err = n.finalNorm.Forward(ctx, finalHidden)
+	if err != nil {
+		return nil, fmt.Errorf("final norm: %w", err)
+	}
+	finalHidden, err = n.engine.Reshape(ctx, finalHidden, []int{batch, d})
+	if err != nil {
+		return nil, fmt.Errorf("reshape after norm: %w", err)
+	}
+
+	return finalHidden, nil
+}
