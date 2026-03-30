@@ -457,26 +457,60 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		batchSize = config.BatchSize
 	}
 
+	// Pre-allocate tensor workspace outside the training loop.
+	// All batch dimensions are fixed after partial-batch dropping (T51.1.1),
+	// so these buffers can be reused across every batch and epoch.
+	// This eliminates per-batch allocations that would cause cudaMalloc
+	// during CUDA graph capture (error 901).
+	bsC := batchSize * channels          // batch dimension includes all channels
+	totalRows := bsC * numPatches        // total rows for encoder
+	chanScale := float32(1.0 / float64(channels))
+
+	// Forward cache: pre-allocate struct and layer cache slice once.
+	fc := gpuBatchForwardCache{
+		layerCaches: make([]gpuBatchLayerCache, m.config.NLayers),
+	}
+
+	// Pre-allocate reusable slices for patch building, flatten, loss, and backward.
+	patchData := make([]float32, totalRows*m.config.PatchLength)
+	flatData := make([]float32, bsC*headIn)
+	predData := make([]float32, batchSize*outDim)
+	dPredData := make([]float32, batchSize*outDim)
+	dChanOutData := make([]float32, bsC*outDim)
+
+	// Pre-allocate tensors with fixed shapes that are overwritten each batch.
+	fc.patches, err = tensor.New[float32]([]int{totalRows, m.config.PatchLength}, patchData)
+	if err != nil {
+		return nil, fmt.Errorf("gpu workspace patches: %w", err)
+	}
+	fc.flatInput, err = tensor.New[float32]([]int{bsC, headIn}, flatData)
+	if err != nil {
+		return nil, fmt.Errorf("gpu workspace flatInput: %w", err)
+	}
+	dChanOut, err := tensor.New[float32]([]int{bsC, outDim}, dChanOutData)
+	if err != nil {
+		return nil, fmt.Errorf("gpu workspace dChanOut: %w", err)
+	}
+
+	// Cache gradient tensor list once (slice of pointers is stable across batches).
+	gradTs := grads.allParamTensors()
+
+	// Drop partial final batch for consistent tensor shapes (required for CUDA graph capture).
+	fullBatches := nSamples - (nSamples % batchSize)
+
 	for epoch := 0; epoch < config.Epochs; epoch++ {
 		epochLoss := 0.0
 		nBatches := 0
 
-		// Drop partial final batch for consistent tensor shapes (required for CUDA graph capture).
-		fullBatches := nSamples - (nSamples % batchSize)
 		for start := 0; start < fullBatches; start += batchSize {
 			bs := batchSize
-			bsC := bs * channels           // batch dimension includes all channels
-			totalRows := bsC * numPatches  // total rows for encoder
 
 			// Zero all gradients.
-			gradTs := grads.allParamTensors()
 			for _, gt := range gradTs {
 				if err := m.engine.Zero(ctx, gt); err != nil {
 					return nil, fmt.Errorf("patchtst gpu: zero grad: %w", err)
 				}
 			}
-
-			chanScale := float32(1.0 / float64(channels))
 
 			// Pre-compute weight transposes (used in backward, constant within batch).
 			headWT, err := m.engine.Transpose(ctx, params.headW, []int{1, 0})
@@ -514,14 +548,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 			}
 
-			// Single forward cache for all channels batched together.
-			fc := gpuBatchForwardCache{
-				layerCaches: make([]gpuBatchLayerCache, m.config.NLayers),
-			}
-
-			// Build ALL patches at once: [bsC*numPatches, patchLen].
+			// Build ALL patches at once into pre-allocated buffer: [bsC*numPatches, patchLen].
 			// Interleave: sample0-ch0, sample0-ch1, ..., sample0-chN, sample1-ch0, ...
-			patchData := make([]float32, totalRows*m.config.PatchLength)
 			for s := 0; s < bs; s++ {
 				sIdx := start + s
 				for ch := 0; ch < channels; ch++ {
@@ -533,10 +561,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						}
 					}
 				}
-			}
-			fc.patches, err = tensor.New[float32]([]int{totalRows, m.config.PatchLength}, patchData)
-			if err != nil {
-				return nil, fmt.Errorf("gpu fwd patches: %w", err)
 			}
 
 			// Patch embedding: [bsC*numPatches, patchLen] @ [patchLen, dModel] = [bsC*numPatches, dModel].
@@ -579,12 +603,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			}
 
 			// Flatten for output head: [bsC*numPatches, dModel] -> [bsC, headIn].
-			flatData := make([]float32, bsC*headIn)
+			// Overwrite pre-allocated flatData buffer (backing fc.flatInput).
 			copy(flatData, x.Data())
-			fc.flatInput, err = tensor.New[float32]([]int{bsC, headIn}, flatData)
-			if err != nil {
-				return nil, err
-			}
 
 			// Output head: ONE MatMul for all samples x channels.
 			// [bsC, headIn] @ [headIn, outDim] = [bsC, outDim]
@@ -600,7 +620,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			// Average across channels: reshape [bsC, outDim] -> [bs, channels, outDim],
 			// sum axis=1 -> [bs, outDim], scale by 1/channels.
 			headOutData := headOut.Data()
-			predData := make([]float32, bs*outDim)
+			for i := range predData {
+				predData[i] = 0
+			}
 			for s := 0; s < bs; s++ {
 				for ch := 0; ch < channels; ch++ {
 					row := s*channels + ch
@@ -615,7 +637,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			// Compute loss and dPred on CPU: pred [bs, outDim] vs labels [bs, outDim].
 			batchLoss := 0.0
-			dPredData := make([]float32, bs*outDim)
 			for s := 0; s < bs; s++ {
 				sIdx := start + s
 				sampleLabels := labels[sIdx*outDim : (sIdx+1)*outDim]
@@ -628,7 +649,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			// --- Backward pass (single pass for all channels) ---
 			// Broadcast dPred [bs, outDim] -> [bsC, outDim], scaled by 1/channels.
-			dChanOutData := make([]float32, bsC*outDim)
+			// Overwrite pre-allocated dChanOutData buffer (backing dChanOut).
 			for s := 0; s < bs; s++ {
 				for ch := 0; ch < channels; ch++ {
 					row := s*channels + ch
@@ -636,10 +657,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						dChanOutData[row*outDim+j] = dPredData[s*outDim+j] * chanScale
 					}
 				}
-			}
-			dChanOut, err := tensor.New[float32]([]int{bsC, outDim}, dChanOutData)
-			if err != nil {
-				return nil, err
 			}
 
 			// Head backward: ONE MatMul for dW, ONE for dX.
@@ -732,7 +749,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			// Gradient clipping.
 			if config.GradClip > 0 {
-				gradTs := grads.allParamTensors()
 				norm := float64(0)
 				for _, gt := range gradTs {
 					for _, v := range gt.Data() {
@@ -762,8 +778,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			vCorr := float32(1.0 / (1.0 - math.Pow(config.Beta2, t)))
 			wdF := float32(config.WeightDecay)
 
-			paramTs := params.allParamTensors()
-			gradTs = grads.allParamTensors()
 			for i := range paramTs {
 				// AdamW step on CPU for simplicity and correctness.
 				pData := paramTs[i].Data()
