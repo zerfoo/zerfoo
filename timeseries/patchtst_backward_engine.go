@@ -25,7 +25,7 @@ func (m *PatchTST) linearBackwardF64EngineAccumWithBufs(ctx context.Context, dY,
 			xT[k][i] = x[i][k]
 		}
 	}
-	dWMat, err := m.matMulEngineWithBufs(ctx, xT, dY, bufs)
+	dWMat, err := matMulEngineWithBufs(m.engine, ctx, xT, dY, bufs)
 	if err != nil {
 		return fmt.Errorf("linearBackwardF64EngineAccum dW: %w", err)
 	}
@@ -43,7 +43,7 @@ func (m *PatchTST) linearBackwardF64EngineAccumWithBufs(ctx context.Context, dY,
 			wT[j][k] = w[k*outDim+j]
 		}
 	}
-	dXMat, err := m.matMulEngineWithBufs(ctx, dY, wT, bufs)
+	dXMat, err := matMulEngineWithBufs(m.engine, ctx, dY, wT, bufs)
 	if err != nil {
 		return fmt.Errorf("linearBackwardF64EngineAccum dX: %w", err)
 	}

@@ -4,93 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-
-	"github.com/zerfoo/ztensor/tensor"
 )
-
-// matMulEngine performs matrix multiplication via the compute engine.
-// a: [M][K], b: [K][N] -> result: [M][N].
-// Converts float64 inputs to float32 tensors, calls engine.MatMul, and
-// converts the float32 result back to float64.
-func (m *TTM) matMulEngine(ctx context.Context, a, b [][]float64) ([][]float64, error) {
-	rows := len(a)
-	if rows == 0 {
-		return nil, nil
-	}
-	inner := len(a[0])
-	cols := len(b[0])
-
-	// Flatten a to float32.
-	aFlat := make([]float32, rows*inner)
-	for i, row := range a {
-		off := i * inner
-		for j, v := range row {
-			aFlat[off+j] = float32(v)
-		}
-	}
-
-	// Flatten b to float32.
-	bFlat := make([]float32, inner*cols)
-	for i, row := range b {
-		off := i * cols
-		for j, v := range row {
-			bFlat[off+j] = float32(v)
-		}
-	}
-
-	aTensor, err := tensor.New[float32]([]int{rows, inner}, aFlat)
-	if err != nil {
-		return nil, fmt.Errorf("ttm matMulEngine: create a tensor: %w", err)
-	}
-	bTensor, err := tensor.New[float32]([]int{inner, cols}, bFlat)
-	if err != nil {
-		return nil, fmt.Errorf("ttm matMulEngine: create b tensor: %w", err)
-	}
-
-	cTensor, err := m.engine.MatMul(ctx, aTensor, bTensor)
-	if err != nil {
-		return nil, fmt.Errorf("ttm matMulEngine: matmul: %w", err)
-	}
-
-	// Convert result back to [][]float64.
-	cData := cTensor.Data()
-	result := make([][]float64, rows)
-	for i := 0; i < rows; i++ {
-		result[i] = make([]float64, cols)
-		off := i * cols
-		for j := 0; j < cols; j++ {
-			result[i][j] = float64(cData[off+j])
-		}
-	}
-	return result, nil
-}
-
-// linearF64Engine computes x @ W + b using the engine for the MatMul.
-// x: [n][inDim], W: [inDim*outDim] (row-major), b: [outDim].
-// The matrix multiplication is performed via engine.MatMul in float32;
-// bias addition remains in float64.
-func (m *TTM) linearF64Engine(ctx context.Context, x [][]float64, w, b []float64, inDim, outDim int) ([][]float64, error) {
-	n := len(x)
-
-	// Reshape flat w [inDim*outDim] into [inDim][outDim] for matMulEngine.
-	wMat := make([][]float64, inDim)
-	for i := 0; i < inDim; i++ {
-		wMat[i] = w[i*outDim : (i+1)*outDim]
-	}
-
-	out, err := m.matMulEngine(ctx, x, wMat)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add bias in float64.
-	for i := 0; i < n; i++ {
-		for j := 0; j < outDim; j++ {
-			out[i][j] += b[j]
-		}
-	}
-	return out, nil
-}
 
 // mixerBlockF64WithCacheEngine runs one TSMixer block in float64 using
 // the compute engine for MatMul operations. Caches activations for backward.
@@ -108,14 +22,14 @@ func (m *TTM) mixerBlockF64WithCacheEngine(ctx context.Context, x [][]float64, l
 	transposed := transposeMatrix(normed, nPatches, dModel)
 	mc.transposed = transposed
 
-	mlp1Pre, err := m.linearF64Engine(ctx, transposed, layer.timeMLP1W, layer.timeMLP1B, nPatches, nPatches)
+	mlp1Pre, err := linearF64Engine(m.engine, ctx, transposed, layer.timeMLP1W, layer.timeMLP1B, nPatches, nPatches)
 	if err != nil {
 		return nil, mc, fmt.Errorf("time MLP1: %w", err)
 	}
 	mc.mlp1Pre = mlp1Pre
 	mlp1Out := geluMatrix(mlp1Pre)
 	mc.mlp1Out = mlp1Out
-	mlp2Out, err := m.linearF64Engine(ctx, mlp1Out, layer.timeMLP2W, layer.timeMLP2B, nPatches, nPatches)
+	mlp2Out, err := linearF64Engine(m.engine, ctx, mlp1Out, layer.timeMLP2W, layer.timeMLP2B, nPatches, nPatches)
 	if err != nil {
 		return nil, mc, fmt.Errorf("time MLP2: %w", err)
 	}
@@ -138,14 +52,14 @@ func (m *TTM) mixerBlockF64WithCacheEngine(ctx context.Context, x [][]float64, l
 		mc.featCentered = centered
 
 		ffnDim := len(layer.featMLP1B)
-		mlp1Pre, err := m.linearF64Engine(ctx, normed, layer.featMLP1W, layer.featMLP1B, dModel, ffnDim)
+		mlp1Pre, err := linearF64Engine(m.engine, ctx, normed, layer.featMLP1W, layer.featMLP1B, dModel, ffnDim)
 		if err != nil {
 			return nil, mc, fmt.Errorf("feat MLP1: %w", err)
 		}
 		mc.featMLP1Pre = mlp1Pre
 		mlp1Out := geluMatrix(mlp1Pre)
 		mc.featMLP1Out = mlp1Out
-		mlp2Out, err := m.linearF64Engine(ctx, mlp1Out, layer.featMLP2W, layer.featMLP2B, ffnDim, dModel)
+		mlp2Out, err := linearF64Engine(m.engine, ctx, mlp1Out, layer.featMLP2W, layer.featMLP2B, ffnDim, dModel)
 		if err != nil {
 			return nil, mc, fmt.Errorf("feat MLP2: %w", err)
 		}
@@ -190,7 +104,7 @@ func (m *TTM) forwardF64WithCacheEngine(ctx context.Context, input [][]float64, 
 
 		// Patch embedding.
 		var err error
-		cc.embedded, err = m.linearF64Engine(ctx, cc.patches, params.patchEmbW, params.patchEmbB, m.config.PatchLen, dModel)
+		cc.embedded, err = linearF64Engine(m.engine, ctx, cc.patches, params.patchEmbW, params.patchEmbB, m.config.PatchLen, dModel)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ttm engine: patch embedding: %w", err)
 		}
@@ -227,7 +141,7 @@ func (m *TTM) forwardF64WithCacheEngine(ctx context.Context, input [][]float64, 
 		}
 
 		headIn := forecastPatches * dModel
-		headOut, err := m.linearF64Engine(ctx, [][]float64{cc.flatInput}, params.headW, params.headB, headIn, m.config.ForecastLen)
+		headOut, err := linearF64Engine(m.engine, ctx, [][]float64{cc.flatInput}, params.headW, params.headB, headIn, m.config.ForecastLen)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ttm engine: forecast head: %w", err)
 		}
@@ -297,7 +211,7 @@ func (m *TTM) batchForwardF64Engine(ctx context.Context, windows [][][]float64, 
 	}
 
 	// Patch embedding: [totalChans*numPatches, patchLen] -> [totalChans*numPatches, dModel].
-	embedded, err := m.linearF64Engine(ctx, bigPatches, params.patchEmbW, params.patchEmbB, patchLen, dModel)
+	embedded, err := linearF64Engine(m.engine, ctx, bigPatches, params.patchEmbW, params.patchEmbB, patchLen, dModel)
 	if err != nil {
 		return nil, fmt.Errorf("ttm batch: patch embedding: %w", err)
 	}
@@ -340,7 +254,7 @@ func (m *TTM) batchForwardF64Engine(ctx context.Context, windows [][][]float64, 
 
 	// Batched forecast head: [totalChans, forecastPatches*dModel] -> [totalChans, forecastLen].
 	headIn := forecastPatches * dModel
-	headOut, err := m.linearF64Engine(ctx, chanOutputs, params.headW, params.headB, headIn, forecastLen)
+	headOut, err := linearF64Engine(m.engine, ctx, chanOutputs, params.headW, params.headB, headIn, forecastLen)
 	if err != nil {
 		return nil, fmt.Errorf("ttm batch: forecast head: %w", err)
 	}
@@ -375,12 +289,12 @@ func (m *TTM) mixerBlockF64Engine(ctx context.Context, x [][]float64, layer *ttm
 	normed := layerNormF64(x, layer.timeNormScale, layer.timeNormBias, dModel)
 	transposed := transposeMatrix(normed, nPatches, dModel)
 
-	mlp1, err := m.linearF64Engine(ctx, transposed, layer.timeMLP1W, layer.timeMLP1B, nPatches, nPatches)
+	mlp1, err := linearF64Engine(m.engine, ctx, transposed, layer.timeMLP1W, layer.timeMLP1B, nPatches, nPatches)
 	if err != nil {
 		return nil, fmt.Errorf("time MLP1: %w", err)
 	}
 	mlp1 = geluMatrix(mlp1)
-	mlp2, err := m.linearF64Engine(ctx, mlp1, layer.timeMLP2W, layer.timeMLP2B, nPatches, nPatches)
+	mlp2, err := linearF64Engine(m.engine, ctx, mlp1, layer.timeMLP2W, layer.timeMLP2B, nPatches, nPatches)
 	if err != nil {
 		return nil, fmt.Errorf("time MLP2: %w", err)
 	}
@@ -397,12 +311,12 @@ func (m *TTM) mixerBlockF64Engine(ctx context.Context, x [][]float64, layer *ttm
 		normed = layerNormF64(h, layer.featNormScale, layer.featNormBias, dModel)
 
 		ffnDim := len(layer.featMLP1B)
-		mlp1, err = m.linearF64Engine(ctx, normed, layer.featMLP1W, layer.featMLP1B, dModel, ffnDim)
+		mlp1, err = linearF64Engine(m.engine, ctx, normed, layer.featMLP1W, layer.featMLP1B, dModel, ffnDim)
 		if err != nil {
 			return nil, fmt.Errorf("feat MLP1: %w", err)
 		}
 		mlp1 = geluMatrix(mlp1)
-		mlp2, err = m.linearF64Engine(ctx, mlp1, layer.featMLP2W, layer.featMLP2B, ffnDim, dModel)
+		mlp2, err = linearF64Engine(m.engine, ctx, mlp1, layer.featMLP2W, layer.featMLP2B, ffnDim, dModel)
 		if err != nil {
 			return nil, fmt.Errorf("feat MLP2: %w", err)
 		}
