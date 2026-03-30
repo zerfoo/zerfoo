@@ -430,7 +430,7 @@ func (m *TimeMixer) MAWeights(scale int) []float64 {
 
 // TrainWindowed trains the TimeMixer on windowed time-series data using AdamW
 // with gradient clipping and linear LR warmup.
-func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, epochs int) (*TrainResult, error) {
+func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error) {
 	if len(windows) == 0 {
 		return nil, fmt.Errorf("timemixer: empty training data")
 	}
@@ -451,12 +451,18 @@ func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, epoch
 		}
 	}
 
-	config := TrainConfig{
-		Epochs:       epochs,
-		LR:           1e-3,
-		WeightDecay:  0.01,
-		GradClip:     1.0,
-		WarmupEpochs: min(5, epochs/5+1),
+	// Apply defaults for optional fields.
+	if config.LR == 0 {
+		config.LR = 1e-3
+	}
+	if config.WeightDecay == 0 {
+		config.WeightDecay = 0.01
+	}
+	if config.GradClip == 0 {
+		config.GradClip = 1.0
+	}
+	if config.WarmupEpochs == 0 {
+		config.WarmupEpochs = min(5, config.Epochs/5+1)
 	}
 	return TrainLoop(m, windows, expandedLabels, config)
 }

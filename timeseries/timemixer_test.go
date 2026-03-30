@@ -579,7 +579,7 @@ func TestTimeMixerTrainWindowedDecreasingLoss(t *testing.T) {
 		labels[s] = math.Sin(float64(s+cfg.InputLen) * 0.3)
 	}
 
-	result, err := m.TrainWindowed(windows, labels, 30)
+	result, err := m.TrainWindowed(windows, labels, TrainConfig{Epochs: 30})
 	if err != nil {
 		t.Fatalf("TrainWindowed failed: %v", err)
 	}
