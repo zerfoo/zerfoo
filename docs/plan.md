@@ -17,7 +17,7 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E47: Batched training performance (0/19 -- GitHub #278, T47.2.4 added for batched attention)
 - E48: TimeMixer backend (0/10 -- GitHub #279)
 - E49: Foundation model inference (0/12 -- GitHub #280)
-- E50: GPU training kernel elimination (1/6 -- weight transpose caching done, layer norm/GELU reverted)
+- E50: GPU training kernel elimination (3/6 -- layer norm fwd, GELU fwd/bwd, weight transpose caching done)
 - E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
 - E52: DRY composition refactoring (0/7 -- eliminate ~5K duplicated lines in timeseries/)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
@@ -2446,7 +2446,7 @@ transposes outside the batch loop.
 
 ### E50.1: Layer Norm Forward on Engine
 
-- [ ] T50.1.1 Implement engine-based layer norm forward  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T50.1.1 Implement engine-based layer norm forward  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
   File: timeseries/patchtst_gpu_train.go
   Replace layerNormF32WithCache with engine ops:
   (1) mean = engine.Sum(x, -1, keepDims=true) / dModel via engine.MulScalar
@@ -2476,7 +2476,7 @@ transposes outside the batch loop.
 
 ### E50.3: GELU Forward/Backward on Engine
 
-- [ ] T50.3.1 Implement engine-based GELU forward and backward  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T50.3.1 Implement engine-based GELU forward and backward  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
   File: timeseries/patchtst_gpu_train.go
   GELU forward: gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
   Using engine ops: engine.Mul, engine.MulScalar, engine.Add, engine.Tanh, engine.AddScalar.
@@ -2521,8 +2521,8 @@ transposes outside the batch loop.
 
 ##### Wave E50-1: Independent implementations (3 agents)
 
-- [ ] T50.1.1 Layer norm forward on engine
-- [ ] T50.3.1 GELU forward/backward on engine
+- [x] T50.1.1 Layer norm forward on engine  DONE 2026-03-30
+- [x] T50.3.1 GELU forward/backward on engine  DONE 2026-03-30
 - [x] T50.4.1 Cache weight transposes  DONE 2026-03-30 0fbaf2e8
 
 ##### Wave E50-2: Dependent + validation (3 agents)
@@ -2654,7 +2654,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.1: Shared Math Ops
 
-- [ ] T52.1.1 Create timeseries/math_ops.go with generic GELU and helpers  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T52.1.1 Create timeseries/math_ops.go with generic GELU and helpers  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Create timeseries/math_ops.go with:
   (1) `func geluScalar[T ~float32 | ~float64](x T) T` -- replaces 4 implementations:
       patchtst.go:695, patchtst_backward.go:677, itransformer.go:353, ttm.go:1436
@@ -2668,7 +2668,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.2: Shared Engine Wrappers
 
-- [ ] T52.2.1 Extract matMulEngine and linearF64Engine as free functions  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T52.2.1 Extract matMulEngine and linearF64Engine as free functions  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Move from PatchTST receiver methods to package-level functions:
   (1) `func matMulEngine(engine compute.Engine[float32], ctx context.Context, a, b [][]float64) ([][]float64, error)`
       Currently: patchtst_engine.go:21 (PatchTST method), ttm_train_engine.go:15 (TTM method -- exact copy)
@@ -2679,7 +2679,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.3: Shared AdamW F32
 
-- [ ] T52.3.1 Create timeseries/adamw_f32.go for shared f32 optimizer ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T52.3.1 Create timeseries/adamw_f32.go for shared f32 optimizer ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Create timeseries/adamw_f32.go with:
   (1) `type adamStateF32 struct { m, v []float32 }` -- replaces 4 definitions:
       nhits.go:276, cfc_engine.go:130, frets_engine.go:113, dlinear_engine.go:52
@@ -2692,7 +2692,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.4: TimeMixer TrainConfig
 
-- [ ] T52.4.1 Fix TimeMixer TrainWindowed to accept TrainConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T52.4.1 Fix TimeMixer TrainWindowed to accept TrainConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Change timemixer.go:433 from:
     `func (m *TimeMixer) TrainWindowed(windows, labels, epochs int) (*TrainResult, error)`
   To:
@@ -2703,7 +2703,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.5: Consolidated Layer Norm
 
-- [ ] T52.5.1 Create timeseries/layernorm_ops.go with canonical implementations  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T52.5.1 Create timeseries/layernorm_ops.go with canonical implementations  Owner: TBD  Est: 2h  verifies: [infrastructure]
   Deps: T52.1.1
   Create timeseries/layernorm_ops.go with 5 canonical functions:
   (1) `func layerNormF64(x [][]float64, scale, bias []float64, d int) [][]float64`
@@ -2723,7 +2723,7 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ### E52.6: Validation
 
-- [ ] T52.6.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T52.6.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
   Acceptance: go vet ./timeseries/ clean. go test -race ./timeseries/ passes.
   Verify: no unused imports, no unused functions from old implementations.
@@ -2734,15 +2734,15 @@ while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performa
 
 ##### Wave E52-1: Independent refactors (4 agents)
 
-- [ ] T52.1.1 Shared math ops (GELU, copyMatrix, softmax)
-- [ ] T52.2.1 Shared engine wrappers (matMulEngine, linearF64Engine)
-- [ ] T52.3.1 Shared AdamW F32
-- [ ] T52.4.1 TimeMixer TrainConfig fix
+- [x] T52.1.1 Shared math ops (GELU, copyMatrix, softmax)
+- [x] T52.2.1 Shared engine wrappers (matMulEngine, linearF64Engine)
+- [x] T52.3.1 Shared AdamW F32
+- [x] T52.4.1 TimeMixer TrainConfig fix
 
 ##### Wave E52-2: Dependent + validation (2 agents)
 
-- [ ] T52.5.1 Consolidated layer norm  Deps: T52.1.1
-- [ ] T52.6.1 Run go vet and tests  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
+- [x] T52.5.1 Consolidated layer norm  Deps: T52.1.1
+- [x] T52.6.1 Run go vet and tests  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
 
 ---
 
