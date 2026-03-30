@@ -302,7 +302,7 @@ func (g *gpuGrads) allParamTensors() []*tensor.TensorNumeric[float32] {
 type gpuBatchLayerCache struct {
 	normed1    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
 	q, k, v    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
-	scores     [][][][]float32                 // [bs][nHeads][seq][seq] - per-sample, CPU
+	scoresTensor *tensor.TensorNumeric[float32] // [bs*nHeads, seq, seq] - batched attention scores
 	attnOut    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
 	normed2    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
 	ffn1PreAct *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
@@ -607,61 +607,92 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						return nil, err
 					}
 
-					// Attention on CPU: per-sample (small seq x seq matrices).
-					qData := lc.q.Data()
-					kData := lc.k.Data()
-					vData := lc.v.Data()
-					seq := numPatches
-					attnOutData := make([]float32, totalRows*dModel)
-
-					lc.scores = make([][][][]float32, bs)
+					// Batched attention via engine ops: reshape Q/K/V to
+					// [bs*nHeads, numPatches, headDim] and use 3D batched MatMul.
 					scale := float32(1.0 / math.Sqrt(float64(headDim)))
-					for s := 0; s < bs; s++ {
-						sOff := s * numPatches * dModel
-						lc.scores[s] = make([][][]float32, nHeads)
-						for h := 0; h < nHeads; h++ {
-							hOff := h * headDim
-							lc.scores[s][h] = make([][]float32, seq)
-							for i := 0; i < seq; i++ {
-								lc.scores[s][h][i] = make([]float32, seq)
-								for j := 0; j < seq; j++ {
-									dot := float32(0)
-									for d := 0; d < headDim; d++ {
-										dot += qData[sOff+i*dModel+hOff+d] * kData[sOff+j*dModel+hOff+d]
-									}
-									lc.scores[s][h][i][j] = dot * scale
-								}
-							}
-							// Softmax.
-							for i := 0; i < seq; i++ {
-								maxS := lc.scores[s][h][i][0]
-								for j := 1; j < seq; j++ {
-									if lc.scores[s][h][i][j] > maxS {
-										maxS = lc.scores[s][h][i][j]
-									}
-								}
-								sumExp := float32(0)
-								for j := 0; j < seq; j++ {
-									lc.scores[s][h][i][j] = float32(math.Exp(float64(lc.scores[s][h][i][j] - maxS)))
-									sumExp += lc.scores[s][h][i][j]
-								}
-								for j := 0; j < seq; j++ {
-									lc.scores[s][h][i][j] /= sumExp
-								}
-							}
-							// Weighted sum.
-							for i := 0; i < seq; i++ {
-								for d := 0; d < headDim; d++ {
-									val := float32(0)
-									for j := 0; j < seq; j++ {
-										val += lc.scores[s][h][i][j] * vData[sOff+j*dModel+hOff+d]
-									}
-									attnOutData[sOff+i*dModel+hOff+d] = val
-								}
-							}
-						}
+					bnh := bs * nHeads // total batch*heads
+					seq := numPatches
+
+					// Reshape Q/K/V: [bs*seq, dModel] -> [bs, seq, nHeads, headDim]
+					// -> transpose [0,2,1,3] -> [bs, nHeads, seq, headDim]
+					// -> reshape [bs*nHeads, seq, headDim].
+					q4d, err := m.engine.Reshape(ctx, lc.q, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
 					}
-					lc.attnOut, err = tensor.New[float32]([]int{totalRows, dModel}, attnOutData)
+					q4d, err = m.engine.Transpose(ctx, q4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					qH, err := m.engine.Reshape(ctx, q4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					k4d, err := m.engine.Reshape(ctx, lc.k, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
+					}
+					k4d, err = m.engine.Transpose(ctx, k4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					kH, err := m.engine.Reshape(ctx, k4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					v4d, err := m.engine.Reshape(ctx, lc.v, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
+					}
+					v4d, err = m.engine.Transpose(ctx, v4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					vH, err := m.engine.Reshape(ctx, v4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					// scores = Q @ K^T * scale: [bnh, seq, seq].
+					kHT, err := m.engine.Transpose(ctx, kH, []int{0, 2, 1})
+					if err != nil {
+						return nil, err
+					}
+					logits, err := m.engine.MatMul(ctx, qH, kHT)
+					if err != nil {
+						return nil, err
+					}
+					logits, err = m.engine.MulScalar(ctx, logits, scale)
+					if err != nil {
+						return nil, err
+					}
+
+					// softmax along last axis.
+					lc.scoresTensor, err = m.engine.Softmax(ctx, logits, -1)
+					if err != nil {
+						return nil, err
+					}
+
+					// attnOut = scores @ V: [bnh, seq, headDim].
+					attnH, err := m.engine.MatMul(ctx, lc.scoresTensor, vH)
+					if err != nil {
+						return nil, err
+					}
+
+					// Reshape back: [bnh, seq, headDim] -> [bs, nHeads, seq, headDim]
+					// -> transpose [0,2,1,3] -> [bs, seq, nHeads, headDim]
+					// -> reshape [bs*seq, dModel].
+					attnH, err = m.engine.Reshape(ctx, attnH, []int{bs, nHeads, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+					attnH, err = m.engine.Transpose(ctx, attnH, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					lc.attnOut, err = m.engine.Reshape(ctx, attnH, []int{totalRows, dModel})
 					if err != nil {
 						return nil, err
 					}
@@ -1017,59 +1048,160 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 						return nil, err
 					}
 
-					// Attention backward on CPU: per-sample (small seq x seq).
-					dAttnOutData := dAttnOutT.Data()
-					qData := lc.q.Data()
-					kData := lc.k.Data()
-					vData := lc.v.Data()
+					// Batched attention backward via engine ops.
+					// Reshape dAttnOut to [bs*nHeads, seq, headDim] (same layout as forward).
 					seq := numPatches
-					dQData := make([]float32, totalRows*dModel)
-					dKData := make([]float32, totalRows*dModel)
-					dVData := make([]float32, totalRows*dModel)
-
+					bnh := bs * nHeads
 					attnScale := float32(1.0 / math.Sqrt(float64(headDim)))
-					for s := 0; s < bs; s++ {
-						sOff := s * numPatches * dModel
-						for h := 0; h < nHeads; h++ {
-							hOff := h * headDim
 
-							dScores := make([][]float32, seq)
-							for i := 0; i < seq; i++ {
-								dScores[i] = make([]float32, seq)
-								for j := 0; j < seq; j++ {
-									for d := 0; d < headDim; d++ {
-										dScores[i][j] += dAttnOutData[sOff+i*dModel+hOff+d] * vData[sOff+j*dModel+hOff+d]
-										dVData[sOff+j*dModel+hOff+d] += lc.scores[s][h][i][j] * dAttnOutData[sOff+i*dModel+hOff+d]
-									}
-								}
-							}
-
-							for i := 0; i < seq; i++ {
-								dot := float32(0)
-								for j := 0; j < seq; j++ {
-									dot += lc.scores[s][h][i][j] * dScores[i][j]
-								}
-								for j := 0; j < seq; j++ {
-									dLogit := lc.scores[s][h][i][j] * (dScores[i][j] - dot) * attnScale
-									for d := 0; d < headDim; d++ {
-										dQData[sOff+i*dModel+hOff+d] += dLogit * kData[sOff+j*dModel+hOff+d]
-										dKData[sOff+j*dModel+hOff+d] += dLogit * qData[sOff+i*dModel+hOff+d]
-									}
-								}
-							}
-						}
-					}
-
-					// Q/K/V projection backward: ONE MatMul each for dW and dNormed1.
-					dQT, err := tensor.New[float32]([]int{totalRows, dModel}, dQData)
+					dAO4d, err := m.engine.Reshape(ctx, dAttnOutT, []int{bs, seq, nHeads, headDim})
 					if err != nil {
 						return nil, err
 					}
-					dKT, err := tensor.New[float32]([]int{totalRows, dModel}, dKData)
+					dAO4d, err = m.engine.Transpose(ctx, dAO4d, []int{0, 2, 1, 3})
 					if err != nil {
 						return nil, err
 					}
-					dVT, err := tensor.New[float32]([]int{totalRows, dModel}, dVData)
+					dAttnOutH, err := m.engine.Reshape(ctx, dAO4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					// Reshape Q/K/V to [bs*nHeads, seq, headDim].
+					q4d, err := m.engine.Reshape(ctx, lc.q, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
+					}
+					q4d, err = m.engine.Transpose(ctx, q4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					qH, err := m.engine.Reshape(ctx, q4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					k4d, err := m.engine.Reshape(ctx, lc.k, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
+					}
+					k4d, err = m.engine.Transpose(ctx, k4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					kH, err := m.engine.Reshape(ctx, k4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					v4d, err := m.engine.Reshape(ctx, lc.v, []int{bs, seq, nHeads, headDim})
+					if err != nil {
+						return nil, err
+					}
+					v4d, err = m.engine.Transpose(ctx, v4d, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					vH, err := m.engine.Reshape(ctx, v4d, []int{bnh, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+
+					// dScores = dAttnOut @ V^T: [bnh, seq, seq].
+					vHT, err := m.engine.Transpose(ctx, vH, []int{0, 2, 1})
+					if err != nil {
+						return nil, err
+					}
+					dScores, err := m.engine.MatMul(ctx, dAttnOutH, vHT)
+					if err != nil {
+						return nil, err
+					}
+
+					// dV = scores^T @ dAttnOut: [bnh, seq, headDim].
+					scoresT, err := m.engine.Transpose(ctx, lc.scoresTensor, []int{0, 2, 1})
+					if err != nil {
+						return nil, err
+					}
+					dVH, err := m.engine.MatMul(ctx, scoresT, dAttnOutH)
+					if err != nil {
+						return nil, err
+					}
+
+					// Softmax backward: dLogit = scores * (dScores - rowSum) * scale
+					// where rowSum = sum(scores * dScores, axis=-1, keepdims=true).
+					sDScores, err := m.engine.Mul(ctx, lc.scoresTensor, dScores)
+					if err != nil {
+						return nil, err
+					}
+					rowSum, err := m.engine.Sum(ctx, sDScores, 2, true)
+					if err != nil {
+						return nil, err
+					}
+					dLogits, err := m.engine.Sub(ctx, dScores, rowSum)
+					if err != nil {
+						return nil, err
+					}
+					dLogits, err = m.engine.Mul(ctx, lc.scoresTensor, dLogits)
+					if err != nil {
+						return nil, err
+					}
+					dLogits, err = m.engine.MulScalar(ctx, dLogits, attnScale)
+					if err != nil {
+						return nil, err
+					}
+
+					// dQ = dLogits @ K: [bnh, seq, headDim].
+					dQH, err := m.engine.MatMul(ctx, dLogits, kH)
+					if err != nil {
+						return nil, err
+					}
+
+					// dK = dLogits^T @ Q: [bnh, seq, headDim].
+					dLogitsT, err := m.engine.Transpose(ctx, dLogits, []int{0, 2, 1})
+					if err != nil {
+						return nil, err
+					}
+					dKH, err := m.engine.MatMul(ctx, dLogitsT, qH)
+					if err != nil {
+						return nil, err
+					}
+
+					// Reshape dQ/dK/dV back to [bs*seq, dModel].
+					dQH, err = m.engine.Reshape(ctx, dQH, []int{bs, nHeads, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+					dQH, err = m.engine.Transpose(ctx, dQH, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					dQT, err := m.engine.Reshape(ctx, dQH, []int{totalRows, dModel})
+					if err != nil {
+						return nil, err
+					}
+
+					dKH, err = m.engine.Reshape(ctx, dKH, []int{bs, nHeads, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+					dKH, err = m.engine.Transpose(ctx, dKH, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					dKT, err := m.engine.Reshape(ctx, dKH, []int{totalRows, dModel})
+					if err != nil {
+						return nil, err
+					}
+
+					dVH, err = m.engine.Reshape(ctx, dVH, []int{bs, nHeads, seq, headDim})
+					if err != nil {
+						return nil, err
+					}
+					dVH, err = m.engine.Transpose(ctx, dVH, []int{0, 2, 1, 3})
+					if err != nil {
+						return nil, err
+					}
+					dVT, err := m.engine.Reshape(ctx, dVH, []int{totalRows, dModel})
 					if err != nil {
 						return nil, err
 					}
