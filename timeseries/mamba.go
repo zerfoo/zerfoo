@@ -56,8 +56,10 @@ type Mamba struct {
 	// Output head: [dModel -> channels*outputLen] applied on last timestep.
 	head *core.Linear[float32]
 
-	normMeans [][]float64
-	normStds  [][]float64
+	normMeans    [][]float64
+	normStds     [][]float64
+	grads        []float64 // gradient accumulator for TrainableBackend
+	shadowParams []float64 // float64 shadow of float32 graph parameters
 }
 
 // NewMamba creates a new Mamba model with the given configuration.
@@ -317,6 +319,147 @@ type mambaCache struct {
 	headOut      *tensor.TensorNumeric[float32]
 }
 
+// flatParamCount returns the total number of scalar float32 parameters.
+func (m *Mamba) flatParamCount() int {
+	n := 0
+	for _, p := range m.allParams() {
+		n += len(p.Value.Data())
+	}
+	return n
+}
+
+// ensureShadowParams lazily initializes the float64 shadow parameter array
+// and syncs it from the float32 graph parameters. Only syncs on first call;
+// subsequent calls preserve shadow values (which may have been updated by adamWUpdate).
+func (m *Mamba) ensureShadowParams() {
+	n := m.flatParamCount()
+	if len(m.shadowParams) == n {
+		return
+	}
+	m.shadowParams = make([]float64, n)
+	idx := 0
+	for _, p := range m.allParams() {
+		for _, v := range p.Value.Data() {
+			m.shadowParams[idx] = float64(v)
+			idx++
+		}
+	}
+}
+
+// syncShadowToGraph copies float64 shadow params back to float32 graph parameters.
+func (m *Mamba) syncShadowToGraph() {
+	idx := 0
+	for _, p := range m.allParams() {
+		data := p.Value.Data()
+		for i := range data {
+			data[i] = float32(m.shadowParams[idx])
+			idx++
+		}
+	}
+}
+
+// ForwardSample runs the Mamba forward pass on a single sample and returns
+// a flat float64 output with cached activations for BackwardSample.
+func (m *Mamba) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	// Sync shadow params (float64) back to graph params (float32) so the
+	// forward pass uses the latest values after any adamWUpdate modifications.
+	if len(m.shadowParams) > 0 {
+		m.syncShadowToGraph()
+	}
+
+	ctx := context.Background()
+	predData, cache, err := m.forward(ctx, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	flat := make([]float64, len(predData))
+	for i, v := range predData {
+		flat[i] = float64(v)
+	}
+	return flat, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (m *Mamba) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*mambaCache)
+	if !ok {
+		return fmt.Errorf("mamba: invalid cache type")
+	}
+
+	if m.grads == nil {
+		m.grads = make([]float64, m.flatParamCount())
+	}
+
+	// Zero graph gradients before backward so we get only this sample's contribution.
+	m.zeroGrads()
+
+	dOut := make([]float32, len(dOutput))
+	for i, v := range dOutput {
+		dOut[i] = float32(v)
+	}
+
+	ctx := context.Background()
+	if err := m.backward(ctx, dOut, cache); err != nil {
+		return err
+	}
+
+	// Accumulate graph parameter gradients into the float64 gradient buffer.
+	idx := 0
+	for _, p := range m.allParams() {
+		if p.Gradient != nil {
+			for _, g := range p.Gradient.Data() {
+				if isFinite(float64(g)) {
+					m.grads[idx] += float64(g)
+				}
+				idx++
+			}
+		} else {
+			idx += len(p.Value.Data())
+		}
+	}
+
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (m *Mamba) FlatGrads() []float64 {
+	if m.grads == nil {
+		m.grads = make([]float64, m.flatParamCount())
+	}
+	return m.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero (TrainableBackend).
+func (m *Mamba) ZeroGrads() {
+	if m.grads == nil {
+		m.grads = make([]float64, m.flatParamCount())
+		return
+	}
+	for i := range m.grads {
+		m.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters as float64 pointers.
+// Uses a shadow float64 array that is synced from/to the float32 graph parameters.
+func (m *Mamba) FlatParams() []*float64 {
+	m.ensureShadowParams()
+	ptrs := make([]*float64, len(m.shadowParams))
+	for i := range m.shadowParams {
+		ptrs[i] = &m.shadowParams[i]
+	}
+	return ptrs
+}
+
+// ParamCount returns the total number of trainable scalar parameters.
+func (m *Mamba) ParamCount() int {
+	return m.flatParamCount()
+}
+
+// Compile-time check that Mamba implements TrainableBackend.
+var _ TrainableBackend = (*Mamba)(nil)
+
 // backward computes gradients through the full model given output gradient.
 func (m *Mamba) backward(ctx context.Context, dOut []float32, cache *mambaCache) error {
 	dModel := m.config.DModel
@@ -410,145 +553,20 @@ func (m *Mamba) TrainWindowed(windows [][][]float64, labels []float64, config Tr
 		}
 	}
 
-	if config.Epochs <= 0 {
-		config.Epochs = 100
-	}
-	if config.LR <= 0 {
-		config.LR = 1e-3
-	}
-	if config.Beta1 <= 0 {
-		config.Beta1 = 0.9
-	}
-	if config.Beta2 <= 0 {
-		config.Beta2 = 0.999
-	}
-	if config.Epsilon <= 0 {
-		config.Epsilon = 1e-8
-	}
-
 	// Z-score normalize inputs.
 	windows, m.normMeans, m.normStds = normalizeWindows(windows)
 
-	ctx := context.Background()
+	// Initialize shadow params from graph params before TrainLoop.
+	m.ensureShadowParams()
 
-	// AdamW state per parameter.
-	params := m.allParams()
-	type paramAdamState struct {
-		m []float32
-		v []float32
-	}
-	states := make([]paramAdamState, len(params))
-	for i, p := range params {
-		n := len(p.Value.Data())
-		states[i] = paramAdamState{m: make([]float32, n), v: make([]float32, n)}
+	result, err := TrainLoop(m, windows, labels, config)
+	if err != nil {
+		return nil, err
 	}
 
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
-	}
+	// Sync final shadow params back to float32 graph parameters.
+	m.syncShadowToGraph()
 
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	outDim := m.config.Channels * m.config.OutputLen
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			bs := end - start
-
-			m.zeroGrads()
-
-			batchLoss := 0.0
-
-			for s := 0; s < bs; s++ {
-				predData, cache, err := m.forward(ctx, windows[start+s])
-				if err != nil {
-					return nil, fmt.Errorf("mamba: forward sample %d: %w", start+s, err)
-				}
-
-				// MSE loss and gradient.
-				dOut := make([]float32, outDim)
-				sampleLabels := labels[(start+s)*outDim : (start+s+1)*outDim]
-				for i := 0; i < outDim; i++ {
-					diff := predData[i] - float32(sampleLabels[i])
-					batchLoss += float64(diff * diff)
-					dOut[i] = 2.0 * diff / float32(bs*outDim)
-				}
-
-				if err := m.backward(ctx, dOut, cache); err != nil {
-					return nil, fmt.Errorf("mamba: backward sample %d: %w", start+s, err)
-				}
-			}
-
-			batchLoss /= float64(bs * outDim)
-			epochLoss += batchLoss
-			nBatches++
-
-			// AdamW update with LR warmup.
-			lr := float32(warmupLR(config.LR, epoch, config.WarmupEpochs))
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			beta1 := float32(config.Beta1)
-			beta2 := float32(config.Beta2)
-			eps := float32(config.Epsilon)
-			wd := float32(config.WeightDecay)
-
-			for i, p := range params {
-				grad := p.Gradient
-				if grad == nil {
-					continue
-				}
-				gData := grad.Data()
-				pData := p.Value.Data()
-
-				// Gradient clipping.
-				if config.GradClip > 0 {
-					norm := float64(0)
-					for _, g := range gData {
-						norm += float64(g) * float64(g)
-					}
-					norm = math.Sqrt(norm)
-					if norm > config.GradClip {
-						scale := float32(config.GradClip / norm)
-						for j := range gData {
-							gData[j] *= scale
-						}
-					}
-				}
-
-				bc1 := float32(1.0 - math.Pow(float64(beta1), t))
-				bc2 := float32(1.0 - math.Pow(float64(beta2), t))
-				for j := range pData {
-					g := gData[j]
-					if !isFinite(float64(g)) {
-						g = 0
-					}
-					states[i].m[j] = beta1*states[i].m[j] + (1-beta1)*g
-					states[i].v[j] = beta2*states[i].v[j] + (1-beta2)*g*g
-					mHat := states[i].m[j] / bc1
-					vHat := states[i].v[j] / bc2
-					pData[j] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*pData[j])
-				}
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("mamba: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
 }
 

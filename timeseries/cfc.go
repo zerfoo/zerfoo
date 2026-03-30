@@ -53,6 +53,7 @@ type CfC struct {
 	ops       numeric.Arithmetic[float32]
 	normMeans [][]float64 // per-channel normalization means from training
 	normStds  [][]float64 // per-channel normalization stds from training
+	grads     []float64   // gradient accumulator for TrainableBackend
 }
 
 // CfCOption configures a CfC model.
@@ -326,6 +327,75 @@ func sigmoid(x float64) float64 {
 	return 1.0 / (1.0 + math.Exp(-x))
 }
 
+// cfcCache holds activations from a forward pass needed for backpropagation.
+type cfcCache struct {
+	seqInput [][]float64 // transposed input [seqLen][channels]
+	output   []float64   // model output [outputSize * outputLen]
+}
+
+// ForwardSample runs the CfC forward pass on a single sample and returns
+// a flat output with cached activations for BackwardSample.
+func (c *CfC) ForwardSample(input [][]float64) ([]float64, interface{}, error) {
+	seqInput := transposeWindow(input)
+	pred := c.forward(seqInput)
+
+	cache := &cfcCache{
+		seqInput: seqInput,
+		output:   pred,
+	}
+	return pred, cache, nil
+}
+
+// BackwardSample accumulates parameter gradients for a single sample.
+func (c *CfC) BackwardSample(dOutput []float64, cacheIface interface{}) error {
+	cache, ok := cacheIface.(*cfcCache)
+	if !ok {
+		return fmt.Errorf("cfc: invalid cache type")
+	}
+
+	if c.grads == nil {
+		c.grads = make([]float64, c.paramCount())
+	}
+
+	sampleGrads := c.backwardSample(cache.seqInput, dOutput)
+	for i := range c.grads {
+		c.grads[i] += sampleGrads[i]
+	}
+	return nil
+}
+
+// FlatGrads returns the internal gradient accumulator.
+func (c *CfC) FlatGrads() []float64 {
+	if c.grads == nil {
+		c.grads = make([]float64, c.paramCount())
+	}
+	return c.grads
+}
+
+// ZeroGrads resets all accumulated gradients to zero.
+func (c *CfC) ZeroGrads() {
+	if c.grads == nil {
+		c.grads = make([]float64, c.paramCount())
+		return
+	}
+	for i := range c.grads {
+		c.grads[i] = 0
+	}
+}
+
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (c *CfC) FlatParams() []*float64 {
+	return c.flatParams()
+}
+
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (c *CfC) ParamCount() int {
+	return c.paramCount()
+}
+
+// Compile-time check that CfC implements TrainableBackend.
+var _ TrainableBackend = (*CfC)(nil)
+
 // TrainWindowed trains the CfC model on windowed data using AdamW with BPTT.
 // windows: [nSamples][channels][inputLen] — input windows.
 // labels: flat slice of length nSamples * outputSize * outputLen.
@@ -345,120 +415,10 @@ func (c *CfC) TrainWindowed(windows [][][]float64, labels []float64, config Trai
 		return c.trainWindowedEngine(windows, labels, config)
 	}
 
-	if config.Epochs <= 0 {
-		config.Epochs = 100
-	}
-	if config.LR <= 0 {
-		config.LR = 1e-3
-	}
-	if config.Beta1 <= 0 {
-		config.Beta1 = 0.9
-	}
-	if config.Beta2 <= 0 {
-		config.Beta2 = 0.999
-	}
-	if config.Epsilon <= 0 {
-		config.Epsilon = 1e-8
-	}
-
 	// Z-score normalize inputs to prevent gradient explosion on multi-scale data.
 	windows, c.normMeans, c.normStds = normalizeWindows(windows)
 
-	nParams := c.paramCount()
-	m := make([]float64, nParams)
-	v := make([]float64, nParams)
-
-	result := &TrainResult{
-		LossHistory: make([]float64, config.Epochs),
-	}
-
-	batchSize := nSamples
-	if config.BatchSize > 0 && config.BatchSize < nSamples {
-		batchSize = config.BatchSize
-	}
-
-	for epoch := 0; epoch < config.Epochs; epoch++ {
-		epochLoss := 0.0
-		nBatches := 0
-
-		for start := 0; start < nSamples; start += batchSize {
-			end := start + batchSize
-			if end > nSamples {
-				end = nSamples
-			}
-			batchWindows := windows[start:end]
-			batchLabels := labels[start*outDim : end*outDim]
-			bs := end - start
-
-			grads := make([]float64, nParams)
-			batchLoss := 0.0
-
-			for s := 0; s < bs; s++ {
-				// Convert [channels][inputLen] to [inputLen][channels] for recurrent processing.
-				seqInput := transposeWindow(batchWindows[s])
-				sampleLabels := batchLabels[s*outDim : (s+1)*outDim]
-
-				// Forward pass to get predictions.
-				pred := c.forward(seqInput)
-
-				// Compute MSE upstream gradient: dLoss[j] = 2*(pred[j]-label[j]) / (bs*outDim).
-				dLoss := make([]float64, outDim)
-				for j := 0; j < outDim; j++ {
-					diff := pred[j] - sampleLabels[j]
-					batchLoss += diff * diff
-					dLoss[j] = 2.0 * diff / float64(bs*outDim)
-				}
-
-				// Single backward pass with vector-Jacobian product.
-				sampleGrads := c.backwardSample(seqInput, dLoss)
-				for p := range grads {
-					grads[p] += sampleGrads[p]
-				}
-			}
-
-			batchLoss /= float64(bs * outDim)
-			epochLoss += batchLoss
-			nBatches++
-
-			// Gradient clipping.
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range grads {
-					norm += g * g
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					scale := config.GradClip / norm
-					for i := range grads {
-						grads[i] *= scale
-					}
-				}
-			}
-
-			// AdamW update with LR warmup.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
-			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			params := c.flatParams()
-			for i := range params {
-				m[i] = config.Beta1*m[i] + (1-config.Beta1)*grads[i]
-				v[i] = config.Beta2*v[i] + (1-config.Beta2)*grads[i]*grads[i]
-				mHat := m[i] / (1 - math.Pow(config.Beta1, t))
-				vHat := v[i] / (1 - math.Pow(config.Beta2, t))
-				*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+config.Epsilon)+config.WeightDecay*(*params[i]))
-			}
-		}
-
-		result.LossHistory[epoch] = epochLoss / float64(nBatches)
-		result.FinalLoss = result.LossHistory[epoch]
-
-		// Early halt on NaN/Inf loss.
-		if !isFinite(result.FinalLoss) {
-			return nil, fmt.Errorf("cfc: training diverged at epoch %d: loss=%v", epoch, result.FinalLoss)
-		}
-	}
-
-	result.Metrics = map[string]float64{"mse": result.FinalLoss}
-	return result, nil
+	return TrainLoop(c, windows, labels, config)
 }
 
 // backwardSample computes gradients for a single sample using BPTT with a
