@@ -2127,7 +2127,7 @@ Support TrainWindowed API, engine-accelerated forward, and inference graph build
   mixing at different scale counts. (6) Channel-independent mode.
   Acceptance: go test -race ./timeseries/ passes.
 
-- [ ] T48.3.3 Run go vet and linters for E48  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T48.3.3 Run go vet and linters for E48  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-03-30
   Deps: T48.3.2
   Acceptance: go vet ./... clean. go test ./timeseries/... passes.
 
@@ -2287,7 +2287,7 @@ composing existing Zerfoo layers, add new layer primitives only where needed.
   Uses existing training.Trainer with AdamW optimizer.
   Acceptance: Fine-tuning on synthetic data produces decreasing loss.
 
-- [ ] T49.4.3 Run go vet and linters for E49  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T49.4.3 Run go vet and linters for E49  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-03-30
   Deps: T49.1.6, T49.2.4, T49.3.4
   Acceptance: go vet ./... clean. go test ./... passes.
 
@@ -2371,11 +2371,11 @@ All zero-dependency tasks. Saturates all agent slots.
 
 ##### Wave E47-5: Final Lint + Parity (6 agents)
 
-- [ ] T48.3.3 Run go vet E48  Deps: T48.3.2
+- [x] T48.3.3 Run go vet E48  DONE 2026-03-30  Deps: T48.3.2
 - [x] T49.1.6 TiRex parity tests  DONE 2026-03-30 PR #286  Deps: T49.1.5
 - [x] T49.2.4 Chronos-2 parity tests  DONE 2026-03-30 PR #286  Deps: T49.2.3
 - [x] T49.3.4 Moirai-2 parity tests  DONE 2026-03-30 PR #286  Deps: T49.3.3
-- [ ] T49.4.3 Run go vet E49  Deps: T49.1.6, T49.2.4, T49.3.4
+- [x] T49.4.3 Run go vet E49  DONE 2026-03-30  Deps: T49.1.6, T49.2.4, T49.3.4
 - [x] T49.4.1 forecast CLI command  DONE 2026-03-30 PR #286  Deps: T49.1.5
 
 ### E47-E49 Risks
