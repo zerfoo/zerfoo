@@ -394,26 +394,6 @@ func layerNormBackwardF32(dOut, centered [][]float32, invStd []float32, scale, d
 	return dInput
 }
 
-// tilePosEmb creates a [bs*numPatches, dModel] tensor by repeating posEmb bs times.
-func tilePosEmb(posEmb *tensor.TensorNumeric[float32], bs, numPatches, dModel int) (*tensor.TensorNumeric[float32], error) {
-	posData := posEmb.Data()
-	tiledData := make([]float32, bs*numPatches*dModel)
-	blockSize := numPatches * dModel
-	for s := 0; s < bs; s++ {
-		copy(tiledData[s*blockSize:(s+1)*blockSize], posData)
-	}
-	return tensor.New[float32]([]int{bs * numPatches, dModel}, tiledData)
-}
-
-// tileBias creates a [rows, dim] tensor by repeating a [1, dim] bias for each row.
-func tileBias(bias *tensor.TensorNumeric[float32], rows, dim int) (*tensor.TensorNumeric[float32], error) {
-	biasData := bias.Data()
-	tiledData := make([]float32, rows*dim)
-	for r := 0; r < rows; r++ {
-		copy(tiledData[r*dim:(r+1)*dim], biasData)
-	}
-	return tensor.New[float32]([]int{rows, dim}, tiledData)
-}
 
 // trainWindowedGPU runs the full GPU training loop for PatchTST.
 // All parameters, gradients, and optimizer moments are kept as float32 tensors.
@@ -525,22 +505,28 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				if err != nil {
 					return nil, fmt.Errorf("gpu fwd patch emb: %w", err)
 				}
-				// Add bias: tile [1, dModel] -> [bs*numPatches, dModel].
-				embBiasTiled, err := tileBias(params.patchEmbB, totalRows, dModel)
-				if err != nil {
-					return nil, err
-				}
-				embedded, err = m.engine.Add(ctx, embedded, embBiasTiled)
+				// Add bias: [bs*numPatches, dModel] + [1, dModel] (broadcast).
+				embedded, err = m.engine.Add(ctx, embedded, params.patchEmbB)
 				if err != nil {
 					return nil, err
 				}
 
-				// Add positional embedding: tile [numPatches, dModel] -> [bs*numPatches, dModel].
-				posEmbTiled, err := tilePosEmb(params.posEmb, bs, numPatches, dModel)
+				// Add positional embedding via broadcast:
+				// embedded [bs*numPatches, dModel] -> [bs, numPatches, dModel]
+				// posEmb [numPatches, dModel] -> [1, numPatches, dModel] (implicit broadcast)
+				emb3d, err := m.engine.Reshape(ctx, embedded, []int{bs, numPatches, dModel})
 				if err != nil {
 					return nil, err
 				}
-				x, err := m.engine.Add(ctx, embedded, posEmbTiled)
+				posEmb3d, err := m.engine.Reshape(ctx, params.posEmb, []int{1, numPatches, dModel})
+				if err != nil {
+					return nil, err
+				}
+				emb3d, err = m.engine.Add(ctx, emb3d, posEmb3d)
+				if err != nil {
+					return nil, err
+				}
+				x, err := m.engine.Reshape(ctx, emb3d, []int{totalRows, dModel})
 				if err != nil {
 					return nil, err
 				}
@@ -574,11 +560,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					qBiasTiled, err := tileBias(layer.qB, totalRows, dModel)
-					if err != nil {
-						return nil, err
-					}
-					lc.q, err = m.engine.Add(ctx, lc.q, qBiasTiled)
+					lc.q, err = m.engine.Add(ctx, lc.q, layer.qB)
 					if err != nil {
 						return nil, err
 					}
@@ -586,11 +568,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					kBiasTiled, err := tileBias(layer.kB, totalRows, dModel)
-					if err != nil {
-						return nil, err
-					}
-					lc.k, err = m.engine.Add(ctx, lc.k, kBiasTiled)
+					lc.k, err = m.engine.Add(ctx, lc.k, layer.kB)
 					if err != nil {
 						return nil, err
 					}
@@ -598,11 +576,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					vBiasTiled, err := tileBias(layer.vB, totalRows, dModel)
-					if err != nil {
-						return nil, err
-					}
-					lc.v, err = m.engine.Add(ctx, lc.v, vBiasTiled)
+					lc.v, err = m.engine.Add(ctx, lc.v, layer.vB)
 					if err != nil {
 						return nil, err
 					}
@@ -703,11 +677,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					oBiasTiled, err := tileBias(layer.oB, totalRows, dModel)
-					if err != nil {
-						return nil, err
-					}
-					attnProj, err = m.engine.Add(ctx, attnProj, oBiasTiled)
+					attnProj, err = m.engine.Add(ctx, attnProj, layer.oB)
 					if err != nil {
 						return nil, err
 					}
@@ -742,11 +712,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					ffn1BiasTiled, err := tileBias(layer.ffn1B, totalRows, ffnDim)
-					if err != nil {
-						return nil, err
-					}
-					lc.ffn1PreAct, err = m.engine.Add(ctx, lc.ffn1PreAct, ffn1BiasTiled)
+					lc.ffn1PreAct, err = m.engine.Add(ctx, lc.ffn1PreAct, layer.ffn1B)
 					if err != nil {
 						return nil, err
 					}
@@ -768,11 +734,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					if err != nil {
 						return nil, err
 					}
-					ffn2BiasTiled, err := tileBias(layer.ffn2B, totalRows, dModel)
-					if err != nil {
-						return nil, err
-					}
-					ffn2Out, err = m.engine.Add(ctx, ffn2Out, ffn2BiasTiled)
+					ffn2Out, err = m.engine.Add(ctx, ffn2Out, layer.ffn2B)
 					if err != nil {
 						return nil, err
 					}
@@ -799,11 +761,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				if err != nil {
 					return nil, err
 				}
-				headBiasTiled, err := tileBias(params.headB, bs, outDim)
-				if err != nil {
-					return nil, err
-				}
-				headOut, err = m.engine.Add(ctx, headOut, headBiasTiled)
+				headOut, err = m.engine.Add(ctx, headOut, params.headB)
 				if err != nil {
 					return nil, err
 				}
