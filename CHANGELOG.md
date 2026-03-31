@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.3](https://github.com/zerfoo/zerfoo/compare/v1.38.2...v1.38.3) (2026-03-31)
+
+
+### Bug Fixes
+
+* **inference:** auto-disable mmap on CUDA devices ([ad1a373](https://github.com/zerfoo/zerfoo/commit/ad1a373c547bb5a19f877205e57c9777f3470760))
+
 ## [1.38.2](https://github.com/zerfoo/zerfoo/compare/v1.38.1...v1.38.2) (2026-03-31)
 
 
