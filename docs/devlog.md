@@ -3,6 +3,125 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-31: GPU transpose no-op bug found and fixed (ztensor eab19d0)
+
+**Type:** investigation + fix
+**Tags:** ztensor, cuda, transpose, gpu-engine, regression, isTransposeReshape
+
+**Problem:** GPU inference produces wrong output while CPU works correctly. The GPU
+engine's `isTransposeReshape` function in `gpu_kernels.go` incorrectly identified
+square-matrix transposes as no-ops (reshapes). For example, transposing a [5,5] tensor
+to [5,5] was treated as a no-op because the shapes matched — but the data needs to be
+physically rearranged.
+
+**Root cause:** `isTransposeReshape` compared non-unit dimensions in order. For square
+matrices, `inNonUnit == outNonUnit == [N,N]`, so it returned true. The attention
+mechanism uses square-matrix transposes for Q/K/V projections, causing untransposed
+attention matrices and wrong inference output.
+
+**Fix:** Added a check: if `inShape == outShape` exactly, return false (force real
+transpose). This is conservative but correct — identity permutations incur only a
+GPU kernel launch overhead.
+
+**Impact:** Fixed `TestGPUEngine_TransposeParity/2D_square` (was FAIL, now PASS).
+GPU inference output improved from "The answer is:" (repeated) to "2.1." for
+"What is 2+2?" — closer but still wrong. Additional GPU engine issues remain.
+See next entry.
+
+---
+
+## 2026-03-31: Causal mask D2H bug found and fixed (zerfoo 90cacad4)
+
+**Type:** investigation + fix
+**Tags:** attention, sdpa, causal-mask, gpu, d2h, prefill
+
+**Problem:** GPU inference SDPA causal masking called `.Data()` on GPU attention scores,
+causing a D2H copy. The CPU-side data was masked (positions where q_pos < k_pos set to -inf),
+but the GPU-side data remained UNMASKED. The subsequent Softmax used the GPU's unmasked data,
+producing wrong attention weights and wrong output.
+
+**Root cause:** `scaled_dot_product_attention.go` line 235: `data := scaledAttentionScores.Data()`
+does a D2H copy for GPU tensors but doesn't update the GPU copy. In-place modification of the
+CPU slice doesn't propagate back to GPU.
+
+**Fix:** Build a causal mask tensor `[1, seqQ, seqK]` with 0/-inf values and apply via
+`engine.Add()` which correctly handles GPU tensors. Broadcast across batch dimension.
+
+**Impact:** Affects ALL models during prefill (seqLen > 1) on GPU. Decode (seqLen == 1) was
+correctly skipped. CPU was unaffected because Data() returns a direct memory reference.
+Combined with the transpose fix, GPU output improved from "The answer is:" (repeated) to
+more coherent text, but additional divergence remains in the Q/K/V projections (under investigation).
+
+---
+
+## 2026-03-31: GPU engine produces wrong inference output (ONGOING)
+
+**Type:** investigation (ongoing)
+**Tags:** ztensor, gpu-engine, inference, regression, multi-issue
+
+**Problem:** After fixing the transpose no-op bug, GPU inference is closer to correct
+but still produces wrong tokens. CPU produces "4." for "What is 2+2?", GPU produces
+"2.1." — different but both are attempting to answer, suggesting partial correctness.
+
+**Investigation so far:**
+1. Confirmed basic GPU ops pass parity: MatMul (1e-7), Softmax (1e-9), Add (exact),
+   RMSNorm (2e-7). All good.
+2. Confirmed model file is not corrupted (Ollama produces "Paris" correctly).
+3. Confirmed the issue is NOT in the kernel .so (all .so variants produce same result).
+4. Confirmed the issue is in the ztensor GPU engine Go code (same binary, different .so = same wrong output).
+5. Fixed square-matrix transpose (isTransposeReshape). Improved output but not fully fixed.
+6. Remaining issue: unknown. May be in graph compilation, CUDA graph capture, or another
+   GPU-specific code path that differs from CPU.
+
+**Next steps:**
+- Add layer-by-layer comparison instrumentation to the forward pass
+- Compare GPU vs CPU intermediate tensors at each graph node
+- Focus on attention and RoPE stages where position information is critical
+- Check if CUDA graph replay uses stale buffers for dynamically-allocated intermediates
+
+---
+
+## 2026-03-31: GPU kernel recompilation produces garbage output
+
+**Type:** investigation
+**Tags:** ztensor, cuda, kernels, libkernels, regression, dgx-spark
+
+**Problem:** Recompiling libkernels.so on DGX Spark (CUDA 13.0, sm_75 target) produces
+a .so that loads and runs at full speed but generates garbage output for ALL models,
+including Gemma3-1B which was previously working at 232 tok/s with coherent text.
+
+**Investigation:**
+1. The March 26 libkernels.so (1.68 MB, sm_75, pre-fused-kernels) produced coherent
+   output for Gemma3-1B at 232 tok/s. It was the ONLY working kernel binary.
+2. Recompiling from the exact same .cu sources (excluding gemv_q4k_sm121.cu which
+   doesn't compile due to cooperative_groups syntax) produces a larger .so (2.15 MB)
+   that generates garbage: "This is a list of the problem: This is a list all of..."
+3. Tested with and without fused kernels (fused_repeat_interleave.cu, fused_softmax_vmul.cu).
+   Both produce garbage — the fused kernels are NOT the cause.
+4. The March 26 .so was overwritten during investigation and is now lost.
+5. Models that use RepeatInterleave (all except possibly Gemma3-1B decode path) crashed
+   with the old .so because the fused kernel symbol was missing (null function pointer).
+
+**Root cause hypothesis:** The kernel .cu source files changed between the March 26
+compilation and today. The Q8 GEMV alignment fix (commit 1313605, "remove float4
+alignment requirement") changed gemv_q8_kernel to use per-element __ldg loads instead
+of float4 aligned loads. While this fixed the SIGSEGV, it may have introduced a
+numerical difference. Other kernel changes between March 26 and today may also
+contribute. Alternatively, CUDA 13.0 JIT compilation of sm_75 PTX for sm_121 hardware
+may produce different code than the older compilation did.
+
+**Fix needed:** Kernel-by-kernel bisection. Compile each .cu individually from the
+current sources vs a known-good state. Identify which kernel(s) produce wrong results.
+The ztensor test suite should cover basic kernel correctness but may not catch subtle
+numerical issues in the inference pipeline context.
+
+**Impact:** ALL GPU inference benchmarks except Gemma3-1B (with old binary) are blocked.
+The only working state requires a prebuilt binary with vendored ztensor v0.8.0 or the
+March 26 libkernels.so (lost). Training (timeseries) is unaffected (uses float32 tensors,
+not quantized kernels).
+
+---
+
 ## 2026-03-30: Q8 GEMV kernel alignment fix + broader GPU engine regression
 
 **Type:** investigation

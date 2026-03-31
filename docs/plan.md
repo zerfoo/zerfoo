@@ -8,24 +8,25 @@ Granite Guardian, K-Quant optimization, multi-model benchmarks, batched GPU
 training, GGUF writer consolidation, documentation site, MSA-inspired scalable
 memory, and research-driven inference optimizations).
 
-Task statuses updated 2026-03-30 based on merged PRs and git history.
+Task statuses updated 2026-03-31 based on merged PRs and git history.
 
 **Status summary:**
-- 370+ tasks completed across all plans
+- 380+ tasks completed across all plans
 - E45: Verification remediation (3/3 complete)
 - E46: Ecosystem v1 release (0/46 -- 5 repos to v1.0.0)
 - E47: Batched training performance (0/19 -- GitHub #278, T47.2.4 added for batched attention)
 - E48: TimeMixer backend (0/10 -- GitHub #279)
 - E49: Foundation model inference (0/12 -- GitHub #280)
-- E50: GPU training kernel elimination (3/6 -- layer norm fwd, GELU fwd/bwd, weight transpose caching done)
-- E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
+- E50: GPU training kernel elimination (4/6 -- layer norm fwd+bwd, GELU fwd/bwd, weight transpose caching done)
+- E51: CUDA graph capture for training (4/6 -- drop partial, pre-allocate, capture API, wiring done; validation pending)
 - E52: DRY composition refactoring (7/7 complete -- shared math_ops, adamw_f32, layernorm_ops, engine wrappers)
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
-- E54: Capture-pure GPU engine ops (0/4 -- GPU-native Zero/Copy, re-enable graph capture)
+- E54: Capture-pure GPU engine ops (2/4 -- GPU-native Zero/Copy done; re-enable graph capture pending)
 - E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
-- E56: Gemma3 inference micro-optimizations (3/9 -- kernels written, wiring reverted pending E57)
-- E57: Fix DGX Spark build regression (0/3 -- BLOCKER for all GPU benchmarks)
-- All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
+- E56: Gemma3 inference micro-optimizations (6/9 -- fused kernels written and wired; produce garbage on DGX, BLOCKED by E57)
+- E57: Fix DGX Spark build regression (1/3 -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
+- E58: GPU vs CPU GQA parity test (0/2 -- diagnostic test to find remaining composed-pipeline divergence)
+- GPU status: 3 fixes pushed (ztensor eab19d0, zerfoo 90cacad4, zerfoo 1d56d2e5). Individual ops pass parity. Composed GQA diverges.
 
 ---
 
@@ -2500,10 +2501,11 @@ transposes outside the batch loop.
 
 ### E50.2: Layer Norm Backward on Engine
 
-- [ ] T50.2.1 Implement engine-based layer norm backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T50.2.1 Implement engine-based layer norm backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-31
   Deps: T50.1.1
-  File: timeseries/patchtst_gpu_train.go
-  Replace layerNormBackwardF32 with engine ops. The backward formula:
+  File: timeseries/patchtst_encoder.go (layerNormBackwardWithEngine)
+  Replaced layerNormBackwardF32 with engine ops. Also removed matFromTensor,
+  tensorFromMat, copyMatToTensor (all now unused). The backward formula:
   (1) dScale += engine.Sum(dOut * centered * invStd, axis=0)
   (2) dBias += engine.Sum(dOut, axis=0)
   (3) dNorm = engine.Mul(dOut, scale)  -- broadcast [1, dModel] over [rows, dModel]
@@ -2566,7 +2568,7 @@ transposes outside the batch loop.
 
 ##### Wave E50-2: Dependent + validation (3 agents)
 
-- [ ] T50.2.1 Layer norm backward on engine  Deps: T50.1.1
+- [x] T50.2.1 Layer norm backward on engine  Deps: T50.1.1  DONE 2026-03-31
 - [ ] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
 - [ ] T50.5.2 Benchmark on DGX Spark  Deps: T50.5.1
 
@@ -2597,7 +2599,7 @@ eliminating ALL intermediate synchronization.
 
 ### E51.1: Drop Partial Batches
 
-- [ ] T51.1.1 Skip partial final batch in trainWindowedGPU  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+- [x] T51.1.1 Skip partial final batch in trainWindowedGPU  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]  DONE 2026-03-30
   File: timeseries/patchtst_gpu_train.go
   When nSamples % batchSize != 0, stop the batch loop before the partial batch.
   Change `for start := 0; start < nSamples; start += batchSize` to stop at
@@ -2607,7 +2609,7 @@ eliminating ALL intermediate synchronization.
 
 ### E51.2: Pre-allocate Tensor Workspace
 
-- [ ] T51.2.1 Pre-allocate all layer caches and intermediates before batch loop  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T51.2.1 Pre-allocate all layer caches and intermediates before batch loop  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
   File: timeseries/patchtst_gpu_train.go
   CUDA graph capture fails on cudaMalloc during capture. Currently, tensor.New
   and engine ops allocate GPU memory on demand. Pre-allocate:
@@ -2620,7 +2622,7 @@ eliminating ALL intermediate synchronization.
 
 ### E51.3: Add Engine Capture/Replay API
 
-- [ ] T51.3.1 Add BeginCapture/EndCapture/Replay to Engine interface  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T51.3.1 Add BeginCapture/EndCapture/Replay to Engine interface  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #46
   Repo: ztensor. File: compute/engine.go, compute/gpu_engine.go, compute/cpu_engine.go
   Add three methods to the Engine[T] interface:
   - `BeginCapture(ctx) error` -- starts CUDA stream capture (no-op on CPU engine)
@@ -2634,7 +2636,7 @@ eliminating ALL intermediate synchronization.
 
 ### E51.4: Wire Graph Capture into Training Loop
 
-- [ ] T51.4.1 Integrate capture/replay into trainWindowedGPU  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+- [x] T51.4.1 Integrate capture/replay into trainWindowedGPU  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-30
   Deps: T51.1.1, T51.2.1, T51.3.1
   File: timeseries/patchtst_gpu_train.go
   Training loop structure becomes:
@@ -2670,13 +2672,13 @@ eliminating ALL intermediate synchronization.
 
 ##### Wave E51-1: Foundation (3 agents)
 
-- [ ] T51.1.1 Drop partial batches
-- [ ] T51.2.1 Pre-allocate tensor workspace
-- [ ] T51.3.1 Add Engine capture/replay API (ztensor repo)
+- [x] T51.1.1 Drop partial batches  DONE 2026-03-30
+- [x] T51.2.1 Pre-allocate tensor workspace  DONE 2026-03-30
+- [x] T51.3.1 Add Engine capture/replay API (ztensor repo)  DONE 2026-03-30
 
 ##### Wave E51-2: Integration + validation (3 agents)
 
-- [ ] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1
+- [x] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1  DONE 2026-03-30
 - [ ] T51.5.1 Run go vet and tests  Deps: T51.4.1
 - [ ] T51.5.2 Benchmark on DGX Spark  Deps: T51.5.1
 
@@ -2922,7 +2924,7 @@ The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for 
 
 ### E54.1: GPU-Native Zero
 
-- [ ] T54.1.1 Implement GPU-native Zero using cudaMemsetAsync  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T54.1.1 Implement GPU-native Zero using cudaMemsetAsync  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #50
   Repo: ztensor. File: compute/gpu_engine.go
   Replace `func (e *GPUEngine[T]) Zero(...) { return e.cpu.Zero(ctx, a) }` with:
   Check if tensor has GPUStorage. If yes: cudaMemsetAsync(ptr, 0, byteSize, e.stream).
@@ -2932,7 +2934,7 @@ The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for 
 
 ### E54.2: GPU-Native Copy
 
-- [ ] T54.2.1 Implement GPU-native Copy using cudaMemcpyAsync D2D  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T54.2.1 Implement GPU-native Copy using cudaMemcpyAsync D2D  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #50
   Repo: ztensor. File: compute/gpu_engine.go
   Replace `func (e *GPUEngine[T]) Copy(...) { return e.cpu.Copy(ctx, dst, src) }` with:
   Check if both tensors have GPUStorage. If yes: MemcpyAsync D2D on e.stream.
@@ -2959,8 +2961,8 @@ The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for 
 
 ##### Wave E54-1: GPU-native ops (2 agents, ztensor repo)
 
-- [ ] T54.1.1 GPU-native Zero (cudaMemsetAsync)
-- [ ] T54.2.1 GPU-native Copy (cudaMemcpyAsync D2D)
+- [x] T54.1.1 GPU-native Zero (cudaMemsetAsync)  DONE 2026-03-30
+- [x] T54.2.1 GPU-native Copy (cudaMemcpyAsync D2D)  DONE 2026-03-30
 
 ##### Wave E54-2: Enable + benchmark (2 agents)
 
@@ -3086,7 +3088,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
 
 ### E56.1: Fused Softmax+V Multiply (Decode)
 
-- [ ] T56.1.1 Implement fused_softmax_vmul.cu kernel  Owner: TBD  Est: 4h  verifies: [UC-001]
+- [x] T56.1.1 Implement fused_softmax_vmul.cu kernel  Owner: TBD  Est: 4h  verifies: [UC-001]  DONE 2026-03-30 ztensor PR #52
   Repo: ztensor. File: internal/cuda/kernels/fused_softmax_vmul.cu
   Fuse softmax + MatMul(scores, V) into one kernel. Currently:
   - Line 235 of scaled_dot_product_attention.go: engine.Softmax(ctx, scaledAttentionScores, -1)
@@ -3098,7 +3100,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
   For decode (seqQ=1): this is a fused reduction (softmax) + GEMV.
   Acceptance: Output matches separate softmax+MatMul within 1e-4.
 
-- [ ] T56.1.2 Add purego bindings and GPUFusedSoftmaxVMul method  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T56.1.2 Add purego bindings and GPUFusedSoftmaxVMul method  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #52
   Deps: T56.1.1
   Repo: ztensor. Files: internal/cuda/purego.go, compute/gpu_engine.go
   Add FusedSoftmaxVMuler optional interface to engine.go.
@@ -3113,7 +3115,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
 
 ### E56.2: Fused GQA Head Expansion
 
-- [ ] T56.2.1 Implement fused_repeat_interleave.cu kernel  Owner: TBD  Est: 3h  verifies: [UC-001]
+- [x] T56.2.1 Implement fused_repeat_interleave.cu kernel  Owner: TBD  Est: 3h  verifies: [UC-001]  DONE 2026-03-30 ztensor PR #51
   Repo: ztensor. File: internal/cuda/kernels/fused_repeat_interleave.cu
   Fuse the reshape+Repeat+reshape pattern for GQA K/V head expansion.
   Currently (grouped_query_attention.go lines 819-843):
@@ -3124,7 +3126,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
   [batch, numQ, seq, headDim] with index remapping: outHead / replicationFactor = srcHead.
   Acceptance: Output matches reshape+Repeat+reshape within 1e-6.
 
-- [ ] T56.2.2 Add purego bindings and wire into GQA  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T56.2.2 Add purego bindings and wire into GQA  Owner: TBD  Est: 1.5h  verifies: [UC-001]  DONE 2026-03-30 PR #308
   Deps: T56.2.1
   Repo: ztensor + zerfoo. Files: ztensor compute/gpu_engine.go, zerfoo layers/attention/grouped_query_attention.go
   Replace lines 819-843 with fused call when engine supports it.
@@ -3236,6 +3238,66 @@ fusions, and any future GPU work cannot be validated until this is fixed.
 - [ ] T57.1.1 Bisect regression
 - [ ] T57.1.2 Fix root cause  Deps: T57.1.1
 - [ ] T57.1.3 Verify benchmarks  Deps: T57.1.2
+
+---
+
+## E58: GPU vs CPU GQA Parity Test (DIAGNOSTIC for E57)
+
+**Problem:** Three GPU regression root causes have been fixed (ztensor eab19d0, zerfoo 90cacad4,
+zerfoo 1d56d2e5) but GPU inference still produces wrong output. Individual operations (MatMul,
+RMSNorm, Softmax, Gather, RoPE, Transpose) all pass parity when tested in isolation. The
+divergence occurs inside the composed GQA (GroupedQueryAttention) Forward pass. Binary dump of
+the GQA input (RMSNorm output) is bit-identical between CPU and GPU when both use heap loading,
+and Q/K/V projections are also bit-identical. The divergence starts AFTER the projections,
+somewhere in the QK norm -> Transpose -> RoPE -> Attention chain inside GQA. compute-sanitizer
+reports zero GPU memory errors.
+
+**Goal:** Write a comprehensive parity test that runs the FULL GQA forward pass on both CPU
+and GPU engines with identical inputs and compares output at each internal step. This will
+pinpoint the exact operation where GPU diverges from CPU inside the composed pipeline.
+
+**File:** tests/parity/gqa_gpu_parity_test.go
+**Environment:** DGX Spark (GEMMA3_GGUF_PATH env var points to ~/models/gemma3-q4km/model.gguf)
+
+### E58.1: GQA Parity Test
+
+- [ ] T58.1.1 Write GQA GPU vs CPU parity test  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  File: tests/parity/gqa_gpu_parity_test.go
+  The test must:
+  (1) Load model weights from GGUF via inference.LoadGGUF (heap, no mmap). Skip if
+      GEMMA3_GGUF_PATH env var is not set.
+  (2) Create CPU and GPU engines (compute.NewCPUEngine, compute.NewGPUEngine).
+  (3) Construct TWO identical GQA layers: one with CPU engine, one with GPU engine.
+      Use the actual Gemma3-1B layer 0 weights: q_proj, k_proj, v_proj, o_proj (Q5_0/Q4_K
+      storage), q_norm, k_norm (float32), and RoPE config (theta=10000, headDim=256,
+      numQueryHeads=4, numKVHeads=1).
+  (4) Create identical input tensor [1, 2, 1152] with deterministic data (e.g. the actual
+      RMSNorm output for BOS + token 18428 "Hi").
+  (5) Upload GPU weights via gpuEngine.UploadWeights.
+  (6) Call GQA Forward on both engines with the same input.
+  (7) Compare full output tensor element-by-element. Report maxDiff and failing indices.
+  (8) If the output differs, add intermediate checkpoints INSIDE GQA Forward to narrow
+      down the divergence: after Q projection, after QK norm, after transpose, after RoPE,
+      after attention scores, after softmax, after output projection.
+  Acceptance: Test compiles, runs on DGX Spark with GEMMA3_GGUF_PATH set, and either
+  PASSES (proving GPU parity) or FAILS with a clear message identifying the first
+  divergent step and the max element-wise difference.
+
+- [ ] T58.1.2 Run test on DGX Spark and document findings  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T58.1.1
+  SSH to DGX Spark, run:
+  `GEMMA3_GGUF_PATH=~/models/gemma3-q4km/model.gguf go test -run TestGQA_GPUParity -v -count=1 ./tests/parity/`
+  Record the output in docs/devlog.md. If the test identifies the divergent step, file a
+  targeted fix. If it passes (GPU parity is correct), investigate the graph execution layer
+  (EngineProxy, graph.Forward, tensor pool) as the next suspect.
+  Acceptance: Test results documented in devlog. Next action identified.
+
+### E58 Parallel Work
+
+##### Wave E58-1: Write and run test (1 agent)
+
+- [ ] T58.1.1 Write GQA GPU parity test
+- [ ] T58.1.2 Run on DGX and document  Deps: T58.1.1
 
 ---
 

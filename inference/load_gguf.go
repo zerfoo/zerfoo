@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
@@ -20,13 +19,14 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		opt(o)
 	}
 
-	// Auto-disable mmap on CUDA devices. MmapStorage has alignment and
-	// device-consistency issues on ARM64 (Grace Hopper) that produce
-	// wrong inference output. Heap loading is slightly slower to start
-	// but the GPU engine handles heap-backed tensors correctly.
-	if strings.HasPrefix(o.device, "cuda") && o.mmap {
+	// Disable mmap for all devices. MmapStorage uses native GGUF quantization
+	// format (e.g. Q4_K super-blocks) while heap loading converts to Go storage
+	// types (Q4Storage, Q8Storage). The different dequantization paths produce
+	// numerically different results, causing CPU/GPU output divergence.
+	// Heap loading ensures consistent quantization behavior across all devices.
+	if o.mmap {
 		o.mmap = false
-		slog.Info("auto-disabled mmap for CUDA device", "device", o.device)
+		slog.Info("auto-disabled mmap for consistent quantization", "device", o.device)
 	}
 
 	// Load and parse the GGUF file.
