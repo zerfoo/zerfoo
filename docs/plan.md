@@ -23,6 +23,7 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
 - E54: Capture-pure GPU engine ops (0/4 -- GPU-native Zero/Copy, re-enable graph capture)
 - E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
+- E56: Gemma3 inference micro-optimizations (0/9 -- fused softmax+V, GQA expand, prefill fusions)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1301,6 +1302,14 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-03-30: E56 added -- Gemma3 inference micro-optimizations
+
+Three fusion opportunities: (a) fused softmax+V multiply in SDPA (line 235+245 of
+scaled_dot_product_attention.go, saves 1 kernel/layer), (b) fused GQA head expansion
+(lines 819-843 of grouped_query_attention.go, saves 6 kernels/layer), (c) extend
+prefill path fusions (remove seqLen==1 guards at lines 375 and 422). Target: 270+
+tok/s decode (vs 245 current), 10-20% prefill improvement.
 
 ### 2026-03-30: E54+E55 added -- capture-pure ops + fused encoder kernel
 
@@ -3053,6 +3062,122 @@ fused_swiglu.cu) provide the pattern.
 ##### Wave E55-4: Benchmark (1 agent)
 
 - [ ] T55.3.2 DGX Spark benchmark  Deps: T55.3.1
+
+---
+
+## E56: Gemma3 Inference Micro-Optimizations
+
+**Problem:** Gemma3 inference is already well-optimized (245 tok/s, 1.25x Ollama on 1B)
+with CUDA graph capture, 6 fused kernels per layer, merged QKV/gate+up, and GPU-native
+ops. However, three small fusion opportunities remain that cumulatively offer ~5-25%
+speedup depending on prefill vs decode workload.
+
+**Current decode (Gemma3-1B, DGX Spark):** 245 tok/s
+**Target decode:** 270+ tok/s (~10% gain from fusions a+b)
+**Target prefill:** 10-20% improvement from fusion c
+
+### E56.1: Fused Softmax+V Multiply (Decode)
+
+- [ ] T56.1.1 Implement fused_softmax_vmul.cu kernel  Owner: TBD  Est: 4h  verifies: [UC-001]
+  Repo: ztensor. File: internal/cuda/kernels/fused_softmax_vmul.cu
+  Fuse softmax + MatMul(scores, V) into one kernel. Currently:
+  - Line 235 of scaled_dot_product_attention.go: engine.Softmax(ctx, scaledAttentionScores, -1)
+  - Line 245: engine.MatMul(ctx, attentionWeights, v)
+  The fused kernel computes softmax row-wise in shared memory, then immediately
+  multiplies by V in the same kernel, avoiding intermediate tensor materialization.
+  Input: scores [batch*heads, seqQ, seqKV], V [batch*heads, seqKV, headDim].
+  Output: attnOut [batch*heads, seqQ, headDim].
+  For decode (seqQ=1): this is a fused reduction (softmax) + GEMV.
+  Acceptance: Output matches separate softmax+MatMul within 1e-4.
+
+- [ ] T56.1.2 Add purego bindings and GPUFusedSoftmaxVMul method  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T56.1.1
+  Repo: ztensor. Files: internal/cuda/purego.go, compute/gpu_engine.go
+  Add FusedSoftmaxVMuler optional interface to engine.go.
+  Acceptance: go build clean.
+
+- [ ] T56.1.3 Wire into ScaledDotProductAttention  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T56.1.2
+  Repo: zerfoo. File: layers/attention/scaled_dot_product_attention.go
+  Type-assert engine to FusedSoftmaxVMuler. If available, replace lines 235+245
+  with single fused call. Fallback to separate ops if not supported.
+  Acceptance: Inference output identical. Benchmark shows reduced kernel count.
+
+### E56.2: Fused GQA Head Expansion
+
+- [ ] T56.2.1 Implement fused_repeat_interleave.cu kernel  Owner: TBD  Est: 3h  verifies: [UC-001]
+  Repo: ztensor. File: internal/cuda/kernels/fused_repeat_interleave.cu
+  Fuse the reshape+Repeat+reshape pattern for GQA K/V head expansion.
+  Currently (grouped_query_attention.go lines 819-843):
+  - Reshape K to [batch, numKV, 1, seq, headDim]
+  - Repeat along axis 2 by replicationFactor
+  - Reshape to [batch, numQ, seq, headDim]
+  The fused kernel reads from [batch, numKV, seq, headDim] and writes to
+  [batch, numQ, seq, headDim] with index remapping: outHead / replicationFactor = srcHead.
+  Acceptance: Output matches reshape+Repeat+reshape within 1e-6.
+
+- [ ] T56.2.2 Add purego bindings and wire into GQA  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+  Deps: T56.2.1
+  Repo: ztensor + zerfoo. Files: ztensor compute/gpu_engine.go, zerfoo layers/attention/grouped_query_attention.go
+  Replace lines 819-843 with fused call when engine supports it.
+  Acceptance: Inference identical. 1 kernel replaces 3 per K and 3 per V.
+
+### E56.3: Fused Prefill Attention Path
+
+- [ ] T56.3.1 Extend merged QKV to prefill (seqLen > 1)  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Repo: zerfoo. File: layers/attention/grouped_query_attention.go
+  Currently at line 375: `if gqa.mergedQKV != nil && seqLen == 1`.
+  For prefill, the merged weight [dModel, (numQ+2*numKV)*headDim] can still be used
+  with a single MatMul on [batch, seqLen, dModel] input. The split into Q/K/V is
+  a zero-copy slice of the output. Remove the seqLen==1 guard.
+  Acceptance: Prefill output identical. 1 MatMul instead of 3.
+
+- [ ] T56.3.2 Extend fused QK norm+RoPE to prefill  Owner: TBD  Est: 4h  verifies: [UC-001]
+  Deps: T56.3.1
+  Repo: ztensor + zerfoo.
+  Currently at line 422: `if seqLen == 1 && gqa.rope != nil && gqa.qNormWeight != nil`.
+  The fused kernel (fused_qk_norm_rope.cu) needs to be extended to handle seqLen > 1.
+  The kernel processes one (query, key) pair per thread block; for seqLen > 1, launch
+  with batch*seqLen blocks instead of just batch blocks.
+  Acceptance: Prefill output matches unfused path within 1e-4. Kernel handles seqLen up to 4096.
+
+- [ ] T56.3.3 Benchmark prefill improvement  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T56.3.1, T56.3.2
+  Benchmark Gemma3-1B prefill latency (128 tokens, 512 tokens, 2048 tokens)
+  before and after fusions on DGX Spark.
+  Acceptance: Measurable prefill speedup documented.
+
+### E56.4: Decode Benchmark
+
+- [ ] T56.4.1 Benchmark decode tok/s improvement  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T56.1.3, T56.2.2
+  Run bench-compare-ollama.sh on DGX Spark for Gemma3-1B with fused softmax+V and
+  fused GQA expansion. Compare: before vs after vs Ollama.
+  Target: 270+ tok/s (vs 245 current).
+  Acceptance: Results documented.
+
+### E56 Parallel Work
+
+E55 and E56 are fully independent (different packages, different repos).
+Within E56, the three fusions are independent.
+
+##### Wave E56-1: Kernels (3 agents, all independent .cu files)
+
+- [ ] T56.1.1 Fused softmax+V multiply kernel
+- [ ] T56.2.1 Fused repeat-interleave kernel
+- [ ] T56.3.1 Extend merged QKV to prefill (zerfoo, no kernel needed)
+
+##### Wave E56-2: Bindings + wiring (3 agents)
+
+- [ ] T56.1.2 Softmax+V purego bindings  Deps: T56.1.1
+- [ ] T56.2.2 Repeat-interleave bindings + GQA wiring  Deps: T56.2.1
+- [ ] T56.3.2 Extend fused QK norm+RoPE to prefill  Deps: T56.3.1
+
+##### Wave E56-3: Integration + benchmarks (3 agents)
+
+- [ ] T56.1.3 Wire softmax+V into SDPA  Deps: T56.1.2
+- [ ] T56.3.3 Prefill benchmark  Deps: T56.3.2
+- [ ] T56.4.1 Decode benchmark  Deps: T56.1.3, T56.2.2
 
 ---
 
