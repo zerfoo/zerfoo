@@ -521,9 +521,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// ztensor's GPU memory pool is now capture-aware (ztensor PR #48):
 	// during BeginCapture, the pool switches to cudaMallocAsync on the
 	// capture stream, so allocations are recorded as graph nodes.
+	// GPU-native Zero (cudaMemsetAsync) and Copy (cudaMemcpyAsync D2D)
+	// in ztensor PR #50 eliminate the TrySlice D2H that broke capture.
 	gc, canCapture := m.engine.(compute.GraphCapturer)
-	_ = gc
-	canCapture = false // disabled: ztensor engine ops internally call TrySlice (D2H) breaking capture
 	var fwdGraph compute.GraphHandle
 	var fwdOut *fwdGraphOutputs
 	fwdCaptured := false

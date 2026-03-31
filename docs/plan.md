@@ -20,7 +20,9 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E50: GPU training kernel elimination (3/6 -- layer norm fwd, GELU fwd/bwd, weight transpose caching done)
 - E51: CUDA graph capture for training (0/6 -- capture forward+backward, replay per batch)
 - E52: DRY composition refactoring (7/7 complete -- shared math_ops, adamw_f32, layernorm_ops, engine wrappers)
-- E53: Unified training forward/backward (0/6 -- extract shared encoder, eliminate 3 forward + 2 backward impls)
+- E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
+- E54: Capture-pure GPU engine ops (0/4 -- GPU-native Zero/Copy, re-enable graph capture)
+- E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1299,6 +1301,16 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-03-30: E54+E55 added -- capture-pure ops + fused encoder kernel
+
+Two parallel workstreams to close the remaining 2.1x gap (128.5s -> 60s):
+E54 (4 tasks): Make GPUEngine.Zero/Copy use cudaMemsetAsync/cudaMemcpyAsync instead of
+delegating to CPU engine (which calls TrySlice D2H on GPU tensors). Root cause found:
+gpu_engine.go:3162 delegates Zero to cpu.Zero which calls a.Data() on GPU tensors.
+E55 (8 tasks): Fused encoder layer CUDA kernel combining LayerNorm + QKV + attention +
+FFN into single kernel launch. Forward + backward kernels in internal/cuda/kernels/.
+Both in ztensor repo, different packages, fully parallel.
 
 ### 2026-03-30: E53 added -- unified training forward/backward (GPU path DRY)
 
@@ -2873,6 +2885,174 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 ##### Wave E53-3: Validation (1 agent)
 
 - [ ] T53.6.1 Full validation  Deps: T53.3.1, T53.5.1
+
+---
+
+## E54: Capture-Pure GPU Engine Ops (ztensor)
+
+**Problem:** CUDA graph capture fails because GPUEngine.Zero delegates to CPUEngine.Zero,
+which calls tensor.Data() on GPU-resident tensors, triggering GPUStorage.TrySlice (sync
+D2H memcpy on the default stream). Other ops (Copy, some fallbacks) have the same issue.
+This blocks capturing the full ~500-op encoder forward+backward as a CUDA graph.
+
+**Root cause:** gpu_engine.go line 3162: `func (e *GPUEngine[T]) Zero(...) { return e.cpu.Zero(ctx, a) }`.
+The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for GPU tensors.
+
+**Goal:** Make GPU engine ops that touch GPU-resident tensors use GPU-native operations
+(cudaMemset, cudaMemcpy D2D) on the engine's stream. No CPU delegation for GPU tensors.
+
+**Repo:** ztensor (github.com/zerfoo/ztensor)
+
+### E54.1: GPU-Native Zero
+
+- [ ] T54.1.1 Implement GPU-native Zero using cudaMemsetAsync  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Repo: ztensor. File: compute/gpu_engine.go
+  Replace `func (e *GPUEngine[T]) Zero(...) { return e.cpu.Zero(ctx, a) }` with:
+  Check if tensor has GPUStorage. If yes: cudaMemsetAsync(ptr, 0, byteSize, e.stream).
+  If no (CPU tensor): delegate to e.cpu.Zero as before.
+  Add cudaMemsetAsync binding to internal/cuda/runtime_purego.go if not present.
+  Acceptance: go test ./compute/ passes. GPU tensors zeroed without D2H copy.
+
+### E54.2: GPU-Native Copy
+
+- [ ] T54.2.1 Implement GPU-native Copy using cudaMemcpyAsync D2D  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Repo: ztensor. File: compute/gpu_engine.go
+  Replace `func (e *GPUEngine[T]) Copy(...) { return e.cpu.Copy(ctx, dst, src) }` with:
+  Check if both tensors have GPUStorage. If yes: MemcpyAsync D2D on e.stream.
+  If mixed or CPU: delegate to e.cpu.Copy.
+  Acceptance: go test passes. GPU-to-GPU copy without TrySlice.
+
+### E54.3: Re-enable Graph Capture in zerfoo
+
+- [ ] T54.3.1 Remove canCapture=false and re-enable forward-prefix capture  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+  Deps: T54.1.1, T54.2.1
+  Repo: zerfoo. File: timeseries/patchtst_gpu_train.go
+  Update ztensor dependency. Remove the `canCapture = false` disable flag.
+  Forward-prefix capture (~78 ops) should work without TrySlice errors.
+  Acceptance: DGX Spark benchmark completes without CUDA errors. Target: ~32s/epoch.
+
+### E54.4: Benchmark
+
+- [ ] T54.4.1 Benchmark on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T54.3.1
+  Run 28K x 20ch x 10 epochs. Compare with 128.5s baseline.
+  Acceptance: Results documented. Graph capture working.
+
+### E54 Parallel Work
+
+##### Wave E54-1: GPU-native ops (2 agents, ztensor repo)
+
+- [ ] T54.1.1 GPU-native Zero (cudaMemsetAsync)
+- [ ] T54.2.1 GPU-native Copy (cudaMemcpyAsync D2D)
+
+##### Wave E54-2: Enable + benchmark (2 agents)
+
+- [ ] T54.3.1 Re-enable graph capture in zerfoo  Deps: T54.1.1, T54.2.1
+- [ ] T54.4.1 Benchmark on DGX Spark  Deps: T54.3.1
+
+---
+
+## E55: Fused PatchTST Encoder CUDA Kernel (ztensor)
+
+**Problem:** Even with graph capture, the encoder runs ~250 separate CUDA kernels per layer
+per direction (forward + backward). Each kernel has launch overhead. A fused kernel
+combining the entire encoder layer into a single launch would eliminate this overhead.
+
+**Goal:** Implement a fused encoder layer CUDA kernel in ztensor that combines:
+LayerNorm + QKV projection + multi-head attention + output projection + residual +
+LayerNorm + FFN1 + GELU + FFN2 + residual into a single kernel launch.
+
+**Repo:** ztensor (github.com/zerfoo/ztensor)
+
+**Reference:** Existing fused kernels in internal/cuda/kernels/ (fused_add_rmsnorm.cu,
+fused_swiglu.cu) provide the pattern.
+
+### E55.1: Fused Encoder Forward Kernel
+
+- [ ] T55.1.1 Implement fused_encoder_fwd.cu  Owner: TBD  Est: 8h  verifies: [infrastructure]
+  Repo: ztensor. File: internal/cuda/kernels/fused_encoder_fwd.cu
+  CUDA kernel that fuses one encoder layer forward pass:
+  (1) LayerNorm1: mean reduction + normalize + scale/bias
+  (2) QKV projection: three matrix multiplies (use cuBLAS from kernel? or tiled GEMM)
+  (3) Multi-head attention: reshape + Q@K^T + softmax + scores@V
+  (4) Output projection: matmul + bias
+  (5) Residual add
+  (6) LayerNorm2: same as (1)
+  (7) FFN1: matmul + bias + GELU
+  (8) FFN2: matmul + bias
+  (9) Residual add
+  Parameters: input, layer weights (Q/K/V/O/FFN1/FFN2/norm1/norm2), output, caches.
+  Dimensions: totalRows, dModel, nHeads, headDim, ffnDim.
+  Note: MatMul inside CUDA kernel can call cuBLAS from device code or use cooperative
+  groups for tiled GEMM. For small matrices ([7680, 64]), tiled GEMM in shared memory
+  may be faster than cuBLAS call overhead.
+  Acceptance: Kernel compiles for sm_121 (GB10). Output matches per-op encoder within 1e-4.
+
+- [ ] T55.1.2 Add purego bindings and Go wrapper  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T55.1.1
+  Repo: ztensor. Files: internal/cuda/purego.go, compute/gpu_engine.go
+  Add launch_fused_encoder_fwd symbol to KernelLib.
+  Add GPUFusedEncoderForward method to GPUEngine.
+  Add FusedEncoderForwarder optional interface to engine.go.
+  Acceptance: go build ./compute/ clean.
+
+- [ ] T55.1.3 Unit tests for fused encoder forward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T55.1.2
+  Repo: ztensor. File: compute/gpu_engine_test.go
+  Test: fused encoder forward matches per-op encoder forward within 1e-4 tolerance
+  for various (totalRows, dModel, nHeads, ffnDim) configurations.
+  Acceptance: go test passes on DGX Spark.
+
+### E55.2: Fused Encoder Backward Kernel
+
+- [ ] T55.2.1 Implement fused_encoder_bwd.cu  Owner: TBD  Est: 10h  verifies: [infrastructure]
+  Deps: T55.1.1
+  Repo: ztensor. File: internal/cuda/kernels/fused_encoder_bwd.cu
+  Backward pass for the fused encoder layer. Computes gradients for all weights
+  and the input gradient in a single kernel. Uses cached activations from forward.
+  This is the most complex kernel -- attention backward requires careful softmax
+  gradient computation and multiple matmul-transpose operations.
+  Acceptance: Kernel compiles. Gradient check matches per-op backward within 1e-3.
+
+- [ ] T55.2.2 Add purego bindings and Go wrapper for backward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T55.2.1
+  Acceptance: go build clean.
+
+### E55.3: Wire into zerfoo
+
+- [ ] T55.3.1 Wire fused encoder into encoderForward/encoderBackward  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T55.1.2, T55.2.2
+  Repo: zerfoo. File: timeseries/patchtst_encoder.go
+  Type-assert engine to FusedEncoderForwarder. If supported, call fused kernel
+  per layer instead of the ~25 individual engine ops.
+  Acceptance: Training convergence unchanged. Gradient check passes.
+
+- [ ] T55.3.2 Benchmark fused encoder on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T55.3.1
+  Run 28K x 20ch x 10 epochs with fused kernel + graph capture.
+  Target: <60s total.
+  Acceptance: Results documented.
+
+### E55 Parallel Work
+
+##### Wave E55-1: Forward + backward kernels (2 agents, independent .cu files)
+
+- [ ] T55.1.1 Fused encoder forward kernel (.cu)
+- [ ] T55.2.1 Fused encoder backward kernel (.cu)
+
+##### Wave E55-2: Bindings + tests (2 agents)
+
+- [ ] T55.1.2 Forward purego bindings + Go wrapper  Deps: T55.1.1
+- [ ] T55.2.2 Backward purego bindings + Go wrapper  Deps: T55.2.1
+
+##### Wave E55-3: Tests + wiring (2 agents)
+
+- [ ] T55.1.3 Forward unit tests  Deps: T55.1.2
+- [ ] T55.3.1 Wire into zerfoo  Deps: T55.1.2, T55.2.2
+
+##### Wave E55-4: Benchmark (1 agent)
+
+- [ ] T55.3.2 DGX Spark benchmark  Deps: T55.3.1
 
 ---
 
