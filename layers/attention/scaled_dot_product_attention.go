@@ -159,28 +159,14 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	// If not, we can fuse MulScalar + Softmax into a single kernel launch.
 	needsMasking := mask != nil || (sdpa.causal && len(attentionScores.Shape()) >= 2 && attentionScores.Shape()[len(attentionScores.Shape())-2] > 1)
 
-	// Unwrap EngineProxy to detect the real engine type for fused paths.
-	realEngine := compute.Engine[T](sdpa.engine)
-	if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
-		realEngine = proxy.Real()
-	}
-
-	// Try fused softmax + V multiply for decode (seqQ == 1, no masking needed).
-	// This replaces both softmax and the subsequent MatMul with a single GPU
-	// kernel launch, eliminating the intermediate attention weights tensor.
-	querySeqLen := q.Shape()[1]
-	if !needsMasking && querySeqLen == 1 {
-		if fuser, ok := realEngine.(compute.FusedSoftmaxVMulProvider[T]); ok {
-			output, fusedErr := fuser.GPUFusedSoftmaxVMul(attentionScores, v, scale)
-			if fusedErr == nil {
-				return output, nil
-			}
-		}
-	}
-
 	var attentionWeights *tensor.TensorNumeric[T]
 	if !needsMasking {
 		// Try fused scaled softmax path: single kernel replaces MulScalar + Softmax.
+		// Unwrap EngineProxy to detect the real engine type.
+		realEngine := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEngine = proxy.Real()
+		}
 		if provider, ok := realEngine.(compute.FusedScaledSoftmaxProvider[T]); ok {
 			out, fusedErr := provider.GPUScaledSoftmax(attentionScores, scale, -1)
 			if fusedErr == nil {
