@@ -21,8 +21,8 @@ that comes with it. Zerfoo removes this dilemma entirely.
 
 Zerfoo is a production-grade ML inference framework written in pure Go. It loads
 GGUF models, supports 18 transformer architectures (Llama 3/4, Gemma 3, DeepSeek
-V3, Mistral, Phi, Qwen, and more), and delivers 245 tokens/second on Gemma 3 1B
-Q4_K_M — 20% faster than Ollama on identical hardware. GPU acceleration (CUDA,
+V3, Mistral, Phi, Qwen, and more), and delivers 233 tokens/second on Gemma 3 1B
+Q4_K_M — 14% faster than Ollama on identical hardware. GPU acceleration (CUDA,
 ROCm, OpenCL) is loaded at runtime via purego and dlopen, so `go build ./...`
 compiles everywhere with no C toolchain required.
 
@@ -77,7 +77,7 @@ This talk covers how this works in practice:
   instructions on the GGUF inference path.
 
 - **Quantized inference**: Q4_K_M, Q8_0, and other GGUF quantization formats
-  run natively. The 245 tok/s benchmark on Gemma 3 1B Q4_K_M uses quantized
+  run natively. The 233 tok/s benchmark on Gemma 3 1B Q4_K_M uses quantized
   GEMM/GEMV kernels written in CUDA PTX, dispatched through purego.
 
 - **Cross-compilation**: `GOOS=linux GOARCH=arm64 go build` produces a static
@@ -114,7 +114,7 @@ The second half of the talk covers how Zerfoo integrates with Kubernetes:
 | 0:00 | The CGo Problem | Why CGo and Python sidecars are untenable for Go teams doing ML at scale |
 | 4:00 | Zerfoo Architecture | Three-layer stack (ztensor, ztoken, zerfoo), GGUF model format, `compute.Engine[T]` |
 | 8:00 | purego Deep Dive | How dlopen/symbol resolution replaces CGo; CUDA kernel dispatch; memory management |
-| 14:00 | Performance | 245 tok/s benchmark, CUDA graph capture (99.5% coverage), quantized GEMM, ARM NEON |
+| 14:00 | Performance | 233 tok/s benchmark, CUDA graph capture (99.5% coverage), quantized GEMM, ARM NEON |
 | 18:00 | Kubernetes Operator | ZerfooInferenceService CRD, adaptive batching, multi-model LRU, disaggregated serving |
 | 26:00 | Live Demo | `kubectl apply` a model, run inference, show Grafana metrics under load |
 | 30:00 | Edge Deployment | Cross-compile to ARM64, DaemonSet pattern, Raspberry Pi 5 / Jetson Orin Nano |
@@ -134,7 +134,7 @@ The second half of the talk covers how Zerfoo integrates with Kubernetes:
    is self-describing and mmap-friendly — models load from a PersistentVolumeClaim
    with no preprocessing step.
 
-4. **245 tok/s in pure Go is competitive with C++ runtimes.** Fused operations,
+4. **233 tok/s in pure Go is competitive with C++ runtimes.** Fused operations,
    CUDA graph capture, and quantized kernels close the performance gap without
    sacrificing Go's developer experience.
 

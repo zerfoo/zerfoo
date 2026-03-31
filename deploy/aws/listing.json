@@ -1,7 +1,7 @@
 {
   "title": "Zerfoo ML Inference Engine for Go",
   "shortDescription": "Production-grade ML inference for transformer models — embedded in Go applications, no CGo required.",
-  "longDescription": "Zerfoo is a high-performance ML inference and training framework written entirely in Go. Deploy large language models (Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3) directly in your Go services without Python dependencies or CGo build complexity.\n\nKey capabilities:\n- OpenAI-compatible REST API with SSE streaming\n- GGUF model format (llama.cpp compatible)\n- GPU acceleration via CUDA, ROCm, and OpenCL — loaded at runtime, no special build required\n- Quantized inference: Q4_K_M, Q8_0, FP16, BF16\n- KV caching, speculative decoding, continuous batching\n- Prometheus metrics, structured logging, health checks\n- Embeddable as a Go library: import github.com/zerfoo/zerfoo\n\nPerformance: Gemma 3 1B Q4_K_M at 245 tok/s decode, exceeding Ollama by 20%.",
+  "longDescription": "Zerfoo is a high-performance ML inference and training framework written entirely in Go. Deploy large language models (Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3) directly in your Go services without Python dependencies or CGo build complexity.\n\nKey capabilities:\n- OpenAI-compatible REST API with SSE streaming\n- GGUF model format (llama.cpp compatible)\n- GPU acceleration via CUDA, ROCm, and OpenCL — loaded at runtime, no special build required\n- Quantized inference: Q4_K_M, Q8_0, FP16, BF16\n- KV caching, speculative decoding, continuous batching\n- Prometheus metrics, structured logging, health checks\n- Embeddable as a Go library: import github.com/zerfoo/zerfoo\n\nPerformance: Gemma 3 1B Q4_K_M at 233 tok/s decode, exceeding Ollama by 14%.",
   "productCode": "PLACEHOLDER_PRODUCT_CODE",
   "categories": [
     "Machine Learning",
@@ -11,7 +11,7 @@
   "highlights": [
     "Go-native, zero CGo by default — go build ./... compiles everywhere",
     "OpenAI-compatible API — drop-in replacement for existing integrations",
-    "Competitive with C++ runtimes — 245 tok/s on Gemma 3 1B Q4_K_M"
+    "Competitive with C++ runtimes — 233 tok/s on Gemma 3 1B Q4_K_M"
   ],
   "pricingModel": "saas",
   "pricingDimensions": [

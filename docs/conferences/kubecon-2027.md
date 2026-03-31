@@ -17,8 +17,8 @@ provide. Zerfoo eliminates that split.
 
 Zerfoo is a production-grade ML inference framework written entirely in Go. It
 loads GGUF models, serves transformer architectures (Llama 3, Gemma 3, DeepSeek
-V3, and twelve others) through an OpenAI-compatible API, and delivers 245
-tokens/second on Gemma 3 1B — 20% faster than Ollama on identical hardware.
+V3, and twelve others) through an OpenAI-compatible API, and delivers 233
+tokens/second on Gemma 3 1B — 14% faster than Ollama on identical hardware.
 Because it has zero CGo by default and ships as a single static binary, it
 deploys identically to any other Go service on Kubernetes.
 
@@ -72,8 +72,8 @@ needed.
   loads dynamically via purego/dlopen at runtime
 - `compute.Engine[T]` — the single interface all tensor arithmetic flows through,
   enabling transparent CPU/GPU switching without code changes
-- Performance baseline: 245 tok/s on Gemma 3 1B Q4_K_M with CUDA graph capture,
-  +20% vs Ollama on DGX Spark GB10
+- Performance baseline: 233 tok/s on Gemma 3 1B Q4_K_M with CUDA graph capture,
+  +14% vs Ollama on DGX Spark GB10
 
 ### 3. The Kubernetes Operator: ZerfooInferenceService CRD (6 min)
 
