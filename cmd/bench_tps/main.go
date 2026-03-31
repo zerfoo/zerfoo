@@ -67,6 +67,14 @@ func run() error {
 	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
 	flag.Parse()
 
+	// Auto-disable mmap on CUDA devices. MmapStorage has alignment and
+	// device-consistency issues on ARM64/Grace Hopper that produce garbage
+	// output. Non-mmap loading reads weights into heap memory which the
+	// GPU engine handles correctly. See docs/devlog.md 2026-03-30 entries.
+	if strings.HasPrefix(*device, "cuda") && !*noMmap {
+		*noMmap = true
+	}
+
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
 		if err != nil {
