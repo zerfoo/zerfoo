@@ -3,6 +3,19 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-30: DGX Spark Gemma3 inference regression -- ztensor MmapStorage misalignment
+
+**Type:** investigation
+**Tags:** ztensor, mmap, cudaMemcpy, misaligned-address, gemma3, dgx-spark, regression
+
+**Problem:** Fresh `go build` on DGX Spark produces `cudaMemcpy failed: misaligned address` during Gemma3 prefill (GroupedQueryAttention, input [1,6,1152]). The prebuilt binary from March 27 works at 71 tok/s.
+**Investigation:** Bisected 48 zerfoo commits -- all fail. Tested ztensor v1.0.0 -- still fails. Checked prebuilt binary with `go version -m`: it was built with vendored ztensor v0.8.0, despite go.mod declaring v0.14.2. Fresh builds download v0.14.2 from the Go proxy.
+**Root cause:** ztensor v0.14.2 includes MmapStorage.SliceElements (commit 0a40e11) for zero-copy expert weight slicing. This produces device pointers with offsets that may not meet CUDA alignment requirements (16-byte for float32). The earlier fix c2d68e7 ("copy mmap bytes to heap before cudaMemcpy") addressed part of this but SliceElements bypasses the copy.
+**Fix:** N/A yet. Needs ztensor fix: MmapStorage.SliceElements must ensure aligned device pointers or copy to aligned heap buffer before cudaMemcpy. Tracked as E57 in docs/plan.md.
+**Impact:** Blocks all GPU benchmarking on DGX Spark with ztensor >= v0.9.0. E55 (fused training kernel), E56 (Gemma3 inference fusions), and all future GPU validation blocked until fixed.
+
+---
+
 ## 2026-03-29: MiniMax-M2 229B inference verified on 128 GB DGX Spark
 
 **Type:** benchmark
