@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.2](https://github.com/zerfoo/zerfoo/compare/v1.38.1...v1.38.2) (2026-03-31)
+
+
+### Bug Fixes
+
+* **timeseries:** disable CUDA graph capture until pool is capture-aware ([05a2659](https://github.com/zerfoo/zerfoo/commit/05a2659a2a8bdc8ecff51b5fff0a907079784b7b))
+* **timeseries:** disable CUDA graph capture until ztensor is capture-pure ([faf3815](https://github.com/zerfoo/zerfoo/commit/faf3815399e0faf746bf180a9c4837f4e61a911c))
+* **timeseries:** disable CUDA graph capture until ztensor is capture-pure ([3f38f17](https://github.com/zerfoo/zerfoo/commit/3f38f176d8fc488a869786e56c90475bdca43f8f))
+* **timeseries:** remove backward CUDA graph capture (TrySlice D2H breaks it) ([8f304b2](https://github.com/zerfoo/zerfoo/commit/8f304b2f8f11b1d146c3e90954a75b96ac894096))
+
+
+### Performance Improvements
+
+* **attention:** extend merged QKV projection to prefill (seqLen &gt; 1) ([4dfdcbf](https://github.com/zerfoo/zerfoo/commit/4dfdcbf3cc016e9f14dec7572533871e319030df))
+* **attention:** wire fused softmax+V and repeat-interleave into GQA ([6ec28a8](https://github.com/zerfoo/zerfoo/commit/6ec28a824539777c6bc4f3f6dd29ef0c5e65ce1c))
+* **timeseries:** disable forward-prefix capture (slower than no capture) ([3e459d1](https://github.com/zerfoo/zerfoo/commit/3e459d17f34b785c580fe11092e1e5f3f6900905))
+* **timeseries:** drop partial batches for CUDA graph compatibility ([a5e602a](https://github.com/zerfoo/zerfoo/commit/a5e602aba2e28330701205d336e9876c41996543))
+* **timeseries:** eliminate .Data() calls for full encoder CUDA graph capture ([4134349](https://github.com/zerfoo/zerfoo/commit/41343494768604de91f903383ff7dacc6c6e0c82))
+* **timeseries:** enable CUDA graph capture with capture-aware pool ([dd01284](https://github.com/zerfoo/zerfoo/commit/dd0128406e4077b14303d16c729ab9c350af0e53))
+* **timeseries:** pre-allocate batch workspace outside training loop ([e60358f](https://github.com/zerfoo/zerfoo/commit/e60358f372410d92e711e4000efd7797b81c8b28))
+* **timeseries:** re-enable CUDA graph capture with GPU-native Zero/Copy ([1f0849a](https://github.com/zerfoo/zerfoo/commit/1f0849a85fcd6aa514aae7bade447bd5af44b979))
+* **timeseries:** replace GELU forward/backward with engine ops ([54d7162](https://github.com/zerfoo/zerfoo/commit/54d71621baf03df0df6323c3514e6e818f141ae2))
+* **timeseries:** replace layer norm forward with engine ops ([e0dfe95](https://github.com/zerfoo/zerfoo/commit/e0dfe95e00e75b40ab94d9f6a580155a6624c75d))
+* **timeseries:** wire CUDA graph capture into PatchTST GPU training ([382feb7](https://github.com/zerfoo/zerfoo/commit/382feb7a452919498ed50c3de03fae1af02fd8fd))
+
 ## [1.38.1](https://github.com/zerfoo/zerfoo/compare/v1.38.0...v1.38.1) (2026-03-30)
 
 
