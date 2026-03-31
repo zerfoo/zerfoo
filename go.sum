@@ -28,6 +28,8 @@ github.com/zerfoo/ztensor v0.14.2-0.20260329061715-0a40e11c6984 h1:4PXZbHuUMRpMR
 github.com/zerfoo/ztensor v0.14.2-0.20260329061715-0a40e11c6984/go.mod h1:icFer0fMw2ugD744QLHSdXmiVCDwm6c4OS8LT7xvdXw=
 github.com/zerfoo/ztensor v1.0.1-0.20260330231915-1f37c699ccae h1:U6TJAyxR+M+hIw4kCmHIBfkm/HF55BkrS/d1fKaElBs=
 github.com/zerfoo/ztensor v1.0.1-0.20260330231915-1f37c699ccae/go.mod h1:icFer0fMw2ugD744QLHSdXmiVCDwm6c4OS8LT7xvdXw=
+github.com/zerfoo/ztensor v1.0.1-0.20260330235452-e39b31850637 h1:55s2CCqISxvqOzEVTxcMSM7GB5HnxfVqJUP9j2GnQDs=
+github.com/zerfoo/ztensor v1.0.1-0.20260330235452-e39b31850637/go.mod h1:icFer0fMw2ugD744QLHSdXmiVCDwm6c4OS8LT7xvdXw=
 github.com/zerfoo/ztoken v0.3.4 h1:cxz/uy6THsz2fYW5LQ196dNDnEKu22RU1Zre9iw9oy8=
 github.com/zerfoo/ztoken v0.3.4/go.mod h1:qRWZODtPHOoI+Jfia6o7A0aMnM92O9jnaBHqd+atdh0=
 go.etcd.io/bbolt v1.4.3 h1:dEadXpI6G79deX5prL3QRNP6JB8UxVkqo4UPnHaNXJo=

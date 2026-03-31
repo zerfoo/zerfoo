@@ -518,17 +518,10 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// Batch 0 = warmup (normal execution, allocates output buffers on GPU).
 	// Batch 1 = capture (BeginCapture, run ops, EndCapture).
 	// Batch 2+ = replay (ReplayGraph reuses same GPU memory addresses).
-	// NOTE: Graph capture is disabled until ztensor's GPU memory pool is
-	// capture-aware. Engine ops allocate output tensors internally via
-	// cudaMalloc/arena, which conflicts with stream capture (error 901:
-	// "operation would make the legacy stream depend on a capturing
-	// blocking stream"). Enabling this requires either (a) pre-allocating
-	// ALL intermediate tensors and passing dst to every engine op, or
-	// (b) making ztensor's pool allocate on the capture stream.
-	// See ADR-077 and issue #278 for context.
+	// ztensor's GPU memory pool is now capture-aware (ztensor PR #48):
+	// during BeginCapture, the pool switches to cudaMallocAsync on the
+	// capture stream, so allocations are recorded as graph nodes.
 	gc, canCapture := m.engine.(compute.GraphCapturer)
-	_ = gc
-	canCapture = false // disabled: engine ops allocate during capture
 	var fwdGraph compute.GraphHandle
 	var fwdOut *fwdGraphOutputs
 	fwdCaptured := false
