@@ -23,7 +23,8 @@ Task statuses updated 2026-03-30 based on merged PRs and git history.
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
 - E54: Capture-pure GPU engine ops (0/4 -- GPU-native Zero/Copy, re-enable graph capture)
 - E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
-- E56: Gemma3 inference micro-optimizations (0/9 -- fused softmax+V, GQA expand, prefill fusions)
+- E56: Gemma3 inference micro-optimizations (3/9 -- kernels written, wiring reverted pending E57)
+- E57: Fix DGX Spark build regression (0/3 -- BLOCKER for all GPU benchmarks)
 - All models produce coherent output on CPU and GPU (ztensor v0.6.3, zerfoo v1.25.5)
 
 ---
@@ -1302,6 +1303,13 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-03-30: E57 added -- DGX Spark build regression (BLOCKER)
+
+Fresh go build on DGX Spark produces cudaMemcpy misaligned address in Gemma3 prefill
+with any ztensor version including v1.0.0. Prebuilt binary works. Root cause: unknown,
+needs bisect. Blocks E55 training kernels, E56 inference fusions, all GPU benchmarks.
+3 tasks: bisect, fix, verify.
 
 ### 2026-03-30: E56 added -- Gemma3 inference micro-optimizations
 
@@ -3178,6 +3186,56 @@ Within E56, the three fusions are independent.
 - [ ] T56.1.3 Wire softmax+V into SDPA  Deps: T56.1.2
 - [ ] T56.3.3 Prefill benchmark  Deps: T56.3.2
 - [ ] T56.4.1 Decode benchmark  Deps: T56.1.3, T56.2.2
+
+---
+
+## E57: Fix DGX Spark Build Regression (BLOCKER for E55, E56)
+
+**Problem:** Fresh `go build` on DGX Spark (linux/arm64) with ANY ztensor version
+(including v1.0.0 from before this session) produces `cudaMemcpy failed: misaligned address`
+during Gemma3 prefill at GroupedQueryAttention node[3] with input shape [1, 6, 1152].
+The prebuilt binary from March 27 (~/zerfoo/bench_tps) works fine at 71 tok/s.
+
+**Root cause hypothesis:** The Go module proxy resolves a different ztensor build artifact
+on DGX Spark than what was vendored in the original working binary. Or a zerfoo-side change
+(from E52/E53 DRY refactoring, shared encoder extraction, or E54 GPU-native Zero) changed
+how tensor storage pointers are managed, causing misaligned GPU pointers during prefill.
+
+**Impact:** Blocks ALL DGX Spark GPU benchmarking -- E55 training kernels, E56 inference
+fusions, and any future GPU work cannot be validated until this is fixed.
+
+### E57.1: Bisect the Regression
+
+- [ ] T57.1.1 Bisect zerfoo commits to find breaking change  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  On DGX Spark, binary search between the last known-working commit (v1.38.0 release,
+  e8a42683) and current main. For each test point:
+  (1) `git checkout <commit>`
+  (2) `go build -o /tmp/bench_test ./cmd/bench_tps/`
+  (3) `LD_LIBRARY_PATH=~/zerfoo /tmp/bench_test -model ~/models/gemma3-gguf/model.gguf -tokens 64 -device cuda -temp 0`
+  Use the OLD libkernels.so from ~/zerfoo/ (March 26, known working).
+  Record first commit that fails. This isolates whether the regression is in zerfoo
+  Go code or ztensor dependency resolution.
+  Acceptance: Exact commit identified. Root cause documented in devlog.
+
+- [ ] T57.1.2 Fix the root cause  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T57.1.1
+  Based on bisect result: revert the breaking change, fix the misalignment, or
+  update the build configuration. Verify Gemma3 inference works end-to-end on DGX Spark.
+  Acceptance: `go build ./cmd/bench_tps/ && ./bench_tps -model gemma3 -device cuda` works.
+
+- [ ] T57.1.3 Verify all benchmarks work  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-001]
+  Deps: T57.1.2
+  Run: (1) Gemma3-1B decode 128 tokens, (2) PatchTST 28K training 1 epoch.
+  Both must succeed on DGX Spark with the fixed code.
+  Acceptance: Both benchmarks complete without CUDA errors.
+
+### E57 Parallel Work
+
+##### Wave E57-1: Bisect + fix (sequential, must be on DGX Spark)
+
+- [ ] T57.1.1 Bisect regression
+- [ ] T57.1.2 Fix root cause  Deps: T57.1.1
+- [ ] T57.1.3 Verify benchmarks  Deps: T57.1.2
 
 ---
 
