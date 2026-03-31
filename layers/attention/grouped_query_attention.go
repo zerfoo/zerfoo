@@ -814,35 +814,58 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		// then merge the repeated dimension back into the head axis.
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
-			kSeqLen := kHeadsRoPE.Shape()[2]
-			// [batch, numKV, seqLen, headDim] -> [batch, numKV, 1, seqLen, headDim]
-			kr, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize, gqa.numKeyValueHeads, 1, kSeqLen, gqa.headDim})
-			if err != nil {
-				return nil, err
+
+			// Try fused RepeatInterleave: single kernel replaces
+			// Reshape -> Repeat -> Reshape for each of K and V.
+			type repeatInterleaver[U tensor.Numeric] interface {
+				RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[U], axis int, reps int, dst ...*tensor.TensorNumeric[U]) (*tensor.TensorNumeric[U], error)
 			}
-			// Repeat on axis 2: [batch, numKV, reps, seqLen, headDim]
-			kr, err = gqa.engine.Repeat(ctx, kr, 2, replicationFactor)
-			if err != nil {
-				return nil, err
+			fusedOK := false
+			realEng := compute.Engine[T](gqa.engine)
+			if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+				realEng = proxy.Real()
 			}
-			// Merge: [batch, numKV*reps, seqLen, headDim]
-			kHeadsRoPE, err = gqa.engine.Reshape(ctx, kr, []int{batchSize, gqa.numQueryHeads, kSeqLen, gqa.headDim})
-			if err != nil {
-				return nil, err
+			if ri, ok := realEng.(repeatInterleaver[T]); ok {
+				kExp, kErr := ri.RepeatInterleave(ctx, kHeadsRoPE, 1, replicationFactor)
+				if kErr == nil {
+					vExp, vErr := ri.RepeatInterleave(ctx, vHeads, 1, replicationFactor)
+					if vErr == nil {
+						kHeadsRoPE = kExp
+						vHeads = vExp
+						fusedOK = true
+					}
+				}
 			}
 
-			vSeqLen := vHeads.Shape()[2]
-			vr, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize, gqa.numKeyValueHeads, 1, vSeqLen, gqa.headDim})
-			if err != nil {
-				return nil, err
-			}
-			vr, err = gqa.engine.Repeat(ctx, vr, 2, replicationFactor)
-			if err != nil {
-				return nil, err
-			}
-			vHeads, err = gqa.engine.Reshape(ctx, vr, []int{batchSize, gqa.numQueryHeads, vSeqLen, gqa.headDim})
-			if err != nil {
-				return nil, err
+			if !fusedOK {
+				// Fallback: Reshape -> Repeat -> Reshape for K and V.
+				kSeqLen := kHeadsRoPE.Shape()[2]
+				kr, err := gqa.engine.Reshape(ctx, kHeadsRoPE, []int{batchSize, gqa.numKeyValueHeads, 1, kSeqLen, gqa.headDim})
+				if err != nil {
+					return nil, err
+				}
+				kr, err = gqa.engine.Repeat(ctx, kr, 2, replicationFactor)
+				if err != nil {
+					return nil, err
+				}
+				kHeadsRoPE, err = gqa.engine.Reshape(ctx, kr, []int{batchSize, gqa.numQueryHeads, kSeqLen, gqa.headDim})
+				if err != nil {
+					return nil, err
+				}
+
+				vSeqLen := vHeads.Shape()[2]
+				vr, err := gqa.engine.Reshape(ctx, vHeads, []int{batchSize, gqa.numKeyValueHeads, 1, vSeqLen, gqa.headDim})
+				if err != nil {
+					return nil, err
+				}
+				vr, err = gqa.engine.Repeat(ctx, vr, 2, replicationFactor)
+				if err != nil {
+					return nil, err
+				}
+				vHeads, err = gqa.engine.Reshape(ctx, vr, []int{batchSize, gqa.numQueryHeads, vSeqLen, gqa.headDim})
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 

@@ -159,6 +159,23 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	// If not, we can fuse MulScalar + Softmax into a single kernel launch.
 	needsMasking := mask != nil || (sdpa.causal && len(attentionScores.Shape()) >= 2 && attentionScores.Shape()[len(attentionScores.Shape())-2] > 1)
 
+	// Fused softmax+V multiply for decode (seqQ=1).
+	// Combines scale, softmax, and V matmul in a single kernel launch,
+	// eliminating the intermediate attention weights tensor entirely.
+	if q.Shape()[1] == 1 && !needsMasking {
+		realEng := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEng = proxy.Real()
+		}
+		if fuser, ok := realEng.(compute.FusedSoftmaxVMulProvider[T]); ok {
+			fusedOut, fusedErr := fuser.GPUFusedSoftmaxVMul(attentionScores, v, scale)
+			if fusedErr == nil {
+				return fusedOut, nil
+			}
+			// Fall through to separate ops on error.
+		}
+	}
+
 	var attentionWeights *tensor.TensorNumeric[T]
 	if !needsMasking {
 		// Try fused scaled softmax path: single kernel replaces MulScalar + Softmax.
