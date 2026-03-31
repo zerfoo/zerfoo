@@ -10,17 +10,14 @@ import (
 )
 
 // fwdGraphOutputs holds the output tensors produced during the CUDA graph
-// capture of the forward block (zero grads + weight transposes + patch embed +
-// pos embed + encoder forward + flatten + head forward). On replay these
-// tensor objects are reused because the graph writes to the same GPU memory.
+// capture of the forward-prefix block (zero grads + weight transposes +
+// patch embedding + positional embedding). On replay these tensor objects
+// are reused because the graph writes to the same GPU memory addresses.
 type fwdGraphOutputs struct {
-	headWT      *tensor.TensorNumeric[float32]
-	layerWTs    []layerTransposes
-	headOut     *tensor.TensorNumeric[float32]     // [bsC, outDim] after head forward
-	flatInput   *tensor.TensorNumeric[float32]     // [bsC, headIn] reshaped encoder output
-	layerCaches []gpuBatchLayerCache               // per-layer forward caches for backward
+	headWT   *tensor.TensorNumeric[float32]
+	layerWTs []layerTransposes
+	x        *tensor.TensorNumeric[float32] // [totalRows, dModel] after pos embed
 }
-
 
 // gpuParams holds all PatchTST parameters as float32 tensors for GPU training.
 type gpuParams struct {
@@ -337,6 +334,82 @@ type gpuBatchForwardCache struct {
 	layerCaches []gpuBatchLayerCache
 }
 
+// copyMatToTensor copies a [][]float32 matrix into an existing tensor's data buffer.
+func copyMatToTensor(mat [][]float32, dst *tensor.TensorNumeric[float32]) {
+	data := dst.Data()
+	cols := len(mat[0])
+	for i, row := range mat {
+		copy(data[i*cols:(i+1)*cols], row)
+	}
+}
+
+// layerNormF32WithCache performs layer norm on CPU and returns cached values.
+// x: [seq][dModel], scale/bias: [dModel].
+func layerNormF32WithCache(x [][]float32, scale, bias []float32, dModel int) ([][]float32, [][]float32, []float32) {
+	seq := len(x)
+	normed := make([][]float32, seq)
+	centered := make([][]float32, seq)
+	invStds := make([]float32, seq)
+
+	for s := 0; s < seq; s++ {
+		mean := float32(0)
+		for j := 0; j < dModel; j++ {
+			mean += x[s][j]
+		}
+		mean /= float32(dModel)
+
+		variance := float32(0)
+		centered[s] = make([]float32, dModel)
+		for j := 0; j < dModel; j++ {
+			centered[s][j] = x[s][j] - mean
+			variance += centered[s][j] * centered[s][j]
+		}
+		variance /= float32(dModel)
+		invStd := float32(1.0 / math.Sqrt(float64(variance)+1e-5))
+		invStds[s] = invStd
+
+		normed[s] = make([]float32, dModel)
+		for j := 0; j < dModel; j++ {
+			normed[s][j] = centered[s][j]*invStd*scale[j] + bias[j]
+		}
+	}
+	return normed, centered, invStds
+}
+
+// layerNormForwardEngine delegates to the standalone layerNormForwardWithEngine.
+func (m *PatchTST) layerNormForwardEngine(ctx context.Context, x, scale, bias *tensor.TensorNumeric[float32], rows, dModel int) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
+	return layerNormForwardWithEngine(ctx, m.engine, x, scale, bias, rows, dModel)
+}
+
+// layerNormBackwardF32 computes backward pass through layer norm on CPU.
+// Accumulates into dScale, dBias.
+func layerNormBackwardF32(dOut, centered [][]float32, invStd []float32, scale, dScale, dBias []float32, dModel int) [][]float32 {
+	seq := len(dOut)
+	dInput := make([][]float32, seq)
+	d := float32(dModel)
+
+	for s := 0; s < seq; s++ {
+		dInput[s] = make([]float32, dModel)
+		// dScale += dOut * centered * invStd
+		// dBias += dOut
+		dotScaleGrad := float32(0)
+		dotMeanGrad := float32(0)
+		for j := 0; j < dModel; j++ {
+			normVal := centered[s][j] * invStd[s]
+			dScale[j] += dOut[s][j] * normVal
+			dBias[j] += dOut[s][j]
+			// dNorm = dOut * scale
+			dNorm := dOut[s][j] * scale[j]
+			dotScaleGrad += dNorm * centered[s][j]
+			dotMeanGrad += dNorm
+		}
+		for j := 0; j < dModel; j++ {
+			dNorm := dOut[s][j] * scale[j]
+			dInput[s][j] = invStd[s] * (dNorm - (dotMeanGrad+centered[s][j]*invStd[s]*invStd[s]*dotScaleGrad)/d)
+		}
+	}
+	return dInput
+}
 
 
 // trainWindowedGPU runs the full GPU training loop for PatchTST.
@@ -411,6 +484,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 	// Pre-allocate reusable slices for patch building, flatten, loss, and backward.
 	patchData := make([]float32, totalRows*m.config.PatchLength)
+	flatData := make([]float32, bsC*headIn)
 	predData := make([]float32, batchSize*outDim)
 	dPredData := make([]float32, batchSize*outDim)
 	dChanOutData := make([]float32, bsC*outDim)
@@ -419,6 +493,10 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	fc.patches, err = tensor.New[float32]([]int{totalRows, m.config.PatchLength}, patchData)
 	if err != nil {
 		return nil, fmt.Errorf("gpu workspace patches: %w", err)
+	}
+	fc.flatInput, err = tensor.New[float32]([]int{bsC, headIn}, flatData)
+	if err != nil {
+		return nil, fmt.Errorf("gpu workspace flatInput: %w", err)
 	}
 	dChanOut, err := tensor.New[float32]([]int{bsC, outDim}, dChanOutData)
 	if err != nil {
@@ -431,15 +509,11 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// Drop partial final batch for consistent tensor shapes (required for CUDA graph capture).
 	fullBatches := nSamples - (nSamples % batchSize)
 
-	// CUDA graph capture state for the forward and backward blocks.
-	// Both blocks are contiguous sequences of engine ops with no .Data() calls,
-	// making them safe to capture into CUDA graphs. On replay, all recorded
-	// kernels execute in a single GPU submission with zero intermediate sync.
-	//
-	// Forward graph: zero grads + weight transposes + patch embed + pos embed +
-	//   encoderForward + flatten + head forward (~500 ops).
-	// Backward graph: head backward + encoderBackward + pos embed backward +
-	//   patch embed backward (~500 ops).
+	// CUDA graph capture state for the forward-prefix block.
+	// The forward prefix (zero grads + weight transposes + patch embed + pos embed)
+	// is a contiguous sequence of engine ops with no .Data() calls, making it safe
+	// to capture into a CUDA graph. On replay, all recorded kernels execute in a
+	// single GPU submission with zero intermediate synchronisation.
 	//
 	// Batch 0 = warmup (normal execution, allocates output buffers on GPU).
 	// Batch 1 = capture (BeginCapture, run ops, EndCapture).
@@ -448,10 +522,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// during BeginCapture, the pool switches to cudaMallocAsync on the
 	// capture stream, so allocations are recorded as graph nodes.
 	gc, canCapture := m.engine.(compute.GraphCapturer)
-	var fwdGraph, bwdGraph compute.GraphHandle
+	var fwdGraph compute.GraphHandle
 	var fwdOut *fwdGraphOutputs
 	fwdCaptured := false
-	bwdCaptured := false
 	batchIter := 0
 
 	for epoch := 0; epoch < config.Epochs; epoch++ {
@@ -478,9 +551,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 			}
 
-			// ----- Forward graph: zero grads + transposes + embed + encoder + head -----
+			// ----- Forward-prefix: zero grads + transposes + embed -----
 			// This block is captured into a CUDA graph on batchIter==1 and
-			// replayed for all subsequent batches. All engine ops are .Data()-free.
+			// replayed for all subsequent batches.
 			if fwdCaptured {
 				// Replay: re-executes all captured GPU kernels in one shot.
 				// Input tensors (params, gradTs, fc.patches) are at fixed addresses;
@@ -493,7 +566,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				// batchIter==1: begin capture (batchIter==0 was the warmup).
 				if canCapture && batchIter == 1 {
 					if err := gc.BeginCapture(); err != nil {
-						return nil, fmt.Errorf("patchtst gpu: begin capture fwd: %w", err)
+						return nil, fmt.Errorf("patchtst gpu: begin capture: %w", err)
 					}
 				}
 
@@ -509,6 +582,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				if err != nil {
 					return nil, err
 				}
+				// layerTransposes is defined at package level in patchtst_encoder.go.
 				layerWTs := make([]layerTransposes, m.config.NLayers)
 				for li := 0; li < m.config.NLayers; li++ {
 					layer := &params.layers[li]
@@ -540,16 +614,20 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 
 				// Patch embedding: [bsC*numPatches, patchLen] @ [patchLen, dModel] = [bsC*numPatches, dModel].
+				// ONE MatMul for all samples and channels.
 				embedded, err := m.engine.MatMul(ctx, fc.patches, params.patchEmbW)
 				if err != nil {
 					return nil, fmt.Errorf("gpu fwd patch emb: %w", err)
 				}
+				// Add bias: [bsC*numPatches, dModel] + [1, dModel] (broadcast).
 				embedded, err = m.engine.Add(ctx, embedded, params.patchEmbB)
 				if err != nil {
 					return nil, err
 				}
 
-				// Add positional embedding via broadcast.
+				// Add positional embedding via broadcast:
+				// embedded [bsC*numPatches, dModel] -> [bsC, numPatches, dModel]
+				// posEmb [numPatches, dModel] -> [1, numPatches, dModel] (implicit broadcast)
 				emb3d, err := m.engine.Reshape(ctx, embedded, []int{bsC, numPatches, dModel})
 				if err != nil {
 					return nil, err
@@ -567,58 +645,58 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// Encoder forward (one pass for all samples x channels).
-				x, layerCaches, err := encoderForward(ctx, m.engine, x, params.layers,
-					bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
-				if err != nil {
-					return nil, fmt.Errorf("gpu encoder fwd: %w", err)
-				}
-
-				// Flatten for output head: [bsC*numPatches, dModel] -> [bsC, headIn].
-				flatInput, err := m.engine.Reshape(ctx, x, []int{bsC, headIn})
-				if err != nil {
-					return nil, fmt.Errorf("gpu fwd flatten: %w", err)
-				}
-
-				// Output head: ONE MatMul for all samples x channels.
-				headOut, err := m.engine.MatMul(ctx, flatInput, params.headW)
-				if err != nil {
-					return nil, err
-				}
-				headOut, err = m.engine.Add(ctx, headOut, params.headB)
-				if err != nil {
-					return nil, err
-				}
-
-				// End forward capture.
+				// End capture on batchIter==1 and save output tensors.
 				if canCapture && batchIter == 1 {
 					fwdGraph, err = gc.EndCapture()
 					if err != nil {
-						return nil, fmt.Errorf("patchtst gpu: end capture fwd: %w", err)
+						return nil, fmt.Errorf("patchtst gpu: end capture: %w", err)
 					}
 					fwdCaptured = true
 				}
 
-				// Save output tensors for replay (GPU memory addresses are stable).
+				// Save output tensors so they can be reused on replay.
+				// On replay, the CUDA graph writes to the same GPU memory addresses
+				// that these tensor objects reference.
 				fwdOut = &fwdGraphOutputs{
-					headWT:      headWT,
-					layerWTs:    layerWTs,
-					headOut:     headOut,
-					flatInput:   flatInput,
-					layerCaches: layerCaches,
+					headWT:   headWT,
+					layerWTs: layerWTs,
+					x:        x,
 				}
 			}
 
-			// Retrieve forward outputs for use by loss computation and backward.
+			// Retrieve forward-prefix outputs for use by the rest of the loop.
+			// After replay these tensor objects still point to the correct GPU
+			// memory which was updated in-place by the graph.
 			headWT := fwdOut.headWT
 			layerWTs := fwdOut.layerWTs
-			fc.flatInput = fwdOut.flatInput
-			fc.layerCaches = fwdOut.layerCaches
+			x := fwdOut.x
 			batchIter++
+
+			// Encoder forward (one pass for all samples x channels).
+			x, fc.layerCaches, err = encoderForward(ctx, m.engine, x, params.layers,
+				bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
+			if err != nil {
+				return nil, fmt.Errorf("gpu encoder fwd: %w", err)
+			}
+
+			// Flatten for output head: [bsC*numPatches, dModel] -> [bsC, headIn].
+			// Overwrite pre-allocated flatData buffer (backing fc.flatInput).
+			copy(flatData, x.Data())
+
+			// Output head: ONE MatMul for all samples x channels.
+			// [bsC, headIn] @ [headIn, outDim] = [bsC, outDim]
+			headOut, err := m.engine.MatMul(ctx, fc.flatInput, params.headW)
+			if err != nil {
+				return nil, err
+			}
+			headOut, err = m.engine.Add(ctx, headOut, params.headB)
+			if err != nil {
+				return nil, err
+			}
 
 			// Average across channels: reshape [bsC, outDim] -> [bs, channels, outDim],
 			// sum axis=1 -> [bs, outDim], scale by 1/channels.
-			headOutData := fwdOut.headOut.Data()
+			headOutData := headOut.Data()
 			for i := range predData {
 				predData[i] = 0
 			}
@@ -658,116 +736,88 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 			}
 
-			// ----- Backward graph: head + encoder + pos emb + patch emb backward -----
-			// Captured into a second CUDA graph on batchIter==2, replayed for 3+.
-			// (batchIter was already incremented after forward, so batchIter==2
-			// corresponds to the second batch's backward pass.)
-			if bwdCaptured {
-				if err := gc.ReplayGraph(bwdGraph); err != nil {
-					return nil, fmt.Errorf("patchtst gpu: replay bwd graph: %w", err)
-				}
-			} else {
-				if canCapture && batchIter == 2 {
-					if err := gc.BeginCapture(); err != nil {
-						return nil, fmt.Errorf("patchtst gpu: begin capture bwd: %w", err)
-					}
-				}
+			// Head backward: ONE MatMul for dW, ONE for dX.
+			// dHeadW += flatInput^T @ dChanOut : [headIn, bsC] @ [bsC, outDim] = [headIn, outDim]
+			flatInputT, err := m.engine.Transpose(ctx, fc.flatInput, []int{1, 0})
+			if err != nil {
+				return nil, err
+			}
+			dHW, err := m.engine.MatMul(ctx, flatInputT, dChanOut)
+			if err != nil {
+				return nil, err
+			}
+			grads.headW, err = m.engine.Add(ctx, grads.headW, dHW)
+			if err != nil {
+				return nil, err
+			}
+			// dHeadB += sum(dChanOut, axis=0) : [1, outDim]
+			dHB, err := m.engine.Sum(ctx, dChanOut, 0, false)
+			if err != nil {
+				return nil, err
+			}
+			dHBR, err := m.engine.Reshape(ctx, dHB, []int{1, outDim})
+			if err != nil {
+				return nil, err
+			}
+			grads.headB, err = m.engine.Add(ctx, grads.headB, dHBR)
+			if err != nil {
+				return nil, err
+			}
 
-				// Head backward: ONE MatMul for dW, ONE for dX.
-				flatInputT, err := m.engine.Transpose(ctx, fc.flatInput, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dHW, err := m.engine.MatMul(ctx, flatInputT, dChanOut)
-				if err != nil {
-					return nil, err
-				}
-				_, err = m.engine.Add(ctx, grads.headW, dHW, grads.headW)
-				if err != nil {
-					return nil, err
-				}
-				dHB, err := m.engine.Sum(ctx, dChanOut, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dHBR, err := m.engine.Reshape(ctx, dHB, []int{1, outDim})
-				if err != nil {
-					return nil, err
-				}
-				_, err = m.engine.Add(ctx, grads.headB, dHBR, grads.headB)
-				if err != nil {
-					return nil, err
-				}
+			// dFlat = dChanOut @ headW^T : [bsC, outDim] @ [outDim, headIn] = [bsC, headIn]
+			dFlat, err := m.engine.MatMul(ctx, dChanOut, headWT)
+			if err != nil {
+				return nil, err
+			}
 
-				// dFlat = dChanOut @ headW^T
-				dFlat, err := m.engine.MatMul(ctx, dChanOut, headWT)
-				if err != nil {
-					return nil, err
-				}
-				dX, err := m.engine.Reshape(ctx, dFlat, []int{totalRows, dModel})
-				if err != nil {
-					return nil, err
-				}
+			// Reshape dFlat from [bsC, headIn] to [bsC*numPatches, dModel].
+			dX, err := m.engine.Reshape(ctx, dFlat, []int{totalRows, dModel})
+			if err != nil {
+				return nil, err
+			}
 
-				// Backward through encoder layers in reverse.
-				dX, err = encoderBackward(ctx, m.engine, dX, params.layers, grads.layers,
-					fc.layerCaches, layerWTs, bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
-				if err != nil {
-					return nil, fmt.Errorf("gpu encoder bwd: %w", err)
-				}
+			// Backward through encoder layers in reverse (single pass).
+			dX, err = encoderBackward(ctx, m.engine, dX, params.layers, grads.layers,
+				fc.layerCaches, layerWTs, bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
+			if err != nil {
+				return nil, fmt.Errorf("gpu encoder bwd: %w", err)
+			}
 
-				// Positional embedding gradient: sum dX across batch dimension.
-				dXForPos, err := m.engine.Reshape(ctx, dX, []int{bsC, numPatches * dModel})
-				if err != nil {
-					return nil, fmt.Errorf("gpu bwd pos reshape: %w", err)
+			// Positional embedding gradient: sum across all bsC samples.
+			dPosData := grads.posEmb.Data()
+			dXData := dX.Data()
+			for s := 0; s < bsC; s++ {
+				sOff := s * numPatches * dModel
+				for j := 0; j < numPatches*dModel; j++ {
+					dPosData[j] += dXData[sOff+j]
 				}
-				dPosFlat, err := m.engine.Sum(ctx, dXForPos, 0, false)
-				if err != nil {
-					return nil, fmt.Errorf("gpu bwd pos sum: %w", err)
-				}
-				dPosReshaped, err := m.engine.Reshape(ctx, dPosFlat, []int{numPatches, dModel})
-				if err != nil {
-					return nil, fmt.Errorf("gpu bwd pos reshape2: %w", err)
-				}
-				_, err = m.engine.Add(ctx, grads.posEmb, dPosReshaped, grads.posEmb)
-				if err != nil {
-					return nil, fmt.Errorf("gpu bwd pos add: %w", err)
-				}
+			}
 
-				// Patch embedding backward.
-				patchesT, err := m.engine.Transpose(ctx, fc.patches, []int{1, 0})
-				if err != nil {
-					return nil, err
-				}
-				dPEW, err := m.engine.MatMul(ctx, patchesT, dX)
-				if err != nil {
-					return nil, err
-				}
-				_, err = m.engine.Add(ctx, grads.patchEmbW, dPEW, grads.patchEmbW)
-				if err != nil {
-					return nil, err
-				}
-				dPEB, err := m.engine.Sum(ctx, dX, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dPEBR, err := m.engine.Reshape(ctx, dPEB, []int{1, dModel})
-				if err != nil {
-					return nil, err
-				}
-				_, err = m.engine.Add(ctx, grads.patchEmbB, dPEBR, grads.patchEmbB)
-				if err != nil {
-					return nil, err
-				}
-
-				// End backward capture.
-				if canCapture && batchIter == 2 {
-					bwdGraph, err = gc.EndCapture()
-					if err != nil {
-						return nil, fmt.Errorf("patchtst gpu: end capture bwd: %w", err)
-					}
-					bwdCaptured = true
-				}
+			// Patch embedding backward: ONE MatMul each.
+			// dW += patches^T @ dX : [patchLen, totalRows] @ [totalRows, dModel]
+			patchesT, err := m.engine.Transpose(ctx, fc.patches, []int{1, 0})
+			if err != nil {
+				return nil, err
+			}
+			dPEW, err := m.engine.MatMul(ctx, patchesT, dX)
+			if err != nil {
+				return nil, err
+			}
+			grads.patchEmbW, err = m.engine.Add(ctx, grads.patchEmbW, dPEW)
+			if err != nil {
+				return nil, err
+			}
+			dPEB, err := m.engine.Sum(ctx, dX, 0, false)
+			if err != nil {
+				return nil, err
+			}
+			dPEBR, err := m.engine.Reshape(ctx, dPEB, []int{1, dModel})
+			if err != nil {
+				return nil, err
+			}
+			grads.patchEmbB, err = m.engine.Add(ctx, grads.patchEmbB, dPEBR)
+			if err != nil {
+				return nil, err
 			}
 
 			batchLoss /= float64(bs * outDim)
@@ -833,9 +883,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	if fwdCaptured {
 		gc.DestroyGraph(fwdGraph)
 	}
-	if bwdCaptured {
-		gc.DestroyGraph(bwdGraph)
-	}
 
 	// Write optimized params back to model tensors.
 	m.writeBackF32FromGPU(params)
@@ -844,6 +891,24 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	return result, nil
 }
 
+// matFromTensor extracts a [][]float32 from a 2D tensor.
+func matFromTensor(t *tensor.TensorNumeric[float32], rows, cols int) [][]float32 {
+	data := t.Data()
+	result := make([][]float32, rows)
+	for i := 0; i < rows; i++ {
+		result[i] = data[i*cols : (i+1)*cols]
+	}
+	return result
+}
+
+// tensorFromMat creates a 2D tensor from [][]float32.
+func tensorFromMat(m [][]float32, rows, cols int) (*tensor.TensorNumeric[float32], error) {
+	data := make([]float32, rows*cols)
+	for i := 0; i < rows; i++ {
+		copy(data[i*cols:(i+1)*cols], m[i])
+	}
+	return tensor.New[float32]([]int{rows, cols}, data)
+}
 
 // writeBackF32FromGPU writes GPU params back to model float32 tensors.
 func (m *PatchTST) writeBackF32FromGPU(p *gpuParams) {
