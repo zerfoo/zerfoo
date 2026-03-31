@@ -90,6 +90,110 @@ func layerNormForwardWithEngine(ctx context.Context, engine compute.Engine[float
 	return normed, centered, invStd, nil
 }
 
+// layerNormBackwardWithEngine computes the backward pass through layer norm using engine ops.
+// dOut: [rows, dModel], centered: [rows, dModel], invStd: [rows, 1].
+// scale: [1, dModel] (layer norm weight), dScale/dBias: [1, dModel] (gradient accumulators).
+// Returns dInput [rows, dModel] and updated dScale, dBias.
+func layerNormBackwardWithEngine(
+	ctx context.Context,
+	engine compute.Engine[float32],
+	dOut, centered, invStd, scale, dScale, dBias *tensor.TensorNumeric[float32],
+	rows, dModel int,
+) (dInput, newDScale, newDBias *tensor.TensorNumeric[float32], err error) {
+	invD := float32(1.0) / float32(rows)
+	_ = invD
+
+	// dScale += Sum(dOut * centered * invStd, axis=0)  -> [1, dModel]
+	normVal, err := engine.Mul(ctx, centered, invStd) // [rows, dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dScaleBatch, err := engine.Mul(ctx, dOut, normVal) // [rows, dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dScaleSum, err := engine.Sum(ctx, dScaleBatch, 0, false) // [dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dScaleSum, err = engine.Reshape(ctx, dScaleSum, []int{1, dModel})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	newDScale, err = engine.Add(ctx, dScale, dScaleSum)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// dBias += Sum(dOut, axis=0)  -> [1, dModel]
+	dBiasSum, err := engine.Sum(ctx, dOut, 0, false) // [dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dBiasSum, err = engine.Reshape(ctx, dBiasSum, []int{1, dModel})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	newDBias, err = engine.Add(ctx, dBias, dBiasSum)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// dNorm = dOut * scale  (broadcast [1, dModel] over [rows, dModel])
+	dNorm, err := engine.Mul(ctx, dOut, scale) // [rows, dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// dotScaleGrad = Sum(dNorm * centered, axis=1, keepDims=true)  -> [rows, 1]
+	dNormCent, err := engine.Mul(ctx, dNorm, centered) // [rows, dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dotScaleGrad, err := engine.Sum(ctx, dNormCent, 1, true) // [rows, 1]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// dotMeanGrad = Sum(dNorm, axis=1, keepDims=true)  -> [rows, 1]
+	dotMeanGrad, err := engine.Sum(ctx, dNorm, 1, true) // [rows, 1]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// dInput = invStd * (dNorm - (dotMeanGrad + centered * invStd^2 * dotScaleGrad) / dModel)
+	invStdSq, err := engine.Mul(ctx, invStd, invStd) // [rows, 1]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	term, err := engine.Mul(ctx, centered, invStdSq) // [rows, dModel] (broadcast [rows,1])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	term, err = engine.Mul(ctx, term, dotScaleGrad) // [rows, dModel] (broadcast [rows,1])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	correction, err := engine.Add(ctx, dotMeanGrad, term) // [rows, dModel] (broadcast)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	correction, err = engine.MulScalar(ctx, correction, 1.0/float32(dModel))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	inner, err := engine.Sub(ctx, dNorm, correction) // [rows, dModel]
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dInput, err = engine.Mul(ctx, invStd, inner) // [rows, dModel] (broadcast [rows,1])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return dInput, newDScale, newDBias, nil
+}
+
 // encoderForward runs the PatchTST transformer encoder layers using engine ops.
 // x: [totalRows, dModel] input tensor (after patch embedding + pos embedding).
 // bsC is batch*channels, numPatches is the sequence length per sample-channel.
@@ -501,22 +605,16 @@ func encoderBackward(
 			return nil, err
 		}
 
-		// LayerNorm2 backward on CPU + residual add.
-		dNormed2Data := matFromTensor(dNormed2, totalRows, dModel)
-		centered2Mat := matFromTensor(lc.centered2, totalRows, dModel)
-		invStd2Flat := lc.invStd2.Data() // [rows*1] flat slice
-		dXAfterAttn := layerNormBackwardF32(dNormed2Data, centered2Mat, invStd2Flat,
-			layer.norm2.Data(), dg.norm2.Data(), dg.bias2.Data(), dModel)
-		// Add residual gradient from FFN path (dX flows through residual 2).
-		dXData := dX.Data()
-		for r := 0; r < totalRows; r++ {
-			for j := 0; j < dModel; j++ {
-				dXAfterAttn[r][j] += dXData[r*dModel+j]
-			}
+		// LayerNorm2 backward using engine ops + residual add.
+		dLN2Input, newDNorm2, newDBias2, err := layerNormBackwardWithEngine(ctx, engine, dNormed2, lc.centered2, lc.invStd2,
+			layer.norm2, dg.norm2, dg.bias2, totalRows, dModel)
+		if err != nil {
+			return nil, err
 		}
-
-		// oProj backward: ONE MatMul each.
-		dAttnProjOut, err := tensorFromMat(dXAfterAttn, totalRows, dModel)
+		dg.norm2 = newDNorm2
+		dg.bias2 = newDBias2
+		// Add residual gradient from FFN path (dX flows through residual 2).
+		dAttnProjOut, err := engine.Add(ctx, dLN2Input, dX)
 		if err != nil {
 			return nil, err
 		}
@@ -798,20 +896,16 @@ func encoderBackward(
 			return nil, err
 		}
 
-		// LayerNorm1 backward on CPU + residual add.
-		dNormed1Data := matFromTensor(dNormed1, totalRows, dModel)
-		centered1Mat := matFromTensor(lc.centered1, totalRows, dModel)
-		invStd1Flat := lc.invStd1.Data() // [rows*1] flat slice
-		dLayerInput := layerNormBackwardF32(dNormed1Data, centered1Mat, invStd1Flat,
-			layer.norm1.Data(), dg.norm1.Data(), dg.bias1.Data(), dModel)
-		// Add residual gradient from attention path.
-		for r := 0; r < totalRows; r++ {
-			for j := 0; j < dModel; j++ {
-				dLayerInput[r][j] += dXAfterAttn[r][j]
-			}
+		// LayerNorm1 backward using engine ops + residual add.
+		dLN1Input, newDNorm1, newDBias1, err := layerNormBackwardWithEngine(ctx, engine, dNormed1, lc.centered1, lc.invStd1,
+			layer.norm1, dg.norm1, dg.bias1, totalRows, dModel)
+		if err != nil {
+			return nil, err
 		}
-
-		dX, err = tensorFromMat(dLayerInput, totalRows, dModel)
+		dg.norm1 = newDNorm1
+		dg.bias1 = newDBias1
+		// Add residual gradient from attention path.
+		dX, err = engine.Add(ctx, dLN1Input, dAttnProjOut)
 		if err != nil {
 			return nil, err
 		}

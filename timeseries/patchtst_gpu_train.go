@@ -334,81 +334,9 @@ type gpuBatchForwardCache struct {
 	layerCaches []gpuBatchLayerCache
 }
 
-// copyMatToTensor copies a [][]float32 matrix into an existing tensor's data buffer.
-func copyMatToTensor(mat [][]float32, dst *tensor.TensorNumeric[float32]) {
-	data := dst.Data()
-	cols := len(mat[0])
-	for i, row := range mat {
-		copy(data[i*cols:(i+1)*cols], row)
-	}
-}
-
-// layerNormF32WithCache performs layer norm on CPU and returns cached values.
-// x: [seq][dModel], scale/bias: [dModel].
-func layerNormF32WithCache(x [][]float32, scale, bias []float32, dModel int) ([][]float32, [][]float32, []float32) {
-	seq := len(x)
-	normed := make([][]float32, seq)
-	centered := make([][]float32, seq)
-	invStds := make([]float32, seq)
-
-	for s := 0; s < seq; s++ {
-		mean := float32(0)
-		for j := 0; j < dModel; j++ {
-			mean += x[s][j]
-		}
-		mean /= float32(dModel)
-
-		variance := float32(0)
-		centered[s] = make([]float32, dModel)
-		for j := 0; j < dModel; j++ {
-			centered[s][j] = x[s][j] - mean
-			variance += centered[s][j] * centered[s][j]
-		}
-		variance /= float32(dModel)
-		invStd := float32(1.0 / math.Sqrt(float64(variance)+1e-5))
-		invStds[s] = invStd
-
-		normed[s] = make([]float32, dModel)
-		for j := 0; j < dModel; j++ {
-			normed[s][j] = centered[s][j]*invStd*scale[j] + bias[j]
-		}
-	}
-	return normed, centered, invStds
-}
-
 // layerNormForwardEngine delegates to the standalone layerNormForwardWithEngine.
 func (m *PatchTST) layerNormForwardEngine(ctx context.Context, x, scale, bias *tensor.TensorNumeric[float32], rows, dModel int) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
 	return layerNormForwardWithEngine(ctx, m.engine, x, scale, bias, rows, dModel)
-}
-
-// layerNormBackwardF32 computes backward pass through layer norm on CPU.
-// Accumulates into dScale, dBias.
-func layerNormBackwardF32(dOut, centered [][]float32, invStd []float32, scale, dScale, dBias []float32, dModel int) [][]float32 {
-	seq := len(dOut)
-	dInput := make([][]float32, seq)
-	d := float32(dModel)
-
-	for s := 0; s < seq; s++ {
-		dInput[s] = make([]float32, dModel)
-		// dScale += dOut * centered * invStd
-		// dBias += dOut
-		dotScaleGrad := float32(0)
-		dotMeanGrad := float32(0)
-		for j := 0; j < dModel; j++ {
-			normVal := centered[s][j] * invStd[s]
-			dScale[j] += dOut[s][j] * normVal
-			dBias[j] += dOut[s][j]
-			// dNorm = dOut * scale
-			dNorm := dOut[s][j] * scale[j]
-			dotScaleGrad += dNorm * centered[s][j]
-			dotMeanGrad += dNorm
-		}
-		for j := 0; j < dModel; j++ {
-			dNorm := dOut[s][j] * scale[j]
-			dInput[s][j] = invStd[s] * (dNorm - (dotMeanGrad+centered[s][j]*invStd[s]*invStd[s]*dotScaleGrad)/d)
-		}
-	}
-	return dInput
 }
 
 
@@ -897,24 +825,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	return result, nil
 }
 
-// matFromTensor extracts a [][]float32 from a 2D tensor.
-func matFromTensor(t *tensor.TensorNumeric[float32], rows, cols int) [][]float32 {
-	data := t.Data()
-	result := make([][]float32, rows)
-	for i := 0; i < rows; i++ {
-		result[i] = data[i*cols : (i+1)*cols]
-	}
-	return result
-}
-
-// tensorFromMat creates a 2D tensor from [][]float32.
-func tensorFromMat(m [][]float32, rows, cols int) (*tensor.TensorNumeric[float32], error) {
-	data := make([]float32, rows*cols)
-	for i := 0; i < rows; i++ {
-		copy(data[i*cols:(i+1)*cols], m[i])
-	}
-	return tensor.New[float32]([]int{rows, cols}, data)
-}
 
 // writeBackF32FromGPU writes GPU params back to model float32 tensors.
 func (m *PatchTST) writeBackF32FromGPU(p *gpuParams) {
