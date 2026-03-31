@@ -448,6 +448,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// during BeginCapture, the pool switches to cudaMallocAsync on the
 	// capture stream, so allocations are recorded as graph nodes.
 	gc, canCapture := m.engine.(compute.GraphCapturer)
+	_ = gc
+	canCapture = false // disabled: ztensor engine ops call GPUStorage.TrySlice internally
 	var fwdGraph compute.GraphHandle
 	var fwdOut *fwdGraphOutputs
 	fwdCaptured := false
