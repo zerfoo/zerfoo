@@ -91,10 +91,10 @@ GPU RMSNorm fallback (PRs #179-186).
 ### Multi-Model Benchmarks (BMK-T2 complete)
 
 3-run median results (2026-03-27, DGX Spark GB10, 128 tokens, greedy):
-Gemma3-1B 235 tok/s (1.25x Ollama), DeepSeek-R1 186 (1.11x), Llama3.2 92
-(0.99x), Mistral-7B 44 (1.00x). All models produce coherent output after GQA
-repeat fix (ztensor v0.6.3) and flash attention decode fix (zerfoo v1.25.5).
-25% faster on small models, parity at 7B.
+Gemma3-1B 233 tok/s (1.14x Ollama), DeepSeek-R1 186 (1.11x), Llama3.2 92
+(0.99x), Mistral-7B 44 (1.00x). All models produce coherent output. v1.38.4
+with ztensor v1.1.2. CUDA graph capture 184/185 instructions (99.5%).
+Up to 14% faster on small models, parity at 7B. Training: PatchTST 128.5s (4.6x faster).
 
 ### GPU Verification (E114, 7/7 complete)
 
@@ -3075,12 +3075,12 @@ fused_swiglu.cu) provide the pattern.
 
 ## E56: Gemma3 Inference Micro-Optimizations
 
-**Problem:** Gemma3 inference is already well-optimized (245 tok/s, 1.25x Ollama on 1B)
-with CUDA graph capture, 6 fused kernels per layer, merged QKV/gate+up, and GPU-native
-ops. However, three small fusion opportunities remain that cumulatively offer ~5-25%
-speedup depending on prefill vs decode workload.
+**Problem:** Gemma3 inference is already well-optimized (233 tok/s, 1.14x Ollama on 1B)
+with CUDA graph capture (184/185 instructions), 6 fused kernels per layer, merged QKV/gate+up,
+and GPU-native ops. However, three small fusion opportunities remain that cumulatively offer
+~5-25% speedup depending on prefill vs decode workload.
 
-**Current decode (Gemma3-1B, DGX Spark):** 245 tok/s
+**Current decode (Gemma3-1B, DGX Spark, v1.38.4):** 233 tok/s
 **Target decode:** 270+ tok/s (~10% gain from fusions a+b)
 **Target prefill:** 10-20% improvement from fusion c
 

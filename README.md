@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**235 tok/s** on Gemma 3 1B Q4_K_M -- 25% faster than Ollama. Zero CGo. 41 model architectures (25 families). **Run models larger than RAM** via memory-mapped I/O (229B MiniMax-M2 on 128 GB). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series inference 21x faster than Python. Tabular ML and time-series forecasting built in.
+**233 tok/s** on Gemma 3 1B Q4_K_M -- up to 14% faster than Ollama. Zero CGo. 41 model architectures (25 families). **Run models larger than RAM** via memory-mapped I/O (229B MiniMax-M2 on 128 GB). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series training 4.6x faster with CUDA graphs. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -15,12 +15,12 @@ Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX
 
 | Model | Size | Quant | Zerfoo (tok/s) | Ollama (tok/s) | Ratio |
 |-------|------|-------|----------------|----------------|-------|
-| Gemma 3 1B | 1B | Q4_K_M | **235** | 188 | **1.25x** |
-| DeepSeek R1 1.5B | 1.5B | Q4_K_M | **186** | 167 | **1.11x** |
+| Gemma 3 1B | 1B | Q4_K_M | **233** | 204 | **1.14x** |
+| DeepSeek R1 1.5B | 1.5B | Q4_K_M | **186** | 168 | **1.11x** |
 | Llama 3.2 3B | 3B | Q4_K_M | 92 | 93 | 0.99x |
 | Mistral 7B | 7B | Q5_K_M | 44 | 44 | 1.00x |
 
-25% faster on small models, parity at 7B. All models produce coherent, verified output.
+Up to 14% faster on small models, parity at 7B. All models produce coherent, verified output.
 
 <details>
 <summary>Methodology</summary>
@@ -30,11 +30,12 @@ Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX
 - **Tokens**: 128 decode tokens per run
 - **Sampling**: greedy (temperature = 0)
 - **Runs**: 3-run median
-- **Date**: 2026-03-27
+- **Date**: 2026-03-30
 - **Ollama version**: 0.17.7
-- **Notes**: All results verified for coherent output. Zerfoo uses CUDA graph capture with flash attention decode. GQA repeat fix applied (ztensor v0.6.3, zerfoo v1.25.5).
+- **Zerfoo version**: v1.38.4 (ztensor v1.1.2)
+- **Notes**: All results verified for coherent output. Zerfoo uses CUDA graph capture (184/185 instructions, 99.5%) with flash attention decode. Fused kernels: softmax+V multiply, repeat-interleave for GQA, fused AddRMSNorm, fused SwiGLU, fused QKNormRoPE, merged QKV, merged gate+up. Auto-disable mmap on CUDA for ARM64 compatibility.
 
-Raw results: [`results/benchmark-2026-03-27.json`](results/benchmark-2026-03-27.json)
+Raw results: [`results/benchmark-2026-03-30.json`](results/benchmark-2026-03-30.json)
 
 </details>
 
@@ -292,7 +293,7 @@ for _, tc := range result.ToolCalls {
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
-| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 235 tok/s |
+| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 233 tok/s |
 | Gemma 3n | GGUF | Mobile-optimized variant |
 | Llama 3 | GGUF | RoPE theta=500K |
 | Llama 4 | GGUF | Latest generation |
