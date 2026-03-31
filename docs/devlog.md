@@ -3,6 +3,19 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-03-30: Q8 GEMV kernel alignment fix + broader GPU engine regression
+
+**Type:** investigation
+**Tags:** ztensor, cuda, gemv-q8, float4, alignment, compute-sanitizer, gemma3, dgx-spark
+
+**Problem:** After fixing the misaligned address crash (see entry below), Gemma3 inference produces garbage output (`<pad>` tokens) at 2.65 tok/s instead of coherent text at 235 tok/s.
+**Investigation:** compute-sanitizer found gemv_q8_kernel doing float4/int4 (16-byte) reads from non-16-byte-aligned pointers: (1) activation `x` via `(const float4*)x` cast, (2) weight `qvals` via `(const int4*)qvals` where Q8 block layout (36 bytes) means qvals at blk+4 is never 16-byte aligned. Fixed both with per-element loads (ztensor PR #57). Crash resolved. But output still garbage even with CUDA graph disabled (`ZERFOO_DISABLE_CUDA_GRAPH=1`).
+**Root cause:** The Q8 alignment was ONE issue. The broader GPU engine in ztensor v1.0.0+ has additional regressions vs v0.8.0 (the version in the working prebuilt binary). The v1.0.0+ GPU path produces numerically wrong results for Gemma3 inference -- separate from alignment.
+**Fix:** Q8 alignment fix shipped (ztensor v1.1.1). Broader regression needs v0.8.0-vs-v1.0.0 GPU engine diff investigation. Tracked as E57 in docs/plan.md.
+**Impact:** DGX Spark GPU inference broken for fresh builds. Prebuilt binary with vendored v0.8.0 still works. Training (timeseries) unaffected (uses float32 tensors, not quantized).
+
+---
+
 ## 2026-03-30: DGX Spark Gemma3 inference regression -- ztensor MmapStorage misalignment
 
 **Type:** investigation
