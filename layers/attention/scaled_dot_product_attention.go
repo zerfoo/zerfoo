@@ -232,18 +232,31 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 			// (offset = seqK - 1, so ki <= seqK-1 == qi+offset for all ki).
 			// Skip masking entirely to avoid a costly .Data() D2H copy on GPU tensors.
 			if seqQ > 1 {
-				data := scaledAttentionScores.Data()
+				// Build a causal mask tensor [1, seqQ, seqK] with 0 for visible
+				// positions and -inf for future positions, then add it to scores.
+				// This avoids .Data() which causes a D2H copy on GPU tensors and
+				// leaves the GPU-side data unmasked (the root cause of the GPU
+				// inference regression where the model ignored causal ordering).
 				batch := shape[0]
-				offset := seqK - seqQ // cached tokens are always visible
+				offset := seqK - seqQ
 				negInf := negInfValue[T]()
-				for b := range batch {
-					for qi := range seqQ {
-						for ki := range seqK {
-							if ki > qi+offset {
-								data[(b*seqQ+qi)*seqK+ki] = negInf
-							}
+				maskData := make([]T, seqQ*seqK)
+				for qi := range seqQ {
+					for ki := range seqK {
+						if ki > qi+offset {
+							maskData[qi*seqK+ki] = negInf
 						}
 					}
+				}
+				causalMask, maskErr := tensor.New[T]([]int{1, seqQ, seqK}, maskData)
+				if maskErr != nil {
+					return nil, fmt.Errorf("causal mask: %w", maskErr)
+				}
+				// Broadcast [1, seqQ, seqK] across [batch, seqQ, seqK].
+				_ = batch // broadcast handled by engine.Add
+				scaledAttentionScores, err = sdpa.engine.Add(ctx, scaledAttentionScores, causalMask)
+				if err != nil {
+					return nil, fmt.Errorf("causal mask add: %w", err)
 				}
 			}
 		}
