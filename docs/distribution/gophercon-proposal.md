@@ -22,8 +22,8 @@ startup, not compile time.
 
 In this talk, attendees will learn how purego replaces CGo for GPU bindings,
 how Go generics enable type-safe tensor operations without runtime overhead,
-and how CUDA graph capture can push decode throughput to 233 tok/s on a
-single GPU -- 14% faster than Ollama on the same hardware. The session
+and how CUDA graph capture can push decode throughput to 234 tok/s on a
+single GPU -- 18% faster than Ollama on the same hardware. The session
 includes a live demo running inference on an NVIDIA DGX Spark.
 
 ## Outline (25-minute talk)

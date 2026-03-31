@@ -84,7 +84,7 @@ See docs/benchmarks.md for current baselines and historical progression.
 
 CUDA graph captures the longest contiguous capturable region (all transformer
 layers). EmbeddingLookup and other non-capturable ops run pre/post capture.
-Zerfoo is up to 14% faster than Ollama on the same hardware.
+Zerfoo is up to 18% faster than Ollama on the same hardware.
 
 ## Static Analysis (2026-03-16)
 

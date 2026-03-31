@@ -12,8 +12,8 @@ Phi 3/4, and DeepSeek V3 -- without CGo, Python, or any external runtime.
 GPU acceleration (CUDA, ROCm, OpenCL) is loaded dynamically at runtime via
 purego/dlopen, so `go build` works everywhere with no C compiler required.
 
-On Gemma 3 1B Q4_K_M, Zerfoo decodes at 233 tok/s on a DGX Spark --
-14% faster than Ollama on the same hardware with the same model file.
+On Gemma 3 1B Q4_K_M, Zerfoo decodes at 234 tok/s on a DGX Spark --
+18% faster than Ollama on the same hardware with the same model file.
 CUDA graph capture covers 99.5% of the decode path. Full benchmarking
 methodology with reproduction steps is linked below.
 

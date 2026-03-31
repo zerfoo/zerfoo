@@ -16,7 +16,7 @@ Zerfoo has grown from a proof-of-concept into a substantial framework:
 
 - **7 repositories (6 active, 1 archived)**, ~50,000+ lines of Go, ~5,000 lines of CUDA C, ~2,000 lines of ARM/x86 assembly
 - **6 model architectures** running: Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3
-- **233 tok/s** on Gemma 3 1B Q4_K_M — 14% faster than Ollama
+- **234 tok/s** on Gemma 3 1B Q4_K_M — 18% faster than Ollama
 - **25+ custom CUDA kernels** with zero-CGo purego bindings
 - **OpenAI-compatible API server** with streaming, batching, speculative decoding
 - **Distributed training** via gRPC and NCCL

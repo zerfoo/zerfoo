@@ -26,7 +26,7 @@ The five-year plan has 6 phases mapped to revenue milestones. We are **4 months 
 | Deliverable | Status | Evidence |
 |-------------|--------|----------|
 | 6 transformer architectures | Done | Llama 3, Gemma 3, Mistral, Qwen 2, Phi, DeepSeek V3 — all production-ready |
-| Beat Ollama throughput | Done | 233 tok/s vs Ollama 204 tok/s on Gemma 3 1B Q4_K_M (+14%, v1.38.4) |
+| Beat Ollama throughput | Done | 234 tok/s vs Ollama 197 tok/s on Gemma 3 1B Q4_K_M (+18%, v1.38.4) |
 | CUDA graph capture | Done | 99.5% instruction coverage on GGUF inference path |
 | Quantized GEMM/GEMV | Done | Q4_0, Q4_K, Q5_0, Q5_K, Q6_K, Q8_0, FP8, FP16, BF16, NF4 — 10+ formats |
 | GGUF loading all architectures | 90% | Working but Q5_K/Q6_K re-quantization bug needs fix |

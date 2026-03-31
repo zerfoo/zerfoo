@@ -14,7 +14,7 @@ Go powers some of the world's largest production systems, yet ML inference
 remains outsourced to Python and C++ runtimes. Zerfoo changes that. It is a
 production-grade ML inference framework written entirely in Go that loads GGUF
 models, runs transformer architectures (Llama 3, Gemma 3, DeepSeek V3, and 12+
-others), and delivers 233 tokens/second on Gemma 3 1B — 14% faster than Ollama
+others), and delivers 233 tokens/second on Gemma 3 1B — 18% faster than Ollama
 on the same hardware.
 
 The key insight: you do not need CGo to talk to GPUs. Zerfoo uses purego and
@@ -84,7 +84,7 @@ services — no sidecar, no FFI, no Python.
 - Quantized GEMM/GEMV: Q4_K_M and Q8 kernels that keep memory bandwidth
   saturated
 - CPU path: ARM NEON and x86 AVX2 SIMD assembly for when there is no GPU
-- Benchmark results: 233 tok/s on Gemma 3 1B Q4_K_M vs Ollama 204 tok/s (+14%)
+- Benchmark results: 234 tok/s on Gemma 3 1B Q4_K_M vs Ollama 204 tok/s (+14%)
 - Computation graph compiler: fusion passes and megakernel code generation
 
 ### 5. Live Demo (5 min)
@@ -137,7 +137,7 @@ sacrificing performance or developer experience.
 
 ## Backup Plan A: Lightning Talk (5 min)
 
-**Title:** "233 tok/s in Pure Go: ML Inference Without CGo"
+**Title:** "234 tok/s in Pure Go: ML Inference Without CGo"
 
 **Outline:**
 
@@ -146,7 +146,7 @@ sacrificing performance or developer experience.
    `compute.Engine[T]` abstraction
 3. **(1.5 min)** Live demo: 7 lines of Go to load Gemma 3 and generate text,
    show tok/s output
-4. **(1 min)** Results: 233 tok/s, 14% faster than Ollama, 15+ model
+4. **(1 min)** Results: 234 tok/s, 18% faster than Ollama, 15+ model
    architectures, zero CGo — one `go get` away
 
 ## Backup Plan B: Unconference Session
