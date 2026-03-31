@@ -448,10 +448,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// during BeginCapture, the pool switches to cudaMallocAsync on the
 	// capture stream, so allocations are recorded as graph nodes.
 	gc, canCapture := m.engine.(compute.GraphCapturer)
-	var fwdGraph, bwdGraph compute.GraphHandle
+	var fwdGraph compute.GraphHandle
 	var fwdOut *fwdGraphOutputs
 	fwdCaptured := false
-	bwdCaptured := false
 	batchIter := 0
 
 	for epoch := 0; epoch < config.Epochs; epoch++ {
@@ -658,21 +657,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				}
 			}
 
-			// ----- Backward graph: head + encoder + pos emb + patch emb backward -----
-			// Captured into a second CUDA graph on batchIter==2, replayed for 3+.
-			// (batchIter was already incremented after forward, so batchIter==2
-			// corresponds to the second batch's backward pass.)
-			if bwdCaptured {
-				if err := gc.ReplayGraph(bwdGraph); err != nil {
-					return nil, fmt.Errorf("patchtst gpu: replay bwd graph: %w", err)
-				}
-			} else {
-				if canCapture && batchIter == 2 {
-					if err := gc.BeginCapture(); err != nil {
-						return nil, fmt.Errorf("patchtst gpu: begin capture bwd: %w", err)
-					}
-				}
-
+			// ----- Backward pass (not captured -- ztensor engine ops internally
+			// call GPUStorage.TrySlice which does D2H memcpy, breaking capture).
+			{
 				// Head backward: ONE MatMul for dW, ONE for dX.
 				flatInputT, err := m.engine.Transpose(ctx, fc.flatInput, []int{1, 0})
 				if err != nil {
@@ -760,14 +747,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					return nil, err
 				}
 
-				// End backward capture.
-				if canCapture && batchIter == 2 {
-					bwdGraph, err = gc.EndCapture()
-					if err != nil {
-						return nil, fmt.Errorf("patchtst gpu: end capture bwd: %w", err)
-					}
-					bwdCaptured = true
-				}
 			}
 
 			batchLoss /= float64(bs * outDim)
@@ -832,9 +811,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// Release captured CUDA graph resources.
 	if fwdCaptured {
 		gc.DestroyGraph(fwdGraph)
-	}
-	if bwdCaptured {
-		gc.DestroyGraph(bwdGraph)
 	}
 
 	// Write optimized params back to model tensors.
