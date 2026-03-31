@@ -372,15 +372,42 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// 1. Linear projections for Q, K, V
 	var err error
 	var qProj, kProj, vProj *tensor.TensorNumeric[T]
-	if gqa.mergedQKV != nil && seqLen == 1 {
-		// Merged QKV: single GEMV + zero-copy split for decode.
+	if gqa.mergedQKV != nil {
+		// Merged QKV: single MatMul for all Q/K/V projections.
+		// Decode (seqLen=1): [batch, 1, dModel] @ W -> [batch, 1, totalDim] -> zero-copy split.
+		// Prefill (seqLen>1): [batch, seqLen, dModel] @ W -> [batch, seqLen, totalDim] ->
+		//   flatten to [batch*seqLen, totalDim] -> split -> reshape back.
 		merged, mergeErr := gqa.engine.MatMul(ctx, input, gqa.mergedQKV)
 		if mergeErr != nil {
 			return nil, fmt.Errorf("merged QKV MatMul: %w", mergeErr)
 		}
+		if seqLen > 1 {
+			// Flatten [batch, seqLen, totalDim] -> [batch*seqLen, totalDim] so
+			// splitMergedQKV can use contiguous zero-copy SubSlice.
+			totalDim := gqa.qDim + gqa.kDim + gqa.vDim
+			merged, err = gqa.engine.Reshape(ctx, merged, []int{batchSize * seqLen, totalDim})
+			if err != nil {
+				return nil, fmt.Errorf("merged QKV reshape flatten: %w", err)
+			}
+		}
 		qProj, kProj, vProj, err = splitMergedQKV[T](merged, gqa.qDim, gqa.kDim, gqa.vDim)
 		if err != nil {
 			return nil, fmt.Errorf("split merged QKV: %w", err)
+		}
+		if seqLen > 1 {
+			// Reshape split outputs back to [batch, seqLen, dim].
+			qProj, err = gqa.engine.Reshape(ctx, qProj, []int{batchSize, seqLen, gqa.qDim})
+			if err != nil {
+				return nil, fmt.Errorf("merged Q reshape: %w", err)
+			}
+			kProj, err = gqa.engine.Reshape(ctx, kProj, []int{batchSize, seqLen, gqa.kDim})
+			if err != nil {
+				return nil, fmt.Errorf("merged K reshape: %w", err)
+			}
+			vProj, err = gqa.engine.Reshape(ctx, vProj, []int{batchSize, seqLen, gqa.vDim})
+			if err != nil {
+				return nil, fmt.Errorf("merged V reshape: %w", err)
+			}
 		}
 	} else {
 		qProj, err = gqa.wq.Forward(ctx, input)
