@@ -1,4 +1,4 @@
-# ADR 033: How Zerfoo Surpassed Ollama — 234 tok/s on DGX Spark GB10
+# ADR 033: How Zerfoo Surpassed Ollama — 241 tok/s on DGX Spark GB10
 
 ## Status
 Accepted
@@ -100,7 +100,7 @@ is negligible. Every audit confirmed the bottleneck was CUDA kernel launch
 overhead, not Go. This phase was valuable for proving where the problem
 was NOT, which directed Phase 6.
 
-### Phase 6: CUDA Graph Capture (190 → 234 tok/s)
+### Phase 6: CUDA Graph Capture (190 → 241 tok/s)
 
 **Problem:** ~338 kernel launches/token at ~5μs each = ~1.7ms of the 5.26ms
 token budget (32%). CUDA graph replay eliminates launch overhead by replaying

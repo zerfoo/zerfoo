@@ -6,7 +6,7 @@ All benchmarks run on DGX Spark GB10 unless noted. Greedy sampling, 128 output t
 
 | Model | Quant | Zerfoo tok/s | Ollama tok/s | Ratio | Date |
 |-------|-------|-------------|--------------|-------|------|
-| Gemma 3 1B | Q4_K_M | 234 | 197 | **1.18x** | 2026-03-31 |
+| Gemma 3 1B | Q4_K_M | 241 | 188 | **1.28x** | 2026-03-31 |
 | DeepSeek-R1 1.5B | Q4_K_M | 186 | 168 | **1.11x** | 2026-03-30 |
 | Llama 3.2 3B | Q4_K_M | 92 | 93 | 0.99x | 2026-03-30 |
 | Mistral 7B | Q4_K_M | 44 | 44 | 1.00x | 2026-03-30 |

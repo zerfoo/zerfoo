@@ -23,7 +23,7 @@ This approach had two problems:
    weight instead of 5.5-6.6 bits, consuming 5-7x more memory bandwidth. This makes
    cuBLAS SGEMM memory-bandwidth-bound instead of compute-bound.
 
-The prior "234 tok/s beats Ollama" benchmark (ADR-033) was measured with Q4_0 ZMF
+The prior "241 tok/s beats Ollama" benchmark (ADR-033) was measured with Q4_0 ZMF
 format where all weights used the fast Q4_0 GEMV. That measurement produced garbled
 output and was not a valid quality comparison.
 

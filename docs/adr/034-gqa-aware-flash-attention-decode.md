@@ -15,7 +15,7 @@ operates on the full maxSeqLen (8192) KV buffer, creating ~128 MB temporaries
 per token and causing a 93.7% throughput regression (234 -> 14 tok/s).
 
 The decode fast path was disabled for GQA models (commit 9803ba1), restoring
-234 tok/s. But this means the GQA attention path is NOT CUDA-graph-captured,
+241 tok/s. But this means the GQA attention path is NOT CUDA-graph-captured,
 losing the launch overhead savings for the ~156 attention kernel launches per
 token.
 

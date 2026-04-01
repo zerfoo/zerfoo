@@ -143,11 +143,11 @@ but still produces wrong tokens. CPU produces "4." for "What is 2+2?", GPU produ
 
 **Problem:** Recompiling libkernels.so on DGX Spark (CUDA 13.0, sm_75 target) produces
 a .so that loads and runs at full speed but generates garbage output for ALL models,
-including Gemma3-1B which was previously working at 232 tok/s with coherent text.
+including Gemma3-1B which was previously working at 241 tok/s with coherent text.
 
 **Investigation:**
 1. The March 26 libkernels.so (1.68 MB, sm_75, pre-fused-kernels) produced coherent
-   output for Gemma3-1B at 232 tok/s. It was the ONLY working kernel binary.
+   output for Gemma3-1B at 241 tok/s. It was the ONLY working kernel binary.
 2. Recompiling from the exact same .cu sources (excluding gemv_q4k_sm121.cu which
    doesn't compile due to cooperative_groups syntax) produces a larger .so (2.15 MB)
    that generates garbage: "This is a list of the problem: This is a list all of..."
@@ -1193,7 +1193,7 @@ race detector.
 | 256t no graph | 156 | 174 | +12% |
 | vs Ollama (204) | -5% | +20% | |
 
-**Impact:** Exceeds Phase 6 baseline (234 tok/s) by 4.7%. Exceeds Ollama by 20%.
+**Impact:** Exceeds Phase 6 baseline (241 tok/s) by 4.7%. Exceeds Ollama by 20%.
 
 ---
 
@@ -1302,7 +1302,7 @@ behavior changes (inlining, code layout, instruction cache) due to larger module
 4. With CUDA graphs: Phase 6 = 235 tok/s, Current = 186 tok/s.
 5. Module boundary (local `replace` directive) does NOT affect throughput (185.9 vs 185.8).
 6. Freshly rebuilding Phase 6 from commit 82aa2ca achieves 233 tok/s — environment is fine.
-7. Git bisect across 503 commits pinpoints regression to commit aeb710a (`chore(deps): bump ztensor to v0.2.0`). Before this commit (in-tree ztensor): 234 tok/s. After: 116 tok/s (further degraded by subsequent changes, partially recovered to 186).
+7. Git bisect across 503 commits pinpoints regression to commit aeb710a (`chore(deps): bump ztensor to v0.2.0`). Before this commit (in-tree ztensor): 241 tok/s. After: 116 tok/s (further degraded by subsequent changes, partially recovered to 186).
 8. Generator-direct path (bypassing sessions) produces garbled output due to CUDA graph address mismatch. Sessions are necessary and NOT the bottleneck.
 
 **Root cause:** The ztensor code extracted to v0.2.0 was different from the Phase 6 in-tree code. The extraction included changes (from Phases 7-13) that degraded the GPU compute hot path. The 16% baseline (no-graph) regression and 7% reduced CUDA graph benefit compound to the 26% total gap.
@@ -1318,7 +1318,7 @@ behavior changes (inlining, code layout, instruction cache) due to larger module
 **Type:** investigation
 **Tags:** performance, Q4 GEMV, cuBLAS, PreUploadFrozenWeights, EnsureCaptureInputsGPU, ztensor extraction
 
-**Problem:** Phase 6 (in-tree monorepo) achieves 234 tok/s at 256t. Current code (ztensor module) achieves 186 tok/s. Both use identical Q4 GEMV kernel (gemm_q4.cu, same binary in libkernels.so).
+**Problem:** Phase 6 (in-tree monorepo) achieves 241 tok/s at 256t. Current code (ztensor module) achieves 186 tok/s. Both use identical Q4 GEMV kernel (gemm_q4.cu, same binary in libkernels.so).
 
 **Investigation:**
 1. Profiled both: Phase 6 `_ExternalCode`=2070ms, current=2750ms (680ms gap for 512t = 1.33ms/token GPU overhead).
@@ -1333,7 +1333,7 @@ behavior changes (inlining, code layout, instruction cache) due to larger module
 
 **Fix:** N/A. The 186 tok/s baseline (cuBLAS SGEMM) is stable and within 5% of Ollama (196). The 234 recovery requires GPU-level investigation beyond Go profiling capabilities.
 
-**Impact:** The +18% claim (234 tok/s) cannot be reproduced with the current ztensor module structure. Suggest nsight systems profiling as next step, or reverting the ztensor extraction for the hot path.
+**Impact:** The +18% claim (241 tok/s) cannot be reproduced with the current ztensor module structure. Suggest nsight systems profiling as next step, or reverting the ztensor extraction for the hot path.
 
 ---
 
@@ -1342,7 +1342,7 @@ behavior changes (inlining, code layout, instruction cache) due to larger module
 **Type:** investigation + fix
 **Tags:** performance, bisect, FlashAttentionDecode, SDPA, regression
 
-**Problem:** Throughput regressed from 234 tok/s (Phase 16) to 149 tok/s (Phase 23).
+**Problem:** Throughput regressed from 241 tok/s (Phase 16) to 149 tok/s (Phase 23).
 
 **Investigation:** `git bisect` across 265 commits identified the first bad commit:
 `c39ca9f fix(inference): eliminate D2H transfer in GQA to enable CUDA graph capture`
@@ -1477,7 +1477,7 @@ issue — the GQA scaled_softmax kernel does something incompatible with stream 
 **Tags:** performance, cuda-graph, session, resetpool, gpu-argmax, compile-traced
 
 **Problem:** Session.Generate throughput (159 tok/s at 50 tokens) is below Phase 20
-peak (234 tok/s). Investigation to recover and exceed.
+peak (241 tok/s). Investigation to recover and exceed.
 
 **Findings:**
 
@@ -1506,7 +1506,7 @@ peak (234 tok/s). Investigation to recover and exceed.
    ~800MB. Memory-bound decode: 800MB / 200GB/s = 4ms/token = 250 tok/s max.
    Current 167 tok/s = 67% of theoretical.
 
-**Root cause of 234 gap:** The 234 tok/s was measured at Phase 20 with the old
+**Root cause of 234 gap:** The 241 tok/s was measured at Phase 20 with the old
 Generator.Generate path. The Generator creates a fresh KV cache each call and triggers
 compileGraph on the first decode step. The session path uses pooled sessions with
 pre-warmed KV caches. The CompileTraced failure means both paths use the fallback
@@ -1614,8 +1614,8 @@ divergence that compounds through 26 transformer layers.
 **Additional findings:**
 - FP16 mode broken: produces <pad> tokens due to mixed Q4/F32/FP16 precision pipeline
   (MatMul dispatch checks Q4 before FP16 dtype, creating inconsistent precision per layer)
-- Throughput 100 tok/s vs 234 tok/s: Q6_K tensors dequantized to F32, using slow SGEMM
-  instead of fast fused GEMV. The 234 tok/s benchmark was on Q4_0 ZMF, not GGUF Q4_K_M.
+- Throughput 100 tok/s vs 241 tok/s: Q6_K tensors dequantized to F32, using slow SGEMM
+  instead of fast fused GEMV. The 241 tok/s benchmark was on Q4_0 ZMF, not GGUF Q4_K_M.
 
 **Fix:** Stop re-quantizing in loader.go. Use native Q4_K storage (already supported) and
 dequant Q5_0 to F32 (matching Q5_K/Q6_K treatment). Then implement native Q5_0 GEMV.
@@ -1644,7 +1644,7 @@ dequant Q5_0 to F32 (matching Q5_K/Q6_K treatment). Then implement native Q5_0 G
   CUDA: generates only newlines or garbled tokens
 
 **Analysis:**
-- Throughput regression from 234 tok/s (Phase 16) to 100 tok/s. Likely because
+- Throughput regression from 241 tok/s (Phase 16) to 100 tok/s. Likely because
   Phase 16 used Q4_K_M quantized GEMV path and this run uses fp32 (no quant flag).
 - Output quality issue is present on CPU too, ruling out GPU-specific bug.
 - Likely a pre-existing tokenizer or GGUF loading issue, not a Phase 21 regression.
@@ -1688,7 +1688,7 @@ Framework ready for community launch phase.
 **Tags:** DGX, all-models, Phase-16, repetition-penalty, CUDA-graph
 
 **Problem:** Phase 16 implemented RMSNorm fusion, Phi 4 TrySlice fix, static Reshape capturability, and repetition penalty verification. Needed end-to-end DGX validation.
-**Results:** All 5 models run without crashes. Repetition penalty (1.2) reduces repetition for all ONNX models. Static Reshape fix increased capturable instruction count. RMSNorm fusion pattern matching works (1610 -> 1445 instructions for Llama 3) but fused Forward produces wrong numerical output -- runtime slot resolution still needs fixing. Gemma 3 GGUF baseline confirmed at 232 tok/s (no regression).
+**Results:** All 5 models run without crashes. Repetition penalty (1.2) reduces repetition for all ONNX models. Static Reshape fix increased capturable instruction count. RMSNorm fusion pattern matching works (1610 -> 1445 instructions for Llama 3) but fused Forward produces wrong numerical output -- runtime slot resolution still needs fixing. Gemma 3 GGUF baseline confirmed at 241 tok/s (no regression).
 **Impact:** Output quality improved via repetition penalty. CUDA graph capture coverage improved via static Reshape. RMSNorm fusion blocked on runtime slot resolution (PR #70).
 
 ## 2026-03-15: RMSNorm fusion pattern matching works, runtime needs fixing

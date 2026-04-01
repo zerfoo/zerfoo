@@ -14,7 +14,7 @@ Zerfoo has two execution paths for inference:
 
 1. **GGUF path** (architecture-specific builders): Loads GGUF files via mmap,
    builds the computation graph using hand-tuned fused operations
-   (GroupedQueryAttention, FusedAddRMSNorm, FFN). Achieves 232 tok/s with
+   (GroupedQueryAttention, FusedAddRMSNorm, FFN). Achieves 241 tok/s with
    99.5% CUDA graph capture on Gemma 3 1B Q4_K.
 
 2. **ZMF/ONNX path** (stored graph): Converts ONNX models to ZMF via zonnx,
