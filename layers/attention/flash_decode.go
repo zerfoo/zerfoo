@@ -44,8 +44,14 @@ func tryFlashDecode[T tensor.Numeric](
 		return nil, nil
 	}
 
-	// Q must be on GPU.
+	// Q, K, V must all be on GPU.
 	if q.GetStorage().DeviceType() != device.CUDA {
+		return nil, nil
+	}
+	if k.GetStorage().DeviceType() != device.CUDA {
+		return nil, nil
+	}
+	if v.GetStorage().DeviceType() != device.CUDA {
 		return nil, nil
 	}
 

@@ -49,8 +49,14 @@ func tryFlashForward[T tensor.Numeric](
 		return nil, nil
 	}
 
-	// Check that Q is on GPU.
+	// Check that Q, K, V are all on GPU.
 	if q.GetStorage().DeviceType() != device.CUDA {
+		return nil, nil
+	}
+	if k.GetStorage().DeviceType() != device.CUDA {
+		return nil, nil
+	}
+	if v.GetStorage().DeviceType() != device.CUDA {
 		return nil, nil
 	}
 
