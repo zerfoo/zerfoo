@@ -135,7 +135,10 @@ func buildTransformerGraph(
 		s := t.GetStorage()
 		// GPU path: use virtual transpose for quantized weights so the
 		// quantized storage is preserved and the GEMV kernel can be used at
-		// inference time. Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
+		// inference time. Q5_0 is NOT included because the GPU Q5_0 upload
+		// produces misaligned addresses on ARM64 (DGX Spark Grace Hopper).
+		// Q5_0 falls through to F32 dequant+transpose below.
+		// Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
 		if isGPUEngine {
 			if _, ok := any(s).(*tensor.Q4Storage); ok {
 				shape := t.Shape()
@@ -144,12 +147,6 @@ func buildTransformerGraph(
 				}
 			}
 			if _, ok := any(s).(*tensor.Q4KStorage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			if _, ok := any(s).(*tensor.Q5_0Storage); ok {
 				shape := t.Shape()
 				if len(shape) == 2 {
 					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
