@@ -151,12 +151,6 @@ func buildTransformerGraph(
 					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
 				}
 			}
-			if _, ok := any(s).(*tensor.Q5_0Storage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
 			if _, ok := any(s).(*tensor.Q5KStorage); ok {
 				shape := t.Shape()
 				if len(shape) == 2 {
