@@ -257,8 +257,17 @@ func (e *embeddingLookupNode[T]) Forward(ctx context.Context, inputs ...*tensor.
 
 	vocabSize := e.weight.Shape()[0]
 
-	// GPU path: use engine.Gather when weight has GPU storage.
+	// GPU path: use engine.Gather when weight has GPU storage or Q8 with GPUPtr.
+	isGPUStorage := false
 	if _, ok := e.weight.GetStorage().(*tensor.GPUStorage[T]); ok {
+		isGPUStorage = true
+	}
+	if qs, ok := any(e.weight.GetStorage()).(*tensor.Q8Storage); ok {
+		if ptr, _, _ := qs.GPUPtr(); ptr != nil {
+			isGPUStorage = true
+		}
+	}
+	if isGPUStorage {
 		intIDs := make([]int, seqLen)
 		for i := range intIDs {
 			id := int(ids[i])
