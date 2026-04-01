@@ -291,7 +291,7 @@ for _, tc := range result.ToolCalls {
 
 | Architecture | Format | Special Features |
 |-------------|--------|-----------------|
-| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 234 tok/s |
+| Gemma 3 | GGUF Q4_K | Production. CUDA graph capture, 241 tok/s |
 | Gemma 3n | GGUF | Mobile-optimized variant |
 | Llama 3 | GGUF | RoPE theta=500K |
 | Llama 4 | GGUF | Latest generation |
