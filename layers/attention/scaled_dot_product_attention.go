@@ -153,14 +153,39 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	if d <= 0 {
 		return nil, fmt.Errorf("ScaledDotProductAttention: headDim must be > 0, got %v", d)
 	}
-	// Fused softmax+V multiply and fused scaled softmax DISABLED.
-	// The fused CUDA kernels produce wrong results on DGX Spark (ARM64/Grace Hopper).
-	// TODO: fix fused_softmax_vmul.cu and scaled_softmax.cu, then re-enable.
+	// Determine whether masking will intervene between scaling and softmax.
+	needsMasking := mask != nil || (sdpa.causal && len(attentionScores.Shape()) >= 2 && attentionScores.Shape()[len(attentionScores.Shape())-2] > 1)
+	scale := float32(1.0 / math.Sqrt(d))
+
+	// Fused softmax+V multiply for decode (seqQ=1).
+	// Combines scale, softmax, and V matmul in a single kernel launch.
+	if q.Shape()[1] == 1 && !needsMasking {
+		realEng := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEng = proxy.Real()
+		}
+		if fuser, ok := realEng.(compute.FusedSoftmaxVMulProvider[T]); ok {
+			fusedOut, fusedErr := fuser.GPUFusedSoftmaxVMul(attentionScores, v, scale)
+			if fusedErr == nil {
+				return fusedOut, nil
+			}
+		}
+	}
 
 	var attentionWeights *tensor.TensorNumeric[T]
-	// Fused scaled softmax -- DISABLED alongside FusedSoftmaxVMul.
-	// The fused kernels produce wrong results on DGX Spark.
-	// TODO: fix fused kernels and re-enable.
+	if !needsMasking {
+		// Fused scaled softmax: single kernel replaces MulScalar + Softmax.
+		realEngine := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEngine = proxy.Real()
+		}
+		if provider, ok := realEngine.(compute.FusedScaledSoftmaxProvider[T]); ok {
+			out, fusedErr := provider.GPUScaledSoftmax(attentionScores, scale, -1)
+			if fusedErr == nil {
+				attentionWeights = out
+			}
+		}
+	}
 
 	if attentionWeights == nil {
 		// Fallback: separate MulScalar + optional masking + Softmax.
