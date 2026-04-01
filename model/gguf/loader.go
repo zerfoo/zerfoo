@@ -215,11 +215,11 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Keep native Q6_K storage. Q6_K has 6-bit precision (64 levels) which is
-	// critical for embedding tensors where Q4_0 re-quantization (16 levels)
-	// produces zero values for small embeddings (e.g., Llama 3.2 BOS token).
-	// The Q6_K GEMV kernel is ~33% slower than Q4_0 but preserves quality.
-	return tensor.NewWithStorage[float32](shape, q6k)
+	// Re-quantize Q6_K to Q4_0 for fast GEMV.
+	f32 := make([]float32, numElements)
+	q6k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 // decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.

@@ -283,7 +283,10 @@ func upgradeEmbeddingPrecision(tensors map[string]*tensor.TensorNumeric[float32]
 		if _, isQ4 := t.GetStorage().(*tensor.Q4Storage); !isQ4 {
 			continue
 		}
-		// Dequantize Q4 to F32, then re-quantize to Q8.
+		// Upgrade Q4 to Q8 for embedding tensors. Q8 has 256 quantization
+		// levels vs Q4's 16, recovering precision lost during Q6_K→Q4_0
+		// re-quantization. Q8 storage is 2x smaller than F32 and the Q8
+		// GEMV kernel is used for the output projection (LM head).
 		f32 := t.Data()
 		q8 := tensor.QuantizeQ8(f32)
 		upgraded, err := tensor.NewWithStorage[float32](t.Shape(), q8)
