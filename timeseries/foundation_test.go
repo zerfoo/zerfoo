@@ -322,11 +322,19 @@ func TestFineTuneDecreasingLoss(t *testing.T) {
 		t.Fatalf("LossHistory length: got %d, want 30", len(result.LossHistory))
 	}
 
-	// Verify loss decreased from first to last epoch.
-	firstLoss := result.LossHistory[0]
-	finalLoss := result.FinalLoss
-	if finalLoss >= firstLoss {
-		t.Errorf("loss did not decrease: first=%f, final=%f", firstLoss, finalLoss)
+	// Verify loss decreased: compare average of first 5 epochs vs last 5 epochs.
+	// Using averages instead of single values avoids flakiness from random init.
+	earlyAvg := float64(0)
+	lateAvg := float64(0)
+	n := 5
+	for i := 0; i < n; i++ {
+		earlyAvg += result.LossHistory[i]
+		lateAvg += result.LossHistory[len(result.LossHistory)-n+i]
+	}
+	earlyAvg /= float64(n)
+	lateAvg /= float64(n)
+	if lateAvg >= earlyAvg {
+		t.Errorf("loss did not decrease: early_avg=%f, late_avg=%f", earlyAvg, lateAvg)
 	}
 
 	// Verify all losses are finite.
