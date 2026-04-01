@@ -404,6 +404,30 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 		}
 	}
 
+	// Re-quantize Q8_0 weight matrices (2D, non-embedding) to Q4_K for uniform
+	// fast GEMV decode path. Embeddings (large vocab dim) keep Q8 for precision.
+	// Without this, Q8_0 attn_v weights in Q4_K_M models block the merged QKV
+	// optimization because Q/K are Q4_K but V is Q8 → merge fails → CPU fallback.
+	if len(shape) == 2 && numElements > 0 && numElements%(256) == 0 {
+		// Only re-quantize weight matrices, not embeddings.
+		// Embeddings have vocab_size as first dim (>> hidden_size).
+		isEmbedding := shape[0] > 50000 // vocab sizes are typically 32K-256K
+		if !isEmbedding {
+			f32 := make([]float32, numElements)
+			for bi := range nBlocks {
+				s := scales[bi]
+				for j := range 32 {
+					idx := bi*32 + j
+					if idx < numElements {
+						f32[idx] = s * float32(quants[idx])
+					}
+				}
+			}
+			q4k := tensor.QuantizeQ4K(f32)
+			return tensor.NewWithStorage[float32](shape, q4k)
+		}
+	}
+
 	q8, err := tensor.NewQ8StorageFromBlocks(scales, quants, numElements)
 	if err != nil {
 		return nil, fmt.Errorf("Q8_0 decode: %w", err)
