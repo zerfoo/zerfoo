@@ -30,6 +30,31 @@ See next entry.
 
 ---
 
+## 2026-03-31: GQA parity test pinpoints row-1-only divergence (E58 T58.1.2)
+
+**Type:** finding
+**Tags:** gpu, gqa, parity, attention, causal, row-divergence
+
+**Test:** TestGQA_GPUParity with Gemma3-1B layer 0 weights, input [1,2,1152].
+**Result:** FAIL. Row 0 maxDiff=2.5e-6 (PASS). Row 1 maxDiff=2.02 (FAIL).
+1139/2304 elements differ by >0.01. CPU sum=-12.72, GPU sum=3.33.
+
+**Analysis:** Row 0 (first token, causal mask blocks all future positions) is
+bit-identical. Row 1 (second token, attends to both positions) diverges massively.
+The pattern implicates the attention score computation for multi-position attention:
+the MatMul Q@K^T or the softmax produces different results when seqLen>1 and
+causal masking is applied via engine.Add.
+
+**Hypothesis:** The engine.Add for causal masking or the batched MatMul (Q@K^T with
+batch broadcasting 4 vs 1) has a GPU-specific bug for the multi-position case.
+Alternatively, the output projection MatMul (which also has M>1) might diverge.
+
+**Next step:** Add intermediate checkpoints inside TestGQA_GPUParity to compare
+Q/K/V projections, QK-normed values, RoPE output, attention scores, softmax output,
+and output projection between CPU and GPU. This will identify the exact divergent step.
+
+---
+
 ## 2026-03-31: Causal mask D2H bug found and fixed (zerfoo 90cacad4)
 
 **Type:** investigation + fix
