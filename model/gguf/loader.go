@@ -60,8 +60,16 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 			return nil, fmt.Errorf("tensor %q: read %d bytes: %w", ti.Name, dataSize, err)
 		}
 
-		// Decode based on type.
-		t, err := decodeTensor(ti.Type, shape, int(numElements), raw)
+		// Decode based on type. Embedding tensors keep native quantization
+		// to preserve precision (Q6_K has 64 levels vs Q4_0's 16; re-quantizing
+		// produces zero values for small embeddings like Llama's BOS token).
+		isEmbedding := ti.Name == "model.embed_tokens.weight" || ti.Name == "lm_head.weight"
+		var t *tensor.TensorNumeric[float32]
+		if isEmbedding {
+			t, err = decodeTensorNative(ti.Type, shape, int(numElements), raw)
+		} else {
+			t, err = decodeTensor(ti.Type, shape, int(numElements), raw)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
@@ -122,6 +130,40 @@ func TensorByteSize(typ GGMLType, numElements int) (int, error) {
 }
 
 // decodeTensor converts raw bytes into a tensor based on GGML type.
+// decodeTensorNative decodes a tensor keeping native quantized storage.
+// Used for embedding tensors where precision matters more than GEMV speed.
+func decodeTensorNative(typ GGMLType, shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
+	switch typ {
+	case GGMLTypeQ4_K:
+		q4k, err := tensor.NewQ4KStorageFromRaw(raw, numElements)
+		if err != nil {
+			return nil, fmt.Errorf("Q4_K native decode: %w", err)
+		}
+		return tensor.NewWithStorage[float32](shape, q4k)
+	case GGMLTypeQ5_K:
+		q5k, err := tensor.NewQ5KStorageFromRaw(raw, numElements)
+		if err != nil {
+			return nil, fmt.Errorf("Q5_K native decode: %w", err)
+		}
+		return tensor.NewWithStorage[float32](shape, q5k)
+	case GGMLTypeQ6_K:
+		q6k, err := tensor.NewQ6KStorageFromRaw(raw, numElements)
+		if err != nil {
+			return nil, fmt.Errorf("Q6_K native decode: %w", err)
+		}
+		return tensor.NewWithStorage[float32](shape, q6k)
+	case GGMLTypeQ5_0:
+		q5, err := tensor.NewQ5_0StorageFromRaw(raw, numElements)
+		if err != nil {
+			return nil, fmt.Errorf("Q5_0 native decode: %w", err)
+		}
+		return tensor.NewWithStorage[float32](shape, q5)
+	default:
+		// All other types (F32, F16, Q4_0, Q8_0, etc.) go through normal decode.
+		return decodeTensor(typ, shape, numElements, raw)
+	}
+}
+
 func decodeTensor(typ GGMLType, shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
 	switch typ {
 	case GGMLTypeF32:
