@@ -237,11 +237,7 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Re-quantize Q5_K to Q4_0 for fast GEMV.
-	f32 := make([]float32, numElements)
-	q5k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q5k)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -249,29 +245,15 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Re-quantize Q6_K to Q4_0 for fast GEMV.
-	f32 := make([]float32, numElements)
-	q6k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q6k)
 }
 
-// decodeQ5_0Tensor decodes Q5_0 blocks and re-quantizes to Q4_0 for fast GEMV.
-// Q5_0 format: 32 elements per block, 22 bytes per block.
-// Layout: 2 bytes fp16 scale + 4 bytes high bits + 16 bytes low 4-bit values.
-// Each byte in qs contains two 4-bit values: the low nibble maps to the first
-// half of the block (positions 0-15) and the high nibble maps to the second
-// half (positions 16-31). This matches llama.cpp's dequantize_row_q5_0.
 func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
 	q5, err := tensor.NewQ5_0StorageFromRaw(raw, numElements)
 	if err != nil {
 		return nil, fmt.Errorf("Q5_0 decode: %w", err)
 	}
-	// Re-quantize Q5_0 to Q4_0 for fast GEMV.
-	f32 := make([]float32, numElements)
-	q5.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	return tensor.NewWithStorage[float32](shape, q5)
 }
 
 // decodeQ2KTensor decodes Q2_K blocks and re-quantizes to Q4_0 for fast GEMV.
