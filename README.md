@@ -7,7 +7,7 @@ Pure Go ML framework -- inference, training, and serving. Embed any GGUF model i
 [![Go Reference](https://pkg.go.dev/badge/github.com/zerfoo/zerfoo.svg)](https://pkg.go.dev/github.com/zerfoo/zerfoo)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**236 tok/s** on Gemma 3 1B Q4_K_M -- up to 20% faster than Ollama. Faster on all 4 benchmarked models. Zero CGo. 41 model architectures (25 families). **Run models larger than RAM** via memory-mapped I/O (229B MiniMax-M2 on 128 GB). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series training 4.6x faster with CUDA graphs. Tabular ML and time-series forecasting built in.
+**241 tok/s** on Gemma 3 1B Q4_K_M -- up to 28% faster than Ollama. Faster on all 4 benchmarked models. Zero CGo. 41 model architectures (25 families). **Run models larger than RAM** via memory-mapped I/O (229B MiniMax-M2 on 128 GB). EAGLE speculative decoding with built-in head training, QuaRot quantization, Q4_K fused GEMV (14x faster), Multi-LoRA serving, BitNet ternary inference. CUDA graph capture, Apple Metal kernels. Time-series training 4.6x faster with CUDA graphs. Tabular ML and time-series forecasting built in.
 
 ### Benchmarks
 
@@ -15,12 +15,12 @@ Decode throughput comparison against [Ollama](https://ollama.com/) on NVIDIA DGX
 
 | Model | Size | Quant | Zerfoo (tok/s) | Ollama (tok/s) | Ratio |
 |-------|------|-------|----------------|----------------|-------|
-| Gemma 3 1B | 1B | Q4_K_M | **236** | 197 | **1.20x** |
-| DeepSeek R1 1.5B | 1.5B | Q4_K_M | **184** | 173 | **1.06x** |
+| Gemma 3 1B | 1B | Q4_K_M | **241** | 188 | **1.28x** |
+| DeepSeek R1 1.5B | 1.5B | Q4_K_M | **190** | 174 | **1.09x** |
 | Llama 3.2 3B | 3B | Q4_K_M | **95** | 93 | **1.02x** |
 | Mistral 7B | 7B | Q5_K_M | **46** | 45 | **1.02x** |
 
-Faster than Ollama on all models. Up to 20% faster on small models, 2% faster at 7B.
+Faster than Ollama on all models. Up to 28% faster on small models, 2% faster at 7B.
 
 <details>
 <summary>Methodology</summary>
