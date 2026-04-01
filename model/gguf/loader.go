@@ -225,14 +225,11 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Re-quantize Q4_K to Q4_0 for fast GEMV decode path.
-	// Q4_0 GEMV is ~45% faster than Q4_K GEMV on GB10 due to simpler
-	// block format (18 vs 144 bytes). The precision loss from Q4_K→Q4_0
-	// is acceptable for inference quality.
-	f32 := make([]float32, numElements)
-	q4k.Dequantize(f32)
-	q4 := tensor.QuantizeQ4(f32)
-	return tensor.NewWithStorage[float32](shape, q4)
+	// Keep native Q4_K storage. The Q4_K GEMV kernel is equally fast as Q4_0
+	// (2.4 us/call for [3072,3072]) and preserves the original weight precision.
+	// The Q4_K→Q4_0 re-quantization was causing 22% zero weights and garbled
+	// output for Llama 3.2 and Mistral 7B.
+	return tensor.NewWithStorage[float32](shape, q4k)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
