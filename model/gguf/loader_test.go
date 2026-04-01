@@ -245,8 +245,8 @@ func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 	}
 
 	// Q5_K should use native Q5KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
-		t.Fatalf("expected Q4Storage after re-quant, got %T", tns.GetStorage())
+	if _, ok := tns.GetStorage().(*tensor.Q5KStorage); !ok {
+		t.Fatalf("expected Q5KStorage (native), got %T", tns.GetStorage())
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -600,8 +600,8 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 	}
 
 	// Q6_K should use native Q6KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
-		t.Fatalf("expected Q4Storage after re-quant, got %T", tns.GetStorage())
+	if _, ok := tns.GetStorage().(*tensor.Q6KStorage); !ok {
+		t.Fatalf("expected Q6KStorage (native), got %T", tns.GetStorage())
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,
