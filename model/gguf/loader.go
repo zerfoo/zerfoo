@@ -225,11 +225,14 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
-	// Keep native Q4_K storage. The Q4_K GEMV kernel is equally fast as Q4_0
-	// (2.4 us/call for [3072,3072]) and preserves the original weight precision.
-	// The Q4_K→Q4_0 re-quantization was causing 22% zero weights and garbled
-	// output for Llama 3.2 and Mistral 7B.
-	return tensor.NewWithStorage[float32](shape, q4k)
+	// Re-quantize Q4_K → Q4_0 for uniform fast GEMV decode path.
+	// Q4_0 block_size=32 works with any hidden_size divisible by 32 (all models).
+	// Q4_K block_size=256 fails when hidden_size%256!=0 (e.g., Gemma3-1B=1152).
+	// The Q4_0 GEMV with separated GPU layout is the fastest decode path.
+	f32 := make([]float32, numElements)
+	q4k.Dequantize(f32)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -237,15 +240,10 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
-	// Re-quantize Q5_K → Q4_K for uniform fast GEMV decode path.
-	// Q4_K's asymmetric quantization with 6-bit sub-block scales preserves
-	// small weights (0% zero values vs Q4_0's 18.7%). Quality loss is minimal
-	// (meanErr=0.0013, maxErr=0.0037) and the single Q4_K dispatch path
-	// enables 242 tok/s vs 150 tok/s with mixed Q5_K/Q4_K/Q6_K kernels.
 	f32 := make([]float32, numElements)
 	q5k.Dequantize(f32)
-	q4k := tensor.QuantizeQ4K(f32)
-	return tensor.NewWithStorage[float32](shape, q4k)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -253,13 +251,10 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
 	}
-	// Re-quantize Q6_K → Q4_K for uniform fast GEMV decode path.
-	// Same rationale as Q5_K above. Q6_K→Q4_K loses slightly more precision
-	// (6-bit to 4-bit) but only 13 tensors in Gemma3-1B Q4_K_M are Q6_K.
 	f32 := make([]float32, numElements)
 	q6k.Dequantize(f32)
-	q4k := tensor.QuantizeQ4K(f32)
-	return tensor.NewWithStorage[float32](shape, q4k)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNumeric[float32], error) {
@@ -267,14 +262,10 @@ func decodeQ5_0Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorN
 	if err != nil {
 		return nil, fmt.Errorf("Q5_0 decode: %w", err)
 	}
-	// Re-quantize Q5_0 → Q4_K for uniform fast GEMV decode path.
-	// Q4_K preserves small weights (0% zeros vs Q4_0's 18.7%) with minimal
-	// quality loss (meanErr=0.0013). This routes all weight tensors through
-	// the single Q4_K GEMV path for maximum throughput.
 	f32 := make([]float32, numElements)
 	q5.Dequantize(f32)
-	q4k := tensor.QuantizeQ4K(f32)
-	return tensor.NewWithStorage[float32](shape, q4k)
+	q4 := tensor.QuantizeQ4(f32)
+	return tensor.NewWithStorage[float32](shape, q4)
 }
 
 // decodeQ2KTensor decodes Q2_K blocks and re-quantizes to Q4_0 for fast GEMV.
@@ -404,14 +395,11 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 		}
 	}
 
-	// Re-quantize Q8_0 weight matrices (2D, non-embedding) to Q4_K for uniform
+	// Re-quantize Q8_0 weight matrices (2D, non-embedding) to Q4_0 for uniform
 	// fast GEMV decode path. Embeddings (large vocab dim) keep Q8 for precision.
-	// Without this, Q8_0 attn_v weights in Q4_K_M models block the merged QKV
-	// optimization because Q/K are Q4_K but V is Q8 → merge fails → CPU fallback.
-	if len(shape) == 2 && numElements > 0 && numElements%(256) == 0 {
-		// Only re-quantize weight matrices, not embeddings.
-		// Embeddings have vocab_size as first dim (>> hidden_size).
-		isEmbedding := shape[0] > 50000 // vocab sizes are typically 32K-256K
+	// Without this, Q8_0 attn_v weights block the merged QKV optimization.
+	if len(shape) == 2 && numElements > 0 {
+		isEmbedding := shape[0] > 50000
 		if !isEmbedding {
 			f32 := make([]float32, numElements)
 			for bi := range nBlocks {
@@ -423,8 +411,8 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 					}
 				}
 			}
-			q4k := tensor.QuantizeQ4K(f32)
-			return tensor.NewWithStorage[float32](shape, q4k)
+			q4 := tensor.QuantizeQ4(f32)
+			return tensor.NewWithStorage[float32](shape, q4)
 		}
 	}
 

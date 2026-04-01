@@ -246,9 +246,9 @@ func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q5_K is re-quantized to Q4_K for uniform fast GEMV decode path.
-	if _, ok := tns.GetStorage().(*tensor.Q4KStorage); !ok {
-		t.Fatalf("expected Q4KStorage (re-quantized from Q5_K), got %T", tns.GetStorage())
+	// Q5_K is re-quantized to Q4_0 for uniform fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatalf("expected Q4Storage (re-quantized from Q5_K), got %T", tns.GetStorage())
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -601,9 +601,9 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q6_K is re-quantized to Q4_K for uniform fast GEMV decode path.
-	if _, ok := tns.GetStorage().(*tensor.Q4KStorage); !ok {
-		t.Fatalf("expected Q4KStorage (re-quantized from Q6_K), got %T", tns.GetStorage())
+	// Q6_K is re-quantized to Q4_0 for uniform fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4Storage); !ok {
+		t.Fatalf("expected Q4Storage (re-quantized from Q6_K), got %T", tns.GetStorage())
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,

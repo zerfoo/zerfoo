@@ -3,7 +3,6 @@ package inference
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -533,9 +532,6 @@ func buildTransformerGraph(
 			// Merged QKV for Q4_K quantized weights.
 			// Note: In Q4_K_M models, V may use Q6_K while Q/K use Q4_K. We only
 			// merge when all three are Q4KStorage to keep the storage type uniform.
-			if os.Getenv("UPLOAD_TRACE") == "1" {
-				fmt.Fprintf(os.Stderr, "[MERGE_QKV] Q=%T K=%T V=%T\n", qW.GetStorage(), kW.GetStorage(), vW.GetStorage())
-			}
 			if qQ4K, ok := any(qW.GetStorage()).(*tensor.Q4KStorage); ok {
 				if kQ4K, ok := any(kW.GetStorage()).(*tensor.Q4KStorage); ok {
 					if vQ4K, ok := any(vW.GetStorage()).(*tensor.Q4KStorage); ok {
