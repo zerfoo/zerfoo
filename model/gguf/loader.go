@@ -63,13 +63,8 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		// Decode based on type. Embedding tensors keep native quantization
 		// to preserve precision (Q6_K has 64 levels vs Q4_0's 16; re-quantizing
 		// produces zero values for small embeddings like Llama's BOS token).
-		isEmbedding := ti.Name == "model.embed_tokens.weight" || ti.Name == "lm_head.weight"
-		var t *tensor.TensorNumeric[float32]
-		if isEmbedding {
-			t, err = decodeTensorNative(ti.Type, shape, int(numElements), raw)
-		} else {
-			t, err = decodeTensor(ti.Type, shape, int(numElements), raw)
-		}
+		// Decode based on type.
+		t, err := decodeTensor(ti.Type, shape, int(numElements), raw)
 		if err != nil {
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
