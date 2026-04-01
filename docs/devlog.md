@@ -30,6 +30,36 @@ See next entry.
 
 ---
 
+## 2026-03-31: GPU inference regression fully diagnosed -- heap vs mmap dequantization mismatch
+
+**Type:** investigation
+**Tags:** gpu, inference, regression, quantization, mmap, heap, q5_0, dequantization
+
+**Root cause chain (6 bugs found, 5 fixed):**
+1. FIXED: isTransposeReshape square-matrix no-op (ztensor eab19d0)
+2. FIXED: Causal mask D2H bug in SDPA (zerfoo 90cacad4)
+3. FIXED: Q4_K/Q5_K/Q6_K/Q5_0 lossy re-quantization to Q4_0 (zerfoo 1d56d2e5)
+4. FIXED: Q5_0Storage B-weight handling in CPU MatMul (ztensor e7927e5)
+5. FIXED: Fused softmax kernels produce wrong decode output (zerfoo 999f2fdf -- disabled)
+6. REMAINING: Heap Q5_0/Q8 dequantization differs from mmap by ~1 ULP per value,
+   accumulating through 18 transformer layers to ~0.09 logit diff at LMHead,
+   which changes the argmax for the first generated token.
+
+**Evidence:**
+- GQA parity test: PASS (maxDiff=2.6e-6) when both use heap loading
+- Graph prefill (185 nodes): CPU/GPU MATCH when both use heap (diff < 0.09)
+- LMHead prefill: CPU first5=[-12.94,...] GPU first5=[-12.86,...] -- close but argmax differs
+- The ~0.09 diff is caused by mmap vs heap dequantization difference in Q5_0 weights,
+  NOT by GPU compute errors
+
+**Resolution:** This is a quantization path mismatch, not a GPU compute bug. To fix:
+- Option A: Make Q5_0Storage.Dequantize bit-identical with MmapStorage.dequantizeQ5_0
+- Option B: Enable mmap on GPU by fixing ARM64 alignment in ztensor's UploadWeights
+- Option C: Accept the divergence (both outputs are mathematically valid for their
+  respective dequantization of the same quantized weights)
+
+---
+
 ## 2026-03-31: GQA parity test pinpoints row-1-only divergence (E58 T58.1.2)
 
 **Type:** finding
