@@ -13,7 +13,15 @@
       "Bash(grep:*)",
       "Bash(ls -1 /Users/dndungu/Code/zerfoo/zerfoo/layers/core/*.go)",
       "Bash(xargs -I {} basename {})",
-      "WebSearch"
+      "WebSearch",
+      "Bash(ls -la /Users/dndungu/Code/zerfoo/ztensor/graph/*.go)",
+      "Bash(ls -la /Users/dndungu/Code/zerfoo/zerfoo/inference/arch_*.go)",
+      "Bash(ls:*)",
+      "WebFetch(domain:vllm.ai)",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "mcp__plugin_claude-mem_mcp-search__search",
+      "WebFetch(domain:awsdocs-neuron.readthedocs-hosted.com)",
+      "WebFetch(domain:openxla.org)"
     ],
     "additionalDirectories": [
       "/Users/dndungu/Code/zerfoo/zonnx",

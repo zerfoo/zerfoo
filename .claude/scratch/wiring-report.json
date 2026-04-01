@@ -1,0 +1,155 @@
+{
+  "architecture_registry": [
+    {"arch": "llama", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "gemma", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "gemma3", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "qwen2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "mistral", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "phi", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "phi3", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "deepseek_v3", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "deepseek2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "mamba", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "mamba3", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "jamba", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "granite", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "whisper", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "bert", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "gpt2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "nemotron_h", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "nemotron_h_moe", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "minimax-m2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "starcoder2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "internlm2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "exaone", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "exaone4", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "dbrx", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "olmo2", "registered": true, "file_exists": true, "status": "OK"},
+    {"arch": "voxtral", "registered": true, "file_exists": true, "status": "OK"}
+  ],
+  "architecture_orphans": {
+    "registered_count": 26,
+    "orphan_count": 17,
+    "orphans": [
+      {"arch": "commandr", "file": "arch_commandr.go", "status": "ORPHAN"},
+      {"arch": "falcon", "file": "arch_falcon.go", "status": "ORPHAN"},
+      {"arch": "glm", "file": "arch_glm.go", "status": "ORPHAN"},
+      {"arch": "kimi", "file": "arch_kimi.go", "status": "ORPHAN"},
+      {"arch": "lfm2", "file": "arch_lfm2.go", "status": "ORPHAN"},
+      {"arch": "llama4", "file": "arch_llama4.go", "status": "ORPHAN"},
+      {"arch": "llava", "file": "arch_llava.go", "status": "ORPHAN"},
+      {"arch": "mixtral", "file": "arch_mixtral.go", "status": "ORPHAN"},
+      {"arch": "rwkv", "file": "arch_rwkv.go", "status": "ORPHAN"},
+      {"arch": "qwenvl", "file": "arch_qwenvl.go", "status": "ORPHAN"}
+    ]
+  },
+  "cli_handlers": [
+    {"command": "predict", "handler": "NewPredictCommand", "handler_exists": true, "status": "OK"},
+    {"command": "tokenize", "handler": "NewTokenizeCommand", "handler_exists": true, "status": "OK"},
+    {"command": "worker", "handler": "NewWorkerCommand", "handler_exists": true, "status": "OK"},
+    {"command": "pull", "handler": "NewPullCommand", "handler_exists": true, "status": "OK"},
+    {"command": "list", "handler": "NewListCommand", "handler_exists": true, "status": "OK"},
+    {"command": "rm", "handler": "NewRmCommand", "handler_exists": true, "status": "OK"},
+    {"command": "run", "handler": "NewRunCommand", "handler_exists": true, "status": "OK"},
+    {"command": "serve", "handler": "NewServeCommand", "handler_exists": true, "status": "OK"},
+    {"command": "version", "handler": "NewVersionCommand", "handler_exists": true, "status": "OK"},
+    {"command": "automl", "handler": "NewAutoMLCommand", "handler_exists": true, "status": "OK"},
+    {"command": "train", "handler": "NewTrainCommand", "handler_exists": true, "status": "OK"},
+    {"command": "guard", "handler": "NewGuardCommand", "handler_exists": true, "status": "OK"},
+    {"command": "sentiment", "handler": "NewSentimentCommand", "handler_exists": true, "status": "OK"},
+    {"command": "finetune-sentiment", "handler": "NewFineTuneSentimentCommand", "handler_exists": true, "status": "OK"},
+    {"command": "transmla", "handler": "NewTransMLACommand", "handler_exists": true, "status": "OK"},
+    {"command": "eagle-train", "handler": "NewEagleTrainCommand", "handler_exists": true, "status": "OK"},
+    {"command": "transcribe", "handler": "NewTranscribeCommand", "handler_exists": true, "status": "OK"}
+  ],
+  "serve_routes": [
+    {"method": "POST", "path": "/v1/chat/completions", "handler": "handleChatCompletions", "status": "OK"},
+    {"method": "POST", "path": "/v1/completions", "handler": "handleCompletions", "status": "OK"},
+    {"method": "POST", "path": "/v1/embeddings", "handler": "handleEmbeddings", "status": "OK"},
+    {"method": "GET", "path": "/v1/models", "handler": "handleModels", "status": "OK"},
+    {"method": "GET", "path": "/v1/models/{id}", "handler": "handleModelInfo", "status": "OK"},
+    {"method": "DELETE", "path": "/v1/models/{id}", "handler": "handleModelDelete", "status": "OK"},
+    {"method": "POST", "path": "/v1/audio/transcriptions", "handler": "handleAudioTranscriptions", "status": "OK"},
+    {"method": "POST", "path": "/v1/classify", "handler": "handleClassify", "status": "OK"},
+    {"method": "POST", "path": "/v1/guard", "handler": "handleGuard", "status": "OK"},
+    {"method": "POST", "path": "/v1/guard/batch", "handler": "handleGuardBatch", "status": "OK"},
+    {"method": "POST", "path": "/v1/guard/scan", "handler": "handleGuardScan", "status": "OK"},
+    {"method": "GET", "path": "/healthz", "handler": "handleHealthz", "status": "OK"},
+    {"method": "GET", "path": "/readyz", "handler": "handleReadyz", "status": "OK"},
+    {"method": "GET", "path": "/openapi.yaml", "handler": "handleOpenAPISpec", "status": "OK"},
+    {"method": "GET", "path": "/metrics", "handler": "handleMetrics", "status": "OK"}
+  ],
+  "layer_registry": {
+    "registered_count": 57,
+    "orphan_count": 0,
+    "orphans": [],
+    "notes": "All layer implementation files have corresponding RegisterLayer calls in layers/registry/registry.go"
+  },
+  "generator_options": {
+    "WithCompressedKV": {
+      "location": "generate/generator.go:142",
+      "status": "OK"
+    },
+    "WithEAGLE": {
+      "location": "generate/generator.go:156",
+      "status": "OK"
+    },
+    "WithMaxSeqLen": {
+      "location": "inference/inference.go:154",
+      "status": "OK"
+    },
+    "WithQuaRot": {
+      "location": "inference/inference.go:210",
+      "status": "OK"
+    }
+  },
+  "inference_options": {
+    "WithMaxSeqLen": "OK",
+    "WithQuaRot": "OK"
+  },
+  "summary": {
+    "total_checks": 5,
+    "categories": {
+      "architecture_registry": {
+        "total": 26,
+        "ok": 26,
+        "orphan": 17,
+        "status": "PARTIAL - 17 arch implementations not registered"
+      },
+      "cli_handlers": {
+        "total": 17,
+        "ok": 17,
+        "missing": 0,
+        "stub": 0,
+        "status": "OK"
+      },
+      "serve_routes": {
+        "total": 15,
+        "ok": 15,
+        "missing": 0,
+        "stub": 0,
+        "status": "OK"
+      },
+      "layer_registry": {
+        "total": 57,
+        "ok": 57,
+        "orphan": 0,
+        "status": "OK"
+      },
+      "generator_options": {
+        "WithCompressedKV": "OK",
+        "WithEAGLE": "OK",
+        "WithMaxSeqLen": "OK",
+        "WithQuaRot": "OK",
+        "status": "OK"
+      }
+    },
+    "key_findings": [
+      "17 architecture implementations exist but are NOT registered: commandr, falcon, glm, kimi, lfm2, llama4, llava, mixtral, rwkv, qwenvl (and timeseries: flowstate, patchtst, regime, tft, tspulse, ttm)",
+      "All 17 CLI commands properly wired to command handlers",
+      "All 15 HTTP serve routes properly mapped to handler functions",
+      "All 57 layer types properly registered in layers/registry/registry.go",
+      "All key generator options properly implemented: WithCompressedKV, WithEAGLE, WithMaxSeqLen, WithQuaRot"
+    ]
+  }
+}

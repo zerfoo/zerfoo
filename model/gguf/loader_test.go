@@ -3,7 +3,9 @@ package gguf
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/zerfoo/float16"
@@ -244,9 +246,9 @@ func TestDecodeQ5KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q5_K should use native Q5KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q5KStorage); !ok {
-		t.Fatalf("expected Q5KStorage (native), got %T", tns.GetStorage())
+	// Q5_K is re-quantized to Q4_K for uniform fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4KStorage); !ok {
+		t.Fatalf("expected Q4KStorage (re-quantized from Q5_K), got %T", tns.GetStorage())
 	}
 
 	// All-zero Q5_K block dequantizes to all zeros.
@@ -599,9 +601,9 @@ func TestDecodeQ6KTensor_ReQuantizesToQ4(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", tns.Shape(), numElements)
 	}
 
-	// Q6_K should use native Q6KStorage (no re-quantization).
-	if _, ok := tns.GetStorage().(*tensor.Q6KStorage); !ok {
-		t.Fatalf("expected Q6KStorage (native), got %T", tns.GetStorage())
+	// Q6_K is re-quantized to Q4_K for uniform fast GEMV decode path.
+	if _, ok := tns.GetStorage().(*tensor.Q4KStorage); !ok {
+		t.Fatalf("expected Q4KStorage (re-quantized from Q6_K), got %T", tns.GetStorage())
 	}
 
 	// Verify the tensor contains dequantized float32 data (not all zeros,
@@ -1586,4 +1588,329 @@ func TestDecodeQ3KTensor(t *testing.T) {
 			break
 		}
 	}
+}
+
+// TestQ5_0ReQuantizationQuality measures quality loss when re-quantizing Q5_0
+// weights to Q4_K and Q4_0. Generates normally distributed float32 data
+// (stddev ~0.02, typical for transformer weight matrices), encodes to Q5_0,
+// then measures the error introduced by each re-quantization target.
+func TestQ5_0ReQuantizationQuality(t *testing.T) {
+	// Use 8192 elements: enough for stable statistics (256 Q5_0 blocks,
+	// 32 Q4_K super-blocks).
+	const numElements = 8192
+
+	// Generate normally distributed weights: mean=0, stddev=0.02.
+	rng := rand.New(rand.NewPCG(42, 0))
+	original := make([]float32, numElements)
+	for i := range original {
+		original[i] = float32(rng.NormFloat64()) * 0.02
+	}
+
+	// Step 1: Quantize float32 -> Q5_0.
+	q5Raw := testQuantizeQ5_0(original)
+	q5s, err := tensor.NewQ5_0StorageFromRaw(q5Raw, numElements)
+	if err != nil {
+		t.Fatalf("NewQ5_0StorageFromRaw: %v", err)
+	}
+	q5f32 := make([]float32, numElements)
+	q5s.Dequantize(q5f32)
+
+	// Step 2a: Re-quantize Q5_0 -> Q4_K.
+	q4kRaw := testQuantizeQ4K(q5f32)
+	q4ks, err := tensor.NewQ4KStorageFromRaw(q4kRaw, numElements)
+	if err != nil {
+		t.Fatalf("NewQ4KStorageFromRaw: %v", err)
+	}
+	q4kf32 := make([]float32, numElements)
+	q4ks.Dequantize(q4kf32)
+
+	// Step 2b: Re-quantize Q5_0 -> Q4_0.
+	q4s := tensor.QuantizeQ4(q5f32)
+	q4f32 := make([]float32, numElements)
+	q4s.Dequantize(q4f32)
+
+	// Compute error metrics: Q5_0 dequantized values are the reference.
+	q4kStats := computeErrorStats(q5f32, q4kf32)
+	q4Stats := computeErrorStats(q5f32, q4f32)
+
+	// Print comparison table.
+	t.Logf("\n%-15s %12s %12s %12s %12s",
+		"Path", "maxErr", "meanErr", "RMSE", "zeroPercent")
+	t.Logf("%-15s %12s %12s %12s %12s",
+		"----", "------", "-------", "----", "-----------")
+	t.Logf("%-15s %12.6f %12.6f %12.6f %11.2f%%",
+		"Q5_0 -> Q4_K", q4kStats.maxErr, q4kStats.meanErr, q4kStats.rmse, q4kStats.zeroPct)
+	t.Logf("%-15s %12.6f %12.6f %12.6f %11.2f%%",
+		"Q5_0 -> Q4_0", q4Stats.maxErr, q4Stats.meanErr, q4Stats.rmse, q4Stats.zeroPct)
+
+	// Verify Q4_K is at least as good as Q4_0 on RMSE.
+	if q4kStats.rmse > q4Stats.rmse*1.1 {
+		t.Errorf("Q4_K RMSE (%f) should not be significantly worse than Q4_0 RMSE (%f)",
+			q4kStats.rmse, q4Stats.rmse)
+	}
+
+	// Sanity: errors should be non-zero (we have non-trivial data).
+	if q4kStats.maxErr == 0 {
+		t.Error("Q4_K maxErr is 0; expected non-zero error from re-quantization")
+	}
+	if q4Stats.maxErr == 0 {
+		t.Error("Q4_0 maxErr is 0; expected non-zero error from re-quantization")
+	}
+
+	// Sanity: zero percentage should be low for normally distributed data.
+	if q4kStats.zeroPct > 50 {
+		t.Errorf("Q4_K zero percent %.2f%% is unexpectedly high", q4kStats.zeroPct)
+	}
+	if q4Stats.zeroPct > 50 {
+		t.Errorf("Q4_0 zero percent %.2f%% is unexpectedly high", q4Stats.zeroPct)
+	}
+}
+
+type errorStats struct {
+	maxErr  float64
+	meanErr float64
+	rmse    float64
+	zeroPct float64
+}
+
+func (s errorStats) String() string {
+	return fmt.Sprintf("maxErr=%.6f meanErr=%.6f RMSE=%.6f zeroPercent=%.2f%%",
+		s.maxErr, s.meanErr, s.rmse, s.zeroPct)
+}
+
+// computeErrorStats computes element-wise error statistics between reference
+// and actual float32 slices.
+func computeErrorStats(ref, actual []float32) errorStats {
+	n := len(ref)
+	var maxErr, sumErr, sumSqErr float64
+	var zeroCount int
+	for i := range n {
+		diff := math.Abs(float64(actual[i] - ref[i]))
+		if diff > maxErr {
+			maxErr = diff
+		}
+		sumErr += diff
+		sumSqErr += diff * diff
+		if actual[i] == 0 {
+			zeroCount++
+		}
+	}
+	return errorStats{
+		maxErr:  maxErr,
+		meanErr: sumErr / float64(n),
+		rmse:    math.Sqrt(sumSqErr / float64(n)),
+		zeroPct: float64(zeroCount) / float64(n) * 100,
+	}
+}
+
+// testQuantizeQ5_0 quantizes float32 values into Q5_0 raw block bytes.
+// Q5_0: 32 values per block, 22 bytes per block.
+// Layout: 2 bytes fp16 scale + 4 bytes qh (high bits) + 16 bytes qs (low nibbles).
+// Symmetric quantization: maps [-absmax, absmax] to [-16, 15].
+func testQuantizeQ5_0(src []float32) []byte {
+	const blockSize = 32
+	const blockBytes = 22
+	n := len(src)
+	nBlocks := (n + blockSize - 1) / blockSize
+	raw := make([]byte, nBlocks*blockBytes)
+
+	for bi := range nBlocks {
+		offset := bi * blockSize
+
+		// Find absmax for this block.
+		var absMax float32
+		for j := range blockSize {
+			idx := offset + j
+			var v float32
+			if idx < n {
+				v = src[idx]
+			}
+			if av := float32(math.Abs(float64(v))); av > absMax {
+				absMax = av
+			}
+		}
+
+		// Scale maps [-absMax, absMax] to [-16, 15].
+		var d float32
+		if absMax > 0 {
+			d = absMax / 15.0
+		}
+		dFP16 := float16.FromFloat32(d)
+
+		blk := raw[bi*blockBytes : (bi+1)*blockBytes]
+		binary.LittleEndian.PutUint16(blk[0:2], dFP16.Bits())
+
+		var invD float32
+		if d > 0 {
+			invD = 1.0 / dFP16.ToFloat32()
+		}
+
+		var qh uint32
+		for j := range 16 {
+			var v0, v1 float32
+			if offset+j < n {
+				v0 = src[offset+j]
+			}
+			if offset+j+16 < n {
+				v1 = src[offset+j+16]
+			}
+
+			// Quantize to 5-bit signed: range [-16, 15], stored as unsigned [0, 31].
+			q0 := clampTestInt(int(math.Round(float64(v0*invD))), -16, 15)
+			q1 := clampTestInt(int(math.Round(float64(v1*invD))), -16, 15)
+
+			u0 := q0 + 16 // unsigned [0, 31]
+			u1 := q1 + 16
+
+			// Low 4 bits go into qs (packed nibbles).
+			blk[6+j] = byte(u0&0x0F) | (byte(u1&0x0F) << 4)
+
+			// High bit (bit 4) goes into qh.
+			if u0&0x10 != 0 {
+				qh |= 1 << j
+			}
+			if u1&0x10 != 0 {
+				qh |= 1 << (j + 16)
+			}
+		}
+		binary.LittleEndian.PutUint32(blk[2:6], qh)
+	}
+	return raw
+}
+
+// testQuantizeQ4K quantizes float32 values into Q4_K raw super-block bytes.
+// Q4_K: 256 values per super-block, 144 bytes per block, 8 sub-blocks of 32.
+// Asymmetric quantization: each sub-block has its own scale and min, packed into
+// 6-bit fields with a shared fp16 super-block scale and super-block dmin.
+func testQuantizeQ4K(src []float32) []byte {
+	const superBlockSize = 256
+	const blockBytes = 144
+	const numSubBlocks = 8
+	const subBlockSize = 32
+
+	n := len(src)
+	nBlocks := (n + superBlockSize - 1) / superBlockSize
+	raw := make([]byte, nBlocks*blockBytes)
+
+	for bi := range nBlocks {
+		off := bi * superBlockSize
+		var values [superBlockSize]float32
+		end := off + superBlockSize
+		if end > n {
+			end = n
+		}
+		copy(values[:], src[off:end])
+
+		// Compute per-sub-block scale and min.
+		var subScales, subMins [numSubBlocks]float32
+		for sb := range numSubBlocks {
+			sOff := sb * subBlockSize
+			minVal := values[sOff]
+			maxVal := values[sOff]
+			for j := 1; j < subBlockSize; j++ {
+				v := values[sOff+j]
+				if v < minVal {
+					minVal = v
+				}
+				if v > maxVal {
+					maxVal = v
+				}
+			}
+			if minVal > 0 {
+				minVal = 0
+			}
+			subScales[sb] = (maxVal - minVal) / 15.0
+			subMins[sb] = -minVal
+		}
+
+		// Find max scale and min across sub-blocks for the super-block header.
+		var maxScale, maxMin float32
+		for sb := range numSubBlocks {
+			if subScales[sb] > maxScale {
+				maxScale = subScales[sb]
+			}
+			if subMins[sb] > maxMin {
+				maxMin = subMins[sb]
+			}
+		}
+
+		d := maxScale / 63.0
+		dmin := maxMin / 63.0
+
+		// Quantize sub-block scales and mins to 6-bit.
+		var scalesQ, minsQ [numSubBlocks]uint8
+		for sb := range numSubBlocks {
+			if d > 0 {
+				scalesQ[sb] = uint8(math.Round(float64(subScales[sb] / d)))
+				if scalesQ[sb] > 63 {
+					scalesQ[sb] = 63
+				}
+			}
+			if dmin > 0 {
+				minsQ[sb] = uint8(math.Round(float64(subMins[sb] / dmin)))
+				if minsQ[sb] > 63 {
+					minsQ[sb] = 63
+				}
+			}
+		}
+
+		blk := raw[bi*blockBytes : (bi+1)*blockBytes]
+
+		// fp16 d and dmin.
+		dFP16 := float16.FromFloat32(d)
+		dminFP16 := float16.FromFloat32(dmin)
+		binary.LittleEndian.PutUint16(blk[0:2], dFP16.Bits())
+		binary.LittleEndian.PutUint16(blk[2:4], dminFP16.Bits())
+
+		// Pack 6-bit scales and mins into 12 bytes at blk[4:16].
+		for i := range 4 {
+			blk[4+i] = (scalesQ[i] & 63) | ((scalesQ[4+i] >> 4) << 6)
+			blk[8+i] = (minsQ[i] & 63) | ((minsQ[4+i] >> 4) << 6)
+		}
+		for i := range 4 {
+			blk[12+i] = (scalesQ[4+i] & 0xF) | ((minsQ[4+i] & 0xF) << 4)
+		}
+
+		// Quantize values to 4-bit per sub-block pair.
+		dRT := dFP16.ToFloat32()
+		dminRT := dminFP16.ToFloat32()
+		for group := range 4 {
+			sb0 := group * 2
+			sb1 := group*2 + 1
+
+			sc0 := dRT * float32(scalesQ[sb0])
+			mn0 := dminRT * float32(minsQ[sb0])
+			sc1 := dRT * float32(scalesQ[sb1])
+			mn1 := dminRT * float32(minsQ[sb1])
+
+			var invScale0, invScale1 float32
+			if sc0 > 0 {
+				invScale0 = 1.0 / sc0
+			}
+			if sc1 > 0 {
+				invScale1 = 1.0 / sc1
+			}
+
+			baseOut := group * 64
+			baseQ := group * 32
+			for l := range 32 {
+				v0 := values[baseOut+l]
+				v1 := values[baseOut+l+32]
+				q0 := clampTestInt(int(math.Round(float64((v0+mn0)*invScale0))), 0, 15)
+				q1 := clampTestInt(int(math.Round(float64((v1+mn1)*invScale1))), 0, 15)
+				blk[16+baseQ+l] = byte(q0) | (byte(q1) << 4)
+			}
+		}
+	}
+	return raw
+}
+
+func clampTestInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
