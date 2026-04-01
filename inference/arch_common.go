@@ -151,9 +151,12 @@ func buildTransformerGraph(
 					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
 				}
 			}
-			// Q5_0 excluded from GPU virtual transpose: the Q5_0 GEMV kernel
-			// triggers misaligned address errors on ARM64 (DGX Spark).
-			// Q5_0 falls through to F32 dequant+transpose+SgemmNT below.
+			if _, ok := any(s).(*tensor.Q5_0Storage); ok {
+				shape := t.Shape()
+				if len(shape) == 2 {
+					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
+				}
+			}
 			if _, ok := any(s).(*tensor.Q5KStorage); ok {
 				shape := t.Shape()
 				if len(shape) == 2 {
