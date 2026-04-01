@@ -153,44 +153,14 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	if d <= 0 {
 		return nil, fmt.Errorf("ScaledDotProductAttention: headDim must be > 0, got %v", d)
 	}
-	scale := float32(1.0 / math.Sqrt(d))
-
-	// Determine whether masking will intervene between scaling and softmax.
-	// If not, we can fuse MulScalar + Softmax into a single kernel launch.
-	needsMasking := mask != nil || (sdpa.causal && len(attentionScores.Shape()) >= 2 && attentionScores.Shape()[len(attentionScores.Shape())-2] > 1)
-
-	// Fused softmax+V multiply for decode (seqQ=1).
-	// Combines scale, softmax, and V matmul in a single kernel launch,
-	// eliminating the intermediate attention weights tensor entirely.
-	if q.Shape()[1] == 1 && !needsMasking {
-		realEng := compute.Engine[T](sdpa.engine)
-		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
-			realEng = proxy.Real()
-		}
-		if fuser, ok := realEng.(compute.FusedSoftmaxVMulProvider[T]); ok {
-			fusedOut, fusedErr := fuser.GPUFusedSoftmaxVMul(attentionScores, v, scale)
-			if fusedErr == nil {
-				return fusedOut, nil
-			}
-			// Fall through to separate ops on error.
-		}
-	}
+	// Fused softmax+V multiply and fused scaled softmax DISABLED.
+	// The fused CUDA kernels produce wrong results on DGX Spark (ARM64/Grace Hopper).
+	// TODO: fix fused_softmax_vmul.cu and scaled_softmax.cu, then re-enable.
 
 	var attentionWeights *tensor.TensorNumeric[T]
-	if !needsMasking {
-		// Try fused scaled softmax path: single kernel replaces MulScalar + Softmax.
-		// Unwrap EngineProxy to detect the real engine type.
-		realEngine := compute.Engine[T](sdpa.engine)
-		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
-			realEngine = proxy.Real()
-		}
-		if provider, ok := realEngine.(compute.FusedScaledSoftmaxProvider[T]); ok {
-			out, fusedErr := provider.GPUScaledSoftmax(attentionScores, scale, -1)
-			if fusedErr == nil {
-				attentionWeights = out
-			}
-		}
-	}
+	// Fused scaled softmax -- DISABLED alongside FusedSoftmaxVMul.
+	// The fused kernels produce wrong results on DGX Spark.
+	// TODO: fix fused kernels and re-enable.
 
 	if attentionWeights == nil {
 		// Fallback: separate MulScalar + optional masking + Softmax.
