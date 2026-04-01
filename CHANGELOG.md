@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.5](https://github.com/zerfoo/zerfoo/compare/v1.38.4...v1.38.5) (2026-04-01)
+
+
+### Bug Fixes
+
+* **attention:** disable fused softmax kernels that produce wrong decode output ([999f2fd](https://github.com/zerfoo/zerfoo/commit/999f2fdf7d7c2a22f87b43c94862a489f9fe4a31))
+* **attention:** use engine.Add for causal masking instead of CPU Data() mutation ([90cacad](https://github.com/zerfoo/zerfoo/commit/90cacad409a4623d49b0d04593cf98f0eac957e4))
+* **gguf:** keep native Q6_K storage (don't re-quantize to Q4_0) ([eee3a54](https://github.com/zerfoo/zerfoo/commit/eee3a54f75d548da369bcbc3bb3c1b7af9ac13c1))
+* **gguf:** upgrade embeddings to F32, keep Q6_K re-quantization for weights ([b887b10](https://github.com/zerfoo/zerfoo/commit/b887b10deca2b432a94a1ecf2ede8ee37e294270))
+* **gguf:** use native Q4_K storage instead of lossy re-quantization to Q4_0 ([1d56d2e](https://github.com/zerfoo/zerfoo/commit/1d56d2e5cac5e7d27030816a55e0e4cc85b4a852))
+* **inference:** add Q5_0Storage virtual transpose in transposeWeight ([9fc3d68](https://github.com/zerfoo/zerfoo/commit/9fc3d681ca945e5b6c0a02afe6a2829871e1bde7))
+* **inference:** re-enable Q5_0 virtual transpose and fused softmax kernels ([004d8bd](https://github.com/zerfoo/zerfoo/commit/004d8bdade1da9681b6abbc1b009e6b816df9f3c))
+* **inference:** re-enable Q5_0 virtual transpose on GPU ([a3d4ac5](https://github.com/zerfoo/zerfoo/commit/a3d4ac5b04a048569e949b4e379ff8c7e4b3c731))
+* **inference:** restore CUDA-only mmap disable (was accidentally global) ([7d07018](https://github.com/zerfoo/zerfoo/commit/7d070187463f3a956c3f7c1a879a0712bdf7770b))
+* **inference:** revert Q5_0 virtual transpose on GPU (misaligned address) ([a906d3a](https://github.com/zerfoo/zerfoo/commit/a906d3a5e76193d550c8da459f8e2af0d6cb291f))
+
+
+### Performance Improvements
+
+* **gguf:** restore Q4_0 re-quantization for Q4_K/Q5_K/Q6_K/Q5_0 ([4e554e0](https://github.com/zerfoo/zerfoo/commit/4e554e04ce852b92a07bca0f774956ec7d79819e))
+* **training:** convert layer norm backward to engine ops (E50.2.1) ([67772c5](https://github.com/zerfoo/zerfoo/commit/67772c5cf7069dfd4e3d7119ff889c33e2426862))
+
 ## [1.38.4](https://github.com/zerfoo/zerfoo/compare/v1.38.3...v1.38.4) (2026-03-31)
 
 
