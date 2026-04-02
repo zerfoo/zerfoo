@@ -608,35 +608,39 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 		}
 	}
 
-	// Linear projections: r, k, v, (g) using matmul.
-	rw := n.weights.receptance.Value.Data() // [H, H] (transposed)
-	kw := n.weights.key.Value.Data()
-	vw := n.weights.value.Value.Data()
-	ow := n.weights.output.Value.Data()
-
-	project := func(shifted []T, w []T) []T {
-		// shifted: [batch*seqLen, H]; w: [H, H]
-		out := make([]T, batch*seqLen*H)
-		for row := 0; row < batch*seqLen; row++ {
-			for col := 0; col < H; col++ {
-				var sum T
-				for k := 0; k < H; k++ {
-					sum = n.ops.Add(sum, n.ops.Mul(shifted[row*H+k], w[k*H+col]))
-				}
-				out[row*H+col] = sum
-			}
+	// Linear projections: r, k, v, (g) via engine.MatMul.
+	ctx := context.Background()
+	project := func(shifted []T, weight *tensor.TensorNumeric[T]) ([]T, error) {
+		mat, tErr := tensor.New([]int{batch * seqLen, H}, shifted)
+		if tErr != nil {
+			return nil, tErr
 		}
-		return out
+		result, tErr := n.engine.MatMul(ctx, mat, weight)
+		if tErr != nil {
+			return nil, tErr
+		}
+		return result.Data(), nil
 	}
 
-	rVec := project(shiftedR, rw)
-	kVec := project(shiftedK, kw)
-	vVec := project(shiftedV, vw)
+	rVec, err := project(shiftedR, n.weights.receptance.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVTimeMix project receptance: %w", err)
+	}
+	kVec, err := project(shiftedK, n.weights.key.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVTimeMix project key: %w", err)
+	}
+	vVec, err := project(shiftedV, n.weights.value.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVTimeMix project value: %w", err)
+	}
 
 	var gVec []T
 	if hasMixG && n.weights.gate != nil {
-		gw := n.weights.gate.Value.Data()
-		gVec = project(shiftedG, gw)
+		gVec, err = project(shiftedG, n.weights.gate.Value)
+		if err != nil {
+			return nil, fmt.Errorf("RWKVTimeMix project gate: %w", err)
+		}
 	}
 
 	// Apply sigmoid to r (receptance).
@@ -645,20 +649,15 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 	}
 
 	// WKV linear attention (per head, iterative).
-	// For each head h (size head_size), compute WKV recurrence.
+	// This recurrence is RWKV-specific with no equivalent in layers/ — kept as-is.
 	decayData := n.weights.timeDecay.Value.Data() // [num_heads, head_size]
 
 	wkvOut := make([]T, batch*seqLen*H)
 
 	for b := 0; b < batch; b++ {
-		// State per head: numerator and denominator of WKV.
-		// Shape: [num_heads, head_size] for num, [num_heads] for den.
-		// RWKV-6 uses full state: [num_heads, head_size, head_size] for matrix-valued state.
-		// Here we use the simplified scalar-per-head WKV (RWKV-4/5 style).
-		wkvNum := make([]float64, n.numHeads*n.headSize) // Σ exp(w+k)*v
-		wkvDen := make([]float64, n.numHeads*n.headSize) // Σ exp(w+k)
+		wkvNum := make([]float64, n.numHeads*n.headSize)
+		wkvDen := make([]float64, n.numHeads*n.headSize)
 
-		// Initialize from time_faaaa if present (initial state).
 		if n.weights.timeFaaaa != nil {
 			for h := 0; h < n.numHeads; h++ {
 				for j := 0; j < n.headSize; j++ {
@@ -670,7 +669,6 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 		for s := 0; s < seqLen; s++ {
 			off := (b*seqLen + s) * H
 
-			// Iterate over heads.
 			for h := 0; h < n.numHeads; h++ {
 				hOff := h * n.headSize
 				decayOff := h * n.headSize
@@ -681,8 +679,6 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 					v := float64(vVec[idx])
 					decay := float64(decayData[decayOff+j])
 
-					// decay is stored as log(-decay) in GGUF (negative log of decay rate).
-					// Actual decay: exp(-exp(decay)) per step.
 					actualDecay := math.Exp(-math.Exp(decay))
 
 					stateIdx := h*n.headSize + j
@@ -694,7 +690,6 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 						wkvVal = wkvNum[stateIdx] / wkvDen[stateIdx]
 					}
 
-					// Gate by receptance.
 					r := float64(rVec[idx])
 					wkvOut[idx] = T(r * wkvVal)
 				}
@@ -702,37 +697,28 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 		}
 	}
 
-	// Apply group norm (ln_x) if present.
+	// Apply group norm (ln_x) if present, using LayerNormalization from layers/.
 	if n.weights.lnXWeight != nil {
-		lnXW := n.weights.lnXWeight.Value.Data()
-		var lnXB []T
-		if n.weights.lnXBias != nil {
-			lnXB = n.weights.lnXBias.Value.Data()
-		} else {
-			lnXB = make([]T, H)
+		lnXBias := n.weights.lnXBias
+		if lnXBias == nil {
+			zeroBias, lnErr := tensor.New([]int{H}, make([]T, H))
+			if lnErr != nil {
+				return nil, fmt.Errorf("RWKVTimeMix create ln_x zero bias: %w", lnErr)
+			}
+			lnXBias = &graph.Parameter[T]{Name: "ln_x.bias", Value: zeroBias}
 		}
-		eps := 1e-5
-		// Apply layer norm per token across all channels (group norm with 1 group = LN).
-		for i := 0; i < batch*seqLen; i++ {
-			off := i * H
-			row := wkvOut[off : off+H]
-			var sum float64
-			for _, v := range row {
-				sum += float64(v)
-			}
-			mean := sum / float64(H)
-			var variance float64
-			for _, v := range row {
-				d := float64(v) - mean
-				variance += d * d
-			}
-			variance /= float64(H)
-			invStd := 1.0 / math.Sqrt(variance+eps)
-			for j := 0; j < H; j++ {
-				norm := (float64(row[j]) - mean) * invStd
-				wkvOut[off+j] = T(norm*float64(lnXW[j]) + float64(lnXB[j]))
-			}
+		lnX := normalization.NewLayerNormalizationFromParams[T](
+			n.engine, n.ops.FromFloat64(1e-5), n.weights.lnXWeight, lnXBias,
+		)
+		wkvTensor, lnErr := tensor.New([]int{batch * seqLen, H}, wkvOut)
+		if lnErr != nil {
+			return nil, fmt.Errorf("RWKVTimeMix create ln_x input: %w", lnErr)
 		}
+		normed, lnErr := lnX.Forward(ctx, wkvTensor)
+		if lnErr != nil {
+			return nil, fmt.Errorf("RWKVTimeMix ln_x forward: %w", lnErr)
+		}
+		wkvOut = normed.Data()
 	}
 
 	// Multiply by gate (SiLU) if present.
@@ -744,19 +730,16 @@ func (n *rwkvTimeMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Tensor
 		}
 	}
 
-	// Output projection.
-	outVec := make([]T, batch*seqLen*H)
-	for row := 0; row < batch*seqLen; row++ {
-		for col := 0; col < H; col++ {
-			var sum T
-			for k := 0; k < H; k++ {
-				sum = n.ops.Add(sum, n.ops.Mul(wkvOut[row*H+k], ow[k*H+col]))
-			}
-			outVec[row*H+col] = sum
-		}
+	// Output projection via engine.MatMul.
+	wkvMat, err := tensor.New([]int{batch * seqLen, H}, wkvOut)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVTimeMix create output input: %w", err)
 	}
-
-	return tensor.New([]int{batch, seqLen, H}, outVec)
+	outMat, err := n.engine.MatMul(ctx, wkvMat, n.weights.output.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVTimeMix output projection: %w", err)
+	}
+	return n.engine.Reshape(ctx, outMat, []int{batch, seqLen, H})
 }
 
 func (n *rwkvTimeMixNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
