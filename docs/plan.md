@@ -28,6 +28,11 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (7/7 COMPLETE -- replace BLAS fallback + FFT with zero-dep implementations)
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
+- E61: Inference builder composition (0/10 -- migrate 6 arch builders to compose from layers/)
+- E62: Auxiliary training package composition (0/7 -- tabular, gnn, modeldsl)
+- E63: Quantized matmul consolidation in ztensor (0/5 -- single dispatcher for 16 copy-paste methods)
+- E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
+- E65: MoE layer composition fix (0/3 -- replace raw .Data() in layers/core/moe.go)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -1186,6 +1191,7 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 | M6 | Industry Standard | E24-E27, WE10-WE11 | $50M ARR; ZerfooConf | 2032-12-31 |
 | M7 | Platform Maturity | E28-E30, WE12 | $75M ARR; federated; on-device | 2034-12-31 |
 | M8 | Market Leadership | E31-E33 | $150M+ ARR; IPO filed | 2036-12-31 |
+| M-COMP | Composition Remediation | E61-E65 | All packages compose from layers/ or engine ops; gpu_engine.go split into <1K-line files; zero private math reimplementations | 2026-Q3 |
 
 ---
 
@@ -1214,6 +1220,11 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 | R33 | SVD truncation degrades quality for some model families | Medium | Medium | Validate perplexity per model family before publishing converted GGUFs; allow configurable rank; provide validation CLI |
 | R34 | I-Quant grid tables diverge from llama.cpp upstream | Low | Medium | Pin to llama.cpp GGUF spec version; re-validate on major releases |
 | R35 | Multi-LoRA adapter GPU memory fragmentation | Medium | Medium | LRU eviction + adapter memory budget cap; monitor with arena allocator stats |
+| R50 | Inference builder refactoring breaks model parity (E61) | High | Medium | Run parity tests for each model after refactoring; keep old code behind build tag until verified |
+| R51 | gnn [][]float64 to tensor conversion changes public API (E62) | Medium | High | Provide adapter functions at API boundary; internal-only tensor usage if possible |
+| R52 | Quantized matmul dispatcher adds dispatch overhead (E63) | Medium | Low | Dispatcher is a type-switch resolved at call time, not runtime polymorphism; benchmark validates <2% regression |
+| R53 | gpu_engine.go file split creates merge conflicts with in-flight PRs (E64) | Low | Medium | Schedule E64 during a merge freeze or after all ztensor PRs land |
+| R54 | MoE engine op refactoring changes expert routing behavior (E65) | Medium | Low | Top-K routing is unchanged; only bias/sigmoid/softmax are refactored; parity test validates |
 
 ---
 
@@ -1302,10 +1313,35 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 - ADR-069: TransMLA -- Retrofit MLA onto MHA/GQA models
 - ADR-075: Batched training with kernel fusion for time series
 - ADR-076: Foundation model inference via gRPC Python bridge
+- ADR-082: Composition remediation strategy (E61-E65)
 
 ---
 
 ## Progress Log
+
+### 2026-04-02: Dirty-architecture cleanup -- routed findings to proper tiers, added E61-E65
+
+Routed docs/dirty-architecture.md (13 findings from 5-agent composition audit) to
+proper documentation tiers:
+- Tier 1 (design.md): Added section 2.5 "Composition Principle" with enforcement
+  status table, positive exemplar (inference path), known violations, justified
+  exceptions, and god object status.
+- Tier 2 (ADR): Created docs/adr/082-composition-remediation-strategy.md with
+  5-phase remediation plan.
+- Tier 3 (devlog.md): Added audit entry with all 13 findings, statistics, worst
+  offenders with file:line references, and prior work cross-references.
+- Plan: Added 5 new epics (E61-E65, 28 tasks total) for unfixed composition
+  violations. Added 5 new risks (R50-R54). Added milestone M-COMP.
+- Deleted docs/dirty-architecture.md after routing all content.
+
+New epics:
+- E61 (10 tasks): Inference builder composition -- migrate 6 arch builders to layers/
+- E62 (7 tasks): Auxiliary training package composition -- tabular, gnn, modeldsl
+- E63 (5 tasks): Quantized matmul consolidation in ztensor -- single dispatcher
+- E64 (3 tasks): GPU engine file decomposition in ztensor -- split god file
+- E65 (3 tasks): MoE layer composition fix -- replace raw .Data()
+
+ADRs created: docs/adr/082-composition-remediation-strategy.md
 
 ### 2026-04-01: E60 added -- CrossAsset GPU training (GitHub #312)
 
@@ -3610,6 +3646,312 @@ Deps: Wave E60-2
 | M-E60-1 | Forward parity | gpuForward matches CPU Forward within 1e-3 on 4-source, 2-layer model | 2026-Q2 |
 | M-E60-2 | Full backprop | Gradient check passes for all layers including attention | 2026-Q2 |
 | M-E60-3 | Training convergence | Loss decreases monotonically for 20 epochs on synthetic data | 2026-Q2 |
+
+---
+
+---
+
+## E61: Inference Builder Composition
+
+**Problem:** 6 inference architecture builders define 31 custom graph nodes with
+inline math instead of composing from layers/. arch_rwkv.go has a 250+ line
+inline triple-loop matrix multiply. arch_bert.go reimplements attention, FFN, and
+embedding as 7 private node types. arch_common.go (the exemplar) proves that full
+layers/ composition works for all 12+ model architectures on the inference path.
+
+**Goal:** Replace custom graph nodes with composition from layers/attention,
+layers/core, layers/normalization, and layers/activations. Reduce custom node
+count from 31 to under 5 (justified exceptions only). See ADR-082.
+
+### E61.1: Critical Builders (inline math elimination)
+
+- [ ] T61.1.1 Refactor arch_rwkv.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]
+  Replace the `project` function (triple-loop matmul, lines 694-707) with
+  layers/core.Linear. Replace inline sigmoid and normalization with
+  layers/activations.Sigmoid and layers/normalization. Replace 3 custom nodes
+  with composed layer nodes.
+  Acceptance: go test passes. RWKV model parity test PASS (output within tolerance).
+
+- [ ] T61.1.2 Refactor arch_bert.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]
+  Replace 7 custom nodes (attention, FFN, embedding, etc.) with composition from
+  layers/attention.GroupedQueryAttention, layers/core.FFN, layers/core.Linear,
+  layers/embeddings.TokenEmbedding.
+  Acceptance: go test passes. BERT model parity test PASS.
+
+- [ ] T61.1.3 Refactor arch_gpt2.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]
+  Replace 4 custom nodes (attention, FFN) with layers/ composition.
+  Acceptance: go test passes. GPT-2 model parity test PASS.
+
+### E61.2: High/Medium Builders
+
+- [ ] T61.2.1 Refactor arch_llava.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]
+  Replace inline attention and FFN with layers/ composition. Keep vision-specific
+  processing as custom nodes if no layers/ equivalent exists.
+  Acceptance: go test passes. LLaVA model parity test PASS.
+
+- [ ] T61.2.2 Refactor arch_falcon.go to compose from layers/  Owner: TBD  Est: 2h  verifies: [UC-010]
+  Replace inline layerNorm (line 384) and GELU with layers/normalization.LayerNorm
+  and layers/activations.GELU. Keep custom multi-query attention node if it differs
+  from GQA.
+  Acceptance: go test passes. Falcon model parity test PASS.
+
+- [ ] T61.2.3 Refactor arch_llama.go custom embedding and LMHead  Owner: TBD  Est: 2h  verifies: [UC-010]
+  Replace 2 custom nodes with layers/embeddings and layers/core.LMHead if the
+  standard implementations match Llama's behavior.
+  Acceptance: go test passes. Llama model parity test PASS (Gemma3-1B benchmark
+  throughput within 2% of pre-refactor).
+
+### E61.3: Validation
+
+- [ ] T61.3.1 Run go vet and full test suite  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T61.1.1, T61.1.2, T61.1.3, T61.2.1, T61.2.2, T61.2.3
+  Acceptance: go vet ./inference/ clean. go test -race ./inference/ passes.
+
+- [ ] T61.3.2 Run model parity tests on DGX Spark  Owner: TBD  Est: 2h  verifies: [UC-010]
+  Deps: T61.3.1
+  Run parity tests for RWKV, BERT, GPT-2, LLaVA, Falcon, Llama on DGX.
+  Acceptance: all parity tests PASS on GPU.
+
+- [ ] T61.3.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T61.3.1
+  Run golangci-lint on all changed files.
+  Acceptance: zero lint warnings.
+
+### E61 Parallel Work
+
+#### Wave E61-1: Critical builders (3 agents)
+- [ ] T61.1.1 arch_rwkv.go
+- [ ] T61.1.2 arch_bert.go
+- [ ] T61.1.3 arch_gpt2.go
+
+#### Wave E61-2: Remaining builders (3 agents)
+- [ ] T61.2.1 arch_llava.go
+- [ ] T61.2.2 arch_falcon.go
+- [ ] T61.2.3 arch_llama.go
+
+#### Wave E61-3: Validation (2 agents)
+Deps: Wave E61-1, Wave E61-2
+- [ ] T61.3.1 + T61.3.3 go vet + linters
+- [ ] T61.3.2 DGX parity tests
+
+---
+
+## E62: Auxiliary Training Package Composition
+
+**Problem:** tabular/, gnn/, and modeldsl/ each reimplement fundamental math
+operations (GELU, sigmoid, softmax, matmul) instead of composing from layers/
+or engine ops. gnn/ operates on [][]float64 instead of tensors, preventing
+engine composition. modeldsl/ reimplements its own softmax and training pipeline
+with private types. See ADR-082.
+
+**Goal:** Replace private math reimplementations with layers/ or engine op calls.
+Convert gnn to tensor representation where practical. Delete dead private functions.
+
+### E62.1: Tabular and ModelDSL
+
+- [ ] T62.1.1 Replace tabular/ private math with layers/ imports  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Replace tabular/tabnet.go:350 sigmoid, tabular/model.go:212 geluScalar, and
+  tabular/train.go:437 geluGradScalar with imports from layers/activations or
+  engine ops. Delete the private implementations.
+  Acceptance: go build ./tabular/ clean. go test ./tabular/ passes.
+
+- [ ] T62.1.2 Replace modeldsl/ private layers with layers/ composition  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace modeldsl/model.go:176 softmaxLayer.forward, modeldsl/train.go:341
+  softmaxLayerT.forward, and modeldsl/train.go:365 softmaxLayerT.backward with
+  composition from layers/activations.Softmax. Refactor the DSL to reference
+  registered layers from layers/ rather than defining private types.
+  Acceptance: go build clean. go test passes. DSL model definitions still work.
+
+- [ ] T62.1.3 Unit tests for refactored tabular and modeldsl  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T62.1.1, T62.1.2
+  Verify output parity within tolerance for TabNet, SAINT, and DSL-defined models.
+  Acceptance: go test passes.
+
+### E62.2: GNN Package
+
+- [ ] T62.2.1 Convert gnn/ matMul and softmax to engine ops  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Replace gnn/gcn.go:206 matMul, gnn/gcn.go:226 matMulTransposeA, and
+  gnn/gcn.go:281 softmaxMatrix with engine.MatMul and engine.Softmax. This
+  requires converting the [][]float64 adjacency and feature matrices to tensors
+  at the GNN API boundary and using tensor operations internally.
+  Acceptance: go build clean. go test ./gnn/ passes. GCN output matches
+  pre-refactor within 1e-10.
+
+- [ ] T62.2.2 Unit tests for GNN tensor conversion  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T62.2.1
+  Test: GCN forward pass with known adjacency + features matches reference output.
+  Test: different graph sizes (10, 100, 1000 nodes).
+  Acceptance: go test passes.
+
+### E62.3: Validation
+
+- [ ] T62.3.1 Run go vet and linters across all 3 packages  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T62.1.3, T62.2.2
+  Acceptance: go vet clean. golangci-lint clean. No unused imports.
+
+- [ ] T62.3.2 Full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T62.3.1
+  Run go test -race ./tabular/ ./gnn/ ./modeldsl/.
+  Acceptance: all tests pass, zero race conditions.
+
+### E62 Parallel Work
+
+#### Wave E62-1: Independent packages (3 agents)
+- [ ] T62.1.1 tabular/ math replacement
+- [ ] T62.1.2 modeldsl/ layer composition
+- [ ] T62.2.1 gnn/ tensor conversion
+
+#### Wave E62-2: Tests + validation (3 agents)
+Deps: Wave E62-1
+- [ ] T62.1.3 tabular + modeldsl tests
+- [ ] T62.2.2 gnn tests
+- [ ] T62.3.1 + T62.3.2 linters + full suite
+
+---
+
+## E63: Quantized MatMul Consolidation (ztensor)
+
+**Problem:** compute/gpu_engine.go contains 16 nearly-identical quantized matmul
+methods spanning lines 1218-2991 (~1,562 lines, 35% of the file). All follow the
+same pattern: get/upload quantized weights, GEMV fast path if M=1, else dequantize
+to F32 + cuBLAS GEMM. The only differences are kernel function name, storage type,
+and block size constant. See ADR-082.
+
+**Goal:** Replace 16 copy-paste methods with a single generic dequantMatMul
+dispatcher. Target: eliminate ~1,400 lines from gpu_engine.go.
+
+**Repo:** github.com/zerfoo/ztensor (separate repo, separate commits)
+
+### E63.1: Design and Implement Dispatcher
+
+- [ ] T63.1.1 Design quantized matmul dispatcher interface  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Define a dispatch table or type-switch that maps storage type to:
+  (1) GEMV kernel function, (2) dequant kernel function, (3) block size.
+  Write the generic `dequantMatMul` function that handles the shared pattern:
+  upload, GEMV-or-dequant+GEMM, makeGPUResult.
+  File: compute/gpu_engine_matmul.go (new file in ztensor).
+  Acceptance: compiles. Dispatcher covers all 8 storage types (Q4, Q4K, Q5_0,
+  Q5K, Q6K, Q8, BF16, Mmap) and both normal/BWeight variants.
+
+- [ ] T63.1.2 Replace 16 methods with dispatcher calls  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T63.1.1
+  Replace each of: matMulQ4, matMulQ4BWeight, matMulQ4K, matMulQ4KBWeight,
+  matMulQ5_0, matMulQ5_0BWeight, matMulQ5K, matMulQ5KBWeight, matMulQ6K,
+  matMulQ6KBWeight, matMulQ8, matMulQ8BWeight, matMulBF16, matMulBF16BWeight,
+  matMulMmap, matMulMmapB with thin wrappers that call dequantMatMul.
+  Acceptance: go build ./... clean. go test ./compute/ passes.
+
+### E63.2: Validation
+
+- [ ] T63.2.1 Benchmark quantized matmul performance  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T63.1.2
+  Run existing matmul benchmarks on DGX Spark for Q4_K, Q5_0, Q8, BF16.
+  Compare throughput before and after refactor.
+  Acceptance: no more than 2% throughput regression on any variant.
+
+- [ ] T63.2.2 Run full ztensor test suite  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T63.1.2
+  Run go test -race ./... in ztensor.
+  Acceptance: all tests pass.
+
+- [ ] T63.2.3 Run zerfoo inference parity tests  Owner: TBD  Est: 1h  verifies: [UC-010]
+  Deps: T63.2.2
+  Run model parity tests in zerfoo with the refactored ztensor.
+  Acceptance: all parity tests PASS. Gemma3-1B throughput within 2%.
+
+### E63 Parallel Work
+
+#### Wave E63-1: Implement (1 agent)
+- [ ] T63.1.1 Design dispatcher
+- [ ] T63.1.2 Replace 16 methods (sequential, same file)
+
+#### Wave E63-2: Validate (3 agents)
+Deps: Wave E63-1
+- [ ] T63.2.1 Benchmark on DGX
+- [ ] T63.2.2 ztensor test suite
+- [ ] T63.2.3 zerfoo parity tests
+
+---
+
+## E64: GPU Engine File Decomposition (ztensor)
+
+**Problem:** compute/gpu_engine.go is 4,318 lines with 94 methods -- a god object.
+After E63 consolidates quantized matmul, the file will be ~2,900 lines. Split it
+into focused files for maintainability.
+
+**Goal:** Split gpu_engine.go into 5 files. No API changes. Pure reorganization.
+
+**Repo:** github.com/zerfoo/ztensor (separate repo, separate commits)
+**Deps:** E63 (consolidate before splitting)
+
+- [ ] T64.1.1 Split gpu_engine.go into focused files  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: E63 complete
+  Split into:
+  - gpu_engine.go: core struct, New, lifecycle, dispatch (15-20 methods)
+  - gpu_engine_matmul.go: all matmul methods including dispatcher (created in E63)
+  - gpu_engine_elementwise.go: add/sub/mul/div/scalar ops
+  - gpu_engine_reduction.go: softmax/sum/argmax/topk
+  - gpu_engine_memory.go: upload/gather/copy/zero
+  Acceptance: go build ./... clean. go test ./compute/ passes. No exported API
+  changes. Each file under 1,000 lines.
+
+- [ ] T64.1.2 Run full ztensor test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T64.1.1
+  Acceptance: go test -race ./... passes.
+
+- [ ] T64.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T64.1.1
+  Acceptance: go vet clean. golangci-lint clean.
+
+### E64 Parallel Work
+
+#### Wave E64-1: Split (1 agent)
+- [ ] T64.1.1 File decomposition
+
+#### Wave E64-2: Validate (2 agents)
+Deps: Wave E64-1
+- [ ] T64.1.2 Test suite
+- [ ] T64.1.3 Linters
+
+---
+
+## E65: MoE Layer Composition Fix
+
+**Problem:** layers/core/moe.go (782 lines) uses raw .Data() access with manual
+loops for bias addition, sigmoid, and gradient computation instead of engine ops.
+Top-K routing has no engine op equivalent and is justified. See ADR-082.
+
+**Goal:** Replace unjustified .Data() access with engine ops. Keep top-K routing
+as-is.
+
+- [ ] T65.1.1 Replace raw .Data() in moe.go with engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace:
+  - moe.go:88-96 manual bias addition with engine.Add
+  - moe.go:100-119 manual sigmoid with engine.Sigmoid or layers/activations.Sigmoid
+  - moe.go:236-315 manual gradient computation with engine ops where possible
+  Keep moe.go:129-158 top-K selection as-is (no engine op equivalent).
+  Acceptance: go build clean. go test ./layers/core/ passes. MoE output parity
+  within 1e-10.
+
+- [ ] T65.1.2 Unit tests for MoE engine op usage  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T65.1.1
+  Verify MoE forward and backward produce identical output before and after refactor.
+  Test with CPU engine.
+  Acceptance: go test passes. Parity within tolerance.
+
+- [ ] T65.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T65.1.1
+  Acceptance: go vet clean. golangci-lint clean.
+
+### E65 Parallel Work
+
+#### Wave E65-1: Implement + test (1 agent)
+- [ ] T65.1.1 Replace .Data() with engine ops
+- [ ] T65.1.2 Unit tests (sequential)
+
+#### Wave E65-2: Validate (1 agent)
+Deps: Wave E65-1
+- [ ] T65.1.3 Linters
 
 ---
 

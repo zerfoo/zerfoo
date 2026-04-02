@@ -3,6 +3,56 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-02: Composition audit -- 7 packages violate, 13 findings
+
+**Type:** audit
+**Tags:** composition, architecture, layers, training, inference, ztensor, technical-debt
+
+**Method:** 5-agent parallel audit of the full codebase against the composition
+principle (complex components compose from layers/ and Engine[T]).
+
+**Summary:** The inference path (arch_common.go) is the exemplar with 70 imports
+from layers/. The training path is severely violated -- 5 packages (timeseries,
+crossasset, tabular, gnn, modeldsl) bypass layers/ entirely and reimplement
+fundamental math from raw slices. 6 inference architecture builders have 31 custom
+graph nodes with inline math. ztensor gpu_engine.go has 16 copy-paste quantized
+matmul methods.
+
+**Key statistics:**
+- 15 softmax reimplementations (should be 1)
+- 13 GELU reimplementations (should be 1)
+- 7 sigmoid reimplementations (should be 1)
+- 67 layerNorm references across 8+ implementations (should be 1)
+- 33 matmul/matvecmul reimplementations (should be 1)
+- 5 distinct AdamW implementations (should be 1)
+- 219 backward pass functions (should be centralized in layers/)
+- 31 custom inference graph nodes across 12 architecture files
+- 16 copy-paste quantized matmul methods in gpu_engine.go (1,562 lines)
+- 26 god files (>800 lines, non-test)
+- 94 GPUEngine methods, 71 KernelRunner interface methods
+
+**Worst offenders:**
+- timeseries/: 8/9 backends have zero imports from layers/ (only mamba.go composes)
+- crossasset/crossasset.go:471-537: reimplements matVecMul, vecAdd, softmax, layerNorm, gelu
+- crossasset/gpu_train.go:848-947: reimplements all of the above again for GPU
+- inference/arch_rwkv.go:694-707: 250+ lines inline matmul (triple-loop project function)
+- inference/arch_bert.go: 7 custom graph nodes reimplementing attention, FFN, embedding
+- inference/arch_gpt2.go: 4 custom graph nodes reimplementing attention, FFN
+- ztensor compute/gpu_engine.go:1218-2991: 16 near-identical quantized matmul methods
+- layers/core/moe.go:88-315: raw .Data() access for bias, sigmoid, top-K, gradients
+
+**Partially addressed by prior work:**
+- E50: layer norm and GELU moved to engine ops in timeseries GPU path
+- E52: shared math_ops, adamw_f32, layernorm_ops extracted in timeseries/
+- E53: unified encoder forward/backward in patchtst_encoder.go
+- E60: CrossAsset GPU training (added GPU path but followed same reimplementation pattern)
+
+**Root cause:** Training backends predate the layers/ package and were never migrated.
+
+**Remediation:** 5 new epics (E61-E65). See ADR-082.
+
+---
+
 ## 2026-03-31: GPU transpose no-op bug found and fixed (ztensor eab19d0)
 
 **Type:** investigation + fix
