@@ -645,12 +645,12 @@ All zero-dependency tasks. Tracks A and B start in parallel.
 
 #### Wave P3: Execute + Program Assembly (6 agents)
 
-- [ ] T60.3.2 Program execution  Deps: T60.3.1, T60.2.1
-- [ ] T60.3.3 Executable serialization  Deps: T60.3.1
-- [ ] T61.3.1 Full program emitter  Deps: T61.2.1, T61.2.2, T61.2.3
-- [ ] T61.3.2 KV cache I/O rewriting  Deps: T61.3.1
-- [ ] T64.1.1 Executable cache  Deps: T60.3.3
-- [ ] T64.1.2 Cache size management  Deps: T64.1.1
+- [x] T60.3.2 Program execution  Deps: T60.3.1, T60.2.1  DONE 2026-04-02
+- [x] T60.3.3 Executable serialization  Deps: T60.3.1  DONE 2026-04-02
+- [x] T61.3.1 Full program emitter  Deps: T61.2.1, T61.2.2, T61.2.3  DONE 2026-04-02 (6 tests)
+- [x] T61.3.2 KV cache I/O rewriting  Deps: T61.3.1  DONE 2026-04-02 (prefill+decode modes, 7 tests)
+- [x] T64.1.1 Executable cache  Deps: T60.3.3  DONE 2026-04-02 (SHA256 content-addressed, 9 tests)
+- [x] T64.1.2 Cache size management  Deps: T64.1.1  DONE 2026-04-02 (LRU eviction, 2GB default)
 
 #### Wave P4: Graph Compilation (4 agents)
 
