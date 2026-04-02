@@ -8,7 +8,7 @@ Granite Guardian, K-Quant optimization, multi-model benchmarks, batched GPU
 training, GGUF writer consolidation, documentation site, MSA-inspired scalable
 memory, and research-driven inference optimizations).
 
-Task statuses updated 2026-03-31 based on merged PRs and git history.
+Task statuses updated 2026-04-01 based on merged PRs and git history.
 
 **Status summary:**
 - 380+ tasks completed across all plans
@@ -27,7 +27,8 @@ Task statuses updated 2026-03-31 based on merged PRs and git history.
 - E57: Fix DGX Spark build regression (1/3 -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
 - E58: GPU vs CPU GQA parity test (0/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (0/7 -- replace BLAS fallback + FFT with zero-dep implementations)
-- GPU status: 3 fixes pushed (ztensor eab19d0, zerfoo 90cacad4, zerfoo 1d56d2e5). Individual ops pass parity. Composed GQA diverges.
+- E60: CrossAsset GPU training (0/12 -- GitHub #312, GPU forward/backward/AdamW for cross-attention model)
+- GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
 
@@ -1305,6 +1306,15 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-04-01: E60 added -- CrossAsset GPU training (GitHub #312)
+
+Added E60 (12 tasks, 3 waves). The CrossAsset model currently trains only the
+classification head via CPU SGD. E60 adds full GPU training with backprop through
+all transformer layers and input projections using ztensor engine ops. Follows the
+PatchTST GPU training pattern (patchtst_gpu_train.go). Float64->float32 conversion
+at extract time. AdamW optimizer (reuse or copy adamw_f32.go). Key challenge:
+multi-head cross-attention backward pass with softmax jacobian.
 
 ### 2026-04-01: E59 added -- Remove gonum.org/v1/gonum dependency
 
@@ -3407,6 +3417,199 @@ All BLAS and FFT tasks are independent. Only the final cleanup depends on both t
 |----|------|--------|------------|------------|
 | R45 | Naive GEMM is slower than gonum on generic arch | Low | Medium | Generic arch path is already the slow fallback; correctness matters more than speed here |
 | R46 | FFT numerical precision differs from gonum on edge cases | Low | Low | Use same algorithm (Cooley-Tukey); validate with known analytic DFT outputs |
+
+---
+
+### E60: CrossAsset GPU Training (GitHub #312)
+
+The CrossAsset model (crossasset/crossasset.go) implements a cross-attention
+transformer for multi-source financial classification. Training currently uses
+CPU float64 with SGD that only updates the classification head (does NOT backprop
+through transformer layers or input projections). This epic adds full GPU training
+via ztensor engine ops following the PatchTST GPU training pattern.
+
+**Architecture:** NSources (e.g., 12) financial data sources, each with
+FeaturesPerSource features. Input projections map each source to DModel.
+NLayers cross-attention transformer layers (each source attends to all sources).
+3-class classification head (Long/Short/Flat) per source.
+
+**Pattern:** Follow timeseries/patchtst_gpu_train.go -- extract float32 params,
+pre-allocate workspace, batched forward via engine.MatMul/Add/Softmax/Tanh,
+backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
+
+#### E60.1: GPU Parameter Infrastructure
+
+- [ ] T60.1.1 Create gpuCAParams and gpuCAGrads structs  Owner: TBD  Est: 1h  verifies: [UC-CA-001]
+  File: crossasset/gpu_params.go
+  Define structs mirroring the Model's weights as float32 tensors:
+  - inputW, inputB: []*tensor.TensorNumeric[float32] (one per source)
+  - layers: []gpuCALayer (qW,kW,vW,outW,lnGamma,lnBeta,ffnW1,ffnB1,ffnW2,ffnB2,ffnGamma,ffnBeta)
+  - headW, headB: *tensor.TensorNumeric[float32]
+  gpuCAGrads mirrors gpuCAParams for gradient accumulation.
+  Acceptance: Compiles. Struct fields match all Model weights.
+
+- [ ] T60.1.2 Implement extractGPUParams and allocGrads  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+  File: crossasset/gpu_params.go  Deps: T60.1.1
+  extractGPUParams(m *Model, engine compute.Engine[float32]) *gpuCAParams:
+  Convert float64 Model weights to float32 tensors. Row-major [rows, cols].
+  allocGrads(p *gpuCAParams) *gpuCAGrads: create zero-valued gradient tensors
+  matching each parameter shape.
+  Acceptance: Unit test extracts params from NewModel, all shapes match, non-nil.
+
+- [ ] T60.1.3 Unit tests for GPU param extraction  Owner: TBD  Est: 1h  verifies: [UC-CA-001]
+  File: crossasset/gpu_params_test.go  Deps: T60.1.2
+  Test: extract params, verify shapes, verify float64->float32 conversion is within 1e-6.
+  Acceptance: go test passes.
+
+#### E60.2: GPU Forward Pass
+
+- [ ] T60.2.1 Implement gpuForward function  Owner: TBD  Est: 4h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train.go  Deps: T60.1.2
+  gpuForward(ctx, engine, params, input, batchSize, config) -> (logits, forwardCache, error)
+  Steps:
+  1. Input projection: for each source, [bs, FeaturesPerSource] @ inputW[s] + inputB[s] -> [bs, DModel].
+     Concat all sources: [bs, NSources, DModel] reshaped to [bs*NSources, DModel].
+  2. Per-layer cross-attention forward:
+     a. LayerNorm (engine.RMSNorm or manual: mean, var, scale, shift)
+     b. Q = x @ qW, K = x @ kW, V = x @ vW (all [bs*NSources, DModel])
+     c. Reshape Q,K,V to [bs*NHeads, NSources, HeadDim]
+     d. Scores = Q @ K^T / sqrt(HeadDim), shape [bs*NHeads, NSources, NSources]
+     e. Attn = Softmax(Scores, axis=-1)
+     f. AttnOut = Attn @ V, shape [bs*NHeads, NSources, HeadDim]
+     g. Reshape to [bs*NSources, DModel], project: out = attnOut @ outW
+     h. Residual: x = x + out
+     i. LayerNorm
+     j. FFN: h = GELU(x @ ffnW1 + ffnB1), ffnOut = h @ ffnW2 + ffnB2
+     k. Residual: x = x + ffnOut
+  3. Reshape [bs*NSources, DModel] -> [bs, NSources, DModel].
+     Per-source head: [bs, NSources, DModel] @ headW + headB -> [bs, NSources, 3].
+  Cache all intermediate activations (x, Q, K, V, scores, attn, ffnH) for backward.
+  Acceptance: Output shape [bs, NSources, 3]. Values finite. Matches CPU forward within 1e-3.
+
+- [ ] T60.2.2 Unit tests for GPU forward pass  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train_test.go  Deps: T60.2.1
+  Test: run gpuForward on CPU engine, compare output to Model.Forward() within 1e-3.
+  Test: different batch sizes (1, 4, 16). Test: verify cache is populated.
+  Acceptance: All tests pass with CPU engine.
+
+#### E60.3: GPU Backward Pass
+
+- [ ] T60.3.1 Implement gpuBackward function  Owner: TBD  Est: 6h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train.go  Deps: T60.2.1
+  gpuBackward(ctx, engine, params, grads, cache, dLogits, config) -> error
+  Steps (reverse order):
+  1. Head backward: dHeadW = x^T @ dLogits, dHeadB = sum(dLogits, axis=0),
+     dx = dLogits @ headW^T.
+  2. Reshape dx to [bs*NSources, DModel].
+  3. Per-layer backward (reverse):
+     a. FFN backward: dFFNOut from residual. dfh = dFFNOut @ ffnW2^T.
+        dGELU = dfh * gelu_prime(h). dFFNW1 = x^T @ dGELU, dFFNB1 = sum(dGELU).
+        dFFNW2 = h^T @ dFFNOut, dFFNB2 = sum(dFFNOut). dx += dfh.
+     b. LayerNorm backward (reuse layerNormBackwardWithEngine from timeseries/patchtst_encoder.go
+        or implement locally with the same math).
+     c. Attention backward:
+        dAttnOut from residual -> dV = attn^T @ dAttnOut.
+        dAttn = dAttnOut @ V^T. dScores = softmax_backward(dAttn, attn).
+        dQ = dScores @ K / sqrt(d_k). dK = dScores^T @ Q / sqrt(d_k).
+        dQW = x^T @ dQ, dKW = x^T @ dK, dVW = x^T @ dV, dOutW = attnOut^T @ dOut.
+        dx += (dQ @ qW^T + dK @ kW^T + dV @ vW^T).
+     d. LayerNorm backward.
+  4. Input projection backward: per source, dInputW[s] = raw^T @ dx_s,
+     dInputB[s] = sum(dx_s, axis=0).
+  Accumulate all gradients into grads struct.
+  Acceptance: Gradient check -- numerical gradient (eps=1e-4) matches analytical within 1e-2
+  for at least 90% of parameters.
+
+- [ ] T60.3.2 Gradient check test  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train_test.go  Deps: T60.3.1
+  Numerical gradient check: perturb each parameter by eps, compute loss diff,
+  compare to analytical gradient. Use small model (NSources=3, DModel=8, NHeads=2, NLayers=1).
+  Acceptance: max relative error < 0.05 for 90%+ of parameters.
+
+#### E60.4: Training Loop and Integration
+
+- [ ] T60.4.1 Implement TrainGPU method  Owner: TBD  Est: 3h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train.go  Deps: T60.3.1
+  func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
+      engine compute.Engine[float32]) (*TrainResult, error)
+  Steps:
+  1. extractGPUParams from Model.
+  2. allocGrads, allocAdamState (reuse adamStateF32 and adamWUpdateF32 from timeseries/adamw_f32.go,
+     or copy the functions into crossasset/ to avoid cross-package dependency on unexported symbols).
+  3. Pre-allocate workspace: input tensor [bs, NSources, FeaturesPerSource],
+     label tensor [bs, NSources, 3] one-hot.
+  4. Per-epoch loop: shuffle, batch, for each batch:
+     a. Convert float64 data batch to float32 tensor.
+     b. gpuForward -> logits, cache.
+     c. Compute softmax cross-entropy loss on CPU.
+     d. Compute dLogits = softmax(logits) - one_hot(labels).
+     e. gpuBackward -> accumulate grads.
+     f. Clip gradients (L2 norm).
+     g. AdamW update for all parameters.
+     h. Zero grads.
+  5. After all epochs, write updated float32 params back to Model float64 weights.
+  Return TrainResult{Losses []float64, FinalAccuracy float64}.
+  Acceptance: Loss decreases over 10 epochs on synthetic data.
+
+- [ ] T60.4.2 Integration test: train then predict  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+  File: crossasset/gpu_train_test.go  Deps: T60.4.1
+  Test: Create model, TrainGPU with 50 samples for 20 epochs, verify loss decreases.
+  Then call Predict and verify outputs are valid (directions in [0,2], confidences in [0,1]).
+  Test with CPU engine (no GPU required for CI).
+  Acceptance: Loss at epoch 20 < loss at epoch 1. Predictions valid.
+
+- [ ] T60.4.3 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T60.4.2
+  Run `go vet ./crossasset/...` and `go test -race ./crossasset/...`.
+  Acceptance: Zero warnings, zero race conditions.
+
+#### E60 Parallel Work
+
+Two parallel tracks, merging at T60.4.1:
+
+| Track | Tasks | Description |
+|-------|-------|-------------|
+| Track A: Infrastructure | T60.1.1, T60.1.2, T60.1.3 | Param extraction, no deps |
+| Track B: Forward+Backward | T60.2.1, T60.2.2, T60.3.1, T60.3.2 | Depends on T60.1.2 |
+
+### Wave E60-1: Infrastructure (3 agents)
+
+- [ ] T60.1.1 GPU param structs
+- [ ] T60.1.2 Extract and alloc functions (can start from struct stubs)
+- [ ] T60.1.3 Unit tests for extraction
+
+### Wave E60-2: Forward + Backward (4 agents)
+
+Deps: Wave E60-1
+
+- [ ] T60.2.1 GPU forward pass
+- [ ] T60.2.2 Forward pass tests
+- [ ] T60.3.1 GPU backward pass
+- [ ] T60.3.2 Gradient check test
+
+### Wave E60-3: Integration (3 agents)
+
+Deps: Wave E60-2
+
+- [ ] T60.4.1 TrainGPU method
+- [ ] T60.4.2 Integration test
+- [ ] T60.4.3 Linters and vet
+
+#### E60 Risks
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R47 | Attention backward gradient math errors (softmax jacobian, multi-head reshape) | High | Medium | Numerical gradient check (T60.3.2) catches errors; reference PyTorch autograd for expected values |
+| R48 | Float64->Float32 precision loss affects convergence | Low | Low | Neural network training is routinely done in float32; verify loss converges on synthetic data |
+| R49 | Cross-package dependency on timeseries/adamw_f32.go unexported symbols | Medium | High | Copy adamWUpdateF32 and adamStateF32 into crossasset/ (they are ~30 lines); or export them |
+
+#### E60 Milestones
+
+| ID | Milestone | Exit Criteria | Target |
+|----|-----------|---------------|--------|
+| M-E60-1 | Forward parity | gpuForward matches CPU Forward within 1e-3 on 4-source, 2-layer model | 2026-Q2 |
+| M-E60-2 | Full backprop | Gradient check passes for all layers including attention | 2026-Q2 |
+| M-E60-3 | Training convergence | Loss decreases monotonically for 20 epochs on synthetic data | 2026-Q2 |
 
 ---
 
