@@ -26,7 +26,7 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E56: Gemma3 inference micro-optimizations (6/9 -- fused kernels written and wired; produce garbage on DGX, BLOCKED by E57)
 - E57: Fix DGX Spark build regression (3/3 COMPLETE -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
 - E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
-- E59: Remove gonum dependency (0/7 -- replace BLAS fallback + FFT with zero-dep implementations)
+- E59: Remove gonum dependency (7/7 COMPLETE -- replace BLAS fallback + FFT with zero-dep implementations)
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -3346,46 +3346,46 @@ and CUDA kernels handle production workloads. Gonum is a fallback and convenienc
 
 ### E59.1: Replace BLAS GEMM with native Go implementations
 
-- [ ] T59.1.1 Write naive triple-loop DGEMM in internal/xblas/gemm.go  Owner: TBD  Est: 30m  verifies: [UC-002]
+- [x] T59.1.1 Write naive triple-loop DGEMM in internal/xblas/gemm.go  Owner: TBD  Est: 30m  verifies: [UC-002]
   - Replace blas64.Gemm call in GemmF64 with a row-major C = A*B triple loop.
   - Same signature: GemmF64(m, n, k int, a, b, c []float64).
   - No tiling or SIMD needed -- float64 GEMM is not on any hot path.
   - Acceptance: GemmF64 produces identical results to current implementation within 1e-10 tolerance.
 
-- [ ] T59.1.2 Write naive triple-loop SGEMM fallback in internal/xblas/gemm_simd_generic.go  Owner: TBD  Est: 30m  verifies: [UC-001]
+- [x] T59.1.2 Write naive triple-loop SGEMM fallback in internal/xblas/gemm_simd_generic.go  Owner: TBD  Est: 30m  verifies: [UC-001]
   - Replace blas32.Gemm call in SgemmSimd with a row-major C = A*B triple loop.
   - Keep the existing sgemmAccRow scalar fallback as-is (it is already gonum-free).
   - Build constraint remains `!arm64 && !amd64`.
   - Acceptance: SgemmSimd on generic arch produces results matching arm64/amd64 SIMD within 1e-4 tolerance.
 
-- [ ] T59.1.3 Add GemmF64 parity tests in internal/xblas/gemm_simd_test.go  Owner: TBD  Est: 30m  verifies: [UC-002]
+- [x] T59.1.3 Add GemmF64 parity tests in internal/xblas/gemm_simd_test.go  Owner: TBD  Est: 30m  verifies: [UC-002]
   - Add TestGemmF64_Identity, TestGemmF64_KnownProduct, TestGemmF64_NonSquare, TestGemmF64_LargeMatrix.
   - Verify against hand-computed expected values (not gonum reference -- gonum is being removed).
   - Acceptance: All new tests pass on arm64 (DGX Spark) and locally.
 
 ### E59.2: Replace FFT with native Go implementation
 
-- [ ] T59.2.1 Write Cooley-Tukey radix-2 FFT in internal/dsp/fft.go  Owner: TBD  Est: 1h  verifies: [UC-003]
+- [x] T59.2.1 Write Cooley-Tukey radix-2 FFT in internal/dsp/fft.go  Owner: TBD  Est: 1h  verifies: [UC-003]
   - New package: internal/dsp.
   - Implement FFT for power-of-2 lengths using iterative Cooley-Tukey.
   - Public function: Coefficients(data []float64) []complex128.
   - Zero-pad input to next power of 2 when length is not power of 2.
   - Acceptance: Output matches gonum fourier.FFT output within 1e-10 tolerance for lengths 2, 4, 8, 16, 32, 64, 128, and non-power-of-2 lengths 3, 5, 7, 10.
 
-- [ ] T59.2.2 Add FFT unit tests in internal/dsp/fft_test.go  Owner: TBD  Est: 30m  verifies: [UC-003]
+- [x] T59.2.2 Add FFT unit tests in internal/dsp/fft_test.go  Owner: TBD  Est: 30m  verifies: [UC-003]
   - Test known DFT outputs: single frequency sinusoid, DC signal, impulse.
   - Test non-power-of-2 input (verify zero-padding produces correct result).
   - Benchmark against current gonum FFT for regression check.
   - Acceptance: All tests pass; no more than 2x slowdown vs gonum on window sizes <= 128.
 
-- [ ] T59.2.3 Wire FFT into features/transformers.go  Owner: TBD  Est: 15m  Deps: T59.2.1  verifies: [UC-003]
+- [x] T59.2.3 Wire FFT into features/transformers.go  Owner: TBD  Est: 15m  Deps: T59.2.1  verifies: [UC-003]
   - Replace `fourier.NewFFT(len(series))` + `fft.Coefficients(nil, series)` with internal/dsp call.
   - Remove gonum/dsp/fourier import.
   - Acceptance: TestFFTTransformer_Transform passes unchanged.
 
 ### E59.3: Remove gonum from go.mod and verify
 
-- [ ] T59.3.1 Remove gonum from go.mod, run go mod tidy, run full test suite  Owner: TBD  Est: 15m  Deps: T59.1.1, T59.1.2, T59.2.3
+- [x] T59.3.1 Remove gonum from go.mod, run go mod tidy, run full test suite  Owner: TBD  Est: 15m  Deps: T59.1.1, T59.1.2, T59.2.3
   - Delete the `gonum.org/v1/gonum v0.17.0` line from go.mod.
   - Run `go mod tidy` to clean go.sum.
   - Run `go test ./...` to confirm no remaining gonum references.
@@ -3403,13 +3403,13 @@ All BLAS and FFT tasks are independent. Only the final cleanup depends on both t
 
 ##### Wave E59-1: Implement replacements (2 agents)
 
-- [ ] T59.1.1 + T59.1.2 + T59.1.3 (Track A: BLAS replacement + tests)
-- [ ] T59.2.1 + T59.2.2 (Track B: FFT implementation + tests)
+- [x] T59.1.1 + T59.1.2 + T59.1.3 (Track A: BLAS replacement + tests)
+- [x] T59.2.1 + T59.2.2 (Track B: FFT implementation + tests)
 
 ##### Wave E59-2: Wire and cleanup (1 agent)
 
-- [ ] T59.2.3 Wire FFT into transformers.go  Deps: Wave E59-1
-- [ ] T59.3.1 Remove gonum from go.mod, verify  Deps: T59.2.3, T59.1.1, T59.1.2
+- [x] T59.2.3 Wire FFT into transformers.go  Deps: Wave E59-1
+- [x] T59.3.1 Remove gonum from go.mod, verify  Deps: T59.2.3, T59.1.1, T59.1.2
 
 ### E59 Risks
 
