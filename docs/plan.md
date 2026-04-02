@@ -28,11 +28,11 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (7/7 COMPLETE -- replace BLAS fallback + FFT with zero-dep implementations)
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
-- E61: Inference builder composition (0/10 -- migrate 6 arch builders to compose from layers/)
-- E62: Auxiliary training package composition (0/7 -- tabular, gnn, modeldsl)
+- E61: Inference builder composition (3/10 -- arch_rwkv, arch_bert, arch_gpt2 done PR #316; arch_llava, arch_falcon, arch_llama pending)
+- E62: Auxiliary training package composition (1/7 -- tabular done PR #316; gnn, modeldsl pending)
 - E63: Quantized matmul consolidation in ztensor (0/5 -- single dispatcher for 16 copy-paste methods)
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
-- E65: MoE layer composition fix (0/3 -- replace raw .Data() in layers/core/moe.go)
+- E65: MoE layer composition fix (1/3 -- raw .Data() replaced PR #316; tests and linters pending)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -3665,20 +3665,20 @@ count from 31 to under 5 (justified exceptions only). See ADR-082.
 
 ### E61.1: Critical Builders (inline math elimination)
 
-- [ ] T61.1.1 Refactor arch_rwkv.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]
+- [x] T61.1.1 Refactor arch_rwkv.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]  DONE 2026-04-02 PR #316
   Replace the `project` function (triple-loop matmul, lines 694-707) with
   layers/core.Linear. Replace inline sigmoid and normalization with
   layers/activations.Sigmoid and layers/normalization. Replace 3 custom nodes
   with composed layer nodes.
   Acceptance: go test passes. RWKV model parity test PASS (output within tolerance).
 
-- [ ] T61.1.2 Refactor arch_bert.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]
+- [x] T61.1.2 Refactor arch_bert.go to compose from layers/  Owner: TBD  Est: 4h  verifies: [UC-010]  DONE 2026-04-02 PR #316
   Replace 7 custom nodes (attention, FFN, embedding, etc.) with composition from
   layers/attention.GroupedQueryAttention, layers/core.FFN, layers/core.Linear,
   layers/embeddings.TokenEmbedding.
   Acceptance: go test passes. BERT model parity test PASS.
 
-- [ ] T61.1.3 Refactor arch_gpt2.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]
+- [x] T61.1.3 Refactor arch_gpt2.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]  DONE 2026-04-02 PR #316
   Replace 4 custom nodes (attention, FFN) with layers/ composition.
   Acceptance: go test passes. GPT-2 model parity test PASS.
 
@@ -3720,9 +3720,9 @@ count from 31 to under 5 (justified exceptions only). See ADR-082.
 ### E61 Parallel Work
 
 #### Wave E61-1: Critical builders (3 agents)
-- [ ] T61.1.1 arch_rwkv.go
-- [ ] T61.1.2 arch_bert.go
-- [ ] T61.1.3 arch_gpt2.go
+- [x] T61.1.1 arch_rwkv.go  DONE 2026-04-02
+- [x] T61.1.2 arch_bert.go  DONE 2026-04-02
+- [x] T61.1.3 arch_gpt2.go  DONE 2026-04-02
 
 #### Wave E61-2: Remaining builders (3 agents)
 - [ ] T61.2.1 arch_llava.go
@@ -3749,7 +3749,7 @@ Convert gnn to tensor representation where practical. Delete dead private functi
 
 ### E62.1: Tabular and ModelDSL
 
-- [ ] T62.1.1 Replace tabular/ private math with layers/ imports  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T62.1.1 Replace tabular/ private math with layers/ imports  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-02 PR #316
   Replace tabular/tabnet.go:350 sigmoid, tabular/model.go:212 geluScalar, and
   tabular/train.go:437 geluGradScalar with imports from layers/activations or
   engine ops. Delete the private implementations.
@@ -3797,7 +3797,7 @@ Convert gnn to tensor representation where practical. Delete dead private functi
 ### E62 Parallel Work
 
 #### Wave E62-1: Independent packages (3 agents)
-- [ ] T62.1.1 tabular/ math replacement
+- [x] T62.1.1 tabular/ math replacement  DONE 2026-04-02
 - [ ] T62.1.2 modeldsl/ layer composition
 - [ ] T62.2.1 gnn/ tensor conversion
 
@@ -3924,7 +3924,7 @@ Top-K routing has no engine op equivalent and is justified. See ADR-082.
 **Goal:** Replace unjustified .Data() access with engine ops. Keep top-K routing
 as-is.
 
-- [ ] T65.1.1 Replace raw .Data() in moe.go with engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T65.1.1 Replace raw .Data() in moe.go with engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02 PR #316
   Replace:
   - moe.go:88-96 manual bias addition with engine.Add
   - moe.go:100-119 manual sigmoid with engine.Sigmoid or layers/activations.Sigmoid
@@ -3946,7 +3946,7 @@ as-is.
 ### E65 Parallel Work
 
 #### Wave E65-1: Implement + test (1 agent)
-- [ ] T65.1.1 Replace .Data() with engine ops
+- [x] T65.1.1 Replace .Data() with engine ops  DONE 2026-04-02
 - [ ] T65.1.2 Unit tests (sequential)
 
 #### Wave E65-2: Validate (1 agent)
