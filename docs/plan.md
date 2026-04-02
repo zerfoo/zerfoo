@@ -28,7 +28,7 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (7/7 COMPLETE -- replace BLAS fallback + FFT with zero-dep implementations)
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
-- E61: Inference builder composition (8/10 -- rwkv, bert, gpt2, falcon done; llama+llava justified; vet+linters done; DGX parity+T61.3.2 pending)
+- E61: Inference builder composition (9/10 -- all 6 builders done; vet+linters pass; DGX parity T61.3.2 pending)
 - E62: Auxiliary training package composition (7/7 COMPLETE -- tabular, modeldsl, gnn refactored; tests+validation pass)
 - E63: Quantized matmul consolidation in ztensor (0/5 -- single dispatcher for 16 copy-paste methods)
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
@@ -3684,7 +3684,7 @@ count from 31 to under 5 (justified exceptions only). See ADR-082.
 
 ### E61.2: High/Medium Builders
 
-- [x] T61.2.1 Refactor arch_llava.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]  DONE 2026-04-02 (DEFERRED: llamaAttnNode/llamaFFNNode/newRMSNormNode are shared by qwenvl+voxtral; mmProjectorNode is vision-specific. Refactoring requires coordinated change across 3 arch files -- separate epic)
+- [x] T61.2.1 Refactor arch_llava.go to compose from layers/  Owner: TBD  Est: 3h  verifies: [UC-010]  DONE 2026-04-02 (GQA+FFN+RMSNorm composed from layers/; shared helpers extracted to arch_vision_helpers.go; mmProjectorNode kept as vision-specific)
   Replace inline attention and FFN with layers/ composition. Keep vision-specific
   processing as custom nodes if no layers/ equivalent exists.
   Acceptance: go test passes. LLaVA model parity test PASS.
