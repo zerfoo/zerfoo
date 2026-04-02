@@ -823,23 +823,20 @@ func (n *rwkvChannelMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Ten
 		}
 	}
 
-	kw := n.weights.key.Value.Data()        // [H, ffnSize]
-	vw := n.weights.value.Value.Data()      // [ffnSize, H]
-	rw := n.weights.receptance.Value.Data() // [H, H]
+	ctx := context.Background()
 
-	// k projection: [batch*seqLen, H] x [H, ffnSize] -> [batch*seqLen, ffnSize].
-	kVec := make([]T, batch*seqLen*ffnSize)
-	for row := 0; row < batch*seqLen; row++ {
-		for col := 0; col < ffnSize; col++ {
-			var sum T
-			for k := 0; k < H; k++ {
-				sum = n.ops.Add(sum, n.ops.Mul(shiftedK[row*H+k], kw[k*ffnSize+col]))
-			}
-			kVec[row*ffnSize+col] = sum
-		}
+	// k projection via engine.MatMul: [batch*seqLen, H] x [H, ffnSize].
+	shiftedKMat, err := tensor.New([]int{batch * seqLen, H}, shiftedK)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix create shiftedK mat: %w", err)
+	}
+	kMat, err := n.engine.MatMul(ctx, shiftedKMat, n.weights.key.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix k projection: %w", err)
 	}
 
 	// Squared ReLU activation on k.
+	kVec := kMat.Data()
 	for i, v := range kVec {
 		f := float64(v)
 		if f < 0 {
@@ -848,36 +845,34 @@ func (n *rwkvChannelMixNode[T]) Forward(_ context.Context, inputs ...*tensor.Ten
 		kVec[i] = T(f * f)
 	}
 
-	// v projection: [batch*seqLen, ffnSize] x [ffnSize, H] -> [batch*seqLen, H].
-	vVec := make([]T, batch*seqLen*H)
-	for row := 0; row < batch*seqLen; row++ {
-		for col := 0; col < H; col++ {
-			var sum T
-			for k := 0; k < ffnSize; k++ {
-				sum = n.ops.Add(sum, n.ops.Mul(kVec[row*ffnSize+k], vw[k*H+col]))
-			}
-			vVec[row*H+col] = sum
-		}
+	// v projection via engine.MatMul: [batch*seqLen, ffnSize] x [ffnSize, H].
+	kActivated, err := tensor.New([]int{batch * seqLen, ffnSize}, kVec)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix create activated k mat: %w", err)
+	}
+	vMat, err := n.engine.MatMul(ctx, kActivated, n.weights.value.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix v projection: %w", err)
 	}
 
-	// r projection: [batch*seqLen, H] x [H, H] -> [batch*seqLen, H].
-	rVec := make([]T, batch*seqLen*H)
-	for row := 0; row < batch*seqLen; row++ {
-		for col := 0; col < H; col++ {
-			var sum T
-			for k := 0; k < H; k++ {
-				sum = n.ops.Add(sum, n.ops.Mul(shiftedR[row*H+k], rw[k*H+col]))
-			}
-			rVec[row*H+col] = sum
-		}
+	// r projection via engine.MatMul: [batch*seqLen, H] x [H, H].
+	shiftedRMat, err := tensor.New([]int{batch * seqLen, H}, shiftedR)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix create shiftedR mat: %w", err)
+	}
+	rMat, err := n.engine.MatMul(ctx, shiftedRMat, n.weights.receptance.Value)
+	if err != nil {
+		return nil, fmt.Errorf("RWKVChannelMix r projection: %w", err)
 	}
 
 	// Sigmoid on r.
+	rVec := rMat.Data()
 	for i, v := range rVec {
 		rVec[i] = T(1.0 / (1.0 + math.Exp(-float64(v))))
 	}
 
 	// Output: sigmoid(r) * v.
+	vVec := vMat.Data()
 	out := make([]T, batch*seqLen*H)
 	for i := range out {
 		out[i] = n.ops.Mul(rVec[i], vVec[i])
