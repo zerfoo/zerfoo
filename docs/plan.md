@@ -27,7 +27,7 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E57: Fix DGX Spark build regression (1/3 -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
 - E58: GPU vs CPU GQA parity test (0/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (0/7 -- replace BLAS fallback + FFT with zero-dep implementations)
-- E60: CrossAsset GPU training (0/12 -- GitHub #312, GPU forward/backward/AdamW for cross-attention model)
+- E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -3439,7 +3439,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
 
 #### E60.1: GPU Parameter Infrastructure
 
-- [ ] T60.1.1 Create gpuCAParams and gpuCAGrads structs  Owner: TBD  Est: 1h  verifies: [UC-CA-001]
+- [x] T60.1.1 Create gpuCAParams and gpuCAGrads structs  Owner: TBD  Est: 1h  verifies: [UC-CA-001]  DONE 2026-04-02
   File: crossasset/gpu_params.go
   Define structs mirroring the Model's weights as float32 tensors:
   - inputW, inputB: []*tensor.TensorNumeric[float32] (one per source)
@@ -3448,7 +3448,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
   gpuCAGrads mirrors gpuCAParams for gradient accumulation.
   Acceptance: Compiles. Struct fields match all Model weights.
 
-- [ ] T60.1.2 Implement extractGPUParams and allocGrads  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+- [x] T60.1.2 Implement extractGPUParams and allocGrads  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
   File: crossasset/gpu_params.go  Deps: T60.1.1
   extractGPUParams(m *Model, engine compute.Engine[float32]) *gpuCAParams:
   Convert float64 Model weights to float32 tensors. Row-major [rows, cols].
@@ -3456,14 +3456,14 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
   matching each parameter shape.
   Acceptance: Unit test extracts params from NewModel, all shapes match, non-nil.
 
-- [ ] T60.1.3 Unit tests for GPU param extraction  Owner: TBD  Est: 1h  verifies: [UC-CA-001]
+- [x] T60.1.3 Unit tests for GPU param extraction  Owner: TBD  Est: 1h  verifies: [UC-CA-001]
   File: crossasset/gpu_params_test.go  Deps: T60.1.2
   Test: extract params, verify shapes, verify float64->float32 conversion is within 1e-6.
   Acceptance: go test passes.
 
 #### E60.2: GPU Forward Pass
 
-- [ ] T60.2.1 Implement gpuForward function  Owner: TBD  Est: 4h  verifies: [UC-CA-001]
+- [x] T60.2.1 Implement gpuForward function  Owner: TBD  Est: 4h  verifies: [UC-CA-001]
   File: crossasset/gpu_train.go  Deps: T60.1.2
   gpuForward(ctx, engine, params, input, batchSize, config) -> (logits, forwardCache, error)
   Steps:
@@ -3486,7 +3486,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
   Cache all intermediate activations (x, Q, K, V, scores, attn, ffnH) for backward.
   Acceptance: Output shape [bs, NSources, 3]. Values finite. Matches CPU forward within 1e-3.
 
-- [ ] T60.2.2 Unit tests for GPU forward pass  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+- [x] T60.2.2 Unit tests for GPU forward pass  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
   File: crossasset/gpu_train_test.go  Deps: T60.2.1
   Test: run gpuForward on CPU engine, compare output to Model.Forward() within 1e-3.
   Test: different batch sizes (1, 4, 16). Test: verify cache is populated.
@@ -3494,7 +3494,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
 
 #### E60.3: GPU Backward Pass
 
-- [ ] T60.3.1 Implement gpuBackward function  Owner: TBD  Est: 6h  verifies: [UC-CA-001]
+- [x] T60.3.1 Implement gpuBackward function  Owner: TBD  Est: 6h  verifies: [UC-CA-001]
   File: crossasset/gpu_train.go  Deps: T60.2.1
   gpuBackward(ctx, engine, params, grads, cache, dLogits, config) -> error
   Steps (reverse order):
@@ -3520,7 +3520,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
   Acceptance: Gradient check -- numerical gradient (eps=1e-4) matches analytical within 1e-2
   for at least 90% of parameters.
 
-- [ ] T60.3.2 Gradient check test  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+- [x] T60.3.2 Gradient check test  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
   File: crossasset/gpu_train_test.go  Deps: T60.3.1
   Numerical gradient check: perturb each parameter by eps, compute loss diff,
   compare to analytical gradient. Use small model (NSources=3, DModel=8, NHeads=2, NLayers=1).
@@ -3528,7 +3528,7 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
 
 #### E60.4: Training Loop and Integration
 
-- [ ] T60.4.1 Implement TrainGPU method  Owner: TBD  Est: 3h  verifies: [UC-CA-001]
+- [x] T60.4.1 Implement TrainGPU method  Owner: TBD  Est: 3h  verifies: [UC-CA-001]
   File: crossasset/gpu_train.go  Deps: T60.3.1
   func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
       engine compute.Engine[float32]) (*TrainResult, error)
@@ -3551,14 +3551,14 @@ backward via transposed matmuls, AdamW from timeseries/adamw_f32.go.
   Return TrainResult{Losses []float64, FinalAccuracy float64}.
   Acceptance: Loss decreases over 10 epochs on synthetic data.
 
-- [ ] T60.4.2 Integration test: train then predict  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
+- [x] T60.4.2 Integration test: train then predict  Owner: TBD  Est: 2h  verifies: [UC-CA-001]
   File: crossasset/gpu_train_test.go  Deps: T60.4.1
   Test: Create model, TrainGPU with 50 samples for 20 epochs, verify loss decreases.
   Then call Predict and verify outputs are valid (directions in [0,2], confidences in [0,1]).
   Test with CPU engine (no GPU required for CI).
   Acceptance: Loss at epoch 20 < loss at epoch 1. Predictions valid.
 
-- [ ] T60.4.3 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T60.4.3 Run go vet and linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T60.4.2
   Run `go vet ./crossasset/...` and `go test -race ./crossasset/...`.
   Acceptance: Zero warnings, zero race conditions.
@@ -3574,26 +3574,26 @@ Two parallel tracks, merging at T60.4.1:
 
 ### Wave E60-1: Infrastructure (3 agents)
 
-- [ ] T60.1.1 GPU param structs
-- [ ] T60.1.2 Extract and alloc functions (can start from struct stubs)
-- [ ] T60.1.3 Unit tests for extraction
+- [x] T60.1.1 GPU param structs
+- [x] T60.1.2 Extract and alloc functions (can start from struct stubs)
+- [x] T60.1.3 Unit tests for extraction
 
 ### Wave E60-2: Forward + Backward (4 agents)
 
 Deps: Wave E60-1
 
-- [ ] T60.2.1 GPU forward pass
-- [ ] T60.2.2 Forward pass tests
-- [ ] T60.3.1 GPU backward pass
-- [ ] T60.3.2 Gradient check test
+- [x] T60.2.1 GPU forward pass
+- [x] T60.2.2 Forward pass tests
+- [x] T60.3.1 GPU backward pass
+- [x] T60.3.2 Gradient check test
 
 ### Wave E60-3: Integration (3 agents)
 
 Deps: Wave E60-2
 
-- [ ] T60.4.1 TrainGPU method
-- [ ] T60.4.2 Integration test
-- [ ] T60.4.3 Linters and vet
+- [x] T60.4.1 TrainGPU method
+- [x] T60.4.2 Integration test
+- [x] T60.4.3 Linters and vet
 
 #### E60 Risks
 
