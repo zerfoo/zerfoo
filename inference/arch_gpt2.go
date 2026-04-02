@@ -3,9 +3,10 @@ package inference
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/zerfoo/layers/activations"
+	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
@@ -126,7 +127,7 @@ func buildGPT2Graph(
 		)
 		normed := builder.AddNode(attnNorm, hidden)
 
-		// --- Self-Attention ---
+		// --- Self-Attention (GQA with no RoPE) ---
 		// Split merged QKV tensor into separate Q, K, V.
 		qkvW, err := lookup(prefix + "attn_qkv.weight")
 		if err != nil {
@@ -137,12 +138,15 @@ func buildGPT2Graph(
 			return nil, nil, fmt.Errorf("layer %d split QKV weight: %w", i, err)
 		}
 
-		var qB, kB, vB *tensor.TensorNumeric[float32]
+		var qBiasLayer, kBiasLayer, vBiasLayer *core.Bias[float32]
 		if qkvB, ok := tensors[prefix+"attn_qkv.bias"]; ok {
-			qB, kB, vB, err = splitQKVBias(qkvB, cfg.NumHeads, numKVHeads, headDim)
-			if err != nil {
-				return nil, nil, fmt.Errorf("layer %d split QKV bias: %w", i, err)
+			qB, kB, vB, splitErr := splitQKVBias(qkvB, cfg.NumHeads, numKVHeads, headDim)
+			if splitErr != nil {
+				return nil, nil, fmt.Errorf("layer %d split QKV bias: %w", i, splitErr)
 			}
+			qBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_q.bias", qB))
+			kBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_k.bias", kB))
+			vBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_v.bias", vB))
 		}
 
 		oW, err := lookup(prefix + "attn_output.weight")
@@ -168,23 +172,37 @@ func buildGPT2Graph(
 			return nil, nil, fmt.Errorf("layer %d transpose O: %w", i, err)
 		}
 
-		oBias := tensors[prefix+"attn_output.bias"]
-
-		attnNode := &gpt2SelfAttentionNode[float32]{
-			engine:   proxy,
-			numHeads: cfg.NumHeads,
-			headDim:  headDim,
-			qWeight:  qWT,
-			kWeight:  kWT,
-			vWeight:  vWT,
-			oWeight:  oWT,
-			qBias:    qB,
-			kBias:    kB,
-			vBias:    vB,
-			oBias:    oBias,
-			layerIdx: i,
+		var oBiasLayer *core.Bias[float32]
+		if oB := tensors[prefix+"attn_output.bias"]; oB != nil {
+			oBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_output.bias", oB))
 		}
-		attnOut := builder.AddNode(attnNode, normed)
+
+		wq := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_q.weight", qWT)),
+			qBiasLayer,
+		)
+		wk := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_k.weight", kWT)),
+			kBiasLayer,
+		)
+		wv := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_v.weight", vWT)),
+			vBiasLayer,
+		)
+		wo := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_output.weight", oWT)),
+			oBiasLayer,
+		)
+
+		gqa, gqaErr := attention.NewGroupedQueryAttentionFromParams[float32](
+			proxy, ops, cfg.HiddenSize, cfg.NumHeads, numKVHeads,
+			wq, wk, wv, wo, nil, headDim,
+		)
+		if gqaErr != nil {
+			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, gqaErr)
+		}
+		gqa.LayerIndex = i
+		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Post-attention residual add ---
 		resAdd1 := &gpt2ResidualAddNode[float32]{engine: proxy}
@@ -206,7 +224,7 @@ func buildGPT2Graph(
 		)
 		normed2 := builder.AddNode(ffnNorm, hidden)
 
-		// --- FFN: Linear(GELU) ---
+		// --- FFN: Dense(GELU) + Dense ---
 		ffnUpW, err := lookup(prefix + "ffn_up.weight")
 		if err != nil {
 			return nil, nil, err
@@ -225,15 +243,28 @@ func buildGPT2Graph(
 			return nil, nil, fmt.Errorf("layer %d transpose ffn_down: %w", i, err)
 		}
 
-		ffnNode := &gpt2FFNNode[float32]{
-			engine:     proxy,
-			ops:        ops,
-			upWeight:   ffnUpWT,
-			upBias:     tensors[prefix+"ffn_up.bias"],
-			downWeight: ffnDownWT,
-			downBias:   tensors[prefix+"ffn_down.bias"],
+		var ffnUpBias *core.Bias[float32]
+		if upB := tensors[prefix+"ffn_up.bias"]; upB != nil {
+			ffnUpBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_up.bias", upB))
 		}
-		ffnOut := builder.AddNode(ffnNode, normed2)
+		var ffnDownBias *core.Bias[float32]
+		if downB := tensors[prefix+"ffn_down.bias"]; downB != nil {
+			ffnDownBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_down.bias", downB))
+		}
+
+		ffnUp := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"ffn_up.weight", ffnUpWT)),
+			ffnUpBias,
+		)
+		geluNode := activations.NewGelu[float32](proxy, ops)
+		ffnDown := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"ffn_down.weight", ffnDownWT)),
+			ffnDownBias,
+		)
+
+		ffnUpOut := builder.AddNode(ffnUp, normed2)
+		geluOut := builder.AddNode(geluNode, ffnUpOut)
+		ffnOut := builder.AddNode(ffnDown, geluOut)
 
 		// --- Post-FFN residual add ---
 		resAdd2 := &gpt2ResidualAddNode[float32]{engine: proxy}
@@ -421,212 +452,6 @@ func (e *gpt2EmbeddingNode[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 }
 
 func (e *gpt2EmbeddingNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// gpt2SelfAttentionNode computes causal multi-head self-attention for GPT-2.
-// GPT-2 uses standard MHA (num_kv_heads == num_heads) without RoPE.
-type gpt2SelfAttentionNode[T tensor.Float] struct {
-	engine   compute.Engine[T]
-	numHeads int
-	headDim  int
-	qWeight  *tensor.TensorNumeric[T] // transposed [hidden, hidden]
-	kWeight  *tensor.TensorNumeric[T]
-	vWeight  *tensor.TensorNumeric[T]
-	oWeight  *tensor.TensorNumeric[T]
-	qBias    *tensor.TensorNumeric[T] // [hidden], may be nil
-	kBias    *tensor.TensorNumeric[T]
-	vBias    *tensor.TensorNumeric[T]
-	oBias    *tensor.TensorNumeric[T]
-	layerIdx int
-}
-
-func (a *gpt2SelfAttentionNode[T]) OpType() string                    { return "GPT2SelfAttention" }
-func (a *gpt2SelfAttentionNode[T]) Attributes() map[string]any         { return nil }
-func (a *gpt2SelfAttentionNode[T]) OutputShape() []int                 { return nil }
-func (a *gpt2SelfAttentionNode[T]) Parameters() []*graph.Parameter[T]  { return nil }
-
-func (a *gpt2SelfAttentionNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	x := inputs[0] // [batch, seqLen, hidden]
-	shape := x.Shape()
-	batch := shape[0]
-	seqLen := shape[1]
-	hidden := shape[2]
-
-	// Q/K/V projections: [batch, seqLen, hidden] @ [hidden, hidden]
-	q, err := a.engine.MatMul(ctx, x, a.qWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2SelfAttention Q matmul: %w", err)
-	}
-	if a.qBias != nil {
-		q, err = a.engine.Add(ctx, q, a.qBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2SelfAttention Q bias: %w", err)
-		}
-	}
-
-	k, err := a.engine.MatMul(ctx, x, a.kWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2SelfAttention K matmul: %w", err)
-	}
-	if a.kBias != nil {
-		k, err = a.engine.Add(ctx, k, a.kBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2SelfAttention K bias: %w", err)
-		}
-	}
-
-	v, err := a.engine.MatMul(ctx, x, a.vWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2SelfAttention V matmul: %w", err)
-	}
-	if a.vBias != nil {
-		v, err = a.engine.Add(ctx, v, a.vBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2SelfAttention V bias: %w", err)
-		}
-	}
-
-	// Manual causal multi-head attention on CPU.
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-	scale := T(1.0 / math.Sqrt(float64(a.headDim)))
-	numHeads := a.numHeads
-	headDim := a.headDim
-
-	output := make([]T, batch*seqLen*hidden)
-
-	for b := 0; b < batch; b++ {
-		bOff := b * seqLen * hidden
-		for h := 0; h < numHeads; h++ {
-			// Compute scores = Q @ K^T / sqrt(headDim) with causal mask.
-			scores := make([]T, seqLen*seqLen)
-			for i := 0; i < seqLen; i++ {
-				for j := 0; j <= i; j++ { // causal: j <= i
-					var dot T
-					for d := 0; d < headDim; d++ {
-						qi := qData[bOff+i*hidden+h*headDim+d]
-						kj := kData[bOff+j*hidden+h*headDim+d]
-						dot += qi * kj
-					}
-					scores[i*seqLen+j] = dot * scale
-				}
-				// Fill masked positions with -inf.
-				for j := i + 1; j < seqLen; j++ {
-					scores[i*seqLen+j] = T(math.Inf(-1))
-				}
-			}
-
-			// Softmax per row.
-			for i := 0; i < seqLen; i++ {
-				maxVal := scores[i*seqLen]
-				for j := 1; j < seqLen; j++ {
-					if scores[i*seqLen+j] > maxVal {
-						maxVal = scores[i*seqLen+j]
-					}
-				}
-				var sumExp T
-				for j := 0; j < seqLen; j++ {
-					scores[i*seqLen+j] = T(math.Exp(float64(scores[i*seqLen+j] - maxVal)))
-					sumExp += scores[i*seqLen+j]
-				}
-				for j := 0; j < seqLen; j++ {
-					scores[i*seqLen+j] /= sumExp
-				}
-			}
-
-			// Weighted sum: output = scores @ V.
-			for i := 0; i < seqLen; i++ {
-				for d := 0; d < headDim; d++ {
-					var sum T
-					for j := 0; j < seqLen; j++ {
-						sum += scores[i*seqLen+j] * vData[bOff+j*hidden+h*headDim+d]
-					}
-					output[bOff+i*hidden+h*headDim+d] = sum
-				}
-			}
-		}
-	}
-
-	attnOut, err := tensor.New[T]([]int{batch, seqLen, hidden}, output)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2SelfAttention output tensor: %w", err)
-	}
-
-	// Output projection: [batch, seqLen, hidden] @ [hidden, hidden]
-	result, err := a.engine.MatMul(ctx, attnOut, a.oWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2SelfAttention O matmul: %w", err)
-	}
-	if a.oBias != nil {
-		result, err = a.engine.Add(ctx, result, a.oBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2SelfAttention O bias: %w", err)
-		}
-	}
-
-	return result, nil
-}
-
-func (a *gpt2SelfAttentionNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// gpt2FFNNode computes the GPT-2 FFN: Linear + GELU + Linear.
-// GPT-2 uses GELU activation (not SwiGLU) with a 2-matrix FFN (up + down).
-type gpt2FFNNode[T tensor.Float] struct {
-	engine     compute.Engine[T]
-	ops        numeric.Arithmetic[T]
-	upWeight   *tensor.TensorNumeric[T] // [hiddenDim, interDim] (transposed)
-	upBias     *tensor.TensorNumeric[T] // [interDim], may be nil
-	downWeight *tensor.TensorNumeric[T] // [interDim, hiddenDim] (transposed)
-	downBias   *tensor.TensorNumeric[T] // [hiddenDim], may be nil
-}
-
-func (f *gpt2FFNNode[T]) OpType() string                  { return "GPT2FFN" }
-func (f *gpt2FFNNode[T]) Attributes() map[string]any       { return nil }
-func (f *gpt2FFNNode[T]) OutputShape() []int               { return nil }
-func (f *gpt2FFNNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-
-func (f *gpt2FFNNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	x := inputs[0]
-
-	// Up projection: [batch, seqLen, hidden] @ [hidden, inter] = [batch, seqLen, inter]
-	up, err := f.engine.MatMul(ctx, x, f.upWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2FFN up: %w", err)
-	}
-	if f.upBias != nil {
-		up, err = f.engine.Add(ctx, up, f.upBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2FFN up bias: %w", err)
-		}
-	}
-
-	// GELU activation.
-	gelu := activations.NewGelu[T](f.engine, f.ops)
-	activated, err := gelu.Forward(ctx, up)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2FFN gelu: %w", err)
-	}
-
-	// Down projection: [batch, seqLen, inter] @ [inter, hidden] = [batch, seqLen, hidden]
-	down, err := f.engine.MatMul(ctx, activated, f.downWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GPT2FFN down: %w", err)
-	}
-	if f.downBias != nil {
-		down, err = f.engine.Add(ctx, down, f.downBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("GPT2FFN down bias: %w", err)
-		}
-	}
-
-	return down, nil
-}
-
-func (f *gpt2FFNNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
