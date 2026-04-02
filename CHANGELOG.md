@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0](https://github.com/zerfoo/zerfoo/compare/v1.38.5...v1.39.0) (2026-04-02)
+
+
+### Features
+
+* **crossasset:** add GPU parameter extraction for training ([#312](https://github.com/zerfoo/zerfoo/issues/312)) ([9bf423e](https://github.com/zerfoo/zerfoo/commit/9bf423ebec7d0e379c596060da5f42a5547aa59d))
+* **crossasset:** add GPU training with full backprop ([#312](https://github.com/zerfoo/zerfoo/issues/312)) ([4f3edc9](https://github.com/zerfoo/zerfoo/commit/4f3edc9840c8962224a3dcc92086a36417aea1b5))
+* **inference:** use GPU Q8 Gather for embedding lookup (100% graph coverage) ([5c8af0e](https://github.com/zerfoo/zerfoo/commit/5c8af0ed77376b5dd5e780a598f8844de5957cbe))
+
+
+### Bug Fixes
+
+* **attention:** check K/V GPU storage before type assertion in flash paths ([b55036c](https://github.com/zerfoo/zerfoo/commit/b55036c7de70347a25c7357d089a0a7b31e1f387))
+* **gguf:** match raw GGUF tensor names for embedding native decode ([c9219ca](https://github.com/zerfoo/zerfoo/commit/c9219cae36ce301b0afd0a546d4002c025f46950))
+* **gguf:** skip Q4_0 re-quantization for embedding tensors ([badeadb](https://github.com/zerfoo/zerfoo/commit/badeadbe7fe1c8a9dac5422298ea69fe733f4922))
+* **gguf:** update Q5_K/Q6_K decode tests for native storage ([21cc2bc](https://github.com/zerfoo/zerfoo/commit/21cc2bceb5b902e3af7153d31e440b1eee28af4f))
+* **test:** use epoch-window average for loss decrease check (fixes flaky CI) ([b532516](https://github.com/zerfoo/zerfoo/commit/b532516a92f79833effc6cfcb6d3d68b415e7ec2))
+
+
+### Performance Improvements
+
+* eliminate ALL lossy re-quantization, keep native Q4K/Q5K/Q6K/Q5_0 ([123a979](https://github.com/zerfoo/zerfoo/commit/123a9794e92172adb3d08706be6006585e60a643))
+* **gguf:** keep native Q4_K storage (eliminate lossy re-quantization) ([63bdd54](https://github.com/zerfoo/zerfoo/commit/63bdd544d60e6300e2f24c5f529504b5a4e5ab12))
+* **gguf:** re-quantize all weight types to Q4_0 for maximum throughput ([4b202d2](https://github.com/zerfoo/zerfoo/commit/4b202d2de11818516fe53988e4f227408b84e2f4))
+* **gguf:** re-quantize Q5_0/Q5_K/Q6_K to Q4_K for uniform fast GEMV ([b408c30](https://github.com/zerfoo/zerfoo/commit/b408c303f33c87339c7e92ddc819bb9230e33d7b))
+* **gguf:** re-quantize Q8_0 weight matrices to Q4_K for merged QKV ([023505d](https://github.com/zerfoo/zerfoo/commit/023505d36e8c771665fb4e51cea045146f2ab8b4))
+
 ## [1.38.5](https://github.com/zerfoo/zerfoo/compare/v1.38.4...v1.38.5) (2026-04-01)
 
 
