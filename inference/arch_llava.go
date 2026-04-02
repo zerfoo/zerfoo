@@ -3,13 +3,16 @@ package inference
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/embeddings"
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/layers/vision"
 	"github.com/zerfoo/zerfoo/model/gguf"
 )
@@ -189,6 +192,36 @@ func BuildLLaVAModel(
 		lmHeadWeight = embedWeight
 	}
 
+	rmsEps := float32(1e-5)
+	if cfg.RMSNormEps > 0 {
+		rmsEps = cfg.RMSNormEps
+	}
+
+	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
+		t, ok := tensors[name]
+		if !ok {
+			return nil, fmt.Errorf("missing tensor %q", name)
+		}
+		return t, nil
+	}
+
+	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
+		return &graph.Parameter[float32]{Name: name, Value: t}
+	}
+
+	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
+		if err != nil {
+			return nil, fmt.Errorf("transpose %s: %w", name, err)
+		}
+		return tr, nil
+	}
+
+	headDim := cfg.HiddenSize / cfg.NumHeads
+	if cfg.HeadDim > 0 {
+		headDim = cfg.HeadDim
+	}
+
 	// Build the graph.
 	proxy := compute.NewEngineProxy[float32](engine)
 	builder := graph.NewBuilder[float32](proxy)
@@ -212,47 +245,25 @@ func BuildLLaVAModel(
 	}
 	projectedVision := builder.AddNode(projNode, visionOut)
 
-	// Text decoder: build the Llama transformer on the projected vision tokens.
-	// The LLaVA decoder takes projected vision embeddings as input instead of
-	// token embeddings. We use a passthrough embedding node.
-	rmsEps := float32(1e-5)
-	if cfg.RMSNormEps > 0 {
-		rmsEps = cfg.RMSNormEps
-	}
-
 	hidden := projectedVision
-
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
-
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	headDim := cfg.HiddenSize / cfg.NumHeads
-	if cfg.HeadDim > 0 {
-		headDim = cfg.HeadDim
-	}
 
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
+		// --- Input LayerNorm ---
 		inputNormW, err := lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		inputNorm, err := newRMSNormNode(proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW))
+		inputNorm, err := normalization.NewRMSNormFromParam[float32](
+			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+		)
 		if err != nil {
 			return nil, nil, err
 		}
 		normed := builder.AddNode(inputNorm, hidden)
 
-		// GQA attention (same as Llama).
+		// --- Self Attention (GQA with RoPE, composed from layers/) ---
 		qW, err := lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
@@ -270,22 +281,55 @@ func BuildLLaVAModel(
 			return nil, nil, err
 		}
 
-		attnNode := &llamaAttnNode[float32]{
-			engine:    proxy,
-			ops:       ops,
-			qW:        qW,
-			kW:        kW,
-			vW:        vW,
-			oW:        oW,
-			numHeads:  cfg.NumHeads,
-			numKVHeads: cfg.NumKVHeads,
-			headDim:   headDim,
-			ropeTheta: cfg.RopeTheta,
-			maxSeqLen: cfg.MaxSeqLen,
+		qWT, err := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
+		if err != nil {
+			return nil, nil, err
 		}
-		attnOut := builder.AddNode(attnNode, normed)
+		kWT, err := transposeWeight(prefix+"self_attn.k_proj.weight", kW)
+		if err != nil {
+			return nil, nil, err
+		}
+		vWT, err := transposeWeight(prefix+"self_attn.v_proj.weight", vW)
+		if err != nil {
+			return nil, nil, err
+		}
+		oWT, err := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
+		if err != nil {
+			return nil, nil, err
+		}
 
-		// Fused residual add + pre-FFN RMSNorm.
+		wq := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+		)
+		wk := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)), nil,
+		)
+		wv := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)), nil,
+		)
+		wo := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+		)
+
+		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
+			context.Background(), proxy, headDim, cfg.MaxSeqLen,
+			embeddings.WithRotaryBase(cfg.RopeTheta),
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d rope: %w", i, err)
+		}
+
+		gqa, err := attention.NewGroupedQueryAttentionFromParams[float32](
+			proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads,
+			wq, wk, wv, wo, rope, headDim,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, err)
+		}
+		gqa.LayerIndex = i
+		attnOut := builder.AddNode(gqa, normed)
+
+		// --- Fused Residual Add + Pre-FFN RMSNorm ---
 		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
@@ -293,7 +337,7 @@ func BuildLLaVAModel(
 		fusedNode := &fusedAddRMSNormNode[float32]{engine: proxy, weight: postNormW, eps: rmsEps}
 		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
 
-		// FFN (SwiGLU).
+		// --- FFN (SwiGLU, composed from layers/) ---
 		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, nil, err
@@ -306,26 +350,50 @@ func BuildLLaVAModel(
 		if err != nil {
 			return nil, nil, err
 		}
-		ffnNode := &llamaFFNNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			gateW:  gateW,
-			upW:    upW,
-			downW:  downW,
+
+		ffn, err := core.NewFFN[float32](
+			prefix+"mlp", proxy, ops,
+			cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
+			core.WithSwiGLU[float32](),
+			core.WithFFNNoBias[float32](),
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d ffn: %w", i, err)
 		}
-		ffnOut := builder.AddNode(ffnNode, normed2)
+
+		gateWT, err := transposeWeight(prefix+"mlp.gate_proj.weight", gateW)
+		if err != nil {
+			return nil, nil, err
+		}
+		upWT, err := transposeWeight(prefix+"mlp.up_proj.weight", upW)
+		if err != nil {
+			return nil, nil, err
+		}
+		downWT, err := transposeWeight(prefix+"mlp.down_proj.weight", downW)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		ffnParams := ffn.Parameters()
+		ffnParams[0].Value = gateWT // w1 = gate_proj
+		ffnParams[1].Value = downWT // w2 = down_proj
+		ffnParams[2].Value = upWT   // w3 = up_proj
+
+		ffnOut := builder.AddNode(ffn, normed2)
 
 		// Residual add.
 		resAdd := &residualAddNode[float32]{engine: proxy, source: fusedNode}
 		hidden = builder.AddNode(resAdd, ffnOut)
 	}
 
-	// Final RMSNorm.
+	// --- Final RMSNorm ---
 	finalNormWeight, err := lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	finalNorm, err := newRMSNormNode(proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight))
+	finalNorm, err := normalization.NewRMSNormFromParam[float32](
+		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -406,7 +474,7 @@ func (p *mmProjectorNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 	half := p.ops.FromFloat64(0.5)
 	one := p.ops.One()
 	coeff := p.ops.FromFloat64(0.044715)
-	sqrtTwoOverPi := p.ops.FromFloat64(math.Sqrt(2.0 / math.Pi))
+	sqrtTwoOverPi := p.ops.FromFloat64(1.1283791670955126) // sqrt(2/pi) precomputed
 	for i, v := range out {
 		x3 := p.ops.Mul(v, p.ops.Mul(v, v))
 		inner := p.ops.Mul(sqrtTwoOverPi, p.ops.Add(v, p.ops.Mul(coeff, x3)))
@@ -438,311 +506,6 @@ func (p *mmProjectorNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 }
 
 func (p *mmProjectorNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// llamaAttnNode implements grouped-query attention with RoPE for the LLaVA text decoder.
-// This is a simplified attention node that operates on vision token sequences.
-type llamaAttnNode[T tensor.Numeric] struct {
-	engine     compute.Engine[T]
-	ops        numeric.Arithmetic[T]
-	qW, kW, vW, oW *tensor.TensorNumeric[T]
-	numHeads   int
-	numKVHeads int
-	headDim    int
-	ropeTheta  float64
-	maxSeqLen  int
-}
-
-func (a *llamaAttnNode[T]) OpType() string                  { return "LLaVAAttn" }
-func (a *llamaAttnNode[T]) Attributes() map[string]any       { return nil }
-func (a *llamaAttnNode[T]) OutputShape() []int               { return nil }
-func (a *llamaAttnNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-
-func (a *llamaAttnNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
-	return []*tensor.TensorNumeric[T]{a.qW, a.kW, a.vW, a.oW}
-}
-
-func (a *llamaAttnNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	input := inputs[0] // [batch, seqLen, hiddenDim]
-	shape := input.Shape()
-	batch := shape[0]
-	seqLen := shape[1]
-	hiddenDim := shape[2]
-
-	inData := input.Data()
-	qWData := a.qW.Data()
-	kWData := a.kW.Data()
-	vWData := a.vW.Data()
-	oWData := a.oW.Data()
-
-	kvDim := a.numKVHeads * a.headDim
-	qDim := a.numHeads * a.headDim
-
-	// Project Q, K, V.
-	q := make([]T, batch*seqLen*qDim)
-	k := make([]T, batch*seqLen*kvDim)
-	v := make([]T, batch*seqLen*kvDim)
-
-	// Q = input * qW^T  (qW: [qDim, hiddenDim])
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			for o := 0; o < qDim; o++ {
-				var sum T
-				for d := 0; d < hiddenDim; d++ {
-					sum = a.ops.Add(sum, a.ops.Mul(inData[b*seqLen*hiddenDim+s*hiddenDim+d], qWData[o*hiddenDim+d]))
-				}
-				q[b*seqLen*qDim+s*qDim+o] = sum
-			}
-			for o := 0; o < kvDim; o++ {
-				var sumK, sumV T
-				for d := 0; d < hiddenDim; d++ {
-					xVal := inData[b*seqLen*hiddenDim+s*hiddenDim+d]
-					sumK = a.ops.Add(sumK, a.ops.Mul(xVal, kWData[o*hiddenDim+d]))
-					sumV = a.ops.Add(sumV, a.ops.Mul(xVal, vWData[o*hiddenDim+d]))
-				}
-				k[b*seqLen*kvDim+s*kvDim+o] = sumK
-				v[b*seqLen*kvDim+s*kvDim+o] = sumV
-			}
-		}
-	}
-
-	// Apply RoPE to Q and K.
-	applyRoPE(q, batch, seqLen, a.numHeads, a.headDim, a.ropeTheta, a.ops)
-	applyRoPE(k, batch, seqLen, a.numKVHeads, a.headDim, a.ropeTheta, a.ops)
-
-	// GQA: compute attention.
-	scale := T(1.0 / math.Sqrt(float64(a.headDim)))
-	kvGroupSize := a.numHeads / a.numKVHeads
-
-	attnOut := make([]T, batch*seqLen*qDim)
-	for b := 0; b < batch; b++ {
-		for h := 0; h < a.numHeads; h++ {
-			kvH := h / kvGroupSize
-			scores := make([]T, seqLen*seqLen)
-			for qi := 0; qi < seqLen; qi++ {
-				for ki := 0; ki < seqLen; ki++ {
-					var dot T
-					for d := 0; d < a.headDim; d++ {
-						qIdx := b*seqLen*qDim + qi*qDim + h*a.headDim + d
-						kIdx := b*seqLen*kvDim + ki*kvDim + kvH*a.headDim + d
-						dot = a.ops.Add(dot, a.ops.Mul(q[qIdx], k[kIdx]))
-					}
-					scores[qi*seqLen+ki] = a.ops.Mul(dot, scale)
-				}
-			}
-
-			// Softmax.
-			for qi := 0; qi < seqLen; qi++ {
-				maxVal := scores[qi*seqLen]
-				for ki := 1; ki < seqLen; ki++ {
-					if a.ops.GreaterThan(scores[qi*seqLen+ki], maxVal) {
-						maxVal = scores[qi*seqLen+ki]
-					}
-				}
-				var sumExp T
-				for ki := 0; ki < seqLen; ki++ {
-					scores[qi*seqLen+ki] = a.ops.Exp(a.ops.Sub(scores[qi*seqLen+ki], maxVal))
-					sumExp = a.ops.Add(sumExp, scores[qi*seqLen+ki])
-				}
-				for ki := 0; ki < seqLen; ki++ {
-					scores[qi*seqLen+ki] = a.ops.Div(scores[qi*seqLen+ki], sumExp)
-				}
-
-				for d := 0; d < a.headDim; d++ {
-					var val T
-					for ki := 0; ki < seqLen; ki++ {
-						vIdx := b*seqLen*kvDim + ki*kvDim + kvH*a.headDim + d
-						val = a.ops.Add(val, a.ops.Mul(scores[qi*seqLen+ki], v[vIdx]))
-					}
-					attnOut[b*seqLen*qDim+qi*qDim+h*a.headDim+d] = val
-				}
-			}
-		}
-	}
-
-	// Output projection: attnOut * oW^T  (oW: [hiddenDim, qDim])
-	out := make([]T, batch*seqLen*hiddenDim)
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			for o := 0; o < hiddenDim; o++ {
-				var sum T
-				for d := 0; d < qDim; d++ {
-					sum = a.ops.Add(sum, a.ops.Mul(attnOut[b*seqLen*qDim+s*qDim+d], oWData[o*qDim+d]))
-				}
-				out[b*seqLen*hiddenDim+s*hiddenDim+o] = sum
-			}
-		}
-	}
-
-	return tensor.New[T]([]int{batch, seqLen, hiddenDim}, out)
-}
-
-func (a *llamaAttnNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// llamaFFNNode implements SwiGLU FFN for the LLaVA text decoder.
-type llamaFFNNode[T tensor.Numeric] struct {
-	engine                compute.Engine[T]
-	ops                   numeric.Arithmetic[T]
-	gateW, upW, downW     *tensor.TensorNumeric[T]
-}
-
-func (f *llamaFFNNode[T]) OpType() string                  { return "LLaVAFFN" }
-func (f *llamaFFNNode[T]) Attributes() map[string]any       { return nil }
-func (f *llamaFFNNode[T]) OutputShape() []int               { return nil }
-func (f *llamaFFNNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-
-func (f *llamaFFNNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
-	return []*tensor.TensorNumeric[T]{f.gateW, f.upW, f.downW}
-}
-
-func (f *llamaFFNNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	input := inputs[0] // [batch, seqLen, hiddenDim]
-	shape := input.Shape()
-	batch := shape[0]
-	seqLen := shape[1]
-	hiddenDim := shape[2]
-	interDim := f.gateW.Shape()[0]
-
-	inData := input.Data()
-	gateData := f.gateW.Data()
-	upData := f.upW.Data()
-	downData := f.downW.Data()
-
-	// gate = input * gateW^T, up = input * upW^T
-	gate := make([]T, batch*seqLen*interDim)
-	up := make([]T, batch*seqLen*interDim)
-
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			for o := 0; o < interDim; o++ {
-				var sumG, sumU T
-				for d := 0; d < hiddenDim; d++ {
-					xVal := inData[b*seqLen*hiddenDim+s*hiddenDim+d]
-					sumG = f.ops.Add(sumG, f.ops.Mul(xVal, gateData[o*hiddenDim+d]))
-					sumU = f.ops.Add(sumU, f.ops.Mul(xVal, upData[o*hiddenDim+d]))
-				}
-				idx := b*seqLen*interDim + s*interDim + o
-				// SiLU(gate) * up
-				one := f.ops.One()
-				negG := f.ops.Mul(f.ops.FromFloat64(-1.0), sumG)
-				sigmoid := f.ops.Div(one, f.ops.Add(one, f.ops.Exp(negG)))
-				gate[idx] = f.ops.Mul(f.ops.Mul(sumG, sigmoid), sumU)
-				up[idx] = gate[idx] // reuse for down projection input
-			}
-		}
-	}
-
-	// down = gate * downW^T  (downW: [hiddenDim, interDim])
-	out := make([]T, batch*seqLen*hiddenDim)
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			for o := 0; o < hiddenDim; o++ {
-				var sum T
-				for d := 0; d < interDim; d++ {
-					sum = f.ops.Add(sum, f.ops.Mul(gate[b*seqLen*interDim+s*interDim+d], downData[o*interDim+d]))
-				}
-				out[b*seqLen*hiddenDim+s*hiddenDim+o] = sum
-			}
-		}
-	}
-
-	return tensor.New[T]([]int{batch, seqLen, hiddenDim}, out)
-}
-
-func (f *llamaFFNNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// applyRoPE applies rotary positional embeddings in-place.
-func applyRoPE[T tensor.Numeric](data []T, batch, seqLen, numHeads, headDim int, theta float64, ops numeric.Arithmetic[T]) {
-	dim := numHeads * headDim
-	for b := 0; b < batch; b++ {
-		for pos := 0; pos < seqLen; pos++ {
-			for h := 0; h < numHeads; h++ {
-				for d := 0; d < headDim/2; d++ {
-					freq := 1.0 / math.Pow(theta, float64(2*d)/float64(headDim))
-					angle := float64(pos) * freq
-					cosVal := ops.FromFloat64(math.Cos(angle))
-					sinVal := ops.FromFloat64(math.Sin(angle))
-
-					idx0 := b*seqLen*dim + pos*dim + h*headDim + 2*d
-					idx1 := idx0 + 1
-					x0 := data[idx0]
-					x1 := data[idx1]
-
-					data[idx0] = ops.Sub(ops.Mul(x0, cosVal), ops.Mul(x1, sinVal))
-					data[idx1] = ops.Add(ops.Mul(x1, cosVal), ops.Mul(x0, sinVal))
-				}
-			}
-		}
-	}
-}
-
-// newRMSNormNode creates an RMSNorm graph node using the normalization layer.
-func newRMSNormNode(
-	engine compute.Engine[float32],
-	ops numeric.Float32Ops,
-	eps float32,
-	weightParam *graph.Parameter[float32],
-) (*rmsNormWrapNode, error) {
-	return &rmsNormWrapNode{
-		engine: engine,
-		ops:    ops,
-		weight: weightParam.Value,
-		eps:    eps,
-	}, nil
-}
-
-// rmsNormWrapNode wraps RMSNorm as a graph node for LLaVA.
-type rmsNormWrapNode struct {
-	engine compute.Engine[float32]
-	ops    numeric.Float32Ops
-	weight *tensor.TensorNumeric[float32]
-	eps    float32
-}
-
-func (r *rmsNormWrapNode) OpType() string                        { return "RMSNorm" }
-func (r *rmsNormWrapNode) Attributes() map[string]any             { return nil }
-func (r *rmsNormWrapNode) OutputShape() []int                     { return nil }
-func (r *rmsNormWrapNode) Parameters() []*graph.Parameter[float32] { return nil }
-
-func (r *rmsNormWrapNode) EmbeddedFrozen() []*tensor.TensorNumeric[float32] {
-	return []*tensor.TensorNumeric[float32]{r.weight}
-}
-
-func (r *rmsNormWrapNode) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-	input := inputs[0]
-	shape := input.Shape()
-	data := input.Data()
-	wData := r.weight.Data()
-
-	hiddenDim := shape[len(shape)-1]
-	numTokens := len(data) / hiddenDim
-
-	out := make([]float32, len(data))
-	for t := 0; t < numTokens; t++ {
-		offset := t * hiddenDim
-		// Compute RMS.
-		var sumSq float32
-		for d := 0; d < hiddenDim; d++ {
-			v := data[offset+d]
-			sumSq += v * v
-		}
-		rms := float32(math.Sqrt(float64(sumSq/float32(hiddenDim)) + float64(r.eps)))
-		invRMS := 1.0 / rms
-
-		for d := 0; d < hiddenDim; d++ {
-			out[offset+d] = data[offset+d] * invRMS * wData[d]
-		}
-	}
-
-	return tensor.New(shape, out)
-}
-
-func (r *rmsNormWrapNode) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[float32], _ ...*tensor.TensorNumeric[float32]) ([]*tensor.TensorNumeric[float32], error) {
 	return nil, nil
 }
 
@@ -816,6 +579,3 @@ func loadCLIPWeights(
 
 // Static interface assertions.
 var _ graph.EmbeddedFrozenProvider[float32] = (*mmProjectorNode[float32])(nil)
-var _ graph.EmbeddedFrozenProvider[float32] = (*llamaAttnNode[float32])(nil)
-var _ graph.EmbeddedFrozenProvider[float32] = (*llamaFFNNode[float32])(nil)
-var _ graph.EmbeddedFrozenProvider[float32] = (*rmsNormWrapNode)(nil)
