@@ -1,9 +1,6 @@
 package xblas
 
 import (
-	"gonum.org/v1/gonum/blas"
-	"gonum.org/v1/gonum/blas/blas64"
-
 	float16 "github.com/zerfoo/float16"
 	float8 "github.com/zerfoo/float8"
 )
@@ -17,12 +14,17 @@ func GemmF32(m, n, k int, a, b, c []float32) {
 }
 
 // GemmF64 computes C = A * B for row-major contiguous matrices.
+// A has shape (m, k), B has shape (k, n), C has shape (m, n).
 func GemmF64(m, n, k int, a, b, c []float64) {
-	alpha, beta := float64(1), float64(0)
-	A := blas64.General{Rows: m, Cols: k, Data: a, Stride: k}
-	B := blas64.General{Rows: k, Cols: n, Data: b, Stride: n}
-	C := blas64.General{Rows: m, Cols: n, Data: c, Stride: n}
-	blas64.Gemm(blas.NoTrans, blas.NoTrans, alpha, A, B, beta, C)
+	for i := range m {
+		for j := range n {
+			var sum float64
+			for p := range k {
+				sum += a[i*k+p] * b[p*n+j]
+			}
+			c[i*n+j] = sum
+		}
+	}
 }
 
 // GemmF16 computes C = A * B for Float16 by converting through float32 SGEMM.

@@ -24,8 +24,8 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E54: Capture-pure GPU engine ops (2/4 -- GPU-native Zero/Copy done; re-enable graph capture pending)
 - E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
 - E56: Gemma3 inference micro-optimizations (6/9 -- fused kernels written and wired; produce garbage on DGX, BLOCKED by E57)
-- E57: Fix DGX Spark build regression (1/3 -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
-- E58: GPU vs CPU GQA parity test (0/2 -- diagnostic test to find remaining composed-pipeline divergence)
+- E57: Fix DGX Spark build regression (3/3 COMPLETE -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
+- E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (0/7 -- replace BLAS fallback + FFT with zero-dep implementations)
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
@@ -3227,7 +3227,7 @@ fusions, and any future GPU work cannot be validated until this is fixed.
 
 ### E57.1: Bisect the Regression
 
-- [ ] T57.1.1 Bisect zerfoo commits to find breaking change  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T57.1.1 Bisect zerfoo commits to find breaking change  Owner: TBD  Est: 2h  verifies: [infrastructure]
   On DGX Spark, binary search between the last known-working commit (v1.38.0 release,
   e8a42683) and current main. For each test point:
   (1) `git checkout <commit>`
@@ -3238,13 +3238,13 @@ fusions, and any future GPU work cannot be validated until this is fixed.
   Go code or ztensor dependency resolution.
   Acceptance: Exact commit identified. Root cause documented in devlog.
 
-- [ ] T57.1.2 Fix the root cause  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T57.1.2 Fix the root cause  Owner: TBD  Est: 2h  verifies: [infrastructure]
   Deps: T57.1.1
   Based on bisect result: revert the breaking change, fix the misalignment, or
   update the build configuration. Verify Gemma3 inference works end-to-end on DGX Spark.
   Acceptance: `go build ./cmd/bench_tps/ && ./bench_tps -model gemma3 -device cuda` works.
 
-- [ ] T57.1.3 Verify all benchmarks work  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-001]
+- [x] T57.1.3 Verify all benchmarks work  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-001]
   Deps: T57.1.2
   Run: (1) Gemma3-1B decode 128 tokens, (2) PatchTST 28K training 1 epoch.
   Both must succeed on DGX Spark with the fixed code.
@@ -3254,9 +3254,9 @@ fusions, and any future GPU work cannot be validated until this is fixed.
 
 ##### Wave E57-1: Bisect + fix (sequential, must be on DGX Spark)
 
-- [ ] T57.1.1 Bisect regression
-- [ ] T57.1.2 Fix root cause  Deps: T57.1.1
-- [ ] T57.1.3 Verify benchmarks  Deps: T57.1.2
+- [x] T57.1.1 Bisect regression
+- [x] T57.1.2 Fix root cause  Deps: T57.1.1
+- [x] T57.1.3 Verify benchmarks  Deps: T57.1.2
 
 ---
 
@@ -3280,7 +3280,7 @@ pinpoint the exact operation where GPU diverges from CPU inside the composed pip
 
 ### E58.1: GQA Parity Test
 
-- [ ] T58.1.1 Write GQA GPU vs CPU parity test  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T58.1.1 Write GQA GPU vs CPU parity test  DONE 2026-04-01  Owner: TBD  Est: 3h  verifies: [infrastructure]
   File: tests/parity/gqa_gpu_parity_test.go
   The test must:
   (1) Load model weights from GGUF via inference.LoadGGUF (heap, no mmap). Skip if
@@ -3315,7 +3315,7 @@ pinpoint the exact operation where GPU diverges from CPU inside the composed pip
 
 ##### Wave E58-1: Write and run test (1 agent)
 
-- [ ] T58.1.1 Write GQA GPU parity test
+- [x] T58.1.1 Write GQA GPU parity test  DONE 2026-04-01
 - [ ] T58.1.2 Run on DGX and document  Deps: T58.1.1
 
 ---
