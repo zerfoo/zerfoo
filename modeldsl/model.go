@@ -63,11 +63,11 @@ func buildLayer(def LayerDef, inDim, outDim int) (execLayer, error) {
 			}
 			eps = f
 		}
-		return &rmsnormLayer{epsilon: eps}, nil
+		return &rmsnormLayerT{epsilon: eps}, nil
 	case LayerSiLU:
-		return &siluLayer{}, nil
+		return &siluLayerT{}, nil
 	case LayerSoftmax:
-		return &softmaxLayer{}, nil
+		return &softmaxLayerT{}, nil
 	case LayerAttention:
 		numHeads := 1
 		if v, ok := def.Params["num_heads"]; ok {
@@ -138,62 +138,17 @@ func (l *linearLayer) forward(input []float64) ([]float64, error) {
 	return out, nil
 }
 
-// rmsnormLayer implements Root Mean Square Layer Normalization.
-type rmsnormLayer struct {
-	epsilon float64
-}
-
-func (l *rmsnormLayer) forward(input []float64) ([]float64, error) {
-	if len(input) == 0 {
-		return nil, fmt.Errorf("rmsnorm: empty input")
-	}
-	var sumSq float64
-	for _, v := range input {
-		sumSq += v * v
-	}
-	rms := math.Sqrt(sumSq/float64(len(input)) + l.epsilon)
-	out := make([]float64, len(input))
-	for i, v := range input {
-		out[i] = v / rms
-	}
-	return out, nil
-}
-
-// siluLayer implements the SiLU (Sigmoid Linear Unit) activation: x * sigmoid(x).
-type siluLayer struct{}
-
-func (l *siluLayer) forward(input []float64) ([]float64, error) {
-	out := make([]float64, len(input))
-	for i, v := range input {
-		out[i] = v * (1.0 / (1.0 + math.Exp(-v)))
-	}
-	return out, nil
-}
-
-// softmaxLayer implements softmax normalization.
-type softmaxLayer struct{}
-
-func (l *softmaxLayer) forward(input []float64) ([]float64, error) {
-	if len(input) == 0 {
-		return nil, fmt.Errorf("softmax: empty input")
-	}
-	maxVal := input[0]
-	for _, v := range input[1:] {
-		if v > maxVal {
-			maxVal = v
-		}
-	}
-	out := make([]float64, len(input))
-	var sum float64
-	for i, v := range input {
-		out[i] = math.Exp(v - maxVal)
-		sum += out[i]
-	}
-	for i := range out {
-		out[i] /= sum
-	}
-	return out, nil
-}
+// NOTE: Element-wise layers (rmsnorm, silu, softmax) operate on raw []float64
+// slices rather than tensors. The layers/activations/ package provides
+// tensor-based equivalents via compute.Engine[T], but the DSL intentionally
+// uses slice-based ops because its entire pipeline (forward, backward,
+// parameter updates) operates on []float64. Converting to tensors would
+// require rewriting every layer type and the training loop.
+//
+// The trainable variants (rmsnormLayerT, siluLayerT, softmaxLayerT) in
+// train.go serve as the single implementations for both inference and
+// training, since they implement the execLayer interface and only cache
+// state needed for backward when forward is called.
 
 // attentionLayer implements a basic single-sequence self-attention.
 // It projects the input into Q, K, V, computes scaled dot-product attention
