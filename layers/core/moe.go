@@ -85,14 +85,9 @@ func (g *MoEGate[T]) route(
 
 	// Add routing bias if present: logits += bias (broadcast across seqLen).
 	if g.routingBias != nil {
-		biasData := g.routingBias.Data()
-		logitsData := logits.Data()
-		seqLen := logits.Shape()[0]
-		numE := logits.Shape()[1]
-		for t := 0; t < seqLen; t++ {
-			for e := 0; e < numE; e++ {
-				logitsData[t*numE+e] = g.ops.Add(logitsData[t*numE+e], biasData[e])
-			}
+		logits, err = g.engine.Add(ctx, logits, g.routingBias)
+		if err != nil {
+			return nil, nil, fmt.Errorf("MoEGate: add routing bias: %w", err)
 		}
 	}
 
@@ -207,7 +202,7 @@ func (g *MoEGate[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 // outputGradient has shape [seqLen, topK] — gradient w.r.t. the normalized gate weights.
 //
 // Returns gradients [dHiddenStates, dGateWeight].
-func (g *MoEGate[T]) Backward(_ context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (g *MoEGate[T]) Backward(ctx context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if outputGradient == nil || g.cachedIndices == nil {
 		return nil, nil
 	}
@@ -287,42 +282,25 @@ func (g *MoEGate[T]) Backward(_ context.Context, _ types.BackwardMode, outputGra
 	// Step 3: Backprop through logits = hiddenStates @ gateWeight.T.
 	// dHiddenStates = dLogits @ gateWeight  [seqLen, modelDim]
 	// dGateWeight = dLogits.T @ hiddenStates [numExperts, modelDim]
-	hsShape := hiddenStates.Shape()
-	modelDim := hsShape[1]
-	gwShape := gateWeight.Shape()
-
-	hsData := hiddenStates.Data()
-	gwData := gateWeight.Data()
-	dHSData := make([]T, seqLen*modelDim)
-	dGWData := make([]T, gwShape[0]*gwShape[1])
-
-	for t := 0; t < seqLen; t++ {
-		for d := 0; d < modelDim; d++ {
-			sum := zero
-			for e := 0; e < numExperts; e++ {
-				sum = g.ops.Add(sum, g.ops.Mul(dLogits[t*numExperts+e], gwData[e*modelDim+d]))
-			}
-			dHSData[t*modelDim+d] = sum
-		}
-	}
-
-	for e := 0; e < numExperts; e++ {
-		for d := 0; d < modelDim; d++ {
-			sum := zero
-			for t := 0; t < seqLen; t++ {
-				sum = g.ops.Add(sum, g.ops.Mul(dLogits[t*numExperts+e], hsData[t*modelDim+d]))
-			}
-			dGWData[e*modelDim+d] = sum
-		}
-	}
-
-	dHS, err := tensor.New[T](hsShape, dHSData)
+	dLogitsTensor, err := tensor.New[T]([]int{seqLen, numExperts}, dLogits)
 	if err != nil {
-		return nil, fmt.Errorf("MoEGate.Backward: create dHiddenStates: %w", err)
+		return nil, fmt.Errorf("MoEGate.Backward: create dLogits tensor: %w", err)
 	}
-	dGW, err := tensor.New[T](gwShape, dGWData)
+
+	// dHiddenStates = dLogits @ gateWeight
+	dHS, err := g.engine.MatMul(ctx, dLogitsTensor, gateWeight)
 	if err != nil {
-		return nil, fmt.Errorf("MoEGate.Backward: create dGateWeight: %w", err)
+		return nil, fmt.Errorf("MoEGate.Backward: matmul dHiddenStates: %w", err)
+	}
+
+	// dGateWeight = dLogits.T @ hiddenStates
+	dLogitsT, err := g.engine.Transpose(ctx, dLogitsTensor, []int{1, 0})
+	if err != nil {
+		return nil, fmt.Errorf("MoEGate.Backward: transpose dLogits: %w", err)
+	}
+	dGW, err := g.engine.MatMul(ctx, dLogitsT, hiddenStates)
+	if err != nil {
+		return nil, fmt.Errorf("MoEGate.Backward: matmul dGateWeight: %w", err)
 	}
 
 	return []*tensor.TensorNumeric[T]{dHS, dGW}, nil
