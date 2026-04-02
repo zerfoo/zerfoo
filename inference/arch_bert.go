@@ -3,9 +3,10 @@ package inference
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/zerfoo/layers/activations"
+	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
@@ -35,6 +36,10 @@ func buildBertGraph(
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	ops := numeric.Float32Ops{}
+
+	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
+		return &graph.Parameter[float32]{Name: name, Value: t}
+	}
 
 	lnEps := float32(1e-12)
 	if cfg.LayerNormEps > 0 {
@@ -84,13 +89,13 @@ func buildBertGraph(
 
 	// Embedding: token + position + token_type, then LayerNorm.
 	embNode := &bertEmbeddingNode[float32]{
-		engine:       proxy,
-		tokenWeight:  tokenEmbdW,
-		posWeight:    posEmbdW,
-		typeWeight:   tokenTypeEmbdW,
-		normWeight:   embNormW,
-		normBias:     embNormB,
-		normEps:      lnEps,
+		engine:      proxy,
+		tokenWeight: tokenEmbdW,
+		posWeight:   posEmbdW,
+		typeWeight:  tokenTypeEmbdW,
+		normWeight:  embNormW,
+		normBias:    embNormB,
+		normEps:     lnEps,
 	}
 	hidden := builder.AddNode(embNode, input)
 
@@ -102,7 +107,7 @@ func buildBertGraph(
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("blk.%d.", i)
 
-		// --- Self-Attention (bidirectional, direct multi-head) ---
+		// --- Self-Attention (bidirectional, using GQA from layers/attention) ---
 		qW, err := lookup(prefix + "attn_q.weight")
 		if err != nil {
 			return nil, nil, err
@@ -138,21 +143,43 @@ func buildBertGraph(
 			return nil, nil, fmt.Errorf("transpose %sattn_output: %w", prefix, err)
 		}
 
-		selfAttn := &bertSelfAttentionNode[float32]{
-			engine:   proxy,
-			numHeads: cfg.NumHeads,
-			headDim:  headDim,
-			qWeight:  qWT,
-			kWeight:  kWT,
-			vWeight:  vWT,
-			oWeight:  oWT,
-			qBias:    tensors[prefix+"attn_q.bias"],
-			kBias:    tensors[prefix+"attn_k.bias"],
-			vBias:    tensors[prefix+"attn_v.bias"],
-			oBias:    tensors[prefix+"attn_output.bias"],
-			layerIdx: i,
+		// Build Q/K/V/O Dense layers with optional bias.
+		var qBias, kBias, vBias, oBias *core.Bias[float32]
+		if b := tensors[prefix+"attn_q.bias"]; b != nil {
+			qBias = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_q.bias", b))
 		}
-		attnOut := builder.AddNode(selfAttn, hidden)
+		if b := tensors[prefix+"attn_k.bias"]; b != nil {
+			kBias = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_k.bias", b))
+		}
+		if b := tensors[prefix+"attn_v.bias"]; b != nil {
+			vBias = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_v.bias", b))
+		}
+		if b := tensors[prefix+"attn_output.bias"]; b != nil {
+			oBias = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_output.bias", b))
+		}
+		wq := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_q.weight", qWT)), qBias,
+		)
+		wk := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_k.weight", kWT)), kBias,
+		)
+		wv := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_v.weight", vWT)), vBias,
+		)
+		wo := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"attn_output.weight", oWT)), oBias,
+		)
+
+		gqa, gqaErr := attention.NewGroupedQueryAttentionFromParams[float32](
+			proxy, ops, cfg.HiddenSize, cfg.NumHeads, cfg.NumHeads,
+			wq, wk, wv, wo, nil, headDim,
+		)
+		if gqaErr != nil {
+			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, gqaErr)
+		}
+		gqa.SetBidirectional(true)
+		gqa.LayerIndex = i
+		attnOut := builder.AddNode(gqa, hidden)
 
 		// --- Post-attention residual + LayerNorm (BERT post-norm) ---
 		attnResNorm := &bertResidualLayerNormNode[float32]{
@@ -163,7 +190,7 @@ func buildBertGraph(
 		}
 		normed := builder.AddNode(attnResNorm, attnOut, hidden)
 
-		// --- FFN: Linear(hidden->inter) + GELU + Linear(inter->hidden) ---
+		// --- FFN: Dense(hidden->inter) + GELU + Dense(inter->hidden) ---
 		ffnUpW, err := lookup(prefix + "ffn_up.weight")
 		if err != nil {
 			return nil, nil, err
@@ -182,13 +209,25 @@ func buildBertGraph(
 			return nil, nil, fmt.Errorf("transpose %sffn_down: %w", prefix, err)
 		}
 
+		var upBias, downBias *core.Bias[float32]
+		if b := tensors[prefix+"ffn_up.bias"]; b != nil {
+			upBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_up.bias", b))
+		}
+		if b := tensors[prefix+"ffn_down.bias"]; b != nil {
+			downBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_down.bias", b))
+		}
+		ffnUp := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"ffn_up.weight", ffnUpWT)), upBias,
+		)
+		ffnDown := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param(prefix+"ffn_down.weight", ffnDownWT)), downBias,
+		)
+		gelu := activations.NewGelu[float32](proxy, ops)
+
 		bertFFN := &bertFFNNode[float32]{
-			engine:     proxy,
-			ops:        ops,
-			upWeight:   ffnUpWT,
-			upBias:     tensors[prefix+"ffn_up.bias"],
-			downWeight: ffnDownWT,
-			downBias:   tensors[prefix+"ffn_down.bias"],
+			up:   ffnUp,
+			gelu: gelu,
+			down: ffnDown,
 		}
 		ffnOut := builder.AddNode(bertFFN, normed)
 
@@ -203,35 +242,44 @@ func buildBertGraph(
 	}
 
 	// --- Pooler: extract CLS token, linear projection + tanh ---
-	poolerW := tensors["cls_pooler.weight"]
-	poolerB := tensors["cls_pooler.bias"]
-	if poolerW != nil {
+	var poolerDense *core.Dense[float32]
+	if poolerW := tensors["cls_pooler.weight"]; poolerW != nil {
 		poolerWT, tErr := engine.Transpose(context.Background(), poolerW, []int{1, 0})
 		if tErr != nil {
 			return nil, nil, fmt.Errorf("transpose cls_pooler.weight: %w", tErr)
 		}
-		poolerW = poolerWT
+		var poolerBias *core.Bias[float32]
+		if b := tensors["cls_pooler.bias"]; b != nil {
+			poolerBias = core.NewBiasFromParam(proxy, ops, param("cls_pooler.bias", b))
+		}
+		poolerDense = core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("cls_pooler.weight", poolerWT)), poolerBias,
+		)
 	}
 	pooler := &bertPoolerNode[float32]{
 		engine: proxy,
-		weight: poolerW,
-		bias:   poolerB,
+		dense:  poolerDense,
+		tanh:   activations.NewTanh[float32](proxy, ops),
 	}
 	pooled := builder.AddNode(pooler, hidden)
 
 	// --- Classifier: linear projection to numLabels ---
-	var clsWT *tensor.TensorNumeric[float32]
+	var clsDense *core.Dense[float32]
 	if clsW, ok := tensors["cls.weight"]; ok {
-		var tErr error
-		clsWT, tErr = engine.Transpose(context.Background(), clsW, []int{1, 0})
+		clsWT, tErr := engine.Transpose(context.Background(), clsW, []int{1, 0})
 		if tErr != nil {
 			return nil, nil, fmt.Errorf("transpose cls.weight: %w", tErr)
 		}
+		var clsBias *core.Bias[float32]
+		if b := tensors["cls.bias"]; b != nil {
+			clsBias = core.NewBiasFromParam(proxy, ops, param("cls.bias", b))
+		}
+		clsDense = core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, param("cls.weight", clsWT)), clsBias,
+		)
 	}
 	classifier := &bertClassifierNode[float32]{
-		engine: proxy,
-		weight: clsWT,
-		bias:   tensors["cls.bias"],
+		dense: clsDense,
 	}
 	output := builder.AddNode(classifier, pooled)
 
@@ -261,9 +309,9 @@ type bertEmbeddingNode[T tensor.Numeric] struct {
 	normEps     float32
 }
 
-func (e *bertEmbeddingNode[T]) OpType() string                  { return "BertEmbedding" }
-func (e *bertEmbeddingNode[T]) Attributes() map[string]any       { return nil }
-func (e *bertEmbeddingNode[T]) OutputShape() []int               { return nil }
+func (e *bertEmbeddingNode[T]) OpType() string                   { return "BertEmbedding" }
+func (e *bertEmbeddingNode[T]) Attributes() map[string]any        { return nil }
+func (e *bertEmbeddingNode[T]) OutputShape() []int                { return nil }
 func (e *bertEmbeddingNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (e *bertEmbeddingNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
@@ -305,7 +353,7 @@ func (e *bertEmbeddingNode[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 		return nil, err
 	}
 
-	// Apply LayerNorm.
+	// Apply LayerNorm from layers/normalization.
 	ln := normalization.NewLayerNormalizationFromParams[T](
 		e.engine,
 		T(e.normEps),
@@ -320,27 +368,9 @@ func (e *bertEmbeddingNode[T]) Backward(_ context.Context, _ types.BackwardMode,
 	return nil, nil
 }
 
-// bertBiasAddNode adds a bias vector to the last dimension of the input.
-type bertBiasAddNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	bias   *tensor.TensorNumeric[T]
-}
-
-func (b *bertBiasAddNode[T]) OpType() string                  { return "BertBiasAdd" }
-func (b *bertBiasAddNode[T]) Attributes() map[string]any       { return nil }
-func (b *bertBiasAddNode[T]) OutputShape() []int               { return nil }
-func (b *bertBiasAddNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-
-func (b *bertBiasAddNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	return b.engine.Add(ctx, inputs[0], b.bias, nil)
-}
-
-func (b *bertBiasAddNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
 // bertResidualLayerNormNode computes: LayerNorm(x + residual) with weight and bias.
-// This implements BERT's post-norm pattern.
+// This implements BERT's post-norm pattern, composing engine.Add with
+// LayerNormalization from layers/normalization.
 type bertResidualLayerNormNode[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 	weight *tensor.TensorNumeric[T] // LayerNorm gamma
@@ -348,9 +378,9 @@ type bertResidualLayerNormNode[T tensor.Numeric] struct {
 	eps    float32
 }
 
-func (n *bertResidualLayerNormNode[T]) OpType() string                  { return "BertResidualLayerNorm" }
-func (n *bertResidualLayerNormNode[T]) Attributes() map[string]any       { return nil }
-func (n *bertResidualLayerNormNode[T]) OutputShape() []int               { return nil }
+func (n *bertResidualLayerNormNode[T]) OpType() string                   { return "BertResidualLayerNorm" }
+func (n *bertResidualLayerNormNode[T]) Attributes() map[string]any        { return nil }
+func (n *bertResidualLayerNormNode[T]) OutputShape() []int                { return nil }
 func (n *bertResidualLayerNormNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (n *bertResidualLayerNormNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -364,7 +394,7 @@ func (n *bertResidualLayerNormNode[T]) Forward(ctx context.Context, inputs ...*t
 		return nil, err
 	}
 
-	// LayerNorm
+	// LayerNorm from layers/normalization.
 	ln := normalization.NewLayerNormalizationFromParams[T](
 		n.engine,
 		T(n.eps),
@@ -379,54 +409,33 @@ func (n *bertResidualLayerNormNode[T]) Backward(_ context.Context, _ types.Backw
 	return nil, nil
 }
 
-// bertFFNNode computes the BERT FFN: Linear + GELU + Linear.
+// bertFFNNode computes the BERT FFN by composing Dense + GELU + Dense from layers/.
 // BERT uses GELU activation (not SwiGLU) and has bias on both linear layers.
 type bertFFNNode[T tensor.Float] struct {
-	engine     compute.Engine[T]
-	ops        numeric.Arithmetic[T]
-	upWeight   *tensor.TensorNumeric[T] // [hiddenDim, interDim] (transposed)
-	upBias     *tensor.TensorNumeric[T] // [interDim], may be nil
-	downWeight *tensor.TensorNumeric[T] // [interDim, hiddenDim] (transposed)
-	downBias   *tensor.TensorNumeric[T] // [hiddenDim], may be nil
+	up   *core.Dense[T]
+	gelu *activations.Gelu[T]
+	down *core.Dense[T]
 }
 
-func (f *bertFFNNode[T]) OpType() string                  { return "BertFFN" }
-func (f *bertFFNNode[T]) Attributes() map[string]any       { return nil }
-func (f *bertFFNNode[T]) OutputShape() []int               { return nil }
-func (f *bertFFNNode[T]) Parameters() []*graph.Parameter[T] { return nil }
+func (f *bertFFNNode[T]) OpType() string                    { return "BertFFN" }
+func (f *bertFFNNode[T]) Attributes() map[string]any         { return nil }
+func (f *bertFFNNode[T]) OutputShape() []int                 { return nil }
+func (f *bertFFNNode[T]) Parameters() []*graph.Parameter[T]  { return nil }
 
 func (f *bertFFNNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	x := inputs[0]
-
-	// Up projection: [batch, seqLen, hidden] @ [hidden, inter] = [batch, seqLen, inter]
-	up, err := f.engine.MatMul(ctx, x, f.upWeight, nil)
+	up, err := f.up.Forward(ctx, inputs[0])
 	if err != nil {
 		return nil, fmt.Errorf("BertFFN up: %w", err)
 	}
-	if f.upBias != nil {
-		up, err = f.engine.Add(ctx, up, f.upBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertFFN up bias: %w", err)
-		}
-	}
 
-	// GELU activation.
-	gelu := activations.NewGelu[T](f.engine, f.ops)
-	activated, err := gelu.Forward(ctx, up)
+	activated, err := f.gelu.Forward(ctx, up)
 	if err != nil {
 		return nil, fmt.Errorf("BertFFN gelu: %w", err)
 	}
 
-	// Down projection: [batch, seqLen, inter] @ [inter, hidden] = [batch, seqLen, hidden]
-	down, err := f.engine.MatMul(ctx, activated, f.downWeight, nil)
+	down, err := f.down.Forward(ctx, activated)
 	if err != nil {
 		return nil, fmt.Errorf("BertFFN down: %w", err)
-	}
-	if f.downBias != nil {
-		down, err = f.engine.Add(ctx, down, f.downBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertFFN down bias: %w", err)
-		}
 	}
 
 	return down, nil
@@ -436,159 +445,12 @@ func (f *bertFFNNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *te
 	return nil, nil
 }
 
-// bertSelfAttentionNode computes bidirectional multi-head self-attention
-// directly, without RoPE or KV-cache. This replaces the GQA+RoPE hack that
-// caused float precision drift over multiple layers.
-type bertSelfAttentionNode[T tensor.Float] struct {
-	engine   compute.Engine[T]
-	numHeads int
-	headDim  int
-	qWeight  *tensor.TensorNumeric[T] // transposed [hidden, hidden]
-	kWeight  *tensor.TensorNumeric[T]
-	vWeight  *tensor.TensorNumeric[T]
-	oWeight  *tensor.TensorNumeric[T]
-	qBias    *tensor.TensorNumeric[T] // [hidden], may be nil
-	kBias    *tensor.TensorNumeric[T]
-	vBias    *tensor.TensorNumeric[T]
-	oBias    *tensor.TensorNumeric[T]
-	layerIdx int
-}
-
-func (a *bertSelfAttentionNode[T]) OpType() string                    { return "BertSelfAttention" }
-func (a *bertSelfAttentionNode[T]) Attributes() map[string]any         { return nil }
-func (a *bertSelfAttentionNode[T]) OutputShape() []int                 { return nil }
-func (a *bertSelfAttentionNode[T]) Parameters() []*graph.Parameter[T]  { return nil }
-
-func (a *bertSelfAttentionNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	x := inputs[0] // [batch, seqLen, hidden]
-	shape := x.Shape()
-	batch := shape[0]
-	seqLen := shape[1]
-	hidden := shape[2]
-
-	// Q/K/V projections: [batch, seqLen, hidden] @ [hidden, hidden]
-	q, err := a.engine.MatMul(ctx, x, a.qWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("BertSelfAttention Q matmul: %w", err)
-	}
-	if a.qBias != nil {
-		q, err = a.engine.Add(ctx, q, a.qBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertSelfAttention Q bias: %w", err)
-		}
-	}
-
-	k, err := a.engine.MatMul(ctx, x, a.kWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("BertSelfAttention K matmul: %w", err)
-	}
-	if a.kBias != nil {
-		k, err = a.engine.Add(ctx, k, a.kBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertSelfAttention K bias: %w", err)
-		}
-	}
-
-	v, err := a.engine.MatMul(ctx, x, a.vWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("BertSelfAttention V matmul: %w", err)
-	}
-	if a.vBias != nil {
-		v, err = a.engine.Add(ctx, v, a.vBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertSelfAttention V bias: %w", err)
-		}
-	}
-
-	// Manual multi-head attention on CPU.
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-	scale := T(1.0 / math.Sqrt(float64(a.headDim)))
-	numHeads := a.numHeads
-	headDim := a.headDim
-
-	output := make([]T, batch*seqLen*hidden)
-
-	for b := 0; b < batch; b++ {
-		bOff := b * seqLen * hidden
-		for h := 0; h < numHeads; h++ {
-			// Compute scores = Q @ K^T / sqrt(headDim) for this head.
-			scores := make([]T, seqLen*seqLen)
-			for i := 0; i < seqLen; i++ {
-				for j := 0; j < seqLen; j++ {
-					var dot T
-					for d := 0; d < headDim; d++ {
-						qi := qData[bOff+i*hidden+h*headDim+d]
-						kj := kData[bOff+j*hidden+h*headDim+d]
-						dot += qi * kj
-					}
-					scores[i*seqLen+j] = dot * scale
-				}
-			}
-
-			// Softmax per row (no causal mask).
-			for i := 0; i < seqLen; i++ {
-				// Find max for numerical stability.
-				maxVal := scores[i*seqLen]
-				for j := 1; j < seqLen; j++ {
-					if scores[i*seqLen+j] > maxVal {
-						maxVal = scores[i*seqLen+j]
-					}
-				}
-				var sumExp T
-				for j := 0; j < seqLen; j++ {
-					scores[i*seqLen+j] = T(math.Exp(float64(scores[i*seqLen+j] - maxVal)))
-					sumExp += scores[i*seqLen+j]
-				}
-				for j := 0; j < seqLen; j++ {
-					scores[i*seqLen+j] /= sumExp
-				}
-			}
-
-			// Weighted sum: output = scores @ V for this head.
-			for i := 0; i < seqLen; i++ {
-				for d := 0; d < headDim; d++ {
-					var sum T
-					for j := 0; j < seqLen; j++ {
-						sum += scores[i*seqLen+j] * vData[bOff+j*hidden+h*headDim+d]
-					}
-					output[bOff+i*hidden+h*headDim+d] = sum
-				}
-			}
-		}
-	}
-
-	attnOut, err := tensor.New[T]([]int{batch, seqLen, hidden}, output)
-	if err != nil {
-		return nil, fmt.Errorf("BertSelfAttention output tensor: %w", err)
-	}
-
-	// Output projection: [batch, seqLen, hidden] @ [hidden, hidden]
-	result, err := a.engine.MatMul(ctx, attnOut, a.oWeight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("BertSelfAttention O matmul: %w", err)
-	}
-	if a.oBias != nil {
-		result, err = a.engine.Add(ctx, result, a.oBias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertSelfAttention O bias: %w", err)
-		}
-	}
-
-	return result, nil
-}
-
-func (a *bertSelfAttentionNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// bertPoolerNode extracts the CLS token (first position), applies a linear
-// projection and tanh activation.
+// bertPoolerNode extracts the CLS token (first position), applies a Dense
+// projection and Tanh activation from layers/.
 type bertPoolerNode[T tensor.Float] struct {
 	engine compute.Engine[T]
-	weight *tensor.TensorNumeric[T] // [hidden, hidden] transposed, may be nil
-	bias   *tensor.TensorNumeric[T] // [hidden], may be nil
+	dense  *core.Dense[T]                 // [hidden, hidden], may be nil
+	tanh   *activations.BaseActivation[T] // Tanh activation
 }
 
 func (p *bertPoolerNode[T]) OpType() string                    { return "BertPooler" }
@@ -614,40 +476,27 @@ func (p *bertPoolerNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 	}
 
 	// If no pooler weight, just return CLS (fallback for models without pooler).
-	if p.weight == nil {
+	if p.dense == nil {
 		return cls, nil
 	}
 
-	// Linear projection: [batch, hidden] @ [hidden, hidden]
-	projected, err := p.engine.MatMul(ctx, cls, p.weight, nil)
+	// Dense projection: [batch, hidden] @ [hidden, hidden] + bias
+	projected, err := p.dense.Forward(ctx, cls)
 	if err != nil {
-		return nil, fmt.Errorf("BertPooler matmul: %w", err)
-	}
-	if p.bias != nil {
-		projected, err = p.engine.Add(ctx, projected, p.bias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertPooler bias: %w", err)
-		}
+		return nil, fmt.Errorf("BertPooler dense: %w", err)
 	}
 
-	// Tanh activation.
-	projData := projected.Data()
-	tanhData := make([]T, len(projData))
-	for i, v := range projData {
-		tanhData[i] = T(math.Tanh(float64(v)))
-	}
-	return tensor.New[T](projected.Shape(), tanhData)
+	// Tanh activation via layers/activations.
+	return p.tanh.Forward(ctx, projected)
 }
 
 func (p *bertPoolerNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 
-// bertClassifierNode applies a linear projection to produce classification logits.
+// bertClassifierNode applies a Dense projection to produce classification logits.
 type bertClassifierNode[T tensor.Float] struct {
-	engine compute.Engine[T]
-	weight *tensor.TensorNumeric[T] // [hidden, numLabels] transposed, may be nil
-	bias   *tensor.TensorNumeric[T] // [numLabels], may be nil
+	dense *core.Dense[T] // [hidden, numLabels], may be nil
 }
 
 func (c *bertClassifierNode[T]) OpType() string                    { return "BertClassifier" }
@@ -658,22 +507,11 @@ func (c *bertClassifierNode[T]) Parameters() []*graph.Parameter[T]  { return nil
 func (c *bertClassifierNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	x := inputs[0] // [batch, hidden]
 
-	if c.weight == nil {
+	if c.dense == nil {
 		return x, nil
 	}
 
-	// Linear: [batch, hidden] @ [hidden, numLabels]
-	logits, err := c.engine.MatMul(ctx, x, c.weight, nil)
-	if err != nil {
-		return nil, fmt.Errorf("BertClassifier matmul: %w", err)
-	}
-	if c.bias != nil {
-		logits, err = c.engine.Add(ctx, logits, c.bias, nil)
-		if err != nil {
-			return nil, fmt.Errorf("BertClassifier bias: %w", err)
-		}
-	}
-	return logits, nil
+	return c.dense.Forward(ctx, x)
 }
 
 func (c *bertClassifierNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
