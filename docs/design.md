@@ -280,6 +280,46 @@ Three type constraints govern the generics:
 - `tensor.Float` -- standard Go floats only: float32, float64
 - `tensor.Addable` -- types supporting native Go operators (+, -, *); excludes custom minifloats
 
+### 2.5 Composition Principle
+
+Complex components must be built by composing smaller components. The `layers/`
+package provides 56+ neural network operations. The `compute.Engine[T]` interface
+provides type-safe tensor arithmetic. Models should compose these building blocks
+rather than reimplementing low-level math.
+
+**Enforcement status (2026-04-02 audit):**
+
+| Path | Composes layers/ | Composes Engine[T] | Status |
+|------|------------------|--------------------|--------|
+| inference/ (arch_common.go) | 70 imports | Yes | Exemplar |
+| inference/ (6 arch builders) | Partial (31 custom nodes) | Partial | Remediation planned (E61) |
+| timeseries/ | No (shared helpers via E52) | Partial (E50/E53) | Remediation in progress |
+| crossasset/ | No | Partial (E60 GPU path) | Remediation planned |
+| tabular/ | No | No | Remediation planned (E62) |
+| gnn/ | No | No | Remediation planned (E62) |
+| modeldsl/ | No | No | Remediation planned (E62) |
+
+The inference path via `arch_common.go` is the exemplar: it composes
+`layers/attention.GroupedQueryAttention`, `layers/normalization.RMSNorm`,
+`layers/embeddings.RotaryPositionalEmbedding`, and `layers/core.Linear` into a
+computation graph that enables CUDA graph capture, fusion passes, and megakernel
+codegen.
+
+The training backends predate the layers/ package and were never fully migrated.
+E50/E52/E53 extracted shared helpers and moved some operations to engine ops, but
+the fundamental pattern of raw-slice math persists. See ADR-082 for the
+remediation strategy.
+
+**Justified exceptions:** Fused CUDA kernels (GEMV+dequant, RoPE+QKNorm,
+softmax+V), ARM NEON SIMD assembly, and separated quantized GPU layouts are
+performance-justified reimplementations that composition cannot achieve.
+See docs/adr/027-composition-prerequisite.md for the full list.
+
+**Known god objects (ztensor):** gpu_engine.go (4,318 lines, 94 methods) and
+KernelRunner interface (71 methods) are oversized. 16 quantized matmul methods
+are copy-paste variants differing only in storage type and block size.
+Remediation planned in E63 (consolidation) and E64 (file decomposition).
+
 Custom minifloats (float8, float16, bfloat16) require `numeric.Arithmetic[T]`
 for all operations since Go operators do not work on defined types.
 
