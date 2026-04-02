@@ -6,9 +6,11 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -209,14 +211,18 @@ func buildFalconGraph(
 		}
 		lnB, _ := tensors[prefix+"input_layernorm.bias"]
 
-		// falconLayerNormNode caches the pre-norm input (residual) so that
-		// falconParallelAddNode can retrieve it without an extra graph input.
-		inputNorm := &falconLayerNormNode[float32]{
-			engine: proxy,
-			weight: lnW,
-			bias:   lnB,
-			eps:    layerNormEps,
+		lnBParam, err := falconBetaParam(param, prefix+"input_layernorm.bias", lnB, lnW)
+		if err != nil {
+			return nil, nil, err
 		}
+		ln := normalization.NewLayerNormalizationFromParams[float32](
+			proxy, ops.FromFloat64(float64(layerNormEps)),
+			param(prefix+"input_layernorm.weight", lnW),
+			lnBParam,
+		)
+		// Wrap in residual-caching node so falconParallelAddNode can
+		// retrieve the pre-norm input without an extra graph edge.
+		inputNorm := &falconResidualLayerNorm[float32]{norm: ln}
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA / MQA) ---
@@ -316,13 +322,18 @@ func buildFalconGraph(
 		upB, _ := tensors[prefix+"mlp.dense_h_to_4h.bias"]
 		downB, _ := tensors[prefix+"mlp.dense_4h_to_h.bias"]
 
-		ffnNode := &falconFFNNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			upW:    upWT,
-			upB:    upB,
-			downW:  downWT,
-			downB:  downB,
+		var upBias, downBias *core.Bias[float32]
+		if upB != nil {
+			upBias = core.NewBiasFromParam(proxy, ops, param(prefix+"mlp.dense_h_to_4h.bias", upB))
+		}
+		if downB != nil {
+			downBias = core.NewBiasFromParam(proxy, ops, param(prefix+"mlp.dense_4h_to_h.bias", downB))
+		}
+
+		ffnNode := &falconGeluFFN[float32]{
+			up:   core.NewDenseFromParams(core.NewLinearFromParam(proxy, param(prefix+"mlp.dense_h_to_4h.weight", upWT)), upBias),
+			gelu: activations.NewGelu[float32](proxy, ops),
+			down: core.NewDenseFromParams(core.NewLinearFromParam(proxy, param(prefix+"mlp.dense_4h_to_h.weight", downWT)), downBias),
 		}
 		ffnOut := builder.AddNode(ffnNode, normed)
 
@@ -336,12 +347,15 @@ func buildFalconGraph(
 	}
 
 	// --- Final LayerNorm ---
-	finalNorm := &falconLayerNormNode[float32]{
-		engine: proxy,
-		weight: finalNormW,
-		bias:   finalNormB,
-		eps:    layerNormEps,
+	finalBetaParam, err := falconBetaParam(param, "model.norm.bias", finalNormB, finalNormW)
+	if err != nil {
+		return nil, nil, err
 	}
+	finalNorm := normalization.NewLayerNormalizationFromParams[float32](
+		proxy, ops.FromFloat64(float64(layerNormEps)),
+		param("model.norm.weight", finalNormW),
+		finalBetaParam,
+	)
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
@@ -368,231 +382,94 @@ func buildFalconGraph(
 	return g, embedWeight, nil
 }
 
-// falconLayerNormNode applies Layer Normalization with pre-loaded gamma and beta.
-// It also caches the pre-norm input (the residual) so that falconParallelAddNode
-// can retrieve it without re-introducing it as a graph input.
-//
-// Implements: (x - mean) / sqrt(var + eps) * gamma [+ beta]
-type falconLayerNormNode[T tensor.Numeric] struct {
-	engine   compute.Engine[T]
-	weight   *tensor.TensorNumeric[T] // gamma (scale)
-	bias     *tensor.TensorNumeric[T] // beta (shift), may be nil
-	eps      float32
-	residual *tensor.TensorNumeric[T] // pre-norm input, cached during Forward
-}
-
-func (n *falconLayerNormNode[T]) OpType() string { return "FalconLayerNorm" }
-func (n *falconLayerNormNode[T]) Attributes() map[string]any {
-	return map[string]any{"eps": n.eps}
-}
-func (n *falconLayerNormNode[T]) OutputShape() []int { return nil }
-func (n *falconLayerNormNode[T]) Parameters() []*graph.Parameter[T] {
-	params := []*graph.Parameter[T]{{Name: "weight", Value: n.weight}}
-	if n.bias != nil {
-		params = append(params, &graph.Parameter[T]{Name: "bias", Value: n.bias})
+// falconBetaParam returns a beta (bias) parameter for LayerNorm. If the model
+// provides a bias tensor, it wraps it in a parameter. Otherwise it creates a
+// zero-filled tensor matching gamma's shape, since
+// normalization.LayerNormalization always applies beta.
+func falconBetaParam(
+	param func(string, *tensor.TensorNumeric[float32]) *graph.Parameter[float32],
+	name string,
+	bias *tensor.TensorNumeric[float32],
+	gamma *tensor.TensorNumeric[float32],
+) (*graph.Parameter[float32], error) {
+	if bias != nil {
+		return param(name, bias), nil
 	}
-	return params
+	zeroBeta, err := tensor.New[float32](gamma.Shape(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create zero beta for %s: %w", name, err)
+	}
+	return param(name, zeroBeta), nil
 }
 
-func (n *falconLayerNormNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+// falconResidualLayerNorm wraps normalization.LayerNormalization and caches the
+// pre-norm input (the residual) so that falconParallelAddNode can retrieve it
+// without an extra graph edge. This is required by Falcon's parallel attention
+// pattern: hidden = residual + attn(norm(x)) + ffn(norm(x)).
+type falconResidualLayerNorm[T tensor.Numeric] struct {
+	norm     *normalization.LayerNormalization[T]
+	residual *tensor.TensorNumeric[T]
+}
+
+func (n *falconResidualLayerNorm[T]) OpType() string              { return "FalconLayerNorm" }
+func (n *falconResidualLayerNorm[T]) Attributes() map[string]any  { return n.norm.Attributes() }
+func (n *falconResidualLayerNorm[T]) OutputShape() []int           { return n.norm.OutputShape() }
+func (n *falconResidualLayerNorm[T]) Parameters() []*graph.Parameter[T] { return n.norm.Parameters() }
+
+func (n *falconResidualLayerNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FalconLayerNorm: expected 1 input, got %d", len(inputs))
 	}
-	x := inputs[0]
-	// Cache the pre-norm input for use by falconParallelAddNode.
-	n.residual = x
-
-	ops := n.engine.Ops()
-	eps := ops.FromFloat64(float64(n.eps))
-
-	shape := x.Shape()
-	lastDim := len(shape) - 1
-
-	// Mean along the last dimension.
-	sum, err := n.engine.ReduceSum(ctx, x, lastDim, true)
-	if err != nil {
-		return nil, err
-	}
-	featureSize := ops.FromFloat64(float64(shape[lastDim]))
-	mean, err := n.engine.DivScalar(ctx, sum, featureSize)
-	if err != nil {
-		return nil, err
-	}
-
-	// Variance = mean((x - mean)^2).
-	diff, err := n.engine.Sub(ctx, x, mean)
-	if err != nil {
-		return nil, err
-	}
-	diff2, err := n.engine.Mul(ctx, diff, diff)
-	if err != nil {
-		return nil, err
-	}
-	varSum, err := n.engine.ReduceSum(ctx, diff2, lastDim, true)
-	if err != nil {
-		return nil, err
-	}
-	variance, err := n.engine.DivScalar(ctx, varSum, featureSize)
-	if err != nil {
-		return nil, err
-	}
-
-	// Normalize: (x - mean) / sqrt(var + eps).
-	varPlusEps, err := n.engine.AddScalar(ctx, variance, eps)
-	if err != nil {
-		return nil, err
-	}
-	stdDev, err := n.engine.Sqrt(ctx, varPlusEps)
-	if err != nil {
-		return nil, err
-	}
-	normed, err := n.engine.Div(ctx, diff, stdDev)
-	if err != nil {
-		return nil, err
-	}
-
-	// Scale by gamma.
-	scaled, err := n.engine.Mul(ctx, normed, n.weight)
-	if err != nil {
-		return nil, err
-	}
-
-	// Shift by beta if present.
-	if n.bias != nil {
-		return n.engine.Add(ctx, scaled, n.bias)
-	}
-	return scaled, nil
+	n.residual = inputs[0]
+	return n.norm.Forward(ctx, inputs...)
 }
 
-func (n *falconLayerNormNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("FalconLayerNorm: backward not implemented")
+func (n *falconResidualLayerNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	return n.norm.Backward(ctx, mode, dOut, inputs...)
 }
 
 // Residual returns the pre-norm input cached during the most recent Forward call.
-func (n *falconLayerNormNode[T]) Residual() *tensor.TensorNumeric[T] {
+func (n *falconResidualLayerNorm[T]) Residual() *tensor.TensorNumeric[T] {
 	return n.residual
 }
 
-// falconFFNNode implements Falcon's 2-layer GELU FFN:
+// falconGeluFFN composes Falcon's 2-layer GELU FFN from layers/:
 //
 //	ffn(x) = down(gelu(up(x)))
 //
 // Unlike the SwiGLU FFN used in Llama, there is no gate projection.
-type falconFFNNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	ops    numeric.Arithmetic[T]
-	upW    *tensor.TensorNumeric[T]
-	upB    *tensor.TensorNumeric[T] // optional
-	downW  *tensor.TensorNumeric[T]
-	downB  *tensor.TensorNumeric[T] // optional
+type falconGeluFFN[T tensor.Float] struct {
+	up   *core.Dense[T]
+	gelu *activations.Gelu[T]
+	down *core.Dense[T]
 }
 
-func (n *falconFFNNode[T]) OpType() string         { return "FalconFFN" }
-func (n *falconFFNNode[T]) Attributes() map[string]any { return nil }
-func (n *falconFFNNode[T]) OutputShape() []int         { return nil }
-func (n *falconFFNNode[T]) Parameters() []*graph.Parameter[T] {
-	params := []*graph.Parameter[T]{
-		{Name: "up_proj", Value: n.upW},
-		{Name: "down_proj", Value: n.downW},
-	}
-	if n.upB != nil {
-		params = append(params, &graph.Parameter[T]{Name: "up_bias", Value: n.upB})
-	}
-	if n.downB != nil {
-		params = append(params, &graph.Parameter[T]{Name: "down_bias", Value: n.downB})
-	}
+func (n *falconGeluFFN[T]) OpType() string             { return "FalconFFN" }
+func (n *falconGeluFFN[T]) Attributes() map[string]any { return nil }
+func (n *falconGeluFFN[T]) OutputShape() []int         { return nil }
+func (n *falconGeluFFN[T]) Parameters() []*graph.Parameter[T] {
+	params := n.up.Parameters()
+	params = append(params, n.down.Parameters()...)
 	return params
 }
 
-func (n *falconFFNNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (n *falconGeluFFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("FalconFFN: expected 1 input, got %d", len(inputs))
 	}
-	x := inputs[0]
-
-	// Up projection: [batch, seq, hidden] x [hidden, 4h] -> [batch, seq, 4h]
-	up, err := n.engine.MatMul(ctx, x, n.upW)
+	up, err := n.up.Forward(ctx, inputs[0])
 	if err != nil {
 		return nil, err
 	}
-	if n.upB != nil {
-		up, err = n.engine.Add(ctx, up, n.upB)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// GELU activation.
-	activated, err := falconGELU(ctx, n.engine, n.ops, up)
+	activated, err := n.gelu.Forward(ctx, up)
 	if err != nil {
 		return nil, err
 	}
-
-	// Down projection: [batch, seq, 4h] x [4h, hidden] -> [batch, seq, hidden]
-	down, err := n.engine.MatMul(ctx, activated, n.downW)
-	if err != nil {
-		return nil, err
-	}
-	if n.downB != nil {
-		down, err = n.engine.Add(ctx, down, n.downB)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return down, nil
+	return n.down.Forward(ctx, activated)
 }
 
-func (n *falconFFNNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (n *falconGeluFFN[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, fmt.Errorf("FalconFFN: backward not implemented")
-}
-
-// falconGELU computes the GELU activation using engine primitives.
-// GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-func falconGELU[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// x^2
-	x2, err := engine.Mul(ctx, x, x)
-	if err != nil {
-		return nil, err
-	}
-	// x^3
-	x3, err := engine.Mul(ctx, x2, x)
-	if err != nil {
-		return nil, err
-	}
-	// 0.044715 * x^3
-	term1, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
-	if err != nil {
-		return nil, err
-	}
-	// x + 0.044715 * x^3
-	term2, err := engine.Add(ctx, x, term1)
-	if err != nil {
-		return nil, err
-	}
-	// sqrt(2/pi) * (x + 0.044715 * x^3)
-	const sqrtTwoPi = 0.7978845608028654 // math.Sqrt(2 / math.Pi)
-	term3, err := engine.MulScalar(ctx, term2, ops.FromFloat64(sqrtTwoPi))
-	if err != nil {
-		return nil, err
-	}
-	// tanh(...)
-	tanhResult, err := engine.Tanh(ctx, term3)
-	if err != nil {
-		return nil, err
-	}
-	// 1 + tanh(...)
-	term4, err := engine.AddScalar(ctx, tanhResult, ops.One())
-	if err != nil {
-		return nil, err
-	}
-	// x * (1 + tanh(...))
-	term5, err := engine.Mul(ctx, x, term4)
-	if err != nil {
-		return nil, err
-	}
-	// 0.5 * x * (1 + tanh(...))
-	return engine.MulScalar(ctx, term5, ops.FromFloat64(0.5))
 }
 
 // falconParallelAddNode implements Falcon's parallel residual update:
@@ -603,7 +480,7 @@ func falconGELU[T tensor.Numeric](ctx context.Context, engine compute.Engine[T],
 // its input (the pre-norm hidden state) during Forward.
 type falconParallelAddNode[T tensor.Numeric] struct {
 	engine compute.Engine[T]
-	norm   *falconLayerNormNode[T] // supplies the cached residual
+	norm   *falconResidualLayerNorm[T] // supplies the cached residual
 }
 
 func (n *falconParallelAddNode[T]) OpType() string                  { return "FalconParallelAdd" }
