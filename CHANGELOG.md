@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0](https://github.com/zerfoo/zerfoo/compare/v1.39.0...v1.40.0) (2026-04-02)
+
+
+### Features
+
+* **crossasset:** full backprop through all layers in CPU Train() ([#315](https://github.com/zerfoo/zerfoo/issues/315)) ([5f5e53b](https://github.com/zerfoo/zerfoo/commit/5f5e53bb6acc360272297d87d0d86cde97b454fb))
+* **dsp:** add Cooley-Tukey radix-2 FFT in internal/dsp ([85aa180](https://github.com/zerfoo/zerfoo/commit/85aa1804f95b3daeaf1ec010a83ced67f777546b))
+* remove direct gonum dependency (E59) ([2715a88](https://github.com/zerfoo/zerfoo/commit/2715a888834b8c90205f4d93984e50d76eec4442))
+
+
+### Bug Fixes
+
+* **crossasset:** prevent OOM by reusing gradient tensors ([#314](https://github.com/zerfoo/zerfoo/issues/314)) ([35b2771](https://github.com/zerfoo/zerfoo/commit/35b2771611fe94ebf9f8fbd85c4e7d29ac4adabe))
+
 ## [1.39.0](https://github.com/zerfoo/zerfoo/compare/v1.38.5...v1.39.0) (2026-04-02)
 
 
