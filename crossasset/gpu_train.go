@@ -803,12 +803,8 @@ func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
 			epochLoss += batchLoss / float64(bs*ns)
 			nBatches++
 
-			// Zero grads.
-			grads, err = allocGrads(params)
-			if err != nil {
-				return nil, err
-			}
-			allGrads = collectParams(grads)
+			// Zero grads in-place (reuse existing tensors to prevent OOM).
+			zeroGrads(grads)
 
 			// Backward pass.
 			if err := gpuBackward(ctx, engine, params, grads, cache, dLogits, cfg); err != nil {

@@ -223,6 +223,7 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 	}
 
 	ns := m.config.NSources
+	dm := m.config.DModel
 	lr := tc.LearningRate
 
 	for epoch := 0; epoch < tc.Epochs; epoch++ {
@@ -235,61 +236,147 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 			}
 			batchSize := batchEnd - batchStart
 
-			// Accumulate gradients for head weights via numerical-ish approach:
-			// compute softmax cross-entropy gradient at the output and backprop
-			// through the head layer.
+			// Zero all gradients.
 			dHeadW := make([]float64, len(m.headW))
 			dHeadB := make([]float64, len(m.headB))
+			dLayers := make([]layer, len(m.layers))
+			for li := range dLayers {
+				dLayers[li] = zeroLayer(dm)
+			}
+			dInputW := make([][]float64, ns)
+			dInputB := make([][]float64, ns)
+			for s := range ns {
+				dInputW[s] = make([]float64, len(m.inputW[s]))
+				dInputB[s] = make([]float64, len(m.inputB[s]))
+			}
 
 			for bi := 0; bi < batchSize; bi++ {
 				idx := perm[batchStart+bi]
 				sample := data[idx]
 				sampleLabels := labels[idx]
 
-				// Forward pass.
-				outputs, err := m.Forward(sample)
-				if err != nil {
-					return fmt.Errorf("crossasset: train: %w", err)
+				// Forward with caching: input projection.
+				x := make([][]float64, ns)
+				for s := range ns {
+					x[s] = make([]float64, dm)
+					matVecMul(x[s], m.inputW[s], sample[s], m.config.FeaturesPerSource, dm)
+					vecAdd(x[s], m.inputB[s])
+				}
+				projected := cloneSlices(x)
+
+				// Forward through layers with caches.
+				layerCaches := make([]*cpuLayerCache, len(m.layers))
+				for li := range m.layers {
+					var cache *cpuLayerCache
+					x, cache = m.forwardLayerCached(x, m.layers[li])
+					layerCaches[li] = cache
 				}
 
-				// For each source, compute loss gradient through head.
-				for s := 0; s < ns; s++ {
+				// Head forward + loss gradient.
+				scaleFactor := 1.0 / float64(batchSize*ns)
+				dx := make([][]float64, ns)
+				for s := range ns {
 					logits := make([]float64, 3)
-					matVecMul(logits, m.headW, outputs[s], m.config.DModel, 3)
+					matVecMul(logits, m.headW, x[s], dm, 3)
 					vecAdd(logits, m.headB)
 
 					probs := softmax(logits)
 
-					// dL/dlogits = probs - one_hot(label).
 					dLogits := make([]float64, 3)
 					copy(dLogits, probs)
 					if sampleLabels[s] >= 0 && sampleLabels[s] < 3 {
 						dLogits[sampleLabels[s]] -= 1.0
 					}
-					scale := 1.0 / float64(batchSize*ns)
 					for j := range dLogits {
-						dLogits[j] *= scale
+						dLogits[j] *= scaleFactor
 					}
 
-					// dW = outer(output, dLogits).
-					dm := m.config.DModel
-					for d := 0; d < dm; d++ {
-						for c := 0; c < 3; c++ {
-							dHeadW[d*3+c] += outputs[s][d] * dLogits[c]
+					// Head weight gradients.
+					for d := range dm {
+						for c := range 3 {
+							dHeadW[d*3+c] += x[s][d] * dLogits[c]
 						}
 					}
-					for c := 0; c < 3; c++ {
+					for c := range 3 {
 						dHeadB[c] += dLogits[c]
 					}
+
+					// dx from head: dLogits @ headW^T.
+					dx[s] = make([]float64, dm)
+					for d := range dm {
+						for c := range 3 {
+							dx[s][d] += dLogits[c] * m.headW[d*3+c]
+						}
+					}
 				}
+
+				// Backward through layers in reverse.
+				for li := len(m.layers) - 1; li >= 0; li-- {
+					dx = m.backwardLayer(dx, layerCaches[li], &m.layers[li], &dLayers[li])
+				}
+
+				// Input projection backward.
+				fps := m.config.FeaturesPerSource
+				for s := range ns {
+					for d := range fps {
+						for c := range dm {
+							dInputW[s][d*dm+c] += sample[s][d] * dx[s][c]
+						}
+					}
+					for c := range dm {
+						dInputB[s][c] += dx[s][c]
+					}
+				}
+
+				_ = projected // used for input projection backward
 			}
 
-			// SGD update on head.
+			// SGD update: head.
 			for i := range m.headW {
 				m.headW[i] -= lr * dHeadW[i]
 			}
 			for i := range m.headB {
 				m.headB[i] -= lr * dHeadB[i]
+			}
+
+			// SGD update: layers.
+			for li := range m.layers {
+				l := &m.layers[li]
+				dl := &dLayers[li]
+				for i := range l.qW {
+					l.qW[i] -= lr * dl.qW[i]
+				}
+				for i := range l.kW {
+					l.kW[i] -= lr * dl.kW[i]
+				}
+				for i := range l.vW {
+					l.vW[i] -= lr * dl.vW[i]
+				}
+				for i := range l.outW {
+					l.outW[i] -= lr * dl.outW[i]
+				}
+				for i := range l.ffnW1 {
+					l.ffnW1[i] -= lr * dl.ffnW1[i]
+				}
+				for i := range l.ffnB1 {
+					l.ffnB1[i] -= lr * dl.ffnB1[i]
+				}
+				for i := range l.ffnW2 {
+					l.ffnW2[i] -= lr * dl.ffnW2[i]
+				}
+				for i := range l.ffnB2 {
+					l.ffnB2[i] -= lr * dl.ffnB2[i]
+				}
+			}
+
+			// SGD update: input projections.
+			for s := range ns {
+				for i := range m.inputW[s] {
+					m.inputW[s][i] -= lr * dInputW[s][i]
+				}
+				for i := range m.inputB[s] {
+					m.inputB[s][i] -= lr * dInputB[s][i]
+				}
 			}
 		}
 	}
