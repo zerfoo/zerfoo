@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/zerfoo/zerfoo/data"
-	"gonum.org/v1/gonum/dsp/fourier"
+	"github.com/zerfoo/zerfoo/internal/dsp"
 )
 
 // Transformer is the interface for feature transformers.
@@ -221,8 +221,7 @@ func (t *FFTTransformer) Transform(dataset *data.Dataset) error {
 				}
 
 				if len(series) > 1 {
-					fft := fourier.NewFFT(len(series))
-					coeffs := fft.Coefficients(nil, series)
+					coeffs := dsp.Coefficients(series)
 
 					// Get top k frequencies
 					for i := 1; i <= t.k && i < len(coeffs); i++ {
