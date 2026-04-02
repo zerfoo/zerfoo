@@ -3,7 +3,6 @@ package tabular
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -338,17 +337,12 @@ func (t *TabNet) glu(ctx context.Context, x *tensor.TensorNumeric[float32]) (*te
 	}
 
 	// Sigmoid on second half.
-	gate, err := t.engine.UnaryOp(ctx, parts[1], sigmoid)
+	gate, err := t.engine.UnaryOp(ctx, parts[1], t.ops.Sigmoid)
 	if err != nil {
 		return nil, fmt.Errorf("tabular: GLU sigmoid: %w", err)
 	}
 
 	return t.engine.Mul(ctx, parts[0], gate)
-}
-
-// sigmoid computes the sigmoid function for a single float32 value.
-func sigmoid(x float32) float32 {
-	return float32(1.0 / (1.0 + math.Exp(-float64(x))))
 }
 
 // sparsemax computes the sparsemax activation along the last axis of a 2D tensor.
