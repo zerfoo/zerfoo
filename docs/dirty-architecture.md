@@ -381,12 +381,95 @@ Make the timeseries trainer use it. Delete the 4 copies.
 
 ---
 
+## Finding 11: Inference Architecture Builders Reimplement Layers
+
+**Severity: HIGH -- Unjustified (3 files), MEDIUM (5 files)**
+
+While `arch_common.go` correctly composes from `layers/`, several architecture
+builders define custom graph nodes with inline math instead:
+
+| File | Lines | Custom Nodes | Imports layers/ | Severity |
+|------|-------|-------------|----------------|----------|
+| arch_rwkv.go | 985 | 3 | NO | CRITICAL -- 250+ lines inline matmul, sigmoid, normalization |
+| arch_bert.go | 681 | 7 | LIMITED | CRITICAL -- reimplements attention, FFN, embedding |
+| arch_gpt2.go | 655 | 4 | LIMITED | CRITICAL -- reimplements attention, FFN |
+| arch_llava.go | 821 | 3 | NO | HIGH -- inline attention + FFN |
+| arch_falcon.go | 634 | 3 | YES | MEDIUM -- inline layerNorm, GELU |
+| arch_llama.go | 348 | 2 | NO | MEDIUM -- custom embedding + LM head |
+
+**Worst offender:** `arch_rwkv.go:694-707` implements a manual triple-loop matrix
+multiply (`project` function) instead of using `layers/core.Linear` or `engine.MatMul`:
+```go
+for row := 0; row < batch*seqLen; row++ {
+    for col := 0; col < H; col++ {
+        var sum T
+        for k := 0; k < H; k++ {
+            sum = n.ops.Add(sum, n.ops.Mul(shifted[row*H+k], w[k*H+col]))
+        }
+    }
+}
+```
+
+**31 total custom node implementations** across 12 architecture files, when
+most of these could compose from `layers/attention`, `layers/core`,
+`layers/normalization`.
+
+---
+
+## Finding 12: ztensor Quantized MatMul Copy-Paste Explosion
+
+**Severity: HIGH -- Unjustified**
+
+`compute/gpu_engine.go` contains **16 nearly-identical quantized matmul methods**
+spanning lines 1218-2991 (~1,562 lines, 35% of the file):
+
+| Method Group | Variants | Lines |
+|-------------|----------|-------|
+| matMulQ4 / matMulQ4BWeight | 2 | ~195 |
+| matMulQ4K / matMulQ4KBWeight | 2 | ~259 |
+| matMulQ6K / matMulQ6KBWeight | 2 | ~247 |
+| matMulQ5K / matMulQ5KBWeight | 2 | ~184 |
+| matMulQ5_0 / matMulQ5_0BWeight | 2 | ~238 |
+| matMulQ8 / matMulQ8BWeight | 2 | ~199 |
+| matMulBF16 / matMulBF16BWeight | 2 | ~189 |
+| matMulMmap / matMulMmapB | 2 | ~247 |
+
+All 16 methods follow the **identical pattern**:
+1. Get/upload quantized weights to GPU
+2. If M=1: GEMV fast path (kernel call)
+3. Else: dequantize to F32 + cuBLAS GEMM
+4. makeGPUResult
+
+The only differences are: kernel function name, storage type, block size constant.
+
+**Fix:** A single generic `dequantMatMul` dispatcher would eliminate ~1,400 lines.
+
+---
+
+## Finding 13: layers/core/moe.go Reimplements Operations
+
+**Severity: MEDIUM -- Partially Justified**
+
+The Mixture of Experts layer (782 lines) uses raw `.Data()` access with manual
+loops instead of engine ops:
+
+- **Line 88-96:** Manual bias addition via loop (should use `engine.Add`)
+- **Line 100-119:** Manual sigmoid (should use `engine.Sigmoid` or `layers/activations`)
+- **Line 129-158:** Manual top-K selection via sort
+- **Line 236-315:** Manual gradient computation on raw float arrays
+
+**Partial justification:** The top-K routing and expert dispatch patterns don't
+have direct engine op equivalents. But bias addition, sigmoid, and softmax
+reimplementations are unjustified.
+
+---
+
 ## Statistics
 
 | Metric | Value |
 |--------|-------|
-| Packages violating composition | 5 (timeseries, crossasset, tabular, gnn, modeldsl) |
-| Packages following composition | 2 (inference, layers) |
+| Packages violating composition | 7 (timeseries, crossasset, tabular, gnn, modeldsl, + parts of inference, ztensor) |
+| Packages following composition | inference/arch_common.go, layers/ |
 | Reimplemented softmax functions | 15 |
 | Reimplemented GELU functions | 13 |
 | Reimplemented sigmoid functions | 7 |
@@ -396,5 +479,7 @@ Make the timeseries trainer use it. Delete the 4 copies.
 | Total backward pass functions | 219 |
 | God files (>800 lines, non-test) | 26 |
 | GPUEngine methods | 94 |
-| KernelRunner interface methods | 71 |
-| Files read for this review | 200+ |
+| KernelRunner interface methods | 71 (should be ~30 with composition) |
+| Custom inference graph nodes | 31 (across 12 arch files) |
+| Copy-paste matmul variants in gpu_engine.go | 16 (1,562 lines) |
+| Agents deployed for analysis | 5 (design docs, layers, training, inference, ztensor) |
