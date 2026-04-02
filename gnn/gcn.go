@@ -1,10 +1,18 @@
 package gnn
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
+
+// cpuEngine is a package-level CPU engine used by matrix helpers.
+var cpuEngine = compute.NewCPUEngine[float64](numeric.Float64Ops{})
 
 // GCNConfig configures a Graph Convolutional Network.
 type GCNConfig struct {
@@ -203,55 +211,66 @@ func xavierMatrix(rows, cols int) [][]float64 {
 	return m
 }
 
-func matMul(a, b [][]float64) [][]float64 {
-	rows := len(a)
-	if rows == 0 {
-		return nil
+// toTensor2D converts a [][]float64 matrix to a 2D tensor.
+func toTensor2D(m [][]float64) *tensor.TensorNumeric[float64] {
+	rows := len(m)
+	cols := len(m[0])
+	flat := make([]float64, rows*cols)
+	for i, row := range m {
+		copy(flat[i*cols:], row)
 	}
-	inner := len(a[0])
-	cols := len(b[0])
+	t, _ := tensor.New[float64]([]int{rows, cols}, flat)
+	return t
+}
+
+// fromTensor2D converts a 2D tensor back to [][]float64.
+func fromTensor2D(t *tensor.TensorNumeric[float64]) [][]float64 {
+	shape := t.Shape()
+	rows, cols := shape[0], shape[1]
+	data := t.Data()
 	out := make([][]float64, rows)
 	for i := range out {
 		out[i] = make([]float64, cols)
-		for k := 0; k < inner; k++ {
-			aik := a[i][k]
-			for j := 0; j < cols; j++ {
-				out[i][j] += aik * b[k][j]
-			}
-		}
+		copy(out[i], data[i*cols:(i+1)*cols])
 	}
 	return out
+}
+
+func matMul(a, b [][]float64) [][]float64 {
+	if len(a) == 0 {
+		return nil
+	}
+	ta := toTensor2D(a)
+	tb := toTensor2D(b)
+	result, err := cpuEngine.MatMul(context.Background(), ta, tb)
+	if err != nil {
+		panic("gnn: matMul engine error: " + err.Error())
+	}
+	return fromTensor2D(result)
 }
 
 func matMulTransposeA(a, b [][]float64) [][]float64 {
-	// Computes a^T * b where a is [m][k] and b is [m][n], result is [k][n].
-	k := len(a[0])
-	n := len(b[0])
-	m := len(a)
-	out := make([][]float64, k)
-	for i := range out {
-		out[i] = make([]float64, n)
-		for p := 0; p < m; p++ {
-			api := a[p][i]
-			for j := 0; j < n; j++ {
-				out[i][j] += api * b[p][j]
-			}
-		}
+	// Computes a^T * b by transposing a first, then using engine MatMul.
+	ta := toTensor2D(a)
+	tb := toTensor2D(b)
+	taT, err := cpuEngine.Transpose(context.Background(), ta, []int{1, 0})
+	if err != nil {
+		panic("gnn: transpose engine error: " + err.Error())
 	}
-	return out
+	result, err := cpuEngine.MatMul(context.Background(), taT, tb)
+	if err != nil {
+		panic("gnn: matMulTransposeA engine error: " + err.Error())
+	}
+	return fromTensor2D(result)
 }
 
 func transposeMatrix(m [][]float64) [][]float64 {
-	rows := len(m)
-	cols := len(m[0])
-	t := make([][]float64, cols)
-	for j := range t {
-		t[j] = make([]float64, rows)
-		for i := range m {
-			t[j][i] = m[i][j]
-		}
+	t := toTensor2D(m)
+	result, err := cpuEngine.Transpose(context.Background(), t, []int{1, 0})
+	if err != nil {
+		panic("gnn: transpose engine error: " + err.Error())
 	}
-	return t
+	return fromTensor2D(result)
 }
 
 func addBias(m [][]float64, bias []float64) [][]float64 {
@@ -279,25 +298,13 @@ func reluMatrix(m [][]float64) [][]float64 {
 }
 
 func softmaxMatrix(m [][]float64) [][]float64 {
-	out := make([][]float64, len(m))
-	for i := range m {
-		out[i] = make([]float64, len(m[i]))
-		max := m[i][0]
-		for _, v := range m[i] {
-			if v > max {
-				max = v
-			}
-		}
-		var sum float64
-		for j, v := range m[i] {
-			out[i][j] = math.Exp(v - max)
-			sum += out[i][j]
-		}
-		for j := range out[i] {
-			out[i][j] /= sum
-		}
+	t := toTensor2D(m)
+	// Softmax along axis 1 (columns within each row).
+	result, err := cpuEngine.Softmax(context.Background(), t, 1)
+	if err != nil {
+		panic("gnn: softmax engine error: " + err.Error())
 	}
-	return out
+	return fromTensor2D(result)
 }
 
 func dropout(m [][]float64, rate float64) [][]float64 {
