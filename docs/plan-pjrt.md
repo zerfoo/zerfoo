@@ -174,7 +174,7 @@ Core PJRT C API bindings using purego/dlopen. Zero CGo.
 
 #### E60.1: Plugin Loading and Client Lifecycle
 
-- [ ] T60.1.1 Implement PJRT plugin loader via purego  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] T60.1.1 Implement PJRT plugin loader via purego  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor
   File: internal/pjrt/pjrt.go
   dlopen a PJRT plugin .so, dlsym "GetPjrtApi", read the returned PJRT_Api
@@ -187,7 +187,7 @@ Core PJRT C API bindings using purego/dlopen. Zero CGo.
   Acceptance: PJRTLib loads pjrt-plugin-cpu.so on Linux and extracts version.
   Test: mock dlopen with a stub .so that returns a minimal PJRT_Api.
 
-- [ ] T60.1.2 Implement PJRT Client wrapper  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T60.1.2 Implement PJRT Client wrapper  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor  Deps: T60.1.1
   File: internal/pjrt/client.go
   Wrap PJRT_Client_Create, _Destroy, _PlatformName, _PlatformVersion,
@@ -198,7 +198,7 @@ Core PJRT C API bindings using purego/dlopen. Zero CGo.
   Acceptance: NewClient succeeds with CPU plugin. PlatformName returns "cpu".
   Devices returns at least one addressable device.
 
-- [ ] T60.1.3 Implement PJRT Device enumeration  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T60.1.3 Implement PJRT Device enumeration  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor  Deps: T60.1.2
   File: internal/pjrt/device.go
   Wrap PJRT_Device_GetDescription, _IsAddressable, _LocalHardwareId.
@@ -299,7 +299,7 @@ programs. Decision rationale: docs/adr/081-stablehlo-text-generation.md.
 
 #### E61.1: Core Emitter Infrastructure
 
-- [ ] T61.1.1 Implement MLIR type system and SSA naming  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T61.1.1 Implement MLIR type system and SSA naming  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor
   File: internal/stablehlo/types.go
   Map Go types to MLIR tensor types: float32 -> tensor<...xf32>,
@@ -309,7 +309,7 @@ programs. Decision rationale: docs/adr/081-stablehlo-text-generation.md.
   Shape formatting: tensor<2x3x4xf32> from Go []int{2,3,4} + dtype.
   Acceptance: FormatType([]int{2,3,4}, "f32") returns "tensor<2x3x4xf32>".
 
-- [ ] T61.1.2 Implement shape inference for arithmetic ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T61.1.2 Implement shape inference for arithmetic ops  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor  Deps: T61.1.1
   File: internal/stablehlo/shapes.go
   Infer output shapes for: Add, Sub, Mul, Div (element-wise with broadcast),
@@ -318,7 +318,7 @@ programs. Decision rationale: docs/adr/081-stablehlo-text-generation.md.
   Broadcast rules: numpy-style broadcasting (trailing dimensions align).
   Acceptance: InferShape("Add", [][]int{{2,3}, {1,3}}) returns []int{2,3}.
 
-- [ ] T61.1.3 Implement shape inference for structural ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T61.1.3 Implement shape inference for structural ops  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02
   repo: ztensor  Deps: T61.1.1
   File: internal/stablehlo/shapes.go
   Infer output shapes for: MatMul (dot_general contraction), Transpose
@@ -626,12 +626,12 @@ run instant.
 
 All zero-dependency tasks. Tracks A and B start in parallel.
 
-- [ ] T60.1.1 PJRT plugin loader via purego  verifies: [infrastructure]
-- [ ] T60.1.2 PJRT Client wrapper  verifies: [infrastructure]  (can start after T60.1.1 partial -- same agent)
-- [ ] T60.1.3 PJRT Device enumeration  verifies: [infrastructure]
-- [ ] T61.1.1 MLIR type system and SSA naming  verifies: [infrastructure]
-- [ ] T61.1.2 Shape inference for arithmetic ops  verifies: [infrastructure]
-- [ ] T61.1.3 Shape inference for structural ops  verifies: [infrastructure]
+- [x] T60.1.1 PJRT plugin loader via purego  verifies: [infrastructure]  DONE 2026-04-02
+- [x] T60.1.2 PJRT Client wrapper  verifies: [infrastructure]  DONE 2026-04-02
+- [x] T60.1.3 PJRT Device enumeration  verifies: [infrastructure]  DONE 2026-04-02
+- [x] T61.1.1 MLIR type system and SSA naming  verifies: [infrastructure]  DONE 2026-04-02 (20 tests)
+- [x] T61.1.2 Shape inference for arithmetic ops  verifies: [infrastructure]  DONE 2026-04-02 (15 tests)
+- [x] T61.1.3 Shape inference for structural ops  verifies: [infrastructure]  DONE 2026-04-02 (53 tests)
 
 #### Wave P2: Buffer + Emit (7 agents)
 
