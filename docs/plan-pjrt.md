@@ -635,13 +635,13 @@ All zero-dependency tasks. Tracks A and B start in parallel.
 
 #### Wave P2: Buffer + Emit (7 agents)
 
-- [ ] T60.2.1 Host-to-device buffer transfer  Deps: T60.1.2
-- [ ] T60.2.2 Device-to-host buffer readback  Deps: T60.2.1
-- [ ] T60.2.3 Buffer metadata and lifecycle  Deps: T60.2.1
-- [ ] T61.2.1 Emitter for element-wise and unary ops  Deps: T61.1.2
-- [ ] T61.2.2 Emitter for MatMul and structural ops  Deps: T61.1.3
-- [ ] T61.2.3 Emitter for reductions and Softmax  Deps: T61.1.3
-- [ ] T60.3.1 StableHLO program compilation  Deps: T60.1.2
+- [x] T60.2.1 Host-to-device buffer transfer  Deps: T60.1.2  DONE 2026-04-02
+- [x] T60.2.2 Device-to-host buffer readback  Deps: T60.2.1  DONE 2026-04-02
+- [x] T60.2.3 Buffer metadata and lifecycle  Deps: T60.2.1  DONE 2026-04-02
+- [x] T61.2.1 Emitter for element-wise and unary ops  Deps: T61.1.2  DONE 2026-04-02 (30 tests)
+- [x] T61.2.2 Emitter for MatMul and structural ops  Deps: T61.1.3  DONE 2026-04-02 (16 tests)
+- [x] T61.2.3 Emitter for reductions and Softmax  Deps: T61.1.3  DONE 2026-04-02 (9 tests)
+- [x] T60.3.1 StableHLO program compilation  Deps: T60.1.2  DONE 2026-04-02
 
 #### Wave P3: Execute + Program Assembly (6 agents)
 
