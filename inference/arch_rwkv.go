@@ -10,6 +10,7 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
 )
 
@@ -151,13 +152,12 @@ func BuildRWKV(
 				return nil, nil, fmt.Errorf("create blocks.0.ln0 zero bias: %w", err)
 			}
 		}
-		ln0Node := &rwkvLayerNormNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			weight: param("blocks.0.ln0.weight", ln0W),
-			bias:   param("blocks.0.ln0.bias", ln0B),
-			eps:    rc.LayerNormEps,
-		}
+		ln0Node := normalization.NewLayerNormalizationFromParams[float32](
+			proxy,
+			rc.LayerNormEps,
+			param("blocks.0.ln0.weight", ln0W),
+			param("blocks.0.ln0.bias", ln0B),
+		)
 		hidden = builder.AddNode(ln0Node, hidden)
 	}
 
@@ -178,13 +178,12 @@ func BuildRWKV(
 			}
 		}
 
-		ln1Node := &rwkvLayerNormNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			weight: param(prefix+"ln1.weight", ln1W),
-			bias:   param(prefix+"ln1.bias", ln1B),
-			eps:    rc.LayerNormEps,
-		}
+		ln1Node := normalization.NewLayerNormalizationFromParams[float32](
+			proxy,
+			rc.LayerNormEps,
+			param(prefix+"ln1.weight", ln1W),
+			param(prefix+"ln1.bias", ln1B),
+		)
 		normed1 := builder.AddNode(ln1Node, hidden)
 
 		// Load time mixing weights.
@@ -221,13 +220,12 @@ func BuildRWKV(
 			}
 		}
 
-		ln2Node := &rwkvLayerNormNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			weight: param(prefix+"ln2.weight", ln2W),
-			bias:   param(prefix+"ln2.bias", ln2B),
-			eps:    rc.LayerNormEps,
-		}
+		ln2Node := normalization.NewLayerNormalizationFromParams[float32](
+			proxy,
+			rc.LayerNormEps,
+			param(prefix+"ln2.weight", ln2W),
+			param(prefix+"ln2.bias", ln2B),
+		)
 		normed2 := builder.AddNode(ln2Node, hidden)
 
 		// Load channel mixing weights.
@@ -248,13 +246,12 @@ func BuildRWKV(
 	}
 
 	// Final LayerNorm.
-	finalNormNode := &rwkvLayerNormNode[float32]{
-		engine: proxy,
-		ops:    ops,
-		weight: param("output_norm.weight", outputNormWeight),
-		bias:   param("output_norm.bias", outputNormBias),
-		eps:    rc.LayerNormEps,
-	}
+	finalNormNode := normalization.NewLayerNormalizationFromParams[float32](
+		proxy,
+		rc.LayerNormEps,
+		param("output_norm.weight", outputNormWeight),
+		param("output_norm.bias", outputNormBias),
+	)
 	normedFinal := builder.AddNode(finalNormNode, hidden)
 
 	// LM Head.
@@ -466,80 +463,6 @@ func loadRWKVChannelMixWeights(
 		value:      param(p+"value.weight", valueWT),
 		receptance: param(p+"receptance.weight", receptanceWT),
 	}, nil
-}
-
-// rwkvLayerNormNode applies standard LayerNorm (used instead of RMSNorm in RWKV).
-// Output: (x - mean) / sqrt(var + eps) * weight + bias
-type rwkvLayerNormNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	ops    numeric.Arithmetic[T]
-	weight *graph.Parameter[T]
-	bias   *graph.Parameter[T]
-	eps    float32
-}
-
-func (n *rwkvLayerNormNode[T]) OpType() string { return "RWKVLayerNorm" }
-func (n *rwkvLayerNormNode[T]) Attributes() map[string]any {
-	return map[string]any{"eps": n.eps}
-}
-func (n *rwkvLayerNormNode[T]) OutputShape() []int { return nil }
-func (n *rwkvLayerNormNode[T]) Parameters() []*graph.Parameter[T] {
-	return []*graph.Parameter[T]{n.weight, n.bias}
-}
-
-func (n *rwkvLayerNormNode[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 1 {
-		return nil, fmt.Errorf("RWKVLayerNorm requires 1 input, got %d", len(inputs))
-	}
-	x := inputs[0]
-	shape := x.Shape()
-	if len(shape) < 2 {
-		return nil, fmt.Errorf("RWKVLayerNorm input must be at least 2D")
-	}
-
-	data := x.Data()
-	wData := n.weight.Value.Data()
-	bData := n.bias.Value.Data()
-	hiddenSize := shape[len(shape)-1]
-	n_ := 1
-	for i := 0; i < len(shape)-1; i++ {
-		n_ *= shape[i]
-	}
-
-	out := make([]T, len(data))
-	eps := float64(n.eps)
-
-	for i := 0; i < n_; i++ {
-		off := i * hiddenSize
-		row := data[off : off+hiddenSize]
-
-		// Compute mean.
-		var sum float64
-		for _, v := range row {
-			sum += float64(v)
-		}
-		mean := sum / float64(hiddenSize)
-
-		// Compute variance.
-		var variance float64
-		for _, v := range row {
-			d := float64(v) - mean
-			variance += d * d
-		}
-		variance /= float64(hiddenSize)
-		invStd := 1.0 / math.Sqrt(variance+eps)
-
-		for j := 0; j < hiddenSize; j++ {
-			norm := (float64(row[j]) - mean) * invStd
-			out[off+j] = T(norm*float64(wData[j]) + float64(bData[j]))
-		}
-	}
-
-	return tensor.New(shape, out)
-}
-
-func (n *rwkvLayerNormNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
 }
 
 // rwkvTimeMixNode implements the RWKV-6 time mixing block (WKV linear attention).
