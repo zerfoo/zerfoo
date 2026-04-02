@@ -803,8 +803,15 @@ func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
 			epochLoss += batchLoss / float64(bs*ns)
 			nBatches++
 
-			// Zero grads in-place (reuse existing tensors to prevent OOM).
-			zeroGrads(grads)
+			// Re-allocate fresh CPU gradient tensors each batch.
+			// engine.Add in gpuBackward returns GPU-resident tensors, making the
+			// previous grads point to GPU memory that the arena may reclaim.
+			// zeroGrads cannot zero GPU tensors (Data() returns a D2H copy).
+			// Fresh CPU tensors avoid stale GPU references and ensure true zeros.
+			grads, err = allocGrads(params)
+			if err != nil {
+				return nil, fmt.Errorf("realloc grads: %w", err)
+			}
 
 			// Backward pass.
 			if err := gpuBackward(ctx, engine, params, grads, cache, dLogits, cfg); err != nil {

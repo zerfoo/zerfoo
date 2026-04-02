@@ -190,33 +190,6 @@ func allocGrads(p *gpuCAParams) (*gpuCAGrads, error) {
 	return g, nil
 }
 
-// zeroGrads zeros all gradient tensors in-place (no allocation).
-func zeroGrads(g *gpuCAGrads) {
-	for _, w := range g.inputW {
-		clearSlice(w.Data())
-	}
-	for _, b := range g.inputB {
-		clearSlice(b.Data())
-	}
-	for _, l := range g.layers {
-		for _, t := range []*tensor.TensorNumeric[float32]{
-			l.qW, l.kW, l.vW, l.outW,
-			l.lnGamma, l.lnBeta,
-			l.ffnW1, l.ffnB1, l.ffnW2, l.ffnB2,
-			l.ffnGamma, l.ffnBeta,
-		} {
-			clearSlice(t.Data())
-		}
-	}
-	clearSlice(g.headW.Data())
-	clearSlice(g.headB.Data())
-}
-
-func clearSlice(s []float32) {
-	for i := range s {
-		s[i] = 0
-	}
-}
 
 // writeBackParams copies float32 GPU params back to the Model's float64 weights.
 func writeBackParams(m *Model, p *gpuCAParams) {
