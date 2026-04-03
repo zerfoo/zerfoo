@@ -526,12 +526,3 @@ func zeroLayer(dm int) layer {
 		ffnBeta:  make([]float64, dm),
 	}
 }
-
-func cloneSlices(src [][]float64) [][]float64 {
-	dst := make([][]float64, len(src))
-	for i, s := range src {
-		dst[i] = make([]float64, len(s))
-		copy(dst[i], s)
-	}
-	return dst
-}

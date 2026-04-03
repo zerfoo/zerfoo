@@ -281,8 +281,6 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 					matVecMul(x[s], m.inputW[s], sample[s], m.config.FeaturesPerSource, dm)
 					vecAdd(x[s], m.inputB[s])
 				}
-				projected := cloneSlices(x)
-
 				// Forward through layers with caches.
 				layerCaches := make([]*cpuLayerCache, len(m.layers))
 				for li := range m.layers {
@@ -346,8 +344,6 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 						dInputB[s][c] += dx[s][c]
 					}
 				}
-
-				_ = projected // used for input projection backward
 			}
 
 			// AdamW update: collect all param/grad pairs and update.
