@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // linearBatchEngine computes Y = X @ W + bias using engine.MatMul.
@@ -374,7 +375,7 @@ func (m *ITransformer) trainWindowedEngine(windows [][][]float64, labels []float
 			}
 
 			// AdamW update.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
+			lr := scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			for i := range params {
 				mState[i] = config.Beta1*mState[i] + (1-config.Beta1)*grads[i]

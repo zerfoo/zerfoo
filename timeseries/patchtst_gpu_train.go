@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // fwdGraphOutputs holds the output tensors produced during the CUDA graph
@@ -779,7 +780,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			}
 
 			// AdamW update.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
+			lr := scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*(fullBatches/batchSize) + nBatches)
 			beta1 := float32(config.Beta1)
 			beta2 := float32(config.Beta2)
