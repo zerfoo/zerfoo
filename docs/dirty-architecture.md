@@ -1,6 +1,7 @@
 # Dirty Architecture: Composability Violations Audit
 
-*Date: 2026-04-02*
+*Updated: 2026-04-03 (revision 2)*
+*Previous: 2026-04-02 (revision 1)*
 
 ## Design Principle Under Review
 
@@ -24,27 +25,38 @@ categorizes each violation as justified or unjustified, and quantifies the scope
 
 ## Summary
 
-| Metric | Count |
-|--------|-------|
-| Source files reviewed | 860 |
-| Total lines of code | 170,860 |
-| Packages with composability violations | 14 |
-| Reimplemented LayerNorm instances | 17 |
-| Reimplemented Linear/MatMul/MLP instances | 18 |
-| Reimplemented softmax instances | 6 (non-kernel) |
-| Reimplemented GELU instances | 5 |
-| Reimplemented AdamW instances | 5 |
-| Reimplemented SGD instances | 5+ |
-| Reimplemented attention instances | 8 |
-| Intra-layers/ violations | 10 |
-| Estimated redundant lines | ~14,000 |
+| Metric | Rev 1 (Apr 2) | Rev 2 (Apr 3) | Delta |
+|--------|---------------|---------------|-------|
+| Source files reviewed (non-test .go) | 860 | 10,373 | +9,513 |
+| Total lines of code | 170,860 | 77,720 | recount (non-test only) |
+| Packages with composability violations | 14 | 8 | -6 (migrated) |
+| Reimplemented LayerNorm instances | 17 | 10 | -7 |
+| Reimplemented Linear/MatMul/MLP instances | 18 | 11 | -7 |
+| Reimplemented softmax instances | 6 | 4 | -2 |
+| Reimplemented GELU instances | 5 | 4 | -1 |
+| Reimplemented AdamW instances | 5 | 1 | -4 |
+| Reimplemented SGD instances | 5+ | 0 | -5+ |
+| Reimplemented attention instances | 8 | 6 | -2 |
+| Intra-layers/ violations | 10 | 14 | +4 (more found) |
+| Estimated redundant lines | ~14,000 | ~8,200 | -5,800 |
 
-**Bottom line:** The inference path (GGUF model loading via `arch_common.go` and
-the architecture builders that compose from `layers/`) follows the composability
-principle well. The training backends (`timeseries/`, `crossasset/`, `tabular/`)
-and experimental packages (`modeldsl/`, `gnn/`, `rl/`, `synth/`, `meta/`,
-`shared/`) are a parallel universe of raw-slice math that bypasses both `Engine[T]`
-and `layers/` entirely.
+**What changed since revision 1:**
+
+- **crossasset/** migrated to `layers/functional` + canonical `optimizer.AdamW[float64]`
+  (T68.1.1-T68.1.3, Apr 3). 1,357 lines of dead GPU code deleted.
+- **rl/** migrated to `layers/functional` + `optimizer.SGD` (T71.1.1, Apr 3).
+- **synth/** migrated to `layers/functional` + `optimizer.SGD` (T71.1.2, Apr 3).
+- **meta/** migrated to `layers/functional` (T71.1.3, Apr 3).
+- **shared/** migrated `matVecMul` to `engine.MatMul` (T71.1.4, Apr 3).
+- Deeper review of `layers/` internals found 4 additional violations not caught
+  in revision 1.
+
+**Bottom line:** The inference path follows the composability principle well. Five
+of the eight S1 violators from revision 1 have been migrated. The remaining
+violations are concentrated in three packages: **timeseries/** (17,570 lines),
+**tabular/** (4,010 lines), and **modeldsl/** (1,520 lines). The `layers/`
+package itself has 14 internal violations where sub-packages bypass `Engine[T]`
+or duplicate each other.
 
 ---
 
@@ -68,117 +80,88 @@ and `layers/` entirely.
 
 ## S1: Critical Violations (Complete Bypass)
 
-### 1. crossasset/ -- Raw-Slice Transformer (918 lines)
+### 1. timeseries/ -- Parallel ML Framework (17,570 lines)
 
-**Files:** `crossasset.go`, `backward.go`, `adamw.go`, `gpu_params.go`, `gpu_train.go`
-
-The cross-asset attention model operates entirely on raw `[]float64` slices.
-It reimplements:
-
-| Component | crossasset/ implementation | Canonical implementation |
-|-----------|---------------------------|--------------------------|
-| Linear/MatVec | `matVecMul()` at crossasset.go:518 | `layers/core.Linear` |
-| Multi-head attention | `forwardLayerCached()` at backward.go:30 | `layers/attention.GroupedQueryAttention` |
-| LayerNorm | `layerNorm()` at crossasset.go:558 | `layers/normalization.LayerNorm` |
-| GELU | `gelu()` at crossasset.go:584 | `layers/activations.Gelu` |
-| Softmax | `softmax()` at crossasset.go:538 | `layers/activations.Softmax` |
-| AdamW | `adamWUpdateAll()` at adamw.go:55 | `training/optimizer.AdamW[T]` |
-| Full backward pass | backward.go (entire file) | `graph.Backward()` |
-
-The `gpu_train.go` file (851 lines) contains a separate GPU training path that
-also reimplements LayerNorm (`cpuLayerNorm` at line 851), softmax backward
-(`cpuSoftmaxBackward` at line 910), and AdamW (`adamWUpdate` at line 959) --
-this time on `[]float32` tensors, but still outside the `layers/` system.
-
-**Impact:** Cannot benefit from CUDA graph capture, megakernel codegen, or any
-future engine optimization. The CPU and GPU paths have diverged: `crossasset.go`
-uses `[]float64`, `gpu_train.go` uses `tensor.TensorNumeric[float32]` with
-manual `.Data()` access. Two independent implementations of the same model.
-
-**Justified?** No. The cross-asset model is a standard transformer encoder.
-`inference/arch_common.go` demonstrates that transformers compose cleanly from
-`layers/`. The only difference is that crossasset trains with backpropagation,
-which the `graph.Backward()` system already supports.
-
-
-### 2. timeseries/ -- Parallel ML Framework (18,197 lines)
-
-**Files:** 34 source files including `math_ops.go`, `layernorm_ops.go`,
-`training_ops.go`, `adamw_f32.go`, plus model files.
+**Files:** 35 non-test source files including `math_ops.go`, `layernorm_ops.go`,
+`training_ops.go`, `adamw_f32.go`, plus model files and `*_backward.go` files.
 
 The top-level `timeseries/` package is effectively a separate ML framework that
-shares zero code with `layers/`. It reimplements:
+shares minimal code with `layers/`. It reimplements:
 
 | Component | timeseries/ file:line | Canonical |
 |-----------|----------------------|-----------|
-| LayerNorm (2D) | layernorm_ops.go:7 | `layers/normalization.LayerNorm` |
-| LayerNorm (2D+cache) | layernorm_ops.go:35 | `layers/normalization.LayerNorm` |
-| LayerNorm backward | layernorm_ops.go:72 | `layers/normalization.LayerNorm.Backward` |
-| LayerNorm (1D) | layernorm_ops.go:106 | `layers/normalization.LayerNorm` |
-| LayerNorm (1D+cache) | layernorm_ops.go:130 | `layers/normalization.LayerNorm` |
-| GELU | math_ops.go:7 | `layers/activations.Gelu` |
-| GELU derivative | math_ops.go:14 | `layers/activations.Gelu.Backward` |
-| Softmax | math_ops.go:34 | `layers/activations.Softmax` |
+| LayerNorm (2D+cache) | layernorm_ops.go:46-92 | `layers/normalization.LayerNorm` |
+| LayerNorm (engine reimpl) | patchtst_encoder.go:21-91 | `layers/normalization.LayerNorm` |
+| LayerNorm backward | patchtst_encoder.go:94-195 | `layers/normalization.LayerNorm.Backward` |
+| LayerNorm (1D cached) | itransformer_backward.go:233-242 | `layers/normalization.LayerNorm` |
+| GELU | itransformer_backward.go:250-254 | `layers/activations.Gelu` |
+| GELU (engine reimpl) | patchtst_encoder.go:411-448 | `layers/activations.Gelu` |
+| Softmax (raw f64) | itransformer_backward.go:638-655 | `layers/activations.Softmax` |
 | AdamW state | training_ops.go:26 | `training/optimizer.AdamW[T]` |
 | AdamW update | training_ops.go:41 | `training/optimizer.AdamW[T].Step` |
 | AdamW (float32) | adamw_f32.go:30 | `training/optimizer.AdamW[T]` |
 | MSE loss | training_ops.go:57 | `training/loss.MSE[T]` |
 | Gradient clipping | training_ops.go:8 | (should be in training/) |
-| Multi-head attention | patchtst.go:315 | `layers/attention.GroupedQueryAttention` |
-| Multi-head attn (f64) | patchtst_backward.go:881 | `layers/attention.GroupedQueryAttention` |
-| Linear forward | nbeats.go:426, nhits.go:260 | `layers/core.Linear` |
-| MLP layer type | nbeats.go:70, doc.go:21 | `layers/core.Linear` + `layers/core.FFN` |
+| Multi-head attention (f64) | itransformer_backward.go:185-212 | `layers/attention.GroupedQueryAttention` |
+| Attention backward (f64) | itransformer_backward.go:1037-1093 | `layers/attention.GroupedQueryAttention` |
+| Linear backward (f64) | patchtst_backward.go:405-430 | `layers/core.Linear` |
+| Linear backward (f64) | itransformer_backward.go:345-361 | `layers/core.Linear` |
+| MLP forward (raw) | timemixer_backward.go:196-223 | `layers/core.Linear` + `layers/core.FFN` |
+| Encoder backward (raw) | patchtst_encoder.go:938-1120 | `graph.Backward()` |
+| Mixing backward (raw) | timemixer_backward.go:278-400+ | `graph.Backward()` |
 
-Several timeseries models have _engine.go companion files (patchtst_engine.go,
-itransformer_engine.go, frets_engine.go, etc.) that partially migrate operations
-to `compute.Engine[T]`. These represent incomplete migration: some ops use the
-engine, but LayerNorm and attention are still reimplemented manually even in the
-engine files (e.g., `patchtst_encoder.go:21` has `layerNormForwardWithEngine`
-which manually computes mean/variance using engine ops rather than using
-`layers/normalization.LayerNorm`).
+**Composition status per model:**
 
-**Impact:** 18,197 lines (11% of the codebase) exist in a parallel universe.
-10 model architectures (PatchTST, iTransformer, DLinear, NHiTS, N-BEATS, TFT,
-TimeMixer, CfC, TTM, Mamba-TS) each carry their own math. Bug fixes to
-`layers/normalization.LayerNorm` do not propagate here. GPU acceleration
-requires duplicate effort for each model.
+| Model | Imports layers/? | Uses Engine[T]? | Forward | Backward |
+|-------|-----------------|-----------------|---------|----------|
+| PatchTST | No | Partial (encoder) | Mixed | Raw f64 loops |
+| iTransformer | `functional` (partial) | Declared, unused in backward | Mixed | Raw f64 loops |
+| N-HiTS | `functional.Linear` | Partial | Composed | Custom backward |
+| N-BEATS | `functional.Linear` | Partial | Composed | Raw loops |
+| TTM | `functional` (partial) | Partial | Mixed | Raw f64 loops |
+| DLinear | No | Optional, unused | Raw f64 | Raw f64 |
+| TimeMixer | No | Optional, unused | Raw f64 | Raw f64 |
+| CfC | No | Optional, unused | Raw f64 | Raw f64 |
+| FreTS | No | Optional, unused | Raw f64 | Raw f64 |
+| Mamba | `layers/ssm`, `layers/core` | Yes | Composed | Composed |
 
-**Justified?** No. The models are standard neural networks (transformer
-encoders, MLPs, recurrent networks). The `_engine.go` files prove that engine
-migration is feasible -- it just was never completed.
+**Impact:** 17,570 lines (23% of non-test codebase) exist in a parallel universe.
+10 model architectures each carry their own math. Bug fixes to canonical layers
+do not propagate here. GPU acceleration requires duplicate effort for each model.
+4 models (DLinear, TimeMixer, CfC, FreTS) declare optional engine fields that are
+never used for training.
 
-**Partially justified exceptions within timeseries/:**
-- `mamba.go` imports `layers/ssm` and `layers/core` -- this file follows the
-  composability principle.
-- `ttm_engine.go` imports `layers/core` and `layers/timeseries` -- partial
-  composition.
+**Justified?** No. Mamba proves that full composition is feasible. The `_engine.go`
+files prove incremental migration works but was never completed.
+
+**Estimated redundant lines:** ~4,500
 
 
-### 3. tabular/ -- Another Parallel Framework (4,010 lines)
+### 2. tabular/ -- Another Parallel Framework (4,010 lines)
 
 **Files:** `ft_transformer.go`, `saint.go`, `tabnet.go`, `resnet.go`, `model.go`,
 `train.go`, `lora.go`, `pretrain.go`, `save.go`, `ensemble.go`
+
+**Status:** No changes since revision 1. Zero imports from `layers/functional`.
 
 Reimplements:
 
 | Component | tabular/ file:line | Canonical |
 |-----------|-------------------|-----------|
-| LayerNorm | ft_transformer.go:457 | `layers/normalization.LayerNorm` |
-| LayerNorm | resnet.go:232 | `layers/normalization.LayerNorm` |
-| LayerNorm | saint.go:653 | `layers/normalization.LayerNorm` |
-| Multi-head attention | ft_transformer.go:313 | `layers/attention.GroupedQueryAttention` |
+| LayerNorm | ft_transformer.go:457-493 | `layers/normalization.LayerNorm` |
+| LayerNorm | resnet.go:232-280 | `layers/normalization.LayerNorm` |
+| LayerNorm | saint.go:653-691 | `layers/normalization.LayerNorm` |
+| Multi-head attention | ft_transformer.go:340-399 | `layers/attention.GroupedQueryAttention` |
 | Multi-head attention | saint.go (self-attn + intersample) | `layers/attention` |
-| GELU | model.go:212 | `layers/activations.Gelu` |
-| Linear forward | ft_transformer.go:496 | `layers/core.Linear` |
-| Linear forward | saint.go:745 | `layers/core.Linear` |
-| Linear forward | tabnet.go:318 | `layers/core.Linear` |
-| Linear forward | resnet.go:282 | `layers/core.Linear` |
-| Linear forward | model.go:191 | `layers/core.Linear` |
-| MLP layer type | model.go:59 | `layers/core.Linear` + `layers/core.FFN` |
+| GELU | model.go:212-216 (`geluScalar`) | `layers/activations.Gelu` |
+| Linear forward | ft_transformer.go:496-502 | `layers/core.Linear` |
+| Linear forward | saint.go:745-751 | `layers/core.Linear` |
+| Linear forward | tabnet.go:318-324 | `layers/core.Linear` |
+| Linear forward | resnet.go:282-288 | `layers/core.Linear` |
+| Linear forward | model.go:191-197 | `layers/core.Linear` |
 
 **Mixed pattern:** tabular/ uses `compute.Engine[T]` for MatMul and some ops,
-but reimplements LayerNorm and GELU inline with `tensor.Data()` access. This is
-the S2 pattern in an S1-sized package.
+but reimplements LayerNorm and GELU inline with `tensor.Data()` access.
 
 **Impact:** 5 model architectures (FT-Transformer, SAINT, TabNet, TabResNet,
 base Model) each carry duplicate linearForward/layerNorm methods. The
@@ -187,8 +170,10 @@ base Model) each carry duplicate linearForward/layerNorm methods. The
 **Justified?** No. These are standard transformer and MLP architectures.
 The `engine.MatMul` usage proves engine integration is possible.
 
+**Estimated redundant lines:** ~1,600
 
-### 4. modeldsl/ -- Third Linear Layer (696 lines)
+
+### 3. modeldsl/ -- Custom Layer Type System (1,520 lines)
 
 **Files:** `dsl.go`, `model.go`, `graph.go`, `optimize.go`, `train.go`
 
@@ -200,117 +185,45 @@ Reimplements:
 | RMSNorm | model.go (via `rmsnormLayerT`) | `layers/normalization.RMSNorm` |
 | SiLU | model.go (via `siluLayerT`) | `layers/activations.SwiGLU` |
 | Softmax | model.go (via `softmaxLayerT`) | `layers/activations.Softmax` |
-| Attention | model.go:153 (`attentionLayer`) | `layers/attention` |
+| Attention | model.go:166-210 (`attentionLayer`) | `layers/attention` |
 | Xavier init | model.go:117 | `layers/components.WeightInitializer` |
 
-The file contains a telling comment at model.go:141:
-> NOTE: Element-wise layers (rmsnorm, silu, softmax) operate on raw []float64
-> slices rather than tensors. The layers/activations/ package provides
-> tensor-based equivalents via compute.Engine[T], but the DSL intentionally
-> uses slice-based ops because its entire pipeline (forward, backward,
-> parameter updates) operates on []float64.
+The DSL defines `LayerType` constants (`LayerLinear`, `LayerRMSNorm`, `LayerSiLU`,
+`LayerSoftmax`, `LayerAttention`) that duplicate the layer registry in
+`layers/registry/`.
 
-This is honest about the violation but does not justify it. The DSL defines
-`LayerType` constants (`LayerLinear`, `LayerRMSNorm`, `LayerSiLU`, `LayerSoftmax`,
-`LayerAttention`) that duplicate the layer registry in `layers/registry/`.
+**Justified?** Partially. The DSL is a model definition language that compiles
+user-provided layer definitions. The custom implementations are encapsulated within
+modeldsl/ and not imported by other packages. However, the DSL should ideally
+produce graphs that compose from existing `layers/` implementations rather than
+reimplementing them from scratch on raw `[]float64` slices.
 
-**Justified?** No. The DSL should produce graphs that compose from existing
-`layers/` implementations rather than creating a parallel type system.
+**Estimated redundant lines:** ~600
 
+---
 
-### 5. gnn/ -- Fourth Linear Layer (416 lines)
+## S1 Packages Migrated Since Revision 1
 
-**Files:** `gcn.go`, `gat.go`
+These packages were S1 violations in revision 1 and have been migrated:
 
-Reimplements:
+| Package | Lines | Migration | Date | Task |
+|---------|-------|-----------|------|------|
+| crossasset/ | 1,407 | `layers/functional` + `optimizer.AdamW[float64]` | Apr 3 | T68.1.1-T68.1.3 |
+| rl/ | 1,293 | `layers/functional` + `optimizer.SGD` | Apr 3 | T71.1.1 |
+| synth/ | 615 | `layers/functional` + `optimizer.SGD` | Apr 3 | T71.1.2 |
+| meta/ | 467 | `layers/functional` | Apr 3 | T71.1.3 |
+| shared/ | 293 | `engine.MatMul` | Apr 3 | T71.1.4 |
 
-| Component | gnn/ file:line | Canonical |
-|-----------|---------------|-----------|
-| Linear (matmul) | gcn.go:239 (`matMul`) | `layers/core.Linear` |
-| ReLU | gcn.go:278 (`reluMatrix`) | `layers/activations.ReLU` |
-| Softmax | gcn.go:300 (`softmaxMatrix`) | `layers/activations.Softmax` |
-| Xavier init | gcn.go:223 (`xavierMatrix`) | `layers/components.WeightInitializer` |
-| Multi-head attention | gat.go:195 | `layers/attention` |
-| Add bias | gcn.go:269 (`addBias`) | `layers/core.Add` |
+**Note on crossasset/:** The cpu forward path now uses `functional.LayerNorm` at
+crossasset.go:603. The backward path uses graph-based differentiation via
+`layers/core.Linear` and `layers/attention.ScaledDotProductAttention`. The
+canonical `optimizer.AdamW[float64]` replaces the custom `adamWUpdateAll`. 1,357
+lines of dead GPU training infrastructure were deleted.
 
-**Impact:** Uses raw `[][]float64`. No `Engine[T]`, no tensors. A private
-`var cpuEngine` is declared at gcn.go:15 but is not used by any method.
-
-**Justified?** No. GCN and GAT are standard neural network architectures.
-The graph-specific operation (adjacency normalization and neighborhood
-aggregation) is the only part that couldn't compose from existing layers.
-
-
-### 6. rl/ -- Fifth Linear Layer (787 lines)
-
-**Files:** `ppo.go`, `sac.go`, `replay.go`, `rl.go`
-
-Reimplements:
-
-| Component | rl/ file:line | Canonical |
-|-----------|-------------|-----------|
-| MLP layer | ppo.go:38 (`mlpLayer`) | `layers/core.Linear` |
-| Linear forward | ppo.go:57 | `layers/core.Linear` |
-| Linear backward | ppo.go:71 | `layers/core.Linear.Backward` |
-| ReLU | ppo.go (inline) | `layers/activations.ReLU` |
-| Tanh | ppo.go (inline) | `layers/activations.Tanh` |
-| SGD update | ppo.go (inline) | `training/optimizer.SGD[T]` |
-
-**Justified?** No. PPO and SAC are standard policy gradient methods that use
-MLP function approximators. The MLP could compose from `layers/core.Linear`.
-
-
-### 7. synth/ -- Sixth Linear Layer (676 lines)
-
-**Files:** `vae.go`, `crash.go`
-
-Reimplements:
-
-| Component | synth/ file:line | Canonical |
-|-----------|-----------------|-----------|
-| Linear forward | vae.go:389 (`linearForward`) | `layers/core.Linear` |
-| ReLU | vae.go (inline) | `layers/activations.ReLU` |
-| Xavier init | vae.go (inline) | `layers/components.WeightInitializer` |
-| SGD update | vae.go (inline) | `training/optimizer.SGD[T]` |
-
-**Justified?** No. VAE is a standard generative model.
-
-
-### 8. meta/ -- Seventh Linear Layer (307 lines)
-
-**Files:** `meta.go`
-
-Reimplements:
-
-| Component | meta/ file:line | Canonical |
-|-----------|----------------|-----------|
-| Linear forward | meta.go:248 (`linearForward`) | `layers/core.Linear` |
-| ReLU | meta.go (inline) | `layers/activations.ReLU` |
-| Xavier init | meta.go (inline) | `layers/components.WeightInitializer` |
-| SGD update | meta.go (inline) | `training/optimizer.SGD[T]` |
-
-MAML meta-learning with raw `[]float64` MLP.
-
-**Justified?** Partially. MAML requires computing gradients through the
-inner-loop optimizer, which is awkward with the current `graph.Backward()`
-system. However, the linear forward pass itself could still compose from
-`layers/core`.
-
-
-### 9. shared/ -- Eighth Linear Layer (259 lines)
-
-**Files:** `latent.go`
-
-Reimplements:
-
-| Component | shared/ file:line | Canonical |
-|-----------|------------------|-----------|
-| MatVecMul | latent.go:241 | `layers/core.Linear` or `engine.MatMul` |
-| SGD update | latent.go (inline) | `training/optimizer.SGD[T]` |
-
-Latent space projections with raw matrix math.
-
-**Justified?** No.
+**Note on gnn/:** The GNN package uses custom matrix algebra (`gcn.go:239
+matMul`, `gcn.go:278 reluMatrix`, `gcn.go:300 softmaxMatrix`) for graph
+convolution operations. These are graph-structure-specific operations that cannot
+trivially compose from standard layers. Reclassified from S1 to S3.
 
 ---
 
@@ -319,6 +232,59 @@ Latent space projections with raw matrix math.
 The `layers/` package, which is meant to be the canonical source of composable
 primitives, has internal violations where sub-packages bypass each other or
 bypass `Engine[T]`.
+
+### vision/clip_encoder.go -- Raw-Loop Multi-Head Attention
+
+**File:** `layers/vision/clip_encoder.go`
+
+| Lines | Violation | Should use |
+|-------|-----------|-----------|
+| 232-251 | 6-level nested raw loop for patch extraction via `.Data()` | engine.Reshape or Conv2d |
+| 274-287 | Manual class token concatenation via `.Data()` | engine.Concat |
+| 290-295 | Position embedding addition via raw for loop + `.Data()` | engine.Add with broadcasting |
+| 362-410 | QK^T scores, softmax, weighted V sum on raw data (~50 lines) | `attention.ScaledDotProductAttention` |
+| 255-270 | Linear projection as raw triple-nested loop | `engine.MatMul` |
+| 503-536 | Inline QuickGELU via raw ops | `layers/activations.Gelu` |
+
+This is the single worst violator within `layers/` itself: ~200 lines of raw CPU
+loops implementing operations that exist as composable engine ops.
+
+### timeseries/mlstm.go -- All-CPU Forward Pass with .Data() Access
+
+**File:** `layers/timeseries/mlstm.go`
+
+| Lines | Violation | Should use |
+|-------|-----------|-----------|
+| 248, 261, 274 | Scalar bias via `.Data()[0]` extraction | engine.AddScalar or tensor wrapping |
+| 322, 326, 342, 375, 386 | Tensor slicing via `.Data()` indexing | engine.Slice |
+| 338-339 | Scalar gate extraction via `.Data()` | engine.Index |
+| 320-402 | Sequential batch-element loop (~80 lines of manual tensor manipulation) | Vectorized engine ops |
+
+### timeseries/slstm.go -- Custom Gate Computation
+
+**File:** `layers/timeseries/slstm.go:313-316`
+
+Inline clamp + exp via UnaryOp. While using engine.UnaryOp (correct), this is
+hand-rolled clamping + exponential that could be a shared primitive.
+
+### timeseries/ssm.go -- All-CPU Discretization + Sequential Loop
+
+**File:** `layers/timeseries/ssm.go`
+
+| Lines | Violation | Should use |
+|-------|-----------|-----------|
+| 188-217 | Raw CPU loops for discretization (exp, mul) | engine.Exp, engine.Mul |
+| 245-302 | Sequential batch/time scan creating new tensors per timestep | Vectorized scan |
+| 300 | Output assembly via `copy(outputData[...], y.Data())` | engine.Concat |
+
+### timeseries/vsn.go -- Manual Weight Extraction
+
+**File:** `layers/timeseries/vsn.go`
+
+| Lines | Violation | Should use |
+|-------|-----------|-----------|
+| 342-346, 417-420 | Weight column extraction via `.Data()` indexing | engine.Slice |
+| 364-373 | Manual importance weight mean via raw loops | engine.ReduceMean |
 
 ### core/gemm.go -- Hand-Rolled GEMM
 
@@ -329,193 +295,133 @@ multiply. Never hits GPU, SIMD, CUDA graph, or any engine backend.
 
 Should use: `engine.MatMul` + `engine.MulScalar` + `engine.Add`
 
-### vision/clip_encoder.go -- Raw-Loop Multi-Head Attention
-
-**File:** `layers/vision/clip_encoder.go:362-410`
-
-6-nested loops implement QK^T scores, softmax, and weighted V sum on raw data
-slices (~50 lines). Duplicates `attention.ScaledDotProductAttention`.
-
-Also at lines 255-270: linear projection as raw triple-nested loop instead of
-`engine.MatMul`. And at lines 492-503: in-place QuickGELU via raw ops.
-
-Should use: `layers/attention.SDPA`, `layers/core.Linear`, `layers/activations.Gelu`
-
-### timeseries/mlstm.go, slstm.go, ssm.go -- All-CPU Forward Passes
-
-**Files:** `layers/timeseries/mlstm.go:237-317`, `slstm.go:257-316`, `ssm.go:230-264`
-
-Entire forward passes as raw CPU loops. Key/value/query projections, gates
-(exp/sigmoid), matrix cell state updates, all bypassing Engine.
-
-Should use: `layers/core.Linear` for projections, engine ops for activations.
-
-### timeseries/vsn.go -- Local LayerNorm Reimplementation
-
-**File:** `layers/timeseries/vsn.go:180-224`
-
-Reimplements LayerNorm using `engine.UnaryOp` for epsilon (breaks tracing).
-
-Should use: `layers/normalization.LayerNormalization`
-
-### normalization/simplified_layer_normalization.go -- Duplicates RMSNorm
-
-**File:** `layers/normalization/simplified_layer_normalization.go:100-141`
-
-Algorithm is identical to `rmsnorm.go:153-190` (~80 identical lines, including
-fused fast paths). Both compute RMS normalization with the same structure.
-
-Should share: common internal RMS computation or delegate to RMSNorm.
-
-### activations/fast_gelu.go -- Near-Copy of gelu.go
-
-**File:** `layers/activations/fast_gelu.go:26-91`
-
-Forward is structurally identical to `gelu.go:47-111` (~65 duplicated lines).
-Same formula, same Engine calls.
-
-Should: consolidate into one implementation or compose from shared internals.
-
 ### core/variable_selection.go -- Inline GELU
 
-**File:** `layers/core/variable_selection.go:147-154`
+**File:** `layers/core/variable_selection.go:145-146`
 
-GELU via `ops.Mul/ops.Sigmoid` on raw data, bypassing Engine.
+```go
+return v.ops.Mul(x, v.ops.Sigmoid(v.ops.Mul(x, v.ops.FromFloat64(1.702))))
+```
 
-Should use: `layers/activations.Gelu`
+Computes `GELU(x) ~ x * sigmoid(1.702 * x)` inline. Duplicates the FastGELU
+approximation from `activations/fast_gelu.go`.
 
-### core/temporal_conv_encoder.go -- Inline ReLU
+Should use: `layers/activations.Gelu` or `layers/activations.FastGelu`
 
-**File:** `layers/core/temporal_conv_encoder.go:107-113, 121-127`
+### core/temporal_conv_encoder.go -- Manual Pool Gradient
 
-ReLU via `.Data()` mutation instead of Engine op.
+**File:** `layers/core/temporal_conv_encoder.go:159-168`
 
-Should use: `layers/activations.Relu`
+Manual backward pass for global average pool with raw `.Data()` loops instead of
+engine broadcast/repeat operations.
 
-### residual/block_attn_res.go -- rmsNormLite
+### normalization/simplified_layer_normalization.go -- Shares rmsNormalize
 
-**File:** `layers/residual/block_attn_res.go:34-64`
+**Status:** RESOLVED. This file correctly delegates to the shared `rmsNormalize`
+helper. Not a violation. (Corrected from revision 1.)
 
-Reimplements RMSNorm without gain (~20 lines).
+### activations/fast_gelu.go -- Properly Delegates
 
-Should use: `layers/normalization.RMSNorm` with gain fixed to ones.
+**Status:** RESOLVED. Line 23 shows proper delegation to Gelu. Not a duplication.
+(Corrected from revision 1.)
+
+### residual/block_attn_res.go -- Clean
+
+**Status:** RESOLVED. Properly uses engine operations throughout. No `.Data()`
+access. (Corrected from revision 1.)
 
 ---
 
 ## S2: Major Violations (Partial Bypass)
 
-### 10. inference/ architecture builders -- Custom Nodes
+### 10. inference/ Architecture Builders -- Custom Nodes
 
-The architecture builders (30 files, `arch_*.go`) compose from `layers/` for
+The architecture builders (30+ files, `arch_*.go`) compose from `layers/` for
 the common pattern (see `arch_common.go`) but create custom `graph.Node[T]`
 implementations for architecture-specific operations:
 
-| Architecture | Custom nodes | Lines |
-|-------------|-------------|-------|
-| Falcon | `falconResidualLayerNorm`, `falconGeluFFN`, `falconParallelAddNode` | ~100 |
-| BERT | `bertEmbeddingNode`, `bertResidualLayerNormNode`, `bertFFNNode`, `bertPoolerNode`, `bertClassifierNode` | ~220 |
-| GPT-2 | `gpt2EmbeddingNode`, `gpt2ResidualAddNode` | ~120 |
-| Command R | `commandRResidualAddNode` | ~40 |
-| DeepSeek | `deepSeekReshapeNode`, `deepSeekConstNode` | ~60 |
-| RWKV | `rwkvTimeMixNode`, `rwkvChannelMixNode` | ~300 |
-| Kimi | `kimiLinearAttentionNode` | ~200 |
-| Mamba | `mambaResidualAddNode` | ~40 |
-| Voxtral | `voxtralAdapterNode` | ~80 |
-| LLaVA | `mmProjectorNode`, `llamaAttnNode`, `llamaFFNNode` | ~200 |
-| QwenVL | `qwenVLAttnNode` | ~150 |
-| Fused ops | `fusedAddRMSNormNode`, `fusedNormAddNode`, `residualAddNode`, `residualRefNode` | ~150 |
+**Unjustified custom nodes (should compose from layers/):**
+
+| Architecture | Node | Lines | Issue |
+|-------------|------|-------|-------|
+| Falcon | `falconGeluFFN` | ~40 | Standard FFN with GELU; use `layers/core.FFN` |
+| BERT | `bertResidualLayerNormNode` | ~40 | Add + LayerNorm; compose from existing layers |
+| BERT | `bertFFNNode` | ~40 | Standard FFN; use `layers/core.FFN` |
+| BERT | `bertEmbeddingNode` | ~80 | Token+pos+segment embedding with raw `.Data()` at lines 324, 332-334 |
+| GPT-2 | `gpt2ResidualAddNode` | ~40 | Simple residual add; use `layers/core.Add` |
+| GPT-2 | `gpt2EmbeddingNode` | ~60 | Token+pos embedding with `.Data()` at lines 411, 423-424 |
+| Command R | `commandRResidualAddNode` | ~40 | Simple residual add |
+| LLaVA | `llamaAttnNode` (arch_vision_helpers.go:17-132) | ~115 | Complete custom GQA with nested `.Data()` loops |
+| LLaVA | `llamaFFNNode` (arch_vision_helpers.go:135-189) | ~55 | Custom SwiGLU with inline sigmoid via `.Data()` |
+| LLaVA | `rmsNormWrapNode` (arch_vision_helpers.go:223-260) | ~40 | Custom RMSNorm with raw `.Data()` normalization |
+
+**Justified custom nodes (unique architecture requirements):**
+
+| Architecture | Node | Justification |
+|-------------|------|---------------|
+| Fused ops | `fusedAddRMSNormNode`, `fusedNormAddNode` | Performance-justified fusions (single kernel) |
+| RWKV | `rwkvTimeMixNode`, `rwkvChannelMixNode` | Fundamentally different recurrence (linear attention) |
+| Kimi | `kimiLinearAttentionNode` | Linear attention with ELU+1 feature map |
+| Mamba | `mambaResidualAddNode` | SSM-specific residual pattern |
+| DeepSeek | `deepSeekReshapeNode`, `deepSeekConstNode` | MLA-specific tensor manipulation |
 
 **Total custom nodes:** ~50 types, ~1,660 lines
+**Unjustified:** ~550 lines across 10 node types
+**Justified:** ~1,110 lines across ~40 node types
 
-**Justified instances:**
-- `fusedAddRMSNormNode`, `fusedNormAddNode` -- Performance-justified fusions
-  that combine multiple engine ops into a single kernel launch.
-- `rwkvTimeMixNode`, `rwkvChannelMixNode` -- RWKV has fundamentally different
-  attention (linear recurrence) that cannot compose from standard attention layers.
-- `kimiLinearAttentionNode` -- Linear attention is a distinct mechanism.
-- `mambaResidualAddNode` -- SSM-specific residual pattern.
-- `deepSeekReshapeNode`, `deepSeekConstNode` -- MLA-specific tensor manipulation.
+The worst offender is `arch_vision_helpers.go` which contains 3 custom nodes
+(llamaAttnNode, llamaFFNNode, rmsNormWrapNode) totaling ~210 lines of raw
+`.Data()` loops that completely bypass the engine.
 
-**Unjustified instances:**
-- `falconGeluFFN` -- This is a standard FFN with GELU. Should compose from
-  `layers/core.FFN`.
-- `bertFFNNode` -- Standard FFN. Should compose from `layers/core.FFN`.
-- `bertResidualLayerNormNode` -- Residual + LayerNorm. Could compose from
-  `layers/normalization.LayerNorm` + `layers/core.Add`.
-- `gpt2ResidualAddNode` -- Simple residual add. Should use `layers/core.Add`.
-- `commandRResidualAddNode` -- Same as gpt2, simple residual add.
-- `gpt2EmbeddingNode` -- Token + position embedding. Could compose from
-  `layers/embeddings.TokenEmbedding`.
-- `bertEmbeddingNode` -- Token + position + segment embedding. Most of this
-  could compose from existing embeddings.
 
-### 11. generate/ -- KV Cache Duplication
+### 11. inference/timeseries/ -- Custom Nodes with .Data() Access
+
+**Files:** 20 files, `arch_*.go` pattern
+
+Mixed composition: some builders compose from `layers/` (arch_ttm.go,
+arch_flowstate.go, arch_patchtst.go), others create custom nodes with extensive
+`.Data()` access:
+
+| File | Lines with .Data() | Issue |
+|------|-------------------|-------|
+| arch_timemixer.go | 335, 337, 389, 396-399, 446, 464, 482 | 10+ .Data() calls; inline softmax at line 507 |
+| arch_tft.go | 139, 314, 494, 519 | Custom temporal fusion with inline LSTM |
+| arch_chronos.go | 871 | Tokenization node |
+| arch_ttm.go | 522, 572, 591, 607, 727 | Custom normalization and output assembly |
+| arch_tirex.go | 376, 580 | Custom projection |
+| arch_tspulse.go | 271, 350, 401 | Probability/semantic extraction |
+| arch_flowstate.go | 360, 382 | Feature extraction |
+| arch_regime.go | 423, 436 | Regime detection |
+
+**Estimated .Data() bypass lines:** ~2,000
+
+
+### 12. generate/ -- KV Cache Duplication
 
 **Files:** `kvcache.go`, `kvcache_fp16.go`, `kvcache_fp8.go`, `kvcache_q3.go`,
 `kvcache_q4.go` (1,235 lines total)
 
 Five KV cache implementations with the same interface (`Get`, `Set`, `Len`,
-`MaxSeqLen`) but different quantization:
-
-| Type | File | Lines | Quantization |
-|------|------|-------|-------------|
-| `KVCache[T]` | kvcache.go | 172 | None (generic) |
-| `KVCacheFP16` | kvcache_fp16.go | 188 | float32 -> float16 |
-| `KVCacheFP8` | kvcache_fp8.go | 183 | float32 -> float8 |
-| `KVCacheQ4` | kvcache_q4.go | 300 | float32 -> Q4_K |
-| `KVCacheQ3` | kvcache_q3.go | 392 | float32 -> Q3_K |
+`MaxSeqLen`) but different quantization. Structural code (layer indexing,
+sequence management, resize logic) is duplicated across all five.
 
 **Justified?** Partially. The quantization math genuinely differs between
-formats, and the Q3/Q4 block quantization has no generic expression. However,
-the structural code (layer indexing, sequence management, resize logic) is
-duplicated across all five. A base struct with quantization strategy injection
-would eliminate ~400 lines of duplication.
-
-
-### 12. inference/timeseries/ -- Partial Composition
-
-**Files:** 20 files, `arch_*.go` pattern
-
-The `inference/timeseries/` sub-package (distinct from the top-level
-`timeseries/`) follows a mixed pattern. Some architecture builders compose from
-`layers/`:
-
-- `arch_ttm.go` -- imports `layers/core` and `layers/timeseries`
-- `arch_flowstate.go` -- imports `layers/core` and `layers/timeseries`
-- `arch_patchtst.go` -- imports `layers/core` and `layers/timeseries`
-
-Others create custom nodes:
-- `arch_timemixer.go:96` -- `timeMixerNode` with 500+ lines including
-  inline softmax (`softmaxKernel` at line 507)
-- `arch_chronos.go:135` -- `chronosNode` with encoder/decoder blocks
-- `arch_tirex.go:107` -- `tiRexNode`
-- `arch_tft.go:325` -- `tftNode` with inline LSTM
-
-**Justified?** Mixed. TimeMixer's seasonality-trend decomposition and TFT's
-variable selection networks have unique structure. But the inline softmax and
-LSTM could compose from existing layers.
+formats. However, a base struct with quantization strategy injection would
+eliminate ~400 lines of structural duplication.
 
 
 ### 13. training/loss/ -- Engine Fields Unused
 
-Several loss functions accept `compute.Engine[T]` but never delegate to it,
-instead iterating over `.Data()` with element-wise `ops` calls:
-
 | Loss | File | Lines | Issue |
 |------|------|-------|-------|
-| `BCELoss` | training/loss/bce.go | 156 | Has `engine` field, iterates `.Data()` for log/mul/add |
-| `RoutingContrastive` | training/loss/routing_contrastive.go | 224 | Triple-nested raw loops for cosine similarity |
-| `QuantileLoss` | training/loss/quantile.go | 92 | Hardcoded `float32` casts via `any(...).(float32)` despite generic `[T]` |
+| `BCELoss` | training/loss/bce.go | 156 | Has `engine` field (line 18), uses only raw `.Data()` for log/mul/add |
+| `RoutingContrastive` | training/loss/routing_contrastive.go | 224 | Triple-nested raw loops for cosine similarity; `.Data()` at lines 65, 91, 108, 118, 152, 188, 211, 280-281 |
+| `QuantileLoss` | training/loss/quantile.go | 92 | Hardcoded `float32` casts via `any(...).(float32)` despite generic `[T]`; panics for non-float32 |
+| `SharpeLoss` | training/loss/quantile.go:83-152 | ~70 | Raw `.Data()` iteration with manual softmax + portfolio computation |
 
 `BCELoss` is the clearest violation: it stores `engine` but its `Forward` and
-`Backward` methods use only `ops` (element-wise arithmetic). The computation
-(log, mul, add, sub, div) maps directly to engine ops (`engine.Log`,
-`engine.Mul`, `engine.Add`, `engine.Sub`, `engine.Div`). Using engine ops would
-enable GPU-accelerated loss computation.
-
-`RoutingContrastive` has triple-nested `for b/i/j` loops computing pairwise
-cosine similarity on raw slices. Could use `engine.MatMul` for batch pairwise
-dot products and `engine.ReduceSum` for norms.
+`Backward` methods use only raw ops. The computation (log, mul, add, sub, div)
+maps directly to engine ops.
 
 `QuantileLoss` breaks generics entirely with `any(targetData[i]).(float32)` --
 this panics at runtime for any type other than `float32`.
@@ -523,20 +429,14 @@ this panics at runtime for any type other than `float32`.
 
 ### 14. training/optimizer/ -- Raw-Slice Gradient Operations
 
-The canonical `AdamW[T]` optimizer properly uses `engine.MulScalar`,
-`engine.Add`, etc. for the core parameter update. However:
-
 | Method | File:line | Issue |
 |--------|-----------|-------|
-| `guardAndClipGradients` | training/optimizer/adamw.go:236 | Iterates every element of every gradient via `.Data()` -- forces D2H transfer on GPU, defeats CUDA graph capture |
-| `AdamW8bit.Step` | training/optimizer/adamw8bit.go | Entire 8-bit Adam update on raw slices, zero Engine usage |
-| `SGD.Step` | training/optimizer/sgd.go | Allocates O(N) tensor to broadcast learning rate instead of using `engine.MulScalar` |
+| `AdamW8bit.Step` | training/optimizer/adamw8bit.go:140-178 | Entire 8-bit Adam update on raw `.Data()` slices; element-by-element loop at lines 155-168 |
+| `guardAndClipGradients` | training/optimizer/adamw.go:239-300 | Uses engine ops (ReduceSum, Mul) with minimal `.Data()` for final scalars -- ACCEPTABLE after re-review |
 
-`guardAndClipGradients` is called on every `Step()`. For GPU tensors, each
-`.Data()` call triggers a D2H copy. With 100+ parameters, this means 100+
-synchronous D2H copies per optimization step. The global norm computation
-should use `engine.Mul` + `engine.ReduceSum` and the scaling should use
-`engine.MulScalar`.
+The `AdamW8bit` optimizer is the remaining violation: the full parameter update
+loop at lines 155-168 iterates element-by-element instead of using vectorized
+engine ops, completely defeating GPU acceleration.
 
 ---
 
@@ -556,8 +456,21 @@ These bypass `layers/` for documented performance reasons (see ADR-027):
 | Megakernel codegen | internal/codegen/ | Whole-graph kernel fusion |
 
 These are the correct pattern: performance-critical hot paths where composition
-adds measurable overhead. They are not composability violations -- they are
-optimized implementations of composed operations.
+adds measurable overhead.
+
+### GNN Package (Reclassified from S1 to S3)
+
+**Files:** `gcn.go`, `gat.go` (639 lines)
+
+Uses custom matrix algebra (`matMul`, `reluMatrix`, `softmaxMatrix`,
+`xavierMatrix`) for graph convolution operations. Graph neighborhood aggregation
+and adjacency normalization are operations that cannot trivially compose from
+standard neural network layers. A declared `var cpuEngine` at gcn.go:15 is
+unused.
+
+**Justified?** Partially. The graph-specific operations (adjacency normalization,
+sparse neighborhood aggregation) are legitimately novel. The `matMul` and
+`reluMatrix` helpers could still delegate to engine ops.
 
 ### Legitimate Standalone Packages
 
@@ -590,61 +503,62 @@ because their functionality is outside the neural network domain:
 
 ### Lines of Redundant Code by Component
 
-| Reimplemented Component | Instances | Est. Redundant Lines |
-|------------------------|-----------|---------------------|
-| Linear/MatMul/MLP layer | 18 | ~2,400 |
-| LayerNorm (all variants) | 17 | ~1,800 |
-| Multi-head attention | 8 | ~2,000 |
-| GELU activation | 4 | ~120 |
-| Softmax | 6 | ~200 |
-| AdamW optimizer | 5 | ~400 |
-| MSE loss | 2 | ~40 |
-| BCE/Quantile/Contrastive loss (raw) | 3 | ~470 |
-| Gradient clipping (raw .Data()) | 3 | ~90 |
-| Xavier initialization | 5 | ~100 |
-| ReLU activation | 5 | ~50 |
-| Full backward passes | 3 | ~3,000 |
-| SGD optimizer | 5+ | ~150 |
-| Intra-layers/ duplication | 10 | ~400 |
-| **Total** | **90+** | **~11,900** |
+| Reimplemented Component | Instances | Est. Redundant Lines | Change |
+|------------------------|-----------|---------------------|--------|
+| Linear/MatMul/MLP layer | 11 | ~1,400 | -1,000 |
+| LayerNorm (all variants) | 10 | ~1,200 | -600 |
+| Multi-head attention | 6 | ~1,500 | -500 |
+| GELU activation | 4 | ~120 | (same) |
+| Softmax | 4 | ~150 | -50 |
+| AdamW optimizer | 1 | ~80 | -320 |
+| MSE loss | 1 | ~20 | -20 |
+| BCE/Quantile/Contrastive loss (raw) | 3 | ~470 | (same) |
+| Gradient clipping (raw .Data()) | 1 | ~30 | -60 |
+| Xavier initialization | 1 | ~20 | -80 |
+| ReLU activation | 1 | ~10 | -40 |
+| Full backward passes (raw f64) | 3 | ~2,500 | -500 |
+| SGD optimizer | 0 | 0 | -150 |
+| Intra-layers/ duplication | 14 | ~600 | +200 |
+| **Total** | **60+** | **~8,200** | **-5,800** |
 
 ### Packages That Follow the Principle
 
-| Package | Pattern | Imports from layers/ |
-|---------|---------|---------------------|
-| `inference/arch_common.go` | Exemplar | attention, normalization, core, embeddings |
+| Package | Pattern | Evidence |
+|---------|---------|---------|
+| `inference/arch_common.go` | Exemplar | Composes attention, normalization, core, embeddings |
 | `inference/arch_llama.go` | Good | Via arch_common |
 | `inference/arch_gemma.go` | Good | Via arch_common |
 | `inference/arch_mistral.go` | Good | Via arch_common |
 | `inference/arch_qwen.go` | Good | Via arch_common |
 | `inference/arch_phi.go` | Good | Via arch_common |
-| `inference/arch_deepseek.go` | Good | Via arch_common + 2 custom |
+| `inference/arch_deepseek.go` | Good | Via arch_common + 2 justified custom nodes |
 | `layers/transformer/` | Good | Composes attention, normalization, core |
-| `layers/vision/` | Good | Composes core, normalization |
+| `layers/vision/` | Partial | Composes core, normalization; clip_encoder.go violates |
 | `layers/audio/` | Good | Composes core |
 | `layers/hrm/` | Good | Composes transformer |
 | `layers/ssm/` | Good | Composes core |
-| `layers/timeseries/` | Good | Composes core, normalization |
+| `layers/timeseries/` | Partial | Composes core, normalization; mlstm/ssm/vsn violate |
 | `model/hrm/` | Good | Composes layers/core, layers/hrm |
+| `crossasset/` | Good (NEW) | Uses `layers/functional` + canonical optimizer |
+| `rl/` | Good (NEW) | Uses `layers/functional` + canonical optimizer |
+| `synth/` | Good (NEW) | Uses `layers/functional` + canonical optimizer |
+| `meta/` | Good (NEW) | Uses `layers/functional` |
+| `shared/` | Good (NEW) | Uses `engine.MatMul` |
 
-### Packages That Violate the Principle
+### Packages That Still Violate the Principle
 
 | Package | Severity | Lines | Uses Engine[T]? | Uses layers/? |
 |---------|----------|-------|-----------------|---------------|
-| `timeseries/` | S1 | 18,197 | Partial (_engine.go files) | 2 of 34 files |
+| `timeseries/` | S1 | 17,570 | Partial (_engine.go files) | 3 of 35 files |
 | `tabular/` | S1 | 4,010 | Partial (MatMul only) | No |
-| `crossasset/` | S1 | 918+851 | Partial (GPU path) | No |
-| `modeldsl/` | S1 | 696 | No | No |
-| `rl/` | S1 | 787 | No | No |
-| `gnn/` | S1 | 416 | No | No |
-| `synth/` | S1 | 676 | No | No |
-| `meta/` | S1 | 307 | No | No |
-| `shared/` | S1 | 259 | No | No |
+| `modeldsl/` | S1 | 1,520 | No | No |
+| `gnn/` | S3 | 639 | No (declared, unused) | No |
 | `training/loss/` | S2 | ~470 | Has field, unused | N/A |
-| `training/optimizer/` | S2 | ~190 | Partial (D2H in clip) | N/A |
+| `training/optimizer/` | S2 | ~140 | Partial (8bit bypasses) | N/A |
 | `inference/` (custom nodes) | S2 | ~1,660 | Yes | Partial |
-| `generate/` (KV cache) | S2 | ~1,235 | N/A | N/A |
 | `inference/timeseries/` | S2 | ~2,000 | Yes | Partial |
+| `generate/` (KV cache) | S2 | ~1,235 | N/A | N/A |
+| `layers/` (internal) | S1.5 | ~600 | Partial | Self-bypass |
 
 ---
 
@@ -671,75 +585,99 @@ because their functionality is outside the neural network domain:
 4. **Copy-paste across packages.** When a new domain package was created (tabular,
    GNN, RL, synth, meta), the author copied the linear/layerNorm/attention pattern
    from whichever existing package was closest, rather than importing from `layers/`.
-   The `mlpLayer` struct appears in 5 separate packages with nearly identical code.
 
 5. **No enforcement mechanism.** There is no lint rule, CI check, or architecture
    test that prevents packages from reimplementing `Engine[T]` operations with raw
-   slice math. ADR-027 documented the principle but did not enforce it.
+   slice math. ADR-027 documented the principle but did not enforce it. (Note: an
+   architecture enforcement test was added to CI on Apr 3 -- see obs #577 -- but
+   timeseries/ is currently on the allowlist.)
+
+### What is working?
+
+The migration pattern used for crossasset/, rl/, synth/, meta/, and shared/ is
+proven and repeatable:
+
+1. Import `layers/functional` for forward ops (Linear, LayerNorm, GELU, etc.)
+2. Import `training/optimizer` for canonical optimizer implementations
+3. Delete reimplemented helpers
+4. Run existing tests to verify behavioral equivalence
+
+This pattern reduced 6 packages from S1 violations to clean composition in a
+single day.
 
 ---
 
 ## Remediation Strategy
 
-### Priority 1: Extract Shared Training Primitives
+### Priority 1: Migrate tabular/ (highest ROI, smallest effort)
 
-The most impactful change is to make `layers/` ergonomic for training workloads.
-Currently, training code avoids `layers/` because:
-- Creating a `LayerNorm` requires constructing parameters and registering with a
-  graph
-- Calling forward requires wrapping data in `tensor.TensorNumeric[T]`
-- The backward pass requires the graph system
+4,010 lines, 5 identical `linearForward` methods, 3 identical `layerNorm`
+methods, 1 shared `geluScalar`. The migration from crossasset/ provides a
+direct template.
 
-A lightweight functional API on top of `layers/` would eliminate the friction:
+Steps:
+1. Add `import "github.com/zerfoo/zerfoo/layers/functional"` to each file
+2. Replace `linearForward(ctx, engine, x, w, b)` with `functional.Linear(ctx, engine, x, w, b)`
+3. Replace `layerNorm(ctx, engine, x, gamma, beta, eps)` with `functional.LayerNorm(ctx, engine, x, gamma, beta, eps)`
+4. Replace `geluScalar()` calls with `functional.GELU`
+5. Replace manual multi-head attention with `functional.MultiHeadAttention`
+6. Delete orphaned helper methods
+7. Run `go test ./tabular/...`
 
-```go
-// Proposed: layers/functional package
-func LayerNorm[T tensor.Numeric](ctx context.Context, engine compute.Engine[T],
-    x *tensor.TensorNumeric[T], scale, bias *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
-```
+**Estimated reduction:** ~600 lines
 
-### Priority 2: Migrate timeseries/ (biggest bang for buck)
+### Priority 2: Migrate timeseries/ forward paths (biggest bang for buck)
 
-The `timeseries/` package has 18,197 lines and 10 model architectures.
-Migration order:
-1. Replace `layernorm_ops.go` calls with `layers/normalization.LayerNorm`
-2. Replace `math_ops.go` (GELU, softmax) with `layers/activations`
-3. Replace `training_ops.go` (AdamW, MSE) with `training/optimizer` and
-   `training/loss`
-4. Replace inline attention in each model with `layers/attention`
-5. Replace `linearForward` / `mlpLayer` with `layers/core.Linear`
+The `timeseries/` package has 17,570 lines across 35 files. Migration order:
 
-### Priority 3: Consolidate crossasset/
+1. Replace `layernorm_ops.go` calls with `functional.LayerNorm`
+2. Replace `math_ops.go` (GELU, softmax) with `functional` equivalents
+3. Replace `training_ops.go` (AdamW, MSE) with `training/optimizer` and `training/loss`
+4. Replace inline attention in iTransformer and PatchTST with `functional.MultiHeadAttention`
+5. Replace `linearForward` / `mlpLayer` with `functional.Linear`
+6. Delete `layernorm_ops.go`, `math_ops.go`, `training_ops.go`, `adamw_f32.go`
 
-Rewrite `crossasset/crossasset.go` to compose from `layers/`. The GPU training
-path (`gpu_train.go`) should use the same graph-based approach as the inference
-pipeline.
+The backward passes are harder -- they require either `graph.Backward()` support
+or maintaining custom backward functions that call `functional` variants.
 
-### Priority 4: Consolidate tabular/
+**Estimated reduction:** ~2,000 lines (forward path only)
 
-5 identical `linearForward` methods -> 1 shared function using `layers/core.Linear`.
-3 identical `layerNorm` methods -> `layers/normalization.LayerNorm`.
+### Priority 3: Fix layers/ internal violations
 
-### Priority 5: Add Architecture Test
+The 14 violations within `layers/` itself undermine the credibility of the
+composition principle. Priority order:
 
-```go
-// go test -run TestNoRawSliceMath ./...
-func TestNoRawSliceMath(t *testing.T) {
-    // Scan non-internal, non-test .go files for patterns that indicate
-    // raw slice math where Engine[T] should be used:
-    // - tensor.Data() in non-test files outside internal/
-    // - manual for loops over tensor elements
-    // - import "math" without import layers/
-}
-```
+1. `vision/clip_encoder.go` -- Rewrite patch extraction, class token concat,
+   position embedding, and attention to use engine ops (~200 lines)
+2. `timeseries/mlstm.go` -- Replace `.Data()` access with engine.Slice and
+   vectorized ops (~80 lines)
+3. `timeseries/ssm.go` -- Replace raw discretization loops with engine ops (~60 lines)
+4. `timeseries/vsn.go` -- Replace weight extraction with engine.Slice (~30 lines)
+5. `core/gemm.go` -- Replace hand-rolled GEMM with engine.MatMul (~20 lines)
+6. `core/variable_selection.go` -- Replace inline GELU with activations.Gelu (~2 lines)
+7. `core/temporal_conv_encoder.go` -- Replace raw pool gradient with engine ops (~10 lines)
 
-### Priority 6: Delete or migrate experimental packages
+### Priority 4: Fix inference/ custom nodes
 
-`modeldsl/`, `gnn/`, `rl/`, `synth/`, `meta/`, `shared/` are all small (<800
-lines each). Options:
-- **Migrate:** Rewrite to compose from `layers/` and `training/`
-- **Delete:** If the package is unused or experimental, remove it
-- **Flag:** Mark as `// Deprecated: does not compose from layers/` until migrated
+Replace unjustified custom nodes in architecture builders:
+
+1. `arch_vision_helpers.go` -- llamaAttnNode, llamaFFNNode, rmsNormWrapNode (~210 lines)
+2. `arch_bert.go` -- bertFFNNode, bertResidualLayerNormNode, bertEmbeddingNode (~140 lines)
+3. `arch_gpt2.go` -- gpt2ResidualAddNode, gpt2EmbeddingNode (~100 lines)
+4. `arch_falcon.go` -- falconGeluFFN (~40 lines)
+5. `arch_commandr.go` -- commandRResidualAddNode (~40 lines)
+
+### Priority 5: Fix training/loss/ engine bypass
+
+1. `bce.go` -- Replace raw ops with engine.Log, engine.Mul, engine.Add, engine.Sub
+2. `routing_contrastive.go` -- Replace triple-nested loops with engine.MatMul for
+   batch pairwise cosine similarity
+3. `quantile.go` -- Fix broken generics (panics for non-float32) and use engine ops
+
+### Priority 6: Add Architecture Test Enforcement
+
+Remove `timeseries/` from the architecture test allowlist as migration completes.
+Add `tabular/` to the test if not already covered.
 
 ---
 
@@ -749,18 +687,36 @@ lines each). Options:
    architecture builders (Llama, Gemma, Mistral, Qwen, Phi) cleanly compose
    from `layers/`. This is the pattern to follow.
 
-2. **layers/ itself is well-designed.** 56+ operations across 19 sub-packages,
+2. **layers/ itself is well-designed.** 56+ operations across 23 sub-packages,
    with clear separation of concerns and consistent interfaces. The composition
    principle works when it is followed.
 
-3. **The _engine.go migration pattern works.** Files like `patchtst_engine.go`
-   and `itransformer_engine.go` show that migrating raw-slice code to `Engine[T]`
-   is feasible and incremental. The pattern just needs to be completed.
+3. **The migration pattern is proven.** Five packages were migrated from S1 to
+   clean composition in a single day (Apr 3). The `layers/functional` API
+   provides the ergonomic bridge that was missing when the violating packages
+   were originally written.
 
-4. **ADR-027 correctly identified the problem.** The 12 composition violations
-   in `layers/` were documented and a remediation plan was created. The same
-   rigor needs to be applied to the 12 packages identified in this audit.
+4. **Migration preserves behavioral equivalence.** All migrated packages pass
+   their existing test suites. The functional API is a drop-in replacement for
+   the reimplemented helpers.
 
 5. **Performance-justified exceptions are documented.** Fused CUDA kernels,
    SIMD assembly, and megakernel codegen are correctly treated as optimized
    implementations, not composability violations.
+
+6. **Mamba in timeseries/ is the reference.** `timeseries/mamba.go` imports
+   `layers/ssm` and `layers/core`, proving that full composition is feasible
+   even for complex time-series models.
+
+7. **Architecture enforcement is now in CI.** The composition test (obs #577)
+   prevents new violations from being introduced, even though legacy violations
+   are currently allowlisted.
+
+---
+
+## Revision History
+
+| Date | Rev | Changes |
+|------|-----|---------|
+| 2026-04-02 | 1 | Initial audit: 14 violating packages, ~14,000 redundant lines |
+| 2026-04-03 | 2 | 5 packages migrated, deeper layers/ review, +4 internal violations found. 8 violating packages remain, ~8,200 redundant lines |
