@@ -70,6 +70,7 @@ type generatorOptions struct {
 	compressedKVChunkSize int    // when > 0, use CompressedKVCache with this chunk size
 	eagleWeightsPath      string // when non-empty, enable EAGLE speculative decoding with weights from this GGUF path
 	tieredKVCfg           *TieredKVStoreConfig // when non-nil, use TieredKVStore
+	pjrtPlan              any    // *graph.PJRTPlan[T], stored as any to avoid type param on generatorOptions
 }
 
 // specDraftConfig holds configuration for speculative decoding via a draft model.
@@ -189,6 +190,7 @@ type Generator[T tensor.Numeric] struct {
 	compressedKVChunkSize int                                        // when > 0, use CompressedKVCache
 	eagleWeightsPath      string                                     // when non-empty, EAGLE decode is preferred
 	tieredKVCfg           *TieredKVStoreConfig                       // when non-nil, use TieredKVStore per generation call
+	pjrtPlan              *graph.PJRTPlan[T]                         // when non-nil, use PJRT backend for inference
 }
 
 // NewGenerator creates a Generator from a model graph, tokenizer, engine, and config.
@@ -209,6 +211,11 @@ func NewGenerator[T tensor.Numeric](
 		mc = runtime.Nop()
 	}
 
+	var pjrtPlan *graph.PJRTPlan[T]
+	if gopts.pjrtPlan != nil {
+		pjrtPlan, _ = gopts.pjrtPlan.(*graph.PJRTPlan[T])
+	}
+
 	gen := &Generator[T]{
 		graph:                 g,
 		tokenizer:             tok,
@@ -220,6 +227,7 @@ func NewGenerator[T tensor.Numeric](
 		compressedKVChunkSize: gopts.compressedKVChunkSize,
 		eagleWeightsPath:      gopts.eagleWeightsPath,
 		tieredKVCfg:           gopts.tieredKVCfg,
+		pjrtPlan:              pjrtPlan,
 	}
 
 	if g != nil {
@@ -244,6 +252,9 @@ func NewGenerator[T tensor.Numeric](
 
 // Graph returns the underlying computation graph.
 func (gen *Generator[T]) Graph() *graph.Graph[T] { return gen.graph }
+
+// PJRTPlan returns the PJRT plan, or nil if PJRT is not enabled.
+func (gen *Generator[T]) PJRTPlan() *graph.PJRTPlan[T] { return gen.pjrtPlan }
 
 // Tokenizer returns the tokenizer.
 func (gen *Generator[T]) Tokenizer() tokenizer.Tokenizer { return gen.tokenizer }

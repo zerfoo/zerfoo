@@ -33,6 +33,7 @@ type InferenceSession[T tensor.Numeric] struct {
 	stopSet      map[int]bool                                              // reusable stop-token set, cleared and repopulated each call
 	generatedIDs []int                                                     // reusable slice for generated token IDs
 	prefixCache  *PrefixCache[T]                                           // shared prefix cache for KV block reuse; nil if disabled
+	pjrtPlan     *graph.PJRTPlan[T]                                        // when non-nil, use PJRT backend; KV cache managed by PJRTPlan
 }
 
 // NewSession creates a new InferenceSession with its own KV cache.
@@ -68,6 +69,7 @@ func (gen *Generator[T]) NewSession() *InferenceSession[T] {
 		planRef:      &gen.plan,
 		poolResetter: poolResetter,
 		prefixCache:  gen.prefixCache,
+		pjrtPlan:     gen.pjrtPlan,
 	}
 }
 
@@ -103,6 +105,11 @@ func (s *InferenceSession[T]) Generate(ctx context.Context, prompt string, sc Sa
 
 	if s.config.BOSTokenID > 0 {
 		promptIDs = append([]int{s.config.BOSTokenID}, promptIDs...)
+	}
+
+	// PJRT path: use RunPrefill/RunDecode instead of graph Forward.
+	if s.pjrtPlan != nil {
+		return s.pjrtGenerate(ctx, s.pjrtPlan, promptIDs, sc)
 	}
 
 	// Build grammar vocab cache if grammar-constrained decoding is active.
@@ -282,6 +289,11 @@ func (s *InferenceSession[T]) GenerateStream(ctx context.Context, prompt string,
 
 	if s.config.BOSTokenID > 0 {
 		promptIDs = append([]int{s.config.BOSTokenID}, promptIDs...)
+	}
+
+	// PJRT path: use RunPrefill/RunDecode instead of graph Forward.
+	if s.pjrtPlan != nil {
+		return s.pjrtGenerateStream(ctx, s.pjrtPlan, promptIDs, sc, stream)
 	}
 
 	// Build grammar vocab cache if grammar-constrained decoding is active.
