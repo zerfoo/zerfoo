@@ -46,6 +46,7 @@ func (c *ServeCommand) Description() string {
 // Run implements Command.Run.
 func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	var modelID, cacheDir, port, gpusRaw, apiKey, tlsCert, tlsKey string
+	var pjrtPlugin string
 	var allowNoAuth bool
 
 	for i := 0; i < len(args); i++ {
@@ -89,6 +90,12 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 			}
 			tlsKey = args[i+1]
 			i++
+		case "--pjrt":
+			if i+1 >= len(args) {
+				return errors.New("--pjrt requires a value")
+			}
+			pjrtPlugin = args[i+1]
+			i++
 		default:
 			if modelID != "" {
 				return fmt.Errorf("unexpected argument: %s", args[i])
@@ -116,6 +123,9 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	var loadOpts []inference.Option
 	if cacheDir != "" {
 		loadOpts = append(loadOpts, inference.WithCacheDir(cacheDir))
+	}
+	if pjrtPlugin != "" {
+		loadOpts = append(loadOpts, inference.WithPJRT(pjrtPlugin))
 	}
 
 	var gpuIDs []int
@@ -240,6 +250,7 @@ OPTIONS:
   --allow-no-auth     Allow starting without an API key (public endpoints)
   --tls-cert <path>   Path to TLS certificate file (requires --tls-key)
   --tls-key <path>    Path to TLS private key file (requires --tls-cert)
+  --pjrt <path>       Path to PJRT plugin .so for accelerator backend
 
 ENDPOINTS:
   POST /v1/chat/completions   Chat completion
@@ -253,6 +264,7 @@ func (c *ServeCommand) Examples() []string {
 		"serve google/gemma-3-1b",
 		"serve google/gemma-3-1b --port 9090",
 		"serve google/gemma-3-1b --gpus 0,1,2,3",
+		"serve google/gemma-3-1b --pjrt /usr/lib/pjrt_cpu.so",
 	}
 }
 

@@ -45,6 +45,7 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	var topK, maxTokens int
 	var topP, repetitionPenalty float64
 	var quarot bool
+	var pjrtPlugin string
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -140,6 +141,12 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 				return err
 			}
 			prompt = s
+		case "--pjrt":
+			s, err := nextVal("--pjrt")
+			if err != nil {
+				return err
+			}
+			pjrtPlugin = s
 		case "--quarot":
 			quarot = true
 		default:
@@ -175,6 +182,9 @@ func (c *RunCommand) Run(ctx context.Context, args []string) error {
 	}
 	if quarot {
 		loadOpts = append(loadOpts, inference.WithQuaRot(true))
+	}
+	if pjrtPlugin != "" {
+		loadOpts = append(loadOpts, inference.WithPJRT(pjrtPlugin))
 	}
 
 	li := startLoading(c.out)
@@ -276,7 +286,8 @@ OPTIONS:
   --cache-dir <dir>              Override model cache directory
   --json-schema <schema>         JSON Schema for structured output (non-interactive)
   --prompt <text>                Prompt text (required with --json-schema)
-  --quarot                       Fuse QuaRot Hadamard rotation into weights at load time`
+  --quarot                       Fuse QuaRot Hadamard rotation into weights at load time
+  --pjrt <path>                  Path to PJRT plugin .so for accelerator backend`
 }
 
 // Examples implements Command.Examples.
@@ -287,6 +298,7 @@ func (c *RunCommand) Examples() []string {
 		`run google/gemma-3-1b --system "You are a helpful assistant"`,
 		`run google/gemma-3-1b --json-schema '{"type":"object","properties":{"name":{"type":"string"}}}' --prompt "Generate a name"`,
 		"run --quarot model.gguf",
+		"run --pjrt /usr/lib/pjrt_cpu.so google/gemma-3-1b",
 	}
 }
 

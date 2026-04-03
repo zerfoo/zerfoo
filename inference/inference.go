@@ -134,6 +134,7 @@ type loadOptions struct {
 	quarot              bool   // fuse QuaRot Hadamard rotation into weights
 	maxBatchConcurrency int    // max goroutines in GenerateBatch (0 = default)
 	sessionPoolSize     int    // session pool capacity (0 = default 16)
+	pjrtPlugin          string // path to PJRT plugin .so (empty = disabled)
 }
 
 // WithCacheDir sets the model cache directory.
@@ -210,6 +211,16 @@ func WithMmap(enabled bool) Option {
 func WithQuaRot(enabled bool) Option {
 	return func(o *loadOptions) {
 		o.quarot = enabled
+	}
+}
+
+// WithPJRT sets the path to a PJRT plugin shared library (.so). When set,
+// the inference pipeline loads the plugin and uses the PJRT backend for
+// compilation and execution instead of the standard Engine path.
+// An empty string (the default) disables PJRT.
+func WithPJRT(pluginPath string) Option {
+	return func(o *loadOptions) {
+		o.pjrtPlugin = pluginPath
 	}
 }
 
