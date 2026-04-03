@@ -136,6 +136,22 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		genOpts = append(genOpts, generate.WithGeneratorKVDtype("fp16"))
 	}
 
+	// PJRT compilation: when a plugin path is set, compile the graph via PJRT
+	// instead of using the standard Engine compilation path.
+	var pjrtPlan *graph.PJRTPlan[float32]
+	if o.pjrtPlugin != "" {
+		sampleInput, stErr := tensor.New[float32]([]int{1, 1}, []float32{1})
+		if stErr != nil {
+			return nil, fmt.Errorf("create PJRT sample input: %w", stErr)
+		}
+		plan, pErr := compilePJRT(o.pjrtPlugin, g, sampleInput)
+		if pErr != nil {
+			return nil, pErr
+		}
+		pjrtPlan = plan
+		genOpts = append(genOpts, generate.WithPJRTPlan(plan))
+	}
+
 	gen := generate.NewGenerator(g, tok, eng, generate.ModelConfig{
 		VocabSize:  meta.VocabSize,
 		MaxSeqLen:  maxSeqLen,
@@ -150,7 +166,8 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 	}
 	pool := make(chan *generate.InferenceSession[float32], poolSize)
 	pool <- gen.NewSession() // Pre-warm with one session for CUDA graph address reuse.
-	return &Model{
+
+	mdl := &Model{
 		generator:   gen,
 		tokenizer:   tok,
 		engine:      eng,
@@ -159,7 +176,9 @@ func LoadFile(path string, opts ...Option) (*Model, error) {
 		embWeights:  embData,
 		hiddenSize:  embHiddenSize,
 		sessionPool: pool,
-	}, nil
+		pjrtPlan:    pjrtPlan,
+	}
+	return mdl, nil
 }
 
 // BuildArchGraph dispatches to the appropriate architecture-specific graph

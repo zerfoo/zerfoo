@@ -44,6 +44,10 @@ type Model struct {
 	// CUDA graph capture records GPU pointers; reusing sessions keeps those
 	// pointers valid for graph replay. The pool grows on demand for concurrency.
 	sessionPool chan *generate.InferenceSession[float32]
+
+	// pjrtPlan holds the PJRT compiled plan when WithPJRT is used.
+	// Nil when using the standard Engine path. Closed by Model.Close().
+	pjrtPlan *graph.PJRTPlan[float32]
 }
 
 // ModelMetadata holds model configuration loaded from config.json.
@@ -808,11 +812,20 @@ func (m *Model) Embed(text string) ([]float32, error) {
 
 // Close releases resources held by the model. If the model was loaded on a
 // GPU, this frees the CUDA engine's handles, pool, and stream. If loaded
-// with mmap, this releases the memory mapping.
+// with mmap, this releases the memory mapping. If a PJRT plan is held,
+// its executables, weight buffers, and KV cache buffers are released.
 func (m *Model) Close() error {
 	var firstErr error
+	if m.pjrtPlan != nil {
+		if err := m.pjrtPlan.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		m.pjrtPlan = nil
+	}
 	if c, ok := m.engine.(io.Closer); ok {
-		firstErr = c.Close()
+		if err := c.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if m.closer != nil {
 		if err := m.closer.Close(); err != nil && firstErr == nil {
