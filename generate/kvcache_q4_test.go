@@ -153,8 +153,9 @@ func TestKVCacheQ4_MemoryReduction(t *testing.T) {
 	}
 
 	lb := &cache.layers[0]
-	numElements := lb.keyBuf.n
-	packedBytes := lb.keyBuf.rawBytes()
+	q4Buf := lb.keyBuf.(*q4Storage)
+	numElements := q4Buf.n
+	packedBytes := q4Buf.rawBytes()
 	f32Bytes := numElements * 4
 
 	// Q4 packs 2 elements per byte.
@@ -164,7 +165,7 @@ func TestKVCacheQ4_MemoryReduction(t *testing.T) {
 	}
 
 	// Total Q4 bytes (packed + scales) should be much less than float32.
-	totalQ4 := lb.keyBuf.totalBytes()
+	totalQ4 := q4Buf.totalBytes()
 	ratio := float64(f32Bytes) / float64(totalQ4)
 	if ratio < 4.0 {
 		t.Errorf("Q4 compression ratio = %.1fx, want >= 4x (f32=%d, q4=%d)",
