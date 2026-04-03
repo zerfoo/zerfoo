@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // trainWindowedEngine implements TrainWindowed using the compute engine for
@@ -259,7 +260,7 @@ func (f *FreTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			}
 
 			// AdamW update via engine tensor ops for large params, scalar for small.
-			lr := float32(warmupLR(config.LR, epoch, config.WarmupEpochs))
+			lr := float32(scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs))
 			tStep := float32(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			beta1 := float32(config.Beta1)
 			beta2 := float32(config.Beta2)

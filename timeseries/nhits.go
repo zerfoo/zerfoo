@@ -11,6 +11,7 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // NHiTSConfig holds the configuration for an NHiTS model.
@@ -549,7 +550,7 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			}
 
 			// Apply all gradients with AdamW (with LR warmup).
-			lr := float32(warmupLR(baseLR, epoch, config.WarmupEpochs))
+			lr := float32(scheduler.WarmupLR(baseLR, epoch, config.WarmupEpochs))
 			for i := range allParams {
 				clipGradientsF32(allGrads[i], config.GradClip)
 				adamWUpdateF32(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, lr, wd, epoch+1)

@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // trainWindowedEngine implements GPU-accelerated CfC training using float32
@@ -394,7 +395,7 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 			}
 
 			// AdamW update using engine for large parameter tensors.
-			lr := float32(warmupLR(config.LR, epoch, config.WarmupEpochs))
+			lr := float32(scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs))
 			tStep := float32(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			beta1 := float32(config.Beta1)
 			beta2 := float32(config.Beta2)

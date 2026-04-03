@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // mixerBlockF64WithCacheEngine runs one TSMixer block in float64 using
@@ -406,7 +408,7 @@ func (m *TTM) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 				}
 			}
 
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
+			lr := scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			for i := range trainableParams {
 				adamM[i] = config.Beta1*adamM[i] + (1-config.Beta1)*grads[i]
