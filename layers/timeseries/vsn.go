@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
@@ -27,6 +28,7 @@ type GRN[T tensor.Numeric] struct {
 	w2     *graph.Parameter[T] // [inputDim, hiddenDim]
 	b2     *graph.Parameter[T] // [1, hiddenDim]
 	wOut   *graph.Parameter[T] // [hiddenDim, outputDim]
+	ln     *normalization.LayerNormalization[T]
 
 	inputDim  int
 	hiddenDim int
@@ -81,6 +83,11 @@ func NewGRN[T tensor.Numeric](
 		return nil, err
 	}
 
+	ln, err := normalization.NewLayerNormalization[T](engine, outputDim)
+	if err != nil {
+		return nil, fmt.Errorf("grn layernorm: %w", err)
+	}
+
 	return &GRN[T]{
 		name:      name,
 		engine:    engine,
@@ -90,6 +97,7 @@ func NewGRN[T tensor.Numeric](
 		w2:        w2,
 		b2:        b2,
 		wOut:      wOut,
+		ln:        ln,
 		inputDim:  inputDim,
 		hiddenDim: hiddenDim,
 		outputDim: outputDim,
@@ -163,7 +171,7 @@ func (g *GRN[T]) Forward(ctx context.Context, x *tensor.TensorNumeric[T]) (*tens
 	}
 
 	// LayerNorm: normalize over the last dimension.
-	normalized, err := layerNorm(ctx, g.engine, res)
+	normalized, err := g.ln.Forward(ctx, res)
 	if err != nil {
 		return nil, fmt.Errorf("grn layernorm: %w", err)
 	}
@@ -173,54 +181,9 @@ func (g *GRN[T]) Forward(ctx context.Context, x *tensor.TensorNumeric[T]) (*tens
 
 // Parameters returns the trainable parameters.
 func (g *GRN[T]) Parameters() []*graph.Parameter[T] {
-	return []*graph.Parameter[T]{g.w1, g.b1, g.w2, g.b2, g.wOut}
-}
-
-// layerNorm applies layer normalization over the last dimension of a 2D tensor.
-func layerNorm[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// mean = ReduceMean(x, axis=-1, keepDims=true)
-	ndim := len(x.Shape())
-	mean, err := engine.ReduceMean(ctx, x, ndim-1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// centered = x - mean
-	centered, err := engine.Sub(ctx, x, mean)
-	if err != nil {
-		return nil, err
-	}
-
-	// variance = ReduceMean(centered^2, axis=-1, keepDims=true)
-	sq, err := engine.Mul(ctx, centered, centered)
-	if err != nil {
-		return nil, err
-	}
-	variance, err := engine.ReduceMean(ctx, sq, ndim-1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// std = sqrt(variance + eps)
-	// Apply eps via UnaryOp to avoid T(float) conversion issues with integer types.
-	varianceEps, err := engine.UnaryOp(ctx, variance, func(v T) T {
-		return T(float64(v) + 1e-5)
-	})
-	if err != nil {
-		return nil, err
-	}
-	std, err := engine.Sqrt(ctx, varianceEps)
-	if err != nil {
-		return nil, err
-	}
-
-	// normalized = centered / std
-	normalized, err := engine.Div(ctx, centered, std)
-	if err != nil {
-		return nil, err
-	}
-
-	return normalized, nil
+	params := []*graph.Parameter[T]{g.w1, g.b1, g.w2, g.b2, g.wOut}
+	params = append(params, g.ln.Parameters()...)
+	return params
 }
 
 // VSN implements a Variable Selection Network for the Temporal Fusion Transformer.
