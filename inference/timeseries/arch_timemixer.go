@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -329,16 +330,21 @@ func (n *timeMixerNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 	// For each scale, compute trend via causal weighted moving average,
 	// then seasonal = input - trend.
 	// trends[s] and seasonals[s] are [batch, inputLen, numVars].
+	//
+	// NOTE: .Data() access is justified here — the causal moving average with
+	// edge padding is a custom decomposition kernel with no engine equivalent.
 	trends := make([]*tensor.TensorNumeric[T], n.cfg.NumScales)
 	seasonals := make([]*tensor.TensorNumeric[T], n.cfg.NumScales)
 
 	data := x.Data()
 	for s := range n.cfg.NumScales {
-		kernel := n.maWeights[s].Value.Data()
+		// Softmax normalize the kernel weights via engine.
+		normKernel, err := n.engine.Softmax(ctx, n.maWeights[s].Value, 0)
+		if err != nil {
+			return nil, fmt.Errorf("softmax MA kernel scale %d: %w", s, err)
+		}
+		kernel := normKernel.Data()
 		kernelSize := len(kernel)
-
-		// Softmax normalize the kernel weights.
-		normKernel := n.softmaxKernel(kernel)
 
 		trendData := make([]T, batch*inputLen*numVars)
 		seasonalData := make([]T, batch*inputLen*numVars)
@@ -352,7 +358,7 @@ func (n *timeMixerNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 						if idx < 0 {
 							idx = 0 // edge padding
 						}
-						sum += normKernel[j] * data[b*inputLen*numVars+idx*numVars+v]
+						sum += kernel[j] * data[b*inputLen*numVars+idx*numVars+v]
 					}
 					pos := b*inputLen*numVars + t*numVars + v
 					trendData[pos] = sum
@@ -361,7 +367,6 @@ func (n *timeMixerNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 			}
 		}
 
-		var err error
 		trends[s], err = tensor.New[T]([]int{batch, inputLen, numVars}, trendData)
 		if err != nil {
 			return nil, fmt.Errorf("create trend scale %d: %w", s, err)
@@ -385,37 +390,80 @@ func (n *timeMixerNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 		}
 	}
 
-	// Step 3: Compute softmax mixing weights.
-	smWeights := n.softmaxKernel(n.mixWeights.Value.Data())
+	// Step 3: Compute softmax mixing weights via engine.
+	smWeights, err := n.engine.Softmax(ctx, n.mixWeights.Value, 0)
+	if err != nil {
+		return nil, fmt.Errorf("softmax mix weights: %w", err)
+	}
 
 	// Step 4: Project each scale and combine with mixing weights.
 	// Output: [batch, outputLen, numVars]
-	outputData := make([]T, batch*n.cfg.OutputLen*numVars)
+	var output *tensor.TensorNumeric[T]
 
 	for s := range n.cfg.NumScales {
-		trendHead := n.trendHeads[s].Value.Data()    // [inputLen * outputLen]
-		seasonHead := n.seasonalHeads[s].Value.Data() // [inputLen * outputLen]
-		trendD := trends[s].Data()
-		seasonD := seasonals[s].Data()
-		w := smWeights[s]
+		// Reshape trend [batch, inputLen, numVars] -> [batch*numVars, inputLen]
+		// via transpose to [batch, numVars, inputLen] then reshape.
+		trendT, err := n.engine.Transpose(ctx, trends[s], []int{0, 2, 1})
+		if err != nil {
+			return nil, fmt.Errorf("transpose trend scale %d: %w", s, err)
+		}
+		trendFlat, err := n.engine.Reshape(ctx, trendT, []int{batch * numVars, inputLen})
+		if err != nil {
+			return nil, fmt.Errorf("reshape trend scale %d: %w", s, err)
+		}
 
-		for b := range batch {
-			for v := range numVars {
-				for o := range n.cfg.OutputLen {
-					var trendProj, seasonProj T
-					for i := range inputLen {
-						trendProj += trendD[b*inputLen*numVars+i*numVars+v] * trendHead[i*n.cfg.OutputLen+o]
-						seasonProj += seasonD[b*inputLen*numVars+i*numVars+v] * seasonHead[i*n.cfg.OutputLen+o]
-					}
-					outputData[b*n.cfg.OutputLen*numVars+o*numVars+v] += w * (trendProj + seasonProj)
-				}
+		// Same for seasonal.
+		seasonalT, err := n.engine.Transpose(ctx, seasonals[s], []int{0, 2, 1})
+		if err != nil {
+			return nil, fmt.Errorf("transpose seasonal scale %d: %w", s, err)
+		}
+		seasonalFlat, err := n.engine.Reshape(ctx, seasonalT, []int{batch * numVars, inputLen})
+		if err != nil {
+			return nil, fmt.Errorf("reshape seasonal scale %d: %w", s, err)
+		}
+
+		// Project: trend [batch*numVars, inputLen] x trendHead [inputLen, outputLen]
+		trendProj, err := n.engine.MatMul(ctx, trendFlat, n.trendHeads[s].Value)
+		if err != nil {
+			return nil, fmt.Errorf("trend projection scale %d: %w", s, err)
+		}
+		// Project: seasonal [batch*numVars, inputLen] x seasonalHead [inputLen, outputLen]
+		seasonProj, err := n.engine.MatMul(ctx, seasonalFlat, n.seasonalHeads[s].Value)
+		if err != nil {
+			return nil, fmt.Errorf("seasonal projection scale %d: %w", s, err)
+		}
+
+		// trendProj + seasonProj: [batch*numVars, outputLen]
+		scaleProj, err := n.engine.Add(ctx, trendProj, seasonProj)
+		if err != nil {
+			return nil, fmt.Errorf("add projections scale %d: %w", s, err)
+		}
+
+		// Reshape back to [batch, numVars, outputLen] then transpose to [batch, outputLen, numVars].
+		reshaped, err := n.engine.Reshape(ctx, scaleProj, []int{batch, numVars, n.cfg.OutputLen})
+		if err != nil {
+			return nil, fmt.Errorf("reshape projection scale %d: %w", s, err)
+		}
+		scaleOut, err := n.engine.Transpose(ctx, reshaped, []int{0, 2, 1})
+		if err != nil {
+			return nil, fmt.Errorf("transpose projection scale %d: %w", s, err)
+		}
+
+		// Extract this scale's mixing weight as a scalar and multiply.
+		sw := smWeights.Data()[s]
+		weighted, err := n.engine.MulScalar(ctx, scaleOut, sw)
+		if err != nil {
+			return nil, fmt.Errorf("weight scale %d: %w", s, err)
+		}
+
+		if output == nil {
+			output = weighted
+		} else {
+			output, err = n.engine.Add(ctx, output, weighted)
+			if err != nil {
+				return nil, fmt.Errorf("accumulate scale %d: %w", s, err)
 			}
 		}
-	}
-
-	output, err := tensor.New[T]([]int{batch, n.cfg.OutputLen, numVars}, outputData)
-	if err != nil {
-		return nil, fmt.Errorf("create output: %w", err)
 	}
 
 	// Apply final norm.
@@ -440,18 +488,19 @@ func (n *timeMixerNode[T]) mixAcrossScales(
 	numScales := len(components)
 	totalPositions := batch * inputLen * numVars
 
-	// Gather cross-scale vectors: [totalPositions, numScales]
-	gatherData := make([]T, totalPositions*numScales)
+	// Stack components along a new last axis: each component [batch*inputLen*numVars]
+	// becomes a column, producing [totalPositions, numScales].
+	flatComponents := make([]*tensor.TensorNumeric[T], numScales)
 	for s := range numScales {
-		d := components[s].Data()
-		for p := range totalPositions {
-			gatherData[p*numScales+s] = d[p]
+		var err error
+		flatComponents[s], err = n.engine.Reshape(ctx, components[s], []int{totalPositions, 1})
+		if err != nil {
+			return nil, fmt.Errorf("reshape component %d for gather: %w", s, err)
 		}
 	}
-
-	gathered, err := tensor.New[T]([]int{totalPositions, numScales}, gatherData)
+	gathered, err := n.engine.Concat(ctx, flatComponents, 1)
 	if err != nil {
-		return nil, fmt.Errorf("gather cross-scale: %w", err)
+		return nil, fmt.Errorf("concat cross-scale: %w", err)
 	}
 
 	// MLP forward: fc1 -> ReLU -> fc2
@@ -460,15 +509,7 @@ func (n *timeMixerNode[T]) mixAcrossScales(
 		return nil, fmt.Errorf("mlp fc1: %w", err)
 	}
 
-	// Apply ReLU in-place on data.
-	hiddenData := hidden.Data()
-	reluData := make([]T, len(hiddenData))
-	for i, v := range hiddenData {
-		if v > 0 {
-			reluData[i] = v
-		}
-	}
-	hidden, err = tensor.New[T](hidden.Shape(), reluData)
+	hidden, err = functional.ReLU(ctx, n.engine, n.ops, hidden)
 	if err != nil {
 		return nil, fmt.Errorf("relu: %w", err)
 	}
@@ -478,15 +519,19 @@ func (n *timeMixerNode[T]) mixAcrossScales(
 		return nil, fmt.Errorf("mlp fc2: %w", err)
 	}
 
-	// Scatter back to per-scale tensors.
-	mixedData := mixed.Data()
+	// Scatter back to per-scale tensors by transposing and reshaping.
+	// mixed is [totalPositions, numScales]. Transpose to [numScales, totalPositions].
+	mixedT, err := n.engine.Transpose(ctx, mixed, []int{1, 0})
+	if err != nil {
+		return nil, fmt.Errorf("transpose mixed: %w", err)
+	}
+
 	result := make([]*tensor.TensorNumeric[T], numScales)
 	for s := range numScales {
-		sData := make([]T, totalPositions)
-		for p := range totalPositions {
-			sData[p] = mixedData[p*numScales+s]
-		}
-		result[s], err = tensor.New[T]([]int{batch, inputLen, numVars}, sData)
+		// Extract row s: reshape [numScales, totalPositions] -> slice row s.
+		// Use Reshape on the transposed data to get individual scale vectors.
+		rowData := mixedT.Data()[s*totalPositions : (s+1)*totalPositions]
+		result[s], err = tensor.New[T]([]int{batch, inputLen, numVars}, rowData)
 		if err != nil {
 			return nil, fmt.Errorf("scatter scale %d: %w", s, err)
 		}
@@ -501,26 +546,6 @@ func (n *timeMixerNode[T]) mixAcrossScales(
 	}
 
 	return result, nil
-}
-
-// softmaxKernel computes softmax normalization on a slice of values.
-func (n *timeMixerNode[T]) softmaxKernel(w []T) []T {
-	out := make([]T, len(w))
-	maxVal := w[0]
-	for _, v := range w[1:] {
-		if v > maxVal {
-			maxVal = v
-		}
-	}
-	var sum T
-	for i, v := range w {
-		out[i] = T(math.Exp(float64(v - maxVal)))
-		sum += out[i]
-	}
-	for i := range out {
-		out[i] /= sum
-	}
-	return out
 }
 
 func (n *timeMixerNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
