@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -279,19 +280,20 @@ func fourierBasis(nHarmonics, length int) (*tensor.TensorNumeric[float32], error
 }
 
 // newMLPLayer creates a layer with He (Kaiming) weight initialization.
+// Weights are stored as [out, in] for compatibility with functional.Linear.
 func newMLPLayer(in, out int) (mlpLayer, error) {
 	scale := float32(math.Sqrt(2.0 / float64(in)))
-	wData := make([]float32, in*out)
+	wData := make([]float32, out*in)
 	for i := range wData {
 		wData[i] = float32(rand.NormFloat64()) * scale
 	}
-	w, err := tensor.New[float32]([]int{in, out}, wData)
+	w, err := tensor.New[float32]([]int{out, in}, wData)
 	if err != nil {
 		return mlpLayer{}, err
 	}
 
 	bData := make([]float32, out)
-	b, err := tensor.New[float32]([]int{1, out}, bData)
+	b, err := tensor.New[float32]([]int{out}, bData)
 	if err != nil {
 		return mlpLayer{}, err
 	}
@@ -422,13 +424,9 @@ func (m *NBEATS) blockForward(ctx context.Context, block nbeatsBlock, x *tensor.
 	return backcast, forecast, nil
 }
 
-// linearForward computes x @ W + b.
+// linearForward computes y = x @ W^T + b via functional.Linear.
 func (m *NBEATS) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := m.engine.MatMul(ctx, x, l.weights)
-	if err != nil {
-		return nil, err
-	}
-	return m.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, m.engine, x, l.weights, l.biases)
 }
 
 // ForwardBatched runs the N-BEATS forward pass on a 3D input tensor.

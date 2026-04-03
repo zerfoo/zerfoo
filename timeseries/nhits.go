@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -266,11 +267,7 @@ func (m *NHiTS) linearForward(ctx context.Context, x *tensor.TensorNumeric[float
 	if len(wShape) < 2 || wShape[0] == 0 || wShape[1] == 0 {
 		return nil, fmt.Errorf("nhits: invalid weight shape %v in linear layer", wShape)
 	}
-	out, err := m.engine.MatMul(ctx, x, l.weights)
-	if err != nil {
-		return nil, err
-	}
-	return m.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, m.engine, x, l.weights, l.biases)
 }
 
 
@@ -281,9 +278,12 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 	nMLP := len(stack.mlpLayers)
 	grads := make([][]float32, nMLP*2+2)
 
-	// Output proj backward: dW = lastH^T @ dH, dB = sum(dH, axis=0), newDH = dH @ W^T.
+	// Output proj backward. Weights are [oDim, hDim] (functional.Linear layout).
+	// dW = dH^T @ lastH: [oDim, batchN] @ [batchN, hDim] = [oDim, hDim]
+	// dB = sum(dH, axis=0)
+	// newDH = dH @ W: [batchN, oDim] @ [oDim, hDim] = [batchN, hDim]
 	oDim := n.config.OutputLength
-	hDim := stack.outputProj.weights.Shape()[0]
+	hDim := stack.outputProj.weights.Shape()[1]
 
 	lastH := intermediates[len(intermediates)-1]
 	lastHTensor, err := tensor.New[float32]([]int{batchN, hDim}, lastH)
@@ -295,19 +295,17 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 		return nil, err
 	}
 
-	// dW = lastH^T @ dH: [hDim, batchN] @ [batchN, oDim] = [hDim, oDim]
-	lastHT, err := n.engine.Transpose(ctx, lastHTensor, []int{1, 0})
+	dHT, err := n.engine.Transpose(ctx, dHTensor, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	dWTensor, err := n.engine.MatMul(ctx, lastHT, dHTensor)
+	dWTensor, err := n.engine.MatMul(ctx, dHT, lastHTensor)
 	if err != nil {
 		return nil, err
 	}
 	grads[nMLP*2] = make([]float32, len(dWTensor.Data()))
 	copy(grads[nMLP*2], dWTensor.Data())
 
-	// dB = sum(dH, axis=0)
 	dBTensor, err := n.engine.Sum(ctx, dHTensor, 0, false)
 	if err != nil {
 		return nil, err
@@ -315,22 +313,17 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 	grads[nMLP*2+1] = make([]float32, len(dBTensor.Data()))
 	copy(grads[nMLP*2+1], dBTensor.Data())
 
-	// newDH = dH @ W^T: [batchN, oDim] @ [oDim, hDim] = [batchN, hDim]
-	wT, err := n.engine.Transpose(ctx, stack.outputProj.weights, []int{1, 0})
-	if err != nil {
-		return nil, err
-	}
-	newDHTensor, err := n.engine.MatMul(ctx, dHTensor, wT)
+	newDHTensor, err := n.engine.MatMul(ctx, dHTensor, stack.outputProj.weights)
 	if err != nil {
 		return nil, err
 	}
 	dHTensor = newDHTensor
 
-	// MLP layers backward (reverse order).
+	// MLP layers backward (reverse order). Weights are [outDim, inDim].
 	for li := nMLP - 1; li >= 0; li-- {
 		l := &stack.mlpLayers[li]
-		lInDim := l.weights.Shape()[0]
-		lOutDim := l.weights.Shape()[1]
+		lOutDim := l.weights.Shape()[0]
+		lInDim := l.weights.Shape()[1]
 
 		// ReLU gradient: zero out where post-ReLU activation <= 0.
 		postReLU := intermediates[li]
@@ -361,12 +354,12 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 			return nil, err
 		}
 
-		// dW = hInput^T @ dH: [lInDim, batchN] @ [batchN, lOutDim] = [lInDim, lOutDim]
-		hInputT, err := n.engine.Transpose(ctx, hInputTensor, []int{1, 0})
+		// dW = dH^T @ hInput: [lOutDim, batchN] @ [batchN, lInDim] = [lOutDim, lInDim]
+		dHT, err := n.engine.Transpose(ctx, dHTensor, []int{1, 0})
 		if err != nil {
 			return nil, err
 		}
-		dWTensor, err := n.engine.MatMul(ctx, hInputT, dHTensor)
+		dWTensor, err := n.engine.MatMul(ctx, dHT, hInputTensor)
 		if err != nil {
 			return nil, err
 		}
@@ -381,12 +374,8 @@ func (n *NHiTS) stackBackwardEngine(ctx context.Context, dH []float32, batchN in
 		grads[li*2+1] = make([]float32, len(dBTensor.Data()))
 		copy(grads[li*2+1], dBTensor.Data())
 
-		// newDH = dH @ W^T: [batchN, lOutDim] @ [lOutDim, lInDim] = [batchN, lInDim]
-		lwT, err := n.engine.Transpose(ctx, l.weights, []int{1, 0})
-		if err != nil {
-			return nil, err
-		}
-		dHTensor, err = n.engine.MatMul(ctx, dHTensor, lwT)
+		// newDH = dH @ W: [batchN, lOutDim] @ [lOutDim, lInDim] = [batchN, lInDim]
+		dHTensor, err = n.engine.MatMul(ctx, dHTensor, l.weights)
 		if err != nil {
 			return nil, err
 		}
@@ -642,11 +631,11 @@ func (n *NHiTS) nhitsF64ParamCount() int {
 		for _, l := range stack.mlpLayers {
 			s := l.weights.Shape()
 			count += s[0] * s[1] // weights
-			count += l.biases.Shape()[1] // biases
+			count += l.biases.Shape()[0] // biases
 		}
 		s := stack.outputProj.weights.Shape()
 		count += s[0] * s[1]
-		count += stack.outputProj.biases.Shape()[1]
+		count += stack.outputProj.biases.Shape()[0]
 	}
 	return count
 }
@@ -735,25 +724,24 @@ func (n *NHiTS) nhitsStackF64Forward(input [][]float64, stackIdx int, paramOffse
 		}
 	}
 
-	// MLP layers with ReLU.
+	// MLP layers with ReLU. Weights are stored [outDim, inDim].
 	h := pooledFlat
 	var preReLU, postAct [][]float64
 	off := paramOffset
 
 	for _, l := range stack.mlpLayers {
 		wShape := l.weights.Shape()
-		inDim, outDim := wShape[0], wShape[1]
-		bShape := l.biases.Shape()
-		bDim := bShape[1]
+		outDim, inDim := wShape[0], wShape[1]
+		bDim := l.biases.Shape()[0]
 
-		// Linear: h @ W + b
+		// Linear: y = x @ W^T + b, W is [outDim, inDim]
 		out := make([]float64, outDim)
 		for j := 0; j < outDim; j++ {
-			out[j] = n.f64Params[off+inDim*outDim+j] // bias
+			out[j] = n.f64Params[off+outDim*inDim+j] // bias
 		}
-		for i := 0; i < inDim; i++ {
-			for j := 0; j < outDim; j++ {
-				out[j] += h[i] * n.f64Params[off+i*outDim+j]
+		for j := 0; j < outDim; j++ {
+			for i := 0; i < inDim; i++ {
+				out[j] += h[i] * n.f64Params[off+j*inDim+i]
 			}
 		}
 		preReLU = append(preReLU, append([]float64(nil), out...))
@@ -766,19 +754,19 @@ func (n *NHiTS) nhitsStackF64Forward(input [][]float64, stackIdx int, paramOffse
 		}
 		postAct = append(postAct, append([]float64(nil), out...))
 		h = out
-		off += inDim*outDim + bDim
+		off += outDim*inDim + bDim
 	}
 
-	// Output projection (no activation).
+	// Output projection (no activation). Weights are [outDim, inDim].
 	projShape := stack.outputProj.weights.Shape()
-	inDim, outDim := projShape[0], projShape[1]
+	outDim, inDim := projShape[0], projShape[1]
 	result := make([]float64, outDim)
 	for j := 0; j < outDim; j++ {
-		result[j] = n.f64Params[off+inDim*outDim+j] // bias
+		result[j] = n.f64Params[off+outDim*inDim+j] // bias
 	}
-	for i := 0; i < inDim; i++ {
-		for j := 0; j < outDim; j++ {
-			result[j] += h[i] * n.f64Params[off+i*outDim+j]
+	for j := 0; j < outDim; j++ {
+		for i := 0; i < inDim; i++ {
+			result[j] += h[i] * n.f64Params[off+j*inDim+i]
 		}
 	}
 
@@ -791,10 +779,10 @@ func (n *NHiTS) nhitsStackParamCount(stackIdx int) int {
 	count := 0
 	for _, l := range stack.mlpLayers {
 		s := l.weights.Shape()
-		count += s[0]*s[1] + l.biases.Shape()[1]
+		count += s[0]*s[1] + l.biases.Shape()[0]
 	}
 	s := stack.outputProj.weights.Shape()
-	count += s[0]*s[1] + stack.outputProj.biases.Shape()[1]
+	count += s[0]*s[1] + stack.outputProj.biases.Shape()[0]
 	return count
 }
 
@@ -848,14 +836,14 @@ func (n *NHiTS) BackwardSample(dOutput []float64, cacheIface interface{}) error 
 		for li, l := range stack.mlpLayers {
 			layerOffsets[li] = tmpOff
 			s := l.weights.Shape()
-			tmpOff += s[0]*s[1] + l.biases.Shape()[1]
+			tmpOff += s[0]*s[1] + l.biases.Shape()[0]
 		}
 		layerOffsets[len(stack.mlpLayers)] = tmpOff // output proj offset
 
-		// Backward through output projection.
+		// Backward through output projection. Weights are [projOut, projIn].
 		projOff := layerOffsets[len(stack.mlpLayers)]
 		projShape := stack.outputProj.weights.Shape()
-		projIn, projOut := projShape[0], projShape[1]
+		projOut, projIn := projShape[0], projShape[1]
 
 		// Last hidden layer activation (input to output proj).
 		var lastH []float64
@@ -865,25 +853,25 @@ func (n *NHiTS) BackwardSample(dOutput []float64, cacheIface interface{}) error 
 			lastH = cache.stackPooled[si]
 		}
 
-		// dW_proj, dB_proj, dH_new
+		// dW_proj [projOut, projIn], dB_proj, dH_new
 		newDH := make([]float64, projIn)
-		for i := 0; i < projIn; i++ {
-			for j := 0; j < projOut; j++ {
-				n.grads[projOff+i*projOut+j] += lastH[i] * dH[j]
-				newDH[i] += dH[j] * n.f64Params[projOff+i*projOut+j]
+		for j := 0; j < projOut; j++ {
+			for i := 0; i < projIn; i++ {
+				n.grads[projOff+j*projIn+i] += lastH[i] * dH[j]
+				newDH[i] += dH[j] * n.f64Params[projOff+j*projIn+i]
 			}
 		}
 		for j := 0; j < projOut; j++ {
-			n.grads[projOff+projIn*projOut+j] += dH[j]
+			n.grads[projOff+projOut*projIn+j] += dH[j]
 		}
 		dH = newDH
 
-		// Backward through MLP layers in reverse.
+		// Backward through MLP layers in reverse. Weights are [lOut, lIn].
 		for li := len(stack.mlpLayers) - 1; li >= 0; li-- {
 			l := &stack.mlpLayers[li]
 			lOff := layerOffsets[li]
 			lShape := l.weights.Shape()
-			lIn, lOut := lShape[0], lShape[1]
+			lOut, lIn := lShape[0], lShape[1]
 
 			// ReLU backward: mask where pre-ReLU <= 0.
 			preReLU := cache.stackPreReLU[si][li]
@@ -901,16 +889,16 @@ func (n *NHiTS) BackwardSample(dOutput []float64, cacheIface interface{}) error 
 				hInput = cache.stackPostAct[si][li-1]
 			}
 
-			// dW, dB, dH_new
+			// dW [lOut, lIn], dB, dH_new
 			newDH2 := make([]float64, lIn)
-			for i := 0; i < lIn; i++ {
-				for j := 0; j < lOut; j++ {
-					n.grads[lOff+i*lOut+j] += hInput[i] * dH[j]
-					newDH2[i] += dH[j] * n.f64Params[lOff+i*lOut+j]
+			for j := 0; j < lOut; j++ {
+				for i := 0; i < lIn; i++ {
+					n.grads[lOff+j*lIn+i] += hInput[i] * dH[j]
+					newDH2[i] += dH[j] * n.f64Params[lOff+j*lIn+i]
 				}
 			}
 			for j := 0; j < lOut; j++ {
-				n.grads[lOff+lIn*lOut+j] += dH[j]
+				n.grads[lOff+lOut*lIn+j] += dH[j]
 			}
 			dH = newDH2
 		}
