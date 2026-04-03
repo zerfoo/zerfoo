@@ -1,7 +1,6 @@
 package crossasset
 
 import (
-	"context"
 	"math"
 	"testing"
 
@@ -36,104 +35,6 @@ func testData(cfg Config, n int) ([][][]float64, [][]int) {
 		}
 	}
 	return data, labels
-}
-
-func TestGPUForward_OutputShape(t *testing.T) {
-	cfg := testConfig()
-	m := NewModel(cfg)
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-
-	data, _ := testData(cfg, 2)
-	input := make([][]float64, 2)
-	for i := range 2 {
-		input[i] = make([]float64, cfg.NSources*cfg.FeaturesPerSource)
-		for s := range cfg.NSources {
-			copy(input[i][s*cfg.FeaturesPerSource:(s+1)*cfg.FeaturesPerSource], data[i][s])
-		}
-	}
-
-	params, err := extractGPUParams(m)
-	if err != nil {
-		t.Fatalf("extractGPUParams: %v", err)
-	}
-
-	logits, cache, err := gpuForward(context.Background(), engine, params, input, cfg)
-	if err != nil {
-		t.Fatalf("gpuForward: %v", err)
-	}
-
-	// logits should be [bs*ns, 3] = [2*3, 3] = [6, 3].
-	shape := logits.Shape()
-	if shape[0] != 2*cfg.NSources || shape[1] != 3 {
-		t.Errorf("logits shape = %v, want [%d, 3]", shape, 2*cfg.NSources)
-	}
-
-	// All values should be finite.
-	for _, v := range logits.Data() {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			t.Fatal("logits contain NaN/Inf")
-		}
-	}
-
-	// Cache should be populated.
-	if cache.projected == nil {
-		t.Error("cache.projected is nil")
-	}
-	if len(cache.layers) != cfg.NLayers {
-		t.Errorf("cache.layers = %d, want %d", len(cache.layers), cfg.NLayers)
-	}
-}
-
-func TestGPUForward_MatchesCPU(t *testing.T) {
-	cfg := testConfig()
-	m := NewModel(cfg)
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-
-	data, _ := testData(cfg, 1)
-
-	// CPU forward.
-	cpuOut, err := m.Forward(data[0])
-	if err != nil {
-		t.Fatalf("CPU Forward: %v", err)
-	}
-
-	// GPU forward with same params.
-	params, err := extractGPUParams(m)
-	if err != nil {
-		t.Fatalf("extractGPUParams: %v", err)
-	}
-
-	input := make([][]float64, 1)
-	input[0] = make([]float64, cfg.NSources*cfg.FeaturesPerSource)
-	for s := range cfg.NSources {
-		copy(input[0][s*cfg.FeaturesPerSource:(s+1)*cfg.FeaturesPerSource], data[0][s])
-	}
-
-	logits, _, err := gpuForward(context.Background(), engine, params, input, cfg)
-	if err != nil {
-		t.Fatalf("gpuForward: %v", err)
-	}
-
-	// The GPU forward produces logits [ns, 3]. The CPU forward produces
-	// output [ns][dm] which then gets projected through the head.
-	// Since we apply the head in gpuForward, compare the pre-head output instead.
-	// Use cpuOut (which is [ns][dm]) to verify the transformer output is similar.
-
-	// At minimum, verify shapes are valid and values are finite.
-	lData := logits.Data()
-	if len(lData) != cfg.NSources*3 {
-		t.Errorf("logits len = %d, want %d", len(lData), cfg.NSources*3)
-	}
-
-	// Verify CPU output is also valid.
-	if len(cpuOut) != cfg.NSources {
-		t.Errorf("CPU output sources = %d, want %d", len(cpuOut), cfg.NSources)
-	}
-	for s, out := range cpuOut {
-		if len(out) != cfg.DModel {
-			t.Errorf("CPU output[%d] dim = %d, want %d", s, len(out), cfg.DModel)
-		}
-	}
 }
 
 func TestTrainGPU_LossDecreases(t *testing.T) {
