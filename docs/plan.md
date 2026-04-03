@@ -35,7 +35,7 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
 - E67: Timeseries full layers migration (11/11 COMPLETE -- all helpers replaced, attention migrated, validated, files verified)
-- E68: CrossAsset full layers migration (3/4 -- CPU forward+backward+AdamW done; T68.1.4 delete pending)
+- E68: CrossAsset full layers migration (4/4 COMPLETE -- forward+backward+AdamW+cleanup, -1,357 lines)
 - E69: Training loss/optimizer Engine compliance (6/6 COMPLETE -- PR #320, #321, #322) + T69.3.1 validated PR #324
 - E70: Intra-layers violations cleanup (10/10 COMPLETE -- all tasks + T70.1.10 validation PR #324)
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
@@ -360,7 +360,7 @@ Deps: Wave 4
 #### Composition Wave 6: Final cleanup (2 agents)
 Deps: Wave 5
 
-- [ ] T68.1.4 CrossAsset delete + validate  verifies: [infrastructure]
+- [x] T68.1.4 CrossAsset delete + validate  verifies: [infrastructure]  DONE 2026-04-03 PR #326 (-1,357 lines, 41% reduction)
 
 ### Completed Research Waves (1-8, all tasks done)
 
