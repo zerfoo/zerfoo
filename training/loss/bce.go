@@ -28,21 +28,20 @@ func NewBCELoss[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmet
 	return &BCELoss[T]{engine: engine, ops: ops}
 }
 
-// clamp restricts p to [eps, 1-eps] for numerical stability.
-func (b *BCELoss[T]) clamp(p T) T {
+// clampOp returns a unary function that restricts values to [eps, 1-eps].
+func (b *BCELoss[T]) clampOp() func(T) T {
 	eps := b.ops.FromFloat64(1e-7)
 	one := b.ops.One()
 	oneMinusEps := b.ops.Sub(one, eps)
-
-	// If p < eps, return eps
-	if b.ops.GreaterThan(eps, p) {
-		return eps
+	return func(p T) T {
+		if b.ops.GreaterThan(eps, p) {
+			return eps
+		}
+		if b.ops.GreaterThan(p, oneMinusEps) {
+			return oneMinusEps
+		}
+		return p
 	}
-	// If p > 1-eps, return 1-eps
-	if b.ops.GreaterThan(p, oneMinusEps) {
-		return oneMinusEps
-	}
-	return p
 }
 
 // Forward computes the mean binary cross-entropy loss.
@@ -56,25 +55,72 @@ func (b *BCELoss[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	b.predictions = predictions
 	b.targets = targets
 
-	one := b.ops.One()
-	pData := predictions.Data()
-	yData := targets.Data()
-	n := len(pData)
-
-	var sum T
-	for i := 0; i < n; i++ {
-		p := b.clamp(pData[i])
-		y := yData[i]
-
-		// -[y*log(p) + (1-y)*log(1-p)]
-		logP := b.ops.Log(p)
-		logOneMinusP := b.ops.Log(b.ops.Sub(one, p))
-		term := b.ops.Add(b.ops.Mul(y, logP), b.ops.Mul(b.ops.Sub(one, y), logOneMinusP))
-		sum = b.ops.Sub(sum, term)
+	// Clamp predictions to [eps, 1-eps] for numerical stability.
+	pClamped, err := b.engine.UnaryOp(ctx, predictions, b.clampOp())
+	if err != nil {
+		return nil, err
 	}
 
-	mean := b.ops.Div(sum, b.ops.FromFloat64(float64(n)))
-	loss, err := tensor.New[T]([]int{1}, []T{mean})
+	// ones tensor for (1-y) and (1-p) computations
+	ones, err := tensor.New[T](targets.Shape(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.engine.Fill(ctx, ones, b.ops.One()); err != nil {
+		return nil, err
+	}
+
+	// log(p)
+	logP, err := b.engine.Log(ctx, pClamped)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1 - p
+	oneMinusP, err := b.engine.Sub(ctx, ones, pClamped, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// log(1 - p)
+	logOneMinusP, err := b.engine.Log(ctx, oneMinusP)
+	if err != nil {
+		return nil, err
+	}
+
+	// y * log(p)
+	yLogP, err := b.engine.Mul(ctx, targets, logP, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1 - y
+	oneMinusY, err := b.engine.Sub(ctx, ones, targets, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// (1-y) * log(1-p)
+	oneMinusYLogOneMinusP, err := b.engine.Mul(ctx, oneMinusY, logOneMinusP, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// y*log(p) + (1-y)*log(1-p)
+	sum, err := b.engine.Add(ctx, yLogP, oneMinusYLogOneMinusP, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// mean of the sum
+	mean, err := b.engine.ReduceMean(ctx, sum, -1, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// negate: BCE = -mean(y*log(p) + (1-y)*log(1-p))
+	negOne := b.ops.FromFloat64(-1)
+	loss, err := b.engine.MulScalar(ctx, mean, negOne)
 	if err != nil {
 		return nil, err
 	}
@@ -97,38 +143,72 @@ func (b *BCELoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *t
 		return nil, graph.ErrInvalidInputCount
 	}
 
-	one := b.ops.One()
-	pData := preds.Data()
-	yData := targs.Data()
-	n := len(pData)
-	nT := b.ops.FromFloat64(float64(n))
-	dOutVal := dOut.Data()[0]
-
-	gradData := make([]T, n)
-	for i := 0; i < n; i++ {
-		p := b.clamp(pData[i])
-		y := yData[i]
-
-		// grad = -(y/p - (1-y)/(1-p)) / N = ((1-y)/(1-p) - y/p) / N
-		yOverP := b.ops.Div(y, p)
-		oneMinusYOverOneMinusP := b.ops.Div(b.ops.Sub(one, y), b.ops.Sub(one, p))
-		grad := b.ops.Div(b.ops.Sub(oneMinusYOverOneMinusP, yOverP), nT)
-
-		// Chain with upstream gradient
-		gradData[i] = b.ops.Mul(grad, dOutVal)
-	}
-
-	gradTensor, err := tensor.New[T](preds.Shape(), gradData)
+	// Clamp predictions for numerical stability.
+	pClamped, err := b.engine.UnaryOp(ctx, preds, b.clampOp())
 	if err != nil {
 		return nil, err
 	}
 
-	zeroGrad, err := tensor.New[T](targs.Shape(), make([]T, len(yData)))
+	// ones tensor
+	ones, err := tensor.New[T](targs.Shape(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.engine.Fill(ctx, ones, b.ops.One()); err != nil {
+		return nil, err
+	}
+
+	// y / p
+	yOverP, err := b.engine.Div(ctx, targs, pClamped, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return []*tensor.TensorNumeric[T]{gradTensor, zeroGrad}, nil
+	// 1 - y
+	oneMinusY, err := b.engine.Sub(ctx, ones, targs, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1 - p
+	oneMinusP, err := b.engine.Sub(ctx, ones, pClamped, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// (1-y) / (1-p)
+	oneMinusYOverOneMinusP, err := b.engine.Div(ctx, oneMinusY, oneMinusP, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// ((1-y)/(1-p) - y/p)
+	rawGrad, err := b.engine.Sub(ctx, oneMinusYOverOneMinusP, yOverP, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Divide by N
+	nT := b.ops.FromFloat64(float64(len(preds.Data())))
+	invN := b.ops.Div(b.ops.One(), nT)
+	grad, err := b.engine.MulScalar(ctx, rawGrad, invN)
+	if err != nil {
+		return nil, err
+	}
+
+	// Chain with upstream gradient (broadcasts [1] against [N])
+	gradPred, err := b.engine.Mul(ctx, grad, dOut, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Zero gradient for targets
+	zeroGrad, err := tensor.New[T](targs.Shape(), make([]T, len(targs.Data())))
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{gradPred, zeroGrad}, nil
 }
 
 // OutputShape returns the output shape of the BCELoss function.

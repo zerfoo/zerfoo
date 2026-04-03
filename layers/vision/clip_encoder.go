@@ -250,28 +250,29 @@ func (e *CLIPEncoder[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNu
 		}
 	}
 
-	// Linear projection: patches [batch*numPatches, patchDim] * weight^T [patchDim, hiddenDim] + bias
-	peW := e.patchEmbedWeight.Value.Data()
-	peB := e.patchEmbedBias.Value.Data()
-	embeddings := make([]T, batch*numPatches*hiddenDim)
-	for b := 0; b < batch; b++ {
-		for p := 0; p < numPatches; p++ {
-			for h := 0; h < hiddenDim; h++ {
-				var sum T
-				for d := 0; d < patchDim; d++ {
-					pIdx := b*numPatches*patchDim + p*patchDim + d
-					wIdx := h*patchDim + d // weight is [hiddenDim, patchDim]
-					sum = e.ops.Add(sum, e.ops.Mul(patches[pIdx], peW[wIdx]))
-				}
-				eIdx := b*numPatches*hiddenDim + p*hiddenDim + h
-				embeddings[eIdx] = e.ops.Add(sum, peB[h])
-			}
-		}
+	// Linear projection: patches [batch*numPatches, patchDim] @ weight^T [patchDim, hiddenDim] + bias
+	patchesTensor, err := tensor.New[T]([]int{batch * numPatches, patchDim}, patches)
+	if err != nil {
+		return nil, fmt.Errorf("create patches tensor: %w", err)
+	}
+	// weight is [hiddenDim, patchDim]; transpose to [patchDim, hiddenDim] for matmul
+	weightT, err := e.engine.Transpose(ctx, e.patchEmbedWeight.Value, []int{1, 0})
+	if err != nil {
+		return nil, fmt.Errorf("transpose patch_embed weight: %w", err)
+	}
+	embeddingsTensor, err := e.engine.MatMul(ctx, patchesTensor, weightT)
+	if err != nil {
+		return nil, fmt.Errorf("patch_embed matmul: %w", err)
+	}
+	embeddingsTensor, err = e.engine.Add(ctx, embeddingsTensor, e.patchEmbedBias.Value)
+	if err != nil {
+		return nil, fmt.Errorf("patch_embed bias: %w", err)
 	}
 
 	// Prepend class token: [batch, numPatches+1, hiddenDim]
 	seqLen := numPatches + 1
 	clsData := e.classEmbedding.Value.Data()
+	embData := embeddingsTensor.Data()
 	withCls := make([]T, batch*seqLen*hiddenDim)
 	for b := 0; b < batch; b++ {
 		// Copy class token for this batch element.
@@ -281,7 +282,7 @@ func (e *CLIPEncoder[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNu
 		// Copy patch embeddings.
 		copy(
 			withCls[b*seqLen*hiddenDim+hiddenDim:b*seqLen*hiddenDim+seqLen*hiddenDim],
-			embeddings[b*numPatches*hiddenDim:(b+1)*numPatches*hiddenDim],
+			embData[b*numPatches*hiddenDim:(b+1)*numPatches*hiddenDim],
 		)
 	}
 
@@ -334,8 +335,7 @@ func (e *CLIPEncoder[T]) forwardBlock(
 	}
 
 	// Reshape to 2D for linear projections.
-	normedData := normed.Data()
-	normed2D, err := tensor.New[T]([]int{batch * seqLen, hiddenDim}, normedData)
+	normed2D, err := e.engine.Reshape(ctx, normed, []int{batch * seqLen, hiddenDim})
 	if err != nil {
 		return nil, err
 	}
@@ -353,76 +353,85 @@ func (e *CLIPEncoder[T]) forwardBlock(
 		return nil, fmt.Errorf("v_proj: %w", err)
 	}
 
-	// Multi-head self-attention.
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-	scale := T(1.0 / math.Sqrt(float64(headDim)))
+	// Multi-head self-attention via engine ops.
+	// Reshape Q, K, V from [batch*seqLen, hiddenDim] to [batch, numHeads, seqLen, headDim].
+	scale := e.ops.FromFloat64(1.0 / math.Sqrt(float64(headDim)))
 
-	attnOut := make([]T, batch*seqLen*hiddenDim)
+	q, err = e.engine.Reshape(ctx, q, []int{batch, seqLen, numHeads, headDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape q: %w", err)
+	}
+	q, err = e.engine.Transpose(ctx, q, []int{0, 2, 1, 3}) // [batch, numHeads, seqLen, headDim]
+	if err != nil {
+		return nil, fmt.Errorf("transpose q: %w", err)
+	}
 
-	for b := 0; b < batch; b++ {
-		for h := 0; h < numHeads; h++ {
-			scores := make([]T, seqLen*seqLen)
-			for qi := 0; qi < seqLen; qi++ {
-				for ki := 0; ki < seqLen; ki++ {
-					var dot T
-					for d := 0; d < headDim; d++ {
-						qIdx := b*seqLen*hiddenDim + qi*hiddenDim + h*headDim + d
-						kIdx := b*seqLen*hiddenDim + ki*hiddenDim + h*headDim + d
-						dot = e.ops.Add(dot, e.ops.Mul(qData[qIdx], kData[kIdx]))
-					}
-					scores[qi*seqLen+ki] = e.ops.Mul(dot, scale)
-				}
-			}
+	k, err = e.engine.Reshape(ctx, k, []int{batch, seqLen, numHeads, headDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape k: %w", err)
+	}
+	k, err = e.engine.Transpose(ctx, k, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, fmt.Errorf("transpose k: %w", err)
+	}
 
-			// Softmax per query position.
-			for qi := 0; qi < seqLen; qi++ {
-				maxVal := scores[qi*seqLen]
-				for ki := 1; ki < seqLen; ki++ {
-					if e.ops.GreaterThan(scores[qi*seqLen+ki], maxVal) {
-						maxVal = scores[qi*seqLen+ki]
-					}
-				}
-				var sumExp T
-				for ki := 0; ki < seqLen; ki++ {
-					diff := e.ops.Sub(scores[qi*seqLen+ki], maxVal)
-					expVal := e.ops.Exp(diff)
-					scores[qi*seqLen+ki] = expVal
-					sumExp = e.ops.Add(sumExp, expVal)
-				}
-				for ki := 0; ki < seqLen; ki++ {
-					scores[qi*seqLen+ki] = e.ops.Div(scores[qi*seqLen+ki], sumExp)
-				}
+	v, err = e.engine.Reshape(ctx, v, []int{batch, seqLen, numHeads, headDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape v: %w", err)
+	}
+	v, err = e.engine.Transpose(ctx, v, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, fmt.Errorf("transpose v: %w", err)
+	}
 
-				// Weighted sum of V.
-				for d := 0; d < headDim; d++ {
-					var val T
-					for ki := 0; ki < seqLen; ki++ {
-						vIdx := b*seqLen*hiddenDim + ki*hiddenDim + h*headDim + d
-						val = e.ops.Add(val, e.ops.Mul(scores[qi*seqLen+ki], vData[vIdx]))
-					}
-					outIdx := b*seqLen*hiddenDim + qi*hiddenDim + h*headDim + d
-					attnOut[outIdx] = val
-				}
-			}
-		}
+	// K^T: [batch, numHeads, headDim, seqLen]
+	kT, err := e.engine.Transpose(ctx, k, []int{0, 1, 3, 2})
+	if err != nil {
+		return nil, fmt.Errorf("transpose k^T: %w", err)
+	}
+
+	// scores = Q @ K^T / sqrt(d_head)  -> [batch, numHeads, seqLen, seqLen]
+	scores, err := e.engine.MatMul(ctx, q, kT)
+	if err != nil {
+		return nil, fmt.Errorf("attn scores matmul: %w", err)
+	}
+	scores, err = e.engine.MulScalar(ctx, scores, scale)
+	if err != nil {
+		return nil, fmt.Errorf("attn scores scale: %w", err)
+	}
+
+	// Softmax along last axis (key dimension).
+	scores, err = e.engine.Softmax(ctx, scores, -1)
+	if err != nil {
+		return nil, fmt.Errorf("attn softmax: %w", err)
+	}
+
+	// attnOut = scores @ V -> [batch, numHeads, seqLen, headDim]
+	attnResult, err := e.engine.MatMul(ctx, scores, v)
+	if err != nil {
+		return nil, fmt.Errorf("attn weighted sum: %w", err)
+	}
+
+	// Transpose back: [batch, seqLen, numHeads, headDim] then reshape to [batch*seqLen, hiddenDim]
+	attnResult, err = e.engine.Transpose(ctx, attnResult, []int{0, 2, 1, 3})
+	if err != nil {
+		return nil, fmt.Errorf("transpose attn out: %w", err)
+	}
+	attnResult, err = e.engine.Reshape(ctx, attnResult, []int{batch * seqLen, hiddenDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape attn out: %w", err)
 	}
 
 	// Output projection.
-	attnTensor, err := tensor.New[T]([]int{batch * seqLen, hiddenDim}, attnOut)
-	if err != nil {
-		return nil, err
-	}
-	projected, err := block.oProj.Forward(ctx, attnTensor)
+	projected, err := block.oProj.Forward(ctx, attnResult)
 	if err != nil {
 		return nil, fmt.Errorf("o_proj: %w", err)
 	}
 
 	// Residual connection.
-	projected3D, err := tensor.New[T]([]int{batch, seqLen, hiddenDim}, projected.Data())
+	projected3D, err := e.engine.Reshape(ctx, projected, []int{batch, seqLen, hiddenDim})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reshape projected: %w", err)
 	}
 	x, err = e.engine.Add(ctx, residual, projected3D)
 	if err != nil {
@@ -436,7 +445,7 @@ func (e *CLIPEncoder[T]) forwardBlock(
 		return nil, fmt.Errorf("ln2: %w", err)
 	}
 
-	normed2D, err = tensor.New[T]([]int{batch * seqLen, hiddenDim}, normed.Data())
+	normed2D, err = e.engine.Reshape(ctx, normed, []int{batch * seqLen, hiddenDim})
 	if err != nil {
 		return nil, err
 	}
@@ -444,14 +453,17 @@ func (e *CLIPEncoder[T]) forwardBlock(
 	if err != nil {
 		return nil, fmt.Errorf("ffn1: %w", err)
 	}
-	applyQuickGELU(ffnOut, e.ops)
+	ffnOut, err = e.quickGELU(ctx, ffnOut)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu: %w", err)
+	}
 
 	ffnOut, err = block.ffn2.Forward(ctx, ffnOut)
 	if err != nil {
 		return nil, fmt.Errorf("ffn2: %w", err)
 	}
 
-	ffn3D, err := tensor.New[T]([]int{batch, seqLen, hiddenDim}, ffnOut.Data())
+	ffn3D, err := e.engine.Reshape(ctx, ffnOut, []int{batch, seqLen, hiddenDim})
 	if err != nil {
 		return nil, err
 	}
@@ -487,17 +499,38 @@ func (e *CLIPEncoder[T]) Backward(_ context.Context, _ types.BackwardMode, _ *te
 	return nil, nil
 }
 
-// applyQuickGELU applies the QuickGELU activation function in-place.
-// QuickGELU(x) = x * sigmoid(1.702 * x)
-func applyQuickGELU[T tensor.Numeric](t *tensor.TensorNumeric[T], ops numeric.Arithmetic[T]) {
-	data := t.Data()
-	coeff := ops.FromFloat64(1.702)
-	one := ops.One()
-	for i, v := range data {
-		// sigmoid(1.702 * x) = 1 / (1 + exp(-1.702 * x))
-		negScaled := ops.Mul(ops.FromFloat64(-1.0), ops.Mul(coeff, v))
-		sigmoid := ops.Div(one, ops.Add(one, ops.Exp(negScaled)))
-		data[i] = ops.Mul(v, sigmoid)
+// quickGELU applies QuickGELU(x) = x * sigmoid(1.702 * x) using engine ops.
+func (e *CLIPEncoder[T]) quickGELU(ctx context.Context, x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	// scaled = 1.702 * x
+	coeff := e.ops.FromFloat64(1.702)
+	scaled, err := e.engine.MulScalar(ctx, x, coeff)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu mul coeff: %w", err)
 	}
-	t.SetData(data)
+	// negScaled = -1.702 * x
+	negOne := e.ops.FromFloat64(-1.0)
+	negScaled, err := e.engine.MulScalar(ctx, scaled, negOne)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu negate: %w", err)
+	}
+	// exp(-1.702 * x)
+	expVal, err := e.engine.Exp(ctx, negScaled)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu exp: %w", err)
+	}
+	// 1 + exp(-1.702 * x)
+	one := e.ops.One()
+	denom, err := e.engine.AddScalar(ctx, expVal, one)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu add one: %w", err)
+	}
+	// sigmoid = 1 / (1 + exp(-1.702 * x))  -- use DivScalar with numerator 1
+	// DivScalar divides tensor by scalar, but we need scalar/tensor.
+	// Instead: x / (1 + exp(-1.702 * x)) = x * sigmoid(1.702 * x)
+	// We can compute x / denom directly.
+	result, err := e.engine.Div(ctx, x, denom)
+	if err != nil {
+		return nil, fmt.Errorf("quickgelu div: %w", err)
+	}
+	return result, nil
 }

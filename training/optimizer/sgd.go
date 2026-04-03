@@ -83,16 +83,8 @@ func (s *SGD[T]) Clip(ctx context.Context, params []*graph.Parameter[T], thresho
 // Step updates the parameters based on their gradients.
 func (s *SGD[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 	for _, p := range params {
-		// Create a tensor for the learning rate with the same shape as the gradient.
-		lrData := make([]T, p.Gradient.Size())
-		for i := range lrData {
-			lrData[i] = s.learningRate
-		}
-
-		lrTensor, _ := tensor.New[T](p.Gradient.Shape(), lrData)
-
 		// scaled_grad = learning_rate * gradient
-		scaledGrad, err := s.engine.Mul(ctx, lrTensor, p.Gradient, nil)
+		scaledGrad, err := s.engine.MulScalar(ctx, p.Gradient, s.learningRate)
 		if err != nil {
 			return fmt.Errorf("failed to scale gradient: %w", err)
 		}
