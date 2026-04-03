@@ -34,13 +34,13 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
-- E67: Timeseries full layers migration (8/11 -- Waves 3+4 done; full suite+linters+file cleanup pending)
-- E68: CrossAsset full layers migration (2/4 -- CPU forward+backward done; AdamW+delete pending)
+- E67: Timeseries full layers migration (11/11 COMPLETE -- all helpers replaced, attention migrated, validated, files verified)
+- E68: CrossAsset full layers migration (3/4 -- CPU forward+backward+AdamW done; T68.1.4 delete pending)
 - E69: Training loss/optimizer Engine compliance (6/6 COMPLETE -- PR #320, #321, #322) + T69.3.1 validated PR #324
 - E70: Intra-layers violations cleanup (10/10 COMPLETE -- all tasks + T70.1.10 validation PR #324)
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
-- E72: Architecture enforcement test (1/2 -- T72.1.1 done, T72.1.2 CI gate pending)
-- E73: Generate KV cache consolidation (2/3 -- base extraction + migration done; T73.1.3 tests pending)
+- E72: Architecture enforcement test (2/2 COMPLETE -- test created + added to CI)
+- E73: Generate KV cache consolidation (3/3 COMPLETE -- base extraction, migration, validation done)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -351,11 +351,11 @@ Deps: Wave 3
 #### Composition Wave 5: Final validation (5 agents)
 Deps: Wave 4
 
-- [ ] T67.3.1 + T67.3.2 Timeseries full suite + linters  verifies: [infrastructure]
-- [ ] T67.3.3 Verify deleted files  verifies: [infrastructure]
-- [ ] T68.1.3 CrossAsset AdamW  verifies: [infrastructure]
-- [ ] T72.1.2 Add arch test to CI  verifies: [infrastructure]
-- [ ] T73.1.3 KV cache tests  verifies: [UC-001, UC-002]
+- [x] T67.3.1 + T67.3.2 Timeseries full suite + linters  verifies: [infrastructure]  DONE 2026-04-03 PR #325
+- [x] T67.3.3 Verify deleted files  verifies: [infrastructure]  DONE 2026-04-03 (math_ops, training_ops, adamw_f32 deleted; -349 net lines)
+- [x] T68.1.3 CrossAsset AdamW  verifies: [infrastructure]  DONE 2026-04-03 PR #325
+- [x] T72.1.2 Add arch test to CI  verifies: [infrastructure]  DONE 2026-04-03 PR #325
+- [x] T73.1.3 KV cache tests  verifies: [UC-001, UC-002]  DONE 2026-04-03 (394 tests pass, 338 lines eliminated)
 
 #### Composition Wave 6: Final cleanup (2 agents)
 Deps: Wave 5
