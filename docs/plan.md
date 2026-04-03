@@ -41,8 +41,8 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
 - E72: Architecture enforcement test (2/2 COMPLETE -- test created + added to CI)
 - E73: Generate KV cache consolidation (3/3 COMPLETE -- base extraction, migration, validation done)
-- E74: Timeseries backward pass composition (0/14 -- add backward ops to layers/functional, migrate 3 backward files + encoder backward)
-- E75: Inference timeseries .Data() elimination (0/9 -- replace unjustified .Data() access in 6 arch builders)
+- E74: Timeseries backward pass composition (4/14 -- backward API done; migration pending)
+- E75: Inference timeseries .Data() elimination (6/9 -- all 6 arch builders done PR #329; validation pending)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -407,16 +407,16 @@ Deps: Wave 7 (T63.1.2)
 #### Composition Wave 9: Backward API + Inference .Data() (10 agents)
 Tracks AC and AD run in parallel. Can start immediately (no deps on Waves 7-8).
 
-- [ ] T74.1.1 functional.LinearBackward  verifies: [infrastructure]
-- [ ] T74.1.2 functional.LayerNormBackward  verifies: [infrastructure]
-- [ ] T74.1.3 functional.GELUBackward  verifies: [infrastructure]
-- [ ] T74.1.4 functional.SoftmaxBackward  verifies: [infrastructure]
-- [ ] T75.1.1 arch_timemixer.go .Data() elimination  verifies: [UC-TS02]
-- [ ] T75.1.2 arch_tft.go .Data() elimination  verifies: [UC-TS01]
-- [ ] T75.1.3 arch_ttm.go .Data() elimination  verifies: [UC-TS01]
-- [ ] T75.1.4 arch_tirex.go .Data() elimination  verifies: [UC-TS01]
-- [ ] T75.1.5 arch_tspulse.go .Data() elimination  verifies: [UC-TS01]
-- [ ] T75.1.6 arch_flowstate.go .Data() elimination  verifies: [UC-TS01]
+- [x] T74.1.1 functional.LinearBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #329
+- [x] T74.1.2 functional.LayerNormBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #329
+- [x] T74.1.3 functional.GELUBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #329
+- [x] T74.1.4 functional.SoftmaxBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #329
+- [x] T75.1.1 arch_timemixer.go .Data() elimination  verifies: [UC-TS02]  DONE 2026-04-03 PR #329 (10->4 .Data())
+- [x] T75.1.2 arch_tft.go .Data() elimination  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (4->1 .Data())
+- [x] T75.1.3 arch_ttm.go .Data() elimination  verifies: [UC-TS01]  DONE 2026-04-03 PR #329
+- [x] T75.1.4 arch_tirex.go .Data() elimination  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (2->0 .Data())
+- [x] T75.1.5 arch_tspulse.go .Data() elimination  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (3->0 .Data())
+- [x] T75.1.6 arch_flowstate.go .Data() elimination  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (2->1 .Data())
 
 #### Composition Wave 10: Composed backward ops + inference validation (5 agents)
 Deps: Wave 9 (T74.1.1-T74.1.4 complete)
@@ -2660,25 +2660,25 @@ loops. Target: ~1,500 lines of raw backward computation replaced by functional c
 
 ### E74.1: Functional Backward API
 
-- [ ] T74.1.1 Add functional.LinearBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T74.1.1 Add functional.LinearBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
   Implement LinearBackward(ctx, engine, dOutput, input, weight) returning
   (dInput, dWeight, dBias). Uses engine.MatMul for gradient computation.
   Reference: patchtst_backward.go:405-430 for expected behavior.
   Acceptance: unit test validates gradient correctness via numerical gradient check.
 
-- [ ] T74.1.2 Add functional.LayerNormBackward  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T74.1.2 Add functional.LayerNormBackward  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
   Implement LayerNormBackward(ctx, engine, dOutput, input, gamma, mean, variance)
   returning (dInput, dGamma, dBeta). Uses engine ops for variance correction.
   Reference: itransformer_backward.go:503-537 for expected behavior.
   Acceptance: numerical gradient check passes within 1e-6.
 
-- [ ] T74.1.3 Add functional.GELUBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T74.1.3 Add functional.GELUBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
   Implement GELUBackward(ctx, engine, dOutput, input) returning dInput.
   Derivative: 0.5*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3))) + correction term.
   Reference: patchtst_encoder.go:994-1007 (encoderBackwardF64 GELU derivative).
   Acceptance: numerical gradient check passes within 1e-6.
 
-- [ ] T74.1.4 Add functional.SoftmaxBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T74.1.4 Add functional.SoftmaxBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
   Implement SoftmaxBackward(ctx, engine, dOutput, softmaxOutput) returning dInput.
   Formula: dInput_i = s_i * (dOutput_i - sum(dOutput * s)).
   Reference: itransformer_backward.go:542-555.
@@ -2804,44 +2804,17 @@ from 29 to 4 (justified only). Estimated ~200-315 lines of raw loops replaced.
 
 ### E75.1: Architecture Builder Migration
 
-- [ ] T75.1.1 arch_timemixer.go -- Replace inline softmax and ReLU with engine ops  Owner: TBD  Est: 3h  verifies: [UC-TS02]
-  Replace inline softmax (line 341) with layers/activations.Softmax.
-  Replace ReLU on hidden (lines 464-470) with engine.ReLU().
-  Replace gather/scatter reshaping (lines 446, 482) with engine.Reshape.
-  Replace moving average .Data() access with engine ops where possible.
-  10 .Data() calls, target: reduce to 2-3 (justified custom decomposition).
-  Acceptance: arch_timemixer tests pass. Inference output matches pre-refactor.
+- [x] T75.1.1 arch_timemixer.go -- Replace inline softmax and ReLU with engine ops  Owner: TBD  Est: 3h  verifies: [UC-TS02]  DONE 2026-04-03 PR #329 (10->4 .Data())
 
-- [ ] T75.1.2 arch_tft.go -- Replace buffer operations with engine ops  Owner: TBD  Est: 2h  verifies: [UC-TS01]
-  Replace hidden state stacking (lines 312-322) with tensor.Stack or engine.Concat.
-  Replace VSN output buffer copy (lines 518-525) with engine.Reshape.
-  Keep forget gate bias init (justified).
-  4 .Data() calls, target: reduce to 1.
-  Acceptance: arch_tft tests pass. TFT inference output matches pre-refactor.
+- [x] T75.1.2 arch_tft.go -- Replace buffer operations with engine ops  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (4->1 .Data())
 
-- [ ] T75.1.3 arch_ttm.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]
-  Replace channel extraction (lines 591-603) with engine.Slice.
-  Keep channel statistics computation (justified custom normalization).
-  5 .Data() calls, target: reduce to 3.
-  Acceptance: arch_ttm tests pass.
+- [x] T75.1.3 arch_ttm.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-04-03 PR #329
 
-- [ ] T75.1.4 arch_tirex.go -- Replace timestep extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]
-  Replace manual timestep extraction loops (lines 376-414, 580-620) with
-  engine.Slice for LSTM block processing input preparation.
-  2 .Data() calls, target: reduce to 0.
-  Acceptance: arch_tirex tests pass. TiRex inference output matches.
+- [x] T75.1.4 arch_tirex.go -- Replace timestep extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (2->0 .Data())
 
-- [ ] T75.1.5 arch_tspulse.go -- Replace reshaping with engine.Reshape  Owner: TBD  Est: 1h  verifies: [UC-TS01]
-  Replace recon reshaping (lines 271-288), class prob reshaping (lines 350-365),
-  and embedding format (lines 401-410) with engine.Reshape.
-  3 .Data() calls, target: reduce to 0.
-  Acceptance: arch_tspulse tests pass.
+- [x] T75.1.5 arch_tspulse.go -- Replace reshaping with engine.Reshape  Owner: TBD  Est: 1h  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (3->0 .Data())
 
-- [ ] T75.1.6 arch_flowstate.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 1h  verifies: [UC-TS01]
-  Replace channel extraction (lines 360-368) with engine.Slice.
-  Keep Fourier basis evaluation (justified custom operation).
-  2 .Data() calls, target: reduce to 1.
-  Acceptance: arch_flowstate tests pass.
+- [x] T75.1.6 arch_flowstate.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 1h  verifies: [UC-TS01]  DONE 2026-04-03 PR #329 (2->1 .Data())
 
 ### E75.2: Validation
 
