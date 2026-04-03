@@ -104,13 +104,10 @@ func (te *TemporalConvEncoder[T]) Forward(ctx context.Context, inputs ...*tensor
 	if err != nil {
 		return nil, fmt.Errorf("conv1: %w", err)
 	}
-	relu1Data := conv1Out.Data()
-	for i, v := range relu1Data {
-		if te.ops.GreaterThan(te.ops.FromFloat64(0), v) {
-			relu1Data[i] = te.ops.FromFloat64(0)
-		}
+	conv1Out, err = te.engine.UnaryOp(ctx, conv1Out, te.ops.ReLU)
+	if err != nil {
+		return nil, fmt.Errorf("relu1: %w", err)
 	}
-	conv1Out.SetData(relu1Data)
 	te.lastConv1Out = conv1Out
 
 	// Conv2 + ReLU
@@ -118,13 +115,10 @@ func (te *TemporalConvEncoder[T]) Forward(ctx context.Context, inputs ...*tensor
 	if err != nil {
 		return nil, fmt.Errorf("conv2: %w", err)
 	}
-	relu2Data := conv2Out.Data()
-	for i, v := range relu2Data {
-		if te.ops.GreaterThan(te.ops.FromFloat64(0), v) {
-			relu2Data[i] = te.ops.FromFloat64(0)
-		}
+	conv2Out, err = te.engine.UnaryOp(ctx, conv2Out, te.ops.ReLU)
+	if err != nil {
+		return nil, fmt.Errorf("relu2: %w", err)
 	}
-	conv2Out.SetData(relu2Data)
 	te.lastConv2Out = conv2Out
 
 	// Global average pool over temporal dimension (axis=2)
@@ -177,15 +171,15 @@ func (te *TemporalConvEncoder[T]) Backward(ctx context.Context, mode types.Backw
 		return nil, err
 	}
 
-	// ReLU backward on conv2
-	conv2Data := te.lastConv2Out.Data()
-	dConv2RData := dConv2.Data()
-	for i, v := range conv2Data {
-		if !te.ops.GreaterThan(v, te.ops.FromFloat64(0)) {
-			dConv2RData[i] = te.ops.FromFloat64(0)
-		}
+	// ReLU backward on conv2: mask gradient where activation was <= 0
+	dConv2Mask, err := te.engine.UnaryOp(ctx, te.lastConv2Out, te.ops.ReLUGrad)
+	if err != nil {
+		return nil, fmt.Errorf("relu2 backward: %w", err)
 	}
-	dConv2.SetData(dConv2RData)
+	dConv2, err = te.engine.Mul(ctx, dConv2, dConv2Mask)
+	if err != nil {
+		return nil, fmt.Errorf("relu2 backward mul: %w", err)
+	}
 
 	// Backward through conv2
 	dConv1Out, err := te.conv2.Backward(ctx, mode, dConv2, te.lastConv1Out)
@@ -193,18 +187,18 @@ func (te *TemporalConvEncoder[T]) Backward(ctx context.Context, mode types.Backw
 		return nil, fmt.Errorf("conv2 backward: %w", err)
 	}
 
-	// ReLU backward on conv1
-	conv1Data := te.lastConv1Out.Data()
-	dConv1Data := dConv1Out[0].Data()
-	for i, v := range conv1Data {
-		if !te.ops.GreaterThan(v, te.ops.FromFloat64(0)) {
-			dConv1Data[i] = te.ops.FromFloat64(0)
-		}
+	// ReLU backward on conv1: mask gradient where activation was <= 0
+	dConv1Mask, err := te.engine.UnaryOp(ctx, te.lastConv1Out, te.ops.ReLUGrad)
+	if err != nil {
+		return nil, fmt.Errorf("relu1 backward: %w", err)
 	}
-	dConv1Out[0].SetData(dConv1Data)
+	dConv1Masked, err := te.engine.Mul(ctx, dConv1Out[0], dConv1Mask)
+	if err != nil {
+		return nil, fmt.Errorf("relu1 backward mul: %w", err)
+	}
 
 	// Backward through conv1
-	dInput, err := te.conv1.Backward(ctx, mode, dConv1Out[0], inputs[0])
+	dInput, err := te.conv1.Backward(ctx, mode, dConv1Masked, inputs[0])
 	if err != nil {
 		return nil, fmt.Errorf("conv1 backward: %w", err)
 	}
