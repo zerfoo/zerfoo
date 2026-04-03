@@ -217,10 +217,24 @@ func (s *SSMLayer[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T
 		}
 	}
 
-	// C: [d_output, d_state]
-	cData := s.C.Value.Data()
-	// D: [d_output, d_input]
-	dData := s.D.Value.Data()
+	// Build engine-compatible tensors for the discretised matrices.
+	bBarT := make([]T, s.dState*s.dInput)
+	for i := range bBar {
+		bBarT[i] = T(bBar[i])
+	}
+	bBarTensor, err := tensor.New[T]([]int{s.dState, s.dInput}, bBarT)
+	if err != nil {
+		return nil, fmt.Errorf("create bBar tensor: %w", err)
+	}
+
+	aBarT := make([]T, s.dState)
+	for i := range aBar {
+		aBarT[i] = T(aBar[i])
+	}
+	aBarTensor, err := tensor.New[T]([]int{s.dState, 1}, aBarT)
+	if err != nil {
+		return nil, fmt.Errorf("create aBar tensor: %w", err)
+	}
 
 	inputData := input.Data()
 
@@ -229,37 +243,61 @@ func (s *SSMLayer[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T
 
 	// --- Sequential scan per batch element ---
 	for b := 0; b < batch; b++ {
-		// Hidden state x: [d_state], initialised to zero.
-		x := make([]float64, s.dState)
+		// Hidden state x: [d_state, 1], initialised to zero.
+		xTensor, err := tensor.New[T]([]int{s.dState, 1}, make([]T, s.dState))
+		if err != nil {
+			return nil, fmt.Errorf("create x tensor: %w", err)
+		}
 
 		for t := 0; t < seqLen; t++ {
-			// u = input[b, t, :] — the input vector at this time step.
+			// u = input[b, t, :] as [d_input, 1]
 			uOffset := b*seqLen*s.dInput + t*s.dInput
-
-			// x_new[i] = A_bar[i] * x[i] + sum_j(B_bar[i,j] * u[j])
-			for i := 0; i < s.dState; i++ {
-				val := aBar[i] * x[i]
-				for j := 0; j < s.dInput; j++ {
-					val += bBar[i*s.dInput+j] * float64(inputData[uOffset+j])
-				}
-				x[i] = val
+			uData := make([]T, s.dInput)
+			copy(uData, inputData[uOffset:uOffset+s.dInput])
+			uTensor, err := tensor.New[T]([]int{s.dInput, 1}, uData)
+			if err != nil {
+				return nil, fmt.Errorf("create u tensor: %w", err)
 			}
 
-			// y[k] = C * x + D * u
-			// y[k] is [d_output]
+			// B_bar * u → [d_state, 1]
+			bBarU, err := s.engine.MatMul(ctx, bBarTensor, uTensor)
+			if err != nil {
+				return nil, fmt.Errorf("ssm B_bar*u MatMul: %w", err)
+			}
+
+			// A_bar ⊙ x (element-wise, diagonal A) → [d_state, 1]
+			aBarX, err := s.engine.Mul(ctx, aBarTensor, xTensor)
+			if err != nil {
+				return nil, fmt.Errorf("ssm A_bar*x Mul: %w", err)
+			}
+
+			// x = A_bar⊙x + B_bar*u → [d_state, 1]
+			xTensor, err = s.engine.Add(ctx, aBarX, bBarU)
+			if err != nil {
+				return nil, fmt.Errorf("ssm state update Add: %w", err)
+			}
+
+			// C * x → [d_output, 1]
+			cx, err := s.engine.MatMul(ctx, s.C.Value, xTensor)
+			if err != nil {
+				return nil, fmt.Errorf("ssm C*x MatMul: %w", err)
+			}
+
+			// D * u → [d_output, 1]
+			du, err := s.engine.MatMul(ctx, s.D.Value, uTensor)
+			if err != nil {
+				return nil, fmt.Errorf("ssm D*u MatMul: %w", err)
+			}
+
+			// y = C*x + D*u → [d_output, 1]
+			y, err := s.engine.Add(ctx, cx, du)
+			if err != nil {
+				return nil, fmt.Errorf("ssm output Add: %w", err)
+			}
+
+			// Copy y into output buffer.
 			yOffset := b*seqLen*s.dOutput + t*s.dOutput
-			for o := 0; o < s.dOutput; o++ {
-				var val float64
-				// C[o, :] dot x
-				for i := 0; i < s.dState; i++ {
-					val += float64(cData[o*s.dState+i]) * x[i]
-				}
-				// D[o, :] dot u
-				for j := 0; j < s.dInput; j++ {
-					val += float64(dData[o*s.dInput+j]) * float64(inputData[uOffset+j])
-				}
-				outputData[yOffset+o] = T(val)
-			}
+			copy(outputData[yOffset:yOffset+s.dOutput], y.Data())
 		}
 	}
 
