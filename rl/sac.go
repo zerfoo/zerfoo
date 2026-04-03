@@ -1,8 +1,16 @@
 package rl
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // SACConfig holds hyperparameters for the SAC agent.
@@ -19,194 +27,220 @@ type SACConfig struct {
 	TargetEntropy float64 // Target entropy for automatic alpha tuning (typically -ActionDim).
 }
 
-// mlp is a simple two-hidden-layer feedforward network: in -> hidden -> hidden -> out.
-type mlp struct {
-	w1, b1 []float64 // First layer: inDim -> hiddenDim
-	w2, b2 []float64 // Second layer: hiddenDim -> hiddenDim
-	w3, b3 []float64 // Output layer: hiddenDim -> outDim
-
-	inDim, hiddenDim, outDim int
+// mlpNet is a three-layer MLP (in -> hidden -> hidden -> out) using functional.Linear
+// with ReLU activations on hidden layers.
+type mlpNet struct {
+	layer1 *linearLayer
+	layer2 *linearLayer
+	layer3 *linearLayer
+	engine compute.Engine[float64]
+	ops    numeric.Arithmetic[float64]
 }
 
-func newMLP(inDim, hiddenDim, outDim int) *mlp {
-	m := &mlp{
-		w1: make([]float64, inDim*hiddenDim),
-		b1: make([]float64, hiddenDim),
-		w2: make([]float64, hiddenDim*hiddenDim),
-		b2: make([]float64, hiddenDim),
-		w3: make([]float64, hiddenDim*outDim),
-		b3: make([]float64, outDim),
-
-		inDim:     inDim,
-		hiddenDim: hiddenDim,
-		outDim:    outDim,
+func newMLPNet(engine compute.Engine[float64], ops numeric.Arithmetic[float64],
+	name string, inDim, hiddenDim, outDim int) (*mlpNet, error) {
+	l1, err := newLinearLayer(name+".l1", inDim, hiddenDim)
+	if err != nil {
+		return nil, err
 	}
-	// Xavier initialisation.
-	xavierInit(m.w1, inDim, hiddenDim)
-	xavierInit(m.w2, hiddenDim, hiddenDim)
-	xavierInit(m.w3, hiddenDim, outDim)
-	return m
-}
-
-func xavierInit(w []float64, fanIn, fanOut int) {
-	scale := math.Sqrt(2.0 / float64(fanIn+fanOut))
-	for i := range w {
-		w[i] = rand.NormFloat64() * scale
+	l2, err := newLinearLayer(name+".l2", hiddenDim, hiddenDim)
+	if err != nil {
+		return nil, err
 	}
-}
-
-// forward computes the output of the MLP with ReLU activations on hidden layers.
-func (m *mlp) forward(input []float64) []float64 {
-	h1 := linearReLU(input, m.w1, m.b1, m.inDim, m.hiddenDim)
-	h2 := linearReLU(h1, m.w2, m.b2, m.hiddenDim, m.hiddenDim)
-	return linearRaw(h2, m.w3, m.b3, m.hiddenDim, m.outDim)
-}
-
-func linearReLU(x, w, b []float64, inDim, outDim int) []float64 {
-	out := make([]float64, outDim)
-	for j := range outDim {
-		sum := b[j]
-		for i := range inDim {
-			sum += x[i] * w[i*outDim+j]
-		}
-		if sum > 0 {
-			out[j] = sum
-		}
+	l3, err := newLinearLayer(name+".l3", hiddenDim, outDim)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	return &mlpNet{layer1: l1, layer2: l2, layer3: l3, engine: engine, ops: ops}, nil
 }
 
-func linearRaw(x, w, b []float64, inDim, outDim int) []float64 {
-	out := make([]float64, outDim)
-	for j := range outDim {
-		sum := b[j]
-		for i := range inDim {
-			sum += x[i] * w[i*outDim+j]
-		}
-		out[j] = sum
+func (m *mlpNet) forward(ctx context.Context, input *tensor.TensorNumeric[float64]) (*tensor.TensorNumeric[float64], error) {
+	h1, err := m.layer1.forward(ctx, m.engine, input)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	h1, err = functional.ReLU(ctx, m.engine, m.ops, h1)
+	if err != nil {
+		return nil, err
+	}
+	h2, err := m.layer2.forward(ctx, m.engine, h1)
+	if err != nil {
+		return nil, err
+	}
+	h2, err = functional.ReLU(ctx, m.engine, m.ops, h2)
+	if err != nil {
+		return nil, err
+	}
+	return m.layer3.forward(ctx, m.engine, h2)
 }
 
-// forwardWithGrad computes forward pass and returns hidden activations for backprop.
+func (m *mlpNet) forwardSlice(ctx context.Context, input []float64) ([]float64, error) {
+	t, err := tensor.New[float64]([]int{1, len(input)}, input)
+	if err != nil {
+		return nil, err
+	}
+	out, err := m.forward(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	return out.Data(), nil
+}
+
 type mlpCache struct {
-	input, h1Pre, h1, h2Pre, h2, output []float64
+	input         *tensor.TensorNumeric[float64]
+	h1Pre, h1Post *tensor.TensorNumeric[float64]
+	h2Pre, h2Post *tensor.TensorNumeric[float64]
+	output        *tensor.TensorNumeric[float64]
 }
 
-func (m *mlp) forwardCached(input []float64) (*mlpCache, []float64) {
+func (m *mlpNet) forwardCached(ctx context.Context, input *tensor.TensorNumeric[float64]) (*mlpCache, []float64, error) {
 	c := &mlpCache{input: input}
-
-	c.h1Pre = linearRawSlice(input, m.w1, m.b1, m.inDim, m.hiddenDim)
-	c.h1 = reluVec(c.h1Pre)
-
-	c.h2Pre = linearRawSlice(c.h1, m.w2, m.b2, m.hiddenDim, m.hiddenDim)
-	c.h2 = reluVec(c.h2Pre)
-
-	c.output = linearRaw(c.h2, m.w3, m.b3, m.hiddenDim, m.outDim)
-	return c, c.output
+	h1Pre, err := m.layer1.forward(ctx, m.engine, input)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.h1Pre = h1Pre
+	h1Post, err := functional.ReLU(ctx, m.engine, m.ops, h1Pre)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.h1Post = h1Post
+	h2Pre, err := m.layer2.forward(ctx, m.engine, h1Post)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.h2Pre = h2Pre
+	h2Post, err := functional.ReLU(ctx, m.engine, m.ops, h2Pre)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.h2Post = h2Post
+	output, err := m.layer3.forward(ctx, m.engine, h2Post)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.output = output
+	return c, output.Data(), nil
 }
 
-func linearRawSlice(x, w, b []float64, inDim, outDim int) []float64 {
-	out := make([]float64, outDim)
-	for j := range outDim {
-		sum := b[j]
-		for i := range inDim {
-			sum += x[i] * w[i*outDim+j]
-		}
-		out[j] = sum
+func (m *mlpNet) backward(ctx context.Context, c *mlpCache, dOutput *tensor.TensorNumeric[float64]) (*tensor.TensorNumeric[float64], error) {
+	outDim := m.layer3.outDim
+	hiddenDim := m.layer3.inDim
+	dOutputCol, err := m.engine.Reshape(ctx, dOutput, []int{outDim, 1})
+	if err != nil {
+		return nil, err
 	}
-	return out
+	dw3, err := m.engine.MatMul(ctx, dOutputCol, c.h2Post)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer3.weight.AddGradient(dw3); err != nil {
+		return nil, err
+	}
+	dOutputBias, err := m.engine.Reshape(ctx, dOutput, []int{outDim})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer3.bias.AddGradient(dOutputBias); err != nil {
+		return nil, err
+	}
+	dOutputFlat, err := m.engine.Reshape(ctx, dOutput, []int{1, outDim})
+	if err != nil {
+		return nil, err
+	}
+	dh2, err := m.engine.MatMul(ctx, dOutputFlat, m.layer3.weight.Value)
+	if err != nil {
+		return nil, err
+	}
+	dh2Pre, err := reluGrad(ctx, m.engine, c.h2Pre, dh2)
+	if err != nil {
+		return nil, err
+	}
+	dh2PreCol, err := m.engine.Reshape(ctx, dh2Pre, []int{hiddenDim, 1})
+	if err != nil {
+		return nil, err
+	}
+	dw2, err := m.engine.MatMul(ctx, dh2PreCol, c.h1Post)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer2.weight.AddGradient(dw2); err != nil {
+		return nil, err
+	}
+	dh2PreBias, err := m.engine.Reshape(ctx, dh2Pre, []int{hiddenDim})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer2.bias.AddGradient(dh2PreBias); err != nil {
+		return nil, err
+	}
+	dh2PreFlat, err := m.engine.Reshape(ctx, dh2Pre, []int{1, hiddenDim})
+	if err != nil {
+		return nil, err
+	}
+	dh1, err := m.engine.MatMul(ctx, dh2PreFlat, m.layer2.weight.Value)
+	if err != nil {
+		return nil, err
+	}
+	dh1Pre, err := reluGrad(ctx, m.engine, c.h1Pre, dh1)
+	if err != nil {
+		return nil, err
+	}
+	dh1PreCol, err := m.engine.Reshape(ctx, dh1Pre, []int{hiddenDim, 1})
+	if err != nil {
+		return nil, err
+	}
+	dw1, err := m.engine.MatMul(ctx, dh1PreCol, c.input)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer1.weight.AddGradient(dw1); err != nil {
+		return nil, err
+	}
+	dh1PreBias, err := m.engine.Reshape(ctx, dh1Pre, []int{hiddenDim})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.layer1.bias.AddGradient(dh1PreBias); err != nil {
+		return nil, err
+	}
+	dh1PreFlat, err := m.engine.Reshape(ctx, dh1Pre, []int{1, hiddenDim})
+	if err != nil {
+		return nil, err
+	}
+	dInput, err := m.engine.MatMul(ctx, dh1PreFlat, m.layer1.weight.Value)
+	if err != nil {
+		return nil, err
+	}
+	return dInput, nil
 }
 
-func reluVec(x []float64) []float64 {
-	out := make([]float64, len(x))
-	for i, v := range x {
-		if v > 0 {
-			out[i] = v
-		}
-	}
-	return out
+func (m *mlpNet) params() []*graph.Parameter[float64] {
+	params := m.layer1.params()
+	params = append(params, m.layer2.params()...)
+	params = append(params, m.layer3.params()...)
+	return params
 }
 
-// backward computes gradients for the MLP given dOutput (gradient of loss w.r.t. output).
-// It accumulates into the provided gradient slices (caller zeroes them per batch).
-func (m *mlp) backward(c *mlpCache, dOutput []float64,
-	dw1, db1, dw2, db2, dw3, db3 []float64) []float64 {
-
-	// Output layer: dL/dw3, dL/db3
-	for j := range m.outDim {
-		db3[j] += dOutput[j]
-		for i := range m.hiddenDim {
-			dw3[i*m.outDim+j] += c.h2[i] * dOutput[j]
-		}
-	}
-
-	// Backprop through output layer to h2
-	dh2 := make([]float64, m.hiddenDim)
-	for i := range m.hiddenDim {
-		for j := range m.outDim {
-			dh2[i] += m.w3[i*m.outDim+j] * dOutput[j]
-		}
-	}
-
-	// ReLU derivative on h2
-	dh2Pre := make([]float64, m.hiddenDim)
-	for i := range m.hiddenDim {
-		if c.h2Pre[i] > 0 {
-			dh2Pre[i] = dh2[i]
-		}
-	}
-
-	// Second hidden layer
-	for j := range m.hiddenDim {
-		db2[j] += dh2Pre[j]
-		for i := range m.hiddenDim {
-			dw2[i*m.hiddenDim+j] += c.h1[i] * dh2Pre[j]
-		}
-	}
-
-	dh1 := make([]float64, m.hiddenDim)
-	for i := range m.hiddenDim {
-		for j := range m.hiddenDim {
-			dh1[i] += m.w2[i*m.hiddenDim+j] * dh2Pre[j]
-		}
-	}
-
-	// ReLU derivative on h1
-	dh1Pre := make([]float64, m.hiddenDim)
-	for i := range m.hiddenDim {
-		if c.h1Pre[i] > 0 {
-			dh1Pre[i] = dh1[i]
-		}
-	}
-
-	// First hidden layer
-	for j := range m.hiddenDim {
-		db1[j] += dh1Pre[j]
-		for i := range m.inDim {
-			dw1[i*m.hiddenDim+j] += c.input[i] * dh1Pre[j]
-		}
-	}
-
-	// Gradient w.r.t. input (for actor backprop through critic)
-	dInput := make([]float64, m.inDim)
-	for i := range m.inDim {
-		for j := range m.hiddenDim {
-			dInput[i] += m.w1[i*m.hiddenDim+j] * dh1Pre[j]
-		}
-	}
-	return dInput
-}
-
-// sgdUpdate applies gradient descent: param -= lr * grad, then zeroes grad.
-func sgdUpdate(param, grad []float64, lr float64) {
-	for i := range param {
-		param[i] -= lr * grad[i]
-		grad[i] = 0
+func (m *mlpNet) clearGradients() {
+	for _, p := range m.params() {
+		p.ClearGradient()
 	}
 }
 
-// softUpdate performs Polyak averaging: target = tau*source + (1-tau)*target.
+func reluGrad(ctx context.Context, engine compute.Engine[float64],
+	pre, dOutput *tensor.TensorNumeric[float64]) (*tensor.TensorNumeric[float64], error) {
+	preData := pre.Data()
+	dData := dOutput.Data()
+	result := make([]float64, len(preData))
+	for i := range result {
+		if preData[i] > 0 {
+			result[i] = dData[i]
+		}
+	}
+	return tensor.New[float64](pre.Shape(), result)
+}
+
 func softUpdate(target, source []float64, tau float64) {
 	for i := range target {
 		target[i] = tau*source[i] + (1-tau)*target[i]
@@ -229,45 +263,67 @@ func clampLogStd(ls float64) float64 {
 	return ls
 }
 
-func copyMLP(src *mlp) *mlp {
-	return &mlp{
-		w1: copySlice(src.w1), b1: copySlice(src.b1),
-		w2: copySlice(src.w2), b2: copySlice(src.b2),
-		w3: copySlice(src.w3), b3: copySlice(src.b3),
-		inDim: src.inDim, hiddenDim: src.hiddenDim, outDim: src.outDim,
+func copyMLPNet(src *mlpNet) (*mlpNet, error) {
+	l1, err := copyLinearLayer(src.layer1)
+	if err != nil {
+		return nil, err
 	}
+	l2, err := copyLinearLayer(src.layer2)
+	if err != nil {
+		return nil, err
+	}
+	l3, err := copyLinearLayer(src.layer3)
+	if err != nil {
+		return nil, err
+	}
+	return &mlpNet{layer1: l1, layer2: l2, layer3: l3, engine: src.engine, ops: src.ops}, nil
+}
+
+func copyLinearLayer(src *linearLayer) (*linearLayer, error) {
+	wData := copySlice(src.weight.Value.Data())
+	wTensor, err := tensor.New[float64](src.weight.Value.Shape(), wData)
+	if err != nil {
+		return nil, err
+	}
+	wParam, err := graph.NewParameter[float64](src.weight.Name+".copy", wTensor, tensor.New[float64])
+	if err != nil {
+		return nil, err
+	}
+	bData := copySlice(src.bias.Value.Data())
+	bTensor, err := tensor.New[float64](src.bias.Value.Shape(), bData)
+	if err != nil {
+		return nil, err
+	}
+	bParam, err := graph.NewParameter[float64](src.bias.Name+".copy", bTensor, tensor.New[float64])
+	if err != nil {
+		return nil, err
+	}
+	return &linearLayer{weight: wParam, bias: bParam, inDim: src.inDim, outDim: src.outDim}, nil
+}
+
+func softUpdateMLP(target, source *mlpNet, tau float64) {
+	softUpdate(target.layer1.weight.Value.Data(), source.layer1.weight.Value.Data(), tau)
+	softUpdate(target.layer1.bias.Value.Data(), source.layer1.bias.Value.Data(), tau)
+	softUpdate(target.layer2.weight.Value.Data(), source.layer2.weight.Value.Data(), tau)
+	softUpdate(target.layer2.bias.Value.Data(), source.layer2.bias.Value.Data(), tau)
+	softUpdate(target.layer3.weight.Value.Data(), source.layer3.weight.Value.Data(), tau)
+	softUpdate(target.layer3.bias.Value.Data(), source.layer3.bias.Value.Data(), tau)
 }
 
 // SAC implements the Soft Actor-Critic algorithm with twin Q-networks
 // and automatic entropy temperature tuning.
 type SAC struct {
 	config SACConfig
-
-	// Actor network: state -> [mean; logStd] (2*actionDim outputs)
-	actor *mlp
-
-	// Twin critics: (state, action) -> Q-value
-	critic1, critic2         *mlp
-	targetCritic1, targetCritic2 *mlp
-
-	// Entropy temperature
+	engine compute.Engine[float64]
+	ops    numeric.Arithmetic[float64]
+	actor  *mlpNet
+	critic1, critic2             *mlpNet
+	targetCritic1, targetCritic2 *mlpNet
 	logAlpha float64
 	alpha    float64
-
-	// Gradient buffers for actor
-	actorDw1, actorDb1 []float64
-	actorDw2, actorDb2 []float64
-	actorDw3, actorDb3 []float64
-
-	// Gradient buffers for critic1
-	c1Dw1, c1Db1 []float64
-	c1Dw2, c1Db2 []float64
-	c1Dw3, c1Db3 []float64
-
-	// Gradient buffers for critic2
-	c2Dw1, c2Db1 []float64
-	c2Dw2, c2Db2 []float64
-	c2Dw3, c2Db3 []float64
+	actorOpt   *optimizer.SGD[float64]
+	critic1Opt *optimizer.SGD[float64]
+	critic2Opt *optimizer.SGD[float64]
 }
 
 // NewSAC creates a new SAC agent with the given configuration.
@@ -296,80 +352,66 @@ func NewSAC(cfg SACConfig) *SAC {
 	if cfg.TargetEntropy == 0 {
 		cfg.TargetEntropy = -float64(cfg.ActionDim)
 	}
-
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
+	ops := numeric.Float64Ops{}
 	criticIn := cfg.StateDim + cfg.ActionDim
-
-	s := &SAC{
-		config:   cfg,
-		actor:    newMLP(cfg.StateDim, cfg.HiddenDim, 2*cfg.ActionDim),
-		critic1:  newMLP(criticIn, cfg.HiddenDim, 1),
-		critic2:  newMLP(criticIn, cfg.HiddenDim, 1),
-		logAlpha: math.Log(cfg.InitAlpha),
-		alpha:    cfg.InitAlpha,
+	actor, err := newMLPNet(engine, ops, "actor", cfg.StateDim, cfg.HiddenDim, 2*cfg.ActionDim)
+	if err != nil {
+		panic("rl: failed to create actor: " + err.Error())
 	}
-
-	s.targetCritic1 = copyMLP(s.critic1)
-	s.targetCritic2 = copyMLP(s.critic2)
-
-	// Allocate gradient buffers for actor.
-	s.actorDw1 = make([]float64, len(s.actor.w1))
-	s.actorDb1 = make([]float64, len(s.actor.b1))
-	s.actorDw2 = make([]float64, len(s.actor.w2))
-	s.actorDb2 = make([]float64, len(s.actor.b2))
-	s.actorDw3 = make([]float64, len(s.actor.w3))
-	s.actorDb3 = make([]float64, len(s.actor.b3))
-
-	// Allocate gradient buffers for critics.
-	s.c1Dw1 = make([]float64, len(s.critic1.w1))
-	s.c1Db1 = make([]float64, len(s.critic1.b1))
-	s.c1Dw2 = make([]float64, len(s.critic1.w2))
-	s.c1Db2 = make([]float64, len(s.critic1.b2))
-	s.c1Dw3 = make([]float64, len(s.critic1.w3))
-	s.c1Db3 = make([]float64, len(s.critic1.b3))
-
-	s.c2Dw1 = make([]float64, len(s.critic2.w1))
-	s.c2Db1 = make([]float64, len(s.critic2.b1))
-	s.c2Dw2 = make([]float64, len(s.critic2.w2))
-	s.c2Db2 = make([]float64, len(s.critic2.b2))
-	s.c2Dw3 = make([]float64, len(s.critic2.w3))
-	s.c2Db3 = make([]float64, len(s.critic2.b3))
-
-	return s
+	critic1, err := newMLPNet(engine, ops, "critic1", criticIn, cfg.HiddenDim, 1)
+	if err != nil {
+		panic("rl: failed to create critic1: " + err.Error())
+	}
+	critic2, err := newMLPNet(engine, ops, "critic2", criticIn, cfg.HiddenDim, 1)
+	if err != nil {
+		panic("rl: failed to create critic2: " + err.Error())
+	}
+	targetCritic1, err := copyMLPNet(critic1)
+	if err != nil {
+		panic("rl: failed to copy critic1: " + err.Error())
+	}
+	targetCritic2, err := copyMLPNet(critic2)
+	if err != nil {
+		panic("rl: failed to copy critic2: " + err.Error())
+	}
+	lr := float32(cfg.LearningRate)
+	return &SAC{
+		config: cfg, engine: engine, ops: ops,
+		actor: actor, critic1: critic1, critic2: critic2,
+		targetCritic1: targetCritic1, targetCritic2: targetCritic2,
+		logAlpha: math.Log(cfg.InitAlpha), alpha: cfg.InitAlpha,
+		actorOpt: optimizer.NewSGD[float64](engine, ops, lr),
+		critic1Opt: optimizer.NewSGD[float64](engine, ops, lr),
+		critic2Opt: optimizer.NewSGD[float64](engine, ops, lr),
+	}
 }
 
 // Alpha returns the current entropy temperature.
 func (s *SAC) Alpha() float64 { return s.alpha }
 
-// sampleAction uses the reparameterisation trick: action = tanh(mean + std*noise).
-// Returns the squashed action and the log-probability.
 func (s *SAC) sampleAction(state State) (Action, float64) {
-	out := s.actor.forward(state)
+	ctx := context.Background()
+	out, err := s.actor.forwardSlice(ctx, state)
+	if err != nil {
+		return make(Action, s.config.ActionDim), 0
+	}
 	actionDim := s.config.ActionDim
 	mean := out[:actionDim]
 	logStd := out[actionDim:]
-
 	action := make(Action, actionDim)
-	logProb := 0.0
-
+	lp := 0.0
 	for i := range actionDim {
 		ls := clampLogStd(logStd[i])
 		std := math.Exp(ls)
-
 		noise := rand.NormFloat64()
-		u := mean[i] + std*noise // pre-squash
-
-		// Squash through tanh.
+		u := mean[i] + std*noise
 		a := math.Tanh(u)
 		action[i] = a
-
-		// Log probability with tanh correction:
-		// log pi(a|s) = log N(u; mean, std) - log(1 - tanh(u)^2)
-		logProb += -0.5*(noise*noise) - ls - 0.5*math.Log(2*math.Pi)
-		// Correction for tanh squashing, with small epsilon for stability.
-		logProb -= math.Log(math.Max(1-a*a, 1e-6))
+		lp += -0.5*(noise*noise) - ls - 0.5*math.Log(2*math.Pi)
+		lp -= math.Log(math.Max(1-a*a, 1e-6))
 	}
-
-	return action, logProb
+	return action, lp
 }
 
 // Act selects an action for the given state using the current policy.
@@ -383,81 +425,84 @@ func (s *SAC) Learn(batch []Experience) error {
 	if len(batch) == 0 {
 		return nil
 	}
-
+	ctx := context.Background()
 	cfg := s.config
 	actionDim := cfg.ActionDim
-
-	// ---- Update critics ----
+	s.critic1.clearGradients()
+	s.critic2.clearGradients()
 	for _, exp := range batch {
-		// Sample next action from current policy for the next state.
 		nextAction, nextLogProb := s.sampleAction(exp.NextState)
-
-		// Compute target Q using target networks.
 		nextInput := append(copySlice(exp.NextState), nextAction...)
-		tq1 := s.targetCritic1.forward(nextInput)[0]
-		tq2 := s.targetCritic2.forward(nextInput)[0]
-		minTQ := tq1
-		if tq2 < tq1 {
-			minTQ = tq2
+		tq1, err := s.targetCritic1.forwardSlice(ctx, nextInput)
+		if err != nil {
+			return err
 		}
-
+		tq2, err := s.targetCritic2.forwardSlice(ctx, nextInput)
+		if err != nil {
+			return err
+		}
+		minTQ := tq1[0]
+		if tq2[0] < tq1[0] {
+			minTQ = tq2[0]
+		}
 		doneVal := 0.0
 		if !exp.Done {
 			doneVal = 1.0
 		}
 		target := exp.Reward + cfg.Gamma*doneVal*(minTQ-s.alpha*nextLogProb)
-
-		// Critic 1 update.
 		curInput := append(copySlice(exp.State), exp.Action...)
-		cache1, q1 := s.critic1.forwardCached(curInput)
-		dq1 := []float64{2 * (q1[0] - target) / float64(len(batch))}
-		s.critic1.backward(cache1, dq1, s.c1Dw1, s.c1Db1, s.c1Dw2, s.c1Db2, s.c1Dw3, s.c1Db3)
-
-		// Critic 2 update.
-		cache2, q2 := s.critic2.forwardCached(curInput)
-		dq2 := []float64{2 * (q2[0] - target) / float64(len(batch))}
-		s.critic2.backward(cache2, dq2, s.c2Dw1, s.c2Db1, s.c2Dw2, s.c2Db2, s.c2Dw3, s.c2Db3)
+		curInputT, err := tensor.New[float64]([]int{1, len(curInput)}, curInput)
+		if err != nil {
+			return err
+		}
+		cache1, q1, err := s.critic1.forwardCached(ctx, curInputT)
+		if err != nil {
+			return err
+		}
+		dq1Val := 2 * (q1[0] - target) / float64(len(batch))
+		dq1, err := tensor.New[float64]([]int{1, 1}, []float64{dq1Val})
+		if err != nil {
+			return err
+		}
+		if _, err := s.critic1.backward(ctx, cache1, dq1); err != nil {
+			return err
+		}
+		cache2, q2, err := s.critic2.forwardCached(ctx, curInputT)
+		if err != nil {
+			return err
+		}
+		dq2Val := 2 * (q2[0] - target) / float64(len(batch))
+		dq2, err := tensor.New[float64]([]int{1, 1}, []float64{dq2Val})
+		if err != nil {
+			return err
+		}
+		if _, err := s.critic2.backward(ctx, cache2, dq2); err != nil {
+			return err
+		}
 	}
-
-	sgdUpdate(s.critic1.w1, s.c1Dw1, cfg.LearningRate)
-	sgdUpdate(s.critic1.b1, s.c1Db1, cfg.LearningRate)
-	sgdUpdate(s.critic1.w2, s.c1Dw2, cfg.LearningRate)
-	sgdUpdate(s.critic1.b2, s.c1Db2, cfg.LearningRate)
-	sgdUpdate(s.critic1.w3, s.c1Dw3, cfg.LearningRate)
-	sgdUpdate(s.critic1.b3, s.c1Db3, cfg.LearningRate)
-
-	sgdUpdate(s.critic2.w1, s.c2Dw1, cfg.LearningRate)
-	sgdUpdate(s.critic2.b1, s.c2Db1, cfg.LearningRate)
-	sgdUpdate(s.critic2.w2, s.c2Dw2, cfg.LearningRate)
-	sgdUpdate(s.critic2.b2, s.c2Db2, cfg.LearningRate)
-	sgdUpdate(s.critic2.w3, s.c2Dw3, cfg.LearningRate)
-	sgdUpdate(s.critic2.b3, s.c2Db3, cfg.LearningRate)
-
-	// ---- Update actor ----
-	// Actor objective: maximise E[min(Q1,Q2)(s,a) - alpha*logProb].
-	// We use analytical gradients through the reparameterisation trick and
-	// backprop through critic1 for dQ/da.
+	if err := s.critic1Opt.Step(ctx, s.critic1.params()); err != nil {
+		return err
+	}
+	if err := s.critic2Opt.Step(ctx, s.critic2.params()); err != nil {
+		return err
+	}
+	s.actor.clearGradients()
 	totalLogProb := 0.0
 	invBatch := 1.0 / float64(len(batch))
-
-	// Reusable throwaway gradient buffers for critic backprop (not applied).
-	tmpCW1 := make([]float64, len(s.critic1.w1))
-	tmpCB1 := make([]float64, len(s.critic1.b1))
-	tmpCW2 := make([]float64, len(s.critic1.w2))
-	tmpCB2 := make([]float64, len(s.critic1.b2))
-	tmpCW3 := make([]float64, len(s.critic1.w3))
-	tmpCB3 := make([]float64, len(s.critic1.b3))
-
 	for _, exp := range batch {
-		// Forward through actor.
-		actorCache, actorOut := s.actor.forwardCached(exp.State)
+		stateT, err := tensor.New[float64]([]int{1, cfg.StateDim}, exp.State)
+		if err != nil {
+			return err
+		}
+		actorCache, actorOut, err := s.actor.forwardCached(ctx, stateT)
+		if err != nil {
+			return err
+		}
 		mean := actorOut[:actionDim]
 		logStd := actorOut[actionDim:]
-
 		action := make([]float64, actionDim)
 		noises := make([]float64, actionDim)
-		logProb := 0.0
-
+		lp := 0.0
 		for i := range actionDim {
 			ls := clampLogStd(logStd[i])
 			std := math.Exp(ls)
@@ -466,82 +511,64 @@ func (s *SAC) Learn(batch []Experience) error {
 			u := mean[i] + std*noise
 			a := math.Tanh(u)
 			action[i] = a
-
-			logProb += -0.5*(noise*noise) - ls - 0.5*math.Log(2*math.Pi)
-			logProb -= math.Log(math.Max(1-a*a, 1e-6))
+			lp += -0.5*(noise*noise) - ls - 0.5*math.Log(2*math.Pi)
+			lp -= math.Log(math.Max(1-a*a, 1e-6))
 		}
-		totalLogProb += logProb
-
-		// Backprop through critic1 to get dQ/da.
+		totalLogProb += lp
 		cInput := append(copySlice(exp.State), action...)
-		cCache, _ := s.critic1.forwardCached(cInput)
-
-		// Zero the throwaway buffers.
-		clear(tmpCW1)
-		clear(tmpCB1)
-		clear(tmpCW2)
-		clear(tmpCB2)
-		clear(tmpCW3)
-		clear(tmpCB3)
-
-		dInput := s.critic1.backward(cCache, []float64{1.0},
-			tmpCW1, tmpCB1, tmpCW2, tmpCB2, tmpCW3, tmpCB3)
-		dQda := dInput[cfg.StateDim:] // gradient of Q w.r.t. action
-
-		// Gradient of actor loss w.r.t. actor outputs (mean, logStd).
-		// Loss = alpha*logProb - Q(s,a)  (minimise to maximise Q - alpha*logProb)
+		cInputT, err := tensor.New[float64]([]int{1, len(cInput)}, cInput)
+		if err != nil {
+			return err
+		}
+		cCache, _, err := s.critic1.forwardCached(ctx, cInputT)
+		if err != nil {
+			return err
+		}
+		savedGrads := make([][]float64, len(s.critic1.params()))
+		for i, p := range s.critic1.params() {
+			savedGrads[i] = copySlice(p.Gradient.Data())
+		}
+		s.critic1.clearGradients()
+		dOne, err := tensor.New[float64]([]int{1, 1}, []float64{1.0})
+		if err != nil {
+			return err
+		}
+		dInput, err := s.critic1.backward(ctx, cCache, dOne)
+		if err != nil {
+			return err
+		}
+		dQda := dInput.Data()[cfg.StateDim:]
+		for i, p := range s.critic1.params() {
+			copy(p.Gradient.Data(), savedGrads[i])
+		}
 		dActorOut := make([]float64, 2*actionDim)
 		for i := range actionDim {
 			a := action[i]
-			dtanh := math.Max(1-a*a, 1e-6) // d(tanh)/d(u)
+			dtanh := math.Max(1-a*a, 1e-6)
 			ls := clampLogStd(logStd[i])
 			std := math.Exp(ls)
-
-			// d(logProb)/d(a) from tanh correction: 2a/(1-a^2)
 			dLogProb_da := 2 * a / math.Max(1-a*a, 1e-6)
-
-			// d(Loss)/d(a) = alpha * d(logProb)/d(a) - dQ/d(a)
 			dLoss_da := (s.alpha*dLogProb_da - dQda[i]) * invBatch
-
-			// Chain rule through tanh: d(a)/d(u) = 1-a^2
 			dLoss_du := dLoss_da * dtanh
-
-			// d(u)/d(mean) = 1; d(u)/d(logStd) = noise * std
 			dActorOut[i] = dLoss_du
 			dActorOut[actionDim+i] = dLoss_du*noises[i]*std + s.alpha*(-1)*invBatch
 		}
-
-		s.actor.backward(actorCache, dActorOut,
-			s.actorDw1, s.actorDb1, s.actorDw2, s.actorDb2, s.actorDw3, s.actorDb3)
+		dActorOutT, err := tensor.New[float64]([]int{1, 2 * actionDim}, dActorOut)
+		if err != nil {
+			return err
+		}
+		if _, err := s.actor.backward(ctx, actorCache, dActorOutT); err != nil {
+			return err
+		}
 	}
-
-	sgdUpdate(s.actor.w1, s.actorDw1, cfg.LearningRate)
-	sgdUpdate(s.actor.b1, s.actorDb1, cfg.LearningRate)
-	sgdUpdate(s.actor.w2, s.actorDw2, cfg.LearningRate)
-	sgdUpdate(s.actor.b2, s.actorDb2, cfg.LearningRate)
-	sgdUpdate(s.actor.w3, s.actorDw3, cfg.LearningRate)
-	sgdUpdate(s.actor.b3, s.actorDb3, cfg.LearningRate)
-
-	// ---- Update entropy temperature ----
+	if err := s.actorOpt.Step(ctx, s.actor.params()); err != nil {
+		return err
+	}
 	avgLogProb := totalLogProb / float64(len(batch))
 	alphaGrad := -(avgLogProb + cfg.TargetEntropy)
 	s.logAlpha -= cfg.AlphaLR * alphaGrad
 	s.alpha = math.Exp(s.logAlpha)
-
-	// ---- Soft-update target critics ----
-	softUpdate(s.targetCritic1.w1, s.critic1.w1, cfg.Tau)
-	softUpdate(s.targetCritic1.b1, s.critic1.b1, cfg.Tau)
-	softUpdate(s.targetCritic1.w2, s.critic1.w2, cfg.Tau)
-	softUpdate(s.targetCritic1.b2, s.critic1.b2, cfg.Tau)
-	softUpdate(s.targetCritic1.w3, s.critic1.w3, cfg.Tau)
-	softUpdate(s.targetCritic1.b3, s.critic1.b3, cfg.Tau)
-
-	softUpdate(s.targetCritic2.w1, s.critic2.w1, cfg.Tau)
-	softUpdate(s.targetCritic2.b1, s.critic2.b1, cfg.Tau)
-	softUpdate(s.targetCritic2.w2, s.critic2.w2, cfg.Tau)
-	softUpdate(s.targetCritic2.b2, s.critic2.b2, cfg.Tau)
-	softUpdate(s.targetCritic2.w3, s.critic2.w3, cfg.Tau)
-	softUpdate(s.targetCritic2.b3, s.critic2.b3, cfg.Tau)
-
+	softUpdateMLP(s.targetCritic1, s.critic1, cfg.Tau)
+	softUpdateMLP(s.targetCritic2, s.critic2, cfg.Tau)
 	return nil
 }

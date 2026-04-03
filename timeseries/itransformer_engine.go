@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // linearBatchEngine computes Y = X @ W + bias using engine.MatMul.
@@ -164,7 +165,9 @@ func (m *ITransformer) forwardWithCacheEngine(ctx context.Context, input [][]flo
 		for c := 0; c < channels; c++ {
 			geluOut[c] = make([]float64, len(fc1Out[c]))
 			for i := range fc1Out[c] {
-				geluOut[c][i] = geluScalar[float64](fc1Out[c][i])
+				v := fc1Out[c][i]
+					inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+					geluOut[c][i] = 0.5 * v * (1 + math.Tanh(inner))
 			}
 		}
 
@@ -280,7 +283,9 @@ func (m *ITransformer) forwardBatchEngine(ctx context.Context, input *tensor.Ten
 			fc1Out := m.linearBatchEngine(ctx, tokens, layer.fc1W, layer.fc1B)
 			for c := 0; c < channels; c++ {
 				for i := range fc1Out[c] {
-					fc1Out[c][i] = geluScalar[float64](fc1Out[c][i])
+					v := fc1Out[c][i]
+						inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+						fc1Out[c][i] = 0.5 * v * (1 + math.Tanh(inner))
 				}
 			}
 			fc2Out := m.linearBatchEngine(ctx, fc1Out, layer.fc2W, layer.fc2B)
@@ -370,7 +375,7 @@ func (m *ITransformer) trainWindowedEngine(windows [][][]float64, labels []float
 			}
 
 			// AdamW update.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
+			lr := scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
 			for i := range params {
 				mState[i] = config.Beta1*mState[i] + (1-config.Beta1)*grads[i]

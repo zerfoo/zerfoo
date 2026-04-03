@@ -9,7 +9,7 @@
 //
 // The workflow is:
 //
-//  1. Create a latent space with NewLatentSpace(dim).
+//  1. Create a latent space with NewLatentSpace(dim, engine).
 //  2. Register models via Register(name, inputDim).
 //  3. Train projection matrices via TrainProjections with aligned data.
 //  4. Use Project to map model features into the shared space.

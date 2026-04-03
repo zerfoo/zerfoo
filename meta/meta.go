@@ -1,10 +1,19 @@
 package meta
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
+
+// cpuEngine is a package-level CPU engine used for linear forward passes.
+var cpuEngine = compute.NewCPUEngine[float64](numeric.Float64Ops{})
 
 // Task provides train/test data splits for a single meta-learning task.
 type Task interface {
@@ -36,7 +45,7 @@ type MAMLConfig struct {
 
 // AdaptedModel represents a model adapted to a specific task.
 type AdaptedModel struct {
-	weights [][]float64 // layer weight matrices (flattened row-major)
+	weights [][]float64 // layer weight matrices, shape [out, in] (flattened row-major)
 	biases  [][]float64 // layer bias vectors
 	dims    []int       // layer dimensions: [input, hidden..., output]
 }
@@ -48,7 +57,11 @@ func (a *AdaptedModel) Predict(input []float64) (float64, error) {
 	}
 	x := input
 	for i := 0; i < len(a.weights); i++ {
-		x = linearForward(x, a.weights[i], a.biases[i], a.dims[i], a.dims[i+1])
+		out, err := linearFwd(x, a.weights[i], a.biases[i], a.dims[i], a.dims[i+1])
+		if err != nil {
+			return 0, fmt.Errorf("meta: predict: layer %d: %w", i, err)
+		}
+		x = out
 		if i < len(a.weights)-1 {
 			x = relu(x)
 		}
@@ -59,7 +72,7 @@ func (a *AdaptedModel) Predict(input []float64) (float64, error) {
 // MAML implements Model-Agnostic Meta-Learning.
 type MAML struct {
 	config  MAMLConfig
-	weights [][]float64 // meta-parameters: layer weight matrices
+	weights [][]float64 // meta-parameters: layer weight matrices, shape [out, in]
 	biases  [][]float64 // meta-parameters: layer bias vectors
 	dims    []int       // layer dimensions
 	rng     *rand.Rand  // random source for init and sampling
@@ -225,7 +238,9 @@ func (m *MAML) MetaLoss(tasks []Task) float64 {
 }
 
 // initWeights initializes all layer weights using He (Kaiming) initialization
-// and zero biases.
+// and zero biases. Weights are stored in [out, in] layout to match
+// functional.Linear convention. Random values are generated in [in, out] order
+// then transposed to preserve deterministic seeded behavior.
 func (m *MAML) initWeights() {
 	nLayers := len(m.dims) - 1
 	m.weights = make([][]float64, nLayers)
@@ -234,27 +249,43 @@ func (m *MAML) initWeights() {
 	for i := 0; i < nLayers; i++ {
 		in, out := m.dims[i], m.dims[i+1]
 		scale := math.Sqrt(2.0 / float64(in))
-		w := make([]float64, in*out)
-		for j := range w {
-			w[j] = m.rng.NormFloat64() * scale
+		// Generate in [in, out] order for seed compatibility, then transpose.
+		tmp := make([]float64, in*out)
+		for j := range tmp {
+			tmp[j] = m.rng.NormFloat64() * scale
+		}
+		w := make([]float64, out*in)
+		for k := 0; k < in; k++ {
+			for j := 0; j < out; j++ {
+				w[j*in+k] = tmp[k*out+j]
+			}
 		}
 		m.weights[i] = w
 		m.biases[i] = make([]float64, out)
 	}
 }
 
-// linearForward computes x @ W + b for a single sample.
-// W is stored row-major with shape [in, out].
-func linearForward(x []float64, w []float64, b []float64, in, out int) []float64 {
-	result := make([]float64, out)
-	for j := 0; j < out; j++ {
-		sum := b[j]
-		for k := 0; k < in; k++ {
-			sum += x[k] * w[k*out+j]
-		}
-		result[j] = sum
+// linearFwd computes y = x @ W^T + b via functional.Linear.
+// W is stored row-major with shape [out, in].
+func linearFwd(x []float64, w []float64, b []float64, in, out int) ([]float64, error) {
+	ctx := context.Background()
+	xT, err := tensor.New[float64]([]int{1, in}, x)
+	if err != nil {
+		return nil, err
 	}
-	return result
+	wT, err := tensor.New[float64]([]int{out, in}, w)
+	if err != nil {
+		return nil, err
+	}
+	bT, err := tensor.New[float64]([]int{out}, b)
+	if err != nil {
+		return nil, err
+	}
+	result, err := functional.Linear(ctx, cpuEngine, xT, wT, bT)
+	if err != nil {
+		return nil, err
+	}
+	return result.Data(), nil
 }
 
 // relu applies ReLU activation element-wise.
@@ -277,7 +308,10 @@ func forward(w, b [][]float64, dims []int, input []float64) (preActs, postActs [
 
 	x := input
 	for i := 0; i < nLayers; i++ {
-		pre := linearForward(x, w[i], b[i], dims[i], dims[i+1])
+		pre, err := linearFwd(x, w[i], b[i], dims[i], dims[i+1])
+		if err != nil {
+			panic(fmt.Sprintf("meta: forward: layer %d: %v", i, err))
+		}
 		preActs[i] = pre
 		if i < nLayers-1 {
 			post := relu(pre)
@@ -347,10 +381,10 @@ func computeGradients(w, b [][]float64, dims []int, inputs [][]float64, targets 
 				}
 			}
 
-			// dW[i] += layerInput^T * dX
-			for k := 0; k < in; k++ {
-				for j := 0; j < out; j++ {
-					gw[i][k*out+j] += layerInput[k] * dX[j]
+			// dW[i] += dX * layerInput^T (weight shape is [out, in])
+			for j := 0; j < out; j++ {
+				for k := 0; k < in; k++ {
+					gw[i][j*in+k] += layerInput[k] * dX[j]
 				}
 			}
 
@@ -359,13 +393,14 @@ func computeGradients(w, b [][]float64, dims []int, inputs [][]float64, targets 
 				gb[i][j] += dX[j]
 			}
 
-			// Propagate gradient to previous layer: dX_prev = dX @ W^T
+			// Propagate gradient to previous layer: dX_prev = W^T @ dX
+			// With weight shape [out, in], W^T[k,j] = W[j,k] = w[i][j*in+k].
 			if i > 0 {
 				dPrev := make([]float64, in)
 				for k := 0; k < in; k++ {
 					var sum float64
 					for j := 0; j < out; j++ {
-						sum += dX[j] * w[i][k*out+j]
+						sum += dX[j] * w[i][j*in+k]
 					}
 					dPrev[k] = sum
 				}

@@ -1,10 +1,23 @@
 package crossasset
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
+
+// cpuEngine is a package-level float64 CPU computation engine used by the
+// cross-asset model's forward pass helpers.
+var cpuEngine = compute.NewCPUEngine[float64](numeric.Float64Ops{})
+
+// cpuOps provides float64 arithmetic for activation functions.
+var cpuOps = numeric.Float64Ops{}
 
 // Direction represents a trading signal direction.
 type Direction int
@@ -515,16 +528,29 @@ func ones(n int) []float64 {
 
 // matVecMul computes dst = W @ src where W is [in, out] stored row-major.
 // dst must have length out, src must have length in.
+// Arithmetic is routed through the CPU Engine[float64] via MatMul.
 func matVecMul(dst, w, src []float64, in, out int) {
-	for o := 0; o < out; o++ {
-		dst[o] = 0
+	ctx := context.Background()
+
+	// src as [1, in] row vector.
+	srcT, err := tensor.New[float64]([]int{1, in}, src)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.matVecMul: src tensor: %v", err))
 	}
-	for i := 0; i < in; i++ {
-		v := src[i]
-		for o := 0; o < out; o++ {
-			dst[o] += v * w[i*out+o]
-		}
+
+	// w as [in, out] matrix.
+	wT, err := tensor.New[float64]([]int{in, out}, w)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.matVecMul: weight tensor: %v", err))
 	}
+
+	// result = src @ W, shape [1, out].
+	result, err := cpuEngine.MatMul(ctx, srcT, wT)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.matVecMul: matmul: %v", err))
+	}
+
+	copy(dst, result.Data())
 }
 
 // vecAdd computes dst[i] += src[i].
@@ -535,52 +561,70 @@ func vecAdd(dst, src []float64) {
 }
 
 // softmax computes softmax over a slice.
+// Arithmetic is routed through the CPU Engine[float64] via functional.Softmax.
 func softmax(x []float64) []float64 {
-	maxVal := x[0]
-	for _, v := range x[1:] {
-		if v > maxVal {
-			maxVal = v
-		}
+	ctx := context.Background()
+
+	t, err := tensor.New[float64]([]int{len(x)}, x)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.softmax: tensor: %v", err))
 	}
+
+	result, err := functional.Softmax(ctx, cpuEngine, t, 0)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.softmax: softmax: %v", err))
+	}
+
 	out := make([]float64, len(x))
-	sum := 0.0
-	for i, v := range x {
-		out[i] = math.Exp(v - maxVal)
-		sum += out[i]
-	}
-	for i := range out {
-		out[i] /= sum
-	}
+	copy(out, result.Data())
 	return out
 }
 
 // layerNorm applies layer normalization.
+// Arithmetic is routed through the CPU Engine[float64] via functional.LayerNorm.
 func layerNorm(x, gamma, beta []float64) []float64 {
+	ctx := context.Background()
 	n := len(x)
-	mean := 0.0
-	for _, v := range x {
-		mean += v
-	}
-	mean /= float64(n)
 
-	variance := 0.0
-	for _, v := range x {
-		d := v - mean
-		variance += d * d
+	xT, err := tensor.New[float64]([]int{1, n}, x)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.layerNorm: x tensor: %v", err))
 	}
-	variance /= float64(n)
 
-	eps := 1e-5
-	invStd := 1.0 / math.Sqrt(variance+eps)
+	gT, err := tensor.New[float64]([]int{1, n}, gamma)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.layerNorm: gamma tensor: %v", err))
+	}
+
+	bT, err := tensor.New[float64]([]int{1, n}, beta)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.layerNorm: beta tensor: %v", err))
+	}
+
+	result, err := functional.LayerNorm(ctx, cpuEngine, xT, gT, bT, 1e-5)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.layerNorm: layernorm: %v", err))
+	}
 
 	out := make([]float64, n)
-	for i := range x {
-		out[i] = (x[i]-mean)*invStd*gamma[i] + beta[i]
-	}
+	copy(out, result.Data())
 	return out
 }
 
 // gelu computes the GELU activation function.
+// Arithmetic is routed through the CPU Engine[float64] via functional.GELU.
 func gelu(x float64) float64 {
-	return 0.5 * x * (1.0 + math.Tanh(math.Sqrt(2.0/math.Pi)*(x+0.044715*x*x*x)))
+	ctx := context.Background()
+
+	t, err := tensor.New[float64]([]int{1}, []float64{x})
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.gelu: tensor: %v", err))
+	}
+
+	result, err := functional.GELU(ctx, cpuEngine, cpuOps, t)
+	if err != nil {
+		panic(fmt.Sprintf("crossasset.gelu: gelu: %v", err))
+	}
+
+	return result.Data()[0]
 }

@@ -1,12 +1,11 @@
 package rl
 
 import (
+	"context"
 	"math"
 	"testing"
 )
 
-// targetEnv is a simple continuous control environment where the agent must
-// output an action close to a fixed target value. Reward = -|action - target|^2.
 type targetEnv struct {
 	target float64
 	state  []float64
@@ -19,7 +18,7 @@ func newTargetEnv(target float64) *targetEnv {
 
 func (e *targetEnv) Reset() State {
 	e.steps = 0
-	e.state = []float64{1.0} // constant observation
+	e.state = []float64{1.0}
 	return e.state
 }
 
@@ -38,41 +37,26 @@ func TestSAC_ImplementsAgent(t *testing.T) {
 func TestSAC_ContinuousAction(t *testing.T) {
 	env := newTargetEnv(0.3)
 	cfg := SACConfig{
-		StateDim:     1,
-		ActionDim:    1,
-		HiddenDim:    8,
-		Gamma:        0.99,
-		Tau:          0.01,
-		LearningRate: 1e-2,
-		AlphaLR:      1e-2,
-		BatchSize:    16,
-		InitAlpha:    0.05,
+		StateDim: 1, ActionDim: 1, HiddenDim: 8,
+		Gamma: 0.99, Tau: 0.01, LearningRate: 1e-2,
+		AlphaLR: 1e-2, BatchSize: 16, InitAlpha: 0.05,
 	}
 	agent := NewSAC(cfg)
 	buf, err := NewReplayBuffer(2000)
 	if err != nil {
 		t.Fatalf("NewReplayBuffer error: %v", err)
 	}
-
-	// Collect experience and train.
 	for ep := range 150 {
 		state := env.Reset()
 		for {
 			action := agent.Act(state)
 			next, reward, done, _ := env.Step(action)
-			buf.Add(Experience{
-				State:     state,
-				Action:    action,
-				Reward:    reward,
-				NextState: next,
-				Done:      done,
-			})
+			buf.Add(Experience{State: state, Action: action, Reward: reward, NextState: next, Done: done})
 			state = next
 			if done {
 				break
 			}
 		}
-		// Train a few times per episode.
 		if buf.Len() >= cfg.BatchSize {
 			for range 5 {
 				batch := buf.Sample(cfg.BatchSize)
@@ -83,8 +67,6 @@ func TestSAC_ContinuousAction(t *testing.T) {
 		}
 		_ = ep
 	}
-
-	// Evaluate: average action should be closer to target than random.
 	var evalReward float64
 	evalEps := 5
 	for range evalEps {
@@ -100,10 +82,6 @@ func TestSAC_ContinuousAction(t *testing.T) {
 		}
 	}
 	avgReward := evalReward / float64(evalEps)
-
-	// Random actions in [-1,1] against target=0.3 give E[reward] per step ≈ -0.42,
-	// so random total ≈ -8.4 over 20 steps. Worst case (always action=-1 or 1) ≈ -17.
-	// A trained agent should at least beat untrained random performance.
 	if avgReward < -8.4 {
 		t.Errorf("SAC did not learn: average eval reward %.4f, want > -8.4 (random baseline)", avgReward)
 	}
@@ -111,35 +89,19 @@ func TestSAC_ContinuousAction(t *testing.T) {
 
 func TestSAC_EntropyTuning(t *testing.T) {
 	cfg := SACConfig{
-		StateDim:      2,
-		ActionDim:     1,
-		HiddenDim:     8,
-		Gamma:         0.99,
-		Tau:           0.005,
-		LearningRate:  1e-3,
-		AlphaLR:       1e-2, // Larger LR so alpha moves noticeably.
-		BatchSize:     16,
-		InitAlpha:     1.0,
-		TargetEntropy: -1.0,
+		StateDim: 2, ActionDim: 1, HiddenDim: 8,
+		Gamma: 0.99, Tau: 0.005, LearningRate: 1e-3,
+		AlphaLR: 1e-2, BatchSize: 16, InitAlpha: 1.0, TargetEntropy: -1.0,
 	}
 	agent := NewSAC(cfg)
-
 	initialAlpha := agent.Alpha()
-
-	// Create a batch of experiences with deterministic-ish actions (low entropy).
-	// This should cause alpha to increase (entropy too low -> raise temperature).
 	batch := make([]Experience, cfg.BatchSize)
 	for i := range batch {
 		batch[i] = Experience{
-			State:     []float64{0.5, 0.5},
-			Action:    []float64{0.1},
-			Reward:    1.0,
-			NextState: []float64{0.5, 0.5},
-			Done:      false,
+			State: []float64{0.5, 0.5}, Action: []float64{0.1},
+			Reward: 1.0, NextState: []float64{0.5, 0.5}, Done: false,
 		}
 	}
-
-	// Train for several steps and track alpha changes.
 	alphaChanged := false
 	for range 20 {
 		if err := agent.Learn(batch); err != nil {
@@ -149,59 +111,45 @@ func TestSAC_EntropyTuning(t *testing.T) {
 			alphaChanged = true
 		}
 	}
-
 	if !alphaChanged {
 		t.Error("entropy temperature alpha did not change during training")
 	}
 }
 
 func TestSAC_TwinCritics(t *testing.T) {
-	cfg := SACConfig{
-		StateDim:  2,
-		ActionDim: 1,
-		HiddenDim: 16,
-	}
+	cfg := SACConfig{StateDim: 2, ActionDim: 1, HiddenDim: 16}
 	agent := NewSAC(cfg)
-
-	// Verify that the two critics produce different outputs (different initialisations).
+	ctx := context.Background()
 	input := append([]float64{0.5, -0.3}, 0.1)
-	q1 := agent.critic1.forward(input)
-	q2 := agent.critic2.forward(input)
-
-	// With random init it's astronomically unlikely they'd be exactly equal.
+	q1, err := agent.critic1.forwardSlice(ctx, input)
+	if err != nil {
+		t.Fatalf("critic1 forward failed: %v", err)
+	}
+	q2, err := agent.critic2.forwardSlice(ctx, input)
+	if err != nil {
+		t.Fatalf("critic2 forward failed: %v", err)
+	}
 	if q1[0] == q2[0] {
 		t.Error("twin critics produced identical outputs; expected different random initialisations")
 	}
 }
 
 func TestSAC_TargetNetworkSoftUpdate(t *testing.T) {
-	cfg := SACConfig{
-		StateDim:  2,
-		ActionDim: 1,
-		HiddenDim: 8,
-		Tau:       0.1,
-	}
+	cfg := SACConfig{StateDim: 2, ActionDim: 1, HiddenDim: 8, Tau: 0.1}
 	agent := NewSAC(cfg)
-
-	// Record initial target weights.
-	initialTargetW := copySlice(agent.targetCritic1.w1)
-
-	// Create a minimal batch and learn.
+	targetW := agent.targetCritic1.layer1.weight.Value.Data()
+	initialTargetW := copySlice(targetW)
 	batch := []Experience{{
-		State:     []float64{1.0, 0.0},
-		Action:    []float64{0.5},
-		Reward:    1.0,
-		NextState: []float64{0.0, 1.0},
-		Done:      false,
+		State: []float64{1.0, 0.0}, Action: []float64{0.5},
+		Reward: 1.0, NextState: []float64{0.0, 1.0}, Done: false,
 	}}
 	if err := agent.Learn(batch); err != nil {
 		t.Fatalf("Learn failed: %v", err)
 	}
-
-	// Target weights should have moved towards critic weights.
 	moved := false
-	for i := range agent.targetCritic1.w1 {
-		if agent.targetCritic1.w1[i] != initialTargetW[i] {
+	targetWAfter := agent.targetCritic1.layer1.weight.Value.Data()
+	for i := range targetWAfter {
+		if targetWAfter[i] != initialTargetW[i] {
 			moved = true
 			break
 		}
@@ -209,11 +157,10 @@ func TestSAC_TargetNetworkSoftUpdate(t *testing.T) {
 	if !moved {
 		t.Error("target network weights did not update after Learn")
 	}
-
-	// Target should be between initial and current critic (Polyak average).
-	for i := range agent.targetCritic1.w1 {
-		tw := agent.targetCritic1.w1[i]
-		cw := agent.critic1.w1[i]
+	criticW := agent.critic1.layer1.weight.Value.Data()
+	for i := range targetWAfter {
+		tw := targetWAfter[i]
+		cw := criticW[i]
 		iw := initialTargetW[i]
 		expected := cfg.Tau*cw + (1-cfg.Tau)*iw
 		if math.Abs(tw-expected) > 1e-10 {

@@ -1,6 +1,11 @@
 package timeseries
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/zerfoo/training/scheduler"
+)
 
 // TrainableBackend is the interface that windowed time-series models implement
 // to participate in the shared TrainLoop. Each model provides a per-sample
@@ -63,7 +68,7 @@ func TrainLoop(backend TrainableBackend, windows [][][]float64, labels []float64
 		config.Epsilon = 1e-8
 	}
 
-	adamState := newAdamWState(nParams)
+	adamState := optimizer.NewAdamWStateF64(nParams)
 
 	result := &TrainResult{
 		LossHistory: make([]float64, config.Epochs),
@@ -117,12 +122,12 @@ func TrainLoop(backend TrainableBackend, windows [][][]float64, labels []float64
 
 			// Gradient clipping.
 			grads := backend.FlatGrads()
-			clipGradients(grads, config.GradClip)
+			optimizer.ClipGradientsF64(grads, config.GradClip)
 
 			// AdamW update with LR warmup.
-			lr := warmupLR(config.LR, epoch, config.WarmupEpochs)
+			lr := scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)
 			t := float64(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			adamWUpdate(backend.FlatParams(), grads, adamState, lr, config, t)
+			optimizer.AdamWUpdateF64(backend.FlatParams(), grads, adamState, lr, config.Beta1, config.Beta2, config.Epsilon, config.WeightDecay, t)
 		}
 
 		result.LossHistory[epoch] = epochLoss / float64(nBatches)

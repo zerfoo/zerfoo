@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -487,7 +488,7 @@ func (m *PatchTST) ffnForward(ctx context.Context, x *tensor.TensorNumeric[float
 	}
 
 	// GELU activation.
-	h, err = m.engine.UnaryOp(ctx, h, geluScalar)
+	h, err = functional.GELU(ctx, m.engine, m.ops, h)
 	if err != nil {
 		return nil, err
 	}

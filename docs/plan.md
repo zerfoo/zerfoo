@@ -34,13 +34,13 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
-- E67: Timeseries full layers migration (0/11 -- 18,197 lines, 10 models)
-- E68: CrossAsset full layers migration (0/4 -- unify CPU/GPU paths)
+- E67: Timeseries full layers migration (4/11 -- Wave 3 helpers replaced; attention+validation pending)
+- E68: CrossAsset full layers migration (1/4 -- CPU forward done; backward, AdamW, delete pending)
 - E69: Training loss/optimizer Engine compliance (6/6 COMPLETE -- PR #320, #321, #322)
 - E70: Intra-layers violations cleanup (9/10 -- Wave 1+2 done; T70.1.10 tests+linters pending)
-- E71: Experimental package migration (0/5 -- rl/, synth/, meta/, shared/)
+- E71: Experimental package migration (4/5 -- rl/, synth/, meta/, shared/ done; T71.1.5 tests pending)
 - E72: Architecture enforcement test (1/2 -- T72.1.1 done, T72.1.2 CI gate pending)
-- E73: Generate KV cache consolidation (1/3 -- T73.1.1 base extraction done)
+- E73: Generate KV cache consolidation (2/3 -- base extraction + migration done; T73.1.3 tests pending)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -325,16 +325,16 @@ Deps: Wave 1 partial (E66 tasks complete)
 #### Composition Wave 3: Migrations (10 agents)
 Deps: E66 complete (Wave 2)
 
-- [ ] T67.1.1 layernorm_ops.go replacement  verifies: [infrastructure]
-- [ ] T67.1.2 math_ops.go replacement  verifies: [infrastructure]
-- [ ] T67.1.3 training_ops.go replacement  verifies: [infrastructure]
-- [ ] T67.1.4 adamw_f32.go replacement  verifies: [infrastructure]
-- [ ] T68.1.1 CrossAsset CPU forward  verifies: [infrastructure]
-- [ ] T71.1.1 rl/ migration  verifies: [infrastructure]
-- [ ] T71.1.2 synth/ migration  verifies: [infrastructure]
-- [ ] T71.1.3 meta/ migration  verifies: [infrastructure]
-- [ ] T71.1.4 shared/ migration  verifies: [infrastructure]
-- [ ] T73.1.2 KV cache migration  verifies: [UC-001, UC-002]
+- [x] T67.1.1 layernorm_ops.go replacement  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T67.1.2 math_ops.go replacement  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T67.1.3 training_ops.go replacement  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T67.1.4 adamw_f32.go replacement  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T68.1.1 CrossAsset CPU forward  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T71.1.1 rl/ migration  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T71.1.2 synth/ migration  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T71.1.3 meta/ migration  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T71.1.4 shared/ migration  verifies: [infrastructure]  DONE 2026-04-03 PR #323
+- [x] T73.1.2 KV cache migration  verifies: [UC-001, UC-002]  DONE 2026-04-03 (no changes needed, T73.1.1 sufficient)
 
 #### Composition Wave 4: Per-model attention + sequential chains (8 agents)
 Deps: Wave 3

@@ -1,8 +1,14 @@
 package timeseries
 
 import (
+	"context"
 	"fmt"
-	"math"
+
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // trainWindowedEngine implements TrainWindowed with fused CPU forward+backward.
@@ -48,22 +54,24 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 		seasonB[c] = float64ToFloat32(d.seasonalB[c])
 	}
 
-	// AdamW state: m and v per parameter slice.
+	// Wrap parameters as graph.Parameter for optimizer.AdamW.
 	type paramSet struct {
 		data []float32
-		adam adamStateF32
 	}
 	allParams := make([]paramSet, channels*4)
+	graphParams := make([]*graph.Parameter[float32], channels*4)
 	for c := 0; c < channels; c++ {
 		for j, p := range [][]float32{trendW[c], trendB[c], seasonW[c], seasonB[c]} {
-			allParams[c*4+j] = paramSet{
-				data: p,
-				adam: adamStateF32{
-					m: make([]float32, len(p)),
-					v: make([]float32, len(p)),
-				},
-			}
+			idx := c*4 + j
+			allParams[idx] = paramSet{data: p}
+			t, _ := tensor.New[float32]([]int{len(p)}, p)
+			graphParams[idx], _ = graph.NewParameter(fmt.Sprintf("ch%d.p%d", c, j), t, tensor.New[float32])
 		}
+	}
+	ctx := context.Background()
+	opt := optimizer.NewAdamW(d.engine, float32(config.LR), float32(config.Beta1), float32(config.Beta2), float32(config.Epsilon), float32(config.WeightDecay))
+	if config.GradClip > 0 {
+		opt.SetMaxGradNorm(config.GradClip)
 	}
 
 	result := &TrainResult{
@@ -147,43 +155,18 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			epochLoss += batchLossF64
 			nBatches++
 
-			if config.GradClip > 0 {
-				norm := 0.0
-				for _, g := range gradSlices {
-					for _, v := range g {
-						norm += float64(v) * float64(v)
-					}
-				}
-				norm = math.Sqrt(norm)
-				if norm > config.GradClip {
-					clipScale := float32(config.GradClip / norm)
-					for _, g := range gradSlices {
-						for j := range g {
-							g[j] *= clipScale
-						}
-					}
-				}
+			// Set gradients and apply AdamW step.
+			opt.SetLR(float32(scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)))
+			for i := range allParams {
+				gradT, _ := tensor.New[float32](graphParams[i].Value.Shape(), gradSlices[i])
+				graphParams[i].Gradient = gradT
 			}
-
-			lr := float32(warmupLR(config.LR, epoch, config.WarmupEpochs))
-			t := float32(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			beta1 := float32(config.Beta1)
-			beta2 := float32(config.Beta2)
-			eps := float32(config.Epsilon)
-			wd := float32(config.WeightDecay)
-
-			bc1 := float32(1.0 - math.Pow(float64(beta1), float64(t)))
-			bc2 := float32(1.0 - math.Pow(float64(beta2), float64(t)))
-
-			for i, ps := range allParams {
-				for j := range ps.data {
-					g := gradSlices[i][j]
-					ps.adam.m[j] = beta1*ps.adam.m[j] + (1-beta1)*g
-					ps.adam.v[j] = beta2*ps.adam.v[j] + (1-beta2)*g*g
-					mHat := ps.adam.m[j] / bc1
-					vHat := ps.adam.v[j] / bc2
-					ps.data[j] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*ps.data[j])
-				}
+			if err := opt.Step(ctx, graphParams); err != nil {
+				return nil, fmt.Errorf("dlinear: adamw step: %w", err)
+			}
+			// Sync updated values back to working slices.
+			for i := range allParams {
+				copy(allParams[i].data, graphParams[i].Value.Data())
 			}
 		}
 
