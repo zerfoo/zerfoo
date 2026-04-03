@@ -1590,7 +1590,7 @@ transposes outside the batch loop.
 
 ### E50.5: Validation and Benchmark
 
-- [ ] T50.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T50.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
   Acceptance: go vet ./timeseries/ clean. go test ./timeseries/ passes.
 
@@ -1614,7 +1614,7 @@ transposes outside the batch loop.
 ##### Wave E50-2: Dependent + validation (3 agents)
 
 - [x] T50.2.1 Layer norm backward on engine  Deps: T50.1.1  DONE 2026-03-31
-- [ ] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
+- [x] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1  DONE 2026-04-03
 - [ ] T50.5.2 Benchmark on DGX Spark  Deps: T50.5.1
 
 ---
@@ -1700,7 +1700,7 @@ eliminating ALL intermediate synchronization.
 
 ### E51.5: Validation and Benchmark
 
-- [ ] T51.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T51.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T51.4.1
   Acceptance: go vet clean. go test ./timeseries/ passes. go test ./... passes in ztensor.
 
@@ -1724,7 +1724,7 @@ eliminating ALL intermediate synchronization.
 ##### Wave E51-2: Integration + validation (3 agents)
 
 - [x] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1  DONE 2026-03-30
-- [ ] T51.5.1 Run go vet and tests  Deps: T51.4.1
+- [x] T51.5.1 Run go vet and tests  Deps: T51.4.1  DONE 2026-04-03
 - [ ] T51.5.2 Benchmark on DGX Spark  Deps: T51.5.1
 
 ---
@@ -1863,7 +1863,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.1: Extract Shared Encoder Forward
 
-- [ ] T53.1.1 Create patchtst_encoder.go with shared encoderForward  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] T53.1.1 Create patchtst_encoder.go with shared encoderForward  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03 PR #327
   File: timeseries/patchtst_encoder.go (NEW)
   Extract from patchtst_gpu_train.go the encoder forward logic as:
   `func encoderForward(ctx, engine, x *tensor.TensorNumeric[float32], layers []gpuEncoderLayer,
@@ -1937,7 +1937,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ##### Wave E53-1: Extract shared encoder (1 agent -- sequential, same file)
 
-- [ ] T53.1.1 Shared encoder forward
+- [x] T53.1.1 Shared encoder forward  DONE 2026-04-03
 - [ ] T53.2.1 Shared encoder backward  Deps: T53.1.1
 
 ##### Wave E53-2: Wire and eliminate (3 agents)
