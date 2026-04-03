@@ -9,6 +9,8 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // MLSTM implements the mLSTM (Matrix LSTM) cell from the xLSTM paper
@@ -214,105 +216,188 @@ func (m *MLSTM[T]) Forward(
 			batch, m.hiddenDim, nShape)
 	}
 
-	// Load parameter data.
-	wkData := m.Wk.Value.Data()
-	wvData := m.Wv.Value.Data()
-	wqData := m.Wq.Value.Data()
-	wiData := m.Wi.Value.Data()
-	wfData := m.Wf.Value.Data()
-	woData := m.Wo.Value.Data()
-	biData := m.Bi.Value.Data()
-	bfData := m.Bf.Value.Data()
-	boData := m.Bo.Value.Data()
-
-	xData := x.Data()
-	cData := cPrev.Data()
-	nData := nPrev.Data()
-
+	eng := m.engine
+	ops := eng.Ops()
 	d := m.hiddenDim
-	hOutData := make([]T, batch*d)
+
+	// Key, value, query projections via engine MatMul.
+	// W is [inputDim, hiddenDim], x is [batch, inputDim] → [batch, hiddenDim]
+	kt, err := eng.MatMul(ctx, x, m.Wk.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wk): %w", err)
+	}
+	vt, err := eng.MatMul(ctx, x, m.Wv.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wv): %w", err)
+	}
+	qt, err := eng.MatMul(ctx, x, m.Wq.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wq): %w", err)
+	}
+
+	// Scalar gate pre-activations: dot(x, w) + b[0] per batch element.
+	// Wi is [inputDim], reshape to [inputDim, 1] for MatMul → [batch, 1]
+	wiCol, err := eng.Reshape(ctx, m.Wi.Value, []int{m.inputDim, 1})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Reshape(Wi): %w", err)
+	}
+	preI, err := eng.MatMul(ctx, x, wiCol)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wi): %w", err)
+	}
+	preI, err = eng.AddScalar(ctx, preI, m.Bi.Value.Data()[0])
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: AddScalar(preI, bi): %w", err)
+	}
+
+	wfCol, err := eng.Reshape(ctx, m.Wf.Value, []int{m.inputDim, 1})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Reshape(Wf): %w", err)
+	}
+	preF, err := eng.MatMul(ctx, x, wfCol)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wf): %w", err)
+	}
+	preF, err = eng.AddScalar(ctx, preF, m.Bf.Value.Data()[0])
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: AddScalar(preF, bf): %w", err)
+	}
+
+	woCol, err := eng.Reshape(ctx, m.Wo.Value, []int{m.inputDim, 1})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Reshape(Wo): %w", err)
+	}
+	preO, err := eng.MatMul(ctx, x, woCol)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(x, Wo): %w", err)
+	}
+	preO, err = eng.AddScalar(ctx, preO, m.Bo.Value.Data()[0])
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: AddScalar(preO, bo): %w", err)
+	}
+
+	// Gate activations via engine UnaryOp.
+	// i = exp(clamp(preI)), f = exp(clamp(preF)) — [batch, 1]
+	clampExpOp := func(v T) T {
+		f := clampFloat(float64(v), -maxGatePreAct, maxGatePreAct)
+		return T(math.Exp(f))
+	}
+	iGate, err := eng.UnaryOp(ctx, preI, clampExpOp)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: clampExp(preI): %w", err)
+	}
+	fGate, err := eng.UnaryOp(ctx, preF, clampExpOp)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: clampExp(preF): %w", err)
+	}
+
+	// o = sigmoid(preO) — [batch, 1]
+	oGate, err := functional.Sigmoid(ctx, eng, ops, preO)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Sigmoid(preO): %w", err)
+	}
+
+	// Update normalizer: n_t = f_t * n_{t-1} + i_t * k_t
+	// fGate and iGate are [batch, 1], nPrev and kt are [batch, d].
+	// Broadcasting: [batch, 1] * [batch, d] → [batch, d]
+	fN, err := eng.Mul(ctx, fGate, nPrev)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Mul(f, nPrev): %w", err)
+	}
+	iK, err := eng.Mul(ctx, iGate, kt)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Mul(i, k): %w", err)
+	}
+	nOut, err = eng.Add(ctx, fN, iK)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: Add(fN, iK): %w", err)
+	}
+
+	// Update matrix cell state: C_t = f_t * C_{t-1} + i_t * (v_t * k_t^T)
+	// The cell state is [batch, d, d]. The engine's MatMul only handles 2D,
+	// so we process each batch element separately using engine ops.
 	cOutData := make([]T, batch*d*d)
-	nOutData := make([]T, batch*d)
-
 	for b := 0; b < batch; b++ {
-		xOff := b * m.inputDim
+		// Extract v[b,:] as [d, 1] and k[b,:] as [1, d] for outer product.
+		vb, err := tensor.New[T]([]int{d, 1}, vt.Data()[b*d:(b+1)*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create vb tensor: %w", err)
+		}
+		kb, err := tensor.New[T]([]int{1, d}, kt.Data()[b*d:(b+1)*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create kb tensor: %w", err)
+		}
 
-		// Compute key, value, query projections: W[inputDim, hiddenDim]
-		kt := make([]float64, d)
-		vt := make([]float64, d)
-		qt := make([]float64, d)
+		// Outer product: v_t * k_t^T = [d, 1] * [1, d] = [d, d]
+		outerProd, err := eng.MatMul(ctx, vb, kb)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(v, k^T): %w", err)
+		}
+
+		// Extract scalar gate values for this batch element.
+		ib := iGate.Data()[b]
+		fb := fGate.Data()[b]
+
+		// C_t = f * C_{t-1} + i * (v * k^T)
+		cPrevB, err := tensor.New[T]([]int{d, d}, cPrev.Data()[b*d*d:(b+1)*d*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create cPrevB tensor: %w", err)
+		}
+		fC, err := eng.MulScalar(ctx, cPrevB, fb)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: MulScalar(cPrev, f): %w", err)
+		}
+		iVK, err := eng.MulScalar(ctx, outerProd, ib)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: MulScalar(outer, i): %w", err)
+		}
+		cNewB, err := eng.Add(ctx, fC, iVK)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: Add(fC, iVK): %w", err)
+		}
+		copy(cOutData[b*d*d:(b+1)*d*d], cNewB.Data())
+	}
+
+	cOut, err = tensor.New[T]([]int{batch, d, d}, cOutData)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: create C tensor: %w", err)
+	}
+
+	// Compute h_t = o_t * (C_t * q_t) / max(|n_t^T * q_t|, 1)
+	// Process per batch since C is 3D and q is 2D.
+	hOutData := make([]T, batch*d)
+	for b := 0; b < batch; b++ {
+		// C[b] is [d, d], q[b] is [d] → reshape to [d, 1] for MatMul → [d, 1]
+		cB, err := tensor.New[T]([]int{d, d}, cOutData[b*d*d:(b+1)*d*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create cB tensor: %w", err)
+		}
+		qb, err := tensor.New[T]([]int{d, 1}, qt.Data()[b*d:(b+1)*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create qb tensor: %w", err)
+		}
+		// C_t * q_t: [d, d] * [d, 1] = [d, 1]
+		cq, err := eng.MatMul(ctx, cB, qb)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(C, q): %w", err)
+		}
+
+		// n_t^T * q_t: dot product of n[b,:] and q[b,:]
+		nb, err := tensor.New[T]([]int{1, d}, nOut.Data()[b*d:(b+1)*d])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: create nb tensor: %w", err)
+		}
+		nqTensor, err := eng.MatMul(ctx, nb, qb)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(n, q): %w", err)
+		}
+		nqVal := float64(nqTensor.Data()[0])
+		denom := math.Max(math.Abs(nqVal), 1.0)
+
+		ob := float64(oGate.Data()[b])
+		cqData := cq.Data()
 		for j := 0; j < d; j++ {
-			for k := 0; k < m.inputDim; k++ {
-				xk := float64(xData[xOff+k])
-				kt[j] += xk * float64(wkData[k*d+j])
-				vt[j] += xk * float64(wvData[k*d+j])
-				qt[j] += xk * float64(wqData[k*d+j])
-			}
-		}
-
-		// Compute scalar gate pre-activations: dot(w, x) + b
-		// Gates are scalar per batch element (single value controlling the whole update).
-		var preI, preF, preO float64
-		for k := 0; k < m.inputDim; k++ {
-			xk := float64(xData[xOff+k])
-			preI += xk * float64(wiData[k])
-			preF += xk * float64(wfData[k])
-			preO += xk * float64(woData[k])
-		}
-
-		// The bias is per hidden dim but for the scalar gate formulation in the
-		// paper, we use a single scalar gate. We sum the bias as a scalar offset.
-		// However, looking at the paper more carefully, the gates i_t and f_t are
-		// scalar per head. We treat the whole cell as one head, so one scalar gate.
-		// We use biData[0] as the scalar bias for simplicity.
-		preI += float64(biData[0])
-		preF += float64(bfData[0])
-		preO += float64(boData[0])
-
-		// Clamp and apply gate activations.
-		preI = clampFloat(preI, -maxGatePreAct, maxGatePreAct)
-		preF = clampFloat(preF, -maxGatePreAct, maxGatePreAct)
-
-		iGate := math.Exp(preI)
-		fGate := math.Exp(preF)
-		oGate := 1.0 / (1.0 + math.Exp(-preO))
-
-		// Update matrix cell state: C_t = f_t * C_{t-1} + i_t * (v_t * k_t^T)
-		cOff := b * d * d
-		for i := 0; i < d; i++ {
-			for j := 0; j < d; j++ {
-				prevC := float64(cData[cOff+i*d+j])
-				outerProd := vt[i] * kt[j]
-				cOutData[cOff+i*d+j] = T(fGate*prevC + iGate*outerProd)
-			}
-		}
-
-		// Update normalizer: n_t = f_t * n_{t-1} + i_t * k_t
-		nOff := b * d
-		for j := 0; j < d; j++ {
-			prevN := float64(nData[nOff+j])
-			nOutData[nOff+j] = T(fGate*prevN + iGate*kt[j])
-		}
-
-		// Compute C_t * q_t (matrix-vector product)
-		cq := make([]float64, d)
-		for i := 0; i < d; i++ {
-			for j := 0; j < d; j++ {
-				cq[i] += float64(cOutData[cOff+i*d+j]) * qt[j]
-			}
-		}
-
-		// Compute normalizer denominator: max(|n_t^T * q_t|, 1)
-		var nq float64
-		for j := 0; j < d; j++ {
-			nq += float64(nOutData[nOff+j]) * qt[j]
-		}
-		denom := math.Max(math.Abs(nq), 1.0)
-
-		// Hidden state: h_t = o_t * (C_t * q_t) / denom
-		hOff := b * d
-		for j := 0; j < d; j++ {
-			hOutData[hOff+j] = T(oGate * cq[j] / denom)
+			hOutData[b*d+j] = T(ob * float64(cqData[j]) / denom)
 		}
 	}
 
@@ -320,14 +405,7 @@ func (m *MLSTM[T]) Forward(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("MLSTM: create h tensor: %w", err)
 	}
-	cOut, err = tensor.New[T]([]int{batch, d, d}, cOutData)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("MLSTM: create C tensor: %w", err)
-	}
-	nOut, err = tensor.New[T]([]int{batch, d}, nOutData)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("MLSTM: create n tensor: %w", err)
-	}
+
 	return h, cOut, nOut, nil
 }
 
