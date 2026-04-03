@@ -335,12 +335,6 @@ type gpuBatchForwardCache struct {
 	layerCaches []gpuBatchLayerCache
 }
 
-// layerNormForwardEngine delegates to the standalone layerNormForwardWithEngine.
-func (m *PatchTST) layerNormForwardEngine(ctx context.Context, x, scale, bias *tensor.TensorNumeric[float32], rows, dModel int) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
-	return layerNormForwardWithEngine(ctx, m.engine, x, scale, bias, rows, dModel)
-}
-
-
 // trainWindowedGPU runs the full GPU training loop for PatchTST.
 // All parameters, gradients, and optimizer moments are kept as float32 tensors.
 // Forward and backward linear operations use engine.MatMul with batched samples
