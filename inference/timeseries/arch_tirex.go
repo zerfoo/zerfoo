@@ -372,19 +372,20 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 		}
 	}
 
+	// Split projected along the time axis: [batch, seq_len, hidden_dim] -> seq_len x [batch, 1, hidden_dim]
+	timeSteps, err := n.engine.Split(ctx, projected, seqLen, 1)
+	if err != nil {
+		return nil, fmt.Errorf("split projected along time axis: %w", err)
+	}
+
 	// Process each time step through the block stack.
-	projData := projected.Data()
 	var finalHidden *tensor.TensorNumeric[T]
 
-	for t := range seqLen {
-		// Extract time step t: [batch, hidden_dim]
-		stepData := make([]T, batch*d)
-		for b := range batch {
-			copy(stepData[b*d:(b+1)*d], projData[b*seqLen*d+t*d:b*seqLen*d+(t+1)*d])
-		}
-		stepInput, sErr := tensor.New[T]([]int{batch, d}, stepData)
+	for t, ts := range timeSteps {
+		// Reshape [batch, 1, hidden_dim] -> [batch, hidden_dim]
+		stepInput, sErr := n.engine.Reshape(ctx, ts, []int{batch, d})
 		if sErr != nil {
-			return nil, fmt.Errorf("extract time step %d: %w", t, sErr)
+			return nil, fmt.Errorf("reshape time step %d: %w", t, sErr)
 		}
 
 		// Run through each block sequentially.
@@ -577,17 +578,19 @@ func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.Tensor
 		}
 	}
 
-	projData := projected.Data()
+	// Split projected along the time axis: [batch, seq_len, hidden_dim] -> seq_len x [batch, 1, hidden_dim]
+	timeSteps, err := n.engine.Split(ctx, projected, seqLen, 1)
+	if err != nil {
+		return nil, fmt.Errorf("split projected along time axis: %w", err)
+	}
+
 	var finalHidden *tensor.TensorNumeric[T]
 
-	for t := range seqLen {
-		stepData := make([]T, batch*d)
-		for b := range batch {
-			copy(stepData[b*d:(b+1)*d], projData[b*seqLen*d+t*d:b*seqLen*d+(t+1)*d])
-		}
-		stepInput, sErr := tensor.New[T]([]int{batch, d}, stepData)
+	for t, ts := range timeSteps {
+		// Reshape [batch, 1, hidden_dim] -> [batch, hidden_dim]
+		stepInput, sErr := n.engine.Reshape(ctx, ts, []int{batch, d})
 		if sErr != nil {
-			return nil, fmt.Errorf("extract time step %d: %w", t, sErr)
+			return nil, fmt.Errorf("reshape time step %d: %w", t, sErr)
 		}
 
 		blockInput := stepInput
