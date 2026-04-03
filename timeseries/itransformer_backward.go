@@ -248,7 +248,9 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 		fc1Out[c] = linearForwardVec(ln1Out[c], layer.fc1W, layer.fc1B)
 		geluOut[c] = make([]float64, len(fc1Out[c]))
 		for i := range fc1Out[c] {
-			geluOut[c][i] = geluScalar[float64](fc1Out[c][i])
+			v := fc1Out[c][i]
+				inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+				geluOut[c][i] = 0.5 * v * (1 + math.Tanh(inner))
 		}
 		fc2Out[c] = linearForwardVec(geluOut[c], layer.fc2W, layer.fc2B)
 
@@ -359,7 +361,12 @@ func (m *ITransformer) encoderLayerBackward(
 		// GELU backward.
 		dFC1Out := make([]float64, dFF)
 		for i := 0; i < dFF; i++ {
-			dFC1Out[i] = dGeluOut[i] * geluDeriv[float64](lc.fc1Out[c][i])
+			xf := lc.fc1Out[c][i]
+				cg := math.Sqrt(2.0 / math.Pi)
+				innerVal := cg * (xf + 0.044715*xf*xf*xf)
+				th := math.Tanh(innerVal)
+				dInner := cg * (1 + 3*0.044715*xf*xf)
+				dFC1Out[i] = dGeluOut[i] * (0.5*(1+th) + 0.5*xf*(1-th*th)*dInner)
 		}
 
 		// fc1: ln1Out @ fc1W + fc1B -> fc1Out
@@ -616,4 +623,34 @@ func (m *ITransformer) batchLoss(windows [][][]float64, labels []float64, bs int
 		}
 	}
 	return loss / float64(bs*m.config.Channels*m.config.OutputLen)
+}
+
+// copyMatrix creates a deep copy of a 2D float64 slice.
+func copyMatrix(x [][]float64) [][]float64 {
+	out := make([][]float64, len(x))
+	for i := range x {
+		out[i] = make([]float64, len(x[i]))
+		copy(out[i], x[i])
+	}
+	return out
+}
+
+// softmaxF64 computes softmax over a 1D float64 slice with numerical stability.
+func softmaxF64(x []float64) []float64 {
+	max := x[0]
+	for _, v := range x[1:] {
+		if v > max {
+			max = v
+		}
+	}
+	sum := 0.0
+	out := make([]float64, len(x))
+	for i, v := range x {
+		out[i] = math.Exp(v - max)
+		sum += out[i]
+	}
+	for i := range out {
+		out[i] /= sum
+	}
+	return out
 }

@@ -224,8 +224,9 @@ func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransforme
 	for c := 0; c < channels; c++ {
 		ffnOut := linearForwardVec(tokens[c], layer.fc1W, layer.fc1B)
 		// GELU activation.
-		for i := range ffnOut {
-			ffnOut[i] = geluScalar[float64](ffnOut[i])
+		for i, v := range ffnOut {
+			inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+			ffnOut[i] = 0.5 * v * (1 + math.Tanh(inner))
 		}
 		ffnOut = linearForwardVec(ffnOut, layer.fc2W, layer.fc2B)
 
