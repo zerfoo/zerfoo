@@ -1,10 +1,7 @@
 package generate
 
 import (
-	"fmt"
 	"math"
-
-	"github.com/zerfoo/ztensor/tensor"
 )
 
 // q3GroupSize is the number of elements per quantization group.
@@ -232,13 +229,23 @@ func (s *q3Storage) totalBytes() int {
 	return len(s.packed) + len(s.centroids)*4
 }
 
-// q3LayerBuf holds the pre-allocated Q3 backing buffer for one layer's KV cache.
-type q3LayerBuf struct {
-	keyBuf *q3Storage
-	valBuf *q3Storage
-	cursor int
-	batch  int
-	dim    int
+// Decode implements QuantStorage.Decode.
+func (s *q3Storage) Decode() []float32 {
+	return s.decode()
+}
+
+// EncodeRegion implements QuantStorage.EncodeRegion.
+func (s *q3Storage) EncodeRegion(batch, seqLen, dim, maxSeqLen, cursor int, src []float32) {
+	for bi := range batch {
+		srcOff := bi * seqLen * dim
+		dstOff := bi*maxSeqLen*dim + cursor*dim
+		s.encodeRegion(dstOff, src[srcOff:srcOff+seqLen*dim])
+	}
+}
+
+// newQ3QuantStorage is the QuantStorage allocation function for Q3.
+func newQ3QuantStorage(total int) QuantStorage {
+	return newQ3Storage(total)
 }
 
 // KVCacheQ3 stores key-value tensors for all attention layers using 3-bit
@@ -248,8 +255,7 @@ type q3LayerBuf struct {
 // quantizes keys pre-RoPE to preserve rotary position information.
 // Memory reduction is ~6.4x compared to float32.
 type KVCacheQ3 struct {
-	layers    []q3LayerBuf
-	maxSeqLen int
+	*quantKVCache
 }
 
 // NewKVCacheQ3 creates a KVCacheQ3 for the specified number of layers and
@@ -257,136 +263,6 @@ type KVCacheQ3 struct {
 // first Update call for each layer.
 func NewKVCacheQ3(numLayers, maxSeqLen int) *KVCacheQ3 {
 	return &KVCacheQ3{
-		layers:    make([]q3LayerBuf, numLayers),
-		maxSeqLen: maxSeqLen,
-	}
-}
-
-// NumLayers returns the number of layers in the cache.
-func (c *KVCacheQ3) NumLayers() int {
-	return len(c.layers)
-}
-
-// Get returns the cached key-value pair for the given layer as float32 tensors
-// covering [0:cursor] on the sequence axis. Q3 data is dequantized to float32
-// on the fly via codebook lookup. Returns false if the layer has not been
-// populated yet.
-func (c *KVCacheQ3) Get(layer int) (*LayerKV[float32], bool) {
-	if layer < 0 || layer >= len(c.layers) {
-		return nil, false
-	}
-	lb := &c.layers[layer]
-	if lb.cursor == 0 {
-		return nil, false
-	}
-
-	shape := []int{lb.batch, lb.cursor, lb.dim}
-	size := lb.batch * lb.cursor * lb.dim
-
-	allKey := lb.keyBuf.decode()
-	allVal := lb.valBuf.decode()
-
-	var keyData, valData []float32
-	if lb.batch == 1 || lb.cursor == c.maxSeqLen {
-		keyData = allKey[:size]
-		valData = allVal[:size]
-	} else {
-		keyData = make([]float32, size)
-		valData = make([]float32, size)
-		seqDim := lb.cursor * lb.dim
-		for bi := range lb.batch {
-			srcOff := bi * c.maxSeqLen * lb.dim
-			dstOff := bi * seqDim
-			copy(keyData[dstOff:dstOff+seqDim], allKey[srcOff:srcOff+seqDim])
-			copy(valData[dstOff:dstOff+seqDim], allVal[srcOff:srcOff+seqDim])
-		}
-	}
-
-	keyT, err := tensor.New(shape, keyData)
-	if err != nil {
-		return nil, false
-	}
-	valT, err := tensor.New(shape, valData)
-	if err != nil {
-		return nil, false
-	}
-
-	return &LayerKV[float32]{Key: keyT, Value: valT}, true
-}
-
-// Update appends new key and value float32 tensors to the Q3 cache for the
-// given layer. Tensors are expected to have shape [batch, seq_len, dim]. Data
-// is converted from float32 to Q3 via sensitivity-weighted k-means codebook
-// quantization and stored in the pre-allocated buffer at the current cursor
-// position.
-func (c *KVCacheQ3) Update(layer int, newK, newV *tensor.TensorNumeric[float32]) error {
-	if layer < 0 || layer >= len(c.layers) {
-		return fmt.Errorf("layer index %d out of range [0, %d)", layer, len(c.layers))
-	}
-
-	shape := newK.Shape()
-	if len(shape) != 3 {
-		return fmt.Errorf("expected 3D tensor [batch, seq, dim], got %dD", len(shape))
-	}
-
-	batch, seqLen, dim := shape[0], shape[1], shape[2]
-	lb := &c.layers[layer]
-
-	// Lazy allocation on first Update.
-	if lb.keyBuf == nil {
-		lb.batch = batch
-		lb.dim = dim
-		total := batch * c.maxSeqLen * dim
-		lb.keyBuf = newQ3Storage(total)
-		lb.valBuf = newQ3Storage(total)
-	}
-
-	if batch != lb.batch {
-		return fmt.Errorf("batch mismatch: cache has %d, got %d", lb.batch, batch)
-	}
-	if dim != lb.dim {
-		return fmt.Errorf("dim mismatch: cache has %d, got %d", lb.dim, dim)
-	}
-	if lb.cursor+seqLen > c.maxSeqLen {
-		return fmt.Errorf("cache overflow: cursor=%d + seq=%d > maxSeqLen=%d", lb.cursor, seqLen, c.maxSeqLen)
-	}
-
-	kData := newK.Data()
-	vData := newV.Data()
-
-	for bi := range batch {
-		srcOff := bi * seqLen * dim
-		dstOff := bi*c.maxSeqLen*dim + lb.cursor*dim
-		lb.keyBuf.encodeRegion(dstOff, kData[srcOff:srcOff+seqLen*dim])
-		lb.valBuf.encodeRegion(dstOff, vData[srcOff:srcOff+seqLen*dim])
-	}
-
-	lb.cursor += seqLen
-	return nil
-}
-
-// SeqLen returns the current cached sequence length. Returns 0 if the cache is empty.
-func (c *KVCacheQ3) SeqLen() int {
-	if len(c.layers) == 0 {
-		return 0
-	}
-	return c.layers[0].cursor
-}
-
-// Reset clears all cached data and resets cursors to zero.
-// The pre-allocated Q3 buffers are retained for reuse.
-func (c *KVCacheQ3) Reset() {
-	for i := range c.layers {
-		c.layers[i].cursor = 0
-	}
-}
-
-// Truncate rolls back the cache to the given sequence length.
-// If newSeqLen >= current SeqLen, this is a no-op.
-func (c *KVCacheQ3) Truncate(newSeqLen int) {
-	for i := range c.layers {
-		if c.layers[i].cursor > newSeqLen {
-			c.layers[i].cursor = newSeqLen
-		}
+		quantKVCache: newQuantKVCache(numLayers, maxSeqLen, newQ3QuantStorage),
 	}
 }

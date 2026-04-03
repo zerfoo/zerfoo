@@ -441,10 +441,11 @@ func TestKVCacheFP16_HalfMemoryVsFloat32(t *testing.T) {
 	}
 
 	lb := &cache.layers[0]
+	fp16Buf := lb.keyBuf.(*fp16Storage).buf
 	// Each buffer holds batch*maxSeq*dim FP16 elements = 2 bytes each.
-	fp16Bytes := lb.keyBuf.Len() * 2
+	fp16Bytes := fp16Buf.Len() * 2
 	// Equivalent float32 would use 4 bytes per element.
-	f32Bytes := lb.keyBuf.Len() * 4
+	f32Bytes := fp16Buf.Len() * 4
 
 	if fp16Bytes*2 != f32Bytes {
 		t.Errorf("FP16 storage should be exactly half of float32: fp16=%d, f32=%d", fp16Bytes, f32Bytes)

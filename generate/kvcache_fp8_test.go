@@ -80,14 +80,15 @@ func TestKVCacheFP8_FP8Storage(t *testing.T) {
 
 	// Verify internal storage is FP8 (1 byte per element).
 	lb := &cache.layers[0]
-	keyBytes := lb.keyBuf.Len()
+	fp8Buf := lb.keyBuf.(*fp8Storage).buf
+	keyBytes := fp8Buf.Len()
 	expectedElements := 1 * 128 * 4 // batch * maxSeqLen * dim
 	if keyBytes != expectedElements {
 		t.Errorf("FP8 key buffer Len() = %d, want %d elements", keyBytes, expectedElements)
 	}
 
 	// Verify RawBytes uses 1 byte per element.
-	rawLen := len(lb.keyBuf.RawBytes())
+	rawLen := len(fp8Buf.RawBytes())
 	if rawLen != expectedElements {
 		t.Errorf("FP8 raw bytes len = %d, want %d (1 byte/element)", rawLen, expectedElements)
 	}
@@ -191,8 +192,9 @@ func TestKVCacheFP8_FP8MemoryReduction(t *testing.T) {
 	}
 
 	lb := &cache.layers[0]
-	numElements := lb.keyBuf.Len()
-	fp8Bytes := len(lb.keyBuf.RawBytes())
+	fp8Buf := lb.keyBuf.(*fp8Storage).buf
+	numElements := fp8Buf.Len()
+	fp8Bytes := len(fp8Buf.RawBytes())
 	f32Bytes := numElements * 4
 
 	// FP8 uses 1 byte per element.
