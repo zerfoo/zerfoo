@@ -5,7 +5,9 @@ import (
 	"math"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // layerTransposes holds pre-computed weight transposes for a single encoder layer.
@@ -936,9 +938,9 @@ func encoderBackward(
 }
 
 // encoderBackwardF64 runs the PatchTST transformer encoder backward pass
-// in pure float64 arithmetic (no engine). It mirrors encoderBackward but
-// operates on float64 slices, enabling the CPU training path (BackwardSample)
-// to share a single implementation with any future float64-based callers.
+// using functional backward ops. It mirrors encoderBackward but operates on
+// float64 slices, enabling the CPU training path (BackwardSample) to share
+// a single implementation with any future float64-based callers.
 //
 // dX: [numPatches][dModel] upstream gradient flowing into the encoder output.
 // layers: encoder layer parameters.
@@ -953,6 +955,10 @@ func encoderBackwardF64(
 	layerCaches []encoderLayerCache,
 	numPatches, dModel, nHeads, headDim, ffnDim int,
 ) [][]float64 {
+	ctx := context.Background()
+	eng := cpuEngine64
+	ops := numeric.Float64Ops{}
+
 	for li := len(layers) - 1; li >= 0; li-- {
 		layer := &layers[li]
 		lc := &layerCaches[li]
@@ -961,160 +967,149 @@ func encoderBackwardF64(
 		// Residual 2 backward: dX flows to both ffn output and the input after attn.
 		dFFN2Out := copyMatrix(dX)
 
-		// FFN backward.
-		// ffn2Out[p][j] = sum_k(ffn1Out[p][k] * ffn2W[k*dModel+j]) + ffn2B[j]
-		dFFN1Out := make([][]float64, numPatches)
-		for p := 0; p < numPatches; p++ {
-			dFFN1Out[p] = make([]float64, ffnDim)
-			for k := 0; k < ffnDim; k++ {
-				for j := 0; j < dModel; j++ {
-					dg.ffn2W[k*dModel+j] += lc.ffn1Out[p][k] * dFFN2Out[p][j]
-					dFFN1Out[p][k] += dFFN2Out[p][j] * layer.ffn2W[k*dModel+j]
-				}
-			}
-			for j := 0; j < dModel; j++ {
-				dg.ffn2B[j] += dFFN2Out[p][j]
-			}
-		}
+		// FFN backward via functional.MLPBackward.
+		// Weight layout: existing flat weights are [in, out] row-major,
+		// but LinearBackward convention is y = x @ W^T + b with W = [out, in].
+		// So we create the tensor as [in, out] and transpose to [out, in].
+		dFFN2OutT := mat64ToTensor(dFFN2Out, numPatches, dModel)
+		normed2T := mat64ToTensor(lc.normed2, numPatches, dModel)
+		ffn1PreActT := mat64ToTensor(lc.ffn1PreAct, numPatches, ffnDim)
+		ffn1OutT := mat64ToTensor(lc.ffn1Out, numPatches, ffnDim)
 
-		// GELU backward.
-		dFFN1PreAct := make([][]float64, numPatches)
-		for p := 0; p < numPatches; p++ {
-			dFFN1PreAct[p] = make([]float64, ffnDim)
-			for j := 0; j < ffnDim; j++ {
-				xf := lc.ffn1PreAct[p][j]
-				cg := math.Sqrt(2.0 / math.Pi)
-				innerVal := cg * (xf + 0.044715*xf*xf*xf)
-				th := math.Tanh(innerVal)
-				dInner := cg * (1 + 3*0.044715*xf*xf)
-				dFFN1PreAct[p][j] = dFFN1Out[p][j] * (0.5*(1+th) + 0.5*xf*(1-th*th)*dInner)
-			}
-		}
+		// ffn1W is [dModel*ffnDim] stored as [dModel, ffnDim] row-major.
+		// LinearBackward wants [out=ffnDim, in=dModel], so transpose.
+		w1Raw, _ := tensor.New[float64]([]int{dModel, ffnDim}, layer.ffn1W)
+		w1T, _ := eng.Transpose(ctx, w1Raw, []int{1, 0})
+		b1T, _ := tensor.New[float64]([]int{ffnDim}, layer.ffn1B)
 
-		// FFN1 backward: ffn1PreAct[p][j] = sum_k(normed2[p][k] * ffn1W[k*ffnDim+j]) + ffn1B[j]
-		dNormed2 := make([][]float64, numPatches)
-		for p := 0; p < numPatches; p++ {
-			dNormed2[p] = make([]float64, dModel)
-			for k := 0; k < dModel; k++ {
-				for j := 0; j < ffnDim; j++ {
-					dg.ffn1W[k*ffnDim+j] += lc.normed2[p][k] * dFFN1PreAct[p][j]
-					dNormed2[p][k] += dFFN1PreAct[p][j] * layer.ffn1W[k*ffnDim+j]
-				}
-			}
-			for j := 0; j < ffnDim; j++ {
-				dg.ffn1B[j] += dFFN1PreAct[p][j]
-			}
-		}
+		// ffn2W is [ffnDim*dModel] stored as [ffnDim, dModel] row-major.
+		// LinearBackward wants [out=dModel, in=ffnDim], so transpose.
+		w2Raw, _ := tensor.New[float64]([]int{ffnDim, dModel}, layer.ffn2W)
+		w2T, _ := eng.Transpose(ctx, w2Raw, []int{1, 0})
+		b2T, _ := tensor.New[float64]([]int{dModel}, layer.ffn2B)
 
-		// LayerNorm2 backward.
-		dXAfterAttn := layerNormBackwardF64(dNormed2, lc.centered2, lc.invStd2, layer.norm2, dg.norm2, dg.bias2, dModel)
+		dNormed2T, dW1T, dB1T, dW2T, dB2T, _ := functional.MLPBackward(
+			ctx, eng, ops, dFFN2OutT, normed2T, w1T, b1T, w2T, b2T,
+			ffn1PreActT, ffn1OutT, "gelu")
+
+		// Transpose weight gradients back to original layout and accumulate.
+		// dW1T is [ffnDim, dModel], need [dModel, ffnDim] for accumulation.
+		dW1Raw, _ := eng.Transpose(ctx, dW1T, []int{1, 0})
+		accumFlat(dg.ffn1W, dW1Raw.Data())
+		accumFlat(dg.ffn1B, dB1T.Data())
+		// dW2T is [dModel, ffnDim], need [ffnDim, dModel] for accumulation.
+		dW2Raw, _ := eng.Transpose(ctx, dW2T, []int{1, 0})
+		accumFlat(dg.ffn2W, dW2Raw.Data())
+		accumFlat(dg.ffn2B, dB2T.Data())
+
+		// LayerNorm2 backward via functional.LayerNormBackward.
+		xBeforeNorm2T := mat64ToTensor(lc.xBeforeNorm2, numPatches, dModel)
+		norm2T, _ := tensor.New[float64]([]int{1, dModel}, layer.norm2)
+		dXAfterAttnT, dScale2T, dBias2T, _ := functional.LayerNormBackward(
+			ctx, eng, dNormed2T, xBeforeNorm2T, norm2T, 1e-5)
+		accumFlat(dg.norm2, dScale2T.Data())
+		accumFlat(dg.bias2, dBias2T.Data())
 
 		// Add residual gradient from FFN path.
-		for p := 0; p < numPatches; p++ {
-			for j := 0; j < dModel; j++ {
-				dXAfterAttn[p][j] += dX[p][j]
-			}
-		}
+		dXResidT := mat64ToTensor(dX, numPatches, dModel)
+		dXAfterAttnT, _ = eng.Add(ctx, dXAfterAttnT, dXResidT)
 
 		// Residual 1 backward: dXAfterAttn flows to both attention output and layer input.
+		dXAfterAttn := tensorToMat64(dXAfterAttnT, numPatches, dModel)
 		dAttnProjOut := copyMatrix(dXAfterAttn)
 
-		// oProj backward: attnProjOut = attnOut @ oW + oB.
-		dAttnOut := make([][]float64, numPatches)
-		for p := 0; p < numPatches; p++ {
-			dAttnOut[p] = make([]float64, dModel)
-			for k := 0; k < dModel; k++ {
-				for j := 0; j < dModel; j++ {
-					dg.oW[k*dModel+j] += lc.attnOut[p][k] * dAttnProjOut[p][j]
-					dAttnOut[p][k] += dAttnProjOut[p][j] * layer.oW[k*dModel+j]
-				}
-			}
-			for j := 0; j < dModel; j++ {
-				dg.oB[j] += dAttnProjOut[p][j]
-			}
-		}
+		// oProj backward via functional.LinearBackward.
+		dAttnProjOutT := mat64ToTensor(dAttnProjOut, numPatches, dModel)
+		attnOutT := mat64ToTensor(lc.attnOut, numPatches, dModel)
+		// oW is [dModel*dModel] stored as [dModel, dModel] row-major.
+		// LinearBackward wants [out=dModel, in=dModel] — same shape, but transpose for correctness.
+		oWRaw, _ := tensor.New[float64]([]int{dModel, dModel}, layer.oW)
+		oWT, _ := eng.Transpose(ctx, oWRaw, []int{1, 0})
+		dAttnOutT, dOWT, dOBT, _ := functional.LinearBackward(ctx, eng, dAttnProjOutT, attnOutT, oWT)
+		// Transpose dOW back to original layout.
+		dOWRaw, _ := eng.Transpose(ctx, dOWT, []int{1, 0})
+		accumFlat(dg.oW, dOWRaw.Data())
+		accumFlat(dg.oB, dOBT.Data())
 
-		// Attention backward.
-		seq := numPatches
-		dQ := make([][]float64, seq)
-		dK := make([][]float64, seq)
-		dV := make([][]float64, seq)
-		for s := 0; s < seq; s++ {
-			dQ[s] = make([]float64, dModel)
-			dK[s] = make([]float64, dModel)
-			dV[s] = make([]float64, dModel)
-		}
+		// Attention backward via functional.MultiHeadAttentionBackward.
+		qT := mat64ToTensor(lc.q, numPatches, dModel)
+		kT := mat64ToTensor(lc.k, numPatches, dModel)
+		vT := mat64ToTensor(lc.v, numPatches, dModel)
+		dQT, dKT, dVT, _ := functional.MultiHeadAttentionBackward(ctx, eng, ops, dAttnOutT, qT, kT, vT, nHeads)
 
-		attnScale := 1.0 / math.Sqrt(float64(headDim))
-		for h := 0; h < nHeads; h++ {
-			hOff := h * headDim
+		// Q/K/V projection backward via functional.LinearBackward.
+		normed1T := mat64ToTensor(lc.normed1, numPatches, dModel)
 
-			// dAttnOut -> dScores, dV.
-			// attnOut[i][hOff+d] = sum_j scores[h][i][j] * v[j][hOff+d]
-			dScores := make([][]float64, seq)
-			for i := 0; i < seq; i++ {
-				dScores[i] = make([]float64, seq)
-				for j := 0; j < seq; j++ {
-					for d := 0; d < headDim; d++ {
-						dScores[i][j] += dAttnOut[i][hOff+d] * lc.v[j][hOff+d]
-						dV[j][hOff+d] += lc.scores[h][i][j] * dAttnOut[i][hOff+d]
-					}
-				}
-			}
+		// qW is [dModel*dModel] stored as [dModel, dModel] row-major → transpose to [dModel, dModel].
+		qWRaw, _ := tensor.New[float64]([]int{dModel, dModel}, layer.qW)
+		qWTensor, _ := eng.Transpose(ctx, qWRaw, []int{1, 0})
+		dNormed1Q, dQW, dQB, _ := functional.LinearBackward(ctx, eng, dQT, normed1T, qWTensor)
 
-			// Softmax backward: dLogits = scores * (dScores - sum(scores * dScores)).
-			dLogits := make([][]float64, seq)
-			for i := 0; i < seq; i++ {
-				dLogits[i] = make([]float64, seq)
-				dot := 0.0
-				for j := 0; j < seq; j++ {
-					dot += lc.scores[h][i][j] * dScores[i][j]
-				}
-				for j := 0; j < seq; j++ {
-					dLogits[i][j] = lc.scores[h][i][j] * (dScores[i][j] - dot)
-				}
-			}
+		kWRaw, _ := tensor.New[float64]([]int{dModel, dModel}, layer.kW)
+		kWTensor, _ := eng.Transpose(ctx, kWRaw, []int{1, 0})
+		dNormed1K, dKW, dKB, _ := functional.LinearBackward(ctx, eng, dKT, normed1T, kWTensor)
 
-			// Scale backward.
-			for i := 0; i < seq; i++ {
-				for j := 0; j < seq; j++ {
-					dLogits[i][j] *= attnScale
-				}
-			}
+		vWRaw, _ := tensor.New[float64]([]int{dModel, dModel}, layer.vW)
+		vWTensor, _ := eng.Transpose(ctx, vWRaw, []int{1, 0})
+		dNormed1V, dVW, dVB, _ := functional.LinearBackward(ctx, eng, dVT, normed1T, vWTensor)
 
-			// QK^T backward: logits[i][j] = sum_d q[i][hOff+d] * k[j][hOff+d]
-			for i := 0; i < seq; i++ {
-				for j := 0; j < seq; j++ {
-					for d := 0; d < headDim; d++ {
-						dQ[i][hOff+d] += dLogits[i][j] * lc.k[j][hOff+d]
-						dK[j][hOff+d] += dLogits[i][j] * lc.q[i][hOff+d]
-					}
-				}
-			}
-		}
+		// Accumulate Q/K/V weight/bias gradients.
+		dQWRaw, _ := eng.Transpose(ctx, dQW, []int{1, 0})
+		accumFlat(dg.qW, dQWRaw.Data())
+		accumFlat(dg.qB, dQB.Data())
+		dKWRaw, _ := eng.Transpose(ctx, dKW, []int{1, 0})
+		accumFlat(dg.kW, dKWRaw.Data())
+		accumFlat(dg.kB, dKB.Data())
+		dVWRaw, _ := eng.Transpose(ctx, dVW, []int{1, 0})
+		accumFlat(dg.vW, dVWRaw.Data())
+		accumFlat(dg.vB, dVB.Data())
 
-		// Q/K/V projection backward.
-		dNormed1 := make([][]float64, numPatches)
-		for p := 0; p < numPatches; p++ {
-			dNormed1[p] = make([]float64, dModel)
-		}
+		// Sum dNormed1 from Q/K/V paths.
+		dNormed1T, _ := eng.Add(ctx, dNormed1Q, dNormed1K)
+		dNormed1T, _ = eng.Add(ctx, dNormed1T, dNormed1V)
 
-		linearBackwardF64Accum(dQ, lc.normed1, layer.qW, dNormed1, dg.qW, dg.qB, dModel, dModel)
-		linearBackwardF64Accum(dK, lc.normed1, layer.kW, dNormed1, dg.kW, dg.kB, dModel, dModel)
-		linearBackwardF64Accum(dV, lc.normed1, layer.vW, dNormed1, dg.vW, dg.vB, dModel, dModel)
-
-		// LayerNorm1 backward.
-		dLayerInput := layerNormBackwardF64(dNormed1, lc.centered1, lc.invStd1, layer.norm1, dg.norm1, dg.bias1, dModel)
+		// LayerNorm1 backward via functional.LayerNormBackward.
+		xBeforeNorm1T := mat64ToTensor(lc.xBeforeNorm1, numPatches, dModel)
+		norm1T, _ := tensor.New[float64]([]int{1, dModel}, layer.norm1)
+		dLayerInputT, dScale1T, dBias1T, _ := functional.LayerNormBackward(
+			ctx, eng, dNormed1T, xBeforeNorm1T, norm1T, 1e-5)
+		accumFlat(dg.norm1, dScale1T.Data())
+		accumFlat(dg.bias1, dBias1T.Data())
 
 		// Add residual gradient from attention path.
-		for p := 0; p < numPatches; p++ {
-			for j := 0; j < dModel; j++ {
-				dLayerInput[p][j] += dXAfterAttn[p][j]
-			}
-		}
+		dXAfterAttnT2 := mat64ToTensor(dXAfterAttn, numPatches, dModel)
+		dLayerInputT, _ = eng.Add(ctx, dLayerInputT, dXAfterAttnT2)
 
-		dX = dLayerInput
+		dX = tensorToMat64(dLayerInputT, numPatches, dModel)
 	}
 
 	return dX
+}
+
+// mat64ToTensor converts a [][]float64 matrix to a 2D tensor [rows, cols].
+func mat64ToTensor(m [][]float64, rows, cols int) *tensor.TensorNumeric[float64] {
+	flat := make([]float64, rows*cols)
+	for i := 0; i < rows; i++ {
+		copy(flat[i*cols:], m[i])
+	}
+	t, _ := tensor.New[float64]([]int{rows, cols}, flat)
+	return t
+}
+
+// tensorToMat64 converts a 2D tensor [rows, cols] to a [][]float64 matrix.
+func tensorToMat64(t *tensor.TensorNumeric[float64], rows, cols int) [][]float64 {
+	data := t.Data()
+	m := make([][]float64, rows)
+	for i := 0; i < rows; i++ {
+		m[i] = make([]float64, cols)
+		copy(m[i], data[i*cols:(i+1)*cols])
+	}
+	return m
+}
+
+// accumFlat adds src element-wise into dst.
+func accumFlat(dst, src []float64) {
+	for i := range src {
+		dst[i] += src[i]
+	}
 }
