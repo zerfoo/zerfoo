@@ -38,6 +38,8 @@ jobs:
           govulncheck ./...
       - name: Unit tests
         run: go test -short ./... -race -timeout 300s
+      - name: Architecture enforcement
+        run: go test ./tests/architecture/ -race -timeout 120s
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
