@@ -194,6 +194,27 @@ func layerNormBackwardWithEngine(
 	return dInput, newDScale, newDBias, nil
 }
 
+// encoderLayersToGPU converts a slice of encoderLayer (linearLayer-based) to
+// gpuEncoderLayer (flat tensor pointers) so that the shared encoderForward can
+// be used by both the inference Forward path and the GPU training path.
+// The returned slice shares the underlying tensor data with the originals.
+func encoderLayersToGPU(layers []encoderLayer) []gpuEncoderLayer {
+	out := make([]gpuEncoderLayer, len(layers))
+	for i, l := range layers {
+		out[i] = gpuEncoderLayer{
+			qW: l.qProj.weights, qB: l.qProj.biases,
+			kW: l.kProj.weights, kB: l.kProj.biases,
+			vW: l.vProj.weights, vB: l.vProj.biases,
+			oW: l.oProj.weights, oB: l.oProj.biases,
+			ffn1W: l.ffn1.weights, ffn1B: l.ffn1.biases,
+			ffn2W: l.ffn2.weights, ffn2B: l.ffn2.biases,
+			norm1: l.norm1, bias1: l.bias1,
+			norm2: l.norm2, bias2: l.bias2,
+		}
+	}
+	return out
+}
+
 // encoderForward runs the PatchTST transformer encoder layers using engine ops.
 // x: [totalRows, dModel] input tensor (after patch embedding + pos embedding).
 // bsC is batch*channels, numPatches is the sequence length per sample-channel.
