@@ -12,17 +12,7 @@ import (
 // a: [M][K], b: [K][N] -> result: [M][N].
 // Converts float64 inputs to float32 tensors, calls engine.MatMul, and
 // converts the float32 result back to float64.
-// matMulBufs holds reusable float32 buffers to avoid allocation per matMul call.
-type matMulBufs struct {
-	a []float32
-	b []float32
-}
-
 func matMulEngine(engine compute.Engine[float32], ctx context.Context, a, b [][]float64) ([][]float64, error) {
-	return matMulEngineWithBufs(engine, ctx, a, b, nil)
-}
-
-func matMulEngineWithBufs(engine compute.Engine[float32], ctx context.Context, a, b [][]float64, bufs *matMulBufs) ([][]float64, error) {
 	rows := len(a)
 	if rows == 0 {
 		return nil, nil
@@ -30,27 +20,8 @@ func matMulEngineWithBufs(engine compute.Engine[float32], ctx context.Context, a
 	inner := len(a[0])
 	cols := len(b[0])
 
-	// Reuse or allocate float32 buffers.
-	var aFlat, bFlat []float32
-	aSz := rows * inner
-	bSz := inner * cols
-	if bufs != nil {
-		if cap(bufs.a) >= aSz {
-			aFlat = bufs.a[:aSz]
-		} else {
-			aFlat = make([]float32, aSz)
-			bufs.a = aFlat
-		}
-		if cap(bufs.b) >= bSz {
-			bFlat = bufs.b[:bSz]
-		} else {
-			bFlat = make([]float32, bSz)
-			bufs.b = bFlat
-		}
-	} else {
-		aFlat = make([]float32, aSz)
-		bFlat = make([]float32, bSz)
-	}
+	aFlat := make([]float32, rows*inner)
+	bFlat := make([]float32, inner*cols)
 
 	for i, row := range a {
 		off := i * inner
