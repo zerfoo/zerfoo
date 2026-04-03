@@ -309,16 +309,14 @@ func lstmForward[T tensor.Numeric](
 	}
 
 	// Stack hidden states: [batch, seqLen, hiddenDim]
-	outData := make([]T, batch*seqLen*l.hiddenDim)
+	// Reshape each [batch, hiddenDim] to [batch, 1, hiddenDim], then concat along axis 1.
 	for t := 0; t < seqLen; t++ {
-		hData := hiddenStates[t].Data()
-		for b := 0; b < batch; b++ {
-			srcOff := b * l.hiddenDim
-			dstOff := b*seqLen*l.hiddenDim + t*l.hiddenDim
-			copy(outData[dstOff:dstOff+l.hiddenDim], hData[srcOff:srcOff+l.hiddenDim])
+		hiddenStates[t], err = engine.Reshape(ctx, hiddenStates[t], []int{batch, 1, l.hiddenDim})
+		if err != nil {
+			return nil, fmt.Errorf("reshape hidden state %d: %w", t, err)
 		}
 	}
-	return tensor.New[T]([]int{batch, seqLen, l.hiddenDim}, outData)
+	return engine.Concat(ctx, hiddenStates, 1)
 }
 
 // tftNode implements the full TFT forward pass as a single graph node.
@@ -481,7 +479,20 @@ func (n *tftNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 
 	// 2. Temporal VSN: apply per-timestep variable selection.
 	// Process each timestep through the VSN to get [batch, seqLen, hiddenDim].
-	vsnOutputs := make([]T, batch*seqLen*n.cfg.HiddenDim)
+	//
+	// Build one-hot column selectors for per-variable extraction.
+	// selector[v] is [numTemporalFeatures, 1] with a 1 at row v.
+	selectors := make([]*tensor.TensorNumeric[T], n.cfg.NumTemporalFeatures)
+	for v := 0; v < n.cfg.NumTemporalFeatures; v++ {
+		col := make([]T, n.cfg.NumTemporalFeatures)
+		col[v] = n.ops.One()
+		selectors[v], err = tensor.New[T]([]int{n.cfg.NumTemporalFeatures, 1}, col)
+		if err != nil {
+			return nil, fmt.Errorf("create selector %d: %w", v, err)
+		}
+	}
+
+	timestepOutputs := make([]*tensor.TensorNumeric[T], seqLen)
 	for t := 0; t < seqLen; t++ {
 		// Extract timestep t: [batch, numTemporalFeatures]
 		xt, err := extractTimestep(temporal, t, batch, n.cfg.NumTemporalFeatures)
@@ -489,17 +500,12 @@ func (n *tftNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 			return nil, fmt.Errorf("extract temporal timestep %d: %w", t, err)
 		}
 
-		// Split into per-variable inputs: each [batch, 1]
+		// Split into per-variable inputs via MatMul with one-hot selectors: each [batch, 1]
 		varInputs := make([]*tensor.TensorNumeric[T], n.cfg.NumTemporalFeatures)
-		xtData := xt.Data()
 		for v := 0; v < n.cfg.NumTemporalFeatures; v++ {
-			vData := make([]T, batch)
-			for b := 0; b < batch; b++ {
-				vData[b] = xtData[b*n.cfg.NumTemporalFeatures+v]
-			}
-			varInputs[v], err = tensor.New[T]([]int{batch, 1}, vData)
+			varInputs[v], err = n.engine.MatMul(ctx, xt, selectors[v])
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("extract variable %d timestep %d: %w", v, t, err)
 			}
 		}
 
@@ -515,19 +521,17 @@ func (n *tftNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 			return nil, fmt.Errorf("add static context timestep %d: %w", t, err)
 		}
 
-		// Copy into output buffer.
-		vsnData := vsnOut.Data()
-		for b := 0; b < batch; b++ {
-			srcOff := b * n.cfg.HiddenDim
-			dstOff := b*seqLen*n.cfg.HiddenDim + t*n.cfg.HiddenDim
-			copy(vsnOutputs[dstOff:dstOff+n.cfg.HiddenDim], vsnData[srcOff:srcOff+n.cfg.HiddenDim])
+		// Reshape [batch, hiddenDim] -> [batch, 1, hiddenDim] for stacking.
+		timestepOutputs[t], err = n.engine.Reshape(ctx, vsnOut, []int{batch, 1, n.cfg.HiddenDim})
+		if err != nil {
+			return nil, fmt.Errorf("reshape VSN output timestep %d: %w", t, err)
 		}
 	}
 
-	// [batch, seqLen, hiddenDim]
-	enriched, err := tensor.New[T]([]int{batch, seqLen, n.cfg.HiddenDim}, vsnOutputs)
+	// Concat along axis 1: [batch, seqLen, hiddenDim]
+	enriched, err := n.engine.Concat(ctx, timestepOutputs, 1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("concat temporal outputs: %w", err)
 	}
 
 	// 3. LSTM encoder over enriched temporal features.
