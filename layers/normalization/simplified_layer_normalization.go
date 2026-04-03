@@ -53,91 +53,15 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 	input := inputs[0]
 	sln.inputShape = input.Shape()
 
-	// GPU fused single-pass kernel for float32 on GPUEngine (inference hot path).
-	if fused, ok := sln.engine.(compute.FusedRMSNormer); ok {
-		if f32Input, iof := any(input).(*tensor.TensorNumeric[float32]); iof {
-			f32Gain, gOk := any(sln.gain.Value).(*tensor.TensorNumeric[float32])
-			f32Eps, eOk := any(sln.epsilon).(float32)
-			if gOk && eOk && f32Gain.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, scales, err := fused.FusedRMSNormGPU(f32Input, f32Gain, f32Eps)
-				if err != nil {
-					return nil, err
-				}
-				if scales != nil {
-					sln.invStdDev = any(scales).(*tensor.TensorNumeric[T])
-				}
-				normalized, nErr := sln.engine.Mul(ctx, input, sln.invStdDev)
-				if nErr != nil {
-					return nil, nErr
-				}
-				sln.normalizedInput = normalized
-				return any(out).(*tensor.TensorNumeric[T]), nil
-			}
-		}
-	}
-	// Fused single-pass kernel for float32 on CPUEngine (inference hot path).
-	if _, isCPU := sln.engine.(*compute.CPUEngine[T]); isCPU {
-		if f32Input, ok := any(input).(*tensor.TensorNumeric[float32]); ok {
-			f32Gain, gOk := any(sln.gain.Value).(*tensor.TensorNumeric[float32])
-			f32Eps, eOk := any(sln.epsilon).(float32)
-			if gOk && eOk && f32Gain.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, scales, err := compute.FusedRMSNorm(f32Input, f32Gain, f32Eps)
-				if err != nil {
-					return nil, err
-				}
-				sln.invStdDev = any(scales).(*tensor.TensorNumeric[T])
-				// normalizedInput = input * invStdDev (needed for backward)
-				normalized, err := sln.engine.Mul(ctx, input, sln.invStdDev)
-				if err != nil {
-					return nil, err
-				}
-				sln.normalizedInput = normalized
-				return any(out).(*tensor.TensorNumeric[T]), nil
-			}
-		}
-	}
-
-	// 1. Square the input
-	squared, err := sln.engine.Mul(ctx, input, input)
+	res, err := rmsNormalize(ctx, sln.engine, input, sln.gain.Value, sln.epsilon)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Mean of squares along the last dimension
-	meanSquared, err := sln.engine.ReduceMean(ctx, squared, -1, true)
-	if err != nil {
-		return nil, err
-	}
+	sln.invStdDev = res.rsqrt           // Cache for backward pass
+	sln.normalizedInput = res.normalized // Cache for backward pass
 
-	// 3. Add epsilon
-	withEpsilon, err := sln.engine.AddScalar(ctx, meanSquared, sln.epsilon)
-	if err != nil {
-		return nil, err
-	}
-
-	// 4. Inverse square root
-	invStdDev, err := sln.engine.Rsqrt(ctx, withEpsilon)
-	if err != nil {
-		return nil, err
-	}
-
-	sln.invStdDev = invStdDev // Cache for backward pass
-
-	// 5. Normalize
-	normalized, err := sln.engine.Mul(ctx, input, invStdDev)
-	if err != nil {
-		return nil, err
-	}
-
-	sln.normalizedInput = normalized // Cache for backward pass
-
-	// 6. Apply gain
-	output, err := sln.engine.Mul(ctx, normalized, sln.gain.Value)
-	if err != nil {
-		return nil, err
-	}
-
-	return output, nil
+	return res.output, nil
 }
 
 // Backward applies the backward pass of the SimplifiedLayerNormalization layer.
