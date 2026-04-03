@@ -8,6 +8,7 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 
 	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // trainWindowedEngine implements TrainWindowed with fused CPU forward+backward.
@@ -155,7 +156,7 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 			nBatches++
 
 			// Set gradients and apply AdamW step.
-			opt.SetLR(float32(warmupLR(config.LR, epoch, config.WarmupEpochs)))
+			opt.SetLR(float32(scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)))
 			for i := range allParams {
 				gradT, _ := tensor.New[float32](graphParams[i].Value.Shape(), gradSlices[i])
 				graphParams[i].Gradient = gradT

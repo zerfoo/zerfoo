@@ -9,6 +9,7 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 
 	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // trainWindowedEngine implements GPU-accelerated CfC training using float32
@@ -402,7 +403,7 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 			}
 
 			// Set gradients and apply AdamW step.
-			opt.SetLR(float32(warmupLR(config.LR, epoch, config.WarmupEpochs)))
+			opt.SetLR(float32(scheduler.WarmupLR(config.LR, epoch, config.WarmupEpochs)))
 			for pi := range allParams {
 				gradT, _ := tensor.New[float32](graphParams[pi].Value.Shape(), allGrads[pi])
 				graphParams[pi].Gradient = gradT

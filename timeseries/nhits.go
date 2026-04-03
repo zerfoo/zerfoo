@@ -14,6 +14,7 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 
 	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // NHiTSConfig holds the configuration for an NHiTS model.
@@ -546,7 +547,7 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			}
 
 			// Set gradients on graph parameters and apply AdamW step.
-			opt.SetLR(float32(warmupLR(baseLR, epoch, config.WarmupEpochs)))
+			opt.SetLR(float32(scheduler.WarmupLR(baseLR, epoch, config.WarmupEpochs)))
 			for i, gp := range graphParams {
 				gradT, err := tensor.New[float32](gp.Value.Shape(), allGrads[i])
 				if err != nil {
