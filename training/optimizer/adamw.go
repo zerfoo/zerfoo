@@ -53,7 +53,7 @@ func (a *AdamW[T]) SetMaxGradNorm(maxGradNorm float64) {
 // Step updates the parameters based on their gradients.
 func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error {
 	// NaN/Inf guard and optional gradient clipping.
-	if err := a.guardAndClipGradients(params); err != nil {
+	if err := a.guardAndClipGradients(ctx, params); err != nil {
 		return err
 	}
 
@@ -233,8 +233,10 @@ func numericToFloat64[T tensor.Numeric](v T) float64 {
 
 // guardAndClipGradients checks all gradient values for NaN/Inf and optionally
 // clips the global gradient norm to MaxGradNorm.
-func (a *AdamW[T]) guardAndClipGradients(params []*graph.Parameter[T]) error {
-	ops := a.engine.Ops()
+//
+// Detection uses Engine ReduceSum to collapse each gradient to a single scalar
+// (1 D2H copy per parameter) instead of iterating every element via .Data().
+func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Parameter[T]) error {
 	var globalNormSq float64
 
 	for _, param := range params {
@@ -243,38 +245,55 @@ func (a *AdamW[T]) guardAndClipGradients(params []*graph.Parameter[T]) error {
 			continue
 		}
 
-		data := grad.Data()
-		for i, v := range data {
-			f := numericToFloat64(v)
-			if math.IsNaN(f) {
-				return fmt.Errorf("adamw: NaN detected in gradient of parameter %q at index %d", param.Name, i)
-			}
-
-			if math.IsInf(f, 0) {
-				return fmt.Errorf("adamw: Inf detected in gradient of parameter %q at index %d", param.Name, i)
-			}
-
-			globalNormSq += f * f
+		// Sum all elements to a single scalar. NaN propagates through addition,
+		// so if any element is NaN the sum will be NaN. Inf likewise propagates.
+		sumTensor, err := a.engine.ReduceSum(ctx, grad, -1, false)
+		if err != nil {
+			return fmt.Errorf("adamw: ReduceSum failed for parameter %q: %w", param.Name, err)
 		}
+
+		sumVal := numericToFloat64(sumTensor.Data()[0])
+
+		if math.IsNaN(sumVal) {
+			return fmt.Errorf("adamw: NaN detected in gradient of parameter %q", param.Name)
+		}
+
+		if math.IsInf(sumVal, 0) {
+			return fmt.Errorf("adamw: Inf detected in gradient of parameter %q", param.Name)
+		}
+
+		// Compute sum of squares for global norm: ||grad||^2
+		gradSquared, err := a.engine.Mul(ctx, grad, grad, nil)
+		if err != nil {
+			return fmt.Errorf("adamw: Mul failed for parameter %q: %w", param.Name, err)
+		}
+
+		sqSumTensor, err := a.engine.ReduceSum(ctx, gradSquared, -1, false)
+		if err != nil {
+			return fmt.Errorf("adamw: ReduceSum failed for parameter %q: %w", param.Name, err)
+		}
+
+		globalNormSq += numericToFloat64(sqSumTensor.Data()[0])
 	}
 
 	if a.maxGradNorm > 0 {
 		globalNorm := math.Sqrt(globalNormSq)
 		if globalNorm > a.maxGradNorm {
-			scale := a.maxGradNorm / globalNorm
+			scaleF64 := a.maxGradNorm / globalNorm
+			scaleT := a.engine.Ops().FromFloat64(scaleF64)
+
 			for _, param := range params {
 				grad := param.Gradient
 				if grad == nil {
 					continue
 				}
 
-				data := grad.Data()
-				for i, v := range data {
-					f := numericToFloat64(v)
-					data[i] = ops.FromFloat64(f * scale)
+				clipped, err := a.engine.MulScalar(ctx, grad, scaleT, grad)
+				if err != nil {
+					return fmt.Errorf("adamw: MulScalar failed for parameter %q: %w", param.Name, err)
 				}
 
-				grad.SetData(data)
+				param.Gradient = clipped
 			}
 		}
 	}
