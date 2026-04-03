@@ -587,19 +587,23 @@ func (n *ttmNode[T]) normalizeInput(_ context.Context, x *tensor.TensorNumeric[T
 }
 
 // extractChannel extracts channel c from [batch, context_len, num_channels] as [batch, context_len].
-func (n *ttmNode[T]) extractChannel(_ context.Context, x *tensor.TensorNumeric[T], batch, c, numChannels int) (*tensor.TensorNumeric[T], error) {
-	data := x.Data()
-	shape := x.Shape()
-	contextLen := shape[1]
-	out := make([]T, batch*contextLen)
+func (n *ttmNode[T]) extractChannel(ctx context.Context, x *tensor.TensorNumeric[T], batch, c, _ int) (*tensor.TensorNumeric[T], error) {
+	contextLen := x.Shape()[1]
 
-	for b := range batch {
-		for t := range contextLen {
-			out[b*contextLen+t] = data[b*contextLen*numChannels+t*numChannels+c]
-		}
+	// Slice channel c along axis 2: [batch, context_len, num_channels] -> [batch, context_len, 1].
+	slicer := core.NewSlice[T](n.engine, []int64{int64(c)}, []int64{int64(c + 1)}, []int64{2}, nil)
+	sliced, err := slicer.Forward(ctx, x)
+	if err != nil {
+		return nil, fmt.Errorf("slice channel %d: %w", c, err)
 	}
 
-	return tensor.New[T]([]int{batch, contextLen}, out)
+	// Reshape to [batch, context_len].
+	out, err := n.engine.Reshape(ctx, sliced, []int{batch, contextLen})
+	if err != nil {
+		return nil, fmt.Errorf("reshape channel %d: %w", c, err)
+	}
+
+	return out, nil
 }
 
 // denormalizeOutput reverses the input normalization: output * std + mean.
