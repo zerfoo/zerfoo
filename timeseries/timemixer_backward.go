@@ -1,5 +1,13 @@
 package timeseries
 
+import (
+	"context"
+
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/layers/functional"
+)
+
 // timeMixerCache stores intermediate activations needed for the backward pass.
 type timeMixerCache struct {
 	// input is the original input [numFeatures][inputLen].
@@ -447,7 +455,8 @@ func (m *TimeMixer) backward(dScales []scaleDecomposition, cache *timeMixerCache
 	}
 }
 
-// mlpBackward computes backward pass for a two-layer MLP with ReLU.
+// mlpBackward computes backward pass for a two-layer MLP with ReLU
+// via functional.MLPBackward.
 // dOut: [numScales] gradient of loss w.r.t. MLP output.
 // x: [numScales] input to MLP.
 // hidden: [hiddenSize] post-ReLU hidden activations.
@@ -457,42 +466,64 @@ func (m *TimeMixer) backward(dScales []scaleDecomposition, cache *timeMixerCache
 func mlpBackward(mlp *mixingMLP, dOut, x, hidden, preReLU []float64, grads *mlpGrads) []float64 {
 	hiddenSize := len(mlp.b1)
 	numScales := len(x)
+	ctx := context.Background()
+	ops := numeric.Float64Ops{}
 
-	// Layer 2 backward: out[i] = b2[i] + sum_j w2[i][j] * hidden[j]
-	// dB2[i] += dOut[i]
-	// dW2[i][j] += dOut[i] * hidden[j]
-	// dHidden[j] += sum_i dOut[i] * w2[i][j]
-	dHidden := make([]float64, hiddenSize)
+	// Convert slices to tensors. MLPBackward expects batch dim, so shape [1, N].
+	dOutT, _ := tensor.New[float64]([]int{1, numScales}, dOut)
+	inputT, _ := tensor.New[float64]([]int{1, numScales}, x)
+
+	// Flatten 2D weight slices to 1D for tensor creation.
+	w1Flat := make([]float64, hiddenSize*numScales)
+	for i := 0; i < hiddenSize; i++ {
+		copy(w1Flat[i*numScales:], mlp.w1[i])
+	}
+	w1T, _ := tensor.New[float64]([]int{hiddenSize, numScales}, w1Flat)
+	b1T, _ := tensor.New[float64]([]int{hiddenSize}, mlp.b1)
+
+	w2Flat := make([]float64, numScales*hiddenSize)
 	for i := 0; i < numScales; i++ {
-		grads.dB2[i] += dOut[i]
+		copy(w2Flat[i*hiddenSize:], mlp.w2[i])
+	}
+	w2T, _ := tensor.New[float64]([]int{numScales, hiddenSize}, w2Flat)
+	b2T, _ := tensor.New[float64]([]int{numScales}, mlp.b2)
+
+	// hidden param of MLPBackward = pre-activation (Linear1 output).
+	// activated param = post-activation (post-ReLU).
+	hiddenT, _ := tensor.New[float64]([]int{1, hiddenSize}, preReLU)
+	activatedT, _ := tensor.New[float64]([]int{1, hiddenSize}, hidden)
+
+	dInput, dW1, dB1, dW2, dB2, err := functional.MLPBackward(
+		ctx, cpuEngine64, ops,
+		dOutT, inputT, w1T, b1T, w2T, b2T, hiddenT, activatedT,
+		"relu")
+	if err != nil {
+		panic("mlpBackward: " + err.Error())
+	}
+
+	// Accumulate gradients.
+	dW1Data := dW1.Data()
+	for i := 0; i < hiddenSize; i++ {
+		for j := 0; j < numScales; j++ {
+			grads.dW1[i][j] += dW1Data[i*numScales+j]
+		}
+	}
+	dB1Data := dB1.Data()
+	for i := 0; i < hiddenSize; i++ {
+		grads.dB1[i] += dB1Data[i]
+	}
+	dW2Data := dW2.Data()
+	for i := 0; i < numScales; i++ {
 		for j := 0; j < hiddenSize; j++ {
-			grads.dW2[i][j] += dOut[i] * hidden[j]
-			dHidden[j] += dOut[i] * mlp.w2[i][j]
+			grads.dW2[i][j] += dW2Data[i*hiddenSize+j]
 		}
 	}
-
-	// ReLU backward: dPreReLU[j] = dHidden[j] if preReLU[j] > 0, else 0
-	dPreReLU := make([]float64, hiddenSize)
-	for j := 0; j < hiddenSize; j++ {
-		if preReLU[j] > 0 {
-			dPreReLU[j] = dHidden[j]
-		}
+	dB2Data := dB2.Data()
+	for i := 0; i < numScales; i++ {
+		grads.dB2[i] += dB2Data[i]
 	}
 
-	// Layer 1 backward: preReLU[j] = b1[j] + sum_k w1[j][k] * x[k]
-	// dB1[j] += dPreReLU[j]
-	// dW1[j][k] += dPreReLU[j] * x[k]
-	// dInput[k] += sum_j dPreReLU[j] * w1[j][k]
-	dInput := make([]float64, numScales)
-	for j := 0; j < hiddenSize; j++ {
-		grads.dB1[j] += dPreReLU[j]
-		for k := 0; k < numScales; k++ {
-			grads.dW1[j][k] += dPreReLU[j] * x[k]
-			dInput[k] += dPreReLU[j] * mlp.w1[j][k]
-		}
-	}
-
-	return dInput
+	return dInput.Data()
 }
 
 // flatParams returns pointers to all trainable parameters in a flat slice.
