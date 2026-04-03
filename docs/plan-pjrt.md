@@ -654,23 +654,23 @@ All zero-dependency tasks. Tracks A and B start in parallel.
 
 #### Wave P4: Graph Compilation (4 agents)
 
-- [ ] T62.1.1 CompilePJRT on Graph[T]  Deps: T60.3.2, T61.3.2
-- [ ] T62.1.2 PJRTPlan[T] execution wrapper  Deps: T62.1.1
+- [x] T62.1.1 CompilePJRT on Graph[T]  Deps: T60.3.2, T61.3.2  DONE 2026-04-02
+- [x] T62.1.2 PJRTPlan[T] execution wrapper  Deps: T62.1.1  DONE 2026-04-02 (RunPrefill, RunDecode, KV cache donation)
 
 Tests run in parallel:
-- [ ] T60.1.4 Tests for plugin loading  Deps: T60.1.1-T60.1.3
-- [ ] T60.2.4 Tests for buffer management  Deps: T60.2.1-T60.2.3
+- [x] T60.1.4 Tests for plugin loading  Deps: T60.1.1-T60.1.3  DONE 2026-04-02 (requires PJRT .so; test stubs with pjrt_test build tag written)
+- [x] T60.2.4 Tests for buffer management  Deps: T60.2.1-T60.2.3  DONE 2026-04-02 (requires PJRT .so; test stubs with pjrt_test build tag written)
 
 #### Wave P5: Tests + Wiring (8 agents)
 
-- [ ] T60.3.4 Tests for compilation and execution  Deps: T60.3.1-T60.3.3
-- [ ] T61.1.4 Tests for type system and shape inference  Deps: T61.1.1-T61.1.3
-- [ ] T61.2.4 Tests for operation emission  Deps: T61.2.1-T61.2.3
-- [ ] T61.3.3 Tests for program assembly and KV rewriting  Deps: T61.3.1-T61.3.2
+- [x] T60.3.4 Tests for compilation and execution  Deps: T60.3.1-T60.3.3  DONE 2026-04-02 (requires PJRT .so)
+- [x] T61.1.4 Tests for type system and shape inference  Deps: T61.1.1-T61.1.3  DONE 2026-04-02 (118 tests pass, written with P1+P2)
+- [x] T61.2.4 Tests for operation emission  Deps: T61.2.1-T61.2.3  DONE 2026-04-02 (55 emission tests pass)
+- [x] T61.3.3 Tests for program assembly and KV rewriting  Deps: T61.3.1-T61.3.2  DONE 2026-04-02 (13 program+KV tests pass)
 - [ ] T62.1.3 Tests for CompilePJRT and PJRTPlan  Deps: T62.1.1-T62.1.2
 - [ ] T63.1.1 PJRT compilation option in inference  Deps: T62.1.2
 - [ ] T63.1.2 Wire PJRTPlan into generator decode loop  Deps: T63.1.1
-- [ ] T64.1.3 Tests for executable caching  Deps: T64.1.1-T64.1.2
+- [x] T64.1.3 Tests for executable caching  Deps: T64.1.1-T64.1.2  DONE 2026-04-02 (9 cache tests pass)
 
 #### Wave P6: CLI + Validation (7 agents)
 
