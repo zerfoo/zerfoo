@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // trainWindowedEngine implements GPU-accelerated CfC training using float32
@@ -122,10 +125,15 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 	}
 	allParams = append(allParams, paramRef{outBPtrs, outBF32})
 
-	// AdamW state per parameter group.
-	adamStates := make([]adamStateF32, len(allParams))
+	// Wrap parameters as graph.Parameter for optimizer.AdamW.
+	graphParams := make([]*graph.Parameter[float32], len(allParams))
 	for i, p := range allParams {
-		adamStates[i] = adamStateF32{m: make([]float32, len(p.f32)), v: make([]float32, len(p.f32))}
+		t, _ := tensor.New[float32]([]int{len(p.f32)}, p.f32)
+		graphParams[i], _ = graph.NewParameter(fmt.Sprintf("param%d", i), t, tensor.New[float32])
+	}
+	opt := optimizer.NewAdamW(c.engine, float32(config.LR), float32(config.Beta1), float32(config.Beta2), float32(config.Epsilon), float32(config.WeightDecay))
+	if config.GradClip > 0 {
+		opt.SetMaxGradNorm(config.GradClip)
 	}
 
 	result := &TrainResult{LossHistory: make([]float64, config.Epochs)}
@@ -393,31 +401,19 @@ func (c *CfC) trainWindowedEngine(windows [][][]float64, labels []float64, confi
 				}
 			}
 
-			// AdamW update using engine for large parameter tensors.
-			lr := float32(warmupLR(config.LR, epoch, config.WarmupEpochs))
-			tStep := float32(epoch*((nSamples+batchSize-1)/batchSize) + nBatches)
-			beta1 := float32(config.Beta1)
-			beta2 := float32(config.Beta2)
-			eps := float32(config.Epsilon)
-			wd := float32(config.WeightDecay)
+			// Set gradients and apply AdamW step.
+			opt.SetLR(float32(warmupLR(config.LR, epoch, config.WarmupEpochs)))
+			for pi := range allParams {
+				gradT, _ := tensor.New[float32](graphParams[pi].Value.Shape(), allGrads[pi])
+				graphParams[pi].Gradient = gradT
+			}
+			if err := opt.Step(ctx, graphParams); err != nil {
+				return nil, fmt.Errorf("cfc: adamw step: %w", err)
+			}
 
+			// Write back to float32 working copies and float64 model weights.
 			for pi, p := range allParams {
-				st := &adamStates[pi]
-				grads := allGrads[pi]
-
-				if len(p.f32) >= 64 {
-					c.adamStepEngine(ctx, p.f32, grads, st.m, st.v, lr, tStep, beta1, beta2, eps, wd)
-				} else {
-					for i := range p.f32 {
-						st.m[i] = beta1*st.m[i] + (1-beta1)*grads[i]
-						st.v[i] = beta2*st.v[i] + (1-beta2)*grads[i]*grads[i]
-						mHat := st.m[i] / (1 - float32(math.Pow(float64(beta1), float64(tStep))))
-						vHat := st.v[i] / (1 - float32(math.Pow(float64(beta2), float64(tStep))))
-						p.f32[i] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*p.f32[i])
-					}
-				}
-
-				// Write back to float64 model weights.
+				copy(p.f32, graphParams[pi].Value.Data())
 				for i, ptr := range p.f64Ptrs {
 					*ptr = float64(p.f32[i])
 				}
@@ -468,91 +464,3 @@ func cfcScalarMatMul(vec []float32, mat []float32, rows, cols int) []float32 {
 	return out
 }
 
-// adamStepEngine performs a single AdamW update step using engine tensor
-// operations for vectorized math (Sqrt, Div, Add, Sub, MulScalar).
-func (c *CfC) adamStepEngine(ctx context.Context, params, grads, mState, vState []float32, lr, tStep, beta1, beta2, eps, wd float32) {
-	n := len(params)
-
-	// Update moments.
-	for i := 0; i < n; i++ {
-		mState[i] = beta1*mState[i] + (1-beta1)*grads[i]
-		vState[i] = beta2*vState[i] + (1-beta2)*grads[i]*grads[i]
-	}
-
-	mHatCorr := 1 - float32(math.Pow(float64(beta1), float64(tStep)))
-	vHatCorr := 1 - float32(math.Pow(float64(beta2), float64(tStep)))
-
-	shape := []int{n}
-	pT, err := tensor.New[float32](shape, params)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	mT, err := tensor.New[float32](shape, mState)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	vT, err := tensor.New[float32](shape, vState)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-
-	mHat, err := c.engine.DivScalar(ctx, mT, mHatCorr)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	vHat, err := c.engine.DivScalar(ctx, vT, vHatCorr)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	vSqrt, err := c.engine.Sqrt(ctx, vHat)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	vSqrtEps, err := c.engine.AddScalar(ctx, vSqrt, eps)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	adamUpdate, err := c.engine.Div(ctx, mHat, vSqrtEps)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	wdTerm, err := c.engine.MulScalar(ctx, pT, wd)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	total, err := c.engine.Add(ctx, adamUpdate, wdTerm)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	scaled, err := c.engine.MulScalar(ctx, total, lr)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-	newP, err := c.engine.Sub(ctx, pT, scaled)
-	if err != nil {
-		c.adamStepScalar(params, mState, vState, lr, tStep, beta1, beta2, eps, wd)
-		return
-	}
-
-	copy(params, newP.Data())
-}
-
-// adamStepScalar is the scalar fallback for AdamW when engine operations fail.
-func (c *CfC) adamStepScalar(params, mState, vState []float32, lr, tStep, beta1, beta2, eps, wd float32) {
-	for i := range params {
-		mHat := mState[i] / (1 - float32(math.Pow(float64(beta1), float64(tStep))))
-		vHat := vState[i] / (1 - float32(math.Pow(float64(beta2), float64(tStep))))
-		params[i] -= lr * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wd*params[i])
-	}
-}
