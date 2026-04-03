@@ -138,14 +138,14 @@ func TestQuantizedKV_MemoryReductionVsFP32(t *testing.T) {
 	q4Bytes := 0
 	for i := range numLayers {
 		lb := &q4Cache.layers[i]
-		q4Bytes += lb.keyBuf.totalBytes() + lb.valBuf.totalBytes()
+		q4Bytes += lb.keyBuf.(*q4Storage).totalBytes() + lb.valBuf.(*q4Storage).totalBytes()
 	}
 
 	// Measure Q3 memory: packed + centroids for key and val per layer.
 	q3Bytes := 0
 	for i := range numLayers {
 		lb := &q3Cache.layers[i]
-		q3Bytes += lb.keyBuf.totalBytes() + lb.valBuf.totalBytes()
+		q3Bytes += lb.keyBuf.(*q3Storage).totalBytes() + lb.valBuf.(*q3Storage).totalBytes()
 	}
 
 	q4Ratio := float64(fp32Bytes) / float64(q4Bytes)

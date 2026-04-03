@@ -152,18 +152,19 @@ func TestKVCacheQ3_MemoryReduction(t *testing.T) {
 	}
 
 	lb := &cache.layers[0]
-	numElements := lb.keyBuf.n
+	q3Buf := lb.keyBuf.(*q3Storage)
+	numElements := q3Buf.n
 	f32Bytes := numElements * 4
 
 	// Q3 packs 3 bits per element: ceil(n*3/8) bytes.
-	packedBytes := lb.keyBuf.rawBytes()
+	packedBytes := q3Buf.rawBytes()
 	expectedPacked := (numElements*3 + 7) / 8
 	if packedBytes != expectedPacked {
 		t.Errorf("Q3 packed bytes = %d, want %d (0.375 byte/element)", packedBytes, expectedPacked)
 	}
 
 	// Total Q3 bytes (packed + codebook) should be much less than float32.
-	totalQ3 := lb.keyBuf.totalBytes()
+	totalQ3 := q3Buf.totalBytes()
 	ratio := float64(f32Bytes) / float64(totalQ3)
 	if ratio < 3.0 {
 		t.Errorf("Q3 compression ratio = %.1fx, want >= 3x (f32=%d, q3=%d)",
