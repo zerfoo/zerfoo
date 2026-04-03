@@ -141,6 +141,7 @@ var dataAbuseAllowlist = map[string]bool{
 	"timeseries/mamba.go":                       true,
 	"timeseries/foundation.go":                  true,
 	"timeseries/cfc_engine.go":                  true,
+	"timeseries/layernorm_ops.go":               true, // backward pass .Data() — tracked in E67
 	// crossasset/ — legacy direct-slice code tracked for Engine migration
 	"crossasset/gpu_params.go": true,
 	"crossasset/gpu_train.go":  true,
