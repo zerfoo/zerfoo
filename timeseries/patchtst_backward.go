@@ -264,6 +264,7 @@ func (m *PatchTST) forwardF64WithCache(input [][]float64, params *patchTSTParams
 // dOutput: gradient of loss w.r.t. model output [outputDim].
 // Returns gradient vector in same order as flatParams().
 func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cache *patchTSTCacheF64) []float64 {
+	ctx := context.Background()
 	numPatches := m.config.NumPatches()
 	dModel := m.config.DModel
 	nHeads := m.config.NHeads
@@ -297,29 +298,33 @@ func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cac
 		}
 
 		// Head backward: out = flatInput @ headW + headB
-		// dHeadW += flatInput^T @ dChanOut (outer product).
-		// dHeadB += dChanOut.
-		// dFlat = dChanOut @ headW^T.
+		// headW stored as [headIn, outDim] row-major (x @ W convention).
+		// LinearBackward expects [outDim, headIn] (x @ W^T convention).
+		headWT := transposeF64(params.headW, headIn, outDim)
+		headWTensor, _ := tensor.New[float64]([]int{outDim, headIn}, headWT)
+		dChanOutT, _ := tensor.New[float64]([]int{1, outDim}, dChanOut)
+		inputT, _ := tensor.New[float64]([]int{1, headIn}, cc.flatInput)
+
+		dFlatT, dHeadWT, dHeadBT, _ := functional.LinearBackward(ctx, cpuEngine64, dChanOutT, inputT, headWTensor)
+
+		// Accumulate dWeight (returned as [outDim, headIn]) back to [headIn, outDim] layout.
+		dHeadWData := dHeadWT.Data()
 		for k := 0; k < headIn; k++ {
 			for j := 0; j < outDim; j++ {
-				dHeadW[k*outDim+j] += cc.flatInput[k] * dChanOut[j]
+				dHeadW[k*outDim+j] += dHeadWData[j*headIn+k]
 			}
 		}
+		dHeadBData := dHeadBT.Data()
 		for j := 0; j < outDim; j++ {
-			dHeadB[j] += dChanOut[j]
-		}
-		dFlat := make([]float64, headIn)
-		for k := 0; k < headIn; k++ {
-			for j := 0; j < outDim; j++ {
-				dFlat[k] += dChanOut[j] * params.headW[k*outDim+j]
-			}
+			dHeadB[j] += dHeadBData[j]
 		}
 
 		// Unflatten: dX [numPatches][dModel].
+		dFlatData := dFlatT.Data()
 		dX := make([][]float64, numPatches)
 		for p := 0; p < numPatches; p++ {
 			dX[p] = make([]float64, dModel)
-			copy(dX[p], dFlat[p*dModel:(p+1)*dModel])
+			copy(dX[p], dFlatData[p*dModel:(p+1)*dModel])
 		}
 
 		// Backward through encoder layers (reverse order) via shared function.
@@ -334,16 +339,34 @@ func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cac
 		}
 
 		// Patch embedding backward.
-		// embedded[p][j] = sum_k(patches[p][k] * patchEmbW[k*dModel+j]) + patchEmbB[j]
+		// patchEmbW stored as [patchLen, dModel] row-major (x @ W convention).
+		// LinearBackward expects [dModel, patchLen] (x @ W^T convention).
+		patchLen := m.config.PatchLength
+		patchWT := transposeF64(params.patchEmbW, patchLen, dModel)
+		patchWTensor, _ := tensor.New[float64]([]int{dModel, patchLen}, patchWT)
+		dXFlat := make([]float64, numPatches*dModel)
 		for p := 0; p < numPatches; p++ {
-			for k := 0; k < m.config.PatchLength; k++ {
-				for j := 0; j < dModel; j++ {
-					dPatchEmbW[k*dModel+j] += cc.patches[p][k] * dX[p][j]
-				}
-			}
+			copy(dXFlat[p*dModel:], dX[p])
+		}
+		dXT, _ := tensor.New[float64]([]int{numPatches, dModel}, dXFlat)
+		patchesFlat := make([]float64, numPatches*patchLen)
+		for p := 0; p < numPatches; p++ {
+			copy(patchesFlat[p*patchLen:], cc.patches[p])
+		}
+		patchesT, _ := tensor.New[float64]([]int{numPatches, patchLen}, patchesFlat)
+
+		_, dPatchWT, dPatchBT, _ := functional.LinearBackward(ctx, cpuEngine64, dXT, patchesT, patchWTensor)
+
+		// Accumulate dWeight (returned as [dModel, patchLen]) back to [patchLen, dModel] layout.
+		dPatchWData := dPatchWT.Data()
+		for k := 0; k < patchLen; k++ {
 			for j := 0; j < dModel; j++ {
-				dPatchEmbB[j] += dX[p][j]
+				dPatchEmbW[k*dModel+j] += dPatchWData[j*patchLen+k]
 			}
+		}
+		dPatchBData := dPatchBT.Data()
+		for j := 0; j < dModel; j++ {
+			dPatchEmbB[j] += dPatchBData[j]
 		}
 	}
 
@@ -770,6 +793,17 @@ func multiHeadAttentionF64(x [][]float64, layer *encoderLayerF64, nHeads, headDi
 
 	// Output projection.
 	return linearF64(attnOut, layer.oW, layer.oB, dModel, dModel)
+}
+
+// transposeF64 transposes a flat row-major matrix [rows, cols] to [cols, rows].
+func transposeF64(m []float64, rows, cols int) []float64 {
+	out := make([]float64, len(m))
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			out[c*rows+r] = m[r*cols+c]
+		}
+	}
+	return out
 }
 
 // linearF64 computes x @ W + b in float64.
