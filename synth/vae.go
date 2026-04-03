@@ -1,9 +1,18 @@
 package synth
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // VAEConfig controls the architecture and training of a MarketVAE.
@@ -35,21 +44,24 @@ type VAEConfig struct {
 type MarketVAE struct {
 	config VAEConfig
 	rng    *rand.Rand
+	engine compute.Engine[float64]
+	ops    numeric.Arithmetic[float64]
 
-	// Encoder weights: input -> hidden layers -> (mu, logvar).
-	encWeights [][]float64 // [layer][row-major]
-	encBiases  [][]float64
+	// Encoder parameters: input -> hidden layers.
+	encParams []*graph.Parameter[float64] // weights
+	encBParams []*graph.Parameter[float64] // biases
 
 	// Separate output heads for mean and log-variance.
-	muWeights     []float64
-	muBias        []float64
-	logvarWeights []float64
-	logvarBias    []float64
+	muParam     *graph.Parameter[float64]
+	muBParam    *graph.Parameter[float64]
+	logvarParam *graph.Parameter[float64]
+	logvarBParam *graph.Parameter[float64]
 
-	// Decoder weights: latent -> hidden layers (reversed) -> output.
-	decWeights [][]float64
-	decBiases  [][]float64
+	// Decoder parameters: latent -> hidden layers (reversed) -> output.
+	decParams  []*graph.Parameter[float64]
+	decBParams []*graph.Parameter[float64]
 
+	sgd     *optimizer.SGD[float64]
 	trained bool
 }
 
@@ -69,9 +81,15 @@ func NewMarketVAE(config VAEConfig) *MarketVAE {
 	}
 	rng := rand.New(rand.NewSource(seed))
 
+	ops := numeric.Float64Ops{}
+	engine := compute.NewCPUEngine[float64](ops)
+
 	v := &MarketVAE{
 		config: config,
 		rng:    rng,
+		engine: engine,
+		ops:    ops,
+		sgd:    optimizer.NewSGD[float64](engine, ops, float32(config.LearningRate)),
 	}
 	v.initWeights()
 	return v
@@ -82,28 +100,47 @@ func (v *MarketVAE) initWeights() {
 	dims := v.encoderDims()
 
 	// Encoder hidden layers.
-	v.encWeights = make([][]float64, len(dims)-1)
-	v.encBiases = make([][]float64, len(dims)-1)
+	v.encParams = make([]*graph.Parameter[float64], len(dims)-1)
+	v.encBParams = make([]*graph.Parameter[float64], len(dims)-1)
 	for i := 0; i < len(dims)-1; i++ {
-		v.encWeights[i] = v.xavierInit(dims[i], dims[i+1])
-		v.encBiases[i] = make([]float64, dims[i+1])
+		v.encParams[i] = v.makeParam(fmt.Sprintf("enc.w.%d", i), dims[i+1], dims[i])
+		v.encBParams[i] = v.makeBiasParam(fmt.Sprintf("enc.b.%d", i), dims[i+1])
 	}
 
 	// Mu and logvar heads from last hidden dim to latent dim.
 	lastHidden := dims[len(dims)-1]
-	v.muWeights = v.xavierInit(lastHidden, v.config.LatentDim)
-	v.muBias = make([]float64, v.config.LatentDim)
-	v.logvarWeights = v.xavierInit(lastHidden, v.config.LatentDim)
-	v.logvarBias = make([]float64, v.config.LatentDim)
+	v.muParam = v.makeParam("mu.w", v.config.LatentDim, lastHidden)
+	v.muBParam = v.makeBiasParam("mu.b", v.config.LatentDim)
+	v.logvarParam = v.makeParam("logvar.w", v.config.LatentDim, lastHidden)
+	v.logvarBParam = v.makeBiasParam("logvar.b", v.config.LatentDim)
 
 	// Decoder hidden layers (reverse of encoder).
 	dDims := v.decoderDims()
-	v.decWeights = make([][]float64, len(dDims)-1)
-	v.decBiases = make([][]float64, len(dDims)-1)
+	v.decParams = make([]*graph.Parameter[float64], len(dDims)-1)
+	v.decBParams = make([]*graph.Parameter[float64], len(dDims)-1)
 	for i := 0; i < len(dDims)-1; i++ {
-		v.decWeights[i] = v.xavierInit(dDims[i], dDims[i+1])
-		v.decBiases[i] = make([]float64, dDims[i+1])
+		v.decParams[i] = v.makeParam(fmt.Sprintf("dec.w.%d", i), dDims[i+1], dDims[i])
+		v.decBParams[i] = v.makeBiasParam(fmt.Sprintf("dec.b.%d", i), dDims[i+1])
 	}
+}
+
+// makeParam creates a Xavier-initialized weight parameter [outDim, inDim] (row-major).
+func (v *MarketVAE) makeParam(name string, outDim, inDim int) *graph.Parameter[float64] {
+	limit := math.Sqrt(6.0 / float64(inDim+outDim))
+	data := make([]float64, outDim*inDim)
+	for i := range data {
+		data[i] = v.rng.Float64()*2*limit - limit
+	}
+	t, _ := tensor.New[float64]([]int{outDim, inDim}, data)
+	p, _ := graph.NewParameter[float64](name, t, tensor.New[float64])
+	return p
+}
+
+// makeBiasParam creates a zero-initialized bias parameter [dim].
+func (v *MarketVAE) makeBiasParam(name string, dim int) *graph.Parameter[float64] {
+	t, _ := tensor.New[float64]([]int{dim}, make([]float64, dim))
+	p, _ := graph.NewParameter[float64](name, t, tensor.New[float64])
+	return p
 }
 
 // encoderDims returns [inputDim, hidden1, hidden2, ...].
@@ -123,14 +160,15 @@ func (v *MarketVAE) decoderDims() []int {
 	return dims
 }
 
-// xavierInit returns a row-major weight matrix [rows*cols] with Xavier uniform init.
-func (v *MarketVAE) xavierInit(rows, cols int) []float64 {
-	limit := math.Sqrt(6.0 / float64(rows+cols))
-	w := make([]float64, rows*cols)
-	for i := range w {
-		w[i] = v.rng.Float64()*2*limit - limit
-	}
-	return w
+// allParams returns all trainable parameters for SGD.
+func (v *MarketVAE) allParams() []*graph.Parameter[float64] {
+	var params []*graph.Parameter[float64]
+	params = append(params, v.encParams...)
+	params = append(params, v.encBParams...)
+	params = append(params, v.muParam, v.muBParam, v.logvarParam, v.logvarBParam)
+	params = append(params, v.decParams...)
+	params = append(params, v.decBParams...)
+	return params
 }
 
 // Train trains the VAE on the provided data using mini-batch gradient descent.
@@ -154,6 +192,8 @@ func (v *MarketVAE) Train(data [][]float64) error {
 		batchSize = n
 	}
 
+	ctx := context.Background()
+
 	for epoch := 0; epoch < v.config.NEpochs; epoch++ {
 		// Shuffle indices.
 		perm := v.rng.Perm(n)
@@ -167,7 +207,7 @@ func (v *MarketVAE) Train(data [][]float64) error {
 			for i, idx := range perm[start:end] {
 				batch[i] = data[idx]
 			}
-			v.trainBatch(batch)
+			v.trainBatch(ctx, batch)
 		}
 	}
 
@@ -176,148 +216,148 @@ func (v *MarketVAE) Train(data [][]float64) error {
 }
 
 // trainBatch performs a single gradient descent step on a mini-batch.
-func (v *MarketVAE) trainBatch(batch [][]float64) {
-	batchLen := len(batch)
-	lr := v.config.LearningRate
-
-	// Accumulate gradients.
-	encWGrad := make([][]float64, len(v.encWeights))
-	encBGrad := make([][]float64, len(v.encBiases))
-	for i := range v.encWeights {
-		encWGrad[i] = make([]float64, len(v.encWeights[i]))
-		encBGrad[i] = make([]float64, len(v.encBiases[i]))
+func (v *MarketVAE) trainBatch(ctx context.Context, batch [][]float64) {
+	params := v.allParams()
+	for _, p := range params {
+		p.ClearGradient()
 	}
-	muWGrad := make([]float64, len(v.muWeights))
-	muBGrad := make([]float64, len(v.muBias))
-	logvarWGrad := make([]float64, len(v.logvarWeights))
-	logvarBGrad := make([]float64, len(v.logvarBias))
 
-	decWGrad := make([][]float64, len(v.decWeights))
-	decBGrad := make([][]float64, len(v.decBiases))
-	for i := range v.decWeights {
-		decWGrad[i] = make([]float64, len(v.decWeights[i]))
-		decBGrad[i] = make([]float64, len(v.decBiases[i]))
-	}
+	eDims := v.encoderDims()
+	lastH := eDims[len(eDims)-1]
+	latent := v.config.LatentDim
 
 	for _, x := range batch {
 		// Forward pass through encoder.
-		encActs := v.encoderForward(x)
+		encActs := v.encoderForward(ctx, x)
 
 		// Last encoder activation.
 		h := encActs[len(encActs)-1]
 
-		// Compute mu and logvar.
-		eDims := v.encoderDims()
-		lastH := eDims[len(eDims)-1]
-		latent := v.config.LatentDim
-
-		mu := linearForward(h, v.muWeights, v.muBias, lastH, latent)
-		logvar := linearForward(h, v.logvarWeights, v.logvarBias, lastH, latent)
+		// Compute mu and logvar via functional.Linear.
+		mu := v.linearFwd(ctx, h, v.muParam.Value, v.muBParam.Value)
+		logvar := v.linearFwd(ctx, h, v.logvarParam.Value, v.logvarBParam.Value)
 
 		// Reparameterization trick: z = mu + exp(0.5 * logvar) * eps.
+		muData := mu.Data()
+		logvarData := logvar.Data()
 		eps := make([]float64, latent)
-		z := make([]float64, latent)
+		zData := make([]float64, latent)
 		for i := 0; i < latent; i++ {
 			eps[i] = v.rng.NormFloat64()
-			z[i] = mu[i] + math.Exp(0.5*logvar[i])*eps[i]
+			zData[i] = muData[i] + math.Exp(0.5*logvarData[i])*eps[i]
 		}
+		z, _ := tensor.New[float64]([]int{1, latent}, zData)
 
 		// Forward pass through decoder.
-		decActs := v.decoderForward(z)
+		decActs := v.decoderForward(ctx, z)
 		recon := decActs[len(decActs)-1]
 
 		// Compute gradients via backpropagation.
 		// dL/d_recon = 2*(recon - x) / inputDim (MSE gradient).
-		dRecon := make([]float64, v.config.InputDim)
-		for i := range dRecon {
-			dRecon[i] = 2 * (recon[i] - x[i]) / float64(v.config.InputDim)
+		reconData := recon.Data()
+		dReconData := make([]float64, v.config.InputDim)
+		for i := range dReconData {
+			dReconData[i] = 2 * (reconData[i] - x[i]) / float64(v.config.InputDim)
 		}
+		dRecon, _ := tensor.New[float64]([]int{1, v.config.InputDim}, dReconData)
 
 		// Backprop through decoder.
 		dDims := v.decoderDims()
-		dZ := v.backpropDecoder(decActs, dRecon, dDims, decWGrad, decBGrad)
+		dZ := v.backpropDecoder(ctx, decActs, dRecon, dDims)
 
 		// Backprop through reparameterization.
-		dMu := make([]float64, latent)
-		dLogvar := make([]float64, latent)
+		dZData := dZ.Data()
+		dMuData := make([]float64, latent)
+		dLogvarData := make([]float64, latent)
 		for i := 0; i < latent; i++ {
 			// Reconstruction gradient.
-			dMu[i] = dZ[i]
-			dLogvar[i] = dZ[i] * 0.5 * math.Exp(0.5*logvar[i]) * eps[i]
+			dMuData[i] = dZData[i]
+			dLogvarData[i] = dZData[i] * 0.5 * math.Exp(0.5*logvarData[i]) * eps[i]
 
-			// KL divergence gradient: d/dmu[0.5*(mu^2 + exp(logvar) - logvar - 1)]
-			dMu[i] += mu[i] / float64(v.config.InputDim)
-			dLogvar[i] += 0.5 * (math.Exp(logvar[i]) - 1) / float64(v.config.InputDim)
+			// KL divergence gradient.
+			dMuData[i] += muData[i] / float64(v.config.InputDim)
+			dLogvarData[i] += 0.5 * (math.Exp(logvarData[i]) - 1) / float64(v.config.InputDim)
 		}
+		dMu, _ := tensor.New[float64]([]int{1, latent}, dMuData)
+		dLogvar, _ := tensor.New[float64]([]int{1, latent}, dLogvarData)
 
 		// Backprop through mu/logvar linear layers.
-		dH_mu := linearBackward(h, dMu, v.muWeights, lastH, latent, muWGrad, muBGrad)
-		dH_logvar := linearBackward(h, dLogvar, v.logvarWeights, lastH, latent, logvarWGrad, logvarBGrad)
+		dH_mu := v.linearBwd(ctx, h, dMu, v.muParam, v.muBParam, lastH, latent)
+		dH_logvar := v.linearBwd(ctx, h, dLogvar, v.logvarParam, v.logvarBParam, lastH, latent)
 
-		dH := make([]float64, lastH)
-		for i := range dH {
-			dH[i] = dH_mu[i] + dH_logvar[i]
-		}
+		dH, _ := v.engine.Add(ctx, dH_mu, dH_logvar)
 
 		// Backprop through encoder.
-		v.backpropEncoder(encActs, dH, eDims, encWGrad, encBGrad)
+		v.backpropEncoder(ctx, encActs, dH, eDims)
 	}
 
-	// Apply gradients (average over batch).
-	scale := lr / float64(batchLen)
-	for i := range v.encWeights {
-		for j := range v.encWeights[i] {
-			v.encWeights[i][j] -= scale * encWGrad[i][j]
-		}
-		for j := range v.encBiases[i] {
-			v.encBiases[i][j] -= scale * encBGrad[i][j]
-		}
+	// Scale gradients by 1/batchLen.
+	scale := 1.0 / float64(len(batch))
+	for _, p := range params {
+		p.Gradient, _ = v.engine.MulScalar(ctx, p.Gradient, scale)
 	}
-	for j := range v.muWeights {
-		v.muWeights[j] -= scale * muWGrad[j]
-	}
-	for j := range v.muBias {
-		v.muBias[j] -= scale * muBGrad[j]
-	}
-	for j := range v.logvarWeights {
-		v.logvarWeights[j] -= scale * logvarWGrad[j]
-	}
-	for j := range v.logvarBias {
-		v.logvarBias[j] -= scale * logvarBGrad[j]
-	}
-	for i := range v.decWeights {
-		for j := range v.decWeights[i] {
-			v.decWeights[i][j] -= scale * decWGrad[i][j]
-		}
-		for j := range v.decBiases[i] {
-			v.decBiases[i][j] -= scale * decBGrad[i][j]
-		}
-	}
+
+	// Apply gradients via SGD.
+	_ = v.sgd.Step(ctx, params)
+}
+
+// linearFwd computes functional.Linear: y = x @ weight^T + bias.
+// Input x is []float64 (1D), weight is [outDim, inDim], bias is [outDim].
+// Returns tensor [1, outDim].
+func (v *MarketVAE) linearFwd(ctx context.Context, input, weight, bias *tensor.TensorNumeric[float64]) *tensor.TensorNumeric[float64] {
+	result, _ := functional.Linear(ctx, v.engine, input, weight, bias)
+	return result
+}
+
+// linearBwd backpropagates through a linear layer, accumulates gradients into param.
+// Returns dInput [1, inDim].
+func (v *MarketVAE) linearBwd(ctx context.Context, input, dOutput *tensor.TensorNumeric[float64],
+	wParam, bParam *graph.Parameter[float64], inDim, outDim int) *tensor.TensorNumeric[float64] {
+
+	// dInput = dOutput @ weight (weight is [outDim, inDim])
+	dInput, _ := v.engine.MatMul(ctx, dOutput, wParam.Value)
+
+	// dW = dOutput^T @ input → [outDim, inDim]
+	dOutputT, _ := v.engine.Transpose(ctx, dOutput, []int{1, 0})
+	dW, _ := v.engine.MatMul(ctx, dOutputT, input)
+	_ = wParam.AddGradient(dW)
+
+	// dB = dOutput reshaped to [outDim]
+	dBData := make([]float64, outDim)
+	copy(dBData, dOutput.Data())
+	dB, _ := tensor.New[float64]([]int{outDim}, dBData)
+	_ = bParam.AddGradient(dB)
+
+	return dInput
 }
 
 // encoderForward runs the encoder and returns activations at each layer.
-// activations[0] = input, activations[i+1] = relu(W*activations[i] + b).
-func (v *MarketVAE) encoderForward(x []float64) [][]float64 {
+// activations[0] = input [1, inputDim], activations[i+1] = relu(Linear(activations[i])).
+func (v *MarketVAE) encoderForward(ctx context.Context, x []float64) []*tensor.TensorNumeric[float64] {
 	dims := v.encoderDims()
-	acts := make([][]float64, len(dims))
-	acts[0] = x
+	acts := make([]*tensor.TensorNumeric[float64], len(dims))
+	t, _ := tensor.New[float64]([]int{1, dims[0]}, x)
+	acts[0] = t
 	for i := 0; i < len(dims)-1; i++ {
-		acts[i+1] = reluForward(linearForward(acts[i], v.encWeights[i], v.encBiases[i], dims[i], dims[i+1]))
+		linear := v.linearFwd(ctx, acts[i], v.encParams[i].Value, v.encBParams[i].Value)
+		relu, _ := functional.ReLU(ctx, v.engine, v.ops, linear)
+		acts[i+1] = relu
 	}
 	return acts
 }
 
 // decoderForward runs the decoder and returns activations at each layer.
-// activations[0] = z, activations[i+1] = relu(W*acts[i] + b) for hidden layers.
+// activations[0] = z [1, latentDim], activations[i+1] = relu(Linear(acts[i])) for hidden layers.
 // The final layer has no activation (linear output).
-func (v *MarketVAE) decoderForward(z []float64) [][]float64 {
+func (v *MarketVAE) decoderForward(ctx context.Context, z *tensor.TensorNumeric[float64]) []*tensor.TensorNumeric[float64] {
 	dims := v.decoderDims()
-	acts := make([][]float64, len(dims))
+	acts := make([]*tensor.TensorNumeric[float64], len(dims))
 	acts[0] = z
 	for i := 0; i < len(dims)-1; i++ {
-		linear := linearForward(acts[i], v.decWeights[i], v.decBiases[i], dims[i], dims[i+1])
+		linear := v.linearFwd(ctx, acts[i], v.decParams[i].Value, v.decBParams[i].Value)
 		if i < len(dims)-2 {
-			acts[i+1] = reluForward(linear)
+			relu, _ := functional.ReLU(ctx, v.engine, v.ops, linear)
+			acts[i+1] = relu
 		} else {
 			acts[i+1] = linear // No activation on output.
 		}
@@ -327,40 +367,56 @@ func (v *MarketVAE) decoderForward(z []float64) [][]float64 {
 
 // backpropDecoder backpropagates through the decoder, accumulating gradients.
 // Returns the gradient with respect to the decoder input (z).
-func (v *MarketVAE) backpropDecoder(acts [][]float64, dOutput []float64, dims []int, wGrad, bGrad [][]float64) []float64 {
+func (v *MarketVAE) backpropDecoder(ctx context.Context, acts []*tensor.TensorNumeric[float64], dOutput *tensor.TensorNumeric[float64], dims []int) *tensor.TensorNumeric[float64] {
 	d := dOutput
 	for i := len(dims) - 2; i >= 0; i-- {
 		if i < len(dims)-2 {
-			// Apply ReLU derivative.
-			d = reluBackward(acts[i+1], d)
+			// Apply ReLU derivative: gradient passes through where activation > 0.
+			d = v.reluBwd(ctx, acts[i+1], d)
 		}
-		d = linearBackward(acts[i], d, v.decWeights[i], dims[i], dims[i+1], wGrad[i], bGrad[i])
+		d = v.linearBwd(ctx, acts[i], d, v.decParams[i], v.decBParams[i], dims[i], dims[i+1])
 	}
 	return d
 }
 
 // backpropEncoder backpropagates through the encoder, accumulating gradients.
-func (v *MarketVAE) backpropEncoder(acts [][]float64, dOutput []float64, dims []int, wGrad, bGrad [][]float64) {
+func (v *MarketVAE) backpropEncoder(ctx context.Context, acts []*tensor.TensorNumeric[float64], dOutput *tensor.TensorNumeric[float64], dims []int) {
 	d := dOutput
 	for i := len(dims) - 2; i >= 0; i-- {
-		d = reluBackward(acts[i+1], d)
-		d = linearBackward(acts[i], d, v.encWeights[i], dims[i], dims[i+1], wGrad[i], bGrad[i])
+		d = v.reluBwd(ctx, acts[i+1], d)
+		d = v.linearBwd(ctx, acts[i], d, v.encParams[i], v.encBParams[i], dims[i], dims[i+1])
 	}
+}
+
+// reluBwd applies the ReLU derivative via Engine: gradient passes through where activation > 0.
+func (v *MarketVAE) reluBwd(ctx context.Context, activation, dOutput *tensor.TensorNumeric[float64]) *tensor.TensorNumeric[float64] {
+	actData := activation.Data()
+	dData := dOutput.Data()
+	result := make([]float64, len(dData))
+	for i := range result {
+		if actData[i] > 0 {
+			result[i] = dData[i]
+		}
+	}
+	t, _ := tensor.New[float64](activation.Shape(), result)
+	return t
 }
 
 // Generate produces n synthetic samples by sampling from the latent space
 // and decoding. The latent samples are drawn from the standard normal prior N(0,I).
 func (v *MarketVAE) Generate(n int) [][]float64 {
+	ctx := context.Background()
 	result := make([][]float64, n)
 	for i := 0; i < n; i++ {
-		z := make([]float64, v.config.LatentDim)
-		for j := range z {
-			z[j] = v.rng.NormFloat64()
+		zData := make([]float64, v.config.LatentDim)
+		for j := range zData {
+			zData[j] = v.rng.NormFloat64()
 		}
-		acts := v.decoderForward(z)
+		z, _ := tensor.New[float64]([]int{1, v.config.LatentDim}, zData)
+		acts := v.decoderForward(ctx, z)
 		recon := acts[len(acts)-1]
-		out := make([]float64, len(recon))
-		copy(out, recon)
+		out := make([]float64, v.config.InputDim)
+		copy(out, recon.Data())
 		result[i] = out
 	}
 	return result
@@ -369,66 +425,15 @@ func (v *MarketVAE) Generate(n int) [][]float64 {
 // Encode maps input data to latent representations by returning the
 // mean vector of the encoder's posterior distribution for each sample.
 func (v *MarketVAE) Encode(data [][]float64) [][]float64 {
-	eDims := v.encoderDims()
-	lastH := eDims[len(eDims)-1]
-	latent := v.config.LatentDim
-
+	ctx := context.Background()
 	result := make([][]float64, len(data))
 	for i, x := range data {
-		encActs := v.encoderForward(x)
+		encActs := v.encoderForward(ctx, x)
 		h := encActs[len(encActs)-1]
-		mu := linearForward(h, v.muWeights, v.muBias, lastH, latent)
-		out := make([]float64, len(mu))
-		copy(out, mu)
+		mu := v.linearFwd(ctx, h, v.muParam.Value, v.muBParam.Value)
+		out := make([]float64, v.config.LatentDim)
+		copy(out, mu.Data())
 		result[i] = out
 	}
 	return result
-}
-
-// linearForward computes y = W^T * x + b where W is [inDim x outDim] row-major.
-func linearForward(x, w, b []float64, inDim, outDim int) []float64 {
-	y := make([]float64, outDim)
-	for j := 0; j < outDim; j++ {
-		y[j] = b[j]
-		for i := 0; i < inDim; i++ {
-			y[j] += x[i] * w[i*outDim+j]
-		}
-	}
-	return y
-}
-
-// linearBackward computes gradients for a linear layer and returns dInput.
-// Accumulates into wGrad and bGrad.
-func linearBackward(input, dOutput, weights []float64, inDim, outDim int, wGrad, bGrad []float64) []float64 {
-	dInput := make([]float64, inDim)
-	for j := 0; j < outDim; j++ {
-		bGrad[j] += dOutput[j]
-		for i := 0; i < inDim; i++ {
-			wGrad[i*outDim+j] += input[i] * dOutput[j]
-			dInput[i] += weights[i*outDim+j] * dOutput[j]
-		}
-	}
-	return dInput
-}
-
-// reluForward applies ReLU element-wise.
-func reluForward(x []float64) []float64 {
-	y := make([]float64, len(x))
-	for i, v := range x {
-		if v > 0 {
-			y[i] = v
-		}
-	}
-	return y
-}
-
-// reluBackward applies the ReLU derivative: gradient passes through where activation > 0.
-func reluBackward(activation, dOutput []float64) []float64 {
-	d := make([]float64, len(dOutput))
-	for i := range d {
-		if activation[i] > 0 {
-			d[i] = dOutput[i]
-		}
-	}
-	return d
 }
