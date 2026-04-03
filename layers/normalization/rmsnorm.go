@@ -116,79 +116,14 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	r.inputTensor = input // Cache for backward pass
 	r.outputShape = input.Shape()
 
-	// Use fused single-pass kernel for float32 (inference hot path).
-	// GPU path: uses FusedRMSNormer interface for single-kernel GPU RMSNorm.
-	if fused, ok := r.engine.(compute.FusedRMSNormer); ok {
-		if f32Input, iof := any(input).(*tensor.TensorNumeric[float32]); iof {
-			f32Weight, wOk := any(r.gain.Value).(*tensor.TensorNumeric[float32])
-			f32Eps, eOk := any(r.epsilon).(float32)
-			if wOk && eOk && f32Weight.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, scales, err := fused.FusedRMSNormGPU(f32Input, f32Weight, f32Eps)
-				if err != nil {
-					return nil, err
-				}
-				if scales != nil {
-					r.rms = any(scales).(*tensor.TensorNumeric[T])
-				}
-				return any(out).(*tensor.TensorNumeric[T]), nil
-			}
-		}
-	}
-	// CPU path: uses standalone FusedRMSNorm function.
-	if _, isCPU := r.engine.(*compute.CPUEngine[T]); isCPU {
-		if f32Input, ok := any(input).(*tensor.TensorNumeric[float32]); ok {
-			f32Weight, wOk := any(r.gain.Value).(*tensor.TensorNumeric[float32])
-			f32Eps, eOk := any(r.epsilon).(float32)
-			if wOk && eOk && f32Weight.Size() == f32Input.Shape()[len(f32Input.Shape())-1] {
-				out, scales, err := compute.FusedRMSNorm(f32Input, f32Weight, f32Eps)
-				if err != nil {
-					return nil, err
-				}
-				r.rms = any(scales).(*tensor.TensorNumeric[T])
-				return any(out).(*tensor.TensorNumeric[T]), nil
-			}
-		}
-	}
-
-	// Fallback: multi-step path for non-float32 types or when fused is disabled.
-	// Calculate sum of squares along the last dimension
-	squared, err := r.engine.Mul(ctx, input, input, nil)
+	res, err := rmsNormalize(ctx, r.engine, input, r.gain.Value, r.epsilon)
 	if err != nil {
 		return nil, err
 	}
 
-	lastDim := len(input.Shape()) - 1
+	r.rms = res.rsqrt // Cache for backward pass
 
-	meanSq, err := r.engine.ReduceMean(ctx, squared, lastDim, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add epsilon and compute reciprocal square root (rsqrt)
-	meanSqPlusEpsilon, err := r.engine.AddScalar(ctx, meanSq, r.epsilon, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	rsqrt, err := r.engine.Rsqrt(ctx, meanSqPlusEpsilon, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r.rms = rsqrt // Cache for backward pass
-
-	// Normalize input and scale by gain
-	normalized, err := r.engine.Mul(ctx, input, rsqrt, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	output, err := r.engine.Mul(ctx, normalized, r.gain.Value, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return output, nil
+	return res.output, nil
 }
 
 // Backward computes the backward pass of the RMSNorm layer.
