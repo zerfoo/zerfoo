@@ -19,7 +19,7 @@ func TestBlockAttnResForward(t *testing.T) {
 	blockSize := 3
 	epsilon := float32(1e-6)
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, dim, epsilon)
 	if err != nil {
 		t.Fatalf("NewBlockAttnRes: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestBlockAttnResForward(t *testing.T) {
 func TestBlockAttnResBlockBoundary(t *testing.T) {
 	// Verify that intra-block is additive: with 0 completed blocks and
 	// a partial block, the output should be the partial block itself
-	// (single-element softmax → weight 1.0 → identity).
+	// (single-element softmax -> weight 1.0 -> identity).
 	ctx := context.Background()
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
@@ -103,7 +103,7 @@ func TestBlockAttnResBlockBoundary(t *testing.T) {
 	dim := 4
 	epsilon := float32(1e-6)
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, 3, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, 3, dim, epsilon)
 	if err != nil {
 		t.Fatalf("NewBlockAttnRes: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBlockAttnResBlockBoundary(t *testing.T) {
 		t.Fatalf("create partial: %v", err)
 	}
 
-	// No completed blocks — only partial block.
+	// No completed blocks -- only partial block.
 	out, err := bar.Forward(ctx, query, nil, partial)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -142,7 +142,7 @@ func TestBlockAttnResEmptyBlocks(t *testing.T) {
 	dim := 8
 	epsilon := float32(1e-6)
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, 4, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, 4, dim, epsilon)
 	if err != nil {
 		t.Fatalf("NewBlockAttnRes: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestBlockAttnResEmptyBlocks(t *testing.T) {
 		t.Errorf("shape = %v, want [%d]", out.Shape(), dim)
 	}
 
-	// Single block → output = partial block exactly.
+	// Single block -> output = partial block exactly.
 	outData := out.Data()
 	for i, want := range partialData {
 		if diff := math.Abs(float64(outData[i] - want)); diff > 1e-5 {
@@ -186,7 +186,7 @@ func TestBlockAttnResAttentionWeights(t *testing.T) {
 	dim := 4
 	epsilon := float32(1e-6)
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, 2, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, 2, dim, epsilon)
 	if err != nil {
 		t.Fatalf("NewBlockAttnRes: %v", err)
 	}
@@ -270,12 +270,12 @@ func TestBlockAttnResInvalidBlockSize(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
 
-	_, err := NewBlockAttnRes[float32](engine, ops, 0, 1e-6)
+	_, err := NewBlockAttnRes[float32](engine, ops, 0, 4, 1e-6)
 	if err == nil {
 		t.Error("expected error for blockSize=0, got nil")
 	}
 
-	_, err = NewBlockAttnRes[float32](engine, ops, -1, 1e-6)
+	_, err = NewBlockAttnRes[float32](engine, ops, -1, 4, 1e-6)
 	if err == nil {
 		t.Error("expected error for blockSize=-1, got nil")
 	}
