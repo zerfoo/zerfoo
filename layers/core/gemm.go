@@ -34,87 +34,69 @@ func (g *Gemm[T]) Attributes() map[string]any {
 func (g *Gemm[T]) OutputShape() []int               { return nil }
 func (g *Gemm[T]) Parameters() []*graph.Parameter[T] { return nil }
 
-func (g *Gemm[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+func (g *Gemm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 2 || len(inputs) > 3 {
 		return nil, fmt.Errorf("Gemm requires 2 or 3 inputs, got %d", len(inputs))
 	}
 
-	aData := inputs[0].Data()
-	bData := inputs[1].Data()
-	aShape := inputs[0].Shape()
-	bShape := inputs[1].Shape()
+	a, b := inputs[0], inputs[1]
 
-	if len(aShape) != 2 || len(bShape) != 2 {
-		return nil, fmt.Errorf("Gemm: inputs must be 2D, got %v and %v", aShape, bShape)
+	if len(a.Shape()) != 2 || len(b.Shape()) != 2 {
+		return nil, fmt.Errorf("Gemm: inputs must be 2D, got %v and %v", a.Shape(), b.Shape())
 	}
 
-	M, K := aShape[0], aShape[1]
+	// Apply transposes if needed.
+	var err error
 	if g.transA {
-		M, K = K, M
+		a, err = g.engine.Transpose(ctx, a, []int{1, 0})
+		if err != nil {
+			return nil, fmt.Errorf("Gemm: transA: %w", err)
+		}
 	}
-	K2, N := bShape[0], bShape[1]
 	if g.transB {
-		K2, N = N, K2
-	}
-	if K != K2 {
-		return nil, fmt.Errorf("Gemm: inner dims mismatch: %d vs %d", K, K2)
+		b, err = g.engine.Transpose(ctx, b, []int{1, 0})
+		if err != nil {
+			return nil, fmt.Errorf("Gemm: transB: %w", err)
+		}
 	}
 
-	alpha := T(g.alpha)
-	out := make([]T, M*N)
+	// Validate inner dimensions.
+	if a.Shape()[1] != b.Shape()[0] {
+		return nil, fmt.Errorf("Gemm: inner dims mismatch: %d vs %d", a.Shape()[1], b.Shape()[0])
+	}
 
-	// Compute alpha * A' * B'
-	for i := 0; i < M; i++ {
-		for j := 0; j < N; j++ {
-			var sum T
-			for k := 0; k < K; k++ {
-				var av, bv T
-				if g.transA {
-					av = aData[k*aShape[1]+i]
-				} else {
-					av = aData[i*aShape[1]+k]
-				}
-				if g.transB {
-					bv = bData[j*bShape[1]+k]
-				} else {
-					bv = bData[k*bShape[1]+j]
-				}
-				sum += av * bv
-			}
-			out[i*N+j] = alpha * sum
+	// Compute A' * B'.
+	result, err := g.engine.MatMul(ctx, a, b)
+	if err != nil {
+		return nil, fmt.Errorf("Gemm: matmul: %w", err)
+	}
+
+	// Scale by alpha if needed.
+	if g.alpha != 1.0 {
+		alpha := T(g.alpha)
+		result, err = g.engine.UnaryOp(ctx, result, func(v T) T { return alpha * v })
+		if err != nil {
+			return nil, fmt.Errorf("Gemm: alpha scale: %w", err)
 		}
 	}
 
 	// Add beta * C if provided.
 	if len(inputs) == 3 {
-		beta := T(g.beta)
-		cData := inputs[2].Data()
-		cShape := inputs[2].Shape()
-		switch {
-		case len(cData) == 1:
-			// Scalar broadcast.
-			cv := beta * cData[0]
-			for i := range out {
-				out[i] += cv
+		c := inputs[2]
+		if g.beta != 1.0 {
+			beta := T(g.beta)
+			c, err = g.engine.UnaryOp(ctx, c, func(v T) T { return beta * v })
+			if err != nil {
+				return nil, fmt.Errorf("Gemm: beta scale: %w", err)
 			}
-		case len(cShape) == 1 && cShape[0] == N:
-			// Bias vector broadcast across rows.
-			for i := 0; i < M; i++ {
-				for j := 0; j < N; j++ {
-					out[i*N+j] += beta * cData[j]
-				}
-			}
-		case len(cData) == M*N:
-			// Full matrix.
-			for i := range out {
-				out[i] += beta * cData[i]
-			}
-		default:
-			return nil, fmt.Errorf("Gemm: C shape %v incompatible with output [%d, %d]", cShape, M, N)
+		}
+		result, err = g.engine.Add(ctx, result, c)
+		if err != nil {
+			return nil, fmt.Errorf("Gemm: add bias: %w", err)
 		}
 	}
 
-	return tensor.New([]int{M, N}, out)
+	return result, nil
 }
 
 func (g *Gemm[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
