@@ -160,6 +160,31 @@ func TestMultiHeadAttention(t *testing.T) {
 	}
 }
 
+func TestMultiHeadAttention_InvalidInputs(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	ctx := context.Background()
+
+	t.Run("non_2D_query", func(t *testing.T) {
+		q, _ := tensor.New[float32]([]int{2, 3, 4}, make([]float32, 24))
+		k, _ := tensor.New[float32]([]int{2, 3, 4}, make([]float32, 24))
+		v, _ := tensor.New[float32]([]int{2, 3, 4}, make([]float32, 24))
+		_, err := MultiHeadAttention(ctx, engine, q, k, v, 2)
+		if err == nil {
+			t.Fatal("expected error for non-2D query")
+		}
+	})
+
+	t.Run("d_model_not_divisible_by_nHeads", func(t *testing.T) {
+		q, _ := tensor.New[float32]([]int{3, 5}, make([]float32, 15))
+		k, _ := tensor.New[float32]([]int{3, 5}, make([]float32, 15))
+		v, _ := tensor.New[float32]([]int{3, 5}, make([]float32, 15))
+		_, err := MultiHeadAttention(ctx, engine, q, k, v, 3)
+		if err == nil {
+			t.Fatal("expected error when d_model not divisible by nHeads")
+		}
+	})
+}
+
 func TestMultiHeadAttention_SingleHead(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
