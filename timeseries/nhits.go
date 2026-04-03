@@ -9,9 +9,11 @@ import (
 	"os"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/training/scheduler"
+
+	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // NHiTSConfig holds the configuration for an NHiTS model.
@@ -448,32 +450,26 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 	result := &TrainResult{}
 
 	// Collect all parameters in order: per stack, mlp layers (w,b) then output proj (w,b).
-	type paramRef struct {
-		data []float32
-	}
-	var allParams []paramRef
+	var graphParams []*graph.Parameter[float32]
 	for si := range n.stacks {
 		stack := &n.stacks[si]
 		for li := range stack.mlpLayers {
-			allParams = append(allParams,
-				paramRef{stack.mlpLayers[li].weights.Data()},
-				paramRef{stack.mlpLayers[li].biases.Data()},
-			)
+			wParam, _ := graph.NewParameter(fmt.Sprintf("stack%d.mlp%d.w", si, li), stack.mlpLayers[li].weights, tensor.New[float32])
+			bParam, _ := graph.NewParameter(fmt.Sprintf("stack%d.mlp%d.b", si, li), stack.mlpLayers[li].biases, tensor.New[float32])
+			graphParams = append(graphParams, wParam, bParam)
 		}
-		allParams = append(allParams,
-			paramRef{stack.outputProj.weights.Data()},
-			paramRef{stack.outputProj.biases.Data()},
-		)
+		wParam, _ := graph.NewParameter(fmt.Sprintf("stack%d.out.w", si), stack.outputProj.weights, tensor.New[float32])
+		bParam, _ := graph.NewParameter(fmt.Sprintf("stack%d.out.b", si), stack.outputProj.biases, tensor.New[float32])
+		graphParams = append(graphParams, wParam, bParam)
 	}
 
-	// AdamW state per parameter.
-	paramStates := make([]adamStateF32, len(allParams))
-	for i, p := range allParams {
-		paramStates[i] = adamStateF32{m: make([]float32, len(p.data)), v: make([]float32, len(p.data))}
-	}
-
+	// AdamW optimizer from training/optimizer.
 	beta1, beta2, eps := float32(0.9), float32(0.999), float32(1e-8)
 	wd := float32(1e-4)
+	opt := optimizer.NewAdamW(n.engine, float32(baseLR), beta1, beta2, eps, wd)
+	if config.GradClip > 0 {
+		opt.SetMaxGradNorm(config.GradClip)
+	}
 
 	for epoch := 0; epoch < epochs; epoch++ {
 		epochLoss := 0.0
@@ -524,7 +520,7 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 			nBatches++
 
 			// Backward pass per stack, collecting all gradients.
-			allGrads := make([][]float32, len(allParams))
+			allGrads := make([][]float32, len(graphParams))
 			paramIdx := 0
 
 			for si := range n.stacks {
@@ -549,11 +545,17 @@ func (n *NHiTS) trainWindowedEngine(windows [][][]float64, labels []float64, con
 				paramIdx += len(stack.mlpLayers)*2 + 2
 			}
 
-			// Apply all gradients with AdamW (with LR warmup).
-			lr := float32(scheduler.WarmupLR(baseLR, epoch, config.WarmupEpochs))
-			for i := range allParams {
-				clipGradientsF32(allGrads[i], config.GradClip)
-				adamWUpdateF32(allParams[i].data, allGrads[i], &paramStates[i], beta1, beta2, eps, lr, wd, epoch+1)
+			// Set gradients on graph parameters and apply AdamW step.
+			opt.SetLR(float32(warmupLR(baseLR, epoch, config.WarmupEpochs)))
+			for i, gp := range graphParams {
+				gradT, err := tensor.New[float32](gp.Value.Shape(), allGrads[i])
+				if err != nil {
+					return nil, fmt.Errorf("nhits train: gradient tensor: %w", err)
+				}
+				gp.Gradient = gradT
+			}
+			if err := opt.Step(ctx, graphParams); err != nil {
+				return nil, fmt.Errorf("nhits train: adamw step: %w", err)
 			}
 		}
 
