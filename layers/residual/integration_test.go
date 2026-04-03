@@ -22,7 +22,7 @@ func TestBlockAttnResIntegration(t *testing.T) {
 	epsilon := float32(1e-6)
 	numLayers := 4
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, dim, epsilon)
 	if err != nil {
 		t.Fatalf("NewBlockAttnRes: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestBlockAttnResScaling(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			bar, err := NewBlockAttnRes[float32](engine, ops, tc.blockSize, epsilon)
+			bar, err := NewBlockAttnRes[float32](engine, ops, tc.blockSize, dim, epsilon)
 			if err != nil {
 				t.Fatalf("NewBlockAttnRes(blockSize=%d): %v", tc.blockSize, err)
 			}
@@ -386,7 +386,7 @@ func BenchmarkBlockAttnRes(b *testing.B) {
 	}
 	partialBlock := currentBlock
 
-	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, epsilon)
+	bar, err := NewBlockAttnRes[float32](engine, ops, blockSize, dim, epsilon)
 	if err != nil {
 		b.Fatalf("NewBlockAttnRes: %v", err)
 	}

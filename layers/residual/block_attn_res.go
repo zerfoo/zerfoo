@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
@@ -25,42 +26,7 @@ type BlockAttnRes[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	ops       numeric.Arithmetic[T]
 	blockSize int
-	norm      *rmsNormLite[T]
-}
-
-// rmsNormLite is a lightweight RMSNorm for key computation in block attention.
-// Unlike the full RMSNorm layer, it has no learnable gain parameter — it only
-// normalizes by the root mean square.
-type rmsNormLite[T tensor.Numeric] struct {
-	engine  compute.Engine[T]
-	ops     numeric.Arithmetic[T]
-	epsilon T
-}
-
-// forward applies RMSNorm normalization to input without learnable gain.
-func (n *rmsNormLite[T]) forward(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	squared, err := n.engine.Mul(ctx, input, input)
-	if err != nil {
-		return nil, err
-	}
-
-	lastDim := len(input.Shape()) - 1
-	meanSq, err := n.engine.ReduceMean(ctx, squared, lastDim, true)
-	if err != nil {
-		return nil, err
-	}
-
-	meanSqEps, err := n.engine.AddScalar(ctx, meanSq, n.epsilon)
-	if err != nil {
-		return nil, err
-	}
-
-	rsqrt, err := n.engine.Rsqrt(ctx, meanSqEps)
-	if err != nil {
-		return nil, err
-	}
-
-	return n.engine.Mul(ctx, input, rsqrt)
+	norm      *normalization.RMSNorm[T]
 }
 
 // NewBlockAttnRes creates a new BlockAttnRes layer.
@@ -69,21 +35,23 @@ func (n *rmsNormLite[T]) forward(ctx context.Context, input *tensor.TensorNumeri
 //   - engine: the compute engine for all arithmetic
 //   - ops: arithmetic operations for type T
 //   - blockSize: number of layers per block (S)
+//   - modelDim: hidden dimension size (for RMSNorm initialization)
 //   - epsilon: small constant for RMSNorm numerical stability
-func NewBlockAttnRes[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], blockSize int, epsilon T) (*BlockAttnRes[T], error) {
+func NewBlockAttnRes[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], blockSize, modelDim int, epsilon T) (*BlockAttnRes[T], error) {
 	if blockSize <= 0 {
 		return nil, fmt.Errorf("BlockAttnRes: blockSize must be positive, got %d", blockSize)
+	}
+
+	norm, err := normalization.NewRMSNorm[T]("block_attn_res_norm", engine, ops, modelDim, normalization.WithRMSNormEpsilon[T](epsilon))
+	if err != nil {
+		return nil, fmt.Errorf("BlockAttnRes: create RMSNorm: %w", err)
 	}
 
 	return &BlockAttnRes[T]{
 		engine:    engine,
 		ops:       ops,
 		blockSize: blockSize,
-		norm: &rmsNormLite[T]{
-			engine:  engine,
-			ops:     ops,
-			epsilon: epsilon,
-		},
+		norm:      norm,
 	}, nil
 }
 
@@ -92,10 +60,11 @@ func (b *BlockAttnRes[T]) BlockSize() int {
 	return b.blockSize
 }
 
-// Parameters returns the learnable parameters (none for BlockAttnRes —
-// the RMSNorm here has no learnable gain).
+// Parameters returns the learnable parameters.
+// The RMSNorm gain is initialized to unit (ones) and not trained by BlockAttnRes,
+// but is exposed for completeness.
 func (b *BlockAttnRes[T]) Parameters() []*graph.Parameter[T] {
-	return nil
+	return b.norm.Parameters()
 }
 
 // Forward computes the block attention residual.
@@ -145,7 +114,7 @@ func (b *BlockAttnRes[T]) Forward(
 	}
 
 	// Step (b): Apply RMSNorm to get keys K [n, dim].
-	k, err := b.norm.forward(ctx, v)
+	k, err := b.norm.Forward(ctx, v)
 	if err != nil {
 		return nil, fmt.Errorf("BlockAttnRes: norm keys: %w", err)
 	}
@@ -159,7 +128,7 @@ func (b *BlockAttnRes[T]) Forward(
 		}
 	}
 
-	// Step (c): Compute logits = query * K^T → [1, n].
+	// Step (c): Compute logits = query * K^T -> [1, n].
 	kT, err := b.engine.Transpose(ctx, k, []int{1, 0})
 	if err != nil {
 		return nil, fmt.Errorf("BlockAttnRes: transpose keys: %w", err)
@@ -170,14 +139,14 @@ func (b *BlockAttnRes[T]) Forward(
 		return nil, fmt.Errorf("BlockAttnRes: matmul logits: %w", err)
 	}
 
-	// Step (d): alpha = softmax(logits) along last dim → [1, n].
+	// Step (d): alpha = softmax(logits) along last dim -> [1, n].
 	alpha, err := b.engine.Softmax(ctx, logits, -1)
 	if err != nil {
 		return nil, fmt.Errorf("BlockAttnRes: softmax: %w", err)
 	}
 
-	// Step (e): h = alpha * V → [1, dim].
-	// alpha is [1, n], V is [n, dim] → matmul gives [1, dim].
+	// Step (e): h = alpha * V -> [1, dim].
+	// alpha is [1, n], V is [n, dim] -> matmul gives [1, dim].
 	h, err := b.engine.MatMul(ctx, alpha, v)
 	if err != nil {
 		return nil, fmt.Errorf("BlockAttnRes: matmul output: %w", err)
@@ -227,7 +196,7 @@ func (b *BlockAttnRes[T]) AttentionWeights(
 		return nil, err
 	}
 
-	k, err := b.norm.forward(ctx, v)
+	k, err := b.norm.Forward(ctx, v)
 	if err != nil {
 		return nil, err
 	}

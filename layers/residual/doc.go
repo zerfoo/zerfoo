@@ -51,7 +51,7 @@
 // block representations:
 //
 //	blockSize := numLayers / 8 // N=8 blocks
-//	bar, _ := residual.NewBlockAttnRes[float32](engine, ops, blockSize, 1e-5)
+//	bar, _ := residual.NewBlockAttnRes[float32](engine, ops, blockSize, modelDim, 1e-5)
 //
 //	var completedBlocks []*tensor.TensorNumeric[T]
 //	var blockAccum *tensor.TensorNumeric[T] // running sum within current block
