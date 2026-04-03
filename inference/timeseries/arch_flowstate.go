@@ -254,11 +254,22 @@ func (n *flowStateNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 	// --- Step 1: Per-channel patch embedding ---
 	// Process each channel independently through patch embed.
 	// PatchEmbed expects [batch, seq_len] per channel.
+	// Transpose [batch, seq_len, num_channels] -> [batch, num_channels, seq_len],
+	// then split on axis 1 to get per-channel tensors.
+	xT, err := n.engine.Transpose(ctx, x, []int{0, 2, 1})
+	if err != nil {
+		return nil, fmt.Errorf("transpose for channel split: %w", err)
+	}
+	channelSlices, err := n.engine.Split(ctx, xT, numCh, 1)
+	if err != nil {
+		return nil, fmt.Errorf("split channels: %w", err)
+	}
 	channelEmbeddings := make([]*tensor.TensorNumeric[T], numCh)
 	for c := range numCh {
-		varSlice, err := n.extractChannel(x, batch, seqLen, numCh, c)
+		// Reshape [batch, 1, seq_len] -> [batch, seq_len]
+		varSlice, err := n.engine.Reshape(ctx, channelSlices[c], []int{batch, seqLen})
 		if err != nil {
-			return nil, fmt.Errorf("extract channel %d: %w", c, err)
+			return nil, fmt.Errorf("reshape channel %d: %w", c, err)
 		}
 
 		embedded, err := n.patchEmbed.Forward(ctx, varSlice)
@@ -309,7 +320,7 @@ func (n *flowStateNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 	}
 
 	// Final norm.
-	hidden, err := n.finalNorm.Forward(ctx, hidden)
+	hidden, err = n.finalNorm.Forward(ctx, hidden)
 	if err != nil {
 		return nil, fmt.Errorf("final norm: %w", err)
 	}
@@ -353,18 +364,6 @@ func (n *flowStateNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tensor
 	}
 
 	return output, nil
-}
-
-// extractChannel extracts channel c from [batch, seq_len, num_channels] as [batch, seq_len].
-func (n *flowStateNode[T]) extractChannel(x *tensor.TensorNumeric[T], batch, seqLen, numCh, c int) (*tensor.TensorNumeric[T], error) {
-	data := x.Data()
-	out := make([]T, batch*seqLen)
-	for b := range batch {
-		for s := range seqLen {
-			out[b*seqLen+s] = data[b*seqLen*numCh+s*numCh+c]
-		}
-	}
-	return tensor.New[T]([]int{batch, seqLen}, out)
 }
 
 // evaluateFourierBasis evaluates the Fourier basis at discrete time points
