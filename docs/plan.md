@@ -41,6 +41,9 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
 - E72: Architecture enforcement test (2/2 COMPLETE -- test created + added to CI)
 - E73: Generate KV cache consolidation (3/3 COMPLETE -- base extraction, migration, validation done)
+- E74: Timeseries backward pass composition (0/14 -- add backward ops to layers/functional, migrate 3 backward files + encoder backward)
+- E75: Inference timeseries .Data() elimination (0/9 -- replace unjustified .Data() access in 6 arch builders)
+- E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -76,6 +79,25 @@ All internal-consumer-blocking work is complete:
 | E28 | Federated Learning | Complete |
 | E29 | On-Device Inference | Complete except T29.4 (benchmark) |
 | E33 | Performance Target 1000+ tok/s | Complete |
+
+### Composition Remediation (Complete)
+
+| Epic | Description | Status |
+|------|-------------|--------|
+| E52 | DRY Composition Refactoring (timeseries/) | Complete (7/7) |
+| E53 | Unified Training Forward/Backward | Complete (6/6) |
+| E57 | Fix DGX Spark Build Regression | Complete (3/3) |
+| E59 | Remove gonum Dependency | Complete (7/7) |
+| E62 | Auxiliary Training Package Composition | Complete (7/7) |
+| E65 | MoE Layer Composition Fix | Complete (3/3) |
+| E66 | Functional Layer API for Training | Complete (5/5) |
+| E67 | Timeseries Full Layers Migration | Complete (11/11) |
+| E68 | CrossAsset Full Layers Migration | Complete (4/4) |
+| E69 | Training Loss/Optimizer Engine Compliance | Complete (6/6) |
+| E70 | Intra-Layers Violations Cleanup | Complete (10/10) |
+| E71 | Experimental Package Migration | Complete (5/5) |
+| E72 | Architecture Enforcement Test | Complete (2/2) |
+| E73 | Generate KV Cache Consolidation | Complete (3/3) |
 
 ### Priority 0: Security Remediation
 
@@ -273,23 +295,29 @@ All 127 tasks completed by 2026-03-27 (PRs #262-#265). Full details in git histo
   all fully independent of each other and of E34-E40.
 - Tracks L, M, N, O are fully independent of all research tracks.
 
-### Composition Remediation Tracks (E66-E73)
+### Composition Remediation Tracks (E66-E76)
 
-| Track | Tasks | Description |
-|-------|-------|-------------|
-| U: Functional API | E66 T66.1.* | Prerequisite: layers/functional package |
-| V: Timeseries Migration | E67 T67.*.* | Biggest migration (18K lines) |
-| W: CrossAsset Migration | E68 T68.*.* | Unify CPU/GPU paths |
-| X: Training Engine Compliance | E69 T69.*.* | Loss + optimizer fixes |
-| Y: Intra-Layers Cleanup | E70 T70.*.* | Fix layers/ internal violations |
-| Z: Experimental Migration | E71 T71.*.* | rl/, synth/, meta/, shared/ |
-| AA: Enforcement | E72 T72.*.* | Architecture test CI gate |
-| AB: KV Cache | E73 T73.*.* | generate/ cache consolidation |
+| Track | Tasks | Description | Status |
+|-------|-------|-------------|--------|
+| U: Functional API | E66 T66.1.* | Prerequisite: layers/functional package | COMPLETE |
+| V: Timeseries Forward Migration | E67 T67.*.* | Forward path migration (18K lines) | COMPLETE |
+| W: CrossAsset Migration | E68 T68.*.* | Unify CPU/GPU paths | COMPLETE |
+| X: Training Engine Compliance | E69 T69.*.* | Loss + optimizer fixes | COMPLETE |
+| Y: Intra-Layers Cleanup | E70 T70.*.* | Fix layers/ internal violations | COMPLETE |
+| Z: Experimental Migration | E71 T71.*.* | rl/, synth/, meta/, shared/ | COMPLETE |
+| AA: Enforcement | E72 T72.*.* | Architecture test CI gate | COMPLETE |
+| AB: KV Cache | E73 T73.*.* | generate/ cache consolidation | COMPLETE |
+| AC: Backward Composition | E74 T74.*.* | Add functional backward ops, migrate 3 backward files | NEW |
+| AD: Inference TS .Data() | E75 T75.*.* | Replace unjustified .Data() in 6 arch builders | NEW |
+| AE: Allowlist Cleanup | E76 T76.*.* | Remove timeseries/ from arch test allowlist | NEW (deps: AC) |
 
 ### Composition Sync Points
 
-- Tracks V, W, Z depend on Track U (E66 functional API is prerequisite).
-- Tracks X, Y, AA, AB are fully independent of Track U.
+- Tracks U-AB: ALL COMPLETE as of 2026-04-03.
+- Track AC (E74) depends on Track U (E66) which is complete.
+- Track AD (E75) is fully independent of Track AC.
+- Track AE (E76) depends on Track AC (E74 must complete before allowlist removal).
+- Tracks AC and AD can run in parallel.
 - All composition tracks are independent of research tracks (E34-E44).
 
 ### Composition Waves
@@ -362,6 +390,60 @@ Deps: Wave 5
 
 - [x] T68.1.4 CrossAsset delete + validate  verifies: [infrastructure]  DONE 2026-04-03 PR #326 (-1,357 lines, 41% reduction)
 
+#### Composition Wave 7: Remaining ztensor + DGX parity (3 agents)
+Independent of Waves 1-6. Can start immediately.
+
+- [ ] T61.3.2 DGX parity tests for inference builders  verifies: [UC-010]
+- [ ] T63.1.1 Design quantized matmul dispatcher (ztensor)  verifies: [infrastructure]
+- [ ] T63.1.2 Replace 16 methods with dispatcher (ztensor)  verifies: [infrastructure]
+
+#### Composition Wave 8: ztensor validation (3 agents)
+Deps: Wave 7 (T63.1.2)
+
+- [ ] T63.2.1 Benchmark quantized matmul (ztensor)  verifies: [infrastructure]
+- [ ] T63.2.2 Full ztensor test suite  verifies: [infrastructure]
+- [ ] T64.1.1 Split gpu_engine.go into focused files (ztensor)  verifies: [infrastructure]
+
+#### Composition Wave 9: Backward API + Inference .Data() (10 agents)
+Tracks AC and AD run in parallel. Can start immediately (no deps on Waves 7-8).
+
+- [ ] T74.1.1 functional.LinearBackward  verifies: [infrastructure]
+- [ ] T74.1.2 functional.LayerNormBackward  verifies: [infrastructure]
+- [ ] T74.1.3 functional.GELUBackward  verifies: [infrastructure]
+- [ ] T74.1.4 functional.SoftmaxBackward  verifies: [infrastructure]
+- [ ] T75.1.1 arch_timemixer.go .Data() elimination  verifies: [UC-TS02]
+- [ ] T75.1.2 arch_tft.go .Data() elimination  verifies: [UC-TS01]
+- [ ] T75.1.3 arch_ttm.go .Data() elimination  verifies: [UC-TS01]
+- [ ] T75.1.4 arch_tirex.go .Data() elimination  verifies: [UC-TS01]
+- [ ] T75.1.5 arch_tspulse.go .Data() elimination  verifies: [UC-TS01]
+- [ ] T75.1.6 arch_flowstate.go .Data() elimination  verifies: [UC-TS01]
+
+#### Composition Wave 10: Composed backward ops + inference validation (5 agents)
+Deps: Wave 9 (T74.1.1-T74.1.4 complete)
+
+- [ ] T74.1.5 functional.MultiHeadAttentionBackward  verifies: [infrastructure]
+- [ ] T74.1.6 functional.MLPBackward  verifies: [infrastructure]
+- [ ] T75.2.1 Inference timeseries tests  verifies: [UC-TS01, UC-TS02]
+- [ ] T75.2.2 Inference timeseries linters + .Data() count  verifies: [infrastructure]
+- [ ] T75.2.3 Verify unchanged files  verifies: [infrastructure]
+
+#### Composition Wave 11: Backward migration (5 agents)
+Deps: Wave 10 (T74.1.5, T74.1.6 complete, T74.1.7 tests)
+
+- [ ] T74.1.7 Backward functional API tests  verifies: [infrastructure]
+- [ ] T74.2.1 patchtst_backward.go migration  verifies: [UC-TS01]
+- [ ] T74.2.2 patchtst_encoder.go backward migration  verifies: [UC-TS01]
+- [ ] T74.2.3 itransformer_backward.go migration  verifies: [UC-TS01]
+- [ ] T74.2.4 timemixer_backward.go migration  verifies: [UC-TS02]
+
+#### Composition Wave 12: Final validation + allowlist cleanup (4 agents)
+Deps: Wave 11
+
+- [ ] T74.3.1 + T74.3.2 Timeseries tests + linters  verifies: [UC-TS01, UC-TS02]
+- [ ] T74.3.3 Line count verification  verifies: [infrastructure]
+- [ ] T76.1.1 Remove timeseries/ from allowlist  verifies: [infrastructure]
+- [ ] T76.1.2 Verify CI green  verifies: [infrastructure]
+
 ### Completed Research Waves (1-8, all tasks done)
 
 Waves 1-8 (127 tasks across 10 tracks A-T) completed 2026-03-27.
@@ -386,7 +468,8 @@ Task details removed during /tidy --apply. See git history for full lists.
 | M7 | Platform Maturity | E28-E30, WE12 | $75M ARR; federated; on-device | 2034-12-31 |
 | M8 | Market Leadership | E31-E33 | $150M+ ARR; IPO filed | 2036-12-31 |
 | M-COMP | Composition Remediation Phase 1 | E61-E65 | Inference builders, tabular/gnn/modeldsl, MoE compose from layers/; ztensor god file consolidated | 2026-Q2 |
-| M-COMP-2 | Composition Remediation Phase 2 | E66-E73 | All packages compose from layers/ or Engine; architecture test in CI; zero private math reimplementations outside internal/ | 2026-Q3 |
+| M-COMP-2 | Composition Remediation Phase 2 | E66-E73 | All forward paths compose from layers/ or Engine; architecture test in CI | DONE 2026-04-03 |
+| M-COMP-3 | Composition Remediation Phase 3 | E74-E76 | All backward passes compose from functional backward ops; inference .Data() eliminated; timeseries/ removed from arch test allowlist | 2026-Q3 |
 
 ---
 
@@ -420,6 +503,10 @@ Task details removed during /tidy --apply. See git history for full lists.
 | R52 | Quantized matmul dispatcher adds dispatch overhead (E63) | Medium | Low | Dispatcher is a type-switch resolved at call time, not runtime polymorphism; benchmark validates <2% regression |
 | R53 | gpu_engine.go file split creates merge conflicts with in-flight PRs (E64) | Low | Medium | Schedule E64 during a merge freeze or after all ztensor PRs land |
 | R54 | MoE engine op refactoring changes expert routing behavior (E65) | Medium | Low | Top-K routing is unchanged; only bias/sigmoid/softmax are refactored; parity test validates |
+| R61 | Functional backward ops produce numerically different gradients than hand-coded loops (E74) | High | Medium | Numerical gradient check (finite differences) for each op; 10-epoch training loss parity within 1e-4 |
+| R62 | MultiHeadAttentionBackward complexity with batched heads (E74) | Medium | Medium | Start from itransformer_backward.go reference; validate per-head gradient isolation |
+| R63 | Replacing .Data() with engine.Slice in inference/timeseries/ changes node count (E75) | Low | Low | Benchmark inference throughput before/after; engine.Slice is lightweight |
+| R64 | Removing timeseries/ from arch test allowlist too early (E76) | Low | Medium | Only remove after E74 fully complete and all tests pass |
 
 ---
 
@@ -514,6 +601,37 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-04-03: Composition remediation phase 3 -- added E74-E76 (25 tasks, 6 waves)
+
+Analyzed docs/dirty-architecture.md revision 2 to identify all remaining violations
+after E66-E73 completion. Three categories of remaining work:
+
+1. **timeseries/ backward passes** (2,048 lines across 3 files + encoder backward):
+   All raw f64 loops with zero composition from layers/. No functional backward API
+   exists yet. Added E74 (14 tasks) to create functional backward ops
+   (LinearBackward, LayerNormBackward, GELUBackward, SoftmaxBackward,
+   MultiHeadAttentionBackward, MLPBackward) and migrate all 3 backward files.
+
+2. **inference/timeseries/ .Data() access** (29 calls, 25 unjustified across 6 files):
+   Raw tensor access bypassing engine for softmax, ReLU, buffer copy, channel
+   extraction, gather/scatter. Added E75 (9 tasks) to replace with engine.Slice,
+   engine.Reshape, layers/activations.Softmax. 4 justified .Data() calls in
+   arch_chronos.go and arch_regime.go are excluded from migration.
+
+3. **Architecture test allowlist**: timeseries/ remains on allowlist due to backward
+   passes. Added E76 (2 tasks) to remove after E74 completes.
+
+Also remaining from prior phases:
+- T61.3.2: DGX parity test for inference builders (moved to Wave 7)
+- E63 (5 tasks): Quantized matmul consolidation in ztensor (Wave 7-8)
+- E64 (3 tasks): GPU engine file decomposition in ztensor (Wave 8)
+
+Added 6 new composition waves (7-12). Waves 7-8 handle ztensor work. Waves 9-12
+handle backward composition and inference .Data() elimination in parallel.
+Wave 9 saturates 10 agents (4 backward API tasks + 6 inference builder tasks).
+
+Added 4 risks (R61-R64), milestone M-COMP-3, updated tracks AC/AD/AE.
+
 ### 2026-04-02: Composition remediation phase 2 -- added E66-E73 (48 tasks, 6 waves)
 
 Extended docs/dirty-architecture.md with intra-layers/ violations (10 findings
@@ -537,40 +655,11 @@ with E66 + E69 + E70 tasks (all zero-dependency). Waves 2-6 cascade dependencies
 
 Added milestone M-COMP-2. Added 6 risks (R55-R60).
 
-### 2026-04-02: Dirty-architecture cleanup -- routed findings to proper tiers, added E61-E65
-
-Routed docs/dirty-architecture.md (13 findings from 5-agent composition audit) to
-proper documentation tiers:
-- Tier 1 (design.md): Added section 2.5 "Composition Principle" with enforcement
-  status table, positive exemplar (inference path), known violations, justified
-  exceptions, and god object status.
-- Tier 2 (ADR): Created docs/adr/082-composition-remediation-strategy.md with
-  5-phase remediation plan.
-- Tier 3 (devlog.md): Added audit entry with all 13 findings, statistics, worst
-  offenders with file:line references, and prior work cross-references.
-- Plan: Added 5 new epics (E61-E65, 28 tasks total) for unfixed composition
-  violations. Added 5 new risks (R50-R54). Added milestone M-COMP.
-- Deleted docs/dirty-architecture.md after routing all content.
-
-New epics:
-- E61 (10 tasks): Inference builder composition -- migrate 6 arch builders to layers/
-- E62 (7 tasks): Auxiliary training package composition -- tabular, gnn, modeldsl
-- E63 (5 tasks): Quantized matmul consolidation in ztensor -- single dispatcher
-- E64 (3 tasks): GPU engine file decomposition in ztensor -- split god file
-- E65 (3 tasks): MoE layer composition fix -- replace raw .Data()
-
-ADRs created: docs/adr/082-composition-remediation-strategy.md
-
-Older progress log entries (2026-03-27 through 2026-04-01) removed during
-2026-04-03 /tidy --apply. See git history for full changelog.
-
----
-
-Older progress log entries (2026-03-26 through 2026-04-01) removed during
-2026-04-03 /tidy --apply. Key additions: E34-E44 research epics (127 tasks,
-all complete), E45 verification remediation (3 tasks, complete), E46-E49
-ecosystem/training/foundation epics, E50-E65 composition remediation phase 1
-(partially complete). See git history for full changelog.
+Older progress log entries (2026-03-26 through 2026-04-02) removed during
+2026-04-03 plan trim. Key additions: E34-E44 research epics (127 tasks,
+all complete), E45-E65 epics, E61-E65 composition remediation phase 1,
+dirty-architecture audit and routing to proper tiers (ADR-082, design.md,
+devlog.md). See git history for full changelog.
 
 ---
 
@@ -597,6 +686,16 @@ ecosystem/training/foundation epics, E50-E65 composition remediation phase 1
 - E43 (Flash Decode) goes in ztensor (CUDA kernel) and zerfoo (attention wiring).
 - E44 (Multi-LoRA) is entirely in zerfoo. Adapter format uses standard GGUF.
 - GGUF is the sole model format (ADR-037).
+- E74 (backward composition) is the biggest remaining composition task. Key insight:
+  layers/functional currently only has forward ops. Backward ops must be added first
+  (T74.1.1-T74.1.7), then 3 backward files + encoder backward can migrate (T74.2.*).
+  The backward ops should use engine operations internally, NOT raw loops.
+  Reference implementations: itransformer_backward.go:503-537 (LayerNorm backward),
+  itransformer_backward.go:542-555 (softmax backward), timemixer_backward.go:457-496
+  (MLP backward). All use the same numerical formulas -- just needs engine wrapping.
+- E75 (inference .Data()) is mostly engine.Slice and engine.Reshape replacements.
+  Do NOT touch arch_chronos.go or arch_regime.go (justified .Data() uses).
+- E63/E64 (ztensor) must be committed in the ztensor repo, not zerfoo.
 - Gemma3-1B Q4_K_M is cached on DGX Spark for integration tests.
 - E47 (batched training) is entirely in zerfoo/timeseries/. Key insight: replace
   per-sample GPU calls with batch-level tensor operations. DataLoader converts
@@ -633,6 +732,7 @@ ecosystem/training/foundation epics, E50-E65 composition remediation phase 1
 | UC-TS01 | Train time series efficiently | Train PatchTST/iTransformer on 28K+ rows with GPU-batched forward in < 60s |
 | UC-TS02 | TimeMixer forecasting | Multi-scale decomposition MLP training and inference |
 | UC-TS03 | Foundation model zero-shot | Zero-shot forecasting via Chronos-2/TiRex/Moirai-2 gRPC bridge |
+| UC-TS04 | Train time series with composed backward | Backward passes use functional backward ops (not raw f64 loops) for maintainability and future GPU acceleration |
 
 ---
 
@@ -1729,226 +1829,15 @@ eliminating ALL intermediate synchronization.
 
 ---
 
-## E52: DRY Composition Refactoring (timeseries/)
+## E52: DRY Composition Refactoring (timeseries/) (COMPLETE)
 
-**Problem:** Deep-review audit found ~5,329 duplicated lines (28%) in timeseries/ (19,150 lines).
-7 GELU implementations, 11 layer norms, 3 matMul wrappers, 4 adamState structs, 3 clipGradients,
-2 identical copyMatrix functions. TTM has character-for-character copies of PatchTST engine wrappers.
-
-**Goal:** Eliminate unjustified duplication via shared helper files. Reduce timeseries/ by ~500 lines
-while preserving all test behavior. Do NOT touch patchtst_gpu_train.go (performance-justified).
-
-### E52.1: Shared Math Ops
-
-- [x] T52.1.1 Create timeseries/math_ops.go with generic GELU and helpers  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Create timeseries/math_ops.go with:
-  (1) `func geluScalar[T ~float32 | ~float64](x T) T` -- replaces 4 implementations:
-      patchtst.go:695, patchtst_backward.go:677, itransformer.go:353, ttm.go:1436
-  (2) `func geluDeriv[T ~float32 | ~float64](x T) T` -- replaces 3 implementations:
-      patchtst_backward.go:655, patchtst_gpu_train.go:1416, itransformer_backward.go:6
-  (3) `func copyMatrix(x [][]float64) [][]float64` -- replaces 2 implementations:
-      patchtst_backward.go:668, itransformer_backward.go:163 (deepCopy2D)
-  (4) `func softmaxF64(x []float64) []float64` -- replaces itransformer.go:309
-  Delete the old implementations and update all callers.
-  Acceptance: go build ./timeseries/ clean. go test ./timeseries/ passes.
-
-### E52.2: Shared Engine Wrappers
-
-- [x] T52.2.1 Extract matMulEngine and linearF64Engine as free functions  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Move from PatchTST receiver methods to package-level functions:
-  (1) `func matMulEngine(engine compute.Engine[float32], ctx context.Context, a, b [][]float64) ([][]float64, error)`
-      Currently: patchtst_engine.go:21 (PatchTST method), ttm_train_engine.go:15 (TTM method -- exact copy)
-  (2) `func linearF64Engine(engine compute.Engine[float32], ctx context.Context, x [][]float64, w, b []float64, inDim, outDim int) ([][]float64, error)`
-      Currently: patchtst_engine.go:98 (PatchTST), ttm_train_engine.go:72 (TTM -- exact copy)
-  Delete TTM copies. Update PatchTST and TTM callers to use free functions.
-  Acceptance: go build clean. go test passes. TTM and PatchTST engine training produce same results.
-
-### E52.3: Shared AdamW F32
-
-- [x] T52.3.1 Create timeseries/adamw_f32.go for shared f32 optimizer ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Create timeseries/adamw_f32.go with:
-  (1) `type adamStateF32 struct { m, v []float32 }` -- replaces 4 definitions:
-      nhits.go:276, cfc_engine.go:130, frets_engine.go:113, dlinear_engine.go:52
-  (2) `func clipGradientsF32(grad []float32, maxNorm float64)` -- replaces:
-      nhits.go:634 (NHiTS method)
-  (3) `func adamWUpdateF32(params, grads []float32, state *adamStateF32, ...)` -- replaces:
-      nhits.go:652 (NHiTS method)
-  Delete old per-backend definitions. Update callers.
-  Acceptance: go build clean. go test passes.
-
-### E52.4: TimeMixer TrainConfig
-
-- [x] T52.4.1 Fix TimeMixer TrainWindowed to accept TrainConfig  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Change timemixer.go:433 from:
-    `func (m *TimeMixer) TrainWindowed(windows, labels, epochs int) (*TrainResult, error)`
-  To:
-    `func (m *TimeMixer) TrainWindowed(windows [][][]float64, labels []float64, config TrainConfig) (*TrainResult, error)`
-  Use config.Epochs, config.LR, config.BatchSize etc. internally.
-  Update all callers (tests, adapters).
-  Acceptance: go build clean. go test passes. TimeMixer can use shared training infra.
-
-### E52.5: Consolidated Layer Norm
-
-- [x] T52.5.1 Create timeseries/layernorm_ops.go with canonical implementations  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Deps: T52.1.1
-  Create timeseries/layernorm_ops.go with 5 canonical functions:
-  (1) `func layerNormF64(x [][]float64, scale, bias []float64, d int) [][]float64`
-      Replaces: patchtst_backward.go:993
-  (2) `func layerNormF64WithCache(x [][]float64, scale, bias []float64, d int) (normed, centered [][]float64, invStd []float64)`
-      Replaces: patchtst_backward.go:556
-  (3) `func layerNormBackwardF64(dOut, centered [][]float64, invStd []float64, scale, dScale, dBias []float64, d int) [][]float64`
-      Replaces: patchtst_backward.go:593, ttm.go:1300
-  (4) `func layerNorm1D(x, scale, bias []float64) []float64`
-      Replaces: itransformer.go:329
-  (5) `func layerNorm1DCached(x, scale, bias []float64) (normed []float64, mu, std float64)`
-      Replaces: itransformer_backward.go:290
-  Engine-based layer norms (PatchTST.layerNorm, TTM.layerNormF32, TFT.layerNorm) stay as
-  methods since they use different tensor APIs, but extract the common body into a helper.
-  Delete old implementations. Update all callers.
-  Acceptance: go build clean. go test passes. Gradient checks still within tolerance.
-
-### E52.6: Validation
-
-- [x] T52.6.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
-  Acceptance: go vet ./timeseries/ clean. go test -race ./timeseries/ passes.
-  Verify: no unused imports, no unused functions from old implementations.
-
-### E52 Parallel Work
-
-#### Waves
-
-##### Wave E52-1: Independent refactors (4 agents)
-
-- [x] T52.1.1 Shared math ops (GELU, copyMatrix, softmax)
-- [x] T52.2.1 Shared engine wrappers (matMulEngine, linearF64Engine)
-- [x] T52.3.1 Shared AdamW F32
-- [x] T52.4.1 TimeMixer TrainConfig fix
-
-##### Wave E52-2: Dependent + validation (2 agents)
-
-- [x] T52.5.1 Consolidated layer norm  Deps: T52.1.1
-- [x] T52.6.1 Run go vet and tests  Deps: T52.1.1, T52.2.1, T52.3.1, T52.4.1, T52.5.1
+7 tasks complete. Eliminated ~5,329 duplicated lines in timeseries/ via shared math_ops, adamw_f32, layernorm_ops, and engine wrappers. Details in git history.
 
 ---
 
-## E53: Unified Training Forward/Backward (GPU Path DRY)
+## E53: Unified Training Forward/Backward (COMPLETE)
 
-**Problem:** PatchTST has 5 forward pass implementations and 3 backward pass implementations
-across 5 files (6,196 lines). The deep-review audit found they share identical control flow
-but differ in numeric type (float32 tensor vs float64 slice) and dispatch mechanism (engine
-ops vs manual loops). After E50 moved layer norm and GELU to engine ops, patchtst_gpu_train.go
-now uses the same engine API as inference -- the structural gap has narrowed.
-
-**Goal:** Write the forward and backward encoder logic once, parameterized by a dispatch
-strategy, eliminating 3 of the 5 forward implementations and 2 of the 3 backward
-implementations. Target: reduce PatchTST from 6,196 lines to ~3,500 lines.
-
-**Approach:** Extract the encoder forward and backward as generic functions that accept an
-engine and operate on `*tensor.TensorNumeric[float32]`. The CPU f64 path (patchtst_backward.go)
-stays separate because it uses a fundamentally different data layout ([][]float64 slices).
-The engine-based f64 path (patchtst_engine.go) converts f64->f32 for engine calls anyway,
-so it can delegate to the shared f32 encoder. The GPU path (patchtst_gpu_train.go) already
-uses f32 tensors and engine ops -- it becomes the reference implementation.
-
-**Files retained after refactoring:**
-- `patchtst.go` -- config, constructor, inference Forward (delegates to shared encoder)
-- `patchtst_backward.go` -- CPU f64 training (kept: different data layout, no engine)
-- `patchtst_gpu_train.go` -- GPU f32 fused training (becomes the shared encoder source)
-- `patchtst_encoder.go` (NEW) -- shared encoder forward/backward with caching
-
-**Files eliminated:**
-- `patchtst_engine.go` -- replaced by shared encoder + f64<->f32 adapter
-- `patchtst_backward_engine.go` -- replaced by shared encoder backward
-
-### E53.1: Extract Shared Encoder Forward
-
-- [x] T53.1.1 Create patchtst_encoder.go with shared encoderForward  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03 PR #327
-  File: timeseries/patchtst_encoder.go (NEW)
-  Extract from patchtst_gpu_train.go the encoder forward logic as:
-  `func encoderForward(ctx, engine, x *tensor.TensorNumeric[float32], layers []gpuEncoderLayer,
-  nLayers, totalRows, dModel, nHeads, headDim, ffnDim int) (*tensor.TensorNumeric[float32], []gpuBatchLayerCache, error)`
-  This function takes a float32 tensor input and engine, runs the full encoder
-  (layer norm, Q/K/V, attention, FFN, residuals), and returns the output plus
-  per-layer caches needed for backward.
-  The function is called by:
-  (1) patchtst_gpu_train.go trainWindowedGPU (replaces inline forward)
-  (2) patchtst.go inference Forward (replaces current per-channel loop)
-  Acceptance: go build clean. go test passes. Inference output unchanged.
-
-### E53.2: Extract Shared Encoder Backward
-
-- [x] T53.2.1 Add encoderBackward to patchtst_encoder.go  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T53.1.1
-  File: timeseries/patchtst_encoder.go
-  Extract from patchtst_gpu_train.go the encoder backward logic as:
-  `func encoderBackward(ctx, engine, dX *tensor.TensorNumeric[float32], layers []gpuEncoderLayer,
-  grads []gpuEncoderLayer, layerCaches []gpuBatchLayerCache, layerWTs []layerTransposes,
-  totalRows, dModel, nHeads, headDim, ffnDim int) (*tensor.TensorNumeric[float32], error)`
-  This includes attention backward, FFN backward, layer norm backward, and residual gradients.
-  Accumulates into grads. Returns dX for patch embedding backward.
-  Acceptance: Gradient check within 1e-3. go test passes.
-
-### E53.3: Wire patchtst_gpu_train.go to Shared Encoder
-
-- [x] T53.3.1 Replace inline forward/backward in GPU train with shared encoder  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-04-03
-  Deps: T53.1.1, T53.2.1
-  File: timeseries/patchtst_gpu_train.go
-  Replace the ~800 lines of inline encoder forward/backward with calls to
-  encoderForward/encoderBackward. Keep: patch extraction, channel batching,
-  head projection, loss computation, AdamW, gradient clipping.
-  Acceptance: Training convergence unchanged. Gradient check passes. go test passes.
-
-### E53.4: Eliminate patchtst_engine.go Forward
-
-- [x] T53.4.1 Replace engine forward paths with shared encoder  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T53.1.1
-  Files: patchtst_engine.go, patchtst.go
-  Replace forwardF64WithCacheEngine and forwardBatchF64WithCacheEngine with:
-  (1) Convert f64 input to f32 tensor
-  (2) Call encoderForward
-  (3) Convert f32 output back to f64
-  The f64<->f32 conversion is a thin adapter. Delete the 400+ lines of duplicated
-  engine forward code.
-  Acceptance: Forward parity test passes (batched matches per-sample within 1e-4).
-
-### E53.5: Eliminate patchtst_backward_engine.go
-
-- [x] T53.5.1 Replace engine backward with shared encoder backward  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T53.2.1, T53.4.1
-  Files: patchtst_backward_engine.go, patchtst_engine.go
-  Replace backwardBatchF64Engine with:
-  (1) Convert f64 cache/gradients to f32 tensors
-  (2) Call encoderBackward
-  (3) Convert f32 gradients back to f64
-  Delete patchtst_backward_engine.go entirely (412 lines).
-  Acceptance: Gradient check passes. Backward parity test passes.
-
-### E53.6: Validation
-
-- [x] T53.6.1 Run go vet, full test suite, verify line count reduction  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T53.3.1, T53.5.1
-  Acceptance: go vet clean. go test -race passes. PatchTST total lines < 4,000
-  (down from 6,196). No behavioral changes.
-
-### E53 Parallel Work
-
-#### Waves
-
-##### Wave E53-1: Extract shared encoder (1 agent -- sequential, same file)
-
-- [x] T53.1.1 Shared encoder forward  DONE 2026-04-03
-- [x] T53.2.1 Shared encoder backward  Deps: T53.1.1  DONE 2026-04-03
-
-##### Wave E53-2: Wire and eliminate (3 agents)
-
-- [x] T53.3.1 Wire GPU train to shared encoder  Deps: T53.1.1, T53.2.1  DONE 2026-04-03
-- [x] T53.4.1 Eliminate engine forward paths  Deps: T53.1.1  DONE 2026-04-03
-- [x] T53.5.1 Eliminate engine backward  Deps: T53.2.1, T53.4.1  DONE 2026-04-03
-
-##### Wave E53-3: Validation (1 agent)
-
-- [x] T53.6.1 Full validation  Deps: T53.3.1, T53.5.1  DONE 2026-04-03
+6 tasks complete. Extracted shared encoderForward/encoderBackward, eliminated patchtst_engine.go and patchtst_backward_engine.go, reduced PatchTST from 6,196 to ~3,500 lines. Details in git history.
 
 ---
 
@@ -2236,53 +2125,9 @@ Within E56, the three fusions are independent.
 
 ---
 
-## E57: Fix DGX Spark Build Regression (BLOCKER for E55, E56)
+## E57: Fix DGX Spark Build Regression (COMPLETE)
 
-**Problem:** Fresh `go build` on DGX Spark (linux/arm64) with ANY ztensor version
-(including v1.0.0 from before this session) produces `cudaMemcpy failed: misaligned address`
-during Gemma3 prefill at GroupedQueryAttention node[3] with input shape [1, 6, 1152].
-The prebuilt binary from March 27 (~/zerfoo/bench_tps) works fine at 71 tok/s.
-
-**Root cause hypothesis:** The Go module proxy resolves a different ztensor build artifact
-on DGX Spark than what was vendored in the original working binary. Or a zerfoo-side change
-(from E52/E53 DRY refactoring, shared encoder extraction, or E54 GPU-native Zero) changed
-how tensor storage pointers are managed, causing misaligned GPU pointers during prefill.
-
-**Impact:** Blocks ALL DGX Spark GPU benchmarking -- E55 training kernels, E56 inference
-fusions, and any future GPU work cannot be validated until this is fixed.
-
-### E57.1: Bisect the Regression
-
-- [x] T57.1.1 Bisect zerfoo commits to find breaking change  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  On DGX Spark, binary search between the last known-working commit (v1.38.0 release,
-  e8a42683) and current main. For each test point:
-  (1) `git checkout <commit>`
-  (2) `go build -o /tmp/bench_test ./cmd/bench_tps/`
-  (3) `LD_LIBRARY_PATH=~/zerfoo /tmp/bench_test -model ~/models/gemma3-gguf/model.gguf -tokens 64 -device cuda -temp 0`
-  Use the OLD libkernels.so from ~/zerfoo/ (March 26, known working).
-  Record first commit that fails. This isolates whether the regression is in zerfoo
-  Go code or ztensor dependency resolution.
-  Acceptance: Exact commit identified. Root cause documented in devlog.
-
-- [x] T57.1.2 Fix the root cause  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Deps: T57.1.1
-  Based on bisect result: revert the breaking change, fix the misalignment, or
-  update the build configuration. Verify Gemma3 inference works end-to-end on DGX Spark.
-  Acceptance: `go build ./cmd/bench_tps/ && ./bench_tps -model gemma3 -device cuda` works.
-
-- [x] T57.1.3 Verify all benchmarks work  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-001]
-  Deps: T57.1.2
-  Run: (1) Gemma3-1B decode 128 tokens, (2) PatchTST 28K training 1 epoch.
-  Both must succeed on DGX Spark with the fixed code.
-  Acceptance: Both benchmarks complete without CUDA errors.
-
-### E57 Parallel Work
-
-##### Wave E57-1: Bisect + fix (sequential, must be on DGX Spark)
-
-- [x] T57.1.1 Bisect regression
-- [x] T57.1.2 Fix root cause  Deps: T57.1.1
-- [x] T57.1.3 Verify benchmarks  Deps: T57.1.2
+3 tasks complete. Fixed 3 root causes (transpose no-op, causal mask D2H, Q4_K re-quant) that caused cudaMemcpy misaligned address on DGX Spark. Details in git history.
 
 ---
 
@@ -2346,103 +2191,9 @@ pinpoint the exact operation where GPU diverges from CPU inside the composed pip
 
 ---
 
----
+## E59: Remove gonum Dependency (COMPLETE)
 
-## E59: Remove gonum.org/v1/gonum Dependency
-
-**Goal:** Eliminate the gonum.org/v1/gonum dependency entirely, replacing it with
-zero-dependency implementations. Aligns with the core principle of minimal external
-dependencies. See docs/adr/078-remove-gonum-dependency.md.
-
-**Context:** gonum is used in exactly 3 files for 2 purposes:
-1. BLAS GEMM fallback (internal/xblas/gemm.go uses blas64.Gemm for float64;
-   gemm_simd_generic.go uses blas32.Gemm on non-arm64/non-amd64 builds).
-2. FFT (features/transformers.go uses gonum/dsp/fourier for time-series feature extraction).
-
-Neither is on the critical inference path. The SIMD assembly (arm64 NEON, amd64 AVX2)
-and CUDA kernels handle production workloads. Gonum is a fallback and convenience.
-
-**Affected files:**
-- internal/xblas/gemm.go (blas64.Gemm for GemmF64)
-- internal/xblas/gemm_simd_generic.go (blas32.Gemm fallback for SgemmSimd on generic arch)
-- internal/xblas/gemm_simd_test.go (benchmark labels reference "gonum")
-- features/transformers.go (fourier.NewFFT for FFTTransformer)
-- go.mod (gonum.org/v1/gonum v0.17.0)
-- go.sum (gonum checksums)
-
-### E59.1: Replace BLAS GEMM with native Go implementations
-
-- [x] T59.1.1 Write naive triple-loop DGEMM in internal/xblas/gemm.go  Owner: TBD  Est: 30m  verifies: [UC-002]
-  - Replace blas64.Gemm call in GemmF64 with a row-major C = A*B triple loop.
-  - Same signature: GemmF64(m, n, k int, a, b, c []float64).
-  - No tiling or SIMD needed -- float64 GEMM is not on any hot path.
-  - Acceptance: GemmF64 produces identical results to current implementation within 1e-10 tolerance.
-
-- [x] T59.1.2 Write naive triple-loop SGEMM fallback in internal/xblas/gemm_simd_generic.go  Owner: TBD  Est: 30m  verifies: [UC-001]
-  - Replace blas32.Gemm call in SgemmSimd with a row-major C = A*B triple loop.
-  - Keep the existing sgemmAccRow scalar fallback as-is (it is already gonum-free).
-  - Build constraint remains `!arm64 && !amd64`.
-  - Acceptance: SgemmSimd on generic arch produces results matching arm64/amd64 SIMD within 1e-4 tolerance.
-
-- [x] T59.1.3 Add GemmF64 parity tests in internal/xblas/gemm_simd_test.go  Owner: TBD  Est: 30m  verifies: [UC-002]
-  - Add TestGemmF64_Identity, TestGemmF64_KnownProduct, TestGemmF64_NonSquare, TestGemmF64_LargeMatrix.
-  - Verify against hand-computed expected values (not gonum reference -- gonum is being removed).
-  - Acceptance: All new tests pass on arm64 (DGX Spark) and locally.
-
-### E59.2: Replace FFT with native Go implementation
-
-- [x] T59.2.1 Write Cooley-Tukey radix-2 FFT in internal/dsp/fft.go  Owner: TBD  Est: 1h  verifies: [UC-003]
-  - New package: internal/dsp.
-  - Implement FFT for power-of-2 lengths using iterative Cooley-Tukey.
-  - Public function: Coefficients(data []float64) []complex128.
-  - Zero-pad input to next power of 2 when length is not power of 2.
-  - Acceptance: Output matches gonum fourier.FFT output within 1e-10 tolerance for lengths 2, 4, 8, 16, 32, 64, 128, and non-power-of-2 lengths 3, 5, 7, 10.
-
-- [x] T59.2.2 Add FFT unit tests in internal/dsp/fft_test.go  Owner: TBD  Est: 30m  verifies: [UC-003]
-  - Test known DFT outputs: single frequency sinusoid, DC signal, impulse.
-  - Test non-power-of-2 input (verify zero-padding produces correct result).
-  - Benchmark against current gonum FFT for regression check.
-  - Acceptance: All tests pass; no more than 2x slowdown vs gonum on window sizes <= 128.
-
-- [x] T59.2.3 Wire FFT into features/transformers.go  Owner: TBD  Est: 15m  Deps: T59.2.1  verifies: [UC-003]
-  - Replace `fourier.NewFFT(len(series))` + `fft.Coefficients(nil, series)` with internal/dsp call.
-  - Remove gonum/dsp/fourier import.
-  - Acceptance: TestFFTTransformer_Transform passes unchanged.
-
-### E59.3: Remove gonum from go.mod and verify
-
-- [x] T59.3.1 Remove gonum from go.mod, run go mod tidy, run full test suite  Owner: TBD  Est: 15m  Deps: T59.1.1, T59.1.2, T59.2.3
-  - Delete the `gonum.org/v1/gonum v0.17.0` line from go.mod.
-  - Run `go mod tidy` to clean go.sum.
-  - Run `go test ./...` to confirm no remaining gonum references.
-  - Acceptance: `go test ./...` passes. `grep -r gonum .` returns zero results (excluding .git).
-
-### E59 Parallel Work
-
-All BLAS and FFT tasks are independent. Only the final cleanup depends on both tracks.
-
-| Track | Tasks | Description |
-|-------|-------|-------------|
-| A: BLAS | T59.1.1, T59.1.2, T59.1.3 | Replace gonum BLAS with native Go GEMM |
-| B: FFT | T59.2.1, T59.2.2, T59.2.3 | Replace gonum DSP with native Go FFT |
-| C: Cleanup | T59.3.1 | Remove go.mod entry, verify |
-
-##### Wave E59-1: Implement replacements (2 agents)
-
-- [x] T59.1.1 + T59.1.2 + T59.1.3 (Track A: BLAS replacement + tests)
-- [x] T59.2.1 + T59.2.2 (Track B: FFT implementation + tests)
-
-##### Wave E59-2: Wire and cleanup (1 agent)
-
-- [x] T59.2.3 Wire FFT into transformers.go  Deps: Wave E59-1
-- [x] T59.3.1 Remove gonum from go.mod, verify  Deps: T59.2.3, T59.1.1, T59.1.2
-
-### E59 Risks
-
-| ID | Risk | Impact | Likelihood | Mitigation |
-|----|------|--------|------------|------------|
-| R45 | Naive GEMM is slower than gonum on generic arch | Low | Medium | Generic arch path is already the slow fallback; correctness matters more than speed here |
-| R46 | FFT numerical precision differs from gonum on edge cases | Low | Low | Use same algorithm (Cooley-Tukey); validate with known analytic DFT outputs |
+7 tasks complete. Replaced gonum BLAS GEMM with native triple-loop implementations and gonum FFT with Cooley-Tukey radix-2; zero external dependencies remain. Details in git history.
 
 ---
 
@@ -2726,76 +2477,9 @@ Deps: Wave E61-1, Wave E61-2
 
 ---
 
-## E62: Auxiliary Training Package Composition
+## E62: Auxiliary Training Package Composition (COMPLETE)
 
-**Problem:** tabular/, gnn/, and modeldsl/ each reimplement fundamental math
-operations (GELU, sigmoid, softmax, matmul) instead of composing from layers/
-or engine ops. gnn/ operates on [][]float64 instead of tensors, preventing
-engine composition. modeldsl/ reimplements its own softmax and training pipeline
-with private types. See ADR-082.
-
-**Goal:** Replace private math reimplementations with layers/ or engine op calls.
-Convert gnn to tensor representation where practical. Delete dead private functions.
-
-### E62.1: Tabular and ModelDSL
-
-- [x] T62.1.1 Replace tabular/ private math with layers/ imports  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-02 PR #316
-  Replace tabular/tabnet.go:350 sigmoid, tabular/model.go:212 geluScalar, and
-  tabular/train.go:437 geluGradScalar with imports from layers/activations or
-  engine ops. Delete the private implementations.
-  Acceptance: go build ./tabular/ clean. go test ./tabular/ passes.
-
-- [x] T62.1.2 Replace modeldsl/ private layers with layers/ composition  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02 (-45 lines, removed duplicate inference-only layer types)
-  Replace modeldsl/model.go:176 softmaxLayer.forward, modeldsl/train.go:341
-  softmaxLayerT.forward, and modeldsl/train.go:365 softmaxLayerT.backward with
-  composition from layers/activations.Softmax. Refactor the DSL to reference
-  registered layers from layers/ rather than defining private types.
-  Acceptance: go build clean. go test passes. DSL model definitions still work.
-
-- [x] T62.1.3 Unit tests for refactored tabular and modeldsl  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-02
-  Deps: T62.1.1, T62.1.2
-  Verify output parity within tolerance for TabNet, SAINT, and DSL-defined models.
-  Acceptance: go test passes.
-
-### E62.2: GNN Package
-
-- [x] T62.2.1 Convert gnn/ matMul and softmax to engine ops  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-02 (4 manual ops replaced with cpuEngine calls)
-  Replace gnn/gcn.go:206 matMul, gnn/gcn.go:226 matMulTransposeA, and
-  gnn/gcn.go:281 softmaxMatrix with engine.MatMul and engine.Softmax. This
-  requires converting the [][]float64 adjacency and feature matrices to tensors
-  at the GNN API boundary and using tensor operations internally.
-  Acceptance: go build clean. go test ./gnn/ passes. GCN output matches
-  pre-refactor within 1e-10.
-
-- [x] T62.2.2 Unit tests for GNN tensor conversion  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-02
-  Deps: T62.2.1
-  Test: GCN forward pass with known adjacency + features matches reference output.
-  Test: different graph sizes (10, 100, 1000 nodes).
-  Acceptance: go test passes.
-
-### E62.3: Validation
-
-- [x] T62.3.1 Run go vet and linters across all 3 packages  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-02
-  Deps: T62.1.3, T62.2.2
-  Acceptance: go vet clean. golangci-lint clean. No unused imports.
-
-- [x] T62.3.2 Full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-02 (race detector clean)
-  Deps: T62.3.1
-  Run go test -race ./tabular/ ./gnn/ ./modeldsl/.
-  Acceptance: all tests pass, zero race conditions.
-
-### E62 Parallel Work
-
-#### Wave E62-1: Independent packages (3 agents)
-- [x] T62.1.1 tabular/ math replacement  DONE 2026-04-02
-- [x] T62.1.2 modeldsl/ layer composition  DONE 2026-04-02
-- [x] T62.2.1 gnn/ tensor conversion  DONE 2026-04-02
-
-#### Wave E62-2: Tests + validation (3 agents)
-Deps: Wave E62-1
-- [x] T62.1.3 tabular + modeldsl tests  DONE 2026-04-02
-- [x] T62.2.2 gnn tests  DONE 2026-04-02
-- [x] T62.3.1 + T62.3.2 linters + full suite  DONE 2026-04-02
+7 tasks complete. Migrated tabular/, gnn/, and modeldsl/ to compose from layers/ and engine ops; GNN converted from [][]float64 to tensors. Details in git history.
 
 ---
 
@@ -2905,524 +2589,328 @@ Deps: Wave E64-1
 
 ---
 
-## E65: MoE Layer Composition Fix
+## E65: MoE Layer Composition Fix (COMPLETE)
 
-**Problem:** layers/core/moe.go (782 lines) uses raw .Data() access with manual
-loops for bias addition, sigmoid, and gradient computation instead of engine ops.
-Top-K routing has no engine op equivalent and is justified. See ADR-082.
-
-**Goal:** Replace unjustified .Data() access with engine ops. Keep top-K routing
-as-is.
-
-- [x] T65.1.1 Replace raw .Data() in moe.go with engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-02 PR #316
-  Replace:
-  - moe.go:88-96 manual bias addition with engine.Add
-  - moe.go:100-119 manual sigmoid with engine.Sigmoid or layers/activations.Sigmoid
-  - moe.go:236-315 manual gradient computation with engine ops where possible
-  Keep moe.go:129-158 top-K selection as-is (no engine op equivalent).
-  Acceptance: go build clean. go test ./layers/core/ passes. MoE output parity
-  within 1e-10.
-
-- [x] T65.1.2 Unit tests for MoE engine op usage  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-02 (validated in wave 1: 17/17 MoE tests pass including backward finite-diff)
-  Deps: T65.1.1
-  Verify MoE forward and backward produce identical output before and after refactor.
-  Test with CPU engine.
-  Acceptance: go test passes. Parity within tolerance.
-
-- [x] T65.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-02 (go vet clean in wave 1)
-  Deps: T65.1.1
-  Acceptance: go vet clean. golangci-lint clean.
-
-### E65 Parallel Work
-
-#### Wave E65-1: Implement + test (1 agent)
-- [x] T65.1.1 Replace .Data() with engine ops  DONE 2026-04-02
-- [x] T65.1.2 Unit tests (sequential)  DONE 2026-04-02
-
-#### Wave E65-2: Validate (1 agent)
-Deps: Wave E65-1
-- [x] T65.1.3 Linters  DONE 2026-04-02
+3 tasks complete. Replaced raw .Data() access in layers/core/moe.go with engine ops for bias addition, sigmoid, and gradient computation (PR #316). Details in git history.
 
 ---
 
-## E66: Functional Layer API for Training (Prerequisite)
+## E66: Functional Layer API for Training (COMPLETE)
 
-**Problem:** Training code avoids `layers/` because constructing a `LayerNorm`
-requires building parameters, registering with a graph, and wrapping data in
-tensors. This ergonomic friction pushed developers to reimplement math inline.
-See docs/dirty-architecture.md "Root Cause Analysis" item 3.
-
-**Goal:** Create a `layers/functional` package that provides stateless, tensor-in
-tensor-out wrappers around existing layers/ implementations. This eliminates the
-friction that causes training packages to bypass layers/.
-
-### E66.1: Core Functional API
-
-- [ ] T66.1.1 Create layers/functional/functional.go with LayerNorm, RMSNorm  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Create `layers/functional` package with:
-  (1) `func LayerNorm[T tensor.Numeric](ctx, engine, x, scale, bias, eps) (*Tensor, error)`
-  (2) `func RMSNorm[T tensor.Numeric](ctx, engine, x, scale, eps) (*Tensor, error)`
-  Each wraps the existing layers/normalization implementation without requiring
-  graph construction or parameter registration.
-  Acceptance: go build clean. Unit tests pass. Output matches layers/normalization within 1e-10.
-
-- [ ] T66.1.2 Add functional GELU, Softmax, ReLU, SiLU, Sigmoid  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Add to layers/functional:
-  (1) `func GELU[T tensor.Float](ctx, engine, x) (*Tensor, error)`
-  (2) `func Softmax[T tensor.Numeric](ctx, engine, x, axis) (*Tensor, error)`
-  (3) `func ReLU[T tensor.Numeric](ctx, engine, x) (*Tensor, error)`
-  (4) `func SiLU[T tensor.Float](ctx, engine, x) (*Tensor, error)`
-  (5) `func Sigmoid[T tensor.Numeric](ctx, engine, x) (*Tensor, error)`
-  Acceptance: go build clean. Unit tests pass.
-
-- [ ] T66.1.3 Add functional Linear, MultiHeadAttention  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  (1) `func Linear[T tensor.Numeric](ctx, engine, x, weight, bias) (*Tensor, error)`
-  (2) `func MultiHeadAttention[T tensor.Numeric](ctx, engine, q, k, v, nHeads) (*Tensor, error)`
-  These wrap engine.MatMul + engine.Add and layers/attention.SDPA respectively.
-  Acceptance: go build clean. Unit tests pass.
-
-- [ ] T66.1.4 Unit tests for functional API  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Deps: T66.1.1, T66.1.2, T66.1.3
-  Test every function with CPU engine. Verify parity with layers/ equivalents.
-  Acceptance: go test -race ./layers/functional/ passes.
-
-- [ ] T66.1.5 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T66.1.4
-  Acceptance: go vet clean. golangci-lint clean.
-
-### E66 Parallel Work
-
-#### Wave E66-1: Independent functions (3 agents)
-- [ ] T66.1.1 LayerNorm, RMSNorm
-- [ ] T66.1.2 Activations (GELU, Softmax, ReLU, SiLU, Sigmoid)
-- [ ] T66.1.3 Linear, MultiHeadAttention
-
-#### Wave E66-2: Validate (1 agent)
-Deps: Wave E66-1
-- [ ] T66.1.4 Unit tests
-- [ ] T66.1.5 Linters
+5 tasks complete. Created layers/functional package with stateless tensor-in/tensor-out wrappers (LayerNorm, RMSNorm, GELU, Softmax, Linear, MultiHeadAttention) enabling training code to compose from layers/ (PRs #320, #322). Details in git history.
 
 ---
 
-## E67: Timeseries Full Layers Migration (18,197 lines)
+## E67: Timeseries Full Layers Migration (COMPLETE)
 
-**Problem:** timeseries/ is the largest composability violator (18,197 lines,
-10 model architectures). E52 extracted shared helpers within the package but did
-not migrate to layers/. The package still has 5 LayerNorm variants, 2 GELU
-implementations, 2 softmax implementations, 3 AdamW copies, and 8 inline
-multi-head attention implementations -- all on raw slices instead of composing
-from layers/.
-
-**Goal:** Replace all private math reimplementations with calls to
-`layers/functional` (from E66) or direct `layers/` composition. Eliminate
-`layernorm_ops.go`, `math_ops.go`, and `training_ops.go`. Each model retains
-its architecture but delegates math to the canonical implementations.
-
-### E67.1: Replace Shared Helpers with Functional API
-
-- [ ] T67.1.1 Replace layernorm_ops.go with layers/functional.LayerNorm  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Deps: T66.1.1
-  Replace all 5 functions (layerNormF64, layerNormF64WithCache,
-  layerNormBackwardF64, layerNorm1D, layerNorm1DCached) with calls to
-  layers/functional.LayerNorm. Update all callers across 10 models.
-  Delete layernorm_ops.go.
-  Acceptance: go build clean. go test ./timeseries/ passes.
-
-- [ ] T67.1.2 Replace math_ops.go with layers/functional  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T66.1.2
-  Replace geluScalar, geluDeriv, softmaxF64, copyMatrix with
-  layers/functional equivalents. Delete math_ops.go.
-  Acceptance: go build clean. go test passes.
-
-- [ ] T67.1.3 Replace training_ops.go with training/optimizer and training/loss  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Replace adamWState, adamWUpdate, mseLossFlat, clipGradients, warmupLR with
-  imports from training/optimizer.AdamW and training/loss.MSE.
-  Delete training_ops.go.
-  Acceptance: go build clean. go test passes.
-
-- [ ] T67.1.4 Replace adamw_f32.go with training/optimizer.AdamW[float32]  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace adamStateF32, adamWUpdateF32 with training/optimizer.AdamW[float32].
-  Delete adamw_f32.go.
-  Acceptance: go build clean. go test passes.
-
-### E67.2: Migrate Per-Model Attention and Normalization
-
-- [ ] T67.2.1 Migrate PatchTST attention to layers/functional  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  Deps: T66.1.3, T67.1.1
-  Replace patchtst.go:315 multiHeadAttention and patchtst_backward.go:881
-  multiHeadAttentionF64 with layers/functional.MultiHeadAttention.
-  Replace patchtst.go:509 layerNorm method with layers/functional.LayerNorm.
-  Acceptance: go test passes. PatchTST training output within 1e-6 of pre-refactor.
-
-- [ ] T67.2.2 Migrate iTransformer attention to layers/functional  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Deps: T66.1.3, T67.1.1
-  Replace itransformer.go:244 multiHeadAttention and
-  itransformer_backward.go attention backward with functional equivalents.
-  Acceptance: go test passes.
-
-- [ ] T67.2.3 Migrate TFT self-attention to layers/functional  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Deps: T66.1.3, T67.1.1
-  Replace tft.go:462 selfAttention with layers/functional.MultiHeadAttention.
-  Replace tft.go:535 layerNorm with layers/functional.LayerNorm.
-  Acceptance: go test passes.
-
-- [ ] T67.2.4 Migrate remaining models (NHiTS, N-BEATS, DLinear, FreTS, CfC, TimeMixer)  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  Deps: T67.1.1, T67.1.2
-  Replace per-model linearForward methods in nbeats.go:426 and nhits.go:260
-  with layers/functional.Linear. Replace any remaining inline LayerNorm.
-  Acceptance: go build clean. go test ./timeseries/ passes.
-
-### E67.3: Validation
-
-- [ ] T67.3.1 Full test suite with race detector  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T67.2.1, T67.2.2, T67.2.3, T67.2.4
-  Run go test -race ./timeseries/ and verify all models produce output
-  within tolerance of pre-refactor.
-  Acceptance: all tests pass. Zero race conditions.
-
-- [ ] T67.3.2 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T67.3.1
-  Acceptance: go vet clean. golangci-lint clean.
-
-- [ ] T67.3.3 Verify deleted files  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T67.3.1
-  Confirm layernorm_ops.go, math_ops.go, training_ops.go, adamw_f32.go are
-  deleted. Count lines removed.
-  Acceptance: files do not exist. Net line reduction documented.
-
-### E67 Parallel Work
-
-#### Wave E67-1: Replace shared helpers (4 agents)
-Deps: E66 complete
-- [ ] T67.1.1 layernorm_ops.go
-- [ ] T67.1.2 math_ops.go
-- [ ] T67.1.3 training_ops.go
-- [ ] T67.1.4 adamw_f32.go
-
-#### Wave E67-2: Migrate per-model attention (4 agents)
-Deps: Wave E67-1
-- [ ] T67.2.1 PatchTST
-- [ ] T67.2.2 iTransformer
-- [ ] T67.2.3 TFT
-- [ ] T67.2.4 Remaining models
-
-#### Wave E67-3: Validate (2 agents)
-Deps: Wave E67-2
-- [ ] T67.3.1 + T67.3.2 Tests + linters
-- [ ] T67.3.3 Verify deletions
+11 tasks complete. Replaced all private math reimplementations in timeseries/ (18,197 lines, 10 models) with layers/functional composition; deleted layernorm_ops.go, math_ops.go, training_ops.go, adamw_f32.go (-349 net lines). Details in git history.
 
 ---
 
-## E68: CrossAsset Full Layers Migration
+## E68: CrossAsset Full Layers Migration (COMPLETE)
 
-**Problem:** crossasset/ has parallel CPU ([]float64) and GPU (tensor) paths.
-E60 added GPU training but the CPU path still reimplements softmax, layerNorm,
-GELU, matVecMul, and full backward on raw slices. Two independent codepaths
-for the same model.
-
-**Goal:** Unify CPU and GPU paths by composing from layers/functional. Delete
-the raw-slice CPU implementation. The model should have one forward/backward
-path that works on both CPU and GPU via Engine[T].
-
-- [ ] T68.1.1 Replace CPU forward with layers/functional composition  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  Deps: T66.1.1, T66.1.2, T66.1.3
-  Replace crossasset.go functions: matVecMul (line 518), softmax (538),
-  layerNorm (558), gelu (584) with layers/functional equivalents.
-  Convert model weights from []float64 to tensor.TensorNumeric[float64].
-  Acceptance: go build clean. CPU forward matches pre-refactor within 1e-10.
-
-- [ ] T68.1.2 Replace CPU backward with graph.Backward  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  Deps: T68.1.1
-  Replace backward.go (entire file) with graph-based backward pass using
-  the layers/ nodes that support Backward().
-  Acceptance: go test passes. Gradient parity within 1e-6.
-
-- [ ] T68.1.3 Replace CPU AdamW with training/optimizer.AdamW  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T68.1.2
-  Replace adamw.go adamWUpdateAll with training/optimizer.AdamW[float64].
-  Acceptance: go test passes.
-
-- [ ] T68.1.4 Delete raw-slice CPU code and validate  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T68.1.3
-  Delete backward.go manual backward, adamw.go raw update.
-  Run go test -race ./crossasset/. Run linters.
-  Acceptance: all tests pass. Net line reduction documented.
-
-### E68 Parallel Work
-
-#### Wave E68-1: CPU migration (1 agent -- sequential chain)
-Deps: E66 complete
-- [ ] T68.1.1 -> T68.1.2 -> T68.1.3 -> T68.1.4 (sequential)
+4 tasks complete. Unified CPU and GPU paths in crossasset/ by composing from layers/functional; deleted raw-slice CPU code (-1,357 lines, 41% reduction, PR #326). Details in git history.
 
 ---
 
-## E69: Training Loss and Optimizer Engine Compliance
+## E69: Training Loss/Optimizer Engine Compliance (COMPLETE)
 
-**Problem:** training/loss/bce.go, routing_contrastive.go, and quantile.go have
-engine fields but iterate .Data() with element-wise ops. training/optimizer/
-adamw.go:236 guardAndClipGradients forces D2H on every gradient on every step.
-See docs/dirty-architecture.md sections 13 and 14.
-
-**Goal:** All loss functions and optimizer operations use Engine[T] tensor ops.
-Zero .Data() access in hot paths.
-
-### E69.1: Loss Functions
-
-- [ ] T69.1.1 Rewrite BCELoss.Forward/Backward to use Engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Replace element-wise ops loop in bce.go:60-83 with engine.Log, engine.Mul,
-  engine.Add, engine.Sub, engine.Div, engine.ReduceMean.
-  Acceptance: go test passes. Output parity within 1e-10. GPU acceleration works.
-
-- [ ] T69.1.2 Rewrite RoutingContrastive to use Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Replace triple-nested loop cosine similarity (routing_contrastive.go:77-110)
-  with engine.MatMul for pairwise dot products and engine.ReduceSum for norms.
-  Acceptance: go test passes. Output parity within 1e-8.
-
-- [ ] T69.1.3 Fix QuantileLoss generics (remove float32 cast)  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace `any(targetData[i]).(float32)` with proper generic ops. The function
-  should work for any T, not just float32.
-  Acceptance: go test passes for float32 and float64.
-
-### E69.2: Optimizer
-
-- [ ] T69.2.1 Replace guardAndClipGradients with Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Replace adamw.go:236-283 element-by-element .Data() iteration with:
-  (1) NaN/Inf check: engine.ReduceSum to detect NaN (NaN + anything = NaN)
-  (2) Global norm: engine.Mul + engine.ReduceSum per parameter, then sqrt
-  (3) Clip: engine.MulScalar on each gradient tensor
-  This eliminates 100+ D2H copies per optimization step on GPU.
-  Acceptance: go test passes. AdamW training produces same results within 1e-10.
-  Benchmark: GPU training step time improves (fewer D2H copies).
-
-- [ ] T69.2.2 Fix SGD.Step memory allocation  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace O(N) tensor allocation for learning rate broadcast with
-  engine.MulScalar.
-  Acceptance: go test passes. No alloc regression.
-
-### E69.3: Validation
-
-- [ ] T69.3.1 Tests and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T69.1.1, T69.1.2, T69.1.3, T69.2.1, T69.2.2
-  Run go test -race ./training/... and linters.
-  Acceptance: all pass.
-
-### E69 Parallel Work
-
-#### Wave E69-1: Independent fixes (5 agents)
-- [ ] T69.1.1 BCELoss
-- [ ] T69.1.2 RoutingContrastive
-- [ ] T69.1.3 QuantileLoss
-- [ ] T69.2.1 guardAndClipGradients
-- [ ] T69.2.2 SGD.Step
-
-#### Wave E69-2: Validate (1 agent)
-Deps: Wave E69-1
-- [ ] T69.3.1 Tests + linters
+6 tasks complete. All loss functions (BCELoss, RoutingContrastive, QuantileLoss) and optimizer ops (guardAndClipGradients, SGD.Step) now use Engine[T] tensor ops with zero .Data() access (PRs #320, #321, #322). Details in git history.
 
 ---
 
-## E70: Intra-Layers Violations Cleanup
+## E70: Intra-Layers Violations Cleanup (COMPLETE)
 
-**Problem:** layers/ itself has internal violations where sub-packages bypass
-each other or bypass Engine[T]. See docs/dirty-architecture.md "S1.5" section.
-
-**Goal:** Every layers/ sub-package composes from Engine[T] and from sibling
-layers/ packages where applicable. Zero raw .Data() access for computation.
-
-- [ ] T70.1.1 Replace core/gemm.go triple-loop with engine.MatMul  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Replace layers/core/gemm.go:66-86 hand-rolled GEMM with engine.MatMul +
-  engine.MulScalar + engine.Add.
-  Acceptance: go test ./layers/core/ passes. GEMM output parity within 1e-10.
-
-- [ ] T70.1.2 Replace vision/clip_encoder.go raw attention with layers/attention  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Replace clip_encoder.go:362-410 raw-loop attention with
-  layers/attention.ScaledDotProductAttention. Replace clip_encoder.go:255-270
-  raw projection with engine.MatMul. Replace clip_encoder.go:492-503 QuickGELU
-  with layers/activations.
-  Acceptance: go test ./layers/vision/ passes.
-
-- [ ] T70.1.3 Replace timeseries/mlstm.go and slstm.go raw loops with Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Replace layers/timeseries/mlstm.go:237-317 and slstm.go:257-316 raw CPU
-  loops with layers/core.Linear for projections and engine ops for gates.
-  Acceptance: go test ./layers/timeseries/ passes.
-
-- [ ] T70.1.4 Replace timeseries/ssm.go raw scan with Engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Replace layers/timeseries/ssm.go:230-264 raw per-step C*x and D*u products
-  with engine.MatMul. Sequential scan structure is kept.
-  Acceptance: go test ./layers/timeseries/ passes.
-
-- [ ] T70.1.5 Replace timeseries/vsn.go local layerNorm with normalization.LayerNorm  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace layers/timeseries/vsn.go:180-224 with layers/normalization.LayerNorm.
-  Acceptance: go test passes.
-
-- [ ] T70.1.6 Deduplicate simplified_layer_normalization and RMSNorm  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Extract shared RMS computation from normalization/rmsnorm.go:153-190 and
-  normalization/simplified_layer_normalization.go:100-141 into a private helper.
-  Acceptance: go test ./layers/normalization/ passes. ~80 lines eliminated.
-
-- [ ] T70.1.7 Deduplicate fast_gelu.go and gelu.go  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Consolidate layers/activations/fast_gelu.go Forward (~65 duplicated lines)
-  into gelu.go or share implementation.
-  Acceptance: go test ./layers/activations/ passes.
-
-- [ ] T70.1.8 Replace core/variable_selection.go inline GELU and temporal_conv_encoder.go inline ReLU  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace core/variable_selection.go:147-154 inline GELU with
-  layers/activations.Gelu. Replace core/temporal_conv_encoder.go:107-127
-  inline ReLU with layers/activations.ReLU.
-  Acceptance: go test ./layers/core/ passes.
-
-- [ ] T70.1.9 Deduplicate residual/block_attn_res.go rmsNormLite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Replace layers/residual/block_attn_res.go:34-64 rmsNormLite with
-  layers/normalization.RMSNorm.
-  Acceptance: go test ./layers/residual/ passes.
-
-- [ ] T70.1.10 Full test suite and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T70.1.1 through T70.1.9
-  Run go test -race ./layers/... and linters.
-  Acceptance: all pass.
-
-### E70 Parallel Work
-
-#### Wave E70-1: Independent fixes (9 agents)
-- [ ] T70.1.1 core/gemm.go
-- [ ] T70.1.2 vision/clip_encoder.go
-- [ ] T70.1.3 timeseries/mlstm.go + slstm.go
-- [ ] T70.1.4 timeseries/ssm.go
-- [ ] T70.1.5 timeseries/vsn.go
-- [ ] T70.1.6 simplified_layer_normalization dedup
-- [ ] T70.1.7 fast_gelu dedup
-- [ ] T70.1.8 variable_selection + temporal_conv_encoder
-- [ ] T70.1.9 residual/block_attn_res.go
-
-#### Wave E70-2: Validate (1 agent)
-Deps: Wave E70-1
-- [ ] T70.1.10 Full test suite + linters
+10 tasks complete. All layers/ sub-packages now compose from Engine[T] and sibling layers/ packages; replaced raw .Data() in core/gemm, vision/clip_encoder, timeseries/mlstm/slstm/ssm/vsn, deduplicated normalization and activation code (PR #324). Details in git history.
 
 ---
 
-## E71: Experimental Package Migration (rl/, synth/, meta/, shared/)
+## E71: Experimental Package Migration (COMPLETE)
 
-**Problem:** rl/ (787 lines), synth/ (676 lines), meta/ (307 lines), and
-shared/ (259 lines) each reimplement Linear, ReLU, SGD, and Xavier init on
-raw []float64 slices. Combined: ~2,029 lines of duplicated neural network
-primitives.
-
-**Goal:** Migrate all four packages to compose from layers/functional and
-training/optimizer. If a package is unused or experimental, consider deletion.
-
-- [ ] T71.1.1 Migrate rl/ to layers/functional and training/optimizer  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Deps: E66 complete
-  Replace rl/ppo.go:38-80 mlpLayer with layers/functional.Linear.
-  Replace rl/sac.go:23-63 mlp with layers/functional.Linear.
-  Replace inline ReLU/Tanh with layers/functional equivalents.
-  Replace inline SGD with training/optimizer.SGD.
-  Acceptance: go test ./rl/ passes.
-
-- [ ] T71.1.2 Migrate synth/ to layers/functional  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Deps: E66 complete
-  Replace synth/vae.go:389 linearForward with layers/functional.Linear.
-  Replace inline ReLU and SGD.
-  Acceptance: go test ./synth/ passes.
-
-- [ ] T71.1.3 Migrate meta/ to layers/functional  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  Deps: E66 complete
-  Replace meta/meta.go:248 linearForward with layers/functional.Linear.
-  Note: MAML inner-loop gradients may require special handling.
-  Acceptance: go test ./meta/ passes.
-
-- [ ] T71.1.4 Migrate shared/ to Engine ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Replace shared/latent.go:241 matVecMul with engine.MatMul.
-  Acceptance: go test ./shared/ passes.
-
-- [ ] T71.1.5 Tests and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Deps: T71.1.1, T71.1.2, T71.1.3, T71.1.4
-  Run go test -race and linters across all 4 packages.
-  Acceptance: all pass.
-
-### E71 Parallel Work
-
-#### Wave E71-1: Independent migrations (4 agents)
-Deps: E66 complete
-- [ ] T71.1.1 rl/
-- [ ] T71.1.2 synth/
-- [ ] T71.1.3 meta/
-- [ ] T71.1.4 shared/
-
-#### Wave E71-2: Validate (1 agent)
-Deps: Wave E71-1
-- [ ] T71.1.5 Tests + linters
+5 tasks complete. Migrated rl/, synth/, meta/, and shared/ (~2,029 lines) to compose from layers/functional and training/optimizer instead of raw slice reimplementations (PR #324). Details in git history.
 
 ---
 
-## E72: Architecture Enforcement Test
+## E72: Architecture Enforcement Test (COMPLETE)
 
-**Problem:** No automated check prevents packages from reimplementing Engine[T]
-operations with raw slice math. ADR-027 documented the principle but did not
-enforce it. Violations recur because there is no CI gate.
-
-**Goal:** Add a go test that scans non-internal source files for patterns
-indicating raw-slice math where Engine[T] should be used.
-
-- [ ] T72.1.1 Create tests/architecture/composition_test.go  Owner: TBD  Est: 3h  verifies: [infrastructure]
-  Write a test that:
-  (1) Scans all .go files outside internal/ and tests/ for .Data() calls
-      in non-test files that are followed by element-wise arithmetic
-  (2) Scans for `import "math"` without `import layers/` in packages that
-      do neural network computation (exclude causal, gp, federated, etc.)
-  (3) Checks for private `type mlpLayer struct` or `func layerNorm` definitions
-      outside layers/
-  (4) Reports violations with file:line
-  Allowlist for justified exceptions (internal/cuda, internal/xblas, etc.)
-  Acceptance: test passes on current codebase. Catches regressions.
-
-- [ ] T72.1.2 Add to CI workflow  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T72.1.1
-  Add `go test ./tests/architecture/` to .github/workflows/ci.yml.
-  Acceptance: CI runs the test on every PR.
-
-### E72 Parallel Work
-
-#### Wave E72-1: Implement (1 agent)
-- [ ] T72.1.1 Create test
-- [ ] T72.1.2 Add to CI (sequential)
+2 tasks complete. Created tests/architecture/composition_test.go that scans for raw-slice math violations and added it to CI workflow (PR #325). Details in git history.
 
 ---
 
-## E73: Generate KV Cache Consolidation
+## E73: Generate KV Cache Consolidation (COMPLETE)
 
-**Problem:** generate/ has 5 KV cache implementations (kvcache.go,
-kvcache_fp16.go, kvcache_fp8.go, kvcache_q3.go, kvcache_q4.go) with duplicated
-structural code (layer indexing, sequence management, resize). Only the
-quantization math differs.
-
-**Goal:** Extract a base KVCacheBase struct with shared structural code and
-inject quantization strategy. Eliminate ~400 lines of duplication.
-
-- [ ] T73.1.1 Extract KVCacheBase with strategy pattern  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
-  Create KVCacheBase struct with shared Get, Len, MaxSeqLen, resize logic.
-  Define QuantStrategy interface with Quantize/Dequantize methods.
-  Implement Float32Strategy, FP16Strategy, FP8Strategy, Q4Strategy, Q3Strategy.
-  Acceptance: go build clean. go test ./generate/ passes.
-
-- [ ] T73.1.2 Migrate existing caches to use KVCacheBase  Owner: TBD  Est: 3h  verifies: [UC-001, UC-002]
-  Deps: T73.1.1
-  Rewrite KVCacheFP16, KVCacheFP8, KVCacheQ4, KVCacheQ3 to embed KVCacheBase.
-  Keep KVCache[T] as the unquantized generic implementation.
-  Acceptance: go test passes. All generation tests produce identical output.
-
-- [ ] T73.1.3 Tests and linters  Owner: TBD  Est: 1h  verifies: [UC-001, UC-002]
-  Deps: T73.1.2
-  Run go test -race ./generate/ and linters. Verify net line reduction.
-  Acceptance: all pass. ~400 lines eliminated.
-
-### E73 Parallel Work
-
-#### Wave E73-1: Implement (sequential)
-- [ ] T73.1.1 -> T73.1.2 -> T73.1.3 (sequential chain)
+3 tasks complete. Extracted KVCacheBase with strategy pattern, consolidated 5 KV cache implementations, eliminated 338 lines of duplication (394 tests pass). Details in git history.
 
 ---
 
-### E66-E73 Risks
+## E74: Timeseries Backward Pass Composition
+
+**Problem:** The timeseries/ package has 2,048 lines of manually-maintained backward
+pass code across 3 files (patchtst_backward.go, itransformer_backward.go,
+timemixer_backward.go) plus encoderBackwardF64 in patchtst_encoder.go. All backward
+passes use raw float64 loops with zero composition from layers/ or engine operations.
+E67 migrated the forward paths but backward passes remain as a parallel ML framework.
+No graph.Backward() API or functional backward ops exist yet.
+
+**Goal:** Add backward operation support to layers/functional, then migrate all 3
+backward files to compose from functional backward ops. Eliminate raw f64 backward
+loops. Target: ~1,500 lines of raw backward computation replaced by functional calls.
+
+**Prerequisite:** E66 (layers/functional API) is COMPLETE.
+
+### E74.1: Functional Backward API
+
+- [ ] T74.1.1 Add functional.LinearBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Implement LinearBackward(ctx, engine, dOutput, input, weight) returning
+  (dInput, dWeight, dBias). Uses engine.MatMul for gradient computation.
+  Reference: patchtst_backward.go:405-430 for expected behavior.
+  Acceptance: unit test validates gradient correctness via numerical gradient check.
+
+- [ ] T74.1.2 Add functional.LayerNormBackward  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Implement LayerNormBackward(ctx, engine, dOutput, input, gamma, mean, variance)
+  returning (dInput, dGamma, dBeta). Uses engine ops for variance correction.
+  Reference: itransformer_backward.go:503-537 for expected behavior.
+  Acceptance: numerical gradient check passes within 1e-6.
+
+- [ ] T74.1.3 Add functional.GELUBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Implement GELUBackward(ctx, engine, dOutput, input) returning dInput.
+  Derivative: 0.5*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3))) + correction term.
+  Reference: patchtst_encoder.go:994-1007 (encoderBackwardF64 GELU derivative).
+  Acceptance: numerical gradient check passes within 1e-6.
+
+- [ ] T74.1.4 Add functional.SoftmaxBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Implement SoftmaxBackward(ctx, engine, dOutput, softmaxOutput) returning dInput.
+  Formula: dInput_i = s_i * (dOutput_i - sum(dOutput * s)).
+  Reference: itransformer_backward.go:542-555.
+  Acceptance: numerical gradient check passes within 1e-6.
+
+- [ ] T74.1.5 Add functional.MultiHeadAttentionBackward  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Implement MultiHeadAttentionBackward(ctx, engine, dOutput, Q, K, V, attentionWeights, params)
+  returning (dQ, dK, dV, dWq, dWk, dWv, dWo). Composes from LinearBackward and
+  SoftmaxBackward internally.
+  Deps: T74.1.1, T74.1.4
+  Reference: itransformer_backward.go:416-458 for expected behavior.
+  Acceptance: numerical gradient check passes within 1e-5.
+
+- [ ] T74.1.6 Add functional.MLPBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Implement MLPBackward(ctx, engine, dOutput, inputs, weights, biases, activationGrads)
+  returning (dInput, dWeights, dBiases). Composes from LinearBackward and activation
+  backward ops. Supports ReLU and GELU activation gradients.
+  Deps: T74.1.1, T74.1.3
+  Reference: timemixer_backward.go:457-496 for 2-layer MLP backward.
+  Acceptance: numerical gradient check for 2-layer MLP passes within 1e-6.
+
+- [ ] T74.1.7 Unit tests for all backward functional ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T74.1.1, T74.1.2, T74.1.3, T74.1.4, T74.1.5, T74.1.6
+  Comprehensive test file: functional_backward_test.go. Tests numerical gradient
+  correctness for each backward op across float32 and float64. Tests composition
+  (e.g., Linear+GELU backward chain).
+  Acceptance: go test -race ./layers/functional/... passes with all backward tests green.
+
+### E74.2: Migrate Backward Files
+
+- [ ] T74.2.1 Migrate patchtst_backward.go to functional backward ops  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+  Deps: T74.1.7
+  Replace raw f64 loops in backwardF64() (lines 266-378) with functional.LinearBackward,
+  functional.LayerNormBackward, and functional.GELUBackward calls.
+  Replace head backward (lines 299-327) and patch embedding backward (lines 329-347)
+  with functional ops.
+  Acceptance: go test ./timeseries/... passes. PatchTST 10-epoch training loss matches
+  pre-refactor within 1e-4.
+
+- [ ] T74.2.2 Migrate encoderBackwardF64 in patchtst_encoder.go  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+  Deps: T74.1.7
+  Replace raw f64 encoder backward (lines 938-1120) with functional.MultiHeadAttentionBackward,
+  functional.LayerNormBackward, functional.GELUBackward, and functional.LinearBackward.
+  This is the largest single backward function (~180 lines of raw loops).
+  Acceptance: PatchTST encoder backward output matches pre-refactor within 1e-6.
+
+- [ ] T74.2.3 Migrate itransformer_backward.go to functional backward ops  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  Deps: T74.1.7
+  Replace backward() (lines 274-312), encoderLayerBackward() (lines 316-497),
+  layerNormBackward() (lines 503-537), and softmaxBackward() (lines 542-555)
+  with functional backward op calls.
+  Delete local layerNormBackward and softmaxBackward helper functions.
+  Acceptance: iTransformer 10-epoch training loss matches pre-refactor within 1e-4.
+
+- [ ] T74.2.4 Migrate timemixer_backward.go to functional backward ops  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Deps: T74.1.7
+  Replace backward() (lines 278-448) and mlpBackward() (lines 457-496) with
+  functional.MLPBackward and functional.LinearBackward calls.
+  Replace ReLU backward conditional (lines 457-480) with functional activation gradient.
+  Acceptance: TimeMixer 10-epoch training loss matches pre-refactor within 1e-4.
+
+### E74.3: Validation
+
+- [ ] T74.3.1 Full timeseries test suite with race detector  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-TS02]
+  Deps: T74.2.1, T74.2.2, T74.2.3, T74.2.4
+  Run go test -race -timeout 300s ./timeseries/...
+  Acceptance: all tests pass with zero race conditions.
+
+- [ ] T74.3.2 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T74.3.1
+  Run go vet ./timeseries/... and golangci-lint on all changed files.
+  Acceptance: zero warnings.
+
+- [ ] T74.3.3 Verify line count reduction  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T74.3.2
+  Count lines in patchtst_backward.go, itransformer_backward.go, timemixer_backward.go,
+  patchtst_encoder.go before and after. Document net reduction.
+  Target: at least 800 lines of raw backward computation eliminated.
+  Acceptance: line count documented in commit message.
+
+### E74 Parallel Work
+
+#### Wave E74-1: Functional backward API (6 agents)
+All functional backward ops are independent of each other.
+- [ ] T74.1.1 LinearBackward
+- [ ] T74.1.2 LayerNormBackward
+- [ ] T74.1.3 GELUBackward
+- [ ] T74.1.4 SoftmaxBackward
+- [ ] T74.1.5 MultiHeadAttentionBackward (deps: T74.1.1, T74.1.4 -- start after Wave E74-1a)
+- [ ] T74.1.6 MLPBackward (deps: T74.1.1, T74.1.3 -- start after Wave E74-1a)
+
+Split into two sub-waves:
+- Wave E74-1a (4 agents): T74.1.1, T74.1.2, T74.1.3, T74.1.4
+- Wave E74-1b (2 agents): T74.1.5, T74.1.6 (after E74-1a)
+- Wave E74-1c (1 agent): T74.1.7 (after E74-1b)
+
+#### Wave E74-2: Migrate backward files (4 agents)
+Deps: Wave E74-1c
+All 4 migration tasks are independent (separate files).
+- [ ] T74.2.1 patchtst_backward.go
+- [ ] T74.2.2 patchtst_encoder.go (encoderBackwardF64)
+- [ ] T74.2.3 itransformer_backward.go
+- [ ] T74.2.4 timemixer_backward.go
+
+#### Wave E74-3: Validation (2 agents)
+Deps: Wave E74-2
+- [ ] T74.3.1 + T74.3.2 Tests + linters
+- [ ] T74.3.3 Line count verification
+
+---
+
+## E75: Inference Timeseries .Data() Elimination
+
+**Problem:** 8 architecture builder files in inference/timeseries/ have 29 .Data()
+calls totaling ~2,000 lines of raw tensor access that bypasses the engine. 25 of
+29 calls are unjustified (reimplementing softmax, ReLU, buffer copy, channel
+extraction, gather/scatter using raw loops instead of engine ops). 4 calls are
+justified (chronos one-hot encoding, flowstate Fourier evaluation, regime utilities).
+
+**Goal:** Replace unjustified .Data() access with engine ops (engine.Slice,
+engine.Reshape, engine.ReLU, layers/activations.Softmax). Reduce .Data() calls
+from 29 to 4 (justified only). Estimated ~200-315 lines of raw loops replaced.
+
+### E75.1: Architecture Builder Migration
+
+- [ ] T75.1.1 arch_timemixer.go -- Replace inline softmax and ReLU with engine ops  Owner: TBD  Est: 3h  verifies: [UC-TS02]
+  Replace inline softmax (line 341) with layers/activations.Softmax.
+  Replace ReLU on hidden (lines 464-470) with engine.ReLU().
+  Replace gather/scatter reshaping (lines 446, 482) with engine.Reshape.
+  Replace moving average .Data() access with engine ops where possible.
+  10 .Data() calls, target: reduce to 2-3 (justified custom decomposition).
+  Acceptance: arch_timemixer tests pass. Inference output matches pre-refactor.
+
+- [ ] T75.1.2 arch_tft.go -- Replace buffer operations with engine ops  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Replace hidden state stacking (lines 312-322) with tensor.Stack or engine.Concat.
+  Replace VSN output buffer copy (lines 518-525) with engine.Reshape.
+  Keep forget gate bias init (justified).
+  4 .Data() calls, target: reduce to 1.
+  Acceptance: arch_tft tests pass. TFT inference output matches pre-refactor.
+
+- [ ] T75.1.3 arch_ttm.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Replace channel extraction (lines 591-603) with engine.Slice.
+  Keep channel statistics computation (justified custom normalization).
+  5 .Data() calls, target: reduce to 3.
+  Acceptance: arch_ttm tests pass.
+
+- [ ] T75.1.4 arch_tirex.go -- Replace timestep extraction with engine.Slice  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Replace manual timestep extraction loops (lines 376-414, 580-620) with
+  engine.Slice for LSTM block processing input preparation.
+  2 .Data() calls, target: reduce to 0.
+  Acceptance: arch_tirex tests pass. TiRex inference output matches.
+
+- [ ] T75.1.5 arch_tspulse.go -- Replace reshaping with engine.Reshape  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Replace recon reshaping (lines 271-288), class prob reshaping (lines 350-365),
+  and embedding format (lines 401-410) with engine.Reshape.
+  3 .Data() calls, target: reduce to 0.
+  Acceptance: arch_tspulse tests pass.
+
+- [ ] T75.1.6 arch_flowstate.go -- Replace channel extraction with engine.Slice  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Replace channel extraction (lines 360-368) with engine.Slice.
+  Keep Fourier basis evaluation (justified custom operation).
+  2 .Data() calls, target: reduce to 1.
+  Acceptance: arch_flowstate tests pass.
+
+### E75.2: Validation
+
+- [ ] T75.2.1 Full inference/timeseries test suite  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-TS02]
+  Deps: T75.1.1, T75.1.2, T75.1.3, T75.1.4, T75.1.5, T75.1.6
+  Run go test -race ./inference/timeseries/...
+  Acceptance: all tests pass.
+
+- [ ] T75.2.2 Run linters and verify .Data() count  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T75.2.1
+  Run go vet and golangci-lint. Count remaining .Data() calls in inference/timeseries/.
+  Target: 4 or fewer .Data() calls (justified only: chronos, flowstate Fourier, regime).
+  Acceptance: lint clean. .Data() count documented.
+
+- [ ] T75.2.3 Verify unchanged files are excluded  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T75.2.1
+  Confirm arch_chronos.go (1 justified .Data()) and arch_regime.go (2 justified .Data())
+  were NOT modified (no unnecessary changes to justified code).
+  Acceptance: git diff shows no changes to arch_chronos.go or arch_regime.go.
+
+### E75 Parallel Work
+
+#### Wave E75-1: Architecture builder migration (6 agents)
+All 6 files are independent.
+- [ ] T75.1.1 arch_timemixer.go
+- [ ] T75.1.2 arch_tft.go
+- [ ] T75.1.3 arch_ttm.go
+- [ ] T75.1.4 arch_tirex.go
+- [ ] T75.1.5 arch_tspulse.go
+- [ ] T75.1.6 arch_flowstate.go
+
+#### Wave E75-2: Validation (2 agents)
+Deps: Wave E75-1
+- [ ] T75.2.1 + T75.2.2 Tests + linters + .Data() count
+- [ ] T75.2.3 Verify unchanged files
+
+---
+
+## E76: Architecture Test Allowlist Cleanup
+
+**Problem:** The architecture enforcement test (E72) has timeseries/ on its
+allowlist because the backward passes bypass layers/. After E74 completes the
+backward migration, timeseries/ should be removed from the allowlist to prevent
+future regressions.
+
+**Goal:** Remove timeseries/ from the architecture test allowlist. Ensure CI
+catches any new .Data() or raw-loop regressions in timeseries/.
+
+- [ ] T76.1.1 Remove timeseries/ from architecture test allowlist  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: E74 complete
+  Edit tests/architecture/composition_test.go to remove timeseries/ from the
+  package allowlist.
+  Acceptance: go test ./tests/architecture/... passes with timeseries/ no longer
+  on the allowlist.
+
+- [ ] T76.1.2 Verify CI green  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T76.1.1
+  Push change and confirm CI workflow passes.
+  Acceptance: CI green.
+
+### E76 Parallel Work
+
+#### Wave E76-1: Sequential (1 agent)
+Deps: E74 complete
+- [ ] T76.1.1 -> T76.1.2 (sequential)
+
+---
+
+### E66-E76 Risks
 
 | ID | Risk | Impact | Likelihood | Mitigation |
 |----|------|--------|------------|------------|
@@ -3432,12 +2920,17 @@ inject quantization strategy. Eliminate ~400 lines of duplication.
 | R58 | MAML inner-loop in meta/ is incompatible with graph-based backward | Medium | High | If incompatible, keep meta/ as justified exception; document why |
 | R59 | Architecture enforcement test has false positives | Low | Medium | Maintain allowlist; review and adjust thresholds quarterly |
 | R60 | KV cache strategy pattern adds virtual dispatch overhead | Low | Low | Benchmark KV cache Get/Set latency; strategy dispatch is not on hot path |
+| R61 | Functional backward ops produce numerically different gradients than hand-coded loops | High | Medium | Numerical gradient check (finite differences) for each op; 10-epoch training loss parity within 1e-4 |
+| R62 | MultiHeadAttentionBackward is complex to implement correctly with batched heads | Medium | Medium | Start from reference implementation in itransformer_backward.go; validate per-head gradient isolation |
+| R63 | Replacing .Data() with engine.Slice in inference/timeseries/ may change graph node count | Low | Low | Benchmark inference throughput before/after; engine.Slice is a lightweight op |
+| R64 | Removing timeseries/ from architecture test allowlist too early causes CI failures | Low | Medium | Only remove AFTER E74 is fully complete and all tests pass |
 
-### E66-E73 Milestones
+### E66-E76 Milestones
 
 | ID | Milestone | Exit Criteria | Target |
 |----|-----------|---------------|--------|
-| M-COMP-2 | Composition Complete | All packages compose from layers/ or Engine; architecture test in CI; zero private math reimplementations outside internal/ | 2026-Q3 |
+| M-COMP-2 | Composition Phase 2 Complete | E66-E73 all compose from layers/ or Engine; architecture test in CI | DONE 2026-04-03 |
+| M-COMP-3 | Composition Phase 3 Complete | E74 backward composition done; E75 inference .Data() eliminated; E76 allowlist removed; zero raw backward loops in timeseries/; dirty-architecture.md violations at 0 | 2026-Q3 |
 
 ---
 
