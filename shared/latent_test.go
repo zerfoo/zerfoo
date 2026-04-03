@@ -1,8 +1,12 @@
 package shared
 
 import (
+	"context"
 	"math"
 	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 // cosine returns the cosine similarity between two vectors.
@@ -32,8 +36,10 @@ func euclidean(a, b []float64) float64 {
 // TestLatentSpace_SharedRepresentation verifies that similar inputs from
 // different models map to nearby points in the shared latent space.
 func TestLatentSpace_SharedRepresentation(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
 	latentDim := 4
-	ls := NewLatentSpace(latentDim)
+	ls := NewLatentSpace(latentDim, engine)
 
 	// Two models with different input dimensions.
 	ls.Register("modelA", 3)
@@ -54,7 +60,7 @@ func TestLatentSpace_SharedRepresentation(t *testing.T) {
 		dataB[i] = []float64{s * 0.8, s * 0.3, 1.0 - s*0.9, s * 0.2, 0.5 - s*0.5}
 	}
 
-	err := ls.TrainProjections(map[string][][]float64{
+	err := ls.TrainProjections(ctx, map[string][][]float64{
 		"modelA": dataA,
 		"modelB": dataB,
 	}, ProjectionConfig{
@@ -71,10 +77,22 @@ func TestLatentSpace_SharedRepresentation(t *testing.T) {
 	idxLow := 10
 	idxHigh := 190
 
-	zA_low := ls.Project("modelA", dataA[idxLow])
-	zB_low := ls.Project("modelB", dataB[idxLow])
-	zA_high := ls.Project("modelA", dataA[idxHigh])
-	zB_high := ls.Project("modelB", dataB[idxHigh])
+	zA_low, err := ls.Project(ctx, "modelA", dataA[idxLow])
+	if err != nil {
+		t.Fatal(err)
+	}
+	zB_low, err := ls.Project(ctx, "modelB", dataB[idxLow])
+	if err != nil {
+		t.Fatal(err)
+	}
+	zA_high, err := ls.Project(ctx, "modelA", dataA[idxHigh])
+	if err != nil {
+		t.Fatal(err)
+	}
+	zB_high, err := ls.Project(ctx, "modelB", dataB[idxHigh])
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Corresponding pairs (same index) should be closer than non-corresponding.
 	distSame := euclidean(zA_low, zB_low)
@@ -102,8 +120,10 @@ func TestLatentSpace_SharedRepresentation(t *testing.T) {
 // TestLatentSpace_TransferBenefit verifies that model B improves after
 // training with model A's shared representations.
 func TestLatentSpace_TransferBenefit(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
 	latentDim := 4
-	ls := NewLatentSpace(latentDim)
+	ls := NewLatentSpace(latentDim, engine)
 
 	ls.Register("modelA", 3)
 	ls.Register("modelB", 5)
@@ -120,7 +140,7 @@ func TestLatentSpace_TransferBenefit(t *testing.T) {
 	}
 
 	// Train projections.
-	err := ls.TrainProjections(map[string][][]float64{
+	err := ls.TrainProjections(ctx, map[string][][]float64{
 		"modelA": dataA,
 		"modelB": dataB,
 	}, ProjectionConfig{
@@ -144,15 +164,24 @@ func TestLatentSpace_TransferBenefit(t *testing.T) {
 		idx := 50 + i*5 // spread across training range
 
 		// Transfer path: A features -> shared -> B features
-		zA := ls.Project("modelA", dataA[idx])
-		bTransferred := ls.Retrieve("modelB", zA)
+		zA, err := ls.Project(ctx, "modelA", dataA[idx])
+		if err != nil {
+			t.Fatal(err)
+		}
+		bTransferred, err := ls.Retrieve(ctx, "modelB", zA)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		// Random baseline: retrieve from random latent vector.
 		randomZ := make([]float64, latentDim)
 		for d := 0; d < latentDim; d++ {
 			randomZ[d] = ls.rng.NormFloat64()
 		}
-		bRandom := ls.Retrieve("modelB", randomZ)
+		bRandom, err := ls.Retrieve(ctx, "modelB", randomZ)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		// MSE between transferred/random and actual B features.
 		actual := dataB[idx]
@@ -185,29 +214,39 @@ func TestLatentSpace_TransferBenefit(t *testing.T) {
 }
 
 func TestLatentSpace_RegisterAndProject(t *testing.T) {
-	ls := NewLatentSpace(3)
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
+	ls := NewLatentSpace(3, engine)
 	ls.Register("m1", 4)
 
 	features := []float64{1, 2, 3, 4}
-	z := ls.Project("m1", features)
+	z, err := ls.Project(ctx, "m1", features)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(z) != 3 {
 		t.Fatalf("expected latent dim 3, got %d", len(z))
 	}
 
 	// Retrieve back.
-	out := ls.Retrieve("m1", z)
+	out, err := ls.Retrieve(ctx, "m1", z)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(out) != 4 {
 		t.Fatalf("expected output dim 4, got %d", len(out))
 	}
 }
 
 func TestLatentSpace_TrainProjections_Errors(t *testing.T) {
-	ls := NewLatentSpace(3)
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
+	ls := NewLatentSpace(3, engine)
 	ls.Register("a", 2)
 
 	// Too few models.
-	err := ls.TrainProjections(map[string][][]float64{
+	err := ls.TrainProjections(ctx, map[string][][]float64{
 		"a": {{1, 2}},
 	}, ProjectionConfig{})
 	if err == nil {
@@ -215,7 +254,7 @@ func TestLatentSpace_TrainProjections_Errors(t *testing.T) {
 	}
 
 	// Unregistered model.
-	err = ls.TrainProjections(map[string][][]float64{
+	err = ls.TrainProjections(ctx, map[string][][]float64{
 		"a": {{1, 2}},
 		"b": {{3, 4}},
 	}, ProjectionConfig{})
@@ -225,7 +264,7 @@ func TestLatentSpace_TrainProjections_Errors(t *testing.T) {
 
 	// Mismatched sample counts.
 	ls.Register("b", 2)
-	err = ls.TrainProjections(map[string][][]float64{
+	err = ls.TrainProjections(ctx, map[string][][]float64{
 		"a": {{1, 2}, {3, 4}},
 		"b": {{5, 6}},
 	}, ProjectionConfig{})
@@ -234,7 +273,7 @@ func TestLatentSpace_TrainProjections_Errors(t *testing.T) {
 	}
 
 	// No samples.
-	err = ls.TrainProjections(map[string][][]float64{
+	err = ls.TrainProjections(ctx, map[string][][]float64{
 		"a": {},
 		"b": {},
 	}, ProjectionConfig{})
@@ -244,7 +283,9 @@ func TestLatentSpace_TrainProjections_Errors(t *testing.T) {
 }
 
 func TestLatentSpace_CosineAlignment(t *testing.T) {
-	ls := NewLatentSpace(4)
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
+	ls := NewLatentSpace(4, engine)
 	ls.Register("x", 3)
 	ls.Register("y", 3)
 
@@ -257,7 +298,7 @@ func TestLatentSpace_CosineAlignment(t *testing.T) {
 		dy[i] = []float64{s * 0.9, 1 - s*0.95, s * s * 1.1}
 	}
 
-	if err := ls.TrainProjections(map[string][][]float64{
+	if err := ls.TrainProjections(ctx, map[string][][]float64{
 		"x": dx, "y": dy,
 	}, ProjectionConfig{
 		LearningRate:    0.005,
@@ -269,8 +310,14 @@ func TestLatentSpace_CosineAlignment(t *testing.T) {
 
 	// Paired latent vectors should have high cosine similarity.
 	idx := 50
-	zx := ls.Project("x", dx[idx])
-	zy := ls.Project("y", dy[idx])
+	zx, err := ls.Project(ctx, "x", dx[idx])
+	if err != nil {
+		t.Fatal(err)
+	}
+	zy, err := ls.Project(ctx, "y", dy[idx])
+	if err != nil {
+		t.Fatal(err)
+	}
 	sim := cosine(zx, zy)
 
 	t.Logf("cosine similarity for paired sample: %.4f", sim)

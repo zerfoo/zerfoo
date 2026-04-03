@@ -1,11 +1,15 @@
 package shared
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"sync"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // ProjectionConfig controls the training of projection matrices.
@@ -60,18 +64,20 @@ type modelEntry struct {
 // LatentSpace is a shared embedding space that multiple models can project
 // into and read from via learned linear projections.
 type LatentSpace struct {
-	mu        sync.RWMutex
-	dim       int
-	models    map[string]*modelEntry
-	rng       *rand.Rand
+	mu     sync.RWMutex
+	dim    int
+	models map[string]*modelEntry
+	rng    *rand.Rand
+	engine compute.Engine[float64]
 }
 
 // NewLatentSpace creates a shared latent space with the given dimension.
-func NewLatentSpace(dim int) *LatentSpace {
+func NewLatentSpace(dim int, engine compute.Engine[float64]) *LatentSpace {
 	return &LatentSpace{
 		dim:    dim,
 		models: make(map[string]*modelEntry),
 		rng:    rand.New(rand.NewSource(42)),
+		engine: engine,
 	}
 }
 
@@ -104,21 +110,21 @@ func (ls *LatentSpace) xavierInit(rows, cols int) []float64 {
 
 // Project maps model features into the shared latent space.
 // features must have length equal to the model's registered input dimension.
-func (ls *LatentSpace) Project(name string, features []float64) []float64 {
+func (ls *LatentSpace) Project(ctx context.Context, name string, features []float64) ([]float64, error) {
 	ls.mu.RLock()
 	defer ls.mu.RUnlock()
 
 	entry := ls.models[name]
-	return matVecMul(entry.project, features, entry.inputDim, ls.dim)
+	return ls.matMul(ctx, entry.project, features, entry.inputDim, ls.dim)
 }
 
 // Retrieve maps a latent-space vector back to a model's representation space.
-func (ls *LatentSpace) Retrieve(name string, latent []float64) []float64 {
+func (ls *LatentSpace) Retrieve(ctx context.Context, name string, latent []float64) ([]float64, error) {
 	ls.mu.RLock()
 	defer ls.mu.RUnlock()
 
 	entry := ls.models[name]
-	return matVecMul(entry.reconstruct, latent, ls.dim, entry.inputDim)
+	return ls.matMul(ctx, entry.reconstruct, latent, ls.dim, entry.inputDim)
 }
 
 // TrainProjections learns projection and reconstruction matrices from
@@ -127,7 +133,7 @@ func (ls *LatentSpace) Retrieve(name string, latent []float64) []float64 {
 // by index). Training minimises reconstruction loss plus an alignment loss
 // that pulls corresponding samples from different models toward the same
 // point in latent space.
-func (ls *LatentSpace) TrainProjections(data map[string][][]float64, config ProjectionConfig) error {
+func (ls *LatentSpace) TrainProjections(ctx context.Context, data map[string][][]float64, config ProjectionConfig) error {
 	if len(data) < 2 {
 		return errors.New("shared: at least two models required for training")
 	}
@@ -167,7 +173,11 @@ func (ls *LatentSpace) TrainProjections(data map[string][][]float64, config Proj
 			latents := make(map[string][]float64, len(names))
 			for _, name := range names {
 				entry := ls.models[name]
-				latents[name] = matVecMul(entry.project, data[name][i], entry.inputDim, ls.dim)
+				z, err := ls.matMul(ctx, entry.project, data[name][i], entry.inputDim, ls.dim)
+				if err != nil {
+					return err
+				}
+				latents[name] = z
 			}
 
 			// Compute mean latent for alignment target.
@@ -188,7 +198,10 @@ func (ls *LatentSpace) TrainProjections(data map[string][][]float64, config Proj
 				z := latents[name]
 
 				// Reconstruction: xHat = reconstruct * z
-				xHat := matVecMul(entry.reconstruct, z, ls.dim, entry.inputDim)
+				xHat, err := ls.matMul(ctx, entry.reconstruct, z, ls.dim, entry.inputDim)
+				if err != nil {
+					return err
+				}
 
 				// Reconstruction error: dRecon = xHat - x
 				dRecon := make([]float64, entry.inputDim)
@@ -237,13 +250,22 @@ func (ls *LatentSpace) TrainProjections(data map[string][][]float64, config Proj
 	return nil
 }
 
-// matVecMul computes y = M * x where M is rows x cols (row-major).
-func matVecMul(m []float64, x []float64, rows, cols int) []float64 {
-	y := make([]float64, cols)
-	for r := 0; r < rows; r++ {
-		for c := 0; c < cols; c++ {
-			y[c] += m[r*cols+c] * x[r]
-		}
+// matMul computes y = M^T * x via engine.MatMul where M is rows x cols
+// (row-major), x has length rows, and the result has length cols.
+func (ls *LatentSpace) matMul(ctx context.Context, m []float64, x []float64, rows, cols int) ([]float64, error) {
+	// Reshape x as [1, rows] and M as [rows, cols] so that
+	// result = x_row * M has shape [1, cols].
+	xT, err := tensor.New[float64]([]int{1, rows}, x)
+	if err != nil {
+		return nil, err
 	}
-	return y
+	mT, err := tensor.New[float64]([]int{rows, cols}, m)
+	if err != nil {
+		return nil, err
+	}
+	result, err := ls.engine.MatMul(ctx, xT, mT)
+	if err != nil {
+		return nil, err
+	}
+	return result.Data(), nil
 }
