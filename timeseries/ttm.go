@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 
+	"math"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -559,7 +562,7 @@ func (m *TTM) mixerForward(ctx context.Context, x *tensor.TensorNumeric[float32]
 	if err != nil {
 		return nil, fmt.Errorf("time MLP1: %w", err)
 	}
-	flat, err = m.engine.UnaryOp(ctx, flat, geluScalar)
+	flat, err = functional.GELU(ctx, m.engine, m.ops, flat)
 	if err != nil {
 		return nil, fmt.Errorf("time GELU: %w", err)
 	}
@@ -601,7 +604,7 @@ func (m *TTM) mixerForward(ctx context.Context, x *tensor.TensorNumeric[float32]
 		if err != nil {
 			return nil, fmt.Errorf("feat MLP1: %w", err)
 		}
-		flat, err = m.engine.UnaryOp(ctx, flat, geluScalar)
+		flat, err = functional.GELU(ctx, m.engine, m.ops, flat)
 		if err != nil {
 			return nil, fmt.Errorf("feat GELU: %w", err)
 		}
@@ -1209,7 +1212,12 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 		for p := 0; p < nPatches; p++ {
 			dFeatMLP1Pre[p] = make([]float64, ffnDim)
 			for j := 0; j < ffnDim; j++ {
-				dFeatMLP1Pre[p][j] = dFeatMLP1Out[p][j] * geluDeriv[float64](mc.featMLP1Pre[p][j])
+				xf := mc.featMLP1Pre[p][j]
+					c := math.Sqrt(2.0 / math.Pi)
+					innerVal := c * (xf + 0.044715*xf*xf*xf)
+					th := math.Tanh(innerVal)
+					dInner := c * (1 + 3*0.044715*xf*xf)
+					dFeatMLP1Pre[p][j] = dFeatMLP1Out[p][j] * (0.5*(1+th) + 0.5*xf*(1-th*th)*dInner)
 			}
 		}
 
@@ -1262,7 +1270,12 @@ func (m *TTM) mixerBlockBackward(dOut [][]float64, layer *ttmMixerLayerF64, mc *
 	for p := 0; p < dModel; p++ {
 		dMLP1Pre[p] = make([]float64, nPatches)
 		for j := 0; j < nPatches; j++ {
-			dMLP1Pre[p][j] = dMLP1Out[p][j] * geluDeriv[float64](mc.mlp1Pre[p][j])
+			xf := mc.mlp1Pre[p][j]
+				c := math.Sqrt(2.0 / math.Pi)
+				innerVal := c * (xf + 0.044715*xf*xf*xf)
+				th := math.Tanh(innerVal)
+				dInner := c * (1 + 3*0.044715*xf*xf)
+				dMLP1Pre[p][j] = dMLP1Out[p][j] * (0.5*(1+th) + 0.5*xf*(1-th*th)*dInner)
 		}
 	}
 
@@ -1403,8 +1416,9 @@ func geluMatrix(x [][]float64) [][]float64 {
 	out := make([][]float64, len(x))
 	for i := range x {
 		out[i] = make([]float64, len(x[i]))
-		for j := range x[i] {
-			out[i][j] = geluScalar[float64](x[i][j])
+		for j, v := range x[i] {
+			inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+			out[i][j] = 0.5 * v * (1 + math.Tanh(inner))
 		}
 	}
 	return out

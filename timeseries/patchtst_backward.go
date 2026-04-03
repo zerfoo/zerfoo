@@ -201,7 +201,8 @@ func (m *PatchTST) forwardF64WithCache(input [][]float64, params *patchTSTParams
 						val += lc.normed2[p][k] * layer.ffn1W[k*ffnDim+j]
 					}
 					lc.ffn1PreAct[p][j] = val
-					lc.ffn1Out[p][j] = geluScalar[float64](val)
+					inner := math.Sqrt(2/math.Pi) * (val + 0.044715*val*val*val)
+					lc.ffn1Out[p][j] = 0.5 * val * (1 + math.Tanh(inner))
 				}
 				lc.ffn2Out[p] = make([]float64, dModel)
 				for j := 0; j < dModel; j++ {
@@ -347,7 +348,12 @@ func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cac
 			for p := 0; p < numPatches; p++ {
 				dFFN1PreAct[p] = make([]float64, ffnDim)
 				for j := 0; j < ffnDim; j++ {
-					dFFN1PreAct[p][j] = dFFN1Out[p][j] * geluDeriv[float64](lc.ffn1PreAct[p][j])
+					xf := lc.ffn1PreAct[p][j]
+						cg := math.Sqrt(2.0 / math.Pi)
+						innerVal := cg * (xf + 0.044715*xf*xf*xf)
+						th := math.Tanh(innerVal)
+						dInner := cg * (1 + 3*0.044715*xf*xf)
+						dFFN1PreAct[p][j] = dFFN1Out[p][j] * (0.5*(1+th) + 0.5*xf*(1-th*th)*dInner)
 				}
 			}
 
@@ -825,7 +831,8 @@ func (m *PatchTST) forwardF64(input [][]float64, params *patchTSTParamsF64) []fl
 					for k := 0; k < dModel; k++ {
 						val += normed[p][k] * layer.ffn1W[k*ffnDim+j]
 					}
-					h[j] = geluScalar[float64](val)
+					inner := math.Sqrt(2/math.Pi) * (val + 0.044715*val*val*val)
+					h[j] = 0.5 * val * (1 + math.Tanh(inner))
 				}
 				// Linear 2: ffnDim -> dModel.
 				ffnOut[p] = make([]float64, dModel)
