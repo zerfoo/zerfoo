@@ -8,7 +8,6 @@ import (
 	"math/rand/v2"
 	"os"
 
-	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -203,12 +202,27 @@ func (m *PatchTST) Forward(ctx context.Context, input *tensor.TensorNumeric[floa
 		return nil, fmt.Errorf("patchtst: add position: %w", err)
 	}
 
-	// Transformer encoder layers.
-	for i, layer := range m.layers {
-		x, err = m.encoderForward(ctx, x, layer)
-		if err != nil {
-			return nil, fmt.Errorf("patchtst: encoder layer %d: %w", i, err)
-		}
+	// Transformer encoder layers via shared encoderForward.
+	// Reshape from [batch*channels, numPatches, dModel] to [totalRows, dModel]
+	// which is the 2D layout expected by the shared encoder.
+	totalRows := batch * channels * numPatches
+	x, err = m.engine.Reshape(ctx, x, []int{totalRows, m.config.DModel})
+	if err != nil {
+		return nil, fmt.Errorf("patchtst: reshape for encoder: %w", err)
+	}
+
+	gpuLayers := encoderLayersToGPU(m.layers)
+	x, _, err = encoderForward(ctx, m.engine, x, gpuLayers,
+		batch*channels, numPatches, totalRows, m.config.DModel, m.config.NHeads,
+		m.config.DModel/m.config.NHeads, m.config.DModel*4)
+	if err != nil {
+		return nil, fmt.Errorf("patchtst: encoder: %w", err)
+	}
+
+	// Reshape back to [batch*channels, numPatches, dModel].
+	x, err = m.engine.Reshape(ctx, x, []int{batch * channels, numPatches, m.config.DModel})
+	if err != nil {
+		return nil, fmt.Errorf("patchtst: reshape after encoder: %w", err)
 	}
 	// x shape: [batch*channels, num_patches, d_model]
 
@@ -264,177 +278,6 @@ func (m *PatchTST) extractPatches(ctx context.Context, input *tensor.TensorNumer
 	}
 
 	return tensor.New[float32]([]int{n, numPatches, m.config.PatchLength}, outData)
-}
-
-// encoderForward runs one transformer encoder layer.
-// x shape: [N, seq, d_model], returns same shape.
-func (m *PatchTST) encoderForward(ctx context.Context, x *tensor.TensorNumeric[float32], layer encoderLayer) (*tensor.TensorNumeric[float32], error) {
-	shape := x.Shape()
-	n, seq, dModel := shape[0], shape[1], shape[2]
-
-	// Pre-norm: layer norm before attention.
-	normed, err := m.layerNorm(ctx, x, layer.norm1, layer.bias1)
-	if err != nil {
-		return nil, fmt.Errorf("norm1: %w", err)
-	}
-
-	// Multi-head self-attention.
-	attnOut, err := m.multiHeadAttention(ctx, normed, layer, n, seq, dModel)
-	if err != nil {
-		return nil, fmt.Errorf("attention: %w", err)
-	}
-
-	// Residual connection.
-	x, err = m.engine.Add(ctx, x, attnOut)
-	if err != nil {
-		return nil, fmt.Errorf("residual1: %w", err)
-	}
-
-	// Pre-norm: layer norm before FFN.
-	normed, err = m.layerNorm(ctx, x, layer.norm2, layer.bias2)
-	if err != nil {
-		return nil, fmt.Errorf("norm2: %w", err)
-	}
-
-	// FFN: two linear layers with GELU activation.
-	ffnOut, err := m.ffnForward(ctx, normed, layer, n, seq, dModel)
-	if err != nil {
-		return nil, fmt.Errorf("ffn: %w", err)
-	}
-
-	// Residual connection.
-	x, err = m.engine.Add(ctx, x, ffnOut)
-	if err != nil {
-		return nil, fmt.Errorf("residual2: %w", err)
-	}
-
-	return x, nil
-}
-
-// multiHeadAttention computes multi-head self-attention via functional.MultiHeadAttention.
-// input shape: [N, seq, d_model], output shape: [N, seq, d_model].
-func (m *PatchTST) multiHeadAttention(ctx context.Context, x *tensor.TensorNumeric[float32], layer encoderLayer, n, seq, dModel int) (*tensor.TensorNumeric[float32], error) {
-	// Reshape to [N*seq, d_model] for linear projections.
-	xFlat, err := m.engine.Reshape(ctx, x, []int{n * seq, dModel})
-	if err != nil {
-		return nil, err
-	}
-
-	q, err := m.linear(ctx, xFlat, layer.qProj)
-	if err != nil {
-		return nil, fmt.Errorf("q proj: %w", err)
-	}
-	k, err := m.linear(ctx, xFlat, layer.kProj)
-	if err != nil {
-		return nil, fmt.Errorf("k proj: %w", err)
-	}
-	v, err := m.linear(ctx, xFlat, layer.vProj)
-	if err != nil {
-		return nil, fmt.Errorf("v proj: %w", err)
-	}
-
-	// Process each batch element through functional.MultiHeadAttention.
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-	outData := make([]float32, n*seq*dModel)
-
-	for i := range n {
-		off := i * seq * dModel
-		qSlice, err := tensor.New[float32]([]int{seq, dModel}, qData[off:off+seq*dModel])
-		if err != nil {
-			return nil, err
-		}
-		kSlice, err := tensor.New[float32]([]int{seq, dModel}, kData[off:off+seq*dModel])
-		if err != nil {
-			return nil, err
-		}
-		vSlice, err := tensor.New[float32]([]int{seq, dModel}, vData[off:off+seq*dModel])
-		if err != nil {
-			return nil, err
-		}
-
-		attn, err := functional.MultiHeadAttention(ctx, m.engine, qSlice, kSlice, vSlice, m.config.NHeads)
-		if err != nil {
-			return nil, fmt.Errorf("attention batch %d: %w", i, err)
-		}
-		copy(outData[off:off+seq*dModel], attn.Data())
-	}
-
-	// Assemble [N*seq, d_model] for output projection.
-	attnFlat, err := tensor.New[float32]([]int{n * seq, dModel}, outData)
-	if err != nil {
-		return nil, err
-	}
-
-	// Output projection.
-	out, err := m.linear(ctx, attnFlat, layer.oProj)
-	if err != nil {
-		return nil, fmt.Errorf("o proj: %w", err)
-	}
-
-	// Reshape to [N, seq, d_model].
-	return m.engine.Reshape(ctx, out, []int{n, seq, dModel})
-}
-
-// ffnForward runs the feed-forward network sub-layer.
-// input shape: [N, seq, d_model], output shape: [N, seq, d_model].
-func (m *PatchTST) ffnForward(ctx context.Context, x *tensor.TensorNumeric[float32], layer encoderLayer, n, seq, dModel int) (*tensor.TensorNumeric[float32], error) {
-	ffnDim := layer.ffn1.weights.Shape()[1] // d_model * 4
-
-	// Reshape to [N*seq, d_model].
-	xFlat, err := m.engine.Reshape(ctx, x, []int{n * seq, dModel})
-	if err != nil {
-		return nil, err
-	}
-
-	// First linear: d_model -> 4*d_model.
-	h, err := m.linear(ctx, xFlat, layer.ffn1)
-	if err != nil {
-		return nil, err
-	}
-
-	// GELU activation.
-	h, err = functional.GELU(ctx, m.engine, m.ops, h)
-	if err != nil {
-		return nil, err
-	}
-
-	// Second linear: 4*d_model -> d_model.
-	// Reshape h to [N*seq, ffnDim] (already is).
-	_ = ffnDim
-	out, err := m.linear(ctx, h, layer.ffn2)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reshape to [N, seq, d_model].
-	return m.engine.Reshape(ctx, out, []int{n, seq, dModel})
-}
-
-// layerNorm applies layer normalization over the last dimension via functional.LayerNorm.
-// x shape: [..., d_model], scale/bias shape: [d_model].
-func (m *PatchTST) layerNorm(ctx context.Context, x *tensor.TensorNumeric[float32], scale, bias *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-	shape := x.Shape()
-	dModel := shape[len(shape)-1]
-	outerSize := 1
-	for _, s := range shape[:len(shape)-1] {
-		outerSize *= s
-	}
-
-	// Reshape to [outer, d_model] for functional.LayerNorm.
-	flat, err := m.engine.Reshape(ctx, x, []int{outerSize, dModel})
-	if err != nil {
-		return nil, err
-	}
-
-	normed, err := functional.LayerNorm(ctx, m.engine, flat, scale, bias, 1e-5)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reshape back to original shape.
-	return m.engine.Reshape(ctx, normed, shape)
 }
 
 // linear computes x @ W + b.
