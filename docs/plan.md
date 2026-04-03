@@ -1878,7 +1878,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.2: Extract Shared Encoder Backward
 
-- [ ] T53.2.1 Add encoderBackward to patchtst_encoder.go  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] T53.2.1 Add encoderBackward to patchtst_encoder.go  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T53.1.1
   File: timeseries/patchtst_encoder.go
   Extract from patchtst_gpu_train.go the encoder backward logic as:
@@ -1938,7 +1938,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 ##### Wave E53-1: Extract shared encoder (1 agent -- sequential, same file)
 
 - [x] T53.1.1 Shared encoder forward  DONE 2026-04-03
-- [ ] T53.2.1 Shared encoder backward  Deps: T53.1.1
+- [x] T53.2.1 Shared encoder backward  Deps: T53.1.1  DONE 2026-04-03
 
 ##### Wave E53-2: Wire and eliminate (3 agents)
 
