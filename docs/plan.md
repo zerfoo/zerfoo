@@ -1914,7 +1914,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.5: Eliminate patchtst_backward_engine.go
 
-- [ ] T53.5.1 Replace engine backward with shared encoder backward  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T53.5.1 Replace engine backward with shared encoder backward  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T53.2.1, T53.4.1
   Files: patchtst_backward_engine.go, patchtst_engine.go
   Replace backwardBatchF64Engine with:
@@ -1944,7 +1944,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 - [x] T53.3.1 Wire GPU train to shared encoder  Deps: T53.1.1, T53.2.1  DONE 2026-04-03
 - [x] T53.4.1 Eliminate engine forward paths  Deps: T53.1.1  DONE 2026-04-03
-- [ ] T53.5.1 Eliminate engine backward  Deps: T53.2.1, T53.4.1
+- [x] T53.5.1 Eliminate engine backward  Deps: T53.2.1, T53.4.1  DONE 2026-04-03
 
 ##### Wave E53-3: Validation (1 agent)
 
