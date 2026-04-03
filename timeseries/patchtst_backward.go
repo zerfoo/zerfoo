@@ -322,8 +322,8 @@ func (m *PatchTST) backwardF64(dOutput []float64, params *patchTSTParamsF64, cac
 			copy(dX[p], dFlat[p*dModel:(p+1)*dModel])
 		}
 
-		// Backward through encoder layers (reverse order).
-		dX = encoderBackwardF64(dX, params.layers, cc.layerCaches, dLayers,
+		// Backward through encoder layers (reverse order) via shared function.
+		dX = encoderBackwardF64(dX, params.layers, dLayers, cc.layerCaches,
 			numPatches, dModel, nHeads, headDim, ffnDim)
 
 		// Positional embedding gradient.

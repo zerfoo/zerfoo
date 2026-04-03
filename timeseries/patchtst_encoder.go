@@ -935,16 +935,22 @@ func encoderBackward(
 	return dX, nil
 }
 
-// encoderBackwardF64 runs the PatchTST encoder backward pass in float64.
-// dX: [numPatches][dModel] upstream gradient.
-// layers: encoder layer parameters, layerCaches: per-layer forward caches.
-// dLayers: gradient accumulators (mutated in place).
-// Returns gradient with respect to encoder input.
+// encoderBackwardF64 runs the PatchTST transformer encoder backward pass
+// in pure float64 arithmetic (no engine). It mirrors encoderBackward but
+// operates on float64 slices, enabling the CPU training path (BackwardSample)
+// to share a single implementation with any future float64-based callers.
+//
+// dX: [numPatches][dModel] upstream gradient flowing into the encoder output.
+// layers: encoder layer parameters.
+// dLayers: gradient accumulators (same layout as layers).
+// layerCaches: per-layer cached activations from the forward pass.
+// numPatches, dModel, nHeads, headDim, ffnDim: architecture constants.
+// Returns: dX gradient with respect to encoder input [numPatches][dModel].
 func encoderBackwardF64(
 	dX [][]float64,
 	layers []encoderLayerF64,
-	layerCaches []encoderLayerCache,
 	dLayers []encoderLayerF64Grad,
+	layerCaches []encoderLayerCache,
 	numPatches, dModel, nHeads, headDim, ffnDim int,
 ) [][]float64 {
 	for li := len(layers) - 1; li >= 0; li-- {
