@@ -141,17 +141,10 @@ func (v *VariableSelection[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 		return nil, err
 	}
 
-	// GELU activation on hidden using ops for element-wise computation.
-	// GELU(x) = x * sigmoid(1.702 * x) approximation.
-	hiddenData := hidden.Data()
-	geluData := make([]T, len(hiddenData))
-	for i, x := range hiddenData {
-		// Use sigmoid approximation: GELU(x) ≈ x * sigmoid(1.702 * x)
-		scaled := v.ops.Mul(x, v.ops.FromFloat64(1.702))
-		sig := v.ops.Sigmoid(scaled)
-		geluData[i] = v.ops.Mul(x, sig)
-	}
-	geluHidden, err := tensor.New[T](hidden.Shape(), geluData)
+	// GELU activation via Engine: GELU(x) ≈ x * sigmoid(1.702 * x)
+	geluHidden, err := v.engine.UnaryOp(ctx, hidden, func(x T) T {
+		return v.ops.Mul(x, v.ops.Sigmoid(v.ops.Mul(x, v.ops.FromFloat64(1.702))))
+	})
 	if err != nil {
 		return nil, err
 	}
