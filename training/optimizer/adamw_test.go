@@ -423,7 +423,7 @@ func TestAdamW_Step_NaNGradientReturnsError(t *testing.T) {
 		t.Fatal("Unexpected nil error")
 	}
 
-	expected := `adamw: NaN detected in gradient of parameter "weights" at index 1`
+	expected := `adamw: NaN detected in gradient of parameter "weights"`
 	if err.Error() != expected {
 		t.Errorf("Error message mismatch:\n got: %s\nwant: %s", err.Error(), expected)
 	}
@@ -450,7 +450,7 @@ func TestAdamW_Step_InfGradientReturnsError(t *testing.T) {
 		t.Fatal("Expected error for Inf gradient, got nil")
 	}
 
-	expected := `adamw: Inf detected in gradient of parameter "bias" at index 0`
+	expected := `adamw: Inf detected in gradient of parameter "bias"`
 	if err.Error() != expected {
 		t.Errorf("Error message mismatch:\n got: %s\nwant: %s", err.Error(), expected)
 	}
@@ -512,7 +512,7 @@ func TestAdamW_Step_GradientClippingActuallyClips(t *testing.T) {
 	param.Gradient = gradient
 
 	// Call the internal guard method directly to inspect gradient values after clipping.
-	err = adamw.guardAndClipGradients([]*graph.Parameter[float32]{param})
+	err = adamw.guardAndClipGradients(context.Background(), []*graph.Parameter[float32]{param})
 	testutils.AssertNoError(t, err, "guardAndClipGradients should not error")
 
 	clippedData := param.Gradient.Data()
@@ -543,7 +543,7 @@ func TestAdamW_Step_NormalGradientUnchanged(t *testing.T) {
 	param.Gradient = gradient
 
 	// Call guard directly to verify gradients are untouched
-	err = adamw.guardAndClipGradients([]*graph.Parameter[float32]{param})
+	err = adamw.guardAndClipGradients(context.Background(), []*graph.Parameter[float32]{param})
 	testutils.AssertNoError(t, err, "guardAndClipGradients should not error")
 
 	data := param.Gradient.Data()
