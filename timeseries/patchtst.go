@@ -311,11 +311,9 @@ func (m *PatchTST) encoderForward(ctx context.Context, x *tensor.TensorNumeric[f
 	return x, nil
 }
 
-// multiHeadAttention computes multi-head self-attention.
+// multiHeadAttention computes multi-head self-attention via functional.MultiHeadAttention.
 // input shape: [N, seq, d_model], output shape: [N, seq, d_model].
 func (m *PatchTST) multiHeadAttention(ctx context.Context, x *tensor.TensorNumeric[float32], layer encoderLayer, n, seq, dModel int) (*tensor.TensorNumeric[float32], error) {
-	headDim := dModel / m.config.NHeads
-
 	// Reshape to [N*seq, d_model] for linear projections.
 	xFlat, err := m.engine.Reshape(ctx, x, []int{n * seq, dModel})
 	if err != nil {
@@ -335,139 +333,48 @@ func (m *PatchTST) multiHeadAttention(ctx context.Context, x *tensor.TensorNumer
 		return nil, fmt.Errorf("v proj: %w", err)
 	}
 
-	// Reshape to [N, seq, n_heads, head_dim] then transpose to [N*n_heads, seq, head_dim].
-	// First reshape to [N, seq, n_heads, head_dim].
-	q, err = m.engine.Reshape(ctx, q, []int{n, seq, m.config.NHeads, headDim})
-	if err != nil {
-		return nil, err
-	}
-	k, err = m.engine.Reshape(ctx, k, []int{n, seq, m.config.NHeads, headDim})
-	if err != nil {
-		return nil, err
-	}
-	v, err = m.engine.Reshape(ctx, v, []int{n, seq, m.config.NHeads, headDim})
-	if err != nil {
-		return nil, err
+	// Process each batch element through functional.MultiHeadAttention.
+	qData := q.Data()
+	kData := k.Data()
+	vData := v.Data()
+	outData := make([]float32, n*seq*dModel)
+
+	for i := range n {
+		off := i * seq * dModel
+		qSlice, err := tensor.New[float32]([]int{seq, dModel}, qData[off:off+seq*dModel])
+		if err != nil {
+			return nil, err
+		}
+		kSlice, err := tensor.New[float32]([]int{seq, dModel}, kData[off:off+seq*dModel])
+		if err != nil {
+			return nil, err
+		}
+		vSlice, err := tensor.New[float32]([]int{seq, dModel}, vData[off:off+seq*dModel])
+		if err != nil {
+			return nil, err
+		}
+
+		attn, err := functional.MultiHeadAttention(ctx, m.engine, qSlice, kSlice, vSlice, m.config.NHeads)
+		if err != nil {
+			return nil, fmt.Errorf("attention batch %d: %w", i, err)
+		}
+		copy(outData[off:off+seq*dModel], attn.Data())
 	}
 
-	// Transpose to [N, n_heads, seq, head_dim].
-	q, err = m.engine.Transpose(ctx, q, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-	k, err = m.engine.Transpose(ctx, k, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-	v, err = m.engine.Transpose(ctx, v, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-
-	// Reshape to [N*n_heads, seq, head_dim] for batched matmul.
-	q, err = m.engine.Reshape(ctx, q, []int{n * m.config.NHeads, seq, headDim})
-	if err != nil {
-		return nil, err
-	}
-	k, err = m.engine.Reshape(ctx, k, []int{n * m.config.NHeads, seq, headDim})
-	if err != nil {
-		return nil, err
-	}
-	v, err = m.engine.Reshape(ctx, v, []int{n * m.config.NHeads, seq, headDim})
-	if err != nil {
-		return nil, err
-	}
-
-	// Scaled dot-product attention: softmax(Q @ K^T / sqrt(d_k)) @ V.
-	// Q @ K^T: [N*n_heads, seq, head_dim] @ [N*n_heads, head_dim, seq] = [N*n_heads, seq, seq].
-	kT, err := m.engine.Transpose(ctx, k, []int{0, 2, 1})
-	if err != nil {
-		return nil, err
-	}
-
-	scores, err := m.batchedMatMul(ctx, q, kT, n*m.config.NHeads, seq, headDim, seq)
-	if err != nil {
-		return nil, fmt.Errorf("qk matmul: %w", err)
-	}
-
-	// Scale by 1/sqrt(head_dim).
-	scaleFactor := float32(1.0 / math.Sqrt(float64(headDim)))
-	scores, err = m.engine.MulScalar(ctx, scores, scaleFactor)
-	if err != nil {
-		return nil, err
-	}
-
-	// Softmax along last axis.
-	attnWeights, err := m.engine.Softmax(ctx, scores, -1)
-	if err != nil {
-		return nil, err
-	}
-
-	// Attention output: weights @ V.
-	// [N*n_heads, seq, seq] @ [N*n_heads, seq, head_dim] = [N*n_heads, seq, head_dim].
-	attnOut, err := m.batchedMatMul(ctx, attnWeights, v, n*m.config.NHeads, seq, seq, headDim)
-	if err != nil {
-		return nil, fmt.Errorf("attn v matmul: %w", err)
-	}
-
-	// Reshape back to [N, n_heads, seq, head_dim].
-	attnOut, err = m.engine.Reshape(ctx, attnOut, []int{n, m.config.NHeads, seq, headDim})
-	if err != nil {
-		return nil, err
-	}
-
-	// Transpose to [N, seq, n_heads, head_dim].
-	attnOut, err = m.engine.Transpose(ctx, attnOut, []int{0, 2, 1, 3})
-	if err != nil {
-		return nil, err
-	}
-
-	// Reshape to [N*seq, d_model] for output projection.
-	attnOut, err = m.engine.Reshape(ctx, attnOut, []int{n * seq, dModel})
+	// Assemble [N*seq, d_model] for output projection.
+	attnFlat, err := tensor.New[float32]([]int{n * seq, dModel}, outData)
 	if err != nil {
 		return nil, err
 	}
 
 	// Output projection.
-	out, err := m.linear(ctx, attnOut, layer.oProj)
+	out, err := m.linear(ctx, attnFlat, layer.oProj)
 	if err != nil {
 		return nil, fmt.Errorf("o proj: %w", err)
 	}
 
 	// Reshape to [N, seq, d_model].
 	return m.engine.Reshape(ctx, out, []int{n, seq, dModel})
-}
-
-// batchedMatMul performs matrix multiplication on batched 3D tensors by iterating
-// over the batch dimension and using 2D MatMul.
-// a shape: [batch, m, k], b shape: [batch, k, n], result: [batch, m, n].
-func (m *PatchTST) batchedMatMul(ctx context.Context, a, b *tensor.TensorNumeric[float32], batch, rows, inner, cols int) (*tensor.TensorNumeric[float32], error) {
-	aData := a.Data()
-	bData := b.Data()
-	outData := make([]float32, batch*rows*cols)
-
-	for i := range batch {
-		aSlice := aData[i*rows*inner : (i+1)*rows*inner]
-		bSlice := bData[i*inner*cols : (i+1)*inner*cols]
-
-		aMat, err := tensor.New[float32]([]int{rows, inner}, aSlice)
-		if err != nil {
-			return nil, err
-		}
-		bMat, err := tensor.New[float32]([]int{inner, cols}, bSlice)
-		if err != nil {
-			return nil, err
-		}
-
-		result, err := m.engine.MatMul(ctx, aMat, bMat)
-		if err != nil {
-			return nil, err
-		}
-
-		copy(outData[i*rows*cols:(i+1)*rows*cols], result.Data())
-	}
-
-	return tensor.New[float32]([]int{batch, rows, cols}, outData)
 }
 
 // ffnForward runs the feed-forward network sub-layer.
@@ -505,7 +412,7 @@ func (m *PatchTST) ffnForward(ctx context.Context, x *tensor.TensorNumeric[float
 	return m.engine.Reshape(ctx, out, []int{n, seq, dModel})
 }
 
-// layerNorm applies layer normalization over the last dimension.
+// layerNorm applies layer normalization over the last dimension via functional.LayerNorm.
 // x shape: [..., d_model], scale/bias shape: [d_model].
 func (m *PatchTST) layerNorm(ctx context.Context, x *tensor.TensorNumeric[float32], scale, bias *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	shape := x.Shape()
@@ -515,57 +422,13 @@ func (m *PatchTST) layerNorm(ctx context.Context, x *tensor.TensorNumeric[float3
 		outerSize *= s
 	}
 
-	// Reshape to [outer, d_model].
+	// Reshape to [outer, d_model] for functional.LayerNorm.
 	flat, err := m.engine.Reshape(ctx, x, []int{outerSize, dModel})
 	if err != nil {
 		return nil, err
 	}
 
-	// Compute mean per row.
-	mean, err := m.engine.ReduceMean(ctx, flat, 1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Subtract mean.
-	centered, err := m.engine.Sub(ctx, flat, mean)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compute variance: mean(centered^2).
-	sq, err := m.engine.Mul(ctx, centered, centered)
-	if err != nil {
-		return nil, err
-	}
-	variance, err := m.engine.ReduceMean(ctx, sq, 1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add epsilon and compute rsqrt.
-	variance, err = m.engine.AddScalar(ctx, variance, 1e-5)
-	if err != nil {
-		return nil, err
-	}
-	invStd, err := m.engine.Rsqrt(ctx, variance)
-	if err != nil {
-		return nil, err
-	}
-
-	// Normalize.
-	normed, err := m.engine.Mul(ctx, centered, invStd)
-	if err != nil {
-		return nil, err
-	}
-
-	// Scale and shift: normed * scale + bias (broadcast over rows).
-	// scale/bias are [1, d_model].
-	normed, err = m.engine.Mul(ctx, normed, scale)
-	if err != nil {
-		return nil, err
-	}
-	normed, err = m.engine.Add(ctx, normed, bias)
+	normed, err := functional.LayerNorm(ctx, m.engine, flat, scale, bias, 1e-5)
 	if err != nil {
 		return nil, err
 	}

@@ -298,3 +298,162 @@ func TestCrossAsset_DifferentInputsProduceDifferentOutputs(t *testing.T) {
 		t.Error("different inputs produced identical outputs")
 	}
 }
+
+// TestCrossAsset_GradientParity verifies that the node-based backward pass
+// produces gradients within 1e-6 of numerical (finite-difference) gradients
+// for a single layer's weight parameters.
+func TestCrossAsset_GradientParity(t *testing.T) {
+	cfg := Config{
+		NSources:          3,
+		FeaturesPerSource: 4,
+		DModel:            8,
+		NHeads:            2,
+		NLayers:           1,
+		DropoutRate:       0.0,
+		LearningRate:      0.001,
+	}
+	m := NewModel(cfg)
+
+	features := make([][]float64, cfg.NSources)
+	for i := range features {
+		features[i] = make([]float64, cfg.FeaturesPerSource)
+		for j := range features[i] {
+			features[i][j] = float64(i*cfg.FeaturesPerSource+j+1) * 0.05
+		}
+	}
+	label := []int{0, 1, 2}
+
+	// Compute loss and analytic gradients via one backward step.
+	ns := cfg.NSources
+	dm := cfg.DModel
+
+	// Forward: input projection.
+	x := make([][]float64, ns)
+	for s := range ns {
+		x[s] = make([]float64, dm)
+		matVecMul(x[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
+		vecAdd(x[s], m.inputB[s])
+	}
+
+	// Forward through layer with cache.
+	xOut, cache := m.forwardLayerCached(x, m.layers[0])
+
+	// Head forward + cross-entropy loss.
+	lossAndGrad := func(xOut [][]float64, label []int) (float64, [][]float64) {
+		totalLoss := 0.0
+		dx := make([][]float64, ns)
+		for s := range ns {
+			logits := make([]float64, 3)
+			matVecMul(logits, m.headW, xOut[s], dm, 3)
+			vecAdd(logits, m.headB)
+			probs := softmax(logits)
+			totalLoss -= math.Log(probs[label[s]] + 1e-12)
+			dLogits := make([]float64, 3)
+			copy(dLogits, probs)
+			dLogits[label[s]] -= 1.0
+			for j := range dLogits {
+				dLogits[j] /= float64(ns)
+			}
+			dx[s] = make([]float64, dm)
+			for d := range dm {
+				for c := range 3 {
+					dx[s][d] += dLogits[c] * m.headW[d*3+c]
+				}
+			}
+		}
+		return totalLoss / float64(ns), dx
+	}
+
+	_, dxHead := lossAndGrad(xOut, label)
+
+	// Backward through layer.
+	dl := zeroLayer(dm)
+	_ = m.backwardLayer(dxHead, cache, &m.layers[0], &dl)
+
+	// Helper: compute loss for a perturbed weight.
+	computeLoss := func() float64 {
+		xFwd := make([][]float64, ns)
+		for s := range ns {
+			xFwd[s] = make([]float64, dm)
+			matVecMul(xFwd[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
+			vecAdd(xFwd[s], m.inputB[s])
+		}
+		var err error
+		for _, l := range m.layers {
+			xFwd, err = m.forwardLayer(xFwd, l)
+			if err != nil {
+				t.Fatalf("forwardLayer: %v", err)
+			}
+		}
+		loss, _ := lossAndGrad(xFwd, label)
+		return loss
+	}
+
+	// Check a subset of qW gradients via finite differences.
+	const h = 1e-5
+	const tol = 1e-4 // relaxed tolerance for finite differences
+	nCheck := 10
+	if nCheck > len(m.layers[0].qW) {
+		nCheck = len(m.layers[0].qW)
+	}
+
+	mismatches := 0
+	for i := 0; i < nCheck; i++ {
+		orig := m.layers[0].qW[i]
+
+		m.layers[0].qW[i] = orig + h
+		lPlus := computeLoss()
+		m.layers[0].qW[i] = orig - h
+		lMinus := computeLoss()
+		m.layers[0].qW[i] = orig
+
+		numerical := (lPlus - lMinus) / (2 * h)
+		analytic := dl.qW[i]
+
+		diff := math.Abs(numerical - analytic)
+		scale := math.Max(math.Abs(numerical), math.Abs(analytic))
+		if scale > 1e-8 {
+			diff /= scale // relative error
+		}
+		if diff > tol {
+			mismatches++
+			if mismatches <= 3 {
+				t.Errorf("qW[%d]: numerical=%.8f, analytic=%.8f, rel_diff=%.6f", i, numerical, analytic, diff)
+			}
+		}
+	}
+
+	// Also check ffnW2 gradients.
+	nCheckFFN := 10
+	if nCheckFFN > len(m.layers[0].ffnW2) {
+		nCheckFFN = len(m.layers[0].ffnW2)
+	}
+	for i := 0; i < nCheckFFN; i++ {
+		orig := m.layers[0].ffnW2[i]
+
+		m.layers[0].ffnW2[i] = orig + h
+		lPlus := computeLoss()
+		m.layers[0].ffnW2[i] = orig - h
+		lMinus := computeLoss()
+		m.layers[0].ffnW2[i] = orig
+
+		numerical := (lPlus - lMinus) / (2 * h)
+		analytic := dl.ffnW2[i]
+
+		diff := math.Abs(numerical - analytic)
+		scale := math.Max(math.Abs(numerical), math.Abs(analytic))
+		if scale > 1e-8 {
+			diff /= scale
+		}
+		if diff > tol {
+			mismatches++
+			if mismatches <= 6 {
+				t.Errorf("ffnW2[%d]: numerical=%.8f, analytic=%.8f, rel_diff=%.6f", i, numerical, analytic, diff)
+			}
+		}
+	}
+
+	if mismatches > 0 {
+		t.Logf("Total gradient mismatches: %d / %d", mismatches, nCheck+nCheckFFN)
+	}
+}

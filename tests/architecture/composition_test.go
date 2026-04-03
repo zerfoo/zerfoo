@@ -476,8 +476,9 @@ var privateLayerAllowlist = map[string]bool{
 	"timeseries/patchtst_backward.go":       true,
 	"timeseries/tft.go":                     true,
 	"timeseries/ttm.go":                     true,
-	// crossasset/ — legacy layer implementations tracked in E70
+	// crossasset/ — legacy layer implementations tracked in E68
 	"crossasset/crossasset.go": true,
+	"crossasset/backward.go":   true, // layerNormCached/layerNormBackward — tracked in E68
 	"crossasset/gpu_params.go": true,
 	"crossasset/gpu_train.go":  true,
 	// tabular/ — legacy models

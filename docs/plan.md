@@ -34,11 +34,11 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
-- E67: Timeseries full layers migration (4/11 -- Wave 3 helpers replaced; attention+validation pending)
-- E68: CrossAsset full layers migration (1/4 -- CPU forward done; backward, AdamW, delete pending)
-- E69: Training loss/optimizer Engine compliance (6/6 COMPLETE -- PR #320, #321, #322)
-- E70: Intra-layers violations cleanup (9/10 -- Wave 1+2 done; T70.1.10 tests+linters pending)
-- E71: Experimental package migration (4/5 -- rl/, synth/, meta/, shared/ done; T71.1.5 tests pending)
+- E67: Timeseries full layers migration (8/11 -- Waves 3+4 done; full suite+linters+file cleanup pending)
+- E68: CrossAsset full layers migration (2/4 -- CPU forward+backward done; AdamW+delete pending)
+- E69: Training loss/optimizer Engine compliance (6/6 COMPLETE -- PR #320, #321, #322) + T69.3.1 validated PR #324
+- E70: Intra-layers violations cleanup (10/10 COMPLETE -- all tasks + T70.1.10 validation PR #324)
+- E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
 - E72: Architecture enforcement test (1/2 -- T72.1.1 done, T72.1.2 CI gate pending)
 - E73: Generate KV cache consolidation (2/3 -- base extraction + migration done; T73.1.3 tests pending)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
@@ -339,14 +339,14 @@ Deps: E66 complete (Wave 2)
 #### Composition Wave 4: Per-model attention + sequential chains (8 agents)
 Deps: Wave 3
 
-- [ ] T67.2.1 PatchTST attention  verifies: [infrastructure]
-- [ ] T67.2.2 iTransformer attention  verifies: [infrastructure]
-- [ ] T67.2.3 TFT attention  verifies: [infrastructure]
-- [ ] T67.2.4 Remaining models  verifies: [infrastructure]
-- [ ] T68.1.2 CrossAsset backward  verifies: [infrastructure]
-- [ ] T69.3.1 Training tests + linters  verifies: [infrastructure]
-- [ ] T70.1.10 Layers tests + linters  verifies: [infrastructure]
-- [ ] T71.1.5 Experimental tests + linters  verifies: [infrastructure]
+- [x] T67.2.1 PatchTST attention  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T67.2.2 iTransformer attention  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T67.2.3 TFT attention  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T67.2.4 Remaining models  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T68.1.2 CrossAsset backward  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T69.3.1 Training tests + linters  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T70.1.10 Layers tests + linters  verifies: [infrastructure]  DONE 2026-04-03 PR #324
+- [x] T71.1.5 Experimental tests + linters  verifies: [infrastructure]  DONE 2026-04-03 PR #324
 
 #### Composition Wave 5: Final validation (5 agents)
 Deps: Wave 4
