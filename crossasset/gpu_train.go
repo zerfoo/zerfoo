@@ -185,7 +185,11 @@ func gpuForward(
 		if err != nil {
 			return nil, nil, fmt.Errorf("layer %d softmax: %w", li, err)
 		}
-		lc.attn = attnWeights
+		// Snapshot attn to CPU — cpuSoftmaxBackward needs this data.
+		attnData := make([]float32, len(attnWeights.Data()))
+		copy(attnData, attnWeights.Data())
+		attnCPU, _ := tensor.New(attnWeights.Shape(), attnData)
+		lc.attn = attnCPU
 
 		// AttnOut = attn @ V: [bs*nHeads, ns, headDim]
 		attnOutH, err := engine.MatMul(ctx, attnWeights, vH)
@@ -239,7 +243,12 @@ func gpuForward(
 		if err != nil {
 			return nil, nil, err
 		}
-		lc.ffnH = ffnH
+		// Snapshot ffnH to CPU — backward's cpuGELUBackward needs this data,
+		// but the GPU arena may recycle the buffer before backward runs.
+		ffnHData := make([]float32, len(ffnH.Data()))
+		copy(ffnHData, ffnH.Data())
+		ffnHCPU, _ := tensor.New(ffnH.Shape(), ffnHData)
+		lc.ffnH = ffnHCPU
 
 		// GELU activation.
 		ffnAct, err := cpuGELU(ffnH, ffnDim)
@@ -882,7 +891,7 @@ func cpuGELU(x *tensor.TensorNumeric[float32], _ int) (*tensor.TensorNumeric[flo
 // cpuGELUBackward computes GELU derivative * upstream gradient on CPU.
 func cpuGELUBackward(dOut, x *tensor.TensorNumeric[float32], _ int) (*tensor.TensorNumeric[float32], error) {
 	dData := dOut.Data()
-	xData := x.Data()
+	xData := x.Data() // x is already CPU-resident (snapshotted in forward pass)
 	out := make([]float32, len(xData))
 	c := math.Sqrt(2.0 / math.Pi)
 	for i := range xData {
