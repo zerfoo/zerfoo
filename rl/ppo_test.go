@@ -1,13 +1,11 @@
 package rl
 
 import (
+	"context"
 	"math"
 	"testing"
 )
 
-// cartPoleEnv is a simplified CartPole environment for testing.
-// State: [position, velocity, angle, angular_velocity]
-// Action: [force] (continuous, thresholded to left/right)
 type cartPoleEnv struct {
 	state [4]float64
 	steps int
@@ -30,49 +28,37 @@ func (c *cartPoleEnv) Step(action Action) (State, float64, bool, error) {
 	)
 	totalMass := massCart + massPole
 	poleMassLength := massPole * length
-
 	x, xDot, theta, thetaDot := c.state[0], c.state[1], c.state[2], c.state[3]
-
 	force := 10.0
 	if len(action) > 0 && action[0] < 0 {
 		force = -10.0
 	}
-
 	cosTheta := math.Cos(theta)
 	sinTheta := math.Sin(theta)
-
 	temp := (force + poleMassLength*thetaDot*thetaDot*sinTheta) / totalMass
 	thetaAcc := (gravity*sinTheta - cosTheta*temp) /
 		(length * (4.0/3.0 - massPole*cosTheta*cosTheta/totalMass))
 	xAcc := temp - poleMassLength*thetaAcc*cosTheta/totalMass
-
 	x += dt * xDot
 	xDot += dt * xAcc
 	theta += dt * thetaDot
 	thetaDot += dt * thetaAcc
-
 	c.state = [4]float64{x, xDot, theta, thetaDot}
 	c.steps++
-
 	done := x < -2.4 || x > 2.4 || theta < -0.2095 || theta > 0.2095 || c.steps >= maxSteps
 	reward := 1.0
 	if done && c.steps < maxSteps {
 		reward = 0.0
 	}
-
 	return c.state[:], reward, done, nil
 }
 
-// banditEnv is a simple 1-step environment where the optimal action is to
-// output a positive value for state[0] > 0 and negative for state[0] < 0.
-// This is trivial for a neural net and ensures PPO convergence is testable.
 type banditEnv struct {
 	state float64
 	done  bool
 }
 
 func (b *banditEnv) Reset() State {
-	// Alternate between positive and negative states.
 	if b.state >= 0 {
 		b.state = -1.0
 	} else {
@@ -83,7 +69,6 @@ func (b *banditEnv) Reset() State {
 }
 
 func (b *banditEnv) Step(action Action) (State, float64, bool, error) {
-	// Reward: +1 if action matches sign of state, else -1.
 	reward := -1.0
 	if len(action) > 0 && action[0]*b.state > 0 {
 		reward = 1.0
@@ -100,10 +85,8 @@ func TestPPO_CartPole(t *testing.T) {
 	cfg.LearningRate = 3e-3
 	cfg.Gamma = 0.99
 	cfg.Lambda = 0.95
-
 	agent := NewPPO(cfg)
 	env := &cartPoleEnv{}
-
 	evaluate := func(nEpisodes int) float64 {
 		totalReward := 0.0
 		for ep := 0; ep < nEpisodes; ep++ {
@@ -122,8 +105,6 @@ func TestPPO_CartPole(t *testing.T) {
 		}
 		return totalReward / float64(nEpisodes)
 	}
-
-	// Train, collecting multiple trajectories per iteration.
 	bestReward := 0.0
 	for iter := 0; iter < 100; iter++ {
 		var trajectory []Experience
@@ -156,10 +137,6 @@ func TestPPO_CartPole(t *testing.T) {
 			t.Logf("iter %d: avg reward %.1f (best %.1f)", iter+1, avg, bestReward)
 		}
 	}
-
-	// Verify the agent can interact with a realistic environment and produce
-	// non-degenerate behavior. The bandit test covers convergence rigorously;
-	// this test verifies CartPole integration. A purely random policy scores ~9.
 	t.Logf("best avg reward: %.1f", bestReward)
 	if bestReward < 9 {
 		t.Errorf("PPO CartPole degenerate: best avg reward %.1f < 9", bestReward)
@@ -167,8 +144,6 @@ func TestPPO_CartPole(t *testing.T) {
 }
 
 func TestPPO_Bandit(t *testing.T) {
-	// Use a trivial 1-step bandit to verify PPO learning loop converges
-	// reliably regardless of random seed.
 	cfg := DefaultPPOConfig(1, 1)
 	cfg.HiddenDim = 16
 	cfg.NEpochs = 4
@@ -176,10 +151,8 @@ func TestPPO_Bandit(t *testing.T) {
 	cfg.LearningRate = 3e-3
 	cfg.Gamma = 0.0
 	cfg.Lambda = 0.0
-
 	agent := NewPPO(cfg)
 	env := &banditEnv{}
-
 	for iter := 0; iter < 200; iter++ {
 		var trajectory []Experience
 		for ep := 0; ep < 32; ep++ {
@@ -199,8 +172,6 @@ func TestPPO_Bandit(t *testing.T) {
 			t.Fatalf("Learn failed at iteration %d: %v", iter, err)
 		}
 	}
-
-	// Evaluate: the agent should get positive reward most of the time.
 	correct := 0
 	total := 100
 	for i := 0; i < total; i++ {
@@ -225,42 +196,35 @@ func TestPPO_ClipObjective(t *testing.T) {
 	cfg.NEpochs = 1
 	cfg.BatchSize = 32
 	cfg.LearningRate = 1e-3
-
 	agent := NewPPO(cfg)
-
 	batch := make([]Experience, 32)
 	for i := range batch {
 		s := []float64{float64(i) * 0.1, float64(i) * -0.1}
 		batch[i] = Experience{
-			State:     s,
-			Action:    []float64{float64(i%2)*2 - 1},
-			Reward:    1.0,
-			NextState: s,
-			Done:      i == len(batch)-1,
+			State: s, Action: []float64{float64(i%2)*2 - 1},
+			Reward: 1.0, NextState: s, Done: i == len(batch)-1,
 		}
 	}
-
-	// Record old log probs.
+	ctx := context.Background()
 	oldLogProbs := make([]float64, len(batch))
 	for i, exp := range batch {
-		mean, logStd := agent.policy.forward(exp.State)
+		mean, logStd, err := agent.policy.forward(ctx, exp.State)
+		if err != nil {
+			t.Fatalf("policy forward failed: %v", err)
+		}
 		oldLogProbs[i] = logProb(exp.Action, mean, logStd)
 	}
-
 	if err := agent.Learn(batch); err != nil {
 		t.Fatalf("Learn failed: %v", err)
 	}
-
-	// Check that the probability ratios are bounded.
 	clip := cfg.ClipRatio
 	for i, exp := range batch {
-		mean, logStd := agent.policy.forward(exp.State)
+		mean, logStd, err := agent.policy.forward(ctx, exp.State)
+		if err != nil {
+			t.Fatalf("policy forward failed: %v", err)
+		}
 		newLP := logProb(exp.Action, mean, logStd)
 		ratio := math.Exp(newLP - oldLogProbs[i])
-
-		// The effective ratio used in the loss is clipped, but the actual
-		// policy ratio can drift beyond the clip range across multiple
-		// minibatch updates within the same epoch. Allow a tolerance.
 		tolerance := 0.25
 		if ratio < 1-clip-tolerance || ratio > 1+clip+tolerance {
 			t.Errorf("sample %d: ratio %.4f outside tolerance [%.2f, %.2f]",
