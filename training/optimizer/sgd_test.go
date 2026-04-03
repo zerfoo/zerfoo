@@ -37,16 +37,16 @@ func testSGDClip[T tensor.Numeric](ops numeric.Arithmetic[T]) func(t *testing.T)
 
 type mockEngine[T tensor.Numeric] struct {
 	compute.Engine[T]
-	mulErr bool
-	subErr bool
+	mulScalarErr bool
+	subErr       bool
 }
 
-func (m *mockEngine[T]) Mul(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if m.mulErr {
-		return nil, errors.New("mul error")
+func (m *mockEngine[T]) MulScalar(ctx context.Context, a *tensor.TensorNumeric[T], scalar T, dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if m.mulScalarErr {
+		return nil, errors.New("mul scalar error")
 	}
 
-	return m.Engine.Mul(ctx, a, b, dst...)
+	return m.Engine.MulScalar(ctx, a, scalar, dst...)
 }
 
 func (m *mockEngine[T]) Sub(ctx context.Context, a, b *tensor.TensorNumeric[T], dst ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
@@ -128,10 +128,10 @@ func TestSGD_Clip(t *testing.T) {
 }
 
 func TestSGD_Step_Error(t *testing.T) {
-	t.Run("mul error", func(t *testing.T) {
+	t.Run("mul scalar error", func(t *testing.T) {
 		engine := &mockEngine[int]{
-			Engine: compute.NewCPUEngine[int](numeric.IntOps{}),
-			mulErr: true,
+			Engine:       compute.NewCPUEngine[int](numeric.IntOps{}),
+			mulScalarErr: true,
 		}
 		sgd := NewSGD[int](engine, numeric.IntOps{}, 1.0)
 		value, _ := tensor.New[int]([]int{2, 2}, []int{1, 2, 3, 4})

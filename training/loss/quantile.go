@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/float16"
+	"github.com/zerfoo/float8"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -45,9 +47,9 @@ func QuantileLoss[T tensor.Numeric](preds, targets *tensor.TensorNumeric[T], qua
 	count := 0
 
 	for i := 0; i < batch; i++ {
-		tgt := float64(any(targetData[i]).(float32))
+		tgt := numericToFloat64(targetData[i])
 		for j := 0; j < numQ; j++ {
-			pred := float64(any(predData[i*numQ+j]).(float32))
+			pred := numericToFloat64(predData[i*numQ+j])
 			q := float64(quantiles[j])
 			err := tgt - pred
 			var l float64
@@ -99,14 +101,14 @@ func SharpeLoss[T tensor.Numeric](weights, returns_ *tensor.TensorNumeric[T]) (f
 	for i := 0; i < batch; i++ {
 		maxW := math.Inf(-1)
 		for j := 0; j < numAssets; j++ {
-			v := float64(any(wData[i*numAssets+j]).(float32))
+			v := numericToFloat64(wData[i*numAssets+j])
 			if v > maxW {
 				maxW = v
 			}
 		}
 		var sumExp float64
 		for j := 0; j < numAssets; j++ {
-			v := float64(any(wData[i*numAssets+j]).(float32))
+			v := numericToFloat64(wData[i*numAssets+j])
 			softW[i*numAssets+j] = math.Exp(v - maxW)
 			sumExp += softW[i*numAssets+j]
 		}
@@ -120,7 +122,7 @@ func SharpeLoss[T tensor.Numeric](weights, returns_ *tensor.TensorNumeric[T]) (f
 	for i := 0; i < batch; i++ {
 		var pr float64
 		for j := 0; j < numAssets; j++ {
-			r := float64(any(rData[i*numAssets+j]).(float32))
+			r := numericToFloat64(rData[i*numAssets+j])
 			pr += softW[i*numAssets+j] * r
 		}
 		portReturns[i] = pr
@@ -147,4 +149,40 @@ func SharpeLoss[T tensor.Numeric](weights, returns_ *tensor.TensorNumeric[T]) (f
 
 	sharpe := meanRet / stdRet
 	return float32(-sharpe), nil
+}
+
+// numericToFloat64 converts a tensor.Numeric value to float64.
+func numericToFloat64[T tensor.Numeric](v T) float64 {
+	switch val := any(v).(type) {
+	case float32:
+		return float64(val)
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int8:
+		return float64(val)
+	case int16:
+		return float64(val)
+	case int32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case uint:
+		return float64(val)
+	case uint8:
+		return float64(val)
+	case uint32:
+		return float64(val)
+	case uint64:
+		return float64(val)
+	case float16.Float16:
+		return float64(val.ToFloat32())
+	case float16.BFloat16:
+		return float64(val.ToFloat32())
+	case float8.Float8:
+		return val.ToFloat64()
+	default:
+		return 0
+	}
 }
