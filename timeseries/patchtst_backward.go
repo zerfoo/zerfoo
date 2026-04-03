@@ -1,7 +1,11 @@
 package timeseries
 
 import (
+	"context"
 	"math"
+
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // patchTSTCacheF64 stores activations from the forward pass for backpropagation.
@@ -885,67 +889,43 @@ func (m *PatchTST) forwardF64(input [][]float64, params *patchTSTParamsF64) []fl
 	return result
 }
 
-// multiHeadAttentionF64 computes multi-head self-attention in float64.
+// multiHeadAttentionF64 computes multi-head self-attention in float64 via
+// functional.MultiHeadAttention.
 // x: [seq][dModel].
 func multiHeadAttentionF64(x [][]float64, layer *encoderLayerF64, nHeads, headDim, dModel int) [][]float64 {
 	seq := len(x)
+	ctx := context.Background()
 
 	// Q, K, V projections.
 	q := linearF64(x, layer.qW, layer.qB, dModel, dModel)
 	k := linearF64(x, layer.kW, layer.kB, dModel, dModel)
 	v := linearF64(x, layer.vW, layer.vB, dModel, dModel)
 
-	// Split into heads and compute attention.
-	attnOut := make([][]float64, seq)
-	for s := range attnOut {
-		attnOut[s] = make([]float64, dModel)
+	// Convert to tensors for functional.MultiHeadAttention.
+	qFlat := make([]float64, seq*dModel)
+	kFlat := make([]float64, seq*dModel)
+	vFlat := make([]float64, seq*dModel)
+	for s := 0; s < seq; s++ {
+		copy(qFlat[s*dModel:], q[s])
+		copy(kFlat[s*dModel:], k[s])
+		copy(vFlat[s*dModel:], v[s])
 	}
 
-	scale := 1.0 / math.Sqrt(float64(headDim))
-	for h := 0; h < nHeads; h++ {
-		hOff := h * headDim
+	qT, _ := tensor.New[float64]([]int{seq, dModel}, qFlat)
+	kT, _ := tensor.New[float64]([]int{seq, dModel}, kFlat)
+	vT, _ := tensor.New[float64]([]int{seq, dModel}, vFlat)
 
-		// Compute attention scores for this head.
-		scores := make([][]float64, seq)
-		for i := 0; i < seq; i++ {
-			scores[i] = make([]float64, seq)
-			for j := 0; j < seq; j++ {
-				dot := 0.0
-				for d := 0; d < headDim; d++ {
-					dot += q[i][hOff+d] * k[j][hOff+d]
-				}
-				scores[i][j] = dot * scale
-			}
-		}
+	attnT, err := functional.MultiHeadAttention(ctx, cpuEngine64, qT, kT, vT, nHeads)
+	if err != nil {
+		panic("multiHeadAttentionF64: " + err.Error())
+	}
 
-		// Softmax.
-		for i := 0; i < seq; i++ {
-			maxScore := scores[i][0]
-			for j := 1; j < seq; j++ {
-				if scores[i][j] > maxScore {
-					maxScore = scores[i][j]
-				}
-			}
-			sumExp := 0.0
-			for j := 0; j < seq; j++ {
-				scores[i][j] = math.Exp(scores[i][j] - maxScore)
-				sumExp += scores[i][j]
-			}
-			for j := 0; j < seq; j++ {
-				scores[i][j] /= sumExp
-			}
-		}
-
-		// Weighted sum of values.
-		for i := 0; i < seq; i++ {
-			for d := 0; d < headDim; d++ {
-				val := 0.0
-				for j := 0; j < seq; j++ {
-					val += scores[i][j] * v[j][hOff+d]
-				}
-				attnOut[i][hOff+d] = val
-			}
-		}
+	// Convert back to slices.
+	attnOut := make([][]float64, seq)
+	data := attnT.Data()
+	for s := 0; s < seq; s++ {
+		attnOut[s] = make([]float64, dModel)
+		copy(attnOut[s], data[s*dModel:(s+1)*dModel])
 	}
 
 	// Output projection.
