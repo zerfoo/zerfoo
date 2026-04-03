@@ -1,139 +1,137 @@
 package crossasset
 
-import "math"
+import (
+	"context"
+	"fmt"
 
-// cpuAdamState holds per-parameter first and second moment estimates for AdamW.
+	"github.com/zerfoo/zerfoo/training/optimizer"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
+)
+
+// cpuAdamState wraps the canonical AdamW[float64] optimizer and the
+// graph.Parameter list that maps 1-to-1 with the model's weight slices.
 type cpuAdamState struct {
-	params []adamSlice // one per parameter slice
+	opt    *optimizer.AdamW[float64]
+	params []*graph.Parameter[float64]
 }
 
-type adamSlice struct {
-	m []float64 // first moment
-	v []float64 // second moment
-}
-
-// newAdamState allocates AdamW state for all model parameters.
-func newAdamState(model *Model) *cpuAdamState {
-	var slices []adamSlice
-
-	// Head.
-	slices = append(slices, newAdamSlice(len(model.headW)))
-	slices = append(slices, newAdamSlice(len(model.headB)))
-
-	// Layers.
-	for _, l := range model.layers {
-		slices = append(slices,
-			newAdamSlice(len(l.qW)),
-			newAdamSlice(len(l.kW)),
-			newAdamSlice(len(l.vW)),
-			newAdamSlice(len(l.outW)),
-			newAdamSlice(len(l.lnGamma)),
-			newAdamSlice(len(l.lnBeta)),
-			newAdamSlice(len(l.ffnW1)),
-			newAdamSlice(len(l.ffnB1)),
-			newAdamSlice(len(l.ffnW2)),
-			newAdamSlice(len(l.ffnB2)),
-			newAdamSlice(len(l.ffnGamma)),
-			newAdamSlice(len(l.ffnBeta)),
-		)
-	}
-
-	// Input projections.
-	for s := range model.inputW {
-		slices = append(slices, newAdamSlice(len(model.inputW[s])))
-		slices = append(slices, newAdamSlice(len(model.inputB[s])))
-	}
-
-	return &cpuAdamState{params: slices}
-}
-
-func newAdamSlice(n int) adamSlice {
-	return adamSlice{m: make([]float64, n), v: make([]float64, n)}
-}
-
-// adamWUpdateAll applies AdamW to all model parameters.
-func adamWUpdateAll(
-	lr float64, step int,
-	model *Model,
-	dHeadW, dHeadB []float64,
-	dLayers []layer,
-	dInputW, dInputB [][]float64,
-	state *cpuAdamState,
-) {
+// newAdamState creates a canonical AdamW optimizer and registers every model
+// parameter as a graph.Parameter whose Value tensor aliases the model's
+// []float64 slice (zero-copy).
+func newAdamState(model *Model, lr float64) (*cpuAdamState, error) {
 	const (
 		beta1       = 0.9
 		beta2       = 0.999
 		eps         = 1e-8
 		weightDecay = 0.01
+		maxGradNorm = 1.0
 	)
 
-	idx := 0
-	adamW := func(params, grads []float64, s *adamSlice) {
-		// Bias correction.
-		bc1 := 1.0 - math.Pow(beta1, float64(step))
-		bc2 := 1.0 - math.Pow(beta2, float64(step))
+	opt := optimizer.NewAdamW[float64](cpuEngine, lr, beta1, beta2, eps, weightDecay)
+	opt.SetMaxGradNorm(maxGradNorm)
 
-		for i := range params {
-			g := grads[i]
-			// Gradient clipping.
-			if g > 1.0 {
-				g = 1.0
-			} else if g < -1.0 {
-				g = -1.0
-			}
+	var params []*graph.Parameter[float64]
 
-			s.m[i] = beta1*s.m[i] + (1-beta1)*g
-			s.v[i] = beta2*s.v[i] + (1-beta2)*g*g
-
-			mHat := s.m[i] / bc1
-			vHat := s.v[i] / bc2
-
-			// AdamW: weight decay applied to param directly, not through gradient.
-			params[i] -= lr * (mHat/(math.Sqrt(vHat)+eps) + weightDecay*params[i])
+	wrap := func(name string, data []float64) error {
+		t, err := tensor.New[float64]([]int{len(data)}, data)
+		if err != nil {
+			return fmt.Errorf("crossasset: wrap param %s: %w", name, err)
 		}
+		p, err := graph.NewParameter[float64](name, t, tensor.New[float64])
+		if err != nil {
+			return fmt.Errorf("crossasset: new param %s: %w", name, err)
+		}
+		params = append(params, p)
+		return nil
 	}
 
 	// Head.
-	adamW(model.headW, dHeadW, &state.params[idx])
-	idx++
-	adamW(model.headB, dHeadB, &state.params[idx])
-	idx++
+	if err := wrap("headW", model.headW); err != nil {
+		return nil, err
+	}
+	if err := wrap("headB", model.headB); err != nil {
+		return nil, err
+	}
 
 	// Layers.
 	for li := range model.layers {
 		l := &model.layers[li]
-		dl := &dLayers[li]
-		adamW(l.qW, dl.qW, &state.params[idx])
-		idx++
-		adamW(l.kW, dl.kW, &state.params[idx])
-		idx++
-		adamW(l.vW, dl.vW, &state.params[idx])
-		idx++
-		adamW(l.outW, dl.outW, &state.params[idx])
-		idx++
-		adamW(l.lnGamma, dl.lnGamma, &state.params[idx])
-		idx++
-		adamW(l.lnBeta, dl.lnBeta, &state.params[idx])
-		idx++
-		adamW(l.ffnW1, dl.ffnW1, &state.params[idx])
-		idx++
-		adamW(l.ffnB1, dl.ffnB1, &state.params[idx])
-		idx++
-		adamW(l.ffnW2, dl.ffnW2, &state.params[idx])
-		idx++
-		adamW(l.ffnB2, dl.ffnB2, &state.params[idx])
-		idx++
-		adamW(l.ffnGamma, dl.ffnGamma, &state.params[idx])
-		idx++
-		adamW(l.ffnBeta, dl.ffnBeta, &state.params[idx])
-		idx++
+		prefix := fmt.Sprintf("layer%d.", li)
+		for _, kv := range []struct {
+			name string
+			data []float64
+		}{
+			{"qW", l.qW}, {"kW", l.kW}, {"vW", l.vW}, {"outW", l.outW},
+			{"lnGamma", l.lnGamma}, {"lnBeta", l.lnBeta},
+			{"ffnW1", l.ffnW1}, {"ffnB1", l.ffnB1},
+			{"ffnW2", l.ffnW2}, {"ffnB2", l.ffnB2},
+			{"ffnGamma", l.ffnGamma}, {"ffnBeta", l.ffnBeta},
+		} {
+			if err := wrap(prefix+kv.name, kv.data); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Input projections.
 	for s := range model.inputW {
-		adamW(model.inputW[s], dInputW[s], &state.params[idx])
-		idx++
-		adamW(model.inputB[s], dInputB[s], &state.params[idx])
-		idx++
+		prefix := fmt.Sprintf("input%d.", s)
+		if err := wrap(prefix+"W", model.inputW[s]); err != nil {
+			return nil, err
+		}
+		if err := wrap(prefix+"B", model.inputB[s]); err != nil {
+			return nil, err
+		}
 	}
+
+	return &cpuAdamState{opt: opt, params: params}, nil
+}
+
+// adamWUpdateAll sets gradients on each registered parameter and delegates
+// the weight update to the canonical AdamW[float64] optimizer.
+func adamWUpdateAll(
+	model *Model,
+	dHeadW, dHeadB []float64,
+	dLayers []layer,
+	dInputW, dInputB [][]float64,
+	state *cpuAdamState,
+) error {
+	// Collect gradient slices in the same order as params were registered.
+	var grads [][]float64
+
+	// Head.
+	grads = append(grads, dHeadW, dHeadB)
+
+	// Layers.
+	for li := range dLayers {
+		dl := &dLayers[li]
+		grads = append(grads,
+			dl.qW, dl.kW, dl.vW, dl.outW,
+			dl.lnGamma, dl.lnBeta,
+			dl.ffnW1, dl.ffnB1,
+			dl.ffnW2, dl.ffnB2,
+			dl.ffnGamma, dl.ffnBeta,
+		)
+	}
+
+	// Input projections.
+	for s := range dInputW {
+		grads = append(grads, dInputW[s], dInputB[s])
+	}
+
+	if len(grads) != len(state.params) {
+		return fmt.Errorf("crossasset: adamw: gradient count %d != param count %d", len(grads), len(state.params))
+	}
+
+	// Set gradient tensors on each parameter (zero-copy alias).
+	for i, p := range state.params {
+		g, err := tensor.New[float64]([]int{len(grads[i])}, grads[i])
+		if err != nil {
+			return fmt.Errorf("crossasset: adamw: wrap gradient %s: %w", p.Name, err)
+		}
+		p.Gradient = g
+	}
+
+	return state.opt.Step(context.Background(), state.params)
 }
