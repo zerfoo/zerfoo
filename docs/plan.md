@@ -1891,7 +1891,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.3: Wire patchtst_gpu_train.go to Shared Encoder
 
-- [ ] T53.3.1 Replace inline forward/backward in GPU train with shared encoder  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T53.3.1 Replace inline forward/backward in GPU train with shared encoder  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-04-03
   Deps: T53.1.1, T53.2.1
   File: timeseries/patchtst_gpu_train.go
   Replace the ~800 lines of inline encoder forward/backward with calls to
@@ -1901,7 +1901,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.4: Eliminate patchtst_engine.go Forward
 
-- [ ] T53.4.1 Replace engine forward paths with shared encoder  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T53.4.1 Replace engine forward paths with shared encoder  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T53.1.1
   Files: patchtst_engine.go, patchtst.go
   Replace forwardF64WithCacheEngine and forwardBatchF64WithCacheEngine with:
@@ -1942,8 +1942,8 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ##### Wave E53-2: Wire and eliminate (3 agents)
 
-- [ ] T53.3.1 Wire GPU train to shared encoder  Deps: T53.1.1, T53.2.1
-- [ ] T53.4.1 Eliminate engine forward paths  Deps: T53.1.1
+- [x] T53.3.1 Wire GPU train to shared encoder  Deps: T53.1.1, T53.2.1  DONE 2026-04-03
+- [x] T53.4.1 Eliminate engine forward paths  Deps: T53.1.1  DONE 2026-04-03
 - [ ] T53.5.1 Eliminate engine backward  Deps: T53.2.1, T53.4.1
 
 ##### Wave E53-3: Validation (1 agent)
