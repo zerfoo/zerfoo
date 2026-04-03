@@ -240,8 +240,10 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 	lr := tc.LearningRate
 
 	// Initialize AdamW state.
-	adamState := newAdamState(m)
-	step := 0
+	adamState, err := newAdamState(m, lr)
+	if err != nil {
+		return err
+	}
 
 	for epoch := 0; epoch < tc.Epochs; epoch++ {
 		perm := rand.Perm(len(data))
@@ -349,8 +351,9 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 			}
 
 			// AdamW update: collect all param/grad pairs and update.
-			step++
-			adamWUpdateAll(lr, step, m, dHeadW, dHeadB, dLayers, dInputW, dInputB, adamState)
+			if err := adamWUpdateAll(m, dHeadW, dHeadB, dLayers, dInputW, dInputB, adamState); err != nil {
+				return err
+			}
 		}
 	}
 
