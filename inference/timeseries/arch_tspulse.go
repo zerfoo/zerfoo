@@ -267,9 +267,15 @@ func (m *TSPulseModel) reconstruct(fineGrained *tensor.TensorNumeric[float32]) (
 		return nil, fmt.Errorf("reconstruction head forward: %w", err)
 	}
 
+	// Reshape to [numPatches * patchLen, numChannels] so each row is one timestep.
+	totalSteps := numPatches * m.config.PatchLen
+	recon, err = m.engine.Reshape(ctx, recon, []int{totalSteps, m.config.NumChannels})
+	if err != nil {
+		return nil, fmt.Errorf("reshape recon output: %w", err)
+	}
+
 	// Convert to output shape [context_len][channels].
-	reconData := recon.Data()
-	contextLen := numPatches * m.config.PatchLen
+	contextLen := totalSteps
 	if contextLen > m.config.ContextLen {
 		contextLen = m.config.ContextLen
 	}
@@ -277,13 +283,12 @@ func (m *TSPulseModel) reconstruct(fineGrained *tensor.TensorNumeric[float32]) (
 	result := make([][]float64, contextLen)
 	for t := range contextLen {
 		result[t] = make([]float64, m.config.NumChannels)
-		patchIdx := t / m.config.PatchLen
-		posInPatch := t % m.config.PatchLen
-		baseIdx := patchIdx*(m.config.PatchLen*m.config.NumChannels) + posInPatch*m.config.NumChannels
 		for c := range m.config.NumChannels {
-			if baseIdx+c < len(reconData) {
-				result[t][c] = float64(reconData[baseIdx+c])
+			v, vErr := recon.At(t, c)
+			if vErr != nil {
+				return nil, fmt.Errorf("read recon value at (%d,%d): %w", t, c, vErr)
 			}
+			result[t][c] = float64(v)
 		}
 	}
 
@@ -346,11 +351,18 @@ func (m *TSPulseModel) Classify(input [][]float64) ([]float64, error) {
 		return nil, fmt.Errorf("softmax: %w", err)
 	}
 
-	// Convert to []float64.
-	probData := probs.Data()
+	// Reshape to 1D [numClasses] and convert to []float64.
+	probs, err = m.engine.Reshape(ctx, probs, []int{m.config.NumClasses})
+	if err != nil {
+		return nil, fmt.Errorf("reshape probs: %w", err)
+	}
 	result := make([]float64, m.config.NumClasses)
 	for i := range m.config.NumClasses {
-		result[i] = float64(probData[i])
+		v, vErr := probs.At(i)
+		if vErr != nil {
+			return nil, fmt.Errorf("read prob at %d: %w", i, vErr)
+		}
+		result[i] = float64(v)
 	}
 
 	return result, nil
@@ -397,11 +409,19 @@ func (m *TSPulseModel) Embed(input [][]float64) ([]float64, error) {
 		return nil, fmt.Errorf("encode: %w", err)
 	}
 
-	// Semantic: [1, dModel]. Extract as []float64.
-	semData := out.Semantic.Data()
+	// Reshape semantic [1, dModel] to 1D [dModel] and extract as []float64.
+	ctx := context.Background()
+	sem, err := m.engine.Reshape(ctx, out.Semantic, []int{m.config.DModel})
+	if err != nil {
+		return nil, fmt.Errorf("reshape semantic: %w", err)
+	}
 	result := make([]float64, m.config.DModel)
 	for i := range m.config.DModel {
-		result[i] = float64(semData[i])
+		v, vErr := sem.At(i)
+		if vErr != nil {
+			return nil, fmt.Errorf("read semantic at %d: %w", i, vErr)
+		}
+		result[i] = float64(v)
 	}
 
 	return result, nil
