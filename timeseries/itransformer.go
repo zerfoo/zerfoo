@@ -1,6 +1,7 @@
 package timeseries
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // ITransformerConfig holds the configuration for an iTransformer model.
@@ -240,13 +243,13 @@ func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransforme
 	return tokens
 }
 
-// multiHeadAttention computes multi-head self-attention over variates.
+// multiHeadAttention computes multi-head self-attention over variates
+// using functional.MultiHeadAttention via the package-level cpuEngine64.
 // tokens: [channels][dModel] -> [channels][dModel].
 func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformerLayer) [][]float64 {
 	channels := len(tokens)
 	dModel := m.config.DModel
 	nHeads := m.config.NHeads
-	headDim := dModel / nHeads
 
 	// Project Q, K, V for all channels.
 	Q := make([][]float64, channels)
@@ -258,45 +261,8 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 		V[c] = linearForwardVec(tokens[c], layer.vW, layer.vB)
 	}
 
-	// Per-head scaled dot-product attention.
-	scale := 1.0 / math.Sqrt(float64(headDim))
-	attnConcat := make([][]float64, channels)
-	for c := range attnConcat {
-		attnConcat[c] = make([]float64, dModel)
-	}
-
-	for h := 0; h < nHeads; h++ {
-		off := h * headDim
-
-		// Compute attention scores: [channels][channels].
-		scores := make([][]float64, channels)
-		for i := 0; i < channels; i++ {
-			scores[i] = make([]float64, channels)
-			for j := 0; j < channels; j++ {
-				dot := 0.0
-				for d := 0; d < headDim; d++ {
-					dot += Q[i][off+d] * K[j][off+d]
-				}
-				scores[i][j] = dot * scale
-			}
-		}
-
-		// Softmax over variate dimension.
-		for i := 0; i < channels; i++ {
-			scores[i] = softmaxF64(scores[i])
-		}
-
-		// Weighted sum of values.
-		for i := 0; i < channels; i++ {
-			for d := 0; d < headDim; d++ {
-				val := 0.0
-				for j := 0; j < channels; j++ {
-					val += scores[i][j] * V[j][off+d]
-				}
-				attnConcat[i][off+d] = val
-			}
-		}
-	}
+	// Use functional.MultiHeadAttention for scaled dot-product attention.
+	attnConcat := mhaF64(Q, K, V, channels, dModel, nHeads)
 
 	// Output projection.
 	out := make([][]float64, channels)
@@ -304,6 +270,39 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 		out[c] = linearForwardVec(attnConcat[c], layer.oW, layer.oB)
 	}
 	return out
+}
+
+// mhaF64 wraps functional.MultiHeadAttention for float64 slice data.
+// q, k, v: [seq][dModel]. Returns [seq][dModel].
+func mhaF64(q, k, v [][]float64, seq, dModel, nHeads int) [][]float64 {
+	// Flatten to 1D for tensor creation.
+	qFlat := make([]float64, seq*dModel)
+	kFlat := make([]float64, seq*dModel)
+	vFlat := make([]float64, seq*dModel)
+	for s := 0; s < seq; s++ {
+		copy(qFlat[s*dModel:], q[s])
+		copy(kFlat[s*dModel:], k[s])
+		copy(vFlat[s*dModel:], v[s])
+	}
+
+	qT, _ := tensor.New[float64]([]int{seq, dModel}, qFlat)
+	kT, _ := tensor.New[float64]([]int{seq, dModel}, kFlat)
+	vT, _ := tensor.New[float64]([]int{seq, dModel}, vFlat)
+
+	ctx := context.Background()
+	out, err := functional.MultiHeadAttention(ctx, cpuEngine64, qT, kT, vT, nHeads)
+	if err != nil {
+		panic("mhaF64: " + err.Error())
+	}
+
+	// Extract back to [][]float64.
+	result := make([][]float64, seq)
+	data := out.Data()
+	for s := 0; s < seq; s++ {
+		result[s] = make([]float64, dModel)
+		copy(result[s], data[s*dModel:(s+1)*dModel])
+	}
+	return result
 }
 
 
