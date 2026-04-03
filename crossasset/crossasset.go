@@ -226,6 +226,10 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 	dm := m.config.DModel
 	lr := tc.LearningRate
 
+	// Initialize AdamW state.
+	adamState := newAdamState(m)
+	step := 0
+
 	for epoch := 0; epoch < tc.Epochs; epoch++ {
 		perm := rand.Perm(len(data))
 
@@ -331,53 +335,9 @@ func (m *Model) Train(data [][][]float64, labels [][]int, tc TrainConfig) error 
 				_ = projected // used for input projection backward
 			}
 
-			// SGD update: head.
-			for i := range m.headW {
-				m.headW[i] -= lr * dHeadW[i]
-			}
-			for i := range m.headB {
-				m.headB[i] -= lr * dHeadB[i]
-			}
-
-			// SGD update: layers.
-			for li := range m.layers {
-				l := &m.layers[li]
-				dl := &dLayers[li]
-				for i := range l.qW {
-					l.qW[i] -= lr * dl.qW[i]
-				}
-				for i := range l.kW {
-					l.kW[i] -= lr * dl.kW[i]
-				}
-				for i := range l.vW {
-					l.vW[i] -= lr * dl.vW[i]
-				}
-				for i := range l.outW {
-					l.outW[i] -= lr * dl.outW[i]
-				}
-				for i := range l.ffnW1 {
-					l.ffnW1[i] -= lr * dl.ffnW1[i]
-				}
-				for i := range l.ffnB1 {
-					l.ffnB1[i] -= lr * dl.ffnB1[i]
-				}
-				for i := range l.ffnW2 {
-					l.ffnW2[i] -= lr * dl.ffnW2[i]
-				}
-				for i := range l.ffnB2 {
-					l.ffnB2[i] -= lr * dl.ffnB2[i]
-				}
-			}
-
-			// SGD update: input projections.
-			for s := range ns {
-				for i := range m.inputW[s] {
-					m.inputW[s][i] -= lr * dInputW[s][i]
-				}
-				for i := range m.inputB[s] {
-					m.inputB[s][i] -= lr * dInputB[s][i]
-				}
-			}
+			// AdamW update: collect all param/grad pairs and update.
+			step++
+			adamWUpdateAll(lr, step, m, dHeadW, dHeadB, dLayers, dInputW, dInputB, adamState)
 		}
 	}
 
