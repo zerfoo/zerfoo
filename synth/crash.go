@@ -1,8 +1,11 @@
 package synth
 
 import (
+	"context"
 	"math"
 	"math/rand"
+
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // CrashConfig controls the behavior of CrashGenerator.
@@ -86,6 +89,7 @@ func (cg *CrashGenerator) GenerateWithSeverity(n int, severity float64) [][]floa
 	latentDim := cg.vae.config.LatentDim
 	duration := cg.config.Duration
 
+	ctx := context.Background()
 	results := make([][]float64, n)
 	for i := 0; i < n; i++ {
 		scenario := make([]float64, 0, duration*inputDim)
@@ -107,11 +111,12 @@ func (cg *CrashGenerator) GenerateWithSeverity(n int, severity float64) [][]floa
 			}
 
 			// Decode through the VAE.
-			acts := cg.vae.decoderForward(z)
+			zTensor, _ := tensor.New[float64]([]int{1, latentDim}, z)
+			acts := cg.vae.decoderForward(ctx, zTensor)
 			decoded := acts[len(acts)-1]
 
 			step := make([]float64, inputDim)
-			copy(step, decoded)
+			copy(step, decoded.Data())
 			scenario = append(scenario, step...)
 		}
 		results[i] = scenario

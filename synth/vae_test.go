@@ -1,9 +1,14 @@
 package synth
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // generateCorrelatedData creates n samples of d-dimensional data where features
@@ -134,10 +139,13 @@ func TestMarketVAE_LatentSpace(t *testing.T) {
 	}
 
 	// Decode both points.
-	acts1 := vae.decoderForward(z1)
-	out1 := acts1[len(acts1)-1]
-	acts2 := vae.decoderForward(z2)
-	out2 := acts2[len(acts2)-1]
+	ctx := context.Background()
+	z1T, _ := tensor.New[float64]([]int{1, len(z1)}, z1)
+	z2T, _ := tensor.New[float64]([]int{1, len(z2)}, z2)
+	acts1 := vae.decoderForward(ctx, z1T)
+	out1 := acts1[len(acts1)-1].Data()
+	acts2 := vae.decoderForward(ctx, z2T)
+	out2 := acts2[len(acts2)-1].Data()
 
 	var dist float64
 	for i := range out1 {
@@ -249,46 +257,60 @@ func TestMarketVAE_Generate(t *testing.T) {
 	}
 }
 
-func TestLinearForwardBackward(t *testing.T) {
-	// Simple 2->3 linear layer: verify gradient numerically.
+func TestLinearForward(t *testing.T) {
+	// Simple 2->3 linear layer via functional.Linear through the VAE's engine path.
 	rng := rand.New(rand.NewSource(42))
-	w := make([]float64, 6)
-	b := make([]float64, 3)
-	for i := range w {
-		w[i] = rng.NormFloat64() * 0.1
+	wData := make([]float64, 6) // [3, 2] row-major (outDim=3, inDim=2)
+	for i := range wData {
+		wData[i] = rng.NormFloat64() * 0.1
 	}
 
-	x := []float64{1.0, 2.0}
-	y := linearForward(x, w, b, 2, 3)
-	if len(y) != 3 {
-		t.Fatalf("expected output dim 3, got %d", len(y))
+	vae := NewMarketVAE(VAEConfig{InputDim: 2, LatentDim: 1, HiddenDims: []int{3}, Seed: 42})
+	ctx := context.Background()
+
+	xData := []float64{1.0, 2.0}
+	xT, _ := tensor.New[float64]([]int{1, 2}, xData)
+	wT, _ := tensor.New[float64]([]int{3, 2}, wData)
+	bT, _ := tensor.New[float64]([]int{3}, make([]float64, 3))
+
+	y := vae.linearFwd(ctx, xT, wT, bT)
+	yData := y.Data()
+	if len(yData) != 3 {
+		t.Fatalf("expected output dim 3, got %d", len(yData))
 	}
 
-	// Check: y[j] = sum_i(x[i]*w[i*3+j]) + b[j].
+	// Check: y[j] = sum_i(x[i]*w[j*2+i]) for weight [outDim, inDim].
 	for j := 0; j < 3; j++ {
-		expected := b[j] + x[0]*w[j] + x[1]*w[3+j]
-		if math.Abs(y[j]-expected) > 1e-10 {
-			t.Errorf("y[%d] = %f, expected %f", j, y[j], expected)
+		expected := xData[0]*wData[j*2] + xData[1]*wData[j*2+1]
+		if math.Abs(yData[j]-expected) > 1e-10 {
+			t.Errorf("y[%d] = %f, expected %f", j, yData[j], expected)
 		}
 	}
 }
 
 func TestReluForwardBackward(t *testing.T) {
-	x := []float64{-2, -1, 0, 1, 2}
-	y := reluForward(x)
+	vae := NewMarketVAE(VAEConfig{InputDim: 5, LatentDim: 1, HiddenDims: []int{5}, Seed: 42})
+	ctx := context.Background()
+
+	xData := []float64{-2, -1, 0, 1, 2}
+	xT, _ := tensor.New[float64]([]int{1, 5}, xData)
+	y, _ := functional.ReLU(ctx, vae.engine, vae.ops, xT)
+	yData := y.Data()
 	expected := []float64{0, 0, 0, 1, 2}
-	for i := range y {
-		if y[i] != expected[i] {
-			t.Errorf("relu[%d] = %f, expected %f", i, y[i], expected[i])
+	for i := range yData {
+		if yData[i] != expected[i] {
+			t.Errorf("relu[%d] = %f, expected %f", i, yData[i], expected[i])
 		}
 	}
 
-	dOut := []float64{1, 1, 1, 1, 1}
-	dIn := reluBackward(y, dOut)
+	dOutData := []float64{1, 1, 1, 1, 1}
+	dOutT, _ := tensor.New[float64]([]int{1, 5}, dOutData)
+	dIn := vae.reluBwd(ctx, y, dOutT)
+	dInData := dIn.Data()
 	expectedGrad := []float64{0, 0, 0, 1, 1}
-	for i := range dIn {
-		if dIn[i] != expectedGrad[i] {
-			t.Errorf("relu_backward[%d] = %f, expected %f", i, dIn[i], expectedGrad[i])
+	for i := range dInData {
+		if dInData[i] != expectedGrad[i] {
+			t.Errorf("relu_backward[%d] = %f, expected %f", i, dInData[i], expectedGrad[i])
 		}
 	}
 }
