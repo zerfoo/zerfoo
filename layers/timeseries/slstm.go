@@ -9,6 +9,8 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // maxGatePreAct is the clamp threshold for gate pre-activations before exp()
@@ -231,102 +233,152 @@ func (s *SLSTM[T]) Forward(
 		}
 	}
 
-	// Load parameter data slices for manual computation.
-	wiData := s.Wi.Value.Data()
-	wfData := s.Wf.Value.Data()
-	wzData := s.Wz.Value.Data()
-	woData := s.Wo.Value.Data()
-	riData := s.Ri.Value.Data()
-	rfData := s.Rf.Value.Data()
-	rzData := s.Rz.Value.Data()
-	roData := s.Ro.Value.Data()
-	biData := s.Bi.Value.Data()
-	bfData := s.Bf.Value.Data()
-	bzData := s.Bz.Value.Data()
-	boData := s.Bo.Value.Data()
+	eng := s.engine
+	ops := eng.Ops()
 
-	xData := x.Data()
-	hData := hPrev.Data()
-	cData := cPrev.Data()
-	nData := nPrev.Data()
+	// Compute pre-activations: W*x + R*h + b for each gate.
+	// W is [inputDim, hiddenDim], x is [batch, inputDim] → MatMul(x, W) = [batch, hiddenDim]
+	// R is [hiddenDim, hiddenDim], hPrev is [batch, hiddenDim] → MatMul(hPrev, R) = [batch, hiddenDim]
+	// Bias is [hiddenDim], broadcast-added to [batch, hiddenDim].
 
-	hOut := make([]T, batch*s.hiddenDim)
-	cOut := make([]T, batch*s.hiddenDim)
-	nOut := make([]T, batch*s.hiddenDim)
+	preI, err := eng.MatMul(ctx, x, s.Wi.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(x, Wi): %w", err)
+	}
+	riH, err := eng.MatMul(ctx, hPrev, s.Ri.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(h, Ri): %w", err)
+	}
+	preI, err = eng.Add(ctx, preI, riH)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preI, riH): %w", err)
+	}
+	preI, err = eng.Add(ctx, preI, s.Bi.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preI, Bi): %w", err)
+	}
 
-	for b := 0; b < batch; b++ {
-		xOff := b * s.inputDim
-		hOff := b * s.hiddenDim
+	preF, err := eng.MatMul(ctx, x, s.Wf.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(x, Wf): %w", err)
+	}
+	rfH, err := eng.MatMul(ctx, hPrev, s.Rf.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(h, Rf): %w", err)
+	}
+	preF, err = eng.Add(ctx, preF, rfH)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preF, rfH): %w", err)
+	}
+	preF, err = eng.Add(ctx, preF, s.Bf.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preF, Bf): %w", err)
+	}
 
-		for j := 0; j < s.hiddenDim; j++ {
-			// Compute pre-activations: W*x + R*h + b
-			var preI, preF, preZ, preO float64
+	preZ, err := eng.MatMul(ctx, x, s.Wz.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(x, Wz): %w", err)
+	}
+	rzH, err := eng.MatMul(ctx, hPrev, s.Rz.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(h, Rz): %w", err)
+	}
+	preZ, err = eng.Add(ctx, preZ, rzH)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preZ, rzH): %w", err)
+	}
+	preZ, err = eng.Add(ctx, preZ, s.Bz.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preZ, Bz): %w", err)
+	}
 
-			// Input projection: W[inputDim, hiddenDim] — x[b,:] dot W[:,j]
-			for k := 0; k < s.inputDim; k++ {
-				xk := float64(xData[xOff+k])
-				preI += xk * float64(wiData[k*s.hiddenDim+j])
-				preF += xk * float64(wfData[k*s.hiddenDim+j])
-				preZ += xk * float64(wzData[k*s.hiddenDim+j])
-				preO += xk * float64(woData[k*s.hiddenDim+j])
-			}
+	preO, err := eng.MatMul(ctx, x, s.Wo.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(x, Wo): %w", err)
+	}
+	roH, err := eng.MatMul(ctx, hPrev, s.Ro.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: MatMul(h, Ro): %w", err)
+	}
+	preO, err = eng.Add(ctx, preO, roH)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preO, roH): %w", err)
+	}
+	preO, err = eng.Add(ctx, preO, s.Bo.Value)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(preO, Bo): %w", err)
+	}
 
-			// Recurrent projection: R[hiddenDim, hiddenDim] — h[b,:] dot R[:,j]
-			for k := 0; k < s.hiddenDim; k++ {
-				hk := float64(hData[hOff+k])
-				preI += hk * float64(riData[k*s.hiddenDim+j])
-				preF += hk * float64(rfData[k*s.hiddenDim+j])
-				preZ += hk * float64(rzData[k*s.hiddenDim+j])
-				preO += hk * float64(roData[k*s.hiddenDim+j])
-			}
+	// Clamp i and f pre-activations before exp() to prevent overflow.
+	clampExpOp := func(v T) T {
+		f := clampFloat(float64(v), -maxGatePreAct, maxGatePreAct)
+		return T(math.Exp(f))
+	}
+	iGate, err := eng.UnaryOp(ctx, preI, clampExpOp)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: clampExp(preI): %w", err)
+	}
+	fGate, err := eng.UnaryOp(ctx, preF, clampExpOp)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: clampExp(preF): %w", err)
+	}
 
-			// Add biases.
-			preI += float64(biData[j])
-			preF += float64(bfData[j])
-			preZ += float64(bzData[j])
-			preO += float64(boData[j])
+	// Cell input: z = tanh(preZ)
+	zVal, err := eng.Tanh(ctx, preZ)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Tanh(preZ): %w", err)
+	}
 
-			// Clamp i and f pre-activations before exp().
-			preI = clampFloat(preI, -maxGatePreAct, maxGatePreAct)
-			preF = clampFloat(preF, -maxGatePreAct, maxGatePreAct)
+	// Output gate: o = sigmoid(preO)
+	oGate, err := functional.Sigmoid(ctx, eng, ops, preO)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Sigmoid(preO): %w", err)
+	}
 
-			// Gate activations.
-			iGate := math.Exp(preI)          // exponential input gate
-			fGate := math.Exp(preF)          // exponential forget gate
-			zVal := math.Tanh(preZ)          // cell input
-			oGate := 1.0 / (1.0 + math.Exp(-preO)) // sigmoid output gate
+	// n = f * nPrev + i
+	fN, err := eng.Mul(ctx, fGate, nPrev)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Mul(f, nPrev): %w", err)
+	}
+	n, err = eng.Add(ctx, fN, iGate)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(fN, i): %w", err)
+	}
 
-			// State updates.
-			cPrevVal := float64(cData[hOff+j])
-			nPrevVal := float64(nData[hOff+j])
+	// c = f * cPrev + i * z
+	fC, err := eng.Mul(ctx, fGate, cPrev)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Mul(f, cPrev): %w", err)
+	}
+	iZ, err := eng.Mul(ctx, iGate, zVal)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Mul(i, z): %w", err)
+	}
+	c, err = eng.Add(ctx, fC, iZ)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Add(fC, iZ): %w", err)
+	}
 
-			nNew := fGate*nPrevVal + iGate
-			cNew := fGate*cPrevVal + iGate*zVal
-
-			// Hidden state: o * (c / n). Guard against division by zero.
-			var hNew float64
-			if nNew > 1e-12 {
-				hNew = oGate * (cNew / nNew)
-			}
-
-			hOut[hOff+j] = T(hNew)
-			cOut[hOff+j] = T(cNew)
-			nOut[hOff+j] = T(nNew)
+	// h = o * (c / n), guarding against division by zero.
+	// Replace any n < 1e-12 with 1e-12 to avoid division by zero.
+	safeN, err := eng.UnaryOp(ctx, n, func(v T) T {
+		if float64(v) < 1e-12 {
+			return T(1e-12)
 		}
+		return v
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: safeN: %w", err)
+	}
+	cDivN, err := eng.Div(ctx, c, safeN)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Div(c, n): %w", err)
+	}
+	h, err = eng.Mul(ctx, oGate, cDivN)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("SLSTM: Mul(o, c/n): %w", err)
 	}
 
-	h, err = tensor.New[T]([]int{batch, s.hiddenDim}, hOut)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("SLSTM: create h tensor: %w", err)
-	}
-	c, err = tensor.New[T]([]int{batch, s.hiddenDim}, cOut)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("SLSTM: create c tensor: %w", err)
-	}
-	n, err = tensor.New[T]([]int{batch, s.hiddenDim}, nOut)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("SLSTM: create n tensor: %w", err)
-	}
 	return h, c, n, nil
 }
 
