@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -476,32 +477,8 @@ func (m *TFT) selfAttention(ctx context.Context, x *tensor.TensorNumeric[float32
 		return nil, err
 	}
 
-	// Scaled dot-product attention: softmax(Q K^T / sqrt(d_k)) V.
-	dK := float32(m.config.DModel / m.config.NHeads)
-	scale := float32(1.0 / math.Sqrt(float64(dK)))
-
-	// Q K^T: [seqLen, d_model] x [d_model, seqLen] -> [seqLen, seqLen].
-	kT, err := m.engine.Transpose(ctx, k, []int{1, 0})
-	if err != nil {
-		return nil, err
-	}
-	scores, err := m.engine.MatMul(ctx, q, kT)
-	if err != nil {
-		return nil, err
-	}
-	scores, err = m.engine.MulScalar(ctx, scores, scale)
-	if err != nil {
-		return nil, err
-	}
-
-	// Softmax over keys dimension (last axis).
-	attnWeights, err := m.engine.Softmax(ctx, scores, -1)
-	if err != nil {
-		return nil, err
-	}
-
-	// Weighted sum of values: [seqLen, seqLen] x [seqLen, d_model] -> [seqLen, d_model].
-	attnOut, err := m.engine.MatMul(ctx, attnWeights, v)
+	// Multi-head scaled dot-product attention via layers/functional.
+	attnOut, err := functional.MultiHeadAttention(ctx, m.engine, q, k, v, m.config.NHeads)
 	if err != nil {
 		return nil, err
 	}
@@ -531,60 +508,13 @@ func (m *TFT) linear(ctx context.Context, x *tensor.TensorNumeric[float32], l li
 	return m.engine.Add(ctx, out, l.biases)
 }
 
-// layerNorm applies layer normalization: (x - mean) / sqrt(var + eps) * gain + bias.
+// layerNorm applies layer normalization via layers/functional.LayerNorm.
 func (m *TFT) layerNorm(
 	ctx context.Context,
 	x *tensor.TensorNumeric[float32],
 	gain, bias *tensor.TensorNumeric[float32],
 ) (*tensor.TensorNumeric[float32], error) {
-	// Compute mean along last axis.
-	mean, err := m.engine.ReduceMean(ctx, x, -1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// x - mean.
-	centered, err := m.engine.Sub(ctx, x, mean)
-	if err != nil {
-		return nil, err
-	}
-
-	// Variance: mean((x - mean)^2).
-	sq, err := m.engine.Mul(ctx, centered, centered)
-	if err != nil {
-		return nil, err
-	}
-	variance, err := m.engine.ReduceMean(ctx, sq, -1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add epsilon and take reciprocal sqrt.
-	eps, err := tensor.New[float32]([]int{1, 1}, []float32{1e-5})
-	if err != nil {
-		return nil, err
-	}
-	varEps, err := m.engine.Add(ctx, variance, eps)
-	if err != nil {
-		return nil, err
-	}
-	invStd, err := m.engine.Rsqrt(ctx, varEps)
-	if err != nil {
-		return nil, err
-	}
-
-	// Normalize.
-	normed, err := m.engine.Mul(ctx, centered, invStd)
-	if err != nil {
-		return nil, err
-	}
-
-	// Scale and shift.
-	scaled, err := m.engine.Mul(ctx, normed, gain)
-	if err != nil {
-		return nil, err
-	}
-	return m.engine.Add(ctx, scaled, bias)
+	return functional.LayerNorm(ctx, m.engine, x, gain, bias, float32(1e-5))
 }
 
 // newGRN creates a Gated Residual Network with initialized weights.
