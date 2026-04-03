@@ -226,8 +226,8 @@ func TestLinearInterpolation(t *testing.T) {
 	// Verify stack output dimensions match outputLen.
 	for i, s := range m.stacks {
 		projShape := s.outputProj.weights.Shape()
-		if projShape[1] != config.OutputLength {
-			t.Errorf("stack %d output proj cols = %d, want %d", i, projShape[1], config.OutputLength)
+		if projShape[0] != config.OutputLength {
+			t.Errorf("stack %d output proj rows = %d, want %d", i, projShape[0], config.OutputLength)
 		}
 	}
 
