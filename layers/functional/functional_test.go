@@ -194,6 +194,65 @@ func TestRMSNorm_Float64(t *testing.T) {
 	}
 }
 
+// ---------- LayerNorm nil-input errors ----------
+
+func TestLayerNorm_NilInputs(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+
+	x, _ := tensor.New[float32]([]int{4}, []float32{1, 2, 3, 4})
+	scale, _ := tensor.New[float32]([]int{4}, []float32{1, 1, 1, 1})
+	bias, _ := tensor.New[float32]([]int{4}, []float32{0, 0, 0, 0})
+
+	tests := []struct {
+		name  string
+		x     *tensor.TensorNumeric[float32]
+		scale *tensor.TensorNumeric[float32]
+		bias  *tensor.TensorNumeric[float32]
+	}{
+		{"nil x", nil, scale, bias},
+		{"nil scale", x, nil, bias},
+		{"nil bias", x, scale, nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := functional.LayerNorm(ctx, engine, tc.x, tc.scale, tc.bias, float32(1e-5))
+			if err == nil {
+				t.Fatal("expected error for nil input, got nil")
+			}
+		})
+	}
+}
+
+// ---------- RMSNorm nil-input errors ----------
+
+func TestRMSNorm_NilInputs(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+
+	x, _ := tensor.New[float32]([]int{4}, []float32{1, 2, 3, 4})
+	scale, _ := tensor.New[float32]([]int{4}, []float32{1, 1, 1, 1})
+
+	tests := []struct {
+		name  string
+		x     *tensor.TensorNumeric[float32]
+		scale *tensor.TensorNumeric[float32]
+	}{
+		{"nil x", nil, scale},
+		{"nil scale", x, nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := functional.RMSNorm(ctx, engine, tc.x, tc.scale, float32(1e-6))
+			if err == nil {
+				t.Fatal("expected error for nil input, got nil")
+			}
+		})
+	}
+}
+
 // ---------- helpers ----------
 
 func rmsnormRef[T tensor.Numeric](ctx context.Context, engine compute.Engine[T],
