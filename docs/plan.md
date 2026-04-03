@@ -1926,7 +1926,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ### E53.6: Validation
 
-- [ ] T53.6.1 Run go vet, full test suite, verify line count reduction  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T53.6.1 Run go vet, full test suite, verify line count reduction  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
   Deps: T53.3.1, T53.5.1
   Acceptance: go vet clean. go test -race passes. PatchTST total lines < 4,000
   (down from 6,196). No behavioral changes.
@@ -1948,7 +1948,7 @@ uses f32 tensors and engine ops -- it becomes the reference implementation.
 
 ##### Wave E53-3: Validation (1 agent)
 
-- [ ] T53.6.1 Full validation  Deps: T53.3.1, T53.5.1
+- [x] T53.6.1 Full validation  Deps: T53.3.1, T53.5.1  DONE 2026-04-03
 
 ---
 
