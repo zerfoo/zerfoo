@@ -17,8 +17,8 @@ func TestNewGRN_Valid(t *testing.T) {
 		t.Fatalf("NewGRN: %v", err)
 	}
 	params := grn.Parameters()
-	if len(params) != 5 {
-		t.Errorf("expected 5 parameters, got %d", len(params))
+	if len(params) != 7 {
+		t.Errorf("expected 7 parameters, got %d", len(params))
 	}
 }
 
@@ -320,9 +320,9 @@ func TestVSN_Parameters(t *testing.T) {
 		t.Fatalf("NewVSN: %v", err)
 	}
 	params := vsn.Parameters()
-	// 4 variable projections + 5 GRN params = 9.
-	if len(params) != 9 {
-		t.Errorf("expected 9 parameters, got %d", len(params))
+	// 4 variable projections + 7 GRN params (5 weights + 2 LayerNorm) = 11.
+	if len(params) != 11 {
+		t.Errorf("expected 11 parameters, got %d", len(params))
 	}
 }
 
