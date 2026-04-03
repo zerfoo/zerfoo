@@ -33,6 +33,14 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E63: Quantized matmul consolidation in ztensor (0/5 -- single dispatcher for 16 copy-paste methods)
 - E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
+- E66: Functional layer API for training (0/5 -- prerequisite for E67/E68/E71)
+- E67: Timeseries full layers migration (0/11 -- 18,197 lines, 10 models)
+- E68: CrossAsset full layers migration (0/4 -- unify CPU/GPU paths)
+- E69: Training loss/optimizer Engine compliance (0/6 -- BCELoss, guardAndClipGradients)
+- E70: Intra-layers violations cleanup (0/10 -- gemm.go, clip_encoder.go, mlstm.go etc.)
+- E71: Experimental package migration (0/5 -- rl/, synth/, meta/, shared/)
+- E72: Architecture enforcement test (0/2 -- CI gate for composition violations)
+- E73: Generate KV cache consolidation (0/3 -- strategy pattern for 5 caches)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -1034,6 +1042,95 @@ on demand. Adapter weights managed via existing arena allocator.
   all fully independent of each other and of E34-E40.
 - Tracks L, M, N, O are fully independent of all research tracks.
 
+### Composition Remediation Tracks (E66-E73)
+
+| Track | Tasks | Description |
+|-------|-------|-------------|
+| U: Functional API | E66 T66.1.* | Prerequisite: layers/functional package |
+| V: Timeseries Migration | E67 T67.*.* | Biggest migration (18K lines) |
+| W: CrossAsset Migration | E68 T68.*.* | Unify CPU/GPU paths |
+| X: Training Engine Compliance | E69 T69.*.* | Loss + optimizer fixes |
+| Y: Intra-Layers Cleanup | E70 T70.*.* | Fix layers/ internal violations |
+| Z: Experimental Migration | E71 T71.*.* | rl/, synth/, meta/, shared/ |
+| AA: Enforcement | E72 T72.*.* | Architecture test CI gate |
+| AB: KV Cache | E73 T73.*.* | generate/ cache consolidation |
+
+### Composition Sync Points
+
+- Tracks V, W, Z depend on Track U (E66 functional API is prerequisite).
+- Tracks X, Y, AA, AB are fully independent of Track U.
+- All composition tracks are independent of research tracks (E34-E44).
+
+### Composition Waves
+
+#### Composition Wave 1: Foundation + Independent (10 agents)
+All zero-dependency tasks. Saturates all agent slots.
+
+- [ ] T66.1.1 layers/functional LayerNorm, RMSNorm  verifies: [infrastructure]
+- [ ] T66.1.2 layers/functional activations  verifies: [infrastructure]
+- [ ] T66.1.3 layers/functional Linear, MHA  verifies: [infrastructure]
+- [ ] T69.1.1 BCELoss Engine ops  verifies: [infrastructure]
+- [ ] T69.1.2 RoutingContrastive Engine ops  verifies: [infrastructure]
+- [ ] T69.1.3 QuantileLoss generics fix  verifies: [infrastructure]
+- [ ] T69.2.1 guardAndClipGradients Engine ops  verifies: [infrastructure]
+- [ ] T69.2.2 SGD.Step memory fix  verifies: [infrastructure]
+- [ ] T70.1.1 core/gemm.go  verifies: [infrastructure]
+- [ ] T70.1.2 vision/clip_encoder.go  verifies: [infrastructure]
+
+#### Composition Wave 2: More independent + E66 validation (10 agents)
+Deps: Wave 1 partial (E66 tasks complete)
+
+- [ ] T66.1.4 + T66.1.5 Functional API tests + linters  verifies: [infrastructure]
+- [ ] T70.1.3 timeseries/mlstm + slstm  verifies: [infrastructure]
+- [ ] T70.1.4 timeseries/ssm  verifies: [infrastructure]
+- [ ] T70.1.5 timeseries/vsn  verifies: [infrastructure]
+- [ ] T70.1.6 simplified_layer_normalization dedup  verifies: [infrastructure]
+- [ ] T70.1.7 fast_gelu dedup  verifies: [infrastructure]
+- [ ] T70.1.8 variable_selection + temporal_conv  verifies: [infrastructure]
+- [ ] T70.1.9 residual/block_attn_res  verifies: [infrastructure]
+- [ ] T72.1.1 Architecture enforcement test  verifies: [infrastructure]
+- [ ] T73.1.1 KV cache base extraction  verifies: [UC-001, UC-002]
+
+#### Composition Wave 3: Migrations (10 agents)
+Deps: E66 complete (Wave 2)
+
+- [ ] T67.1.1 layernorm_ops.go replacement  verifies: [infrastructure]
+- [ ] T67.1.2 math_ops.go replacement  verifies: [infrastructure]
+- [ ] T67.1.3 training_ops.go replacement  verifies: [infrastructure]
+- [ ] T67.1.4 adamw_f32.go replacement  verifies: [infrastructure]
+- [ ] T68.1.1 CrossAsset CPU forward  verifies: [infrastructure]
+- [ ] T71.1.1 rl/ migration  verifies: [infrastructure]
+- [ ] T71.1.2 synth/ migration  verifies: [infrastructure]
+- [ ] T71.1.3 meta/ migration  verifies: [infrastructure]
+- [ ] T71.1.4 shared/ migration  verifies: [infrastructure]
+- [ ] T73.1.2 KV cache migration  verifies: [UC-001, UC-002]
+
+#### Composition Wave 4: Per-model attention + sequential chains (8 agents)
+Deps: Wave 3
+
+- [ ] T67.2.1 PatchTST attention  verifies: [infrastructure]
+- [ ] T67.2.2 iTransformer attention  verifies: [infrastructure]
+- [ ] T67.2.3 TFT attention  verifies: [infrastructure]
+- [ ] T67.2.4 Remaining models  verifies: [infrastructure]
+- [ ] T68.1.2 CrossAsset backward  verifies: [infrastructure]
+- [ ] T69.3.1 Training tests + linters  verifies: [infrastructure]
+- [ ] T70.1.10 Layers tests + linters  verifies: [infrastructure]
+- [ ] T71.1.5 Experimental tests + linters  verifies: [infrastructure]
+
+#### Composition Wave 5: Final validation (5 agents)
+Deps: Wave 4
+
+- [ ] T67.3.1 + T67.3.2 Timeseries full suite + linters  verifies: [infrastructure]
+- [ ] T67.3.3 Verify deleted files  verifies: [infrastructure]
+- [ ] T68.1.3 CrossAsset AdamW  verifies: [infrastructure]
+- [ ] T72.1.2 Add arch test to CI  verifies: [infrastructure]
+- [ ] T73.1.3 KV cache tests  verifies: [UC-001, UC-002]
+
+#### Composition Wave 6: Final cleanup (2 agents)
+Deps: Wave 5
+
+- [ ] T68.1.4 CrossAsset delete + validate  verifies: [infrastructure]
+
 ### Waves
 
 #### Wave 1: Foundation (10 agents)
@@ -1191,7 +1288,8 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 | M6 | Industry Standard | E24-E27, WE10-WE11 | $50M ARR; ZerfooConf | 2032-12-31 |
 | M7 | Platform Maturity | E28-E30, WE12 | $75M ARR; federated; on-device | 2034-12-31 |
 | M8 | Market Leadership | E31-E33 | $150M+ ARR; IPO filed | 2036-12-31 |
-| M-COMP | Composition Remediation | E61-E65 | All packages compose from layers/ or engine ops; gpu_engine.go split into <1K-line files; zero private math reimplementations | 2026-Q3 |
+| M-COMP | Composition Remediation Phase 1 | E61-E65 | Inference builders, tabular/gnn/modeldsl, MoE compose from layers/; ztensor god file consolidated | 2026-Q2 |
+| M-COMP-2 | Composition Remediation Phase 2 | E66-E73 | All packages compose from layers/ or Engine; architecture test in CI; zero private math reimplementations outside internal/ | 2026-Q3 |
 
 ---
 
@@ -1318,6 +1416,29 @@ These run in parallel with any wave -- no E34-E39 dependencies.
 ---
 
 ## Progress Log
+
+### 2026-04-02: Composition remediation phase 2 -- added E66-E73 (48 tasks, 6 waves)
+
+Extended docs/dirty-architecture.md with intra-layers/ violations (10 findings
+from layers-review agent) and training/loss/optimizer violations (6 findings
+from training-review agent). Total violations: 14 packages, 90+ reimplemented
+components, ~14,000 estimated redundant lines.
+
+Added 8 new epics (E66-E73, 48 tasks total) covering remaining composability
+violations not addressed by E61-E65:
+- E66 (5 tasks): layers/functional API -- prerequisite for all training migrations
+- E67 (11 tasks): timeseries/ full migration to layers/ (18,197 lines)
+- E68 (4 tasks): crossasset/ full migration to layers/
+- E69 (6 tasks): training/loss/ and training/optimizer/ Engine compliance
+- E70 (10 tasks): intra-layers/ violations cleanup
+- E71 (5 tasks): rl/, synth/, meta/, shared/ migration
+- E72 (2 tasks): architecture enforcement test CI gate
+- E73 (3 tasks): generate/ KV cache consolidation
+
+Added 6 composition waves to Parallel Work section. Wave 1 saturates 10 agents
+with E66 + E69 + E70 tasks (all zero-dependency). Waves 2-6 cascade dependencies.
+
+Added milestone M-COMP-2. Added 6 risks (R55-R60).
 
 ### 2026-04-02: Dirty-architecture cleanup -- routed findings to proper tiers, added E61-E65
 
@@ -3952,6 +4073,502 @@ as-is.
 #### Wave E65-2: Validate (1 agent)
 Deps: Wave E65-1
 - [x] T65.1.3 Linters  DONE 2026-04-02
+
+---
+
+## E66: Functional Layer API for Training (Prerequisite)
+
+**Problem:** Training code avoids `layers/` because constructing a `LayerNorm`
+requires building parameters, registering with a graph, and wrapping data in
+tensors. This ergonomic friction pushed developers to reimplement math inline.
+See docs/dirty-architecture.md "Root Cause Analysis" item 3.
+
+**Goal:** Create a `layers/functional` package that provides stateless, tensor-in
+tensor-out wrappers around existing layers/ implementations. This eliminates the
+friction that causes training packages to bypass layers/.
+
+### E66.1: Core Functional API
+
+- [ ] T66.1.1 Create layers/functional/functional.go with LayerNorm, RMSNorm  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Create `layers/functional` package with:
+  (1) `func LayerNorm[T tensor.Numeric](ctx, engine, x, scale, bias, eps) (*Tensor, error)`
+  (2) `func RMSNorm[T tensor.Numeric](ctx, engine, x, scale, eps) (*Tensor, error)`
+  Each wraps the existing layers/normalization implementation without requiring
+  graph construction or parameter registration.
+  Acceptance: go build clean. Unit tests pass. Output matches layers/normalization within 1e-10.
+
+- [ ] T66.1.2 Add functional GELU, Softmax, ReLU, SiLU, Sigmoid  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Add to layers/functional:
+  (1) `func GELU[T tensor.Float](ctx, engine, x) (*Tensor, error)`
+  (2) `func Softmax[T tensor.Numeric](ctx, engine, x, axis) (*Tensor, error)`
+  (3) `func ReLU[T tensor.Numeric](ctx, engine, x) (*Tensor, error)`
+  (4) `func SiLU[T tensor.Float](ctx, engine, x) (*Tensor, error)`
+  (5) `func Sigmoid[T tensor.Numeric](ctx, engine, x) (*Tensor, error)`
+  Acceptance: go build clean. Unit tests pass.
+
+- [ ] T66.1.3 Add functional Linear, MultiHeadAttention  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  (1) `func Linear[T tensor.Numeric](ctx, engine, x, weight, bias) (*Tensor, error)`
+  (2) `func MultiHeadAttention[T tensor.Numeric](ctx, engine, q, k, v, nHeads) (*Tensor, error)`
+  These wrap engine.MatMul + engine.Add and layers/attention.SDPA respectively.
+  Acceptance: go build clean. Unit tests pass.
+
+- [ ] T66.1.4 Unit tests for functional API  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T66.1.1, T66.1.2, T66.1.3
+  Test every function with CPU engine. Verify parity with layers/ equivalents.
+  Acceptance: go test -race ./layers/functional/ passes.
+
+- [ ] T66.1.5 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T66.1.4
+  Acceptance: go vet clean. golangci-lint clean.
+
+### E66 Parallel Work
+
+#### Wave E66-1: Independent functions (3 agents)
+- [ ] T66.1.1 LayerNorm, RMSNorm
+- [ ] T66.1.2 Activations (GELU, Softmax, ReLU, SiLU, Sigmoid)
+- [ ] T66.1.3 Linear, MultiHeadAttention
+
+#### Wave E66-2: Validate (1 agent)
+Deps: Wave E66-1
+- [ ] T66.1.4 Unit tests
+- [ ] T66.1.5 Linters
+
+---
+
+## E67: Timeseries Full Layers Migration (18,197 lines)
+
+**Problem:** timeseries/ is the largest composability violator (18,197 lines,
+10 model architectures). E52 extracted shared helpers within the package but did
+not migrate to layers/. The package still has 5 LayerNorm variants, 2 GELU
+implementations, 2 softmax implementations, 3 AdamW copies, and 8 inline
+multi-head attention implementations -- all on raw slices instead of composing
+from layers/.
+
+**Goal:** Replace all private math reimplementations with calls to
+`layers/functional` (from E66) or direct `layers/` composition. Eliminate
+`layernorm_ops.go`, `math_ops.go`, and `training_ops.go`. Each model retains
+its architecture but delegates math to the canonical implementations.
+
+### E67.1: Replace Shared Helpers with Functional API
+
+- [ ] T67.1.1 Replace layernorm_ops.go with layers/functional.LayerNorm  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T66.1.1
+  Replace all 5 functions (layerNormF64, layerNormF64WithCache,
+  layerNormBackwardF64, layerNorm1D, layerNorm1DCached) with calls to
+  layers/functional.LayerNorm. Update all callers across 10 models.
+  Delete layernorm_ops.go.
+  Acceptance: go build clean. go test ./timeseries/ passes.
+
+- [ ] T67.1.2 Replace math_ops.go with layers/functional  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T66.1.2
+  Replace geluScalar, geluDeriv, softmaxF64, copyMatrix with
+  layers/functional equivalents. Delete math_ops.go.
+  Acceptance: go build clean. go test passes.
+
+- [ ] T67.1.3 Replace training_ops.go with training/optimizer and training/loss  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Replace adamWState, adamWUpdate, mseLossFlat, clipGradients, warmupLR with
+  imports from training/optimizer.AdamW and training/loss.MSE.
+  Delete training_ops.go.
+  Acceptance: go build clean. go test passes.
+
+- [ ] T67.1.4 Replace adamw_f32.go with training/optimizer.AdamW[float32]  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace adamStateF32, adamWUpdateF32 with training/optimizer.AdamW[float32].
+  Delete adamw_f32.go.
+  Acceptance: go build clean. go test passes.
+
+### E67.2: Migrate Per-Model Attention and Normalization
+
+- [ ] T67.2.1 Migrate PatchTST attention to layers/functional  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T66.1.3, T67.1.1
+  Replace patchtst.go:315 multiHeadAttention and patchtst_backward.go:881
+  multiHeadAttentionF64 with layers/functional.MultiHeadAttention.
+  Replace patchtst.go:509 layerNorm method with layers/functional.LayerNorm.
+  Acceptance: go test passes. PatchTST training output within 1e-6 of pre-refactor.
+
+- [ ] T67.2.2 Migrate iTransformer attention to layers/functional  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T66.1.3, T67.1.1
+  Replace itransformer.go:244 multiHeadAttention and
+  itransformer_backward.go attention backward with functional equivalents.
+  Acceptance: go test passes.
+
+- [ ] T67.2.3 Migrate TFT self-attention to layers/functional  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T66.1.3, T67.1.1
+  Replace tft.go:462 selfAttention with layers/functional.MultiHeadAttention.
+  Replace tft.go:535 layerNorm with layers/functional.LayerNorm.
+  Acceptance: go test passes.
+
+- [ ] T67.2.4 Migrate remaining models (NHiTS, N-BEATS, DLinear, FreTS, CfC, TimeMixer)  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T67.1.1, T67.1.2
+  Replace per-model linearForward methods in nbeats.go:426 and nhits.go:260
+  with layers/functional.Linear. Replace any remaining inline LayerNorm.
+  Acceptance: go build clean. go test ./timeseries/ passes.
+
+### E67.3: Validation
+
+- [ ] T67.3.1 Full test suite with race detector  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T67.2.1, T67.2.2, T67.2.3, T67.2.4
+  Run go test -race ./timeseries/ and verify all models produce output
+  within tolerance of pre-refactor.
+  Acceptance: all tests pass. Zero race conditions.
+
+- [ ] T67.3.2 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T67.3.1
+  Acceptance: go vet clean. golangci-lint clean.
+
+- [ ] T67.3.3 Verify deleted files  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T67.3.1
+  Confirm layernorm_ops.go, math_ops.go, training_ops.go, adamw_f32.go are
+  deleted. Count lines removed.
+  Acceptance: files do not exist. Net line reduction documented.
+
+### E67 Parallel Work
+
+#### Wave E67-1: Replace shared helpers (4 agents)
+Deps: E66 complete
+- [ ] T67.1.1 layernorm_ops.go
+- [ ] T67.1.2 math_ops.go
+- [ ] T67.1.3 training_ops.go
+- [ ] T67.1.4 adamw_f32.go
+
+#### Wave E67-2: Migrate per-model attention (4 agents)
+Deps: Wave E67-1
+- [ ] T67.2.1 PatchTST
+- [ ] T67.2.2 iTransformer
+- [ ] T67.2.3 TFT
+- [ ] T67.2.4 Remaining models
+
+#### Wave E67-3: Validate (2 agents)
+Deps: Wave E67-2
+- [ ] T67.3.1 + T67.3.2 Tests + linters
+- [ ] T67.3.3 Verify deletions
+
+---
+
+## E68: CrossAsset Full Layers Migration
+
+**Problem:** crossasset/ has parallel CPU ([]float64) and GPU (tensor) paths.
+E60 added GPU training but the CPU path still reimplements softmax, layerNorm,
+GELU, matVecMul, and full backward on raw slices. Two independent codepaths
+for the same model.
+
+**Goal:** Unify CPU and GPU paths by composing from layers/functional. Delete
+the raw-slice CPU implementation. The model should have one forward/backward
+path that works on both CPU and GPU via Engine[T].
+
+- [ ] T68.1.1 Replace CPU forward with layers/functional composition  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T66.1.1, T66.1.2, T66.1.3
+  Replace crossasset.go functions: matVecMul (line 518), softmax (538),
+  layerNorm (558), gelu (584) with layers/functional equivalents.
+  Convert model weights from []float64 to tensor.TensorNumeric[float64].
+  Acceptance: go build clean. CPU forward matches pre-refactor within 1e-10.
+
+- [ ] T68.1.2 Replace CPU backward with graph.Backward  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T68.1.1
+  Replace backward.go (entire file) with graph-based backward pass using
+  the layers/ nodes that support Backward().
+  Acceptance: go test passes. Gradient parity within 1e-6.
+
+- [ ] T68.1.3 Replace CPU AdamW with training/optimizer.AdamW  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T68.1.2
+  Replace adamw.go adamWUpdateAll with training/optimizer.AdamW[float64].
+  Acceptance: go test passes.
+
+- [ ] T68.1.4 Delete raw-slice CPU code and validate  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T68.1.3
+  Delete backward.go manual backward, adamw.go raw update.
+  Run go test -race ./crossasset/. Run linters.
+  Acceptance: all tests pass. Net line reduction documented.
+
+### E68 Parallel Work
+
+#### Wave E68-1: CPU migration (1 agent -- sequential chain)
+Deps: E66 complete
+- [ ] T68.1.1 -> T68.1.2 -> T68.1.3 -> T68.1.4 (sequential)
+
+---
+
+## E69: Training Loss and Optimizer Engine Compliance
+
+**Problem:** training/loss/bce.go, routing_contrastive.go, and quantile.go have
+engine fields but iterate .Data() with element-wise ops. training/optimizer/
+adamw.go:236 guardAndClipGradients forces D2H on every gradient on every step.
+See docs/dirty-architecture.md sections 13 and 14.
+
+**Goal:** All loss functions and optimizer operations use Engine[T] tensor ops.
+Zero .Data() access in hot paths.
+
+### E69.1: Loss Functions
+
+- [ ] T69.1.1 Rewrite BCELoss.Forward/Backward to use Engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Replace element-wise ops loop in bce.go:60-83 with engine.Log, engine.Mul,
+  engine.Add, engine.Sub, engine.Div, engine.ReduceMean.
+  Acceptance: go test passes. Output parity within 1e-10. GPU acceleration works.
+
+- [ ] T69.1.2 Rewrite RoutingContrastive to use Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace triple-nested loop cosine similarity (routing_contrastive.go:77-110)
+  with engine.MatMul for pairwise dot products and engine.ReduceSum for norms.
+  Acceptance: go test passes. Output parity within 1e-8.
+
+- [ ] T69.1.3 Fix QuantileLoss generics (remove float32 cast)  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace `any(targetData[i]).(float32)` with proper generic ops. The function
+  should work for any T, not just float32.
+  Acceptance: go test passes for float32 and float64.
+
+### E69.2: Optimizer
+
+- [ ] T69.2.1 Replace guardAndClipGradients with Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace adamw.go:236-283 element-by-element .Data() iteration with:
+  (1) NaN/Inf check: engine.ReduceSum to detect NaN (NaN + anything = NaN)
+  (2) Global norm: engine.Mul + engine.ReduceSum per parameter, then sqrt
+  (3) Clip: engine.MulScalar on each gradient tensor
+  This eliminates 100+ D2H copies per optimization step on GPU.
+  Acceptance: go test passes. AdamW training produces same results within 1e-10.
+  Benchmark: GPU training step time improves (fewer D2H copies).
+
+- [ ] T69.2.2 Fix SGD.Step memory allocation  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace O(N) tensor allocation for learning rate broadcast with
+  engine.MulScalar.
+  Acceptance: go test passes. No alloc regression.
+
+### E69.3: Validation
+
+- [ ] T69.3.1 Tests and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T69.1.1, T69.1.2, T69.1.3, T69.2.1, T69.2.2
+  Run go test -race ./training/... and linters.
+  Acceptance: all pass.
+
+### E69 Parallel Work
+
+#### Wave E69-1: Independent fixes (5 agents)
+- [ ] T69.1.1 BCELoss
+- [ ] T69.1.2 RoutingContrastive
+- [ ] T69.1.3 QuantileLoss
+- [ ] T69.2.1 guardAndClipGradients
+- [ ] T69.2.2 SGD.Step
+
+#### Wave E69-2: Validate (1 agent)
+Deps: Wave E69-1
+- [ ] T69.3.1 Tests + linters
+
+---
+
+## E70: Intra-Layers Violations Cleanup
+
+**Problem:** layers/ itself has internal violations where sub-packages bypass
+each other or bypass Engine[T]. See docs/dirty-architecture.md "S1.5" section.
+
+**Goal:** Every layers/ sub-package composes from Engine[T] and from sibling
+layers/ packages where applicable. Zero raw .Data() access for computation.
+
+- [ ] T70.1.1 Replace core/gemm.go triple-loop with engine.MatMul  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Replace layers/core/gemm.go:66-86 hand-rolled GEMM with engine.MatMul +
+  engine.MulScalar + engine.Add.
+  Acceptance: go test ./layers/core/ passes. GEMM output parity within 1e-10.
+
+- [ ] T70.1.2 Replace vision/clip_encoder.go raw attention with layers/attention  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace clip_encoder.go:362-410 raw-loop attention with
+  layers/attention.ScaledDotProductAttention. Replace clip_encoder.go:255-270
+  raw projection with engine.MatMul. Replace clip_encoder.go:492-503 QuickGELU
+  with layers/activations.
+  Acceptance: go test ./layers/vision/ passes.
+
+- [ ] T70.1.3 Replace timeseries/mlstm.go and slstm.go raw loops with Engine ops  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Replace layers/timeseries/mlstm.go:237-317 and slstm.go:257-316 raw CPU
+  loops with layers/core.Linear for projections and engine ops for gates.
+  Acceptance: go test ./layers/timeseries/ passes.
+
+- [ ] T70.1.4 Replace timeseries/ssm.go raw scan with Engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Replace layers/timeseries/ssm.go:230-264 raw per-step C*x and D*u products
+  with engine.MatMul. Sequential scan structure is kept.
+  Acceptance: go test ./layers/timeseries/ passes.
+
+- [ ] T70.1.5 Replace timeseries/vsn.go local layerNorm with normalization.LayerNorm  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace layers/timeseries/vsn.go:180-224 with layers/normalization.LayerNorm.
+  Acceptance: go test passes.
+
+- [ ] T70.1.6 Deduplicate simplified_layer_normalization and RMSNorm  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Extract shared RMS computation from normalization/rmsnorm.go:153-190 and
+  normalization/simplified_layer_normalization.go:100-141 into a private helper.
+  Acceptance: go test ./layers/normalization/ passes. ~80 lines eliminated.
+
+- [ ] T70.1.7 Deduplicate fast_gelu.go and gelu.go  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Consolidate layers/activations/fast_gelu.go Forward (~65 duplicated lines)
+  into gelu.go or share implementation.
+  Acceptance: go test ./layers/activations/ passes.
+
+- [ ] T70.1.8 Replace core/variable_selection.go inline GELU and temporal_conv_encoder.go inline ReLU  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace core/variable_selection.go:147-154 inline GELU with
+  layers/activations.Gelu. Replace core/temporal_conv_encoder.go:107-127
+  inline ReLU with layers/activations.ReLU.
+  Acceptance: go test ./layers/core/ passes.
+
+- [ ] T70.1.9 Deduplicate residual/block_attn_res.go rmsNormLite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Replace layers/residual/block_attn_res.go:34-64 rmsNormLite with
+  layers/normalization.RMSNorm.
+  Acceptance: go test ./layers/residual/ passes.
+
+- [ ] T70.1.10 Full test suite and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T70.1.1 through T70.1.9
+  Run go test -race ./layers/... and linters.
+  Acceptance: all pass.
+
+### E70 Parallel Work
+
+#### Wave E70-1: Independent fixes (9 agents)
+- [ ] T70.1.1 core/gemm.go
+- [ ] T70.1.2 vision/clip_encoder.go
+- [ ] T70.1.3 timeseries/mlstm.go + slstm.go
+- [ ] T70.1.4 timeseries/ssm.go
+- [ ] T70.1.5 timeseries/vsn.go
+- [ ] T70.1.6 simplified_layer_normalization dedup
+- [ ] T70.1.7 fast_gelu dedup
+- [ ] T70.1.8 variable_selection + temporal_conv_encoder
+- [ ] T70.1.9 residual/block_attn_res.go
+
+#### Wave E70-2: Validate (1 agent)
+Deps: Wave E70-1
+- [ ] T70.1.10 Full test suite + linters
+
+---
+
+## E71: Experimental Package Migration (rl/, synth/, meta/, shared/)
+
+**Problem:** rl/ (787 lines), synth/ (676 lines), meta/ (307 lines), and
+shared/ (259 lines) each reimplement Linear, ReLU, SGD, and Xavier init on
+raw []float64 slices. Combined: ~2,029 lines of duplicated neural network
+primitives.
+
+**Goal:** Migrate all four packages to compose from layers/functional and
+training/optimizer. If a package is unused or experimental, consider deletion.
+
+- [ ] T71.1.1 Migrate rl/ to layers/functional and training/optimizer  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: E66 complete
+  Replace rl/ppo.go:38-80 mlpLayer with layers/functional.Linear.
+  Replace rl/sac.go:23-63 mlp with layers/functional.Linear.
+  Replace inline ReLU/Tanh with layers/functional equivalents.
+  Replace inline SGD with training/optimizer.SGD.
+  Acceptance: go test ./rl/ passes.
+
+- [ ] T71.1.2 Migrate synth/ to layers/functional  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: E66 complete
+  Replace synth/vae.go:389 linearForward with layers/functional.Linear.
+  Replace inline ReLU and SGD.
+  Acceptance: go test ./synth/ passes.
+
+- [ ] T71.1.3 Migrate meta/ to layers/functional  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: E66 complete
+  Replace meta/meta.go:248 linearForward with layers/functional.Linear.
+  Note: MAML inner-loop gradients may require special handling.
+  Acceptance: go test ./meta/ passes.
+
+- [ ] T71.1.4 Migrate shared/ to Engine ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Replace shared/latent.go:241 matVecMul with engine.MatMul.
+  Acceptance: go test ./shared/ passes.
+
+- [ ] T71.1.5 Tests and linters  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T71.1.1, T71.1.2, T71.1.3, T71.1.4
+  Run go test -race and linters across all 4 packages.
+  Acceptance: all pass.
+
+### E71 Parallel Work
+
+#### Wave E71-1: Independent migrations (4 agents)
+Deps: E66 complete
+- [ ] T71.1.1 rl/
+- [ ] T71.1.2 synth/
+- [ ] T71.1.3 meta/
+- [ ] T71.1.4 shared/
+
+#### Wave E71-2: Validate (1 agent)
+Deps: Wave E71-1
+- [ ] T71.1.5 Tests + linters
+
+---
+
+## E72: Architecture Enforcement Test
+
+**Problem:** No automated check prevents packages from reimplementing Engine[T]
+operations with raw slice math. ADR-027 documented the principle but did not
+enforce it. Violations recur because there is no CI gate.
+
+**Goal:** Add a go test that scans non-internal source files for patterns
+indicating raw-slice math where Engine[T] should be used.
+
+- [ ] T72.1.1 Create tests/architecture/composition_test.go  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Write a test that:
+  (1) Scans all .go files outside internal/ and tests/ for .Data() calls
+      in non-test files that are followed by element-wise arithmetic
+  (2) Scans for `import "math"` without `import layers/` in packages that
+      do neural network computation (exclude causal, gp, federated, etc.)
+  (3) Checks for private `type mlpLayer struct` or `func layerNorm` definitions
+      outside layers/
+  (4) Reports violations with file:line
+  Allowlist for justified exceptions (internal/cuda, internal/xblas, etc.)
+  Acceptance: test passes on current codebase. Catches regressions.
+
+- [ ] T72.1.2 Add to CI workflow  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T72.1.1
+  Add `go test ./tests/architecture/` to .github/workflows/ci.yml.
+  Acceptance: CI runs the test on every PR.
+
+### E72 Parallel Work
+
+#### Wave E72-1: Implement (1 agent)
+- [ ] T72.1.1 Create test
+- [ ] T72.1.2 Add to CI (sequential)
+
+---
+
+## E73: Generate KV Cache Consolidation
+
+**Problem:** generate/ has 5 KV cache implementations (kvcache.go,
+kvcache_fp16.go, kvcache_fp8.go, kvcache_q3.go, kvcache_q4.go) with duplicated
+structural code (layer indexing, sequence management, resize). Only the
+quantization math differs.
+
+**Goal:** Extract a base KVCacheBase struct with shared structural code and
+inject quantization strategy. Eliminate ~400 lines of duplication.
+
+- [ ] T73.1.1 Extract KVCacheBase with strategy pattern  Owner: TBD  Est: 4h  verifies: [UC-001, UC-002]
+  Create KVCacheBase struct with shared Get, Len, MaxSeqLen, resize logic.
+  Define QuantStrategy interface with Quantize/Dequantize methods.
+  Implement Float32Strategy, FP16Strategy, FP8Strategy, Q4Strategy, Q3Strategy.
+  Acceptance: go build clean. go test ./generate/ passes.
+
+- [ ] T73.1.2 Migrate existing caches to use KVCacheBase  Owner: TBD  Est: 3h  verifies: [UC-001, UC-002]
+  Deps: T73.1.1
+  Rewrite KVCacheFP16, KVCacheFP8, KVCacheQ4, KVCacheQ3 to embed KVCacheBase.
+  Keep KVCache[T] as the unquantized generic implementation.
+  Acceptance: go test passes. All generation tests produce identical output.
+
+- [ ] T73.1.3 Tests and linters  Owner: TBD  Est: 1h  verifies: [UC-001, UC-002]
+  Deps: T73.1.2
+  Run go test -race ./generate/ and linters. Verify net line reduction.
+  Acceptance: all pass. ~400 lines eliminated.
+
+### E73 Parallel Work
+
+#### Wave E73-1: Implement (sequential)
+- [ ] T73.1.1 -> T73.1.2 -> T73.1.3 (sequential chain)
+
+---
+
+### E66-E73 Risks
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R55 | layers/functional API adds dispatch overhead for training | Low | Medium | Functions are thin wrappers; benchmark to confirm <2% overhead |
+| R56 | timeseries/ migration breaks training accuracy | High | Medium | Parity tests for every model; compare 10-epoch training loss curves before/after |
+| R57 | crossasset/ graph-based backward produces different gradients | Medium | Medium | Numerical gradient check (finite differences) validates analytical gradients |
+| R58 | MAML inner-loop in meta/ is incompatible with graph-based backward | Medium | High | If incompatible, keep meta/ as justified exception; document why |
+| R59 | Architecture enforcement test has false positives | Low | Medium | Maintain allowlist; review and adjust thresholds quarterly |
+| R60 | KV cache strategy pattern adds virtual dispatch overhead | Low | Low | Benchmark KV cache Get/Set latency; strategy dispatch is not on hot path |
+
+### E66-E73 Milestones
+
+| ID | Milestone | Exit Criteria | Target |
+|----|-----------|---------------|--------|
+| M-COMP-2 | Composition Complete | All packages compose from layers/ or Engine; architecture test in CI; zero private math reimplementations outside internal/ | 2026-Q3 |
 
 ---
 
