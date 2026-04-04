@@ -302,18 +302,8 @@ func TestEAGLEGenerate_ContextCancelled(t *testing.T) {
 }
 
 func TestEAGLEVerifyTokens(t *testing.T) {
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ops := numeric.Float32Ops{}
 	tok := buildTestTokenizer()
 	vocabSize := tok.VocabSize()
-	hiddenDim := 16
-
-	head, _ := core.NewEAGLEHead(engine, ops, hiddenDim)
-	lmData := make([]float32, vocabSize*hiddenDim)
-	lmWeight, _ := tensor.New[float32]([]int{vocabSize, hiddenDim}, lmData)
-
-	cfg := ModelConfig{VocabSize: vocabSize, MaxSeqLen: 128, EOSTokenID: 2, NumLayers: 1}
-	eg := NewEAGLEGenerator[float32](nil, head, tok, engine, lmWeight, cfg, 4)
 
 	t.Run("all_accepted", func(t *testing.T) {
 		// Target logits: position 0 -> 5, position 1 -> 6, position 2 -> 2
@@ -330,7 +320,7 @@ func TestEAGLEVerifyTokens(t *testing.T) {
 		data[2*vocabSize+2] = 10.0     // pos 2 -> token 2
 
 		logits, _ := tensor.New[float32]([]int{1, 3, vocabSize}, data)
-		accepted, bonus := eg.verifyTokens(logits, []int{4, 5, 6}, map[int]bool{2: true})
+		accepted, bonus := verifyDraftTokens(logits, []int{4, 5, 6}, map[int]bool{2: true})
 
 		if len(accepted) != 3 {
 			t.Errorf("expected 3 accepted, got %d", len(accepted))
@@ -354,7 +344,7 @@ func TestEAGLEVerifyTokens(t *testing.T) {
 		data[2*vocabSize+6] = 10.0
 
 		logits, _ := tensor.New[float32]([]int{1, 3, vocabSize}, data)
-		accepted, bonus := eg.verifyTokens(logits, []int{4, 5, 6}, map[int]bool{2: true})
+		accepted, bonus := verifyDraftTokens(logits, []int{4, 5, 6}, map[int]bool{2: true})
 
 		if len(accepted) != 1 {
 			t.Errorf("expected 1 accepted, got %d", len(accepted))
@@ -380,7 +370,7 @@ func TestEAGLEVerifyTokens(t *testing.T) {
 		data[3*vocabSize+7] = 10.0   // pos 3 (never reached)
 
 		logits, _ := tensor.New[float32]([]int{1, 4, vocabSize}, data)
-		accepted, bonus := eg.verifyTokens(logits, []int{4, 5, 6, 7}, map[int]bool{2: true})
+		accepted, bonus := verifyDraftTokens(logits, []int{4, 5, 6, 7}, map[int]bool{2: true})
 
 		if len(accepted) != 3 {
 			t.Errorf("expected 3 accepted (partial), got %d: %v", len(accepted), accepted)
@@ -400,7 +390,7 @@ func TestEAGLEVerifyTokens(t *testing.T) {
 		data[3] = 10.0 // pos 0 -> 3
 
 		logits, _ := tensor.New[float32]([]int{1, 1, vocabSize}, data)
-		accepted, bonus := eg.verifyTokens(logits, []int{4}, map[int]bool{2: true})
+		accepted, bonus := verifyDraftTokens(logits, []int{4}, map[int]bool{2: true})
 
 		if len(accepted) != 1 {
 			t.Errorf("expected 1 accepted, got %d", len(accepted))

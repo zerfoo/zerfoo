@@ -3,7 +3,6 @@ package generate
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/ztensor/compute"
@@ -113,7 +112,7 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 	stopSet[eg.config.EOSTokenID] = true
 
 	// Prefill: run the full prompt through the target model.
-	prefillTensor, err := eagleIDsToTensor[T](promptIDs)
+	prefillTensor, err := tokenIDsToTensor[T](promptIDs)
 	if err != nil {
 		return "", fmt.Errorf("eagle: create prefill tensor: %w", err)
 	}
@@ -124,7 +123,7 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 	}
 
 	// Sample first token from target (greedy).
-	firstToken := eagleArgmaxLastPos(result.Logits)
+	firstToken := logitsArgmaxLastPos(result.Logits)
 	if stopSet[firstToken] {
 		return "", nil
 	}
@@ -165,7 +164,7 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 
 		// Verify phase: target processes all draft tokens in one batched
 		// forward pass. We get logits + penultimate features for the next step.
-		verifyTensor, tErr := eagleIDsToTensor[T](draftTokens)
+		verifyTensor, tErr := tokenIDsToTensor[T](draftTokens)
 		if tErr != nil {
 			return "", fmt.Errorf("eagle: create verify tensor: %w", tErr)
 		}
@@ -176,7 +175,7 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 		}
 
 		// Accept/reject: compare target's greedy output with draft tokens.
-		accepted, bonusToken := eg.verifyTokens(verifyResult.Logits, draftTokens, stopSet)
+		accepted, bonusToken := verifyDraftTokens(verifyResult.Logits, draftTokens, stopSet)
 
 		// Emit accepted draft tokens.
 		stopped := false
@@ -221,7 +220,7 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 
 		// Check stop strings.
 		if len(sc.StopStrings) > 0 {
-			if stopped, text := eg.checkStop(generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
+			if stopped, text := incrementalCheckStop(eg.tokenizer, generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
 				return text, nil
 			}
 		}
@@ -263,7 +262,7 @@ func (eg *EAGLEGenerator[T]) generateDraftTokens(
 			return nil, fmt.Errorf("eagle: draft step %d lm head: %w", i, err)
 		}
 
-		tokenID := eagleArgmaxLastPos(logits)
+		tokenID := logitsArgmaxLastPos(logits)
 		draftTokens = append(draftTokens, tokenID)
 		currentFeatures = nextHidden
 	}
@@ -309,52 +308,6 @@ func eagleLMHeadForward[T tensor.Numeric](
 	return engine.Reshape(ctx, out, []int{batch, seqLen, vocabSize})
 }
 
-// verifyTokens compares target logits against draft tokens.
-// Returns the accepted draft tokens and a bonus token (-1 if none).
-func (eg *EAGLEGenerator[T]) verifyTokens(
-	targetLogits *tensor.TensorNumeric[T],
-	draftTokens []int,
-	stopSet map[int]bool,
-) (accepted []int, bonusToken int) {
-	shape := targetLogits.Shape()
-	vocabSize := shape[2]
-	seqLen := shape[1]
-	data := targetLogits.Data()
-
-	accepted = make([]int, 0, len(draftTokens))
-	bonusToken = -1
-
-	for i, dt := range draftTokens {
-		if i >= seqLen {
-			break
-		}
-
-		offset := i * vocabSize
-		targetToken := eagleArgmaxSlice(data[offset : offset+vocabSize])
-
-		switch {
-		case i == len(draftTokens)-1:
-			// Last draft position: accept the draft token and use target's
-			// prediction as the bonus token for the next step.
-			accepted = append(accepted, dt)
-			if !stopSet[dt] {
-				bonusToken = targetToken
-			}
-		case targetToken == draftTokens[i+1]:
-			// Target agrees with what draft predicted next. Accept current token.
-			accepted = append(accepted, dt)
-		default:
-			// Target disagrees. Accept this token but use target's next-token
-			// prediction instead of draft's.
-			accepted = append(accepted, dt)
-			bonusToken = targetToken
-			return accepted, bonusToken
-		}
-	}
-
-	return accepted, bonusToken
-}
-
 // extractLastPosition extracts a single sequence position from a
 // [1, seqLen, hidden] tensor, returning a [1, 1, hidden] tensor.
 func (eg *EAGLEGenerator[T]) extractLastPosition(
@@ -384,70 +337,3 @@ func (eg *EAGLEGenerator[T]) extractLastPosition(
 	return tensor.New([]int{1, 1, hidden}, posData)
 }
 
-// checkStop checks if the decoded generated tokens contain any stop string.
-func (eg *EAGLEGenerator[T]) checkStop(generatedIDs []int, stopStrings []string, prevDecoded *string, prevCount *int) (bool, string) {
-	if len(generatedIDs) == *prevCount {
-		return false, ""
-	}
-
-	if *prevCount > 0 {
-		overlapIDs := generatedIDs[*prevCount-1:]
-		overlapDecoded, err := eg.tokenizer.Decode(overlapIDs)
-		if err != nil {
-			return false, ""
-		}
-		singleDecoded, err := eg.tokenizer.Decode(generatedIDs[*prevCount-1 : *prevCount])
-		if err != nil {
-			return false, ""
-		}
-		fragment := overlapDecoded[len(singleDecoded):]
-		*prevDecoded += fragment
-	} else {
-		decoded, err := eg.tokenizer.Decode(generatedIDs)
-		if err != nil {
-			return false, ""
-		}
-		*prevDecoded = decoded
-	}
-	*prevCount = len(generatedIDs)
-
-	for _, ss := range stopStrings {
-		if idx := strings.Index(*prevDecoded, ss); idx >= 0 {
-			return true, (*prevDecoded)[:idx]
-		}
-	}
-	return false, ""
-}
-
-// eagleIDsToTensor converts token IDs to a [1, seqLen] input tensor.
-func eagleIDsToTensor[T tensor.Numeric](ids []int) (*tensor.TensorNumeric[T], error) {
-	data := make([]T, len(ids))
-	for i, id := range ids {
-		data[i] = T(id)
-	}
-	return tensor.New([]int{1, len(ids)}, data)
-}
-
-// eagleArgmaxLastPos returns the argmax token ID from the last sequence position
-// of a [batch, seqLen, vocab] logits tensor (batch index 0).
-func eagleArgmaxLastPos[T tensor.Numeric](logits *tensor.TensorNumeric[T]) int {
-	shape := logits.Shape()
-	vocabSize := shape[2]
-	seqLen := shape[1]
-	data := logits.Data()
-	offset := (seqLen - 1) * vocabSize
-	return eagleArgmaxSlice(data[offset : offset+vocabSize])
-}
-
-// eagleArgmaxSlice returns the index of the maximum value in a slice.
-func eagleArgmaxSlice[T tensor.Numeric](data []T) int {
-	maxIdx := 0
-	maxVal := data[0]
-	for i := 1; i < len(data); i++ {
-		if data[i] > maxVal {
-			maxVal = data[i]
-			maxIdx = i
-		}
-	}
-	return maxIdx
-}

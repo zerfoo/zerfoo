@@ -142,32 +142,13 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 			break
 		}
 
-		// Reset arena pool between tokens so intermediates are reclaimed.
-		if resetter, ok := gen.engine.(compute.PoolResetter); ok {
-			resetter.ResetPool()
-		}
-
-		// Update the reused tensor's value in-place.
-		decodeBuf[0] = T(nextToken)
-
-		if p := gen.plan.Load(); p != nil {
-			logits, err = p.Run(genCtx, tokenTensor)
-		} else {
-			logits, err = gen.graph.Forward(genCtx, tokenTensor)
-			if err == nil {
-				gen.compileGraph(genCtx, tokenTensor)
-			}
-		}
+		step, err := gen.runDecodeStep(ctx, genCtx, tokenTensor, decodeBuf, nextToken, sc, generatedIDs, stopSet)
 		if err != nil {
-			return fmt.Errorf("decode forward: %w", err)
+			return err
 		}
+		nextToken = step.Token
 
-		nextToken, err = gen.sampleFromLogits(logits, sc, generatedIDs)
-		if err != nil {
-			return fmt.Errorf("sample: %w", err)
-		}
-
-		if stopSet[nextToken] {
+		if step.Stop {
 			break
 		}
 		generatedIDs = append(generatedIDs, nextToken)
