@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -550,11 +551,6 @@ func (s *SAINT) multiHeadAttention(
 	qW, kW, vW, outW *tensor.TensorNumeric[float32],
 	nHeads int,
 ) (*tensor.TensorNumeric[float32], error) {
-	dm := s.config.DModel
-	headDim := dm / nHeads
-	shape := x.Shape()
-	seqLen := shape[0]
-
 	// Q, K, V projections: [seqLen, DModel].
 	q, err := s.engine.MatMul(ctx, x, qW)
 	if err != nil {
@@ -569,124 +565,20 @@ func (s *SAINT) multiHeadAttention(
 		return nil, err
 	}
 
-	// Process each head.
-	headOutputs := make([][]float32, nHeads)
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-
-	for h := 0; h < nHeads; h++ {
-		// Extract head slice: [seqLen, headDim].
-		qSlice := make([]float32, seqLen*headDim)
-		kSlice := make([]float32, seqLen*headDim)
-		vSlice := make([]float32, seqLen*headDim)
-		for i := 0; i < seqLen; i++ {
-			for j := 0; j < headDim; j++ {
-				qSlice[i*headDim+j] = qData[i*dm+h*headDim+j]
-				kSlice[i*headDim+j] = kData[i*dm+h*headDim+j]
-				vSlice[i*headDim+j] = vData[i*dm+h*headDim+j]
-			}
-		}
-
-		qHead, err := tensor.New[float32]([]int{seqLen, headDim}, qSlice)
-		if err != nil {
-			return nil, err
-		}
-		kHead, err := tensor.New[float32]([]int{seqLen, headDim}, kSlice)
-		if err != nil {
-			return nil, err
-		}
-		vHead, err := tensor.New[float32]([]int{seqLen, headDim}, vSlice)
-		if err != nil {
-			return nil, err
-		}
-
-		// Attention scores: Q @ K^T / sqrt(headDim).
-		kT, err := s.engine.Transpose(ctx, kHead, []int{1, 0})
-		if err != nil {
-			return nil, err
-		}
-		scores, err := s.engine.MatMul(ctx, qHead, kT)
-		if err != nil {
-			return nil, err
-		}
-		scale := float32(1.0 / math.Sqrt(float64(headDim)))
-		scores, err = s.engine.MulScalar(ctx, scores, scale)
-		if err != nil {
-			return nil, err
-		}
-
-		// Softmax over last dim.
-		attnWeights, err := s.engine.Softmax(ctx, scores, -1)
-		if err != nil {
-			return nil, err
-		}
-
-		// Weighted sum: attnWeights @ V -> [seqLen, headDim].
-		headOut, err := s.engine.MatMul(ctx, attnWeights, vHead)
-		if err != nil {
-			return nil, err
-		}
-		headOutputs[h] = headOut.Data()
-	}
-
-	// Concatenate heads: [seqLen, DModel].
-	concatData := make([]float32, seqLen*dm)
-	for i := 0; i < seqLen; i++ {
-		for h := 0; h < nHeads; h++ {
-			for j := 0; j < headDim; j++ {
-				concatData[i*dm+h*headDim+j] = headOutputs[h][i*headDim+j]
-			}
-		}
-	}
-	concat, err := tensor.New[float32]([]int{seqLen, dm}, concatData)
+	// Multi-head scaled dot-product attention.
+	attnOut, err := functional.MultiHeadAttention(ctx, s.engine, q, k, v, nHeads)
 	if err != nil {
 		return nil, err
 	}
 
 	// Output projection.
-	return s.engine.MatMul(ctx, concat, outW)
+	return s.engine.MatMul(ctx, attnOut, outW)
 }
 
 // layerNorm applies layer normalization along the last dimension.
 // x shape: [N, DModel], gamma/beta shape: [1, DModel].
 func (s *SAINT) layerNorm(ctx context.Context, x, gamma, beta *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-	shape := x.Shape()
-	n := shape[0]
-	dm := shape[1]
-	eps := float32(1e-5)
-
-	xData := x.Data()
-	gData := gamma.Data()
-	bData := beta.Data()
-	outData := make([]float32, n*dm)
-
-	for i := 0; i < n; i++ {
-		row := xData[i*dm : (i+1)*dm]
-
-		// Mean.
-		var mean float32
-		for _, v := range row {
-			mean += v
-		}
-		mean /= float32(dm)
-
-		// Variance.
-		var variance float32
-		for _, v := range row {
-			d := v - mean
-			variance += d * d
-		}
-		variance /= float32(dm)
-
-		// Normalize.
-		invStd := float32(1.0 / math.Sqrt(float64(variance+eps)))
-		for j := 0; j < dm; j++ {
-			outData[i*dm+j] = (row[j]-mean)*invStd*gData[j] + bData[j]
-		}
-	}
-
-	return tensor.New[float32]([]int{n, dm}, outData)
+	return functional.LayerNorm(ctx, s.engine, x, gamma, beta, float32(1e-5))
 }
 
 // ffn applies a two-layer feed-forward network with GELU activation.
@@ -741,13 +633,15 @@ func (s *SAINT) meanPool(ctx context.Context, x *tensor.TensorNumeric[float32], 
 	return tensor.New[float32]([]int{batchSize, dm}, pooled)
 }
 
-// linearForward computes x @ W + b.
+// linearForward computes x @ W + b using the canonical functional.Linear.
+// mlpLayer stores weights as [in, out]; functional.Linear expects [out, in],
+// so we transpose before calling.
 func (s *SAINT) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := s.engine.MatMul(ctx, x, l.weights)
+	wT, err := s.engine.Transpose(ctx, l.weights, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	return s.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, s.engine, x, wT, l.biases)
 }
 
 // TrainSAINT trains a SAINT model on the given data and labels using SGD with
