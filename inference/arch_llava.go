@@ -209,12 +209,10 @@ func BuildLLaVAModel(
 		return &graph.Parameter[float32]{Name: name, Value: t}
 	}
 
+	_, isGPUEngine := engine.(compute.WeightUploader)
+
 	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
-		if err != nil {
-			return nil, fmt.Errorf("transpose %s: %w", name, err)
-		}
-		return tr, nil
+		return transposeWeight2D(engine, isGPUEngine, name, t)
 	}
 
 	headDim := cfg.HiddenSize / cfg.NumHeads

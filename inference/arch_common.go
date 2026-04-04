@@ -131,173 +131,8 @@ func buildTransformerGraph(
 
 	_, isGPUEngine := engine.(compute.WeightUploader)
 
-	transposeWeight := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-		s := t.GetStorage()
-		// GPU path: use virtual transpose for quantized weights so the
-		// quantized storage is preserved and the fused dequant+GEMV kernel can
-		// be used at inference time. The UploadWeights F32 loop must skip these
-		// types (see gpu_engine.go) to prevent storage replacement.
-		// Q8 weights are still dequantized to F32 for cuBLAS SGEMM.
-		if isGPUEngine {
-			if _, ok := any(s).(*tensor.Q4Storage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			if _, ok := any(s).(*tensor.Q4KStorage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			if _, ok := any(s).(*tensor.Q5_0Storage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			if _, ok := any(s).(*tensor.Q5KStorage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			if _, ok := any(s).(*tensor.Q6KStorage); ok {
-				shape := t.Shape()
-				if len(shape) == 2 {
-					return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-				}
-			}
-			shape := t.Shape()
-			if len(shape) == 2 {
-				if qs, ok := any(s).(*tensor.Q8Storage); ok {
-					f32 := make([]float32, qs.Len())
-					qs.Dequantize(f32)
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					return tensor.New([]int{cols, rows}, transposed)
-				}
-				// Float16Storage: dequantize, transpose, re-encode to preserve Float16Storage.
-				// Without this, engine.Transpose produces F32 storage and FP16 weights
-				// lose their native format, doubling memory and missing the FP16 MatMul path.
-				if fs, ok := any(s).(*tensor.Float16Storage); ok {
-					f32 := fs.Slice()
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					fp16 := tensor.NewFloat16StorageFromF32(transposed)
-					return tensor.NewWithStorage[float32]([]int{cols, rows}, fp16)
-				}
-				// FP8 E4M3: dequantize, transpose, re-quantize to preserve FP8E4M3Storage.
-				// Without this, engine.Transpose produces F32 storage and the FP8 MatMul
-				// path is never invoked, causing degenerate output from double quantization
-				// (FP8->F32->FP16 in the generic fp16MatMul fallback).
-				if fs, ok := any(s).(*tensor.FP8E4M3Storage); ok {
-					f32 := fs.Slice()
-					rows, cols := shape[0], shape[1]
-					transposed := make([]float32, len(f32))
-					for r := range rows {
-						for c := range cols {
-							transposed[c*rows+r] = f32[r*cols+c]
-						}
-					}
-					fp8 := tensor.NewFP8E4M3Storage(transposed)
-					return tensor.NewWithStorage[float32]([]int{cols, rows}, fp8)
-				}
-			}
-			tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
-			if err != nil {
-				return nil, fmt.Errorf("transpose %s: %w", name, err)
-			}
-			return tr, nil
-		}
-
-		// CPU path: virtual transpose for quantized storage.
-		if _, ok := any(s).(*tensor.Q4Storage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		if _, ok := any(s).(*tensor.Q8Storage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		if _, ok := any(s).(*tensor.Q5_0Storage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		if _, ok := any(s).(*tensor.Q4KStorage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		if _, ok := any(s).(*tensor.Q5KStorage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		if _, ok := any(s).(*tensor.Q6KStorage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				return tensor.NewWithStorage[float32]([]int{shape[1], shape[0]}, s)
-			}
-		}
-		// Float16Storage: dequantize, transpose, re-encode to preserve compact storage.
-		if fs, ok := any(s).(*tensor.Float16Storage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				f32 := fs.Slice()
-				rows, cols := shape[0], shape[1]
-				transposed := make([]float32, len(f32))
-				for r := range rows {
-					for c := range cols {
-						transposed[c*rows+r] = f32[r*cols+c]
-					}
-				}
-				fp16 := tensor.NewFloat16StorageFromF32(transposed)
-				return tensor.NewWithStorage[float32]([]int{cols, rows}, fp16)
-			}
-		}
-		// FP8 E4M3: dequantize, transpose, re-quantize to preserve FP8E4M3Storage.
-		// Without this, engine.Transpose produces F32 storage and the FP8 MatMul
-		// path is never invoked on GPU.
-		if fs, ok := any(s).(*tensor.FP8E4M3Storage); ok {
-			shape := t.Shape()
-			if len(shape) == 2 {
-				f32 := fs.Slice()
-				rows, cols := shape[0], shape[1]
-				transposed := make([]float32, len(f32))
-				for r := range rows {
-					for c := range cols {
-						transposed[c*rows+r] = f32[r*cols+c]
-					}
-				}
-				fp8 := tensor.NewFP8E4M3Storage(transposed)
-				return tensor.NewWithStorage[float32]([]int{cols, rows}, fp8)
-			}
-		}
-		tr, err := engine.Transpose(context.Background(), t, []int{1, 0})
-		if err != nil {
-			return nil, fmt.Errorf("transpose %s: %w", name, err)
-		}
-		return tr, nil
+	tw := func(name string, t *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
+		return transposeWeight2D(engine, isGPUEngine, name, t)
 	}
 
 	finalNormWeight, err := lookup("model.norm.weight")
@@ -390,11 +225,11 @@ func buildTransformerGraph(
 				return nil, uvErr
 			}
 
-			qWT, tErr := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
+			qWT, tErr := tw(prefix+"self_attn.q_proj.weight", qW)
 			if tErr != nil {
 				return nil, tErr
 			}
-			oWT, tErr := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
+			oWT, tErr := tw(prefix+"self_attn.o_proj.weight", oW)
 			if tErr != nil {
 				return nil, tErr
 			}
@@ -403,11 +238,11 @@ func buildTransformerGraph(
 			//   wDKV: [dModel, rank] — already [inputDim, outputDim], no transpose needed
 			//   wUK:  [dK, rank]     — stored as [outputDim, inputDim], needs transpose to [rank, dK]
 			//   wUV:  [dV, rank]     — stored as [outputDim, inputDim], needs transpose to [rank, dV]
-			ukWT, tErr := transposeWeight(transMLAPrefix+"wUK", ukW)
+			ukWT, tErr := tw(transMLAPrefix+"wUK", ukW)
 			if tErr != nil {
 				return nil, tErr
 			}
-			uvWT, tErr := transposeWeight(transMLAPrefix+"wUV", uvW)
+			uvWT, tErr := tw(transMLAPrefix+"wUV", uvW)
 			if tErr != nil {
 				return nil, tErr
 			}
@@ -452,19 +287,19 @@ func buildTransformerGraph(
 				return nil, oErr
 			}
 
-			qWT, tErr := transposeWeight(prefix+"self_attn.q_proj.weight", qW)
+			qWT, tErr := tw(prefix+"self_attn.q_proj.weight", qW)
 			if tErr != nil {
 				return nil, tErr
 			}
-			kWT, tErr := transposeWeight(prefix+"self_attn.k_proj.weight", kW)
+			kWT, tErr := tw(prefix+"self_attn.k_proj.weight", kW)
 			if tErr != nil {
 				return nil, tErr
 			}
-			vWT, tErr := transposeWeight(prefix+"self_attn.v_proj.weight", vW)
+			vWT, tErr := tw(prefix+"self_attn.v_proj.weight", vW)
 			if tErr != nil {
 				return nil, tErr
 			}
-			oWT, tErr := transposeWeight(prefix+"self_attn.o_proj.weight", oW)
+			oWT, tErr := tw(prefix+"self_attn.o_proj.weight", oW)
 			if tErr != nil {
 				return nil, tErr
 			}
@@ -633,15 +468,15 @@ func buildTransformerGraph(
 			return nil, fmt.Errorf("layer %d ffn: %w", i, err)
 		}
 
-		gateWT, err := transposeWeight(prefix+"mlp.gate_proj.weight", gateW)
+		gateWT, err := tw(prefix+"mlp.gate_proj.weight", gateW)
 		if err != nil {
 			return nil, err
 		}
-		upWT, err := transposeWeight(prefix+"mlp.up_proj.weight", upW)
+		upWT, err := tw(prefix+"mlp.up_proj.weight", upW)
 		if err != nil {
 			return nil, err
 		}
-		downWT, err := transposeWeight(prefix+"mlp.down_proj.weight", downW)
+		downWT, err := tw(prefix+"mlp.down_proj.weight", downW)
 		if err != nil {
 			return nil, err
 		}
