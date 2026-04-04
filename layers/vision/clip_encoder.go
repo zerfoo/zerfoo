@@ -231,34 +231,24 @@ func (e *CLIPEncoder[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNu
 	gridSize := e.cfg.ImageSize / patchSize
 	patchDim := channels * patchSize * patchSize
 
-	// Extract patches: [batch, C, H, W] -> [batch, numPatches, C*P*P]
-	inputData := input.Data()
-	patches := make([]T, batch*numPatches*patchDim)
-	for b := 0; b < batch; b++ {
-		for gy := 0; gy < gridSize; gy++ {
-			for gx := 0; gx < gridSize; gx++ {
-				patchIdx := gy*gridSize + gx
-				for c := 0; c < channels; c++ {
-					for py := 0; py < patchSize; py++ {
-						for px := 0; px < patchSize; px++ {
-							srcY := gy*patchSize + py
-							srcX := gx*patchSize + px
-							srcIdx := b*channels*e.cfg.ImageSize*e.cfg.ImageSize + c*e.cfg.ImageSize*e.cfg.ImageSize + srcY*e.cfg.ImageSize + srcX
-							dstIdx := b*numPatches*patchDim + patchIdx*patchDim + c*patchSize*patchSize + py*patchSize + px
-							patches[dstIdx] = inputData[srcIdx]
-						}
-					}
-				}
-			}
-		}
+	// Extract patches using engine ops:
+	// [batch, C, H, W] -> [batch, C, gridY, P, gridX, P]
+	reshaped, err := e.engine.Reshape(ctx, input, []int{batch, channels, gridSize, patchSize, gridSize, patchSize})
+	if err != nil {
+		return nil, fmt.Errorf("reshape to grid: %w", err)
+	}
+	// -> [batch, gridY, gridX, C, P, P]
+	permuted, err := e.engine.Transpose(ctx, reshaped, []int{0, 2, 4, 1, 3, 5})
+	if err != nil {
+		return nil, fmt.Errorf("transpose patches: %w", err)
+	}
+	// -> [batch*numPatches, C*P*P]
+	patchesTensor, err := e.engine.Reshape(ctx, permuted, []int{batch * numPatches, patchDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape patches flat: %w", err)
 	}
 
 	// Linear projection: patches [batch*numPatches, patchDim] @ weight^T [patchDim, hiddenDim] + bias
-	patchesTensor, err := tensor.New[T]([]int{batch * numPatches, patchDim}, patches)
-	if err != nil {
-		return nil, fmt.Errorf("create patches tensor: %w", err)
-	}
-	// weight is [hiddenDim, patchDim]; transpose to [patchDim, hiddenDim] for matmul
 	weightT, err := e.engine.Transpose(ctx, e.patchEmbedWeight.Value, []int{1, 0})
 	if err != nil {
 		return nil, fmt.Errorf("transpose patch_embed weight: %w", err)
@@ -272,34 +262,30 @@ func (e *CLIPEncoder[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNu
 		return nil, fmt.Errorf("patch_embed bias: %w", err)
 	}
 
-	// Prepend class token: [batch, numPatches+1, hiddenDim]
-	seqLen := numPatches + 1
-	clsData := e.classEmbedding.Value.Data()
-	embData := embeddingsTensor.Data()
-	withCls := make([]T, batch*seqLen*hiddenDim)
-	for b := 0; b < batch; b++ {
-		// Copy class token for this batch element.
-		for h := 0; h < hiddenDim; h++ {
-			withCls[b*seqLen*hiddenDim+h] = clsData[h]
-		}
-		// Copy patch embeddings.
-		copy(
-			withCls[b*seqLen*hiddenDim+hiddenDim:b*seqLen*hiddenDim+seqLen*hiddenDim],
-			embData[b*numPatches*hiddenDim:(b+1)*numPatches*hiddenDim],
-		)
-	}
-
-	// Add position embedding.
-	posData := e.positionEmbedding.Value.Data()
-	for b := 0; b < batch; b++ {
-		for i := 0; i < seqLen*hiddenDim; i++ {
-			withCls[b*seqLen*hiddenDim+i] = e.ops.Add(withCls[b*seqLen*hiddenDim+i], posData[i])
-		}
-	}
-
-	x, err := tensor.New[T]([]int{batch, seqLen, hiddenDim}, withCls)
+	// Reshape embeddings to [batch, numPatches, hiddenDim] for concatenation.
+	embeddingsTensor, err = e.engine.Reshape(ctx, embeddingsTensor, []int{batch, numPatches, hiddenDim})
 	if err != nil {
-		return nil, fmt.Errorf("create embeddings tensor: %w", err)
+		return nil, fmt.Errorf("reshape embeddings: %w", err)
+	}
+
+	// Prepend class token: expand [1, 1, hiddenDim] to [batch, 1, hiddenDim] via Repeat, then Concat.
+	seqLen := numPatches + 1
+	clsTokens := e.classEmbedding.Value
+	if batch > 1 {
+		clsTokens, err = e.engine.Repeat(ctx, clsTokens, 0, batch)
+		if err != nil {
+			return nil, fmt.Errorf("repeat class token: %w", err)
+		}
+	}
+	withCls, err := e.engine.Concat(ctx, []*tensor.TensorNumeric[T]{clsTokens, embeddingsTensor}, 1)
+	if err != nil {
+		return nil, fmt.Errorf("concat class token: %w", err)
+	}
+
+	// Add position embedding: [1, numPatches+1, hiddenDim] broadcasts over batch.
+	x, err := e.engine.Add(ctx, withCls, e.positionEmbedding.Value)
+	if err != nil {
+		return nil, fmt.Errorf("add position embedding: %w", err)
 	}
 
 	// Transformer encoder blocks.
