@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0](https://github.com/zerfoo/zerfoo/compare/v1.40.1...v1.41.0) (2026-04-04)
+
+
+### Features
+
+* **cmd:** add --pjrt flag for PJRT backend selection ([66fb945](https://github.com/zerfoo/zerfoo/commit/66fb945a185c06cd7e1178d18ebccf68a3a23721))
+* **crossasset:** replace SGD with AdamW in CPU Train() ([#315](https://github.com/zerfoo/zerfoo/issues/315)) ([4d6664c](https://github.com/zerfoo/zerfoo/commit/4d6664c05d0af3763613c7d77330685af62a6fbf))
+* **functional:** add GELUBackward for gradient computation ([0e89305](https://github.com/zerfoo/zerfoo/commit/0e893054ed5d97abf96b1445f3ecece868695ccd))
+* **functional:** add LayerNormBackward for gradient computation ([1e51b9e](https://github.com/zerfoo/zerfoo/commit/1e51b9e474ddf0a6c011df45af87504391434678))
+* **functional:** add LinearBackward for gradient computation ([534127d](https://github.com/zerfoo/zerfoo/commit/534127d71cb4794855b3e6bf3526aea734685853))
+* **functional:** add MLPBackward for 2-layer MLP gradient computation ([8624a1e](https://github.com/zerfoo/zerfoo/commit/8624a1e17b4ae92589b160e9ad2a4d7c23de6eed))
+* **functional:** add MultiHeadAttentionBackward ([2d91fa3](https://github.com/zerfoo/zerfoo/commit/2d91fa3f45bfa7e7b13c0fb191beb9bb9f58386e))
+* **functional:** add SoftmaxBackward for gradient computation ([1c2c486](https://github.com/zerfoo/zerfoo/commit/1c2c486dedd9859bc1ece6215ddf9444fc0ff62c))
+* **generate:** wire PJRTPlan into decode loop ([ca6bab6](https://github.com/zerfoo/zerfoo/commit/ca6bab630cf4871e5e3ea024b85813b0dc3c0f47))
+* **inference:** add PJRT compilation path ([9cde667](https://github.com/zerfoo/zerfoo/commit/9cde667d1d0e3f88ea38ccab41c8ddd5f30acf81))
+* **layers:** add functional activation wrappers (GELU, Softmax, ReLU, SiLU, Sigmoid) ([962b36d](https://github.com/zerfoo/zerfoo/commit/962b36d3e5233425a4fe793659ce85d65837270b))
+* **layers:** add functional LayerNorm and RMSNorm wrappers ([08c7ac9](https://github.com/zerfoo/zerfoo/commit/08c7ac9bb4789331000f7d601864cb82785e6e29))
+* **layers:** add functional Linear and MultiHeadAttention wrappers ([e5449e8](https://github.com/zerfoo/zerfoo/commit/e5449e85d1bef80feb8a283e9d981f479e6e500c))
+
+
+### Bug Fixes
+
+* **architecture:** add crossasset/backward.go to privateLayer allowlist ([5c01ccf](https://github.com/zerfoo/zerfoo/commit/5c01ccf9100365440de57cfc0e8e5e3f0db28e70))
+* **architecture:** add layernorm_ops.go backward to dataAbuse allowlist ([34fe067](https://github.com/zerfoo/zerfoo/commit/34fe0679b1e9b7431fda4603d3b6bc8f26e55e9b))
+* **crossasset:** call Train() once with all epochs to preserve AdamW state ([834b8f3](https://github.com/zerfoo/zerfoo/commit/834b8f3645e5e74e9c7ec1d049d0e99a1c8ffa43))
+* **crossasset:** delegate TrainGPU to CPU full-backprop with AdamW ([#317](https://github.com/zerfoo/zerfoo/issues/317)) ([b345932](https://github.com/zerfoo/zerfoo/commit/b3459328139a4631eda8cb86fcde91f1b05f769a))
+* **crossasset:** snapshot GPU tensors to CPU before backward reads ([#317](https://github.com/zerfoo/zerfoo/issues/317)) ([4de925e](https://github.com/zerfoo/zerfoo/commit/4de925e96d7aa2f2ca4da003caff19f708e8ff2a))
+* **timeseries:** resolve warmupLR merge conflict with scheduler.WarmupLR ([9f573cf](https://github.com/zerfoo/zerfoo/commit/9f573cf1afaa5e759bb3501a43645c4f6d8c6c71))
+* **timeseries:** update nhits_test weight shape check for transposed layout ([f090509](https://github.com/zerfoo/zerfoo/commit/f090509aacb0b63f98c58c2e0f8216522b938281))
+* **training:** fix QuantileLoss generic type assertions ([a282e9d](https://github.com/zerfoo/zerfoo/commit/a282e9dc60523e5cab996efea2081d2c423fa195))
+
+
+### Performance Improvements
+
+* **training:** replace guardAndClipGradients .Data() loops with Engine ops ([92e1218](https://github.com/zerfoo/zerfoo/commit/92e1218faa4fcc138d0daebeeb83764d29d7154c))
+* **training:** replace SGD broadcast allocation with engine.MulScalar ([aad4deb](https://github.com/zerfoo/zerfoo/commit/aad4debdbfd0f5a442e78ffb9f77e4e100200e95))
+
 ## [1.40.1](https://github.com/zerfoo/zerfoo/compare/v1.40.0...v1.40.1) (2026-04-02)
 
 
