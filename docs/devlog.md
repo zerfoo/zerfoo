@@ -3,6 +3,41 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-03: E74/E75 backward composition and .Data() elimination complete
+
+**Type:** finding
+**Tags:** composition, backward, inference, timeseries
+
+**Summary:** E74 (backward pass composition) completed 12/14 tasks. All functional
+backward ops (Linear, LayerNorm, GELU, Softmax, MHA, MLP) created in layers/functional.
+All 3 backward files + encoder backward migrated (PRs #329-#331). +127 net lines from
+bridge helpers. T76.1.1 (allowlist removal) BLOCKED: 88 .Data() calls remain in
+slice-tensor conversion bridges. E75 completed 9/9 tasks -- .Data() calls in inference
+timeseries reduced from 29 to 15 justified (PRs #329-#330).
+
+## 2026-03-30: Ecosystem v1 release -- 5 libraries at v1.0.0
+
+**Type:** finding
+**Tags:** release, v1, ecosystem, float16, float8, ztensor, ztoken, zonnx
+
+**Summary:** All 5 sub-v1 libraries promoted to v1.0.0 in a single day (46 tasks).
+float16 completed BFloat16 Phases 2-5 (arithmetic modes, batch ops, math functions,
+parse/format, error handling). float8 verified E4M3FN against NVIDIA reference (256 values).
+ztensor narrowed v1 stable surface to Engine[T], Tensor[T], Numeric, Device, numeric.*.
+ztoken expanded edge case tests. zonnx API reviewed and tagged.
+
+## 2026-03-30: Batched training + TimeMixer + foundation models shipped
+
+**Type:** benchmark
+**Tags:** training, batched, timemixer, tirex, chronos, moirai, foundation
+
+**Summary:** E47 shipped batched forward/backward for all 9 time series backends
+(PatchTST, iTransformer, DLinear, Mamba, CfC, FreTS, TTM, N-HiTS, N-BEATS). CPU
+benchmark: PatchTST 28K rows at 596s (target <60s needs CUDA). E48 shipped TimeMixer
+(multi-scale decomposition + MLP mixing). E49 shipped native Go inference for 3
+foundation models: TiRex (xLSTM), Chronos-2 (T5), Moirai-2 (masked encoder) with
+GGUF converters, graph builders, parity tests, CLI, and fine-tune API.
+
 ## 2026-04-02: Composition audit -- 7 packages violate, 13 findings
 
 **Type:** audit
