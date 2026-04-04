@@ -4,24 +4,24 @@ package vision
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 )
 
 // CLIPEncoderConfig holds configuration for a CLIP vision encoder.
 type CLIPEncoderConfig struct {
-	ImageSize  int // Input image size (square, e.g. 224).
-	PatchSize  int // Patch size for patch embedding (e.g. 14).
-	HiddenDim  int // Hidden dimension throughout the encoder.
-	NumHeads   int // Number of attention heads per transformer block.
-	NumLayers  int // Number of transformer encoder blocks.
+	ImageSize   int // Input image size (square, e.g. 224).
+	PatchSize   int // Patch size for patch embedding (e.g. 14).
+	HiddenDim   int // Hidden dimension throughout the encoder.
+	NumHeads    int // Number of attention heads per transformer block.
+	NumLayers   int // Number of transformer encoder blocks.
 	NumChannels int // Number of input channels (default 3 for RGB).
 }
 
@@ -37,6 +37,7 @@ type visionBlock[T tensor.Numeric] struct {
 	kProj *core.Linear[T]
 	vProj *core.Linear[T]
 	oProj *core.Linear[T]
+	sdpa  *attention.ScaledDotProductAttention[T]
 	ln2   *normalization.LayerNormalization[T]
 	ffn1  *core.Dense[T]
 	ffn2  *core.Dense[T]
@@ -167,9 +168,11 @@ func NewCLIPEncoder[T tensor.Numeric](
 			return nil, fmt.Errorf("block %d ffn2: %w", i, err)
 		}
 
+		sdpa := attention.NewBidirectionalSDPA[T](engine, cfg.HiddenDim/cfg.NumHeads)
+
 		blocks[i] = visionBlock[T]{
 			ln1: ln1, qProj: qProj, kProj: kProj, vProj: vProj, oProj: oProj,
-			ln2: ln2, ffn1: ffn1, ffn2: ffn2,
+			sdpa: sdpa, ln2: ln2, ffn1: ffn1, ffn2: ffn2,
 		}
 	}
 
@@ -353,10 +356,9 @@ func (e *CLIPEncoder[T]) forwardBlock(
 		return nil, fmt.Errorf("v_proj: %w", err)
 	}
 
-	// Multi-head self-attention via engine ops.
-	// Reshape Q, K, V from [batch*seqLen, hiddenDim] to [batch, numHeads, seqLen, headDim].
-	scale := e.ops.FromFloat64(1.0 / math.Sqrt(float64(headDim)))
-
+	// Multi-head self-attention via ScaledDotProductAttention.
+	// Reshape Q, K, V from [batch*seqLen, hiddenDim] to [batch*numHeads, seqLen, headDim]
+	// which is the 3D format expected by SDPA.
 	q, err = e.engine.Reshape(ctx, q, []int{batch, seqLen, numHeads, headDim})
 	if err != nil {
 		return nil, fmt.Errorf("reshape q: %w", err)
@@ -364,6 +366,10 @@ func (e *CLIPEncoder[T]) forwardBlock(
 	q, err = e.engine.Transpose(ctx, q, []int{0, 2, 1, 3}) // [batch, numHeads, seqLen, headDim]
 	if err != nil {
 		return nil, fmt.Errorf("transpose q: %w", err)
+	}
+	q, err = e.engine.Reshape(ctx, q, []int{batch * numHeads, seqLen, headDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape q 3d: %w", err)
 	}
 
 	k, err = e.engine.Reshape(ctx, k, []int{batch, seqLen, numHeads, headDim})
@@ -374,6 +380,10 @@ func (e *CLIPEncoder[T]) forwardBlock(
 	if err != nil {
 		return nil, fmt.Errorf("transpose k: %w", err)
 	}
+	k, err = e.engine.Reshape(ctx, k, []int{batch * numHeads, seqLen, headDim})
+	if err != nil {
+		return nil, fmt.Errorf("reshape k 3d: %w", err)
+	}
 
 	v, err = e.engine.Reshape(ctx, v, []int{batch, seqLen, numHeads, headDim})
 	if err != nil {
@@ -383,36 +393,23 @@ func (e *CLIPEncoder[T]) forwardBlock(
 	if err != nil {
 		return nil, fmt.Errorf("transpose v: %w", err)
 	}
-
-	// K^T: [batch, numHeads, headDim, seqLen]
-	kT, err := e.engine.Transpose(ctx, k, []int{0, 1, 3, 2})
+	v, err = e.engine.Reshape(ctx, v, []int{batch * numHeads, seqLen, headDim})
 	if err != nil {
-		return nil, fmt.Errorf("transpose k^T: %w", err)
+		return nil, fmt.Errorf("reshape v 3d: %w", err)
 	}
 
-	// scores = Q @ K^T / sqrt(d_head)  -> [batch, numHeads, seqLen, seqLen]
-	scores, err := e.engine.MatMul(ctx, q, kT)
+	// SDPA: [batch*numHeads, seqLen, headDim] -> [batch*numHeads, seqLen, headDim]
+	attnResult, err := block.sdpa.Forward(ctx, q, k, v, nil)
 	if err != nil {
-		return nil, fmt.Errorf("attn scores matmul: %w", err)
-	}
-	scores, err = e.engine.MulScalar(ctx, scores, scale)
-	if err != nil {
-		return nil, fmt.Errorf("attn scores scale: %w", err)
+		return nil, fmt.Errorf("sdpa: %w", err)
 	}
 
-	// Softmax along last axis (key dimension).
-	scores, err = e.engine.Softmax(ctx, scores, -1)
+	// Reshape back: [batch*numHeads, seqLen, headDim] -> [batch, numHeads, seqLen, headDim]
+	// -> transpose to [batch, seqLen, numHeads, headDim] -> [batch*seqLen, hiddenDim]
+	attnResult, err = e.engine.Reshape(ctx, attnResult, []int{batch, numHeads, seqLen, headDim})
 	if err != nil {
-		return nil, fmt.Errorf("attn softmax: %w", err)
+		return nil, fmt.Errorf("reshape attn 4d: %w", err)
 	}
-
-	// attnOut = scores @ V -> [batch, numHeads, seqLen, headDim]
-	attnResult, err := e.engine.MatMul(ctx, scores, v)
-	if err != nil {
-		return nil, fmt.Errorf("attn weighted sum: %w", err)
-	}
-
-	// Transpose back: [batch, seqLen, numHeads, headDim] then reshape to [batch*seqLen, hiddenDim]
 	attnResult, err = e.engine.Transpose(ctx, attnResult, []int{0, 2, 1, 3})
 	if err != nil {
 		return nil, fmt.Errorf("transpose attn out: %w", err)
