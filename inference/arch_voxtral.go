@@ -232,7 +232,7 @@ func BuildVoxtralModel(
 		if err != nil {
 			return nil, nil, err
 		}
-		inputNorm, err := newRMSNormNode(proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW))
+		inputNorm, err := newVisionRMSNorm(proxy, rmsEps, param(prefix+"input_layernorm.weight", inputNormW))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -256,18 +256,13 @@ func BuildVoxtralModel(
 			return nil, nil, err
 		}
 
-		attnNode := &llamaAttnNode[float32]{
-			engine:     proxy,
-			ops:        ops,
-			qW:         qW,
-			kW:         kW,
-			vW:         vW,
-			oW:         oW,
-			numHeads:   cfg.NumHeads,
-			numKVHeads: cfg.NumKVHeads,
-			headDim:    headDim,
-			ropeTheta:  cfg.RopeTheta,
-			maxSeqLen:  cfg.MaxSeqLen,
+		attnNode, err := newVisionGQA(
+			proxy,
+			cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads, headDim, cfg.MaxSeqLen,
+			cfg.RopeTheta, qW, kW, vW, oW, prefix, param,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, err)
 		}
 		attnOut := builder.AddNode(attnNode, normed)
 
@@ -292,12 +287,9 @@ func BuildVoxtralModel(
 		if err != nil {
 			return nil, nil, err
 		}
-		ffnNode := &llamaFFNNode[float32]{
-			engine: proxy,
-			ops:    ops,
-			gateW:  gateW,
-			upW:    upW,
-			downW:  downW,
+		ffnNode, err := newVisionSwiGLUFFN(proxy, cfg.HiddenSize, gateW, upW, downW, prefix)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d ffn: %w", i, err)
 		}
 		ffnOut := builder.AddNode(ffnNode, normed2)
 
@@ -311,7 +303,7 @@ func BuildVoxtralModel(
 	if err != nil {
 		return nil, nil, err
 	}
-	finalNorm, err := newRMSNormNode(proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight))
+	finalNorm, err := newVisionRMSNorm(proxy, rmsEps, param("model.norm.weight", finalNormWeight))
 	if err != nil {
 		return nil, nil, err
 	}
