@@ -54,32 +54,9 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
 	}
 
-	var cacheProvider CacheProvider[T]
-	var tieredStore *TieredKVStore[T]
-	if gen.tieredKVCfg != nil {
-		cfg := *gen.tieredKVCfg
-		if cfg.NumLayers == 0 {
-			cfg.NumLayers = gen.config.NumLayers
-		}
-		if cfg.MaxSeqLen == 0 {
-			cfg.MaxSeqLen = gen.config.MaxSeqLen
-		}
-		var err error
-		tieredStore, err = NewTieredKVStore[T](gen.engine, cfg)
-		if err != nil {
-			return fmt.Errorf("create tiered KV store: %w", err)
-		}
-		cacheProvider = &tieredKVAdapter[T]{store: tieredStore}
-	} else if gen.compressedKVChunkSize > 0 {
-		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
-	} else if gen.blockPool != nil {
-		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
-	} else if qc, ok := gen.newQuantizedCache(); ok {
-		cacheProvider = qc
-	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
-		cacheProvider = gen.newTensorCache()
-	} else {
-		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
+	cacheProvider, tieredStore, err := gen.selectCacheProvider()
+	if err != nil {
+		return err
 	}
 	if tieredStore != nil {
 		defer tieredStore.Close()
