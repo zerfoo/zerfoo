@@ -189,7 +189,11 @@ func (b *BCELoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *t
 	}
 
 	// Divide by N
-	nT := b.ops.FromFloat64(float64(len(preds.Data())))
+	n := 1
+	for _, d := range preds.Shape() {
+		n *= d
+	}
+	nT := b.ops.FromFloat64(float64(n))
 	invN := b.ops.Div(b.ops.One(), nT)
 	grad, err := b.engine.MulScalar(ctx, rawGrad, invN)
 	if err != nil {
@@ -203,8 +207,11 @@ func (b *BCELoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *t
 	}
 
 	// Zero gradient for targets
-	zeroGrad, err := tensor.New[T](targs.Shape(), make([]T, len(targs.Data())))
+	zeroGrad, err := tensor.New[T](targs.Shape(), nil)
 	if err != nil {
+		return nil, err
+	}
+	if err := b.engine.Zeros(ctx, zeroGrad, targs.Shape()); err != nil {
 		return nil, err
 	}
 
