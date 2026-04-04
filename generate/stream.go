@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
