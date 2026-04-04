@@ -3,7 +3,6 @@ package generate
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -92,7 +91,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 	targetCtx := WithCache(ctx, CacheProvider[T](targetCache))
 
 	// Prefill both models with the prompt.
-	prefillTensor, err := sg.idsToTensor(promptIDs)
+	prefillTensor, err := tokenIDsToTensor[T](promptIDs)
 	if err != nil {
 		return "", fmt.Errorf("create prefill tensor: %w", err)
 	}
@@ -108,7 +107,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 	}
 
 	// Sample first token from target.
-	firstToken := sg.greedyArgmax(targetLogits)
+	firstToken := logitsArgmaxLastPos(targetLogits)
 	if stopSet[firstToken] {
 		return "", nil
 	}
@@ -141,7 +140,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 		draftInput := nextDraftInput
 
 		for range draftN {
-			tokenTensor, tErr := sg.idsToTensor([]int{draftInput})
+			tokenTensor, tErr := tokenIDsToTensor[T]([]int{draftInput})
 			if tErr != nil {
 				return "", fmt.Errorf("draft token tensor: %w", tErr)
 			}
@@ -151,7 +150,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 				return "", fmt.Errorf("draft forward: %w", fErr)
 			}
 
-			draftToken := sg.greedyArgmax(draftLogits)
+			draftToken := logitsArgmaxLastPos(draftLogits)
 			draftTokens = append(draftTokens, draftToken)
 
 			if stopSet[draftToken] {
@@ -165,7 +164,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 		}
 
 		// Verify phase: target processes all draft tokens in one forward pass.
-		verifyTensor, tErr := sg.idsToTensor(draftTokens)
+		verifyTensor, tErr := tokenIDsToTensor[T](draftTokens)
 		if tErr != nil {
 			return "", fmt.Errorf("verify tensor: %w", tErr)
 		}
@@ -179,7 +178,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 		// Target logits at position i predict what comes AFTER draft token i.
 		// We already accepted the "previous" token (firstToken or last accepted).
 		// Now we check: does target agree with the draft for the remaining?
-		accepted, bonusToken := sg.verifyTokens(verifyLogits, draftTokens, stopSet)
+		accepted, bonusToken := verifyDraftTokens(verifyLogits, draftTokens, stopSet)
 
 		// Emit accepted draft tokens.
 		stopped := false
@@ -233,7 +232,7 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 
 		// Check stop strings.
 		if len(sc.StopStrings) > 0 {
-			if stopped, text := sg.checkStop(generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
+			if stopped, text := incrementalCheckStop(sg.tokenizer,generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
 				return text, nil
 			}
 		}
@@ -250,118 +249,3 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 	return result, nil
 }
 
-// verifyTokens compares target logits against draft tokens.
-// Returns the accepted draft tokens and a bonus token (-1 if none).
-func (sg *SpeculativeGenerator[T]) verifyTokens(
-	targetLogits *tensor.TensorNumeric[T],
-	draftTokens []int,
-	stopSet map[int]bool,
-) (accepted []int, bonusToken int) {
-	shape := targetLogits.Shape()
-	vocabSize := shape[2]
-	seqLen := shape[1]
-	data := targetLogits.Data()
-
-	accepted = make([]int, 0, len(draftTokens))
-	bonusToken = -1
-
-	for i, dt := range draftTokens {
-		if i >= seqLen {
-			break
-		}
-
-		// Target's greedy prediction at position i.
-		offset := i * vocabSize
-		targetToken := sg.argmaxSlice(data[offset : offset+vocabSize])
-
-		switch {
-		case i == len(draftTokens)-1:
-			// Last draft position: accept the draft token and use target's
-			// prediction as the bonus token for the next step.
-			accepted = append(accepted, dt)
-			if !stopSet[dt] {
-				bonusToken = targetToken
-			}
-		case targetToken == draftTokens[i+1]:
-			// Target agrees with what draft predicted next. Accept current token.
-			accepted = append(accepted, dt)
-		default:
-			// Target disagrees. Accept this token but use target's next-token
-			// prediction instead of draft's.
-			accepted = append(accepted, dt)
-			bonusToken = targetToken
-			return accepted, bonusToken
-		}
-	}
-
-	return accepted, bonusToken
-}
-
-// greedyArgmax returns the argmax of the last position in a [1, seqLen, vocab] tensor.
-func (sg *SpeculativeGenerator[T]) greedyArgmax(logits *tensor.TensorNumeric[T]) int {
-	shape := logits.Shape()
-	vocabSize := shape[2]
-	seqLen := shape[1]
-	data := logits.Data()
-	lastStart := (seqLen - 1) * vocabSize
-	return sg.argmaxSlice(data[lastStart : lastStart+vocabSize])
-}
-
-// argmaxSlice returns the index of the maximum value in a slice.
-func (sg *SpeculativeGenerator[T]) argmaxSlice(data []T) int {
-	maxIdx := 0
-	maxVal := data[0]
-	for i := 1; i < len(data); i++ {
-		if data[i] > maxVal {
-			maxVal = data[i]
-			maxIdx = i
-		}
-	}
-	return maxIdx
-}
-
-// idsToTensor converts token IDs to a [1, seqLen] input tensor.
-func (sg *SpeculativeGenerator[T]) idsToTensor(ids []int) (*tensor.TensorNumeric[T], error) {
-	data := make([]T, len(ids))
-	for i, id := range ids {
-		data[i] = T(id)
-	}
-	return tensor.New([]int{1, len(ids)}, data)
-}
-
-// checkStop checks if the decoded generated tokens contain any stop string.
-// It maintains a running decoded string across calls to avoid re-decoding all
-// tokens on every step (which would be O(n^2) over a generation).
-func (sg *SpeculativeGenerator[T]) checkStop(generatedIDs []int, stopStrings []string, prevDecoded *string, prevCount *int) (bool, string) {
-	if len(generatedIDs) == *prevCount {
-		return false, ""
-	}
-
-	if *prevCount > 0 {
-		overlapIDs := generatedIDs[*prevCount-1:]
-		overlapDecoded, err := sg.tokenizer.Decode(overlapIDs)
-		if err != nil {
-			return false, ""
-		}
-		singleDecoded, err := sg.tokenizer.Decode(generatedIDs[*prevCount-1 : *prevCount])
-		if err != nil {
-			return false, ""
-		}
-		fragment := overlapDecoded[len(singleDecoded):]
-		*prevDecoded += fragment
-	} else {
-		decoded, err := sg.tokenizer.Decode(generatedIDs)
-		if err != nil {
-			return false, ""
-		}
-		*prevDecoded = decoded
-	}
-	*prevCount = len(generatedIDs)
-
-	for _, ss := range stopStrings {
-		if idx := strings.Index(*prevDecoded, ss); idx >= 0 {
-			return true, (*prevDecoded)[:idx]
-		}
-	}
-	return false, ""
-}
