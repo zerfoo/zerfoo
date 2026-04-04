@@ -44,12 +44,12 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
-- E77: Tabular package composition migration (0/9 -- replace reimplemented ops with functional)
-- E78: Layers internal violations cleanup (0/11 -- rewrite violating code to use engine ops)
-- E79: Generate package refactoring (0/7 -- extract shared decode loop, deduplicate handlers)
-- E80: Inference builder boilerplate extraction (0/8 -- shared factory functions for 25-30 builders)
-- E81: Inference custom node replacement (0/7 -- replace 10 unjustified custom nodes with layers/)
-- E82: Training loss engine migration (0/6 -- rewrite loss functions to use engine ops, fix QuantileLoss)
+- E77: Tabular package composition migration (2/9 -- ft_transformer + saint migrated PR #334)
+- E78: Layers internal violations cleanup (2/11 -- clip_encoder patch+attention rewritten PR #334)
+- E79: Generate package refactoring (2/7 -- selectCacheProvider + decode step extracted PR #334)
+- E80: Inference builder boilerplate extraction (2/8 -- tensorLookup/paramWrapper + transposeWeight PR #334)
+- E81: Inference custom node replacement (1/7 -- arch_vision_helpers 3 nodes replaced PR #334)
+- E82: Training loss engine migration (1/6 -- bce.go engine ops PR #334)
 - E83: Serve handler refactoring (0/5 -- extract shared helpers from monolithic handlers)
 - E84: ModeLDSL composition (0/8 -- rewrite DSL layer implementations to compose from layers/)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
@@ -401,16 +401,16 @@ Remaining from Wave 12:
 #### Composition Wave 13: Phase 4 implementations (10 agents, all independent)
 All E77-E84 implementation tasks are independent. Saturates 10 agents.
 
-- [ ] T77.1.1 ft_transformer.go: replace ops with functional (E77)
-- [ ] T77.1.2 saint.go: replace ops with functional (E77)
-- [ ] T78.1.1 clip_encoder.go: patch extraction with engine.Reshape (E78)
-- [ ] T78.1.2 clip_encoder.go: attention with ScaledDotProductAttention (E78)
-- [ ] T79.1.1 Extract selectCacheProvider (E79)
-- [ ] T79.1.2 Extract core decode step (E79)
-- [ ] T80.1.1 Create builder_helpers.go with newTensorLookup, newParamWrapper (E80)
-- [ ] T80.1.2 Add transposeWeight() (E80)
-- [ ] T81.1.1 arch_vision_helpers.go: replace custom nodes (E81)
-- [ ] T82.1.1 bce.go: replace raw ops with engine ops (E82)
+- [x] T77.1.1 ft_transformer.go: replace ops with functional (E77)  PR #334 2026-04-03
+- [x] T77.1.2 saint.go: replace ops with functional (E77)  PR #334 2026-04-03
+- [x] T78.1.1 clip_encoder.go: patch extraction with engine.Reshape (E78)  PR #334 2026-04-03
+- [x] T78.1.2 clip_encoder.go: attention with ScaledDotProductAttention (E78)  PR #334 2026-04-03
+- [x] T79.1.1 Extract selectCacheProvider (E79)  PR #334 2026-04-03
+- [x] T79.1.2 Extract core decode step (E79)  PR #334 2026-04-03
+- [x] T80.1.1 Create builder_helpers.go with newTensorLookup, newParamWrapper (E80)  PR #334 2026-04-03
+- [x] T80.1.2 Add transposeWeight() (E80)  PR #334 2026-04-03
+- [x] T81.1.1 arch_vision_helpers.go: replace custom nodes (E81)  PR #334 2026-04-03
+- [x] T82.1.1 bce.go: replace raw ops with engine ops (E82)  PR #334 2026-04-03
 
 #### Composition Wave 14: Phase 4 continued (10 agents)
 Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-T80.1.6)
