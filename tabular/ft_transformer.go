@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -311,12 +312,10 @@ func (ft *FTTransformer) Predict(features []float64) (Direction, float64, error)
 // transformerForward applies one transformer encoder layer.
 // Input shape: [seqLen, DToken], output shape: [seqLen, DToken].
 func (ft *FTTransformer) transformerForward(ctx context.Context, x *tensor.TensorNumeric[float32], layer ftTransformerLayer, seqLen int) (*tensor.TensorNumeric[float32], error) {
-	dToken := ft.config.DToken
 	nHeads := ft.config.NHeads
-	dHead := dToken / nHeads
 
 	// Pre-norm 1: layer norm before attention.
-	normed, err := ft.layerNorm(ctx, x, layer.ln1Gamma, layer.ln1Beta, seqLen, dToken)
+	normed, err := functional.LayerNorm(ctx, ft.engine, x, layer.ln1Gamma, layer.ln1Beta, 1e-5)
 	if err != nil {
 		return nil, fmt.Errorf("ln1: %w", err)
 	}
@@ -335,84 +334,14 @@ func (ft *FTTransformer) transformerForward(ctx context.Context, x *tensor.Tenso
 		return nil, fmt.Errorf("v proj: %w", err)
 	}
 
-	// Multi-head attention: process each head separately, then concatenate.
-	// For single-sample inference, we work with [seqLen, DToken] tensors.
-	// Split into heads: reshape to per-head views and compute attention.
-	headOutputs := make([]*tensor.TensorNumeric[float32], nHeads)
-	qData := q.Data()
-	kData := k.Data()
-	vData := v.Data()
-
-	invSqrtDk := float32(1.0 / math.Sqrt(float64(dHead)))
-
-	for h := 0; h < nHeads; h++ {
-		// Extract head h: columns [h*dHead : (h+1)*dHead] from each row.
-		qh := make([]float32, seqLen*dHead)
-		kh := make([]float32, seqLen*dHead)
-		vh := make([]float32, seqLen*dHead)
-		for s := 0; s < seqLen; s++ {
-			copy(qh[s*dHead:(s+1)*dHead], qData[s*dToken+h*dHead:s*dToken+(h+1)*dHead])
-			copy(kh[s*dHead:(s+1)*dHead], kData[s*dToken+h*dHead:s*dToken+(h+1)*dHead])
-			copy(vh[s*dHead:(s+1)*dHead], vData[s*dToken+h*dHead:s*dToken+(h+1)*dHead])
-		}
-
-		qhT, err := tensor.New[float32]([]int{seqLen, dHead}, qh)
-		if err != nil {
-			return nil, err
-		}
-		khT, err := tensor.New[float32]([]int{seqLen, dHead}, kh)
-		if err != nil {
-			return nil, err
-		}
-		vhT, err := tensor.New[float32]([]int{seqLen, dHead}, vh)
-		if err != nil {
-			return nil, err
-		}
-
-		// Attention scores: Q_h @ K_h^T / sqrt(d_head) -> [seqLen, seqLen]
-		khTransposed, err := ft.engine.Transpose(ctx, khT, []int{1, 0})
-		if err != nil {
-			return nil, err
-		}
-		scores, err := ft.engine.MatMul(ctx, qhT, khTransposed)
-		if err != nil {
-			return nil, err
-		}
-		scores, err = ft.engine.MulScalar(ctx, scores, invSqrtDk)
-		if err != nil {
-			return nil, err
-		}
-
-		// Softmax over last dimension.
-		attnWeights, err := ft.engine.Softmax(ctx, scores, -1)
-		if err != nil {
-			return nil, err
-		}
-
-		// Weighted sum: attn @ V_h -> [seqLen, dHead]
-		headOut, err := ft.engine.MatMul(ctx, attnWeights, vhT)
-		if err != nil {
-			return nil, err
-		}
-
-		headOutputs[h] = headOut
-	}
-
-	// Concatenate heads: [seqLen, dHead] * nHeads -> [seqLen, DToken]
-	concatData := make([]float32, seqLen*dToken)
-	for h := 0; h < nHeads; h++ {
-		hData := headOutputs[h].Data()
-		for s := 0; s < seqLen; s++ {
-			copy(concatData[s*dToken+h*dHead:s*dToken+(h+1)*dHead], hData[s*dHead:(s+1)*dHead])
-		}
-	}
-	concat, err := tensor.New[float32]([]int{seqLen, dToken}, concatData)
+	// Multi-head attention.
+	attnResult, err := functional.MultiHeadAttention(ctx, ft.engine, q, k, v, nHeads)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mha: %w", err)
 	}
 
 	// Output projection.
-	attnOut, err := ft.linearForward(ctx, concat, layer.wO)
+	attnOut, err := ft.linearForward(ctx, attnResult, layer.wO)
 	if err != nil {
 		return nil, fmt.Errorf("o proj: %w", err)
 	}
@@ -424,7 +353,7 @@ func (ft *FTTransformer) transformerForward(ctx context.Context, x *tensor.Tenso
 	}
 
 	// Pre-norm 2: layer norm before FFN.
-	normed2, err := ft.layerNorm(ctx, x, layer.ln2Gamma, layer.ln2Beta, seqLen, dToken)
+	normed2, err := functional.LayerNorm(ctx, ft.engine, x, layer.ln2Gamma, layer.ln2Beta, 1e-5)
 	if err != nil {
 		return nil, fmt.Errorf("ln2: %w", err)
 	}
@@ -452,51 +381,13 @@ func (ft *FTTransformer) transformerForward(ctx context.Context, x *tensor.Tenso
 	return x, nil
 }
 
-// layerNorm applies layer normalization: (x - mean) / sqrt(var + eps) * gamma + beta.
-// Input shape: [seqLen, dim]. Layer norm is applied per-row (over the dim axis).
-func (ft *FTTransformer) layerNorm(ctx context.Context, x *tensor.TensorNumeric[float32], gamma, beta *tensor.TensorNumeric[float32], seqLen, dim int) (*tensor.TensorNumeric[float32], error) {
-	const eps = 1e-5
-
-	data := x.Data()
-	out := make([]float32, seqLen*dim)
-	gammaData := gamma.Data()
-	betaData := beta.Data()
-
-	for s := 0; s < seqLen; s++ {
-		row := data[s*dim : (s+1)*dim]
-
-		// Compute mean.
-		var mean float64
-		for _, v := range row {
-			mean += float64(v)
-		}
-		mean /= float64(dim)
-
-		// Compute variance.
-		var variance float64
-		for _, v := range row {
-			diff := float64(v) - mean
-			variance += diff * diff
-		}
-		variance /= float64(dim)
-
-		invStd := float32(1.0 / math.Sqrt(variance+eps))
-
-		// Normalize, scale, shift.
-		for j := 0; j < dim; j++ {
-			normalized := (row[j] - float32(mean)) * invStd
-			out[s*dim+j] = normalized*gammaData[j] + betaData[j]
-		}
-	}
-
-	return tensor.New[float32]([]int{seqLen, dim}, out)
-}
-
-// linearForward computes x @ W + b via the engine.
+// linearForward computes a linear transformation via functional.Linear.
+// mlpLayer stores weights as [in, out], so we transpose to [out, in] for
+// functional.Linear which expects [out_features, in_features].
 func (ft *FTTransformer) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := ft.engine.MatMul(ctx, x, l.weights)
+	wT, err := ft.engine.Transpose(ctx, l.weights, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	return ft.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, ft.engine, x, wT, l.biases)
 }
