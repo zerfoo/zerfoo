@@ -41,8 +41,8 @@ Task statuses updated 2026-04-01 based on merged PRs and git history.
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
 - E72: Architecture enforcement test (2/2 COMPLETE -- test created + added to CI)
 - E73: Generate KV cache consolidation (3/3 COMPLETE -- base extraction, migration, validation done)
-- E74: Timeseries backward pass composition (12/14 -- backward API done; migration pending)
-- E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders done PR #329; validation pending)
+- E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; T74.1.7 integration tests + T74.3.1-T74.3.3 validation done)
+- E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -421,28 +421,28 @@ Tracks AC and AD run in parallel. Can start immediately (no deps on Waves 7-8).
 #### Composition Wave 10: Composed backward ops + inference validation (5 agents)
 Deps: Wave 9 (T74.1.1-T74.1.4 complete)
 
-- [ ] T74.1.5 functional.MultiHeadAttentionBackward  verifies: [infrastructure]
-- [ ] T74.1.6 functional.MLPBackward  verifies: [infrastructure]
-- [ ] T75.2.1 Inference timeseries tests  verifies: [UC-TS01, UC-TS02]
-- [ ] T75.2.2 Inference timeseries linters + .Data() count  verifies: [infrastructure]
-- [ ] T75.2.3 Verify unchanged files  verifies: [infrastructure]
+- [x] T74.1.5 functional.MultiHeadAttentionBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #330
+- [x] T74.1.6 functional.MLPBackward  verifies: [infrastructure]  DONE 2026-04-03 PR #330
+- [x] T75.2.1 Inference timeseries tests  verifies: [UC-TS01, UC-TS02]  DONE 2026-04-03 PR #330
+- [x] T75.2.2 Inference timeseries linters + .Data() count  verifies: [infrastructure]  DONE 2026-04-03 (15 justified .Data() remain)
+- [x] T75.2.3 Verify unchanged files  verifies: [infrastructure]  DONE 2026-04-03 (arch_chronos, arch_regime unchanged)
 
 #### Composition Wave 11: Backward migration (5 agents)
 Deps: Wave 10 (T74.1.5, T74.1.6 complete, T74.1.7 tests)
 
-- [ ] T74.1.7 Backward functional API tests  verifies: [infrastructure]
-- [ ] T74.2.1 patchtst_backward.go migration  verifies: [UC-TS01]
-- [ ] T74.2.2 patchtst_encoder.go backward migration  verifies: [UC-TS01]
-- [ ] T74.2.3 itransformer_backward.go migration  verifies: [UC-TS01]
-- [ ] T74.2.4 timemixer_backward.go migration  verifies: [UC-TS02]
+- [x] T74.1.7 Backward functional API tests  verifies: [infrastructure]  DONE 2026-04-03 PR #331
+- [x] T74.2.1 patchtst_backward.go migration  verifies: [UC-TS01]  DONE 2026-04-03 PR #331
+- [x] T74.2.2 patchtst_encoder.go backward migration  verifies: [UC-TS01]  DONE 2026-04-03 PR #331
+- [x] T74.2.3 itransformer_backward.go migration  verifies: [UC-TS01]  DONE 2026-04-03 PR #331
+- [x] T74.2.4 timemixer_backward.go migration  verifies: [UC-TS02]  DONE 2026-04-03 PR #331
 
 #### Composition Wave 12: Final validation + allowlist cleanup (4 agents)
 Deps: Wave 11
 
-- [ ] T74.3.1 + T74.3.2 Timeseries tests + linters  verifies: [UC-TS01, UC-TS02]
-- [ ] T74.3.3 Line count verification  verifies: [infrastructure]
-- [ ] T76.1.1 Remove timeseries/ from allowlist  verifies: [infrastructure]
-- [ ] T76.1.2 Verify CI green  verifies: [infrastructure]
+- [x] T74.3.1 + T74.3.2 Timeseries tests + linters  verifies: [UC-TS01, UC-TS02]  DONE 2026-04-03 (16.3s, all pass)
+- [x] T74.3.3 Line count verification  verifies: [infrastructure]  DONE 2026-04-03 (3168->3295, +127 lines from bridge helpers)
+- [ ] T76.1.1 Remove timeseries/ from allowlist  verifies: [infrastructure]  BLOCKED -- backward files still use .Data() in slice-tensor conversion bridges (88 calls); needs future bridge elimination epic
+- [ ] T76.1.2 Verify CI green  verifies: [infrastructure]  BLOCKED by T76.1.1
 
 ### Completed Research Waves (1-8, all tasks done)
 
@@ -2684,7 +2684,7 @@ loops. Target: ~1,500 lines of raw backward computation replaced by functional c
   Reference: itransformer_backward.go:542-555.
   Acceptance: numerical gradient check passes within 1e-6.
 
-- [ ] T74.1.5 Add functional.MultiHeadAttentionBackward  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] T74.1.5 Add functional.MultiHeadAttentionBackward  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03 PR #330
   Implement MultiHeadAttentionBackward(ctx, engine, dOutput, Q, K, V, attentionWeights, params)
   returning (dQ, dK, dV, dWq, dWk, dWv, dWo). Composes from LinearBackward and
   SoftmaxBackward internally.
@@ -2692,7 +2692,7 @@ loops. Target: ~1,500 lines of raw backward computation replaced by functional c
   Reference: itransformer_backward.go:416-458 for expected behavior.
   Acceptance: numerical gradient check passes within 1e-5.
 
-- [ ] T74.1.6 Add functional.MLPBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T74.1.6 Add functional.MLPBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-03 PR #330
   Implement MLPBackward(ctx, engine, dOutput, inputs, weights, biases, activationGrads)
   returning (dInput, dWeights, dBiases). Composes from LinearBackward and activation
   backward ops. Supports ReLU and GELU activation gradients.
