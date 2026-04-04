@@ -401,32 +401,9 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
 	}
 
-	var cacheProvider CacheProvider[T]
-	var tieredStore *TieredKVStore[T]
-	if gen.tieredKVCfg != nil {
-		cfg := *gen.tieredKVCfg
-		if cfg.NumLayers == 0 {
-			cfg.NumLayers = gen.config.NumLayers
-		}
-		if cfg.MaxSeqLen == 0 {
-			cfg.MaxSeqLen = gen.config.MaxSeqLen
-		}
-		var err error
-		tieredStore, err = NewTieredKVStore[T](gen.engine, cfg)
-		if err != nil {
-			return "", fmt.Errorf("create tiered KV store: %w", err)
-		}
-		cacheProvider = &tieredKVAdapter[T]{store: tieredStore}
-	} else if gen.compressedKVChunkSize > 0 {
-		cacheProvider = NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize)
-	} else if gen.blockPool != nil {
-		cacheProvider = NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers)
-	} else if qc, ok := gen.newQuantizedCache(); ok {
-		cacheProvider = qc
-	} else if _, ok := any(gen.engine).(compute.WeightUploader); ok {
-		cacheProvider = gen.newTensorCache()
-	} else {
-		cacheProvider = NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen)
+	cacheProvider, tieredStore, err := gen.selectCacheProvider()
+	if err != nil {
+		return "", err
 	}
 	if tieredStore != nil {
 		defer tieredStore.Close()
@@ -503,33 +480,11 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			break
 		}
 
-		// Reset arena pool between tokens so intermediates are reclaimed.
-		if resetter, ok := gen.engine.(compute.PoolResetter); ok {
-			resetter.ResetPool()
-		}
-
-		// Update the reused tensor's value in-place.
-		decodeBuf[0] = T(nextToken)
-
-		if p := gen.plan.Load(); p != nil {
-			logits, err = p.Run(genCtx, tokenTensor)
-		} else {
-			logits, err = gen.graph.Forward(genCtx, tokenTensor)
-			// After the first decode Forward(), compile the graph.
-			// The graph's memo from this Forward() provides shapes
-			// without re-executing (avoids corrupting model state).
-			if err == nil {
-				gen.compileGraph(genCtx, tokenTensor)
-			}
-		}
+		step, err := gen.runDecodeStep(ctx, genCtx, tokenTensor, decodeBuf, nextToken, sc, generatedIDs, stopSet)
 		if err != nil {
-			return "", fmt.Errorf("decode forward: %w", err)
+			return "", err
 		}
-
-		nextToken, err = gen.sampleFromLogits(logits, sc, generatedIDs)
-		if err != nil {
-			return "", fmt.Errorf("sample: %w", err)
-		}
+		nextToken = step.Token
 
 		if debugOnnx {
 			cacheSeq := -1
@@ -545,7 +500,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
 		}
 
-		if stopSet[nextToken] {
+		if step.Stop {
 			break
 		}
 		generatedIDs = append(generatedIDs, nextToken)
@@ -722,6 +677,39 @@ func (gen *Generator[T]) idsToTensor(ids []int) (*tensor.TensorNumeric[T], error
 		data[i] = T(id)
 	}
 	return tensor.New([]int{1, len(ids)}, data)
+}
+
+// selectCacheProvider creates the appropriate KV cache provider based on the
+// generator's configuration. It returns the cache provider and, when tiered
+// storage is used, the TieredKVStore that the caller must Close after use.
+func (gen *Generator[T]) selectCacheProvider() (CacheProvider[T], *TieredKVStore[T], error) {
+	if gen.tieredKVCfg != nil {
+		cfg := *gen.tieredKVCfg
+		if cfg.NumLayers == 0 {
+			cfg.NumLayers = gen.config.NumLayers
+		}
+		if cfg.MaxSeqLen == 0 {
+			cfg.MaxSeqLen = gen.config.MaxSeqLen
+		}
+		store, err := NewTieredKVStore[T](gen.engine, cfg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create tiered KV store: %w", err)
+		}
+		return &tieredKVAdapter[T]{store: store}, store, nil
+	}
+	if gen.compressedKVChunkSize > 0 {
+		return NewCompressedKVCache[T](gen.engine, gen.config.NumLayers, 0, 0, gen.compressedKVChunkSize), nil, nil
+	}
+	if gen.blockPool != nil {
+		return NewPagedKVCache[T](gen.blockPool, gen.config.NumLayers), nil, nil
+	}
+	if qc, ok := gen.newQuantizedCache(); ok {
+		return qc, nil, nil
+	}
+	if _, ok := any(gen.engine).(compute.WeightUploader); ok {
+		return gen.newTensorCache(), nil, nil
+	}
+	return NewKVCache[T](gen.config.NumLayers, gen.config.MaxSeqLen), nil, nil
 }
 
 // newQuantizedCache returns a Q4 or Q3 quantized KV cache when kvDtype
