@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0](https://github.com/zerfoo/zerfoo/compare/v1.41.0...v1.42.0) (2026-04-05)
+
+
+### Features
+
+* **inference:** add builder_helpers with newTensorLookup and newParamWrapper ([adfb334](https://github.com/zerfoo/zerfoo/commit/adfb334b5bf0198458e55b114e3a67615294a2e8))
+
+
+### Bug Fixes
+
+* **generate:** remove unused compute import after merge ([b7511c3](https://github.com/zerfoo/zerfoo/commit/b7511c38658c42e477c3793bbd70c5526409ce36))
+
 ## [1.41.0](https://github.com/zerfoo/zerfoo/compare/v1.40.1...v1.41.0) (2026-04-04)
 
 
