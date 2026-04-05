@@ -44,13 +44,13 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
-- E77: Tabular package composition migration (2/9 -- ft_transformer + saint migrated PR #334)
-- E78: Layers internal violations cleanup (2/11 -- clip_encoder patch+attention rewritten PR #334)
-- E79: Generate package refactoring (2/7 -- selectCacheProvider + decode step extracted PR #334)
-- E80: Inference builder boilerplate extraction (2/8 -- tensorLookup/paramWrapper + transposeWeight PR #334)
+- E77: Tabular package composition migration (4/9 -- ft_transformer + saint + tabnet + resnet PR #334/#336)
+- E78: Layers internal violations cleanup (3/11 -- clip_encoder patch+attention+QuickGELU PR #334/#336)
+- E79: Generate package refactoring (4/7 -- cache provider + decode step + sampleFromLogits + stream dedup PR #334/#336)
+- E80: Inference builder boilerplate extraction (3/8 -- tensorLookup/paramWrapper + transposeWeight + embedding/LMHead PR #334/#336)
 - E81: Inference custom node replacement (1/7 -- arch_vision_helpers 3 nodes replaced PR #334)
 - E82: Training loss engine migration (1/6 -- bce.go engine ops PR #334)
-- E83: Serve handler refactoring (0/5 -- extract shared helpers from monolithic handlers)
+- E83: Serve handler refactoring (1/5 -- buildGenerationOptions extracted PR #336)
 - E84: ModeLDSL composition (0/8 -- rewrite DSL layer implementations to compose from layers/)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -415,16 +415,16 @@ All E77-E84 implementation tasks are independent. Saturates 10 agents.
 #### Composition Wave 14: Phase 4 continued (10 agents)
 Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-T80.1.6)
 
-- [ ] T77.1.3 tabnet.go: replace linearForward (E77)
-- [ ] T77.1.4 resnet.go: replace linearForward, layerNorm (E77)
-- [ ] T78.1.3 clip_encoder.go: replace QuickGELU (E78)
-- [ ] T78.1.4 mlstm.go: replace .Data() with engine.Slice (E78)
-- [ ] T78.1.5 ssm.go: replace raw loops with engine ops (E78)
-- [ ] T79.1.3 Break up sampleFromLogits (E79)
-- [ ] T79.1.4 Deduplicate GenerateStream (E79)  Deps: T79.1.2
-- [ ] T80.1.3 Add newEmbeddingNode/newLMHeadNode factories (E80)
-- [ ] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)
-- [ ] T83.1.1 Extract buildGenerationOptions (E83)
+- [x] T77.1.3 tabnet.go: replace linearForward (E77)  PR #336 2026-04-04
+- [x] T77.1.4 resnet.go: replace linearForward, layerNorm (E77)  PR #336 2026-04-04
+- [x] T78.1.3 clip_encoder.go: replace QuickGELU (E78)  PR #336 2026-04-04
+- [ ] T78.1.4 mlstm.go: replace .Data() with engine.Slice (E78)  -- deferred to Wave 15
+- [ ] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  -- deferred to Wave 15
+- [x] T79.1.3 Break up sampleFromLogits (E79)  PR #336 2026-04-04
+- [x] T79.1.4 Deduplicate GenerateStream (E79)  PR #336 2026-04-04
+- [x] T80.1.3 Add newEmbeddingNode/newLMHeadNode factories (E80)  PR #336 2026-04-04
+- [ ] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)  -- deferred to Wave 15
+- [x] T83.1.1 Extract buildGenerationOptions (E83)  PR #336 2026-04-04
 
 #### Composition Wave 15: Phase 4 continued (10 agents)
 
