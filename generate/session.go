@@ -505,33 +505,14 @@ func (s *InferenceSession[T]) sampleFromLogits(
 	vocabSize := shape[2]
 	seqLen := shape[1]
 
-	// GPU argmax fast path: for greedy decoding with GPU-resident logits,
-	// run argmax entirely on GPU. Copies 4 bytes instead of ~1MB of logits.
-	// Disabled when grammar-constrained decoding is active (must mask first).
-	if sc.GrammarState == nil && sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
-		if _, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
-			if am, ok := any(s.engine).(compute.GPUArgmaxer); ok {
-				if seqLen == 1 {
-					if f32t, ok := any(logits).(*tensor.TensorNumeric[float32]); ok {
-						idx, err := am.GPUArgmax(f32t)
-						if err == nil {
-							return idx, nil
-						}
-					}
-				}
-			}
-		}
+	// GPU argmax fast path: copies 4 bytes instead of ~1MB of logits.
+	if idx, ok := tryGPUArgmax(logits, s.engine, sc); ok {
+		return idx, nil
 	}
 
-	totalElems := seqLen * vocabSize
-	data := make([]T, totalElems)
-
-	if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
-		if err := gs.CopyTo(data); err != nil {
-			return 0, fmt.Errorf("copy logits from GPU: %w", err)
-		}
-	} else {
-		copy(data, logits.Data())
+	data, err := copyLogitsToCPU(logits, seqLen, vocabSize)
+	if err != nil {
+		return 0, err
 	}
 
 	lastStart := (seqLen - 1) * vocabSize
@@ -553,17 +534,7 @@ func (s *InferenceSession[T]) sampleFromLogits(
 			applyRepetitionPenalty(logitsF64, generatedTokens, sc.RepetitionPenalty)
 		}
 
-		if sc.Temperature > 0 {
-			applyTemperature(logitsF64, sc.Temperature)
-			if sc.TopK > 0 && sc.TopK < vocabSize {
-				applyTopK(logitsF64, sc.TopK)
-			}
-			if sc.TopP > 0 && sc.TopP < 1.0 {
-				applyTopP(logitsF64, sc.TopP)
-			}
-			return sampleFromDistribution(logitsF64), nil
-		}
-		return argmax(logitsF64), nil
+		return applyTemperatureAndTopP(logitsF64, sc, vocabSize), nil
 	}
 
 	// Greedy fast path (no grammar).
@@ -588,21 +559,7 @@ func (s *InferenceSession[T]) sampleFromLogits(
 		applyRepetitionPenalty(logitsF64, generatedTokens, sc.RepetitionPenalty)
 	}
 
-	if sc.Temperature <= 0 {
-		return argmax(logitsF64), nil
-	}
-
-	applyTemperature(logitsF64, sc.Temperature)
-
-	if sc.TopK > 0 && sc.TopK < vocabSize {
-		applyTopK(logitsF64, sc.TopK)
-	}
-
-	if sc.TopP > 0 && sc.TopP < 1.0 {
-		applyTopP(logitsF64, sc.TopP)
-	}
-
-	return sampleFromDistribution(logitsF64), nil
+	return applyTemperatureAndTopP(logitsF64, sc, vocabSize), nil
 }
 
 // intsToInt32 converts a slice of int to int32 for use with the radix tree.

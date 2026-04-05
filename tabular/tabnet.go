@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -314,13 +315,15 @@ func (t *TabNet) FeatureImportance(ctx context.Context) (*tensor.TensorNumeric[f
 	return importance, nil
 }
 
-// linearForward computes x @ W + b via the engine.
+// linearForward computes a linear transformation via functional.Linear.
+// mlpLayer stores weights as [in, out], so we transpose to [out, in] for
+// functional.Linear which expects [out_features, in_features].
 func (t *TabNet) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := t.engine.MatMul(ctx, x, l.weights)
+	wT, err := t.engine.Transpose(ctx, l.weights, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	return t.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, t.engine, x, wT, l.biases)
 }
 
 // glu applies the Gated Linear Unit: given input [batch, 2*dim], splits into

@@ -3,6 +3,7 @@ package inference
 import (
 	"fmt"
 
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -64,4 +65,17 @@ func newParamWrapper[T tensor.Numeric]() paramWrapper[T] {
 // Wrap creates a graph.Parameter from a name and tensor value.
 func (pw paramWrapper[T]) Wrap(name string, t *tensor.TensorNumeric[T]) *graph.Parameter[T] {
 	return &graph.Parameter[T]{Name: name, Value: t}
+}
+
+// newEmbeddingNode creates an embeddingLookupNode that converts token IDs to
+// embeddings via weight table lookup. Set scale > 0 to multiply embeddings
+// by a constant (e.g., sqrt(hiddenSize) for Gemma).
+func newEmbeddingNode[T tensor.Numeric](engine compute.Engine[T], weight *tensor.TensorNumeric[T], scale float32) *embeddingLookupNode[T] {
+	return &embeddingLookupNode[T]{engine: engine, weight: weight, scale: scale}
+}
+
+// newLMHeadNode creates an lmHeadNode that projects hidden states to vocabulary
+// logits. Set softcapVal > 0 to apply logit softcapping: cap * tanh(logit/cap).
+func newLMHeadNode[T tensor.Numeric](engine compute.Engine[T], weight *tensor.TensorNumeric[T], softcapVal float32) *lmHeadNode[T] {
+	return &lmHeadNode[T]{engine: engine, weight: weight, softcapVal: softcapVal}
 }
