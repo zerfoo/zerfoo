@@ -248,9 +248,9 @@ func (m *TabResNet) linearForward(ctx context.Context, x *tensor.TensorNumeric[f
 func (m *TabResNet) applyActivation(ctx context.Context, x *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	switch m.config.Activation {
 	case ActivationGELU:
-		return m.engine.UnaryOp(ctx, x, geluScalar)
+		return functional.GELU(ctx, m.engine, m.ops, x)
 	default:
-		return m.engine.UnaryOp(ctx, x, m.ops.ReLU)
+		return functional.ReLU(ctx, m.engine, m.ops, x)
 	}
 }
 
