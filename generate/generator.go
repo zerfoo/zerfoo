@@ -395,56 +395,21 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		return "", fmt.Errorf("prompt produced no tokens")
 	}
 
-	// Prepend BOS token if configured.
-	if gen.config.BOSTokenID > 0 {
-		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
-	}
-
-	cacheProvider, tieredStore, err := gen.selectCacheProvider()
+	pf, err := gen.prefillSetup(ctx, promptIDs, sc)
 	if err != nil {
 		return "", err
 	}
-	if tieredStore != nil {
-		defer tieredStore.Close()
+	if pf.tieredStore != nil {
+		defer pf.tieredStore.Close()
 	}
-	genCtx := WithCache(ctx, cacheProvider)
 
 	if debugOnnx {
 		log.Printf("[DEBUG_ONNX] Generate: cacheType=%T numLayers=%d maxSeqLen=%d vocabSize=%d",
-			cacheProvider, gen.config.NumLayers, gen.config.MaxSeqLen, gen.config.VocabSize)
+			pf.cacheProvider, gen.config.NumLayers, gen.config.MaxSeqLen, gen.config.VocabSize)
 	}
 
-	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
-	for _, id := range sc.StopTokenIDs {
-		stopSet[id] = true
-	}
-	stopSet[gen.config.EOSTokenID] = true
-
-	generatedIDs := make([]int, 0, sc.MaxNewTokens)
-
-	// Running state for incremental stop-string checking.
-	var runningDecoded string
-	var decodedCount int
-
-	// Reset stateful auto-input nodes (position IDs, attention mask, KV cache
-	// buffers) so they start fresh for this generation sequence.
-	gen.graph.ResetStatefulNodes()
-
-	// Prefill: run the full prompt through the graph.
-	prefillTensor, err := gen.idsToTensor(promptIDs)
-	if err != nil {
-		return "", fmt.Errorf("create prefill tensor: %w", err)
-	}
-
-	logits, err := gen.graph.Forward(genCtx, prefillTensor)
-	if err != nil {
-		return "", fmt.Errorf("prefill forward: %w", err)
-	}
-
-	nextToken, err := gen.sampleFromLogits(logits, sc, generatedIDs)
-	if err != nil {
-		return "", fmt.Errorf("sample after prefill: %w", err)
-	}
+	nextToken := pf.nextToken
+	generatedIDs := pf.generatedIDs
 
 	if debugOnnx {
 		log.Printf("[DEBUG_ONNX] Generate: prefill produced token %d, promptIDs=%v", nextToken, promptIDs)
@@ -455,22 +420,17 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		sc.GrammarState = advanceGrammar(sc.GrammarState, nextToken, sc.grammarVocab)
 	}
 
-	if stopSet[nextToken] {
+	if pf.stopSet[nextToken] {
 		return "", nil
 	}
 	generatedIDs = append(generatedIDs, nextToken)
 
+	// Running state for incremental stop-string checking.
+	var runningDecoded string
+	var decodedCount int
+
 	if stopped, text := gen.checkStop(generatedIDs, sc.StopStrings, &runningDecoded, &decodedCount); stopped {
 		return text, nil
-	}
-
-	// Pre-allocate a [1,1] tensor for the decode loop. We reuse this tensor
-	// across all decode steps, updating its single element in-place to avoid
-	// per-token allocation and GC pressure.
-	decodeBuf := []T{T(nextToken)}
-	tokenTensor, err := tensor.New([]int{1, 1}, decodeBuf)
-	if err != nil {
-		return "", fmt.Errorf("create decode tensor: %w", err)
 	}
 
 	// Autoregressive decode loop.
@@ -479,7 +439,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 			break
 		}
 
-		step, err := gen.runDecodeStep(ctx, genCtx, tokenTensor, decodeBuf, nextToken, sc, generatedIDs, stopSet)
+		step, err := gen.runDecodeStep(ctx, pf.genCtx, pf.tokenTensor, pf.decodeBuf, nextToken, sc, generatedIDs, pf.stopSet)
 		if err != nil {
 			return "", err
 		}
@@ -487,7 +447,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 
 		if debugOnnx {
 			cacheSeq := -1
-			if cache, ok := GetCache[T](genCtx); ok {
+			if cache, ok := GetCache[T](pf.genCtx); ok {
 				cacheSeq = cache.SeqLen()
 			}
 			log.Printf("[DEBUG_ONNX] decode step: token=%d cacheSeqLen=%d generatedSoFar=%d",
@@ -514,18 +474,7 @@ func (gen *Generator[T]) Generate(ctx context.Context, prompt string, sc Samplin
 		}
 	}
 
-	// Sync GPU counter back to CPU after decode loop completes.
-	// During CUDA graph replay, the GPU counter advances independently;
-	// this brings the CPU-side seqLen back in sync.
-	type counterSyncer interface {
-		SyncCounterFromGPU() error
-	}
-	if cs, ok := cacheProvider.(counterSyncer); ok {
-		if err := cs.SyncCounterFromGPU(); err != nil {
-			// Log but don't fail -- GPU counter desync is recoverable
-			fmt.Fprintf(os.Stderr, "warning: GPU counter sync failed: %v\n", err)
-		}
-	}
+	syncGPUCounter[T](pf.cacheProvider)
 
 	if len(generatedIDs) == 0 {
 		return "", nil
@@ -552,41 +501,17 @@ func (gen *Generator[T]) sampleFromLogits(
 	vocabSize := shape[2]
 	seqLen := shape[1]
 
-	// GPU argmax fast path: for greedy decoding with GPU-resident logits,
-	// run argmax entirely on GPU. Copies back 4 bytes instead of ~1MB.
-	// Disabled when grammar-constrained decoding is active (must mask first).
-	if sc.GrammarState == nil && sc.Temperature <= 0 && (sc.RepetitionPenalty <= 0 || sc.RepetitionPenalty == 1.0) {
-		if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
-			if am, ok := gen.engine.(compute.GPUArgmaxer); ok {
-				// For [1, seqLen, vocabSize], the last position starts at (seqLen-1)*vocabSize.
-				// When seqLen=1 (autoregressive decode), the logits tensor IS the last position.
-				if seqLen == 1 {
-					// Safe type assertion: GPUArgmaxer only accepts float32 tensors.
-					if f32t, ok := any(logits).(*tensor.TensorNumeric[float32]); ok {
-						idx, err := am.GPUArgmax(f32t)
-						if err == nil {
-							return idx, nil
-						}
-						// Fall through to CPU path on error.
-					}
-				}
-				_ = gs // used above in type assertion chain
-			}
-		}
+	// GPU argmax fast path: copies back 4 bytes instead of ~1MB.
+	if idx, ok := tryGPUArgmax(logits, gen.engine, sc); ok {
+		return idx, nil
 	}
 
 	// Allocate a local buffer for logits. A struct-level buffer would be
 	// racy when BatchGenerate spawns concurrent goroutines that each call
 	// Generate on the same Generator instance.
-	totalElems := seqLen * vocabSize
-	data := make([]T, totalElems)
-
-	if gs, ok := logits.GetStorage().(*tensor.GPUStorage[T]); ok {
-		if err := gs.CopyTo(data); err != nil {
-			return 0, fmt.Errorf("copy logits from GPU: %w", err)
-		}
-	} else {
-		copy(data, logits.Data())
+	data, err := copyLogitsToCPU(logits, seqLen, vocabSize)
+	if err != nil {
+		return 0, err
 	}
 
 	lastStart := (seqLen - 1) * vocabSize
@@ -652,21 +577,7 @@ func (gen *Generator[T]) sampleFromLogits(
 		applyRepetitionPenalty(logitsF64, generatedTokens, sc.RepetitionPenalty)
 	}
 
-	if sc.Temperature <= 0 {
-		return argmax(logitsF64), nil
-	}
-
-	applyTemperature(logitsF64, sc.Temperature)
-
-	if sc.TopK > 0 && sc.TopK < vocabSize {
-		applyTopK(logitsF64, sc.TopK)
-	}
-
-	if sc.TopP > 0 && sc.TopP < 1.0 {
-		applyTopP(logitsF64, sc.TopP)
-	}
-
-	return sampleFromDistribution(logitsF64), nil
+	return applyTemperatureAndTopP(logitsF64, sc, vocabSize), nil
 }
 
 // idsToTensor converts token IDs to a [1, seqLen] input tensor.

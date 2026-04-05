@@ -75,22 +75,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build generation options.
-	var opts []inference.GenerateOption
-	if adapterName != "" {
-		opts = append(opts, inference.WithAdapter(adapterName))
-	}
-	if req.Temperature != nil {
-		opts = append(opts, inference.WithTemperature(*req.Temperature))
-	}
-	if req.TopP != nil {
-		opts = append(opts, inference.WithTopP(*req.TopP))
-	}
-	if req.TopK != nil {
-		opts = append(opts, inference.WithTopK(*req.TopK))
-	}
-	if req.MaxTokens != nil {
-		opts = append(opts, inference.WithMaxTokens(*req.MaxTokens))
-	}
+	opts := buildGenerationOptions(samplingParams{
+		AdapterName: adapterName,
+		Temperature: req.Temperature,
+		TopP:        req.TopP,
+		TopK:        req.TopK,
+		MaxTokens:   req.MaxTokens,
+	})
 
 	// Wire response_format json_schema into grammar-constrained decoding.
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && req.ResponseFormat.JSONSchema != nil {
@@ -263,22 +254,13 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var opts []inference.GenerateOption
-	if complAdapterName != "" {
-		opts = append(opts, inference.WithAdapter(complAdapterName))
-	}
-	if req.Temperature != nil {
-		opts = append(opts, inference.WithTemperature(*req.Temperature))
-	}
-	if req.TopP != nil {
-		opts = append(opts, inference.WithTopP(*req.TopP))
-	}
-	if req.TopK != nil {
-		opts = append(opts, inference.WithTopK(*req.TopK))
-	}
-	if req.MaxTokens != nil {
-		opts = append(opts, inference.WithMaxTokens(*req.MaxTokens))
-	}
+	opts := buildGenerationOptions(samplingParams{
+		AdapterName: complAdapterName,
+		Temperature: req.Temperature,
+		TopP:        req.TopP,
+		TopK:        req.TopK,
+		MaxTokens:   req.MaxTokens,
+	})
 
 	if req.Stream {
 		s.streamCompletion(w, r.Context(), req.Prompt, opts)
@@ -490,6 +472,38 @@ func (s *Server) buildModelObject() ModelObject {
 		OwnedBy:      "local",
 		Architecture: arch,
 	}
+}
+
+// samplingParams holds the common sampling parameters shared across chat
+// completion and text completion requests.
+type samplingParams struct {
+	AdapterName string
+	Temperature *float64
+	TopP        *float64
+	TopK        *int
+	MaxTokens   *int
+}
+
+// buildGenerationOptions converts sampling parameters into a slice of
+// inference.GenerateOption values suitable for passing to model methods.
+func buildGenerationOptions(p samplingParams) []inference.GenerateOption {
+	var opts []inference.GenerateOption
+	if p.AdapterName != "" {
+		opts = append(opts, inference.WithAdapter(p.AdapterName))
+	}
+	if p.Temperature != nil {
+		opts = append(opts, inference.WithTemperature(*p.Temperature))
+	}
+	if p.TopP != nil {
+		opts = append(opts, inference.WithTopP(*p.TopP))
+	}
+	if p.TopK != nil {
+		opts = append(opts, inference.WithTopK(*p.TopK))
+	}
+	if p.MaxTokens != nil {
+		opts = append(opts, inference.WithMaxTokens(*p.MaxTokens))
+	}
+	return opts
 }
 
 func handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {

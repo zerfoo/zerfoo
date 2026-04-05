@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
-
-	"github.com/zerfoo/ztensor/tensor"
 )
 
 // errStopString is a sentinel indicating that a stop string was matched
@@ -48,68 +45,29 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		return fmt.Errorf("prompt produced no tokens")
 	}
 
-	// Prepend BOS token if configured.
-	if gen.config.BOSTokenID > 0 {
-		promptIDs = append([]int{gen.config.BOSTokenID}, promptIDs...)
-	}
-
-	cacheProvider, tieredStore, err := gen.selectCacheProvider()
+	pf, err := gen.prefillSetup(ctx, promptIDs, sc)
 	if err != nil {
 		return err
 	}
-	if tieredStore != nil {
-		defer tieredStore.Close()
-	}
-	genCtx := WithCache(ctx, cacheProvider)
-
-	stopSet := make(map[int]bool, len(sc.StopTokenIDs)+1)
-	for _, id := range sc.StopTokenIDs {
-		stopSet[id] = true
-	}
-	stopSet[gen.config.EOSTokenID] = true
-
-	generatedIDs := make([]int, 0, sc.MaxNewTokens)
-	prevDecoded := ""
-
-	// Reset stateful auto-input nodes for this new generation sequence.
-	gen.graph.ResetStatefulNodes()
-
-	// Prefill.
-	prefillTensor, err := gen.idsToTensor(promptIDs)
-	if err != nil {
-		return fmt.Errorf("create prefill tensor: %w", err)
+	if pf.tieredStore != nil {
+		defer pf.tieredStore.Close()
 	}
 
-	logits, err := gen.graph.Forward(genCtx, prefillTensor)
-	if err != nil {
-		return fmt.Errorf("prefill forward: %w", err)
-	}
+	nextToken := pf.nextToken
+	generatedIDs := pf.generatedIDs
 
-	nextToken, err := gen.sampleFromLogits(logits, sc, generatedIDs)
-	if err != nil {
-		return fmt.Errorf("sample after prefill: %w", err)
-	}
-
-	if stopSet[nextToken] {
+	if pf.stopSet[nextToken] {
 		return stream.OnToken("", true)
 	}
 	generatedIDs = append(generatedIDs, nextToken)
 
 	// Emit incremental token.
+	prevDecoded := ""
 	if emitErr := gen.emitToken(generatedIDs, &prevDecoded, sc.StopStrings, stream); emitErr != nil {
 		if errors.Is(emitErr, errStopString) {
 			return nil
 		}
 		return emitErr
-	}
-
-	// Pre-allocate a [1,1] tensor for the decode loop. We reuse this tensor
-	// across all decode steps, updating its single element in-place to avoid
-	// per-token allocation and GC pressure.
-	decodeBuf := []T{T(nextToken)}
-	tokenTensor, tErr := tensor.New([]int{1, 1}, decodeBuf)
-	if tErr != nil {
-		return fmt.Errorf("create decode tensor: %w", tErr)
 	}
 
 	// Autoregressive decode loop.
@@ -118,7 +76,7 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 			break
 		}
 
-		step, err := gen.runDecodeStep(ctx, genCtx, tokenTensor, decodeBuf, nextToken, sc, generatedIDs, stopSet)
+		step, err := gen.runDecodeStep(ctx, pf.genCtx, pf.tokenTensor, pf.decodeBuf, nextToken, sc, generatedIDs, pf.stopSet)
 		if err != nil {
 			return err
 		}
@@ -137,16 +95,7 @@ func (gen *Generator[T]) GenerateStream(ctx context.Context, prompt string, sc S
 		}
 	}
 
-	// Sync GPU counter back to CPU after decode loop completes.
-	type counterSyncer interface {
-		SyncCounterFromGPU() error
-	}
-	if cs, ok := cacheProvider.(counterSyncer); ok {
-		if err := cs.SyncCounterFromGPU(); err != nil {
-			// Log but don't fail -- GPU counter desync is recoverable
-			fmt.Fprintf(os.Stderr, "warning: GPU counter sync failed: %v\n", err)
-		}
-	}
+	syncGPUCounter[T](pf.cacheProvider)
 
 	return stream.OnToken("", true)
 }

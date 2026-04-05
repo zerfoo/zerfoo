@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -227,64 +228,20 @@ func (m *TabResNet) forward(ctx context.Context, input *tensor.TensorNumeric[flo
 	return m.linearForward(ctx, x, m.head)
 }
 
-// layerNorm applies layer normalization across the feature dimension (axis=1).
-// out = gamma * (x - mean) / sqrt(var + eps) + beta
+// layerNorm applies layer normalization via the functional package.
 func (m *TabResNet) layerNorm(ctx context.Context, x, gamma, beta *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
-	const eps float32 = 1e-5
-
-	// mean across features (axis=1), keepDims=true.
-	mean, err := m.engine.ReduceMean(ctx, x, 1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// centered = x - mean.
-	centered, err := m.engine.Sub(ctx, x, mean)
-	if err != nil {
-		return nil, err
-	}
-
-	// variance = mean(centered^2, axis=1).
-	sq, err := m.engine.Mul(ctx, centered, centered)
-	if err != nil {
-		return nil, err
-	}
-	variance, err := m.engine.ReduceMean(ctx, sq, 1, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// std = sqrt(variance + eps).
-	varEps, err := m.engine.AddScalar(ctx, variance, eps)
-	if err != nil {
-		return nil, err
-	}
-	std, err := m.engine.Sqrt(ctx, varEps)
-	if err != nil {
-		return nil, err
-	}
-
-	// normalized = centered / std.
-	normalized, err := m.engine.Div(ctx, centered, std)
-	if err != nil {
-		return nil, err
-	}
-
-	// Scale and shift: gamma * normalized + beta.
-	scaled, err := m.engine.Mul(ctx, normalized, gamma)
-	if err != nil {
-		return nil, err
-	}
-	return m.engine.Add(ctx, scaled, beta)
+	return functional.LayerNorm(ctx, m.engine, x, gamma, beta, 1e-5)
 }
 
-// linearForward computes x @ W + b via the engine.
+// linearForward computes a linear transformation via functional.Linear.
+// mlpLayer stores weights as [in, out], so we transpose to [out, in] for
+// functional.Linear which expects [out_features, in_features].
 func (m *TabResNet) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := m.engine.MatMul(ctx, x, l.weights)
+	wT, err := m.engine.Transpose(ctx, l.weights, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	return m.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, m.engine, x, wT, l.biases)
 }
 
 // applyActivation applies the configured activation function.

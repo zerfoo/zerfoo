@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/ztensor/types"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 )
 
@@ -484,36 +485,17 @@ func (e *CLIPEncoder[T]) Backward(_ context.Context, _ types.BackwardMode, _ *te
 
 // quickGELU applies QuickGELU(x) = x * sigmoid(1.702 * x) using engine ops.
 func (e *CLIPEncoder[T]) quickGELU(ctx context.Context, x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// scaled = 1.702 * x
-	coeff := e.ops.FromFloat64(1.702)
-	scaled, err := e.engine.MulScalar(ctx, x, coeff)
+	scaled, err := e.engine.MulScalar(ctx, x, e.ops.FromFloat64(1.702))
 	if err != nil {
 		return nil, fmt.Errorf("quickgelu mul coeff: %w", err)
 	}
-	// negScaled = -1.702 * x
-	negOne := e.ops.FromFloat64(-1.0)
-	negScaled, err := e.engine.MulScalar(ctx, scaled, negOne)
+	sig, err := functional.Sigmoid(ctx, e.engine, e.ops, scaled)
 	if err != nil {
-		return nil, fmt.Errorf("quickgelu negate: %w", err)
+		return nil, fmt.Errorf("quickgelu sigmoid: %w", err)
 	}
-	// exp(-1.702 * x)
-	expVal, err := e.engine.Exp(ctx, negScaled)
+	result, err := e.engine.Mul(ctx, x, sig)
 	if err != nil {
-		return nil, fmt.Errorf("quickgelu exp: %w", err)
-	}
-	// 1 + exp(-1.702 * x)
-	one := e.ops.One()
-	denom, err := e.engine.AddScalar(ctx, expVal, one)
-	if err != nil {
-		return nil, fmt.Errorf("quickgelu add one: %w", err)
-	}
-	// sigmoid = 1 / (1 + exp(-1.702 * x))  -- use DivScalar with numerator 1
-	// DivScalar divides tensor by scalar, but we need scalar/tensor.
-	// Instead: x / (1 + exp(-1.702 * x)) = x * sigmoid(1.702 * x)
-	// We can compute x / denom directly.
-	result, err := e.engine.Div(ctx, x, denom)
-	if err != nil {
-		return nil, fmt.Errorf("quickgelu div: %w", err)
+		return nil, fmt.Errorf("quickgelu mul: %w", err)
 	}
 	return result, nil
 }
