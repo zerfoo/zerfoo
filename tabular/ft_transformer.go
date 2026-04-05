@@ -363,7 +363,7 @@ func (ft *FTTransformer) transformerForward(ctx context.Context, x *tensor.Tenso
 	if err != nil {
 		return nil, fmt.Errorf("ffn1: %w", err)
 	}
-	ffnOut, err = ft.engine.UnaryOp(ctx, ffnOut, geluScalar)
+	ffnOut, err = functional.GELU(ctx, ft.engine, ft.ops, ffnOut)
 	if err != nil {
 		return nil, fmt.Errorf("gelu: %w", err)
 	}

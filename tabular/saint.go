@@ -595,7 +595,7 @@ func (s *SAINT) ffn(ctx context.Context, x, w1, b1, w2, b2 *tensor.TensorNumeric
 	}
 
 	// GELU activation.
-	h, err = s.engine.UnaryOp(ctx, h, geluScalar)
+	h, err = functional.GELU(ctx, s.engine, s.ops, h)
 	if err != nil {
 		return nil, err
 	}
