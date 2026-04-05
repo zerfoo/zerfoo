@@ -9,6 +9,8 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // Direction represents a trading signal direction.
@@ -187,32 +189,27 @@ func (m *Model) Predict(features []float64) (Direction, float64, error) {
 	return dir, conf, nil
 }
 
-// linearForward computes x @ W + b via the engine.
+// linearForward computes a linear transformation via functional.Linear.
+// Weights are stored as [in, out] so we transpose to [out, in] for the
+// canonical functional.Linear which computes x @ W^T + b.
 func (m *Model) linearForward(ctx context.Context, x *tensor.TensorNumeric[float32], l mlpLayer) (*tensor.TensorNumeric[float32], error) {
-	out, err := m.engine.MatMul(ctx, x, l.weights)
+	wT, err := m.engine.Transpose(ctx, l.weights, []int{1, 0})
 	if err != nil {
 		return nil, err
 	}
-	return m.engine.Add(ctx, out, l.biases)
+	return functional.Linear(ctx, m.engine, x, wT, l.biases)
 }
 
 // applyActivation applies the configured activation function via the engine.
 func (m *Model) applyActivation(ctx context.Context, x *tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	switch m.config.Activation {
 	case ActivationReLU:
-		return m.engine.UnaryOp(ctx, x, m.ops.ReLU)
+		return functional.ReLU(ctx, m.engine, m.ops, x)
 	case ActivationGELU:
-		return m.engine.UnaryOp(ctx, x, geluScalar)
+		return functional.GELU(ctx, m.engine, m.ops, x)
 	default:
-		return m.engine.UnaryOp(ctx, x, m.ops.ReLU)
+		return functional.ReLU(ctx, m.engine, m.ops, x)
 	}
-}
-
-// geluScalar computes the GELU approximation for a single float32 value.
-func geluScalar(x float32) float32 {
-	xf := float64(x)
-	inner := math.Sqrt(2/math.Pi) * (xf + 0.044715*xf*xf*xf)
-	return float32(0.5 * xf * (1 + math.Tanh(inner)))
 }
 
 // argmax returns the Direction corresponding to the highest probability
