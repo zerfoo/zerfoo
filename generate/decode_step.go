@@ -114,6 +114,46 @@ func verifyDraftTokens[T tensor.Numeric](
 	return accepted, bonusToken
 }
 
+// emitVerifiedResult holds the outcome of emitting verified speculative tokens.
+type emitVerifiedResult struct {
+	// Emitted is the token IDs that were appended to generatedIDs.
+	Emitted []int
+	// Stop is true when generation should halt (stop token or max reached).
+	Stop bool
+}
+
+// emitVerified appends accepted draft tokens and the bonus token to
+// generatedIDs, stopping on any stop-set token or when maxNewTokens is
+// reached. This is the shared emit loop used by SpeculativeGenerator,
+// EAGLEGenerator, and Generator.generateSpeculative.
+func emitVerified(
+	accepted []int,
+	bonusToken int,
+	generatedIDs []int,
+	maxNewTokens int,
+	stopSet map[int]bool,
+) (updatedIDs []int, stop bool) {
+	for _, tok := range accepted {
+		if stopSet[tok] {
+			return generatedIDs, true
+		}
+		generatedIDs = append(generatedIDs, tok)
+		if len(generatedIDs) >= maxNewTokens {
+			return generatedIDs, true
+		}
+	}
+	if bonusToken >= 0 {
+		if stopSet[bonusToken] {
+			return generatedIDs, true
+		}
+		generatedIDs = append(generatedIDs, bonusToken)
+	}
+	if len(generatedIDs) >= maxNewTokens {
+		return generatedIDs, true
+	}
+	return generatedIDs, false
+}
+
 // sliceArgmax returns the index of the maximum value in a slice.
 func sliceArgmax[T tensor.Numeric](data []T) int {
 	maxIdx := 0

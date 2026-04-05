@@ -789,34 +789,12 @@ func (gen *Generator[T]) generateSpeculative(ctx context.Context, prompt string,
 		}
 
 		// Accept/reject: compare target's greedy output with draft tokens.
-		accepted, bonusToken := gen.specVerifyTokens(verifyLogits, draftTokens, stopSet)
+		accepted, bonusToken := verifyDraftTokens(verifyLogits, draftTokens, stopSet)
 
-		// Emit accepted draft tokens.
-		stopped := false
-		for _, tok := range accepted {
-			if stopSet[tok] {
-				stopped = true
-				break
-			}
-			generatedIDs = append(generatedIDs, tok)
-			if len(generatedIDs) >= sc.MaxNewTokens {
-				stopped = true
-				break
-			}
-		}
+		// Emit accepted tokens and bonus token.
+		var stopped bool
+		generatedIDs, stopped = emitVerified(accepted, bonusToken, generatedIDs, sc.MaxNewTokens, stopSet)
 		if stopped {
-			break
-		}
-
-		// Emit the bonus token (target's correction or next token).
-		if bonusToken >= 0 {
-			if stopSet[bonusToken] {
-				break
-			}
-			generatedIDs = append(generatedIDs, bonusToken)
-		}
-
-		if len(generatedIDs) >= sc.MaxNewTokens {
 			break
 		}
 
@@ -896,56 +874,3 @@ func (gen *Generator[T]) generateSpeculative(ctx context.Context, prompt string,
 	return result, nil
 }
 
-// specVerifyTokens compares target logits against draft tokens for the
-// speculative decoding path integrated into Generator.
-func (gen *Generator[T]) specVerifyTokens(
-	targetLogits *tensor.TensorNumeric[T],
-	draftTokens []int,
-	stopSet map[int]bool,
-) (accepted []int, bonusToken int) {
-	shape := targetLogits.Shape()
-	vocabSize := shape[2]
-	seqLen := shape[1]
-	data := targetLogits.Data()
-
-	accepted = make([]int, 0, len(draftTokens))
-	bonusToken = -1
-
-	for i, dt := range draftTokens {
-		if i >= seqLen {
-			break
-		}
-
-		offset := i * vocabSize
-		targetToken := specArgmax(data[offset : offset+vocabSize])
-
-		switch {
-		case i == len(draftTokens)-1:
-			accepted = append(accepted, dt)
-			if !stopSet[dt] {
-				bonusToken = targetToken
-			}
-		case targetToken == draftTokens[i+1]:
-			accepted = append(accepted, dt)
-		default:
-			accepted = append(accepted, dt)
-			bonusToken = targetToken
-			return accepted, bonusToken
-		}
-	}
-
-	return accepted, bonusToken
-}
-
-// specArgmax returns the index of the maximum value in a slice.
-func specArgmax[T tensor.Numeric](data []T) int {
-	maxIdx := 0
-	maxVal := data[0]
-	for i := 1; i < len(data); i++ {
-		if data[i] > maxVal {
-			maxVal = data[i]
-			maxIdx = i
-		}
-	}
-	return maxIdx
-}

@@ -177,32 +177,10 @@ func (eg *EAGLEGenerator[T]) Generate(ctx context.Context, prompt string, sc Sam
 		// Accept/reject: compare target's greedy output with draft tokens.
 		accepted, bonusToken := verifyDraftTokens(verifyResult.Logits, draftTokens, stopSet)
 
-		// Emit accepted draft tokens.
-		stopped := false
-		for _, tok := range accepted {
-			if stopSet[tok] {
-				stopped = true
-				break
-			}
-			generatedIDs = append(generatedIDs, tok)
-			if len(generatedIDs) >= sc.MaxNewTokens {
-				stopped = true
-				break
-			}
-		}
+		// Emit accepted tokens and bonus token.
+		var stopped bool
+		generatedIDs, stopped = emitVerified(accepted, bonusToken, generatedIDs, sc.MaxNewTokens, stopSet)
 		if stopped {
-			break
-		}
-
-		// Emit the bonus token (target's correction or next token).
-		if bonusToken >= 0 {
-			if stopSet[bonusToken] {
-				break
-			}
-			generatedIDs = append(generatedIDs, bonusToken)
-		}
-
-		if len(generatedIDs) >= sc.MaxNewTokens {
 			break
 		}
 

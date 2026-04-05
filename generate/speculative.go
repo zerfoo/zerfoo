@@ -180,32 +180,10 @@ func (sg *SpeculativeGenerator[T]) Generate(ctx context.Context, prompt string, 
 		// Now we check: does target agree with the draft for the remaining?
 		accepted, bonusToken := verifyDraftTokens(verifyLogits, draftTokens, stopSet)
 
-		// Emit accepted draft tokens.
-		stopped := false
-		for _, tok := range accepted {
-			if stopSet[tok] {
-				stopped = true
-				break
-			}
-			generatedIDs = append(generatedIDs, tok)
-			if len(generatedIDs) >= sc.MaxNewTokens {
-				stopped = true
-				break
-			}
-		}
+		// Emit accepted tokens and bonus token.
+		var stopped bool
+		generatedIDs, stopped = emitVerified(accepted, bonusToken, generatedIDs, sc.MaxNewTokens, stopSet)
 		if stopped {
-			break
-		}
-
-		// Emit the bonus token (target's correction or next token).
-		if bonusToken >= 0 {
-			if stopSet[bonusToken] {
-				break
-			}
-			generatedIDs = append(generatedIDs, bonusToken)
-		}
-
-		if len(generatedIDs) >= sc.MaxNewTokens {
 			break
 		}
 
