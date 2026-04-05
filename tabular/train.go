@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -12,6 +11,7 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
@@ -250,7 +250,7 @@ func forwardPass(ctx context.Context, model *Model, input *tensor.TensorNumeric[
 	return logits, activations, preActivations, nil
 }
 
-// crossEntropyLoss computes the softmax cross-entropy loss on CPU.
+// crossEntropyLoss computes the softmax cross-entropy loss using engine ops.
 // Returns scalar loss, softmax output tensor, and error.
 func crossEntropyLoss(ctx context.Context, engine compute.Engine[float32], logits *tensor.TensorNumeric[float32], labels []int, batchSize, numClasses int) (float64, *tensor.TensorNumeric[float32], error) {
 	// Compute softmax.
@@ -259,17 +259,53 @@ func crossEntropyLoss(ctx context.Context, engine compute.Engine[float32], logit
 		return 0, nil, err
 	}
 
-	// Cross-entropy: -sum(log(softmax[label])) / batchSize.
-	probs := softmaxOut.Data()
-	var loss float64
-	for i := 0; i < batchSize; i++ {
-		p := float64(probs[i*numClasses+labels[i]])
-		if p < 1e-7 {
-			p = 1e-7
+	// Clamp softmax output to avoid log(0).
+	ops := engine.Ops()
+	clamped, err := engine.UnaryOp(ctx, softmaxOut, func(v float32) float32 {
+		if v < 1e-7 {
+			return 1e-7
 		}
-		loss -= math.Log(p)
+		return v
+	})
+	if err != nil {
+		return 0, nil, err
 	}
-	loss /= float64(batchSize)
+
+	// Compute log probabilities via engine.
+	logProbs, err := engine.Log(ctx, clamped)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Create one-hot target mask [batchSize, numClasses].
+	oneHotData := make([]float32, batchSize*numClasses)
+	for i, l := range labels {
+		oneHotData[i*numClasses+l] = 1.0
+	}
+	oneHot, err := tensor.New[float32]([]int{batchSize, numClasses}, oneHotData)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Mask log-probs to keep only target class: logProbs * oneHot.
+	masked, err := engine.Mul(ctx, logProbs, oneHot)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Sum across classes (axis 1), then sum across batch (axis 0).
+	sumClasses, err := engine.ReduceSum(ctx, masked, 1, false)
+	if err != nil {
+		return 0, nil, err
+	}
+	totalSum, err := engine.ReduceSum(ctx, sumClasses, 0, false)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Extract scalar loss: -sum / batchSize.
+	loss := -float64(totalSum.Data()[0]) / float64(batchSize)
+	_ = ops // suppress unused
 
 	return loss, softmaxOut, nil
 }
@@ -419,11 +455,7 @@ func activationBackward(ctx context.Context, engine compute.Engine[float32], ops
 		}
 		return engine.Mul(ctx, dOut, grad)
 	case ActivationGELU:
-		grad, err := engine.UnaryOp(ctx, preAct, geluGradScalar)
-		if err != nil {
-			return nil, err
-		}
-		return engine.Mul(ctx, dOut, grad)
+		return functional.GELUBackward(ctx, engine, ops, dOut, preAct)
 	default:
 		grad, err := engine.UnaryOp(ctx, preAct, ops.ReLUGrad)
 		if err != nil {
@@ -431,17 +463,6 @@ func activationBackward(ctx context.Context, engine compute.Engine[float32], ops
 		}
 		return engine.Mul(ctx, dOut, grad)
 	}
-}
-
-// geluGradScalar computes the derivative of GELU for a single float32 value.
-func geluGradScalar(x float32) float32 {
-	xf := float64(x)
-	sqrt2Pi := math.Sqrt(2.0 / math.Pi)
-	inner := sqrt2Pi * (xf + 0.044715*xf*xf*xf)
-	tanhVal := math.Tanh(inner)
-	dtanh := 1 - tanhVal*tanhVal
-	dinnerDx := sqrt2Pi * (1 + 3*0.044715*xf*xf)
-	return float32(0.5*(1+tanhVal) + 0.5*xf*dtanh*dinnerDx)
 }
 
 // evaluate runs a forward pass on validation data and returns loss and accuracy.
