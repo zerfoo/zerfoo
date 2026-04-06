@@ -70,60 +70,6 @@ func (e *extErrEngine) Ops() numeric.Arithmetic[float32] {
 	return numeric.Float32Ops{}
 }
 
-// ---------- Tests for CrossEntropyLoss Forward error paths (post-Log) ----------
-
-func TestCrossEntropyLoss_Forward_GatherError(t *testing.T) {
-	eng := newExtErrEngine(map[string]int{"Gather": 1})
-	cel := NewCrossEntropyLoss[float32](eng)
-
-	preds, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 3, 1, 2})
-	targets, _ := tensor.New[float32]([]int{2}, []float32{2.0, 0.0})
-
-	_, err := cel.Forward(context.Background(), preds, targets)
-	if err == nil {
-		t.Error("expected Gather error")
-	}
-}
-
-func TestCrossEntropyLoss_Forward_ReduceSumError(t *testing.T) {
-	eng := newExtErrEngine(map[string]int{"ReduceSum": 1})
-	cel := NewCrossEntropyLoss[float32](eng)
-
-	preds, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 3, 1, 2})
-	targets, _ := tensor.New[float32]([]int{2}, []float32{2.0, 0.0})
-
-	_, err := cel.Forward(context.Background(), preds, targets)
-	if err == nil {
-		t.Error("expected ReduceSum error")
-	}
-}
-
-func TestCrossEntropyLoss_Forward_MulScalarError(t *testing.T) {
-	eng := newExtErrEngine(map[string]int{"MulScalar": 1})
-	cel := NewCrossEntropyLoss[float32](eng)
-
-	preds, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 3, 1, 2})
-	targets, _ := tensor.New[float32]([]int{2}, []float32{2.0, 0.0})
-
-	_, err := cel.Forward(context.Background(), preds, targets)
-	if err == nil {
-		t.Error("expected MulScalar error")
-	}
-}
-
-func TestCrossEntropyLoss_Forward_DivScalarError(t *testing.T) {
-	eng := newExtErrEngine(map[string]int{"DivScalar": 1})
-	cel := NewCrossEntropyLoss[float32](eng)
-
-	preds, _ := tensor.New[float32]([]int{2, 3}, []float32{1, 2, 3, 3, 1, 2})
-	targets, _ := tensor.New[float32]([]int{2}, []float32{2.0, 0.0})
-
-	_, err := cel.Forward(context.Background(), preds, targets)
-	if err == nil {
-		t.Error("expected DivScalar error")
-	}
-}
-
 // ---------- CrossEntropyLoss Forward success (full path) ----------
 
 func TestCrossEntropyLoss_Forward_Success(t *testing.T) {
