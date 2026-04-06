@@ -46,24 +46,16 @@ func buildGPT2Graph(
 		lnEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	pw := newParamWrapper[float32]()
 
 	// Load global tensors.
-	tokenEmbdW, err := lookup("token_embd.weight")
+	tokenEmbdW, err := tl.Lookup("token_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	posEmbdW, err := lookup("position_embd.weight")
+	posEmbdW, err := tl.Lookup("position_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,11 +67,11 @@ func buildGPT2Graph(
 	}
 
 	// Final LayerNorm.
-	outputNormW, err := lookup("output_norm.weight")
+	outputNormW, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	outputNormB, err := lookup("output_norm.bias")
+	outputNormB, err := tl.Lookup("output_norm.bias")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,24 +104,24 @@ func buildGPT2Graph(
 		prefix := fmt.Sprintf("blk.%d.", i)
 
 		// --- Pre-attention LayerNorm ---
-		attnNormW, err := lookup(prefix + "attn_norm.weight")
+		attnNormW, err := tl.Lookup(prefix + "attn_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		attnNormB, err := lookup(prefix + "attn_norm.bias")
+		attnNormB, err := tl.Lookup(prefix + "attn_norm.bias")
 		if err != nil {
 			return nil, nil, err
 		}
 		attnNorm := normalization.NewLayerNormalizationFromParams[float32](
 			proxy, float32(lnEps),
-			param(prefix+"attn_norm.weight", attnNormW),
-			param(prefix+"attn_norm.bias", attnNormB),
+			pw.Wrap(prefix+"attn_norm.weight", attnNormW),
+			pw.Wrap(prefix+"attn_norm.bias", attnNormB),
 		)
 		normed := builder.AddNode(attnNorm, hidden)
 
 		// --- Self-Attention (GQA with no RoPE) ---
 		// Split merged QKV tensor into separate Q, K, V.
-		qkvW, err := lookup(prefix + "attn_qkv.weight")
+		qkvW, err := tl.Lookup(prefix + "attn_qkv.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -144,12 +136,12 @@ func buildGPT2Graph(
 			if splitErr != nil {
 				return nil, nil, fmt.Errorf("layer %d split QKV bias: %w", i, splitErr)
 			}
-			qBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_q.bias", qB))
-			kBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_k.bias", kB))
-			vBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_v.bias", vB))
+			qBiasLayer = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"attn_q.bias", qB))
+			kBiasLayer = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"attn_k.bias", kB))
+			vBiasLayer = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"attn_v.bias", vB))
 		}
 
-		oW, err := lookup(prefix + "attn_output.weight")
+		oW, err := tl.Lookup(prefix + "attn_output.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -174,23 +166,23 @@ func buildGPT2Graph(
 
 		var oBiasLayer *core.Bias[float32]
 		if oB := tensors[prefix+"attn_output.bias"]; oB != nil {
-			oBiasLayer = core.NewBiasFromParam(proxy, ops, param(prefix+"attn_output.bias", oB))
+			oBiasLayer = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"attn_output.bias", oB))
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"attn_q.weight", qWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_q.weight", qWT)),
 			qBiasLayer,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"attn_k.weight", kWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_k.weight", kWT)),
 			kBiasLayer,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"attn_v.weight", vWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_v.weight", vWT)),
 			vBiasLayer,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"attn_output.weight", oWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_output.weight", oWT)),
 			oBiasLayer,
 		)
 
@@ -205,31 +197,31 @@ func buildGPT2Graph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Post-attention residual add ---
-		resAdd1 := &gpt2ResidualAddNode[float32]{engine: proxy}
+		resAdd1 := &elementwiseAddNode[float32]{engine: proxy}
 		hidden = builder.AddNode(resAdd1, attnOut, hidden)
 
 		// --- Pre-FFN LayerNorm ---
-		ffnNormW, err := lookup(prefix + "ffn_norm.weight")
+		ffnNormW, err := tl.Lookup(prefix + "ffn_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		ffnNormB, err := lookup(prefix + "ffn_norm.bias")
+		ffnNormB, err := tl.Lookup(prefix + "ffn_norm.bias")
 		if err != nil {
 			return nil, nil, err
 		}
 		ffnNorm := normalization.NewLayerNormalizationFromParams[float32](
 			proxy, float32(lnEps),
-			param(prefix+"ffn_norm.weight", ffnNormW),
-			param(prefix+"ffn_norm.bias", ffnNormB),
+			pw.Wrap(prefix+"ffn_norm.weight", ffnNormW),
+			pw.Wrap(prefix+"ffn_norm.bias", ffnNormB),
 		)
 		normed2 := builder.AddNode(ffnNorm, hidden)
 
 		// --- FFN: Dense(GELU) + Dense ---
-		ffnUpW, err := lookup(prefix + "ffn_up.weight")
+		ffnUpW, err := tl.Lookup(prefix + "ffn_up.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		ffnDownW, err := lookup(prefix + "ffn_down.weight")
+		ffnDownW, err := tl.Lookup(prefix + "ffn_down.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -245,20 +237,20 @@ func buildGPT2Graph(
 
 		var ffnUpBias *core.Bias[float32]
 		if upB := tensors[prefix+"ffn_up.bias"]; upB != nil {
-			ffnUpBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_up.bias", upB))
+			ffnUpBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"ffn_up.bias", upB))
 		}
 		var ffnDownBias *core.Bias[float32]
 		if downB := tensors[prefix+"ffn_down.bias"]; downB != nil {
-			ffnDownBias = core.NewBiasFromParam(proxy, ops, param(prefix+"ffn_down.bias", downB))
+			ffnDownBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"ffn_down.bias", downB))
 		}
 
 		ffnUp := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"ffn_up.weight", ffnUpWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"ffn_up.weight", ffnUpWT)),
 			ffnUpBias,
 		)
 		geluNode := activations.NewGelu[float32](proxy, ops)
 		ffnDown := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"ffn_down.weight", ffnDownWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"ffn_down.weight", ffnDownWT)),
 			ffnDownBias,
 		)
 
@@ -267,20 +259,20 @@ func buildGPT2Graph(
 		ffnOut := builder.AddNode(ffnDown, geluOut)
 
 		// --- Post-FFN residual add ---
-		resAdd2 := &gpt2ResidualAddNode[float32]{engine: proxy}
+		resAdd2 := &elementwiseAddNode[float32]{engine: proxy}
 		hidden = builder.AddNode(resAdd2, ffnOut, hidden)
 	}
 
 	// --- Final LayerNorm ---
 	finalNorm := normalization.NewLayerNormalizationFromParams[float32](
 		proxy, float32(lnEps),
-		param("output_norm.weight", outputNormW),
-		param("output_norm.bias", outputNormB),
+		pw.Wrap("output_norm.weight", outputNormW),
+		pw.Wrap("output_norm.bias", outputNormB),
 	)
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -452,27 +444,6 @@ func (e *gpt2EmbeddingNode[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 }
 
 func (e *gpt2EmbeddingNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, nil
-}
-
-// gpt2ResidualAddNode computes x + residual for GPT-2 pre-norm residual connections.
-type gpt2ResidualAddNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-}
-
-func (n *gpt2ResidualAddNode[T]) OpType() string                  { return "GPT2ResidualAdd" }
-func (n *gpt2ResidualAddNode[T]) Attributes() map[string]any       { return nil }
-func (n *gpt2ResidualAddNode[T]) OutputShape() []int               { return nil }
-func (n *gpt2ResidualAddNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-
-func (n *gpt2ResidualAddNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("GPT2ResidualAdd: expected 2 inputs (x, residual), got %d", len(inputs))
-	}
-	return n.engine.Add(ctx, inputs[0], inputs[1], nil)
-}
-
-func (n *gpt2ResidualAddNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
 }
 

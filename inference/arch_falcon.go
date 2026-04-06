@@ -54,33 +54,25 @@ func buildFalconGraph(
 		layerNormEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
+	pw := newParamWrapper[float32]()
+
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
-	}
-
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	finalNormW, err := lookup("model.norm.weight")
+	finalNormW, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	finalNormB, _ := tensors["model.norm.bias"]
+	finalNormB, _ := tl.Optional("model.norm.bias")
 
 	_, isGPUEngine := engine.(compute.WeightUploader)
 
@@ -92,7 +84,7 @@ func buildFalconGraph(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -104,19 +96,19 @@ func buildFalconGraph(
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
 		// --- Input LayerNorm (shared by attention and FFN in parallel) ---
-		lnW, err := lookup(prefix + "input_layernorm.weight")
+		lnW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		lnB, _ := tensors[prefix+"input_layernorm.bias"]
+		lnB, _ := tl.Optional(prefix + "input_layernorm.bias")
 
-		lnBParam, err := falconBetaParam(param, prefix+"input_layernorm.bias", lnB, lnW)
+		lnBParam, err := falconBetaParam(pw, prefix+"input_layernorm.bias", lnB, lnW)
 		if err != nil {
 			return nil, nil, err
 		}
 		ln := normalization.NewLayerNormalizationFromParams[float32](
 			proxy, ops.FromFloat64(float64(layerNormEps)),
-			param(prefix+"input_layernorm.weight", lnW),
+			pw.Wrap(prefix+"input_layernorm.weight", lnW),
 			lnBParam,
 		)
 		// Wrap in residual-caching node so falconParallelAddNode can
@@ -125,19 +117,19 @@ func buildFalconGraph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA / MQA) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -160,19 +152,19 @@ func buildFalconGraph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)),
 			nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)),
 			nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)),
 			nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)),
 			nil,
 		)
 
@@ -199,11 +191,11 @@ func buildFalconGraph(
 
 		// --- FFN (GELU, no gating) ---
 		// Falcon FFN: ffn(x) = down(gelu(up(x)))
-		upW, err := lookup(prefix + "mlp.dense_h_to_4h.weight")
+		upW, err := tl.Lookup(prefix + "mlp.dense_h_to_4h.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		downW, err := lookup(prefix + "mlp.dense_4h_to_h.weight")
+		downW, err := tl.Lookup(prefix + "mlp.dense_4h_to_h.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -218,23 +210,24 @@ func buildFalconGraph(
 		}
 
 		// Optional FFN biases (Falcon 7B has bias; 40B+ drops it).
-		upB, _ := tensors[prefix+"mlp.dense_h_to_4h.bias"]
-		downB, _ := tensors[prefix+"mlp.dense_4h_to_h.bias"]
+		upB, _ := tl.Optional(prefix + "mlp.dense_h_to_4h.bias")
+		downB, _ := tl.Optional(prefix + "mlp.dense_4h_to_h.bias")
 
 		var upBias, downBias *core.Bias[float32]
 		if upB != nil {
-			upBias = core.NewBiasFromParam(proxy, ops, param(prefix+"mlp.dense_h_to_4h.bias", upB))
+			upBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"mlp.dense_h_to_4h.bias", upB))
 		}
 		if downB != nil {
-			downBias = core.NewBiasFromParam(proxy, ops, param(prefix+"mlp.dense_4h_to_h.bias", downB))
+			downBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"mlp.dense_4h_to_h.bias", downB))
 		}
 
-		ffnNode := &falconGeluFFN[float32]{
-			up:   core.NewDenseFromParams(core.NewLinearFromParam(proxy, param(prefix+"mlp.dense_h_to_4h.weight", upWT)), upBias),
-			gelu: activations.NewGelu[float32](proxy, ops),
-			down: core.NewDenseFromParams(core.NewLinearFromParam(proxy, param(prefix+"mlp.dense_4h_to_h.weight", downWT)), downBias),
-		}
-		ffnOut := builder.AddNode(ffnNode, normed)
+		ffnUp := core.NewDenseFromParams(core.NewLinearFromParam(proxy, pw.Wrap(prefix+"mlp.dense_h_to_4h.weight", upWT)), upBias)
+		ffnGelu := activations.NewGelu[float32](proxy, ops)
+		ffnDown := core.NewDenseFromParams(core.NewLinearFromParam(proxy, pw.Wrap(prefix+"mlp.dense_4h_to_h.weight", downWT)), downBias)
+
+		ffnUpOut := builder.AddNode(ffnUp, normed)
+		ffnGeluOut := builder.AddNode(ffnGelu, ffnUpOut)
+		ffnOut := builder.AddNode(ffnDown, ffnGeluOut)
 
 		// --- Parallel Residual Add: hidden = residual + attn(norm(x)) + ffn(norm(x)) ---
 		// The residual is retrieved from inputNorm's cached pre-norm input.
@@ -246,13 +239,13 @@ func buildFalconGraph(
 	}
 
 	// --- Final LayerNorm ---
-	finalBetaParam, err := falconBetaParam(param, "model.norm.bias", finalNormB, finalNormW)
+	finalBetaParam, err := falconBetaParam(pw, "model.norm.bias", finalNormB, finalNormW)
 	if err != nil {
 		return nil, nil, err
 	}
 	finalNorm := normalization.NewLayerNormalizationFromParams[float32](
 		proxy, ops.FromFloat64(float64(layerNormEps)),
-		param("model.norm.weight", finalNormW),
+		pw.Wrap("model.norm.weight", finalNormW),
 		finalBetaParam,
 	)
 	normedFinal := builder.AddNode(finalNorm, hidden)
@@ -269,7 +262,7 @@ func buildFalconGraph(
 			}
 		}
 	}
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -286,19 +279,19 @@ func buildFalconGraph(
 // zero-filled tensor matching gamma's shape, since
 // normalization.LayerNormalization always applies beta.
 func falconBetaParam(
-	param func(string, *tensor.TensorNumeric[float32]) *graph.Parameter[float32],
+	pw paramWrapper[float32],
 	name string,
 	bias *tensor.TensorNumeric[float32],
 	gamma *tensor.TensorNumeric[float32],
 ) (*graph.Parameter[float32], error) {
 	if bias != nil {
-		return param(name, bias), nil
+		return pw.Wrap(name, bias), nil
 	}
 	zeroBeta, err := tensor.New[float32](gamma.Shape(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create zero beta for %s: %w", name, err)
 	}
-	return param(name, zeroBeta), nil
+	return pw.Wrap(name, zeroBeta), nil
 }
 
 // falconResidualLayerNorm wraps normalization.LayerNormalization and caches the
@@ -330,45 +323,6 @@ func (n *falconResidualLayerNorm[T]) Backward(ctx context.Context, mode types.Ba
 // Residual returns the pre-norm input cached during the most recent Forward call.
 func (n *falconResidualLayerNorm[T]) Residual() *tensor.TensorNumeric[T] {
 	return n.residual
-}
-
-// falconGeluFFN composes Falcon's 2-layer GELU FFN from layers/:
-//
-//	ffn(x) = down(gelu(up(x)))
-//
-// Unlike the SwiGLU FFN used in Llama, there is no gate projection.
-type falconGeluFFN[T tensor.Float] struct {
-	up   *core.Dense[T]
-	gelu *activations.Gelu[T]
-	down *core.Dense[T]
-}
-
-func (n *falconGeluFFN[T]) OpType() string             { return "FalconFFN" }
-func (n *falconGeluFFN[T]) Attributes() map[string]any { return nil }
-func (n *falconGeluFFN[T]) OutputShape() []int         { return nil }
-func (n *falconGeluFFN[T]) Parameters() []*graph.Parameter[T] {
-	params := n.up.Parameters()
-	params = append(params, n.down.Parameters()...)
-	return params
-}
-
-func (n *falconGeluFFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 1 {
-		return nil, fmt.Errorf("FalconFFN: expected 1 input, got %d", len(inputs))
-	}
-	up, err := n.up.Forward(ctx, inputs[0])
-	if err != nil {
-		return nil, err
-	}
-	activated, err := n.gelu.Forward(ctx, up)
-	if err != nil {
-		return nil, err
-	}
-	return n.down.Forward(ctx, activated)
-}
-
-func (n *falconGeluFFN[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("FalconFFN: backward not implemented")
 }
 
 // falconParallelAddNode implements Falcon's parallel residual update:
