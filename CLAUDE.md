@@ -8,7 +8,7 @@ Be the best-in-class ML inference framework in Go — competitive with C++ runti
 
 ## Hardware
 
-DGX Spark GPU available at `ssh ndungu@192.168.86.250`
+DGX Spark GPU available at `ssh ndungu@192.168.86.29`
 
 ## Build & Test
 
