@@ -46,6 +46,9 @@ func NewRoutingContrastive[T tensor.Numeric](engine compute.Engine[T], ops numer
 //
 // Inputs: exactly one tensor of shape [batch, numHeads, seqLen].
 // Returns a scalar loss tensor of shape [1].
+//
+// Uses engine.MatMul to compute the gram matrix (all pairwise dot products)
+// in a single operation per batch element, replacing O(numHeads^2) loops.
 func (rc *RoutingContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("RoutingContrastive: expected 1 input (routing scores), got %d", len(inputs))
@@ -62,7 +65,6 @@ func (rc *RoutingContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.
 	batch := shape[0]
 	numHeads := shape[1]
 	seqLen := shape[2]
-	data := scores.Data()
 	ops := rc.ops
 	eps := ops.FromFloat64(1e-12)
 
@@ -73,58 +75,86 @@ func (rc *RoutingContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.
 	numPairs := numHeads * (numHeads - 1) / 2
 	invPairs := ops.FromFloat64(1.0 / float64(numPairs*batch))
 
-	var totalSim T
-	for b := range batch {
-		for i := range numHeads {
-			headI, err := tensor.New[T]([]int{seqLen}, data[(b*numHeads+i)*seqLen:(b*numHeads+i+1)*seqLen])
-			if err != nil {
-				return nil, err
-			}
-			normISqT, err := rc.engine.Mul(ctx, headI, headI)
-			if err != nil {
-				return nil, err
-			}
-			normISqSum, err := rc.engine.ReduceSum(ctx, normISqT, 0, false)
-			if err != nil {
-				return nil, err
-			}
-			normISq := normISqSum.Data()[0]
-
-			for j := i + 1; j < numHeads; j++ {
-				headJ, err := tensor.New[T]([]int{seqLen}, data[(b*numHeads+j)*seqLen:(b*numHeads+j+1)*seqLen])
-				if err != nil {
-					return nil, err
-				}
-
-				// Dot product via engine.Mul + engine.ReduceSum.
-				prod, err := rc.engine.Mul(ctx, headI, headJ)
-				if err != nil {
-					return nil, err
-				}
-				dotT, err := rc.engine.ReduceSum(ctx, prod, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dotIJ := dotT.Data()[0]
-
-				normJSqT, err := rc.engine.Mul(ctx, headJ, headJ)
-				if err != nil {
-					return nil, err
-				}
-				normJSqSum, err := rc.engine.ReduceSum(ctx, normJSqT, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				normJSq := normJSqSum.Data()[0]
-
-				denom := ops.Add(ops.Sqrt(ops.Mul(normISq, normJSq)), eps)
-				sim := ops.Div(dotIJ, denom)
-				totalSim = ops.Add(totalSim, sim)
-			}
-		}
+	// Split along batch axis: [batch, numHeads, seqLen] → batch * [1, numHeads, seqLen]
+	batchSlices, err := rc.engine.Split(ctx, scores, batch, 0)
+	if err != nil {
+		return nil, fmt.Errorf("RoutingContrastive: split batch: %w", err)
 	}
 
-	loss := ops.Mul(rc.scale, ops.Mul(totalSim, invPairs))
+	var totalSimScalar T
+	for _, bSlice := range batchSlices {
+		// Reshape to [numHeads, seqLen]
+		headsMat, err := rc.engine.Reshape(ctx, bSlice, []int{numHeads, seqLen})
+		if err != nil {
+			return nil, err
+		}
+
+		// Gram matrix: heads @ heads^T → [numHeads, numHeads]
+		headsT, err := rc.engine.Transpose(ctx, headsMat, []int{1, 0})
+		if err != nil {
+			return nil, err
+		}
+		gram, err := rc.engine.MatMul(ctx, headsMat, headsT)
+		if err != nil {
+			return nil, err
+		}
+
+		// Squared norms per head: element-wise square + reduce.
+		headsSq, err := rc.engine.Mul(ctx, headsMat, headsMat)
+		if err != nil {
+			return nil, err
+		}
+		normsSq, err := rc.engine.ReduceSum(ctx, headsSq, 1, false) // [numHeads]
+		if err != nil {
+			return nil, err
+		}
+
+		// Norm products matrix: sqrt(normsSq_i) * sqrt(normsSq_j) via outer product.
+		// norms = sqrt(normsSq) → [numHeads]
+		norms, err := rc.engine.UnaryOp(ctx, normsSq, ops.Sqrt)
+		if err != nil {
+			return nil, err
+		}
+		normsCol, err := rc.engine.Reshape(ctx, norms, []int{numHeads, 1})
+		if err != nil {
+			return nil, err
+		}
+		normsRow, err := rc.engine.Reshape(ctx, norms, []int{1, numHeads})
+		if err != nil {
+			return nil, err
+		}
+		normProd, err := rc.engine.MatMul(ctx, normsCol, normsRow) // [numHeads, numHeads]
+		if err != nil {
+			return nil, err
+		}
+
+		// Cosine similarity matrix = gram / (normProd + eps)
+		normProdEps, err := rc.engine.AddScalar(ctx, normProd, eps)
+		if err != nil {
+			return nil, err
+		}
+		cosSim, err := rc.engine.Div(ctx, gram, normProdEps)
+		if err != nil {
+			return nil, err
+		}
+
+		// Sum of upper triangle = (sum_all - trace) / 2
+		// For cosine similarity, trace = numHeads (each head with itself = 1.0)
+		sumAll, err := rc.engine.ReduceSum(ctx, cosSim, 1, false) // [numHeads]
+		if err != nil {
+			return nil, err
+		}
+		sumTotal, err := rc.engine.ReduceSum(ctx, sumAll, 0, false) // scalar [1]
+		if err != nil {
+			return nil, err
+		}
+		totalVal := sumTotal.Data()[0]
+		trace := ops.FromFloat64(float64(numHeads))
+		upperTriSum := ops.Div(ops.Sub(totalVal, trace), ops.FromFloat64(2.0))
+		totalSimScalar = ops.Add(totalSimScalar, upperTriSum)
+	}
+
+	loss := ops.Mul(rc.scale, ops.Mul(totalSimScalar, invPairs))
 	return tensor.New[T]([]int{1}, []T{loss})
 }
 
