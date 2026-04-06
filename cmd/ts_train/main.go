@@ -219,7 +219,7 @@ func saveModelGGUF(path string, params []*graph.Parameter[float32]) error {
 }
 
 // computeQuantileLossAndGrad computes QuantileLoss and its gradient w.r.t. model output.
-func computeQuantileLossAndGrad(output, targetTensor *tensor.TensorNumeric[float32], quantiles []float32) (float32, *tensor.TensorNumeric[float32], error) {
+func computeQuantileLossAndGrad(engine compute.Engine[float32], output, targetTensor *tensor.TensorNumeric[float32], quantiles []float32) (float32, *tensor.TensorNumeric[float32], error) {
 	outputData := output.Data()
 	targetData := targetTensor.Data()
 	totalElems := len(outputData)
@@ -241,7 +241,7 @@ func computeQuantileLossAndGrad(output, targetTensor *tensor.TensorNumeric[float
 		return 0, nil, err
 	}
 
-	lossVal, err := loss.QuantileLoss[float32](preds, tgts, quantiles)
+	lossVal, err := loss.QuantileLoss(engine, preds, tgts, quantiles)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -379,7 +379,7 @@ func run() error {
 				return fmt.Errorf("create target tensor: %w", err)
 			}
 
-			lossVal, grad, err := computeQuantileLossAndGrad(output, targetTensor, quantiles)
+			lossVal, grad, err := computeQuantileLossAndGrad(engine, output, targetTensor, quantiles)
 			if err != nil {
 				return fmt.Errorf("loss: %w", err)
 			}
@@ -440,7 +440,7 @@ func run() error {
 				return fmt.Errorf("create val target: %w", err)
 			}
 
-			lossVal, _, err := computeQuantileLossAndGrad(output, targetTensor, quantiles)
+			lossVal, _, err := computeQuantileLossAndGrad(engine, output, targetTensor, quantiles)
 			if err != nil {
 				return fmt.Errorf("val loss: %w", err)
 			}
