@@ -30,8 +30,8 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
 - E61: Inference builder composition (9/10 -- all 6 builders done; vet+linters pass; DGX parity T61.3.2 pending)
 - E62: Auxiliary training package composition (7/7 COMPLETE -- tabular, modeldsl, gnn refactored; tests+validation pass)
-- E63: Quantized matmul consolidation in ztensor (0/5 -- single dispatcher for 16 copy-paste methods)
-- E64: GPU engine file decomposition in ztensor (0/3 -- split 4,318-line god file)
+- E63: Quantized matmul consolidation in ztensor (2/5 -- dispatcher + replacements done ztensor PR #76 v1.4.0; DGX benchmarks + validation pending)
+- E64: GPU engine file decomposition in ztensor (0/3 -- split 3,521-line file, deps on E63)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
 - E67: Timeseries full layers migration (11/11 COMPLETE -- all helpers replaced, attention migrated, validated, files verified)
@@ -1445,7 +1445,7 @@ dispatcher. Target: eliminate ~1,400 lines from gpu_engine.go.
 
 ### E63.1: Design and Implement Dispatcher
 
-- [ ] T63.1.1 Design quantized matmul dispatcher interface  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T63.1.1 Design quantized matmul dispatcher interface  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #76 v1.4.0
   Define a dispatch table or type-switch that maps storage type to:
   (1) GEMV kernel function, (2) dequant kernel function, (3) block size.
   Write the generic `dequantMatMul` function that handles the shared pattern:
@@ -1454,7 +1454,7 @@ dispatcher. Target: eliminate ~1,400 lines from gpu_engine.go.
   Acceptance: compiles. Dispatcher covers all 8 storage types (Q4, Q4K, Q5_0,
   Q5K, Q6K, Q8, BF16, Mmap) and both normal/BWeight variants.
 
-- [ ] T63.1.2 Replace 16 methods with dispatcher calls  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] T63.1.2 Replace 16 methods with dispatcher calls  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #76 v1.4.0 (14/16 methods consolidated, Mmap pair unchanged)
   Deps: T63.1.1
   Replace each of: matMulQ4, matMulQ4BWeight, matMulQ4K, matMulQ4KBWeight,
   matMulQ5_0, matMulQ5_0BWeight, matMulQ5K, matMulQ5KBWeight, matMulQ6K,
@@ -1482,9 +1482,9 @@ dispatcher. Target: eliminate ~1,400 lines from gpu_engine.go.
 
 ### E63 Parallel Work
 
-#### Wave E63-1: Implement (1 agent)
-- [ ] T63.1.1 Design dispatcher
-- [ ] T63.1.2 Replace 16 methods (sequential, same file)
+#### Wave E63-1: Implement (1 agent) -- COMPLETE
+- [x] T63.1.1 Design dispatcher  DONE 2026-04-06
+- [x] T63.1.2 Replace 14 methods (sequential, same file)  DONE 2026-04-06
 
 #### Wave E63-2: Validate (3 agents)
 Deps: Wave E63-1
