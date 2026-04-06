@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -93,7 +95,8 @@ func TestQuantileLoss(t *testing.T) {
 				t.Fatalf("failed to create targets tensor: %v", err)
 			}
 
-			got, err := QuantileLoss[float32](preds, targets, tc.quantiles)
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+			got, err := QuantileLoss(engine, preds, targets, tc.quantiles)
 			if err != nil {
 				t.Fatalf("QuantileLoss returned error: %v", err)
 			}
@@ -102,6 +105,25 @@ func TestQuantileLoss(t *testing.T) {
 				t.Errorf("QuantileLoss = %v, want %v (diff %v)", got, tc.want, diff)
 			}
 		})
+	}
+}
+
+func TestQuantileLoss_Float64(t *testing.T) {
+	engine := compute.NewCPUEngine[float64](numeric.Float64Ops{})
+	preds, err := tensor.New[float64]([]int{2, 1}, []float64{1.0, 2.0})
+	if err != nil {
+		t.Fatalf("failed to create preds: %v", err)
+	}
+	targets, err := tensor.New[float64]([]int{2}, []float64{2.0, 1.0})
+	if err != nil {
+		t.Fatalf("failed to create targets: %v", err)
+	}
+	got, err := QuantileLoss(engine, preds, targets, []float32{0.5})
+	if err != nil {
+		t.Fatalf("QuantileLoss float64 returned error: %v", err)
+	}
+	if diff := math.Abs(float64(got) - 0.5); diff > 1e-6 {
+		t.Errorf("QuantileLoss float64 = %v, want 0.5", got)
 	}
 }
 
