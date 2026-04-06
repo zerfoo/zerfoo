@@ -51,29 +51,21 @@ func buildLlama4Graph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
+	pw := newParamWrapper[float32]()
+
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
-	}
-
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -88,7 +80,7 @@ func buildLlama4Graph(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -101,12 +93,12 @@ func buildLlama4Graph(
 		blkPrefix := fmt.Sprintf("blk.%d.", i)
 
 		// --- Input LayerNorm ---
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -114,19 +106,19 @@ func buildLlama4Graph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -149,19 +141,19 @@ func buildLlama4Graph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)),
 			nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)),
 			nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)),
 			nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)),
 			nil,
 		)
 
@@ -210,7 +202,7 @@ func buildLlama4Graph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Fused Residual Add + Pre-FFN LayerNorm ---
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -240,7 +232,7 @@ func buildLlama4Graph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -259,7 +251,7 @@ func buildLlama4Graph(
 			}
 		}
 	}
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

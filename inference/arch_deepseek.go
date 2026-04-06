@@ -39,29 +39,20 @@ func buildDeepSeekGraph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
-	}
-
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,7 +62,7 @@ func buildDeepSeekGraph(
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup.
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -91,12 +82,12 @@ func buildDeepSeekGraph(
 		blkPrefix := fmt.Sprintf("blk.%d.", i)
 
 		// --- Input LayerNorm ---
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -104,11 +95,11 @@ func buildDeepSeekGraph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- MLA (Multi-head Latent Attention) ---
-		kvAProjW, err := lookup(blkPrefix + "attn_kv_a_proj_with_mqa.weight")
+		kvAProjW, err := tl.Lookup(blkPrefix + "attn_kv_a_proj_with_mqa.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kvBProjW, err := lookup(blkPrefix + "attn_kv_b_proj.weight")
+		kvBProjW, err := tl.Lookup(blkPrefix + "attn_kv_b_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -142,10 +133,10 @@ func buildDeepSeekGraph(
 
 		// Build Dense layers for MLA projections.
 		wQ := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param("q_proj.weight", qProjWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap("q_proj.weight", qProjWT)), nil,
 		)
 		wDKV := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param("kv_a_proj.weight", kvAProjWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap("kv_a_proj.weight", kvAProjWT)), nil,
 		)
 
 		// Split B projection into separate K and V up-projections.
@@ -167,13 +158,13 @@ func buildDeepSeekGraph(
 			return nil, nil, fmt.Errorf("layer %d create uv weight: %w", i, err)
 		}
 		wUK := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param("kv_b_k_proj.weight", ukWeight)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap("kv_b_k_proj.weight", ukWeight)), nil,
 		)
 		wUV := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param("kv_b_v_proj.weight", uvWeight)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap("kv_b_v_proj.weight", uvWeight)), nil,
 		)
 		wO := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param("o_proj.weight", oProjWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap("o_proj.weight", oProjWT)), nil,
 		)
 
 		// RoPE for MLA — applied only to ropeHeadDim dimensions.
@@ -198,7 +189,7 @@ func buildDeepSeekGraph(
 		attnOut := builder.AddNode(mla, normed)
 
 		// --- Fused Residual Add + Pre-FFN LayerNorm ---
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -228,7 +219,7 @@ func buildDeepSeekGraph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -236,7 +227,7 @@ func buildDeepSeekGraph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -296,24 +287,26 @@ func buildDeepSeekMoE(
 		topK = 6
 	}
 
+	tl := newTensorLookup(tensors)
+
 	// Load router weight.
-	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	routerW, err := tl.Lookup(blkPrefix + "ffn_gate_inp.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	// Load stacked expert weights.
-	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	gateExpsW, err := tl.Lookup(blkPrefix + "ffn_gate_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	upExpsW, err := tl.Lookup(blkPrefix + "ffn_up_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	downExpsW, err := tl.Lookup(blkPrefix + "ffn_down_exps.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	// Split stacked expert weights into individual expert FFNs.
@@ -367,17 +360,19 @@ func buildDeepSeekStandardFFN(
 	normed graph.Node[float32],
 	prefix string,
 ) (graph.Node[float32], error) {
-	gateW, ok := tensors[prefix+"mlp.gate_proj.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.gate_proj.weight")
+	tl := newTensorLookup(tensors)
+
+	gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
+	if err != nil {
+		return nil, err
 	}
-	upW, ok := tensors[prefix+"mlp.up_proj.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.up_proj.weight")
+	upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
+	if err != nil {
+		return nil, err
 	}
-	downW, ok := tensors[prefix+"mlp.down_proj.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"mlp.down_proj.weight")
+	downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	ffn, err := core.NewFFN[float32](
@@ -452,9 +447,10 @@ func buildExpertFFN(
 		return nil, err
 	}
 
-	gateParam := &graph.Parameter[float32]{Name: name + "_gate", Value: gateWT}
-	upParam := &graph.Parameter[float32]{Name: name + "_up", Value: upWT}
-	downParam := &graph.Parameter[float32]{Name: name + "_down", Value: downWT}
+	pw := newParamWrapper[float32]()
+	gateParam := pw.Wrap(name+"_gate", gateWT)
+	upParam := pw.Wrap(name+"_up", upWT)
+	downParam := pw.Wrap(name+"_down", downWT)
 
 	w1 := core.NewDenseFromParams(core.NewLinearFromParam(engine, gateParam), nil)
 	w2 := core.NewDenseFromParams(core.NewLinearFromParam(engine, downParam), nil)
@@ -519,17 +515,19 @@ func buildSharedExpertFFN(
 	blkPrefix string,
 	cfg *gguf.ModelConfig,
 ) (*core.FFN[float32], error) {
-	gateW, ok := tensors[blkPrefix+"ffn_shared_expert_gate.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_gate.weight")
+	tl := newTensorLookup(tensors)
+
+	gateW, err := tl.Lookup(blkPrefix + "ffn_shared_expert_gate.weight")
+	if err != nil {
+		return nil, err
 	}
-	upW, ok := tensors[blkPrefix+"ffn_shared_expert_up.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_up.weight")
+	upW, err := tl.Lookup(blkPrefix + "ffn_shared_expert_up.weight")
+	if err != nil {
+		return nil, err
 	}
-	downW, ok := tensors[blkPrefix+"ffn_shared_expert_down.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_shared_expert_down.weight")
+	downW, err := tl.Lookup(blkPrefix + "ffn_shared_expert_down.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	ctx := context.Background()

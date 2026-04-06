@@ -41,12 +41,14 @@ func buildGLM4Graph(
 	cfg *gguf.ModelConfig,
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
@@ -81,29 +83,20 @@ func buildGLM4MoEGraph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
-	}
-
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,7 +114,7 @@ func buildGLM4MoEGraph(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -134,12 +127,12 @@ func buildGLM4MoEGraph(
 		blkPrefix := fmt.Sprintf("blk.%d.", i)
 
 		// --- Input RMSNorm ---
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -147,19 +140,19 @@ func buildGLM4MoEGraph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA with RoPE) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -183,16 +176,16 @@ func buildGLM4MoEGraph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)), nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)), nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)), nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)), nil,
 		)
 
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
@@ -217,7 +210,7 @@ func buildGLM4MoEGraph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Fused Residual Add + Pre-MoE RMSNorm ---
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -240,7 +233,7 @@ func buildGLM4MoEGraph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -248,7 +241,7 @@ func buildGLM4MoEGraph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -273,22 +266,24 @@ func buildGLM4MoE(
 	blkPrefix string,
 	numExperts, topK int,
 ) (graph.Node[float32], error) {
-	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	tl := newTensorLookup(tensors)
+
+	routerW, err := tl.Lookup(blkPrefix + "ffn_gate_inp.weight")
+	if err != nil {
+		return nil, err
 	}
 
-	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	gateExpsW, err := tl.Lookup(blkPrefix + "ffn_gate_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	upExpsW, err := tl.Lookup(blkPrefix + "ffn_up_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	downExpsW, err := tl.Lookup(blkPrefix + "ffn_down_exps.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	experts := make([]graph.Node[float32], numExperts)

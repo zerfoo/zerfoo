@@ -32,13 +32,15 @@ func buildOLMo2Graph(
 	cfg *gguf.ModelConfig,
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// OLMo2 may tie lm_head to embedding weights.
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
@@ -67,17 +69,9 @@ func buildOLMo2TransformerGraph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	pw := newParamWrapper[float32]()
 
 	_, isGPUEngine := engine.(compute.WeightUploader)
 
@@ -85,7 +79,7 @@ func buildOLMo2TransformerGraph(
 		return transposeWeight2D(engine, isGPUEngine, name, t)
 	}
 
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, err
 	}
@@ -110,19 +104,19 @@ func buildOLMo2TransformerGraph(
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
 		// --- Self Attention (no pre-norm in OLMo2) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, err
 		}
@@ -145,19 +139,19 @@ func buildOLMo2TransformerGraph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)),
 			nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)),
 			nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)),
 			nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)),
 			nil,
 		)
 
@@ -212,22 +206,22 @@ func buildOLMo2TransformerGraph(
 		}
 
 		// QK norms.
-		qNormW, err := lookup(prefix + "self_attn.q_norm.weight")
+		qNormW, err := tl.Lookup(prefix + "self_attn.q_norm.weight")
 		if err != nil {
 			return nil, err
 		}
 		qNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"self_attn.q_norm.weight", qNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.q_norm.weight", qNormW),
 		)
 		if err != nil {
 			return nil, err
 		}
-		kNormW, err := lookup(prefix + "self_attn.k_norm.weight")
+		kNormW, err := tl.Lookup(prefix + "self_attn.k_norm.weight")
 		if err != nil {
 			return nil, err
 		}
 		kNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"self_attn.k_norm.weight", kNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.k_norm.weight", kNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -238,7 +232,7 @@ func buildOLMo2TransformerGraph(
 		attnOut := builder.AddNode(gqa, hidden)
 
 		// --- Post-Attention Norm: RMSNorm(attnOut) + residual ---
-		postAttnNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postAttnNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, err
 		}
@@ -246,15 +240,15 @@ func buildOLMo2TransformerGraph(
 		hidden = builder.AddNode(postAttnFused, attnOut, hidden)
 
 		// --- FFN (SwiGLU, no pre-norm in OLMo2) ---
-		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
+		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		upW, err := lookup(prefix + "mlp.up_proj.weight")
+		upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		downW, err := lookup(prefix + "mlp.down_proj.weight")
+		downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
 		if err != nil {
 			return nil, err
 		}
@@ -317,7 +311,7 @@ func buildOLMo2TransformerGraph(
 		ffnOut := builder.AddNode(ffn, hidden)
 
 		// --- Post-FFN Norm: RMSNorm(ffnOut) + residual ---
-		postFfnNormW, err := lookup(prefix + "post_feedforward_layernorm.weight")
+		postFfnNormW, err := tl.Lookup(prefix + "post_feedforward_layernorm.weight")
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +321,7 @@ func buildOLMo2TransformerGraph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, err
@@ -346,7 +340,7 @@ func buildOLMo2TransformerGraph(
 			}
 		}
 	}
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

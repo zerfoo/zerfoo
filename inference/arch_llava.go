@@ -158,36 +158,39 @@ func BuildLLaVAModel(
 		return nil, nil, fmt.Errorf("load clip weights: %w", err)
 	}
 
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
+
 	// Load multi-modal projector weights.
-	projW0, ok := tensors["mm_projector.0.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm_projector.0.weight")
+	projW0, err := tl.Lookup("mm_projector.0.weight")
+	if err != nil {
+		return nil, nil, err
 	}
-	projB0, ok := tensors["mm_projector.0.bias"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm_projector.0.bias")
+	projB0, err := tl.Lookup("mm_projector.0.bias")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var projW2, projB2 *tensor.TensorNumeric[float32]
 	if lc.ProjectorType == "mlp" {
-		var okW, okB bool
-		projW2, okW = tensors["mm_projector.2.weight"]
-		projB2, okB = tensors["mm_projector.2.bias"]
-		if !okW {
-			return nil, nil, fmt.Errorf("missing tensor %q", "mm_projector.2.weight")
+		var lookupErr error
+		projW2, lookupErr = tl.Lookup("mm_projector.2.weight")
+		if lookupErr != nil {
+			return nil, nil, lookupErr
 		}
-		if !okB {
-			return nil, nil, fmt.Errorf("missing tensor %q", "mm_projector.2.bias")
+		projB2, lookupErr = tl.Lookup("mm_projector.2.bias")
+		if lookupErr != nil {
+			return nil, nil, lookupErr
 		}
 	}
 
 	// Get text model embedding weight.
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
@@ -195,18 +198,6 @@ func BuildLLaVAModel(
 	rmsEps := float32(1e-5)
 	if cfg.RMSNormEps > 0 {
 		rmsEps = cfg.RMSNormEps
-	}
-
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
-
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
 	}
 
 	_, isGPUEngine := engine.(compute.WeightUploader)
@@ -249,12 +240,12 @@ func BuildLLaVAModel(
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
 		// --- Input LayerNorm ---
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -262,19 +253,19 @@ func BuildLLaVAModel(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA with RoPE, composed from layers/) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -297,16 +288,16 @@ func BuildLLaVAModel(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)), nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)), nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)), nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)), nil,
 		)
 
 		rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
@@ -328,7 +319,7 @@ func BuildLLaVAModel(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Fused Residual Add + Pre-FFN RMSNorm ---
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -336,15 +327,15 @@ func BuildLLaVAModel(
 		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
 
 		// --- FFN (SwiGLU, composed from layers/) ---
-		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
+		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		upW, err := lookup(prefix + "mlp.up_proj.weight")
+		upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		downW, err := lookup(prefix + "mlp.down_proj.weight")
+		downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -385,12 +376,12 @@ func BuildLLaVAModel(
 	}
 
 	// --- Final RMSNorm ---
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -398,7 +389,7 @@ func BuildLLaVAModel(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

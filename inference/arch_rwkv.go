@@ -98,29 +98,20 @@ func BuildRWKV(
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	ops := numeric.Float32Ops{}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, err := lookup("token_embd.weight")
+	embedWeight, err := tl.Lookup("token_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	lmHeadWeight, ok := tensors["output.weight"]
+	lmHeadWeight, ok := tl.Optional("output.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	outputNormWeight, err := lookup("output_norm.weight")
+	outputNormWeight, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -139,7 +130,7 @@ func BuildRWKV(
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup.
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	// Layer 0 pre-LN (ln0) applied to embeddings in RWKV.
@@ -155,8 +146,8 @@ func BuildRWKV(
 		ln0Node := normalization.NewLayerNormalizationFromParams[float32](
 			proxy,
 			rc.LayerNormEps,
-			param("blocks.0.ln0.weight", ln0W),
-			param("blocks.0.ln0.bias", ln0B),
+			pw.Wrap("blocks.0.ln0.weight", ln0W),
+			pw.Wrap("blocks.0.ln0.bias", ln0B),
 		)
 		hidden = builder.AddNode(ln0Node, hidden)
 	}
@@ -165,7 +156,7 @@ func BuildRWKV(
 		prefix := fmt.Sprintf("blocks.%d.", i)
 
 		// Time mixing (WKV attention).
-		ln1W, err := lookup(prefix + "ln1.weight")
+		ln1W, err := tl.Lookup(prefix + "ln1.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -181,8 +172,8 @@ func BuildRWKV(
 		ln1Node := normalization.NewLayerNormalizationFromParams[float32](
 			proxy,
 			rc.LayerNormEps,
-			param(prefix+"ln1.weight", ln1W),
-			param(prefix+"ln1.bias", ln1B),
+			pw.Wrap(prefix+"ln1.weight", ln1W),
+			pw.Wrap(prefix+"ln1.bias", ln1B),
 		)
 		normed1 := builder.AddNode(ln1Node, hidden)
 
@@ -207,7 +198,7 @@ func BuildRWKV(
 		hidden = builder.AddNode(resAdd1, timeMixOut, hidden)
 
 		// Channel mixing (FFN-like).
-		ln2W, err := lookup(prefix + "ln2.weight")
+		ln2W, err := tl.Lookup(prefix + "ln2.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -223,8 +214,8 @@ func BuildRWKV(
 		ln2Node := normalization.NewLayerNormalizationFromParams[float32](
 			proxy,
 			rc.LayerNormEps,
-			param(prefix+"ln2.weight", ln2W),
-			param(prefix+"ln2.bias", ln2B),
+			pw.Wrap(prefix+"ln2.weight", ln2W),
+			pw.Wrap(prefix+"ln2.bias", ln2B),
 		)
 		normed2 := builder.AddNode(ln2Node, hidden)
 
@@ -249,13 +240,13 @@ func BuildRWKV(
 	finalNormNode := normalization.NewLayerNormalizationFromParams[float32](
 		proxy,
 		rc.LayerNormEps,
-		param("output_norm.weight", outputNormWeight),
-		param("output_norm.bias", outputNormBias),
+		pw.Wrap("output_norm.weight", outputNormWeight),
+		pw.Wrap("output_norm.bias", outputNormBias),
 	)
 	normedFinal := builder.AddNode(finalNormNode, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -299,18 +290,10 @@ func loadRWKVTimeMixWeights(
 	rc RWKVConfig,
 ) (*rwkvTimeMixWeights[float32], error) {
 	p := prefix + "att."
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	load := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	load := tl.Lookup
 
 	// Load required tensors.
 	timeMixR, err := load(p + "time_mix_r")
@@ -365,39 +348,39 @@ func loadRWKVTimeMixWeights(
 	}
 
 	w := &rwkvTimeMixWeights[float32]{
-		timeMixR:   param(p+"time_mix_r", timeMixR),
-		timeMixK:   param(p+"time_mix_k", timeMixK),
-		timeMixV:   param(p+"time_mix_v", timeMixV),
-		timeDecay:  param(p+"time_decay", timeDecay),
-		receptance: param(p+"receptance.weight", receptanceWT),
-		key:        param(p+"key.weight", keyWT),
-		value:      param(p+"value.weight", valueWT),
-		output:     param(p+"output.weight", outputWT),
+		timeMixR:   pw.Wrap(p+"time_mix_r", timeMixR),
+		timeMixK:   pw.Wrap(p+"time_mix_k", timeMixK),
+		timeMixV:   pw.Wrap(p+"time_mix_v", timeMixV),
+		timeDecay:  pw.Wrap(p+"time_decay", timeDecay),
+		receptance: pw.Wrap(p+"receptance.weight", receptanceWT),
+		key:        pw.Wrap(p+"key.weight", keyWT),
+		value:      pw.Wrap(p+"value.weight", valueWT),
+		output:     pw.Wrap(p+"output.weight", outputWT),
 	}
 
 	// Optional: time_mix_g and gate (RWKV-6 gated variant).
 	if tmG, ok := tensors[p+"time_mix_g"]; ok {
-		w.timeMixG = param(p+"time_mix_g", tmG)
+		w.timeMixG = pw.Wrap(p+"time_mix_g", tmG)
 	}
 	if gateW, ok := tensors[p+"gate.weight"]; ok {
 		gateWT, tErr := cpuTranspose2D(gateW)
 		if tErr != nil {
 			return nil, fmt.Errorf("transpose gate: %w", tErr)
 		}
-		w.gate = param(p+"gate.weight", gateWT)
+		w.gate = pw.Wrap(p+"gate.weight", gateWT)
 	}
 
 	// time_faaaa: initial state (optional, RWKV-6).
 	if tf, ok := tensors[p+"time_faaaa"]; ok {
-		w.timeFaaaa = param(p+"time_faaaa", tf)
+		w.timeFaaaa = pw.Wrap(p+"time_faaaa", tf)
 	}
 
 	// ln_x: group norm inside time mixing output (RWKV-6).
 	if lnXW, ok := tensors[p+"ln_x.weight"]; ok {
-		w.lnXWeight = param(p+"ln_x.weight", lnXW)
+		w.lnXWeight = pw.Wrap(p+"ln_x.weight", lnXW)
 	}
 	if lnXB, ok := tensors[p+"ln_x.bias"]; ok {
-		w.lnXBias = param(p+"ln_x.bias", lnXB)
+		w.lnXBias = pw.Wrap(p+"ln_x.bias", lnXB)
 	}
 
 	return w, nil
@@ -408,18 +391,10 @@ func loadRWKVChannelMixWeights(
 	prefix string,
 ) (*rwkvChannelMixWeights[float32], error) {
 	p := prefix + "ffn."
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	load := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	load := tl.Lookup
 
 	timeMixK, err := load(p + "time_mix_k")
 	if err != nil {
@@ -457,11 +432,11 @@ func loadRWKVChannelMixWeights(
 	}
 
 	return &rwkvChannelMixWeights[float32]{
-		timeMixK:   param(p+"time_mix_k", timeMixK),
-		timeMixR:   param(p+"time_mix_r", timeMixR),
-		key:        param(p+"key.weight", keyWT),
-		value:      param(p+"value.weight", valueWT),
-		receptance: param(p+"receptance.weight", receptanceWT),
+		timeMixK:   pw.Wrap(p+"time_mix_k", timeMixK),
+		timeMixR:   pw.Wrap(p+"time_mix_r", timeMixR),
+		key:        pw.Wrap(p+"key.weight", keyWT),
+		value:      pw.Wrap(p+"value.weight", valueWT),
+		receptance: pw.Wrap(p+"receptance.weight", receptanceWT),
 	}, nil
 }
 

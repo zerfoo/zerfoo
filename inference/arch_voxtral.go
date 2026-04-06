@@ -148,31 +148,34 @@ func BuildVoxtralModel(
 		return nil, nil, fmt.Errorf("load voxtral encoder weights: %w", err)
 	}
 
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
+
 	// Load adapter MLP weights.
-	adapterW0, ok := tensors["mm.a.mlp.0.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm.a.mlp.0.weight")
+	adapterW0, err := tl.Lookup("mm.a.mlp.0.weight")
+	if err != nil {
+		return nil, nil, err
 	}
-	adapterB0, ok := tensors["mm.a.mlp.0.bias"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm.a.mlp.0.bias")
+	adapterB0, err := tl.Lookup("mm.a.mlp.0.bias")
+	if err != nil {
+		return nil, nil, err
 	}
-	adapterW2, ok := tensors["mm.a.mlp.2.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm.a.mlp.2.weight")
+	adapterW2, err := tl.Lookup("mm.a.mlp.2.weight")
+	if err != nil {
+		return nil, nil, err
 	}
-	adapterB2, ok := tensors["mm.a.mlp.2.bias"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "mm.a.mlp.2.bias")
+	adapterB2, err := tl.Lookup("mm.a.mlp.2.bias")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Get text model embedding weight.
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
@@ -208,18 +211,6 @@ func BuildVoxtralModel(
 
 	hidden := adapterOut
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
-
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
 	headDim := cfg.HiddenSize / cfg.NumHeads
 	if cfg.HeadDim > 0 {
 		headDim = cfg.HeadDim
@@ -228,30 +219,30 @@ func BuildVoxtralModel(
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		inputNorm, err := newVisionRMSNorm(proxy, rmsEps, param(prefix+"input_layernorm.weight", inputNormW))
+		inputNorm, err := newVisionRMSNorm(proxy, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW))
 		if err != nil {
 			return nil, nil, err
 		}
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// GQA attention (same as Llama).
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -259,7 +250,7 @@ func BuildVoxtralModel(
 		attnNode, err := newVisionGQA(
 			proxy,
 			cfg.HiddenSize, cfg.NumHeads, cfg.NumKVHeads, headDim, cfg.MaxSeqLen,
-			cfg.RopeTheta, qW, kW, vW, oW, prefix, param,
+			cfg.RopeTheta, qW, kW, vW, oW, prefix, pw,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, err)
@@ -267,7 +258,7 @@ func BuildVoxtralModel(
 		attnOut := builder.AddNode(attnNode, normed)
 
 		// Fused residual add + pre-FFN RMSNorm.
-		postNormW, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -275,15 +266,15 @@ func BuildVoxtralModel(
 		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
 
 		// FFN (SwiGLU).
-		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
+		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		upW, err := lookup(prefix + "mlp.up_proj.weight")
+		upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		downW, err := lookup(prefix + "mlp.down_proj.weight")
+		downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -299,18 +290,18 @@ func BuildVoxtralModel(
 	}
 
 	// Final RMSNorm.
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	finalNorm, err := newVisionRMSNorm(proxy, rmsEps, param("model.norm.weight", finalNormWeight))
+	finalNorm, err := newVisionRMSNorm(proxy, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight))
 	if err != nil {
 		return nil, nil, err
 	}
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
