@@ -314,34 +314,53 @@ func (m *MLSTM[T]) Forward(
 	}
 
 	// Update matrix cell state: C_t = f_t * C_{t-1} + i_t * (v_t * k_t^T)
-	// The cell state is [batch, d, d]. The engine's MatMul only handles 2D,
-	// so we process each batch element separately using engine ops.
-	cOutData := make([]T, batch*d*d)
+	// The engine's MatMul only handles 2D, so we split along batch axis
+	// and process each batch element separately.
+	vtSlices, err := eng.Split(ctx, vt, batch, 0) // batch * [1, d]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split vt: %w", err)
+	}
+	ktSlices, err := eng.Split(ctx, kt, batch, 0)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split kt: %w", err)
+	}
+	iSlices, err := eng.Split(ctx, iGate, batch, 0) // batch * [1, 1]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split iGate: %w", err)
+	}
+	fSlices, err := eng.Split(ctx, fGate, batch, 0)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split fGate: %w", err)
+	}
+	cPrevSlices, err := eng.Split(ctx, cPrev, batch, 0) // batch * [1, d, d]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split cPrev: %w", err)
+	}
+
+	cOutSlices := make([]*tensor.TensorNumeric[T], batch)
 	for b := 0; b < batch; b++ {
-		// Extract v[b,:] as [d, 1] and k[b,:] as [1, d] for outer product.
-		vb, err := tensor.New[T]([]int{d, 1}, vt.Data()[b*d:(b+1)*d])
+		// Reshape v[b] to [d, 1] and k[b] to [1, d] for outer product.
+		vb, err := eng.Reshape(ctx, vtSlices[b], []int{d, 1})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create vb tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape vb: %w", err)
 		}
-		kb, err := tensor.New[T]([]int{1, d}, kt.Data()[b*d:(b+1)*d])
+		kb, err := eng.Reshape(ctx, ktSlices[b], []int{1, d})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create kb tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape kb: %w", err)
 		}
 
-		// Outer product: v_t * k_t^T = [d, 1] * [1, d] = [d, d]
-		outerProd, err := eng.MatMul(ctx, vb, kb)
+		outerProd, err := eng.MatMul(ctx, vb, kb) // [d, d]
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(v, k^T): %w", err)
 		}
 
-		// Extract scalar gate values for this batch element.
-		ib := iGate.Data()[b]
-		fb := fGate.Data()[b]
+		// Extract scalar gate values (1-element tensors).
+		ib := iSlices[b].Data()[0]
+		fb := fSlices[b].Data()[0]
 
-		// C_t = f * C_{t-1} + i * (v * k^T)
-		cPrevB, err := tensor.New[T]([]int{d, d}, cPrev.Data()[b*d*d:(b+1)*d*d])
+		cPrevB, err := eng.Reshape(ctx, cPrevSlices[b], []int{d, d})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create cPrevB tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape cPrevB: %w", err)
 		}
 		fC, err := eng.MulScalar(ctx, cPrevB, fb)
 		if err != nil {
@@ -351,59 +370,87 @@ func (m *MLSTM[T]) Forward(
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("MLSTM: MulScalar(outer, i): %w", err)
 		}
-		cNewB, err := eng.Add(ctx, fC, iVK)
+		cNewB, err := eng.Add(ctx, fC, iVK) // [d, d]
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("MLSTM: Add(fC, iVK): %w", err)
 		}
-		copy(cOutData[b*d*d:(b+1)*d*d], cNewB.Data())
+		// Reshape to [1, d, d] for concatenation
+		cNewB3D, err := eng.Reshape(ctx, cNewB, []int{1, d, d})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape cNewB: %w", err)
+		}
+		cOutSlices[b] = cNewB3D
 	}
 
-	cOut, err = tensor.New[T]([]int{batch, d, d}, cOutData)
+	cOut, err = eng.Concat(ctx, cOutSlices, 0) // [batch, d, d]
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("MLSTM: create C tensor: %w", err)
+		return nil, nil, nil, fmt.Errorf("MLSTM: concat C: %w", err)
 	}
 
 	// Compute h_t = o_t * (C_t * q_t) / max(|n_t^T * q_t|, 1)
 	// Process per batch since C is 3D and q is 2D.
-	hOutData := make([]T, batch*d)
+	qtSlices, err := eng.Split(ctx, qt, batch, 0) // batch * [1, d]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split qt: %w", err)
+	}
+	nOutSlices, err := eng.Split(ctx, nOut, batch, 0)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split nOut: %w", err)
+	}
+	oSlices, err := eng.Split(ctx, oGate, batch, 0) // batch * [1, 1]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split oGate: %w", err)
+	}
+	cOutSplits, err := eng.Split(ctx, cOut, batch, 0) // batch * [1, d, d]
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("MLSTM: split cOut: %w", err)
+	}
+
+	hSlices := make([]*tensor.TensorNumeric[T], batch)
 	for b := 0; b < batch; b++ {
-		// C[b] is [d, d], q[b] is [d] → reshape to [d, 1] for MatMul → [d, 1]
-		cB, err := tensor.New[T]([]int{d, d}, cOutData[b*d*d:(b+1)*d*d])
+		cB, err := eng.Reshape(ctx, cOutSplits[b], []int{d, d})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create cB tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape cB: %w", err)
 		}
-		qb, err := tensor.New[T]([]int{d, 1}, qt.Data()[b*d:(b+1)*d])
+		qb, err := eng.Reshape(ctx, qtSlices[b], []int{d, 1})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create qb tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape qb: %w", err)
 		}
-		// C_t * q_t: [d, d] * [d, 1] = [d, 1]
-		cq, err := eng.MatMul(ctx, cB, qb)
+
+		cq, err := eng.MatMul(ctx, cB, qb) // [d, 1]
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(C, q): %w", err)
 		}
 
-		// n_t^T * q_t: dot product of n[b,:] and q[b,:]
-		nb, err := tensor.New[T]([]int{1, d}, nOut.Data()[b*d:(b+1)*d])
+		// n_t^T * q_t: dot product
+		nb, err := eng.Reshape(ctx, nOutSlices[b], []int{1, d})
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("MLSTM: create nb tensor: %w", err)
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape nb: %w", err)
 		}
-		nqTensor, err := eng.MatMul(ctx, nb, qb)
+		nqTensor, err := eng.MatMul(ctx, nb, qb) // [1, 1]
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("MLSTM: MatMul(n, q): %w", err)
 		}
-		nqVal := float64(nqTensor.Data()[0])
+		nqVal := float64(nqTensor.Data()[0]) // scalar extraction
 		denom := math.Max(math.Abs(nqVal), 1.0)
 
-		ob := float64(oGate.Data()[b])
-		cqData := cq.Data()
-		for j := 0; j < d; j++ {
-			hOutData[b*d+j] = T(ob * float64(cqData[j]) / denom)
+		ob := float64(oSlices[b].Data()[0]) // scalar extraction
+
+		// h[b] = o * (C*q) / denom
+		cqFlat, err := eng.Reshape(ctx, cq, []int{1, d}) // [1, d]
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: reshape cq: %w", err)
 		}
+		scaledCQ, err := eng.MulScalar(ctx, cqFlat, ops.FromFloat64(ob/denom))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("MLSTM: scale h: %w", err)
+		}
+		hSlices[b] = scaledCQ
 	}
 
-	h, err = tensor.New[T]([]int{batch, d}, hOutData)
+	h, err = eng.Concat(ctx, hSlices, 0) // [batch, d]
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("MLSTM: create h tensor: %w", err)
+		return nil, nil, nil, fmt.Errorf("MLSTM: concat h: %w", err)
 	}
 
 	return h, cOut, nOut, nil
