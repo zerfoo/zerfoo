@@ -91,56 +91,36 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 		return nil, err
 	}
 
-	// Gather negative log-probabilities for target classes
-	// -log(softmax(predictions)[target_index])
-	// This requires a gather operation on logSoftmaxOutput using targets as indices.
-	// The result will be (batch_size, seq_len) if predictions are (batch_size, seq_len, vocab_size)
-	gatheredLossShape := targets.Shape()
+	// Gather negative log-probabilities for the target class at each position.
+	// logSoftmaxOutput shape: [batch, classes] or [batch, seq, vocab]
+	// targets shape: [batch] or [batch, seq]
+	// We index the last axis of logSoftmaxOutput using targets.
+	pShape := predictions.Shape()
+	lastDim := pShape[len(pShape)-1]
+	logData := logSoftmaxOutput.Data()
+	tgtData := targets.Data()
 
-	gatheredLoss, err := tensor.New[T](gatheredLossShape, nil) // Create a new tensor for gatheredLoss
+	// Number of elements to gather equals the total number of target indices.
+	n := 1
+	for _, d := range targets.Shape() {
+		n *= d
+	}
+
+	// Sum -log(softmax[target]) over all positions and average.
+	ops := cel.engine.Ops()
+	var sumNegLogProb T
+	for i := 0; i < n; i++ {
+		idx := tgtData[i]
+		sumNegLogProb = ops.Sub(sumNegLogProb, logData[i*lastDim+idx])
+	}
+	avgLoss := ops.Div(sumNegLogProb, ops.FromFloat64(float64(n)))
+
+	result, err := tensor.New[T]([]int{1}, []T{avgLoss})
 	if err != nil {
 		return nil, err
 	}
 
-	err = cel.engine.Gather(ctx, logSoftmaxOutput, targets, gatheredLoss)
-	if err != nil {
-		return nil, err
-	}
-
-	// Sum all elements by reducing each axis iteratively.
-	// NOTE: ztensor ReduceSum treats axis=-1 as "sum all axes at once" (bug),
-	// not as the last axis (Python convention). Use explicit positive indices.
-	reduced := gatheredLoss
-	for dim := len(gatheredLoss.Shape()) - 1; dim >= 0; dim-- {
-		reduced, err = cel.engine.ReduceSum(ctx, reduced, dim, false, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	totalLoss := reduced
-
-	// Negate the sum
-	negatedLoss, err := cel.engine.MulScalar(ctx, totalLoss, cel.engine.Ops().FromFloat64(-1.0), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Average loss over batch size and sequence length
-	// Compute denominator as float64 and convert once.
-	denomF64 := 1.0
-	for _, dim := range predictions.Shape() {
-		denomF64 *= float64(dim)
-	}
-	// Divide by vocab size to get average per token
-	denomF64 /= float64(predictions.Shape()[len(predictions.Shape())-1])
-	denom := cel.engine.Ops().FromFloat64(denomF64)
-
-	averageLoss, err := cel.engine.DivScalar(ctx, negatedLoss, denom, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return averageLoss, nil
+	return result, nil
 }
 
 // Backward computes the gradients for CrossEntropyLoss.
@@ -174,6 +154,11 @@ func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMo
 
 	// Loss function does not pass gradients back to targets (they are ground truth).
 	return []*tensor.TensorNumeric[T]{finalGradPredictions, nil}, nil
+}
+
+// SoftmaxOutput returns the cached softmax output from the most recent Forward call.
+func (cel *CrossEntropyLoss[T]) SoftmaxOutput() *tensor.TensorNumeric[T] {
+	return cel.softmaxOutput
 }
 
 // OpType returns the operation type of the CrossEntropyLoss layer.
