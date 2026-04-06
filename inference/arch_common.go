@@ -117,17 +117,9 @@ func buildTransformerGraph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
-
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	// Use canonical helpers from builder_helpers.go.
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
 	_, isGPUEngine := engine.(compute.WeightUploader)
 
@@ -135,7 +127,7 @@ func buildTransformerGraph(
 		return transposeWeight2D(engine, isGPUEngine, name, t)
 	}
 
-	finalNormWeight, err := lookup("model.norm.weight")
+	finalNormWeight, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, err
 	}
@@ -148,11 +140,7 @@ func buildTransformerGraph(
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup: token IDs -> [1, seqLen, hiddenSize].
-	embNode := &embeddingLookupNode[float32]{
-		engine: proxy,
-		weight: embedWeight,
-		scale:  opts.embedScale,
-	}
+	embNode := newEmbeddingNode(proxy, embedWeight, opts.embedScale)
 	hidden := builder.AddNode(embNode, input)
 	headDim := cfg.HiddenSize / cfg.NumHeads
 	if cfg.HeadDim > 0 {
@@ -163,12 +151,12 @@ func buildTransformerGraph(
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
 		// --- Input LayerNorm ---
-		inputNormW, err := lookup(prefix + "input_layernorm.weight")
+		inputNormW, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(prefix+"input_layernorm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(prefix+"input_layernorm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, err
@@ -178,7 +166,7 @@ func buildTransformerGraph(
 		// --- Self Attention ---
 		// Check for TransMLA tensors: if present, use MLA instead of GQA.
 		transMLAPrefix := fmt.Sprintf("transmla.%d.", i)
-		_, hasTransMLA := tensors[transMLAPrefix+"wDKV"]
+		hasTransMLA := tl.Has(transMLAPrefix + "wDKV")
 
 		// Select RoPE base: global vs local based on layer pattern.
 		ropeBase := cfg.RopeTheta
@@ -204,23 +192,23 @@ func buildTransformerGraph(
 		var attnOut graph.Node[float32]
 		if hasTransMLA && cfg.TransMLAKVLoraDim > 0 {
 			// --- TransMLA path: use MultiHeadLatentAttention ---
-			qW, qErr := lookup(prefix + "self_attn.q_proj.weight")
+			qW, qErr := tl.Lookup(prefix + "self_attn.q_proj.weight")
 			if qErr != nil {
 				return nil, qErr
 			}
-			oW, oErr := lookup(prefix + "self_attn.o_proj.weight")
+			oW, oErr := tl.Lookup(prefix + "self_attn.o_proj.weight")
 			if oErr != nil {
 				return nil, oErr
 			}
-			dkvW, dkvErr := lookup(transMLAPrefix + "wDKV")
+			dkvW, dkvErr := tl.Lookup(transMLAPrefix + "wDKV")
 			if dkvErr != nil {
 				return nil, dkvErr
 			}
-			ukW, ukErr := lookup(transMLAPrefix + "wUK")
+			ukW, ukErr := tl.Lookup(transMLAPrefix + "wUK")
 			if ukErr != nil {
 				return nil, ukErr
 			}
-			uvW, uvErr := lookup(transMLAPrefix + "wUV")
+			uvW, uvErr := tl.Lookup(transMLAPrefix + "wUV")
 			if uvErr != nil {
 				return nil, uvErr
 			}
@@ -248,19 +236,19 @@ func buildTransformerGraph(
 			}
 
 			wQ := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)), nil,
 			)
 			wDKV := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wDKV", dkvW)), nil,
+				core.NewLinearFromParam(proxy, pw.Wrap(transMLAPrefix+"wDKV", dkvW)), nil,
 			)
 			wUK := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wUK", ukWT)), nil,
+				core.NewLinearFromParam(proxy, pw.Wrap(transMLAPrefix+"wUK", ukWT)), nil,
 			)
 			wUV := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(transMLAPrefix+"wUV", uvWT)), nil,
+				core.NewLinearFromParam(proxy, pw.Wrap(transMLAPrefix+"wUV", uvWT)), nil,
 			)
 			wO := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)), nil,
 			)
 
 			mla := attention.NewMultiHeadLatentAttention[float32](
@@ -270,19 +258,19 @@ func buildTransformerGraph(
 			attnOut = builder.AddNode(mla, normed)
 		} else {
 			// --- Standard GQA path ---
-			qW, qErr := lookup(prefix + "self_attn.q_proj.weight")
+			qW, qErr := tl.Lookup(prefix + "self_attn.q_proj.weight")
 			if qErr != nil {
 				return nil, qErr
 			}
-			kW, kErr := lookup(prefix + "self_attn.k_proj.weight")
+			kW, kErr := tl.Lookup(prefix + "self_attn.k_proj.weight")
 			if kErr != nil {
 				return nil, kErr
 			}
-			vW, vErr := lookup(prefix + "self_attn.v_proj.weight")
+			vW, vErr := tl.Lookup(prefix + "self_attn.v_proj.weight")
 			if vErr != nil {
 				return nil, vErr
 			}
-			oW, oErr := lookup(prefix + "self_attn.o_proj.weight")
+			oW, oErr := tl.Lookup(prefix + "self_attn.o_proj.weight")
 			if oErr != nil {
 				return nil, oErr
 			}
@@ -307,30 +295,30 @@ func buildTransformerGraph(
 			// Build Q/K/V/O Dense layers, optionally with attention bias (Qwen 2).
 			var qBias, kBias, vBias *core.Bias[float32]
 			if opts.attnBias {
-				if qB, ok := tensors[prefix+"self_attn.q_proj.bias"]; ok {
-					qBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.q_proj.bias", qB))
+				if qB, ok := tl.Optional(prefix + "self_attn.q_proj.bias"); ok {
+					qBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"self_attn.q_proj.bias", qB))
 				}
-				if kB, ok := tensors[prefix+"self_attn.k_proj.bias"]; ok {
-					kBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.k_proj.bias", kB))
+				if kB, ok := tl.Optional(prefix + "self_attn.k_proj.bias"); ok {
+					kBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"self_attn.k_proj.bias", kB))
 				}
-				if vB, ok := tensors[prefix+"self_attn.v_proj.bias"]; ok {
-					vBias = core.NewBiasFromParam(proxy, ops, param(prefix+"self_attn.v_proj.bias", vB))
+				if vB, ok := tl.Optional(prefix + "self_attn.v_proj.bias"); ok {
+					vBias = core.NewBiasFromParam(proxy, ops, pw.Wrap(prefix+"self_attn.v_proj.bias", vB))
 				}
 			}
 			wq := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)),
 				qBias,
 			)
 			wk := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)),
 				kBias,
 			)
 			wv := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)),
 				vBias,
 			)
 			wo := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)),
 				nil,
 			)
 
@@ -385,22 +373,22 @@ func buildTransformerGraph(
 
 			// Set Q/K norms if enabled (Gemma 3).
 			if opts.qkNorm {
-				qNormW, lookupErr := lookup(prefix + "self_attn.q_norm.weight")
+				qNormW, lookupErr := tl.Lookup(prefix + "self_attn.q_norm.weight")
 				if lookupErr != nil {
 					return nil, lookupErr
 				}
 				qNorm, normErr := normalization.NewRMSNormFromParam[float32](
-					proxy, ops, rmsEps, param(prefix+"self_attn.q_norm.weight", qNormW),
+					proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.q_norm.weight", qNormW),
 				)
 				if normErr != nil {
 					return nil, normErr
 				}
-				kNormW, lookupErr := lookup(prefix + "self_attn.k_norm.weight")
+				kNormW, lookupErr := tl.Lookup(prefix + "self_attn.k_norm.weight")
 				if lookupErr != nil {
 					return nil, lookupErr
 				}
 				kNorm, normErr := normalization.NewRMSNormFromParam[float32](
-					proxy, ops, rmsEps, param(prefix+"self_attn.k_norm.weight", kNormW),
+					proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.k_norm.weight", kNormW),
 				)
 				if normErr != nil {
 					return nil, normErr
@@ -414,12 +402,12 @@ func buildTransformerGraph(
 
 		// --- Post-Attention Norm (Gemma 3: normalize before residual add) ---
 		if opts.postNorm {
-			postAttnNormW, lookupErr := lookup(prefix + "post_attention_layernorm.weight")
+			postAttnNormW, lookupErr := tl.Lookup(prefix + "post_attention_layernorm.weight")
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
 			postAttnNorm, normErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, rmsEps, param(prefix+"post_attention_layernorm.weight", postAttnNormW),
+				proxy, ops, rmsEps, pw.Wrap(prefix+"post_attention_layernorm.weight", postAttnNormW),
 			)
 			if normErr != nil {
 				return nil, normErr
@@ -437,7 +425,7 @@ func buildTransformerGraph(
 		} else {
 			preFfnNormKey = prefix + "post_attention_layernorm.weight"
 		}
-		postNormW, err := lookup(preFfnNormKey)
+		postNormW, err := tl.Lookup(preFfnNormKey)
 		if err != nil {
 			return nil, err
 		}
@@ -445,15 +433,15 @@ func buildTransformerGraph(
 		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
 
 		// --- FFN (SwiGLU) ---
-		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
+		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		upW, err := lookup(prefix + "mlp.up_proj.weight")
+		upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
 		if err != nil {
 			return nil, err
 		}
-		downW, err := lookup(prefix + "mlp.down_proj.weight")
+		downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +507,7 @@ func buildTransformerGraph(
 		// When postNorm is enabled (Gemma 3), fuse RMSNorm(ffnOut) + Add(result, residual)
 		// into a single kernel launch, replacing 2 separate launches.
 		if opts.postNorm {
-			postFfnNormW, lookupErr := lookup(prefix + "post_feedforward_layernorm.weight")
+			postFfnNormW, lookupErr := tl.Lookup(prefix + "post_feedforward_layernorm.weight")
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -539,7 +527,7 @@ func buildTransformerGraph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("model.norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("model.norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, err
@@ -561,7 +549,7 @@ func buildTransformerGraph(
 			}
 		}
 	}
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight, softcapVal: opts.logitSoftcap}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, opts.logitSoftcap)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
