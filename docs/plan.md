@@ -44,13 +44,13 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
-- E77: Tabular package composition migration (4/9 -- ft_transformer + saint + tabnet + resnet PR #334/#336)
-- E78: Layers internal violations cleanup (3/11 -- clip_encoder patch+attention+QuickGELU PR #334/#336)
-- E79: Generate package refactoring (4/7 -- cache provider + decode step + sampleFromLogits + stream dedup PR #334/#336)
-- E80: Inference builder boilerplate extraction (3/8 -- tensorLookup/paramWrapper + transposeWeight + embedding/LMHead PR #334/#336)
+- E77: Tabular package composition migration (6/9 -- all file migrations done; cleanup+validation pending)
+- E78: Layers internal violations cleanup (9/11 -- all file fixes done; validation pending)
+- E79: Generate package refactoring (5/7 -- all extractions done; validation pending)
+- E80: Inference builder boilerplate extraction (4/8 -- helpers + arch_common done; remaining builders + validation pending)
 - E81: Inference custom node replacement (1/7 -- arch_vision_helpers 3 nodes replaced PR #334)
-- E82: Training loss engine migration (1/6 -- bce.go engine ops PR #334)
-- E83: Serve handler refactoring (1/5 -- buildGenerationOptions extracted PR #336)
+- E82: Training loss engine migration (3/6 -- bce + routing_contrastive + quantile done)
+- E83: Serve handler refactoring (2/5 -- buildGenerationOptions + parseAndApplyGrammar done)
 - E84: ModeLDSL composition (0/8 -- rewrite DSL layer implementations to compose from layers/)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -418,26 +418,26 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 - [x] T77.1.3 tabnet.go: replace linearForward (E77)  PR #336 2026-04-04
 - [x] T77.1.4 resnet.go: replace linearForward, layerNorm (E77)  PR #336 2026-04-04
 - [x] T78.1.3 clip_encoder.go: replace QuickGELU (E78)  PR #336 2026-04-04
-- [ ] T78.1.4 mlstm.go: replace .Data() with engine.Slice (E78)  -- deferred to Wave 15
-- [ ] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  -- deferred to Wave 15
+- [x] T78.1.4 mlstm.go: replace .Data() with engine.Split (E78)  2026-04-05
+- [x] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  2026-04-05
 - [x] T79.1.3 Break up sampleFromLogits (E79)  PR #336 2026-04-04
 - [x] T79.1.4 Deduplicate GenerateStream (E79)  PR #336 2026-04-04
 - [x] T80.1.3 Add newEmbeddingNode/newLMHeadNode factories (E80)  PR #336 2026-04-04
-- [ ] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)  -- deferred to Wave 15
+- [x] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)  2026-04-05
 - [x] T83.1.1 Extract buildGenerationOptions (E83)  PR #336 2026-04-04
 
 #### Composition Wave 15: Phase 4 continued (10 agents)
 
-- [ ] T77.1.5 model.go: replace linearForward, geluScalar (E77)
-- [ ] T77.1.6 train.go: replace crossEntropyLoss (E77)
-- [ ] T78.1.6 vsn.go: replace weight extraction (E78)
-- [ ] T78.1.7 gemm.go: replace hand-rolled GEMM (E78)
-- [ ] T78.1.8 variable_selection.go: replace inline GELU (E78)
-- [ ] T78.1.9 temporal_conv_encoder.go: replace raw pool gradient (E78)
-- [ ] T79.1.5 Deduplicate speculative decode step (E79)  Deps: T79.1.2
-- [ ] T80.1.4 Migrate arch_llama/gemma/mistral to helpers (E80)  Deps: T80.1.1-T80.1.3
-- [ ] T82.1.3 quantile.go: fix broken generics (E82)
-- [ ] T83.1.2 Extract parseAndApplyGrammar (E83)
+- [x] T77.1.5 model.go: replace linearForward, geluScalar (E77)  2026-04-05
+- [x] T77.1.6 train.go: replace crossEntropyLoss (E77)  2026-04-06
+- [x] T78.1.6 vsn.go: replace weight extraction (E78)  2026-04-05
+- [x] T78.1.7 gemm.go: replace hand-rolled GEMM (E78)  no-op: already refactored 2026-04-05
+- [x] T78.1.8 variable_selection.go: replace inline GELU (E78)  2026-04-05
+- [x] T78.1.9 temporal_conv_encoder.go: replace raw pool gradient (E78)  2026-04-05
+- [x] T79.1.5 Deduplicate speculative decode step (E79)  2026-04-05
+- [x] T80.1.4 Migrate arch_llama/gemma/mistral to helpers (E80)  2026-04-05
+- [x] T82.1.3 quantile.go: fix broken generics (E82)  2026-04-05
+- [x] T83.1.2 Extract parseAndApplyGrammar (E83)  2026-04-05
 
 #### Composition Wave 16: Phase 4 continued (10 agents)
 
@@ -1826,11 +1826,11 @@ functional.GELU, functional.MultiHeadAttention. Delete orphaned helpers.
   Replace linearForward with functional.Linear, layerNorm with functional.LayerNorm.
   Acceptance: go test -run TestResNet passes.
 
-- [ ] T77.1.5 model.go: replace linearForward, geluScalar with functional  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T77.1.5 model.go: replace linearForward, geluScalar with functional  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Replace linearForward with functional.Linear, geluScalar with functional.GELU.
   Acceptance: go test passes.
 
-- [ ] T77.1.6 train.go: replace crossEntropyLoss with training/loss  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T77.1.6 train.go: replace crossEntropyLoss with training/loss  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Replace local crossEntropyLoss with training/loss.CrossEntropyLoss.
   Acceptance: go test passes. Training loss curve unchanged.
 
@@ -1857,8 +1857,8 @@ functional.GELU, functional.MultiHeadAttention. Delete orphaned helpers.
 - [ ] T77.1.2 saint.go
 - [ ] T77.1.3 tabnet.go
 - [ ] T77.1.4 resnet.go
-- [ ] T77.1.5 model.go
-- [ ] T77.1.6 train.go
+- [x] T77.1.5 model.go
+- [x] T77.1.6 train.go
 
 #### Wave E77-2: Cleanup + validation (3 agents)
 Deps: Wave E77-1
@@ -1894,28 +1894,28 @@ with engine operations throughout.
   Replace inline QuickGELU implementation with layers/activations.Gelu.
   Acceptance: go test passes.
 
-- [ ] T78.1.4 layers/timeseries/mlstm.go: replace .Data() access with engine.Slice and vectorized ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T78.1.4 layers/timeseries/mlstm.go: replace .Data() access with engine.Slice and vectorized ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
   Replace raw .Data() access and manual loops with engine.Slice for element
   access and engine.Mul, engine.Add for vectorized computation.
   Acceptance: go test -run TestMLSTM passes. Output matches within 1e-5.
 
-- [ ] T78.1.5 layers/timeseries/ssm.go: replace raw discretization loops with engine.Exp, engine.Mul  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] T78.1.5 layers/timeseries/ssm.go: replace raw discretization loops with engine.Exp, engine.Mul  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   Replace manual discretization loops (exp, mul) with engine.Exp, engine.Mul.
   Acceptance: go test -run TestSSM passes.
 
-- [ ] T78.1.6 layers/timeseries/vsn.go: replace weight extraction with engine.Slice  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T78.1.6 layers/timeseries/vsn.go: replace weight extraction with engine.Slice  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Replace manual weight extraction via .Data() with engine.Slice.
   Acceptance: go test -run TestVSN passes.
 
-- [ ] T78.1.7 layers/core/gemm.go: replace hand-rolled GEMM with engine.MatMul  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T78.1.7 layers/core/gemm.go: replace hand-rolled GEMM with engine.MatMul  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Replace triple-loop GEMM with engine.MatMul.
   Acceptance: go test passes. Output matches within 1e-6.
 
-- [ ] T78.1.8 layers/core/variable_selection.go: replace inline GELU with activations.Gelu  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T78.1.8 layers/core/variable_selection.go: replace inline GELU with activations.Gelu  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Replace inline GELU with layers/activations.Gelu.
   Acceptance: go test passes.
 
-- [ ] T78.1.9 layers/core/temporal_conv_encoder.go: replace raw pool gradient with engine ops  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T78.1.9 layers/core/temporal_conv_encoder.go: replace raw pool gradient with engine ops  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Replace manual pool gradient computation with engine operations.
   Acceptance: go test passes.
 
@@ -1936,12 +1936,12 @@ All files are independent.
 - [ ] T78.1.1 clip_encoder.go patch extraction
 - [ ] T78.1.2 clip_encoder.go attention
 - [ ] T78.1.3 clip_encoder.go QuickGELU
-- [ ] T78.1.4 mlstm.go
-- [ ] T78.1.5 ssm.go
-- [ ] T78.1.6 vsn.go
-- [ ] T78.1.7 gemm.go
-- [ ] T78.1.8 variable_selection.go
-- [ ] T78.1.9 temporal_conv_encoder.go
+- [x] T78.1.4 mlstm.go
+- [x] T78.1.5 ssm.go
+- [x] T78.1.6 vsn.go
+- [x] T78.1.7 gemm.go
+- [x] T78.1.8 variable_selection.go
+- [x] T78.1.9 temporal_conv_encoder.go
 
 #### Wave E78-2: Validation (2 agents)
 Deps: Wave E78-1
@@ -1985,7 +1985,7 @@ sampling sub-functions. Deduplicate GenerateStream and speculative paths.
   of its own inline loop.
   Acceptance: go test -run TestGenerateStream passes. Streaming output unchanged.
 
-- [ ] T79.1.5 Deduplicate speculative to use shared decode step  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T79.1.5 Deduplicate speculative to use shared decode step  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T79.1.2
   Rewrite speculative decode to use the shared decode step.
   Acceptance: go test passes. Speculative decoding output unchanged.
@@ -2010,7 +2010,7 @@ sampling sub-functions. Deduplicate GenerateStream and speculative paths.
 #### Wave E79-2: Deduplication (2 agents)
 Deps: T79.1.2
 - [ ] T79.1.4 GenerateStream dedup
-- [ ] T79.1.5 Speculative dedup
+- [x] T79.1.5 Speculative dedup
 
 #### Wave E79-3: Validation (2 agents)
 Deps: Wave E79-2
@@ -2046,7 +2046,7 @@ all builders to use them.
   Extract the repeated embedding and LMHead node instantiation patterns.
   Acceptance: go build clean.
 
-- [ ] T80.1.4 Migrate arch_llama.go, arch_gemma.go, arch_mistral.go to use helpers  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T80.1.4 Migrate arch_llama.go, arch_gemma.go, arch_mistral.go to use helpers  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T80.1.1, T80.1.2, T80.1.3
   Replace boilerplate in the 3 most-used builders with shared helper calls.
   Acceptance: go test passes. Model parity unchanged.
@@ -2082,7 +2082,7 @@ all builders to use them.
 
 #### Wave E80-2: Migrate builders (3 agents)
 Deps: Wave E80-1
-- [ ] T80.1.4 llama/gemma/mistral
+- [x] T80.1.4 llama/gemma/mistral
 - [ ] T80.1.5 qwen/phi/deepseek
 - [ ] T80.1.6 remaining ~20 builders
 
@@ -2173,12 +2173,12 @@ has element-by-element loop that should be vectorized.
   Replace manual .Data() loops in BCELoss with engine tensor operations.
   Acceptance: go test -run TestBCELoss passes. Output matches within 1e-6.
 
-- [ ] T82.1.2 routing_contrastive.go: replace triple-nested loops with engine.MatMul  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T82.1.2 routing_contrastive.go: replace triple-nested loops with engine.MatMul  Owner: TBD  Est: 3h  verifies: [infrastructure]
   Replace the triple-nested loop in RoutingContrastiveLoss with engine.MatMul
   for similarity computation and engine ops for the contrastive formulation.
   Acceptance: go test passes. Loss value matches within 1e-5.
 
-- [ ] T82.1.3 quantile.go: fix broken generics (panics for non-float32), use engine ops  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] T82.1.3 quantile.go: fix broken generics (panics for non-float32), use engine ops  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   Fix the float32 cast that panics for float64 and other types. Use engine
   ops for the quantile computation instead of raw loops.
   Acceptance: go test passes for float32 AND float64. No panics.
@@ -2202,8 +2202,8 @@ has element-by-element loop that should be vectorized.
 
 #### Wave E82-1: Independent rewrites (4 agents)
 - [ ] T82.1.1 bce.go
-- [ ] T82.1.2 routing_contrastive.go
-- [ ] T82.1.3 quantile.go
+- [x] T82.1.2 routing_contrastive.go
+- [x] T82.1.3 quantile.go
 - [ ] T82.1.4 AdamW8bit
 
 #### Wave E82-2: Validation (2 agents)
@@ -2231,7 +2231,7 @@ parsing, generation option building, grammar application, and tool call detectio
   a single buildGenerationOptions function.
   Acceptance: go test passes. Both handlers produce identical generation options.
 
-- [ ] T83.1.2 Extract parseAndApplyGrammar helper  Owner: TBD  Est: 1h  verifies: [UC-002]
+- [x] T83.1.2 Extract parseAndApplyGrammar helper  Owner: TBD  Est: 1h  verifies: [UC-002]
   Extract grammar parsing and application logic shared between the two handlers.
   Acceptance: go test passes. Grammar-constrained generation unchanged.
 
@@ -2254,7 +2254,7 @@ parsing, generation option building, grammar application, and tool call detectio
 #### Wave E83-1: Extract helpers (3 agents)
 All extractions are independent.
 - [ ] T83.1.1 buildGenerationOptions
-- [ ] T83.1.2 parseAndApplyGrammar
+- [x] T83.1.2 parseAndApplyGrammar
 - [ ] T83.1.3 detectAndFormatToolCalls
 
 #### Wave E83-2: Validation (2 agents)
