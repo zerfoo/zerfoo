@@ -4,7 +4,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -100,21 +102,23 @@ func (s Int8State) memoryBytes() int {
 // for first and second moment estimates. Parameters remain in full precision.
 // This reduces optimizer state memory by ~4x compared to FP32 AdamW.
 type AdamW8bit[T tensor.Numeric] struct {
+	engine                    compute.Engine[T]
 	lr, beta1, beta2, eps, wd float32
 	step                      int
 	m, v                      map[*graph.Parameter[T]]*Int8State
 }
 
 // NewAdamW8bit creates a new 8-bit AdamW optimizer.
-func NewAdamW8bit[T tensor.Numeric](lr, beta1, beta2, eps, wd float32) *AdamW8bit[T] {
+func NewAdamW8bit[T tensor.Numeric](engine compute.Engine[T], lr, beta1, beta2, eps, wd float32) *AdamW8bit[T] {
 	return &AdamW8bit[T]{
-		lr:    lr,
-		beta1: beta1,
-		beta2: beta2,
-		eps:   eps,
-		wd:    wd,
-		m:     make(map[*graph.Parameter[T]]*Int8State),
-		v:     make(map[*graph.Parameter[T]]*Int8State),
+		engine: engine,
+		lr:     lr,
+		beta1:  beta1,
+		beta2:  beta2,
+		eps:    eps,
+		wd:     wd,
+		m:      make(map[*graph.Parameter[T]]*Int8State),
+		v:      make(map[*graph.Parameter[T]]*Int8State),
 	}
 }
 
@@ -124,12 +128,17 @@ func (a *AdamW8bit[T]) Step(ctx context.Context, params []*graph.Parameter[T]) e
 	a.step++
 
 	// Bias correction factors.
+	ops := a.engine.Ops()
+	one := ops.FromFloat64(1.0)
 	bc1 := 1.0 - math.Pow(float64(a.beta1), float64(a.step))
 	bc2 := 1.0 - math.Pow(float64(a.beta2), float64(a.step))
-	alpha := float64(a.lr) * math.Sqrt(bc2) / bc1
-
-	b1 := float64(a.beta1)
-	b2 := float64(a.beta2)
+	alphaScalar := ops.FromFloat64(float64(a.lr) * math.Sqrt(bc2) / bc1)
+	b1T := ops.FromFloat64(float64(a.beta1))
+	oneMinusB1 := ops.Sub(one, b1T)
+	b2T := ops.FromFloat64(float64(a.beta2))
+	oneMinusB2 := ops.Sub(one, b2T)
+	epsT := ops.FromFloat64(float64(a.eps))
+	lrWd := ops.FromFloat64(float64(a.lr) * float64(a.wd))
 
 	for _, param := range params {
 		grad := param.Gradient
@@ -137,11 +146,11 @@ func (a *AdamW8bit[T]) Step(ctx context.Context, params []*graph.Parameter[T]) e
 			continue
 		}
 
-		paramData := param.Value.Data()
-		gradData := grad.Data()
-		n := len(paramData)
+		shape := param.Value.Shape()
+		n := len(param.Value.Data())
 
-		// Dequantize or initialize moment estimates.
+		// Dequantize or initialize moment estimates as float32 slices,
+		// then wrap as tensors for vectorized engine ops.
 		var mf, vf []float32
 		if ms, ok := a.m[param]; ok {
 			mf = dequantizeFromInt8(*ms)
@@ -151,35 +160,114 @@ func (a *AdamW8bit[T]) Step(ctx context.Context, params []*graph.Parameter[T]) e
 			vf = make([]float32, n)
 		}
 
-		// Update moments and parameters in a single pass.
-		for i := range n {
-			g := float64(gradData[i])
+		// Create moment tensors with the same shape as the parameter.
+		mTensor, err := tensor.New[T](shape, float32SliceToT[T](mf, ops))
+		if err != nil {
+			return err
+		}
+		vTensor, err := tensor.New[T](shape, float32SliceToT[T](vf, ops))
+		if err != nil {
+			return err
+		}
 
-			// m = beta1 * m + (1 - beta1) * g
-			mf[i] = float32(b1*float64(mf[i]) + (1-b1)*g)
+		// m = beta1 * m + (1 - beta1) * grad
+		mScaled, err := a.engine.MulScalar(ctx, mTensor, b1T)
+		if err != nil {
+			return err
+		}
+		gScaled, err := a.engine.MulScalar(ctx, grad, oneMinusB1)
+		if err != nil {
+			return err
+		}
+		mTensor, err = a.engine.Add(ctx, mScaled, gScaled)
+		if err != nil {
+			return err
+		}
 
-			// v = beta2 * v + (1 - beta2) * g^2
-			vf[i] = float32(b2*float64(vf[i]) + (1-b2)*g*g)
+		// v = beta2 * v + (1 - beta2) * grad^2
+		vScaled, err := a.engine.MulScalar(ctx, vTensor, b2T)
+		if err != nil {
+			return err
+		}
+		gradSq, err := a.engine.Mul(ctx, grad, grad)
+		if err != nil {
+			return err
+		}
+		gSqScaled, err := a.engine.MulScalar(ctx, gradSq, oneMinusB2)
+		if err != nil {
+			return err
+		}
+		vTensor, err = a.engine.Add(ctx, vScaled, gSqScaled)
+		if err != nil {
+			return err
+		}
 
-			// param = param - alpha * m / (sqrt(v) + eps) - lr * wd * param
-			update := alpha * float64(mf[i]) / (math.Sqrt(float64(vf[i])) + float64(a.eps))
-			decay := float64(a.lr) * float64(a.wd) * float64(paramData[i])
-			paramData[i] = T(float64(paramData[i]) - update - decay)
+		// update = alpha * m / (sqrt(v) + eps)
+		sqrtV, err := a.engine.Sqrt(ctx, vTensor)
+		if err != nil {
+			return err
+		}
+		sqrtVEps, err := a.engine.AddScalar(ctx, sqrtV, epsT)
+		if err != nil {
+			return err
+		}
+		update, err := a.engine.Div(ctx, mTensor, sqrtVEps)
+		if err != nil {
+			return err
+		}
+		update, err = a.engine.MulScalar(ctx, update, alphaScalar)
+		if err != nil {
+			return err
+		}
+
+		// decay = lr * wd * param
+		decay, err := a.engine.MulScalar(ctx, param.Value, lrWd)
+		if err != nil {
+			return err
+		}
+
+		// param = param - update - decay
+		paramNew, err := a.engine.Sub(ctx, param.Value, update)
+		if err != nil {
+			return err
+		}
+		param.Value, err = a.engine.Sub(ctx, paramNew, decay)
+		if err != nil {
+			return err
 		}
 
 		// Re-quantize moments to INT8.
-		mq := quantizeToInt8(mf)
-		vq := quantizeToInt8(vf)
+		mq := quantizeToInt8(tSliceToFloat32(mTensor.Data()))
+		vq := quantizeToInt8(tSliceToFloat32(vTensor.Data()))
 		a.m[param] = &mq
 		a.v[param] = &vq
 
 		// Clear gradient.
-		for i := range gradData {
-			gradData[i] = 0
+		var zero T
+		if err := a.engine.Fill(ctx, param.Gradient, zero); err != nil {
+			param.ClearGradient()
 		}
 	}
 
 	return nil
+}
+
+// float32SliceToT converts a []float32 to []T using the arithmetic ops.
+func float32SliceToT[T tensor.Numeric](src []float32, ops numeric.Arithmetic[T]) []T {
+	dst := make([]T, len(src))
+	for i, v := range src {
+		dst[i] = ops.FromFloat64(float64(v))
+	}
+	return dst
+}
+
+// tSliceToFloat32 converts a []T to []float32.
+func tSliceToFloat32[T tensor.Numeric](src []T) []float32 {
+	dst := make([]float32, len(src))
+	for i, v := range src {
+		dst[i] = float32(numericToFloat64(v))
+	}
+	return dst
 }
 
 // Statically assert that AdamW8bit implements the Optimizer interface.

@@ -115,7 +115,8 @@ func TestAdamW8bit_Convergence(t *testing.T) {
 }
 
 func TestAdamW8bit_NoGradient(t *testing.T) {
-	opt := NewAdamW8bit[float32](0.01, 0.9, 0.999, 1e-8, 0.0)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	opt := NewAdamW8bit[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
 
 	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
 	if err != nil {
@@ -141,7 +142,8 @@ func TestAdamW8bit_NoGradient(t *testing.T) {
 
 func TestAdamW8bit_WeightDecay(t *testing.T) {
 	ctx := context.Background()
-	opt := NewAdamW8bit[float32](0.01, 0.9, 0.999, 1e-8, 0.1)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	opt := NewAdamW8bit[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.1)
 
 	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
 	if err != nil {
@@ -176,7 +178,8 @@ func TestAdamW8bit_WeightDecay(t *testing.T) {
 
 func TestAdamW8bit_GradientCleared(t *testing.T) {
 	ctx := context.Background()
-	opt := NewAdamW8bit[float32](0.01, 0.9, 0.999, 1e-8, 0.0)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	opt := NewAdamW8bit[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
 
 	value, err := tensor.New[float32]([]int{2}, []float32{1.0, 2.0})
 	if err != nil {
@@ -271,7 +274,8 @@ func runQuadraticAdamW(ctx context.Context, t *testing.T) float32 {
 func runQuadraticAdamW8bit(ctx context.Context, t *testing.T) float32 {
 	t.Helper()
 
-	opt := NewAdamW8bit[float32](0.01, 0.9, 0.999, 1e-8, 0.0)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	opt := NewAdamW8bit[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
 
 	value, err := tensor.New[float32]([]int{2}, []float32{0.0, 0.0})
 	if err != nil {

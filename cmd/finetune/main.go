@@ -206,7 +206,7 @@ func run() error {
 	model.AddLayer(layer2)
 
 	// Create optimizer and QLoRA trainer.
-	opt := optimizer.NewAdamW8bit[float32](float32(*lr), 0.9, 0.999, 1e-8, 0.01)
+	opt := optimizer.NewAdamW8bit[float32](engine, float32(*lr), 0.9, 0.999, 1e-8, 0.01)
 	trainer, err := lora.NewQLoRATrainer[float32](
 		model, *rank, float32(*alpha),
 		[]string{"q_proj", "v_proj"},
