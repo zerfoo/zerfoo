@@ -183,57 +183,78 @@ func (s *SSMLayer[T]) Forward(ctx context.Context, input *tensor.TensorNumeric[T
 		return nil, fmt.Errorf("SSMLayer input d_input = %d, want %d", dIn, s.dInput)
 	}
 
-	// --- Discretise ---
-	// dt = exp(log_dt)  (scalar)
-	logDt := float64(s.Dt.Value.Data()[0])
-	dt := math.Exp(logDt)
+	// --- Discretise using engine ops ---
+	eng := s.engine
+	ops := eng.Ops()
 
-	// A_diag = -exp(A_log)  (stable negative eigenvalues)
-	aLog := s.A.Value.Data()
-	aDiag := make([]float64, s.dState)
-	for i, v := range aLog {
-		aDiag[i] = -math.Exp(float64(v))
-	}
-
-	// A_bar[i] = exp(A_diag[i] * dt)
-	aBar := make([]float64, s.dState)
-	for i := range aDiag {
-		aBar[i] = math.Exp(aDiag[i] * dt)
-	}
-
-	// B_bar[i,j] = (A_bar[i] - 1) / A_diag[i] * B[i,j]
-	// When A_diag[i] is very close to 0, use the limit: B_bar = dt * B.
-	bData := s.B.Value.Data()
-	bBar := make([]float64, s.dState*s.dInput)
-	for i := 0; i < s.dState; i++ {
-		var scale float64
-		if math.Abs(aDiag[i]) < 1e-12 {
-			scale = dt
-		} else {
-			scale = (aBar[i] - 1.0) / aDiag[i]
-		}
-		for j := 0; j < s.dInput; j++ {
-			bBar[i*s.dInput+j] = scale * float64(bData[i*s.dInput+j])
-		}
-	}
-
-	// Build engine-compatible tensors for the discretised matrices.
-	bBarT := make([]T, s.dState*s.dInput)
-	for i := range bBar {
-		bBarT[i] = T(bBar[i])
-	}
-	bBarTensor, err := tensor.New[T]([]int{s.dState, s.dInput}, bBarT)
+	// dt = exp(log_dt)
+	dtTensor, err := eng.Exp(ctx, s.Dt.Value) // [1]
 	if err != nil {
-		return nil, fmt.Errorf("create bBar tensor: %w", err)
+		return nil, fmt.Errorf("SSM: exp(log_dt): %w", err)
 	}
 
-	aBarT := make([]T, s.dState)
-	for i := range aBar {
-		aBarT[i] = T(aBar[i])
-	}
-	aBarTensor, err := tensor.New[T]([]int{s.dState, 1}, aBarT)
+	// A_diag = -exp(A_log) — stable negative eigenvalues
+	expA, err := eng.Exp(ctx, s.A.Value) // [dState]
 	if err != nil {
-		return nil, fmt.Errorf("create aBar tensor: %w", err)
+		return nil, fmt.Errorf("SSM: exp(A): %w", err)
+	}
+	aDiag, err := eng.MulScalar(ctx, expA, ops.FromFloat64(-1)) // [dState]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: negate exp(A): %w", err)
+	}
+
+	// A_bar = exp(A_diag * dt)
+	dtScalar := dtTensor.Data()[0] // scalar extraction from 1-element tensor
+	aDt, err := eng.MulScalar(ctx, aDiag, dtScalar)              // [dState]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: aDiag*dt: %w", err)
+	}
+	aBarFlat, err := eng.Exp(ctx, aDt) // [dState]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: exp(aDiag*dt): %w", err)
+	}
+	aBarTensor, err := eng.Reshape(ctx, aBarFlat, []int{s.dState, 1}) // [dState, 1]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: reshape aBar: %w", err)
+	}
+
+	// B_bar = (A_bar - 1) / A_diag * B, with safe division for near-zero A_diag
+	aBarMinus1, err := eng.AddScalar(ctx, aBarFlat, ops.FromFloat64(-1)) // [dState]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: aBar-1: %w", err)
+	}
+	// Safe divide: clamp |aDiag| away from zero, fallback to dt for near-zero values
+	aDiagSafe, err := eng.UnaryOp(ctx, aDiag, func(v T) T {
+		if math.Abs(float64(v)) < 1e-12 {
+			return ops.FromFloat64(-1e-12) // placeholder; scale will be overridden
+		}
+		return v
+	})
+	if err != nil {
+		return nil, fmt.Errorf("SSM: safe aDiag: %w", err)
+	}
+	scaleVec, err := eng.Div(ctx, aBarMinus1, aDiagSafe) // [dState]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: (aBar-1)/aDiag: %w", err)
+	}
+	// For near-zero aDiag elements, override scale with dt
+	scaleVec, err = eng.UnaryOp(ctx, scaleVec, func(v T) T {
+		if math.Abs(float64(v)) > 1e6 { // overflow guard from near-zero division
+			return dtScalar
+		}
+		return v
+	})
+	if err != nil {
+		return nil, fmt.Errorf("SSM: scale overflow guard: %w", err)
+	}
+	// B_bar = scale * B: broadcast [dState, 1] * [dState, dInput]
+	scaleCol, err := eng.Reshape(ctx, scaleVec, []int{s.dState, 1})
+	if err != nil {
+		return nil, fmt.Errorf("SSM: reshape scale: %w", err)
+	}
+	bBarTensor, err := eng.Mul(ctx, scaleCol, s.B.Value) // [dState, dInput]
+	if err != nil {
+		return nil, fmt.Errorf("SSM: scale*B: %w", err)
 	}
 
 	inputData := input.Data()
