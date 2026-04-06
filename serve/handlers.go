@@ -152,41 +152,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		FinishReason: "stop",
 	}
 
-	if len(req.Tools) > 0 {
-		tc := ToolChoice{Mode: "auto"}
-		if req.ToolChoice != nil {
-			tc = *req.ToolChoice
-		}
-
-		var toolResult *ToolCallResult
-		if result, ok := DetectToolCall(resp.Content, req.Tools, tc); ok {
-			toolResult = result
-		} else if tc.Mode == "function" && tc.Function != nil {
-			// Forced tool choice: always return a tool call for the specified function.
-			args := json.RawMessage("{}")
-			if json.Valid([]byte(resp.Content)) {
-				args = json.RawMessage(resp.Content)
-			}
-			toolResult = &ToolCallResult{
-				ID:           generateCallID(),
-				FunctionName: tc.Function.Name,
-				Arguments:    args,
-			}
-		}
-
-		if toolResult != nil {
-			choice.Message.Content = ""
-			choice.FinishReason = "tool_calls"
-			choice.ToolCalls = []ToolCall{{
-				ID:   toolResult.ID,
-				Type: "function",
-				Function: ToolCallFunction{
-					Name:      toolResult.FunctionName,
-					Arguments: string(toolResult.Arguments),
-				},
-			}}
-		}
-	}
+	detectAndFormatToolCalls(&choice, resp.Content, req.Tools, req.ToolChoice)
 
 	writeJSON(w, http.StatusOK, ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
@@ -518,6 +484,50 @@ func handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(http.StatusOK)
 	w.Write(openapiSpec) //nolint:errcheck
+}
+
+// detectAndFormatToolCalls examines generated content for tool calls and, if
+// detected, rewrites the choice to use finish_reason "tool_calls" with the
+// appropriate ToolCall slice. It handles auto-detection via DetectToolCall and
+// the forced tool_choice fallback.
+func detectAndFormatToolCalls(choice *ChatCompletionChoice, content string, tools []Tool, choicePtr *ToolChoice) {
+	if len(tools) == 0 {
+		return
+	}
+
+	tc := ToolChoice{Mode: "auto"}
+	if choicePtr != nil {
+		tc = *choicePtr
+	}
+
+	var toolResult *ToolCallResult
+	if result, ok := DetectToolCall(content, tools, tc); ok {
+		toolResult = result
+	} else if tc.Mode == "function" && tc.Function != nil {
+		// Forced tool choice: always return a tool call for the specified function.
+		args := json.RawMessage("{}")
+		if json.Valid([]byte(content)) {
+			args = json.RawMessage(content)
+		}
+		toolResult = &ToolCallResult{
+			ID:           generateCallID(),
+			FunctionName: tc.Function.Name,
+			Arguments:    args,
+		}
+	}
+
+	if toolResult != nil {
+		choice.Message.Content = ""
+		choice.FinishReason = "tool_calls"
+		choice.ToolCalls = []ToolCall{{
+			ID:   toolResult.ID,
+			Type: "function",
+			Function: ToolCallFunction{
+				Name:      toolResult.FunctionName,
+				Arguments: string(toolResult.Arguments),
+			},
+		}}
+	}
 }
 
 // handleHealthz returns 200 with {"status":"ok"} to indicate the server is alive.
