@@ -85,19 +85,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Wire response_format json_schema into grammar-constrained decoding.
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && req.ResponseFormat.JSONSchema != nil {
-		var schema grammar.JSONSchema
-		if err := json.Unmarshal(req.ResponseFormat.JSONSchema.Schema, &schema); err != nil {
-			s.logger.Debug("invalid json_schema", "error", err.Error())
-			writeError(w, http.StatusBadRequest, "invalid json_schema")
-			return
-		}
-		g, err := grammar.Convert(&schema)
+		grammarOpt, err := parseAndApplyGrammar(req.ResponseFormat.JSONSchema.Schema)
 		if err != nil {
-			s.logger.Debug("unsupported schema", "error", err.Error())
-			writeError(w, http.StatusBadRequest, "unsupported schema")
+			s.logger.Debug("grammar error", "error", err.Error())
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		opts = append(opts, inference.WithGrammar(g))
+		opts = append(opts, grammarOpt)
 	}
 
 	// Convert messages and fetch any images.
@@ -504,6 +498,20 @@ func buildGenerationOptions(p samplingParams) []inference.GenerateOption {
 		opts = append(opts, inference.WithMaxTokens(*p.MaxTokens))
 	}
 	return opts
+}
+
+// parseAndApplyGrammar unmarshals a JSON Schema from raw bytes and converts
+// it into a grammar-constrained decoding option.
+func parseAndApplyGrammar(schemaBytes json.RawMessage) (inference.GenerateOption, error) {
+	var schema grammar.JSONSchema
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil, fmt.Errorf("invalid json_schema: %w", err)
+	}
+	g, err := grammar.Convert(&schema)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported schema: %w", err)
+	}
+	return inference.WithGrammar(g), nil
 }
 
 func handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
