@@ -195,7 +195,7 @@ func TestLoRAFinetune(t *testing.T) {
 	evalPairs := allPairs[nPairs-evalSize:]
 
 	// Create AdamW8bit optimizer (4x memory savings over FP32 AdamW).
-	opt := optimizer.NewAdamW8bit[float32](1e-4, 0.9, 0.999, 1e-8, 0.0)
+	opt := optimizer.NewAdamW8bit[float32](engine, 1e-4, 0.9, 0.999, 1e-8, 0.0)
 
 	// Create QLoRA trainer — injects LoRA adapters into all three layers.
 	trainer, err := lora.NewQLoRATrainer[float32](
