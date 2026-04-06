@@ -30,7 +30,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E60: CrossAsset GPU training (12/12 COMPLETE -- GitHub #312, GPU forward/backward/AdamW)
 - E61: Inference builder composition (9/10 -- all 6 builders done; vet+linters pass; DGX parity T61.3.2 pending)
 - E62: Auxiliary training package composition (7/7 COMPLETE -- tabular, modeldsl, gnn refactored; tests+validation pass)
-- E63: Quantized matmul consolidation in ztensor (2/5 -- dispatcher + replacements done ztensor PR #76 v1.4.0; DGX benchmarks + validation pending)
+- E63: Quantized matmul consolidation in ztensor (2/5 -- dispatcher + replacements done ztensor PR #76 v1.4.0; DGX benchmarks need CUDA CGo kernel stubs)
 - E64: GPU engine file decomposition in ztensor (3/3 COMPLETE -- split into 5 files, ztensor PR #77)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)

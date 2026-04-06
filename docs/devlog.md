@@ -3,6 +3,34 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-06: DGX validation after E63/E64 ztensor refactoring
+
+**Type:** finding
+**Tags:** ztensor, E63, E64, DGX, validation
+
+**Problem:** Validated zerfoo test suite on DGX Spark (GB10, aarch64) after ztensor v1.4.0 (matmul consolidation) and E64 (file decomposition).
+**Root cause:** N/A — validation run.
+**Fix:** N/A.
+**Impact:** ztensor v1.4.0 changes are compatible. Pre-existing failures documented.
+
+**Results:**
+- PatchTST tests: PASS (all subtests)
+- layers/: PASS
+- training/: PASS
+- serve/: PASS
+- tabular/: PASS (5.5s)
+- inference/: PASS (all sub-packages except timeseries/TSPulse)
+- generate/: FAIL (pre-existing: FP16 GPU tensor cache tests fail without CUDA CGo path)
+- timeseries/: FAIL (pre-existing: TestAllBackends_CPUTrainingBenchmark exceeds 30s budget on ARM, TestFineTuneDecreasingLoss NaN)
+
+**Pre-existing failures (not introduced by E63/E64):**
+1. `TestTensorCache_FP16_GPU*` — FP16 GPU cache needs CUDA CGo path; purego path insufficient
+2. `TestAllBackends_CPUTrainingBenchmark` — ARM CPU too slow for 30s budget (takes ~47s)
+3. `TestFineTuneDecreasingLoss` — NaN in foundation model fine-tune
+4. `TestTSPulseClassify` — pre-existing failure
+
+**DGX environment:** Go 1.26, ztensor v1.4.0, CUDA toolkit at /usr/local/cuda, libkernels.so present, commit d46cfdb3.
+
 ## 2026-04-03: E74/E75 backward composition and .Data() elimination complete
 
 **Type:** finding
