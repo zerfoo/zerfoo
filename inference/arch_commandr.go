@@ -13,7 +13,6 @@ import (
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/ztensor/types"
 )
 
 func init() {
@@ -43,24 +42,16 @@ func buildCommandRGraph(
 
 	const layerNormEps = float32(1e-5)
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
+	pw := newParamWrapper[float32]()
+
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
-	}
-
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
@@ -75,7 +66,7 @@ func buildCommandRGraph(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -92,11 +83,11 @@ func buildCommandRGraph(
 		prefix := fmt.Sprintf("model.layers.%d.", i)
 
 		// --- Pre-attention LayerNorm ---
-		inputNormGamma, err := lookup(prefix + "input_layernorm.weight")
+		inputNormGamma, err := tl.Lookup(prefix + "input_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		inputNormBeta, err := lookup(prefix + "input_layernorm.bias")
+		inputNormBeta, err := tl.Lookup(prefix + "input_layernorm.bias")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -115,19 +106,19 @@ func buildCommandRGraph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- Self Attention (GQA with RoPE) ---
-		qW, err := lookup(prefix + "self_attn.q_proj.weight")
+		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(prefix + "self_attn.k_proj.weight")
+		kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(prefix + "self_attn.v_proj.weight")
+		vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(prefix + "self_attn.o_proj.weight")
+		oW, err := tl.Lookup(prefix + "self_attn.o_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -150,19 +141,19 @@ func buildCommandRGraph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.q_proj.weight", qWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)),
 			nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.k_proj.weight", kWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)),
 			nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.v_proj.weight", vWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)),
 			nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(prefix+"self_attn.o_proj.weight", oWT)),
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)),
 			nil,
 		)
 
@@ -203,15 +194,15 @@ func buildCommandRGraph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Residual add after attention ---
-		resAdd1 := &commandRResidualAddNode[float32]{engine: proxy}
+		resAdd1 := &elementwiseAddNode[float32]{engine: proxy}
 		hidden = builder.AddNode(resAdd1, attnOut, hidden)
 
 		// --- Pre-FFN LayerNorm ---
-		postNormGamma, err := lookup(prefix + "post_attention_layernorm.weight")
+		postNormGamma, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		postNormBeta, err := lookup(prefix + "post_attention_layernorm.bias")
+		postNormBeta, err := tl.Lookup(prefix + "post_attention_layernorm.bias")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -230,15 +221,15 @@ func buildCommandRGraph(
 		normed2 := builder.AddNode(postNorm, hidden)
 
 		// --- FFN (SwiGLU) ---
-		gateW, err := lookup(prefix + "mlp.gate_proj.weight")
+		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		upW, err := lookup(prefix + "mlp.up_proj.weight")
+		upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		downW, err := lookup(prefix + "mlp.down_proj.weight")
+		downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -288,16 +279,16 @@ func buildCommandRGraph(
 		ffnOut := builder.AddNode(ffn, normed2)
 
 		// --- Residual add after FFN ---
-		resAdd2 := &commandRResidualAddNode[float32]{engine: proxy}
+		resAdd2 := &elementwiseAddNode[float32]{engine: proxy}
 		hidden = builder.AddNode(resAdd2, ffnOut, hidden)
 	}
 
 	// --- Final LayerNorm ---
-	finalNormGamma, err := lookup("model.norm.weight")
+	finalNormGamma, err := tl.Lookup("model.norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
-	finalNormBeta, err := lookup("model.norm.bias")
+	finalNormBeta, err := tl.Lookup("model.norm.bias")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -327,7 +318,7 @@ func buildCommandRGraph(
 			}
 		}
 	}
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -339,26 +330,3 @@ func buildCommandRGraph(
 	return g, embedWeight, nil
 }
 
-// commandRResidualAddNode performs a simple element-wise residual add.
-// Unlike the fused RMSNorm variant, Command R uses separate add + LayerNorm nodes
-// because LayerNorm requires both gamma and beta, and there is no GPU-fused
-// AddLayerNorm kernel in the current GRAL abstraction.
-type commandRResidualAddNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-}
-
-func (n *commandRResidualAddNode[T]) OpType() string                  { return "CommandRResidualAdd" }
-func (n *commandRResidualAddNode[T]) Attributes() map[string]any       { return nil }
-func (n *commandRResidualAddNode[T]) Parameters() []*graph.Parameter[T] { return nil }
-func (n *commandRResidualAddNode[T]) OutputShape() []int               { return nil }
-
-func (n *commandRResidualAddNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("CommandRResidualAdd: expected 2 inputs, got %d", len(inputs))
-	}
-	return n.engine.Add(ctx, inputs[0], inputs[1])
-}
-
-func (n *commandRResidualAddNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	return nil, fmt.Errorf("CommandRResidualAdd: backward not implemented")
-}

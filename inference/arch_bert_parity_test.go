@@ -7,8 +7,10 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -276,15 +278,12 @@ func TestBertParity_EmbeddingOnly(t *testing.T) {
 		}
 	}
 
-	// Run through the embedding node.
+	// Run through the embedding node + LayerNorm (now separate).
 	embNode := &bertEmbeddingNode[float32]{
 		engine:      proxy,
 		tokenWeight: tokenW,
 		posWeight:   posW,
 		typeWeight:  typeW,
-		normWeight:  normW,
-		normBias:    normB,
-		normEps:     eps,
 	}
 
 	inputData := make([]float32, len(inputIDs))
@@ -296,9 +295,20 @@ func TestBertParity_EmbeddingOnly(t *testing.T) {
 		t.Fatalf("create input tensor: %v", err)
 	}
 
-	result, err := embNode.Forward(context.Background(), inputTensor)
+	embedded, err := embNode.Forward(context.Background(), inputTensor)
 	if err != nil {
 		t.Fatalf("embedding forward: %v", err)
+	}
+
+	// Apply LayerNorm as a separate step (matches the refactored graph structure).
+	embLN := normalization.NewLayerNormalizationFromParams[float32](
+		proxy, eps,
+		&graph.Parameter[float32]{Name: "emb_norm_gamma", Value: normW},
+		&graph.Parameter[float32]{Name: "emb_norm_beta", Value: normB},
+	)
+	result, err := embLN.Forward(context.Background(), embedded)
+	if err != nil {
+		t.Fatalf("embedding layernorm: %v", err)
 	}
 
 	resultData := result.Data()
