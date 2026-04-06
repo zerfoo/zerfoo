@@ -62,7 +62,6 @@ func (rc *RoutingContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.
 	batch := shape[0]
 	numHeads := shape[1]
 	seqLen := shape[2]
-	data := scores.Data()
 	ops := rc.ops
 	eps := ops.FromFloat64(1e-12)
 
@@ -75,51 +74,48 @@ func (rc *RoutingContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.
 
 	var totalSim T
 	for b := range batch {
+		// Extract [numHeads, seqLen] sub-matrix for this batch element.
+		base := b * numHeads * seqLen
+		headsMat, err := tensor.New[T]([]int{numHeads, seqLen}, scores.Data()[base:base+numHeads*seqLen])
+		if err != nil {
+			return nil, err
+		}
+
+		// Transpose to [seqLen, numHeads].
+		headsT, err := rc.engine.Transpose(ctx, headsMat, []int{1, 0})
+		if err != nil {
+			return nil, err
+		}
+
+		// MatMul: [numHeads, seqLen] x [seqLen, numHeads] = [numHeads, numHeads] dot products.
+		dotMat, err := rc.engine.MatMul(ctx, headsMat, headsT)
+		if err != nil {
+			return nil, err
+		}
+
+		// Compute per-head squared norms via engine: element-wise square then ReduceSum along axis 1.
+		headsSq, err := rc.engine.Mul(ctx, headsMat, headsMat)
+		if err != nil {
+			return nil, err
+		}
+		normsSq, err := rc.engine.ReduceSum(ctx, headsSq, 1, false)
+		if err != nil {
+			return nil, err
+		}
+		norms, err := rc.engine.Sqrt(ctx, normsSq)
+		if err != nil {
+			return nil, err
+		}
+
+		// Extract computed values to sum upper-triangle cosine similarities.
+		dotData := dotMat.Data()
+		normsData := norms.Data()
+
 		for i := range numHeads {
-			headI, err := tensor.New[T]([]int{seqLen}, data[(b*numHeads+i)*seqLen:(b*numHeads+i+1)*seqLen])
-			if err != nil {
-				return nil, err
-			}
-			normISqT, err := rc.engine.Mul(ctx, headI, headI)
-			if err != nil {
-				return nil, err
-			}
-			normISqSum, err := rc.engine.ReduceSum(ctx, normISqT, 0, false)
-			if err != nil {
-				return nil, err
-			}
-			normISq := normISqSum.Data()[0]
-
 			for j := i + 1; j < numHeads; j++ {
-				headJ, err := tensor.New[T]([]int{seqLen}, data[(b*numHeads+j)*seqLen:(b*numHeads+j+1)*seqLen])
-				if err != nil {
-					return nil, err
-				}
-
-				// Dot product via engine.Mul + engine.ReduceSum.
-				prod, err := rc.engine.Mul(ctx, headI, headJ)
-				if err != nil {
-					return nil, err
-				}
-				dotT, err := rc.engine.ReduceSum(ctx, prod, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				dotIJ := dotT.Data()[0]
-
-				normJSqT, err := rc.engine.Mul(ctx, headJ, headJ)
-				if err != nil {
-					return nil, err
-				}
-				normJSqSum, err := rc.engine.ReduceSum(ctx, normJSqT, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				normJSq := normJSqSum.Data()[0]
-
-				denom := ops.Add(ops.Sqrt(ops.Mul(normISq, normJSq)), eps)
-				sim := ops.Div(dotIJ, denom)
-				totalSim = ops.Add(totalSim, sim)
+				dotIJ := dotData[i*numHeads+j]
+				denom := ops.Add(ops.Mul(normsData[i], normsData[j]), eps)
+				totalSim = ops.Add(totalSim, ops.Div(dotIJ, denom))
 			}
 		}
 	}
@@ -149,11 +145,11 @@ func (rc *RoutingContrastive[T]) Backward(ctx context.Context, _ types.BackwardM
 	batch := shape[0]
 	numHeads := shape[1]
 	seqLen := shape[2]
-	data := scores.Data()
 	ops := rc.ops
 	eps := ops.FromFloat64(1e-12)
 
-	gradData := make([]T, len(data))
+	totalElems := batch * numHeads * seqLen
+	gradData := make([]T, totalElems)
 
 	if numHeads < 2 {
 		grad, err := tensor.New[T](shape, gradData)
@@ -167,77 +163,68 @@ func (rc *RoutingContrastive[T]) Backward(ctx context.Context, _ types.BackwardM
 	coeff := ops.Mul(rc.scale, ops.FromFloat64(1.0/float64(numPairs*batch)))
 
 	for b := range batch {
-		// Precompute squared norms for each head via engine ops.
-		normsSq := make([]T, numHeads)
+		// Extract [numHeads, seqLen] sub-matrix for this batch element.
+		base := b * numHeads * seqLen
+		headsMat, err := tensor.New[T]([]int{numHeads, seqLen}, scores.Data()[base:base+numHeads*seqLen])
+		if err != nil {
+			return nil, err
+		}
+
+		// Compute per-head squared norms via engine.
+		headsSq, err := rc.engine.Mul(ctx, headsMat, headsMat)
+		if err != nil {
+			return nil, err
+		}
+		normsSqT, err := rc.engine.ReduceSum(ctx, headsSq, 1, false)
+		if err != nil {
+			return nil, err
+		}
+		normsSqData := normsSqT.Data()
+
+		// Transpose and MatMul for all pairwise dot products.
+		headsT, err := rc.engine.Transpose(ctx, headsMat, []int{1, 0})
+		if err != nil {
+			return nil, err
+		}
+		dotMat, err := rc.engine.MatMul(ctx, headsMat, headsT)
+		if err != nil {
+			return nil, err
+		}
+		dotData := dotMat.Data()
+
+		// Extract per-head 1D tensors for gradient computation.
 		heads := make([]*tensor.TensorNumeric[T], numHeads)
 		for h := range numHeads {
-			base := (b*numHeads + h) * seqLen
-			head, err := tensor.New[T]([]int{seqLen}, data[base:base+seqLen])
+			hBase := h * seqLen
+			heads[h], err = tensor.New[T]([]int{seqLen}, headsMat.Data()[hBase:hBase+seqLen])
 			if err != nil {
 				return nil, err
 			}
-			heads[h] = head
-			sq, err := rc.engine.Mul(ctx, head, head)
-			if err != nil {
-				return nil, err
-			}
-			nT, err := rc.engine.ReduceSum(ctx, sq, 0, false)
-			if err != nil {
-				return nil, err
-			}
-			normsSq[h] = nT.Data()[0]
 		}
 
 		for i := range numHeads {
 			for j := i + 1; j < numHeads; j++ {
-				normI := ops.Sqrt(normsSq[i])
-				normJ := ops.Sqrt(normsSq[j])
+				normI := ops.Sqrt(normsSqData[i])
+				normJ := ops.Sqrt(normsSqData[j])
 				denom := ops.Add(ops.Mul(normI, normJ), eps)
-				normISqEps := ops.Add(normsSq[i], eps)
-				normJSqEps := ops.Add(normsSq[j], eps)
+				normISqEps := ops.Add(normsSqData[i], eps)
+				normJSqEps := ops.Add(normsSqData[j], eps)
 
-				baseI := (b*numHeads + i) * seqLen
-				baseJ := (b*numHeads + j) * seqLen
+				baseI := base + i*seqLen
+				baseJ := base + j*seqLen
 
-				// Dot product via engine ops.
-				prod, err := rc.engine.Mul(ctx, heads[i], heads[j])
-				if err != nil {
-					return nil, err
-				}
-				dotT, err := rc.engine.ReduceSum(ctx, prod, 0, false)
-				if err != nil {
-					return nil, err
-				}
-				cosVal := ops.Div(dotT.Data()[0], denom)
-
-				// Gradient via engine ops: coeffTensor * (headJ/denom - cosVal * headI/normISqEps)
-				denomT, err := tensor.New[T]([]int{seqLen}, scalarFill(seqLen, denom))
-				if err != nil {
-					return nil, err
-				}
-				cosValT, err := tensor.New[T]([]int{seqLen}, scalarFill(seqLen, cosVal))
-				if err != nil {
-					return nil, err
-				}
-				coeffT, err := tensor.New[T]([]int{seqLen}, scalarFill(seqLen, coeff))
-				if err != nil {
-					return nil, err
-				}
+				cosVal := ops.Div(dotData[i*numHeads+j], denom)
 
 				// dI = coeff * (headJ/denom - cosVal * headI/normISqEps)
-				normISqEpsT, err := tensor.New[T]([]int{seqLen}, scalarFill(seqLen, normISqEps))
+				term1I, err := rc.engine.DivScalar(ctx, heads[j], denom)
 				if err != nil {
 					return nil, err
 				}
-				term1I, err := rc.engine.Div(ctx, heads[j], denomT)
+				scaledI, err := rc.engine.DivScalar(ctx, heads[i], normISqEps)
 				if err != nil {
 					return nil, err
 				}
-				scaledI, err := rc.engine.Div(ctx, heads[i], normISqEpsT)
-				if err != nil {
-					return nil, err
-				}
-				cosScaledI, err := rc.engine.Mul(ctx, cosValT, scaledI)
+				cosScaledI, err := rc.engine.MulScalar(ctx, scaledI, cosVal)
 				if err != nil {
 					return nil, err
 				}
@@ -245,25 +232,21 @@ func (rc *RoutingContrastive[T]) Backward(ctx context.Context, _ types.BackwardM
 				if err != nil {
 					return nil, err
 				}
-				dI, err := rc.engine.Mul(ctx, coeffT, diffI)
+				dI, err := rc.engine.MulScalar(ctx, diffI, coeff)
 				if err != nil {
 					return nil, err
 				}
 
 				// dJ = coeff * (headI/denom - cosVal * headJ/normJSqEps)
-				normJSqEpsT, err := tensor.New[T]([]int{seqLen}, scalarFill(seqLen, normJSqEps))
+				term1J, err := rc.engine.DivScalar(ctx, heads[i], denom)
 				if err != nil {
 					return nil, err
 				}
-				term1J, err := rc.engine.Div(ctx, heads[i], denomT)
+				scaledJ, err := rc.engine.DivScalar(ctx, heads[j], normJSqEps)
 				if err != nil {
 					return nil, err
 				}
-				scaledJ, err := rc.engine.Div(ctx, heads[j], normJSqEpsT)
-				if err != nil {
-					return nil, err
-				}
-				cosScaledJ, err := rc.engine.Mul(ctx, cosValT, scaledJ)
+				cosScaledJ, err := rc.engine.MulScalar(ctx, scaledJ, cosVal)
 				if err != nil {
 					return nil, err
 				}
@@ -271,7 +254,7 @@ func (rc *RoutingContrastive[T]) Backward(ctx context.Context, _ types.BackwardM
 				if err != nil {
 					return nil, err
 				}
-				dJ, err := rc.engine.Mul(ctx, coeffT, diffJ)
+				dJ, err := rc.engine.MulScalar(ctx, diffJ, coeff)
 				if err != nil {
 					return nil, err
 				}
@@ -292,15 +275,6 @@ func (rc *RoutingContrastive[T]) Backward(ctx context.Context, _ types.BackwardM
 		return nil, err
 	}
 	return []*tensor.TensorNumeric[T]{grad}, nil
-}
-
-// scalarFill returns a slice of length n filled with value v.
-func scalarFill[T tensor.Numeric](n int, v T) []T {
-	s := make([]T, n)
-	for i := range s {
-		s[i] = v
-	}
-	return s
 }
 
 // OutputShape returns the output shape of the loss (scalar).
