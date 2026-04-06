@@ -328,9 +328,13 @@ func (v *VSN[T]) Forward(ctx context.Context, inputs []*tensor.TensorNumeric[T])
 		return nil, nil, fmt.Errorf("softmax weights: %w", err)
 	}
 
-	// Compute weighted sum of embeddings.
-	// weights[:, i] * embeddings[i] summed over i.
-	// Start with zeros.
+	// Split weights [batch, numVars] along axis 1 into numVars * [batch, 1].
+	weightCols, err := v.engine.Split(ctx, weights, v.numVars, 1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("split weights: %w", err)
+	}
+
+	// Compute weighted sum of embeddings using engine ops.
 	outData := make([]T, batch*v.dModel)
 	output, err := tensor.New[T]([]int{batch, v.dModel}, outData)
 	if err != nil {
@@ -338,39 +342,26 @@ func (v *VSN[T]) Forward(ctx context.Context, inputs []*tensor.TensorNumeric[T])
 	}
 
 	for i := 0; i < v.numVars; i++ {
-		// Extract weight for variable i: weights[:, i] -> [batch, 1]
-		wData := weights.Data()
-		wiData := make([]T, batch)
-		for b := 0; b < batch; b++ {
-			wiData[b] = wData[b*v.numVars+i]
-		}
-		wi, err := tensor.New[T]([]int{batch, 1}, wiData)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// wi * embedding[i]: [batch, 1] * [batch, dModel] -> [batch, dModel] (broadcast)
-		scaled, err := v.engine.Mul(ctx, wi, embeddings[i])
+		// weightCols[i] is [batch, 1], broadcast-multiply with embedding[i] [batch, dModel]
+		scaled, err := v.engine.Mul(ctx, weightCols[i], embeddings[i])
 		if err != nil {
 			return nil, nil, fmt.Errorf("scale var %d: %w", i, err)
 		}
-
 		output, err = v.engine.Add(ctx, output, scaled)
 		if err != nil {
 			return nil, nil, fmt.Errorf("accumulate var %d: %w", i, err)
 		}
 	}
 
-	// Compute mean importance weights across batch for reporting.
-	importanceWeights := make([]float32, v.numVars)
-	wData := weights.Data()
-	for b := 0; b < batch; b++ {
-		for i := 0; i < v.numVars; i++ {
-			importanceWeights[i] += float32(wData[b*v.numVars+i])
-		}
+	// Compute mean importance weights across batch via engine ReduceMean.
+	meanWeights, err := v.engine.ReduceMean(ctx, weights, 0, false) // [numVars]
+	if err != nil {
+		return nil, nil, fmt.Errorf("mean weights: %w", err)
 	}
+	mwData := meanWeights.Data()
+	importanceWeights := make([]float32, v.numVars)
 	for i := range importanceWeights {
-		importanceWeights[i] /= float32(batch)
+		importanceWeights[i] = float32(mwData[i])
 	}
 
 	return output, importanceWeights, nil
@@ -381,8 +372,6 @@ func (v *VSN[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGr
 	if len(inputs) != v.numVars {
 		return nil, fmt.Errorf("VSN backward expects %d inputs, got %d", v.numVars, len(inputs))
 	}
-
-	batch := inputs[0].Shape()[0]
 
 	// Recompute forward embeddings and weights for backward.
 	embeddings := make([]*tensor.TensorNumeric[T], v.numVars)
@@ -409,21 +398,17 @@ func (v *VSN[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGr
 		return nil, err
 	}
 
+	// Split weights for backward.
+	weightCols, err := v.engine.Split(ctx, weights, v.numVars, 1) // numVars * [batch, 1]
+	if err != nil {
+		return nil, err
+	}
+
 	// Gradient w.r.t. each variable projection.
 	inputGrads := make([]*tensor.TensorNumeric[T], v.numVars)
 	for i := 0; i < v.numVars; i++ {
 		// dEmb_i = weight_i * outputGradient
-		wData := weights.Data()
-		wiData := make([]T, batch)
-		for b := 0; b < batch; b++ {
-			wiData[b] = wData[b*v.numVars+i]
-		}
-		wi, err := tensor.New[T]([]int{batch, 1}, wiData)
-		if err != nil {
-			return nil, err
-		}
-
-		dEmb, err := v.engine.Mul(ctx, wi, outputGradient)
+		dEmb, err := v.engine.Mul(ctx, weightCols[i], outputGradient)
 		if err != nil {
 			return nil, err
 		}
