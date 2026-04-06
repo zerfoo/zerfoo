@@ -418,26 +418,26 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 - [x] T77.1.3 tabnet.go: replace linearForward (E77)  PR #336 2026-04-04
 - [x] T77.1.4 resnet.go: replace linearForward, layerNorm (E77)  PR #336 2026-04-04
 - [x] T78.1.3 clip_encoder.go: replace QuickGELU (E78)  PR #336 2026-04-04
-- [ ] T78.1.4 mlstm.go: replace .Data() with engine.Slice (E78)  -- deferred to Wave 15
-- [ ] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  -- deferred to Wave 15
+- [x] T78.1.4 mlstm.go: replace .Data() with engine.Split (E78)  PR #TBD 2026-04-05
+- [x] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  PR #TBD 2026-04-05
 - [x] T79.1.3 Break up sampleFromLogits (E79)  PR #336 2026-04-04
 - [x] T79.1.4 Deduplicate GenerateStream (E79)  PR #336 2026-04-04
 - [x] T80.1.3 Add newEmbeddingNode/newLMHeadNode factories (E80)  PR #336 2026-04-04
-- [ ] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)  -- deferred to Wave 15
+- [x] T82.1.2 routing_contrastive.go: replace loops with engine.MatMul (E82)  PR #TBD 2026-04-05
 - [x] T83.1.1 Extract buildGenerationOptions (E83)  PR #336 2026-04-04
 
 #### Composition Wave 15: Phase 4 continued (10 agents)
 
-- [ ] T77.1.5 model.go: replace linearForward, geluScalar (E77)
-- [ ] T77.1.6 train.go: replace crossEntropyLoss (E77)
-- [ ] T78.1.6 vsn.go: replace weight extraction (E78)
-- [ ] T78.1.7 gemm.go: replace hand-rolled GEMM (E78)
-- [ ] T78.1.8 variable_selection.go: replace inline GELU (E78)
-- [ ] T78.1.9 temporal_conv_encoder.go: replace raw pool gradient (E78)
-- [ ] T79.1.5 Deduplicate speculative decode step (E79)  Deps: T79.1.2
-- [ ] T80.1.4 Migrate arch_llama/gemma/mistral to helpers (E80)  Deps: T80.1.1-T80.1.3
-- [ ] T82.1.3 quantile.go: fix broken generics (E82)
-- [ ] T83.1.2 Extract parseAndApplyGrammar (E83)
+- [x] T77.1.5 model.go: replace linearForward, geluScalar (E77)  PR #TBD 2026-04-05
+- [x] T77.1.6 train.go: replace crossEntropyLoss (E77)  PR #TBD 2026-04-05
+- [x] T78.1.6 vsn.go: replace weight extraction (E78)  PR #TBD 2026-04-05
+- [x] T78.1.7 gemm.go: replace hand-rolled GEMM (E78)  no-op: GEMM already refactored 2026-04-05
+- [x] T78.1.8 variable_selection.go: replace inline GELU (E78)  PR #TBD 2026-04-05
+- [x] T78.1.9 temporal_conv_encoder.go: replace raw pool gradient (E78)  PR #TBD 2026-04-05
+- [x] T79.1.5 Deduplicate speculative decode step (E79)  7102d92b 2026-04-05
+- [x] T80.1.4 Migrate arch_llama/gemma/mistral to helpers (E80)  PR #TBD 2026-04-05
+- [x] T82.1.3 quantile.go: fix broken generics (E82)  PR #TBD 2026-04-05
+- [x] T83.1.2 Extract parseAndApplyGrammar (E83)  PR #TBD 2026-04-05
 
 #### Composition Wave 16: Phase 4 continued (10 agents)
 
