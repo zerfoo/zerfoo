@@ -1,15 +1,17 @@
 package loss
 
 import (
+	"context"
 	"fmt"
 	"math"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-// QuantileLoss computes the pinball (quantile regression) loss.
+// QuantileLoss computes the pinball (quantile regression) loss using engine ops.
 // preds has shape [batch, num_quantiles], targets has shape [batch],
 // and quantiles is a slice of quantile levels (e.g., 0.1, 0.5, 0.9).
 //
@@ -20,7 +22,7 @@ import (
 //	loss_q = (q-1) * error   if error < 0
 //
 // Returns the mean loss over all samples and quantiles.
-func QuantileLoss[T tensor.Numeric](preds, targets *tensor.TensorNumeric[T], quantiles []float32) (float32, error) {
+func QuantileLoss[T tensor.Numeric](engine compute.Engine[T], preds, targets *tensor.TensorNumeric[T], quantiles []float32) (float32, error) {
 	predShape := preds.Shape()
 	targetShape := targets.Shape()
 
@@ -34,39 +36,91 @@ func QuantileLoss[T tensor.Numeric](preds, targets *tensor.TensorNumeric[T], qua
 		return 0, fmt.Errorf("QuantileLoss: len(quantiles)=%d must match preds dim 1=%d", len(quantiles), numQ)
 	}
 
-	// targets can be [batch] or [batch, 1]
 	targetBatch := targetShape[0]
 	if targetBatch != batch {
 		return 0, fmt.Errorf("QuantileLoss: batch mismatch preds=%d targets=%d", batch, targetBatch)
 	}
 
-	predData := preds.Data()
-	targetData := targets.Data()
+	ctx := context.Background()
+	ops := engine.Ops()
 
-	var totalLoss float64
-	count := 0
-
-	for i := 0; i < batch; i++ {
-		tgt := numericToFloat64(targetData[i])
-		for j := 0; j < numQ; j++ {
-			pred := numericToFloat64(predData[i*numQ+j])
-			q := float64(quantiles[j])
-			err := tgt - pred
-			var l float64
-			if err >= 0 {
-				l = q * err
-			} else {
-				l = (q - 1) * err
-			}
-			totalLoss += l
-			count++
+	// Broadcast targets [batch] -> [batch, 1] -> [batch, numQ] via Repeat.
+	tgt1D := targets
+	if len(targetShape) == 1 {
+		var err error
+		tgt1D, err = engine.Reshape(ctx, targets, []int{batch, 1})
+		if err != nil {
+			return 0, fmt.Errorf("QuantileLoss: reshape targets: %w", err)
 		}
 	}
-
-	if count == 0 {
-		return 0, nil
+	tgtBroad, err := engine.Repeat(ctx, tgt1D, 1, numQ)
+	if err != nil {
+		return 0, fmt.Errorf("QuantileLoss: repeat targets: %w", err)
 	}
-	return float32(totalLoss / float64(count)), nil
+
+	// error = targets - preds, shape [batch, numQ]
+	errTensor, err := engine.Sub(ctx, tgtBroad, preds)
+	if err != nil {
+		return 0, fmt.Errorf("QuantileLoss: sub: %w", err)
+	}
+
+	// pos = max(error, 0), neg = max(-error, 0)
+	pos, err := engine.UnaryOp(ctx, errTensor, ops.ReLU)
+	if err != nil {
+		return 0, fmt.Errorf("QuantileLoss: relu pos: %w", err)
+	}
+	negErr, err := engine.MulScalar(ctx, errTensor, ops.FromFloat64(-1))
+	if err != nil {
+		return 0, fmt.Errorf("QuantileLoss: negate: %w", err)
+	}
+	neg, err := engine.UnaryOp(ctx, negErr, ops.ReLU)
+	if err != nil {
+		return 0, fmt.Errorf("QuantileLoss: relu neg: %w", err)
+	}
+
+	// Build quantile weight tensors [1, numQ].
+	qData := make([]T, numQ)
+	qm1Data := make([]T, numQ)
+	for j := 0; j < numQ; j++ {
+		qData[j] = ops.FromFloat64(float64(quantiles[j]))
+		qm1Data[j] = ops.FromFloat64(float64(1 - quantiles[j]))
+	}
+	qTensor, err := tensor.New[T]([]int{1, numQ}, qData)
+	if err != nil {
+		return 0, err
+	}
+	qm1Tensor, err := tensor.New[T]([]int{1, numQ}, qm1Data)
+	if err != nil {
+		return 0, err
+	}
+
+	// loss = q * pos + (1-q) * neg  (both non-negative)
+	qPos, err := engine.Mul(ctx, pos, qTensor)
+	if err != nil {
+		return 0, err
+	}
+	qm1Neg, err := engine.Mul(ctx, neg, qm1Tensor)
+	if err != nil {
+		return 0, err
+	}
+	total, err := engine.Add(ctx, qPos, qm1Neg)
+	if err != nil {
+		return 0, err
+	}
+
+	// Mean over all elements: sum across numQ, then sum across batch, divide by count.
+	sumQ, err := engine.ReduceSum(ctx, total, 1, false)
+	if err != nil {
+		return 0, err
+	}
+	sumAll, err := engine.ReduceSum(ctx, sumQ, 0, false)
+	if err != nil {
+		return 0, err
+	}
+
+	count := batch * numQ
+	result := numericToFloat64(sumAll.Data()[0]) / float64(count)
+	return float32(result), nil
 }
 
 // SharpeLoss computes the negative Sharpe ratio as a differentiable loss for
