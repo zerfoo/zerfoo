@@ -341,14 +341,14 @@ All 127 tasks completed by 2026-03-27 (PRs #262-#265). Full details in git histo
 | AC: Backward Composition | E74 T74.*.* | Add functional backward ops, migrate 3 backward files | COMPLETE (12/14, 2 DGX pending) |
 | AD: Inference TS .Data() | E75 T75.*.* | Replace unjustified .Data() in 6 arch builders | COMPLETE |
 | AE: Allowlist Cleanup | E76 T76.*.* | Remove timeseries/ from arch test allowlist | BLOCKED (deps: AC) |
-| AF: Tabular Composition | E77 T77.*.* | Replace reimplemented ops with functional | NOT STARTED |
-| AG: Layers Internal | E78 T78.*.* | Rewrite violating code to use engine ops | NOT STARTED |
-| AH: Generate Refactor | E79 T79.*.* | Extract shared decode loop, deduplicate | NOT STARTED |
-| AI: Builder Boilerplate | E80 T80.*.* | Shared factory functions for arch builders | NOT STARTED |
-| AJ: Custom Nodes | E81 T81.*.* | Replace unjustified custom nodes with layers/ | NOT STARTED |
-| AK: Training Loss | E82 T82.*.* | Loss functions + optimizer to engine ops | NOT STARTED |
-| AL: Serve Handlers | E83 T83.*.* | Extract shared helpers from monolithic handlers | NOT STARTED |
-| AM: ModeLDSL | E84 T84.*.* | DSL layer implementations compose from layers/ | NOT STARTED |
+| AF: Tabular Composition | E77 T77.*.* | Replace reimplemented ops with functional | DONE |
+| AG: Layers Internal | E78 T78.*.* | Rewrite violating code to use engine ops | DONE |
+| AH: Generate Refactor | E79 T79.*.* | Extract shared decode loop, deduplicate | DONE |
+| AI: Builder Boilerplate | E80 T80.*.* | Shared factory functions for arch builders | DONE |
+| AJ: Custom Nodes | E81 T81.*.* | Replace unjustified custom nodes with layers/ | DONE |
+| AK: Training Loss | E82 T82.*.* | Loss functions + optimizer to engine ops | DONE |
+| AL: Serve Handlers | E83 T83.*.* | Extract shared helpers from monolithic handlers | DONE |
+| AM: ModeLDSL | E84 T84.*.* | DSL layer implementations compose from layers/ | DONE |
 
 ### Composition Sync Points
 
@@ -467,20 +467,20 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 
 #### Composition Wave 18: Phase 4 validation (10 agents)
 
-- [ ] T77.2.2 Run go vet and linters (E77)  Deps: T77.2.1
-- [ ] T78.2.2 Run go vet and linters (E78)  Deps: T78.2.1
-- [ ] T79.2.2 Run go vet and linters (E79)  Deps: T79.2.1
-- [ ] T80.2.1 Run go test ./inference/... with race (E80)  Deps: T80.1.4-T80.1.6
-- [ ] T80.2.2 Run go vet and linters (E80)  Deps: T80.2.1
-- [ ] T81.2.2 Run go vet and linters (E81)  Deps: T81.2.1
-- [ ] T82.2.2 Run go vet and linters (E82)  Deps: T82.2.1
-- [ ] T83.2.1 Run go test ./serve/... with race (E83)  Deps: T83.1.1-T83.1.3
-- [ ] T83.2.2 Run go vet and linters (E83)  Deps: T83.2.1
-- [ ] T84.2.1 Run go test ./modeldsl/... with race (E84)  Deps: T84.1.1-T84.1.6
+- [x] T77.2.2 Run go vet and linters (E77)  Deps: T77.2.1  2026-04-06
+- [x] T78.2.2 Run go vet and linters (E78)  Deps: T78.2.1  2026-04-06
+- [x] T79.2.2 Run go vet and linters (E79)  Deps: T79.2.1  2026-04-06
+- [x] T80.2.1 Run go test ./inference/... with race (E80)  Deps: T80.1.4-T80.1.6  2026-04-06
+- [x] T80.2.2 Run go vet and linters (E80)  Deps: T80.2.1  2026-04-06
+- [x] T81.2.2 Run go vet and linters (E81)  Deps: T81.2.1  2026-04-06
+- [x] T82.2.2 Run go vet and linters (E82)  Deps: T82.2.1  2026-04-06
+- [x] T83.2.1 Run go test ./serve/... with race (E83)  Deps: T83.1.1-T83.1.3  2026-04-06
+- [x] T83.2.2 Run go vet and linters (E83)  Deps: T83.2.1  2026-04-06
+- [x] T84.2.1 Run go test ./modeldsl/... with race (E84)  Deps: T84.1.1-T84.1.6  2026-04-06
 
 #### Composition Wave 19: Phase 4 final validation (1 agent)
 
-- [ ] T84.2.2 Run go vet and linters (E84)  Deps: T84.2.1
+- [x] T84.2.2 Run go vet and linters (E84)  Deps: T84.2.1  2026-04-06
 
 ### Completed Research Waves (1-8, all tasks done)
 
