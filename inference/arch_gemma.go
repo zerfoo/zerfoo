@@ -1,7 +1,6 @@
 package inference
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -26,9 +25,11 @@ func buildGemmaGraph(
 	cfg *gguf.ModelConfig,
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Gemma always ties LM head to embedding weights.

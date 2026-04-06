@@ -35,7 +35,7 @@ func newVisionGQA(
 	ropeTheta float64,
 	qW, kW, vW, oW *tensor.TensorNumeric[float32],
 	prefix string,
-	param func(string, *tensor.TensorNumeric[float32]) *graph.Parameter[float32],
+	pw paramWrapper[float32],
 ) (*attention.GroupedQueryAttention[float32], error) {
 	qWT, err := cpuTranspose2D(qW)
 	if err != nil {
@@ -55,16 +55,16 @@ func newVisionGQA(
 	}
 
 	wq := core.NewDenseFromParams(
-		core.NewLinearFromParam(engine, param(prefix+"self_attn.q_proj.weight", qWT)), nil,
+		core.NewLinearFromParam(engine, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)), nil,
 	)
 	wk := core.NewDenseFromParams(
-		core.NewLinearFromParam(engine, param(prefix+"self_attn.k_proj.weight", kWT)), nil,
+		core.NewLinearFromParam(engine, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)), nil,
 	)
 	wv := core.NewDenseFromParams(
-		core.NewLinearFromParam(engine, param(prefix+"self_attn.v_proj.weight", vWT)), nil,
+		core.NewLinearFromParam(engine, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)), nil,
 	)
 	wo := core.NewDenseFromParams(
-		core.NewLinearFromParam(engine, param(prefix+"self_attn.o_proj.weight", oWT)), nil,
+		core.NewLinearFromParam(engine, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)), nil,
 	)
 
 	if maxSeqLen == 0 {

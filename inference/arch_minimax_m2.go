@@ -38,17 +38,9 @@ func buildMiniMaxM2Graph(
 		rmsEps = cfg.RMSNormEps
 	}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	pw := newParamWrapper[float32]()
 
 	// Global tensors use GGUF names.
 	embedWeight, ok := tensors["token_embd.weight"]
@@ -61,7 +53,7 @@ func buildMiniMaxM2Graph(
 		lmHeadWeight = embedWeight
 	}
 
-	finalNormWeight, err := lookup("output_norm.weight")
+	finalNormWeight, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,7 +63,7 @@ func buildMiniMaxM2Graph(
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup.
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -95,12 +87,12 @@ func buildMiniMaxM2Graph(
 		blk := fmt.Sprintf("blk.%d.", i)
 
 		// --- Input LayerNorm ---
-		inputNormW, err := lookup(blk + "attn_norm.weight")
+		inputNormW, err := tl.Lookup(blk + "attn_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		inputNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(blk+"attn_norm.weight", inputNormW),
+			proxy, ops, rmsEps, pw.Wrap(blk+"attn_norm.weight", inputNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -108,19 +100,19 @@ func buildMiniMaxM2Graph(
 		normed := builder.AddNode(inputNorm, hidden)
 
 		// --- GQA Attention with QK Norms and Partial RoPE ---
-		qW, err := lookup(blk + "attn_q.weight")
+		qW, err := tl.Lookup(blk + "attn_q.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		kW, err := lookup(blk + "attn_k.weight")
+		kW, err := tl.Lookup(blk + "attn_k.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		vW, err := lookup(blk + "attn_v.weight")
+		vW, err := tl.Lookup(blk + "attn_v.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		oW, err := lookup(blk + "attn_output.weight")
+		oW, err := tl.Lookup(blk + "attn_output.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -144,16 +136,16 @@ func buildMiniMaxM2Graph(
 		}
 
 		wq := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(blk+"attn_q.weight", qWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(blk+"attn_q.weight", qWT)), nil,
 		)
 		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(blk+"attn_k.weight", kWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(blk+"attn_k.weight", kWT)), nil,
 		)
 		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(blk+"attn_v.weight", vWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(blk+"attn_v.weight", vWT)), nil,
 		)
 		wo := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, param(blk+"attn_output.weight", oWT)), nil,
+			core.NewLinearFromParam(proxy, pw.Wrap(blk+"attn_output.weight", oWT)), nil,
 		)
 
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
@@ -179,22 +171,22 @@ func buildMiniMaxM2Graph(
 		gqa.LayerIndex = i
 
 		// QK norms: apply per-layer RMSNorm to Q and K projections.
-		qNormW, err := lookup(blk + "attn_q_norm.weight")
+		qNormW, err := tl.Lookup(blk + "attn_q_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		qNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(blk+"attn_q_norm.weight", qNormW),
+			proxy, ops, rmsEps, pw.Wrap(blk+"attn_q_norm.weight", qNormW),
 		)
 		if err != nil {
 			return nil, nil, err
 		}
-		kNormW, err := lookup(blk + "attn_k_norm.weight")
+		kNormW, err := tl.Lookup(blk + "attn_k_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
 		kNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, param(blk+"attn_k_norm.weight", kNormW),
+			proxy, ops, rmsEps, pw.Wrap(blk+"attn_k_norm.weight", kNormW),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -211,7 +203,7 @@ func buildMiniMaxM2Graph(
 		attnOut := builder.AddNode(gqa, normed)
 
 		// --- Fused Residual Add + Pre-FFN LayerNorm ---
-		ffnNormW, err := lookup(blk + "ffn_norm.weight")
+		ffnNormW, err := tl.Lookup(blk + "ffn_norm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -233,7 +225,7 @@ func buildMiniMaxM2Graph(
 
 	// --- Final RMSNorm ---
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, rmsEps, param("output_norm.weight", finalNormWeight),
+		proxy, ops, rmsEps, pw.Wrap("output_norm.weight", finalNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -241,7 +233,7 @@ func buildMiniMaxM2Graph(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// --- LM Head ---
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

@@ -157,19 +157,11 @@ func BuildMamba3MIMO(
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	ops := numeric.Float32Ops{}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	pw := newParamWrapper[float32]()
 
-	embedWeight, err := lookup("token_embd.weight")
+	embedWeight, err := tl.Lookup("token_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -179,7 +171,7 @@ func BuildMamba3MIMO(
 		lmHeadWeight = embedWeight // tie embeddings
 	}
 
-	outputNormWeight, err := lookup("output_norm.weight")
+	outputNormWeight, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -189,7 +181,7 @@ func BuildMamba3MIMO(
 	input := builder.Input([]int{1, 1})
 
 	// Embedding lookup.
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := mc.DInner / mc.NumHeads
@@ -209,12 +201,12 @@ func BuildMamba3MIMO(
 		prefix := fmt.Sprintf("mamba3.%d.", i)
 
 		// Pre-layer RMSNorm.
-		normW, lErr := lookup(prefix + "norm.weight")
+		normW, lErr := tl.Lookup(prefix + "norm.weight")
 		if lErr != nil {
 			return nil, nil, lErr
 		}
 		norm, nErr := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, mc.RMSNormEps, param(prefix+"norm.weight", normW),
+			proxy, ops, mc.RMSNormEps, pw.Wrap(prefix+"norm.weight", normW),
 		)
 		if nErr != nil {
 			return nil, nil, nErr
@@ -245,7 +237,7 @@ func BuildMamba3MIMO(
 
 	// Final RMSNorm.
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, mc.RMSNormEps, param("output_norm.weight", outputNormWeight),
+		proxy, ops, mc.RMSNormEps, pw.Wrap("output_norm.weight", outputNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -253,7 +245,7 @@ func BuildMamba3MIMO(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)

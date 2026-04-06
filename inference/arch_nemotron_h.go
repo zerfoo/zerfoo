@@ -106,14 +106,15 @@ const (
 //   - blk.{i}.ffn_gate_inp.weight exists -> MoE layer
 //   - blk.{i}.ffn_gate.weight exists -> Dense FFN layer
 func detectNemotronHLayerType(tensors map[string]*tensor.TensorNumeric[float32], i int) nemotronHLayerType {
+	tl := newTensorLookup(tensors)
 	prefix := fmt.Sprintf("blk.%d.", i)
-	if _, ok := tensors[prefix+"ssm_in.weight"]; ok {
+	if tl.Has(prefix + "ssm_in.weight") {
 		return nemotronHLayerMamba
 	}
-	if _, ok := tensors[prefix+"attn_q.weight"]; ok {
+	if tl.Has(prefix + "attn_q.weight") {
 		return nemotronHLayerAttn
 	}
-	if _, ok := tensors[prefix+"ffn_gate_inp.weight"]; ok {
+	if tl.Has(prefix + "ffn_gate_inp.weight") {
 		return nemotronHLayerMoE
 	}
 	return nemotronHLayerFFN
@@ -182,30 +183,20 @@ func BuildNemotronH(
 	moeEnabled bool,
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	ops := numeric.Float32Ops{}
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
-
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	embedWeight, err := lookup("token_embd.weight")
+	embedWeight, err := tl.Lookup("token_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	lmHeadWeight, ok := tensors["output.weight"]
+	lmHeadWeight, ok := tl.Optional("output.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}
 
-	outputNormWeight, err := lookup("output_norm.weight")
+	outputNormWeight, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -214,7 +205,7 @@ func BuildNemotronH(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	headDim := nc.HiddenSize / nc.AttnHeads
@@ -241,7 +232,7 @@ func BuildNemotronH(
 	dtRank := int(math.Ceil(float64(nc.HiddenSize) / 16))
 	for i := 0; i < nc.NumLayers; i++ {
 		prefix := fmt.Sprintf("blk.%d.", i)
-		if dtW, exists := tensors[prefix+"ssm_dt.weight"]; exists {
+		if dtW, exists := tl.Optional(prefix + "ssm_dt.weight"); exists {
 			// ssm_dt.weight shape: [d_inner, dt_rank]
 			dtRank = dtW.Shape()[1]
 			break
@@ -254,12 +245,12 @@ func BuildNemotronH(
 
 		// Use attn_norm.weight as the pre-layer norm for all layer types.
 		normName := prefix + "attn_norm.weight"
-		normW, lErr := lookup(normName)
+		normW, lErr := tl.Lookup(normName)
 		if lErr != nil {
 			return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 		}
 		norm, nErr := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, nc.RMSEps, param(normName, normW),
+			proxy, ops, nc.RMSEps, pw.Wrap(normName, normW),
 		)
 		if nErr != nil {
 			return nil, nil, fmt.Errorf("layer %d norm: %w", i, nErr)
@@ -297,12 +288,12 @@ func BuildNemotronH(
 			hidden = builder.AddNode(resAdd, attnOut, hidden)
 
 			// Pre-FFN RMSNorm.
-			ffnNormW, lErr := lookup(prefix + "ffn_norm.weight")
+			ffnNormW, lErr := tl.Lookup(prefix + "ffn_norm.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
 			ffnNorm, nErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, nc.RMSEps, param(prefix+"ffn_norm.weight", ffnNormW),
+				proxy, ops, nc.RMSEps, pw.Wrap(prefix+"ffn_norm.weight", ffnNormW),
 			)
 			if nErr != nil {
 				return nil, nil, fmt.Errorf("layer %d ffn norm: %w", i, nErr)
@@ -345,7 +336,7 @@ func BuildNemotronH(
 
 	// Final RMSNorm.
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, nc.RMSEps, param("output_norm.weight", outputNormWeight),
+		proxy, ops, nc.RMSEps, pw.Wrap("output_norm.weight", outputNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -353,7 +344,7 @@ func BuildNemotronH(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
@@ -378,31 +369,22 @@ func buildNemotronHAttention(
 	prefix string,
 	headDim int,
 ) (graph.Node[float32], error) {
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
+	pw := newParamWrapper[float32]()
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
-
-	qW, err := lookup(prefix + "attn_q.weight")
+	qW, err := tl.Lookup(prefix + "attn_q.weight")
 	if err != nil {
 		return nil, err
 	}
-	kW, err := lookup(prefix + "attn_k.weight")
+	kW, err := tl.Lookup(prefix + "attn_k.weight")
 	if err != nil {
 		return nil, err
 	}
-	vW, err := lookup(prefix + "attn_v.weight")
+	vW, err := tl.Lookup(prefix + "attn_v.weight")
 	if err != nil {
 		return nil, err
 	}
-	oW, err := lookup(prefix + "attn_output.weight")
+	oW, err := tl.Lookup(prefix + "attn_output.weight")
 	if err != nil {
 		return nil, err
 	}
@@ -425,16 +407,16 @@ func buildNemotronHAttention(
 	}
 
 	wq := core.NewDenseFromParams(
-		core.NewLinearFromParam(proxy, param(prefix+"attn_q.weight", qWT)), nil,
+		core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_q.weight", qWT)), nil,
 	)
 	wk := core.NewDenseFromParams(
-		core.NewLinearFromParam(proxy, param(prefix+"attn_k.weight", kWT)), nil,
+		core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_k.weight", kWT)), nil,
 	)
 	wv := core.NewDenseFromParams(
-		core.NewLinearFromParam(proxy, param(prefix+"attn_v.weight", vWT)), nil,
+		core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_v.weight", vWT)), nil,
 	)
 	wo := core.NewDenseFromParams(
-		core.NewLinearFromParam(proxy, param(prefix+"attn_output.weight", oWT)), nil,
+		core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_output.weight", oWT)), nil,
 	)
 
 	maxSeqLen := nc.MaxSeqLen
@@ -472,23 +454,17 @@ func buildNemotronHFFN(
 	layerIdx int,
 	prefix string,
 ) (graph.Node[float32], error) {
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	gateW, err := lookup(prefix + "ffn_gate.weight")
+	gateW, err := tl.Lookup(prefix + "ffn_gate.weight")
 	if err != nil {
 		return nil, err
 	}
-	upW, err := lookup(prefix + "ffn_up.weight")
+	upW, err := tl.Lookup(prefix + "ffn_up.weight")
 	if err != nil {
 		return nil, err
 	}
-	downW, err := lookup(prefix + "ffn_down.weight")
+	downW, err := tl.Lookup(prefix + "ffn_down.weight")
 	if err != nil {
 		return nil, err
 	}
@@ -546,24 +522,26 @@ func buildNemotronHMoE(
 		topK = 6
 	}
 
+	tl := newTensorLookup(tensors)
+
 	// Load router weight.
-	routerW, ok := tensors[prefix+"ffn_gate_inp.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_gate_inp.weight")
+	routerW, err := tl.Lookup(prefix + "ffn_gate_inp.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	// Load stacked expert weights.
-	gateExpsW, ok := tensors[prefix+"ffn_gate_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_gate_exps.weight")
+	gateExpsW, err := tl.Lookup(prefix + "ffn_gate_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	upExpsW, ok := tensors[prefix+"ffn_up_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_up_exps.weight")
+	upExpsW, err := tl.Lookup(prefix + "ffn_up_exps.weight")
+	if err != nil {
+		return nil, err
 	}
-	downExpsW, ok := tensors[prefix+"ffn_down_exps.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_down_exps.weight")
+	downExpsW, err := tl.Lookup(prefix + "ffn_down_exps.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	// Split stacked expert weights into individual expert FFNs.
@@ -615,17 +593,19 @@ func buildNemotronHSharedExpertFFN(
 	prefix string,
 	nc NemotronHConfig,
 ) (*core.FFN[float32], error) {
-	gateW, ok := tensors[prefix+"ffn_shared_expert_gate.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_shared_expert_gate.weight")
+	tl := newTensorLookup(tensors)
+
+	gateW, err := tl.Lookup(prefix + "ffn_shared_expert_gate.weight")
+	if err != nil {
+		return nil, err
 	}
-	upW, ok := tensors[prefix+"ffn_shared_expert_up.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_shared_expert_up.weight")
+	upW, err := tl.Lookup(prefix + "ffn_shared_expert_up.weight")
+	if err != nil {
+		return nil, err
 	}
-	downW, ok := tensors[prefix+"ffn_shared_expert_down.weight"]
-	if !ok {
-		return nil, fmt.Errorf("missing tensor %q", prefix+"ffn_shared_expert_down.weight")
+	downW, err := tl.Lookup(prefix + "ffn_shared_expert_down.weight")
+	if err != nil {
+		return nil, err
 	}
 
 	gateWT, err := cpuTranspose2D(gateW)
@@ -688,11 +668,12 @@ func loadNemotronHSSMWeights(
 	dtRank, ssmHeadDim int,
 ) error {
 	params := block.Parameters()
+	tl := newTensorLookup(tensors)
 
 	// Load ssm_in.weight -> inProj.
-	inW, ok := tensors[prefix+"ssm_in.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_in.weight")
+	inW, err := tl.Lookup(prefix + "ssm_in.weight")
+	if err != nil {
+		return err
 	}
 	if len(inW.Shape()) == 2 {
 		transposed, err := cpuTranspose2D(inW)
@@ -705,15 +686,15 @@ func loadNemotronHSSMWeights(
 	}
 
 	// Load ssm_conv1d.weight -> convWeight.
-	convW, ok := tensors[prefix+"ssm_conv1d.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_conv1d.weight")
+	convW, err := tl.Lookup(prefix + "ssm_conv1d.weight")
+	if err != nil {
+		return err
 	}
 	params[1].Value = convW
 
 	// For Nemotron-H, B/C projection may be fused into ssm_in, so xProj might
 	// not exist as a separate tensor. Leave default-initialized if missing.
-	if xpW, ok := tensors[prefix+"ssm_x_proj.weight"]; ok {
+	if xpW, ok := tl.Optional(prefix + "ssm_x_proj.weight"); ok {
 		if len(xpW.Shape()) == 2 {
 			transposed, err := cpuTranspose2D(xpW)
 			if err != nil {
@@ -726,9 +707,9 @@ func loadNemotronHSSMWeights(
 	}
 
 	// Load ssm_dt.weight -> dtProj.
-	dtW, ok := tensors[prefix+"ssm_dt.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_dt.weight")
+	dtW, err := tl.Lookup(prefix + "ssm_dt.weight")
+	if err != nil {
+		return err
 	}
 	if len(dtW.Shape()) == 2 {
 		transposed, err := cpuTranspose2D(dtW)
@@ -743,9 +724,9 @@ func loadNemotronHSSMWeights(
 	// Load ssm_A.weight -> per-head A parameters.
 	// Nemotron-H ssm_A may not be in log-space; check and apply log if values
 	// are all positive (log-space values would be mixed-sign for typical inits).
-	aW, ok := tensors[prefix+"ssm_A.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_A.weight")
+	aW, err := tl.Lookup(prefix + "ssm_A.weight")
+	if err != nil {
+		return err
 	}
 
 	aData := aW.Data()
@@ -794,9 +775,9 @@ func loadNemotronHSSMWeights(
 	}
 
 	// Load ssm_D.weight -> per-head D parameters.
-	dW, ok := tensors[prefix+"ssm_D.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_D.weight")
+	dW, err := tl.Lookup(prefix + "ssm_D.weight")
+	if err != nil {
+		return err
 	}
 	for h := 0; h < numHeads; h++ {
 		headData := make([]float32, ssmHeadDim)
@@ -819,7 +800,7 @@ func loadNemotronHSSMWeights(
 
 	// headMix: initialize to identity if missing from GGUF.
 	hmIdx := baseIdx + numHeads*2
-	if hmT, ok := tensors[prefix+"ssm_head_mix.weight"]; ok && hmIdx < len(params) {
+	if hmT, ok := tl.Optional(prefix + "ssm_head_mix.weight"); ok && hmIdx < len(params) {
 		if len(hmT.Shape()) == 2 {
 			transposed, err := cpuTranspose2D(hmT)
 			if err != nil {
@@ -848,9 +829,9 @@ func loadNemotronHSSMWeights(
 
 	// Load ssm_out.weight -> outProj.
 	opIdx := hmIdx + 1
-	outW, ok := tensors[prefix+"ssm_out.weight"]
-	if !ok {
-		return fmt.Errorf("missing tensor %q", prefix+"ssm_out.weight")
+	outW, err := tl.Lookup(prefix + "ssm_out.weight")
+	if err != nil {
+		return err
 	}
 	if opIdx < len(params) {
 		if len(outW.Shape()) == 2 {

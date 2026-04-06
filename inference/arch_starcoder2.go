@@ -1,8 +1,6 @@
 package inference
 
 import (
-	"fmt"
-
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model/gguf"
@@ -27,13 +25,15 @@ func buildStarCoder2Graph(
 	cfg *gguf.ModelConfig,
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
-	embedWeight, ok := tensors["model.embed_tokens.weight"]
-	if !ok {
-		return nil, nil, fmt.Errorf("missing tensor %q", "model.embed_tokens.weight")
+	tl := newTensorLookup(tensors)
+
+	embedWeight, err := tl.Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// StarCoder2 may tie lm_head to embedding weights.
-	lmHeadWeight, ok := tensors["lm_head.weight"]
+	lmHeadWeight, ok := tl.Optional("lm_head.weight")
 	if !ok {
 		lmHeadWeight = embedWeight
 	}

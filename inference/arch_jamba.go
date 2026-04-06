@@ -137,19 +137,11 @@ func BuildJamba(
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
 	ops := numeric.Float32Ops{}
 
-	lookup := func(name string) (*tensor.TensorNumeric[float32], error) {
-		t, ok := tensors[name]
-		if !ok {
-			return nil, fmt.Errorf("missing tensor %q", name)
-		}
-		return t, nil
-	}
+	tl := newTensorLookup(tensors)
 
-	param := func(name string, t *tensor.TensorNumeric[float32]) *graph.Parameter[float32] {
-		return &graph.Parameter[float32]{Name: name, Value: t}
-	}
+	pw := newParamWrapper[float32]()
 
-	embedWeight, err := lookup("token_embd.weight")
+	embedWeight, err := tl.Lookup("token_embd.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,7 +151,7 @@ func BuildJamba(
 		lmHeadWeight = embedWeight
 	}
 
-	outputNormWeight, err := lookup("output_norm.weight")
+	outputNormWeight, err := tl.Lookup("output_norm.weight")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -168,7 +160,7 @@ func BuildJamba(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	embNode := &embeddingLookupNode[float32]{engine: proxy, weight: embedWeight}
+	embNode := newEmbeddingNode(proxy, embedWeight, 0)
 	hidden := builder.AddNode(embNode, input)
 
 	// Derive SSM parameters.
@@ -205,12 +197,12 @@ func BuildJamba(
 			// --- Transformer Attention Block ---
 
 			// Pre-attention RMSNorm.
-			attnNormW, lErr := lookup(prefix + "attn_norm.weight")
+			attnNormW, lErr := tl.Lookup(prefix + "attn_norm.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d attention: %w", i, lErr)
 			}
 			attnNorm, nErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, jc.RMSEps, param(prefix+"attn_norm.weight", attnNormW),
+				proxy, ops, jc.RMSEps, pw.Wrap(prefix+"attn_norm.weight", attnNormW),
 			)
 			if nErr != nil {
 				return nil, nil, fmt.Errorf("layer %d attention norm: %w", i, nErr)
@@ -218,19 +210,19 @@ func BuildJamba(
 			normed := builder.AddNode(attnNorm, hidden)
 
 			// Q/K/V/O projections.
-			qW, lErr := lookup(prefix + "attn_q.weight")
+			qW, lErr := tl.Lookup(prefix + "attn_q.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
-			kW, lErr := lookup(prefix + "attn_k.weight")
+			kW, lErr := tl.Lookup(prefix + "attn_k.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
-			vW, lErr := lookup(prefix + "attn_v.weight")
+			vW, lErr := tl.Lookup(prefix + "attn_v.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
-			oW, lErr := lookup(prefix + "attn_output.weight")
+			oW, lErr := tl.Lookup(prefix + "attn_output.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
@@ -253,19 +245,19 @@ func BuildJamba(
 			}
 
 			wq := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"attn_q.weight", qWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_q.weight", qWT)),
 				nil,
 			)
 			wk := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"attn_k.weight", kWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_k.weight", kWT)),
 				nil,
 			)
 			wv := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"attn_v.weight", vWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_v.weight", vWT)),
 				nil,
 			)
 			wo := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, param(prefix+"attn_output.weight", oWT)),
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"attn_output.weight", oWT)),
 				nil,
 			)
 
@@ -297,12 +289,12 @@ func BuildJamba(
 			hidden = builder.AddNode(resAdd, attnOut, hidden)
 
 			// Pre-FFN RMSNorm.
-			ffnNormW, lErr := lookup(prefix + "ffn_norm.weight")
+			ffnNormW, lErr := tl.Lookup(prefix + "ffn_norm.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
 			ffnNorm, nErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, jc.RMSEps, param(prefix+"ffn_norm.weight", ffnNormW),
+				proxy, ops, jc.RMSEps, pw.Wrap(prefix+"ffn_norm.weight", ffnNormW),
 			)
 			if nErr != nil {
 				return nil, nil, fmt.Errorf("layer %d ffn norm: %w", i, nErr)
@@ -310,15 +302,15 @@ func BuildJamba(
 			normed2 := builder.AddNode(ffnNorm, hidden)
 
 			// FFN (SwiGLU).
-			gateW, lErr := lookup(prefix + "ffn_gate.weight")
+			gateW, lErr := tl.Lookup(prefix + "ffn_gate.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
-			upW, lErr := lookup(prefix + "ffn_up.weight")
+			upW, lErr := tl.Lookup(prefix + "ffn_up.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
-			downW, lErr := lookup(prefix + "ffn_down.weight")
+			downW, lErr := tl.Lookup(prefix + "ffn_down.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d: %w", i, lErr)
 			}
@@ -359,12 +351,12 @@ func BuildJamba(
 		} else {
 			// --- Mamba SSM Block ---
 
-			normW, lErr := lookup(prefix + "ssm_norm.weight")
+			normW, lErr := tl.Lookup(prefix + "ssm_norm.weight")
 			if lErr != nil {
 				return nil, nil, fmt.Errorf("layer %d ssm: %w", i, lErr)
 			}
 			norm, nErr := normalization.NewRMSNormFromParam[float32](
-				proxy, ops, jc.RMSEps, param(prefix+"ssm_norm.weight", normW),
+				proxy, ops, jc.RMSEps, pw.Wrap(prefix+"ssm_norm.weight", normW),
 			)
 			if nErr != nil {
 				return nil, nil, fmt.Errorf("layer %d ssm norm: %w", i, nErr)
@@ -392,7 +384,7 @@ func BuildJamba(
 
 	// Final RMSNorm.
 	finalNorm, err := normalization.NewRMSNormFromParam[float32](
-		proxy, ops, jc.RMSEps, param("output_norm.weight", outputNormWeight),
+		proxy, ops, jc.RMSEps, pw.Wrap("output_norm.weight", outputNormWeight),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -400,7 +392,7 @@ func BuildJamba(
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
 	// LM Head.
-	lmHead := &lmHeadNode[float32]{engine: proxy, weight: lmHeadWeight}
+	lmHead := newLMHeadNode(proxy, lmHeadWeight, 0)
 	output := builder.AddNode(lmHead, normedFinal)
 
 	g, err := builder.Build(output)
