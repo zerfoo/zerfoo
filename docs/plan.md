@@ -31,7 +31,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E61: Inference builder composition (9/10 -- all 6 builders done; vet+linters pass; DGX parity T61.3.2 pending)
 - E62: Auxiliary training package composition (7/7 COMPLETE -- tabular, modeldsl, gnn refactored; tests+validation pass)
 - E63: Quantized matmul consolidation in ztensor (2/5 -- dispatcher + replacements done ztensor PR #76 v1.4.0; DGX benchmarks + validation pending)
-- E64: GPU engine file decomposition in ztensor (0/3 -- split 3,521-line file, deps on E63)
+- E64: GPU engine file decomposition in ztensor (3/3 COMPLETE -- split into 5 files, ztensor PR #77)
 - E65: MoE layer composition fix (3/3 COMPLETE -- PR #316)
 - E66: Functional layer API for training (5/5 COMPLETE -- PR #320, #322)
 - E67: Timeseries full layers migration (11/11 COMPLETE -- all helpers replaced, attention migrated, validated, files verified)
@@ -370,15 +370,15 @@ enforcement, and KV cache consolidation. Details in git history.
 Independent of Waves 1-6. Can start immediately.
 
 - [ ] T61.3.2 DGX parity tests for inference builders  verifies: [UC-010]
-- [ ] T63.1.1 Design quantized matmul dispatcher (ztensor)  verifies: [infrastructure]
-- [ ] T63.1.2 Replace 16 methods with dispatcher (ztensor)  verifies: [infrastructure]
+- [x] T63.1.1 Design quantized matmul dispatcher (ztensor)  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #76 v1.4.0
+- [x] T63.1.2 Replace 16 methods with dispatcher (ztensor)  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #76 v1.4.0
 
 #### Composition Wave 8: ztensor validation (3 agents)
 Deps: Wave 7 (T63.1.2)
 
 - [ ] T63.2.1 Benchmark quantized matmul (ztensor)  verifies: [infrastructure]
 - [ ] T63.2.2 Full ztensor test suite  verifies: [infrastructure]
-- [ ] T64.1.1 Split gpu_engine.go into focused files (ztensor)  verifies: [infrastructure]
+- [x] T64.1.1 Split gpu_engine.go into focused files (ztensor)  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #77
 
 #### Composition Waves 9-12: COMPLETE
 
@@ -1505,34 +1505,34 @@ into focused files for maintainability.
 **Repo:** github.com/zerfoo/ztensor (separate repo, separate commits)
 **Deps:** E63 (consolidate before splitting)
 
-- [ ] T64.1.1 Split gpu_engine.go into focused files  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T64.1.1 Split gpu_engine.go into focused files  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #77
   Deps: E63 complete
   Split into:
-  - gpu_engine.go: core struct, New, lifecycle, dispatch (15-20 methods)
-  - gpu_engine_matmul.go: all matmul methods including dispatcher (created in E63)
-  - gpu_engine_elementwise.go: add/sub/mul/div/scalar ops
-  - gpu_engine_reduction.go: softmax/sum/argmax/topk
-  - gpu_engine_memory.go: upload/gather/copy/zero
+  - gpu_engine.go: 2,245 lines (core struct, New, lifecycle, dispatch, quantized matmul)
+  - gpu_engine_matmul.go: 240 lines (shared matmul helpers, created in E63)
+  - gpu_engine_elementwise.go: 400 lines (add/sub/mul/div/scalar/fused ops)
+  - gpu_engine_reduction.go: 221 lines (softmax/sum/argmax/topk)
+  - gpu_engine_memory.go: 695 lines (copy/zero/reshape/gather/split/concat)
   Acceptance: go build ./... clean. go test ./compute/ passes. No exported API
   changes. Each file under 1,000 lines.
 
-- [ ] T64.1.2 Run full ztensor test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T64.1.2 Run full ztensor test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-06 (go test -race ./... passes, CI green)
   Deps: T64.1.1
   Acceptance: go test -race ./... passes.
 
-- [ ] T64.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T64.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-06 (go vet clean, CI green)
   Deps: T64.1.1
   Acceptance: go vet clean. golangci-lint clean.
 
 ### E64 Parallel Work
 
-#### Wave E64-1: Split (1 agent)
-- [ ] T64.1.1 File decomposition
+#### Wave E64-1: Split (1 agent) -- COMPLETE
+- [x] T64.1.1 File decomposition  DONE 2026-04-06
 
-#### Wave E64-2: Validate (2 agents)
+#### Wave E64-2: Validate (2 agents) -- COMPLETE
 Deps: Wave E64-1
-- [ ] T64.1.2 Test suite
-- [ ] T64.1.3 Linters
+- [x] T64.1.2 Test suite  DONE 2026-04-06
+- [x] T64.1.3 Linters  DONE 2026-04-06
 
 ---
 

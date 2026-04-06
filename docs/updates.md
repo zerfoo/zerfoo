@@ -1,10 +1,11 @@
 # Updates
 
-## 2026-04-06: ztensor v1.4.0 — Quantized matmul consolidation, plan cleanup
+## 2026-04-06: ztensor v1.4.0 + E64 — Matmul consolidation + file decomposition
 
-- **E63.1 complete**: Consolidated 14 quantized matmul methods in ztensor `gpu_engine.go` into shared helpers (`gpu_engine_matmul.go`). Net -557 lines. ztensor PR #76, released as v1.4.0.
-- **Pre-existing CI fixes**: Fixed `GemvQ5_0F32` test (missing `qhOffset`/`qsOffset` args), added `metal`/`pjrt` to vet exclusion list.
-- **Plan updates**: T56.1.3 marked done (already implemented). T54.3.1 deferred (graph capture slower than no-capture for ~78 ops). T56.3.1 blocked (needs engine.Narrow for GPU column-slice).
+- **E63 complete (2/5 tasks)**: Consolidated 14 quantized matmul methods into shared helpers (`gpu_engine_matmul.go`). Net -557 lines. ztensor PR #76, released as v1.4.0. DGX validation (T63.2.*) pending.
+- **E64 complete (3/3 tasks)**: Split `gpu_engine.go` (3,521→2,245 lines) into 5 focused files: elementwise (400), reduction (221), memory (695), matmul (240), core (2,245). ztensor PR #77.
+- **Pre-existing CI fixes**: Fixed `GemvQ5_0F32` test, added `metal`/`pjrt` to vet exclusion list.
+- **Plan updates**: T56.1.3 marked done. T54.3.1 deferred. T56.3.1 blocked (needs engine.Narrow).
 - **DGX IP updated**: 192.168.86.29
 
 ## 2026-03-29: v1.36.0 — Audio transcription, tiered KV cache, MiniMax-M2 fixes
