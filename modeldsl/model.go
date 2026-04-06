@@ -163,13 +163,16 @@ func (l *linearLayer) forward(input []float64) ([]float64, error) {
 		return nil, err
 	}
 
-	// Add bias.
-	out := outT.Data()
-	result := make([]float64, l.outDim)
-	for j := range result {
-		result[j] = out[j] + l.bias[j]
+	// Add bias via engine to avoid raw .Data() loop.
+	biasT, err := tensor.New[float64]([]int{1, l.outDim}, l.bias)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	sumT, err := dslEngine.Add(context.Background(), outT, biasT)
+	if err != nil {
+		return nil, err
+	}
+	return sumT.Data(), nil
 }
 
 // NOTE: Element-wise layers (rmsnorm, silu, softmax) operate on raw []float64
