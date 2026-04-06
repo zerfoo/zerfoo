@@ -418,7 +418,7 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 - [x] T77.1.3 tabnet.go: replace linearForward (E77)  PR #336 2026-04-04
 - [x] T77.1.4 resnet.go: replace linearForward, layerNorm (E77)  PR #336 2026-04-04
 - [x] T78.1.3 clip_encoder.go: replace QuickGELU (E78)  PR #336 2026-04-04
-- [x] T78.1.4 mlstm.go: replace .Data() with engine.Split (E78)  PR #TBD 2026-04-05
+- [ ] T78.1.4 mlstm.go: replace .Data() with engine ops (E78)  BLOCKED: engine.Split+Reshape causes intermittent NaN; needs batched 3D MatMul
 - [x] T78.1.5 ssm.go: replace raw loops with engine ops (E78)  PR #TBD 2026-04-05
 - [x] T79.1.3 Break up sampleFromLogits (E79)  PR #336 2026-04-04
 - [x] T79.1.4 Deduplicate GenerateStream (E79)  PR #336 2026-04-04
