@@ -150,25 +150,27 @@ func (te *TemporalConvEncoder[T]) Backward(ctx context.Context, mode types.Backw
 	}
 
 	// Backward through global average pool: distribute gradient evenly
+	// Reshape dPooled from [batch, channels] to [batch, channels, 1] then
+	// broadcast to [batch, channels, timeLen] via engine ops.
 	conv2Shape := te.lastConv2Out.Shape()
-	batch := conv2Shape[0]
-	channels := conv2Shape[1]
 	timeLen := conv2Shape[2]
 	invLen := te.ops.FromFloat64(1.0 / float64(timeLen))
 
-	dPooledData := dPooled[0].Data()
-	dConv2Data := make([]T, batch*channels*timeLen)
-	for b := range batch {
-		for c := range channels {
-			grad := te.ops.Mul(dPooledData[b*channels+c], invLen)
-			for t := range timeLen {
-				dConv2Data[b*channels*timeLen+c*timeLen+t] = grad
-			}
-		}
-	}
-	dConv2, err := tensor.New[T](conv2Shape, dConv2Data)
+	// Scale by 1/timeLen
+	dPooledScaled, err := te.engine.MulScalar(ctx, dPooled[0], invLen)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pool backward scale: %w", err)
+	}
+	// Reshape to [batch, channels, 1] for broadcasting
+	dPooledShape := dPooledScaled.Shape()
+	dPooled3D, err := te.engine.Reshape(ctx, dPooledScaled, []int{dPooledShape[0], dPooledShape[1], 1})
+	if err != nil {
+		return nil, fmt.Errorf("pool backward reshape: %w", err)
+	}
+	// Broadcast to [batch, channels, timeLen] by repeating along time axis
+	dConv2, err := te.engine.Repeat(ctx, dPooled3D, 2, timeLen)
+	if err != nil {
+		return nil, fmt.Errorf("pool backward repeat: %w", err)
 	}
 
 	// ReLU backward on conv2: mask gradient where activation was <= 0
