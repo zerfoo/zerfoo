@@ -12,6 +12,7 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 
 	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
@@ -250,64 +251,29 @@ func forwardPass(ctx context.Context, model *Model, input *tensor.TensorNumeric[
 	return logits, activations, preActivations, nil
 }
 
-// crossEntropyLoss computes the softmax cross-entropy loss using engine ops.
+// crossEntropyLoss computes the softmax cross-entropy loss using training/loss.CrossEntropyLoss.
 // Returns scalar loss, softmax output tensor, and error.
 func crossEntropyLoss(ctx context.Context, engine compute.Engine[float32], logits *tensor.TensorNumeric[float32], labels []int, batchSize, numClasses int) (float64, *tensor.TensorNumeric[float32], error) {
-	// Compute softmax.
-	softmaxOut, err := engine.Softmax(ctx, logits, 1)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	// Clamp softmax output to avoid log(0).
-	ops := engine.Ops()
-	clamped, err := engine.UnaryOp(ctx, softmaxOut, func(v float32) float32 {
-		if v < 1e-7 {
-			return 1e-7
-		}
-		return v
-	})
-	if err != nil {
-		return 0, nil, err
-	}
-
-	// Compute log probabilities via engine.
-	logProbs, err := engine.Log(ctx, clamped)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	// Create one-hot target mask [batchSize, numClasses].
-	oneHotData := make([]float32, batchSize*numClasses)
+	// Convert int labels to float32 tensor for the canonical CrossEntropyLoss.
+	labelF32 := make([]float32, batchSize)
 	for i, l := range labels {
-		oneHotData[i*numClasses+l] = 1.0
+		labelF32[i] = float32(l)
 	}
-	oneHot, err := tensor.New[float32]([]int{batchSize, numClasses}, oneHotData)
+	targetTensor, err := tensor.New[float32]([]int{batchSize}, labelF32)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	// Mask log-probs to keep only target class: logProbs * oneHot.
-	masked, err := engine.Mul(ctx, logProbs, oneHot)
+	cel := loss.NewCrossEntropyLoss[float32](engine)
+	lossTensor, err := cel.Forward(ctx, logits, targetTensor)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	// Sum across classes (axis 1), then sum across batch (axis 0).
-	sumClasses, err := engine.ReduceSum(ctx, masked, 1, false)
-	if err != nil {
-		return 0, nil, err
-	}
-	totalSum, err := engine.ReduceSum(ctx, sumClasses, 0, false)
-	if err != nil {
-		return 0, nil, err
-	}
+	// Extract scalar loss value.
+	lossVal := float64(lossTensor.Data()[0])
 
-	// Extract scalar loss: -sum / batchSize.
-	loss := -float64(totalSum.Data()[0]) / float64(batchSize)
-	_ = ops // suppress unused
-
-	return loss, softmaxOut, nil
+	return lossVal, cel.SoftmaxOutput(), nil
 }
 
 // backwardPass computes gradients and accumulates them into the parameter gradient tensors.
