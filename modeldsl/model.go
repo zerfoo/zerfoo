@@ -1,9 +1,16 @@
 package modeldsl
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/layers/core"
 )
 
 // execLayer is a compiled layer that can run forward inference on float64 vectors.
@@ -104,12 +111,19 @@ func toFloat64(v any) (float64, error) {
 	}
 }
 
-// linearLayer implements a dense linear transformation: y = xW + b.
+// dslEngine is a package-level CPU engine for float64, used by linearLayer
+// to delegate matrix multiplication to layers/core.Linear.
+var dslEngine = compute.NewCPUEngine[float64](numeric.Float64Ops{})
+
+// linearLayer implements a dense linear transformation: y = xW + b,
+// delegating the matmul to layers/core.Linear.
 type linearLayer struct {
+	linear *core.Linear[float64]
+	bias   []float64 // [outDim]
+	inDim  int
+	outDim int
+	// weights stores the raw weight data for use by linearLayerT (training).
 	weights []float64 // [inDim * outDim], row-major
-	bias    []float64 // [outDim]
-	inDim   int
-	outDim  int
 }
 
 func newLinearLayer(inDim, outDim int) *linearLayer {
@@ -120,30 +134,50 @@ func newLinearLayer(inDim, outDim int) *linearLayer {
 		weights[i] = rand.NormFloat64() * scale
 	}
 	bias := make([]float64, outDim)
-	return &linearLayer{weights: weights, bias: bias, inDim: inDim, outDim: outDim}
+
+	// Create the core.Linear layer using the initialized weights.
+	lin, err := core.NewLinear[float64]("dsl_linear", dslEngine, dslEngine.Ops(), inDim, outDim)
+	if err != nil {
+		// NewLinear only errors on empty name or non-positive dims, which we control.
+		panic(fmt.Sprintf("modeldsl: newLinearLayer: %v", err))
+	}
+	// Overwrite the random weights from core.Linear with our Xavier-initialized weights.
+	copy(lin.Parameters()[0].Value.Data(), weights)
+
+	return &linearLayer{linear: lin, bias: bias, inDim: inDim, outDim: outDim, weights: weights}
 }
 
 func (l *linearLayer) forward(input []float64) ([]float64, error) {
 	if len(input) != l.inDim {
 		return nil, fmt.Errorf("linear: expected %d inputs, got %d", l.inDim, len(input))
 	}
-	out := make([]float64, l.outDim)
-	for j := 0; j < l.outDim; j++ {
-		sum := l.bias[j]
-		for i := 0; i < l.inDim; i++ {
-			sum += input[i] * l.weights[i*l.outDim+j]
-		}
-		out[j] = sum
+
+	// Wrap input as [1, inDim] tensor for core.Linear.Forward.
+	inputT, err := tensor.New[float64]([]int{1, l.inDim}, input)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+
+	outT, err := l.linear.Forward(context.Background(), inputT)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add bias.
+	out := outT.Data()
+	result := make([]float64, l.outDim)
+	for j := range result {
+		result[j] = out[j] + l.bias[j]
+	}
+	return result, nil
 }
 
 // NOTE: Element-wise layers (rmsnorm, silu, softmax) operate on raw []float64
 // slices rather than tensors. The layers/activations/ package provides
 // tensor-based equivalents via compute.Engine[T], but the DSL intentionally
-// uses slice-based ops because its entire pipeline (forward, backward,
-// parameter updates) operates on []float64. Converting to tensors would
-// require rewriting every layer type and the training loop.
+// uses slice-based ops for those because its entire pipeline (forward, backward,
+// parameter updates) operates on []float64. The linear layer delegates to
+// layers/core.Linear for the matrix multiplication.
 //
 // The trainable variants (rmsnormLayerT, siluLayerT, softmaxLayerT) in
 // train.go serve as the single implementations for both inference and
