@@ -44,13 +44,14 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
-- E77: Tabular package composition migration (6/9 -- all file migrations done; cleanup+validation pending)
+- E77: Tabular package composition migration (7/9 -- all migrations + cleanup done; validation pending)
 - E78: Layers internal violations cleanup (9/11 -- all file fixes done; validation pending)
 - E79: Generate package refactoring (5/7 -- all extractions done; validation pending)
-- E80: Inference builder boilerplate extraction (4/8 -- helpers + arch_common done; remaining builders + validation pending)
-- E81: Inference custom node replacement (1/7 -- arch_vision_helpers 3 nodes replaced PR #334)
-- E82: Training loss engine migration (3/6 -- bce + routing_contrastive + quantile done)
-- E83: Serve handler refactoring (2/5 -- buildGenerationOptions + parseAndApplyGrammar done)
+- E80: Inference builder boilerplate extraction (6/8 -- all builders migrated; validation pending)
+- E81: Inference custom node replacement (5/7 -- bert+gpt2+falcon+commandr+vision done; validation pending)
+- E82: Training loss engine migration (4/6 -- bce + routing_contrastive + quantile + adamw8bit done)
+- E83: Serve handler refactoring (3/5 -- all 3 extractions done; validation pending)
+- E84: ModeLDSL composition (1/8 -- linearLayer replaced with layers/core.Linear)
 - E84: ModeLDSL composition (0/8 -- rewrite DSL layer implementations to compose from layers/)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
@@ -441,16 +442,16 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 
 #### Composition Wave 16: Phase 4 continued (10 agents)
 
-- [ ] T77.1.7 Delete orphaned helpers (E77)  Deps: T77.1.1-T77.1.6
-- [ ] T80.1.5 Migrate arch_qwen/phi/deepseek to helpers (E80)  Deps: T80.1.1-T80.1.3
-- [ ] T80.1.6 Migrate remaining ~20 builders (E80)  Deps: T80.1.1-T80.1.3
-- [ ] T81.1.2 arch_bert.go: replace custom nodes (E81)
-- [ ] T81.1.3 arch_gpt2.go: replace custom nodes (E81)
-- [ ] T81.1.4 arch_falcon.go: replace falconGeluFFN (E81)
-- [ ] T81.1.5 arch_commandr.go: replace custom node (E81)
-- [ ] T82.1.4 AdamW8bit: vectorize with engine ops (E82)
-- [ ] T83.1.3 Extract detectAndFormatToolCalls (E83)
-- [ ] T84.1.1 Replace linearLayer with layers/core.Linear (E84)
+- [x] T77.1.7 Delete orphaned helpers (E77)  no-op: already removed in prior waves 2026-04-06
+- [x] T80.1.5 Migrate arch_qwen/phi/deepseek to helpers (E80)  2026-04-06
+- [x] T80.1.6 Migrate remaining ~20 builders (E80)  28 files migrated 2026-04-06
+- [x] T81.1.2 arch_bert.go: replace custom nodes (E81)  2026-04-06
+- [x] T81.1.3 arch_gpt2.go: replace custom nodes (E81)  2026-04-06
+- [x] T81.1.4 arch_falcon.go: replace falconGeluFFN (E81)  2026-04-06
+- [x] T81.1.5 arch_commandr.go: replace custom node (E81)  2026-04-06
+- [x] T82.1.4 AdamW8bit: vectorize with engine ops (E82)  2026-04-06
+- [x] T83.1.3 Extract detectAndFormatToolCalls (E83)  2026-04-06
+- [x] T84.1.1 Replace linearLayer with layers/core.Linear (E84)  2026-04-06
 
 #### Composition Wave 17: Phase 4 continued (10 agents)
 
@@ -1834,7 +1835,7 @@ functional.GELU, functional.MultiHeadAttention. Delete orphaned helpers.
   Replace local crossEntropyLoss with training/loss.CrossEntropyLoss.
   Acceptance: go test passes. Training loss curve unchanged.
 
-- [ ] T77.1.7 Delete orphaned helper methods  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T77.1.7 Delete orphaned helper methods  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Deps: T77.1.1, T77.1.2, T77.1.3, T77.1.4, T77.1.5, T77.1.6
   Delete linearForward, layerNorm, geluScalar, local attention, crossEntropyLoss
   if no remaining callers exist.
@@ -1862,7 +1863,7 @@ functional.GELU, functional.MultiHeadAttention. Delete orphaned helpers.
 
 #### Wave E77-2: Cleanup + validation (3 agents)
 Deps: Wave E77-1
-- [ ] T77.1.7 Delete orphaned helpers
+- [x] T77.1.7 Delete orphaned helpers
 - [ ] T77.2.1 Test suite with race  Deps: T77.1.7
 - [ ] T77.2.2 Linters  Deps: T77.2.1
 
@@ -2051,11 +2052,11 @@ all builders to use them.
   Replace boilerplate in the 3 most-used builders with shared helper calls.
   Acceptance: go test passes. Model parity unchanged.
 
-- [ ] T80.1.5 Migrate arch_qwen.go, arch_phi.go, arch_deepseek.go to use helpers  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T80.1.5 Migrate arch_qwen.go, arch_phi.go, arch_deepseek.go to use helpers  Owner: TBD  Est: 2h  verifies: [UC-001]
   Deps: T80.1.1, T80.1.2, T80.1.3
   Acceptance: go test passes. Model parity unchanged.
 
-- [ ] T80.1.6 Migrate remaining ~20 architecture builders to use helpers  Owner: TBD  Est: 4h  verifies: [UC-001]
+- [x] T80.1.6 Migrate remaining ~20 architecture builders to use helpers  Owner: TBD  Est: 4h  verifies: [UC-001]
   Deps: T80.1.1, T80.1.2, T80.1.3
   Migrate arch_bert, arch_gpt2, arch_falcon, arch_rwkv, arch_llava,
   arch_commandr, arch_starcoder, arch_mpt, arch_olmo, arch_stablelm,
@@ -2083,8 +2084,8 @@ all builders to use them.
 #### Wave E80-2: Migrate builders (3 agents)
 Deps: Wave E80-1
 - [x] T80.1.4 llama/gemma/mistral
-- [ ] T80.1.5 qwen/phi/deepseek
-- [ ] T80.1.6 remaining ~20 builders
+- [x] T80.1.5 qwen/phi/deepseek
+- [x] T80.1.6 remaining ~20 builders
 
 #### Wave E80-3: Validation (2 agents)
 Deps: Wave E80-2
@@ -2111,20 +2112,20 @@ that should compose from layers/. Worst: arch_vision_helpers.go (210 lines of ra
   layers/normalization.RMSNorm.
   Acceptance: go test passes. LLaVA/vision model parity unchanged.
 
-- [ ] T81.1.2 arch_bert.go: replace bertFFNNode/bertResidualLayerNormNode/bertEmbeddingNode  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T81.1.2 arch_bert.go: replace bertFFNNode/bertResidualLayerNormNode/bertEmbeddingNode  Owner: TBD  Est: 2h  verifies: [UC-001]
   Replace 3 custom nodes with layers/core.FFN, layers/normalization.LayerNorm,
   layers/embeddings.TokenEmbedding.
   Acceptance: go test passes. BERT model parity unchanged.
 
-- [ ] T81.1.3 arch_gpt2.go: replace gpt2ResidualAddNode/gpt2EmbeddingNode  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T81.1.3 arch_gpt2.go: replace gpt2ResidualAddNode/gpt2EmbeddingNode  Owner: TBD  Est: 1.5h  verifies: [UC-001]
   Replace 2 custom nodes with standard layer compositions.
   Acceptance: go test passes. GPT-2 model parity unchanged.
 
-- [ ] T81.1.4 arch_falcon.go: replace falconGeluFFN with layers/core.FFN  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T81.1.4 arch_falcon.go: replace falconGeluFFN with layers/core.FFN  Owner: TBD  Est: 1h  verifies: [UC-001]
   Replace custom FFN node with layers/core.FFN configured with GELU activation.
   Acceptance: go test passes. Falcon model parity unchanged.
 
-- [ ] T81.1.5 arch_commandr.go: replace commandRResidualAddNode  Owner: TBD  Est: 0.5h  verifies: [UC-001]
+- [x] T81.1.5 arch_commandr.go: replace commandRResidualAddNode  Owner: TBD  Est: 0.5h  verifies: [UC-001]
   Replace custom residual add node with standard engine.Add composition.
   Acceptance: go test passes.
 
@@ -2145,10 +2146,10 @@ that should compose from layers/. Worst: arch_vision_helpers.go (210 lines of ra
 #### Wave E81-1: Replace nodes (5 agents)
 All builders are independent.
 - [ ] T81.1.1 arch_vision_helpers.go
-- [ ] T81.1.2 arch_bert.go
-- [ ] T81.1.3 arch_gpt2.go
-- [ ] T81.1.4 arch_falcon.go
-- [ ] T81.1.5 arch_commandr.go
+- [x] T81.1.2 arch_bert.go
+- [x] T81.1.3 arch_gpt2.go
+- [x] T81.1.4 arch_falcon.go
+- [x] T81.1.5 arch_commandr.go
 
 #### Wave E81-2: Validation (2 agents)
 Deps: Wave E81-1
@@ -2183,7 +2184,7 @@ has element-by-element loop that should be vectorized.
   ops for the quantile computation instead of raw loops.
   Acceptance: go test passes for float32 AND float64. No panics.
 
-- [ ] T82.1.4 AdamW8bit: replace element-by-element loop with vectorized engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T82.1.4 AdamW8bit: replace element-by-element loop with vectorized engine ops  Owner: TBD  Est: 2h  verifies: [infrastructure]
   Replace the element-by-element optimizer update loop with vectorized engine
   operations (engine.Mul, engine.Add, engine.MulScalar, etc.).
   Acceptance: go test passes. Optimizer convergence unchanged.
@@ -2204,7 +2205,7 @@ has element-by-element loop that should be vectorized.
 - [ ] T82.1.1 bce.go
 - [x] T82.1.2 routing_contrastive.go
 - [x] T82.1.3 quantile.go
-- [ ] T82.1.4 AdamW8bit
+- [x] T82.1.4 AdamW8bit
 
 #### Wave E82-2: Validation (2 agents)
 Deps: Wave E82-1
@@ -2235,7 +2236,7 @@ parsing, generation option building, grammar application, and tool call detectio
   Extract grammar parsing and application logic shared between the two handlers.
   Acceptance: go test passes. Grammar-constrained generation unchanged.
 
-- [ ] T83.1.3 Extract detectAndFormatToolCalls helper  Owner: TBD  Est: 1h  verifies: [UC-002]
+- [x] T83.1.3 Extract detectAndFormatToolCalls helper  Owner: TBD  Est: 1h  verifies: [UC-002]
   Extract tool call detection and formatting logic into a shared helper.
   Acceptance: go test passes. Tool call responses formatted identically.
 
@@ -2255,7 +2256,7 @@ parsing, generation option building, grammar application, and tool call detectio
 All extractions are independent.
 - [ ] T83.1.1 buildGenerationOptions
 - [x] T83.1.2 parseAndApplyGrammar
-- [ ] T83.1.3 detectAndFormatToolCalls
+- [x] T83.1.3 detectAndFormatToolCalls
 
 #### Wave E83-2: Validation (2 agents)
 Deps: Wave E83-1
@@ -2277,7 +2278,7 @@ Reconcile LayerType constants with layers/registry.
 
 ### E84.1: Replace Reimplemented Layers
 
-- [ ] T84.1.1 Replace linearLayer with layers/core.Linear  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] T84.1.1 Replace linearLayer with layers/core.Linear  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   Replace the local linearLayer implementation with layers/core.Linear.
   Acceptance: go test -run TestModelDSL passes. Linear layer output matches.
 
@@ -2316,7 +2317,7 @@ Reconcile LayerType constants with layers/registry.
 ### E84 Parallel Work
 
 #### Wave E84-1: Independent layer replacements (6 agents)
-- [ ] T84.1.1 linearLayer
+- [x] T84.1.1 linearLayer
 - [ ] T84.1.2 rmsnormLayerT
 - [ ] T84.1.3 siluLayerT/softmaxLayerT
 - [ ] T84.1.4 attentionLayer
