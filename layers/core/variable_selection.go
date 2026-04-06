@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -141,10 +142,9 @@ func (v *VariableSelection[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 		return nil, err
 	}
 
-	// GELU activation via Engine: GELU(x) ≈ x * sigmoid(1.702 * x)
-	geluHidden, err := v.engine.UnaryOp(ctx, hidden, func(x T) T {
-		return v.ops.Mul(x, v.ops.Sigmoid(v.ops.Mul(x, v.ops.FromFloat64(1.702))))
-	})
+	// GELU activation via engine tensor ops (tanh approximation):
+	// GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715*x^3)))
+	geluHidden, err := geluEngine(ctx, v.engine, v.ops, hidden)
 	if err != nil {
 		return nil, err
 	}
@@ -339,4 +339,43 @@ func (v *VariableSelection[T]) Backward(ctx context.Context, mode types.Backward
 // Parameters returns the parameters of the layer.
 func (v *VariableSelection[T]) Parameters() []*graph.Parameter[T] {
 	return []*graph.Parameter[T]{v.w1, v.b1, v.w2, v.b2}
+}
+
+// geluEngine applies the GELU tanh approximation using engine tensor ops.
+// This mirrors functional.GELU but accepts tensor.Numeric constraint.
+func geluEngine[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T],
+	x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	x2, err := engine.Mul(ctx, x, x)
+	if err != nil {
+		return nil, err
+	}
+	x3, err := engine.Mul(ctx, x2, x)
+	if err != nil {
+		return nil, err
+	}
+	coeff, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
+	if err != nil {
+		return nil, err
+	}
+	inner, err := engine.Add(ctx, x, coeff)
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := engine.MulScalar(ctx, inner, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	th, err := engine.Tanh(ctx, scaled)
+	if err != nil {
+		return nil, err
+	}
+	onePlus, err := engine.AddScalar(ctx, th, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	prod, err := engine.Mul(ctx, x, onePlus)
+	if err != nil {
+		return nil, err
+	}
+	return engine.MulScalar(ctx, prod, ops.FromFloat64(0.5))
 }
