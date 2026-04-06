@@ -51,8 +51,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E81: Inference custom node replacement (5/7 -- bert+gpt2+falcon+commandr+vision done; validation pending)
 - E82: Training loss engine migration (4/6 -- bce + routing_contrastive + quantile + adamw8bit done)
 - E83: Serve handler refactoring (3/5 -- all 3 extractions done; validation pending)
-- E84: ModeLDSL composition (1/8 -- linearLayer replaced with layers/core.Linear)
-- E84: ModeLDSL composition (0/8 -- rewrite DSL layer implementations to compose from layers/)
+- E84: ModeLDSL composition (6/8 -- linearLayer, rmsnorm, silu, softmax, attention, Xavier init, LayerType constants replaced)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -455,16 +454,16 @@ Deps: Wave 13 partial (T79.1.2 for T79.1.4/T79.1.5; T80.1.1-T80.1.3 for T80.1.4-
 
 #### Composition Wave 17: Phase 4 continued (10 agents)
 
-- [ ] T84.1.2 Replace rmsnormLayerT with layers/normalization.RMSNorm (E84)
-- [ ] T84.1.3 Replace siluLayerT, softmaxLayerT with layers/activations (E84)
-- [ ] T84.1.4 Replace attentionLayer with layers/attention (E84)
-- [ ] T84.1.5 Replace Xavier init with layers/components.WeightInitializer (E84)
-- [ ] T84.1.6 Reconcile LayerType constants with layers/registry (E84)
-- [ ] T77.2.1 Run go test ./tabular/... with race (E77)  Deps: T77.1.7
-- [ ] T78.2.1 Run go test ./layers/... with race (E78)  Deps: T78.1.1-T78.1.9
-- [ ] T79.2.1 Run go test ./generate/... with race (E79)  Deps: T79.1.1-T79.1.5
-- [ ] T81.2.1 Run inference parity tests (E81)  Deps: T81.1.1-T81.1.5
-- [ ] T82.2.1 Run go test ./training/... with race (E82)  Deps: T82.1.1-T82.1.4
+- [x] T84.1.2 Replace rmsnormLayerT with layers/normalization.RMSNorm (E84)  2026-04-06
+- [x] T84.1.3 Replace siluLayerT, softmaxLayerT with layers/activations (E84)  2026-04-06
+- [x] T84.1.4 Replace attentionLayer with layers/attention (E84)  2026-04-06
+- [x] T84.1.5 Replace Xavier init with layers/components.WeightInitializer (E84)  2026-04-06
+- [x] T84.1.6 Reconcile LayerType constants with layers/registry (E84)  2026-04-06
+- [x] T77.2.1 Run go test ./tabular/... with race (E77)  Deps: T77.1.7  2026-04-06
+- [x] T78.2.1 Run go test ./layers/... with race (E78)  Deps: T78.1.1-T78.1.9  2026-04-06
+- [x] T79.2.1 Run go test ./generate/... with race (E79)  Deps: T79.1.1-T79.1.5  2026-04-06
+- [x] T81.2.1 Run inference parity tests (E81)  Deps: T81.1.1-T81.1.5  2026-04-06 (pre-existing TSPulse test failure, core inference PASS)
+- [x] T82.2.1 Run go test ./training/... with race (E82)  Deps: T82.1.1-T82.1.4  2026-04-06
 
 #### Composition Wave 18: Phase 4 validation (10 agents)
 
@@ -2282,24 +2281,24 @@ Reconcile LayerType constants with layers/registry.
   Replace the local linearLayer implementation with layers/core.Linear.
   Acceptance: go test -run TestModelDSL passes. Linear layer output matches.
 
-- [ ] T84.1.2 Replace rmsnormLayerT with layers/normalization.RMSNorm  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T84.1.2 Replace rmsnormLayerT with layers/normalization.RMSNorm  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Replace local RMSNorm with layers/normalization.RMSNorm.
   Acceptance: go test passes. Norm output matches within 1e-6.
 
-- [ ] T84.1.3 Replace siluLayerT, softmaxLayerT with layers/activations  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T84.1.3 Replace siluLayerT, softmaxLayerT with layers/activations  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Replace local SiLU and Softmax with layers/activations.SiLU and
   layers/activations.Softmax.
   Acceptance: go test passes.
 
-- [ ] T84.1.4 Replace attentionLayer with layers/attention  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T84.1.4 Replace attentionLayer with layers/attention  Owner: TBD  Est: 2h  verifies: [infrastructure]
   Replace local attention implementation with layers/attention composition.
   Acceptance: go test passes. Attention output matches within 1e-5.
 
-- [ ] T84.1.5 Replace Xavier init with layers/components.WeightInitializer  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T84.1.5 Replace Xavier init with layers/components.WeightInitializer  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
   Replace local Xavier initialization with the canonical initializer.
   Acceptance: go test passes. Weight distribution statistically equivalent.
 
-- [ ] T84.1.6 Reconcile LayerType constants with layers/registry  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T84.1.6 Reconcile LayerType constants with layers/registry  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Align modeldsl LayerType constants with layers/registry types. Remove
   duplicates. Use layers/registry as the single source of truth.
   Acceptance: go build clean. No duplicate type constants.
@@ -2318,11 +2317,11 @@ Reconcile LayerType constants with layers/registry.
 
 #### Wave E84-1: Independent layer replacements (6 agents)
 - [x] T84.1.1 linearLayer
-- [ ] T84.1.2 rmsnormLayerT
-- [ ] T84.1.3 siluLayerT/softmaxLayerT
-- [ ] T84.1.4 attentionLayer
-- [ ] T84.1.5 Xavier init
-- [ ] T84.1.6 LayerType constants
+- [x] T84.1.2 rmsnormLayerT
+- [x] T84.1.3 siluLayerT/softmaxLayerT
+- [x] T84.1.4 attentionLayer
+- [x] T84.1.5 Xavier init
+- [x] T84.1.6 LayerType constants
 
 #### Wave E84-2: Validation (2 agents)
 Deps: Wave E84-1

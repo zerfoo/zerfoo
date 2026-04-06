@@ -11,12 +11,15 @@ import (
 // LayerType identifies the kind of neural network layer.
 type LayerType string
 
+// LayerType constants use PascalCase to match the registration keys
+// in layers/registry.RegisterAll. The registry is the canonical source
+// of layer names; these constants mirror it for DSL use.
 const (
-	LayerLinear    LayerType = "linear"
-	LayerRMSNorm  LayerType = "rmsnorm"
-	LayerSiLU     LayerType = "silu"
-	LayerSoftmax  LayerType = "softmax"
-	LayerAttention LayerType = "attention"
+	LayerLinear    LayerType = "Linear"
+	LayerRMSNorm   LayerType = "RMSNorm"
+	LayerSiLU      LayerType = "SiLU"
+	LayerSoftmax   LayerType = "Softmax"
+	LayerAttention LayerType = "Attention"
 )
 
 // LayerDef defines a single layer in the model.

@@ -3,14 +3,16 @@ package modeldsl
 import (
 	"context"
 	"fmt"
-	"math"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 
+	"github.com/zerfoo/zerfoo/layers/activations"
+	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/normalization"
 )
 
 // execLayer is a compiled layer that can run forward inference on float64 vectors.
@@ -70,11 +72,11 @@ func buildLayer(def LayerDef, inDim, outDim int) (execLayer, error) {
 			}
 			eps = f
 		}
-		return &rmsnormLayerT{epsilon: eps}, nil
+		return newRMSNormLayer(inDim, eps)
 	case LayerSiLU:
-		return &siluLayerT{}, nil
+		return newSiLULayer(), nil
 	case LayerSoftmax:
-		return &softmaxLayerT{}, nil
+		return newSoftmaxLayer(), nil
 	case LayerAttention:
 		numHeads := 1
 		if v, ok := def.Params["num_heads"]; ok {
@@ -127,11 +129,11 @@ type linearLayer struct {
 }
 
 func newLinearLayer(inDim, outDim int) *linearLayer {
-	// Xavier initialization.
-	scale := math.Sqrt(2.0 / float64(inDim+outDim))
-	weights := make([]float64, inDim*outDim)
-	for i := range weights {
-		weights[i] = rand.NormFloat64() * scale
+	// Xavier initialization via layers/components.XavierInitializer.
+	xavier := components.NewXavierInitializer[float64](numeric.Float64Ops{})
+	weights, err := xavier.Initialize(inDim, outDim)
+	if err != nil {
+		panic(fmt.Sprintf("modeldsl: newLinearLayer xavier init: %v", err))
 	}
 	bias := make([]float64, outDim)
 
@@ -175,21 +177,85 @@ func (l *linearLayer) forward(input []float64) ([]float64, error) {
 	return sumT.Data(), nil
 }
 
-// NOTE: Element-wise layers (rmsnorm, silu, softmax) operate on raw []float64
-// slices rather than tensors. The layers/activations/ package provides
-// tensor-based equivalents via compute.Engine[T], but the DSL intentionally
-// uses slice-based ops for those because its entire pipeline (forward, backward,
-// parameter updates) operates on []float64. The linear layer delegates to
-// layers/core.Linear for the matrix multiplication.
-//
-// The trainable variants (rmsnormLayerT, siluLayerT, softmaxLayerT) in
-// train.go serve as the single implementations for both inference and
-// training, since they implement the execLayer interface and only cache
-// state needed for backward when forward is called.
+// rmsnormLayer wraps layers/normalization.RMSNorm for inference.
+type rmsnormLayer struct {
+	norm *normalization.RMSNorm[float64]
+	dim  int
+}
 
-// attentionLayer implements a basic single-sequence self-attention.
-// It projects the input into Q, K, V, computes scaled dot-product attention
-// per head, concatenates, and applies an output projection.
+func newRMSNormLayer(dim int, epsilon float64) (*rmsnormLayer, error) {
+	ops := numeric.Float64Ops{}
+	norm, err := normalization.NewRMSNorm[float64](
+		"dsl_rmsnorm", dslEngine, ops, dim,
+		normalization.WithRMSNormEpsilon[float64](epsilon),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("modeldsl: newRMSNormLayer: %w", err)
+	}
+	return &rmsnormLayer{norm: norm, dim: dim}, nil
+}
+
+func (l *rmsnormLayer) forward(input []float64) ([]float64, error) {
+	t, err := tensor.New[float64]([]int{1, l.dim}, input)
+	if err != nil {
+		return nil, err
+	}
+	out, err := l.norm.Forward(context.Background(), t)
+	if err != nil {
+		return nil, err
+	}
+	return out.Data(), nil
+}
+
+// siluLayer wraps layers/activations.Sigmoid to compute SiLU: x * sigmoid(x).
+type siluLayer struct {
+	sigmoid *activations.Sigmoid[float64]
+}
+
+func newSiLULayer() *siluLayer {
+	return &siluLayer{sigmoid: activations.NewSigmoid[float64](dslEngine, numeric.Float64Ops{})}
+}
+
+func (l *siluLayer) forward(input []float64) ([]float64, error) {
+	t, err := tensor.New[float64]([]int{len(input)}, input)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	sig, err := l.sigmoid.Forward(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	out, err := dslEngine.Mul(ctx, t, sig)
+	if err != nil {
+		return nil, err
+	}
+	return out.Data(), nil
+}
+
+// softmaxLayer wraps layers/activations.Softmax for inference.
+type softmaxLayer struct {
+	sm *activations.Softmax[float64]
+}
+
+func newSoftmaxLayer() *softmaxLayer {
+	return &softmaxLayer{sm: activations.NewSoftmax[float64](dslEngine, -1)}
+}
+
+func (l *softmaxLayer) forward(input []float64) ([]float64, error) {
+	t, err := tensor.New[float64]([]int{1, len(input)}, input)
+	if err != nil {
+		return nil, err
+	}
+	out, err := l.sm.Forward(context.Background(), t)
+	if err != nil {
+		return nil, err
+	}
+	return out.Data(), nil
+}
+
+// attentionLayer implements self-attention using core.Linear projections and
+// layers/attention.ScaledDotProductAttention for the score computation.
 type attentionLayer struct {
 	numHeads int
 	headDim  int
@@ -198,6 +264,7 @@ type attentionLayer struct {
 	wk       *linearLayer
 	wv       *linearLayer
 	wo       *linearLayer
+	sdpa     *attention.ScaledDotProductAttention[float64]
 }
 
 func newAttentionLayer(dim, numHeads int) *attentionLayer {
@@ -210,6 +277,7 @@ func newAttentionLayer(dim, numHeads int) *attentionLayer {
 		wk:       newLinearLayer(dim, dim),
 		wv:       newLinearLayer(dim, dim),
 		wo:       newLinearLayer(dim, dim),
+		sdpa:     attention.NewScaledDotProductAttention[float64](dslEngine, headDim),
 	}
 }
 
@@ -227,28 +295,33 @@ func (a *attentionLayer) forward(input []float64) ([]float64, error) {
 		return nil, err
 	}
 
-	// Per-head attention: for a single token, attention(q, k, v) over 1 position
-	// simplifies to just the value vector (softmax of a single score is 1.0).
-	// We still do the full computation for correctness.
-	scale := 1.0 / math.Sqrt(float64(a.headDim))
-	result := make([]float64, a.dim)
-	for h := 0; h < a.numHeads; h++ {
-		offset := h * a.headDim
+	ctx := context.Background()
 
-		// Dot product of q and k for this head.
-		var score float64
-		for d := 0; d < a.headDim; d++ {
-			score += q[offset+d] * k[offset+d]
-		}
-		score *= scale
-
-		// With a single position, softmax(score) = 1.0.
-		// Output is simply v scaled by 1.0.
-		for d := 0; d < a.headDim; d++ {
-			result[offset+d] = v[offset+d]
-		}
-		_ = score // Used in multi-position scenarios.
+	// Reshape Q, K, V from [dim] to [numHeads, 1, headDim] for SDPA.
+	qT, err := tensor.New[float64]([]int{a.numHeads, 1, a.headDim}, q)
+	if err != nil {
+		return nil, err
+	}
+	kT, err := tensor.New[float64]([]int{a.numHeads, 1, a.headDim}, k)
+	if err != nil {
+		return nil, err
+	}
+	vT, err := tensor.New[float64]([]int{a.numHeads, 1, a.headDim}, v)
+	if err != nil {
+		return nil, err
 	}
 
-	return a.wo.forward(result)
+	// ScaledDotProductAttention: for seq_len=1, output = V.
+	outT, err := a.sdpa.Forward(ctx, qT, kT, vT, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reshape back to [dim].
+	flat, err := outT.Reshape([]int{a.dim})
+	if err != nil {
+		return nil, err
+	}
+
+	return a.wo.forward(flat.Data())
 }
