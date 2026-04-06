@@ -23,7 +23,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
 - E54: Capture-pure GPU engine ops (2/4 -- GPU-native Zero/Copy done; re-enable graph capture pending)
 - E55: Fused PatchTST encoder CUDA kernel (0/8 -- single kernel per encoder layer)
-- E56: Gemma3 inference micro-optimizations (6/9 -- fused kernels written and wired; produce garbage on DGX, BLOCKED by E57)
+- E56: Gemma3 inference micro-optimizations (7/9 -- fused kernels written and wired; T56.1.3 done; prefill extension + benchmarks pending)
 - E57: Fix DGX Spark build regression (3/3 COMPLETE -- 3 root causes fixed: transpose no-op, causal mask D2H, Q4_K re-quant; composed GQA divergence remains)
 - E58: GPU vs CPU GQA parity test (1/2 -- diagnostic test to find remaining composed-pipeline divergence)
 - E59: Remove gonum dependency (7/7 COMPLETE -- replace BLAS fallback + FFT with zero-dep implementations)
@@ -1012,8 +1012,8 @@ The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for 
 
 ### E54.3: Re-enable Graph Capture in zerfoo
 
-- [ ] T54.3.1 Remove canCapture=false and re-enable forward-prefix capture  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
-  Deps: T54.1.1, T54.2.1
+- [ ] T54.3.1 Remove canCapture=false and re-enable forward-prefix capture  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]  DEFERRED: forward-prefix capture (~78 ops) is slower than no-capture (20.9s vs 12.9s/epoch). Graph too small for replay savings to offset launch+sync cost. Keep disabled until fused encoder kernel (E55) enables ~500-op capture.
+  Deps: T54.1.1, T54.2.1, E55
   Repo: zerfoo. File: timeseries/patchtst_gpu_train.go
   Update ztensor dependency. Remove the `canCapture = false` disable flag.
   Forward-prefix capture (~78 ops) should work without TrySlice errors.
@@ -1035,7 +1035,7 @@ The CPU engine zeros via `a.Data()` slice mutation, which triggers D2H copy for 
 
 ##### Wave E54-2: Enable + benchmark (2 agents)
 
-- [ ] T54.3.1 Re-enable graph capture in zerfoo  Deps: T54.1.1, T54.2.1
+- [ ] T54.3.1 Re-enable graph capture in zerfoo  Deps: T54.1.1, T54.2.1, E55  DEFERRED
 - [ ] T54.4.1 Benchmark on DGX Spark  Deps: T54.3.1
 
 ---
@@ -1175,7 +1175,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
   Add FusedSoftmaxVMuler optional interface to engine.go.
   Acceptance: go build clean.
 
-- [ ] T56.1.3 Wire into ScaledDotProductAttention  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T56.1.3 Wire into ScaledDotProductAttention  Owner: TBD  Est: 1h  verifies: [UC-001]  DONE 2026-03-30 (wired at sdpa.go:160-173 with FusedSoftmaxVMulProvider type-assert + fallback)
   Deps: T56.1.2
   Repo: zerfoo. File: layers/attention/scaled_dot_product_attention.go
   Type-assert engine to FusedSoftmaxVMuler. If available, replace lines 235+245
@@ -1203,7 +1203,7 @@ and GPU-native ops. However, three small fusion opportunities remain that cumula
 
 ### E56.3: Fused Prefill Attention Path
 
-- [ ] T56.3.1 Extend merged QKV to prefill (seqLen > 1)  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [ ] T56.3.1 Extend merged QKV to prefill (seqLen > 1)  Owner: TBD  Est: 2h  verifies: [UC-001]  BLOCKED: splitMergedQKV GPU SubSlice is fundamentally broken for seqLen>1 (takes contiguous memory, but Q/K/V are interleaved row-by-row in merged output). Needs engine.Narrow (column-slice on last dim) in ztensor first. Prefill already uses separate wq/wk/wv projections; perf diff of 1 vs 3 MatMuls during one-time prefill is negligible.
   Repo: zerfoo. File: layers/attention/grouped_query_attention.go
   Currently at line 375: `if gqa.mergedQKV != nil && seqLen == 1`.
   For prefill, the merged weight [dModel, (numQ+2*numKV)*headDim] can still be used
@@ -1244,7 +1244,7 @@ Within E56, the three fusions are independent.
 
 - [x] T56.1.1 Fused softmax+V multiply kernel  DONE 2026-03-30
 - [x] T56.2.1 Fused repeat-interleave kernel  DONE 2026-03-30
-- [ ] T56.3.1 Extend merged QKV to prefill (zerfoo, no kernel needed)
+- [ ] T56.3.1 Extend merged QKV to prefill  BLOCKED (needs engine.Narrow in ztensor)
 
 ##### Wave E56-2: Bindings + wiring (3 agents)
 
@@ -1254,7 +1254,7 @@ Within E56, the three fusions are independent.
 
 ##### Wave E56-3: Integration + benchmarks (3 agents)
 
-- [ ] T56.1.3 Wire softmax+V into SDPA  Deps: T56.1.2
+- [x] T56.1.3 Wire softmax+V into SDPA  DONE 2026-03-30
 - [ ] T56.3.3 Prefill benchmark  Deps: T56.3.2
 - [ ] T56.4.1 Decode benchmark  Deps: T56.1.3, T56.2.2
 
