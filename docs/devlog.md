@@ -3,6 +3,30 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-06: DGX benchmark infrastructure for E50/E51
+
+**Type:** finding
+**Tags:** DGX, benchmark, E50, E51, PatchTST, training
+
+**Problem:** Needed to benchmark PatchTST GPU training (T50.5.2) and graph capture training (T51.5.2) on DGX Spark after E50/E51 code changes.
+**Root cause:** No benchmark tool existed; needed to create cmd/bench_train.
+**Fix:** Created cmd/bench_train that generates synthetic 28K x 20ch x 24 input data and runs TrainWindowed with configurable engine (GPU/CPU). Supports --samples, --channels, --epochs, --batch-size, --lr, --cpu flags.
+**Impact:** Benchmark tool now available for all future training performance measurements.
+
+**DGX benchmark status:**
+- GPU benchmark: Started (PID 69014, writing to /tmp/gpu_bench.log). DGX SSH became unreachable under load.
+- CPU benchmark: Started (PID 65462, -cpu flag). Also running when SSH became unreachable.
+- Both processes confirmed running on DGX via pgrep. Results need to be collected when DGX SSH recovers.
+- DGX load average was 9.33 (15min avg) indicating severe resource contention from running both benchmarks simultaneously.
+
+**Blockers for other DGX tasks:**
+- T58.1.2 (GQA parity): Requires GGUF model files (GEMMA3_GGUF_PATH). No Gemma3 model on DGX.
+- T63.2.1-T63.2.3: Require CUDA CGo kernel stubs compiled on DGX.
+- T56.4.1 (decode benchmark): Requires GGUF model files on DGX.
+- T61.3.2 (parity tests): Requires GGUF model files on DGX.
+
+**Next steps:** Reconnect to DGX to collect /tmp/gpu_bench.log results. Run benchmarks sequentially (not simultaneously) to avoid overloading the system.
+
 ## 2026-04-06: DGX validation after E63/E64 ztensor refactoring
 
 **Type:** finding
