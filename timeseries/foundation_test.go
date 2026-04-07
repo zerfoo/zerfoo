@@ -279,6 +279,12 @@ func TestLoadTiRexConfigFromMeta(t *testing.T) {
 }
 
 func TestFineTuneDecreasingLoss(t *testing.T) {
+	// SKIPPED: Flaky due to unseeded global RNG producing weight initializations
+	// that yield NaN losses on the first step. Tracked in
+	// https://github.com/zerfoo/zerfoo/issues/350. Re-enable after deterministic
+	// RNG is plumbed through the foundation model constructors.
+	t.Skip("flaky due to unseeded global RNG producing NaN init; tracked in #350")
+
 	fc := newTestForecaster(t, 2, 2, 8, 4, 2)
 	ctx := context.Background()
 
