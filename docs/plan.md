@@ -17,8 +17,8 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
 - E48: TimeMixer backend (10/10 complete) -- DONE 2026-03-30
 - E49: Foundation model inference (12/12 complete) -- DONE 2026-03-30
-- E50: GPU training kernel elimination (4/6 -- layer norm fwd+bwd, GELU fwd/bwd, weight transpose caching done)
-- E51: CUDA graph capture for training (4/6 -- drop partial, pre-allocate, capture API, wiring done; validation pending)
+- E50: GPU training kernel elimination (5/6 -- code complete; DGX benchmark T50.5.2 pending)
+- E51: CUDA graph capture for training (5/6 -- code complete; DGX benchmark T51.5.2 pending)
 - E52: DRY composition refactoring (7/7 complete -- shared math_ops, adamw_f32, layernorm_ops, engine wrappers)
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
 - E54: Capture-pure GPU engine ops (2/4 -- GPU-native Zero/Copy done; re-enable graph capture pending)
@@ -44,14 +44,14 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
-- E77: Tabular package composition migration (7/9 -- all migrations + cleanup done; validation pending)
-- E78: Layers internal violations cleanup (9/11 -- all file fixes done; validation pending)
-- E79: Generate package refactoring (5/7 -- all extractions done; validation pending)
-- E80: Inference builder boilerplate extraction (6/8 -- all builders migrated; validation pending)
-- E81: Inference custom node replacement (5/7 -- bert+gpt2+falcon+commandr+vision done; validation pending)
-- E82: Training loss engine migration (4/6 -- bce + routing_contrastive + quantile + adamw8bit done)
-- E83: Serve handler refactoring (3/5 -- all 3 extractions done; validation pending)
-- E84: ModeLDSL composition (6/8 -- linearLayer, rmsnorm, silu, softmax, attention, Xavier init, LayerType constants replaced)
+- E77: Tabular package composition migration (9/9 COMPLETE -- PRs #334, #336, #338, #341)
+- E78: Layers internal violations cleanup (11/11 COMPLETE -- PRs #334, #336, #338, #341)
+- E79: Generate package refactoring (7/7 COMPLETE -- PRs #334, #336, #338, #341)
+- E80: Inference builder boilerplate extraction (8/8 COMPLETE -- PRs #334, #336, #338, #341)
+- E81: Inference custom node replacement (7/7 COMPLETE -- PRs #334, #336, #338, #341)
+- E82: Training loss engine migration (6/6 COMPLETE -- PRs #334, #336, #338, #341)
+- E83: Serve handler refactoring (5/5 COMPLETE -- PRs #334, #336, #338, #341)
+- E84: ModeLDSL composition (8/8 COMPLETE -- PRs #334, #336, #338, #341)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -578,6 +578,16 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-04-06: Wave 20 DGX benchmarks + housekeeping
+
+- Merged release-please PR #340 (v1.42.1).
+- Fixed stale status header for E77-E84 (all DONE), E50/E51 (code complete).
+- Fixed DGX IP in hand-off notes (192.168.86.250 → 192.168.86.29).
+- Created cmd/bench_train benchmark tool for PatchTST training.
+- Started GPU + CPU benchmarks on DGX (T50.5.2, T51.5.2); results pending collection.
+- T58.1.2 (GQA parity) blocked: no GGUF model files on DGX.
+- T63.2.1-T63.2.3 blocked: need CUDA CGo kernel stubs on DGX.
+
 ### 2026-04-06: /tidy --apply --prune
 
 - Marked Waves 18-19 validation tasks complete (11/11). Epics E77-E84 all DONE.
@@ -603,7 +613,7 @@ E77-E84 phase 4. See git history for full changelog.
 ## Hand-off Notes
 
 - All code is in Go 1.25 with generics. No CGo. GPU via purego/dlopen.
-- DGX Spark GPU at `ssh ndungu@192.168.86.250` for CUDA testing.
+- DGX Spark GPU at `ssh ndungu@192.168.86.29` for CUDA testing.
 - ztensor and zerfoo are separate repos with separate go.mod files.
   Primitive tasks (T34.1.*, T35.1.*, T35.3.4, T37.1.5, T39.1.*) go in ztensor.
   All other tasks go in zerfoo.
