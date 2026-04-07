@@ -1770,16 +1770,22 @@ docs/adr/077-cuda-graph-training-capture.md
 
 ### E85.2: Fix (refined 2026-04-07 with diagnosis findings)
 
-- [ ] T85.2.0 Inventory ztensor compute.Engine for dst-param variants  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  Repo: ztensor (separate repo at /Users/dndungu/Code/zerfoo/ztensor)
-  File: compute/engine.go (interface), compute/cpu_engine.go, compute/gpu_engine_*.go
-  For each op used in patchtst_gpu_train.go per-batch loop, check if a dst-parameter
-  variant exists: Transpose, MatMul, Add, Sum, Reshape, MulScalar, Sub, Mul, Tanh.
-  Existing dst signature looks like: `Op(ctx, args..., dst *Tensor) (*Tensor, error)`
-  where the function writes into dst and returns dst.
-  Acceptance: Markdown table mapping each op to: dst-variant exists (yes/no), file:line.
-  This is BLOCKING for T85.2.1. If any required op lacks dst variant, file ztensor PR
-  to add it before proceeding.
+- [x] T85.2.0 Inventory ztensor compute.Engine for dst-param variants  DONE 2026-04-07
+  All 9 required ops accept variadic `dst ...*tensor.TensorNumeric[T]` on the
+  Engine interface (compute/engine.go) AND in GPUEngine impls (route through
+  internal `gpu<Op>(..., dst...)` helpers):
+  | Op        | Interface (engine.go) | GPU impl |
+  |-----------|-----------------------|----------|
+  | Add       | :179 | gpu_engine_elementwise.go:20 |
+  | Sub       | :184 | gpu_engine_elementwise.go:25 |
+  | Mul       | :189 | gpu_engine_elementwise.go:30 |
+  | MatMul    | :199 | gpu_engine.go:733 |
+  | Transpose | :204 | gpu_engine_memory.go:18 |
+  | Sum       | :211 | gpu_engine_reduction.go:17 |
+  | Tanh      | :232 | gpu_engine_elementwise.go:60 |
+  | MulScalar | :270 | gpu_engine_elementwise.go:75 |
+  | Reshape   | :324 | gpu_engine_memory.go:614 |
+  Conclusion: **Wave E85-2b (T85.2.0a) is not needed.** Proceed directly to E85-3.
 
 - [ ] T85.2.0a Add missing dst-param variants to ztensor Engine (if needed)  Owner: TBD  Est: 4h  verifies: [infrastructure]
   Deps: T85.2.0
@@ -1881,14 +1887,12 @@ docs/adr/077-cuda-graph-training-capture.md
 - [x] T85.1.4 Verify graph capture engaged (it is NOT — disabled at line 453) — DONE
 - T85.1.1, T85.1.2 (runtime profiling) — SKIPPED, not needed
 
-#### Wave E85-2a: ztensor API inventory (1 agent, ~1h)
-Sequential — must finish before any fix can start.
-- [ ] T85.2.0 Inventory ztensor compute.Engine for dst-param variants
+#### Wave E85-2a: ztensor API inventory — DONE 2026-04-07
+- [x] T85.2.0 Inventory ztensor compute.Engine for dst-param variants
+  All 9 required ops already have dst variants. See task entry for table.
 
-#### Wave E85-2b: ztensor API extension (1 agent, ~4h, conditional)
-Deps: T85.2.0
-Skip this wave if T85.2.0 finds all needed dst variants already exist.
-- [ ] T85.2.0a Add missing dst-param variants to ztensor (separate repo, separate PR)
+#### Wave E85-2b: ztensor API extension — SKIPPED (not needed)
+T85.2.0 confirmed all dst variants exist; no ztensor changes required.
 
 #### Wave E85-3: Fix per-batch leaks (5 agents in parallel)
 Deps: T85.2.0a (or T85.2.0 if no extension needed)
