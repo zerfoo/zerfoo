@@ -4,8 +4,8 @@ import (
 	"context"
 	"math"
 
-	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // patchTSTCacheF64 stores activations from the forward pass for backpropagation.
@@ -38,10 +38,10 @@ type encoderLayerCache struct {
 	centered1    [][]float64 // x - mean
 
 	// Attention.
-	q, k, v      [][]float64   // [seq][dModel] after projection
-	scores       [][][]float64 // [nHeads][seq][seq] attention weights (post-softmax)
-	attnOut      [][]float64   // [seq][dModel] after weighted sum (before oProj)
-	attnProjOut  [][]float64   // [seq][dModel] after oProj
+	q, k, v     [][]float64   // [seq][dModel] after projection
+	scores      [][][]float64 // [nHeads][seq][seq] attention weights (post-softmax)
+	attnOut     [][]float64   // [seq][dModel] after weighted sum (before oProj)
+	attnProjOut [][]float64   // [seq][dModel] after oProj
 
 	// After first residual.
 	xAfterAttn [][]float64 // [seq][dModel]
@@ -441,8 +441,6 @@ func linearBackwardF64Accum(dY, x [][]float64, w []float64, dX [][]float64, dW, 
 	}
 }
 
-
-
 // patchTSTParamsF64 holds a float64 copy of all PatchTST parameters for training.
 type patchTSTParamsF64 struct {
 	patchEmbW []float64 // [patchLen * dModel]
@@ -478,14 +476,14 @@ func (m *PatchTST) extractParamsF64() *patchTSTParamsF64 {
 	p.layers = make([]encoderLayerF64, len(m.layers))
 	for i, l := range m.layers {
 		p.layers[i] = encoderLayerF64{
-			qW: float32ToFloat64(l.qProj.weights.Data()),
-			qB: float32ToFloat64(l.qProj.biases.Data()),
-			kW: float32ToFloat64(l.kProj.weights.Data()),
-			kB: float32ToFloat64(l.kProj.biases.Data()),
-			vW: float32ToFloat64(l.vProj.weights.Data()),
-			vB: float32ToFloat64(l.vProj.biases.Data()),
-			oW: float32ToFloat64(l.oProj.weights.Data()),
-			oB: float32ToFloat64(l.oProj.biases.Data()),
+			qW:    float32ToFloat64(l.qProj.weights.Data()),
+			qB:    float32ToFloat64(l.qProj.biases.Data()),
+			kW:    float32ToFloat64(l.kProj.weights.Data()),
+			kB:    float32ToFloat64(l.kProj.biases.Data()),
+			vW:    float32ToFloat64(l.vProj.weights.Data()),
+			vB:    float32ToFloat64(l.vProj.biases.Data()),
+			oW:    float32ToFloat64(l.oProj.weights.Data()),
+			oB:    float32ToFloat64(l.oProj.biases.Data()),
 			ffn1W: float32ToFloat64(l.ffn1.weights.Data()),
 			ffn1B: float32ToFloat64(l.ffn1.biases.Data()),
 			ffn2W: float32ToFloat64(l.ffn2.weights.Data()),

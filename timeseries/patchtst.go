@@ -558,14 +558,14 @@ func (m *PatchTST) PredictWindowed(modelPath string, windows [][][]float64) ([]f
 // patchTSTWeights is the JSON-serializable form of PatchTST parameters.
 type patchTSTWeights struct {
 	Config    PatchTSTConfig     `json:"config"`
-	PatchEmbW []float64         `json:"patch_emb_w"`
-	PatchEmbB []float64         `json:"patch_emb_b"`
-	PosEmb    []float64         `json:"pos_emb"`
+	PatchEmbW []float64          `json:"patch_emb_w"`
+	PatchEmbB []float64          `json:"patch_emb_b"`
+	PosEmb    []float64          `json:"pos_emb"`
 	Layers    []encoderLayerJSON `json:"layers"`
-	HeadW     []float64         `json:"head_w"`
-	HeadB     []float64         `json:"head_b"`
-	NormMeans [][]float64       `json:"norm_means,omitempty"`
-	NormStds  [][]float64       `json:"norm_stds,omitempty"`
+	HeadW     []float64          `json:"head_w"`
+	HeadB     []float64          `json:"head_b"`
+	NormMeans [][]float64        `json:"norm_means,omitempty"`
+	NormStds  [][]float64        `json:"norm_stds,omitempty"`
 }
 
 type encoderLayerJSON struct {
