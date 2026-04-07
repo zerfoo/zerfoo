@@ -30,10 +30,10 @@ type scaleDecomposition struct {
 // mixes components across scales. Input dimension is numScales, hidden
 // dimension is hiddenSize, output dimension is numScales.
 type mixingMLP struct {
-	w1   [][]float64 // [hiddenSize][numScales]
-	b1   []float64   // [hiddenSize]
-	w2   [][]float64 // [numScales][hiddenSize]
-	b2   []float64   // [numScales]
+	w1 [][]float64 // [hiddenSize][numScales]
+	b1 []float64   // [hiddenSize]
+	w2 [][]float64 // [numScales][hiddenSize]
+	b2 []float64   // [numScales]
 }
 
 // forward runs the two-layer MLP with ReLU activation.
@@ -62,15 +62,35 @@ func (mlp *mixingMLP) forward(x []float64) []float64 {
 	return out
 }
 
+// randFloat64 returns a uniform [0,1) sample from r if non-nil, else from the
+// global math/rand/v2 generator.
+func randFloat64(r *rand.Rand) float64 {
+	if r != nil {
+		return r.Float64()
+	}
+	return rand.Float64()
+}
+
+// randNormFloat64 returns a standard-normal sample from r if non-nil, else
+// from the global math/rand/v2 generator.
+func randNormFloat64(r *rand.Rand) float64 {
+	if r != nil {
+		return r.NormFloat64()
+	}
+	return rand.NormFloat64()
+}
+
 // newMixingMLP creates a mixing MLP with Kaiming uniform initialization.
-func newMixingMLP(numScales, hiddenSize int) *mixingMLP {
+// If rng is non-nil it is used for weight sampling; otherwise the global
+// math/rand/v2 generator is used.
+func newMixingMLP(numScales, hiddenSize int, rng *rand.Rand) *mixingMLP {
 	// Kaiming uniform: U(-bound, bound) where bound = sqrt(6 / fan_in)
 	bound1 := math.Sqrt(6.0 / float64(numScales))
 	w1 := make([][]float64, hiddenSize)
 	for i := range w1 {
 		w1[i] = make([]float64, numScales)
 		for j := range w1[i] {
-			w1[i][j] = (rand.Float64()*2 - 1) * bound1
+			w1[i][j] = (randFloat64(rng)*2 - 1) * bound1
 		}
 	}
 	b1 := make([]float64, hiddenSize)
@@ -80,7 +100,7 @@ func newMixingMLP(numScales, hiddenSize int) *mixingMLP {
 	for i := range w2 {
 		w2[i] = make([]float64, hiddenSize)
 		for j := range w2[i] {
-			w2[i][j] = (rand.Float64()*2 - 1) * bound2
+			w2[i][j] = (randFloat64(rng)*2 - 1) * bound2
 		}
 	}
 	b2 := make([]float64, numScales)
@@ -114,11 +134,16 @@ type TimeMixer struct {
 	// Length: NumScales. Softmax is applied at inference time.
 	mixWeights []float64
 
-	engine compute.Engine[float32]    // optional; enables GPU-accelerated forward
+	engine compute.Engine[float32]     // optional; enables GPU-accelerated forward
 	ops    numeric.Arithmetic[float32] // arithmetic ops for engine path
 
 	// Training state for TrainableBackend.
 	grads []float64 // gradient accumulator
+
+	// initRNG is an optional caller-provided RNG used only during NewTimeMixer
+	// weight initialization. Cleared at the end of NewTimeMixer so it cannot
+	// affect later behavior.
+	initRNG *rand.Rand
 }
 
 // NewTimeMixer creates a new TimeMixer model with the given configuration.
@@ -143,6 +168,12 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 		mixWeights:    make([]float64, cfg.NumScales),
 	}
 
+	// Apply options FIRST so caller-provided RNG is available for weight init.
+	for _, opt := range opts {
+		opt(m)
+	}
+	rng := m.initRNG
+
 	// Initialize learnable MA weights per scale with uniform initialization
 	// then softmax-normalize so they sum to 1.
 	for s := 0; s < cfg.NumScales; s++ {
@@ -150,15 +181,15 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 		m.maWeights[s] = make([]float64, kernelSize)
 		// Initialize with small random perturbations around uniform.
 		for i := range m.maWeights[s] {
-			m.maWeights[s][i] = 1.0/float64(kernelSize) + rand.NormFloat64()*0.01
+			m.maWeights[s][i] = 1.0/float64(kernelSize) + randNormFloat64(rng)*0.01
 		}
 		normalizeWeights(m.maWeights[s])
 	}
 
 	// Initialize mixing MLPs for each layer.
 	for l := 0; l < cfg.NumLayers; l++ {
-		m.seasonalMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
-		m.trendMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize)
+		m.seasonalMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize, rng)
+		m.trendMLPs[l] = newMixingMLP(cfg.NumScales, cfg.HiddenSize, rng)
 	}
 
 	// Initialize scale-specific linear heads with Xavier uniform initialization.
@@ -170,8 +201,8 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 			m.trendHeads[s][i] = make([]float64, cfg.OutputLen)
 			m.seasonalHeads[s][i] = make([]float64, cfg.OutputLen)
 			for j := 0; j < cfg.OutputLen; j++ {
-				m.trendHeads[s][i][j] = (rand.Float64()*2 - 1) * xavierBound
-				m.seasonalHeads[s][i][j] = (rand.Float64()*2 - 1) * xavierBound
+				m.trendHeads[s][i][j] = (randFloat64(rng)*2 - 1) * xavierBound
+				m.seasonalHeads[s][i][j] = (randFloat64(rng)*2 - 1) * xavierBound
 			}
 		}
 	}
@@ -181,9 +212,8 @@ func NewTimeMixer(cfg TimeMixerConfig, opts ...TimeMixerOption) *TimeMixer {
 		m.mixWeights[s] = 0.0
 	}
 
-	for _, opt := range opts {
-		opt(m)
-	}
+	// Drop RNG reference so it does not outlive init.
+	m.initRNG = nil
 
 	return m
 }

@@ -3,6 +3,7 @@ package timeseries
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
@@ -21,6 +22,17 @@ func WithTimeMixerEngine(engine compute.Engine[float32], ops numeric.Arithmetic[
 	}
 }
 
+// WithTimeMixerRNG sets a deterministic RNG used for weight initialization
+// in NewTimeMixer. Without this option NewTimeMixer draws weights from the
+// global math/rand/v2 generator, which is runtime-seeded and therefore
+// non-deterministic across test runs. Pass a seeded *rand.Rand to make
+// model construction reproducible (e.g. for gradient checks).
+func WithTimeMixerRNG(r *rand.Rand) TimeMixerOption {
+	return func(m *TimeMixer) {
+		m.initRNG = r
+	}
+}
+
 // ForwardEngine runs the engine-accelerated forward pass, producing the same
 // MultiScaleOutput as Forward. The weighted moving average at each scale is
 // computed via engine.MatMul by constructing a causal convolution (Toeplitz)
@@ -28,7 +40,8 @@ func WithTimeMixerEngine(engine compute.Engine[float32], ops numeric.Arithmetic[
 // any engine error.
 func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*TimeMixerOutput, error) {
 	if m.engine == nil {
-		fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+		fwdOut, fwdErr := m.Forward(input)
+		return fwdOut, fwdErr
 	}
 
 	if len(input) == 0 {
@@ -55,7 +68,8 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Time
 	}
 	xT, err := tensor.New[float32]([]int{nf, inputLen}, xFlat)
 	if err != nil {
-		fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+		fwdOut, fwdErr := m.Forward(input)
+		return fwdOut, fwdErr
 	}
 
 	scales := make([]scaleDecomposition, m.config.NumScales)
@@ -85,7 +99,8 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Time
 
 		toepT, err := tensor.New[float32]([]int{inputLen, inputLen}, toepFlat)
 		if err != nil {
-			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+			fwdOut, fwdErr := m.Forward(input)
+			return fwdOut, fwdErr
 		}
 
 		// Transpose x to [inputLen x numFeatures] so we can do toeplitz @ xT
@@ -106,20 +121,23 @@ func (m *TimeMixer) ForwardEngine(ctx context.Context, input [][]float64) (*Time
 		}
 		toepTransT, err := tensor.New[float32]([]int{inputLen, inputLen}, toepTransFlat)
 		if err != nil {
-			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+			fwdOut, fwdErr := m.Forward(input)
+			return fwdOut, fwdErr
 		}
 		_ = toepT
 
 		// trend = x @ toeplitz^T : [nf x inputLen] @ [inputLen x inputLen] = [nf x inputLen]
 		trendT, err := m.engine.MatMul(ctx, xT, toepTransT)
 		if err != nil {
-			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+			fwdOut, fwdErr := m.Forward(input)
+			return fwdOut, fwdErr
 		}
 
 		// seasonal = x - trend (via engine.Sub)
 		seasonalT, err := m.engine.Sub(ctx, xT, trendT)
 		if err != nil {
-			fwdOut, fwdErr := m.Forward(input); return fwdOut, fwdErr
+			fwdOut, fwdErr := m.Forward(input)
+			return fwdOut, fwdErr
 		}
 
 		// Unpack trend and seasonal back to [][]float64.

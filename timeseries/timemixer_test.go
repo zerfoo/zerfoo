@@ -458,7 +458,7 @@ func TestTimeMixerMixingDeterministic(t *testing.T) {
 }
 
 func TestMixingMLPForward(t *testing.T) {
-	mlp := newMixingMLP(3, 8)
+	mlp := newMixingMLP(3, 8, nil)
 
 	// Zero input should produce output equal to bias pass-through.
 	input := []float64{0, 0, 0}
