@@ -52,6 +52,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E82: Training loss engine migration (6/6 COMPLETE -- PRs #334, #336, #338, #341)
 - E83: Serve handler refactoring (5/5 COMPLETE -- PRs #334, #336, #338, #341)
 - E84: ModeLDSL composition (8/8 COMPLETE -- PRs #334, #336, #338, #341)
+- E85: Fix GPU training memory leak in PatchTST encoder bwd (CRITICAL -- 0/9, blocks T50.5.2/T51.5.2)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -577,6 +578,13 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-07: E85 added — fix GPU training memory leak
+
+- Added E85 (9 tasks across 4 waves) targeting the cudaMalloc OOM in `trainWindowedGPU`
+  encoder backward path. CRITICAL — blocks T50.5.2 and T51.5.2 (DGX training benchmarks).
+- Detailed reproducer and evidence matrix in the epic and devlog.
+- Wave plan: diagnosis (3 agents) -> profile run (1) -> fix (3) -> validation (1).
 
 ### 2026-04-06: Wave 20 DGX benchmarks + housekeeping
 
@@ -1678,6 +1686,131 @@ catches any new .Data() or raw-loop regressions in timeseries/.
 #### Wave E76-1: Sequential (1 agent)
 Deps: E74 complete
 - [ ] T76.1.1 -> T76.1.2 (sequential)
+
+---
+
+## E85: Fix GPU Training Memory Leak in PatchTST Encoder Backward (CRITICAL)
+
+**Problem:** `trainWindowedGPU` (timeseries/patchtst_gpu_train.go) leaks GPU memory across epochs.
+The benchmark hits `cudaMalloc failed: out of memory` in `gpu encoder bwd` (or `gpu encoder fwd`)
+at 10+ epochs once the dataset reaches ~10K samples x 20 channels. Short runs (3 epochs)
+work fine and scale linearly to 25K samples at ~5.9s/epoch.
+
+**Reproducer (DGX Spark GB10):**
+```
+ssh ndungu@192.168.86.29 'cd /home/ndungu/zerfoo && ./bench_train -samples 10000 -channels 20 -epochs 10 -batch-size 64 -out /tmp/leak.log'
+# Expected: 10 epoch loss curve in ~24s
+# Actual: cudaMalloc OOM in gpu encoder bwd after ~14min
+```
+
+**Evidence matrix (all measured 2026-04-06 on DGX Spark GB10):**
+
+| Samples | Channels | Epochs | Result |
+|---------|----------|--------|--------|
+| 100     | 5        | 3      | OK 0.29s |
+| 1,000   | 20       | 3      | OK 0.81s |
+| 10,000  | 20       | 3      | OK 7.3s  |
+| 20,000  | 20       | 3      | OK 14.4s |
+| 25,000  | 20       | 3      | OK 17.6s |
+| 10,000  | 20       | 10     | FAIL: OOM in gpu encoder bwd (14min) |
+| 25,000  | 20       | 10     | FAIL: hung in CUDA call |
+| 28,000  | 20       | 10     | FAIL: OOM in gpu encoder fwd (23min) |
+
+**Regression:** v1.38.4 reportedly trained 28K x 20ch x 10 epochs in 128.5s
+(docs/benchmarks.md:22). That result is no longer reproducible after the E50/E51 work.
+
+**Goal:** Identify the leak, fix it, restore the 28K x 20ch x 10 epoch benchmark on DGX Spark.
+Unblocks T50.5.2 and T51.5.2.
+
+**Repo:** zerfoo
+**Files:** timeseries/patchtst_gpu_train.go (primary), timeseries/patchtst_encoder.go,
+timeseries/patchtst_backward.go, optimizer/adamw.go (if optimizer state grows)
+**Reference:** docs/devlog.md "GPU training memory leak in PatchTST encoder backward (CRITICAL)"
+docs/adr/077-cuda-graph-training-capture.md
+
+### E85.1: Diagnosis
+
+- [ ] T85.1.1 Add per-epoch GPU allocation profiling to bench_train  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  File: cmd/bench_train/main.go
+  Wrap each epoch with allocation counters: number of `tensor.New` calls, total GPU bytes
+  allocated, total bytes freed. Use `runtime.ReadMemStats` for Go heap and ztensor's
+  GPU allocator stats if exposed (check compute/gpu_engine.go for an alloc counter API,
+  add one if missing).
+  Acceptance: Bench output shows epoch N: alloc=X bytes, free=Y bytes, net=Z bytes.
+  If net grows monotonically across epochs, leak is confirmed and quantified.
+
+- [ ] T85.1.2 Run bench_train at 10K x 20ch x 5 epochs with profiling enabled  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T85.1.1
+  Run on DGX Spark with the new profiling. Confirm net allocation per epoch.
+  Acceptance: Numerical evidence of leak (e.g., +200MB/epoch). Documented in devlog.
+
+- [x] T85.1.3 Audit trainWindowedGPU for tensor.New / engine.New calls inside epoch loop  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-07
+  Found ~38 leaked allocations per batch across patchtst_gpu_train.go lines 510-747.
+  Full breakdown in devlog "GPU training memory leak — root cause identified".
+
+- [x] T85.1.4 Verify CUDA graph capture (T51.4.1) is engaged for encoder backward  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-07
+  Capture is DISABLED at line 453 (`canCapture = false`). Comment at 442-450 explains
+  the small forward-prefix graph is slower than no-capture; full encoder capture is
+  blocked on E55 (fused encoder kernel). So per-batch ops execute as discrete kernel
+  launches with all their leaked allocations.
+
+### E85.2: Fix
+
+- [ ] T85.2.1 Eliminate per-batch allocations in gpu encoder bwd  Owner: TBD  Est: 3h  verifies: [UC-TS01]
+  Deps: T85.1.3
+  Replace `tensor.New` calls inside the per-batch backward path with reuse of
+  pre-allocated workspace tensors from `gpuBatchBackwardCache`. Add fields to the cache
+  struct as needed.
+  Acceptance: Per-batch allocation count drops to zero (verified by T85.1.1 profiler).
+
+- [ ] T85.2.2 Ensure optimizer/AdamW state is not reallocated per epoch  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T85.1.3
+  AdamW m/v moments should be allocated once at trainer init and updated in place.
+  Verify no shadow copy is created per step.
+  Acceptance: AdamW state allocations happen only at init.
+
+- [ ] T85.2.3 Free intermediate gradient tensors after backward step  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T85.1.3
+  If any non-cache intermediate tensors escape the per-batch scope, ensure they are
+  released or returned to pool before the next batch starts.
+  Acceptance: No defunct GPU tensors after each batch (verified by T85.1.1).
+
+### E85.3: Validation
+
+- [ ] T85.3.1 Run 10K x 20ch x 10 epochs on DGX Spark  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+  Deps: T85.2.*
+  Acceptance: Completes without OOM. Loss decreases monotonically. <30s total.
+
+- [ ] T85.3.2 Run 28K x 20ch x 10 epochs on DGX Spark (T50.5.2 and T51.5.2 benchmark)  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+  Deps: T85.3.1
+  Acceptance: Completes without OOM. Compare against v1.38.4 baseline (128.5s).
+  Document in docs/benchmarks.md and devlog.
+
+- [ ] T85.3.3 Mark T50.5.2 and T51.5.2 complete with results  Owner: TBD  Est: 0.25h  verifies: [infrastructure]
+  Deps: T85.3.2
+  Update docs/plan.md, docs/benchmarks.md row for PatchTST training, devlog entry.
+  Acceptance: Plan reflects the new state. Benchmarks doc shows current measurement.
+
+### E85 Parallel Work
+
+#### Wave E85-1: Diagnosis (3 agents, mostly sequential due to shared file)
+- [ ] T85.1.1 Add profiling to bench_train (independent)
+- [ ] T85.1.3 Audit allocations in trainWindowedGPU (independent)
+- [ ] T85.1.4 Verify graph capture engaged (independent)
+
+#### Wave E85-2: Profile run (1 agent)
+Deps: T85.1.1
+- [ ] T85.1.2 Run 10K x 5 epoch with profiling on DGX
+
+#### Wave E85-3: Fix (3 agents)
+Deps: T85.1.2, T85.1.3, T85.1.4
+- [ ] T85.2.1 Eliminate per-batch allocations (primary)
+- [ ] T85.2.2 Verify AdamW state init-only
+- [ ] T85.2.3 Free intermediate gradients
+
+#### Wave E85-4: Validation (1 agent)
+Deps: E85.2 complete
+- [ ] T85.3.1 -> T85.3.2 -> T85.3.3 (sequential, all on DGX)
 
 ---
 
