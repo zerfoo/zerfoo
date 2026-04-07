@@ -22,7 +22,7 @@ func TestMLSTM_OutputShape(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{batch, hiddenDim, hiddenDim}, make([]float32, batch*hiddenDim*hiddenDim))
 	nPrev, _ := tensor.New[float32]([]int{batch, hiddenDim}, make([]float32, batch*hiddenDim))
 
-	h, c, n, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	h, c, n, _, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestMLSTM_OuterProductUpdate(t *testing.T) {
 	// nPrev = [0, 0]
 	nPrev, _ := tensor.New[float32]([]int{1, 2}, []float32{0, 0})
 
-	_, cNew, nNew, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	_, cNew, nNew, _, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -162,16 +162,19 @@ func TestMLSTM_ManualComputation(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{1, 2, 2}, []float32{0.1, 0.2, 0.3, 0.4})
 	nPrev, _ := tensor.New[float32]([]int{1, 2}, []float32{1.0, 1.0})
 
-	hNew, cNew, nNew, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	hNew, cNew, nNew, _, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	// Hand computation:
+	// Hand computation (stabilized form, mPrev=0):
 	// k = [0.3, 0.7], v = [0.3, 0.7], q = [0.3, 0.7]
 	// preI = 0 + 0.5 = 0.5 (bias[0]), preF = 0 + (-0.5) = -0.5, preO = 0 + 1.0 = 1.0
-	iGate := math.Exp(0.5)
-	fGate := math.Exp(-0.5)
+	// m = max(preF + mPrev, preI) = max(-0.5 + 0, 0.5) = 0.5
+	// iGate = exp(preI - m) = exp(0) = 1
+	// fGate = exp(preF + mPrev - m) = exp(-0.5 + 0 - 0.5) = exp(-1)
+	iGate := 1.0
+	fGate := math.Exp(-1.0)
 	oGate := 1.0 / (1.0 + math.Exp(-1.0))
 
 	// C = f * C_prev + i * (v * k^T)
@@ -258,7 +261,7 @@ func TestMLSTM_ExponentialGatingClamp(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{1, 2, 2}, make([]float32, 4))
 	nPrev, _ := tensor.New[float32]([]int{1, 2}, []float32{1, 1})
 
-	h, c, n, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	h, c, n, _, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -303,7 +306,7 @@ func TestMLSTM_BatchIndependence(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{2, hiddenDim, hiddenDim}, cData)
 	nPrev, _ := tensor.New[float32]([]int{2, hiddenDim}, nData)
 
-	hBatch, cBatch, nBatch, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	hBatch, cBatch, nBatch, _, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward batched: %v", err)
 	}
@@ -316,7 +319,7 @@ func TestMLSTM_BatchIndependence(t *testing.T) {
 		cSingle, _ := tensor.New[float32]([]int{1, hiddenDim, hiddenDim}, cData[b*d*d:(b+1)*d*d])
 		nSingle, _ := tensor.New[float32]([]int{1, hiddenDim}, nData[b*hiddenDim:(b+1)*hiddenDim])
 
-		hs, cs, ns, err := mlstm.Forward(context.Background(), xSingle, hSingle, cSingle, nSingle)
+		hs, cs, ns, _, err := mlstm.Forward(context.Background(), xSingle, hSingle, cSingle, nSingle, nil)
 		if err != nil {
 			t.Fatalf("Forward single batch %d: %v", b, err)
 		}
@@ -380,7 +383,7 @@ func TestMLSTM_ForwardInputValidation(t *testing.T) {
 		h, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
 		c, _ := tensor.New[float32]([]int{1, 2, 2}, make([]float32, 4))
 		n, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
-		_, _, _, err := mlstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := mlstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong inputDim")
 		}
@@ -391,7 +394,7 @@ func TestMLSTM_ForwardInputValidation(t *testing.T) {
 		h, _ := tensor.New[float32]([]int{1, 5}, make([]float32, 5))
 		c, _ := tensor.New[float32]([]int{1, 2, 2}, make([]float32, 4))
 		n, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
-		_, _, _, err := mlstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := mlstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong hPrev shape")
 		}
@@ -402,7 +405,7 @@ func TestMLSTM_ForwardInputValidation(t *testing.T) {
 		h, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
 		c, _ := tensor.New[float32]([]int{1, 3, 3}, make([]float32, 9))
 		n, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
-		_, _, _, err := mlstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := mlstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong cPrev shape")
 		}
@@ -413,7 +416,7 @@ func TestMLSTM_ForwardInputValidation(t *testing.T) {
 		h, _ := tensor.New[float32]([]int{1, 2}, make([]float32, 2))
 		c, _ := tensor.New[float32]([]int{1, 2, 2}, make([]float32, 4))
 		n, _ := tensor.New[float32]([]int{1, 5}, make([]float32, 5))
-		_, _, _, err := mlstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := mlstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong nPrev shape")
 		}

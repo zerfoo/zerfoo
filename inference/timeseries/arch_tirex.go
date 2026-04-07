@@ -334,6 +334,7 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 		h    *tensor.TensorNumeric[T]
 		cMat *tensor.TensorNumeric[T]
 		n    *tensor.TensorNumeric[T]
+		m    *tensor.TensorNumeric[T]
 	}
 	slstmStates := make([]slstmState, n.cfg.NumLayers)
 	mlstmStates := make([]mlstmState, n.cfg.NumLayers)
@@ -402,11 +403,11 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 				blockInput = h
 			case "mlstm":
 				st := mlstmStates[i]
-				h, cMat, nState, fErr := block.mlstm.Forward(ctx, blockInput, st.h, st.cMat, st.n)
+				h, cMat, nState, mState, fErr := block.mlstm.Forward(ctx, blockInput, st.h, st.cMat, st.n, st.m)
 				if fErr != nil {
 					return nil, fmt.Errorf("mLSTM block %d step %d: %w", i, t, fErr)
 				}
-				mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState}
+				mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState, m: mState}
 				blockInput = h
 			}
 		}
@@ -540,6 +541,7 @@ func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.Tensor
 		h    *tensor.TensorNumeric[T]
 		cMat *tensor.TensorNumeric[T]
 		n    *tensor.TensorNumeric[T]
+		m    *tensor.TensorNumeric[T]
 	}
 	slstmStates := make([]slstmState, n.cfg.NumLayers)
 	mlstmStates := make([]mlstmState, n.cfg.NumLayers)
@@ -606,11 +608,11 @@ func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.Tensor
 				blockInput = h
 			case "mlstm":
 				st := mlstmStates[i]
-				h, cMat, nState, fErr := block.mlstm.Forward(ctx, blockInput, st.h, st.cMat, st.n)
+				h, cMat, nState, mState, fErr := block.mlstm.Forward(ctx, blockInput, st.h, st.cMat, st.n, st.m)
 				if fErr != nil {
 					return nil, fmt.Errorf("mLSTM block %d step %d: %w", i, t, fErr)
 				}
-				mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState}
+				mlstmStates[i] = mlstmState{h: h, cMat: cMat, n: nState, m: mState}
 				blockInput = h
 			}
 		}
