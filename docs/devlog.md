@@ -3,6 +3,50 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-07: GPU training memory leak — root cause identified
+
+**Type:** finding
+**Tags:** PatchTST, GPU, training, memory leak, E50, E51, E85, T85.1.3, T85.1.4
+
+**Problem:** Diagnose the cudaMalloc OOM in `trainWindowedGPU` (see prior entry "GPU training memory leak in PatchTST encoder backward (CRITICAL)").
+
+**Root cause:** `timeseries/patchtst_gpu_train.go` allocates fresh GPU tensors on **every batch iteration**. The pre-allocated workspace (T51.2.1) only covered `patches`, `flatInput`, and `dChanOut`. All other engine ops in the per-batch loop allocate new tensors via the standard `engine.Op(ctx, ...)` signature that returns a fresh tensor.
+
+**Per-batch allocation sites identified (patchtst_gpu_train.go):**
+1. Lines 510, 519-542: 1 + 6N transposes per batch (headWT + qWT/kWT/vWT/oWT/ffn1WT/ffn2WT per layer)
+2. Lines 547-572: embedded MatMul + Add + 2 Reshapes + Add + Reshape (forward-prefix)
+3. Lines 605, 709: encoderForward / encoderBackward — internal allocations in patchtst_encoder.go
+4. Lines 617-621: headOut MatMul + Add
+5. Lines 670, 674, 678: flatInputT, dHW, grads.headW reassigned via Add (stale-pointer risk for gradTs)
+6. Lines 683, 687, 691: dHB, dHBR, grads.headB reassigned
+7. Lines 697, 703: dFlat MatMul, dX Reshape
+8. Lines 727, 731, 735: patchesT, dPEW, grads.patchEmbW reassigned
+9. Lines 739, 743, 747: dPEB, dPEBR, grads.patchEmbB reassigned
+
+For a 2-layer model: ~13 transposes + ~25 other intermediates = ~38 leaked tensors per batch. At 28K samples / batch=64 = 437 batches/epoch * 10 epochs = 4370 batch iterations * 38 = ~166,000 leaked GPU tensor allocations.
+
+**CUDA graph capture (T51.4.1) is disabled.** Line 453: `canCapture = false`. The comment at lines 442-450 explains this was disabled because the small forward-prefix graph (~78 ops) is slower than no-capture (20.9s vs 12.9s/epoch). Full encoder capture is blocked on E55 (fused encoder kernel). So the per-batch ops execute as discrete kernel launches with all their allocations.
+
+**Stale gradient pointer concern:** Lines 678/691/735/747 reassign `grads.headW = engine.Add(ctx, grads.headW, dHW)` etc. The `gradTs` slice (captured at line 430 via `grads.allParamTensors()`) still holds the ORIGINAL pointers. Gradient clipping (line 759) and AdamW (line 787) iterate `gradTs` — if `engine.Add` returns a new tensor rather than mutating in place, these operate on stale gradients while the leak grows. Loss DOES decrease in working short runs, so either Add is destructive to its first arg OR `allParamTensors` returns sub-tensors that share backing storage with `grads.X` fields. Worth verifying as part of the fix.
+
+**Fix direction:** All per-batch engine ops must write into pre-allocated destination tensors. Two options:
+- (A) Use `engine.OpName(ctx, args..., dst)` if the engine API supports a dst parameter for Transpose/MatMul/Add/Sum/Reshape.
+- (B) Pre-allocate output tensors and use `engine.Copy(ctx, src, dst)` after each op.
+
+This requires touching:
+- `timeseries/patchtst_gpu_train.go` (the trainWindowedGPU function and the gpuBatchForwardCache struct)
+- `timeseries/patchtst_encoder.go` (encoderForward and encoderBackward)
+- Possibly ztensor's `compute.Engine[T]` interface to add `dst` params where missing (separate repo)
+
+**Impact:** Confirms E85 fix scope. T85.2.1-T85.2.3 will need to (a) extend gpuBatchForwardCache with destination buffers for all per-batch outputs, (b) switch to engine ops with dst args, (c) verify `gradTs` semantics around the Add reassignments.
+
+**Next steps:**
+1. Check ztensor compute.Engine interface for existing dst-param support on Transpose/MatMul/Add/Sum/Reshape
+2. If missing, file ztensor issue/PR to add dst params (BLOCKING for the fix)
+3. If present, refactor patchtst_gpu_train.go to use them
+4. Same for patchtst_encoder.go (encoderForward/encoderBackward)
+5. Verify the gradTs vs grads.X reassignment semantics
+
 ## 2026-04-06: GPU training memory leak in PatchTST encoder backward (CRITICAL)
 
 **Type:** finding
