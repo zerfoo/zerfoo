@@ -1,5 +1,13 @@
 # Updates
 
+## 2026-04-06: v1.42.1 released + DGX benchmark infrastructure
+
+- **v1.42.1 released**: Merged release-please PR #340. Includes all E77-E84 composition phase 4 work.
+- **cmd/bench_train**: New benchmark tool for PatchTST training (28K x 20ch x 10 epochs). Supports GPU/CPU engine selection.
+- **DGX benchmarks started**: GPU + CPU benchmarks running on DGX. SSH became unreachable under load. Results pending collection.
+- **Plan status fix**: Updated stale E77-E84 status lines (all DONE). Fixed DGX IP in hand-off notes.
+- **Blockers identified**: T58.1.2 (GQA parity) needs GGUF model files on DGX. T63.2.1-T63.2.3 need CUDA CGo stubs.
+
 ## 2026-04-06: ztensor v1.4.0 + E64 — Matmul consolidation + file decomposition
 
 - **E63 complete (2/5 tasks)**: Consolidated 14 quantized matmul methods into shared helpers (`gpu_engine_matmul.go`). Net -557 lines. ztensor PR #76, released as v1.4.0. DGX validation (T63.2.*) pending.
