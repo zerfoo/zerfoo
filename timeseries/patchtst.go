@@ -212,7 +212,8 @@ func (m *PatchTST) Forward(ctx context.Context, input *tensor.TensorNumeric[floa
 	}
 
 	gpuLayers := encoderLayersToGPU(m.layers)
-	x, _, err = encoderForward(ctx, m.engine, x, gpuLayers,
+	infLayerCaches := make([]gpuBatchLayerCache, len(gpuLayers))
+	x, err = encoderForward(ctx, m.engine, x, gpuLayers, infLayerCaches,
 		batch*channels, numPatches, totalRows, m.config.DModel, m.config.NHeads,
 		m.config.DModel/m.config.NHeads, m.config.DModel*4)
 	if err != nil {

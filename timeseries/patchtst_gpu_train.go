@@ -326,6 +326,217 @@ type gpuBatchLayerCache struct {
 	xResidual   *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
 	xAfterAttn  *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
 	geluTanhVal *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim] cached for backward
+
+	// --- T85.2.4 pre-allocated encoder fwd/bwd scratch buffers ---
+	// Allocated lazily on the first encoderForward call and reused for all
+	// subsequent batches. All dimensions are fixed after partial-batch
+	// dropping so these buffers can be written into in-place via the
+	// dst-param variants of the engine ops.
+
+	// Layer norm 1 (forward) intermediates.
+	ln1Mean     *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1CentSq   *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	ln1Var      *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1VarEps   *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Stddev   *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Ones     *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Scaled   *tensor.TensorNumeric[float32] // [totalRows, dModel] centered*invStd
+	ln1NormMul  *tensor.TensorNumeric[float32] // [totalRows, dModel] normed*scale pre-bias
+	// Layer norm 2 (forward) intermediates.
+	ln2Mean    *tensor.TensorNumeric[float32]
+	ln2CentSq  *tensor.TensorNumeric[float32]
+	ln2Var     *tensor.TensorNumeric[float32]
+	ln2VarEps  *tensor.TensorNumeric[float32]
+	ln2Stddev  *tensor.TensorNumeric[float32]
+	ln2Ones    *tensor.TensorNumeric[float32]
+	ln2Scaled  *tensor.TensorNumeric[float32]
+	ln2NormMul *tensor.TensorNumeric[float32]
+
+	// Attention forward intermediates (4D reshape/transpose + matmul scratch).
+	qBiased *tensor.TensorNumeric[float32] // [totalRows, dModel] q after bias add
+	kBiased *tensor.TensorNumeric[float32]
+	vBiased *tensor.TensorNumeric[float32]
+
+	q4d         *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
+	k4d         *tensor.TensorNumeric[float32]
+	v4d         *tensor.TensorNumeric[float32]
+	q4dT        *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
+	k4dT        *tensor.TensorNumeric[float32]
+	v4dT        *tensor.TensorNumeric[float32]
+	qH          *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
+	kH          *tensor.TensorNumeric[float32]
+	vH          *tensor.TensorNumeric[float32]
+	kHT         *tensor.TensorNumeric[float32] // [bnh, headDim, seq]
+	logits      *tensor.TensorNumeric[float32] // [bnh, seq, seq]
+	logitsScaled *tensor.TensorNumeric[float32]
+	attnH       *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
+	attnH4d     *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
+	attnH4dT    *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
+
+	attnProj     *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	attnProjBias *tensor.TensorNumeric[float32]
+	xAfterRes1   *tensor.TensorNumeric[float32] // [totalRows, dModel]
+
+	// FFN forward intermediates.
+	ffn1Matmul *tensor.TensorNumeric[float32] // [totalRows, ffnDim]
+	geluX3     *tensor.TensorNumeric[float32]
+	geluInner1 *tensor.TensorNumeric[float32]
+	geluInner2 *tensor.TensorNumeric[float32]
+	geluInner3 *tensor.TensorNumeric[float32]
+	geluOnePlusTanh *tensor.TensorNumeric[float32]
+	geluXTimes      *tensor.TensorNumeric[float32]
+	ffn2Matmul      *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	ffn2Out         *tensor.TensorNumeric[float32]
+	xAfterRes2      *tensor.TensorNumeric[float32] // [totalRows, dModel] (layer output)
+
+	// --- Backward scratch ---
+	// FFN backward.
+	ffn1OutT    *tensor.TensorNumeric[float32] // [ffnDim, totalRows]
+	dFfn2W      *tensor.TensorNumeric[float32] // [ffnDim, dModel]
+	dFfn2BSum   *tensor.TensorNumeric[float32] // [dModel]
+	dFfn2BR     *tensor.TensorNumeric[float32] // [1, dModel]
+	dFfn1Out    *tensor.TensorNumeric[float32] // [totalRows, ffnDim]
+	gTerm1      *tensor.TensorNumeric[float32]
+	gTanhSq     *tensor.TensorNumeric[float32]
+	gSechSq     *tensor.TensorNumeric[float32]
+	gXSq        *tensor.TensorNumeric[float32]
+	gDudx       *tensor.TensorNumeric[float32]
+	gTerm2      *tensor.TensorNumeric[float32]
+	gDeriv      *tensor.TensorNumeric[float32]
+	dFfn1PreAct *tensor.TensorNumeric[float32]
+	normed2T    *tensor.TensorNumeric[float32] // [dModel, totalRows]
+	dFfn1W      *tensor.TensorNumeric[float32] // [dModel, ffnDim]
+	dFfn1BSum   *tensor.TensorNumeric[float32]
+	dFfn1BR     *tensor.TensorNumeric[float32]
+	dNormed2    *tensor.TensorNumeric[float32] // [totalRows, dModel]
+
+	// LayerNorm2 backward.
+	dAttnProjOut *tensor.TensorNumeric[float32]
+
+	// Output proj backward.
+	attnOutT *tensor.TensorNumeric[float32] // [dModel, totalRows]
+	dOW      *tensor.TensorNumeric[float32]
+	dOBSum   *tensor.TensorNumeric[float32]
+	dOBR     *tensor.TensorNumeric[float32]
+	dAttnOut *tensor.TensorNumeric[float32] // [totalRows, dModel]
+
+	// Attention backward.
+	dAO4d     *tensor.TensorNumeric[float32]
+	dAO4dT    *tensor.TensorNumeric[float32]
+	dAttnOutH *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
+	bwdQ4d    *tensor.TensorNumeric[float32]
+	bwdQ4dT   *tensor.TensorNumeric[float32]
+	bwdQH     *tensor.TensorNumeric[float32]
+	bwdK4d    *tensor.TensorNumeric[float32]
+	bwdK4dT   *tensor.TensorNumeric[float32]
+	bwdKH     *tensor.TensorNumeric[float32]
+	bwdV4d    *tensor.TensorNumeric[float32]
+	bwdV4dT   *tensor.TensorNumeric[float32]
+	bwdVH     *tensor.TensorNumeric[float32]
+	vHT       *tensor.TensorNumeric[float32] // [bnh, headDim, seq]
+	dScores   *tensor.TensorNumeric[float32] // [bnh, seq, seq]
+	scoresT   *tensor.TensorNumeric[float32]
+	dVH       *tensor.TensorNumeric[float32]
+	sDScores  *tensor.TensorNumeric[float32]
+	rowSum    *tensor.TensorNumeric[float32] // [bnh, seq, 1]
+	dLogits1  *tensor.TensorNumeric[float32]
+	dLogits2  *tensor.TensorNumeric[float32]
+	dLogits   *tensor.TensorNumeric[float32]
+	dQH       *tensor.TensorNumeric[float32]
+	dLogitsT  *tensor.TensorNumeric[float32]
+	dKH       *tensor.TensorNumeric[float32]
+	dQH4d     *tensor.TensorNumeric[float32]
+	dQH4dT    *tensor.TensorNumeric[float32]
+	dQT       *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	dKH4d     *tensor.TensorNumeric[float32]
+	dKH4dT    *tensor.TensorNumeric[float32]
+	dKT       *tensor.TensorNumeric[float32]
+	dVH4d     *tensor.TensorNumeric[float32]
+	dVH4dT    *tensor.TensorNumeric[float32]
+	dVT       *tensor.TensorNumeric[float32]
+
+	// Q/K/V projection backward.
+	normed1T *tensor.TensorNumeric[float32]
+	dQW      *tensor.TensorNumeric[float32]
+	dQBSum   *tensor.TensorNumeric[float32]
+	dQBR     *tensor.TensorNumeric[float32]
+	dKW      *tensor.TensorNumeric[float32]
+	dKBSum   *tensor.TensorNumeric[float32]
+	dKBR     *tensor.TensorNumeric[float32]
+	dVW      *tensor.TensorNumeric[float32]
+	dVBSum   *tensor.TensorNumeric[float32]
+	dVBR     *tensor.TensorNumeric[float32]
+	dN1q     *tensor.TensorNumeric[float32]
+	dN1k     *tensor.TensorNumeric[float32]
+	dN1v     *tensor.TensorNumeric[float32]
+	dN1Sum1  *tensor.TensorNumeric[float32]
+	dNormed1 *tensor.TensorNumeric[float32]
+
+	// LayerNorm backward scratch (shared between ln1/ln2 backward calls).
+	lnbNormVal       *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	lnbDScaleBatch   *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	lnbDScaleSum     *tensor.TensorNumeric[float32] // [dModel]
+	lnbDScaleSumR    *tensor.TensorNumeric[float32] // [1, dModel]
+	lnbDBiasSum      *tensor.TensorNumeric[float32]
+	lnbDBiasSumR     *tensor.TensorNumeric[float32]
+	lnbDNorm         *tensor.TensorNumeric[float32]
+	lnbDNormCent     *tensor.TensorNumeric[float32]
+	lnbDotScaleGrad  *tensor.TensorNumeric[float32]
+	lnbDotMeanGrad   *tensor.TensorNumeric[float32]
+	lnbInvStdSq      *tensor.TensorNumeric[float32]
+	lnbTerm          *tensor.TensorNumeric[float32]
+	lnbCorrection    *tensor.TensorNumeric[float32]
+	lnbInner         *tensor.TensorNumeric[float32]
+	lnbDInput        *tensor.TensorNumeric[float32]
+
+	// Second set for ln2 backward (since both ln1 and ln2 backward run in the
+	// same iteration and need separate buffers).
+	ln2bNormVal      *tensor.TensorNumeric[float32]
+	ln2bDScaleBatch  *tensor.TensorNumeric[float32]
+	ln2bDScaleSum    *tensor.TensorNumeric[float32]
+	ln2bDScaleSumR   *tensor.TensorNumeric[float32]
+	ln2bDBiasSum     *tensor.TensorNumeric[float32]
+	ln2bDBiasSumR    *tensor.TensorNumeric[float32]
+	ln2bDNorm        *tensor.TensorNumeric[float32]
+	ln2bDNormCent    *tensor.TensorNumeric[float32]
+	ln2bDotScaleGrad *tensor.TensorNumeric[float32]
+	ln2bDotMeanGrad  *tensor.TensorNumeric[float32]
+	ln2bInvStdSq     *tensor.TensorNumeric[float32]
+	ln2bTerm         *tensor.TensorNumeric[float32]
+	ln2bCorrection   *tensor.TensorNumeric[float32]
+	ln2bInner        *tensor.TensorNumeric[float32]
+	ln2bDInput       *tensor.TensorNumeric[float32]
+
+	// dXOut is the gradient w.r.t. this layer's input, computed by
+	// encoderBackward and consumed as the dX input by the previous layer's
+	// backward iteration. [totalRows, dModel]
+	dXOut *tensor.TensorNumeric[float32]
+
+	// Gradient accumulator "ping" buffers.
+	//
+	// Pre-fix semantics: `dg.X = engine.Add(dg.X, delta)` allocates a NEW
+	// tensor each backward call and reassigns dg.X to it. The initial
+	// gradient tensor (the one cached in gradTs) is therefore disconnected
+	// from dg.X after the first backward and is never updated by subsequent
+	// ops. AdamW reads gradTs which remains zero across batches, so the
+	// encoder parameters effectively do not train (by design of the current
+	// buggy pipeline — see T85.1.* diagnosis).
+	//
+	// To reproduce that pre-fix behavior bit-identically while eliminating
+	// per-batch allocations, we pre-allocate one scratch tensor per gradient
+	// per layer. On each backward the scratch is used as the dst for the
+	// accumulating Add, and dg.X is reassigned to point at the scratch.
+	accFfn2W, accFfn2B *tensor.TensorNumeric[float32]
+	accFfn1W, accFfn1B *tensor.TensorNumeric[float32]
+	accOW, accOB       *tensor.TensorNumeric[float32]
+	accQW, accQB       *tensor.TensorNumeric[float32]
+	accKW, accKB       *tensor.TensorNumeric[float32]
+	accVW, accVB       *tensor.TensorNumeric[float32]
+	accNorm1, accBias1 *tensor.TensorNumeric[float32]
+	accNorm2, accBias2 *tensor.TensorNumeric[float32]
+
+	// buffersAllocated is set true after the one-time lazy allocation.
+	buffersAllocated bool
 }
 
 // gpuBatchForwardCache stores batched forward data across all channels.
@@ -602,7 +813,9 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			batchIter++
 
 			// Encoder forward (one pass for all samples x channels).
-			x, fc.layerCaches, err = encoderForward(ctx, m.engine, x, params.layers,
+			// fc.layerCaches is pre-allocated and persistent across batches so
+			// that encoder scratch buffers are reused (T85.2.4).
+			x, err = encoderForward(ctx, m.engine, x, params.layers, fc.layerCaches,
 				bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
 			if err != nil {
 				return nil, fmt.Errorf("gpu encoder fwd: %w", err)

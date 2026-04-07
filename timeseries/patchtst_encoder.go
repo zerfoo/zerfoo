@@ -2,6 +2,7 @@ package timeseries
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -17,183 +18,813 @@ type layerTransposes struct {
 	ffn1WT, ffn2WT     *tensor.TensorNumeric[float32]
 }
 
+// matMulInto computes dst = a @ b, zeroing dst first because the CPU SGEMM
+// backend (xblas.SgemmSimd) accumulates into C rather than overwriting it.
+// Without the zero, reusing a buffer across batches would produce (prev + new).
+func matMulInto(
+	ctx context.Context,
+	engine compute.Engine[float32],
+	a, b, dst *tensor.TensorNumeric[float32],
+) error {
+	if err := engine.Zero(ctx, dst); err != nil {
+		return err
+	}
+	_, err := engine.MatMul(ctx, a, b, dst)
+	return err
+}
+
 // layerNormForwardWithEngine performs layer norm using engine ops.
 // x: [rows, dModel], scale: [1, dModel], bias: [1, dModel].
-// Returns normed [rows, dModel], centered [rows, dModel], invStd [rows, 1].
-func layerNormForwardWithEngine(ctx context.Context, engine compute.Engine[float32], x, scale, bias *tensor.TensorNumeric[float32], rows, dModel int) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
+// Writes into pre-allocated buffers (normedBuf, centeredBuf, invStdBuf) plus
+// scratch buffers (mean, centSq, variance, varEps, stddev, ones, scaledBuf,
+// normMulBuf). All buffers must have the correct shapes pre-allocated.
+func layerNormForwardWithEngine(
+	ctx context.Context,
+	engine compute.Engine[float32],
+	x, scale, bias *tensor.TensorNumeric[float32],
+	normedBuf, centeredBuf, invStdBuf *tensor.TensorNumeric[float32],
+	meanBuf, centSqBuf, varBuf, varEpsBuf, stddevBuf, onesBuf, scaledBuf, normMulBuf *tensor.TensorNumeric[float32],
+	rows, dModel int,
+) (normed, centered, invStd *tensor.TensorNumeric[float32], err error) {
 	invD := float32(1.0) / float32(dModel)
 
 	// mean = Sum(x, axis=1, keepDims=true) * (1/dModel)  -> [rows, 1]
-	mean, err := engine.Sum(ctx, x, 1, true)
+	mean, err := engine.Sum(ctx, x, 1, true, meanBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	mean, err = engine.MulScalar(ctx, mean, invD)
+	mean, err = engine.MulScalar(ctx, mean, invD, meanBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// centered = x - mean  (broadcast [rows,1] over [rows, dModel])
-	centered, err = engine.Sub(ctx, x, mean)
+	centered, err = engine.Sub(ctx, x, mean, centeredBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// variance = Sum(centered*centered, axis=1, keepDims=true) * (1/dModel)  -> [rows, 1]
-	centSq, err := engine.Mul(ctx, centered, centered)
+	centSq, err := engine.Mul(ctx, centered, centered, centSqBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	variance, err := engine.Sum(ctx, centSq, 1, true)
+	variance, err := engine.Sum(ctx, centSq, 1, true, varBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	variance, err = engine.MulScalar(ctx, variance, invD)
+	variance, err = engine.MulScalar(ctx, variance, invD, varBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// invStd = 1 / sqrt(variance + eps)  -> [rows, 1]
-	varEps, err := engine.AddScalar(ctx, variance, 1e-5)
+	varEps, err := engine.AddScalar(ctx, variance, 1e-5, varEpsBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	stddev, err := engine.Sqrt(ctx, varEps)
+	stddev, err := engine.Sqrt(ctx, varEps, stddevBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	onesData := make([]float32, rows)
-	for i := range onesData {
-		onesData[i] = 1.0
-	}
-	ones, err := tensor.New[float32]([]int{rows, 1}, onesData)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	invStd, err = engine.Div(ctx, ones, stddev)
+	invStd, err = engine.Div(ctx, onesBuf, stddev, invStdBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// normed = centered * invStd * scale + bias  (broadcast [rows,1] and [1,dModel])
-	normed, err = engine.Mul(ctx, centered, invStd)
+	scaled, err := engine.Mul(ctx, centered, invStd, scaledBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	normed, err = engine.Mul(ctx, normed, scale)
+	normMul, err := engine.Mul(ctx, scaled, scale, normMulBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	normed, err = engine.Add(ctx, normed, bias)
+	normed, err = engine.Add(ctx, normMul, bias, normedBuf)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	_ = rows
 
 	return normed, centered, invStd, nil
+}
+
+// lnBwdBufs groups scratch buffers used by layerNormBackwardWithEngine so
+// that callers (encoderBackward) can supply distinct buffer sets for ln1 and
+// ln2 backward within the same iteration.
+type lnBwdBufs struct {
+	normVal, dScaleBatch                       *tensor.TensorNumeric[float32]
+	dScaleSum, dScaleSumR                      *tensor.TensorNumeric[float32]
+	dBiasSum, dBiasSumR                        *tensor.TensorNumeric[float32]
+	dNorm, dNormCent                           *tensor.TensorNumeric[float32]
+	dotScaleGrad, dotMeanGrad                  *tensor.TensorNumeric[float32]
+	invStdSq, term, correction, inner, dInput  *tensor.TensorNumeric[float32]
 }
 
 // layerNormBackwardWithEngine computes the backward pass through layer norm using engine ops.
 // dOut: [rows, dModel], centered: [rows, dModel], invStd: [rows, 1].
 // scale: [1, dModel] (layer norm weight), dScale/dBias: [1, dModel] (gradient accumulators).
-// Returns dInput [rows, dModel] and updated dScale, dBias.
+// Writes into pre-allocated scratch buffers in bufs. The returned newDScale
+// and newDBias ARE bufs.dScaleAcc and bufs.dBiasAcc respectively; the caller
+// is expected to copy these into its gradient accumulators (dg.norm*, dg.bias*)
+// via a subsequent engine.Add to match the pre-fix semantics exactly.
 func layerNormBackwardWithEngine(
 	ctx context.Context,
 	engine compute.Engine[float32],
 	dOut, centered, invStd, scale, dScale, dBias *tensor.TensorNumeric[float32],
+	bufs *lnBwdBufs,
 	rows, dModel int,
 ) (dInput, newDScale, newDBias *tensor.TensorNumeric[float32], err error) {
-	invD := float32(1.0) / float32(rows)
-	_ = invD
+	_ = rows
 
 	// dScale += Sum(dOut * centered * invStd, axis=0)  -> [1, dModel]
-	normVal, err := engine.Mul(ctx, centered, invStd) // [rows, dModel]
+	normVal, err := engine.Mul(ctx, centered, invStd, bufs.normVal) // [rows, dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dScaleBatch, err := engine.Mul(ctx, dOut, normVal) // [rows, dModel]
+	dScaleBatch, err := engine.Mul(ctx, dOut, normVal, bufs.dScaleBatch) // [rows, dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dScaleSum, err := engine.Sum(ctx, dScaleBatch, 0, false) // [dModel]
+	dScaleSum, err := engine.Sum(ctx, dScaleBatch, 0, false, bufs.dScaleSum) // [dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dScaleSum, err = engine.Reshape(ctx, dScaleSum, []int{1, dModel})
+	dScaleSumR, err := engine.Reshape(ctx, dScaleSum, []int{1, dModel}, bufs.dScaleSumR)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	newDScale, err = engine.Add(ctx, dScale, dScaleSum)
+	// Accumulate in-place into the caller's dScale tensor.
+	newDScale, err = engine.Add(ctx, dScale, dScaleSumR, dScale)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// dBias += Sum(dOut, axis=0)  -> [1, dModel]
-	dBiasSum, err := engine.Sum(ctx, dOut, 0, false) // [dModel]
+	dBiasSum, err := engine.Sum(ctx, dOut, 0, false, bufs.dBiasSum) // [dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dBiasSum, err = engine.Reshape(ctx, dBiasSum, []int{1, dModel})
+	dBiasSumR, err := engine.Reshape(ctx, dBiasSum, []int{1, dModel}, bufs.dBiasSumR)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	newDBias, err = engine.Add(ctx, dBias, dBiasSum)
+	// Accumulate in-place into the caller's dBias tensor.
+	newDBias, err = engine.Add(ctx, dBias, dBiasSumR, dBias)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// dNorm = dOut * scale  (broadcast [1, dModel] over [rows, dModel])
-	dNorm, err := engine.Mul(ctx, dOut, scale) // [rows, dModel]
+	dNorm, err := engine.Mul(ctx, dOut, scale, bufs.dNorm) // [rows, dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// dotScaleGrad = Sum(dNorm * centered, axis=1, keepDims=true)  -> [rows, 1]
-	dNormCent, err := engine.Mul(ctx, dNorm, centered) // [rows, dModel]
+	dNormCent, err := engine.Mul(ctx, dNorm, centered, bufs.dNormCent) // [rows, dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dotScaleGrad, err := engine.Sum(ctx, dNormCent, 1, true) // [rows, 1]
+	dotScaleGrad, err := engine.Sum(ctx, dNormCent, 1, true, bufs.dotScaleGrad) // [rows, 1]
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// dotMeanGrad = Sum(dNorm, axis=1, keepDims=true)  -> [rows, 1]
-	dotMeanGrad, err := engine.Sum(ctx, dNorm, 1, true) // [rows, 1]
+	dotMeanGrad, err := engine.Sum(ctx, dNorm, 1, true, bufs.dotMeanGrad) // [rows, 1]
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// dInput = invStd * (dNorm - (dotMeanGrad + centered * invStd^2 * dotScaleGrad) / dModel)
-	invStdSq, err := engine.Mul(ctx, invStd, invStd) // [rows, 1]
+	invStdSq, err := engine.Mul(ctx, invStd, invStd, bufs.invStdSq) // [rows, 1]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	term, err := engine.Mul(ctx, centered, invStdSq) // [rows, dModel] (broadcast [rows,1])
+	term, err := engine.Mul(ctx, centered, invStdSq, bufs.term) // [rows, dModel] (broadcast [rows,1])
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	term, err = engine.Mul(ctx, term, dotScaleGrad) // [rows, dModel] (broadcast [rows,1])
+	term, err = engine.Mul(ctx, term, dotScaleGrad, bufs.term) // [rows, dModel] (broadcast [rows,1])
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	correction, err := engine.Add(ctx, dotMeanGrad, term) // [rows, dModel] (broadcast)
+	correction, err := engine.Add(ctx, dotMeanGrad, term, bufs.correction) // [rows, dModel] (broadcast)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	correction, err = engine.MulScalar(ctx, correction, 1.0/float32(dModel))
+	correction, err = engine.MulScalar(ctx, correction, 1.0/float32(dModel), bufs.correction)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	inner, err := engine.Sub(ctx, dNorm, correction) // [rows, dModel]
+	inner, err := engine.Sub(ctx, dNorm, correction, bufs.inner) // [rows, dModel]
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dInput, err = engine.Mul(ctx, invStd, inner) // [rows, dModel] (broadcast [rows,1])
+	dInput, err = engine.Mul(ctx, invStd, inner, bufs.dInput) // [rows, dModel] (broadcast [rows,1])
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	return dInput, newDScale, newDBias, nil
+}
+
+// allocLayerCacheBuffers lazily allocates all scratch buffers on a
+// gpuBatchLayerCache the first time it is touched. All dimensions come from
+// the caller and are fixed for the lifetime of the training/inference loop.
+// Subsequent calls on the same cache are no-ops.
+func allocLayerCacheBuffers(lc *gpuBatchLayerCache, bsC, seq, totalRows, dModel, nHeads, headDim, ffnDim int) error {
+	if lc.buffersAllocated {
+		return nil
+	}
+	bnh := bsC * nHeads
+
+	mk2 := func(rows, cols int) (*tensor.TensorNumeric[float32], error) {
+		return tensor.New[float32]([]int{rows, cols}, make([]float32, rows*cols))
+	}
+	mk1 := func(n int) (*tensor.TensorNumeric[float32], error) {
+		return tensor.New[float32]([]int{n}, make([]float32, n))
+	}
+	mk3 := func(a, b, c int) (*tensor.TensorNumeric[float32], error) {
+		return tensor.New[float32]([]int{a, b, c}, make([]float32, a*b*c))
+	}
+	mk4 := func(a, b, c, d int) (*tensor.TensorNumeric[float32], error) {
+		return tensor.New[float32]([]int{a, b, c, d}, make([]float32, a*b*c*d))
+	}
+
+	var err error
+	// Cached forward activations (previously allocated inside encoderForward).
+	if lc.normed1, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.centered1, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.invStd1, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.normed2, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.centered2, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.invStd2, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.q, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.k, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.v, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.scoresTensor, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.attnOut, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ffn1PreAct, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.ffn1Out, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.xResidual, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.xAfterAttn, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.geluTanhVal, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+
+	// Layer norm forward scratch.
+	if lc.ln1Mean, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln1CentSq, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln1Var, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln1VarEps, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln1Stddev, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	onesData1 := make([]float32, totalRows)
+	for i := range onesData1 {
+		onesData1[i] = 1.0
+	}
+	if lc.ln1Ones, err = tensor.New[float32]([]int{totalRows, 1}, onesData1); err != nil {
+		return err
+	}
+	if lc.ln1Scaled, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln1NormMul, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2Mean, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2CentSq, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2Var, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2VarEps, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2Stddev, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	onesData2 := make([]float32, totalRows)
+	for i := range onesData2 {
+		onesData2[i] = 1.0
+	}
+	if lc.ln2Ones, err = tensor.New[float32]([]int{totalRows, 1}, onesData2); err != nil {
+		return err
+	}
+	if lc.ln2Scaled, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2NormMul, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+
+	// Attention forward scratch.
+	if lc.qBiased, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.kBiased, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.vBiased, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.q4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.k4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.v4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.q4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.k4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.v4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.qH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.kH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.vH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.kHT, err = mk3(bnh, headDim, seq); err != nil {
+		return err
+	}
+	if lc.logits, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.logitsScaled, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.attnH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.attnH4d, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.attnH4dT, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.attnProj, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.attnProjBias, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.xAfterRes1, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+
+	// FFN forward scratch.
+	if lc.ffn1Matmul, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluX3, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluInner1, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluInner2, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluInner3, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluOnePlusTanh, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.geluXTimes, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.ffn2Matmul, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ffn2Out, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.xAfterRes2, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+
+	// Backward scratch.
+	if lc.ffn1OutT, err = mk2(ffnDim, totalRows); err != nil {
+		return err
+	}
+	if lc.dFfn2W, err = mk2(ffnDim, dModel); err != nil {
+		return err
+	}
+	if lc.dFfn2BSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.dFfn2BR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.dFfn1Out, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gTerm1, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gTanhSq, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gSechSq, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gXSq, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gDudx, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gTerm2, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.gDeriv, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.dFfn1PreAct, err = mk2(totalRows, ffnDim); err != nil {
+		return err
+	}
+	if lc.normed2T, err = mk2(dModel, totalRows); err != nil {
+		return err
+	}
+	if lc.dFfn1W, err = mk2(dModel, ffnDim); err != nil {
+		return err
+	}
+	if lc.dFfn1BSum, err = mk1(ffnDim); err != nil {
+		return err
+	}
+	if lc.dFfn1BR, err = mk2(1, ffnDim); err != nil {
+		return err
+	}
+	if lc.dNormed2, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dAttnProjOut, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.attnOutT, err = mk2(dModel, totalRows); err != nil {
+		return err
+	}
+	if lc.dOW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.dOBSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.dOBR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.dAttnOut, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dAO4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.dAO4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dAttnOutH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdQ4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.bwdQ4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdQH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdK4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.bwdK4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdKH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdV4d, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.bwdV4dT, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.bwdVH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.vHT, err = mk3(bnh, headDim, seq); err != nil {
+		return err
+	}
+	if lc.dScores, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.scoresT, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.dVH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.sDScores, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.rowSum, err = mk3(bnh, seq, 1); err != nil {
+		return err
+	}
+	if lc.dLogits1, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.dLogits2, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.dLogits, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.dQH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dLogitsT, err = mk3(bnh, seq, seq); err != nil {
+		return err
+	}
+	if lc.dKH, err = mk3(bnh, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dQH4d, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dQH4dT, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.dQT, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dKH4d, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dKH4dT, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.dKT, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dVH4d, err = mk4(bsC, nHeads, seq, headDim); err != nil {
+		return err
+	}
+	if lc.dVH4dT, err = mk4(bsC, seq, nHeads, headDim); err != nil {
+		return err
+	}
+	if lc.dVT, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.normed1T, err = mk2(dModel, totalRows); err != nil {
+		return err
+	}
+	if lc.dQW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.dQBSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.dQBR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.dKW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.dKBSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.dKBR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.dVW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.dVBSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.dVBR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.dN1q, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dN1k, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dN1v, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dN1Sum1, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dNormed1, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.dXOut, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+
+	// Layer norm backward scratch (two sets to support ln1 and ln2 in same iter).
+	if lc.lnbNormVal, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDScaleBatch, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDScaleSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.lnbDScaleSumR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDBiasSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.lnbDBiasSumR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDNorm, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDNormCent, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDotScaleGrad, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.lnbDotMeanGrad, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.lnbInvStdSq, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.lnbTerm, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbCorrection, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbInner, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.lnbDInput, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bNormVal, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDScaleBatch, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDScaleSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDScaleSumR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDBiasSum, err = mk1(dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDBiasSumR, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDNorm, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDNormCent, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDotScaleGrad, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2bDotMeanGrad, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2bInvStdSq, err = mk2(totalRows, 1); err != nil {
+		return err
+	}
+	if lc.ln2bTerm, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bCorrection, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bInner, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+	if lc.ln2bDInput, err = mk2(totalRows, dModel); err != nil {
+		return err
+	}
+
+	// Gradient accumulator ping buffers (one per gradient per layer).
+	if lc.accFfn2W, err = mk2(ffnDim, dModel); err != nil {
+		return err
+	}
+	if lc.accFfn2B, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accFfn1W, err = mk2(dModel, ffnDim); err != nil {
+		return err
+	}
+	if lc.accFfn1B, err = mk2(1, ffnDim); err != nil {
+		return err
+	}
+	if lc.accOW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.accOB, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accQW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.accQB, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accKW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.accKB, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accVW, err = mk2(dModel, dModel); err != nil {
+		return err
+	}
+	if lc.accVB, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accNorm1, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accBias1, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accNorm2, err = mk2(1, dModel); err != nil {
+		return err
+	}
+	if lc.accBias2, err = mk2(1, dModel); err != nil {
+		return err
+	}
+
+	lc.buffersAllocated = true
+	return nil
 }
 
 // encoderLayersToGPU converts a slice of encoderLayer (linearLayer-based) to
@@ -221,16 +852,25 @@ func encoderLayersToGPU(layers []encoderLayer) []gpuEncoderLayer {
 // x: [totalRows, dModel] input tensor (after patch embedding + pos embedding).
 // bsC is batch*channels, numPatches is the sequence length per sample-channel.
 // totalRows must equal bsC * numPatches.
-// Returns: output [totalRows, dModel] and per-layer caches for backward.
+//
+// layerCaches is an IN parameter: on the first call, all per-layer scratch
+// buffers are lazily allocated and cached; subsequent calls reuse these
+// buffers via the dst-param variants of the engine ops. This eliminates
+// per-batch allocations in the hot training path.
+//
+// Returns: output [totalRows, dModel] (the final layer's xAfterRes2 buffer).
 func encoderForward(
 	ctx context.Context,
 	engine compute.Engine[float32],
 	x *tensor.TensorNumeric[float32],
 	layers []gpuEncoderLayer,
+	layerCaches []gpuBatchLayerCache,
 	bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim int,
-) (*tensor.TensorNumeric[float32], []gpuBatchLayerCache, error) {
+) (*tensor.TensorNumeric[float32], error) {
 	nLayers := len(layers)
-	layerCaches := make([]gpuBatchLayerCache, nLayers)
+	if len(layerCaches) != nLayers {
+		return nil, fmt.Errorf("encoderForward: layerCaches len %d != nLayers %d", len(layerCaches), nLayers)
+	}
 	seq := numPatches
 	bnh := bsC * nHeads
 
@@ -239,235 +879,181 @@ func encoderForward(
 		layer := &layers[li]
 		lc := &layerCaches[li]
 
-		// Save layer input for residual backward.
-		xCopy := make([]float32, len(x.Data()))
-		copy(xCopy, x.Data())
-		lc.xResidual, err = tensor.New[float32]([]int{totalRows, dModel}, xCopy)
-		if err != nil {
-			return nil, nil, err
+		if err = allocLayerCacheBuffers(lc, bsC, seq, totalRows, dModel, nHeads, headDim, ffnDim); err != nil {
+			return nil, err
 		}
 
 		// Layer norm 1 via engine ops (over all bsC*numPatches rows).
-		lc.normed1, lc.centered1, lc.invStd1, err = layerNormForwardWithEngine(ctx, engine, x, layer.norm1, layer.bias1, totalRows, dModel)
+		_, _, _, err = layerNormForwardWithEngine(ctx, engine, x, layer.norm1, layer.bias1,
+			lc.normed1, lc.centered1, lc.invStd1,
+			lc.ln1Mean, lc.ln1CentSq, lc.ln1Var, lc.ln1VarEps, lc.ln1Stddev, lc.ln1Ones, lc.ln1Scaled, lc.ln1NormMul,
+			totalRows, dModel)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
-		// Q/K/V projections: ONE MatMul each for entire batch.
-		// [bsC*numPatches, dModel] @ [dModel, dModel] = [bsC*numPatches, dModel]
-		lc.q, err = engine.MatMul(ctx, lc.normed1, layer.qW)
-		if err != nil {
-			return nil, nil, err
+		// Q/K/V projections.
+		if err := matMulInto(ctx, engine, lc.normed1, layer.qW, lc.q); err != nil {
+			return nil, err
 		}
-		lc.q, err = engine.Add(ctx, lc.q, layer.qB)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, lc.q, layer.qB, lc.q); err != nil {
+			return nil, err
 		}
-		lc.k, err = engine.MatMul(ctx, lc.normed1, layer.kW)
-		if err != nil {
-			return nil, nil, err
+		if err := matMulInto(ctx, engine, lc.normed1, layer.kW, lc.k); err != nil {
+			return nil, err
 		}
-		lc.k, err = engine.Add(ctx, lc.k, layer.kB)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, lc.k, layer.kB, lc.k); err != nil {
+			return nil, err
 		}
-		lc.v, err = engine.MatMul(ctx, lc.normed1, layer.vW)
-		if err != nil {
-			return nil, nil, err
+		if err := matMulInto(ctx, engine, lc.normed1, layer.vW, lc.v); err != nil {
+			return nil, err
 		}
-		lc.v, err = engine.Add(ctx, lc.v, layer.vB)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, lc.v, layer.vB, lc.v); err != nil {
+			return nil, err
 		}
 
-		// Batched attention via engine ops: reshape Q/K/V to
-		// [bsC*nHeads, numPatches, headDim] and use 3D batched MatMul.
+		// Batched attention.
 		scale := float32(1.0 / math.Sqrt(float64(headDim)))
 
-		// Reshape Q/K/V: [bsC*seq, dModel] -> [bsC, seq, nHeads, headDim]
-		// -> transpose [0,2,1,3] -> [bsC, nHeads, seq, headDim]
-		// -> reshape [bsC*nHeads, seq, headDim].
-		q4d, err := engine.Reshape(ctx, lc.q, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
-			return nil, nil, err
+		// Q: reshape -> transpose -> reshape to [bnh, seq, headDim].
+		if _, err = engine.Reshape(ctx, lc.q, []int{bsC, seq, nHeads, headDim}, lc.q4d); err != nil {
+			return nil, err
 		}
-		q4d, err = engine.Transpose(ctx, q4d, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Transpose(ctx, lc.q4d, []int{0, 2, 1, 3}, lc.q4dT); err != nil {
+			return nil, err
 		}
-		qH, err := engine.Reshape(ctx, q4d, []int{bnh, seq, headDim})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Reshape(ctx, lc.q4dT, []int{bnh, seq, headDim}, lc.qH); err != nil {
+			return nil, err
 		}
-
-		k4d, err := engine.Reshape(ctx, lc.k, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
-			return nil, nil, err
+		// K.
+		if _, err = engine.Reshape(ctx, lc.k, []int{bsC, seq, nHeads, headDim}, lc.k4d); err != nil {
+			return nil, err
 		}
-		k4d, err = engine.Transpose(ctx, k4d, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Transpose(ctx, lc.k4d, []int{0, 2, 1, 3}, lc.k4dT); err != nil {
+			return nil, err
 		}
-		kH, err := engine.Reshape(ctx, k4d, []int{bnh, seq, headDim})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Reshape(ctx, lc.k4dT, []int{bnh, seq, headDim}, lc.kH); err != nil {
+			return nil, err
 		}
-
-		v4d, err := engine.Reshape(ctx, lc.v, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
-			return nil, nil, err
+		// V.
+		if _, err = engine.Reshape(ctx, lc.v, []int{bsC, seq, nHeads, headDim}, lc.v4d); err != nil {
+			return nil, err
 		}
-		v4d, err = engine.Transpose(ctx, v4d, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Transpose(ctx, lc.v4d, []int{0, 2, 1, 3}, lc.v4dT); err != nil {
+			return nil, err
 		}
-		vH, err := engine.Reshape(ctx, v4d, []int{bnh, seq, headDim})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Reshape(ctx, lc.v4dT, []int{bnh, seq, headDim}, lc.vH); err != nil {
+			return nil, err
 		}
 
-		// scores = Q @ K^T * scale: [bnh, seq, seq].
-		kHT, err := engine.Transpose(ctx, kH, []int{0, 2, 1})
-		if err != nil {
-			return nil, nil, err
+		// scores = Q @ K^T * scale.
+		if _, err = engine.Transpose(ctx, lc.kH, []int{0, 2, 1}, lc.kHT); err != nil {
+			return nil, err
 		}
-		logits, err := engine.MatMul(ctx, qH, kHT)
-		if err != nil {
-			return nil, nil, err
+		if err := matMulInto(ctx, engine, lc.qH, lc.kHT, lc.logits); err != nil {
+			return nil, err
 		}
-		logits, err = engine.MulScalar(ctx, logits, scale)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.MulScalar(ctx, lc.logits, scale, lc.logitsScaled); err != nil {
+			return nil, err
 		}
 
 		// softmax along last axis.
-		lc.scoresTensor, err = engine.Softmax(ctx, logits, -1)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Softmax(ctx, lc.logitsScaled, -1, lc.scoresTensor); err != nil {
+			return nil, err
 		}
 
-		// attnOut = scores @ V: [bnh, seq, headDim].
-		attnH, err := engine.MatMul(ctx, lc.scoresTensor, vH)
-		if err != nil {
-			return nil, nil, err
+		// attnOut = scores @ V -> [bnh, seq, headDim] -> reshape -> transpose -> reshape.
+		if err := matMulInto(ctx, engine, lc.scoresTensor, lc.vH, lc.attnH); err != nil {
+			return nil, err
+		}
+		if _, err = engine.Reshape(ctx, lc.attnH, []int{bsC, nHeads, seq, headDim}, lc.attnH4d); err != nil {
+			return nil, err
+		}
+		if _, err = engine.Transpose(ctx, lc.attnH4d, []int{0, 2, 1, 3}, lc.attnH4dT); err != nil {
+			return nil, err
+		}
+		if _, err = engine.Reshape(ctx, lc.attnH4dT, []int{totalRows, dModel}, lc.attnOut); err != nil {
+			return nil, err
 		}
 
-		// Reshape back: [bnh, seq, headDim] -> [bsC, nHeads, seq, headDim]
-		// -> transpose [0,2,1,3] -> [bsC, seq, nHeads, headDim]
-		// -> reshape [bsC*seq, dModel].
-		attnH, err = engine.Reshape(ctx, attnH, []int{bsC, nHeads, seq, headDim})
-		if err != nil {
-			return nil, nil, err
+		// Output projection.
+		if err := matMulInto(ctx, engine, lc.attnOut, layer.oW, lc.attnProj); err != nil {
+			return nil, err
 		}
-		attnH, err = engine.Transpose(ctx, attnH, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, nil, err
-		}
-		lc.attnOut, err = engine.Reshape(ctx, attnH, []int{totalRows, dModel})
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, lc.attnProj, layer.oB, lc.attnProjBias); err != nil {
+			return nil, err
 		}
 
-		// Output projection: ONE MatMul for entire batch.
-		// [bsC*numPatches, dModel] @ [dModel, dModel] = [bsC*numPatches, dModel]
-		attnProj, err := engine.MatMul(ctx, lc.attnOut, layer.oW)
-		if err != nil {
-			return nil, nil, err
-		}
-		attnProj, err = engine.Add(ctx, attnProj, layer.oB)
-		if err != nil {
-			return nil, nil, err
+		// Residual 1: xAfterRes1 = x + attnProjBias.
+		if _, err = engine.Add(ctx, x, lc.attnProjBias, lc.xAfterRes1); err != nil {
+			return nil, err
 		}
 
-		// Residual 1.
-		x, err = engine.Add(ctx, x, attnProj)
+		// Layer norm 2: reads xAfterRes1.
+		_, _, _, err = layerNormForwardWithEngine(ctx, engine, lc.xAfterRes1, layer.norm2, layer.bias2,
+			lc.normed2, lc.centered2, lc.invStd2,
+			lc.ln2Mean, lc.ln2CentSq, lc.ln2Var, lc.ln2VarEps, lc.ln2Stddev, lc.ln2Ones, lc.ln2Scaled, lc.ln2NormMul,
+			totalRows, dModel)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
-		// Save x after attention for residual backward.
-		xAfterCopy := make([]float32, len(x.Data()))
-		copy(xAfterCopy, x.Data())
-		lc.xAfterAttn, err = tensor.New[float32]([]int{totalRows, dModel}, xAfterCopy)
-		if err != nil {
-			return nil, nil, err
+		// FFN1: [totalRows, dModel] @ [dModel, ffnDim] = [totalRows, ffnDim].
+		if err := matMulInto(ctx, engine, lc.normed2, layer.ffn1W, lc.ffn1Matmul); err != nil {
+			return nil, err
+		}
+		if _, err = engine.Add(ctx, lc.ffn1Matmul, layer.ffn1B, lc.ffn1PreAct); err != nil {
+			return nil, err
 		}
 
-		// Layer norm 2 via engine ops.
-		lc.normed2, lc.centered2, lc.invStd2, err = layerNormForwardWithEngine(ctx, engine, x, layer.norm2, layer.bias2, totalRows, dModel)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// FFN1: ONE MatMul for entire batch.
-		// [bsC*numPatches, dModel] @ [dModel, ffnDim] = [bsC*numPatches, ffnDim]
-		lc.ffn1PreAct, err = engine.MatMul(ctx, lc.normed2, layer.ffn1W)
-		if err != nil {
-			return nil, nil, err
-		}
-		lc.ffn1PreAct, err = engine.Add(ctx, lc.ffn1PreAct, layer.ffn1B)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// GELU via engine ops: gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+		// GELU via engine ops: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 		geluIn := lc.ffn1PreAct
-		geluX3, err := engine.Mul(ctx, geluIn, geluIn)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Mul(ctx, geluIn, geluIn, lc.geluX3); err != nil {
+			return nil, err
 		}
-		geluX3, err = engine.Mul(ctx, geluX3, geluIn) // x^3
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Mul(ctx, lc.geluX3, geluIn, lc.geluX3); err != nil {
+			return nil, err
 		}
-		geluInner, err := engine.MulScalar(ctx, geluX3, float32(0.044715)) // 0.044715 * x^3
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.MulScalar(ctx, lc.geluX3, float32(0.044715), lc.geluInner1); err != nil {
+			return nil, err
 		}
-		geluInner, err = engine.Add(ctx, geluIn, geluInner) // x + 0.044715*x^3
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, geluIn, lc.geluInner1, lc.geluInner2); err != nil {
+			return nil, err
 		}
-		geluInner, err = engine.MulScalar(ctx, geluInner, float32(math.Sqrt(2.0/math.Pi))) // sqrt(2/pi) * (...)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.MulScalar(ctx, lc.geluInner2, float32(math.Sqrt(2.0/math.Pi)), lc.geluInner3); err != nil {
+			return nil, err
 		}
-		lc.geluTanhVal, err = engine.Tanh(ctx, geluInner) // tanh(...)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Tanh(ctx, lc.geluInner3, lc.geluTanhVal); err != nil {
+			return nil, err
 		}
-		onePlusTanh, err := engine.AddScalar(ctx, lc.geluTanhVal, float32(1.0)) // 1 + tanh(...)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.AddScalar(ctx, lc.geluTanhVal, float32(1.0), lc.geluOnePlusTanh); err != nil {
+			return nil, err
 		}
-		lc.ffn1Out, err = engine.Mul(ctx, geluIn, onePlusTanh) // x * (1 + tanh(...))
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Mul(ctx, geluIn, lc.geluOnePlusTanh, lc.geluXTimes); err != nil {
+			return nil, err
 		}
-		lc.ffn1Out, err = engine.MulScalar(ctx, lc.ffn1Out, float32(0.5)) // 0.5 * x * (1 + tanh(...))
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.MulScalar(ctx, lc.geluXTimes, float32(0.5), lc.ffn1Out); err != nil {
+			return nil, err
 		}
 
-		// FFN2: ONE MatMul for entire batch.
-		// [bsC*numPatches, ffnDim] @ [ffnDim, dModel] = [bsC*numPatches, dModel]
-		ffn2Out, err := engine.MatMul(ctx, lc.ffn1Out, layer.ffn2W)
-		if err != nil {
-			return nil, nil, err
+		// FFN2.
+		if err := matMulInto(ctx, engine, lc.ffn1Out, layer.ffn2W, lc.ffn2Matmul); err != nil {
+			return nil, err
 		}
-		ffn2Out, err = engine.Add(ctx, ffn2Out, layer.ffn2B)
-		if err != nil {
-			return nil, nil, err
+		if _, err = engine.Add(ctx, lc.ffn2Matmul, layer.ffn2B, lc.ffn2Out); err != nil {
+			return nil, err
 		}
 
-		// Residual 2.
-		x, err = engine.Add(ctx, x, ffn2Out)
-		if err != nil {
-			return nil, nil, err
+		// Residual 2: xAfterRes2 = xAfterRes1 + ffn2Out.
+		if _, err = engine.Add(ctx, lc.xAfterRes1, lc.ffn2Out, lc.xAfterRes2); err != nil {
+			return nil, err
 		}
+
+		// Next layer input is this layer's output.
+		x = lc.xAfterRes2
 	}
 
-	return x, layerCaches, nil
+	return x, nil
 }
 
 // encoderBackward runs the PatchTST transformer encoder backward pass.
@@ -492,446 +1078,370 @@ func encoderBackward(
 		dg := &grads[li]
 		lt := &lwts[li]
 
-		// FFN2 backward: ONE MatMul each.
+		// FFN2 backward.
 		// dFFN2Out = dX (from residual 2).
 		// dW += ffn1Out^T @ dFFN2Out : [ffnDim, totalRows] @ [totalRows, dModel]
-		ffn1OutT, err := engine.Transpose(ctx, lc.ffn1Out, []int{1, 0})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.ffn1Out, []int{1, 0}, lc.ffn1OutT); err != nil {
 			return nil, err
 		}
-		dFW, err := engine.MatMul(ctx, ffn1OutT, dX)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.ffn1OutT, dX, lc.dFfn2W); err != nil {
 			return nil, err
 		}
-		dg.ffn2W, err = engine.Add(ctx, dg.ffn2W, dFW)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.ffn2W, lc.dFfn2W, dg.ffn2W); err != nil {
 			return nil, err
 		}
-		dFB, err := engine.Sum(ctx, dX, 0, false)
-		if err != nil {
+		if _, err := engine.Sum(ctx, dX, 0, false, lc.dFfn2BSum); err != nil {
 			return nil, err
 		}
-		dFBR, err := engine.Reshape(ctx, dFB, []int{1, dModel})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dFfn2BSum, []int{1, dModel}, lc.dFfn2BR); err != nil {
 			return nil, err
 		}
-		dg.ffn2B, err = engine.Add(ctx, dg.ffn2B, dFBR)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.ffn2B, lc.dFfn2BR, dg.ffn2B); err != nil {
 			return nil, err
 		}
-		// dFFN1Out = dFFN2Out @ ffn2W^T : [totalRows, dModel] @ [dModel, ffnDim]
-		dFFN1Out, err := engine.MatMul(ctx, dX, lt.ffn2WT)
-		if err != nil {
+		// dFFN1Out = dFFN2Out @ ffn2W^T
+		if err := matMulInto(ctx, engine, dX, lt.ffn2WT, lc.dFfn1Out); err != nil {
 			return nil, err
 		}
 
-		// GELU backward via engine ops.
-		// d/dx[gelu] = 0.5*(1+tanh) + 0.5*x*(1-tanh^2)*sqrt(2/pi)*(1+3*0.044715*x^2)
+		// GELU backward: d/dx = 0.5*(1+tanh) + 0.5*x*(1-tanh^2)*sqrt(2/pi)*(1+3*0.044715*x^2)
 		geluX := lc.ffn1PreAct
 		tanhVal := lc.geluTanhVal
 
 		// term1 = 0.5 * (1 + tanh)
-		term1, err := engine.AddScalar(ctx, tanhVal, float32(1.0))
-		if err != nil {
+		if _, err := engine.AddScalar(ctx, tanhVal, float32(1.0), lc.gTerm1); err != nil {
 			return nil, err
 		}
-		term1, err = engine.MulScalar(ctx, term1, float32(0.5))
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.gTerm1, float32(0.5), lc.gTerm1); err != nil {
 			return nil, err
 		}
-
 		// sech^2 = 1 - tanh^2
-		tanhSq, err := engine.Mul(ctx, tanhVal, tanhVal)
-		if err != nil {
+		if _, err := engine.Mul(ctx, tanhVal, tanhVal, lc.gTanhSq); err != nil {
 			return nil, err
 		}
-		sechSq, err := engine.MulScalar(ctx, tanhSq, float32(-1.0))
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.gTanhSq, float32(-1.0), lc.gSechSq); err != nil {
 			return nil, err
 		}
-		sechSq, err = engine.AddScalar(ctx, sechSq, float32(1.0))
-		if err != nil {
+		if _, err := engine.AddScalar(ctx, lc.gSechSq, float32(1.0), lc.gSechSq); err != nil {
 			return nil, err
 		}
-
 		// du/dx = sqrt(2/pi) * (1 + 3*0.044715*x^2)
-		xSq, err := engine.Mul(ctx, geluX, geluX)
-		if err != nil {
+		if _, err := engine.Mul(ctx, geluX, geluX, lc.gXSq); err != nil {
 			return nil, err
 		}
-		dudx, err := engine.MulScalar(ctx, xSq, float32(3*0.044715))
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.gXSq, float32(3*0.044715), lc.gDudx); err != nil {
 			return nil, err
 		}
-		dudx, err = engine.AddScalar(ctx, dudx, float32(1.0))
-		if err != nil {
+		if _, err := engine.AddScalar(ctx, lc.gDudx, float32(1.0), lc.gDudx); err != nil {
 			return nil, err
 		}
-		dudx, err = engine.MulScalar(ctx, dudx, float32(math.Sqrt(2.0/math.Pi)))
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.gDudx, float32(math.Sqrt(2.0/math.Pi)), lc.gDudx); err != nil {
 			return nil, err
 		}
-
 		// term2 = 0.5 * x * sech^2 * du/dx
-		term2, err := engine.Mul(ctx, geluX, sechSq)
-		if err != nil {
+		if _, err := engine.Mul(ctx, geluX, lc.gSechSq, lc.gTerm2); err != nil {
 			return nil, err
 		}
-		term2, err = engine.Mul(ctx, term2, dudx)
-		if err != nil {
+		if _, err := engine.Mul(ctx, lc.gTerm2, lc.gDudx, lc.gTerm2); err != nil {
 			return nil, err
 		}
-		term2, err = engine.MulScalar(ctx, term2, float32(0.5))
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.gTerm2, float32(0.5), lc.gTerm2); err != nil {
 			return nil, err
 		}
-
 		// geluDeriv = term1 + term2
-		geluDeriv, err := engine.Add(ctx, term1, term2)
-		if err != nil {
+		if _, err := engine.Add(ctx, lc.gTerm1, lc.gTerm2, lc.gDeriv); err != nil {
 			return nil, err
 		}
-		dFFN1PreAct, err := engine.Mul(ctx, dFFN1Out, geluDeriv)
-		if err != nil {
+		if _, err := engine.Mul(ctx, lc.dFfn1Out, lc.gDeriv, lc.dFfn1PreAct); err != nil {
 			return nil, err
 		}
 
-		// FFN1 backward: ONE MatMul each.
-		// dW += normed2^T @ dFFN1PreAct
-		normed2T, err := engine.Transpose(ctx, lc.normed2, []int{1, 0})
-		if err != nil {
+		// FFN1 backward.
+		if _, err := engine.Transpose(ctx, lc.normed2, []int{1, 0}, lc.normed2T); err != nil {
 			return nil, err
 		}
-		dF1W, err := engine.MatMul(ctx, normed2T, dFFN1PreAct)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.normed2T, lc.dFfn1PreAct, lc.dFfn1W); err != nil {
 			return nil, err
 		}
-		dg.ffn1W, err = engine.Add(ctx, dg.ffn1W, dF1W)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.ffn1W, lc.dFfn1W, dg.ffn1W); err != nil {
 			return nil, err
 		}
-		dF1B, err := engine.Sum(ctx, dFFN1PreAct, 0, false)
-		if err != nil {
+		if _, err := engine.Sum(ctx, lc.dFfn1PreAct, 0, false, lc.dFfn1BSum); err != nil {
 			return nil, err
 		}
-		dF1BR, err := engine.Reshape(ctx, dF1B, []int{1, ffnDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dFfn1BSum, []int{1, ffnDim}, lc.dFfn1BR); err != nil {
 			return nil, err
 		}
-		dg.ffn1B, err = engine.Add(ctx, dg.ffn1B, dF1BR)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.ffn1B, lc.dFfn1BR, dg.ffn1B); err != nil {
 			return nil, err
 		}
 		// dNormed2 = dFFN1PreAct @ ffn1W^T
-		dNormed2, err := engine.MatMul(ctx, dFFN1PreAct, lt.ffn1WT)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.dFfn1PreAct, lt.ffn1WT, lc.dNormed2); err != nil {
 			return nil, err
 		}
 
-		// LayerNorm2 backward using engine ops + residual add.
-		dLN2Input, newDNorm2, newDBias2, err := layerNormBackwardWithEngine(ctx, engine, dNormed2, lc.centered2, lc.invStd2,
-			layer.norm2, dg.norm2, dg.bias2, totalRows, dModel)
+		// LayerNorm2 backward.
+		ln2Bufs := &lnBwdBufs{
+			normVal:      lc.ln2bNormVal,
+			dScaleBatch:  lc.ln2bDScaleBatch,
+			dScaleSum:    lc.ln2bDScaleSum,
+			dScaleSumR:   lc.ln2bDScaleSumR,
+			dBiasSum:     lc.ln2bDBiasSum,
+			dBiasSumR:    lc.ln2bDBiasSumR,
+			dNorm:        lc.ln2bDNorm,
+			dNormCent:    lc.ln2bDNormCent,
+			dotScaleGrad: lc.ln2bDotScaleGrad,
+			dotMeanGrad:  lc.ln2bDotMeanGrad,
+			invStdSq:     lc.ln2bInvStdSq,
+			term:         lc.ln2bTerm,
+			correction:   lc.ln2bCorrection,
+			inner:        lc.ln2bInner,
+			dInput:       lc.ln2bDInput,
+		}
+		dLN2Input, _, _, err := layerNormBackwardWithEngine(ctx, engine, lc.dNormed2, lc.centered2, lc.invStd2,
+			layer.norm2, dg.norm2, dg.bias2, ln2Bufs, totalRows, dModel)
 		if err != nil {
 			return nil, err
 		}
-		dg.norm2 = newDNorm2
-		dg.bias2 = newDBias2
-		// Add residual gradient from FFN path (dX flows through residual 2).
-		dAttnProjOut, err := engine.Add(ctx, dLN2Input, dX)
-		if err != nil {
+		// Add residual gradient from FFN path: dAttnProjOut = dLN2Input + dX.
+		if _, err := engine.Add(ctx, dLN2Input, dX, lc.dAttnProjOut); err != nil {
 			return nil, err
 		}
 		// dW += attnOut^T @ dAttnProjOut
-		attnOutT, err := engine.Transpose(ctx, lc.attnOut, []int{1, 0})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.attnOut, []int{1, 0}, lc.attnOutT); err != nil {
 			return nil, err
 		}
-		dOW, err := engine.MatMul(ctx, attnOutT, dAttnProjOut)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.attnOutT, lc.dAttnProjOut, lc.dOW); err != nil {
 			return nil, err
 		}
-		dg.oW, err = engine.Add(ctx, dg.oW, dOW)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.oW, lc.dOW, dg.oW); err != nil {
 			return nil, err
 		}
-		dOB, err := engine.Sum(ctx, dAttnProjOut, 0, false)
-		if err != nil {
+		if _, err := engine.Sum(ctx, lc.dAttnProjOut, 0, false, lc.dOBSum); err != nil {
 			return nil, err
 		}
-		dOBR, err := engine.Reshape(ctx, dOB, []int{1, dModel})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dOBSum, []int{1, dModel}, lc.dOBR); err != nil {
 			return nil, err
 		}
-		dg.oB, err = engine.Add(ctx, dg.oB, dOBR)
-		if err != nil {
+		if _, err := engine.Add(ctx, dg.oB, lc.dOBR, dg.oB); err != nil {
 			return nil, err
 		}
 		// dAttnOut = dAttnProjOut @ oW^T
-		dAttnOutT, err := engine.MatMul(ctx, dAttnProjOut, lt.oWT)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.dAttnProjOut, lt.oWT, lc.dAttnOut); err != nil {
 			return nil, err
 		}
 
-		// Batched attention backward via engine ops.
-		// Reshape dAttnOut to [bsC*nHeads, seq, headDim] (same layout as forward).
+		// Batched attention backward.
 		attnScale := float32(1.0 / math.Sqrt(float64(headDim)))
 
-		dAO4d, err := engine.Reshape(ctx, dAttnOutT, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dAttnOut, []int{bsC, seq, nHeads, headDim}, lc.dAO4d); err != nil {
 			return nil, err
 		}
-		dAO4d, err = engine.Transpose(ctx, dAO4d, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.dAO4d, []int{0, 2, 1, 3}, lc.dAO4dT); err != nil {
 			return nil, err
 		}
-		dAttnOutH, err := engine.Reshape(ctx, dAO4d, []int{bnh, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dAO4dT, []int{bnh, seq, headDim}, lc.dAttnOutH); err != nil {
 			return nil, err
 		}
 
-		// Reshape Q/K/V to [bsC*nHeads, seq, headDim].
-		q4d, err := engine.Reshape(ctx, lc.q, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
+		// Reshape Q/K/V to [bnh, seq, headDim] using bwd scratch buffers.
+		if _, err := engine.Reshape(ctx, lc.q, []int{bsC, seq, nHeads, headDim}, lc.bwdQ4d); err != nil {
 			return nil, err
 		}
-		q4d, err = engine.Transpose(ctx, q4d, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.bwdQ4d, []int{0, 2, 1, 3}, lc.bwdQ4dT); err != nil {
 			return nil, err
 		}
-		qH, err := engine.Reshape(ctx, q4d, []int{bnh, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.bwdQ4dT, []int{bnh, seq, headDim}, lc.bwdQH); err != nil {
 			return nil, err
 		}
-
-		k4d, err := engine.Reshape(ctx, lc.k, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.k, []int{bsC, seq, nHeads, headDim}, lc.bwdK4d); err != nil {
 			return nil, err
 		}
-		k4d, err = engine.Transpose(ctx, k4d, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.bwdK4d, []int{0, 2, 1, 3}, lc.bwdK4dT); err != nil {
 			return nil, err
 		}
-		kH, err := engine.Reshape(ctx, k4d, []int{bnh, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.bwdK4dT, []int{bnh, seq, headDim}, lc.bwdKH); err != nil {
 			return nil, err
 		}
-
-		v4d, err := engine.Reshape(ctx, lc.v, []int{bsC, seq, nHeads, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.v, []int{bsC, seq, nHeads, headDim}, lc.bwdV4d); err != nil {
 			return nil, err
 		}
-		v4d, err = engine.Transpose(ctx, v4d, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.bwdV4d, []int{0, 2, 1, 3}, lc.bwdV4dT); err != nil {
 			return nil, err
 		}
-		vH, err := engine.Reshape(ctx, v4d, []int{bnh, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.bwdV4dT, []int{bnh, seq, headDim}, lc.bwdVH); err != nil {
 			return nil, err
 		}
 
-		// dScores = dAttnOut @ V^T: [bnh, seq, seq].
-		vHT, err := engine.Transpose(ctx, vH, []int{0, 2, 1})
-		if err != nil {
+		// dScores = dAttnOut @ V^T.
+		if _, err := engine.Transpose(ctx, lc.bwdVH, []int{0, 2, 1}, lc.vHT); err != nil {
 			return nil, err
 		}
-		dScores, err := engine.MatMul(ctx, dAttnOutH, vHT)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.dAttnOutH, lc.vHT, lc.dScores); err != nil {
 			return nil, err
 		}
-
-		// dV = scores^T @ dAttnOut: [bnh, seq, headDim].
-		scoresT, err := engine.Transpose(ctx, lc.scoresTensor, []int{0, 2, 1})
-		if err != nil {
+		// dV = scores^T @ dAttnOut.
+		if _, err := engine.Transpose(ctx, lc.scoresTensor, []int{0, 2, 1}, lc.scoresT); err != nil {
 			return nil, err
 		}
-		dVH, err := engine.MatMul(ctx, scoresT, dAttnOutH)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.scoresT, lc.dAttnOutH, lc.dVH); err != nil {
 			return nil, err
 		}
 
-		// Softmax backward: dLogit = scores * (dScores - rowSum) * scale
-		// where rowSum = sum(scores * dScores, axis=-1, keepdims=true).
-		sDScores, err := engine.Mul(ctx, lc.scoresTensor, dScores)
-		if err != nil {
+		// Softmax backward.
+		if _, err := engine.Mul(ctx, lc.scoresTensor, lc.dScores, lc.sDScores); err != nil {
 			return nil, err
 		}
-		rowSum, err := engine.Sum(ctx, sDScores, 2, true)
-		if err != nil {
+		if _, err := engine.Sum(ctx, lc.sDScores, 2, true, lc.rowSum); err != nil {
 			return nil, err
 		}
-		dLogits, err := engine.Sub(ctx, dScores, rowSum)
-		if err != nil {
+		if _, err := engine.Sub(ctx, lc.dScores, lc.rowSum, lc.dLogits1); err != nil {
 			return nil, err
 		}
-		dLogits, err = engine.Mul(ctx, lc.scoresTensor, dLogits)
-		if err != nil {
+		if _, err := engine.Mul(ctx, lc.scoresTensor, lc.dLogits1, lc.dLogits2); err != nil {
 			return nil, err
 		}
-		dLogits, err = engine.MulScalar(ctx, dLogits, attnScale)
-		if err != nil {
+		if _, err := engine.MulScalar(ctx, lc.dLogits2, attnScale, lc.dLogits); err != nil {
 			return nil, err
 		}
 
-		// dQ = dLogits @ K: [bnh, seq, headDim].
-		dQH, err := engine.MatMul(ctx, dLogits, kH)
-		if err != nil {
+		// dQ = dLogits @ K.
+		if err := matMulInto(ctx, engine, lc.dLogits, lc.bwdKH, lc.dQH); err != nil {
+			return nil, err
+		}
+		// dK = dLogits^T @ Q.
+		if _, err := engine.Transpose(ctx, lc.dLogits, []int{0, 2, 1}, lc.dLogitsT); err != nil {
+			return nil, err
+		}
+		if err := matMulInto(ctx, engine, lc.dLogitsT, lc.bwdQH, lc.dKH); err != nil {
 			return nil, err
 		}
 
-		// dK = dLogits^T @ Q: [bnh, seq, headDim].
-		dLogitsT, err := engine.Transpose(ctx, dLogits, []int{0, 2, 1})
-		if err != nil {
+		// Reshape dQ/dK/dV to [totalRows, dModel].
+		if _, err := engine.Reshape(ctx, lc.dQH, []int{bsC, nHeads, seq, headDim}, lc.dQH4d); err != nil {
 			return nil, err
 		}
-		dKH, err := engine.MatMul(ctx, dLogitsT, qH)
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.dQH4d, []int{0, 2, 1, 3}, lc.dQH4dT); err != nil {
 			return nil, err
 		}
-
-		// Reshape dQ/dK/dV back to [bsC*seq, dModel].
-		dQH, err = engine.Reshape(ctx, dQH, []int{bsC, nHeads, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dQH4dT, []int{totalRows, dModel}, lc.dQT); err != nil {
 			return nil, err
 		}
-		dQH, err = engine.Transpose(ctx, dQH, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dKH, []int{bsC, nHeads, seq, headDim}, lc.dKH4d); err != nil {
 			return nil, err
 		}
-		dQT, err := engine.Reshape(ctx, dQH, []int{totalRows, dModel})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.dKH4d, []int{0, 2, 1, 3}, lc.dKH4dT); err != nil {
 			return nil, err
 		}
-
-		dKH, err = engine.Reshape(ctx, dKH, []int{bsC, nHeads, seq, headDim})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dKH4dT, []int{totalRows, dModel}, lc.dKT); err != nil {
 			return nil, err
 		}
-		dKH, err = engine.Transpose(ctx, dKH, []int{0, 2, 1, 3})
-		if err != nil {
+		if _, err := engine.Reshape(ctx, lc.dVH, []int{bsC, nHeads, seq, headDim}, lc.dVH4d); err != nil {
 			return nil, err
 		}
-		dKT, err := engine.Reshape(ctx, dKH, []int{totalRows, dModel})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.dVH4d, []int{0, 2, 1, 3}, lc.dVH4dT); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Reshape(ctx, lc.dVH4dT, []int{totalRows, dModel}, lc.dVT); err != nil {
 			return nil, err
 		}
 
-		dVH, err = engine.Reshape(ctx, dVH, []int{bsC, nHeads, seq, headDim})
-		if err != nil {
-			return nil, err
-		}
-		dVH, err = engine.Transpose(ctx, dVH, []int{0, 2, 1, 3})
-		if err != nil {
-			return nil, err
-		}
-		dVT, err := engine.Reshape(ctx, dVH, []int{totalRows, dModel})
-		if err != nil {
+		if _, err := engine.Transpose(ctx, lc.normed1, []int{1, 0}, lc.normed1T); err != nil {
 			return nil, err
 		}
 
-		normed1T, err := engine.Transpose(ctx, lc.normed1, []int{1, 0})
-		if err != nil {
+		// Q/K/V weight gradients.
+		if err := matMulInto(ctx, engine, lc.normed1T, lc.dQT, lc.dQW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.qW, lc.dQW, dg.qW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Sum(ctx, lc.dQT, 0, false, lc.dQBSum); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Reshape(ctx, lc.dQBSum, []int{1, dModel}, lc.dQBR); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.qB, lc.dQBR, dg.qB); err != nil {
+			return nil, err
+		}
+		if err := matMulInto(ctx, engine, lc.normed1T, lc.dKT, lc.dKW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.kW, lc.dKW, dg.kW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Sum(ctx, lc.dKT, 0, false, lc.dKBSum); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Reshape(ctx, lc.dKBSum, []int{1, dModel}, lc.dKBR); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.kB, lc.dKBR, dg.kB); err != nil {
+			return nil, err
+		}
+		if err := matMulInto(ctx, engine, lc.normed1T, lc.dVT, lc.dVW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.vW, lc.dVW, dg.vW); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Sum(ctx, lc.dVT, 0, false, lc.dVBSum); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Reshape(ctx, lc.dVBSum, []int{1, dModel}, lc.dVBR); err != nil {
+			return nil, err
+		}
+		if _, err := engine.Add(ctx, dg.vB, lc.dVBR, dg.vB); err != nil {
 			return nil, err
 		}
 
-		// dQW += normed1^T @ dQ
-		dQW, err := engine.MatMul(ctx, normed1T, dQT)
-		if err != nil {
+		// dNormed1 = dQ @ qW^T + dK @ kW^T + dV @ vW^T
+		if err := matMulInto(ctx, engine, lc.dQT, lt.qWT, lc.dN1q); err != nil {
 			return nil, err
 		}
-		dg.qW, err = engine.Add(ctx, dg.qW, dQW)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.dKT, lt.kWT, lc.dN1k); err != nil {
 			return nil, err
 		}
-		dQB, err := engine.Sum(ctx, dQT, 0, false)
-		if err != nil {
+		if err := matMulInto(ctx, engine, lc.dVT, lt.vWT, lc.dN1v); err != nil {
 			return nil, err
 		}
-		dQBR, err := engine.Reshape(ctx, dQB, []int{1, dModel})
-		if err != nil {
+		if _, err := engine.Add(ctx, lc.dN1q, lc.dN1k, lc.dN1Sum1); err != nil {
 			return nil, err
 		}
-		dg.qB, err = engine.Add(ctx, dg.qB, dQBR)
-		if err != nil {
+		if _, err := engine.Add(ctx, lc.dN1Sum1, lc.dN1v, lc.dNormed1); err != nil {
 			return nil, err
 		}
 
-		dKW, err := engine.MatMul(ctx, normed1T, dKT)
+		// LayerNorm1 backward.
+		ln1Bufs := &lnBwdBufs{
+			normVal:      lc.lnbNormVal,
+			dScaleBatch:  lc.lnbDScaleBatch,
+			dScaleSum:    lc.lnbDScaleSum,
+			dScaleSumR:   lc.lnbDScaleSumR,
+			dBiasSum:     lc.lnbDBiasSum,
+			dBiasSumR:    lc.lnbDBiasSumR,
+			dNorm:        lc.lnbDNorm,
+			dNormCent:    lc.lnbDNormCent,
+			dotScaleGrad: lc.lnbDotScaleGrad,
+			dotMeanGrad:  lc.lnbDotMeanGrad,
+			invStdSq:     lc.lnbInvStdSq,
+			term:         lc.lnbTerm,
+			correction:   lc.lnbCorrection,
+			inner:        lc.lnbInner,
+			dInput:       lc.lnbDInput,
+		}
+		dLN1Input, _, _, err := layerNormBackwardWithEngine(ctx, engine, lc.dNormed1, lc.centered1, lc.invStd1,
+			layer.norm1, dg.norm1, dg.bias1, ln1Bufs, totalRows, dModel)
 		if err != nil {
 			return nil, err
 		}
-		dg.kW, err = engine.Add(ctx, dg.kW, dKW)
-		if err != nil {
+		// Final dX for this layer = dLN1Input + dAttnProjOut, written into lc.dXOut.
+		if _, err := engine.Add(ctx, dLN1Input, lc.dAttnProjOut, lc.dXOut); err != nil {
 			return nil, err
 		}
-		dKB, err := engine.Sum(ctx, dKT, 0, false)
-		if err != nil {
-			return nil, err
-		}
-		dKBR, err := engine.Reshape(ctx, dKB, []int{1, dModel})
-		if err != nil {
-			return nil, err
-		}
-		dg.kB, err = engine.Add(ctx, dg.kB, dKBR)
-		if err != nil {
-			return nil, err
-		}
-
-		dVW, err := engine.MatMul(ctx, normed1T, dVT)
-		if err != nil {
-			return nil, err
-		}
-		dg.vW, err = engine.Add(ctx, dg.vW, dVW)
-		if err != nil {
-			return nil, err
-		}
-		dVB, err := engine.Sum(ctx, dVT, 0, false)
-		if err != nil {
-			return nil, err
-		}
-		dVBR, err := engine.Reshape(ctx, dVB, []int{1, dModel})
-		if err != nil {
-			return nil, err
-		}
-		dg.vB, err = engine.Add(ctx, dg.vB, dVBR)
-		if err != nil {
-			return nil, err
-		}
-
-		// dNormed1 = dQ @ qW^T + dK @ kW^T + dV @ vW^T : ONE MatMul each.
-		dN1q, err := engine.MatMul(ctx, dQT, lt.qWT)
-		if err != nil {
-			return nil, err
-		}
-		dN1k, err := engine.MatMul(ctx, dKT, lt.kWT)
-		if err != nil {
-			return nil, err
-		}
-		dN1v, err := engine.MatMul(ctx, dVT, lt.vWT)
-		if err != nil {
-			return nil, err
-		}
-		dNormed1, err := engine.Add(ctx, dN1q, dN1k)
-		if err != nil {
-			return nil, err
-		}
-		dNormed1, err = engine.Add(ctx, dNormed1, dN1v)
-		if err != nil {
-			return nil, err
-		}
-
-		// LayerNorm1 backward using engine ops + residual add.
-		dLN1Input, newDNorm1, newDBias1, err := layerNormBackwardWithEngine(ctx, engine, dNormed1, lc.centered1, lc.invStd1,
-			layer.norm1, dg.norm1, dg.bias1, totalRows, dModel)
-		if err != nil {
-			return nil, err
-		}
-		dg.norm1 = newDNorm1
-		dg.bias1 = newDBias1
-		// Add residual gradient from attention path.
-		dX, err = engine.Add(ctx, dLN1Input, dAttnProjOut)
-		if err != nil {
-			return nil, err
-		}
+		dX = lc.dXOut
 	}
 
 	return dX, nil
