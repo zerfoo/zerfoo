@@ -52,7 +52,7 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E82: Training loss engine migration (6/6 COMPLETE -- PRs #334, #336, #338, #341)
 - E83: Serve handler refactoring (5/5 COMPLETE -- PRs #334, #336, #338, #341)
 - E84: ModeLDSL composition (8/8 COMPLETE -- PRs #334, #336, #338, #341)
-- E85: Fix GPU training memory leak in PatchTST encoder bwd (CRITICAL -- 0/9, blocks T50.5.2/T51.5.2)
+- E85: Fix GPU training memory leak in PatchTST encoder bwd (CRITICAL -- 2/13 diagnosis done, fix scope refined; blocks T50.5.2/T51.5.2)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -578,6 +578,20 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-07 (afternoon): E85 diagnosis complete, fix scope refined
+
+- T85.1.3 + T85.1.4 marked DONE. Root cause: ~38 leaked GPU tensors per batch in
+  trainWindowedGPU. CUDA graph capture (T51.4.1) confirmed disabled at line 453.
+- T85.1.1 + T85.1.2 (runtime profiling) skipped — root cause was visible from source.
+- E85.2 (fix tasks) refined from 3 vague tasks to 8 concrete tasks (T85.2.0-T85.2.7)
+  with line numbers, target struct fields, and specific allocation sites.
+- Added Wave E85-2a (ztensor API inventory) as a hard prerequisite for the fix.
+- Added Wave E85-2b (ztensor API extension) as conditional follow-up.
+- Wave E85-3 expanded from 3 to 5 parallel agents (one per allocation cluster +
+  encoder helpers).
+- Added "E85 Next-Session Starter Checklist" with the exact resume sequence.
+- Shipped diagnosis as PR #346 (merged).
 
 ### 2026-04-07: E85 added — fix GPU training memory leak
 
@@ -1754,26 +1768,95 @@ docs/adr/077-cuda-graph-training-capture.md
   blocked on E55 (fused encoder kernel). So per-batch ops execute as discrete kernel
   launches with all their leaked allocations.
 
-### E85.2: Fix
+### E85.2: Fix (refined 2026-04-07 with diagnosis findings)
 
-- [ ] T85.2.1 Eliminate per-batch allocations in gpu encoder bwd  Owner: TBD  Est: 3h  verifies: [UC-TS01]
-  Deps: T85.1.3
-  Replace `tensor.New` calls inside the per-batch backward path with reuse of
-  pre-allocated workspace tensors from `gpuBatchBackwardCache`. Add fields to the cache
-  struct as needed.
-  Acceptance: Per-batch allocation count drops to zero (verified by T85.1.1 profiler).
+- [ ] T85.2.0 Inventory ztensor compute.Engine for dst-param variants  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Repo: ztensor (separate repo at /Users/dndungu/Code/zerfoo/ztensor)
+  File: compute/engine.go (interface), compute/cpu_engine.go, compute/gpu_engine_*.go
+  For each op used in patchtst_gpu_train.go per-batch loop, check if a dst-parameter
+  variant exists: Transpose, MatMul, Add, Sum, Reshape, MulScalar, Sub, Mul, Tanh.
+  Existing dst signature looks like: `Op(ctx, args..., dst *Tensor) (*Tensor, error)`
+  where the function writes into dst and returns dst.
+  Acceptance: Markdown table mapping each op to: dst-variant exists (yes/no), file:line.
+  This is BLOCKING for T85.2.1. If any required op lacks dst variant, file ztensor PR
+  to add it before proceeding.
 
-- [ ] T85.2.2 Ensure optimizer/AdamW state is not reallocated per epoch  Owner: TBD  Est: 1h  verifies: [UC-TS01]
-  Deps: T85.1.3
-  AdamW m/v moments should be allocated once at trainer init and updated in place.
-  Verify no shadow copy is created per step.
-  Acceptance: AdamW state allocations happen only at init.
+- [ ] T85.2.0a Add missing dst-param variants to ztensor Engine (if needed)  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T85.2.0
+  Repo: ztensor
+  For each op identified in T85.2.0 as missing a dst variant, add one. Pattern:
+  - GPU: write into dst's GPU storage, no new allocation
+  - CPU: write into dst's slice, no new allocation
+  Add unit tests for each new dst variant.
+  Acceptance: ztensor PR merged. Bumped version. zerfoo go.mod updated.
 
-- [ ] T85.2.3 Free intermediate gradient tensors after backward step  Owner: TBD  Est: 1h  verifies: [UC-TS01]
-  Deps: T85.1.3
-  If any non-cache intermediate tensors escape the per-batch scope, ensure they are
-  released or returned to pool before the next batch starts.
-  Acceptance: No defunct GPU tensors after each batch (verified by T85.1.1).
+- [ ] T85.2.1 Pre-allocate per-batch transpose buffers in gpuBatchForwardCache  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T85.2.0a
+  File: timeseries/patchtst_gpu_train.go
+  Extend `gpuBatchForwardCache` struct (line 404) to include:
+  - `headWT *tensor.TensorNumeric[float32]` (shape [outDim, headIn])
+  - `layerWTs []layerTransposes` with pre-allocated qWT/kWT/vWT/oWT/ffn1WT/ffn2WT per layer
+  Allocate these ONCE before the epoch loop using `tensor.New` with backing []float32.
+  Replace lines 510, 519-540 to use `m.engine.Transpose(ctx, src, perm, dst)` writing
+  into the pre-allocated buffers.
+  Eliminates: 1 + 6N transposes per batch (13 for 2-layer model).
+  Acceptance: Build passes. 10K x 20ch x 10 epochs runs without OOM (basic smoke test
+  on DGX). Loss curve matches existing 3-epoch convergence.
+
+- [ ] T85.2.2 Pre-allocate forward-prefix output buffers (embedded, emb3d, x)  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+  Deps: T85.2.0a
+  File: timeseries/patchtst_gpu_train.go
+  Extend gpuBatchForwardCache with:
+  - `embedded *tensor.TensorNumeric[float32]` (shape [bsC*numPatches, dModel])
+  - `emb3d *tensor.TensorNumeric[float32]` (shape [bsC, numPatches, dModel])
+  - `posEmb3d *tensor.TensorNumeric[float32]` (shape [1, numPatches, dModel])
+  - `xForward *tensor.TensorNumeric[float32]` (shape [totalRows, dModel])
+  - `headOut *tensor.TensorNumeric[float32]` (shape [bsC, outDim])
+  Refactor lines 547-572 and 617-621 to use dst-param variants.
+  Eliminates: ~6 forward-prefix tensors per batch.
+  Acceptance: Build passes. Forward pass output bit-identical to pre-fix.
+
+- [ ] T85.2.3 Pre-allocate backward intermediate buffers  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+  Deps: T85.2.0a
+  File: timeseries/patchtst_gpu_train.go
+  Extend gpuBatchForwardCache (or new gpuBatchBackwardCache) with:
+  - `flatInputT, dHW, dHB, dHBR, dFlat, dX *tensor.TensorNumeric[float32]`
+  - `patchesT, dPEW, dPEB, dPEBR *tensor.TensorNumeric[float32]`
+  Refactor lines 670-747 to use dst-param variants.
+  Eliminates: ~10 backward intermediates per batch.
+  Acceptance: Build passes. Gradient values bit-identical to pre-fix (compare via test).
+
+- [ ] T85.2.4 Audit and fix per-batch allocations in encoderForward / encoderBackward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+  Deps: T85.2.0a
+  Files: timeseries/patchtst_encoder.go, timeseries/patchtst_backward.go
+  encoderForward (line 605) and encoderBackward (line 709) are called per batch and
+  contain MANY internal allocations (attention scores, softmax, FFN intermediates,
+  layer norm caches). Each layer iteration produces its own set.
+  Read both functions end-to-end, list all allocation sites, extend gpuBatchLayerCache
+  to hold pre-allocated buffers for each, refactor to use dst-param variants.
+  This is the largest single piece of E85.2 work — likely 40+ allocation sites.
+  Acceptance: Per-batch allocation count from these functions drops to zero (verify
+  with T85.1.1 profiler if added).
+
+- [ ] T85.2.5 Verify gradient pointer semantics (gradTs vs grads.X reassignment)  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+  Deps: T85.2.3
+  File: timeseries/patchtst_gpu_train.go lines 678, 691, 735, 747, 759, 787
+  After T85.2.3, the `grads.headW = engine.Add(...)` reassignments should disappear
+  (replaced with in-place dst variant). Verify that `gradTs` (line 430) and `grads.X`
+  fields point to the SAME tensor objects after each batch. Add a test or assertion.
+  This also resolves the latent correctness concern about stale gradients in
+  AdamW (line 787) and grad clipping (line 759).
+  Acceptance: Test confirms grads.headW == gradTs[headWIdx] after backward step.
+
+- [ ] T85.2.6 Run gofmt + go vet + golangci-lint on changed files  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T85.2.1, T85.2.2, T85.2.3, T85.2.4, T85.2.5
+  Acceptance: Zero lint findings. go vet clean.
+
+- [ ] T85.2.7 Run timeseries unit tests with race detector  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+  Deps: T85.2.6
+  Run: go test -race -timeout 300s ./timeseries/...
+  Specifically verify: TestPatchTST_TrainWindowed_EngineConvergence, TestPatchTST_BatchedTrainConvergence
+  Acceptance: All pre-existing PatchTST tests pass. No new failures.
 
 ### E85.3: Validation
 
@@ -1791,26 +1874,70 @@ docs/adr/077-cuda-graph-training-capture.md
   Update docs/plan.md, docs/benchmarks.md row for PatchTST training, devlog entry.
   Acceptance: Plan reflects the new state. Benchmarks doc shows current measurement.
 
-### E85 Parallel Work
+### E85 Parallel Work (refined 2026-04-07)
 
-#### Wave E85-1: Diagnosis (3 agents, mostly sequential due to shared file)
-- [ ] T85.1.1 Add profiling to bench_train (independent)
-- [ ] T85.1.3 Audit allocations in trainWindowedGPU (independent)
-- [ ] T85.1.4 Verify graph capture engaged (independent)
+#### Wave E85-1: Diagnosis — DONE 2026-04-07
+- [x] T85.1.3 Audit allocations in trainWindowedGPU — DONE
+- [x] T85.1.4 Verify graph capture engaged (it is NOT — disabled at line 453) — DONE
+- T85.1.1, T85.1.2 (runtime profiling) — SKIPPED, not needed
 
-#### Wave E85-2: Profile run (1 agent)
-Deps: T85.1.1
-- [ ] T85.1.2 Run 10K x 5 epoch with profiling on DGX
+#### Wave E85-2a: ztensor API inventory (1 agent, ~1h)
+Sequential — must finish before any fix can start.
+- [ ] T85.2.0 Inventory ztensor compute.Engine for dst-param variants
 
-#### Wave E85-3: Fix (3 agents)
-Deps: T85.1.2, T85.1.3, T85.1.4
-- [ ] T85.2.1 Eliminate per-batch allocations (primary)
-- [ ] T85.2.2 Verify AdamW state init-only
-- [ ] T85.2.3 Free intermediate gradients
+#### Wave E85-2b: ztensor API extension (1 agent, ~4h, conditional)
+Deps: T85.2.0
+Skip this wave if T85.2.0 finds all needed dst variants already exist.
+- [ ] T85.2.0a Add missing dst-param variants to ztensor (separate repo, separate PR)
 
-#### Wave E85-4: Validation (1 agent)
-Deps: E85.2 complete
-- [ ] T85.3.1 -> T85.3.2 -> T85.3.3 (sequential, all on DGX)
+#### Wave E85-3: Fix per-batch leaks (5 agents in parallel)
+Deps: T85.2.0a (or T85.2.0 if no extension needed)
+All 5 tasks touch timeseries/patchtst_gpu_train.go but in distinct sections.
+Worktree isolation handles the file overlap. Designate T85.2.4 (encoder helpers,
+different files) as primary owner of patchtst_encoder.go.
+- [ ] T85.2.1 Pre-allocate transpose buffers (lines 510-542)
+- [ ] T85.2.2 Pre-allocate forward-prefix buffers (lines 547-621)
+- [ ] T85.2.3 Pre-allocate backward intermediates (lines 670-747)
+- [ ] T85.2.4 Audit + fix encoderForward / encoderBackward (largest scope)
+- [ ] T85.2.5 Verify gradient pointer semantics (small audit + assertion)
+
+#### Wave E85-4: Lint + unit tests (1 agent)
+Deps: E85-3 merged
+- [ ] T85.2.6 gofmt / go vet / golangci-lint
+- [ ] T85.2.7 go test -race ./timeseries/
+
+#### Wave E85-5: DGX validation (1 agent)
+Deps: E85-4 complete, code merged to main, DGX synced
+Run benchmarks SEQUENTIALLY (not concurrent — that overloaded DGX last session).
+- [ ] T85.3.1 Run 10K x 20ch x 10 epochs on DGX (smoke test for fix)
+- [ ] T85.3.2 Run 28K x 20ch x 10 epochs on DGX (T50.5.2 / T51.5.2 benchmark)
+- [ ] T85.3.3 Update plan.md, benchmarks.md, devlog.md with results
+
+### E85 Next-Session Starter Checklist
+
+Use this exact sequence when resuming E85 in a fresh session:
+
+1. **Read context** (in order):
+   - docs/plan.md section "E85: Fix GPU Training Memory Leak" (this section)
+   - docs/devlog.md entry "GPU training memory leak — root cause identified"
+   - timeseries/patchtst_gpu_train.go lines 344-851 (full trainWindowedGPU)
+
+2. **Start Wave E85-2a:** Switch to ztensor repo, read compute/engine.go, list which
+   ops have a dst-parameter variant. Check Transpose, MatMul, Add, Sum, Reshape,
+   MulScalar, Sub, Mul, Tanh. Write findings to a comment on PR #346 or a new file.
+
+3. **If dst variants are missing** (likely for some): file a ztensor PR adding them
+   before touching zerfoo. Pattern is documented in compute/engine.go for ops that
+   already have dst variants (look for any `_, err := e.SomeOp(ctx, a, b, dst)` call).
+
+4. **If dst variants exist:** start Wave E85-3 in zerfoo. T85.2.4 is the largest
+   piece — start it first or assign to the strongest agent.
+
+5. **Critical reminder for DGX validation (T85.3.x):**
+   - DO NOT run multiple bench_train processes simultaneously. Last session this
+     overloaded the DGX (load avg 18+, sshd unresponsive for 30+ min).
+   - Run benchmarks ONE AT A TIME with `-out /tmp/log` for unbuffered file output.
+   - Use `pgrep bench_train` between runs to confirm cleanup.
 
 ---
 
