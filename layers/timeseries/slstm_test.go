@@ -27,7 +27,7 @@ func TestSLSTM_OutputShape(t *testing.T) {
 		nPrev.Data()[i] = 1.0
 	}
 
-	h, c, n, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	h, c, n, _, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -77,22 +77,25 @@ func TestSLSTM_ManualComputation(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{1, 1}, []float32{0.2})
 	nPrev, _ := tensor.New[float32]([]int{1, 1}, []float32{1.0})
 
-	h, c, n, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	h, c, n, _, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	// Hand computation:
+	// Hand computation (stabilized form, mPrev=0):
 	// pre = W*x + R*h + b = 1*0.5 + 0.5*0.1 + 0 = 0.55  (same for all gates)
+	// m = max(preF + mPrev, preI) = max(0.55 + 0, 0.55) = 0.55
+	// iGate = exp(preI - m) = exp(0) = 1
+	// fGate = exp(preF + mPrev - m) = exp(0) = 1
 	pre := 1.0*0.5 + 0.5*0.1
-	iGate := math.Exp(pre)                     // exp(0.55)
-	fGate := math.Exp(pre)                     // exp(0.55)
-	zVal := math.Tanh(pre)                     // tanh(0.55)
-	oGate := 1.0 / (1.0 + math.Exp(-pre))     // sigmoid(0.55)
+	iGate := 1.0                                // exp(preI - m)
+	fGate := 1.0                                // exp(preF + mPrev - m)
+	zVal := math.Tanh(pre)                      // tanh(0.55)
+	oGate := 1.0 / (1.0 + math.Exp(-pre))      // sigmoid(0.55)
 
-	wantN := fGate*1.0 + iGate                 // f*nPrev + i
-	wantC := fGate*0.2 + iGate*zVal            // f*cPrev + i*z
-	wantH := oGate * (wantC / wantN)           // o * (c/n)
+	wantN := fGate*1.0 + iGate                  // f*nPrev + i = 2
+	wantC := fGate*0.2 + iGate*zVal             // f*cPrev + i*z
+	wantH := oGate * (wantC / wantN)            // o * (c/n)
 
 	tol := 1e-4
 	if diff := math.Abs(float64(h.Data()[0]) - wantH); diff > tol {
@@ -135,7 +138,7 @@ func TestSLSTM_ExponentialGatingClamp(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{1, 1}, []float32{0.0})
 	nPrev, _ := tensor.New[float32]([]int{1, 1}, []float32{1.0})
 
-	h, c, n, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	h, c, n, _, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -155,13 +158,17 @@ func TestSLSTM_ExponentialGatingClamp(t *testing.T) {
 		}
 	}
 
-	// n should be clamped exp(20) + exp(20)*1 from nPrev.
-	// Pre-activation for i: 1000*1 = 1000 → clamped to 20 → exp(20)
-	// Pre-activation for f: 1000*1 = 1000 → clamped to 20 → exp(20)
-	// n = exp(20)*1 + exp(20) = 2*exp(20)
-	expectedN := 2 * math.Exp(20.0)
-	if diff := math.Abs(float64(n.Data()[0]) - expectedN); diff/expectedN > 1e-4 {
-		t.Errorf("n = %e, want %e", n.Data()[0], expectedN)
+	// Stabilized form: with Wi=Wf=1000 clamped to maxGatePreAct, both preI and
+	// preF equal maxGatePreAct, so m = max(preF+0, preI) = maxGatePreAct and
+	// both gates = exp(0) = 1. With nPrev=1 and cPrev=0:
+	//   n = 1*1 + 1 = 2
+	//   c = 1*0 + 1*tanh(0) = 0     (Wz=0, x=1 → preZ=0)
+	//   h = sigmoid(0) * (0/2) = 0
+	// The key invariant — no Inf/NaN — is checked above. Here we verify the
+	// gates are bounded to 1 (paper stabilization property).
+	expectedN := 2.0
+	if diff := math.Abs(float64(n.Data()[0]) - expectedN); diff > 1e-4 {
+		t.Errorf("n = %e, want %e (stabilized gates bounded to 1)", n.Data()[0], expectedN)
 	}
 }
 
@@ -184,7 +191,7 @@ func TestSLSTM_BatchIndependence(t *testing.T) {
 	cPrev, _ := tensor.New[float32]([]int{2, hiddenDim}, cData)
 	nPrev, _ := tensor.New[float32]([]int{2, hiddenDim}, nData)
 
-	hBatch, cBatch, nBatch, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev)
+	hBatch, cBatch, nBatch, _, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
 		t.Fatalf("Forward batched: %v", err)
 	}
@@ -196,7 +203,7 @@ func TestSLSTM_BatchIndependence(t *testing.T) {
 		cSingle, _ := tensor.New[float32]([]int{1, hiddenDim}, cData[b*hiddenDim:(b+1)*hiddenDim])
 		nSingle, _ := tensor.New[float32]([]int{1, hiddenDim}, nData[b*hiddenDim:(b+1)*hiddenDim])
 
-		hs, cs, ns, err := slstm.Forward(context.Background(), xSingle, hSingle, cSingle, nSingle)
+		hs, cs, ns, _, err := slstm.Forward(context.Background(), xSingle, hSingle, cSingle, nSingle, nil)
 		if err != nil {
 			t.Fatalf("Forward single batch %d: %v", b, err)
 		}
@@ -258,7 +265,7 @@ func TestSLSTM_ForwardInputValidation(t *testing.T) {
 		h := good([]int{1, 2}, 2)
 		c := good([]int{1, 2}, 2)
 		n := good([]int{1, 2}, 2)
-		_, _, _, err := slstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := slstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for 3D x")
 		}
@@ -269,7 +276,7 @@ func TestSLSTM_ForwardInputValidation(t *testing.T) {
 		h := good([]int{1, 2}, 2)
 		c := good([]int{1, 2}, 2)
 		n := good([]int{1, 2}, 2)
-		_, _, _, err := slstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := slstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong inputDim")
 		}
@@ -280,7 +287,7 @@ func TestSLSTM_ForwardInputValidation(t *testing.T) {
 		h := good([]int{1, 5}, 5)
 		c := good([]int{1, 2}, 2)
 		n := good([]int{1, 2}, 2)
-		_, _, _, err := slstm.Forward(ctx, x, h, c, n)
+		_, _, _, _, err := slstm.Forward(ctx, x, h, c, n, nil)
 		if err == nil {
 			t.Error("expected error for wrong hPrev shape")
 		}

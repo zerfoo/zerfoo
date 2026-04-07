@@ -328,7 +328,7 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 
 	// Initialize hidden states for each block.
 	type slstmState struct {
-		h, c, n *tensor.TensorNumeric[T]
+		h, c, n, m *tensor.TensorNumeric[T]
 	}
 	type mlstmState struct {
 		h    *tensor.TensorNumeric[T]
@@ -394,11 +394,11 @@ func (n *tiRexNode[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 			switch block.blockType {
 			case "slstm":
 				st := slstmStates[i]
-				h, c, nState, fErr := block.slstm.Forward(ctx, blockInput, st.h, st.c, st.n)
+				h, c, nState, mState, fErr := block.slstm.Forward(ctx, blockInput, st.h, st.c, st.n, st.m)
 				if fErr != nil {
 					return nil, fmt.Errorf("sLSTM block %d step %d: %w", i, t, fErr)
 				}
-				slstmStates[i] = slstmState{h: h, c: c, n: nState}
+				slstmStates[i] = slstmState{h: h, c: c, n: nState, m: mState}
 				blockInput = h
 			case "mlstm":
 				st := mlstmStates[i]
@@ -534,7 +534,7 @@ func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.Tensor
 	}
 
 	type slstmState struct {
-		h, c, n *tensor.TensorNumeric[T]
+		h, c, n, m *tensor.TensorNumeric[T]
 	}
 	type mlstmState struct {
 		h    *tensor.TensorNumeric[T]
@@ -598,11 +598,11 @@ func (n *tiRexNode[T]) forwardFeatures(ctx context.Context, input *tensor.Tensor
 			switch block.blockType {
 			case "slstm":
 				st := slstmStates[i]
-				h, c, nState, fErr := block.slstm.Forward(ctx, blockInput, st.h, st.c, st.n)
+				h, c, nState, mState, fErr := block.slstm.Forward(ctx, blockInput, st.h, st.c, st.n, st.m)
 				if fErr != nil {
 					return nil, fmt.Errorf("sLSTM block %d step %d: %w", i, t, fErr)
 				}
-				slstmStates[i] = slstmState{h: h, c: c, n: nState}
+				slstmStates[i] = slstmState{h: h, c: c, n: nState, m: mState}
 				blockInput = h
 			case "mlstm":
 				st := mlstmStates[i]
