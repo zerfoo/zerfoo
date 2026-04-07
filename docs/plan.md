@@ -1796,7 +1796,7 @@ docs/adr/077-cuda-graph-training-capture.md
   Add unit tests for each new dst variant.
   Acceptance: ztensor PR merged. Bumped version. zerfoo go.mod updated.
 
-- [ ] T85.2.1 Pre-allocate per-batch transpose buffers in gpuBatchForwardCache  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T85.2.1 Pre-allocate per-batch transpose buffers in gpuBatchForwardCache  DONE 2026-04-07  Owner: agent-a-trainloop
   Deps: T85.2.0a
   File: timeseries/patchtst_gpu_train.go
   Extend `gpuBatchForwardCache` struct (line 404) to include:
@@ -1809,7 +1809,7 @@ docs/adr/077-cuda-graph-training-capture.md
   Acceptance: Build passes. 10K x 20ch x 10 epochs runs without OOM (basic smoke test
   on DGX). Loss curve matches existing 3-epoch convergence.
 
-- [ ] T85.2.2 Pre-allocate forward-prefix output buffers (embedded, emb3d, x)  Owner: TBD  Est: 1.5h  verifies: [UC-TS01]
+- [x] T85.2.2 Pre-allocate forward-prefix output buffers (embedded, emb3d, x)  DONE 2026-04-07  Owner: agent-a-trainloop
   Deps: T85.2.0a
   File: timeseries/patchtst_gpu_train.go
   Extend gpuBatchForwardCache with:
@@ -1822,7 +1822,7 @@ docs/adr/077-cuda-graph-training-capture.md
   Eliminates: ~6 forward-prefix tensors per batch.
   Acceptance: Build passes. Forward pass output bit-identical to pre-fix.
 
-- [ ] T85.2.3 Pre-allocate backward intermediate buffers  Owner: TBD  Est: 2h  verifies: [UC-TS01]
+- [x] T85.2.3 Pre-allocate backward intermediate buffers  DONE 2026-04-07  Owner: agent-a-trainloop
   Deps: T85.2.0a
   File: timeseries/patchtst_gpu_train.go
   Extend gpuBatchForwardCache (or new gpuBatchBackwardCache) with:
@@ -1832,7 +1832,7 @@ docs/adr/077-cuda-graph-training-capture.md
   Eliminates: ~10 backward intermediates per batch.
   Acceptance: Build passes. Gradient values bit-identical to pre-fix (compare via test).
 
-- [ ] T85.2.4 Audit and fix per-batch allocations in encoderForward / encoderBackward  Owner: TBD  Est: 4h  verifies: [UC-TS01]
+- [x] T85.2.4 Audit and fix per-batch allocations in encoderForward / encoderBackward  DONE 2026-04-07  Owner: agent-b-encoder (recovered during integration)
   Deps: T85.2.0a
   Files: timeseries/patchtst_encoder.go, timeseries/patchtst_backward.go
   encoderForward (line 605) and encoderBackward (line 709) are called per batch and
@@ -1844,7 +1844,7 @@ docs/adr/077-cuda-graph-training-capture.md
   Acceptance: Per-batch allocation count from these functions drops to zero (verify
   with T85.1.1 profiler if added).
 
-- [ ] T85.2.5 Verify gradient pointer semantics (gradTs vs grads.X reassignment)  Owner: TBD  Est: 1h  verifies: [UC-TS01]
+- [x] T85.2.5 Verify gradient pointer semantics (gradTs vs grads.X reassignment)  DONE 2026-04-07  Owner: agent-a-trainloop
   Deps: T85.2.3
   File: timeseries/patchtst_gpu_train.go lines 678, 691, 735, 747, 759, 787
   After T85.2.3, the `grads.headW = engine.Add(...)` reassignments should disappear
@@ -1854,11 +1854,13 @@ docs/adr/077-cuda-graph-training-capture.md
   AdamW (line 787) and grad clipping (line 759).
   Acceptance: Test confirms grads.headW == gradTs[headWIdx] after backward step.
 
-- [ ] T85.2.6 Run gofmt + go vet + golangci-lint on changed files  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T85.2.6 Run gofmt + go vet + golangci-lint on changed files  DONE 2026-04-07
   Deps: T85.2.1, T85.2.2, T85.2.3, T85.2.4, T85.2.5
   Acceptance: Zero lint findings. go vet clean.
 
-- [ ] T85.2.7 Run timeseries unit tests with race detector  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]
+- [x] T85.2.7 Run timeseries unit tests with race detector  DONE 2026-04-07
+  All timeseries tests pass; TestPatchTST_TrainWindowed_EngineConvergence and
+  TestPatchTST_BatchedTrainConvergence green. Full repo: 136/136 packages ok.
   Deps: T85.2.6
   Run: go test -race -timeout 300s ./timeseries/...
   Specifically verify: TestPatchTST_TrainWindowed_EngineConvergence, TestPatchTST_BatchedTrainConvergence
