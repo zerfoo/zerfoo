@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // layerTransposes holds pre-computed weight transposes for a single encoder layer.
@@ -114,12 +114,12 @@ func layerNormForwardWithEngine(
 // that callers (encoderBackward) can supply distinct buffer sets for ln1 and
 // ln2 backward within the same iteration.
 type lnBwdBufs struct {
-	normVal, dScaleBatch                       *tensor.TensorNumeric[float32]
-	dScaleSum, dScaleSumR                      *tensor.TensorNumeric[float32]
-	dBiasSum, dBiasSumR                        *tensor.TensorNumeric[float32]
-	dNorm, dNormCent                           *tensor.TensorNumeric[float32]
-	dotScaleGrad, dotMeanGrad                  *tensor.TensorNumeric[float32]
-	invStdSq, term, correction, inner, dInput  *tensor.TensorNumeric[float32]
+	normVal, dScaleBatch                      *tensor.TensorNumeric[float32]
+	dScaleSum, dScaleSumR                     *tensor.TensorNumeric[float32]
+	dBiasSum, dBiasSumR                       *tensor.TensorNumeric[float32]
+	dNorm, dNormCent                          *tensor.TensorNumeric[float32]
+	dotScaleGrad, dotMeanGrad                 *tensor.TensorNumeric[float32]
+	invStdSq, term, correction, inner, dInput *tensor.TensorNumeric[float32]
 }
 
 // layerNormBackwardWithEngine computes the backward pass through layer norm using engine ops.

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/training/scheduler"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/training/scheduler"
 )
 
 // gpuParams holds all PatchTST parameters as float32 tensors for GPU training.
@@ -302,20 +302,20 @@ func (g *gpuGrads) allParamTensors() []*tensor.TensorNumeric[float32] {
 
 // gpuBatchLayerCache stores per-layer forward activations for the entire batch.
 type gpuBatchLayerCache struct {
-	normed1    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
-	q, k, v    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	normed1      *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	q, k, v      *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
 	scoresTensor *tensor.TensorNumeric[float32] // [bs*nHeads, seq, seq] - batched attention scores
-	attnOut    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
-	normed2    *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
-	ffn1PreAct *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
-	ffn1Out    *tensor.TensorNumeric[float32]  // [bs*numPatches, ffnDim]
-	centered1  *tensor.TensorNumeric[float32]   // [bs*numPatches, dModel]
-	invStd1    *tensor.TensorNumeric[float32]  // [bs*numPatches, 1]
-	centered2  *tensor.TensorNumeric[float32]  // [bs*numPatches, dModel]
-	invStd2    *tensor.TensorNumeric[float32]  // [bs*numPatches, 1]
-	xResidual   *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
-	xAfterAttn  *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
-	geluTanhVal *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim] cached for backward
+	attnOut      *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	normed2      *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	ffn1PreAct   *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim]
+	ffn1Out      *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim]
+	centered1    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	invStd1      *tensor.TensorNumeric[float32] // [bs*numPatches, 1]
+	centered2    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel]
+	invStd2      *tensor.TensorNumeric[float32] // [bs*numPatches, 1]
+	xResidual    *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] input to layer
+	xAfterAttn   *tensor.TensorNumeric[float32] // [bs*numPatches, dModel] after residual 1
+	geluTanhVal  *tensor.TensorNumeric[float32] // [bs*numPatches, ffnDim] cached for backward
 
 	// --- T85.2.4 pre-allocated encoder fwd/bwd scratch buffers ---
 	// Allocated lazily on the first encoderForward call and reused for all
@@ -324,14 +324,14 @@ type gpuBatchLayerCache struct {
 	// dst-param variants of the engine ops.
 
 	// Layer norm 1 (forward) intermediates.
-	ln1Mean     *tensor.TensorNumeric[float32] // [totalRows, 1]
-	ln1CentSq   *tensor.TensorNumeric[float32] // [totalRows, dModel]
-	ln1Var      *tensor.TensorNumeric[float32] // [totalRows, 1]
-	ln1VarEps   *tensor.TensorNumeric[float32] // [totalRows, 1]
-	ln1Stddev   *tensor.TensorNumeric[float32] // [totalRows, 1]
-	ln1Ones     *tensor.TensorNumeric[float32] // [totalRows, 1]
-	ln1Scaled   *tensor.TensorNumeric[float32] // [totalRows, dModel] centered*invStd
-	ln1NormMul  *tensor.TensorNumeric[float32] // [totalRows, dModel] normed*scale pre-bias
+	ln1Mean    *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1CentSq  *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	ln1Var     *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1VarEps  *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Stddev  *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Ones    *tensor.TensorNumeric[float32] // [totalRows, 1]
+	ln1Scaled  *tensor.TensorNumeric[float32] // [totalRows, dModel] centered*invStd
+	ln1NormMul *tensor.TensorNumeric[float32] // [totalRows, dModel] normed*scale pre-bias
 	// Layer norm 2 (forward) intermediates.
 	ln2Mean    *tensor.TensorNumeric[float32]
 	ln2CentSq  *tensor.TensorNumeric[float32]
@@ -347,32 +347,32 @@ type gpuBatchLayerCache struct {
 	kBiased *tensor.TensorNumeric[float32]
 	vBiased *tensor.TensorNumeric[float32]
 
-	q4d         *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
-	k4d         *tensor.TensorNumeric[float32]
-	v4d         *tensor.TensorNumeric[float32]
-	q4dT        *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
-	k4dT        *tensor.TensorNumeric[float32]
-	v4dT        *tensor.TensorNumeric[float32]
-	qH          *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
-	kH          *tensor.TensorNumeric[float32]
-	vH          *tensor.TensorNumeric[float32]
-	kHT         *tensor.TensorNumeric[float32] // [bnh, headDim, seq]
-	logits      *tensor.TensorNumeric[float32] // [bnh, seq, seq]
+	q4d          *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
+	k4d          *tensor.TensorNumeric[float32]
+	v4d          *tensor.TensorNumeric[float32]
+	q4dT         *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
+	k4dT         *tensor.TensorNumeric[float32]
+	v4dT         *tensor.TensorNumeric[float32]
+	qH           *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
+	kH           *tensor.TensorNumeric[float32]
+	vH           *tensor.TensorNumeric[float32]
+	kHT          *tensor.TensorNumeric[float32] // [bnh, headDim, seq]
+	logits       *tensor.TensorNumeric[float32] // [bnh, seq, seq]
 	logitsScaled *tensor.TensorNumeric[float32]
-	attnH       *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
-	attnH4d     *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
-	attnH4dT    *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
+	attnH        *tensor.TensorNumeric[float32] // [bnh, seq, headDim]
+	attnH4d      *tensor.TensorNumeric[float32] // [bsC, nHeads, seq, headDim]
+	attnH4dT     *tensor.TensorNumeric[float32] // [bsC, seq, nHeads, headDim]
 
 	attnProj     *tensor.TensorNumeric[float32] // [totalRows, dModel]
 	attnProjBias *tensor.TensorNumeric[float32]
 	xAfterRes1   *tensor.TensorNumeric[float32] // [totalRows, dModel]
 
 	// FFN forward intermediates.
-	ffn1Matmul *tensor.TensorNumeric[float32] // [totalRows, ffnDim]
-	geluX3     *tensor.TensorNumeric[float32]
-	geluInner1 *tensor.TensorNumeric[float32]
-	geluInner2 *tensor.TensorNumeric[float32]
-	geluInner3 *tensor.TensorNumeric[float32]
+	ffn1Matmul      *tensor.TensorNumeric[float32] // [totalRows, ffnDim]
+	geluX3          *tensor.TensorNumeric[float32]
+	geluInner1      *tensor.TensorNumeric[float32]
+	geluInner2      *tensor.TensorNumeric[float32]
+	geluInner3      *tensor.TensorNumeric[float32]
 	geluOnePlusTanh *tensor.TensorNumeric[float32]
 	geluXTimes      *tensor.TensorNumeric[float32]
 	ffn2Matmul      *tensor.TensorNumeric[float32] // [totalRows, dModel]
@@ -463,21 +463,21 @@ type gpuBatchLayerCache struct {
 	dNormed1 *tensor.TensorNumeric[float32]
 
 	// LayerNorm backward scratch (shared between ln1/ln2 backward calls).
-	lnbNormVal       *tensor.TensorNumeric[float32] // [totalRows, dModel]
-	lnbDScaleBatch   *tensor.TensorNumeric[float32] // [totalRows, dModel]
-	lnbDScaleSum     *tensor.TensorNumeric[float32] // [dModel]
-	lnbDScaleSumR    *tensor.TensorNumeric[float32] // [1, dModel]
-	lnbDBiasSum      *tensor.TensorNumeric[float32]
-	lnbDBiasSumR     *tensor.TensorNumeric[float32]
-	lnbDNorm         *tensor.TensorNumeric[float32]
-	lnbDNormCent     *tensor.TensorNumeric[float32]
-	lnbDotScaleGrad  *tensor.TensorNumeric[float32]
-	lnbDotMeanGrad   *tensor.TensorNumeric[float32]
-	lnbInvStdSq      *tensor.TensorNumeric[float32]
-	lnbTerm          *tensor.TensorNumeric[float32]
-	lnbCorrection    *tensor.TensorNumeric[float32]
-	lnbInner         *tensor.TensorNumeric[float32]
-	lnbDInput        *tensor.TensorNumeric[float32]
+	lnbNormVal      *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	lnbDScaleBatch  *tensor.TensorNumeric[float32] // [totalRows, dModel]
+	lnbDScaleSum    *tensor.TensorNumeric[float32] // [dModel]
+	lnbDScaleSumR   *tensor.TensorNumeric[float32] // [1, dModel]
+	lnbDBiasSum     *tensor.TensorNumeric[float32]
+	lnbDBiasSumR    *tensor.TensorNumeric[float32]
+	lnbDNorm        *tensor.TensorNumeric[float32]
+	lnbDNormCent    *tensor.TensorNumeric[float32]
+	lnbDotScaleGrad *tensor.TensorNumeric[float32]
+	lnbDotMeanGrad  *tensor.TensorNumeric[float32]
+	lnbInvStdSq     *tensor.TensorNumeric[float32]
+	lnbTerm         *tensor.TensorNumeric[float32]
+	lnbCorrection   *tensor.TensorNumeric[float32]
+	lnbInner        *tensor.TensorNumeric[float32]
+	lnbDInput       *tensor.TensorNumeric[float32]
 
 	// Second set for ln2 backward (since both ln1 and ln2 backward run in the
 	// same iteration and need separate buffers).
@@ -622,8 +622,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	// so these buffers can be reused across every batch and epoch.
 	// This eliminates per-batch allocations that would cause cudaMalloc
 	// during CUDA graph capture (error 901).
-	bsC := batchSize * channels          // batch dimension includes all channels
-	totalRows := bsC * numPatches        // total rows for encoder
+	bsC := batchSize * channels   // batch dimension includes all channels
+	totalRows := bsC * numPatches // total rows for encoder
 	chanScale := float32(1.0 / float64(channels))
 
 	// Forward cache: pre-allocate struct and layer cache slice once.
@@ -1143,7 +1143,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 	result.Metrics = map[string]float64{"mse": result.FinalLoss}
 	return result, nil
 }
-
 
 // writeBackF32FromGPU writes GPU params back to model float32 tensors.
 func (m *PatchTST) writeBackF32FromGPU(p *gpuParams) {
