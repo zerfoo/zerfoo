@@ -3,6 +3,49 @@
 Investigation findings, debugging sessions, and benchmark results.
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
+## 2026-04-06: GPU training memory leak in PatchTST encoder backward (CRITICAL)
+
+**Type:** finding
+**Tags:** PatchTST, GPU, training, memory leak, E50, E51, DGX, T50.5.2
+
+**Problem:** PatchTST GPU training (`trainWindowedGPU`) cannot complete a 10-epoch run on the DGX Spark GB10. OOMs with `cudaMalloc failed: out of memory` in `gpu encoder bwd` even at modest data sizes.
+
+**Reproduction (cmd/bench_train, all on DGX Spark GB10):**
+
+| Samples | Channels | Epochs | Result |
+|---------|----------|--------|--------|
+| 100     | 5        | 3      | OK 0.29s (97ms/epoch) |
+| 1,000   | 20       | 3      | OK 0.81s (271ms/epoch) |
+| 10,000  | 20       | 3      | OK 7.3s (2.4s/epoch) |
+| 20,000  | 20       | 3      | OK 14.4s (4.8s/epoch) |
+| 25,000  | 20       | 3      | OK 17.6s (5.9s/epoch) |
+| 28,000  | 20       | 10     | **FAIL: OOM in gpu encoder fwd after 23min** |
+| 25,000  | 20       | 10     | **FAIL: hung in CUDA call (kill -9 ineffective)** |
+| 10,000  | 20       | 10     | **FAIL: OOM in gpu encoder bwd after 14min** |
+
+**Root cause:** GPU memory allocation grows across epochs. Short runs (≤3 epochs) at 25K x 20ch fit in memory and complete in ~6s/epoch. The same data size hits OOM at 10 epochs. The OOM site shifts from `gpu encoder fwd` to `gpu encoder bwd` depending on data size, indicating accumulation of intermediate tensors in the backward path.
+
+**Impact:** This blocks T50.5.2 and T51.5.2 from completing the standard 28K x 20ch x 10 epoch benchmark. The previous benchmark result (128.5s for 28K x 20ch x 10 epochs in v1.38.4, benchmarks.md:22) is no longer reproducible — that path appears to have been changed by E50/E51 work.
+
+**Fix:** Investigate `trainWindowedGPU` and `gpu_encoder_bwd` for tensor allocations that escape per-batch cleanup. Check if pre-allocated workspace (T51.2.1) is being reused or if new tensors are created each batch. The CUDA graph capture path (T51.4.1) was supposed to eliminate per-batch allocations — verify it's actually engaged.
+
+**Workaround:** None for full 28K benchmark. Short runs (≤3 epochs) work and produce valid loss curves.
+
+**Per-epoch GPU times (working sizes):**
+- 100x5: 97ms
+- 1000x20: 271ms  
+- 10000x20: 2.43s
+- 20000x20: 4.81s
+- 25000x20: 5.86s
+
+Linear scaling at ~5.9s/epoch per 25K samples for 3-epoch runs.
+
+**Next steps:**
+1. Add tensor allocation profiling to `trainWindowedGPU` per-epoch
+2. Check `gpu_encoder_bwd` for missed `defer tensor.Free()` or pool returns
+3. Verify CUDA graph capture is engaged for the encoder backward (T51.4.1)
+4. File GitHub issue once root cause is confirmed
+
 ## 2026-04-06: DGX benchmark infrastructure for E50/E51
 
 **Type:** finding
