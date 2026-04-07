@@ -279,13 +279,14 @@ func TestLoadTiRexConfigFromMeta(t *testing.T) {
 }
 
 func TestFineTuneDecreasingLoss(t *testing.T) {
-	// SKIPPED: Flaky due to unseeded global RNG producing weight initializations
-	// that yield NaN losses on the first step. Tracked in
-	// https://github.com/zerfoo/zerfoo/issues/350. Re-enable after deterministic
-	// RNG is plumbed through the foundation model constructors.
-	t.Skip("flaky due to unseeded global RNG producing NaN init; tracked in #350")
-
-	fc := newTestForecaster(t, 2, 2, 8, 4, 2)
+	// The TiRex sLSTM/mLSTM backbone is numerically delicate for some random
+	// weight initializations — about 15-20% of random inits produce NaN on
+	// the first forward pass (exploding recurrent activations). That is a
+	// separate model-stability concern tracked in #350. For this test we
+	// just want to verify the fine-tune loop reduces the loss when given a
+	// usable starting point, so we retry construction until the first epoch
+	// loss is finite. If no seed produces a usable init in 20 tries,
+	// something is genuinely broken.
 	ctx := context.Background()
 
 	// Generate synthetic training data: simple linear trend.
@@ -319,9 +320,22 @@ func TestFineTuneDecreasingLoss(t *testing.T) {
 		FreezeBackbone: true,
 	}
 
-	result, err := fc.FineTune(ctx, data, labels, cfg)
-	if err != nil {
-		t.Fatalf("FineTune: %v", err)
+	var result *TrainResult
+	const maxAttempts = 20
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		fc := newTestForecaster(t, 2, 2, 8, 4, 2)
+		r, err := fc.FineTune(ctx, data, labels, cfg)
+		if err != nil {
+			t.Fatalf("FineTune: %v", err)
+		}
+		if len(r.LossHistory) == 0 || math.IsNaN(r.LossHistory[0]) || math.IsInf(r.LossHistory[0], 0) {
+			continue
+		}
+		result = r
+		break
+	}
+	if result == nil {
+		t.Fatalf("no usable init after %d attempts (all produced NaN/Inf on first epoch)", maxAttempts)
 	}
 
 	if len(result.LossHistory) != 30 {
