@@ -17,8 +17,8 @@ Task statuses updated 2026-04-03 based on merged PRs and git history.
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
 - E48: TimeMixer backend (10/10 complete) -- DONE 2026-03-30
 - E49: Foundation model inference (12/12 complete) -- DONE 2026-03-30
-- E50: GPU training kernel elimination (5/6 -- code complete; DGX benchmark T50.5.2 pending)
-- E51: CUDA graph capture for training (5/6 -- code complete; DGX benchmark T51.5.2 pending)
+- E50: GPU training kernel elimination (5/6 -- code complete; DGX benchmark T50.5.2 BLOCKED on GPU memory leak in encoder bwd, see devlog)
+- E51: CUDA graph capture for training (5/6 -- code complete; DGX benchmark T51.5.2 BLOCKED on GPU memory leak, see devlog)
 - E52: DRY composition refactoring (7/7 complete -- shared math_ops, adamw_f32, layernorm_ops, engine wrappers)
 - E53: Unified training forward/backward (6/6 complete -- shared encoder, eliminated engine paths)
 - E54: Capture-pure GPU engine ops (2/4 -- GPU-native Zero/Copy done; re-enable graph capture pending)

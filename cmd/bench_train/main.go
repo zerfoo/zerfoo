@@ -8,9 +8,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -25,7 +27,22 @@ func main() {
 	batchSize := flag.Int("batch-size", 64, "batch size")
 	lr := flag.Float64("lr", 1e-3, "learning rate")
 	cpuOnly := flag.Bool("cpu", false, "force CPU engine")
+	outFile := flag.String("out", "", "write results to file (unbuffered)")
 	flag.Parse()
+
+	// If -out specified, tee all output to the file (unbuffered).
+	if *outFile != "" {
+		f, err := os.Create(*outFile)
+		if err != nil {
+			log.Fatalf("create output file: %v", err)
+		}
+		defer f.Close()
+		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		// Flush after each log line by wrapping the file.
+		defer f.Sync()
+	}
+	// Force line-buffered log output.
+	log.SetFlags(log.Ldate | log.Ltime)
 
 	inputLen := 24
 	config := ts.PatchTSTConfig{
