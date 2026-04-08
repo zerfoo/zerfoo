@@ -2,6 +2,101 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-08: T1.4 extractGPUParams aliasing audit
+
+**Type:** research / audit (no code changes)
+**Tags:** patchtst, gpu, convergence-regression, aliasing, adamw
+
+**Question.** Is `paramTs[i]` the LIVE GPU tensor that the forward pass reads
+from, or a SEPARATE COPY created at training start? And does the forward pass
+read weights from the same `*tensor.TensorNumeric[float32]` instances as
+`paramTs[i]`, or from `m.<field>` directly?
+
+**Verdict.** `paramTs[i]` is a SEPARATE COPY relative to `m.patchEmb.weights`
+/ `m.layers[i].qProj.weights` / ... — `extractGPUParams` allocates fresh
+tensors via `clone` (host-side `make` + `copy` + `tensor.New`). BUT within
+the GPU training loop, `paramTs[i]` IS the same pointer the forward pass
+reads from (`params.headW`, `params.layers[li].qW`, etc. — not `m.head.weights`).
+So the read-path aliasing inside `trainWindowedGPU` is consistent. The bug
+is NOT "forward reads from the wrong tensor"; it lives on the write-path.
+
+**Evidence (file: `timeseries/patchtst_gpu_train.go`).**
+
+1. `extractGPUParams` clones every parameter into a fresh tensor:
+   - `clone` closure allocates `make([]float32, …)` + `copy` + `tensor.New`
+     at `patchtst_gpu_train.go:60-64`.
+   - `reshapeBias` does the same at `patchtst_gpu_train.go:171-175`.
+   - Applied to patchEmb W/B (`:67`, `:71-76`), posEmb (`:79-84`), every
+     encoder layer projection/FFN/norm (`:87-154`), and head W/B
+     (`:157-166`). No path returns `m.<field>` directly.
+   - → `p.headW != m.head.weights` (different `*TensorNumeric` pointers,
+     backed by independent storage).
+
+2. `allParamTensors()` returns LIVE ALIASES of the `gpuParams` fields, not
+   copies (`:178-188`): it just appends the existing pointers. So
+   `paramTs[i] == params.headW` etc. — the same instance.
+
+3. Forward pass reads from `params.*`, not `m.*`:
+   - `engine.Transpose(ctx, params.headW, …)` at `:855`.
+   - `layer := &params.layers[li]` at `:859`.
+   - `engine.MatMul(ctx, fc.flatInput, params.headW, fc.headOut)` at `:940`.
+   - No references to `m.head.weights` / `m.layers[i].qProj.weights` inside
+     the training loop forward/backward. `m.*` is only touched by
+     `writeBackF32FromGPU` after training (`:1178-1201`).
+   - → Read-path IS aliased: `paramTs[i]` and the tensor the forward pass
+     reads are the same `*TensorNumeric` instance.
+
+4. CPU-mirror setup (`:609-623`) acknowledges the real constraint: for GPU
+   tensors, `pt.Data()` returns "a fresh device→host memcpy each call, not
+   a pointer to live memory". `cpuParams[i]` is snapshotted from device once
+   at training start (`copy(cpuParams[i], pt.Data())`).
+
+5. AdamW step (`:1127-1153`) runs on the CPU mirror and pushes back via
+   `paramTs[i].SetData(pData)` at `:1152`. `SetData` delegates to
+   `storage.Set` in `ztensor/tensor/tensor.go:268-270`. The correctness of
+   this round trip depends on `storage.Set` actually uploading host→device
+   AND on the CUDA-graph-captured forward (`fwdCaptured`, `:855-940`) using
+   a device pointer that `storage.Set` writes into, not a stale pointer
+   baked into the captured graph.
+
+**Interpretation — E2 (read-path) vs E3 (write-path).**
+
+- E2 ("forward reads stale weights because paramTs is a copy of model params,
+  not the live tensor") is REFUTED. Inside the training loop the forward
+  pass reads from the exact same `*TensorNumeric` instances that AdamW
+  writes through (`paramTs[i] == params.headW == &params.layers[li].qW`
+  etc.). There is no second layer of copying between `paramTs[i]` and what
+  `engine.MatMul`/`engine.Transpose` consume.
+
+- E3 ("updates via the CPU-mirror round trip don't reach the device that the
+  captured forward graph executes on") is the remaining plausible failure
+  mode. The suspects, in order:
+  (a) `storage.Set` for GPU storage may allocate a NEW device buffer instead
+      of writing in-place, leaving the CUDA-captured graph pointing at the
+      old one (`fwdCaptured` path at `:855-940`, destroyed at `:1166`).
+  (b) Even if `storage.Set` writes in place, the captured CUDA graph may
+      have snapshotted device pointers of the transpose buffers (`fc.headWT`,
+      `layerWTs`) which are recomputed from `params.headW` ONCE before
+      capture and then reused — any parameter update after capture would
+      be invisible until the transpose buffers are re-materialized inside
+      the captured region.
+  (c) `tensor.Data()` returning a fresh device→host memcpy (per the comment
+      at `:609-615`) suggests the GPU storage uses a staging host buffer;
+      if `SetData` writes to that staging buffer without a host→device
+      flush, device memory never changes.
+
+**Recommendation.** Pursue E3 (write-path fix). Specifically:
+1. Verify `storage.Set` for the active GPU backend actually does a
+   host→device memcpy into the original device pointer (not realloc).
+2. Verify the captured CUDA graph at `:855-940` does NOT freeze transpose
+   outputs across optimizer steps — i.e., `fc.headWT` / `layerWTs` must be
+   recomputed every iteration from the (now-updated) `params.headW`.
+3. As a fast diagnostic, disable CUDA graph capture (`fwdCaptured = false`)
+   and re-run the 28K×20×10 bench. If loss starts moving, the bug is in
+   the captured-graph + SetData interaction, not in AdamW itself.
+
+Read-path E2 is a dead end; closing that branch of the investigation.
+
 ## 2026-04-08: Spark commissioned as bench runner; GPU convergence fix verified incomplete
 
 **Type:** investigation + infrastructure commissioning
