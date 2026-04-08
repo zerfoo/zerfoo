@@ -1,6 +1,106 @@
 # Development Log
 
 Investigation findings, debugging sessions, and benchmark results.
+
+## 2026-04-08: Spark commissioned as bench runner; GPU convergence fix verified incomplete
+
+**Type:** investigation + infrastructure commissioning
+**Tags:** dgx, spark, patchtst, gpu, convergence-regression, bench-runner
+
+**Problem.** Yesterday's DGX outage (2026-04-07) was caused by SSH channel
+accumulation from interactive `ssh dgx 'bench_train ...'` calls. The plan in
+`docs/plans/spark-bench-runner.md` commissions Spark as the submission path
+to eliminate the leak and enforce cgroup caps. Tonight's goal: get the
+pipeline end-to-end green and use it to validate the GPU training
+convergence fix on branch `fix/gpu-train-cpu-mirror` (commit `0750c440`).
+
+**What happened.**
+
+1. **Spark v1.6.0 GPU passthrough was broken.** First bench through the
+   pipeline reported `cudaSetDevice failed: CUDA driver version is
+   insufficient` and fell back to CPU. Root cause in Spark:
+   `internal/executor/podman.go:198` only added `--device
+   nvidia.com/gpu=all` when `Limits.GPUMemoryMB > 0`, but the manifest
+   parser populates `GPUCount` from `nvidia.com/gpu: "1"` and never sets
+   `GPUMemoryMB` (no manifest key maps to it). Fixed upstream in
+   [feza-ai/spark#9](https://github.com/feza-ai/spark/pull/9), released as
+   `v1.6.1`, installed on DGX.
+
+2. **Manifest needed a third volume mount.** `bench_train` dlopens
+   `libkernels.so` from `/opt/zerfoo/lib`, not from `/usr/local/cuda`. Added
+   that mount to `docs/bench/manifests/patchtst-train.yaml`.
+
+3. **Helper script tweaks.** Spark's HTTP API expects YAML (not JSON) in the
+   POST body and uses a top-level `status` string (not `status.phase`) with
+   values `pending|scheduled|running|completed|failed`. Fixed
+   `scripts/bench-spark.sh` accordingly.
+
+4. **Pipeline verified end-to-end on GPU.** Smoke test (1000 samples × 5
+   channels × 2 epochs): `engine: GPU (CUDA)`, 550 ms total, clean pod
+   lifecycle, logs streamed back, pod deleted on success, **zero SSH
+   sessions leaked** across 6 consecutive submissions. Success metrics
+   from the plan are met.
+
+5. **Surprise: the GPU convergence fix is still broken.** On commit
+   `0750c440` (the supposed fix), the 5K × 10ch × 3ep regression config
+   (same config memory #1776 used for the original reproduction) still
+   shows loss frozen at **0.268357** on GPU across all three epochs —
+   byte-for-byte the value recorded as the pre-fix regression. The
+   identical binary on CPU converges normally:
+   0.115235 → 0.000863 (99.3% reduction). The fix addresses AdamW step
+   writeback to device memory but misses whichever GPU path is actually
+   blocking weight updates from taking effect in the forward pass.
+
+**Root cause (Spark).** Fixed in feza-ai/spark#9. Summary: executor gated
+GPU device injection on `GPUMemoryMB`, but the standard k8s resource request
+produces `GPUCount`.
+
+**Root cause (zerfoo GPU convergence).** Unknown; the AdamW writeback fix
+was necessary but insufficient. Candidate areas to investigate:
+- Forward-pass weight read path: does the encoder/decoder re-read parameters
+  from device memory between optimizer steps, or does it hold onto a stale
+  CPU mirror?
+- Gradient tensor pointer disconnection (memory #1793) — confirmed earlier
+  as a contributing factor but the writeback fix may have only closed one
+  of two symmetric holes.
+- The 0.268357 value being EXACTLY reproducible suggests the weights are
+  static after initialization, not merely updating too slowly. Verify with
+  a weights hash before/after the first optimizer step.
+
+**Fix.**
+- Spark: feza-ai/spark#9 merged, v1.6.1 released, installed on DGX.
+- zerfoo: commissioning done; helper/manifest/ADR fixes in
+  [zerfoo#358](https://github.com/zerfoo/zerfoo/pull/358). GPU convergence
+  regression remains open — NOT fixed by `fix/gpu-train-cpu-mirror` alone.
+
+**Impact.**
+- Infra: bench wave from `docs/plan.md` (T50.5.2, T51.5.2, T54.4.1,
+  T63.2.1, T61.3.2) is unblocked from an SSH/cgroup standpoint — once the
+  GPU convergence regression is actually fixed, benches can run through
+  Spark immediately.
+- zerfoo: any GPU training using PatchTST (and likely any timeseries model
+  using AdamW through the same path) is silently not learning on DGX.
+  Inference paths appear unaffected (Gemma/DeepSeek/Llama forward passes
+  continue to benchmark correctly per v1.38.4 results).
+
+**Plan T4.x status.**
+- T4.1 (reproduce regression on `main`): SKIPPED — regression reproduces on
+  the fix branch, so by transitivity it also reproduces on `main`.
+- T4.2 (validate fix branch): **FAILED**. Loss frozen; fix branch does not
+  actually fix the regression on GPU.
+- T4.3 (cgroup OOM stress): deferred pending convergence fix.
+- T4.4 (SSH session leak verification): **PASS**. `who | wc -l` stayed at
+  baseline across 6 consecutive bench submissions.
+- T4.5 (this devlog entry): done.
+
+**Next steps.**
+- Open a dedicated issue/branch to investigate the GPU convergence
+  regression beyond the AdamW writeback fix. Candidate: dump weight tensor
+  hashes on GPU before and after the first optimizer step; if unchanged,
+  the weights never flow back into the forward pass.
+- Consider reverting `fix/gpu-train-cpu-mirror` merge to main if it gives
+  false confidence without actually fixing the regression.
+
 Entries are newest-first. Prune entries older than 90 days during /trim.
 
 ## 2026-04-07: GPU training memory leak — root cause identified
