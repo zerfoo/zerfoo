@@ -2258,3 +2258,29 @@ Framework ready for community launch phase.
 **Fix:** Wire CUDA engine to TrainWindowed path (requires CUDA streaming GEMM for mmap'd tensors).
 **Impact:** Batched training is functionally correct and converges. Performance improvement requires GPU kernel integration.
 **Commit:** v1.37.0 (9a289ff9)
+
+## 2026-04-08: T1.6 SetData GPU semantics audit
+
+**Verdict:** WRITE PATH IS SAFE. `SetData` on a GPU-backed tensor is an unconditional host->device copy. No dirty flag, no residency branch, no silent skip. E2 (SetData skipping on GPU) is refuted; leaning **E3** (parameter identity / host round-trip clobber).
+
+**Evidence (file:line):**
+- `ztensor/tensor/tensor.go:268` `TensorNumeric.SetData` -> pure delegate `t.storage.Set(data)`. No device branch at tensor level.
+- `ztensor/tensor/storage.go:18` `Storage[T].Set(data []T)` interface.
+- `ztensor/tensor/gpu_storage.go:337` `GPUStorage.Set` -> calls `TrySet`, logs on error (non-fatal but not skipped).
+- `ztensor/tensor/gpu_storage.go:278-333` `TrySet`:
+  - `:279` `SetDevice(deviceID)` always runs.
+  - `:285-318` length-mismatch path: Free + (pool or runtime) Malloc; state reset on failure.
+  - `:320-330` copy path: `managed` branch writes directly into `unsafe.Slice((*T)(devicePtr), n)`; discrete branch calls `runtime.Memcpy(dst=devicePtr, src=unsafe.SliceData(data), MemcpyHostToDevice)`. On CUDA this lands in `cuda.MemcpyHtoD` via `gpuapi.Runtime`.
+  - Only "skip" is the implicit `len(data)==0` guard at `:320` — correct.
+- `GPUStorage` struct at `ztensor/tensor/gpu_storage.go:25-36` has NO `dirty`/`hostValid` flag. `view`/`refcount` affect `Free()` only.
+- `ztensor/tensor/tensor.go:216-218` `Data()` returns `t.storage.Slice()` (non-view path). `ztensor/tensor/gpu_storage.go:241` `Slice()` -> `TrySlice` at `:215`, which always allocates a fresh `[]T` and performs a fresh `MemcpyDeviceToHost` (or unified copy for managed). **No host-side caching**; every `Data()` call hits the device. No stale snapshot risk in the reader.
+- Immutable storages that `panic` on `Set` (Q4/Q8/Q*K/AWQ/GPTQ/W8A8/IQ*) are CPU-side packed weights — orthogonal to the training optimizer write-back (params are float32). `mmap_storage.Set` at `:136` is a no-op but only applies to memory-mapped weight files, not training state.
+
+**Trace — `paramTs[i]` GPU tensor, `SetData(hostFloat32)`:**
+`tensor.go:268` -> `gpu_storage.go:337` -> `:278 TrySet` -> `:279 SetDevice` -> (length-equal) -> `:325 runtime.Memcpy(devicePtr, unsafe.SliceData(data), len*4, MemcpyHostToDevice)` -> CUDA `cuMemcpyHtoD`. Unconditional.
+
+**Implication for E2/E3 triage:**
+- E2 (silent GPU skip): **refuted** — no code path in `GPUStorage.TrySet` skips the copy for a same-length, non-empty slice.
+- E3 (parameter identity / order-of-ops): **primary suspect**. If optimizer updates fail to manifest in the forward pass, the candidates are: (a) optimizer writes to a different `*TensorNumeric[T]` than the forward graph reads (paramTs slice vs graph node identity), (b) a post-SetData H2D is overwritten by a later D2H round-trip that snapshots pre-update state, (c) optimizer state vs parameter tensor swap (like the fix in `f29c93bd` for optimizer step write-back).
+
+**Next:** verify identity of `paramTs[i]` between trainer loop, graph parameter slots, and optimizer — log `devicePtr` before/after `SetData` on a canary step. Scratch: `.claude/scratch/t1.6-audit.md`.
