@@ -2284,3 +2284,81 @@ Framework ready for community launch phase.
 - E3 (parameter identity / order-of-ops): **primary suspect**. If optimizer updates fail to manifest in the forward pass, the candidates are: (a) optimizer writes to a different `*TensorNumeric[T]` than the forward graph reads (paramTs slice vs graph node identity), (b) a post-SetData H2D is overwritten by a later D2H round-trip that snapshots pre-update state, (c) optimizer state vs parameter tensor swap (like the fix in `f29c93bd` for optimizer step write-back).
 
 **Next:** verify identity of `paramTs[i]` between trainer loop, graph parameter slots, and optimizer — log `devicePtr` before/after `SetData` on a canary step. Scratch: `.claude/scratch/t1.6-audit.md`.
+
+## 2026-04-08: T1.5 forward-pass param access audit
+
+Audit of every trainable-weight read issued per batch by
+`timeseries/patchtst_gpu_train.go::trainWindowedGPU` and the functions it
+invokes during training (`encoderForward` + inline patch-embed / head ops).
+The question: does any of those reads touch a *different* `*TensorNumeric`
+than the ones `paramTs[i].SetData(...)` writes at line 1152, or consume a
+stale cached snapshot?
+
+**Pointer provenance:** `params.allParamTensors()` (patchtst_gpu_train.go:594)
+returns pointers that alias the exact fields of `params` / `params.layers`.
+`encoderForward` receives `params.layers` by slice and indexes
+`layer := &layers[li]` (patchtst_encoder.go:879), so `layer.qW` etc. are the
+same `*TensorNumeric` as `paramTs[i]`. `GPUStorage.Set` (gpu_storage.go:337)
+performs an in-place host→device memcpy into the existing device pointer, so
+SetData preserves identity and is visible on the next forward.
+
+**Cache audit:**
+- `fc.layerWTs` / `fc.headWT`: weight transposes, recomputed every batch from
+  live params at patchtst_gpu_train.go:855–878. Used only by backward. Not a
+  staleness source.
+- `fc.layerCaches[li]`: activation/scratch only, no weight copies.
+- CUDA forward-prefix graph: **disabled** (`canCapture = false`,
+  patchtst_gpu_train.go:798). Even if enabled, graph replay would reuse the
+  same device pointer that SetData mutates — not a staleness source.
+- `cpuParams[i]`: AdamW working buffer, never read by forward.
+
+| #  | Weight             | Read site                          | Source tensor             | Matches paramTs? |
+|----|--------------------|------------------------------------|---------------------------|------------------|
+|  1 | patchEmbW          | patchtst_gpu_train.go:886          | params.patchEmbW          | Y |
+|  2 | patchEmbB          | patchtst_gpu_train.go:889          | params.patchEmbB          | Y |
+|  3 | posEmb             | patchtst_gpu_train.go:895          | params.posEmb             | Y |
+|  4 | headW (transpose)  | patchtst_gpu_train.go:855          | params.headW              | Y |
+|  5 | layer.qW (trans)   | patchtst_gpu_train.go:861          | params.layers[li].qW      | Y |
+|  6 | layer.kW (trans)   | patchtst_gpu_train.go:864          | params.layers[li].kW      | Y |
+|  7 | layer.vW (trans)   | patchtst_gpu_train.go:867          | params.layers[li].vW      | Y |
+|  8 | layer.oW (trans)   | patchtst_gpu_train.go:870          | params.layers[li].oW      | Y |
+|  9 | layer.ffn1W (trans)| patchtst_gpu_train.go:873          | params.layers[li].ffn1W   | Y |
+| 10 | layer.ffn2W (trans)| patchtst_gpu_train.go:876          | params.layers[li].ffn2W   | Y |
+| 11 | layer.norm1        | patchtst_encoder.go:887            | params.layers[li].norm1   | Y |
+| 12 | layer.bias1        | patchtst_encoder.go:887            | params.layers[li].bias1   | Y |
+| 13 | layer.qW (matmul)  | patchtst_encoder.go:896            | params.layers[li].qW      | Y |
+| 14 | layer.qB           | patchtst_encoder.go:899            | params.layers[li].qB      | Y |
+| 15 | layer.kW (matmul)  | patchtst_encoder.go:902            | params.layers[li].kW      | Y |
+| 16 | layer.kB           | patchtst_encoder.go:905            | params.layers[li].kB      | Y |
+| 17 | layer.vW (matmul)  | patchtst_encoder.go:908            | params.layers[li].vW      | Y |
+| 18 | layer.vB           | patchtst_encoder.go:911            | params.layers[li].vB      | Y |
+| 19 | layer.oW (matmul)  | patchtst_encoder.go:980            | params.layers[li].oW      | Y |
+| 20 | layer.oB           | patchtst_encoder.go:983            | params.layers[li].oB      | Y |
+| 21 | layer.norm2        | patchtst_encoder.go:993            | params.layers[li].norm2   | Y |
+| 22 | layer.bias2        | patchtst_encoder.go:993            | params.layers[li].bias2   | Y |
+| 23 | layer.ffn1W (mm)   | patchtst_encoder.go:1002           | params.layers[li].ffn1W   | Y |
+| 24 | layer.ffn1B        | patchtst_encoder.go:1005           | params.layers[li].ffn1B   | Y |
+| 25 | layer.ffn2W (mm)   | patchtst_encoder.go:1040           | params.layers[li].ffn2W   | Y |
+| 26 | layer.ffn2B        | patchtst_encoder.go:1043           | params.layers[li].ffn2B   | Y |
+| 27 | headW (matmul)     | patchtst_gpu_train.go:940          | params.headW              | Y |
+| 28 | headB              | patchtst_gpu_train.go:943          | params.headB              | Y |
+
+**Counts:** 28 distinct per-batch forward read sites audited. 28/28 alias
+`paramTs`. 0 sites consume a stale snapshot of weights.
+
+**Verdict — leans E3, not E2.** The forward path has no weight cache between
+`params.*` and the engine ops: `encoderForward` re-reads `layers[li].*` (same
+pointers as `paramTs`) every batch, and all weight-derived scratch in
+`gpuBatchForwardCache` is recomputed per batch. So the hypothesis that
+`gpuBatchForwardCache` holds a stale weight snapshot (E2) is disproved for the
+forward pass. The regression must live elsewhere — likely a flavor of E3:
+`GPUStorage.TrySet` silently degrades to a `log.Printf` warning on any error
+(gpu_storage.go:338–340), so a failing host→device copy would be invisible;
+the AdamW math works on a CPU mirror that is only reconciled to device via
+SetData and is never verified by read-back. Recommended follow-ups (T1.6+):
+(a) assert TrySet success instead of swallowing it through Set;
+(b) after SetData, read back `pt.Data()` and compare to `cpuParams[i]` on a
+canary batch; (c) sanity-check the 16-field layer ordering in
+`allParamTensors` (patchtst_gpu_train.go:183-185) against AdamW's indexing.
+
+Scratch: `.claude/scratch/t1.5-audit.md`.
