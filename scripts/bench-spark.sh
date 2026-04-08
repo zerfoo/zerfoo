@@ -9,7 +9,7 @@
 # after logs are fetched (default: leave the pod for inspection via
 # `curl http://${SPARK_HOST}/api/v1/pods/<name>`).
 #
-# Requires: bash, curl, python3 with pyyaml,
+# Requires: bash, curl, python3,
 #           network access to ${SPARK_HOST} (default 192.168.86.250:8080).
 #
 # This replaces the deprecated `ssh dgx 'bench_train ...'` pattern that
@@ -66,24 +66,13 @@ MANIFEST_RENDERED="$(
     "${MANIFEST_TEMPLATE}"
 )"
 
-# Spark's /api/v1/pods accepts JSON, not YAML. Convert via python3+pyyaml.
-MANIFEST_JSON="$(
-  printf '%s' "${MANIFEST_RENDERED}" | python3 -c '
-import sys, json
-try:
-    import yaml
-except ImportError:
-    sys.stderr.write("bench-spark.sh: python3 yaml module required (pip install pyyaml)\n")
-    sys.exit(4)
-print(json.dumps(yaml.safe_load(sys.stdin)))
-'
-)"
-
+# Spark's /api/v1/pods reads the request body via its own indent-based YAML
+# parser, so we POST raw YAML (not JSON). Content-Type is informational.
 echo "bench-spark: submitting ${POD_NAME} to http://${SPARK_HOST}"
 SUBMIT_RESP="$(
-  curl -sf -X POST \
-    -H 'Content-Type: application/json' \
-    --data "${MANIFEST_JSON}" \
+  printf '%s' "${MANIFEST_RENDERED}" | curl -sf -X POST \
+    -H 'Content-Type: application/yaml' \
+    --data-binary @- \
     "http://${SPARK_HOST}/api/v1/pods"
 )" || { echo "bench-spark: submit failed" >&2; exit 5; }
 
@@ -91,7 +80,7 @@ echo "bench-spark: submitted"
 printf '%s\n' "${SUBMIT_RESP}" | head -c 500
 echo
 
-# Poll for terminal phase.
+# Poll for terminal status. Spark phases: pending|scheduled|running|completed|failed.
 PHASE=""
 for _ in $(seq 1 7200); do  # 6 hours max at 3s/tick
   STATUS_JSON="$(curl -sf "http://${SPARK_HOST}/api/v1/pods/${POD_NAME}" || echo '{}')"
@@ -102,18 +91,19 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     print(""); sys.exit(0)
-print(d.get("status", {}).get("phase", ""))
+s = d.get("status", "")
+print(s if isinstance(s, str) else "")
 '
   )"
   case "${PHASE}" in
-    Succeeded|Failed) break ;;
+    completed|failed) break ;;
     "")               echo "bench-spark: pod not found yet; retrying" >&2 ;;
     *)                ;;
   esac
   sleep 3
 done
 
-echo "bench-spark: pod phase=${PHASE}; fetching logs"
+echo "bench-spark: pod status=${PHASE}; fetching logs"
 curl -sf "http://${SPARK_HOST}/api/v1/pods/${POD_NAME}/logs" || echo "(log fetch failed)"
 
 if [[ "${CLEANUP}" -eq 1 ]]; then
@@ -123,7 +113,7 @@ if [[ "${CLEANUP}" -eq 1 ]]; then
 fi
 
 case "${PHASE}" in
-  Succeeded) exit 0 ;;
-  Failed)    exit 1 ;;
+  completed) exit 0 ;;
+  failed)    exit 1 ;;
   *)         exit 2 ;;
 esac
