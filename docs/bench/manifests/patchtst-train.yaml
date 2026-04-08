@@ -29,7 +29,8 @@ spec:
   containers:
     - name: bench
       image: docker.io/library/ubuntu:24.04
-      command: ["/var/lib/zerfoo/bin/bench_train"]
+      command:
+        - /var/lib/zerfoo/bin/bench_train
       args:
         - "-samples"
         - "${SAMPLES}"
@@ -51,6 +52,9 @@ spec:
         - name: zerfoo-bin
           mountPath: /var/lib/zerfoo/bin
           readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
         - name: cuda
           mountPath: /usr/local/cuda
           readOnly: true
@@ -60,6 +64,10 @@ spec:
     - name: zerfoo-bin
       hostPath:
         path: /var/lib/zerfoo/bin
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
         type: Directory
     - name: cuda
       hostPath:
