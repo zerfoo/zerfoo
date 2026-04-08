@@ -8,15 +8,29 @@ Be the best-in-class ML inference framework in Go — competitive with C++ runti
 
 ## Hardware
 
-DGX Spark GPU available at `ssh ndungu@192.168.86.250`
+DGX Spark GPU host is at `192.168.86.250` (NVIDIA GB10, aarch64, unified memory).
+
+**Benchmarks MUST run via Spark, not interactive SSH.** Interactive `ssh dgx 'bench_train ...'` calls from the Claude Code bash tool leak SSH channels and have taken the host down (2026-04-07 outage, see `docs/plans/spark-bench-runner.md`). The host runs Spark v1.6.0+ as a single-node Podman-backed pod orchestrator; submit benches as Kubernetes Pod manifests via the Spark HTTP API on `:8080`.
+
+- Submit a bench: `scripts/bench-spark.sh -samples N -channels C -epochs E` (wraps POST to `http://192.168.86.250:8080/api/v1/pods` with `docs/bench/manifests/patchtst-train.yaml`).
+- Inspect: `curl http://192.168.86.250:8080/api/v1/pods/<name>`
+- Stream logs: `curl http://192.168.86.250:8080/api/v1/pods/<name>/logs`
+- Kill a runaway bench: `curl -X DELETE http://192.168.86.250:8080/api/v1/pods/<name>`
+
+The manifest enforces cgroup limits (`memory: 32Gi`, `cpu: "8"`, `nvidia.com/gpu: 1`) via Podman, so a runaway bench OOM-kills inside the container instead of taking down the host. Podman cannot cgroup-cap VRAM on GB10 (no MIG); VRAM contention is serialized via `SPARK_GPU_MAX=1` (one GPU pod at a time on the host).
+
+**Interactive shell on DGX** is still available for debugging (`ssh ndungu@192.168.86.250`), but **do not run benchmarks through it** — that means no `go test -bench`, no `bench_train`, no `go run ./cmd/bench_*`, no `go test -tags cuda` that touches GPU kernels. Anything that loops for more than ~10 seconds goes through Spark.
+
+ADR: `docs/adr/083-spark-bench-runner.md` (pending) for rationale and alternatives evaluated.
 
 ## Build & Test
 
 ```bash
-go test ./...                           # CPU tests (no GPU required)
-go test -tags cuda ./...                # With CUDA (on DGX Spark)
+go test ./...                           # CPU tests (no GPU required, runs anywhere)
 go test -run TestParity -count=1 ./tests/parity/...  # Model parity tests (require model files)
 ```
+
+GPU tests (`-tags cuda`, `bench_train`, and any benchmark that actually touches CUDA kernels) must run on DGX via Spark — see the Hardware section above. Do not run them via interactive SSH.
 
 ## Key Conventions
 
