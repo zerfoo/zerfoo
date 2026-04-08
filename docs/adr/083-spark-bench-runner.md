@@ -113,11 +113,27 @@ Kubernetes Pod schema so the manifest is portable if we ever outgrow it.
 - If we ever need multi-tenant benches, revisit VRAM isolation (possibly via
   time-slicing or a newer GPU generation with MIG).
 
+## Minimum Spark version: v1.6.1
+
+Commissioning on 2026-04-08 surfaced a Spark bug that made `v1.6.0` unusable
+for this plan: the executor only injected `--device nvidia.com/gpu=all` when
+`Limits.GPUMemoryMB > 0`, but the manifest parser populates `GPUCount` from
+the k8s-standard `nvidia.com/gpu: "1"` key and never sets `GPUMemoryMB`.
+Pods scheduled via the HTTP API with a standard GPU request silently ran
+without a GPU device and fell back to CPU. Fixed upstream in
+[feza-ai/spark#9](https://github.com/feza-ai/spark/pull/9) and released as
+`v1.6.1`. **Do not use `v1.6.0` on DGX for this runner.**
+
+Also: the manifest MUST mount `/opt/zerfoo/lib` in addition to
+`/var/lib/zerfoo/bin` and `/usr/local/cuda`, because `bench_train` dlopens
+`libkernels.so` from that host path.
+
 ## References
 - `docs/plans/spark-bench-runner.md` — full deployment plan, task breakdown,
   and validation steps.
-- `github.com/feza-ai/spark` — Spark source and releases (`v1.6.0` at time of
-  decision).
+- `github.com/feza-ai/spark` — Spark source and releases (`v1.6.1` minimum).
+- [feza-ai/spark#9](https://github.com/feza-ai/spark/pull/9) — upstream GPU
+  passthrough fix required by this runner.
 - ADR 017 — DGX hardware validation strategy (prior context).
 - Incident writeup in `docs/devlog.md` once validation completes under Epic E4
   of the plan.
