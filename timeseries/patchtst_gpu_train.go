@@ -606,6 +606,22 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		}
 	}
 
+	// Persistent CPU mirrors of params and grads. Required because for GPU
+	// tensors, tensor.Data() returns a fresh device→host memcpy each call,
+	// not a pointer to live memory. Without these mirrors, AdamW updates a
+	// throwaway slice and the device weights never change (the bug fixed
+	// here: 25K×N benches showed loss frozen to 6+ sig figs across epochs
+	// because the optimizer's writes to paramTs[i].Data() went to a
+	// temporary buffer instead of the device).
+	cpuParams := make([][]float32, nParamTensors)
+	cpuGrads := make([][]float32, nParamTensors)
+	for i, pt := range paramTs {
+		cpuParams[i] = make([]float32, pt.Size())
+		cpuGrads[i] = make([]float32, pt.Size())
+		// Snapshot initial weights from device.
+		copy(cpuParams[i], pt.Data())
+	}
+
 	channels := len(windows[0])
 
 	result := &TrainResult{
@@ -1110,8 +1126,19 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 			for i := range paramTs {
 				// AdamW step on CPU for simplicity and correctness.
-				pData := paramTs[i].Data()
-				gData := gradTs[i].Data()
+				//
+				// IMPORTANT: for GPU tensors, paramTs[i].Data() returns a fresh
+				// device→host memcpy each call — writing to it does NOT update
+				// the device. We use persistent CPU mirrors (cpuParams[i]) for
+				// the params, snapshotted from device once at training start
+				// and updated in place by AdamW each step. After the step, we
+				// push the updated mirror back to the device tensor via
+				// SetData. The Adam moments and the gradient mirror live on
+				// CPU throughout, so they don't need this round trip.
+				gradData := gradTs[i].Data() // fresh device→host copy of grad
+				copy(cpuGrads[i], gradData)
+				pData := cpuParams[i]
+				gData := cpuGrads[i]
 				mData := adamM[i].Data()
 				vData := adamV[i].Data()
 				for j := range pData {
@@ -1121,6 +1148,8 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					vHat := vData[j] * vCorr
 					pData[j] -= lrF * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wdF*pData[j])
 				}
+				// Push the updated CPU mirror back to the device.
+				paramTs[i].SetData(pData)
 			}
 		}
 
