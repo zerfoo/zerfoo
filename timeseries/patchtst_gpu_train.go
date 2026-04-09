@@ -502,29 +502,6 @@ type gpuBatchLayerCache struct {
 	// backward iteration. [totalRows, dModel]
 	dXOut *tensor.TensorNumeric[float32]
 
-	// Gradient accumulator "ping" buffers.
-	//
-	// Pre-fix semantics: `dg.X = engine.Add(dg.X, delta)` allocates a NEW
-	// tensor each backward call and reassigns dg.X to it. The initial
-	// gradient tensor (the one cached in gradTs) is therefore disconnected
-	// from dg.X after the first backward and is never updated by subsequent
-	// ops. AdamW reads gradTs which remains zero across batches, so the
-	// encoder parameters effectively do not train (by design of the current
-	// buggy pipeline — see T85.1.* diagnosis).
-	//
-	// To reproduce that pre-fix behavior bit-identically while eliminating
-	// per-batch allocations, we pre-allocate one scratch tensor per gradient
-	// per layer. On each backward the scratch is used as the dst for the
-	// accumulating Add, and dg.X is reassigned to point at the scratch.
-	accFfn2W, accFfn2B *tensor.TensorNumeric[float32]
-	accFfn1W, accFfn1B *tensor.TensorNumeric[float32]
-	accOW, accOB       *tensor.TensorNumeric[float32]
-	accQW, accQB       *tensor.TensorNumeric[float32]
-	accKW, accKB       *tensor.TensorNumeric[float32]
-	accVW, accVB       *tensor.TensorNumeric[float32]
-	accNorm1, accBias1 *tensor.TensorNumeric[float32]
-	accNorm2, accBias2 *tensor.TensorNumeric[float32]
-
 	// buffersAllocated is set true after the one-time lazy allocation.
 	buffersAllocated bool
 }
@@ -604,22 +581,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// Persistent CPU mirrors of params and grads. Required because for GPU
-	// tensors, tensor.Data() returns a fresh device→host memcpy each call,
-	// not a pointer to live memory. Without these mirrors, AdamW updates a
-	// throwaway slice and the device weights never change (the bug fixed
-	// here: 25K×N benches showed loss frozen to 6+ sig figs across epochs
-	// because the optimizer's writes to paramTs[i].Data() went to a
-	// temporary buffer instead of the device).
-	cpuParams := make([][]float32, nParamTensors)
-	cpuGrads := make([][]float32, nParamTensors)
-	for i, pt := range paramTs {
-		cpuParams[i] = make([]float32, pt.Size())
-		cpuGrads[i] = make([]float32, pt.Size())
-		// Snapshot initial weights from device.
-		copy(cpuParams[i], pt.Data())
 	}
 
 	channels := len(windows[0])
@@ -771,8 +732,12 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 		return nil, fmt.Errorf("gpu workspace dPEBR: %w", err)
 	}
 
-	// Cache gradient tensor list once (slice of pointers is stable across batches).
-	gradTs := grads.allParamTensors()
+	// paramTs and gradTs are (re)built per batch inside the loop below.
+	// See plan T1.2 and .claude/scratch/{e1-gradts-sites,t3.1b-grad-check-result}.md:
+	// params.X / grads.X may be reassigned to different backing storage during
+	// forward/backward; a once-per-training snapshot pointed at stale buffers,
+	// so AdamW read zero gradients and weights never updated.
+	var gradTs []*tensor.TensorNumeric[float32]
 
 	// Drop partial final batch for consistent tensor shapes (required for CUDA graph capture).
 	fullBatches := nSamples - (nSamples % batchSize)
@@ -806,6 +771,13 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 
 		for start := 0; start < fullBatches; start += batchSize {
 			bs := batchSize
+
+			// Rebuild paramTs/gradTs from the live struct fields each batch.
+			// A once-per-training snapshot went stale whenever params.X / grads.X
+			// were reassigned, causing AdamW to read zero-filled buffers and
+			// freezing PatchTST GPU training loss at 0.268357 (plan T1.2).
+			paramTs = params.allParamTensors()
+			gradTs = grads.allParamTensors()
 
 			// Build ALL patches at once into pre-allocated buffer: [bsC*numPatches, patchLen].
 			// Interleave: sample0-ch0, sample0-ch1, ..., sample0-chN, sample1-ch0, ...
@@ -1069,21 +1041,15 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 				return nil, err
 			}
 
-			// E85 T85.2.5: after the first backward pass, verify that grads.X still
-			// matches the entries cached in gradTs. The dst-param Add calls above
-			// mutated in place rather than replacing pointers; if this assertion
-			// fires, grad clipping and AdamW below would read stale tensors.
+			// T2.1 (v2 plan): strengthened sentinel. Compares data-slice base
+			// pointers via unsafe.Pointer so regressions of the gradTs staleness
+			// class (T3.1b finding: struct-wrapper identity holds while Data()
+			// arenas diverge) panic loudly at first batch. The dead struct-
+			// pointer checks were removed in T1.2 now that T1.2 rebuilds gradTs
+			// per batch. See .claude/scratch/e1-gradts-sites.md and
+			// .claude/scratch/t3.1b-grad-check-result.md.
 			if epoch == 0 && nBatches == 0 {
-				headWIdx := 3 + 16*m.config.NLayers
-				if gradTs[headWIdx] != grads.headW {
-					return nil, fmt.Errorf("patchtst gpu: gradient pointer aliasing broke for headW (gradTs[%d]=%p, grads.headW=%p)", headWIdx, gradTs[headWIdx], grads.headW)
-				}
-				if gradTs[headWIdx+1] != grads.headB {
-					return nil, fmt.Errorf("patchtst gpu: gradient pointer aliasing broke for headB")
-				}
-				if gradTs[0] != grads.patchEmbW || gradTs[1] != grads.patchEmbB {
-					return nil, fmt.Errorf("patchtst gpu: gradient pointer aliasing broke for patchEmb")
-				}
+				verifyGradTsAliasing(grads, gradTs)
 			}
 
 			batchLoss /= float64(bs * outDim)
@@ -1125,20 +1091,13 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			wdF := float32(config.WeightDecay)
 
 			for i := range paramTs {
-				// AdamW step on CPU for simplicity and correctness.
-				//
-				// IMPORTANT: for GPU tensors, paramTs[i].Data() returns a fresh
-				// device→host memcpy each call — writing to it does NOT update
-				// the device. We use persistent CPU mirrors (cpuParams[i]) for
-				// the params, snapshotted from device once at training start
-				// and updated in place by AdamW each step. After the step, we
-				// push the updated mirror back to the device tensor via
-				// SetData. The Adam moments and the gradient mirror live on
-				// CPU throughout, so they don't need this round trip.
-				gradData := gradTs[i].Data() // fresh device→host copy of grad
-				copy(cpuGrads[i], gradData)
-				pData := cpuParams[i]
-				gData := cpuGrads[i]
+				// AdamW step on CPU for simplicity and correctness. Since T1.2
+				// rebuilds paramTs and gradTs from the live struct fields each
+				// batch, paramTs[i].Data() and gradTs[i].Data() return the
+				// actual live storage — direct in-place updates propagate to
+				// subsequent forward passes without a SetData round trip.
+				pData := paramTs[i].Data()
+				gData := gradTs[i].Data()
 				mData := adamM[i].Data()
 				vData := adamV[i].Data()
 				for j := range pData {
@@ -1148,8 +1107,6 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 					vHat := vData[j] * vCorr
 					pData[j] -= lrF * (mHat/(float32(math.Sqrt(float64(vHat)))+eps) + wdF*pData[j])
 				}
-				// Push the updated CPU mirror back to the device.
-				paramTs[i].SetData(pData)
 			}
 		}
 

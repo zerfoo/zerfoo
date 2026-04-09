@@ -773,56 +773,6 @@ func allocLayerCacheBuffers(lc *gpuBatchLayerCache, bsC, seq, totalRows, dModel,
 		return err
 	}
 
-	// Gradient accumulator ping buffers (one per gradient per layer).
-	if lc.accFfn2W, err = mk2(ffnDim, dModel); err != nil {
-		return err
-	}
-	if lc.accFfn2B, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accFfn1W, err = mk2(dModel, ffnDim); err != nil {
-		return err
-	}
-	if lc.accFfn1B, err = mk2(1, ffnDim); err != nil {
-		return err
-	}
-	if lc.accOW, err = mk2(dModel, dModel); err != nil {
-		return err
-	}
-	if lc.accOB, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accQW, err = mk2(dModel, dModel); err != nil {
-		return err
-	}
-	if lc.accQB, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accKW, err = mk2(dModel, dModel); err != nil {
-		return err
-	}
-	if lc.accKB, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accVW, err = mk2(dModel, dModel); err != nil {
-		return err
-	}
-	if lc.accVB, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accNorm1, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accBias1, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accNorm2, err = mk2(1, dModel); err != nil {
-		return err
-	}
-	if lc.accBias2, err = mk2(1, dModel); err != nil {
-		return err
-	}
-
 	lc.buffersAllocated = true
 	return nil
 }
