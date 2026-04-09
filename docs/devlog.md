@@ -2,6 +2,35 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-08: CORRECTION — PatchTST GPU training convergence regression is NOT fixed
+
+**Type:** correction
+**Tags:** patchtst, gpu, convergence-regression, bisect-marker
+
+The "PatchTST GPU training convergence regression — root cause + fix" entry below claims the fix landed in commit 168a938f (PR #365). This is false. Empirical DGX validation on branch `fix/v3-storage-identity-sentinel` via `scripts/bench-spark.sh -samples 5000 -channels 10 -epochs 3` still produces the byte-identical frozen-loss signature:
+
+```
+epoch 1: loss=0.268357 ok
+epoch 2: loss=0.268357 ok
+epoch 3: loss=0.268357 ok
+```
+
+PR #365's strengthened sentinel panicked during Wave 5 validation (PR #366) on a false positive — comparing ephemeral `Data()` base pointers that `GPUStorage.Slice()` materializes fresh on every call. That panic LOOKED like the sentinel catching a bug and hid the fact that T5.3 (the actual convergence metric) was never reached. Once the v3 sentinel fix (this PR) corrected the false positive, T5.2 and T5.3 immediately revealed the frozen loss had been there all along.
+
+**Real root cause (still unresolved):** In the GPU backward path, `ztensor/compute/gpu_kernels.go:121` `makeGPUResult` calls `dst.SetStorage(newGPUStorage)` which flips the shared grad wrapper from CPUStorage to GPUStorage mid-backward (36/37 grads flip; posEmb idx=2 is the holdout per #367). After the flip, `gradTs[i].Data()` triggers a D2H copy from the new device buffer — but that buffer reads all zeros (empirically confirmed by T3.1b on branch `debug/gpu-train-grad-check`: `grads.patchEmbW[:4] = [0 0 0 0]` at Point A, post-backward). The engine ops are writing gradients somewhere, but NOT into the device buffer that the grad wrapper's storage ends up pointing at. AdamW reads zero grads, applies zero update, weights frozen.
+
+This is a ztensor-layer bug, not a zerfoo-layer one. PR #365's per-batch rebuild of paramTs/gradTs was a no-op because the wrappers were already aliased with `grads.X`/`params.X`. Issue #364 (paramTs staleness) turned out to be a false concern for the same reason.
+
+**Status of PR #365's sub-changes:**
+- Per-batch paramTs/gradTs rebuild: no-op, harmless, leave
+- Strengthened sentinel: false positive on GPU storage, **this PR replaces it with a Storage-identity check**
+- Scratch-tensor accumulator removal: correct dead-code cleanup, keep
+- cpuParams/cpuGrads mirror removal: re-evaluate — the mirror may have been accidentally working as a D2H flush workaround for the real bug
+
+**Next step:** ztensor investigation into `makeGPUResult` and the backward-path engine ops. Trace a single `engine.Add(ctx, grads.X, delta, grads.X)` call end-to-end: where does the kernel's result land in device memory vs where `grads.X.GetStorage()` points after the call? Tracked in #368.
+
+**Bisect marker:** do NOT trust commit 168a938f as a working commit. See issue #368.
+
 ## 2026-04-08: PatchTST GPU training convergence regression — root cause + fix
 
 **Type:** investigation + fix
