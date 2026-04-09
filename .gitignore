@@ -51,3 +51,4 @@ api-server
 debug-infer
 embedding
 zerfoo-train
+bench_train

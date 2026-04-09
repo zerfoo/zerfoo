@@ -2,6 +2,37 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-08: PatchTST GPU training convergence regression — root cause + fix
+
+**Type:** investigation + fix
+**Tags:** patchtst, gpu, convergence-regression, gradts, paramts, adamw, gb10
+
+**Problem.** PatchTST GPU training loss frozen at exactly `0.268357` byte-for-byte across all epochs on 5K x 10ch x 3ep bench. CPU converges normally (99.3% reduction) on the same binary. Prior fix `f29c93bd` (CPU-mirror AdamW writeback) was necessary but insufficient.
+
+**Investigation arc.**
+1. v1 plan proposed a binary fork: E2 (forward-pass read path) vs E3 (SetData write path).
+2. Wave 1 static audits (T1.4, T1.5, T1.6) all leaned E3, but each refuted the E3 mechanisms on paper. SetData traced to an unconditional HtoD memcpy; paramTs aliased forward reads 28/28; no graph-capture staleness.
+3. Wave 2 empirical diagnostic (T1.3) on DGX: 37/37 parameter hashes bit-identical pre/post AdamW step. Verdict: E3 write path broken — but every mechanism we could see was sound.
+4. Wave 3 T3.1a narrowing diagnostic: `paramTs[0].GetStorage()` is `*tensor.CPUStorage[float32]`. The "GPU" training path uses CPU-backed tensors throughout on GB10 unified memory. The comment near line 609 claiming `Data()` was a "fresh D->H memcpy" was false. SetData is a slice-header swap. Both cpuParams mirror and f29c93bd's rationale were based on this false premise.
+5. T3.1a also found that `gradTs[0].Data()` and `gradTs[36].Data()` were ALL ZERO at AdamW read time. Bug was upstream of the write path — in the gradient path.
+6. Wave 3 T3.1b narrowed further with pointer-identity logs at Point A (post-backward) and Point B (pre-AdamW). `grads.patchEmbW` pointer `0x...2000` vs `gradTs[0]` pointer `0x...2800` — different arenas, offset 0x800. `grads.headB` vs `gradTs[36]` in entirely different arenas.
+
+**Root cause (mechanism beta).** `gradTs` and `paramTs` slices in `timeseries/patchtst_gpu_train.go` were once-per-training snapshots captured via `grads.allParamTensors()` / `params.allParamTensors()` at setup time. The `*TensorNumeric` wrappers matched `grads.X` (so the struct-equality sentinel at the old L1076 passed) but the underlying Storage diverged from the live backing that backward's in-place `engine.Add` writes into. AdamW read stale zero buffers, applied zero updates, weights never moved. The `headB` case was dispositive: no encoder scratch indirection, still shows arena mismatch. Both v1 plan hypotheses (E2 read-path, E3 write-path) were wrong — the bug was in the gradient-path snapshot, a class neither hypothesis named.
+
+**Fix (commit 168a938f, PR #365).**
+- Rebuild `paramTs` and `gradTs` per batch immediately before the zero-grads loop so both slices point at the live struct fields.
+- Replace the dead struct-equality sentinel with `verifyGradTsAliasing` that compares `unsafe.Pointer(&Data()[0])` across all parameter indices and panics with a full arena dump on mismatch. Extracted to `gradts_sentinel.go` with unit test covering happy path, arena mismatch, length mismatch, and zero-length asymmetry.
+- Remove 16 dead `acc*` scratch-tensor fields on `gpuBatchLayerCache` that were allocated in `allocBackwardScratch` and never read anywhere (audit verdict: dead code — `.claude/scratch/e3-accumulator-audit.md`).
+- Remove the redundant `cpuParams`/`cpuGrads` mirror from `f29c93bd`. On the CPUStorage path, `Data()` returns the live backing slice directly; AdamW now operates on `paramTs[i].Data()` and `gradTs[i].Data()` without the self-copy SetData round-trip. Audit verdict: redundant (`.claude/scratch/e3-cpumirror-audit.md`).
+
+**Impact.** Unblocks UC-TS01 (PatchTST training) on GPU. Issue #364 tracks the paramTs latent staleness finding (same root cause as gradTs, was masked by cpuParams mirror — fixed in same commit).
+
+**Lessons.**
+- Code comments were the primary misdirection: the "GPU" path is actually CPUStorage on GB10, and `Data()` does not memcpy. Both mechanisms in the v1 E3 fork assumed device-memory semantics that never applied.
+- The old sentinel gave false confidence because it compared `*TensorNumeric` wrapper identity rather than the backing `Data()` slice pointer. A sentinel that can be satisfied by unrelated state is worse than no sentinel.
+- Static analysis (Wave 1 audits) converged on the wrong diagnosis because the audited mechanisms were genuinely sound. Empirical diagnostics (weight hash deltas → storage kind → pointer identity) were required to find a mechanism the plan hadn't listed as a hypothesis.
+- Remaining validation on DGX (v2 plan Wave 5): bench 5K x 10 x 3 >=90% reduction, plus `TestGPUSingleStepParity` and `TestGPUTinyTrainingConvergence` must pass as execute (not skip).
+
 ## 2026-04-08: T1.4 extractGPUParams aliasing audit
 
 **Type:** research / audit (no code changes)
