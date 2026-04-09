@@ -55,8 +55,8 @@ func makeGrads(pw, pb, pe, hw, hb *tensor.TensorNumeric[float32]) *gpuGrads {
 	}
 }
 
-// TestGradTsSentinel exercises verifyGradTsAliasing across the four regression
-// classes the strengthened sentinel is meant to catch.
+// TestGradTsSentinel exercises verifyGradTsAliasing across the regression
+// classes the v3 Storage-identity sentinel is meant to catch.
 func TestGradTsSentinel(t *testing.T) {
 	t.Run("HappyPathAliased", func(t *testing.T) {
 		pw := mustTensor(t, []int{2, 2}, []float32{1, 2, 3, 4})
@@ -68,14 +68,14 @@ func TestGradTsSentinel(t *testing.T) {
 		grads := makeGrads(pw, pb, pe, hw, hb)
 		// gradTs is the cached flat slice taken at training start. In the
 		// happy path it holds the same wrappers as allParamTensors() and so
-		// shares Data()[0] pointers by construction.
+		// shares Storage identity by construction.
 		gradTs := grads.allParamTensors()
 
 		// Must not panic.
 		verifyGradTsAliasing(grads, gradTs)
 	})
 
-	t.Run("ArenaMismatchPanics", func(t *testing.T) {
+	t.Run("WrapperMismatchPanics", func(t *testing.T) {
 		pw := mustTensor(t, []int{2, 2}, []float32{1, 2, 3, 4})
 		pb := mustTensor(t, []int{2}, []float32{5, 6})
 		pe := mustTensor(t, []int{1, 2}, []float32{7, 8})
@@ -84,12 +84,13 @@ func TestGradTsSentinel(t *testing.T) {
 		grads := makeGrads(pw, pb, pe, hw, hb)
 
 		gradTs := grads.allParamTensors()
-		// Replace index 3 (headW) with a different tensor of identical shape
-		// but an independent backing slice — simulates an arena realloc that
-		// left the wrapper identity intact in callers but rerouted storage.
+		// Replace index 3 (headW) with a different tensor wrapper with
+		// identical shape but an independent backing Storage — simulates the
+		// class of bug where the cached gradTs slice goes stale (e.g. the
+		// pre-T1.2 arena realloc scenario).
 		gradTs[3] = mustTensor(t, []int{2, 2}, []float32{9, 10, 11, 12})
 
-		expectPanic(t, "backing-slice mismatch at index 3", func() {
+		expectPanic(t, "wrapper mismatch at index 3", func() {
 			verifyGradTsAliasing(grads, gradTs)
 		})
 	})
@@ -110,22 +111,44 @@ func TestGradTsSentinel(t *testing.T) {
 		})
 	})
 
-	t.Run("ZeroLengthAsymmetryPanics", func(t *testing.T) {
+	// HappyPath_SharedStorage verifies the v3 fix's core invariant: two
+	// distinct *TensorNumeric wrappers that share the SAME backing Storage
+	// would fail the wrapper-identity pre-filter (and so panic) — but the
+	// point of the v3 fix is that identical wrappers with an EPHEMERAL
+	// Data() slice (as GPUStorage.Slice() produces via D2H copy) must NOT
+	// panic. We can't allocate GPUStorage without CUDA, but we can assert
+	// the analogous property on the CPU path: the happy path (same wrapper,
+	// same Storage) never panics even though two independent .Data() calls
+	// would return slice headers with different addresses if the storage
+	// were non-contiguous — CPUStorage returns the same backing array, so
+	// this test is primarily a guard against future regressions of the
+	// Data()-pointer comparison.
+	t.Run("HappyPath_RepeatedDataCallsOK", func(t *testing.T) {
 		pw := mustTensor(t, []int{2, 2}, []float32{1, 2, 3, 4})
 		pb := mustTensor(t, []int{2}, []float32{5, 6})
 		pe := mustTensor(t, []int{1, 2}, []float32{7, 8})
 		hw := mustTensor(t, []int{2, 2}, []float32{9, 10, 11, 12})
 		hb := mustTensor(t, []int{2}, []float32{13, 14})
+
 		grads := makeGrads(pw, pb, pe, hw, hb)
-
 		gradTs := grads.allParamTensors()
-		// Swap index 1 (patchEmbB) for a zero-length tensor while leaving the
-		// live gpuGrads entry non-empty. The per-index Data()-length check
-		// must fire rather than silently skipping via the zero-length branch.
-		gradTs[1] = mustTensor(t, []int{0}, []float32{})
 
-		expectPanic(t, "len mismatch at index 1", func() {
-			verifyGradTsAliasing(grads, gradTs)
-		})
+		// Touch Data() a few times on both sides to mimic the GPU path's
+		// fresh-slice-per-call behavior. Must still not panic because
+		// Storage identity is preserved.
+		_ = pw.Data()
+		_ = gradTs[0].Data()
+		_ = hw.Data()
+		_ = gradTs[3].Data()
+
+		verifyGradTsAliasing(grads, gradTs)
 	})
+
+	// StorageMismatch_ConstructedViaPublicAPI: not achievable through the
+	// public tensor API, since there is no supported way to swap a tensor's
+	// backing Storage without also replacing the wrapper. On GPU the flip
+	// happens inside ztensor (makeGPUResult.SetStorage) and requires real
+	// CUDA to reproduce — covered by the T5.3 Wave 5 DGX regression run.
+	// The WrapperMismatchPanics case above covers the common stale-cache
+	// class; the Storage-identity check guards the (CUDA-only) flip class.
 }
