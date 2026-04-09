@@ -996,13 +996,20 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			}
 
 			// Reshape dFlat from [bsC, headIn] to [totalRows, dModel].
-			if _, err = m.engine.Reshape(ctx, fc.dFlat, []int{totalRows, dModel}, fc.dX); err != nil {
+			// NOTE: ztensor GPUEngine.Reshape ignores the dst arg for the
+			// zero-copy GPUStorage fast-path — it returns a fresh tensor
+			// aliasing fc.dFlat's storage. Callers MUST use the return
+			// value; `fc.dX` here is kept only as a pre-alloc slot for its
+			// shape metadata but its backing storage is stale zeros. See
+			// docs/devlog.md 2026-04-09 Wave 7 root cause entry.
+			dXReshaped, err := m.engine.Reshape(ctx, fc.dFlat, []int{totalRows, dModel}, fc.dX)
+			if err != nil {
 				return nil, err
 			}
 
 			// Backward through encoder layers in reverse (single pass).
-			// encoderBackward may return a different tensor than fc.dX; use its return value.
-			dX, err := encoderBackward(ctx, m.engine, fc.dX, params.layers, grads.layers,
+			// encoderBackward may return a different tensor than its input; use its return value.
+			dX, err := encoderBackward(ctx, m.engine, dXReshaped, params.layers, grads.layers,
 				fc.layerCaches, fc.layerWTs, bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
 			if err != nil {
 				return nil, fmt.Errorf("gpu encoder bwd: %w", err)
