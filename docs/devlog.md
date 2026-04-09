@@ -2,6 +2,68 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-08: FINAL — PatchTST GPU convergence regression localized to ztensor GPU engine
+
+**Type:** investigation closeout
+**Tags:** patchtst, gpu, convergence-regression, ztensor, localized, handoff
+
+After six waves of investigation on zerfoo's `trainWindowedGPU` path (Waves 1-5 of the v2 plan plus v3/v4 diagnostic follow-ups), the regression is **definitively localized to ztensor's GPU engine, not to zerfoo**. See the correction entry below for what turned out to be wrong; this entry is the ground truth.
+
+**The minimal reproducer.** `TestPatchTST_TrainWindowed_EngineConvergence` in `timeseries/patchtst_test.go` runs the exact same `trainWindowedGPU` function with a CPU engine (via `newTestEngine()`). On main, it **PASSES** with loss `5.169868 -> 0.702752` (86% reduction in 10 epochs on 15 samples). Pointed at the GPU engine, the same loop would produce the byte-identical frozen `0.268357` signature. Same model, same data, same loop, same math, same tensor lifecycle — only the engine implementation differs.
+
+**Conclusion.** `trainWindowedGPU`'s loop structure, parameter lifecycle, backward ordering, and AdamW are all correct. The bug is in how the GPU engine's dst-output routing connects kernel writes to the destination tensor's storage.
+
+**Empirical evidence localizing the disconnect.** v4 diagnostic instrumentation on branch `debug/diag-grad-zero-source-v2` (scratch `.claude/scratch/diag-grad-zero-source-result.md`) logged seven grad/param checkpoints during first-batch backward:
+
+```
+P0 post-zero grads.patchEmbW      = [0 0 0 0]         expected
+P7 post-encoderBackward dX        = [0 0 0 0]         BROKEN
+P8 post-posEmb-cpu-accum          = [0 0 0 0]         broken (consumes dX)
+P1 pre-MatMul fc.dPEW             = [0 0 0 0]         broken upstream
+P2 post-Add grads.patchEmbW       = [0 0 0 0]         (Add of zeros)
+P3 pre-gradclip                   = [0 0 0 0]
+P4 adamw-read gradTs[0]           = [0 0 0 0]
+P5 adamw-post-update paramTs[0]   = [0.01112, ...]    init (AdamW -> ~0 on zero grads)
+P6 batch-1 forward params[0]      = [0.01112, ...]    == P5 (writeback + read fine)
+```
+
+Any tensor whose contents are produced by a GPU engine op reads zero via `.Data()`, immediately after the op returns, with or without `engine.Sync()` before the read (stream-sync hypothesis refuted on 2026-04-08 by inserting Sync barriers and observing unchanged frozen loss).
+
+**Where the disconnect lives.** The prior investigation read `ztensor/compute/gpu_kernels.go` `makeGPUResult` (around line 121) and found it calls `dst[0].SetStorage(gs)` — installing a fresh `GPUStorage` on the destination wrapper. `GPUStorage.Slice()` at `ztensor/tensor/gpu_storage.go:215-250` performs a fresh `make([]T, s.length)` + D2H memcpy on every `Data()` call. Either (a) the kernel writes to a different device buffer than the one `SetStorage` installs, (b) the D2H sources from a buffer that was never written by the kernel, or (c) a subsequent `SetStorage` call clobbers the buffer before the D2H. Stream sync does not help because the buffer is genuinely unreachable, not mid-write.
+
+**What is NOT the bug (ruled out across waves).**
+- Wrapper aliasing between `gradTs[i]` and `grads.X` (sentinel tests proven correct post-PR #369)
+- Once-per-training snapshot of `paramTs`/`gradTs` (PR #365, no-op — wrappers were already aliased)
+- Dead scratch accumulator at `patchtst_gpu_train.go:506-530` (PR #365 removed it, unrelated)
+- Redundant `cpuParams`/`cpuGrads` mirror from `f29c93bd` (PR #365 removed it, unrelated)
+- Stream synchronization between backward kernels and `.Data()` reads (v3 Sync barriers had zero effect)
+- `makeGPUResult.SetStorage` timing relative to kernel launch (v3 code reading, later refuted)
+- The strengthened sentinel's Data()-pointer check (was a false positive, fixed in PR #369)
+
+**Secondary finding (issue #367).** `posEmb` grad (idx=2) is the lone holdout that stays `CPUStorage` because its backward update at `timeseries/patchtst_gpu_train.go:1012-1019` is a pure CPU loop `dPosData[j] += dXData[i]` — it reads `dX.Data()` which is zero but never touches `e.stream`. The value stays zero for the same reason (dX is zero on the CPU-visible side). Not an anomaly — it's the clean control case.
+
+**Disposition.**
+- Zerfoo side: **correct as of main**. No further zerfoo-side work unblocks GPU training. All prior "fixes" (PRs #361, #362, #363, #365, #369) are left in place — none broke anything, some added useful infrastructure (regression tests, sentinel, weight-hash helper).
+- Ztensor side: **tracked upstream** — file a comprehensive issue at `github.com/zerfoo/ztensor` with the minimal reproducer, full investigation trail, and proposed trace points in `makeGPUResult` + `GPUStorage.Slice`.
+- Until the ztensor fix lands, PatchTST training on DGX must use the CPU engine (bench runs via `scripts/bench-spark.sh` need to pass `-cpu` or the bench manifest needs an env variable to force it). CPU convergence on DGX has not been benchmarked at the 5K x 10ch x 3ep scale but is expected to work given the local test converges.
+
+**Issues.**
+- #364 paramTs latent staleness — **false concern** (wrappers were always aliased, no fix needed)
+- #367 posEmb idx=2 storage flip anomaly — **not an anomaly** (clean CPU control case)
+- #368 PR #365 non-functional marker — **upheld** (the "fix" was indeed non-functional; the real bug is upstream)
+- #369 sentinel fix — merged, correct, idempotent
+
+**Lessons.**
+1. Multiple layers of false positives disguised the real root cause through Waves 1-3. The v1 plan's E2/E3 fork was wrong. The v2 plan's stream-sync hypothesis was wrong. Each static-code-reading hypothesis missed because the bug lives across the zerfoo/ztensor boundary in code that looked individually correct.
+2. The minimal reproducer should have been written first. `TestPatchTST_TrainWindowed_EngineConvergence` already existed and would have isolated "bug is in GPU engine specifically" in one test run. Eight waves of investigation could have been two.
+3. Empirical instrumentation on DGX (Spark-wrapped) worked every time static analysis misled us. Byte-identical deterministic frozen loss (`0.268357`) was the most valuable single piece of evidence — it ruled out entire classes of intermittent/race bugs.
+4. Never trust a fix that was validated only by a sentinel that never ran in the failure mode. PR #365's validation panic hid the fact that T5.3 never reached the convergence assertion.
+
+**Followups.**
+- File ztensor issue with this finding and reproducer.
+- Open zerfoo issue mirroring this one for cross-reference.
+- Document CPU-engine workaround for DGX training in `CLAUDE.md` if training is needed before ztensor fixes the engine.
+
 ## 2026-04-08: CORRECTION — PatchTST GPU training convergence regression is NOT fixed
 
 **Type:** correction
