@@ -2,6 +2,61 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-09: RESOLVED — PatchTST GPU convergence regression (Wave 7 in-situ instrumentation)
+
+**Type:** investigation
+**Tags:** patchtst, gpu, training, convergence, ztensor, reshape
+
+**Problem:** PatchTST GPU training loss frozen at 0.268357 across all epochs
+on DGX GB10. Prior waves (ztensor#79) ruled out primitive-level bugs at both
+small and production shapes. Wave 7 instrumented `trainWindowedGPU` and
+`encoderBackward` with a first-batch `gpuProbe` helper logging device pointer,
+shape, head values, L2 norm, and allZero flag for every op in the backward
+chain, gated by `ZERFOO_DIAG_PROBE=1`.
+
+**Root cause:** `ztensor/compute/gpu_engine_memory.go:614` `GPUEngine.Reshape`
+takes a variadic `dst ...*tensor.TensorNumeric[T]` parameter (shared contract
+with the CPU engine) but its zero-copy GPUStorage fast-path at line 644
+**ignores `dst` entirely**:
+
+    if gs, ok := a.GetStorage().(*tensor.GPUStorage[T]); ok && isFloat32[T]() && newSize == currentSize {
+        return tensor.NewWithStorage[T](inferredShape, gs.View(gs.Len()))
+    }
+
+It returns a brand-new tensor aliasing the source storage and never touches
+`dst`. PatchTST's GPU backward discarded the return value and fed the stale
+pre-allocated `fc.dX` (all zeros) into `encoderBackward`:
+
+    if _, err = m.engine.Reshape(ctx, fc.dFlat, []int{totalRows, dModel}, fc.dX); err != nil { ... }
+    dX, err := encoderBackward(ctx, m.engine, fc.dX, ...)  // stale zeros
+
+Probe evidence from the first batch (samples=500 c=5 e=1 on DGX, full log at
+`.claude/scratch/wave-7-probe-logs.txt`):
+
+    post-dFlat-matmul       ptr=0x...628c000 l2=0.0833596 allZero=false
+    post-dFlat-reshape-dX   ptr=0x...f244000 l2=0         allZero=true
+    encBwd:entry:dX         ptr=0x...f244000 l2=0         allZero=true
+
+The zero dX propagated through every encoder layer's backward and every
+downstream grad op, producing identical zero gradients batch after batch.
+
+**Fix:** zerfoo commit 73d14342 on `fix/wave-7-gpu-reshape-dst`: capture the
+return value of `engine.Reshape` and pass it into `encoderBackward`. One-line
+behavioral change; `fc.dX` retained as a pre-alloc slot.
+
+**Impact:** DGX GPU bench (samples=5000 c=10 e=3) — loss goes from frozen
+at 0.268357 across all epochs to strictly decreasing:
+
+    epoch 1: loss=0.027676
+    epoch 2: loss=0.019176
+    epoch 3: loss=0.018603
+    convergence: OK (0.027676 -> 0.018603, 32.8% reduction)
+    total: 4.24s (1.41s/epoch)
+
+**Follow-up:** file a ztensor issue to make `GPUEngine.Reshape` honor `dst`
+per the compute.Engine contract, so the next caller that discards the return
+value doesn't re-hit this silent-zero trap.
+
 ## 2026-04-08: FINAL — PatchTST GPU convergence regression localized to ztensor GPU engine
 
 **Type:** investigation closeout
