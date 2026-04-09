@@ -2393,3 +2393,33 @@ canary batch; (c) sanity-check the 16-field layer ordering in
 `allParamTensors` (patchtst_gpu_train.go:183-185) against AdamW's indexing.
 
 Scratch: `.claude/scratch/t1.5-audit.md`.
+
+## 2026-04-08: Wave 5 DGX validation — fix NOT verified (BLOCKED)
+
+Wave 5 DGX convergence validation against main @ 6bde36a6 (includes PR #365
+fix 168a938f). Built `bench_train` on DGX
+(md5 `b2da62ec93225b10be86a10d4b642516`) and submitted a 1K x 5 x 2 smoke
+bench via `scripts/bench-spark.sh`.
+
+Result: **smoke bench panicked inside the strengthened gradTs sentinel on the
+very first batch.** Engine was correctly `GPU (CUDA)`. The sentinel found
+matching wrapper identity (`0x59749b7bf860` on both sides) but divergent
+backing-slice pointers (`0x...bb71000` vs `0x...bb71800`, exactly 0x800
+apart) — meaning some op between `allParamTensors()` assembly and the
+immediately-following verification reseats `Data()` on the grad tensor
+in-place. The rebuild-per-batch fix closes wrapper aliasing; it does NOT
+close backing-slice reseating.
+
+Loss before fix: 0.268357 frozen across epochs. Loss after fix: n/a —
+never produced a first batch on GPU before the sentinel fired.
+
+T5.3 (5K x 10 x 3 regression), T4.2, T4.3 were **not executed** per the
+plan's stop-on-failure directive. Zero-stub policy honored.
+
+SSH session leak check: 0 -> 0 (clean; Spark path did not leak).
+
+Next step: trace who calls `SetData` / reallocates the grad tensor backing
+buffer between `timeseries/gradts_sentinel.go:43` and
+`timeseries/patchtst_gpu_train.go:1052` on the GPU path. Candidate: arena
+pool recycle or an engine op reseating the grad slice. Full details:
+`.claude/scratch/wave-5-dgx-validation-result.md`.
