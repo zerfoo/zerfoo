@@ -815,6 +815,7 @@ func encoderForward(
 	x *tensor.TensorNumeric[float32],
 	layers []gpuEncoderLayer,
 	layerCaches []gpuBatchLayerCache,
+	fusedGPU *fusedEncoderGPU,
 	bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim int,
 ) (*tensor.TensorNumeric[float32], error) {
 	nLayers := len(layers)
@@ -823,7 +824,7 @@ func encoderForward(
 	}
 
 	// Try fused encoder kernel path (replaces ~78 ops/layer with 1 call).
-	if result, used, err := fusedEncoderForward(ctx, engine, x, layers, layerCaches,
+	if result, used, err := fusedEncoderForward(ctx, engine, x, layers, layerCaches, fusedGPU,
 		bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim); err != nil {
 		return nil, fmt.Errorf("encoderForward fused: %w", err)
 	} else if used {
