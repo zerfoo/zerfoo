@@ -15,13 +15,20 @@ CUDA graph capture: 184/185 instructions (99.5%). Fused kernels: softmax+V multi
 
 Full results: `results/benchmark-2026-03-31.json` (3-run median)
 
-## Training: PatchTST (GPU, 2026-03-30, v1.38.4)
+## Training: PatchTST (GPU, 2026-04-09, v1.42+)
 
-| Workload | Before | After | Speedup |
-|----------|--------|-------|---------|
-| PatchTST 28K rows x 20 features x 10 epochs | 596s | 128.5s | **4.6x** |
+| Workload | v1.37 | v1.38.4 | v1.42+ | Speedup (v1.37→v1.42+) |
+|----------|-------|---------|--------|------------------------|
+| 28K×20×10 | 596s | 128.5s | **40.3s** | **14.8x** |
+| 20K×20×5 | N/A | N/A | **15.0s** | — |
+| 5K×10×3 | N/A | N/A | **3.0s** | — |
 
-Pre-allocated batch workspace, CUDA graph capture for training loop.
+DGX GB10, commit `2ecf473a`. Pre-allocated batch workspace + GPU dst-memory
+reuse (ztensor#84/#85). Loss converges 99.9% (0.0178 → 0.000022) on 28K×20×10.
+
+Previous v1.38.4 baseline (128.5s at 28K×20×10) regressed to OOM after E85
+buffer pre-allocation (commit `09a318c6`) introduced per-op GPU memory leaks.
+Fixed in ztensor#85 by reusing dst device pointers instead of allocating per call.
 
 ## Over-RAM Inference (2026-03-29)
 
