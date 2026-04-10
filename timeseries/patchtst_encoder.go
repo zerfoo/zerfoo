@@ -821,6 +821,15 @@ func encoderForward(
 	if len(layerCaches) != nLayers {
 		return nil, fmt.Errorf("encoderForward: layerCaches len %d != nLayers %d", len(layerCaches), nLayers)
 	}
+
+	// Try fused encoder kernel path (replaces ~78 ops/layer with 1 call).
+	if result, used, err := fusedEncoderForward(ctx, engine, x, layers, layerCaches,
+		bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim); err != nil {
+		return nil, fmt.Errorf("encoderForward fused: %w", err)
+	} else if used {
+		return result, nil
+	}
+
 	seq := numPatches
 	bnh := bsC * nHeads
 
