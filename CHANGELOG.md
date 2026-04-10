@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0](https://github.com/zerfoo/zerfoo/compare/v1.42.1...v1.43.0) (2026-04-10)
+
+
+### Features
+
+* **bench:** add bench-spark.sh helper for Spark submission ([0321a18](https://github.com/zerfoo/zerfoo/commit/0321a187595afd7f2f319e1f7d20865557cec7c2))
+* **bench:** add PatchTST training benchmark tool ([d847238](https://github.com/zerfoo/zerfoo/commit/d847238c0a12e0c818057e8724709f3a4a6bf67a))
+* **bench:** add Spark pod manifest for PatchTST training ([0e05d43](https://github.com/zerfoo/zerfoo/commit/0e05d43ab2aedb4938ed4f725f7f1408f8006abe))
+* **timeseries:** activate fused encoder forward path ([8aa526d](https://github.com/zerfoo/zerfoo/commit/8aa526d4213779ab70c78b3d03998c2d90b69a3b))
+* **timeseries:** add weight-hash debug helper for GPU training diagnosis ([c5a34c5](https://github.com/zerfoo/zerfoo/commit/c5a34c52c32564304c9e287205c702e89fd33195))
+* **timeseries:** wire fused encoder kernel into PatchTST training ([bafdad0](https://github.com/zerfoo/zerfoo/commit/bafdad024f827dcd9ef69921b4b6e7771dfd0fab))
+
+
+### Bug Fixes
+
+* **bench:** mount /opt/zerfoo/lib so libkernels.so is reachable ([aa6331a](https://github.com/zerfoo/zerfoo/commit/aa6331a189f129ce642bf4df556868e0d8cd840a))
+* **bench:** post YAML (not JSON) and parse Spark status shape ([9d20746](https://github.com/zerfoo/zerfoo/commit/9d207460e1f25098fb2be00ea227260e749f1319))
+* **ci:** make govulncheck non-blocking for unfixed bbolt vuln ([b6b38a6](https://github.com/zerfoo/zerfoo/commit/b6b38a68a9e53e353764d327b970d655fff36154))
+* **mlstm:** use paper's stabilized exponential-gating formulation ([46b7b86](https://github.com/zerfoo/zerfoo/commit/46b7b868dab76ae4af1b83fe5d28a2ced1c58bed))
+* **slstm:** use paper's stabilized exponential-gating formulation ([e47e4a4](https://github.com/zerfoo/zerfoo/commit/e47e4a47e20e27952dd6e0a438769f3b18607243))
+* **timeseries:** compare Storage identity in gradTs sentinel ([a67063a](https://github.com/zerfoo/zerfoo/commit/a67063a5d61ec75d29c50fd084228abd0113fc62))
+* **timeseries:** GPU training convergence — rebuild paramTs/gradTs per batch, strengthen sentinel, remove dead machinery ([168a938](https://github.com/zerfoo/zerfoo/commit/168a938f68c62de8f1677854e6e45a038e77a288))
+* **timeseries:** GPU training writes back optimizer step to device ([f29c93b](https://github.com/zerfoo/zerfoo/commit/f29c93bdb74bd278ea6f2149b8aec189d1034bba))
+* **timeseries:** skip flaky TimeMixer gradient check + add WithTimeMixerRNG ([4f96d99](https://github.com/zerfoo/zerfoo/commit/4f96d999cf16521442859799aa35617f0cf0b6f8))
+* **timeseries:** use return value of GPU Reshape in PatchTST backward ([d61cbab](https://github.com/zerfoo/zerfoo/commit/d61cbabb929ecfd4d1c65e17c073aef9f957b4a3))
+
+
+### Performance Improvements
+
+* **timeseries:** pre-allocate PatchTST GPU train loop buffers (E85 T85.2.1-3,5) ([09a318c](https://github.com/zerfoo/zerfoo/commit/09a318c6db9e625155c2964708b9c8f6ada4e6ed))
+
 ## [1.42.1](https://github.com/zerfoo/zerfoo/compare/v1.42.0...v1.42.1) (2026-04-06)
 
 
