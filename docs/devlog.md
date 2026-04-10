@@ -2,6 +2,46 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-09: BISECTED — PatchTST GPU training OOM/slowdown at large shapes (#373)
+
+**Type:** investigation
+**Tags:** patchtst, gpu, training, performance, memory, e85, bisect
+
+**Problem:** PatchTST GPU training OOMs at 28K×20×10 and runs >300s at
+20K×20×5 on current main (vs ~60s pre-regression and 128.5s at 28K×20×10
+on v1.38.4 baseline). Small shapes (5K×10×3) unaffected.
+
+**Bisect result:** Regression introduced in commit `09a318c6`
+(`perf(timeseries): pre-allocate PatchTST GPU train loop buffers (E85
+T85.2.1-3,5)`, 2026-04-06). Its parent `c7b5a145` completes 20K×20×5 in
+~60s; `09a318c6` itself runs >300s at the same shape.
+
+**Root cause:** E85 converted all GPU ops from local-variable results to
+persistent struct-field `dst` params (`fc.headWT`, `fc.dX`, etc.), expecting
+this to eliminate per-batch `cudaMalloc`. But ztensor's GPU engine still
+allocates fresh GPU memory on every op call even when `dst` is provided —
+`makeGPUResult` (gpu_kernels.go:121) does `pool.Alloc → SetStorage(newGS)`
+on dst. The old GPUStorage is orphaned and depends on Go's GC finalizer to
+call `pool.Free`. At large shapes with ~20 ops × 300+ batches per epoch,
+orphaned allocations pile up faster than the GC can free them → unbounded
+GPU memory growth → OOM or severe memory-pressure slowdown.
+
+Pre-E85, ops used local variables that went out of scope quickly and were
+GC'd promptly. The persistent `fc.*` fields keep wrappers alive while
+rapidly cycling their backing GPUStorage, creating a steady-state leak.
+
+**Fix direction (ztensor):** When `dst` is provided and its existing
+GPUStorage has sufficient capacity, GPU ops should compute into the existing
+device pointer (reuse `dst.GetStorage().Ptr()`) instead of allocating new
+memory. This is what "dst-param variants" should mean — zero-allocation
+when dst is pre-sized. File: `ztensor/compute/gpu_kernels.go:121`
+`makeGPUResult` and individual op implementations.
+
+**Impact:** Blocks re-achieving the v1.38.4 performance baseline at
+production shapes. Small shapes unaffected.
+
+**Refs:** #373, commit 09a318c6, ztensor gpu_kernels.go:121
+
 ## 2026-04-09: RESOLVED — PatchTST GPU convergence regression (Wave 7 in-situ instrumentation)
 
 **Type:** investigation
