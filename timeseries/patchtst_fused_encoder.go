@@ -9,10 +9,16 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-// fusedEncoderLayerBufs holds pre-allocated GPU buffers for the fused encoder
-// kernel. These are indexed by the FEB_* constants from the kernel headers.
-type fusedEncoderLayerBufs struct {
-	ptrs      [16]unsafe.Pointer
+// fusedLayerGPU holds persistent GPU pointers for one encoder layer's
+// fused kernel buffers. Allocated once per layer on first use.
+type fusedLayerGPU struct {
+	weights [16]unsafe.Pointer // FEW_* indexed, persistent GPU copies of weights
+	bufs    [16]unsafe.Pointer // FEB_* indexed, pre-allocated GPU scratch/cache
+}
+
+// fusedEncoderGPU holds all GPU resources for the fused encoder path.
+type fusedEncoderGPU struct {
+	layers    []fusedLayerGPU
 	allocated bool
 }
 
@@ -29,82 +35,74 @@ func tensorDevPtr(t *tensor.TensorNumeric[float32]) unsafe.Pointer {
 	return gs.Ptr()
 }
 
-// buildWeightPtrs builds the FEW_* indexed weight pointer array from a gpuEncoderLayer.
-func buildWeightPtrs(layer *gpuEncoderLayer) [16]unsafe.Pointer {
-	return [16]unsafe.Pointer{
-		/* FEW_QW     = 0  */ tensorDevPtr(layer.qW),
-		/* FEW_QB     = 1  */ tensorDevPtr(layer.qB),
-		/* FEW_KW     = 2  */ tensorDevPtr(layer.kW),
-		/* FEW_KB     = 3  */ tensorDevPtr(layer.kB),
-		/* FEW_VW     = 4  */ tensorDevPtr(layer.vW),
-		/* FEW_VB     = 5  */ tensorDevPtr(layer.vB),
-		/* FEW_OW     = 6  */ tensorDevPtr(layer.oW),
-		/* FEW_OB     = 7  */ tensorDevPtr(layer.oB),
-		/* FEW_FFN1W  = 8  */ tensorDevPtr(layer.ffn1W),
-		/* FEW_FFN1B  = 9  */ tensorDevPtr(layer.ffn1B),
-		/* FEW_FFN2W  = 10 */ tensorDevPtr(layer.ffn2W),
-		/* FEW_FFN2B  = 11 */ tensorDevPtr(layer.ffn2B),
-		/* FEW_NORM1W = 12 */ tensorDevPtr(layer.norm1),
-		/* FEW_NORM1B = 13 */ tensorDevPtr(layer.bias1),
-		/* FEW_NORM2W = 14 */ tensorDevPtr(layer.norm2),
-		/* FEW_NORM2B = 15 */ tensorDevPtr(layer.bias2),
+// uploadTensor allocates GPU memory and copies the tensor's float32 data.
+func uploadTensor(fep compute.FusedEncoderProvider, t *tensor.TensorNumeric[float32]) (unsafe.Pointer, error) {
+	data := t.Data()
+	ptr, err := fep.AllocDeviceFloat32(len(data))
+	if err != nil {
+		return nil, err
 	}
+	if err := fep.CopyToDevice(ptr, data); err != nil {
+		return nil, err
+	}
+	return ptr, nil
 }
 
-// buildFwdCachePtrs maps existing gpuBatchLayerCache tensors to the FEB_* array.
-func buildFwdCachePtrs(lc *gpuBatchLayerCache) [16]unsafe.Pointer {
-	return [16]unsafe.Pointer{
-		/* FEB_NORMED1    = 0  */ tensorDevPtr(lc.normed1),
-		/* FEB_LN1_INVSTD = 1  */ tensorDevPtr(lc.invStd1),
-		/* FEB_Q          = 2  */ tensorDevPtr(lc.q),
-		/* FEB_K          = 3  */ tensorDevPtr(lc.k),
-		/* FEB_V          = 4  */ tensorDevPtr(lc.v),
-		/* FEB_QH         = 5  */ tensorDevPtr(lc.qH),
-		/* FEB_KH         = 6  */ tensorDevPtr(lc.kH),
-		/* FEB_VH         = 7  */ tensorDevPtr(lc.vH),
-		/* FEB_ATTN_SCORES = 8 */ tensorDevPtr(lc.scoresTensor),
-		/* FEB_ATTN_OUT_H = 9  */ tensorDevPtr(lc.attnH),
-		/* FEB_ATTN_OUT   = 10 */ tensorDevPtr(lc.attnOut),
-		/* FEB_X_RES1     = 11 */ tensorDevPtr(lc.xAfterRes1),
-		/* FEB_NORMED2    = 12 */ tensorDevPtr(lc.normed2),
-		/* FEB_LN2_INVSTD = 13 */ tensorDevPtr(lc.invStd2),
-		/* FEB_FFN1_PRE   = 14 */ tensorDevPtr(lc.ffn1PreAct),
-		/* FEB_FFN1_OUT   = 15 */ tensorDevPtr(lc.ffn1Out),
+// allocFusedLayerWeights uploads all 16 weight tensors for one layer to GPU.
+func allocFusedLayerWeights(fep compute.FusedEncoderProvider, layer *gpuEncoderLayer) ([16]unsafe.Pointer, error) {
+	tensors := [16]*tensor.TensorNumeric[float32]{
+		layer.qW, layer.qB, layer.kW, layer.kB,
+		layer.vW, layer.vB, layer.oW, layer.oB,
+		layer.ffn1W, layer.ffn1B, layer.ffn2W, layer.ffn2B,
+		layer.norm1, layer.bias1, layer.norm2, layer.bias2,
 	}
+	var ptrs [16]unsafe.Pointer
+	for i, t := range tensors {
+		// Check if already GPU-backed (from a previous per-op run).
+		if p := tensorDevPtr(t); p != nil {
+			ptrs[i] = p
+			continue
+		}
+		// Upload to GPU.
+		p, err := uploadTensor(fep, t)
+		if err != nil {
+			return ptrs, fmt.Errorf("weight[%d]: %w", i, err)
+		}
+		ptrs[i] = p
+	}
+	return ptrs, nil
 }
 
-// buildGradPtrs maps gradient accumulator tensors to the FEG_* array.
-func buildGradPtrs(grad *gpuEncoderLayer) [16]unsafe.Pointer {
-	return [16]unsafe.Pointer{
-		/* FEG_DQW     = 0  */ tensorDevPtr(grad.qW),
-		/* FEG_DQB     = 1  */ tensorDevPtr(grad.qB),
-		/* FEG_DKW     = 2  */ tensorDevPtr(grad.kW),
-		/* FEG_DKB     = 3  */ tensorDevPtr(grad.kB),
-		/* FEG_DVW     = 4  */ tensorDevPtr(grad.vW),
-		/* FEG_DVB     = 5  */ tensorDevPtr(grad.vB),
-		/* FEG_DOW     = 6  */ tensorDevPtr(grad.oW),
-		/* FEG_DOB     = 7  */ tensorDevPtr(grad.oB),
-		/* FEG_DFFN1W  = 8  */ tensorDevPtr(grad.ffn1W),
-		/* FEG_DFFN1B  = 9  */ tensorDevPtr(grad.ffn1B),
-		/* FEG_DFFN2W  = 10 */ tensorDevPtr(grad.ffn2W),
-		/* FEG_DFFN2B  = 11 */ tensorDevPtr(grad.ffn2B),
-		/* FEG_DNORM1W = 12 */ tensorDevPtr(grad.norm1),
-		/* FEG_DNORM1B = 13 */ tensorDevPtr(grad.bias1),
-		/* FEG_DNORM2W = 14 */ tensorDevPtr(grad.norm2),
-		/* FEG_DNORM2B = 15 */ tensorDevPtr(grad.bias2),
+// allocFusedLayerBufs allocates the 16 FEB_* GPU scratch/cache buffers for one layer.
+func allocFusedLayerBufs(fep compute.FusedEncoderProvider, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches int) ([16]unsafe.Pointer, error) {
+	bnh := bsC * nHeads
+	sizes := [16]int{
+		/* FEB_NORMED1    */ totalRows * dModel,
+		/* FEB_LN1_INVSTD */ totalRows,
+		/* FEB_Q          */ totalRows * dModel,
+		/* FEB_K          */ totalRows * dModel,
+		/* FEB_V          */ totalRows * dModel,
+		/* FEB_QH         */ bnh * numPatches * headDim,
+		/* FEB_KH         */ bnh * numPatches * headDim,
+		/* FEB_VH         */ bnh * numPatches * headDim,
+		/* FEB_ATTN_SCORES*/ bnh * numPatches * numPatches,
+		/* FEB_ATTN_OUT_H */ bnh * numPatches * headDim,
+		/* FEB_ATTN_OUT   */ totalRows * dModel,
+		/* FEB_X_RES1     */ totalRows * dModel,
+		/* FEB_NORMED2    */ totalRows * dModel,
+		/* FEB_LN2_INVSTD */ totalRows,
+		/* FEB_FFN1_PRE   */ totalRows * ffnDim,
+		/* FEB_FFN1_OUT   */ totalRows * ffnDim,
 	}
-}
-
-// buildWeightTransposePtrs maps pre-transposed weights to the FEWT_* array.
-func buildWeightTransposePtrs(lwt *layerTransposes) [6]unsafe.Pointer {
-	return [6]unsafe.Pointer{
-		/* FEWT_QWT    = 0 */ tensorDevPtr(lwt.qWT),
-		/* FEWT_KWT    = 1 */ tensorDevPtr(lwt.kWT),
-		/* FEWT_VWT    = 2 */ tensorDevPtr(lwt.vWT),
-		/* FEWT_OWT    = 3 */ tensorDevPtr(lwt.oWT),
-		/* FEWT_FFN1WT = 4 */ tensorDevPtr(lwt.ffn1WT),
-		/* FEWT_FFN2WT = 5 */ tensorDevPtr(lwt.ffn2WT),
+	var ptrs [16]unsafe.Pointer
+	for i, n := range sizes {
+		p, err := fep.AllocDeviceFloat32(n)
+		if err != nil {
+			return ptrs, fmt.Errorf("buf[%d] (%d floats): %w", i, n, err)
+		}
+		ptrs[i] = p
 	}
+	return ptrs, nil
 }
 
 // fusedEncoderForward attempts to run the fused encoder forward path.
@@ -117,66 +115,98 @@ func fusedEncoderForward(
 	x *tensor.TensorNumeric[float32],
 	layers []gpuEncoderLayer,
 	layerCaches []gpuBatchLayerCache,
+	fusedGPU *fusedEncoderGPU,
 	bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim int,
 ) (*tensor.TensorNumeric[float32], bool, error) {
+	if fusedGPU == nil {
+		return nil, false, nil // no persistent state (e.g., inference path)
+	}
 	fep, ok := engine.(compute.FusedEncoderProvider)
 	if !ok || !fep.FusedEncoderAvailable() {
 		return nil, false, nil
 	}
 
 	nLayers := len(layers)
+
+	// Allocate persistent GPU resources on first call.
+	if !fusedGPU.allocated {
+		fusedGPU.layers = make([]fusedLayerGPU, nLayers)
+		for li := 0; li < nLayers; li++ {
+			var err error
+			fusedGPU.layers[li].weights, err = allocFusedLayerWeights(fep, &layers[li])
+			if err != nil {
+				return nil, false, fmt.Errorf("layer %d weights: %w", li, err)
+			}
+			fusedGPU.layers[li].bufs, err = allocFusedLayerBufs(fep, totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches)
+			if err != nil {
+				return nil, false, fmt.Errorf("layer %d bufs: %w", li, err)
+			}
+		}
+		fusedGPU.allocated = true
+	}
+
+	// Ensure input is on GPU.
 	inputPtr := tensorDevPtr(x)
 	if inputPtr == nil {
-		return nil, false, nil // not GPU-backed, fall back
+		// Upload input to GPU.
+		var err error
+		inputPtr, err = uploadTensor(fep, x)
+		if err != nil {
+			return nil, false, fmt.Errorf("upload input: %w", err)
+		}
+	}
+
+	// Allocate output buffer (reused across layers, final layer output returned).
+	outputPtr, err := fep.AllocDeviceFloat32(totalRows * dModel)
+	if err != nil {
+		return nil, false, fmt.Errorf("alloc output: %w", err)
 	}
 
 	for li := 0; li < nLayers; li++ {
-		layer := &layers[li]
-		lc := &layerCaches[li]
+		fl := &fusedGPU.layers[li]
 
-		// Ensure cache buffers are allocated (reuse existing allocator).
-		if err := allocLayerCacheBuffers(lc, bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim); err != nil {
-			return nil, false, err
-		}
-
-		weights := buildWeightPtrs(layer)
-		bufs := buildFwdCachePtrs(lc)
-
-		// Check all pointers are valid (all tensors must be GPU-backed).
-		for i := 0; i < 16; i++ {
-			if weights[i] == nil {
-				return nil, false, fmt.Errorf("fusedEncoderForward: weight[%d] not on GPU", i)
-			}
-		}
-		for i := 0; i < 16; i++ {
-			if bufs[i] == nil {
-				return nil, false, fmt.Errorf("fusedEncoderForward: buffer[%d] not on GPU", i)
-			}
-		}
-
-		// Determine output pointer. For the last layer, use x's storage
-		// (the caller expects the result in the returned tensor).
-		// For intermediate layers, use xAfterRes2 as output, then make it
-		// the next layer's input.
-		var outputPtr unsafe.Pointer
-		if lc.xAfterRes2 != nil {
-			outputPtr = tensorDevPtr(lc.xAfterRes2)
-		} else {
-			// Fall back if xAfterRes2 not allocated
-			return nil, false, nil
-		}
-
-		if err := fep.FusedEncoderForward(&weights, &bufs, inputPtr, outputPtr,
+		if err := fep.FusedEncoderForward(&fl.weights, &fl.bufs, inputPtr, outputPtr,
 			totalRows, dModel, nHeads, headDim, ffnDim, bsC, numPatches); err != nil {
-			return nil, false, fmt.Errorf("fusedEncoderForward layer %d: %w", li, err)
+			return nil, false, fmt.Errorf("fused forward layer %d: %w", li, err)
 		}
 
 		// Output becomes input for next layer.
-		inputPtr = outputPtr
+		inputPtr, outputPtr = outputPtr, inputPtr
 	}
 
-	// Return the last layer's output tensor.
-	return layerCaches[nLayers-1].xAfterRes2, true, nil
+	// After the loop, inputPtr holds the final output (due to the swap).
+	// Wrap it as a non-owning GPU tensor view for the caller.
+	finalPtr := inputPtr
+	gs := tensor.NewGPUStorageViewFromPtr[float32](finalPtr, totalRows*dModel, 0)
+	result, err := tensor.New[float32]([]int{totalRows, dModel}, make([]float32, totalRows*dModel))
+	if err != nil {
+		return nil, false, fmt.Errorf("wrap output: %w", err)
+	}
+	result.SetStorage(gs)
+	return result, true, nil
+}
+
+// buildGradPtrs maps gradient accumulator tensors to the FEG_* array.
+func buildGradPtrs(grad *gpuEncoderLayer) [16]unsafe.Pointer {
+	return [16]unsafe.Pointer{
+		tensorDevPtr(grad.qW), tensorDevPtr(grad.qB),
+		tensorDevPtr(grad.kW), tensorDevPtr(grad.kB),
+		tensorDevPtr(grad.vW), tensorDevPtr(grad.vB),
+		tensorDevPtr(grad.oW), tensorDevPtr(grad.oB),
+		tensorDevPtr(grad.ffn1W), tensorDevPtr(grad.ffn1B),
+		tensorDevPtr(grad.ffn2W), tensorDevPtr(grad.ffn2B),
+		tensorDevPtr(grad.norm1), tensorDevPtr(grad.bias1),
+		tensorDevPtr(grad.norm2), tensorDevPtr(grad.bias2),
+	}
+}
+
+// buildWeightTransposePtrs maps pre-transposed weights to the FEWT_* array.
+func buildWeightTransposePtrs(lwt *layerTransposes) [6]unsafe.Pointer {
+	return [6]unsafe.Pointer{
+		tensorDevPtr(lwt.qWT), tensorDevPtr(lwt.kWT),
+		tensorDevPtr(lwt.vWT), tensorDevPtr(lwt.oWT),
+		tensorDevPtr(lwt.ffn1WT), tensorDevPtr(lwt.ffn2WT),
+	}
 }
 
 // fusedEncoderBackward attempts to run the fused encoder backward path.
@@ -192,30 +222,8 @@ func fusedEncoderBackward(
 	input *tensor.TensorNumeric[float32],
 	bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim int,
 ) (*tensor.TensorNumeric[float32], bool, error) {
-	fep, ok := engine.(compute.FusedEncoderProvider)
-	if !ok || !fep.FusedEncoderAvailable() {
-		return nil, false, nil
-	}
-
-	nLayers := len(layers)
-	dXPtr := tensorDevPtr(dX)
-	if dXPtr == nil {
-		return nil, false, nil
-	}
-
-	// Process layers in reverse order.
-	for li := nLayers - 1; li >= 0; li-- {
-		layer := &layers[li]
-		grad := &grads[li]
-		lc := &layerCaches[li]
-		lwt := &lwts[li]
-
-		// Backward wiring deferred to DGX validation — the fused backward
-		// kernel requires dedicated scratch buffers (FEBB_*) that are not
-		// yet allocated. Fall back to per-op path for now.
-		_, _, _, _ = layer, grad, lc, lwt
-		return nil, false, nil
-	}
-
+	// Backward fused path deferred — needs dedicated FEBB_* scratch allocation
+	// and mapping of gradient accumulators. Fall back to per-op path.
+	_, _ = engine, dX
 	return nil, false, nil
 }

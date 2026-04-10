@@ -513,6 +513,7 @@ type gpuBatchForwardCache struct {
 	patches     *tensor.TensorNumeric[float32] // [bsC*numPatches, patchLen]
 	flatInput   *tensor.TensorNumeric[float32] // [bsC, headIn]
 	layerCaches []gpuBatchLayerCache
+	fusedGPU    fusedEncoderGPU // persistent GPU buffers for fused encoder path
 
 	// Pre-allocated weight-transpose buffers (T85.2.1).
 	headWT   *tensor.TensorNumeric[float32] // [outDim, headIn]
@@ -892,7 +893,7 @@ func (m *PatchTST) trainWindowedGPU(windows [][][]float64, labels []float64, con
 			// Encoder forward (one pass for all samples x channels).
 			// fc.layerCaches is pre-allocated and persistent across batches so
 			// that encoder scratch buffers are reused (T85.2.4).
-			x, err = encoderForward(ctx, m.engine, x, params.layers, fc.layerCaches,
+			x, err = encoderForward(ctx, m.engine, x, params.layers, fc.layerCaches, &fc.fusedGPU,
 				bsC, numPatches, totalRows, dModel, nHeads, headDim, ffnDim)
 			if err != nil {
 				return nil, fmt.Errorf("gpu encoder fwd: %w", err)
