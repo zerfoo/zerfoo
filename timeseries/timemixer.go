@@ -905,5 +905,22 @@ func (m *TimeMixer) ParamCount() int {
 	return len(m.FlatParams())
 }
 
+// SetTrendHeads sets the trend projection heads for testing.
+// heads[s] is [inputLen][outputLen] for scale s.
+func (m *TimeMixer) SetTrendHeads(heads [][][]float64) {
+	m.trendHeads = heads
+}
+
+// SetSeasonalHeads sets the seasonal projection heads for testing.
+// heads[s] is [inputLen][outputLen] for scale s.
+func (m *TimeMixer) SetSeasonalHeads(heads [][][]float64) {
+	m.seasonalHeads = heads
+}
+
+// SetMixWeights sets the raw (pre-softmax) mixing weights for testing.
+func (m *TimeMixer) SetMixWeights(w []float64) {
+	m.mixWeights = w
+}
+
 // Compile-time check that TimeMixer implements TrainableBackend.
 var _ TrainableBackend = (*TimeMixer)(nil)
