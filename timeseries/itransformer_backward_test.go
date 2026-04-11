@@ -86,7 +86,7 @@ func TestITransformer_BackwardBatchEngine_GradientCheck(t *testing.T) {
 	}
 
 	// Numerical gradient check via central finite differences.
-	params := m.flatParams()
+	params := m.FlatParams()
 	nParams := len(params)
 	if len(analyticalGrads) != nParams {
 		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)

@@ -454,7 +454,7 @@ func TestITransformer_GradientCheck(t *testing.T) {
 	analyticalGrads := accGrads.collectGrads(config)
 
 	// Pick 10 random parameters and verify with central finite differences.
-	params := m.flatParams()
+	params := m.FlatParams()
 	nParams := len(params)
 	if len(analyticalGrads) != nParams {
 		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)

@@ -317,7 +317,7 @@ func (m *ITransformer) trainWindowedEngine(windows [][][]float64, labels []float
 
 	ctx := context.Background()
 
-	params := m.flatParams()
+	params := m.FlatParams()
 	nParams := len(params)
 	mState := make([]float64, nParams)
 	vState := make([]float64, nParams)
