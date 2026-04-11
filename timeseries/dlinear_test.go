@@ -391,7 +391,7 @@ func TestDLinear_ParamCount(t *testing.T) {
 	}
 
 	// Verify flatParams matches.
-	params := m.flatParams()
+	params := m.FlatParams()
 	if len(params) != want {
 		t.Errorf("flatParams length = %d, want %d", len(params), want)
 	}
@@ -623,7 +623,7 @@ func TestDLinear_TrainWindowed_MultiScale(t *testing.T) {
 	}
 
 	// Verify all weights are finite.
-	assertFiniteWeights(t, m.flatParams())
+	assertFiniteWeights(t, m.FlatParams())
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 500 samples)", result.FinalLoss)
 }
 

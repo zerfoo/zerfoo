@@ -526,51 +526,7 @@ func mlpBackward(mlp *mixingMLP, dOut, x, hidden, preReLU []float64, grads *mlpG
 	return dInput.Data()
 }
 
-// flatParams returns pointers to all trainable parameters in a flat slice.
-// Order: maWeights (per scale), then for each layer: seasonalMLP (w1, b1, w2, b2),
-// trendMLP (w1, b1, w2, b2).
-func (m *TimeMixer) flatParams() []*float64 {
-	var params []*float64
-
-	// MA weights.
-	for s := range m.maWeights {
-		for i := range m.maWeights[s] {
-			params = append(params, &m.maWeights[s][i])
-		}
-	}
-
-	// MLP parameters per layer.
-	for l := 0; l < m.config.NumLayers; l++ {
-		params = append(params, flatMLP(m.seasonalMLPs[l])...)
-		params = append(params, flatMLP(m.trendMLPs[l])...)
-	}
-
-	return params
-}
-
-// flatMLP returns pointers to all parameters of a mixing MLP.
-func flatMLP(mlp *mixingMLP) []*float64 {
-	var params []*float64
-	for i := range mlp.w1 {
-		for j := range mlp.w1[i] {
-			params = append(params, &mlp.w1[i][j])
-		}
-	}
-	for i := range mlp.b1 {
-		params = append(params, &mlp.b1[i])
-	}
-	for i := range mlp.w2 {
-		for j := range mlp.w2[i] {
-			params = append(params, &mlp.w2[i][j])
-		}
-	}
-	for i := range mlp.b2 {
-		params = append(params, &mlp.b2[i])
-	}
-	return params
-}
-
-// collectGrads flattens the gradient accumulators in the same order as flatParams.
+// collectGrads flattens the gradient accumulators in the same order as FlatParams.
 func (g *timeMixerGrads) collectGrads(m *TimeMixer) []float64 {
 	var grads []float64
 
