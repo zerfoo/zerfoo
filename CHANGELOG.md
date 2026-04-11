@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0](https://github.com/zerfoo/zerfoo/compare/v1.44.0...v1.45.0) (2026-04-11)
+
+
+### Features
+
+* **parity:** add 11 more layer parity tests (E86.1 remaining) ([462f24e](https://github.com/zerfoo/zerfoo/commit/462f24e6aa161dce30059772cc2b33286b756e17))
+* **parity:** add 22 new layer parity tests (E86.1 + E86.3) ([092e3bf](https://github.com/zerfoo/zerfoo/commit/092e3bf121f8b3194820cb602bef99a8aa624db0))
+* **parity:** add GQA and MoE golden-file parity tests ([2e043e9](https://github.com/zerfoo/zerfoo/commit/2e043e9f932d1c0a27a81ea6904605c09437f059))
+* **parity:** add PyTorch golden file parity tests for 32 layers ([6200355](https://github.com/zerfoo/zerfoo/commit/6200355c2782232f7471242f0277efd4de4e29df))
+* **parity:** Wave 2 - backward parity + model architectures (E86.2, E86.4) ([9351180](https://github.com/zerfoo/zerfoo/commit/9351180f2f16d82b09dbc157c697055a0f8e832b))
+* **parity:** wire Go tests for 10 existing golden files (E86.0) ([e8b9815](https://github.com/zerfoo/zerfoo/commit/e8b98158dc22f5d5c71b76ffc0021b0640387961))
+
+
+### Bug Fixes
+
+* **core:** add missing transposes in MatMul backward ([fefdcba](https://github.com/zerfoo/zerfoo/commit/fefdcba621d4379e80a8d06a328131af48097b87))
+* **loss:** add 2/N scaling factor to MSE backward for mean reduction ([54be887](https://github.com/zerfoo/zerfoo/commit/54be88795b9c27554e8121597690823446dabe12))
+* **loss:** add batch normalization to CrossEntropy backward ([7733c08](https://github.com/zerfoo/zerfoo/commit/7733c08bdab51a0e76ab62fa3270a3c50e13cf7a))
+* **normalization:** correct ReduceSum axis in LayerNorm backward ([5c300c9](https://github.com/zerfoo/zerfoo/commit/5c300c9563e64d1bf461668f8d6f59f7968b5e17))
+
 ## [1.44.0](https://github.com/zerfoo/zerfoo/compare/v1.43.0...v1.44.0) (2026-04-11)
 
 
