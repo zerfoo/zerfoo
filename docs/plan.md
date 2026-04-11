@@ -13,7 +13,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 **Status summary:**
 - 380+ tasks completed across all plans
 - E86: PyTorch parity testing (66/72 -- 105 tests, 100 pass, 5 skip, 0 fail; GPU parity E86.5 pending DGX)
-- E88: Upgrade timeseries model tests from structural to golden-file parity (3/6 DONE -- PatchTST, N-BEATS, ITransformer)
+- E88: Upgrade timeseries model tests from structural to golden-file parity (6/6 DONE -- PatchTST, N-BEATS, ITransformer, DLinear, CfC, FreTS, TimeMixer)
 - E89: Timeseries Engine[T] compliance -- eliminate raw slice math (0/27 -- 6 models, 155+ violations)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
 - E45: Verification remediation (3/3 complete) -- DONE
