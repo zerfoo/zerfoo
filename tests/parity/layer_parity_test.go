@@ -17,9 +17,13 @@ import (
 	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/zerfoo/layers/gather"
 	"github.com/zerfoo/zerfoo/layers/normalization"
+	"github.com/zerfoo/zerfoo/layers/recurrent"
 	"github.com/zerfoo/zerfoo/layers/reducesum"
+	"github.com/zerfoo/zerfoo/layers/regularization"
+	"github.com/zerfoo/zerfoo/layers/ssm"
 	ltranspose "github.com/zerfoo/zerfoo/layers/transpose"
 	"github.com/zerfoo/zerfoo/training/loss"
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
@@ -786,6 +790,330 @@ func TestParity_Gather(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Conv2D test
+// ---------------------------------------------------------------------------
+
+func TestParity_Conv2D(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "core_conv2d")
+	tol := getFloat(g, "tolerance")
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	weight := makeTensor(t, getFloat32s(g, "weight"), getInts(g, "weight_shape"))
+	bias := makeTensor(t, getFloat32s(g, "bias"), getInts(g, "bias_shape"))
+
+	strides := getInts(g, "stride")
+	pads := getInts(g, "padding")
+
+	conv := core.NewConv2d[float32](engine, ops, strides, pads, []int{1, 1}, 1)
+	output, err := conv.Forward(context.Background(), input, weight, bias)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "conv2d_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// FFN test
+// ---------------------------------------------------------------------------
+
+// transposeWeight2D transposes a 2D weight matrix from [rows, cols] to [cols, rows].
+func transposeWeight2D(data []float32, rows, cols int) []float32 {
+	out := make([]float32, len(data))
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			out[j*rows+i] = data[i*cols+j]
+		}
+	}
+	return out
+}
+
+func TestParity_FFN(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "core_ffn")
+	tol := getFloat(g, "tolerance")
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+
+	inputShape := getInts(g, "input_shape")
+	w1Shape := getInts(g, "w1_shape")
+	w2Shape := getInts(g, "w2_shape")
+
+	inputDim := inputShape[1]  // 4
+	hiddenDim := w1Shape[1]    // 32
+	outputDim := w2Shape[1]    // 4
+
+	// Create FFN with no bias (golden file has no bias data)
+	ffn, err := core.NewFFN[float32]("test_ffn", engine, ops, inputDim, hiddenDim, outputDim, core.WithFFNNoBias[float32]())
+	if err != nil {
+		t.Fatalf("NewFFN: %v", err)
+	}
+
+	// Set weights from golden data.
+	// FFN has w1, w2, w3 Dense layers. Each Dense has a Linear with weights [in, out].
+	// Golden data has weights in [in, out] format (matching Zerfoo's layout).
+	params := ffn.Parameters()
+	w1Data := getFloat32s(g, "w1")
+	w2Data := getFloat32s(g, "w2")
+	w3Data := getFloat32s(g, "w3")
+
+	for _, p := range params {
+		pdata := p.Value.Data()
+		switch len(pdata) {
+		case len(w1Data):
+			// Could be w1 or w3, distinguish by name
+			if len(p.Name) > 0 && p.Name[len(p.Name)-1] == 's' {
+				// Parameter names end with "_weights"
+				// w1 is first, w3 is third in parameter order
+			}
+		}
+		_ = pdata
+	}
+
+	// More precise approach: FFN.Parameters() returns w1 params, then w2 params, then w3 params.
+	// Each Dense has [linear_weights] (no bias since WithFFNNoBias).
+	// w1 linear weight: [inputDim, hiddenDim] = [4, 32]
+	// w2 linear weight: [hiddenDim, outputDim] = [32, 4]
+	// w3 linear weight: [inputDim, hiddenDim] = [4, 32]
+	if len(params) < 3 {
+		t.Fatalf("expected at least 3 parameters, got %d", len(params))
+	}
+
+	copy(params[0].Value.Data(), w1Data)
+	copy(params[1].Value.Data(), w2Data)
+	copy(params[2].Value.Data(), w3Data)
+
+	output, err := ffn.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "ffn_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// BatchNorm test
+// ---------------------------------------------------------------------------
+
+func TestParity_BatchNorm(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "norm_batch_norm")
+	tol := getFloat(g, "tolerance")
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	scale := makeTensor(t, getFloat32s(g, "scale"), getInts(g, "scale_shape"))
+	bias := makeTensor(t, getFloat32s(g, "bias"), getInts(g, "bias_shape"))
+	runningMean := makeTensor(t, getFloat32s(g, "running_mean"), getInts(g, "scale_shape"))
+	runningVar := makeTensor(t, getFloat32s(g, "running_var"), getInts(g, "scale_shape"))
+
+	eps := float32(getFloat(g, "epsilon"))
+	bn := normalization.NewBatchNormalization[float32](engine, ops, eps)
+
+	output, err := bn.Forward(context.Background(), input, scale, bias, runningMean, runningVar)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "batch_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// Dropout test (eval mode only)
+// ---------------------------------------------------------------------------
+
+func TestParity_Dropout(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "op_dropout")
+	tol := getFloat(g, "tolerance")
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	rate := float32(getFloat(g, "rate"))
+
+	dropout := regularization.NewDropout[float32](engine, ops, rate)
+	// Eval mode (default): output should be identical to input
+	output, err := dropout.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "dropout_eval", output.Data(), getFloat32s(g, "expected_output_eval"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// AdamW optimizer test
+// ---------------------------------------------------------------------------
+
+func TestParity_AdamW(t *testing.T) {
+	engine, _ := setup()
+	g := loadGolden(t, "optimizer_adamw")
+	tol := getFloat(g, "tolerance")
+
+	lr := float32(getFloat(g, "lr"))
+	beta1 := float32(getFloat(g, "beta1"))
+	beta2 := float32(getFloat(g, "beta2"))
+	eps := float32(getFloat(g, "epsilon"))
+	wd := float32(getFloat(g, "weight_decay"))
+
+	param := makeParam(t, "test_param", getFloat32s(g, "param_before"), getInts(g, "param_shape"))
+	gradTensor := makeTensor(t, getFloat32s(g, "grad"), getInts(g, "param_shape"))
+	param.Gradient = gradTensor
+
+	adamw := optimizer.NewAdamW[float32](engine, lr, beta1, beta2, eps, wd)
+	err := adamw.Step(context.Background(), []*graph.Parameter[float32]{param})
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	assertClose(t, "adamw_step", param.Value.Data(), getFloat32s(g, "expected_param_after"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// SGD optimizer test
+// ---------------------------------------------------------------------------
+
+func TestParity_SGD(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "optimizer_sgd")
+	tol := getFloat(g, "tolerance")
+
+	lr := float32(getFloat(g, "lr"))
+
+	param := makeParam(t, "test_param", getFloat32s(g, "param_before"), getInts(g, "param_shape"))
+	gradTensor := makeTensor(t, getFloat32s(g, "grad"), getInts(g, "param_shape"))
+	param.Gradient = gradTensor
+
+	sgd := optimizer.NewSGD[float32](engine, ops, lr)
+	err := sgd.Step(context.Background(), []*graph.Parameter[float32]{param})
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	assertClose(t, "sgd_step", param.Value.Data(), getFloat32s(g, "expected_param_after"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// SimpleRNN test
+// ---------------------------------------------------------------------------
+
+func TestParity_SimpleRNN(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "recurrent_simple_rnn")
+	tol := getFloat(g, "tolerance")
+
+	inputDim := int(getFloat(g, "input_dim"))
+	hiddenDim := int(getFloat(g, "hidden_dim"))
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	inputShape := getInts(g, "input_shape")
+	batchSize := inputShape[0]
+	seqLen := inputShape[1]
+
+	rnn, err := recurrent.NewSimpleRNN[float32]("test_rnn", engine, ops, inputDim, hiddenDim)
+	if err != nil {
+		t.Fatalf("NewSimpleRNN: %v", err)
+	}
+
+	// Set weights from golden data.
+	// PyTorch stores weights as [out, in], Zerfoo Linear stores as [in, out].
+	// RNN parameters order: inputWeights params, hiddenWeights params, bias params.
+	params := rnn.Parameters()
+	// inputWeights: Linear with weights [inputDim, hiddenDim]
+	// PyTorch weight_ih: [hiddenDim, inputDim] -> transpose
+	wihShape := getInts(g, "weight_ih_shape")
+	wihData := transposeWeight2D(getFloat32s(g, "weight_ih"), wihShape[0], wihShape[1])
+	copy(params[0].Value.Data(), wihData)
+
+	// hiddenWeights: Linear with weights [hiddenDim, hiddenDim]
+	// PyTorch weight_hh: [hiddenDim, hiddenDim] -> transpose (symmetric dims but data differs)
+	whhShape := getInts(g, "weight_hh_shape")
+	whhData := transposeWeight2D(getFloat32s(g, "weight_hh"), whhShape[0], whhShape[1])
+	copy(params[1].Value.Data(), whhData)
+
+	// Bias: Zerfoo has a single bias, PyTorch has bias_ih + bias_hh
+	biasIH := getFloat32s(g, "bias_ih")
+	biasHH := getFloat32s(g, "bias_hh")
+	combinedBias := make([]float32, len(biasIH))
+	for i := range combinedBias {
+		combinedBias[i] = biasIH[i] + biasHH[i]
+	}
+	copy(params[2].Value.Data(), combinedBias)
+
+	// Run forward step-by-step over the sequence dimension
+	inData := input.Data()
+	outputs := make([]float32, 0, batchSize*seqLen*hiddenDim)
+	for step := 0; step < seqLen; step++ {
+		// Extract input[:, step, :] -> [batch, inputDim]
+		stepData := make([]float32, batchSize*inputDim)
+		for b := 0; b < batchSize; b++ {
+			copy(stepData[b*inputDim:(b+1)*inputDim], inData[b*seqLen*inputDim+step*inputDim:b*seqLen*inputDim+step*inputDim+inputDim])
+		}
+		stepInput := makeTensor(t, stepData, []int{batchSize, inputDim})
+		stepOutput, err := rnn.Forward(context.Background(), stepInput)
+		if err != nil {
+			t.Fatalf("Forward step %d: %v", step, err)
+		}
+		outputs = append(outputs, stepOutput.Data()...)
+	}
+
+	// Reshape outputs to [batch, seq, hidden] for comparison
+	// outputs is currently [seq * batch * hidden], need to rearrange to [batch * seq * hidden]
+	expected := getFloat32s(g, "expected_output")
+	reordered := make([]float32, len(outputs))
+	for b := 0; b < batchSize; b++ {
+		for s := 0; s < seqLen; s++ {
+			for h := 0; h < hiddenDim; h++ {
+				reordered[b*seqLen*hiddenDim+s*hiddenDim+h] = outputs[s*batchSize*hiddenDim+b*hiddenDim+h]
+			}
+		}
+	}
+	assertClose(t, "simple_rnn_output", reordered, expected, tol)
+}
+
+// ---------------------------------------------------------------------------
+// S4 test
+// ---------------------------------------------------------------------------
+
+func TestParity_S4(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "ssm_s4")
+	tol := getFloat(g, "tolerance")
+
+	inputDim := int(getFloat(g, "input_dim"))
+	stateDim := int(getFloat(g, "state_dim"))
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+
+	s4, err := ssm.NewS4[float32]("test_s4", engine, ops, inputDim, stateDim)
+	if err != nil {
+		t.Fatalf("NewS4: %v", err)
+	}
+
+	// Set parameters from golden data
+	params := s4.Parameters()
+	// Parameters order: aLog, b, c, d
+	copy(params[0].Value.Data(), getFloat32s(g, "a_log"))
+	copy(params[1].Value.Data(), getFloat32s(g, "b"))
+	copy(params[2].Value.Data(), getFloat32s(g, "c"))
+	copy(params[3].Value.Data(), getFloat32s(g, "d"))
+
+	output, err := s4.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "s4_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// MambaBlock test
+// ---------------------------------------------------------------------------
+
+func TestParity_MambaBlock(t *testing.T) {
+	t.Skip("TODO: complex weight wiring needed - MambaBlock has 6+ projection layers (in_proj, x_proj, dt_proj, out_proj, conv_weight, A, D) with intricate dimensions and discretization logic that requires careful mapping from PyTorch's parameter layout")
+}
+
+// ---------------------------------------------------------------------------
+// TransformerBlock test
+// ---------------------------------------------------------------------------
+
+func TestParity_TransformerBlock(t *testing.T) {
+	t.Skip("TODO: complex weight wiring needed - TransformerBlock requires constructing an attention node (with QKV+output projections), 3 RMSNorm layers, and an FFN, all with coordinated weight shapes and specific parameter initialization from golden data")
+}
+
+// ---------------------------------------------------------------------------
 // Summary test: runs all layer parity tests and prints a report
 // ---------------------------------------------------------------------------
 
@@ -836,6 +1164,24 @@ func TestParity_Summary(t *testing.T) {
 		{"ReduceSum", TestParity_ReduceSum},
 		{"Transpose", TestParity_Transpose},
 		{"Gather", TestParity_Gather},
+		// Conv2D
+		{"Conv2D", TestParity_Conv2D},
+		// FFN
+		{"FFN", TestParity_FFN},
+		// Normalization (BatchNorm)
+		{"BatchNorm", TestParity_BatchNorm},
+		// Regularization
+		{"Dropout", TestParity_Dropout},
+		// Optimizers
+		{"AdamW", TestParity_AdamW},
+		{"SGD", TestParity_SGD},
+		// Recurrent
+		{"SimpleRNN", TestParity_SimpleRNN},
+		// SSM
+		{"S4", TestParity_S4},
+		{"MambaBlock", TestParity_MambaBlock},
+		// Transformer
+		{"TransformerBlock", TestParity_TransformerBlock},
 	}
 
 	passed, failed := 0, 0
