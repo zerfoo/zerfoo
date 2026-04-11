@@ -1495,6 +1495,72 @@ def gen_shape_ops():
 
 
 # ---------------------------------------------------------------------------
+# Timeseries: DLinear
+# ---------------------------------------------------------------------------
+
+def gen_dlinear():
+    """Generate golden data for DLinear forward pass.
+
+    DLinear decomposes input into trend (moving average) and seasonal (residual),
+    then applies separate linear projections per channel.
+    """
+    set_seed()
+    input_len = 8
+    output_len = 4
+    channels = 2
+    kernel_size = 3
+
+    # Input: [channels][input_len]
+    x = torch.randn(channels, input_len).float()
+
+    # Weights for trend and seasonal linear projections per channel.
+    # Weight shape per channel: [output_len, input_len], bias: [output_len]
+    trend_w = torch.randn(channels, output_len, input_len).float() * 0.1
+    trend_b = torch.zeros(channels, output_len).float()
+    seasonal_w = torch.randn(channels, output_len, input_len).float() * 0.1
+    seasonal_b = torch.zeros(channels, output_len).float()
+
+    # Moving average decomposition (edge-padded, matching Zerfoo's implementation).
+    half = kernel_size // 2
+    trend = torch.zeros_like(x)
+    for c in range(channels):
+        for i in range(input_len):
+            s = 0.0
+            count = 0
+            for j in range(i - half, i + half + 1):
+                idx = max(0, min(j, input_len - 1))
+                s += x[c, idx].item()
+                count += 1
+            trend[c, i] = s / count
+
+    seasonal = x - trend
+
+    # Forward: output[c] = trend_w[c] @ trend[c] + trend_b[c] + seasonal_w[c] @ seasonal[c] + seasonal_b[c]
+    output = torch.zeros(channels, output_len)
+    for c in range(channels):
+        trend_out = trend_w[c] @ trend[c] + trend_b[c]
+        seasonal_out = seasonal_w[c] @ seasonal[c] + seasonal_b[c]
+        output[c] = trend_out + seasonal_out
+
+    save_case("timeseries_dlinear", {
+        "layer": "dlinear",
+        "input_len": input_len,
+        "output_len": output_len,
+        "channels": channels,
+        "kernel_size": kernel_size,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "trend_w": to_list(trend_w), "trend_w_shape": list(trend_w.shape),
+        "trend_b": to_list(trend_b), "trend_b_shape": list(trend_b.shape),
+        "seasonal_w": to_list(seasonal_w), "seasonal_w_shape": list(seasonal_w.shape),
+        "seasonal_b": to_list(seasonal_b), "seasonal_b_shape": list(seasonal_b.shape),
+        "expected_trend": to_list(trend), "trend_shape": list(trend.shape),
+        "expected_seasonal": to_list(seasonal), "seasonal_shape": list(seasonal.shape),
+        "expected_output": to_list(output), "output_shape": list(output.shape),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1560,6 +1626,8 @@ def main():
         ("SSMLayer", gen_ssm_layer),
         ("ArithmeticOps", gen_arithmetic_ops),
         ("ShapeOps", gen_shape_ops),
+        # Timeseries models (E86.4)
+        ("DLinear", gen_dlinear),
     ]
 
     passed, failed = 0, 0

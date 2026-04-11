@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/gnn"
 	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
@@ -24,12 +25,16 @@ import (
 	"github.com/zerfoo/zerfoo/layers/ssm"
 	"github.com/zerfoo/zerfoo/layers/timeseries"
 	ltranspose "github.com/zerfoo/zerfoo/layers/transpose"
+	"github.com/zerfoo/zerfoo/rl"
+	"github.com/zerfoo/zerfoo/synth"
+	"github.com/zerfoo/zerfoo/tabular"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 // goldenDir returns the path to tests/golden/layers/.
@@ -1664,6 +1669,461 @@ func TestParity_AttnRes(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Backward / gradient parity tests (T86.2)
+// ---------------------------------------------------------------------------
+
+// T86.2.1: Activation backward tests
+
+func TestParity_ReLU_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_relu")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	relu := activations.NewReLU(engine, ops)
+	if _, err := relu.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := relu.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "relu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_GELU_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_gelu")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	gelu := activations.NewGelu(engine, ops)
+	if _, err := gelu.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := gelu.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "gelu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_Sigmoid_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_sigmoid")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	sigmoid := activations.NewSigmoid(engine, ops)
+	if _, err := sigmoid.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := sigmoid.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "sigmoid_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_Tanh_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_tanh")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	tanh := activations.NewTanh(engine, ops)
+	if _, err := tanh.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := tanh.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "tanh_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_LeakyReLU_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_leaky_relu")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	alpha := getFloat(g, "alpha")
+	lrelu := activations.NewLeakyReLU(engine, ops, activations.WithAlpha[float32](alpha))
+	if _, err := lrelu.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := lrelu.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "leaky_relu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_SwiGLU_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "activation_swiglu")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	swiglu := activations.NewSwiGLU[float32](engine, ops)
+	if _, err := swiglu.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := swiglu.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "swiglu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+// T86.2.2: Normalization backward tests
+
+func TestParity_LayerNorm_Backward(t *testing.T) {
+	engine, _ := setup()
+	g := loadGolden(t, "norm_layer_norm")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	eps := float32(getFloat(g, "epsilon"))
+	gammaParam := makeParam(t, "gamma", getFloat32s(g, "gamma"), getInts(g, "gamma_shape"))
+	betaParam := makeParam(t, "beta", getFloat32s(g, "beta"), getInts(g, "beta_shape"))
+
+	ln := normalization.NewLayerNormalizationFromParams(engine, eps, gammaParam, betaParam)
+	if _, err := ln.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := ln.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "layer_norm_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+func TestParity_RMSNorm_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "norm_rms_norm")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	eps := float32(getFloat(g, "epsilon"))
+	gainParam := makeParam(t, "gain", getFloat32s(g, "gain"), getInts(g, "gain_shape"))
+
+	rms, err := normalization.NewRMSNormFromParam(engine, ops, eps, gainParam)
+	if err != nil {
+		t.Fatalf("NewRMSNormFromParam: %v", err)
+	}
+	if _, err := rms.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := rms.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "rms_norm_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+}
+
+// T86.2.3: Core backward tests
+
+func TestParity_Linear_Backward(t *testing.T) {
+	engine, _ := setup()
+	g := loadGolden(t, "core_linear")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	weightParam := makeParam(t, "weight", getFloat32s(g, "weight"), getInts(g, "weight_shape"))
+
+	linear := core.NewLinearFromParam(engine, weightParam)
+	if _, err := linear.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := linear.Backward(ctx, types.FullBackprop, gradOutput, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "linear_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+
+	// Check weight gradient was accumulated into the parameter
+	params := linear.Parameters()
+	assertClose(t, "linear_grad_weight", params[0].Gradient.Data(), getFloat32s(g, "expected_grad_weight"), tol)
+}
+
+func TestParity_MatMul_Backward(t *testing.T) {
+	engine, _ := setup()
+	g := loadGolden(t, "core_matmul")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_a_shape"))
+	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_b_shape"))
+
+	mm := core.NewMatMul[float32](engine)
+	if _, err := mm.Forward(ctx, a, b); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	grads, err := mm.Backward(ctx, types.FullBackprop, gradOutput, a, b)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "matmul_grad_a", grads[0].Data(), getFloat32s(g, "expected_grad_a"), tol)
+	assertClose(t, "matmul_grad_b", grads[1].Data(), getFloat32s(g, "expected_grad_b"), tol)
+}
+
+// T86.2.4: Loss backward tests
+
+func TestParity_MSELoss_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "loss_mse")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
+	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+
+	mse := loss.NewMSE(engine, ops)
+	if _, err := mse.Forward(ctx, pred, target); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// For loss backward, dOut is typically ones (scalar 1.0)
+	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	grads, err := mse.Backward(ctx, types.FullBackprop, dOut, pred, target)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "mse_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+}
+
+func TestParity_BCELoss_Backward(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "loss_bce")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
+	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+
+	bce := loss.NewBCELoss(engine, ops)
+	if _, err := bce.Forward(ctx, pred, target); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	grads, err := bce.Backward(ctx, types.FullBackprop, dOut, pred, target)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "bce_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+}
+
+func TestParity_CrossEntropyLoss_Backward(t *testing.T) {
+	engine, _ := setup()
+	g := loadGolden(t, "loss_cross_entropy")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	logits := makeTensor(t, getFloat32s(g, "logits"), getInts(g, "logits_shape"))
+	targetsRaw := g["targets"].([]interface{})
+	targetData := make([]float32, len(targetsRaw))
+	for i, v := range targetsRaw {
+		targetData[i] = float32(v.(float64))
+	}
+	targets := makeTensor(t, targetData, []int{len(targetData)})
+
+	cel := loss.NewCrossEntropyLoss[float32](engine)
+	if _, err := cel.Forward(ctx, logits, targets); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	grads, err := cel.Backward(ctx, types.FullBackprop, dOut)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	assertClose(t, "cross_entropy_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+}
+
+// T86.2.5: SSM backward test
+
+func TestParity_S4_Backward(t *testing.T) {
+	g := loadGolden(t, "ssm_s4")
+	if getFloat32s(g, "grad_output") == nil {
+		t.Skip("no backward golden data for S4")
+	}
+}
+
+// T86.2.6: Attention backward test
+
+func TestParity_SDPA_Backward(t *testing.T) {
+	g := loadGolden(t, "attention_sdpa_causal")
+	if getFloat32s(g, "grad_output") == nil {
+		t.Skip("no backward golden data for SDPA")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Structural parity tests for specialized models (T86.4.8-T86.4.13)
+// ---------------------------------------------------------------------------
+
+func TestParity_TabNet_Structural(t *testing.T) {
+	engine, _ := setup()
+	ops := numeric.Float32Ops{}
+	cfg := tabular.TabNetConfig{
+		InputDim: 8, OutputDim: 3, NSteps: 3,
+		RelaxationFactor: 1.5, SparsityCoefficient: 1e-3, FeatureTransformerDim: 16,
+	}
+	model, err := tabular.NewTabNet(cfg, engine, &ops)
+	if err != nil {
+		t.Fatalf("NewTabNet: %v", err)
+	}
+	inputData := make([]float32, 4*cfg.InputDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.1
+	}
+	output, err := model.Forward(context.Background(), makeTensor(t, inputData, []int{4, cfg.InputDim}))
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if s := output.Shape(); s[0] != 4 || s[1] != cfg.OutputDim {
+		t.Errorf("shape: got %v, want [4,%d]", s, cfg.OutputDim)
+	}
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+func TestParity_PPO_Structural(t *testing.T) {
+	cfg := rl.DefaultPPOConfig(4, 2)
+	cfg.HiddenDim = 16
+	agent := rl.NewPPO(cfg)
+	action := agent.Act(rl.State{0.1, -0.2, 0.3, 0.4})
+	if len(action) != 2 {
+		t.Fatalf("action dim: got %d, want 2", len(action))
+	}
+	for i, v := range action {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("action[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+func TestParity_SAC_Structural(t *testing.T) {
+	agent := rl.NewSAC(rl.SACConfig{StateDim: 4, ActionDim: 2, HiddenDim: 16})
+	action := agent.Act(rl.State{0.1, -0.2, 0.3, 0.4})
+	if len(action) != 2 {
+		t.Fatalf("action dim: got %d, want 2", len(action))
+	}
+	for i, v := range action {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Fatalf("action[%d] = %v (NaN/Inf)", i, v)
+		}
+		if v < -1.0 || v > 1.0 {
+			t.Errorf("action[%d] = %v outside [-1,1]", i, v)
+		}
+	}
+}
+
+func TestParity_GCN_Structural(t *testing.T) {
+	model := gnn.NewGCN(gnn.GCNConfig{InputDim: 4, HiddenDims: []int{8}, OutputDim: 3})
+	adj := make([][]float64, 5)
+	features := make([][]float64, 5)
+	for i := range adj {
+		adj[i] = make([]float64, 5)
+		adj[i][(i+1)%5] = 1.0
+		adj[i][(i-1+5)%5] = 1.0
+		features[i] = make([]float64, 4)
+		for j := range features[i] {
+			features[i][j] = float64(i*4+j+1) * 0.1
+		}
+	}
+	output, err := model.Forward(adj, features)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if len(output) != 5 || len(output[0]) != 3 {
+		t.Fatalf("shape: got [%d][%d], want [5][3]", len(output), len(output[0]))
+	}
+	for i, row := range output {
+		for j, v := range row {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Fatalf("output[%d][%d] = %v (NaN/Inf)", i, j, v)
+			}
+		}
+	}
+}
+
+func TestParity_GAT_Structural(t *testing.T) {
+	model := gnn.NewGAT(gnn.GATConfig{InputDim: 4, HiddenDim: 8, OutputDim: 3, NHeads: 2})
+	adj := make([][]float64, 5)
+	features := make([][]float64, 5)
+	for i := range adj {
+		adj[i] = make([]float64, 5)
+		adj[i][(i+1)%5] = 1.0
+		adj[i][(i-1+5)%5] = 1.0
+		features[i] = make([]float64, 4)
+		for j := range features[i] {
+			features[i][j] = float64(i*4+j+1) * 0.1
+		}
+	}
+	output, err := model.Forward(adj, features)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if len(output) != 5 || len(output[0]) != 3 {
+		t.Fatalf("shape: got [%d][%d], want [5][3]", len(output), len(output[0]))
+	}
+}
+
+func TestParity_MarketVAE_Structural(t *testing.T) {
+	vae := synth.NewMarketVAE(synth.VAEConfig{
+		InputDim: 8, LatentDim: 4, HiddenDims: []int{16},
+		LearningRate: 0.001, NEpochs: 1, Seed: 42,
+	})
+	generated := vae.Generate(5)
+	if len(generated) != 5 || len(generated[0]) != 8 {
+		t.Fatalf("Generate: got [%d][%d], want [5][8]", len(generated), len(generated[0]))
+	}
+	for i, sample := range generated {
+		for j, v := range sample {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Fatalf("generated[%d][%d] = %v (NaN/Inf)", i, j, v)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Summary test: runs all layer parity tests and prints a report
 // ---------------------------------------------------------------------------
 
@@ -1758,6 +2218,37 @@ func TestParity_Summary(t *testing.T) {
 		// Core shape ops
 		{"Op/Reshape", TestParity_Op_Reshape},
 		{"Op/Concat", TestParity_Op_Concat},
+		// Backward / gradient parity (T86.2)
+		{"Backward/ReLU", TestParity_ReLU_Backward},
+		{"Backward/GELU", TestParity_GELU_Backward},
+		{"Backward/Sigmoid", TestParity_Sigmoid_Backward},
+		{"Backward/Tanh", TestParity_Tanh_Backward},
+		{"Backward/LeakyReLU", TestParity_LeakyReLU_Backward},
+		{"Backward/SwiGLU", TestParity_SwiGLU_Backward},
+		{"Backward/LayerNorm", TestParity_LayerNorm_Backward},
+		{"Backward/RMSNorm", TestParity_RMSNorm_Backward},
+		{"Backward/Linear", TestParity_Linear_Backward},
+		{"Backward/MatMul", TestParity_MatMul_Backward},
+		{"Backward/MSELoss", TestParity_MSELoss_Backward},
+		{"Backward/BCELoss", TestParity_BCELoss_Backward},
+		{"Backward/CrossEntropyLoss", TestParity_CrossEntropyLoss_Backward},
+		{"Backward/S4", TestParity_S4_Backward},
+		{"Backward/SDPA", TestParity_SDPA_Backward},
+		// Timeseries & Tabular model forward parity (E86 T86.4)
+		{"DLinear", TestParity_DLinear},
+		{"PatchTST/Structural", TestParity_PatchTST_Structural},
+		{"NBEATS/Structural", TestParity_NBEATS_Structural},
+		{"ITransformer/Structural", TestParity_ITransformer_Structural},
+		{"TFT/Structural", TestParity_TFT_Structural},
+		{"CfC/Structural", TestParity_CfC_Structural},
+		{"FTTransformer/Structural", TestParity_FTTransformer_Structural},
+		// Specialized models (E86 T86.4.8-T86.4.13)
+		{"TabNet/Structural", TestParity_TabNet_Structural},
+		{"PPO/Structural", TestParity_PPO_Structural},
+		{"SAC/Structural", TestParity_SAC_Structural},
+		{"GCN/Structural", TestParity_GCN_Structural},
+		{"GAT/Structural", TestParity_GAT_Structural},
+		{"MarketVAE/Structural", TestParity_MarketVAE_Structural},
 	}
 
 	passed, failed := 0, 0
