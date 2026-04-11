@@ -8,10 +8,11 @@ Granite Guardian, K-Quant optimization, multi-model benchmarks, batched GPU
 training, GGUF writer consolidation, documentation site, MSA-inspired scalable
 memory, and research-driven inference optimizations).
 
-Task statuses updated 2026-04-03 based on merged PRs and git history.
+Task statuses updated 2026-04-10 based on merged PRs and git history.
 
 **Status summary:**
 - 380+ tasks completed across all plans
+- E86: PyTorch parity testing (0/72 -- initial audit 32/32 pass; 10 golden files unwired; planned in 3 waves, 8 agents)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -216,6 +217,289 @@ cleanup, link verification, Lighthouse audit, mobile/search QA all complete.
 
 Detailed task lists for P1-P15 removed during 2026-04-03 /tidy --apply.
 All 127 tasks completed by 2026-03-27 (PRs #262-#265). Full details in git history.
+
+---
+
+## E86: PyTorch Parity Testing for All Layers and Architectures
+
+### Context
+
+Zerfoo has had multiple instances of incorrect layer implementations and performance
+issues that went undetected because there was no systematic comparison against a mature
+reference framework. PyTorch is the most widely validated ML framework and serves as
+a reliable source of numerical truth for standard operations (while acknowledging it is
+not infallible, its correctness coverage far exceeds Zerfoo's).
+
+This epic creates comprehensive parity tests that compare every Zerfoo layer, loss
+function, optimizer, and model architecture against PyTorch. The approach:
+1. A Python script generates deterministic golden test data using PyTorch (fixed seeds,
+   small shapes, exported as JSON with flat arrays and shape metadata).
+2. Go parity tests load the golden data, run through Zerfoo, and compare element-wise
+   within float32 tolerance.
+3. Both forward and backward passes are tested where applicable.
+4. GPU parity tests are submitted to DGX via Spark for CUDA kernel verification.
+
+### Existing Coverage (from initial audit 2026-04-10)
+
+32 forward-pass CPU parity tests already pass (100%): ReLU, GELU, Sigmoid, Tanh,
+Softmax, LeakyReLU, SwiGLU, Erf, functional.ReLU/GELU/Sigmoid/SiLU/Softmax/
+LayerNorm/RMSNorm/Linear, LayerNorm, RMSNorm, Linear, MatMul, Conv1D, SDPA (causal
++ bidirectional), MultiHeadAttention, TokenEmbedding, RotaryEmbedding, MSE, BCE,
+CrossEntropy, ReduceSum, Transpose, Gather.
+
+Files: tests/golden/generate_golden.py, tests/golden/layers/*.json,
+tests/parity/layer_parity_test.go.
+
+### Key Conventions Discovered
+
+- core.Linear stores weight as [in, out] and computes x @ W.
+- functional.Linear stores weight as [out, in] (PyTorch convention) and computes x @ W^T.
+- SDPA defaults to bidirectional; callers must SetCausal(true) for decoder attention.
+- RoPE uses split-half rotation (GPT-NeoX/LLaMA style), not interleaved pairs.
+- GELU uses tanh approximation. LayerNorm uses population variance (N, not N-1).
+- Conv1D/Conv2D use cross-correlation (same as PyTorch, not true convolution).
+
+### Acceptance Criteria
+
+- Every layer in layers/ has at least one forward-pass golden file test vs PyTorch.
+- Every layer with Backward() has a gradient parity test vs PyTorch autograd.
+- Every loss function and optimizer has a parity test.
+- All timeseries and tabular model architectures have end-to-end forward parity tests.
+- GPU parity tests run on DGX for all CUDA-accelerated layers.
+- All tests integrated into CI (CPU tests run on every PR, GPU tests run weekly).
+
+### Work Breakdown
+
+Each task follows the same pattern: (1) add a gen_xxx() function to
+tests/golden/generate_golden.py, (2) run the script to generate the JSON golden
+file, (3) add a TestParity_Xxx Go test to tests/parity/layer_parity_test.go that
+loads the golden file and compares Zerfoo output, (4) add the test to the
+TestParity_Summary list. For backward tests, include grad_output and
+expected_grad_input fields in the golden file and call Backward() in Go.
+
+Golden files already exist but lack Go tests: composite_transformer_block,
+core_conv2d, core_ffn, norm_batch_norm, op_dropout, optimizer_adamw,
+optimizer_sgd, recurrent_simple_rnn, ssm_mamba, ssm_s4. Wire these first.
+
+#### E86.0: Wire existing unwired golden files (Go tests only, no Python)
+
+- [ ] T86.0.1 Wire Conv2D golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Conv2D forward matches golden within 1e-4. Read core/conv2d.go to determine
+  weight layout. PyTorch golden uses [out_ch, in_ch, kH, kW].
+- [ ] T86.0.2 Wire FFN golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: FFN forward matches gate-up-swiglu-down golden within 1e-4. Requires
+  NewFFNFromDense or direct Dense/SwiGLU wiring with w1, w2, w3 from golden.
+- [ ] T86.0.3 Wire BatchNorm golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: BatchNorm eval-mode forward matches golden within 1e-5. Use
+  NewBatchNormalizationWithParams with scale, bias, running_mean, running_var.
+- [ ] T86.0.4 Wire Dropout golden Go test  Owner: TBD  Est: 15m  verifies: [UC-L01]
+  AC: Dropout eval mode is identity. Verify output == input.
+- [ ] T86.0.5 Wire AdamW optimizer golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L02]
+  AC: One AdamW step matches torch.optim.AdamW param_after within 1e-6.
+- [ ] T86.0.6 Wire SGD optimizer golden Go test  Owner: TBD  Est: 15m  verifies: [UC-L02]
+  AC: One SGD step matches torch.optim.SGD param_after within 1e-6.
+- [ ] T86.0.7 Wire SimpleRNN golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: SimpleRNN forward matches torch.nn.RNN golden within 1e-5. Align weight
+  convention: PyTorch weight_ih is [hidden, input], Zerfoo may be [input, hidden].
+- [ ] T86.0.8 Wire S4 SSM golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: S4 scan matches a_disc=exp(-exp(a_log)) golden within 1e-5.
+- [ ] T86.0.9 Wire MambaBlock golden Go test  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Mamba selective scan + gating matches golden within 1e-3. Complex weight
+  wiring: w_in, conv, w_dt, A_log, w_out from golden.
+- [ ] T86.0.10 Wire TransformerBlock composite golden Go test  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Full transformer block (RMSNorm->Attn->Res->RMSNorm->FFN->Res) matches
+  golden within 1e-4. Use tiny config: d_model=16, n_heads=2, d_ff=32.
+- [ ] T86.0.11 Run go vet + go test on all wired tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E86.1: New Layer Forward Parity (generate golden + wire Go test)
+
+- [ ] T86.1.1 FastGelu activation  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: FastGelu inference forward matches torch.nn.GELU(approximate='tanh') within 1e-5.
+- [ ] T86.1.2 SimplifiedLayerNorm  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Matches y = gain * x / sqrt(mean(x^2) + eps) within 1e-5.
+- [ ] T86.1.3 SkipSimplifiedLayerNorm  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Matches SimplifiedLN(x + residual) within 1e-5.
+- [ ] T86.1.4 GQA (GroupedQueryAttention)  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: GQA with 4 query heads, 2 KV heads, d_model=16. Requires NewGroupedQueryAttention
+  with Q/K/V/O weight params. Output matches manual grouped SDPA within 1e-4.
+- [ ] T86.1.5 AttentionHead  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Single head with Q/K/V projections + SDPA. Matches PyTorch within 1e-4.
+- [ ] T86.1.6 MoE (MixtureOfExperts + MoEGate)  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: Top-2 routing with 4 experts, each a small FFN. Matches manual dispatch within 1e-4.
+- [ ] T86.1.7 LMHead  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: LMHead [batch, seq, hidden] -> [batch, seq, vocab] matches linear projection within 1e-5.
+- [ ] T86.1.8 MIMOMambaBlock  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: MIMO SSM scan matches manual multi-input selective scan within 1e-3.
+- [ ] T86.1.9 AttnRes residual  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Output matches x + attention(norm(x)) within 1e-6.
+- [ ] T86.1.10 BlockAttnRes residual  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Block-level attention residual matches within 1e-6.
+- [ ] T86.1.11 HModule hierarchical residual  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: HModule forward (transformer block + hierarchical residual) matches within 1e-4.
+- [ ] T86.1.12 PatchEmbed timeseries  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Patch embedding of timeseries input matches manual Conv1D + reshape within 1e-5.
+- [ ] T86.1.13 GRN (Gated Residual Network)  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: GRN forward matches manual dense->ELU->dense->dropout->layernorm->gate within 1e-4.
+- [ ] T86.1.14 TSMixerBlock  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Timeseries mixing block matches manual MLP mixing within 1e-4.
+- [ ] T86.1.15 MLSTM  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Multivariate LSTM forward matches xLSTM paper reference within 1e-4.
+- [ ] T86.1.16 SLSTM  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Sparse LSTM forward matches reference within 1e-4.
+- [ ] T86.1.17 SSMLayer (timeseries)  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Timeseries SSM layer matches diagonal state space scan within 1e-4.
+- [ ] T86.1.18 CLIPEncoder  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: CLIP vision encoder (tiny: 2 layers, dim=32) matches transformers.CLIPVisionModel within 1e-3.
+- [ ] T86.1.19 MelExtractor  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Mel spectrogram of a 1-second 16kHz sine wave matches torchaudio within 1e-3.
+- [ ] T86.1.20 WhisperEncoder  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: Whisper encoder (tiny: 2 layers, dim=32) matches openai-whisper within 1e-3.
+- [ ] T86.1.21 Core arithmetic ops (Add, Sub, Mul, Div, Pow, Sqrt, Sin, Cos, Neg)  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Each element-wise op matches torch equivalent within 1e-7. One golden file per op.
+- [ ] T86.1.22 Core shape ops (Reshape, Squeeze, Unsqueeze, Concat, Slice, Pad, Expand, Tile)  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Shape ops produce identical data layout to PyTorch. Exact equality.
+- [ ] T86.1.23 Core comparison ops (Equal, Greater, LessOrEqual, Where, TopK, Trilu)  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Comparison and selection ops match PyTorch. Exact equality for booleans.
+- [ ] T86.1.24 Run go vet + go test on all E86.1 tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E86.2: Layer Backward Parity (gradient verification)
+
+- [ ] T86.2.1 Activation backward: ReLU, GELU, Sigmoid, Tanh, LeakyReLU, SwiGLU  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: Each backward gradient matches PyTorch autograd within 1e-5.
+  Golden files already have grad_output and expected_grad_input.
+- [ ] T86.2.2 Normalization backward: LayerNorm, RMSNorm  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Gradients for input, gamma, beta match PyTorch autograd within 1e-4.
+- [ ] T86.2.3 Core backward: Linear, Dense, Conv1D, MatMul  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: Weight and input gradients match PyTorch autograd within 1e-4.
+- [ ] T86.2.4 Loss backward: MSE, BCE, CrossEntropy  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: Loss gradients match PyTorch autograd within 1e-5.
+- [ ] T86.2.5 SSM backward: S4, MambaBlock  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: SSM backward gradients match finite-difference check within 1e-3.
+- [ ] T86.2.6 Attention backward: SDPA causal + bidirectional  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: SDPA backward matches PyTorch autograd within 1e-4.
+- [ ] T86.2.7 Run go vet + go test for all backward parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E86.3: Optimizer and Initializer Parity
+
+- [ ] T86.3.1 EMA: add golden + Go test for one EMA update  Owner: TBD  Est: 30m  verifies: [UC-L02]
+  AC: EMA shadow parameter matches manual exponential moving average within 1e-6.
+- [ ] T86.3.2 SWA: add golden + Go test for one SWA step  Owner: TBD  Est: 30m  verifies: [UC-L02]
+  AC: SWA averaged parameter matches manual running average within 1e-6.
+- [ ] T86.3.3 Initializers: statistical tests for Xavier, He, Uniform  Owner: TBD  Est: 30m  verifies: [UC-L02]
+  AC: Mean and variance of initialized weights match expected distribution.
+  Xavier: var = 2/(fan_in + fan_out). He: var = 2/fan_in. Test on 10K samples.
+- [ ] T86.3.4 Run go vet + go test for optimizer parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E86.4: Model Architecture End-to-End Parity
+
+Each task builds a tiny model in PyTorch with random (seeded) weights, exports
+all weights + input + expected output as a golden JSON file, then loads weights
+into the Zerfoo model and compares forward pass output.
+
+- [ ] T86.4.1 PatchTST (2 layers, dim=16, 4 heads)  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Forward output matches PyTorch within 1e-3. Patch + embed + encoder + head.
+- [ ] T86.4.2 N-BEATS (2 stacks, 3 blocks each)  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Forecast + backcast matches neuralforecast NBEATS within 1e-3.
+- [ ] T86.4.3 DLinear  Owner: TBD  Est: 30m  verifies: [UC-L03]
+  AC: Trend + seasonal decomposition linear matches manual within 1e-4.
+- [ ] T86.4.4 ITransformer  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Inverted attention (variables as tokens) matches reference within 1e-3.
+- [ ] T86.4.5 TFT  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Variable selection + GRN + attention matches reference within 1e-3.
+- [ ] T86.4.6 CfC  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Closed-form continuous ODE cell matches ncps reference within 1e-3.
+- [ ] T86.4.7 FTTransformer  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Feature tokenizer + transformer + CLS pooling matches reference within 1e-3.
+- [ ] T86.4.8 TabNet  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Sparsemax attention + feature processing matches pytorch-tabnet within 1e-3.
+- [ ] T86.4.9 PPO (actor + critic forward + loss)  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Policy loss (clipped surrogate) and value loss match manual within 1e-3.
+- [ ] T86.4.10 SAC (Q-network + actor + entropy)  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: Critic Q-values and actor log-probs match manual within 1e-3.
+- [ ] T86.4.11 GCN (2-layer graph convolution)  Owner: TBD  Est: 45m  verifies: [UC-L03]
+  AC: GCN on 10-node graph matches A_hat @ X @ W manual computation within 1e-3.
+- [ ] T86.4.12 GAT (2-head graph attention)  Owner: TBD  Est: 45m  verifies: [UC-L03]
+  AC: GAT with learned attention coefficients matches manual within 1e-3.
+- [ ] T86.4.13 MarketVAE (encoder + reparameterize + decoder)  Owner: TBD  Est: 1h  verifies: [UC-L03]
+  AC: VAE reconstruction with fixed seed (no sampling noise) matches manual within 1e-3.
+- [ ] T86.4.14 Run go vet + go test for all architecture parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E86.5: GPU Kernel Parity (DGX via Spark)
+
+- [ ] T86.5.1 Build arm64 parity test image for DGX  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: Containerfile with tests/parity/ tests compiles for linux/arm64 with -tags cuda.
+  Image pushed to ghcr.io/zerfoo/zerfoo-parity:latest.
+- [ ] T86.5.2 GPU vs CPU parity: activations  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: GPU forward output matches CPU for all 9 activations within 1e-4.
+- [ ] T86.5.3 GPU vs CPU parity: normalization  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: GPU LayerNorm, RMSNorm, BatchNorm match CPU within 1e-4.
+- [ ] T86.5.4 GPU vs CPU parity: core ops  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: GPU Linear, MatMul, Conv1D, FFN match CPU within 1e-3.
+- [ ] T86.5.5 GPU vs CPU parity: attention  Owner: TBD  Est: 45m  verifies: [UC-L01]
+  AC: GPU SDPA (causal + bidirectional) and GQA match CPU within 1e-3.
+- [ ] T86.5.6 GPU vs CPU parity: RotaryEmbedding  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: GPU RoPE matches CPU within 1e-5.
+- [ ] T86.5.7 GPU backward parity: all trained layers  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: GPU gradients match CPU gradients within 1e-3 for all layers with Backward().
+- [ ] T86.5.8 Submit tests to DGX via Spark and collect results  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: Pod completes with exit 0. Results captured in .claude/scratch/gpu-parity-results.txt.
+
+#### E86.6: CI Integration and Reporting
+
+- [ ] T86.6.1 Add CPU parity tests to CI workflow  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: .github/workflows/ runs `go test -run TestParity_ ./tests/parity/...` on every PR.
+- [ ] T86.6.2 Add golden file staleness check to CI  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: CI runs `python3 tests/golden/generate_golden.py` and diffs output. Fails if golden
+  files would change (ensures they stay in sync with PyTorch version).
+- [ ] T86.6.3 Create parity coverage report  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: Script or test function prints a table of all layers and their coverage status
+  (CPU forward, CPU backward, GPU forward, GPU backward).
+- [ ] T86.6.4 Run go vet + golangci-lint on all parity test files  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+### E86 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| AN: Wire Existing | T86.0.1-T86.0.11 | Wire 10 existing golden files (Go only) | None |
+| AO: New Layer Forward | T86.1.1-T86.1.24 | New golden + Go tests for remaining layers | None |
+| AP: Backward | T86.2.1-T86.2.7 | Gradient parity for trainable layers | AN |
+| AQ: Optimizers | T86.3.1-T86.3.4 | Optimizer steps + initializers | None |
+| AR: Architectures | T86.4.1-T86.4.14 | End-to-end model forward parity | AN, AO (partial) |
+| AS: GPU Parity | T86.5.1-T86.5.8 | DGX GPU vs CPU kernel parity | AN, AP |
+| AT: CI | T86.6.1-T86.6.4 | CI integration and reporting | AN |
+
+### E86 Sync Points
+
+- Tracks AN, AO, and AQ are fully independent -- can run in Wave 1.
+- Track AP (backward) needs at least AN done (golden files + Go test infrastructure).
+  Track AO is NOT a prerequisite because backward tests only cover layers that already
+  have golden files from the initial audit (activations, norms, core, loss, SSM, SDPA).
+- Track AR (architectures) can start after AN completes (component layer trust) but
+  does NOT need AO -- architecture tests only verify forward pass.
+- Track AS (GPU) needs AN + AP (CPU baselines to compare against).
+- Track AT (CI) needs AN at minimum to have tests to run.
+
+### E86 Waves
+
+#### Wave E86-1: Wire Existing + New Layers + Optimizers (3 agents)
+All three tracks are fully independent.
+
+- [ ] Agent 1: T86.0.1-T86.0.11 (wire 10 existing golden files -- Go tests only, no Python)
+- [ ] Agent 2: T86.1.1-T86.1.24 (new layer forward parity -- Python golden + Go tests)
+- [ ] Agent 3: T86.3.1-T86.3.4 (optimizer + initializer parity)
+
+#### Wave E86-2: Backward + Architectures (3 agents)
+Deps: Wave E86-1 Agent 1 (AN track -- golden file infrastructure proven).
+
+- [ ] Agent 1: T86.2.1-T86.2.7 (backward gradient parity for all trainable layers)
+- [ ] Agent 2: T86.4.1-T86.4.7 (timeseries + tabular architecture parity)
+- [ ] Agent 3: T86.4.8-T86.4.14 (TabNet, RL, GNN, synth architecture parity)
+
+#### Wave E86-3: GPU + CI (2 agents)
+Deps: Waves E86-1 and E86-2 (CPU baselines established).
+
+- [ ] Agent 1: T86.5.1-T86.5.8 (GPU kernel parity on DGX via Spark)
+- [ ] Agent 2: T86.6.1-T86.6.4 (CI integration + coverage report)
 
 ---
 
@@ -438,6 +722,7 @@ Task details removed during /tidy --apply. See git history for full lists.
 | M-COMP-2 | Composition Remediation Phase 2 | E66-E73 | All forward paths compose from layers/ or Engine; architecture test in CI | DONE 2026-04-03 |
 | M-COMP-3 | Composition Remediation Phase 3 | E74-E76 | All backward passes compose from functional backward ops; inference .Data() eliminated; timeseries/ removed from arch test allowlist | 2026-Q3 |
 | M-COMP-4 | Composition Remediation Phase 4 | E77-E84 | dirty-architecture.md violations reduced from ~9,800 to <2,000 lines; tabular/, layers/, generate/, inference/, training/, serve/, modeldsl/ all compose from layers/ or Engine | 2026-Q3 |
+| M-E86 | PyTorch Parity Complete | E86 | 100% layer forward parity, 100% backward parity, all model architectures, GPU kernel parity on DGX | 2026-Q3 |
 
 ---
 
@@ -485,6 +770,8 @@ Task details removed during /tidy --apply. See git history for full lists.
 | R67 | generate/ refactoring breaks streaming/speculative generation (E79) | High | Medium | Run full generation test suite including streaming, speculative, and EAGLE paths; compare output token sequences |
 | R68 | Inference builder helper migration breaks model parity (30 architectures) (E80) | High | High | Run parity tests per architecture after migration; keep old code behind build tag until DGX verified |
 | R69 | ModeLDSL composition changes DSL compilation behavior (E84) | Medium | Medium | Run full modeldsl test suite; compare compiled model structure before/after; validate layer-type registration |
+| R70 | PyTorch golden files may not match Zerfoo's intended semantics for some ops (E86) | Medium | Medium | When PyTorch and Zerfoo disagree, investigate which is correct rather than blindly matching PyTorch. Document intentional differences in the golden file description field. |
+| R71 | GPU parity tests may show larger tolerance than CPU due to non-deterministic kernel execution order (E86) | Low | High | Use 1e-3 tolerance for GPU tests (vs 1e-5 for CPU). If larger divergence, investigate specific kernel. |
 
 ---
 
@@ -578,6 +865,32 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-10 (evening): E86 plan refined for execution
+
+- Restructured E86 from 4 sequential waves to 3 waves with better parallelism (8 agents total).
+- Added E86.0 sub-epic: wire 10 existing golden files that have no Go test (Conv2D, FFN,
+  BatchNorm, Dropout, AdamW, SGD, SimpleRNN, S4, MambaBlock, TransformerBlock).
+- Split batched tasks into individual tasks: timeseries layers (6 separate tasks),
+  SSM variants, residual types, audio layers. Total tasks: 72 (was 63).
+- Removed false dependencies: backward tests only need E86.0 (wire existing), not all
+  of E86.1 (new layers). Architecture tests can start after E86.0 completes.
+- Added E86.4 tasks for GCN and GAT separately (was combined). Added SWA optimizer.
+- Wave 1 now has 3 fully independent agents (wire existing, new layers, optimizers).
+  Wave 2 has 3 agents (backward, timeseries/tabular archs, RL/GNN/synth archs).
+  Wave 3 has 2 agents (GPU on DGX, CI integration).
+
+### 2026-04-10: E86 added -- PyTorch parity testing for all layers
+
+- Added E86 for comprehensive PyTorch parity testing of every layer, loss function,
+  optimizer, and model architecture.
+- Initial audit completed: 32/32 CPU forward-pass parity tests PASS (100%).
+  Tests cover: 8 activations, 8 functional ops, 2 normalization, 3 core, 3 attention,
+  2 embeddings, 3 loss, 3 ops.
+- Files created: tests/golden/generate_golden.py (PyTorch 2.11.0 golden generator),
+  tests/golden/layers/ (36 JSON golden files), tests/parity/layer_parity_test.go.
+- Key findings: core.Linear uses [in,out] weight (x@W); functional.Linear uses
+  [out,in] (x@W^T). SDPA defaults bidirectional. RoPE uses split-half rotation.
 
 ### 2026-04-07 (afternoon): E85 diagnosis complete, fix scope refined
 
@@ -693,6 +1006,18 @@ E77-E84 phase 4. See git history for full changelog.
   high-level composition but E84 goes deeper into the individual layer implementations.
   The LayerType constant reconciliation (T84.1.6) should make layers/registry the single
   source of truth.
+- E86 (PyTorch parity): The golden file generator is tests/golden/generate_golden.py.
+  Run `python3 tests/golden/generate_golden.py` to regenerate all golden files.
+  Go tests are in tests/parity/layer_parity_test.go. Pattern for adding a new layer:
+  1. Add a gen_xxx() function to generate_golden.py that creates deterministic input,
+     runs PyTorch forward, and calls save_case() with JSON output.
+  2. Add a TestParity_Xxx function to layer_parity_test.go that loads the golden file,
+     creates the Zerfoo layer, runs Forward(), and calls assertClose().
+  3. Add the test to the TestParity_Summary cases list.
+  Key gotcha: core.Linear weight is [in, out] (x@W), but functional.Linear weight
+  is [out, in] (x@W^T). The golden file must match whichever convention the test uses.
+  For backward tests: golden files include grad_output, expected_grad_input, and
+  expected_grad_weight fields. Call layer.Backward() and compare.
 - Gemma3-1B Q4_K_M is cached on DGX Spark for integration tests.
 - E47 (batched training) is entirely in zerfoo/timeseries/. Key insight: replace
   per-sample GPU calls with batch-level tensor operations. DataLoader converts
