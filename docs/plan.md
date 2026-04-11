@@ -13,6 +13,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 **Status summary:**
 - 380+ tasks completed across all plans
 - E86: PyTorch parity testing (52/72 -- Waves 1-2 complete: 92 tests, 88 pass, 4 fail [backward bugs]; Wave 3 GPU+CI pending)
+- E87: Fix backward pass bugs found by PyTorch parity (0/8 -- 4 bugs: LayerNorm, MatMul, MSE, CrossEntropy)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -469,6 +470,83 @@ Deps: Waves E86-1 and E86-2 (CPU baselines established).
 
 ---
 
+## E87: Fix Backward Pass Bugs Found by PyTorch Parity
+
+### Context
+
+PyTorch parity testing (E86 Wave 2) discovered 4 bugs in Backward() methods where
+Zerfoo's gradient computation does not match PyTorch autograd. These bugs affect
+training correctness -- models using these layers will compute wrong gradients,
+leading to degraded or incorrect training outcomes. The parity tests
+(TestParity_*_Backward in tests/parity/layer_parity_test.go) serve as regression
+tests once the bugs are fixed.
+
+### Work Breakdown
+
+#### T87.1 Fix LayerNorm Backward -- wrong ReduceSum axis for dGamma/dBeta
+
+- [ ] T87.1.1 Fix layers/normalization/layer_normalization.go Backward()  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  File: layers/normalization/layer_normalization.go, lines 219 and 229.
+  Bug: ReduceSum reduces along the feature dimension (axis = len(inputShape)-1) instead
+  of the batch dimensions. For input [B, features], dGamma and dBeta should have shape
+  [features], computed by summing across the batch dimension (axis 0).
+  Fix: Change the axis argument from `len(ln.inputShape)-1` to `0` (or reduce all dims
+  except the last). For 3D input [B, S, F], reduce dims 0 and 1.
+  AC: TestParity_LayerNorm_Backward passes (gradients match PyTorch within 1e-4).
+  Risk: Check that existing LayerNorm tests (normalization/layer_normalization_test.go)
+  still pass. Some may have been written against buggy behavior.
+- [ ] T87.1.2 Run go test ./layers/normalization/... and TestParity_LayerNorm_Backward  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### T87.2 Fix MatMul Backward -- missing transposes in gradient computation
+
+- [ ] T87.2.1 Fix layers/core/matmul.go Backward()  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  File: layers/core/matmul.go, lines 231 and 237.
+  Bug: For C = A @ B, the correct gradients are dA = dOut @ B^T and dB = A^T @ dOut.
+  Current code: gradA = MatMul(dOut, B) and gradB = MatMul(A, dOut) -- both missing
+  transposes. The shapes only work by accident when matrices are square.
+  Fix: Line 231: transpose B before matmul (engine.Transpose(b, []int{1,0}), then
+  MatMul(dOut, bT)). Line 237: transpose A before matmul (engine.Transpose(a, []int{1,0}),
+  then MatMul(aT, dOut)).
+  AC: TestParity_MatMul_Backward passes (gradients match PyTorch within 1e-4).
+- [ ] T87.2.2 Run go test ./layers/core/... and TestParity_MatMul_Backward  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### T87.3 Fix MSE Backward -- missing 2/N scaling factor
+
+- [ ] T87.3.1 Fix training/loss/mse.go Backward()  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  File: training/loss/mse.go, around line 90.
+  Bug: Gradient is computed as (pred - target) * dOut, but the correct gradient for
+  MSE with mean reduction is 2 * (pred - target) / N * dOut (derivative of mean((p-t)^2)).
+  Fix: After computing diff = pred - target, multiply by 2/N before multiplying by dOut.
+  Use engine.MulScalar with ops.FromFloat64(2.0 / float64(N)) where N = len(preds.Data()).
+  AC: TestParity_MSELoss_Backward passes (gradients match PyTorch within 1e-5).
+  Risk: The existing MSE backward test (training/loss/mse_test.go) may expect the
+  current wrong gradient. If so, update the test to expect the correct 2/N-scaled gradient.
+- [ ] T87.3.2 Run go test ./training/loss/... and TestParity_MSELoss_Backward  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### T87.4 Fix CrossEntropy Backward -- missing 1/N batch normalization
+
+- [ ] T87.4.1 Fix training/loss/cross_entropy_loss.go Backward()  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  File: training/loss/cross_entropy_loss.go, around line 150.
+  Bug: Gradient is (softmax - one_hot) * dOut without dividing by batch size. The forward
+  pass uses mean reduction (divides by batch size), so the backward must also divide by N.
+  Fix: After computing gradPredictions = softmax - one_hot, divide by batch size using
+  engine.DivScalar with ops.FromFloat64(float64(batchSize)).
+  AC: TestParity_CrossEntropyLoss_Backward passes (gradients match PyTorch within 1e-5).
+  Risk: Same as MSE -- existing tests may expect wrong gradient. Update if needed.
+- [ ] T87.4.2 Run go test ./training/loss/... and TestParity_CrossEntropyLoss_Backward  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+### E87 Waves
+
+#### Wave E87-1: Fix all 4 backward bugs (4 agents)
+All 4 bugs are in different packages and files -- fully independent.
+
+- [ ] Agent 1: T87.1.1-T87.1.2 (LayerNorm backward fix)
+- [ ] Agent 2: T87.2.1-T87.2.2 (MatMul backward fix)
+- [ ] Agent 3: T87.3.1-T87.3.2 (MSE backward fix)
+- [ ] Agent 4: T87.4.1-T87.4.2 (CrossEntropy backward fix)
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -831,6 +909,14 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-10 (night): E87 added -- fix 4 backward pass bugs
+
+- Added E87 (8 tasks, 1 wave, 4 agents) to fix bugs found by E86 Wave 2.
+- Bugs: LayerNorm (wrong ReduceSum axis), MatMul (missing transposes),
+  MSE (missing 2/N factor), CrossEntropy (missing 1/N normalization).
+- All 4 fixes are in different packages -- fully parallelizable in one wave.
+- Each fix has a paired test verification task.
 
 ### 2026-04-10 (evening): E86 plan refined for execution
 
