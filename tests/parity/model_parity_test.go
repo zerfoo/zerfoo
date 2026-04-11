@@ -1020,3 +1020,105 @@ func TestParity_FreTS(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// E88: TimeMixer golden-file forward parity (NumPy reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_TimeMixer(t *testing.T) {
+	g := loadGolden(t, "model_timemixer")
+	tol := getFloat(g, "tolerance")
+
+	inputLen := int(getFloat(g, "input_len"))
+	outputLen := int(getFloat(g, "output_len"))
+	numFeatures := int(getFloat(g, "num_features"))
+	numScales := int(getFloat(g, "num_scales"))
+	hiddenSize := int(getFloat(g, "hidden_size"))
+	numLayers := int(getFloat(g, "num_layers"))
+
+	cfg := tsmodels.TimeMixerConfig{
+		InputLen:    inputLen,
+		OutputLen:   outputLen,
+		NumFeatures: numFeatures,
+		NumScales:   numScales,
+		HiddenSize:  hiddenSize,
+		NumLayers:   numLayers,
+	}
+
+	m := tsmodels.NewTimeMixer(cfg)
+
+	// Inject golden flat params (MA weights + MLP weights) via FlatParams pointers.
+	flatParams := getFloat64s(g, "flat_params")
+	ptrs := m.FlatParams()
+	if len(ptrs) != len(flatParams) {
+		t.Fatalf("flat_params length mismatch: got %d pointers, want %d values", len(ptrs), len(flatParams))
+	}
+	for i, v := range flatParams {
+		*ptrs[i] = v
+	}
+
+	// Inject trend/seasonal heads and mix weights.
+	trendHeadsRaw, ok := g["trend_heads"].([]interface{})
+	if !ok {
+		t.Fatalf("trend_heads not found or wrong type")
+	}
+	trendHeads := make([][][]float64, numScales)
+	for s := 0; s < numScales; s++ {
+		flat := toFloat64Slice(trendHeadsRaw[s])
+		trendHeads[s] = reshapeFloat64(flat, inputLen, outputLen)
+	}
+	m.SetTrendHeads(trendHeads)
+
+	seasonalHeadsRaw, ok := g["seasonal_heads"].([]interface{})
+	if !ok {
+		t.Fatalf("seasonal_heads not found or wrong type")
+	}
+	seasonalHeads := make([][][]float64, numScales)
+	for s := 0; s < numScales; s++ {
+		flat := toFloat64Slice(seasonalHeadsRaw[s])
+		seasonalHeads[s] = reshapeFloat64(flat, inputLen, outputLen)
+	}
+	m.SetSeasonalHeads(seasonalHeads)
+
+	mixWeights := getFloat64s(g, "mix_weights")
+	m.SetMixWeights(mixWeights)
+
+	// Build input [numFeatures][inputLen].
+	inputFlat := getFloat64s(g, "input")
+	input := make([][]float64, numFeatures)
+	for f := 0; f < numFeatures; f++ {
+		input[f] = inputFlat[f*inputLen : (f+1)*inputLen]
+	}
+
+	// Run forward pass.
+	out, err := m.Forward(input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Compare against golden expected output.
+	expectedOutput := getFloat64s(g, "expected_output")
+	got := make([]float64, 0, numFeatures*outputLen)
+	for f := 0; f < numFeatures; f++ {
+		got = append(got, out.Forecast[f]...)
+	}
+	if len(got) != len(expectedOutput) {
+		t.Fatalf("output length: got %d, want %d", len(got), len(expectedOutput))
+	}
+	for i := range got {
+		diff := math.Abs(got[i] - expectedOutput[i])
+		if diff > tol {
+			t.Errorf("output[%d]: got %g, want %g (diff=%g, tol=%g)", i, got[i], expectedOutput[i], diff, tol)
+		}
+	}
+}
+
+// toFloat64Slice converts a JSON array ([]interface{}) to []float64.
+func toFloat64Slice(v interface{}) []float64 {
+	arr := v.([]interface{})
+	out := make([]float64, len(arr))
+	for i, x := range arr {
+		out[i] = x.(float64)
+	}
+	return out
+}
