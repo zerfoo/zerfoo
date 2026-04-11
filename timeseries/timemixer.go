@@ -1,12 +1,15 @@
 package timeseries
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // TimeMixerConfig holds configuration for a TimeMixer model.
@@ -325,13 +328,23 @@ func (m *TimeMixer) pastDecomposableMixing(scales []scaleDecomposition) []scaleD
 
 		scaleVec := make([]float64, numScales)
 
+		// mlpFwd dispatches to engine MLP when available, else CPU.
+		mlpFwd := func(mlp *mixingMLP, x []float64) []float64 {
+			if m.engine != nil {
+				if out := m.engineMLPForward(mlp, x); out != nil {
+					return out
+				}
+			}
+			return mlp.forward(x)
+		}
+
 		// Mix seasonal across scales.
 		for f := 0; f < nf; f++ {
 			for t := 0; t < seqLen; t++ {
 				for s := 0; s < numScales; s++ {
 					scaleVec[s] = scales[s].seasonal[f][t]
 				}
-				mixed := seasonalMLP.forward(scaleVec)
+				mixed := mlpFwd(seasonalMLP, scaleVec)
 				for s := 0; s < numScales; s++ {
 					newSeasonal[s].seasonal[f][t] = mixed[s]
 				}
@@ -344,7 +357,7 @@ func (m *TimeMixer) pastDecomposableMixing(scales []scaleDecomposition) []scaleD
 				for s := 0; s < numScales; s++ {
 					scaleVec[s] = scales[s].trend[f][t]
 				}
-				mixed := trendMLP.forward(scaleVec)
+				mixed := mlpFwd(trendMLP, scaleVec)
 				for s := 0; s < numScales; s++ {
 					newTrend[s].trend[f][t] = mixed[s]
 				}
@@ -352,12 +365,16 @@ func (m *TimeMixer) pastDecomposableMixing(scales []scaleDecomposition) []scaleD
 		}
 
 		// Bottom-up residual: coarse scale (higher index) adds to next finer scale.
-		// Iterate from coarsest-1 down to finest.
-		for s := numScales - 2; s >= 0; s-- {
-			for f := 0; f < nf; f++ {
-				for t := 0; t < seqLen; t++ {
-					newSeasonal[s].seasonal[f][t] += newSeasonal[s+1].seasonal[f][t]
-					newTrend[s].trend[f][t] += newTrend[s+1].trend[f][t]
+		// When engine is available, use engine.Add for the residual connections.
+		if m.engine != nil {
+			m.engineBottomUpResidual(newSeasonal, newTrend, numScales, nf, seqLen)
+		} else {
+			for s := numScales - 2; s >= 0; s-- {
+				for f := 0; f < nf; f++ {
+					for t := 0; t < seqLen; t++ {
+						newSeasonal[s].seasonal[f][t] += newSeasonal[s+1].seasonal[f][t]
+						newTrend[s].trend[f][t] += newTrend[s+1].trend[f][t]
+					}
 				}
 			}
 		}
@@ -401,6 +418,18 @@ func linearProject(input []float64, weight [][]float64, outputLen int) []float64
 	return out
 }
 
+// projectVector applies a linear projection using Engine[T] when available,
+// falling back to the CPU path otherwise.
+// input: [inputLen], weight: [inputLen][outputLen], output: [outputLen].
+func (m *TimeMixer) projectVector(input []float64, weight [][]float64, outputLen int) []float64 {
+	if m.engine != nil {
+		if out := m.engineProjectVector(input, weight, outputLen); out != nil {
+			return out
+		}
+	}
+	return linearProject(input, weight, outputLen)
+}
+
 // Forward takes input [numFeatures][inputLen] and produces a forecast
 // [numFeatures][outputLen] by decomposing at multiple scales, projecting
 // each scale's trend and seasonal components via learned linear heads,
@@ -433,8 +462,8 @@ func (m *TimeMixer) Forward(input [][]float64) (*TimeMixerOutput, error) {
 	for f := 0; f < nf; f++ {
 		forecast[f] = make([]float64, outLen)
 		for s := 0; s < len(mixed); s++ {
-			trendProj := linearProject(mixed[s].trend[f], m.trendHeads[s], outLen)
-			seasonProj := linearProject(mixed[s].seasonal[f], m.seasonalHeads[s], outLen)
+			trendProj := m.projectVector(mixed[s].trend[f], m.trendHeads[s], outLen)
+			seasonProj := m.projectVector(mixed[s].seasonal[f], m.seasonalHeads[s], outLen)
 			for j := 0; j < outLen; j++ {
 				forecast[f][j] += smWeights[s] * (trendProj[j] + seasonProj[j])
 			}
@@ -574,6 +603,167 @@ func (m *TimeMixer) BackwardSample(dOutput []float64, cacheIface interface{}) er
 	return nil
 }
 
+// engineMLPForward runs a two-layer MLP forward pass using Engine[T] ops.
+// Input: [numScales], output: [numScales]. Returns nil on engine error.
+func (m *TimeMixer) engineMLPForward(mlp *mixingMLP, x []float64) []float64 {
+	ctx := context.Background()
+	numScales := len(x)
+	hiddenSize := len(mlp.b1)
+
+	// Convert input to float32 tensor [1, numScales].
+	xF32 := make([]float32, numScales)
+	for i, v := range x {
+		xF32[i] = float32(v)
+	}
+	xT, _ := tensor.New[float32]([]int{1, numScales}, xF32)
+
+	// W1^T [numScales, hiddenSize] for x @ W1^T. W1 is [hiddenSize, numScales].
+	w1T := make([]float32, numScales*hiddenSize)
+	for i := 0; i < hiddenSize; i++ {
+		for j := 0; j < numScales; j++ {
+			w1T[j*hiddenSize+i] = float32(mlp.w1[i][j])
+		}
+	}
+	w1Tensor, _ := tensor.New[float32]([]int{numScales, hiddenSize}, w1T)
+
+	// b1 [1, hiddenSize].
+	b1F32 := make([]float32, hiddenSize)
+	for i, v := range mlp.b1 {
+		b1F32[i] = float32(v)
+	}
+	b1Tensor, _ := tensor.New[float32]([]int{1, hiddenSize}, b1F32)
+
+	// hidden = ReLU(x @ W1^T + b1)
+	h1, err := m.engine.MatMul(ctx, xT, w1Tensor)
+	if err != nil {
+		return nil
+	}
+	h1b, err := m.engine.Add(ctx, h1, b1Tensor, nil)
+	if err != nil {
+		return nil
+	}
+	hidden, err := m.engine.UnaryOp(ctx, h1b, m.ops.ReLU, nil)
+	if err != nil {
+		return nil
+	}
+
+	// W2^T [hiddenSize, numScales] for hidden @ W2^T. W2 is [numScales, hiddenSize].
+	w2T := make([]float32, hiddenSize*numScales)
+	for i := 0; i < numScales; i++ {
+		for j := 0; j < hiddenSize; j++ {
+			w2T[j*numScales+i] = float32(mlp.w2[i][j])
+		}
+	}
+	w2Tensor, _ := tensor.New[float32]([]int{hiddenSize, numScales}, w2T)
+
+	// b2 [1, numScales].
+	b2F32 := make([]float32, numScales)
+	for i, v := range mlp.b2 {
+		b2F32[i] = float32(v)
+	}
+	b2Tensor, _ := tensor.New[float32]([]int{1, numScales}, b2F32)
+
+	// out = hidden @ W2^T + b2
+	h2, err := m.engine.MatMul(ctx, hidden, w2Tensor)
+	if err != nil {
+		return nil
+	}
+	outT, err := m.engine.Add(ctx, h2, b2Tensor, nil)
+	if err != nil {
+		return nil
+	}
+
+	// Convert back to float64.
+	outData := outT.Data()
+	out := make([]float64, numScales)
+	for i := range out {
+		out[i] = float64(outData[i])
+	}
+	return out
+}
+
+// engineBottomUpResidual applies bottom-up residual connections using Engine[T].
+func (m *TimeMixer) engineBottomUpResidual(newSeasonal, newTrend []scaleDecomposition, numScales, nf, seqLen int) {
+	ctx := context.Background()
+	for s := numScales - 2; s >= 0; s-- {
+		for f := 0; f < nf; f++ {
+			// Seasonal residual via engine.Add.
+			sF := make([]float32, seqLen)
+			sCoarse := make([]float32, seqLen)
+			for t := 0; t < seqLen; t++ {
+				sF[t] = float32(newSeasonal[s].seasonal[f][t])
+				sCoarse[t] = float32(newSeasonal[s+1].seasonal[f][t])
+			}
+			sFT, _ := tensor.New[float32]([]int{seqLen}, sF)
+			sCoarseT, _ := tensor.New[float32]([]int{seqLen}, sCoarse)
+			if sumT, err := m.engine.Add(ctx, sFT, sCoarseT, nil); err == nil {
+				for t, v := range sumT.Data() {
+					newSeasonal[s].seasonal[f][t] = float64(v)
+				}
+			} else {
+				for t := 0; t < seqLen; t++ {
+					newSeasonal[s].seasonal[f][t] += newSeasonal[s+1].seasonal[f][t]
+				}
+			}
+
+			// Trend residual via engine.Add.
+			tF := make([]float32, seqLen)
+			tCoarse := make([]float32, seqLen)
+			for t := 0; t < seqLen; t++ {
+				tF[t] = float32(newTrend[s].trend[f][t])
+				tCoarse[t] = float32(newTrend[s+1].trend[f][t])
+			}
+			tFT, _ := tensor.New[float32]([]int{seqLen}, tF)
+			tCoarseT, _ := tensor.New[float32]([]int{seqLen}, tCoarse)
+			if sumT, err := m.engine.Add(ctx, tFT, tCoarseT, nil); err == nil {
+				for t, v := range sumT.Data() {
+					newTrend[s].trend[f][t] = float64(v)
+				}
+			} else {
+				for t := 0; t < seqLen; t++ {
+					newTrend[s].trend[f][t] += newTrend[s+1].trend[f][t]
+				}
+			}
+		}
+	}
+}
+
+// engineProjectVector applies a linear projection via engine.MatMul.
+// input: [inputLen], weight: [inputLen][outputLen]. Returns nil on error.
+func (m *TimeMixer) engineProjectVector(input []float64, weight [][]float64, outputLen int) []float64 {
+	ctx := context.Background()
+	inputLen := len(input)
+
+	// Convert input to [1, inputLen] float32 tensor.
+	xF32 := make([]float32, inputLen)
+	for i, v := range input {
+		xF32[i] = float32(v)
+	}
+	xT, _ := tensor.New[float32]([]int{1, inputLen}, xF32)
+
+	// Weight [inputLen][outputLen] -> flat [inputLen, outputLen] float32.
+	wF32 := make([]float32, inputLen*outputLen)
+	for i := 0; i < inputLen; i++ {
+		for j := 0; j < outputLen; j++ {
+			wF32[i*outputLen+j] = float32(weight[i][j])
+		}
+	}
+	wT, _ := tensor.New[float32]([]int{inputLen, outputLen}, wF32)
+
+	// out = x @ W : [1, inputLen] @ [inputLen, outputLen] = [1, outputLen]
+	outT, err := m.engine.MatMul(ctx, xT, wT)
+	if err != nil {
+		return nil
+	}
+
+	outData := outT.Data()
+	out := make([]float64, outputLen)
+	for i := range out {
+		out[i] = float64(outData[i])
+	}
+	return out
+}
+
 // FlatGrads returns the internal gradient accumulator.
 func (m *TimeMixer) FlatGrads() []float64 {
 	if m.grads == nil {
@@ -594,13 +784,125 @@ func (m *TimeMixer) ZeroGrads() {
 }
 
 // FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+// Order: maWeights (per scale), then for each layer: seasonalMLP (w1, b1, w2, b2),
+// trendMLP (w1, b1, w2, b2).
 func (m *TimeMixer) FlatParams() []*float64 {
-	return m.flatParams()
+	var params []*float64
+
+	// MA weights.
+	for s := range m.maWeights {
+		for i := range m.maWeights[s] {
+			params = append(params, &m.maWeights[s][i])
+		}
+	}
+
+	// MLP parameters per layer.
+	for l := 0; l < m.config.NumLayers; l++ {
+		params = append(params, flatMLP(m.seasonalMLPs[l])...)
+		params = append(params, flatMLP(m.trendMLPs[l])...)
+	}
+
+	return params
+}
+
+// flatMLP returns pointers to all parameters of a mixing MLP.
+func flatMLP(mlp *mixingMLP) []*float64 {
+	var params []*float64
+	for i := range mlp.w1 {
+		for j := range mlp.w1[i] {
+			params = append(params, &mlp.w1[i][j])
+		}
+	}
+	for i := range mlp.b1 {
+		params = append(params, &mlp.b1[i])
+	}
+	for i := range mlp.w2 {
+		for j := range mlp.w2[i] {
+			params = append(params, &mlp.w2[i][j])
+		}
+	}
+	for i := range mlp.b2 {
+		params = append(params, &mlp.b2[i])
+	}
+	return params
+}
+
+// Parameters returns all trainable parameters as graph.Parameter[float32] tensors.
+func (m *TimeMixer) Parameters() []*graph.Parameter[float32] {
+	var params []*graph.Parameter[float32]
+
+	// MA weights per scale.
+	for s := range m.maWeights {
+		data := make([]float32, len(m.maWeights[s]))
+		for i, v := range m.maWeights[s] {
+			data[i] = float32(v)
+		}
+		t, _ := tensor.New[float32]([]int{len(data)}, data)
+		p, _ := graph.NewParameter(fmt.Sprintf("ma_weights.%d", s), t, tensor.New[float32])
+		params = append(params, p)
+	}
+
+	// MLP parameters per layer.
+	for l := 0; l < m.config.NumLayers; l++ {
+		params = append(params, mlpParameters(fmt.Sprintf("layer%d.seasonal", l), m.seasonalMLPs[l])...)
+		params = append(params, mlpParameters(fmt.Sprintf("layer%d.trend", l), m.trendMLPs[l])...)
+	}
+
+	return params
+}
+
+// mlpParameters converts a mixingMLP's weights to graph.Parameter[float32] tensors.
+func mlpParameters(prefix string, mlp *mixingMLP) []*graph.Parameter[float32] {
+	hiddenSize := len(mlp.b1)
+	numScales := len(mlp.w1[0])
+	var params []*graph.Parameter[float32]
+
+	// W1 [hiddenSize, numScales]
+	w1Data := make([]float32, hiddenSize*numScales)
+	for i := 0; i < hiddenSize; i++ {
+		for j := 0; j < numScales; j++ {
+			w1Data[i*numScales+j] = float32(mlp.w1[i][j])
+		}
+	}
+	w1T, _ := tensor.New[float32]([]int{hiddenSize, numScales}, w1Data)
+	w1P, _ := graph.NewParameter(prefix+".w1", w1T, tensor.New[float32])
+	params = append(params, w1P)
+
+	// B1 [hiddenSize]
+	b1Data := make([]float32, hiddenSize)
+	for i, v := range mlp.b1 {
+		b1Data[i] = float32(v)
+	}
+	b1T, _ := tensor.New[float32]([]int{hiddenSize}, b1Data)
+	b1P, _ := graph.NewParameter(prefix+".b1", b1T, tensor.New[float32])
+	params = append(params, b1P)
+
+	// W2 [numScales, hiddenSize]
+	w2Data := make([]float32, numScales*hiddenSize)
+	for i := 0; i < numScales; i++ {
+		for j := 0; j < hiddenSize; j++ {
+			w2Data[i*hiddenSize+j] = float32(mlp.w2[i][j])
+		}
+	}
+	w2T, _ := tensor.New[float32]([]int{numScales, hiddenSize}, w2Data)
+	w2P, _ := graph.NewParameter(prefix+".w2", w2T, tensor.New[float32])
+	params = append(params, w2P)
+
+	// B2 [numScales]
+	b2Data := make([]float32, numScales)
+	for i, v := range mlp.b2 {
+		b2Data[i] = float32(v)
+	}
+	b2T, _ := tensor.New[float32]([]int{numScales}, b2Data)
+	b2P, _ := graph.NewParameter(prefix+".b2", b2T, tensor.New[float32])
+	params = append(params, b2P)
+
+	return params
 }
 
 // ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
 func (m *TimeMixer) ParamCount() int {
-	return len(m.flatParams())
+	return len(m.FlatParams())
 }
 
 // Compile-time check that TimeMixer implements TrainableBackend.

@@ -83,7 +83,7 @@ func TestTimeMixer_Backward_GradientCheck(t *testing.T) {
 	analyticalGrads := grads.collectGrads(m)
 
 	// Numerical gradient check via central finite differences.
-	params := m.flatParams()
+	params := m.FlatParams()
 	nParams := len(params)
 	if len(analyticalGrads) != nParams {
 		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)
@@ -232,7 +232,7 @@ func TestTimeMixer_Backward_LossReduction(t *testing.T) {
 		analyticalGrads := grads.collectGrads(m)
 
 		// SGD update.
-		params := m.flatParams()
+		params := m.FlatParams()
 		for pi := range params {
 			*params[pi] -= lr * analyticalGrads[pi]
 		}
@@ -323,7 +323,7 @@ func TestTimeMixer_Backward_MultiLayer(t *testing.T) {
 	analyticalGrads := grads.collectGrads(m)
 
 	// Numerical gradient check.
-	params := m.flatParams()
+	params := m.FlatParams()
 	nParams := len(params)
 	if len(analyticalGrads) != nParams {
 		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)
