@@ -1561,6 +1561,127 @@ def gen_dlinear():
 
 
 # ---------------------------------------------------------------------------
+# GQA (Grouped Query Attention) -- no RoPE, no KV cache
+# ---------------------------------------------------------------------------
+
+def gen_gqa():
+    """GQA with 4 query heads, 2 KV heads, d_model=16, no RoPE.
+
+    Zerfoo GQA Dense layers store weights as [in, out] and compute x @ W + b.
+    The golden file provides weights in that layout.
+    """
+    set_seed()
+    batch, seq_len = 1, 4
+    d_model = 16
+    n_q_heads, n_kv_heads = 4, 2
+    head_dim = d_model // n_q_heads  # 4
+
+    x = torch.randn(batch, seq_len, d_model)
+
+    # Q/K/V/O Dense weights [in, out] and biases [out] (Zerfoo layout)
+    wq_w = torch.randn(d_model, d_model) * 0.02          # [16, 16]
+    wq_b = torch.randn(d_model) * 0.02                    # [16]
+    wk_w = torch.randn(d_model, n_kv_heads * head_dim) * 0.02  # [16, 8]
+    wk_b = torch.randn(n_kv_heads * head_dim) * 0.02      # [8]
+    wv_w = torch.randn(d_model, n_kv_heads * head_dim) * 0.02  # [16, 8]
+    wv_b = torch.randn(n_kv_heads * head_dim) * 0.02      # [8]
+    wo_w = torch.randn(d_model, d_model) * 0.02           # [16, 16]
+    wo_b = torch.randn(d_model) * 0.02                    # [16]
+
+    # Project: Q = x @ wq_w + wq_b, etc.
+    q = x @ wq_w + wq_b                                    # [1, 4, 16]
+    k = x @ wk_w + wk_b                                    # [1, 4, 8]
+    v = x @ wv_w + wv_b                                    # [1, 4, 8]
+
+    # Reshape into heads
+    q = q.view(batch, seq_len, n_q_heads, head_dim).transpose(1, 2)   # [1, 4, 4, 4]
+    k = k.view(batch, seq_len, n_kv_heads, head_dim).transpose(1, 2)  # [1, 2, 4, 4]
+    v = v.view(batch, seq_len, n_kv_heads, head_dim).transpose(1, 2)  # [1, 2, 4, 4]
+
+    # Repeat KV heads to match query heads (GQA expansion)
+    repeat_factor = n_q_heads // n_kv_heads  # 2
+    k = k.repeat_interleave(repeat_factor, dim=1)  # [1, 4, 4, 4]
+    v = v.repeat_interleave(repeat_factor, dim=1)  # [1, 4, 4, 4]
+
+    # Scaled dot-product attention (causal)
+    scale = 1.0 / math.sqrt(head_dim)
+    scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+    scores = scores.masked_fill(mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+    attn = F.softmax(scores, dim=-1)
+    attn_out = torch.matmul(attn, v)  # [1, 4, 4, 4]
+
+    # Concat heads and output projection
+    attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq_len, d_model)
+    y = attn_out @ wo_w + wo_b
+
+    save_case("attention_gqa", {
+        "layer": "grouped_query_attention",
+        "d_model": d_model, "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads,
+        "head_dim": head_dim,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "wq_w": to_list(wq_w), "wq_w_shape": list(wq_w.shape),
+        "wq_b": to_list(wq_b), "wq_b_shape": list(wq_b.shape),
+        "wk_w": to_list(wk_w), "wk_w_shape": list(wk_w.shape),
+        "wk_b": to_list(wk_b), "wk_b_shape": list(wk_b.shape),
+        "wv_w": to_list(wv_w), "wv_w_shape": list(wv_w.shape),
+        "wv_b": to_list(wv_b), "wv_b_shape": list(wv_b.shape),
+        "wo_w": to_list(wo_w), "wo_w_shape": list(wo_w.shape),
+        "wo_b": to_list(wo_b), "wo_b_shape": list(wo_b.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
+# MoE (Mixture of Experts)
+# ---------------------------------------------------------------------------
+
+def gen_moe():
+    """MoE with 4 experts (simple linear), top-2 routing, softmax gating."""
+    set_seed()
+    seq_len = 4
+    model_dim = 8
+    n_experts = 4
+    top_k = 2
+
+    x = torch.randn(seq_len, model_dim)
+    gate_w = torch.randn(n_experts, model_dim) * 0.1  # [4, 8]
+
+    # Expert weights: each is a simple linear [model_dim, model_dim]
+    expert_weights = [torch.randn(model_dim, model_dim) * 0.1 for _ in range(n_experts)]
+
+    # Routing: logits = x @ gate_w^T, probs = softmax(logits)
+    logits = x @ gate_w.T  # [4, 4]
+    probs = F.softmax(logits, dim=-1)
+
+    # Top-k selection per token
+    topk_vals, topk_idxs = torch.topk(probs, top_k, dim=-1)
+    # Normalize top-k weights
+    topk_weights = topk_vals / topk_vals.sum(dim=-1, keepdim=True)
+
+    # Dispatch: for each token, compute weighted sum of expert outputs
+    output = torch.zeros(seq_len, model_dim)
+    for t in range(seq_len):
+        for k in range(top_k):
+            expert_idx = topk_idxs[t, k].item()
+            weight = topk_weights[t, k].item()
+            expert_out = x[t:t+1] @ expert_weights[expert_idx]  # [1, model_dim]
+            output[t] += weight * expert_out.squeeze(0)
+
+    save_case("core_moe", {
+        "layer": "mixture_of_experts",
+        "model_dim": model_dim, "n_experts": n_experts, "top_k": top_k,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "gate_weight": to_list(gate_w), "gate_weight_shape": list(gate_w.shape),
+        "expert_weights": [to_list(w) for w in expert_weights],
+        "expert_weight_shape": list(expert_weights[0].shape),
+        "expected_output": to_list(output), "output_shape": list(output.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1628,6 +1749,9 @@ def main():
         ("ShapeOps", gen_shape_ops),
         # Timeseries models (E86.4)
         ("DLinear", gen_dlinear),
+        # Complex layers (GQA, MoE)
+        ("GQA", gen_gqa),
+        ("MoE", gen_moe),
     ]
 
     passed, failed = 0, 0

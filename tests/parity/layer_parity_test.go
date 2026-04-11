@@ -3,6 +3,7 @@ package parity_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -1994,6 +1995,88 @@ func TestParity_SDPA_Backward(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GQA (Grouped Query Attention) parity test -- golden file
+// ---------------------------------------------------------------------------
+
+func TestParity_GQA(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "attention_gqa")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	dModel := int(getFloat(g, "d_model"))
+	nQHeads := int(getFloat(g, "n_q_heads"))
+	nKVHeads := int(getFloat(g, "n_kv_heads"))
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+
+	gqa, err := attention.NewGroupedQueryAttention(engine, ops, dModel, nQHeads, nKVHeads,
+		attention.WithNoRoPE[float32]())
+	if err != nil {
+		t.Fatalf("NewGroupedQueryAttention: %v", err)
+	}
+
+	// Parameters: [wq_linear, wq_bias, wk_linear, wk_bias, wv_linear, wv_bias, wo_linear, wo_bias]
+	params := gqa.Parameters()
+	if len(params) < 8 {
+		t.Fatalf("expected 8 params, got %d", len(params))
+	}
+	copy(params[0].Value.Data(), getFloat32s(g, "wq_w"))
+	copy(params[1].Value.Data(), getFloat32s(g, "wq_b"))
+	copy(params[2].Value.Data(), getFloat32s(g, "wk_w"))
+	copy(params[3].Value.Data(), getFloat32s(g, "wk_b"))
+	copy(params[4].Value.Data(), getFloat32s(g, "wv_w"))
+	copy(params[5].Value.Data(), getFloat32s(g, "wv_b"))
+	copy(params[6].Value.Data(), getFloat32s(g, "wo_w"))
+	copy(params[7].Value.Data(), getFloat32s(g, "wo_b"))
+
+	output, err := gqa.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "gqa_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
+// MoE (Mixture of Experts) parity test -- golden file
+// ---------------------------------------------------------------------------
+
+func TestParity_MoE(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "core_moe")
+	tol := getFloat(g, "tolerance")
+	ctx := context.Background()
+
+	nExperts := int(getFloat(g, "n_experts"))
+	topK := int(getFloat(g, "top_k"))
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	gateWeight := makeTensor(t, getFloat32s(g, "gate_weight"), getInts(g, "gate_weight_shape"))
+
+	expertWeightsRaw := g["expert_weights"].([]interface{})
+	expertShape := getInts(g, "expert_weight_shape")
+	experts := make([]graph.Node[float32], nExperts)
+	for i := 0; i < nExperts; i++ {
+		ewArr := expertWeightsRaw[i].([]interface{})
+		ewData := make([]float32, len(ewArr))
+		for j, v := range ewArr {
+			ewData[j] = float32(v.(float64))
+		}
+		p := makeParam(t, fmt.Sprintf("expert_%d", i), ewData, expertShape)
+		experts[i] = core.NewLinearFromParam(engine, p)
+	}
+
+	gate := core.NewMoEGate[float32](engine, ops, topK)
+	moe := core.NewMixtureOfExperts(engine, ops, gate, experts, nExperts, topK)
+
+	output, err := moe.Forward(ctx, input, gateWeight)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "moe_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
 // Structural parity tests for specialized models (T86.4.8-T86.4.13)
 // ---------------------------------------------------------------------------
 
@@ -2652,6 +2735,9 @@ func TestParity_Summary(t *testing.T) {
 		{"TFT/Structural", TestParity_TFT_Structural},
 		{"CfC/Structural", TestParity_CfC_Structural},
 		{"FTTransformer/Structural", TestParity_FTTransformer_Structural},
+		// Complex layers (GQA, MoE)
+		{"GQA", TestParity_GQA},
+		{"MoE", TestParity_MoE},
 		// Specialized models (E86 T86.4.8-T86.4.13)
 		{"TabNet/Structural", TestParity_TabNet_Structural},
 		{"PPO/Structural", TestParity_PPO_Structural},
