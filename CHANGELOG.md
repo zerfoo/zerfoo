@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0](https://github.com/zerfoo/zerfoo/compare/v1.43.0...v1.44.0) (2026-04-11)
+
+
+### Features
+
+* **crossasset:** add Save/Load for trained model weights ([c1e7ab1](https://github.com/zerfoo/zerfoo/commit/c1e7ab133340efc14a89937d8cd37036cf676b7c)), closes [#378](https://github.com/zerfoo/zerfoo/issues/378)
+
 ## [1.43.0](https://github.com/zerfoo/zerfoo/compare/v1.42.1...v1.43.0) (2026-04-10)
 
 
