@@ -219,7 +219,8 @@ func TestLayerNormalization_BackwardErrors(t *testing.T) {
 		{"mul_term2_num_error", map[string]int{"Mul": 6}},
 		{"mulscalar_error", map[string]int{"MulScalar": 1}},
 		{"div_term2_error", map[string]int{"Div": 2}},
-		{"divscalar_error", map[string]int{"DivScalar": 1}},
+		{"mulscalar_nTimesStd_error", map[string]int{"MulScalar": 2}},
+		{"div_term3_error", map[string]int{"Div": 3}},
 		{"sub_term1_term2_error", map[string]int{"Sub": 2}},
 		{"sub_dInput_term3_error", map[string]int{"Sub": 3}},
 	}

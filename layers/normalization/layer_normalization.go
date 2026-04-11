@@ -216,19 +216,25 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		return nil, err
 	}
 
-	dGamma, err := ln.engine.ReduceSum(ctx, dOutMulNormedInput, len(ln.inputShape)-1, false, nil)
-	if err != nil {
-		return nil, err
+	dGamma := dOutMulNormedInput
+	for i := 0; i < len(ln.inputShape)-1; i++ {
+		dGamma, err = ln.engine.ReduceSum(ctx, dGamma, 0, false, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := ln.gamma.AddGradient(dGamma); err != nil {
 		return nil, err
 	}
 
-	// dL/dbeta = sum(dOut) along the normalization axis
-	dBeta, err := ln.engine.ReduceSum(ctx, dOut, len(ln.inputShape)-1, false, nil)
-	if err != nil {
-		return nil, err
+	// dL/dbeta = sum(dOut) along the batch dimensions (all non-feature dims)
+	dBeta := dOut
+	for i := 0; i < len(ln.inputShape)-1; i++ {
+		dBeta, err = ln.engine.ReduceSum(ctx, dBeta, 0, false, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := ln.beta.AddGradient(dBeta); err != nil {
@@ -312,8 +318,13 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		return nil, err
 	}
 
-	// Term 3: dLdMeanTerm / N
-	term3, err := ln.engine.DivScalar(ctx, dLdMeanTerm, N, nil)
+	// Term 3: dLdMeanTerm / (N * stdDev)
+	nTimesStd, err := ln.engine.MulScalar(ctx, stdDev, N, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	term3, err := ln.engine.Div(ctx, dLdMeanTerm, nTimesStd, nil)
 	if err != nil {
 		return nil, err
 	}
