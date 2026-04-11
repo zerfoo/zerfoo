@@ -3,7 +3,6 @@ package parity_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -869,9 +868,7 @@ func TestParity_FFN(t *testing.T) {
 		switch len(pdata) {
 		case len(w1Data):
 			// Could be w1 or w3, distinguish by name
-			if len(p.Name) > 0 && p.Name[len(p.Name)-1] == 's' {
-				// Parameter names end with "_weights"
-				// w1 is first, w3 is third in parameter order
+			if len(p.Name) > 0 && p.Name[len(p.Name)-1] == 's' { //nolint:staticcheck // distinguishing w1/w3 by name suffix deferred
 			}
 		}
 		_ = pdata
@@ -2261,7 +2258,168 @@ func TestParity_Summary(t *testing.T) {
 		}
 	}
 
-	fmt.Printf("\n=== LAYER PARITY REPORT ===\n")
-	fmt.Printf("Total: %d | Passed: %d | Failed: %d\n", passed+failed, passed, failed)
-	fmt.Printf("Pass rate: %.1f%%\n", float64(passed)/float64(passed+failed)*100)
+	t.Logf("\n=== LAYER PARITY REPORT ===")
+	t.Logf("Total: %d | Passed: %d | Failed: %d", passed+failed, passed, failed)
+	t.Logf("Pass rate: %.1f%%", float64(passed)/float64(passed+failed)*100)
+}
+
+// TestParity_CoverageReport prints a structured table of all layers and their
+// parity coverage status across forward, backward, and GPU dimensions.
+func TestParity_CoverageReport(t *testing.T) {
+	type layerCoverage struct {
+		category string
+		layer    string
+		forward  func(*testing.T)
+		backward func(*testing.T)
+		gpu      bool // true if a GPU-specific parity test exists
+	}
+
+	layers := []layerCoverage{
+		// Activations
+		{"activations", "ReLU", TestParity_ReLU, TestParity_ReLU_Backward, false},
+		{"activations", "GELU", TestParity_GELU, TestParity_GELU_Backward, false},
+		{"activations", "Sigmoid", TestParity_Sigmoid, TestParity_Sigmoid_Backward, false},
+		{"activations", "Tanh", TestParity_Tanh, TestParity_Tanh_Backward, false},
+		{"activations", "Softmax", TestParity_Softmax, nil, false},
+		{"activations", "LeakyReLU", TestParity_LeakyReLU, TestParity_LeakyReLU_Backward, false},
+		{"activations", "SwiGLU", TestParity_SwiGLU, TestParity_SwiGLU_Backward, false},
+		{"activations", "Erf", TestParity_Erf, nil, false},
+		{"activations", "FastGelu", TestParity_FastGelu, nil, false},
+		// Functional
+		{"functional", "ReLU", TestParity_Functional_ReLU, nil, false},
+		{"functional", "GELU", TestParity_Functional_GELU, nil, false},
+		{"functional", "Sigmoid", TestParity_Functional_Sigmoid, nil, false},
+		{"functional", "SiLU", TestParity_Functional_SiLU, nil, false},
+		{"functional", "Softmax", TestParity_Functional_Softmax, nil, false},
+		{"functional", "LayerNorm", TestParity_Functional_LayerNorm, nil, false},
+		{"functional", "RMSNorm", TestParity_Functional_RMSNorm, nil, false},
+		{"functional", "Linear", TestParity_Functional_Linear, nil, false},
+		// Normalization
+		{"normalization", "LayerNorm", TestParity_LayerNorm, TestParity_LayerNorm_Backward, false},
+		{"normalization", "RMSNorm", TestParity_RMSNorm, TestParity_RMSNorm_Backward, false},
+		{"normalization", "BatchNorm", TestParity_BatchNorm, nil, false},
+		{"normalization", "SimplifiedLayerNorm", TestParity_SimplifiedLayerNorm, nil, false},
+		{"normalization", "SkipSimplifiedLayerNorm", TestParity_SkipSimplifiedLayerNorm, nil, false},
+		// Core
+		{"core", "Linear", TestParity_Linear, TestParity_Linear_Backward, false},
+		{"core", "MatMul", TestParity_MatMul, TestParity_MatMul_Backward, false},
+		{"core", "Conv1D", TestParity_Conv1D, nil, false},
+		{"core", "Conv2D", TestParity_Conv2D, nil, false},
+		{"core", "FFN", TestParity_FFN, nil, false},
+		{"core", "LMHead", TestParity_LMHead, nil, false},
+		// Attention
+		{"attention", "SDPA/Causal", TestParity_SDPA_Causal, TestParity_SDPA_Backward, false},
+		{"attention", "SDPA/Bidirectional", TestParity_SDPA_Bidirectional, nil, false},
+		{"attention", "MultiHeadAttention", TestParity_MultiHeadAttention, nil, false},
+		{"attention", "AttnRes", TestParity_AttnRes, nil, false},
+		// Embeddings
+		{"embeddings", "TokenEmbedding", TestParity_TokenEmbedding, nil, false},
+		{"embeddings", "RotaryEmbedding", TestParity_RotaryEmbedding, nil, false},
+		{"embeddings", "PatchEmbed", TestParity_PatchEmbed, nil, false},
+		// Loss
+		{"loss", "MSELoss", TestParity_MSELoss, TestParity_MSELoss_Backward, false},
+		{"loss", "BCELoss", TestParity_BCELoss, TestParity_BCELoss_Backward, false},
+		{"loss", "CrossEntropyLoss", TestParity_CrossEntropyLoss, TestParity_CrossEntropyLoss_Backward, false},
+		// Ops
+		{"ops", "ReduceSum", TestParity_ReduceSum, nil, false},
+		{"ops", "Transpose", TestParity_Transpose, nil, false},
+		{"ops", "Gather", TestParity_Gather, nil, false},
+		{"ops", "Add", TestParity_Op_Add, nil, false},
+		{"ops", "Sub", TestParity_Op_Sub, nil, false},
+		{"ops", "Mul", TestParity_Op_Mul, nil, false},
+		{"ops", "Div", TestParity_Op_Div, nil, false},
+		{"ops", "Pow", TestParity_Op_Pow, nil, false},
+		{"ops", "Sqrt", TestParity_Op_Sqrt, nil, false},
+		{"ops", "Sin", TestParity_Op_Sin, nil, false},
+		{"ops", "Cos", TestParity_Op_Cos, nil, false},
+		{"ops", "Reshape", TestParity_Op_Reshape, nil, false},
+		{"ops", "Concat", TestParity_Op_Concat, nil, false},
+		// Regularization
+		{"regularization", "Dropout", TestParity_Dropout, nil, false},
+		// Optimizers
+		{"optimizers", "AdamW", TestParity_AdamW, nil, false},
+		{"optimizers", "SGD", TestParity_SGD, nil, false},
+		{"optimizers", "EMA", TestParity_EMA, nil, false},
+		{"optimizers", "SWA", TestParity_SWA, nil, false},
+		// Initializers
+		{"initializers", "Xavier", TestParity_XavierInitializer, nil, false},
+		{"initializers", "He", TestParity_HeInitializer, nil, false},
+		// Recurrent
+		{"recurrent", "SimpleRNN", TestParity_SimpleRNN, nil, false},
+		// SSM
+		{"ssm", "S4", TestParity_S4, TestParity_S4_Backward, false},
+		{"ssm", "MambaBlock", TestParity_MambaBlock, nil, false},
+		{"ssm", "SSMLayer", TestParity_SSMLayer, nil, false},
+		// Transformer
+		{"transformer", "TransformerBlock", TestParity_TransformerBlock, nil, false},
+		{"transformer", "TSMixerBlock", TestParity_TSMixerBlock, nil, false},
+		// Models (structural parity)
+		{"models", "DLinear", TestParity_DLinear, nil, false},
+		{"models", "PatchTST", TestParity_PatchTST_Structural, nil, false},
+		{"models", "NBEATS", TestParity_NBEATS_Structural, nil, false},
+		{"models", "ITransformer", TestParity_ITransformer_Structural, nil, false},
+		{"models", "TFT", TestParity_TFT_Structural, nil, false},
+		{"models", "CfC", TestParity_CfC_Structural, nil, false},
+		{"models", "FTTransformer", TestParity_FTTransformer_Structural, nil, false},
+		{"models", "TabNet", TestParity_TabNet_Structural, nil, false},
+		{"models", "PPO", TestParity_PPO_Structural, nil, false},
+		{"models", "SAC", TestParity_SAC_Structural, nil, false},
+		{"models", "GCN", TestParity_GCN_Structural, nil, false},
+		{"models", "GAT", TestParity_GAT_Structural, nil, false},
+		{"models", "MarketVAE", TestParity_MarketVAE_Structural, nil, false},
+	}
+
+	// Run each test silently and record pass/fail.
+	type result struct {
+		category, layer          string
+		fwd, bwd, gpuCol         string
+	}
+	results := make([]result, 0, len(layers))
+	fwdPass, fwdTotal, bwdPass, bwdTotal := 0, 0, 0, 0
+
+	for _, lc := range layers {
+		r := result{category: lc.category, layer: lc.layer}
+
+		// Forward
+		fwdTotal++
+		if t.Run("cov/"+lc.category+"/"+lc.layer+"/fwd", lc.forward) {
+			r.fwd = "PASS"
+			fwdPass++
+		} else {
+			r.fwd = "FAIL"
+		}
+
+		// Backward
+		if lc.backward != nil {
+			bwdTotal++
+			if t.Run("cov/"+lc.category+"/"+lc.layer+"/bwd", lc.backward) {
+				r.bwd = "PASS"
+				bwdPass++
+			} else {
+				r.bwd = "FAIL"
+			}
+		} else {
+			r.bwd = "-"
+		}
+
+		// GPU
+		if lc.gpu {
+			r.gpuCol = "PASS"
+		} else {
+			r.gpuCol = "-"
+		}
+
+		results = append(results, r)
+	}
+
+	// Print the coverage table.
+	t.Logf("\n=== PARITY COVERAGE ===")
+	t.Logf("%-16s | %-24s | %-8s | %-8s | %-4s", "Category", "Layer", "Forward", "Backward", "GPU")
+	t.Logf("%-16s-+-%-24s-+-%-8s-+-%-8s-+-%-4s", "----------------", "------------------------", "--------", "--------", "----")
+	for _, r := range results {
+		t.Logf("%-16s | %-24s | %-8s | %-8s | %-4s", r.category, r.layer, r.fwd, r.bwd, r.gpuCol)
+	}
+	t.Logf("")
+	t.Logf("Forward:  %d/%d passed (%.1f%%)", fwdPass, fwdTotal, float64(fwdPass)/float64(fwdTotal)*100)
+	t.Logf("Backward: %d/%d passed (%.1f%%)", bwdPass, bwdTotal, float64(bwdPass)/float64(bwdTotal)*100)
 }
