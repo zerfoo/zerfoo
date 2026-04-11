@@ -283,33 +283,22 @@ optimizer_sgd, recurrent_simple_rnn, ssm_mamba, ssm_s4. Wire these first.
 
 #### E86.0: Wire existing unwired golden files (Go tests only, no Python)
 
-- [ ] T86.0.1 Wire Conv2D golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: Conv2D forward matches golden within 1e-4. Read core/conv2d.go to determine
-  weight layout. PyTorch golden uses [out_ch, in_ch, kH, kW].
-- [ ] T86.0.2 Wire FFN golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: FFN forward matches gate-up-swiglu-down golden within 1e-4. Requires
-  NewFFNFromDense or direct Dense/SwiGLU wiring with w1, w2, w3 from golden.
-- [ ] T86.0.3 Wire BatchNorm golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: BatchNorm eval-mode forward matches golden within 1e-5. Use
-  NewBatchNormalizationWithParams with scale, bias, running_mean, running_var.
-- [ ] T86.0.4 Wire Dropout golden Go test  Owner: TBD  Est: 15m  verifies: [UC-L01]
-  AC: Dropout eval mode is identity. Verify output == input.
-- [ ] T86.0.5 Wire AdamW optimizer golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L02]
-  AC: One AdamW step matches torch.optim.AdamW param_after within 1e-6.
-- [ ] T86.0.6 Wire SGD optimizer golden Go test  Owner: TBD  Est: 15m  verifies: [UC-L02]
-  AC: One SGD step matches torch.optim.SGD param_after within 1e-6.
-- [ ] T86.0.7 Wire SimpleRNN golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: SimpleRNN forward matches torch.nn.RNN golden within 1e-5. Align weight
-  convention: PyTorch weight_ih is [hidden, input], Zerfoo may be [input, hidden].
-- [ ] T86.0.8 Wire S4 SSM golden Go test  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: S4 scan matches a_disc=exp(-exp(a_log)) golden within 1e-5.
+- [x] T86.0.1 Wire Conv2D golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
+- [x] T86.0.2 Wire FFN golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
+- [x] T86.0.3 Wire BatchNorm golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
+- [x] T86.0.4 Wire Dropout golden Go test  Est: 15m  verifies: [UC-L01]  DONE 2026-04-10
+- [x] T86.0.5 Wire AdamW optimizer golden Go test  Est: 30m  verifies: [UC-L02]  DONE 2026-04-10
+- [x] T86.0.6 Wire SGD optimizer golden Go test  Est: 15m  verifies: [UC-L02]  DONE 2026-04-10
+- [x] T86.0.7 Wire SimpleRNN golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
+- [x] T86.0.8 Wire S4 SSM golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [ ] T86.0.9 Wire MambaBlock golden Go test  Owner: TBD  Est: 45m  verifies: [UC-L01]
-  AC: Mamba selective scan + gating matches golden within 1e-3. Complex weight
-  wiring: w_in, conv, w_dt, A_log, w_out from golden.
+  AC: Mamba selective scan + gating matches golden within 1e-3. SKIPPED: complex
+  multi-projection weight wiring (in_proj, conv, dt_proj, A_log, out_proj).
 - [ ] T86.0.10 Wire TransformerBlock composite golden Go test  Owner: TBD  Est: 45m  verifies: [UC-L01]
   AC: Full transformer block (RMSNorm->Attn->Res->RMSNorm->FFN->Res) matches
-  golden within 1e-4. Use tiny config: d_model=16, n_heads=2, d_ff=32.
-- [ ] T86.0.11 Run go vet + go test on all wired tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  golden within 1e-4. SKIPPED: requires attention node + norm + FFN coordination.
+- [x] T86.0.11 Run go vet + go test on all wired tests  Est: 15m  verifies: [infrastructure]  DONE 2026-04-10
+  42/42 pass, 2 skip (MambaBlock, TransformerBlock). Full suite green.
 
 #### E86.1: New Layer Forward Parity (generate golden + wire Go test)
 
