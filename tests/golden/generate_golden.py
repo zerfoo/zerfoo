@@ -1561,6 +1561,201 @@ def gen_dlinear():
 
 
 # ---------------------------------------------------------------------------
+# PatchTST (Patch Time-Series Transformer) golden-file forward parity
+# ---------------------------------------------------------------------------
+
+def gen_patchtst():
+    """Generate golden data for PatchTST forward pass.
+
+    Tiny PatchTST: InputLength=16, PatchLength=4, Stride=4, DModel=8,
+    NHeads=2, NLayers=1, OutputDim=4, batch=2, channels=1 (univariate).
+
+    Architecture:
+      1. Patch embedding: linear [patchLen -> dModel] (x @ W + b)
+      2. Positional embedding: additive learned [numPatches, dModel]
+      3. Pre-norm transformer encoder (LayerNorm -> MHA -> residual ->
+         LayerNorm -> FFN(GELU tanh approx) -> residual)
+      4. Head: flatten [numPatches*dModel] -> Linear -> [outputDim]
+
+    Weight order in flat_params (matches Go's flatParams()):
+      patchEmbW, patchEmbB, posEmb,
+      per-layer: qW, qB, kW, kB, vW, vB, oW, oB,
+                 ffn1W, ffn1B, ffn2W, ffn2B,
+                 norm1, bias1, norm2, bias2,
+      headW, headB
+    """
+    set_seed()
+
+    batch = 2
+    input_len = 16
+    patch_len = 4
+    stride = 4
+    d_model = 8
+    n_heads = 2
+    n_layers = 1
+    output_dim = 4
+    num_patches = (input_len - patch_len) // stride + 1  # 4
+    head_dim = d_model // n_heads  # 4
+    ffn_dim = d_model * 4  # 32
+
+    # Input: [batch, input_len] random float32.
+    x = torch.randn(batch, input_len)
+
+    # --- Build all weights with fixed seed ---
+    # Patch embedding: W [patch_len, d_model], b [d_model]
+    patch_emb_w = torch.randn(patch_len, d_model) * 0.1
+    patch_emb_b = torch.randn(d_model) * 0.1
+
+    # Positional embedding: [num_patches, d_model]
+    pos_emb = torch.randn(num_patches, d_model) * 0.02
+
+    # Encoder layer weights (1 layer)
+    layers_weights = []
+    for _ in range(n_layers):
+        lw = {}
+        # Q/K/V/O projections: W [d_model, d_model], b [d_model]
+        lw["q_w"] = torch.randn(d_model, d_model) * 0.1
+        lw["q_b"] = torch.randn(d_model) * 0.1
+        lw["k_w"] = torch.randn(d_model, d_model) * 0.1
+        lw["k_b"] = torch.randn(d_model) * 0.1
+        lw["v_w"] = torch.randn(d_model, d_model) * 0.1
+        lw["v_b"] = torch.randn(d_model) * 0.1
+        lw["o_w"] = torch.randn(d_model, d_model) * 0.1
+        lw["o_b"] = torch.randn(d_model) * 0.1
+        # FFN: ffn1 [d_model, ffn_dim], ffn2 [ffn_dim, d_model]
+        lw["ffn1_w"] = torch.randn(d_model, ffn_dim) * 0.1
+        lw["ffn1_b"] = torch.randn(ffn_dim) * 0.1
+        lw["ffn2_w"] = torch.randn(ffn_dim, d_model) * 0.1
+        lw["ffn2_b"] = torch.randn(d_model) * 0.1
+        # LayerNorm: scale (gamma), bias (beta) [d_model]
+        lw["norm1"] = torch.ones(d_model)
+        lw["bias1"] = torch.zeros(d_model)
+        lw["norm2"] = torch.ones(d_model)
+        lw["bias2"] = torch.zeros(d_model)
+        layers_weights.append(lw)
+
+    # Head: W [num_patches*d_model, output_dim], b [output_dim]
+    head_w = torch.randn(num_patches * d_model, output_dim) * 0.1
+    head_b = torch.randn(output_dim) * 0.1
+
+    # --- Forward pass ---
+    # Process each batch element (univariate, channels=1).
+    outputs = []
+    for bi in range(batch):
+        row = x[bi]  # [input_len]
+
+        # Extract patches: [num_patches, patch_len]
+        patches = []
+        for p in range(num_patches):
+            start = p * stride
+            patches.append(row[start:start + patch_len])
+        patches = torch.stack(patches)  # [num_patches, patch_len]
+
+        # Patch embedding: patches @ W + b -> [num_patches, d_model]
+        embedded = patches @ patch_emb_w + patch_emb_b
+
+        # Add positional embedding.
+        embedded = embedded + pos_emb
+
+        # Transformer encoder.
+        h = embedded  # [num_patches, d_model]
+        for li in range(n_layers):
+            lw = layers_weights[li]
+
+            # Pre-norm 1: LayerNorm.
+            normed = F.layer_norm(h, [d_model], weight=lw["norm1"], bias=lw["bias1"])
+
+            # MHA: Q, K, V projections.
+            q = normed @ lw["q_w"] + lw["q_b"]  # [num_patches, d_model]
+            k = normed @ lw["k_w"] + lw["k_b"]
+            v = normed @ lw["v_w"] + lw["v_b"]
+
+            # Split into heads: [num_patches, n_heads, head_dim] -> [n_heads, num_patches, head_dim]
+            q = q.view(num_patches, n_heads, head_dim).transpose(0, 1)
+            k = k.view(num_patches, n_heads, head_dim).transpose(0, 1)
+            v = v.view(num_patches, n_heads, head_dim).transpose(0, 1)
+
+            # Scaled dot-product attention (no causal mask).
+            scale = 1.0 / math.sqrt(head_dim)
+            scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # [n_heads, num_patches, num_patches]
+            attn_weights = F.softmax(scores, dim=-1)
+            attn_out = torch.matmul(attn_weights, v)  # [n_heads, num_patches, head_dim]
+
+            # Concat heads: [num_patches, d_model]
+            attn_out = attn_out.transpose(0, 1).contiguous().view(num_patches, d_model)
+
+            # Output projection.
+            attn_out = attn_out @ lw["o_w"] + lw["o_b"]
+
+            # Residual.
+            h = h + attn_out
+
+            # Pre-norm 2: LayerNorm.
+            normed = F.layer_norm(h, [d_model], weight=lw["norm2"], bias=lw["bias2"])
+
+            # FFN with GELU tanh approximation.
+            ffn_h = normed @ lw["ffn1_w"] + lw["ffn1_b"]  # [num_patches, ffn_dim]
+            ffn_h = F.gelu(ffn_h, approximate="tanh")
+            ffn_out = ffn_h @ lw["ffn2_w"] + lw["ffn2_b"]  # [num_patches, d_model]
+
+            # Residual.
+            h = h + ffn_out
+
+        # Flatten: [num_patches * d_model]
+        flat = h.reshape(-1)
+
+        # Head: linear [num_patches*d_model -> output_dim]
+        out = flat @ head_w + head_b  # [output_dim]
+        outputs.append(out)
+
+    output = torch.stack(outputs)  # [batch, output_dim]
+
+    # --- Build flat_params in Go's flatParams() order ---
+    flat_params = []
+    flat_params.extend(to_list(patch_emb_w))
+    flat_params.extend(to_list(patch_emb_b))
+    flat_params.extend(to_list(pos_emb))
+    for li in range(n_layers):
+        lw = layers_weights[li]
+        flat_params.extend(to_list(lw["q_w"]))
+        flat_params.extend(to_list(lw["q_b"]))
+        flat_params.extend(to_list(lw["k_w"]))
+        flat_params.extend(to_list(lw["k_b"]))
+        flat_params.extend(to_list(lw["v_w"]))
+        flat_params.extend(to_list(lw["v_b"]))
+        flat_params.extend(to_list(lw["o_w"]))
+        flat_params.extend(to_list(lw["o_b"]))
+        flat_params.extend(to_list(lw["ffn1_w"]))
+        flat_params.extend(to_list(lw["ffn1_b"]))
+        flat_params.extend(to_list(lw["ffn2_w"]))
+        flat_params.extend(to_list(lw["ffn2_b"]))
+        flat_params.extend(to_list(lw["norm1"]))
+        flat_params.extend(to_list(lw["bias1"]))
+        flat_params.extend(to_list(lw["norm2"]))
+        flat_params.extend(to_list(lw["bias2"]))
+    flat_params.extend(to_list(head_w))
+    flat_params.extend(to_list(head_b))
+
+    save_case("model_patchtst", {
+        "model": "patchtst",
+        "batch": batch,
+        "input_len": input_len,
+        "patch_len": patch_len,
+        "stride": stride,
+        "d_model": d_model,
+        "n_heads": n_heads,
+        "n_layers": n_layers,
+        "output_dim": output_dim,
+        "num_patches": num_patches,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "flat_params": flat_params,
+        "param_count": len(flat_params),
+        "expected_output": to_list(output), "output_shape": list(output.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
 # GQA (Grouped Query Attention) -- no RoPE, no KV cache
 # ---------------------------------------------------------------------------
 
@@ -1749,6 +1944,7 @@ def main():
         ("ShapeOps", gen_shape_ops),
         # Timeseries models (E86.4)
         ("DLinear", gen_dlinear),
+        ("PatchTST", gen_patchtst),
         # Complex layers (GQA, MoE)
         ("GQA", gen_gqa),
         ("MoE", gen_moe),

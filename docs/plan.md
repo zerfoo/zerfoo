@@ -12,7 +12,8 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 
 **Status summary:**
 - 380+ tasks completed across all plans
-- E86: PyTorch parity testing (64/72 -- 103 tests, 98 pass, 5 skip, 0 fail; GPU parity E86.5 pending DGX)
+- E86: PyTorch parity testing (66/72 -- 105 tests, 100 pass, 5 skip, 0 fail; GPU parity E86.5 pending DGX)
+- E88: Upgrade timeseries model tests from structural to golden-file parity (0/6)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30

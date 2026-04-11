@@ -108,6 +108,170 @@ func TestParity_DLinear(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// T86.4.1b: PatchTST golden-file forward parity (PyTorch reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_PatchTST(t *testing.T) {
+	g := loadGolden(t, "model_patchtst")
+	tol := getFloat(g, "tolerance")
+
+	inputLen := int(getFloat(g, "input_len"))
+	patchLen := int(getFloat(g, "patch_len"))
+	stride := int(getFloat(g, "stride"))
+	dModel := int(getFloat(g, "d_model"))
+	nHeads := int(getFloat(g, "n_heads"))
+	nLayers := int(getFloat(g, "n_layers"))
+	outputDim := int(getFloat(g, "output_dim"))
+	batch := int(getFloat(g, "batch"))
+	goldenParamCount := int(getFloat(g, "param_count"))
+
+	config := tsmodels.PatchTSTConfig{
+		InputLength: inputLen,
+		PatchLength: patchLen,
+		Stride:      stride,
+		DModel:      dModel,
+		NHeads:      nHeads,
+		NLayers:     nLayers,
+		OutputDim:   outputDim,
+	}
+
+	engine, ops := setup()
+	m, err := tsmodels.NewPatchTST(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewPatchTST: %v", err)
+	}
+
+	// Verify param count matches golden data.
+	if pc := m.ParamCount(); pc != goldenParamCount {
+		t.Fatalf("param count: got %d, want %d", pc, goldenParamCount)
+	}
+
+	// Extract golden flat params and weights from golden data.
+	flatParams := getFloat64s(g, "flat_params")
+
+	// Build the patchTSTWeights JSON using golden flat_params.
+	// Flat param order: patchEmbW, patchEmbB, posEmb,
+	//   per-layer: qW, qB, kW, kB, vW, vB, oW, oB,
+	//              ffn1W, ffn1B, ffn2W, ffn2B, norm1, bias1, norm2, bias2,
+	//   headW, headB.
+	numPatches := (inputLen - patchLen) / stride + 1
+	ffnDim := dModel * 4
+	off := 0
+
+	take := func(n int) []float64 {
+		s := flatParams[off : off+n]
+		off += n
+		return s
+	}
+
+	patchEmbW := take(patchLen * dModel)
+	patchEmbB := take(dModel)
+	posEmb := take(numPatches * dModel)
+
+	type layerJSON struct {
+		QW    []float64 `json:"q_w"`
+		QB    []float64 `json:"q_b"`
+		KW    []float64 `json:"k_w"`
+		KB    []float64 `json:"k_b"`
+		VW    []float64 `json:"v_w"`
+		VB    []float64 `json:"v_b"`
+		OW    []float64 `json:"o_w"`
+		OB    []float64 `json:"o_b"`
+		FFN1W []float64 `json:"ffn1_w"`
+		FFN1B []float64 `json:"ffn1_b"`
+		FFN2W []float64 `json:"ffn2_w"`
+		FFN2B []float64 `json:"ffn2_b"`
+		Norm1 []float64 `json:"norm1"`
+		Bias1 []float64 `json:"bias1"`
+		Norm2 []float64 `json:"norm2"`
+		Bias2 []float64 `json:"bias2"`
+	}
+
+	layers := make([]layerJSON, nLayers)
+	for i := 0; i < nLayers; i++ {
+		layers[i] = layerJSON{
+			QW:    take(dModel * dModel),
+			QB:    take(dModel),
+			KW:    take(dModel * dModel),
+			KB:    take(dModel),
+			VW:    take(dModel * dModel),
+			VB:    take(dModel),
+			OW:    take(dModel * dModel),
+			OB:    take(dModel),
+			FFN1W: take(dModel * ffnDim),
+			FFN1B: take(ffnDim),
+			FFN2W: take(ffnDim * dModel),
+			FFN2B: take(dModel),
+			Norm1: take(dModel),
+			Bias1: take(dModel),
+			Norm2: take(dModel),
+			Bias2: take(dModel),
+		}
+	}
+
+	headW := take(numPatches * dModel * outputDim)
+	headB := take(outputDim)
+
+	if off != len(flatParams) {
+		t.Fatalf("flat_params offset mismatch: consumed %d, total %d", off, len(flatParams))
+	}
+
+	// Write golden weights to a temp file in PatchTST's JSON format.
+	weightsJSON := map[string]interface{}{
+		"config": map[string]interface{}{
+			"InputLength":        inputLen,
+			"PatchLength":        patchLen,
+			"Stride":             stride,
+			"DModel":             dModel,
+			"NHeads":             nHeads,
+			"NLayers":            nLayers,
+			"OutputDim":          outputDim,
+			"ChannelIndependent": false,
+		},
+		"patch_emb_w": patchEmbW,
+		"patch_emb_b": patchEmbB,
+		"pos_emb":     posEmb,
+		"layers":      layers,
+		"head_w":      headW,
+		"head_b":      headB,
+	}
+	dir := t.TempDir()
+	weightsPath := filepath.Join(dir, "patchtst_golden.json")
+	wData, err := json.Marshal(weightsJSON)
+	if err != nil {
+		t.Fatalf("marshal weights: %v", err)
+	}
+	if err := os.WriteFile(weightsPath, wData, 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+
+	// Build input windows: [batch][1 channel][inputLen].
+	inputFlat := getFloat64s(g, "input")
+	windows := make([][][]float64, batch)
+	for b := 0; b < batch; b++ {
+		windows[b] = [][]float64{inputFlat[b*inputLen : (b+1)*inputLen]}
+	}
+
+	// Run prediction through PredictWindowed (loads weights, runs f64 forward).
+	preds, err := m.PredictWindowed(weightsPath, windows)
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	// Compare against golden expected output.
+	expectedOutput := getFloat64s(g, "expected_output")
+	if len(preds) != len(expectedOutput) {
+		t.Fatalf("output length: got %d, want %d", len(preds), len(expectedOutput))
+	}
+	for i := range preds {
+		diff := math.Abs(preds[i] - expectedOutput[i])
+		if diff > tol {
+			t.Errorf("output[%d]: got %g, want %g (diff=%g, tol=%g)", i, preds[i], expectedOutput[i], diff, tol)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // T86.4.1: PatchTST structural forward parity
 // Structural test - not golden-file parity
 // ---------------------------------------------------------------------------
@@ -319,6 +483,139 @@ func TestParity_ITransformer_Structural(t *testing.T) {
 	}
 	if allSame {
 		t.Errorf("output is constant: same result for different inputs")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// N-BEATS golden-file forward parity (Python reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_NBEATS(t *testing.T) {
+	engine, ops := setup()
+
+	g := loadGolden(t, "model_nbeats")
+	tol := getFloat(g, "tolerance")
+
+	inputLen := int(getFloat(g, "input_length"))
+	outputLen := int(getFloat(g, "output_length"))
+	hiddenDim := int(getFloat(g, "hidden_dim"))
+	nHarmonics := int(getFloat(g, "n_harmonics"))
+	batch := int(getFloat(g, "batch"))
+
+	config := tsmodels.NBEATSConfig{
+		InputLength:     inputLen,
+		OutputLength:    outputLen,
+		StackTypes:      []tsmodels.StackType{tsmodels.StackTrend, tsmodels.StackSeasonality},
+		NBlocksPerStack: 1,
+		HiddenDim:       hiddenDim,
+		NHarmonics:      nHarmonics,
+	}
+
+	m, err := tsmodels.NewNBEATS(config, engine, ops)
+	if err != nil {
+		t.Fatalf("NewNBEATS: %v", err)
+	}
+
+	// Load golden params into model.
+	goldenParams := getFloat64s(g, "params")
+	flatPtrs := m.FlatParams()
+	if len(goldenParams) != len(flatPtrs) {
+		t.Fatalf("param count mismatch: golden=%d, model=%d", len(goldenParams), len(flatPtrs))
+	}
+	for i, v := range goldenParams {
+		*flatPtrs[i] = float32(v)
+	}
+
+	// Build input tensor.
+	inputFlat := getFloat32s(g, "input")
+	input := makeTensor(t, inputFlat, []int{batch, inputLen})
+
+	result, err := m.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	expectedOutput := getFloat32s(g, "expected_output")
+	got := result.Forecast.Data()
+
+	if len(got) != len(expectedOutput) {
+		t.Fatalf("output length: got %d, want %d", len(got), len(expectedOutput))
+	}
+	assertClose(t, "nbeats_forecast", got, expectedOutput, tol)
+}
+
+// ---------------------------------------------------------------------------
+// ITransformer golden-file forward parity (Python reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_ITransformer(t *testing.T) {
+	g := loadGolden(t, "model_itransformer")
+	tol := getFloat(g, "tolerance")
+
+	channels := int(getFloat(g, "channels"))
+	inputLen := int(getFloat(g, "input_len"))
+	outputLen := int(getFloat(g, "output_len"))
+	dModel := int(getFloat(g, "d_model"))
+	dFF := int(getFloat(g, "d_ff"))
+	nHeads := int(getFloat(g, "n_heads"))
+	nLayers := int(getFloat(g, "n_layers"))
+
+	config := tsmodels.ITransformerConfig{
+		Channels:  channels,
+		InputLen:  inputLen,
+		OutputLen: outputLen,
+		DModel:    dModel,
+		DFF:       dFF,
+		NHeads:    nHeads,
+		NLayers:   nLayers,
+	}
+
+	m, err := tsmodels.NewITransformer(config, nil, nil)
+	if err != nil {
+		t.Fatalf("NewITransformer: %v", err)
+	}
+
+	// Load golden params via flatParams pointers.
+	goldenParams := getFloat64s(g, "params")
+	flatPtrs := m.FlatParams()
+	if len(goldenParams) != len(flatPtrs) {
+		t.Fatalf("param count mismatch: golden=%d, model=%d", len(goldenParams), len(flatPtrs))
+	}
+	for i, v := range goldenParams {
+		*flatPtrs[i] = v
+	}
+
+	// Build input: [channels][inputLen] from golden JSON.
+	inputRaw := g["input"].([]interface{})
+	input := make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		row := inputRaw[c].([]interface{})
+		input[c] = make([]float64, inputLen)
+		for j := 0; j < inputLen; j++ {
+			input[c][j] = row[j].(float64)
+		}
+	}
+
+	// Run forward via ForwardSample (returns flat [channels*outputLen]).
+	output, _, err := m.ForwardSample(input)
+	if err != nil {
+		t.Fatalf("ForwardSample: %v", err)
+	}
+
+	// Compare against expected output (JSON is [channels][outputLen]).
+	expectedRaw := g["expected_output"].([]interface{})
+	idx := 0
+	for c := 0; c < channels; c++ {
+		row := expectedRaw[c].([]interface{})
+		for j := 0; j < outputLen; j++ {
+			want := row[j].(float64)
+			got := output[idx]
+			diff := math.Abs(got - want)
+			if diff > tol {
+				t.Errorf("output[%d][%d]: got %g, want %g (diff=%g, tol=%g)", c, j, got, want, diff, tol)
+			}
+			idx++
+		}
 	}
 }
 

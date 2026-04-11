@@ -2729,6 +2729,7 @@ func TestParity_Summary(t *testing.T) {
 		{"Backward/SDPA", TestParity_SDPA_Backward},
 		// Timeseries & Tabular model forward parity (E86 T86.4)
 		{"DLinear", TestParity_DLinear},
+		{"PatchTST", TestParity_PatchTST},
 		{"PatchTST/Structural", TestParity_PatchTST_Structural},
 		{"NBEATS/Structural", TestParity_NBEATS_Structural},
 		{"ITransformer/Structural", TestParity_ITransformer_Structural},

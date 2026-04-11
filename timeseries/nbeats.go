@@ -429,6 +429,45 @@ func (m *NBEATS) linearForward(ctx context.Context, x *tensor.TensorNumeric[floa
 	return functional.Linear(ctx, m.engine, x, l.weights, l.biases)
 }
 
+// FlatParams returns pointers to all trainable parameters in a deterministic
+// order: for each stack, for each block: 4 FC layers (weight, bias each),
+// then thetaB (weight, bias), then thetaF (weight, bias).
+func (m *NBEATS) FlatParams() []*float32 {
+	var params []*float32
+	for si := range m.stacks {
+		for bi := range m.stacks[si].blocks {
+			b := &m.stacks[si].blocks[bi]
+			for li := range b.fcLayers {
+				wData := b.fcLayers[li].weights.Data()
+				for i := range wData {
+					params = append(params, &wData[i])
+				}
+				bData := b.fcLayers[li].biases.Data()
+				for i := range bData {
+					params = append(params, &bData[i])
+				}
+			}
+			wData := b.thetaBLayer.weights.Data()
+			for i := range wData {
+				params = append(params, &wData[i])
+			}
+			bData := b.thetaBLayer.biases.Data()
+			for i := range bData {
+				params = append(params, &bData[i])
+			}
+			wData = b.thetaFLayer.weights.Data()
+			for i := range wData {
+				params = append(params, &wData[i])
+			}
+			bData = b.thetaFLayer.biases.Data()
+			for i := range bData {
+				params = append(params, &bData[i])
+			}
+		}
+	}
+	return params
+}
+
 // ForwardBatched runs the N-BEATS forward pass on a 3D input tensor.
 // Input x has shape [batch, channels, inputLen]. The channels are averaged
 // to produce a [batch, inputLen] tensor which is then passed through the
