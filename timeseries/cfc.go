@@ -1,6 +1,7 @@
 package timeseries
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -8,7 +9,9 @@ import (
 	"os"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // CfCConfig holds the configuration for a CfC model.
@@ -167,14 +170,13 @@ func (c *CfC) forward(input [][]float64) []float64 {
 		}
 	}
 
-	// Output projection.
+	// Output projection via cpuEngine64.MatMul: h[1, hiddenSize] @ outW[hiddenSize, outDim] + outB.
+	ctx := context.Background()
 	outDim := c.config.OutputSize * c.config.OutputLen
+	proj := cfcMatVecF64(ctx, h, c.outW, c.config.HiddenSize, outDim)
 	out := make([]float64, outDim)
 	for j := 0; j < outDim; j++ {
-		out[j] = c.outB[j]
-		for i := 0; i < c.config.HiddenSize; i++ {
-			out[j] += h[i] * c.outW[i][j]
-		}
+		out[j] = proj[j] + c.outB[j]
 	}
 	return out
 }
@@ -217,61 +219,93 @@ func (c *CfC) ForwardBatch(windows [][][]float64) [][]float64 {
 
 		for l := 0; l < numLayers; l++ {
 			layer := c.layers[l]
-			inSize := len(layer.Wx)
 
 			for b := 0; b < batch; b++ {
-				xb := x[b]
-				hb := h[b]
-
-				// Compute tau = sigmoid(Wtau * [x, h] + btau).
-				tau := make([]float64, hiddenSize)
-				for j := 0; j < hiddenSize; j++ {
-					val := layer.Btau[j]
-					for i := 0; i < inSize; i++ {
-						val += xb[i] * layer.Wtau[i][j]
-					}
-					for i := 0; i < hiddenSize; i++ {
-						val += hb[i] * layer.Wtau[inSize+i][j]
-					}
-					tau[j] = sigmoid(val)
-				}
-
-				// Compute pre-activation: tanh(Wx*x + Wh*h + bh).
-				preact := make([]float64, hiddenSize)
-				for j := 0; j < hiddenSize; j++ {
-					val := layer.Bh[j]
-					for i := 0; i < inSize; i++ {
-						val += xb[i] * layer.Wx[i][j]
-					}
-					for i := 0; i < hiddenSize; i++ {
-						val += hb[i] * layer.Wh[i][j]
-					}
-					preact[j] = math.Tanh(val)
-				}
-
-				// Closed-form ODE update: h_new = f * h_old + (1-f) * preact.
-				hNew := make([]float64, hiddenSize)
-				for j := 0; j < hiddenSize; j++ {
-					tauClamped := math.Max(tau[j], 1e-6)
-					f := math.Exp(-1.0 / tauClamped)
-					hNew[j] = f*hb[j] + (1-f)*preact[j]
-				}
-
+				hNew := c.cfcStep(layer, x[b], h[b])
 				h[b] = hNew
 				x[b] = hNew // feed hidden state to next layer
 			}
 		}
 	}
 
-	// Output projection for each sample.
+	// Output projection for each sample via cpuEngine64.MatMul.
+	ctx := context.Background()
 	out := make([][]float64, batch)
 	for b := 0; b < batch; b++ {
+		proj := cfcMatVecF64(ctx, h[b], c.outW, hiddenSize, outDim)
 		out[b] = make([]float64, outDim)
 		for j := 0; j < outDim; j++ {
-			out[b][j] = c.outB[j]
-			for i := 0; i < hiddenSize; i++ {
-				out[b][j] += h[b][i] * c.outW[i][j]
-			}
+			out[b][j] = proj[j] + c.outB[j]
+		}
+	}
+	return out
+}
+
+// cfcMatVecF64 computes vec[1, rows] @ mat[rows, cols] using cpuEngine64.MatMul.
+// Returns a slice of length cols. Falls back to scalar multiply on error.
+func cfcMatVecF64(ctx context.Context, vec []float64, mat [][]float64, rows, cols int) []float64 {
+	vT, err := tensor.New[float64]([]int{1, rows}, vec)
+	if err != nil {
+		return cfcScalarMatVecF64(vec, mat, rows, cols)
+	}
+	mFlat := make([]float64, rows*cols)
+	for i := 0; i < rows; i++ {
+		copy(mFlat[i*cols:], mat[i])
+	}
+	mT, err := tensor.New[float64]([]int{rows, cols}, mFlat)
+	if err != nil {
+		return cfcScalarMatVecF64(vec, mat, rows, cols)
+	}
+	out, err := cpuEngine64.MatMul(ctx, vT, mT)
+	if err != nil {
+		return cfcScalarMatVecF64(vec, mat, rows, cols)
+	}
+	return out.Data()
+}
+
+// cfcScalarMatVecF64 computes vec @ mat on the CPU as a fallback.
+func cfcScalarMatVecF64(vec []float64, mat [][]float64, rows, cols int) []float64 {
+	out := make([]float64, cols)
+	for j := 0; j < cols; j++ {
+		for i := 0; i < rows; i++ {
+			out[j] += vec[i] * mat[i][j]
+		}
+	}
+	return out
+}
+
+// cfcMatVecF64TransposeW computes vec[1, cols] @ W^T[cols, rows] using cpuEngine64.MatMul.
+// W is stored as [rows][cols], so W^T is [cols][rows].
+// Returns a slice of length rows.
+func cfcMatVecF64TransposeW(ctx context.Context, vec []float64, w [][]float64, rows, cols int) []float64 {
+	// Transpose W to [cols][rows].
+	wt := make([]float64, cols*rows)
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			wt[j*rows+i] = w[i][j]
+		}
+	}
+	vT, err := tensor.New[float64]([]int{1, cols}, vec)
+	if err != nil {
+		return cfcScalarMatVecTransposeF64(vec, w, rows, cols)
+	}
+	wtT, err := tensor.New[float64]([]int{cols, rows}, wt)
+	if err != nil {
+		return cfcScalarMatVecTransposeF64(vec, w, rows, cols)
+	}
+	out, err := cpuEngine64.MatMul(ctx, vT, wtT)
+	if err != nil {
+		return cfcScalarMatVecTransposeF64(vec, w, rows, cols)
+	}
+	return out.Data()
+}
+
+// cfcScalarMatVecTransposeF64 computes vec @ W^T on CPU as fallback.
+func cfcScalarMatVecTransposeF64(vec []float64, w [][]float64, rows, cols int) []float64 {
+	out := make([]float64, rows)
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			out[i] += vec[j] * w[i][j]
 		}
 	}
 	return out
@@ -281,33 +315,25 @@ func (c *CfC) ForwardBatch(windows [][][]float64) [][]float64 {
 // h(t) = f * h(t-1) + (1-f) * tanh(Wx*x + Wh*h + bh)
 // where f = exp(-dt/tau), tau = sigmoid(Wtau*[x,h] + btau), dt = 1.0.
 func (c *CfC) cfcStep(layer cfcLayer, x, h []float64) []float64 {
+	ctx := context.Background()
 	hiddenSize := c.config.HiddenSize
 	inSize := len(layer.Wx)
 
 	// Compute tau = sigmoid(Wtau * [x, h] + btau).
+	// Split Wtau into x-part [inSize, hiddenSize] and h-part [hiddenSize, hiddenSize].
+	tauX := cfcMatVecF64(ctx, x, layer.Wtau[:inSize], inSize, hiddenSize)
+	tauH := cfcMatVecF64(ctx, h, layer.Wtau[inSize:], hiddenSize, hiddenSize)
 	tau := make([]float64, hiddenSize)
 	for j := 0; j < hiddenSize; j++ {
-		val := layer.Btau[j]
-		for i := 0; i < inSize; i++ {
-			val += x[i] * layer.Wtau[i][j]
-		}
-		for i := 0; i < hiddenSize; i++ {
-			val += h[i] * layer.Wtau[inSize+i][j]
-		}
-		tau[j] = sigmoid(val)
+		tau[j] = sigmoid(layer.Btau[j] + tauX[j] + tauH[j])
 	}
 
 	// Compute pre-activation: tanh(Wx*x + Wh*h + bh).
+	preX := cfcMatVecF64(ctx, x, layer.Wx, inSize, hiddenSize)
+	preH := cfcMatVecF64(ctx, h, layer.Wh, hiddenSize, hiddenSize)
 	preact := make([]float64, hiddenSize)
 	for j := 0; j < hiddenSize; j++ {
-		val := layer.Bh[j]
-		for i := 0; i < inSize; i++ {
-			val += x[i] * layer.Wx[i][j]
-		}
-		for i := 0; i < hiddenSize; i++ {
-			val += h[i] * layer.Wh[i][j]
-		}
-		preact[j] = math.Tanh(val)
+		preact[j] = math.Tanh(layer.Bh[j] + preX[j] + preH[j])
 	}
 
 	// Closed-form ODE update: h_new = f * h_old + (1-f) * preact
@@ -384,8 +410,73 @@ func (c *CfC) ZeroGrads() {
 }
 
 // FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+// Order per layer: Wh (row-major), Wx (row-major), Bh, Wtau (row-major), Btau.
+// Then: outW (row-major), outB.
 func (c *CfC) FlatParams() []*float64 {
-	return c.flatParams()
+	n := c.paramCount()
+	params := make([]*float64, 0, n)
+	for l := 0; l < c.config.NumLayers; l++ {
+		layer := &c.layers[l]
+		for i := range layer.Wh {
+			for j := range layer.Wh[i] {
+				params = append(params, &layer.Wh[i][j])
+			}
+		}
+		for i := range layer.Wx {
+			for j := range layer.Wx[i] {
+				params = append(params, &layer.Wx[i][j])
+			}
+		}
+		for j := range layer.Bh {
+			params = append(params, &layer.Bh[j])
+		}
+		for i := range layer.Wtau {
+			for j := range layer.Wtau[i] {
+				params = append(params, &layer.Wtau[i][j])
+			}
+		}
+		for j := range layer.Btau {
+			params = append(params, &layer.Btau[j])
+		}
+	}
+	for i := range c.outW {
+		for j := range c.outW[i] {
+			params = append(params, &c.outW[i][j])
+		}
+	}
+	for j := range c.outB {
+		params = append(params, &c.outB[j])
+	}
+	return params
+}
+
+// Parameters returns all trainable parameters as float32 graph parameters.
+func (c *CfC) Parameters() []*graph.Parameter[float32] {
+	var params []*graph.Parameter[float32]
+	idx := 0
+	addParam := func(name string, data []float64, shape []int) {
+		f32 := make([]float32, len(data))
+		for i, v := range data {
+			f32[i] = float32(v)
+		}
+		t, _ := tensor.New[float32](shape, f32)
+		p, _ := graph.NewParameter(fmt.Sprintf("%s_%d", name, idx), t, tensor.New[float32])
+		params = append(params, p)
+		idx++
+	}
+	for l := 0; l < c.config.NumLayers; l++ {
+		layer := c.layers[l]
+		inSize := len(layer.Wx)
+		addParam("wh", cfcFlatten2D(layer.Wh), []int{c.config.HiddenSize, c.config.HiddenSize})
+		addParam("wx", cfcFlatten2D(layer.Wx), []int{inSize, c.config.HiddenSize})
+		addParam("bh", layer.Bh, []int{c.config.HiddenSize})
+		addParam("wtau", cfcFlatten2D(layer.Wtau), []int{inSize + c.config.HiddenSize, c.config.HiddenSize})
+		addParam("btau", layer.Btau, []int{c.config.HiddenSize})
+	}
+	outDim := c.config.OutputSize * c.config.OutputLen
+	addParam("outw", cfcFlatten2D(c.outW), []int{c.config.HiddenSize, outDim})
+	addParam("outb", c.outB, []int{outDim})
+	return params
 }
 
 // ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
@@ -446,6 +537,7 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 		hPrev[l] = make([]float64, hiddenSize)
 	}
 
+	ctx := context.Background()
 	for t := 0; t < seqLen; t++ {
 		states[t] = make([]stepState, numLayers)
 		x := input[t]
@@ -459,30 +551,20 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 			copy(ss.x, x)
 			copy(ss.hPrev, hPrev[l])
 
-			// Compute tau.
+			// Compute tau via Engine MatMul: sigmoid(Wtau * [x, h] + btau).
+			tauX := cfcMatVecF64(ctx, x, layer.Wtau[:inSize], inSize, hiddenSize)
+			tauH := cfcMatVecF64(ctx, hPrev[l], layer.Wtau[inSize:], hiddenSize, hiddenSize)
 			ss.tau = make([]float64, hiddenSize)
 			for j := 0; j < hiddenSize; j++ {
-				val := layer.Btau[j]
-				for i := 0; i < inSize; i++ {
-					val += x[i] * layer.Wtau[i][j]
-				}
-				for i := 0; i < hiddenSize; i++ {
-					val += hPrev[l][i] * layer.Wtau[inSize+i][j]
-				}
-				ss.tau[j] = sigmoid(val)
+				ss.tau[j] = sigmoid(layer.Btau[j] + tauX[j] + tauH[j])
 			}
 
-			// Compute pre-activation (value before tanh).
+			// Compute pre-activation via Engine MatMul: Wx*x + Wh*h + bh.
+			preX := cfcMatVecF64(ctx, x, layer.Wx, inSize, hiddenSize)
+			preH := cfcMatVecF64(ctx, hPrev[l], layer.Wh, hiddenSize, hiddenSize)
 			ss.preact = make([]float64, hiddenSize)
 			for j := 0; j < hiddenSize; j++ {
-				val := layer.Bh[j]
-				for i := 0; i < inSize; i++ {
-					val += x[i] * layer.Wx[i][j]
-				}
-				for i := 0; i < hiddenSize; i++ {
-					val += hPrev[l][i] * layer.Wh[i][j]
-				}
-				ss.preact[j] = val
+				ss.preact[j] = layer.Bh[j] + preX[j] + preH[j]
 			}
 
 			// h_new = f * h_old + (1-f) * tanh(preact)
@@ -505,22 +587,50 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 	grads := make([]float64, nParams)
 
 	// Output projection backward: dOutW[i][j] += finalH[i] * dLoss[j], dOutB[j] += dLoss[j].
+	// Use Engine: outer product finalH[hiddenSize,1] @ dLoss[1,outDim] -> [hiddenSize,outDim].
 	outWOff := c.outWParamOffset()
 	outBOff := c.outBParamOffset()
-	for i := 0; i < hiddenSize; i++ {
-		for j := 0; j < outDim; j++ {
-			grads[outWOff+i*outDim+j] = finalH[i] * dLoss[j]
+	hT, _ := tensor.New[float64]([]int{hiddenSize, 1}, finalH)
+	dLT, _ := tensor.New[float64]([]int{1, outDim}, dLoss)
+	dOutWT, outerErr := cpuEngine64.MatMul(ctx, hT, dLT)
+	if outerErr == nil {
+		dOutWData := dOutWT.Data()
+		copy(grads[outWOff:outWOff+hiddenSize*outDim], dOutWData)
+	} else {
+		for i := 0; i < hiddenSize; i++ {
+			for j := 0; j < outDim; j++ {
+				grads[outWOff+i*outDim+j] = finalH[i] * dLoss[j]
+			}
 		}
 	}
 	for j := 0; j < outDim; j++ {
 		grads[outBOff+j] = dLoss[j]
 	}
 
-	// dH = dLoss @ outW^T: gradient of loss w.r.t. final hidden state.
-	dh := make([]float64, hiddenSize)
+	// dH = dLoss @ outW^T via Engine: dLoss[1,outDim] @ outW^T -> [1,hiddenSize].
+	// Equivalently: outW[hiddenSize,outDim]^T @ dLoss^T, but simpler as matmul with transposed outW.
+	outWFlat := make([]float64, hiddenSize*outDim)
+	for i := 0; i < hiddenSize; i++ {
+		copy(outWFlat[i*outDim:], c.outW[i])
+	}
+	// Transpose outW to [outDim, hiddenSize].
+	outWtFlat := make([]float64, outDim*hiddenSize)
 	for i := 0; i < hiddenSize; i++ {
 		for j := 0; j < outDim; j++ {
-			dh[i] += c.outW[i][j] * dLoss[j]
+			outWtFlat[j*hiddenSize+i] = outWFlat[i*outDim+j]
+		}
+	}
+	dh := make([]float64, hiddenSize)
+	dLossVec, _ := tensor.New[float64]([]int{1, outDim}, dLoss)
+	outWtT, _ := tensor.New[float64]([]int{outDim, hiddenSize}, outWtFlat)
+	dhT, dhErr := cpuEngine64.MatMul(ctx, dLossVec, outWtT)
+	if dhErr == nil {
+		copy(dh, dhT.Data())
+	} else {
+		for i := 0; i < hiddenSize; i++ {
+			for j := 0; j < outDim; j++ {
+				dh[i] += c.outW[i][j] * dLoss[j]
+			}
 		}
 	}
 
@@ -556,20 +666,39 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 				dZtau[j] = dh[j] * dhDf * dfDtau * dtauDz
 			}
 
-			// Accumulate parameter gradients.
-			// Wx gradients.
+			// Accumulate parameter gradients using Engine outer products.
+			// Wx gradients: dPreact[1,h] outer ss.x[1,inSize] -> [inSize,h].
 			wxOff := layerOff + hiddenSize*hiddenSize
-			for i := 0; i < inSize; i++ {
-				for j := 0; j < hiddenSize; j++ {
-					grads[wxOff+i*hiddenSize+j] += dPreact[j] * ss.x[i]
+			xColT, _ := tensor.New[float64]([]int{inSize, 1}, ss.x)
+			dPreactRowT, _ := tensor.New[float64]([]int{1, hiddenSize}, dPreact)
+			dWxT, wxErr := cpuEngine64.MatMul(ctx, xColT, dPreactRowT)
+			if wxErr == nil {
+				dWxData := dWxT.Data()
+				for i := range dWxData {
+					grads[wxOff+i] += dWxData[i]
+				}
+			} else {
+				for i := 0; i < inSize; i++ {
+					for j := 0; j < hiddenSize; j++ {
+						grads[wxOff+i*hiddenSize+j] += dPreact[j] * ss.x[i]
+					}
 				}
 			}
 
-			// Wh gradients.
+			// Wh gradients: dPreact[1,h] outer ss.hPrev[1,h] -> [h,h].
 			whOff := layerOff
-			for i := 0; i < hiddenSize; i++ {
-				for j := 0; j < hiddenSize; j++ {
-					grads[whOff+i*hiddenSize+j] += dPreact[j] * ss.hPrev[i]
+			hpColT, _ := tensor.New[float64]([]int{hiddenSize, 1}, ss.hPrev)
+			dWhT, whErr := cpuEngine64.MatMul(ctx, hpColT, dPreactRowT)
+			if whErr == nil {
+				dWhData := dWhT.Data()
+				for i := range dWhData {
+					grads[whOff+i] += dWhData[i]
+				}
+			} else {
+				for i := 0; i < hiddenSize; i++ {
+					for j := 0; j < hiddenSize; j++ {
+						grads[whOff+i*hiddenSize+j] += dPreact[j] * ss.hPrev[i]
+					}
 				}
 			}
 
@@ -579,16 +708,33 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 				grads[bhOff+j] += dPreact[j]
 			}
 
-			// Wtau gradients.
+			// Wtau gradients: dZtau outer x -> [inSize, h] and dZtau outer hPrev -> [h, h].
 			wtauOff := bhOff + hiddenSize
-			for i := 0; i < inSize; i++ {
-				for j := 0; j < hiddenSize; j++ {
-					grads[wtauOff+i*hiddenSize+j] += dZtau[j] * ss.x[i]
+			dZtauRowT, _ := tensor.New[float64]([]int{1, hiddenSize}, dZtau)
+			dWtauXT, wtxErr := cpuEngine64.MatMul(ctx, xColT, dZtauRowT)
+			if wtxErr == nil {
+				dWtauXData := dWtauXT.Data()
+				for i := range dWtauXData {
+					grads[wtauOff+i] += dWtauXData[i]
+				}
+			} else {
+				for i := 0; i < inSize; i++ {
+					for j := 0; j < hiddenSize; j++ {
+						grads[wtauOff+i*hiddenSize+j] += dZtau[j] * ss.x[i]
+					}
 				}
 			}
-			for i := 0; i < hiddenSize; i++ {
-				for j := 0; j < hiddenSize; j++ {
-					grads[wtauOff+(inSize+i)*hiddenSize+j] += dZtau[j] * ss.hPrev[i]
+			dWtauHT, wthErr := cpuEngine64.MatMul(ctx, hpColT, dZtauRowT)
+			if wthErr == nil {
+				dWtauHData := dWtauHT.Data()
+				for i := range dWtauHData {
+					grads[wtauOff+inSize*hiddenSize+i] += dWtauHData[i]
+				}
+			} else {
+				for i := 0; i < hiddenSize; i++ {
+					for j := 0; j < hiddenSize; j++ {
+						grads[wtauOff+(inSize+i)*hiddenSize+j] += dZtau[j] * ss.hPrev[i]
+					}
 				}
 			}
 
@@ -598,23 +744,23 @@ func (c *CfC) backwardSample(input [][]float64, dLoss []float64) []float64 {
 				grads[btauOff+j] += dZtau[j]
 			}
 
-			// Propagate dh backward.
+			// Propagate dh backward via Engine MatMul.
+			// dhPrev[i] = sum_j(dPreact[j] * Wh[i][j]) + sum_j(dZtau[j] * Wtau[inSize+i][j]) + dh[i] * fVals[i]
+			// = dPreact[1,h] @ Wh^T[h,h] + dZtau[1,h] @ Wtau_h^T[h,h] + dh * f (element-wise)
+			dhPrevPreact := cfcMatVecF64TransposeW(ctx, dPreact, layer.Wh, hiddenSize, hiddenSize)
+			dhPrevZtau := cfcMatVecF64TransposeW(ctx, dZtau, layer.Wtau[inSize:], hiddenSize, hiddenSize)
 			dhPrev := make([]float64, hiddenSize)
 			for i := 0; i < hiddenSize; i++ {
-				for j := 0; j < hiddenSize; j++ {
-					dhPrev[i] += dPreact[j] * layer.Wh[i][j]
-					dhPrev[i] += dZtau[j] * layer.Wtau[inSize+i][j]
-				}
-				dhPrev[i] += dh[i] * fVals[i]
+				dhPrev[i] = dhPrevPreact[i] + dhPrevZtau[i] + dh[i]*fVals[i]
 			}
 
 			if l > 0 {
+				// dx[i] = sum_j(dPreact[j] * Wx[i][j]) + sum_j(dZtau[j] * Wtau[i][j])
+				dxPreact := cfcMatVecF64TransposeW(ctx, dPreact, layer.Wx, inSize, hiddenSize)
+				dxZtau := cfcMatVecF64TransposeW(ctx, dZtau, layer.Wtau[:inSize], inSize, hiddenSize)
 				dx := make([]float64, inSize)
 				for i := 0; i < inSize; i++ {
-					for j := 0; j < hiddenSize; j++ {
-						dx[i] += dPreact[j] * layer.Wx[i][j]
-						dx[i] += dZtau[j] * layer.Wtau[i][j]
-					}
+					dx[i] = dxPreact[i] + dxZtau[i]
 				}
 				dh = dx
 			} else {
@@ -727,45 +873,13 @@ func (c *CfC) outBParamOffset() int {
 	return c.outWParamOffset() + c.config.HiddenSize*outDim
 }
 
-// flatParams returns pointers to all trainable parameters in a flat slice.
-// Order per layer: Wh (row-major), Wx (row-major), Bh, Wtau (row-major), Btau.
-// Then: outW (row-major), outB.
-func (c *CfC) flatParams() []*float64 {
-	n := c.paramCount()
-	params := make([]*float64, 0, n)
-	for l := 0; l < c.config.NumLayers; l++ {
-		layer := &c.layers[l]
-		for i := range layer.Wh {
-			for j := range layer.Wh[i] {
-				params = append(params, &layer.Wh[i][j])
-			}
-		}
-		for i := range layer.Wx {
-			for j := range layer.Wx[i] {
-				params = append(params, &layer.Wx[i][j])
-			}
-		}
-		for j := range layer.Bh {
-			params = append(params, &layer.Bh[j])
-		}
-		for i := range layer.Wtau {
-			for j := range layer.Wtau[i] {
-				params = append(params, &layer.Wtau[i][j])
-			}
-		}
-		for j := range layer.Btau {
-			params = append(params, &layer.Btau[j])
-		}
+// cfcFlatten2D flattens a 2D float64 slice to a 1D slice (row-major).
+func cfcFlatten2D(m [][]float64) []float64 {
+	var out []float64
+	for _, row := range m {
+		out = append(out, row...)
 	}
-	for i := range c.outW {
-		for j := range c.outW[i] {
-			params = append(params, &c.outW[i][j])
-		}
-	}
-	for j := range c.outB {
-		params = append(params, &c.outB[j])
-	}
-	return params
+	return out
 }
 
 // cfcWeights is the JSON-serializable form of CfC parameters.
