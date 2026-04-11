@@ -13,6 +13,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
+	"github.com/zerfoo/zerfoo/layers/audio"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/functional"
@@ -21,9 +22,12 @@ import (
 	"github.com/zerfoo/zerfoo/layers/recurrent"
 	"github.com/zerfoo/zerfoo/layers/reducesum"
 	"github.com/zerfoo/zerfoo/layers/regularization"
+	"github.com/zerfoo/zerfoo/layers/residual"
 	"github.com/zerfoo/zerfoo/layers/ssm"
 	"github.com/zerfoo/zerfoo/layers/timeseries"
+	"github.com/zerfoo/zerfoo/layers/transformer"
 	ltranspose "github.com/zerfoo/zerfoo/layers/transpose"
+	"github.com/zerfoo/zerfoo/layers/vision"
 	"github.com/zerfoo/zerfoo/rl"
 	"github.com/zerfoo/zerfoo/synth"
 	"github.com/zerfoo/zerfoo/tabular"
@@ -1303,7 +1307,8 @@ func TestParity_MambaBlock(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TransformerBlock(t *testing.T) {
-	t.Skip("TODO: complex weight wiring needed - TransformerBlock requires constructing an attention node (with QKV+output projections), 3 RMSNorm layers, and an FFN, all with coordinated weight shapes and specific parameter initialization from golden data")
+	// Delegate to the structural test — golden file not yet implemented.
+	TestParity_TransformerBlock_Structural(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -1662,7 +1667,8 @@ func TestParity_Op_Concat(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_AttnRes(t *testing.T) {
-	t.Skip("TODO: AttnRes requires multiple layer outputs as input with coordinated shapes and RMSNorm initialization that needs careful golden data generation")
+	// Delegate to the structural test — golden file not yet implemented.
+	TestParity_AttnRes_Structural(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -2121,6 +2127,413 @@ func TestParity_MarketVAE_Structural(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AttentionHead structural test (T86.1.5)
+// ---------------------------------------------------------------------------
+
+func TestParity_AttentionHead_Structural(t *testing.T) {
+	engine, _ := setup()
+	inputDim := 8
+	headDim := 4
+	batchSize := 2
+	seqLen := 3
+
+	head, err := attention.NewAttentionHead[float32](engine, inputDim, headDim)
+	if err != nil {
+		t.Fatalf("NewAttentionHead: %v", err)
+	}
+
+	inputData := make([]float32, batchSize*seqLen*inputDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.01
+	}
+	input := makeTensor(t, inputData, []int{batchSize, seqLen, inputDim})
+
+	output, err := head.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output should be [batch, seq, headDim]
+	if s := output.Shape(); len(s) != 3 || s[0] != batchSize || s[1] != seqLen || s[2] != headDim {
+		t.Errorf("shape: got %v, want [%d,%d,%d]", s, batchSize, seqLen, headDim)
+	}
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+	// Verify output is not constant (all same value)
+	data := output.Data()
+	allSame := true
+	for _, v := range data[1:] {
+		if v != data[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame && len(data) > 1 {
+		t.Error("output is constant — all values are the same")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GQA structural test (T86.1.4)
+// ---------------------------------------------------------------------------
+
+func TestParity_GQA_Structural(t *testing.T) {
+	t.Skip("GQA requires RoPE setup, KV cache integration, and complex multi-head weight coordination — too complex for structural test without golden data")
+}
+
+// ---------------------------------------------------------------------------
+// MIMOMambaBlock structural test (T86.1.8)
+// ---------------------------------------------------------------------------
+
+func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
+	t.Skip("MIMOMambaBlock has 7+ projection layers with per-head SSM parameters, cross-head mixing, and causal conv1d — too complex for structural test")
+}
+
+// ---------------------------------------------------------------------------
+// AttnRes structural test (T86.1.9)
+// ---------------------------------------------------------------------------
+
+func TestParity_AttnRes_Structural(t *testing.T) {
+	engine, ops := setup()
+	modelDim := 8
+	numLayers := 3
+
+	ar, err := residual.NewAttnRes[float32]("test_attn_res", engine, ops, modelDim)
+	if err != nil {
+		t.Fatalf("NewAttnRes: %v", err)
+	}
+
+	// Create mock layer outputs
+	inputs := make([]*tensor.TensorNumeric[float32], numLayers)
+	for i := range inputs {
+		data := make([]float32, modelDim)
+		for j := range data {
+			data[j] = float32(i*modelDim+j+1) * 0.1
+		}
+		inputs[i] = makeTensor(t, data, []int{1, modelDim})
+	}
+
+	output, err := ar.Forward(context.Background(), inputs...)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output shape should match input shape [1, modelDim]
+	if s := output.Shape(); len(s) != 2 || s[0] != 1 || s[1] != modelDim {
+		t.Errorf("shape: got %v, want [1,%d]", s, modelDim)
+	}
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HModule structural test (T86.1.11)
+// ---------------------------------------------------------------------------
+
+func TestParity_HModule_Structural(t *testing.T) {
+	t.Skip("HModule requires a transformer.Block with an attention graph.Node — too many interdependent components for a standalone structural test")
+}
+
+// ---------------------------------------------------------------------------
+// MLSTM structural test (T86.1.15)
+// ---------------------------------------------------------------------------
+
+func TestParity_MLSTM_Structural(t *testing.T) {
+	engine, _ := setup()
+	inputDim := 4
+	hiddenDim := 3
+	batch := 2
+
+	mlstm, err := timeseries.NewMLSTM[float32](engine, inputDim, hiddenDim)
+	if err != nil {
+		t.Fatalf("NewMLSTM: %v", err)
+	}
+
+	// Prepare inputs
+	xData := make([]float32, batch*inputDim)
+	for i := range xData {
+		xData[i] = float32(i+1) * 0.1
+	}
+	x := makeTensor(t, xData, []int{batch, inputDim})
+
+	hPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	cPrev := makeTensor(t, make([]float32, batch*hiddenDim*hiddenDim), []int{batch, hiddenDim, hiddenDim})
+	nPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+
+	h, c, n, m, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Validate shapes
+	if s := h.Shape(); len(s) != 2 || s[0] != batch || s[1] != hiddenDim {
+		t.Errorf("h shape: got %v, want [%d,%d]", s, batch, hiddenDim)
+	}
+	if s := c.Shape(); len(s) != 3 || s[0] != batch || s[1] != hiddenDim || s[2] != hiddenDim {
+		t.Errorf("c shape: got %v, want [%d,%d,%d]", s, batch, hiddenDim, hiddenDim)
+	}
+	if s := n.Shape(); len(s) != 2 || s[0] != batch || s[1] != hiddenDim {
+		t.Errorf("n shape: got %v, want [%d,%d]", s, batch, hiddenDim)
+	}
+	if m == nil {
+		t.Error("m (stabilizer) is nil")
+	}
+
+	// Check for NaN/Inf
+	for _, out := range []*tensor.TensorNumeric[float32]{h, c, n} {
+		for i, v := range out.Data() {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SLSTM structural test (T86.1.16)
+// ---------------------------------------------------------------------------
+
+func TestParity_SLSTM_Structural(t *testing.T) {
+	engine, _ := setup()
+	inputDim := 4
+	hiddenDim := 3
+	batch := 2
+
+	slstm, err := timeseries.NewSLSTM[float32](engine, inputDim, hiddenDim)
+	if err != nil {
+		t.Fatalf("NewSLSTM: %v", err)
+	}
+
+	// Prepare inputs
+	xData := make([]float32, batch*inputDim)
+	for i := range xData {
+		xData[i] = float32(i+1) * 0.1
+	}
+	x := makeTensor(t, xData, []int{batch, inputDim})
+
+	hPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	cPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	nPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+
+	h, c, n, m, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Validate shapes — all should be [batch, hiddenDim]
+	for name, out := range map[string]*tensor.TensorNumeric[float32]{"h": h, "c": c, "n": n, "m": m} {
+		if s := out.Shape(); len(s) != 2 || s[0] != batch || s[1] != hiddenDim {
+			t.Errorf("%s shape: got %v, want [%d,%d]", name, s, batch, hiddenDim)
+		}
+	}
+
+	// Check for NaN/Inf
+	for _, out := range []*tensor.TensorNumeric[float32]{h, c, n, m} {
+		for i, v := range out.Data() {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CLIPEncoder structural test (T86.1.18)
+// ---------------------------------------------------------------------------
+
+func TestParity_CLIPEncoder_Structural(t *testing.T) {
+	engine, ops := setup()
+	cfg := vision.CLIPEncoderConfig{
+		ImageSize:   16,
+		PatchSize:   4,
+		HiddenDim:   8,
+		NumHeads:    2,
+		NumLayers:   1,
+		NumChannels: 3,
+	}
+
+	enc, err := vision.NewCLIPEncoder[float32]("test_clip", engine, ops, cfg)
+	if err != nil {
+		t.Fatalf("NewCLIPEncoder: %v", err)
+	}
+
+	// Input: [batch, channels, height, width]
+	batch := 1
+	inputSize := batch * cfg.NumChannels * cfg.ImageSize * cfg.ImageSize
+	inputData := make([]float32, inputSize)
+	for i := range inputData {
+		inputData[i] = float32(i%256) / 255.0
+	}
+	input := makeTensor(t, inputData, []int{batch, cfg.NumChannels, cfg.ImageSize, cfg.ImageSize})
+
+	output, err := enc.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output: [batch, numPatches+1, hiddenDim]
+	numPatches := cfg.NumPatches()
+	if s := output.Shape(); len(s) != 3 || s[0] != batch || s[1] != numPatches+1 || s[2] != cfg.HiddenDim {
+		t.Errorf("shape: got %v, want [%d,%d,%d]", s, batch, numPatches+1, cfg.HiddenDim)
+	}
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MelExtractor structural test (T86.1.19)
+// ---------------------------------------------------------------------------
+
+func TestParity_MelExtractor_Structural(t *testing.T) {
+	cfg := audio.DefaultMelConfig()
+	extractor := audio.NewMelExtractor(cfg)
+
+	// Generate a simple sine wave at 440 Hz
+	sampleRate := float64(cfg.SampleRate)
+	duration := 0.1 // 100ms
+	numSamples := int(sampleRate * duration)
+	samples := make([]float32, numSamples)
+	for i := range samples {
+		samples[i] = float32(math.Sin(2.0 * math.Pi * 440.0 * float64(i) / sampleRate))
+	}
+
+	mel, err := extractor.Extract(samples)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Output: [numMels, numFrames]
+	shape := mel.Shape()
+	if len(shape) != 2 {
+		t.Fatalf("shape: expected 2D, got %v", shape)
+	}
+	if shape[0] != cfg.NumMels {
+		t.Errorf("numMels: got %d, want %d", shape[0], cfg.NumMels)
+	}
+	if shape[1] <= 0 {
+		t.Errorf("numFrames: got %d, want > 0", shape[1])
+	}
+
+	for i, v := range mel.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("mel[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WhisperEncoder structural test (T86.1.20)
+// ---------------------------------------------------------------------------
+
+func TestParity_WhisperEncoder_Structural(t *testing.T) {
+	engine, ops := setup()
+	cfg := audio.WhisperEncoderConfig{
+		NumMels:    8,
+		HiddenDim:  16,
+		NumHeads:   2,
+		NumLayers:  1,
+		KernelSize: 3,
+	}
+
+	enc, err := audio.NewWhisperEncoder[float32]("test_whisper", engine, ops, cfg)
+	if err != nil {
+		t.Fatalf("NewWhisperEncoder: %v", err)
+	}
+
+	// Input: [batch, numMels, T_frames]
+	batch := 1
+	frames := 16
+	inputData := make([]float32, batch*cfg.NumMels*frames)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.01
+	}
+	input := makeTensor(t, inputData, []int{batch, cfg.NumMels, frames})
+
+	output, err := enc.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output should be 2D or 3D with hiddenDim as last dim
+	shape := output.Shape()
+	if len(shape) < 2 {
+		t.Fatalf("shape: expected at least 2D, got %v", shape)
+	}
+	if shape[len(shape)-1] != cfg.HiddenDim {
+		t.Errorf("last dim: got %d, want %d", shape[len(shape)-1], cfg.HiddenDim)
+	}
+
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Comparison ops test (T86.1.23)
+// ---------------------------------------------------------------------------
+
+func TestParity_ComparisonOps(t *testing.T) {
+	t.Skip("Engine does not expose Equal, Greater, Where, or TopK methods — comparison ops are not part of the compute.Engine interface")
+}
+
+// ---------------------------------------------------------------------------
+// TransformerBlock structural test (T86.0.10) — wired version
+// ---------------------------------------------------------------------------
+
+func TestParity_TransformerBlock_Structural(t *testing.T) {
+	engine, _ := setup()
+	ops := &numeric.Float32Ops{}
+	modelDim := 8
+	ffnDim := 16
+	batchSize := 1
+	seqLen := 3
+
+	// Create a simple attention head as the attention node.
+	// headDim must equal modelDim so the residual Add is shape-compatible.
+	attnHead, err := attention.NewAttentionHead[float32](engine, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewAttentionHead: %v", err)
+	}
+
+	block, err := transformer.NewTransformerBlock(engine, ops, modelDim, ffnDim, attnHead)
+	if err != nil {
+		t.Fatalf("NewTransformerBlock: %v", err)
+	}
+
+	inputData := make([]float32, batchSize*seqLen*modelDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.01
+	}
+	input := makeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
+
+	output, err := block.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output should be same shape as input [batch, seq, modelDim]
+	if s := output.Shape(); len(s) != 3 || s[0] != batchSize || s[1] != seqLen || s[2] != modelDim {
+		t.Errorf("shape: got %v, want [%d,%d,%d]", s, batchSize, seqLen, modelDim)
+	}
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Summary test: runs all layer parity tests and prints a report
 // ---------------------------------------------------------------------------
 
@@ -2246,6 +2659,18 @@ func TestParity_Summary(t *testing.T) {
 		{"GCN/Structural", TestParity_GCN_Structural},
 		{"GAT/Structural", TestParity_GAT_Structural},
 		{"MarketVAE/Structural", TestParity_MarketVAE_Structural},
+		// E86.1 remaining layers
+		{"AttentionHead/Structural", TestParity_AttentionHead_Structural},
+		{"GQA/Structural", TestParity_GQA_Structural},
+		{"MIMOMambaBlock/Structural", TestParity_MIMOMambaBlock_Structural},
+		{"HModule/Structural", TestParity_HModule_Structural},
+		{"MLSTM/Structural", TestParity_MLSTM_Structural},
+		{"SLSTM/Structural", TestParity_SLSTM_Structural},
+		{"CLIPEncoder/Structural", TestParity_CLIPEncoder_Structural},
+		{"MelExtractor/Structural", TestParity_MelExtractor_Structural},
+		{"WhisperEncoder/Structural", TestParity_WhisperEncoder_Structural},
+		{"ComparisonOps", TestParity_ComparisonOps},
+		{"TransformerBlock/Structural", TestParity_TransformerBlock_Structural},
 	}
 
 	passed, failed := 0, 0
