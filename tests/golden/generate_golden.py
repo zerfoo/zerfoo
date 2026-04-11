@@ -1756,6 +1756,194 @@ def gen_patchtst():
 
 
 # ---------------------------------------------------------------------------
+# FreTS (Frequency-enhanced Time Series) golden-file forward parity
+# ---------------------------------------------------------------------------
+
+def gen_frets():
+    """Generate golden data for FreTS forward pass.
+
+    FreTS architecture:
+      1. Manual DFT per channel -> select top-K frequency components
+      2. Channel mixing MLP (2-layer with ReLU, residual) on real/imag separately
+      3. Temporal mixing MLP (2-layer with ReLU, residual) on real/imag separately
+      4. Inverse DFT -> linear projection per channel
+
+    Uses manual DFT/IDFT to match Go implementation exactly (not np.fft).
+    """
+    np.random.seed(SEED)
+
+    channels = 3
+    input_len = 12
+    output_len = 4
+    top_k = 4
+    hidden_size = 8
+    n_freqs = input_len // 2 + 1  # 7
+
+    # Generate deterministic input: [channels][input_len]
+    x = np.random.randn(channels, input_len)
+
+    # Generate deterministic weights (small scale for numerical stability).
+    chan_w1 = np.random.randn(channels * hidden_size) * 0.1
+    chan_b1 = np.random.randn(hidden_size) * 0.1
+    chan_w2 = np.random.randn(hidden_size * channels) * 0.1
+    chan_b2 = np.random.randn(channels) * 0.1
+
+    temp_w1 = np.random.randn(top_k * hidden_size) * 0.1
+    temp_b1 = np.random.randn(hidden_size) * 0.1
+    temp_w2 = np.random.randn(hidden_size * top_k) * 0.1
+    temp_b2 = np.random.randn(top_k) * 0.1
+
+    out_w = np.random.randn(channels * output_len * input_len) * 0.1
+    out_b = np.random.randn(channels * output_len) * 0.1
+
+    # --- Manual DFT (matches Go's dft function exactly) ---
+    def manual_dft(signal):
+        """DFT of real signal -> complex coefficients [n/2+1]."""
+        n = len(signal)
+        nf = n // 2 + 1
+        out = np.zeros(nf, dtype=np.complex128)
+        for k in range(nf):
+            s = 0.0 + 0.0j
+            for t in range(n):
+                angle = -2.0 * math.pi * k * t / n
+                s += signal[t] * complex(math.cos(angle), math.sin(angle))
+            out[k] = s
+        return out
+
+    # --- Manual IDFT (matches Go's idft function exactly) ---
+    def manual_idft(coeffs, n):
+        """IDFT from positive-frequency coefficients back to real signal of length n."""
+        out = np.zeros(n)
+        nf = len(coeffs)
+        for t in range(n):
+            s = 0.0 + 0.0j
+            for k in range(nf):
+                angle = 2.0 * math.pi * k * t / n
+                c = complex(math.cos(angle), math.sin(angle))
+                if k == 0 or (n % 2 == 0 and k == n // 2):
+                    s += coeffs[k] * c
+                else:
+                    s += coeffs[k] * c + np.conj(coeffs[k]) * np.conj(c)
+            out[t] = s.real / n
+        return out
+
+    # --- Top-K indices by magnitude (matches Go's topKIndices) ---
+    def top_k_indices(coeffs, k):
+        mags = np.abs(coeffs)
+        # argsort descending, take first k, then sort ascending
+        idx = np.argsort(-mags)[:k]
+        return np.sort(idx)
+
+    # --- mat_vec: vec[1,rows] @ mat[rows,cols] -> [cols] ---
+    def mat_vec(vec, mat_flat, rows, cols):
+        mat = mat_flat.reshape(rows, cols)
+        return vec @ mat
+
+    # Step 1: DFT per channel, select top-K frequencies.
+    all_coeffs = []
+    top_indices = []
+    freq_real = np.zeros((channels, top_k))
+    freq_imag = np.zeros((channels, top_k))
+
+    for c in range(channels):
+        coeffs = manual_dft(x[c])
+        all_coeffs.append(coeffs)
+        idx = top_k_indices(coeffs, top_k)
+        top_indices.append(idx)
+        for i, fi in enumerate(idx):
+            freq_real[c, i] = coeffs[fi].real
+            freq_imag[c, i] = coeffs[fi].imag
+
+    # Step 2: Channel mixing MLP (per frequency bin k).
+    for k in range(top_k):
+        real_in = freq_real[:, k].copy()  # [channels]
+        imag_in = freq_imag[:, k].copy()  # [channels]
+
+        # Layer 1: input @ chanW1[channels, hidden] + chanB1, then ReLU
+        raw_real = mat_vec(real_in, chan_w1, channels, hidden_size)
+        raw_imag = mat_vec(imag_in, chan_w1, channels, hidden_size)
+        h_real = np.maximum(raw_real + chan_b1, 0.0)
+        h_imag = np.maximum(raw_imag + chan_b1, 0.0)
+
+        # Layer 2: h @ chanW2[hidden, channels] + chanB2
+        out_real = mat_vec(h_real, chan_w2, hidden_size, channels)
+        out_imag = mat_vec(h_imag, chan_w2, hidden_size, channels)
+
+        # Residual connection
+        freq_real[:, k] = real_in + out_real + chan_b2
+        freq_imag[:, k] = imag_in + out_imag + chan_b2
+
+    # Step 3: Temporal mixing MLP (per channel).
+    for c in range(channels):
+        temp_real_in = freq_real[c].copy()  # [top_k]
+        temp_imag_in = freq_imag[c].copy()  # [top_k]
+
+        # Layer 1: input @ tempW1[topK, hidden] + tempB1, then ReLU
+        raw_real = mat_vec(temp_real_in, temp_w1, top_k, hidden_size)
+        raw_imag = mat_vec(temp_imag_in, temp_w1, top_k, hidden_size)
+        h_real = np.maximum(raw_real + temp_b1, 0.0)
+        h_imag = np.maximum(raw_imag + temp_b1, 0.0)
+
+        # Layer 2: h @ tempW2[hidden, topK] + tempB2
+        out_real = mat_vec(h_real, temp_w2, hidden_size, top_k)
+        out_imag = mat_vec(h_imag, temp_w2, hidden_size, top_k)
+
+        # Residual connection
+        freq_real[c] += out_real + temp_b2
+        freq_imag[c] += out_imag + temp_b2
+
+    # Step 4: Inverse DFT per channel.
+    reconstructed = np.zeros((channels, input_len))
+    for c in range(channels):
+        mixed = np.zeros(len(all_coeffs[c]), dtype=np.complex128)
+        for i, fi in enumerate(top_indices[c]):
+            mixed[fi] = complex(freq_real[c, i], freq_imag[c, i])
+        reconstructed[c] = manual_idft(mixed, input_len)
+
+    # Step 5: Linear projection per channel.
+    # outW is [channels * outputLen * inputLen], stored as:
+    #   for channel c: outW[c*outputLen*inputLen + o*inputLen + i]
+    # Go transposes: outWt[i*outputLen+o] = outW[wOff+o*inputLen+i]
+    # Then: reconstructed @ outWt[inputLen, outputLen] + outB
+    output = np.zeros((channels, output_len))
+    for c in range(channels):
+        w_off = c * output_len * input_len
+        b_off = c * output_len
+        # Build transposed weight matrix [inputLen, outputLen]
+        out_wt = np.zeros((input_len, output_len))
+        for o in range(output_len):
+            for i in range(input_len):
+                out_wt[i, o] = out_w[w_off + o * input_len + i]
+        proj = reconstructed[c] @ out_wt
+        output[c] = proj + out_b[b_off:b_off + output_len]
+
+    # Flatten output to [channels * outputLen] (same order as Go PredictWindowed).
+    expected_output = output.flatten().tolist()
+
+    save_case("model_frets", {
+        "layer": "frets",
+        "channels": channels,
+        "input_len": input_len,
+        "output_len": output_len,
+        "top_k": top_k,
+        "hidden_size": hidden_size,
+        "input": x.flatten().tolist(),
+        "chan_w1": chan_w1.tolist(),
+        "chan_b1": chan_b1.tolist(),
+        "chan_w2": chan_w2.tolist(),
+        "chan_b2": chan_b2.tolist(),
+        "temp_w1": temp_w1.tolist(),
+        "temp_b1": temp_b1.tolist(),
+        "temp_w2": temp_w2.tolist(),
+        "temp_b2": temp_b2.tolist(),
+        "out_w": out_w.tolist(),
+        "out_b": out_b.tolist(),
+        "expected_output": expected_output,
+        "tolerance": 1e-9,
+    })
+
+
+# ---------------------------------------------------------------------------
 # GQA (Grouped Query Attention) -- no RoPE, no KV cache
 # ---------------------------------------------------------------------------
 
@@ -1877,6 +2065,99 @@ def gen_moe():
 
 
 # ---------------------------------------------------------------------------
+# CfC (Closed-form Continuous-time) golden-file forward parity
+# ---------------------------------------------------------------------------
+
+def gen_cfc():
+    """Generate golden data for CfC forward pass.
+
+    CfC uses liquid time-constant neurons with closed-form ODE solutions:
+      tau = sigmoid(x @ Wtau_x + h @ Wtau_h + Btau)
+      f = exp(-1.0 / max(tau, 1e-6))
+      preact = tanh(x @ Wx + h @ Wh + Bh)
+      h_new = f * h + (1 - f) * preact
+    Output projection: h @ outW + outB
+    """
+    np.random.seed(SEED)
+
+    input_size = 3
+    hidden_size = 8
+    output_size = 2
+    num_layers = 1
+    output_len = 4
+    seq_len = 5
+
+    # Input: [channels][seq_len] — channels == input_size for CfC.
+    x_channels = np.random.randn(input_size, seq_len).astype(np.float64)
+
+    # Layer weights (NumPy, deterministic).
+    in_size = input_size
+    wh = np.random.randn(hidden_size, hidden_size).astype(np.float64) * 0.1
+    wx = np.random.randn(in_size, hidden_size).astype(np.float64) * 0.1
+    bh = np.zeros(hidden_size, dtype=np.float64)
+    wtau = np.random.randn(in_size + hidden_size, hidden_size).astype(np.float64) * 0.1
+    btau = np.zeros(hidden_size, dtype=np.float64)
+
+    # Output projection.
+    out_dim = output_size * output_len
+    out_w = np.random.randn(hidden_size, out_dim).astype(np.float64) * 0.1
+    out_b = np.zeros(out_dim, dtype=np.float64)
+
+    # Transpose input: [channels][seq_len] -> [seq_len][channels] (matches Go transposeWindow).
+    x_seq = x_channels.T  # [seq_len, input_size]
+
+    # Run CfC recurrence.
+    h = np.zeros(hidden_size, dtype=np.float64)
+    for t in range(seq_len):
+        xt = x_seq[t]  # [input_size]
+
+        # tau = sigmoid(xt @ Wtau[:in_size] + h @ Wtau[in_size:] + Btau)
+        tau_x = xt @ wtau[:in_size]        # [hidden_size]
+        tau_h = h @ wtau[in_size:]          # [hidden_size]
+        tau = 1.0 / (1.0 + np.exp(-(btau + tau_x + tau_h)))
+
+        # preact = tanh(xt @ Wx + h @ Wh + Bh)
+        pre_x = xt @ wx        # [hidden_size]
+        pre_h = h @ wh          # [hidden_size]
+        preact = np.tanh(bh + pre_x + pre_h)
+
+        # f = exp(-1.0 / max(tau, 1e-6))
+        tau_clamped = np.maximum(tau, 1e-6)
+        f = np.exp(-1.0 / tau_clamped)
+
+        # h_new = f * h + (1 - f) * preact
+        h = f * h + (1.0 - f) * preact
+
+    # Output projection: h @ outW + outB
+    output = h @ out_w + out_b  # [out_dim]
+
+    # Save in cfcWeights JSON format compatible with Go's loadWeights.
+    save_case("model_cfc", {
+        "layer": "cfc",
+        "input_size": input_size,
+        "hidden_size": hidden_size,
+        "output_size": output_size,
+        "num_layers": num_layers,
+        "output_len": output_len,
+        "seq_len": seq_len,
+        "input": x_channels.flatten().tolist(),
+        "input_shape": list(x_channels.shape),
+        # Layer weights (2D as nested lists for JSON).
+        "wh": wh.tolist(),
+        "wx": wx.tolist(),
+        "bh": bh.tolist(),
+        "wtau": wtau.tolist(),
+        "btau": btau.tolist(),
+        # Output projection.
+        "out_w": out_w.tolist(),
+        "out_b": out_b.tolist(),
+        "expected_output": output.tolist(),
+        "output_shape": [out_dim],
+        "tolerance": 1e-7,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1945,9 +2226,12 @@ def main():
         # Timeseries models (E86.4)
         ("DLinear", gen_dlinear),
         ("PatchTST", gen_patchtst),
+        ("FreTS", gen_frets),
         # Complex layers (GQA, MoE)
         ("GQA", gen_gqa),
         ("MoE", gen_moe),
+        # Timeseries models (E88)
+        ("CfC", gen_cfc),
     ]
 
     passed, failed = 0, 0
