@@ -13,7 +13,8 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 **Status summary:**
 - 380+ tasks completed across all plans
 - E86: PyTorch parity testing (66/72 -- 105 tests, 100 pass, 5 skip, 0 fail; GPU parity E86.5 pending DGX)
-- E88: Upgrade timeseries model tests from structural to golden-file parity (0/6)
+- E88: Upgrade timeseries model tests from structural to golden-file parity (3/6 DONE -- PatchTST, N-BEATS, ITransformer)
+- E89: Timeseries Engine[T] compliance -- eliminate raw slice math (0/27 -- 6 models, 155+ violations)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
@@ -510,6 +511,164 @@ All 4 bugs are in different packages and files -- fully independent.
 
 ---
 
+## E89: Timeseries Engine[T] Compliance -- Eliminate Raw Slice Math
+
+### Context
+
+"Engine[T] is law" -- all tensor arithmetic must flow through compute.Engine[T].
+Six timeseries model files violate this by performing raw float64/float32 slice
+arithmetic in for loops. This makes them CPU-only, prevents GPU acceleration,
+breaks CUDA graph capture, and bypasses the compute abstraction that makes
+Zerfoo's architecture work.
+
+These models were written as quick Python ports and never properly migrated.
+The Engine[T] existed before they were written -- this is not legacy, it is a
+convention violation. Four clean reference files (nbeats.go, nhits.go, tft.go,
+mamba.go) demonstrate the correct pattern.
+
+### Audit Results
+
+| File | Raw Slice Lines | Engine Calls | Status | Priority |
+|------|----------------|-------------|--------|----------|
+| frets.go | 73 | 0 | VIOLATION | CRITICAL |
+| cfc.go | 42 | 0 | VIOLATION | CRITICAL |
+| timemixer.go | 24 | 0 | VIOLATION | HIGH |
+| dlinear.go | 10 | 0 | VIOLATION | HIGH |
+| itransformer.go | 4 | 0 | VIOLATION | MEDIUM |
+| itransformer_backward.go | 6+ | 0 | VIOLATION | MEDIUM |
+| patchtst.go | 1 | 11 | PARTIAL | LOW |
+
+Clean references: nbeats.go (0 violations, 9 Engine calls), nhits.go, tft.go, mamba.go.
+
+### Approach
+
+For each violating file:
+1. Replace raw []float64 / []float32 parameter storage with graph.Parameter[T].
+2. Replace manual for-loop arithmetic with Engine[T] ops (MatMul, Add, MulScalar, etc.).
+3. Replace flatParams() with Parameters() []*graph.Parameter[T].
+4. Keep the same mathematical formula -- only change HOW the computation is dispatched.
+5. Verify with existing golden-file parity test (output must not change).
+
+The golden-file parity tests from E86/E88 serve as regression tests: if the
+refactored model produces different output, the test catches it immediately.
+
+### Acceptance Criteria
+
+- Zero raw slice arithmetic in forward/backward paths of all timeseries models.
+- All models use compute.Engine[T] for every tensor operation.
+- All models store parameters as graph.Parameter[T], not raw slices.
+- All existing tests pass (go test ./timeseries/... and parity tests).
+- No flatParams() methods remain (replaced by Parameters()).
+
+### Work Breakdown
+
+#### E89.1: ITransformer -- float64 slices to Engine[T] (most-used, best parity coverage)
+
+- [ ] T89.1.1 Migrate ITransformer forward path to Engine[T]  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  File: timeseries/itransformer.go (647 lines, 4 raw arithmetic violations).
+  Replace [][]float64 weight storage with graph.Parameter[float32]. Replace manual
+  linear transforms (y[j] += xi * w[i][j]) with engine.MatMul. Replace residual
+  additions with engine.Add. Keep forward() signature compatible via adapter.
+  AC: TestParity_ITransformer golden-file parity test passes (tolerance 1e-9).
+  Reference: nbeats.go for Engine-based linear layer pattern.
+- [ ] T89.1.2 Migrate ITransformer backward path to Engine[T]  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  File: timeseries/itransformer_backward.go (723 lines, manual gradient accumulation).
+  Replace manual grads[i] += ... with Engine operations and graph.Parameter gradient
+  accumulation. Use layers/functional backward ops (LinearBackward, LayerNormBackward,
+  MultiHeadAttentionBackward) where available.
+  AC: ITransformer training produces same loss curve within 1e-4 over 10 epochs.
+- [ ] T89.1.3 Remove flatParams() from ITransformer, replace with Parameters()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: flatParams() removed. Parameters() returns []*graph.Parameter[T]. Callers updated.
+- [ ] T89.1.4 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.2: DLinear -- simplest violation, best test coverage
+
+- [ ] T89.2.1 Migrate DLinear forward path to Engine[T]  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  File: timeseries/dlinear.go (532 lines, 10 raw arithmetic violations).
+  Replace manual movingAverage, seasonal decomposition, and output projection
+  with Engine ops. movingAverage -> engine.Conv1D or manual engine.Add/DivScalar.
+  AC: TestParity_DLinear golden-file parity test passes (tolerance 1e-4).
+- [ ] T89.2.2 Remove flatParams(), add Parameters()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T89.2.3 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.3: CfC (Closed-form Continuous) -- 42 violations, RNN cell
+
+- [ ] T89.3.1 Migrate CfC forward path to Engine[T]  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  File: timeseries/cfc.go (842 lines, 42 raw arithmetic violations).
+  Replace manual matrix-vector products (Wtau, Wx, Wh computations) with
+  engine.MatMul. Replace element-wise sigmoid/tanh with engine ops.
+  AC: TestParity_CfC_Structural test passes (shape, no NaN, non-constant).
+- [ ] T89.3.2 Migrate CfC backward path to Engine[T]  Owner: TBD  Est: 2h  verifies: [UC-L01]
+  AC: CfC training loss matches pre-migration within 1e-4 over 10 epochs.
+- [ ] T89.3.3 Remove flatParams(), add Parameters()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T89.3.4 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.4: FreTS -- 73 violations, worst offender (DFT/IDFT + MLP)
+
+- [ ] T89.4.1 Migrate FreTS forward path to Engine[T]  Owner: TBD  Est: 3h  verifies: [UC-L01]
+  File: timeseries/frets.go (925 lines, 73 raw arithmetic violations).
+  Replace manual DFT/IDFT nested loops with Engine ops. Replace channel MLP and
+  temporal MLP manual forward with engine.MatMul + engine activation.
+  Note: complex128 arithmetic may need special handling -- Engine may not support
+  complex types. If so, split real/imaginary and use engine.MatMul on each.
+  AC: FreTS forward produces correct output (structural test: shape, no NaN).
+- [ ] T89.4.2 Migrate FreTS backward path  Owner: TBD  Est: 2h  verifies: [UC-L01]
+- [ ] T89.4.3 Remove flatParams(), add Parameters()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T89.4.4 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.5: TimeMixer -- 24 violations, multi-scale decomposition
+
+- [ ] T89.5.1 Migrate TimeMixer forward path to Engine[T]  Owner: TBD  Est: 1.5h  verifies: [UC-L01]
+  File: timeseries/timemixer.go (607 lines, 24 raw arithmetic violations).
+  Replace mixingMLP manual 2-layer MLP with engine.MatMul + engine activation.
+  Replace manual residual connections with engine.Add.
+  AC: TimeMixer forward produces correct output (structural test).
+- [ ] T89.5.2 Remove flatParams(), add Parameters()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T89.5.3 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.6: PatchTST -- 1 violation, nearly clean
+
+- [ ] T89.6.1 Remove remaining raw slice arithmetic in PatchTST  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  File: timeseries/patchtst.go (1 raw arithmetic violation).
+  AC: Zero raw slice arithmetic in forward path. TestParity_PatchTST passes.
+- [ ] T89.6.2 Run go test ./timeseries/... and parity tests  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+#### E89.7: Validation sweep
+
+- [ ] T89.7.1 Run full test suite: go test ./...  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [ ] T89.7.2 Run all parity tests: go test -run TestParity_ ./tests/parity/...  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [ ] T89.7.3 Verify no flatParams() methods remain in timeseries/  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: `grep -r 'flatParams' timeseries/` returns only test files.
+- [ ] T89.7.4 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
+
+### E89 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| AU: ITransformer | T89.1.1-T89.1.4 | Highest parity coverage | None |
+| AV: DLinear | T89.2.1-T89.2.3 | Simplest, best golden coverage | None |
+| AW: CfC | T89.3.1-T89.3.4 | RNN cell, moderate complexity | None |
+| AX: FreTS | T89.4.1-T89.4.4 | Worst offender, complex128 | None |
+| AY: TimeMixer | T89.5.1-T89.5.3 | Multi-scale MLP | None |
+| AZ: PatchTST | T89.6.1-T89.6.2 | Nearly clean, trivial | None |
+| BA: Validation | T89.7.1-T89.7.4 | Full sweep | All above |
+
+### E89 Waves
+
+All model migrations are independent (different files, no shared code paths).
+
+#### Wave E89-1: Migrate all 6 models (3 agents)
+- [ ] Agent 1: T89.1.1-T89.1.4 + T89.6.1-T89.6.2 (ITransformer + PatchTST)
+- [ ] Agent 2: T89.2.1-T89.2.3 + T89.5.1-T89.5.3 (DLinear + TimeMixer)
+- [ ] Agent 3: T89.3.1-T89.3.4 + T89.4.1-T89.4.4 (CfC + FreTS)
+
+#### Wave E89-2: Validation sweep (1 agent)
+Deps: Wave E89-1
+
+- [ ] Agent 1: T89.7.1-T89.7.4 (full test + lint + parity + grep verification)
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -872,6 +1031,16 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-11: E89 added -- timeseries Engine[T] compliance
+
+- Added E89 (27 tasks, 2 waves) to eliminate all raw slice math from 6 timeseries
+  model files (155+ lines of for-loop arithmetic violating "Engine[T] is law").
+- Audit found: frets.go (73 violations), cfc.go (42), timemixer.go (24),
+  dlinear.go (10), itransformer.go (4+), patchtst.go (1). Clean references:
+  nbeats.go, nhits.go, tft.go, mamba.go.
+- All migrations are independent (Wave 1: 3 agents, 2 models each).
+- E88 completed: PatchTST, N-BEATS, ITransformer upgraded to golden-file parity.
 
 ### 2026-04-10 (night): E87 added -- fix 4 backward pass bugs
 
