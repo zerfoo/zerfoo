@@ -2158,6 +2158,199 @@ def gen_cfc():
 
 
 # ---------------------------------------------------------------------------
+# TimeMixer golden-file forward parity
+# ---------------------------------------------------------------------------
+
+def gen_timemixer():
+    """Generate golden data for TimeMixer forward pass.
+
+    TimeMixer (ICLR 2024) decomposes input into trend/seasonal at multiple
+    scales using learnable moving averages, mixes across scales with 2-layer
+    MLPs, projects via per-scale linear heads, and combines with softmax-gated
+    mixing weights.
+
+    Config: InputLen=12, OutputLen=4, NumFeatures=3, NumScales=2,
+            HiddenSize=8, NumLayers=1.
+    """
+    np.random.seed(42)
+
+    input_len = 12
+    output_len = 4
+    num_features = 3
+    num_scales = 2
+    hidden_size = 8
+    num_layers = 1
+
+    # Input: [num_features][input_len]
+    x = np.random.randn(num_features, input_len)
+
+    # --- MA weights per scale (softmax-normalized) ---
+    # Scale s has kernel size 2^(s+1).
+    ma_weights = []
+    for s in range(num_scales):
+        ks = 1 << (s + 1)
+        raw = np.random.randn(ks) * 0.1
+        # softmax normalize
+        e = np.exp(raw - np.max(raw))
+        ma_weights.append((e / e.sum()).tolist())
+
+    # --- MLP weights (per layer: seasonal then trend) ---
+    # Each MLP: w1 [hidden_size, num_scales], b1 [hidden_size],
+    #           w2 [num_scales, hidden_size], b2 [num_scales].
+    seasonal_mlps = []
+    trend_mlps = []
+    for _ in range(num_layers):
+        seasonal_mlps.append({
+            "w1": np.random.randn(hidden_size, num_scales).tolist(),
+            "b1": np.random.randn(hidden_size).tolist(),
+            "w2": np.random.randn(num_scales, hidden_size).tolist(),
+            "b2": np.random.randn(num_scales).tolist(),
+        })
+        trend_mlps.append({
+            "w1": np.random.randn(hidden_size, num_scales).tolist(),
+            "b1": np.random.randn(hidden_size).tolist(),
+            "w2": np.random.randn(num_scales, hidden_size).tolist(),
+            "b2": np.random.randn(num_scales).tolist(),
+        })
+
+    # --- Projection heads per scale: [input_len][output_len] ---
+    trend_heads = []
+    seasonal_heads = []
+    for _ in range(num_scales):
+        trend_heads.append(np.random.randn(input_len, output_len).tolist())
+        seasonal_heads.append(np.random.randn(input_len, output_len).tolist())
+
+    # --- Mix weights (pre-softmax, initialized to 0) ---
+    mix_weights = [0.0] * num_scales
+
+    # ---- Forward pass in NumPy (mirrors Go implementation) ----
+
+    # 1. Decompose: weighted moving average per scale.
+    def weighted_moving_avg(series, kernel):
+        n = len(series)
+        k = len(kernel)
+        out = np.zeros(n)
+        for i in range(n):
+            s = 0.0
+            for j in range(k):
+                idx = max(0, i - j)
+                s += kernel[j] * series[idx]
+            out[i] = s
+        return out
+
+    scales_trend = []    # [num_scales][num_features][input_len]
+    scales_seasonal = []
+    for s in range(num_scales):
+        kernel = np.array(ma_weights[s])
+        st = []
+        ss = []
+        for f in range(num_features):
+            tr = weighted_moving_avg(x[f], kernel)
+            st.append(tr)
+            ss.append(x[f] - tr)
+        scales_trend.append(st)
+        scales_seasonal.append(ss)
+
+    # 2. Past decomposable mixing (bottom-up).
+    for l in range(num_layers):
+        s_mlp = seasonal_mlps[l]
+        t_mlp = trend_mlps[l]
+
+        def mlp_forward(inp, w1, b1, w2, b2):
+            """Two-layer MLP with ReLU: out = W2 @ ReLU(W1 @ x + b1) + b2."""
+            w1 = np.array(w1)
+            b1 = np.array(b1)
+            w2 = np.array(w2)
+            b2 = np.array(b2)
+            hidden = np.maximum(0, w1 @ inp + b1)  # ReLU
+            return w2 @ hidden + b2
+
+        new_seasonal = [[np.zeros(input_len) for _ in range(num_features)]
+                        for _ in range(num_scales)]
+        new_trend = [[np.zeros(input_len) for _ in range(num_features)]
+                     for _ in range(num_scales)]
+
+        # Mix seasonal across scales.
+        for f in range(num_features):
+            for t in range(input_len):
+                scale_vec = np.array([scales_seasonal[s][f][t]
+                                      for s in range(num_scales)])
+                mixed = mlp_forward(scale_vec, s_mlp["w1"], s_mlp["b1"],
+                                    s_mlp["w2"], s_mlp["b2"])
+                for s in range(num_scales):
+                    new_seasonal[s][f][t] = mixed[s]
+
+        # Mix trend across scales.
+        for f in range(num_features):
+            for t in range(input_len):
+                scale_vec = np.array([scales_trend[s][f][t]
+                                      for s in range(num_scales)])
+                mixed = mlp_forward(scale_vec, t_mlp["w1"], t_mlp["b1"],
+                                    t_mlp["w2"], t_mlp["b2"])
+                for s in range(num_scales):
+                    new_trend[s][f][t] = mixed[s]
+
+        # Bottom-up residual: coarse -> fine.
+        for s in range(num_scales - 2, -1, -1):
+            for f in range(num_features):
+                new_seasonal[s][f] = new_seasonal[s][f] + new_seasonal[s + 1][f]
+                new_trend[s][f] = new_trend[s][f] + new_trend[s + 1][f]
+
+        scales_seasonal = new_seasonal
+        scales_trend = new_trend
+
+    # 3. Softmax mixing weights.
+    mw = np.array(mix_weights)
+    e = np.exp(mw - np.max(mw))
+    sm_weights = e / e.sum()
+
+    # 4. Project each scale and combine.
+    forecast = np.zeros((num_features, output_len))
+    for f in range(num_features):
+        for s in range(num_scales):
+            th = np.array(trend_heads[s])   # [input_len, output_len]
+            sh = np.array(seasonal_heads[s])
+            trend_proj = np.array(scales_trend[s][f]) @ th
+            season_proj = np.array(scales_seasonal[s][f]) @ sh
+            forecast[f] += sm_weights[s] * (trend_proj + season_proj)
+
+    # --- Build flat_params in same order as Go's FlatParams ---
+    # Order: ma_weights (per scale), then per layer: seasonal MLP (w1, b1, w2, b2),
+    #        trend MLP (w1, b1, w2, b2).
+    flat_params = []
+    for s in range(num_scales):
+        flat_params.extend(ma_weights[s])
+    for l in range(num_layers):
+        flat_params.extend(np.array(seasonal_mlps[l]["w1"]).flatten().tolist())
+        flat_params.extend(seasonal_mlps[l]["b1"])
+        flat_params.extend(np.array(seasonal_mlps[l]["w2"]).flatten().tolist())
+        flat_params.extend(seasonal_mlps[l]["b2"])
+        flat_params.extend(np.array(trend_mlps[l]["w1"]).flatten().tolist())
+        flat_params.extend(trend_mlps[l]["b1"])
+        flat_params.extend(np.array(trend_mlps[l]["w2"]).flatten().tolist())
+        flat_params.extend(trend_mlps[l]["b2"])
+
+    save_case("model_timemixer", {
+        "layer": "timemixer",
+        "input_len": input_len,
+        "output_len": output_len,
+        "num_features": num_features,
+        "num_scales": num_scales,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "input": x.flatten().tolist(),
+        "input_shape": list(x.shape),
+        "flat_params": flat_params,
+        "trend_heads": [np.array(h).flatten().tolist() for h in trend_heads],
+        "seasonal_heads": [np.array(h).flatten().tolist() for h in seasonal_heads],
+        "mix_weights": mix_weights,
+        "expected_output": forecast.flatten().tolist(),
+        "output_shape": list(forecast.shape),
+        "tolerance": 1e-7,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2232,6 +2425,7 @@ def main():
         ("MoE", gen_moe),
         # Timeseries models (E88)
         ("CfC", gen_cfc),
+        ("TimeMixer", gen_timemixer),
     ]
 
     passed, failed = 0, 0
