@@ -25,6 +25,23 @@ func getFloat64s(m map[string]interface{}, key string) []float64 {
 	return out
 }
 
+// getFloat64s2D extracts a 2D float64 slice from a JSON nested array.
+func getFloat64s2D(m map[string]interface{}, key string) [][]float64 {
+	arr, ok := m[key].([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([][]float64, len(arr))
+	for i, row := range arr {
+		rowArr := row.([]interface{})
+		out[i] = make([]float64, len(rowArr))
+		for j, v := range rowArr {
+			out[i][j] = v.(float64)
+		}
+	}
+	return out
+}
+
 // reshapeFloat64 reshapes a flat float64 slice into a 2D slice [rows][cols].
 func reshapeFloat64(flat []float64, rows, cols int) [][]float64 {
 	result := make([][]float64, rows)
@@ -693,6 +710,101 @@ func TestParity_TFT_Structural(t *testing.T) {
 	}
 	if allSame {
 		t.Errorf("output is constant: same result for different inputs")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// E88: CfC golden-file forward parity (NumPy reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_CfC(t *testing.T) {
+	g := loadGolden(t, "model_cfc")
+	tol := getFloat(g, "tolerance")
+
+	inputSize := int(getFloat(g, "input_size"))
+	hiddenSize := int(getFloat(g, "hidden_size"))
+	outputSize := int(getFloat(g, "output_size"))
+	numLayers := int(getFloat(g, "num_layers"))
+	outputLen := int(getFloat(g, "output_len"))
+	seqLen := int(getFloat(g, "seq_len"))
+
+	config := tsmodels.CfCConfig{
+		InputSize:  inputSize,
+		HiddenSize: hiddenSize,
+		OutputSize: outputSize,
+		NumLayers:  numLayers,
+		OutputLen:  outputLen,
+	}
+
+	m, err := tsmodels.NewCfC(config)
+	if err != nil {
+		t.Fatalf("NewCfC: %v", err)
+	}
+
+	// Extract golden weights from JSON.
+	whFlat := getFloat64s2D(g, "wh")
+	wxFlat := getFloat64s2D(g, "wx")
+	bhFlat := getFloat64s(g, "bh")
+	wtauFlat := getFloat64s2D(g, "wtau")
+	btauFlat := getFloat64s(g, "btau")
+	outWFlat := getFloat64s2D(g, "out_w")
+	outBFlat := getFloat64s(g, "out_b")
+
+	// Write golden weights to a temp file in CfC's JSON format.
+	dir := t.TempDir()
+	weightsPath := filepath.Join(dir, "cfc_golden.json")
+	weightsJSON := map[string]interface{}{
+		"config": map[string]interface{}{
+			"InputSize":  inputSize,
+			"HiddenSize": hiddenSize,
+			"OutputSize": outputSize,
+			"NumLayers":  numLayers,
+			"OutputLen":  outputLen,
+		},
+		"layers": []map[string]interface{}{
+			{
+				"wh":   whFlat,
+				"wx":   wxFlat,
+				"bh":   bhFlat,
+				"wtau": wtauFlat,
+				"btau": btauFlat,
+			},
+		},
+		"out_w": outWFlat,
+		"out_b": outBFlat,
+	}
+	wData, err := json.Marshal(weightsJSON)
+	if err != nil {
+		t.Fatalf("marshal weights: %v", err)
+	}
+	if err := os.WriteFile(weightsPath, wData, 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+
+	// Build input: [channels][seqLen] from golden flat data.
+	inputFlat := getFloat64s(g, "input")
+	channels := inputSize
+	input := make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		input[c] = inputFlat[c*seqLen : (c+1)*seqLen]
+	}
+
+	// Run prediction, loading weights from the golden file.
+	preds, err := m.PredictWindowed(weightsPath, [][][]float64{input})
+	if err != nil {
+		t.Fatalf("PredictWindowed: %v", err)
+	}
+
+	// Compare against golden expected output.
+	expectedOutput := getFloat64s(g, "expected_output")
+	if len(preds) != len(expectedOutput) {
+		t.Fatalf("output length: got %d, want %d", len(preds), len(expectedOutput))
+	}
+	for i := range preds {
+		diff := math.Abs(preds[i] - expectedOutput[i])
+		if diff > tol {
+			t.Errorf("output[%d]: got %g, want %g (diff=%g, tol=%g)", i, preds[i], expectedOutput[i], diff, tol)
+		}
 	}
 }
 
