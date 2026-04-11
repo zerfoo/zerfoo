@@ -934,3 +934,89 @@ func TestParity_FTTransformer_Structural(t *testing.T) {
 		t.Errorf("output is constant: same (direction, confidence) for different inputs")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// FreTS golden-file forward parity (NumPy reference)
+// ---------------------------------------------------------------------------
+
+func TestParity_FreTS(t *testing.T) {
+	g := loadGolden(t, "model_frets")
+	tol := getFloat(g, "tolerance")
+
+	channels := int(getFloat(g, "channels"))
+	inputLen := int(getFloat(g, "input_len"))
+	outputLen := int(getFloat(g, "output_len"))
+	topK := int(getFloat(g, "top_k"))
+	hiddenSize := int(getFloat(g, "hidden_size"))
+
+	config := tsmodels.FreTSConfig{
+		Channels:   channels,
+		InputLen:   inputLen,
+		OutputLen:  outputLen,
+		TopK:       topK,
+		HiddenSize: hiddenSize,
+	}
+
+	m, err := tsmodels.NewFreTS(config)
+	if err != nil {
+		t.Fatalf("NewFreTS: %v", err)
+	}
+
+	// Load golden weights via FlatParams pointers.
+	// FlatParams order: chanW1, chanB1, chanW2, chanB2, tempW1, tempB1, tempW2, tempB2, outW, outB
+	chanW1 := getFloat64s(g, "chan_w1")
+	chanB1 := getFloat64s(g, "chan_b1")
+	chanW2 := getFloat64s(g, "chan_w2")
+	chanB2 := getFloat64s(g, "chan_b2")
+	tempW1 := getFloat64s(g, "temp_w1")
+	tempB1 := getFloat64s(g, "temp_b1")
+	tempW2 := getFloat64s(g, "temp_w2")
+	tempB2 := getFloat64s(g, "temp_b2")
+	outW := getFloat64s(g, "out_w")
+	outB := getFloat64s(g, "out_b")
+
+	allWeights := make([]float64, 0)
+	allWeights = append(allWeights, chanW1...)
+	allWeights = append(allWeights, chanB1...)
+	allWeights = append(allWeights, chanW2...)
+	allWeights = append(allWeights, chanB2...)
+	allWeights = append(allWeights, tempW1...)
+	allWeights = append(allWeights, tempB1...)
+	allWeights = append(allWeights, tempW2...)
+	allWeights = append(allWeights, tempB2...)
+	allWeights = append(allWeights, outW...)
+	allWeights = append(allWeights, outB...)
+
+	flatPtrs := m.FlatParams()
+	if len(allWeights) != len(flatPtrs) {
+		t.Fatalf("param count mismatch: golden=%d, model=%d", len(allWeights), len(flatPtrs))
+	}
+	for i, v := range allWeights {
+		*flatPtrs[i] = v
+	}
+
+	// Build input: [channels][inputLen] from golden flat data.
+	inputFlat := getFloat64s(g, "input")
+	input := make([][]float64, channels)
+	for c := 0; c < channels; c++ {
+		input[c] = inputFlat[c*inputLen : (c+1)*inputLen]
+	}
+
+	// Run forward via ForwardSample (returns flat [channels*outputLen]).
+	output, _, err := m.ForwardSample(input)
+	if err != nil {
+		t.Fatalf("ForwardSample: %v", err)
+	}
+
+	// Compare against expected output.
+	expectedOutput := getFloat64s(g, "expected_output")
+	if len(output) != len(expectedOutput) {
+		t.Fatalf("output length: got %d, want %d", len(output), len(expectedOutput))
+	}
+	for i := range output {
+		diff := math.Abs(output[i] - expectedOutput[i])
+		if diff > tol {
+			t.Errorf("output[%d]: got %g, want %g (diff=%g, tol=%g)", i, output[i], expectedOutput[i], diff, tol)
+		}
+	}
+}
